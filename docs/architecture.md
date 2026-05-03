@@ -1,0 +1,520 @@
+# HexKeyLab Architecture & Feature Reference
+
+This document is the authoritative description of what HexKeyLab does. It supersedes the v0.8 `lumatone_project_reference.md` and is written for the post-refactor v1.0 codebase, but the v0.9 single-file implementation is the functional baseline being preserved.
+
+The first half (Hardware Integration, Tuning System, HKL Feature Set, Coordinate System) describes *what HKL is* and is stable across the refactor. The second half (Internal Subsystems) describes the *current* implementation; it is intentionally lighter because much of it is being restructured.
+
+---
+
+## 1. Hardware Integration
+
+### 1.1 Lumatone
+
+- **Layout**: 5 boards × 56 keys = 280 keys, hexagonal isomorphic.
+- **Physical board swap on Max's unit**: boards 3 and 4 are swapped. This is encoded as `sysexBoardMap = [1,2,3,5,4]` mapping group index (0-indexed) to SysEx board ID (1-indexed). Every LTN file, MIDI map, and SysEx send must respect this.
+- **Connectivity**: USB-MIDI (primary), 5-pin DIN MIDI in/thru/out, 1/4" Sustain jack, 1/4" Expression jack.
+- **SysEx envelope**: `F0 00 21 50 <board> <cmd> <data1-4> F7`. Manufacturer ID `[0x00, 0x21, 0x50]`. Per-key data passes (keyIndex, noteNum, channel as 0-indexed byte, typeByte). `typeByte = (faderUpIsNull << 4) | keyType` where keyType is 0=disabled, 1=noteOnNoteOff, 2=CC, 3=lumaTouch.
+
+### 1.2 Pedal jacks (v0.9 verified)
+
+**Sustain jack** is hardcoded to emit CC 64 (binary). Switch-style pedals work; continuous half-damper pedals are quantized to binary by firmware on this jack.
+
+**Expression jack** is hardcoded to emit CC 4 (Foot Controller) and is **wired in the Roland convention**: wiper expected on the ring (T = pot end1, R = pot wiper, S = pot end2). Pedals that follow this convention work natively (Roland DP-10 with body switch in "Continuous" mode, Roland EV-5, Yamaha FC7 with the firmware's Invert Pedal toggle). Pedals using the Korg convention (DS-1H, DS-2H — pot between tip and sleeve, ring floating) do NOT work: the ADC reads a floating pin and produces noise indistinguishable from a binary switch pedal.
+
+The expression jack supports a runtime calibration mode (CMD 0x38) that learns the ADC bounds for the connected pedal. While calibration is active, firmware emits spontaneous CMD 0x3E status packets every ~100ms with running min/max bounds and a valid flag.
+
+CC numbers cannot be remapped via SysEx; the firmware does not expose this. Sensitivity (CMD 0x03) is a 0–127 gain-style scalar. Polarity invert (CMD 0x04) is a boolean.
+
+### 1.3 Audio architecture
+
+HKL is self-contained. The Lumatone sends MIDI on a fixed (channel, note) addressing scheme; HKL maps those addresses to lattice positions based on the current layout, computes frequencies from the active tuning system, and renders audio directly through its sample/oscillator engine. There is no external synth in the signal path. A3 = 220 Hz is the central reference of the tuning system.
+
+---
+
+## 2. Tuning System
+
+### 2.1 Layout: Harmonic Table
+
+Three hexagonal axes mapped to musical intervals:
+- **q-axis**: major thirds (5:4)
+- **r-axis**: perfect **fifths** (3:2) — NOT minor thirds (verified from LTN data; lattice (0,1) maps to 3/2)
+- **Derived axis**: minor thirds (6:5) via direction (-1, +1) in (q, r) since (5/4)⁻¹ × (3/2) = 6/5
+
+### 2.2 Banded JI
+
+The keyboard is divided into **3-key-wide bands** along the q-axis:
+- Within each band, intervals are pure 5-limit JI
+- **Seams** exist between bands where JI breaks down
+- **Octave constraint**: every key is exactly 2:1 above the key 3 positions to its left on q
+- This allows complex JI chord progressions that stay within bands and avoid seams
+- 5-limit mode constrains prime-5 exponent to ±2 (because `posInBand ∈ {0,1,2}`); diesis (128:125, requires |e5|=3) is unreachable in 5-limit but reachable in 7-limit via syntonic adjustments
+
+### 2.3 Frequency formulas
+
+**5-limit**:
+```
+freq(q, r) = 220 × 2^bandOf(q) × (5/4)^(posInBand(q)−1) × (3/2)^r
+where:
+  bandOf(q)    = floor((q+1)/3)
+  posInBand(q) = ((q+1) % 3 + 3) % 3
+A3 (220 Hz) at (0, 0): bandOf=0, posInBand=1
+```
+
+**7-limit**: same base, with region adjustments. The fifths axis is divided into alternating **A (pure)** and **B (septimal)** regions of width `septimalW = 3`, determined by lattice r (not physical rPhys). A regions get syntonic comma cancellation per A-band depth from center. B regions inherit their paired A's adjustment then ×63/64 (septimal comma). Global tempering ×(80/81)^(septimalShift/6) smooths the 42-step cycle. Result: A↔B seams are 64:63, B↔nextA seams are 36:35.
+
+**Equal temperament**:
+```
+freq(q, r) = 220 × 2^((4q + 7r) / 12)
+```
+Pure 12-TET. No bands, no regions, no adjustments.
+
+### 2.4 JI ratio between two keys (5-limit)
+
+The ratio `freq(q2,r2) / freq(q1,r1)` factors as `2^e2 × 3^e3 × 5^e5`:
+- `e5 = dp` where dp = posInBand(q2) − posInBand(q1)
+- `e3 = dr` where dr = r2 − r1
+- `e2 = db − 2·dp − dr` where db = bandOf(q2) − bandOf(q1)
+
+In 7-limit, `jiRatio()` extends with prime-7 exponent tracking. Each region adjustment modifies exponents: syntonic ×(81/80) shifts (e2, e3, e5), septimal ×(63/64) shifts (e2, e3, e7).
+
+### 2.5 Septimal seam shift (7-limit only)
+
+Controls position of the A/B region boundaries:
+- Range: −21 to 20 (42 positions)
+- Wrap: `((s + dir + 21) % 42 + 42) % 42 − 21`
+- Controls: ▲/▼ buttons + ArrowUp/ArrowDown keyboard shortcuts (custom repeat timer at animation-frame cadence; browser auto-repeat suppressed)
+- ▲ increases septimalShift → seams move +r (upward)
+
+### 2.6 Coordinate system summary
+
+- **q**: position along major-third axis (5:4)
+- **r**: position along **fifths** axis (3:2)
+- **p**: posInBand(q), position within the 3-wide octave band (0, 1, 2)
+- **Minor thirds**: derived direction (−1, +1) in (q, r)
+- **Origin**: A3, in the middle of the keyboard
+
+### 2.7 Coverage and analysis findings
+
+- **5-limit**: 55 unique MIDI notes per layout, 79 combined across the 3 layouts
+- **7-limit**: 45–46 notes per layout, 118 combined
+- **7-limit unique pitches**: ~208–210 unique pitches reachable from any central key (280 keys minus ~70 duplicates from syntonic comma cancellation)
+- **Coverage proof**: Q ≡ 7V (mod 12) for all keyboard intervals, where V = 12-TET semitone equivalent and Q = (e3 + 4e5 − 2e7) mod 12. All 12 V-classes covered by the reference table.
+
+### 2.8 Tuning deliverables
+
+A single LTN file configures the Lumatone with the **fixed MIDI layout** — every physical key gets a stable (channel, note) address (see §4.12). HKL handles all tuning interpretation and layout switching at runtime. There are no per-layout LTN files, no .scl/.kbm files, and no external synth configuration to maintain in sync.
+
+Layouts (Natural ♮, Flat ♭, Sharp ♯) are pure software state in HKL; switching layouts changes which lattice positions the keys represent, but does not change the Lumatone's MIDI output addressing.
+
+| Layout | Lattice shift |
+|---|---|
+| Natural ♮ | (0, 0) |
+| Flat ♭ | (+7, −4) |
+| Sharp ♯ | (−7, +4) |
+
+---
+
+## 3. Color Scheme
+
+### 3.1 5-limit / 7-limit: 7-hue system
+
+7 hues × {light, dark} = 14 base colors. Plus 14 B-region warm-shifted variants in 7-limit = 28 total.
+
+| Code | Hue | Light (white key) | Dark (black key) |
+|---|---|---|---|
+| PK | Pink | #FF4C79 | #59002C |
+| PU | Purple | #C94CFF | #3E0059 |
+| BL | Blue | #4C96FF | #002559 |
+| TE | Teal | #4CFFBA | #005937 |
+| GR | Green | #55FF4C | #045900 |
+| YE | Yellow | #FFF94C | #595600 |
+| OR | Orange | #FF884C | #591D00 |
+
+**Hue assignment (unified formula)**:
+```
+computeHue(q, r) = hueCycle[(floor(midi/12) − bandOf(q) − 2·pairOf(r − septimalShift) − 4) % 7]
+where:
+  midi = 57 + 4q + 7r
+  pairOf(r) = floor((r − septimalShift + 3.5) / 6)
+  hueCycle = ['PU','PK','OR','YE','GR','TE','BL']
+```
+
+The +3.5 offset in `pairOf` ensures no hex sits on a floor boundary, giving symmetric animation timing.
+
+In 5-limit mode (pair = 0), this reduces to the original `colorTable[q%3][r%12]` lookup.
+
+**B-region warm shift**: B-region keys get `.sl`/`.sd` color variants, 50% lerp toward the next hue in `hueCycle`.
+
+### 3.2 Equal temperament: 3-hue system
+
+3-hue octave cycle using PK, PU, BL only:
+```
+equalHueCycle[floor(midi/12) % 3]   where equalHueCycle = ['BL','PU','PK']
+```
+Derived from the Lumatone's standard harmonic table color pattern (`floor(note/12) % 3`) rotated so A3 = purple. No band correction, no pair term, no warm shifts.
+
+### 3.3 Light vs dark (all modes)
+
+Determined by 12-TET equivalent pitch class `(57 + 4q + 7r) % 12`:
+- white key (light): pitch class ∈ {0, 2, 4, 5, 7, 9, 11}
+- black key (dark): everything else
+
+---
+
+## 4. HKL Feature Set
+
+### 4.1 Display
+
+- **Hex grid** rotated counterclockwise ~34.6° (`tiltAngle = π/2 − atan2(gy, gx)`) so constant-frequency runs horizontally. Gradient: q-axis = log(2)/3 per step (octave constraint), r-axis = midpoint of 5-limit log(3/2) and 7-limit adjusted value.
+- **Canvas sizing**: width = max(400, viewport − 24px); height computed from actual keyboard vertical extent + padding `padY = hexR + dxH × 0.5`. Vertical centering via `kbOffY = −(minY + maxY) / 2`. Wrapper has `min-width: 424px`.
+- **Rotation handling**: hex shapes drawn in rotated context, note text drawn unrotated for readability.
+- **Extend pattern toggle** clamps the cell range to keyboard extent when off.
+
+### 4.2 Controls (two rows, centered)
+
+**Row 1**: Layout selector (♭ ♮ ♯), Note names, Band seams, Extend pattern, Show coordinates, Short intervals.
+
+**Row 2**: Tuning selector + seam shift | Transpose controls | Audio + Instrument | Clear | Lumatone status panel.
+
+- **Tuning selector**: dropdown {Equal, 5-limit, 7-limit}. Sets internal flags, shows/hides seam shift, ramps audio.
+- **Seam shift**: ▲/▼ buttons with value display; visible only in 7-limit. Key-repeat 400ms initial / 80ms subsequent. ArrowUp/Down keyboard shortcuts use a custom repeat timer.
+- **Transpose**: 5-axis ▲/▼ stacks (P5, M3, m3, P8, SC) always visible. Same key-repeat behavior.
+- **Audio**: toggle + instrument/waveform selector. Piano default. Samples lazy-load on first selection with blue "loading…" state.
+- **Clear**: deselects all.
+- **Lumatone status panel**: connection badge (green/red), Auto-sync checkbox + status badge, **Calibrate Pedal button** (v0.9).
+
+### 4.3 Keyboard shortcuts
+
+- **ArrowLeft / ArrowRight**: cycle layout (♭ → ♮ → ♯ → ♭)
+- **ArrowUp / ArrowDown**: septimal seam shift (no-op outside 7-limit)
+- `shouldIgnore()` detects text input focus and lets keystrokes through; outside text inputs, focused checkbox/radio is blurred on arrow press
+- Browser auto-repeat suppressed; custom repeat timers handle held keys
+- Keyup only stops repeat if up-key matches active down-key (prevents stuck-key)
+
+### 4.4 Selection and interaction
+
+- **Click**: toggle key on/off
+- **Shift+click**: exclusive select
+- **Clear button**: deselect all
+- **Mouse hover**: `hoverKey` tracks hovered key; renderer draws distinct highlight outside selection treatment; cleared on mouseleave
+- **Selected keys**: brightened fill (+90), white border ring at hex edge; persists through layout switches
+
+### 4.5 Layout animation (500ms)
+
+- Smoothstep position easing
+- View center (`viewQ`, `viewR`) animates from old to new
+- Key selections shift by layout delta
+- Audio voices ramp frequencies over animation duration (sustained instruments glide; decaying instruments stop+retrigger at end)
+- Keyboard outline and dark overlay remain static (precomputed from baseKey geometry)
+
+### 4.6 Chord transposition (5 axes)
+
+P5 (0, +1), M3 (+1, 0), m3 (−1, +1), P8 (+3, 0), SC (−7, +4).
+
+- **Bounds check**: blocked if any note's screen center would leave canvas
+- **Audio**: 100ms slide via exponentialRampToValueAtTime; sustained samples use sSlideAndFadeOut/sNoteOnFaded; decaying instruments stop+retrigger
+- **MIDI**: stopAllMidi() + syncMidi() after re-keying
+- No-op when nothing selected
+
+### 4.7 Note naming
+
+`fifthName(r)` algorithmically computes note names for any fifths distance. Accidentals rendered as decomposed Unicode glyphs (♯, ♭, 𝄪, 𝄫) with continuous font scaling (`scale = min(1, maxW/totalW)` where `maxW = hexR × 1.3`) and double-flat cascade nudge (`i × −fontSize × 0.14`).
+
+### 4.8 Info panel
+
+A scrollable panel below the canvas (max-height constrained to viewport):
+
+- **Row 1 — Note cards**: each selected key as a colored tag (note name in keyboard hue, octave, frequency Hz). Sorted low to high. With "Show coordinates" enabled, also shows `(q=… r=… p=…)`.
+- **Row 2 — Chord analysis** (3–4 unique pitch classes): root (colored), quality name, inversion, root-position JI ratio. Template matching uses semitone intervals + letter distances. 25 templates: triads (major, minor, diminished, augmented, sus4, sus2, Pythagorean), seventh chords (major, dominant, minor, minor-major, diminished, half-diminished, augmented, augmented major), added-second chords, augmented sixth chords (Italian, French, German), incomplete sevenths (dominant, minor, major, minor-major, diminished). Chords labeled "septimal" when root-position ratio has a factor of 7 AND max term ≤ 27. Equal mode: ratio hidden, "septimal" prefix stripped.
+- **Rows 3+ — Intervals**: all pairwise intervals grouped by generic interval size. Each shows colored note names with octaves, cents, and named interval.
+  - 5-limit / 7-limit: JI ratio displayed; color-coded by complement-reduced Tenney Height: green (TH < 8), yellow (8–12.5), red (≥12.5)
+  - Equal mode: no ratio. Standard names via `equalIntervalName()` (computes from actual note names + octaves, NOT lattice displacement). Intervals where `semis % 12 === 0` are green (rational ratios — unisons, octaves, enharmonic spellings d2/A7); everything else is red.
+
+### 4.9 Short intervals mode
+
+"Short intervals" checkbox applies `shortenInterval(name)` post-processor in three phases:
+1. Full-phrase specials (harmonic→7m, lesser/greater septimal tritones)
+2. Word-by-word abbreviations (P/m/M/d/A, ordinals→cardinals, comma terms SC/7C/PC/7D/A1/Ds/Sc/D/A/C)
+3. Structural cleanup (strip spaces, re-insert around ±)
+
+Uses HTML entities for lesser/greater glyphs.
+
+### 4.10 Interval naming: reference table + comma decomposition
+
+Every 5/7-limit interval is expressed as a named reference interval ± commas, with zero information loss.
+
+**Algorithm**:
+1. Factor the ratio into prime exponents (e2, e3, e5, e7) via `factor7()`. Large ratios whose num/den exceed 2^53 use the `e` vector returned by `reduce()` (v0.8) rather than trial-dividing num/den (which would silently lose precision).
+2. Octave-reduce to [1, 2), counting extra octaves
+3. Try **direct decomposition** against all reference entries
+4. Try **complement decomposition** (2/ratio against all refs)
+5. Pick result with fewest displayed comma groups, tiebreak by fewer total items, then lower TH, then direct over complement
+6. Format: compound ordinals absorb octaves ("minor 10th"); non-ordinals prepend ("2 octaves + apotome")
+
+**Octave-multiple naming**: pure octave multiples with no reference interval and no commas are named ET-style: "perfect octave" (2:1), "perfect 15th" (4:1), "perfect 22nd" (8:1), etc.
+
+**Comma basis** (7 commas, 3 linearly independent): syntonic 81/80, septimal 64/63, schisma 32805/32768, Pythagorean comma 531441/524288, plus three derived commas. The optimizer tries all 6 permutation orderings of derived comma substitutions.
+
+**Pythagorean reference entries**: 256:243 (m2), 9:8 (M2), 32:27 (m3), 81:64 (M3), 27:16 (M6), 243:128 (M7), 531441:524288 (Pythagorean comma).
+
+**Reference table size**: ~60 entries in v0.8, covering full augmented/diminished interval space.
+
+**Score function**: `groups × 100 + items`, TH tiebreak.
+
+### 4.11 Lumatone integration (output)
+
+#### Auto-sync architecture (v0.8)
+
+- **Auto-sync checkbox** + sync status badge replace older Retry/Push UI
+- On every state change affecting colors, `syncLumatoneColors()` computes the 280-entry target, diffs against tracked `deviceColors`, and queues only the changes
+- **Visual wipe sort**: changed keys pushed in +q (left-to-right), −r (top-to-bottom) order
+- **In-flight race handling**: if a SysEx is awaiting ACK when a new sync kicks off, its color is folded into the predicted snapshot so the diff accounts for what the device is about to become
+- **Queue swap, not restart**: a new sync replaces `sysexQueue` without cancelling the in-flight message, which finishes naturally before the new queue proceeds
+- `sysexCancelAll()` tears down everything when Auto-sync is turned off
+
+#### On-connect setup
+
+On first auto-sync after `findLumatone()` succeeds:
+- 280 × `CHANGE_KEY_NOTE` (fixed MIDI layout)
+- `SET_AFTERTOUCH_FLAG (0x0E) = 1`
+- `SET_LIGHT_ON_KEYSTROKES (0x07) = 1`
+- `queryFirmwareRevision()` (silent; response logged)
+
+#### Pedal calibration (v0.9)
+
+- **Calibrate Pedal button** in Lumatone status panel toggles calibration mode
+- **Active state**: panel below canvas shows live ADC min/max bounds (parsed from spontaneous CMD 0x3E packets), valid flag, and a CC4 live readout (visible after calibration ends — firmware suppresses CC4 during cal mode)
+- **Reset to Factory button** in panel sends CMD 0x39
+- **Maximum debug logging** in console while cal mode active: every CMD 0x3E packet (first + every 10th in raw hex), every CC 4 message with timing, calibration entry/exit events
+- **Outside cal mode**: minimal CC 4 logging (endpoints only)
+
+### 4.12 Lumatone integration (input)
+
+`handleMidiMessage(e)` dispatches:
+- **SysEx CMD 0x3E** → calibration packet handler
+- **Other SysEx** → `sysexHandleResponse` (ACK matching for queue)
+- **CC 4** (expression jack) → debug log + binary-fallback sustain (depth ≥ 0.5 → on)
+- **CC 64** (sustain jack) → binary sustain on/off
+- **Note on/off** → audio + selection
+- **Polyphonic aftertouch (0xA0)** → per-voice volume modulation
+
+Note routing uses the **fixed MIDI layout**: every physical key has a stable (channel, note) address. `fixedMidiToKey(ch, note)` converts at MIDI-input time. Channels 0–4 = the five board groups. Notes 0–55 = key index within board.
+
+### 4.13 Audio engine
+
+`SampleEngine` IIFE module encapsulates sample loading, voice lifecycle, and segment scheduling.
+
+#### Signal path
+```
+sample → segGain (crossfade) → voiceGain (envelope) → master
+```
+
+Gain constants: `sampleMaster = 0.9`, `oscGain = 0.35`, `squareGain = 0.25`.
+
+#### Velocity curve
+`0.10 + 0.90 × (vel/127)²` — quadratic with 10% floor.
+
+#### Range attenuation
+`rangeAttenuation` tapers volume above the highest sampled note in an instrument.
+
+#### Voice anchors (v0.8 wrap-aligned segment switching)
+`sourceStartTime`, `sourceStartOffset`, `sourceLoopA`, `sourceLoopB`, `sourceLoopAIdx`, `sourceLoopBIdx`, `sourceRate`. All wraps via `scheduleSegmentSwitch`; `source.loop = true` removed everywhere. Switch picks `b` (next wrap), then uniformly picks `a` from `validStartsByEnd[b]`. Linear 30ms equal-power crossfade. `doImmediateSwitch` for wrap-during-ramp.
+
+#### Frequency ramping
+- **Layout switches**: 500ms (`animDuration`); sustained instruments glide, decaying instruments stop+retrigger
+- **Tuning/seam changes**: 150ms via `rampActiveFreqs()`
+- **Transpositions**: 100ms
+
+#### `commitRampSync` race handling (v0.8)
+Integrates in-flight ramp sync before starting a new one. `pendingRamp` identity check cancels stale re-anchors. Position-based wrap check fixes stale-anchor race in rapid `sRampFreq` calls.
+
+#### Polyphonic aftertouch (v0.8)
+Per-voice `pressureGain`. Velocity-anchored handover: when AT message arrives, voice gain ramps from current to AT-implied target with `AFTERTOUCH_RAMP_S` smoothing.
+
+#### Sustain semantics
+- `sustainPedalDown` flag (set by CC 64 OR CC 4 ≥ 64 in v0.9 binary fallback)
+- `sustainedKeys` Set: keys held only by the pedal (released physically but still sounding)
+- Re-articulation: striking a sustained key triggers `noteOff` + new voice + flash (`triggerRearticulateFlash` / `rearticulateFlashUntil`)
+
+#### Instruments
+9 sample-based + oscillators. Piano (Salamander) is default. Non-looped/decaying instruments: piano. Looped/sustained: FluidR3_GM. Vibrato instruments: violin, viola, cello, flute, drawbar_organ.
+
+`SampleEngine.INSTRUMENTS` registry contains `{freq, loopPts[], validStartsByEnd, trimStart, slopeCV}` per sample, baked from analyzer output.
+
+---
+
+## 5. Internal Subsystems (current v0.9 state)
+
+This section describes the existing single-file implementation. Treat it as a reference for what's being moved during the refactor, not as a guide for new code.
+
+### 5.1 File structure
+
+`HexKeyLab.html` — single file, ~4200 lines. Inline `<style>`, inline `<script>`. Sections roughly in order:
+1. CSS
+2. HTML toolbar + canvas + info panel
+3. Constants (colorTable, baseKeys, layoutShifts, hueC, hueCycleOrder, equalHueCycle)
+4. Tuning math (factor7, reduce, jiRatio, comma decomposer, REF table, chord templates)
+5. Layout/rendering (canvas sizing, geometry, draw loop, hex/text canvases)
+6. UI handlers (transpose, seam-shift, layout buttons, keyboard shortcuts)
+7. Audio engine (`SampleEngine` IIFE)
+8. MIDI plumbing (findLumatone, handleMidiMessage)
+9. Lumatone SysEx (queue, builders, sync, calibration in v0.9)
+10. Initialization
+
+### 5.2 Render pipeline
+
+**Offscreen build** (on dirty flags):
+- `hexCanvas`: colored hex fills for entire extended grid, B-region warm-shifted in 7-limit, 3-hue formula in Equal mode
+- `textCanvas`: note name labels on transparent background, scalable accidentals
+
+`hexDirty` / `textDirty` flags minimize rebuilds:
+- septimalShift only dirties hex layer
+- note names only dirty text layer
+- resize/extend dirty both
+- Layout switches are zero-cost (pure offset change)
+
+**Per-frame draw**:
+1. Blit hexCanvas + textCanvas at view-offset
+2. Selection highlights (brightened fill + white ring) in rotated context
+3. Hover highlight if `hoverKey` set
+4. Re-articulate flashes (timestamp-gated)
+5. Lattice seams (skipped in Equal mode); endpoint snap to outline vertices via power-6 curve `|2t−1|^6` during animation
+6. Dark overlay with outline polygon cutout (opacity 0.65 with extend, 1.0 without)
+7. Keyboard outline (3.5px white stroke, round joins)
+
+### 5.3 Outline geometry (precomputed)
+
+- `kbOutlinePaths`: array of closed polygon paths in baseKey screen coordinates
+- Computed at init via topology tracing with `edgeIsect`
+- `snapVtx(px, py)`: nearest outline vertex within 6px for seam endpoint snapping (no segment projections, no flanking hex logic)
+
+### 5.4 Output / input plumbing
+
+- `syncAudio()` — diffs active voices against selection
+- `syncMidi()` — sends noteOn/noteOff in parallel
+- `syncOutput()` — both
+- `handleMidiMessage(e)` — see §4.12
+
+### 5.5 SysEx queue
+
+- Single-message-in-flight ACK queue
+- `sysexQueue: Uint8Array[]`, `sysexWaiting: Uint8Array | null`, `sysexTimer`, `sysexBusyTimer`
+- Constants: `SYSEX_TIMEOUT_MS = 2000`, `SYSEX_BUSY_DELAY_MS = 500`, `SYSEX_NOINPUT_DELAY_MS = 35`
+- Status bytes: `SYSEX_NACK = 0x00`, `SYSEX_ACK = 0x01`, `SYSEX_BUSY = 0x02`
+- BUSY → retry after delay; NACK/ERROR → log and proceed
+- `pushTotal` / `pushSent` / `pushInProgress` track UI; `pushSilent` skips UI updates for control-path messages (firmware query, calibration)
+
+### 5.6 Key constants
+
+```
+hexR = 16          # hex circumradius in CSS px
+dxH = hexR * 1.78  # horizontal spacing between hex centers
+dyH = hexR * 1.54  # vertical spacing between hex rows
+tiltAngle ≈ 34.6°  # counterclockwise rotation
+outR = hexR + 1    # outline offset from hex centers
+septimalW = 3      # 7-limit region band width along r-axis
+animDuration = 500 # layout animation duration in ms
+sysexBoardMap = [1,2,3,5,4]
+fixedMidiChannelMap = [0,1,2,3,4]
+AFTERTOUCH_RAMP_S
+REARTICULATE_FLASH_MS
+```
+
+### 5.7 Key data structures
+
+- `baseKeys`: 280 [q, r] pairs defining physical keyboard shape (5 boards × 56 keys), in natural-layout coordinates
+- `colorTable`: 3×12 array, `(q%3, r%12) → hue code` (5-limit fast path)
+- `equalHueCycle`: `['BL','PU','PK']`
+- `hueC`: hue code → {l, d, sl, sd} hex strings
+- `hueCycleOrder`: `['PU','PK','OR','YE','GR','TE','BL']`
+- `layoutShifts`: `{1: [0,0], 2: [7,−4], 3: [−7,4]}`
+- `degreeMap`: `(r,p) → scale degree (0–78)` — internal pitch-class index used by tuning math
+- `midiToKey`: fixed-layout reverse lookup `(channel,note) → "q,r"`
+- `deviceColors`: 280-entry tracked device state for diff-based auto-sync
+- `kbOutlinePaths`: precomputed outline polygons
+- `kbBaseSet`: Set of `"bq,br"` strings for all baseKeys
+- `REF`: ~60 reference interval entries
+- `chordTemplates`: 25 chord templates
+- `SampleEngine.INSTRUMENTS`: 9 sample-based instruments + their precomputed loop-point data
+
+---
+
+## 6. Companion Tool: HexKeyLab-analyzer
+
+Not shipped with HKL. Used offline to generate `loopPts`, `validStartsByEnd`, `trimStart`, and `slopeCV` baked into `SampleEngine.INSTRUMENTS`.
+
+### 6.1 URL templating
+- `filePattern` config option for non-standard URLs like `"{NOTE}.{ext}"`
+- `noteStyle: 'sharp' | 'flat'` (default flat) controls enharmonic spelling
+- Sharp notes URL-encoded as `%23` (required for sources like VCSL)
+
+### 6.2 Per-instrument gate overrides (`gateOpts`)
+
+Configurable per instrument:
+`rmsGate`, `specGate`, `cliqueThreshold`, `minSpacingSec`, `minBackwardSec`, `minForwardSec`, `xfadeSec`, `rmsStepThreshold`.
+
+### 6.3 Macro-period algorithm (`prepareLoopMacroPeriod`)
+
+- Steady region detection via RMS envelope (50ms window, 10ms hop, ≥70% peak runs)
+- Anchor candidates at quartile positions; pick anchor with largest qualifying-N pool
+- At each candidate N: compare 60ms Hann-windowed FFT log-magnitude spectrum + RMS to anchor; gate by `rmsGate`, `specGate`
+- Score = `rmsRel × 10 + specMse`; `minSpacing` filter preserves diversity
+- Snap each pick to nearest +going zero crossing within ±T/2 whose local slope matches anchor's
+- Returns `trimStart`, `loopPts[]`, `slopeCV` (std of slope / mean slope)
+
+### 6.4 Freq-guided algorithm (`prepareLoopFreqGuided`)
+
+Fallback for clean periodic samples. Places K·T target positions in a loop window around the anchor, locks each to the nearest high-correlation +ZC within ±T/2. `corrThresh` default 0.85.
+
+### 6.5 Vibrato-aware pipeline (`prepareLoopVibrato`)
+
+For instruments flagged `vibrato: true` (violin, viola, cello, flute, drawbar_organ).
+- RMS envelope (20ms window, 5ms step, ±30ms smoothing); pitch via zero-crossing period tracking
+- Auto-select AMP or PITCH signal by higher coefficient of variation
+- Hysteresis state machine (H = 0.5 × std) extracts vibrato cycle boundaries
+- Consistency filter: keep only loop points within [0.75, 1.25] × median vibrato period spacing
+- Two-pass correlation-based waveform-phase snap
+
+### 6.6 Backward-clique filter (`filterToBackwardClique`)
+
+Shared post-process for all three algorithms.
+
+- **Pair quality metric** `xfadeDev(a, b)`: midpoint RMS deviation over central 20% of a 30ms crossfade window
+- **Amplitude-step gate** `ampStepDev(a, b) = |envRms[a] − envRms[b]| / max(envRms[a], envRms[b])` where envRms is 50ms-window envelope. Orthogonal to phase coherence.
+- Edge in graph iff `xfadeDev ≤ cliqueThreshold` AND `ampStepDev ≤ rmsStepThreshold`
+- Max-clique growth around each candidate; minimum-spacing collapse drops redundant points
+- Output: `validStartsByEnd[b]` (graph form) ready for runtime consumption
+
+### 6.7 Tier color coding
+
+Result rows colored by algorithm + quality:
+- `mp-{red,yellow,blue,green}` — macro-period (clique size + slopeCV + span)
+- `fg-{red,orange,blue}` — freq-guided (kept-point count)
+- `vb-{red,yellow,blue,green}` — vibrato (mirrors macro-period)
+- `legacy` — deep-fallback correlation-anchor path
+
+### 6.8 Validation
+
+Final pairwise correlations across kept loop points typically ≥ 0.99 for a good sample. Bimodal clusters indicate mixed phases; two-pass re-anchoring isolates the main cluster. Tier color gives quick visual check on sample quality across the range.
+
+---
+
+## Appendix: Glossary
+
+- **Band** — 3-key-wide region along q-axis where 5-limit JI is pure
+- **Comma** — small interval between two ratios that should be equivalent (syntonic 81/80, septimal 64/63, schisma, Pythagorean, etc.)
+- **Diesis** — 128:125 (great), unreachable in 5-limit but reachable in 7-limit via syntonic adjustments
+- **Fixed MIDI layout** — HKL's tuning-independent (channel, note) addressing for every physical key
+- **Half-damper** — continuous pedal control over damper depth (vs. binary on/off)
+- **Lumatouch** — Lumatone keyType 3, continuous fader (NOT poly aftertouch)
+- **LTN** — Lumatone preset/mapping file format
+- **posInBand (p)** — position within a band (0, 1, or 2)
+- **Region (A/B)** — 7-limit band along r-axis; A = pure, B = septimal
+- **Roland-style pedal wiring** — wiper on ring of TRS plug (the Lumatone expects this)
+- **Korg-style pedal wiring** — pot between tip and sleeve, ring floating (incompatible with Lumatone expression jack)
+- **SC** — syntonic comma 81/80; also a transpose axis (−7q, +4r)
+- **Seam** — boundary between bands or between 7-limit A/B regions
+- **Septimal shift** — 7-limit seam position parameter (range −21 to 20, wraps 42)
+- **TH (Tenney Height)** — log₂(num × den) of a ratio; a complexity measure
+- **Tuning** — currently {Equal, 5-limit, 7-limit}
+- **typeByte** — Lumatone per-key flags, `(faderUpIsNull << 4) | keyType`

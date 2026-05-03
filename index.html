@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HexKeyLab</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:#111;min-height:100%}
+.wrap{background:#111;padding:8px 12px 12px;font-family:system-ui,-apple-system,sans-serif;overflow-x:auto}
+.ctrls{display:flex;gap:2px 8px;align-items:center;font-size:12px;color:#999;margin:0 0 6px;flex-wrap:wrap;justify-content:center;user-select:none;-webkit-user-select:none}
+.ctrls label{display:flex;align-items:center;gap:4px;color:#999}
+.ctrls label:has(input){cursor:pointer}
+.ctrls input[type=checkbox]{accent-color:#fff}
+.ctrls .cdiv{width:1px;height:16px;background:#333;margin:0 4px}
+.ctrls select{background:#222;color:#999;border:1.5px solid #555;border-radius:4px;padding:2px 6px;font-size:12px;font-family:inherit;cursor:pointer;outline:none}
+.ctrls select:hover{border-color:#888}
+.ctrls select.wf-loading{border-color:#4C96FF;color:#4C96FF;opacity:1;font-variant-numeric:tabular-nums;pointer-events:none}
+.lsel{display:flex;gap:4px;align-items:center;margin-right:8px}
+.lsel span{font-weight:500;color:#ccc}
+.lsel .lbtn{padding:0 12px !important;border-radius:4px !important;border:1.5px solid #555 !important;background:#222 !important;color:#999 !important;cursor:pointer !important;font-size:20px !important;font-weight:500 !important;line-height:1.6 !important;min-height:0 !important;min-width:0 !important;margin:0 !important;box-shadow:none !important;text-transform:none !important;letter-spacing:normal !important;font-family:inherit !important;outline:none !important;-webkit-appearance:none !important;appearance:none !important}
+.lsel .lbtn:hover{border-color:#888 !important}
+.lsel .lbtn.active{border-color:#fff !important;background:#fff !important;color:#000 !important}
+canvas{display:block;background:#111;margin:0 auto}
+.info-line{
+  margin:8px 0 0;padding:8px 12px;min-height:36px;
+  background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;
+  font-size:13px;color:#888;
+  font-family:'SF Mono',ui-monospace,'Cascadia Code','Fira Code',monospace,system-ui;
+  display:flex;align-items:flex-start;gap:6px;flex-wrap:wrap;line-height:1.6;
+  overflow-y:auto;
+}
+.info-line .info-break{flex-basis:100%;height:0}
+.info-line .note-tag{
+  display:inline-flex;align-items:center;gap:4px;
+  padding:2px 8px;border-radius:4px;
+  background:#252525;border:1px solid #333;color:#ccc;font-size:12px;white-space:nowrap;
+}
+.info-line .note-name{color:#fff;font-weight:600}
+.info-line .freq{color:#999;font-size:11px}
+.info-line .ratio-tag{
+  display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:4px;
+  font-size:12px;font-weight:500;white-space:nowrap;
+}
+.info-line .ratio-tag.tier-green{background:#1e2a1e;border:1px solid #2a3d2a;color:#8fc}
+.info-line .ratio-tag.tier-yellow{background:#2a2a1e;border:1px solid #3d3d2a;color:#dc8}
+.info-line .ratio-tag.tier-red{background:#2a1e1e;border:1px solid #3d2a2a;color:#e88}
+.info-line .tier-green .interval-name{color:#6b9;font-weight:400;font-style:italic}
+.info-line .tier-green .cents{color:#7a7;font-size:11px;font-weight:400}
+.info-line .tier-yellow .interval-name{color:#b96;font-weight:400;font-style:italic}
+.info-line .tier-yellow .cents{color:#a97;font-size:11px;font-weight:400}
+.info-line .tier-red .interval-name{color:#b66;font-weight:400;font-style:italic}
+.info-line .tier-red .cents{color:#a77;font-size:11px;font-weight:400}
+.info-line .chord-tag{
+  display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:4px;
+  background:#1e1e2a;border:1px solid #2a2a3d;
+  color:#bac;font-size:13px;font-weight:600;white-space:nowrap;
+}
+.info-line .chord-quality{font-weight:500}
+.info-line .chord-detail{color:#889;font-size:11px;font-weight:400}
+.info-line .hint{color:#777;font-style:italic;font-size:13px;font-family:system-ui,sans-serif}
+.info-line .septimal-badge{
+  display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:4px;
+  background:#2a1528;border:1px solid #3d2038;color:#E44CBC;font-size:11px;font-weight:600;white-space:nowrap;
+}
+.title-bar{text-align:center;margin:0 0 6px;user-select:none;-webkit-user-select:none}
+.title-bar .title{font-size:22px;font-weight:700;letter-spacing:1px}
+.t-pk-d{color:#B03058}.t-pk-l{color:#FF4C79}
+.t-pu-d{color:#8838B8}.t-pu-l{color:#C94CFF}
+.t-bl-d{color:#2868B8}.t-bl-l{color:#4C96FF}
+.title-bar .subtitle{font-size:11px;color:#888;margin-top:1px}
+.tpax{display:inline-flex;flex-direction:column;align-items:center}
+.tpab{background:#222;border:1px solid #555;color:#999;font-size:11px;padding:0 6px;cursor:pointer;border-radius:2px;line-height:1.4;font-family:inherit}
+.tpab:hover{border-color:#888}
+.tpal{font-size:12px;color:#ccc;font-weight:600;line-height:1.1}
+.push-btn{padding:0 10px !important;border-radius:4px !important;border:1.5px solid #555 !important;background:#222 !important;color:#999 !important;cursor:pointer !important;font-size:12px !important;font-weight:500 !important;line-height:1.8 !important;min-height:0 !important;min-width:0 !important;margin:0 !important;box-shadow:none !important;text-transform:none !important;letter-spacing:normal !important;font-family:inherit !important;outline:none !important;-webkit-appearance:none !important;appearance:none !important;transition:border-color 0.15s,background 0.15s,color 0.15s}
+.push-btn:hover:not(:disabled){border-color:#888 !important}
+.push-btn:disabled{opacity:0.4 !important;cursor:not-allowed !important}
+.luma-connected{font-size:12px;color:#4CFF7C;font-weight:500}
+.luma-disconnected{font-size:12px;color:#FF4C4C;font-weight:500}
+.auto-sync-col{display:inline-flex;flex-direction:column;align-items:stretch;gap:3px;vertical-align:middle;margin-left:6px}
+.auto-sync-lbl{font-size:12px;line-height:1;display:flex;align-items:center;gap:4px;white-space:nowrap}
+.sync-status{padding:0 10px;border-radius:4px;border:1.5px solid #555;background:#222;color:#999;font-size:12px;font-weight:500;line-height:1.6;text-align:center;box-sizing:border-box;font-variant-numeric:tabular-nums;opacity:0.65}
+.sync-status.pushing{border-color:#4C96FF;color:#4C96FF;opacity:1}
+.calib-btn{padding:0 10px !important;border-radius:4px !important;border:1.5px solid #555 !important;background:#222 !important;color:#999 !important;cursor:pointer !important;font-size:12px !important;font-weight:500 !important;line-height:1.6 !important;min-height:0 !important;min-width:0 !important;margin:0 !important;box-shadow:none !important;text-transform:none !important;letter-spacing:normal !important;font-family:inherit !important;outline:none !important;-webkit-appearance:none !important;appearance:none !important;transition:border-color 0.15s,background 0.15s,color 0.15s}
+.calib-btn:hover:not(:disabled){border-color:#888 !important}
+.calib-btn:disabled{opacity:0.4 !important;cursor:not-allowed !important}
+.calib-btn.active{border-color:#FF884C !important;color:#FF884C !important}
+.calib-panel{margin:6px auto 0;padding:8px 14px;background:#1a1a1a;border:1.5px solid #FF884C;border-radius:6px;font-size:12px;color:#ccc;display:none;align-items:center;gap:14px;flex-wrap:wrap;max-width:fit-content;font-family:'SF Mono',ui-monospace,'Cascadia Code','Fira Code',monospace}
+.calib-panel.active{display:flex}
+.calib-panel .calib-title{color:#FF884C;font-weight:600;font-family:system-ui,sans-serif}
+.calib-panel .calib-instruction{color:#999;font-style:italic;font-family:system-ui,sans-serif}
+.calib-panel .calib-stat{color:#9ce;font-variant-numeric:tabular-nums;letter-spacing:0.3px}
+.calib-panel .calib-stat .stat-label{color:#666;margin-right:3px}
+.calib-panel .calib-stat .stat-val{color:#9ce}
+.calib-panel .calib-stat .stat-val.valid{color:#4CFF7C}
+.calib-panel .calib-stat .stat-val.invalid{color:#FF4C4C}
+.calib-panel .calib-live{color:#FFF94C;font-variant-numeric:tabular-nums;font-weight:600;min-width:38px;text-align:right}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="title-bar">
+<div class="title"><span class="t-pk-d">H</span><span class="t-pk-l">e</span><span class="t-pk-l">x</span><span class="t-pu-d">K</span><span class="t-pu-l">e</span><span class="t-pu-l">y</span><span class="t-bl-d">L</span><span class="t-bl-l">a</span><span class="t-bl-l">b</span></div>
+<div class="subtitle">version 0.9 · by Max Randal</div>
+</div>
+<div class="ctrls">
+<div class="lsel">
+<span>Layout:</span>
+<button class="lbtn" id="lb2" onclick="setLayout(2)">&#9837;</button>
+<button class="lbtn active" id="lb1" onclick="setLayout(1)">&#9838;</button>
+<button class="lbtn" id="lb3" onclick="setLayout(3)">&#9839;</button>
+</div>
+<label><input type="checkbox" id="cbNotes" onchange="cbNotesChanged()" checked> Note names</label>
+<label><input type="checkbox" id="cbBands" onchange="draw()" checked> Band seams</label>
+<label><input type="checkbox" id="cbExtend" onchange="cbExtendChanged()" checked> Extend pattern</label>
+<label><input type="checkbox" id="cbCoords" onchange="updateInfo()"> Show coordinates</label>
+<label><input type="checkbox" id="cbShortIvl" onchange="updateInfo()"> Short intervals</label>
+<div style="flex-basis:100%;height:0"></div>
+<div class="lsel">
+<span>Tuning:</span>
+<select id="selTuning" onchange="setTuning()">
+<option value="E">Equal</option>
+<option value="5" selected>5-limit</option>
+<option value="7">7-limit</option>
+</select>
+</div>
+<span id="seamShiftCtrl" style="display:none">
+<span class="tpax">
+<button class="tpab" id="btnSeamUp">&#x25B2;</button>
+<span class="tpal" id="seamShiftInd">0</span>
+<button class="tpab" id="btnSeamDn">&#x25BC;</button>
+</span>
+</span>
+<span class="cdiv"></span>
+<span id="transposeCtrl" class="lsel">
+<span>Transpose:</span>
+<span class="tpax"><button class="tpab" data-dq="0" data-dr="1">&#x25B2;</button><span class="tpal">P5</span><button class="tpab" data-dq="0" data-dr="-1">&#x25BC;</button></span>
+<span class="tpax"><button class="tpab" data-dq="1" data-dr="0">&#x25B2;</button><span class="tpal">M3</span><button class="tpab" data-dq="-1" data-dr="0">&#x25BC;</button></span>
+<span class="tpax"><button class="tpab" data-dq="-1" data-dr="1">&#x25B2;</button><span class="tpal">m3</span><button class="tpab" data-dq="1" data-dr="-1">&#x25BC;</button></span>
+<span class="tpax"><button class="tpab" data-dq="3" data-dr="0">&#x25B2;</button><span class="tpal">P8</span><button class="tpab" data-dq="-3" data-dr="0">&#x25BC;</button></span>
+<span class="tpax"><button class="tpab" data-dq="-7" data-dr="4">&#x25B2;</button><span class="tpal">SC</span><button class="tpab" data-dq="7" data-dr="-4">&#x25BC;</button></span>
+</span>
+<span class="cdiv"></span>
+<button class="push-btn" id="btnClear" onclick="clearSelection()">Clear</button>
+<span class="cdiv"></span>
+<label><input type="checkbox" id="cbAudio" onchange="toggleAudio()"> Audio</label>
+<select id="waveform" onchange="changeWaveform()">
+<option value="piano" selected>Piano</option>
+<option value="drawbar_organ">Drawbar Organ</option>
+<option value="reed_organ">Reed Organ</option>
+<option value="harp">Harp</option>
+<option value="flute">Flute</option>
+<option value="violin">Violin</option>
+<option value="viola">Viola</option>
+<option value="cello">Cello</option>
+<option value="trombone">Trombone</option>
+<option value="triangle">Triangle Wave</option>
+<option value="sine">Sine Wave</option>
+<option value="square">Square Wave</option>
+</select>
+<span id="midiControls" style="display:none">
+<span class="cdiv"></span>
+<span id="lumaStatus" class="luma-disconnected">Lumatone Not Connected</span>
+<button class="calib-btn" id="btnCalibPedal" onclick="togglePedalCalibration()" title="Calibrate the expression pedal jack — sweep pedal full range while active">Calibrate Pedal</button>
+<span class="auto-sync-col">
+<label class="auto-sync-lbl"><input type="checkbox" id="cbAutoSync" onchange="toggleAutoSync()"> Auto-sync</label>
+<div class="sync-status" id="syncStatus">Idle</div>
+</span>
+</span>
+</div>
+<canvas id="cv"></canvas>
+<div class="calib-panel" id="calibPanel">
+<span class="calib-title">Pedal Calibration</span>
+<span class="calib-instruction">Sweep pedal full range repeatedly</span>
+<span class="calib-stat"><span class="stat-label">CC4 live:</span><span class="calib-live" id="calibLive">---</span></span>
+<span class="calib-stat"><span class="stat-label">ADC min:</span><span class="stat-val" id="calibMin">----</span></span>
+<span class="calib-stat"><span class="stat-label">ADC max:</span><span class="stat-val" id="calibMax">----</span></span>
+<span class="calib-stat"><span class="stat-label">valid:</span><span class="stat-val" id="calibValid">-</span></span>
+<button class="calib-btn" onclick="resetPedalBounds()" title="Reset firmware bounds to factory defaults (CMD 39h)">Reset to Factory</button>
+</div>
+<div class="info-line" id="infoLine"><span class="hint">Click any key to select &middot; shift+click for exclusive select</span></div>
+</div>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

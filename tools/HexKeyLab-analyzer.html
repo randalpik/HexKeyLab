@@ -1,0 +1,1964 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>HexKeyLab Sample Analyzer</title>
+<style>
+  body{font-family:system-ui,-apple-system,sans-serif;max-width:1100px;margin:20px auto;padding:0 20px;color:#222}
+  h1{font-size:20px;margin-bottom:6px}
+  h2{font-size:16px;margin-top:20px}
+  p,li{font-size:14px;line-height:1.5}
+  button{font-size:14px;padding:8px 14px;margin:4px 2px;cursor:pointer}
+  button:disabled{opacity:.5;cursor:default}
+  pre{background:#f4f4f4;border:1px solid #ddd;padding:10px;font-size:12px;max-height:400px;overflow:auto;white-space:pre-wrap}
+  .status{color:#666;font-size:13px;margin:8px 0}
+  .ok{color:#060}
+  .warn{color:#c80}
+  .err{color:#c00}
+  table{border-collapse:collapse;font-size:12px;margin:10px 0}
+  th,td{border:1px solid #ccc;padding:4px 8px;text-align:right}
+  th{background:#eee;cursor:pointer;user-select:none}
+  th:hover{background:#ddd}
+  td:first-child,th:first-child,td:nth-child(2),th:nth-child(2){text-align:left}
+  tr.fail{background:#eee;color:#888}
+  /* ── MACRO-PERIOD TIER COLORS (brighter) ──
+     based on backward-clique size and slopeCV/span */
+  tr.mp-red{background:#ffcfcf}       /* clique=2 (only 1 pair, borderline) */
+  tr.mp-yellow{background:#fff0bf}    /* clique=3 (3 pairs, workable) */
+  tr.mp-blue{background:#cfe2ff}      /* clique≥4 but slopeCV or span weak */
+  tr.mp-green{background:#cfe8cf}     /* clique≥4, slopeCV≤0.15, span≥1000ms */
+  /* ── FREQ-GUIDED TIER COLORS (darker/more muted) ── */
+  tr.fg-red{background:#e0a5a5}       /* kept<5 */
+  tr.fg-orange{background:#e6bd93}    /* kept 5-9 */
+  tr.fg-blue{background:#9cc0e8}      /* kept≥10 */
+  /* ── LEGACY TIER (deep fallback, reddish) ── */
+  tr.legacy{background:#d9b0b0}
+  /* ── VIBRATO TIER (mirror macro-period tiers, parallel meaning) ── */
+  tr.vb-red{background:#ffcfcf}       /* clique=2 */
+  tr.vb-yellow{background:#fff0bf}    /* clique=3 */
+  tr.vb-blue{background:#cfe2ff}      /* clique≥4 but small count */
+  tr.vb-green{background:#cfe8cf}     /* clique≥4 and generous count */
+  tr.selected{background:#dff}
+  tr.selected.mp-red{background:#f0b4b4}
+  tr.selected.mp-yellow{background:#f0daa0}
+  tr.selected.mp-blue{background:#b4cfef}
+  tr.selected.mp-green{background:#a8d0a8}
+  tr.selected.fg-red{background:#c48585}
+  tr.selected.fg-orange{background:#c99d73}
+  tr.selected.fg-blue{background:#7ea4cc}
+  tr.selected.legacy{background:#be9090}
+  tr.selected.vb-red{background:#f0b4b4}
+  tr.selected.vb-yellow{background:#f0daa0}
+  tr.selected.vb-blue{background:#b4cfef}
+  tr.selected.vb-green{background:#a8d0a8}
+  input[type=checkbox]{cursor:pointer}
+  textarea{width:100%;height:180px;font-family:monospace;font-size:11px}
+  .instHeader{margin-top:18px;display:flex;justify-content:space-between;align-items:center}
+  .instHeader h3{margin:0;font-size:15px}
+  .instHeader span{font-size:12px;color:#666}
+</style>
+</head>
+<body>
+<h1>HexKeyLab Sample Analyzer</h1>
+<p>Fetches <em>every</em> chromatic note in each instrument's range from the soundfont CDN,
+decodes it with Web Audio (identical to HexKeyLab's runtime), runs <code>prepareLoop</code>,
+and displays the results so you can decide which to include.</p>
+
+<p>Missing notes (404s) are silently skipped. After analysis, use the checkboxes to pick
+which samples to keep, then copy the output into HexKeyLab.html.</p>
+
+<h2>Instrument ranges (editable)</h2>
+<p style="font-size:12px;color:#666">Each instrument lists its baseUrl, note range (chromatic, inclusive), and an optional <code>vibrato:true</code> flag for instruments that should use the vibrato-aware loop point detector.
+Ranges go from lowOctave to highOctave; any notes returning 404 are skipped automatically.</p>
+<textarea id="configs" autocomplete="off" spellcheck="false"></textarea>
+<p><button id="run">Analyze all instruments</button>
+<button id="genOutput">Generate output from selected</button>
+<button id="selectGood">Auto-select good samples</button>
+<button id="selectAll">Select all</button>
+<button id="selectNone">Select none</button>
+<button id="resetConfigs">Reset configs to defaults</button>
+<button id="analyzeCustom">Analyze custom file</button>
+<input type="file" id="customFile" accept="audio/*" style="display:none">
+<span id="customFreq" style="margin-left:10px"></span></p>
+
+<div id="status" class="status">Ready.</div>
+
+<h2>Results</h2>
+<div id="results"></div>
+
+<h2>Output (paste into HexKeyLab.html)</h2>
+<pre id="output">// Run analysis to generate output</pre>
+
+<script>
+/* ═══ filterToBackwardClique — keep only loop points with mutually-clean
+   backward transitions ═══
+   After any pipeline (macro-period, vibrato, freq-guided) produces a set of
+   candidate loop points, this filter verifies actual crossfade quality between
+   each pair and retains only the largest subset where every backward transition
+   is clean. "Backward" = from a later sample-time point to an earlier one,
+   which is what happens on (a) the source's native loop wrap from loopEnd back
+   to loopStart and (b) any segment-switch crossfade where new's pts[a'] is
+   before old's pts[a].
+
+   Forward transitions (earlier→later) are "free" — playing forward in the
+   sample is always OK, and forward segment-switch crossfades just accelerate
+   through audio we would have reached anyway in a quasi-stationary region.
+
+   Pair-quality metric: simulate a 5ms linear crossfade between two positions,
+   measure the max of peak-amplitude deviation and RMS deviation vs baseline.
+   Threshold default 0.20 = ≤20% amplitude deviation at crossfade midpoint.
+
+   Clique search: brute force over all 2^N subsets (N always ≤ ~15 in practice). */
+function filterToBackwardClique(buf, loopPtsSec, opts){
+  opts=opts||{};
+  var threshold=opts.threshold||0.20;
+  var xfadeSec=opts.xfadeSec||0.030;
+  /* minSpacingSec: after finding the max clique, collapse loop points that
+     are closer than this to a single representative. Rationale: within a
+     fundamental period or two, points at "+ZC with matching slope" are
+     essentially the same point in a perceptual sense — they offer no loop
+     variety, just a ~few-ms offset in where the seam lands. Keeping them all
+     bloats the graph with redundant options and produces stuck-sounding
+     loops (same AB pair forever, just with slight start offset). */
+  var minSpacingSec=opts.minSpacingSec||0.050;
+  /* rmsStepThreshold: max allowed amplitude step between loop point endpoints,
+     measured as |envA - envB| / max(envA, envB) where env is a 50ms-windowed
+     RMS centered on each point. Catches the "volume step at seam" artifact
+     that cliqueThreshold misses: two points with phase-coherent signals but
+     different envelope levels mix cleanly (no phase cancellation), so
+     midpoint-RMS-dev is low, but the listener hears loud→quiet as the
+     crossfade transitions. Trombone is the canonical case — gradual breath-
+     pressure drift produces large envelope change across the sample's 3s
+     duration. Default 0.25 is fairly permissive; tighten for drifting
+     instruments. */
+  var rmsStepThreshold=opts.rmsStepThreshold||0.25;
+  var sr=buf.sampleRate,d=buf.getChannelData(0),len=buf.length;
+  var n=loopPtsSec.length;
+  if(n<2)return{kept:loopPtsSec.slice(),cliqueSize:n,dropped:0,spacingDropped:0};
+  var xfSamples=Math.max(4,Math.round(xfadeSec*sr));
+  /* Precompute envelope RMS at each loop point: 50ms window centered on pt.
+     Wider than xfadeDev's 6ms middle window — this approximates perceived
+     loudness (averages out vibrato/fast modulation but captures slow drift). */
+  var envWin=Math.round(sr*0.05);
+  var envHalf=envWin>>1;
+  var envRms=new Array(n);
+  for(var ei=0;ei<n;ei++){
+    var pi=Math.round(loopPtsSec[ei]*sr);
+    var lo=pi-envHalf;if(lo<0)lo=0;
+    var hi=pi+envHalf;if(hi>len)hi=len;
+    var sum=0;
+    for(var s=lo;s<hi;s++)sum+=d[s]*d[s];
+    envRms[ei]=Math.sqrt(sum/(hi-lo+1e-9));
+  }
+  /* Amplitude-step deviation between two loop points. Symmetric in i,j. */
+  function ampStepDev(i,j){
+    var a=envRms[i],b=envRms[j];
+    var mx=(a>b)?a:b;
+    return Math.abs(a-b)/(mx+1e-9);
+  }
+  /* bdev[i][j] for i>j: deviation of backward crossfade pts[i] → pts[j].
+
+     Metric: midpoint RMS deviation.
+
+     Rationale: the perceptual artifact of a "warble" at a loop seam is caused
+     by the crossfade mid-window where both signals contribute at 50/50. If
+     the two signals have different harmonic phases, mid-mix = 0.5*(A+B) has
+     significant cancellation — amplitude and timbre both dip audibly. The
+     OLD metric (RMS averaged over the whole crossfade window) hid this
+     because the window's edges have near-100% of one source (no interference)
+     and the average smoothed out the midpoint dip. Example: for uncorrelated
+     signals, midpoint RMS drops 29% but whole-window RMS drops only ~15%.
+
+     The NEW metric samples only the central 20% of the crossfade window,
+     where gA ≈ gB ≈ 0.5 — that's where interference matters. Expected
+     midpoint RMS if signals are phase-coherent = 0.5*(rmsA+rmsB). Actual
+     mix RMS ÷ expected = deviation. Threshold 0.25 catches most audible
+     artifacts while still admitting close-phase pairs.
+
+     Peak deviation is no longer tracked — RMS alone is the right signal for
+     this perceptual artifact. */
+  function xfadeDev(pa,pb){
+    if(pa+xfSamples>=len||pb+xfSamples>=len)return Infinity;
+    var m0=Math.floor(xfSamples*0.4);
+    var m1=Math.floor(xfSamples*0.6);
+    var sumPowMix=0,sumPowA=0,sumPowB=0;
+    for(var t=m0;t<m1;t++){
+      var gA=1-t/xfSamples,gB=t/xfSamples;
+      var va=d[pa+t],vb=d[pb+t];
+      var mix=gA*va+gB*vb;
+      sumPowMix+=mix*mix;
+      sumPowA+=va*va;
+      sumPowB+=vb*vb;
+    }
+    var mn=m1-m0;
+    var rmsMix=Math.sqrt(sumPowMix/mn);
+    var rmsA=Math.sqrt(sumPowA/mn);
+    var rmsB=Math.sqrt(sumPowB/mn);
+    /* Expected mid RMS if signals were phase-coherent = average of gain-weighted
+       RMSs. At midpoint gA≈gB≈0.5, so expected ≈ 0.5*(rmsA+rmsB). */
+    var expCoherent=0.5*(rmsA+rmsB);
+    return Math.abs(rmsMix/(expCoherent+1e-9)-1);
+  }
+  var bdev=new Array(n);
+  for(var i=0;i<n;i++)bdev[i]=new Array(n).fill(Infinity);
+  for(var i=1;i<n;i++){
+    for(var j=0;j<i;j++){
+      bdev[i][j]=xfadeDev(Math.round(loopPtsSec[i]*sr),Math.round(loopPtsSec[j]*sr));
+    }
+  }
+  /* Maximum clique: brute force over subsets. edge(i,j) = bdev[max,min] ≤ threshold */
+  var best=[0];
+  var limit=(1<<n);
+  for(var mask=1;mask<limit;mask++){
+    var subset=[];
+    for(var bi=0;bi<n;bi++)if(mask&(1<<bi))subset.push(bi);
+    if(subset.length<=best.length)continue;
+    var ok=true;
+    for(var x=0;x<subset.length&&ok;x++){
+      for(var y=x+1;y<subset.length;y++){
+        var hi=Math.max(subset[x],subset[y]),lo=Math.min(subset[x],subset[y]);
+        if(bdev[hi][lo]>threshold){ok=false;break;}
+        if(ampStepDev(hi,lo)>rmsStepThreshold){ok=false;break;}
+      }
+    }
+    if(ok)best=subset;
+  }
+  /* Map clique indices back to time-ordered loop points */
+  var kept=best.map(function(i){return loopPtsSec[i];}).sort(function(a,b){return a-b;});
+  /* Spacing filter: drop near-duplicates. Keep first (earliest) in each
+     spacing group. Order matters — they're already sorted by time. */
+  var spaced=[];
+  for(var k=0;k<kept.length;k++){
+    if(spaced.length===0||(kept[k]-spaced[spaced.length-1])>=minSpacingSec){
+      spaced.push(kept[k]);
+    }
+  }
+  var spacingDropped=kept.length-spaced.length;
+  /* Worst backward dev within the SPACED set (for diagnostics).
+     We need to re-check this against the spaced subset only. */
+  var spacedSet={};
+  for(var k=0;k<spaced.length;k++)spacedSet[Math.round(spaced[k]*sr)]=1;
+  var spacedIndices=best.filter(function(i){return spacedSet[Math.round(loopPtsSec[i]*sr)];});
+  var worstDev=0;
+  for(var x=0;x<spacedIndices.length;x++){
+    for(var y=x+1;y<spacedIndices.length;y++){
+      var hi=Math.max(spacedIndices[x],spacedIndices[y]),lo=Math.min(spacedIndices[x],spacedIndices[y]);
+      if(bdev[hi][lo]>worstDev)worstDev=bdev[hi][lo];
+    }
+  }
+  return{kept:spaced,cliqueSize:best.length,dropped:n-best.length,spacingDropped:spacingDropped,worstDev:+worstDev.toFixed(3)};
+}
+
+/* ═══ prepareLoopVibrato — vibrato-aware loop point detection ═══
+   For instruments with periodic modulation (flute tremolo, string vibrato),
+   loop points must satisfy TWO orthogonal constraints:
+     1. Positive-going waveform zero crossing — prevents fundamental-waveform
+        click at the loop boundary.
+     2. Positive-going modulation zero crossing — prevents an audible jump in
+        the vibrato/tremolo cycle when the loop wraps from pts[b] back to
+        pts[a], because both points are at the same modulation phase.
+
+   Without (2), looping segments creates a perceived short vibrato cycle on
+   every loop iteration (every ~0.5-1.0s depending on segment length),
+   regardless of how we postprocess or pair-select. The user will describe
+   this as "a short period between normal periods" — it's the loop jump
+   itself.
+
+   Types of modulation supported:
+     • AMP (tremolo) — amplitude modulation. Dominant in flute, also present
+       in strings in FluidR3_GM. Signal: the RMS envelope over 20ms windows,
+       smoothed over ~30ms. Positive-going crossing = envelope rising through
+       its mean.
+     • PITCH (true vibrato) — pitch modulation. Dominant in some string
+       samples / vocal samples. Signal: the instantaneous fundamental period,
+       measured between successive fundamental-waveform crossings. Positive-
+       going crossing = period dropping through mean (shorter period = higher
+       pitch = pitch crossing upward through mean).
+
+   Auto-detection: compute the coefficient of variation (std/mean) of both
+   signals. The one with higher CV wins. If both are below 0.02 (no
+   meaningful modulation), the function fails and the standard pipeline
+   takes over.
+
+   Algorithm:
+     1. Silence trim; define sustain region (skip first 300ms attack,
+        last 100ms tail).
+     2. Find all positive-going waveform zero crossings in sustain.
+     3. Filter to "fundamental" crossings — greedy spacing ≥0.7× the nominal
+        period. Discards harmonic-induced extras.
+     4. Compute both candidate modulation signals (amp envelope + pitch
+        period series) and their CVs.
+     5. Pick the stronger signal. Its direction convention differs:
+        AMP uses rising crossings (low→high), PITCH uses falling crossings
+        (high→low).
+     6. Hysteresis state machine with H = 0.5 × std: signal must swing
+        beyond mean ± H to "arm" and "fire" a crossing. Rejects noise-level
+        wobble near the mean.
+     7. Compute vibrato periods between successive crossings; take the
+        median. Keep only crossings bordering intervals within [0.75, 1.25]
+        × median (rejects irregular-vibrato sections of the sample).
+     8. Snap each kept vibrato-crossing time to the nearest fundamental
+        waveform crossing. These are the loop points. */
+function prepareLoopVibrato(buf, freq, opts){
+  opts=opts||{};
+  var sr=buf.sampleRate, len=buf.length, d=buf.getChannelData(0);
+  var nominalPeriod=sr/freq;
+  /* 1. Silence trim */
+  var trimStart=0;
+  for(var s=0;s<len;s++){if(Math.abs(d[s])>0.003){trimStart=s;break;}}
+  /* 2. Sustain region */
+  var susStart=trimStart+Math.round(sr*0.3);
+  var susEnd=len-Math.round(sr*0.1);
+  if(susEnd-susStart<sr*0.5){
+    return {trimStart:trimStart/sr,loopPts:null,failReason:'sustain too short'};
+  }
+  /* 3. All positive-going waveform zero crossings (fractional position) */
+  var allXings=[];
+  for(var s=susStart+1;s<susEnd;s++){
+    if(d[s]>0&&d[s-1]<=0){
+      var frac=(d[s]===d[s-1])?0:-d[s-1]/(d[s]-d[s-1]);
+      allXings.push(s-1+frac);
+    }
+  }
+  if(allXings.length<30){
+    return {trimStart:trimStart/sr,loopPts:null,failReason:'too few waveform crossings: '+allXings.length};
+  }
+  /* 4. Fundamental crossings — greedy spacing ≥0.7× nominal period */
+  var minSpacing=nominalPeriod*0.7;
+  var fundXings=[allXings[0]];
+  for(var i=1;i<allXings.length;i++){
+    if(allXings[i]-fundXings[fundXings.length-1]>=minSpacing){
+      fundXings.push(allXings[i]);
+    }
+  }
+  if(fundXings.length<10){
+    return {trimStart:trimStart/sr,loopPts:null,failReason:'too few fundamental crossings: '+fundXings.length};
+  }
+  /* 5a. PITCH signal: instantaneous periods, smoothed over ~80ms */
+  var periods=[];
+  for(var i=0;i<fundXings.length-1;i++)periods.push(fundXings[i+1]-fundXings[i]);
+  var pSmW=Math.max(3,Math.round(0.08*freq)),pSmK=Math.floor(pSmW/2);
+  var pitchSig=new Array(periods.length);
+  var pitchTime=new Array(periods.length);
+  for(var i=0;i<periods.length;i++){
+    var lo=Math.max(0,i-pSmK),hi=Math.min(periods.length,i+pSmK+1),sum=0;
+    for(var j=lo;j<hi;j++)sum+=periods[j];
+    pitchSig[i]=sum/(hi-lo);
+    pitchTime[i]=(fundXings[i]+fundXings[i+1])/(2*sr); /* mid-interval time */
+  }
+  var pMean=0;for(var i=0;i<pitchSig.length;i++)pMean+=pitchSig[i];pMean/=pitchSig.length;
+  var pVar=0;for(var i=0;i<pitchSig.length;i++){var dd=pitchSig[i]-pMean;pVar+=dd*dd;}
+  var pStd=Math.sqrt(pVar/pitchSig.length);
+  var pitchCV=pStd/Math.max(pMean,1e-9);
+  /* 5b. AMP signal: RMS envelope over 20ms windows, step 5ms, smoothed ~30ms */
+  var envWin=Math.round(sr*0.02),envStep=Math.round(sr*0.005);
+  var ampRaw=[],ampTime=[];
+  for(var s=susStart;s+envWin<susEnd;s+=envStep){
+    var ss=0;for(var k=0;k<envWin;k++)ss+=d[s+k]*d[s+k];
+    ampRaw.push(Math.sqrt(ss/envWin));
+    ampTime.push((s+envWin/2)/sr);
+  }
+  if(ampRaw.length<20){
+    return {trimStart:trimStart/sr,loopPts:null,failReason:'envelope too short'};
+  }
+  var aSmK=6; /* ±30ms smoothing */
+  var ampSig=new Array(ampRaw.length);
+  for(var i=0;i<ampRaw.length;i++){
+    var lo=Math.max(0,i-aSmK),hi=Math.min(ampRaw.length,i+aSmK+1),sum=0;
+    for(var j=lo;j<hi;j++)sum+=ampRaw[j];
+    ampSig[i]=sum/(hi-lo);
+  }
+  var aMean=0;for(var i=0;i<ampSig.length;i++)aMean+=ampSig[i];aMean/=ampSig.length;
+  var aVar=0;for(var i=0;i<ampSig.length;i++){var dd=ampSig[i]-aMean;aVar+=dd*dd;}
+  var aStd=Math.sqrt(aVar/ampSig.length);
+  var ampCV=aStd/Math.max(aMean,1e-9);
+  /* 6. Pick whichever signal has higher CV */
+  var sig,sigTime,sigMean,sigStd,sigCV,sigType,risingIsPositive;
+  if(ampCV>pitchCV){
+    sig=ampSig;sigTime=ampTime;sigMean=aMean;sigStd=aStd;sigCV=ampCV;sigType='AMP';
+    risingIsPositive=true; /* amp rising through mean = positive-going crossing */
+  }else{
+    sig=pitchSig;sigTime=pitchTime;sigMean=pMean;sigStd=pStd;sigCV=pitchCV;sigType='PITCH';
+    risingIsPositive=false; /* period dropping = pitch rising = positive-going crossing */
+  }
+  if(sigCV<0.02){
+    return {trimStart:trimStart/sr,loopPts:null,failReason:'no modulation (best CV '+sigCV.toFixed(4)+' < 0.02)'};
+  }
+  var H=sigStd*0.5;
+  /* 7. Hysteresis state machine. States 'high' (sig > mean+H) / 'low' (sig < mean-H).
+     For AMP: fire on low→high transition. For PITCH: fire on high→low transition.
+     When firing, walk backward to find the exact index where the mean was crossed. */
+  var fromState=risingIsPositive?'low':'high';
+  var toState=risingIsPositive?'high':'low';
+  var vibTimes=[];
+  var state=null;
+  for(var i=0;i<sig.length;i++){
+    var v=sig[i],cur=null;
+    if(v>sigMean+H)cur='high';
+    else if(v<sigMean-H)cur='low';
+    if(cur&&cur!==state){
+      if(state===fromState&&cur===toState){
+        var crossIdx=i;
+        for(var j=i;j>0;j--){
+          if(risingIsPositive){
+            if(sig[j-1]<=sigMean&&sig[j]>sigMean){crossIdx=j;break;}
+          }else{
+            if(sig[j-1]>=sigMean&&sig[j]<sigMean){crossIdx=j;break;}
+          }
+        }
+        vibTimes.push(sigTime[crossIdx]);
+      }
+      state=cur;
+    }
+  }
+  if(vibTimes.length<3){
+    return {trimStart:trimStart/sr,loopPts:null,failReason:'too few ('+sigType+') crossings: '+vibTimes.length};
+  }
+  /* 8. Vibrato period consistency filter */
+  var vibPeriods=[];
+  for(var i=0;i<vibTimes.length-1;i++)vibPeriods.push(vibTimes[i+1]-vibTimes[i]);
+  var sortedVP=vibPeriods.slice().sort(function(a,b){return a-b;});
+  var medVP=sortedVP[Math.floor(sortedVP.length/2)];
+  var tolLo=0.75,tolHi=1.25;
+  var keep=new Array(vibTimes.length);for(var i=0;i<keep.length;i++)keep[i]=false;
+  for(var i=0;i<vibPeriods.length;i++){
+    var r=vibPeriods[i]/medVP;
+    if(r>=tolLo&&r<=tolHi){keep[i]=true;keep[i+1]=true;}
+  }
+  /* 8. CORRELATION-BASED SNAP: snap each kept vibrato-crossing time to the
+     positive-going zero crossing whose LOCAL WAVEFORM SHAPE best matches a
+     reference shape. This is critical for complex waveforms (like flute)
+     that have MULTIPLE positive-going zero crossings per fundamental period
+     (3 positive + 3 negative for a flute with 6 total). A naive "snap to
+     nearest fundamental" picks ONE crossing per period but not consistently
+     the same one — so loop points land at different waveform phases and the
+     splice sounds like the vibrato "stopped and restarted". Cross-correlating
+     a window around each candidate against a reference window forces all
+     loop points to align at the SAME waveform phase within the period.
+
+     Two-pass reference selection: picking the first vibrato crossing's
+     nearest positive crossing as reference can land on an OUTLIER phase if
+     the first crossing happens to be at a minor zero-crossing of the
+     waveform. Pass 1 gets a provisional set of loop points. Pass 2 picks a
+     new reference — the LP with highest median correlation to all others
+     (i.e., a representative of the MAIN CLUSTER) — and re-snaps. This makes
+     the result robust to a bad initial reference.
+
+     Post-filter: drop any final loop point whose correlation with the final
+     reference is below 0.90 (outliers that the main-cluster phase couldn't
+     reach within ±1 period of their vibrato target).
+
+     Window size: 2 nominal periods (±1 period) centered on each candidate.
+     Search radius: ±1 nominal period around each vibrato target. */
+  var firstKept=-1;
+  for(var i=0;i<vibTimes.length;i++)if(keep[i]){firstKept=i;break;}
+  if(firstKept<0){
+    return {trimStart:trimStart/sr,loopPts:null,failReason:'no vibrato crossings kept after consistency filter'};
+  }
+  var W=Math.round(nominalPeriod); /* half-window; total window = 2*W */
+  function extractWin(center){
+    if(center-W<0||center+W>=len)return null;
+    var w=new Float64Array(2*W),m=0;
+    for(var k=0;k<2*W;k++){w[k]=d[center-W+k];m+=w[k];}
+    m/=(2*W);
+    var mag=0;
+    for(var k=0;k<2*W;k++){w[k]-=m;mag+=w[k]*w[k];}
+    mag=Math.sqrt(mag);
+    if(mag<1e-9)return null;
+    return {win:w,mag:mag};
+  }
+  function corrScore(ref,cand){
+    var dot=0;
+    for(var k=0;k<2*W;k++)dot+=ref.win[k]*cand.win[k];
+    return dot/(ref.mag*cand.mag);
+  }
+  /* Snap all kept vibrato crossings given a reference center-sample */
+  function snapAll(refCenter){
+    var refObj=extractWin(refCenter);
+    if(!refObj)return null;
+    var out=[];
+    for(var i=0;i<vibTimes.length;i++){
+      if(!keep[i])continue;
+      var targetSample=vibTimes[i]*sr;
+      var bestCorr=-Infinity,bestSample=-1;
+      for(var k=0;k<allXings.length;k++){
+        if(Math.abs(allXings[k]-targetSample)>nominalPeriod)continue;
+        var candSample=Math.floor(allXings[k])+1;
+        var candObj=extractWin(candSample);
+        if(!candObj)continue;
+        var c=corrScore(refObj,candObj);
+        if(c>bestCorr){bestCorr=c;bestSample=candSample;}
+      }
+      if(bestSample>=0)out.push({sample:bestSample,corr:bestCorr});
+    }
+    return {ref:refObj,list:out};
+  }
+  /* Pass 1: provisional snap using first-kept-vibrato-crossing as reference seed */
+  var refTarget=vibTimes[firstKept]*sr;
+  var refBestK=-1,refBestD=Infinity;
+  for(var k=0;k<allXings.length;k++){
+    var dd=Math.abs(allXings[k]-refTarget);
+    if(dd<refBestD){refBestD=dd;refBestK=k;}
+  }
+  var seedRef=Math.floor(allXings[refBestK])+1;
+  var pass1=snapAll(seedRef);
+  if(!pass1||pass1.list.length<2){
+    return {trimStart:trimStart/sr,loopPts:null,failReason:'pass 1 produced too few points'};
+  }
+  /* Pass 2: pick the LP with highest MEDIAN pairwise correlation as new reference,
+     then re-snap. This selects a main-cluster representative. */
+  var pairwise=[];
+  var wins=pass1.list.map(function(p){return extractWin(p.sample);});
+  for(var i=0;i<pass1.list.length;i++){
+    if(!wins[i]){pairwise.push(-1);continue;}
+    var corrs=[];
+    for(var j=0;j<pass1.list.length;j++){
+      if(i===j||!wins[j])continue;
+      corrs.push(corrScore(wins[i],wins[j]));
+    }
+    corrs.sort(function(a,b){return a-b;});
+    pairwise.push(corrs.length?corrs[Math.floor(corrs.length/2)]:-1);
+  }
+  var bestI=0,bestMed=pairwise[0];
+  for(var i=1;i<pairwise.length;i++){if(pairwise[i]>bestMed){bestMed=pairwise[i];bestI=i;}}
+  var finalRef=pass1.list[bestI].sample;
+  var finalResult=(finalRef===seedRef)?pass1:snapAll(finalRef);
+  if(!finalResult||finalResult.list.length<2){
+    return {trimStart:trimStart/sr,loopPts:null,failReason:'pass 2 produced too few points'};
+  }
+  /* Post-filter: drop loop points whose correlation with the final reference < 0.90.
+     These are outliers where the main-cluster phase couldn't be reached within ±1
+     nominal period of the vibrato target. */
+  var loopPtsSet={};
+  for(var i=0;i<finalResult.list.length;i++){
+    if(finalResult.list[i].corr>=0.90){
+      loopPtsSet[finalResult.list[i].sample]=true;
+    }
+  }
+  var loopPts=Object.keys(loopPtsSet).map(Number).sort(function(a,b){return a-b;}).map(function(s){return s/sr;});
+  if(loopPts.length<2){
+    return {trimStart:trimStart/sr,loopPts:null,failReason:'too few after correlation snap + filter: '+loopPts.length};
+  }
+  /* Backward-clique filter — same criterion as macro-period path. Vibrato
+     picks already align at matching modulation phase so most pairs should be
+     clean, but the filter catches any residual outliers. */
+  var vibCliqueThreshold=opts.cliqueThreshold||0.25;
+  var vibMinSpacingSec=opts.minSpacingSec||0.050;
+  var vibRmsStepThreshold=opts.rmsStepThreshold||0.25;
+  var cliqueRes=filterToBackwardClique(buf,loopPts,{threshold:vibCliqueThreshold,minSpacingSec:vibMinSpacingSec,rmsStepThreshold:vibRmsStepThreshold});
+  if(cliqueRes.cliqueSize<2){
+    return {trimStart:trimStart/sr,loopPts:null,failReason:'vibrato clique collapsed to '+cliqueRes.cliqueSize+' pts'};
+  }
+  /* Build validStartsByEnd graph — see macro-period path for semantics.
+     For vibrato samples we use smaller minimums since vibrato loop points
+     are typically ~150-300ms apart (one vibrato period) and we don't want
+     to reject most pairs. Vibrato's coherent modulation makes closer loops
+     musically acceptable. */
+  var vibMinBackward=0.10;
+  var vibMinForward=0.15;
+  var keptPts=cliqueRes.kept;
+  var validStartsByEnd=new Array(keptPts.length);
+  for(var b=0;b<keptPts.length;b++){
+    validStartsByEnd[b]=[];
+    for(var a=0;a<b;a++){
+      if(keptPts[b]-keptPts[a]>=vibMinBackward)validStartsByEnd[b].push(a);
+    }
+  }
+  var totalValidSeams=0;
+  var usableBs=0;
+  for(var b=0;b<validStartsByEnd.length;b++){
+    if(validStartsByEnd[b].length===0)continue;
+    totalValidSeams+=validStartsByEnd[b].length;
+    for(var ai=0;ai<validStartsByEnd[b].length;ai++){
+      var a=validStartsByEnd[b][ai];
+      var foundForward=false;
+      for(var bn=a+1;bn<keptPts.length;bn++){
+        if(keptPts[bn]-keptPts[a]>=vibMinForward){foundForward=true;break;}
+      }
+      if(foundForward){usableBs++;break;}
+    }
+  }
+  if(usableBs===0){
+    return {trimStart:trimStart/sr,loopPts:null,
+      failReason:'vibrato: no usable loop pathway ≥'+vibMinBackward+'s/'+vibMinForward+'s'};
+  }
+  return {
+    trimStart:trimStart/sr,
+    loopPts:keptPts,
+    validStartsByEnd:validStartsByEnd,
+    slopeCV:sigCV, /* use winning-signal CV as vibrato-depth proxy */
+    vibratoType:sigType,
+    vibratoHz:+(1/medVP).toFixed(2),
+    vibratoPeriodMs:Math.round(medVP*1000),
+    vibratoCrossings:vibTimes.length,
+    vibratoKept:loopPts.length,
+    cliqueSize:cliqueRes.cliqueSize,
+    cliqueDropped:cliqueRes.dropped,
+    pitchCV:+pitchCV.toFixed(4),
+    ampCV:+ampCV.toFixed(4),
+    stats:{method:'vibrato',clique:cliqueRes.cliqueSize,cliqueDropped:cliqueRes.dropped,cliqueWorstDev:cliqueRes.worstDev,validSeams:totalValidSeams,usableBs:usableBs}
+  };
+}
+
+/* ═══ prepareLoopMacroPeriod — macro-period loop detection ═══
+   For instruments with complex harmonic content (pipe organ, voice, any
+   instrument where multiple partials beat against each other), the waveform
+   doesn't repeat literally at the fundamental period T=1/f. Two regions of
+   the sample spaced at a "macro-period" sound identical — same pitch, same
+   volume, same timbre — but have different instantaneous waveforms because
+   the harmonic phase relationships continuously drift.
+
+   Crucially, during an equal-power crossfade, phase mismatch between two
+   sources blends into a chorused version of the sound — which is natural for
+   organ-like instruments. So loop-point selection should optimize for what
+   the listener actually perceives: RMS match (constant volume at the seam)
+   and spectrum magnitude match (constant timbre), NOT sample-level waveform
+   correlation (phase alignment, which NMSE measures).
+
+   Algorithm:
+     1. Trim silence, find steady region via 70%-of-peak RMS envelope.
+     2. Try 3 candidate anchors at 25/50/75% of steady region.
+     3. For each anchor, sweep N·T offsets starting at N=minN (80ms from
+        anchor — excludes trivial fundamental-period self-correlation).
+        Score each N by:
+          score(N) = rmsRel(N) × 10 + specLogMSE(N)
+        where rmsRel is relative RMS difference and specLogMSE is mean
+        squared error of log-magnitude FFT between the two windows.
+     4. Qualifying N: rmsRel ≤ 0.05 AND specLogMSE ≤ 1.0. Both gates are
+        perceptually grounded (5% volume diff is barely audible, 1.0
+        log-MSE is mild timbre drift).
+     5. Pick anchor with most qualifying Ns (tiebreak: lowest score).
+     6. Greedy pick best-score qualifying Ns with minN spacing between picks.
+     7. Require ≥2 picks. 3+ = success, 2 = borderline (sample's steady
+        region is too short for full variation, often the case for low-pitch
+        samples where macro-period ~≥ steady region/2).
+
+   Must stay in sync with HexKeyLab.html SampleEngine.prepareLoopMacroPeriod. */
+
+/* Radix-2 in-place FFT. re/im are Float64Arrays of length N (power of 2).
+   twiddle[2k]=cos(-2πk/N), twiddle[2k+1]=sin(-2πk/N) precomputed once. */
+function fftInPlace(re, im, twiddle){
+  var N=re.length;
+  for(var i=0,j=0;i<N;i++){
+    if(i<j){var t=re[i];re[i]=re[j];re[j]=t;t=im[i];im[i]=im[j];im[j]=t;}
+    var m=N>>1;while(m>0&&j>=m){j-=m;m>>=1;}j+=m;
+  }
+  for(var size=2;size<=N;size*=2){
+    var halfsize=size>>1,tablestep=N/size;
+    for(var i=0;i<N;i+=size){
+      for(var k=0,l=0;k<halfsize;k++,l+=tablestep){
+        var wr=twiddle[2*l],wi=twiddle[2*l+1];
+        var idx=i+k,idx2=idx+halfsize;
+        var tre=re[idx2]*wr-im[idx2]*wi;
+        var tim=re[idx2]*wi+im[idx2]*wr;
+        re[idx2]=re[idx]-tre;im[idx2]=im[idx]-tim;
+        re[idx]+=tre;im[idx]+=tim;
+      }
+    }
+  }
+}
+function makeTwiddle(N){
+  var t=new Float64Array(N*2);
+  for(var k=0;k<N;k++){t[2*k]=Math.cos(-2*Math.PI*k/N);t[2*k+1]=Math.sin(-2*Math.PI*k/N);}
+  return t;
+}
+
+function prepareLoopMacroPeriod(buf, freq, opts){
+  opts=opts||{};
+  var rmsGate=opts.rmsGate||0.08;
+  var specGate=opts.specGate||1.5;
+  /* minJumpSec: minimum time span of any backward loop jump. 200ms balances
+     click avoidance (shorter jumps = tighter loop = more frequent seams per
+     second = more audible) with variety (longer min = fewer valid pairs per
+     sample). Used uniformly in analyzer (for valid-pair computation and
+     cluster scoring) and at runtime (via the shipped `endsByStart` graph). */
+  var minJumpSec=opts.minJumpSec||0.20;
+  var mseWindowSec=opts.mseWindowSec||0.06;
+  var maxLoopPts=opts.maxLoopPts||8;
+  /* maxCands: cap the number of candidate N-positions to keep cluster-build
+     cost bounded. The O(NC²·fftBins) pair-compare work in medoid + clique
+     growth (4 seeds) scales quadratically here, so doubling NC quadruples
+     the time. Empirically 200 is enough for good cluster detection on
+     organ / string samples without overcounting near-duplicates. At 200
+     candidates and ~2000 FFT bins, the full pipeline runs in <500ms on
+     high-freq samples. */
+  var maxCands=opts.maxCands||200;
+  var sr=buf.sampleRate,len=buf.length,d=buf.getChannelData(0);
+  var period=sr/freq;
+  /* 1. Trim silence */
+  var trimStart=0;
+  for(var s=0;s<len;s++){if(Math.abs(d[s])>0.003){trimStart=s;break;}}
+  /* 2. Steady region via RMS envelope */
+  var rmsWin=Math.round(sr*0.05),rmsHop=Math.round(sr*0.01);
+  var rmsCurve=[];
+  for(var s=trimStart;s+rmsWin<len;s+=rmsHop){
+    var sum=0;for(var k=0;k<rmsWin;k++)sum+=d[s+k]*d[s+k];
+    rmsCurve.push({pos:s+Math.floor(rmsWin/2),rms:Math.sqrt(sum/rmsWin)});
+  }
+  if(rmsCurve.length<3)return{trimStart:trimStart/sr,loopPts:null,stats:{failReason:'RMS curve too short'}};
+  var peakRms=0;
+  for(var i=0;i<rmsCurve.length;i++)if(rmsCurve[i].rms>peakRms)peakRms=rmsCurve[i].rms;
+  /* ── EARLY EXIT: silent/near-silent sample ──
+     If the peak RMS across the entire sample is below an audibility floor
+     (0.001 ≈ -60dBFS), there's nothing to loop. This catches dead samples
+     (all zeros) and effectively-silent samples (quantization noise only).
+     Without this check, silent samples still produce a "steady region" (the
+     0.70*peakRms threshold is near-zero), pass ZC detection if there's any
+     noise floor, and waste seconds in FFT/clustering. */
+  if(peakRms<0.001){
+    return{trimStart:trimStart/sr,loopPts:null,stats:{failReason:'sample silent/inaudible (peakRms='+peakRms.toExponential(2)+')'}};
+  }
+  var rmsThresh=peakRms*0.70;
+  var runStart=-1,bestStart=-1,bestEnd=-1,bestLen=0;
+  for(var i=0;i<rmsCurve.length;i++){
+    if(rmsCurve[i].rms>=rmsThresh){
+      if(runStart<0)runStart=i;
+      if(i-runStart>bestLen){bestLen=i-runStart;bestStart=runStart;bestEnd=i;}
+    } else runStart=-1;
+  }
+  if(bestStart<0)return{trimStart:trimStart/sr,loopPts:null,stats:{failReason:'no steady region'}};
+  var steadyStart=rmsCurve[bestStart].pos,steadyEnd=rmsCurve[bestEnd].pos;
+  /* ── EARLY EXIT: zero-crossing pre-check ──
+     Before setting up FFTs and enumerating hundreds of candidates (each
+     needing an FFT), count positive-going ZCs in the steady region. If
+     there are too few, the sample is almost certainly going to fail the
+     later ZC+slope snap anyway (each loop point must be a +ZC with
+     matching slope). Reject now and save 2+ seconds on high-freq samples
+     where NC climbs into the thousands before subsampling.
+
+     Threshold: we need at least ~20 +ZCs across the steady region to have
+     reasonable candidates for clustering + ZC snap. Legacy path's own
+     ZC count threshold is 4, which is why such samples fail there anyway
+     with "too few crossings" after macro-period burns ~2s. */
+  var minZC=20;
+  var zcMinSpacing=Math.round(Math.max(1,period*0.5)); /* dedupe near-duplicates */
+  var zcCount=0, lastZC=-zcMinSpacing-1;
+  for(var s=steadyStart+1;s<steadyEnd;s++){
+    if(d[s]>0&&d[s-1]<=0){
+      if(s-lastZC>=zcMinSpacing){zcCount++;lastZC=s;}
+      if(zcCount>=minZC)break;
+    }
+  }
+  if(zcCount<minZC){
+    return{trimStart:trimStart/sr,loopPts:null,stats:{failReason:'too few +ZCs in steady region: '+zcCount+'/'+minZC}};
+  }
+  var xfWin=Math.max(Math.round(mseWindowSec*sr),Math.round(period*4));
+  var minJumpSamples=Math.round(minJumpSec*sr);
+  if(steadyEnd-steadyStart<minJumpSamples+xfWin){
+    return{trimStart:trimStart/sr,loopPts:null,
+      stats:{failReason:'steady region too short: '+((steadyEnd-steadyStart)/sr).toFixed(3)+'s, need '+((minJumpSamples+xfWin)/sr).toFixed(3)+'s'}};
+  }
+  /* FFT setup: power-of-2 ≥ xfWin */
+  var fftN=2;while(fftN<xfWin)fftN*=2;
+  var twiddle=makeTwiddle(fftN);
+  var hann=new Float64Array(xfWin);
+  for(var i=0;i<xfWin;i++)hann[i]=0.5-0.5*Math.cos(2*Math.PI*i/(xfWin-1));
+  var reBuf=new Float64Array(fftN),imBuf=new Float64Array(fftN);
+  var nBins=(fftN>>1)+1;
+  function logMagSpec(start){
+    for(var i=0;i<fftN;i++){reBuf[i]=0;imBuf[i]=0;}
+    for(var i=0;i<xfWin;i++)reBuf[i]=d[start+i]*hann[i];
+    fftInPlace(reBuf,imBuf,twiddle);
+    var logMag=new Float64Array(nBins);
+    for(var i=0;i<nBins;i++){
+      var mag=Math.sqrt(reBuf[i]*reBuf[i]+imBuf[i]*imBuf[i]);
+      logMag[i]=Math.log(mag+1e-6);
+    }
+    return logMag;
+  }
+  function rmsOf(start){
+    var sum=0;for(var i=0;i<xfWin;i++)sum+=d[start+i]*d[start+i];
+    return Math.sqrt(sum/xfWin);
+  }
+  /* ═══ CLUSTER-BASED PICK SELECTION ═══
+     Find the largest/best subset of candidate N-positions that are mutually
+     similar (all pairs pass rmsGate and specGate). This avoids anchor-based
+     failure modes where a single outlier anchor traps the algorithm.
+
+     Algorithm:
+       1. Enumerate candidates — all N-positions in steady region, subsampled
+          to at most maxCands for tractable clustering.
+       2. Compute rms + logMagSpec for each candidate.
+       3. Seeds: medoid + 25/50/75% positions.
+       4. Greedy clique growth from each seed (amortized gate-checking).
+       5. Compute valid-pair count per cluster — pairs (i,j) with
+          pts[j] - pts[i] ≥ minJumpSec. Clusters with 0 valid pairs rejected.
+       6. Pick winning cluster by validPairs desc, tiebreak quality asc.
+       7. Build `endsByStart` graph for runtime use. */
+  function pairRmsRel(ri,rj){return Math.abs(ri-rj)/(Math.max(ri,rj)+1e-9);}
+  function pairSpecMse(si,sj){
+    var sum=0;for(var i=0;i<nBins;i++){var diff=si[i]-sj[i];sum+=diff*diff;}
+    return sum/nBins;
+  }
+  /* 1-2. Enumerate candidates, subsampling if needed. minJumpSec in
+     period-units is how many N-steps one loop must span at minimum. */
+  var minJumpN=Math.max(1,Math.ceil(minJumpSec*sr/period));
+  var baseN0=steadyStart;
+  var NMaxC=Math.floor((steadyEnd-baseN0-xfWin)/period);
+  if(NMaxC<minJumpN+1){
+    return{trimStart:trimStart/sr,loopPts:null,
+      stats:{failReason:'steady too short for min jump: NMax='+NMaxC+', minJumpN='+minJumpN}};
+  }
+  /* Subsample N-step to cap total candidates at maxCands */
+  var NTotal=NMaxC+1;
+  var nStep=Math.max(1,Math.ceil(NTotal/maxCands));
+  var cands=[];
+  for(var N=0;N<=NMaxC;N+=nStep){
+    var shift=Math.floor(baseN0+N*period);
+    if(shift+xfWin>=len)break;
+    cands.push({N:N,pos:shift,rms:rmsOf(shift),spec:logMagSpec(shift)});
+  }
+  if(cands.length<2){
+    return{trimStart:trimStart/sr,loopPts:null,stats:{failReason:'too few candidates: '+cands.length}};
+  }
+  /* 3. Seed selection — medoid of all cands + evenly-spaced positions.
+     Medoid = cand with lowest sum-of-pair-quality to all others. For
+     efficiency, medoid is computed via sum of pairwise `rmsRel*10 + specMse`
+     against ALL other cands — O(NC²) pair compares but NC is typically
+     ~100-400, so ~10K-160K compares × fftBins ≈ 300K-5M flops. Trivial. */
+  var NC=cands.length;
+  var sumMetric=new Float64Array(NC);
+  for(var i=0;i<NC;i++){
+    for(var j=i+1;j<NC;j++){
+      var m=pairRmsRel(cands[i].rms,cands[j].rms)*10+pairSpecMse(cands[i].spec,cands[j].spec);
+      sumMetric[i]+=m;sumMetric[j]+=m;
+    }
+  }
+  var medoidIdx=0;
+  for(var i=1;i<NC;i++)if(sumMetric[i]<sumMetric[medoidIdx])medoidIdx=i;
+  var seedSet={};seedSet[medoidIdx]=1;
+  var seedPositions=[0.25,0.50,0.75];
+  for(var sp=0;sp<seedPositions.length;sp++){
+    var sidx=Math.min(NC-1,Math.max(0,Math.round((NC-1)*seedPositions[sp])));
+    seedSet[sidx]=1;
+  }
+  var seeds=Object.keys(seedSet).map(function(k){return+k;});
+  /* 4. Greedy clique growth from each seed. Amortize gate-checking by
+     recording each alive member's worst metric vs any current clique member.
+     When adding a new member, incrementally update worstMetric[i] =
+     max(worstMetric[i], pairMetric(i, newMember)). If adding newMember
+     already violates a gate against i, set alive[i]=false. */
+  function growClique(seedIdx){
+    var clique=[seedIdx];
+    var alive=new Uint8Array(NC);
+    for(var i=0;i<NC;i++)alive[i]=(i===seedIdx?0:1);
+    var worstRms=new Float64Array(NC); /* worst rmsRel seen vs any clique member */
+    var worstSpec=new Float64Array(NC); /* worst specMse seen vs any clique member */
+    var worstMetric=new Float64Array(NC); /* worstRms*10 + worstSpec */
+    for(var i=0;i<NC;i++){worstRms[i]=0;worstSpec[i]=0;worstMetric[i]=0;}
+    var newestMember=seedIdx;
+    while(true){
+      /* Update worst metrics for all alive members vs newestMember */
+      var nC=cands[newestMember];
+      for(var i=0;i<NC;i++){
+        if(!alive[i])continue;
+        var rr=pairRmsRel(cands[i].rms,nC.rms);
+        var sm=pairSpecMse(cands[i].spec,nC.spec);
+        if(rr>rmsGate||sm>specGate){alive[i]=0;continue;}
+        if(rr>worstRms[i])worstRms[i]=rr;
+        if(sm>worstSpec[i])worstSpec[i]=sm;
+        worstMetric[i]=worstRms[i]*10+worstSpec[i];
+      }
+      /* Find best alive candidate (lowest worstMetric) */
+      var bestIdx=-1,bestW=Infinity;
+      for(var i=0;i<NC;i++){
+        if(!alive[i])continue;
+        if(worstMetric[i]<bestW){bestW=worstMetric[i];bestIdx=i;}
+      }
+      if(bestIdx<0)break;
+      clique.push(bestIdx);
+      alive[bestIdx]=0;
+      newestMember=bestIdx;
+    }
+    /* Compute cluster-wide quality metrics (worst across all pairs in clique) */
+    var maxRms=0,maxSpec=0;
+    for(var a=0;a<clique.length;a++){
+      for(var b=a+1;b<clique.length;b++){
+        var rr=pairRmsRel(cands[clique[a]].rms,cands[clique[b]].rms);
+        var sm=pairSpecMse(cands[clique[a]].spec,cands[clique[b]].spec);
+        if(rr>maxRms)maxRms=rr;
+        if(sm>maxSpec)maxSpec=sm;
+      }
+    }
+    return{members:clique,size:clique.length,worstRms:maxRms,worstSpec:maxSpec,score:maxRms*10+maxSpec};
+  }
+  var clusters=[];
+  for(var s=0;s<seeds.length;s++){
+    var cl=growClique(seeds[s]);
+    if(cl.size>=2)clusters.push(cl);
+  }
+  if(clusters.length===0){
+    return{trimStart:trimStart/sr,loopPts:null,
+      stats:{failReason:'no cluster grew from any seed (cands='+NC+', seeds='+seeds.length+')'}};
+  }
+  /* 5. Cluster selection rule */
+  var chosen=null;
+  /* 5. Compute valid-pair count per cluster. A pair (i,j) with i<j is valid
+     iff pts[j] - pts[i] ≥ minJumpSec (equivalently, N[j] - N[i] ≥ minJumpN).
+     Clusters with 0 valid pairs can never yield a useful loop, so they're
+     rejected here. Pair symmetry: since A↔B crossfade quality is symmetric
+     in A and B, we don't distinguish direction — a valid pair is valid in
+     both the forward-skip and backward-jump senses. */
+  for(var c=0;c<clusters.length;c++){
+    var cl=clusters[c];
+    var ns=cl.members.map(function(idx){return cands[idx].N;}).sort(function(a,b){return a-b;});
+    var vp=0;
+    for(var i=0;i<ns.length;i++){
+      for(var j=i+1;j<ns.length;j++){
+        if(ns[j]-ns[i]>=minJumpN)vp++;
+      }
+    }
+    cl.validPairs=vp;
+  }
+  clusters=clusters.filter(function(c){return c.validPairs>0;});
+  if(clusters.length===0){
+    return{trimStart:trimStart/sr,loopPts:null,
+      stats:{failReason:'no cluster yields valid pairs at minJumpSec='+minJumpSec+'s'}};
+  }
+  /* 6. Pick winning cluster: validPairs desc, tiebreak quality score asc */
+  chosen=clusters.reduce(function(best,c){
+    if(!best)return c;
+    if(c.validPairs>best.validPairs)return c;
+    if(c.validPairs===best.validPairs&&c.score<best.score)return c;
+    return best;
+  },null);
+  var clusterSizes=clusters.map(function(c){return c.size+'('+c.validPairs+'vp)';});
+  /* Convert winning cluster to pick list with per-member score */
+  var clusterMembers=chosen.members.map(function(idx){
+    var worst=0;
+    for(var k=0;k<chosen.members.length;k++){
+      if(chosen.members[k]===idx)continue;
+      var o=cands[chosen.members[k]];
+      var m=pairRmsRel(cands[idx].rms,o.rms)*10+pairSpecMse(cands[idx].spec,o.spec);
+      if(m>worst)worst=m;
+    }
+    return{idx:idx,N:cands[idx].N,pos:cands[idx].pos,rms:cands[idx].rms,score:worst};
+  });
+  /* Sort picks by N. If more than maxLoopPts, select a subset that maximizes
+     N-range coverage (farthest-point sampling) rather than clustering them all
+     in one dense region. This ensures picks have enough mutual N-span that
+     many valid pairs exist after the ≥minJumpSec filter downstream. */
+  clusterMembers.sort(function(a,b){return a.N-b.N;});
+  var picked;
+  if(clusterMembers.length<=maxLoopPts){
+    picked=clusterMembers;
+  }else{
+    /* Farthest-point sampling: start with endpoints, iteratively add the
+       member farthest (in N-space) from any already-selected member. */
+    picked=[clusterMembers[0],clusterMembers[clusterMembers.length-1]];
+    var selected=new Uint8Array(clusterMembers.length);
+    selected[0]=1;selected[clusterMembers.length-1]=1;
+    while(picked.length<maxLoopPts){
+      var bestIdx=-1,bestDist=-1;
+      for(var k=0;k<clusterMembers.length;k++){
+        if(selected[k])continue;
+        var minDist=Infinity;
+        for(var p=0;p<picked.length;p++){
+          var dd=Math.abs(clusterMembers[k].N-picked[p].N);
+          if(dd<minDist)minDist=dd;
+        }
+        if(minDist>bestDist){bestDist=minDist;bestIdx=k;}
+      }
+      if(bestIdx<0)break;
+      selected[bestIdx]=1;
+      picked.push(clusterMembers[bestIdx]);
+    }
+    picked.sort(function(a,b){return a.N-b.N;});
+  }
+  if(picked.length<2){
+    return{trimStart:trimStart/sr,loopPts:null,
+      stats:{failReason:'only '+picked.length+' picks in cluster'}};
+  }
+  /* Choose a slope-reference: the medoid of `picked`, i.e. the pick whose
+     worst pair-metric against other picks is lowest. This stands in for the
+     old single-anchor slope reference. Its slope becomes the target to
+     which every pick's ZC snap tries to match. */
+  var refIdx=0,refWorst=Infinity;
+  for(var i=0;i<picked.length;i++){
+    var worst=0;
+    for(var j=0;j<picked.length;j++){
+      if(i===j)continue;
+      var m=pairRmsRel(picked[i].rms,picked[j].rms)*10
+            +pairSpecMse(cands[picked[i].idx].spec,cands[picked[j].idx].spec);
+      if(m>worst)worst=m;
+    }
+    if(worst<refWorst){refWorst=worst;refIdx=i;}
+  }
+  var loopPts=[];
+  var slopes=[];
+  var slopeWinS=Math.min(Math.round(period*0.5),32);
+  function computeSlope(pos){
+    var p=Math.round(pos);
+    if(p-slopeWinS<0||p+slopeWinS>=len)return 0;
+    return (d[p+slopeWinS]-d[p-slopeWinS])/(2*slopeWinS);
+  }
+  /* Snap each pick to the nearest +ZC whose slope matches the reference
+     pick's slope. This ensures value match (both ≈0 at +ZC) and slope match
+     at the seam. The snap moves by at most T/2 (<1 period, <1% of the 60ms
+     measurement window), so the cluster's RMS/spec quality still holds. */
+  var halfT=Math.max(1,Math.round(period/2));
+  var refSlope=computeSlope(picked[refIdx].pos);
+  function snapZcMatchingSlope(pos){
+    var pCenter=Math.round(pos);
+    var bestPos=pos,bestDiff=Infinity;
+    for(var s=Math.max(1,pCenter-halfT);s<=Math.min(len-2,pCenter+halfT);s++){
+      if(d[s]>0&&d[s-1]<=0){
+        var frac=(d[s]===d[s-1])?0:-d[s-1]/(d[s]-d[s-1]);
+        var zcPos=s-1+frac;
+        var slope=computeSlope(zcPos);
+        var diff=Math.abs(slope-refSlope);
+        if(diff<bestDiff){bestDiff=diff;bestPos=zcPos;}
+      }
+    }
+    return bestPos;
+  }
+  var snapDistSamples=[];
+  for(var pi=0;pi<picked.length;pi++){
+    var snappedPos=snapZcMatchingSlope(picked[pi].pos);
+    snapDistSamples.push(Math.abs(snappedPos-picked[pi].pos));
+    loopPts.push(snappedPos/sr);
+    slopes.push(computeSlope(snappedPos));
+  }
+  var maxSnapDist=snapDistSamples.length?Math.max.apply(null,snapDistSamples):0;
+  /* Integer-snap */
+  var finalPts=loopPts.map(function(t){var s=Math.floor(t*sr)+1;if(s>=len)s=len-1;return s/sr;});
+  var seen={},dedup=[];
+  for(var i=0;i<finalPts.length;i++){
+    var key=Math.round(finalPts[i]*sr);
+    if(seen[key])continue;
+    seen[key]=1;dedup.push(finalPts[i]);
+  }
+  if(dedup.length<2)return{trimStart:trimStart/sr,loopPts:null,stats:{failReason:'collapsed after snap'}};
+  /* Backward-clique filter: keep only points whose mutual backward
+     transitions pass the quality threshold. See filterToBackwardClique.
+     cliqueThreshold is the direct lever for final seam quality — each pair's
+     midpoint-RMS deviation must be ≤ this value. Default 0.25 = up to 25%
+     mid-crossfade phase-cancellation tolerated; tighten for cleaner seams. */
+  var cliqueThreshold=opts.cliqueThreshold||0.25;
+  var minSpacingSec=opts.minSpacingSec||0.050;
+  var rmsStepThreshold=opts.rmsStepThreshold||0.25;
+  var cliqueRes=filterToBackwardClique(buf,dedup,{threshold:cliqueThreshold,minSpacingSec:minSpacingSec,rmsStepThreshold:rmsStepThreshold});
+  if(cliqueRes.cliqueSize<2){
+    return{trimStart:trimStart/sr,loopPts:null,
+      stats:{failReason:'clique filter reduced to '+cliqueRes.cliqueSize+' pts (picked='+picked.length+')'}};
+  }
+  var finalLoopPts=cliqueRes.kept;
+  /* ═══ Build validStartsByEnd graph ═══
+     validStartsByEnd[b] = list of a indices (a < b) where the BACKWARD JUMP
+     from pts[b] to pts[a] is usable. "Usable" means:
+       - seam is clean (guaranteed by clique filter membership — all pairs
+         in kept set have mutually clean seams)
+       - backward jump distance pts[b] - pts[a] ≥ minBackwardSec
+
+     Runtime will additionally check, at pair-choice time, that the chosen
+     b_new allows some b_new with pts[b_new] - pts[a_new] ≥ minForwardSec.
+     We don't encode that constraint here; it's a property of the point
+     positions that the engine can check on-the-fly. */
+  var minBackwardSec=opts.minBackwardSec||0.150;
+  var minForwardSec=opts.minForwardSec||0.300;
+  var validStartsByEnd=new Array(finalLoopPts.length);
+  for(var b=0;b<finalLoopPts.length;b++){
+    validStartsByEnd[b]=[];
+    for(var a=0;a<b;a++){
+      if(finalLoopPts[b]-finalLoopPts[a]>=minBackwardSec){
+        validStartsByEnd[b].push(a);
+      }
+    }
+  }
+  /* Sanity: at least one usable (a→b seam, then forward to b_new) pathway
+     must exist. A b is usable ONLY if validStartsByEnd[b] is nonempty AND
+     there exists some later point to forward-play to (pts[b_new] - pts[a]
+     ≥ minForwardSec for some a in validStartsByEnd[b], some b_new). If no
+     b meets both, the sample can't be looped. */
+  var totalValidSeams=0;
+  var usableBs=0;
+  for(var b=0;b<validStartsByEnd.length;b++){
+    if(validStartsByEnd[b].length===0)continue;
+    totalValidSeams+=validStartsByEnd[b].length;
+    /* Check at least one a has a valid forward partner */
+    for(var ai=0;ai<validStartsByEnd[b].length;ai++){
+      var a=validStartsByEnd[b][ai];
+      var foundForward=false;
+      for(var bn=a+1;bn<finalLoopPts.length;bn++){
+        if(finalLoopPts[bn]-finalLoopPts[a]>=minForwardSec){foundForward=true;break;}
+      }
+      if(foundForward){usableBs++;break;}
+    }
+  }
+  if(usableBs===0){
+    return{trimStart:trimStart/sr,loopPts:null,
+      stats:{failReason:'no usable loop pathway: no b has both a clean backward seam (≥'+minBackwardSec+'s) and a forward partner (≥'+minForwardSec+'s)'}};
+  }
+  /* slopeCV */
+  var slopeSum=0,slopeSumSq=0;
+  for(var i=0;i<slopes.length;i++){slopeSum+=slopes[i];slopeSumSq+=slopes[i]*slopes[i];}
+  var slopeMean=slopeSum/slopes.length;
+  var slopeVar=slopeSumSq/slopes.length-slopeMean*slopeMean;
+  var slopeCV=Math.sqrt(Math.max(0,slopeVar))/(Math.abs(slopeMean)+0.0001);
+  return{
+    trimStart:trimStart/sr,
+    loopPts:finalLoopPts,
+    validStartsByEnd:validStartsByEnd,
+    slopeCV:slopeCV,
+    stats:{
+      method:'macro-period',
+      cands:NC,
+      clusterCount:clusters.length,
+      clusterSizes:clusterSizes.join(','),
+      chosenSize:chosen.size,
+      chosenValidPairs:chosen.validPairs,
+      chosenScore:+chosen.score.toFixed(3),
+      picked:picked.length,
+      clique:cliqueRes.cliqueSize,
+      cliqueDropped:cliqueRes.dropped,
+      cliqueSpacingDropped:cliqueRes.spacingDropped||0,
+      cliqueWorstDev:cliqueRes.worstDev,
+      validSeams:totalValidSeams,
+      usableBs:usableBs,
+      Nmin:picked[0].N,
+      Nmax:picked[picked.length-1].N,
+      spanMs:+((picked[picked.length-1].N-picked[0].N)*period/sr*1000).toFixed(0),
+      borderline:totalValidSeams<2,
+      kept:finalLoopPts.length,
+      slopeCV:+slopeCV.toFixed(3),
+      maxSnapMs:+(maxSnapDist/sr*1000).toFixed(2)
+    }
+  };
+}
+
+
+
+/* ═══ prepareLoopFreqGuided — frequency-guided loop point detection ═══
+   Used for non-vibrato samples. Unlike the older approach that collects all
+   +going ZCs in the sustain region and filters by ZC-count-per-period, this
+   method uses the known fundamental frequency T=1/freq to PREDICT where the
+   next valid loop endpoint should be, then locks each endpoint to the nearest
+   waveform-correlated +going ZC within a tight window.
+
+   Why this matters for complex-overtone instruments (organ stops, voice):
+   The number of ZCs per fundamental period depends on the instantaneous phase
+   relationship of the harmonics and can vary across the sample. Counting ZCs
+   and picking "every Nth" can silently land on different phases of the
+   fundamental at different times — the old correlation filter would often
+   still accept such mismatches because the short windows around each ZC look
+   similar locally, even though the underlying fundamental phase differs.
+   Frequency-guided placement structurally eliminates this failure mode: any
+   two endpoints separated by exactly N·T are necessarily the same phase of
+   the fundamental component.
+
+   Loop points are generated within a tight window around a central anchor
+   (default ±100ms = 200ms total span). This keeps per-loop jump-back distance
+   small, which matters for samples with gradual volume drift (trombone
+   especially) — larger loop traversals accumulate more volume variation and
+   make seams audible. */
+function prepareLoopFreqGuided(buf, freq, opts){
+  opts=opts||{};
+  var loopWindowSec=opts.loopWindowSec||0.20;
+  var targetCount=opts.targetCount||10;
+  /* 0.85 default (was 0.95): for harmonic-rich instruments (organ, voice),
+     small detunings in overtones compound across many periods, so waveform
+     correlation at well-separated targets can drop well below 0.95 even when
+     the fundamental phase is perfectly aligned. Frequency-guided placement
+     already guarantees fundamental alignment via N·T spacing; correlation
+     here is just a sanity check against picking a harmonic-induced ZC
+     instead of the fundamental-phase ZC within the ±T/2 search window. */
+  var corrThresh=opts.corrThresh||0.85;
+  var sr=buf.sampleRate, len=buf.length, d=buf.getChannelData(0);
+  var period=sr/freq;
+  /* 1. Trim leading silence */
+  var trimStart=0;
+  for(var s=0;s<len;s++){if(Math.abs(d[s])>0.003){trimStart=s;break;}}
+  /* 2. Steady region via RMS envelope: 50ms windows, 10ms hops, keep longest
+     contiguous span where RMS ≥ 70% of peak. Replaces the hard-coded
+     trimStart+300ms / len-100ms bounds which were brittle for slow-attack
+     instruments and samples with early release cues. */
+  var rmsWin=Math.round(sr*0.05),rmsHop=Math.round(sr*0.01);
+  var rmsCurve=[];
+  for(var s=trimStart;s+rmsWin<len;s+=rmsHop){
+    var sum=0;for(var k=0;k<rmsWin;k++)sum+=d[s+k]*d[s+k];
+    rmsCurve.push({pos:s+Math.floor(rmsWin/2),rms:Math.sqrt(sum/rmsWin)});
+  }
+  if(rmsCurve.length<3)return{trimStart:trimStart/sr,loopPts:null,
+    stats:{failReason:'RMS curve too short'}};
+  var peakRms=0;
+  for(var i=0;i<rmsCurve.length;i++)if(rmsCurve[i].rms>peakRms)peakRms=rmsCurve[i].rms;
+  var rmsThresh=peakRms*0.70;
+  /* find longest run of consecutive samples above threshold */
+  var runStart=-1,bestStart=-1,bestEnd=-1,bestLen=0;
+  for(var i=0;i<rmsCurve.length;i++){
+    if(rmsCurve[i].rms>=rmsThresh){
+      if(runStart<0)runStart=i;
+      if(i-runStart>bestLen){bestLen=i-runStart;bestStart=runStart;bestEnd=i;}
+    } else {
+      runStart=-1;
+    }
+  }
+  if(bestStart<0)return{trimStart:trimStart/sr,loopPts:null,
+    stats:{failReason:'no steady region found'}};
+  var steadyStart=rmsCurve[bestStart].pos,steadyEnd=rmsCurve[bestEnd].pos;
+  if(steadyEnd-steadyStart<sr*0.2)return{trimStart:trimStart/sr,loopPts:null,
+    stats:{failReason:'steady region too short: '+((steadyEnd-steadyStart)/sr).toFixed(3)+'s'}};
+  /* 3. Anchor: first clean +going ZC from middle of steady region */
+  var midPoint=Math.round((steadyStart+steadyEnd)/2);
+  var anchorSearchEnd=Math.min(midPoint+Math.round(period*5),steadyEnd);
+  var anchor=-1;
+  for(var s=Math.max(midPoint,1);s<anchorSearchEnd;s++){
+    if(d[s]>0&&d[s-1]<=0){
+      var frac=(d[s]===d[s-1])?0:-d[s-1]/(d[s]-d[s-1]);
+      anchor=s-1+frac;break;
+    }
+  }
+  if(anchor<0)return{trimStart:trimStart/sr,loopPts:null,
+    stats:{failReason:'no anchor ZC found near steady midpoint'}};
+  /* 4. Compute slopeCV over candidate ZCs in the loop window
+     (informational, feeds the engine's crossfade duration) */
+  var halfWindowSamp=loopWindowSec/2*sr;
+  var winLo=Math.max(steadyStart,Math.round(anchor-halfWindowSamp));
+  var winHi=Math.min(steadyEnd,Math.round(anchor+halfWindowSamp));
+  /* 5. For each target K, search ±T/2 around anchor+K*T for best +ZC */
+  /* corrWin = 2 periods. No cap — capping hurt low-frequency samples
+     (organ bass, trombone low register) where 256 samples is a small
+     fraction of a period. */
+  var corrWin=Math.round(period*2);
+  var anchorI=Math.floor(anchor);
+  function corrAt(candSamp){
+    var c=Math.floor(candSamp);
+    if(c-corrWin<0||c+corrWin>=len||anchorI-corrWin<0||anchorI+corrWin>=len)return 0;
+    var num=0,da=0,db=0;
+    for(var k=-corrWin;k<=corrWin;k++){
+      var va=d[anchorI+k],vb=d[c+k];
+      num+=va*vb;da+=va*va;db+=vb*vb;
+    }
+    var denom=Math.sqrt(da*db);
+    return denom>0?num/denom:0;
+  }
+  var kMin=Math.ceil((winLo-anchor)/period);
+  var kMax=Math.floor((winHi-anchor)/period);
+  if(kMax-kMin<1)return{trimStart:trimStart/sr,loopPts:null,
+    stats:{failReason:'loop window fits fewer than 2 periods: kMin='+kMin+',kMax='+kMax}};
+  /* pick evenly-spaced K values across [kMin, kMax] */
+  var targetKs=[];
+  var kStep=Math.max(1,Math.round((kMax-kMin)/(targetCount-1)));
+  for(var k=kMin;k<=kMax;k+=kStep)targetKs.push(k);
+  if(targetKs[targetKs.length-1]!==kMax)targetKs.push(kMax);
+  var searchRadius=period/2;
+  var loopPts=[];
+  var slopes=[];
+  /* diagnostic counters — help identify why the method fails when it does */
+  var diagNoZC=0,diagBelowThresh=0,diagAcceptedCorr=[];
+  var slopeWin=Math.min(Math.round(period*0.5),32);
+  function computeSlope(pos){
+    var p=Math.round(pos);
+    if(p-slopeWin<0||p+slopeWin>=len)return 0;
+    return (d[p+slopeWin]-d[p-slopeWin])/(2*slopeWin);
+  }
+  for(var ti=0;ti<targetKs.length;ti++){
+    var kv=targetKs[ti];
+    var expectedSamp=anchor+kv*period;
+    var lo=Math.floor(expectedSamp-searchRadius),hi=Math.ceil(expectedSamp+searchRadius);
+    if(lo<=0||hi>=len)continue;
+    /* collect +going ZCs in window */
+    var best=null;
+    var foundAnyZC=false,maxCorrInWindow=-1;
+    for(var s=lo+1;s<=hi;s++){
+      if(d[s]>0&&d[s-1]<=0){
+        foundAnyZC=true;
+        var frac=(d[s]===d[s-1])?0:-d[s-1]/(d[s]-d[s-1]);
+        var pos=s-1+frac;
+        var correlation=corrAt(pos);
+        if(correlation>maxCorrInWindow)maxCorrInWindow=correlation;
+        if(correlation<corrThresh)continue;
+        var distNorm=Math.abs(pos-expectedSamp)/period; /* 0 = at expected, 0.5 = edge of window */
+        var score=correlation-distNorm*0.05;
+        if(!best||score>best.score){
+          best={pos:pos,correlation:correlation,score:score};
+        }
+      }
+    }
+    if(!foundAnyZC)diagNoZC++;
+    else if(!best)diagBelowThresh++;
+    if(best){
+      loopPts.push(best.pos/sr);
+      slopes.push(computeSlope(best.pos));
+      diagAcceptedCorr.push(best.correlation);
+    }
+  }
+  if(loopPts.length<2)return{trimStart:trimStart/sr,loopPts:null,
+    stats:{failReason:'too few loop points passed correlation filter: '+loopPts.length+
+           ' of '+targetKs.length+' targets',anchor:(anchor/sr).toFixed(4),
+           steadyStart:(steadyStart/sr).toFixed(3),steadyEnd:(steadyEnd/sr).toFixed(3),
+           targets:targetKs.length,noZC:diagNoZC,belowThresh:diagBelowThresh,
+           corrThresh:corrThresh}};
+  /* 6. slopeCV across kept points (feeds engine crossfade scaling) */
+  var slopeSum=0,slopeSumSq=0;
+  for(var i=0;i<slopes.length;i++){slopeSum+=slopes[i];slopeSumSq+=slopes[i]*slopes[i];}
+  var slopeMean=slopeSum/slopes.length;
+  var slopeVar=slopeSumSq/slopes.length-slopeMean*slopeMean;
+  var slopeCV=Math.sqrt(Math.max(0,slopeVar))/(Math.abs(slopeMean)+0.0001);
+  /* Snap each fractional time to the first integer sample on the positive side
+     of the ZC, matching the legacy path's convention. */
+  var finalPts=loopPts.map(function(t){
+    var s=Math.floor(t*sr)+1;if(s>=len)s=len-1;return s/sr;
+  });
+  /* dedupe any that collapsed to the same integer sample */
+  var seen={},dedup=[];
+  for(var i=0;i<finalPts.length;i++){
+    var key=Math.round(finalPts[i]*sr);
+    if(seen[key])continue;
+    seen[key]=1;dedup.push(finalPts[i]);
+  }
+  finalPts=dedup;
+  if(finalPts.length<2)return{trimStart:trimStart/sr,loopPts:null,
+    stats:{failReason:'loop points collapsed after integer snap'}};
+  /* median accepted correlation — informational, helps tune corrThresh */
+  var sortedCorr=diagAcceptedCorr.slice().sort(function(a,b){return a-b;});
+  var medCorr=sortedCorr.length?sortedCorr[Math.floor(sortedCorr.length/2)]:0;
+  var minCorr=sortedCorr.length?sortedCorr[0]:0;
+  return{
+    trimStart:trimStart/sr,
+    loopPts:finalPts,
+    slopeCV:slopeCV,
+    stats:{
+      method:'freq-guided',
+      anchor:(anchor/sr).toFixed(4),
+      steadySec:((steadyEnd-steadyStart)/sr).toFixed(3),
+      targets:targetKs.length,
+      kept:finalPts.length,
+      noZC:diagNoZC,
+      belowThresh:diagBelowThresh,
+      corrThresh:corrThresh,
+      minCorr:minCorr.toFixed(3),
+      medCorr:medCorr.toFixed(3),
+      slopeCV:slopeCV.toFixed(3)
+    }
+  };
+}
+
+
+/* ═══ prepareLoop — MUST STAY IN SYNC with HexKeyLab.html SampleEngine.prepareLoop ═══
+   hasVibrato=true triggers the vibrato-aware path (prepareLoopVibrato).
+   Non-vibrato samples go through prepareLoopFreqGuided, which uses the known
+   fundamental frequency to predict loop endpoint times and locks each one to
+   the nearest waveform-correlated +going ZC. This avoids the failure mode of
+   the older ZC-count-per-period heuristic when complex overtones (organ stops,
+   voice samples) produce a variable number of ZCs per fundamental period. */
+function prepareLoop(buf, freq, loopRange, hasVibrato, gateOpts){
+  /* ── FAST FAIL: silent sample check at the dispatcher level ──
+     Samples that are effectively silent (all zero, or quantization noise
+     only) can't be looped by any path, and MP in particular would burn
+     seconds on FFT/clustering before finally failing. Reject up front by
+     peak amplitude — if no sample exceeds ~-60dBFS, nothing to loop. */
+  var sr=buf.sampleRate, len=buf.length, d=buf.getChannelData(0);
+  var peakAbs=0;
+  for(var s=0;s<len;s++){
+    var a=d[s];
+    if(a<0)a=-a;
+    if(a>peakAbs)peakAbs=a;
+    if(peakAbs>=0.01)break; /* shortcut — any meaningful audio trips this fast */
+  }
+  if(peakAbs<0.001){
+    return{trimStart:0,loopPts:null,failReason:'sample silent (peak='+peakAbs.toExponential(2)+')'};
+  }
+  /* ── FAST FAIL: zero-crossing pre-check at the dispatcher level ──
+     If a sample's "sustain" region has no positive-going zero crossings at
+     all, no pipeline path can succeed (all three require +ZCs for loop-point
+     placement). Instead of waiting for each path to run (macro-period can
+     take seconds on short-period high-freq inputs before failing elsewhere),
+     reject here. Region definition matches the legacy path's `susStart..
+     susEnd` so "too few crossings: 0" failures are detected identically. */
+  var period=Math.round(sr/freq);
+  var trimStart=0;
+  for(var s=0;s<len;s++){if(Math.abs(d[s])>0.003){trimStart=s;break;}}
+  var susStart=trimStart+Math.round(sr*0.3);
+  var susEnd=len-Math.round(sr*0.1);
+  if(susEnd-susStart>period*6){
+    var minCxSamples=Math.round(Math.max(1,period*0.8));
+    var cxCount=0, lastCx=-minCxSamples-1;
+    for(var s=susStart+1;s<susEnd;s++){
+      if(d[s]>0&&d[s-1]<=0){
+        if(s-lastCx>=minCxSamples){cxCount++;lastCx=s;}
+        if(cxCount>=4)break; /* legacy path's own minimum is 4 */
+      }
+    }
+    if(cxCount<4){
+      return{trimStart:trimStart/sr,loopPts:null,failReason:'too few crossings: '+cxCount};
+    }
+  }
+  if(hasVibrato){
+    var vibResult=prepareLoopVibrato(buf, freq, gateOpts);
+    if(vibResult.loopPts&&vibResult.loopPts.length>=2)return vibResult;
+    /* Fall through to standard pipeline if vibrato detection fails */
+  }
+  /* Try macro-period first (handles complex harmonics via NMSE search).
+     Falls through to freq-guided if the sample has no discernible macro-period. */
+  var mpResult=prepareLoopMacroPeriod(buf, freq, gateOpts);
+  if(mpResult.loopPts&&mpResult.loopPts.length>=2)return mpResult;
+  var mpFailStats=mpResult&&mpResult.stats?mpResult.stats:null;
+  var fgResult=prepareLoopFreqGuided(buf, freq, gateOpts);
+  if(fgResult.loopPts&&fgResult.loopPts.length>=2){
+    /* tag with upstream failure info for diagnostics */
+    if(fgResult.stats)fgResult.stats.mpFallbackReason=mpFailStats?mpFailStats.failReason:null;
+    return fgResult;
+  }
+  /* Fall through to legacy ZC-count path if both new paths fail */
+  var fgFailStats=fgResult&&fgResult.stats?fgResult.stats:null;
+  var sr=buf.sampleRate, len=buf.length, d=buf.getChannelData(0);
+  var period=Math.round(sr/freq);
+  var trimStart=0;
+  for(var s=0;s<len;s++){if(Math.abs(d[s])>0.003){trimStart=s;break;}}
+  var susStart=trimStart+Math.round(sr*0.3);
+  var susEnd=len-Math.round(sr*0.1);
+  if(susEnd-susStart<period*6)return {trimStart:trimStart/sr,loopPts:null,failReason:'sustain too short'};
+  var cx=[];
+  var minCxSamples=Math.round(period*0.8);
+  for(var s=susStart+1;s<susEnd;s++){
+    if(d[s]>0&&d[s-1]<=0){
+      var frac=(d[s]===d[s-1])?0:-d[s-1]/(d[s]-d[s-1]);
+      var cxPos=s-1+frac;
+      if(cx.length===0||cxPos-cx[cx.length-1]>=minCxSamples)cx.push(cxPos);
+    }
+  }
+  if(cx.length<4)return {trimStart:trimStart/sr,loopPts:null,failReason:'too few crossings: '+cx.length};
+  var winR=Math.min(Math.round(sr*0.05),period*5);
+  var slopeWin=Math.min(Math.round(period*0.5),32);
+  var rms=[],slope=[];
+  for(var i=0;i<cx.length;i++){
+    var ci=Math.floor(cx[i]);
+    var sum=0;for(var s=ci;s<ci+winR&&s<len;s++)sum+=d[s]*d[s];
+    rms.push(Math.sqrt(sum/winR));
+    var a=ci-slopeWin,b=ci+slopeWin;
+    if(a<0||b>=len){slope.push(0);continue;}
+    slope.push((d[b]-d[a])/(2*slopeWin));
+  }
+  var stableStart=0,stableEnd=cx.length;
+  var regionRms=[],regionSlope=[];
+  for(var i=stableStart;i<stableEnd;i++){regionRms.push(rms[i]);regionSlope.push(slope[i]);}
+  regionRms.sort(function(a,b){return a-b;});
+  regionSlope.sort(function(a,b){return a-b;});
+  var medRms=regionRms[Math.floor(regionRms.length/2)];
+  var medSlope=regionSlope[Math.floor(regionSlope.length/2)];
+  for(var iter=0;iter<3;iter++){
+    var trimmed=regionRms.filter(function(v){return Math.abs(v-medRms)<medRms*0.5;});
+    if(trimmed.length<3)break;
+    medRms=trimmed[Math.floor(trimmed.length/2)];
+  }
+  var slopeSum=0,slopeSumSq=0,slopeN=0;
+  for(var i=stableStart;i<stableEnd;i++){
+    slopeSum+=slope[i];slopeSumSq+=slope[i]*slope[i];slopeN++;
+  }
+  var slopeMean=slopeSum/slopeN;
+  var slopeVar=slopeSumSq/slopeN-slopeMean*slopeMean;
+  var slopeCV=Math.sqrt(Math.max(0,slopeVar))/(Math.abs(slopeMean)+0.0001);
+  /* RMS+slope filter with progressive relaxation */
+  var candidates=[];
+  var rmsFactor=0.12,slopeFactor=0.15;
+  for(var relaxIter=0;relaxIter<4;relaxIter++){
+    candidates=[];
+    var rTol=medRms*rmsFactor,sTol=Math.abs(medSlope)*slopeFactor;
+    for(var i=stableStart;i<stableEnd;i++){
+      if(Math.abs(rms[i]-medRms)>rTol)continue;
+      if(Math.abs(slope[i]-medSlope)>sTol)continue;
+      candidates.push(i);
+    }
+    if(candidates.length>=4)break;
+    rmsFactor*=1.8;slopeFactor*=1.8;
+  }
+  if(candidates.length<2)return {trimStart:trimStart/sr,loopPts:null,failReason:'candidates<2 (medRms='+medRms.toFixed(4)+')'};
+  var corrWin=Math.min(period*2,256);
+  function corr(aIdx,bIdx){
+    var ac=Math.floor(cx[aIdx]),bc=Math.floor(cx[bIdx]);
+    if(ac-corrWin<0||ac+corrWin>=len||bc-corrWin<0||bc+corrWin>=len)return 0;
+    var num=0,da=0,db=0;
+    for(var k=-corrWin;k<=corrWin;k++){
+      var va=d[ac+k],vb=d[bc+k];
+      num+=va*vb;da+=va*va;db+=vb*vb;
+    }
+    var denom=Math.sqrt(da*db);
+    return denom>0?num/denom:0;
+  }
+  var refIdx=candidates[0];
+  if(candidates.length>2){
+    var bestRefScore=Infinity;
+    for(var i=0;i<candidates.length;i++){
+      var ci=candidates[i];
+      var sc=Math.abs(rms[ci]-medRms)/medRms+Math.abs(slope[ci]-medSlope)/(Math.abs(medSlope)+0.0001);
+      if(sc<bestRefScore){bestRefScore=sc;refIdx=ci;}
+    }
+  }
+  var corrThresh=0.95;
+  var correlated=[];
+  for(var i=0;i<candidates.length;i++){
+    if(candidates[i]===refIdx){correlated.push(candidates[i]);continue;}
+    if(corr(refIdx,candidates[i])>=corrThresh)correlated.push(candidates[i]);
+  }
+  if(correlated.length<3){
+    correlated=[];corrThresh=0.90;
+    for(var i=0;i<candidates.length;i++){
+      if(candidates[i]===refIdx){correlated.push(candidates[i]);continue;}
+      if(corr(refIdx,candidates[i])>=corrThresh)correlated.push(candidates[i]);
+    }
+  }
+  if(correlated.length<3){correlated=candidates;}
+  var minPointGapSamples=Math.round(sr*0.15);
+  var good=[];
+  for(var i=0;i<correlated.length;i++){
+    var ci=correlated[i];
+    if(good.length===0||cx[ci]-cx[good[good.length-1]]>=minPointGapSamples){
+      good.push(ci);
+      if(good.length>=20)break;
+    }
+  }
+  if(good.length<3){
+    minPointGapSamples=Math.round(sr*0.075);
+    good=[];
+    for(var i=0;i<correlated.length;i++){
+      var ci=correlated[i];
+      if(good.length===0||cx[ci]-cx[good[good.length-1]]>=minPointGapSamples){
+        good.push(ci);
+        if(good.length>=20)break;
+      }
+    }
+  }
+  if(good.length<2&&correlated.length>=2)good=correlated.slice(0,20);
+  if(good.length<2)return {trimStart:trimStart/sr,loopPts:null,failReason:'good<2'};
+  /* Snap to integer just after positive-going zero crossing (d>0 side).
+     Consistent polarity across all loop points → clean splices. */
+  var pts=good.map(function(i){
+    var s=Math.floor(cx[i])+1;
+    if(s>=len)s=len-1;
+    return s/sr;
+  });
+  var snappedVals=pts.map(function(t){return d[Math.round(t*sr)];});
+  var sortedVals=snappedVals.slice().sort(function(a,b){return Math.abs(a)-Math.abs(b);});
+  var medAbsVal=Math.abs(sortedVals[Math.floor(sortedVals.length/2)]);
+  var valTol=Math.max(medAbsVal*2,0.003);
+  var finalPts=[];
+  for(var i=0;i<pts.length;i++){
+    if(Math.abs(snappedVals[i])<=valTol)finalPts.push(pts[i]);
+  }
+  if(finalPts.length<2)finalPts=pts;
+  return {trimStart:trimStart/sr,loopPts:finalPts,slopeCV:slopeCV,
+    stats:{method:'legacy',
+           mpFallbackReason:(typeof mpFailStats!=='undefined'&&mpFailStats)?mpFailStats.failReason:null,
+           fgFallbackReason:fgFailStats?fgFailStats.failReason:null,
+           fgDiag:fgFailStats}};
+}
+
+/* ═══ Default instrument configs — range-based chromatic enumeration ═══
+   Each instrument lists its baseUrl and octave range. The analyzer tries every
+   chromatic note in the range and silently skips any that return 404.
+
+   Config fields:
+     baseUrl     — URL prefix, appended with the filename from filePattern
+     lowOct/highOct — MIDI octave range to enumerate (C4 = MIDI 60)
+     filePattern — template with {NOTE} placeholder. Default '{NOTE}.mp3'.
+     noteStyle   — 'flat' (C,Db,D,Eb,...) or 'sharp' (C,C#,D,D#,...). Default 'flat'.
+     vibrato     — true enables the vibrato analyzer pipeline for that instrument.
+
+   VCSL samples (sgossner/VCSL) use sharp notation and WAV format, served via
+   raw.githubusercontent.com. Gleitz soundfonts (FluidR3_GM, MusyngKite, FatBoy)
+   use flat notation and MP3 format. */
+var DEFAULT_CONFIGS={
+  violin:      {baseUrl:'https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/violin-mp3/',      lowOct:2, highOct:7, vibrato:true},
+  viola:       {baseUrl:'https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/viola-mp3/',       lowOct:2, highOct:7, vibrato:true},
+  cello:       {baseUrl:'https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/cello-mp3/',       lowOct:1, highOct:6, vibrato:true},
+  french_horn: {baseUrl:'https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/french_horn-mp3/', lowOct:1, highOct:7},
+  trombone:    {baseUrl:'https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/trombone-mp3/',    lowOct:1, highOct:5,
+    /* Amplitude-step gate tightened: trombone has gradual breath-pressure
+       drift across each sample's 3s duration, so loop pairs drawn from
+       "far apart" endpoints can have phase-coherent but volume-mismatched
+       signals. cliqueThreshold (phase cancellation) misses this; rmsStep-
+       Threshold catches it. 0.08 = reject pairs with >8% envelope step. */
+    gateOpts:{rmsStepThreshold:0.08}},
+  flute:       {baseUrl:'https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/flute-mp3/',       lowOct:3, highOct:7, vibrato:true},
+  /* ── Organ candidates — v0.8 research ──
+     Three diverse sources. Analyzer silently 404-skips missing notes so it's
+     fine if some ranges don't fully populate.
+
+     Gleitz: MusyngKite (rendered from Musyng Kite.sfpack, 1.75GB source —
+     different from FluidR3's 148MB source, so different samples) and FatBoy
+     (320MB source, also distinct). Drawbar = Hammond-style, simpler harmonics;
+     reed_organ = harmonium-like single-reed, typically very clean loops.
+
+     VCSL: sgossner's CC0 pipe organ, wholetone-sampled (expect ~50% 404 rate),
+     sharp-note filenames. Multiple articulations: Loud/Quiet, Pedal, Man3Open. */
+  church_organ_fluid:{baseUrl:'https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/church_organ-mp3/',lowOct:0, highOct:8},
+  drawbar_organ_musyng:{baseUrl:'https://gleitz.github.io/midi-js-soundfonts/MusyngKite/drawbar_organ-mp3/',lowOct:1, highOct:7},
+  reed_organ_musyng:{baseUrl:'https://gleitz.github.io/midi-js-soundfonts/MusyngKite/reed_organ-mp3/',lowOct:1, highOct:7},
+  church_organ_musyng:{baseUrl:'https://gleitz.github.io/midi-js-soundfonts/MusyngKite/church_organ-mp3/',lowOct:0, highOct:8},
+  drawbar_organ_fatboy:{baseUrl:'https://gleitz.github.io/midi-js-soundfonts/FatBoy/drawbar_organ-mp3/',lowOct:1, highOct:7},
+  reed_organ_fatboy:{baseUrl:'https://gleitz.github.io/midi-js-soundfonts/FatBoy/reed_organ-mp3/',lowOct:1, highOct:7,
+    /* Strict gates — reed organ has abundant clean candidates, so prune to
+       only the cleanest seams:
+         rmsGate 0.05 (from 0.08) — tighter candidate RMS coherence
+         specGate 1.0 (from 1.5)  — tighter candidate spectral similarity
+         cliqueThreshold 0.15 (from 0.25) — final seam midpoint-RMS dev ≤15%
+         minSpacingSec 0.075 (from 0.050) — 75ms between loop points for variety
+       Left alone: minBackwardSec/minForwardSec (those govern loop LENGTH,
+       not seam quality). */
+    gateOpts:{rmsGate:0.05, specGate:1.0, cliqueThreshold:0.15, minSpacingSec:0.075}},
+  vcsl_pipeorgan_loud:{baseUrl:'https://raw.githubusercontent.com/sgossner/VCSL/master/Aerophones/Edge-blown%20Aerophones/Pipe%20Organ/Loud/',lowOct:1, highOct:6, filePattern:'Rode_Man3Open_{NOTE}.wav', noteStyle:'sharp'}
+};
+
+/* Chromatic note arrays — flat for FluidR3/MusyngKite/FatBoy, sharp for VCSL. */
+var CHROMATIC_FLAT =['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
+var CHROMATIC_SHARP=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+var CHROMATIC=CHROMATIC_FLAT; /* legacy alias; freq lookup uses index, not name */
+
+/* A4 = 440Hz (MIDI 69). C4 = MIDI 60. Octave n starts at MIDI 12*(n+1). */
+function noteFreq(chromaticIdx, octave){
+  var midi=12*(octave+1)+chromaticIdx;
+  return 440*Math.pow(2,(midi-69)/12);
+}
+/* Build filename from template, substituting {NOTE} with chosen spelling.
+   URL-encode sharps: `#` is a URL fragment separator, so unencoded `C#4.wav`
+   truncates server-side to `C` and 404s. Targeted replacement is safe here
+   because spelledName can only be [A-G][#b]?[0-9]. */
+function buildUrl(cfg, spelledName){
+  var pattern=cfg.filePattern||'{NOTE}.mp3';
+  var filename=pattern.replace('{NOTE}',spelledName).replace(/#/g,'%23');
+  return cfg.baseUrl+filename;
+}
+function enumerateRange(lowOct, highOct, noteStyle){
+  var names=(noteStyle==='sharp')?CHROMATIC_SHARP:CHROMATIC_FLAT;
+  var out=[];
+  for(var o=lowOct;o<=highOct;o++){
+    for(var i=0;i<12;i++){
+      out.push({name:names[i]+o, freq:+noteFreq(i,o).toFixed(2)});
+    }
+  }
+  return out;
+}
+
+/* Populate configs textarea with defaults. Deferred via DOMContentLoaded to
+   beat Firefox's form-state restoration, which can otherwise overwrite an
+   earlier synchronous .value assignment with stale cached content. Reset
+   button lets the user force defaults back if anything diverges. */
+function resetConfigsToDefaults(){
+  document.getElementById('configs').value=JSON.stringify(DEFAULT_CONFIGS,null,2);
+}
+if(document.readyState==='loading'){
+  document.addEventListener('DOMContentLoaded',resetConfigsToDefaults);
+}else{
+  resetConfigsToDefaults();
+}
+document.getElementById('resetConfigs').addEventListener('click',resetConfigsToDefaults);
+
+var ctx=null;
+function getCtx(){
+  if(!ctx){
+    var AC=window.AudioContext||window.webkitAudioContext;
+    try{ctx=new AC({sampleRate:44100});}catch(e){ctx=new AC();}
+  }
+  return ctx;
+}
+
+function fmt(x,n){return (+x.toFixed(n)).toString();}
+
+async function analyzeOne(url, freq){
+  var c=getCtx();
+  var r=await fetch(url);
+  if(!r.ok)throw new Error('HTTP '+r.status);
+  var ab=await r.arrayBuffer();
+  var buf=await c.decodeAudioData(ab);
+  return prepareLoop(buf, freq);
+}
+
+/* Global storage of all analyzed results, keyed by instrument.
+   Each entry: {inst, sample:{name,freq}, result:{loopPts,trimStart,slopeCV} or null, failReason, row:<tr>} */
+var ALL_RESULTS={};
+
+/* Quality heuristic: is this sample "good" enough to auto-select? */
+function isGoodSample(res){
+  if(!res || !res.loopPts || res.loopPts.length<4) return false;
+  var pts=res.loopPts;
+  var span=pts[pts.length-1]-pts[0];
+  var gaps=[];for(var j=1;j<pts.length;j++)gaps.push(pts[j]-pts[j-1]);
+  var minGap=Math.min.apply(null,gaps);
+  /* count>=4 (clique filter drops many samples to 3-5), span>=500ms,
+     no sub-50ms gaps (crowded clusters) */
+  if(span<0.5) return false;
+  if(minGap<0.05) return false;
+  return true;
+}
+
+async function analyzeAll(){
+  var configs;
+  try{configs=JSON.parse(document.getElementById('configs').value);}
+  catch(e){alert('Invalid JSON in configs: '+e.message);return;}
+  var status=document.getElementById('status');
+  var resultsDiv=document.getElementById('results');
+  var output=document.getElementById('output');
+  resultsDiv.innerHTML='';
+  output.textContent='';
+  ALL_RESULTS={};
+
+  for(var inst in configs){
+    var cfg=configs[inst];
+    ALL_RESULTS[inst]=[];
+    var noteList=enumerateRange(cfg.lowOct, cfg.highOct, cfg.noteStyle);
+
+    /* Header */
+    var header=document.createElement('div');header.className='instHeader';
+    var h=document.createElement('h3');h.textContent=inst;
+    var summary=document.createElement('span');summary.id='summary_'+inst;summary.textContent='0/0 samples';
+    header.appendChild(h);header.appendChild(summary);
+    resultsDiv.appendChild(header);
+
+    /* Table — Vibrato column is used when the instrument is flagged
+       vibrato:true and prepareLoopVibrato returns vibratoHz/vibratoPeriodMs. */
+    var t=document.createElement('table');
+    t.innerHTML='<tr><th style="width:30px">✓</th><th>Sample</th><th>Freq</th>'+
+      '<th>Count</th><th>Span (s)</th><th>Min gap</th><th>Max gap</th>'+
+      '<th>slopeCV</th><th>Vibrato</th><th>Method</th><th>Status</th></tr>';
+    resultsDiv.appendChild(t);
+
+    var found=0,failed=0;
+
+    for(var i=0;i<noteList.length;i++){
+      var s=noteList[i];
+      status.textContent=inst+': fetching '+s.name+' ('+(i+1)+'/'+noteList.length+')';
+      status.className='status';
+      var url=buildUrl(cfg, s.name);
+      var row, res=null, failReason=null;
+      try{
+        var c=getCtx();
+        var r=await fetch(url);
+        if(!r.ok){
+          if(r.status===404){continue;} /* silent skip for 404 */
+          throw new Error('HTTP '+r.status);
+        }
+        var ab=await r.arrayBuffer();
+        var buf=await c.decodeAudioData(ab);
+        res=prepareLoop(buf, s.freq, null, cfg.vibrato===true, cfg.gateOpts);
+        if(!res.loopPts||res.loopPts.length<2){
+          failReason=(res.stats&&res.stats.failReason)||res.failReason||'null';res=null;
+        }
+      }catch(e){
+        failReason='ERROR: '+e.message;
+      }
+
+      /* Build row */
+      row=t.insertRow();
+      var chkCell=row.insertCell();
+      var chk=document.createElement('input');chk.type='checkbox';
+      chk.dataset.inst=inst;chk.dataset.name=s.name;
+      chkCell.appendChild(chk);
+      row.insertCell().textContent=s.name;
+      row.insertCell().textContent=s.freq;
+
+      if(res){
+        var pts=res.loopPts;
+        var span=pts[pts.length-1]-pts[0];
+        var gaps=[];for(var j=1;j<pts.length;j++)gaps.push(pts[j]-pts[j-1]);
+        var minGap=Math.min.apply(null,gaps);
+        var maxGap=Math.max.apply(null,gaps);
+        row.insertCell().textContent=pts.length;
+        row.insertCell().textContent=span.toFixed(2);
+        row.insertCell().textContent=Math.round(minGap*1000)+'ms';
+        row.insertCell().textContent=Math.round(maxGap*1000)+'ms';
+        row.insertCell().textContent=res.slopeCV.toFixed(2);
+        /* Vibrato cell — blank for non-vibrato, shows type/Hz + consistency
+           ratio (kept/total crossings) when vibrato analysis succeeded */
+        var vibCell=row.insertCell();
+        if(res.vibratoHz!==undefined){
+          vibCell.textContent=res.vibratoType+' '+res.vibratoHz+'Hz ('+res.vibratoKept+'/'+res.vibratoCrossings+')';
+        }else{
+          vibCell.textContent='';
+        }
+        /* Method cell: which algorithm succeeded */
+        var methodCell=row.insertCell();
+        var method=(res.stats&&res.stats.method)||'?';
+        methodCell.textContent=method;
+        /* Status cell: status + per-method diagnostic detail */
+        var statusCell=row.insertCell();
+        var statusText='ok';
+        if(method==='macro-period'&&res.stats){
+          statusText='ok ('+res.stats.chosenSize+' in cluster/'+res.stats.cands+' cands'+
+            (res.stats.clusterCount>1?', '+res.stats.clusterCount+' clusters ['+res.stats.clusterSizes+']':'')+
+            ', score '+res.stats.chosenScore+
+            ' → '+res.stats.picked+' picks → '+res.stats.clique+' clique'+
+            (res.stats.cliqueDropped?' (-'+res.stats.cliqueDropped+')':'')+
+            (res.stats.cliqueSpacingDropped?' (spacing -'+res.stats.cliqueSpacingDropped+')':'')+
+            ', '+res.stats.validSeams+' seams, '+res.stats.usableBs+' usable endpoints, worstDev '+res.stats.cliqueWorstDev+
+            ', span '+res.stats.spanMs+'ms)';
+        } else if(method==='freq-guided'&&res.stats){
+          statusText='ok ('+res.stats.kept+'/'+res.stats.targets+
+            ' corr≥'+res.stats.minCorr+'/med '+res.stats.medCorr+
+            (res.stats.noZC>0||res.stats.belowThresh>0?
+              ' skip:noZC='+res.stats.noZC+',low='+res.stats.belowThresh:'')+')';
+          if(res.stats.mpFallbackReason)statusText+=' [mp fail: '+res.stats.mpFallbackReason+']';
+        } else if(method==='legacy'&&res.stats){
+          var reasons=[];
+          if(res.stats.mpFallbackReason)reasons.push('mp fail: '+res.stats.mpFallbackReason);
+          if(res.stats.fgFallbackReason)reasons.push('fg fail: '+res.stats.fgFallbackReason);
+          statusText='ok (legacy'+(reasons.length?'; '+reasons.join('; '):'')+')';
+        } else if(method==='vibrato'&&res.stats){
+          statusText='ok ('+res.stats.clique+' clique'+
+            (res.stats.cliqueDropped?', dropped '+res.stats.cliqueDropped:'')+
+            ', '+(res.stats.validSeams||0)+' seams, worstDev '+res.stats.cliqueWorstDev+')';
+        }
+        statusCell.textContent=statusText;
+        /* ── Color coding ──
+           Tier by number of usable endpoints and seam count — samples with
+           more "usable b" values give richer loop variety. Green requires
+           both good endpoint variety and good slopeCV/span. */
+        if(method==='macro-period'&&res.stats){
+          var ub=res.stats.usableBs;
+          var seams=res.stats.validSeams;
+          var scv=res.stats.slopeCV;
+          var span=res.stats.spanMs;
+          if(ub<2||seams<2)row.className='mp-red';
+          else if(ub<3||seams<4)row.className='mp-yellow';
+          else if(scv<=0.15&&span>=1000)row.className='mp-green';
+          else row.className='mp-blue';
+        } else if(method==='freq-guided'&&res.stats){
+          var kp=res.stats.kept;
+          if(kp<5)row.className='fg-red';
+          else if(kp<10)row.className='fg-orange';
+          else row.className='fg-blue';
+        } else if(method==='legacy'){
+          row.className='legacy';
+        } else if(method==='vibrato'&&res.stats){
+          var vs2=res.stats.validSeams||0;
+          if(vs2<2)row.className='vb-red';
+          else if(vs2<4)row.className='vb-yellow';
+          else if(vs2>=10)row.className='vb-green';
+          else row.className='vb-blue';
+        }
+        /* Auto-check if good */
+        if(isGoodSample(res)){chk.checked=true;row.classList.add('selected');}
+        chk.addEventListener('change',function(e){
+          if(e.target.checked) e.target.closest('tr').classList.add('selected');
+          else e.target.closest('tr').classList.remove('selected');
+          updateSummary();
+        });
+        found++;
+      } else {
+        for(var k=0;k<7;k++)row.insertCell().textContent='-';
+        row.insertCell().textContent=failReason||'fail';
+        row.className='fail';
+        chk.disabled=true;
+        failed++;
+      }
+
+      ALL_RESULTS[inst].push({sample:s, result:res, failReason:failReason, row:row, chk:chk});
+    }
+
+    summary.textContent=found+' ok, '+failed+' failed';
+    if(found===0){summary.textContent+=' (check range?)';}
+  }
+
+  status.textContent='Analysis complete. Use checkboxes to select, then click "Generate output from selected".';
+  status.className='status ok';
+  updateSummary();
+}
+
+function updateSummary(){
+  for(var inst in ALL_RESULTS){
+    var rows=ALL_RESULTS[inst];
+    var checked=rows.filter(function(r){return r.chk.checked;}).length;
+    var ok=rows.filter(function(r){return r.result;}).length;
+    var el=document.getElementById('summary_'+inst);
+    if(el) el.textContent=checked+' selected of '+ok+' analyzed';
+  }
+}
+
+function generateOutput(){
+  var output=document.getElementById('output');
+  var lines=['/* PRECOMPUTED loop points — generated '+new Date().toISOString()+' */',''];
+  var totalChecked=0;
+  for(var inst in ALL_RESULTS){
+    var rows=ALL_RESULTS[inst].filter(function(r){return r.chk.checked && r.result;});
+    if(rows.length===0) continue;
+    lines.push('    /* '+inst+' — '+rows.length+' samples */');
+    lines.push('    '+inst+'_samples = [');
+    for(var i=0;i<rows.length;i++){
+      var r=rows[i];var res=r.result;var s=r.sample;
+      var ptsStr='['+res.loopPts.map(function(p){return fmt(p,5);}).join(',')+']';
+      /* validStartsByEnd serialized as [[a,a,...],[a,...],...]. Runtime uses
+         validStartsByEnd[b_cur] to pick a clean backward-jump target a_new. */
+      var ebsStr='['+(res.validStartsByEnd||[]).map(function(arr){
+        return '['+arr.join(',')+']';
+      }).join(',')+']';
+      var line="        {name:'"+s.name+"',freq:"+s.freq+',loopPts:'+ptsStr+
+        ',validStartsByEnd:'+ebsStr+
+        ',trimStart:'+fmt(res.trimStart,4)+',slopeCV:'+fmt(res.slopeCV,3)+'}';
+      if(i<rows.length-1) line+=',';
+      lines.push(line);
+      totalChecked++;
+    }
+    lines.push('    ],');
+    lines.push('');
+  }
+  output.textContent=lines.join('\n');
+  var status=document.getElementById('status');
+  status.textContent='Generated output for '+totalChecked+' selected samples.';
+  status.className='status ok';
+}
+
+function setAllChecks(filterFn){
+  for(var inst in ALL_RESULTS){
+    ALL_RESULTS[inst].forEach(function(r){
+      if(!r.result) return;
+      var shouldCheck=filterFn(r);
+      if(r.chk.checked!==shouldCheck){
+        r.chk.checked=shouldCheck;
+        if(shouldCheck) r.row.classList.add('selected');
+        else r.row.classList.remove('selected');
+      }
+    });
+  }
+  updateSummary();
+}
+
+document.getElementById('run').addEventListener('click',function(){
+  this.disabled=true;
+  analyzeAll().finally(function(){
+    document.getElementById('run').disabled=false;
+  });
+});
+document.getElementById('genOutput').addEventListener('click',generateOutput);
+document.getElementById('selectGood').addEventListener('click',function(){
+  setAllChecks(function(r){return isGoodSample(r.result);});
+});
+document.getElementById('selectAll').addEventListener('click',function(){
+  setAllChecks(function(r){return !!r.result;});
+});
+document.getElementById('selectNone').addEventListener('click',function(){
+  setAllChecks(function(r){return false;});
+});
+
+/* Custom file analyzer (for sample wizard foundation) */
+document.getElementById('analyzeCustom').addEventListener('click',function(){
+  var freq=prompt('Fundamental frequency of this sample (Hz)?', '440');
+  if(!freq)return;
+  freq=parseFloat(freq);
+  var hasVib=confirm('Does this instrument have pitch vibrato? (OK = yes, Cancel = no)\n\n'+
+    'Vibrato instruments (flute, strings, vocals) need loop points aligned to '+
+    'vibrato zero crossings, not just waveform zero crossings. Enabling this '+
+    'runs prepareLoopVibrato instead of the standard pipeline.');
+  document.getElementById('customFreq').textContent='(freq='+freq+'Hz'+(hasVib?', vibrato':'')+')';
+  var input=document.getElementById('customFile');
+  input.onchange=async function(){
+    var file=input.files[0];if(!file)return;
+    var c=getCtx();
+    var ab=await file.arrayBuffer();
+    var buf=await c.decodeAudioData(ab);
+    var res=prepareLoop(buf, freq, null, hasVib);
+    var out=document.getElementById('output');
+    if(res.loopPts){
+      var ebsStr='['+(res.validStartsByEnd||[]).map(function(arr){return '['+arr.join(',')+']';}).join(',')+']';
+      out.textContent='{name:'+"'"+file.name+"'"+',freq:'+freq+',loopPts:'+
+        '['+res.loopPts.map(function(p){return fmt(p,5);}).join(',')+']'+
+        ',validStartsByEnd:'+ebsStr+
+        ',trimStart:'+fmt(res.trimStart,4)+',slopeCV:'+fmt(res.slopeCV,3)+'}';
+    }else{
+      out.textContent='FAILED: '+(res.failReason||'unknown');
+    }
+  };
+  input.click();
+});
+</script>
+</body>
+</html>
