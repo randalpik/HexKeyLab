@@ -153,26 +153,11 @@ export interface SysexQueueModule {
   queryFirmware(): void;
 }
 
-// ── Window-bridge globals ──────────────────────────────────────────────────
+// ── Platform globals ───────────────────────────────────────────────────────
 
 declare global {
   interface Window {
     AudioContext: typeof AudioContext;
     webkitAudioContext?: typeof AudioContext;
-    /** Phase 1 inline-handler bridge — exposes module-scoped functions for
-     *  HTML attributes (onclick=, onchange=). Removed when index.html
-     *  converts to addEventListener wiring. */
-    setLayout: (n: number) => void;
-    setTuning: () => void;
-    toggleAudio: () => void;
-    changeWaveform: () => void;
-    togglePedalCalibration: () => void;
-    toggleAutoSync: () => void;
-    clearSelection: () => void;
-    resetPedalBounds: () => void;
-    draw: () => void;
-    updateInfo: () => void;
-    cbNotesChanged: () => void;
-    cbExtendChanged: () => void;
   }
 }

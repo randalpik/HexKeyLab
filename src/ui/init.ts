@@ -3,13 +3,10 @@
 // 1. Initialize audio (creates AudioContext, loads default instrument).
 // 2. Request MIDI access; on success, auto-detect Lumatone, wire input.
 // 3. Attach canvas mouse listeners for click selection + hover lighten.
-// 4. First paint + info-panel size.
-// 5. Window resize handler.
-// 6. Phase 1 inline-handler bridge: the HTML still uses inline onclick=/
-//    onchange= attributes pointing to globals (setLayout, toggleAudio, etc.).
-//    ES modules don't reach window, so we expose the relevant handlers via
-//    Object.assign(window, {...}). This will go away when index.html gets
-//    converted to addEventListener wiring.
+// 4. Wire toolbar controls (layout buttons, view checkboxes, tuning, audio,
+//    calibration, auto-sync) via addEventListener.
+// 5. First paint + info-panel size.
+// 6. Window resize handler.
 
 import { selection } from '../state/selection.js';
 import { view } from '../state/view.js';
@@ -19,9 +16,7 @@ import { sizeInfoPanel, updateInfo } from '../render/info.js';
 import { initAudio, changeWaveform, toggleAudio } from '../audio/engine.js';
 import { requestMidi } from '../midi/engine.js';
 import { handleMidiMessage } from '../midi/handler.js';
-import {
-  setTuning, shiftSeams, setLayout, clearSelection, transposeSelection,
-} from './controls.js';
+import { setTuning, setLayout, clearSelection } from './controls.js';
 import './keyboard.js';
 import {
   togglePedalCalibration, resetPedalBounds,
@@ -55,6 +50,39 @@ cv.addEventListener('mouseleave', function () {
   if (selection.hoverKey !== null) { selection.hoverKey = null; draw(); }
 });
 
+// ── Toolbar wiring ──
+const $ = <T extends HTMLElement>(id: string): T =>
+  document.getElementById(id) as T;
+
+// Layout buttons
+$<HTMLButtonElement>('lb2').addEventListener('click', () => setLayout(2));
+$<HTMLButtonElement>('lb1').addEventListener('click', () => setLayout(1));
+$<HTMLButtonElement>('lb3').addEventListener('click', () => setLayout(3));
+
+// View-toggle checkboxes
+$<HTMLInputElement>('cbNotes').addEventListener('change', () => {
+  view.textDirty = true; draw();
+});
+$<HTMLInputElement>('cbBands').addEventListener('change', () => draw());
+$<HTMLInputElement>('cbExtend').addEventListener('change', () => {
+  view.hexDirty = true; view.textDirty = true; draw();
+});
+$<HTMLInputElement>('cbCoords').addEventListener('change', updateInfo);
+$<HTMLInputElement>('cbShortIvl').addEventListener('change', updateInfo);
+
+// Tuning + clear
+$<HTMLSelectElement>('selTuning').addEventListener('change', setTuning);
+$<HTMLButtonElement>('btnClear').addEventListener('click', clearSelection);
+
+// Audio
+$<HTMLInputElement>('cbAudio').addEventListener('change', toggleAudio);
+$<HTMLSelectElement>('waveform').addEventListener('change', changeWaveform);
+
+// Calibration & auto-sync
+$<HTMLButtonElement>('btnCalibPedal').addEventListener('click', togglePedalCalibration);
+$<HTMLButtonElement>('btnResetPedal').addEventListener('click', resetPedalBounds);
+$<HTMLInputElement>('cbAutoSync').addEventListener('change', toggleAutoSync);
+
 draw();
 sizeInfoPanel();
 
@@ -70,17 +98,3 @@ function onResize(): void {
   sizeInfoPanel();
 }
 window.addEventListener('resize', onResize);
-
-// ── Phase 1 inline-handler bridge ──
-// The HTML uses inline onclick=/onchange= attributes that reference these names.
-// In a <script type="module"> context, top-level functions are module-scoped,
-// so we have to expose them on window. To be removed once index.html is
-// converted to addEventListener wiring.
-function cbNotesChanged(): void { view.textDirty = true; draw(); }
-function cbExtendChanged(): void { view.hexDirty = true; view.textDirty = true; draw(); }
-Object.assign(window, {
-  setLayout, setTuning, toggleAudio, changeWaveform,
-  togglePedalCalibration, toggleAutoSync, clearSelection, resetPedalBounds,
-  draw, updateInfo,
-  cbNotesChanged, cbExtendChanged,
-});

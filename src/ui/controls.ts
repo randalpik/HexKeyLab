@@ -103,7 +103,7 @@ export function transposeSelection(dq: number, dr: number): void {
       }
       sampleMoves.forEach(function (m) { m.vol = SampleEngine.slideAndFadeOut(m.oldKey, m.newFreq, 0.1); });
       sampleMoves.forEach(function (m) {
-        SampleEngine.noteOnFaded(m.newKey, m.newFreq, m.vol, 0.1);
+        SampleEngine.noteOnFaded(m.newKey, m.newFreq, m.vol!, 0.1);
         newOscs[m.newKey] = { type: 'sample', freq: m.newFreq };
       });
       audio.activeOscs = newOscs;
@@ -174,7 +174,7 @@ export function setLayout(n: number): void {
       }
       layoutMoves.forEach(function (m) { m.vol = SampleEngine.slideAndFadeOut(m.oldKey, m.newFreq, rampDur); });
       layoutMoves.forEach(function (m) {
-        SampleEngine.noteOnFaded(m.newKey, m.newFreq, m.vol, rampDur);
+        SampleEngine.noteOnFaded(m.newKey, m.newFreq, m.vol!, rampDur);
         newOscs[m.newKey] = { type: 'sample', freq: m.newFreq };
       });
     }

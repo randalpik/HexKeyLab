@@ -78,23 +78,25 @@ The fixed-MIDI mapping is set up *once* per device-connection in `lumatone/sync.
 
 ---
 
-## Inline-handler bridge (Phase 1 holdover)
+## Inline-handler bridge (Phase 1 holdover, removed 2026-05-04)
 
-**Picked**: Keep the `index.html` inline `onclick=`/`onchange=` attributes for now; expose the relevant module-scoped handlers on `window` via `Object.assign(window, { … })` at the end of `ui/init.ts`.
+**Picked**: For Phases 1–3, kept `index.html` inline `onclick=`/`onchange=` attributes and exposed the relevant module-scoped handlers on `window` via `Object.assign(window, { … })` at the end of `ui/init.ts`. Removed in Phase 4.1 (2026-05-04) — `index.html` is now wired entirely through `addEventListener` in `ui/init.ts`, and the `Window` interface in `src/types.ts` no longer carries bridge functions (only `AudioContext`/`webkitAudioContext`, which are real platform globals).
 
-**Will be removed when**: `index.html` gets converted to `addEventListener` wiring (Phase 4 / v1.0 polish).
+**Why kept for the migration**: Removing required dropping 14 inline-handler attributes from `index.html` and adding `getElementById` + `addEventListener` calls in `ui/init.ts`. Mechanical but cross-cutting; kept the scope of Phase 3 to module structure + types.
 
-**Why kept for now**: Removing requires editing `index.html` to drop ~13 inline-handler attributes and replacing them with event-binding code in `ui/init.ts`. Mechanical but cross-cutting; kept the scope of Phase 3 to module structure + types. The bridge is documented in `ui/init.ts` and `src/types.ts`'s `Window` interface.
-
-**Where**: `src/ui/init.ts` (the bridge), `index.html` (the inline attrs that depend on it).
+**Where (post-removal)**: `src/ui/init.ts` ("Toolbar wiring" section, ~14 listener registrations), `index.html` (no inline handlers; one new id `btnResetPedal` was added on the calibration reset button).
 
 ---
 
-## Strict TypeScript with two legacy `@ts-nocheck` holdouts
+## Strict TypeScript end-to-end (Phase 4 complete, 2026-05-04)
 
-**Picked**: `tsconfig.json strict: true`. 35/37 files type-check strictly. Two files keep `@ts-nocheck` with explanatory comments:
+**Picked**: `tsconfig.json strict: true`, no `@ts-nocheck` anywhere in `src/`.
 
-- `src/audio/samples.ts` (1494 lines) — verbatim v0.9 SampleEngine IIFE. Internal sample-loop logic is well-tested in v0.9; rewriting with strict types is high-risk for low gain. **Don't refactor SampleEngine internals without reading `lessons.md` first** — sample-loop invariants (no `source.loop = true`, all wraps via `scheduleSegmentSwitch`, `commitRampSync` integrates in-flight ramp position) are hard to spot from the type system.
-- `src/render/draw.ts` (538 lines) — main draw + offscreen layers + hit-test + hover/selection passes + seam blend. Many implicit-any locals and DOM-element-as-`HTMLElement` accesses; conversion is mechanical but tedious. Defer to v1.0 polish.
+**History**: Phases 1–3 left two `@ts-nocheck` holdouts — `audio/samples.ts` (1494-line v0.9 IIFE) and `render/draw.ts` (538 lines). Both were converted in Phase 4 (4.2 and 4.3 respectively). Approach:
 
-**Where**: `tsconfig.json` (strict on), `src/audio/samples.ts`, `src/render/draw.ts` (with documentation comments).
+- **`render/draw.ts`** — single mechanical pass. Annotated top-level decls (`Set<string>`, `number[]`, `Record<KeyId, DrawnKey>`, etc.), function signatures, forEach/map callbacks, and 3 DOM-checkbox `as HTMLInputElement` casts. The `getContext('2d')` swap pattern (`savedCtx = ctx; ctx = gc; … ctx = savedCtx`) was kept — a typed local `gc` is used and assigned to `ctx` for the duration of the layer build. Zero-cost-blit invariant preserved.
+- **`audio/samples.ts`** — pragmatic typing. The IIFE's logic is verbatim from v0.9; the SampleEngine encodes sample-loop invariants (no `source.loop = true`, all wraps via `scheduleSegmentSwitch`, `commitRampSync` integrates in-flight ramp position) that are hard to spot from types alone. Rather than over-specifying with deep voice-shape interfaces, internal helpers use `any` for parameters/voice objects and proper types only at module state, the public-API entry points, and the IIFE return surface. The inline cast in `audio/engine.ts` (`as typeof RawSampleEngine & { INSTRUMENTS: Record<string, InstrumentDef> }`) was removed — `INSTRUMENTS: Record<string, any>` is now declared inside samples.ts.
+
+**Don't refactor SampleEngine internals without reading `lessons.md` first** — adding stricter types could tempt a future contributor to "clean up" the loop scheduler or ramp manager, both of which are tightly coupled through voice state.
+
+**Where**: `tsconfig.json` (strict on, unchanged from Phase 3), `src/audio/samples.ts`, `src/render/draw.ts`, `src/audio/engine.ts` (cast removal).

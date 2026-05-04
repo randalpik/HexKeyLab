@@ -1,5 +1,3 @@
-// @ts-nocheck — verbatim v0.9 render pipeline (538 lines of canvas + offscreen
-// layer logic). Going strict here is a Phase 4 task; behavior is well-tested.
 // Main canvas + draw pipeline.
 //
 // Architecture invariant from lessons.md: offscreen hex/text layers are built
@@ -18,7 +16,7 @@ import { bandOf } from '../layout/coords.js';
 import { hexR, dxH, dyH, tiltAngle, cosT, sinT } from '../layout/geometry.js';
 import { tuning } from '../state/tuning.js';
 import { view } from '../state/view.js';
-import { selection } from '../state/selection.js';
+import { selection, type DrawnKey } from '../state/selection.js';
 import { audio } from '../state/audio.js';
 import { whiteSet, hueC, computeHue } from './colors.js';
 import { sizeCanvas, getVisibleRange } from './canvas.js';
@@ -28,6 +26,7 @@ import {
   parseNote, accToVal, noteName,
   SHARP, DBLSHARP, FLAT, DBLFLAT,
 } from '../tuning/notes.js';
+import type { KeyId } from '../types.js';
 
 // ── canvas setup ───────────────────────────────────────────────────────────
 export const cv = document.getElementById('cv') as HTMLCanvasElement;
@@ -38,32 +37,32 @@ cv.style.height = view.CH + 'px';
 export let ctx: CanvasRenderingContext2D = cv.getContext('2d')!;
 
 // ── layout-anim raf scheduler ──────────────────────────────────────────────
-let layoutAnimId = null;
-function animateLayout() {
+let layoutAnimId: number | null = null;
+function animateLayout(): void {
   const stillRunning = animation.step();
   draw();
   layoutAnimId = stillRunning ? requestAnimationFrame(animateLayout) : null;
 }
 /** Schedule (or re-schedule) the layout-switch animation raf loop. */
-export function startLayoutAnim() {
+export function startLayoutAnim(): void {
   if (layoutAnimId) cancelAnimationFrame(layoutAnimId);
   layoutAnimId = requestAnimationFrame(animateLayout);
 }
 
 // ── outline geometry (precomputed at module load) ──────────────────────────
-const kbBaseSet = new Set();
-baseKeys.forEach(function (k) { kbBaseSet.add(k[0] + ',' + k[1]); });
+const kbBaseSet = new Set<string>();
+baseKeys.forEach((k) => { kbBaseSet.add(k[0] + ',' + k[1]); });
 
 const outR = hexR + 1;
-const olDirs = [[1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1]];
-const hdx = [], hdy = [], epx = [], epy = [];
+const olDirs: ReadonlyArray<readonly [number, number]> = [[1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1]];
+const hdx: number[] = [], hdy: number[] = [], epx: number[] = [], epy: number[] = [];
 for (let _di = 0; _di < 6; _di++) {
   const _rx = olDirs[_di][0] * dxH + olDirs[_di][1] * dxH * 0.5, _ry = -olDirs[_di][1] * dyH;
   const _rl = Math.sqrt(_rx * _rx + _ry * _ry);
   hdx[_di] = _rx / _rl; hdy[_di] = _ry / _rl;
   epx[_di] = -hdy[_di]; epy[_di] = hdx[_di];
 }
-function edgeIsect(hx1, hy1, d1, hx2, hy2, d2) {
+function edgeIsect(hx1: number, hy1: number, d1: number, hx2: number, hy2: number, d2: number): [number, number] {
   const px1 = hx1 + outR * hdx[d1], py1 = hy1 + outR * hdy[d1];
   const px2 = hx2 + outR * hdx[d2], py2 = hy2 + outR * hdy[d2];
   const det = epx[d2] * epy[d1] - epx[d1] * epy[d2];
@@ -73,24 +72,25 @@ function edgeIsect(hx1, hy1, d1, hx2, hy2, d2) {
   return [px1 + t * epx[d1], py1 + t * epy[d1]];
 }
 
-const kbOutlinePaths = []; /* array of closed polyline arrays [[x,y],[x,y],...] */
+type Point = [number, number];
+const kbOutlinePaths: Point[][] = []; /* array of closed polyline arrays [[x,y],[x,y],...] */
 (function () {
-  const eDirs = [[1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1]];
+  const eDirs: ReadonlyArray<readonly [number, number]> = [[1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1]];
   /* base positions */
-  const bPos = {};
-  baseKeys.forEach(function (bk) {
+  const bPos: Record<string, { ux: number; uy: number }> = {};
+  baseKeys.forEach((bk) => {
     bPos[bk[0] + ',' + bk[1]] = { ux: bk[0] * dxH + bk[1] * dxH * 0.5, uy: -bk[1] * dyH };
   });
   /* find boundary edges */
-  const bEdges = {};
-  baseKeys.forEach(function (bk) {
+  const bEdges: Record<string, boolean> = {};
+  baseKeys.forEach((bk) => {
     const bq = bk[0], br = bk[1];
     for (let d = 0; d < 6; d++) {
       if (!kbBaseSet.has((bq + eDirs[d][0]) + ',' + (br + eDirs[d][1])))
         bEdges[bq + ',' + br + ',' + d] = true;
     }
   });
-  function nextBEdge(q, r, d) {
+  function nextBEdge(q: number, r: number, d: number): [number, number, number] | null {
     let nd = (d + 5) % 6;
     for (let s = 0; s < 12; s++) {
       if (bEdges[q + ',' + r + ',' + nd]) return [q, r, nd];
@@ -100,12 +100,12 @@ const kbOutlinePaths = []; /* array of closed polyline arrays [[x,y],[x,y],...] 
     return null;
   }
   /* trace chains */
-  const bUsed = {};
+  const bUsed: Record<string, boolean> = {};
   for (const ek in bEdges) {
     if (bUsed[ek]) continue;
     const ep = ek.split(','); let cq = +ep[0], cr = +ep[1], cd = +ep[2];
     const sq = cq, sr = cr, sd = cd;
-    const chain = [];
+    const chain: [number, number, number][] = [];
     do {
       chain.push([cq, cr, cd]);
       bUsed[cq + ',' + cr + ',' + cd] = true;
@@ -114,7 +114,7 @@ const kbOutlinePaths = []; /* array of closed polyline arrays [[x,y],[x,y],...] 
       cq = nx[0]; cr = nx[1]; cd = nx[2];
     } while (cq !== sq || cr !== sr || cd !== sd);
     if (chain.length < 3) continue;
-    const poly = [];
+    const poly: Point[] = [];
     for (let ci = 0; ci < chain.length; ci++) {
       const cur = chain[ci], nxt = chain[(ci + 1) % chain.length];
       const h1 = bPos[cur[0] + ',' + cur[1]], h2 = bPos[nxt[0] + ',' + nxt[1]];
@@ -128,13 +128,13 @@ const kbOutlinePaths = []; /* array of closed polyline arrays [[x,y],[x,y],...] 
 
 // ── hit-test ───────────────────────────────────────────────────────────────
 /** Map screen coordinates to a "q,r" lattice key, or null if too far from any. */
-export function hexAtPoint(mx, my) {
+export function hexAtPoint(mx: number, my: number): KeyId | null {
   /* transform to unrotated coords */
   const dx = mx - view.CW / 2, dy = my - (view.CH / 2 + view.kbOffY);
   const ux = dx * cosT - dy * sinT;
   const uy = dx * sinT + dy * cosT;
   /* find nearest hex by unrotated distance */
-  let best = null, bestD = Infinity;
+  let best: DrawnKey | null = null, bestD = Infinity;
   for (let i = 0; i < selection.drawnKeys.length; i++) {
     const k = selection.drawnKeys[i];
     const ddx = ux - k.ux, ddy = uy - k.uy, d2 = ddx * ddx + ddy * ddy;
@@ -145,13 +145,13 @@ export function hexAtPoint(mx, my) {
 }
 
 // ── drawing helpers ────────────────────────────────────────────────────────
-function drawHexPath(cx, cy, r) { ctx.beginPath(); for (let i = 0; i < 6; i++) { const a = Math.PI / 6 + i * Math.PI / 3; ctx.lineTo(cx + r * Math.cos(a), cy + r * Math.sin(a)); } ctx.closePath(); }
-function lightenHex(hex, amt) {
+function drawHexPath(cx: number, cy: number, r: number): void { ctx.beginPath(); for (let i = 0; i < 6; i++) { const a = Math.PI / 6 + i * Math.PI / 3; ctx.lineTo(cx + r * Math.cos(a), cy + r * Math.sin(a)); } ctx.closePath(); }
+function lightenHex(hex: string, amt: number): string {
   let r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
   r = Math.min(255, r + amt); g = Math.min(255, g + amt); b = Math.min(255, b + amt);
   return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
 }
-function drawNoteName(cx, cy, name, isW, isExt) {
+function drawNoteName(cx: number, cy: number, name: string, isW: boolean, isExt: boolean): void {
   if (name === '?') return;
   const p = parseNote(name); const v = accToVal(p.acc); const absV = Math.abs(v);
   ctx.fillStyle = isW ? (isExt ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.8)') : (isExt ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.9)');
@@ -218,16 +218,18 @@ function drawNoteName(cx, cy, name, isW, isExt) {
 }
 
 // ── offscreen layers: hexCanvas (fills) + textCanvas (labels) ──────────────
-let hexCanvas = null, textCanvas = null;
+let hexCanvas: HTMLCanvasElement | null = null, textCanvas: HTMLCanvasElement | null = null;
 let gridRefQ = 0, gridRefR = 0, gridPadX = 0, gridPadY = 0, gridW = 0, gridH = 0, gridDpr = 1;
 
+interface GridRange { qMin: number; qMax: number; rMin: number; rMax: number; }
+
 /* keyboard extent across all layouts for tight bounds when Extend is off */
-let kbQMin, kbQMax, kbRMin, kbRMax;
+let kbQMin: number, kbQMax: number, kbRMin: number, kbRMax: number;
 (function () {
   kbQMin = 1e9; kbQMax = -1e9; kbRMin = 1e9; kbRMax = -1e9;
-  [1, 2, 3].forEach(function (li) {
+  ([1, 2, 3] as const).forEach((li) => {
     const sh = layoutShifts[li];
-    baseKeys.forEach(function (k) {
+    baseKeys.forEach((k) => {
       const q = k[0] + sh[0], r = k[1] + sh[1];
       if (q < kbQMin) kbQMin = q; if (q > kbQMax) kbQMax = q;
       if (r < kbRMin) kbRMin = r; if (r > kbRMax) kbRMax = r;
@@ -236,10 +238,10 @@ let kbQMin, kbQMax, kbRMin, kbRMax;
   kbQMin -= 2; kbQMax += 2; kbRMin -= 2; kbRMax += 2;
 })();
 
-function sizeGridCanvases() {
+function sizeGridCanvases(): void {
   gridRefQ = 0; gridRefR = 0;
   let mxDx = 0, mxDy = 0;
-  [1, 2, 3].forEach(function (li) {
+  ([1, 2, 3] as const).forEach((li) => {
     const sh = layoutShifts[li];
     const dux = sh[0] * dxH + sh[1] * dxH * 0.5, duy = -sh[1] * dyH;
     mxDx = Math.max(mxDx, Math.abs(dux * cosT + duy * sinT));
@@ -251,11 +253,11 @@ function sizeGridCanvases() {
   gridDpr = window.devicePixelRatio || 1;
 }
 
-function gridRange(extended) {
-  const gCorners = [[-gridW / 2, -(gridH / 2 + view.kbOffY)], [gridW / 2, -(gridH / 2 + view.kbOffY)],
+function gridRange(extended: boolean): GridRange {
+  const gCorners: Point[] = [[-gridW / 2, -(gridH / 2 + view.kbOffY)], [gridW / 2, -(gridH / 2 + view.kbOffY)],
     [gridW / 2, gridH / 2 - view.kbOffY], [-gridW / 2, gridH / 2 - view.kbOffY]];
   let qLo = 1e9, qHi = -1e9, rLo = 1e9, rHi = -1e9;
-  gCorners.forEach(function (c) {
+  gCorners.forEach((c) => {
     const ux = c[0] * cosT - c[1] * sinT, uy = c[0] * sinT + c[1] * cosT;
     const rRel = -uy / dyH, qRel = (ux - rRel * dxH * 0.5) / dxH;
     if (qRel + gridRefQ < qLo) qLo = qRel + gridRefQ; if (qRel + gridRefQ > qHi) qHi = qRel + gridRefQ;
@@ -269,10 +271,10 @@ function gridRange(extended) {
   return { qMin: qLo, qMax: qHi, rMin: rLo, rMax: rHi };
 }
 
-function buildGridKeys(range) {
+function buildGridKeys(range: GridRange): DrawnKey[] {
   const gcx = gridW / 2, gcy = gridH / 2 + view.kbOffY;
-  const kbSet = new Set(); baseKeys.forEach(function (k) { kbSet.add(k[0] + ',' + k[1]); });
-  const gKeys = [];
+  const kbSet = new Set<string>(); baseKeys.forEach((k) => { kbSet.add(k[0] + ',' + k[1]); });
+  const gKeys: DrawnKey[] = [];
   for (let r = range.rMax; r >= range.rMin; r--) for (let q = range.qMin; q <= range.qMax; q++) {
     const isKb = kbSet.has(q + ',' + r);
     const ux = (q - gridRefQ) * dxH + (r - gridRefR) * dxH * 0.5, uy = -(r - gridRefR) * dyH;
@@ -283,25 +285,25 @@ function buildGridKeys(range) {
   return gKeys;
 }
 
-function buildHexLayer() {
+function buildHexLayer(): void {
   sizeGridCanvases();
-  const extended = document.getElementById('cbExtend').checked;
+  const extended = (document.getElementById('cbExtend') as HTMLInputElement).checked;
   const range = gridRange(extended);
   const gKeys = buildGridKeys(range);
   if (!hexCanvas) hexCanvas = document.createElement('canvas');
   hexCanvas.width = gridW * gridDpr; hexCanvas.height = gridH * gridDpr;
-  const gc = hexCanvas.getContext('2d');
+  const gc = hexCanvas.getContext('2d')!;
   gc.setTransform(gridDpr, 0, 0, gridDpr, 0, 0);
   gc.fillStyle = '#111'; gc.fillRect(0, 0, gridW, gridH);
   const gcx = gridW / 2, gcy = gridH / 2 + view.kbOffY;
   const savedCtx = ctx; ctx = gc;
   ctx.save(); ctx.translate(gcx, gcy); ctx.rotate(-tiltAngle);
-  ctx.fillStyle = '#111'; gKeys.forEach(function (k) { if (k.isKb) { drawHexPath(k.ux, k.uy, hexR + 0.5); ctx.fill(); } });
-  gKeys.forEach(function (k) {
+  ctx.fillStyle = '#111'; gKeys.forEach((k) => { if (k.isKb) { drawHexPath(k.ux, k.uy, hexR + 0.5); ctx.fill(); } });
+  gKeys.forEach((k) => {
     const midi = 57 + 4 * k.q + 7 * k.r; const pc = ((midi % 12) + 12) % 12; const isW = whiteSet.has(pc);
     const mh = computeHue(k.q, k.r);
     const inB = tuning.septimalEnabled && ((Math.floor((k.r - tuning.septimalShift) / tuning.septimalW) & 1) !== 0);
-    const col = inB ? (isW ? hueC[mh].sl : hueC[mh].sd) : (isW ? hueC[mh].l : hueC[mh].d);
+    const col = inB ? (isW ? hueC[mh].sl! : hueC[mh].sd!) : (isW ? hueC[mh].l : hueC[mh].d);
     drawHexPath(k.ux, k.uy, hexR - 0.5); ctx.fillStyle = col; ctx.fill();
   });
   ctx.restore();
@@ -309,20 +311,20 @@ function buildHexLayer() {
   view.hexDirty = false;
 }
 
-function buildTextLayer() {
+function buildTextLayer(): void {
   sizeGridCanvases();
-  const extended = document.getElementById('cbExtend').checked;
+  const extended = (document.getElementById('cbExtend') as HTMLInputElement).checked;
   const range = gridRange(extended);
   const gKeys = buildGridKeys(range);
   if (!textCanvas) textCanvas = document.createElement('canvas');
   textCanvas.width = gridW * gridDpr; textCanvas.height = gridH * gridDpr;
-  const gc = textCanvas.getContext('2d');
+  const gc = textCanvas.getContext('2d')!;
   gc.setTransform(gridDpr, 0, 0, gridDpr, 0, 0);
   /* transparent background — composites over hex layer */
   gc.clearRect(0, 0, gridW, gridH);
-  if (document.getElementById('cbNotes').checked) {
+  if ((document.getElementById('cbNotes') as HTMLInputElement).checked) {
     const savedCtx = ctx; ctx = gc;
-    gKeys.forEach(function (k) {
+    gKeys.forEach((k) => {
       const midi = 57 + 4 * k.q + 7 * k.r; const pc = ((midi % 12) + 12) % 12; const isW = whiteSet.has(pc);
       drawNoteName(k.sx, k.sy, noteName(k.q, k.r), isW, false);
     });
@@ -332,15 +334,15 @@ function buildTextLayer() {
 }
 
 // ── main draw ──────────────────────────────────────────────────────────────
-export function draw() {
+export function draw(): void {
   const dpr = window.devicePixelRatio || 1;
   cv.width = view.CW * dpr; cv.height = view.CH * dpr;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = '#111'; ctx.fillRect(0, 0, view.CW, view.CH);
   const cyC = view.CH / 2 + view.kbOffY;
-  const showN = document.getElementById('cbNotes').checked;
-  const showB = document.getElementById('cbBands').checked;
-  const showE = document.getElementById('cbExtend').checked;
+  const showN = (document.getElementById('cbNotes') as HTMLInputElement).checked;
+  const showB = (document.getElementById('cbBands') as HTMLInputElement).checked;
+  const showE = (document.getElementById('cbExtend') as HTMLInputElement).checked;
 
   /* rebuild layers if needed (not during animation) */
   if (!animation.isAnimating) {
@@ -362,9 +364,9 @@ export function draw() {
   /* build allKeys for seams + click detection (arithmetic only, no rendering) */
   const kbShQ = animation.isAnimating ? Math.round(view.viewQ) : layoutShifts[tuning.curLayout][0];
   const kbShR = animation.isAnimating ? Math.round(view.viewR) : layoutShifts[tuning.curLayout][1];
-  const kbSet = new Set(); baseKeys.forEach(function (k) { kbSet.add((k[0] + kbShQ) + ',' + (k[1] + kbShR)); });
+  const kbSet = new Set<string>(); baseKeys.forEach((k) => { kbSet.add((k[0] + kbShQ) + ',' + (k[1] + kbShR)); });
   const vis = getVisibleRange(view.viewQ, view.viewR);
-  const allKeys = [];
+  const allKeys: DrawnKey[] = [];
   for (let r = vis.rMax; r >= vis.rMin; r--) for (let q = vis.qMin; q <= vis.qMax; q++) {
     const isKb = kbSet.has(q + ',' + r);
     const ux = (q - view.viewQ) * dxH + (r - view.viewR) * dxH * 0.5;
@@ -375,13 +377,14 @@ export function draw() {
     allKeys.push({ q: q, r: r, ux: ux, uy: uy, sx: sx, sy: sy, isKb: isKb });
   }
   selection.drawnKeys = allKeys;
-  const posMap = {}; allKeys.forEach(function (k) { posMap[k.q + ',' + k.r] = k; });
-  kbSet.forEach(function (key) {
+  const posMap: Record<KeyId, DrawnKey> = {};
+  allKeys.forEach((k) => { posMap[k.q + ',' + k.r] = k; });
+  kbSet.forEach((key) => {
     if (!posMap[key]) {
       const p = key.split(','), q = +p[0], r = +p[1];
       const ux = (q - view.viewQ) * dxH + (r - view.viewR) * dxH * 0.5, uy = -(r - view.viewR) * dyH;
       const sx = ux * cosT + uy * sinT + view.CW / 2, sy = -ux * sinT + uy * cosT + cyC;
-      const k = { q: q, r: r, ux: ux, uy: uy, sx: sx, sy: sy, isKb: true };
+      const k: DrawnKey = { q: q, r: r, ux: ux, uy: uy, sx: sx, sy: sy, isKb: true };
       allKeys.push(k); posMap[key] = k;
     }
   });
@@ -399,31 +402,31 @@ export function draw() {
       const hmidi = 57 + 4 * hk.q + 7 * hk.r; const hpc = ((hmidi % 12) + 12) % 12; const hW = whiteSet.has(hpc);
       const hmh = computeHue(hk.q, hk.r);
       const hInB = tuning.septimalEnabled && ((Math.floor((hk.r - tuning.septimalShift) / tuning.septimalW) & 1) !== 0);
-      const hCol = hInB ? (hW ? hueC[hmh].sl : hueC[hmh].sd) : (hW ? hueC[hmh].l : hueC[hmh].d);
+      const hCol = hInB ? (hW ? hueC[hmh].sl! : hueC[hmh].sd!) : (hW ? hueC[hmh].l : hueC[hmh].d);
       drawHexPath(hk.ux, hk.uy, hexR - 0.5); ctx.fillStyle = lightenHex(hCol, 30); ctx.fill();
     }
   }
 
   /* selection: brightened hex fills */
   const flashNow = performance.now();
-  const flashingSet = new Set();
+  const flashingSet = new Set<KeyId>();
   for (const fk in audio.rearticulateFlashUntil) {
     if (audio.rearticulateFlashUntil[fk] > flashNow) flashingSet.add(fk);
     else delete audio.rearticulateFlashUntil[fk];
   }
-  selection.selectedKeys.forEach(function (key) {
+  selection.selectedKeys.forEach((key) => {
     if (flashingSet.has(key)) return;
     const k = posMap[key]; if (!k) return;
     const midi = 57 + 4 * k.q + 7 * k.r; const pc = ((midi % 12) + 12) % 12; const isW = whiteSet.has(pc);
     const mh = computeHue(k.q, k.r);
     const inB = tuning.septimalEnabled && ((Math.floor((k.r - tuning.septimalShift) / tuning.septimalW) & 1) !== 0);
-    let col = inB ? (isW ? hueC[mh].sl : hueC[mh].sd) : (isW ? hueC[mh].l : hueC[mh].d);
+    let col = inB ? (isW ? hueC[mh].sl! : hueC[mh].sd!) : (isW ? hueC[mh].l : hueC[mh].d);
     col = lightenHex(col, 90);
     drawHexPath(k.ux, k.uy, hexR - 0.5); ctx.fillStyle = col; ctx.fill();
   });
 
   /* selection rings */
-  selection.selectedKeys.forEach(function (key) {
+  selection.selectedKeys.forEach((key) => {
     if (flashingSet.has(key)) return;
     const k = posMap[key]; if (!k) return;
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5;
@@ -433,13 +436,14 @@ export function draw() {
   /* lattice seams — skip in Equal mode (no seams) */
   if (showB && !tuning.equalEnabled) {
     const eHL = hexR * 0.55; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.lineCap = 'butt';
-    const drawnSeams = new Set(); const allSet = new Set(allKeys.map(function (k) { return k.q + ',' + k.r; }));
-    const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1], [-1, 1], [1, -1]];
+    const drawnSeams = new Set<string>();
+    const allSet = new Set<string>(allKeys.map((k) => k.q + ',' + k.r));
+    const dirs: ReadonlyArray<readonly [number, number]> = [[1, 0], [-1, 0], [0, 1], [0, -1], [-1, 1], [1, -1]];
     const animT = animation.progress;
     const seamBlend = animT < 0 ? 1 : Math.pow(Math.abs(2 * animT - 1), 6);
     const olOX = (kbShQ - view.viewQ) * dxH + (kbShR - view.viewR) * dxH * 0.5;
     const olOY = -(kbShR - view.viewR) * dyH;
-    function snapVtx(px, py) {
+    function snapVtx(px: number, py: number): { d: number; x: number; y: number } | null {
       let bd = Infinity, bpx = 0, bpy = 0;
       for (let pi = 0; pi < kbOutlinePaths.length; pi++) {
         const poly = kbOutlinePaths[pi];
@@ -451,9 +455,9 @@ export function draw() {
       }
       return bd < 36 ? { d: Math.sqrt(bd), x: bpx, y: bpy } : null;
     }
-    const seamSegs = [];
-    allKeys.forEach(function (k) {
-      dirs.forEach(function (d) {
+    const seamSegs: [number, number, number, number][] = [];
+    allKeys.forEach((k) => {
+      dirs.forEach((d) => {
         const nq = k.q + d[0], nr = k.r + d[1], nk = nq + ',' + nr;
         if (!allSet.has(nk)) return;
         const sameBand = bandOf(k.q) === bandOf(nq);
@@ -478,7 +482,7 @@ export function draw() {
     });
     if (seamSegs.length) {
       ctx.beginPath();
-      seamSegs.forEach(function (s) { ctx.moveTo(s[0], s[1]); ctx.lineTo(s[2], s[3]); });
+      seamSegs.forEach((s) => { ctx.moveTo(s[0], s[1]); ctx.lineTo(s[2], s[3]); });
       ctx.stroke();
     }
   }
@@ -487,7 +491,7 @@ export function draw() {
 
   /* re-render text for selected keys on top of selection fills */
   if (showN && selection.selectedKeys.size > 0) {
-    selection.selectedKeys.forEach(function (key) {
+    selection.selectedKeys.forEach((key) => {
       if (flashingSet.has(key)) return;
       const k = posMap[key]; if (!k) return;
       const midi = 57 + 4 * k.q + 7 * k.r; const pc = ((midi % 12) + 12) % 12; const isW = whiteSet.has(pc);
@@ -512,7 +516,7 @@ export function draw() {
   const diag = Math.ceil(Math.sqrt(view.CW * view.CW + view.CH * view.CH));
   ctx.beginPath();
   ctx.rect(-diag, -diag, diag * 2, diag * 2);
-  kbOutlinePaths.forEach(function (poly) {
+  kbOutlinePaths.forEach((poly) => {
     for (let i = 0; i < poly.length; i++) {
       if (i === 0) ctx.moveTo(poly[i][0], poly[i][1]);
       else ctx.lineTo(poly[i][0], poly[i][1]);
@@ -524,7 +528,7 @@ export function draw() {
 
   ctx.strokeStyle = '#fff'; ctx.lineWidth = 3.5; ctx.lineCap = 'butt'; ctx.lineJoin = 'round';
   ctx.beginPath();
-  kbOutlinePaths.forEach(function (poly) {
+  kbOutlinePaths.forEach((poly) => {
     for (let i = 0; i < poly.length; i++) {
       if (i === 0) ctx.moveTo(poly[i][0], poly[i][1]);
       else ctx.lineTo(poly[i][0], poly[i][1]);

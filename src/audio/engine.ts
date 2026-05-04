@@ -14,19 +14,7 @@
 import { audio } from '../state/audio.js';
 import { selection } from '../state/selection.js';
 import { keyFreq } from '../tuning/frequency.js';
-import { SampleEngine as RawSampleEngine } from './samples.js';
-
-/* SampleEngine is a verbatim v0.9 IIFE module without granular types. The
-   INSTRUMENTS map keys (piano/violin/cello/etc.) come from runtime config,
-   not a static union, so we widen the index type for cross-module use. */
-interface InstrumentDef {
-  name: string;
-  decays?: boolean;
-  samples: { name: string; freq: number }[];
-}
-const SampleEngine = RawSampleEngine as typeof RawSampleEngine & {
-  INSTRUMENTS: Record<string, InstrumentDef>;
-};
+import { SampleEngine } from './samples.js';
 import {
   AFTERTOUCH_RAMP_S,
   aftertouchTargetGain, aftertouchHandoverDuration,

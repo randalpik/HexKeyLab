@@ -1,4 +1,3 @@
-// @ts-nocheck
 // Sample engine: instrument library + voice lifecycle.
 // IIFE is preserved verbatim from v0.9 — do not refactor internals without
 // reading docs/lessons.md (sample-loop invariants: never source.loop=true,
@@ -7,7 +6,7 @@
 
 export const SampleEngine = (function () {
   var RELEASE_SCALE = 0.5; /* global multiplier on per-instrument release times */
-  var INSTRUMENTS={
+  var INSTRUMENTS: Record<string, any> = {
     piano:{
       name:'Grand Piano (Salamander)',
       baseUrl:'https://tonejs.github.io/audio/salamander/',
@@ -256,8 +255,8 @@ export const SampleEngine = (function () {
       ]
     }
   };
-  var ctx=null,master=null,sampleMaster=null,buffers={},activeVoices={},currentInstrument=null;
-  function init(audioCtx,destNode){
+  var ctx: any = null, master: any = null, sampleMaster: any = null, buffers: Record<string, any> = {}, activeVoices: Record<string, any> = {}, currentInstrument: any = null;
+  function init(audioCtx: AudioContext, destNode: AudioNode): void {
     ctx=audioCtx;
     /* samples get their own master gain, independent of oscillator oscGain/squareGain */
     sampleMaster=ctx.createGain();
@@ -273,7 +272,7 @@ export const SampleEngine = (function () {
      blends into natural chorus, which is perceptually fine for organ-like
      tones. See analyzer's prepareLoopMacroPeriod for the full derivation.
      Must stay in sync with analyzer. */
-  function fftInPlace(re,im,twiddle){
+  function fftInPlace(re: any, im: any, twiddle: any): void {
     var N=re.length;
     for(var i=0,j=0;i<N;i++){
       if(i<j){var t=re[i];re[i]=re[j];re[j]=t;t=im[i];im[i]=im[j];im[j]=t;}
@@ -293,12 +292,12 @@ export const SampleEngine = (function () {
       }
     }
   }
-  function makeTwiddle(N){
+  function makeTwiddle(N: number): Float64Array {
     var t=new Float64Array(N*2);
     for(var k=0;k<N;k++){t[2*k]=Math.cos(-2*Math.PI*k/N);t[2*k+1]=Math.sin(-2*Math.PI*k/N);}
     return t;
   }
-  function prepareLoopMacroPeriod(buf,freq,opts){
+  function prepareLoopMacroPeriod(buf: any, freq: any, opts: any): any {
     opts=opts||{};
     var rmsGate=opts.rmsGate||0.05;
     var specGate=opts.specGate||1.0;
@@ -339,7 +338,7 @@ export const SampleEngine = (function () {
     for(var i=0;i<xfWin;i++)hann[i]=0.5-0.5*Math.cos(2*Math.PI*i/(xfWin-1));
     var reBuf=new Float64Array(fftN),imBuf=new Float64Array(fftN);
     var nBins=(fftN>>1)+1;
-    function logMagSpec(start){
+    function logMagSpec(start: number): Float64Array {
       for(var i=0;i<fftN;i++){reBuf[i]=0;imBuf[i]=0;}
       for(var i=0;i<xfWin;i++)reBuf[i]=d[start+i]*hann[i];
       fftInPlace(reBuf,imBuf,twiddle);
@@ -350,11 +349,11 @@ export const SampleEngine = (function () {
       }
       return logMag;
     }
-    function rmsOf(start){
+    function rmsOf(start: number): number {
       var sum=0;for(var i=0;i<xfWin;i++)sum+=d[start+i]*d[start+i];
       return Math.sqrt(sum/xfWin);
     }
-    function findAnchorNear(probe){
+    function findAnchorNear(probe: number): number {
       for(var s=Math.max(probe,1);s<steadyEnd&&s<probe+period*5;s++){
         if(d[s]>0&&d[s-1]<=0){
           var frac=(d[s]===d[s-1])?0:-d[s-1]/(d[s]-d[s-1]);
@@ -363,7 +362,7 @@ export const SampleEngine = (function () {
       }
       return -1;
     }
-    var anchorCands=[];
+    var anchorCands: number[] = [];
     for(var ai=0;ai<3;ai++){
       var t=(ai+1)/4;
       var probe=Math.round(steadyStart+t*(steadyEnd-steadyStart));
@@ -372,14 +371,14 @@ export const SampleEngine = (function () {
     }
     if(anchorCands.length===0)return{trimStart:trimStart/sr,loopPts:null,stats:{failReason:'no anchor'}};
     var minN=Math.max(1,Math.ceil(minDistSec*sr/period));
-    var bestAnchorData=null;
+    var bestAnchorData: any = null;
     for(var ai=0;ai<anchorCands.length;ai++){
       var anchor=anchorCands[ai];
       var NMax=Math.floor((steadyEnd-Math.floor(anchor)-xfWin)/period);
       if(NMax<minN)continue;
       var refRms=rmsOf(Math.floor(anchor));
       var refSpec=logMagSpec(Math.floor(anchor));
-      var qualifying=[];
+      var qualifying: any[] = [];
       var minScore=Infinity;
       for(var N=minN;N<=NMax;N++){
         var shift=Math.floor(anchor+N*period);
@@ -405,7 +404,7 @@ export const SampleEngine = (function () {
     if(bestAnchorData===null||bestAnchorData.qualifying.length===0){
       return{trimStart:trimStart/sr,loopPts:null,stats:{failReason:'no qualifying Ns'}};
     }
-    var qualifying=bestAnchorData.qualifying;
+    qualifying = bestAnchorData.qualifying;
     qualifying.sort(function(a,b){return a.score-b.score;});
     var minSpacingN=minN;
     var picked=[];
@@ -420,12 +419,12 @@ export const SampleEngine = (function () {
       picked.push(c);
     }
     if(picked.length<2)return{trimStart:trimStart/sr,loopPts:null,stats:{failReason:'only '+picked.length+' pick(s)'}};
-    picked.sort(function(a,b){return a.N-b.N;});
-    var anchor=bestAnchorData.anchor;
+    picked.sort(function(a: any, b: any){return a.N-b.N;});
+    anchor=bestAnchorData.anchor;
     var loopPts=[anchor/sr];
-    var slopes=[];
+    var slopes: number[] = [];
     var slopeWinS=Math.min(Math.round(period*0.5),32);
-    function computeSlope(pos){
+    function computeSlope(pos: number): number {
       var p=Math.round(pos);
       if(p-slopeWinS<0||p+slopeWinS>=len)return 0;
       return (d[p+slopeWinS]-d[p-slopeWinS])/(2*slopeWinS);
@@ -438,7 +437,7 @@ export const SampleEngine = (function () {
        is <1 period, ~1% of the 60ms measurement window. */
     var halfT=Math.max(1,Math.round(period/2));
     var anchorSlope=computeSlope(anchor);
-    function snapZcMatchingSlope(pos){
+    function snapZcMatchingSlope(pos: number): number {
       var pCenter=Math.round(pos);
       var bestPos=pos,bestDiff=Infinity;
       for(var s=Math.max(1,pCenter-halfT);s<=Math.min(len-2,pCenter+halfT);s++){
@@ -460,7 +459,7 @@ export const SampleEngine = (function () {
       slopes.push(computeSlope(snappedPos));
     }
     var finalPts=loopPts.map(function(t){var s=Math.floor(t*sr)+1;if(s>=len)s=len-1;return s/sr;});
-    var seen={},dedup=[];
+    var seen: Record<number, number> = {}, dedup: number[] = [];
     for(var i=0;i<finalPts.length;i++){
       var key=Math.round(finalPts[i]*sr);
       if(seen[key])continue;
@@ -482,7 +481,7 @@ export const SampleEngine = (function () {
      waveform-correlated +going ZC. Avoids the ZC-count-per-period failure mode
      of the legacy path on complex overtones. Must stay in sync with the
      analyzer's prepareLoopFreqGuided. */
-  function prepareLoopFreqGuided(buf,freq,opts){
+  function prepareLoopFreqGuided(buf: any, freq: any, opts: any): any {
     opts=opts||{};
     var loopWindowSec=opts.loopWindowSec||0.20;
     var targetCount=opts.targetCount||10;
@@ -531,13 +530,13 @@ export const SampleEngine = (function () {
     var kMin=Math.ceil((winLo-anchor)/period);
     var kMax=Math.floor((winHi-anchor)/period);
     if(kMax-kMin<1)return{trimStart:trimStart/sr,loopPts:null,stats:{failReason:'loop window too narrow'}};
-    var targetKs=[],kStep=Math.max(1,Math.round((kMax-kMin)/(targetCount-1)));
+    var targetKs: number[] = [],kStep=Math.max(1,Math.round((kMax-kMin)/(targetCount-1)));
     for(var k=kMin;k<=kMax;k+=kStep)targetKs.push(k);
     if(targetKs[targetKs.length-1]!==kMax)targetKs.push(kMax);
     /* For each target, find best-correlated +ZC in ±T/2 window */
     var corrWin=Math.round(period*2);
     var anchorI=Math.floor(anchor);
-    function corrAt(candSamp){
+    function corrAt(candSamp: number): number {
       var c=Math.floor(candSamp);
       if(c-corrWin<0||c+corrWin>=len||anchorI-corrWin<0||anchorI+corrWin>=len)return 0;
       var num=0,da=0,db=0;
@@ -549,9 +548,9 @@ export const SampleEngine = (function () {
       return denom>0?num/denom:0;
     }
     var searchRadius=period/2;
-    var loopPts=[],slopes=[];
+    var loopPts: number[] = [], slopes: number[] = [];
     var slopeWin=Math.min(Math.round(period*0.5),32);
-    function computeSlope(pos){
+    function computeSlope(pos: number): number {
       var p=Math.round(pos);
       if(p-slopeWin<0||p+slopeWin>=len)return 0;
       return (d[p+slopeWin]-d[p-slopeWin])/(2*slopeWin);
@@ -561,7 +560,7 @@ export const SampleEngine = (function () {
       var expectedSamp=anchor+kv*period;
       var lo=Math.floor(expectedSamp-searchRadius),hi=Math.ceil(expectedSamp+searchRadius);
       if(lo<=0||hi>=len)continue;
-      var best=null;
+      var best: { pos: number; score: number } | null = null;
       for(var s=lo+1;s<=hi;s++){
         if(d[s]>0&&d[s-1]<=0){
           var frac=(d[s]===d[s-1])?0:-d[s-1]/(d[s]-d[s-1]);
@@ -583,7 +582,7 @@ export const SampleEngine = (function () {
     var slopeVar=slopeSumSq/slopes.length-slopeMean*slopeMean;
     var slopeCV=Math.sqrt(Math.max(0,slopeVar))/(Math.abs(slopeMean)+0.0001);
     var finalPts=loopPts.map(function(t){var s=Math.floor(t*sr)+1;if(s>=len)s=len-1;return s/sr;});
-    var seen={},dedup=[];
+    var seen: Record<number, number> = {}, dedup: number[] = [];
     for(var i=0;i<finalPts.length;i++){
       var key=Math.round(finalPts[i]*sr);
       if(seen[key])continue;
@@ -593,12 +592,12 @@ export const SampleEngine = (function () {
     return{trimStart:trimStart/sr,loopPts:dedup,slopeCV:slopeCV,
       stats:{method:'freq-guided',kept:dedup.length,slopeCV:slopeCV.toFixed(3)}};
   }
-  function prepareLoop(buf,freq,loopRange){
+  function prepareLoop(buf: any, freq: any, loopRange?: any): any {
     /* primary path: macro-period (handles complex harmonic beating) */
-    var mp=prepareLoopMacroPeriod(buf,freq);
+    var mp=prepareLoopMacroPeriod(buf,freq,{});
     if(mp.loopPts&&mp.loopPts.length>=2)return mp;
     /* fallback 1: frequency-guided (simple periodic case) */
-    var fg=prepareLoopFreqGuided(buf,freq);
+    var fg=prepareLoopFreqGuided(buf,freq,{});
     if(fg.loopPts&&fg.loopPts.length>=2)return fg;
     /* fallback 2: legacy ZC-count heuristic */
     var sr=buf.sampleRate,len=buf.length,d=buf.getChannelData(0);
@@ -614,7 +613,7 @@ export const SampleEngine = (function () {
       stats:{failReason:'sustain too short: '+(susEnd-susStart)+' samples < '+(period*6)}};
     /* find positive zero-crossings with sub-sample interpolation.
        Enforce one crossing per ~fundamental period to avoid flat-spot false positives. */
-    var cx=[];
+    var cx: number[] = [];
     var minCxSamples=Math.round(period*0.8); /* minimum sample-spacing between crossings */
     for(var s=susStart+1;s<susEnd;s++){
       if(d[s]>0&&d[s-1]<=0){
@@ -628,7 +627,7 @@ export const SampleEngine = (function () {
     /* per-crossing features: RMS (50ms window) + slope (half-period) */
     var winR=Math.min(Math.round(sr*0.05),period*5);
     var slopeWin=Math.min(Math.round(period*0.5),32);
-    var rms=[],slope=[];
+    var rms: number[] = [], slope: number[] = [];
     for(var i=0;i<cx.length;i++){
       var ci=Math.floor(cx[i]);
       var sum=0;for(var s=ci;s<ci+winR&&s<len;s++)sum+=d[s]*d[s];
@@ -642,7 +641,7 @@ export const SampleEngine = (function () {
        overly restrictive for lower-frequency samples. */
     var stableStart=0,stableEnd=cx.length;
     /* stats over full sustain */
-    var regionRms=[],regionSlope=[];
+    var regionRms: number[] = [], regionSlope: number[] = [];
     for(var i=stableStart;i<stableEnd;i++){regionRms.push(rms[i]);regionSlope.push(slope[i]);}
     regionRms.sort(function(a,b){return a-b;});
     regionSlope.sort(function(a,b){return a-b;});
@@ -668,7 +667,7 @@ export const SampleEngine = (function () {
     /* RMS + slope filter with progressive relaxation.
        Different MP3 decoders can shift sample values enough that tight tolerances fail.
        Start strict, relax progressively until we have at least 4 candidates. */
-    var candidates=[];
+    var candidates: number[] = [];
     var rmsFactor=0.12,slopeFactor=0.15;
     for(var relaxIter=0;relaxIter<4;relaxIter++){
       candidates=[];
@@ -685,7 +684,7 @@ export const SampleEngine = (function () {
       stats:{crossings:cx.length,candidates:candidates.length,correlated:0,corrThresh:'-',slopeCV:slopeCV.toFixed(3),failReason:'candidates<2 (med_rms='+medRms.toFixed(4)+',tol='+rmsTol.toFixed(4)+')'}};
     /* waveform correlation filter */
     var corrWin=Math.min(period*2,256);
-    function corr(aIdx,bIdx){
+    function corr(aIdx: number, bIdx: number): number {
       var ac=Math.floor(cx[aIdx]),bc=Math.floor(cx[bIdx]);
       if(ac-corrWin<0||ac+corrWin>=len||bc-corrWin<0||bc+corrWin>=len)return 0;
       var num=0,da=0,db=0;
@@ -707,7 +706,7 @@ export const SampleEngine = (function () {
       }
     }
     var corrThresh=0.95;
-    var correlated=[];
+    var correlated: number[] = [];
     for(var i=0;i<candidates.length;i++){
       if(candidates[i]===refIdx){correlated.push(candidates[i]);continue;}
       if(corr(refIdx,candidates[i])>=corrThresh)correlated.push(candidates[i]);
@@ -726,7 +725,7 @@ export const SampleEngine = (function () {
        how candidates are distributed. 150ms ≈ one vibrato period at 6Hz. */
     var minPointGapSec=0.15;
     var minPointGapSamples=Math.round(sr*minPointGapSec);
-    var good=[];
+    var good: number[] = [];
     for(var i=0;i<correlated.length;i++){
       var ci=correlated[i];
       if(good.length===0||cx[ci]-cx[good[good.length-1]]>=minPointGapSamples){
@@ -773,7 +772,7 @@ export const SampleEngine = (function () {
     var sortedVals=snappedVals.slice().sort(function(a,b){return Math.abs(a)-Math.abs(b);});
     var medAbsVal=Math.abs(sortedVals[Math.floor(sortedVals.length/2)]);
     var valTol=Math.max(medAbsVal*2,0.003); /* 2x median or floor of 0.003 */
-    var finalPts=[],finalIdxs=[];
+    var finalPts: number[] = [], finalIdxs: number[] = [];
     for(var i=0;i<pts.length;i++){
       if(Math.abs(snappedVals[i])<=valTol){finalPts.push(pts[i]);finalIdxs.push(good[i]);}
     }
@@ -781,21 +780,21 @@ export const SampleEngine = (function () {
     return{trimStart:trimStart/sr,loopPts:finalPts,slopeCV:slopeCV,
       stats:{crossings:cx.length,candidates:candidates.length,correlated:correlated.length,corrThresh:corrThresh,slopeCV:slopeCV.toFixed(3),snapped:finalPts.length,preSnap:good.length}};
   }
-  function loadInstrument(key,onProgress){
-    return new Promise(function(resolve,reject){
+  function loadInstrument(key: string, onProgress?: (loaded: number, total: number, name: string) => void): Promise<void> {
+    return new Promise<void>(function(resolve,reject){
       var instr=INSTRUMENTS[key];
       if(!instr)return reject(new Error('Unknown instrument: '+key));
       if(buffers[key]){currentInstrument=key;return resolve();}
-      var loaded=0,total=instr.samples.length,result=[];
+      var loaded=0,total=instr.samples.length,result: any[] = [];
       var aborted=false;
       function logLoopReport(){
         console.log('=== Loop points for '+instr.name+' ===');
-        var tableRows=[];
+        var tableRows: any[] = [];
         for(var i=0;i<result.length;i++){
           var r=result[i];if(!r)continue;
           var pts=r.lp&&r.lp.loopPts;
           if(!pts||pts.length<2){
-            var failRow={sample:instr.samples[i].name,freq:r.freq,count:pts?pts.length:0,
+            var failRow: any = {sample:instr.samples[i].name,freq:r.freq,count:pts?pts.length:0,
               span_ms:'-',min_gap_ms:'-',max_gap_ms:'-',mean_gap_ms:'-'};
             if(r.lp&&r.lp.stats&&!r.lp.stats.precomputed){
               failRow.slopeCV=r.lp.stats.slopeCV||'-';
@@ -811,8 +810,8 @@ export const SampleEngine = (function () {
           for(var j=1;j<pts.length;j++)gaps.push((pts[j]-pts[j-1])*1000);
           var span=(pts[pts.length-1]-pts[0])*1000;
           var minG=Math.min.apply(null,gaps),maxG=Math.max.apply(null,gaps);
-          var meanG=gaps.reduce(function(a,b){return a+b;},0)/gaps.length;
-          var row={
+          var meanG=gaps.reduce(function(a: number, b: number){return a+b;},0)/gaps.length;
+          var row: any = {
             sample:instr.samples[i].name,freq:r.freq,
             count:pts.length,
             span_ms:Math.round(span),
@@ -832,7 +831,7 @@ export const SampleEngine = (function () {
         }
         console.table(tableRows);
       }
-      instr.samples.forEach(function(s,i){
+      instr.samples.forEach(function(s: any, i: number){
         if(aborted)return;
         var url=instr.baseUrl+s.name+instr.ext;
         var timer=setTimeout(function(){aborted=true;delete buffers[key];reject(new Error("Timeout loading "+s.name));},10000);
@@ -888,7 +887,7 @@ export const SampleEngine = (function () {
       });
     });
   }
-  function findNearest(freq){
+  function findNearest(freq: number): any {
     var samps=buffers[currentInstrument];if(!samps||samps.length===0)return null;
     var best=0,bestDist=Infinity;
     for(var i=0;i<samps.length;i++){var dist=Math.abs(Math.log2(freq/samps[i].freq));if(dist<bestDist){bestDist=dist;best=i;}}
@@ -898,7 +897,7 @@ export const SampleEngine = (function () {
      for a given frequency — 1.0 within range, reducing toward 0.5 as freq exceeds
      the highest sample. Used identically by sNoteOn and sNoteOnFaded so that
      transposing up and back down fully restores the original gain. */
-  function rangeAttenuation(freq){
+  function rangeAttenuation(freq: number): number {
     var samps=buffers[currentInstrument];
     if(!samps||samps.length===0)return 1.0;
     var highestFreq=samps[samps.length-1].freq;
@@ -907,7 +906,7 @@ export const SampleEngine = (function () {
     /* gentle taper: 1.0 → 1.0, 1.5 → 0.82, 2.0 → 0.64, ≥2.4 → 0.5 (clamped) */
     return Math.max(0.5,1.0-(overshoot-1.0)*0.36);
   }
-  function sNoteOn(voiceKey,freq,velocity){
+  function sNoteOn(voiceKey: string, freq: number, velocity: number): void {
     if(!ctx||!currentInstrument)return;
     if(activeVoices[voiceKey])sNoteOff(voiceKey);
     var nearest=findNearest(freq);if(!nearest)return;
@@ -999,7 +998,7 @@ export const SampleEngine = (function () {
       scheduleSegmentSwitch(voiceKey,firstPassMs);
     }
   }
-  function scheduleSegmentSwitch(voiceKey,initialDelayMs){
+  function scheduleSegmentSwitch(voiceKey: string, initialDelayMs?: number): void {
     var v=activeVoices[voiceKey];
     if(!v||!v.alive||!v.loopPts||v.loopPts.length<2)return;
     /* ── WRAP-ALIGNED SEGMENT SWITCHING (every wrap is a switch) ──
@@ -1163,7 +1162,7 @@ export const SampleEngine = (function () {
       scheduleSegmentSwitch(voiceKey);
     },timerDelayMs);
   }
-    function sNoteOff(voiceKey){
+    function sNoteOff(voiceKey: string): void {
     var v=activeVoices[voiceKey];if(!v)return;
     if(v.loopTimer){clearTimeout(v.loopTimer);v.loopTimer=null;}
     if(v.reAnchorTimer){clearTimeout(v.reAnchorTimer);v.reAnchorTimer=null;}
@@ -1187,13 +1186,13 @@ export const SampleEngine = (function () {
      wrap-during-ramp coverage gap.
      
      Returns true on success, false if voice state can't support a switch. */
-  function doImmediateSwitch(voiceKey,startTime){
+  function doImmediateSwitch(voiceKey: string, startTime?: number): boolean {
     var v=activeVoices[voiceKey];
     if(!v||!v.alive||!v.loopPts||v.loopPts.length<2)return false;
     var pts=v.loopPts;
     if(pts.length<2)return false;
     var now=ctx.currentTime;
-    if(startTime===undefined)startTime=now+0.008;
+    var st: number = startTime===undefined?now+0.008:startTime;
     /* Pick new pair from the graph. Same logic as scheduleSegmentSwitch's
        timer body, kept in sync. Backward jump uses current bCurIdx. */
     var a,b;
@@ -1231,24 +1230,24 @@ export const SampleEngine = (function () {
     newSrc.loopStart=pts[a];newSrc.loopEnd=pts[b];
     newSrc.playbackRate.value=v.source.playbackRate.value;
     var newSG=ctx.createGain();
-    newSG.gain.setValueAtTime(0,startTime);
-    newSG.gain.linearRampToValueAtTime(v.vol,startTime+xfDur);
+    newSG.gain.setValueAtTime(0,st);
+    newSG.gain.linearRampToValueAtTime(v.vol,st+xfDur);
     newSrc.connect(newSG);newSG.connect(v.voiceGain);
-    newSrc.start(startTime,pts[a]);
+    newSrc.start(st,pts[a]);
     var oldSource=v.source,oldSegGain=v.segGain;
     var curGain=oldSegGain.gain.value;
-    oldSegGain.gain.cancelScheduledValues(startTime);
-    oldSegGain.gain.setValueAtTime(curGain,startTime);
-    oldSegGain.gain.linearRampToValueAtTime(0,startTime+xfDur);
+    oldSegGain.gain.cancelScheduledValues(st);
+    oldSegGain.gain.setValueAtTime(curGain,st);
+    oldSegGain.gain.linearRampToValueAtTime(0,st+xfDur);
     oldSource.onended=function(){
       try{oldSource.disconnect();}catch(e){}
       try{oldSegGain.disconnect();}catch(e){}
     };
-    try{oldSource.stop(startTime+xfDur+0.02);}catch(e){}
+    try{oldSource.stop(st+xfDur+0.02);}catch(e){}
     /* Update voice state to reference the new source — anchor for future
-       wrap computation is (startTime, pts[a], newRate). */
+       wrap computation is (st, pts[a], newRate). */
     v.source=newSrc;v.segGain=newSG;
-    v.sourceStartTime=startTime;
+    v.sourceStartTime=st;
     v.sourceOffset=pts[a];
     v.sourceLoopA=pts[a];v.sourceLoopB=pts[b];
     v.sourceLoopAIdx=a;v.sourceLoopBIdx=b;
@@ -1274,7 +1273,7 @@ export const SampleEngine = (function () {
      playhead IS at the unfolded position; if it exceeds loopB, the
      wrap-during-ramp check downstream must handle it via doImmediateSwitch.
      Folding would desync the anchor from reality. */
-  function commitRampSync(v,now){
+  function commitRampSync(v: any, now: number): void {
     if(v.pendingRampStart===undefined)return;
     var rs=v.pendingRampStart,re=v.pendingRampEnd;
     var r0=v.pendingRampR0,r1=v.pendingRampR1;
@@ -1296,7 +1295,7 @@ export const SampleEngine = (function () {
     v.pendingRampR0=undefined;
     v.pendingRampR1=undefined;
   }
-  function sRampFreq(voiceKey,newFreq,durSec){
+  function sRampFreq(voiceKey: string, newFreq: number, durSec: number): boolean {
     var v=activeVoices[voiceKey];if(!v)return false;
     if(!v.alive){var pv=v.vol;delete activeVoices[voiceKey];sNoteOn(voiceKey,newFreq,Math.round(((pv-0.3)/0.7)*127));return true;}
     var now=ctx.currentTime;
@@ -1387,7 +1386,7 @@ export const SampleEngine = (function () {
     },durSec*1000+20);
     return true;
   }
-  function sSlideAndFadeOut(voiceKey,targetFreq,dur){
+  function sSlideAndFadeOut(voiceKey: string, targetFreq: number, dur: number): number {
     var v=activeVoices[voiceKey];if(!v)return 0.7;
     /* Return baseVol (pre-attenuation) so the caller can pass it to sNoteOnFaded,
        which will reapply attenuation based on the NEW frequency. Falls back to v.vol
@@ -1406,7 +1405,7 @@ export const SampleEngine = (function () {
     }
     delete activeVoices[voiceKey];return savedVol;
   }
-  function sNoteOnFaded(voiceKey,freq,vol,dur){
+  function sNoteOnFaded(voiceKey: string, freq: number, vol: number, dur: number): void {
     if(!ctx||!currentInstrument)return;
     if(activeVoices[voiceKey])sHardStop(voiceKey);
     var nearest=findNearest(freq);if(!nearest)return;
@@ -1465,16 +1464,16 @@ export const SampleEngine = (function () {
       scheduleSegmentSwitch(voiceKey,firstPassMs);
     }
   }
-  function sHardStop(voiceKey){
+  function sHardStop(voiceKey: string): void {
     var v=activeVoices[voiceKey];if(!v)return;
     if(v.loopTimer){clearTimeout(v.loopTimer);v.loopTimer=null;}
     if(v.reAnchorTimer){clearTimeout(v.reAnchorTimer);v.reAnchorTimer=null;}
     if(v.alive){v.voiceGain.gain.cancelScheduledValues(ctx.currentTime);v.voiceGain.gain.setValueAtTime(0,ctx.currentTime);try{v.source.stop(ctx.currentTime);}catch(e){}}
     delete activeVoices[voiceKey];
   }
-  function sHardStopAll(){for(var k in activeVoices)sHardStop(k);}
-  function sStopAll(){for(var k in activeVoices)sNoteOff(k);}
-  function sSetAftertouch(voiceKey,targetGain,rampSec){
+  function sHardStopAll(): void {for(var k in activeVoices)sHardStop(k);}
+  function sStopAll(): void {for(var k in activeVoices)sNoteOff(k);}
+  function sSetAftertouch(voiceKey: string, targetGain: number, rampSec: number): void {
     var v=activeVoices[voiceKey];if(!v||!v.alive||!v.pressureGain)return;
     var now=ctx.currentTime;
     v.pressureGain.gain.cancelScheduledValues(now);
@@ -1487,8 +1486,8 @@ export const SampleEngine = (function () {
     hardStop:sHardStop,hardStopAll:sHardStopAll,stopAll:sStopAll,
     setAftertouch:sSetAftertouch,
     getActiveVoices:function(){return activeVoices;},
-    isLoaded:function(){return currentInstrument&&buffers[currentInstrument];},
-    setInstrument:function(k){if(buffers[k])currentInstrument=k;},
-    isInstrumentLoaded:function(k){return !!buffers[k];},
-    unloadInstrument:function(k){delete buffers[k];}};
+    isLoaded:function(){return !!(currentInstrument&&buffers[currentInstrument]);},
+    setInstrument:function(k: string){if(buffers[k])currentInstrument=k;},
+    isInstrumentLoaded:function(k: string){return !!buffers[k];},
+    unloadInstrument:function(k: string){delete buffers[k];}};
 })();
