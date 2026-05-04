@@ -20,9 +20,9 @@ The companion tool, `HexKeyLab-analyzer.html`, is a dev-only sidecar that genera
 
 ## Project status (2026)
 
-Currently mid-refactor. Versions 0.1 through 0.9 lived in a single `HexKeyLab.html` file with inline CSS and JS — about 4200 lines by the end. v0.9 added pedal calibration and exposed the limits of the single-file pattern. Max is now breaking HKL out into a TypeScript + Vite repo, modular by domain, targeting v1.0 as the first release hosted on his website.
+Repo at `/home/max/HexKeyLab`, version `0.10.0-dev`. Migration from the v0.9 single-file (`HexKeyLab.html`, ~4200 lines of inline CSS/JS) to a TypeScript + Vite project is complete: 38 modules under `src/`, strict TypeScript end-to-end, behavior frozen at v0.9 parity. The next change to land is v1.0 feature work, planned separately.
 
-Stack decision (made in this conversation): TypeScript + Vite + vanilla DOM, modular by domain. **No React, no Redux.** HKL is mostly engine code (audio, MIDI, render, SysEx state machines) — not a UI app. The toolbar UI is small enough to not need a framework. If a framework is later wanted for the toolbar specifically, Lit or Solid are the considered options. React was explicitly considered and rejected.
+Stack: TypeScript + Vite + vanilla DOM, modular by domain. **No React, no Redux.** HKL is mostly engine code (audio, MIDI, render, SysEx state machines) — not a UI app. The toolbar UI is small enough to not need a framework. If a framework is later wanted *for the toolbar specifically*, Lit or Solid are the considered options. React was explicitly considered and rejected.
 
 ## How to work with Max
 
@@ -38,9 +38,9 @@ Stack decision (made in this conversation): TypeScript + Vite + vanilla DOM, mod
 
 **Terminology preferences**: Spell out "augmented"/"diminished" (not abbreviated). "Lesser/greater" naming conventions for septimal intervals. Comma decomposition for precision over blanket prefixes like "septimal."
 
-**Verification before claims**. Run `node -e "new Function(scriptContent)"` for JS syntax. View files before editing them with `str_replace`. Search project knowledge or codebase before saying something doesn't exist.
+**Verification before claims**. Run `npm run typecheck` and `npm run build` before claiming a change works. Re-Read files between edits if intervening tool calls may have modified them; if `Edit` fails with "file modified since read", re-Read and re-attempt the same change before moving on. Search the codebase before saying something doesn't exist.
 
-**File paths** (when running locally during chat sessions): working file `/home/claude/HexKeyLab.html`, copy to `/mnt/user-data/outputs/` for presentation. In Claude Code on Max's machine, the repo path will be wherever he keeps it; don't assume.
+**File paths**. Repo is `/home/max/HexKeyLab` in Claude Code; that's the working directory for any code change.
 
 ## Critical hardware context
 
@@ -100,7 +100,7 @@ HKL is **self-contained**. All tuning, layout interpretation, and audio synthesi
 
 - **For feature work**: skim CLAUDE.md (this file) → read relevant section of architecture.md → check lessons.md for related gotchas → propose design (if non-trivial) → implement → test.
 - **For debugging**: reproduce symptom → check lessons.md for similar past issues → narrow scope → propose hypothesis → test it before pursuing.
-- **For new modules**: place under appropriate `src/` subdirectory (audio, midi, lumatone, tuning, layout, render, ui, state). Keep modules focused on one concern. Export a small surface; hold internal state private.
+- **For new modules**: place under appropriate `src/` subdirectory (audio, midi, lumatone, tuning, layout, render, ui, state, effects). Keep modules focused on one concern. Export a small surface; hold internal state private.
 - **For commits**: small, focused, with a description that explains *why*, not just *what*.
 
 ## What to update when

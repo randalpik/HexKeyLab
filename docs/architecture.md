@@ -1,8 +1,6 @@
 # HexKeyLab Architecture & Feature Reference
 
-This document is the authoritative description of what HexKeyLab does. It supersedes the v0.8 `lumatone_project_reference.md` and is written for the post-refactor v1.0 codebase, but the v0.9 single-file implementation is the functional baseline being preserved.
-
-The first half (Hardware Integration, Tuning System, HKL Feature Set, Coordinate System) describes *what HKL is* and is stable across the refactor. The second half (Internal Subsystems) describes the *current* implementation; it is intentionally lighter because much of it is being restructured.
+Authoritative description of what HexKeyLab is, what it does, and how the codebase is organized. v0.9 behavior parity is preserved through the v0.10 modular TypeScript migration; the descriptions below are the current state.
 
 ---
 
@@ -15,7 +13,7 @@ The first half (Hardware Integration, Tuning System, HKL Feature Set, Coordinate
 - **Connectivity**: USB-MIDI (primary), 5-pin DIN MIDI in/thru/out, 1/4" Sustain jack, 1/4" Expression jack.
 - **SysEx envelope**: `F0 00 21 50 <board> <cmd> <data1-4> F7`. Manufacturer ID `[0x00, 0x21, 0x50]`. Per-key data passes (keyIndex, noteNum, channel as 0-indexed byte, typeByte). `typeByte = (faderUpIsNull << 4) | keyType` where keyType is 0=disabled, 1=noteOnNoteOff, 2=CC, 3=lumaTouch.
 
-### 1.2 Pedal jacks (v0.9 verified)
+### 1.2 Pedal jacks
 
 **Sustain jack** is hardcoded to emit CC 64 (binary). Switch-style pedals work; continuous half-damper pedals are quantized to binary by firmware on this jack.
 
@@ -181,7 +179,7 @@ Determined by 12-TET equivalent pitch class `(57 + 4q + 7r) % 12`:
 - **Transpose**: 5-axis ▲/▼ stacks (P5, M3, m3, P8, SC) always visible. Same key-repeat behavior.
 - **Audio**: toggle + instrument/waveform selector. Piano default. Samples lazy-load on first selection with blue "loading…" state.
 - **Clear**: deselects all.
-- **Lumatone status panel**: connection badge (green/red), Auto-sync checkbox + status badge, **Calibrate Pedal button** (v0.9).
+- **Lumatone status panel**: connection badge (green/red), Auto-sync checkbox + status badge, **Calibrate Pedal button**.
 
 ### 4.3 Keyboard shortcuts
 
@@ -244,7 +242,7 @@ Uses HTML entities for lesser/greater glyphs.
 Every 5/7-limit interval is expressed as a named reference interval ± commas, with zero information loss.
 
 **Algorithm**:
-1. Factor the ratio into prime exponents (e2, e3, e5, e7) via `factor7()`. Large ratios whose num/den exceed 2^53 use the `e` vector returned by `reduce()` (v0.8) rather than trial-dividing num/den (which would silently lose precision).
+1. Factor the ratio into prime exponents (e2, e3, e5, e7) via `factor7()`. Large ratios whose num/den exceed 2^53 use the `e` vector returned by `reduce()` rather than trial-dividing num/den (which would silently lose precision).
 2. Octave-reduce to [1, 2), counting extra octaves
 3. Try **direct decomposition** against all reference entries
 4. Try **complement decomposition** (2/ratio against all refs)
@@ -257,13 +255,13 @@ Every 5/7-limit interval is expressed as a named reference interval ± commas, w
 
 **Pythagorean reference entries**: 256:243 (m2), 9:8 (M2), 32:27 (m3), 81:64 (M3), 27:16 (M6), 243:128 (M7), 531441:524288 (Pythagorean comma).
 
-**Reference table size**: ~60 entries in v0.8, covering full augmented/diminished interval space.
+**Reference table size**: ~60 entries, covering full augmented/diminished interval space.
 
 **Score function**: `groups × 100 + items`, TH tiebreak.
 
 ### 4.11 Lumatone integration (output)
 
-#### Auto-sync architecture (v0.8)
+#### Auto-sync architecture
 
 - **Auto-sync checkbox** + sync status badge replace older Retry/Push UI
 - On every state change affecting colors, `syncLumatoneColors()` computes the 280-entry target, diffs against tracked `deviceColors`, and queues only the changes
@@ -280,7 +278,7 @@ On first auto-sync after `findLumatone()` succeeds:
 - `SET_LIGHT_ON_KEYSTROKES (0x07) = 1`
 - `queryFirmwareRevision()` (silent; response logged)
 
-#### Pedal calibration (v0.9)
+#### Pedal calibration
 
 - **Calibrate Pedal button** in Lumatone status panel toggles calibration mode
 - **Active state**: panel below canvas shows live ADC min/max bounds (parsed from spontaneous CMD 0x3E packets), valid flag, and a CC4 live readout (visible after calibration ends — firmware suppresses CC4 during cal mode)
@@ -293,7 +291,7 @@ On first auto-sync after `findLumatone()` succeeds:
 `handleMidiMessage(e)` dispatches:
 - **SysEx CMD 0x3E** → calibration packet handler
 - **Other SysEx** → `sysexHandleResponse` (ACK matching for queue)
-- **CC 4** (expression jack) → debug log + binary-fallback sustain (depth ≥ 0.5 → on)
+- **CC 4** (expression jack) → binary-fallback sustain (depth ≥ 0.5 → on); verbose debug log when calibration mode is active
 - **CC 64** (sustain jack) → binary sustain on/off
 - **Note on/off** → audio + selection
 - **Polyphonic aftertouch (0xA0)** → per-voice volume modulation
@@ -317,22 +315,22 @@ Gain constants: `sampleMaster = 0.9`, `oscGain = 0.35`, `squareGain = 0.25`.
 #### Range attenuation
 `rangeAttenuation` tapers volume above the highest sampled note in an instrument.
 
-#### Voice anchors (v0.8 wrap-aligned segment switching)
-`sourceStartTime`, `sourceStartOffset`, `sourceLoopA`, `sourceLoopB`, `sourceLoopAIdx`, `sourceLoopBIdx`, `sourceRate`. All wraps via `scheduleSegmentSwitch`; `source.loop = true` removed everywhere. Switch picks `b` (next wrap), then uniformly picks `a` from `validStartsByEnd[b]`. Linear 30ms equal-power crossfade. `doImmediateSwitch` for wrap-during-ramp.
+#### Voice anchors (wrap-aligned segment switching)
+`sourceStartTime`, `sourceStartOffset`, `sourceLoopA`, `sourceLoopB`, `sourceLoopAIdx`, `sourceLoopBIdx`, `sourceRate`. All wraps via `scheduleSegmentSwitch`; `source.loop = true` is never used. Switch picks `b` (next wrap), then uniformly picks `a` from `validStartsByEnd[b]`. Linear 30ms equal-power crossfade. `doImmediateSwitch` for wrap-during-ramp.
 
 #### Frequency ramping
 - **Layout switches**: 500ms (`animDuration`); sustained instruments glide, decaying instruments stop+retrigger
 - **Tuning/seam changes**: 150ms via `rampActiveFreqs()`
 - **Transpositions**: 100ms
 
-#### `commitRampSync` race handling (v0.8)
+#### `commitRampSync` race handling
 Integrates in-flight ramp sync before starting a new one. `pendingRamp` identity check cancels stale re-anchors. Position-based wrap check fixes stale-anchor race in rapid `sRampFreq` calls.
 
-#### Polyphonic aftertouch (v0.8)
+#### Polyphonic aftertouch
 Per-voice `pressureGain`. Velocity-anchored handover: when AT message arrives, voice gain ramps from current to AT-implied target with `AFTERTOUCH_RAMP_S` smoothing.
 
 #### Sustain semantics
-- `sustainPedalDown` flag (set by CC 64 OR CC 4 ≥ 64 in v0.9 binary fallback)
+- `sustainPedalDown` flag (set by CC 64 OR CC 4 ≥ 64 binary fallback)
 - `sustainedKeys` Set: keys held only by the pedal (released physically but still sounding)
 - Re-articulation: striking a sustained key triggers `noteOff` + new voice + flash (`triggerRearticulateFlash` / `rearticulateFlashUntil`)
 
@@ -343,25 +341,11 @@ Per-voice `pressureGain`. Velocity-anchored handover: when AT message arrives, v
 
 ---
 
-## 5. Internal Subsystems (current v0.9 state)
+## 5. Internal Subsystems
 
-This section describes the existing single-file implementation. Treat it as a reference for what's being moved during the refactor, not as a guide for new code.
+Implementation-level notes. For module/file layout see the **Module Structure** section near the end of this document.
 
-### 5.1 File structure
-
-`HexKeyLab.html` — single file, ~4200 lines. Inline `<style>`, inline `<script>`. Sections roughly in order:
-1. CSS
-2. HTML toolbar + canvas + info panel
-3. Constants (colorTable, baseKeys, layoutShifts, hueC, hueCycleOrder, equalHueCycle)
-4. Tuning math (factor7, reduce, jiRatio, comma decomposer, REF table, chord templates)
-5. Layout/rendering (canvas sizing, geometry, draw loop, hex/text canvases)
-6. UI handlers (transpose, seam-shift, layout buttons, keyboard shortcuts)
-7. Audio engine (`SampleEngine` IIFE)
-8. MIDI plumbing (findLumatone, handleMidiMessage)
-9. Lumatone SysEx (queue, builders, sync, calibration in v0.9)
-10. Initialization
-
-### 5.2 Render pipeline
+### 5.1 Render pipeline
 
 **Offscreen build** (on dirty flags):
 - `hexCanvas`: colored hex fills for entire extended grid, B-region warm-shifted in 7-limit, 3-hue formula in Equal mode
@@ -382,29 +366,31 @@ This section describes the existing single-file implementation. Treat it as a re
 6. Dark overlay with outline polygon cutout (opacity 0.65 with extend, 1.0 without)
 7. Keyboard outline (3.5px white stroke, round joins)
 
-### 5.3 Outline geometry (precomputed)
+### 5.2 Outline geometry (precomputed)
 
 - `kbOutlinePaths`: array of closed polygon paths in baseKey screen coordinates
 - Computed at init via topology tracing with `edgeIsect`
 - `snapVtx(px, py)`: nearest outline vertex within 6px for seam endpoint snapping (no segment projections, no flanking hex logic)
 
-### 5.4 Output / input plumbing
+### 5.3 Output / input plumbing
 
 - `syncAudio()` — diffs active voices against selection
 - `syncMidi()` — sends noteOn/noteOff in parallel
 - `syncOutput()` — both
 - `handleMidiMessage(e)` — see §4.12
 
-### 5.5 SysEx queue
+### 5.4 SysEx queue
 
-- Single-message-in-flight ACK queue
-- `sysexQueue: Uint8Array[]`, `sysexWaiting: Uint8Array | null`, `sysexTimer`, `sysexBusyTimer`
+Encapsulated in `lumatone/sysex.ts`: private state, public API (`enqueueControl`, `replaceQueue`, `cancel`, `handleResponse`, `queryFirmware`, `inFlight` getter, `isInProgress` getter).
+
+- Single-message-in-flight ACK queue. Internal: queue array, waiting message, ACK timer, busy-retry timer.
 - Constants: `SYSEX_TIMEOUT_MS = 2000`, `SYSEX_BUSY_DELAY_MS = 500`, `SYSEX_NOINPUT_DELAY_MS = 35`
 - Status bytes: `SYSEX_NACK = 0x00`, `SYSEX_ACK = 0x01`, `SYSEX_BUSY = 0x02`
 - BUSY → retry after delay; NACK/ERROR → log and proceed
-- `pushTotal` / `pushSent` / `pushInProgress` track UI; `pushSilent` skips UI updates for control-path messages (firmware query, calibration)
+- `pushTotal` / `pushSent` / `pushInProgress` track UI for the visible color-sync push; `pushSilent` skips UI updates for control-path messages (firmware query, calibration)
+- See `decisions.md` for the queue-swap-vs-cancel choice (Option B).
 
-### 5.6 Key constants
+### 5.5 Key constants
 
 ```
 hexR = 16          # hex circumradius in CSS px
@@ -420,7 +406,7 @@ AFTERTOUCH_RAMP_S
 REARTICULATE_FLASH_MS
 ```
 
-### 5.7 Key data structures
+### 5.6 Key data structures
 
 - `baseKeys`: 280 [q, r] pairs defining physical keyboard shape (5 boards × 56 keys), in natural-layout coordinates
 - `colorTable`: 3×12 array, `(q%3, r%12) → hue code` (5-limit fast path)
@@ -499,7 +485,7 @@ Final pairwise correlations across kept loop points typically ≥ 0.99 for a goo
 
 ---
 
-## Module Structure (post-Phase-3)
+## Module Structure
 
 ```
 src/
@@ -538,12 +524,12 @@ src/
 │   ├── animation.ts            # encapsulated view tween (tweenTo / step / progress / isAnimating)
 │   ├── draw.ts                 # cv, ctx, draw, hexAtPoint, animateLayout, hex/text offscreen
 │   │                           #   layers, drawing helpers, kbOutlinePaths, hover/selection,
-│   │                           #   seam blend  [@ts-nocheck — see decisions.md]
+│   │                           #   seam blend
 │   └── info.ts                 # updateInfo (info panel renderer), sizeInfoPanel
 ├── audio/
 │   ├── aftertouch.ts           # AFTERTOUCH_*, velocityBaseVol, target/handover helpers
 │   ├── engine.ts               # noteOn/Off, sustain, aftertouch, init/changeWaveform, ramp
-│   └── samples.ts              # SampleEngine IIFE  [@ts-nocheck — verbatim v0.9]
+│   └── samples.ts              # SampleEngine IIFE — verbatim v0.9 logic, see lessons.md
 ├── midi/
 │   ├── engine.ts               # keyToMidi, port discovery (findLumatone, requestMidi),
 │   │                           #   syncMidi, syncOutput, fixedMidiToKey, midiNoteOn/Off
@@ -559,7 +545,7 @@ src/
     │                           #   clearSelection (+ seam-shift / transpose repeat IIFEs)
     ├── keyboard.ts             # ←/→ layouts, ↑/↓ seam shift
     └── init.ts                 # bootstrap: initAudio, requestMidi, mouse/resize listeners,
-                                #   inline-handler bridge to window
+                                #   addEventListener wiring for the toolbar controls
 ```
 
 **Dependency direction** (top to bottom; lower modules don't import from higher):

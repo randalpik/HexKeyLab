@@ -1,6 +1,6 @@
 # HexKeyLab Decisions Log
 
-Append-only log of non-obvious design choices made during the v0.9 → v1.0 migration. Each entry: what we picked, what we rejected, why, and where the decision lives in the code.
+Append-only log of non-obvious design choices. Each entry: what we picked, what we rejected, why, and where the decision lives in the code. Add an entry whenever a non-obvious call gets made; future sessions read this before re-litigating settled ground.
 
 ---
 

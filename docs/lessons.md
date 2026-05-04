@@ -64,7 +64,7 @@ Rapid `sRampFreq` calls (e.g., during fast transposition) will race if the new r
 
 ### Wrap-aligned segment switching: never use `source.loop = true`
 
-In v0.8 we unified all sample wraps via `scheduleSegmentSwitch`. Native looping is removed because it doesn't compose with crossfade scheduling, ramp races, and the validStartsByEnd graph. If you find yourself wanting `loop = true`, you're solving the wrong problem.
+All sample wraps go through `scheduleSegmentSwitch`. Native looping doesn't compose with crossfade scheduling, ramp races, or the `validStartsByEnd` graph. If you find yourself wanting `loop = true`, you're solving the wrong problem.
 
 ### Polyphonic aftertouch handover needs velocity anchoring
 
@@ -136,13 +136,13 @@ When a new sync starts mid-push, the in-flight message is NOT cancelled. It fini
 
 If a problem keeps not yielding to attempts, stop guessing and ask. Examples that should have triggered earlier asks: the descending-once-per-second pedal behavior (turned out to be hardware wiring, not firmware), the band/region distinction in 7-limit (turned out to need careful reading of LTN files). Cheap ask, expensive guess.
 
-### Run `node -e "new Function(scriptContent)"` before presenting JS changes
+### Run `npm run typecheck` and `npm run build` before claiming a change works
 
-Catches syntax errors before Max sees a broken file. Costs nothing, prevents an avoidable round-trip.
+Cheap, deterministic, catches the regression before Max does. The build also surfaces import-resolution failures that strict TypeScript alone misses.
 
-### View files before editing them with `str_replace`
+### Re-Read files between edits when other tool calls may have modified them
 
-If view output is older than the most recent edit, the line numbers and context strings are stale and `str_replace` will fail or, worse, succeed in the wrong place. Re-view between edits to the same file.
+If `Edit` fails with "file modified since read", re-Read the file and re-attempt the same change before moving on. Skipping the re-Read is how silent edit losses happen — the failure looks final but isn't.
 
 ### Design before code on complex features
 
@@ -150,13 +150,13 @@ For anything touching the audio engine, sample loop logic, SysEx state machines,
 
 ### Refactor, don't rewrite
 
-The code inside the single-file structure mostly works. The audio engine especially has subtle, well-tested behavior (segment switching, ramp races, sustain semantics) that's expensive to reproduce. Move it into modules, add types, but don't redesign it. Mixing mechanical refactor with internal redesign is the standard rewrite-doom failure mode.
+The audio engine especially has subtle, well-tested behavior (segment switching, ramp races, sustain semantics) that's expensive to reproduce. Move things between modules, add types, but don't redesign internals. Mixing mechanical refactor with internal redesign is the standard rewrite-doom failure mode.
 
 ---
 
-## Architectural decisions (historical)
+## Architectural decisions
 
-These are settled choices that shouldn't be re-litigated without a strong new reason. They're recorded here so that future sessions don't waste cycles re-evaluating them.
+Settled choices that shouldn't be re-litigated without a strong new reason. Recorded here so that future sessions don't waste cycles re-evaluating them. (For decisions made *during* the v0.9→v1.0 migration, see `decisions.md`.)
 
 ### Single static Lumatone mapping; HKL interprets layout in software
 
