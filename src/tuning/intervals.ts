@@ -1,22 +1,36 @@
-// @ts-nocheck
 // Interval naming via reference table + comma decomposition, plus Equal-mode
 // interval naming from note spelling.
 
 import { gcd } from './ratios.js';
 import { noteName, parseNote, keyOctave } from './notes.js';
 
+type PrimeExp = [number, number, number, number];
+type CommaItem = [number, string]; /* [sign, name] */
+
+interface RefEntry {
+  n: number;
+  d: number;
+  name: string;
+  e: PrimeExp;
+  ord: number;
+  comma: number;
+  th: number;
+}
+
 /* factor integer into 2^a × 3^b × 5^c × 7^d */
-export function factor7(n) {
-  const e = [0, 0, 0, 0], p = [2, 3, 5, 7];
+export function factor7(n: number): PrimeExp | null {
+  const e: PrimeExp = [0, 0, 0, 0];
+  const p = [2, 3, 5, 7];
   for (let i = 0; i < 4; i++) while (n % p[i] === 0) { e[i]++; n /= p[i]; }
   return n === 1 ? e : null;
 }
 
 /* reference table: each entry is {n, d, name, e:[e2,e3,e5,e7], ord, comma, th} */
-export const REF = [];
+export const REF: RefEntry[] = [];
 (function () {
-  function add(n, d, name, ord, comma) {
+  function add(n: number, d: number, name: string, ord: number, comma: number): void {
     const fn = factor7(n), fd = factor7(d);
+    if (!fn || !fd) throw new Error('REF entry not 7-limit: ' + n + '/' + d);
     REF.push({
       n, d, name,
       e: [fn[0] - fd[0], fn[1] - fd[1], fn[2] - fd[2], fn[3] - fd[3]],
@@ -63,7 +77,7 @@ export const REF = [];
 
 /* solve difference vector for comma counts: s(syntonic) z(septimal) h(schisma)
    syntonic=(-4,4,-1,0) septimal=(6,-2,0,-1) schisma=(-15,8,1,0) */
-export function solveCommas(de) {
+export function solveCommas(de: PrimeExp): [number, number, number] | null {
   const z = -de[3], hN = de[1] + 4 * de[2] - 2 * de[3];
   if (hN % 12 !== 0) return null;
   const h = hN / 12, s = h - de[2];
@@ -73,13 +87,14 @@ export function solveCommas(de) {
 
 /* substitute derived commas to minimize displayed count
    Pythagorean = syntonic+schisma, diaschisma = syntonic-schisma, sept.diesis = syntonic+septimal */
-export function optimizeCommas(s, z, h) {
+export function optimizeCommas(s: number, z: number, h: number): CommaItem[] {
   /* try all 6 orderings of 3 substitution rules to minimize display groups */
   const orders = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
-  let bestItems = null, bestGrps = 99;
+  let bestItems: CommaItem[] | null = null;
+  let bestGrps = 99;
   for (let oi = 0; oi < 6; oi++) {
     let cs = s, cz = z, ch = h;
-    const items = [];
+    const items: CommaItem[] = [];
     for (let si = 0; si < 3; si++) {
       const rule = orders[oi][si];
       if (rule === 0) {/* septimal diesis: syn+sept same sign */
@@ -100,19 +115,19 @@ export function optimizeCommas(s, z, h) {
     while (ch > 0) { items.push([1, 'schisma']); ch--; }
     while (ch < 0) { items.push([-1, 'schisma']); ch++; }
     /* count display groups (distinct sign+name pairs) */
-    const gk = {};
+    const gk: Record<string, true> = {};
     items.forEach(c => { gk[c[0] + '|' + c[1]] = true; });
     const ng = Object.keys(gk).length;
-    if (ng < bestGrps || (ng === bestGrps && items.length < bestItems.length)) {
+    if (ng < bestGrps || (ng === bestGrps && items.length < (bestItems?.length ?? Infinity))) {
       bestGrps = ng;
       bestItems = items.slice();
     }
   }
-  return bestItems;
+  return bestItems ?? [];
 }
 
 /* ordinal suffix for compound intervals */
-export function ordSuffix(n) {
+export function ordSuffix(n: number): string {
   if (n === 1) return 'unison';
   if (n === 8) return 'octave';
   let s = '' + n;
@@ -122,29 +137,32 @@ export function ordSuffix(n) {
   return s;
 }
 
-export function octStr(n) { return n === 1 ? 'octave' : n + ' octaves'; }
+export function octStr(n: number): string { return n === 1 ? 'octave' : n + ' octaves'; }
 
 /* compound ordinal: "minor 3rd" + 1 oct → "minor 10th" */
-export function compoundOrd(name, ord, extraOct) {
+export function compoundOrd(name: string, ord: number, extraOct: number): string {
   if (!extraOct) return name;
   return name.replace(ordSuffix(ord), ordSuffix(ord + 7 * extraOct));
 }
 
+interface RefShape { name: string; ord: number; comma: number; }
+
 /* format final interval name from decomposition result */
-export function fmtInterval(ref, commaItems, extraOct, isComp) {
+export function fmtInterval(ref: RefShape, commaItems: CommaItem[], extraOct: number, isComp: boolean): string {
   /* if ref is a comma, fold it into comma list and use perfect unison as effective ref */
   if (ref.comma) {
-    commaItems = [].concat([[1, ref.name]], commaItems);
+    commaItems = ([[1, ref.name] as CommaItem]).concat(commaItems);
     ref = { name: 'perfect unison', ord: 1, comma: 0 };
   }
   /* group same-sign same-name commas */
-  const grps = [];
+  interface CommaGroup { s: number; n: string; c: number; }
+  const grps: CommaGroup[] = [];
   commaItems.forEach(c => {
     const last = grps.length ? grps[grps.length - 1] : null;
     if (last && last.s === c[0] && last.n === c[1]) last.c++;
     else grps.push({ s: c[0], n: c[1], c: 1 });
   });
-  function fmtC(g, first) {
+  function fmtC(g: CommaGroup, first: boolean): string {
     const cnt = g.c > 1 ? g.c + '× ' : '';
     if (first) return cnt + g.n;
     return (g.s > 0 ? '+ ' : '− ') + cnt + g.n;
@@ -154,7 +172,7 @@ export function fmtInterval(ref, commaItems, extraOct, isComp) {
     grps.forEach(g => { g.s *= -1; });
     const totOct = extraOct + 1;
     if (isU && !grps.length) return octStr(totOct);
-    if (isU) { return octStr(totOct) + ' ' + grps.map(g => fmtC(g, false)).join(' '); }
+    if (isU) return octStr(totOct) + ' ' + grps.map(g => fmtC(g, false)).join(' ');
     const base = octStr(totOct) + ' − ' + ref.name;
     if (!grps.length) return base;
     return base + ' ' + grps.map(g => fmtC(g, false)).join(' ');
@@ -165,7 +183,7 @@ export function fmtInterval(ref, commaItems, extraOct, isComp) {
     const cs = grps.map((g, i) => fmtC(g, i === 0)).join(' ');
     return extraOct ? octStr(extraOct) + ' + ' + cs : cs;
   }
-  let base;
+  let base: string;
   if (ref.ord > 0 && extraOct > 0) base = compoundOrd(ref.name, ref.ord, extraOct);
   else if (extraOct > 0) base = octStr(extraOct) + ' + ' + ref.name;
   else base = ref.name;
@@ -173,8 +191,8 @@ export function fmtInterval(ref, commaItems, extraOct, isComp) {
   return base + ' ' + grps.map(g => fmtC(g, false)).join(' ');
 }
 
-export function intervalName(num, den, preE) {
-  let e;
+export function intervalName(num: number, den: number, preE?: PrimeExp): string {
+  let e: PrimeExp;
   if (preE) {
     /* exponents passed in directly (from jiRatio) — exact even when num/den
        have overflowed float precision */
@@ -188,18 +206,18 @@ export function intervalName(num, den, preE) {
      robust for extreme exponents where num/den may be imprecise or overflow */
   const log2R = e[0] + e[1] * Math.log2(3) + e[2] * Math.log2(5) + e[3] * Math.log2(7);
   const extraOct = Math.max(0, Math.floor(log2R + 1e-9));
-  const re = [e[0] - extraOct, e[1], e[2], e[3]];
+  const re: PrimeExp = [e[0] - extraOct, e[1], e[2], e[3]];
   /* count display groups for scoring */
-  function cScore(items, isComp) {
-    const gk = {};
+  function cScore(items: CommaItem[], isComp: boolean): number {
+    const gk: Record<string, true> = {};
     items.forEach(c => { gk[c[0] + '|' + c[1]] = true; });
     return Object.keys(gk).length * 100 + items.length + (isComp ? 0.5 : 0);
   }
   /* try direct decomposition against all references */
-  let best = null;
+  let best: { ref: RefEntry; items: CommaItem[]; score: number; comp: boolean } | null = null;
   for (let i = 0; i < REF.length; i++) {
     const ref = REF[i];
-    const de = [re[0] - ref.e[0], re[1] - ref.e[1], re[2] - ref.e[2], re[3] - ref.e[3]];
+    const de: PrimeExp = [re[0] - ref.e[0], re[1] - ref.e[1], re[2] - ref.e[2], re[3] - ref.e[3]];
     const sol = solveCommas(de);
     if (!sol) continue;
     const items = optimizeCommas(sol[0], sol[1], sol[2]);
@@ -208,10 +226,10 @@ export function intervalName(num, den, preE) {
       best = { ref, items, score, comp: false };
   }
   /* try complement decomposition (handles V=12 edge cases and octave-minus forms) */
-  const ce = [1 - re[0], -re[1], -re[2], -re[3]];
+  const ce: PrimeExp = [1 - re[0], -re[1], -re[2], -re[3]];
   for (let i = 0; i < REF.length; i++) {
     const ref = REF[i];
-    const de = [ce[0] - ref.e[0], ce[1] - ref.e[1], ce[2] - ref.e[2], ce[3] - ref.e[3]];
+    const de: PrimeExp = [ce[0] - ref.e[0], ce[1] - ref.e[1], ce[2] - ref.e[2], ce[3] - ref.e[3]];
     const sol = solveCommas(de);
     if (!sol) continue;
     const items = optimizeCommas(sol[0], sol[1], sol[2]);
@@ -226,7 +244,7 @@ export function intervalName(num, den, preE) {
 /* abbreviate interval name for compact display.
    `short` is the user's "Short intervals" preference (was: read directly from
    document.getElementById('cbShortIvl').checked). */
-export function shortenInterval(name, short) {
+export function shortenInterval(name: string, short: boolean): string {
   if (!short) return name;
   /* phase 1: full-phrase special cases */
   name = name.replace(/lesser septimal tritone/g, '7d5');
@@ -261,10 +279,10 @@ export function shortenInterval(name, short) {
   return name;
 }
 
-export const letterIdx = { C: 0, D: 1, E: 2, F: 3, G: 4, A: 5, B: 6 };
+export const letterIdx: Record<string, number> = { C: 0, D: 1, E: 2, F: 3, G: 4, A: 5, B: 6 };
 
 /* Equal mode interval naming (from note spelling, no ratios) */
-export function equalIntervalName(q1, r1, q2, r2) {
+export function equalIntervalName(q1: number, r1: number, q2: number, r2: number): string {
   let semis = 4 * (q2 - q1) + 7 * (r2 - r1);
   /* compute letter distance from actual note names + octaves */
   const nn1 = noteName(q1, r1), nn2 = noteName(q2, r2);

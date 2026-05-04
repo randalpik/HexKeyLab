@@ -1,4 +1,3 @@
-// @ts-nocheck
 // Polyphonic aftertouch → per-voice volume, anchored on strike velocity.
 //
 // Observed Lumatone behavior: aftertouch only starts firing once pressure
@@ -21,14 +20,14 @@ export const AFTERTOUCH_HANDOVER_SCALE_S = 0.375; /* added time per unit |log(ta
 export const AFTERTOUCH_HANDOVER_MAX_S = 0.750;   /* cap for extreme ratios */
 
 /* velocity → baseVol, mirroring SampleEngine's internal curve so ratios line up. */
-export function velocityBaseVol(v) {
+export function velocityBaseVol(v: number): number {
   v = Math.max(1, Math.min(127, v));
   const vn = v / 127;
   return 0.10 + 0.90 * vn * vn;
 }
 
 /* target pressureGain multiplier for a given pressure and this voice's strike velocity */
-export function aftertouchTargetGain(pressure, strikeVel) {
+export function aftertouchTargetGain(pressure: number, strikeVel: number): number {
   const t = Math.max(0, Math.min(127, pressure)) / 127;
   const eqVel = AFTERTOUCH_VEL_FLOOR + t * (AFTERTOUCH_VEL_CEIL - AFTERTOUCH_VEL_FLOOR);
   return velocityBaseVol(eqVel) / velocityBaseVol(strikeVel || 100);
@@ -36,7 +35,7 @@ export function aftertouchTargetGain(pressure, strikeVel) {
 
 /* handover duration scales with |log(target)| — pressureGain starts at 1.0 on
    every voice so distance to target equals |log(target/1.0)| = |log(target)|. */
-export function aftertouchHandoverDuration(target) {
+export function aftertouchHandoverDuration(target: number): number {
   if (target <= 0) return AFTERTOUCH_HANDOVER_BASE_S;
   const dist = Math.abs(Math.log(target));
   return Math.min(

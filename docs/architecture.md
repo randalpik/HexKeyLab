@@ -499,6 +499,81 @@ Final pairwise correlations across kept loop points typically ≥ 0.99 for a goo
 
 ---
 
+## Module Structure (post-Phase-3)
+
+```
+src/
+├── main.ts                     # entry point: import './ui/init.js'
+├── types.ts                    # shared domain types (KeyCoord, JiRatio, SysexCmd, …)
+├── state/                      # plain {…} objects, mutated directly
+│   ├── tuning.ts               # curLayout, septimal*/equal*, septimalShift, septimalW
+│   ├── view.ts                 # CW, CH, kbMinW, kbOffY, viewQ, viewR, hexDirty, textDirty
+│   ├── selection.ts            # selectedKeys, drawnKeys, hoverKey
+│   ├── audio.ts                # audioCtx, oscGain, squareGain, audioEnabled, activeWaveform,
+│   │                           #   activeOscs, keyVelocity, sustainPedalDown, sustainedKeys,
+│   │                           #   aftertouchSnapshot, rearticulateFlashUntil, wfLoadingKey
+│   ├── midi.ts                 # midiAccess, midiOut, midiIn, activeMidiNotes, midiToKey
+│   ├── lumatone.ts             # autoSyncEnabled, deviceColors, fixedLayoutSent
+│   └── pedal.ts                # calibrating, debug, lastMin/Max/Valid, packetCount,
+│                               #   lastCC4Value, lastCC4Time
+├── effects/                    # one-call fan-outs per state-change domain
+│   ├── onTuningChanged.ts      # rampActiveFreqs + view.hexDirty + draw + (syncLumatoneColors)
+│   ├── onLayoutChanged.ts      # syncLumatoneColors + buildMidiReverse + syncOutput
+│   └── onSelectionChanged.ts   # syncOutput + draw
+├── tuning/                     # PURE math: no DOM, no audio, no MIDI
+│   ├── notes.ts                # note naming (handles any r), fmtNote, keyOctave
+│   ├── ratios.ts               # gcd, jiRatio, intervalTier
+│   ├── regions.ts              # 7-limit A/B region partitioning
+│   ├── frequency.ts            # keyFreq for Equal / 5-limit / 7-limit
+│   ├── intervals.ts            # comma decomposition, REF table, intervalName,
+│   │                           #   shortenInterval, equalIntervalName
+│   └── chords.ts               # template-based chord recognition + classification
+├── layout/                     # PURE math: lattice ↔ screen
+│   ├── baseKeys.ts             # 280-key map, layoutShifts {1, 2, 3}
+│   ├── coords.ts               # bandOf, posInBand
+│   └── geometry.ts             # hexR/dxH/dyH, tilt, hexToScreen
+├── render/
+│   ├── colors.ts               # colorTable, hueC, computeHue, keyColorHex
+│   ├── canvas.ts               # sizeCanvas, getVisibleRange (load-time IIFE for CH/kbOffY)
+│   ├── animation.ts            # encapsulated view tween (tweenTo / step / progress / isAnimating)
+│   ├── draw.ts                 # cv, ctx, draw, hexAtPoint, animateLayout, hex/text offscreen
+│   │                           #   layers, drawing helpers, kbOutlinePaths, hover/selection,
+│   │                           #   seam blend  [@ts-nocheck — see decisions.md]
+│   └── info.ts                 # updateInfo (info panel renderer), sizeInfoPanel
+├── audio/
+│   ├── aftertouch.ts           # AFTERTOUCH_*, velocityBaseVol, target/handover helpers
+│   ├── engine.ts               # noteOn/Off, sustain, aftertouch, init/changeWaveform, ramp
+│   └── samples.ts              # SampleEngine IIFE  [@ts-nocheck — verbatim v0.9]
+├── midi/
+│   ├── engine.ts               # keyToMidi, port discovery (findLumatone, requestMidi),
+│   │                           #   syncMidi, syncOutput, fixedMidiToKey, midiNoteOn/Off
+│   └── handler.ts              # inbound MIDI router (SysEx, CC, aftertouch, notes)
+├── lumatone/
+│   ├── protocol.ts             # SYSEX_CMD_*, sysexBoardMap = [1,2,3,5,4], message builders
+│   ├── sysex.ts                # ENCAPSULATED queue (private state, public API)
+│   ├── sync.ts                 # syncLumatoneColors, toggleAutoSync
+│   └── calibration.ts          # togglePedalCalibration, resetPedalBounds,
+│                               #   handleCalibrationPacket
+└── ui/
+    ├── controls.ts             # setTuning, shiftSeams, setLayout, transposeSelection,
+    │                           #   clearSelection (+ seam-shift / transpose repeat IIFEs)
+    ├── keyboard.ts             # ←/→ layouts, ↑/↓ seam shift
+    └── init.ts                 # bootstrap: initAudio, requestMidi, mouse/resize listeners,
+                                #   inline-handler bridge to window
+```
+
+**Dependency direction** (top to bottom; lower modules don't import from higher):
+
+```
+main → ui/init → ui/{controls, keyboard} → effects → engines (audio, midi, lumatone) → render → state → tuning + layout
+                                                          ↓
+                                                  protocol + samples (encapsulated)
+```
+
+The cycle-prone seam is between effects and engines: `effects/onSelectionChanged` calls `syncOutput` (in `midi/engine`) which calls `syncAudio` (in `audio/engine`); `audio/engine.sustainPedalOff` calls back into `effects/onSelectionChanged`. This works at runtime because ES modules resolve function bindings lazily — the cycle never executes during module evaluation, only during user-driven events.
+
+---
+
 ## Appendix: Glossary
 
 - **Band** — 3-key-wide region along q-axis where 5-limit JI is pure

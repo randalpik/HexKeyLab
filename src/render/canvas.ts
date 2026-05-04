@@ -1,9 +1,8 @@
-// @ts-nocheck
 // Canvas size + viewport range. Initialization runs at module load from baseKeys.
 
 import { baseKeys } from '../layout/baseKeys.js';
 import { hexR, dxH, dyH, cosT, sinT, hexToScreen } from '../layout/geometry.js';
-import { CW, CH, kbOffY, setCW, setCH, setKbMinW, setKbOffY } from '../state/view.js';
+import { view } from '../state/view.js';
 
 (function () {
   let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
@@ -16,23 +15,30 @@ import { CW, CH, kbOffY, setCW, setCH, setKbMinW, setKbOffY } from '../state/vie
   });
   const padY = hexR + dxH * 0.5; /* 1 key width gap beyond outline */
   const padX = dxH * 1.5 + hexR;
-  setKbMinW(Math.ceil((Math.max(-minX, maxX) + padX) * 2));
-  setCH(Math.ceil(maxY - minY + 2 * padY)); /* actual extent, not symmetrized */
-  setKbOffY(-(minY + maxY) / 2); /* shift to center keyboard in CH */
+  view.kbMinW = Math.ceil((Math.max(-minX, maxX) + padX) * 2);
+  view.CH = Math.ceil(maxY - minY + 2 * padY); /* actual extent, not symmetrized */
+  view.kbOffY = -(minY + maxY) / 2; /* shift to center keyboard in CH */
 })();
 
-export function sizeCanvas() {
+export function sizeCanvas(): void {
   const wrapPad = 24; /* 12px padding each side of .wrap */
-  setCW(Math.max(400, window.innerWidth - wrapPad));
+  view.CW = Math.max(400, window.innerWidth - wrapPad);
+}
+
+export interface VisibleRange {
+  qMin: number;
+  qMax: number;
+  rMin: number;
+  rMax: number;
 }
 
 /* visible range computed per-frame based on current view */
-export function getVisibleRange(vq, vr) {
-  const corners = [
-    [-CW / 2, -(CH / 2 + kbOffY)],
-    [CW / 2, -(CH / 2 + kbOffY)],
-    [CW / 2, CH / 2 - kbOffY],
-    [-CW / 2, CH / 2 - kbOffY],
+export function getVisibleRange(vq: number, vr: number): VisibleRange {
+  const corners: [number, number][] = [
+    [-view.CW / 2, -(view.CH / 2 + view.kbOffY)],
+    [view.CW / 2, -(view.CH / 2 + view.kbOffY)],
+    [view.CW / 2, view.CH / 2 - view.kbOffY],
+    [-view.CW / 2, view.CH / 2 - view.kbOffY],
   ];
   let qLo = 1e9, qHi = -1e9, rLo = 1e9, rHi = -1e9;
   corners.forEach(function (c) {

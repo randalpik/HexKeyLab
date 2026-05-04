@@ -1,9 +1,8 @@
-// @ts-nocheck
 // Algorithmic note naming — handles any r value with no lookup table.
 
-export const letterSemi = { A: 0, B: 2, C: 3, D: 5, E: 7, F: 8, G: 10 };
+export const letterSemi: Record<string, number> = { A: 0, B: 2, C: 3, D: 5, E: 7, F: 8, G: 10 };
 
-export function accToVal(a) {
+export function accToVal(a: string): number {
   let v = 0;
   for (let i = 0; i < a.length; i++) {
     if (a[i] === '#') v++;
@@ -12,7 +11,7 @@ export function accToVal(a) {
   return v;
 }
 
-export function valToAcc(v) {
+export function valToAcc(v: number): string {
   if (v === 0) return '';
   if (v > 0) {
     let s = '';
@@ -24,11 +23,16 @@ export function valToAcc(v) {
   return s;
 }
 
-export function parseNote(n) {
+export interface ParsedNote {
+  letter: string;
+  acc: string;
+}
+
+export function parseNote(n: string): ParsedNote {
   return { letter: n[0], acc: n.slice(1) };
 }
 
-export function m3up(n) {
+export function m3up(n: string): string {
   const p = parseNote(n);
   const L = 'ABCDEFG';
   const i = L.indexOf(p.letter);
@@ -38,7 +42,7 @@ export function m3up(n) {
   return nl + valToAcc(nv);
 }
 
-export function m3dn(n) {
+export function m3dn(n: string): string {
   const p = parseNote(n);
   const L = 'ABCDEFG';
   const i = L.indexOf(p.letter);
@@ -49,7 +53,7 @@ export function m3dn(n) {
 }
 
 /* compute note name for r-th fifth above A (works for any integer r) */
-export function fifthName(r) {
+export function fifthName(r: number): string {
   if (r >= 0) {
     const letter = 'AEBFCGD'[r % 7];
     const acc = Math.floor(r / 7) + ((r % 7 >= 3) ? 1 : 0);
@@ -62,7 +66,7 @@ export function fifthName(r) {
   }
 }
 
-export function noteName(q, r) {
+export function noteName(q: number, r: number): string {
   const fn = fifthName(r);
   const pos = ((q + 1) % 3 + 3) % 3;
   if (pos === 1) return fn;
@@ -75,7 +79,7 @@ export const DBLSHARP = '\u{1D12A}';
 export const FLAT = '♭';
 export const DBLFLAT = '\u{1D12B}';
 
-export function fmtNote(name) {
+export function fmtNote(name: string): string {
   if (name === '?') return '?';
   const p = parseNote(name);
   const v = accToVal(p.acc);
@@ -91,7 +95,7 @@ export function fmtNote(name) {
 
 /* octave boundary is determined by letter name only, ignoring accidentals:
    Cb4 is octave 4 (C-letter), B#3 is octave 3 (B-letter) */
-export function keyOctave(q, r) {
+export function keyOctave(q: number, r: number): number {
   const name = noteName(q, r);
   const v = accToVal(parseNote(name).acc);
   const natMidi = 57 + 4 * q + 7 * r - v; /* strip accidental to get natural-letter MIDI */

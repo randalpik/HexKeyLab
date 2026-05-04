@@ -1,4 +1,5 @@
-// @ts-nocheck
+import type { SysexMessage } from '../types.js';
+
 // Lumatone SysEx protocol constants and message builders.
 //
 // Envelope: F0 00 21 50 <board> <cmd> <data...> F7
@@ -8,7 +9,7 @@
 // "fix" this with the naïve [1,2,3,4,5] — it'll light the wrong physical
 // boards. (See CLAUDE.md.)
 
-export const SYSEX_MANU = [0x00, 0x21, 0x50];
+export const SYSEX_MANU = [0x00, 0x21, 0x50] as const;
 
 export const SYSEX_CMD_CHANGE_KEY_NOTE = 0x00;
 export const SYSEX_CMD_SET_COLOUR = 0x01;
@@ -28,14 +29,14 @@ export const SYSEX_ACK = 0x01;
 export const SYSEX_BUSY = 0x02;
 
 /* baseKeys group index (0-4) → SysEx board index (1-based). Groups 3,4 swapped. */
-export const sysexBoardMap = [1, 2, 3, 5, 4];
+export const sysexBoardMap = [1, 2, 3, 5, 4] as const;
 
 /* fixed MIDI layout: channels 0-4 (0-indexed in SysEx, firmware uses byte directly) */
-export const fixedMidiChannelMap = [0, 1, 2, 3, 4];
+export const fixedMidiChannelMap = [0, 1, 2, 3, 4] as const;
 
 // ── message builders ────────────────────────────────────────────────────────
 
-export function buildNoteSysEx(board, keyIdx, note, channel, typeByte) {
+export function buildNoteSysEx(board: number, keyIdx: number, note: number, channel: number, typeByte: number): SysexMessage {
   /* F0 00 21 50 <board> 00 <key> <note> <ch> <type> F7 */
   return new Uint8Array([
     0xF0,
@@ -43,10 +44,10 @@ export function buildNoteSysEx(board, keyIdx, note, channel, typeByte) {
     board, SYSEX_CMD_CHANGE_KEY_NOTE, keyIdx,
     note, channel, typeByte,
     0xF7,
-  ]);
+  ]) as SysexMessage;
 }
 
-export function buildColorSysEx(board, keyIdx, hexCol, deviceIdx) {
+export function buildColorSysEx(board: number, keyIdx: number, hexCol: string, deviceIdx: number): SysexMessage {
   /* hexCol is '#RRGGBB'. deviceIdx is the 0-279 baseKeys index for ACK routing. */
   const r = parseInt(hexCol.slice(1, 3), 16);
   const g = parseInt(hexCol.slice(3, 5), 16);
@@ -59,28 +60,28 @@ export function buildColorSysEx(board, keyIdx, hexCol, deviceIdx) {
     (g >> 4) & 0xF, g & 0xF,
     (b >> 4) & 0xF, b & 0xF,
     0xF7,
-  ]);
+  ]) as SysexMessage;
   msg.keyIdx = deviceIdx;
   msg.color = hexCol;
   return msg;
 }
 
-export function buildToggleSysEx(cmd, value) {
+export function buildToggleSysEx(cmd: number, value: number | boolean): SysexMessage {
   /* F0 00 21 50 00 <cmd> <value> 00 00 00 F7 — sendSysExToggle format */
   return new Uint8Array([
     0xF0,
     SYSEX_MANU[0], SYSEX_MANU[1], SYSEX_MANU[2],
     0x00, cmd, value ? 1 : 0, 0x00, 0x00, 0x00,
     0xF7,
-  ]);
+  ]) as SysexMessage;
 }
 
-export function buildRequestSysEx(cmd) {
+export function buildRequestSysEx(cmd: number): SysexMessage {
   /* F0 00 21 50 00 <cmd> 00 00 00 00 F7 — sendSysExRequest format */
   return new Uint8Array([
     0xF0,
     SYSEX_MANU[0], SYSEX_MANU[1], SYSEX_MANU[2],
     0x00, cmd, 0x00, 0x00, 0x00, 0x00,
     0xF7,
-  ]);
+  ]) as SysexMessage;
 }

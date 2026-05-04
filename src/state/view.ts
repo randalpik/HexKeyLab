@@ -1,14 +1,24 @@
-// @ts-nocheck
-// Canvas viewport metrics. CH/kbMinW/kbOffY are constant after the load-time
-// IIFE in render/canvas.ts populates them from baseKeys. CW changes on window
-// resize via sizeCanvas. Read these as live bindings from any module.
+// Canvas viewport metrics + view center + dirty flags.
+//
+// CH/kbMinW/kbOffY are populated at module load by render/canvas.ts (from
+// baseKeys). CW changes on window resize via sizeCanvas.
+//
+// viewQ/viewR are the lattice-space view center. They're updated by
+// render/animation.ts during a layout-switch tween; read by the draw pipeline.
+//
+// hexDirty/textDirty signal that the offscreen layers need rebuild on the next
+// draw(). Set true by tuning/layout/extend toggles; cleared by the layer build
+// inside draw().
+//
+// Read or write `view.X` directly.
 
-export let CW = 0;
-export let CH = 0;
-export let kbMinW = 0;
-export let kbOffY = 0;
-
-export function setCW(v) { CW = v; }
-export function setCH(v) { CH = v; }
-export function setKbMinW(v) { kbMinW = v; }
-export function setKbOffY(v) { kbOffY = v; }
+export const view = {
+  CW: 0,
+  CH: 0,
+  kbMinW: 0,
+  kbOffY: 0,
+  viewQ: 0,
+  viewR: 0,
+  hexDirty: true,
+  textDirty: true,
+};

@@ -1,4 +1,3 @@
-// @ts-nocheck
 // Template-based chord recognition with prime-content classification
 // (septimal / Pythagorean / 5-limit).
 
@@ -6,9 +5,15 @@ import { gcd, jiRatio } from './ratios.js';
 import { noteName, parseNote } from './notes.js';
 import { letterIdx } from './intervals.js';
 
-/* s = semitone intervals from root, g = generic letter intervals
-   (0=unison, 1=2nd, 2=3rd, …, 6=7th) */
-export const chordTemplates = [
+interface ChordTemplate {
+  /** semitone intervals from root */
+  s: number[];
+  /** generic letter intervals from root (0=unison, 1=2nd, 2=3rd, …, 6=7th) */
+  g: number[];
+  name: string;
+}
+
+export const chordTemplates: ChordTemplate[] = [
   /* triads */
   { s: [4, 7], g: [2, 4], name: 'major triad' },
   { s: [3, 7], g: [2, 4], name: 'minor triad' },
@@ -40,14 +45,40 @@ export const chordTemplates = [
   { s: [3, 9], g: [2, 6], name: 'incomplete diminished seventh' },
 ];
 
-export const invNames = [null, 'in first inversion', 'in second inversion', 'in third inversion'];
+export const invNames: (string | null)[] = [null, 'in first inversion', 'in second inversion', 'in third inversion'];
 
-export function isPow2(n) { return n > 0 && (n & (n - 1)) === 0; }
-export function lcm(a, b) { return a / gcd(a, b) * b; }
+export function isPow2(n: number): boolean { return n > 0 && (n & (n - 1)) === 0; }
+export function lcm(a: number, b: number): number { return a / gcd(a, b) * b; }
 
-export function analyzeChord(keys) {
+interface ChordInputKey {
+  q: number;
+  r: number;
+  name: string;
+  col: string;
+}
+
+interface ChordResult {
+  root: string;
+  rootCol: string;
+  quality: string;
+  invName: string | null;
+  ratio: string;
+}
+
+interface ChordNote {
+  pc: number;
+  midi: number;
+  name: string;
+  col: string;
+  rawName: string;
+  li: number;
+  q: number;
+  r: number;
+}
+
+export function analyzeChord(keys: ChordInputKey[]): ChordResult | null {
   /* keys already sorted by freq; each has q, r, name, col */
-  let notes = keys.map(k => {
+  let notes: ChordNote[] = keys.map(k => {
     const midi = 57 + 4 * k.q + 7 * k.r;
     const nn = noteName(k.q, k.r);
     const li = letterIdx[parseNote(nn).letter];
@@ -55,7 +86,7 @@ export function analyzeChord(keys) {
   });
   notes.sort((a, b) => a.midi - b.midi);
   /* reject if any same-name pair is not a pure octave multiple */
-  const nameGroups = {};
+  const nameGroups: Record<string, ChordNote[]> = {};
   notes.forEach(note => {
     if (!nameGroups[note.rawName]) nameGroups[note.rawName] = [];
     nameGroups[note.rawName].push(note);
@@ -68,7 +99,8 @@ export function analyzeChord(keys) {
     }
   }
   /* deduplicate by note name (keep lowest octave) */
-  const seen = {}, unique = [];
+  const seen: Record<string, true> = {};
+  const unique: ChordNote[] = [];
   notes.forEach(note => {
     if (!seen[note.rawName]) { seen[note.rawName] = true; unique.push(note); }
   });
@@ -78,7 +110,7 @@ export function analyzeChord(keys) {
   /* try each note as root */
   for (let ri = 0; ri < n; ri++) {
     const root = notes[ri];
-    const pairs = [];
+    const pairs: { s: number; g: number }[] = [];
     for (let i = 0; i < n; i++) {
       if (i === ri) continue;
       pairs.push({
@@ -103,11 +135,11 @@ export function analyzeChord(keys) {
       if (inv < 0) inv = 0;
       /* compute chord ratio in root position order */
       const rootMidi = root.midi;
-      const chordRats = [];
+      const chordRats: { num: number; den: number }[] = [];
       for (let ci = 0; ci < n; ci++) {
         if (ci === ri) { chordRats.push({ num: 1, den: 1 }); continue; }
         const rat = jiRatio(root.q, root.r, notes[ci].q, notes[ci].r);
-        let rnum, rden;
+        let rnum: number, rden: number;
         if (notes[ci].midi >= rootMidi) { rnum = rat.num; rden = rat.den; }
         else { rnum = rat.den; rden = rat.num; }
         /* octave-reduce to [1, 2) above root */
