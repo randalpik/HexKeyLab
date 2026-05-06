@@ -103,6 +103,10 @@ export interface OscVoice {
   type: 'osc';
   osc: OscillatorNode;
   gain: GainNode;
+  /** Damper modulation node — sits between gain (envelope) and pressureGain
+   *  (aftertouch). Defaults to 1.0; modulated by setDamperDepth while the key
+   *  is in audio.sustainedKeys, pinned to 1.0 while in audio.sostenutoLockedKeys. */
+  damperGain: GainNode;
   pressureGain: GainNode;
   vol: number;
   /** Set true on first aftertouch message; gates the handover ramp. */

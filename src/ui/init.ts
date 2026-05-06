@@ -10,14 +10,19 @@
 
 import { selection } from '../state/selection.js';
 import { view } from '../state/view.js';
+import { pedal } from '../state/pedal.js';
 import { sizeCanvas } from '../render/canvas.js';
 import { cv, draw, hexAtPoint } from '../render/draw.js';
 import { sizeInfoPanel, updateInfo } from '../render/info.js';
-import { initAudio, changeWaveform, toggleAudio } from '../audio/engine.js';
+import {
+  initAudio, changeWaveform, toggleAudio,
+  setDamperDepth, sostenutoOn, sostenutoOff,
+} from '../audio/engine.js';
 import { requestMidi } from '../midi/engine.js';
 import { handleMidiMessage } from '../midi/handler.js';
-import { setTuning, setLayout, clearSelection } from './controls.js';
+import { setTuning, setOutline, setLayout, clearSelection } from './controls.js';
 import './keyboard.js';
+import '../input/keyboard-notes.js';
 import {
   togglePedalCalibration, resetPedalBounds,
 } from '../lumatone/calibration.js';
@@ -70,13 +75,38 @@ $<HTMLInputElement>('cbExtend').addEventListener('change', () => {
 $<HTMLInputElement>('cbCoords').addEventListener('change', updateInfo);
 $<HTMLInputElement>('cbShortIvl').addEventListener('change', updateInfo);
 
-// Tuning + clear
+// Tuning + outline + clear
 $<HTMLSelectElement>('selTuning').addEventListener('change', setTuning);
+$<HTMLSelectElement>('selOutline').addEventListener('change', setOutline);
 $<HTMLButtonElement>('btnClear').addEventListener('click', clearSelection);
 
 // Audio
 $<HTMLInputElement>('cbAudio').addEventListener('change', toggleAudio);
 $<HTMLSelectElement>('waveform').addEventListener('change', changeWaveform);
+
+// Pedal mode (sustain jack role: damper vs sostenuto)
+$<HTMLSelectElement>('pedalMode').addEventListener('change', function (e) {
+  const next = (e.target as HTMLSelectElement).value as 'sustain' | 'sostenuto';
+  const prev = pedal.mode;
+  if (next === prev) return;
+  pedal.mode = next;
+  /* If sustain jack is currently held, re-evaluate it under the new mode so
+     mid-press dropdown changes don't strand sustain or sostenuto state. */
+  const lastCC64 = pedal.lastCC64Value;
+  if (prev === 'sostenuto' && next === 'sustain') {
+    /* leaving sostenuto: clear any locked set, then if CC64 is held, treat it as damper */
+    sostenutoOff();
+    pedal.cc64Depth = (lastCC64 !== null && lastCC64 >= 64) ? 1 : 0;
+    setDamperDepth();
+  } else if (prev === 'sustain' && next === 'sostenuto') {
+    /* entering sostenuto: if CC64 was contributing to damper, drop that contribution
+       and re-trigger sostenuto from the held state */
+    pedal.cc64Depth = 0;
+    setDamperDepth();
+    if (lastCC64 !== null && lastCC64 >= 64) sostenutoOn();
+    else sostenutoOff();
+  }
+});
 
 // Calibration & auto-sync
 $<HTMLButtonElement>('btnCalibPedal').addEventListener('click', togglePedalCalibration);

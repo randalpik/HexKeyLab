@@ -928,8 +928,13 @@ export const SampleEngine = (function () {
        message arrives (which may be never, or well after onset). Placed outside
        voiceGain so it doesn't interfere with the release envelope. */
     var pressureGain=ctx.createGain();pressureGain.gain.value=1.0;pressureGain.connect(master);
+    /* damperGain: continuous-damper modulation. Sits between voiceGain (release
+       envelope) and pressureGain (aftertouch) — engine.ts ramps it via
+       setVoiceDamperDepth while the key is in sustainedKeys, pins to 1.0 for
+       sostenuto-locked keys. Default 1.0 = no attenuation. */
+    var damperGain=ctx.createGain();damperGain.gain.value=1.0;damperGain.connect(pressureGain);
     /* voiceGain: persistent node for this voice — noteOff fades this to silence everything */
-    var voiceGain=ctx.createGain();voiceGain.gain.value=1.0;voiceGain.connect(pressureGain);
+    var voiceGain=ctx.createGain();voiceGain.gain.value=1.0;voiceGain.connect(damperGain);
     var segGain=ctx.createGain();var now=ctx.currentTime;
     segGain.gain.setValueAtTime(vol,now);
     var source=ctx.createBufferSource();source.buffer=nearest.buffer;
@@ -970,7 +975,7 @@ export const SampleEngine = (function () {
     source.connect(segGain);segGain.connect(voiceGain);
     var startOffset=(nearest.lp&&nearest.lp.trimStart)?nearest.lp.trimStart:0;
     source.start(now,startOffset);
-    var voice={source:source,segGain:segGain,voiceGain:voiceGain,pressureGain:pressureGain,freq:freq,sampleFreq:nearest.freq,
+    var voice={source:source,segGain:segGain,voiceGain:voiceGain,damperGain:damperGain,pressureGain:pressureGain,freq:freq,sampleFreq:nearest.freq,
       vol:vol,baseVol:baseVol,alive:true,loopPts:pts,validStartsByEnd:vsbe,loopTimer:null,buffer:nearest.buffer,instr:instr,
       slopeCV:(nearest.lp&&typeof nearest.lp.slopeCV==='number')?nearest.lp.slopeCV:0.5,
       /* ── SOURCE ANCHOR (for wrap-aligned segment switching) ──
@@ -1428,7 +1433,8 @@ export const SampleEngine = (function () {
       startOffset=(nearest.lp&&nearest.lp.trimStart)?nearest.lp.trimStart:0;
     }
     var pressureGain=ctx.createGain();pressureGain.gain.value=1.0;pressureGain.connect(master);
-    var voiceGain=ctx.createGain();voiceGain.gain.value=1.0;voiceGain.connect(pressureGain);
+    var damperGain=ctx.createGain();damperGain.gain.value=1.0;damperGain.connect(pressureGain);
+    var voiceGain=ctx.createGain();voiceGain.gain.value=1.0;voiceGain.connect(damperGain);
     var segGain=ctx.createGain();var now=ctx.currentTime;
     segGain.gain.setValueAtTime(0,now);segGain.gain.linearRampToValueAtTime(vol,now+dur);
     source.connect(segGain);segGain.connect(voiceGain);
@@ -1447,7 +1453,7 @@ export const SampleEngine = (function () {
         }
       }
     }
-    var voice={source:source,segGain:segGain,voiceGain:voiceGain,pressureGain:pressureGain,freq:freq,sampleFreq:nearest.freq,vol:vol,baseVol:baseVol,alive:true,
+    var voice={source:source,segGain:segGain,voiceGain:voiceGain,damperGain:damperGain,pressureGain:pressureGain,freq:freq,sampleFreq:nearest.freq,vol:vol,baseVol:baseVol,alive:true,
       loopPts:pts,validStartsByEnd:vsbeFaded||null,loopTimer:null,buffer:nearest.buffer,instr:instr,
       slopeCV:(nearest.lp&&typeof nearest.lp.slopeCV==='number')?nearest.lp.slopeCV:0.5,
       /* Source anchor — see comment in sNoteOn */
@@ -1480,11 +1486,22 @@ export const SampleEngine = (function () {
     v.pressureGain.gain.setValueAtTime(v.pressureGain.gain.value,now);
     v.pressureGain.gain.linearRampToValueAtTime(targetGain,now+rampSec);
   }
+  /* Continuous-damper modulation. tau=0 → instant set (sostenuto pin), else
+     setTargetAtTime exponential smoothing. Engine guarantees sample voices
+     have a damperGain via sNoteOn/sNoteOnFaded. */
+  function sSetVoiceDamperDepth(voiceKey: string, depth: number, tau: number): void {
+    var v=activeVoices[voiceKey];if(!v||!v.alive||!v.damperGain)return;
+    var now=ctx.currentTime;
+    v.damperGain.gain.cancelScheduledValues(now);
+    if(tau<=0){v.damperGain.gain.setValueAtTime(depth,now);}
+    else{v.damperGain.gain.setTargetAtTime(depth,now,tau);}
+  }
   return{INSTRUMENTS:INSTRUMENTS,init:init,loadInstrument:loadInstrument,
     noteOn:sNoteOn,noteOff:sNoteOff,rampFreq:sRampFreq,
     slideAndFadeOut:sSlideAndFadeOut,noteOnFaded:sNoteOnFaded,
     hardStop:sHardStop,hardStopAll:sHardStopAll,stopAll:sStopAll,
     setAftertouch:sSetAftertouch,
+    setVoiceDamperDepth:sSetVoiceDamperDepth,
     getActiveVoices:function(){return activeVoices;},
     isLoaded:function(){return !!(currentInstrument&&buffers[currentInstrument]);},
     setInstrument:function(k: string){if(buffers[k])currentInstrument=k;},

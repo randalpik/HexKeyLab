@@ -35,6 +35,19 @@ export function setTuning(): void {
   (document.getElementById('selTuning') as HTMLSelectElement).blur();
 }
 
+export function setOutline(): void {
+  /* When the outline is None, Extend off would clamp the canvas to an
+     undefined region (no bounds), so we force the renderer to act as if
+     Extend is on and disable the checkbox to communicate that. */
+  const sel = document.getElementById('selOutline') as HTMLSelectElement;
+  const cbExtend = document.getElementById('cbExtend') as HTMLInputElement;
+  cbExtend.disabled = sel.value === 'none';
+  view.hexDirty = true;
+  view.textDirty = true;
+  draw();
+  sel.blur();
+}
+
 export function shiftSeams(dir: number): void {
   tuning.septimalShift = ((tuning.septimalShift + dir + 21) % 42 + 42) % 42 - 21;
   document.getElementById('seamShiftInd')!.textContent = String(tuning.septimalShift);

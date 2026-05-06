@@ -14,6 +14,7 @@
 import { baseKeys, layoutShifts } from '../layout/baseKeys.js';
 import { bandOf } from '../layout/coords.js';
 import { hexR, dxH, dyH, tiltAngle, cosT, sinT } from '../layout/geometry.js';
+import { qwertyKeys } from '../input/qwerty.js';
 import { tuning } from '../state/tuning.js';
 import { view } from '../state/view.js';
 import { selection, type DrawnKey } from '../state/selection.js';
@@ -50,9 +51,6 @@ export function startLayoutAnim(): void {
 }
 
 // ── outline geometry (precomputed at module load) ──────────────────────────
-const kbBaseSet = new Set<string>();
-baseKeys.forEach((k) => { kbBaseSet.add(k[0] + ',' + k[1]); });
-
 const outR = hexR + 1;
 const olDirs: ReadonlyArray<readonly [number, number]> = [[1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1]];
 const hdx: number[] = [], hdy: number[] = [], epx: number[] = [], epy: number[] = [];
@@ -73,20 +71,22 @@ function edgeIsect(hx1: number, hy1: number, d1: number, hx2: number, hy2: numbe
 }
 
 type Point = [number, number];
-const kbOutlinePaths: Point[][] = []; /* array of closed polyline arrays [[x,y],[x,y],...] */
-(function () {
+
+/* Trace boundary edges around a (q, r) cell set into closed polyline arrays.
+   Used for both the Lumatone (baseKeys) and QWERTY (qwertyKeys) outlines. */
+function computeOutlinePaths(keys: ReadonlyArray<readonly [number, number]>): Point[][] {
+  const keySet = new Set<string>();
+  keys.forEach((k) => { keySet.add(k[0] + ',' + k[1]); });
   const eDirs: ReadonlyArray<readonly [number, number]> = [[1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1]];
-  /* base positions */
   const bPos: Record<string, { ux: number; uy: number }> = {};
-  baseKeys.forEach((bk) => {
+  keys.forEach((bk) => {
     bPos[bk[0] + ',' + bk[1]] = { ux: bk[0] * dxH + bk[1] * dxH * 0.5, uy: -bk[1] * dyH };
   });
-  /* find boundary edges */
   const bEdges: Record<string, boolean> = {};
-  baseKeys.forEach((bk) => {
+  keys.forEach((bk) => {
     const bq = bk[0], br = bk[1];
     for (let d = 0; d < 6; d++) {
-      if (!kbBaseSet.has((bq + eDirs[d][0]) + ',' + (br + eDirs[d][1])))
+      if (!keySet.has((bq + eDirs[d][0]) + ',' + (br + eDirs[d][1])))
         bEdges[bq + ',' + br + ',' + d] = true;
     }
   });
@@ -99,7 +99,7 @@ const kbOutlinePaths: Point[][] = []; /* array of closed polyline arrays [[x,y],
     }
     return null;
   }
-  /* trace chains */
+  const paths: Point[][] = [];
   const bUsed: Record<string, boolean> = {};
   for (const ek in bEdges) {
     if (bUsed[ek]) continue;
@@ -122,9 +122,22 @@ const kbOutlinePaths: Point[][] = []; /* array of closed polyline arrays [[x,y],
       const pt = edgeIsect(h1.ux, h1.uy, cur[2], h2.ux, h2.uy, nxt[2]);
       poly.push(pt);
     }
-    if (poly.length >= 3) kbOutlinePaths.push(poly);
+    if (poly.length >= 3) paths.push(poly);
   }
-})();
+  return paths;
+}
+
+const lumatoneOutlinePaths: Point[][] = computeOutlinePaths(baseKeys);
+const qwertyOutlinePaths: Point[][] = computeOutlinePaths(qwertyKeys);
+
+type OutlineMode = 'lumatone' | 'qwerty' | 'none';
+function getOutlineMode(): OutlineMode {
+  const sel = document.getElementById('selOutline') as HTMLSelectElement | null;
+  const v = sel?.value;
+  if (v === 'qwerty') return 'qwerty';
+  if (v === 'none') return 'none';
+  return 'lumatone';
+}
 
 // ── hit-test ───────────────────────────────────────────────────────────────
 /** Map screen coordinates to a "q,r" lattice key, or null if too far from any. */
@@ -225,8 +238,10 @@ interface GridRange { qMin: number; qMax: number; rMin: number; rMax: number; }
 
 /* keyboard extent across all layouts for tight bounds when Extend is off */
 let kbQMin: number, kbQMax: number, kbRMin: number, kbRMax: number;
+let qwertyQMin: number, qwertyQMax: number, qwertyRMin: number, qwertyRMax: number;
 (function () {
   kbQMin = 1e9; kbQMax = -1e9; kbRMin = 1e9; kbRMax = -1e9;
+  qwertyQMin = 1e9; qwertyQMax = -1e9; qwertyRMin = 1e9; qwertyRMax = -1e9;
   ([1, 2, 3] as const).forEach((li) => {
     const sh = layoutShifts[li];
     baseKeys.forEach((k) => {
@@ -234,8 +249,14 @@ let kbQMin: number, kbQMax: number, kbRMin: number, kbRMax: number;
       if (q < kbQMin) kbQMin = q; if (q > kbQMax) kbQMax = q;
       if (r < kbRMin) kbRMin = r; if (r > kbRMax) kbRMax = r;
     });
+    qwertyKeys.forEach((k) => {
+      const q = k[0] + sh[0], r = k[1] + sh[1];
+      if (q < qwertyQMin) qwertyQMin = q; if (q > qwertyQMax) qwertyQMax = q;
+      if (r < qwertyRMin) qwertyRMin = r; if (r > qwertyRMax) qwertyRMax = r;
+    });
   });
   kbQMin -= 2; kbQMax += 2; kbRMin -= 2; kbRMax += 2;
+  qwertyQMin -= 2; qwertyQMax += 2; qwertyRMin -= 2; qwertyRMax += 2;
 })();
 
 function sizeGridCanvases(): void {
@@ -264,9 +285,18 @@ function gridRange(extended: boolean): GridRange {
     if (rRel + gridRefR < rLo) rLo = rRel + gridRefR; if (rRel + gridRefR > rHi) rHi = rRel + gridRefR;
   });
   qLo = Math.floor(qLo) - 2; qHi = Math.ceil(qHi) + 2; rLo = Math.floor(rLo) - 2; rHi = Math.ceil(rHi) + 2;
-  if (!extended) {
-    qLo = Math.max(qLo, kbQMin); qHi = Math.min(qHi, kbQMax);
-    rLo = Math.max(rLo, kbRMin); rHi = Math.min(rHi, kbRMax);
+  /* Extend off → clamp to the active outline's bounds so we don't render
+     hexes that will be masked anyway. None mode never clamps (otherwise
+     toggling Extend off would empty the canvas). */
+  const mode = getOutlineMode();
+  if (!extended && mode !== 'none') {
+    if (mode === 'qwerty') {
+      qLo = Math.max(qLo, qwertyQMin); qHi = Math.min(qHi, qwertyQMax);
+      rLo = Math.max(rLo, qwertyRMin); rHi = Math.min(rHi, qwertyRMax);
+    } else {
+      qLo = Math.max(qLo, kbQMin); qHi = Math.min(qHi, kbQMax);
+      rLo = Math.max(rLo, kbRMin); rHi = Math.min(rHi, kbRMax);
+    }
   }
   return { qMin: qLo, qMax: qHi, rMin: rLo, rMax: rHi };
 }
@@ -441,14 +471,22 @@ export function draw(): void {
     const dirs: ReadonlyArray<readonly [number, number]> = [[1, 0], [-1, 0], [0, 1], [0, -1], [-1, 1], [1, -1]];
     const animT = animation.progress;
     const seamBlend = animT < 0 ? 1 : Math.pow(Math.abs(2 * animT - 1), 6);
-    const olOX = (kbShQ - view.viewQ) * dxH + (kbShR - view.viewR) * dxH * 0.5;
-    const olOY = -(kbShR - view.viewR) * dyH;
+    /* snap seams to whichever outline is currently visible — a Lumatone snap
+       under a hidden Lumatone outline would tug seams toward an invisible
+       reference. Both Lumatone and QWERTY ride with the active layout shift,
+       so they share the same snap offset. None mode: no snap. */
+    const seamMode = getOutlineMode();
+    const snapPaths: Point[][] = seamMode === 'qwerty' ? qwertyOutlinePaths
+      : seamMode === 'lumatone' ? lumatoneOutlinePaths : [];
+    const snapOX = (kbShQ - view.viewQ) * dxH + (kbShR - view.viewR) * dxH * 0.5;
+    const snapOY = -(kbShR - view.viewR) * dyH;
     function snapVtx(px: number, py: number): { d: number; x: number; y: number } | null {
+      if (snapPaths.length === 0) return null;
       let bd = Infinity, bpx = 0, bpy = 0;
-      for (let pi = 0; pi < kbOutlinePaths.length; pi++) {
-        const poly = kbOutlinePaths[pi];
+      for (let pi = 0; pi < snapPaths.length; pi++) {
+        const poly = snapPaths[pi];
         for (let i = 0; i < poly.length; i++) {
-          const vx = poly[i][0] + olOX, vy = poly[i][1] + olOY;
+          const vx = poly[i][0] + snapOX, vy = poly[i][1] + snapOY;
           const d2 = (px - vx) * (px - vx) + (py - vy) * (py - vy);
           if (d2 < bd) { bd = d2; bpx = vx; bpy = vy; }
         }
@@ -509,35 +547,43 @@ export function draw(): void {
   }
 
   /* === overlay + outline (rotated context, on top of everything) === */
-  ctx.save();
-  ctx.translate(view.CW / 2, cyC);
-  ctx.rotate(-tiltAngle);
+  const outlineMode = getOutlineMode();
+  if (outlineMode !== 'none') {
+    ctx.save();
+    ctx.translate(view.CW / 2, cyC);
+    ctx.rotate(-tiltAngle);
 
-  const diag = Math.ceil(Math.sqrt(view.CW * view.CW + view.CH * view.CH));
-  ctx.beginPath();
-  ctx.rect(-diag, -diag, diag * 2, diag * 2);
-  kbOutlinePaths.forEach((poly) => {
-    for (let i = 0; i < poly.length; i++) {
-      if (i === 0) ctx.moveTo(poly[i][0], poly[i][1]);
-      else ctx.lineTo(poly[i][0], poly[i][1]);
-    }
-    ctx.closePath();
-  });
-  ctx.fillStyle = showE ? 'rgba(17,17,17,0.65)' : 'rgba(17,17,17,1.0)';
-  ctx.fill('evenodd');
+    /* Both outlines ride with viewQ — keyboard input applies layoutShifts at
+       note-on time so QWERTY follows ♭/♮/♯ exactly like the Lumatone, and the
+       outline visually stays put on canvas as the lattice scrolls underneath. */
+    const activePaths = outlineMode === 'qwerty' ? qwertyOutlinePaths : lumatoneOutlinePaths;
 
-  ctx.strokeStyle = '#fff'; ctx.lineWidth = 3.5; ctx.lineCap = 'butt'; ctx.lineJoin = 'round';
-  ctx.beginPath();
-  kbOutlinePaths.forEach((poly) => {
-    for (let i = 0; i < poly.length; i++) {
-      if (i === 0) ctx.moveTo(poly[i][0], poly[i][1]);
-      else ctx.lineTo(poly[i][0], poly[i][1]);
-    }
-    ctx.closePath();
-  });
-  ctx.stroke();
+    const diag = Math.ceil(Math.sqrt(view.CW * view.CW + view.CH * view.CH));
+    ctx.beginPath();
+    ctx.rect(-diag, -diag, diag * 2, diag * 2);
+    activePaths.forEach((poly) => {
+      for (let i = 0; i < poly.length; i++) {
+        if (i === 0) ctx.moveTo(poly[i][0], poly[i][1]);
+        else ctx.lineTo(poly[i][0], poly[i][1]);
+      }
+      ctx.closePath();
+    });
+    ctx.fillStyle = showE ? 'rgba(17,17,17,0.65)' : 'rgba(17,17,17,1.0)';
+    ctx.fill('evenodd');
 
-  ctx.restore();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 3.5; ctx.lineCap = 'butt'; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    activePaths.forEach((poly) => {
+      for (let i = 0; i < poly.length; i++) {
+        if (i === 0) ctx.moveTo(poly[i][0], poly[i][1]);
+        else ctx.lineTo(poly[i][0], poly[i][1]);
+      }
+      ctx.closePath();
+    });
+    ctx.stroke();
+
+    ctx.restore();
+  }
 
   updateInfo();
 }

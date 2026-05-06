@@ -179,7 +179,7 @@ Determined by 12-TET equivalent pitch class `(57 + 4q + 7r) % 12`:
 - **Transpose**: 5-axis ▲/▼ stacks (P5, M3, m3, P8, SC) always visible. Same key-repeat behavior.
 - **Audio**: toggle + instrument/waveform selector. Piano default. Samples lazy-load on first selection with blue "loading…" state.
 - **Clear**: deselects all.
-- **Lumatone status panel**: connection badge (green/red), Auto-sync checkbox + status badge, **Calibrate Pedal button**.
+- **Lumatone status panel**: connection badge (green/red), **Pedals dropdown** (Sustain / Sostenuto+Sustain — controls how the sustain jack is interpreted, see §4.13), **Calibrate Pedal button**, Auto-sync checkbox + status badge.
 
 ### 4.3 Keyboard shortcuts
 
@@ -281,7 +281,7 @@ On first auto-sync after `findLumatone()` succeeds:
 #### Pedal calibration
 
 - **Calibrate Pedal button** in Lumatone status panel toggles calibration mode
-- **Active state**: panel below canvas shows live ADC min/max bounds (parsed from spontaneous CMD 0x3E packets), valid flag, and a CC4 live readout (visible after calibration ends — firmware suppresses CC4 during cal mode)
+- **Active state**: panel below canvas shows live ADC min/max bounds (parsed from spontaneous CMD 0x3E packets) and valid flag. No CC4 live readout — firmware suppresses CC4 emission during cal mode (it sends 0x3E instead), so a "live" CC4 number inside the cal panel would be misleading.
 - **Reset to Factory button** in panel sends CMD 0x39
 - **Maximum debug logging** in console while cal mode active: every CMD 0x3E packet (first + every 10th in raw hex), every CC 4 message with timing, calibration entry/exit events
 - **Outside cal mode**: minimal CC 4 logging (endpoints only)
@@ -291,9 +291,9 @@ On first auto-sync after `findLumatone()` succeeds:
 `handleMidiMessage(e)` dispatches:
 - **SysEx CMD 0x3E** → calibration packet handler
 - **Other SysEx** → `sysexHandleResponse` (ACK matching for queue)
-- **CC 4** (expression jack) → binary-fallback sustain (depth ≥ 0.5 → on); verbose debug log when calibration mode is active
-- **CC 64** (sustain jack) → binary sustain on/off
-- **Note on/off** → audio + selection
+- **CC 4** (expression jack) → continuous damper depth: `pedal.cc4Depth = d2/127`, then `setDamperDepth()`. Verbose debug log during calibration; outside cal mode, only endpoint hits (0/127) are logged.
+- **CC 64** (sustain jack) → role depends on `pedal.mode`: in `'sustain'` mode it's binary damper (`pedal.cc64Depth = d2 ≥ 64 ? 1 : 0`, then `setDamperDepth()`); in `'sostenuto'` mode it calls `sostenutoOn()`/`sostenutoOff()` and does not touch damper depth.
+- **Note on/off** → audio + selection. Note-off branches on `audio.sustainPedalDown || audio.sostenutoLockedKeys.has(key)`: keep-sustained or release.
 - **Polyphonic aftertouch (0xA0)** → per-voice volume modulation
 
 Note routing uses the **fixed MIDI layout**: every physical key has a stable (channel, note) address. `fixedMidiToKey(ch, note)` converts at MIDI-input time. Channels 0–4 = the five board groups. Notes 0–55 = key index within board.
@@ -304,10 +304,13 @@ Note routing uses the **fixed MIDI layout**: every physical key has a stable (ch
 
 #### Signal path
 ```
-sample → segGain (crossfade) → voiceGain (envelope) → master
+sample → segGain (crossfade) → voiceGain (envelope) → damperGain → pressureGain → master
+osc    →                       gain      (envelope) → damperGain → pressureGain → dest
 ```
 
-Gain constants: `sampleMaster = 0.9`, `oscGain = 0.35`, `squareGain = 0.25`.
+`damperGain` is the continuous-damper modulation node (default 1.0; ramped via `setTargetAtTime` while the key is in `sustainedKeys`; pinned to 1.0 for sostenuto-locked keys). `pressureGain` is the polyphonic aftertouch node (default 1.0). They sit downstream of the release envelope so neither modulation fights `voiceGain`/`gain` cancel-schedule patterns.
+
+Gain constants: `sampleMaster = 0.9`, `oscGain = 0.35`, `squareGain = 0.25`. Damper smoothing: `DAMPER_SMOOTH_TAU = 0.025` (≈25ms exponential τ for `setTargetAtTime`); below `DAMPER_RELEASE_FLOOR = 0.005` damper depth, sustained voices not protected by sostenuto are released.
 
 #### Velocity curve
 `0.10 + 0.90 × (vel/127)²` — quadratic with 10% floor.
@@ -329,10 +332,33 @@ Integrates in-flight ramp sync before starting a new one. `pendingRamp` identity
 #### Polyphonic aftertouch
 Per-voice `pressureGain`. Velocity-anchored handover: when AT message arrives, voice gain ramps from current to AT-implied target with `AFTERTOUCH_RAMP_S` smoothing.
 
-#### Sustain semantics
-- `sustainPedalDown` flag (set by CC 64 OR CC 4 ≥ 64 binary fallback)
-- `sustainedKeys` Set: keys held only by the pedal (released physically but still sounding)
-- Re-articulation: striking a sustained key triggers `noteOff` + new voice + flash (`triggerRearticulateFlash` / `rearticulateFlashUntil`)
+#### Pedal semantics
+
+Two pedal jacks (CC 4 = expression jack continuous, CC 64 = sustain jack binary) feed a unified damper-depth model plus an optional sostenuto layer. The Pedals dropdown selects what the sustain jack does:
+
+**Sustain mode** (default, no expression pedal needed): both jacks contribute to damper depth. `pedal.cc4Depth` (0..1) and `pedal.cc64Depth` (0 or 1) are combined as `max()` into `audio.damperDepth`. CC 64 alone gives the classic binary-sustain experience; CC 4 alone (or both together) gives continuous damper.
+
+**Sostenuto+Sustain mode** (with continuous expression pedal plugged in): CC 4 is the only damper source. CC 64 toggles a sostenuto layer that snapshots `selection.selectedKeys` at sostenuto-on into `audio.sostenutoLockedKeys`. Locked notes ride through any subsequent damper-pedal change.
+
+State:
+- `audio.damperDepth` — current effective damper depth, 0..1
+- `audio.sustainPedalDown` — mirrors `damperDepth > 0` (single-bit "is the damper engaged at all"); kept for note-off keep-or-release branching
+- `audio.sustainedKeys` — keys released physically but still sounding because either pedal holds them
+- `audio.sostenutoActive` / `audio.sostenutoLockedKeys` — sostenuto layer
+- `pedal.mode`, `pedal.cc4Depth`, `pedal.cc64Depth`, `pedal.lastCC64Value` — input-side routing state
+
+Engine API:
+- `setDamperDepth()` — recomputes `audio.damperDepth = max(cc4, cc64)`, updates `sustainPedalDown`, walks `sustainedKeys` applying the new depth (skipping sostenuto-locked keys), and runs the per-key release sequence when depth crosses below `DAMPER_RELEASE_FLOOR`.
+- `sostenutoOn()` — `sostenutoLockedKeys = new Set(selectedKeys)`; pins those voices' `damperGain` to 1.0 immediately (no ramp) so locked notes ring at full volume regardless of damper depth at the moment.
+- `sostenutoOff()` — clears the locked set; for each previously-locked key still in `sustainedKeys`, either re-applies current damper depth (if damper engaged) or releases (if damper is up).
+
+Continuous-damper behavior is **gain-based**, not release-time-based: a per-voice `damperGain` node attenuates sustained ringing in proportion to `(1 − depth)`. Half-pedaling produces audibly attenuated ringing in real time, not a deferred decay rate. See `decisions.md` for the rationale.
+
+Sostenuto-locked keys are exempt from damper attenuation while locked — their `damperGain` stays at 1.0 even with `damperDepth < 1`. This matches piano physics (the sostenuto rod lifts dampers off the locked strings entirely) and prevents the half-damper from attenuating notes that should be unaffected.
+
+Mode-dropdown change at runtime re-evaluates the held CC 64 state (`pedal.lastCC64Value`) so a held sustain pedal isn't stranded when the user toggles between sustain and sostenuto modes mid-press. Wired in `ui/init.ts`.
+
+Re-articulation: striking a sustained key triggers `noteOff` + new voice + flash (`triggerRearticulateFlash` / `rearticulateFlashUntil`). The new voice gets a fresh `damperGain = 1.0`; the next note-off path that adds it to `sustainedKeys` re-applies current `damperDepth`.
 
 #### Instruments
 9 sample-based + oscillators. Piano (Salamander) is default. Non-looped/decaying instruments: piano. Looped/sustained: FluidR3_GM. Vibrato instruments: violin, viola, cello, flute, drawbar_organ.
@@ -404,6 +430,8 @@ sysexBoardMap = [1,2,3,5,4]
 fixedMidiChannelMap = [0,1,2,3,4]
 AFTERTOUCH_RAMP_S
 REARTICULATE_FLASH_MS
+DAMPER_SMOOTH_TAU      # ~25ms exponential τ for setTargetAtTime damper smoothing
+DAMPER_RELEASE_FLOOR   # below this depth, sustained voices release through normal noteOff
 ```
 
 ### 5.6 Key data structures
@@ -497,11 +525,13 @@ src/
 │   ├── selection.ts            # selectedKeys, drawnKeys, hoverKey
 │   ├── audio.ts                # audioCtx, oscGain, squareGain, audioEnabled, activeWaveform,
 │   │                           #   activeOscs, keyVelocity, sustainPedalDown, sustainedKeys,
+│   │                           #   damperDepth, sostenutoActive, sostenutoLockedKeys,
 │   │                           #   aftertouchSnapshot, rearticulateFlashUntil, wfLoadingKey
 │   ├── midi.ts                 # midiAccess, midiOut, midiIn, activeMidiNotes, midiToKey
 │   ├── lumatone.ts             # autoSyncEnabled, deviceColors, fixedLayoutSent
 │   └── pedal.ts                # calibrating, debug, lastMin/Max/Valid, packetCount,
-│                               #   lastCC4Value, lastCC4Time
+│                               #   lastCC4Value, lastCC4Time, mode (sustain/sostenuto),
+│                               #   cc4Depth, cc64Depth, lastCC64Value
 ├── effects/                    # one-call fan-outs per state-change domain
 │   ├── onTuningChanged.ts      # rampActiveFreqs + view.hexDirty + draw + (syncLumatoneColors)
 │   ├── onLayoutChanged.ts      # syncLumatoneColors + buildMidiReverse + syncOutput

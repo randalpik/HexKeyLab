@@ -95,7 +95,6 @@ canvas{display:block;background:#111;margin:0 auto}
 .calib-panel .calib-stat .stat-val{color:#9ce}
 .calib-panel .calib-stat .stat-val.valid{color:#4CFF7C}
 .calib-panel .calib-stat .stat-val.invalid{color:#FF4C4C}
-.calib-panel .calib-live{color:#FFF94C;font-variant-numeric:tabular-nums;font-weight:600;min-width:38px;text-align:right}
 </style>
 </head>
 <body>
@@ -114,6 +113,14 @@ canvas{display:block;background:#111;margin:0 auto}
 <label><input type="checkbox" id="cbNotes" checked> Note names</label>
 <label><input type="checkbox" id="cbBands" checked> Band seams</label>
 <label><input type="checkbox" id="cbExtend" checked> Extend pattern</label>
+<div class="lsel">
+<span>Outline:</span>
+<select id="selOutline">
+<option value="lumatone" selected>Lumatone</option>
+<option value="qwerty">QWERTY</option>
+<option value="none">None</option>
+</select>
+</div>
 <label><input type="checkbox" id="cbCoords"> Show coordinates</label>
 <label><input type="checkbox" id="cbShortIvl"> Short intervals</label>
 <div style="flex-basis:100%;height:0"></div>
@@ -162,6 +169,10 @@ canvas{display:block;background:#111;margin:0 auto}
 <span id="midiControls" style="display:none">
 <span class="cdiv"></span>
 <span id="lumaStatus" class="luma-disconnected">Lumatone Not Connected</span>
+<label title="Sustain mode: sustain jack = damper. Sostenuto mode: sustain jack = sostenuto, expression jack = continuous damper.">Pedals: <select id="pedalMode">
+<option value="sustain" selected>Sustain</option>
+<option value="sostenuto">Sostenuto + Sustain</option>
+</select></label>
 <button class="calib-btn" id="btnCalibPedal" title="Calibrate the expression pedal jack — sweep pedal full range while active">Calibrate Pedal</button>
 <span class="auto-sync-col">
 <label class="auto-sync-lbl"><input type="checkbox" id="cbAutoSync"> Auto-sync</label>
@@ -173,7 +184,6 @@ canvas{display:block;background:#111;margin:0 auto}
 <div class="calib-panel" id="calibPanel">
 <span class="calib-title">Pedal Calibration</span>
 <span class="calib-instruction">Sweep pedal full range repeatedly</span>
-<span class="calib-stat"><span class="stat-label">CC4 live:</span><span class="calib-live" id="calibLive">---</span></span>
 <span class="calib-stat"><span class="stat-label">ADC min:</span><span class="stat-val" id="calibMin">----</span></span>
 <span class="calib-stat"><span class="stat-label">ADC max:</span><span class="stat-val" id="calibMax">----</span></span>
 <span class="calib-stat"><span class="stat-label">valid:</span><span class="stat-val" id="calibValid">-</span></span>
