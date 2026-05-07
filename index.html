@@ -110,12 +110,12 @@ canvas{display:block;background:#111;margin:0 auto}
 <button class="lbtn active" id="lb1">&#9838;</button>
 <button class="lbtn" id="lb3">&#9839;</button>
 </div>
-<label><input type="checkbox" id="cbNotes" checked> Note names</label>
-<label><input type="checkbox" id="cbBands" checked> Band seams</label>
-<label><input type="checkbox" id="cbExtend" checked> Extend pattern</label>
+<label><input type="checkbox" id="cbNotes" autocomplete="off" checked> Note names</label>
+<label><input type="checkbox" id="cbBands" autocomplete="off" checked> Band seams</label>
+<label><input type="checkbox" id="cbExtend" autocomplete="off" checked> Extend pattern</label>
 <div class="lsel">
 <span>Outline:</span>
-<select id="selOutline">
+<select id="selOutline" autocomplete="off">
 <option value="lumatone" selected>Lumatone</option>
 <option value="qwerty">QWERTY</option>
 <option value="none">None</option>
@@ -124,12 +124,12 @@ canvas{display:block;background:#111;margin:0 auto}
 <span class="tpax"><button class="tpab" id="btnQwertyTrUp">&#x25B2;</button><span class="tpal" id="qwertyTrInd">0</span><button class="tpab" id="btnQwertyTrDn">&#x25BC;</button></span>
 </span>
 </div>
-<label><input type="checkbox" id="cbCoords"> Show coordinates</label>
-<label><input type="checkbox" id="cbShortIvl"> Short intervals</label>
+<label><input type="checkbox" id="cbCoords" autocomplete="off"> Show coordinates</label>
+<label><input type="checkbox" id="cbShortIvl" autocomplete="off"> Short intervals</label>
 <div style="flex-basis:100%;height:0"></div>
 <div class="lsel">
 <span>Tuning:</span>
-<select id="selTuning">
+<select id="selTuning" autocomplete="off">
 <option value="E">Equal</option>
 <option value="5" selected>5-limit</option>
 <option value="7">7-limit</option>
@@ -154,8 +154,8 @@ canvas{display:block;background:#111;margin:0 auto}
 <span class="cdiv"></span>
 <button class="push-btn" id="btnClear">Clear</button>
 <span class="cdiv"></span>
-<label><input type="checkbox" id="cbAudio"> Audio</label>
-<select id="waveform">
+<label><input type="checkbox" id="cbAudio" autocomplete="off"> Audio</label>
+<select id="waveform" autocomplete="off">
 <option value="piano" selected>Piano</option>
 <option value="drawbar_organ">Drawbar Organ</option>
 <option value="reed_organ">Reed Organ</option>
@@ -172,16 +172,18 @@ canvas{display:block;background:#111;margin:0 auto}
 <span id="midiControls" style="display:none">
 <span class="cdiv"></span>
 <span id="lumaStatus" class="luma-disconnected">Lumatone Not Connected</span>
-<label title="Sustain mode: sustain jack = damper. Sostenuto mode: sustain jack = sostenuto, expression jack = continuous damper.">Pedals: <select id="pedalMode">
+<label title="Sustain mode: sustain jack = damper. Sostenuto mode: sustain jack = sostenuto, expression jack = continuous damper.">Pedals: <select id="pedalMode" autocomplete="off">
 <option value="sustain" selected>Sustain</option>
 <option value="sostenuto">Sostenuto + Sustain</option>
 </select></label>
 <button class="calib-btn" id="btnCalibPedal" title="Calibrate the expression pedal jack — sweep pedal full range while active">Calibrate Pedal</button>
 <span class="auto-sync-col">
-<label class="auto-sync-lbl"><input type="checkbox" id="cbAutoSync"> Auto-sync</label>
+<label class="auto-sync-lbl"><input type="checkbox" id="cbAutoSync" autocomplete="off"> Auto-sync</label>
 <div class="sync-status" id="syncStatus">Idle</div>
 </span>
 </span>
+<span class="cdiv"></span>
+<button class="push-btn" id="btnResetPrefs" title="Reset all toolbar settings to defaults and reload">Reset prefs</button>
 </div>
 <canvas id="cv"></canvas>
 <div class="calib-panel" id="calibPanel">

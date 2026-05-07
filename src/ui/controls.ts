@@ -9,6 +9,8 @@
 import { tuning } from '../state/tuning.js';
 import { selection } from '../state/selection.js';
 import { audio } from '../state/audio.js';
+import { savePrefs } from '../state/persistence.js';
+import type { LayoutId, OutlineMode, TuningMode } from '../state/persistence.js';
 import {
   layoutShifts, QWERTY_TRANSPOSE_MIN, QWERTY_TRANSPOSE_MAX,
 } from '../layout/baseKeys.js';
@@ -36,6 +38,7 @@ export function setTuning(): void {
   (document.getElementById('seamShiftCtrl') as HTMLElement).style.display = tuning.septimalEnabled ? '' : 'none';
   onTuningChanged();
   (document.getElementById('selTuning') as HTMLSelectElement).blur();
+  savePrefs({ tuning: val as TuningMode });
 }
 
 export function setOutline(): void {
@@ -54,6 +57,7 @@ export function setOutline(): void {
   view.textDirty = true;
   draw();
   sel.blur();
+  savePrefs({ outline: sel.value as OutlineMode });
 }
 
 export function setQwertyTranspose(dir: number): void {
@@ -68,12 +72,14 @@ export function setQwertyTranspose(dir: number): void {
   view.hexDirty = true;
   view.textDirty = true;
   draw();
+  savePrefs({ qwertyTranspose: next });
 }
 
 export function shiftSeams(dir: number): void {
   tuning.septimalShift = ((tuning.septimalShift + dir + 21) % 42 + 42) % 42 - 21;
   document.getElementById('seamShiftInd')!.textContent = String(tuning.septimalShift);
   onTuningChanged({ colorSync: false });
+  savePrefs({ septimalShift: tuning.septimalShift });
 }
 
 /* key-repeat for seam shift buttons */
@@ -254,6 +260,24 @@ export function setLayout(n: number): void {
   document.querySelectorAll('.lbtn').forEach(function (b) { b.classList.remove('active'); });
   document.getElementById('lb' + n)!.classList.add('active');
   startLayoutAnim();
+  savePrefs({ curLayout: n as LayoutId });
+}
+
+/* Init-time variant of setLayout: snap directly to the persisted layout
+   without a 500 ms view tween or audio re-keying (no notes are playing yet,
+   and we don't want a startup animation flicker). Caller already set
+   tuning.curLayout via prefs; this just aligns view + button class + canvas. */
+export function applyLayoutImmediate(n: number): void {
+  tuning.curLayout = n;
+  const sh = layoutShifts[n];
+  view.viewQ = sh[0];
+  view.viewR = sh[1];
+  document.querySelectorAll('.lbtn').forEach(function (b) { b.classList.remove('active'); });
+  const btn = document.getElementById('lb' + n);
+  if (btn) btn.classList.add('active');
+  view.hexDirty = true;
+  view.textDirty = true;
+  draw();
 }
 
 export function clearSelection(): void {

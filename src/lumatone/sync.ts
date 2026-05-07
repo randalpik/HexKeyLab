@@ -13,6 +13,7 @@
 import { tuning } from '../state/tuning.js';
 import { midi } from '../state/midi.js';
 import { lumatone } from '../state/lumatone.js';
+import { savePrefs } from '../state/persistence.js';
 import { baseKeys, layoutShifts } from '../layout/baseKeys.js';
 import { keyColorHex } from '../render/colors.js';
 import {
@@ -95,6 +96,7 @@ export function syncLumatoneColors(): void {
 export function toggleAutoSync(): void {
   const cb = document.getElementById('cbAutoSync') as HTMLInputElement;
   lumatone.autoSyncEnabled = cb.checked;
+  savePrefs({ autoSync: lumatone.autoSyncEnabled });
   if (lumatone.autoSyncEnabled) {
     /* OFF → ON: full initial sync (setup + all colors). If no device connected
        yet, this no-ops; findLumatone will pick up the state on next connection. */

@@ -14,6 +14,7 @@
 import { audio } from '../state/audio.js';
 import { pedal } from '../state/pedal.js';
 import { selection } from '../state/selection.js';
+import { savePrefs } from '../state/persistence.js';
 import { keyFreq } from '../tuning/frequency.js';
 import { SampleEngine } from './samples.js';
 import {
@@ -177,6 +178,7 @@ export function syncAudio(): void {
 
 export function toggleAudio(): void {
   audio.audioEnabled = (document.getElementById('cbAudio') as HTMLInputElement).checked;
+  savePrefs({ audioEnabled: audio.audioEnabled });
   if (audio.audioEnabled) {
     initAudio();
     if (audio.audioCtx!.state === 'suspended') audio.audioCtx!.resume();
@@ -210,13 +212,7 @@ export function changeWaveform(): void {
   const wf = sel.value;
   sel.blur();
   if (audio.wfLoadingKey) return;
-  /* auto-enable audio */
-  if (!audio.audioEnabled) {
-    (document.getElementById('cbAudio') as HTMLInputElement).checked = true;
-    audio.audioEnabled = true;
-    initAudio();
-    if (audio.audioCtx!.state === 'suspended') audio.audioCtx!.resume();
-  }
+  savePrefs({ waveform: wf });
   const instr = SampleEngine.INSTRUMENTS[wf];
   if (instr && !SampleEngine.isInstrumentLoaded(wf)) {
     /* on-demand load with progress — don't touch current audio until success */
