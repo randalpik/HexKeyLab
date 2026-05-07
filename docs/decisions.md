@@ -144,3 +144,105 @@ The fixed-MIDI mapping is set up *once* per device-connection in `lumatone/sync.
 - Engine API: `src/audio/engine.ts` — `setDamperDepth`, `sostenutoOn`, `sostenutoOff`, `applyDamperToVoice`, `pinDamperToOne`, `releaseSustainedKey`. `SampleEngine.setVoiceDamperDepth` is the sample-side accessor.
 - Note-off branches: `src/midi/handler.ts` and `src/input/keyboard-notes.ts`.
 - UI: `index.html` (`#pedalMode` select; `#calibLive` removed), `src/ui/init.ts` (mode-flip handler with held-CC64 re-evaluation).
+
+---
+
+## Vibrato sample selection: full-chromatic analyze, ~4-semitone spacing, quality-first picks
+
+**Date**: 2026-05-07
+**Picked**: For each `vibrato:true` instrument in `samples.ts`, the workflow is
+(1) fetch every chromatic note in the soundfont's range; (2) decode with ffmpeg
+to `f32le` mono at 44.1 kHz; (3) run `prepareLoopVibrato` on each via the analyzer's
+exposed function; (4) classify into green/blue/yellow/red tiers using the same
+logic as the analyzer UI (seams ≥ 2/4, usableBs ≥ 2/3, minPickCorr ≥ 0.93 for green);
+(5) walk the range in 4-semitone steps starting from the lowest usable note,
+picking the highest-tier sample within ±2 semitones at each step (tier rank
+first, minPickCorr breaks ties); (6) emit JS source via the same format the
+analyzer's `generateOutput` produces; (7) replace the instrument block in
+`samples.ts`. End state for the 5 vibrato instruments: 14–20 samples each, all
+green or blue, minPickCorr typically 0.95–1.00.
+
+**Rejected**:
+
+- **Hand-selecting samples in the analyzer UI**, the previous workflow. Slow,
+  human-bottlenecked, and biases toward whatever notes happen to look good
+  on the day — not the highest-quality coverage of the range.
+- **Even spacing without quality gating**. A note at exact 4-semitone steps
+  might be `red` while a neighbor 2 semitones away is `green`. Strict spacing
+  ships worse loops; the ±2-semitone window keeps spacing roughly even
+  while always preferring quality.
+- **Including `red`/`fail` samples as fallbacks** when the window has nothing
+  green/blue/yellow. Red samples produce audible loop seams; better to leave
+  a 4-semitone gap and let the engine pick the nearest neighbor.
+
+**Why**:
+
+- The analyzer's tier model is the right quality proxy — `minPickCorr ≥ 0.93`
+  means every loop point shares waveform phase with the anchor, so any pair
+  loops cleanly. That's exactly what the runtime needs.
+- 4-semitone spacing (~3 samples per octave) is dense enough that the engine's
+  nearest-pitch lookup never has to stretch a sample by more than ±2 semitones,
+  and small enough that 5–7 octaves of an instrument's range fits in 15–20
+  samples — comparable to what was hand-curated before, but reproducible.
+
+**Where**:
+
+- Analyzer entry point: `tools/HexKeyLab-analyzer.html` — `prepareLoopVibrato`,
+  `prepareLoopMacroPeriod`, and the shared `findSteadyRegion` /
+  `buildBackwardForwardGraph` / `correlateWaveforms` / `refineFundamentalPeriod`
+  helpers above them. `transpose` config field handles the FatBoy drawbar
+  octave-mismatch convention.
+- Result: `src/audio/samples.ts`, the 5 `vibrato:true` instrument blocks
+  (violin, viola, cello, flute, drawbar_organ).
+- The selection script runs entirely outside the browser via Node + ffmpeg
+  for batch reproducibility; the analyzer's HTML UI remains for individual-
+  sample inspection / debugging.
+
+---
+
+## Octave-mismatched soundfonts: pair filename with actual audio fundamental, no runtime transpose
+
+**Date**: 2026-05-07
+**Picked**: For soundfonts where the filename labels are an octave above the
+actual recorded audio (FatBoy Hammond drawbar — `A4.mp3` contains audio at
+220 Hz, not 440 Hz), each `samples.ts` entry pairs `name:` (the filename to
+fetch) with `freq:` (the file's *actual audio fundamental*). The runtime
+engine plays the file at native rate=1.0 for its closest pitch. The analyzer
+config still has `transpose:2` to tell the analyzer how to interpret the
+file (so `refineFundamentalPeriod` searches the right autocorrelation lag),
+but the output it emits — and the `samples.ts` block — does NOT carry a
+`transpose` field.
+
+**Rejected**:
+
+- **Engine-side `transpose:N` multiplier** (the previous approach). For an
+  audible Eb2 (78.4 Hz) request, the engine fetched `Eb2.mp3` (Eb1 audio at
+  39.2 Hz) and played it at rate = 78.4 × 2 / 78.4 = 2.0 to lift the audio
+  up to the labeled pitch. This worked for pitch but doubled the recorded
+  Leslie vibrato speed (~5 Hz became ~10 Hz). Audibly wrong.
+- **Re-pitch the audio at decode time** (offline). Possible but adds an
+  ffmpeg pass per sample and discards the original recording fidelity.
+  Native-rate playback is the simpler choice.
+
+**Why**:
+
+- Runtime playback rate determines BOTH the perceived pitch AND the rate of
+  any modulation baked into the file (vibrato, tremolo, chorus, Leslie).
+  Native rate is the only setting where modulation matches what the recording
+  engineer captured. Anything else is a trade-off.
+- Pairing `name` (= filename) with `freq` (= actual audio pitch) loses one
+  audible octave at the top (no `Bb8.mp3` exists on the CDN to fill in for
+  audible Bb7), but the lowest octave's audible range is still well-covered.
+  For Hammond drawbar specifically, the bass register is far more
+  important than the top — losing audible Bb7 in exchange for 5 Hz rather
+  than 10 Hz Leslie is a clear improvement.
+
+**Where**:
+
+- `src/audio/samples.ts:158` — `drawbar_organ` block, no `transpose:` field;
+  each entry's `freq` is the actual audio fundamental of the named file.
+- `tools/HexKeyLab-analyzer.html` — `transpose` config field documented;
+  analyzer emits `freqActual` as-is (= actual audio fundamental).
+- Engine math (`src/audio/samples.ts:428`, `:1009`): `rate = freq *
+  (instr.transpose||1) / nearest.freq` still works — drawbar gets transpose=1
+  by default and `nearest.freq` already encodes the audio's true pitch.
