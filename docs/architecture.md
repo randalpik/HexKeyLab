@@ -310,7 +310,10 @@ osc    →                       gain      (envelope) → damperGain → pressur
 
 `damperGain` is the continuous-damper modulation node (default 1.0; ramped via `setTargetAtTime` while the key is in `sustainedKeys`; pinned to 1.0 for sostenuto-locked keys). `pressureGain` is the polyphonic aftertouch node (default 1.0). They sit downstream of the release envelope so neither modulation fights `voiceGain`/`gain` cancel-schedule patterns.
 
-Gain constants: `sampleMaster = 0.9`, `oscGain = 0.35`, `squareGain = 0.25`. Damper smoothing: `DAMPER_SMOOTH_TAU = 0.025` (≈25ms exponential τ for `setTargetAtTime`); below `DAMPER_RELEASE_FLOOR = 0.005` damper depth, sustained voices not protected by sostenuto are released.
+Gain constants: `sampleMaster = 1.0`, `oscGain = squareGain = 1.0` (pass-through; per-waveform target amplitude is in the per-note `vol`). Damper smoothing: `DAMPER_SMOOTH_TAU = 0.025` (≈25ms exponential τ for `setTargetAtTime`); below `DAMPER_RELEASE_FLOOR = 0.005` damper depth, sustained voices not protected by sostenuto are released.
+
+#### Per-sample gain normalization
+Every sample entry carries a precomputed `gain` (linear scalar) that brings its measured RMS to a uniform target of **−18 dBFS**, with a single-voice peak ceiling of −3 dBFS to prevent transient clipping. Applied once at `sNoteOn` (`vol *= nearest.gain`). Oscillators carry equivalent target amplitudes baked into the per-note `vol`: sine ≈ 0.1779, triangle ≈ 0.2179, square ≈ 0.1259 (so steady-tone RMS = TARGET_RMS for all three). Low-frequency Fletcher-Munson boost on sine/triangle is preserved. See decisions.md for rationale; see `analyzer/backfill-gains.js` and the §6 analyzer notes for how the values are computed.
 
 #### Velocity curve
 `0.10 + 0.90 × (vel/127)²` — quadratic with 10% floor.
@@ -363,7 +366,7 @@ Re-articulation: striking a sustained key triggers `noteOff` + new voice + flash
 #### Instruments
 9 sample-based + oscillators. Piano (Salamander) is default. Non-looped/decaying instruments: piano. Looped/sustained: FluidR3_GM. Vibrato instruments: violin, viola, cello, flute, drawbar_organ.
 
-`SampleEngine.INSTRUMENTS` registry contains `{freq, loopPts[], validStartsByEnd, trimStart, slopeCV}` per sample, baked from analyzer output.
+`SampleEngine.INSTRUMENTS` registry contains `{freq, gain, loopPts[], validStartsByEnd, trimStart, slopeCV}` per sample, baked from analyzer output. (`gain` is omitted on entries predating normalization; runtime falls back to 1.0.)
 
 ---
 
@@ -455,7 +458,7 @@ DAMPER_RELEASE_FLOOR   # below this depth, sustained voices release through norm
 
 ## 6. Companion Tool: HexKeyLab-analyzer
 
-Not shipped with HKL. Used offline to generate `loopPts`, `validStartsByEnd`, `trimStart`, and `slopeCV` baked into `SampleEngine.INSTRUMENTS`.
+Not shipped with HKL. Used offline to generate `loopPts`, `validStartsByEnd`, `trimStart`, `slopeCV`, and `gain` baked into `SampleEngine.INSTRUMENTS`. Two entry points: the in-browser `tools/HexKeyLab-analyzer.html` (interactive, exposes the same algorithms) and the Node-based pipeline under `analyzer/` (`generate-samples.js` for new instruments, `backfill-gains.js` for adding `gain` to existing entries without disturbing loop points).
 
 ### 6.1 URL templating
 - `filePattern` config option for non-standard URLs like `"{NOTE}.{ext}"`
@@ -510,6 +513,17 @@ Result rows colored by algorithm + quality:
 ### 6.8 Validation
 
 Final pairwise correlations across kept loop points typically ≥ 0.99 for a good sample. Bimodal clusters indicate mixed phases; two-pass re-anchoring isolates the main cluster. Tier color gives quick visual check on sample quality across the range.
+
+### 6.9 RMS-normalization gain
+
+After loop / decay analysis, each sample is measured for amplitude:
+
+- **Loop instruments**: RMS over the steady region returned by `findSteadyRegion` (50 ms RMS window, 10 ms hop, ≥70% peak run). Vibrato instruments pre-smooth the curve over ±150 ms so AMP cycles don't shatter the steady span. The peak amplitude over the same window bounds the gain so a single-voice peak post-boost ≤ −3 dBFS.
+- **Decay instruments**: peak 100 ms RMS window post-trimStart, slid in 20 ms hops. Shorter than the 500 ms window used for pitch refinement because amplitude wants perceptual loudness (transient sources decay quickly), not pitch stability.
+
+`gain = min(TARGET_RMS / rms, TARGET_PEAK / peak)`, clamped to `[GAIN_MIN, GAIN_MAX]`. Constants live in both `analyzer/generate-samples.js` and `analyzer/backfill-gains.js`: `TARGET_DBFS = −18`, `PEAK_DBFS = −3`, `GAIN_MIN = 0.1`, `GAIN_MAX = 8.0` (sanity bound; the peak ceiling is the real limiter).
+
+The Node analyzer emits `gain` directly into the per-sample object alongside `freq`. The standalone `backfill-gains.js` patches the same field into existing entries in `src/audio/samples.ts` in place — useful for adding normalization to instruments whose loop data was generated before the field existed (trombone, reed_organ) without re-running their full loop pipeline. Reports go to `analyzer/out/<key>-report.md` and `analyzer/out/gain-backfill-report.md`.
 
 ---
 

@@ -54,8 +54,19 @@ const COLOR_UNMEASURED = '#888'; // grey — measurement window not covered yet
 let enabled = false;
 let frozen = false;
 let audioCtx: AudioContext | null = null;
-let analyser: AnalyserNode | null = null;
-let timeBuf: Float32Array<ArrayBuffer> | null = null;
+/* Per-channel taps. We split the master output into L and R, run an
+   AnalyserNode on each, and combine via energy-summed RMS in tick(). The
+   default Web Audio "speakers" downmix to mono uses 0.5*(L+R), which reads
+   ~3 dB low for mono-content-in-stereo samples (instrument samples are
+   recorded mono and packed into stereo containers — both channels are
+   nearly equal, so amplitude-averaging halves their energy contribution).
+   Energy-summed per-channel RMS matches the analyzer's ffmpeg `-ac 1`
+   measurement and is the convention used by ITU-R BS.1770 / LUFS for
+   loudness perception. */
+let analyserL: AnalyserNode | null = null;
+let analyserR: AnalyserNode | null = null;
+let timeBufL: Float32Array<ArrayBuffer> | null = null;
+let timeBufR: Float32Array<ArrayBuffer> | null = null;
 let canvas: HTMLCanvasElement | null = null;
 let cctx: CanvasRenderingContext2D | null = null;
 let rafId = 0;
@@ -84,13 +95,25 @@ export function initLoopOverlay(ac: AudioContext, sampleEngine: SampleEngineSurf
   if (enabled) return;
   enabled = true;
   audioCtx = ac;
-  analyser = ac.createAnalyser();
-  analyser.fftSize = 2048;
-  analyser.smoothingTimeConstant = 0;
-  sampleEngine.tapMaster(analyser);
-  /* Construct from an explicit ArrayBuffer so the type is Float32Array<ArrayBuffer>,
+  /* ChannelSplitter routes each input channel to a separate output. We tap
+     sampleMaster into the splitter, then connect each output to its own
+     mono AnalyserNode. The analysers each see one channel of the stereo
+     master signal — no downmix happens, getFloatTimeDomainData returns the
+     raw per-channel waveform. */
+  const splitter = ac.createChannelSplitter(2);
+  analyserL = ac.createAnalyser();
+  analyserR = ac.createAnalyser();
+  analyserL.fftSize = 2048;
+  analyserR.fftSize = 2048;
+  analyserL.smoothingTimeConstant = 0;
+  analyserR.smoothingTimeConstant = 0;
+  sampleEngine.tapMaster(splitter);
+  splitter.connect(analyserL, 0);
+  splitter.connect(analyserR, 1);
+  /* Construct from explicit ArrayBuffers so the type is Float32Array<ArrayBuffer>,
      which is what AnalyserNode.getFloatTimeDomainData expects under TS 5.7+ libs. */
-  timeBuf = new Float32Array(new ArrayBuffer(analyser.fftSize * 4));
+  timeBufL = new Float32Array(new ArrayBuffer(analyserL.fftSize * 4));
+  timeBufR = new Float32Array(new ArrayBuffer(analyserR.fftSize * 4));
 
   canvas = document.createElement('canvas');
   canvas.id = 'loopDiagOverlay';
@@ -148,15 +171,26 @@ function onKey(e: KeyboardEvent): void {
 
 function tick(): void {
   rafId = requestAnimationFrame(tick);
-  if (!analyser || !audioCtx || !timeBuf) return;
+  if (!analyserL || !analyserR || !audioCtx || !timeBufL || !timeBufR) return;
   if (!frozen) {
-    analyser.getFloatTimeDomainData(timeBuf);
-    let sum = 0;
-    for (let i = 0; i < timeBuf.length; i++) sum += timeBuf[i] * timeBuf[i];
-    const rms = Math.sqrt(sum / timeBuf.length);
+    analyserL.getFloatTimeDomainData(timeBufL);
+    analyserR.getFloatTimeDomainData(timeBufR);
+    let sumL = 0, sumR = 0;
+    for (let i = 0; i < timeBufL.length; i++) {
+      sumL += timeBufL[i] * timeBufL[i];
+      sumR += timeBufR[i] * timeBufR[i];
+    }
+    const N = timeBufL.length;
+    const rmsSqL = sumL / N;
+    const rmsSqR = sumR / N;
+    /* Energy-summed RMS: sqrt(rmsL² + rmsR²). Matches ITU-R BS.1770 / LUFS
+       channel summation and the analyzer's ffmpeg `-ac 1` energy-preserving
+       downmix. For mono-content-in-stereo this reads +3 dB above either
+       channel alone, capturing the full energy that hits the listener. */
+    const rms = Math.sqrt(rmsSqL + rmsSqR);
     /* Center the envelope timestamp on the analyzer window so the dip's x
        position lines up with the audio sample that produced it. */
-    const ctxTime = audioCtx.currentTime - (timeBuf.length / audioCtx.sampleRate) * 0.5;
+    const ctxTime = audioCtx.currentTime - (N / audioCtx.sampleRate) * 0.5;
     envelopeBuf.push({ ctxTime, rms });
     if (envelopeBuf.length > ENV_CAP) envelopeBuf.shift();
     measureSeams();

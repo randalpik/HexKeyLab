@@ -69,8 +69,12 @@ export function initAudio(): void {
   } else {
     console.log('AudioContext sampleRate: 44100 ✓');
   }
-  audio.oscGain = audio.audioCtx.createGain(); audio.oscGain.gain.value = 0.35; audio.oscGain.connect(audio.audioCtx.destination);
-  audio.squareGain = audio.audioCtx.createGain(); audio.squareGain.gain.value = 0.25; audio.squareGain.connect(audio.audioCtx.destination);
+  /* Bus gains are pass-through (1.0). Per-waveform target amplitudes are baked
+     into the per-note `vol` in noteOn so that single-note RMS lands at the same
+     target (−18 dBFS) as sample-based instruments. The buses remain so future
+     global mix tweaks have a single attachment point. */
+  audio.oscGain = audio.audioCtx.createGain(); audio.oscGain.gain.value = 1.0; audio.oscGain.connect(audio.audioCtx.destination);
+  audio.squareGain = audio.audioCtx.createGain(); audio.squareGain.gain.value = 1.0; audio.squareGain.connect(audio.audioCtx.destination);
   SampleEngine.init(audio.audioCtx, audio.audioCtx.destination); /* sampleMaster at 0.9 */
   if (isLoopDiagEnabled()) initLoopOverlay(audio.audioCtx, SampleEngine);
 }
@@ -94,7 +98,19 @@ export function noteOn(key: KeyId, velocity?: number): void {
     const gain = audio.audioCtx.createGain();
     osc.type = type; osc.frequency.value = freq;
     const simple = (type === 'sine' || type === 'triangle');
-    let vol = simple ? 0.7 : 0.3;
+    /* Target single-note RMS = −18 dBFS, matching the per-sample normalization
+       baked into sample instruments. Peak amplitude derives from the
+       waveform's RMS-to-peak ratio: sine = 1/√2, triangle = 1/√3, square = 1.
+       (TARGET_RMS = 10^(−18/20) ≈ 0.1259) */
+    let vol = (type === 'sine')     ? 0.1779   /* 0.1259 × √2  */
+            : (type === 'triangle') ? 0.2179   /* 0.1259 × √3  */
+            :                         0.1259;  /* square (RMS = peak) */
+    /* Low-frequency perceptual loudness compensation (Fletcher-Munson). Pure
+       tones lose perceived loudness below ~440 Hz; recorded instrument samples
+       don't need this because their natural recordings already capture the
+       right spectral character. Capped at 3× to avoid clipping at the bottom
+       of the range. Square excluded — its harmonic richness already lifts
+       perceived bass. */
     if (simple) { const boost = Math.min(3, Math.sqrt(440 / freq)); vol *= boost; }
     const atk = simple ? 0.02 : 0.04;
     const now = audio.audioCtx.currentTime;

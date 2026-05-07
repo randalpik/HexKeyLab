@@ -38,6 +38,15 @@ const SALAMANDER_NOTES = { 0:'C', 3:'Ds', 6:'Fs', 9:'A' };
 const SEMI = {C:0,'C#':1,Db:1,D:2,'D#':3,Ds:3,Eb:3,E:4,F:5,'F#':6,Fs:6,Gb:6,G:7,'G#':8,Ab:8,A:9,'A#':10,Bb:10,B:11};
 const SR = 44100;
 
+/* Per-sample RMS-normalization target. The analyzer measures each sample's
+   steady-region RMS (loop) or peak 500ms RMS (decay) and emits a `gain` field
+   that brings the audible portion to TARGET_DBFS at runtime. Single source of
+   truth for normalization — backfill-gains.js mirrors these constants. */
+const TARGET_DBFS = -18;
+const TARGET_RMS = Math.pow(10, TARGET_DBFS / 20);  /* ≈ 0.12589 */
+const GAIN_MIN = 0.1;
+const GAIN_MAX = 4.0;
+
 // ─── 0. config + helpers ─────────────────────────────────────────────────────
 
 function loadConfig() {
@@ -195,6 +204,53 @@ function analyzeDecay(buf, freq, fns) {
   };
 }
 
+// ─── 4b. RMS measurement for gain normalization ─────────────────────────────
+
+function findGainTrimStart(d) {
+  for (let i = 0; i < d.length; i++) if (Math.abs(d[i]) > 0.003) return i;
+  return 0;
+}
+
+function rmsOver(d, start, end) {
+  if (end <= start) return 0;
+  let sum = 0;
+  for (let i = start; i < end; i++) sum += d[i] * d[i];
+  return Math.sqrt(sum / (end - start));
+}
+
+function measureRmsDecay(d) {
+  /* 100ms peak-loudness window — see comment in backfill-gains.js. The
+     analyzer's separate analyzeDecay() uses 500ms because that window is for
+     pitch refinement (autocorrelation needs duration); amplitude measurement
+     wants something closer to perceptual integration. */
+  const trim = findGainTrimStart(d);
+  const winLen = Math.round(SR * 0.1);
+  if (d.length - trim < winLen + Math.round(SR * 0.02)) return null;
+  const hop = Math.round(SR * 0.02);
+  let bestSumSq = 0;
+  for (let s = trim; s + winLen < d.length; s += hop) {
+    let sum = 0;
+    for (let k = 0; k < winLen; k++) sum += d[s+k] * d[s+k];
+    if (sum > bestSumSq) bestSumSq = sum;
+  }
+  return Math.sqrt(bestSumSq / winLen);
+}
+
+function measureRmsLoop(d, cfg, fns) {
+  const trim = findGainTrimStart(d);
+  /* Vibrato instruments smooth the RMS envelope so AMP cycles don't drag
+     troughs below the 70% threshold and shatter the steady region. */
+  const opts = { smoothMs: cfg.vibrato ? 300 : 0 };
+  const res = fns.findSteadyRegion(d, SR, trim, d.length, opts);
+  if (res.failReason) return null;
+  return rmsOver(d, res.steadyStart, res.steadyEnd);
+}
+
+function computeGainFromRms(rms) {
+  if (rms == null || rms <= 0) return null;
+  return Math.max(GAIN_MIN, Math.min(GAIN_MAX, TARGET_RMS / rms));
+}
+
 // ─── 5. classify ─────────────────────────────────────────────────────────────
 
 function classifyLoop(res) {
@@ -259,16 +315,20 @@ function emitSampleEntry(r, cfg) {
   // (for decay this is res.freqActual; for loop pipelines we surface freqActual too)
   const freq = (typeof r.res.freqActual === 'number') ? r.res.freqActual : r.labeledFreq / cfg.transpose;
   const freqStr = fmt(freq, 3);
+  /* gain = TARGET_RMS / measuredRms, clamped. Goes immediately after freq so
+     the schema fans out: identifier (name), pitch (freq), level (gain), then
+     loop-specific fields. Falls back to 1.0 silently at runtime if absent. */
+  const gainStr = (typeof r.gain === 'number') ? `,gain:${fmt(r.gain, 4)}` : '';
 
   if (cfg.decays) {
-    return `        {name:'${r.note}',freq:${freqStr}}`;
+    return `        {name:'${r.note}',freq:${freqStr}${gainStr}}`;
   }
 
   // loop entry
   const ptsStr = '[' + r.res.loopPts.map(p => fmt(p, 7)).join(',') + ']';
   const ebsStr = '[' + (r.res.validStartsByEnd || []).map(arr => '['+arr.join(',')+']').join(',') + ']';
   const slopeStr = (typeof r.res.slopeCV === 'number') ? `,slopeCV:${fmt(r.res.slopeCV, 3)}` : '';
-  return `        {name:'${r.note}',freq:${freqStr},loopPts:${ptsStr},validStartsByEnd:${ebsStr},trimStart:${fmt(r.res.trimStart, 7)}${slopeStr}}`;
+  return `        {name:'${r.note}',freq:${freqStr}${gainStr},loopPts:${ptsStr},validStartsByEnd:${ebsStr},trimStart:${fmt(r.res.trimStart, 7)}${slopeStr}}`;
 }
 
 // Path-specific default comments. Override per-instrument via cfg.comment
@@ -347,21 +407,27 @@ function buildReport(results, picks, cfg) {
   lines.push('');
   lines.push(`## Picks (${picks.length}, ~4-semitone spacing)`);
   lines.push('');
+  const gainCol = (p) => {
+    if (typeof p.rms !== 'number' || p.rms <= 0) return '— | —';
+    const dBFS = (20 * Math.log10(p.rms)).toFixed(1);
+    const g = (typeof p.gain === 'number') ? p.gain.toFixed(4) : '—';
+    return `${dBFS} | ${g}`;
+  };
   if (cfg.decays) {
-    lines.push(`| Note | Labeled (Hz) | Measured (Hz) | Drift (¢) | Tier |`);
-    lines.push(`| --- | ---: | ---: | ---: | --- |`);
+    lines.push(`| Note | Labeled (Hz) | Measured (Hz) | Drift (¢) | RMS (dBFS) | gain | Tier |`);
+    lines.push(`| --- | ---: | ---: | ---: | ---: | ---: | --- |`);
     picks.forEach(p => {
       const drift = p.res.driftCents != null ? p.res.driftCents.toFixed(1) : '—';
       const fa    = p.res.freqActual != null ? p.res.freqActual.toFixed(2) : '—';
-      lines.push(`| ${p.note} | ${p.labeledFreq.toFixed(2)} | ${fa} | ${drift} | ${p.tier} |`);
+      lines.push(`| ${p.note} | ${p.labeledFreq.toFixed(2)} | ${fa} | ${drift} | ${gainCol(p)} | ${p.tier} |`);
     });
   } else {
-    lines.push(`| Note | Hz | minPickCorr | seams | usable | tier |`);
-    lines.push(`| --- | ---: | ---: | ---: | ---: | --- |`);
+    lines.push(`| Note | Hz | minPickCorr | seams | usable | RMS (dBFS) | gain | tier |`);
+    lines.push(`| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |`);
     picks.forEach(p => {
       const s = p.res.stats || {};
       const fa = p.res.freqActual != null ? p.res.freqActual.toFixed(2) : p.labeledFreq.toFixed(2);
-      lines.push(`| ${p.note} | ${fa} | ${s.minPickCorr || '—'} | ${s.validSeams || '—'} | ${s.usableBs || '—'} | ${p.tier} |`);
+      lines.push(`| ${p.note} | ${fa} | ${s.minPickCorr || '—'} | ${s.validSeams || '—'} | ${s.usableBs || '—'} | ${gainCol(p)} | ${p.tier} |`);
     });
   }
   // failures
@@ -394,7 +460,10 @@ function buildReport(results, picks, cfg) {
     const res = cfg.decays ? analyzeDecay(buf, analysisFreq, fns)
                             : analyzeLoop(buf, analysisFreq, cfg, fns);
     const tier = cfg.decays ? classifyDecay(res) : classifyLoop(res);
-    return { note: s.note, midi: s.midi, labeledFreq: s.labeledFreq, res, tier };
+    const d = buf.getChannelData();
+    const rms = cfg.decays ? measureRmsDecay(d) : measureRmsLoop(d, cfg, fns);
+    const gain = computeGainFromRms(rms);
+    return { note: s.note, midi: s.midi, labeledFreq: s.labeledFreq, res, tier, rms, gain };
   });
   const picks = pickSamples(results, cfg);
   fs.mkdirSync(OUT_DIR, { recursive: true });
