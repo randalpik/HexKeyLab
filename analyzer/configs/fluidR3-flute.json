@@ -1,0 +1,16 @@
+{
+  "instrumentKey": "flute",
+  "displayName": "Flute",
+  "baseUrl": "https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/flute-mp3/",
+  "ext": ".mp3",
+  "filePattern": "{NOTE}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 3,
+  "highOct": 7,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.2,
+  "volume": 1.0,
+  "gateOpts": {}
+}

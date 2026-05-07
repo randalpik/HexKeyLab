@@ -5,3 +5,5 @@ dist/
 .vite/
 .idea/
 .vscode/
+analyzer/.cache/
+analyzer/out/
