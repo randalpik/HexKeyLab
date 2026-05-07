@@ -24,7 +24,7 @@ import { lumatone } from '../state/lumatone.js';
 import { loadPrefs, savePrefs, clearPrefs, DEFAULT_PREFS } from '../state/persistence.js';
 import type { PrefsV1 } from '../state/persistence.js';
 import { sizeCanvas } from '../render/canvas.js';
-import { cv, draw, hexAtPoint } from '../render/draw.js';
+import { cv, draw, hexAtPoint, activeFootprintSet } from '../render/draw.js';
 import { sizeInfoPanel, updateInfo } from '../render/info.js';
 import {
   initAudio, changeWaveform, toggleAudio,
@@ -124,8 +124,25 @@ $<HTMLInputElement>('cbBands').addEventListener('change', (e) => {
   savePrefs({ showBands: (e.target as HTMLInputElement).checked });
 });
 $<HTMLInputElement>('cbExtend').addEventListener('change', (e) => {
-  view.hexDirty = true; view.textDirty = true; draw();
-  savePrefs({ extendPattern: (e.target as HTMLInputElement).checked });
+  const checked = (e.target as HTMLInputElement).checked;
+  view.hexDirty = true; view.textDirty = true;
+  /* Disabling extend pattern hides keys outside the outline; release any that
+     were sounding (selected or pedal-sustained) so audio/MIDI mirror what's
+     visible. fp===null means outline is 'none' → nothing to clip. */
+  let selectionMutated = false;
+  if (!checked) {
+    const fp = activeFootprintSet();
+    if (fp) {
+      selection.selectedKeys.forEach((k) => {
+        if (!fp.has(k)) { selection.selectedKeys.delete(k); selectionMutated = true; }
+      });
+      audio.sustainedKeys.forEach((k) => {
+        if (!fp.has(k)) { audio.sustainedKeys.delete(k); selectionMutated = true; }
+      });
+    }
+  }
+  if (selectionMutated) onSelectionChanged(); else draw();
+  savePrefs({ extendPattern: checked });
 });
 $<HTMLInputElement>('cbCoords').addEventListener('change', (e) => {
   updateInfo();

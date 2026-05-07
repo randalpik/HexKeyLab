@@ -142,13 +142,62 @@ function getOutlineMode(): OutlineMode {
   return 'lumatone';
 }
 
+/* Set of (q,r) keys covered by the active outline at the current state.
+   Returns null when outline is 'none' (no clipping applies). Lumatone is the
+   layout-shifted Lumatone footprint; qwerty additionally rides with
+   qwertyTranspose to mirror the rendered outline position. */
+export function activeFootprintSet(): Set<KeyId> | null {
+  const outlineMode = getOutlineMode();
+  if (outlineMode === 'none') return null;
+  const sh = layoutShifts[tuning.curLayout];
+  const set = new Set<KeyId>();
+  if (outlineMode === 'lumatone') {
+    baseKeys.forEach((k) => { set.add((k[0] + sh[0]) + ',' + (k[1] + sh[1])); });
+  } else {
+    const ts = qwertyTransposeShift(tuning.qwertyTranspose);
+    qwertyKeys.forEach((k) => { set.add((k[0] + sh[0] + ts[0]) + ',' + (k[1] + sh[1] + ts[1])); });
+  }
+  return set;
+}
+
 // ── hit-test ───────────────────────────────────────────────────────────────
+/* Even-odd point-in-polygon test across a set of closed polygons. Mirrors the
+   `ctx.fill('evenodd')` rule used to render the outline overlay. */
+function pointInOutline(paths: Point[][], x: number, y: number): boolean {
+  let inside = false;
+  for (let p = 0; p < paths.length; p++) {
+    const poly = paths[p];
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const xi = poly[i][0], yi = poly[i][1], xj = poly[j][0], yj = poly[j][1];
+      if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) inside = !inside;
+    }
+  }
+  return inside;
+}
+
 /** Map screen coordinates to a "q,r" lattice key, or null if too far from any. */
 export function hexAtPoint(mx: number, my: number): KeyId | null {
   /* transform to unrotated coords */
   const dx = mx - view.CW / 2, dy = my - (view.CH / 2 + view.kbOffY);
   const ux = dx * cosT - dy * sinT;
   const uy = dx * sinT + dy * cosT;
+  /* When extend pattern is off, the overlay paints outside the outline solid,
+     hiding non-footprint keys. Mirror that visibility in the hit-test so clicks
+     on covered keys are no-ops. Outline 'none' draws no overlay → no clipping. */
+  const showE = (document.getElementById('cbExtend') as HTMLInputElement | null)?.checked ?? true;
+  const outlineMode = getOutlineMode();
+  if (!showE && outlineMode !== 'none') {
+    /* qwerty outline rides with qwertyTranspose: render translates the path,
+       so here we translate the test point by the inverse to compare in path space. */
+    let tx = ux, ty = uy;
+    if (outlineMode === 'qwerty' && tuning.qwertyTranspose !== 0) {
+      const ts = qwertyTransposeShift(tuning.qwertyTranspose);
+      tx -= ts[0] * dxH + ts[1] * dxH * 0.5;
+      ty -= -ts[1] * dyH;
+    }
+    const paths = outlineMode === 'qwerty' ? qwertyOutlinePaths : lumatoneOutlinePaths;
+    if (!pointInOutline(paths, tx, ty)) return null;
+  }
   /* find nearest hex by unrotated distance */
   let best: DrawnKey | null = null, bestD = Infinity;
   for (let i = 0; i < selection.drawnKeys.length; i++) {
