@@ -24,36 +24,135 @@
 import { audio } from '../state/audio.js';
 import { selection } from '../state/selection.js';
 import { tuning } from '../state/tuning.js';
-import { layoutShifts } from '../layout/baseKeys.js';
-import { noteOff, triggerRearticulateFlash } from '../audio/engine.js';
+import { view } from '../state/view.js';
+import { layoutShifts, qwertyTransposeShift } from '../layout/baseKeys.js';
+import {
+  noteOn, noteOff, triggerRearticulateFlash, instrDecays,
+} from '../audio/engine.js';
+import { SampleEngine } from '../audio/samples.js';
+import { keyFreq } from '../tuning/frequency.js';
+import { animation } from '../render/animation.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import { qwertyKeyMap } from './qwerty.js';
-import type { KeyId } from '../types.js';
+import type { KeyId, Voice } from '../types.js';
 
 const KEYBOARD_VELOCITY = 96;
+
+/* Filled by the IIFE below so external modules (controls.ts) can ask for a
+   migration of just the QWERTY-held voices when qwertyTranspose changes. */
+export let migrateHeldQwertyVoices: (dq: number, dr: number) => void = () => {};
 
 (function () {
   /* Set of event.code strings currently held by the computer keyboard.
      Tracked so blur / visibilitychange can release exactly the keys we hold. */
   const heldCodes = new Set<string>();
 
-  function shouldIgnore(): boolean {
-    const ae = document.activeElement;
-    if (!ae) return false;
-    if (ae.tagName === 'SELECT' || ae.tagName === 'TEXTAREA') return true;
-    if (ae.tagName === 'INPUT') {
-      const t = ((ae as HTMLInputElement).type || '').toLowerCase();
+  function elCapturesKeys(el: Element | null): boolean {
+    if (!el) return false;
+    if (el.tagName === 'SELECT' || el.tagName === 'TEXTAREA') return true;
+    if (el.tagName === 'INPUT') {
+      const t = ((el as HTMLInputElement).type || '').toLowerCase();
       return t !== 'checkbox' && t !== 'radio' && t !== 'button' && t !== 'submit' && t !== 'reset';
     }
     return false;
   }
+  function shouldIgnore(): boolean { return elCapturesKeys(document.activeElement); }
 
   function codeToKey(code: string): KeyId | null {
     const base = qwertyKeyMap[code];
     if (!base) return null;
     const sh = layoutShifts[tuning.curLayout];
-    return (base[0] + sh[0]) + ',' + (base[1] + sh[1]);
+    const ts = qwertyTransposeShift(tuning.qwertyTranspose);
+    return (base[0] + sh[0] + ts[0]) + ',' + (base[1] + sh[1] + ts[1]);
   }
+
+  /* Compute the KeyId a held event.code maps to under an arbitrary transpose,
+     so we can find OLD voices when transpose changes (codeToKey already
+     returns the NEW one if tuning.qwertyTranspose has been mutated, or the
+     OLD one if it hasn't — caller controls the order). */
+  function codeToKeyAt(code: string, qOff: number, rOff: number): KeyId | null {
+    const base = qwertyKeyMap[code];
+    if (!base) return null;
+    const sh = layoutShifts[tuning.curLayout];
+    return (base[0] + sh[0] + qOff) + ',' + (base[1] + sh[1] + rOff);
+  }
+
+  /* Smoothly migrate audio voices currently held via the computer keyboard by
+     a (dq, dr) lattice delta. Mirrors the sustained branch of setLayout
+     (controls.ts), but limited to QWERTY-originated voices identified via
+     heldCodes. Sustained / Lumatone-originated voices are left alone.
+     Selection is migrated for the same set of keys.
+     Caller invokes this BEFORE mutating tuning.qwertyTranspose. */
+  migrateHeldQwertyVoices = function (dq: number, dr: number): void {
+    if (heldCodes.size === 0) return;
+    if (dq === 0 && dr === 0) return;
+    /* current transpose offsets (pre-mutation) */
+    const cur = qwertyTransposeShift(tuning.qwertyTranspose);
+    /* gather (oldKey, newKey) pairs */
+    const pairs: { code: string; oldKey: KeyId; newKey: KeyId }[] = [];
+    heldCodes.forEach((code) => {
+      const oldKey = codeToKeyAt(code, cur[0], cur[1]);
+      const newKey = codeToKeyAt(code, cur[0] + dq, cur[1] + dr);
+      if (oldKey && newKey && oldKey !== newKey) pairs.push({ code, oldKey, newKey });
+    });
+    if (pairs.length === 0) return;
+
+    if (audio.audioEnabled && audio.audioCtx) {
+      if (instrDecays()) {
+        /* decaying instruments (piano, etc.): stop the old voice at its old
+           pitch and re-attack at the new one. Limited to the migrated pairs
+           so other held / sustained voices are untouched. */
+        pairs.forEach((p) => {
+          if (!audio.activeOscs[p.oldKey]) return;
+          noteOff(p.oldKey);
+          if (audio.keyVelocity[p.oldKey] !== undefined) {
+            audio.keyVelocity[p.newKey] = audio.keyVelocity[p.oldKey];
+            delete audio.keyVelocity[p.oldKey];
+          }
+          noteOn(p.newKey, audio.keyVelocity[p.newKey]);
+        });
+      } else {
+        /* sustained: smooth ramp over animation duration */
+        const now = audio.audioCtx.currentTime;
+        const rampDur = animation.duration / 1000;
+        const sampleMoves: { oldKey: KeyId; newKey: KeyId; newFreq: number; vol?: number }[] = [];
+        pairs.forEach((p) => {
+          const e = audio.activeOscs[p.oldKey];
+          if (!e) return;
+          const np = p.newKey.split(','), nq = +np[0], nr = +np[1];
+          if (e.type === 'osc') {
+            e.osc.frequency.setValueAtTime(e.osc.frequency.value, now);
+            e.osc.frequency.exponentialRampToValueAtTime(keyFreq(nq, nr), now + rampDur);
+            audio.activeOscs[p.newKey] = e;
+            delete audio.activeOscs[p.oldKey];
+          } else if (e.type === 'sample') {
+            sampleMoves.push({ oldKey: p.oldKey, newKey: p.newKey, newFreq: keyFreq(nq, nr) });
+          }
+          if (audio.keyVelocity[p.oldKey] !== undefined) {
+            audio.keyVelocity[p.newKey] = audio.keyVelocity[p.oldKey];
+            delete audio.keyVelocity[p.oldKey];
+          }
+        });
+        sampleMoves.forEach((m) => { m.vol = SampleEngine.slideAndFadeOut(m.oldKey, m.newFreq, rampDur); });
+        sampleMoves.forEach((m) => {
+          SampleEngine.noteOnFaded(m.newKey, m.newFreq, m.vol!, rampDur);
+          audio.activeOscs[m.newKey] = { type: 'sample', freq: m.newFreq } as Voice;
+          delete audio.activeOscs[m.oldKey];
+        });
+      }
+    }
+
+    /* migrate the corresponding selection entries (so the indicator follows) */
+    pairs.forEach((p) => {
+      if (selection.selectedKeys.has(p.oldKey)) {
+        selection.selectedKeys.delete(p.oldKey);
+        selection.selectedKeys.add(p.newKey);
+      }
+    });
+    view.hexDirty = true;
+    view.textDirty = true;
+    onSelectionChanged();
+  };
 
   function noteOnFromKeyboard(code: string): void {
     const key = codeToKey(code);
@@ -90,28 +189,41 @@ const KEYBOARD_VELOCITY = 96;
     Array.from(heldCodes).forEach((c) => { noteOffFromKeyboard(c); });
   }
 
+  /* Capture phase + early preventDefault: Firefox runs its built-in
+     accelerators (Quick Find on "/" and "'", apostrophe-find, etc.) as the
+     keydown default action, so we must cancel BEFORE the bubble phase or
+     any later early-return. We still skip when focus is in a form field
+     (shouldIgnore) — typing should never be hijacked. */
   window.addEventListener('keydown', function (e) {
     if (shouldIgnore()) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    if (e.repeat) return;
     if (!qwertyKeyMap[e.code]) return;
-    if (heldCodes.has(e.code)) return; /* already held — defensive */
     e.preventDefault();
+    if (e.repeat) return;
+    if (heldCodes.has(e.code)) return; /* already held — defensive */
     noteOnFromKeyboard(e.code);
-  });
+  }, { capture: true });
 
   window.addEventListener('keyup', function (e) {
     /* deliberately do NOT gate keyup on shouldIgnore() or modifiers — if the
        user moves focus into an input or presses Ctrl after a note-down, we
        still want a clean release on keyup. */
     if (!qwertyKeyMap[e.code]) return;
-    if (!heldCodes.has(e.code)) return;
     e.preventDefault();
+    if (!heldCodes.has(e.code)) return;
     noteOffFromKeyboard(e.code);
-  });
+  }, { capture: true });
 
   window.addEventListener('blur', releaseAll);
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) releaseAll();
+  });
+
+  /* When focus enters a form field that captures key events (notably an open
+     SELECT dropdown — its popup steals subsequent keyup events from our
+     window listener), release any currently-held QWERTY notes. Without this,
+     clicking a dropdown while a key is held leaves the note stuck. */
+  document.addEventListener('focusin', function (e) {
+    if (elCapturesKeys(e.target as Element | null)) releaseAll();
   });
 })();

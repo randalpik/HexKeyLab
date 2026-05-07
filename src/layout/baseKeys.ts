@@ -8,3 +8,13 @@ export const layoutShifts: Record<number, readonly [number, number]> = {
   2: [7, -4],
   3: [-7, 4],
 };
+
+/* Per-step QWERTY transpose shift: each step is (+2q, -r) — one chromatic
+   semitone (25:24 in 5-limit, 1 step in 12-TET). Applied to the QWERTY slab
+   only, on top of the active layout shift. */
+export function qwertyTransposeShift(t: number): readonly [number, number] {
+  return [2 * t, -t];
+}
+
+export const QWERTY_TRANSPOSE_MIN = -3;
+export const QWERTY_TRANSPOSE_MAX = 3;

@@ -9,7 +9,10 @@
 import { tuning } from '../state/tuning.js';
 import { selection } from '../state/selection.js';
 import { audio } from '../state/audio.js';
-import { layoutShifts } from '../layout/baseKeys.js';
+import {
+  layoutShifts, QWERTY_TRANSPOSE_MIN, QWERTY_TRANSPOSE_MAX,
+} from '../layout/baseKeys.js';
+import { migrateHeldQwertyVoices } from '../input/keyboard-notes.js';
 import { dxH, dyH, cosT, sinT } from '../layout/geometry.js';
 import { view } from '../state/view.js';
 import { keyFreq } from '../tuning/frequency.js';
@@ -42,10 +45,29 @@ export function setOutline(): void {
   const sel = document.getElementById('selOutline') as HTMLSelectElement;
   const cbExtend = document.getElementById('cbExtend') as HTMLInputElement;
   cbExtend.disabled = sel.value === 'none';
+  /* QWERTY transpose stepper is QWERTY-only — toggle visibility (not display)
+     so the slot stays reserved and the rest of the toolbar doesn't shift when
+     the control appears. The transpose value persists across outline changes. */
+  const qwTrCtrl = document.getElementById('qwertyTransposeCtrl') as HTMLElement;
+  qwTrCtrl.style.visibility = sel.value === 'qwerty' ? 'visible' : 'hidden';
   view.hexDirty = true;
   view.textDirty = true;
   draw();
   sel.blur();
+}
+
+export function setQwertyTranspose(dir: number): void {
+  const next = Math.max(QWERTY_TRANSPOSE_MIN, Math.min(QWERTY_TRANSPOSE_MAX, tuning.qwertyTranspose + dir));
+  if (next === tuning.qwertyTranspose) return;
+  const ddir = next - tuning.qwertyTranspose;
+  /* migrate held QWERTY voices BEFORE mutating the transpose: the migrate fn
+     reads tuning.qwertyTranspose to compute OLD keys, then applies (dq, dr). */
+  migrateHeldQwertyVoices(2 * ddir, -ddir);
+  tuning.qwertyTranspose = next;
+  document.getElementById('qwertyTrInd')!.textContent = String(next);
+  view.hexDirty = true;
+  view.textDirty = true;
+  draw();
 }
 
 export function shiftSeams(dir: number): void {
@@ -130,6 +152,29 @@ export function transposeSelection(dq: number, dr: number): void {
   if (instrDecays()) syncAudio(); /* retrigger at new coords */
   draw();
 }
+
+/* key-repeat for QWERTY transpose stepper */
+(function () {
+  let tid: number | null = null, iid: number | null = null;
+  function startRepeat(dir: number): void {
+    stopRepeat();
+    setQwertyTranspose(dir);
+    tid = window.setTimeout(function () { iid = window.setInterval(function () { setQwertyTranspose(dir); }, 80); }, 400);
+  }
+  function stopRepeat(): void {
+    if (tid !== null) { clearTimeout(tid); tid = null; }
+    if (iid !== null) { clearInterval(iid); iid = null; }
+  }
+  ['btnQwertyTrUp', 'btnQwertyTrDn'].forEach(function (id) {
+    const dir = id === 'btnQwertyTrUp' ? 1 : -1;
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('mousedown', function (e) { e.preventDefault(); startRepeat(dir); });
+    el.addEventListener('touchstart', function (e) { e.preventDefault(); startRepeat(dir); }, { passive: false });
+  });
+  document.addEventListener('mouseup', stopRepeat);
+  document.addEventListener('touchend', stopRepeat);
+})();
 
 /* key-repeat for transpose buttons */
 (function () {

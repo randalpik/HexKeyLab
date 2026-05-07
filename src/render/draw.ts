@@ -11,7 +11,10 @@
 // call from the current view + layout shift; the click hit-test reads it as
 // the screen-space lookup table.
 
-import { baseKeys, layoutShifts } from '../layout/baseKeys.js';
+import {
+  baseKeys, layoutShifts, qwertyTransposeShift,
+  QWERTY_TRANSPOSE_MIN, QWERTY_TRANSPOSE_MAX,
+} from '../layout/baseKeys.js';
 import { bandOf } from '../layout/coords.js';
 import { hexR, dxH, dyH, tiltAngle, cosT, sinT } from '../layout/geometry.js';
 import { qwertyKeys } from '../input/qwerty.js';
@@ -236,7 +239,9 @@ let gridRefQ = 0, gridRefR = 0, gridPadX = 0, gridPadY = 0, gridW = 0, gridH = 0
 
 interface GridRange { qMin: number; qMax: number; rMin: number; rMax: number; }
 
-/* keyboard extent across all layouts for tight bounds when Extend is off */
+/* keyboard extent across all layouts for tight bounds when Extend is off.
+   QWERTY bounds also span the full QWERTY-transpose range (-3..+3) so the
+   precomputed union covers every reachable QWERTY position. */
 let kbQMin: number, kbQMax: number, kbRMin: number, kbRMax: number;
 let qwertyQMin: number, qwertyQMax: number, qwertyRMin: number, qwertyRMax: number;
 (function () {
@@ -249,11 +254,14 @@ let qwertyQMin: number, qwertyQMax: number, qwertyRMin: number, qwertyRMax: numb
       if (q < kbQMin) kbQMin = q; if (q > kbQMax) kbQMax = q;
       if (r < kbRMin) kbRMin = r; if (r > kbRMax) kbRMax = r;
     });
-    qwertyKeys.forEach((k) => {
-      const q = k[0] + sh[0], r = k[1] + sh[1];
-      if (q < qwertyQMin) qwertyQMin = q; if (q > qwertyQMax) qwertyQMax = q;
-      if (r < qwertyRMin) qwertyRMin = r; if (r > qwertyRMax) qwertyRMax = r;
-    });
+    for (let t = QWERTY_TRANSPOSE_MIN; t <= QWERTY_TRANSPOSE_MAX; t++) {
+      const ts = qwertyTransposeShift(t);
+      qwertyKeys.forEach((k) => {
+        const q = k[0] + sh[0] + ts[0], r = k[1] + sh[1] + ts[1];
+        if (q < qwertyQMin) qwertyQMin = q; if (q > qwertyQMax) qwertyQMax = q;
+        if (r < qwertyRMin) qwertyRMin = r; if (r > qwertyRMax) qwertyRMax = r;
+      });
+    }
   });
   kbQMin -= 2; kbQMax += 2; kbRMin -= 2; kbRMax += 2;
   qwertyQMin -= 2; qwertyQMax += 2; qwertyRMin -= 2; qwertyRMax += 2;
@@ -473,13 +481,15 @@ export function draw(): void {
     const seamBlend = animT < 0 ? 1 : Math.pow(Math.abs(2 * animT - 1), 6);
     /* snap seams to whichever outline is currently visible — a Lumatone snap
        under a hidden Lumatone outline would tug seams toward an invisible
-       reference. Both Lumatone and QWERTY ride with the active layout shift,
-       so they share the same snap offset. None mode: no snap. */
+       reference. Both Lumatone and QWERTY ride with the active layout shift;
+       QWERTY additionally rides with qwertyTranspose. None mode: no snap. */
     const seamMode = getOutlineMode();
     const snapPaths: Point[][] = seamMode === 'qwerty' ? qwertyOutlinePaths
       : seamMode === 'lumatone' ? lumatoneOutlinePaths : [];
-    const snapOX = (kbShQ - view.viewQ) * dxH + (kbShR - view.viewR) * dxH * 0.5;
-    const snapOY = -(kbShR - view.viewR) * dyH;
+    const qts = seamMode === 'qwerty' ? qwertyTransposeShift(tuning.qwertyTranspose) : [0, 0] as const;
+    const snapOX = (kbShQ - view.viewQ) * dxH + (kbShR - view.viewR) * dxH * 0.5
+      + qts[0] * dxH + qts[1] * dxH * 0.5;
+    const snapOY = -(kbShR - view.viewR) * dyH - qts[1] * dyH;
     function snapVtx(px: number, py: number): { d: number; x: number; y: number } | null {
       if (snapPaths.length === 0) return null;
       let bd = Infinity, bpx = 0, bpy = 0;
@@ -555,7 +565,14 @@ export function draw(): void {
 
     /* Both outlines ride with viewQ — keyboard input applies layoutShifts at
        note-on time so QWERTY follows ♭/♮/♯ exactly like the Lumatone, and the
-       outline visually stays put on canvas as the lattice scrolls underneath. */
+       outline visually stays put on canvas as the lattice scrolls underneath.
+       QWERTY additionally rides with qwertyTranspose: this is a per-step
+       (+2q, -r) shift applied in canvas pixels here so the camera stays
+       fixed (selection visibility preserved) while the QWERTY slab slides. */
+    if (outlineMode === 'qwerty' && tuning.qwertyTranspose !== 0) {
+      const ts = qwertyTransposeShift(tuning.qwertyTranspose);
+      ctx.translate(ts[0] * dxH + ts[1] * dxH * 0.5, -ts[1] * dyH);
+    }
     const activePaths = outlineMode === 'qwerty' ? qwertyOutlinePaths : lumatoneOutlinePaths;
 
     const diag = Math.ceil(Math.sqrt(view.CW * view.CW + view.CH * view.CH));
