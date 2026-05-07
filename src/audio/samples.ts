@@ -4,6 +4,8 @@
 // all wraps via scheduleSegmentSwitch, commitRampSync integrates in-flight
 // ramp position).
 
+import { recordSeamEvent } from './diagnostics/loopOverlay.js';
+
 export const SampleEngine = (function () {
   var RELEASE_SCALE = 0.5; /* global multiplier on per-instrument release times */
   var INSTRUMENTS: Record<string, any> = {
@@ -113,21 +115,19 @@ export const SampleEngine = (function () {
          phase) loop point dropped from most samples; E5 dropped entirely
          (high-drift); F5 and Bb5 added (extended upper range). */
       samples:[
-        {name:'Ab2',freq:103.83,loopPts:[0.58102,1.27474,1.62159,1.96844,2.31528],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3]],trimStart:0.0171,slopeCV:0.079},
-        {name:'B2',freq:123.47,loopPts:[0.51696,1.2302,1.58683,1.94342,2.30005,3.0295],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4]],trimStart:0.0067,slopeCV:0.076},
-        {name:'D3',freq:146.83,loopPts:[0.1554,0.50311,0.87113,1.2119,1.57993,2.29553,2.66356,3.03159],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0069,slopeCV:0.076},
-        {name:'F3',freq:174.61,loopPts:[0.77422,1.10299,1.41034,1.73701,2.37313,2.69977,3.02644],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5]],trimStart:0.0077,slopeCV:0.043},
-        {name:'Ab3',freq:207.65,loopPts:[0.16263,0.50937,0.8756,1.22254,1.58875,2.30193,2.66816,3.03438],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0113,slopeCV:0.096},
-        {name:'B3',freq:246.94,loopPts:[0.12193,0.47855,0.83492,1.19129,1.56385,1.92023,2.29281,3.02175],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0092,slopeCV:0.017},
-        {name:'D4',freq:293.66,loopPts:[0.58646,0.94401,1.28454,1.64209,1.98261,2.34016,3.03823],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5]],trimStart:0.005,slopeCV:0.039},
-        {name:'Gb4',freq:369.99,loopPts:[0.17914,0.53365,0.89075,1.24785,1.60492,1.96202,2.31912,3.03329],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0059,slopeCV:0.22},
-        {name:'Ab4',freq:415.3,loopPts:[0.48633,0.85737,1.21154,1.58259,1.93676,2.3078,3.03302],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5]],trimStart:0.0103,slopeCV:0.058},
-        {name:'Bb4',freq:466.16,loopPts:[0.47422,0.83483,1.19544,1.57107,1.93168,2.29229,3.02855],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5]],trimStart:0.0094,slopeCV:0.064},
-        {name:'Db5',freq:554.37,loopPts:[0.42993,0.80188,1.17558,1.54932,2.28057,2.65249,3.02624],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5]],trimStart:0.0071,slopeCV:0.268},
-        {name:'F5',freq:698.46,loopPts:[0.07735,0.43898,0.81732,1.17844,1.55673,1.91932],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4]],trimStart:0.0059,slopeCV:0.346},
-        {name:'G5',freq:783.99,loopPts:[0.7998,1.16748,1.5505,1.91816,2.28458],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3]],trimStart:0.0054,slopeCV:0.139},
-        {name:'Bb5',freq:932.33,loopPts:[0.46023,0.82095,1.18059,1.55635,1.91705,2.29172,3.02819],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5]],trimStart:0.0048,slopeCV:0.375}
-      ]
+        {name:'Ab2',freq:103.784,loopPts:[0.9843764,1.2445125,1.5142857,1.7648073,2.0249433,2.2947166,2.5645125,2.8149887],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0170522},
+        {name:'B2',freq:123.38,loopPts:[0.8940816,1.1696372,1.4452154,1.7126757,1.988254,2.2638095,2.5393878,2.8068481],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0066893},
+        {name:'D3',freq:146.729,loopPts:[0.8966893,1.1624943,1.4419274,1.700907,1.9735147,2.2529478,2.5119274,2.7913605],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0069388},
+        {name:'F3',freq:174.496,loopPts:[0.6239229,0.9333787,1.2428571,1.546576,1.8560544,2.1655102,2.474966,2.7787075],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0076644},
+        {name:'Ab3',freq:207.529,loopPts:[0.4178231,0.7792063,1.1068934,1.4345578,1.7670522,2.0947166,2.4272109,2.754898],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0113152},
+        {name:'B3',freq:246.951,loopPts:[0.3651474,0.7053288,1.0454875,1.3856689,1.7258503,2.0619728,2.4021542,2.7423129],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0091837},
+        {name:'D4',freq:293.669,loopPts:[0.4026077,0.7362812,1.0768254,1.4105215,1.7476417,2.0881859,2.4253061,2.7590023],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.004966},
+        {name:'F4',freq:349.032,loopPts:[0.2700227,0.6252834,0.9662358,1.3243991,1.6854195,2.0406803,2.3959637,2.7455102],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0070295},
+        {name:'Ab4',freq:415.057,loopPts:[0.2294785,0.5860544,0.9570975,1.3112925,1.6678685,2.0389116,2.3882766,2.737619],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0103401},
+        {name:'B4',freq:493.442,loopPts:[0.1813152,0.5440363,0.9088209,1.2715873,1.6363946,1.999161,2.3619274,2.7267347],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0092744},
+        {name:'D5',freq:586.812,loopPts:[0.1530612,0.4358957,0.809093,1.2624036,1.6185941,1.9798866,2.2900227,2.6530159],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0067347},
+        {name:'Gb5',freq:739.235,loopPts:[0.1831746,0.5808163,0.9270975,1.2760317,1.6331293,1.976712,2.3594785,2.7246939],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0056689}
+    ],
     },
     flute:{
       name:'Flute',baseUrl:'https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/flute-mp3/',
@@ -161,6 +161,10 @@ export const SampleEngine = (function () {
     drawbar_organ:{
       name:'Drawbar Organ',baseUrl:'https://gleitz.github.io/midi-js-soundfonts/FatBoy/drawbar_organ-mp3/',
       ext:'.mp3',releaseTime:0.15,volume:1.0,loop:true,decays:false,vibrato:true,
+      /* Hammond drawbar convention: filenames label pitches an octave above
+         the actual recorded audio content. transpose=2.0 plays back at 2× the
+         filename-derived rate so a key requesting 440 Hz audibly produces 440 Hz. */
+      transpose:2.0,
       /* 25 samples, diminished-7th sampling (every minor third: B, D, F, Ab)
          from B1 to B7. Generated via the vibrato-aware analyzer path (manually
          enabled — drawbar organ has enough harmonic chorusing that the vibrato
@@ -213,33 +217,26 @@ export const SampleEngine = (function () {
          validStartsByEnd where specific loop points had no clean backward
          partner. This is intentional — drop bad seams, keep good ones. */
       samples:[
-        {name:'C1',freq:32.7,loopPts:[1.15546,1.52163,2.25431,2.62059,2.98687],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3]],trimStart:0.0088,slopeCV:0.091},
-        {name:'D1',freq:36.71,loopPts:[0.34683,0.67313,0.99939,2.96608],validStartsByEnd:[[],[0],[0,1],[0,1,2]],trimStart:0.0111,slopeCV:0.071},
-        {name:'F1',freq:43.65,loopPts:[0.77204,2.28122,2.6241,2.98995],validStartsByEnd:[[],[0],[0,1],[0,1,2]],trimStart:0.0096,slopeCV:0.088},
-        {name:'A1',freq:55,loopPts:[0.04821,0.42932,0.79229,1.15528,1.53646,1.89946,2.28061,3.02485],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.008,slopeCV:0.06},
-        {name:'B1',freq:61.74,loopPts:[0.04834,0.79213,1.16408,1.52794,1.96451,3.01553],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4]],trimStart:0.0074,slopeCV:0.065},
-        {name:'D2',freq:73.42,loopPts:[0.05168,0.32372,0.62279,1.08503,1.30265,1.71045,2.17277,2.58068],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0066,slopeCV:0.146},
-        {name:'F2',freq:87.31,loopPts:[0.44249,0.76265,1.10567,1.35721,1.81458,1.99757,2.18045,3.00363],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0073,slopeCV:0.07},
-        {name:'Ab2',freq:103.83,loopPts:[0.05345,0.41392,0.78891,2.32726,2.67345],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3]],trimStart:0.0073,slopeCV:0.15},
-        {name:'B2',freq:123.47,loopPts:[0.39424,0.7176,1.04095,1.34821,1.7039,3.02986],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4]],trimStart:0.0064,slopeCV:0.145},
-        {name:'Eb3',freq:155.56,loopPts:[0.32109,0.57138,1.46327,1.73279,2.28782,2.90707],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4]],trimStart:0.0082,slopeCV:0.286},
-        {name:'F3',freq:174.61,loopPts:[0.30907,1.28664,1.56676,1.97839,2.40712,3.02451],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4]],trimStart:0.0075,slopeCV:0.245},
-        {name:'Ab3',freq:207.65,loopPts:[0.0498,0.37667,1.9198,2.24678,2.90045],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3]],trimStart:0.0045,slopeCV:0.215},
-        {name:'B3',freq:246.94,loopPts:[0.64707,0.81683,0.96236,1.12,1.32619,1.94873,2.09424],validStartsByEnd:[[],[0],[0],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4]],trimStart:0.007,slopeCV:0.125},
-        {name:'Db4',freq:277.18,loopPts:[0.30524,1.22356,1.54769,1.74578,2.4156,2.66771],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4]],trimStart:0.0064,slopeCV:0.378},
-        {name:'E4',freq:329.63,loopPts:[0.99653,1.42073,1.6783,1.81771,1.95406,2.49952,3.02964],validStartsByEnd:[[],[0],[0,1],[0,1],[0,1,2],[0,1,2,3,4],[0,1,2,3,4,5]],trimStart:0.0066,slopeCV:0.277},
-        {name:'G4',freq:392,loopPts:[0.28447,0.71506,0.94444,1.46424,1.60179,2.04519,2.47329,3.0415],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0058,slopeCV:0.257},
-        {name:'Bb4',freq:466.16,loopPts:[0.1615,0.55125,0.85315,1.18295,1.57263,2.17438,2.44422,2.71404],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0067,slopeCV:0.222},
-        {name:'C5',freq:523.25,loopPts:[0.10281,0.51485,1.41719,1.92086,2.44168],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3]],trimStart:0.0061,slopeCV:0.138},
-        {name:'D5',freq:587.33,loopPts:[0.11891,0.24635,0.3739,0.50138,0.63052,0.98741,1.34444],validStartsByEnd:[[],[],[0],[0,1],[0,1,2],[0,1,2,3,4],[0,1,2,3,4,5]],trimStart:0.0059,slopeCV:0.202},
-        {name:'F5',freq:698.46,loopPts:[0.62288,1.12739,1.64619,1.86771,2.18215,2.52803,2.76528],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5]],trimStart:0.0052,slopeCV:0.184},
-        {name:'Ab5',freq:830.61,loopPts:[0.04132,0.22889,0.41639,0.61952,0.80825,0.99576,1.18333,1.57522],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.006,slopeCV:0.136},
-        {name:'C6',freq:1046.5,loopPts:[0.05982,0.15141,0.25828,0.34986,0.45766,2.23039,2.39925,2.56714],validStartsByEnd:[[],[],[0],[0,1],[0,1,2],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0048,slopeCV:0.045},
-        {name:'D6',freq:1174.66,loopPts:[1.48995,1.63274,2.47084,2.55249,2.64429],validStartsByEnd:[[],[],[0,1],[0,1],[0,1,2]],trimStart:0.0061,slopeCV:0.126},
-        {name:'E6',freq:1318.51,loopPts:[0.93075,1.07914,1.22755,2.45968,2.57626,2.69286,2.8102,2.93746],validStartsByEnd:[[],[],[0],[0,1,2],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5]],trimStart:0.0056,slopeCV:0.124},
-        {name:'Gb6',freq:1479.98,loopPts:[0.60002,0.942,1.09785,2.12333,2.24746,2.37224,2.48084,2.63603],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5,6]],trimStart:0.0058,slopeCV:0.094},
-        {name:'A6',freq:1760,loopPts:[1.1702,1.3251,1.48052,2.53059,2.68546,2.81707],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3]],trimStart:0.0057,slopeCV:0.088},
-        {name:'C7',freq:2093,loopPts:[0.3088,0.40229,0.79009,0.87025,1.44558,1.98082,2.48934,2.58286],validStartsByEnd:[[],[],[0,1],[0,1],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5]],trimStart:0.006,slopeCV:0.123}
+        {name:'Db1',freq:34.708,loopPts:[1.6805215,1.8533107,2.0261224,2.1989796,2.3718367,2.515941,2.6888209,2.861678],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0085261},
+        {name:'E1',freq:41.277,loopPts:[1.6627664,1.832381,2.0019955,2.1715873,2.3653968,2.5349887,2.7045805,2.8741723],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0100907},
+        {name:'G1',freq:49.07,loopPts:[1.4738776,1.6775964,1.8813379,2.0646939,2.2683673,2.4720408,2.675805,2.859229],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0087755},
+        {name:'Bb1',freq:58.367,loopPts:[1.6272109,1.8156463,1.9869388,2.1753741,2.3466893,2.5351247,2.7064172,2.8948753],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0077324},
+        {name:'Db2',freq:69.429,loopPts:[1.6278231,1.815102,1.9879592,2.1752154,2.3480952,2.5353741,2.708254,2.8955329],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0068254},
+        {name:'E2',freq:82.548,loopPts:[0.4363265,0.7270748,1.0178231,1.3085034,1.599229,1.93839,2.2291383,2.5198866],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0076644},
+        {name:'G2',freq:98.162,loopPts:[0.4995692,0.7236961,0.9579592,1.1820408,1.4163265,1.6404308,1.8645125,2.0988209],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0075737},
+        {name:'Bb2',freq:116.772,loopPts:[1.4171429,1.5285034,1.5884807,1.6569841,1.7255102,1.7854649,1.8540136,1.9140136],validStartsByEnd:[[],[],[0],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4]],trimStart:0.0066667},
+        {name:'D3',freq:147.11,loopPts:[2.2760544,2.6703855,2.7723583,2.8811338,2.9830839],validStartsByEnd:[[],[0],[0],[0,1],[0,1,2]],trimStart:0.0085714},
+        {name:'Gb3',freq:185.328,loopPts:[2.270907,2.4975283,2.6702041,2.7565306,2.8428571],validStartsByEnd:[[],[0],[0,1],[0,1],[0,1,2]],trimStart:0.0071655},
+        {name:'Bb3',freq:233.506,loopPts:[1.1152154,2.8240136,2.9010884,2.9781859],validStartsByEnd:[[],[0],[0],[0,1]],trimStart:0.0073016},
+        {name:'Db4',freq:277.659,loopPts:[0.4757596,1.4589796,1.8407256,2.4997506,2.8634921],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3]],trimStart:0.0063946},
+        {name:'E4',freq:330.007,loopPts:[0.2691837,0.4237868,0.5146939,0.8389342,0.9298186,1.0631746,1.5509977],validStartsByEnd:[[],[0],[0],[0,1,2],[0,1,2],[0,1,2,3],[0,1,2,3,4,5]],trimStart:0.0066213},
+        {name:'A4',freq:440.803,loopPts:[0.8162132,0.9590703,1.3765079,1.5285261,1.7122676,2.3520635],validStartsByEnd:[[],[],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4]],trimStart:0.0069841},
+        {name:'C5',freq:524.152,loopPts:[0.5282086,1.1901814,1.6251247,2.1001814,2.559932,2.884263],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4]],trimStart:0.0061224},
+        {name:'E5',freq:660.456,loopPts:[2.5999773,2.6892971,2.7529025,2.8180272,2.8816327,2.9452154,3.0148753],validStartsByEnd:[[],[],[0],[0],[0,1],[0,1,2],[0,1,2,3]],trimStart:0.0054875},
+        {name:'Ab5',freq:831.985,loopPts:[0.1194785,0.458458,0.8022449,1.1328571,1.4633787,1.8252381,2.2002721,2.6102041],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4,5],[0,1,2,3,4,5,6]],trimStart:0.0060091},
+        {name:'B5',freq:989.277,loopPts:[0.0643084,0.8577778,1.2236961,1.5896372,1.9545578,2.3629025],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4]],trimStart:0.0050113},
+        {name:'D6',freq:1176.56,loopPts:[1.0836281,1.3190476,1.79678,2.1971429,2.3773469,2.8397279],validStartsByEnd:[[],[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3,4]],trimStart:0.0061224},
+        {name:'Gb6',freq:1482.056,loopPts:[0.7686621,1.5815873,1.9621088,2.1489796],validStartsByEnd:[[],[0],[0,1],[0,1,2]],trimStart:0.0058277}
       ]
     },
     harp:{
@@ -263,522 +260,6 @@ export const SampleEngine = (function () {
     sampleMaster.gain.value=1.0;
     sampleMaster.connect(destNode);
     master=sampleMaster;
-  }
-  /* Macro-period loop point finder — primary path for non-vibrato samples.
-     Uses RMS + log-magnitude-spectrum matching to find loop points where
-     crossfade quality is perceptually good (stable volume, stable timbre).
-     For equal-power crossfade, sample-level waveform correlation (NMSE) is
-     NOT what matters — harmonic phase mismatch at crossfade time simply
-     blends into natural chorus, which is perceptually fine for organ-like
-     tones. See analyzer's prepareLoopMacroPeriod for the full derivation.
-     Must stay in sync with analyzer. */
-  function fftInPlace(re: any, im: any, twiddle: any): void {
-    var N=re.length;
-    for(var i=0,j=0;i<N;i++){
-      if(i<j){var t=re[i];re[i]=re[j];re[j]=t;t=im[i];im[i]=im[j];im[j]=t;}
-      var m=N>>1;while(m>0&&j>=m){j-=m;m>>=1;}j+=m;
-    }
-    for(var size=2;size<=N;size*=2){
-      var halfsize=size>>1,tablestep=N/size;
-      for(var i=0;i<N;i+=size){
-        for(var k=0,l=0;k<halfsize;k++,l+=tablestep){
-          var wr=twiddle[2*l],wi=twiddle[2*l+1];
-          var idx=i+k,idx2=idx+halfsize;
-          var tre=re[idx2]*wr-im[idx2]*wi;
-          var tim=re[idx2]*wi+im[idx2]*wr;
-          re[idx2]=re[idx]-tre;im[idx2]=im[idx]-tim;
-          re[idx]+=tre;im[idx]+=tim;
-        }
-      }
-    }
-  }
-  function makeTwiddle(N: number): Float64Array {
-    var t=new Float64Array(N*2);
-    for(var k=0;k<N;k++){t[2*k]=Math.cos(-2*Math.PI*k/N);t[2*k+1]=Math.sin(-2*Math.PI*k/N);}
-    return t;
-  }
-  function prepareLoopMacroPeriod(buf: any, freq: any, opts: any): any {
-    opts=opts||{};
-    var rmsGate=opts.rmsGate||0.05;
-    var specGate=opts.specGate||1.0;
-    var minDistSec=opts.minDistSec||0.08;
-    var mseWindowSec=opts.mseWindowSec||0.06;
-    var maxLoopPts=opts.maxLoopPts||8;
-    var sr=buf.sampleRate,len=buf.length,d=buf.getChannelData(0);
-    var period=sr/freq;
-    var trimStart=0;
-    for(var s=0;s<len;s++){if(Math.abs(d[s])>0.003){trimStart=s;break;}}
-    var rmsWin=Math.round(sr*0.05),rmsHop=Math.round(sr*0.01);
-    var rmsCurve=[];
-    for(var s=trimStart;s+rmsWin<len;s+=rmsHop){
-      var sum=0;for(var k=0;k<rmsWin;k++)sum+=d[s+k]*d[s+k];
-      rmsCurve.push({pos:s+Math.floor(rmsWin/2),rms:Math.sqrt(sum/rmsWin)});
-    }
-    if(rmsCurve.length<3)return{trimStart:trimStart/sr,loopPts:null,stats:{failReason:'RMS curve too short'}};
-    var peakRms=0;
-    for(var i=0;i<rmsCurve.length;i++)if(rmsCurve[i].rms>peakRms)peakRms=rmsCurve[i].rms;
-    var rmsThresh=peakRms*0.70;
-    var runStart=-1,bestStart=-1,bestEnd=-1,bestLen=0;
-    for(var i=0;i<rmsCurve.length;i++){
-      if(rmsCurve[i].rms>=rmsThresh){
-        if(runStart<0)runStart=i;
-        if(i-runStart>bestLen){bestLen=i-runStart;bestStart=runStart;bestEnd=i;}
-      } else runStart=-1;
-    }
-    if(bestStart<0)return{trimStart:trimStart/sr,loopPts:null,stats:{failReason:'no steady region'}};
-    var steadyStart=rmsCurve[bestStart].pos,steadyEnd=rmsCurve[bestEnd].pos;
-    var xfWin=Math.max(Math.round(mseWindowSec*sr),Math.round(period*4));
-    var minDistSamples=Math.round(minDistSec*sr);
-    if(steadyEnd-steadyStart<minDistSamples+xfWin){
-      return{trimStart:trimStart/sr,loopPts:null,stats:{failReason:'steady region too short'}};
-    }
-    var fftN=2;while(fftN<xfWin)fftN*=2;
-    var twiddle=makeTwiddle(fftN);
-    var hann=new Float64Array(xfWin);
-    for(var i=0;i<xfWin;i++)hann[i]=0.5-0.5*Math.cos(2*Math.PI*i/(xfWin-1));
-    var reBuf=new Float64Array(fftN),imBuf=new Float64Array(fftN);
-    var nBins=(fftN>>1)+1;
-    function logMagSpec(start: number): Float64Array {
-      for(var i=0;i<fftN;i++){reBuf[i]=0;imBuf[i]=0;}
-      for(var i=0;i<xfWin;i++)reBuf[i]=d[start+i]*hann[i];
-      fftInPlace(reBuf,imBuf,twiddle);
-      var logMag=new Float64Array(nBins);
-      for(var i=0;i<nBins;i++){
-        var mag=Math.sqrt(reBuf[i]*reBuf[i]+imBuf[i]*imBuf[i]);
-        logMag[i]=Math.log(mag+1e-6);
-      }
-      return logMag;
-    }
-    function rmsOf(start: number): number {
-      var sum=0;for(var i=0;i<xfWin;i++)sum+=d[start+i]*d[start+i];
-      return Math.sqrt(sum/xfWin);
-    }
-    function findAnchorNear(probe: number): number {
-      for(var s=Math.max(probe,1);s<steadyEnd&&s<probe+period*5;s++){
-        if(d[s]>0&&d[s-1]<=0){
-          var frac=(d[s]===d[s-1])?0:-d[s-1]/(d[s]-d[s-1]);
-          return s-1+frac;
-        }
-      }
-      return -1;
-    }
-    var anchorCands: number[] = [];
-    for(var ai=0;ai<3;ai++){
-      var t=(ai+1)/4;
-      var probe=Math.round(steadyStart+t*(steadyEnd-steadyStart));
-      var a=findAnchorNear(probe);
-      if(a>=0)anchorCands.push(a);
-    }
-    if(anchorCands.length===0)return{trimStart:trimStart/sr,loopPts:null,stats:{failReason:'no anchor'}};
-    var minN=Math.max(1,Math.ceil(minDistSec*sr/period));
-    var bestAnchorData: any = null;
-    for(var ai=0;ai<anchorCands.length;ai++){
-      var anchor=anchorCands[ai];
-      var NMax=Math.floor((steadyEnd-Math.floor(anchor)-xfWin)/period);
-      if(NMax<minN)continue;
-      var refRms=rmsOf(Math.floor(anchor));
-      var refSpec=logMagSpec(Math.floor(anchor));
-      var qualifying: any[] = [];
-      var minScore=Infinity;
-      for(var N=minN;N<=NMax;N++){
-        var shift=Math.floor(anchor+N*period);
-        if(shift+xfWin>=len)continue;
-        var segRms=rmsOf(shift);
-        var rmsRel=Math.abs(refRms-segRms)/(refRms+1e-9);
-        if(rmsRel>rmsGate)continue;
-        var segSpec=logMagSpec(shift);
-        var specMse=0;
-        for(var i=0;i<nBins;i++){var diff=refSpec[i]-segSpec[i];specMse+=diff*diff;}
-        specMse/=nBins;
-        if(specMse>specGate)continue;
-        var score=rmsRel*10+specMse;
-        if(score<minScore)minScore=score;
-        qualifying.push({N:N,score:score,rmsRel:rmsRel,specMse:specMse});
-      }
-      if(bestAnchorData===null||
-         qualifying.length>bestAnchorData.qualifying.length||
-         (qualifying.length===bestAnchorData.qualifying.length&&minScore<bestAnchorData.minScore)){
-        bestAnchorData={ai:ai,anchor:anchor,NMax:NMax,qualifying:qualifying,minScore:minScore};
-      }
-    }
-    if(bestAnchorData===null||bestAnchorData.qualifying.length===0){
-      return{trimStart:trimStart/sr,loopPts:null,stats:{failReason:'no qualifying Ns'}};
-    }
-    qualifying = bestAnchorData.qualifying;
-    qualifying.sort(function(a,b){return a.score-b.score;});
-    var minSpacingN=minN;
-    var picked=[];
-    for(var i=0;i<qualifying.length;i++){
-      if(picked.length>=maxLoopPts-1)break;
-      var c=qualifying[i];
-      var ok=true;
-      for(var j=0;j<picked.length;j++){
-        if(Math.abs(picked[j].N-c.N)<minSpacingN){ok=false;break;}
-      }
-      if(!ok)continue;
-      picked.push(c);
-    }
-    if(picked.length<2)return{trimStart:trimStart/sr,loopPts:null,stats:{failReason:'only '+picked.length+' pick(s)'}};
-    picked.sort(function(a: any, b: any){return a.N-b.N;});
-    anchor=bestAnchorData.anchor;
-    var loopPts=[anchor/sr];
-    var slopes: number[] = [];
-    var slopeWinS=Math.min(Math.round(period*0.5),32);
-    function computeSlope(pos: number): number {
-      var p=Math.round(pos);
-      if(p-slopeWinS<0||p+slopeWinS>=len)return 0;
-      return (d[p+slopeWinS]-d[p-slopeWinS])/(2*slopeWinS);
-    }
-    /* Snap each pick to the nearest +ZC (within ±T/2) with slope closest
-       to the anchor's slope. Picks at anchor+N·period are NOT at actual
-       +ZCs of the composite waveform (only the idealized fundamental), so
-       starting playback there creates clicks. Snap ensures value match
-       (both ≈0) and slope match. RMS/spec scores still hold since the move
-       is <1 period, ~1% of the 60ms measurement window. */
-    var halfT=Math.max(1,Math.round(period/2));
-    var anchorSlope=computeSlope(anchor);
-    function snapZcMatchingSlope(pos: number): number {
-      var pCenter=Math.round(pos);
-      var bestPos=pos,bestDiff=Infinity;
-      for(var s=Math.max(1,pCenter-halfT);s<=Math.min(len-2,pCenter+halfT);s++){
-        if(d[s]>0&&d[s-1]<=0){
-          var frac=(d[s]===d[s-1])?0:-d[s-1]/(d[s]-d[s-1]);
-          var zcPos=s-1+frac;
-          var slope=computeSlope(zcPos);
-          var diff=Math.abs(slope-anchorSlope);
-          if(diff<bestDiff){bestDiff=diff;bestPos=zcPos;}
-        }
-      }
-      return bestPos;
-    }
-    slopes.push(anchorSlope);
-    for(var pi=0;pi<picked.length;pi++){
-      var rawPos=anchor+picked[pi].N*period;
-      var snappedPos=snapZcMatchingSlope(rawPos);
-      loopPts.push(snappedPos/sr);
-      slopes.push(computeSlope(snappedPos));
-    }
-    var finalPts=loopPts.map(function(t){var s=Math.floor(t*sr)+1;if(s>=len)s=len-1;return s/sr;});
-    var seen: Record<number, number> = {}, dedup: number[] = [];
-    for(var i=0;i<finalPts.length;i++){
-      var key=Math.round(finalPts[i]*sr);
-      if(seen[key])continue;
-      seen[key]=1;dedup.push(finalPts[i]);
-    }
-    if(dedup.length<2)return{trimStart:trimStart/sr,loopPts:null,stats:{failReason:'collapsed'}};
-    var slopeSum=0,slopeSumSq=0;
-    for(var i=0;i<slopes.length;i++){slopeSum+=slopes[i];slopeSumSq+=slopes[i]*slopes[i];}
-    var slopeMean=slopeSum/slopes.length;
-    var slopeVar=slopeSumSq/slopes.length-slopeMean*slopeMean;
-    var slopeCV=Math.sqrt(Math.max(0,slopeVar))/(Math.abs(slopeMean)+0.0001);
-    return{trimStart:trimStart/sr,loopPts:dedup,slopeCV:slopeCV,
-      stats:{method:'macro-period',picked:picked.length,qualifying:qualifying.length,
-             Nmin:picked[0].N,Nmax:picked[picked.length-1].N,borderline:picked.length===2,
-             kept:dedup.length}};
-  }
-  /* Frequency-guided loop point finder — primary path for non-vibrato samples.
-     Uses T=1/freq to predict endpoint times and locks each to the nearest
-     waveform-correlated +going ZC. Avoids the ZC-count-per-period failure mode
-     of the legacy path on complex overtones. Must stay in sync with the
-     analyzer's prepareLoopFreqGuided. */
-  function prepareLoopFreqGuided(buf: any, freq: any, opts: any): any {
-    opts=opts||{};
-    var loopWindowSec=opts.loopWindowSec||0.20;
-    var targetCount=opts.targetCount||10;
-    var corrThresh=opts.corrThresh||0.85;
-    var sr=buf.sampleRate,len=buf.length,d=buf.getChannelData(0);
-    var period=sr/freq;
-    var trimStart=0;
-    for(var s=0;s<len;s++){if(Math.abs(d[s])>0.003){trimStart=s;break;}}
-    /* Steady region via RMS envelope (50ms win, 10ms hop, ≥70% peak) */
-    var rmsWin=Math.round(sr*0.05),rmsHop=Math.round(sr*0.01);
-    var rmsCurve=[];
-    for(var s=trimStart;s+rmsWin<len;s+=rmsHop){
-      var sum=0;for(var k=0;k<rmsWin;k++)sum+=d[s+k]*d[s+k];
-      rmsCurve.push({pos:s+Math.floor(rmsWin/2),rms:Math.sqrt(sum/rmsWin)});
-    }
-    if(rmsCurve.length<3)return{trimStart:trimStart/sr,loopPts:null,stats:{failReason:'RMS curve too short'}};
-    var peakRms=0;
-    for(var i=0;i<rmsCurve.length;i++)if(rmsCurve[i].rms>peakRms)peakRms=rmsCurve[i].rms;
-    var rmsThresh=peakRms*0.70;
-    var runStart=-1,bestStart=-1,bestEnd=-1,bestLen=0;
-    for(var i=0;i<rmsCurve.length;i++){
-      if(rmsCurve[i].rms>=rmsThresh){
-        if(runStart<0)runStart=i;
-        if(i-runStart>bestLen){bestLen=i-runStart;bestStart=runStart;bestEnd=i;}
-      } else runStart=-1;
-    }
-    if(bestStart<0)return{trimStart:trimStart/sr,loopPts:null,stats:{failReason:'no steady region'}};
-    var steadyStart=rmsCurve[bestStart].pos,steadyEnd=rmsCurve[bestEnd].pos;
-    if(steadyEnd-steadyStart<sr*0.2)return{trimStart:trimStart/sr,loopPts:null,
-      stats:{failReason:'steady region too short'}};
-    /* Anchor: first +going ZC from steady midpoint */
-    var midPoint=Math.round((steadyStart+steadyEnd)/2);
-    var anchorSearchEnd=Math.min(midPoint+Math.round(period*5),steadyEnd);
-    var anchor=-1;
-    for(var s=Math.max(midPoint,1);s<anchorSearchEnd;s++){
-      if(d[s]>0&&d[s-1]<=0){
-        var frac=(d[s]===d[s-1])?0:-d[s-1]/(d[s]-d[s-1]);
-        anchor=s-1+frac;break;
-      }
-    }
-    if(anchor<0)return{trimStart:trimStart/sr,loopPts:null,stats:{failReason:'no anchor ZC'}};
-    /* Target placement: anchor + K*T spanning ±loopWindow/2 */
-    var halfWindowSamp=loopWindowSec/2*sr;
-    var winLo=Math.max(steadyStart,Math.round(anchor-halfWindowSamp));
-    var winHi=Math.min(steadyEnd,Math.round(anchor+halfWindowSamp));
-    var kMin=Math.ceil((winLo-anchor)/period);
-    var kMax=Math.floor((winHi-anchor)/period);
-    if(kMax-kMin<1)return{trimStart:trimStart/sr,loopPts:null,stats:{failReason:'loop window too narrow'}};
-    var targetKs: number[] = [],kStep=Math.max(1,Math.round((kMax-kMin)/(targetCount-1)));
-    for(var k=kMin;k<=kMax;k+=kStep)targetKs.push(k);
-    if(targetKs[targetKs.length-1]!==kMax)targetKs.push(kMax);
-    /* For each target, find best-correlated +ZC in ±T/2 window */
-    var corrWin=Math.round(period*2);
-    var anchorI=Math.floor(anchor);
-    function corrAt(candSamp: number): number {
-      var c=Math.floor(candSamp);
-      if(c-corrWin<0||c+corrWin>=len||anchorI-corrWin<0||anchorI+corrWin>=len)return 0;
-      var num=0,da=0,db=0;
-      for(var k=-corrWin;k<=corrWin;k++){
-        var va=d[anchorI+k],vb=d[c+k];
-        num+=va*vb;da+=va*va;db+=vb*vb;
-      }
-      var denom=Math.sqrt(da*db);
-      return denom>0?num/denom:0;
-    }
-    var searchRadius=period/2;
-    var loopPts: number[] = [], slopes: number[] = [];
-    var slopeWin=Math.min(Math.round(period*0.5),32);
-    function computeSlope(pos: number): number {
-      var p=Math.round(pos);
-      if(p-slopeWin<0||p+slopeWin>=len)return 0;
-      return (d[p+slopeWin]-d[p-slopeWin])/(2*slopeWin);
-    }
-    for(var ti=0;ti<targetKs.length;ti++){
-      var kv=targetKs[ti];
-      var expectedSamp=anchor+kv*period;
-      var lo=Math.floor(expectedSamp-searchRadius),hi=Math.ceil(expectedSamp+searchRadius);
-      if(lo<=0||hi>=len)continue;
-      var best: { pos: number; score: number } | null = null;
-      for(var s=lo+1;s<=hi;s++){
-        if(d[s]>0&&d[s-1]<=0){
-          var frac=(d[s]===d[s-1])?0:-d[s-1]/(d[s]-d[s-1]);
-          var pos=s-1+frac;
-          var correlation=corrAt(pos);
-          if(correlation<corrThresh)continue;
-          var distNorm=Math.abs(pos-expectedSamp)/period;
-          var score=correlation-distNorm*0.05;
-          if(!best||score>best.score)best={pos:pos,score:score};
-        }
-      }
-      if(best){loopPts.push(best.pos/sr);slopes.push(computeSlope(best.pos));}
-    }
-    if(loopPts.length<2)return{trimStart:trimStart/sr,loopPts:null,
-      stats:{failReason:'too few points passed correlation: '+loopPts.length+' of '+targetKs.length}};
-    var slopeSum=0,slopeSumSq=0;
-    for(var i=0;i<slopes.length;i++){slopeSum+=slopes[i];slopeSumSq+=slopes[i]*slopes[i];}
-    var slopeMean=slopeSum/slopes.length;
-    var slopeVar=slopeSumSq/slopes.length-slopeMean*slopeMean;
-    var slopeCV=Math.sqrt(Math.max(0,slopeVar))/(Math.abs(slopeMean)+0.0001);
-    var finalPts=loopPts.map(function(t){var s=Math.floor(t*sr)+1;if(s>=len)s=len-1;return s/sr;});
-    var seen: Record<number, number> = {}, dedup: number[] = [];
-    for(var i=0;i<finalPts.length;i++){
-      var key=Math.round(finalPts[i]*sr);
-      if(seen[key])continue;
-      seen[key]=1;dedup.push(finalPts[i]);
-    }
-    if(dedup.length<2)return{trimStart:trimStart/sr,loopPts:null,stats:{failReason:'collapsed after snap'}};
-    return{trimStart:trimStart/sr,loopPts:dedup,slopeCV:slopeCV,
-      stats:{method:'freq-guided',kept:dedup.length,slopeCV:slopeCV.toFixed(3)}};
-  }
-  function prepareLoop(buf: any, freq: any, loopRange?: any): any {
-    /* primary path: macro-period (handles complex harmonic beating) */
-    var mp=prepareLoopMacroPeriod(buf,freq,{});
-    if(mp.loopPts&&mp.loopPts.length>=2)return mp;
-    /* fallback 1: frequency-guided (simple periodic case) */
-    var fg=prepareLoopFreqGuided(buf,freq,{});
-    if(fg.loopPts&&fg.loopPts.length>=2)return fg;
-    /* fallback 2: legacy ZC-count heuristic */
-    var sr=buf.sampleRate,len=buf.length,d=buf.getChannelData(0);
-    var period=Math.round(sr/freq);
-    /* trim leading silence */
-    var trimStart=0;
-    for(var s=0;s<len;s++){if(Math.abs(d[s])>0.003){trimStart=s;break;}}
-    /* sustain region: skip 300ms of attack (catches slow bowed string attacks),
-       100ms at end (decay tail) */
-    var susStart=trimStart+Math.round(sr*0.3);
-    var susEnd=len-Math.round(sr*0.1);
-    if(susEnd-susStart<period*6)return{trimStart:trimStart/sr,loopPts:null,
-      stats:{failReason:'sustain too short: '+(susEnd-susStart)+' samples < '+(period*6)}};
-    /* find positive zero-crossings with sub-sample interpolation.
-       Enforce one crossing per ~fundamental period to avoid flat-spot false positives. */
-    var cx: number[] = [];
-    var minCxSamples=Math.round(period*0.8); /* minimum sample-spacing between crossings */
-    for(var s=susStart+1;s<susEnd;s++){
-      if(d[s]>0&&d[s-1]<=0){
-        var frac=(d[s]===d[s-1])?0:-d[s-1]/(d[s]-d[s-1]);
-        var cxPos=s-1+frac;
-        if(cx.length===0||cxPos-cx[cx.length-1]>=minCxSamples)cx.push(cxPos);
-      }
-    }
-    if(cx.length<4)return{trimStart:trimStart/sr,loopPts:null,
-      stats:{failReason:'too few crossings: '+cx.length}};
-    /* per-crossing features: RMS (50ms window) + slope (half-period) */
-    var winR=Math.min(Math.round(sr*0.05),period*5);
-    var slopeWin=Math.min(Math.round(period*0.5),32);
-    var rms: number[] = [], slope: number[] = [];
-    for(var i=0;i<cx.length;i++){
-      var ci=Math.floor(cx[i]);
-      var sum=0;for(var s=ci;s<ci+winR&&s<len;s++)sum+=d[s]*d[s];
-      rms.push(Math.sqrt(sum/winR));
-      var a=ci-slopeWin,b=ci+slopeWin;
-      if(a<0||b>=len){slope.push(0);continue;}
-      slope.push((d[b]-d[a])/(2*slopeWin));
-    }
-    /* Use full sustain region; RMS/slope/correlation filters handle anomalies naturally.
-       Previous sliding-window approach limited span to 1/3 of crossings, which was
-       overly restrictive for lower-frequency samples. */
-    var stableStart=0,stableEnd=cx.length;
-    /* stats over full sustain */
-    var regionRms: number[] = [], regionSlope: number[] = [];
-    for(var i=stableStart;i<stableEnd;i++){regionRms.push(rms[i]);regionSlope.push(slope[i]);}
-    regionRms.sort(function(a,b){return a-b;});
-    regionSlope.sort(function(a,b){return a-b;});
-    var medRms=regionRms[Math.floor(regionRms.length/2)];
-    var medSlope=regionSlope[Math.floor(regionSlope.length/2)];
-    /* Robust median refinement: iteratively trim outliers (>50% from median) and recompute.
-       This prevents attack tails or tremolo valleys from biasing the median high/low. */
-    for(var iter=0;iter<3;iter++){
-      var trimmed=regionRms.filter(function(v){return Math.abs(v-medRms)<medRms*0.5;});
-      if(trimmed.length<3)break;
-      medRms=trimmed[Math.floor(trimmed.length/2)];
-    }
-    var rmsTol=medRms*0.12; /* tightened from 0.20 — rejects amplitude dips/peaks */
-    var slopeTol=Math.abs(medSlope)*0.15;
-    /* coefficient of variation of slope (informational only) */
-    var slopeSum=0,slopeSumSq=0,slopeN=0;
-    for(var i=stableStart;i<stableEnd;i++){
-      slopeSum+=slope[i];slopeSumSq+=slope[i]*slope[i];slopeN++;
-    }
-    var slopeMean=slopeSum/slopeN;
-    var slopeVar=slopeSumSq/slopeN-slopeMean*slopeMean;
-    var slopeCV=Math.sqrt(Math.max(0,slopeVar))/(Math.abs(slopeMean)+0.0001);
-    /* RMS + slope filter with progressive relaxation.
-       Different MP3 decoders can shift sample values enough that tight tolerances fail.
-       Start strict, relax progressively until we have at least 4 candidates. */
-    var candidates: number[] = [];
-    var rmsFactor=0.12,slopeFactor=0.15;
-    for(var relaxIter=0;relaxIter<4;relaxIter++){
-      candidates=[];
-      var rTol=medRms*rmsFactor,sTol=Math.abs(medSlope)*slopeFactor;
-      for(var i=stableStart;i<stableEnd;i++){
-        if(Math.abs(rms[i]-medRms)>rTol)continue;
-        if(Math.abs(slope[i]-medSlope)>sTol)continue;
-        candidates.push(i);
-      }
-      if(candidates.length>=4)break;
-      rmsFactor*=1.8;slopeFactor*=1.8;
-    }
-    if(candidates.length<2)return{trimStart:trimStart/sr,loopPts:null,
-      stats:{crossings:cx.length,candidates:candidates.length,correlated:0,corrThresh:'-',slopeCV:slopeCV.toFixed(3),failReason:'candidates<2 (med_rms='+medRms.toFixed(4)+',tol='+rmsTol.toFixed(4)+')'}};
-    /* waveform correlation filter */
-    var corrWin=Math.min(period*2,256);
-    function corr(aIdx: number, bIdx: number): number {
-      var ac=Math.floor(cx[aIdx]),bc=Math.floor(cx[bIdx]);
-      if(ac-corrWin<0||ac+corrWin>=len||bc-corrWin<0||bc+corrWin>=len)return 0;
-      var num=0,da=0,db=0;
-      for(var k=-corrWin;k<=corrWin;k++){
-        var va=d[ac+k],vb=d[bc+k];
-        num+=va*vb;da+=va*va;db+=vb*vb;
-      }
-      var denom=Math.sqrt(da*db);
-      return denom>0?num/denom:0;
-    }
-    /* reference: most-average candidate */
-    var refIdx=candidates[0];
-    if(candidates.length>2){
-      var bestRefScore=Infinity;
-      for(var i=0;i<candidates.length;i++){
-        var ci=candidates[i];
-        var sc=Math.abs(rms[ci]-medRms)/medRms+Math.abs(slope[ci]-medSlope)/(Math.abs(medSlope)+0.0001);
-        if(sc<bestRefScore){bestRefScore=sc;refIdx=ci;}
-      }
-    }
-    var corrThresh=0.95;
-    var correlated: number[] = [];
-    for(var i=0;i<candidates.length;i++){
-      if(candidates[i]===refIdx){correlated.push(candidates[i]);continue;}
-      if(corr(refIdx,candidates[i])>=corrThresh)correlated.push(candidates[i]);
-    }
-    if(correlated.length<3){
-      correlated=[];corrThresh=0.90;
-      for(var i=0;i<candidates.length;i++){
-        if(candidates[i]===refIdx){correlated.push(candidates[i]);continue;}
-        if(corr(refIdx,candidates[i])>=corrThresh)correlated.push(candidates[i]);
-      }
-    }
-    if(correlated.length<3){correlated=candidates;}
-    /* ── ENFORCE MINIMUM POINT SPACING ──
-       Walk through correlated candidates; keep a point only if it's at least minPointGap
-       from the last kept point. This prevents tightly-clustered points regardless of
-       how candidates are distributed. 150ms ≈ one vibrato period at 6Hz. */
-    var minPointGapSec=0.15;
-    var minPointGapSamples=Math.round(sr*minPointGapSec);
-    var good: number[] = [];
-    for(var i=0;i<correlated.length;i++){
-      var ci=correlated[i];
-      if(good.length===0||cx[ci]-cx[good[good.length-1]]>=minPointGapSamples){
-        good.push(ci);
-        if(good.length>=20)break;
-      }
-    }
-    /* if too few at 150ms, relax to 75ms */
-    if(good.length<3){
-      minPointGapSamples=Math.round(sr*0.075);
-      good=[];
-      for(var i=0;i<correlated.length;i++){
-        var ci=correlated[i];
-        if(good.length===0||cx[ci]-cx[good[good.length-1]]>=minPointGapSamples){
-          good.push(ci);
-          if(good.length>=20)break;
-        }
-      }
-    }
-    /* final fallback: if still too few, take all correlated without spacing */
-    if(good.length<2&&correlated.length>=2){
-      good=correlated.slice(0,20);
-    }
-    if(good.length<2)return{trimStart:trimStart/sr,loopPts:null,
-      stats:{crossings:cx.length,candidates:candidates.length,correlated:correlated.length,corrThresh:corrThresh,slopeCV:slopeCV.toFixed(3),failReason:'good<2 after 150ms spacing filter'}};
-    /* ── SNAP TO INTEGER SAMPLES, POSITIVE-GOING SIDE ──
-       Each cx[i] is a positive-going zero-crossing between sample floor(cx[i])
-       (where d≤0) and floor(cx[i])+1 (where d>0). We always pick the d>0 side
-       so every loop point has the same polarity — splicing between same-sign
-       values produces small discontinuity; splicing between opposite-sign
-       values produces audible clicks. This rule matches the analyzer's
-       prepareLoop convention, so runtime-analyzed points align with
-       precomputed ones. */
-    var pts=good.map(function(i){
-      var s=Math.floor(cx[i])+1;
-      if(s>=len)s=len-1;
-      return s/sr;
-    });
-    /* ── FILTER BY SAMPLE-VALUE CONSISTENCY ──
-       After snapping, some chosen integer samples may still have significant |d[s]|.
-       Splices between points with very different d values cause amplitude jumps.
-       Keep only points whose sample value is within a tight band of the median. */
-    var snappedVals=pts.map(function(t){return d[Math.round(t*sr)];});
-    var sortedVals=snappedVals.slice().sort(function(a,b){return Math.abs(a)-Math.abs(b);});
-    var medAbsVal=Math.abs(sortedVals[Math.floor(sortedVals.length/2)]);
-    var valTol=Math.max(medAbsVal*2,0.003); /* 2x median or floor of 0.003 */
-    var finalPts: number[] = [], finalIdxs: number[] = [];
-    for(var i=0;i<pts.length;i++){
-      if(Math.abs(snappedVals[i])<=valTol){finalPts.push(pts[i]);finalIdxs.push(good[i]);}
-    }
-    if(finalPts.length<2){finalPts=pts;finalIdxs=good;} /* don't over-filter */
-    return{trimStart:trimStart/sr,loopPts:finalPts,slopeCV:slopeCV,
-      stats:{crossings:cx.length,candidates:candidates.length,correlated:correlated.length,corrThresh:corrThresh,slopeCV:slopeCV.toFixed(3),snapped:finalPts.length,preSnap:good.length}};
   }
   function loadInstrument(key: string, onProgress?: (loaded: number, total: number, name: string) => void): Promise<void> {
     return new Promise<void>(function(resolve,reject){
@@ -849,18 +330,51 @@ export const SampleEngine = (function () {
                nearby crossing as a tiebreaker. Decoder drift could matter
                across different browsers (Firefox analyzer → Chromium HKL),
                but even then, moving by ±1-2 samples doesn't fix a true
-               decoder mismatch and is just as likely to hurt as help. */
-            lp={trimStart:s.trimStart||0,loopPts:s.loopPts.slice(),slopeCV:s.slopeCV||0,
+               decoder mismatch and is just as likely to hurt as help.
+
+               validStartsByEnd / endsByStart pass through by reference — they
+               are the analyzer's seam-validity graph, read-only at runtime,
+               and absolutely required by scheduleSegmentSwitch. Dropping them
+               sends the picker into the legacy random branch, which produces
+               forward / same-point jumps and ignores the analyzer's work.
+
+               Snap loopPts and trimStart to integer audio samples here. The
+               paste-output rounded these to a few decimal places, which loses
+               sub-sample precision (e.g., trimStart=0.0094 round-trips to
+               414.54 samples instead of 414). At rate=1 a fractional offset
+               forces buffer-read interpolation everywhere it propagates; if
+               the FIRST source's offset (trimStart) has a different fractional
+               part than every SUBSEQUENT source's offset (pts[a]), the two
+               sources read the buffer at different sub-sample positions during
+               a crossfade — producing an audibly different timbre on the first
+               switch despite identical buffer-content endpoints. Snapping
+               normalizes both to the integer grid so for rate=1 every source
+               reads buffer at integer samples and there's nothing to interpolate. */
+            var sr=buf.sampleRate;
+            var snappedTrim=Math.round((s.trimStart||0)*sr)/sr;
+            var snappedPts=s.loopPts.map(function(p: number){return Math.round(p*sr)/sr;});
+            lp={trimStart:snappedTrim,loopPts:snappedPts,slopeCV:s.slopeCV||0,
+                validStartsByEnd:s.validStartsByEnd,endsByStart:s.endsByStart,
                 stats:{precomputed:true,count:s.loopPts.length}};
           } else if(instr.loop){
-            /* Fallback: runtime analysis (for user-uploaded samples without precomputed data) */
-            lp=prepareLoop(buf,s.freq,instr.loopMin&&instr.loopMax?[instr.loopMin,instr.loopMax]:null);
+            /* No runtime fallback — the analyzer must produce loopPts for any
+               loop-mode instrument we ship. Failing loud here surfaces a data
+               problem at load time, which is far better than silently shipping
+               an instrument with no working loops. To regenerate, open
+               tools/HexKeyLab-analyzer.html, analyze the affected sample(s),
+               and paste the loopPts/validStartsByEnd into samples.ts. */
+            var msg='SampleEngine: instrument "'+key+'" sample "'+s.name+'" is loop-mode but has no precomputed loopPts. Re-run the analyzer for this sample.';
+            console.error(msg);
+            aborted=true;
+            delete buffers[key];
+            reject(new Error(msg));
+            return;
           } else {
             lp={trimStart:0};
           }
           /* trim silence for decaying instruments too */
           if(!instr.loop){var _d=buf.getChannelData(0);for(var _s=0;_s<buf.length;_s++){if(Math.abs(_d[_s])>0.003){lp.trimStart=_s/buf.sampleRate;break;}}}
-          result[i]={buffer:buf,freq:s.freq,lp:lp};loaded++;
+          result[i]={buffer:buf,freq:s.freq,lp:lp,name:s.name};loaded++;
           if(onProgress)onProgress(loaded,total,s.name);
           if(loaded===total&&!aborted){
             buffers[key]=result.filter(function(x){
@@ -911,7 +425,7 @@ export const SampleEngine = (function () {
     if(activeVoices[voiceKey])sNoteOff(voiceKey);
     var nearest=findNearest(freq);if(!nearest)return;
     var instr=INSTRUMENTS[currentInstrument];
-    var rate=freq/nearest.freq;
+    var rate=freq*(instr.transpose||1)/nearest.freq;
     var vel=(velocity!==undefined)?velocity/127:0.85;
     var instrVol=instr.volume||1.0;
     var baseVol=(0.10+0.90*vel*vel)*instrVol;
@@ -935,8 +449,32 @@ export const SampleEngine = (function () {
     var damperGain=ctx.createGain();damperGain.gain.value=1.0;damperGain.connect(pressureGain);
     /* voiceGain: persistent node for this voice — noteOff fades this to silence everything */
     var voiceGain=ctx.createGain();voiceGain.gain.value=1.0;voiceGain.connect(damperGain);
-    var segGain=ctx.createGain();var now=ctx.currentTime;
-    segGain.gain.setValueAtTime(vol,now);
+    var segGain=ctx.createGain();
+    /* Schedule the source FIRST_SOURCE_LEAD seconds in the future, not at
+       currentTime, and record sourceStartTime as the same future moment.
+       Reason: source.start(t, ...) with t < ctx.currentTime gets clamped by
+       Web Audio to the actual currentTime at processing — which can be one
+       render quantum (~2.7ms) or more past `t` if JS stalls between
+       capturing currentTime and the audio thread consuming the schedule.
+       Recording sourceStartTime as the JS-captured time then under-records
+       the actual start moment, throwing off the switchTime computation in
+       scheduleSegmentSwitch. The mismatch produces a phase-shifted crossfade
+       on the first switch that the analyzer never validated → audible dip.
+       Pre-scheduling far enough ahead makes start exact (no clamping). The
+       lead must comfortably exceed any plausible JS stall on the note-on
+       path (event handler, click logic, redraw, possible GC pause) — 50ms
+       is well above the worst case while still imperceptible (≪100ms) as
+       note-onset latency. Subsequent sources (created in scheduleSegmentSwitch)
+       already pre-schedule with even more lead; this brings the first source
+       in line. */
+    /* Snap to the next integer audio sample so every source we ever start
+       has a sample-aligned `when`. Combined with sample-aligned offsets
+       (trimStart / pts[a] are snapped at sample-load time), this means at
+       rate=1 the audio engine reads the buffer at integer sample positions
+       throughout — no interpolation, and identical sub-sample alignment
+       across the first source and every subsequent source. */
+    var startT=Math.ceil((ctx.currentTime+0.050)*ctx.sampleRate)/ctx.sampleRate;
+    segGain.gain.setValueAtTime(vol,startT);
     var source=ctx.createBufferSource();source.buffer=nearest.buffer;
     source.playbackRate.value=rate;
     var pts=nearest.lp&&nearest.lp.loopPts;
@@ -974,8 +512,8 @@ export const SampleEngine = (function () {
     }
     source.connect(segGain);segGain.connect(voiceGain);
     var startOffset=(nearest.lp&&nearest.lp.trimStart)?nearest.lp.trimStart:0;
-    source.start(now,startOffset);
-    var voice={source:source,segGain:segGain,voiceGain:voiceGain,damperGain:damperGain,pressureGain:pressureGain,freq:freq,sampleFreq:nearest.freq,
+    source.start(startT,startOffset);
+    var voice={source:source,segGain:segGain,voiceGain:voiceGain,damperGain:damperGain,pressureGain:pressureGain,freq:freq,sampleFreq:nearest.freq,transpose:(instr.transpose||1),sampleName:nearest.name,
       vol:vol,baseVol:baseVol,alive:true,loopPts:pts,validStartsByEnd:vsbe,loopTimer:null,buffer:nearest.buffer,instr:instr,
       slopeCV:(nearest.lp&&typeof nearest.lp.slopeCV==='number')?nearest.lp.slopeCV:0.5,
       /* ── SOURCE ANCHOR (for wrap-aligned segment switching) ──
@@ -986,8 +524,10 @@ export const SampleEngine = (function () {
          positions drive the wrap-scheduler math:
            firstWrap = sourceStartTime + (sourceLoopB - sourceOffset) / sourceRate
          The initial source's loop spans the entire pts array, so
-         sourceLoopAIdx=0, sourceLoopBIdx=pts.length-1. */
-      sourceStartTime:now,sourceOffset:startOffset,
+         sourceLoopAIdx=0, sourceLoopBIdx=pts.length-1.
+         sourceStartTime is the FUTURE startT scheduled above — never the
+         JS-captured currentTime — so wrap-scheduler math matches reality. */
+      sourceStartTime:startT,sourceOffset:startOffset,
       sourceLoopA:(pts&&pts.length>=2)?pts[0]:0,
       sourceLoopB:(pts&&pts.length>=2)?pts[pts.length-1]:0,
       sourceLoopAIdx:0,
@@ -996,181 +536,244 @@ export const SampleEngine = (function () {
     source.onended=function(){voice.alive=false;};
     activeVoices[voiceKey]=voice;
     if(instr.loop&&pts&&pts.length>=2){
-      /* Play the whole sample naturally through to the last loop point before any
-         segment switching begins — gives ~1-3s of pristine sustain before any
-         crossfade/repetition artifacts can occur. */
-      var firstPassMs=(pts[pts.length-1]-startOffset)*1000/rate;
-      scheduleSegmentSwitch(voiceKey,firstPassMs);
+      /* Play through to the last loop point before the first switch —
+         gives ~1-3s of pristine sustain before any crossfade artifacts
+         can occur. scheduleSegmentSwitch reads source-anchor state for
+         the first-wrap time, so no initial-delay arg is needed. */
+      scheduleSegmentSwitch(voiceKey);
     }
   }
-  function scheduleSegmentSwitch(voiceKey: string, initialDelayMs?: number): void {
+  /* Pick (a, b) for the NEXT loop segment, given the current voice state
+     (specifically v.sourceLoopBIdx — the b we're jumping FROM). Logic shared
+     between scheduleSegmentSwitch (pre-schedule path) and doImmediateSwitch
+     (synchronous path) so both honor validStartsByEnd identically.
+
+     ═══ Pick new pair (a_new, b_new) ═══
+     TWO-STEP PROCESS with correct runtime separation of concerns:
+
+     1. BACKWARD JUMP: we're at pts[b_cur] and need to jump backward to
+        some a_new < b_cur where the seam is clean and the jump is
+        meaningful (≥minBackwardSec distance). The clean-seam-candidates
+        are pre-computed in validStartsByEnd[b_cur] — at analysis time
+        the filter verified each a→b_cur crossfade and rejected pairs
+        with audible phase-mismatch artifacts.
+
+     2. FORWARD ENDPOINT: once a_new is chosen, b_new can be any point
+        where pts[b_new] - pts[a_new] ≥ minForwardSec. No seam is
+        involved here — it's just playing forward through the sample.
+        The only requirement is that the loop segment is long enough to
+        not churn (≥minForwardSec). */
+  function pickNextSeam(v: any, pts: any): {a: number, b: number} {
+    var vsbeLocal=v.validStartsByEnd;
+    var bCurIdx=v.sourceLoopBIdx;
+    var a:number=0,b:number=pts.length-1;
+    if(pts.length===2){return {a:0,b:1};}
+    if(!vsbeLocal){
+      /* Legacy sample data without the graph — generate pairs on the fly.
+         Constrain a < bCurIdx so we never produce a forward or same-point
+         jump (the original implementation ignored bCurIdx, which manifested
+         as audible "loop ran out faster" and unvalidated seams). */
+      var minJumpSec=0.20,pairFound=false;
+      for(var at=0;at<100;at++){
+        if(bCurIdx<=0){a=0;b=pts.length-1;pairFound=true;break;}
+        a=Math.floor(Math.random()*bCurIdx);
+        b=a+1+Math.floor(Math.random()*(pts.length-a-1));
+        if(b>=pts.length)b=pts.length-1;
+        if(pts[b]-pts[a]>=minJumpSec){pairFound=true;break;}
+      }
+      if(!pairFound){a=0;b=pts.length-1;}
+      return {a:a,b:b};
+    }
+    /* STEP 1: pick a_new uniformly from validStartsByEnd[bCurIdx] */
+    var aCands=(bCurIdx<vsbeLocal.length&&vsbeLocal[bCurIdx])?vsbeLocal[bCurIdx]:[];
+    if(aCands.length===0){
+      /* No valid backward jump from current b. This can happen if the
+         graph has empty validStartsByEnd[b] for the current b (dead-end
+         endpoint). Keep the current pair — we'll re-loop until some
+         other state change picks a new b. */
+      return {a:v.sourceLoopAIdx,b:v.sourceLoopBIdx};
+    }
+    a=aCands[Math.floor(Math.random()*aCands.length)];
+    /* STEP 2: pick b_new from points where the forward segment
+       (pts[b_new] - pts[a]) is ≥ minForwardSec. Must also have b_new
+       as a "live" endpoint (reachable via some future backward jump)
+       — a live endpoint is one where validStartsByEnd[b_new] is
+       nonempty. Otherwise we could land on a dead-end b and get stuck.
+       We also allow b_new = last loop point regardless (we can always
+       fall through to that, even if the future switch has to keep
+       the same pair). */
+    var minForwardSec=0.30;
+    var bCands:number[]=[];
+    for(var bi=a+1;bi<pts.length;bi++){
+      if(pts[bi]-pts[a]<minForwardSec)continue;
+      var isLive=(bi<vsbeLocal.length&&vsbeLocal[bi]&&vsbeLocal[bi].length>0);
+      if(isLive||bi===pts.length-1)bCands.push(bi);
+    }
+    if(bCands.length===0){
+      /* No forward partner. Pick any valid b_new≥a_new+1 as fallback. */
+      for(var bi2=a+1;bi2<pts.length;bi2++)bCands.push(bi2);
+    }
+    if(bCands.length===0){return {a:v.sourceLoopAIdx,b:v.sourceLoopBIdx};}
+    b=bCands[Math.floor(Math.random()*bCands.length)];
+    return {a:a,b:b};
+  }
+
+  /* ── WRAP-ALIGNED SEGMENT SWITCHING (every wrap is a switch) ──
+     ALL looping is handled here — no browser-native loop is engaged. Each
+     source plays a single pass through its [loopStart, loopEnd] segment,
+     then is replaced at the pts[b] moment with a new source using a new
+     (a, b) pair and a 30ms linear crossfade.
+
+     Why no native-loop safety net: the browser's native loop produces a
+     hard-cut wrap from loopEnd back to loopStart. Even with ZC+slope
+     matching, the instantaneous harmonic phase configuration differs
+     between those two points (macro-period samples match by spectral
+     shape over a window, not sample-perfect), so the hard cut clicks.
+     Crossfading over that click doesn't help because the click is in
+     the OLD source's own output, not at the seam between old and new.
+
+     ── PRE-SCHEDULE ON THE AUDIO CLOCK ──
+     Critical: the crossfade audio events are scheduled HERE, at the moment
+     scheduleSegmentSwitch is called, anchored exactly at switchTime — not
+     in a setTimeout body that runs near switchTime. Web Audio scheduling
+     is sample-accurate; setTimeout firing time is not. Anchoring on the
+     audio clock makes the crossfade deterministic regardless of JS
+     event-loop jitter (which would otherwise let the old source play past
+     pts[b_old] into unvalidated buffer content for tens of ms before the
+     ramp-out started — the source of intermittent same-seam dips).
+
+     setTimeout's only job is JS-side state cleanup (commitPendingSwitch +
+     re-schedule the next switch). Late firing is harmless because the
+     audio has already played. cancelPendingSwitch undoes the pre-scheduled
+     events if a rate ramp interrupts before commit.
+
+     Relies on source-anchor state (sourceStartTime, sourceOffset,
+     sourceLoopA, sourceLoopB, sourceRate) being accurate. Set by sNoteOn
+     for initial source, by commitPendingSwitch for subsequent sources, and
+     by sRampFreq after playbackRate ramps settle. */
+  function scheduleSegmentSwitch(voiceKey: string, _initialDelayMs?: number): void {
     var v=activeVoices[voiceKey];
     if(!v||!v.alive||!v.loopPts||v.loopPts.length<2)return;
-    /* ── WRAP-ALIGNED SEGMENT SWITCHING (every wrap is a switch) ──
-       ALL looping is handled here — no browser-native loop is engaged. Each
-       source plays a single pass through its [loopStart, loopEnd] segment,
-       then is replaced at the pts[b] moment with a new source using a new
-       random (a, b) pair and a 5ms linear crossfade.
-
-       Why no native-loop safety net: the browser's native loop produces a
-       hard-cut wrap from loopEnd back to loopStart. Even with ZC+slope
-       matching, the instantaneous harmonic phase configuration differs
-       between those two points (macro-period samples match by spectral
-       shape over a window, not sample-perfect), so the hard cut clicks.
-       Crossfading over that click doesn't help because the click is in
-       the OLD source's own output, not at the seam between old and new.
-
-       If this timer fires late (rare — setTimeout is usually reliable and
-       we have 30ms lead), the old source plays forward past pts[b_old]
-       into whatever follows in the buffer (sample decay, silence). That
-       produces brief unintended audio but NOT a click. An acceptable
-       graceful failure mode.
-
-       Relies on source-anchor state (sourceStartTime, sourceOffset,
-       sourceLoopA, sourceLoopB, sourceRate) being accurate. Set by sNoteOn
-       for initial source, by the switch below for subsequent sources, and
-       by sRampFreq after playbackRate ramps settle. */
+    /* Defensive: a stray pre-scheduled switch shouldn't exist here, but if
+       it does (e.g., from a missed cancel path), tear it down before
+       creating a new one to avoid double-stacking sources. */
+    if(v.pendingSwitch)cancelPendingSwitch(v);
     var pts=v.loopPts;
     var rate=v.sourceRate||v.source.playbackRate.value||1;
     var now=ctx.currentTime;
     /* The current source wraps at this time. ALWAYS switch at every wrap. */
     var switchTime=v.sourceStartTime+(v.sourceLoopB-v.sourceOffset)/rate;
-    /* initialDelayMs legacy param: retained for backward-compat with call
-       sites that computed firstPassMs explicitly. Accepted but not needed —
-       the source anchor state already encodes the correct first-wrap time. */
-    var lead=0.03;
-    var timerDelayMs=Math.max(0,(switchTime-now-lead)*1000);
+    /* If we're already past the wrap (extreme JS stall during a prior call),
+       push a few ms forward so setValueAtTime / source.start are valid. */
+    if(switchTime<now+0.005)switchTime=now+0.005;
+
+    var picked=pickNextSeam(v,pts);
+    var a=picked.a,b=picked.b;
+
+    /* ── 30ms LINEAR CROSSFADE ──
+       Old source at pts[b_old] (just reached its loopEnd), new source
+       starts at pts[a_new]. Linear ramp gives amplitude = |cos(Δφₖ/2)| at
+       midpoint per harmonic — no +3dB boost at phase-aligned fundamental
+       (equal-power would do that). Empirically settled on 30ms with the
+       current engine; never benchmarked against alternatives. */
+    var xfDur=0.030;
+    var newSrc=ctx.createBufferSource();newSrc.buffer=v.buffer;
+    /* No newSrc.loop=true — the next scheduleSegmentSwitch will replace this
+       source before it reaches pts[b]. loopStart/loopEnd are metadata only. */
+    newSrc.loopStart=pts[a];newSrc.loopEnd=pts[b];
+    newSrc.playbackRate.value=v.source.playbackRate.value;
+    var newSG=ctx.createGain();
+    newSG.gain.setValueAtTime(0,switchTime);
+    newSG.gain.linearRampToValueAtTime(v.vol,switchTime+xfDur);
+    newSrc.connect(newSG);newSG.connect(v.voiceGain);
+    newSrc.start(switchTime,pts[a]);
+
+    /* Pre-schedule the OLD source's gain ramp out at switchTime. Crucially,
+       do NOT schedule oldSrc.stop() yet — stop() is one-shot and uncancellable,
+       so deferring it to commitPendingSwitch keeps cancellation symmetric.
+
+       Anchor the ramp at v.vol (the known steady-state level), not at
+       oldSegGain.gain.value. The .value getter races with future-scheduled
+       setValueAtTime events: when scheduleSegmentSwitch runs immediately
+       after sNoteOn (which schedules vol at startT, 5ms in the future),
+       audio time hasn't reached startT yet so .value still reads the
+       AudioParam default of 1.0 — which would force an audible amplitude
+       boost at switchTime if used here. v.vol is the source of truth. */
+    var oldSrc=v.source,oldSegGain=v.segGain;
+    oldSegGain.gain.cancelScheduledValues(switchTime);
+    oldSegGain.gain.setValueAtTime(v.vol,switchTime);
+    oldSegGain.gain.linearRampToValueAtTime(0,switchTime+xfDur);
+
+    /* Capture old b idx for the seam-event log at commit time. */
+    v.pendingSwitch={
+      newSrc:newSrc,newSG:newSG,oldSrc:oldSrc,oldSegGain:oldSegGain,
+      switchTime:switchTime,xfDur:xfDur,a:a,b:b,fromBIdx:v.sourceLoopBIdx
+    };
+
+    /* JS-only timer: fires after the crossfade completes, with a small
+       margin. Late firing is harmless. */
+    var commitTimerMs=Math.max(0,(switchTime+xfDur-now)*1000)+5;
     v.loopTimer=setTimeout(function(){
-      var v2=activeVoices[voiceKey];
-      if(!v2||!v2.alive)return;
-      /* If setTimeout fired late, we've missed the scheduled wrap moment —
-         the old source's playhead is now past pts[b_old] and playing forward
-         into unrelated buffer content. Best we can do is switch RIGHT NOW
-         with the intended crossfade centered on `now`, accepting a small
-         glitch (the old source has been producing post-pts[b_old] audio
-         for the delay duration before the crossfade starts). This is a
-         graceful failure — no hard-cut click, just a brief unintended
-         continuation. */
-      var now2=ctx.currentTime;
-      var actualSwitchTime=Math.max(switchTime,now2+0.005);
-      /* ═══ Pick new pair (a_new, b_new) ═══
-         TWO-STEP PROCESS with correct runtime separation of concerns:
-         
-         1. BACKWARD JUMP: we're at pts[b_cur] and need to jump backward to
-            some a_new < b_cur where the seam is clean and the jump is
-            meaningful (≥minBackwardSec distance). The clean-seam-candidates
-            are pre-computed in validStartsByEnd[b_cur] — at analysis time
-            the filter verified each a→b_cur crossfade and rejected pairs
-            with audible phase-mismatch artifacts.
-         
-         2. FORWARD ENDPOINT: once a_new is chosen, b_new can be any point
-            where pts[b_new] - pts[a_new] ≥ minForwardSec. No seam is
-            involved here — it's just playing forward through the sample.
-            The only requirement is that the loop segment is long enough to
-            not churn (≥minForwardSec).
-         
-         Rationale: I previously conflated the two with a single graph keyed
-         by a. That was backwards — the graph needed to be keyed by the
-         OUTGOING b (where we are when we need to pick a backward target),
-         not the incoming a. The forward direction is free playback, not a
-         seam at all. */
-      var minForwardSec=0.30;
-      var a,b;
-      var vsbeLocal=v2.validStartsByEnd;
-      var bCurIdx=v2.sourceLoopBIdx;
-      if(pts.length===2){a=0;b=1;}
-      else if(!vsbeLocal){
-        /* Legacy sample data without the graph — fall back to generating
-           pairs on the fly with a span check. */
-        var minJumpSec=0.20,pairFound=false;
-        for(var at=0;at<100;at++){
-          a=Math.floor(Math.random()*(pts.length-1));
-          b=a+1+Math.floor(Math.random()*(pts.length-a-1));
-          if(b>=pts.length)b=pts.length-1;
-          if(pts[b]-pts[a]>=minJumpSec){pairFound=true;break;}
-        }
-        if(!pairFound){a=0;b=pts.length-1;}
-      }
-      else{
-        /* STEP 1: pick a_new uniformly from validStartsByEnd[bCurIdx] */
-        var aCands=(bCurIdx<vsbeLocal.length&&vsbeLocal[bCurIdx])?vsbeLocal[bCurIdx]:[];
-        if(aCands.length===0){
-          /* No valid backward jump from current b. This can happen if the
-             graph has empty validStartsByEnd[b] for the current b (dead-end
-             endpoint). Keep the current pair — we'll re-loop until some
-             other state change picks a new b. */
-          a=v2.sourceLoopAIdx;b=v2.sourceLoopBIdx;
-        }else{
-          a=aCands[Math.floor(Math.random()*aCands.length)];
-          /* STEP 2: pick b_new from all points where the forward segment
-             (pts[b_new] - pts[a]) is ≥ minForwardSec. Must also have b_new
-             as a "live" endpoint (reachable via some future backward jump)
-             — a live endpoint is one where validStartsByEnd[b_new] is
-             nonempty. Otherwise we could land on a dead-end b and get stuck.
-             We also allow b_new = last loop point regardless (we can always
-             fall through to that, even if the future switch has to keep
-             the same pair). */
-          var bCands=[];
-          for(var bi=a+1;bi<pts.length;bi++){
-            if(pts[bi]-pts[a]<minForwardSec)continue;
-            var isLive=(bi<vsbeLocal.length&&vsbeLocal[bi]&&vsbeLocal[bi].length>0);
-            if(isLive||bi===pts.length-1)bCands.push(bi);
-          }
-          if(bCands.length===0){
-            /* No forward partner. Pick any valid b_new≥a_new+1 as fallback. */
-            for(var bi=a+1;bi<pts.length;bi++)bCands.push(bi);
-          }
-          if(bCands.length===0){
-            /* Totally stuck — keep current pair. */
-            a=v2.sourceLoopAIdx;b=v2.sourceLoopBIdx;
-          }else{
-            b=bCands[Math.floor(Math.random()*bCands.length)];
-          }
-        }
-      }
-      /* ── 5ms LINEAR CROSSFADE ──
-         Old source at pts[a_old] (just reached its loopEnd), new source
-         starts at pts[a_new]. Linear ramp gives amplitude = |cos(Δφₖ/2)| at
-         midpoint per harmonic — no +3dB boost at phase-aligned fundamental
-         (equal-power would do that). Short 5ms duration minimizes the
-         interference window (ZC+slope snap already ensured seam
-         compatibility). */
-      var xfDur=0.030;
-      var newSrc=ctx.createBufferSource();newSrc.buffer=v2.buffer;
-      /* No newSrc.loop=true — scheduleSegmentSwitch will replace this source
-         before it reaches pts[b]. loopStart/loopEnd left as metadata only. */
-      newSrc.loopStart=pts[a];newSrc.loopEnd=pts[b];
-      newSrc.playbackRate.value=v2.source.playbackRate.value;
-      var newSG=ctx.createGain();
-      newSG.gain.setValueAtTime(0,actualSwitchTime);
-      newSG.gain.linearRampToValueAtTime(v2.vol,actualSwitchTime+xfDur);
-      newSrc.connect(newSG);newSG.connect(v2.voiceGain);
-      newSrc.start(actualSwitchTime,pts[a]);
-      var oldSource=v2.source,oldSegGain=v2.segGain;
-      var curStart=oldSegGain.gain.value;
-      oldSegGain.gain.cancelScheduledValues(actualSwitchTime);
-      oldSegGain.gain.setValueAtTime(curStart,actualSwitchTime);
-      oldSegGain.gain.linearRampToValueAtTime(0,actualSwitchTime+xfDur);
-      oldSource.onended=function(){
-        try{oldSource.disconnect();}catch(e){}
-        try{oldSegGain.disconnect();}catch(e){}
-      };
-      try{oldSource.stop(actualSwitchTime+xfDur+0.02);}catch(e){}
-      v2.source=newSrc;v2.segGain=newSG;
-      v2.sourceStartTime=actualSwitchTime;
-      v2.sourceOffset=pts[a];
-      v2.sourceLoopA=pts[a];v2.sourceLoopB=pts[b];
-      v2.sourceLoopAIdx=a;v2.sourceLoopBIdx=b;
-      v2.sourceRate=newSrc.playbackRate.value;
-      newSrc.onended=function(){v2.alive=false;};
-      /* Schedule the next switch — fires at the NEW source's next wrap */
+      commitPendingSwitch(voiceKey);
       scheduleSegmentSwitch(voiceKey);
-    },timerDelayMs);
+    },commitTimerMs);
+  }
+
+  /* Commit a pre-scheduled switch: advance JS-side voice state to the new
+     source, schedule old-source cleanup, and emit the seam diagnostic event.
+     Audio has already played its crossfade on the audio clock; this just
+     reconciles JS state with the new reality. */
+  function commitPendingSwitch(voiceKey: string): void {
+    var v=activeVoices[voiceKey];
+    if(!v||!v.pendingSwitch)return;
+    var p=v.pendingSwitch;
+    var pts=v.loopPts;
+    /* Schedule old source's stop now (its gain ramped to 0 at switchTime+xfDur). */
+    try{p.oldSrc.stop(p.switchTime+p.xfDur+0.02);}catch(e){}
+    p.oldSrc.onended=function(){
+      try{p.oldSrc.disconnect();}catch(e){}
+      try{p.oldSegGain.disconnect();}catch(e){}
+    };
+    /* Advance voice state to the new source. */
+    v.source=p.newSrc;v.segGain=p.newSG;
+    v.sourceStartTime=p.switchTime;
+    v.sourceOffset=pts[p.a];
+    v.sourceLoopA=pts[p.a];v.sourceLoopB=pts[p.b];
+    v.sourceLoopAIdx=p.a;v.sourceLoopBIdx=p.b;
+    v.sourceRate=p.newSrc.playbackRate.value;
+    recordSeamEvent({ctxTime:p.switchTime,voiceKey:voiceKey,sampleName:v.sampleName||'?',
+      rate:v.sourceRate||1,fromBIdx:p.fromBIdx,toAIdx:p.a,
+      fromTime:pts[p.fromBIdx],toTime:pts[p.a],xfadeDur:p.xfDur});
+    p.newSrc.onended=function(){v.alive=false;};
+    v.pendingSwitch=null;
+  }
+
+  /* Cancel a pre-scheduled switch (called from sRampFreq/sNoteOff/sHardStop
+     before they mutate v.source). Stops the new source, disconnects its
+     graph, and restores the old segGain to v.vol via a brief 5ms ramp so
+     mid-crossfade cancellation doesn't click. */
+  function cancelPendingSwitch(v: any): void {
+    if(!v.pendingSwitch)return;
+    var p=v.pendingSwitch;
+    /* stop(0) clamps to currentTime per spec — works whether newSrc has
+       already started (cancel after switchTime) or not (cancel before). */
+    try{p.newSrc.stop(0);}catch(e){}
+    try{p.newSrc.disconnect();}catch(e){}
+    try{p.newSG.disconnect();}catch(e){}
+    var now=ctx.currentTime;
+    p.oldSegGain.gain.cancelScheduledValues(now);
+    p.oldSegGain.gain.setValueAtTime(p.oldSegGain.gain.value,now);
+    p.oldSegGain.gain.linearRampToValueAtTime(v.vol,now+0.005);
+    v.pendingSwitch=null;
   }
     function sNoteOff(voiceKey: string): void {
     var v=activeVoices[voiceKey];if(!v)return;
     if(v.loopTimer){clearTimeout(v.loopTimer);v.loopTimer=null;}
     if(v.reAnchorTimer){clearTimeout(v.reAnchorTimer);v.reAnchorTimer=null;}
+    /* If a switch was pre-scheduled but not yet committed, tear it down so the
+       new source doesn't continue playing (silently, behind the released
+       voiceGain) and leak the BufferSource node. */
+    if(v.pendingSwitch)cancelPendingSwitch(v);
     var instr=INSTRUMENTS[currentInstrument];
     var release=(((instr&&instr.releaseTime)||0.3)*RELEASE_SCALE);var now=ctx.currentTime;
     if(v.alive){
@@ -1196,39 +799,15 @@ export const SampleEngine = (function () {
     if(!v||!v.alive||!v.loopPts||v.loopPts.length<2)return false;
     var pts=v.loopPts;
     if(pts.length<2)return false;
+    /* If a pre-scheduled switch is in flight, tear it down — we're about to
+       create a different new source synchronously, and the pending one would
+       layer on top and corrupt voice state. */
+    if(v.pendingSwitch)cancelPendingSwitch(v);
+    var bCurIdx=v.sourceLoopBIdx;
     var now=ctx.currentTime;
     var st: number = startTime===undefined?now+0.008:startTime;
-    /* Pick new pair from the graph. Same logic as scheduleSegmentSwitch's
-       timer body, kept in sync. Backward jump uses current bCurIdx. */
-    var a,b;
-    var vsbeLocal=v.validStartsByEnd;
-    var bCurIdx=v.sourceLoopBIdx;
-    if(pts.length===2){a=0;b=1;}
-    else if(!vsbeLocal){
-      var minJumpSec=0.20,pairFound=false;
-      for(var at=0;at<100;at++){
-        a=Math.floor(Math.random()*(pts.length-1));
-        b=a+1+Math.floor(Math.random()*(pts.length-a-1));
-        if(b>=pts.length)b=pts.length-1;
-        if(pts[b]-pts[a]>=minJumpSec){pairFound=true;break;}
-      }
-      if(!pairFound){a=0;b=pts.length-1;}
-    }else{
-      var aCands=(bCurIdx<vsbeLocal.length&&vsbeLocal[bCurIdx])?vsbeLocal[bCurIdx]:[];
-      if(aCands.length===0){a=0;b=pts.length-1;}
-      else{
-        a=aCands[Math.floor(Math.random()*aCands.length)];
-        var minForwardSec=0.30;
-        var bCands=[];
-        for(var bi=a+1;bi<pts.length;bi++){
-          if(pts[bi]-pts[a]<minForwardSec)continue;
-          var isLive=(bi<vsbeLocal.length&&vsbeLocal[bi]&&vsbeLocal[bi].length>0);
-          if(isLive||bi===pts.length-1)bCands.push(bi);
-        }
-        if(bCands.length===0){for(var bi=a+1;bi<pts.length;bi++)bCands.push(bi);}
-        b=bCands.length?bCands[Math.floor(Math.random()*bCands.length)]:pts.length-1;
-      }
-    }
+    var picked=pickNextSeam(v,pts);
+    var a=picked.a,b=picked.b;
     /* Create new source, crossfade, update voice state. */
     var xfDur=0.030;
     var newSrc=ctx.createBufferSource();newSrc.buffer=v.buffer;
@@ -1240,9 +819,10 @@ export const SampleEngine = (function () {
     newSrc.connect(newSG);newSG.connect(v.voiceGain);
     newSrc.start(st,pts[a]);
     var oldSource=v.source,oldSegGain=v.segGain;
-    var curGain=oldSegGain.gain.value;
+    /* Anchor the ramp at v.vol — same rationale as scheduleSegmentSwitch:
+       reading oldSegGain.gain.value can race with future-scheduled events. */
     oldSegGain.gain.cancelScheduledValues(st);
-    oldSegGain.gain.setValueAtTime(curGain,st);
+    oldSegGain.gain.setValueAtTime(v.vol,st);
     oldSegGain.gain.linearRampToValueAtTime(0,st+xfDur);
     oldSource.onended=function(){
       try{oldSource.disconnect();}catch(e){}
@@ -1257,6 +837,8 @@ export const SampleEngine = (function () {
     v.sourceLoopA=pts[a];v.sourceLoopB=pts[b];
     v.sourceLoopAIdx=a;v.sourceLoopBIdx=b;
     v.sourceRate=newSrc.playbackRate.value;
+    recordSeamEvent({ctxTime:st,voiceKey:voiceKey,sampleName:v.sampleName||'?',
+      rate:v.sourceRate||1,fromBIdx:bCurIdx,toAIdx:a,fromTime:pts[bCurIdx],toTime:pts[a],xfadeDur:xfDur});
     newSrc.onended=function(){v.alive=false;};
     return true;
   }
@@ -1315,7 +897,11 @@ export const SampleEngine = (function () {
       v.reAnchorTimer=null;
       commitRampSync(v,now);
     }
-    var newRate=newFreq/v.sampleFreq;
+    /* Cancel any pre-scheduled segment switch — its audio events were anchored
+       on the old rate and pre-ramp state, which is about to change. The
+       reAnchorTimer below will schedule a fresh one after the ramp settles. */
+    if(v.pendingSwitch)cancelPendingSwitch(v);
+    var newRate=newFreq*(v.transpose||1)/v.sampleFreq;
     var oldRate=v.sourceRate||v.source.playbackRate.value||1;
     /* ── WRAP-DURING-RAMP PROTECTION (position-based) ──
        If the ramp will carry the playhead past loopB, the source plays
@@ -1397,9 +983,14 @@ export const SampleEngine = (function () {
        which will reapply attenuation based on the NEW frequency. Falls back to v.vol
        for voices created before baseVol was tracked. */
     var savedVol=(v.baseVol!==undefined)?v.baseVol:v.vol;
+    /* Tear down any pre-scheduled switch first; the rate ramp below would
+       leave its switchTime/playbackRate stale, and the voice is being
+       deleted anyway. */
+    if(v.pendingSwitch)cancelPendingSwitch(v);
+    if(v.loopTimer){clearTimeout(v.loopTimer);v.loopTimer=null;}
     var now=ctx.currentTime;
     if(v.alive){
-      var targetRate=targetFreq/v.sampleFreq;
+      var targetRate=targetFreq*(v.transpose||1)/v.sampleFreq;
       v.source.playbackRate.cancelScheduledValues(now);
       v.source.playbackRate.setValueAtTime(v.source.playbackRate.value,now);
       v.source.playbackRate.linearRampToValueAtTime(targetRate,now+dur);
@@ -1415,7 +1006,7 @@ export const SampleEngine = (function () {
     if(activeVoices[voiceKey])sHardStop(voiceKey);
     var nearest=findNearest(freq);if(!nearest)return;
     var instr=INSTRUMENTS[currentInstrument];
-    var rate=freq/nearest.freq;
+    var rate=freq*(instr.transpose||1)/nearest.freq;
     /* vol param is treated as baseVol (without range attenuation);
        apply attenuation fresh based on current freq */
     var baseVol=vol;
@@ -1435,10 +1026,20 @@ export const SampleEngine = (function () {
     var pressureGain=ctx.createGain();pressureGain.gain.value=1.0;pressureGain.connect(master);
     var damperGain=ctx.createGain();damperGain.gain.value=1.0;damperGain.connect(pressureGain);
     var voiceGain=ctx.createGain();voiceGain.gain.value=1.0;voiceGain.connect(damperGain);
-    var segGain=ctx.createGain();var now=ctx.currentTime;
-    segGain.gain.setValueAtTime(0,now);segGain.gain.linearRampToValueAtTime(vol,now+dur);
+    var segGain=ctx.createGain();
+    /* Pre-schedule 50ms ahead so source.start isn't clamped under any
+       plausible JS stall — see the longer comment in sNoteOn for the
+       full rationale. */
+    /* Snap to the next integer audio sample so every source we ever start
+       has a sample-aligned `when`. Combined with sample-aligned offsets
+       (trimStart / pts[a] are snapped at sample-load time), this means at
+       rate=1 the audio engine reads the buffer at integer sample positions
+       throughout — no interpolation, and identical sub-sample alignment
+       across the first source and every subsequent source. */
+    var startT=Math.ceil((ctx.currentTime+0.050)*ctx.sampleRate)/ctx.sampleRate;
+    segGain.gain.setValueAtTime(0,startT);segGain.gain.linearRampToValueAtTime(vol,startT+dur);
     source.connect(segGain);segGain.connect(voiceGain);
-    source.start(now,startOffset);
+    source.start(startT,startOffset);
     /* Graph: accept new validStartsByEnd or convert legacy endsByStart */
     var vsbeFaded=nearest.lp&&nearest.lp.validStartsByEnd;
     if(!vsbeFaded&&nearest.lp&&nearest.lp.endsByStart&&pts){
@@ -1453,11 +1054,11 @@ export const SampleEngine = (function () {
         }
       }
     }
-    var voice={source:source,segGain:segGain,voiceGain:voiceGain,damperGain:damperGain,pressureGain:pressureGain,freq:freq,sampleFreq:nearest.freq,vol:vol,baseVol:baseVol,alive:true,
+    var voice={source:source,segGain:segGain,voiceGain:voiceGain,damperGain:damperGain,pressureGain:pressureGain,freq:freq,sampleFreq:nearest.freq,transpose:(instr.transpose||1),sampleName:nearest.name,vol:vol,baseVol:baseVol,alive:true,
       loopPts:pts,validStartsByEnd:vsbeFaded||null,loopTimer:null,buffer:nearest.buffer,instr:instr,
       slopeCV:(nearest.lp&&typeof nearest.lp.slopeCV==='number')?nearest.lp.slopeCV:0.5,
       /* Source anchor — see comment in sNoteOn */
-      sourceStartTime:now,sourceOffset:startOffset,
+      sourceStartTime:startT,sourceOffset:startOffset,
       sourceLoopA:(pts&&pts.length>=2)?pts[0]:0,
       sourceLoopB:(pts&&pts.length>=2)?pts[pts.length-1]:0,
       sourceLoopAIdx:0,
@@ -1466,14 +1067,14 @@ export const SampleEngine = (function () {
     source.onended=function(){voice.alive=false;};
     activeVoices[voiceKey]=voice;
     if(instr.loop&&pts&&pts.length>=2){
-      var firstPassMs=(pts[pts.length-1]-startOffset)*1000/rate;
-      scheduleSegmentSwitch(voiceKey,firstPassMs);
+      scheduleSegmentSwitch(voiceKey);
     }
   }
   function sHardStop(voiceKey: string): void {
     var v=activeVoices[voiceKey];if(!v)return;
     if(v.loopTimer){clearTimeout(v.loopTimer);v.loopTimer=null;}
     if(v.reAnchorTimer){clearTimeout(v.reAnchorTimer);v.reAnchorTimer=null;}
+    if(v.pendingSwitch)cancelPendingSwitch(v);
     if(v.alive){v.voiceGain.gain.cancelScheduledValues(ctx.currentTime);v.voiceGain.gain.setValueAtTime(0,ctx.currentTime);try{v.source.stop(ctx.currentTime);}catch(e){}}
     delete activeVoices[voiceKey];
   }
@@ -1506,5 +1107,9 @@ export const SampleEngine = (function () {
     isLoaded:function(){return !!(currentInstrument&&buffers[currentInstrument]);},
     setInstrument:function(k: string){if(buffers[k])currentInstrument=k;},
     isInstrumentLoaded:function(k: string){return !!buffers[k];},
-    unloadInstrument:function(k: string){delete buffers[k];}};
+    unloadInstrument:function(k: string){delete buffers[k];},
+    /* Diagnostics: lets loopOverlay attach an AnalyserNode to the samples-only
+       master so envelope visualization captures sample voices without
+       oscillator content. Connects in parallel to the existing destination. */
+    tapMaster:function(node: AudioNode){if(master)master.connect(node);}};
 })();

@@ -17,6 +17,7 @@ import { selection } from '../state/selection.js';
 import { savePrefs } from '../state/persistence.js';
 import { keyFreq } from '../tuning/frequency.js';
 import { SampleEngine } from './samples.js';
+import { initLoopOverlay, isLoopDiagEnabled } from './diagnostics/loopOverlay.js';
 import {
   AFTERTOUCH_RAMP_S,
   aftertouchTargetGain, aftertouchHandoverDuration,
@@ -71,6 +72,7 @@ export function initAudio(): void {
   audio.oscGain = audio.audioCtx.createGain(); audio.oscGain.gain.value = 0.35; audio.oscGain.connect(audio.audioCtx.destination);
   audio.squareGain = audio.audioCtx.createGain(); audio.squareGain.gain.value = 0.25; audio.squareGain.connect(audio.audioCtx.destination);
   SampleEngine.init(audio.audioCtx, audio.audioCtx.destination); /* sampleMaster at 0.9 */
+  if (isLoopDiagEnabled()) initLoopOverlay(audio.audioCtx, SampleEngine);
 }
 
 export function noteOn(key: KeyId, velocity?: number): void {

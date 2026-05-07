@@ -38,9 +38,10 @@ import {
 } from './controls.js';
 import './keyboard.js';
 import '../input/keyboard-notes.js';
-import {
-  togglePedalCalibration, resetPedalBounds,
-} from '../lumatone/calibration.js';
+// Pedal calibration UI temporarily hidden; will be re-wired behind a separate calibration menu.
+// import {
+//   togglePedalCalibration, resetPedalBounds,
+// } from '../lumatone/calibration.js';
 import { toggleAutoSync } from '../lumatone/sync.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 
@@ -188,8 +189,8 @@ $<HTMLSelectElement>('pedalMode').addEventListener('change', function (e) {
 });
 
 // Calibration & auto-sync
-$<HTMLButtonElement>('btnCalibPedal').addEventListener('click', togglePedalCalibration);
-$<HTMLButtonElement>('btnResetPedal').addEventListener('click', resetPedalBounds);
+// $<HTMLButtonElement>('btnCalibPedal').addEventListener('click', togglePedalCalibration);
+// $<HTMLButtonElement>('btnResetPedal').addEventListener('click', resetPedalBounds);
 $<HTMLInputElement>('cbAutoSync').addEventListener('change', toggleAutoSync);
 
 /* Reset prefs in-place: clear storage, then drive every control back to its
