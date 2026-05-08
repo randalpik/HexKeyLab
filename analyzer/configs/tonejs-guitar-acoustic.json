@@ -1,0 +1,16 @@
+{
+  "instrumentKey": "acoustic_guitar",
+  "displayName": "Acoustic Guitar",
+  "baseUrl": "https://nbrosowsky.github.io/tonejs-instruments/samples/guitar-acoustic/",
+  "ext": ".mp3",
+  "filePattern": "{NOTE}.mp3",
+  "noteStyle": "sharp_s",
+  "lowOct": 2,
+  "highOct": 5,
+  "transpose": 1,
+  "decays": true,
+  "vibrato": false,
+  "releaseTime": 0.1,
+  "volume": 1.0,
+  "gateOpts": {}
+}

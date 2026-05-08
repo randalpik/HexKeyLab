@@ -103,13 +103,26 @@ Reasonable defaults for fields the user probably won't care about:
    ```
    Confirm both pass.
 
-7. **If the instrument required a non-default convention** (transpose
+7. **Register the instrument in the UI dropdown.** `index.html` has a
+   hardcoded `<select id="waveform">` block — samples.ts is NOT
+   auto-enumerated. Add an `<option value="<key>">Display Name</option>`
+   in the family-appropriate position:
+   - Decay keyboard/plucked group: piano, organs, harp, guitars
+   - Sustained winds: flute, clarinet, oboe, ...
+   - Sustained strings: violin, viola, cello
+   - Sustained brass: trombone, horn, ...
+   - Synthesis waveforms come last (triangle/sine/square)
+
+   Skipping this step is the most common reason a freshly-spliced
+   instrument doesn't appear in the UI.
+
+8. **If the instrument required a non-default convention** (transpose
    ≠ 1, custom gateOpts, unusual sampling style), append a brief
    entry to `docs/decisions.md` noting *why* the convention was
    chosen. Skip the docs entry for plain-vanilla instruments — there's
    nothing to document beyond the config file itself.
 
-8. **Remind the user to audition** the new instrument before
+9. **Remind the user to audition** the new instrument before
    committing. The analyzer's quality classifier is a loop-coherence
    proxy (or pitch-coherence proxy for decay); it can't catch
    instruments that loop cleanly but sound wrong (recording artifacts,
