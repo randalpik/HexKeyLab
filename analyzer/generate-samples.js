@@ -43,14 +43,17 @@ const SALAMANDER_NOTES = { 0:'C', 3:'Ds', 6:'Fs', 9:'A' };
 const SEMI = {C:0,'C#':1,Cs:1,Db:1,D:2,'D#':3,Ds:3,Eb:3,E:4,F:5,'F#':6,Fs:6,Gb:6,G:7,'G#':8,Gs:8,Ab:8,A:9,'A#':10,As:10,Bb:10,B:11};
 const SR = 44100;
 
-/* Per-sample RMS-normalization target. The analyzer measures each sample's
-   steady-region RMS (loop) or peak 500ms RMS (decay) and emits a `gain` field
-   that brings the audible portion to TARGET_DBFS at runtime. Single source of
-   truth for normalization — backfill-gains.js mirrors these constants. */
+/* Per-sample normalization targets. Loop instruments use RMS targeting
+   (steady-region RMS → TARGET_DBFS). Decay instruments use peak targeting
+   (attack peak → TARGET_PEAK_DECAY_DBFS) so every decay sample's peak lands
+   at the same dB regardless of how fast the note decays. Single source of
+   truth — backfill-gains.js mirrors these constants. */
 const TARGET_DBFS = -18;
 const TARGET_RMS = Math.pow(10, TARGET_DBFS / 20);  /* ≈ 0.12589 */
+const TARGET_PEAK_DECAY_DBFS = -6;
+const TARGET_PEAK_DECAY = Math.pow(10, TARGET_PEAK_DECAY_DBFS / 20);  /* ≈ 0.5012 */
 const GAIN_MIN = 0.1;
-const GAIN_MAX = 4.0;
+const GAIN_MAX = 12.0;
 
 // ─── 0. config + helpers ─────────────────────────────────────────────────────
 
@@ -134,7 +137,7 @@ function fetchAll(cfg, notes) {
   return fetched;
 }
 
-// ─── 2. decode (ffmpeg → f32 mono 44.1k) ─────────────────────────────────────
+// ─── 2. decode (ffmpeg → f32 PCM 44.1k; mono for pitch/RMS, stereo for peak) ──
 
 function decodeAll(samples) {
   for (const s of samples) {
@@ -143,6 +146,15 @@ function decodeAll(samples) {
       execFileSync('ffmpeg', ['-loglevel','error','-y','-i', s.mp3, '-ac','1','-ar', String(SR),'-f','f32le', raw], { stdio: 'inherit' });
     }
     s.raw = raw;
+    /* Stereo decode for decay peak measurement — mono downmix attenuates
+       anti-correlated stereo content vs. the per-frame max(|L|,|R|) the
+       browser actually plays. Cached separately as .s2.raw so the mono
+       pipeline (pitch, loop analysis) is unaffected. */
+    const rawS2 = s.mp3.replace(/\.\w+$/, '.s2.raw');
+    if (!fs.existsSync(rawS2) || fs.statSync(rawS2).mtimeMs < fs.statSync(s.mp3).mtimeMs) {
+      execFileSync('ffmpeg', ['-loglevel','error','-y','-i', s.mp3, '-ac','2','-ar', String(SR),'-f','f32le', rawS2], { stdio: 'inherit' });
+    }
+    s.rawStereo = rawS2;
   }
 }
 
@@ -150,6 +162,11 @@ function loadRaw(rawPath) {
   const buf = fs.readFileSync(rawPath);
   const data = new Float32Array(buf.buffer, buf.byteOffset, Math.floor(buf.length/4));
   return { sampleRate: SR, length: data.length, getChannelData: () => data };
+}
+
+function loadStereoRaw(rawPath) {
+  const buf = fs.readFileSync(rawPath);
+  return new Float32Array(buf.buffer, buf.byteOffset, Math.floor(buf.length/4));
 }
 
 // ─── 3. load analyzer functions from HTML ────────────────────────────────────
@@ -225,22 +242,26 @@ function rmsOver(d, start, end) {
   return Math.sqrt(sum / (end - start));
 }
 
-function measureRmsDecay(d) {
-  /* 100ms peak-loudness window — see comment in backfill-gains.js. The
-     analyzer's separate analyzeDecay() uses 500ms because that window is for
-     pitch refinement (autocorrelation needs duration); amplitude measurement
-     wants something closer to perceptual integration. */
-  const trim = findGainTrimStart(d);
-  const winLen = Math.round(SR * 0.1);
-  if (d.length - trim < winLen + Math.round(SR * 0.02)) return null;
-  const hop = Math.round(SR * 0.02);
-  let bestSumSq = 0;
-  for (let s = trim; s + winLen < d.length; s += hop) {
-    let sum = 0;
-    for (let k = 0; k < winLen; k++) sum += d[s+k] * d[s+k];
-    if (sum > bestSumSq) bestSumSq = sum;
+function measurePeakDecay(stereo, mono) {
+  /* Peak amplitude over the attack region (first 200ms after trim) measured
+     on STEREO data as max(|L|,|R|) per frame — that's what the browser plays
+     and what determines clip-relevant amplitude. Mono downmix would attenuate
+     anti-correlated content and over-boost the gain. RMS-based targeting
+     fails on decay sounds anyway: crest factor varies across the keyboard
+     and equal-RMS gives unequal peaks. */
+  const trim = findGainTrimStart(mono);
+  const peakSearchLen = Math.round(SR * 0.2);
+  const monoLen = mono.length;
+  if (monoLen <= trim) return null;
+  const searchEnd = Math.min(trim + peakSearchLen, monoLen);
+  let peakAbs = 0;
+  for (let i = trim; i < searchEnd; i++) {
+    const aL = Math.abs(stereo[2*i]);
+    const aR = Math.abs(stereo[2*i+1]);
+    const a = aL > aR ? aL : aR;
+    if (a > peakAbs) peakAbs = a;
   }
-  return Math.sqrt(bestSumSq / winLen);
+  return peakAbs > 0 ? peakAbs : null;
 }
 
 function measureRmsLoop(d, cfg, fns) {
@@ -256,6 +277,11 @@ function measureRmsLoop(d, cfg, fns) {
 function computeGainFromRms(rms) {
   if (rms == null || rms <= 0) return null;
   return Math.max(GAIN_MIN, Math.min(GAIN_MAX, TARGET_RMS / rms));
+}
+
+function computeGainFromPeak(peak) {
+  if (peak == null || peak <= 0) return null;
+  return Math.max(GAIN_MIN, Math.min(GAIN_MAX, TARGET_PEAK_DECAY / peak));
 }
 
 // ─── 5. classify ─────────────────────────────────────────────────────────────
@@ -322,9 +348,10 @@ function emitSampleEntry(r, cfg) {
   // (for decay this is res.freqActual; for loop pipelines we surface freqActual too)
   const freq = (typeof r.res.freqActual === 'number') ? r.res.freqActual : r.labeledFreq / cfg.transpose;
   const freqStr = fmt(freq, 3);
-  /* gain = TARGET_RMS / measuredRms, clamped. Goes immediately after freq so
-     the schema fans out: identifier (name), pitch (freq), level (gain), then
-     loop-specific fields. Falls back to 1.0 silently at runtime if absent. */
+  /* gain: loop = TARGET_RMS / measuredRms; decay = TARGET_PEAK_DECAY / peak.
+     Both clamped. Goes immediately after freq so the schema fans out:
+     identifier (name), pitch (freq), level (gain), then loop-specific fields.
+     Falls back to 1.0 silently at runtime if absent. */
   const gainStr = (typeof r.gain === 'number') ? `,gain:${fmt(r.gain, 4)}` : '';
 
   if (cfg.decays) {
@@ -420,19 +447,25 @@ function buildReport(results, picks, cfg) {
   lines.push('');
   lines.push(`## Picks (${picks.length}, ~4-semitone spacing)`);
   lines.push('');
-  const gainCol = (p) => {
+  const gainColLoop = (p) => {
     if (typeof p.rms !== 'number' || p.rms <= 0) return '— | —';
     const dBFS = (20 * Math.log10(p.rms)).toFixed(1);
     const g = (typeof p.gain === 'number') ? p.gain.toFixed(4) : '—';
     return `${dBFS} | ${g}`;
   };
+  const gainColDecay = (p) => {
+    if (typeof p.peak !== 'number' || p.peak <= 0) return '— | —';
+    const dBFS = (20 * Math.log10(p.peak)).toFixed(1);
+    const g = (typeof p.gain === 'number') ? p.gain.toFixed(4) : '—';
+    return `${dBFS} | ${g}`;
+  };
   if (cfg.decays) {
-    lines.push(`| Note | Labeled (Hz) | Measured (Hz) | Drift (¢) | RMS (dBFS) | gain | Tier |`);
+    lines.push(`| Note | Labeled (Hz) | Measured (Hz) | Drift (¢) | Peak (dBFS) | gain | Tier |`);
     lines.push(`| --- | ---: | ---: | ---: | ---: | ---: | --- |`);
     picks.forEach(p => {
       const drift = p.res.driftCents != null ? p.res.driftCents.toFixed(1) : '—';
       const fa    = p.res.freqActual != null ? p.res.freqActual.toFixed(2) : '—';
-      lines.push(`| ${p.note} | ${p.labeledFreq.toFixed(2)} | ${fa} | ${drift} | ${gainCol(p)} | ${p.tier} |`);
+      lines.push(`| ${p.note} | ${p.labeledFreq.toFixed(2)} | ${fa} | ${drift} | ${gainColDecay(p)} | ${p.tier} |`);
     });
   } else {
     lines.push(`| Note | Hz | minPickCorr | seams | usable | RMS (dBFS) | gain | tier |`);
@@ -440,7 +473,7 @@ function buildReport(results, picks, cfg) {
     picks.forEach(p => {
       const s = p.res.stats || {};
       const fa = p.res.freqActual != null ? p.res.freqActual.toFixed(2) : p.labeledFreq.toFixed(2);
-      lines.push(`| ${p.note} | ${fa} | ${s.minPickCorr || '—'} | ${s.validSeams || '—'} | ${s.usableBs || '—'} | ${gainCol(p)} | ${p.tier} |`);
+      lines.push(`| ${p.note} | ${fa} | ${s.minPickCorr || '—'} | ${s.validSeams || '—'} | ${s.usableBs || '—'} | ${gainColLoop(p)} | ${p.tier} |`);
     });
   }
   // failures
@@ -474,9 +507,16 @@ function buildReport(results, picks, cfg) {
                             : analyzeLoop(buf, analysisFreq, cfg, fns);
     const tier = cfg.decays ? classifyDecay(res) : classifyLoop(res);
     const d = buf.getChannelData();
-    const rms = cfg.decays ? measureRmsDecay(d) : measureRmsLoop(d, cfg, fns);
-    const gain = computeGainFromRms(rms);
-    return { note: s.note, midi: s.midi, labeledFreq: s.labeledFreq, res, tier, rms, gain };
+    let rms = null, peak = null, gain = null;
+    if (cfg.decays) {
+      const stereo = loadStereoRaw(s.rawStereo);
+      peak = measurePeakDecay(stereo, d);
+      gain = computeGainFromPeak(peak);
+    } else {
+      rms = measureRmsLoop(d, cfg, fns);
+      gain = computeGainFromRms(rms);
+    }
+    return { note: s.note, midi: s.midi, labeledFreq: s.labeledFreq, res, tier, rms, peak, gain };
   });
   const picks = pickSamples(results, cfg);
   fs.mkdirSync(OUT_DIR, { recursive: true });
