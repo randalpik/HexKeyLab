@@ -3,11 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <title>HexKeyLab</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{background:#111;min-height:100%}
-.wrap{background:#111;padding:8px 12px 12px;font-family:system-ui,-apple-system,sans-serif;overflow-x:auto}
+html,body{background:#111;height:100%;overflow:hidden}
+.wrap{background:#111;padding:8px 12px 12px;font-family:system-ui,-apple-system,sans-serif;display:flex;flex-direction:column;height:100vh;overflow-x:auto;overflow-y:hidden}
 .ctrls{display:flex;gap:2px 8px;align-items:center;font-size:12px;color:#999;margin:0 0 6px;flex-wrap:wrap;justify-content:center;user-select:none;-webkit-user-select:none}
 .ctrls label{display:flex;align-items:center;gap:4px;color:#999}
 .ctrls label:has(input){cursor:pointer}
@@ -21,7 +22,7 @@ html,body{background:#111;min-height:100%}
 .lsel .lbtn{padding:0 12px !important;border-radius:4px !important;border:1.5px solid #555 !important;background:#222 !important;color:#999 !important;cursor:pointer !important;font-size:20px !important;font-weight:500 !important;line-height:1.6 !important;min-height:0 !important;min-width:0 !important;margin:0 !important;box-shadow:none !important;text-transform:none !important;letter-spacing:normal !important;font-family:inherit !important;outline:none !important;-webkit-appearance:none !important;appearance:none !important}
 .lsel .lbtn:hover{border-color:#888 !important}
 .lsel .lbtn.active{border-color:#fff !important;background:#fff !important;color:#000 !important}
-canvas{display:block;background:#111;margin:0 auto}
+canvas{display:block;background:#111;margin:0 auto;flex:0 0 auto}
 .info-line{
   margin:8px 0 0;padding:8px 12px;min-height:36px;
   background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;
@@ -29,6 +30,7 @@ canvas{display:block;background:#111;margin:0 auto}
   font-family:'SF Mono',ui-monospace,'Cascadia Code','Fira Code',monospace,system-ui;
   display:flex;align-items:flex-start;gap:6px;flex-wrap:wrap;line-height:1.6;
   overflow-y:auto;
+  flex:1 1 0;min-height:0;
 }
 .info-line .info-break{flex-basis:100%;height:0}
 .info-line .note-tag{

@@ -20,7 +20,7 @@ import { SampleEngine } from './samples.js';
 import { initLoopOverlay, isLoopDiagEnabled } from './diagnostics/loopOverlay.js';
 import {
   AFTERTOUCH_RAMP_S,
-  aftertouchTargetGain, aftertouchHandoverDuration,
+  aftertouchTargetGain, inflightExpRampValue,
 } from './aftertouch.js';
 import { draw } from '../render/draw.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
@@ -129,6 +129,23 @@ export function noteOn(key: KeyId, velocity?: number): void {
     osc.start(now);
     audio.activeOscs[key] = { type: 'osc', osc, gain, damperGain, pressureGain, vol };
   }
+  /* Seed PA from the held filter state when a voice is recreated under a
+     still-pressed key — e.g. instrument switch via changeWaveform, or any
+     other noteOff→noteOn while paFilter[key] is live. Lumatone fires PA only
+     on change, so a held-steady key emits no fresh PA after the rebuild;
+     without this, the new voice plays at velocity volume forever. We use
+     the gated+smoothed value (filt.v) rather than the raw snapshot so that
+     a held key whose pressure is currently below the gate threshold doesn't
+     get spuriously seeded from sensor noise. Mark aftertouchSeen=true so
+     the next incoming PA uses the short AFTERTOUCH_RAMP_S smoothing rather
+     than the longer first-arrival handover ramp. Decaying instruments are
+     skipped via handleAftertouch's instrDecays() early return. */
+  const v = audio.activeOscs[key];
+  const filt = audio.paFilter[key];
+  if (v && filt && filt.open && filt.v > 0) {
+    v.aftertouchSeen = true;
+    handleAftertouch(key, filt.v);
+  }
 }
 
 export function noteOff(key: KeyId): void {
@@ -143,7 +160,11 @@ export function noteOff(key: KeyId): void {
     e.osc.stop(now + 0.08);
   }
   delete audio.activeOscs[key];
-  delete audio.aftertouchSnapshot[key];
+  /* aftertouchSnapshot is NOT deleted here — its lifecycle parallels
+     keyVelocity's: it persists until the user fully releases the key
+     (handler.ts unsustained note-off, releaseSustainedKey). Deleting on
+     every voice teardown would wipe held-pressure state across instrument
+     switches and leave the new voice playing at PA=0 forever. */
 }
 
 export function stopAllNotes(): void { for (const k in audio.activeOscs) noteOff(k); }
@@ -154,27 +175,25 @@ export function handleAftertouch(key: KeyId, pressure: number): void {
   const strikeVel = audio.keyVelocity[key] !== undefined ? audio.keyVelocity[key] : 100;
   const target = aftertouchTargetGain(pressure, strikeVel);
   const now = audio.audioCtx.currentTime;
-  const wasSeen = !!e.aftertouchSeen;
-  let dur: number;
-  if (!wasSeen) {
-    /* first aftertouch for this voice → schedule the handover ramp */
-    e.aftertouchSeen = true;
-    dur = aftertouchHandoverDuration(target);
-    e.handoverEndTime = now + dur;
-  } else if (e.handoverEndTime !== undefined && now < e.handoverEndTime) {
-    /* still inside the handover window — use remaining time so the travel
-       duration is preserved even as subsequent messages adjust the target */
-    dur = Math.max(AFTERTOUCH_RAMP_S, e.handoverEndTime - now);
-  } else {
-    /* past the handover → short smoothing ramp tracks pressure changes */
-    dur = AFTERTOUCH_RAMP_S;
-  }
+  /* Uniform short ramp on every PA message — the handover-duration scaling
+     was producing a long pre-scheduled climb that didn't track input ("ramps
+     quickly to the PA region without following actual pressure"). With each
+     message getting AFTERTOUCH_RAMP_S, the gain chases the live target
+     continuously: each new ramp picks up where the previous left off (via
+     inflightExpRampValue), so the trajectory is continuous between messages
+     and reflects the user's pressure input directly. */
+  e.aftertouchSeen = true;
+  const dur = AFTERTOUCH_RAMP_S;
   if (e.type === 'sample') {
     SampleEngine.setAftertouch(key, target, dur);
   } else if (e.type === 'osc' && e.pressureGain) {
+    /* Same JS-tracked-ramp polyfill as sSetAftertouch — see samples.ts. */
+    const tgt = Math.max(target, 0.0001);
+    const anchor = e.paRampState ? inflightExpRampValue(e.paRampState, now) : e.pressureGain.gain.value;
     e.pressureGain.gain.cancelScheduledValues(now);
-    e.pressureGain.gain.setValueAtTime(e.pressureGain.gain.value, now);
-    e.pressureGain.gain.linearRampToValueAtTime(target, now + dur);
+    e.pressureGain.gain.setValueAtTime(anchor, now);
+    e.pressureGain.gain.exponentialRampToValueAtTime(tgt, now + dur);
+    e.paRampState = { startVal: anchor, startTime: now, targetVal: tgt, endTime: now + dur };
   }
 }
 
@@ -294,6 +313,8 @@ function pinDamperToOne(key: KeyId): void {
 function releaseSustainedKey(key: KeyId): void {
   selection.selectedKeys.delete(key);
   delete audio.keyVelocity[key];
+  delete audio.aftertouchSnapshot[key];
+  delete audio.paFilter[key];
   audio.sustainedKeys.delete(key);
 }
 

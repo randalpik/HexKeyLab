@@ -1,8 +1,5 @@
 // Info-panel renderer. Reads selection + tuning state, formats note cards,
 // chord analysis, and intervals into the #infoLine element.
-//
-// sizeInfoPanel() caps the panel's max-height to fit the viewport — called
-// once at module load and again on window resize.
 
 import { tuning } from '../state/tuning.js';
 import { selection } from '../state/selection.js';
@@ -154,11 +151,3 @@ export function updateInfo(): void {
   el.innerHTML = html;
 }
 
-const infoEl = document.getElementById('infoLine')!;
-
-export function sizeInfoPanel(): void {
-  infoEl.style.maxHeight = '';
-  const rect = infoEl.getBoundingClientRect();
-  const available = window.innerHeight - rect.top - 12;
-  infoEl.style.maxHeight = Math.max(120, available) + 'px';
-}

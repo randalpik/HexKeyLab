@@ -25,7 +25,7 @@ import { loadPrefs, savePrefs, clearPrefs, DEFAULT_PREFS } from '../state/persis
 import type { PrefsV1 } from '../state/persistence.js';
 import { sizeCanvas } from '../render/canvas.js';
 import { cv, draw, hexAtPoint, activeFootprintSet } from '../render/draw.js';
-import { sizeInfoPanel, updateInfo } from '../render/info.js';
+import { updateInfo } from '../render/info.js';
 import {
   initAudio, changeWaveform, toggleAudio,
   setDamperDepth, sostenutoOn, sostenutoOff,
@@ -245,7 +245,6 @@ if (prefs.audioEnabled) toggleAudio();
 if (prefs.autoSync) toggleAutoSync();
 
 draw();
-sizeInfoPanel();
 
 function onResize(): void {
   const oldCW = view.CW;
@@ -256,6 +255,5 @@ function onResize(): void {
     view.textDirty = true;
     draw();
   }
-  sizeInfoPanel();
 }
 window.addEventListener('resize', onResize);

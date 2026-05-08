@@ -34,6 +34,14 @@ export const audio: {
   sostenutoLockedKeys: Set<KeyId>;
   rearticulateFlashUntil: Record<KeyId, number>;
   aftertouchSnapshot: Record<KeyId, number>;
+  /* Per-key PA pre-processing state used by aftertouch.filterPA():
+     hysteresis gate (open/close at separate thresholds — rejects the 0/1
+     onset oscillation) plus an EWMA smoother (rejects step quantization).
+     `v` is the filtered PA value fed downstream into aftertouchTargetGain.
+     `t` is the audioCtx time of the last filter update, used to make the
+     EWMA alpha time-based so the smoothing constant doesn't depend on
+     incoming MIDI rate. Cleared on full key release. */
+  paFilter: Record<KeyId, { open: boolean; v: number; t: number }>;
 } = {
   audioCtx: null,
   oscGain: null,
@@ -50,4 +58,5 @@ export const audio: {
   sostenutoLockedKeys: new Set(),
   rearticulateFlashUntil: {},
   aftertouchSnapshot: {},
+  paFilter: {},
 };

@@ -11,6 +11,13 @@
 //
 // Tap point is sampleMaster (samples-only output, not oscillators), exposed
 // by SampleEngine.tapMaster.
+//
+// Also overlays per-frame max(velocity) and max(PA) across held keys, mapped
+// 0–127 onto the same y-axis as the dB scale (so 127 = top, 0 = bottom). Lets
+// us eyeball whether output jerks track the input signals or are introduced
+// downstream.
+
+import { audio } from '../../state/audio.js';
 
 export type SeamEvent = {
   ctxTime: number;       // audioCtx time of crossfade center (= actualSwitchTime)
@@ -69,10 +76,22 @@ let timeBufL: Float32Array<ArrayBuffer> | null = null;
 let timeBufR: Float32Array<ArrayBuffer> | null = null;
 let canvas: HTMLCanvasElement | null = null;
 let cctx: CanvasRenderingContext2D | null = null;
+let controlsEl: HTMLDivElement | null = null;
 let rafId = 0;
+/* Toggle for the input-side traces (vel / raw PA / filtered PA). Off by
+   default so the overlay stays focused on the master RMS envelope; the
+   "Key data" checkbox in the corner of the overlay flips this on. */
+let showInputTraces = false;
 
 const envelopeBuf: { ctxTime: number; rms: number }[] = [];
 const seamBuf: SeamEvent[] = [];
+/* Per-frame max(keyVelocity), max(aftertouchSnapshot), and max(paFilter.v)
+   across all held keys, sampled in tick(). Capped at ENV_CAP. paSmooth is
+   the post-filter (gated + EWMA-smoothed) value being fed downstream. */
+const inputBuf: { ctxTime: number; vel: number; pa: number; paSmooth: number }[] = [];
+const COLOR_VEL = '#f80';      // orange
+const COLOR_PA = '#f0f';       // magenta — raw PA
+const COLOR_PA_SMOOTH = '#08f'; // blue — filtered PA (what's fed to gain)
 
 export function isLoopDiagEnabled(): boolean {
   if (typeof window === 'undefined') return false;
@@ -133,6 +152,36 @@ export function initLoopOverlay(ac: AudioContext, sampleEngine: SampleEngineSurf
   window.addEventListener('resize', resizeCanvas);
   window.addEventListener('keydown', onKey);
 
+  /* "Key data" toggle — opt-in for the input-side traces so the overlay
+     defaults to the RMS envelope alone. Sits inside the canvas zone but
+     gets pointerEvents:auto so the checkbox is actually clickable. */
+  controlsEl = document.createElement('div');
+  Object.assign(controlsEl.style, {
+    position: 'fixed',
+    right: '8px',
+    bottom: '198px',
+    color: 'rgba(255,255,255,0.85)',
+    font: '11px sans-serif',
+    background: 'rgba(0,0,0,0.6)',
+    padding: '2px 6px',
+    borderRadius: '3px',
+    zIndex: '10000',
+    pointerEvents: 'auto',
+    userSelect: 'none',
+  });
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.id = 'loopDiagInputTraces';
+  Object.assign(cb.style, { verticalAlign: 'middle', margin: '0 4px 0 0', cursor: 'pointer' });
+  cb.addEventListener('change', () => { showInputTraces = cb.checked; });
+  const lbl = document.createElement('label');
+  lbl.htmlFor = 'loopDiagInputTraces';
+  lbl.textContent = 'Key data';
+  Object.assign(lbl.style, { cursor: 'pointer', verticalAlign: 'middle' });
+  controlsEl.appendChild(cb);
+  controlsEl.appendChild(lbl);
+  document.body.appendChild(controlsEl);
+
   console.log('%c[loopdiag] enabled · D=freeze · Shift+D=dump · \\=hide',
     'color:#0ff;font-weight:bold');
   rafId = requestAnimationFrame(tick);
@@ -158,7 +207,11 @@ function onKey(e: KeyboardEvent): void {
      intercept the bare key (unlike Ctrl+D, which is the bookmark shortcut). */
   if (e.code === 'Backslash' && !e.shiftKey) {
     e.preventDefault();
-    if (canvas) canvas.style.display = canvas.style.display === 'none' ? 'block' : 'none';
+    if (canvas) {
+      const next = canvas.style.display === 'none' ? 'block' : 'none';
+      canvas.style.display = next;
+      if (controlsEl) controlsEl.style.display = next;
+    }
   } else if (e.key === 'D' && e.shiftKey) {
     e.preventDefault();
     /* Single-line JSON keeps this paste-friendly into other tools. */
@@ -193,6 +246,14 @@ function tick(): void {
     const ctxTime = audioCtx.currentTime - (N / audioCtx.sampleRate) * 0.5;
     envelopeBuf.push({ ctxTime, rms });
     if (envelopeBuf.length > ENV_CAP) envelopeBuf.shift();
+    /* Max across held keys keeps the trace meaningful for chord input;
+       single-key debugging shows that key's value directly. */
+    let vMax = 0, pMax = 0, pSmoothMax = 0;
+    for (const k in audio.keyVelocity) { const v = audio.keyVelocity[k]; if (v > vMax) vMax = v; }
+    for (const k in audio.aftertouchSnapshot) { const p = audio.aftertouchSnapshot[k]; if (p > pMax) pMax = p; }
+    for (const k in audio.paFilter) { const f = audio.paFilter[k]; if (f.v > pSmoothMax) pSmoothMax = f.v; }
+    inputBuf.push({ ctxTime, vel: vMax, pa: pMax, paSmooth: pSmoothMax });
+    if (inputBuf.length > ENV_CAP) inputBuf.shift();
     measureSeams();
   }
   draw();
@@ -278,6 +339,12 @@ function draw(): void {
     const c = Math.max(MIN_DB, Math.min(MAX_DB, db));
     return plotBottom - ((c - MIN_DB) / (MAX_DB - MIN_DB)) * (plotBottom - plotTop);
   };
+  /* 0..127 mapped onto the same y-extent as MIN_DB..MAX_DB, so vel/PA traces
+     share the plot strip with the envelope (no labels — assumed range). */
+  const yOf127 = (v: number): number => {
+    const c = Math.max(0, Math.min(127, v));
+    return plotBottom - (c / 127) * (plotBottom - plotTop);
+  };
 
   /* dB grid */
   cctx.lineWidth = 1;
@@ -338,6 +405,47 @@ function draw(): void {
     if (!started) { cctx.moveTo(x, y); started = true; } else cctx.lineTo(x, y);
   }
   cctx.stroke();
+
+  /* Velocity (orange), raw PA (magenta), and filtered PA (blue) traces —
+     0..127 mapped onto the plot's y-extent. Only rendered when the
+     "Key data" checkbox is on; off by default so the RMS envelope is
+     uncluttered. */
+  if (showInputTraces) {
+    cctx.lineWidth = 1.25;
+    cctx.strokeStyle = COLOR_VEL;
+    cctx.beginPath();
+    started = false;
+    for (let i = 0; i < inputBuf.length; i++) {
+      const e = inputBuf[i];
+      if (e.ctxTime < tStart) continue;
+      const x = xOf(e.ctxTime);
+      const y = yOf127(e.vel);
+      if (!started) { cctx.moveTo(x, y); started = true; } else cctx.lineTo(x, y);
+    }
+    cctx.stroke();
+    cctx.strokeStyle = COLOR_PA;
+    cctx.beginPath();
+    started = false;
+    for (let i = 0; i < inputBuf.length; i++) {
+      const e = inputBuf[i];
+      if (e.ctxTime < tStart) continue;
+      const x = xOf(e.ctxTime);
+      const y = yOf127(e.pa);
+      if (!started) { cctx.moveTo(x, y); started = true; } else cctx.lineTo(x, y);
+    }
+    cctx.stroke();
+    cctx.strokeStyle = COLOR_PA_SMOOTH;
+    cctx.beginPath();
+    started = false;
+    for (let i = 0; i < inputBuf.length; i++) {
+      const e = inputBuf[i];
+      if (e.ctxTime < tStart) continue;
+      const x = xOf(e.ctxTime);
+      const y = yOf127(e.paSmooth);
+      if (!started) { cctx.moveTo(x, y); started = true; } else cctx.lineTo(x, y);
+    }
+    cctx.stroke();
+  }
 
   /* Status line: total seams in window broken out by dip bucket, plus
      last-seam summary with measured dB if available. */

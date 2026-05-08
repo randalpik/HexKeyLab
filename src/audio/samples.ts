@@ -5,6 +5,7 @@
 // ramp position).
 
 import { recordSeamEvent } from './diagnostics/loopOverlay.js';
+import { inflightExpRampValue } from './aftertouch.js';
 
 export const SampleEngine = (function () {
   var RELEASE_SCALE = 0.5; /* global multiplier on per-instrument release times */
@@ -1331,9 +1332,20 @@ export const SampleEngine = (function () {
   function sSetAftertouch(voiceKey: string, targetGain: number, rampSec: number): void {
     var v=activeVoices[voiceKey];if(!v||!v.alive||!v.pressureGain)return;
     var now=ctx.currentTime;
+    /* dB-linear exponential ramp. We can't use cancelAndHoldAtTime in
+       Firefox, and reading gain.value during cancel can return the prior
+       fixed anchor (not the in-flight ramp value) — that's the snap-back
+       footgun that produced the audible drops. Polyfill: track the ramp
+       in JS and compute the in-flight value analytically via
+       inflightExpRampValue. Anchor at THAT, not gain.value, then exp-ramp
+       to the new target. Math.max(target, 0.0001) satisfies expRamp's
+       positive-target requirement. */
+    var target=Math.max(targetGain,0.0001);
+    var anchor=v.paRampState?inflightExpRampValue(v.paRampState,now):v.pressureGain.gain.value;
     v.pressureGain.gain.cancelScheduledValues(now);
-    v.pressureGain.gain.setValueAtTime(v.pressureGain.gain.value,now);
-    v.pressureGain.gain.linearRampToValueAtTime(targetGain,now+rampSec);
+    v.pressureGain.gain.setValueAtTime(anchor,now);
+    v.pressureGain.gain.exponentialRampToValueAtTime(target,now+rampSec);
+    v.paRampState={startVal:anchor,startTime:now,targetVal:target,endTime:now+rampSec};
   }
   /* Continuous-damper modulation. tau=0 → instant set (sostenuto pin), else
      setTargetAtTime exponential smoothing. Engine guarantees sample voices

@@ -27,6 +27,7 @@ import {
   noteOff, handleAftertouch, triggerRearticulateFlash,
   setDamperDepth, sostenutoOn, sostenutoOff,
 } from '../audio/engine.js';
+import { filterPA } from '../audio/aftertouch.js';
 import { fixedMidiToKey } from './engine.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 
@@ -84,12 +85,17 @@ export function handleMidiMessage(e: MIDIMessageEvent): void {
     }
     return;
   }
-  /* Polyphonic aftertouch (0xA0): modulate per-voice volume via pressureGain */
+  /* Polyphonic aftertouch (0xA0): modulate per-voice volume via pressureGain.
+     Raw d2 is stashed in aftertouchSnapshot for diagnostics; the value fed
+     to handleAftertouch is filterPA's gated + smoothed output (rejects the
+     0/1 onset flicker and the 7-bit stair-stepping). */
   if (status === 0xA0) {
     const atKey = fixedMidiToKey(ch, d1);
     if (atKey) {
       audio.aftertouchSnapshot[atKey] = d2;
-      handleAftertouch(atKey, d2);
+      const ctxTime = audio.audioCtx ? audio.audioCtx.currentTime : 0;
+      const filtered = filterPA(atKey, d2, ctxTime);
+      handleAftertouch(atKey, filtered);
     }
     return;
   }
@@ -114,6 +120,8 @@ export function handleMidiMessage(e: MIDIMessageEvent): void {
     } else {
       selection.selectedKeys.delete(key);
       delete audio.keyVelocity[key];
+      delete audio.aftertouchSnapshot[key];
+      delete audio.paFilter[key];
     }
   } else return;
   onSelectionChanged();

@@ -98,6 +98,16 @@ export interface SysexMessage extends Uint8Array {
 
 // ── Audio voices ───────────────────────────────────────────────────────────
 
+/** dB-linear ramp state on pressureGain, tracked in JS so we can compute the
+ *  in-flight value analytically when a new PA message arrives — polyfills
+ *  cancelAndHoldAtTime, which isn't available in our Firefox build. */
+export interface PaRampState {
+  startVal: number;
+  startTime: number;
+  targetVal: number;
+  endTime: number;
+}
+
 /** Oscillator voice (sine/square/triangle paths). */
 export interface OscVoice {
   type: 'osc';
@@ -109,10 +119,10 @@ export interface OscVoice {
   damperGain: GainNode;
   pressureGain: GainNode;
   vol: number;
-  /** Set true on first aftertouch message; gates the handover ramp. */
+  /** Set true on first aftertouch message after voice creation. */
   aftertouchSeen?: boolean;
-  /** Wall-clock end time of the aftertouch handover ramp. */
-  handoverEndTime?: number;
+  /** In-flight pressureGain ramp state (see PaRampState). */
+  paRampState?: PaRampState;
 }
 
 /** Sample voice (delegates to SampleEngine internally; only freq is tracked here). */
@@ -120,7 +130,6 @@ export interface SampleVoice {
   type: 'sample';
   freq: number;
   aftertouchSeen?: boolean;
-  handoverEndTime?: number;
 }
 
 export type Voice = OscVoice | SampleVoice;
