@@ -2,7 +2,7 @@
 
 A browser-based visualizer, audio engine, and Lumatone controller for hexagonal isomorphic keyboards in just intonation.
 
-HexKeyLab renders the hex lattice with 5-limit JI, 7-limit JI, or 12-TET tuning, plays through sample-based instruments (Salamander piano, FluidR3 strings / winds / organs) and oscillators, and analyzes intervals and chords with full comma decomposition. With a Lumatone connected, it lights the keys to match the on-screen colors, handles polyphonic aftertouch, and supports expression-pedal calibration over SysEx.
+HexKeyLab renders the hex lattice with 5-limit JI, 7-limit JI, or 12-TET tuning, plays through 13 sample-based instruments (Salamander piano, FluidR3 strings and flute, FatBoy organs / clarinet / electric piano, VCSL chamber organ, nbrosowsky acoustic guitar) and oscillators, and analyzes intervals and chords with full comma decomposition. With a Lumatone connected, it lights the keys to match the on-screen colors, handles polyphonic aftertouch, and supports expression-pedal calibration over SysEx.
 
 A3 = 220 Hz. The Harmonic Table layout maps the q-axis to major thirds (5:4) and the r-axis to fifths (3:2). Three layouts (♭ ♮ ♯) are pure software state — the Lumatone keeps a single fixed MIDI mapping; HKL interprets everything in software.
 

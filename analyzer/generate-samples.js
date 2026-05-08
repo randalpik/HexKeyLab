@@ -36,6 +36,8 @@ const NOTES_SHARP = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 // Sharp naming with 's' suffix instead of '#' — used by nbrosowsky/tonejs-instruments.
 // Avoids URL-encoding sharps, since 's' is filename-safe.
 const NOTES_SHARP_S = ['C','Cs','D','Ds','E','F','Fs','G','Gs','A','As','B'];
+// Lowercase sharp naming — used by peastman/sso (oboe-a#4.wav, etc.)
+const NOTES_SHARP_LOWER = ['c','c#','d','d#','e','f','f#','g','g#','a','a#','b'];
 // Tone.js Salamander naming + sparse sampling: only A/C/Ds/Fs at semitones 9/0/3/6
 const SALAMANDER_NOTES = { 0:'C', 3:'Ds', 6:'Fs', 9:'A' };
 const SEMI = {C:0,'C#':1,Cs:1,Db:1,D:2,'D#':3,Ds:3,Eb:3,E:4,F:5,'F#':6,Fs:6,Gb:6,G:7,'G#':8,Gs:8,Ab:8,A:9,'A#':10,As:10,Bb:10,B:11};
@@ -90,6 +92,7 @@ function enumerateNotes(cfg) {
       if (cfg.noteStyle === 'salamander') name = SALAMANDER_NOTES[semi];
       else if (cfg.noteStyle === 'sharp') name = NOTES_SHARP[semi];
       else if (cfg.noteStyle === 'sharp_s') name = NOTES_SHARP_S[semi];
+      else if (cfg.noteStyle === 'sharp_lower') name = NOTES_SHARP_LOWER[semi];
       else                                 name = NOTES_FLAT[semi];
       if (!name) continue;
       const note = name + oct;
@@ -372,6 +375,12 @@ function emitBlock(picks, cfg) {
   const loopFlag  = cfg.decays ? 'loop:false' : 'loop:true';
   let header = `      ext:'${cfg.ext}',releaseTime:${cfg.releaseTime},volume:${cfg.volume},${loopFlag},${decayFlag}`;
   if (!cfg.decays && cfg.vibrato) header += ',vibrato:true';
+  // Emit filePattern only when non-default. Runtime engine uses
+  // filePattern if present, else falls back to '{NOTE}{ext}'.
+  const defaultPattern = '{NOTE}' + cfg.ext;
+  if (cfg.filePattern && cfg.filePattern !== defaultPattern) {
+    header += `,filePattern:'${cfg.filePattern}'`;
+  }
   lines.push(header + ',');
   // Comment: per-config override (cfg.comment as an array of lines) takes
   // precedence over the path-default. This lets configs document

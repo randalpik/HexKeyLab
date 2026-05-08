@@ -364,9 +364,19 @@ Mode-dropdown change at runtime re-evaluates the held CC 64 state (`pedal.lastCC
 Re-articulation: striking a sustained key triggers `noteOff` + new voice + flash (`triggerRearticulateFlash` / `rearticulateFlashUntil`). The new voice gets a fresh `damperGain = 1.0`; the next note-off path that adds it to `sustainedKeys` re-applies current `damperDepth`.
 
 #### Instruments
-9 sample-based + oscillators. Piano (Salamander) is default. Non-looped/decaying instruments: piano. Looped/sustained: FluidR3_GM. Vibrato instruments: violin, viola, cello, flute, drawbar_organ.
+14 sample-based (13 visible, 1 hidden) + 3 oscillators. Piano (Salamander) is default.
 
-`SampleEngine.INSTRUMENTS` registry contains `{freq, gain, loopPts[], validStartsByEnd, trimStart, slopeCV}` per sample, baked from analyzer output. (`gain` is omitted on entries predating normalization; runtime falls back to 1.0.)
+- **Decay/non-looped**: piano (Salamander), electric_piano (FatBoy electric_piano_1), harp (FluidR3 orchestral_harp), acoustic_guitar (nbrosowsky/tonejs-instruments).
+- **Sustained/looped, no vibrato (macro-period)**: drawbar_organ (FatBoy), reed_organ (FatBoy), trombone (FluidR3), clarinet (FatBoy), chamber_organ (VCSL Renaissance Organ 8').
+- **Sustained/looped, vibrato**: violin / viola / cello (FluidR3), flute (FluidR3).
+- **Hidden in dropdown**: oboe (VSCO-2-CE Sus) — last-tried entry remains in `samples.ts` but `<option>` commented out in `index.html`. Deferred to v1.x; oboe and (also-deferred-without-current-entry) French horn share a single algorithm-side blocker. See `decisions.md` "v1 instrument batch" and `lessons.md` "Soundfont and real-instrument oboe/horn share a single wall."
+- **Oscillators**: triangle, sine, square — peak-amplitude tuned to match the −18 dBFS RMS target.
+
+Source vendor selection is empirical per-instrument, not categorical. FatBoy works for clarinet but failed clarinet's mid/upper register on the MusyngKite render; FluidR3 ships strings/flute/trombone but its french horn was rejected; VCSL ships chamber organ but doesn't have oboe or horn at all. Try multiple sources via the analyzer before settling.
+
+The dropdown in `index.html` is hand-maintained — `samples.ts` is NOT auto-enumerated. Adding an instrument requires both the `samples.ts` splice (via `analyzer/insert-instrument.js`) AND an `<option>` line in `<select id="waveform">`. See the `add-instrument` skill, step 7.
+
+`SampleEngine.INSTRUMENTS` registry contains `{name, baseUrl, ext, releaseTime, volume, loop, decays, [vibrato], [filePattern], samples[]}` per instrument, with each sample carrying `{name, freq, gain, [loopPts, validStartsByEnd, trimStart, slopeCV]}`. The `filePattern` field defaults to `'{NOTE}{ext}'` if absent; runtime URL builder applies `#`→`%23` encoding. (`gain` is omitted on entries predating normalization; runtime falls back to 1.0.)
 
 ---
 
@@ -452,7 +462,7 @@ DAMPER_RELEASE_FLOOR   # below this depth, sustained voices release through norm
 - `kbBaseSet`: Set of `"bq,br"` strings for all baseKeys
 - `REF`: ~60 reference interval entries
 - `chordTemplates`: 25 chord templates
-- `SampleEngine.INSTRUMENTS`: 9 sample-based instruments + their precomputed loop-point data
+- `SampleEngine.INSTRUMENTS`: 14 sample-based instruments (13 visible + 1 hidden oboe) + their precomputed loop-point data
 
 ---
 
@@ -461,14 +471,25 @@ DAMPER_RELEASE_FLOOR   # below this depth, sustained voices release through norm
 Not shipped with HKL. Used offline to generate `loopPts`, `validStartsByEnd`, `trimStart`, `slopeCV`, and `gain` baked into `SampleEngine.INSTRUMENTS`. Two entry points: the in-browser `tools/HexKeyLab-analyzer.html` (interactive, exposes the same algorithms) and the Node-based pipeline under `analyzer/` (`generate-samples.js` for new instruments, `backfill-gains.js` for adding `gain` to existing entries without disturbing loop points).
 
 ### 6.1 URL templating
-- `filePattern` config option for non-standard URLs like `"{NOTE}.{ext}"`
-- `noteStyle: 'sharp' | 'flat'` (default flat) controls enharmonic spelling
-- Sharp notes URL-encoded as `%23` (required for sources like VCSL)
+
+Both the analyzer (Node) and the runtime engine build sample URLs from the same metadata, so config changes propagate end-to-end without engine edits.
+
+- `filePattern`: `'{NOTE}{ext}'` default; non-default values like `'RenOrgan_8foot_Room_{NOTE}_rr1.wav'` (chamber organ) are emitted into `samples.ts` and consumed by `SampleEngine.loadInstrument` at line 559.
+- `noteStyle`: enumeration controls enharmonic spelling.
+  - `'flat'` — `Bb`, `Db`, `Eb`, `Gb`, `Ab` (gleitz/FluidR3/MusyngKite/FatBoy default).
+  - `'sharp'` — `C#`, `D#`, `F#`, `G#`, `A#` (VCSL).
+  - `'sharp_s'` — `Cs`, `Ds`, `Fs`, `Gs`, `As` (nbrosowsky/tonejs-instruments — `s` suffix is filename-safe).
+  - `'sharp_lower'` — `c#`, `d#`, `f#`, `g#`, `a#` (peastman/sso, lowercase letters).
+  - `'salamander'` — sparse map `{0:'C', 3:'Ds', 6:'Fs', 9:'A'}` paired with sparse sampling.
+- `noteSemis`: list of per-octave semitones to enumerate. Default `[0..11]` (chromatic). Wholetone-sampled sources use `[0,2,4,6,8,10]`; minor-third-sampled use `[1,4,7,10]`; etc.
+- `transpose`: rational ratio expressing audio fundamental ÷ filename label. Defaults to 1. `2` for Hammond convention (filenames an octave above audio). `0.5` for chamber organ (audio an octave above labels). Generalizes to any rational interval offset.
+- Sharp `#` characters in any constructed URL are URL-encoded as `%23` automatically by both `buildUrl` (analyzer) and `SampleEngine.loadInstrument` (runtime).
 
 ### 6.2 Per-instrument gate overrides (`gateOpts`)
 
-Configurable per instrument:
-`rmsGate`, `specGate`, `cliqueThreshold`, `minSpacingSec`, `minBackwardSec`, `minForwardSec`, `xfadeSec`, `rmsStepThreshold`.
+Configurable per instrument: `rmsGate`, `specGate`, `cliqueThreshold`, `minSpacingSec`, `minBackwardSec`, `minForwardSec`, `xfadeSec`, `rmsStepThreshold`, `fwdStabilityThreshold`, `fwdStabilitySec`.
+
+**Defaults are surprising — read before tuning**: `cliqueThreshold` and `rmsStepThreshold` both default to **0.25** (lower is *tighter*, higher is *looser*). `fwdStabilityThreshold` defaults to **0.10** (±10% RMS deviation in a 300ms forward window; `Infinity` disables). The reed_organ's `cliqueThreshold: 0.15` is a tightening, not a loosening — its samples are unusually steady. See `lessons.md` and `decisions.md` for the brass-killer-by-design rationale on `fwdStabilityThreshold`.
 
 ### 6.3 Macro-period algorithm (`prepareLoopMacroPeriod`)
 

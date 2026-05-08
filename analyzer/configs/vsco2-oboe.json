@@ -1,0 +1,25 @@
+{
+  "instrumentKey": "oboe",
+  "displayName": "Oboe",
+  "baseUrl": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Oboe/Sus/",
+  "ext": ".wav",
+  "filePattern": "Oboe_Sus_{NOTE}_v3_Main.wav",
+  "noteStyle": "sharp",
+  "noteSemis": [2, 5, 10],
+  "lowOct": 2,
+  "highOct": 5,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": false,
+  "releaseTime": 0.2,
+  "volume": 1.0,
+  "gateOpts": {},
+  "comment": [
+    "VSCO-2-CE Sus articulation = explicit no-vibrato. Source recorded",
+    "anechoically by Sam Gossner, Sam Burke (oboe). Sparse 3-per-octave",
+    "(D, F, A#) pattern across A#2-F5. v3 velocity (mf-ish). Default gates",
+    "expected to pass — these are clean professional samples, unlike the",
+    "soundfont-rendered MusyngKite oboe whose amplitude wobble required",
+    "loose gates and ultimately couldn't ship."
+  ]
+}

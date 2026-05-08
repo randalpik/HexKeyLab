@@ -1,0 +1,23 @@
+{
+  "instrumentKey": "chamber_organ",
+  "displayName": "Chamber Organ",
+  "baseUrl": "https://raw.githubusercontent.com/sgossner/VCSL/master/Aerophones/Edge-blown%20Aerophones/Renaissance%20Organ/8%27/",
+  "ext": ".wav",
+  "filePattern": "RenOrgan_8foot_Room_{NOTE}_rr1.wav",
+  "noteStyle": "sharp",
+  "noteSemis": [0, 2, 4, 6, 8, 10],
+  "lowOct": 1,
+  "highOct": 5,
+  "transpose": 0.5,
+  "decays": false,
+  "vibrato": false,
+  "releaseTime": 0.15,
+  "volume": 1.0,
+  "gateOpts": {},
+  "comment": [
+    "VCSL Renaissance Organ 8' rank = concert pitch. Wholetone-sampled",
+    "(C, D, E, F#, G#, A# per octave) — every 2 semitones gives the analyzer",
+    "a sample at every 4-semitone pick position. Range C1–E5; high octave 5",
+    "samples may 404 above E5."
+  ]
+}
