@@ -1,5 +1,7 @@
 # HexKeyLab
 
+Live at **<https://hexkeylab.maxrandalmusic.com>**.
+
 A browser-based visualizer, audio engine, and Lumatone controller for hexagonal isomorphic keyboards in just intonation.
 
 HexKeyLab renders the hex lattice with 5-limit JI, 7-limit JI, or 12-TET tuning, plays through 13 sample-based instruments (Salamander piano, FluidR3 strings and flute, FatBoy organs / clarinet / electric piano, VCSL chamber organ, nbrosowsky acoustic guitar) and oscillators, and analyzes intervals and chords with full comma decomposition. With a Lumatone connected, it lights the keys to match the on-screen colors, handles polyphonic aftertouch, and supports expression-pedal calibration over SysEx.
@@ -8,7 +10,7 @@ A3 = 220 Hz. The Harmonic Table layout maps the q-axis to major thirds (5:4) and
 
 ## Status
 
-Pre-v1.0 (`0.10.0-dev`). Behavior is at v0.9 parity; the codebase has been migrated from a single ~4200-line HTML file into a modular TypeScript + Vite project. v1.0 will be the first publicly-hosted release.
+v1.0 — first publicly-hosted release. The codebase has been migrated from a single ~4200-line HTML file into a modular TypeScript + Vite project (38 modules under `src/`, strict end-to-end). Deployed continuously from `main` to Netlify.
 
 ## Running it
 
