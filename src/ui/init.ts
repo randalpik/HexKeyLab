@@ -55,6 +55,7 @@ const $ = <T extends HTMLElement>(id: string): T =>
 function applyPrefsToDom(p: PrefsV1): void {
   $<HTMLInputElement>('cbNotes').checked = p.showNotes;
   $<HTMLInputElement>('cbBands').checked = p.showBands;
+  $<HTMLInputElement>('cbAnalysis').checked = p.showAnalysis;
   $<HTMLInputElement>('cbExtend').checked = p.extendPattern;
   $<HTMLInputElement>('cbCoords').checked = p.showCoords;
   $<HTMLInputElement>('cbShortIvl').checked = p.shortIvl;

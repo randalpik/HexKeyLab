@@ -41,8 +41,12 @@ type IntervalCell = IntervalCellEqual | IntervalCellJI;
 
 export function updateInfo(): void {
   const el = document.getElementById('infoLine')!;
-  if (selection.selectedKeys.size === 0) {
-    el.innerHTML = '<span class="hint">Click any key to select · shift+click for exclusive select</span>';
+  const showAnalysis = (
+    document.getElementById("cbAnalysis") as HTMLInputElement
+  ).checked;
+  if (selection.selectedKeys.size === 0 || !showAnalysis) {
+    el.innerHTML =
+      '<span class="hint">Click any key to select · shift+click for exclusive select</span>';
     return;
   }
   const keys: InfoKey[] = [];

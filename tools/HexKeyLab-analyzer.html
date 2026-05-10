@@ -122,6 +122,23 @@ function filterToBackwardClique(buf, loopPtsSec, opts){
      duration. Default 0.25 is fairly permissive; tighten for drifting
      instruments. */
   var rmsStepThreshold=opts.rmsStepThreshold||0.25;
+  /* slopeStepThreshold: max allowed envelope-slope step between loop point
+     endpoints, measured as |slopeA - slopeB| where slope is fractional change
+     per fundamental period. Catches the "swell jump at seam" artifact that
+     ampStepDev misses: two endpoints can sit at envelope ≈ 0.5 — one rising
+     through 0.5, one falling — and ampStepDev passes (same value), but the
+     listener perceives "rising volume" at one boundary and "falling volume"
+     at the other, producing a swell on every loop iteration. This is the
+     subset of cases the previous prepareLoopVibrato handled by aligning to
+     mean-crossings of consistent direction; gating on slope at every pair
+     subsumes that mechanism and extends it to irregular-modulation samples.
+     Requires opts.tActualSec (set by the unified prepareLoop pipeline). When
+     tActualSec is absent, the slope gate is skipped — preserves the function
+     for callers that don't have a fundamental-period estimate. Default 0.02
+     ≈ 2% envelope change per fundamental period; tighten for samples with
+     deliberately heavy modulation (drawbar). */
+  var slopeStepThreshold=opts.slopeStepThreshold!==undefined?opts.slopeStepThreshold:0.02;
+  var tActualSec=opts.tActualSec;
   /* fwdStabilityThreshold: max allowed |envWindow - envAtPoint| / envAtPoint
      anywhere in the forward window after a candidate point. Catches the
      "anomaly past the seam" artifact: ampStepDev only compares two endpoints
@@ -189,20 +206,54 @@ function filterToBackwardClique(buf, loopPtsSec, opts){
      loudness (averages out vibrato/fast modulation but captures slow drift). */
   var envWin=Math.round(sr*0.05);
   var envHalf=envWin>>1;
-  var envRms=new Array(n);
-  for(var ei=0;ei<n;ei++){
-    var pi=Math.round(loopPtsSec[ei]*sr);
-    var lo=pi-envHalf;if(lo<0)lo=0;
-    var hi=pi+envHalf;if(hi>len)hi=len;
+  function rmsAt(p){
+    var lo=p-envHalf;if(lo<0)lo=0;
+    var hi=p+envHalf;if(hi>len)hi=len;
+    if(hi<=lo)return 0;
     var sum=0;
     for(var s=lo;s<hi;s++)sum+=d[s]*d[s];
-    envRms[ei]=Math.sqrt(sum/(hi-lo+1e-9));
+    return Math.sqrt(sum/(hi-lo+1e-9));
+  }
+  var envRms=new Array(n);
+  for(var ei=0;ei<n;ei++){
+    envRms[ei]=rmsAt(Math.round(loopPtsSec[ei]*sr));
+  }
+  /* Precompute fractional envelope slope at each loop point, normalized to
+     "fractional change per fundamental period". Estimator:
+       slope[i] = (env(pi + W) − env(pi − W)) / (2·envMean)
+     where W = T_actual_sec·sr. The 2·envMean denominator turns absolute env
+     deltas into a dimensionless rate-per-fundamental-period (the (env+ - env-)
+     spans 2·T, dividing by 2 gives per-T, dividing by envMean normalizes
+     against the sample's average loudness so a 0.02 threshold has the same
+     meaning across notes regardless of recording level).
+     Only computed when tActualSec is supplied — otherwise the slope gate is
+     skipped and slopeRel stays null. */
+  var slopeRel=null;
+  if(tActualSec&&tActualSec>0){
+    var W=Math.max(1,Math.round(tActualSec*sr));
+    var envMean=0;
+    for(var ei=0;ei<n;ei++)envMean+=envRms[ei];
+    envMean=(n>0)?envMean/n:0;
+    if(envMean>1e-9){
+      slopeRel=new Array(n);
+      for(var ei=0;ei<n;ei++){
+        var pi=Math.round(loopPtsSec[ei]*sr);
+        var ePlus=rmsAt(pi+W),eMinus=rmsAt(pi-W);
+        slopeRel[ei]=(ePlus-eMinus)/(2*envMean);
+      }
+    }
   }
   /* Amplitude-step deviation between two loop points. Symmetric in i,j. */
   function ampStepDev(i,j){
     var a=envRms[i],b=envRms[j];
     var mx=(a>b)?a:b;
     return Math.abs(a-b)/(mx+1e-9);
+  }
+  /* Slope-step magnitude between two loop points. Symmetric in i,j. Returns 0
+     when slopeRel is unavailable so the gate is a no-op. */
+  function slopeStepDev(i,j){
+    if(!slopeRel)return 0;
+    return Math.abs(slopeRel[i]-slopeRel[j]);
   }
   /* bdev[i][j] for i>j: deviation of backward crossfade pts[i] → pts[j].
 
@@ -267,6 +318,7 @@ function filterToBackwardClique(buf, loopPtsSec, opts){
         var hi=Math.max(subset[x],subset[y]),lo=Math.min(subset[x],subset[y]);
         if(bdev[hi][lo]>threshold){ok=false;break;}
         if(ampStepDev(hi,lo)>rmsStepThreshold){ok=false;break;}
+        if(slopeStepDev(hi,lo)>slopeStepThreshold){ok=false;break;}
       }
     }
     if(ok)best=subset;
@@ -287,35 +339,39 @@ function filterToBackwardClique(buf, loopPtsSec, opts){
   var spacedSet={};
   for(var k=0;k<spaced.length;k++)spacedSet[Math.round(spaced[k]*sr)]=1;
   var spacedIndices=best.filter(function(i){return spacedSet[Math.round(loopPtsSec[i]*sr)];});
-  var worstDev=0;
+  var worstDev=0,worstSlopeStep=0;
   for(var x=0;x<spacedIndices.length;x++){
     for(var y=x+1;y<spacedIndices.length;y++){
       var hi=Math.max(spacedIndices[x],spacedIndices[y]),lo=Math.min(spacedIndices[x],spacedIndices[y]);
       if(bdev[hi][lo]>worstDev)worstDev=bdev[hi][lo];
+      var ss=slopeStepDev(hi,lo);
+      if(ss>worstSlopeStep)worstSlopeStep=ss;
     }
   }
-  return{kept:spaced,cliqueSize:best.length,dropped:n-best.length,spacingDropped:spacingDropped,worstDev:+worstDev.toFixed(3),fwdRejected:fwdRejected};
+  return{kept:spaced,cliqueSize:best.length,dropped:n-best.length,spacingDropped:spacingDropped,worstDev:+worstDev.toFixed(3),worstSlopeStep:slopeRel?+worstSlopeStep.toFixed(4):null,fwdRejected:fwdRejected};
 }
 
 /* ═══ findSteadyRegion — RMS-70%-of-peak steady region detector ═══
    Builds a 50ms-window / 10ms-hop RMS envelope from trimStart, finds the
    longest run where rms ≥ 0.70 × peakRms, and returns its sample bounds.
-   Shared by both prepareLoopVibrato and prepareLoopMacroPeriod — same
-   problem, same answer; kept in one place so any future refinement
-   propagates to both paths.
 
-   opts.smoothMs (default 0): if > 0, low-pass the RMS curve with a moving
-   average over ±smoothMs/2 before thresholding. The vibrato path passes
-   smoothMs > vibrato period (~300ms) so AMP tremolo doesn't drag troughs
-   below 70% and shatter the sustain into per-cycle slivers. Macro-period
-   leaves it at 0 — its samples have steady amplitude by definition and
-   smoothing would only add noise.
+   opts.smoothMs (explicit override): if > 0, low-pass the RMS curve with a
+   moving average over ±smoothMs/2 before thresholding. Caller can force a
+   specific smoothing window — useful when the caller already knows the
+   modulation timescale.
+
+   Auto-smoothing: when opts.smoothMs is undefined, we compute the envelope's
+   coefficient of variation (std/mean) and pick smoothMs = 300 if CV > 0.05,
+   else 0. Heavy modulation (AMP tremolo, Leslie) drags troughs below the
+   70%-of-peak threshold and shatters the sustain into per-cycle slivers; the
+   smoothed curve flattens the modulation and recovers a contiguous run.
+   Steady-envelope samples (oboe, clarinet) have CV well below 0.05 and pick
+   up no smoothing.
 
    Returns {steadyStart, steadyEnd, peakRms} on success,
            {failReason, peakRms?} on failure. */
 function findSteadyRegion(d, sr, trimStart, len, opts){
   opts=opts||{};
-  var smoothMs=opts.smoothMs||0;
   var rmsWin=Math.round(sr*0.05),rmsHop=Math.round(sr*0.01);
   var rmsCurve=[];
   for(var s=trimStart;s+rmsWin<len;s+=rmsHop){
@@ -323,6 +379,17 @@ function findSteadyRegion(d, sr, trimStart, len, opts){
     rmsCurve.push({pos:s+Math.floor(rmsWin/2),rms:Math.sqrt(sum/rmsWin)});
   }
   if(rmsCurve.length<3)return{failReason:'RMS curve too short'};
+  /* Auto-tune smoothMs from the curve's CV unless the caller forced a value. */
+  var smoothMs;
+  if(opts.smoothMs!==undefined){
+    smoothMs=opts.smoothMs;
+  }else{
+    var cvMean=0;for(var i=0;i<rmsCurve.length;i++)cvMean+=rmsCurve[i].rms;
+    cvMean/=rmsCurve.length;
+    var cvVar=0;for(var i=0;i<rmsCurve.length;i++){var dd=rmsCurve[i].rms-cvMean;cvVar+=dd*dd;}
+    var cv=(cvMean>1e-9)?Math.sqrt(cvVar/rmsCurve.length)/cvMean:0;
+    smoothMs=(cv>0.05)?300:0;
+  }
   if(smoothMs>0){
     /* Moving average over ±smoothMs/2. rmsHop is 10ms so half-width in
        array indices = smoothMs / 20. */

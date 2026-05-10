@@ -18,6 +18,7 @@ export interface PrefsV1 {
   showNotes: boolean;
   showBands: boolean;
   extendPattern: boolean;
+  showAnalysis: boolean;
   showCoords: boolean;
   shortIvl: boolean;
   outline: OutlineMode;
@@ -37,18 +38,19 @@ export const DEFAULT_PREFS: PrefsV1 = {
   showNotes: true,
   showBands: true,
   extendPattern: true,
+  showAnalysis: true,
   showCoords: false,
   shortIvl: false,
-  outline: 'lumatone',
-  tuning: '5',
+  outline: "lumatone",
+  tuning: "5",
   septimalShift: 0,
   curLayout: 1,
   qwertyTranspose: 0,
   /* audio defaults to ON to match the long-standing "load piano + play on
      first reload" behavior of pre-persistence HKL */
   audioEnabled: true,
-  waveform: 'piano',
-  pedalMode: 'sustain',
+  waveform: "piano",
+  pedalMode: "sustain",
   autoSync: false,
 };
 
@@ -87,6 +89,7 @@ export function loadPrefs(): PrefsV1 {
     showNotes: typeof o.showNotes === 'boolean' ? o.showNotes : DEFAULT_PREFS.showNotes,
     showBands: typeof o.showBands === 'boolean' ? o.showBands : DEFAULT_PREFS.showBands,
     extendPattern: typeof o.extendPattern === 'boolean' ? o.extendPattern : DEFAULT_PREFS.extendPattern,
+    showAnalysis: typeof o.showAnalysis === 'boolean' ? o.showAnalysis : DEFAULT_PREFS.showAnalysis,
     showCoords: typeof o.showCoords === 'boolean' ? o.showCoords : DEFAULT_PREFS.showCoords,
     shortIvl: typeof o.shortIvl === 'boolean' ? o.shortIvl : DEFAULT_PREFS.shortIvl,
     outline: isOutlineMode(o.outline) ? o.outline : DEFAULT_PREFS.outline,
