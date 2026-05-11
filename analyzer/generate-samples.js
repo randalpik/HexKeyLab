@@ -106,12 +106,41 @@ function enumerateNotes(cfg) {
   return out;
 }
 
-function buildUrl(cfg, note) {
-  return cfg.baseUrl + cfg.filePattern.replace('{NOTE}', note).replace(/#/g, '%23');
+function applyPlaceholders(pattern, note, midi) {
+  // {NOTE}        — full note name with octave, sharp/flat (e.g. "F#4", "Bb3")
+  // {NOTE_LETTER} — letter without octave (e.g. "F#", "Bb")
+  // {NOTE_LOWER}  — full note name lowercased (SSO harp uses "harp-c4.wav")
+  // {MIDI}        — 3-digit zero-padded MIDI number (SSO organ, jRhodes3d)
+  // '#' is URL-encoded *after* substitution so the placeholder itself
+  // never needs to be entered already-encoded.
+  const letter = note.replace(/\d+$/, '');
+  const midiStr = String(midi).padStart(3, '0');
+  return pattern
+    .replace(/\{NOTE_LETTER\}/g, letter)
+    .replace(/\{NOTE_LOWER\}/g, note.toLowerCase())
+    .replace(/\{MIDI\}/g, midiStr)
+    .replace(/\{NOTE\}/g, note)
+    .replace(/#/g, '%23');
+}
+
+function buildUrls(cfg, note, midi) {
+  // filePatterns (plural) — array of templates to try in order. The first
+  // that successfully fetches wins. Used for Iowa strings where the sul-string
+  // prefix varies per pitch and we'd rather brute-force than encode a
+  // string-per-note table.
+  const patterns = cfg.filePatterns || [cfg.filePattern];
+  return patterns.map(p => cfg.baseUrl + applyPlaceholders(p, note, midi));
 }
 
 // ─── 1. fetch (curl, cached) ─────────────────────────────────────────────────
 
+/* Local copy of the cached file lives at dir/<note>.<ext>; the matchedPattern
+   sidecar (dir/<note>.pattern) records which filePattern actually fetched, so
+   subsequent runs reuse the same cached file without re-checking every URL and
+   emitSampleEntry can record the per-sample filename for the runtime to fetch
+   from. Sidecar absence (legacy cache) means: assume the first filePattern is
+   the match — acceptable for single-pattern configs and harmless for the rare
+   regeneration where the first pattern wasn't actually the one that hit. */
 function fetchAll(cfg, notes) {
   const dir = path.join(CACHE_DIR, cfg.instrumentKey);
   fs.mkdirSync(dir, { recursive: true });
@@ -119,19 +148,34 @@ function fetchAll(cfg, notes) {
   let nFetched = 0, nCached = 0, nMiss = 0;
   for (const n of notes) {
     const mp3 = path.join(dir, `${n.note}${cfg.ext}`);
+    const patFile = path.join(dir, `${n.note}.pattern`);
+    let matchedFile = null;
     if (!fs.existsSync(mp3) || fs.statSync(mp3).size === 0) {
-      const url = buildUrl(cfg, n.note);
-      const r = spawnSync('curl', ['-sLfo', mp3, url], { stdio: 'ignore' });
-      if (r.status !== 0) {
+      const patterns = cfg.filePatterns || [cfg.filePattern];
+      let ok = false;
+      for (const pattern of patterns) {
+        const url = cfg.baseUrl + applyPlaceholders(pattern, n.note, n.midi);
+        const r = spawnSync('curl', ['-sLfo', mp3, url], { stdio: 'ignore' });
+        if (r.status === 0 && fs.existsSync(mp3) && fs.statSync(mp3).size > 0) {
+          ok = true;
+          matchedFile = applyPlaceholders(pattern, n.note, n.midi);
+          fs.writeFileSync(patFile, matchedFile);
+          break;
+        }
         try { fs.unlinkSync(mp3); } catch {}
-        nMiss++;
-        continue;
       }
+      if (!ok) { nMiss++; continue; }
       nFetched++;
     } else {
       nCached++;
+      if (fs.existsSync(patFile)) {
+        matchedFile = fs.readFileSync(patFile, 'utf8');
+      } else {
+        const firstPattern = (cfg.filePatterns && cfg.filePatterns[0]) || cfg.filePattern;
+        matchedFile = applyPlaceholders(firstPattern, n.note, n.midi);
+      }
     }
-    fetched.push({ ...n, mp3 });
+    fetched.push({ ...n, mp3, matchedFile });
   }
   console.error(`fetch: ${nFetched} new, ${nCached} cached, ${nMiss} 404/missing`);
   return fetched;
@@ -181,8 +225,13 @@ function loadAnalyzer() {
     window: { AudioContext: function(){} }
   };
   // create a function whose body is the analyzer's <script> content, with
-  // the exports we need bound at the end
-  const src = m[1] + '\n;return {prepareLoop, refineFundamentalPeriod, findSteadyRegion};';
+  // the exports we need bound at the end. findSteadyRegion (the old
+  // 70%-of-peak detector) is gone; the segments pipeline uses
+  // findSteadyRegionMeanThreshold internally and surfaces the resulting
+  // steady region through res.stats.steadyStartSec/.steadyEndSec — so the
+  // headless runner reads it from there for measureRmsLoop instead of
+  // re-running the detection.
+  const src = m[1] + '\n;return {prepareLoop, refineFundamentalPeriod};';
   const factory = new Function('document','window', src);
   return factory(stub.document, stub.window);
 }
@@ -190,11 +239,12 @@ function loadAnalyzer() {
 // ─── 4. analysis paths ───────────────────────────────────────────────────────
 
 function analyzeLoop(buf, freq, cfg, fns) {
-  // Unified pipeline — handles steady, periodic-modulation, and irregular-
-  // envelope samples in one path. The cfg.vibrato flag is kept only as a
-  // hint that pre-fills looser phase-coherence defaults (corrThreshold:0.90,
-  // corrWindowPeriods:2) for samples whose pitch wobble decorrelates a
-  // 3-period waveform window. Per-instrument cfg.gateOpts override.
+  // Segment-based pipeline. The cfg.vibrato flag pre-fills looser phase-
+  // coherence defaults (corrThreshold:0.90, corrWindowPeriods:2) for pitched-
+  // vibrato samples; per-instrument cfg.gateOpts override. prepareLoop returns
+  //   { segments: [{a, b}, ...], stats: {nSegments, sccOk, bridgeCount,
+  //     steadyStartSec, steadyEndSec, ...}, diag: {...} }
+  // and we propagate that shape through the rest of the pipeline.
   const opts = { ...(cfg.gateOpts || {}) };
   if (cfg.vibrato) {
     if (opts.corrThreshold === undefined) opts.corrThreshold = 0.90;
@@ -272,14 +322,16 @@ function measurePeakDecay(stereo, mono) {
   return peakAbs > 0 ? peakAbs : null;
 }
 
-function measureRmsLoop(d, cfg, fns) {
-  const trim = findGainTrimStart(d);
-  /* findSteadyRegion auto-tunes its smoothing window from the envelope CV —
-     heavy modulation gets ~300ms smoothing, steady samples get none. No
-     explicit hint needed here. */
-  const res = fns.findSteadyRegion(d, SR, trim, d.length);
-  if (res.failReason) return null;
-  return rmsOver(d, res.steadyStart, res.steadyEnd);
+function measureRmsLoop(d, res) {
+  /* Reuse the steady region that prepareLoop already detected. Same
+     boundaries the segment selector used → gain normalization stays
+     consistent with the audio region the seams are validated over. */
+  const stats = res && res.stats;
+  if (!stats || stats.steadyStartSec == null || stats.steadyEndSec == null) return null;
+  const start = Math.round(stats.steadyStartSec * SR);
+  const end = Math.round(stats.steadyEndSec * SR);
+  if (end <= start) return null;
+  return rmsOver(d, start, end);
 }
 
 function computeGainFromRms(rms) {
@@ -295,15 +347,22 @@ function computeGainFromPeak(peak) {
 // ─── 5. classify ─────────────────────────────────────────────────────────────
 
 function classifyLoop(res) {
-  if (!res || res.failReason || !res.loopPts || res.loopPts.length < 2) return 'fail';
+  /* Segments-pipeline tier:
+       fail  no segments returned, or stats missing
+       red   1 segment (or SCC broken — no perpetual cycle possible)
+       yellow 2–3 segments (perpetual loop works but low variety)
+       blue  4+ segments, SCC OK, but ≥half are bridges (constrained variety)
+       green 4+ segments, SCC OK, fewer than half bridges (real randomization)
+     Mirrors the analyzer's per-row tier classifier — keep them in sync. */
+  if (!res || !Array.isArray(res.segments)) return 'fail';
   const s = res.stats || {};
-  const seams  = s.validSeams  || 0;
-  const ub     = s.usableBs    || 0;
-  const corr   = s.minPickCorr || 0;
-  if (seams < 2 || ub < 2) return 'red';
-  if (seams < 4 || ub < 3) return 'yellow';
-  if (corr >= 0.93) return 'green';
-  return 'blue';
+  const n = res.segments.length;
+  const sccOk = !!s.sccOk;
+  const bridges = s.bridgeCount || 0;
+  if (n < 2 || !sccOk) return 'red';
+  if (n < 4) return 'yellow';
+  if (bridges * 2 >= n) return 'blue';
+  return 'green';
 }
 
 function classifyDecay(res) {
@@ -326,7 +385,8 @@ function pickSamples(results, cfg) {
   if (cfg.decays) return usable.slice();
 
   // Loop instruments: ~4-semitone spacing, preferring higher tier within
-  // each ±2-semitone window.
+  // each ±2-semitone window. Tiebreak inside a tier: more segments first
+  // (richer randomization), then more steady-region seconds.
   const picked = [];
   let target = usable[0].midi;
   const maxMidi = usable[usable.length - 1].midi;
@@ -336,9 +396,12 @@ function pickSamples(results, cfg) {
     if (win.length === 0) { target += 4; continue; }
     win.sort((a,b) => {
       if (TIER_RANK[a.tier] !== TIER_RANK[b.tier]) return TIER_RANK[b.tier] - TIER_RANK[a.tier];
-      const ca = (a.res.stats && a.res.stats.minPickCorr) || 0;
-      const cb = (b.res.stats && b.res.stats.minPickCorr) || 0;
-      return cb - ca;
+      const na = (a.res.segments && a.res.segments.length) || 0;
+      const nb = (b.res.segments && b.res.segments.length) || 0;
+      if (na !== nb) return nb - na;
+      const sa = (a.res.stats && a.res.stats.steadyDurSec) || 0;
+      const sb = (b.res.stats && b.res.stats.steadyDurSec) || 0;
+      return sb - sa;
     });
     picked.push(win[0]);
     used.add(win[0].note);
@@ -361,15 +424,29 @@ function emitSampleEntry(r, cfg) {
      identifier (name), pitch (freq), level (gain), then loop-specific fields.
      Falls back to 1.0 silently at runtime if absent. */
   const gainStr = (typeof r.gain === 'number') ? `,gain:${fmt(r.gain, 4)}` : '';
+  /* Emit a per-sample `file` field whenever the resolved filename can't be
+     reconstructed from a simple `{NOTE}{ext}` substitution at runtime — i.e.
+     when filePatterns plural was used, or any of {MIDI}/{NOTE_LETTER}/
+     {NOTE_LOWER} appeared in the template. The runtime engine prefers this
+     over filePattern substitution. */
+  const defaultPattern = '{NOTE}' + cfg.ext;
+  const usesMulti = !!cfg.filePatterns;
+  const singleTemplate = cfg.filePattern || defaultPattern;
+  const usesNewPlaceholders = /\{MIDI\}|\{NOTE_LETTER\}|\{NOTE_LOWER\}/.test(singleTemplate);
+  const needFile = usesMulti || usesNewPlaceholders;
+  const fileStr = (needFile && r.matchedFile) ? `,file:'${r.matchedFile}'` : '';
 
   if (cfg.decays) {
-    return `        {name:'${r.note}',freq:${freqStr}${gainStr}}`;
+    return `        {name:'${r.note}',freq:${freqStr}${gainStr}${fileStr}}`;
   }
 
-  // loop entry
-  const ptsStr = '[' + r.res.loopPts.map(p => fmt(p, 7)).join(',') + ']';
-  const ebsStr = '[' + (r.res.validStartsByEnd || []).map(arr => '['+arr.join(',')+']').join(',') + ']';
-  return `        {name:'${r.note}',freq:${freqStr}${gainStr},loopPts:${ptsStr},validStartsByEnd:${ebsStr},trimStart:${fmt(r.res.trimStart, 7)}}`;
+  // loop entry — segments array, one {a, b} per pair the runtime picker can
+  // pick at each wrap. Sorted by `a` (selectSegments returns them sorted, but
+  // sort defensively in case anyone post-processes). No loopPts /
+  // validStartsByEnd anymore.
+  const segs = (r.res.segments || []).slice().sort((p, q) => p.a - q.a);
+  const segsStr = '[' + segs.map(s => `{a:${fmt(s.a, 7)},b:${fmt(s.b, 7)}}`).join(',') + ']';
+  return `        {name:'${r.note}',freq:${freqStr}${gainStr}${fileStr},segments:${segsStr},trimStart:${fmt(r.res.trimStart, 7)}}`;
 }
 
 // Path-specific default comments. Override per-instrument via cfg.comment
@@ -384,12 +461,12 @@ function defaultComment(cfg) {
     ];
   }
   return [
-    'Loop path (unified prepareLoop). Each loop point is a phase-coherent',
-    'positive-going zero-crossing on a regular grid at the autocorrelation-',
-    'refined fundamental period; pairs additionally satisfy an envelope-slope',
-    'gate so seams hold across steady, periodic-modulation, and irregular-',
-    'envelope samples alike. Generated by analyzer/generate-samples.js from',
-    `${path.basename(process.argv[2] || 'unknown.json')}.`,
+    'Segments pipeline. Each entry\'s `segments` is a list of {a, b} loop',
+    'pairs picked from inside the sample\'s mean-anchored steady region. The',
+    'runtime picker plays to a chosen b, crossfades back to the same segment\'s',
+    'a (validated pair-seam), then picks a new segment whose b is reachable',
+    'from a — yielding perpetual random looping over the SCC. Generated by',
+    `analyzer/generate-samples.js from ${path.basename(process.argv[2] || 'unknown.json')}.`,
   ];
 }
 
@@ -467,12 +544,16 @@ function buildReport(results, picks, cfg) {
       lines.push(`| ${p.note} | ${p.labeledFreq.toFixed(2)} | ${fa} | ${drift} | ${gainColDecay(p)} | ${p.tier} |`);
     });
   } else {
-    lines.push(`| Note | Hz | minPickCorr | seams | usable | RMS (dBFS) | gain | tier |`);
-    lines.push(`| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |`);
+    lines.push(`| Note | Hz | segments | SCC | bridges | steady (s) | RMS (dBFS) | gain | tier |`);
+    lines.push(`| --- | ---: | ---: | :---: | ---: | ---: | ---: | ---: | --- |`);
     picks.forEach(p => {
       const s = p.res.stats || {};
       const fa = p.res.freqActual != null ? p.res.freqActual.toFixed(2) : p.labeledFreq.toFixed(2);
-      lines.push(`| ${p.note} | ${fa} | ${s.minPickCorr || '—'} | ${s.validSeams || '—'} | ${s.usableBs || '—'} | ${gainColLoop(p)} | ${p.tier} |`);
+      const nSeg = (p.res.segments && p.res.segments.length) || 0;
+      const scc = s.sccOk ? 'ok' : 'BRK';
+      const br = (s.bridgeCount != null) ? s.bridgeCount : '—';
+      const steady = (s.steadyDurSec != null) ? s.steadyDurSec.toFixed(2) : '—';
+      lines.push(`| ${p.note} | ${fa} | ${nSeg} | ${scc} | ${br} | ${steady} | ${gainColLoop(p)} | ${p.tier} |`);
     });
   }
   // failures
@@ -512,10 +593,10 @@ function buildReport(results, picks, cfg) {
       peak = measurePeakDecay(stereo, d);
       gain = computeGainFromPeak(peak);
     } else {
-      rms = measureRmsLoop(d, cfg, fns);
+      rms = measureRmsLoop(d, res);
       gain = computeGainFromRms(rms);
     }
-    return { note: s.note, midi: s.midi, labeledFreq: s.labeledFreq, res, tier, rms, peak, gain };
+    return { note: s.note, midi: s.midi, labeledFreq: s.labeledFreq, matchedFile: s.matchedFile, res, tier, rms, peak, gain };
   });
   const picks = pickSamples(results, cfg);
   fs.mkdirSync(OUT_DIR, { recursive: true });
