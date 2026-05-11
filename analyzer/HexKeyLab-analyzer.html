@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>HexKeyLab Sample Analyzer</title>
+<style>
+  body{font-family:system-ui,-apple-system,sans-serif;max-width:1100px;margin:20px auto;padding:0 20px;color:#222}
+  h1{font-size:20px;margin-bottom:6px}
+  h2{font-size:16px;margin-top:20px}
+  p,li{font-size:14px;line-height:1.5}
+  button{font-size:14px;padding:8px 14px;margin:4px 2px;cursor:pointer}
+  button:disabled{opacity:.5;cursor:default}
+  pre{background:#f4f4f4;border:1px solid #ddd;padding:10px;font-size:12px;max-height:400px;overflow:auto;white-space:pre-wrap}
+  .status{color:#666;font-size:13px;margin:8px 0}
+  .ok{color:#060}
+  .warn{color:#c80}
+  .err{color:#c00}
+  table{border-collapse:collapse;font-size:12px;margin:10px 0}
+  th,td{border:1px solid #ccc;padding:4px 8px;text-align:right}
+  th{background:#eee;cursor:pointer;user-select:none}
+  th:hover{background:#ddd}
+  td:first-child,th:first-child,td:nth-child(2),th:nth-child(2){text-align:left}
+  tr.fail{background:#eee;color:#888}
+  /* ── TIER COLORS — by backward-clique size, seams, and minPickCorr ── */
+  tr.tier-red{background:#ffcfcf}       /* seams<2 or usableBs<2 */
+  tr.tier-yellow{background:#fff0bf}    /* seams<4 or usableBs<3 */
+  tr.tier-blue{background:#cfe2ff}      /* seams≥4, usableBs≥3, minPickCorr<0.97 */
+  tr.tier-green{background:#cfe8cf}     /* seams≥4, usableBs≥3, minPickCorr≥0.97 */
+  tr.selected{background:#dff}
+  tr.selected.tier-red{background:#f0b4b4}
+  tr.selected.tier-yellow{background:#f0daa0}
+  tr.selected.tier-blue{background:#b4cfef}
+  tr.selected.tier-green{background:#a8d0a8}
+  input[type=checkbox]{cursor:pointer}
+  textarea{width:100%;height:180px;font-family:monospace;font-size:11px}
+  .instHeader{margin-top:18px;display:flex;justify-content:space-between;align-items:center}
+  .instHeader h3{margin:0;font-size:15px}
+  .instHeader span{font-size:12px;color:#666}
+</style>
+</head>
+<body>
+<h1>HexKeyLab Sample Analyzer</h1>
+<p>Fetches <em>every</em> chromatic note in each instrument's range from the soundfont CDN,
+decodes it with Web Audio (identical to HexKeyLab's runtime), runs <code>prepareLoop</code>,
+and displays the results so you can decide which to include.</p>
+
+<p>Missing notes (404s) are silently skipped. After analysis, use the checkboxes to pick
+which samples to keep, then copy the output into HexKeyLab.html.</p>
+
+<h2>Instrument ranges (editable)</h2>
+<p style="font-size:12px;color:#666">Each instrument lists its baseUrl, note range (chromatic, inclusive), and optional <code>gateOpts</code> overrides for tuning the unified analyzer pipeline (corrThreshold, slopeStepThreshold, etc.).
+Ranges go from lowOctave to highOctave; any notes returning 404 are skipped automatically.</p>
+<textarea id="configs" autocomplete="off" spellcheck="false"></textarea>
+<p><button id="run">Analyze all instruments</button>
+<button id="reAnalyze" disabled>Re-analyze (cached buffers, new thresholds)</button>
+<button id="genOutput">Generate output from selected</button>
+<button id="selectGood">Auto-select good samples</button>
+<button id="selectAll">Select all</button>
+<button id="selectNone">Select none</button>
+<button id="resetConfigs">Reset configs to defaults</button>
+<button id="analyzeCustom">Analyze custom file</button>
+<input type="file" id="customFile" accept="audio/*" style="display:none">
+<span id="customFreq" style="margin-left:10px"></span></p>
+<p style="font-size:12px;color:#444">
+  <strong>Pair-gate thresholds</strong> (apply globally; leave blank to use the per-instrument config / default).
+  RMS step:
+  <input type="number" id="globalRmsStep" step="0.01" min="0" max="1" placeholder="0.01" style="width:80px">
+  Slope step:
+  <input type="number" id="globalSlopeStep" step="0.001" min="0" max="1" placeholder="0.01" style="width:80px">
+  Slope stride (sec):
+  <input type="number" id="globalSlopeStride" step="0.001" min="0.001" max="1" placeholder="0.030" style="width:80px">
+  Corr threshold:
+  <input type="number" id="globalCorrThreshold" step="0.01" min="0" max="1" placeholder="0.95" style="width:80px">
+  Pitch step (¢):
+  <input type="number" id="globalPitchStep" step="1" min="0" placeholder="∞" style="width:70px">
+  Tilt step:
+  <input type="number" id="globalTiltStep" step="0.01" min="0" placeholder="∞" style="width:70px">
+  <label style="margin-left:12px"><input type="checkbox" id="globalTrendNormalize" checked> Trend normalize</label>
+  Win (ms):
+  <input type="number" id="globalTrendWindowMs" step="50" min="100" max="5000" placeholder="600" style="width:80px">
+  <span style="color:#888"> — change values then click Re-analyze to re-run the pipeline on the cached buffers. Pitch/tilt blank = no gating (curves still measured + visualized).</span>
+</p>
+
+<div id="status" class="status">Ready.</div>
+
+<h2>Results</h2>
+<div id="results"></div>
+
+<h2>Output (paste into HexKeyLab.html)</h2>
+<pre id="output">// Run analysis to generate output</pre>
+
+<script src="analyzer-instruments.js"></script>
+<script src="analyzer-analysis.js"></script>
+<script src="analyzer-visualization.js"></script>
+<script src="analyzer-output.js"></script>
+<script>
+/* Inline harness — owns ALL_RESULTS state, fetches/decodes samples, drives the
+   four HKL* modules, and wires the UI events. The four modules are pure
+   reusable units; the glue lives here. */
+
+/* Populate configs textarea with defaults. Deferred via DOMContentLoaded to
+   beat Firefox's form-state restoration, which can otherwise overwrite an
+   earlier synchronous .value assignment with stale cached content. Reset
+   button lets the user force defaults back if anything diverges. */
+function resetConfigsToDefaults(){
+  document.getElementById('configs').value=JSON.stringify(HKLInstruments.DEFAULT_CONFIGS,null,2);
+}
+if(document.readyState==='loading'){
+  document.addEventListener('DOMContentLoaded',resetConfigsToDefaults);
+}else{
+  resetConfigsToDefaults();
+}
+document.getElementById('resetConfigs').addEventListener('click',resetConfigsToDefaults);
+
+var ctx=null;
+function getCtx(){
+  if(!ctx){
+    var AC=window.AudioContext||window.webkitAudioContext;
+    try{ctx=new AC({sampleRate:44100});}catch(e){ctx=new AC();}
+  }
+  return ctx;
+}
+
+async function analyzeOne(url, freq){
+  var c=getCtx();
+  var r=await fetch(url);
+  if(!r.ok)throw new Error('HTTP '+r.status);
+  var ab=await r.arrayBuffer();
+  var buf=await c.decodeAudioData(ab);
+  return HKLAnalysis.prepareLoop(buf, freq);
+}
+
+/* Global storage of all analyzed results, keyed by instrument.
+   Each entry: {sample:{name,freq}, result, rawRes, buf, opts, cfg, freq, failReason, row, chk}
+   rawRes is the raw prepareLoop output (always set when analysis ran, even on
+   failure — used by the graph button). buf is retained so the re-analyze
+   button can replay analysis with different gate thresholds without re-fetching. */
+var ALL_RESULTS={};
+
+/* Read the global threshold inputs at the top of the page and fold them into
+   a fresh gateOpts object. Empty inputs leave the per-instrument cfg.gateOpts
+   value (or the algorithm default) in place. Numerical inputs override even
+   when the per-instrument config sets a value — the user's session-level
+   override takes precedence. */
+function mergeGlobalThresholds(cfgOpts){
+  var merged={};
+  if(cfgOpts) for(var k in cfgOpts) merged[k]=cfgOpts[k];
+  function readNum(id){
+    var el=document.getElementById(id);
+    if(!el)return null;
+    var v=el.value.trim();
+    if(v==='')return null;
+    var n=parseFloat(v);
+    return isFinite(n)?n:null;
+  }
+  var rms=readNum('globalRmsStep');
+  var slope=readNum('globalSlopeStep');
+  var stride=readNum('globalSlopeStride');
+  var corr=readNum('globalCorrThreshold');
+  var pitch=readNum('globalPitchStep');
+  var tilt=readNum('globalTiltStep');
+  if(rms!==null)merged.rmsStepThreshold=rms;
+  if(slope!==null)merged.slopeStepThreshold=slope;
+  if(stride!==null)merged.slopeStrideSec=stride;
+  if(corr!==null)merged.corrThreshold=corr;
+  /* Pitch/tilt: blank input = no gate (curves still measured + drawn).
+     Numeric value = max |Δpitch| in cents / max relative |Δtilt|. */
+  if(pitch!==null)merged.pitchStepThresholdCents=pitch;
+  if(tilt!==null)merged.tiltStepThreshold=tilt;
+  /* Trend normalization. The checkbox is authoritative when present —
+     unchecked overrides any per-config trendNormalize:true. The window-ms
+     input overrides only when non-empty. */
+  var trendChk=document.getElementById('globalTrendNormalize');
+  if(trendChk)merged.trendNormalize=trendChk.checked;
+  var trendWin=readNum('globalTrendWindowMs');
+  if(trendWin!==null)merged.trendWindowMs=trendWin;
+  return merged;
+}
+
+/* Quality heuristic: is this sample "good" enough to auto-select?
+   count>=4 (clique filter drops many samples to 3-5), span>=500ms,
+   no sub-50ms gaps (crowded clusters). */
+function isGoodSample(res){
+  if(!res || !res.loopPts || res.loopPts.length<4) return false;
+  var pts=res.loopPts;
+  var span=pts[pts.length-1]-pts[0];
+  var gaps=[];for(var j=1;j<pts.length;j++)gaps.push(pts[j]-pts[j-1]);
+  var minGap=Math.min.apply(null,gaps);
+  if(span<0.5) return false;
+  if(minGap<0.05) return false;
+  return true;
+}
+
+async function analyzeAll(){
+  var configs;
+  try{configs=JSON.parse(document.getElementById('configs').value);}
+  catch(e){alert('Invalid JSON in configs: '+e.message);return;}
+  var status=document.getElementById('status');
+  var resultsDiv=document.getElementById('results');
+  var output=document.getElementById('output');
+  resultsDiv.innerHTML='';
+  output.textContent='';
+  ALL_RESULTS={};
+
+  for(var inst in configs){
+    var cfg=configs[inst];
+    ALL_RESULTS[inst]=[];
+    var noteList=HKLInstruments.enumerateRange(cfg.lowOct, cfg.highOct, cfg.noteStyle, cfg.noteSemis);
+
+    /* Header */
+    var header=document.createElement('div');header.className='instHeader';
+    var h=document.createElement('h3');h.textContent=inst;
+    var summary=document.createElement('span');summary.id='summary_'+inst;summary.textContent='0/0 samples';
+    header.appendChild(h);header.appendChild(summary);
+    resultsDiv.appendChild(header);
+
+    /* Table — Modulation column shows ampCV diagnostic from the unified
+       pipeline (high values flag heavy AMP tremolo / Leslie / breath wobble). */
+    var t=document.createElement('table');
+    t.innerHTML='<tr><th style="width:30px">✓</th><th>Sample</th><th>Freq</th>'+
+      '<th>Count</th><th>Span (s)</th><th>Min gap</th><th>Max gap</th>'+
+      '<th>Quality</th><th>Modulation</th><th>Status</th></tr>';
+    resultsDiv.appendChild(t);
+
+    var found=0,failed=0;
+
+    for(var i=0;i<noteList.length;i++){
+      var s=noteList[i];
+      status.textContent=inst+': fetching '+s.name+' ('+(i+1)+'/'+noteList.length+')';
+      status.className='status';
+      var url=HKLInstruments.buildUrl(cfg, s.name);
+      var row, res=null, rawRes=null, rowBuf=null, rowOpts=null, failReason=null;
+      try{
+        var c=getCtx();
+        var r=await fetch(url);
+        if(!r.ok){
+          if(r.status===404){continue;} /* silent skip for 404 */
+          throw new Error('HTTP '+r.status);
+        }
+        var ab=await r.arrayBuffer();
+        var buf=await c.decodeAudioData(ab);
+        /* transpose>1 means filename labels pitches above the actual audio
+           content. Pass the audio's true fundamental to prepareLoop so the
+           autocorrelation refinement and ZC analysis are correct. The output
+           emits freqActual *as-is* (= the file's actual audio fundamental),
+           so each samples.ts entry pairs `name` (the filename to fetch) with
+           `freq` (what that file actually plays at native rate=1.0). The
+           runtime engine no longer needs a transpose factor — the per-sample
+           freq is already correct, vibrato speed is preserved, and the only
+           cost is that the audible range tops out one octave below the
+           highest filename available on the CDN. */
+        var analysisFreq=s.freq/(cfg.transpose||1);
+        /* Fold global threshold overrides into per-instrument gateOpts.
+           Empty inputs leave defaults in place. The merged opts are stored
+           on the row entry so re-analyze can replay analysis on cached
+           buffers without re-fetching. */
+        rowOpts=mergeGlobalThresholds(cfg.gateOpts);
+        rowBuf=buf;
+        rawRes=HKLAnalysis.prepareLoop(buf, analysisFreq, rowOpts);
+        res=rawRes;
+        /* Per-sample segment-graph dump to console — one block per analyzed
+           note. Fired regardless of success/failure. */
+        HKLViz.dumpSegmentGraph(inst+'/'+s.name,rawRes);
+        if(!res.loopPts||res.loopPts.length<2){
+          failReason=(res.stats&&res.stats.failReason)||res.failReason||'null';res=null;
+        }
+      }catch(e){
+        failReason='ERROR: '+e.message;
+      }
+
+      /* Build row shell. Detailed cell content + tier class is handled by
+         renderRow, which is also reused by reAnalyzeAll on threshold changes. */
+      row=t.insertRow();
+      var chk=document.createElement('input');chk.type='checkbox';
+      chk.dataset.inst=inst;chk.dataset.name=s.name;
+      chk.addEventListener('change',function(e){
+        if(e.target.checked) e.target.closest('tr').classList.add('selected');
+        else e.target.closest('tr').classList.remove('selected');
+        updateSummary();
+      });
+      var entry={sample:s, result:res, rawRes:rawRes, buf:rowBuf, opts:rowOpts, cfg:cfg, freq:s.freq, failReason:failReason, row:row, chk:chk};
+      if(res){
+        if(isGoodSample(res))entry.chk.checked=true;
+        found++;
+      }else{
+        failed++;
+      }
+      ALL_RESULTS[inst].push(entry);
+      HKLViz.renderRow(entry);
+    }
+
+    summary.textContent=found+' ok, '+failed+' failed';
+    if(found===0){summary.textContent+=' (check range?)';}
+  }
+
+  status.textContent='Analysis complete. Use checkboxes to select, then click "Generate output from selected".';
+  status.className='status ok';
+  document.getElementById('reAnalyze').disabled=false;
+  updateSummary();
+}
+
+/* Re-run prepareLoop on every cached buffer with the current global threshold
+   inputs folded into each entry's opts. No fetch/decode — uses the buf
+   retained from the initial Analyze pass. */
+function reAnalyzeAll(){
+  var status=document.getElementById('status');
+  var nOk=0,nFail=0;
+  for(var inst in ALL_RESULTS){
+    var rows=ALL_RESULTS[inst];
+    for(var i=0;i<rows.length;i++){
+      var entry=rows[i];
+      if(!entry.buf)continue;
+      var freq=entry.freq;
+      var analysisFreq=freq/(entry.cfg.transpose||1);
+      entry.opts=mergeGlobalThresholds(entry.cfg.gateOpts);
+      var newRes=HKLAnalysis.prepareLoop(entry.buf,analysisFreq,entry.opts);
+      entry.rawRes=newRes;
+      if(!newRes.loopPts||newRes.loopPts.length<2){
+        entry.failReason=(newRes.stats&&newRes.stats.failReason)||newRes.failReason||'null';
+        entry.result=null;
+        nFail++;
+      }else{
+        entry.failReason=null;
+        entry.result=newRes;
+        nOk++;
+      }
+      HKLViz.renderRow(entry);
+    }
+  }
+  updateSummary();
+  status.textContent='Re-analyzed: '+nOk+' ok, '+nFail+' failed.';
+  status.className='status ok';
+}
+
+function updateSummary(){
+  for(var inst in ALL_RESULTS){
+    var rows=ALL_RESULTS[inst];
+    var checked=rows.filter(function(r){return r.chk.checked;}).length;
+    var ok=rows.filter(function(r){return r.result;}).length;
+    var el=document.getElementById('summary_'+inst);
+    if(el) el.textContent=checked+' selected of '+ok+' analyzed';
+  }
+}
+
+function setAllChecks(filterFn){
+  for(var inst in ALL_RESULTS){
+    ALL_RESULTS[inst].forEach(function(r){
+      if(!r.chk)return;
+      var want=filterFn(r);
+      if(r.chk.checked!==want){
+        r.chk.checked=want;
+        if(want) r.row.classList.add('selected');
+        else r.row.classList.remove('selected');
+      }
+    });
+  }
+  updateSummary();
+}
+
+document.getElementById('run').addEventListener('click',function(){
+  this.disabled=true;
+  analyzeAll().finally(function(){
+    document.getElementById('run').disabled=false;
+  });
+});
+document.getElementById('reAnalyze').addEventListener('click',function(){
+  this.disabled=true;
+  try { reAnalyzeAll(); }
+  finally { this.disabled=false; }
+});
+document.getElementById('genOutput').addEventListener('click',function(){
+  HKLOutput.generateOutput(ALL_RESULTS);
+});
+document.getElementById('selectGood').addEventListener('click',function(){
+  setAllChecks(function(r){return isGoodSample(r.result);});
+});
+document.getElementById('selectAll').addEventListener('click',function(){
+  setAllChecks(function(r){return !!r.result;});
+});
+document.getElementById('selectNone').addEventListener('click',function(){
+  setAllChecks(function(r){return false;});
+});
+
+/* Custom file analyzer (for sample wizard foundation). The unified prepareLoop
+   handles every signal regime in one pipeline — no per-sample vibrato hint
+   needed; the slope gate + auto-smoothing detect modulation automatically. */
+document.getElementById('analyzeCustom').addEventListener('click',function(){
+  var freq=prompt('Fundamental frequency of this sample (Hz)?', '440');
+  if(!freq)return;
+  freq=parseFloat(freq);
+  document.getElementById('customFreq').textContent='(freq='+freq+'Hz)';
+  var input=document.getElementById('customFile');
+  input.onchange=async function(){
+    var file=input.files[0];if(!file)return;
+    var c=getCtx();
+    var ab=await file.arrayBuffer();
+    var buf=await c.decodeAudioData(ab);
+    var res=HKLAnalysis.prepareLoop(buf, freq);
+    var out=document.getElementById('output');
+    var fmt=HKLOutput.fmt;
+    if(res.loopPts){
+      var ebsStr='['+(res.validStartsByEnd||[]).map(function(arr){return '['+arr.join(',')+']';}).join(',')+']';
+      var emitFreq=(typeof res.freqActual==='number')?fmt(res.freqActual,3):freq;
+      /* 7-decimal precision so integer-sample positions round-trip exactly. */
+      out.textContent='{name:'+"'"+file.name+"'"+',freq:'+emitFreq+',loopPts:'+
+        '['+res.loopPts.map(function(p){return fmt(p,7);}).join(',')+']'+
+        ',validStartsByEnd:'+ebsStr+
+        ',trimStart:'+fmt(res.trimStart,7)+'}';
+    }else{
+      out.textContent='FAILED: '+(res.failReason||(res.stats&&res.stats.failReason)||'unknown');
+    }
+  };
+  input.click();
+});
+</script>
+</body>
+</html>

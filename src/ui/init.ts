@@ -43,6 +43,7 @@ import '../input/keyboard-notes.js';
 //   togglePedalCalibration, resetPedalBounds,
 // } from '../lumatone/calibration.js';
 import { toggleAutoSync } from '../lumatone/sync.js';
+import { initLumaDiag, isLumaDiagEnabled } from '../lumatone/lumadiag.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 
 const $ = <T extends HTMLElement>(id: string): T =>
@@ -88,6 +89,8 @@ initAudio();
 changeWaveform();
 
 requestMidi(handleMidiMessage);
+
+if (isLumaDiagEnabled()) initLumaDiag();
 
 cv.addEventListener('mousedown', function (e: MouseEvent) {
   const rect = cv.getBoundingClientRect();

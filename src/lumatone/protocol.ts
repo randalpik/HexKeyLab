@@ -24,6 +24,21 @@ export const SYSEX_CMD_CALIBRATE_EXPRESSION_PEDAL = 0x38;
 export const SYSEX_CMD_RESET_EXPRESSION_PEDAL_BOUNDS = 0x39;
 export const SYSEX_CMD_PERIPHERAL_CALIBRATION_DATA = 0x3E;
 
+/* Per-board threshold & sensitivity calibration (firmware 1.0.7+ / 1.0.10+).
+   The "SET_KEY_*" names are firmware-internal but apply to all keys on the
+   target board — there is no true per-key threshold command. */
+export const SYSEX_CMD_RESET_VELOCITY_CONFIG = 0x0A;
+export const SYSEX_CMD_RESET_AFTERTOUCH_CONFIG = 0x12;
+export const SYSEX_CMD_SET_KEY_MAX_THRESHOLD = 0x29;  /* packs (max, atThresh) */
+export const SYSEX_CMD_SET_KEY_MIN_THRESHOLD = 0x2A;  /* packs (minHigh, minLow) */
+export const SYSEX_CMD_SET_KEY_FADER_SENS = 0x2B;
+export const SYSEX_CMD_SET_KEY_AT_SENS = 0x2C;
+export const SYSEX_CMD_RESET_LUMATOUCH_CONFIG = 0x2F;
+export const SYSEX_CMD_SET_CC_ACTIVE_THRESHOLD = 0x32;
+export const SYSEX_CMD_RESET_BOARD_THRESHOLDS = 0x34;
+export const SYSEX_CMD_GET_BOARD_THRESHOLDS = 0x3A;
+export const SYSEX_CMD_GET_BOARD_SENSITIVITY = 0x3B;
+
 export const SYSEX_NACK = 0x00;
 export const SYSEX_ACK = 0x01;
 export const SYSEX_BUSY = 0x02;
@@ -82,6 +97,66 @@ export function buildRequestSysEx(cmd: number): SysexMessage {
     0xF0,
     SYSEX_MANU[0], SYSEX_MANU[1], SYSEX_MANU[2],
     0x00, cmd, 0x00, 0x00, 0x00, 0x00,
+    0xF7,
+  ]) as SysexMessage;
+}
+
+/* Board-addressed request: F0 00 21 50 <board> <cmd> 00 00 00 00 F7.
+   Used for per-board RESET and GET commands (0x34, 0x3A, 0x3B, etc.). */
+export function buildBoardRequestSysEx(board: number, cmd: number): SysexMessage {
+  return new Uint8Array([
+    0xF0,
+    SYSEX_MANU[0], SYSEX_MANU[1], SYSEX_MANU[2],
+    board, cmd, 0x00, 0x00, 0x00, 0x00,
+    0xF7,
+  ]) as SysexMessage;
+}
+
+/* Empirically (verified on Max's unit), the firmware only honors the low
+   nibble of each threshold/sensitivity value — non-zero high nibbles break
+   the board. The Terpstra driver source claims 8-bit (0..0xFE), but the
+   shipping firmware appears to truncate. So we clamp to 4 bits and always
+   send the high nibble as 0. The nibble-pair envelope is preserved (hi, lo)
+   for protocol compatibility. */
+const clamp4 = (v: number): number => v < 0 ? 0 : v > 0xF ? 0xF : (v | 0);
+
+/* CMD 0x29: per-board max threshold + aftertouch threshold (4-bit each). */
+export function buildSetMaxThreshold(board: number, maxThresh: number, atMax: number): SysexMessage {
+  const m = clamp4(maxThresh);
+  const a = clamp4(atMax);
+  return new Uint8Array([
+    0xF0,
+    SYSEX_MANU[0], SYSEX_MANU[1], SYSEX_MANU[2],
+    board, SYSEX_CMD_SET_KEY_MAX_THRESHOLD,
+    (m >> 4) & 0xF, m & 0xF,
+    (a >> 4) & 0xF, a & 0xF,
+    0xF7,
+  ]) as SysexMessage;
+}
+
+/* CMD 0x2A: per-board min threshold pair (high + low hysteresis). 4-bit each. */
+export function buildSetMinThreshold(board: number, minHigh: number, minLow: number): SysexMessage {
+  const h = clamp4(minHigh);
+  const l = clamp4(minLow);
+  return new Uint8Array([
+    0xF0,
+    SYSEX_MANU[0], SYSEX_MANU[1], SYSEX_MANU[2],
+    board, SYSEX_CMD_SET_KEY_MIN_THRESHOLD,
+    (h >> 4) & 0xF, h & 0xF,
+    (l >> 4) & 0xF, l & 0xF,
+    0xF7,
+  ]) as SysexMessage;
+}
+
+/* CMD 0x2B / 0x2C / 0x32: per-board single-value 4-bit setting (CC sensitivity,
+   AT sensitivity, or CC active threshold). Sent as 2 nibbles + two zero pads. */
+export function buildSetBoardSens(board: number, cmd: number, sensitivity: number): SysexMessage {
+  const s = clamp4(sensitivity);
+  return new Uint8Array([
+    0xF0,
+    SYSEX_MANU[0], SYSEX_MANU[1], SYSEX_MANU[2],
+    board, cmd,
+    (s >> 4) & 0xF, s & 0xF, 0x00, 0x00,
     0xF7,
   ]) as SysexMessage;
 }
