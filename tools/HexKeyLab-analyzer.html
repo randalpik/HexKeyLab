@@ -71,6 +71,9 @@ Ranges go from lowOctave to highOctave; any notes returning 404 are skipped auto
   <input type="number" id="globalSlopeStride" step="0.001" min="0.001" max="1" placeholder="0.030" style="width:80px">
   Corr threshold:
   <input type="number" id="globalCorrThreshold" step="0.01" min="0" max="1" placeholder="0.95" style="width:80px">
+  <label style="margin-left:12px"><input type="checkbox" id="globalTrendNormalize" checked> Trend normalize</label>
+  Win (ms):
+  <input type="number" id="globalTrendWindowMs" step="50" min="100" max="5000" placeholder="600" style="width:80px">
   <span style="color:#888"> — change values then click Re-analyze to re-run the pipeline on the cached buffers.</span>
 </p>
 
@@ -449,7 +452,95 @@ function findSteadyRegionMeanThreshold(d, sr, trimStart, trimEnd, opts){
   };
 }
 
+/* ═══ computeTrendCurve — slow-amplitude trend for sustained samples ═══
+   Estimates the slow-varying amplitude trend (bow-pressure / breath drift)
+   so segment selection can run on a normalized signal. Strictly for the
+   loop pipeline; never invoked on decay-instrument paths.
 
+   Algorithm:
+     1. Pick smoothing window: clamp(opts.trendWindowMs ?? 600,
+        max(8·T_actual_ms, 500), min(2000, 0.4·steadyDurMs)).
+        Floor guarantees ≥ ~4–5 vibrato cycles smoothed; ceiling keeps the
+        curve from collapsing to flat on short steady regions.
+     2. Build coarse RMS curve at 10ms hop over [trimStart, trimEnd] using
+        cumulative-sum-of-squares (O(N)).
+     3. Compute meanTrendOverSteady (mean curve value within steady span).
+     4. Divide curve by it (mean ≈ 1 over steady).
+     5. Apply floor 0.05 — caps 1/trend gain at 20×.
+     6. Linearly interpolate to per-sample Float32Array; trend = 1 outside
+        the trimmed region.
+   Returns one of:
+     { applied:true, dense, hopCurve:{values,hopSec,startSec},
+       meanRmsOverSteady, effectiveWinMs, underconstrained, windowMs, floor }
+     { applied:false, reason }                                            */
+function computeTrendCurve(d, sr, trimStart, trimEnd, steady, opts){
+  opts=opts||{};
+  var steadyDurSec=steady.secEnd-steady.secStart;
+  if(steadyDurSec<0.2) return{applied:false,reason:'steady region < 200ms'};
+  var T_actual_sec=opts.tActualSec||0;
+  var requestedWinMs=opts.trendWindowMs!==undefined?opts.trendWindowMs:600;
+  var floorVal=opts.trendFloor!==undefined?opts.trendFloor:0.05;
+  var minWinMs=Math.max(8*T_actual_sec*1000,500);
+  var maxWinMs=Math.min(2000,0.4*steadyDurSec*1000);
+  if(maxWinMs<minWinMs) maxWinMs=minWinMs;
+  var effectiveWinMs=Math.min(Math.max(requestedWinMs,minWinMs),maxWinMs);
+  var underconstrained=(effectiveWinMs<4*T_actual_sec*1000);
+  var winSamp=Math.max(2,Math.round(effectiveWinMs*0.001*sr));
+  var hopSamp=Math.max(1,Math.round(0.010*sr)); /* 10ms hop */
+  var halfWin=winSamp>>1;
+  var len=d.length;
+  /* Cumulative sum-of-squares over the full buffer — O(N) once. */
+  var cumSumSq=new Float64Array(len+1);
+  for(var i=0;i<len;i++)cumSumSq[i+1]=cumSumSq[i]+d[i]*d[i];
+  function rmsRange(lo,hi){
+    if(lo<0)lo=0;if(hi>len)hi=len;
+    if(hi<=lo)return 0;
+    return Math.sqrt((cumSumSq[hi]-cumSumSq[lo])/(hi-lo));
+  }
+  /* Build the coarse curve over [trimStart, trimEnd]. */
+  var curveStartSamp=trimStart;
+  var curveVals=[];
+  for(var s=trimStart;s<trimEnd;s+=hopSamp){
+    curveVals.push(rmsRange(s-halfWin,s+halfWin));
+  }
+  if(curveVals.length<3) return{applied:false,reason:'trim region too short for trend curve'};
+  /* Mean over the steady span (in coarse-curve index space). */
+  var idxStart=Math.max(0,Math.round((steady.steadyStart-trimStart)/hopSamp));
+  var idxEnd=Math.min(curveVals.length-1,Math.round((steady.steadyEnd-trimStart)/hopSamp));
+  if(idxEnd<=idxStart) return{applied:false,reason:'steady span maps to empty curve range'};
+  var sumS=0,cntS=0;
+  for(var i=idxStart;i<=idxEnd;i++){sumS+=curveVals[i];cntS++;}
+  var meanRmsOverSteady=cntS>0?sumS/cntS:0;
+  if(meanRmsOverSteady<1e-4) return{applied:false,reason:'trend mean below floor'};
+  /* Normalize to mean ≈ 1 over steady, then floor. */
+  var normalized=new Array(curveVals.length);
+  for(var i=0;i<curveVals.length;i++){
+    var v=curveVals[i]/meanRmsOverSteady;
+    if(v<floorVal)v=floorVal;
+    normalized[i]=v;
+  }
+  /* Linearly interpolate to per-sample resolution. Trend = 1 outside trim. */
+  var dense=new Float32Array(len);
+  for(var i=0;i<len;i++)dense[i]=1;
+  for(var s=trimStart;s<trimEnd;s++){
+    var fIdx=(s-curveStartSamp)/hopSamp;
+    var i0=Math.floor(fIdx);
+    if(i0<0){dense[s]=normalized[0];continue;}
+    if(i0>=normalized.length-1){dense[s]=normalized[normalized.length-1];continue;}
+    var frac=fIdx-i0;
+    dense[s]=normalized[i0]*(1-frac)+normalized[i0+1]*frac;
+  }
+  return{
+    applied:true,
+    dense:dense,
+    hopCurve:{values:normalized,hopSec:hopSamp/sr,startSec:trimStart/sr},
+    meanRmsOverSteady:meanRmsOverSteady,
+    effectiveWinMs:effectiveWinMs,
+    underconstrained:underconstrained,
+    windowMs:effectiveWinMs,
+    floor:floorVal
+  };
+}
 
 /* ═══ buildVisualCurves — env/slope curves for the per-row canvas ═══
    Returns the `envCurve`, `envCurveSlow`, `slopeCurve` triple that
@@ -723,13 +814,17 @@ function prepareLoop(buf, freq, opts){
   var slopeStrideSec=opts.slopeStrideSec!==undefined?opts.slopeStrideSec:0.030;
   var envWinDiag=Math.max(32,Math.round(4*T_actual_sec*sr));
   var curves=buildVisualCurves(d,sr,len,trimStart,trimEnd,T_actual_sec,envWinDiag,slopeStrideSec,null);
+  /* Gate-side references. Reassigned after trend computation if normalization
+     is applied — `selectSegments`, `buildCandidates`, and the per-candidate
+     slope computation all flow through these. */
+  var bufGate=buf, dGate=d, curvesGate=curves;
   var envHalfDiag=envWinDiag>>1;
   function rmsAtDiag(p){
     var lo=p-envHalfDiag;if(lo<0)lo=0;
     var hi=p+envHalfDiag;if(hi>len)hi=len;
     if(hi<=lo)return 0;
     var sum=0;
-    for(var s=lo;s<hi;s++)sum+=d[s]*d[s];
+    for(var s=lo;s<hi;s++)sum+=dGate[s]*dGate[s];
     return Math.sqrt(sum/(hi-lo+1e-9));
   }
   var hSamp=Math.max(32,Math.round(slopeStrideSec*sr));
@@ -758,9 +853,9 @@ function prepareLoop(buf, freq, opts){
       var inSepRej=!!(sepRejTimes&&sepRejTimes[t]);
       var env=rmsAtDiag(samp);
       var slope=null;
-      if(curves.envMean>1e-9){
+      if(curvesGate.envMean>1e-9){
         var ep=rmsAtDiag(samp+hSamp),em=rmsAtDiag(samp-hSamp);
-        slope=(ep-em)/(2*curves.envMean);
+        slope=(ep-em)/(2*curvesGate.envMean);
       }
       out.push({
         posSec:t,
@@ -816,6 +911,32 @@ function prepareLoop(buf, freq, opts){
         tDriftCents:+((1200*Math.log2(T_actual_sec/(period/sr))).toFixed(1))},
       diag:dFail};
   }
+  /* ── 5b. Trend normalization (sustained loop instruments only).
+       Estimate the slow amplitude drift and divide it out before pair-gate
+       matching. selectSegments is unchanged — we just hand it a flatter
+       buffer. Raw `d` is retained for +ZC enumeration, pitch refinement,
+       and steady-region detection; trend is positive everywhere so +ZC
+       locations are identical. */
+  var trendRes={applied:false,reason:'disabled by opts'};
+  var dNorm=null,bufNorm=null,curvesNorm=null;
+  var trendEnabled=opts.trendNormalize!==false;
+  if(trendEnabled){
+    trendRes=computeTrendCurve(d,sr,trimStart,trimEnd,steady,{
+      tActualSec:T_actual_sec,
+      trendWindowMs:opts.trendWindowMs,
+      trendFloor:opts.trendFloor
+    });
+    if(trendRes.applied){
+      dNorm=new Float32Array(len);
+      var td=trendRes.dense;
+      for(var ti=0;ti<len;ti++)dNorm[ti]=d[ti]/td[ti];
+      bufNorm={sampleRate:sr,length:len,getChannelData:function(){return dNorm;}};
+      curvesNorm=buildVisualCurves(dNorm,sr,len,trimStart,trimEnd,T_actual_sec,envWinDiag,slopeStrideSec,null);
+      /* Swap gate references onto the normalized signal so selectSegments,
+         buildCandidates, and the slope diagnostic all see the flatter curve. */
+      bufGate=bufNorm; dGate=dNorm; curvesGate=curvesNorm;
+    }
+  }
   /* ── 6. Restrict +ZCs to inside the steady region. */
   var inSteadyCands=[];
   for(var ci=0;ci<dedup.length;ci++){
@@ -824,6 +945,17 @@ function prepareLoop(buf, freq, opts){
   if(inSteadyCands.length<2){
     var dFew=addSteadyToDiag(baseDiag(),steady);
     dFew.candidates=buildCandidates(null,steady);
+    if(trendRes.applied){
+      dFew.trendCurve=trendRes.hopCurve;
+      dFew.trendNormalize={applied:true,windowMs:trendRes.effectiveWinMs,floor:trendRes.floor,
+        meanRmsOverSteady:trendRes.meanRmsOverSteady,
+        underconstrained:trendRes.underconstrained};
+      dFew.envCurveNorm=curvesNorm.envCurve;
+      dFew.envCurveSlowNorm=curvesNorm.envCurveSlow;
+      dFew.slopeCurveNorm=curvesNorm.slopeCurve;
+    } else {
+      dFew.trendNormalize={applied:false,reason:trendRes.reason};
+    }
     return{trimStart:trimStart/sr,loopPts:null,segments:[],
       stats:{mode:'segments',
         failReason:'too few +ZCs in steady region ('+inSteadyCands.length+'/'+dedup.length+')',
@@ -836,7 +968,7 @@ function prepareLoop(buf, freq, opts){
       diag:dFew};
   }
   /* ── 7. selectSegments. */
-  var segRes=selectSegments(buf,inSteadyCands,{
+  var segRes=selectSegments(bufGate,inSteadyCands,{
     tActualSec:T_actual_sec,
     rmsStepThreshold:opts.rmsStepThreshold,
     slopeStepThreshold:opts.slopeStepThreshold,
@@ -866,6 +998,52 @@ function prepareLoop(buf, freq, opts){
   diagFinal.sccOk=!!segRes.diag.sccOk;
   diagFinal.bridgeCount=segRes.diag.bridgeCount||0;
   diagFinal.segDiag=segRes.diag;
+  /* Trend metadata (analyzer-side only — runtime application is a later task).
+     Downsample the 10ms-hop curve to ~50ms for compact emission. */
+  var trendForEmit=null;
+  if(trendRes.applied){
+    diagFinal.trendCurve=trendRes.hopCurve;
+    diagFinal.trendNormalize={applied:true,windowMs:trendRes.effectiveWinMs,floor:trendRes.floor,
+      meanRmsOverSteady:trendRes.meanRmsOverSteady,
+      underconstrained:trendRes.underconstrained};
+    diagFinal.envCurveNorm=curvesNorm.envCurve;
+    diagFinal.envCurveSlowNorm=curvesNorm.envCurveSlow;
+    diagFinal.slopeCurveNorm=curvesNorm.slopeCurve;
+    /* Compute flatness CV (raw vs normalized slow env over steady span). */
+    function cvOverSteady(curve){
+      if(!curve||!curve.values||!curve.values.length)return null;
+      var st=curve.startSec,hop=curve.hopSec;
+      var iLo=Math.max(0,Math.floor((steady.secStart-st)/hop));
+      var iHi=Math.min(curve.values.length-1,Math.ceil((steady.secEnd-st)/hop));
+      if(iHi<=iLo)return null;
+      var sum=0,n=0;
+      for(var i=iLo;i<=iHi;i++){sum+=curve.values[i];n++;}
+      var mean=sum/n;
+      if(mean<1e-9)return null;
+      var sq=0;
+      for(var i=iLo;i<=iHi;i++){var dv=curve.values[i]-mean;sq+=dv*dv;}
+      return Math.sqrt(sq/n)/mean;
+    }
+    diagFinal.trendNormalize.rawCV=cvOverSteady(curves.envCurveSlow);
+    diagFinal.trendNormalize.normCV=cvOverSteady(curvesNorm.envCurveSlow);
+    /* Downsample 10ms-hop normalized trend to 50ms for emit. */
+    var emitHopMs=50;
+    var stride=Math.max(1,Math.round(emitHopMs/(trendRes.hopCurve.hopSec*1000)));
+    var emitVals=[];
+    for(var i=0;i<trendRes.hopCurve.values.length;i+=stride){
+      var lo=i, hi=Math.min(trendRes.hopCurve.values.length,i+stride);
+      var s=0;for(var j=lo;j<hi;j++)s+=trendRes.hopCurve.values[j];
+      emitVals.push(s/(hi-lo));
+    }
+    trendForEmit={
+      applied:true,
+      values:emitVals,
+      hopMs:emitHopMs,
+      startSec:trendRes.hopCurve.startSec
+    };
+  } else {
+    diagFinal.trendNormalize={applied:false,reason:trendRes.reason};
+  }
   var stats={
     mode:'segments',
     method:'segments',
@@ -887,7 +1065,7 @@ function prepareLoop(buf, freq, opts){
   };
   if(segRes.segments.length<2){
     stats.failReason='segments: '+(segRes.diag.failReason||'fewer than 2 segments survived');
-    return{trimStart:trimStart/sr,loopPts:null,segments:segRes.segments,stats:stats,diag:diagFinal};
+    return{trimStart:trimStart/sr,loopPts:null,segments:segRes.segments,stats:stats,diag:diagFinal,trend:trendForEmit};
   }
   return{
     trimStart:trimStart/sr,
@@ -895,7 +1073,8 @@ function prepareLoop(buf, freq, opts){
     segments:segRes.segments,
     freqActual:1/T_actual_sec,
     stats:stats,
-    diag:diagFinal
+    diag:diagFinal,
+    trend:trendForEmit
   };
 }
 
@@ -1157,6 +1336,13 @@ function mergeGlobalThresholds(cfgOpts){
   if(slope!==null)merged.slopeStepThreshold=slope;
   if(stride!==null)merged.slopeStrideSec=stride;
   if(corr!==null)merged.corrThreshold=corr;
+  /* Trend normalization. The checkbox is authoritative when present —
+     unchecked overrides any per-config trendNormalize:true. The window-ms
+     input overrides only when non-empty. */
+  var trendChk=document.getElementById('globalTrendNormalize');
+  if(trendChk)merged.trendNormalize=trendChk.checked;
+  var trendWin=readNum('globalTrendWindowMs');
+  if(trendWin!==null)merged.trendWindowMs=trendWin;
   return merged;
 }
 
@@ -1511,6 +1697,40 @@ function renderGraphForEntry(entry){
     if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
   }
   ctx.stroke();
+  /* Trend & normalized overlays (sustained loop, trend normalization active).
+     - Trend curve: dashed red, on the raw env y-scale (multiply mean-normalized
+       value by meanRmsOverSteady).
+     - Normalized fast env: solid purple. Values are already in raw-RMS units
+       (RMS of d/trend averages to meanRmsOverSteady over steady), so plot
+       directly. */
+  var trendOn=diag.trendNormalize&&diag.trendNormalize.applied;
+  if(trendOn&&diag.trendCurve&&diag.trendCurve.values&&diag.trendCurve.values.length){
+    var trC=diag.trendCurve;
+    var meanS=diag.trendNormalize.meanRmsOverSteady||1;
+    ctx.strokeStyle='#d33';
+    ctx.lineWidth=1.5;
+    ctx.setLineDash([5,3]);
+    ctx.beginPath();
+    for(var i=0;i<trC.values.length;i++){
+      var t=trC.startSec+i*trC.hopSec;
+      var x=xs(t),y=ys(trC.values[i]*meanS);
+      if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  if(trendOn&&diag.envCurveNorm&&diag.envCurveNorm.values&&diag.envCurveNorm.values.length){
+    var envN=diag.envCurveNorm;
+    ctx.strokeStyle='#8e44ad';
+    ctx.lineWidth=1.5;
+    ctx.beginPath();
+    for(var i=0;i<envN.values.length;i++){
+      var t=envN.startSec+i*envN.hopSec;
+      var x=xs(t),y=ys(envN.values[i]);
+      if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+  }
   /* Mean-RMS reference + steady-region threshold lines (segments pipeline). */
   if(diag.pipeline==='segments'&&diag.meanRms!=null){
     /* Mean RMS — solid grey line across steady region only. */
@@ -1603,6 +1823,21 @@ function renderGraphForEntry(entry){
     }
     ctx.stroke();
   }
+  /* Normalized slope (dashed purple, on top of raw). */
+  if(trendOn&&diag.slopeCurveNorm&&diag.slopeCurveNorm.values){
+    var slN=diag.slopeCurveNorm;
+    ctx.strokeStyle='#8e44ad';
+    ctx.lineWidth=1.2;
+    ctx.setLineDash([4,3]);
+    ctx.beginPath();
+    for(var i=0;i<slN.values.length;i++){
+      var t=slN.startSec+i*slN.hopSec;
+      var x=xs(t),y=ysSlope(slN.values[i]);
+      if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
   /* Boundary lines across both panels */
   function vLine(t,color,label){
     if(t<0||t>tMax)return;
@@ -1694,12 +1929,30 @@ function renderGraphForEntry(entry){
     var bridgeStr='bridges='+(diag.bridgeCount||0);
     var pickInfo=pcCount+' +ZCs · '+(stx.nValidPairs||0)+' valid pairs → '+segCount+' segments · '+sccStr+' · '+bridgeStr+
       ' · dots: '+nFinal+' green / '+nPartner+' blue / '+nIsolated+' yellow / '+nHidden+' hidden';
-    var legend='env panel: blue=fast env, gray=1000ms avg, dashed grey=meanRMS, dashed red=steady threshold.  bars: green segments span [a, b], arrow points toward b.  dots: green=segment endpoint, blue=separation-rejected pair endpoint (bumped by 100ms-spacing), yellow=outside steady, hidden=in steady but never formed a long-enough pair.';
+    var legend='env panel: blue=fast env, gray=1000ms avg, dashed grey=meanRMS, dashed red lines=trend (steady threshold + slow drift), purple=normalized env.  bars: green segments span [a, b], arrow points toward b.  dots: green=segment endpoint, blue=separation-rejected pair endpoint (bumped by 100ms-spacing), yellow=outside steady, hidden=in steady but never formed a long-enough pair.';
     var paramInfo='envWin='+(diag.envWinSec*1000).toFixed(1)+'ms  slopeStride=±'+((diag.slopeHSec||0)*1000).toFixed(1)+'ms  rmsThresh='+diag.rmsStepThreshold+'  slopeThresh='+diag.slopeStepThreshold;
     if(diag.steadyStartSec!=null){
       paramInfo+='  steady=['+diag.steadyStartSec.toFixed(2)+'–'+diag.steadyEndSec.toFixed(2)+']s';
     }
-    entry.graphInfo.textContent=title+'  ·  '+pickInfo+'\n'+legend+'\n'+paramInfo;
+    var trendInfo='';
+    if(diag.trendNormalize){
+      if(diag.trendNormalize.applied){
+        var tn=diag.trendNormalize;
+        var raw=tn.rawCV,nrm=tn.normCV;
+        trendInfo='\ntrend: ';
+        if(raw!=null&&nrm!=null){
+          var ratio=nrm>1e-9?(raw/nrm):0;
+          trendInfo+='rawCV='+raw.toFixed(3)+' normCV='+nrm.toFixed(3)+
+            ' (compressed '+ratio.toFixed(1)+'×)  win='+Math.round(tn.windowMs)+'ms';
+        } else {
+          trendInfo+='applied (win='+Math.round(tn.windowMs)+'ms)';
+        }
+        if(tn.underconstrained) trendInfo+='  ⚠underconstrained';
+      } else {
+        trendInfo='\ntrend: not applied ('+diag.trendNormalize.reason+')';
+      }
+    }
+    entry.graphInfo.textContent=title+'  ·  '+pickInfo+'\n'+legend+'\n'+paramInfo+trendInfo;
   }
 }
 

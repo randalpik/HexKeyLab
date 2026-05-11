@@ -250,6 +250,13 @@ function analyzeLoop(buf, freq, cfg, fns) {
     if (opts.corrThreshold === undefined) opts.corrThreshold = 0.90;
     if (opts.corrWindowPeriods === undefined) opts.corrWindowPeriods = 2;
   }
+  // Trend normalization defaults — sustained loop instruments only. Divides
+  // out slow bow/breath drift before pair-gate matching so peaks/troughs sit
+  // on a consistent RMS level. Per-instrument gateOpts can opt out for
+  // sources where the slow envelope is musical content (organ Leslie,
+  // plucked harpsichord).
+  if (opts.trendNormalize === undefined) opts.trendNormalize = true;
+  if (opts.trendWindowMs === undefined) opts.trendWindowMs = 600;
   return fns.prepareLoop(buf, freq, opts);
 }
 
@@ -446,7 +453,16 @@ function emitSampleEntry(r, cfg) {
   // validStartsByEnd anymore.
   const segs = (r.res.segments || []).slice().sort((p, q) => p.a - q.a);
   const segsStr = '[' + segs.map(s => `{a:${fmt(s.a, 7)},b:${fmt(s.b, 7)}}`).join(',') + ']';
-  return `        {name:'${r.note}',freq:${freqStr}${gainStr}${fileStr},segments:${segsStr},trimStart:${fmt(r.res.trimStart, 7)}}`;
+  // Trend curve (sustained loop only). Compact dense array at 50ms hop;
+  // values are mean-normalized (~1 over steady region) so the runtime can
+  // apply 1/trend as a gain envelope without altering average loudness.
+  // Absent when the analyzer skipped normalization (e.g. steady region too
+  // short or instrument opted out via gateOpts.trendNormalize:false).
+  const trend = r.res.trend;
+  const trendStr = (trend && trend.applied && trend.values && trend.values.length)
+    ? `,trend:[${trend.values.map(v => fmt(v, 4)).join(',')}],trendHopMs:${trend.hopMs},trendStartSec:${fmt(trend.startSec, 4)}`
+    : '';
+  return `        {name:'${r.note}',freq:${freqStr}${gainStr}${fileStr},segments:${segsStr},trimStart:${fmt(r.res.trimStart, 7)}${trendStr}}`;
 }
 
 // Path-specific default comments. Override per-instrument via cfg.comment
