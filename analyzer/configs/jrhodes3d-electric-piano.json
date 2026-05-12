@@ -1,7 +1,7 @@
 {
   "instrumentKey": "electric_piano",
   "displayName": "Electric Piano (Rhodes)",
-  "baseUrl": "https://cdn.jsdelivr.net/gh/jlearman/jRhodes3d-wav@master/jRhodes3d-st-wav/",
+  "baseUrl": "https://raw.githubusercontent.com/jlearman/jRhodes3d-wav/master/jRhodes3d-st-wav/",
   "ext": ".wav",
   "filePattern": "A_{MIDI}__{NOTE}_5-ST.wav",
   "noteStyle": "sharp",

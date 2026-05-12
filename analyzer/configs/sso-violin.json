@@ -1,7 +1,7 @@
 {
   "instrumentKey": "violin",
   "displayName": "Violin (SSO)",
-  "baseUrl": "https://cdn.jsdelivr.net/gh/peastman/sso@master/Sonatina%20Symphonic%20Orchestra/Samples/Violin/",
+  "baseUrl": "https://raw.githubusercontent.com/peastman/sso/master/Sonatina%20Symphonic%20Orchestra/Samples/Violin/",
   "ext": ".wav",
   "filePattern": "violin-{NOTE_LOWER}.wav",
   "noteStyle": "sharp",
@@ -19,8 +19,10 @@
     "legato sustains, sampled at minor thirds (G3, A#3, C#4, E4, G4, ...,",
     "C#7 — noteSemis [1,4,7,10] picks exactly those four per octave).",
     "Lowercase filenames with literal `#` for sharps (`violin-a#4.wav`);",
-    "jsdelivr is case-sensitive, uppercase 403s. The {NOTE_LOWER} placeholder",
-    "produces the lowercased note name; sharps URL-encode to %23 at fetch.",
+    "the source repo is case-sensitive, uppercase 404s. The {NOTE_LOWER}",
+    "placeholder produces the lowercased note name; sharps URL-encode to",
+    "%23 at fetch. Hosted via raw.githubusercontent.com — jsdelivr's CDN",
+    "returns intermittent 404s and multi-second hangs on these WAVs.",
     "First instrument migrated to the segment-based pipeline (see prepareLoop",
     "/ selectSegments)."
   ]

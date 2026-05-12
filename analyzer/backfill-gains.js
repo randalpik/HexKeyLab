@@ -101,7 +101,14 @@ function parseInstruments(src) {
     const samples = [];
     for (let j = start + 1; j < end; j++) {
       const sm = lines[j].match(/^ *\{name:'([^']+)'/);
-      if (sm) samples.push({ name: sm[1], lineIdx: j });
+      if (!sm) continue;
+      /* Per-sample `file:` is emitted whenever the resolved URL can't be
+         reconstructed from `{NOTE}{ext}` — i.e. multi-pattern configs (Splendid
+         piano, VCSL harpsichord) and configs using {MIDI}/{NOTE_LOWER}/
+         {NOTE_LETTER} placeholders (FluidR3 harp, peastman SSO). When present
+         it's the URL path relative to baseUrl, already URL-encoded. */
+      const fm = lines[j].match(/,file:'([^']+)'/);
+      samples.push({ name: sm[1], file: fm ? fm[1] : null, lineIdx: j });
     }
     instruments[key] = { key, baseUrl: baseUrlM[1], ext: extM[1], vibrato, decays, samples };
     i = end + 1;
@@ -111,13 +118,24 @@ function parseInstruments(src) {
 
 // ─── fetch + decode (shared cache with generate-samples.js) ──────────────────
 
-function fetchOne(cacheSubdir, sampleName, baseUrl, ext) {
-  const dir = path.join(CACHE_DIR, cacheSubdir);
-  fs.mkdirSync(dir, { recursive: true });
-  const mp3 = path.join(dir, `${sampleName}${ext}`);
+function fetchOne(cacheSubdir, sample, baseUrl, ext) {
+  /* relPath: the URL path relative to baseUrl AND the cache path under
+     CACHE_DIR/<cacheSubdir>. When samples-data.ts carries a `file:` field
+     (multi-pattern configs, custom placeholder configs), use it verbatim —
+     it's already URL-encoded and matches generate-samples.js's cache key.
+     Otherwise fall back to the simple `{name}{ext}` convention. */
+  const relPath = sample.file || `${sample.name}${ext}`;
+  const mp3 = path.join(CACHE_DIR, cacheSubdir, relPath);
+  fs.mkdirSync(path.dirname(mp3), { recursive: true });
   if (fs.existsSync(mp3) && fs.statSync(mp3).size > 0) return mp3;
-  const url = (baseUrl + sampleName + ext).replace(/#/g, '%23');
-  const r = spawnSync('curl', ['-sLfo', mp3, url], { stdio: 'ignore' });
+  /* Only encode `#` for the legacy no-file path; per-sample `file:` is
+     already encoded so a second pass would double-encode. */
+  const url = sample.file ? (baseUrl + relPath) : (baseUrl + relPath).replace(/#/g, '%23');
+  /* --max-time guards against jsdelivr / GitHub raw stalls. Without it a
+     single slow connection can wedge the whole backfill for tens of minutes;
+     30s is generous for a small sample and lets transient slowness retry on
+     the next run via cache miss. */
+  const r = spawnSync('curl', ['-sLfo', mp3, '--max-time', '30', url], { stdio: 'ignore' });
   if (r.status !== 0) {
     try { fs.unlinkSync(mp3); } catch {}
     return null;
@@ -182,30 +200,60 @@ function peakOver(d, start, end) {
   return p;
 }
 
-function measureRmsLoop(d, instr, fns) {
-  const trim = findTrimStart(d);
+function stereoRmsOver(stereo, start, end) {
+  if (end <= start) return 0;
+  let sumSq = 0;
+  for (let i = start; i < end; i++) {
+    const l = stereo[2*i], r = stereo[2*i+1];
+    sumSq += l*l + r*r;
+  }
+  return Math.sqrt(sumSq / (2 * (end - start)));
+}
+
+function stereoPeakOver(stereo, start, end) {
+  let p = 0;
+  for (let i = start; i < end; i++) {
+    const aL = Math.abs(stereo[2*i]);
+    const aR = Math.abs(stereo[2*i+1]);
+    const a = aL > aR ? aL : aR;
+    if (a > p) p = a;
+  }
+  return p;
+}
+
+function measureRmsLoop(stereo, mono, instr, fns) {
+  /* findSteadyRegion still operates on the mono signal — its 50ms/10ms RMS
+     curve is a steadiness detector, not a loudness measure, so the mono
+     downmix doesn't bias it. Loudness measurement itself (rms + peak) uses
+     stereo so it matches what the listener hears with both ears. See
+     measureDecay comment for why mono downmix breaks on decorrelated stereo
+     channels. */
+  const trim = findTrimStart(mono);
   /* Vibrato instruments need smoothing on the RMS curve so the AMP cycle
      doesn't drag troughs below 70% of peak and shatter the steady region. */
   const opts = { smoothMs: instr.vibrato ? 300 : 0 };
-  const res = fns.findSteadyRegion(d, SR, trim, d.length, opts);
+  const res = fns.findSteadyRegion(mono, SR, trim, mono.length, opts);
   if (res.failReason) return { rms: null, failReason: res.failReason };
   return {
-    rms: rmsOver(d, res.steadyStart, res.steadyEnd),
-    peak: peakOver(d, res.steadyStart, res.steadyEnd),
+    rms: stereoRmsOver(stereo, res.steadyStart, res.steadyEnd),
+    peak: stereoPeakOver(stereo, res.steadyStart, res.steadyEnd),
     region: 'steady',
   };
 }
 
 function measureDecay(stereo, mono) {
-  /* Decay-path measurement matches the loop path's shape: RMS over a fixed
-     window after trim (drives the gain target via TARGET_RMS), plus stereo
-     peak in the same window (drives the peak-ceiling clip protection).
-     RMS uses mono (matches loop convention); peak uses STEREO max(|L|,|R|)
-     since that's what the browser plays.
+  /* Decay-path measurement: stereo-combined RMS over a fixed window after
+     trim (drives the gain target via TARGET_RMS), plus stereo peak in the
+     same window (drives the peak-ceiling clip protection).
 
-     Replaces the old pure-peak normalization, which produced 4–8 dB of
-     perceived-loudness drift across the keyboard because crest factor
-     varies note-to-note. */
+     RMS uses stereo combined energy — sqrt(Σ(L²+R²) / 2N) — NOT mono
+     downmix. Mono RMS under-reports loudness for recordings with
+     decorrelated stereo channels (e.g. Splendid Grand Piano hammer
+     transients): L+R cancels the per-channel peaks and the measured RMS
+     reads 5–7 dB low, which makes the peak-ceiling engage incorrectly and
+     under-gains the sample. Stereo combined RMS matches what the listener
+     hears with both ears. Kept identical to generate-samples.js measureDecay
+     so re-runs of either tool produce the same gain values. */
   const trim = findTrimStart(mono);
   const winLen = Math.round(SR * DECAY_RMS_WINDOW_S);
   const monoLen = mono.length;
@@ -217,15 +265,17 @@ function measureDecay(stereo, mono) {
     return { peak: null, rms: null, failReason: 'sample shorter than 50ms after trim' };
   }
   let peakAbs = 0;
+  let sumSq = 0;
   for (let i = trim; i < end; i++) {
-    const aL = Math.abs(stereo[2*i]);
-    const aR = Math.abs(stereo[2*i+1]);
+    const l = stereo[2*i];
+    const r = stereo[2*i+1];
+    const aL = Math.abs(l);
+    const aR = Math.abs(r);
     const a = aL > aR ? aL : aR;
     if (a > peakAbs) peakAbs = a;
+    sumSq += l*l + r*r;
   }
-  let sumSq = 0;
-  for (let i = trim; i < end; i++) sumSq += mono[i] * mono[i];
-  const rms = Math.sqrt(sumSq / (end - trim));
+  const rms = Math.sqrt(sumSq / (2 * (end - trim)));
   return {
     rms,
     peak: peakAbs,
@@ -292,14 +342,15 @@ function patchEntryLine(line, gainStr) {
     reportLines.push(`| --- | ---: | ---: | ---: | ---: | --- |`);
 
     for (const s of instr.samples) {
-      const mp3 = fetchOne(cacheSubdir, s.name, instr.baseUrl, instr.ext);
+      const mp3 = fetchOne(cacheSubdir, s, instr.baseUrl, instr.ext);
       if (!mp3) {
         console.error(`  ${s.name}: fetch failed`);
         reportLines.push(`| ${s.name} | — | — | — | fetch failed |`);
         continue;
       }
       const d = decodeOne(mp3);
-      const meas = instr.decays ? measureDecay(decodeStereo(mp3), d) : measureRmsLoop(d, instr, fns);
+      const stereo = decodeStereo(mp3);
+      const meas = instr.decays ? measureDecay(stereo, d) : measureRmsLoop(stereo, d, instr, fns);
       const measFailed = (meas.rms == null);
       if (measFailed) {
         console.error(`  ${s.name}: ${meas.failReason}`);

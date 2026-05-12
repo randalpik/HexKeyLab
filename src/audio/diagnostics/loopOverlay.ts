@@ -243,12 +243,30 @@ function buildMasterControls(parent: HTMLDivElement): void {
      audio.limiter on every change so a late audio-init (cbAudio toggled on
      after loopdiag panel exists) is handled — if the params aren't there yet,
      the slider is a no-op and the next change will land once they exist. */
-  addParamRow(parent, 'Shelf freq', 1000, 16000, 100, 6000,
-    (v) => v.toFixed(0) + ' Hz',
-    (v) => { if (audio.highShelf) audio.highShelf.frequency.value = v; });
-  addParamRow(parent, 'Shelf gain', -18, 6, 0.5, 0,
-    (v) => v.toFixed(1) + ' dB',
-    (v) => { if (audio.highShelf) audio.highShelf.gain.value = v; });
+  addParamRow(
+    parent,
+    "Shelf freq",
+    1000,
+    16000,
+    100,
+    5600,
+    (v) => v.toFixed(0) + " Hz",
+    (v) => {
+      if (audio.highShelf) audio.highShelf.frequency.value = v;
+    },
+  );
+  addParamRow(
+    parent,
+    "Shelf gain",
+    -18,
+    6,
+    0.5,
+    -12,
+    (v) => v.toFixed(1) + " dB",
+    (v) => {
+      if (audio.highShelf) audio.highShelf.gain.value = v;
+    },
+  );
   addParamRow(parent, 'Limit thresh', -24, 0, 0.5, -3,
     (v) => v.toFixed(1) + ' dB',
     (v) => { if (audio.limiter) audio.limiter.threshold.value = v; });

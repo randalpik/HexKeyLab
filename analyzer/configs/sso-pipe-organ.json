@@ -1,7 +1,7 @@
 {
   "instrumentKey": "pipe_organ",
   "displayName": "Pipe Organ",
-  "baseUrl": "https://cdn.jsdelivr.net/gh/peastman/sso@master/Sonatina%20Symphonic%20Orchestra/Samples/Organ/great-opendiapason8ft/",
+  "baseUrl": "https://raw.githubusercontent.com/peastman/sso/master/Sonatina%20Symphonic%20Orchestra/Samples/Organ/great-opendiapason8ft/",
   "ext": ".flac",
   "filePattern": "{MIDI}-{NOTE_LETTER}.flac",
   "noteStyle": "sharp",

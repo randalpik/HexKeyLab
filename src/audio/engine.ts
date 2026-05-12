@@ -78,8 +78,8 @@ export function initAudio(): void {
   audio.masterBus = audio.audioCtx.createGain(); audio.masterBus.gain.value = 1.0;
   audio.highShelf = audio.audioCtx.createBiquadFilter();
   audio.highShelf.type = 'highshelf';
-  audio.highShelf.frequency.value = 6000;
-  audio.highShelf.gain.value = 0;
+  audio.highShelf.frequency.value = 5600;
+  audio.highShelf.gain.value = -12;
   audio.limiter = audio.audioCtx.createDynamicsCompressor();
   audio.limiter.threshold.value = -3;
   audio.limiter.ratio.value = 20;

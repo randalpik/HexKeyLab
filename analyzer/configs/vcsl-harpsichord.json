@@ -1,7 +1,7 @@
 {
   "instrumentKey": "harpsichord",
   "displayName": "Harpsichord (Flemish)",
-  "baseUrl": "https://cdn.jsdelivr.net/gh/sgossner/VCSL@master/Chordophones/Zithers/Harpsichord%2C%20Flemish/",
+  "baseUrl": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Harpsichord%2C%20Flemish/",
   "ext": ".wav",
   "filePatterns": [
     "Sustains/Low/HarpsiRH_Low_Far_{NOTE}_rr1.wav",

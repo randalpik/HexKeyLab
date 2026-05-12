@@ -1,7 +1,7 @@
 {
   "instrumentKey": "harp",
   "displayName": "Concert Harp",
-  "baseUrl": "https://cdn.jsdelivr.net/gh/peastman/sso@master/Sonatina%20Symphonic%20Orchestra/Samples/Harp/",
+  "baseUrl": "https://raw.githubusercontent.com/peastman/sso/master/Sonatina%20Symphonic%20Orchestra/Samples/Harp/",
   "ext": ".wav",
   "filePattern": "harp-{NOTE_LOWER}.wav",
   "noteStyle": "sharp",

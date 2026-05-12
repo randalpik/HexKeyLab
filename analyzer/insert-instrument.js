@@ -56,12 +56,13 @@ function findBlockBounds(lines, key) {
 }
 
 function findInsertionPoint(lines) {
-  // Insert just before the closing `  };` of `var INSTRUMENTS: Record<...>`.
-  // That's the line matching `^  };` after the first match of `INSTRUMENTS:`.
+  // Insert just before the closing brace of `export const INSTRUMENTS: Record<...>`.
+  // The current file has it at column 0 (`};`); accept indented variants too in
+  // case the formatter ever wraps the map.
   let inMap = false;
   for (let i = 0; i < lines.length; i++) {
     if (!inMap && /INSTRUMENTS:\s*Record/.test(lines[i])) inMap = true;
-    if (inMap && lines[i] === '  };') return i;
+    if (inMap && (lines[i] === '};' || lines[i] === '  };')) return i;
   }
   return -1;
 }

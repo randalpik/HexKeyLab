@@ -292,13 +292,24 @@ function rmsOver(d, start, end) {
 }
 
 function measureDecay(stereo, mono) {
-  /* Decay-path loudness measure: RMS over DECAY_RMS_WINDOW_S after trim
-     (perceptual onset loudness, drives the gain target) plus the stereo
-     peak over the same window (clip-protection ceiling). RMS uses mono
-     (matches loop-path measurement convention); peak uses STEREO max(|L|,|R|)
-     since that's what the browser plays and what determines clip risk.
+  /* Decay-path loudness measure: stereo-combined RMS over DECAY_RMS_WINDOW_S
+     after trim (perceptual onset loudness, drives the gain target) plus stereo
+     peak over the same window (clip-protection ceiling).
 
-     Pure peak normalization was the previous approach but produced 4–8 dB
+     RMS uses stereo combined energy — sqrt(Σ(L²+R²) / 2N) — NOT the mono
+     downmix. Mono RMS was the previous approach but it under-reports loudness
+     for recordings with decorrelated stereo channels (e.g. Splendid Grand
+     Piano hammer transients): when L and R carry opposite-phase peaks the
+     (L+R)/2 downmix cancels them, the measured RMS reads 5–7 dB low, the
+     pipeline thinks the crest factor is huge, the peak ceiling engages
+     incorrectly, and the sample plays back significantly below target. Stereo
+     combined RMS equals what the listener hears with both ears and matches
+     the per-channel RMS for correlated signals — so the fix is loss-neutral
+     for instruments without decorrelated stereo.
+
+     Peak still uses STEREO max(|L|,|R|) — clip risk is per-channel.
+
+     Pure peak normalization was the original approach but produced 4–8 dB
      of perceived-loudness drift across the keyboard because crest factor
      varies note-to-note. Targeting RMS instead, with a peak ceiling to
      prevent clipping on high-crest notes, matches the loop-path shape. */
@@ -309,19 +320,42 @@ function measureDecay(stereo, mono) {
   const end = Math.min(trim + winLen, monoLen);
   if (end - trim < Math.round(SR * 0.05)) return null;  /* need ≥50ms of audio */
   let peakAbs = 0;
+  let sumSq = 0;
   for (let i = trim; i < end; i++) {
-    const aL = Math.abs(stereo[2*i]);
-    const aR = Math.abs(stereo[2*i+1]);
+    const l = stereo[2*i];
+    const r = stereo[2*i+1];
+    const aL = Math.abs(l);
+    const aR = Math.abs(r);
     const a = aL > aR ? aL : aR;
     if (a > peakAbs) peakAbs = a;
+    sumSq += l*l + r*r;
   }
-  let sumSq = 0;
-  for (let i = trim; i < end; i++) sumSq += mono[i] * mono[i];
-  const rms = Math.sqrt(sumSq / (end - trim));
+  const rms = Math.sqrt(sumSq / (2 * (end - trim)));
   return { peak: peakAbs, rms };
 }
 
-function measureRmsLoop(d, res) {
+function stereoRmsOver(stereo, start, end) {
+  if (end <= start) return 0;
+  let sumSq = 0;
+  for (let i = start; i < end; i++) {
+    const l = stereo[2*i], r = stereo[2*i+1];
+    sumSq += l*l + r*r;
+  }
+  return Math.sqrt(sumSq / (2 * (end - start)));
+}
+
+function stereoPeakOver(stereo, start, end) {
+  let p = 0;
+  for (let i = start; i < end; i++) {
+    const aL = Math.abs(stereo[2*i]);
+    const aR = Math.abs(stereo[2*i+1]);
+    const a = aL > aR ? aL : aR;
+    if (a > p) p = a;
+  }
+  return p;
+}
+
+function measureRmsLoop(stereo, mono, res) {
   /* Loudness measure for gain normalization. Two-tier:
        (1) primary: RMS over the steady region — the analyzer's loop-body
            span, which is what the user actually hears during sustained
@@ -331,41 +365,48 @@ function measureRmsLoop(d, res) {
            span (<200ms) or fails entirely. Used to be the only measure
            but it overestimates loop loudness on soundfont samples whose
            attack RMS far exceeds their sustain RMS — gain too small,
-           playback ~20 dB below target. */
+           playback ~20 dB below target.
+     Both RMS and peak are computed from stereo (RMS as combined energy
+     sqrt(Σ(L²+R²)/2N), peak as per-frame max(|L|,|R|)) so the measurement
+     matches what the listener hears with both ears. See measureDecay
+     comment for why mono downmix breaks on decorrelated stereo. */
   const stats = res && res.stats;
   if (stats && stats.steadyStartSec != null && stats.steadyEndSec != null) {
     const start = Math.round(stats.steadyStartSec * SR);
     const end = Math.round(stats.steadyEndSec * SR);
     if (end - start >= Math.round(SR * 0.2)) {
-      return rmsOver(d, start, end);
+      return { rms: stereoRmsOver(stereo, start, end), peak: stereoPeakOver(stereo, start, end) };
     }
   }
   /* Fallback for samples with no usable steady region. */
   const trimStartSec = (res && typeof res.trimStart === 'number') ? res.trimStart : 0;
   const start = Math.max(0, Math.round(trimStartSec * SR));
-  const end = d.length;
+  const end = mono.length;
   if (end - start < Math.round(SR * 0.2)) return null;
   const winSamp = Math.min(end - start, Math.round(SR * 1.0));
   const hopSamp = Math.max(1, Math.round(SR * 0.1));
-  let bestRms = 0;
+  let bestRms = 0, bestStart = start;
   for (let s = start; s + winSamp <= end; s += hopSamp) {
-    const r = rmsOver(d, s, s + winSamp);
-    if (r > bestRms) bestRms = r;
+    const r = stereoRmsOver(stereo, s, s + winSamp);
+    if (r > bestRms) { bestRms = r; bestStart = s; }
   }
   const lastStart = end - winSamp;
   if (lastStart > start) {
-    const r = rmsOver(d, lastStart, end);
-    if (r > bestRms) bestRms = r;
+    const r = stereoRmsOver(stereo, lastStart, end);
+    if (r > bestRms) { bestRms = r; bestStart = lastStart; }
   }
-  return bestRms > 0 ? bestRms : null;
+  if (bestRms <= 0) return null;
+  return { rms: bestRms, peak: stereoPeakOver(stereo, bestStart, bestStart + winSamp) };
 }
 
-function computeGainFromRms(rms) {
-  if (rms == null || rms <= 0) return null;
-  return Math.max(GAIN_MIN, TARGET_RMS / rms);
-}
-
-function computeGainFromDecay(meas) {
+function computeGain(meas) {
+  /* Unified gain calculation for both loop and decay paths:
+       gain = min(TARGET_RMS / rms, TARGET_PEAK / peak), floored at GAIN_MIN.
+     The RMS-target hits TARGET_DBFS for the measurement window; the peak
+     ceiling kicks in only when RMS targeting would push the per-channel
+     stereo peak above TARGET_PEAK_DBFS (avoiding clipping). Measurement
+     windows differ (loop: steady region; decay: 200ms post-trim) but the
+     gain shape is identical. */
   if (!meas || meas.rms == null || meas.rms <= 0) return null;
   const gainRms = TARGET_RMS / meas.rms;
   const gainPeakCeiling = (meas.peak > 0) ? (TARGET_PEAK / meas.peak) : Infinity;
@@ -603,10 +644,13 @@ function emitBlock(picks, cfg) {
   const loopFlag  = cfg.decays ? 'loop:false' : 'loop:true';
   let header = `      ext:'${cfg.ext}',releaseTime:${cfg.releaseTime},volume:${cfg.volume},${loopFlag},${decayFlag}`;
   if (!cfg.decays && cfg.vibrato) header += ',vibrato:true';
-  // Emit filePattern only when non-default. Runtime engine uses
-  // filePattern if present, else falls back to '{NOTE}{ext}'.
+  // Emit filePattern only when non-default and only when filePatterns plural
+  // was NOT used — with filePatterns each sample carries its own `file:`
+  // field, so a header filePattern would be both redundant and misleading
+  // (loadConfig defaults cfg.filePattern to '{NOTE}.mp3' which is wrong for
+  // FLAC sources, and the value is never consulted at runtime either way).
   const defaultPattern = '{NOTE}' + cfg.ext;
-  if (cfg.filePattern && cfg.filePattern !== defaultPattern) {
+  if (!cfg.filePatterns && cfg.filePattern && cfg.filePattern !== defaultPattern) {
     header += `,filePattern:'${cfg.filePattern}'`;
   }
   lines.push(header + ',');
@@ -745,16 +789,11 @@ function buildReport(results, picks, cfg, fallbackNotes) {
                               : analyzeLoop(buf, analysisFreq, cfg, fns);
       const tier = cfg.decays ? classifyDecay(res) : classifyLoop(res);
       const d = buf.getChannelData();
-      let rms = null, peak = null, gain = null;
-      if (cfg.decays) {
-        const stereo = loadStereoRaw(fetched.rawStereo);
-        const meas = measureDecay(stereo, d);
-        if (meas) { peak = meas.peak; rms = meas.rms; }
-        gain = computeGainFromDecay(meas);
-      } else {
-        rms = measureRmsLoop(d, res);
-        gain = computeGainFromRms(rms);
-      }
+      const stereo = loadStereoRaw(fetched.rawStereo);
+      const meas = cfg.decays ? measureDecay(stereo, d) : measureRmsLoop(stereo, d, res);
+      const rms = meas ? meas.rms : null;
+      const peak = meas ? meas.peak : null;
+      const gain = computeGain(meas);
       const rec = { note: n.note, midi: n.midi, labeledFreq: n.labeledFreq, matchedFile: fetched.matchedFile, res, tier, rms, peak, gain };
       attempts.push({ patternIdx, matchedFile: fetched.matchedFile, tier, failReason: (res && (res.failReason || (res.stats && res.stats.failReason))) || null });
       if (!best || TIER_RANK[tier] > TIER_RANK[best.tier]) {
