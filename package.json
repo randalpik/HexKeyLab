@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "analyze": "node --max-old-space-size=8192 --expose-gc analyzer/generate-samples.js"
   },
   "devDependencies": {
     "@types/node": "25.6.2",

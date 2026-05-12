@@ -69,13 +69,33 @@ export function initAudio(): void {
   } else {
     console.log('AudioContext sampleRate: 44100 ✓');
   }
+  /* Master chain: all source buses → masterBus → highShelf → limiter → destination.
+     Defaults are tuned to be near-bypass for a single voice (shelf 0 dB; limiter
+     threshold −3 dB with hard knee — single voices at the −3 dBFS sample peak
+     ceiling won't push it). The limiter prevents dense-chord clipping at the
+     source; the high-shelf is opt-in tone-tilt for residual recorded HF hiss.
+     Both params are dialed in live via the ?loopdiag=1 overlay (no persistence). */
+  audio.masterBus = audio.audioCtx.createGain(); audio.masterBus.gain.value = 1.0;
+  audio.highShelf = audio.audioCtx.createBiquadFilter();
+  audio.highShelf.type = 'highshelf';
+  audio.highShelf.frequency.value = 6000;
+  audio.highShelf.gain.value = 0;
+  audio.limiter = audio.audioCtx.createDynamicsCompressor();
+  audio.limiter.threshold.value = -3;
+  audio.limiter.ratio.value = 20;
+  audio.limiter.attack.value = 0.003;
+  audio.limiter.release.value = 0.25;
+  audio.limiter.knee.value = 0;
+  audio.masterBus.connect(audio.highShelf);
+  audio.highShelf.connect(audio.limiter);
+  audio.limiter.connect(audio.audioCtx.destination);
   /* Bus gains are pass-through (1.0). Per-waveform target amplitudes are baked
      into the per-note `vol` in noteOn so that single-note RMS lands at the same
      target (−18 dBFS) as sample-based instruments. The buses remain so future
      global mix tweaks have a single attachment point. */
-  audio.oscGain = audio.audioCtx.createGain(); audio.oscGain.gain.value = 1.0; audio.oscGain.connect(audio.audioCtx.destination);
-  audio.squareGain = audio.audioCtx.createGain(); audio.squareGain.gain.value = 1.0; audio.squareGain.connect(audio.audioCtx.destination);
-  SampleEngine.init(audio.audioCtx, audio.audioCtx.destination); /* sampleMaster at 0.9 */
+  audio.oscGain = audio.audioCtx.createGain(); audio.oscGain.gain.value = 1.0; audio.oscGain.connect(audio.masterBus);
+  audio.squareGain = audio.audioCtx.createGain(); audio.squareGain.gain.value = 1.0; audio.squareGain.connect(audio.masterBus);
+  SampleEngine.init(audio.audioCtx, audio.masterBus); /* sampleMaster at 0.9 */
   if (isLoopDiagEnabled()) initLoopOverlay(audio.audioCtx, SampleEngine);
 }
 

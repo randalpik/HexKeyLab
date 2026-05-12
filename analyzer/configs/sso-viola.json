@@ -1,0 +1,23 @@
+{
+  "instrumentKey": "viola",
+  "displayName": "Viola (SSO)",
+  "baseUrl": "https://cdn.jsdelivr.net/gh/peastman/sso@master/Sonatina%20Symphonic%20Orchestra/Samples/Viola/",
+  "ext": ".flac",
+  "filePattern": "viola-sus-{NOTE_LOWER}.flac",
+  "noteStyle": "sharp_lower",
+  "noteSemis": [0, 3, 6, 9],
+  "lowOct": 3,
+  "highOct": 6,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "volume": 1.0,
+  "gateOpts": {"corrThreshold": 0.90, "corrWindowPeriods": 2},
+  "comment": [
+    "Sonatina Symphonic Orchestra solo Viola (sustain). 13 samples covering",
+    "a3-a5, c3-c6, d#3-d#5, f#3-f#5 — minor-third sampling matching the",
+    "other SSO solo strings. FLAC (not .wav like the section Violas). Lowercase",
+    "filenames per jsdelivr case-sensitivity."
+  ]
+}

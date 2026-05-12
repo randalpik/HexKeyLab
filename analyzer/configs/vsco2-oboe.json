@@ -8,7 +8,7 @@
   "noteSemis": [2, 5, 10],
   "lowOct": 2,
   "highOct": 5,
-  "transpose": 1,
+  "transpose": 0.5,
   "decays": false,
   "vibrato": false,
   "releaseTime": 0.2,
@@ -20,6 +20,8 @@
     "(D, F, A#) pattern across A#2-F5. v3 velocity (mf-ish). Default gates",
     "expected to pass — these are clean professional samples, unlike the",
     "soundfont-rendered MusyngKite oboe whose amplitude wobble required",
-    "loose gates and ultimately couldn't ship."
+    "loose gates and ultimately couldn't ship. transpose:0.5 because the",
+    "VSCO filename pitches are labeled an octave below the actual sounding",
+    "pitch."
   ]
 }

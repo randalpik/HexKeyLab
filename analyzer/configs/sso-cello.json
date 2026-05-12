@@ -1,0 +1,27 @@
+{
+  "instrumentKey": "cello",
+  "displayName": "Cello (SSO)",
+  "baseUrl": "https://cdn.jsdelivr.net/gh/peastman/sso@master/Sonatina%20Symphonic%20Orchestra/Samples/Cello/",
+  "ext": ".wav",
+  "filePatterns": [
+    "cello-{NOTE_LOWER}.wav",
+    "cello-{NOTE_LOWER}.flac"
+  ],
+  "noteStyle": "sharp_lower",
+  "noteSemis": [0, 3, 6, 9],
+  "lowOct": 2,
+  "highOct": 5,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "volume": 1.0,
+  "gateOpts": {"corrThreshold": 0.90, "corrWindowPeriods": 2},
+  "comment": [
+    "Sonatina Symphonic Orchestra solo Cello (sustain). SSO cello files use",
+    "a mixed-extension scheme — low/mid octaves are .wav, the top a few",
+    "(c5, a4, f#5, etc.) are .flac. filePatterns[] tries .wav first then",
+    ".flac for each note so both ranges resolve. Minor-third sampling per",
+    "octave; lowercase filenames are jsdelivr-case-sensitive."
+  ]
+}

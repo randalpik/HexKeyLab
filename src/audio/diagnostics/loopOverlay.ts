@@ -152,22 +152,24 @@ export function initLoopOverlay(ac: AudioContext, sampleEngine: SampleEngineSurf
   window.addEventListener('resize', resizeCanvas);
   window.addEventListener('keydown', onKey);
 
-  /* "Key data" toggle — opt-in for the input-side traces so the overlay
-     defaults to the RMS envelope alone. Sits inside the canvas zone but
-     gets pointerEvents:auto so the checkbox is actually clickable. */
+  /* Controls panel — "Key data" toggle plus the Master chain dials (shelf +
+     limiter). Sits in the canvas zone but gets pointerEvents:auto so the
+     inputs are interactive. Sized to fit the Master block; sits above the
+     canvas strip. */
   controlsEl = document.createElement('div');
   Object.assign(controlsEl.style, {
     position: 'fixed',
     right: '8px',
-    bottom: '198px',
+    bottom: '228px',
     color: 'rgba(255,255,255,0.85)',
     font: '11px sans-serif',
     background: 'rgba(0,0,0,0.6)',
-    padding: '2px 6px',
+    padding: '4px 8px',
     borderRadius: '3px',
     zIndex: '10000',
     pointerEvents: 'auto',
     userSelect: 'none',
+    minWidth: '260px',
   });
   const cb = document.createElement('input');
   cb.type = 'checkbox';
@@ -180,11 +182,85 @@ export function initLoopOverlay(ac: AudioContext, sampleEngine: SampleEngineSurf
   Object.assign(lbl.style, { cursor: 'pointer', verticalAlign: 'middle' });
   controlsEl.appendChild(cb);
   controlsEl.appendChild(lbl);
+  buildMasterControls(controlsEl);
   document.body.appendChild(controlsEl);
 
   console.log('%c[loopdiag] enabled · D=freeze · Shift+D=dump · \\=hide',
     'color:#0ff;font-weight:bold');
   rafId = requestAnimationFrame(tick);
+}
+
+/* One row in the Master block: a label, a range input wired to an AudioParam,
+   and a live numeric readout. Writes the slider value through `apply` so the
+   AudioParam (not a duplicate JS variable) is the source of truth — values
+   reset on reload because the master chain is rebuilt by initAudio(). */
+function addParamRow(
+  parent: HTMLDivElement,
+  label: string,
+  min: number, max: number, step: number, initial: number,
+  format: (v: number) => string,
+  apply: (v: number) => void,
+): void {
+  const row = document.createElement('div');
+  Object.assign(row.style, {
+    display: 'grid',
+    gridTemplateColumns: '78px 1fr 70px',
+    alignItems: 'center',
+    columnGap: '6px',
+    marginTop: '2px',
+  });
+  const lab = document.createElement('span');
+  lab.textContent = label;
+  const inp = document.createElement('input');
+  inp.type = 'range';
+  inp.min = String(min); inp.max = String(max); inp.step = String(step);
+  inp.value = String(initial);
+  Object.assign(inp.style, { width: '100%', margin: '0', cursor: 'pointer' });
+  const val = document.createElement('span');
+  val.textContent = format(initial);
+  Object.assign(val.style, { textAlign: 'right', fontVariantNumeric: 'tabular-nums' });
+  inp.addEventListener('input', () => {
+    const v = parseFloat(inp.value);
+    apply(v);
+    val.textContent = format(v);
+  });
+  row.appendChild(lab);
+  row.appendChild(inp);
+  row.appendChild(val);
+  parent.appendChild(row);
+}
+
+function buildMasterControls(parent: HTMLDivElement): void {
+  const hdr = document.createElement('div');
+  hdr.textContent = '── Master ──';
+  Object.assign(hdr.style, {
+    marginTop: '4px',
+    color: 'rgba(255,255,255,0.55)',
+    textAlign: 'center',
+  });
+  parent.appendChild(hdr);
+  /* Each row writes directly to its AudioParam. We re-fetch audio.highShelf /
+     audio.limiter on every change so a late audio-init (cbAudio toggled on
+     after loopdiag panel exists) is handled — if the params aren't there yet,
+     the slider is a no-op and the next change will land once they exist. */
+  addParamRow(parent, 'Shelf freq', 1000, 16000, 100, 6000,
+    (v) => v.toFixed(0) + ' Hz',
+    (v) => { if (audio.highShelf) audio.highShelf.frequency.value = v; });
+  addParamRow(parent, 'Shelf gain', -18, 6, 0.5, 0,
+    (v) => v.toFixed(1) + ' dB',
+    (v) => { if (audio.highShelf) audio.highShelf.gain.value = v; });
+  addParamRow(parent, 'Limit thresh', -24, 0, 0.5, -3,
+    (v) => v.toFixed(1) + ' dB',
+    (v) => { if (audio.limiter) audio.limiter.threshold.value = v; });
+  addParamRow(parent, 'Limit ratio', 1, 20, 0.5, 20,
+    (v) => v.toFixed(1),
+    (v) => { if (audio.limiter) audio.limiter.ratio.value = v; });
+  addParamRow(parent, 'Limit attack', 0.001, 0.1, 0.001, 0.003,
+    (v) => (v * 1000).toFixed(1) + ' ms',
+    (v) => { if (audio.limiter) audio.limiter.attack.value = v; });
+  addParamRow(parent, 'Limit release', 0.05, 1, 0.01, 0.25,
+    (v) => (v * 1000).toFixed(0) + ' ms',
+    (v) => { if (audio.limiter) audio.limiter.release.value = v; });
 }
 
 function resizeCanvas(): void {
@@ -482,4 +558,16 @@ function draw(): void {
   /* Bottom-right next to the time-axis ticks — keeps the top label strip
      reserved for seam labels exclusively. */
   cctx.fillText(status, w - tw - 8, h - 4);
+
+  /* Limiter gain-reduction readout, top-right. `reduction` is a read-only
+     property on DynamicsCompressorNode in dB (≤ 0). Most useful real-time
+     feedback for dialing threshold / ratio while playing dense chords. */
+  if (audio.limiter) {
+    const gr = audio.limiter.reduction;
+    const grStr = 'GR: ' + (gr >= -0.05 ? '0.0' : gr.toFixed(1)) + ' dB';
+    cctx.font = '11px sans-serif';
+    cctx.fillStyle = gr <= -3 ? '#f88' : gr <= -1 ? '#fc8' : 'rgba(255,255,255,0.55)';
+    const grw = cctx.measureText(grStr).width;
+    cctx.fillText(grStr, w - grw - 8, labelStripBottom - 2);
+  }
 }

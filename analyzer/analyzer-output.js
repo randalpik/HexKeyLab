@@ -4,7 +4,7 @@
    trimStart) at the precision the engine needs for sample-aligned
    playback. */
 
-window.HKLOutput = (function () {
+export const HKLOutput = (function () {
   function fmt(x, n) { return (+x.toFixed(n)).toString(); }
 
   function generateOutput(ALL_RESULTS) {

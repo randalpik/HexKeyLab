@@ -4,7 +4,7 @@
    and owns the per-row DOM lifecycle. Calls dumpSegmentGraph as a
    debug-console diagnostic. */
 
-window.HKLViz = (function () {
+export const HKLViz = (function () {
 /* ═══ dumpSegmentGraph — diagnostic for the segment-based pipeline ═══
    Prints the per-sample segment list plus an overlap-chain audit. The
    "perpetual cycle" check is now structural — segments form one SCC iff
@@ -18,18 +18,35 @@ function dumpSegmentGraph(noteName, res){
     console.log('[segments]',noteName,'no segments ('+(st.failReason||'unknown')+')');
     return;
   }
-  /* Sort by a, audit consecutive overlaps. */
+  /* Sort by a; audit overlap-graph connectivity via running max-b sweep
+     (the correct test — see comment in selectSegments). The old check only
+     compared adjacent pairs in sorted order and reported false breaks when
+     an earlier longer pair was bridging two short later pairs. */
   var sorted=segs.slice().sort(function(p,q){return p.a-q.a;});
   var overlaps=0,breaks=[];
-  for(var i=0;i<sorted.length-1;i++){
-    if(sorted[i].b>=sorted[i+1].a)overlaps++;
-    else breaks.push(i);
+  if(sorted.length>1){
+    var sweepMax=sorted[0].b;
+    for(var i=0;i<sorted.length-1;i++){
+      if(sorted[i].b>sweepMax)sweepMax=sorted[i].b;
+      if(sweepMax>=sorted[i+1].a)overlaps++;
+      else breaks.push(i);
+    }
   }
-  /* Bridge count: segment i is a bridge if b_{i-1} < a_{i+1}. */
+  /* Bridge count: segment i is a bridge iff removing it disconnects the
+     overlap graph. Same test as isBridge inside selectSegments. */
+  function isBridgeAudit(arr,idx){
+    if(arr.length<=2)return false;
+    var rem=[];for(var ri=0;ri<arr.length;ri++)if(ri!==idx)rem.push(arr[ri]);
+    if(rem.length<2)return false;
+    var rMaxB=rem[0].b;
+    for(var ri2=0;ri2<rem.length-1;ri2++){
+      if(rem[ri2].b>rMaxB)rMaxB=rem[ri2].b;
+      if(rMaxB<rem[ri2+1].a)return true;
+    }
+    return false;
+  }
   var bridges=0;
-  for(var i=1;i<sorted.length-1;i++){
-    if(sorted[i-1].b<sorted[i+1].a)bridges++;
-  }
+  for(var i=0;i<sorted.length;i++)if(isBridgeAudit(sorted,i))bridges++;
   var span=sorted[sorted.length-1].b-sorted[0].a;
   var totalLen=0;
   for(var i=0;i<sorted.length;i++)totalLen+=sorted[i].b-sorted[i].a;
@@ -45,7 +62,7 @@ function dumpSegmentGraph(noteName, res){
   if(st.nValidPairs!=null)console.log('  pipeline: nCandidates='+st.nCandidates+' nInSteady='+st.nInSteady+' nValidPairs='+st.nValidPairs+' nSegments='+st.nSegments);
   var sd=res.diag&&res.diag.segDiag;
   if(sd){
-    console.log('  pair rejects: rms='+sd.rejectByRms+' slope='+sd.rejectBySlope+' corr='+sd.rejectByCorr+' xfade='+sd.rejectByXfade+' pitch='+(sd.rejectByPitch||0)+' tilt='+(sd.rejectByTilt||0));
+    console.log('  pair rejects: rms='+sd.rejectByRms+' slope='+sd.rejectBySlope+' corr='+sd.rejectByCorr+' pitch='+(sd.rejectByPitch||0)+' tilt='+(sd.rejectByTilt||0)+' tiltSlope='+(sd.rejectByTiltSlope||0));
     if(sd.distHistogram){
       var h=sd.distHistogram;
       console.log('  pair-distance histogram (s): min='+h.min+' p25='+h.p25+' p50='+h.p50+' p75='+h.p75+' max='+h.max);
@@ -58,11 +75,16 @@ function dumpSegmentGraph(noteName, res){
       var th=sd.tiltStepHistogram;
       console.log('  pair tilt-step histogram: min='+th.min+' p25='+th.p25+' p50='+th.p50+' p75='+th.p75+' p95='+th.p95+' max='+th.max);
     }
+    if(sd.tiltSlopeStepHistogram){
+      var tsh=sd.tiltSlopeStepHistogram;
+      console.log('  pair tilt-slope-step histogram: min='+tsh.min+' p25='+tsh.p25+' p50='+tsh.p50+' p75='+tsh.p75+' p95='+tsh.p95+' max='+tsh.max);
+    }
     if(sd.selectedSeamStats){
-      var sss=sd.selectedSeamStats.map(function(x){return '['+x.a.toFixed(3)+'→'+x.b.toFixed(3)+': p='+(x.pitchStep!=null?x.pitchStep+'¢':'-')+' t='+(x.tiltStep!=null?x.tiltStep:'-')+']';}).join(' ');
+      var sss=sd.selectedSeamStats.map(function(x){return '['+x.a.toFixed(3)+'→'+x.b.toFixed(3)+': p='+(x.pitchStep!=null?x.pitchStep+'¢':'-')+' t='+(x.tiltStep!=null?x.tiltStep:'-')+' ts='+(x.tiltSlopeStep!=null?x.tiltSlopeStep:'-')+']';}).join(' ');
       console.log('  selected seams:',sss);
     }
-    console.log('  selection rejects: byMinLength='+(sd.nRejectedByMinLength||0)+' bySeparation='+(sd.nRejectedBySeparation||0)+' (kept '+(sd.nSelectedPrePrune!=null?sd.nSelectedPrePrune:'?')+' before SCC prune)');
+    var nSepKeys=sd.separationRejectedTimes?Object.keys(sd.separationRejectedTimes).length:0;
+    console.log('  selection rejects: byMinLength='+(sd.nRejectedByMinLength||0)+' bySeparation='+(sd.nRejectedBySeparation||0)+' pairs ('+nSepKeys+' unique candidates flagged → max blue-dot count) (kept '+(sd.nSelectedPrePrune!=null?sd.nSelectedPrePrune:'?')+' before SCC prune; '+(sd.nGhostEndpoints||0)+' ghost endpoints survived greedy but were pruned)');
   }
   if(res.diag&&res.diag.pitchStats){
     var ps=res.diag.pitchStats;
@@ -144,11 +166,11 @@ function renderRow(entry){
     mc.textContent=(st.steadyDurSec!=null)?('steady '+st.steadyDurSec.toFixed(2)+'s'):'';
     row.insertCell().textContent=buildStatusText(res);
     /* Tier:
-         fail/red: 0–1 segments OR SCC broken (no perpetual cycle)
-         yellow:   2–3 segments (low variety)
+         fail/red: ≤2 segments OR SCC broken (no perpetual cycle or too few seams)
+         yellow:   exactly 3 segments (low variety)
          blue:     4+ segments, SCC OK, ≥half are bridges (constrained variety)
          green:    4+ segments, SCC OK, fewer than half bridges (real variety) */
-    if(nSeg<2||!st.sccOk)row.className='tier-red';
+    if(nSeg<3||!st.sccOk)row.className='tier-red';
     else if(nSeg<4)row.className='tier-yellow';
     else if((st.bridgeCount||0)*2>=nSeg)row.className='tier-blue';
     else row.className='tier-green';
@@ -205,7 +227,7 @@ function toggleGraph(entry){
      with the fundamental-period window
    • Boundary lines: trimStart (grey), smartStart (orange), steadyEnd (grey)
    • Per-candidate dots: green filled = in final clique, yellow hollow =
-     rejected by pair gates (rms, slope, xfade, or amp-step)
+     rejected by pair gates (rms, slope, pitch, tilt, tiltSlope, or corr)
    • Slope tangent line at each candidate: slope of the env curve, visually
      scaled so a 1% change per 40ms shows as a small but readable angle */
 function renderGraphForEntry(entry){
@@ -219,23 +241,47 @@ function renderGraphForEntry(entry){
     if(entry.graphInfo)entry.graphInfo.textContent='no diag (analysis failed before reaching the gate stage)';
     return;
   }
-  /* Four stacked panels share the time axis so candidate positions line up
-     vertically: env (loudest signal — segment bars, candidates, trend
-     overlays), slope, pitch (cents from T_actual), tilt (RMS(Δd)/RMS(d)).
-     Pitch and tilt only render if their curves are present. */
+  /* Up to five stacked panels share the time axis so candidate positions line
+     up vertically: env (loudest signal — segment bars, candidates, trend
+     overlays), slope, pitch (cents from T_actual), tilt (RMS(Δd)/RMS(d)),
+     and tilt-slope (d/dt of the tilt trend). Pitch, tilt, and tilt-slope
+     only render if their curves are present. */
   var ml=50,mr=18,mt=12,mb=22;
   var pw=W-ml-mr;
   var totalPh=H-mt-mb;
   var gap=8;
   var hasPitch=!!(diag.pitchCurve&&diag.pitchCurve.values&&diag.pitchCurve.values.length);
   var hasTilt=!!(diag.tiltCurve&&diag.tiltCurve.values&&diag.tiltCurve.values.length);
-  var nExtra=(hasPitch?1:0)+(hasTilt?1:0);
+  var hasTiltSlope=!!(diag.tiltSlopeCurve&&diag.tiltSlopeCurve.values&&diag.tiltSlopeCurve.values.length);
+  var nExtra=(hasPitch?1:0)+(hasTilt?1:0)+(hasTiltSlope?1:0);
   var gapsTotal=(1+nExtra)*gap;
   var panelTotal=totalPh-gapsTotal;
-  var envPh,slopePh,pitchPh=0,tiltPh=0;
-  if(nExtra===2){envPh=Math.round(panelTotal*0.40);slopePh=Math.round(panelTotal*0.20);pitchPh=Math.round(panelTotal*0.20);tiltPh=panelTotal-envPh-slopePh-pitchPh;}
-  else if(nExtra===1){envPh=Math.round(panelTotal*0.50);slopePh=Math.round(panelTotal*0.25);if(hasPitch)pitchPh=panelTotal-envPh-slopePh;else tiltPh=panelTotal-envPh-slopePh;}
-  else{envPh=Math.round(panelTotal*0.60);slopePh=panelTotal-envPh;}
+  var envPh,slopePh,pitchPh=0,tiltPh=0,tiltSlopePh=0;
+  if(nExtra===3){
+    envPh=Math.round(panelTotal*0.32);
+    slopePh=Math.round(panelTotal*0.17);
+    pitchPh=Math.round(panelTotal*0.17);
+    tiltPh=Math.round(panelTotal*0.17);
+    tiltSlopePh=panelTotal-envPh-slopePh-pitchPh-tiltPh;
+  } else if(nExtra===2){
+    envPh=Math.round(panelTotal*0.40);
+    slopePh=Math.round(panelTotal*0.20);
+    /* Whichever two extras are present get equal split of the remainder. */
+    var rem2=panelTotal-envPh-slopePh;
+    var half=Math.round(rem2*0.5);
+    if(hasPitch&&hasTilt){pitchPh=half;tiltPh=rem2-half;}
+    else if(hasPitch&&hasTiltSlope){pitchPh=half;tiltSlopePh=rem2-half;}
+    else{tiltPh=half;tiltSlopePh=rem2-half;}
+  } else if(nExtra===1){
+    envPh=Math.round(panelTotal*0.50);
+    slopePh=Math.round(panelTotal*0.25);
+    var rem1=panelTotal-envPh-slopePh;
+    if(hasPitch)pitchPh=rem1;
+    else if(hasTilt)tiltPh=rem1;
+    else tiltSlopePh=rem1;
+  } else {
+    envPh=Math.round(panelTotal*0.60);slopePh=panelTotal-envPh;
+  }
   var envTop=mt;
   var envBot=envTop+envPh;
   var slopeTop=envBot+gap;
@@ -244,6 +290,8 @@ function renderGraphForEntry(entry){
   var pitchBot=pitchTop+pitchPh;
   var tiltTop=(hasPitch?pitchBot:slopeBot)+gap;
   var tiltBot=tiltTop+tiltPh;
+  var tiltSlopeTop=(hasTilt?tiltBot:(hasPitch?pitchBot:slopeBot))+gap;
+  var tiltSlopeBot=tiltSlopeTop+tiltSlopePh;
   var envCurve=diag.envCurve;
   var totalSec=envCurve.startSec+envCurve.values.length*envCurve.hopSec;
   var tMax=Math.max(totalSec,diag.trimEndSec+0.1);
@@ -338,10 +386,37 @@ function renderGraphForEntry(entry){
       return tiltTop+tiltPh-(clamped-tiltLo)/(tiltHi-tiltLo)*tiltPh;
     };
   }
+  /* Tilt-slope axis: symmetric around 0. Use the 98th percentile of |slope|
+     inside the steady region (NaN-skipping) with a floor at 4×threshold so
+     the gate band is always visible. Mirrors the RMS-slope panel sizing. */
+  var tiltSlopeRange=0;
+  var ysTiltSlope=null;
+  if(hasTiltSlope){
+    var tsc=diag.tiltSlopeCurve;
+    var sStartTS=diag.steadyStartSec!=null?diag.steadyStartSec:diag.trimStartSec;
+    var sEndTS=diag.steadyEndSec!=null?diag.steadyEndSec:diag.trimEndSec;
+    var absTS=[];
+    for(var i=0;i<tsc.values.length;i++){
+      var t=tsc.startSec+i*tsc.hopSec;
+      if(t<sStartTS||t>sEndTS)continue;
+      var v=tsc.values[i];
+      if(typeof v!=='number'||isNaN(v))continue;
+      absTS.push(Math.abs(v));
+    }
+    absTS.sort(function(a,b){return a-b;});
+    tiltSlopeRange=absTS.length?absTS[Math.floor(absTS.length*0.98)]:0;
+    var tssThr=(typeof diag.tiltSlopeStepThreshold==='number'&&isFinite(diag.tiltSlopeStepThreshold))?diag.tiltSlopeStepThreshold:0;
+    tiltSlopeRange=Math.max(tiltSlopeRange*1.2,tssThr*4,0.005);
+    ysTiltSlope=function(v){
+      var clamped=Math.max(-tiltSlopeRange,Math.min(tiltSlopeRange,v));
+      return tiltSlopeTop+tiltSlopePh/2-(clamped/tiltSlopeRange)*(tiltSlopePh/2);
+    };
+  }
   /* Active region (post-trim) bands across every panel. */
   var panels=[{top:envTop,h:envPh},{top:slopeTop,h:slopePh}];
   if(hasPitch)panels.push({top:pitchTop,h:pitchPh});
   if(hasTilt)panels.push({top:tiltTop,h:tiltPh});
+  if(hasTiltSlope)panels.push({top:tiltSlopeTop,h:tiltSlopePh});
   ctx.fillStyle='#f4f9f0';
   for(var pi=0;pi<panels.length;pi++)ctx.fillRect(xs(diag.trimStartSec),panels[pi].top,xs(diag.trimEndSec)-xs(diag.trimStartSec),panels[pi].h);
   /* Steady region (segments pipeline only) — darker shade INSIDE the trim
@@ -605,6 +680,45 @@ function renderGraphForEntry(entry){
       ctx.stroke();
     }
   }
+  /* ── Tilt-slope panel ──────────────────────────────────────────────────
+     Signed finite-difference of the tilt trend curve. Same shape as the
+     RMS-slope panel: faint band at ±threshold/2 (visible only when the user
+     sets a finite threshold), zero reference line, signed curve.
+     Pairs whose endpoints land on opposite sides of this band — or both
+     well outside it — are what the gate is meant to reject. */
+  if(hasTiltSlope){
+    var tssThr2=(typeof diag.tiltSlopeStepThreshold==='number'&&isFinite(diag.tiltSlopeStepThreshold))?diag.tiltSlopeStepThreshold:0;
+    if(tssThr2>0&&tssThr2<tiltSlopeRange){
+      ctx.fillStyle='#f0f4fa';
+      ctx.fillRect(ml,ysTiltSlope(tssThr2/2),pw,ysTiltSlope(-tssThr2/2)-ysTiltSlope(tssThr2/2));
+    }
+    ctx.strokeStyle='#666';
+    ctx.lineWidth=1;
+    ctx.beginPath();
+    ctx.moveTo(ml,ysTiltSlope(0));ctx.lineTo(ml+pw,ysTiltSlope(0));
+    ctx.stroke();
+    /* Curve — dark green to echo the segment-bar arrow colour, distinct
+       from RMS-slope's black. Break the line on NaN so gaps at the curve
+       edges (where the finite-difference window is incomplete) read as
+       missing data rather than as zero. */
+    var tsc2=diag.tiltSlopeCurve;
+    if(tsc2&&tsc2.values&&tsc2.values.length){
+      ctx.strokeStyle='#1f6e3c';
+      ctx.lineWidth=1.4;
+      ctx.beginPath();
+      var tsStarted=false;
+      for(var i=0;i<tsc2.values.length;i++){
+        var v=tsc2.values[i];
+        var t=tsc2.startSec+i*tsc2.hopSec;
+        var x=xs(t);
+        if(typeof v!=='number'||isNaN(v)){tsStarted=false;continue;}
+        var y=ysTiltSlope(v);
+        if(!tsStarted){ctx.moveTo(x,y);tsStarted=true;}
+        else ctx.lineTo(x,y);
+      }
+      ctx.stroke();
+    }
+  }
   /* Boundary lines across every panel */
   function vLine(t,color,label){
     if(t<0||t>tMax)return;
@@ -634,11 +748,15 @@ function renderGraphForEntry(entry){
      formed a valid pair at all) are intentionally NOT drawn — they're not
      useful for tuning and just clutter the canvas.
      Drawing order: lowest tier first so high-tier dots paint on top. */
-  var nFinal=0,nPartner=0,nIsolated=0,nHidden=0;
+  var nFinal=0,nPartner=0,nIsolated=0,nHidden=0,nGhost=0;
   function dotStyleFor(c){
-    if(c.inSegment)return{fill:'#0a0',stroke:'#060',rEnv:5,rSlp:4,rPit:4,rTlt:4,lw:1.2,connectRgba:'rgba(0,170,0,0.45)'};
-    if(c.inSeparationRejected)return{fill:'#3498db',stroke:'#1e5e8a',rEnv:3,rSlp:2.5,rPit:2.5,rTlt:2.5,lw:1,connectRgba:'rgba(52,152,219,0.25)'};
-    return{fill:null,stroke:'#aa8000',rEnv:2.5,rSlp:2,rPit:2,rTlt:2,lw:0.8,connectRgba:'rgba(170,140,0,0.15)'};
+    if(c.inSegment)return{fill:'#0a0',stroke:'#060',rEnv:5,rSlp:4,rPit:4,rTlt:4,rTSlp:4,lw:1.2,connectRgba:'rgba(0,170,0,0.45)'};
+    /* Ghost endpoints (greedy-selected, pruned by SCC or non-bridge filter)
+       sit one tier below green visually — distinct fill so the user can see
+       which "phantom" segments shaped the separation gate during selection. */
+    if(c.inGhostEndpoint)return{fill:'#e67e22',stroke:'#9c4a0a',rEnv:4.5,rSlp:3.5,rPit:3.5,rTlt:3.5,rTSlp:3.5,lw:1.1,connectRgba:'rgba(230,126,34,0.40)'};
+    if(c.inSeparationRejected)return{fill:'#3498db',stroke:'#1e5e8a',rEnv:3,rSlp:2.5,rPit:2.5,rTlt:2.5,rTSlp:2.5,lw:1,connectRgba:'rgba(52,152,219,0.25)'};
+    return{fill:null,stroke:'#aa8000',rEnv:2.5,rSlp:2,rPit:2,rTlt:2,rTSlp:2,lw:0.8,connectRgba:'rgba(170,140,0,0.15)'};
   }
   function dot(x,y,r,fill,stroke,lw){
     ctx.beginPath();
@@ -656,6 +774,7 @@ function renderGraphForEntry(entry){
       var ySlp=c.slope!=null?ysSlope(c.slope):null;
       var yPit=(hasPitch&&c.pitch!=null)?ysPitch(c.pitch):null;
       var yTlt=(hasTilt&&c.tilt!=null)?ysTilt(c.tilt):null;
+      var yTSlp=(hasTiltSlope&&c.tiltSlope!=null)?ysTiltSlope(c.tiltSlope):null;
       /* Connect line: vertical guide from the env panel through each
          subsequent panel where the candidate has a value, so the user can
          trace a single candidate's fingerprint visually. */
@@ -666,6 +785,7 @@ function renderGraphForEntry(entry){
       if(ySlp!=null){segments.push([prevY,ySlp]);prevY=ySlp;}
       if(yPit!=null){segments.push([prevY,yPit]);prevY=yPit;}
       if(yTlt!=null){segments.push([prevY,yTlt]);prevY=yTlt;}
+      if(yTSlp!=null){segments.push([prevY,yTSlp]);prevY=yTSlp;}
       if(segments.length){
         ctx.beginPath();
         for(var k=0;k<segments.length;k++){
@@ -677,16 +797,22 @@ function renderGraphForEntry(entry){
       if(ySlp!=null)dot(x,ySlp,st.rSlp,st.fill,st.stroke,st.lw);
       if(yPit!=null)dot(x,yPit,st.rPit,st.fill,st.stroke,st.lw);
       if(yTlt!=null)dot(x,yTlt,st.rTlt,st.fill,st.stroke,st.lw);
+      if(yTSlp!=null)dot(x,yTSlp,st.rTSlp,st.fill,st.stroke,st.lw);
     }
   }
-  /* Yellow: only candidates OUTSIDE the steady region. (Inside-steady-but-
-     uninteresting candidates are skipped — see nHidden count below.) */
-  drawCandTier(function(c){return !c.inSteady&&!c.inSegment&&!c.inSeparationRejected;});
-  drawCandTier(function(c){return c.inSeparationRejected&&!c.inSegment;});
+  /* Draw order (lowest-tier → highest, so higher tiers paint on top):
+       yellow (outside steady, not in any picked set)
+       blue (separation-rejected, not in any picked set)
+       orange (greedy-selected then pruned by SCC/non-bridge — "ghost")
+       green (final segment endpoint) */
+  drawCandTier(function(c){return !c.inSteady&&!c.inSegment&&!c.inSeparationRejected&&!c.inGhostEndpoint;});
+  drawCandTier(function(c){return c.inSeparationRejected&&!c.inSegment&&!c.inGhostEndpoint;});
+  drawCandTier(function(c){return c.inGhostEndpoint&&!c.inSegment;});
   drawCandTier(function(c){return c.inSegment;});
   for(var i=0;i<diag.candidates.length;i++){
     var c=diag.candidates[i];
     if(c.inSegment)nFinal++;
+    else if(c.inGhostEndpoint)nGhost++;
     else if(c.inSeparationRejected)nPartner++;
     else if(!c.inSteady)nIsolated++;
     else nHidden++;
@@ -708,7 +834,12 @@ function renderGraphForEntry(entry){
     ctx.fillText(tiltHi.toFixed(3),3,tiltTop+10);
     ctx.fillText(tiltLo.toFixed(3),3,tiltBot-2);
   }
-  var axisBot=hasTilt?tiltBot:(hasPitch?pitchBot:slopeBot);
+  if(hasTiltSlope){
+    ctx.fillText('+'+tiltSlopeRange.toFixed(3),3,tiltSlopeTop+10);
+    ctx.fillText('0',3,tiltSlopeTop+tiltSlopePh/2+3);
+    ctx.fillText('-'+tiltSlopeRange.toFixed(3),3,tiltSlopeBot-2);
+  }
+  var axisBot=hasTiltSlope?tiltSlopeBot:(hasTilt?tiltBot:(hasPitch?pitchBot:slopeBot));
   ctx.fillText('0s',ml,axisBot+14);
   ctx.fillText(tMax.toFixed(2)+'s',ml+pw-32,axisBot+14);
   /* Info line */
@@ -720,11 +851,15 @@ function renderGraphForEntry(entry){
     var sccStr=diag.sccOk?'SCC OK':'SCC broken';
     var bridgeStr='bridges='+(diag.bridgeCount||0);
     var pickInfo=pcCount+' +ZCs · '+(stx.nValidPairs||0)+' valid pairs → '+segCount+' segments · '+sccStr+' · '+bridgeStr+
-      ' · dots: '+nFinal+' green / '+nPartner+' blue / '+nIsolated+' yellow / '+nHidden+' hidden';
-    var legend='env: blue=fast env, gray=1000ms avg, dashed grey=meanRMS, dashed red=amp trend, purple=normalized env.  slope: black=raw, purple-dashed=normalized.  pitch: teal=cents from T_actual, dashed grey=mean.  tilt: tan=fine (100ms), brown=slow trend (600ms, gate uses this), dashed grey=mean.  bars: green segments span [a,b], arrow→b.  dots: green=segment endpoint, blue=separation-rejected, yellow=outside steady.';
+      ' · dots: '+nFinal+' green / '+nGhost+' orange / '+nPartner+' blue / '+nIsolated+' yellow / '+nHidden+' hidden';
+    var tiltTrendMs=diag.tiltTrendWinSec!=null?Math.round(diag.tiltTrendWinSec*1000):600;
+    var legend='env: blue=fast env, gray=1000ms avg, dashed grey=meanRMS, dashed red=amp trend, purple=normalized env.  slope: black=raw, purple-dashed=normalized.  pitch: teal=cents from T_actual, dashed grey=mean.  tilt: tan=fine (100ms), brown=slow trend ('+tiltTrendMs+'ms, gate uses this), dashed grey=mean.  tilt-slope: dark green=d/dt of trend, band=±threshold/2 (only shown when gated).  bars: green segments span [a,b], arrow→b.  dots: green=final segment endpoint, orange=greedy-picked but pruned (these also gated separation rejection), blue=separation-rejected, yellow=outside steady.';
     var paramInfo='envWin='+(diag.envWinSec*1000).toFixed(1)+'ms  slopeStride=±'+((diag.slopeHSec||0)*1000).toFixed(1)+'ms  rmsThresh='+diag.rmsStepThreshold+'  slopeThresh='+diag.slopeStepThreshold;
     if(diag.pitchStepThresholdCents!=null&&isFinite(diag.pitchStepThresholdCents))paramInfo+='  pitchThresh='+diag.pitchStepThresholdCents+'¢';
     if(diag.tiltStepThreshold!=null&&isFinite(diag.tiltStepThreshold))paramInfo+='  tiltThresh='+diag.tiltStepThreshold;
+    paramInfo+='  tiltTrendWin='+tiltTrendMs+'ms';
+    if(diag.tiltSlopeStrideSec!=null)paramInfo+='  tiltSlopeStride=±'+(diag.tiltSlopeStrideSec*1000).toFixed(0)+'ms';
+    if(diag.tiltSlopeStepThreshold!=null&&isFinite(diag.tiltSlopeStepThreshold))paramInfo+='  tiltSlopeThresh='+diag.tiltSlopeStepThreshold;
     if(diag.steadyStartSec!=null){
       paramInfo+='  steady=['+diag.steadyStartSec.toFixed(2)+'–'+diag.steadyEndSec.toFixed(2)+']s';
     }
@@ -757,12 +892,17 @@ function renderGraphForEntry(entry){
     if(diag.tiltStats){
       var ts=diag.tiltStats;
       var drift=ts.mean>1e-9?(100*(ts.max-ts.min)/ts.mean):0;
-      pitchTiltInfo+='\ntilt trend (600ms): mean='+ts.mean.toFixed(3)+' drift=(max-min)/mean='+drift.toFixed(1)+'%';
+      var trendLabel=diag.tiltTrendWinSec!=null?Math.round(diag.tiltTrendWinSec*1000):600;
+      pitchTiltInfo+='\ntilt trend ('+trendLabel+'ms): mean='+ts.mean.toFixed(3)+' drift=(max-min)/mean='+drift.toFixed(1)+'%';
       if(diag.tiltFineStats){
         var tfs=diag.tiltFineStats;
         var fineMod=tfs.mean>1e-9?(100*(tfs.p95-tfs.p5)/tfs.mean):0;
         pitchTiltInfo+='   ·   fine (100ms) vibrato mod (p5-p95)/mean='+fineMod.toFixed(1)+'%';
       }
+    }
+    if(diag.tiltSlopeStats){
+      var tss=diag.tiltSlopeStats;
+      pitchTiltInfo+='\ntilt-slope: mean='+tss.mean.toFixed(4)+' std='+tss.std.toFixed(4)+' (p5..p95)=['+tss.p5.toFixed(4)+', '+tss.p95.toFixed(4)+']';
     }
     /* Per-selected-segment seam steps — what the runtime hears at each wrap.
        Helps spot which specific (a,b) is likely the audible offender. */
@@ -772,22 +912,26 @@ function renderGraphForEntry(entry){
       var seamLine=seams.map(function(s){
         var p=s.pitchStep!=null?s.pitchStep.toFixed(1)+'¢':'-';
         var t=s.tiltStep!=null?(s.tiltStep*100).toFixed(1)+'%':'-';
-        return p+'/'+t;
+        var ts=s.tiltSlopeStep!=null?s.tiltSlopeStep.toFixed(4):'-';
+        return p+'/'+t+'/'+ts;
       }).join(' ');
-      var maxPitch=0,maxTilt=0;
+      var maxPitch=0,maxTilt=0,maxTiltSlope=0;
       for(var k=0;k<seams.length;k++){
         if(seams[k].pitchStep!=null&&seams[k].pitchStep>maxPitch)maxPitch=seams[k].pitchStep;
         if(seams[k].tiltStep!=null&&seams[k].tiltStep>maxTilt)maxTilt=seams[k].tiltStep;
+        if(seams[k].tiltSlopeStep!=null&&seams[k].tiltSlopeStep>maxTiltSlope)maxTiltSlope=seams[k].tiltSlopeStep;
       }
-      pitchTiltInfo+='\nseam steps (Δ¢/Δtilt%): '+seamLine+'  (max '+maxPitch.toFixed(1)+'¢ / '+(maxTilt*100).toFixed(1)+'%)';
+      pitchTiltInfo+='\nseam steps (Δ¢/Δtilt%/Δtilt-slope): '+seamLine+'  (max '+maxPitch.toFixed(1)+'¢ / '+(maxTilt*100).toFixed(1)+'% / '+maxTiltSlope.toFixed(4)+')';
     }
-    if(sd&&(sd.pitchStepHistogram||sd.tiltStepHistogram)){
+    if(sd&&(sd.pitchStepHistogram||sd.tiltStepHistogram||sd.tiltSlopeStepHistogram)){
       var rej='';
       if(sd.rejectByPitch)rej+=' rejByPitch='+sd.rejectByPitch;
       if(sd.rejectByTilt)rej+=' rejByTilt='+sd.rejectByTilt;
+      if(sd.rejectByTiltSlope)rej+=' rejByTiltSlope='+sd.rejectByTiltSlope;
       var hist='';
       if(sd.pitchStepHistogram)hist+=' pitch p50='+sd.pitchStepHistogram.p50+'¢ p95='+sd.pitchStepHistogram.p95+'¢';
       if(sd.tiltStepHistogram)hist+=' tilt p50='+(sd.tiltStepHistogram.p50*100).toFixed(1)+'% p95='+(sd.tiltStepHistogram.p95*100).toFixed(1)+'%';
+      if(sd.tiltSlopeStepHistogram)hist+=' tilt-slope p50='+sd.tiltSlopeStepHistogram.p50+' p95='+sd.tiltSlopeStepHistogram.p95;
       pitchTiltInfo+='\nvalid pairs:'+hist+rej;
     }
     entry.graphInfo.textContent=title+'  ·  '+pickInfo+'\n'+legend+'\n'+paramInfo+trendInfo+pitchTiltInfo;

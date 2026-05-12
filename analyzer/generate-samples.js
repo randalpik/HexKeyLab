@@ -22,12 +22,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
 const REPO = path.resolve(__dirname, '..');
-const ANALYZER_HTML = path.join(REPO, 'tools', 'HexKeyLab-analyzer.html');
+/* analyzer-analysis.js holds the pure signal-processing module (prepareLoop,
+   refineFundamentalPeriod, etc). The analyzer was split out of the single-
+   file tools/HexKeyLab-analyzer.html into analyzer/*.js; we read only the
+   analysis module since the visualization + harness need DOM/Canvas. */
+const ANALYZER_ANALYSIS_JS = path.join(__dirname, 'analyzer-analysis.js');
 const CACHE_DIR = path.join(__dirname, '.cache');
 const OUT_DIR = path.join(__dirname, 'out');
 
@@ -52,8 +56,12 @@ const TARGET_DBFS = -18;
 const TARGET_RMS = Math.pow(10, TARGET_DBFS / 20);  /* ≈ 0.12589 */
 const TARGET_PEAK_DECAY_DBFS = -6;
 const TARGET_PEAK_DECAY = Math.pow(10, TARGET_PEAK_DECAY_DBFS / 20);  /* ≈ 0.5012 */
+/* Floor only — sources can be quiet enough to need any amount of boost,
+   and an arbitrary ceiling produces silent per-note level discontinuities
+   that are harder to diagnose than the occasional noisy boosted sample.
+   Trust the measurement; if a sample ends up too noisy after gain, the
+   right fix is a better source recording, not a hidden clamp. */
 const GAIN_MIN = 0.1;
-const GAIN_MAX = 12.0;
 
 // ─── 0. config + helpers ─────────────────────────────────────────────────────
 
@@ -64,6 +72,11 @@ function loadConfig() {
     process.exit(1);
   }
   const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  /* Config basename (no extension) drives the on-disk cache directory.
+     Per-config caches let multiple soundfonts target the same instrumentKey
+     (e.g. iowa-clarinet vs fatboy-clarinet → both have instrumentKey:'clarinet')
+     without overwriting each other's decoded audio. */
+  cfg.configName = path.basename(cfgPath, '.json');
   // defaults
   cfg.transpose = cfg.transpose || 1;
   cfg.filePattern = cfg.filePattern || '{NOTE}.mp3';
@@ -134,72 +147,51 @@ function buildUrls(cfg, note, midi) {
 
 // ─── 1. fetch (curl, cached) ─────────────────────────────────────────────────
 
-/* Local copy of the cached file lives at dir/<note>.<ext>; the matchedPattern
-   sidecar (dir/<note>.pattern) records which filePattern actually fetched, so
-   subsequent runs reuse the same cached file without re-checking every URL and
-   emitSampleEntry can record the per-sample filename for the runtime to fetch
-   from. Sidecar absence (legacy cache) means: assume the first filePattern is
-   the match — acceptable for single-pattern configs and harmless for the rare
-   regeneration where the first pattern wasn't actually the one that hit. */
-function fetchAll(cfg, notes) {
-  const dir = path.join(CACHE_DIR, cfg.instrumentKey);
-  fs.mkdirSync(dir, { recursive: true });
-  const fetched = [];
-  let nFetched = 0, nCached = 0, nMiss = 0;
-  for (const n of notes) {
-    const mp3 = path.join(dir, `${n.note}${cfg.ext}`);
-    const patFile = path.join(dir, `${n.note}.pattern`);
-    let matchedFile = null;
-    if (!fs.existsSync(mp3) || fs.statSync(mp3).size === 0) {
-      const patterns = cfg.filePatterns || [cfg.filePattern];
-      let ok = false;
-      for (const pattern of patterns) {
-        const url = cfg.baseUrl + applyPlaceholders(pattern, n.note, n.midi);
-        const r = spawnSync('curl', ['-sLfo', mp3, url], { stdio: 'ignore' });
-        if (r.status === 0 && fs.existsSync(mp3) && fs.statSync(mp3).size > 0) {
-          ok = true;
-          matchedFile = applyPlaceholders(pattern, n.note, n.midi);
-          fs.writeFileSync(patFile, matchedFile);
-          break;
-        }
-        try { fs.unlinkSync(mp3); } catch {}
-      }
-      if (!ok) { nMiss++; continue; }
-      nFetched++;
-    } else {
-      nCached++;
-      if (fs.existsSync(patFile)) {
-        matchedFile = fs.readFileSync(patFile, 'utf8');
-      } else {
-        const firstPattern = (cfg.filePatterns && cfg.filePatterns[0]) || cfg.filePattern;
-        matchedFile = applyPlaceholders(firstPattern, n.note, n.midi);
-      }
-    }
-    fetched.push({ ...n, mp3, matchedFile });
+/* Cache is keyed by the actual URL-matched filename (relative to baseUrl).
+   This lets multi-pattern configs (e.g. Iowa strings: sulC/G/D/A variants of
+   each note) cache every fetched variant independently so the analyze-time
+   fallback can replay any of them without re-downloading. Single-pattern
+   configs (filePattern: '{NOTE}.mp3', etc.) end up with the same filename as
+   before, so their caches transfer over cleanly. The old <NOTE>.<ext> +
+   .pattern-sidecar layout is no longer written; legacy files just sit unused.
+   Returns {matchedFile, mp3, fromCache} or null on 404. */
+function fetchOne(cfg, note, midi, patternIdx) {
+  const patterns = cfg.filePatterns || [cfg.filePattern];
+  if (patternIdx >= patterns.length) return null;
+  const dir = path.join(CACHE_DIR, cfg.configName);
+  const matchedFile = applyPlaceholders(patterns[patternIdx], note, midi);
+  const cachedFile = path.join(dir, matchedFile);
+  fs.mkdirSync(path.dirname(cachedFile), { recursive: true });
+  if (fs.existsSync(cachedFile) && fs.statSync(cachedFile).size > 0) {
+    return { matchedFile, mp3: cachedFile, fromCache: true };
   }
-  console.error(`fetch: ${nFetched} new, ${nCached} cached, ${nMiss} 404/missing`);
-  return fetched;
+  const url = cfg.baseUrl + matchedFile;
+  const r = spawnSync('curl', ['-sLfo', cachedFile, url], { stdio: 'ignore' });
+  if (r.status !== 0 || !fs.existsSync(cachedFile) || fs.statSync(cachedFile).size === 0) {
+    try { fs.unlinkSync(cachedFile); } catch {}
+    return null;
+  }
+  return { matchedFile, mp3: cachedFile, fromCache: false };
 }
 
 // ─── 2. decode (ffmpeg → f32 PCM 44.1k; mono for pitch/RMS, stereo for peak) ──
 
-function decodeAll(samples) {
-  for (const s of samples) {
-    const raw = s.mp3.replace(/\.\w+$/, '.raw');
-    if (!fs.existsSync(raw) || fs.statSync(raw).mtimeMs < fs.statSync(s.mp3).mtimeMs) {
-      execFileSync('ffmpeg', ['-loglevel','error','-y','-i', s.mp3, '-ac','1','-ar', String(SR),'-f','f32le', raw], { stdio: 'inherit' });
-    }
-    s.raw = raw;
-    /* Stereo decode for decay peak measurement — mono downmix attenuates
-       anti-correlated stereo content vs. the per-frame max(|L|,|R|) the
-       browser actually plays. Cached separately as .s2.raw so the mono
-       pipeline (pitch, loop analysis) is unaffected. */
-    const rawS2 = s.mp3.replace(/\.\w+$/, '.s2.raw');
-    if (!fs.existsSync(rawS2) || fs.statSync(rawS2).mtimeMs < fs.statSync(s.mp3).mtimeMs) {
-      execFileSync('ffmpeg', ['-loglevel','error','-y','-i', s.mp3, '-ac','2','-ar', String(SR),'-f','f32le', rawS2], { stdio: 'inherit' });
-    }
-    s.rawStereo = rawS2;
+function decodeOne(s) {
+  /* Append `.raw` to the full filename (NOT replace the extension), so two
+     source files with the same note name but different extensions — e.g.
+     Iowa `E3.aif` and FatBoy `E3.mp3` coexisting in the same cache dir after
+     a source switch — decode to distinct `.raw` paths instead of one
+     clobbering the other. Same applies to the stereo decode. */
+  const raw = s.mp3 + '.raw';
+  if (!fs.existsSync(raw) || fs.statSync(raw).mtimeMs < fs.statSync(s.mp3).mtimeMs) {
+    execFileSync('ffmpeg', ['-loglevel','error','-y','-i', s.mp3, '-ac','1','-ar', String(SR),'-f','f32le', raw], { stdio: 'inherit' });
   }
+  s.raw = raw;
+  const rawS2 = s.mp3 + '.s2.raw';
+  if (!fs.existsSync(rawS2) || fs.statSync(rawS2).mtimeMs < fs.statSync(s.mp3).mtimeMs) {
+    execFileSync('ffmpeg', ['-loglevel','error','-y','-i', s.mp3, '-ac','2','-ar', String(SR),'-f','f32le', rawS2], { stdio: 'inherit' });
+  }
+  s.rawStereo = rawS2;
 }
 
 function loadRaw(rawPath) {
@@ -215,48 +207,33 @@ function loadStereoRaw(rawPath) {
 
 // ─── 3. load analyzer functions from HTML ────────────────────────────────────
 
-function loadAnalyzer() {
-  const html = fs.readFileSync(ANALYZER_HTML, 'utf8');
-  const m = html.match(/<script>([\s\S]*?)<\/script>/);
-  if (!m) throw new Error('no <script> block in analyzer HTML');
-  // stub the DOM bits the analyzer uses on load (DOMContentLoaded listener etc.)
-  const stub = {
-    document: { getElementById:()=>({addEventListener:()=>{},textContent:'',value:'',dataset:{}}), addEventListener:()=>{}, readyState:'complete', createElement:()=>({appendChild:()=>{}}) },
-    window: { AudioContext: function(){} }
+async function loadAnalyzer() {
+  // analyzer-analysis.js is an ES module exporting `HKLAnalysis` — a DOM-free
+  // namespace publishing prepareLoop, refineFundamentalPeriod, etc.
+  // pathToFileURL is required for dynamic import on Windows; harmless on
+  // Linux (canonical file:// form).
+  const mod = await import(pathToFileURL(ANALYZER_ANALYSIS_JS).href);
+  const api = mod.HKLAnalysis;
+  if (!api || !api.prepareLoop) throw new Error('analyzer-analysis.js did not export HKLAnalysis.prepareLoop');
+  return {
+    prepareLoop: api.prepareLoop,
+    refineFundamentalPeriod: api.refineFundamentalPeriod,
+    trimSilence: api.trimSilence,
+    applyConfigDefaults: api.applyConfigDefaults,
   };
-  // create a function whose body is the analyzer's <script> content, with
-  // the exports we need bound at the end. findSteadyRegion (the old
-  // 70%-of-peak detector) is gone; the segments pipeline uses
-  // findSteadyRegionMeanThreshold internally and surfaces the resulting
-  // steady region through res.stats.steadyStartSec/.steadyEndSec — so the
-  // headless runner reads it from there for measureRmsLoop instead of
-  // re-running the detection.
-  const src = m[1] + '\n;return {prepareLoop, refineFundamentalPeriod};';
-  const factory = new Function('document','window', src);
-  return factory(stub.document, stub.window);
 }
 
 // ─── 4. analysis paths ───────────────────────────────────────────────────────
 
 function analyzeLoop(buf, freq, cfg, fns) {
-  // Segment-based pipeline. The cfg.vibrato flag pre-fills looser phase-
-  // coherence defaults (corrThreshold:0.90, corrWindowPeriods:2) for pitched-
-  // vibrato samples; per-instrument cfg.gateOpts override. prepareLoop returns
+  // Segment-based pipeline. applyConfigDefaults applies the cfg.vibrato hint
+  // (corrThreshold:0.90, corrWindowPeriods:2) + trend-normalization defaults
+  // shared with the browser harness so both paths produce identical results.
+  // prepareLoop returns
   //   { segments: [{a, b}, ...], stats: {nSegments, sccOk, bridgeCount,
   //     steadyStartSec, steadyEndSec, ...}, diag: {...} }
   // and we propagate that shape through the rest of the pipeline.
-  const opts = { ...(cfg.gateOpts || {}) };
-  if (cfg.vibrato) {
-    if (opts.corrThreshold === undefined) opts.corrThreshold = 0.90;
-    if (opts.corrWindowPeriods === undefined) opts.corrWindowPeriods = 2;
-  }
-  // Trend normalization defaults — sustained loop instruments only. Divides
-  // out slow bow/breath drift before pair-gate matching so peaks/troughs sit
-  // on a consistent RMS level. Per-instrument gateOpts can opt out for
-  // sources where the slow envelope is musical content (organ Leslie,
-  // plucked harpsichord).
-  if (opts.trendNormalize === undefined) opts.trendNormalize = true;
-  if (opts.trendWindowMs === undefined) opts.trendWindowMs = 600;
+  const opts = fns.applyConfigDefaults(cfg, cfg.gateOpts);
   return fns.prepareLoop(buf, freq, opts);
 }
 
@@ -269,8 +246,7 @@ function analyzeDecay(buf, freq, fns) {
   // overall envelope shape.
   const d = buf.getChannelData();
   const sr = buf.sampleRate;
-  let trimStart = 0;
-  for (let i = 0; i < d.length; i++) if (Math.abs(d[i]) > 0.003) { trimStart = i; break; }
+  const { trimStart } = fns.trimSilence(d, sr);
   const winLen = Math.round(sr * 0.5);
   if (d.length - trimStart < winLen + Math.round(sr * 0.05)) {
     return { failReason: 'sample too short for decay analysis', trimStart: trimStart/sr };
@@ -330,43 +306,72 @@ function measurePeakDecay(stereo, mono) {
 }
 
 function measureRmsLoop(d, res) {
-  /* Reuse the steady region that prepareLoop already detected. Same
-     boundaries the segment selector used → gain normalization stays
-     consistent with the audio region the seams are validated over. */
+  /* Loudness measure for gain normalization. Two-tier:
+       (1) primary: RMS over the steady region — the analyzer's loop-body
+           span, which is what the user actually hears during sustained
+           playback. Matches the engine's playback regime.
+       (2) fallback: RMS over the loudest 1-second window in the post-trim
+           audio, for samples where steady detection yields a too-narrow
+           span (<200ms) or fails entirely. Used to be the only measure
+           but it overestimates loop loudness on soundfont samples whose
+           attack RMS far exceeds their sustain RMS — gain too small,
+           playback ~20 dB below target. */
   const stats = res && res.stats;
-  if (!stats || stats.steadyStartSec == null || stats.steadyEndSec == null) return null;
-  const start = Math.round(stats.steadyStartSec * SR);
-  const end = Math.round(stats.steadyEndSec * SR);
-  if (end <= start) return null;
-  return rmsOver(d, start, end);
+  if (stats && stats.steadyStartSec != null && stats.steadyEndSec != null) {
+    const start = Math.round(stats.steadyStartSec * SR);
+    const end = Math.round(stats.steadyEndSec * SR);
+    if (end - start >= Math.round(SR * 0.2)) {
+      return rmsOver(d, start, end);
+    }
+  }
+  /* Fallback for samples with no usable steady region. */
+  const trimStartSec = (res && typeof res.trimStart === 'number') ? res.trimStart : 0;
+  const start = Math.max(0, Math.round(trimStartSec * SR));
+  const end = d.length;
+  if (end - start < Math.round(SR * 0.2)) return null;
+  const winSamp = Math.min(end - start, Math.round(SR * 1.0));
+  const hopSamp = Math.max(1, Math.round(SR * 0.1));
+  let bestRms = 0;
+  for (let s = start; s + winSamp <= end; s += hopSamp) {
+    const r = rmsOver(d, s, s + winSamp);
+    if (r > bestRms) bestRms = r;
+  }
+  const lastStart = end - winSamp;
+  if (lastStart > start) {
+    const r = rmsOver(d, lastStart, end);
+    if (r > bestRms) bestRms = r;
+  }
+  return bestRms > 0 ? bestRms : null;
 }
 
 function computeGainFromRms(rms) {
   if (rms == null || rms <= 0) return null;
-  return Math.max(GAIN_MIN, Math.min(GAIN_MAX, TARGET_RMS / rms));
+  return Math.max(GAIN_MIN, TARGET_RMS / rms);
 }
 
 function computeGainFromPeak(peak) {
   if (peak == null || peak <= 0) return null;
-  return Math.max(GAIN_MIN, Math.min(GAIN_MAX, TARGET_PEAK_DECAY / peak));
+  return Math.max(GAIN_MIN, TARGET_PEAK_DECAY / peak);
 }
 
 // ─── 5. classify ─────────────────────────────────────────────────────────────
 
 function classifyLoop(res) {
   /* Segments-pipeline tier:
-       fail  no segments returned, or stats missing
-       red   1 segment (or SCC broken — no perpetual cycle possible)
-       yellow 2–3 segments (perpetual loop works but low variety)
-       blue  4+ segments, SCC OK, but ≥half are bridges (constrained variety)
-       green 4+ segments, SCC OK, fewer than half bridges (real randomization)
+       fail   no segments returned, or stats missing
+       red    ≤2 segments (or SCC broken — no perpetual cycle possible);
+              filtered out by pickSamples and triggers the filePatterns
+              fallback in the main loop
+       yellow exactly 3 segments (perpetual loop works but low variety)
+       blue   4+ segments, SCC OK, but ≥half are bridges (constrained variety)
+       green  4+ segments, SCC OK, fewer than half bridges (real randomization)
      Mirrors the analyzer's per-row tier classifier — keep them in sync. */
   if (!res || !Array.isArray(res.segments)) return 'fail';
   const s = res.stats || {};
   const n = res.segments.length;
   const sccOk = !!s.sccOk;
   const bridges = s.bridgeCount || 0;
-  if (n < 2 || !sccOk) return 'red';
+  if (n < 3 || !sccOk) return 'red';
   if (n < 4) return 'yellow';
   if (bridges * 2 >= n) return 'blue';
   return 'green';
@@ -383,6 +388,10 @@ function classifyDecay(res) {
 const TIER_RANK = { green: 4, blue: 3, yellow: 2, red: 1, fail: 0 };
 
 function pickSamples(results, cfg) {
+  // Hard exclusion: red and fail tier samples NEVER get picked, regardless
+  // of coverage gaps. Reds either fail SCC (no perpetual loop possible) or
+  // produce ≤2 segments (too few to randomize away from). Either way we'd
+  // rather have a wider coverage gap than emit an unloopable sample.
   const usable = results.filter(r => r.tier === 'green' || r.tier === 'blue' || r.tier === 'yellow');
   if (usable.length === 0) return [];
   usable.sort((a,b) => a.midi - b.midi);
@@ -391,30 +400,110 @@ function pickSamples(results, cfg) {
   // pre-curated by the soundfont author. Keep every valid sample.
   if (cfg.decays) return usable.slice();
 
-  // Loop instruments: ~4-semitone spacing, preferring higher tier within
-  // each ±2-semitone window. Tiebreak inside a tier: more segments first
-  // (richer randomization), then more steady-region seconds.
-  const picked = [];
-  let target = usable[0].midi;
-  const maxMidi = usable[usable.length - 1].midi;
-  const used = new Set();
-  while (target <= maxMidi + 2) {
-    const win = usable.filter(r => Math.abs(r.midi - target) <= 2 && !used.has(r.note));
-    if (win.length === 0) { target += 4; continue; }
-    win.sort((a,b) => {
-      if (TIER_RANK[a.tier] !== TIER_RANK[b.tier]) return TIER_RANK[b.tier] - TIER_RANK[a.tier];
-      const na = (a.res.segments && a.res.segments.length) || 0;
-      const nb = (b.res.segments && b.res.segments.length) || 0;
-      if (na !== nb) return nb - na;
-      const sa = (a.res.stats && a.res.stats.steadyDurSec) || 0;
-      const sb = (b.res.stats && b.res.stats.steadyDurSec) || 0;
-      return sb - sa;
-    });
-    picked.push(win[0]);
-    used.add(win[0].note);
-    target = win[0].midi + 4;
+  /* Two-pass selection for loop instruments:
+       Pass 1 — spine: walk green samples at ~4-semitone spacing, pick the
+                best within each ±2-semitone window.
+       Pass 2 — fill: identify gaps > 4 semitones in the spine (between
+                adjacent picks and at the head/tail of the usable range)
+                and insert blue+yellow samples at ~4-semitone spacing inside
+                each gap, anchored so no fill lands within 4 semitones of a
+                spine pick.
+     Within a window the picker prefers higher tier (blue > yellow), then
+     more segments (richer randomization), then more steady-region seconds. */
+  const tiebreak = (a, b) => {
+    if (TIER_RANK[a.tier] !== TIER_RANK[b.tier]) return TIER_RANK[b.tier] - TIER_RANK[a.tier];
+    const na = (a.res.segments && a.res.segments.length) || 0;
+    const nb = (b.res.segments && b.res.segments.length) || 0;
+    if (na !== nb) return nb - na;
+    const sa = (a.res.stats && a.res.stats.steadyDurSec) || 0;
+    const sb = (b.res.stats && b.res.stats.steadyDurSec) || 0;
+    return sb - sa;
+  };
+  /* spacedPick: walk from startMidi to endMidi by 4-semitone targets; in each
+     ±2-semitone window pick the best candidate by tiebreak; advance to
+     best.midi + 4 after each pick. Optionally exclude any candidate within
+     minSep semitones of an existing-pick set (used by the fill pass to keep
+     yellows from clustering against the spine). */
+  function spacedPick(candidates, startMidi, endMidi, excludeFrom, minSep) {
+    if (candidates.length === 0) return [];
+    const sorted = candidates.slice().sort((a,b) => a.midi - b.midi);
+    const picked = [];
+    const seen = new Set();
+    let target = startMidi;
+    while (target <= endMidi + 2) {
+      const win = sorted.filter(r =>
+        Math.abs(r.midi - target) <= 2
+        && !seen.has(r.note)
+        && (!excludeFrom || !excludeFrom.some(p => Math.abs(r.midi - p.midi) < minSep))
+        && !picked.some(p => Math.abs(r.midi - p.midi) < (minSep || 0))
+      );
+      if (win.length === 0) { target += 4; continue; }
+      const best = win.slice().sort(tiebreak)[0];
+      picked.push(best);
+      seen.add(best.note);
+      target = best.midi + 4;
+    }
+    return picked;
   }
-  return picked;
+
+  // Pass 1: green spine. No min-sep — allow close greens (e.g. Ab3+Bb3 on
+  // Iowa viola) since both are loop-quality samples and redundancy at the
+  // green tier is fine.
+  const greens = usable.filter(r => r.tier === 'green');
+  const spine = greens.length > 0
+    ? spacedPick(greens, greens[0].midi, greens[greens.length - 1].midi)
+    : [];
+  spine.sort((a,b) => a.midi - b.midi);
+
+  // Pass 2: blue + yellow fill in gaps > 4 semitones. Head/tail edges count
+  // as gaps too (we want coverage out to the lowest and highest usable
+  // note). Each fill must sit ≥2 semitones from every spine pick AND every
+  // other fill — strict enough to block stacking (a yellow at midi N+1
+  // landing right next to a green at N+0, no coverage gain) but loose
+  // enough that a 5-semitone gap can still be filled at the only spacing
+  // available (one fill at distance 2 from one boundary, 3 from the other).
+  const fillTier = usable.filter(r => r.tier === 'blue' || r.tier === 'yellow');
+  const minMidi = usable[0].midi;
+  const maxMidi = usable[usable.length - 1].midi;
+  const FILL_MIN_SEP = 2;
+  const gaps = [];
+  if (spine.length === 0) {
+    // No green spine — fill the entire usable range with blue+yellow.
+    gaps.push({ lowExcl: minMidi - 1, highExcl: maxMidi + 1, isHead: false, isTail: false });
+  } else {
+    if (spine[0].midi - minMidi > 4) gaps.push({ lowExcl: minMidi - 1, highExcl: spine[0].midi, isHead: true, isTail: false });
+    for (let i = 1; i < spine.length; i++) {
+      if (spine[i].midi - spine[i - 1].midi > 4) {
+        gaps.push({ lowExcl: spine[i - 1].midi, highExcl: spine[i].midi, isHead: false, isTail: false });
+      }
+    }
+    const last = spine[spine.length - 1];
+    if (maxMidi - last.midi > 4) gaps.push({ lowExcl: last.midi, highExcl: maxMidi + 1, isHead: false, isTail: true });
+  }
+
+  const fills = [];
+  for (const gap of gaps) {
+    const inGap = fillTier.filter(r => r.midi > gap.lowExcl && r.midi < gap.highExcl);
+    if (inGap.length === 0) continue;
+    /* Anchor depends on gap location:
+       - head (lowest available is below the spine): walk inward from the
+         lowest in-gap candidate so we extend coverage down to the
+         instrument's bottom.
+       - tail (highest available is above the spine): walk inward from
+         lowExcl+4 up to the highest in-gap candidate.
+       - middle: walk from lowExcl+4 up to highExcl-1, centered between
+         the two spine boundaries.
+       Empty-spine case is a single "head+tail" gap covering everything. */
+    const startTarget = gap.isHead ? inGap[0].midi : gap.lowExcl + 4;
+    const endTarget = gap.isTail ? inGap[inGap.length - 1].midi : gap.highExcl - 1;
+    const excludeFrom = spine.length > 0 ? spine.concat(fills) : null;
+    const filled = spacedPick(inGap, startTarget, endTarget, excludeFrom, FILL_MIN_SEP);
+    for (const f of filled) fills.push(f);
+  }
+
+  const all = spine.concat(fills);
+  all.sort((a,b) => a.midi - b.midi);
+  return all;
 }
 
 // ─── 7. emit JS source ───────────────────────────────────────────────────────
@@ -521,7 +610,8 @@ function emitBlock(picks, cfg) {
 
 // ─── 8. report ───────────────────────────────────────────────────────────────
 
-function buildReport(results, picks, cfg) {
+function buildReport(results, picks, cfg, fallbackNotes) {
+  fallbackNotes = fallbackNotes || [];
   const tally = { green: 0, blue: 0, yellow: 0, red: 0, fail: 0 };
   results.forEach(r => tally[r.tier]++);
   const lines = [];
@@ -583,6 +673,24 @@ function buildReport(results, picks, cfg) {
       lines.push(`- ${f.note}: ${reason}`);
     });
   }
+  // filePattern fallback summary — only emitted for multi-pattern configs
+  // where at least one note had to walk past patterns[0] (either because
+  // patterns[0] 404'd or because its analysis tier was fail/red).
+  if (fallbackNotes.length) {
+    lines.push('');
+    lines.push(`## Fallbacks used (${fallbackNotes.length})`);
+    lines.push('');
+    lines.push(`Notes whose first available filePattern produced an invalid result and were re-analyzed against later patterns. Each row lists every attempt (✓ = kept; ✗ = rejected with reason).`);
+    lines.push('');
+    fallbackNotes.forEach(fb => {
+      const trail = fb.attempts.map(a => {
+        const tag = (a.patternIdx === fb.bestPatternIdx) ? '✓' : '✗';
+        const reason = a.failReason ? ` — ${a.failReason}` : '';
+        return `${tag} [${a.patternIdx}] ${a.matchedFile} (${a.tier})${a.patternIdx === fb.bestPatternIdx ? '' : reason}`;
+      }).join('  →  ');
+      lines.push(`- **${fb.note}**: ${trail}`);
+    });
+  }
   return lines.join('\n') + '\n';
 }
 
@@ -593,33 +701,70 @@ function buildReport(results, picks, cfg) {
   console.error(`config: ${cfg.instrumentKey} (${cfg.displayName}), ${cfg.decays?'decay':'unified loop'} path${cfg.vibrato?' (vibrato hint)':''}, transpose=${cfg.transpose}`);
   const notes = enumerateNotes(cfg);
   console.error(`enumerated ${notes.length} notes (${cfg.lowOct}–${cfg.highOct})`);
-  const samples = fetchAll(cfg, notes);
-  decodeAll(samples);
-  const fns = loadAnalyzer();
-  const results = samples.map(s => {
-    const buf = loadRaw(s.raw);
-    const analysisFreq = s.labeledFreq / cfg.transpose;
-    const res = cfg.decays ? analyzeDecay(buf, analysisFreq, fns)
-                            : analyzeLoop(buf, analysisFreq, cfg, fns);
-    const tier = cfg.decays ? classifyDecay(res) : classifyLoop(res);
-    const d = buf.getChannelData();
-    let rms = null, peak = null, gain = null;
-    if (cfg.decays) {
-      const stereo = loadStereoRaw(s.rawStereo);
-      peak = measurePeakDecay(stereo, d);
-      gain = computeGainFromPeak(peak);
-    } else {
-      rms = measureRmsLoop(d, res);
-      gain = computeGainFromRms(rms);
+  const fns = await loadAnalyzer();
+  const patterns = cfg.filePatterns || [cfg.filePattern];
+  const multiPattern = patterns.length > 1;
+  /* "Valid" = usable by pickSamples (tier ∈ {yellow, blue, green}). Once
+     a pattern yields one of these, we stop trying alternatives — we have
+     a working sample. Fail/red trigger the fallback to the next pattern. */
+  const VALID_TIERS = new Set(['green', 'blue', 'yellow']);
+  const results = [];
+  const fallbackNotes = []; /* per-note: { note, attempts:[{patternIdx, matchedFile, tier, failReason}] } */
+  let nFetched = 0, nCached = 0, nMissAll = 0;
+  for (const n of notes) {
+    let best = null, bestPatternIdx = -1;
+    const attempts = [];
+    for (let patternIdx = 0; patternIdx < patterns.length; patternIdx++) {
+      const fetched = fetchOne(cfg, n.note, n.midi, patternIdx);
+      if (!fetched) continue; /* 404 — try next pattern */
+      if (fetched.fromCache) nCached++; else nFetched++;
+      decodeOne(fetched);
+      const buf = loadRaw(fetched.raw);
+      const analysisFreq = n.labeledFreq / cfg.transpose;
+      const res = cfg.decays ? analyzeDecay(buf, analysisFreq, fns)
+                              : analyzeLoop(buf, analysisFreq, cfg, fns);
+      const tier = cfg.decays ? classifyDecay(res) : classifyLoop(res);
+      const d = buf.getChannelData();
+      let rms = null, peak = null, gain = null;
+      if (cfg.decays) {
+        const stereo = loadStereoRaw(fetched.rawStereo);
+        peak = measurePeakDecay(stereo, d);
+        gain = computeGainFromPeak(peak);
+      } else {
+        rms = measureRmsLoop(d, res);
+        gain = computeGainFromRms(rms);
+      }
+      const rec = { note: n.note, midi: n.midi, labeledFreq: n.labeledFreq, matchedFile: fetched.matchedFile, res, tier, rms, peak, gain };
+      attempts.push({ patternIdx, matchedFile: fetched.matchedFile, tier, failReason: (res && (res.failReason || (res.stats && res.stats.failReason))) || null });
+      if (!best || TIER_RANK[tier] > TIER_RANK[best.tier]) {
+        best = rec;
+        bestPatternIdx = patternIdx;
+      }
+      if (VALID_TIERS.has(tier)) break;
     }
-    return { note: s.note, midi: s.midi, labeledFreq: s.labeledFreq, matchedFile: s.matchedFile, res, tier, rms, peak, gain };
-  });
+    if (!best) { nMissAll++; continue; }
+    results.push(best);
+    if (multiPattern && (bestPatternIdx > 0 || attempts.length > 1)) {
+      fallbackNotes.push({ note: n.note, bestPatternIdx, attempts });
+    }
+    /* Force a GC pass between notes when --expose-gc is available. Each
+       per-note iteration allocates a fresh Float32Array view over a
+       fs.readFileSync Buffer (~3-30 MB per sample); V8 won't release those
+       Buffers until it runs GC on the small JS heap. For multi-pattern
+       configs like vcsl-baroque-recorder (4 patterns × 28 notes = up to
+       112 fetch+decode+analyze cycles) the off-heap Buffer pool grows
+       linearly and crashes Node at the default 4 GB old-space limit. An
+       explicit gc() here keeps the pool tight; the `npm run analyze`
+       script also bumps --max-old-space-size as a belt-and-suspenders. */
+    if (typeof global.gc === 'function') global.gc();
+  }
+  console.error(`fetch: ${nFetched} new, ${nCached} cached, ${nMissAll} 404/missing` + (multiPattern ? `, ${fallbackNotes.length} note${fallbackNotes.length===1?'':'s'} used fallback` : ''));
   const picks = pickSamples(results, cfg);
   fs.mkdirSync(OUT_DIR, { recursive: true });
   const blockPath  = path.join(OUT_DIR, `${cfg.instrumentKey}-block.txt`);
   const reportPath = path.join(OUT_DIR, `${cfg.instrumentKey}-report.md`);
   fs.writeFileSync(blockPath,  emitBlock(picks, cfg));
-  fs.writeFileSync(reportPath, buildReport(results, picks, cfg));
+  fs.writeFileSync(reportPath, buildReport(results, picks, cfg, fallbackNotes));
   console.error(`\nwrote: ${blockPath}\nwrote: ${reportPath}`);
   console.error(`picks: ${picks.length}`);
 })();

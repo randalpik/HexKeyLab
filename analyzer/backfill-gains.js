@@ -8,7 +8,9 @@
  *   node analyzer/backfill-gains.js piano violin       # subset
  *
  * Pipeline (per sample):
- *   1. Fetch baseUrl + name + ext to analyzer/.cache/<key>/<name>.mp3 (curl)
+ *   1. Fetch baseUrl + name + ext to analyzer/.cache/<configName>/<name>.mp3 (curl)
+ *      — <configName> resolved from baseUrl via analyzer/configs/*.json so the
+ *      cache lines up with generate-samples.js's per-config directories.
  *   2. Decode to f32 mono PCM @ 44.1 kHz via ffmpeg → analyzer/.cache/.../*.raw
  *   3. Find trimStart (first |x|>0.003) and measure RMS:
  *        loop  : findSteadyRegion (50ms/10ms RMS curve, ≥70% peak run); RMS
@@ -17,7 +19,7 @@
  *        decay : peak amplitude in attack region (first 200ms post-trim).
  *                gain = TARGET_PEAK_DECAY / peak (so all decay sample peaks
  *                land at the same dB).
- *   4. gain = 10^(TARGET_DBFS/20) / rms, clamped [GAIN_MIN, GAIN_MAX]
+ *   4. gain = 10^(TARGET_DBFS/20) / rms, floored at GAIN_MIN (no ceiling)
  *   5. Patch `gain:N.NNNN` into the entry line right after `freq:`
  *
  * Idempotent: if a `gain:` field is already present, it's replaced. Writes a
@@ -26,15 +28,36 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
 const REPO = path.resolve(__dirname, '..');
-const ANALYZER_HTML = path.join(REPO, 'tools', 'HexKeyLab-analyzer.html');
-const SAMPLES_TS = path.join(REPO, 'src', 'audio', 'samples.ts');
+/* findSteadyRegion etc. live in the modular ESM at analyzer-analysis.js
+   (extracted from the old monolithic tools/HexKeyLab-analyzer.html). */
+const ANALYZER_ANALYSIS_JS = path.join(__dirname, 'analyzer-analysis.js');
+/* The INSTRUMENTS map was split out of samples.ts into samples-data.ts when
+   the audio engine was modularized. */
+const SAMPLES_TS = path.join(REPO, 'src', 'audio', 'samples-data.ts');
 const CACHE_DIR = path.join(__dirname, '.cache');
+const CONFIGS_DIR = path.join(__dirname, 'configs');
 const OUT_DIR = path.join(__dirname, 'out');
+
+/* Build a baseUrl → config-basename index so we can reuse the same per-config
+   cache directories generate-samples.js writes. Without this, backfill would
+   write to .cache/<instrumentKey>/ while generate writes to .cache/<configName>/,
+   producing parallel caches that get out of sync. */
+function buildConfigIndex() {
+  const map = {};
+  for (const f of fs.readdirSync(CONFIGS_DIR)) {
+    if (!f.endsWith('.json')) continue;
+    try {
+      const cfg = JSON.parse(fs.readFileSync(path.join(CONFIGS_DIR, f), 'utf8'));
+      if (cfg.baseUrl) map[cfg.baseUrl] = f.replace(/\.json$/, '');
+    } catch { /* ignore malformed configs */ }
+  }
+  return map;
+}
 
 const SR = 44100;
 const TARGET_DBFS = -18;
@@ -52,10 +75,12 @@ const TARGET_PEAK_DECAY = Math.pow(10, TARGET_PEAK_DECAY_DBFS / 20);  /* ≈ 0.5
    samples' peak above the ceiling. */
 const PEAK_DBFS = -3;
 const TARGET_PEAK = Math.pow(10, PEAK_DBFS / 20);   /* ≈ 0.7079 */
+/* Floor only — see generate-samples.js for rationale. No GAIN_MAX: quiet
+   sources are normalized to target regardless of how much gain that takes.
+   Per-note level consistency is the higher priority. */
 const GAIN_MIN = 0.1;
-const GAIN_MAX = 12.0;  /* sanity bound (21.6 dB boost); the peak ceiling is the real limiter. Set high enough that every decay sample reaches its target peak even when the source is very quiet (harp top notes peak at -25 dBFS and need ~9× to reach -6 dBFS). */
 
-// ─── parse INSTRUMENTS map from samples.ts ───────────────────────────────────
+// ─── parse INSTRUMENTS map from samples-data.ts ──────────────────────────────
 
 function parseInstruments(src) {
   const lines = src.split('\n');
@@ -90,8 +115,8 @@ function parseInstruments(src) {
 
 // ─── fetch + decode (shared cache with generate-samples.js) ──────────────────
 
-function fetchOne(key, sampleName, baseUrl, ext) {
-  const dir = path.join(CACHE_DIR, key);
+function fetchOne(cacheSubdir, sampleName, baseUrl, ext) {
+  const dir = path.join(CACHE_DIR, cacheSubdir);
   fs.mkdirSync(dir, { recursive: true });
   const mp3 = path.join(dir, `${sampleName}${ext}`);
   if (fs.existsSync(mp3) && fs.statSync(mp3).size > 0) return mp3;
@@ -105,7 +130,10 @@ function fetchOne(key, sampleName, baseUrl, ext) {
 }
 
 function decodeOne(mp3) {
-  const raw = mp3.replace(/\.\w+$/, '.raw');
+  /* Append `.raw` (not replace ext) so distinct source extensions in the
+     same cache dir get distinct decoded outputs. See generate-samples.js
+     decodeOne for the full rationale. */
+  const raw = mp3 + '.raw';
   if (!fs.existsSync(raw) || fs.statSync(raw).mtimeMs < fs.statSync(mp3).mtimeMs) {
     execFileSync('ffmpeg', ['-loglevel','error','-y','-i', mp3, '-ac','1','-ar', String(SR),'-f','f32le', raw], { stdio: 'inherit' });
   }
@@ -121,7 +149,7 @@ function decodeOne(mp3) {
    peak, which makes a peak-based gain calibration over-boost those samples.
    Returns interleaved [L0,R0,L1,R1,...]. */
 function decodeStereo(mp3) {
-  const raw = mp3.replace(/\.\w+$/, '.s2.raw');
+  const raw = mp3 + '.s2.raw';
   if (!fs.existsSync(raw) || fs.statSync(raw).mtimeMs < fs.statSync(mp3).mtimeMs) {
     execFileSync('ffmpeg', ['-loglevel','error','-y','-i', mp3, '-ac','2','-ar', String(SR),'-f','f32le', raw], { stdio: 'inherit' });
   }
@@ -129,19 +157,13 @@ function decodeStereo(mp3) {
   return new Float32Array(buf.buffer, buf.byteOffset, Math.floor(buf.length/4));
 }
 
-// ─── load findSteadyRegion from analyzer HTML ────────────────────────────────
+// ─── load findSteadyRegion from analyzer-analysis.js ─────────────────────────
 
-function loadAnalyzer() {
-  const html = fs.readFileSync(ANALYZER_HTML, 'utf8');
-  const m = html.match(/<script>([\s\S]*?)<\/script>/);
-  if (!m) throw new Error('no <script> block in analyzer HTML');
-  const stub = {
-    document: { getElementById:()=>({addEventListener:()=>{},textContent:'',value:'',dataset:{}}), addEventListener:()=>{}, readyState:'complete', createElement:()=>({appendChild:()=>{}}) },
-    window: { AudioContext: function(){} }
-  };
-  const src = m[1] + '\n;return {findSteadyRegion};';
-  const factory = new Function('document','window', src);
-  return factory(stub.document, stub.window);
+async function loadAnalyzer() {
+  const mod = await import(pathToFileURL(ANALYZER_ANALYSIS_JS).href);
+  const api = mod.HKLAnalysis;
+  if (!api || !api.findSteadyRegion) throw new Error('analyzer-analysis.js did not export HKLAnalysis.findSteadyRegion');
+  return { findSteadyRegion: api.findSteadyRegion };
 }
 
 // ─── RMS measurement ─────────────────────────────────────────────────────────
@@ -230,7 +252,7 @@ function patchEntryLine(line, gainStr) {
 
 // ─── main ────────────────────────────────────────────────────────────────────
 
-(function main() {
+(async function main() {
   const argv = process.argv.slice(2);
   const targetKeys = argv.length ? new Set(argv) : null;
 
@@ -240,12 +262,13 @@ function patchEntryLine(line, gainStr) {
   const keys = targetKeys ? allKeys.filter(k => targetKeys.has(k)) : allKeys;
   if (targetKeys) {
     const missing = [...targetKeys].filter(k => !instruments[k]);
-    if (missing.length) console.error(`warning: not found in samples.ts: ${missing.join(', ')}`);
+    if (missing.length) console.error(`warning: not found in samples-data.ts: ${missing.join(', ')}`);
   }
   console.error(`parsed ${allKeys.length} instruments; processing ${keys.length}: ${keys.join(', ')}`);
   console.error(`target = ${TARGET_DBFS} dBFS RMS  (TARGET_RMS = ${TARGET_RMS.toFixed(5)})`);
 
-  const fns = loadAnalyzer();
+  const fns = await loadAnalyzer();
+  const configByBaseUrl = buildConfigIndex();
   const lines = orig.split('\n');
   const reportLines = [];
   reportLines.push(`# Sample gain backfill — measured RMS and computed gain factors`);
@@ -254,20 +277,28 @@ function patchEntryLine(line, gainStr) {
   reportLines.push(`- TARGET_RMS = ${TARGET_RMS.toFixed(5)} (linear)`);
   reportLines.push(`- Loop instruments: gain = TARGET_RMS (${TARGET_RMS.toFixed(5)}, ${TARGET_DBFS} dBFS) / measuredRmsOverSteadyRegion`);
   reportLines.push(`- Decay instruments: gain = TARGET_PEAK_DECAY (${TARGET_PEAK_DECAY.toFixed(5)}, ${TARGET_PEAK_DECAY_DBFS} dBFS) / measuredAttackPeak — every decay-sample peak normalized to the same dB`);
-  reportLines.push(`- Both paths peak-ceiling capped at ${PEAK_DBFS} dBFS, sanity-clamped to gain ∈ [${GAIN_MIN}, ${GAIN_MAX}]`);
+  reportLines.push(`- Both paths peak-ceiling capped at ${PEAK_DBFS} dBFS, gain floored at ${GAIN_MIN} (no ceiling)`);
   reportLines.push('');
 
   for (const key of keys) {
     const instr = instruments[key];
     const path_ = instr.decays ? 'decay' : (instr.vibrato ? 'vibrato' : 'macro');
-    console.error(`\n=== ${key} (${path_}, ${instr.samples.length} samples) ===`);
-    reportLines.push(`## ${key} (${path_})`);
+    /* Resolve the cache subdir from the instrument's baseUrl via the
+       config index. Falls back to the instrument key with a warning if no
+       matching config exists — that means generate-samples.js hasn't been
+       run for this source, so the parallel cache is the best we can do. */
+    const cacheSubdir = configByBaseUrl[instr.baseUrl] || key;
+    if (!configByBaseUrl[instr.baseUrl]) {
+      console.error(`  warning: no config matches ${key}'s baseUrl; caching under "${key}"`);
+    }
+    console.error(`\n=== ${key} (${path_}, ${instr.samples.length} samples)  cache=${cacheSubdir} ===`);
+    reportLines.push(`## ${key} (${path_}, cache: \`${cacheSubdir}\`)`);
     reportLines.push('');
     reportLines.push(`| Sample | RMS | RMS dBFS | Peak dBFS | gain | note |`);
     reportLines.push(`| --- | ---: | ---: | ---: | ---: | --- |`);
 
     for (const s of instr.samples) {
-      const mp3 = fetchOne(key, s.name, instr.baseUrl, instr.ext);
+      const mp3 = fetchOne(cacheSubdir, s.name, instr.baseUrl, instr.ext);
       if (!mp3) {
         console.error(`  ${s.name}: fetch failed`);
         reportLines.push(`| ${s.name} | — | — | — | fetch failed |`);
@@ -282,16 +313,15 @@ function patchEntryLine(line, gainStr) {
         continue;
       }
       /* Decay: peak-target normalization. Loop: RMS-target normalization with
-         peak ceiling. Both clamped to [GAIN_MIN, GAIN_MAX] for sanity. */
+         peak ceiling. Floored at GAIN_MIN; no ceiling — see file header. */
       const gainTarget = instr.decays
         ? (meas.peak > 0 ? TARGET_PEAK_DECAY / meas.peak : Infinity)
         : (TARGET_RMS / meas.rms);
       const gainCeiling = (meas.peak > 0) ? (TARGET_PEAK / meas.peak) : Infinity;
       const rawGain = Math.min(gainTarget, gainCeiling);
-      const gain = clamp(rawGain, GAIN_MIN, GAIN_MAX);
+      const gain = Math.max(GAIN_MIN, rawGain);
       const peakLimited = gainCeiling < gainTarget;
-      const sanityClamped = (Math.abs(gain - rawGain) > 1e-9);
-      const tag = sanityClamped ? '⚠ clamped' : (peakLimited ? 'peak-lim' : '');
+      const tag = peakLimited ? 'peak-lim' : '';
       const rmsStr = meas.rms != null ? meas.rms.toFixed(5) : '—';
       const dBFS = meas.rms != null ? (20 * Math.log10(meas.rms)).toFixed(1) : '—';
       const peakDb = meas.peak > 0 ? 20 * Math.log10(meas.peak) : -Infinity;

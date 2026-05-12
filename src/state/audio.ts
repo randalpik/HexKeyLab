@@ -22,6 +22,13 @@ export const audio: {
   audioCtx: AudioContext | null;
   oscGain: GainNode | null;
   squareGain: GainNode | null;
+  /* Master chain (built in initAudio): all source buses route through
+     masterBus → highShelf → limiter → destination. Defaults are neutral
+     (shelf 0 dB, limiter threshold −3 dB) so behavior matches pre-chain
+     output for a single voice. Dialed in via the ?loopdiag=1 overlay. */
+  masterBus: GainNode | null;
+  highShelf: BiquadFilterNode | null;
+  limiter: DynamicsCompressorNode | null;
   audioEnabled: boolean;
   activeWaveform: string;
   wfLoadingKey: string | null;
@@ -46,6 +53,9 @@ export const audio: {
   audioCtx: null,
   oscGain: null,
   squareGain: null,
+  masterBus: null,
+  highShelf: null,
+  limiter: null,
   audioEnabled: false,
   activeWaveform: 'piano',
   wfLoadingKey: null,

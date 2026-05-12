@@ -1,0 +1,26 @@
+{
+  "instrumentKey": "trombone",
+  "displayName": "Trombone",
+  "baseUrl": "https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/trombone-mp3/",
+  "ext": ".mp3",
+  "filePattern": "{NOTE}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 2,
+  "highOct": 5,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": false,
+  "releaseTime": 0.25,
+  "volume": 1.0,
+  "gateOpts": {"corrThreshold": 0.99, "rmsStepThreshold": 0.08},
+  "comment": [
+    "FluidR3_GM Trombone — soundfont-rendered MP3 (engineered loop in source).",
+    "corrThreshold:0.99 (vs default 0.95) because the harmonic structure varies",
+    "just enough across the sample that 0.95 admits picks whose 3-period waveform",
+    "correlates 'OK but not perfect' with the anchor — clean enough for most uses",
+    "but audibly inconsistent on long sustained chords. 0.99 forces phase-perfect",
+    "coherence; trombone has more than enough valid picks to support it.",
+    "rmsStepThreshold:0.08 (vs default 0.25) catches volume-mismatched picks from",
+    "gradual breath-pressure drift that phase-coherence alone misses."
+  ]
+}

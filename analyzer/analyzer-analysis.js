@@ -3,7 +3,7 @@
    fundamental; returns loop-point segments and the diagnostics that the
    visualization module renders. */
 
-window.HKLAnalysis = (function () {
+export const HKLAnalysis = (function () {
 /* ═══ selectSegments — segment-based loop selector ═══
    The only loop-point selector. The runtime's state machine is
    "play to b, loop back to a, pick next segment, repeat" — perpetual looping
@@ -14,9 +14,10 @@ window.HKLAnalysis = (function () {
      1. Restrict +ZC candidates to those inside the steady region passed in.
      2. Compute envelope RMS + slope at each candidate (frequency-adaptive
         envelope window) — same per-candidate stats the dot overlay uses.
-     3. Enumerate every (a, b) pair with a < b; apply the existing per-pair
-        gates: rmsStepThreshold, slopeStepThreshold, correlateWaveforms phase
-        coherence, xfadeDev midpoint deviation.
+     3. Enumerate every (a, b) pair with a < b; apply the per-pair gates:
+        rmsStepThreshold, slopeStepThreshold, pitch/tilt/tiltSlope (all O(1)
+        and short-circuited before the only O(window) gate), then a final
+        correlateWaveforms phase-coherence check at corrThreshold.
      4. Sort valid pairs by (b − a) descending. Greedy-select: accept iff
         (a) pair length ≥ minPairLengthSec, (b) both endpoints ≥ minEndpoint-
         SepSec from every endpoint of an already-selected pair. No 8-pair cap
@@ -36,8 +37,6 @@ window.HKLAnalysis = (function () {
 function selectSegments(buf, candidates, opts){
   opts=opts||{};
   var sr=buf.sampleRate,d=buf.getChannelData(0),len=buf.length;
-  var threshold=opts.threshold!==undefined?opts.threshold:0.20;
-  var xfadeSec=opts.xfadeSec||0.030;
   var rmsStepThreshold=opts.rmsStepThreshold!==undefined?opts.rmsStepThreshold:0.01;
   var slopeStepThreshold=opts.slopeStepThreshold!==undefined?opts.slopeStepThreshold:0.01;
   var slopeStrideSec=opts.slopeStrideSec!==undefined?opts.slopeStrideSec:0.030;
@@ -51,16 +50,31 @@ function selectSegments(buf, candidates, opts){
      measured + visualized; only this layer chooses to admit / reject pairs).
      pitchStepThresholdCents: max |Δpitch| in cents between (a, b) candidate
        positions, sampled from the per-buffer pitch curve.
-     tiltStepThreshold: max relative |Δtilt| / max(tilt_a, tilt_b). */
+     tiltStepThreshold: max relative |Δtilt| / max(tilt_a, tilt_b).
+     tiltSlopeStepThreshold: max |Δ(tilt-slope)| between (a, b). Tilt-slope is
+       the finite-difference derivative of the smoothed tilt trend curve — two
+       points can match in tilt magnitude but disagree on trajectory (one
+       rising, one falling), which still produces an audible seam. Gating on
+       this confines selection to where brightness is changing consistently. */
   var pitchAtCandidates=opts.pitchAtCandidates||null;
   var tiltAtCandidates=opts.tiltAtCandidates||null;
-  var pitchStepThresholdCents=opts.pitchStepThresholdCents!==undefined?opts.pitchStepThresholdCents:Infinity;
-  var tiltStepThreshold=opts.tiltStepThreshold!==undefined?opts.tiltStepThreshold:Infinity;
+  var tiltSlopeAtCandidates=opts.tiltSlopeAtCandidates||null;
+  /* Defaults chosen to give meaningful seam-quality gating out of the box:
+       5¢   — under one-quarter of a typical vibrato cycle width; tight enough
+              to keep wrap discontinuities below the pitch-just-noticeable
+              difference for sustained tones.
+       0.05 — 5% relative tilt step is at the edge of perceptible brightness
+              change for most sustained instruments.
+       0.05 — same magnitude for the dimensionless tilt-slope difference;
+              starts as a soft gate that rejects only the worst mismatches. */
+  var pitchStepThresholdCents=opts.pitchStepThresholdCents!==undefined?opts.pitchStepThresholdCents:5;
+  var tiltStepThreshold=opts.tiltStepThreshold!==undefined?opts.tiltStepThreshold:0.05;
+  var tiltSlopeStepThreshold=opts.tiltSlopeStepThreshold!==undefined?opts.tiltSlopeStepThreshold:0.05;
+  var _debug=opts._debug?{greedyAccepted:[],components:[],keptComponentIdx:-1,nonBridgePrunings:[]}:null;
 
   var n=candidates.length;
   if(n<2)return{segments:[],diag:{failReason:'<2 candidates after steady-region restriction',nCandidates:n}};
 
-  var xfSamples=Math.max(4,Math.round(xfadeSec*sr));
   var envWinPeriods=opts.envWinPeriods!==undefined?opts.envWinPeriods:4;
   var envWin=(tActualSec&&tActualSec>0)?Math.max(32,Math.round(envWinPeriods*tActualSec*sr)):Math.round(sr*0.05);
   var envHalf=envWin>>1;
@@ -99,29 +113,11 @@ function selectSegments(buf, candidates, opts){
     if(!slopeRel)return 0;
     return Math.abs(slopeRel[i]-slopeRel[j]);
   }
-  function xfadeDev(pa,pb){
-    if(pa+xfSamples>=len||pb+xfSamples>=len)return Infinity;
-    var m0=Math.floor(xfSamples*0.4);
-    var m1=Math.floor(xfSamples*0.6);
-    var sumPowMix=0,sumPowA=0,sumPowB=0;
-    for(var t=m0;t<m1;t++){
-      var gA=1-t/xfSamples,gB=t/xfSamples;
-      var va=d[pa+t],vb=d[pb+t];
-      var mix=gA*va+gB*vb;
-      sumPowMix+=mix*mix;sumPowA+=va*va;sumPowB+=vb*vb;
-    }
-    var mn=m1-m0;
-    var rmsMix=Math.sqrt(sumPowMix/mn);
-    var rmsA=Math.sqrt(sumPowA/mn);
-    var rmsB=Math.sqrt(sumPowB/mn);
-    var expCoherent=0.5*(rmsA+rmsB);
-    return Math.abs(rmsMix/(expCoherent+1e-9)-1);
-  }
   /* ── 3. Enumerate valid (a, b) pairs ────────────────────────────────── */
   var corrWinSamples=Math.max(32,Math.round(corrWindowPeriods*(tActualSec||0.005)*sr));
   var validPairs=[];
-  var rejectByRms=0,rejectBySlope=0,rejectByCorr=0,rejectByXfade=0;
-  var rejectByPitch=0,rejectByTilt=0;
+  var rejectByRms=0,rejectBySlope=0,rejectByCorr=0;
+  var rejectByPitch=0,rejectByTilt=0,rejectByTiltSlope=0;
   function pitchStepDev(i,j){
     if(!pitchAtCandidates)return 0;
     var pa=pitchAtCandidates[j],pb=pitchAtCandidates[i];
@@ -135,21 +131,43 @@ function selectSegments(buf, candidates, opts){
     var mx=Math.max(ta,tb);
     return mx>1e-9?Math.abs(ta-tb)/mx:0;
   }
+  /* Absolute difference (not ratio) because tilt-slope is signed and its
+     sign is informative — a rising-to-falling pair is worse than two
+     same-sign slopes of equal magnitude. The slope values are already
+     normalized by trend mean inside computeTiltSlopeCurve, so this is
+     dimensionless. Missing values (null/NaN at one or both endpoints —
+     happens near steady-region edges where the stride-window straddles
+     undefined trend samples) return Infinity, which rejects the pair
+     whenever the gate is in place. If the gate is disabled
+     (tiltSlopeStepThreshold = Infinity), Infinity > Infinity is false and
+     the pair passes. The whole-array null guard returns 0 because then
+     there is no gate to honor. */
+  function tiltSlopeStepDev(i,j){
+    if(!tiltSlopeAtCandidates)return 0;
+    var sa=tiltSlopeAtCandidates[j],sb=tiltSlopeAtCandidates[i];
+    if(sa==null||sb==null||isNaN(sa)||isNaN(sb))return Infinity;
+    return Math.abs(sa-sb);
+  }
+  /* Gate order: every O(1) check runs before the only O(corrWinSamples)
+     gate, so pairs rejected by the cheap metrics never pay for correlation.
+     For low-pitched long samples (cello-class, ≥10 s steady) this is what
+     keeps the n²·corrWin term from blowing up — correlation is by far the
+     dominant cost when it runs on every surviving pair. */
   for(var i=1;i<n;i++){
     for(var j=0;j<i;j++){
       /* a < b by construction: j < i so pair is (a=j, b=i) */
       if(ampStepDev(i,j)>rmsStepThreshold){rejectByRms++;continue;}
       if(slopeStepDev(i,j)>slopeStepThreshold){rejectBySlope++;continue;}
-      var pi=Math.round(candidates[i]*sr),pj=Math.round(candidates[j]*sr);
-      var pc=correlateWaveforms(d,pi,pj,corrWinSamples);
-      if(pc<corrThreshold){rejectByCorr++;continue;}
-      var xd=xfadeDev(pi,pj);
-      if(xd>threshold){rejectByXfade++;continue;}
       var psd=pitchStepDev(i,j);
       if(psd>pitchStepThresholdCents){rejectByPitch++;continue;}
       var tsd=tiltStepDev(i,j);
       if(tsd>tiltStepThreshold){rejectByTilt++;continue;}
-      validPairs.push({a:candidates[j],b:candidates[i],aIdx:j,bIdx:i,dist:candidates[i]-candidates[j],pc:pc,xd:xd,pitchStep:psd,tiltStep:tsd});
+      var tssd=tiltSlopeStepDev(i,j);
+      if(tssd>tiltSlopeStepThreshold){rejectByTiltSlope++;continue;}
+      var pi=Math.round(candidates[i]*sr),pj=Math.round(candidates[j]*sr);
+      var pc=correlateWaveforms(d,pi,pj,corrWinSamples);
+      if(pc<corrThreshold){rejectByCorr++;continue;}
+      validPairs.push({a:candidates[j],b:candidates[i],aIdx:j,bIdx:i,dist:candidates[i]-candidates[j],pc:pc,pitchStep:psd,tiltStep:tsd,tiltSlopeStep:tssd});
     }
   }
   if(validPairs.length===0){
@@ -157,8 +175,9 @@ function selectSegments(buf, candidates, opts){
       failReason:'no valid pairs',
       nCandidates:n,
       rejectByRms:rejectByRms,rejectBySlope:rejectBySlope,
-      rejectByCorr:rejectByCorr,rejectByXfade:rejectByXfade,
-      rejectByPitch:rejectByPitch,rejectByTilt:rejectByTilt
+      rejectByCorr:rejectByCorr,
+      rejectByPitch:rejectByPitch,rejectByTilt:rejectByTilt,
+      rejectByTiltSlope:rejectByTiltSlope
     }};
   }
   /* ── 4. Distance-descending greedy selection ─────────────────────────── */
@@ -189,6 +208,7 @@ function selectSegments(buf, candidates, opts){
     }
     selected.push(pr);
     endpoints.push(pr.a);endpoints.push(pr.b);
+    if(_debug)_debug.greedyAccepted.push({a:pr.a,b:pr.b,dist:pr.dist});
   }
   /* Distance distribution among the valid pairs (min/p25/p50/p75/max).
      Useful for diagnosing "lots of valid pairs but few segments" — if the
@@ -207,11 +227,10 @@ function selectSegments(buf, candidates, opts){
     p75:+quantile(distsSorted,0.75).toFixed(4),
     max:+quantile(distsSorted,1).toFixed(4)
   };
-  /* Pitch/tilt step distributions across the pairs that survived the
-     existing per-pair gates (rms/slope/corr/xfade) AND the new pitch/tilt
-     gates (which are open by default — Infinity thresholds). The histogram
-     therefore reports what the *current* set of accepted pairs looks like
-     along these two new dimensions, so the user can pick a useful gate. */
+  /* Pitch/tilt step distributions across the pairs that survived every
+     per-pair gate (rms/slope/pitch/tilt/tiltSlope/corr). The histogram
+     reports what the current set of accepted pairs looks like along
+     pitch/tilt so the user can pick a useful gate. */
   function quantHist(arr){
     if(!arr.length)return null;
     var s=arr.slice().sort(function(a,b){return a-b;});
@@ -226,18 +245,26 @@ function selectSegments(buf, candidates, opts){
   }
   var pitchHist=pitchAtCandidates?quantHist(validPairs.map(function(p){return p.pitchStep;})):null;
   var tiltHist=tiltAtCandidates?quantHist(validPairs.map(function(p){return p.tiltStep;})):null;
+  var tiltSlopeHist=tiltSlopeAtCandidates?quantHist(validPairs.map(function(p){return p.tiltSlopeStep;})):null;
   /* Sort selected by a for SCC analysis. */
   selected.sort(function(p,q){return p.a-q.a;});
 
-  /* ── 5. SCC verification (consecutive overlap chain) ──────────────────
-     Two segments overlap iff their [a, b] ranges intersect. When sorted by
-     a, they form one SCC iff b_i ≥ a_{i+1} for every consecutive i. Any
-     break splits the set into separate components. We then identify all
-     components and keep the one covering the most total time (union of
-     ranges). */
+  /* ── 5. Overlap-graph component split ─────────────────────────────────
+     Two pairs overlap iff their [a, b] ranges intersect. Connected
+     components in the overlap graph correspond to gaps in the UNION of
+     ranges. After sorting by a, sweep and track the running max-b-so-far;
+     a new component starts only when the next pair's a exceeds it. The
+     naive "consecutive overlap" check (b_i ≥ a_{i+1}) is INSUFFICIENT —
+     a short pair tucked inside an earlier longer pair can have a small b
+     that's less than the next pair's a, but the earlier long pair still
+     bridges them. The running-max sweep catches that. */
   var componentBreaks=[];
-  for(var ci=0;ci<selected.length-1;ci++){
-    if(selected[ci].b<selected[ci+1].a)componentBreaks.push(ci);
+  if(selected.length>0){
+    var runMaxB=selected[0].b;
+    for(var ci=0;ci<selected.length-1;ci++){
+      if(selected[ci].b>runMaxB)runMaxB=selected[ci].b;
+      if(runMaxB<selected[ci+1].a)componentBreaks.push(ci);
+    }
   }
   var components=[];
   if(selected.length>0){
@@ -258,11 +285,20 @@ function selectSegments(buf, candidates, opts){
     }
     return hi-lo;
   }
-  var keptComponent=null;
+  var keptComponent=null,keptComponentIdx=-1;
   for(var ci2=0;ci2<components.length;ci2++){
     if(!keptComponent||componentCoverage(components[ci2])>componentCoverage(keptComponent)){
-      keptComponent=components[ci2];
+      keptComponent=components[ci2];keptComponentIdx=ci2;
     }
+  }
+  if(_debug){
+    for(var ci3=0;ci3<components.length;ci3++){
+      _debug.components.push({
+        coverage:+componentCoverage(components[ci3]).toFixed(4),
+        pairs:components[ci3].map(function(p){return{a:+p.a.toFixed(4),b:+p.b.toFixed(4),dist:+p.dist.toFixed(4)};})
+      });
+    }
+    _debug.keptComponentIdx=keptComponentIdx;
   }
   if(!keptComponent||keptComponent.length===0){
     return{segments:[],diag:{
@@ -279,9 +315,23 @@ function selectSegments(buf, candidates, opts){
      overlap each other; removing it splits the chain). Remove the most
      redundant non-bridge first (shortest by dist, then most-overlapped).
      If only bridges remain and we're still > maxSegments, keep them all. */
+  /* Correct bridge test: pair idx is a bridge iff removing it disconnects the
+     overlap graph. We remove idx and run the same running-max-b sweep used
+     in the component split — if a gap appears, idx was the only thing
+     bridging two regions. The old test only checked whether idx-1 and idx+1
+     in sorted order overlap directly, which is wrong: a far-earlier pair
+     with a large b can still bridge them through the overlap graph. */
   function isBridge(arr, idx){
-    if(idx===0||idx===arr.length-1)return false; /* edges aren't bridges by this def — drop is OK */
-    return arr[idx-1].b<arr[idx+1].a;
+    if(arr.length<=2)return false; /* with ≤2 pairs, no pair can be a bridge */
+    var rem=[];
+    for(var ri=0;ri<arr.length;ri++)if(ri!==idx)rem.push(arr[ri]);
+    if(rem.length<2)return false;
+    var rMaxB=rem[0].b;
+    for(var ri2=0;ri2<rem.length-1;ri2++){
+      if(rem[ri2].b>rMaxB)rMaxB=rem[ri2].b;
+      if(rMaxB<rem[ri2+1].a)return true;
+    }
+    return false;
   }
   function overlapWithNeighbors(arr, idx){
     /* Sum of intersection length with left + right neighbor. Higher = more
@@ -313,6 +363,7 @@ function selectSegments(buf, candidates, opts){
         worst=idx;worstDist=dist;worstOv=ov;
       }
     }
+    if(_debug)_debug.nonBridgePrunings.push({a:+work[worst].a.toFixed(4),b:+work[worst].b.toFixed(4),dist:+work[worst].dist.toFixed(4)});
     work.splice(worst,1);
   }
   /* Final output. */
@@ -320,17 +371,25 @@ function selectSegments(buf, candidates, opts){
   /* Bridge count for diag (after pruning). */
   var bridges=0;
   for(var i=0;i<work.length;i++)if(isBridge(work,i))bridges++;
-  /* SCC sanity check after prune. */
+  /* Connectivity sanity check after non-bridge prune — same running-max-b
+     sweep as the component split. The old check only compared consecutive
+     pairs in sorted order, which would erroneously fail on legitimate
+     overlap-connected sets containing "nested" short pairs after a longer
+     earlier pair. */
   var sccOk=true;
-  for(var i=0;i<work.length-1;i++){
-    if(work[i].b<work[i+1].a){sccOk=false;break;}
+  if(work.length>1){
+    var sccRunMaxB=work[0].b;
+    for(var i=0;i<work.length-1;i++){
+      if(work[i].b>sccRunMaxB)sccRunMaxB=work[i].b;
+      if(sccRunMaxB<work[i+1].a){sccOk=false;break;}
+    }
   }
   /* Per-selected-segment seam stats — what the user actually hears at each
      wrap point. Reports |Δpitch| (cents) and |Δtilt| (relative) at every
      (a, b) of the kept segments. Useful for spotting which specific seams
      are likely audible. */
   var selectedSeamStats=null;
-  if(pitchAtCandidates||tiltAtCandidates){
+  if(pitchAtCandidates||tiltAtCandidates||tiltSlopeAtCandidates){
     selectedSeamStats=segments.map(function(sg){
       /* Find pair in `work` by matching a/b. */
       var pair=null;
@@ -338,24 +397,49 @@ function selectSegments(buf, candidates, opts){
       return{
         a:sg.a,b:sg.b,
         pitchStep:pair?+pair.pitchStep.toFixed(2):null,
-        tiltStep:pair?+pair.tiltStep.toFixed(4):null
+        tiltStep:pair?+pair.tiltStep.toFixed(4):null,
+        tiltSlopeStep:pair?+pair.tiltSlopeStep.toFixed(5):null
       };
     });
   }
+  /* "Ghost" endpoints — pairs that the greedy loop SELECTED (so their endpoints
+     went into the `endpoints[]` array that drove the separation gate) but
+     later got DISCARDED by SCC component pruning or by the non-bridge filter.
+     These don't appear as green dots in the visualization but they DID
+     contribute to the separation rejection of nearby candidates. Exposing
+     them lets the user see why blue dots are clustered around regions of the
+     steady span that no longer have a visible segment endpoint. */
+  var finalEndpointKeys={};
+  for(var fi=0;fi<work.length;fi++){
+    finalEndpointKeys[+work[fi].a.toFixed(7)]=true;
+    finalEndpointKeys[+work[fi].b.toFixed(7)]=true;
+  }
+  var ghostEndpointTimes={};
+  for(var gi=0;gi<selected.length;gi++){
+    var ga=+selected[gi].a.toFixed(7),gb=+selected[gi].b.toFixed(7);
+    if(!finalEndpointKeys[ga])ghostEndpointTimes[ga]=true;
+    if(!finalEndpointKeys[gb])ghostEndpointTimes[gb]=true;
+  }
+  var nGhostEndpoints=Object.keys(ghostEndpointTimes).length;
   return{
     segments:segments,
     diag:{
       nCandidates:n,
       nValidPairs:validPairs.length,
       rejectByRms:rejectByRms,rejectBySlope:rejectBySlope,
-      rejectByCorr:rejectByCorr,rejectByXfade:rejectByXfade,
+      rejectByCorr:rejectByCorr,
       rejectByPitch:rejectByPitch,rejectByTilt:rejectByTilt,
+      rejectByTiltSlope:rejectByTiltSlope,
       nRejectedByMinLength:nRejectedByMinLength,
       nRejectedBySeparation:nRejectedBySeparation,
       separationRejectedTimes:separationRejectedTimes,
+      ghostEndpointTimes:ghostEndpointTimes,
+      nGhostEndpoints:nGhostEndpoints,
+      _debug:_debug,
       distHistogram:distHistogram,
       pitchStepHistogram:pitchHist,
       tiltStepHistogram:tiltHist,
+      tiltSlopeStepHistogram:tiltSlopeHist,
       selectedSeamStats:selectedSeamStats,
       nSelectedPrePrune:keptComponent.length,
       componentCount:components.length,
@@ -369,19 +453,190 @@ function selectSegments(buf, candidates, opts){
   };
 }
 
-/* ═══ findSteadyRegionMeanThreshold ═══
-   Returns the largest contiguous span where smoothed RMS stays at or above
-   `steadyRmsRatio * meanRMS`. Mean-anchored (vs peak-anchored): robust to
-   one-off peaks (attack transients, fast-decay tails) skewing the bar.
-     • mandatory smoothing window (default max(3·T_actual, 0.30s)) so musical
-       modulation (5–7Hz vibrato) integrates out rather than carves the region
-       into vibrato-cycle-sized fragments
-     • returns sampleStart/sampleEnd in original-buffer samples plus secStart/
-       secEnd for the caller's convenience
-   Used by the segment-based loop selector (selectSegments) as a hard
-   inclusion constraint on +ZC candidates — anything outside the returned
-   span is dropped before pair-validity work. */
-function findSteadyRegionMeanThreshold(d, sr, trimStart, trimEnd, opts){
+/* ═══ applyConfigDefaults ═══
+   Derives the prepareLoop opts object from a config's gateOpts, layering in
+   the vibrato hint and trend-normalization defaults. Both the Node-side
+   runner and the in-browser harness call this so they apply the same
+   per-config defaults — without it, the browser would skip the vibrato
+   hint entirely (corrWindowPeriods stays at the prepareLoop default 3
+   instead of the vibrato-friendly 2), producing systematically tighter
+   correlation gates than the headless run and landing many Iowa-string
+   notes in "< 2 segments → fail" that the headless gets through.
+
+   Precedence: cfg.gateOpts < cfg.vibrato defaults < trend defaults. The
+   browser harness then layers user-form overrides on top via
+   mergeGlobalThresholds, which spread-merges this output and then writes
+   any non-empty form inputs over the result. */
+function applyConfigDefaults(cfg, baseOpts){
+  var opts={};
+  if(baseOpts) for(var k in baseOpts) opts[k]=baseOpts[k];
+  if(cfg && cfg.vibrato){
+    if(opts.corrThreshold===undefined)opts.corrThreshold=0.90;
+    if(opts.corrWindowPeriods===undefined)opts.corrWindowPeriods=2;
+  }
+  if(opts.trendNormalize===undefined)opts.trendNormalize=true;
+  if(opts.trendWindowMs===undefined)opts.trendWindowMs=600;
+  return opts;
+}
+
+/* ═══ trimSilence ═══
+   Returns {trimStart, trimEnd} in original-buffer samples. Used to bound
+   every downstream signal-analysis step plus, critically, to set the runtime
+   playback start offset emitted into samples.ts — every ms of leading silence
+   left in the trim becomes audible silence when a key is triggered.
+
+   Implementation: windowed RMS test rather than first-sample-over-bar.
+     • A single noise spike crossing an absolute amplitude bar is enough to
+       commit trimStart in the latter, which leaves up to several hundred ms
+       of pre-onset floor noise in samples whose actual onset is far later
+       (Iowa MIS viola/C4 was the motivating case: a stray 0.00298-amplitude
+       spike at 0.159 s committed the trim, but the real bow attack doesn't
+       cross 0.005 RMS until 0.426 s).
+     • A 20 ms RMS window integrates one-off spikes and lifts the bar above
+       the Iowa MIS floor (≈ 0.003 peak / 0.0003 RMS) by enough margin to
+       reject pre-onset noise without cutting into genuine soft onsets.
+     • For fast-onset instruments (brass, oboe, bassoon, plucked) the new
+       trim is typically 5-20 ms EARLIER than the old per-sample check —
+       the old check missed the rising edge of the onset until the envelope
+       crossed 0.003 absolute; the windowed RMS sees the rise.
+
+   Tunable via opts (defaults tuned on Iowa MIS strings + winds + brass):
+     trimWindowMs    — RMS window length in ms (default 20)
+     trimRmsThresh   — RMS threshold (default 0.005)
+     trimHopMs       — search hop in ms (default 5; window/4) */
+function trimSilence(d, sr, opts){
+  opts=opts||{};
+  var winMs=opts.trimWindowMs!==undefined?opts.trimWindowMs:20;
+  var thresh=opts.trimRmsThresh!==undefined?opts.trimRmsThresh:0.005;
+  var hopMs=opts.trimHopMs!==undefined?opts.trimHopMs:Math.max(1,winMs/4);
+  var win=Math.max(1,Math.round(sr*winMs/1000));
+  var hop=Math.max(1,Math.round(sr*hopMs/1000));
+  var len=d.length;
+  var sqThresh=thresh*thresh*win;  /* compare sum-of-squares to threshold² * win to avoid per-window sqrt */
+  /* Forward scan: first window whose RMS ≥ thresh. */
+  var trimStart=0;
+  for(var s=0;s+win<=len;s+=hop){
+    var sum=0;
+    for(var k=0;k<win;k++)sum+=d[s+k]*d[s+k];
+    if(sum>=sqThresh){trimStart=s;break;}
+  }
+  /* Backward scan: last window whose RMS ≥ thresh. */
+  var trimEnd=len;
+  for(var s=len-win;s>=0;s-=hop){
+    var sum=0;
+    for(var k=0;k<win;k++)sum+=d[s+k]*d[s+k];
+    if(sum>=sqThresh){trimEnd=s+win;break;}
+  }
+  return{trimStart:trimStart,trimEnd:trimEnd};
+}
+
+/* ═══ findSteadyRegion ═══
+   Returns the steady-state span of a sustained sample as sampleStart/End in
+   original-buffer samples plus secStart/secEnd for callers. Used by the
+   segment-based loop selector as a hard inclusion constraint on +ZC
+   candidates — anything outside the returned span is dropped before pair-
+   validity work.
+
+   Two-pass detector, run on a single smoothed RMS curve (default smoothing
+   ≥ max(3·T_actual, 0.30s) so 5–7 Hz vibrato integrates out):
+
+     Pass 1 — flatness (preferred). Median-anchored amplitude bar plus a
+     relative-slope gate. The amplitude bar (default 0.7 × median) is
+     robust against onset/decay distortion because the steady region
+     dominates the curve by duration, so the median tracks steady RMS even
+     when mean is pulled down. The slope gate (default ≤ 0.5 / sec) is
+     computed on a second-pass-smoothed copy of the curve (extra 500 ms)
+     to integrate out vibrato AM that survives the first pass; this
+     directly measures "is the smoothed envelope flat here?" — the
+     property we actually care about for both noisy onsets (string
+     overshoot-and-settle) and smooth ones (clarinet slow rise).
+
+     Pass 2 — amplitude-only fallback. The original mean-anchored algorithm:
+     longest contiguous run with rms ≥ steadyRmsRatio · meanRMS (default
+     0.5). Less precise but never collapses on vibrato-heavy bowed samples
+     where the slope gate over-rejects.
+
+   Fallback rule: if Pass 1 yields a duration < steadyFallbackRatio × the
+   Pass 2 duration (default 0.5), use Pass 2. This handles Iowa
+   violin/viola/double-bass where bow + vibrato AM is intrinsically too
+   variable for slope-based steady detection; everything else (cello,
+   clarinet, oboe, bassoon, flute, brass) benefits from the tighter
+   flatness trim.
+
+   Tunable via opts (all read off cfg.gateOpts in production):
+     steadySmoothingSec       — first-pass smoothing window (s)
+     steadyMedianRatio        — Pass 1 amplitude bar (0.7 = 70% of median)
+     steadyMaxRelSlopePerSec  — Pass 1 slope bar (0.5 = 50%/sec)
+     steadySlopeWindowSec     — Pass 1 forward/back slope-measurement half-window
+     steadySlopeExtraSmoothMs — Pass 1 extra smoothing applied to slope basis
+     steadyRmsRatio           — Pass 2 amplitude bar (0.5 = 50% of mean)
+     steadyFallbackRatio      — Pass 1 → Pass 2 trip point (0.5) */
+
+/* Pass 2 detector: longest run ≥ ratio·meanRMS. Existing semantics. */
+function _findSteadyByAmplitudeBar(rmsCurve, ratio, firstCrossingIdx){
+  var meanRms=0;
+  for(var i=0;i<rmsCurve.length;i++)meanRms+=rmsCurve[i].rms;
+  meanRms/=rmsCurve.length;
+  if(meanRms<0.001)return{failReason:'sample silent/inaudible (meanRms='+meanRms.toExponential(2)+')',meanRms:meanRms};
+  var rmsThresh=meanRms*ratio;
+  var runStart=-1,bestStart=-1,bestEnd=-1,bestLen=0;
+  /* Skip any index before the smoothed-RMS curve first crosses its own
+     median. Prevents the mean-anchored bar (which is pulled down by the
+     decay tail) from admitting the lower half of a gradual onset. */
+  for(var i=0;i<rmsCurve.length;i++){
+    if(i<firstCrossingIdx){runStart=-1;continue;}
+    if(rmsCurve[i].rms>=rmsThresh){
+      if(runStart<0)runStart=i;
+      if(i-runStart>bestLen){bestLen=i-runStart;bestStart=runStart;bestEnd=i;}
+    } else runStart=-1;
+  }
+  if(bestStart<0)return{failReason:'no steady region above '+(ratio*100).toFixed(0)+'% of meanRMS past first-median-crossing',meanRms:meanRms};
+  return{start:bestStart,end:bestEnd,meanRms:meanRms,rmsThresh:rmsThresh};
+}
+
+/* Pass 1 detector: longest run where the smoothed RMS is both above a
+   median-anchored bar AND its derivative is below a relative-slope bar.
+   Median is computed once in the wrapper and passed in. */
+function _findSteadyByFlatness(rmsCurve, hopSec, median, medianRatio, slopeBar, slopeWinSec, extraSmoothMs, firstCrossingIdx){
+  if(median<0.001)return{failReason:'sample silent/inaudible (median='+median.toExponential(2)+')',median:median};
+  var rmsBar=median*medianRatio;
+  /* Slope basis: second smoothing pass over the already-smoothed curve so
+     5-7 Hz vibrato AM (which the first pass partially admits) integrates
+     out before differentiation. */
+  var slopeBasis=rmsCurve.map(function(c){return c.rms;});
+  if(extraSmoothMs>0){
+    var smHalf=Math.max(1,Math.round(extraSmoothMs/(1000*hopSec*2)));
+    var sm=new Array(slopeBasis.length);
+    for(var i=0;i<slopeBasis.length;i++){
+      var lo=Math.max(0,i-smHalf),hi=Math.min(slopeBasis.length,i+smHalf+1),sum=0;
+      for(var j=lo;j<hi;j++)sum+=slopeBasis[j];
+      sm[i]=sum/(hi-lo);
+    }
+    slopeBasis=sm;
+  }
+  var dk=Math.max(1,Math.round(slopeWinSec/hopSec));
+  var slope=new Array(rmsCurve.length);
+  for(var i=0;i<rmsCurve.length;i++){
+    var lo=Math.max(0,i-dk),hi=Math.min(slopeBasis.length-1,i+dk);
+    var dt=(hi-lo)*hopSec;
+    slope[i]=dt>0?(slopeBasis[hi]-slopeBasis[lo])/dt/Math.max(slopeBasis[i],1e-6):0;
+  }
+  /* Longest run satisfying both gates AND past the first median crossing
+     (the wrapper-computed boundary that keeps any detector from admitting
+     pre-mean-crossing onset region). */
+  var runStart=-1,bestStart=-1,bestEnd=-1,bestLen=0;
+  for(var i=0;i<rmsCurve.length;i++){
+    if(i<firstCrossingIdx){runStart=-1;continue;}
+    if(rmsCurve[i].rms>=rmsBar && Math.abs(slope[i])<=slopeBar){
+      if(runStart<0)runStart=i;
+      if(i-runStart>bestLen){bestLen=i-runStart;bestStart=runStart;bestEnd=i;}
+    } else runStart=-1;
+  }
+  if(bestStart<0)return{failReason:'no flat steady region under slope='+slopeBar.toFixed(2)+'/s + median bar='+rmsBar.toExponential(2)+' past first-median-crossing',median:median,rmsBar:rmsBar,slopeBar:slopeBar};
+  return{start:bestStart,end:bestEnd,median:median,rmsBar:rmsBar,slopeBar:slopeBar};
+}
+
+function findSteadyRegion(d, sr, trimStart, trimEnd, opts){
   opts=opts||{};
   var rmsWin=Math.round(sr*0.05),rmsHop=Math.round(sr*0.01);
   if(trimEnd-trimStart<rmsWin*3) return{failReason:'post-trim region too short'};
@@ -391,8 +646,7 @@ function findSteadyRegionMeanThreshold(d, sr, trimStart, trimEnd, opts){
     rmsCurve.push({pos:s+Math.floor(rmsWin/2),rms:Math.sqrt(sum/rmsWin)});
   }
   if(rmsCurve.length<3)return{failReason:'RMS curve too short'};
-  /* Smooth ≥ max(3·T_actual, 0.30s) by default — wide enough to integrate
-     out 5–7Hz vibrato. */
+  /* First-pass smoothing — wide enough to integrate out 5-7 Hz vibrato. */
   var smoothMs;
   if(opts.steadySmoothingSec!==undefined){
     smoothMs=opts.steadySmoothingSec*1000;
@@ -401,7 +655,7 @@ function findSteadyRegionMeanThreshold(d, sr, trimStart, trimEnd, opts){
     smoothMs=Math.max(3*tActualMs,300);
   }
   if(smoothMs>0){
-    var smHalf=Math.max(1,Math.round(smoothMs/20)); /* rmsHop=10ms → half-width = smoothMs/20 array slots */
+    var smHalf=Math.max(1,Math.round(smoothMs/20));
     var smoothed=new Array(rmsCurve.length);
     for(var i=0;i<rmsCurve.length;i++){
       var lo=Math.max(0,i-smHalf),hi=Math.min(rmsCurve.length,i+smHalf+1),sum2=0;
@@ -410,33 +664,70 @@ function findSteadyRegionMeanThreshold(d, sr, trimStart, trimEnd, opts){
     }
     for(var i=0;i<rmsCurve.length;i++)rmsCurve[i].rms=smoothed[i];
   }
-  /* Mean RMS over the smoothed curve. */
-  var meanRms=0;
-  for(var i=0;i<rmsCurve.length;i++)meanRms+=rmsCurve[i].rms;
-  meanRms/=rmsCurve.length;
-  if(meanRms<0.001) return{failReason:'sample silent/inaudible (meanRms='+meanRms.toExponential(2)+')',meanRms:meanRms};
-  var ratio=opts.steadyRmsRatio!==undefined?opts.steadyRmsRatio:0.5;
-  var rmsThresh=meanRms*ratio;
-  /* Largest run of consecutive points at or above the threshold. */
-  var runStart=-1,bestStart=-1,bestEnd=-1,bestLen=0;
-  for(var i=0;i<rmsCurve.length;i++){
-    if(rmsCurve[i].rms>=rmsThresh){
-      if(runStart<0)runStart=i;
-      if(i-runStart>bestLen){bestLen=i-runStart;bestStart=runStart;bestEnd=i;}
-    } else runStart=-1;
+  var hopSec=rmsHop/sr;
+  var medianRatio=opts.steadyMedianRatio!==undefined?opts.steadyMedianRatio:0.7;
+  var slopeBar=opts.steadyMaxRelSlopePerSec!==undefined?opts.steadyMaxRelSlopePerSec:0.5;
+  var slopeWinSec=opts.steadySlopeWindowSec!==undefined?opts.steadySlopeWindowSec:0.05;
+  var extraSmoothMs=opts.steadySlopeExtraSmoothMs!==undefined?opts.steadySlopeExtraSmoothMs:500;
+  var fallbackRatio=opts.steadyFallbackRatio!==undefined?opts.steadyFallbackRatio:0.5;
+  var ampRatio=opts.steadyRmsRatio!==undefined?opts.steadyRmsRatio:0.5;
+  /* Median over the smoothed curve + first index at which the curve crosses
+     it. This boundary is the hard floor on where steady can start — both
+     detectors honor it. Median (not arithmetic mean) tracks the typical
+     steady level since the steady region usually dominates the curve by
+     duration; arithmetic mean is pulled down by the decay tail and would
+     cross too early on samples like Iowa viola/C4. */
+  var sortedRms=rmsCurve.map(function(c){return c.rms;}).slice().sort(function(a,b){return a-b;});
+  var medianRms=sortedRms[Math.floor(sortedRms.length/2)];
+  var firstCrossingIdx=0;
+  while(firstCrossingIdx<rmsCurve.length && rmsCurve[firstCrossingIdx].rms<medianRms) firstCrossingIdx++;
+  var flat=_findSteadyByFlatness(rmsCurve,hopSec,medianRms,medianRatio,slopeBar,slopeWinSec,extraSmoothMs,firstCrossingIdx);
+  var amp =_findSteadyByAmplitudeBar(rmsCurve,ampRatio,firstCrossingIdx);
+  /* Pick the flatness result unless it's too short relative to the
+     amplitude-bar result (vibrato-heavy bowed string cases — see Iowa
+     violin/viola where the AM defeats the slope gate). If amplitude-bar
+     also failed, we have nothing to return. */
+  var picked=null,method='none';
+  if(!amp.failReason){
+    if(!flat.failReason && (flat.end-flat.start)>=fallbackRatio*(amp.end-amp.start)){
+      picked=flat;method='flat';
+    }else{
+      picked=amp;method='amp-fallback';
+    }
+  }else if(!flat.failReason){
+    picked=flat;method='flat';
   }
-  if(bestStart<0)return{failReason:'no steady region above '+(ratio*100).toFixed(0)+'% of meanRMS',meanRms:meanRms};
-  var ss=rmsCurve[bestStart].pos,se=rmsCurve[bestEnd].pos;
+  if(!picked){
+    return{failReason:flat.failReason||amp.failReason,meanRms:amp.meanRms,median:flat.median};
+  }
+  var ss=rmsCurve[picked.start].pos,se=rmsCurve[picked.end].pos;
+  /* firstCrossingSec — the wall-clock moment the smoothed RMS curve first
+     reaches the median. steady.secStart will be >= this by construction. */
+  var firstCrossingSec=firstCrossingIdx<rmsCurve.length?rmsCurve[firstCrossingIdx].pos/sr:null;
   return{
     steadyStart:ss,steadyEnd:se,
     secStart:ss/sr,secEnd:se/sr,
-    meanRms:meanRms,
-    rmsThresh:rmsThresh,
+    method:method,
+    meanRms:amp.meanRms||0,
+    median:flat.median||0,
+    firstCrossingSec:firstCrossingSec,
+    /* rmsThresh kept for back-compat with diagnostic emit (line 1188). For
+       the flatness path it reflects the median-anchored bar; for the
+       amplitude fallback it reflects the meanRMS bar — same field, two
+       semantics distinguished by `method`. */
+    rmsThresh:method==='flat'?(flat.rmsBar||0):(amp.rmsThresh||0),
+    slopeBar:flat.slopeBar||0,
     smoothMs:smoothMs,
-    /* curve exposed for visualization */
-    rmsCurve:rmsCurve
+    rmsCurve:rmsCurve,
+    /* Both detectors' raw spans exposed for diagnostics. */
+    flatSpan:flat.failReason?null:{start:flat.start,end:flat.end},
+    ampSpan: amp.failReason ?null:{start:amp.start, end:amp.end}
   };
 }
+/* Back-compat alias — kept so the old export name still resolves if any
+   external consumer ever surfaces. Currently nothing outside this file
+   uses it. */
+var findSteadyRegionMeanThreshold = findSteadyRegion;
 
 /* ═══ computeTrendCurve — slow-amplitude trend for sustained samples ═══
    Estimates the slow-varying amplitude trend (bow-pressure / breath drift)
@@ -498,9 +789,22 @@ function computeTrendCurve(d, sr, trimStart, trimEnd, steady, opts){
   for(var i=idxStart;i<=idxEnd;i++){sumS+=curveVals[i];cntS++;}
   var meanRmsOverSteady=cntS>0?sumS/cntS:0;
   if(meanRmsOverSteady<1e-4) return{applied:false,reason:'trend mean below floor'};
-  /* Normalize to mean ≈ 1 over steady, then floor. */
+  /* Normalize to mean ≈ 1 over steady, then floor.
+     OUTSIDE the steady span (onset and post-steady tail) we hold the curve
+     at exactly 1 so the natural amplitude envelope passes through
+     unmodified — the buffer-divide is gain=1 and nothing changes. Without
+     this clamp, the windowed RMS underestimates true amplitude near the
+     onset (its window straddles silent pre-onset samples), and dividing
+     by it would amplify a precise onset above the steady RMS — audibly
+     wrong for instruments like the clarinet whose onset rises cleanly to
+     steady without overshooting. We only want to flatten slow drift
+     *within* the loop area, not reshape the attack. The dense
+     interpolation below produces a one-hop (≈10 ms) ramp between the
+     held 1.0 and the first natural in-steady value, straddling the
+     boundary — smooth enough to avoid clicks. */
   var normalized=new Array(curveVals.length);
   for(var i=0;i<curveVals.length;i++){
+    if(i<idxStart||i>idxEnd){normalized[i]=1;continue;}
     var v=curveVals[i]/meanRmsOverSteady;
     if(v<floorVal)v=floorVal;
     normalized[i]=v;
@@ -778,6 +1082,55 @@ function computeTiltCurve(d, sr, trimStart, trimEnd, opts){
   return{startSec:+(trimStart/sr).toFixed(5),hopSec:+(hopSamp/sr).toFixed(5),winSec:+(winSamp/sr).toFixed(5),values:values};
 }
 
+/* ═══ computeTiltSlopeCurve — derivative of the smoothed tilt trend ═══
+   Finite-difference derivative of an existing tilt curve (intended to be the
+   slow trend, not the fine curve). Normalized by the trend mean over the
+   curve's own valid range, so the result is dimensionless (1/sec) and
+   comparable across instruments — same treatment RMS-slope gets via envMean.
+
+   stride: hop count on each side of the centered finite difference. The
+     effective window width is (2 * stride) hops; with hopSec ≈ 20ms and a
+     default 0.30s stride that's ≈600ms — wide enough to ride over residual
+     vibrato wobble in the trend curve.
+
+   The output values are signed: positive = brightness rising, negative =
+   falling. Both signs are informative; the gate uses |Δ slope| (absolute,
+   not ratio) so a rising-to-falling pair scores higher than two same-sign
+   slopes of equal magnitude. */
+function computeTiltSlopeCurve(tiltCurve, opts){
+  opts=opts||{};
+  if(!tiltCurve||!tiltCurve.values||tiltCurve.values.length<3){
+    return{startSec:tiltCurve?tiltCurve.startSec:0,hopSec:tiltCurve?tiltCurve.hopSec:0.020,winSec:0,values:[]};
+  }
+  var v=tiltCurve.values;
+  var hopSec=tiltCurve.hopSec;
+  var strideSec=opts.tiltSlopeStrideSec!==undefined?opts.tiltSlopeStrideSec:0.30;
+  var h=Math.max(1,Math.round(strideSec/hopSec));
+  /* Mean over non-NaN values — defensive against NaN gaps from the underlying
+     tilt computation (rare but possible if RMS hits zero). */
+  var meanSum=0,meanCount=0;
+  for(var i=0;i<v.length;i++){
+    var vi=v[i];
+    if(typeof vi==='number'&&!isNaN(vi)){meanSum+=vi;meanCount++;}
+  }
+  var mean=meanCount>0?meanSum/meanCount:0;
+  var out=new Array(v.length);
+  var denom=(2*h*hopSec*mean);
+  for(var i=0;i<v.length;i++){
+    var iPlus=i+h,iMinus=i-h;
+    if(iPlus>=v.length||iMinus<0||mean<1e-9){out[i]=NaN;continue;}
+    var vp=v[iPlus],vm=v[iMinus];
+    if(typeof vp!=='number'||isNaN(vp)||typeof vm!=='number'||isNaN(vm)){out[i]=NaN;continue;}
+    out[i]=+((vp-vm)/denom).toFixed(5);
+  }
+  return{
+    startSec:tiltCurve.startSec,
+    hopSec:hopSec,
+    winSec:+(2*h*hopSec).toFixed(5),
+    values:out
+  };
+}
+
 /* Linear-interpolated sample of a {startSec, hopSec, values} curve at time
    t. Returns null outside the curve range, or when both neighbors are NaN;
    if one neighbor is NaN, returns the other. Used to fold pitch/tilt onto
@@ -828,6 +1181,26 @@ function prepareLoop(buf, freq, opts){
   opts=opts||{};
   var maxLoopPts=opts.maxLoopPts||8;
   var tRefineRange=opts.tRefineRange!==undefined?opts.tRefineRange:0.05;
+  /* Mono downmix safety net — applies when a multichannel buffer reaches
+     prepareLoop directly (e.g. a user-uploaded stereo file via the
+     analyzer's "Analyze custom file" path, or any future caller that
+     hasn't already downmixed). For the primary Iowa-MIS pipeline the Vite
+     middleware now does `ffmpeg -ac 1` so the WAV arrives mono and this
+     block is a no-op. Coefficient √(1/N) per channel matches ffmpeg's
+     energy-preserving downmix (`-ac 1` uses sqrt(0.5) per channel for
+     stereo) so analyses are signal-identical regardless of which path
+     produced the mono. Single-channel buffers skip this entirely. */
+  if(buf.numberOfChannels && buf.numberOfChannels>1){
+    var nCh=buf.numberOfChannels;
+    var coef=Math.sqrt(1/nCh);
+    var dMono=new Float32Array(buf.length);
+    for(var ch=0;ch<nCh;ch++){
+      var cd=buf.getChannelData(ch);
+      for(var s=0;s<buf.length;s++)dMono[s]+=cd[s]*coef;
+    }
+    buf={sampleRate:buf.sampleRate,length:buf.length,numberOfChannels:1,
+         getChannelData:function(){return dMono;}};
+  }
   var sr=buf.sampleRate,len=buf.length,d=buf.getChannelData(0);
   var period=sr/freq;  /* labeled period in samples — used only for the ZC
                           pre-check spacing and the autocorr search band. */
@@ -842,10 +1215,8 @@ function prepareLoop(buf, freq, opts){
     return{trimStart:0,loopPts:null,failReason:'sample silent (peak='+peakAbs.toExponential(2)+')'};
   }
   /* 1. Trim silence at both ends. */
-  var trimStart=0;
-  for(var s=0;s<len;s++){if(Math.abs(d[s])>0.003){trimStart=s;break;}}
-  var trimEnd=len;
-  for(var s=len-1;s>=0;s--){if(Math.abs(d[s])>0.003){trimEnd=s+1;break;}}
+  var trim=trimSilence(d,sr);
+  var trimStart=trim.trimStart,trimEnd=trim.trimEnd;
   if(trimEnd-trimStart<sr*0.3){
     return{trimStart:trimStart/sr,loopPts:null,
       stats:{failReason:'audio-active region too short: '+((trimEnd-trimStart)/sr).toFixed(2)+'s'}};
@@ -916,19 +1287,28 @@ function prepareLoop(buf, freq, opts){
   /* Two tilt curves at different timescales:
        tiltCurve       fine 100ms window — shows the cycle-to-cycle brightness
                        modulation coupled to vibrato. Visualization context.
-       tiltTrendCurve  slow 600ms window — averages out ≥3 vibrato cycles, so
-                       only the slow brightness drift across the steady region
-                       remains. THIS is what the gate and seam-step stats
-                       compare, because slow drift is what makes a seam
-                       audibly shift; the vibrato wobble is the same at every
-                       cycle phase and isn't the audible offender. */
+       tiltTrendCurve  slow 1200ms window (default) — averages out ≥6 vibrato
+                       cycles so only the slow brightness drift across the
+                       steady region remains. THIS is what the gate and
+                       seam-step stats compare, because slow drift is what
+                       makes a seam audibly shift; the vibrato wobble is the
+                       same at every cycle phase and isn't the audible
+                       offender. The wider default (was 600ms) better resists
+                       vibrato pull-around on strings. */
   var tiltCurve=computeTiltCurve(d,sr,trimStart,trimEnd,{
     tiltWinSec:opts.tiltWinSec,
     tiltHopSec:opts.tiltHopSec
   });
   var tiltTrendCurve=computeTiltCurve(d,sr,trimStart,trimEnd,{
-    tiltWinSec:opts.tiltTrendWinSec!==undefined?opts.tiltTrendWinSec:0.60,
+    tiltWinSec:opts.tiltTrendWinSec!==undefined?opts.tiltTrendWinSec:1.20,
     tiltHopSec:opts.tiltHopSec
+  });
+  /* Tilt-slope curve = finite-difference derivative of the trend. The gate
+     compares |slope_a - slope_b| between pair candidates: two points with
+     matching tilt but differing slope (rising vs falling brightness) still
+     produce an audible seam, and pairing them is what we want to reject. */
+  var tiltSlopeCurve=computeTiltSlopeCurve(tiltTrendCurve,{
+    tiltSlopeStrideSec:opts.tiltSlopeStrideSec
   });
   /* Gate-side references. Reassigned after trend computation if normalization
      is applied — `selectSegments`, `buildCandidates`, and the per-candidate
@@ -952,7 +1332,7 @@ function prepareLoop(buf, freq, opts){
                              (visually: "almost picked, but bumped").
      All default false when no steady region / no segments are available
      (e.g. early-return failures). */
-  function buildCandidates(segments, steady, sepRejTimes){
+  function buildCandidates(segments, steady, sepRejTimes, ghostTimes){
     var segEndpointSamps={};
     if(segments){
       for(var i=0;i<segments.length;i++){
@@ -967,6 +1347,11 @@ function prepareLoop(buf, freq, opts){
       var inSteady=steady?(dedup[i]>=steady.secStart&&dedup[i]<=steady.secEnd):false;
       var inSeg=!!segEndpointSamps[samp];
       var inSepRej=!!(sepRejTimes&&sepRejTimes[t]);
+      /* Ghost endpoint: this candidate was picked as a segment endpoint during
+         the greedy loop (so it gated separation rejections nearby) but its
+         pair was later pruned by SCC or non-bridge filters. Visualizing these
+         is what explains blue clusters far from visible green dots. */
+      var inGhost=!!(ghostTimes&&ghostTimes[t]);
       var env=rmsAtDiag(samp);
       var slope=null;
       if(curvesGate.envMean>1e-9){
@@ -980,15 +1365,18 @@ function prepareLoop(buf, freq, opts){
          the wrap. The fine curve stays available in diag.tiltCurve for the
          visualization overlay. */
       var tilt=sampleCurve(tiltTrendCurve,dedup[i]);
+      var tiltSlope=sampleCurve(tiltSlopeCurve,dedup[i]);
       out.push({
         posSec:t,
         env:+env.toFixed(6),
         slope:slope!=null?+slope.toFixed(5):null,
         pitch:pitch!=null?+pitch.toFixed(2):null,
         tilt:tilt!=null?+tilt.toFixed(4):null,
+        tiltSlope:tiltSlope!=null?+tiltSlope.toFixed(5):null,
         inSteady:inSteady,
         inSegment:inSeg,
-        inSeparationRejected:inSepRej
+        inSeparationRejected:inSepRej,
+        inGhostEndpoint:inGhost
       });
     }
     return out;
@@ -1004,14 +1392,18 @@ function prepareLoop(buf, freq, opts){
       slopeStrideSec:slopeStrideSec,
       rmsStepThreshold:opts.rmsStepThreshold!==undefined?opts.rmsStepThreshold:0.01,
       slopeStepThreshold:opts.slopeStepThreshold!==undefined?opts.slopeStepThreshold:0.01,
-      pitchStepThresholdCents:opts.pitchStepThresholdCents!==undefined?opts.pitchStepThresholdCents:null,
-      tiltStepThreshold:opts.tiltStepThreshold!==undefined?opts.tiltStepThreshold:null,
+      pitchStepThresholdCents:opts.pitchStepThresholdCents!==undefined?opts.pitchStepThresholdCents:5,
+      tiltStepThreshold:opts.tiltStepThreshold!==undefined?opts.tiltStepThreshold:0.05,
+      tiltSlopeStepThreshold:opts.tiltSlopeStepThreshold!==undefined?opts.tiltSlopeStepThreshold:0.05,
+      tiltSlopeStrideSec:opts.tiltSlopeStrideSec!==undefined?opts.tiltSlopeStrideSec:0.30,
+      tiltTrendWinSec:opts.tiltTrendWinSec!==undefined?opts.tiltTrendWinSec:1.20,
       envCurve:curves.envCurve,
       envCurveSlow:curves.envCurveSlow,
       slopeCurve:curves.slopeCurve,
       pitchCurve:pitchCurve,
       tiltCurve:tiltCurve,
-      tiltTrendCurve:tiltTrendCurve
+      tiltTrendCurve:tiltTrendCurve,
+      tiltSlopeCurve:tiltSlopeCurve
     };
   }
   function addSteadyToDiag(diag, steady){
@@ -1023,10 +1415,15 @@ function prepareLoop(buf, freq, opts){
     return diag;
   }
   /* ── 5. Detect steady region. */
-  var steady=findSteadyRegionMeanThreshold(d,sr,trimStart,trimEnd,{
+  var steady=findSteadyRegion(d,sr,trimStart,trimEnd,{
     tActualSec:T_actual_sec,
     steadyRmsRatio:opts.steadyRmsRatio,
-    steadySmoothingSec:opts.steadySmoothingSec
+    steadySmoothingSec:opts.steadySmoothingSec,
+    steadyMedianRatio:opts.steadyMedianRatio,
+    steadyMaxRelSlopePerSec:opts.steadyMaxRelSlopePerSec,
+    steadySlopeWindowSec:opts.steadySlopeWindowSec,
+    steadySlopeExtraSmoothMs:opts.steadySlopeExtraSmoothMs,
+    steadyFallbackRatio:opts.steadyFallbackRatio
   });
   if(steady.failReason){
     var dFail=baseDiag();
@@ -1101,6 +1498,7 @@ function prepareLoop(buf, freq, opts){
   var pitchAtInSteady=inSteadyCands.map(function(t){return sampleCurve(pitchCurve,t);});
   /* Gate samples from the TREND curve. See buildCandidates above for why. */
   var tiltAtInSteady=inSteadyCands.map(function(t){return sampleCurve(tiltTrendCurve,t);});
+  var tiltSlopeAtInSteady=inSteadyCands.map(function(t){return sampleCurve(tiltSlopeCurve,t);});
   var segRes=selectSegments(bufGate,inSteadyCands,{
     tActualSec:T_actual_sec,
     rmsStepThreshold:opts.rmsStepThreshold,
@@ -1108,14 +1506,16 @@ function prepareLoop(buf, freq, opts){
     slopeStrideSec:slopeStrideSec,
     corrThreshold:opts.corrThreshold,
     corrWindowPeriods:opts.corrWindowPeriods,
-    threshold:opts.xfadeDeviationThreshold!==undefined?opts.xfadeDeviationThreshold:0.20,
     minPairLengthSec:opts.minPairLengthSec,
     minEndpointSepSec:opts.minEndpointSepSec,
     maxSegments:maxLoopPts,
     pitchAtCandidates:pitchAtInSteady,
     tiltAtCandidates:tiltAtInSteady,
+    tiltSlopeAtCandidates:tiltSlopeAtInSteady,
     pitchStepThresholdCents:opts.pitchStepThresholdCents,
-    tiltStepThreshold:opts.tiltStepThreshold
+    tiltStepThreshold:opts.tiltStepThreshold,
+    tiltSlopeStepThreshold:opts.tiltSlopeStepThreshold,
+    _debug:opts._debug
   });
   /* ── 8. Build endpoint list, then unify all post-selection state into
          one return whether or not segments survived. Both success and
@@ -1130,7 +1530,7 @@ function prepareLoop(buf, freq, opts){
   for(var k in endptSet)endptList.push(endptSet[k]);
   endptList.sort(function(a,b){return a-b;});
   var diagFinal=addSteadyToDiag(baseDiag(),steady);
-  diagFinal.candidates=buildCandidates(segRes.segments,steady,segRes.diag.separationRejectedTimes);
+  diagFinal.candidates=buildCandidates(segRes.segments,steady,segRes.diag.separationRejectedTimes,segRes.diag.ghostEndpointTimes);
   diagFinal.segments=segRes.segments;
   diagFinal.sccOk=!!segRes.diag.sccOk;
   diagFinal.bridgeCount=segRes.diag.bridgeCount||0;
@@ -1169,9 +1569,12 @@ function prepareLoop(buf, freq, opts){
   }
   diagFinal.pitchStats=statsOverSteady(pitchCurve);
   /* tiltStats reports the SLOW drift across steady (what matters for seams);
-     tiltFineStats is for the fine vibrato-scale modulation if anyone wants it. */
+     tiltFineStats is for the fine vibrato-scale modulation if anyone wants it.
+     tiltSlopeStats is the signed-slope distribution — its spread tells you
+     how much the brightness trajectory varies inside the steady region. */
   diagFinal.tiltStats=statsOverSteady(tiltTrendCurve);
   diagFinal.tiltFineStats=statsOverSteady(tiltCurve);
+  diagFinal.tiltSlopeStats=statsOverSteady(tiltSlopeCurve);
   /* Trend metadata (analyzer-side only — runtime application is a later task).
      Downsample the 10ms-hop curve to ~50ms for compact emission. */
   var trendForEmit=null;
@@ -1255,7 +1658,10 @@ function prepareLoop(buf, freq, opts){
   return {
     prepareLoop: prepareLoop,
     selectSegments: selectSegments,
-    findSteadyRegionMeanThreshold: findSteadyRegionMeanThreshold,
+    findSteadyRegion: findSteadyRegion,
+    findSteadyRegionMeanThreshold: findSteadyRegion, /* back-compat alias */
+    trimSilence: trimSilence,
+    applyConfigDefaults: applyConfigDefaults,
     computeTrendCurve: computeTrendCurve,
     buildVisualCurves: buildVisualCurves,
     computePitchCurve: computePitchCurve,

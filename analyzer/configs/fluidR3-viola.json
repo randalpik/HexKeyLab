@@ -5,12 +5,18 @@
   "ext": ".mp3",
   "filePattern": "{NOTE}.mp3",
   "noteStyle": "flat",
-  "lowOct": 2,
-  "highOct": 7,
+  "lowOct": 3,
+  "highOct": 5,
   "transpose": 1,
   "decays": false,
   "vibrato": true,
   "releaseTime": 0.3,
   "volume": 1.0,
-  "gateOpts": {}
+  "gateOpts": {},
+  "comment": [
+    "Natural viola range C3-E6; we extend slightly to B6 for solo register",
+    "headroom. Going lower (C2-B2) pulled in FluidR3's synthesized pitch-",
+    "stretches of the C-string sample, which had wildly inconsistent RMS",
+    "vs in-range notes and broke gain normalization."
+  ]
 }

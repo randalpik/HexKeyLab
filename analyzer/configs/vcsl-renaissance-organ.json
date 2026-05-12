@@ -1,6 +1,6 @@
 {
-  "instrumentKey": "chamber_organ",
-  "displayName": "Chamber Organ",
+  "instrumentKey": "renaissance_organ",
+  "displayName": "Renaissance Organ",
   "baseUrl": "https://raw.githubusercontent.com/sgossner/VCSL/master/Aerophones/Edge-blown%20Aerophones/Renaissance%20Organ/8%27/",
   "ext": ".wav",
   "filePattern": "RenOrgan_8foot_Room_{NOTE}_rr1.wav",

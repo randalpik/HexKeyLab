@@ -39,7 +39,10 @@ function iowaMisTranscodeMiddleware(prefix: string, remoteBase: string) {
         res.statusCode = 502; return res.end(String(e));
       }
     }
-    const cacheKey = rel.replace(/[\/\\:]/g, '_').replace(/\.aiff?$/i, '.wav');
+    /* Cache key includes `.mono.f32.` so the cache invalidates when we
+       change format. Older `.wav` (stereo 16-bit) caches sit unused; nothing
+       references them. */
+    const cacheKey = rel.replace(/[\/\\:]/g, '_').replace(/\.aiff?$/i, '.mono.f32.wav');
     const cachePath = path.join(IOWA_CACHE, cacheKey);
     if (!fs.existsSync(cachePath) || fs.statSync(cachePath).size === 0) {
       const upstream = remoteBase + rel;
@@ -54,7 +57,16 @@ function iowaMisTranscodeMiddleware(prefix: string, remoteBase: string) {
       }
       const tmpIn = path.join(IOWA_CACHE, `_in_${process.pid}_${Date.now()}.aif`);
       fs.writeFileSync(tmpIn, Buffer.from(aifBytes));
-      const ff = spawnSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', tmpIn, '-c:a', 'pcm_s16le', cachePath]);
+      /* `-ac 1` mono downmix at the server (ffmpeg uses sqrt(0.5) per
+         channel — same as the headless `-ac 1 -f f32le` path) and
+         `pcm_f32le` for IEEE 32-bit float precision (Iowa AIFFs are
+         24-bit). Both choices eliminate the prior divergence between the
+         in-browser analyzer and the Node-side runner, which were getting
+         (a) different mono coefficients (browser's client-side `(L+R)/2`
+         vs ffmpeg's `0.7071·(L+R)`) and (b) different precision
+         (16-bit-quantized WAV vs 32-bit float raw). The runtime engine
+         consumes whatever the analyzer emits and doesn't care. */
+      const ff = spawnSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', tmpIn, '-ac', '1', '-c:a', 'pcm_f32le', cachePath]);
       try { fs.unlinkSync(tmpIn); } catch {}
       if (ff.status !== 0) {
         res.statusCode = 500;
@@ -71,6 +83,29 @@ function iowaMisTranscodeMiddleware(prefix: string, remoteBase: string) {
     res.setHeader('cache-control', 'no-cache');
     res.end(fs.readFileSync(cachePath));
   };
+}
+
+/* /analyzer-configs-manifest: dev-only endpoint that returns every JSON file
+   in analyzer/configs/ as a single map keyed by filename (sans .json). The
+   analyzer page uses this to render its per-instrument checkbox list. The
+   configs/ files are the single source of truth — no in-browser editing. */
+const CONFIGS_DIR = path.join(__dirname, 'analyzer/configs');
+function analyzerConfigsManifest(req: any, res: any, next: any) {
+  if (!req.url || req.url.split('?')[0] !== '/analyzer-configs-manifest') return next();
+  try {
+    const files = fs.readdirSync(CONFIGS_DIR).filter((f) => f.endsWith('.json')).sort();
+    const out: Record<string, unknown> = {};
+    for (const f of files) {
+      const key = f.replace(/\.json$/, '');
+      out[key] = JSON.parse(fs.readFileSync(path.join(CONFIGS_DIR, f), 'utf8'));
+    }
+    res.setHeader('content-type', 'application/json');
+    res.setHeader('cache-control', 'no-cache');
+    res.end(JSON.stringify(out));
+  } catch (e: any) {
+    res.statusCode = 500;
+    res.end(String(e));
+  }
 }
 
 export default defineConfig({
@@ -94,6 +129,12 @@ export default defineConfig({
           '/iowa-mis-legacy',
           'https://theremin.music.uiowa.edu/sound%20files/MIS',
         ));
+      },
+    },
+    {
+      name: 'analyzer-configs-manifest',
+      configureServer(server) {
+        server.middlewares.use(analyzerConfigsManifest);
       },
     },
   ],

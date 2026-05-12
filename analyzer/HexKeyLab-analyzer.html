@@ -32,7 +32,10 @@
   tr.selected.tier-blue{background:#b4cfef}
   tr.selected.tier-green{background:#a8d0a8}
   input[type=checkbox]{cursor:pointer}
-  textarea{width:100%;height:180px;font-family:monospace;font-size:11px}
+  #configList{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:2px 14px;border:1px solid #ddd;padding:8px 10px;background:#fafafa;font-size:12px;max-height:300px;overflow:auto}
+  #configList label{display:flex;align-items:center;gap:6px;font-family:monospace}
+  #configList .key{font-weight:600;color:#222}
+  #configList .display{color:#666}
   .instHeader{margin-top:18px;display:flex;justify-content:space-between;align-items:center}
   .instHeader h3{margin:0;font-size:15px}
   .instHeader span{font-size:12px;color:#666}
@@ -47,17 +50,23 @@ and displays the results so you can decide which to include.</p>
 <p>Missing notes (404s) are silently skipped. After analysis, use the checkboxes to pick
 which samples to keep, then copy the output into HexKeyLab.html.</p>
 
-<h2>Instrument ranges (editable)</h2>
-<p style="font-size:12px;color:#666">Each instrument lists its baseUrl, note range (chromatic, inclusive), and optional <code>gateOpts</code> overrides for tuning the unified analyzer pipeline (corrThreshold, slopeStepThreshold, etc.).
-Ranges go from lowOctave to highOctave; any notes returning 404 are skipped automatically.</p>
-<textarea id="configs" autocomplete="off" spellcheck="false"></textarea>
-<p><button id="run">Analyze all instruments</button>
+<h2>Instruments to analyze</h2>
+<p style="font-size:12px;color:#666">Configs are loaded from <code>analyzer/configs/*.json</code> — the single source of truth. To change a range, <code>gateOpts</code>, or any other setting, edit the JSON file and reload. Iowa URLs are auto-rewritten through the Vite dev server's <code>/iowa-mis</code> proxy (theremin.music.uiowa.edu sends no CORS headers and ships AIFF).</p>
+<p style="font-size:12px;margin:4px 0">
+  <button id="configsSelectAll" type="button">Select all</button>
+  <button id="configsSelectNone" type="button">Select none</button>
+  <button id="configsSelectActiveSustained" type="button" title="The 10 sustained-instrument configs currently sourced by samples-data.ts">Active sustained (10)</button>
+  <button id="configsSelectActiveDecay" type="button" title="The 6 decay-path configs currently sourced by samples-data.ts">Active decay (6)</button>
+  <button id="configsSelectHidden" type="button" title="The 5 sustained instruments hidden from the in-app dropdown (configs still ship)">Hidden (5)</button>
+  <span id="configsStatus" style="color:#888;margin-left:8px">Loading configs…</span>
+</p>
+<div id="configList"></div>
+<p><button id="run" disabled>Analyze all instruments</button>
 <button id="reAnalyze" disabled>Re-analyze (cached buffers, new thresholds)</button>
 <button id="genOutput">Generate output from selected</button>
 <button id="selectGood">Auto-select good samples</button>
 <button id="selectAll">Select all</button>
 <button id="selectNone">Select none</button>
-<button id="resetConfigs">Reset configs to defaults</button>
 <button id="analyzeCustom">Analyze custom file</button>
 <input type="file" id="customFile" accept="audio/*" style="display:none">
 <span id="customFreq" style="margin-left:10px"></span></p>
@@ -72,9 +81,13 @@ Ranges go from lowOctave to highOctave; any notes returning 404 are skipped auto
   Corr threshold:
   <input type="number" id="globalCorrThreshold" step="0.01" min="0" max="1" placeholder="0.95" style="width:80px">
   Pitch step (¢):
-  <input type="number" id="globalPitchStep" step="1" min="0" placeholder="∞" style="width:70px">
+  <input type="number" id="globalPitchStep" step="1" min="0" value="5" placeholder="5" style="width:70px">
   Tilt step:
-  <input type="number" id="globalTiltStep" step="0.01" min="0" placeholder="∞" style="width:70px">
+  <input type="number" id="globalTiltStep" step="0.01" min="0" value="0.05" placeholder="0.05" style="width:70px">
+  Tilt trend win (ms):
+  <input type="number" id="globalTiltTrendWinMs" step="50" min="100" max="5000" placeholder="1200" style="width:80px">
+  Tilt slope step:
+  <input type="number" id="globalTiltSlopeStep" step="0.001" min="0" value="0.05" placeholder="0.05" style="width:80px">
   <label style="margin-left:12px"><input type="checkbox" id="globalTrendNormalize" checked> Trend normalize</label>
   Win (ms):
   <input type="number" id="globalTrendWindowMs" step="50" min="100" max="5000" placeholder="600" style="width:80px">
@@ -89,28 +102,112 @@ Ranges go from lowOctave to highOctave; any notes returning 404 are skipped auto
 <h2>Output (paste into HexKeyLab.html)</h2>
 <pre id="output">// Run analysis to generate output</pre>
 
-<script src="analyzer-instruments.js"></script>
-<script src="analyzer-analysis.js"></script>
-<script src="analyzer-visualization.js"></script>
-<script src="analyzer-output.js"></script>
-<script>
-/* Inline harness — owns ALL_RESULTS state, fetches/decodes samples, drives the
-   four HKL* modules, and wires the UI events. The four modules are pure
-   reusable units; the glue lives here. */
+<script type="module">
+import { HKLInstruments } from './analyzer-instruments.js';
+import { HKLAnalysis }    from './analyzer-analysis.js';
+import { HKLViz }         from './analyzer-visualization.js';
+import { HKLOutput }      from './analyzer-output.js';
 
-/* Populate configs textarea with defaults. Deferred via DOMContentLoaded to
-   beat Firefox's form-state restoration, which can otherwise overwrite an
-   earlier synchronous .value assignment with stale cached content. Reset
-   button lets the user force defaults back if anything diverges. */
-function resetConfigsToDefaults(){
-  document.getElementById('configs').value=JSON.stringify(HKLInstruments.DEFAULT_CONFIGS,null,2);
+/* Inline harness — owns ALL_RESULTS + ALL_CONFIGS state, fetches/decodes
+   samples, drives the four HKL* modules, and wires the UI events. The four
+   modules are pure reusable units; the glue lives here. */
+
+/* ALL_CONFIGS is populated once from /analyzer-configs-manifest at page load.
+   The dev server reads analyzer/configs/*.json fresh on every request, so a
+   reload after editing a JSON file picks up changes without a restart. */
+var ALL_CONFIGS = {};
+
+function renderConfigList(manifest) {
+  var container = document.getElementById('configList');
+  container.innerHTML = '';
+  var keys = Object.keys(manifest).sort();
+  for (var i = 0; i < keys.length; i++) {
+    var key = keys[i];
+    var cfg = manifest[key];
+    var label = document.createElement('label');
+    var chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.dataset.cfgKey = key;
+    chk.checked = true;
+    label.appendChild(chk);
+    var keySpan = document.createElement('span');
+    keySpan.className = 'key';
+    keySpan.textContent = key;
+    label.appendChild(keySpan);
+    if (cfg && cfg.displayName) {
+      var disp = document.createElement('span');
+      disp.className = 'display';
+      disp.textContent = '— ' + cfg.displayName;
+      label.appendChild(disp);
+    }
+    container.appendChild(label);
+  }
 }
-if(document.readyState==='loading'){
-  document.addEventListener('DOMContentLoaded',resetConfigsToDefaults);
-}else{
-  resetConfigsToDefaults();
+
+async function loadConfigsManifest() {
+  var statusEl = document.getElementById('configsStatus');
+  try {
+    var r = await fetch('/analyzer-configs-manifest');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    var manifest = await r.json();
+    /* Run each baseUrl through the Iowa proxy rewrite once at load time; from
+       here on every downstream consumer (buildUrls, analyzeAll, the cached
+       entry.cfg used by reAnalyzeAll) sees only the post-rewrite URL. */
+    var keys = Object.keys(manifest);
+    for (var i = 0; i < keys.length; i++) {
+      var cfg = manifest[keys[i]];
+      if (cfg && typeof cfg.baseUrl === 'string') {
+        cfg.baseUrl = HKLInstruments.rewriteIowaBaseUrl(cfg.baseUrl);
+      }
+    }
+    ALL_CONFIGS = manifest;
+    renderConfigList(manifest);
+    statusEl.textContent = keys.length + ' configs loaded.';
+    statusEl.style.color = '#060';
+    document.getElementById('run').disabled = false;
+  } catch (e) {
+    statusEl.textContent = 'Failed to load configs: ' + e.message + ' (is the dev server running?)';
+    statusEl.style.color = '#c00';
+  }
 }
-document.getElementById('resetConfigs').addEventListener('click',resetConfigsToDefaults);
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', loadConfigsManifest);
+} else {
+  loadConfigsManifest();
+}
+
+function setAllConfigChecks(checked) {
+  var nodes = document.querySelectorAll('#configList input[type=checkbox]');
+  for (var i = 0; i < nodes.length; i++) nodes[i].checked = checked;
+}
+/* Preset config keys for the three current "deployment groups" — must stay in
+   sync with src/audio/samples-data.ts. If a source is swapped (e.g. flute
+   moves from fluidR3 to vsco2), update the corresponding entry here too. */
+var ACTIVE_SUSTAINED_KEYS = [
+  'fluidR3-flute', 'vsco2-oboe', 'fatboy-clarinet', 'fluidR3-trombone',
+  'sso-violin', 'fluidR3-viola', 'fluidR3-cello',
+  'sso-pipe-organ', 'vcsl-renaissance-organ', 'fatboy-drawbar',
+];
+var ACTIVE_DECAY_KEYS = [
+  'iowa-piano', 'jrhodes3d-electric-piano', 'vcsl-harpsichord',
+  'iowa-vibraphone', 'sso-harp', 'tonejs-guitar-acoustic',
+];
+var HIDDEN_SUSTAINED_KEYS = [
+  'iowa-bassoon', 'vcsl-tenor-saxophone', 'vcsl-baroque-recorder',
+  'iowa-french-horn', 'sso-double-bass',
+];
+function setConfigCheckSubset(keyList) {
+  var allowed = {};
+  for (var k = 0; k < keyList.length; k++) allowed[keyList[k]] = true;
+  var nodes = document.querySelectorAll('#configList input[type=checkbox]');
+  for (var i = 0; i < nodes.length; i++) nodes[i].checked = !!allowed[nodes[i].dataset.cfgKey];
+}
+document.getElementById('configsSelectAll').addEventListener('click', function () { setAllConfigChecks(true); });
+document.getElementById('configsSelectNone').addEventListener('click', function () { setAllConfigChecks(false); });
+document.getElementById('configsSelectActiveSustained').addEventListener('click', function () { setConfigCheckSubset(ACTIVE_SUSTAINED_KEYS); });
+document.getElementById('configsSelectActiveDecay').addEventListener('click', function () { setConfigCheckSubset(ACTIVE_DECAY_KEYS); });
+document.getElementById('configsSelectHidden').addEventListener('click', function () { setConfigCheckSubset(HIDDEN_SUSTAINED_KEYS); });
 
 var ctx=null;
 function getCtx(){
@@ -167,6 +264,13 @@ function mergeGlobalThresholds(cfgOpts){
      Numeric value = max |Δpitch| in cents / max relative |Δtilt|. */
   if(pitch!==null)merged.pitchStepThresholdCents=pitch;
   if(tilt!==null)merged.tiltStepThreshold=tilt;
+  /* Tilt trend window (smooths the curve used for the tilt gate AND as the
+     basis for the tilt-slope derivative). Tilt slope step is the gate on
+     |Δ(tilt-slope)| between paired candidates — blank = no gating. */
+  var tiltWin=readNum('globalTiltTrendWinMs');
+  var tiltSlope=readNum('globalTiltSlopeStep');
+  if(tiltWin!==null)merged.tiltTrendWinSec=tiltWin/1000;
+  if(tiltSlope!==null)merged.tiltSlopeStepThreshold=tiltSlope;
   /* Trend normalization. The checkbox is authoritative when present —
      unchecked overrides any per-config trendNormalize:true. The window-ms
      input overrides only when non-empty. */
@@ -192,9 +296,16 @@ function isGoodSample(res){
 }
 
 async function analyzeAll(){
-  var configs;
-  try{configs=JSON.parse(document.getElementById('configs').value);}
-  catch(e){alert('Invalid JSON in configs: '+e.message);return;}
+  /* Restrict to currently-checked configs from the manifest. Reading
+     ALL_CONFIGS rather than refetching keeps Firefox's restored check state
+     authoritative — no race against the page-load fetch. */
+  var configs={};
+  var checked=document.querySelectorAll('#configList input[type=checkbox]:checked');
+  for(var ci=0;ci<checked.length;ci++){
+    var k=checked[ci].dataset.cfgKey;
+    if(ALL_CONFIGS[k]) configs[k]=ALL_CONFIGS[k];
+  }
+  if(Object.keys(configs).length===0){alert('No configs selected. Check at least one instrument above.');return;}
   var status=document.getElementById('status');
   var resultsDiv=document.getElementById('results');
   var output=document.getElementById('output');
@@ -228,39 +339,62 @@ async function analyzeAll(){
       var s=noteList[i];
       status.textContent=inst+': fetching '+s.name+' ('+(i+1)+'/'+noteList.length+')';
       status.className='status';
-      var url=HKLInstruments.buildUrl(cfg, s.name);
+      /* filePatterns[] fallback — mirrors generate-samples.js main loop.
+         Walk candidates in order, classify each by tier, and keep the
+         best-tier result. A 404 silently skips to the next pattern (some
+         pitches aren't recorded on every string). A "valid" tier
+         (yellow/blue/green) short-circuits the walk so we don't pay extra
+         fetch + decode cost when we already have a usable sample. Iowa
+         strings rely heavily on this: ~9 of 10 viola picks come from a
+         non-first sul. Without it, the browser was committing to sulC for
+         every low-mid note and dropping to red where sulG/sulD would have
+         given green. */
+      var urls=HKLInstruments.buildUrls(cfg, s.name, s.midi);
       var row, res=null, rawRes=null, rowBuf=null, rowOpts=null, failReason=null;
+      var VALID_TIERS={green:1,blue:1,yellow:1};
+      var TIER_RANK={green:4,blue:3,yellow:2,red:1,fail:0};
+      function classifyTier(r){
+        if(!r||!Array.isArray(r.segments))return 'fail';
+        var n=r.segments.length,st=r.stats||{};
+        var sccOk=!!st.sccOk,br=st.bridgeCount||0;
+        if(n<3||!sccOk)return 'red';
+        if(n<4)return 'yellow';
+        if(br*2>=n)return 'blue';
+        return 'green';
+      }
       try{
         var c=getCtx();
-        var r=await fetch(url);
-        if(!r.ok){
-          if(r.status===404){continue;} /* silent skip for 404 */
-          throw new Error('HTTP '+r.status);
+        var bestRes=null,bestBuf=null,bestOpts=null,bestRank=-1;
+        var anyHit=false;
+        for(var ui=0;ui<urls.length;ui++){
+          var rr=await fetch(urls[ui]);
+          if(rr.status===404)continue;
+          if(!rr.ok)throw new Error('HTTP '+rr.status+' for '+urls[ui]);
+          anyHit=true;
+          var ab=await rr.arrayBuffer();
+          var buf=await c.decodeAudioData(ab);
+          /* transpose>1 means filename labels pitches above the actual audio
+             content. Pass the audio's true fundamental to prepareLoop so the
+             autocorrelation refinement and ZC analysis are correct. */
+          var analysisFreq=s.freq/(cfg.transpose||1);
+          var thisOpts=mergeGlobalThresholds(HKLAnalysis.applyConfigDefaults(cfg, cfg.gateOpts));
+          var thisRes=HKLAnalysis.prepareLoop(buf, analysisFreq, thisOpts);
+          HKLViz.dumpSegmentGraph(inst+'/'+s.name+' ['+ui+']',thisRes);
+          var tier=classifyTier(thisRes);
+          var rank=TIER_RANK[tier];
+          if(rank>bestRank){
+            bestRank=rank;
+            bestRes=thisRes;
+            bestBuf=buf;
+            bestOpts=thisOpts;
+          }
+          if(VALID_TIERS[tier])break;
         }
-        var ab=await r.arrayBuffer();
-        var buf=await c.decodeAudioData(ab);
-        /* transpose>1 means filename labels pitches above the actual audio
-           content. Pass the audio's true fundamental to prepareLoop so the
-           autocorrelation refinement and ZC analysis are correct. The output
-           emits freqActual *as-is* (= the file's actual audio fundamental),
-           so each samples.ts entry pairs `name` (the filename to fetch) with
-           `freq` (what that file actually plays at native rate=1.0). The
-           runtime engine no longer needs a transpose factor — the per-sample
-           freq is already correct, vibrato speed is preserved, and the only
-           cost is that the audible range tops out one octave below the
-           highest filename available on the CDN. */
-        var analysisFreq=s.freq/(cfg.transpose||1);
-        /* Fold global threshold overrides into per-instrument gateOpts.
-           Empty inputs leave defaults in place. The merged opts are stored
-           on the row entry so re-analyze can replay analysis on cached
-           buffers without re-fetching. */
-        rowOpts=mergeGlobalThresholds(cfg.gateOpts);
-        rowBuf=buf;
-        rawRes=HKLAnalysis.prepareLoop(buf, analysisFreq, rowOpts);
+        if(!anyHit)continue; /* every candidate 404'd — silent skip */
+        rawRes=bestRes;
         res=rawRes;
-        /* Per-sample segment-graph dump to console — one block per analyzed
-           note. Fired regardless of success/failure. */
-        HKLViz.dumpSegmentGraph(inst+'/'+s.name,rawRes);
+        rowBuf=bestBuf;
+        rowOpts=bestOpts;
         if(!res.loopPts||res.loopPts.length<2){
           failReason=(res.stats&&res.stats.failReason)||res.failReason||'null';res=null;
         }
@@ -312,9 +446,14 @@ function reAnalyzeAll(){
       if(!entry.buf)continue;
       var freq=entry.freq;
       var analysisFreq=freq/(entry.cfg.transpose||1);
-      entry.opts=mergeGlobalThresholds(entry.cfg.gateOpts);
+      entry.opts=mergeGlobalThresholds(HKLAnalysis.applyConfigDefaults(entry.cfg, entry.cfg.gateOpts));
       var newRes=HKLAnalysis.prepareLoop(entry.buf,analysisFreq,entry.opts);
       entry.rawRes=newRes;
+      /* Re-dump to console so the bySeparation / pair-rejection counts
+         match the freshly-rendered canvas. Without this, the console keeps
+         showing stats from the original Analyze pass, which is misleading
+         when thresholds have been changed. */
+      HKLViz.dumpSegmentGraph(inst+'/'+entry.sample.name,newRes);
       if(!newRes.loopPts||newRes.loopPts.length<2){
         entry.failReason=(newRes.stats&&newRes.stats.failReason)||newRes.failReason||'null';
         entry.result=null;

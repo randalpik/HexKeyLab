@@ -17,7 +17,7 @@
   "vibrato": true,
   "releaseTime": 0.3,
   "volume": 1.0,
-  "gateOpts": {"corrThreshold": 0.80, "minBackwardSec": 0.10, "minForwardSec": 0.20},
+  "gateOpts": {},
   "comment": [
     "University of Iowa MIS Violin (2014), arco ff, anechoic 24-bit/44.1kHz",
     "stereo. Each chromatic pitch lives under a specific sul-string filename;",

@@ -163,20 +163,33 @@ canvas{display:block;background:#111;margin:0 auto;flex:0 0 auto}
 <span class="cdiv"></span>
 <label><input type="checkbox" id="cbAudio" autocomplete="off"> Audio</label>
 <select id="waveform" autocomplete="off">
+<!-- Decay-path instruments (piano on top, keyboards then plucked/struck) -->
 <option value="piano" selected>Piano</option>
 <option value="electric_piano">Electric Piano</option>
+<option value="harpsichord">Harpsichord</option>
+<option value="vibraphone">Vibraphone</option>
 <option value="harp">Harp</option>
 <option value="acoustic_guitar">Acoustic Guitar</option>
-<option value="chamber_organ">Chamber Organ</option>
-<option value="drawbar_organ">Drawbar Organ</option>
-<option value="reed_organ">Reed Organ</option>
+<!-- Sustained loop instruments — orchestral score order: woodwinds, brass, strings, organs.
+     Five non-organ sustains hidden: source recordings have inconsistent timbre /
+     onsets across the range that the analyzer can't smooth over. Re-enable when
+     a better source for each is found. -->
 <option value="flute">Flute</option>
+<option value="oboe">Oboe</option>
 <option value="clarinet">Clarinet</option>
-<!-- <option value="oboe">Oboe</option>  hidden for v1; oboe recordings of all kinds (soundfont-rendered MusyngKite, anechoic-professional VSCO-2-CE, public-domain SSO) carry envelope micro-variation that macro-period can't slope-match. Re-enable when analyzer gets envelope-aware loop seams or a CDN-friendly source with smoothed character is found. -->
+<!-- <option value="bassoon">Bassoon</option> -->
+<!-- <option value="saxophone">Tenor Saxophone</option> -->
+<!-- <option value="baroque_recorder">Baroque Recorder</option> -->
+<!-- <option value="french_horn">French Horn</option> -->
+<option value="trombone">Trombone</option>
 <option value="violin">Violin</option>
 <option value="viola">Viola</option>
 <option value="cello">Cello</option>
-<option value="trombone">Trombone</option>
+<!-- <option value="double_bass">Double Bass</option> -->
+<option value="pipe_organ">Pipe Organ</option>
+<option value="renaissance_organ">Renaissance Organ</option>
+<option value="drawbar_organ">Drawbar Organ</option>
+<!-- Synthesized waveforms (no sample data, generated in engine.ts) -->
 <option value="triangle">Triangle Wave</option>
 <option value="sine">Sine Wave</option>
 <option value="square">Square Wave</option>
