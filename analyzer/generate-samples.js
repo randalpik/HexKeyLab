@@ -47,15 +47,23 @@ const SALAMANDER_NOTES = { 0:'C', 3:'Ds', 6:'Fs', 9:'A' };
 const SEMI = {C:0,'C#':1,Cs:1,Db:1,D:2,'D#':3,Ds:3,Eb:3,E:4,F:5,'F#':6,Fs:6,Gb:6,G:7,'G#':8,Gs:8,Ab:8,A:9,'A#':10,As:10,Bb:10,B:11};
 const SR = 44100;
 
-/* Per-sample normalization targets. Loop instruments use RMS targeting
-   (steady-region RMS → TARGET_DBFS). Decay instruments use peak targeting
-   (attack peak → TARGET_PEAK_DECAY_DBFS) so every decay sample's peak lands
-   at the same dB regardless of how fast the note decays. Single source of
-   truth — backfill-gains.js mirrors these constants. */
+/* Per-sample normalization targets. Both loop and decay paths target RMS at
+   TARGET_DBFS, with a peak ceiling at TARGET_PEAK_DBFS that engages only when
+   RMS targeting would otherwise push a sample's peak into clip range. The
+   measurement *windows* differ — loop uses the analyzer's steady region,
+   decay uses a fixed DECAY_RMS_WINDOW_S after trim — but the target shape
+   is identical. Single source of truth — backfill-gains.js mirrors these. */
 const TARGET_DBFS = -18;
 const TARGET_RMS = Math.pow(10, TARGET_DBFS / 20);  /* ≈ 0.12589 */
-const TARGET_PEAK_DECAY_DBFS = -6;
-const TARGET_PEAK_DECAY = Math.pow(10, TARGET_PEAK_DECAY_DBFS / 20);  /* ≈ 0.5012 */
+/* Peak ceiling — engages when RMS targeting would push a sample's peak above
+   this level. Per-voice headroom that the master limiter also catches if
+   multiple voices stack; this just keeps single notes from clipping. */
+const TARGET_PEAK_DBFS = -3;
+const TARGET_PEAK = Math.pow(10, TARGET_PEAK_DBFS / 20);  /* ≈ 0.7079 */
+/* Window over which decay-path RMS is measured. Aligns with Fletcher
+   loudness integration time, so calibrated notes match in perceived loudness
+   across the keyboard even when crest factor varies note-to-note. */
+const DECAY_RMS_WINDOW_S = 0.2;
 /* Floor only — sources can be quiet enough to need any amount of boost,
    and an arbitrary ceiling produces silent per-note level discontinuities
    that are harder to diagnose than the occasional noisy boosted sample.
@@ -283,26 +291,34 @@ function rmsOver(d, start, end) {
   return Math.sqrt(sum / (end - start));
 }
 
-function measurePeakDecay(stereo, mono) {
-  /* Peak amplitude over the attack region (first 200ms after trim) measured
-     on STEREO data as max(|L|,|R|) per frame — that's what the browser plays
-     and what determines clip-relevant amplitude. Mono downmix would attenuate
-     anti-correlated content and over-boost the gain. RMS-based targeting
-     fails on decay sounds anyway: crest factor varies across the keyboard
-     and equal-RMS gives unequal peaks. */
+function measureDecay(stereo, mono) {
+  /* Decay-path loudness measure: RMS over DECAY_RMS_WINDOW_S after trim
+     (perceptual onset loudness, drives the gain target) plus the stereo
+     peak over the same window (clip-protection ceiling). RMS uses mono
+     (matches loop-path measurement convention); peak uses STEREO max(|L|,|R|)
+     since that's what the browser plays and what determines clip risk.
+
+     Pure peak normalization was the previous approach but produced 4–8 dB
+     of perceived-loudness drift across the keyboard because crest factor
+     varies note-to-note. Targeting RMS instead, with a peak ceiling to
+     prevent clipping on high-crest notes, matches the loop-path shape. */
   const trim = findGainTrimStart(mono);
-  const peakSearchLen = Math.round(SR * 0.2);
+  const winLen = Math.round(SR * DECAY_RMS_WINDOW_S);
   const monoLen = mono.length;
   if (monoLen <= trim) return null;
-  const searchEnd = Math.min(trim + peakSearchLen, monoLen);
+  const end = Math.min(trim + winLen, monoLen);
+  if (end - trim < Math.round(SR * 0.05)) return null;  /* need ≥50ms of audio */
   let peakAbs = 0;
-  for (let i = trim; i < searchEnd; i++) {
+  for (let i = trim; i < end; i++) {
     const aL = Math.abs(stereo[2*i]);
     const aR = Math.abs(stereo[2*i+1]);
     const a = aL > aR ? aL : aR;
     if (a > peakAbs) peakAbs = a;
   }
-  return peakAbs > 0 ? peakAbs : null;
+  let sumSq = 0;
+  for (let i = trim; i < end; i++) sumSq += mono[i] * mono[i];
+  const rms = Math.sqrt(sumSq / (end - trim));
+  return { peak: peakAbs, rms };
 }
 
 function measureRmsLoop(d, res) {
@@ -349,9 +365,11 @@ function computeGainFromRms(rms) {
   return Math.max(GAIN_MIN, TARGET_RMS / rms);
 }
 
-function computeGainFromPeak(peak) {
-  if (peak == null || peak <= 0) return null;
-  return Math.max(GAIN_MIN, TARGET_PEAK_DECAY / peak);
+function computeGainFromDecay(meas) {
+  if (!meas || meas.rms == null || meas.rms <= 0) return null;
+  const gainRms = TARGET_RMS / meas.rms;
+  const gainPeakCeiling = (meas.peak > 0) ? (TARGET_PEAK / meas.peak) : Infinity;
+  return Math.max(GAIN_MIN, Math.min(gainRms, gainPeakCeiling));
 }
 
 // ─── 5. classify ─────────────────────────────────────────────────────────────
@@ -515,10 +533,12 @@ function emitSampleEntry(r, cfg) {
   // (for decay this is res.freqActual; for loop pipelines we surface freqActual too)
   const freq = (typeof r.res.freqActual === 'number') ? r.res.freqActual : r.labeledFreq / cfg.transpose;
   const freqStr = fmt(freq, 3);
-  /* gain: loop = TARGET_RMS / measuredRms; decay = TARGET_PEAK_DECAY / peak.
-     Both clamped. Goes immediately after freq so the schema fans out:
-     identifier (name), pitch (freq), level (gain), then loop-specific fields.
-     Falls back to 1.0 silently at runtime if absent. */
+  /* gain: both paths target TARGET_RMS over their measurement window, with a
+     peak ceiling at TARGET_PEAK that kicks in only when RMS targeting would
+     otherwise clip. Floored at GAIN_MIN (no ceiling on the gain itself).
+     Goes immediately after freq so the schema fans out: identifier (name),
+     pitch (freq), level (gain), then loop-specific fields. Falls back to 1.0
+     silently at runtime if absent. */
   const gainStr = (typeof r.gain === 'number') ? `,gain:${fmt(r.gain, 4)}` : '';
   /* Emit a per-sample `file` field whenever the resolved filename can't be
      reconstructed from a simple `{NOTE}{ext}` substitution at runtime — i.e.
@@ -728,8 +748,9 @@ function buildReport(results, picks, cfg, fallbackNotes) {
       let rms = null, peak = null, gain = null;
       if (cfg.decays) {
         const stereo = loadStereoRaw(fetched.rawStereo);
-        peak = measurePeakDecay(stereo, d);
-        gain = computeGainFromPeak(peak);
+        const meas = measureDecay(stereo, d);
+        if (meas) { peak = meas.peak; rms = meas.rms; }
+        gain = computeGainFromDecay(meas);
       } else {
         rms = measureRmsLoop(d, res);
         gain = computeGainFromRms(rms);

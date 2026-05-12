@@ -12,13 +12,12 @@
  *      — <configName> resolved from baseUrl via analyzer/configs/*.json so the
  *      cache lines up with generate-samples.js's per-config directories.
  *   2. Decode to f32 mono PCM @ 44.1 kHz via ffmpeg → analyzer/.cache/.../*.raw
- *   3. Find trimStart (first |x|>0.003) and measure RMS:
+ *   3. Find trimStart (first |x|>0.003) and measure RMS+peak:
  *        loop  : findSteadyRegion (50ms/10ms RMS curve, ≥70% peak run); RMS
  *                over the steady span. vibrato:true passes smoothMs=300.
- *                gain = TARGET_RMS / measuredRms (peak-ceiling capped).
- *        decay : peak amplitude in attack region (first 200ms post-trim).
- *                gain = TARGET_PEAK_DECAY / peak (so all decay sample peaks
- *                land at the same dB).
+ *        decay : RMS over DECAY_RMS_WINDOW_S after trim (Fletcher integration
+ *                time) and stereo peak in the same window.
+ *      gain = min(TARGET_RMS / rms, TARGET_PEAK / peak) for both paths.
  *   4. gain = 10^(TARGET_DBFS/20) / rms, floored at GAIN_MIN (no ceiling)
  *   5. Patch `gain:N.NNNN` into the entry line right after `freq:`
  *
@@ -62,19 +61,16 @@ function buildConfigIndex() {
 const SR = 44100;
 const TARGET_DBFS = -18;
 const TARGET_RMS = Math.pow(10, TARGET_DBFS / 20);  /* ≈ 0.12589 */
-/* Decay path uses PEAK normalization, not RMS: every decay sample's attack
-   peak lands at exactly the same dB after gain. RMS-based targeting fails on
-   decay sounds because crest factor varies wildly across the keyboard — fast-
-   decaying high notes have high crest factor, so equal-RMS gives unequal
-   peaks. Peak normalization side-steps this: gain = TARGET_PEAK_DECAY / peak. */
-const TARGET_PEAK_DECAY_DBFS = -6;
-const TARGET_PEAK_DECAY = Math.pow(10, TARGET_PEAK_DECAY_DBFS / 20);  /* ≈ 0.5012 */
-/* Peak ceiling: caps any sample's post-gain peak at -3 dBFS. Decay path
-   normally targets -6 dBFS so this rarely engages there; it's the active
-   limiter for loop instruments where TARGET_RMS would otherwise push some
-   samples' peak above the ceiling. */
+/* Peak ceiling: caps any sample's post-gain peak at -3 dBFS. Engages when
+   RMS targeting would otherwise push the peak into clip range — common for
+   fast-decaying high notes on the decay path (high crest factor) and for
+   any loop sample whose attack RMS sits much higher than its steady RMS. */
 const PEAK_DBFS = -3;
 const TARGET_PEAK = Math.pow(10, PEAK_DBFS / 20);   /* ≈ 0.7079 */
+/* Decay path: RMS measurement window after trim. Fletcher integration time
+   (~50–200ms); 200ms gives stable readings without bleeding into the long
+   tail. Mirrors generate-samples.js DECAY_RMS_WINDOW_S. */
+const DECAY_RMS_WINDOW_S = 0.2;
 /* Floor only — see generate-samples.js for rationale. No GAIN_MAX: quiet
    sources are normalized to target regardless of how much gain that takes.
    Per-note level consistency is the higher priority. */
@@ -200,42 +196,40 @@ function measureRmsLoop(d, instr, fns) {
   };
 }
 
-function measurePeakDecay(stereo, mono) {
-  /* Peak amplitude normalization for decay instruments. Peak is measured on
-     STEREO data as max(|L|,|R|) per frame, because that's what the runtime
-     plays and what determines clip-relevant amplitude — mono downmix
-     under-reports anti-correlated content. Trim/search range is in mono-
-     sample coordinates and applies to the stereo data 1:1 (same SR). */
+function measureDecay(stereo, mono) {
+  /* Decay-path measurement matches the loop path's shape: RMS over a fixed
+     window after trim (drives the gain target via TARGET_RMS), plus stereo
+     peak in the same window (drives the peak-ceiling clip protection).
+     RMS uses mono (matches loop convention); peak uses STEREO max(|L|,|R|)
+     since that's what the browser plays.
+
+     Replaces the old pure-peak normalization, which produced 4–8 dB of
+     perceived-loudness drift across the keyboard because crest factor
+     varies note-to-note. */
   const trim = findTrimStart(mono);
-  const peakSearchLen = Math.round(SR * 0.2);
+  const winLen = Math.round(SR * DECAY_RMS_WINDOW_S);
   const monoLen = mono.length;
   if (monoLen <= trim) {
-    return { peak: null, failReason: 'sample empty after trim' };
+    return { peak: null, rms: null, failReason: 'sample empty after trim' };
   }
-  const searchEnd = Math.min(trim + peakSearchLen, monoLen);
-  let peakPos = trim, peakAbs = 0;
-  for (let i = trim; i < searchEnd; i++) {
+  const end = Math.min(trim + winLen, monoLen);
+  if (end - trim < Math.round(SR * 0.05)) {
+    return { peak: null, rms: null, failReason: 'sample shorter than 50ms after trim' };
+  }
+  let peakAbs = 0;
+  for (let i = trim; i < end; i++) {
     const aL = Math.abs(stereo[2*i]);
     const aR = Math.abs(stereo[2*i+1]);
     const a = aL > aR ? aL : aR;
-    if (a > peakAbs) { peakAbs = a; peakPos = i; }
+    if (a > peakAbs) peakAbs = a;
   }
-  /* Diagnostic 25ms energy-summed RMS at peak — not used for gain, just reported */
-  const winLen = Math.round(SR * 0.025);
-  let rms = null;
-  if (peakPos + winLen <= monoLen) {
-    let sumL = 0, sumR = 0;
-    for (let k = 0; k < winLen; k++) {
-      const L = stereo[2*(peakPos+k)];
-      const R = stereo[2*(peakPos+k)+1];
-      sumL += L*L; sumR += R*R;
-    }
-    rms = Math.sqrt((sumL + sumR) / winLen);
-  }
+  let sumSq = 0;
+  for (let i = trim; i < end; i++) sumSq += mono[i] * mono[i];
+  const rms = Math.sqrt(sumSq / (end - trim));
   return {
     rms,
     peak: peakAbs,
-    region: 'attackPeakStereo',
+    region: 'decayRmsWindow',
   };
 }
 
@@ -276,7 +270,7 @@ function patchEntryLine(line, gainStr) {
   reportLines.push(`- Target: **${TARGET_DBFS} dBFS RMS** per sample`);
   reportLines.push(`- TARGET_RMS = ${TARGET_RMS.toFixed(5)} (linear)`);
   reportLines.push(`- Loop instruments: gain = TARGET_RMS (${TARGET_RMS.toFixed(5)}, ${TARGET_DBFS} dBFS) / measuredRmsOverSteadyRegion`);
-  reportLines.push(`- Decay instruments: gain = TARGET_PEAK_DECAY (${TARGET_PEAK_DECAY.toFixed(5)}, ${TARGET_PEAK_DECAY_DBFS} dBFS) / measuredAttackPeak — every decay-sample peak normalized to the same dB`);
+  reportLines.push(`- Decay instruments: gain = TARGET_RMS (${TARGET_RMS.toFixed(5)}, ${TARGET_DBFS} dBFS) / measuredRmsOver${DECAY_RMS_WINDOW_S*1000}ms — same shape as loop, with the same peak ceiling`);
   reportLines.push(`- Both paths peak-ceiling capped at ${PEAK_DBFS} dBFS, gain floored at ${GAIN_MIN} (no ceiling)`);
   reportLines.push('');
 
@@ -305,18 +299,18 @@ function patchEntryLine(line, gainStr) {
         continue;
       }
       const d = decodeOne(mp3);
-      const meas = instr.decays ? measurePeakDecay(decodeStereo(mp3), d) : measureRmsLoop(d, instr, fns);
-      const measFailed = instr.decays ? (meas.peak == null) : (meas.rms == null);
+      const meas = instr.decays ? measureDecay(decodeStereo(mp3), d) : measureRmsLoop(d, instr, fns);
+      const measFailed = (meas.rms == null);
       if (measFailed) {
         console.error(`  ${s.name}: ${meas.failReason}`);
         reportLines.push(`| ${s.name} | — | — | — | ${meas.failReason} |`);
         continue;
       }
-      /* Decay: peak-target normalization. Loop: RMS-target normalization with
-         peak ceiling. Floored at GAIN_MIN; no ceiling — see file header. */
-      const gainTarget = instr.decays
-        ? (meas.peak > 0 ? TARGET_PEAK_DECAY / meas.peak : Infinity)
-        : (TARGET_RMS / meas.rms);
+      /* Same shape for both paths: RMS-target gain with a peak ceiling.
+         The measurement window differs (decay: 200ms after trim; loop:
+         analyzer steady region) but the gain formula is unified.
+         Floored at GAIN_MIN; no ceiling on gain itself — see file header. */
+      const gainTarget = TARGET_RMS / meas.rms;
       const gainCeiling = (meas.peak > 0) ? (TARGET_PEAK / meas.peak) : Infinity;
       const rawGain = Math.min(gainTarget, gainCeiling);
       const gain = Math.max(GAIN_MIN, rawGain);
