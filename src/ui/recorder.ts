@@ -15,6 +15,10 @@ import { applySnapshot } from '../recording/apply.js';
 import { serializeHkr, parseHkr, HkrParseError } from '../recording/hkr.js';
 import { sessionToMidi } from '../midi-io/export.js';
 import { midiToSession, selfTestRoundTrip } from '../midi-io/import.js';
+import {
+  startCapture, stopCapture, isCapturing, isCaptureSupported,
+} from '../audio/capture.js';
+import { loadPrefs, savePrefs } from '../state/persistence.js';
 import type { HkrSession } from '../recording/types.js';
 
 const $ = <T extends HTMLElement>(id: string): T | null =>
@@ -139,9 +143,28 @@ function requireAudio(): boolean {
   return false;
 }
 
+function captureEnabled(): boolean {
+  return loadPrefs().captureAudio && isCaptureSupported();
+}
+
+/* Buffer for ~1.5 s after stop so sample release tails / oscillator envelope
+   releases land in the WAV. Reads small (post-decay) is cheaper than a tighter
+   timer that clips audible tails. */
+const CAPTURE_TAIL_MS = 1500;
+
+function finishCapture(): void {
+  if (!isCapturing()) return;
+  setTimeout(async () => {
+    const blob = await stopCapture();
+    if (!blob) return;
+    downloadBlob('hkl-' + isoStamp() + '.wav', blob);
+  }, CAPTURE_TAIL_MS);
+}
+
 function onRecordClick(): void {
   if (isRecording()) {
     curSession = stopRecording();
+    finishCapture();
     updateButtons();
     updateStatus();
     return;
@@ -149,6 +172,7 @@ function onRecordClick(): void {
   if (isPlaying()) return;
   if (!requireAudio()) return;
   startRecording();
+  if (captureEnabled()) startCapture();
   recordingStartCtxTime = audio.audioCtx ? audio.audioCtx.currentTime : 0;
   updateButtons();
   startStatusLoop();
@@ -157,6 +181,7 @@ function onRecordClick(): void {
 function onPlayClick(): void {
   if (isPlaying()) {
     stopPlayback();
+    finishCapture();
     updateButtons();
     updateStatus();
     return;
@@ -179,7 +204,12 @@ function onPlayClick(): void {
       updateButtons();
       return;
     }
-    startPlayback(sess, () => { updateButtons(); updateStatus(); });
+    if (captureEnabled()) startCapture();
+    startPlayback(sess, () => {
+      finishCapture();
+      updateButtons();
+      updateStatus();
+    });
     updateButtons();
     startStatusLoop();
   })();
@@ -266,6 +296,11 @@ export function initRecorderUI(): void {
   if (fiH) fiH.addEventListener('change', (e) => { void onLoadHkrChange(e); });
   const fiM = $<HTMLInputElement>('fileInputMidi');
   if (fiM) fiM.addEventListener('change', (e) => { void onImportMidiChange(e); });
+  const cbCap = $<HTMLInputElement>('cbCaptureAudio');
+  if (cbCap) {
+    cbCap.checked = loadPrefs().captureAudio;
+    cbCap.addEventListener('change', () => savePrefs({ captureAudio: cbCap.checked }));
+  }
 
   /* Debug handle gated on URL param ?hklrec=1 — exposes the current session
      and MIDI round-trip self-test for in-DevTools verification. */

@@ -484,3 +484,28 @@ The trade-off: pure-selection clicks with `audio.audioEnabled === false` don't t
 - `src/recording/snapshot.ts` — `captureSnapshot`, `snapshotMatchesLive`.
 - `src/recording/apply.ts` — `applySnapshot`.
 - See `lessons.md` for the general "splitting modules to break cycles beats dynamic imports."
+
+---
+
+## Audio capture format: 44.1k/16-bit WAV via AudioWorklet (2026-05-13)
+
+**Picked**: AudioWorklet tap off `audio.limiter`, accumulate Float32 frames on the main thread, encode 16-bit PCM WAV on stop. Capture is auto-bracketed around `.hkr` record/playback when the "Capture audio" toggle is on.
+
+**Rejected**:
+- **MediaRecorder → WebM/Opus**: small files, simple, but lossy and inconsistent MIME support across browsers. Misses the goal of "step toward packaging the sample engine for general use" — that future leans on bit-exact output, which a lossy codec gives up.
+- **ScriptProcessor**: simpler one-file path (no separate worklet module), but deprecated; AudioWorklet was a small extra cost for a cleaner long-term shape.
+- **Bundle the WAV inside the `.hkr`**: a `.hkr` is a small JSON event stream; merging a multi-MB binary into it would invert the size relationship and break the existing JSON-load path. The WAV travels alongside (same isoStamp), not inside.
+
+**Why**: WAV is universal in DAWs, lossless, and trivially decoded by anyone who wants to consume the engine output without HKL. The tap point post-limiter captures exactly what the listener hears (high-shelf + limiter applied), so the file matches the live experience instead of an idealized clean signal. Worklet-side processing keeps the audio thread untouched and the encode work parked on the main thread.
+
+**Worklet bundling subtlety**: the worklet is `.js`, not `.ts`, and imported via `?url` (`import workletUrl from './capture-worklet.js?url'`). A `.ts` worklet would either be served as raw TypeScript (invalid JS in a worklet scope) or rejected by `audioWorklet.addModule()` on MIME grounds. Vite 6 inlines small assets as data: URLs by default — modern Firefox/Chrome accept `data:text/javascript` for `addModule`, but `?url` is the explicit form that documents intent and survives future inline-threshold changes.
+
+**Capture span ends Stop + 1500 ms** so sample release tails (samples-engine voiceGain fade) and oscillator envelope releases land in the file. Without the tail, recordings end on an audible chop.
+
+**Where**:
+- `src/audio/capture.ts` — lifecycle (`initCapture`, `startCapture`, `stopCapture`).
+- `src/audio/capture-worklet.js` — worklet processor.
+- `src/audio/wav.ts` — WAV encoder.
+- `src/audio/engine.ts:initAudio` — fire-and-forget `initCapture(ctx)` call.
+- `src/ui/recorder.ts` — auto-bracket + toggle wiring.
+- `src/state/persistence.ts` — `captureAudio: boolean` field on `PrefsV1`.

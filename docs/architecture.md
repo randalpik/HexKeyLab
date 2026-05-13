@@ -341,6 +341,12 @@ A control group in the toolbar after the Lumatone status block: Rec / Play / Sav
 
 `?hklrec=1` URL param exposes `window.__hkl_rec` with `getSession()`, `setSession(s)`, and `selfTestRoundTrip()` — for in-DevTools verification.
 
+#### Audio capture (sidecar .wav)
+
+Independent of `.hkr` capture, a "Capture audio" toggle in the Recording group brackets the master-bus output of every record-or-playback span and downloads it as a 44.1 kHz / 16-bit stereo `.wav` named `hkl-<isoStamp>.wav`. The tap is an `AudioWorkletNode` (`src/audio/capture-worklet.js`) connected as a parallel sink off `audio.limiter` — `limiter → destination` (existing) is untouched; `limiter → captureNode` runs alongside while capturing. The worklet copies stereo Float32 frames per `process()` block and `postMessage`s them to the main thread, where `src/audio/capture.ts` accumulates chunks and hands them to `encodeWav16()` in `src/audio/wav.ts` on stop.
+
+The capture span ends 1.5 s after the user-visible Stop / playback-end so sample release tails and oscillator envelope releases land in the file. `.wav` is *not* bundled with `.hkr` — it's a separate download that travels alongside the `.hkr` for the same isoStamp. This path is faithful to the engine output (post high-shelf, post limiter) where `.hkr` re-render through a non-HKL synth would not be. It also lays the foundation for a future offline-render mode.
+
 #### Out of scope for v1
 
 - **Layout change mid-record**: detected (snapshot vs live mismatch), emits a single `warn` event the first time it diverges, otherwise continues recording against the original snapshot.

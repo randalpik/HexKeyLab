@@ -17,6 +17,7 @@ import { selection } from '../state/selection.js';
 import { savePrefs } from '../state/persistence.js';
 import { keyFreq } from '../tuning/frequency.js';
 import { SampleEngine } from './samples.js';
+import { initCapture } from './capture.js';
 import {
   AFTERTOUCH_RAMP_S,
   aftertouchTargetGain, inflightExpRampValue,
@@ -107,6 +108,11 @@ export function initAudio(): void {
   audio.oscGain = audio.audioCtx.createGain(); audio.oscGain.gain.value = 1.0; audio.oscGain.connect(audio.masterBus);
   audio.squareGain = audio.audioCtx.createGain(); audio.squareGain.gain.value = 1.0; audio.squareGain.connect(audio.masterBus);
   SampleEngine.init(audio.audioCtx, audio.masterBus); /* sampleMaster at 0.9 */
+  /* Fire-and-forget worklet load for the audio-capture tap. Best-effort:
+     a load failure leaves capture unsupported but doesn't affect the engine.
+     Kept off the synchronous init path so existing callers (toggleAudio,
+     on-demand instrument load) don't need to await anything. */
+  void initCapture(audio.audioCtx);
 }
 
 export function noteOn(key: KeyId, velocity?: number): void {

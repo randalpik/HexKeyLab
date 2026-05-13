@@ -41,6 +41,7 @@ export interface PrefsV1 {
   toolbars: ToolbarVisibility;
   showDiagnostics: boolean;
   calibrateKeys: boolean;
+  captureAudio: boolean;
 }
 
 /* Defaults mirror the HTML attributes + state/*.ts initial values, so a fresh
@@ -74,6 +75,7 @@ export const DEFAULT_PREFS: PrefsV1 = {
   },
   showDiagnostics: false,
   calibrateKeys: false,
+  captureAudio: false,
 };
 
 function isLayoutId(n: unknown): n is LayoutId {
@@ -177,6 +179,10 @@ export function loadPrefs(): PrefsV1 {
       typeof o.calibrateKeys === "boolean"
         ? o.calibrateKeys
         : DEFAULT_PREFS.calibrateKeys,
+    captureAudio:
+      typeof o.captureAudio === "boolean"
+        ? o.captureAudio
+        : DEFAULT_PREFS.captureAudio,
   };
 }
 
