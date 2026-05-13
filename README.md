@@ -4,13 +4,13 @@ Live at **<https://hexkeylab.maxrandalmusic.com>**.
 
 A browser-based visualizer, audio engine, and Lumatone controller for hexagonal isomorphic keyboards in just intonation.
 
-HexKeyLab renders the hex lattice with 5-limit JI, 7-limit JI, or 12-TET tuning, plays through 13 sample-based instruments (Salamander piano, FluidR3 strings and flute, FatBoy organs / clarinet / electric piano, VCSL chamber organ, nbrosowsky acoustic guitar) and oscillators, and analyzes intervals and chords with full comma decomposition. With a Lumatone connected, it lights the keys to match the on-screen colors, handles polyphonic aftertouch, and supports expression-pedal calibration over SysEx.
+HexKeyLab renders the hex lattice with 5-limit JI, 7-limit JI, or 12-TET tuning, plays through ~15 sample-based instruments (Salamander piano, FluidR3 strings and flute, FatBoy organs / clarinet / electric piano, VCSL renaissance organ, nbrosowsky acoustic guitar) and oscillators, and analyzes intervals and chords with full comma decomposition. It records performances and exports them as MPE `.mid` files for editing in any DAW, then re-imports the edited result with full coordinate fidelity. With a Lumatone connected, it lights the keys to match the on-screen colors, handles polyphonic aftertouch, and supports expression-pedal calibration over SysEx.
 
 A3 = 220 Hz. The Harmonic Table layout maps the q-axis to major thirds (5:4) and the r-axis to fifths (3:2). Three layouts (♭ ♮ ♯) are pure software state — the Lumatone keeps a single fixed MIDI mapping; HKL interprets everything in software.
 
 ## Status
 
-v1.0 — first publicly-hosted release. The codebase has been migrated from a single ~4200-line HTML file into a modular TypeScript + Vite project (38 modules under `src/`, strict end-to-end). Deployed continuously from `main` to Netlify.
+v1.0 — first publicly-hosted release. The codebase migrated from a single ~4200-line HTML file into a modular TypeScript + Vite project (~57 modules under `src/`, strict end-to-end). Deployed continuously from `main` to Netlify.
 
 ## Running it
 
@@ -46,4 +46,4 @@ Plug in, click Auto-sync. On first connection HKL pushes a fixed (channel, note)
 
 ## Companion tool
 
-`tools/HexKeyLab-analyzer.html` is a dev-only sidecar that generates the loop-point data baked into the sample instruments. Not shipped as part of HKL.
+`analyzer/HexKeyLab-analyzer.html` is a dev-only sidecar that generates the loop-point data baked into the sample instruments. Not shipped as part of HKL.

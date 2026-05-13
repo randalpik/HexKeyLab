@@ -86,6 +86,10 @@ canvas{display:block;background:#111;margin:0 auto;flex:0 0 auto}
 .auto-sync-lbl{font-size:12px;line-height:1;display:flex;align-items:center;gap:4px;white-space:nowrap}
 .sync-status{padding:0 10px;border-radius:4px;border:1.5px solid #555;background:#222;color:#999;font-size:12px;font-weight:500;line-height:1.6;text-align:center;box-sizing:border-box;font-variant-numeric:tabular-nums;opacity:0.65}
 .sync-status.pushing{border-color:#4C96FF;color:#4C96FF;opacity:1}
+.rec-btn.recording{border-color:#FF4C4C !important;color:#FF4C4C !important;animation:hkl-rec-pulse 1s ease-in-out infinite}
+.push-btn.playing{border-color:#4CFF7C !important;color:#4CFF7C !important}
+@keyframes hkl-rec-pulse{0%,100%{opacity:1}50%{opacity:0.55}}
+.recording-status{padding:0 10px;border-radius:4px;border:1.5px solid #555;background:#222;color:#999;font-size:12px;font-weight:500;line-height:1.6;text-align:center;box-sizing:border-box;font-variant-numeric:tabular-nums;opacity:0.85;min-width:80px}
 /* Pedal calibration UI — temporarily hidden; will be re-surfaced behind a separate calibration menu.
 .calib-btn{padding:0 10px !important;border-radius:4px !important;border:1.5px solid #555 !important;background:#222 !important;color:#999 !important;cursor:pointer !important;font-size:12px !important;font-weight:500 !important;line-height:1.6 !important;min-height:0 !important;min-width:0 !important;margin:0 !important;box-shadow:none !important;text-transform:none !important;letter-spacing:normal !important;font-family:inherit !important;outline:none !important;-webkit-appearance:none !important;appearance:none !important;transition:border-color 0.15s,background 0.15s,color 0.15s}
 .calib-btn:hover:not(:disabled){border-color:#888 !important}
@@ -208,6 +212,18 @@ canvas{display:block;background:#111;margin:0 auto;flex:0 0 auto}
 <label class="auto-sync-lbl"><input type="checkbox" id="cbAutoSync" autocomplete="off"> Auto-sync</label>
 <div class="sync-status" id="syncStatus">Idle</div>
 </span>
+</span>
+<span class="cdiv"></span>
+<span id="recControls" class="lsel">
+<button class="push-btn rec-btn" id="btnRecord" title="Start/stop recording">● Rec</button>
+<button class="push-btn" id="btnPlay" disabled title="Play current recording">▶ Play</button>
+<button class="push-btn" id="btnSaveHkr" disabled title="Save the current recording as .hkr (HexKeyLab native format)">Save .hkr</button>
+<button class="push-btn" id="btnLoadHkr" title="Load a .hkr recording">Load .hkr</button>
+<button class="push-btn" id="btnExportMidi" disabled title="Export the current recording as a .mid file (MPE)">Export .mid</button>
+<button class="push-btn" id="btnImportMidi" title="Import a .mid file (requires matching .hkr loaded for layout snapshot)">Import .mid</button>
+<input type="file" id="fileInputHkr" accept=".hkr,.json" style="display:none">
+<input type="file" id="fileInputMidi" accept=".mid,.midi" style="display:none">
+<span class="recording-status" id="recStatus">Idle</span>
 </span>
 <span class="cdiv"></span>
 <button class="push-btn" id="btnResetPrefs" title="Reset all toolbar settings to defaults and reload">Reset prefs</button>

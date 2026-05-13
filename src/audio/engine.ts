@@ -24,6 +24,9 @@ import {
 } from './aftertouch.js';
 import { draw } from '../render/draw.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
+import {
+  recordOn, recordOff, recordPa, recordPedalDepthsChange, recordSostenuto,
+} from '../recording/capture.js';
 import type { KeyId } from '../types.js';
 
 /* Damper smoothing time-constant for setTargetAtTime. CC4 arrives as 0–127
@@ -175,6 +178,10 @@ export function noteOn(key: KeyId, velocity?: number): void {
     v.aftertouchSeen = true;
     handleAftertouch(key, filt.v);
   }
+  /* Recording hook — fires only when a new voice was committed (the early
+     returns above ensure this). Capture the velocity actually used by the
+     audio engine, so playback reproduces the same dynamics. */
+  recordOn(key, velocity ?? 100);
 }
 
 export function noteOff(key: KeyId): void {
@@ -194,6 +201,7 @@ export function noteOff(key: KeyId): void {
      (handler.ts unsustained note-off, releaseSustainedKey). Deleting on
      every voice teardown would wipe held-pressure state across instrument
      switches and leave the new voice playing at PA=0 forever. */
+  recordOff(key);
 }
 
 export function stopAllNotes(): void { for (const k in audio.activeOscs) noteOff(k); }
@@ -224,6 +232,7 @@ export function handleAftertouch(key: KeyId, pressure: number): void {
     e.pressureGain.gain.exponentialRampToValueAtTime(tgt, now + dur);
     e.paRampState = { startVal: anchor, startTime: now, targetVal: tgt, endTime: now + dur };
   }
+  recordPa(key, pressure);
 }
 
 export function replayActiveNotes(): void {
@@ -355,6 +364,7 @@ export function setDamperDepth(): void {
   const depth = Math.max(pedal.cc4Depth, pedal.cc64Depth);
   audio.damperDepth = depth;
   audio.sustainPedalDown = depth > 0;
+  recordPedalDepthsChange();
   if (depth > DAMPER_RELEASE_FLOOR) {
     audio.sustainedKeys.forEach(function (k) {
       if (!audio.sostenutoLockedKeys.has(k)) applyDamperToVoice(k, depth);
@@ -379,16 +389,18 @@ export function sostenutoOn(): void {
   audio.sostenutoLockedKeys = new Set(selection.selectedKeys);
   audio.sostenutoActive = true;
   audio.sostenutoLockedKeys.forEach(pinDamperToOne);
+  recordSostenuto(true);
 }
 
 /* Sostenuto-off: clear the locked set. Previously-locked keys currently in
    sustainedKeys are now subject to damper — apply current depth, or release
    them if the damper is also up. */
 export function sostenutoOff(): void {
-  if (!audio.sostenutoActive) return;
+  if (!audio.sostenutoActive) { recordSostenuto(false); return; }
   const wasLocked = audio.sostenutoLockedKeys;
   audio.sostenutoLockedKeys = new Set();
   audio.sostenutoActive = false;
+  recordSostenuto(false);
   const depth = audio.damperDepth;
   if (depth > DAMPER_RELEASE_FLOOR) {
     /* damper still engaged — locked keys keep ringing under damper attenuation */

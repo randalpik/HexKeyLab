@@ -8,19 +8,20 @@ Max Randal. Music theorist, software engineer, and Lumatone player. Builds HKL a
 
 ## What HexKeyLab is
 
-A browser-based visualizer, audio engine, and Lumatone controller for hexagonal isomorphic keyboards with arbitrary tuning systems (currently 5-limit JI, 7-limit JI, and 12-TET). It does five things:
+A browser-based visualizer, audio engine, and Lumatone controller for hexagonal isomorphic keyboards with arbitrary tuning systems (currently 5-limit JI, 7-limit JI, and 12-TET). It does six things:
 
 1. **Visualizes** the hex lattice with band/seam structure, color-coded by tuning system
 2. **Plays audio** through sample-based instruments (piano, organs, strings, etc.) and oscillators with proper JI tuning
 3. **Communicates with the Lumatone** via MIDI input (notes from physical play) and SysEx output (key colors, key remapping, calibration)
 4. **Analyzes intervals and chords** with comma-decomposition naming and JI ratio display
-5. **Documents tuning theory** through interactive exploration
+5. **Records and plays back performances** with full coordinate fidelity, and exports/imports `.mid` files via MPE for editing in external DAWs
+6. **Documents tuning theory** through interactive exploration
 
-The companion tool, `HexKeyLab-analyzer.html`, is a dev-only sidecar that generates loop-point data for sample-based instruments. It's not shipped with HKL but is part of the project.
+The companion tool at `analyzer/HexKeyLab-analyzer.html` is a dev-only sidecar that generates loop-point data for sample-based instruments. It's not shipped with HKL but is part of the project.
 
 ## Project status (2026)
 
-Repo at `/home/max/HexKeyLab`, version `0.10.0-dev`. Migration from the v0.9 single-file (`HexKeyLab.html`, ~4200 lines of inline CSS/JS) to a TypeScript + Vite project is complete: 38 modules under `src/`, strict TypeScript end-to-end, behavior frozen at v0.9 parity. The next change to land is v1.0 feature work, planned separately.
+Repo at `/home/max/HexKeyLab`, version `1.0.0`. Migration from the v0.9 single-file (`HexKeyLab.html`, ~4200 lines of inline CSS/JS) to a TypeScript + Vite project is complete (~57 modules under `src/`, strict end-to-end). v1.0 feature work is landing on top: pedal revamp, polyphonic aftertouch, persistence, recording/playback, and Lumatone diagnostics are all in.
 
 Stack: TypeScript + Vite + vanilla DOM, modular by domain. **No React, no Redux.** HKL is mostly engine code (audio, MIDI, render, SysEx state machines) — not a UI app. The toolbar UI is small enough to not need a framework. If a framework is later wanted *for the toolbar specifically*, Lit or Solid are the considered options. React was explicitly considered and rejected.
 
@@ -64,6 +65,10 @@ These are non-negotiable constraints. Always respect them.
 
 HKL is **self-contained**. All tuning, layout interpretation, and audio synthesis happens inside HKL. The Lumatone sends MIDI on a fixed (channel, note) addressing scheme; HKL maps those addresses to the current lattice state, computes frequencies from the active tuning system, and renders audio directly through its sample/oscillator engine. No external synth, no Scala/SCL, no per-layout MIDI mappings — one static Lumatone configuration, all interpretation in software.
 
+## Recording architecture (philosophy)
+
+The recording feature treats lattice coordinates as the source of identity, not pitch. The native `.hkr` format (JSON) is the canonical recording: it bundles a layout snapshot (tuning, 5-limit layout, 7-limit shift, instrument, pedal mode, A3 reference) with a flat coordinate-event stream `{t, k, q, r, v, …}`. `.mid` is exported from and imported back to `.hkr` deterministically; the two travel separately (no bundled container). MIDI export uses MPE — manager channel 1, member channels 2–16, pitch-bend range ±48 semitones via RPN — so per-voice JI offsets survive a DAW round-trip. The capture hook lives **inside the audio engine** (`noteOn`/`noteOff`/`handleAftertouch`/`setDamperDepth`/`sostenuto*`) so QWERTY, mouse-click, and Lumatone input all record the same way. Playback drives the audio engine directly and also writes to `selection.selectedKeys` so keys flash visually as they play.
+
 ## Critical Lumatone protocol context
 
 - **SysEx envelope**: `F0 00 21 50 <board> <cmd> <data1-4> F7`
@@ -100,7 +105,7 @@ HKL is **self-contained**. All tuning, layout interpretation, and audio synthesi
 
 - **For feature work**: skim CLAUDE.md (this file) → read relevant section of architecture.md → check lessons.md for related gotchas → propose design (if non-trivial) → implement → test.
 - **For debugging**: reproduce symptom → check lessons.md for similar past issues → narrow scope → propose hypothesis → test it before pursuing.
-- **For new modules**: place under appropriate `src/` subdirectory (audio, midi, lumatone, tuning, layout, render, ui, state, effects). Keep modules focused on one concern. Export a small surface; hold internal state private.
+- **For new modules**: place under appropriate `src/` subdirectory (audio, midi, midi-io, lumatone, tuning, layout, render, recording, ui, state, effects, input). Keep modules focused on one concern. Export a small surface; hold internal state private.
 - **For commits**: small, focused, with a description that explains *why*, not just *what*.
 
 ## What to update when

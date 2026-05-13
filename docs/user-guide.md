@@ -198,6 +198,31 @@ Toggle **Short intervals** to abbreviate ("major 3rd" → "M3", "syntonic comma"
 
 ---
 
+## Recording and playback
+
+HKL records every performance — Lumatone, QWERTY, or click — and can play it back, save it, and round-trip it through any DAW that understands MPE.
+
+The recording controls sit in a group on the toolbar, between the Lumatone block and Reset prefs:
+
+- **● Rec** — start / stop recording. While recording, the button pulses red and the status pill ticks elapsed time. Whatever you play (notes, sustain pedal, expression pedal, polyphonic aftertouch) is captured. You can start recording mid-chord — held voices get added to the recording as `t=0` events automatically, so playback reproduces them.
+- **▶ Play** — plays the current recording back. The keys flash on the canvas as they play, matching what live input looks like. You can press your own keys at the same time — playback uses a separate voice ledger so Stop only releases what playback created, leaving your own keys alone.
+- **Save .hkr** — downloads the current recording as a `.hkr` file (HexKeyLab's native JSON format). `.hkr` is the source of truth — it carries the tuning system, layout, instrument, and the coordinate event stream, so a re-load plays back identically.
+- **Load .hkr** — opens a `.hkr` file. On Play, HKL applies the recording's layout snapshot (so loading a 7-limit recording switches you into 7-limit before playback starts).
+- **Export .mid** — downloads the recording as a standard `.mid` file using **MPE** (one channel per voice, ±48-semitone pitch bend). Any modern MPE-aware DAW (Logic, Bitwig, Ableton 11+) reads this and reproduces the JI pitches faithfully. Useful for quantizing rhythm, editing notes, or rendering the score through other software.
+- **Import .mid** — re-imports a `.mid` (typically one you've edited in a DAW). HKL needs the matching `.hkr` loaded first — the recording's layout snapshot is what makes coordinate identity recoverable from the (note, channel-bend) tuples. Out-of-tolerance notes (>25 cents from the nearest reachable coordinate under the snapshot) are skipped and logged as warnings.
+
+The status pill on the right shows current state: *Idle*, *Recording 0:04*, *Playing 0:02 / 0:18*, or *Loaded 0:18*.
+
+### Why two formats
+
+`.hkr` is the canonical recording. `.mid` is a derived view for DAW interchange. Re-import always anchors against an `.hkr` snapshot so coordinate identity survives even if a DAW quantizes pitch-wheel data — the snapshot tells HKL exactly which lattice positions to map (note, bend) tuples onto.
+
+### Future: Lilypond score export
+
+The `.hkr` schema is designed so a future exporter can walk the events and emit Lilypond source with colored noteheads matching the key colors. That tool isn't shipped yet; the recordings you make today will work with it when it lands.
+
+---
+
 ## Persistence
 
 Most toolbar settings — selected layout, tuning, audio toggle, instrument, checkbox states, outline mode — are remembered across page reloads via local storage.

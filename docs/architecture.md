@@ -172,14 +172,15 @@ Determined by 12-TET equivalent pitch class `(57 + 4q + 7r) % 12`:
 
 **Row 1**: Layout selector (♭ ♮ ♯), Note names, Band seams, Extend pattern, Show coordinates, Short intervals.
 
-**Row 2**: Tuning selector + seam shift | Transpose controls | Audio + Instrument | Clear | Lumatone status panel.
+**Row 2**: Tuning selector + seam shift | Transpose controls | Audio + Instrument | Clear | Lumatone status panel | Recording controls | Reset prefs.
 
 - **Tuning selector**: dropdown {Equal, 5-limit, 7-limit}. Sets internal flags, shows/hides seam shift, ramps audio.
 - **Seam shift**: ▲/▼ buttons with value display; visible only in 7-limit. Key-repeat 400ms initial / 80ms subsequent. ArrowUp/Down keyboard shortcuts use a custom repeat timer.
 - **Transpose**: 5-axis ▲/▼ stacks (P5, M3, m3, P8, SC) always visible. Same key-repeat behavior.
 - **Audio**: toggle + instrument/waveform selector. Piano default. Samples lazy-load on first selection with blue "loading…" state.
 - **Clear**: deselects all.
-- **Lumatone status panel**: connection badge (green/red), **Pedals dropdown** (Sustain / Sostenuto+Sustain — controls how the sustain jack is interpreted, see §4.13), **Calibrate Pedal button**, Auto-sync checkbox + status badge.
+- **Lumatone status panel**: connection badge (green/red), **Pedals dropdown** (Sustain / Sostenuto+Sustain — controls how the sustain jack is interpreted, see §4.14), **Calibrate Pedal button**, Auto-sync checkbox + status badge.
+- **Recording controls** (see §4.13): ● Rec / ▶ Play / Save .hkr / Load .hkr / Export .mid / Import .mid + a status pill.
 
 ### 4.3 Keyboard shortcuts
 
@@ -298,7 +299,57 @@ On first auto-sync after `findLumatone()` succeeds:
 
 Note routing uses the **fixed MIDI layout**: every physical key has a stable (channel, note) address. `fixedMidiToKey(ch, note)` converts at MIDI-input time. Channels 0–4 = the five board groups. Notes 0–55 = key index within board.
 
-### 4.13 Audio engine
+### 4.13 Recording, playback, and MIDI round-trip
+
+HKL records every performance — Lumatone, QWERTY, or mouse — as a stream of lattice-coordinate events, plays it back through the audio engine, and exchanges `.mid` files with external DAWs for editing.
+
+#### Architecture
+
+- **`.hkr` (JSON, source of truth)**: layout snapshot (tuning system, 5-limit layout, 7-limit shift, instrument, pedal mode, A3 reference) + a flat event list `[{t, k, q, r, …}]`. Schema version-stamped (`format:"hkr", version:1`); event kinds are `on / off / pa / cc4 / cc64 / warn` keyed by `k`. Timing is `audioCtxSec` from `epoch=0` (the same clock the audio engine ramps schedule against).
+- **`.mid` (binary, derived view)**: exported and re-imported deterministically against the same snapshot. The two files travel separately — they are NOT bundled.
+- **MPE export**: single-track format-0 MIDI. Channel 1 is the manager (carries CC4/CC64 + MPE Configuration Message); channels 2–16 are members (one voice each). Per-member pitch-bend range = ±48 semitones via RPN 0, wide enough that any JI offset fits even when the 12-TET snap chooses an adjacent semitone. Tempo fixed at 120 BPM, PPQ 960.
+- **MIDI → `.hkr` inverse**: requires the originating snapshot (the UI prompts: "Load matching .hkr first"). Builds a frequency index over the lattice under the snapshot's tuning, then each MIDI noteOn's `(note, channel-bend)` triple is converted to frequency and nearest-matched against the index. 25-cent sanity gate — anything farther emits a `warn` event instead of a coordinate.
+
+#### Capture point
+
+The recording hooks live **inside the audio engine**, not at the MIDI input handler. This is the convergence point for every input source: Lumatone notes (after `(channel, note) → (q, r)` translation), QWERTY presses, and canvas clicks all flow through `audio.noteOn`/`noteOff` before sounding. Hooking once here means a single line per engine entry point catches everything; the alternative (per-input-source hooks) would scatter capture across `midi/handler.ts`, `input/keyboard-notes.ts`, and the canvas click handler. CC4/CC64 capture lives in `setDamperDepth` + `sostenutoOn/Off`; poly aftertouch in `handleAftertouch`.
+
+Hooks short-circuit when `audio.audioEnabled === false`, which means silent input is not recorded — documented as a "feature not bug" since recording without audio is meaningless.
+
+#### Playback
+
+Web-Audio look-ahead scheduler (Chris-Wilson pattern): a 25 ms `setTimeout` loop walks events that fall within the next 100 ms window against `audio.audioCtx.currentTime`, schedules a per-event `setTimeout` to dispatch at the right moment. Dispatch routes per `k`:
+- `on` → `noteOn` + add to playback ledger + add to `selection.selectedKeys` + `draw()`
+- `off` → `noteOff` + remove from ledger + remove from `selectedKeys` + `draw()`
+- `pa`  → `handleAftertouch`
+- `cc4` → `pedal.cc4Depth = v; setDamperDepth()`
+- `cc64` → routes through `setDamperDepth()` (sustain mode) or `sostenutoOn/Off` (sostenuto mode), per the snapshot's `pedalMode`
+
+The playback **ledger** (`playbackKeys: Set<KeyId>`) tracks voices created by playback only — stopPlayback releases those, leaving any user-held voices alone. Live user input (Lumatone, QWERTY, mouse) is allowed during playback and mixes with playback audio.
+
+Applying the snapshot at play-start drives the existing control handlers (`setTuning`, `setLayout`, `changeWaveform`) so all side effects fire (color sync, info-panel refresh, prefs persistence). Sample-based instruments are awaited if not yet loaded.
+
+#### Transport
+
+Three states: `idle | recording | playing`, mutually exclusive. State lives module-private in `recording/capture.ts` and `recording/playback.ts`; the UI in `ui/recorder.ts` reads via `isRecording()` / `isPlaying()`.
+
+Auto-balance on transitions: starting Record emits synthetic `on` events at t=0 for any currently-held voices; stopping Record emits synthetic `off` events for any voice still held. The recording is therefore self-balanced — playback never produces stuck notes.
+
+#### UI
+
+A control group in the toolbar after the Lumatone status block: Rec / Play / Save .hkr / Load .hkr / Export .mid / Import .mid + a `recording-status` pill ("Idle" / "Recording 0:04" / "Playing 0:02 / 0:18" / "Loaded 0:18"). The status timer runs only while state ≠ idle (via `requestAnimationFrame`).
+
+`?hklrec=1` URL param exposes `window.__hkl_rec` with `getSession()`, `setSession(s)`, and `selfTestRoundTrip()` — for in-DevTools verification.
+
+#### Out of scope for v1
+
+- **Layout change mid-record**: detected (snapshot vs live mismatch), emits a single `warn` event the first time it diverges, otherwise continues recording against the original snapshot.
+- **Paused playback**: no pause state in v1.
+- **Bundled `.hkr` + `.mid`**: files stay separate.
+- **Tempo / time signature in `.hkr`**: not modeled. MIDI export uses fixed 120 BPM 4/4 so DAW quantizers have something to grid against.
+- **Lilypond export**: the `.hkr` schema is designed to support it (coordinates + snapshot are all an exporter needs), but the exporter itself is future work.
+
+### 4.14 Audio engine
 
 `SampleEngine` IIFE module encapsulates sample loading, voice lifecycle, and segment scheduling.
 
@@ -364,19 +415,19 @@ Mode-dropdown change at runtime re-evaluates the held CC 64 state (`pedal.lastCC
 Re-articulation: striking a sustained key triggers `noteOff` + new voice + flash (`triggerRearticulateFlash` / `rearticulateFlashUntil`). The new voice gets a fresh `damperGain = 1.0`; the next note-off path that adds it to `sustainedKeys` re-applies current `damperDepth`.
 
 #### Instruments
-14 sample-based (13 visible, 1 hidden) + 3 oscillators. Piano (Salamander) is default.
 
-- **Decay/non-looped**: piano (Salamander), electric_piano (FatBoy electric_piano_1), harp (FluidR3 orchestral_harp), acoustic_guitar (nbrosowsky/tonejs-instruments).
-- **Sustained/looped, no vibrato (macro-period)**: drawbar_organ (FatBoy), reed_organ (FatBoy), trombone (FluidR3), clarinet (FatBoy), chamber_organ (VCSL Renaissance Organ 8').
-- **Sustained/looped, vibrato**: violin / viola / cello (FluidR3), flute (FluidR3).
-- **Hidden in dropdown**: oboe (VSCO-2-CE Sus) — last-tried entry remains in `samples.ts` but `<option>` commented out in `index.html`. Deferred to v1.x; oboe and (also-deferred-without-current-entry) French horn share a single algorithm-side blocker. See `decisions.md` "v1 instrument batch" and `lessons.md` "Soundfont and real-instrument oboe/horn share a single wall."
+Roughly 15 sample-based + 3 oscillator voices in the dropdown today. The set rotates as new sources are audited; see `samples-data.ts` for the authoritative list and `index.html`'s `<select id="waveform">` for what's currently visible. Categories:
+
+- **Decay/non-looped**: piano (Salamander), electric_piano, harpsichord, harp, acoustic_guitar.
+- **Sustained/looped, no vibrato (macro-period)**: clarinet, trombone, organs (pipe / renaissance / drawbar).
+- **Sustained/looped, vibrato**: violin / viola / cello, flute.
 - **Oscillators**: triangle, sine, square — peak-amplitude tuned to match the −18 dBFS RMS target.
 
-Source vendor selection is empirical per-instrument, not categorical. FatBoy works for clarinet but failed clarinet's mid/upper register on the MusyngKite render; FluidR3 ships strings/flute/trombone but its french horn was rejected; VCSL ships chamber organ but doesn't have oboe or horn at all. Try multiple sources via the analyzer before settling.
+Source vendor selection is empirical per-instrument, not categorical. FatBoy works for clarinet but failed clarinet's mid/upper register on the MusyngKite render; FluidR3 ships strings/flute/trombone but its french horn was rejected; VCSL ships chamber/renaissance organ but doesn't have oboe or horn at all. Try multiple sources via the analyzer before settling. Oboe and French horn share an algorithm-side blocker — see `lessons.md` "Soundfont and real-instrument oboe/horn share a single wall."
 
-The dropdown in `index.html` is hand-maintained — `samples.ts` is NOT auto-enumerated. Adding an instrument requires both the `samples.ts` splice (via `analyzer/insert-instrument.js`) AND an `<option>` line in `<select id="waveform">`. See the `add-instrument` skill, step 7.
+The dropdown in `index.html` is hand-maintained — `samples-data.ts` is NOT auto-enumerated. Adding an instrument requires both the `samples-data.ts` splice (via `analyzer/insert-instrument.js`) AND an `<option>` line in `<select id="waveform">`. See the `add-instrument` skill.
 
-`SampleEngine.INSTRUMENTS` registry contains `{name, baseUrl, ext, releaseTime, volume, loop, decays, [vibrato], [filePattern], samples[]}` per instrument, with each sample carrying `{name, freq, gain, [loopPts, validStartsByEnd, trimStart, slopeCV]}`. The `filePattern` field defaults to `'{NOTE}{ext}'` if absent; runtime URL builder applies `#`→`%23` encoding. (`gain` is omitted on entries predating normalization; runtime falls back to 1.0.)
+`SampleEngine.INSTRUMENTS` registry contains `{name, baseUrl, ext, releaseTime, volume, loop, decays, [vibrato], [filePattern], samples[]}` per instrument, with each sample carrying `{name, freq, gain, [loopPts, validStartsByEnd, trimStart, slopeCV]}`. The `filePattern` field defaults to `'{NOTE}{ext}'` if absent; runtime URL builder applies `#`→`%23` encoding.
 
 ---
 
@@ -418,7 +469,30 @@ Implementation-level notes. For module/file layout see the **Module Structure** 
 - `syncOutput()` — both
 - `handleMidiMessage(e)` — see §4.12
 
-### 5.4 SysEx queue
+### 5.4 Recording subsystem
+
+Three module groups:
+
+- **`src/recording/`** — domain logic, no DOM.
+  - `types.ts` — `HkrSession`, `HkrEvent` discriminated union, `LayoutSnapshot`.
+  - `clock.ts` — `nowSec()`, sources from `audio.audioCtx.currentTime` with `performance.now()` fallback.
+  - `snapshot.ts` — `captureSnapshot()` + `snapshotMatchesLive(s)`. Kept leaf-position in the dep graph because `capture.ts` imports it.
+  - `apply.ts` — `applySnapshot(s)`. Pulled out of `snapshot.ts` to avoid a cycle through `ui/controls.ts` (which the snapshot apply must call into for side effects).
+  - `capture.ts` — module-private buffer + per-event recorders (`recordOn`, `recordOff`, `recordPa`, `recordPedalDepthsChange`, `recordSostenuto`). Auto-balances on start (synthetic ons for held voices) and stop (synthetic offs for still-held voices).
+  - `playback.ts` — look-ahead scheduler + playback ledger + dispatch routing. Owns its own per-key `Set` so Stop releases only playback's contributions.
+  - `hkr.ts` — JSON serialize/parse with field validation; emits `HkrParseError` on schema mismatch.
+
+- **`src/midi-io/`** — `.hkr` ↔ MIDI, no DOM.
+  - `allocator.ts` — `MpeAllocator` (LRU over channels 2..16; on exhaustion evicts oldest and emits forced note-off on the same channel).
+  - `mpe.ts` — `coordToMidi(q, r, snapshot) → {note, bend14}` and `midiToFreq(note, bend14)`. Anchored on MIDI 69 = A4 = 440 Hz (the MIDI-standard reference); HKL's A3 = 220 Hz lies at MIDI 57.
+  - `export.ts` — `sessionToMidi(session)`. Builds the MPE Configuration Message + per-member RPN bend-range preamble, walks events, sorts by `(t, ord)`, emits via `midi-file`.
+  - `import.ts` — `midiToSession(bytes, snapshot)`. Builds a `freqIndex` over the lattice (q ∈ [-30,30], r ∈ [-16,16]) under the snapshot's tuning; nearest-frequency match with 25-cent gate. `selfTestRoundTrip(snapshot)` is exported for the `?hklrec=1` debug harness.
+
+- **`src/ui/recorder.ts`** — DOM glue only. Transport buttons, hidden `<input type="file">` triggers, Blob+URL downloads, `recording-status` text driven by `requestAnimationFrame` while active. `initRecorderUI()` is called once from `ui/init.ts`.
+
+The capture-point hooks live in `src/audio/engine.ts` (one line per entry point: `noteOn`, `noteOff`, `handleAftertouch`, `setDamperDepth`, `sostenutoOn`, `sostenutoOff`). The hooks no-op when `isRecording()` is false.
+
+### 5.5 SysEx queue
 
 Encapsulated in `lumatone/sysex.ts`: private state, public API (`enqueueControl`, `replaceQueue`, `cancel`, `handleResponse`, `queryFirmware`, `inFlight` getter, `isInProgress` getter).
 
@@ -429,7 +503,7 @@ Encapsulated in `lumatone/sysex.ts`: private state, public API (`enqueueControl`
 - `pushTotal` / `pushSent` / `pushInProgress` track UI for the visible color-sync push; `pushSilent` skips UI updates for control-path messages (firmware query, calibration)
 - See `decisions.md` for the queue-swap-vs-cancel choice (Option B).
 
-### 5.5 Key constants
+### 5.6 Key constants
 
 ```
 hexR = 16          # hex circumradius in CSS px
@@ -447,7 +521,7 @@ DAMPER_SMOOTH_TAU      # ~25ms exponential τ for setTargetAtTime damper smoothi
 DAMPER_RELEASE_FLOOR   # below this depth, sustained voices release through normal noteOff
 ```
 
-### 5.6 Key data structures
+### 5.7 Key data structures
 
 - `baseKeys`: 280 [q, r] pairs defining physical keyboard shape (5 boards × 56 keys), in natural-layout coordinates
 - `colorTable`: 3×12 array, `(q%3, r%12) → hue code` (5-limit fast path)
@@ -468,7 +542,7 @@ DAMPER_RELEASE_FLOOR   # below this depth, sustained voices release through norm
 
 ## 6. Companion Tool: HexKeyLab-analyzer
 
-Not shipped with HKL. Used offline to generate `loopPts`, `validStartsByEnd`, `trimStart`, `slopeCV`, and `gain` baked into `SampleEngine.INSTRUMENTS`. Two entry points: the in-browser `tools/HexKeyLab-analyzer.html` (interactive, exposes the same algorithms) and the Node-based pipeline under `analyzer/` (`generate-samples.js` for new instruments, `backfill-gains.js` for adding `gain` to existing entries without disturbing loop points).
+Not shipped with HKL. Used offline to generate `loopPts`, `validStartsByEnd`, `trimStart`, `slopeCV`, and `gain` baked into `SampleEngine.INSTRUMENTS`. Two entry points: the in-browser `analyzer/HexKeyLab-analyzer.html` (interactive, exposes the same algorithms) and the Node-based pipeline under `analyzer/` (`generate-samples.js` for new instruments, `backfill-gains.js` for adding `gain` to existing entries without disturbing loop points).
 
 ### 6.1 URL templating
 
@@ -594,21 +668,43 @@ src/
 ├── audio/
 │   ├── aftertouch.ts           # AFTERTOUCH_*, velocityBaseVol, target/handover helpers
 │   ├── engine.ts               # noteOn/Off, sustain, aftertouch, init/changeWaveform, ramp
-│   └── samples.ts              # SampleEngine IIFE — verbatim v0.9 logic, see lessons.md
+│   ├── samples.ts              # SampleEngine barrel (samples-engine + samples-data)
+│   ├── samples-data.ts         # INSTRUMENTS registry: loop points + gains + URL patterns
+│   ├── samples-engine.ts       # Sample voice scheduler — verbatim v0.9 logic, see lessons.md
+│   └── diagnostics/
+│       └── loopOverlay.ts      # ?loopdiag=1 RMS meter + loop-point overlay
 ├── midi/
 │   ├── engine.ts               # keyToMidi, port discovery (findLumatone, requestMidi),
 │   │                           #   syncMidi, syncOutput, fixedMidiToKey, midiNoteOn/Off
 │   └── handler.ts              # inbound MIDI router (SysEx, CC, aftertouch, notes)
+├── midi-io/
+│   ├── allocator.ts            # MPE channel allocator (LRU over 2..16)
+│   ├── mpe.ts                  # coord ↔ (note, bend14) math, ±48-semi range
+│   ├── export.ts               # sessionToMidi: builds MPE preamble + RPN + delta-time events
+│   └── import.ts               # midiToSession: snapshot-anchored frequency-index inverse
+├── recording/
+│   ├── types.ts                # HkrSession, HkrEvent, LayoutSnapshot
+│   ├── clock.ts                # nowSec() → audioCtx.currentTime
+│   ├── snapshot.ts             # captureSnapshot, snapshotMatchesLive (leaf)
+│   ├── apply.ts                # applySnapshot — drives setTuning/setLayout/changeWaveform
+│   ├── capture.ts              # buffer + recordOn/Off/Pa/PedalDepths/Sostenuto
+│   ├── playback.ts             # look-ahead scheduler + playback ledger + dispatch
+│   └── hkr.ts                  # serializeHkr, parseHkr, HkrParseError
 ├── lumatone/
 │   ├── protocol.ts             # SYSEX_CMD_*, sysexBoardMap = [1,2,3,5,4], message builders
 │   ├── sysex.ts                # ENCAPSULATED queue (private state, public API)
 │   ├── sync.ts                 # syncLumatoneColors, toggleAutoSync
-│   └── calibration.ts          # togglePedalCalibration, resetPedalBounds,
-│                               #   handleCalibrationPacket
+│   ├── calibration.ts          # togglePedalCalibration, resetPedalBounds,
+│   │                           #   handleCalibrationPacket
+│   └── lumadiag.ts             # ?lumadiag=1 diagnostic panel for SysEx/firmware probing
+├── input/
+│   ├── qwerty.ts               # QWERTY → (q, r) mapping
+│   └── keyboard-notes.ts       # held-voice migration on layout/transpose change
 └── ui/
     ├── controls.ts             # setTuning, shiftSeams, setLayout, transposeSelection,
     │                           #   clearSelection (+ seam-shift / transpose repeat IIFEs)
     ├── keyboard.ts             # ←/→ layouts, ↑/↓ seam shift
+    ├── recorder.ts             # transport buttons, file save/load, status pill
     └── init.ts                 # bootstrap: initAudio, requestMidi, mouse/resize listeners,
                                 #   addEventListener wiring for the toolbar controls
 ```
@@ -616,24 +712,30 @@ src/
 **Dependency direction** (top to bottom; lower modules don't import from higher):
 
 ```
-main → ui/init → ui/{controls, keyboard} → effects → engines (audio, midi, lumatone) → render → state → tuning + layout
-                                                          ↓
-                                                  protocol + samples (encapsulated)
+main → ui/init → ui/{controls, keyboard, recorder} → effects → engines (audio, midi, midi-io, lumatone) → recording → render → state → tuning + layout
+                                                                  ↓
+                                                          protocol + samples (encapsulated)
 ```
 
-The cycle-prone seam is between effects and engines: `effects/onSelectionChanged` calls `syncOutput` (in `midi/engine`) which calls `syncAudio` (in `audio/engine`); `audio/engine.sustainPedalOff` calls back into `effects/onSelectionChanged`. This works at runtime because ES modules resolve function bindings lazily — the cycle never executes during module evaluation, only during user-driven events.
+Two cycle-prone seams:
+
+1. **Effects ↔ engines**: `effects/onSelectionChanged` calls `syncOutput` (in `midi/engine`) which calls `syncAudio` (in `audio/engine`); `audio/engine.sostenutoOff` calls back into `effects/onSelectionChanged`. Works at runtime because ES modules resolve function bindings lazily — the cycle never executes during module evaluation, only during user-driven events.
+
+2. **Recording capture-point ↔ snapshot apply**: `audio/engine` imports `recording/capture`, which imports `recording/snapshot` (leaf). Separately, `ui/recorder` imports `recording/apply`, which imports `ui/controls` → `audio/engine`. Keeping `apply.ts` separate from `snapshot.ts` is what prevents the cycle from closing through `recording/capture`. See `lessons.md` "Splitting modules to break import cycles beats dynamic imports."
 
 ---
 
 ## Appendix: Glossary
 
 - **Band** — 3-key-wide region along q-axis where 5-limit JI is pure
+- **.hkr** — HexKeyLab Recording format: JSON, version-stamped, layout snapshot + coordinate event stream. The canonical recording. See §4.13.
 - **Comma** — small interval between two ratios that should be equivalent (syntonic 81/80, septimal 64/63, schisma, Pythagorean, etc.)
 - **Diesis** — 128:125 (great), unreachable in 5-limit but reachable in 7-limit via syntonic adjustments
 - **Fixed MIDI layout** — HKL's tuning-independent (channel, note) addressing for every physical key
 - **Half-damper** — continuous pedal control over damper depth (vs. binary on/off)
 - **Lumatouch** — Lumatone keyType 3, continuous fader (NOT poly aftertouch)
 - **LTN** — Lumatone preset/mapping file format
+- **MPE** — MIDI Polyphonic Expression. One channel per active voice within a "zone"; pitch-bend, aftertouch, and timbre CCs apply per-channel rather than across the whole zone. HKL exports to MPE with the lower zone (manager ch 1, members ch 2–16) and ±48-semitone per-member pitch-bend range.
 - **posInBand (p)** — position within a band (0, 1, or 2)
 - **Region (A/B)** — 7-limit band along r-axis; A = pure, B = septimal
 - **Roland-style pedal wiring** — wiper on ring of TRS plug (the Lumatone expects this)

@@ -45,6 +45,7 @@ import '../input/keyboard-notes.js';
 import { toggleAutoSync } from '../lumatone/sync.js';
 import { initLumaDiag, isLumaDiagEnabled } from '../lumatone/lumadiag.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
+import { initRecorderUI } from './recorder.js';
 
 const $ = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
@@ -236,6 +237,8 @@ function resetToDefaults(): void {
 }
 
 $<HTMLButtonElement>('btnResetPrefs').addEventListener('click', resetToDefaults);
+
+initRecorderUI();
 
 /* ── Init backfill: fire change-handlers so they read the prefs-primed DOM
    and propagate to JS state + side-effect targets (visibility toggles,
