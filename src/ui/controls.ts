@@ -21,7 +21,7 @@ import { keyFreq } from '../tuning/frequency.js';
 import { SampleEngine } from '../audio/samples.js';
 import {
   noteOff, stopAllNotes, syncAudio, replayActiveNotes,
-  instrDecays,
+  instrReplaysOnTranspose,
 } from '../audio/engine.js';
 import { stopAllMidi, syncMidi } from '../midi/engine.js';
 import { animation } from '../render/animation.js';
@@ -122,8 +122,9 @@ export function transposeSelection(dq: number, dr: number): void {
   if (blocked) return;
   /* re-key audio */
   if (audio.audioEnabled && audio.audioCtx) {
-    if (instrDecays()) {
-      /* decaying instrument: stop old, let syncAudio retrigger after selection shift */
+    if (instrReplaysOnTranspose()) {
+      /* decaying instrument or opt-in replayOnTranspose (organs):
+         stop old, let syncAudio retrigger after selection shift */
       for (const k in audio.activeOscs) noteOff(k);
       audio.activeOscs = {};
     } else {
@@ -155,7 +156,7 @@ export function transposeSelection(dq: number, dr: number): void {
   selection.selectedKeys.forEach(function (k) { const p = k.split(','); shifted.add((+p[0] + dq) + ',' + (+p[1] + dr)); });
   selection.selectedKeys = shifted;
   stopAllMidi(); syncMidi();
-  if (instrDecays()) syncAudio(); /* retrigger at new coords */
+  if (instrReplaysOnTranspose()) syncAudio(); /* retrigger at new coords */
   draw();
 }
 
@@ -210,10 +211,10 @@ export function setLayout(n: number): void {
   /* ramp audio or retrigger for decaying instruments */
   if (audio.audioEnabled && audio.audioCtx && Object.keys(audio.activeOscs).length > 0) {
     const newOscs: Record<KeyId, Voice> = {};
-    if (instrDecays()) {
-      /* decaying: re-key dict to new coords, then retrigger immediately so
-         new pitches sound as soon as the shift initiates — matches the
-         selection-indicator move. */
+    if (instrReplaysOnTranspose()) {
+      /* decaying or replay-on-transpose: re-key dict to new coords, then
+         retrigger immediately so new pitches sound as soon as the shift
+         initiates — matches the selection-indicator move. */
       for (const k in audio.activeOscs) {
         const p = k.split(','), nq = +p[0] + dq, nr = +p[1] + dr;
         newOscs[nq + ',' + nr] = audio.activeOscs[k];

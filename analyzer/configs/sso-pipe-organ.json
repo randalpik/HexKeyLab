@@ -10,6 +10,7 @@
   "highOct": 6,
   "transpose": 1,
   "decays": false,
+  "replayOnTranspose": true,
   "vibrato": false,
   "releaseTime": 0.25,
   "volume": 1.0,

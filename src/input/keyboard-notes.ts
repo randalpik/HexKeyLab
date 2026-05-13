@@ -27,7 +27,7 @@ import { tuning } from '../state/tuning.js';
 import { view } from '../state/view.js';
 import { layoutShifts, qwertyTransposeShift } from '../layout/baseKeys.js';
 import {
-  noteOn, noteOff, triggerRearticulateFlash, instrDecays,
+  noteOn, noteOff, triggerRearticulateFlash, instrReplaysOnTranspose,
 } from '../audio/engine.js';
 import { SampleEngine } from '../audio/samples.js';
 import { keyFreq } from '../tuning/frequency.js';
@@ -98,10 +98,11 @@ export let migrateHeldQwertyVoices: (dq: number, dr: number) => void = () => {};
     if (pairs.length === 0) return;
 
     if (audio.audioEnabled && audio.audioCtx) {
-      if (instrDecays()) {
-        /* decaying instruments (piano, etc.): stop the old voice at its old
-           pitch and re-attack at the new one. Limited to the migrated pairs
-           so other held / sustained voices are untouched. */
+      if (instrReplaysOnTranspose()) {
+        /* decaying instruments (piano, etc.) or replay-on-transpose
+           (organs): stop the old voice at its old pitch and re-attack at
+           the new one. Limited to the migrated pairs so other held /
+           sustained voices are untouched. */
         pairs.forEach((p) => {
           if (!audio.activeOscs[p.oldKey]) return;
           noteOff(p.oldKey);

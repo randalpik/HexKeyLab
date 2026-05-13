@@ -50,6 +50,15 @@ export function instrDecays(): boolean {
   const i = SampleEngine.INSTRUMENTS[audio.activeWaveform];
   return i ? !!i.decays : false;
 }
+/* Combined predicate for transpose-style coordinate shifts: either the
+   instrument decays naturally, or it's opted into stop+retrigger via
+   replayOnTranspose (sustained keyboards whose looping samples sound
+   phasey under crossfade). */
+export function instrReplaysOnTranspose(): boolean {
+  const i = SampleEngine.INSTRUMENTS[audio.activeWaveform];
+  if (!i) return false;
+  return !!i.decays || !!i.replayOnTranspose;
+}
 
 interface WebkitWindow extends Window {
   webkitAudioContext?: typeof AudioContext;

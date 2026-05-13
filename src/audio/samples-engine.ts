@@ -9,6 +9,19 @@ import { INSTRUMENTS } from './samples-data.js';
 
 const RELEASE_SCALE = 0.5;
 
+/* Equal-power crossfade base curves. cos/sin pair keeps Σ(g²)≈1 across the
+   fade so summed voices stay at constant perceived loudness (linear ramps
+   dip ~3 dB at the midpoint). Used by sSlideAndFadeOut (old voice → 0) and
+   sNoteOnFaded (new voice 0 → vol) when sustained instruments transpose. */
+const EQUAL_POWER_LEN = 64;
+const _epFadeOut = new Float32Array(EQUAL_POWER_LEN);
+const _epFadeIn = new Float32Array(EQUAL_POWER_LEN);
+for (let i = 0; i < EQUAL_POWER_LEN; i++) {
+  const t = i / (EQUAL_POWER_LEN - 1);
+  _epFadeOut[i] = Math.cos(t * Math.PI / 2);
+  _epFadeIn[i] = Math.sin(t * Math.PI / 2);
+}
+
 /* Dev-only: route Iowa MIS fetches through the Vite middleware (see
    vite.config.ts → iowaMisTranscodeMiddleware). Two reasons to bridge:
      (1) theremin.music.uiowa.edu sends no Access-Control-Allow-* headers,
@@ -888,10 +901,15 @@ const activeVoices: Record<string, any> = {};
       var targetRate=targetFreq*(v.transpose||1)/v.sampleFreq;
       v.source.playbackRate.cancelScheduledValues(now);
       v.source.playbackRate.setValueAtTime(v.source.playbackRate.value,now);
-      v.source.playbackRate.linearRampToValueAtTime(targetRate,now+dur);
+      /* exponential pitch glide: pitch perception is logarithmic so the
+         rate ramp must be too. Endpoints are always > 0 (positive freqs). */
+      v.source.playbackRate.exponentialRampToValueAtTime(targetRate,now+dur);
+      /* equal-power fade-out: scaled cos curve from current gain → 0. */
+      var startVal=v.voiceGain.gain.value;
+      var out=new Float32Array(EQUAL_POWER_LEN);
+      for(var oi=0;oi<EQUAL_POWER_LEN;oi++)out[oi]=_epFadeOut[oi]*startVal;
       v.voiceGain.gain.cancelScheduledValues(now);
-      v.voiceGain.gain.setValueAtTime(v.voiceGain.gain.value,now);
-      v.voiceGain.gain.linearRampToValueAtTime(0,now+dur);
+      v.voiceGain.gain.setValueCurveAtTime(out,now,dur);
       try{v.source.stop(now+dur+0.05);}catch(e){}
     }
     delete activeVoices[voiceKey];return savedVol;
@@ -941,7 +959,11 @@ const activeVoices: Record<string, any> = {};
        full rationale. Snap `when` to the integer-sample grid (pairs with
        load-time trimStart/pts snapping so rate=1 reads avoid interpolation). */
     var startT=Math.ceil((ctx.currentTime+0.050)*ctx.sampleRate)/ctx.sampleRate;
-    segGain.gain.setValueAtTime(0,startT);segGain.gain.linearRampToValueAtTime(vol,startT+dur);
+    /* equal-power fade-in: scaled sin curve from 0 → vol. Pairs with the
+       cos fade-out in sSlideAndFadeOut so summed gain is ~constant. */
+    var fin=new Float32Array(EQUAL_POWER_LEN);
+    for(var fi=0;fi<EQUAL_POWER_LEN;fi++)fin[fi]=_epFadeIn[fi]*vol;
+    segGain.gain.setValueCurveAtTime(fin,startT,dur);
     source.connect(segGain);segGain.connect(voiceGain);
     source.start(startT,startOffset);
     /* Graph: accept new validStartsByEnd or convert legacy endsByStart */

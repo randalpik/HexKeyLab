@@ -95,6 +95,7 @@ function loadConfig() {
   cfg.gateOpts = cfg.gateOpts || {};
   cfg.vibrato = cfg.vibrato === true;
   cfg.decays = cfg.decays === true;
+  cfg.replayOnTranspose = cfg.replayOnTranspose === true;
   return cfg;
 }
 
@@ -643,6 +644,9 @@ function emitBlock(picks, cfg) {
   const decayFlag = cfg.decays ? 'decays:true' : 'decays:false';
   const loopFlag  = cfg.decays ? 'loop:false' : 'loop:true';
   let header = `      ext:'${cfg.ext}',releaseTime:${cfg.releaseTime},volume:${cfg.volume},${loopFlag},${decayFlag}`;
+  /* Opt-in: sustained instruments that should retrigger (not crossfade)
+     on coordinate transposes — see audio/engine.ts:instrReplaysOnTranspose. */
+  if (cfg.replayOnTranspose) header += ',replayOnTranspose:true';
   if (!cfg.decays && cfg.vibrato) header += ',vibrato:true';
   // Emit filePattern only when non-default and only when filePatterns plural
   // was NOT used — with filePatterns each sample carries its own `file:`

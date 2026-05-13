@@ -595,7 +595,7 @@ export const INSTRUMENTS: Record<string, any> = {
     },
     pipe_organ:{
       name:'Pipe Organ',baseUrl:'https://raw.githubusercontent.com/peastman/sso/master/Sonatina%20Symphonic%20Orchestra/Samples/Organ/great-opendiapason8ft/',
-      ext:'.flac',releaseTime:0.25,volume:1,loop:true,decays:false,filePattern:'{MIDI}-{NOTE_LETTER}.flac',
+      ext:'.flac',releaseTime:0.25,volume:1,loop:true,decays:false,replayOnTranspose:true,filePattern:'{MIDI}-{NOTE_LETTER}.flac',
       /* Sonatina Symphonic Orchestra Pipe Organ — Great division, Open Diapason 8'
          stop (the canonical principal-pipe-organ timbre). Filenames are
          MIDI-NOTE.flac (e.g. 060-C.flac, 069-A.flac). Sampled at minor thirds
@@ -619,7 +619,7 @@ export const INSTRUMENTS: Record<string, any> = {
     },
     renaissance_organ:{
       name:'Renaissance Organ',baseUrl:'https://raw.githubusercontent.com/sgossner/VCSL/master/Aerophones/Edge-blown%20Aerophones/Renaissance%20Organ/8%27/',
-      ext:'.wav',releaseTime:0.15,volume:1,loop:true,decays:false,filePattern:'RenOrgan_8foot_Room_{NOTE}_rr1.wav',
+      ext:'.wav',releaseTime:0.15,volume:1,loop:true,decays:false,replayOnTranspose:true,filePattern:'RenOrgan_8foot_Room_{NOTE}_rr1.wav',
       /* VCSL Renaissance Organ 8' rank = concert pitch. Wholetone-sampled
          (C, D, E, F#, G#, A# per octave) — every 2 semitones gives the analyzer
          a sample at every 4-semitone pick position. Range C1–E5; high octave 5
@@ -642,7 +642,7 @@ export const INSTRUMENTS: Record<string, any> = {
     },
     drawbar_organ:{
       name:'Drawbar Organ',baseUrl:'https://gleitz.github.io/midi-js-soundfonts/FatBoy/drawbar_organ-mp3/',
-      ext:'.mp3',releaseTime:0.15,volume:1,loop:true,decays:false,vibrato:true,
+      ext:'.mp3',releaseTime:0.15,volume:1,loop:true,decays:false,replayOnTranspose:true,vibrato:true,
       /* FatBoy drawbar files are labeled an octave above their actual audio
          content (Hammond convention: filename A4.mp3 contains 220 Hz audio).
          Each entry's freq is the *actual audio fundamental* paired with the
