@@ -1,6 +1,9 @@
 // Lumatone per-board calibration overlay (dev-only).
 //
-// Activate with `?lumadiag=1` in the URL. Off by default — zero overhead.
+// Toggled via the "Calibrate Keys" checkbox in the Lumatone toolbar. Lazy:
+// ensureLumaDiag() builds DOM on first call; setLumaDiagVisible toggles
+// display. A Shift+\ hotkey is also wired — when pressed it invokes the
+// registered hotkey callback so init.ts can keep the checkbox + pref in sync.
 //
 // Lets the user adjust per-board key thresholds and CC/aftertouch sensitivity
 // live from HKL, bypassing the macro-button-driven calibration routine
@@ -20,8 +23,6 @@
 // Sliders fire SysEx on `change` (release), not `input` (drag), to be gentle
 // on the single-in-flight SysEx queue. All sends route through
 // sysex.enqueueControl so they share the ACK/busy/retry path.
-//
-// Hotkey: Shift+\ toggles overlay visibility.
 
 import { midi } from '../state/midi.js';
 import { sysex } from './sysex.js';
@@ -43,15 +44,6 @@ import {
   buildSetMinThreshold,
   buildSetBoardSens,
 } from './protocol.js';
-
-export function isLumaDiagEnabled(): boolean {
-  if (typeof window === 'undefined') return false;
-  try {
-    return new URLSearchParams(window.location.search).get('lumadiag') === '1';
-  } catch {
-    return false;
-  }
-}
 
 /* Per-board values, mirrored from the device. `null` = not yet fetched; the
    corresponding slider stays disabled until the read-back populates it. */
@@ -80,8 +72,9 @@ const FIELDS: { key: FieldKey; label: string; tip: string }[] = [
   { key: 'atSens',   label: 'AT sens',  tip: 'CMD 0x2C — aftertouch output sensitivity' },
 ];
 
-let enabled = false;
+let domBuilt = false;
 let panel: HTMLDivElement | null = null;
+let hotkeyCallback: (() => void) | null = null;
 const boardStates: BoardState[] = [];
 const valueLabels: Record<string, HTMLSpanElement> = {};
 const sliders: Record<string, HTMLInputElement> = {};
@@ -342,16 +335,26 @@ function onKey(e: KeyboardEvent): void {
   const tag = (document.activeElement?.tagName || '').toLowerCase();
   if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
   if (e.altKey || e.metaKey || e.ctrlKey) return;
-  /* Shift+Backslash so it doesn't collide with loopOverlay's bare-Backslash bind. */
   if (e.code === 'Backslash' && e.shiftKey) {
     e.preventDefault();
-    if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    /* Defer to init.ts so it can flip the checkbox + savePrefs alongside the
+       visibility toggle — keeps the checkbox and overlay in sync. */
+    if (hotkeyCallback) hotkeyCallback();
   }
 }
 
-export function initLumaDiag(): void {
-  if (enabled) return;
-  enabled = true;
+export function setLumaDiagHotkeyCallback(fn: (() => void) | null): void {
+  hotkeyCallback = fn;
+}
+
+export function setLumaDiagVisible(visible: boolean): void {
+  if (!panel) return;
+  panel.style.display = visible ? 'block' : 'none';
+}
+
+export function ensureLumaDiag(): void {
+  if (domBuilt) return;
+  domBuilt = true;
   for (let i = 0; i < 5; i++) boardStates.push(makeBlankState());
 
   panel = document.createElement('div');
@@ -371,6 +374,7 @@ export function initLumaDiag(): void {
     zIndex: '10001',
     pointerEvents: 'auto',
     userSelect: 'none',
+    display: 'none',
   });
   const header = document.createElement('div');
   header.textContent = 'lumadiag · per-board calibration';
@@ -399,6 +403,6 @@ export function initLumaDiag(): void {
     }
   }, 1500);
 
-  console.log('%c[lumadiag] enabled · Shift+\\ toggles visibility · sliders enable once values are read from device',
+  console.log('%c[lumadiag] built · Shift+\\ toggles visibility · sliders enable once values are read from device',
     'color:#0ff;font-weight:bold');
 }

@@ -150,10 +150,12 @@ export function findLumatone(handleMidiMessage: MidiMessageHandler): void {
   if (foundIn) foundIn.onmidimessage = handleMidiMessage;
   /* update UI */
   const statusEl = document.getElementById('lumaStatus')!;
+  const lumaGroup = document.getElementById('tb-group-lumatone');
   if (midi.midiOut) {
     const isNewConnection = !oldOut || oldOut !== midi.midiOut;
     statusEl.textContent = 'Lumatone Connected';
     statusEl.className = 'luma-connected';
+    if (lumaGroup) lumaGroup.classList.add('lumatone-connected');
     if (isNewConnection) {
       /* Silent firmware probe, then (only if user opted in) sync colors.
          We DO NOT auto-configure the device without Auto-sync checked. */
@@ -163,23 +165,21 @@ export function findLumatone(handleMidiMessage: MidiMessageHandler): void {
   } else {
     statusEl.textContent = 'Lumatone Not Connected';
     statusEl.className = 'luma-disconnected';
+    if (lumaGroup) lumaGroup.classList.remove('lumatone-connected');
   }
   console.log('Lumatone search: out=' + (midi.midiOut ? (midi.midiOut as MIDIOutput).name : 'none')
     + ', in=' + (midi.midiIn ? (midi.midiIn as MIDIInput).name : 'none'));
 }
 
-function showMidiControls(): void {
-  document.getElementById('midiControls')!.style.display = '';
-}
-
 /* Request MIDI access at startup. Caller provides handleMidiMessage so that
-   findLumatone can wire it onto the input port. */
+   findLumatone can wire it onto the input port. The Lumatone toolbar's
+   visibility is owned by the user pref (toolbars.lumatone) — MIDI state only
+   drives the lumaStatus text/class, not the toolbar's display. */
 export function requestMidi(handleMidiMessage: MidiMessageHandler): void {
   if (!navigator.requestMIDIAccess) return;
   navigator.requestMIDIAccess({ sysex: true }).then(function (access) {
     console.log('MIDI access granted');
     midi.midiAccess = access;
-    showMidiControls();
     findLumatone(handleMidiMessage);
     access.onstatechange = function (e) {
       const port = (e as MIDIConnectionEvent).port;

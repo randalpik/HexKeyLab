@@ -38,12 +38,18 @@ import {
 } from './controls.js';
 import './keyboard.js';
 import '../input/keyboard-notes.js';
-// Pedal calibration UI temporarily hidden; will be re-wired behind a separate calibration menu.
-// import {
-//   togglePedalCalibration, resetPedalBounds,
-// } from '../lumatone/calibration.js';
+import {
+  togglePedalCalibration, resetPedalBounds,
+} from '../lumatone/calibration.js';
 import { toggleAutoSync } from '../lumatone/sync.js';
-import { initLumaDiag, isLumaDiagEnabled } from '../lumatone/lumadiag.js';
+import {
+  ensureLumaDiag, setLumaDiagVisible, setLumaDiagHotkeyCallback,
+} from '../lumatone/lumadiag.js';
+import {
+  ensureLoopOverlay, setLoopOverlayVisible,
+} from '../audio/diagnostics/loopOverlay.js';
+import { SampleEngine } from '../audio/samples.js';
+import { applyToolbarVisibility, initToolbarSelector } from './toolbars.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import { initRecorderUI } from './recorder.js';
 
@@ -67,10 +73,14 @@ function applyPrefsToDom(p: PrefsV1): void {
   $<HTMLSelectElement>('waveform').value = p.waveform;
   $<HTMLSelectElement>('pedalMode').value = p.pedalMode;
   $<HTMLInputElement>('cbAutoSync').checked = p.autoSync;
+  $<HTMLInputElement>('cbShowDiag').checked = p.showDiagnostics;
+  $<HTMLInputElement>('cbCalibrateKeys').checked = p.calibrateKeys;
 }
 
 const prefs = loadPrefs();
 applyPrefsToDom(prefs);
+applyToolbarVisibility(prefs.toolbars);
+initToolbarSelector();
 
 /* State fields with no DOM mirror — set directly before any handlers run. */
 tuning.septimalShift = prefs.septimalShift;
@@ -91,7 +101,39 @@ changeWaveform();
 
 requestMidi(handleMidiMessage);
 
-if (isLumaDiagEnabled()) initLumaDiag();
+/* lumadiag overlay: lazy build + show driven by prefs/checkbox. Hotkey
+   (Shift+\) defers to a callback so the checkbox + pref stay in sync. */
+function applyCalibrateKeys(visible: boolean): void {
+  if (visible) {
+    ensureLumaDiag();
+    setLumaDiagVisible(true);
+  } else {
+    setLumaDiagVisible(false);
+  }
+}
+setLumaDiagHotkeyCallback(() => {
+  const cb = $<HTMLInputElement>('cbCalibrateKeys');
+  const next = !cb.checked;
+  cb.checked = next;
+  applyCalibrateKeys(next);
+  savePrefs({ calibrateKeys: next });
+});
+if (prefs.calibrateKeys) applyCalibrateKeys(true);
+
+/* loopdiag overlay: lazy build + show driven by prefs/checkbox. Needs an
+   AudioContext, so deferred until audio is initialized. */
+function applyShowDiagnostics(visible: boolean): void {
+  if (visible) {
+    if (!audio.audioCtx) {
+      console.warn('[hkl] Show diagnostics: enable Audio first');
+      return;
+    }
+    ensureLoopOverlay(audio.audioCtx, SampleEngine);
+    setLoopOverlayVisible(true);
+  } else {
+    setLoopOverlayVisible(false);
+  }
+}
 
 cv.addEventListener('mousedown', function (e: MouseEvent) {
   const rect = cv.getBoundingClientRect();
@@ -194,9 +236,21 @@ $<HTMLSelectElement>('pedalMode').addEventListener('change', function (e) {
 });
 
 // Calibration & auto-sync
-// $<HTMLButtonElement>('btnCalibPedal').addEventListener('click', togglePedalCalibration);
-// $<HTMLButtonElement>('btnResetPedal').addEventListener('click', resetPedalBounds);
+$<HTMLButtonElement>('btnCalibPedal').addEventListener('click', togglePedalCalibration);
+$<HTMLButtonElement>('btnResetPedal').addEventListener('click', resetPedalBounds);
 $<HTMLInputElement>('cbAutoSync').addEventListener('change', toggleAutoSync);
+
+// Diagnostics toggles
+$<HTMLInputElement>('cbShowDiag').addEventListener('change', (e) => {
+  const checked = (e.target as HTMLInputElement).checked;
+  applyShowDiagnostics(checked);
+  savePrefs({ showDiagnostics: checked });
+});
+$<HTMLInputElement>('cbCalibrateKeys').addEventListener('change', (e) => {
+  const checked = (e.target as HTMLInputElement).checked;
+  applyCalibrateKeys(checked);
+  savePrefs({ calibrateKeys: checked });
+});
 
 /* Reset prefs in-place: clear storage, then drive every control back to its
    default through the same handlers a user would fire. No reload — avoids the
@@ -206,6 +260,9 @@ function resetToDefaults(): void {
   const p = DEFAULT_PREFS;
 
   applyPrefsToDom(p);
+  applyToolbarVisibility(p.toolbars);
+  applyShowDiagnostics(p.showDiagnostics);
+  applyCalibrateKeys(p.calibrateKeys);
 
   /* Non-DOM state: pedal mode + seam shift get set directly. */
   pedal.mode = p.pedalMode;
@@ -250,6 +307,10 @@ setOutline();
 applyLayoutImmediate(prefs.curLayout);
 if (prefs.audioEnabled) toggleAudio();
 if (prefs.autoSync) toggleAutoSync();
+/* Apply showDiagnostics now that audio is initialized — the loop overlay
+   needs audioCtx, which exists after the toggleAudio() / initAudio() path
+   above (or after first interaction if audio is off). */
+if (prefs.showDiagnostics) applyShowDiagnostics(true);
 
 draw();
 

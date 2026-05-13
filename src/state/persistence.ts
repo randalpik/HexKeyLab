@@ -14,6 +14,14 @@ export type TuningMode = '5' | '7' | 'E';
 export type PedalMode = 'sustain' | 'sostenuto';
 export type LayoutId = 1 | 2 | 3;
 
+export interface ToolbarVisibility {
+  layout: boolean;
+  playback: boolean;
+  analysis: boolean;
+  recording: boolean;
+  lumatone: boolean;
+}
+
 export interface PrefsV1 {
   showNotes: boolean;
   showBands: boolean;
@@ -30,6 +38,9 @@ export interface PrefsV1 {
   waveform: string;
   pedalMode: PedalMode;
   autoSync: boolean;
+  toolbars: ToolbarVisibility;
+  showDiagnostics: boolean;
+  calibrateKeys: boolean;
 }
 
 /* Defaults mirror the HTML attributes + state/*.ts initial values, so a fresh
@@ -49,9 +60,20 @@ export const DEFAULT_PREFS: PrefsV1 = {
   /* audio defaults to ON to match the long-standing "load piano + play on
      first reload" behavior of pre-persistence HKL */
   audioEnabled: true,
-  waveform: "piano",
+  waveform: "splendid_piano",
   pedalMode: "sustain",
   autoSync: false,
+  /* Layout + Playback cover the core single-keyboard workflow; Analysis,
+     Recording, and Lumatone are opt-in for users who care about those. */
+  toolbars: {
+    layout: true,
+    playback: true,
+    analysis: false,
+    recording: false,
+    lumatone: false,
+  },
+  showDiagnostics: false,
+  calibrateKeys: false,
 };
 
 function isLayoutId(n: unknown): n is LayoutId {
@@ -68,6 +90,30 @@ function isPedalMode(s: unknown): s is PedalMode {
 }
 function isFiniteNumber(n: unknown): n is number {
   return typeof n === 'number' && Number.isFinite(n);
+}
+function loadToolbars(o: unknown): ToolbarVisibility {
+  if (!o || typeof o !== "object") return { ...DEFAULT_PREFS.toolbars };
+  const t = o as Record<string, unknown>;
+  return {
+    layout:
+      typeof t.layout === "boolean" ? t.layout : DEFAULT_PREFS.toolbars.layout,
+    playback:
+      typeof t.playback === "boolean"
+        ? t.playback
+        : DEFAULT_PREFS.toolbars.playback,
+    analysis:
+      typeof t.analysis === "boolean"
+        ? t.analysis
+        : DEFAULT_PREFS.toolbars.analysis,
+    recording:
+      typeof t.recording === "boolean"
+        ? t.recording
+        : DEFAULT_PREFS.toolbars.recording,
+    lumatone:
+      typeof t.lumatone === "boolean"
+        ? t.lumatone
+        : DEFAULT_PREFS.toolbars.lumatone,
+  };
 }
 
 /* Read prefs from localStorage. Missing/invalid fields fall back per-field
@@ -86,21 +132,51 @@ export function loadPrefs(): PrefsV1 {
   if (!obj || typeof obj !== 'object') return { ...DEFAULT_PREFS };
   const o = obj as Record<string, unknown>;
   return {
-    showNotes: typeof o.showNotes === 'boolean' ? o.showNotes : DEFAULT_PREFS.showNotes,
-    showBands: typeof o.showBands === 'boolean' ? o.showBands : DEFAULT_PREFS.showBands,
-    extendPattern: typeof o.extendPattern === 'boolean' ? o.extendPattern : DEFAULT_PREFS.extendPattern,
-    showAnalysis: typeof o.showAnalysis === 'boolean' ? o.showAnalysis : DEFAULT_PREFS.showAnalysis,
-    showCoords: typeof o.showCoords === 'boolean' ? o.showCoords : DEFAULT_PREFS.showCoords,
-    shortIvl: typeof o.shortIvl === 'boolean' ? o.shortIvl : DEFAULT_PREFS.shortIvl,
+    showNotes:
+      typeof o.showNotes === "boolean" ? o.showNotes : DEFAULT_PREFS.showNotes,
+    showBands:
+      typeof o.showBands === "boolean" ? o.showBands : DEFAULT_PREFS.showBands,
+    extendPattern:
+      typeof o.extendPattern === "boolean"
+        ? o.extendPattern
+        : DEFAULT_PREFS.extendPattern,
+    showAnalysis:
+      typeof o.showAnalysis === "boolean"
+        ? o.showAnalysis
+        : DEFAULT_PREFS.showAnalysis,
+    showCoords:
+      typeof o.showCoords === "boolean"
+        ? o.showCoords
+        : DEFAULT_PREFS.showCoords,
+    shortIvl:
+      typeof o.shortIvl === "boolean" ? o.shortIvl : DEFAULT_PREFS.shortIvl,
     outline: isOutlineMode(o.outline) ? o.outline : DEFAULT_PREFS.outline,
     tuning: isTuningMode(o.tuning) ? o.tuning : DEFAULT_PREFS.tuning,
-    septimalShift: isFiniteNumber(o.septimalShift) ? o.septimalShift : DEFAULT_PREFS.septimalShift,
+    septimalShift: isFiniteNumber(o.septimalShift)
+      ? o.septimalShift
+      : DEFAULT_PREFS.septimalShift,
     curLayout: isLayoutId(o.curLayout) ? o.curLayout : DEFAULT_PREFS.curLayout,
-    qwertyTranspose: isFiniteNumber(o.qwertyTranspose) ? o.qwertyTranspose : DEFAULT_PREFS.qwertyTranspose,
-    audioEnabled: typeof o.audioEnabled === 'boolean' ? o.audioEnabled : DEFAULT_PREFS.audioEnabled,
-    waveform: typeof o.waveform === 'string' ? o.waveform : DEFAULT_PREFS.waveform,
+    qwertyTranspose: isFiniteNumber(o.qwertyTranspose)
+      ? o.qwertyTranspose
+      : DEFAULT_PREFS.qwertyTranspose,
+    audioEnabled:
+      typeof o.audioEnabled === "boolean"
+        ? o.audioEnabled
+        : DEFAULT_PREFS.audioEnabled,
+    waveform:
+      typeof o.waveform === "string" ? o.waveform : DEFAULT_PREFS.waveform,
     pedalMode: isPedalMode(o.pedalMode) ? o.pedalMode : DEFAULT_PREFS.pedalMode,
-    autoSync: typeof o.autoSync === 'boolean' ? o.autoSync : DEFAULT_PREFS.autoSync,
+    autoSync:
+      typeof o.autoSync === "boolean" ? o.autoSync : DEFAULT_PREFS.autoSync,
+    toolbars: loadToolbars(o.toolbars),
+    showDiagnostics:
+      typeof o.showDiagnostics === "boolean"
+        ? o.showDiagnostics
+        : DEFAULT_PREFS.showDiagnostics,
+    calibrateKeys:
+      typeof o.calibrateKeys === "boolean"
+        ? o.calibrateKeys
+        : DEFAULT_PREFS.calibrateKeys,
   };
 }
 

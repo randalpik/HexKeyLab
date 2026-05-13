@@ -5,9 +5,12 @@
 // us see whether audible volume dips fall ON seams (sample/seam-data issue)
 // or BETWEEN them (crossfade gain-curve issue).
 //
-// Activate with `?loopdiag=1` in the URL. Off by default — zero overhead.
-// Hotkeys (when enabled): D = freeze · Shift+D = console-dump JSON ·
-// Ctrl+D = hide/show canvas.
+// Toggled via the "Show diagnostics" checkbox in the Playback toolbar. Lazy:
+// ensureLoopOverlay() builds DOM + audio routing on first call; subsequent
+// calls are no-ops. setLoopOverlayVisible() toggles display + the rAF loop.
+// recordSeamEvent and the rAF tick both gate on `enabled` so a hidden overlay
+// has near-zero overhead.
+// Hotkeys (when visible): D = freeze · Shift+D = console-dump JSON.
 //
 // Tap point is sampleMaster (samples-only output, not oscillators), exposed
 // by SampleEngine.tapMaster.
@@ -58,6 +61,7 @@ const COLOR_SMALL = '#fc0';     // yellow
 const COLOR_AUDIBLE = '#f44';   // red
 const COLOR_UNMEASURED = '#888'; // grey — measurement window not covered yet
 
+let domBuilt = false;
 let enabled = false;
 let frozen = false;
 let audioCtx: AudioContext | null = null;
@@ -93,16 +97,7 @@ const COLOR_VEL = '#f80';      // orange
 const COLOR_PA = '#f0f';       // magenta — raw PA
 const COLOR_PA_SMOOTH = '#08f'; // blue — filtered PA (what's fed to gain)
 
-export function isLoopDiagEnabled(): boolean {
-  if (typeof window === 'undefined') return false;
-  try {
-    return new URLSearchParams(window.location.search).get('loopdiag') === '1';
-  } catch {
-    return false;
-  }
-}
-
-/* No-op when overlay isn't initialized. Call sites in samples.ts always invoke
+/* No-op when overlay isn't visible. Call sites in samples.ts always invoke
    this; the cost when off is one function call returning early. */
 export function recordSeamEvent(ev: SeamEvent): void {
   if (!enabled) return;
@@ -110,9 +105,11 @@ export function recordSeamEvent(ev: SeamEvent): void {
   if (seamBuf.length > SEAM_CAP) seamBuf.shift();
 }
 
-export function initLoopOverlay(ac: AudioContext, sampleEngine: SampleEngineSurface): void {
-  if (enabled) return;
-  enabled = true;
+/* Idempotent: build DOM + audio routing on first call, then no-op. The overlay
+   starts hidden; call setLoopOverlayVisible(true) to show it. */
+export function ensureLoopOverlay(ac: AudioContext, sampleEngine: SampleEngineSurface): void {
+  if (domBuilt) return;
+  domBuilt = true;
   audioCtx = ac;
   /* ChannelSplitter routes each input channel to a separate output. We tap
      sampleMaster into the splitter, then connect each output to its own
@@ -145,6 +142,7 @@ export function initLoopOverlay(ac: AudioContext, sampleEngine: SampleEngineSurf
     pointerEvents: 'none',
     zIndex: '9999',
     background: 'rgba(0,0,0,0.78)',
+    display: 'none',
   });
   document.body.appendChild(canvas);
   cctx = canvas.getContext('2d');
@@ -170,6 +168,7 @@ export function initLoopOverlay(ac: AudioContext, sampleEngine: SampleEngineSurf
     pointerEvents: 'auto',
     userSelect: 'none',
     minWidth: '260px',
+    display: 'none',
   });
   const cb = document.createElement('input');
   cb.type = 'checkbox';
@@ -185,9 +184,24 @@ export function initLoopOverlay(ac: AudioContext, sampleEngine: SampleEngineSurf
   buildMasterControls(controlsEl);
   document.body.appendChild(controlsEl);
 
-  console.log('%c[loopdiag] enabled · D=freeze · Shift+D=dump · \\=hide',
+  console.log('%c[loopdiag] built · D=freeze · Shift+D=dump',
     'color:#0ff;font-weight:bold');
-  rafId = requestAnimationFrame(tick);
+}
+
+/* Toggle visibility. Pauses the rAF when hidden so a built-but-hidden overlay
+   has near-zero overhead. `enabled` is the gate for recordSeamEvent and the
+   tick loop. */
+export function setLoopOverlayVisible(visible: boolean): void {
+  if (!domBuilt) return;
+  enabled = visible;
+  if (canvas) canvas.style.display = visible ? 'block' : 'none';
+  if (controlsEl) controlsEl.style.display = visible ? 'block' : 'none';
+  if (visible && rafId === 0) {
+    rafId = requestAnimationFrame(tick);
+  } else if (!visible && rafId !== 0) {
+    cancelAnimationFrame(rafId);
+    rafId = 0;
+  }
 }
 
 /* One row in the Master block: a label, a range input wired to an AudioParam,
@@ -293,20 +307,11 @@ function resizeCanvas(): void {
 
 function onKey(e: KeyboardEvent): void {
   /* Don't steal keys from form fields — the toolbar owns those. */
+  if (!enabled) return;
   const tag = (document.activeElement?.tagName || '').toLowerCase();
   if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
   if (e.altKey || e.metaKey || e.ctrlKey) return;
-  /* Use e.code for Backslash so dead-key / layout differences don't matter.
-     Backslash is not bound by the QWERTY note input, and the browser doesn't
-     intercept the bare key (unlike Ctrl+D, which is the bookmark shortcut). */
-  if (e.code === 'Backslash' && !e.shiftKey) {
-    e.preventDefault();
-    if (canvas) {
-      const next = canvas.style.display === 'none' ? 'block' : 'none';
-      canvas.style.display = next;
-      if (controlsEl) controlsEl.style.display = next;
-    }
-  } else if (e.key === 'D' && e.shiftKey) {
+  if (e.key === 'D' && e.shiftKey) {
     e.preventDefault();
     /* Single-line JSON keeps this paste-friendly into other tools. */
     console.log(JSON.stringify({ envelope: envelopeBuf.slice(), seams: seamBuf.slice() }));
@@ -317,6 +322,7 @@ function onKey(e: KeyboardEvent): void {
 }
 
 function tick(): void {
+  if (!enabled) { rafId = 0; return; }
   rafId = requestAnimationFrame(tick);
   if (!analyserL || !analyserR || !audioCtx || !timeBufL || !timeBufR) return;
   if (!frozen) {

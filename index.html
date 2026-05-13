@@ -89,8 +89,8 @@ canvas{display:block;background:#111;margin:0 auto;flex:0 0 auto}
 .rec-btn.recording{border-color:#FF4C4C !important;color:#FF4C4C !important;animation:hkl-rec-pulse 1s ease-in-out infinite}
 .push-btn.playing{border-color:#4CFF7C !important;color:#4CFF7C !important}
 @keyframes hkl-rec-pulse{0%,100%{opacity:1}50%{opacity:0.55}}
-.recording-status{padding:0 10px;border-radius:4px;border:1.5px solid #555;background:#222;color:#999;font-size:12px;font-weight:500;line-height:1.6;text-align:center;box-sizing:border-box;font-variant-numeric:tabular-nums;opacity:0.85;min-width:80px}
-/* Pedal calibration UI — temporarily hidden; will be re-surfaced behind a separate calibration menu.
+.recording-status{padding:0 10px;border-radius:4px;border:1.5px solid #555;background:#222;color:#999;font-size:12px;font-weight:500;line-height:1.6;text-align:center;box-sizing:border-box;font-variant-numeric:tabular-nums;opacity:0.65;min-width:80px}
+.recording-status.active{border-color:#4C96FF;color:#4C96FF;opacity:1}
 .calib-btn{padding:0 10px !important;border-radius:4px !important;border:1.5px solid #555 !important;background:#222 !important;color:#999 !important;cursor:pointer !important;font-size:12px !important;font-weight:500 !important;line-height:1.6 !important;min-height:0 !important;min-width:0 !important;margin:0 !important;box-shadow:none !important;text-transform:none !important;letter-spacing:normal !important;font-family:inherit !important;outline:none !important;-webkit-appearance:none !important;appearance:none !important;transition:border-color 0.15s,background 0.15s,color 0.15s}
 .calib-btn:hover:not(:disabled){border-color:#888 !important}
 .calib-btn:disabled{opacity:0.4 !important;cursor:not-allowed !important}
@@ -104,7 +104,21 @@ canvas{display:block;background:#111;margin:0 auto;flex:0 0 auto}
 .calib-panel .calib-stat .stat-val{color:#9ce}
 .calib-panel .calib-stat .stat-val.valid{color:#4CFF7C}
 .calib-panel .calib-stat .stat-val.invalid{color:#FF4C4C}
-*/
+.ts-label{font-weight:500;color:#ccc;margin-right:4px}
+.tbtn{padding:0 10px;border:1.5px solid #555;background:#1a1a1a;color:#888;font-size:12px;font-weight:500;line-height:1.8;border-radius:4px;cursor:pointer;font-family:inherit;outline:none}
+.tbtn:hover{border-color:#888}
+.tbtn.active{border-color:#B266FF;color:#B266FF}
+.tbtn.active:hover{border-color:#C99CFF;color:#C99CFF}
+.toolbar-row{margin-top:2px}
+.toolbar-group{display:inline-flex;flex-wrap:nowrap;flex-shrink:0;align-items:center;gap:4px 8px;padding:3px 8px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;min-height:54px}
+.tb-hidden{display:none !important}
+.cb-column{display:inline-flex;flex-direction:column;align-items:flex-start;gap:0}
+.cb-column label{height:16px;line-height:16px}
+.btn-pair{display:inline-flex;flex-direction:column;gap:2px;align-items:stretch}
+.btn-pair .push-btn{width:100% !important}
+.luma-vstack{display:inline-flex;flex-direction:column;align-items:flex-start;gap:2px}
+.luma-row{display:inline-flex;flex-wrap:nowrap;align-items:center;gap:4px 8px}
+#tb-group-lumatone:not(.lumatone-connected) .luma-conn-only{display:none !important}
 </style>
 </head>
 <body>
@@ -113,31 +127,18 @@ canvas{display:block;background:#111;margin:0 auto;flex:0 0 auto}
 <div class="title"><span class="t-pk-d">H</span><span class="t-pk-l">e</span><span class="t-pk-l">x</span><span class="t-pu-d">K</span><span class="t-pu-l">e</span><span class="t-pu-l">y</span><span class="t-bl-d">L</span><span class="t-bl-l">a</span><span class="t-bl-l">b</span></div>
 <div class="subtitle">version 1.0 · by Max Randal</div>
 </div>
-<div class="ctrls">
-<div class="lsel">
-<span>Layout:</span>
-<button class="lbtn" id="lb2">&#9837;</button>
-<button class="lbtn active" id="lb1">&#9838;</button>
-<button class="lbtn" id="lb3">&#9839;</button>
+<div class="ctrls toolbar-selector">
+<span class="ts-label">Toolbars:</span>
+<button class="tbtn" id="tbLayout">Layout</button>
+<button class="tbtn" id="tbPlayback">Playback</button>
+<button class="tbtn" id="tbAnalysis">Analysis</button>
+<button class="tbtn" id="tbRecording">Recording</button>
+<button class="tbtn" id="tbLumatone">Lumatone</button>
+<span class="cdiv"></span>
+<button class="push-btn" id="btnResetPrefs" title="Reset all toolbar settings and visibility to defaults">Reset</button>
 </div>
-<label><input type="checkbox" id="cbNotes" autocomplete="off" checked> Note names</label>
-<label><input type="checkbox" id="cbBands" autocomplete="off" checked> Band seams</label>
-<label><input type="checkbox" id="cbExtend" autocomplete="off" checked> Extend pattern</label>
-<label><input type="checkbox" id="cbAnalysis" autocomplete="off"> Show analysis</label>
-<label><input type="checkbox" id="cbCoords" autocomplete="off"> Show coordinates</label>
-<label><input type="checkbox" id="cbShortIvl" autocomplete="off"> Short intervals</label>
-<div class="lsel">
-<span>Outline:</span>
-<select id="selOutline" autocomplete="off">
-<option value="lumatone" selected>Lumatone</option>
-<option value="qwerty">QWERTY</option>
-<option value="none">None</option>
-</select>
-<span id="qwertyTransposeCtrl" style="visibility:hidden;margin-left:8px">
-<span class="tpax"><button class="tpab" id="btnQwertyTrUp">&#x25B2;</button><span class="tpal" id="qwertyTrInd">0</span><button class="tpab" id="btnQwertyTrDn">&#x25BC;</button></span>
-</span>
-</div>
-<div style="flex-basis:100%;height:0"></div>
+<div class="ctrls toolbar-row">
+<div class="toolbar-group" id="tb-group-layout">
 <div class="lsel">
 <span>Tuning:</span>
 <select id="selTuning" autocomplete="off">
@@ -145,7 +146,6 @@ canvas{display:block;background:#111;margin:0 auto;flex:0 0 auto}
 <option value="5" selected>5-limit</option>
 <option value="7">7-limit</option>
 </select>
-</div>
 <span id="seamShiftCtrl" style="display:none">
 <span class="tpax">
 <button class="tpab" id="btnSeamUp">&#x25B2;</button>
@@ -153,18 +153,31 @@ canvas{display:block;background:#111;margin:0 auto;flex:0 0 auto}
 <button class="tpab" id="btnSeamDn">&#x25BC;</button>
 </span>
 </span>
-<span class="cdiv"></span>
-<span id="transposeCtrl" class="lsel">
-<span>Transpose:</span>
-<span class="tpax"><button class="tpab" data-dq="0" data-dr="1">&#x25B2;</button><span class="tpal">P5</span><button class="tpab" data-dq="0" data-dr="-1">&#x25BC;</button></span>
-<span class="tpax"><button class="tpab" data-dq="1" data-dr="0">&#x25B2;</button><span class="tpal">M3</span><button class="tpab" data-dq="-1" data-dr="0">&#x25BC;</button></span>
-<span class="tpax"><button class="tpab" data-dq="-1" data-dr="1">&#x25B2;</button><span class="tpal">m3</span><button class="tpab" data-dq="1" data-dr="-1">&#x25BC;</button></span>
-<span class="tpax"><button class="tpab" data-dq="3" data-dr="0">&#x25B2;</button><span class="tpal">P8</span><button class="tpab" data-dq="-3" data-dr="0">&#x25BC;</button></span>
-<span class="tpax"><button class="tpab" data-dq="-7" data-dr="4">&#x25B2;</button><span class="tpal">SC</span><button class="tpab" data-dq="7" data-dr="-4">&#x25BC;</button></span>
+</div>
+<div class="lsel">
+<span>Layout:</span>
+<button class="lbtn" id="lb2">&#9837;</button>
+<button class="lbtn active" id="lb1">&#9838;</button>
+<button class="lbtn" id="lb3">&#9839;</button>
+</div>
+<div class="cb-column">
+<label><input type="checkbox" id="cbNotes" autocomplete="off" checked> Note names</label>
+<label><input type="checkbox" id="cbBands" autocomplete="off" checked> Band seams</label>
+<label><input type="checkbox" id="cbExtend" autocomplete="off" checked> Extend pattern</label>
+</div>
+<div class="lsel">
+<span>Outline:</span>
+<select id="selOutline" autocomplete="off">
+<option value="lumatone" selected>Lumatone</option>
+<option value="qwerty">QWERTY</option>
+<option value="none">None</option>
+</select>
+<span id="qwertyTransposeCtrl" style="visibility:hidden">
+<span class="tpax"><button class="tpab" id="btnQwertyTrUp">&#x25B2;</button><span class="tpal" id="qwertyTrInd">0</span><button class="tpab" id="btnQwertyTrDn">&#x25BC;</button></span>
 </span>
-<span class="cdiv"></span>
-<button class="push-btn" id="btnClear">Clear</button>
-<span class="cdiv"></span>
+</div>
+</div>
+<div class="toolbar-group" id="tb-group-playback">
 <label><input type="checkbox" id="cbAudio" autocomplete="off"> Audio</label>
 <select id="waveform" autocomplete="off">
 <!-- Decay-path instruments (piano on top, keyboards then plucked/struck) -->
@@ -198,38 +211,58 @@ canvas{display:block;background:#111;margin:0 auto;flex:0 0 auto}
 <option value="sine">Sine Wave</option>
 <option value="square">Square Wave</option>
 </select>
-<span id="midiControls" style="display:none">
-<span class="cdiv"></span>
+<span id="transposeCtrl" class="lsel">
+<span>Transpose:</span>
+<span class="tpax"><button class="tpab" data-dq="0" data-dr="1">&#x25B2;</button><span class="tpal">P5</span><button class="tpab" data-dq="0" data-dr="-1">&#x25BC;</button></span>
+<span class="tpax"><button class="tpab" data-dq="1" data-dr="0">&#x25B2;</button><span class="tpal">M3</span><button class="tpab" data-dq="-1" data-dr="0">&#x25BC;</button></span>
+<span class="tpax"><button class="tpab" data-dq="-1" data-dr="1">&#x25B2;</button><span class="tpal">m3</span><button class="tpab" data-dq="1" data-dr="-1">&#x25BC;</button></span>
+<span class="tpax"><button class="tpab" data-dq="3" data-dr="0">&#x25B2;</button><span class="tpal">P8</span><button class="tpab" data-dq="-3" data-dr="0">&#x25BC;</button></span>
+<span class="tpax"><button class="tpab" data-dq="-7" data-dr="4">&#x25B2;</button><span class="tpal">SC</span><button class="tpab" data-dq="7" data-dr="-4">&#x25BC;</button></span>
+</span>
+<button class="push-btn" id="btnClear">Clear</button>
+<label title="Loop-seam diagnostics overlay — visualizes master-output RMS, seam crossfades, and per-key input traces (requires Audio enabled)"><input type="checkbox" id="cbShowDiag" autocomplete="off"> Show diagnostics</label>
+</div>
+<div class="toolbar-group" id="tb-group-analysis">
+<div class="cb-column">
+<label><input type="checkbox" id="cbAnalysis" autocomplete="off"> Show analysis</label>
+<label><input type="checkbox" id="cbShortIvl" autocomplete="off"> Short intervals</label>
+<label><input type="checkbox" id="cbCoords" autocomplete="off"> Show coordinates</label>
+</div>
+</div>
+<div class="toolbar-group" id="tb-group-recording">
+<div class="btn-pair">
+<button class="push-btn rec-btn" id="btnRecord" title="Start/stop recording">● Rec</button>
+<button class="push-btn" id="btnPlay" disabled title="Play current recording">▶ Play</button>
+</div>
+<div class="btn-pair">
+<button class="push-btn" id="btnSaveHkr" disabled title="Save the current recording as .hkr (HexKeyLab native format)">Save .hkr</button>
+<button class="push-btn" id="btnLoadHkr" title="Load a .hkr recording">Load .hkr</button>
+</div>
+<div class="btn-pair">
+<button class="push-btn" id="btnExportMidi" disabled title="Export the current recording as a .mid file (MPE)">Export .mid</button>
+<button class="push-btn" id="btnImportMidi" disabled title="Import a .mid file (requires matching .hkr loaded for layout snapshot)">Import .mid</button>
+</div>
+<input type="file" id="fileInputHkr" accept=".hkr,.json" style="display:none">
+<input type="file" id="fileInputMidi" accept=".mid,.midi" style="display:none">
+<span class="recording-status" id="recStatus">Idle</span>
+</div>
+<div class="toolbar-group" id="tb-group-lumatone">
+<div class="luma-vstack">
 <span id="lumaStatus" class="luma-disconnected">Lumatone Not Connected</span>
+<div class="luma-row">
+<label class="auto-sync-lbl"><input type="checkbox" id="cbAutoSync" autocomplete="off"> Auto-sync</label>
+<div class="sync-status" id="syncStatus">Idle</div>
+</div>
+</div>
 <label title="Sustain mode: sustain jack = damper. Sostenuto mode: sustain jack = sostenuto, expression jack = continuous damper.">Pedals: <select id="pedalMode" autocomplete="off">
 <option value="sustain" selected>Sustain</option>
 <option value="sostenuto">Sostenuto + Sustain</option>
 </select></label>
-<!-- Pedal calibration button — temporarily hidden; will be re-surfaced behind a separate calibration menu.
-<button class="calib-btn" id="btnCalibPedal" title="Calibrate the expression pedal jack — sweep pedal full range while active">Calibrate Pedal</button>
--->
-<span class="auto-sync-col">
-<label class="auto-sync-lbl"><input type="checkbox" id="cbAutoSync" autocomplete="off"> Auto-sync</label>
-<div class="sync-status" id="syncStatus">Idle</div>
-</span>
-</span>
-<span class="cdiv"></span>
-<span id="recControls" class="lsel">
-<button class="push-btn rec-btn" id="btnRecord" title="Start/stop recording">● Rec</button>
-<button class="push-btn" id="btnPlay" disabled title="Play current recording">▶ Play</button>
-<button class="push-btn" id="btnSaveHkr" disabled title="Save the current recording as .hkr (HexKeyLab native format)">Save .hkr</button>
-<button class="push-btn" id="btnLoadHkr" title="Load a .hkr recording">Load .hkr</button>
-<button class="push-btn" id="btnExportMidi" disabled title="Export the current recording as a .mid file (MPE)">Export .mid</button>
-<button class="push-btn" id="btnImportMidi" title="Import a .mid file (requires matching .hkr loaded for layout snapshot)">Import .mid</button>
-<input type="file" id="fileInputHkr" accept=".hkr,.json" style="display:none">
-<input type="file" id="fileInputMidi" accept=".mid,.midi" style="display:none">
-<span class="recording-status" id="recStatus">Idle</span>
-</span>
-<span class="cdiv"></span>
-<button class="push-btn" id="btnResetPrefs" title="Reset all toolbar settings to defaults and reload">Reset prefs</button>
+<button class="calib-btn luma-conn-only" id="btnCalibPedal" title="Calibrate the expression pedal jack — sweep pedal full range while active">Calibrate Pedal</button>
+<label class="luma-conn-only" title="Per-board key calibration overlay (Shift+\ also toggles)"><input type="checkbox" id="cbCalibrateKeys" autocomplete="off"> Calibrate Keys</label>
+</div>
 </div>
 <canvas id="cv"></canvas>
-<!-- Pedal calibration panel — temporarily hidden; will be re-surfaced behind a separate calibration menu.
 <div class="calib-panel" id="calibPanel">
 <span class="calib-title">Pedal Calibration</span>
 <span class="calib-instruction">Sweep pedal full range repeatedly</span>
@@ -238,7 +271,6 @@ canvas{display:block;background:#111;margin:0 auto;flex:0 0 auto}
 <span class="calib-stat"><span class="stat-label">valid:</span><span class="stat-val" id="calibValid">-</span></span>
 <button class="calib-btn" id="btnResetPedal" title="Reset firmware bounds to factory defaults (CMD 39h)">Reset to Factory</button>
 </div>
--->
 <div class="info-line" id="infoLine"><span class="hint">Click any key to select &middot; shift+click for exclusive select</span></div>
 </div>
 <script type="module" src="/src/main.ts"></script>

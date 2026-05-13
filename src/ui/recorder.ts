@@ -65,7 +65,12 @@ function readFileAsBytes(file: File): Promise<Uint8Array> {
 
 function setStatusText(text: string): void {
   const el = $('recStatus');
-  if (el) el.textContent = text;
+  if (el) {
+    el.textContent = text;
+    /* Mirror the sync-status pattern: dim when idle, blue-bordered when there's
+       anything to read (recording/playing/loaded/error). */
+    el.classList.toggle('active', text !== 'Idle');
+  }
 }
 
 function updateButtons(): void {
@@ -91,7 +96,8 @@ function updateButtons(): void {
   if (btnSave) btnSave.disabled = !hasSession || rec || play;
   if (btnLoad) btnLoad.disabled = rec || play;
   if (btnExport) btnExport.disabled = !hasSession || rec || play;
-  if (btnImport) btnImport.disabled = rec || play;
+  /* Import requires a loaded .hkr to merge MIDI into (see onImportMidiClick). */
+  if (btnImport) btnImport.disabled = !hasSession || rec || play;
 }
 
 function updateStatus(): void {

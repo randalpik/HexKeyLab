@@ -17,7 +17,6 @@ import { selection } from '../state/selection.js';
 import { savePrefs } from '../state/persistence.js';
 import { keyFreq } from '../tuning/frequency.js';
 import { SampleEngine } from './samples.js';
-import { initLoopOverlay, isLoopDiagEnabled } from './diagnostics/loopOverlay.js';
 import {
   AFTERTOUCH_RAMP_S,
   aftertouchTargetGain, inflightExpRampValue,
@@ -108,7 +107,6 @@ export function initAudio(): void {
   audio.oscGain = audio.audioCtx.createGain(); audio.oscGain.gain.value = 1.0; audio.oscGain.connect(audio.masterBus);
   audio.squareGain = audio.audioCtx.createGain(); audio.squareGain.gain.value = 1.0; audio.squareGain.connect(audio.masterBus);
   SampleEngine.init(audio.audioCtx, audio.masterBus); /* sampleMaster at 0.9 */
-  if (isLoopDiagEnabled()) initLoopOverlay(audio.audioCtx, SampleEngine);
 }
 
 export function noteOn(key: KeyId, velocity?: number): void {
