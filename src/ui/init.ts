@@ -35,6 +35,7 @@ import { handleMidiMessage } from '../midi/handler.js';
 import {
   setTuning, setOutline, setLayout, applyLayoutImmediate,
   setQwertyTranspose, clearSelection,
+  applyRotation, setRotationFromDom,
 } from './controls.js';
 import './keyboard.js';
 import '../input/keyboard-notes.js';
@@ -68,6 +69,7 @@ function applyPrefsToDom(p: PrefsV1): void {
   $<HTMLInputElement>('cbCoords').checked = p.showCoords;
   $<HTMLInputElement>('cbShortIvl').checked = p.shortIvl;
   $<HTMLSelectElement>('selOutline').value = p.outline;
+  $<HTMLSelectElement>('selRotation').value = p.rotation;
   $<HTMLSelectElement>('selTuning').value = p.tuning;
   $<HTMLInputElement>('cbAudio').checked = p.audioEnabled;
   $<HTMLSelectElement>('waveform').value = p.waveform;
@@ -79,6 +81,9 @@ function applyPrefsToDom(p: PrefsV1): void {
 
 const prefs = loadPrefs();
 applyPrefsToDom(prefs);
+/* Apply persisted rotation before first paint — resets geometry tilt,
+   canvas bounds, and cv.style.height to match the saved mode. */
+applyRotation(prefs.rotation);
 applyToolbarVisibility(prefs.toolbars);
 initToolbarSelector();
 
@@ -204,6 +209,7 @@ $<HTMLInputElement>('cbShortIvl').addEventListener('change', (e) => {
 // Tuning + outline + clear
 $<HTMLSelectElement>('selTuning').addEventListener('change', setTuning);
 $<HTMLSelectElement>('selOutline').addEventListener('change', setOutline);
+$<HTMLSelectElement>('selRotation').addEventListener('change', setRotationFromDom);
 $<HTMLButtonElement>('btnClear').addEventListener('click', clearSelection);
 
 // Audio
@@ -278,6 +284,7 @@ function resetToDefaults(): void {
 
   setTuning();
   setOutline();
+  applyRotation(p.rotation);
   setLayout(p.curLayout);
 
   if (audio.audioEnabled !== p.audioEnabled) toggleAudio();

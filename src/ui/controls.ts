@@ -10,12 +10,13 @@ import { tuning } from '../state/tuning.js';
 import { selection } from '../state/selection.js';
 import { audio } from '../state/audio.js';
 import { savePrefs } from '../state/persistence.js';
-import type { LayoutId, OutlineMode, TuningMode } from '../state/persistence.js';
+import type { LayoutId, OutlineMode, RotationMode, TuningMode } from '../state/persistence.js';
 import {
   layoutShifts, QWERTY_TRANSPOSE_MIN, QWERTY_TRANSPOSE_MAX,
 } from '../layout/baseKeys.js';
 import { migrateHeldQwertyVoices } from '../input/keyboard-notes.js';
-import { dxH, dyH, cosT, sinT } from '../layout/geometry.js';
+import { dxH, dyH, cosT, sinT, setRotation } from '../layout/geometry.js';
+import { recomputeCanvasBounds } from '../render/canvas.js';
 import { view } from '../state/view.js';
 import { keyFreq } from '../tuning/frequency.js';
 import { SampleEngine } from '../audio/samples.js';
@@ -25,7 +26,7 @@ import {
 } from '../audio/engine.js';
 import { stopAllMidi, syncMidi } from '../midi/engine.js';
 import { animation } from '../render/animation.js';
-import { draw, startLayoutAnim } from '../render/draw.js';
+import { cv, draw, startLayoutAnim } from '../render/draw.js';
 import { syncLumatoneColors } from '../lumatone/sync.js';
 import { onTuningChanged } from '../effects/onTuningChanged.js';
 import { onLayoutChanged } from '../effects/onLayoutChanged.js';
@@ -39,6 +40,23 @@ export function setTuning(): void {
   onTuningChanged();
   (document.getElementById('selTuning') as HTMLSelectElement).blur();
   savePrefs({ tuning: val as TuningMode });
+}
+
+export function applyRotation(mode: RotationMode): void {
+  setRotation(mode);
+  recomputeCanvasBounds();
+  cv.style.height = view.CH + 'px';
+  view.hexDirty = true;
+  view.textDirty = true;
+}
+
+export function setRotationFromDom(): void {
+  const sel = document.getElementById('selRotation') as HTMLSelectElement;
+  const mode = sel.value as RotationMode;
+  applyRotation(mode);
+  draw();
+  sel.blur();
+  savePrefs({ rotation: mode });
 }
 
 export function setOutline(): void {

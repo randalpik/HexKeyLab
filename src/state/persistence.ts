@@ -13,6 +13,7 @@ export type OutlineMode = 'lumatone' | 'qwerty' | 'none';
 export type TuningMode = '5' | '7' | 'E';
 export type PedalMode = 'sustain' | 'sostenuto';
 export type LayoutId = 1 | 2 | 3;
+export type RotationMode = 'verticalFreq' | 'lumatone' | 'qwerty';
 
 export interface ToolbarVisibility {
   layout: boolean;
@@ -30,6 +31,7 @@ export interface PrefsV1 {
   showCoords: boolean;
   shortIvl: boolean;
   outline: OutlineMode;
+  rotation: RotationMode;
   tuning: TuningMode;
   septimalShift: number;
   curLayout: LayoutId;
@@ -54,6 +56,7 @@ export const DEFAULT_PREFS: PrefsV1 = {
   showCoords: false,
   shortIvl: false,
   outline: "lumatone",
+  rotation: "verticalFreq",
   tuning: "5",
   septimalShift: 0,
   curLayout: 1,
@@ -83,6 +86,9 @@ function isLayoutId(n: unknown): n is LayoutId {
 }
 function isOutlineMode(s: unknown): s is OutlineMode {
   return s === 'lumatone' || s === 'qwerty' || s === 'none';
+}
+function isRotationMode(s: unknown): s is RotationMode {
+  return s === 'verticalFreq' || s === 'lumatone' || s === 'qwerty';
 }
 function isTuningMode(s: unknown): s is TuningMode {
   return s === '5' || s === '7' || s === 'E';
@@ -153,6 +159,7 @@ export function loadPrefs(): PrefsV1 {
     shortIvl:
       typeof o.shortIvl === "boolean" ? o.shortIvl : DEFAULT_PREFS.shortIvl,
     outline: isOutlineMode(o.outline) ? o.outline : DEFAULT_PREFS.outline,
+    rotation: isRotationMode(o.rotation) ? o.rotation : DEFAULT_PREFS.rotation,
     tuning: isTuningMode(o.tuning) ? o.tuning : DEFAULT_PREFS.tuning,
     septimalShift: isFiniteNumber(o.septimalShift)
       ? o.septimalShift

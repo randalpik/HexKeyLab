@@ -1,20 +1,42 @@
-// Hex lattice → screen geometry. Tilt angle is computed once from the
-// average log-frequency gradient across band seams and 5/7-limit modes:
-//   q-axis: log(2)/3 per step (octave constraint over 3-wide bands, not within-band log(5/4))
-//   r-axis: midpoint of 5-limit log(3/2) and 7-limit log(3/2)-log(81/80)/6
+// Hex lattice → screen geometry. The tilt angle is selectable at runtime via
+// setRotation():
+//   verticalFreq — average log-frequency gradient is screen-vertical
+//                  (q-axis: log(2)/3 per step; r-axis: midpoint of 5-limit
+//                  log(3/2) and 7-limit log(3/2)-log(81/80)/6)
+//   lumatone     — (+7q, -2r) direction is screen-horizontal (Lumatone case row)
+//   qwerty       — q-axis is screen-horizontal
+//
+// tiltAngle/cosT/sinT are `let` exports; ES module live bindings propagate
+// updates to every importer without re-importing.
+
+import type { RotationMode } from '../state/persistence.js';
 
 export const hexR = 16;
 export const dxH = hexR * 1.78;
 export const dyH = hexR * 1.54;
 
-export const tiltAngle = (function (): number {
+const TILT_VERTICAL_FREQ = (function (): number {
   const avgR = Math.log(3 / 2) - Math.log(81 / 80) / 12;
   const gx = Math.log(2) / (3 * dxH);
   const gy = (avgR - Math.log(2) / 6) / dyH;
   return Math.PI / 2 - Math.atan2(gy, gx);
 })();
-export const cosT = Math.cos(tiltAngle);
-export const sinT = Math.sin(tiltAngle);
+const TILT_LUMATONE = Math.atan(dyH / (3 * dxH));
+const TILT_QWERTY = 0;
+
+export let tiltAngle = TILT_VERTICAL_FREQ;
+export let cosT = Math.cos(tiltAngle);
+export let sinT = Math.sin(tiltAngle);
+
+export function setRotation(mode: RotationMode): void {
+  switch (mode) {
+    case 'lumatone': tiltAngle = TILT_LUMATONE; break;
+    case 'qwerty': tiltAngle = TILT_QWERTY; break;
+    default: tiltAngle = TILT_VERTICAL_FREQ;
+  }
+  cosT = Math.cos(tiltAngle);
+  sinT = Math.sin(tiltAngle);
+}
 
 export interface ScreenPoint {
   /** screen-space x relative to view center */

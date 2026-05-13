@@ -4,7 +4,10 @@ import { baseKeys } from '../layout/baseKeys.js';
 import { hexR, dxH, dyH, cosT, sinT, hexToScreen } from '../layout/geometry.js';
 import { view } from '../state/view.js';
 
-(function () {
+/* Project baseKeys at the current tilt and refresh canvas dims. Called once
+   at module load and again whenever rotation changes — uses live-binding
+   cosT/sinT via hexToScreen, so just re-run after setRotation(). */
+export function recomputeCanvasBounds(): void {
   let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
   baseKeys.forEach(function (k) {
     const p = hexToScreen(k[0], k[1]);
@@ -18,7 +21,8 @@ import { view } from '../state/view.js';
   view.kbMinW = Math.ceil((Math.max(-minX, maxX) + padX) * 2);
   view.CH = Math.ceil(maxY - minY + 2 * padY); /* actual extent, not symmetrized */
   view.kbOffY = -(minY + maxY) / 2; /* shift to center keyboard in CH */
-})();
+}
+recomputeCanvasBounds();
 
 export function sizeCanvas(): void {
   const wrapPad = 24; /* 12px padding each side of .wrap */
