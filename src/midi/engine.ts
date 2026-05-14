@@ -131,8 +131,19 @@ export function findLumatone(handleMidiMessage: MidiMessageHandler): void {
       foundIn = port; break;
     }
   }
-  /* update output */
+  /* Compare by port.id rather than JS object identity. Firefox's MIDIAccess
+     is a snapshot — to detect hotplug we re-request access on a poll
+     (lessons.md), which yields fresh MIDIPort *objects* for the same physical
+     device. Object-identity comparisons would falsely flag every poll as a
+     new connection and re-fire queryFirmware. id is stable per device. */
   const oldOut = midi.midiOut;
+  const oldIn = midi.midiIn;
+  const oldOutId = oldOut ? oldOut.id : null;
+  const oldInId = oldIn ? oldIn.id : null;
+  const newOutId = foundOut ? foundOut.id : null;
+  const newInId = foundIn ? foundIn.id : null;
+  const changed = oldOutId !== newOutId || oldInId !== newInId;
+  /* update output */
   midi.midiOut = foundOut;
   if (!midi.midiOut && oldOut) {
     /* Lost connection: cancel any in-flight work and forget device state */
@@ -140,19 +151,26 @@ export function findLumatone(handleMidiMessage: MidiMessageHandler): void {
     sysex.cancel();
     lumatone.deviceColors = null;
     lumatone.fixedLayoutSent = false;
-  } else if (midi.midiOut && midi.midiOut !== oldOut) {
+  } else if (midi.midiOut && oldOutId !== newOutId) {
     syncMidi();
   }
-  /* update input */
-  const oldIn = midi.midiIn;
-  if (oldIn) oldIn.onmidimessage = null;
-  midi.midiIn = foundIn;
-  if (foundIn) foundIn.onmidimessage = handleMidiMessage;
+  /* update input — only rewire the message handler when the port identity
+     changes, so polling that returns the same physical device doesn't churn. */
+  if (oldInId !== newInId) {
+    if (oldIn) oldIn.onmidimessage = null;
+    midi.midiIn = foundIn;
+    if (foundIn) foundIn.onmidimessage = handleMidiMessage;
+  } else if (foundIn && foundIn !== oldIn) {
+    /* Same id, fresh JS object (Firefox re-request case) — keep the new
+       reference so subsequent sends/queries target a non-stale port. */
+    midi.midiIn = foundIn;
+    foundIn.onmidimessage = handleMidiMessage;
+  }
   /* update UI */
   const statusEl = document.getElementById('lumaStatus')!;
   const lumaGroup = document.getElementById('tb-group-lumatone');
   if (midi.midiOut) {
-    const isNewConnection = !oldOut || oldOut !== midi.midiOut;
+    const isNewConnection = oldOutId !== newOutId;
     statusEl.textContent = 'Lumatone Connected';
     statusEl.className = 'luma-connected';
     if (lumaGroup) lumaGroup.classList.add('lumatone-connected');
@@ -167,24 +185,51 @@ export function findLumatone(handleMidiMessage: MidiMessageHandler): void {
     statusEl.className = 'luma-disconnected';
     if (lumaGroup) lumaGroup.classList.remove('lumatone-connected');
   }
-  console.log('Lumatone search: out=' + (midi.midiOut ? (midi.midiOut as MIDIOutput).name : 'none')
-    + ', in=' + (midi.midiIn ? (midi.midiIn as MIDIInput).name : 'none'));
+  if (changed) {
+    console.log('Lumatone search: out=' + (midi.midiOut ? (midi.midiOut as MIDIOutput).name : 'none')
+      + ', in=' + (midi.midiIn ? (midi.midiIn as MIDIInput).name : 'none'));
+  }
 }
 
 /* Request MIDI access at startup. Caller provides handleMidiMessage so that
    findLumatone can wire it onto the input port. The Lumatone toolbar's
    visibility is owned by the user pref (toolbars.lumatone) — MIDI state only
-   drives the lumaStatus text/class, not the toolbar's display. */
+   drives the lumaStatus text/class, not the toolbar's display.
+
+   Firefox's MIDIAccess is a snapshot: it does not dispatch statechange events
+   AND does not update port.state on existing port references when devices
+   are hotplugged (lessons.md). To detect hotplug we re-call requestMIDIAccess
+   on a poll, replacing midi.midiAccess with a fresh one. Chromium honors
+   statechange so the event-driven path stays wired for instant response;
+   the poll is redundant there but harmless. */
+const HOTPLUG_POLL_MS = 1500;
+let hotplugPollTimer: number | null = null;
+
+function refreshMidiAccess(handleMidiMessage: MidiMessageHandler): void {
+  navigator.requestMIDIAccess({ sysex: true }).then(function (access) {
+    midi.midiAccess = access;
+    /* Re-wire on the fresh access object — Chromium will fire statechange
+       on it; on Firefox it never fires but the assignment is cheap.
+       Don't log inside the callback: a fresh MIDIAccess fires statechange
+       once per known port on creation, so every poll would flood the
+       console. findLumatone's own log already fires on real transitions. */
+    access.onstatechange = function () { findLumatone(handleMidiMessage); };
+    findLumatone(handleMidiMessage);
+  }).catch(function () { /* swallow poll-failure noise */ });
+}
+
 export function requestMidi(handleMidiMessage: MidiMessageHandler): void {
   if (!navigator.requestMIDIAccess) return;
   navigator.requestMIDIAccess({ sysex: true }).then(function (access) {
     console.log('MIDI access granted');
     midi.midiAccess = access;
     findLumatone(handleMidiMessage);
-    access.onstatechange = function (e) {
-      const port = (e as MIDIConnectionEvent).port;
-      console.log('MIDI state change:', port?.name, port?.state);
-      findLumatone(handleMidiMessage);
-    };
+    access.onstatechange = function () { findLumatone(handleMidiMessage); };
+    if (hotplugPollTimer === null) {
+      hotplugPollTimer = window.setInterval(
+        function () { refreshMidiAccess(handleMidiMessage); },
+        HOTPLUG_POLL_MS,
+      );
+    }
   }).catch(function (err) { console.error('MIDI access denied:', err); });
 }

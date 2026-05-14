@@ -36,6 +36,14 @@ Two ways to deal with it: (1) recalibrate with softer max-press so the learned c
 
 `file://` URLs do NOT work in Firefox. localhost or HTTPS only. Chromium permits `file://` for testing. Max develops with both browsers; the deployment target needs to assume Firefox + secure context.
 
+### Firefox's `MIDIAccess` is a snapshot — no statechange events, no live port updates
+
+Firefox does not dispatch `MIDIAccess.onstatechange` on hotplug, AND the existing port references in `access.outputs` / `access.inputs` don't update their `port.state` either. The access object is effectively a frozen snapshot of the moment `requestMIDIAccess` was called. Polling `findLumatone` against the existing access does nothing. Chromium dispatches statechange and updates port.state as the spec describes.
+
+To detect hotplug in Firefox, **re-call `navigator.requestMIDIAccess({sysex:true})` on a timer** and replace `midi.midiAccess` with the fresh object. Subsequent calls don't re-prompt for permission once granted. A fresh access yields fresh port state (and possibly fresh port *objects* with the same `id` — so identity checks in `findLumatone` must compare `port.id`, not JS object identity, or every poll falsely fires the new-connection path).
+
+Chromium keeps the event-driven `onstatechange` path for instant response; the poll is redundant there but harmless. Poll cadence is `HOTPLUG_POLL_MS` in `src/midi/engine.ts`.
+
 ### Per-board threshold/sensitivity SysEx values are 4-bit, not 8-bit
 
 Commands `0x29`, `0x2A`, `0x2B`, `0x2C`, `0x32` (per-board max/AT thresholds, min hysteresis, CC/AT sensitivity, CC active threshold) are documented in the Terpstra Editor source as taking 8-bit values (`0..0xFE`) packed as two nibbles. **The shipping firmware on Max's unit only honors the low nibble** — sending any non-zero high nibble breaks that board (notes stop registering until a reset). The clamp in HKL's `protocol.ts` builders is therefore 4-bit, and the lumadiag sliders are 0..15.
