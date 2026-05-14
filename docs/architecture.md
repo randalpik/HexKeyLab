@@ -619,10 +619,10 @@ Final pairwise correlations across kept loop points typically ≥ 0.99 for a goo
 
 After loop / decay analysis, each sample is measured for amplitude:
 
-- **Loop instruments**: RMS over the steady region returned by `findSteadyRegion` (50 ms RMS window, 10 ms hop, ≥70% peak run). Vibrato instruments pre-smooth the curve over ±150 ms so AMP cycles don't shatter the steady span. The peak amplitude over the same window bounds the gain so a single-voice peak post-boost ≤ −3 dBFS.
-- **Decay instruments**: peak 100 ms RMS window post-trimStart, slid in 20 ms hops. Shorter than the 500 ms window used for pitch refinement because amplitude wants perceptual loudness (transient sources decay quickly), not pitch stability.
+- **Loop instruments**: stereo RMS over the steady region returned by `findSteadyRegion` (50 ms RMS window, 10 ms hop, ≥70% peak run). Vibrato instruments pre-smooth the curve over ±150 ms so AMP cycles don't shatter the steady span. The peak amplitude over the same window bounds the gain so a single-voice peak post-boost ≤ −3 dBFS.
+- **Decay instruments**: K-weighted integrated loudness per ITU-R BS.1770-4 (pre-filter high-shelf @1681 Hz +4 dB, RLB high-pass @38 Hz, 400 ms momentary windows / 100 ms hop, absolute gate at −70 LUFS, relative gate at −10 LU below pre-gated mean), integrated over the full post-trim region. Returned as a stereo-RMS-equivalent (`sqrt(integrated_combined/2)`) so the gain formula is shared with the loop path. Implementation in `analyzer/k-weighting.js`.
 
-`gain = min(TARGET_RMS / rms, TARGET_PEAK / peak)`, clamped to `[GAIN_MIN, GAIN_MAX]`. Constants live in both `analyzer/generate-samples.js` and `analyzer/backfill-gains.js`: `TARGET_DBFS = −18`, `PEAK_DBFS = −3`, `GAIN_MIN = 0.1`, `GAIN_MAX = 8.0` (sanity bound; the peak ceiling is the real limiter).
+`gain = min(TARGET_RMS / rms, TARGET_PEAK / peak)`, floored at `GAIN_MIN`. Constants live in both `analyzer/generate-samples.js` and `analyzer/backfill-gains.js`: `TARGET_DBFS = −18`, `PEAK_DBFS = −3`, `GAIN_MIN = 0.1`.
 
 The Node analyzer emits `gain` directly into the per-sample object alongside `freq`. The standalone `backfill-gains.js` patches the same field into existing entries in `src/audio/samples.ts` in place — useful for adding normalization to instruments whose loop data was generated before the field existed (trombone, reed_organ) without re-running their full loop pipeline. Reports go to `analyzer/out/<key>-report.md` and `analyzer/out/gain-backfill-report.md`.
 

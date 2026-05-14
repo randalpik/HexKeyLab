@@ -23,6 +23,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { measureDecayLufs } from './k-weighting.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -47,12 +48,13 @@ const SALAMANDER_NOTES = { 0:'C', 3:'Ds', 6:'Fs', 9:'A' };
 const SEMI = {C:0,'C#':1,Cs:1,Db:1,D:2,'D#':3,Ds:3,Eb:3,E:4,F:5,'F#':6,Fs:6,Gb:6,G:7,'G#':8,Gs:8,Ab:8,A:9,'A#':10,As:10,Bb:10,B:11};
 const SR = 44100;
 
-/* Per-sample normalization targets. Both loop and decay paths target RMS at
-   TARGET_DBFS, with a peak ceiling at TARGET_PEAK_DBFS that engages only when
-   RMS targeting would otherwise push a sample's peak into clip range. The
-   measurement *windows* differ — loop uses the analyzer's steady region,
-   decay uses a fixed DECAY_RMS_WINDOW_S after trim — but the target shape
-   is identical. Single source of truth — backfill-gains.js mirrors these. */
+/* Per-sample normalization targets. Both loop and decay paths target the
+   same TARGET_RMS, with a peak ceiling at TARGET_PEAK_DBFS that engages only
+   when RMS targeting would push a sample's peak into clip range. The
+   measurement *methods* differ — loop uses stereo RMS over the analyzer's
+   steady region; decay uses K-weighted integrated loudness (ITU-R BS.1770,
+   see k-weighting.js) returned as a stereo-RMS-equivalent so the gain math
+   stays uniform. Single source of truth — backfill-gains.js mirrors these. */
 const TARGET_DBFS = -18;
 const TARGET_RMS = Math.pow(10, TARGET_DBFS / 20);  /* ≈ 0.12589 */
 /* Peak ceiling — engages when RMS targeting would push a sample's peak above
@@ -60,10 +62,6 @@ const TARGET_RMS = Math.pow(10, TARGET_DBFS / 20);  /* ≈ 0.12589 */
    multiple voices stack; this just keeps single notes from clipping. */
 const TARGET_PEAK_DBFS = -3;
 const TARGET_PEAK = Math.pow(10, TARGET_PEAK_DBFS / 20);  /* ≈ 0.7079 */
-/* Window over which decay-path RMS is measured. Aligns with Fletcher
-   loudness integration time, so calibrated notes match in perceived loudness
-   across the keyboard even when crest factor varies note-to-note. */
-const DECAY_RMS_WINDOW_S = 0.2;
 /* Floor only — sources can be quiet enough to need any amount of boost,
    and an arbitrary ceiling produces silent per-note level discontinuities
    that are harder to diagnose than the occasional noisy boosted sample.
@@ -133,13 +131,16 @@ function applyPlaceholders(pattern, note, midi) {
   // {NOTE_LETTER} — letter without octave (e.g. "F#", "Bb")
   // {NOTE_LOWER}  — full note name lowercased (SSO harp uses "harp-c4.wav")
   // {MIDI}        — 3-digit zero-padded MIDI number (SSO organ, jRhodes3d)
+  // {MIDI_RAW}    — unpadded MIDI number (Headroom uses "...CLOSE 60.flac")
   // '#' is URL-encoded *after* substitution so the placeholder itself
   // never needs to be entered already-encoded.
   const letter = note.replace(/\d+$/, '');
   const midiStr = String(midi).padStart(3, '0');
+  const midiRaw = String(midi);
   return pattern
     .replace(/\{NOTE_LETTER\}/g, letter)
     .replace(/\{NOTE_LOWER\}/g, note.toLowerCase())
+    .replace(/\{MIDI_RAW\}/g, midiRaw)
     .replace(/\{MIDI\}/g, midiStr)
     .replace(/\{NOTE\}/g, note)
     .replace(/#/g, '%23');
@@ -293,46 +294,20 @@ function rmsOver(d, start, end) {
 }
 
 function measureDecay(stereo, mono) {
-  /* Decay-path loudness measure: stereo-combined RMS over DECAY_RMS_WINDOW_S
-     after trim (perceptual onset loudness, drives the gain target) plus stereo
-     peak over the same window (clip-protection ceiling).
+  /* Decay-path loudness measure: K-weighted integrated loudness per ITU-R
+     BS.1770-4 (see analyzer/k-weighting.js). Replaces the previous 200ms
+     post-trim RMS, which was dominated by the hammer transient and produced
+     audible inter-sample loudness drift on sources with inconsistent
+     attack-vs-sustain ratios (Maestro grand piano was the prompting case —
+     ~8 dB source-level mismatch between adjacent semitones, matched at the
+     attack window but drifting on the sustain).
 
-     RMS uses stereo combined energy — sqrt(Σ(L²+R²) / 2N) — NOT the mono
-     downmix. Mono RMS was the previous approach but it under-reports loudness
-     for recordings with decorrelated stereo channels (e.g. Splendid Grand
-     Piano hammer transients): when L and R carry opposite-phase peaks the
-     (L+R)/2 downmix cancels them, the measured RMS reads 5–7 dB low, the
-     pipeline thinks the crest factor is huge, the peak ceiling engages
-     incorrectly, and the sample plays back significantly below target. Stereo
-     combined RMS equals what the listener hears with both ears and matches
-     the per-channel RMS for correlated signals — so the fix is loss-neutral
-     for instruments without decorrelated stereo.
-
-     Peak still uses STEREO max(|L|,|R|) — clip risk is per-channel.
-
-     Pure peak normalization was the original approach but produced 4–8 dB
-     of perceived-loudness drift across the keyboard because crest factor
-     varies note-to-note. Targeting RMS instead, with a peak ceiling to
-     prevent clipping on high-crest notes, matches the loop-path shape. */
-  const trim = findGainTrimStart(mono);
-  const winLen = Math.round(SR * DECAY_RMS_WINDOW_S);
-  const monoLen = mono.length;
-  if (monoLen <= trim) return null;
-  const end = Math.min(trim + winLen, monoLen);
-  if (end - trim < Math.round(SR * 0.05)) return null;  /* need ≥50ms of audio */
-  let peakAbs = 0;
-  let sumSq = 0;
-  for (let i = trim; i < end; i++) {
-    const l = stereo[2*i];
-    const r = stereo[2*i+1];
-    const aL = Math.abs(l);
-    const aR = Math.abs(r);
-    const a = aL > aR ? aL : aR;
-    if (a > peakAbs) peakAbs = a;
-    sumSq += l*l + r*r;
-  }
-  const rms = Math.sqrt(sumSq / (2 * (end - trim)));
-  return { peak: peakAbs, rms };
+     Returns rms in stereo-combined-RMS-equivalent units so the existing gain
+     formula (gain = TARGET_RMS/rms, peak-ceiling capped) operates unchanged.
+     Peak is still measured on the unfiltered stereo for clip protection. */
+  const m = measureDecayLufs(stereo, mono, SR);
+  if (m.rms == null) return null;
+  return m;
 }
 
 function stereoRmsOver(stereo, start, end) {
@@ -590,7 +565,7 @@ function emitSampleEntry(r, cfg) {
   const defaultPattern = '{NOTE}' + cfg.ext;
   const usesMulti = !!cfg.filePatterns;
   const singleTemplate = cfg.filePattern || defaultPattern;
-  const usesNewPlaceholders = /\{MIDI\}|\{NOTE_LETTER\}|\{NOTE_LOWER\}/.test(singleTemplate);
+  const usesNewPlaceholders = /\{MIDI(_RAW)?\}|\{NOTE_LETTER\}|\{NOTE_LOWER\}/.test(singleTemplate);
   const needFile = usesMulti || usesNewPlaceholders;
   const fileStr = (needFile && r.matchedFile) ? `,file:'${r.matchedFile}'` : '';
 
@@ -704,14 +679,14 @@ function buildReport(results, picks, cfg, fallbackNotes) {
     return `${dBFS} | ${g}`;
   };
   const gainColDecay = (p) => {
-    if (typeof p.peak !== 'number' || p.peak <= 0) return '— | —';
-    const dBFS = (20 * Math.log10(p.peak)).toFixed(1);
+    const lufs = (typeof p.lufs === 'number') ? p.lufs.toFixed(1) : '—';
+    const peak = (typeof p.peak === 'number' && p.peak > 0) ? (20 * Math.log10(p.peak)).toFixed(1) : '—';
     const g = (typeof p.gain === 'number') ? p.gain.toFixed(4) : '—';
-    return `${dBFS} | ${g}`;
+    return `${lufs} | ${peak} | ${g}`;
   };
   if (cfg.decays) {
-    lines.push(`| Note | Labeled (Hz) | Measured (Hz) | Drift (¢) | Peak (dBFS) | gain | Tier |`);
-    lines.push(`| --- | ---: | ---: | ---: | ---: | ---: | --- |`);
+    lines.push(`| Note | Labeled (Hz) | Measured (Hz) | Drift (¢) | LUFS | Peak (dBFS) | gain | Tier |`);
+    lines.push(`| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |`);
     picks.forEach(p => {
       const drift = p.res.driftCents != null ? p.res.driftCents.toFixed(1) : '—';
       const fa    = p.res.freqActual != null ? p.res.freqActual.toFixed(2) : '—';
@@ -797,8 +772,9 @@ function buildReport(results, picks, cfg, fallbackNotes) {
       const meas = cfg.decays ? measureDecay(stereo, d) : measureRmsLoop(stereo, d, res);
       const rms = meas ? meas.rms : null;
       const peak = meas ? meas.peak : null;
+      const lufs = (meas && typeof meas.lufs === 'number') ? meas.lufs : null;
       const gain = computeGain(meas);
-      const rec = { note: n.note, midi: n.midi, labeledFreq: n.labeledFreq, matchedFile: fetched.matchedFile, res, tier, rms, peak, gain };
+      const rec = { note: n.note, midi: n.midi, labeledFreq: n.labeledFreq, matchedFile: fetched.matchedFile, res, tier, rms, peak, lufs, gain };
       attempts.push({ patternIdx, matchedFile: fetched.matchedFile, tier, failReason: (res && (res.failReason || (res.stats && res.stats.failReason))) || null });
       if (!best || TIER_RANK[tier] > TIER_RANK[best.tier]) {
         best = rec;

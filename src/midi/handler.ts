@@ -69,7 +69,15 @@ export function handleMidiMessage(e: MIDIMessageEvent): void {
         /* outside cal mode, only log endpoint hits to keep console clean */
         console.log('[Pedal CC4] ' + d2 + ' (ch=' + ch + ')');
       }
-      pedal.cc4Depth = d2 / 127;
+      /* Treat d2 ≤ 1 as fully released. The expression pedal's at-rest ADC
+         reading sometimes lands a count or two above zero (see lessons.md
+         — the firmware calibration peak is symmetric, so the bottom can
+         also be slightly off). Without this clamp, an at-rest CC 4 = 1
+         leaves cc4Depth at 1/127 ≈ 0.008 — above DAMPER_RELEASE_FLOOR
+         (0.005) — and notes stay sustained indefinitely. Diagnosed via
+         the pedalHud + pedal.dumpRecent(): a stuck occurrence consistently
+         showed CC 4 = 1 as the final value rather than CC 4 = 0. */
+      pedal.cc4Depth = (d2 <= 1) ? 0 : d2 / 127;
       setDamperDepth();
       pushPedalEvent({ t: nowMs, cc: 4, value: d2, ch, depthAfter: audio.damperDepth });
       return;

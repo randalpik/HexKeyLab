@@ -13,7 +13,7 @@
   "vibrato": true,
   "releaseTime": 0.3,
   "volume": 1.0,
-  "gateOpts": {},
+  "gateOpts": { "tiltStepThreshold": 0.02 },
   "comment": [
     "Sonatina Symphonic Orchestra solo Violin — purpose-built sample-library",
     "legato sustains, sampled at minor thirds (G3, A#3, C#4, E4, G4, ...,",

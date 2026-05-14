@@ -12,11 +12,12 @@
  *      — <configName> resolved from baseUrl via analyzer/configs/*.json so the
  *      cache lines up with generate-samples.js's per-config directories.
  *   2. Decode to f32 mono PCM @ 44.1 kHz via ffmpeg → analyzer/.cache/.../*.raw
- *   3. Find trimStart (first |x|>0.003) and measure RMS+peak:
+ *   3. Find trimStart (first |x|>0.003) and measure loudness+peak:
  *        loop  : findSteadyRegion (50ms/10ms RMS curve, ≥70% peak run); RMS
  *                over the steady span. vibrato:true passes smoothMs=300.
- *        decay : RMS over DECAY_RMS_WINDOW_S after trim (Fletcher integration
- *                time) and stereo peak in the same window.
+ *        decay : K-weighted integrated loudness (ITU-R BS.1770-4, see
+ *                k-weighting.js) over the full post-trim region with momentary
+ *                window gating; stereo peak over the same span.
  *      gain = min(TARGET_RMS / rms, TARGET_PEAK / peak) for both paths.
  *   4. gain = 10^(TARGET_DBFS/20) / rms, floored at GAIN_MIN (no ceiling)
  *   5. Patch `gain:N.NNNN` into the entry line right after `freq:`
@@ -28,6 +29,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { measureDecayLufs } from './k-weighting.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -67,10 +69,6 @@ const TARGET_RMS = Math.pow(10, TARGET_DBFS / 20);  /* ≈ 0.12589 */
    any loop sample whose attack RMS sits much higher than its steady RMS. */
 const PEAK_DBFS = -3;
 const TARGET_PEAK = Math.pow(10, PEAK_DBFS / 20);   /* ≈ 0.7079 */
-/* Decay path: RMS measurement window after trim. Fletcher integration time
-   (~50–200ms); 200ms gives stable readings without bleeding into the long
-   tail. Mirrors generate-samples.js DECAY_RMS_WINDOW_S. */
-const DECAY_RMS_WINDOW_S = 0.2;
 /* Floor only — see generate-samples.js for rationale. No GAIN_MAX: quiet
    sources are normalized to target regardless of how much gain that takes.
    Per-note level consistency is the higher priority. */
@@ -242,45 +240,15 @@ function measureRmsLoop(stereo, mono, instr, fns) {
 }
 
 function measureDecay(stereo, mono) {
-  /* Decay-path measurement: stereo-combined RMS over a fixed window after
-     trim (drives the gain target via TARGET_RMS), plus stereo peak in the
-     same window (drives the peak-ceiling clip protection).
-
-     RMS uses stereo combined energy — sqrt(Σ(L²+R²) / 2N) — NOT mono
-     downmix. Mono RMS under-reports loudness for recordings with
-     decorrelated stereo channels (e.g. Splendid Grand Piano hammer
-     transients): L+R cancels the per-channel peaks and the measured RMS
-     reads 5–7 dB low, which makes the peak-ceiling engage incorrectly and
-     under-gains the sample. Stereo combined RMS matches what the listener
-     hears with both ears. Kept identical to generate-samples.js measureDecay
-     so re-runs of either tool produce the same gain values. */
-  const trim = findTrimStart(mono);
-  const winLen = Math.round(SR * DECAY_RMS_WINDOW_S);
-  const monoLen = mono.length;
-  if (monoLen <= trim) {
-    return { peak: null, rms: null, failReason: 'sample empty after trim' };
-  }
-  const end = Math.min(trim + winLen, monoLen);
-  if (end - trim < Math.round(SR * 0.05)) {
-    return { peak: null, rms: null, failReason: 'sample shorter than 50ms after trim' };
-  }
-  let peakAbs = 0;
-  let sumSq = 0;
-  for (let i = trim; i < end; i++) {
-    const l = stereo[2*i];
-    const r = stereo[2*i+1];
-    const aL = Math.abs(l);
-    const aR = Math.abs(r);
-    const a = aL > aR ? aL : aR;
-    if (a > peakAbs) peakAbs = a;
-    sumSq += l*l + r*r;
-  }
-  const rms = Math.sqrt(sumSq / (2 * (end - trim)));
-  return {
-    rms,
-    peak: peakAbs,
-    region: 'decayRmsWindow',
-  };
+  /* Decay-path measurement: K-weighted integrated loudness per ITU-R
+     BS.1770-4 (see analyzer/k-weighting.js). Returns rms in stereo-RMS-
+     equivalent units so the existing gain formula operates unchanged. Peak
+     is measured on the unfiltered stereo for clip-protection. Kept
+     identical to generate-samples.js measureDecay so re-runs of either tool
+     produce the same gain values. */
+  const m = measureDecayLufs(stereo, mono, SR);
+  if (m.rms == null) return { peak: null, rms: null, failReason: m.failReason };
+  return { rms: m.rms, peak: m.peak, lufs: m.lufs, region: 'lufs' };
 }
 
 // ─── patching ────────────────────────────────────────────────────────────────
@@ -317,10 +285,10 @@ function patchEntryLine(line, gainStr) {
   const reportLines = [];
   reportLines.push(`# Sample gain backfill — measured RMS and computed gain factors`);
   reportLines.push('');
-  reportLines.push(`- Target: **${TARGET_DBFS} dBFS RMS** per sample`);
+  reportLines.push(`- Target: **${TARGET_DBFS} dBFS** stereo-RMS-equivalent per sample`);
   reportLines.push(`- TARGET_RMS = ${TARGET_RMS.toFixed(5)} (linear)`);
-  reportLines.push(`- Loop instruments: gain = TARGET_RMS (${TARGET_RMS.toFixed(5)}, ${TARGET_DBFS} dBFS) / measuredRmsOverSteadyRegion`);
-  reportLines.push(`- Decay instruments: gain = TARGET_RMS (${TARGET_RMS.toFixed(5)}, ${TARGET_DBFS} dBFS) / measuredRmsOver${DECAY_RMS_WINDOW_S*1000}ms — same shape as loop, with the same peak ceiling`);
+  reportLines.push(`- Loop instruments: gain = TARGET_RMS / stereoRmsOverSteadyRegion`);
+  reportLines.push(`- Decay instruments: gain = TARGET_RMS / K-weighted integrated loudness (ITU-R BS.1770-4) returned as stereo-RMS-equivalent — same gain shape as loop`);
   reportLines.push(`- Both paths peak-ceiling capped at ${PEAK_DBFS} dBFS, gain floored at ${GAIN_MIN} (no ceiling)`);
   reportLines.push('');
 
@@ -338,14 +306,14 @@ function patchEntryLine(line, gainStr) {
     console.error(`\n=== ${key} (${path_}, ${instr.samples.length} samples)  cache=${cacheSubdir} ===`);
     reportLines.push(`## ${key} (${path_}, cache: \`${cacheSubdir}\`)`);
     reportLines.push('');
-    reportLines.push(`| Sample | RMS | RMS dBFS | Peak dBFS | gain | note |`);
-    reportLines.push(`| --- | ---: | ---: | ---: | ---: | --- |`);
+    reportLines.push(`| Sample | RMS | RMS dBFS | LUFS | Peak dBFS | gain | note |`);
+    reportLines.push(`| --- | ---: | ---: | ---: | ---: | ---: | --- |`);
 
     for (const s of instr.samples) {
       const mp3 = fetchOne(cacheSubdir, s, instr.baseUrl, instr.ext);
       if (!mp3) {
         console.error(`  ${s.name}: fetch failed`);
-        reportLines.push(`| ${s.name} | — | — | — | fetch failed |`);
+        reportLines.push(`| ${s.name} | — | — | — | — | — | fetch failed |`);
         continue;
       }
       const d = decodeOne(mp3);
@@ -354,13 +322,14 @@ function patchEntryLine(line, gainStr) {
       const measFailed = (meas.rms == null);
       if (measFailed) {
         console.error(`  ${s.name}: ${meas.failReason}`);
-        reportLines.push(`| ${s.name} | — | — | — | ${meas.failReason} |`);
+        reportLines.push(`| ${s.name} | — | — | — | — | — | ${meas.failReason} |`);
         continue;
       }
       /* Same shape for both paths: RMS-target gain with a peak ceiling.
-         The measurement window differs (decay: 200ms after trim; loop:
-         analyzer steady region) but the gain formula is unified.
-         Floored at GAIN_MIN; no ceiling on gain itself — see file header. */
+         The measurement method differs — loop: stereo RMS over steady;
+         decay: K-weighted integrated loudness as stereo-RMS-equivalent —
+         but the gain formula is unified. Floored at GAIN_MIN; no ceiling
+         on gain itself — see file header. */
       const gainTarget = TARGET_RMS / meas.rms;
       const gainCeiling = (meas.peak > 0) ? (TARGET_PEAK / meas.peak) : Infinity;
       const rawGain = Math.min(gainTarget, gainCeiling);
@@ -369,9 +338,10 @@ function patchEntryLine(line, gainStr) {
       const tag = peakLimited ? 'peak-lim' : '';
       const rmsStr = meas.rms != null ? meas.rms.toFixed(5) : '—';
       const dBFS = meas.rms != null ? (20 * Math.log10(meas.rms)).toFixed(1) : '—';
+      const lufsStr = (typeof meas.lufs === 'number') ? meas.lufs.toFixed(1) : '—';
       const peakDb = meas.peak > 0 ? 20 * Math.log10(meas.peak) : -Infinity;
-      console.error(`  ${s.name}: rms=${rmsStr} (${dBFS} dBFS), peak=${peakDb.toFixed(1)} dBFS → gain=${fmtGain(gain)}${tag ? '  ' + tag : ''}`);
-      reportLines.push(`| ${s.name} | ${rmsStr} | ${dBFS} | ${peakDb.toFixed(1)} | ${fmtGain(gain)} | ${tag} |`);
+      console.error(`  ${s.name}: rms=${rmsStr} (${dBFS} dBFS, ${lufsStr} LUFS), peak=${peakDb.toFixed(1)} dBFS → gain=${fmtGain(gain)}${tag ? '  ' + tag : ''}`);
+      reportLines.push(`| ${s.name} | ${rmsStr} | ${dBFS} | ${lufsStr} | ${peakDb.toFixed(1)} | ${fmtGain(gain)} | ${tag} |`);
 
       lines[s.lineIdx] = patchEntryLine(lines[s.lineIdx], fmtGain(gain));
     }
