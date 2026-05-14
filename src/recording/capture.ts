@@ -19,6 +19,7 @@ let active = false;
 let buffer: HkrEvent[] = [];
 let snapshot: LayoutSnapshot | null = null;
 let t0 = 0;
+let t0Anchored = false;
 let divergenceWarned = false;
 let lastCc4 = -1;
 let lastCc64 = -1;
@@ -36,7 +37,15 @@ function pushEvent(ev: HkrEvent): void {
   buffer.push(ev);
 }
 
+/* Lazy-anchor t0 at the first event push, so dead time before the first
+   action (button-press → first note/pedal move) is trimmed. Seed pushes at
+   record-start anchor immediately so held-note/pedal context sits at t=0. */
 function tNow(): number {
+  if (!t0Anchored) {
+    t0 = nowSec();
+    t0Anchored = true;
+    return 0;
+  }
   return nowSec() - t0;
 }
 
@@ -55,19 +64,20 @@ export function startRecording(): void {
   divergenceWarned = false;
   lastCc4 = pedal.cc4Depth;
   lastCc64 = effectiveCc64();
-  t0 = nowSec();
-  /* Seed pedal state at t=0 so playback starts with the right context. */
-  if (lastCc4 > 0) pushEvent({ t: 0, k: 'cc4', v: lastCc4 });
-  if (lastCc64 > 0) pushEvent({ t: 0, k: 'cc64', v: lastCc64 });
+  t0Anchored = false;
+  active = true;
+  /* Seed pedal state at t=0 so playback starts with the right context.
+     First seed call anchors t0; subsequent ones return ~0. */
+  if (lastCc4 > 0) pushEvent({ t: tNow(), k: 'cc4', v: lastCc4 });
+  if (lastCc64 > 0) pushEvent({ t: tNow(), k: 'cc64', v: lastCc64 });
   /* Auto-balance: synthetic note-ons for voices already held when recording
      started, so playback reproduces a recording that begins mid-chord. */
   for (const key in audio.activeOscs) {
     const parts = key.split(',');
     const q = +parts[0], r = +parts[1];
     const v = audio.keyVelocity[key] ?? 100;
-    pushEvent({ t: 0, k: 'on', q, r, v });
+    pushEvent({ t: tNow(), k: 'on', q, r, v });
   }
-  active = true;
 }
 
 export function stopRecording(): HkrSession | null {
@@ -119,13 +129,12 @@ export function recordPa(key: KeyId, pressure: number): void {
    sostenutoOn/Off drives the cc64 channel via recordSostenuto. */
 export function recordPedalDepthsChange(): void {
   if (!active) return;
-  const t = tNow();
   if (Math.abs(pedal.cc4Depth - lastCc4) > CC4_EPSILON) {
-    pushEvent({ t, k: 'cc4', v: pedal.cc4Depth });
+    pushEvent({ t: tNow(), k: 'cc4', v: pedal.cc4Depth });
     lastCc4 = pedal.cc4Depth;
   }
   if (pedal.mode === 'sustain' && pedal.cc64Depth !== lastCc64) {
-    pushEvent({ t, k: 'cc64', v: pedal.cc64Depth });
+    pushEvent({ t: tNow(), k: 'cc64', v: pedal.cc64Depth });
     lastCc64 = pedal.cc64Depth;
   }
 }

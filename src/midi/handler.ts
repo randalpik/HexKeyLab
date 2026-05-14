@@ -16,7 +16,7 @@
 //     voice, then onSelectionChanged() to drive audio + MIDI + redraw.
 
 import { audio } from '../state/audio.js';
-import { pedal } from '../state/pedal.js';
+import { pedal, pushPedalEvent } from '../state/pedal.js';
 import { selection } from '../state/selection.js';
 import {
   SYSEX_MANU, SYSEX_CMD_PERIPHERAL_CALIBRATION_DATA,
@@ -71,6 +71,7 @@ export function handleMidiMessage(e: MIDIMessageEvent): void {
       }
       pedal.cc4Depth = d2 / 127;
       setDamperDepth();
+      pushPedalEvent({ t: nowMs, cc: 4, value: d2, ch, depthAfter: audio.damperDepth });
       return;
     }
     if (d1 === 64) {
@@ -82,6 +83,7 @@ export function handleMidiMessage(e: MIDIMessageEvent): void {
         pedal.cc64Depth = (d2 >= 64) ? 1 : 0;
         setDamperDepth();
       }
+      pushPedalEvent({ t: performance.now(), cc: 64, value: d2, ch, depthAfter: audio.damperDepth });
     }
     return;
   }

@@ -40,9 +40,11 @@ Two ways to deal with it: (1) recalibrate with softer max-press so the learned c
 
 Firefox does not dispatch `MIDIAccess.onstatechange` on hotplug, AND the existing port references in `access.outputs` / `access.inputs` don't update their `port.state` either. The access object is effectively a frozen snapshot of the moment `requestMIDIAccess` was called. Polling `findLumatone` against the existing access does nothing. Chromium dispatches statechange and updates port.state as the spec describes.
 
-To detect hotplug in Firefox, **re-call `navigator.requestMIDIAccess({sysex:true})` on a timer** and replace `midi.midiAccess` with the fresh object. Subsequent calls don't re-prompt for permission once granted. A fresh access yields fresh port state (and possibly fresh port *objects* with the same `id` — so identity checks in `findLumatone` must compare `port.id`, not JS object identity, or every poll falsely fires the new-connection path).
+The only way to see a newly-plugged device in Firefox is to **re-call `navigator.requestMIDIAccess({sysex:true})`** and replace `midi.midiAccess`. Subsequent calls don't re-prompt for permission once granted. A fresh access yields fresh port state — and possibly fresh port *objects* with the same `id` — so identity checks in `findLumatone` must compare `port.id`, not JS object identity, or every refresh falsely fires the new-connection path.
 
-Chromium keeps the event-driven `onstatechange` path for instant response; the poll is redundant there but harmless. Poll cadence is `HOTPLUG_POLL_MS` in `src/midi/engine.ts`.
+**Don't refresh while connected.** A `requestMIDIAccess` call is heavy enough in Firefox to audibly glitch playback and disrupt outbound SysEx. We therefore poll-refresh ONLY while `midi.midiOut === null` (looking for connection). Once connected, the poll suspends; the user manually re-checks via a click on the `lumaStatus` indicator (`cursor: pointer`, tooltip wired in `requestMidi`) — or just refreshes the page — if they unplug. Chromium gets unplug-while-connected for free via `statechange`.
+
+Poll cadence is `HOTPLUG_POLL_MS` in `src/midi/engine.ts`.
 
 ### Per-board threshold/sensitivity SysEx values are 4-bit, not 8-bit
 

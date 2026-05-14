@@ -196,6 +196,9 @@ export function setLoopOverlayVisible(visible: boolean): void {
   enabled = visible;
   if (canvas) canvas.style.display = visible ? 'block' : 'none';
   if (controlsEl) controlsEl.style.display = visible ? 'block' : 'none';
+  /* Canvas was built hidden, so its initial resizeCanvas() saw clientWidth=0
+     and the backing store collapsed to 1×1. Resize now that layout is live. */
+  if (visible) resizeCanvas();
   if (visible && rafId === 0) {
     rafId = requestAnimationFrame(tick);
   } else if (!visible && rafId !== 0) {

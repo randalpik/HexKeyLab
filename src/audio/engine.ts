@@ -20,7 +20,7 @@ import { SampleEngine } from './samples.js';
 import { initCapture } from './capture.js';
 import {
   AFTERTOUCH_RAMP_S,
-  aftertouchTargetGain, inflightExpRampValue,
+  aftertouchTargetGain, inflightExpRampValue, velocityBaseVol,
 } from './aftertouch.js';
 import { draw } from '../render/draw.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
@@ -141,6 +141,11 @@ export function noteOn(key: KeyId, velocity?: number): void {
     let vol = (type === 'sine')     ? 0.1779   /* 0.1259 × √2  */
             : (type === 'triangle') ? 0.2179   /* 0.1259 × √3  */
             :                         0.1259;  /* square (RMS = peak) */
+    /* Velocity scaling — mirrors SampleEngine's 0.10 + 0.90·vel² curve so
+       oscillator dynamics line up with sample instruments, and so PA's
+       baseVol(eqVel)/baseVol(strikeVel) ratio (handleAftertouch) lands voices
+       at matching peak loudness regardless of strike velocity. */
+    vol *= velocityBaseVol(velocity || 100);
     /* Low-frequency perceptual loudness compensation (Fletcher-Munson). Pure
        tones lose perceived loudness below ~440 Hz; recorded instrument samples
        don't need this because their natural recordings already capture the

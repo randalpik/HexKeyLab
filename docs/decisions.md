@@ -509,3 +509,18 @@ The trade-off: pure-selection clicks with `audio.audioEnabled === false` don't t
 - `src/audio/engine.ts:initAudio` — fire-and-forget `initCapture(ctx)` call.
 - `src/ui/recorder.ts` — auto-bracket + toggle wiring.
 - `src/state/persistence.ts` — `captureAudio: boolean` field on `PrefsV1`.
+
+---
+
+## `.hkr` recording t0 anchors at first event, not at button press (2026-05-13)
+
+**Picked**: `t0` in `recording/capture.ts` lazy-anchors on the first `pushEvent` call. Dead time between hitting record and the first action is trimmed; the first user event lands at `t = 0`.
+
+**Rejected**: Anchoring `t0 = nowSec()` at `startRecording()` (the previous behavior). Produced a leading silence in every recording equal to the operator's reaction time, which then shows up as empty leading bars in MIDI exports and shifts all downstream timestamps off the start of bar 1.
+
+**Why**: The recording is supposed to capture the *performance*, not the moment the operator clicked a button. Trimming up-front silence makes the `.hkr` and its exported `.mid` open cleanly in a DAW at bar 1.
+
+**Subtlety**: seed events (already-held notes, already-depressed pedals at record-start) still need to sit at `t = 0` so playback reproduces a recording that begins mid-chord. They use the same `tNow()` path — the first seed call anchors `t0` immediately, subsequent seed calls return ~0 because they happen in the same tick. If there are no seeds, `t0` simply stays unanchored until the first real input.
+
+**Where**:
+- `src/recording/capture.ts` — `tNow()` lazy-anchor, `t0Anchored` flag, `startRecording` reordered so seed pushes go through `tNow()`.

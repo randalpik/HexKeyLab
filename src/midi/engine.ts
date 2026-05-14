@@ -196,12 +196,14 @@ export function findLumatone(handleMidiMessage: MidiMessageHandler): void {
    visibility is owned by the user pref (toolbars.lumatone) — MIDI state only
    drives the lumaStatus text/class, not the toolbar's display.
 
-   Firefox's MIDIAccess is a snapshot: it does not dispatch statechange events
-   AND does not update port.state on existing port references when devices
-   are hotplugged (lessons.md). To detect hotplug we re-call requestMIDIAccess
-   on a poll, replacing midi.midiAccess with a fresh one. Chromium honors
-   statechange so the event-driven path stays wired for instant response;
-   the poll is redundant there but harmless. */
+   Firefox's MIDIAccess is a snapshot: no statechange events, and port.state
+   doesn't update on existing references (lessons.md). The only way to see a
+   newly-plugged device is to re-call requestMIDIAccess. That call is heavy
+   enough to glitch audio playback while a Lumatone is already in use, so we
+   ONLY poll while disconnected — once connected, the poll stops and the user
+   manually re-checks via a click on the lumaStatus indicator (or page
+   refresh) if they unplug. Chromium honors statechange so unplug-while-
+   connected is detected automatically there. */
 const HOTPLUG_POLL_MS = 1500;
 let hotplugPollTimer: number | null = null;
 
@@ -209,10 +211,9 @@ function refreshMidiAccess(handleMidiMessage: MidiMessageHandler): void {
   navigator.requestMIDIAccess({ sysex: true }).then(function (access) {
     midi.midiAccess = access;
     /* Re-wire on the fresh access object — Chromium will fire statechange
-       on it; on Firefox it never fires but the assignment is cheap.
-       Don't log inside the callback: a fresh MIDIAccess fires statechange
-       once per known port on creation, so every poll would flood the
-       console. findLumatone's own log already fires on real transitions. */
+       on it; on Firefox it never fires but the assignment is cheap. No
+       logging inside the callback: a fresh MIDIAccess fires statechange
+       once per known port on creation, which would flood the console. */
     access.onstatechange = function () { findLumatone(handleMidiMessage); };
     findLumatone(handleMidiMessage);
   }).catch(function () { /* swallow poll-failure noise */ });
@@ -226,10 +227,26 @@ export function requestMidi(handleMidiMessage: MidiMessageHandler): void {
     findLumatone(handleMidiMessage);
     access.onstatechange = function () { findLumatone(handleMidiMessage); };
     if (hotplugPollTimer === null) {
-      hotplugPollTimer = window.setInterval(
-        function () { refreshMidiAccess(handleMidiMessage); },
-        HOTPLUG_POLL_MS,
-      );
+      hotplugPollTimer = window.setInterval(function () {
+        if (midi.midiOut) return;
+        /* Only scan while the user is actually looking at Lumatone status.
+           Hidden toolbar = the user has opted out of seeing this, so don't
+           do any background work for it. */
+        const lumaGroup = document.getElementById('tb-group-lumatone');
+        if (!lumaGroup || lumaGroup.classList.contains('tb-hidden')) return;
+        refreshMidiAccess(handleMidiMessage);
+      }, HOTPLUG_POLL_MS);
+    }
+    /* Click the status text to force a re-check. Useful on Firefox where
+       statechange isn't fired and we don't auto-poll while connected, so
+       unplug-while-in-use isn't detected automatically. */
+    const statusEl = document.getElementById('lumaStatus');
+    if (statusEl) {
+      statusEl.style.cursor = 'pointer';
+      statusEl.title = 'Click to re-check Lumatone connection';
+      statusEl.addEventListener('click', function () {
+        refreshMidiAccess(handleMidiMessage);
+      });
     }
   }).catch(function (err) { console.error('MIDI access denied:', err); });
 }

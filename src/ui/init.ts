@@ -49,6 +49,7 @@ import {
 import {
   ensureLoopOverlay, setLoopOverlayVisible,
 } from '../audio/diagnostics/loopOverlay.js';
+import { ensurePedalHud, setPedalHudVisible } from './pedalHud.js';
 import { SampleEngine } from '../audio/samples.js';
 import { applyToolbarVisibility, initToolbarSelector } from './toolbars.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
@@ -124,6 +125,16 @@ setLumaDiagHotkeyCallback(() => {
   savePrefs({ calibrateKeys: next });
 });
 if (prefs.calibrateKeys) applyCalibrateKeys(true);
+
+/* Pedal HUD: opt-in diagnostic readout for the intermittent stuck-sustain
+   bug. Enabled via `?pedaldiag=1` querystring; no toolbar/pref entry (this
+   is debug instrumentation, not a feature). Importing pedalHud.js above
+   also attaches `pedal.dumpRecent` and `pedal.clear` to the pedal object
+   and bridges pedal to window — those work whether or not the HUD is shown. */
+if (new URLSearchParams(location.search).has('pedaldiag')) {
+  ensurePedalHud();
+  setPedalHudVisible(true);
+}
 
 /* loopdiag overlay: lazy build + show driven by prefs/checkbox. Needs an
    AudioContext, so deferred until audio is initialized. */
