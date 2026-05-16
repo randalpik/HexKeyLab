@@ -570,3 +570,163 @@ The trade-off: pure-selection clicks with `audio.audioEnabled === false` don't t
 - `tools/lumatone-cal/lmtncal-read.py` — diagnostic state dump.
 - `tools/lumatone-cal/lmtncal-poke.py` — earlier (failed) macro-button spoof attempt, kept for diagnostic reference; marked obsolete in the README and in `docs/lessons.md`.
 - `docs/lumatone-calibration.md` — full how-to guide.
+
+---
+
+## `.hkr` → LilyPond transcription: tempo + Ellis-DP beats + per-bar Viterbi DP (2026-05-15)
+
+**Picked**: Build a custom 11-module transcription pipeline under `src/transcription/`:
+
+1. **Onset pairing** (`onsets.ts`) — FIFO match of `on`/`off` events per (q,r); strength = velocity + density bonus.
+2. **Tempo estimation** (`tempo.ts`) — IOI autocorrelation of an onset envelope (10 ms bins) weighted by a log-Gaussian prior centered at 100 BPM; optional ±15 % hard constraint when the user supplies a BPM hint. Parabolic peak interpolation for sub-bin resolution.
+3. **Beat tracking** (`beats.ts`) — Ellis-style DP: `C(t) = s(t) + max(0, max_{t' ∈ [t−dMax, t−dMin]} C(t') − λ(t − t' − T)²)`. Traceback from the best-scoring tail beat.
+4. **Meter / downbeat phase** (`meter.ts`) — phase search over `numerator` candidate offsets; extrapolate the chosen phase backward by full bars in `quantize.ts` until the tick origin sits at or before the first onset (so no leading notes get dropped).
+5. **Chord grouping** (`chords.ts`) — 30 ms cluster window anchored on the first member (not the last) to prevent transitive drift through near-30 ms IOIs.
+6. **Duration quantization** (`quantize.ts`) — the load-bearing module. Per-bar Viterbi DP over an allowed atom set ({8th, quarter, dotted quarter, half, dotted half, whole} — v1 deliberately excludes 16ths and 32nds). Cost = atom complexity + tie cost (0.40) + boundary penalty. Position snap to 16-tick grid (one 8th). Rests inserted when release gap ≥ 16 ticks.
+7. **Voicing** (`voicing.ts`) — middle-C threshold per chord; mixed chords split across staves. Post-split rest consolidation: consecutive rests in a voice merge → re-split at bar boundaries → re-fed through `splitDuration` so an all-rest bar collapses to a whole rest instead of mirroring the other staff's note shapes.
+8. **LilyPond emission** (`lyEmit.ts`) — Dutch syntax, `\tweak NoteHead.color` per chord-tone, `% onset-ids:` comments preserve identity for future correction-UI hooks.
+
+Pitch spelling reuses `noteName(q, r)` / `keyOctave(q, r)` from `src/tuning/notes.ts` directly — sharps on +r, flats on −r, no enharmonic respelling, no key-signature inference.
+
+**Rejected**:
+- **midi2ly** (ships with LilyPond) — officially "not recommended for human-generated MIDI"; per-note grid snap with no joint optimization.
+- **music21** `quarterLengthDivisors` — same per-note independent snap; produces garbage tuplets.
+- **MuseScore 3/4 importer** — strongest OSS quantizer (adaptive grid + beat tracking) but GPL/C++ and not extractable from the editor.
+- **PM2S** (Liu et al., ISMIR 2022) — neural CRNN that beats commercial software on MV2H, but requires Python + PyTorch + ASAP-corpus model weights; doesn't know our coordinate metadata.
+
+**Why**:
+- The literature (Cemgil/Kappen, Raphael, Nakamura, Ellis, Klapuri) is mature, but the academic problem assumes audio onset detection from acoustic input. Our input is symbolic, our tempo is near-constant, and our time signature is user-supplied — three constraints that collapse the academic search space dramatically. The "load-bearing step every OSS pipeline skips" is the DP over notation-grids, not per-note snapping; building that as ~200 lines was cheaper than wrangling an external dependency.
+- `TIE_COST: 0.40` is tuned so that "dotted half rest from beat 1" (cost 0.35) beats "quarter + half rest tied" (cost 0.45), and "quarter + half rest starting on beat 2" beats "dotted half rest across the bar midpoint" (whose boundary penalty balloons to 1.25). This matches standard engraving rules without hard-coding them.
+
+**Where**:
+- `src/transcription/{types,onsets,tempo,beats,meter,chords,quantize,voicing,pitch,lyEmit,index}.ts`
+- UI hook: "Export .ly" button + modal in `src/ui/recorder.ts`; dialog in `index.html`.
+- `?hklrec=1` exposes `__hkl_rec.transcribe(opts)` for DevTools verification.
+
+---
+
+## Path A (Finale 25 + Wine + RGP Lua bridge) ruled out by spike (2026-05-16)
+
+**Picked**: Do not pursue a Finale 25 plugin for HKL-driven note entry. Pivot to HKL Composer (Verovio-backed standalone app).
+
+**What was tried** (`tools/finale-bridge/` spike, 2026-05-16):
+- S1 (RGP Lua loads under Wine + Finale 25) — ✓
+- S2 (per-notehead color via `FCNoteheadMod`) — ✗
+- S3 (LuaSocket TCP polling under Wine) — ✗
+
+**Why dismissed**:
+- **The Finale PDK Framework exposes no per-notehead color setter anywhere.** Exhaustive search of the public method index (pdk.finalelua.com) shows `Set*Color*` methods only on `FCGridsGuidesPrefs` (grid/guide preferences). `FCNoteheadMod`, `FCEntryAlterMod`, `FCNote`, `FCNoteEntry` have no color members. The PDK can set notehead font/char, but not RGB. Per-note color in Finale 25 is available only via the manual UI (Edit Filter → color), not scriptable.
+- **Workarounds are too limited for HKL's palette**: 4-layer routing gives at most 4 simultaneous colors (vs. our 7-hue × dark/light × septimal variants); SMuFL character swaps are brittle and don't preserve note semantics.
+- **LuaSocket isn't bundled** with RGP Lua. `luaosutils.internet` ships but is HTTPS outbound only — Finale cannot be a TCP server. Workable by flipping direction (HKL hosts HTTP, Finale polls) but moot once color is off the table.
+- The headline value of bridging HKL into Finale was the per-(q,r) notehead color. Without that the side-channel adds nothing the user doesn't already have from existing Finale Speedy Entry on a piano.
+
+**Where**:
+- `tools/finale-bridge/` — spike scripts (`spike-1-hello.lua`, `spike-2-color.lua`, `spike-3-poll.lua`) + README with the decision matrix. Gitignored (this directory is in `.gitignore`).
+
+---
+
+## Verovio over LilyPond for live composition rendering (2026-05-16)
+
+**Picked**: Verovio (RISM Digital Center, v6.1.0, in-browser WASM, MEI in / SVG out) as the engraving back-end for HKL Composer. Frescobaldi / LilyPond binary kept as the *batch* transcription target for `.hkr` → `.ly` (recording-based path) but NOT used in the live editor.
+
+**Rejected** (after research):
+- **Frescobaldi as live preview surface for streamed `.ly` writes**: confirmed via doc + source review that Frescobaldi has no auto-reload watcher. Best case is a Qt "file changed" prompt on focus; worst case a silent stale buffer. F5 reload would be manual per change.
+- **LilyPond binary for live re-renders**: typical compile times are ~1–3 s (Guile startup dominates the cost even on empty files). Not "live" by keystroke standards.
+- **`midi2ly` and similar batch tools**: not suitable for live entry (no incremental update path).
+- **Drawing notation with bare SVG / VexFlow**: VexFlow exists and is mature for rendering chord/measure widgets but isn't engraving-quality. Verovio renders SMuFL glyphs and applies real engraving rules (collision avoidance, beam slants, accidental layout) at sub-100 ms per chord — comparable in quality to Finale/Sibelius output, faster in browser than any LilyPond round-trip can match.
+
+**Why**:
+- Verovio's render is sub-100 ms on small scores. Re-rendering on every chord entry feels instantaneous. This is the load-bearing property for a Speedy-Entry-style workflow.
+- MEI's `<note color="#RRGGBB">` is in the MEI 5 schema directly. Per-notehead RGB in chord brackets works without overrides. CSS `.stem`, `.flag`, `.accid` can be forced back to black via `!important` so only noteheads carry the lattice color.
+- Click-to-locate is trivial: every MEI `xml:id` becomes the corresponding SVG element's `id`. `event.target.closest('g.note').id` resolves to the MEI element.
+- Playback-position sync is first-class: `tk.getElementsAtTime(ms)` returns the active element ids, `tk.getTimeForElement(xmlId)` is the inverse.
+
+**What Verovio does NOT give us** (we build):
+- The composition UX — cursor model, navigation, insert/delete operations, voice management, duration changes, pitch changes. Verovio's `edit()` API exists but is explicitly "experimental code not to rely on" and supports only `drag` (move existing element) and `insert` (low-level). All high-level composition operations are HKL Composer code.
+- Cursor rendering — Verovio has no built-in cursor. Composer draws its own SVG overlay layered on top.
+
+**Where**:
+- `src/composer/render.ts` — Verovio toolkit init, render loop, view mode (scroll/page).
+- `src/composer/verovio-types.ts` — narrow TypeScript declarations for the toolkit methods we use.
+- Verovio loaded from CDN (`https://www.verovio.org/javascript/latest/verovio-toolkit-wasm.js`) via dynamic script injection — no npm dependency to keep the HKL bundle slim. ~6–8 MB gzipped WASM, 200–800 ms startup.
+
+---
+
+## HKL Composer as a multi-page Vite entry, not a separate project (2026-05-16)
+
+**Picked**: Add a second HTML entry (`composer.html` at repo root) alongside the existing `index.html`. Configure `vite.config.ts` with `build.rollupOptions.input` for both. Both bundles share `src/*` modules. The composer entry imports `src/bridge/*` plus a narrow set of pure helpers from `src/transcription/pitch.ts` and `src/tuning/notes.ts`; it does NOT import `src/audio`, `src/midi`, `src/state`, or `src/lumatone`.
+
+**Rejected**:
+- **Separate repo / separate package.json**: would force code duplication for the tuning/coords helpers Composer needs, plus a release cycle decoupled from HKL. The two apps are versioned together by design.
+- **Composer as a "mode" inside HKL** (same HTML, toolbar toggle): tangles the data models — HKL's selection/audio state would have to coexist with Composer's MEI/cursor state in the same global scope. Two tabs gives us free process-isolation of those state worlds.
+- **Composer as an iframe inside HKL**: introduces postMessage round-trips even for purely-Composer concerns and breaks DevTools console scoping.
+
+**Why**:
+- Vite's multi-page support is first-class; one config change covers it. Bundles split cleanly (composer-only Verovio WASM doesn't pollute the HKL viewer bundle).
+- Two tabs = two BrowsingContexts with their own DOM, history, and devtools but same-origin (so `BroadcastChannel` works without a network hop). The user explicitly wanted this shape — opens HKL in one tab, Composer in another, switches between them like any other browser-native app pair.
+- The hard separation of `src/composer/` imports (no `src/audio`, `src/midi`, etc.) keeps the bridge surface honest: anything Composer needs from HKL must travel through the protocol, not through a shared module. Verifiable via grep, not just convention.
+
+**Where**:
+- `composer.html` — entry HTML at repo root.
+- `vite.config.ts` — `build.rollupOptions.input.{main, composer}`.
+- `src/composer/` — Composer-only modules.
+
+---
+
+## Bridge transport: BroadcastChannel with fully-resolved chord data (2026-05-16)
+
+**Picked**: `BroadcastChannel('hkl-composer-bridge')` for HKL ↔ Composer messaging. All chord data flowing over the channel is fully resolved by HKL — Composer never sees raw `(q, r)` pairs without `{pname, accid, oct, midi, colorHex, velocity}` already attached.
+
+**Rejected**:
+- **`postMessage` via `window.opener`**: requires Composer to be opened by HKL (no opener if user opens composer.html directly).
+- **SharedWorker**: persists across tabs but needs a worker file, lifecycle management, and a typed channel layer of its own. Overkill for two-app messaging.
+- **WebSocket via a local helper process**: an external Node process adds an install step and a failure mode neither browser tab has alone. Justified for HKL ↔ Wine bridging (Path A's hypothetical scenario), not for same-origin tabs.
+- **Send raw `(q, r)` and let Composer resolve via shared tuning helpers**: would force Composer to import `src/state/tuning` and `src/tuning/*` to compute names/colors, defeating the decoupling.
+
+**Why**:
+- BroadcastChannel is sub-millisecond, same-origin, no boilerplate, supported in Firefox and Chromium. No external processes; no install steps.
+- Fully-resolved payloads let Composer be input-agnostic. HKL knows whether the keys came from Lumatone, QWERTY, or mouse; Composer doesn't need to. The bridge protocol becomes the only shared contract.
+- The protocol is one file (`src/bridge/protocol.ts`) and a typed wrapper (`src/bridge/channel.ts`). Both sides import the type definitions; mismatched fields fail at compile time.
+
+**Where**:
+- `src/bridge/protocol.ts` — `HklEvent`, `ComposerEvent`, `ResolvedNote`, `CoordRef`, `PlaybackEvent` type definitions. Constants: `CHANNEL_NAME`, `PROTOCOL_VERSION`.
+- `src/bridge/channel.ts` — `BridgeChannel<In, Out>` generic wrapper; `createHklBridge()` / `createComposerBridge()` factories.
+- `src/bridge/hkl-side.ts` — HKL-side subscriber. RAF polls `selection.selectedKeys` and broadcasts held-keys diffs; dispatches incoming `play-chord` / `play-score` to the audio engine; suppresses broadcasts while `playbackActive` is true to avoid feedback.
+
+---
+
+## `.hkc` canonical save format = MEI 5 XML with `data-q` / `data-r` extensions (2026-05-16)
+
+**Picked**: HKL Composer saves to `.hkc` files which are just MEI 5 XML with `data-q` and `data-r` attributes on every `<note>` carrying the lattice coordinates. MEI's spec is permissive about unknown attributes (they're ignored by validators), so a `.hkc` file opens in any MEI-aware viewer (Verovio web demos, MuseScore via the Humdrum bridge, etc.) — the only thing those viewers lose is the lattice identity, not the displayed score.
+
+**Rejected**:
+- **Custom JSON format** that bundles MEI as a string + extra metadata: forces a parsing layer on every load, and the metadata is `(q, r)` per-note anyway — there's no extra info worth a separate envelope.
+- **Compress as `.hkcz` (zipped MEI)**: meaningful savings only on very large scores; .hkc text-XML compresses well at HTTP/storage layer if needed.
+
+**Why**:
+- MEI is Verovio's native input format. Round-tripping through it has zero loss for everything Verovio renders.
+- `data-q` / `data-r` are valid HTML5/XML attribute names (the `data-*` namespace is officially open for custom attributes). MEI parsers ignore them; HKL Composer reads them on load to drive playback (`coordToKeyId` for the play-chord/play-score dispatch).
+- MusicXML export is one-way (lossy via Verovio's importer per known limitations on dynamics/repeats), but pitches/rhythms/colors round-trip cleanly. Users who want WYSIWYG editing in Finale/Sibelius can `.musicxml` export and re-import there.
+
+**Where**:
+- `src/composer/model.ts` — MEI DOM construction with `data-q`/`data-r` on every `<note>`.
+- `src/composer/save.ts` — `saveHkc`, `loadHkcFromFile`, `exportMusicXml`, `downloadMusicXml`.
+
+---
+
+## Path C → Path C-Full → "HKL Composer as standalone tool" framing (2026-05-16)
+
+**Picked**: Treat HKL Composer not as a "feature inside HKL" but as a sibling application that uses HKL as its input device. Ambition: become the user's primary composition surface, eventually replacing Finale for day-to-day work.
+
+**Rejected** (earlier framings considered during planning):
+- **"Path C2" — one-shot HKL Speedy Entry → MusicXML → external editor**: user pushed back. Without in-editor edit-during-input (cursor navigation, voice targeting, in-place modification), the workflow isn't meaningfully better than text-editing LilyPond by hand.
+- **"Path C / Path C-Full" framing as a feature of HKL**: this framing under-budgeted the editing UX. Verovio handles engraving; the *editor* is the bulk of the work and lives in HKL Composer.
+
+**Why**:
+- The user explicitly framed the criteria as: live preview, Speedy-style entry, backspace, four voices, cursor navigation, insert/overwrite modes, save/load, MusicXML export, playback with cursor follow. These define a real notation editor, not a thin feature.
+- The decoupled architecture (bridge protocol, MEI canonical, Verovio engraver) means the editor's growth doesn't bloat HKL's audio/MIDI codepath. New features in Composer (tuplets, dynamics, articulations, ornaments, multi-instrument scores, PDF export, undo/redo) land under `src/composer/` and don't touch HKL.
+- The user's stated playback need ("HKL keys highlight + cursor moves on each voice + return-to-original-position on stop") is already met by the v1 architecture without changing HKL's audio engine — confirmation that the decoupling is right.
+
+**Where**:
+- Planning file (transient): `/home/max/.claude/plans/now-that-we-have-idempotent-pudding.md`.
+- All Phase 1 implementation under `src/composer/`, `src/bridge/`, `composer.html`, and `vite.config.ts`.

@@ -114,6 +114,14 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
   },
+  build: {
+    rollupOptions: {
+      input: {
+        main:     path.resolve(__dirname, 'index.html'),
+        composer: path.resolve(__dirname, 'composer.html'),
+      },
+    },
+  },
   plugins: [
     {
       name: 'iowa-mis-bridge',

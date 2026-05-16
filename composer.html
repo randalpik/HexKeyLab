@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="HKL Composer — a keyboard-driven music notation editor using Verovio. Companion to HexKeyLab.">
+<meta name="theme-color" content="#111111">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<title>HKL Composer</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+html, body { background: #111; height: 100%; overflow: hidden }
+body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: flex; flex-direction: column }
+
+#composerToolbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px; background: #1a1a1a; border-bottom: 1px solid #2a2a2a;
+  font-size: 12px; flex: 0 0 auto;
+}
+#composerToolbar .group { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid #2a2a2a; border-radius: 4px; min-height: 28px }
+#composerToolbar .label { color: #888; font-size: 11px; letter-spacing: 0.3px }
+#composerToolbar .value { color: #fff; font-weight: 500; min-width: 14px; text-align: center }
+#composerToolbar .conn { font-size: 11px; padding: 2px 8px; border-radius: 4px; background: #2a1a1a; color: #FF4C79; border: 1px solid #4a2a3a }
+#composerToolbar .conn.connected { background: #1a2a1a; color: #4CFFBA; border-color: #2a4a3a }
+#composerToolbar .conn.standalone { background: #2a2a1a; color: #FFF94C; border-color: #4a4a2a }
+#composerToolbar .btn { padding: 3px 12px; background: #222; color: #ccc; border: 1.5px solid #555; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 12px }
+#composerToolbar .btn:hover { border-color: #888 }
+#composerToolbar .btn.active { border-color: #4CFFBA; color: #4CFFBA }
+#composerToolbar .spacer { flex: 1 }
+
+#composerMain {
+  flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+  background: #1a1a1a; overflow: hidden;
+}
+#score {
+  flex: 1 1 auto; min-height: 0;
+  background: #fafafa;
+  overflow: auto;
+  position: relative;
+}
+/* Verovio output renders at its real intrinsic pixel size (explicit
+   width/height when svgViewBox is off). Anchored top-left of #score — no
+   margin, no centering. Flows normally so it contributes to #score's
+   scrollable area; overflow: auto on #score handles scrolling when the
+   SVG exceeds visible dimensions. */
+#score > svg { display: block; margin: 0 }
+/* Cursor overlay is sized to match Verovio's SVG dimensions in JS so it
+   covers the same scrollable area. Both children of #score scroll together. */
+#score > svg#cursorOverlay {
+  position: absolute; left: 0; top: 0;
+  pointer-events: none;
+}
+
+
+/* Crisp staff lines / bar lines / stems / ledger lines. Verovio renders these
+   as <path> with linear stroke; crispEdges suppresses anti-aliasing so we get
+   full-pixel-value rendering. Glyphs (noteheads, accidentals, flags) are
+   rendered as <use> referencing SMuFL font outlines and are exempt — they
+   keep geometricPrecision for shape quality. */
+#score svg .staff path,
+#score svg .barLineAttr path,
+#score svg .barLine path,
+#score svg .barLine line,
+#score svg .barLine rect,
+#score svg .ledgerLines path,
+#score svg .ledgerLines line,
+#score svg .stem rect,
+#score svg .stem line,
+#score svg .stem path { shape-rendering: crispEdges }
+
+/* The MEI @color attribute on <note> propagates to all descendants by default
+   — notehead AND stem AND flag AND accidental. We want color on noteheads
+   only. Force stems, flags, accidentals, and ledger lines back to black. */
+#score svg .stem,
+#score svg .stem *,
+#score svg .flag,
+#score svg .flag *,
+#score svg .accid,
+#score svg .accid *,
+#score svg .ledgerLines,
+#score svg .ledgerLines * { color: #000 !important; fill: #000 !important }
+
+/* Toolbar Play button playing-state styling. */
+#composerToolbar .btn.playing { border-color: #FF4C79; color: #FF4C79 }
+
+#composerStatus {
+  padding: 4px 12px; background: #1a1a1a; border-top: 1px solid #2a2a2a;
+  font-family: 'SF Mono', ui-monospace, monospace; font-size: 11px; color: #888;
+  flex: 0 0 auto;
+}
+</style>
+</head>
+<body>
+
+<div id="composerToolbar">
+  <div class="group">
+    <span class="label">Voice</span>
+    <span class="value" id="voiceIndicator">1</span>
+  </div>
+  <div class="group">
+    <span class="label">Duration</span>
+    <span class="value" id="durationIndicator">4</span>
+  </div>
+  <div class="group">
+    <span class="label">Mode</span>
+    <span class="value" id="modeIndicator">INS</span>
+  </div>
+  <div class="group">
+    <button class="btn active" id="btnViewPage">Page</button>
+    <button class="btn" id="btnViewScroll">Scroll</button>
+  </div>
+  <div class="group">
+    <button class="btn" id="btnPlay" title="Play score from beginning">▶ Play</button>
+  </div>
+  <div class="spacer"></div>
+  <button class="btn" id="btnSave">Save .hkc</button>
+  <button class="btn" id="btnLoad">Load .hkc</button>
+  <button class="btn" id="btnExportXml">Export .musicxml</button>
+  <div class="conn" id="connStatus">no HKL</div>
+</div>
+
+<div id="composerMain">
+  <div id="score"></div>
+</div>
+
+<div id="composerStatus" id="composerStatus">Loading Verovio…</div>
+
+<input type="file" id="fileInputHkc" accept=".hkc,.xml,.mei" style="display:none">
+
+<script type="module" src="/src/composer/main.ts"></script>
+</body>
+</html>

@@ -336,3 +336,98 @@ The decay-path gain normalizer (now K-weighted LUFS via `analyzer/k-weighting.js
 K-weighting reduces the mismatch (Maestro: ~8 dB → ~3–4 dB across the keyboard) but doesn't eliminate it. Iowa piano, which is recorded with substantial headroom, normalizes cleanly to within ~0.5 dB.
 
 Diagnostic: if `analyzer/out/<key>-report.md` shows a `Peak (dBFS)` column clustered at −3 with non-uniform LUFS, the peak ceiling is binding. The fix isn't a different normalizer — it's a better-mastered source recording. Don't reach for the headroom by raising `TARGET_PEAK_DBFS` (allows single-note clipping) or lowering `TARGET_DBFS` (makes the whole instrument quiet relative to others).
+
+## Composer / Verovio / engraving
+
+### Verovio's `svgViewBox: true` is what makes the SVG scale to its container
+
+The most important fact about Verovio's `svgViewBox` option, learned the hard way:
+
+- **`svgViewBox: true`** → emitted SVG carries only `viewBox`, no intrinsic `width`/`height`. Browser scales the SVG to fill its containing block's width while preserving aspect ratio. Rendered staff size depends on the viewport width.
+- **`svgViewBox: false`** (or omitted) → emitted SVG has explicit `width="X" height="Y"` pixel attributes. Browser renders at exactly those dimensions, no scaling. Container scrollbars handle overflow.
+
+For an editor where staff lines need to land on stable pixels regardless of viewport, you want it OFF. For a "fit the score to whatever width is available" viewer, you want it ON. We tried both during the HKL Composer launch; OFF was the right call for live editing.
+
+Knock-on effect: with `svgViewBox: false`, the SVG's intrinsic size = `pageWidth × scale/100` by `pageHeight × scale/100`. So `scale` is a true zoom on output dimensions, and `pageWidth` directly controls the canvas pixel width. With `svgViewBox: true`, `scale` only affects internal coordinate density, which browsers normalize away during fit-to-container — the visible size doesn't change with `scale` adjustments. This led to "scale doesn't do anything" confusion across several iterations.
+
+### Verovio justifies content to `pageWidth` when `breaks: 'none'`
+
+With `breaks: 'none'` and a `pageWidth: 100000`, a single measure of content gets stretched across 100000 tenths of canvas. The justified content + `svgViewBox: true`'s browser scaling = one measure across the entire viewport. The fix isn't to make pageWidth small (then content overflows / clips); it's to drop `svgViewBox` so the SVG renders at intrinsic pixel size and the user scrolls horizontally through the natural-width content.
+
+For scroll-style mode: `breaks: 'none'`, `pageWidth: 100000` (Verovio clips the emitted SVG width to the actual content extent, so a huge pageWidth is fine — it just gives layout headroom), `svgViewBox: false`, `scale: 100`.
+
+### Staff line spacing must be an integer multiple of the output pixel density for crisp lines
+
+At Verovio's default `unit: 9` and `scale: 50`, staff space = 4.5 px (non-integer). Every other staff line falls on a half-pixel y-coordinate; `shape-rendering: crispEdges` rounds those inconsistently → 1px/2px alternation across the five staff lines.
+
+Fix: pick `unit × scale/100` to land on an integer. At `scale: 50`, `unit: 8` gives 4 px between lines. At `scale: 100`, `unit: 9` (default) gives 9 px (integer) — also crisp.
+
+Apply `shape-rendering: crispEdges` via CSS only to linear elements (`.staff path`, `.barLine path`, `.stem rect`, `.ledgerLines path`). Notehead and accidental glyphs are SMuFL font outlines rendered via `<use>` — they need `geometricPrecision` (the default) for shape quality. Applying `crispEdges` globally makes glyphs blocky.
+
+### Frescobaldi does not auto-reload changed files; LilyPond compile is too slow for live preview
+
+Researched during the HKL Composer pivot. Frescobaldi (Wilbert Berendsen, active but slow, latest 4.0.4 Aug 2025) has no documented `QFileSystemWatcher` integration. External writes to an open `.ly` file are either silently ignored or show a Qt "file changed on disk" prompt at focus-in — neither produces a live update.
+
+LilyPond binary compile times are ~1–3 s on small scores (Guile startup dominates even on empty input). Not "live" by keystroke standards.
+
+`frescobaldi --line=N --column=M file.ly` does drive the cursor in a running single-instance Frescobaldi, but only the text cursor, not the PDF preview. PDF-side highlighting from outside isn't exposed.
+
+Net: Frescobaldi is a great editor for hand-tweaking `.ly` source, but cannot serve as a live preview surface for a streamed-write workflow. HKL Composer uses Verovio in-app for live; the `.hkr` → LilyPond transcription path writes `.ly` files for users to open in Frescobaldi when they want text-level polish on a finished score.
+
+### Stale DOM refs across `innerHTML` rewrites are the most insidious overlay bug
+
+The HKL Composer cursor disappeared after the first user interaction. Trace: `cursor.attach()` set `this.svg = newOverlay` but `ensureNodes()` checked `if (!this.barRect)` — the ref still pointed to the previous overlay's `<rect>` (which had just been GC-eligible because Verovio's `loadData() + renderToSVG()` wrote a fresh `innerHTML` on `#score`, destroying the previous overlay along with the Verovio SVG). The check evaluated falsy and the new overlay never got its `<rect>` appended. Subsequent attribute writes went into the orphan node.
+
+Lesson: any code that caches references to DOM elements inside a container whose `innerHTML` is rewritten externally must reset those refs at the rewrite boundary. The cleanup belongs in the function that handles the rewrite (here, `cursor.attach()`), not in the next-frame logic.
+
+Sister pitfall on the same overlay: if you also override the overlay's width/height in `attach()` to a fixed value (e.g. `100%`), you fight the caller's careful work to size the overlay to match the underlying SVG's pixel dimensions — and the overlay's coordinate system stops aligning with the content. Either size from the caller or size in attach, not both.
+
+### BroadcastChannel feedback loops require explicit suppression
+
+HKL Composer dispatches `play-score` to HKL via the bridge. HKL plays via its audio engine — which adds the playing keys to `selection.selectedKeys` so they highlight on the lattice via the existing `draw()` path. But HKL's bridge also broadcasts `held-keys` whenever `selectedKeys` changes — so Composer would see its own playback as held-key input, treat them as candidate notes for the next duration-key entry, and loop.
+
+Fix: `playbackActive` boolean in `src/bridge/hkl-side.ts`. Set true at play-chord / play-score start; false at finish / abort. While true, `broadcastHeldKeysIfChanged()` returns early. Composer's view of held-keys is unchanged from before playback; when playback ends, the broadcast picks up the real selectedKeys delta.
+
+Sister tracker: `playbackOwnedKeys: Set<KeyId>` to record which selectedKeys entries were added BY playback dispatch (vs. keys the user was already holding via mouse/Lumatone). The noteOff path only removes keys that playback owns — so user-held keys survive a playback that happens to play the same coord.
+
+### MEI's `@color` attribute paints the entire note tree by default
+
+Setting `<note color="#abc">` in MEI propagates the color to descendants in Verovio's SVG output: notehead, stem, flag, accidental, even the dot. To color only the notehead, we override stem/flag/accid back to black via CSS `!important`:
+
+```css
+#score svg .stem, #score svg .stem *,
+#score svg .flag, #score svg .flag *,
+#score svg .accid, #score svg .accid *,
+#score svg .ledgerLines, #score svg .ledgerLines *
+  { color: #000 !important; fill: #000 !important }
+```
+
+Both `color` and `fill` need !importanting because Verovio uses CSS `color: ...` on the group with `fill: currentColor` on children (and occasionally direct `fill` on others). The cascade is finicky; targeting the descendants and forcing both properties is the reliable path.
+
+### Verovio's `edit()` API is experimental and supports only `drag`/`insert`
+
+Looked at this during planning. Documented at book.verovio.org as "experimental code not to rely on." Only two action types in the codebase. No high-level operations like "change pitch", "add note to chord", "change duration", "insert measure", "change time signature".
+
+Implication: a Verovio-based editor maintains MEI in its own model layer, mutates the XML/DOM directly, and calls `tk.loadData(newMei) + tk.renderToSVG(1)` to refresh. Verovio is the engraver, not the editor. HKL Composer's `src/composer/model.ts` is the editor.
+
+## LilyPond transcription quantization
+
+### `TIE_COST` calibration matters more than `BOUNDARY_WEIGHT`
+
+The duration Viterbi DP in `src/transcription/quantize.ts` balances three costs: atom complexity, ties (cost per non-final atom in a chain), and boundary penalty (crossing a stronger metric position). At `TIE_COST: 0.15`, the DP fragmented well-aligned durations: a 3-beat rest at bar start preferred `r4 r2` (cost 0.20) over `r2.` (cost 0.35). At `TIE_COST: 0.40` the dotted-half wins (cost 0.35 vs 0.45).
+
+The ranking under-the-hood:
+- 3-beat rest at bar start, dotted-half: complexity 0.35, boundary 0, ties 0 → total 0.35.
+- 3-beat rest at bar start, quarter+half: complexity 0.05, boundary 0, ties 0.40 → total 0.45.
+- 3-beat rest at beat 2 of 4/4, dotted-half: complexity 0.35, boundary `(50-25)*0.05 = 1.25` (crosses bar middle, weight 50) → total 1.60.
+- 3-beat rest at beat 2, quarter+half: complexity 0.05, ties 0.40, boundary 0 → total 0.45.
+
+Both "starts on beat 1" and "starts on beat 2" produce idiomatic notation. With TIE_COST too low (0.15), the beat-1 case wrongly fragments; with TIE_COST too high (0.60+), ties stop winning when they should (e.g., half note from beat 2 in 4/4 should be quarter+quarter tied, not single half).
+
+### Rest consolidation in voicing fixes the "mirroring" bug
+
+When `voicing.ts` splits a chord across staves via the middle-C threshold, the off-hand staff gets a rest of identical atom structure to the original chord. For a treble passage of 8 eighth notes, the bass would emit 8 eighth-rests mirroring the rhythm — visually wrong (an all-rest bar should be a single whole rest).
+
+Fix: after the voice split, walk each voice's stream; consecutive rests merge into one duration, slice at bar boundaries, re-fed through `splitDuration` (the duration DP). A treble bar of 8 eighth notes against an empty bass voice → bass gets a single `r1` after consolidation. A treble + a single quarter-note pickup in the bass → bass gets `quarter + half-rest` (the user's specific example).
+
+The re-fed DP runs per-bar slice so rests don't tie across bars (rests don't carry ties — `r2 ~ r2` is invalid LilyPond).

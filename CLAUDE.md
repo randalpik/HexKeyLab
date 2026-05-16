@@ -8,22 +8,27 @@ Max Randal. Music theorist, software engineer, and Lumatone player. Builds HKL a
 
 ## What HexKeyLab is
 
-A browser-based visualizer, audio engine, and Lumatone controller for hexagonal isomorphic keyboards with arbitrary tuning systems (currently 5-limit JI, 7-limit JI, and 12-TET). It does six things:
+A browser-based visualizer, audio engine, and Lumatone controller for hexagonal isomorphic keyboards with arbitrary tuning systems (currently 5-limit JI, 7-limit JI, and 12-TET). It does seven things:
 
 1. **Visualizes** the hex lattice with band/seam structure, color-coded by tuning system
 2. **Plays audio** through sample-based instruments (piano, organs, strings, etc.) and oscillators with proper JI tuning
 3. **Communicates with the Lumatone** via MIDI input (notes from physical play) and SysEx output (key colors, key remapping, calibration)
 4. **Analyzes intervals and chords** with comma-decomposition naming and JI ratio display
 5. **Records and plays back performances** with full coordinate fidelity, and exports/imports `.mid` files via MPE for editing in external DAWs
-6. **Documents tuning theory** through interactive exploration
+6. **Transcribes recordings to sheet music** via a `.hkr` → LilyPond pipeline (tempo estimation + Ellis-DP beat tracking + per-bar duration Viterbi DP), emitting colored noteheads keyed to the lattice
+7. **Documents tuning theory** through interactive exploration
 
 The companion tool at `analyzer/HexKeyLab-analyzer.html` is a dev-only sidecar that generates loop-point data for sample-based instruments. It's not shipped with HKL but is part of the project.
+
+**HKL Composer** (`composer.html`) is a sibling app shipped from the same repo — a keyboard-driven, Verovio-backed score editor that uses HKL as its input device via a same-origin `BroadcastChannel` bridge. Composer holds the MEI/score state; HKL holds the audio/MIDI/tuning state. See architecture.md §7.
 
 ## Project status (2026)
 
 Repo at `/home/max/HexKeyLab`, version `1.0.0`. Migration from the v0.9 single-file (`HexKeyLab.html`, ~4200 lines of inline CSS/JS) to a TypeScript + Vite project is complete (~57 modules under `src/`, strict end-to-end). v1.0 feature work is landing on top: pedal revamp, polyphonic aftertouch, persistence, recording/playback, and Lumatone diagnostics are all in.
 
 Stack: TypeScript + Vite + vanilla DOM, modular by domain. **No React, no Redux.** HKL is mostly engine code (audio, MIDI, render, SysEx state machines) — not a UI app. The toolbar UI is small enough to not need a framework. If a framework is later wanted *for the toolbar specifically*, Lit or Solid are the considered options. React was explicitly considered and rejected.
+
+Vite is configured for **multi-page build**: `index.html` (HKL viewer) and `composer.html` (HKL Composer) are separate entry points with separate bundles, sharing `src/*` modules. Verovio WASM is only pulled into the composer bundle.
 
 ## How to work with Max
 
@@ -68,6 +73,16 @@ HKL is **self-contained**. All tuning, layout interpretation, and audio synthesi
 ## Recording architecture (philosophy)
 
 The recording feature treats lattice coordinates as the source of identity, not pitch. The native `.hkr` format (JSON) is the canonical recording: it bundles a layout snapshot (tuning, 5-limit layout, 7-limit shift, instrument, pedal mode, A3 reference) with a flat coordinate-event stream `{t, k, q, r, v, …}`. `.mid` is exported from and imported back to `.hkr` deterministically; the two travel separately (no bundled container). MIDI export uses MPE — manager channel 1, member channels 2–16, pitch-bend range ±48 semitones via RPN — so per-voice JI offsets survive a DAW round-trip. The capture hook lives **inside the audio engine** (`noteOn`/`noteOff`/`handleAftertouch`/`setDamperDepth`/`sostenuto*`) so QWERTY, mouse-click, and Lumatone input all record the same way. Playback drives the audio engine directly and also writes to `selection.selectedKeys` so keys flash visually as they play.
+
+`.hkr` → LilyPond transcription is in `src/transcription/`: tempo estimation (IOI autocorrelation + log-Gaussian prior), Ellis-DP beat tracking, phase-search downbeat detection, per-bar Viterbi DP for duration quantization, middle-C voice split with rest consolidation. Output `.ly` is colored per-notehead via `\tweak NoteHead.color`. Pitch spelling reuses `noteName(q, r)` / `keyOctave(q, r)` so lattice-correct accidentals (sharps on +r, flats on −r) come through for free.
+
+## Composer architecture (philosophy)
+
+HKL Composer (`composer.html`) is a separate browser tab that consumes HKL's held-keys state and emits playback requests via `BroadcastChannel('hkl-composer-bridge')`. The bridge protocol is fully resolved: HKL sends `ResolvedNote` records with `{q, r, pname, accid, oct, midi, colorHex, velocity}` — Composer does **not** import HKL's tuning, audio, MIDI, or state modules. The decoupling lets Composer survive standalone (load/save/edit `.hkc` files even with HKL closed); entry of held chords requires HKL to be connected.
+
+Engraving is **Verovio** (in-browser WASM, MEI in / SVG out, sub-100 ms re-render per chord). The canonical Composer state is MEI XML in memory; `.hkc` files are just MEI with HKL custom attrs (`data-q`, `data-r`) embedded on each `<note>`. MusicXML export is one-way (lossy on dynamics/repeats per Verovio's importer limits, but pitches/rhythms/colors round-trip).
+
+Playback orchestration: Composer walks the MEI to compute per-voice timing in ms, dispatches `play-score` over the bridge. HKL's audio engine plays via the same `noteOn`/`noteOff` path used for live input. HKL also adds the playing keys to `selection.selectedKeys` (with a `playbackOwnedKeys` tracker so user-held keys aren't disturbed) and calls `draw()` — the lattice highlights what's sounding. The held-keys broadcast is suppressed while HKL is playing back to prevent Composer from seeing its own playback echoed back as held-key input.
 
 ## Critical Lumatone protocol context
 
@@ -119,7 +134,8 @@ Most HKL work doesn't touch this. Documented here because deriving it again cost
 
 - **For feature work**: skim CLAUDE.md (this file) → read relevant section of architecture.md → check lessons.md for related gotchas → propose design (if non-trivial) → implement → test.
 - **For debugging**: reproduce symptom → check lessons.md for similar past issues → narrow scope → propose hypothesis → test it before pursuing.
-- **For new modules**: place under appropriate `src/` subdirectory (audio, midi, midi-io, lumatone, tuning, layout, render, recording, ui, state, effects, input). Keep modules focused on one concern. Export a small surface; hold internal state private.
+- **For new modules**: place under appropriate `src/` subdirectory (audio, midi, midi-io, lumatone, tuning, layout, render, recording, transcription, ui, state, effects, input, bridge, composer). Keep modules focused on one concern. Export a small surface; hold internal state private.
+- **Composer-side code** lives under `src/composer/` and is allowed to import `src/bridge/` plus a narrow set of pure helpers (`src/transcription/pitch.ts`, `src/tuning/notes.ts`). It must NOT import `src/audio/`, `src/midi/`, `src/state/`, or `src/lumatone/` — those are HKL-side concerns and the bridge protocol exists specifically to keep Composer independent of them.
 - **For commits**: small, focused, with a description that explains *why*, not just *what*.
 
 ## What to update when

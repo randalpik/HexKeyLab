@@ -367,9 +367,93 @@ The capture span ends 1.5 s after the user-visible Stop / playback-end so sample
 - **Paused playback**: no pause state in v1.
 - **Bundled `.hkr` + `.mid`**: files stay separate.
 - **Tempo / time signature in `.hkr`**: not modeled. MIDI export uses fixed 120 BPM 4/4 so DAW quantizers have something to grid against.
-- **Lilypond export**: the `.hkr` schema is designed to support it (coordinates + snapshot are all an exporter needs), but the exporter itself is future work.
+- **Lilypond export**: see §4.14 for the v1 transcription pipeline.
 
-### 4.14 Audio engine
+### 4.14 `.hkr` → LilyPond transcription
+
+Takes a `.hkr` recording played at a roughly constant tempo in a user-supplied time signature and produces a `.ly` file with a colored-notehead grand staff. v1 scope: 8th-note minimum granularity (no 16ths or 32nds), middle-C voice split, no microtonal accidentals (12-TET notation; the lattice spelling from `noteName(q,r)` provides the enharmonic spelling).
+
+#### Pipeline
+
+`.hkr` → onsets → tempo → beats → meter → chords → qnotes → voiced → `.ly`.
+
+Eleven modules under `src/transcription/`, each focused on one stage. Identity (`Onset.id`, `QNote.sourceOnsetIds`) flows end-to-end so a future correction UI can map a rendered notehead back to the raw events.
+
+#### Tempo estimation (`tempo.ts`)
+
+IOI autocorrelation on a 10 ms binned onset envelope, weighted by a log-Gaussian prior peaked at 100 BPM (σ = 0.3 in log domain). When the user supplies a BPM hint, the candidate-lag search is hard-constrained to ±15 % of the hint period. Parabolic peak interpolation around the best lag gives sub-bin resolution. Octave errors (half / double tempo) are the standard failure mode — mitigated by the prior + hint constraint but not eliminated.
+
+#### Beat tracking (`beats.ts`)
+
+Ellis-style DP: `C(t) = s(t) + max(0, max_{t' ∈ [t−dMax, t−dMin]} C(t') − λ(t − t' − T)²)` where T is the target period from tempo estimation, `dMin/dMax` are search-window bounds (±50 % of T), and `λ = 0.5` controls tightness. Traceback from the highest-scoring beat in the final T-window gives the beat sequence.
+
+#### Meter / downbeat phase (`meter.ts` + `quantize.ts` extrapolation)
+
+Phase search over `numerator` candidate offsets: for each phase ∈ [0, numerator), sum the aggregate onset strength near beats whose index ≡ phase (mod numerator). Pick the highest-scoring phase.
+
+In `quantize.ts`, the chosen phase's beat time gets extrapolated **backward by whole bars** until the resulting tick origin is ≤ the first onset's time. This preserves the phase search's downbeat choice while guaranteeing no leading notes get dropped — if the phase finder picks a phase whose first downbeat sits past the first onset, the tick origin shifts back so the first onset lands as a pickup in bar 0 rather than being clipped.
+
+#### Chord grouping (`chords.ts`)
+
+Cluster onsets whose `t` is within 30 ms of the first member of the current cluster (NOT the last member — using "last" allows transitive drift through near-30 ms IOIs and over-groups fast 32nd runs into a single chord). Cluster representative `t` is the median; `tOff` is the max.
+
+#### Duration quantization (`quantize.ts`) — the load-bearing module
+
+Per-bar Viterbi DP over an allowed atom set. v1 atom durations (in 64th-note ticks at `subdivisions: 32` per quarter):
+
+| Atom | Ticks | LilyPond | Complexity |
+|------|-------|----------|------------|
+| 8th  | 16    | `8`      | 0.10       |
+| quarter | 32 | `4`      | 0.00       |
+| dotted quarter | 48 | `4.` | 0.30   |
+| half | 64    | `2`      | 0.05       |
+| dotted half | 96 | `2.`  | 0.35       |
+| whole | 128  | `1`      | 0.10       |
+
+(v1 deliberately omits 16ths and 32nds; granularity is tempo-dependent and the user's playing rarely exceeds 240 BPM = 16ths at 60 BPM = 8ths at 120 BPM.)
+
+Position snap to a 16-tick grid (one 8th). Within each bar, the DP fills a `(startTick, durTicks)` event with a sequence of atoms minimizing:
+
+```
+total_cost = sum(atom.complexity) + Σ TIE_COST × (atoms - 1) + Σ boundary_penalty(atom)
+```
+
+- **`TIE_COST = 0.40`** — calibrated so single-atom notations beat tied chains at clean alignments, but ties still win when they should (e.g., a half note from beat 2 of a 4/4 bar gets the boundary penalty for crossing the bar middle and the DP prefers `quarter + quarter tied`).
+- **Boundary penalty** = `0.05 × (worst_metric_weight_inside_duration − start_weight)`. Metric weights: bar start = 100, bar middle (4/4) = 50, beat = 25, 8th subdivision = 8, 16th = 6, etc. A note starting on a weak beat that crosses a stronger boundary inside its duration pays the difference.
+
+Rest insertion: if a chord's release-tick is ≥ 16 ticks before the next chord's onset, a rest fills the gap. Below that threshold, the released-but-silent time folds into the preceding note's duration.
+
+#### Voicing (`voicing.ts`)
+
+Middle-C (MIDI 60) threshold per chord. All-treble or all-bass chords go to one staff; mixed chords split — pitches ≥60 to treble (voice 1 of staff 1), <60 to bass (voice 1 of staff 2), at the same `startTick` (LilyPond's grand-staff voicing handles this cleanly).
+
+**Rest consolidation** runs after the voice split. Consecutive `isRest` QNotes in each voice merge into a single duration, slice at bar boundaries, re-fed through `splitDuration` so an all-rest bar collapses to `r1` instead of mirroring the active staff's note rhythm. See `lessons.md` "Rest consolidation in voicing fixes the 'mirroring' bug."
+
+#### LilyPond emission (`lyEmit.ts`)
+
+Standard `\new PianoStaff << \new Staff = "RH" { ... } \\ \new Staff = "LH" { ... } >>`. Dutch syntax (`c`, `cis`, `ees`, `c'`, `c,`). Per-notehead color via `\tweak NoteHead.color #(rgb-color r g b)`. Single-color chords get one `\colorNote` wrapper; heterogeneous chords use per-pitch `\tweak` inside `< >`. Source-onset ids ride along as `% onset-ids: [...]` comments above each chord for future correction-UI hooks.
+
+Pitch spelling reuses `noteName(q, r)` + `keyOctave(q, r)` from `src/tuning/notes.ts` directly. The lattice's natural Pythagorean spelling (sharps on +r, flats on −r) flows through to LilyPond without enharmonic respelling. No key signature inference in v1 — the music is rendered "in C" with explicit accidentals per note.
+
+#### UI
+
+"Export .ly" button in the Recording toolbar opens a modal: title, time-signature numerator (default 4, denominator fixed at 4 in v1), optional BPM hint. The pipeline runs synchronously and downloads the `.ly` via the existing `downloadBlob` helper.
+
+`?hklrec=1` URL param exposes `window.__hkl_rec.transcribe(opts)` for DevTools verification — returns `{ ly, debug }` where `debug` contains every intermediate IR (`onsets`, `tempo`, `beats`, `meter`, `chords`, `qnotes`, `voiced`).
+
+#### Color handling
+
+`darkColorHex(q, r)` in `src/transcription/pitch.ts` wraps `keyColorHex` with a per-hue table (`HUE_PROFILES`) that remaps each of HKL's seven hues to a paper-readable variant: OR/YE shift toward goldenrod, GR shifts toward yellow-green, TE shifts toward cyan, PK shifts magenta-ward — chosen so PK/OR and TE/GR (the two confusion pairs on white background) become clearly distinguishable. Stem/flag/accidental color is suppressed via `\tweak NoteHead.color` (only the notehead carries the lattice color).
+
+#### Out of scope for v1
+
+- Rubato / variable tempo — pipeline assumes near-constant tempo throughout.
+- Tuplets (triplets first would be the v2 target).
+- Time-signature change mid-piece.
+- Microtonal accidentals (HEJI via Ekmelily is a known future path).
+- Manual correction UI — the pipeline preserves `sourceOnsetIds` end-to-end so a v2 UI can navigate from notehead to raw events without rewriting the model.
+
+### 4.15 Audio engine
 
 `SampleEngine` IIFE module encapsulates sample loading, voice lifecycle, and segment scheduling.
 
@@ -642,6 +726,154 @@ The Node analyzer emits `gain` directly into the per-sample object alongside `fr
 
 ---
 
+## 7. HKL Composer
+
+Standalone keyboard-driven score editor at `composer.html`, shipped from the same repo and built by the same Vite config as the main HKL viewer. Uses Verovio (WASM, MEI in / SVG out) for engraving. Consumes HKL's held-keys state via `BroadcastChannel`; dispatches playback requests back. Composer holds the MEI/score state; HKL holds the audio/MIDI/tuning state. The two apps run as separate browser tabs with no shared module imports beyond the bridge protocol.
+
+### 7.1 Two-tab architecture
+
+- **HKL tab** (`index.html`) — Lumatone input, audio engine, tuning state, lattice rendering. Unchanged by Composer's existence.
+- **Composer tab** (`composer.html`) — MEI model, Verovio render, cursor overlay, keyboard input handler, playback orchestration. Imports `src/bridge/*` plus pure helpers from `src/transcription/pitch.ts` and `src/tuning/notes.ts`. Does NOT import `src/audio`, `src/midi`, `src/state`, or `src/lumatone`.
+
+Composer is openable standalone (load/save/edit `.hkc` files works without HKL); entry of held chords requires HKL to be connected. The "connection status" indicator in the toolbar reflects three states: `no HKL` (red) before initial handshake, `connected` (green) after `hkl-hello`, `standalone` (yellow) after 1 s with no hello.
+
+### 7.2 Bridge protocol (`src/bridge/`)
+
+Single source of truth: `src/bridge/protocol.ts`. One `BroadcastChannel` named `'hkl-composer-bridge'` carries both directions; per-side type safety via `BridgeChannel<In, Out>` generic in `src/bridge/channel.ts`.
+
+**HKL → Composer events** (`HklEvent`):
+- `hkl-hello`, `hkl-bye` — lifecycle.
+- `held-keys` — array of `ResolvedNote` records, each `{q, r, pname, accid, oct, midi, colorHex, velocity}`. Broadcast on every change to `selection.selectedKeys` (RAF-polled; signature-diffed so no spam).
+- `playback-position` — `{meiId, timeMs}` per chord onset during a play-score; final position with `meiId: null` at end.
+- `playback-finished` — playback queue exhausted (or aborted).
+- `tuning-changed` — `{mode, description}` informational; Composer updates status text.
+
+**Composer → HKL events** (`ComposerEvent`):
+- `composer-hello`, `composer-bye`, `request-state` — handshake / state refresh.
+- `play-chord` — `{notes: CoordRef[], durationMs}` for entry-time monitoring tone.
+- `play-score` — `{events: PlaybackEvent[]}` with per-event `{atMs, durationMs, notes, meiId?}`. HKL drives its audio engine off this.
+- `stop-playback` — cancel any active playback.
+
+`ResolvedNote` is intentionally fully resolved by HKL: pname, accid, oct, midi, colorHex are derived from `(q, r)` plus current tuning state on the HKL side. Composer never needs to know HKL's current tuning to render correctly.
+
+### 7.3 HKL-side bridge (`src/bridge/hkl-side.ts`)
+
+Initialized at the end of `ui/init.ts` (after audio + MIDI setup). RAF-polled loop reads `selection.selectedKeys`, resolves each `(q, r)` via `noteName(q, r)` + `keyOctave(q, r)` + `darkColorHex(q, r)`, and broadcasts on signature change. Listens for `composer-hello` / `request-state` and replies with the current state.
+
+Inbound `play-chord` / `play-score` dispatches via existing `audio.noteOn` / `noteOff`. While playback is active:
+- A `playbackActive: boolean` flag suppresses the held-keys broadcast (otherwise Composer would see its own playback echoed back as held-key input — feedback loop).
+- A `playbackOwnedKeys: Set<KeyId>` tracks which `selectedKeys` entries playback added (vs. keys the user is holding via mouse/Lumatone). On noteOff or abort, only playback-owned keys get removed from `selectedKeys`, so user-held keys survive a playback that happens to play the same coord.
+- `draw()` is called after each chord onset and offset so the lattice highlight (via existing `selection.selectedKeys` path) tracks what's currently sounding.
+
+### 7.4 Composer model: MEI in-memory DOM
+
+`src/composer/model.ts`. The MEI document is held as a `Document` (DOMParser-parsed XML). Initial document is a single measure with two staves and two layers per staff (four voices). Mutations are direct DOM operations; the document gets re-serialized to a string and handed to Verovio's `loadData()` on every render.
+
+Voice numbering (per Composer convention, top-to-bottom):
+- voice 1 = staff 1 (treble), layer 1
+- voice 2 = staff 1 (treble), layer 2
+- voice 3 = staff 2 (bass), layer 1
+- voice 4 = staff 2 (bass), layer 2
+
+Each voice has its own cursor position stored in `cursors: Record<Voice, number>`. The model methods are append/insert/replace/delete at cursor, plus navigation (`switchVoice`, `moveCursor`, `setCursor`, `cursorToEnd`).
+
+Time-aligned voice switching: `switchVoice` snapshots the source voice's cumulative-time-at-cursor (via `getTimeAt`), switches voices, then calls `findCursorAtOrBefore(newVoice, time)` to place the cursor at the latest position in the new voice whose start-time ≤ snapshot time. Durations are computed in 64th-note ticks via `elementDurationTicks(el)`.
+
+Every `<note>` carries `data-q` and `data-r` custom attributes so the lattice identity survives a save/load roundtrip. MEI spec ignores unknown attributes — `.hkc` files open fine in other MEI viewers (just without the playback / coord-aware features).
+
+### 7.5 Render & cursor overlay
+
+`src/composer/render.ts` owns the Verovio toolkit lifecycle. The WASM is loaded from CDN (`https://www.verovio.org/javascript/latest/verovio-toolkit-wasm.js`) via dynamic script injection — no npm dependency to keep the HKL viewer bundle slim. `~6–8 MB` gzipped, `200–800 ms` first-render latency.
+
+Engraving options (current as of 2026-05-16, see decisions.md and lessons.md for the iteration):
+- `svgViewBox: false` (default) — SVG has explicit `width`/`height` pixel attrs; browser renders at intrinsic size, no fit-to-container scaling.
+- `scale: 100` — natural Verovio render size.
+- `pageWidth: 2100` / `pageHeight: 2970` (page mode, breaks: 'auto'); `pageWidth: 100000` / `pageHeight: 400` (scroll mode, breaks: 'none').
+- `header: 'none'`, `footer: 'none'` to strip metadata blocks from the output.
+- `svgAdditionalAttribute: ['note@data-q', 'note@data-r', 'note@color']` exposes lattice coords on rendered notes.
+
+The cursor overlay (`src/composer/cursor.ts`) is a separate `<svg>` appended inside `#score` after each Verovio render. Sized in `main.ts` to match Verovio's emitted dimensions so it scrolls in lockstep. Two modes:
+
+- **Editing mode** — single bar at the active voice's cursor position, drawn from `renderer.rectForId(meiId)` lookups on the rendered SVG element. Includes a "V1"–"V4" label.
+- **Playback mode** — per-voice bars (one per voice that has sounded an event), each independently positioned. Editing cursor is hidden. Toggled via `cursor.setPlaybackMode(on)`.
+
+The cursor class deliberately resets its `barRect` / `voiceLabel` / `playbackBars` refs in `attach()` — Verovio's `loadData() + renderToSVG()` writes a fresh `innerHTML` on `#score` which orphans the previous overlay along with the rendered SVG. See lessons.md "Stale DOM refs across `innerHTML` rewrites."
+
+### 7.6 Input model (keyboard-driven)
+
+`src/composer/input.ts`. No mouse-to-document handlers in v1 by design — Speedy-Entry-style keyboard flow with Finale-convention bindings:
+
+- **`1`–`7`** — duration (Finale order: 1=64th, 2=32nd, 3=16th, 4=8th, 5=quarter, 6=half, 7=whole). With held keys → chord; without → rest.
+- **`.`** — toggle dot count (0 / 1 / 2, one-shot reset after the next entry).
+- **`↑`/`↓`** — switch voice (cycles 1↔2↔3↔4, time-aligned per §7.4).
+- **`←`/`→`** — move cursor within current voice.
+- **`Home`/`End`** — jump to start/end of current voice.
+- **`Backspace`** — delete the element before cursor.
+- **`Delete`** — delete the element after cursor.
+- **`Insert`** — toggle insert / overwrite mode.
+
+Arrow keys are suppressed during playback (the `isPlaybackActive` hook in `InputHooks` short-circuits the navigation block).
+
+On duration keypress: a `play-chord` message goes to HKL via the bridge so the user hears the entered chord at HKL's accurate JI frequency before deciding to commit/edit.
+
+### 7.7 Playback orchestration (`src/composer/playback.ts`)
+
+`buildPlayback(model)` walks each of the 4 voices in the MEI; for each chord/note (rests advance the voice clock but don't emit), it emits a `PlaybackEvent` with cumulative `atMs` per voice and `durationMs` from `elementDurationTicks` at the current tempo (120 BPM hardcoded in v1). Events are sorted by `atMs` so simultaneous voice attacks land together.
+
+`startPlayback` (in `main.ts`):
+1. Snapshot the editing cursor's `(voice, cursor)` for restore.
+2. Send `play-score` to HKL.
+3. `cursor.setPlaybackMode(true)` — editing cursor hides, per-voice playback bars become visible.
+
+On each `playback-position` from HKL: look up the meiId's voice via `model.findElement(meiId)`, call `cursor.setPlaybackPosition(voice, meiId)`. The editing cursor's model state is NOT mutated during playback — the per-voice playback bars are pure overlay updates.
+
+On `playback-finished` or `stop-playback`: `finalizePlaybackEnd()` exits playback mode, restores the editing cursor's snapshot via `model.setVoice` / `model.setCursor`, refreshes the overlay.
+
+The Composer-side `.playing` CSS class is toggled on the currently-sounding MEI element via `highlightElement` (in `playback.ts`); no visual styling is applied to it currently (the glow was removed; the class remains as a hook for future styling).
+
+### 7.8 Save / load / export
+
+`src/composer/save.ts`:
+- **`.hkc`** — canonical save format. The MEI XML string, including `data-q`/`data-r` custom attributes. `saveHkc(model)` serializes; `loadHkcFromFile(file)` parses and returns a new `ComposerModel`.
+- **`.musicxml`** — one-way export via `exportMusicXml(model)`. Walks the model, emits `<score-partwise>` with grand-staff structure, per-voice `<note>` / `<chord>` / `<rest>` elements, `<backup>` to align voices, `<notehead color="...">` for the lattice color. Lossy on dynamics/repeats/articulations (the v1 model doesn't carry those anyway), but pitches/rhythms/colors round-trip cleanly to MuseScore / Finale / Sibelius.
+- `MusicXML divisions: 16` (= 16 ticks per quarter, enough for 32nd notes at 2 ticks each).
+
+### 7.9 View modes
+
+Toolbar toggle between "Page" and "Scroll" views. Both use `svgViewBox: false` and `scale: 100`; the difference is `pageWidth` / `pageHeight` / `breaks`. Verovio's `setOptions()` is called on toggle, followed by a re-render (`loadData` + `renderToSVG`) so the new layout takes effect.
+
+### 7.10 Out of scope for v1
+
+- Note-level edits in existing chords (change one pitch, change duration of one element).
+- Tuplets, dynamics, articulations, slurs, ties (across chords).
+- Time signature changes; partial bars / anacrusis.
+- Score-level metadata: title, composer, tempo markings, key signatures.
+- Print / PDF export (Verovio supports this; integration is straightforward but deferred).
+- Undo / redo.
+- Microtonal accidentals (HEJI via MEI's custom-accidental support).
+- Multi-instrument scores beyond grand staff.
+- Multiple measures (v1 has a single growing measure; explicit barlines are a small follow-up).
+
+### 7.11 Standalone tool / sub-app structure
+
+The Composer is built and bundled by the same Vite config as the main HKL viewer:
+
+```ts
+// vite.config.ts
+build: {
+  rollupOptions: {
+    input: {
+      main:     resolve(__dirname, 'index.html'),
+      composer: resolve(__dirname, 'composer.html'),
+    },
+  },
+}
+```
+
+Two HTML entries at repo root, two output bundles. Verovio WASM is only pulled into the composer bundle. `npm run dev` serves both; navigate to `/composer.html` for the editor, `/` (or `/index.html`) for the viewer. `npm run build` produces both `dist/index.html` and `dist/composer.html` with separate JS chunks.
+
+---
+
 ## Module Structure
 
 ```
@@ -710,6 +942,37 @@ src/
 │   ├── capture.ts              # buffer + recordOn/Off/Pa/PedalDepths/Sostenuto
 │   ├── playback.ts             # look-ahead scheduler + playback ledger + dispatch
 │   └── hkr.ts                  # serializeHkr, parseHkr, HkrParseError
+├── transcription/              # .hkr → LilyPond pipeline (§4.14)
+│   ├── types.ts                # Onset, BeatGrid, Meter, ChordEvent, QNote, VoicedScore,
+│   │                           #   TranscribeOpts, TranscribeResult
+│   ├── pitch.ts                # coordToLilyPitch, darkColorHex (per-hue paper-readable
+│   │                           #   palette), coordToMidi
+│   ├── onsets.ts               # hkrToOnsets — FIFO on/off pairing, density-bonus strength
+│   ├── tempo.ts                # IOI autocorrelation + log-Gaussian prior + parabolic peak
+│   ├── beats.ts                # Ellis-DP beat tracker
+│   ├── meter.ts                # downbeat-phase search
+│   ├── chords.ts               # 30 ms first-anchor clustering
+│   ├── quantize.ts             # per-bar Viterbi DP over allowed atoms (load-bearing)
+│   ├── voicing.ts              # middle-C split + rest consolidation
+│   ├── lyEmit.ts               # LilyPond emitter, Dutch syntax, per-notehead \tweak color
+│   └── index.ts                # sessionToLilypond — orchestrator
+├── bridge/                     # HKL ↔ Composer same-origin BroadcastChannel (§7.2)
+│   ├── protocol.ts             # CHANNEL_NAME, HklEvent, ComposerEvent, ResolvedNote,
+│   │                           #   CoordRef, PlaybackEvent type defs
+│   ├── channel.ts              # BridgeChannel<In, Out> + createHklBridge/createComposerBridge
+│   └── hkl-side.ts             # HKL-side subscriber: RAF held-keys poll, play-chord /
+│                               #   play-score dispatch, playbackActive feedback suppression
+├── composer/                   # HKL Composer entry — see §7
+│   ├── main.ts                 # bootstrap + bridge wire-up
+│   ├── model.ts                # ComposerModel: MEI as in-memory DOM; per-voice cursors;
+│   │                           #   time-aligned switchVoice; mutation ops
+│   ├── render.ts               # Verovio toolkit init (CDN), render loop, view modes
+│   ├── cursor.ts               # Editing + playback cursor overlay (two modes)
+│   ├── input.ts                # Keyboard handler (digit→duration, arrows, backspace, etc.)
+│   ├── playback.ts             # buildPlayback, highlightElement, clearHighlights
+│   ├── save.ts                 # .hkc save/load, .musicxml export
+│   ├── verovio-types.ts        # Narrow TypeScript declarations for window.verovio
+│   └── (composer-toolbar markup lives in composer.html)
 ├── lumatone/
 │   ├── protocol.ts             # SYSEX_CMD_*, sysexBoardMap = [1,2,3,5,4], message builders
 │   ├── sysex.ts                # ENCAPSULATED queue (private state, public API)
@@ -731,11 +994,21 @@ src/
 
 **Dependency direction** (top to bottom; lower modules don't import from higher):
 
+**HKL viewer bundle** (`index.html`):
 ```
-main → ui/init → ui/{controls, keyboard, recorder} → effects → engines (audio, midi, midi-io, lumatone) → recording → render → state → tuning + layout
+main → ui/init → ui/{controls, keyboard, recorder} → effects → engines (audio, midi, midi-io, lumatone) → recording → transcription → render → state → tuning + layout
                                                                   ↓
                                                           protocol + samples (encapsulated)
+                                                                  ↓
+                                                          bridge/hkl-side ← initialized at end of ui/init
 ```
+
+**Composer bundle** (`composer.html`):
+```
+composer/main → composer/{render, model, cursor, input, playback, save, ui} → bridge/{protocol, channel} + transcription/pitch + tuning/notes + render/colors
+```
+
+The two bundles share `src/bridge/protocol.ts` and `src/bridge/channel.ts` plus a small set of pure helpers. Composer-side code must NOT import from `src/audio`, `src/midi`, `src/state`, `src/lumatone`, or `src/effects` — the bridge protocol is the only sanctioned interaction surface between the two apps. Verifiable by grepping `import.*\b(audio|midi|state|lumatone|effects)\b` in `src/composer/`.
 
 Two cycle-prone seams:
 
@@ -749,12 +1022,16 @@ Two cycle-prone seams:
 
 - **Band** — 3-key-wide region along q-axis where 5-limit JI is pure
 - **.hkr** — HexKeyLab Recording format: JSON, version-stamped, layout snapshot + coordinate event stream. The canonical recording. See §4.13.
+- **.hkc** — HKL Composer save format: MEI 5 XML with `data-q` / `data-r` custom attributes on every `<note>` preserving the lattice identity. Opens in any MEI viewer (Verovio web demos, etc.); only the playback / coord-aware features need HKL Composer. See §7.4.
+- **Bridge protocol** — `BroadcastChannel('hkl-composer-bridge')` carrying typed `HklEvent` / `ComposerEvent` messages between the HKL viewer tab and the HKL Composer tab. Single source of truth: `src/bridge/protocol.ts`. See §7.2.
 - **Comma** — small interval between two ratios that should be equivalent (syntonic 81/80, septimal 64/63, schisma, Pythagorean, etc.)
 - **Diesis** — 128:125 (great), unreachable in 5-limit but reachable in 7-limit via syntonic adjustments
 - **Fixed MIDI layout** — HKL's tuning-independent (channel, note) addressing for every physical key
 - **Half-damper** — continuous pedal control over damper depth (vs. binary on/off)
+- **HKL Composer** — the keyboard-driven notation editor at `composer.html`. Verovio for engraving; consumes HKL's held-keys via the bridge protocol. See §7.
 - **Lumatouch** — Lumatone keyType 3, continuous fader (NOT poly aftertouch)
 - **LTN** — Lumatone preset/mapping file format
+- **MEI** — Music Encoding Initiative XML format. HKL Composer's canonical in-memory model and `.hkc` save format. See <https://music-encoding.org>.
 - **MPE** — MIDI Polyphonic Expression. One channel per active voice within a "zone"; pitch-bend, aftertouch, and timbre CCs apply per-channel rather than across the whole zone. HKL exports to MPE with the lower zone (manager ch 1, members ch 2–16) and ±48-semitone per-member pitch-bend range.
 - **posInBand (p)** — position within a band (0, 1, or 2)
 - **Region (A/B)** — 7-limit band along r-axis; A = pure, B = septimal
@@ -766,3 +1043,4 @@ Two cycle-prone seams:
 - **TH (Tenney Height)** — log₂(num × den) of a ratio; a complexity measure
 - **Tuning** — currently {Equal, 5-limit, 7-limit}
 - **typeByte** — Lumatone per-key flags, `(faderUpIsNull << 4) | keyType`
+- **Verovio** — RISM Digital Center's MEI → SVG rendering engine. Used by HKL Composer as a WASM module loaded from the verovio.org CDN. Sub-100 ms re-render typical; primary live-engraving back-end for the editor.

@@ -8,3 +8,4 @@ dist/
 analyzer/.cache/
 analyzer/out/
 .iowa-cache/
+tools/finale-bridge/

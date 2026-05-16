@@ -107,6 +107,11 @@ changeWaveform();
 
 requestMidi(handleMidiMessage);
 
+/* HKL ↔ Composer bridge — broadcasts held-keys for the companion composer.html
+   surface, dispatches play-chord/play-score from Composer. Idempotent; safe
+   if no Composer tab is open. */
+import('../bridge/hkl-side.js').then((m) => m.initHklBridge());
+
 /* lumadiag overlay: lazy build + show driven by prefs/checkbox. Hotkey
    (Shift+\) defers to a callback so the checkbox + pref stay in sync. */
 function applyCalibrateKeys(visible: boolean): void {
