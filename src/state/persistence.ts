@@ -23,6 +23,15 @@ export interface ToolbarVisibility {
   lumatone: boolean;
 }
 
+/* Velocity calibration (curve + per-key gain). Set by src/audio/velocityCal.ts.
+   Absent = defaults (matches prior hardcoded quadratic curve and no per-key gain). */
+export interface VelocityCalPrefs {
+  floor: number;
+  ceiling: number;
+  gamma: number;
+  perKey: Record<string, number>;
+}
+
 export interface PrefsV1 {
   showNotes: boolean;
   showBands: boolean;
@@ -44,6 +53,7 @@ export interface PrefsV1 {
   showDiagnostics: boolean;
   calibrateKeys: boolean;
   captureAudio: boolean;
+  velocityCal?: VelocityCalPrefs;
 }
 
 /* Defaults mirror the HTML attributes + state/*.ts initial values, so a fresh
@@ -190,7 +200,21 @@ export function loadPrefs(): PrefsV1 {
       typeof o.captureAudio === "boolean"
         ? o.captureAudio
         : DEFAULT_PREFS.captureAudio,
+    velocityCal: loadVelocityCal(o.velocityCal),
   };
+}
+
+function loadVelocityCal(o: unknown): VelocityCalPrefs | undefined {
+  if (!o || typeof o !== 'object') return undefined;
+  const v = o as Record<string, unknown>;
+  if (typeof v.floor !== 'number' || typeof v.ceiling !== 'number' || typeof v.gamma !== 'number') return undefined;
+  const perKey: Record<string, number> = {};
+  if (v.perKey && typeof v.perKey === 'object') {
+    for (const [k, val] of Object.entries(v.perKey as Record<string, unknown>)) {
+      if (typeof val === 'number' && val > 0 && val < 10) perKey[k] = val;
+    }
+  }
+  return { floor: v.floor, ceiling: v.ceiling, gamma: v.gamma, perKey };
 }
 
 /* Merge a partial patch into the stored prefs and write back. Read-modify-write

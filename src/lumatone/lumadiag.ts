@@ -43,7 +43,9 @@ import {
   buildSetMaxThreshold,
   buildSetMinThreshold,
   buildSetBoardSens,
+  buildSetVelocityLut,
 } from './protocol.js';
+import { velocityCal, DEFAULT_CAL } from '../audio/velocityCal.js';
 
 /* Per-board values, mirrored from the device. `null` = not yet fetched; the
    corresponding slider stays disabled until the read-back populates it. */
@@ -331,6 +333,323 @@ function makeGlobalFooter(): HTMLDivElement {
   return foot;
 }
 
+/* Velocity calibration UI: hardware LUT push, HKL curve sliders, per-key gain
+   auto-capture. Built once; element refs cached so external state changes can
+   refresh the displayed values. */
+const velCalUi: {
+  floorSlider?: HTMLInputElement;
+  floorVal?: HTMLSpanElement;
+  ceilingSlider?: HTMLInputElement;
+  ceilingVal?: HTMLSpanElement;
+  gammaSlider?: HTMLInputElement;
+  gammaVal?: HTMLSpanElement;
+  preview?: HTMLCanvasElement;
+  captureBtn?: HTMLButtonElement;
+  captureStatus?: HTMLSpanElement;
+  calKeyCount?: HTMLSpanElement;
+  targetSlider?: HTMLInputElement;
+  targetVal?: HTMLSpanElement;
+} = {};
+
+let captureTicker: number | null = null;
+
+function pushIdentityVelocityLut(): void {
+  /* Identity LUT: lut[i] = i, slowest (i=0) → softest, fastest (i=127) → loudest.
+     buildSetVelocityLut reverses internally to match the firmware wire order. */
+  const lut: number[] = [];
+  for (let i = 0; i < 128; i++) lut.push(i);
+  const msg = buildSetVelocityLut(lut);
+  const ok = sysex.enqueueControl(msg);
+  if (ok) console.log('[lumadiag] pushed identity velocity LUT to Lumatone (CMD 0x08)');
+  else console.warn('[lumadiag] no Lumatone connected — identity LUT not sent');
+}
+
+function drawCurvePreview(): void {
+  const cv = velCalUi.preview;
+  if (!cv) return;
+  const ctx = cv.getContext('2d');
+  if (!ctx) return;
+  const w = cv.width, h = cv.height;
+  ctx.clearRect(0, 0, w, h);
+  /* Frame + diagonal reference (identity floor=0, ceiling=1, gamma=1). */
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
+  ctx.beginPath();
+  ctx.moveTo(0, h);
+  ctx.lineTo(w, 0);
+  ctx.stroke();
+  /* Curve. */
+  ctx.strokeStyle = '#9cf';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let x = 0; x <= w; x++) {
+    const v = (x / w) * 127;
+    const g = velocityCal.curveGain(v);
+    const y = h - g * h;
+    if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
+function refreshCurveUi(): void {
+  if (velCalUi.floorSlider) {
+    velCalUi.floorSlider.value = String(Math.round(velocityCal.floor * 100));
+    velCalUi.floorVal!.textContent = velocityCal.floor.toFixed(2);
+  }
+  if (velCalUi.ceilingSlider) {
+    velCalUi.ceilingSlider.value = String(Math.round(velocityCal.ceiling * 100));
+    velCalUi.ceilingVal!.textContent = velocityCal.ceiling.toFixed(2);
+  }
+  if (velCalUi.gammaSlider) {
+    velCalUi.gammaSlider.value = String(Math.round(velocityCal.gamma * 100));
+    velCalUi.gammaVal!.textContent = velocityCal.gamma.toFixed(2);
+  }
+  if (velCalUi.calKeyCount) {
+    velCalUi.calKeyCount.textContent = String(velocityCal.calibratedKeyCount);
+  }
+  drawCurvePreview();
+}
+
+function startCaptureTicker(): void {
+  if (captureTicker !== null) return;
+  captureTicker = window.setInterval(() => {
+    if (velCalUi.captureStatus) {
+      velCalUi.captureStatus.textContent = velocityCal.capturedKeyCount
+        + ' / 280 keys recorded';
+    }
+  }, 250);
+}
+
+function stopCaptureTicker(): void {
+  if (captureTicker !== null) { clearInterval(captureTicker); captureTicker = null; }
+}
+
+function makeVelocityCalSection(): HTMLDivElement {
+  const sec = document.createElement('div');
+  Object.assign(sec.style, {
+    borderTop: '2px solid rgba(255,255,255,0.25)',
+    padding: '8px',
+    background: 'rgba(80,160,255,0.04)',
+  });
+  const title = document.createElement('strong');
+  title.textContent = 'Velocity calibration';
+  Object.assign(title.style, { fontSize: '12px', color: '#9cf', display: 'block', marginBottom: '6px' });
+  sec.appendChild(title);
+
+  /* ── Hardware foundation ── */
+  const hwBlock = document.createElement('div');
+  Object.assign(hwBlock.style, { marginBottom: '8px' });
+  const hwLabel = document.createElement('div');
+  hwLabel.textContent = 'Hardware foundation';
+  Object.assign(hwLabel.style, { fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginBottom: '2px' });
+  const hwHint = document.createElement('div');
+  hwHint.textContent = 'Push identity LUT so the firmware emits its full 0–127 range — gives HKL the maximum input resolution to shape from.';
+  Object.assign(hwHint.style, { fontSize: '10px', color: 'rgba(255,255,255,0.5)', marginBottom: '4px', lineHeight: '1.3' });
+  const hwBtn = document.createElement('button');
+  hwBtn.textContent = 'Push identity LUT to Lumatone (CMD 0x08)';
+  Object.assign(hwBtn.style, {
+    fontSize: '11px', padding: '2px 6px',
+    background: 'rgba(255,255,255,0.08)', color: '#eee',
+    border: '1px solid rgba(255,255,255,0.2)', borderRadius: '2px',
+    cursor: 'pointer', width: '100%',
+  });
+  hwBtn.addEventListener('click', pushIdentityVelocityLut);
+  hwBlock.appendChild(hwLabel);
+  hwBlock.appendChild(hwHint);
+  hwBlock.appendChild(hwBtn);
+  sec.appendChild(hwBlock);
+  const hwResetHint = document.createElement('div');
+  hwResetHint.textContent = '(Use "Reset velocity LUT" below to revert to factory firmware curve.)';
+  Object.assign(hwResetHint.style, { fontSize: '10px', color: 'rgba(255,255,255,0.4)', marginTop: '2px', marginBottom: '8px', lineHeight: '1.2' });
+  sec.appendChild(hwResetHint);
+
+  /* ── HKL curve ── */
+  const curveLabel = document.createElement('div');
+  curveLabel.textContent = 'HKL curve';
+  Object.assign(curveLabel.style, { fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginBottom: '4px' });
+  sec.appendChild(curveLabel);
+
+  const previewWrap = document.createElement('div');
+  Object.assign(previewWrap.style, { display: 'flex', justifyContent: 'center', marginBottom: '6px' });
+  const preview = document.createElement('canvas');
+  preview.width = 200; preview.height = 80;
+  Object.assign(preview.style, { background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.15)' });
+  previewWrap.appendChild(preview);
+  sec.appendChild(previewWrap);
+  velCalUi.preview = preview;
+
+  const mkCurveSlider = (
+    label: string, tip: string, min: number, max: number, step: number,
+    valueOf: () => number, setter: (v: number) => void, format: (v: number) => string,
+  ): { row: HTMLDivElement; slider: HTMLInputElement; val: HTMLSpanElement } => {
+    const row = document.createElement('div');
+    Object.assign(row.style, {
+      display: 'grid', gridTemplateColumns: '50px 1fr 44px',
+      alignItems: 'center', gap: '6px', margin: '2px 0',
+    });
+    const lbl = document.createElement('span');
+    lbl.textContent = label;
+    lbl.title = tip;
+    Object.assign(lbl.style, { fontSize: '11px', color: 'rgba(255,255,255,0.75)' });
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = String(min); slider.max = String(max); slider.step = String(step);
+    slider.value = String(valueOf());
+    Object.assign(slider.style, { width: '100%' });
+    const val = document.createElement('span');
+    val.textContent = format(valueOf());
+    Object.assign(val.style, {
+      fontSize: '11px', fontFamily: 'monospace', textAlign: 'right',
+      color: 'rgba(255,255,255,0.9)',
+    });
+    slider.addEventListener('input', () => {
+      setter(parseFloat(slider.value));
+      val.textContent = format(parseFloat(slider.value));
+      drawCurvePreview();
+    });
+    row.appendChild(lbl);
+    row.appendChild(slider);
+    row.appendChild(val);
+    return { row, slider, val };
+  };
+  /* Sliders work in integer hundredths (0..100, 0..300, etc.) so HTML range
+     resolution is fine. Setters convert back to fractional. */
+  const floorUi = mkCurveSlider(
+    'floor', 'Audio gain at velocity 1 (× 100)',
+    0, 30, 1,
+    () => velocityCal.floor * 100,
+    (v: number) => velocityCal.setFloor(v / 100),
+    (v: number) => (v / 100).toFixed(2),
+  );
+  const ceilingUi = mkCurveSlider(
+    'ceiling', 'Audio gain at velocity 127 (× 100)',
+    60, 127, 1,
+    () => velocityCal.ceiling * 100,
+    (v: number) => velocityCal.setCeiling(v / 100),
+    (v: number) => (v / 100).toFixed(2),
+  );
+  const gammaUi = mkCurveSlider(
+    'gamma', 'Curve exponent (× 100). >1 = soft notes get quieter (piano-like).',
+    50, 300, 5,
+    () => velocityCal.gamma * 100,
+    (v: number) => velocityCal.setGamma(v / 100),
+    (v: number) => (v / 100).toFixed(2),
+  );
+  velCalUi.floorSlider = floorUi.slider; velCalUi.floorVal = floorUi.val;
+  velCalUi.ceilingSlider = ceilingUi.slider; velCalUi.ceilingVal = ceilingUi.val;
+  velCalUi.gammaSlider = gammaUi.slider; velCalUi.gammaVal = gammaUi.val;
+  sec.appendChild(floorUi.row);
+  sec.appendChild(ceilingUi.row);
+  sec.appendChild(gammaUi.row);
+
+  const curveResetBtn = document.createElement('button');
+  curveResetBtn.textContent = 'Reset curve (' + DEFAULT_CAL.floor.toFixed(2) + ' / '
+    + DEFAULT_CAL.gamma.toFixed(2) + ' / ' + DEFAULT_CAL.ceiling.toFixed(2) + ')';
+  Object.assign(curveResetBtn.style, {
+    fontSize: '11px', padding: '1px 6px', marginTop: '4px',
+    background: 'rgba(255,255,255,0.08)', color: '#eee',
+    border: '1px solid rgba(255,255,255,0.2)', borderRadius: '2px',
+    cursor: 'pointer',
+  });
+  curveResetBtn.addEventListener('click', () => {
+    velocityCal.resetCurve();
+    refreshCurveUi();
+  });
+  sec.appendChild(curveResetBtn);
+
+  /* ── Per-key auto-capture ── */
+  const capLabel = document.createElement('div');
+  capLabel.textContent = 'Per-key auto-capture';
+  Object.assign(capLabel.style, { fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginTop: '10px', marginBottom: '4px' });
+  sec.appendChild(capLabel);
+
+  const capHint = document.createElement('div');
+  capHint.textContent = 'Start, press every problem key at the loudness you intend "pp" to be, stop. HKL computes per-key gain so they all land at the target velocity. Push identity LUT first for best results.';
+  Object.assign(capHint.style, { fontSize: '10px', color: 'rgba(255,255,255,0.5)', marginBottom: '6px', lineHeight: '1.3' });
+  sec.appendChild(capHint);
+
+  const targetUi = mkCurveSlider(
+    'target', 'Desired output velocity for a "pp" press during capture',
+    5, 50, 1,
+    () => 25,
+    () => {}, /* setter no-op; value read on stop */
+    (v: number) => String(Math.round(v)),
+  );
+  velCalUi.targetSlider = targetUi.slider;
+  velCalUi.targetVal = targetUi.val;
+  /* Override the input handler: target is read-on-demand, no curve preview update. */
+  targetUi.slider.oninput = () => { targetUi.val.textContent = targetUi.slider.value; };
+  sec.appendChild(targetUi.row);
+
+  const capRow = document.createElement('div');
+  Object.assign(capRow.style, { display: 'flex', gap: '4px', alignItems: 'center', marginTop: '4px' });
+  const captureBtn = document.createElement('button');
+  captureBtn.textContent = 'Start capture';
+  Object.assign(captureBtn.style, {
+    fontSize: '11px', padding: '2px 6px',
+    background: 'rgba(255,255,255,0.08)', color: '#eee',
+    border: '1px solid rgba(255,255,255,0.2)', borderRadius: '2px',
+    cursor: 'pointer',
+  });
+  const status = document.createElement('span');
+  status.textContent = '0 / 280 keys recorded';
+  Object.assign(status.style, { fontSize: '11px', color: 'rgba(255,255,255,0.6)' });
+  captureBtn.addEventListener('click', () => {
+    if (!velocityCal.capturing) {
+      velocityCal.startCapture();
+      captureBtn.textContent = 'Stop & compute';
+      captureBtn.style.background = 'rgba(255,140,0,0.25)';
+      status.textContent = '0 / 280 keys recorded';
+      startCaptureTicker();
+    } else {
+      const target = parseFloat(velCalUi.targetSlider!.value);
+      const n = velocityCal.stopCaptureAndCompute(target);
+      stopCaptureTicker();
+      captureBtn.textContent = 'Start capture';
+      captureBtn.style.background = 'rgba(255,255,255,0.08)';
+      status.textContent = n + ' key' + (n === 1 ? '' : 's') + ' calibrated (target ' + target + ')';
+      refreshCurveUi();
+    }
+  });
+  velCalUi.captureBtn = captureBtn;
+  velCalUi.captureStatus = status;
+  capRow.appendChild(captureBtn);
+  capRow.appendChild(status);
+  sec.appendChild(capRow);
+
+  const totalRow = document.createElement('div');
+  Object.assign(totalRow.style, {
+    display: 'flex', gap: '8px', alignItems: 'center',
+    marginTop: '6px', fontSize: '11px', color: 'rgba(255,255,255,0.7)',
+  });
+  const totalLabel = document.createElement('span');
+  totalLabel.textContent = 'Currently calibrated keys: ';
+  const totalVal = document.createElement('span');
+  totalVal.textContent = String(velocityCal.calibratedKeyCount);
+  Object.assign(totalVal.style, { fontFamily: 'monospace', color: '#9cf' });
+  velCalUi.calKeyCount = totalVal;
+  const clearBtn = document.createElement('button');
+  clearBtn.textContent = 'Clear all per-key';
+  Object.assign(clearBtn.style, {
+    fontSize: '11px', padding: '1px 6px', marginLeft: 'auto',
+    background: 'rgba(255,255,255,0.08)', color: '#eee',
+    border: '1px solid rgba(255,255,255,0.2)', borderRadius: '2px',
+    cursor: 'pointer',
+  });
+  clearBtn.addEventListener('click', () => {
+    velocityCal.clearPerKey();
+    refreshCurveUi();
+  });
+  totalRow.appendChild(totalLabel);
+  totalRow.appendChild(totalVal);
+  totalRow.appendChild(clearBtn);
+  sec.appendChild(totalRow);
+
+  drawCurvePreview();
+  return sec;
+}
+
 function onKey(e: KeyboardEvent): void {
   const tag = (document.activeElement?.tagName || '').toLowerCase();
   if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
@@ -387,6 +706,7 @@ export function ensureLumaDiag(): void {
   });
   panel.appendChild(header);
   for (let i = 0; i < 5; i++) panel.appendChild(makeBoardSection(i));
+  panel.appendChild(makeVelocityCalSection());
   panel.appendChild(makeGlobalFooter());
   document.body.appendChild(panel);
 

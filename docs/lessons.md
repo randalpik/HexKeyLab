@@ -62,6 +62,38 @@ The read-back commands `0x3A` / `0x3B` still return the full byte (`hi<<4 | lo`)
 
 Don't "fix" the clamp upward without first verifying empirically on the device — this was discovered the hard way.
 
+### Per-KEY thresholds (via cmdSetMax/cmdSetMin) ARE full 8-bit
+
+The 4-bit clamp above applies *only* to the per-board SysEx commands. The per-key threshold writes that happen at TC startup (`setMaxPic` / `setMinPic` / `setAftertouchMaxPic` sending PIC commands `cmdSetMax`=67, `cmdSetMin`=68, `cmdSetAftertouchMax`=89) are full 0..254. Values in the `KeyData_N` files routinely reach 70+ and work fine. Don't conflate the two layers.
+
+### MAX threshold direction: HIGH = stricter, not more permissive
+
+"Abs. distance from MAX ADC to trigger" means how far the sensor reading has to drop from its rest value before the key event fires. Hall sensors on the Lumatone are wired rest=high ADC, pressed=low ADC. So:
+- **Higher MAX value → key must travel farther from rest before triggering** → if larger than the key's physical ADC swing, the key appears dead.
+- **Lower MAX → light touch triggers**, at the cost of velocity compression toward fortissimo (shorter press-time measurement window).
+
+For dead/weak keys, lower MAX. To recover compressed velocity range on weak-swing keys, *raise MIN* so the MIN-to-MAX gap shrinks proportionally. The gap is the press-time measurement budget.
+
+### The PIC's calibration mode (0x24) can't be exited without hardware macro buttons
+
+`sysexCallibrateKeys` (0x24) puts each PIC microcontroller into cal mode. The PIC commits and exits cal mode only on its own hardware macro-button signal — not on anything the BBB sends over UART. There is no PIC command for "end calibration" in the firmware's command enum. We verified this exhaustively (full disassembly of `decodePicMessage`, `setKeyboardMode`, `writeToPic`). When macro buttons are broken or disconnected, 0x24 calibration is unusable for that board and any subsequent SysEx threshold query for that board returns `STATE` (0x04) error until power-cycle.
+
+Path forward when macro buttons are broken: skip 0x24 entirely. Edit per-key calibration directly via `tools/lumatone-cal/keydata-live.py`. See `docs/lumatone-calibration.md`.
+
+### In-memory `kbd_preset_params` is indexed by PIC number, NOT spatial board
+
+Two related quirks compound:
+1. Boards 3 and 4 are physically swapped on Max's unit, so spatial position ≠ PIC number. `sysexBoardMap = [1, 2, 3, 5, 4]` translates spatial→PIC.
+2. TC's in-memory per-board state and on-disk `KeyData_N` files are indexed by **PIC number** (the BBB doesn't know about the physical swap; it only sees electrical wiring). Memory slot `i` (0..4) corresponds to `KeyData_(i+1)` and to PIC `i+1`.
+
+When poking memory for a key at HKL coords (q, r): compute `sysex_board = sysexBoardMap[board_group]`, then memory slot = `sysex_board - 1`. Using `board_group` as the slot index reads the WRONG board (the one physically swapped with the intended one).
+
+### `writeToPic` doesn't clear bits — clearing happens in AckBitClear, and only for SET commands
+
+TC's `writeToPic` dispatches based on bits in `picMessage0Flag[board]` but never clears them. Bit-clearing happens when the PIC acks the command, dispatched by `AckBitClear` keyed on the cmd byte. For GET commands (`cmdGetMax`=76, `cmdGetMin`=77, `cmdGetAftertouchMax`=96), `AckBitClear`'s case is the default no-op — the GET response is data, not a simple ack, and is handled by a different path in `decodePicMessage`.
+
+Practical consequence: setting bit `0x4000000` (the cmdGetAftertouchMax dispatch bit) to spoof "calibration complete" causes the BBB to send the query repeatedly until something else clears it. Don't assume bit persistence means writeToPic isn't running; check by other means.
+
 ---
 
 ## Tuning math

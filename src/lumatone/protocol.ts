@@ -24,6 +24,9 @@ export const SYSEX_CMD_CALIBRATE_EXPRESSION_PEDAL = 0x38;
 export const SYSEX_CMD_RESET_EXPRESSION_PEDAL_BOUNDS = 0x39;
 export const SYSEX_CMD_PERIPHERAL_CALIBRATION_DATA = 0x3E;
 
+/* Velocity / aftertouch curve LUTs. 0x08 = SET, 0x0A = RESET to factory. */
+export const SYSEX_CMD_SET_VELOCITY_CONFIG = 0x08;
+
 /* Per-board threshold & sensitivity calibration (firmware 1.0.7+ / 1.0.10+).
    The "SET_KEY_*" names are firmware-internal but apply to all keys on the
    target board — there is no true per-key threshold command. */
@@ -146,6 +149,23 @@ export function buildSetMinThreshold(board: number, minHigh: number, minLow: num
     (l >> 4) & 0xF, l & 0xF,
     0xF7,
   ]) as SysexMessage;
+}
+
+/* CMD 0x08 SET_VELOCITY_CONFIG: 128-byte velocity lookup table (7-bit values).
+   Caller passes the LUT in natural order — `lut[i] = output_velocity_at_input_i`
+   where i=0 is the slowest press and i=127 is the fastest. The firmware wants
+   the table reversed on the wire (per Terpstra driver sendVelocityConfig, lines
+   212–223: "shortest ticks count is the highest velocity"). */
+export function buildSetVelocityLut(lut: number[]): SysexMessage {
+  if (lut.length !== 128) throw new Error('velocity LUT must have 128 entries');
+  const bytes: number[] = [
+    0xF0,
+    SYSEX_MANU[0], SYSEX_MANU[1], SYSEX_MANU[2],
+    0x00, SYSEX_CMD_SET_VELOCITY_CONFIG,
+  ];
+  for (let i = 0; i < 128; i++) bytes.push(lut[127 - i] & 0x7F);
+  bytes.push(0xF7);
+  return new Uint8Array(bytes) as SysexMessage;
 }
 
 /* CMD 0x2B / 0x2C / 0x32: per-board single-value 4-bit setting (CC sensitivity,

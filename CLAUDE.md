@@ -86,6 +86,19 @@ The recording feature treats lattice coordinates as the source of identity, not 
 - **Key types**: 0=disabled, 1=noteOnNoteOff, 2=CC, 3=lumaTouch (continuous fader, NOT poly aftertouch).
 - **typeByte format**: `(faderUpIsNull << 4) | keyType`
 
+## Lumatone hardware (reverse-engineered, for calibration only)
+
+Most HKL work doesn't touch this. Documented here because deriving it again costs a session.
+
+- **Internals**: BeagleBone Black + Debian + 5 PIC microcontrollers. BBB↔PIC over UART `/dev/ttyO1`. BBB↔host over USB-MIDI plus USB-ethernet gadget.
+- **SSH access** (Max's unit only — broken macro buttons make this necessary): `ssh debian@192.168.6.2` (Linux host), password `temppwd`. Mac/Windows hosts use `192.168.7.2`.
+- **Firmware binary**: `/home/debian/TerpstraController/TerpstraController` (ARM 32-bit ELF, not stripped, full DWARF debug info, PIE). Launcher loop: `lmtn_launcher.sh` respawns it forever.
+- **Per-key calibration storage**: `/home/debian/TerpstraController/files/KeyData_1..5`. Text files, 4 sections × 56 values (MAX, MIN, validity, AT MAX). Loaded at every TC boot and pushed to PICs.
+- **In-memory `kbd_preset_params`**: TC `.bss` struct, 638-byte stride per board, section offsets +0x118 / +0x150 / +0x1c0 / +0x1fe. Indexed by PIC number (`sysex_board - 1`), NOT by spatial board_group — the physical-swap mapping only applies to file naming / SysEx routing, never to in-memory layout.
+- **0x24 calibration is unusable for Max's boards 1/4/5**. PIC firmware waits for hardware macro-button signal; no SysEx or BBB-side trick can substitute. Use direct file/memory editing instead.
+- **Toolchain**: `tools/lumatone-cal/` — Python scripts for live per-key editing (`keydata-live.py`), local file inspection (`keydata-locate.py`), diagnostic state dumps (`lmtncal-read.py`).
+- **Full guide**: `docs/lumatone-calibration.md`. Read that before doing any calibration work.
+
 ## Browser/runtime context
 
 - **Primary browser**: Firefox.
@@ -99,6 +112,7 @@ The recording feature treats lattice coordinates as the source of identity, not 
 - **`docs/architecture.md`** — what HKL does and how it's organized. Feature-level reference.
 - **`docs/lessons.md`** — gotchas, dead-ends, anti-patterns, hard-won truths. Read before debugging anything that smells familiar.
 - **`docs/decisions.md`** — append-only log of non-obvious design choices. Add an entry when committing a decision worth remembering.
+- **`docs/lumatone-calibration.md`** — how to do per-key hardware calibration via SSH + scripts in `tools/lumatone-cal/`. Only needed when working around the broken macro buttons on Max's unit.
 - **`README.md`** — user-facing project description.
 
 ## Workflow patterns

@@ -23,6 +23,20 @@ The expression jack supports a runtime calibration mode (CMD 0x38) that learns t
 
 CC numbers cannot be remapped via SysEx; the firmware does not expose this. Sensitivity (CMD 0x03) is a 0–127 gain-style scalar. Polarity invert (CMD 0x04) is a boolean.
 
+### 1.2.1 Lumatone internals (reverse-engineered)
+
+Useful only for per-key hardware calibration on units with broken macro buttons or for diagnostics that the SysEx surface doesn't cover. Normal HKL operation requires none of this; documented here so future sessions can find it.
+
+The Lumatone is a **BeagleBone Black running Debian** plus **five PIC microcontrollers** (one per octave board). The BBB talks to the PICs over UART `/dev/ttyO1`. The host (e.g., HKL) talks to the BBB over USB-MIDI. The BBB also exposes itself as a USB-ethernet gadget; from a Linux host, the device IP is `192.168.6.2` (Mac/Windows: `192.168.7.2`). SSH credentials: `debian` / `temppwd`. The on-device firmware is `/home/debian/TerpstraController/TerpstraController` (ARM 32-bit ELF, not stripped, full debug info). A wrapper script `lmtn_launcher.sh` respawns it in an infinite loop.
+
+**Per-key calibration state** lives in two places:
+- On disk: `/home/debian/TerpstraController/files/KeyData_1..5`. Plain text, comma-separated, 4 sections × 56 values per file (MAX threshold, MIN threshold, validity, AT MAX threshold). Loaded at every TC boot via `loadKeySetting`/`loadKeyThresholds` and pushed to PICs via `setMaxPic`/`setMinPic`/`setValidPic`/`setAftertouchMaxPic`. **Persistent.**
+- In RAM: the `kbd_preset_params` struct in TC's `.bss`. Stride 638 bytes per board; section offsets `+0x118` (MAX), `+0x150` (MIN), `+0x1c0` (validity), `+0x1fe` (AT MAX). **Volatile; lost at TC restart or power cycle.**
+
+Critical indexing detail: both layers (file naming and in-memory slot) use **PIC number** (`sysex_board`), not spatial board position. Memory slot `i` ↔ `KeyData_(i+1)` ↔ PIC `i+1`. The physical-swap mapping `sysexBoardMap = [1,2,3,5,4]` only enters when translating HKL's spatial board_group to the PIC number — never when indexing the firmware's internal data structures.
+
+The `tools/lumatone-cal/` directory contains Python scripts that read/write this state both volatile (`/proc/<tc-pid>/mem`) and persistent (file edit). See `docs/lumatone-calibration.md` for the per-key calibration workflow.
+
 ### 1.3 Audio architecture
 
 HKL is self-contained. The Lumatone sends MIDI on a fixed (channel, note) addressing scheme; HKL maps those addresses to lattice positions based on the current layout, computes frequencies from the active tuning system, and renders audio directly through its sample/oscillator engine. There is no external synth in the signal path. A3 = 220 Hz is the central reference of the tuning system.

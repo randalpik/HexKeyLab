@@ -16,6 +16,7 @@
 //      pressure increases. A time-based EWMA smooths the transitions.
 
 import { audio } from '../state/audio.js';
+import { velocityCal } from './velocityCal.js';
 import type { KeyId } from '../types.js';
 
 export const AFTERTOUCH_VEL_FLOOR = 72;       /* velocity equivalent of aftertouch = 0   */
@@ -37,11 +38,11 @@ export const AFTERTOUCH_HANDOVER_BASE_S = 0.075;  /* minimum handover duration *
 export const AFTERTOUCH_HANDOVER_SCALE_S = 0.375; /* added time per unit |log(target)| */
 export const AFTERTOUCH_HANDOVER_MAX_S = 0.750;   /* cap for extreme ratios */
 
-/* velocity → baseVol, mirroring SampleEngine's internal curve so ratios line up. */
+/* velocity → baseVol, via the user-configurable velocityCal curve. Default
+   parameters (floor 0.10, ceiling 1.0, gamma 2.0) reproduce the prior hardcoded
+   quadratic 0.10 + 0.90·(v/127)² exactly. */
 export function velocityBaseVol(v: number): number {
-  v = Math.max(1, Math.min(127, v));
-  const vn = v / 127;
-  return 0.10 + 0.90 * vn * vn;
+  return velocityCal.curveGain(v);
 }
 
 /* target pressureGain multiplier for a given pressure and this voice's strike velocity */

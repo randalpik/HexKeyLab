@@ -4,7 +4,7 @@
 // scheduleSegmentSwitch, commitRampSync integrates in-flight ramp position).
 
 import { recordSeamEvent } from './diagnostics/loopOverlay.js';
-import { inflightExpRampValue } from './aftertouch.js';
+import { inflightExpRampValue, velocityBaseVol } from './aftertouch.js';
 import { INSTRUMENTS } from './samples-data.js';
 
 const RELEASE_SCALE = 0.5;
@@ -273,9 +273,8 @@ const activeVoices: Record<string, any> = {};
     if(!nearest)return;
     var instr=INSTRUMENTS[currentInstrument];
     var rate=freq*(instr.transpose||1)/nearest.freq;
-    var vel=(velocity!==undefined)?velocity/127:0.85;
     var instrVol=instr.volume||1.0;
-    var baseVol=(0.10+0.90*vel*vel)*instrVol;
+    var baseVol=velocityBaseVol(velocity!==undefined?velocity:108)*instrVol;
     /* ── ABOVE-RANGE VIBRATO ATTENUATION ──
        When a note is requested above the highest sampled pitch, the sample gets
        pitch-shifted up — which also speeds up its vibrato (cello's ~5Hz vibrato

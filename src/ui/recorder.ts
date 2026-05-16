@@ -15,6 +15,7 @@ import { applySnapshot } from '../recording/apply.js';
 import { serializeHkr, parseHkr, HkrParseError } from '../recording/hkr.js';
 import { sessionToMidi } from '../midi-io/export.js';
 import { midiToSession, selfTestRoundTrip } from '../midi-io/import.js';
+import { sessionToLilypond } from '../transcription/index.js';
 import {
   startCapture, stopCapture, isCapturing, isCaptureSupported,
 } from '../audio/capture.js';
@@ -87,6 +88,7 @@ function updateButtons(): void {
   const btnLoad = $<HTMLButtonElement>('btnLoadHkr');
   const btnExport = $<HTMLButtonElement>('btnExportMidi');
   const btnImport = $<HTMLButtonElement>('btnImportMidi');
+  const btnLy = $<HTMLButtonElement>('btnExportLilypond');
   if (btnRec) {
     btnRec.textContent = rec ? '■ Stop' : '● Rec';
     btnRec.classList.toggle('recording', rec);
@@ -102,6 +104,7 @@ function updateButtons(): void {
   if (btnExport) btnExport.disabled = !hasSession || rec || play;
   /* Import requires a loaded .hkr to merge MIDI into (see onImportMidiClick). */
   if (btnImport) btnImport.disabled = !hasSession || rec || play;
+  if (btnLy) btnLy.disabled = !hasSession || rec || play;
 }
 
 function updateStatus(): void {
@@ -262,6 +265,42 @@ function onImportMidiClick(): void {
   if (inp) { inp.value = ''; inp.click(); }
 }
 
+function onExportLilypondClick(): void {
+  if (!curSession || isRecording() || isPlaying()) return;
+  const dlg = $<HTMLDialogElement>('lyExportDialog');
+  if (!dlg) return;
+  const titleInp = $<HTMLInputElement>('lyTitle');
+  const numInp = $<HTMLInputElement>('lyNumerator');
+  const bpmInp = $<HTMLInputElement>('lyBpm');
+  if (titleInp && titleInp.value.trim() === '') titleInp.value = 'Untitled';
+  if (numInp && numInp.value.trim() === '') numInp.value = '4';
+  if (bpmInp) bpmInp.value = '';
+  dlg.showModal();
+}
+
+function onLyExportSubmit(e: Event): void {
+  e.preventDefault();
+  const dlg = $<HTMLDialogElement>('lyExportDialog');
+  if (!curSession || !dlg) { dlg?.close(); return; }
+  const title = ($<HTMLInputElement>('lyTitle')?.value ?? 'Untitled').trim() || 'Untitled';
+  const numerator = Math.max(1, Math.round(parseFloat($<HTMLInputElement>('lyNumerator')?.value ?? '4') || 4));
+  const bpmRaw = $<HTMLInputElement>('lyBpm')?.value ?? '';
+  const bpmHint = bpmRaw.trim() === '' ? null : (parseFloat(bpmRaw) || null);
+  try {
+    const result = sessionToLilypond(curSession, { numerator, bpmHint, title });
+    downloadBlob('hkl-' + isoStamp() + '.ly',
+      new Blob([result.ly], { type: 'text/plain' }));
+    dlg.close();
+  } catch (err) {
+    setStatusText('LilyPond export failed: ' + (err as Error).message);
+    dlg.close();
+  }
+}
+
+function onLyCancel(): void {
+  $<HTMLDialogElement>('lyExportDialog')?.close();
+}
+
 async function onImportMidiChange(e: Event): Promise<void> {
   const inp = e.target as HTMLInputElement;
   const file = inp.files && inp.files[0];
@@ -292,6 +331,12 @@ export function initRecorderUI(): void {
   if (btnExport) btnExport.addEventListener('click', onExportMidiClick);
   const btnImport = $<HTMLButtonElement>('btnImportMidi');
   if (btnImport) btnImport.addEventListener('click', onImportMidiClick);
+  const btnLy = $<HTMLButtonElement>('btnExportLilypond');
+  if (btnLy) btnLy.addEventListener('click', onExportLilypondClick);
+  const lyForm = $<HTMLFormElement>('lyExportForm');
+  if (lyForm) lyForm.addEventListener('submit', onLyExportSubmit);
+  const lyCancel = $<HTMLButtonElement>('lyCancelBtn');
+  if (lyCancel) lyCancel.addEventListener('click', onLyCancel);
   const fiH = $<HTMLInputElement>('fileInputHkr');
   if (fiH) fiH.addEventListener('change', (e) => { void onLoadHkrChange(e); });
   const fiM = $<HTMLInputElement>('fileInputMidi');
@@ -309,6 +354,12 @@ export function initRecorderUI(): void {
       getSession: (): HkrSession | null => curSession,
       setSession: (s: HkrSession): void => { curSession = s; updateButtons(); updateStatus(); },
       selfTestRoundTrip: (): unknown => curSession ? selfTestRoundTrip(curSession.snapshot) : [],
+      transcribe: (opts?: { numerator?: number; bpmHint?: number | null; title?: string }): unknown =>
+        curSession ? sessionToLilypond(curSession, {
+          numerator: opts?.numerator ?? 4,
+          bpmHint: opts?.bpmHint ?? null,
+          title: opts?.title ?? 'Untitled',
+        }) : null,
     };
   }
 

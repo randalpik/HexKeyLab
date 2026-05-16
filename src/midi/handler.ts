@@ -28,6 +28,7 @@ import {
   setDamperDepth, sostenutoOn, sostenutoOff,
 } from '../audio/engine.js';
 import { filterPA } from '../audio/aftertouch.js';
+import { velocityCal } from '../audio/velocityCal.js';
 import { fixedMidiToKey } from './engine.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 
@@ -123,6 +124,10 @@ export function handleMidiMessage(e: MIDIMessageEvent): void {
     audio.sustainedKeys.delete(key); /* re-struck while sustained → back to normal */
     selection.selectedKeys.add(key);
     audio.keyVelocity[key] = d2;
+    /* Per-key gain auto-capture: while a capture session is active, every
+       note-on velocity feeds a per-key sample list. Out of capture mode this
+       is a single boolean check. */
+    velocityCal.recordSample(key, d2);
   } else if (status === 0x80 || (status === 0x90 && d2 === 0)) {
     if (audio.sustainPedalDown || audio.sostenutoLockedKeys.has(key)) {
       /* damper or sostenuto holds the note — keep sounding, mark as sustained */

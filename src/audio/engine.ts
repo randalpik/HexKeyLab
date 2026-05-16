@@ -22,6 +22,7 @@ import {
   AFTERTOUCH_RAMP_S,
   aftertouchTargetGain, inflightExpRampValue, velocityBaseVol,
 } from './aftertouch.js';
+import { velocityCal } from './velocityCal.js';
 import { draw } from '../render/draw.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import {
@@ -121,12 +122,16 @@ export function noteOn(key: KeyId, velocity?: number): void {
   const parts = key.split(','), q = +parts[0], r = +parts[1];
   const freq = keyFreq(q, r);
   const wf = audio.activeWaveform;
+  /* Stage 1 velocity calibration: per-key gain applied once here, before the
+     sample/oscillator branch. Raw `velocity` is preserved for the recording
+     hook below so playback re-applies the current transform. */
+  const adjVel = velocityCal.applyPerKeyGain(key, velocity ?? 100);
   if (instrIsSample() && SampleEngine.isInstrumentLoaded(wf)) {
     SampleEngine.setInstrument(wf);
     /* Velocity drives initial volume (via baseVol in segGain); pressureGain stays
        at 1.0 until the first aftertouch message for a sustained instrument, then
        ramps to the aftertouch-dictated gain. */
-    SampleEngine.noteOn(key, freq, velocity || 100);
+    SampleEngine.noteOn(key, freq, adjVel);
     audio.activeOscs[key] = { type: 'sample', freq };
   } else if (!instrIsSample()) {
     const type = wf as OscillatorType;
@@ -141,11 +146,11 @@ export function noteOn(key: KeyId, velocity?: number): void {
     let vol = (type === 'sine')     ? 0.1779   /* 0.1259 × √2  */
             : (type === 'triangle') ? 0.2179   /* 0.1259 × √3  */
             :                         0.1259;  /* square (RMS = peak) */
-    /* Velocity scaling — mirrors SampleEngine's 0.10 + 0.90·vel² curve so
-       oscillator dynamics line up with sample instruments, and so PA's
-       baseVol(eqVel)/baseVol(strikeVel) ratio (handleAftertouch) lands voices
-       at matching peak loudness regardless of strike velocity. */
-    vol *= velocityBaseVol(velocity || 100);
+    /* Velocity scaling — mirrors SampleEngine's curve so oscillator dynamics
+       line up with sample instruments, and so PA's baseVol(eqVel)/baseVol(strikeVel)
+       ratio (handleAftertouch) lands voices at matching peak loudness regardless
+       of strike velocity. velocityBaseVol consults velocityCal's user curve. */
+    vol *= velocityBaseVol(adjVel);
     /* Low-frequency perceptual loudness compensation (Fletcher-Munson). Pure
        tones lose perceived loudness below ~440 Hz; recorded instrument samples
        don't need this because their natural recordings already capture the
@@ -218,7 +223,11 @@ export function stopAllNotes(): void { for (const k in audio.activeOscs) noteOff
 export function handleAftertouch(key: KeyId, pressure: number): void {
   if (!audio.audioEnabled || !audio.audioCtx || instrDecays()) return;
   const e = audio.activeOscs[key]; if (!e) return;
-  const strikeVel = audio.keyVelocity[key] !== undefined ? audio.keyVelocity[key] : 100;
+  /* Strike anchor must match the velocity actually used at noteOn — apply the
+     same per-key gain so PA's baseVol(eqVel)/baseVol(strikeVel) ratio stays
+     consistent with the voice's onset volume. */
+  const rawStrike = audio.keyVelocity[key] !== undefined ? audio.keyVelocity[key] : 100;
+  const strikeVel = velocityCal.applyPerKeyGain(key, rawStrike);
   const target = aftertouchTargetGain(pressure, strikeVel);
   const now = audio.audioCtx.currentTime;
   /* Uniform short ramp on every PA message — the handover-duration scaling
