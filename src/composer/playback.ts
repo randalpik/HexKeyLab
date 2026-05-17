@@ -100,7 +100,10 @@ export function buildPlayback(model: ComposerModel): PlaybackEvent[] {
       const local = child.localName;
       const ticks = elementDurationTicks(child);
 
-      if (local === 'rest') {
+      if (local === 'rest' || local === 'space') {
+        /* Both rests and (placeholder) spaces advance the voice clock
+           silently. Including spaces in the stream lets a voice that's
+           empty in some measures correctly time-shift its later content. */
         tTicks += ticks;
         i++;
         continue;
@@ -155,13 +158,13 @@ export function buildPlayback(model: ComposerModel): PlaybackEvent[] {
 function pushContentChildren(layer: Element, out: Element[]): void {
   for (const c of Array.from(layer.children)) {
     const ln = c.localName;
-    if (ln === 'chord' || ln === 'note' || ln === 'rest') {
+    if (ln === 'chord' || ln === 'note' || ln === 'rest' || ln === 'space') {
       out.push(c);
     } else if (ln === 'beam') {
       /* Descend into beam wrappers. */
       for (const cc of Array.from(c.children)) {
         const ln2 = cc.localName;
-        if (ln2 === 'chord' || ln2 === 'note' || ln2 === 'rest') out.push(cc);
+        if (ln2 === 'chord' || ln2 === 'note' || ln2 === 'rest' || ln2 === 'space') out.push(cc);
       }
     }
   }

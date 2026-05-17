@@ -43,6 +43,10 @@ export interface KeyStatsSnapshot {
   stddev: number;
   /** Coefficient of variation; -1 if undefined. */
   cv: number;
+  /** 5th and 95th percentile velocity. Action targets: p5 ≤ 30 (can play quiet)
+   *  and p95 ≥ 100 (can play loud) for an unrestricted key. */
+  p5: number;
+  p95: number;
 }
 
 export interface PrefsV1 {
@@ -236,7 +240,12 @@ function loadVelocityCal(o: unknown): VelocityCalPrefs | undefined {
       const r = val as Record<string, unknown>;
       if (typeof r.n === 'number' && typeof r.mean === 'number'
           && typeof r.stddev === 'number' && typeof r.cv === 'number') {
-        s[k] = { n: r.n, mean: r.mean, stddev: r.stddev, cv: r.cv };
+        /* p5/p95 are new — accept stored values when present, otherwise fall
+           back to mean ± stddev as a reasonable approximation until samples
+           accumulate. */
+        const p5 = typeof r.p5 === 'number' ? r.p5 : Math.max(0, r.mean - r.stddev);
+        const p95 = typeof r.p95 === 'number' ? r.p95 : Math.min(127, r.mean + r.stddev);
+        s[k] = { n: r.n, mean: r.mean, stddev: r.stddev, cv: r.cv, p5, p95 };
       }
     }
     if (Object.keys(s).length > 0) stats = s;

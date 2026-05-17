@@ -730,3 +730,182 @@ Pitch spelling reuses `noteName(q, r)` / `keyOctave(q, r)` from `src/tuning/note
 **Where**:
 - Planning file (transient): `/home/max/.claude/plans/now-that-we-have-idempotent-pudding.md`.
 - All Phase 1 implementation under `src/composer/`, `src/bridge/`, `composer.html`, and `vite.config.ts`.
+
+---
+
+## Per-key velocity calibration metrics: p5/p95 over mean/CV (2026-05-17)
+
+**Picked**: Per-key velocity diagnostic surface uses `p5` and `p95` (outlier-rejecting velocity floor and ceiling) as the primary metrics. Three outlier categories tied to direct hardware actions: "Can't play quiet" (p5 > 30 → raise MAX), "Can't play loud" (p95 < 100 → raise MIN), "Narrow range" (p95−p5 < 60 → raise MAX, accept hardware ceiling, lean on HKL gain/curve for residual).
+
+**Rejected**:
+- **Mean + coefficient-of-variation (the initial implementation)**: built on a noise-floor hypothesis where MIN=0 was supposed to be catching rest-state sensor noise, producing random velocity output. CV>0.3 was the predicted alarm. Empirically refuted on Max's unit: across 280 keys with MIN=0 and full play-through, **zero keys** showed CV>0.3. The "random velocity" symptom Max originally reported was actually constrained-range keys feeling inconsistent because their narrow output range got stretched across his intended dynamics — diagnosable by p5/p95 but invisible to mean/CV.
+- **Raw ADC capture via SSH backchannel**: technically reachable but ~3× the implementation cost and would mostly tell us what MIDI velocity statistics already encode. Deferred indefinitely.
+
+**Why**:
+- MIN/MAX are independent monotonic knobs that shift the velocity distribution. Mean only captures the center; CV only captures variance. Neither identifies which *end* of the velocity range is constrained, which is what determines whether to raise MAX (drops p5) vs raise MIN (lifts p95).
+- p5/p95 are outlier-resistant (one weird press doesn't move them), but still capture the "this is what realistic play can actually produce" envelope.
+- The three failure modes map directly to actions: position on a (p5, p95) scatter plot identifies the right hardware knob without further interpretation.
+
+**Constraint surfaced**: The threshold tuning ceiling is the key's intrinsic dynamic range — physical ADC swing × user's hand-speed range. MIN/MAX position the velocity distribution within that envelope but cannot independently expand both ends. Keys hitting that ceiling get residual range bridged by HKL's per-key gain and global curve.
+
+**Where**:
+- `src/audio/velocityCal.ts` — `KeyStats` now carries `p5`/`p95`; `KeyStatsSnapshot` persists them.
+- `src/state/persistence.ts` — `KeyStatsSnapshot` interface; validator gracefully accepts older snapshots that lack p5/p95 by approximating from mean±stddev.
+- `src/lumatone/lumadiag.ts` — scatter axes are (p5, p95); outlier lists are the three action-oriented categories; inspector histogram has p5/p95 markers.
+
+---
+
+## Per-key calibration via bulk-raise + per-key rescue (2026-05-17)
+
+**Picked**: Convergence pattern is *asymmetric*. Raise MAX globally via `--bulk-raise`, identify the small minority of keys that go dead at the new level, rescue them individually with single-key writes. Iterate 3-4 global passes; `--bulk-raise` only writes keys whose current value is below the target so each pass preserves prior rescues automatically.
+
+**Rejected**:
+- **Per-key bottom-up tuning** (raise each key independently until it's just-right): correct but expensive (~280 iterations of bisecting per key) and unnecessary — most keys have plenty of physical swing headroom and behave well at any reasonable MAX.
+- **Stats-driven per-key target computation** (read p95 → compute per-key MAX): would require coordinating data flow from HKL localStorage → BBB script. Not needed when the empirical iteration converges fast.
+- **Lower-then-raise** (start permissive, iteratively narrow): biased the wrong way. The keyboard's worst-case key dictates the floor, but most keys want more space.
+
+**Why**:
+- Empirically Max's keyboard has ~5-20 dead keys at MAX=100, fewer at 130, very few at 160. Healthy keys dominate. Asymmetric search converges in ~1 hour vs. days of per-key bottom-up.
+- `--bulk-raise` semantics make iteration safe: prior per-key rescues at a lower MAX stay lower because they're already below the next target. No script needs to track which keys were hand-tuned.
+
+**Where**:
+- `tools/lumatone-cal/keydata-live.py` — `--bulk` (unconditional), `--bulk-raise` (only-if-below), `--bulk-lower` (only-if-above) commands.
+- `docs/lumatone-calibration.md` — full workflow procedure under "Workflow: full-keyboard calibration".
+
+---
+
+## Composer cursor: linear flat-children across measures (2026-05)
+
+**Picked**: The cursor is a single integer per voice, indexing into the *concatenated* flat stream of `(chord|note|rest|space-placeholder)` content across all measures, in measure order. `locateCursor(voice, c)` maps that integer to `(measureIdx, layer, withinIdx)` at insertion-point semantics; `locateFlatElement(voice, idx)` does element-at-index lookup at strict-less-than semantics for deletes.
+
+**Rejected**: A per-measure cursor — `{ measureIdx, withinIdx }` — would have matched MEI's tree shape more directly, but every navigation primitive (arrow keys, voice switch, dot/tie targeting) becomes two coordinates that need to be moved in concert. The linear-integer model collapses voice traversal to `cursor++` / `cursor--` and keeps `getCurrentElement` and friends as one-liners.
+
+**Why**: the keyboard flow is sequential — the user enters notes one after another, occasionally backing up. They don't usually think "measure 3 beat 2" while entering; they think "the next note" or "the previous note". Linear cursors match that mental model. Multi-measure traversal is automatic.
+
+**Constraint surfaced**: boundary semantics get subtle. Cursor=N at a position where flat[N] is in measure m+1 and flat[N-1] is in measure m means "the cursor sits between m and m+1." For insertion, that should target m's trailing edge OR m+1's leading edge depending on context. We use strict-less-than for the locator (cursor advances to next layer at boundary) plus a special-case override in `insertWithSplit` for the "partial real measure followed by placeholder-only measure" case (extends m₁ rather than consuming m₂'s placeholder).
+
+**Where**:
+- `src/composer/model.ts` — `flatChildren`, `locateCursor`, `locateFlatElement`, and every navigation/mutation that consumes a cursor.
+
+---
+
+## Composer empty-voice placeholders: `<space>` over `<mSpace>`, `<mRest>`, or manual SVG (2026-05)
+
+**Picked**: every layer with no real content carries one or more `<space dur="…" data-placeholder="true">` children whose ticks sum to the measure's full duration. Verovio honors `<space dur>` as a width-reserving layout-only element (no glyph drawn). Placeholders also count as flat-children, so the cursor can navigate to an arbitrary measure of an otherwise-empty voice. The `data-placeholder="true"` private attribute distinguishes them from any user-meaningful `<space>` elements (we don't emit those today; the marker is defensive).
+
+**Rejected**:
+- `<mSpace/>` — the standard MEI "tacit measure" marker. Verified via headless inspector: **zero layout effect** in Verovio. Same bar-line / staff-line gap as a truly-empty layer.
+- `<rest dur="1">` with `@visible="false"` — proper layout width allocation, but `@visible="false"` is NOT honored by Verovio. The rest renders visibly.
+- Hand-drawing the empty-measure layout (cursor overlay covering Verovio's degenerate bbox + custom barline placement) — too invasive, fragile across Verovio updates, fights the engraver.
+
+**Why**:
+- `<space>` is the only MEI element we tested that both reserves measure width AND draws nothing.
+- Using it as a navigation target lets the user start a voice partway through the score without manually entering whole rests to reach that measure. The lattice-coord-driven workflow benefits.
+- The placeholder invariant ("a layer either has real content OR has placeholders summing to measure, never both") is enforced by `normalizePlaceholders()` called from every mutation entry point. Idempotent and cheap.
+
+**Where**:
+- `src/composer/model.ts` — `normalizePlaceholders`, integration with insert/delete/replace, `replaceDocument` migration.
+- `src/composer/cursor.ts` — staff-anchored fallback positioning for placeholder targets (degenerate bbox).
+- `src/composer/playback.ts` — `<space>` advances voice clock silently so empty-voice measures correctly time-shift later content.
+- `src/composer/save.ts` — MusicXML export skips placeholders; the padding-with-rest logic handles voice-silent-this-measure naturally.
+
+---
+
+## Composer accidentals: clamp at ±3 + per-staff carry-state display pass (2026-05)
+
+**Picked**: Composer supports alterations from ±1 to ±3, expressed as a single canonical MEI accidental token (`s`, `f`, `x` for ×, `ff`, `ts`, `tf`). Higher alterations are FILTERED OUT at entry in `input.ts:commitDuration` with a status message. The accidental display pass runs at serialize-time on the cloned doc, walks per-measure per-staff, and decides each note's `@accid` (visible) vs `@accid.ges` (hidden) based on carry-state + key signature.
+
+**Rejected**:
+- **Multi-`<accid>` children for compound alterations** (e.g., `<accid x/><accid x/>` for ×4). MEI 5 allows it; Verovio source has comments suggesting it handles spacing. **It doesn't, in practice** — headless verification: two children render at identical bbox, complete overlap. Fixing would require Verovio patches or hand-positioning glyphs (which spirals into reserving layout space). User accepted clamping at ±3.
+- **`@accid="ss"` (precomposed `##`)** instead of `@accid="x"` (canonical ×) for double-sharp. Both are valid MEI 5 tokens but map to different SMuFL glyphs (U+E269 vs U+E263). × is the conventional engraving form.
+- **Bridge-side clamping** at ±3. The bridge passes through the full HKL spelling string; clamping happens in Composer's entry path. Keeps the bridge a simple passthrough.
+
+**Why**:
+- The single-token range covers 99%+ of real-world cases. ±4+ on HKL's lattice means extreme positions you'd practically reach only via septimal shifts; the user can re-spell.
+- Single-token form is idempotent across save/load and supports clean visibility hiding via `@accid.ges` (one attribute, lossless gestural pitch).
+- Per-staff (not per-voice) carry-state matches engraving convention.
+
+**Constraint surfaced**: a previous iteration tried multi-`<accid>` stacking with greedy decomposition (one triple `ts` first, then doubles `x`). Headless inspection caught the overlap. The whole feature was reverted to single-token + entry filter; legacy `.hkc` files that briefly saved with `<accid>` children get migrated on load to a single clamped `@accid`.
+
+**Where**:
+- `src/composer/accidentals.ts` — `alterFromCount`, `alterFromToken`, `tokenFromAlter`, `getNoteAlter`, `computeAccidentalDisplay`.
+- `src/composer/model.ts` — `buildNoteElement` emits single `@accid`; `replaceDocument` migrates legacy forms.
+- `src/composer/input.ts` — `commitDuration` filters held notes with `|alter| > 3`.
+
+---
+
+## Composer ties: private stub flags + bidirectional partner pointers + auto-resolve on insert (2026-05)
+
+**Picked**: realized tie pairs use single-letter `@tie` values (`i`/`m`/`t`) per MEI 5. Each side carries a `data-tie-partner` custom attribute pointing at the partner's xml:id for O(1) orphan lookup. Stubs (a tie initiated by `=` with no destination yet) use a private `data-pending-tie="true"` attribute and have no Verovio rendering. They auto-resolve into a real `@tie="i"/"t"` pair when a matching pitch is entered after them.
+
+**Rejected**:
+- **Compound `@tie="ti"` / `"it"` for medial pieces** — not valid MEI 5; Verovio rejects with `Unsupported data.TIE 'ti'`. Use `m` for medial.
+- **`<lv>` (laissez vibrer)** for stub ties — Verovio renders nothing without `endid` or `tstamp2` (implements older MEI 4 stricter rule). `@dur` isn't consulted. Tested several configurations, all silent.
+- **`@tie="i"` (single MEI form) on a stub** — same silent rendering AND triggers "Expected median or terminal" warnings.
+- **Console-level suppression of Verovio tie warnings** — user rejected; tie warnings are diagnostically useful elsewhere.
+
+**Why**:
+- Single-letter `@tie` is the only form Verovio reliably renders.
+- Bidirectional `data-tie-partner` makes orphan unwind O(1).
+- Auto-resolve at insert time means the user doesn't have to remove and re-add a stub once they've entered the destination note.
+
+**Where**:
+- `src/composer/model.ts` — `toggleTieOnCurrent`, `resolvePendingTies`, `orphanTiePartners`, chain-tie wiring in `insertWithSplit`.
+
+---
+
+## Composer time-sig change: per-measure truncation over rebuild-and-reflow (2026-05)
+
+**Picked**: when the user changes the meter, walk each measure × voice's layer in place. Find the FIRST element that overflows the new measure's tick budget; shorten it to fit (or drop if `remaining === 0`); drop everything after. Re-normalize placeholders; clamp cursors; re-apply barlines. Measure count is preserved; enlarging is a no-op.
+
+**Rejected**: an earlier `rebuildMeasureLayout` flattened all content per voice, coalesced tied chains into single notional events, tore down every measure, built a fresh measure 1, and replayed the streams through `insertChordAtCursor`-with-auto-split. Worked when the model was simple but became misaligned once placeholders / multi-measure / per-measure invariants landed.
+
+**Why**:
+- Truncation respects measure boundaries the user has laid out. Going from 4/4 → 3/4 keeps each measure's first three quarters and drops the fourth; reflow would shift everything.
+- The truncation algorithm is O(notes-per-measure) and uses existing orphan-cleanup primitives. The rebuild path had ~80 lines of snapshot-and-replay with tie-chain coalescing logic that misbehaved when key-sig / tempo / accidental state was involved.
+- "Don't surprise me when I change the meter" — truncation is predictable.
+
+**Constraint surfaced**: tied chains crossing the new truncation point unwind via `orphanTiePartners`, but no automatic re-tying under the new meter. Documented as out-of-scope.
+
+**Where**:
+- `src/composer/model.ts` — `truncateOverflowingMeasures`, `truncateLayer`, `setTimeSig`.
+- `src/composer/setupDialog.ts` — confirmation prompt only when the new meter is SMALLER and content exists.
+
+---
+
+## Composer rendering polish: notehead-on-top + geometricPrecision everywhere (2026-05)
+
+**Picked**:
+- After every Verovio render, `render.ts` walks each `<g class="note">` and moves its `<g class="notehead">` child to the LAST sibling position so SVG document order puts the colored notehead ON TOP of the black stem.
+- All strokes (staff lines, ledger lines, bar lines, stems) use `shape-rendering: geometricPrecision` in CSS.
+
+**Rejected**:
+- Default Verovio child order (notehead first, then stem) — stem then paints over the colored notehead, producing a visible black intrusion into the colored circle.
+- `crispEdges` selectively per-element — caused inconsistent stem widths (1px vs 2px depending on sub-pixel x parity) and the empty-initial-measure bar-gap problem. Degrades badly at high zoom-out: 1px strokes round to 0.
+
+**Why**:
+- DOM reorder is a 4-line post-process; doesn't fight Verovio's layout. SVG z-order = document order.
+- `geometricPrecision` anti-aliases sub-pixel positions so every stroke renders to its specified width regardless of placement. Foundation for in-app zoom control: at high zoom-out, anti-aliased strokes fade to a faint line instead of disappearing.
+
+**Where**:
+- `src/composer/render.ts` — notehead-on-top reorder after `tk.renderToSVG`.
+- `composer.html` — single CSS rule covering all stroke classes.
+
+---
+
+## Composer headless inspection tool (2026-05)
+
+**Picked**: `tools/composer-inspect/inspect.mjs` — Node script that launches headless Chromium via remote-debugging-port, navigates to the running dev server's `/composer.html`, waits for Verovio WASM to load and render, runs an arbitrary JS expression in the page context via CDP `Runtime.evaluate`, and prints the result as JSON. No npm dependencies (uses Node 22+'s native WebSocket + chromium in PATH).
+
+**Rejected**:
+- Playwright / Puppeteer — adds a dev dependency and ~250 MB of browser binaries (Chromium is already on the system).
+- Manual browser cycle for every iteration — slow and error-prone for Verovio rendering details that vary 1-2 px between cases.
+
+**Why**:
+- Verifying engraving details (where exactly does the bar line land vs the staff lines? what SMuFL glyph rendered for `@accid="ts"`? does Verovio space multi-`<accid>` children apart?) requires reading the rendered SVG, not the MEI input. The DOM is only available after Verovio runs in a real browser context.
+- Many decisions in this iteration cite "headless verification" — the tool is what made those decisions empirical rather than speculative.
+- Reusable for future iteration: any time Composer's rendering needs verification, `node tools/composer-inspect/inspect.mjs '<JS-expr>'`. No setup beyond `npm run dev`.
+
+**Where**:
+- `tools/composer-inspect/inspect.mjs` — the script; ~110 lines.
+- Used heavily across the May 2026 Composer engraving sessions.

@@ -22,6 +22,7 @@ import type { ResolvedNote } from '../bridge/protocol.js';
 import type {
   ComposerModel, Duration, ChordInput, RestInput,
 } from './model.js';
+import { alterFromCount } from './accidentals.js';
 
 export type EntryMode = 'insert' | 'overwrite';
 
@@ -72,7 +73,19 @@ function shouldIgnore(e: KeyboardEvent): boolean {
 export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
   function commitDuration(dur: Duration): void {
     state.duration = dur;
-    const held = hooks.getHeldKeys();
+    const heldRaw = hooks.getHeldKeys();
+    /* Filter notes whose alteration exceeds ±3 — Verovio can't render
+       compound accidentals legibly (the extra <accid> glyphs overlap
+       without horizontal allocation). The user can re-spell or shift
+       the lattice to bring them in range. */
+    const held = heldRaw.filter((k) => Math.abs(alterFromCount(k.accid)) <= 3);
+    if (heldRaw.length > 0 && held.length === 0) {
+      hooks.setStatus?.('All held keys have alteration > ±3; not entered.');
+      return;
+    }
+    if (held.length < heldRaw.length) {
+      hooks.setStatus?.('Some held keys had alteration > ±3 and were dropped.');
+    }
     if (held.length > 0) {
       const chord: ChordInput = { notes: held, duration: dur };
       if (state.mode === 'overwrite') {

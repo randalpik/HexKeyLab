@@ -55,7 +55,18 @@ The Hall sensors must be wired with **rest = high ADC, pressed = low ADC**. So M
 
 Velocity is computed as `time(MAX crossing) - time(MIN crossing)`. The **gap** between MIN and MAX thresholds is the resolution budget for press-time measurement. Smaller gap = press-time always short = velocities skew high (compressed). Wider gap = more dynamic range, but only if the sensor can swing that far.
 
-For weak-swing keys: lower MAX so they register, raise MIN to compress the timing window — restores high-end velocity reach.
+**MIN and MAX move velocity in opposite directions:**
+
+| Knob | Effect on press_time | Effect on reported velocity |
+|---|---|---|
+| Raise MIN | shorter (timer starts later) | velocity **higher** |
+| Raise MAX | longer (timer ends later) | velocity **lower** |
+
+Practical use:
+- **Onset issue (key won't register on light press)**: MAX is too high relative to the key's physical ADC swing. *Lower MAX* until it registers.
+- **Saturated high (every strike reads >100)**: MIN→MAX gap is too small for press-time to discriminate forces. *Raise MAX* to widen the gap.
+- **Stuck middle (can't reach 127 at fff)**: gap is wide enough but press-time floor is hit. *Raise MIN* to narrow it from below.
+- **Per-key MIN and MAX are 8-bit** (0..254), not the 4-bit clamp that the per-board SysEx (0x29/0x2A) suffers from on this firmware. Don't confuse the two layers.
 
 ---
 
@@ -105,16 +116,33 @@ If you've copied the KeyData files locally to `/home/max/lumatone/TerpstraContro
 
 ### `keydata-live.py` (run on the Lumatone via SSH)
 
-The main tool. Three modes:
+The main tool. Single-key, bulk, and persist modes:
 
 ```bash
 # READ current in-memory values for a key
 sudo python3 /home/debian/keydata-live.py --read <q> <r>
 
-# SET a single threshold live — takes effect within ~1 main-loop tick (sub-second).
+# SET a single threshold live (~1 main-loop tick to propagate to the PIC)
 # section: 1=MAX, 2=MIN, 3=validity, 4=AT_MAX
 # value: 0-254 (or 0/1 for validity)
 sudo python3 /home/debian/keydata-live.py <q> <r> <section> <value>
+
+# BULK SET all 280 keys at once — clobbers prior per-key edits
+sudo python3 /home/debian/keydata-live.py --bulk <section> <value>
+
+# BULK RAISE — only writes keys whose current value is BELOW the target.
+# Establishes a floor. NOT rescue-preserving: a rescue below the target
+# will be raised. Use --bulk-change for rescue-preserving sweeps.
+sudo python3 /home/debian/keydata-live.py --bulk-raise <section> <value>
+
+# BULK LOWER — symmetric; only writes keys with current > target.
+sudo python3 /home/debian/keydata-live.py --bulk-lower <section> <value>
+
+# BULK CHANGE — only writes keys whose current value EQUALS <from>.
+# The rescue-preserving primitive: bumps the old baseline to a new
+# baseline without touching any key whose value already differs. Use
+# for the iterative MAX-raising loop.
+sudo python3 /home/debian/keydata-live.py --bulk-change <section> <from> <to>
 
 # COMMIT current in-memory state of ALL boards to disk (KeyData_1..5)
 sudo python3 /home/debian/keydata-live.py --commit
@@ -138,39 +166,63 @@ An earlier attempt at spoofing the macro-button signal at the BBB level. **Doesn
 
 ---
 
-## Workflow: dialing in a single key
+## Workflow: full-keyboard calibration (validated 2026-05)
 
-The iteration loop:
+Iterative widening with per-key rescue. Three to four global passes plus targeted rescues, converging in ~1 hour. The approach was developed empirically — see `docs/decisions.md` for the rejected alternatives.
 
-1. **Identify a problem key in HKL.** Toggle the "coords" checkbox in the toolbar so q and r appear on each hex. Click or hover the problem key — note its (q, r).
+### Phase 0 — sane baseline
 
-2. **Read its current values.**
+1. **Push identity LUT** from HKL's lumadiag panel (Hardware foundation → "Push identity LUT to Lumatone"). Makes the firmware emit its full 0-127 range.
+2. **Seed all KeyData files with a known baseline**:
    ```bash
-   sudo python3 /home/debian/keydata-live.py --read <q> <r>
+   # Copy the project's default (MAX=70 / MIN=0 / valid=1 / AT_MAX=200) to all 5 boards:
+   scp tools/lumatone-cal/KeyData_default debian@192.168.6.2:/tmp/
+   ssh debian@192.168.6.2 'for n in 1 2 3 4 5; do sudo cp /tmp/KeyData_default /home/debian/TerpstraController/files/KeyData_$n; done && sudo reboot'
    ```
-   You'll see the 4 sections. Look at section 1 (MAX) and section 2 (MIN) especially.
+   After reboot, every key is at a permissive baseline that gets onsets working everywhere.
 
-3. **For a "dead" key** (no press registers): MAX is probably too high. Try lowering it:
+### Phase 1 — collect velocity statistics
+
+3. Open `?lumadiag=1` in HKL. Enable "Collect" in the **Per-key velocity statistics** section.
+4. Play every key 30-50 times across the full range of forces you'd use in normal play. The scatter populates with each key's (p5, p95) point. Two clusters typically emerge:
+   - **Top-right cluster**: p5 >> 30, p95 close to 127. Keys saturate high — soft presses still register as forte. *Action: raise MAX.*
+   - **Diagonal-middle cluster**: p5 around 50-80, p95 around 80-100. Keys stuck in the middle of the velocity range. *Action: raise MAX to drop p5, or raise MIN to lift p95.*
+
+### Phase 2 — iterative MAX raising
+
+5. **First raise (modest):**
    ```bash
-   sudo python3 /home/debian/keydata-live.py <q> <r> 1 70
+   sudo python3 /home/debian/keydata-live.py --bulk-change 1 70 100
    ```
-   Play the key. If it still doesn't register, try 50, then 30, then 15. Each change takes effect immediately.
-
-4. **For a "quiet" key** (registers but velocity tops out low): the MIN-to-MAX gap is too wide for that key's physical swing. Raise MIN:
+   (bumps every key still at the 70 baseline to 100; on the first pass this is equivalent to `--bulk 1 100` since nothing has been rescued yet.)
+6. **Play every key.** Watch the lumadiag scatter and the "Can't play loud" outlier list. Some keys vanish from the scatter or stay at p95 ≈ 0 — those went dead (their physical ADC swing is below 100).
+7. **Rescue each newly-dead key individually**:
    ```bash
-   sudo python3 /home/debian/keydata-live.py <q> <r> 2 30
+   sudo python3 /home/debian/keydata-live.py <q> <r> 1 80   # try 80; drop further if still dead
    ```
-   Try 30, then 50. Stop before the key feels "delayed" / loses its quiet end.
+   Expect 5-20 rescues at this level. Pick a rescue value that isn't equal to the current baseline so subsequent `--bulk-change` passes won't catch it.
+8. **Second raise:** `--bulk-change 1 100 130`. Same play-through and rescue cycle. `--bulk-change` is the rescue-preserving primitive: it only touches keys still at the old baseline (100), so any rescue at 80 (or any other off-baseline value) is left alone.
+9. **Third raise:** `--bulk-change 1 130 160`. Fewer casualties each pass.
+10. **Stop** when further raises stop helping the "Can't play quiet" outlier list — you've hit the keyboard's physical ceiling for low-end reach.
 
-5. **Avoid going too low on MAX or too high on MIN** — you'll get false triggers from rest noise / key wobble. Find the sweet spot by binary searching.
+### Phase 3 — MIN tuning for high-end reach
 
-6. **When the key feels right, move to the next one.** Repeat. Live edits are cheap; you can iterate dozens of keys without rebooting.
+11. For keys still in the "Can't play loud" list (p95 < 100) after MAX is dialed in:
+    ```bash
+    sudo python3 /home/debian/keydata-live.py <q> <r> 2 15
+    ```
+    Try MIN = 10, 20, 30. This narrows the press-time measurement window, pushing reported velocities upward. Stop when p95 saturates or the soft end (p5) creeps back up.
 
-7. **When the whole board feels good, commit:**
-   ```bash
-   sudo python3 /home/debian/keydata-live.py --commit
-   ```
-   This writes the current in-memory state to `KeyData_1..5` on disk and creates `.bak` backups (first time only). From here on, values survive power cycles.
+### Phase 4 — persist + HKL-side residuals
+
+12. **Commit:** `sudo python3 /home/debian/keydata-live.py --commit`. Reboot to verify TC loads the persisted values cleanly.
+13. **Remaining range gaps** (e.g. keys whose physical sensor swing simply can't span 0-127): use HKL's per-key gain + global velocity curve in the lumadiag "HKL curve" section. The per-key gain adjusts loudness offset; the curve's `gamma` parameter compresses the low end so even a hardware floor of p5=50 can feel like ppp through the right curve shape.
+
+### Tips
+
+- **Live edits are volatile.** If you want a rescue level to survive a TC crash, run `--commit` after each pass. Otherwise just commit at the end.
+- **Don't rush the play-through.** A key only appears alive in the scatter if you strike it after the change. Hit every key several times.
+- **Backups exist** as `KeyData_N.bak` after the first `--commit`. If a pass goes catastrophically wrong: `cp KeyData_N.bak KeyData_N && sudo reboot` returns to the prior committed state.
 
 ### Bulk seeding a board
 

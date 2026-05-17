@@ -75,9 +75,25 @@ const ACCID_TO_ALTER: Record<string, number> = {
   'n':  0,
   's':  1,
   'f':  -1,
-  'ss': 2,
+  'ss': 2,   /* precomposed ## */
+  'x':  2,   /* canonical double-sharp glyph */
   'ff': -2,
+  'ts': 3,   /* canonical triple-sharp glyph */
+  'tf': -3,
+  'xs': 3,   /* alt triple sharp: × + ♯ */
+  'sx': 3,   /* alt triple sharp: ♯ + × */
 };
+
+/** Net alteration for a MusicXML <alter> element. Reads @accid then
+ *  @accid.ges. HKL Composer clamps at ±3 in the entry path, so only
+ *  single-token forms ever land in a saved doc. */
+function totalAlter(node: Element): number {
+  const a = node.getAttribute('accid');
+  if (a !== null) return ACCID_TO_ALTER[a] ?? 0;
+  const g = node.getAttribute('accid.ges');
+  if (g !== null) return ACCID_TO_ALTER[g] ?? 0;
+  return 0;
+}
 
 /* divisions per quarter — use 16 so we cover 32nd notes (= 2 divisions) and
    dotted 16ths (= 6) without fractional values. */
@@ -136,18 +152,17 @@ function readTieFlags(node: Element): { tieStart: boolean; tieStop: boolean } {
 function readNote(node: Element): XmlNoteSpec {
   const pname = node.getAttribute('pname') ?? 'c';
   const oct = parseInt(node.getAttribute('oct') ?? '4', 10);
-  /* Sounded accidental is whatever is currently displayed (@accid) OR the
-     hidden gestural accidental (@accid.ges) left behind by the accidental
-     display pass. MusicXML's <alter> needs the actual pitch, not the
-     visual representation. */
-  const accid = node.getAttribute('accid') ?? node.getAttribute('accid.ges') ?? '';
+  /* Sum the net alteration from whichever encoding the note carries
+     (@accid, @accid.ges, or <accid> children). MusicXML's <alter> needs
+     the actual pitch as a signed integer. */
+  const alter = totalAlter(node);
   const color = node.getAttribute('color') ?? undefined;
   const qStr = node.getAttribute('data-q');
   const rStr = node.getAttribute('data-r');
   const ties = readTieFlags(node);
   return {
     step: PNAME_TO_STEP[pname] ?? 'C',
-    alter: ACCID_TO_ALTER[accid] ?? 0,
+    alter,
     octave: oct,
     color,
     q: qStr !== null ? parseInt(qStr, 10) : undefined,

@@ -35,16 +35,16 @@ function letterToPname(letter: string): ResolvedNote['pname'] {
   return letter.toLowerCase() as ResolvedNote['pname'];
 }
 
-function accToMei(acc: string): ResolvedNote['accid'] {
+/** Convert HKL's internal accidental count string (`#`/`b`) to the bridge's
+ *  MEI-style count string (`s`/`f`). Empty alteration becomes `''`. No
+ *  clamping — Composer handles arbitrary alteration depth by decomposing
+ *  into canonical glyphs (x / ts / tf / ff) and stacking `<accid>` children
+ *  for ±4+. */
+function accToMei(acc: string): string {
   const v = accToVal(acc);
   if (v === 0) return '';
-  if (v === 1) return 's';
-  if (v === -1) return 'f';
-  if (v === 2) return 'ss';
-  if (v === -2) return 'ff';
-  /* Triple+ accidentals exist on the lattice extremes; MEI does encode them
-     but our v1 won't represent them faithfully. Fall through to natural. */
-  return '';
+  const sign = v > 0 ? 's' : 'f';
+  return sign.repeat(Math.abs(v));
 }
 
 function resolveKey(q: number, r: number): ResolvedNote {

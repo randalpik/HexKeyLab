@@ -750,11 +750,12 @@ Single source of truth: `src/bridge/protocol.ts`. One `BroadcastChannel` named `
 
 **Composer → HKL events** (`ComposerEvent`):
 - `composer-hello`, `composer-bye`, `request-state` — handshake / state refresh.
-- `play-chord` — `{notes: CoordRef[], durationMs}` for entry-time monitoring tone.
 - `play-score` — `{events: PlaybackEvent[]}` with per-event `{atMs, durationMs, notes, meiId?}`. HKL drives its audio engine off this.
 - `stop-playback` — cancel any active playback.
 
-`ResolvedNote` is intentionally fully resolved by HKL: pname, accid, oct, midi, colorHex are derived from `(q, r)` plus current tuning state on the HKL side. Composer never needs to know HKL's current tuning to render correctly.
+(No entry-time monitor: an earlier `play-chord` message that fired on each duration keypress was removed because its scheduled `noteOff` cut the user's still-held Lumatone notes short. Composer only sends playback requests during explicit `play-score`.)
+
+`ResolvedNote` is intentionally fully resolved by HKL: pname, accid, oct, midi, colorHex are derived from `(q, r)` plus current tuning state on the HKL side. Composer never needs to know HKL's current tuning to render correctly. `accid` is a count-form string (`''`, `'s'`, `'ss'`, `'sss'`, `'f'`, `'ff'`, `'fff'`, …, or `'n'` for explicit natural); HKL doesn't clamp at the bridge. See §7.16 for how Composer handles values outside ±3.
 
 ### 7.3 HKL-side bridge (`src/bridge/hkl-side.ts`)
 
@@ -767,7 +768,7 @@ Inbound `play-chord` / `play-score` dispatches via existing `audio.noteOn` / `no
 
 ### 7.4 Composer model: MEI in-memory DOM
 
-`src/composer/model.ts`. The MEI document is held as a `Document` (DOMParser-parsed XML). Initial document is a single measure with two staves and two layers per staff (four voices). Mutations are direct DOM operations; the document gets re-serialized to a string and handed to Verovio's `loadData()` on every render.
+`src/composer/model.ts`. The MEI document is held as a `Document` (DOMParser-parsed XML). Initial document is a single measure with two staves (grand staff with `bar.thru="true"`) and two layers per staff (four voices). Score metadata — title, composer, key signature, time signature, tempo — lives on the document (`<titleStmt>`, `<scoreDef>` attributes, `<tempo>` element in the first measure). Mutations are direct DOM operations; the document gets re-serialized to a string and handed to Verovio's `loadData()` on every render.
 
 Voice numbering (per Composer convention, top-to-bottom):
 - voice 1 = staff 1 (treble), layer 1
@@ -775,11 +776,19 @@ Voice numbering (per Composer convention, top-to-bottom):
 - voice 3 = staff 2 (bass), layer 1
 - voice 4 = staff 2 (bass), layer 2
 
-Each voice has its own cursor position stored in `cursors: Record<Voice, number>`. The model methods are append/insert/replace/delete at cursor, plus navigation (`switchVoice`, `moveCursor`, `setCursor`, `cursorToEnd`).
+Each voice has its own cursor position stored in `cursors: Record<Voice, number>`. The cursor indexes into the **linear flat stream** for that voice — the concatenation of `(chord|note|rest|space-placeholder)` content across all measures, in measure order. Multi-measure traversal is transparent to the cursor model. Mutations: insert/replace/delete at cursor, plus navigation (`switchVoice`, `moveCursor`, `setCursor`, `cursorToEnd`).
 
 Time-aligned voice switching: `switchVoice` snapshots the source voice's cumulative-time-at-cursor (via `getTimeAt`), switches voices, then calls `findCursorAtOrBefore(newVoice, time)` to place the cursor at the latest position in the new voice whose start-time ≤ snapshot time. Durations are computed in 64th-note ticks via `elementDurationTicks(el)`.
 
-Every `<note>` carries `data-q` and `data-r` custom attributes so the lattice identity survives a save/load roundtrip. MEI spec ignores unknown attributes — `.hkc` files open fine in other MEI viewers (just without the playback / coord-aware features).
+The model has two cursor-locator helpers with deliberately different boundary semantics:
+- `locateCursor(voice, c)` — insertion-point lookup. Uses strict `<` so that cursor=N at a measure boundary lands in the NEXT measure's layer at `withinIdx=0`. A special-case override in `insertWithSplit` re-aims insertion to the previous measure's trailing edge when the cursor sits between real content (m₁) and a placeholder-only measure (m₂) — the user's intent in that case is to extend m₁ rather than consume m₂'s placeholder.
+- `locateFlatElement(voice, idx)` — element-at-flat-index lookup, strict-decrement walker. Used by `deleteAtCursor` and similar to find the element at a specific flat position, not its insertion point.
+
+Every `<note>` carries:
+- `data-q` and `data-r` custom attributes so the lattice identity survives a save/load roundtrip. MEI spec ignores unknown attributes — `.hkc` files open fine in other MEI viewers (just without the playback / coord-aware features).
+- `xml:id` attribute set via `setAttributeNS(XML_NS, …)` (not bare `setAttribute`) so the attribute lives in the proper XML namespace and our `[*|id]` CSS-selector lookups resolve correctly. See lessons.md "Manually-set xml:id without setAttributeNS".
+
+Every `<staff>` and `<measure>` also carries `xml:id` so the cursor overlay can look up their bounding rects via `renderer.rectForId(staffId)` for empty-voice cursor anchoring (see §7.13).
 
 ### 7.5 Render & cursor overlay
 
@@ -792,33 +801,38 @@ Engraving options (current as of 2026-05-16, see decisions.md and lessons.md for
 - `header: 'none'`, `footer: 'none'` to strip metadata blocks from the output.
 - `svgAdditionalAttribute: ['note@data-q', 'note@data-r', 'note@color']` exposes lattice coords on rendered notes.
 
+After Verovio renders, `render.ts` post-processes the SVG: each `<g class="note">` has its `<g class="notehead">` child moved to the LAST sibling position. Since SVG draws in document order, this puts the colored notehead ON TOP of the stem and prevents the (black) stem from intruding into the (colored) circle. CSS additionally forces stems, flags, accidentals, ledger lines, and rhythm dots back to black via `color: #000 !important; fill: #000 !important` (only the literal notehead carries the lattice color).
+
+Sub-pixel rendering: all strokes (staff lines, ledger lines, bar lines, stems) use `shape-rendering: geometricPrecision` in the CSS. An earlier mix of `crispEdges` for some strokes caused inconsistent stem widths (1px vs 2px depending on sub-pixel parity) and bar line gaps (15px instead of the conventional ~4.5px overhang past content). `geometricPrecision` is also the foundation for in-app zoom control — at high zoom-out, `crispEdges` would snap thin strokes to 0px (invisible), while `geometricPrecision` anti-aliases them visibly.
+
 The cursor overlay (`src/composer/cursor.ts`) is a separate `<svg>` appended inside `#score` after each Verovio render. Sized in `main.ts` to match Verovio's emitted dimensions so it scrolls in lockstep. Two modes:
 
-- **Editing mode** — single bar at the active voice's cursor position, drawn from `renderer.rectForId(meiId)` lookups on the rendered SVG element. Includes a "V1"–"V4" label.
+- **Editing mode** — bar/box at the active voice's cursor position. Insert mode anchors to the RIGHT edge of the just-entered element (`flat[cursor - 1]`). Overwrite mode draws a translucent selection BOX around the element at `flat[cursor]` (the one that would be replaced). Empty-voice and at-placeholder cases anchor on the active staff (see §7.13). Includes a "V1"–"V4" label.
 - **Playback mode** — per-voice bars (one per voice that has sounded an event), each independently positioned. Editing cursor is hidden. Toggled via `cursor.setPlaybackMode(on)`.
 
 The cursor class deliberately resets its `barRect` / `voiceLabel` / `playbackBars` refs in `attach()` — Verovio's `loadData() + renderToSVG()` writes a fresh `innerHTML` on `#score` which orphans the previous overlay along with the rendered SVG. See lessons.md "Stale DOM refs across `innerHTML` rewrites."
 
 ### 7.6 Input model (keyboard-driven)
 
-`src/composer/input.ts`. No mouse-to-document handlers in v1 by design — Speedy-Entry-style keyboard flow with Finale-convention bindings:
+`src/composer/input.ts`. No mouse-to-document handlers — Speedy-Entry-style keyboard flow with Finale-convention bindings:
 
-- **`1`–`7`** — duration (Finale order: 1=64th, 2=32nd, 3=16th, 4=8th, 5=quarter, 6=half, 7=whole). With held keys → chord; without → rest.
-- **`.`** — toggle dot count (0 / 1 / 2, one-shot reset after the next entry).
+- **`1`–`7`** — duration (Finale order: 1=64th, 2=32nd, 3=16th, 4=8th, 5=quarter, 6=half, 7=whole). With held keys → chord; without → rest. Any held key with `|alter| > ±3` is filtered out of the chord input before commit (Verovio's multi-`<accid>` rendering doesn't allocate space and the glyphs overlap; see §7.16). Status message indicates partial / full filtering.
+- **`.`** — cycle dots on the CURRENT note/chord/rest (0 → 1 → 2 → 0). In insert mode targets `flat[cursor-1]`; in overwrite mode targets `flat[cursor]`. If adding a dot would overflow the measure, the note is auto-tied across the bar.
+- **`=`** — toggle a tie on the current note/chord (Finale convention). Per-pitch: matching pitches in the next element become real ties; non-matching pitches become stubs (see §7.14). Pressing `=` again removes the tie.
 - **`↑`/`↓`** — switch voice (cycles 1↔2↔3↔4, time-aligned per §7.4).
 - **`←`/`→`** — move cursor within current voice.
 - **`Home`/`End`** — jump to start/end of current voice.
-- **`Backspace`** — delete the element before cursor.
+- **`Backspace`** — delete the element before the cursor. Skips over placeholders without deleting them; if the deletion empties an entire measure (across all voices), the measure itself is removed unless it's the only one.
 - **`Delete`** — delete the element after cursor.
 - **`Insert`** — toggle insert / overwrite mode.
 
 Arrow keys are suppressed during playback (the `isPlaybackActive` hook in `InputHooks` short-circuits the navigation block).
 
-On duration keypress: a `play-chord` message goes to HKL via the bridge so the user hears the entered chord at HKL's accurate JI frequency before deciding to commit/edit.
+Composer never sends entry-time playback to HKL. The user already hears their held Lumatone keys live; sending a `play-chord` back caused a noteOff race that cut held notes short.
 
 ### 7.7 Playback orchestration (`src/composer/playback.ts`)
 
-`buildPlayback(model)` walks each of the 4 voices in the MEI; for each chord/note (rests advance the voice clock but don't emit), it emits a `PlaybackEvent` with cumulative `atMs` per voice and `durationMs` from `elementDurationTicks` at the current tempo (120 BPM hardcoded in v1). Events are sorted by `atMs` so simultaneous voice attacks land together.
+`buildPlayback(model)` walks every measure of every voice in the MEI; for each chord/note (rests and placeholder spaces advance the voice clock but don't emit), it emits a `PlaybackEvent` with cumulative `atMs` per voice and `durationMs` from `elementDurationTicks` at the score's tempo (read from the `<tempo>` element in the first measure, fallback 120 BPM). Tied chains coalesce: a chord with `@tie="i"` emits ONE event with the chain's total duration; subsequent `@tie="m"|"t"` pieces in the same voice don't trigger re-attacks. Events are sorted by `atMs` so simultaneous voice attacks land together.
 
 `startPlayback` (in `main.ts`):
 1. Snapshot the editing cursor's `(voice, cursor)` for restore.
@@ -842,17 +856,18 @@ The Composer-side `.playing` CSS class is toggled on the currently-sounding MEI 
 
 Toolbar toggle between "Page" and "Scroll" views. Both use `svgViewBox: false` and `scale: 100`; the difference is `pageWidth` / `pageHeight` / `breaks`. Verovio's `setOptions()` is called on toggle, followed by a re-render (`loadData` + `renderToSVG`) so the new layout takes effect.
 
-### 7.10 Out of scope for v1
+### 7.10 Out of scope (still)
 
-- Note-level edits in existing chords (change one pitch, change duration of one element).
-- Tuplets, dynamics, articulations, slurs, ties (across chords).
-- Time signature changes; partial bars / anacrusis.
-- Score-level metadata: title, composer, tempo markings, key signatures.
-- Print / PDF export (Verovio supports this; integration is straightforward but deferred).
+- Note-level edits in existing chords (change one pitch within a chord).
+- Tuplets, dynamics, articulations, slurs.
+- Anacrusis / partial-bar pickups.
+- Print / PDF export (Verovio supports this; integration deferred).
 - Undo / redo.
-- Microtonal accidentals (HEJI via MEI's custom-accidental support).
+- Microtonal / quarter-tone / HEJI accidentals.
 - Multi-instrument scores beyond grand staff.
-- Multiple measures (v1 has a single growing measure; explicit barlines are a small follow-up).
+- Tie-chain re-coalescence under time-signature change (currently per-measure truncation; see §7.15).
+- Auto-filling partial measures with trailing rests (current model permits partial measures).
+- Accidentals beyond ±3 (filtered out at entry; see §7.16).
 
 ### 7.11 Standalone tool / sub-app structure
 
@@ -871,6 +886,102 @@ build: {
 ```
 
 Two HTML entries at repo root, two output bundles. Verovio WASM is only pulled into the composer bundle. `npm run dev` serves both; navigate to `/composer.html` for the editor, `/` (or `/index.html`) for the viewer. `npm run build` produces both `dist/index.html` and `dist/composer.html` with separate JS chunks.
+
+### 7.12 Document Setup modal
+
+`src/composer/setupDialog.ts` + the `<dialog id="setupDialog">` element in `composer.html`. A single "Setup…" button in the toolbar opens a native `<dialog>` modal with form fields for:
+
+- **Title** → `<titleStmt><title>`.
+- **Composer** → `<titleStmt><respStmt><persName role="composer">`.
+- **Key signature** → `<scoreDef key.sig="0|1s..7s|1f..7f">`. Drop-down lists all 15 major keys (Cb…C#); minor modes share key signatures.
+- **Time signature** → `<scoreDef meter.count meter.unit>`. Numerator 1–16; denominator 1/2/4/8/16.
+- **Tempo** → `<tempo>` as the first child of measure 1, with `mm`, `mm.unit`, optional `mm.dots`, `midi.bpm`, and optional text content (e.g., "Allegro").
+
+The dialog reads current values from the model on open and applies them in dependency order on save (title/composer/keysig/tempo first, then time signature last because it can trigger §7.15 truncation).
+
+Time-signature changes prompt for confirmation only when the new meter is **smaller** than the current one AND the score has content — enlarging is non-destructive.
+
+### 7.13 Empty-voice placeholders
+
+Every layer (per voice, per measure) that has no real content (note/chord/rest) carries one or more `<space dur="…" data-placeholder="true">` children whose tick durations sum to the measure's full duration. The placeholder is invisible to Verovio (no glyph drawn) but reserves the measure's horizontal layout space, which:
+
+- Fixes the empty-initial-measure bar-line / staff-line gap (Verovio would otherwise lay an empty measure out at a degenerate width, leaving the final barline ~15px short of where the staff lines end).
+- Lets the cursor navigate to an arbitrary measure of an otherwise-empty voice — placeholders count as flat-children, so the user can `↑` to voice 3 and `→` past placeholders to land in any specific measure, then press a duration to enter content there. No more manual whole-rest stuffing to reach a later measure.
+
+Invariant: each layer either has at least one real-content child (no placeholders) or has only placeholder spaces summing to `measureTicks()`. Enforced by the `normalizePlaceholders()` pass called from every mutation entry point and from `replaceDocument` after load.
+
+When the user inserts content at a placeholder's flat position, `insertWithSplit`'s normal logic handles it: the new content lands in the placeholder's layer, normalization strips the placeholder, the cursor advances naturally. When the cursor sits at a boundary BETWEEN real content (m₁) and a placeholder-only measure (m₂), the insertion is re-aimed at m₁'s trailing edge (extending the partial measure) rather than consuming m₂'s placeholder — see `insertWithSplit` in `model.ts`.
+
+Backspace on a placeholder skips past without deleting (cursor moves left so the next press reaches real content behind the empty area).
+
+When the cursor visually anchors to a placeholder (empty layer), the rendered `<g class="space">` has degenerate 0×0 bbox, so `cursor.ts` falls back to anchoring on the staff: `model.getStaffIdAtCursor(voice)` returns the xml:id of the staff for the voice in the measure CONTAINING the cursor, and `renderer.findSigEndXForStaff(staffId)` returns the rightmost edge of any clef/keysig/meterSig inside that staff's bbox. The cursor lands at `sigEndX + small offset` for first-measure-of-system, or `staff.left + 10` for later measures with no sig changes.
+
+### 7.14 Ties
+
+`@tie="i"|"m"|"t"` on `<note>` (single MEI 5 values, not compound forms — Verovio rejects `"ti"`/`"it"`). Each tied pair carries a `data-tie-partner` attribute on both sides (custom; MEI ignores) pointing at the partner's xml:id. This makes orphan cleanup O(1) when one side of a pair is deleted.
+
+`toggleTieOnCurrent` (bound to `=`):
+- If the current note has a tie, removes it (and clears its partner).
+- Else looks at the next layer element. For each note in the current chord, finds a same-pitch partner (same pname + alter + oct) in the next element. Matched: sets `@tie="i"` on current, `@tie="t"` on partner. Unmatched: leaves the current note as a STUB (no MEI tie attribute; tracked via `data-pending-tie="true"`).
+
+Stub ties don't render visually (Verovio's `<lv>` element draws nothing reliably; manual SVG overlay was rejected as too invasive). They auto-resolve into a real tie pair the moment a matching pitch is entered after them — `resolvePendingTies` runs at the end of every `insertChordAtCursor` / `replaceChordAtCursor`.
+
+When an element is deleted (or replaced), `orphanTiePartners(elem)` walks each inner note's `data-tie-partner`; surviving initiators are demoted back to a pending stub, surviving terminators have their `@tie` cleared. Tie chains across multiple pieces (from §7.15 auto-tie-on-overflow) carry partner pointers between every adjacent pair so a chain unwinds cleanly when any piece is removed.
+
+Auto-tie-on-overflow: when an inserted note exceeds the remaining ticks in the current measure, `insertWithSplit` decomposes the duration into a representable head + tail chain via `decomposeTicks(ticks)` (greedy by 64ths down to a power-of-2 table). Each chain piece gets a `<note>` with the appropriate `@tie` value (i/m/t) and `data-tie-partner` pointing at the previous piece. New measures are appended as needed; `setBarlines()` keeps the final-barline (`@right="end"`) on the last measure.
+
+### 7.15 Time-signature change: per-measure truncation
+
+When the user changes the meter (Setup modal → Time signature), `setTimeSig` calls `truncateOverflowingMeasures()`. Per measure, per voice's layer:
+
+- Walk content in order, summing 64th-note ticks.
+- Find the FIRST element that would overflow the new measure's tick budget. Compute `remaining = cap - running`.
+- If `remaining > 0`: shorten that element's `@dur`/`@dots` to the largest representable duration ≤ remaining (`decomposeTicks(remaining)[0]`). Pitches, ties, color, lattice coords all preserved.
+- If `remaining === 0`: the previous element exactly filled the new measure; drop the overflowing element via `orphanTiePartners + removeChild`.
+- Drop every element AFTER the truncation point (`orphanTiePartners + removeChild` each).
+
+After the per-measure pass, `normalizePlaceholders()` regenerates placeholders in any layer that ended up content-empty, `setBarlines()` re-applies the final barline, and each voice's cursor is clamped to its new flat length.
+
+Measure count is preserved (no reflow into new measures). Enlarging is a no-op except for re-normalizing placeholders to the new tick budget. Tied chains that cross the truncation point unwind correctly via the existing orphan logic. This replaces an earlier `rebuildMeasureLayout` approach that flattened content and re-distributed — see decisions.md "Per-measure truncation over rebuild-and-reflow".
+
+### 7.16 Accidentals: carry-state display + clamp at ±3
+
+`src/composer/accidentals.ts` runs at serialize-time on the cloned doc (live doc stays untouched). Per measure × per staff (treble and bass independently; accidentals carry across voices within a staff):
+
+- Initial carry-state = key-signature alterations (a `Record<pname, number>` derived from `key.sig="3s"` → `{f:1, c:1, g:1}` etc.).
+- Walk all notes in the staff sorted by start tick (then by layer for ties).
+- For each note: compute its absolute alteration from `@accid` or `@accid.ges` (survives save/load); compare to the currently-expected alteration.
+  - Matches → hide via `@accid.ges` (remove `@accid`).
+  - Tie destination (`@tie="t"|"m"`) → always hide, but DO update carry state.
+  - Else → show via `@accid` (the canonical single-token glyph), update state. alter=0 with non-zero state writes `@accid="n"` (natural sign cancellation).
+
+Single-token canonical glyphs only — multi-`<accid>` child stacking was attempted but Verovio doesn't allocate horizontal space for additional children, so they overlap exactly. Composer therefore clamps at ±3:
+
+- `tokenFromAlter(alter)` returns `s`/`f`/`x`/`ff`/`ts`/`tf` for alter ∈ {±1, ±2, ±3}. `x` is the canonical double-sharp glyph (×, U+E263); `ss` would draw two single sharps stacked, which is undesirable. `ts`/`tf` are the triple-sharp/flat tokens (Verovio renders them visually as ×♯ / ♭♭♭ but they remain one MEI token from our side).
+- Notes whose HKL-spelled alteration exceeds ±3 are FILTERED OUT at entry by `commitDuration` in `input.ts`. The user sees a status message. To enter such notes the user would have to re-spell via lattice transformation.
+- Legacy `.hkc` files with `@accid="ss"` are migrated to `@accid="x"` on load. Legacy files with `<accid>` children (from a brief experimental period) are collapsed into a single clamped `@accid` on load.
+
+The bridge protocol's `accid` field is widened to `string` (count form: `''`, `'s'`, `'ss'`, `'sss'`, …, `'n'`); the bridge does NOT clamp. All clamping lives in Composer's entry path so the bridge stays a simple passthrough.
+
+### 7.17 Intelligent beaming
+
+`src/composer/beams.ts`. Beams are computed at serialize-time on the cloned doc (live doc has no `<beam>` wrappers, keeping cursor/mutation logic simple). `regroupBeams(doc, timeSig)` walks each measure × layer, removes any existing `<beam>` wrappers, then re-wraps consecutive beamable elements (`dur >= 8`, not a rest) within each beat group:
+
+- **Simple meter** (n/{1,2,4}): beat groups of one denominator-note each.
+- **Compound meter** (n/{8,16} with n divisible by 3 and ≥6): beat groups of three denominator-notes each (one dotted denominator beat).
+- **4/4 special case**: beats 1–2 and beats 3–4 form two super-groups (so 8 eighth notes in 4/4 beam as two groups of 4 rather than four groups of 2).
+
+Rests and durations ≥ quarter break the run. Singletons stay un-wrapped. An element belongs to the beat-group containing its startTick (no group-splitting of a single element).
+
+### 7.18 Bar lines + grand staff
+
+- `bar.thru="true"` on `<staffGrp>` so bar lines render as one continuous line from the top of the treble staff to the bottom of the bass staff (grand-staff convention).
+- `@right="end"` on the last measure renders the final thin+thick barline (MEI 5 "final" form; `"dbl"` rendered as a regular double bar, which we don't want at score end).
+- CSS forces `shape-rendering: geometricPrecision` on all strokes (staff lines, ledger lines, bar lines, stems). See §7.5.
+
+### 7.19 Headless inspection tool
+
+`tools/composer-inspect/inspect.mjs` — a Node script that launches headless Chromium via remote-debugging-port, navigates to the running dev server's `/composer.html`, waits for Verovio WASM to load and render, evaluates an arbitrary JS expression in the page context, and prints the result as JSON. Used heavily for iterating on engraving / accidental / barline rendering without manual browser cycles. Requires Node 22+ (native WebSocket) and chromium in PATH; no npm dependencies. See `tools/composer-inspect/inspect.mjs` for usage examples.
 
 ---
 

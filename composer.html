@@ -52,32 +52,29 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
 }
 
 
-/* Crisp staff lines / stems / ledger lines. Verovio renders these as <path>
-   with linear stroke; crispEdges suppresses anti-aliasing so we get
-   full-pixel-value rendering. Glyphs (noteheads, accidentals, flags) are
-   rendered as <use> referencing SMuFL font outlines and are exempt — they
-   keep geometricPrecision for shape quality.
-
-   Bar lines deliberately use geometricPrecision instead: Verovio emits them
-   with a 27-unit stroke that lands at sub-pixel offsets, which crispEdges
-   would snap inconsistently (2 vs 3 visible px depending on coordinate
-   parity). geometricPrecision anti-aliases so every bar line has the same
-   visual weight. */
+/* All strokes — staff lines, ledger lines, bar lines, stems — render
+   with geometricPrecision so they anti-alias consistently across browser
+   zoom levels. crispEdges snaps sub-pixel positions to integer pixels,
+   which causes (a) inconsistent stroke widths for elements at parity-
+   sensitive coordinates (stems, bar lines) and (b) lines disappearing
+   entirely when sub-pixel anti-aliasing would have rendered them faintly
+   visible at high zoom-out. Anti-aliasing keeps everything visually
+   coherent and is the right foundation for in-app zoom control. */
 #score svg .staff path,
 #score svg .ledgerLines path,
 #score svg .ledgerLines line,
-#score svg .stem rect,
-#score svg .stem line,
-#score svg .stem path { shape-rendering: crispEdges }
-
 #score svg .barLineAttr path,
 #score svg .barLine path,
 #score svg .barLine line,
-#score svg .barLine rect { shape-rendering: geometricPrecision }
+#score svg .barLine rect,
+#score svg .stem path,
+#score svg .stem line,
+#score svg .stem rect { shape-rendering: geometricPrecision }
 
 /* The MEI @color attribute on <note> propagates to all descendants by default
-   — notehead AND stem AND flag AND accidental. We want color on noteheads
-   only. Force stems, flags, accidentals, and ledger lines back to black. */
+   — notehead AND stem AND flag AND accidental AND dots. We want color on
+   the literal circular notehead only. Force stems, flags, accidentals,
+   ledger lines, and rhythm dots back to black. */
 #score svg .stem,
 #score svg .stem *,
 #score svg .flag,
@@ -85,7 +82,9 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
 #score svg .accid,
 #score svg .accid *,
 #score svg .ledgerLines,
-#score svg .ledgerLines * { color: #000 !important; fill: #000 !important }
+#score svg .ledgerLines *,
+#score svg .dots,
+#score svg .dots * { color: #000 !important; fill: #000 !important }
 
 /* Toolbar Play button playing-state styling. */
 #composerToolbar .btn.playing { border-color: #FF4C79; color: #FF4C79 }

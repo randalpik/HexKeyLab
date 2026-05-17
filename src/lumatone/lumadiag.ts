@@ -687,10 +687,15 @@ const STATS_SCATTER_W = 290;
 const STATS_SCATTER_H = 180;
 const STATS_SCATTER_PAD = 12;
 
-function scatterXY(mean: number, cv: number): [number, number] {
-  const cvClamped = Math.min(1.0, Math.max(0, cv));
-  const x = STATS_SCATTER_PAD + (mean / 127) * (STATS_SCATTER_W - 2 * STATS_SCATTER_PAD);
-  const y = (STATS_SCATTER_H - STATS_SCATTER_PAD) - cvClamped * (STATS_SCATTER_H - 2 * STATS_SCATTER_PAD);
+/* Scatter axes: x = p5 (low-end floor), y = p95 (high-end ceiling).
+   Both 0..127. Ideal key sits TOP-LEFT (low floor, high ceiling — full range).
+   Cluster A (saturated high) ends up top-right. Cluster B (stuck middle)
+   clusters near the diagonal in the center. */
+function scatterXY(p5: number, p95: number): [number, number] {
+  const p5c = Math.min(127, Math.max(0, p5));
+  const p95c = Math.min(127, Math.max(0, p95));
+  const x = STATS_SCATTER_PAD + (p5c / 127) * (STATS_SCATTER_W - 2 * STATS_SCATTER_PAD);
+  const y = (STATS_SCATTER_H - STATS_SCATTER_PAD) - (p95c / 127) * (STATS_SCATTER_H - 2 * STATS_SCATTER_PAD);
   return [x, y];
 }
 
@@ -698,14 +703,18 @@ function findKeyAtScatterPos(mx: number, my: number): string | null {
   let bestKey: string | null = null;
   let bestDist = 36;  // squared 6px
   for (const { key, stats } of velocityCal.getAllStats()) {
-    if (stats.n < STATS_MIN_N || stats.cv < 0) continue;
-    const [x, y] = scatterXY(stats.mean, stats.cv);
+    if (stats.n < STATS_MIN_N) continue;
+    const [x, y] = scatterXY(stats.p5, stats.p95);
     const dx = x - mx, dy = y - my;
     const d2 = dx * dx + dy * dy;
     if (d2 < bestDist) { bestDist = d2; bestKey = key; }
   }
   return bestKey;
 }
+
+const STATS_LOW_FLOOR = 30;   // p5 above this = "can't play quiet"
+const STATS_HIGH_CEIL = 100;  // p95 below this = "can't play loud"
+const STATS_MIN_RANGE = 60;   // (p95 - p5) below this = "narrow range"
 
 function drawScatter(): void {
   if (!statsUi) return;
@@ -714,42 +723,52 @@ function drawScatter(): void {
   if (!ctx) return;
   ctx.clearRect(0, 0, STATS_SCATTER_W, STATS_SCATTER_H);
 
-  /* Reference grid: CV=0.3 (noisy threshold), keyboard-wide mean. */
-  ctx.strokeStyle = 'rgba(255,80,80,0.25)';
+  /* The y = x diagonal is the impossibility boundary (p95 must exceed p5).
+     Dim it so the eye knows valid space is above-left. */
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
   ctx.lineWidth = 1;
-  const [, cv3y] = scatterXY(0, STATS_HIGH_CV);
   ctx.beginPath();
-  ctx.moveTo(STATS_SCATTER_PAD, cv3y);
-  ctx.lineTo(STATS_SCATTER_W - STATS_SCATTER_PAD, cv3y);
+  const [diag0x, diag0y] = scatterXY(0, 0);
+  const [diag1x, diag1y] = scatterXY(127, 127);
+  ctx.moveTo(diag0x, diag0y);
+  ctx.lineTo(diag1x, diag1y);
   ctx.stroke();
-  const global = velocityCal.getGlobalStats();
-  if (global.nKeys >= 2) {
-    const [meanX] = scatterXY(global.meanOfMeans, 0);
-    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
-    ctx.beginPath();
-    ctx.moveTo(meanX, STATS_SCATTER_PAD);
-    ctx.lineTo(meanX, STATS_SCATTER_H - STATS_SCATTER_PAD);
-    ctx.stroke();
-  }
 
-  /* Axis labels. */
+  /* Threshold lines: vertical at p5=STATS_LOW_FLOOR, horizontal at
+     p95=STATS_HIGH_CEIL. The TARGET ZONE is the upper-left rectangle
+     bounded by these (low floor + high ceiling). */
+  ctx.strokeStyle = 'rgba(255,120,80,0.30)';
+  const [floorX] = scatterXY(STATS_LOW_FLOOR, 0);
+  ctx.beginPath();
+  ctx.moveTo(floorX, STATS_SCATTER_PAD);
+  ctx.lineTo(floorX, STATS_SCATTER_H - STATS_SCATTER_PAD);
+  ctx.stroke();
+  const [, ceilY] = scatterXY(0, STATS_HIGH_CEIL);
+  ctx.beginPath();
+  ctx.moveTo(STATS_SCATTER_PAD, ceilY);
+  ctx.lineTo(STATS_SCATTER_W - STATS_SCATTER_PAD, ceilY);
+  ctx.stroke();
+
+  /* Soft tint on the ideal-zone rectangle (above ceilY, left of floorX). */
+  ctx.fillStyle = 'rgba(120,255,120,0.04)';
+  ctx.fillRect(STATS_SCATTER_PAD, STATS_SCATTER_PAD,
+    floorX - STATS_SCATTER_PAD, ceilY - STATS_SCATTER_PAD);
+
+  /* Axis tick labels. */
   ctx.fillStyle = 'rgba(255,255,255,0.4)';
   ctx.font = '9px sans-serif';
-  for (const m of [0, 32, 64, 96, 127]) {
-    const [tx] = scatterXY(m, 0);
-    ctx.fillText(String(m), tx - 6, STATS_SCATTER_H - 1);
-  }
-  for (const c of [0.25, 0.5, 0.75]) {
-    const [, ty] = scatterXY(0, c);
-    ctx.fillText(c.toFixed(2), 0, ty + 3);
+  for (const v of [0, 32, 64, 96, 127]) {
+    const [tx] = scatterXY(v, 0);
+    ctx.fillText(String(v), tx - 6, STATS_SCATTER_H - 1);
+    const [, ty] = scatterXY(0, v);
+    ctx.fillText(String(v), 0, ty + 3);
   }
 
-  /* Per-key dots, color-coded by board. Selected (inspector) key drawn last
-     with a white outline so it's visible. */
+  /* Per-key dots. Selected (inspector) key drawn last with a white outline. */
   let selectedDot: { x: number; y: number; color: string } | null = null;
   for (const { key, stats } of velocityCal.getAllStats()) {
-    if (stats.n < STATS_MIN_N || stats.cv < 0) continue;
-    const [x, y] = scatterXY(stats.mean, stats.cv);
+    if (stats.n < STATS_MIN_N) continue;
+    const [x, y] = scatterXY(stats.p5, stats.p95);
     const board = STATS_KEY_TO_BOARD.get(key) ?? 0;
     const color = STATS_BOARD_COLORS[board];
     if (key === statsInspectorKey) {
@@ -788,18 +807,26 @@ function refreshInspector(): void {
     return;
   }
   const board = (STATS_KEY_TO_BOARD.get(statsInspectorKey) ?? 0) + 1;
-  const cvStr = stats.cv < 0 ? '—' : stats.cv.toFixed(3);
-  const line = document.createElement('div');
-  line.textContent = '(' + statsInspectorKey + ')  brd ' + board
+  const range = stats.p95 - stats.p5;
+  /* Two lines: primary range info, then variance/cv as a secondary indicator. */
+  const line1 = document.createElement('div');
+  line1.textContent = '(' + statsInspectorKey + ')  brd ' + board
     + '  n=' + stats.n
-    + '  μ=' + stats.mean.toFixed(1)
+    + '  p5=' + stats.p5.toFixed(0)
+    + '  p95=' + stats.p95.toFixed(0)
+    + '  range=' + range.toFixed(0);
+  inspector.appendChild(line1);
+  const cvStr = stats.cv < 0 ? '—' : stats.cv.toFixed(2);
+  const line2 = document.createElement('div');
+  line2.textContent = '  μ=' + stats.mean.toFixed(1)
     + '  σ=' + stats.stddev.toFixed(1)
     + '  CV=' + cvStr;
-  inspector.appendChild(line);
+  Object.assign(line2.style, { color: 'rgba(255,255,255,0.55)', fontSize: '10px' });
+  inspector.appendChild(line2);
 
-  /* Histogram sparkline (live samples only). */
+  /* Histogram sparkline (live samples only), with p5/p95 markers overlaid. */
   const hist = velocityCal.getKeyHistogram(statsInspectorKey, 32);
-  const sparkW = 270, sparkH = 24;
+  const sparkW = 270, sparkH = 26;
   const spark = document.createElement('canvas');
   spark.width = sparkW; spark.height = sparkH;
   Object.assign(spark.style, {
@@ -813,8 +840,17 @@ function refreshInspector(): void {
     const barW = sparkW / hist.length;
     sctx.fillStyle = '#9fc';
     for (let i = 0; i < hist.length; i++) {
-      const bh = (hist[i] / maxCount) * (sparkH - 2);
+      const bh = (hist[i] / maxCount) * (sparkH - 4);
       sctx.fillRect(i * barW, sparkH - bh, barW - 1, bh);
+    }
+    /* p5 / p95 vertical markers. Map velocity 0..127 to sparkline x. */
+    sctx.strokeStyle = 'rgba(255,200,80,0.85)';
+    sctx.lineWidth = 1;
+    for (const v of [stats.p5, stats.p95]) {
+      const x = (v / 127) * sparkW;
+      sctx.beginPath();
+      sctx.moveTo(x, 0); sctx.lineTo(x, sparkH);
+      sctx.stroke();
     }
   }
   inspector.appendChild(spark);
@@ -823,83 +859,109 @@ function refreshInspector(): void {
 function drawOutlierLists(): void {
   if (!statsUi) return;
   const all = velocityCal.getAllStats();
-  const valid = all.filter(({ stats }) => stats.n >= STATS_MIN_N && stats.cv >= 0);
+  const valid = all.filter(({ stats }) => stats.n >= STATS_MIN_N);
 
-  /* High-CV: top 5, only show entries with CV >= half-threshold to avoid noise. */
+  /* Reuse two existing container divs for three action-oriented lists:
+     can't-play-quiet + narrow-range packed into the first slot, can't-play-loud
+     into the second. (Keeps the existing DOM shape; cheaper than reflowing.) */
+  const mkRow = (
+    key: string,
+    color: string,
+    text: string,
+  ): HTMLDivElement => {
+    const row = document.createElement('div');
+    row.textContent = text;
+    Object.assign(row.style, {
+      fontSize: '10px', fontFamily: 'monospace',
+      color, cursor: 'pointer',
+    });
+    row.addEventListener('click', () => {
+      statsInspectorKey = key;
+      refreshInspector();
+      drawScatter();
+    });
+    return row;
+  };
+
+  const mkHeader = (text: string, topGap: boolean): HTMLDivElement => {
+    const h = document.createElement('div');
+    h.textContent = text;
+    Object.assign(h.style, {
+      fontSize: '11px',
+      color: 'rgba(255,255,255,0.65)',
+      marginTop: topGap ? '6px' : '0',
+      marginBottom: '2px',
+    });
+    return h;
+  };
+
+  const mkEmpty = (text: string): HTMLDivElement => {
+    const e = document.createElement('div');
+    e.textContent = text;
+    Object.assign(e.style, { fontSize: '10px', color: 'rgba(255,255,255,0.4)' });
+    return e;
+  };
+
+  /* List 1 container: "Can't play quiet" + "Narrow range" stacked. */
   statsUi.highCvList.innerHTML = '';
-  const h1 = document.createElement('div');
-  h1.textContent = 'Top noisy (high CV → raise hardware MIN):';
-  Object.assign(h1.style, { fontSize: '11px', color: 'rgba(255,255,255,0.65)', marginBottom: '2px' });
-  statsUi.highCvList.appendChild(h1);
-  const byCv = valid.slice().sort((a, b) => b.stats.cv - a.stats.cv).slice(0, 5);
-  const cvHits = byCv.filter(({ stats }) => stats.cv >= STATS_HIGH_CV * 0.5);
-  if (cvHits.length === 0) {
-    const empty = document.createElement('div');
-    empty.textContent = '  (none yet)';
-    Object.assign(empty.style, { fontSize: '10px', color: 'rgba(255,255,255,0.4)' });
-    statsUi.highCvList.appendChild(empty);
-  }
-  for (const { key, stats } of cvHits) {
-    const row = document.createElement('div');
-    const board = (STATS_KEY_TO_BOARD.get(key) ?? 0) + 1;
-    const flagged = stats.cv >= STATS_HIGH_CV;
-    row.textContent = '  (' + key + ')  brd ' + board
-      + '  CV=' + stats.cv.toFixed(2)
-      + '  μ=' + stats.mean.toFixed(0)
-      + '  n=' + stats.n;
-    Object.assign(row.style, {
-      fontSize: '10px', fontFamily: 'monospace',
-      color: flagged ? '#f95' : 'rgba(255,255,255,0.7)',
-      cursor: 'pointer',
-    });
-    row.addEventListener('click', () => {
-      statsInspectorKey = key;
-      refreshInspector();
-      drawScatter();
-    });
-    statsUi.highCvList.appendChild(row);
+
+  statsUi.highCvList.appendChild(mkHeader("Can't play quiet (p5 high → raise MAX):", false));
+  const byFloor = valid.slice().sort((a, b) => b.stats.p5 - a.stats.p5);
+  const floorHits = byFloor.filter(({ stats }) => stats.p5 > STATS_LOW_FLOOR).slice(0, 5);
+  if (floorHits.length === 0) {
+    statsUi.highCvList.appendChild(mkEmpty('  (none)'));
+  } else {
+    for (const { key, stats } of floorHits) {
+      const board = (STATS_KEY_TO_BOARD.get(key) ?? 0) + 1;
+      const flagged = stats.p5 >= 50;
+      statsUi.highCvList.appendChild(mkRow(key,
+        flagged ? '#f95' : 'rgba(255,255,255,0.7)',
+        '  (' + key + ')  brd ' + board
+        + '  p5=' + stats.p5.toFixed(0)
+        + '  p95=' + stats.p95.toFixed(0)
+        + '  n=' + stats.n));
+    }
   }
 
-  /* Mean drift: keys whose mean deviates from keyboard average by ≥1.5σ. */
-  statsUi.meanDriftList.innerHTML = '';
-  const h2 = document.createElement('div');
-  h2.textContent = 'Top mean-drift (per-key gain candidates):';
-  Object.assign(h2.style, { fontSize: '11px', color: 'rgba(255,255,255,0.65)', marginTop: '4px', marginBottom: '2px' });
-  statsUi.meanDriftList.appendChild(h2);
-  const global = velocityCal.getGlobalStats();
-  if (global.nKeys < 5 || global.stddevOfMeans <= 0) {
-    const empty = document.createElement('div');
-    empty.textContent = '  (need more data)';
-    Object.assign(empty.style, { fontSize: '10px', color: 'rgba(255,255,255,0.4)' });
-    statsUi.meanDriftList.appendChild(empty);
-    return;
+  statsUi.highCvList.appendChild(mkHeader('Narrow range (range < ' + STATS_MIN_RANGE
+    + ' → raise MAX, accept hardware ceiling):', true));
+  const byRange = valid.slice().sort((a, b) => (a.stats.p95 - a.stats.p5) - (b.stats.p95 - b.stats.p5));
+  const rangeHits = byRange.filter(({ stats }) => (stats.p95 - stats.p5) < STATS_MIN_RANGE).slice(0, 5);
+  if (rangeHits.length === 0) {
+    statsUi.highCvList.appendChild(mkEmpty('  (none)'));
+  } else {
+    for (const { key, stats } of rangeHits) {
+      const board = (STATS_KEY_TO_BOARD.get(key) ?? 0) + 1;
+      const r = stats.p95 - stats.p5;
+      const flagged = r < 40;
+      statsUi.highCvList.appendChild(mkRow(key,
+        flagged ? '#f95' : 'rgba(255,255,255,0.7)',
+        '  (' + key + ')  brd ' + board
+        + '  range=' + r.toFixed(0)
+        + '  [' + stats.p5.toFixed(0) + '..' + stats.p95.toFixed(0) + ']'
+        + '  n=' + stats.n));
+    }
   }
-  const byDrift = valid
-    .map(({ key, stats }) => ({
-      key, stats,
-      drift: (stats.mean - global.meanOfMeans) / global.stddevOfMeans,
-    }))
-    .sort((a, b) => Math.abs(b.drift) - Math.abs(a.drift))
-    .slice(0, 5);
-  for (const { key, stats, drift } of byDrift) {
-    const row = document.createElement('div');
-    const board = (STATS_KEY_TO_BOARD.get(key) ?? 0) + 1;
-    const flagged = Math.abs(drift) >= 1.5;
-    row.textContent = '  (' + key + ')  brd ' + board
-      + '  μ=' + stats.mean.toFixed(0)
-      + '  Δσ=' + (drift >= 0 ? '+' : '') + drift.toFixed(1)
-      + '  n=' + stats.n;
-    Object.assign(row.style, {
-      fontSize: '10px', fontFamily: 'monospace',
-      color: flagged ? '#f95' : 'rgba(255,255,255,0.7)',
-      cursor: 'pointer',
-    });
-    row.addEventListener('click', () => {
-      statsInspectorKey = key;
-      refreshInspector();
-      drawScatter();
-    });
-    statsUi.meanDriftList.appendChild(row);
+
+  /* List 2 container: "Can't play loud". */
+  statsUi.meanDriftList.innerHTML = '';
+  statsUi.meanDriftList.appendChild(mkHeader("Can't play loud (p95 < " + STATS_HIGH_CEIL
+    + ' → raise MIN):', false));
+  const byCeil = valid.slice().sort((a, b) => a.stats.p95 - b.stats.p95);
+  const ceilHits = byCeil.filter(({ stats }) => stats.p95 < STATS_HIGH_CEIL).slice(0, 5);
+  if (ceilHits.length === 0) {
+    statsUi.meanDriftList.appendChild(mkEmpty('  (none)'));
+  } else {
+    for (const { key, stats } of ceilHits) {
+      const board = (STATS_KEY_TO_BOARD.get(key) ?? 0) + 1;
+      const flagged = stats.p95 < 80;
+      statsUi.meanDriftList.appendChild(mkRow(key,
+        flagged ? '#f95' : 'rgba(255,255,255,0.7)',
+        '  (' + key + ')  brd ' + board
+        + '  p5=' + stats.p5.toFixed(0)
+        + '  p95=' + stats.p95.toFixed(0)
+        + '  n=' + stats.n));
+    }
   }
 }
 
@@ -991,7 +1053,8 @@ function makePerKeyStatsSection(): HTMLDivElement {
   sec.appendChild(scatterWrap);
 
   const axisHint = document.createElement('div');
-  axisHint.textContent = 'x: mean velocity · y: CV. Red line = CV=0.30 (noisy). Top-right needs higher hardware MIN.';
+  axisHint.textContent = 'x: p5 (floor) · y: p95 (ceiling). Green-tinted zone = ideal. '
+    + 'Right of red line: can\'t play quiet (raise MAX). Below red line: can\'t play loud (raise MIN).';
   Object.assign(axisHint.style, {
     fontSize: '10px', color: 'rgba(255,255,255,0.5)',
     marginBottom: '6px', textAlign: 'center', lineHeight: '1.3',

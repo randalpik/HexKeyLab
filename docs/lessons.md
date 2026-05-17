@@ -94,6 +94,43 @@ TC's `writeToPic` dispatches based on bits in `picMessage0Flag[board]` but never
 
 Practical consequence: setting bit `0x4000000` (the cmdGetAftertouchMax dispatch bit) to spoof "calibration complete" causes the BBB to send the query repeatedly until something else clears it. Don't assume bit persistence means writeToPic isn't running; check by other means.
 
+### Velocity randomness is NOT a noise-floor problem
+
+Plausible theory that turned out wrong: with MIN=0, rest-position sensor noise crosses the MIN threshold randomly before the real press starts, jittering the press-time measurement and producing random-looking velocity output. The theory predicted "raising MIN above each key's noise floor will eliminate the randomness."
+
+Empirically refuted: Max's keyboard with MIN=0 across all 280 keys shows **zero keys with CV > 0.3**. The "random velocity" symptom Max originally reported was actually a different problem masquerading — keys with constrained velocity range (Cluster B: p5≈50, p95≈90) feel inconsistent because the *narrow* range gets stretched across the user's intended dynamics. CV is low; range is what's wrong.
+
+Don't chase the noise hypothesis. Diagnose with p5/p95, not CV.
+
+### Velocity = inverse press-time; MIN and MAX are independent monotonic knobs
+
+`press_time = time(ADC reaches rest−MAX) − time(ADC reaches rest−MIN)`. Press-time → bin → velocity LUT lookup. With identity LUT: shorter press-time = higher velocity.
+
+- **Raise MIN** → timer starts later (smaller ADC traversal) → press-time *shorter* → velocity *higher*
+- **Raise MAX** → timer ends later (larger ADC traversal) → press-time *longer* → velocity *lower*
+
+Opposite directions. Both apply per-key (0..254 each in KeyData_N). Use MAX to drop the floor (p5), use MIN to raise the ceiling (p95). They cannot independently expand both ends — you're scaling and shifting a monotonic transform of press-time. The intrinsic dynamic range of any key is bounded by its physical ADC swing × the user's hand-speed range; threshold tuning only positions the velocity distribution within that envelope. Residuals beyond that are HKL's job (per-key gain + global curve in `velocityCal.ts`).
+
+### Use p5/p95 to diagnose per-key calibration, not mean/CV
+
+The natural metrics for "what's this key's realistic velocity range during normal play" are the outlier-rejecting percentiles, not the moments. lumadiag's per-key velocity statistics scatter plots (p5, p95) per key. The target zone is upper-left (p5 ≤ 30, p95 ≥ 100). Three failure modes diagnose directly from position:
+
+| Position | Symptom | Action |
+|---|---|---|
+| Right of p5=30 line | Can't play quiet | Raise MAX |
+| Below p95=100 line | Can't play loud | Raise MIN (or raise MAX if also right of floor line) |
+| Near the y=x diagonal | Narrow range | Raise MAX; accept hardware ceiling; HKL gain/curve compresses low end |
+| Top-right corner | Saturated high (Cluster A) | Raise MAX |
+| Mid-diagonal (Cluster B) | Stuck middle | Raise MAX or MIN depending on which end matters more |
+
+### Per-key calibration converges in 3-4 passes of bulk-raise + per-key rescue
+
+When raising MAX globally to widen the velocity range, *some* keys (with small physical sensor swing) go dead at the new threshold. The cheap convergence pattern is asymmetric: raise globally, find casualties, rescue individually. `tools/lumatone-cal/keydata-live.py --bulk-raise <section> <value>` only writes keys whose current value is below the target, preserving prior per-key rescues across iterations.
+
+Typical sequence: `--bulk-raise 1 100` → play → rescue ~10 keys → `--bulk-raise 1 130` → play → rescue ~3-5 keys → `--bulk-raise 1 160` → play → fewer rescues. Stop when further raises stop helping the "Can't play quiet" outlier list. ~1 hour total, vs. days of per-key bottom-up.
+
+Do NOT use `--bulk` (without `-raise`) once you have rescues — it's unconditional and will clobber them.
+
 ---
 
 ## Tuning math
@@ -409,6 +446,85 @@ Both `color` and `fill` need !importanting because Verovio uses CSS `color: ...`
 Looked at this during planning. Documented at book.verovio.org as "experimental code not to rely on." Only two action types in the codebase. No high-level operations like "change pitch", "add note to chord", "change duration", "insert measure", "change time signature".
 
 Implication: a Verovio-based editor maintains MEI in its own model layer, mutates the XML/DOM directly, and calls `tk.loadData(newMei) + tk.renderToSVG(1)` to refresh. Verovio is the engraver, not the editor. HKL Composer's `src/composer/model.ts` is the editor.
+
+### Verovio's `@accid="ss"` renders ## (two single sharps), `@accid="x"` renders × (canonical double sharp)
+
+Both are valid MEI 5 double-sharp tokens but they map to different SMuFL glyphs:
+- `ss` → U+E269 `accidentalSharpSharp` (precomposed `##`).
+- `x`  → U+E263 `accidentalDoubleSharp` (the canonical × croix).
+
+HKL Composer wants `x` for the conventional appearance. `replaceDocument` migrates legacy `@accid="ss"` to `x` on load. Triple-sharp is `ts` (U+E265, Verovio renders it visually as `×♯`); triple-flat is `tf`. Double-flat has no equivalent confusion — `ff` is canonical.
+
+### Verovio's multi-`<accid>` children overlap exactly — no horizontal layout allocation
+
+MEI 5 explicitly allows multiple `<accid>` children on a single `<note>` for compound alterations (quadruple-sharp etc.). Verovio source has comments like `// Reduce spacing for successive accidentals` in `AdjustAccidXFunctor`, suggesting it handles the case. **It doesn't, in practice** — verified by headless inspection: two `<accid accid="x"/>` children rendered both at viewport left=164.6 right=183.1, identical bbox, total overlap.
+
+Implication: HKL Composer can't faithfully render `|alter| > 3`. Choices were (a) hand-position glyphs and reserve layout space (would require patching Verovio or doing complex SVG post-processing), or (b) clamp at ±3 and filter higher-alter input. Picked (b); the lattice positions that produce ±4+ are extreme enough that the user can re-spell by transposing.
+
+### `@tie="ti"` / `"it"` is not a valid MEI 5 value
+
+We initially merged tie flags into compound forms when a note was both medial-terminus and medial-initial in a chain. Verovio rejects: `Unsupported data.TIE 'ti'`. MEI 5's `data.TIE` enum is `i | m | t | n` — `m` already means "medial" (both incoming and outgoing). Always use `m` for medial pieces.
+
+### Verovio renders `<tie>` / `<lv>` only when both endpoints resolve
+
+Verovio's `<lv>` (laissez vibrer) inherits from `Tie` and goes through `View::DrawTimeSpanningElement` → `HasValidTimeSpanningOrder`, which returns false if `start` OR `end` is null. With only `@startid` (no `@endid`, no `@tstamp2`), the element renders nothing silently — no warning, no glyph.
+
+MEI 5's spec says `<lv startid="#x"/>` alone is valid (only one of startid/tstamp.* required), but Verovio implements the older MEI 4 stricter rule (`one of {dur, dur.ges, endid, tstamp2}` also required). `@dur` is NOT consulted; only `@endid` or `@tstamp2` create the second endpoint. For HKL Composer stub ties, we ended up using `data-pending-tie="true"` as a private flag (no Verovio rendering at all, just auto-resolution into a real `@tie` pair when a partner appears).
+
+### Verovio's "Unable to match @tie of note" warning vs "Expected median or terminal"
+
+Two distinct Verovio messages on the same family of problem:
+- **"Expected median or terminal in note '%s', skipping it"** (`src/convertfunctor.cpp:1204`): fired during analytical `@tie` → `<tie>` element conversion when a same-pitch follower lacks an expected `@tie="m"` or `@tie="t"`.
+- **"Unable to match @tie of note (n), skipping it"**: lives in the compiled WASM (verified via `strings`) but is harder to locate in source. Fires under related conditions when the tie pair-up fails.
+
+When you see either, root cause is usually a stale `@tie="i"` on a note whose downstream partner has been removed (auto-tie chain orphaning bug) or where compound `"ti"`/`"it"` slipped in. The fix is `orphanTiePartners()` on every removal path + single-letter `@tie` values only.
+
+### Manually-set xml:id without setAttributeNS
+
+`element.setAttribute('xml:id', 'foo')` stores the attribute with local name literally `"xml:id"` in the NULL namespace. Subsequent `element.getAttribute('xml:id')` works (qualified-name lookup), but `querySelector('[*|id="foo"]')` does NOT match (`*|id` matches local name `"id"` in any namespace, not `"xml:id"` in null namespace).
+
+For HKL Composer, this hid a bug in tie-partner cleanup: the partner lookup used `querySelector('[*|id="…"]')` and silently returned null for any element whose xml:id was set via the wrong API.
+
+Fix: always use `element.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:id', value)`. The `el()` helper in `model.ts` has a special case for the `xml:id` key.
+
+### Save → load round-trip with the accidental-display pass
+
+The display pass runs on the SERIALIZE clone, not the live doc. Output MEI has `@accid.ges` for hidden notes (and `@accid` for visible ones). On load, the live doc has whichever form was saved.
+
+If the display pass on the next render only reads `@accid` (and not `@accid.ges`), a previously-hidden sharp would be misread as natural and the pass would spuriously emit `@accid="n"` to "cancel" a non-existent prior sharp. The fallback in `accidentals.ts:getNoteAlter`:
+
+```ts
+const a = note.getAttribute('accid');
+if (a !== null) return alterFromToken(a);
+const g = note.getAttribute('accid.ges');
+if (g !== null) return alterFromToken(g);
+return 0;
+```
+
+…makes the round-trip idempotent. The same falls-through-to-ges pattern must exist in any code that derives pitch from a note — save.ts, model.ts's `extractResolvedFromElement`, etc.
+
+### Verovio renders `<space>` as a 0×0 invisible group; `<mSpace>` doesn't reserve width
+
+For HKL Composer empty-voice layout, we want a layer with no real content to still take up its measure's full horizontal space (so the bar line aligns with the staff lines). Three candidates were tested via headless:
+- `<mSpace/>`: marker for "tacit measure". **No effect on layout.** Same bar-gap as truly-empty.
+- `<rest dur="1"/>` (whole rest): proper width allocation, but draws a visible rest glyph (and `@visible="false"` is NOT honored by Verovio).
+- `<space dur="1"/>`: proper width allocation, draws nothing. **The winner.**
+
+`<space>` requires `@dur` — without it, behavior is undefined per spec and Verovio doesn't allocate width. For irregular meters (5/4 etc.), use `decomposeTicks(measureTicks)` to express the duration as one or more `<space>` children whose ticks sum to one measure.
+
+The rendered `<g class="space">` has degenerate bbox (left=30 width=0 in our SVG coordinate space), so the cursor overlay falls back to staff-anchored positioning when its target is a placeholder.
+
+### Verovio's "play-chord" entry-time monitor cuts held Lumatone notes short
+
+Original design: on each duration keypress, Composer sent `play-chord` to HKL with the entered notes + a calculated duration in ms. HKL would `noteOn` + scheduled `noteOff`. Problem: the user is still holding the Lumatone keys for those notes. HKL's scheduled `noteOff` fires after the calculated duration and CANCELS the user's held note (their physical key press → MIDI → noteOn registered the note; HKL has no way to distinguish "released by user" from "scheduled noteOff timer"). Result: notes drop out mid-hold.
+
+Removed entirely. Composer only sends playback during explicit `play-score` (Play button). For audible feedback during entry, the user already hears their held Lumatone keys live via HKL's regular audio path.
+
+### Sub-pixel stroke widths and `crispEdges` / `geometricPrecision`
+
+Verovio emits stems with `stroke-width="18"` in internal coordinates, which at our scale comes out to ~1.8 viewport pixels. With `shape-rendering: crispEdges`, that gets snapped to either 1 or 2 pixels depending on the stroke's sub-pixel x-position parity. The same applies to bar lines (`stroke-width=27` ≈ 2.7 px) and any horizontally-positioned stroke.
+
+`shape-rendering: geometricPrecision` anti-aliases instead — every stroke renders to the same visual weight regardless of position. Also degrades gracefully at high zoom-out: a 1-px line that `crispEdges` would round to 0 (invisible) stays visibly faint with `geometricPrecision`. HKL Composer uses `geometricPrecision` on staff lines, ledger lines, bar lines, and stems — everything that's a `<path>` stroke. SMuFL glyphs (notehead, accidental, etc.) keep the default rendering since they're filled `<use>` references, not strokes.
 
 ## LilyPond transcription quantization
 

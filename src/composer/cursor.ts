@@ -86,21 +86,50 @@ class CursorOverlay {
     let isSelectionBox = false;
     let diag: Record<string, unknown> = { voice, cursor, voiceLen, mode };
 
+    /* Anchor the cursor on the active staff (the staff for this voice in
+       the measure containing the cursor). Used both for the truly-empty
+       fallback AND for placeholders, whose rendered bbox is degenerate
+       (Verovio emits an empty <g> for MEI <space>). */
+    const anchorOnStaff = (): boolean => {
+      const staffId = model.getStaffIdAtCursor(voice);
+      if (!staffId) return false;
+      const staffRect = renderer.rectForId(staffId);
+      if (!staffRect) return false;
+      const sigEndX = renderer.findSigEndXForStaff(staffId);
+      /* When this staff has rendered sigs (first measure of a system), put
+         the cursor just past them. Otherwise (mid-score measure without sig
+         changes) put it a small distance past the staff's left edge. */
+      x = sigEndX !== null ? sigEndX + CURSOR_HPAD : staffRect.left + 10;
+      y = staffRect.top - CURSOR_VPAD;
+      h = staffRect.height + CURSOR_VPAD * 2;
+      return true;
+    };
+
+    const isPlaceholderEl = (el: Element): boolean =>
+      el.localName === 'space' && el.getAttribute('data-placeholder') === 'true';
+
     if (mode === 'insert') {
       if (cursor === 0) {
-        /* Pre-staff position — no current element to anchor to. */
-        diag.case = 'insert-empty';
+        if (anchorOnStaff()) diag.case = 'insert-empty-on-staff';
+        else diag.case = 'insert-empty-fallback';
       } else {
         const ref = model.getCurrentElement(voice, 'insert');
-        const rect = ref ? renderer.rectForId(ref.id) : null;
-        diag = { ...diag, refId: ref?.id, rect: rect ? { l: rect.left, t: rect.top, w: rect.width, h: rect.height } : null };
-        if (rect) {
-          x = rect.right + CURSOR_HPAD;
-          y = rect.top - CURSOR_VPAD;
-          h = rect.height + CURSOR_VPAD * 2;
-          diag.case = 'insert-right-of-prev';
+        if (!ref || isPlaceholderEl(ref.elem)) {
+          /* Placeholder bboxes are degenerate; anchor on the placeholder's
+             measure-staff. Same path for a missing ref (defensive). */
+          if (anchorOnStaff()) diag.case = ref ? 'insert-placeholder-on-staff' : 'insert-no-ref-staff';
+          else diag.case = 'insert-staff-fallback';
         } else {
-          diag.case = ref ? 'insert-rect-missing' : 'insert-no-ref';
+          const rect = renderer.rectForId(ref.id);
+          diag = { ...diag, refId: ref.id, rect: rect ? { l: rect.left, t: rect.top, w: rect.width, h: rect.height } : null };
+          if (rect) {
+            x = rect.right + CURSOR_HPAD;
+            y = rect.top - CURSOR_VPAD;
+            h = rect.height + CURSOR_VPAD * 2;
+            diag.case = 'insert-right-of-prev';
+          } else {
+            diag.case = 'insert-rect-missing';
+          }
         }
       }
     } else {
@@ -119,21 +148,29 @@ class CursorOverlay {
             diag.case = 'overwrite-past-end-no-rect';
           }
         } else {
-          diag.case = 'overwrite-empty';
+          if (anchorOnStaff()) diag.case = 'overwrite-empty-on-staff';
+          else diag.case = 'overwrite-empty-fallback';
         }
       } else {
         const ref = model.getCurrentElement(voice, 'overwrite');
-        const rect = ref ? renderer.rectForId(ref.id) : null;
-        diag = { ...diag, refId: ref?.id, rect: rect ? { l: rect.left, t: rect.top, w: rect.width, h: rect.height } : null };
-        if (rect) {
-          x = rect.left - CURSOR_HPAD;
-          y = rect.top - CURSOR_VPAD;
-          w = rect.width + CURSOR_HPAD * 2;
-          h = rect.height + CURSOR_VPAD * 2;
-          isSelectionBox = true;
-          diag.case = 'overwrite-selection-box';
+        if (ref && isPlaceholderEl(ref.elem)) {
+          /* Placeholder under overwrite cursor — anchor on its measure-
+             staff (no selection box since there's nothing visible). */
+          if (anchorOnStaff()) diag.case = 'overwrite-placeholder-on-staff';
+          else diag.case = 'overwrite-placeholder-fallback';
         } else {
-          diag.case = ref ? 'overwrite-rect-missing' : 'overwrite-no-ref';
+          const rect = ref ? renderer.rectForId(ref.id) : null;
+          diag = { ...diag, refId: ref?.id, rect: rect ? { l: rect.left, t: rect.top, w: rect.width, h: rect.height } : null };
+          if (rect) {
+            x = rect.left - CURSOR_HPAD;
+            y = rect.top - CURSOR_VPAD;
+            w = rect.width + CURSOR_HPAD * 2;
+            h = rect.height + CURSOR_VPAD * 2;
+            isSelectionBox = true;
+            diag.case = 'overwrite-selection-box';
+          } else {
+            diag.case = ref ? 'overwrite-rect-missing' : 'overwrite-no-ref';
+          }
         }
       }
     }

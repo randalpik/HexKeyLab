@@ -1,78 +1,125 @@
 // Compute accidental display visibility per engraving convention.
 //
-// HKL emits an absolute pitch spelling on every note: a letter (@pname) plus
-// an accidental token (@accid) drawn from {'', 's', 'f', 'ss', 'ff', 'n'},
-// where '' means "no symbol drawn, natural in absolute pitch terms" and 'n'
-// means "natural sign drawn, natural in absolute pitch terms". The two
-// differ only in display, not in sounding pitch.
+// HKL emits a count-form accidental string per note via the bridge:
+//   ''     no accidental         'n'     explicit natural sign
+//   's'    +1     'f'    -1
+//   'ss'   +2     'ff'   -2
+//   'sss'  +3     'fff'  -3
+//
+// The bridge passes values for ±4+ too, but Composer's entry path
+// (input.ts:commitDuration) filters those out — Verovio's multi-<accid>
+// rendering doesn't allocate horizontal space and the glyphs overlap.
+// Effectively the supported range is ±3, expressed as a single MEI
+// accidental token (s/f/x/ff/ts/tf, or n for explicit natural).
+//
+// This pass operates on the rendered clone (not the live doc). Per note,
+// it reads the net integer alteration from either @accid attribute or
+// @accid.ges attribute, decides visibility against carry-state + key
+// signature, and writes the canonical form back to the clone:
+//
+//   visible → @accid attribute set to the canonical glyph token
+//   hidden  → @accid.ges holds the gestural token; @accid removed
 //
 // Engraving rules:
-//   1. Within a measure, an accidental at (pname, oct) carries forward across
-//      ALL voices on the same staff. Subsequent notes at the same letter+
-//      octave don't repeat it unless they DIFFER.
+//   1. Within a measure, alteration at (pname, oct) carries forward across
+//      voices on the same staff.
 //   2. At a bar line, state resets to the key signature.
-//   3. Tie destinations (@tie="t" or "m") never show an accidental — the
-//      sound is implicit from the tied chain. BUT they DO update the
-//      carry-state for subsequent notes at the same letter+octave.
-//   4. An accidental matching the current implied pitch is hidden.
-//   5. When a note differs from the implied pitch, the visible accidental
-//      is determined by the absolute pitch: 's'/'f'/'ss'/'ff' draw the
-//      symbol; a natural pitch when the implied is non-natural draws 'n'
-//      (the natural sign to cancel).
-//
-// The pass mutates @accid / @accid.ges on the clone. The live doc keeps its
-// original @accid values written by HKL.
+//   3. Tie destinations (@tie="t" or "m") are always hidden, but they DO
+//      update carry state.
 
 const SHARP_ORDER: ReadonlyArray<string> = ['f', 'c', 'g', 'd', 'a', 'e', 'b'];
 const FLAT_ORDER:  ReadonlyArray<string> = ['b', 'e', 'a', 'd', 'g', 'c', 'f'];
 
-/** Decode a key signature attribute into a map of pitch letter → 's' | 'f'.
- *  '0' or unset → {}. '3s' → { f: 's', c: 's', g: 's' }. '2f' → { b: 'f', e: 'f' }. */
-function keySigToAccids(sig: string): Record<string, 's' | 'f'> {
-  const out: Record<string, 's' | 'f'> = {};
+/** Convert a single MEI accidental token to signed integer alteration. */
+export function alterFromToken(t: string): number {
+  switch (t) {
+    case 's': return 1;
+    case 'f': return -1;
+    case 'n': case '': return 0;
+    case 'ss': case 'x': return 2;
+    case 'ff': return -2;
+    case 'ts': case 'xs': case 'sx': return 3;
+    case 'tf': return -3;
+    default: return 0;
+  }
+}
+
+/** Parse a count-form accidental string (HKL bridge format) to integer.
+ *  '' / 'n' → 0; 's' → 1; 'ss' → 2; 'sss' → 3; same negative for 'f'.
+ *  Values outside ±3 are still parsed correctly; the caller's entry filter
+ *  (input.ts:commitDuration) decides what to do with them. */
+export function alterFromCount(s: string): number {
+  if (!s || s === 'n') return 0;
+  let n = 0;
+  for (const c of s) {
+    if (c === 's') n++;
+    else if (c === 'f') n--;
+  }
+  return n;
+}
+
+/** Return the canonical MEI single-glyph token for a given alteration in
+ *  ±3 range. For 0 returns null (no accidental written; caller decides
+ *  whether to emit 'n' for explicit cancellation). For |alter|>3, clamps
+ *  to ±3 — Composer's entry filter should prevent this from ever reaching
+ *  here, but the clamp keeps the function total. */
+export function tokenFromAlter(alter: number): string | null {
+  if (alter === 0) return null;
+  const sign = alter > 0 ? 1 : -1;
+  const n = Math.min(Math.abs(alter), 3);
+  if (n === 1) return sign > 0 ? 's' : 'f';
+  if (n === 2) return sign > 0 ? 'x' : 'ff';
+  return sign > 0 ? 'ts' : 'tf';
+}
+
+/** Net alteration on a note, reading from @accid then @accid.ges. */
+export function getNoteAlter(note: Element): number {
+  const a = note.getAttribute('accid');
+  if (a !== null) return alterFromToken(a);
+  const g = note.getAttribute('accid.ges');
+  if (g !== null) return alterFromToken(g);
+  return 0;
+}
+
+/** Decode a key-signature attribute into a map of pitch letter → ±1. */
+function keySigToAlter(sig: string): Record<string, number> {
+  const out: Record<string, number> = {};
   if (!sig || sig === '0') return out;
   const n = parseInt(sig.slice(0, -1), 10);
   if (!Number.isFinite(n) || n <= 0) return out;
   const order = sig.endsWith('s') ? SHARP_ORDER : FLAT_ORDER;
-  const accid: 's' | 'f' = sig.endsWith('s') ? 's' : 'f';
-  for (let i = 0; i < Math.min(n, 7); i++) out[order[i]] = accid;
+  const v = sig.endsWith('s') ? 1 : -1;
+  for (let i = 0; i < Math.min(n, 7); i++) out[order[i]] = v;
   return out;
 }
 
-/** Normalize an accidental token to its absolute-pitch representation.
- *  '' and 'n' both mean "natural" in pitch terms. */
-function toAbsolute(written: string): string {
-  if (written === '' || written === 'n') return '';
-  return written;
+/** Strip the visible @accid and gestural @accid.ges attributes. */
+function clearAccidals(note: Element): void {
+  note.removeAttribute('accid');
+  note.removeAttribute('accid.ges');
 }
 
-/** Decide what @accid value (if any) to display, given the note's absolute
- *  pitch and the currently-implied pitch at its (letter, oct) position.
- *  Returns null when nothing should be displayed (note will sound at the
- *  implied pitch naturally). */
-function neededDisplay(absolute: string, expected: string): string | null {
-  if (absolute === expected) return null;
-  if (absolute === '') return 'n'; /* natural sign cancels a sharp/flat */
-  return absolute;
-}
-
-/** Apply a display decision to a note. */
-function applyDecision(note: Element, written: string, display: string | null): void {
-  if (display === null) {
-    /* Hide any written accidental — keep gestural for the sound. */
-    if (note.hasAttribute('accid')) {
-      note.setAttribute('accid.ges', written);
-      note.removeAttribute('accid');
-    }
+/** Write the visible form of the given alter to @accid. alter=0 with a
+ *  caller-supplied "need cancellation" intent writes 'n' (natural sign);
+ *  alter=0 with no cancellation is handled by the caller before this. */
+function showAlter(note: Element, alter: number): void {
+  clearAccidals(note);
+  if (alter === 0) {
+    note.setAttribute('accid', 'n');
     return;
   }
-  /* Display this accidental. */
-  if (note.getAttribute('accid') === display) return; /* already correct */
-  note.setAttribute('accid', display);
-  /* If we just wrote a natural that cancels a written sharp/flat, the
-     sounding pitch is natural — accid.ges should also reflect that or be
-     absent. Verovio reads @accid as the sounded value too. */
-  note.removeAttribute('accid.ges');
+  const token = tokenFromAlter(alter);
+  if (token) note.setAttribute('accid', token);
+}
+
+/** Hide the accidental: move alter into @accid.ges so Verovio doesn't
+ *  draw it but the gestural pitch is preserved. alter=0 leaves the note
+ *  with no accidental representation. */
+function hideAlter(note: Element, alter: number): void {
+  clearAccidals(note);
+  if (alter === 0) return;
+  const token = tokenFromAlter(alter);
+  if (token) note.setAttribute('accid.ges', token);
 }
 
 function elementDurationTicks(el: Element): number {
@@ -86,8 +133,6 @@ function elementDurationTicks(el: Element): number {
   return base;
 }
 
-/** Returns all <note> elements in a layer's content stream, paired with
- *  the start tick of their parent chord/note and the layer number. */
 function notesInLayer(layer: Element): Array<{ note: Element; startTick: number; layerN: number }> {
   const layerN = parseInt(layer.getAttribute('n') ?? '1', 10);
   const out: Array<{ note: Element; startTick: number; layerN: number }> = [];
@@ -110,12 +155,8 @@ function notesInLayer(layer: Element): Array<{ note: Element; startTick: number;
   return out;
 }
 
-/** Compute and write accidental display visibility for every note in the
- *  doc. Mutates @accid / @accid.ges on notes; does not change pitch.
- *  Walks one measure-staff at a time; resets state at each bar line. */
 export function computeAccidentalDisplay(doc: Document, keySig: string): void {
-  const keyAccids = keySigToAccids(keySig);
-
+  const keyAlters = keySigToAlter(keySig);
   const measures = doc.querySelectorAll('measure');
   for (const measure of Array.from(measures)) {
     for (const staffN of [1, 2]) {
@@ -125,41 +166,36 @@ export function computeAccidentalDisplay(doc: Document, keySig: string): void {
       const layers = Array.from(staff.querySelectorAll('layer'));
       const allNotes: Array<{ note: Element; startTick: number; layerN: number }> = [];
       for (const layer of layers) allNotes.push(...notesInLayer(layer));
-      /* Sort by startTick ascending, breaking ties by layer (1 wins so its
-         accidental sets state for voice 2 at the same beat). */
       allNotes.sort((a, b) =>
         a.startTick !== b.startTick ? a.startTick - b.startTick : a.layerN - b.layerN);
 
-      /* (pname:oct) → absolute accidental currently in effect for this
-         measure-staff. Initial: empty (means "default to key sig"). */
-      const local: Record<string, string> = {};
+      /* (pname:oct) → currently-implied integer alteration for this measure-staff. */
+      const local: Record<string, number> = {};
 
       for (const { note } of allNotes) {
         const pname = note.getAttribute('pname');
         const oct = note.getAttribute('oct');
         if (!pname || !oct) continue;
         const key = pname + ':' + oct;
-
-        const written = note.getAttribute('accid') ?? '';
-        const absolute = toAbsolute(written);
-        const expected = (key in local) ? local[key] : (keyAccids[pname] ?? '');
+        const alter = getNoteAlter(note);
+        const expected = (key in local) ? local[key] : (keyAlters[pname] ?? 0);
         const tie = note.getAttribute('tie');
         const isTieDestination = tie === 't' || tie === 'm';
 
         if (isTieDestination) {
-          /* Hide the accidental — chain initiator already showed it. But
-             DO update the carry state: a tie destination IS sounding at
-             the carried pitch, and subsequent notes need to know. */
-          applyDecision(note, written, null);
-          local[key] = absolute;
+          /* Hide (chain initiator already showed it). Update state to the
+             carried pitch so subsequent notes see it. */
+          hideAlter(note, alter);
+          local[key] = alter;
           continue;
         }
 
-        const display = neededDisplay(absolute, expected);
-        applyDecision(note, written, display);
-        /* Update carry state to reflect the absolute pitch (whether
-           visually displayed or not). */
-        local[key] = absolute;
+        if (alter === expected) {
+          hideAlter(note, alter);
+        } else {
+          showAlter(note, alter);
+          local[key] = alter;
+        }
       }
     }
   }

@@ -25,7 +25,7 @@
 
 import type { ResolvedNote } from '../bridge/protocol.js';
 import { regroupBeams, readTimeSig } from './beams.js';
-import { computeAccidentalDisplay } from './accidentals.js';
+import { computeAccidentalDisplay, alterFromCount, alterFromToken, tokenFromAlter, getNoteAlter } from './accidentals.js';
 
 /* ── public types ────────────────────────────────────────────────────────── */
 
@@ -62,6 +62,17 @@ export interface SetupDefaults {
 
 export const MEI_NS = 'http://www.music-encoding.org/ns/mei';
 const XML_NS = 'http://www.w3.org/XML/1998/namespace';
+
+/** Custom attribute marking an empty-voice-in-this-measure placeholder.
+ *  These are <space> elements that give Verovio enough layout content to
+ *  size the measure correctly, are visually invisible per MEI spec, and
+ *  serve as navigation targets so the cursor can land in an empty voice
+ *  in mid-score. See normalizePlaceholders. */
+const PLACEHOLDER_ATTR = 'data-placeholder';
+
+function isPlaceholder(el: Element): boolean {
+  return el.localName === 'space' && el.getAttribute(PLACEHOLDER_ATTR) === 'true';
+}
 
 function el(doc: Document, name: string, attrs?: Record<string, string | number | undefined>): Element {
   const e = doc.createElementNS(MEI_NS, name);
@@ -195,11 +206,11 @@ function emptyMeiDoc(setup: SetupDefaults = {}): Document {
     <section>
       <measure n="1" right="end" xml:id="${newId('m')}">
         <tempo tstamp="1" staff="1" mm="${bpm}" mm.unit="${tempoUnit}"${tempoDotsAttr} midi.bpm="${bpm}">${tempoTextSpan}</tempo>
-        <staff n="1">
+        <staff n="1" xml:id="${newId('s')}">
           <layer n="1" xml:id="${newId('l')}"/>
           <layer n="2" xml:id="${newId('l')}"/>
         </staff>
-        <staff n="2">
+        <staff n="2" xml:id="${newId('s')}">
           <layer n="1" xml:id="${newId('l')}"/>
           <layer n="2" xml:id="${newId('l')}"/>
         </staff>
@@ -227,6 +238,7 @@ export class ComposerModel {
     } else {
       this.doc = emptyMeiDoc();
     }
+    this.normalizePlaceholders();
   }
 
   /** Replace the entire document in-place (used by Load .hkc to preserve
@@ -241,8 +253,38 @@ export class ComposerModel {
     /* Migrate older .hkc files that lack bar.thru on the staffGrp. */
     const sg = this.doc.querySelector('staffGrp');
     if (sg && !sg.hasAttribute('bar.thru')) sg.setAttribute('bar.thru', 'true');
+    /* Migrate older .hkc files that lack xml:id on <staff> (cursor.ts looks
+       these up to position the empty-voice cursor on the right staff). */
+    for (const staff of Array.from(this.doc.querySelectorAll('staff'))) {
+      if (!staff.getAttribute('xml:id')) {
+        staff.setAttributeNS(XML_NS, 'xml:id', newId('s'));
+      }
+    }
+    /* Migrate older .hkc files that used @accid="ss" for double sharps —
+       Verovio renders that as a precomposed "##" glyph, not the canonical
+       × (which is @accid="x"). Rewrite for visual consistency. */
+    for (const note of Array.from(this.doc.querySelectorAll('note'))) {
+      if (note.getAttribute('accid') === 'ss') note.setAttribute('accid', 'x');
+      if (note.getAttribute('accid.ges') === 'ss') note.setAttribute('accid.ges', 'x');
+    }
+    /* Migrate older .hkc files that emitted <accid> child elements for
+       quadruple+ accidentals. Verovio's layout doesn't reserve space for
+       extra accid children (they overlap), so we no longer use them.
+       Collapse them into a single @accid clamped to ±3. */
+    for (const note of Array.from(this.doc.querySelectorAll('note'))) {
+      const accidChildren = Array.from(note.children).filter((c) => c.localName === 'accid');
+      if (accidChildren.length === 0) continue;
+      let alter = 0;
+      for (const c of accidChildren) {
+        alter += alterFromToken(c.getAttribute('accid') ?? '');
+        note.removeChild(c);
+      }
+      const token = tokenFromAlter(alter);
+      if (token) note.setAttribute('accid', token);
+    }
     /* Migrate older .hkc files that used right="dbl" for the final barline. */
     this.setBarlines();
+    this.normalizePlaceholders();
   }
 
   /** Strip any <beam> wrappers from the live doc so cursor/mutation code
@@ -268,7 +310,7 @@ export class ComposerModel {
 
   serialize(): string {
     /* Render-time passes operate on a clone so the live doc stays flat
-       (cursor/mutation invariant). Both passes are idempotent. Order:
+       (cursor/mutation invariant). All passes are idempotent. Order:
        accidentals first (operates on flat notes), then beams (wraps them). */
     const clone = this.doc.cloneNode(true) as Document;
     computeAccidentalDisplay(clone, this.getKeySig());
@@ -409,8 +451,10 @@ export class ComposerModel {
     return { count, unit };
   }
 
-  /** Set the time signature. Triggers rebuildMeasureLayout if the meter
-   *  actually changes AND the score has any content. */
+  /** Set the time signature. On any meter change, per-measure truncation
+   *  walks each layer and shortens/drops content that doesn't fit the new
+   *  measure's tick budget. Measure count is preserved; enlarging is a
+   *  no-op except for re-normalizing placeholders to the new duration. */
   setTimeSig(count: number, unit: number): void {
     const sd = this.doc.querySelector('scoreDef');
     if (!sd) return;
@@ -419,7 +463,7 @@ export class ComposerModel {
     sd.setAttribute('meter.count', String(count));
     sd.setAttribute('meter.unit', String(unit));
     if (count !== prevCount || unit !== prevUnit) {
-      if (this.hasAnyContent()) this.rebuildMeasureLayout();
+      this.truncateOverflowingMeasures();
     }
   }
 
@@ -456,6 +500,39 @@ export class ComposerModel {
     return Array.from(this.doc.querySelectorAll('measure'));
   }
 
+  /** Returns the xml:id of the <staff> the given voice maps to, in the
+   *  first measure. Cursor overlay uses this for the pathological "no
+   *  flat-children at all" fallback. */
+  getStaffIdForVoice(voice: Voice): string | null {
+    const measure = this.allMeasures()[0];
+    if (!measure) return null;
+    return this.staffIdInMeasure(measure, voice);
+  }
+
+  /** Returns the xml:id of the <staff> the cursor is currently "in" — the
+   *  staff for the voice in the measure containing the element at the
+   *  cursor (or just before it). When the voice is entirely empty (no
+   *  placeholders even — shouldn't happen post-normalize), falls back to
+   *  the first measure. */
+  getStaffIdAtCursor(voice?: Voice): string | null {
+    const v = voice ?? this.currentVoice;
+    const c = this.cursors[v];
+    const flat = this.flatChildren(v);
+    let measure: Element | null = null;
+    const target = c < flat.length ? flat[c] : (c > 0 ? flat[c - 1] : null);
+    if (target) measure = target.closest('measure');
+    if (!measure) measure = this.allMeasures()[0] ?? null;
+    if (!measure) return null;
+    return this.staffIdInMeasure(measure, v);
+  }
+
+  private staffIdInMeasure(measure: Element, voice: Voice): string | null {
+    const staffN = voice <= 2 ? 1 : 2;
+    const staff = Array.from(measure.querySelectorAll('staff'))
+      .find((s) => s.getAttribute('n') === String(staffN));
+    return staff?.getAttribute('xml:id') ?? null;
+  }
+
   /** Total ticks in one measure under the current meter. */
   measureTicks(): number {
     const { count, unit } = this.getTimeSig();
@@ -484,23 +561,31 @@ export class ComposerModel {
     return out;
   }
 
-  /** Flat content children (chord|note|rest) across all measures for voice. */
+  /** Flat navigable children across all measures for voice. Includes both
+   *  real content (chord/note/rest) AND placeholder spaces, so the cursor
+   *  can land in an otherwise-empty voice at a specific measure. */
   flatChildren(voice: Voice): Element[] {
     const out: Element[] = [];
     for (const layer of this.allLayers(voice)) {
       for (const c of Array.from(layer.children)) {
         const ln = c.localName;
-        if (ln === 'chord' || ln === 'note' || ln === 'rest') out.push(c);
+        if (ln === 'chord' || ln === 'note' || ln === 'rest' || isPlaceholder(c)) out.push(c);
       }
     }
     return out;
   }
 
-  /** Translate a linear cursor into an INSERTION POINT
-   *  (measureIdx, layer, withinIdx). Inclusive — at a measure boundary,
-   *  prefers the earlier measure so callers can fill its trailing edge.
-   *  When linear cursor is at end-of-voice, returns the last layer with
-   *  withinIdx = its content length. */
+  /** Translate a linear cursor (which counts placeholders) into an
+   *  insertion point — (measureIdx, layer, withinIdx) — where withinIdx
+   *  is expressed in CONTENT-children terms (placeholders excluded) so
+   *  insertWithSplit's tick math works unchanged.
+   *
+   *  Boundary semantics: cursor=N means "before flat[N]". `<` (strict)
+   *  is the right rule — when cursor sits at a measure boundary (e.g. the
+   *  start of measure k = the position of the first nav element in m_k),
+   *  insertion should target m_k, not m_(k-1)'s trailing edge.
+   *
+   *  Past end: returns the last layer at its content-child length. */
   private locateCursor(voice: Voice, linearCursor: number): {
     measureIdx: number; layer: Element; withinIdx: number;
   } | null {
@@ -509,23 +594,31 @@ export class ComposerModel {
     let consumed = 0;
     for (let mi = 0; mi < layers.length; mi++) {
       const layer = layers[mi];
-      const kids = this.contentChildren(layer);
-      if (linearCursor <= consumed + kids.length) {
-        return { measureIdx: mi, layer, withinIdx: linearCursor - consumed };
+      const navKids = this.navigableChildren(layer);
+      if (linearCursor < consumed + navKids.length) {
+        const navIdx = linearCursor - consumed;
+        let realIdx = 0;
+        for (let i = 0; i < navIdx; i++) {
+          if (!isPlaceholder(navKids[i])) realIdx++;
+        }
+        return { measureIdx: mi, layer, withinIdx: realIdx };
       }
-      consumed += kids.length;
+      consumed += navKids.length;
     }
-    /* Past end — return the last layer at its full length. */
+    /* Past end — return the last layer at its content-child length. */
     const last = layers.length - 1;
     const layer = layers[last];
     return { measureIdx: last, layer, withinIdx: this.contentChildren(layer).length };
   }
 
-  /** Locate a SPECIFIC ELEMENT by its flat index. Returns the measure and
-   *  position holding element[flatIdx], or null when flatIdx is out of range.
-   *  Strict-less-than walker — at a measure boundary, the first element of
-   *  the next measure has the higher precedence (which differs from
-   *  locateCursor's insertion-point semantics). */
+  /** Locate the navigable element at flat-index `flatIdx`. Returns the
+   *  measure, layer, and withinIdx (CONTENT-children index) where the
+   *  element lives, or null if out of range. The returned element may be
+   *  either real content OR a placeholder; callers that care should check
+   *  via `isPlaceholder`. The returned `withinIdx` points at the real-
+   *  content element when the target IS real content; for a placeholder
+   *  target, withinIdx is the number of real-content children before it
+   *  (which may equal contentChildren.length when the layer has none). */
   private locateFlatElement(voice: Voice, flatIdx: number): {
     measureIdx: number; layer: Element; withinIdx: number;
   } | null {
@@ -533,11 +626,15 @@ export class ComposerModel {
     const layers = this.allLayers(voice);
     let remaining = flatIdx;
     for (let mi = 0; mi < layers.length; mi++) {
-      const kids = this.contentChildren(layers[mi]);
-      if (remaining < kids.length) {
-        return { measureIdx: mi, layer: layers[mi], withinIdx: remaining };
+      const navKids = this.navigableChildren(layers[mi]);
+      if (remaining < navKids.length) {
+        let realIdx = 0;
+        for (let i = 0; i < remaining; i++) {
+          if (!isPlaceholder(navKids[i])) realIdx++;
+        }
+        return { measureIdx: mi, layer: layers[mi], withinIdx: realIdx };
       }
-      remaining -= kids.length;
+      remaining -= navKids.length;
     }
     return null;
   }
@@ -553,11 +650,52 @@ export class ComposerModel {
     return t;
   }
 
-  /** Filter to actual musical content (chord/note/rest), skip whitespace
-   *  and any other element types (<tempo>, etc.). */
+  /** Filter to actual musical content (chord/note/rest), skipping placeholders,
+   *  whitespace, and other element types. Used for layout / tick math and for
+   *  the within-layer index returned by locateCursor. */
   private contentChildren(layer: Element): Element[] {
     return Array.from(layer.children).filter((c) =>
       c.localName === 'chord' || c.localName === 'note' || c.localName === 'rest');
+  }
+
+  /** Filter to cursor-navigable elements: content (chord/note/rest) PLUS
+   *  placeholder spaces. Used by flatChildren and locateCursor's outer
+   *  mapping so the cursor can land on a placeholder in a voice that's
+   *  empty in this measure. */
+  private navigableChildren(layer: Element): Element[] {
+    return Array.from(layer.children).filter((c) =>
+      c.localName === 'chord' || c.localName === 'note' || c.localName === 'rest' ||
+      isPlaceholder(c));
+  }
+
+  /** Strip and re-add <space data-placeholder> children on every layer so
+   *  the document always satisfies the invariant: a layer either has at
+   *  least one real-content child (no placeholders) or it has only
+   *  placeholder spaces summing to the measure's full duration. Idempotent.
+   *  Called from every mutation entry point. */
+  private normalizePlaceholders(): void {
+    const layers = this.doc.querySelectorAll('layer');
+    const ticks = this.measureTicks();
+    const pieces = ticks > 0 ? decomposeTicks(ticks) : [];
+    for (const layer of Array.from(layers)) {
+      let hasReal = false;
+      const toRemove: Element[] = [];
+      for (const c of Array.from(layer.children)) {
+        if (isPlaceholder(c)) toRemove.push(c);
+        else if (c.localName === 'chord' || c.localName === 'note' || c.localName === 'rest') hasReal = true;
+      }
+      for (const c of toRemove) layer.removeChild(c);
+      if (hasReal) continue;
+      for (const p of pieces) {
+        const space = el(this.doc, 'space', {
+          'xml:id': newId('sp'),
+          dur: p.dur,
+          dots: p.dots > 0 ? p.dots : undefined,
+        });
+        space.setAttribute(PLACEHOLDER_ATTR, 'true');
+        layer.appendChild(space);
+      }
+    }
   }
 
   /** Append a new empty measure with all four layers. Sets barlines. */
@@ -567,10 +705,10 @@ export class ComposerModel {
     const measures = this.allMeasures();
     const n = measures.length + 1;
     const m = el(this.doc, 'measure', { n, 'xml:id': newId('m') });
-    const s1 = el(this.doc, 'staff', { n: 1 });
+    const s1 = el(this.doc, 'staff', { n: 1, 'xml:id': newId('s') });
     s1.appendChild(el(this.doc, 'layer', { n: 1, 'xml:id': newId('l') }));
     s1.appendChild(el(this.doc, 'layer', { n: 2, 'xml:id': newId('l') }));
-    const s2 = el(this.doc, 'staff', { n: 2 });
+    const s2 = el(this.doc, 'staff', { n: 2, 'xml:id': newId('s') });
     s2.appendChild(el(this.doc, 'layer', { n: 1, 'xml:id': newId('l') }));
     s2.appendChild(el(this.doc, 'layer', { n: 2, 'xml:id': newId('l') }));
     m.appendChild(s1);
@@ -588,14 +726,6 @@ export class ComposerModel {
       if (i < measures.length - 1) measures[i].removeAttribute('right');
       else measures[i].setAttribute('right', 'end');
     }
-  }
-
-  private hasAnyContent(): boolean {
-    for (let v: Voice = 1; v <= 4; v = (v + 1) as Voice) {
-      if (this.flatChildren(v).length > 0) return true;
-      if (v === 4) break;
-    }
-    return false;
   }
 
   /* ── navigation ─────────────────────────────────────────────────────────── */
@@ -671,6 +801,8 @@ export class ComposerModel {
     const originalCursor = this.cursors[v];
     const id = this.insertWithSplit(input, false);
     this.resolvePendingTies(originalCursor);
+    this.normalizePlaceholders();
+    this.cursors[v] = Math.min(this.cursors[v], this.getVoiceLength(v));
     return id;
   }
 
@@ -678,7 +810,11 @@ export class ComposerModel {
    *  split across measure boundaries (no ties on rests). Inserting a rest
    *  does NOT resolve a pending tie (a rest has no matching pitch). */
   insertRestAtCursor(input: RestInput): string {
-    return this.insertWithSplit({ ...input, notes: [] as ReadonlyArray<ResolvedNote> }, true);
+    const v = this.currentVoice;
+    const id = this.insertWithSplit({ ...input, notes: [] as ReadonlyArray<ResolvedNote> }, true);
+    this.normalizePlaceholders();
+    this.cursors[v] = Math.min(this.cursors[v], this.getVoiceLength(v));
+    return id;
   }
 
   /** Before an element is removed or replaced, clean up any tie state
@@ -775,6 +911,7 @@ export class ComposerModel {
       const replaced = this.buildChordElement(input);
       loc.layer.replaceChild(replaced, old);
       this.resolvePendingTies(cursorAtCall);
+      this.normalizePlaceholders();
       return replaced.getAttribute('xml:id');
     }
     /* Overflow on replace: remove old, insertWithSplit, restore cursor. */
@@ -784,6 +921,7 @@ export class ComposerModel {
     const id = this.insertWithSplit(input, false);
     this.cursors[v] = cursorAtCall;
     this.resolvePendingTies(cursorAtCall);
+    this.normalizePlaceholders();
     return id;
   }
 
@@ -798,11 +936,23 @@ export class ComposerModel {
 
   /** Delete the element immediately to the left of the cursor. If that
    *  deletion empties the entire measure (across all 4 voices), the
-   *  measure itself is removed — unless it's the only measure left. */
+   *  measure itself is removed — unless it's the only measure left.
+   *
+   *  Backspacing onto a placeholder doesn't delete it (placeholders are
+   *  not user-entered content); the cursor moves left so the next press
+   *  reaches whatever real content lies behind. */
   deleteAtCursor(): boolean {
     const v = this.currentVoice;
     const c = this.cursors[v];
     if (c <= 0) return false;
+    const flat = this.flatChildren(v);
+    const target = flat[c - 1];
+    if (!target) return false;
+    if (isPlaceholder(target)) {
+      /* Skip past the placeholder; cursor moves but nothing is removed. */
+      this.cursors[v] = c - 1;
+      return true;
+    }
     const loc = this.locateFlatElement(v, c - 1);
     if (!loc) return false;
     const kids = this.contentChildren(loc.layer);
@@ -813,13 +963,21 @@ export class ComposerModel {
     loc.layer.removeChild(victim);
     this.cursors[v] = c - 1;
     /* If the just-emptied measure has no content in ANY voice, drop it
-       (unless it's the only measure left). */
+       (unless it's the only measure left). measureIsEmpty uses
+       contentChildren so it correctly treats "only placeholders" as
+       empty. */
     if (measure && this.measureIsEmpty(measure) && this.allMeasures().length > 1) {
       measure.parentNode?.removeChild(measure);
       this.renumberMeasures();
     }
     /* Always re-apply barlines (last measure may have changed). */
     this.setBarlines();
+    this.normalizePlaceholders();
+    /* Clamp cursor: dropping a measure shrank flat-children for every voice. */
+    for (let vi = 1 as Voice; vi <= 4; vi = (vi + 1) as Voice) {
+      this.cursors[vi] = Math.min(this.cursors[vi], this.getVoiceLength(vi));
+      if (vi === 4) break;
+    }
     return true;
   }
 
@@ -848,6 +1006,7 @@ export class ComposerModel {
     const v = this.currentVoice;
     const ref = this.getCurrentElement(v, mode);
     if (!ref) return null;
+    if (isPlaceholder(ref.elem)) return null; /* nothing to dot */
     const elem = ref.elem;
     const isRest = elem.localName === 'rest';
     const curDots = parseInt(elem.getAttribute('dots') ?? '0', 10) as Dots;
@@ -868,6 +1027,7 @@ export class ComposerModel {
       /* Fits in measure: just set/remove @dots. */
       if (nextDots > 0) elem.setAttribute('dots', String(nextDots));
       else elem.removeAttribute('dots');
+      this.normalizePlaceholders();
       return { id: ref.id, newDots: nextDots };
     }
 
@@ -914,6 +1074,8 @@ export class ComposerModel {
          insert-mode convention "right of just-entered element". */
     }
     void savedCursor; /* not needed beyond reasoning; ref.index re-derived */
+    this.normalizePlaceholders();
+    this.cursors[v] = Math.min(this.cursors[v], this.getVoiceLength(v));
     if (!firstId) return null;
     return { id: firstId, newDots: nextDots };
   }
@@ -926,6 +1088,7 @@ export class ComposerModel {
     const ref = this.getCurrentElement(v, mode);
     if (!ref) return null;
     if (ref.elem.localName === 'rest') return null;
+    if (isPlaceholder(ref.elem)) return null; /* placeholders aren't tieable */
     const currentNotes = this.extractNoteElements(ref.elem);
     if (currentNotes.length === 0) return null;
 
@@ -953,6 +1116,7 @@ export class ComposerModel {
         }
         clearTieFlag(n);
       }
+      this.normalizePlaceholders();
       return { id: ref.id, tied: false };
     }
 
@@ -976,105 +1140,73 @@ export class ComposerModel {
         setStubTie(n);
       }
     }
+    this.normalizePlaceholders();
     return { id: ref.id, tied: true };
   }
 
-  /** Rebuild measures: flatten all content per voice, then re-distribute
-   *  under the current meter via insertWithSplit (which auto-ties across
-   *  the new bar lines). */
-  rebuildMeasureLayout(): void {
-    /* Snapshot per-voice ordered list of {duration, dots, notes|rest, tieIn?}. */
-    type Snap = { kind: 'note' | 'rest'; dur: Duration; dots: Dots; notes: SnapNote[] };
-    const snapsByVoice: Record<Voice, Snap[]> = { 1: [], 2: [], 3: [], 4: [] };
-
-    for (let v: Voice = 1; v <= 4; v = (v + 1) as Voice) {
-      /* Walk flat children; coalesce tied chains into single notional events
-         (so the rebuild creates one long note that re-splits naturally). */
-      const flat = this.flatChildren(v);
-      let i = 0;
-      while (i < flat.length) {
-        const elem = flat[i];
-        if (elem.localName === 'rest') {
-          const dur = (elem.getAttribute('dur') ?? '4') as Duration;
-          const dots = parseInt(elem.getAttribute('dots') ?? '0', 10) as Dots;
-          snapsByVoice[v].push({ kind: 'rest', dur, dots, notes: [] });
-          i++;
-          continue;
-        }
-        const notes = this.extractNoteElements(elem).map((n) => snapNoteOf(n));
-        let ticks = elementDurationTicks(elem);
-        let j = i + 1;
-        /* Coalesce tied chain. */
-        if (this.elementHasTieInitial(elem)) {
-          while (j < flat.length) {
-            const e2 = flat[j];
-            if (e2.localName === 'rest') break;
-            if (!this.elementHasTieTerminal(e2)) break;
-            ticks += elementDurationTicks(e2);
-            if (!this.elementHasTieInitial(e2)) { j++; break; }
-            j++;
-          }
-        }
-        /* Convert ticks back to (dur, dots): not always representable
-           cleanly for a tied chain (e.g. quarter + 8th = dotted quarter
-           is representable; quarter + 16 = not directly representable as
-           single dur). decomposeTicks splits it into reasonable pieces.
-           We push one snap per piece. */
-        const pieces = decomposeTicks(ticks);
-        for (const p of pieces) snapsByVoice[v].push({ kind: 'note', dur: p.dur, dots: p.dots, notes });
-        i = j === i + 1 ? i + 1 : j;
+  /** After a time-signature change, walk each measure × voice layer in
+   *  place. For each layer, find the first element that overflows the new
+   *  measure's tick budget; shorten it to the largest representable dur ≤
+   *  remaining ticks (or drop it if remaining is 0), then drop everything
+   *  after it. Measure count is preserved; tied chains that cross the new
+   *  truncation point get orphaned cleanly (orphanTiePartners demotes
+   *  surviving partners back to stubs). */
+  private truncateOverflowingMeasures(): void {
+    const cap = this.measureTicks();
+    for (const measure of this.allMeasures()) {
+      for (let v: Voice = 1; v <= 4; v = (v + 1) as Voice) {
+        const layer = this.layerInMeasure(measure, v);
+        if (layer) this.truncateLayer(layer, cap);
+        if (v === 4) break;
       }
+    }
+    this.normalizePlaceholders();
+    for (let v: Voice = 1; v <= 4; v = (v + 1) as Voice) {
+      this.cursors[v] = Math.min(this.cursors[v], this.getVoiceLength(v));
       if (v === 4) break;
     }
-
-    /* Tear down all measures except a single fresh first measure. */
-    const section = this.doc.querySelector('section');
-    if (!section) return;
-    while (section.firstChild) section.removeChild(section.firstChild);
-    /* Build fresh measure 1, preserving the tempo element if present. */
-    const m1 = el(this.doc, 'measure', { n: 1, 'xml:id': newId('m') });
-    /* Re-add tempo (we kept it referenced elsewhere; rebuild puts a new
-       <tempo> in based on current tempo state). */
-    const tempo = this.recreateTempoElement();
-    if (tempo) m1.appendChild(tempo);
-    const s1 = el(this.doc, 'staff', { n: 1 });
-    s1.appendChild(el(this.doc, 'layer', { n: 1, 'xml:id': newId('l') }));
-    s1.appendChild(el(this.doc, 'layer', { n: 2, 'xml:id': newId('l') }));
-    const s2 = el(this.doc, 'staff', { n: 2 });
-    s2.appendChild(el(this.doc, 'layer', { n: 1, 'xml:id': newId('l') }));
-    s2.appendChild(el(this.doc, 'layer', { n: 2, 'xml:id': newId('l') }));
-    m1.appendChild(s1);
-    m1.appendChild(s2);
-    section.appendChild(m1);
-
-    this.cursors = { 1: 0, 2: 0, 3: 0, 4: 0 };
-
-    /* Replay snaps per voice. */
-    const savedVoice = this.currentVoice;
-    for (let v: Voice = 1; v <= 4; v = (v + 1) as Voice) {
-      this.currentVoice = v;
-      this.cursors[v] = 0;
-      for (const snap of snapsByVoice[v]) {
-        if (snap.kind === 'rest') {
-          this.insertRestAtCursor({ duration: snap.dur, dots: snap.dots });
-        } else {
-          const notes = snap.notes.map((sn) => resolvedFromSnapNote(sn));
-          this.insertChordAtCursor({ notes, duration: snap.dur, dots: snap.dots });
-        }
-      }
-      if (v === 4) break;
-    }
-    this.currentVoice = savedVoice;
     this.setBarlines();
   }
 
-  /* ── private helpers ────────────────────────────────────────────────────── */
-
-  private recreateTempoElement(): Element | null {
-    const t = this.doc.querySelector('tempo');
-    if (!t) return null;
-    return t.cloneNode(true) as Element;
+  private truncateLayer(layer: Element, cap: number): void {
+    const kids = this.contentChildren(layer);
+    let running = 0;
+    let truncateAt = -1;
+    for (let i = 0; i < kids.length; i++) {
+      const ticks = elementDurationTicks(kids[i]);
+      if (running + ticks > cap) { truncateAt = i; break; }
+      running += ticks;
+    }
+    if (truncateAt < 0) return; /* fully fits — nothing to do */
+    const overflowEl = kids[truncateAt];
+    const remaining = cap - running;
+    if (remaining > 0) {
+      /* Shorten the overflowing element to fit. @dur (and @dots) live on
+         the element itself (chord parent or bare note); inner notes of a
+         chord don't carry @dur so a single setAttribute is enough.
+         Pitches, ties, color, data-q/r, etc. are preserved. */
+      const pieces = decomposeTicks(remaining);
+      if (pieces.length === 0) {
+        this.orphanTiePartners(overflowEl);
+        layer.removeChild(overflowEl);
+      } else {
+        const first = pieces[0];
+        overflowEl.setAttribute('dur', first.dur);
+        if (first.dots > 0) overflowEl.setAttribute('dots', String(first.dots));
+        else overflowEl.removeAttribute('dots');
+      }
+    } else {
+      /* Previous element exactly filled the measure — drop overflowEl. */
+      this.orphanTiePartners(overflowEl);
+      layer.removeChild(overflowEl);
+    }
+    for (let i = truncateAt + 1; i < kids.length; i++) {
+      this.orphanTiePartners(kids[i]);
+      layer.removeChild(kids[i]);
+    }
   }
+
+  /* ── private helpers ────────────────────────────────────────────────────── */
 
   /** Core insert with measure-overflow splitting. For chords with notes
    *  arr.length > 0, splits notes-identical pieces with ties; for rests
@@ -1085,8 +1217,35 @@ export class ComposerModel {
   ): string {
     const v = this.currentVoice;
     const cursor = this.cursors[v];
-    const loc = this.locateCursor(v, cursor);
+    let loc = this.locateCursor(v, cursor);
     if (!loc) throw new Error('no layer at cursor');
+    /* Boundary rule: locateCursor uses strict-less-than semantics so that
+       cursor at a placeholder targets the placeholder's measure. But when
+       the cursor is at a partial-real-measure / empty-next-measure
+       BOUNDARY (cursor=N where flat[N] is a placeholder and flat[N-1] is
+       real content in a different measure), the user's intent is to
+       extend the previous measure, not consume the placeholder. Re-aim
+       the insert at the end of the previous layer in that case. */
+    if (cursor > 0) {
+      const flat = this.flatChildren(v);
+      const at = cursor < flat.length ? flat[cursor] : null;
+      const prev = flat[cursor - 1];
+      if (at && prev && isPlaceholder(at) && !isPlaceholder(prev)) {
+        const prevMeasure = prev.closest('measure');
+        const atMeasure = at.closest('measure');
+        if (prevMeasure && atMeasure && prevMeasure !== atMeasure) {
+          const prevLayer = prev.parentElement;
+          if (prevLayer) {
+            const prevMeasureIdx = this.allMeasures().indexOf(prevMeasure);
+            loc = {
+              measureIdx: prevMeasureIdx,
+              layer: prevLayer,
+              withinIdx: this.contentChildren(prevLayer).length,
+            };
+          }
+        }
+      }
+    }
     const totalTicks = ticksOf(input.duration, input.dots ?? 0);
     const usedBefore = this.timeWithinMeasure(v, loc.measureIdx, loc.withinIdx);
     const remaining = this.measureTicks() - usedBefore;
@@ -1204,7 +1363,16 @@ export class ComposerModel {
       attrs.dur = dur;
       if (dots > 0) attrs.dots = dots;
     }
-    if (n.accid) attrs.accid = n.accid;
+    /* Accidental: emit a single canonical MEI token (s/f/x/ff/ts/tf or
+       'n' for explicit natural). HKL count-form string is parsed to an
+       integer alter; values outside ±3 should never arrive here (entry
+       path filters them) but we clamp to ±3 defensively just in case. */
+    if (n.accid === 'n') {
+      attrs.accid = 'n';
+    } else {
+      const token = tokenFromAlter(alterFromCount(n.accid));
+      if (token) attrs.accid = token;
+    }
     return el(this.doc, 'note', attrs);
   }
 
@@ -1230,7 +1398,10 @@ export class ComposerModel {
       const q = parseInt(n.getAttribute('data-q') ?? '0', 10);
       const r = parseInt(n.getAttribute('data-r') ?? '0', 10);
       const pname = (n.getAttribute('pname') ?? 'c') as ResolvedNote['pname'];
-      const accid = (n.getAttribute('accid') ?? '') as ResolvedNote['accid'];
+      /* Reconstruct the count-form accidental string from whatever form the
+         note carries (@accid attr, @accid.ges, or <accid> children). */
+      const alter = getNoteAlter(n);
+      const accid = alter === 0 ? '' : (alter > 0 ? 's' : 'f').repeat(Math.abs(alter));
       const oct = parseInt(n.getAttribute('oct') ?? '4', 10);
       const colorHex = n.getAttribute('color') ?? '#000000';
       /* MIDI is not used by buildChordElement except for sort order; reconstruct
@@ -1371,38 +1542,8 @@ function removeLvForNote(note: Element): void {
 
 function notesMatch(a: Element, b: Element): boolean {
   return a.getAttribute('pname') === b.getAttribute('pname')
-    && (a.getAttribute('accid') ?? '') === (b.getAttribute('accid') ?? '')
-    && a.getAttribute('oct') === b.getAttribute('oct');
-}
-
-/* ── rebuild snapshot helpers ────────────────────────────────────────────── */
-
-interface SnapNote {
-  q: number; r: number;
-  pname: ResolvedNote['pname'];
-  accid: ResolvedNote['accid'];
-  oct: number;
-  colorHex: string;
-}
-
-function snapNoteOf(n: Element): SnapNote {
-  return {
-    q: parseInt(n.getAttribute('data-q') ?? '0', 10),
-    r: parseInt(n.getAttribute('data-r') ?? '0', 10),
-    pname: (n.getAttribute('pname') ?? 'c') as ResolvedNote['pname'],
-    accid: (n.getAttribute('accid') ?? '') as ResolvedNote['accid'],
-    oct: parseInt(n.getAttribute('oct') ?? '4', 10),
-    colorHex: n.getAttribute('color') ?? '#000000',
-  };
-}
-
-function resolvedFromSnapNote(s: SnapNote): ResolvedNote {
-  const midi = 57 + 4 * s.q + 7 * s.r;
-  return {
-    q: s.q, r: s.r,
-    pname: s.pname, accid: s.accid, oct: s.oct,
-    midi, colorHex: s.colorHex, velocity: 80,
-  };
+    && a.getAttribute('oct') === b.getAttribute('oct')
+    && getNoteAlter(a) === getNoteAlter(b);
 }
 
 /* ── chord input builder from bridge held-keys ──────────────────────────── */

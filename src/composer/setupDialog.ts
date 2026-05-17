@@ -135,10 +135,16 @@ export function openSetupDialog(model: ComposerModel, onApply: () => void): void
     const meterChanged = prev.count !== values.count || prev.unit !== values.unit;
     let proceedWithMeterChange = true;
     if (meterChanged) {
-      const hasNotes = hasAnyNotes(model);
-      if (hasNotes) {
+      /* Per-measure truncation only drops content when the new measure's
+         tick budget is SMALLER than the current one. Enlarging is
+         non-destructive (existing measures just have unfilled space), so
+         no confirmation needed. */
+      const prevTicks = prev.count * (64 / prev.unit);
+      const newTicks = values.count * (64 / values.unit);
+      const wouldTruncate = newTicks < prevTicks && hasAnyNotes(model);
+      if (wouldTruncate) {
         proceedWithMeterChange = window.confirm(
-          'Changing time signature will rebuild measure boundaries and may re-flow ties. Continue?'
+          'Changing time signature may truncate notes that don’t fit in the new measure. Continue?'
         );
       }
     }

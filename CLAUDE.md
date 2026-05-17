@@ -84,6 +84,10 @@ Engraving is **Verovio** (in-browser WASM, MEI in / SVG out, sub-100 ms re-rende
 
 Playback orchestration: Composer walks the MEI to compute per-voice timing in ms, dispatches `play-score` over the bridge. HKL's audio engine plays via the same `noteOn`/`noteOff` path used for live input. HKL also adds the playing keys to `selection.selectedKeys` (with a `playbackOwnedKeys` tracker so user-held keys aren't disturbed) and calls `draw()` — the lattice highlights what's sounding. The held-keys broadcast is suppressed while HKL is playing back to prevent Composer from seeing its own playback echoed back as held-key input.
 
+Multi-measure with per-measure invariants: every voice's layer either holds real content OR holds invisible `<space data-placeholder>` elements summing to one measure — never both. Placeholders both reserve Verovio layout width (fixing the empty-measure bar-line gap) and serve as cursor navigation targets (letting the user start a voice partway through the score without manually entering whole rests). Auto-tie-on-overflow splits long notes across barlines via `<note @tie="i"/"m"/"t">` with `data-tie-partner` cross-references for O(1) orphan cleanup. Accidentals are clamped at ±3 (multi-`<accid>` children overlap in Verovio rendering); higher alterations are filtered at entry. Time-sig change uses per-measure truncation (not flatten-and-reflow). See architecture.md §7 for details.
+
+**Headless Composer inspection**: `tools/composer-inspect/inspect.mjs` runs an arbitrary JS expression in a headless-Chromium-loaded Composer page and prints the result as JSON. Use it any time Composer's rendering needs empirical verification (e.g., "where exactly does the bar line land?", "what SMuFL glyph rendered for this accidental?"). Requires `npm run dev` running. Example: `node tools/composer-inspect/inspect.mjs '[...document.querySelectorAll("g.accid use")].map(u => u.getAttribute("xlink:href"))'`.
+
 ## Critical Lumatone protocol context
 
 - **SysEx envelope**: `F0 00 21 50 <board> <cmd> <data1-4> F7`

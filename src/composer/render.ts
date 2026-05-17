@@ -132,6 +132,16 @@ class Renderer {
       }
       this.container.innerHTML = combined;
     }
+    /* Bring noteheads to the front. Verovio renders each <g class="note">
+       as [notehead, dots, stem]; SVG z-order is document order, so the
+       stem draws over the notehead. With our colored noteheads + black
+       stems, the stem intrudes visibly. Move each notehead group to be
+       the LAST child of its note so it draws on top. Dots are off to the
+       side and unaffected. */
+    for (const note of Array.from(this.container.querySelectorAll('g.note'))) {
+      const notehead = note.querySelector(':scope > g.notehead');
+      if (notehead) note.appendChild(notehead);
+    }
   }
 
   /** Resolve a clicked SVG element to its xml:id, walking up to the nearest
@@ -158,6 +168,41 @@ class Renderer {
       r.top - containerRect.top + this.container.scrollTop,
       r.width, r.height,
     );
+  }
+
+  /** Find the right-edge x (in container-local coords) of the rightmost
+   *  clef / keySig / meterSig element whose bounding box lies INSIDE the
+   *  given staff's bounding box. Returns null if the staff isn't rendered
+   *  yet or has no sigs inside its bounds (e.g., mid-score measures
+   *  without sig changes — caller should fall back to a small staff-left
+   *  offset). */
+  findSigEndXForStaff(staffId: string): number | null {
+    if (!this.container) return null;
+    const staffNode = this.container.querySelector('#' + CSS.escape(staffId));
+    if (!staffNode) return null;
+    const containerRect = this.container.getBoundingClientRect();
+    const staffRect = (staffNode as Element).getBoundingClientRect();
+    /* Verovio's emitted SVG can place clef/sig groups either inside the
+       staff <g> or as siblings at the system/measure level — depends on
+       version and whether it's the start of a system. Query the whole
+       container and filter to those whose bbox lies inside THIS staff
+       (vertically AND horizontally — bass staves on different measures
+       share the same y range, so a vertical-only filter would pull in
+       sigs from the wrong measure). */
+    const candidates = Array.from(
+      this.container.querySelectorAll('g.clef, g.keySig, g.meterSig')
+    );
+    let rightmost = -Infinity;
+    for (const n of candidates) {
+      const r = (n as Element).getBoundingClientRect();
+      const cy = (r.top + r.bottom) / 2;
+      const cx = (r.left + r.right) / 2;
+      if (cy < staffRect.top || cy > staffRect.bottom) continue;
+      if (cx < staffRect.left || cx > staffRect.right) continue;
+      if (r.right > rightmost) rightmost = r.right;
+    }
+    if (rightmost === -Infinity) return null;
+    return rightmost - containerRect.left + this.container.scrollLeft;
   }
 }
 

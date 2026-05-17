@@ -18,8 +18,18 @@ export interface ResolvedNote {
   r: number;
   /** MEI pname letter (lowercase 'a'..'g'). */
   pname: 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g';
-  /** MEI accid token. Empty string = no accidental glyph. */
-  accid: '' | 's' | 'f' | 'ss' | 'ff' | 'n';
+  /** MEI-style count-form accidental string. Examples:
+   *    ''       — no accidental
+   *    's'      — single sharp     'f'       — single flat
+   *    'ss'     — double sharp     'ff'      — double flat
+   *    'sss'    — triple sharp     'fff'     — triple flat
+   *    'ssss'+  — quadruple+       'ffff'+   — quadruple+
+   *    'n'      — explicit natural (with visible sign)
+   *  Composer parses the count to an integer alter and emits canonical MEI
+   *  glyph(s). HKL does NOT clamp at ±2; the full alteration reaches
+   *  Composer so it can decompose into the right combination of x / ff /
+   *  ts / tf glyphs (with multi-`<accid>` child stacking for ±4+). */
+  accid: string;
   /** Scientific octave (middle C = 4). */
   oct: number;
   /** 12-TET nominal MIDI note = 57 + 4q + 7r. */

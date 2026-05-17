@@ -84,11 +84,15 @@ export interface KeyStats {
   cv: number;
   min: number;
   max: number;
+  /** 5th and 95th percentiles. Outlier-rejecting bounds on the realistic
+   *  velocity range for normal play. For n < STATS_MIN_N, falls back to min/max. */
+  p5: number;
+  p95: number;
 }
 
 function computeStats(arr: number[]): KeyStats {
   const n = arr.length;
-  if (n === 0) return { n: 0, mean: 0, stddev: 0, cv: -1, min: 0, max: 0 };
+  if (n === 0) return { n: 0, mean: 0, stddev: 0, cv: -1, min: 0, max: 0, p5: 0, p95: 0 };
   let sum = 0, min = arr[0], max = arr[0];
   for (let i = 0; i < n; i++) {
     sum += arr[i];
@@ -96,7 +100,7 @@ function computeStats(arr: number[]): KeyStats {
     if (arr[i] > max) max = arr[i];
   }
   const mean = sum / n;
-  if (n < STATS_MIN_N) return { n, mean, stddev: 0, cv: -1, min, max };
+  if (n < STATS_MIN_N) return { n, mean, stddev: 0, cv: -1, min, max, p5: min, p95: max };
   let sumSq = 0;
   for (let i = 0; i < n; i++) {
     const d = arr[i] - mean;
@@ -104,7 +108,10 @@ function computeStats(arr: number[]): KeyStats {
   }
   const stddev = Math.sqrt(sumSq / (n - 1));
   const cv = mean > 0 ? stddev / mean : -1;
-  return { n, mean, stddev, cv, min, max };
+  const sorted = arr.slice().sort((a, b) => a - b);
+  const p5 = sorted[Math.round(0.05 * (n - 1))];
+  const p95 = sorted[Math.round(0.95 * (n - 1))];
+  return { n, mean, stddev, cv, min, max, p5, p95 };
 }
 
 /* Clamp + integer-snap. Velocity is a 7-bit MIDI value with no fractional
@@ -260,7 +267,10 @@ export const velocityCal = {
     const arr = samples.get(key);
     if (arr && arr.length > 0) return computeStats(arr);
     const snap = snapshots[key];
-    if (snap) return { n: snap.n, mean: snap.mean, stddev: snap.stddev, cv: snap.cv, min: 0, max: 0 };
+    if (snap) return {
+      n: snap.n, mean: snap.mean, stddev: snap.stddev, cv: snap.cv,
+      min: snap.p5, max: snap.p95, p5: snap.p5, p95: snap.p95,
+    };
     return undefined;
   },
 
@@ -289,7 +299,10 @@ export const velocityCal = {
     for (const k of Object.keys(snapshots)) {
       if (seen.has(k)) continue;
       const s = snapshots[k];
-      out.push({ key: k, stats: { n: s.n, mean: s.mean, stddev: s.stddev, cv: s.cv, min: 0, max: 0 } });
+      out.push({ key: k, stats: {
+        n: s.n, mean: s.mean, stddev: s.stddev, cv: s.cv,
+        min: s.p5, max: s.p95, p5: s.p5, p95: s.p95,
+      }});
     }
     return out;
   },
@@ -358,7 +371,7 @@ export const velocityCal = {
     for (const [k, arr] of samples) {
       if (arr.length < STATS_MIN_N) continue;
       const s = computeStats(arr);
-      next[k] = { n: s.n, mean: s.mean, stddev: s.stddev, cv: s.cv };
+      next[k] = { n: s.n, mean: s.mean, stddev: s.stddev, cv: s.cv, p5: s.p5, p95: s.p95 };
     }
     /* Preserve snapshot entries for keys not played this session. */
     for (const k of Object.keys(snapshots)) {

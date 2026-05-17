@@ -1,26 +1,119 @@
 #!/usr/bin/env python3
-# keydata-live — set a single key's threshold value live, no reboot.
+# keydata-live — per-key (and bulk) hardware threshold tuning on a running
+# Lumatone, live, with no reboot between edits.
 #
-# Usage:
+# === SINGLE-KEY COMMANDS ==================================================
+#
 #   sudo python3 keydata-live.py <q> <r> <section> <value>
-#       q, r       — lattice coordinates (use HKL coords toggle to find these)
+#       q, r       — lattice coordinates (HKL "coords" toggle reveals them on
+#                    each hex; pick a problem key, read its (q, r))
 #       section    — 1=MAX, 2=MIN, 3=validity, 4=AT_MAX
 #       value      — 0-254 (or 0/1 for section 3)
 #
 #   sudo python3 keydata-live.py --read <q> <r>
-#       Read current in-memory values for that key without modifying.
+#       Read current in-memory values for the key without modifying.
+#
+# === BULK COMMANDS (for global calibration sweeps) ========================
+#
+#   sudo python3 keydata-live.py --bulk <section> <value>
+#       Set section to value for every key on every board (280 keys).
+#       Unconditional — clobbers any prior per-key edits.
+#
+#   sudo python3 keydata-live.py --bulk-raise <section> <value>
+#       Same, but only for keys whose CURRENT value < value. Establishes a
+#       floor. NOT rescue-preserving — a rescue lower than `value` will be
+#       raised to `value`. Use --bulk-change for rescue-preserving sweeps.
+#
+#   sudo python3 keydata-live.py --bulk-lower <section> <value>
+#       Same, but only where current > value. Establishes a ceiling.
+#       Symmetric caveat: a rescue above `value` will be lowered.
+#
+#   sudo python3 keydata-live.py --bulk-change <section> <from> <to>
+#       Only writes keys whose current value EQUALS `from`. The
+#       rescue-preserving primitive: bumps the old baseline to the new
+#       baseline without touching any key whose value differs (i.e. any
+#       per-key rescue at a different value). Use this for the iterative
+#       MAX-raising loop.
+#
+# === PERSIST =============================================================
 #
 #   sudo python3 keydata-live.py --commit
-#       After you've dialed in values you like via repeated live edits, this
-#       writes the current in-memory state back to KeyData_N files on disk so
-#       changes survive a power cycle.
+#       Read current in-memory state for all 5 PIC slots, write back to
+#       /home/debian/TerpstraController/files/KeyData_1..5 on disk. First
+#       commit auto-creates KeyData_N.bak backups. After --commit, values
+#       survive power cycle.
 #
-# Mechanism: writes to /proc/<TerpstraController pid>/mem at the in-memory
-# kbd_preset_params byte for this key+section, then sets the corresponding
-# bit in picMessage0Flag[boardId-1] so writeToPic dispatches the section to
-# the PIC on its next main-loop tick (sub-millisecond).
+# === MECHANISM ===========================================================
 #
-# NB: in-memory changes are volatile. Run --commit to persist.
+# Writes to /proc/<TerpstraController pid>/mem at the in-memory
+# kbd_preset_params byte for the relevant key+section, then sets the
+# corresponding bit in picMessage0Flag[mem_slot] so writeToPic dispatches the
+# section to the PIC on its next main-loop tick (~1ms). The PIC's volatile
+# per-key threshold updates immediately. Persistence via --commit writes the
+# in-memory state back to the KeyData_N files TC reloads at every boot.
+#
+# Memory slot for a key at HKL coords (q, r):
+#   board_group = baseKeys_index // 56  (HKL's spatial position, 0..4)
+#   sysex_board = sysexBoardMap[board_group]  ([1, 2, 3, 5, 4] for Max's swap)
+#   mem_slot    = sysex_board - 1   ← THIS is the in-memory + file index
+# Memory slot indexes the BBB's view (PIC number), NOT spatial board.
+#
+# NB: in-memory changes are VOLATILE. Run --commit to persist.
+#
+# === CALIBRATION WORKFLOW (proven 2026-05) ================================
+#
+# Iterative widening with per-key rescue. Converges in 3-4 passes.
+#
+# 0. (one time) Push identity velocity LUT from HKL's lumadiag panel so the
+#    firmware emits its full 0-127 range. Set sane defaults across all
+#    boards: MAX=70, MIN=0, validity=1, AT_MAX=200 (see KeyData_default).
+#
+# 1. Collect a baseline of per-key velocity statistics in HKL's lumadiag
+#    panel (Per-key velocity statistics section, "Collect" checkbox on).
+#    Play every key at the full range of forces you'd use in normal play
+#    (50+ strikes per key for stable p5/p95). The scatter shows two failure
+#    modes:
+#      - top-right cluster: keys saturate >100, can't play quiet (raise MAX)
+#      - middle / near-diagonal: keys stuck in mid-velocity, can't reach
+#        full dynamic range (raise MIN to push p95 up, or raise MAX to drop
+#        p5 down — they're independent monotonic knobs)
+#
+# 2. First raise (modest):
+#      sudo python3 keydata-live.py --bulk-change 1 70 100
+#    (bump every key still at the 70 baseline to 100; nothing else has been
+#    touched yet, so this is equivalent to --bulk 1 100 on the first pass)
+#    Then play every key. Watch the lumadiag scatter — dots should migrate
+#    left (p5 drops). Some keys vanish from the scatter / show no new
+#    samples → those went dead (their physical ADC swing < new MAX).
+#
+# 3. Rescue dead keys individually (probably 5-20 of them):
+#      sudo python3 keydata-live.py <q> <r> 1 80   # back down per dead key
+#    Use lumadiag's "Can't play loud" list (p95 < 100) as a starting point,
+#    confirm by playing the key after the rescue. Pick a rescue value that
+#    isn't equal to the current baseline so subsequent --bulk-change passes
+#    don't catch it.
+#
+# 4. Second raise:
+#      sudo python3 keydata-live.py --bulk-change 1 100 130
+#    --bulk-change only touches keys still at the old baseline (100), so
+#    rescues at 80 (or any other value) are left alone. More rescues for
+#    newly-dead keys at the new baseline.
+#
+# 5. Third raise: e.g. --bulk-change 1 130 160. Fewer casualties at each
+#    pass. Stop when further raises don't improve "Can't play quiet"
+#    outliers.
+#
+# 6. If keys still can't reach p95=127 after MAX is dialed in, raise their
+#    MIN selectively (section 2) to push the high end of velocity up.
+#    sudo python3 keydata-live.py <q> <r> 2 15
+#
+# 7. When happy: sudo python3 keydata-live.py --commit
+#    Reboot the Lumatone (or wait for next power cycle) — TC reloads from
+#    disk and pushes to PICs. Done.
+#
+# Residual range gaps (e.g. weak-swing keys that physically can't reach
+# p95=127 no matter what) are addressed in HKL via per-key gain + the
+# global velocity curve in velocityCal.ts. See docs/lumatone-calibration.md.
 
 from __future__ import print_function
 import os
@@ -203,6 +296,90 @@ def cmd_set(q, r, section, value):
         os.close(fd)
 
 
+def cmd_bulk(section, value, mode='set', from_value=None):
+    """Bulk-write a single section across all 5 boards × 56 keys.
+
+       mode='set'         → unconditional. Writes value to every key.
+       mode='raise-to'    → only writes value where current < value. Ensures a
+                             floor — every key ends at value or above. NOT a
+                             rescue-preserving primitive: a per-key rescue
+                             whose value is below the target will be raised.
+       mode='lower-to'    → only writes value where current > value. Ensures a
+                             ceiling. Symmetric caveat: a per-key rescue above
+                             the target will be lowered.
+       mode='change-from' → only writes value where current == from_value.
+                             The rescue-preserving primitive: bumps the old
+                             baseline to the new baseline without touching any
+                             key whose value differs (i.e. any per-key rescue,
+                             which by definition is at some other value).
+
+       Persistence still requires --commit; this is in-memory + immediate PIC push."""
+    if section not in SECTION_OFFSETS:
+        sys.exit('Section must be 1, 2, 3, or 4')
+    if section == 3:
+        if value not in (0, 1):
+            sys.exit('Validity (section 3) must be 0 or 1')
+        if mode == 'change-from' and from_value not in (0, 1):
+            sys.exit('Validity (section 3) from_value must be 0 or 1')
+    else:
+        if value < 0 or value > 254:
+            sys.exit('Value must be 0..254')
+        if mode == 'change-from' and (from_value is None or from_value < 0 or from_value > 254):
+            sys.exit('from_value must be 0..254')
+    if mode not in ('set', 'raise-to', 'lower-to', 'change-from'):
+        sys.exit('mode must be set, raise-to, lower-to, or change-from')
+    if mode == 'change-from' and from_value is None:
+        sys.exit('change-from mode requires from_value')
+
+    pid = find_tc_pid()
+    base = find_load_base(pid)
+    fd = open_mem(pid)
+    try:
+        kbd_base = find_kbd_preset_base(fd, base)
+        if mode == 'change-from':
+            sys.stderr.write('bulk {0} section {1} ({2}): {3} -> {4}\n'.format(
+                mode, section, SECTION_NAMES[section], from_value, value))
+        else:
+            sys.stderr.write('bulk {0} section {1} ({2}) = {3}\n'.format(
+                mode, section, SECTION_NAMES[section], value))
+        for mem_slot in range(5):
+            addr = kbd_base + mem_slot * BOARD_STRIDE + SECTION_OFFSETS[section]
+            os.lseek(fd, addr, os.SEEK_SET)
+            cur = bytearray(os.read(fd, 56))
+            changed = 0
+            for i in range(56):
+                if mode == 'set':
+                    if cur[i] != value:
+                        cur[i] = value; changed += 1
+                elif mode == 'raise-to':
+                    if cur[i] < value:
+                        cur[i] = value; changed += 1
+                elif mode == 'lower-to':
+                    if cur[i] > value:
+                        cur[i] = value; changed += 1
+                elif mode == 'change-from':
+                    if cur[i] == from_value:
+                        cur[i] = value; changed += 1
+            if changed == 0:
+                sys.stderr.write('  mem_slot {0} (PIC {1}): no changes\n'.format(
+                    mem_slot, mem_slot + 1))
+                continue
+            os.lseek(fd, addr, os.SEEK_SET)
+            os.write(fd, bytes(cur))
+            flag_addr = base + PIC_MESSAGE0_FLAG + mem_slot * 4
+            os.lseek(fd, flag_addr, os.SEEK_SET)
+            flag_cur = struct.unpack('<I', os.read(fd, 4))[0]
+            flag_new = flag_cur | SECTION_BITS[section]
+            os.lseek(fd, flag_addr, os.SEEK_SET)
+            os.write(fd, struct.pack('<I', flag_new))
+            sys.stderr.write('  mem_slot {0} (PIC {1}): {2} keys changed; '
+                             'flag 0x{3:08x} -> 0x{4:08x}\n'.format(
+                                 mem_slot, mem_slot + 1, changed, flag_cur, flag_new))
+        sys.stderr.write('Done. NOTE: in-memory only; run --commit to persist.\n')
+    finally:
+        os.close(fd)
+
+
 def cmd_commit():
     """Read current in-memory state for all 5 PIC slots and write to KeyData_N files.
        Memory slot i loads from KeyData_(i+1) at boot, so we iterate by slot directly
@@ -240,12 +417,35 @@ def main():
     args = sys.argv[1:]
     if not args:
         sys.exit('Usage:\n'
-                 '  set:    sudo python3 keydata-live.py <q> <r> <section 1-4> <value>\n'
-                 '  read:   sudo python3 keydata-live.py --read <q> <r>\n'
-                 '  commit: sudo python3 keydata-live.py --commit')
+                 '  set:         sudo python3 keydata-live.py <q> <r> <section 1-4> <value>\n'
+                 '  read:        sudo python3 keydata-live.py --read <q> <r>\n'
+                 '  bulk set:    sudo python3 keydata-live.py --bulk <section> <value>\n'
+                 '               (writes every key, clobbers prior per-key rescues)\n'
+                 '  bulk raise:  sudo python3 keydata-live.py --bulk-raise <section> <value>\n'
+                 '               (writes keys currently BELOW value — establishes a floor;\n'
+                 '                will clobber any rescue below value)\n'
+                 '  bulk lower:  sudo python3 keydata-live.py --bulk-lower <section> <value>\n'
+                 '               (writes keys currently ABOVE value — establishes a ceiling;\n'
+                 '                will clobber any rescue above value)\n'
+                 '  bulk change: sudo python3 keydata-live.py --bulk-change <section> <from> <to>\n'
+                 '               (writes only keys whose current value EQUALS from; the\n'
+                 '                rescue-preserving primitive for iterative MAX-raising)\n'
+                 '  commit:      sudo python3 keydata-live.py --commit')
     if args[0] == '--read':
         if len(args) != 3: sys.exit('--read needs <q> <r>')
         cmd_read(int(args[1]), int(args[2]))
+    elif args[0] == '--bulk':
+        if len(args) != 3: sys.exit('--bulk needs <section> <value>')
+        cmd_bulk(int(args[1]), int(args[2]), 'set')
+    elif args[0] == '--bulk-raise':
+        if len(args) != 3: sys.exit('--bulk-raise needs <section> <value>')
+        cmd_bulk(int(args[1]), int(args[2]), 'raise-to')
+    elif args[0] == '--bulk-lower':
+        if len(args) != 3: sys.exit('--bulk-lower needs <section> <value>')
+        cmd_bulk(int(args[1]), int(args[2]), 'lower-to')
+    elif args[0] == '--bulk-change':
+        if len(args) != 4: sys.exit('--bulk-change needs <section> <from> <to>')
+        cmd_bulk(int(args[1]), int(args[3]), 'change-from', from_value=int(args[2]))
     elif args[0] == '--commit':
         cmd_commit()
     else:
