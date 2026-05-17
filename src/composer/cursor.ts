@@ -1,8 +1,17 @@
 // Cursor overlay. Two modes:
-//   - Editing mode (default): single bar at the model's insertion point.
+//   - Editing mode (default): single bar (insert) or selection box
+//     (overwrite) at the model's current-element position.
 //   - Playback mode: per-voice bars, one for each voice currently sounding.
 //     The editing cursor is hidden; the editing cursor's model state is
 //     preserved so it can be restored when playback ends.
+//
+// Insert mode anchor: cursor sits at the RIGHT edge of the just-entered
+// element (element at flat-index `cursor - 1`). At cursor === 0 it falls
+// back to a pre-staff position.
+//
+// Overwrite mode: cursor renders a translucent selection BOX around the
+// element at flat-index `cursor` (the one that would be replaced). At end
+// of voice (no current element) falls back to a thin right-edge bar.
 
 import { renderer } from './render.js';
 import type { ComposerModel, Voice } from './model.js';
@@ -11,6 +20,9 @@ const CURSOR_COLOR = '#7226e4';
 const CURSOR_WIDTH = 2;
 const PLAYBACK_WIDTH = 3;
 const CURSOR_VPAD = 6;
+const CURSOR_HPAD = 4;
+const SELECTION_FILL_OPACITY = 0.18;
+const SELECTION_STROKE_OPACITY = 0.7;
 
 const DEBUG = typeof location !== 'undefined' &&
   new URLSearchParams(location.search).has('debugCursor');
@@ -28,10 +40,6 @@ class CursorOverlay {
 
   attach(svg: SVGSVGElement): void {
     this.svg = svg;
-    /* Reset element refs: the previous overlay SVG has been removed from the
-       DOM (Verovio rewrote #score.innerHTML between renders). ensureNodes()
-       re-creates the editing cursor; playback bars get recreated lazily on
-       the next playback-position event. */
     this.barRect = null;
     this.voiceLabel = null;
     this.playbackBars.clear();
@@ -42,7 +50,6 @@ class CursorOverlay {
     if (!this.barRect) {
       this.barRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
       this.barRect.setAttribute('fill', CURSOR_COLOR);
-      this.barRect.setAttribute('opacity', '0.7');
       this.svg.appendChild(this.barRect);
     }
     if (!this.voiceLabel) {
@@ -65,8 +72,6 @@ class CursorOverlay {
       /* Hide editing cursor during playback. */
       this.barRect!.setAttribute('opacity', '0');
       this.voiceLabel!.textContent = '';
-      /* Reposition any visible playback bars (since the underlying Verovio
-         SVG may have re-laid out). */
       for (const [voice, meiId] of this.playbackPositions) {
         this.positionPlaybackBar(voice, meiId);
       }
@@ -77,53 +82,91 @@ class CursorOverlay {
     const cursor = model.getCursor();
     const voiceLen = model.getVoiceLength();
 
-    let x: number, y: number, h: number;
-    let diag: Record<string, unknown> = { voice, cursor, voiceLen };
+    let x = 80, y = 60 + (voice - 1) * 50, w = CURSOR_WIDTH, h = 60;
+    let isSelectionBox = false;
+    let diag: Record<string, unknown> = { voice, cursor, voiceLen, mode };
 
-    if (voiceLen === 0) {
-      x = 80;
-      y = 60 + (voice - 1) * 50;
-      h = 60;
-      diag.case = 'empty-voice';
-    } else {
-      let refId: string | null = null;
-      let edge: 'left' | 'right' = 'left';
-      if (cursor < voiceLen) {
-        refId = model.getElementIdAt(voice, cursor);
-        edge = 'left';
+    if (mode === 'insert') {
+      if (cursor === 0) {
+        /* Pre-staff position — no current element to anchor to. */
+        diag.case = 'insert-empty';
       } else {
-        refId = model.getElementIdAt(voice, voiceLen - 1);
-        edge = 'right';
+        const ref = model.getCurrentElement(voice, 'insert');
+        const rect = ref ? renderer.rectForId(ref.id) : null;
+        diag = { ...diag, refId: ref?.id, rect: rect ? { l: rect.left, t: rect.top, w: rect.width, h: rect.height } : null };
+        if (rect) {
+          x = rect.right + CURSOR_HPAD;
+          y = rect.top - CURSOR_VPAD;
+          h = rect.height + CURSOR_VPAD * 2;
+          diag.case = 'insert-right-of-prev';
+        } else {
+          diag.case = ref ? 'insert-rect-missing' : 'insert-no-ref';
+        }
       }
-      const rect = refId ? renderer.rectForId(refId) : null;
-      diag = { ...diag, refId, edge, rect: rect ? { l: rect.left, t: rect.top, w: rect.width, h: rect.height } : null };
-      if (rect) {
-        x = (edge === 'left') ? (rect.left - 4) : (rect.right + 4);
-        y = rect.top - CURSOR_VPAD;
-        h = rect.height + CURSOR_VPAD * 2;
-        diag.case = 'rect-found';
+    } else {
+      /* overwrite */
+      if (voiceLen === 0 || cursor >= voiceLen) {
+        /* Past end — show a thin right-edge bar (no element to enclose). */
+        if (voiceLen > 0) {
+          const ref = model.getElementIdAt(voice, voiceLen - 1);
+          const rect = ref ? renderer.rectForId(ref) : null;
+          if (rect) {
+            x = rect.right + CURSOR_HPAD;
+            y = rect.top - CURSOR_VPAD;
+            h = rect.height + CURSOR_VPAD * 2;
+            diag.case = 'overwrite-past-end';
+          } else {
+            diag.case = 'overwrite-past-end-no-rect';
+          }
+        } else {
+          diag.case = 'overwrite-empty';
+        }
       } else {
-        x = 80;
-        y = 60 + (voice - 1) * 50;
-        h = 60;
-        diag.case = refId ? 'rect-missing' : 'no-refId';
+        const ref = model.getCurrentElement(voice, 'overwrite');
+        const rect = ref ? renderer.rectForId(ref.id) : null;
+        diag = { ...diag, refId: ref?.id, rect: rect ? { l: rect.left, t: rect.top, w: rect.width, h: rect.height } : null };
+        if (rect) {
+          x = rect.left - CURSOR_HPAD;
+          y = rect.top - CURSOR_VPAD;
+          w = rect.width + CURSOR_HPAD * 2;
+          h = rect.height + CURSOR_VPAD * 2;
+          isSelectionBox = true;
+          diag.case = 'overwrite-selection-box';
+        } else {
+          diag.case = ref ? 'overwrite-rect-missing' : 'overwrite-no-ref';
+        }
       }
     }
 
     const bar = this.barRect!;
     bar.setAttribute('x', String(x));
     bar.setAttribute('y', String(y));
-    bar.setAttribute('width', String(mode === 'overwrite' ? CURSOR_WIDTH * 3 : CURSOR_WIDTH));
+    bar.setAttribute('width', String(w));
     bar.setAttribute('height', String(h));
-    bar.setAttribute('opacity', mode === 'overwrite' ? '0.45' : '0.85');
+    if (isSelectionBox) {
+      bar.setAttribute('fill', CURSOR_COLOR);
+      bar.setAttribute('fill-opacity', String(SELECTION_FILL_OPACITY));
+      bar.setAttribute('stroke', CURSOR_COLOR);
+      bar.setAttribute('stroke-opacity', String(SELECTION_STROKE_OPACITY));
+      bar.setAttribute('stroke-width', '1.5');
+      bar.setAttribute('opacity', '1');
+    } else {
+      bar.setAttribute('fill', CURSOR_COLOR);
+      bar.setAttribute('fill-opacity', '1');
+      bar.removeAttribute('stroke');
+      bar.removeAttribute('stroke-opacity');
+      bar.removeAttribute('stroke-width');
+      bar.setAttribute('opacity', '0.85');
+    }
 
     const label = this.voiceLabel!;
     label.textContent = 'V' + voice;
-    label.setAttribute('x', String(x + 4));
+    const labelX = isSelectionBox ? x + w + 4 : x + 4;
+    label.setAttribute('x', String(labelX));
     label.setAttribute('y', String(y - 2));
 
     if (DEBUG) {
-      diag = { ...diag, x, y, h, mode,
+      diag = { ...diag, x, y, w, h, isSelectionBox,
         svgSize: { w: this.svg.getAttribute('width'), h: this.svg.getAttribute('height') } };
       console.log('[cursor]', diag);
     }
@@ -134,8 +177,6 @@ class CursorOverlay {
   setPlaybackMode(on: boolean): void {
     this.playbackMode = on;
     if (!on) {
-      /* Hide and clear all playback bars; editing cursor becomes visible
-         again on the next update() call. */
       this.playbackPositions.clear();
       for (const bar of this.playbackBars.values()) {
         bar.setAttribute('opacity', '0');
@@ -143,7 +184,6 @@ class CursorOverlay {
     }
   }
 
-  /** Update one voice's playback cursor. Pass meiId=null to remove. */
   setPlaybackPosition(voice: Voice, meiId: string | null): void {
     if (!this.svg) return;
     if (meiId === null) {

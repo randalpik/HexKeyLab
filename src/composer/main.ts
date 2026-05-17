@@ -18,6 +18,7 @@ import { cursor } from './cursor.js';
 import { initInput, getInputState } from './input.js';
 import { saveHkc, loadHkcFromFile, downloadMusicXml } from './save.js';
 import { buildPlayback, highlightElement, clearHighlights } from './playback.js';
+import { openSetupDialog } from './setupDialog.js';
 
 const $ = <T extends HTMLElement>(id: string): T | null =>
   document.getElementById(id) as T | null;
@@ -53,7 +54,7 @@ function refreshIndicators(): void {
   const s = getInputState();
   const voice = model.getCurrentVoice();
   const v = $('voiceIndicator');         if (v) v.textContent = String(voice);
-  const d = $('durationIndicator');      if (d) d.textContent = s.duration + (s.dots > 0 ? '.'.repeat(s.dots) : '');
+  const d = $('durationIndicator');      if (d) d.textContent = s.duration;
   const m = $('modeIndicator');          if (m) m.textContent = s.mode === 'insert' ? 'INS' : 'OVR';
 }
 
@@ -169,14 +170,6 @@ async function bootRenderer(): Promise<void> {
 
 initInput(model, {
   getHeldKeys: () => lastHeldKeys,
-  playChord: (notes, durationMs) => {
-    if (!hklConnected) return;
-    bridge.send({
-      type: 'play-chord',
-      notes: notes.map((n) => ({ q: n.q, r: n.r })),
-      durationMs,
-    });
-  },
   onChange: () => {
     reRender();
   },
@@ -184,6 +177,7 @@ initInput(model, {
     refreshIndicators();
     cursor.update(model, getInputState().mode);
   },
+  setStatus: (msg) => setStatus(msg),
   isPlaybackActive: () => isPlaying,
 });
 
@@ -240,6 +234,14 @@ function finalizePlaybackEnd(statusMsg: string): void {
 $('btnPlay')?.addEventListener('click', () => {
   if (isPlaying) stopPlayback();
   else startPlayback();
+});
+
+$('btnSetup')?.addEventListener('click', () => {
+  openSetupDialog(model, () => {
+    reRender();
+    refreshIndicators();
+    setStatus('Setup applied.');
+  });
 });
 
 /* ── save / load / export ────────────────────────────────────────────────── */

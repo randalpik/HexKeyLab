@@ -1,11 +1,11 @@
 // File I/O for Composer:
 //   - .hkc save/load (canonical MEI with HKL data-q/data-r attrs)
 //   - .musicxml export (one-way, lossy — colors and lattice tags preserved
-//     where the spec allows; advanced markings like tempo/dynamics aren't
-//     emitted because the model doesn't carry them yet).
+//     where the spec allows; advanced markings like dynamics aren't emitted
+//     because the model doesn't carry them yet).
 //
 // Uses simple download/upload via Blob + <input type="file"> — no File System
-// Access API yet. Switching to FSA for "live-write to a file" is a v2 concern.
+// Access API yet.
 
 import { ComposerModel } from './model.js';
 import type { Voice, Duration, Dots } from './model.js';
@@ -90,6 +90,15 @@ function durationToTicks(dur: Duration, dots: Dots): number {
   return base;
 }
 
+function keySigToFifths(sig: string): number {
+  if (sig === '0' || !sig) return 0;
+  const n = parseInt(sig.slice(0, -1), 10);
+  if (!isFinite(n)) return 0;
+  if (sig.endsWith('s')) return n;
+  if (sig.endsWith('f')) return -n;
+  return 0;
+}
+
 interface XmlNoteSpec {
   step: string;
   alter: number;
@@ -97,6 +106,8 @@ interface XmlNoteSpec {
   color?: string;
   q?: number;
   r?: number;
+  tieStart: boolean;
+  tieStop: boolean;
 }
 
 interface XmlNoteEvent {
@@ -106,87 +117,34 @@ interface XmlNoteEvent {
   dots: number;
   staff: 1 | 2;
   voice: number; /* MusicXML voice number, 1..4 globally */
+  measureIdx: number; /* 0-based; emitted as @number = measureIdx + 1 */
 }
 
-function gatherEvents(model: ComposerModel): XmlNoteEvent[] {
-  /* For each of the 4 voices, walk the layer's children, produce ordered
-     XmlNoteEvents. v1 has a single measure. */
-  const out: XmlNoteEvent[] = [];
-  for (let voice: Voice = 1; voice <= 4; voice = (voice + 1) as Voice) {
-    const len = model.getVoiceLength(voice);
-    const staff = (voice <= 2) ? 1 : 2;
-    for (let i = 0; i < len; i++) {
-      const id = model.getElementIdAt(voice, i);
-      if (id === null) continue;
-      const ev = readElement(model, id, voice, staff);
-      if (ev) out.push(ev);
-    }
-    if (voice === 4) break;
-  }
-  return out;
+function isMeiElement(elem: Element, name: string): boolean {
+  return elem.localName === name;
 }
 
-function readElement(
-  model: ComposerModel, meiId: string, voice: Voice, staff: 1 | 2,
-): XmlNoteEvent | null {
-  /* Round-trip via the serialized XML — keeps reading concerns out of the
-     model class itself. */
-  const xml = model.serialize();
-  const doc = new DOMParser().parseFromString(xml, 'application/xml');
-  const node = doc.querySelector('[*|id="' + meiId + '"]')
-    ?? doc.querySelector('[id="' + meiId + '"]');
-  if (!node) return null;
-  const local = node.localName;
-  if (local === 'rest') {
-    const dur = (node.getAttribute('dur') ?? '4') as Duration;
-    const dots = parseInt(node.getAttribute('dots') ?? '0', 10) as Dots;
-    return {
-      notes: [],
-      durTicks: durationToTicks(dur, dots),
-      durName: DURATION_NAME[dur] ?? 'quarter',
-      dots,
-      staff,
-      voice,
-    };
-  }
-  if (local === 'note') {
-    const dur = (node.getAttribute('dur') ?? '4') as Duration;
-    const dots = parseInt(node.getAttribute('dots') ?? '0', 10) as Dots;
-    return {
-      notes: [readNote(node)],
-      durTicks: durationToTicks(dur, dots),
-      durName: DURATION_NAME[dur] ?? 'quarter',
-      dots,
-      staff,
-      voice,
-    };
-  }
-  if (local === 'chord') {
-    const dur = (node.getAttribute('dur') ?? '4') as Duration;
-    const dots = parseInt(node.getAttribute('dots') ?? '0', 10) as Dots;
-    const notes: XmlNoteSpec[] = [];
-    for (const child of Array.from(node.children)) {
-      if (child.localName === 'note') notes.push(readNote(child));
-    }
-    return {
-      notes,
-      durTicks: durationToTicks(dur, dots),
-      durName: DURATION_NAME[dur] ?? 'quarter',
-      dots,
-      staff,
-      voice,
-    };
-  }
-  return null;
+function readTieFlags(node: Element): { tieStart: boolean; tieStop: boolean } {
+  const t = node.getAttribute('tie');
+  /* MEI 5 data.TIE: 'i' (initial) | 'm' (medial — both) | 't' (terminal). */
+  return {
+    tieStart: t === 'i' || t === 'm',
+    tieStop: t === 't' || t === 'm',
+  };
 }
 
 function readNote(node: Element): XmlNoteSpec {
   const pname = node.getAttribute('pname') ?? 'c';
   const oct = parseInt(node.getAttribute('oct') ?? '4', 10);
-  const accid = node.getAttribute('accid') ?? '';
+  /* Sounded accidental is whatever is currently displayed (@accid) OR the
+     hidden gestural accidental (@accid.ges) left behind by the accidental
+     display pass. MusicXML's <alter> needs the actual pitch, not the
+     visual representation. */
+  const accid = node.getAttribute('accid') ?? node.getAttribute('accid.ges') ?? '';
   const color = node.getAttribute('color') ?? undefined;
   const qStr = node.getAttribute('data-q');
   const rStr = node.getAttribute('data-r');
+  const ties = readTieFlags(node);
   return {
     step: PNAME_TO_STEP[pname] ?? 'C',
     alter: ACCID_TO_ALTER[accid] ?? 0,
@@ -194,56 +152,157 @@ function readNote(node: Element): XmlNoteSpec {
     color,
     q: qStr !== null ? parseInt(qStr, 10) : undefined,
     r: rStr !== null ? parseInt(rStr, 10) : undefined,
+    tieStart: ties.tieStart,
+    tieStop: ties.tieStop,
   };
 }
 
-export function exportMusicXml(model: ComposerModel, title = 'Untitled'): string {
-  const events = gatherEvents(model);
+function gatherEventsFromDoc(doc: Document): XmlNoteEvent[] {
+  const out: XmlNoteEvent[] = [];
+  const measures = Array.from(doc.querySelectorAll('measure'));
+  for (let mi = 0; mi < measures.length; mi++) {
+    const measure = measures[mi];
+    for (let voice = 1 as Voice; voice <= 4; voice = (voice + 1) as Voice) {
+      const staff = (voice <= 2) ? 1 : 2;
+      const staffN = staff;
+      const layerN = (voice === 1 || voice === 3) ? 1 : 2;
+      const layer = Array.from(measure.querySelectorAll(`staff[n="${staffN}"] layer[n="${layerN}"]`))[0];
+      if (!layer) {
+        if (voice === 4) break;
+        continue;
+      }
+      for (const child of contentChildren(layer)) {
+        const local = child.localName;
+        const dur = (child.getAttribute('dur') ?? '4') as Duration;
+        const dots = parseInt(child.getAttribute('dots') ?? '0', 10) as Dots;
+        if (isMeiElement(child, 'rest')) {
+          out.push({
+            notes: [],
+            durTicks: durationToTicks(dur, dots),
+            durName: DURATION_NAME[dur] ?? 'quarter',
+            dots, staff: staff as 1 | 2, voice, measureIdx: mi,
+          });
+        } else if (isMeiElement(child, 'note')) {
+          out.push({
+            notes: [readNote(child)],
+            durTicks: durationToTicks(dur, dots),
+            durName: DURATION_NAME[dur] ?? 'quarter',
+            dots, staff: staff as 1 | 2, voice, measureIdx: mi,
+          });
+        } else if (isMeiElement(child, 'chord')) {
+          const noteEls = Array.from(child.children).filter((c) => c.localName === 'note');
+          out.push({
+            notes: noteEls.map((n) => readNote(n)),
+            durTicks: durationToTicks(dur, dots),
+            durName: DURATION_NAME[dur] ?? 'quarter',
+            dots, staff: staff as 1 | 2, voice, measureIdx: mi,
+          });
+        }
+      }
+      if (voice === 4) break;
+    }
+  }
+  return out;
+}
 
-  /* Group events by voice for emission. MusicXML wants per-voice streams
-     within the measure, separated by <backup> to re-zero the voice clock. */
-  const byVoice: Record<number, XmlNoteEvent[]> = { 1: [], 2: [], 3: [], 4: [] };
-  for (const ev of events) byVoice[ev.voice].push(ev);
+function contentChildren(layer: Element): Element[] {
+  /* Layer may contain <beam> wrappers in the serialized MEI; flatten them. */
+  const out: Element[] = [];
+  for (const c of Array.from(layer.children)) {
+    const ln = c.localName;
+    if (ln === 'chord' || ln === 'note' || ln === 'rest') {
+      out.push(c);
+    } else if (ln === 'beam') {
+      for (const cc of Array.from(c.children)) {
+        const ln2 = cc.localName;
+        if (ln2 === 'chord' || ln2 === 'note' || ln2 === 'rest') out.push(cc);
+      }
+    }
+  }
+  return out;
+}
 
-  /* Compute voice durations (in ticks) so backups land on correct offsets. */
-  const voiceTicks: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
-  for (const ev of events) voiceTicks[ev.voice] += ev.durTicks;
+export function exportMusicXml(model: ComposerModel): string {
+  const xml = model.serialize();
+  const doc = new DOMParser().parseFromString(xml, 'application/xml');
 
-  /* Measure length = max voice length (for a single-measure v1 we just pad). */
-  const measureTicks = Math.max(voiceTicks[1], voiceTicks[2], voiceTicks[3], voiceTicks[4], DIVISIONS * 4);
+  const title = model.getTitle();
+  const composer = model.getComposer() || 'HKL Composer';
+  const keySig = model.getKeySig();
+  const fifths = keySigToFifths(keySig);
+  const ts = model.getTimeSig();
+  const tempo = model.getTempo();
+
+  const events = gatherEventsFromDoc(doc);
+  const measureCount = Math.max(1, doc.querySelectorAll('measure').length);
+
+  /* Group events by (measure, voice). */
+  const grouped: Record<number, Record<number, XmlNoteEvent[]>> = {};
+  for (let mi = 0; mi < measureCount; mi++) {
+    grouped[mi] = { 1: [], 2: [], 3: [], 4: [] };
+  }
+  for (const ev of events) grouped[ev.measureIdx][ev.voice].push(ev);
+
+  /* Measure-tick budget under current meter. */
+  const measureTicks = ts.count * DIVISIONS * 4 / ts.unit;
 
   let body = '';
-  body += `  <measure number="1">\n`;
-  body += `    <attributes>\n`;
-  body += `      <divisions>${DIVISIONS}</divisions>\n`;
-  body += `      <key><fifths>0</fifths></key>\n`;
-  body += `      <time><beats>4</beats><beat-type>4</beat-type></time>\n`;
-  body += `      <staves>2</staves>\n`;
-  body += `      <clef number="1"><sign>G</sign><line>2</line></clef>\n`;
-  body += `      <clef number="2"><sign>F</sign><line>4</line></clef>\n`;
-  body += `    </attributes>\n`;
+  for (let mi = 0; mi < measureCount; mi++) {
+    body += `  <measure number="${mi + 1}">\n`;
 
-  /* Emit voice 1, then backup+voice2, then backup+voice3, then backup+voice4.
-     If a voice is short of measureTicks, pad with a hidden rest at end. */
-  for (let voice = 1 as 1 | 2 | 3 | 4; voice <= 4; voice = (voice + 1) as 1 | 2 | 3 | 4) {
-    if (voice > 1) body += `    <backup><duration>${voiceTicks[voice - 1]}</duration></backup>\n`;
-    for (const ev of byVoice[voice]) body += emitEventXml(ev);
-    /* Pad to measure end if needed (so subsequent backup is correct). */
-    const remaining = measureTicks - voiceTicks[voice];
-    if (remaining > 0) {
-      body += `    <note><rest/><duration>${remaining}</duration><staff>${voice <= 2 ? 1 : 2}</staff><voice>${voice}</voice></note>\n`;
-      voiceTicks[voice] = measureTicks;
+    if (mi === 0) {
+      body += `    <attributes>\n`;
+      body += `      <divisions>${DIVISIONS}</divisions>\n`;
+      body += `      <key><fifths>${fifths}</fifths></key>\n`;
+      body += `      <time><beats>${ts.count}</beats><beat-type>${ts.unit}</beat-type></time>\n`;
+      body += `      <staves>2</staves>\n`;
+      body += `      <clef number="1"><sign>G</sign><line>2</line></clef>\n`;
+      body += `      <clef number="2"><sign>F</sign><line>4</line></clef>\n`;
+      body += `    </attributes>\n`;
+      body += `    <sound tempo="${tempo.bpm}"/>\n`;
+      const beatUnitName = DURATION_NAME[(String(tempo.unit) as Duration) ?? '4'] ?? 'quarter';
+      body += `    <direction placement="above">\n`;
+      body += `      <direction-type>\n`;
+      if (tempo.text) body += `        <words>${escapeXml(tempo.text)} </words>\n`;
+      body += `        <metronome><beat-unit>${beatUnitName}</beat-unit>`;
+      if (tempo.dots > 0) body += `<beat-unit-dot/>`;
+      body += `<per-minute>${tempo.bpm}</per-minute></metronome>\n`;
+      body += `      </direction-type>\n`;
+      body += `      <sound tempo="${tempo.bpm}"/>\n`;
+      body += `    </direction>\n`;
     }
-    if (voice === 4) break;
+
+    /* Per-voice streams within this measure, separated by <backup>. */
+    const voiceTicks: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
+    for (let voice = 1 as 1 | 2 | 3 | 4; voice <= 4; voice = (voice + 1) as 1 | 2 | 3 | 4) {
+      if (voice > 1) body += `    <backup><duration>${voiceTicks[voice - 1]}</duration></backup>\n`;
+      for (const ev of grouped[mi][voice]) {
+        body += emitEventXml(ev);
+        voiceTicks[voice] += ev.durTicks;
+      }
+      /* Pad to measure end if voice short. */
+      const remaining = measureTicks - voiceTicks[voice];
+      if (remaining > 0) {
+        body += `    <note><rest/><duration>${remaining}</duration><staff>${voice <= 2 ? 1 : 2}</staff><voice>${voice}</voice></note>\n`;
+        voiceTicks[voice] = measureTicks;
+      }
+      if (voice === 4) break;
+    }
+
+    /* Final barline on the last measure. */
+    if (mi === measureCount - 1) {
+      body += `    <barline location="right"><bar-style>light-heavy</bar-style></barline>\n`;
+    }
+
+    body += `  </measure>\n`;
   }
-  body += `  </measure>\n`;
 
   return `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
 <score-partwise version="3.0">
   <work><work-title>${escapeXml(title)}</work-title></work>
   <identification>
-    <creator type="composer">HKL Composer</creator>
+    <creator type="composer">${escapeXml(composer)}</creator>
     <encoding>
       <software>HKL Composer</software>
       <encoding-date>${new Date().toISOString().slice(0, 10)}</encoding-date>
@@ -267,8 +326,6 @@ function emitEventXml(ev: XmlNoteEvent): string {
       `<voice>${ev.voice}</voice>${dotXml(ev.dots)}<type>${ev.durName}</type>` +
       `<staff>${ev.staff}</staff></note>\n`;
   }
-  /* Note or chord — emit one <note> per pitch, with <chord/> on the
-     second-onward members. */
   let s = '';
   for (let i = 0; i < ev.notes.length; i++) {
     const n = ev.notes[i];
@@ -278,11 +335,21 @@ function emitEventXml(ev: XmlNoteEvent): string {
     if (n.alter !== 0) s += `<alter>${n.alter}</alter>`;
     s += `<octave>${n.octave}</octave></pitch>`;
     s += `<duration>${ev.durTicks}</duration>`;
+    /* Sound-layer ties. */
+    if (n.tieStart) s += `<tie type="start"/>`;
+    if (n.tieStop) s += `<tie type="stop"/>`;
     s += `<voice>${ev.voice}</voice>`;
     s += `${dotXml(ev.dots)}`;
     s += `<type>${ev.durName}</type>`;
     s += `<staff>${ev.staff}</staff>`;
     if (n.color) s += `<notehead color="${escapeXml(n.color)}">normal</notehead>`;
+    /* Engraving-layer ties. */
+    if (n.tieStart || n.tieStop) {
+      s += `<notations>`;
+      if (n.tieStart) s += `<tied type="start"/>`;
+      if (n.tieStop) s += `<tied type="stop"/>`;
+      s += `</notations>`;
+    }
     s += `</note>\n`;
   }
   return s;
@@ -295,8 +362,8 @@ function dotXml(dots: number): string {
   return s;
 }
 
-export function downloadMusicXml(model: ComposerModel, title = 'Untitled'): void {
-  const xml = exportMusicXml(model, title);
+export function downloadMusicXml(model: ComposerModel): void {
+  const xml = exportMusicXml(model);
   const filename = 'hkc-' + isoStamp() + '.musicxml';
   downloadBlob(filename, new Blob([xml], { type: 'application/vnd.recordare.musicxml+xml' }));
 }

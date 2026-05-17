@@ -194,23 +194,6 @@ function dispatchChord(notes: ReadonlyArray<CoordRef>, durationMs: number, pb: A
   pb.pending.add(offHandle);
 }
 
-function playChord(notes: ReadonlyArray<CoordRef>, durationMs: number): void {
-  abortActive();
-  const pb = newPlayback();
-  active = pb;
-  playbackActive = true;
-  dispatchChord(notes, durationMs, pb);
-  /* No playback-position emit for one-shot monitoring chords; Composer only
-     uses position events during a full play-score. */
-  /* For play-chord (entry monitoring), playbackActive resets when the
-     setTimeout completes. */
-  window.setTimeout(() => {
-    if (active === pb && pb.heldKeys.size === 0) {
-      playbackActive = false;
-    }
-  }, durationMs + 20);
-}
-
 function playScore(events: ReadonlyArray<PlaybackEvent>): void {
   abortActive();
   if (events.length === 0) {
@@ -268,9 +251,6 @@ bridge.on((msg: ComposerEvent) => {
       /* Composer disconnected. Stop any playback in progress so we're not
          left with stuck notes. */
       abortActive();
-      break;
-    case 'play-chord':
-      playChord(msg.notes, msg.durationMs);
       break;
     case 'play-score':
       playScore(msg.events);

@@ -128,6 +128,10 @@ export function handleMidiMessage(e: MIDIMessageEvent): void {
        note-on velocity feeds a per-key sample list. Out of capture mode this
        is a single boolean check. */
     velocityCal.recordSample(key, d2);
+    /* Per-key velocity statistics: always-on rolling sample collection when
+       statsEnabled (toggled in lumadiag). Independent of auto-capture; feeds
+       the dispersion / outlier view. Single boolean check when disabled. */
+    velocityCal.recordForStats(key, d2);
   } else if (status === 0x80 || (status === 0x90 && d2 === 0)) {
     if (audio.sustainPedalDown || audio.sostenutoLockedKeys.has(key)) {
       /* damper or sostenuto holds the note — keep sounding, mark as sustained */

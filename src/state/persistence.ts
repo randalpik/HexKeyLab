@@ -23,13 +23,26 @@ export interface ToolbarVisibility {
   lumatone: boolean;
 }
 
-/* Velocity calibration (curve + per-key gain). Set by src/audio/velocityCal.ts.
+/* Velocity calibration (curve + per-key gain + per-key stats).
+   Set by src/audio/velocityCal.ts.
    Absent = defaults (matches prior hardcoded quadratic curve and no per-key gain). */
 export interface VelocityCalPrefs {
   floor: number;
   ceiling: number;
   gamma: number;
   perKey: Record<string, number>;
+  statsEnabled?: boolean;
+  /** Persisted snapshot of per-key velocity stats. Raw samples are session-only
+   *  in velocityCal.ts; only this aggregate persists. */
+  stats?: Record<string, KeyStatsSnapshot>;
+}
+
+export interface KeyStatsSnapshot {
+  n: number;
+  mean: number;
+  stddev: number;
+  /** Coefficient of variation; -1 if undefined. */
+  cv: number;
 }
 
 export interface PrefsV1 {
@@ -214,7 +227,21 @@ function loadVelocityCal(o: unknown): VelocityCalPrefs | undefined {
       if (typeof val === 'number' && val > 0 && val < 10) perKey[k] = val;
     }
   }
-  return { floor: v.floor, ceiling: v.ceiling, gamma: v.gamma, perKey };
+  const statsEnabled = typeof v.statsEnabled === 'boolean' ? v.statsEnabled : undefined;
+  let stats: Record<string, KeyStatsSnapshot> | undefined;
+  if (v.stats && typeof v.stats === 'object') {
+    const s: Record<string, KeyStatsSnapshot> = {};
+    for (const [k, val] of Object.entries(v.stats as Record<string, unknown>)) {
+      if (!val || typeof val !== 'object') continue;
+      const r = val as Record<string, unknown>;
+      if (typeof r.n === 'number' && typeof r.mean === 'number'
+          && typeof r.stddev === 'number' && typeof r.cv === 'number') {
+        s[k] = { n: r.n, mean: r.mean, stddev: r.stddev, cv: r.cv };
+      }
+    }
+    if (Object.keys(s).length > 0) stats = s;
+  }
+  return { floor: v.floor, ceiling: v.ceiling, gamma: v.gamma, perKey, statsEnabled, stats };
 }
 
 /* Merge a partial patch into the stored prefs and write back. Read-modify-write

@@ -45,7 +45,21 @@ import {
   buildSetBoardSens,
   buildSetVelocityLut,
 } from './protocol.js';
-import { velocityCal, DEFAULT_CAL } from '../audio/velocityCal.js';
+import { velocityCal, DEFAULT_CAL, STATS_MIN_N, STATS_HIGH_CV } from '../audio/velocityCal.js';
+import { baseKeys } from '../layout/baseKeys.js';
+
+/* Build (q,r-string) → board_group lookup once. Used by the per-key stats
+   scatter to color dots by board. */
+const STATS_KEY_TO_BOARD: Map<string, number> = (() => {
+  const m = new Map<string, number>();
+  for (let i = 0; i < baseKeys.length; i++) {
+    m.set(baseKeys[i][0] + ',' + baseKeys[i][1], Math.floor(i / 56));
+  }
+  return m;
+})();
+
+/* Per-board palette for the scatter. Five visually distinct hues. */
+const STATS_BOARD_COLORS = ['#5af', '#9c5', '#fc5', '#f95', '#c5f'];
 
 /* Per-board values, mirrored from the device. `null` = not yet fetched; the
    corresponding slider stays disabled until the read-back populates it. */
@@ -650,6 +664,385 @@ function makeVelocityCalSection(): HTMLDivElement {
   return sec;
 }
 
+/* ── Per-key velocity statistics section ──────────────────────────────────
+   Always-on rolling sample collection (when enabled), scatter visualization
+   of (mean, CV) per key, top-N outlier lists (high-CV → noisy; mean-drift →
+   per-key gain candidates), and a sticky per-key inspector with histogram
+   sparkline. Refreshed 1Hz while panel exists. */
+
+interface StatsUi {
+  enableCheckbox: HTMLInputElement;
+  status: HTMLSpanElement;
+  scatter: HTMLCanvasElement;
+  inspector: HTMLDivElement;
+  highCvList: HTMLDivElement;
+  meanDriftList: HTMLDivElement;
+}
+
+let statsUi: StatsUi | null = null;
+let statsInspectorKey: string | null = null;
+let statsTickerId: number | null = null;
+
+const STATS_SCATTER_W = 290;
+const STATS_SCATTER_H = 180;
+const STATS_SCATTER_PAD = 12;
+
+function scatterXY(mean: number, cv: number): [number, number] {
+  const cvClamped = Math.min(1.0, Math.max(0, cv));
+  const x = STATS_SCATTER_PAD + (mean / 127) * (STATS_SCATTER_W - 2 * STATS_SCATTER_PAD);
+  const y = (STATS_SCATTER_H - STATS_SCATTER_PAD) - cvClamped * (STATS_SCATTER_H - 2 * STATS_SCATTER_PAD);
+  return [x, y];
+}
+
+function findKeyAtScatterPos(mx: number, my: number): string | null {
+  let bestKey: string | null = null;
+  let bestDist = 36;  // squared 6px
+  for (const { key, stats } of velocityCal.getAllStats()) {
+    if (stats.n < STATS_MIN_N || stats.cv < 0) continue;
+    const [x, y] = scatterXY(stats.mean, stats.cv);
+    const dx = x - mx, dy = y - my;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestDist) { bestDist = d2; bestKey = key; }
+  }
+  return bestKey;
+}
+
+function drawScatter(): void {
+  if (!statsUi) return;
+  const cv = statsUi.scatter;
+  const ctx = cv.getContext('2d');
+  if (!ctx) return;
+  ctx.clearRect(0, 0, STATS_SCATTER_W, STATS_SCATTER_H);
+
+  /* Reference grid: CV=0.3 (noisy threshold), keyboard-wide mean. */
+  ctx.strokeStyle = 'rgba(255,80,80,0.25)';
+  ctx.lineWidth = 1;
+  const [, cv3y] = scatterXY(0, STATS_HIGH_CV);
+  ctx.beginPath();
+  ctx.moveTo(STATS_SCATTER_PAD, cv3y);
+  ctx.lineTo(STATS_SCATTER_W - STATS_SCATTER_PAD, cv3y);
+  ctx.stroke();
+  const global = velocityCal.getGlobalStats();
+  if (global.nKeys >= 2) {
+    const [meanX] = scatterXY(global.meanOfMeans, 0);
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.beginPath();
+    ctx.moveTo(meanX, STATS_SCATTER_PAD);
+    ctx.lineTo(meanX, STATS_SCATTER_H - STATS_SCATTER_PAD);
+    ctx.stroke();
+  }
+
+  /* Axis labels. */
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  ctx.font = '9px sans-serif';
+  for (const m of [0, 32, 64, 96, 127]) {
+    const [tx] = scatterXY(m, 0);
+    ctx.fillText(String(m), tx - 6, STATS_SCATTER_H - 1);
+  }
+  for (const c of [0.25, 0.5, 0.75]) {
+    const [, ty] = scatterXY(0, c);
+    ctx.fillText(c.toFixed(2), 0, ty + 3);
+  }
+
+  /* Per-key dots, color-coded by board. Selected (inspector) key drawn last
+     with a white outline so it's visible. */
+  let selectedDot: { x: number; y: number; color: string } | null = null;
+  for (const { key, stats } of velocityCal.getAllStats()) {
+    if (stats.n < STATS_MIN_N || stats.cv < 0) continue;
+    const [x, y] = scatterXY(stats.mean, stats.cv);
+    const board = STATS_KEY_TO_BOARD.get(key) ?? 0;
+    const color = STATS_BOARD_COLORS[board];
+    if (key === statsInspectorKey) {
+      selectedDot = { x, y, color };
+      continue;
+    }
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  if (selectedDot) {
+    ctx.fillStyle = selectedDot.color;
+    ctx.beginPath();
+    ctx.arc(selectedDot.x, selectedDot.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+}
+
+function refreshInspector(): void {
+  if (!statsUi) return;
+  const inspector = statsUi.inspector;
+  inspector.innerHTML = '';
+  if (!statsInspectorKey) {
+    inspector.textContent = velocityCal.statsEnabled
+      ? 'Hover a dot to inspect.'
+      : '(stats off)';
+    return;
+  }
+  const stats = velocityCal.getKeyStats(statsInspectorKey);
+  if (!stats) {
+    inspector.textContent = statsInspectorKey + ': no data';
+    return;
+  }
+  const board = (STATS_KEY_TO_BOARD.get(statsInspectorKey) ?? 0) + 1;
+  const cvStr = stats.cv < 0 ? '—' : stats.cv.toFixed(3);
+  const line = document.createElement('div');
+  line.textContent = '(' + statsInspectorKey + ')  brd ' + board
+    + '  n=' + stats.n
+    + '  μ=' + stats.mean.toFixed(1)
+    + '  σ=' + stats.stddev.toFixed(1)
+    + '  CV=' + cvStr;
+  inspector.appendChild(line);
+
+  /* Histogram sparkline (live samples only). */
+  const hist = velocityCal.getKeyHistogram(statsInspectorKey, 32);
+  const sparkW = 270, sparkH = 24;
+  const spark = document.createElement('canvas');
+  spark.width = sparkW; spark.height = sparkH;
+  Object.assign(spark.style, {
+    display: 'block', marginTop: '4px',
+    background: 'rgba(0,0,0,0.3)',
+  });
+  const sctx = spark.getContext('2d');
+  if (sctx) {
+    let maxCount = 1;
+    for (let i = 0; i < hist.length; i++) if (hist[i] > maxCount) maxCount = hist[i];
+    const barW = sparkW / hist.length;
+    sctx.fillStyle = '#9fc';
+    for (let i = 0; i < hist.length; i++) {
+      const bh = (hist[i] / maxCount) * (sparkH - 2);
+      sctx.fillRect(i * barW, sparkH - bh, barW - 1, bh);
+    }
+  }
+  inspector.appendChild(spark);
+}
+
+function drawOutlierLists(): void {
+  if (!statsUi) return;
+  const all = velocityCal.getAllStats();
+  const valid = all.filter(({ stats }) => stats.n >= STATS_MIN_N && stats.cv >= 0);
+
+  /* High-CV: top 5, only show entries with CV >= half-threshold to avoid noise. */
+  statsUi.highCvList.innerHTML = '';
+  const h1 = document.createElement('div');
+  h1.textContent = 'Top noisy (high CV → raise hardware MIN):';
+  Object.assign(h1.style, { fontSize: '11px', color: 'rgba(255,255,255,0.65)', marginBottom: '2px' });
+  statsUi.highCvList.appendChild(h1);
+  const byCv = valid.slice().sort((a, b) => b.stats.cv - a.stats.cv).slice(0, 5);
+  const cvHits = byCv.filter(({ stats }) => stats.cv >= STATS_HIGH_CV * 0.5);
+  if (cvHits.length === 0) {
+    const empty = document.createElement('div');
+    empty.textContent = '  (none yet)';
+    Object.assign(empty.style, { fontSize: '10px', color: 'rgba(255,255,255,0.4)' });
+    statsUi.highCvList.appendChild(empty);
+  }
+  for (const { key, stats } of cvHits) {
+    const row = document.createElement('div');
+    const board = (STATS_KEY_TO_BOARD.get(key) ?? 0) + 1;
+    const flagged = stats.cv >= STATS_HIGH_CV;
+    row.textContent = '  (' + key + ')  brd ' + board
+      + '  CV=' + stats.cv.toFixed(2)
+      + '  μ=' + stats.mean.toFixed(0)
+      + '  n=' + stats.n;
+    Object.assign(row.style, {
+      fontSize: '10px', fontFamily: 'monospace',
+      color: flagged ? '#f95' : 'rgba(255,255,255,0.7)',
+      cursor: 'pointer',
+    });
+    row.addEventListener('click', () => {
+      statsInspectorKey = key;
+      refreshInspector();
+      drawScatter();
+    });
+    statsUi.highCvList.appendChild(row);
+  }
+
+  /* Mean drift: keys whose mean deviates from keyboard average by ≥1.5σ. */
+  statsUi.meanDriftList.innerHTML = '';
+  const h2 = document.createElement('div');
+  h2.textContent = 'Top mean-drift (per-key gain candidates):';
+  Object.assign(h2.style, { fontSize: '11px', color: 'rgba(255,255,255,0.65)', marginTop: '4px', marginBottom: '2px' });
+  statsUi.meanDriftList.appendChild(h2);
+  const global = velocityCal.getGlobalStats();
+  if (global.nKeys < 5 || global.stddevOfMeans <= 0) {
+    const empty = document.createElement('div');
+    empty.textContent = '  (need more data)';
+    Object.assign(empty.style, { fontSize: '10px', color: 'rgba(255,255,255,0.4)' });
+    statsUi.meanDriftList.appendChild(empty);
+    return;
+  }
+  const byDrift = valid
+    .map(({ key, stats }) => ({
+      key, stats,
+      drift: (stats.mean - global.meanOfMeans) / global.stddevOfMeans,
+    }))
+    .sort((a, b) => Math.abs(b.drift) - Math.abs(a.drift))
+    .slice(0, 5);
+  for (const { key, stats, drift } of byDrift) {
+    const row = document.createElement('div');
+    const board = (STATS_KEY_TO_BOARD.get(key) ?? 0) + 1;
+    const flagged = Math.abs(drift) >= 1.5;
+    row.textContent = '  (' + key + ')  brd ' + board
+      + '  μ=' + stats.mean.toFixed(0)
+      + '  Δσ=' + (drift >= 0 ? '+' : '') + drift.toFixed(1)
+      + '  n=' + stats.n;
+    Object.assign(row.style, {
+      fontSize: '10px', fontFamily: 'monospace',
+      color: flagged ? '#f95' : 'rgba(255,255,255,0.7)',
+      cursor: 'pointer',
+    });
+    row.addEventListener('click', () => {
+      statsInspectorKey = key;
+      refreshInspector();
+      drawScatter();
+    });
+    statsUi.meanDriftList.appendChild(row);
+  }
+}
+
+function refreshStatsSection(): void {
+  if (!statsUi) return;
+  /* Sync any new samples to snapshots — persists to localStorage when dirty. */
+  velocityCal.syncStatsSnapshot();
+
+  const total = velocityCal.getTotalSamples();
+  const enough = velocityCal.getKeyCountWithEnoughSamples();
+  statsUi.status.textContent = velocityCal.statsEnabled
+    ? enough + ' keys · ' + total + ' samples'
+    : 'off';
+
+  drawScatter();
+  refreshInspector();
+  drawOutlierLists();
+}
+
+function makePerKeyStatsSection(): HTMLDivElement {
+  const sec = document.createElement('div');
+  Object.assign(sec.style, {
+    borderTop: '2px solid rgba(255,255,255,0.25)',
+    padding: '8px',
+    background: 'rgba(160,255,80,0.04)',
+  });
+  const title = document.createElement('strong');
+  title.textContent = 'Per-key velocity statistics';
+  Object.assign(title.style, { fontSize: '12px', color: '#9fc', display: 'block', marginBottom: '6px' });
+  sec.appendChild(title);
+
+  /* Controls row: enable toggle, clear button, status line. */
+  const controls = document.createElement('div');
+  Object.assign(controls.style, {
+    display: 'flex', alignItems: 'center', gap: '6px',
+    marginBottom: '6px', fontSize: '11px',
+  });
+  const enableCb = document.createElement('input');
+  enableCb.type = 'checkbox';
+  enableCb.id = 'lmDiagStatsEnable';
+  enableCb.checked = velocityCal.statsEnabled;
+  Object.assign(enableCb.style, { cursor: 'pointer' });
+  enableCb.addEventListener('change', () => {
+    velocityCal.setStatsEnabled(enableCb.checked);
+    refreshStatsSection();
+  });
+  const enableLbl = document.createElement('label');
+  enableLbl.htmlFor = 'lmDiagStatsEnable';
+  enableLbl.textContent = 'Collect';
+  Object.assign(enableLbl.style, { cursor: 'pointer', color: 'rgba(255,255,255,0.75)' });
+  const clearBtn = document.createElement('button');
+  clearBtn.textContent = 'Clear';
+  Object.assign(clearBtn.style, {
+    fontSize: '11px', padding: '1px 6px',
+    background: 'rgba(255,255,255,0.08)', color: '#eee',
+    border: '1px solid rgba(255,255,255,0.2)', borderRadius: '2px',
+    cursor: 'pointer',
+  });
+  clearBtn.addEventListener('click', () => {
+    if (!window.confirm('Clear all per-key velocity statistics?')) return;
+    velocityCal.clearStats();
+    statsInspectorKey = null;
+    refreshStatsSection();
+  });
+  const status = document.createElement('span');
+  Object.assign(status.style, {
+    color: 'rgba(255,255,255,0.6)', marginLeft: 'auto',
+    fontFamily: 'monospace',
+  });
+  status.textContent = '—';
+  controls.appendChild(enableCb);
+  controls.appendChild(enableLbl);
+  controls.appendChild(clearBtn);
+  controls.appendChild(status);
+  sec.appendChild(controls);
+
+  /* Scatter plot canvas. */
+  const scatterWrap = document.createElement('div');
+  Object.assign(scatterWrap.style, { display: 'flex', justifyContent: 'center', marginBottom: '4px' });
+  const scatter = document.createElement('canvas');
+  scatter.width = STATS_SCATTER_W;
+  scatter.height = STATS_SCATTER_H;
+  Object.assign(scatter.style, {
+    background: 'rgba(0,0,0,0.4)',
+    border: '1px solid rgba(255,255,255,0.15)',
+    cursor: 'crosshair',
+  });
+  scatterWrap.appendChild(scatter);
+  sec.appendChild(scatterWrap);
+
+  const axisHint = document.createElement('div');
+  axisHint.textContent = 'x: mean velocity · y: CV. Red line = CV=0.30 (noisy). Top-right needs higher hardware MIN.';
+  Object.assign(axisHint.style, {
+    fontSize: '10px', color: 'rgba(255,255,255,0.5)',
+    marginBottom: '6px', textAlign: 'center', lineHeight: '1.3',
+  });
+  sec.appendChild(axisHint);
+
+  /* Per-key inspector — sticky on hover; reused for histogram. */
+  const inspector = document.createElement('div');
+  Object.assign(inspector.style, {
+    fontSize: '11px', color: 'rgba(255,255,255,0.85)',
+    background: 'rgba(0,0,0,0.3)', padding: '4px 6px',
+    borderRadius: '2px', marginBottom: '6px',
+    minHeight: '40px', fontFamily: 'monospace',
+  });
+  inspector.textContent = 'Hover a dot to inspect.';
+  sec.appendChild(inspector);
+
+  /* Outlier lists. */
+  const highCvList = document.createElement('div');
+  sec.appendChild(highCvList);
+  const meanDriftList = document.createElement('div');
+  sec.appendChild(meanDriftList);
+
+  /* Wire interactions on scatter. */
+  scatter.addEventListener('mousemove', (e: MouseEvent) => {
+    const rect = scatter.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const hit = findKeyAtScatterPos(mx, my);
+    if (hit) {
+      statsInspectorKey = hit;
+      refreshInspector();
+      drawScatter();
+    }
+  });
+
+  statsUi = { enableCheckbox: enableCb, status, scatter, inspector, highCvList, meanDriftList };
+  refreshStatsSection();
+
+  /* 1Hz refresh while the panel exists. Cheap; pauses are handled by the
+     stats functions short-circuiting when disabled. */
+  if (statsTickerId === null) {
+    statsTickerId = window.setInterval(() => {
+      if (!panel || panel.style.display === 'none') return;
+      refreshStatsSection();
+    }, 1000);
+  }
+
+  return sec;
+}
+
 function onKey(e: KeyboardEvent): void {
   const tag = (document.activeElement?.tagName || '').toLowerCase();
   if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
@@ -707,6 +1100,7 @@ export function ensureLumaDiag(): void {
   panel.appendChild(header);
   for (let i = 0; i < 5; i++) panel.appendChild(makeBoardSection(i));
   panel.appendChild(makeVelocityCalSection());
+  panel.appendChild(makePerKeyStatsSection());
   panel.appendChild(makeGlobalFooter());
   document.body.appendChild(panel);
 

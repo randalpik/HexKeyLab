@@ -72,10 +72,6 @@ export type ComposerEvent =
   | { type: 'composer-bye' }
   /** Ask HKL to re-broadcast hkl-hello + current held-keys + tuning. */
   | { type: 'request-state' }
-  /** Play this chord immediately for the given duration (monitoring during
-   *  entry — when user holds Lumatone keys and Composer wants a confirmation
-   *  tone before committing to the score). */
-  | { type: 'play-chord'; notes: ReadonlyArray<CoordRef>; durationMs: number }
   /** Play a sequence of chords with HKL-driven timing. HKL will broadcast
    *  playback-position events as it advances. */
   | { type: 'play-score'; events: ReadonlyArray<PlaybackEvent> }

@@ -4,7 +4,12 @@
 //                5=quarter, 6=half, 7=whole).
 //                If keys are currently held in HKL, commits a chord;
 //                otherwise commits a rest.
-//   . (period) = toggle dot on next entry
+//   . (period) = cycle dots (0→1→2→0) on the current note/chord/rest.
+//                In insert mode: targets the just-entered element (cursor-1).
+//                In overwrite mode: targets the selected element (cursor).
+//                Auto-ties across the bar if adding the dot overflows.
+//   = (equal)  = toggle tie on the current note/chord. Attaches per-pitch
+//                to the next element when pitches match; stub otherwise.
 //   ArrowUp/Down   = previous/next voice
 //   ArrowLeft/Right = move cursor in current voice
 //   Backspace  = delete element at/before cursor
@@ -15,22 +20,21 @@
 
 import type { ResolvedNote } from '../bridge/protocol.js';
 import type {
-  ComposerModel, Duration, Dots, ChordInput, RestInput,
+  ComposerModel, Duration, ChordInput, RestInput,
 } from './model.js';
 
 export type EntryMode = 'insert' | 'overwrite';
 
 export interface InputState {
   duration: Duration;
-  dots: Dots;
   mode: EntryMode;
 }
 
 export interface InputHooks {
   getHeldKeys: () => ReadonlyArray<ResolvedNote>;
-  playChord: (notes: ReadonlyArray<ResolvedNote>, durationMs: number) => void;
   onChange: () => void;
   onStateChange: () => void;
+  setStatus?: (msg: string) => void;
   /** True while score playback is running. While true, cursor/voice
    *  navigation (arrow keys) is suppressed so the user can't fight the
    *  playback cursors. Other keys (digits, backspace) still work. */
@@ -49,7 +53,6 @@ const DIGIT_TO_DUR: Record<string, Duration> = {
 
 const state: InputState = {
   duration: '4',
-  dots: 0,
   mode: 'insert',
 };
 
@@ -66,42 +69,23 @@ function shouldIgnore(e: KeyboardEvent): boolean {
   return false;
 }
 
-/* Approximate ms-per-whole-note at 120 BPM (a quarter = 500ms → whole = 2000ms).
-   Only used for the playback-monitor chord on entry, not for score timing. */
-const MS_PER_WHOLE = 2000;
-function durationToMs(dur: Duration, dots: Dots): number {
-  const base = MS_PER_WHOLE / parseInt(dur, 10);
-  if (dots === 1) return base * 1.5;
-  if (dots === 2) return base * 1.75;
-  return base;
-}
-
 export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
   function commitDuration(dur: Duration): void {
     state.duration = dur;
     const held = hooks.getHeldKeys();
     if (held.length > 0) {
-      const chord: ChordInput = { notes: held, duration: dur, dots: state.dots };
+      const chord: ChordInput = { notes: held, duration: dur };
       if (state.mode === 'overwrite') {
         const id = model.replaceChordAtCursor(chord);
         if (id === null) model.insertChordAtCursor(chord);
-        else /* replace doesn't advance cursor */ model.moveCursor('right');
+        else model.moveCursor('right');
       } else {
         model.insertChordAtCursor(chord);
       }
-      /* Audible confirmation via HKL. */
-      hooks.playChord(held, durationToMs(dur, state.dots));
     } else {
-      const rest: RestInput = { duration: dur, dots: state.dots };
-      if (state.mode === 'overwrite') {
-        /* No chord-replace-with-rest API yet; just insert. v2 concern. */
-        model.insertRestAtCursor(rest);
-      } else {
-        model.insertRestAtCursor(rest);
-      }
+      const rest: RestInput = { duration: dur };
+      model.insertRestAtCursor(rest);
     }
-    /* Dots are a one-shot modifier; reset after use. */
-    state.dots = 0;
     hooks.onStateChange();
     hooks.onChange();
   }
@@ -117,16 +101,26 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       return;
     }
 
-    /* Dot toggle. */
+    /* Cycle dots on the current element. */
     if (e.key === '.') {
       e.preventDefault();
-      state.dots = (state.dots === 0 ? 1 : (state.dots === 1 ? 2 : 0));
+      const r = model.cycleDotsOnCurrent(state.mode);
+      if (r === null) hooks.setStatus?.('No note under cursor.');
       hooks.onStateChange();
+      hooks.onChange();
       return;
     }
 
-    /* Voice / cursor navigation. Suppressed during playback so the user
-       doesn't fight the per-voice playback cursors. */
+    /* Toggle tie on the current note/chord. */
+    if (e.key === '=') {
+      e.preventDefault();
+      const r = model.toggleTieOnCurrent(state.mode);
+      if (r === null) hooks.setStatus?.('No tieable note under cursor.');
+      hooks.onChange();
+      return;
+    }
+
+    /* Voice / cursor navigation. Suppressed during playback. */
     const navKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'];
     if (navKeys.indexOf(e.key) >= 0) {
       if (hooks.isPlaybackActive()) { e.preventDefault(); return; }
@@ -149,13 +143,10 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     }
     if (e.key === 'Delete') {
       e.preventDefault();
-      /* Delete the element immediately to the right of the cursor. */
       const v = model.getCurrentVoice();
       const c = model.getCursor();
       const id = model.getElementIdAt(v, c);
       if (id !== null) {
-        /* Move cursor right then deleteAtCursor (which removes the now-left
-           element — i.e. what was at the original cursor). */
         model.moveCursor('right');
         if (model.deleteAtCursor()) {
           hooks.onStateChange();
@@ -170,6 +161,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       e.preventDefault();
       state.mode = (state.mode === 'insert' ? 'overwrite' : 'insert');
       hooks.onStateChange();
+      hooks.onChange();
       return;
     }
   }
