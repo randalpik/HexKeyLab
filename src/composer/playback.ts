@@ -11,9 +11,14 @@
 
 import type { ComposerModel, Voice } from './model.js';
 import type { PlaybackEvent, CoordRef } from '../bridge/protocol.js';
+import {
+  collectDynams, collectHairpins, getDynamicMap, absoluteTickForMoment,
+} from './expressions.js';
 
 const DEFAULT_BPM = 120;
 const MS_PER_MIN = 60_000;
+const DEFAULT_VELOCITY = 85; /* "mf" — matches DEFAULT_DYNAMIC_MAP['mf'] */
+const HAIRPIN_OPEN_END_DELTA = 25; /* synthesized cres/dim level when no flanking dynamic */
 
 interface TempoInfo { bpm: number; unitDenom: number; dots: number }
 
@@ -71,6 +76,79 @@ function tieHas(el: Element, role: 'initial' | 'terminal'): boolean {
 function elementHasTieInitial(el: Element): boolean { return tieHas(el, 'initial'); }
 function elementHasTieTerminal(el: Element): boolean { return tieHas(el, 'terminal'); }
 
+/* ── velocity timeline ───────────────────────────────────────────────────── */
+
+interface VelocityLookup {
+  /** Return the velocity at the given absolute 64th-note tick. */
+  at: (tick: number) => number;
+}
+
+function buildVelocityLookup(doc: Document): VelocityLookup {
+  const dynMap = getDynamicMap(doc);
+  const dynams = collectDynams(doc, dynMap)
+    .map((d) => ({ tick: absoluteTickForMoment(doc, d.moment), velocity: d.velocity, rec: d }));
+  const hairpins = collectHairpins(doc)
+    .map((h) => ({
+      startTick: absoluteTickForMoment(doc, h.start),
+      endTick: absoluteTickForMoment(doc, h.end),
+      form: h.form,
+      rec: h,
+    }))
+    .filter((h) => h.endTick > h.startTick); /* Reject degenerate zero-length spans */
+
+  /* Piecewise-constant lookup of the dynamic level at-or-before a tick. */
+  function levelBefore(tick: number): number {
+    let level = DEFAULT_VELOCITY;
+    for (const d of dynams) {
+      if (d.tick <= tick + 1e-6) level = d.velocity;
+      else break; /* dynams sorted ascending */
+    }
+    return level;
+  }
+  function nextDynamAfter(tick: number, upToTick: number): number | null {
+    for (const d of dynams) {
+      if (d.tick > tick + 1e-6 && d.tick <= upToTick + 1e-6) return d.velocity;
+    }
+    return null;
+  }
+
+  return {
+    at(tick: number): number {
+      const baseLevel = levelBefore(tick);
+
+      /* Find the LATEST-STARTING hairpin whose range contains this tick.
+         If multiple overlap, the latest-started wins (matches "more recent
+         user intent"). */
+      let active: typeof hairpins[number] | null = null;
+      for (const h of hairpins) {
+        if (h.startTick <= tick + 1e-6 && tick <= h.endTick + 1e-6) {
+          if (!active || h.startTick > active.startTick) active = h;
+        }
+      }
+      if (!active) return clampVel(baseLevel);
+
+      /* Start level: level at the hairpin's start (which might be a dynam
+         at the start, or the level inherited from before). */
+      const startLevel = levelBefore(active.startTick);
+      /* End level: explicit dynam at the hairpin's end (within the span),
+         else synthesized ±delta. */
+      const explicitEnd = nextDynamAfter(active.startTick, active.endTick);
+      const endLevel = explicitEnd !== null
+        ? explicitEnd
+        : clampVel(startLevel + (active.form === 'cres' ? HAIRPIN_OPEN_END_DELTA : -HAIRPIN_OPEN_END_DELTA));
+
+      const span = active.endTick - active.startTick;
+      const t = span > 0 ? (tick - active.startTick) / span : 0;
+      const u = Math.max(0, Math.min(1, t));
+      return clampVel(startLevel + (endLevel - startLevel) * u);
+    },
+  };
+}
+
+function clampVel(v: number): number {
+  return Math.max(1, Math.min(127, Math.round(v)));
+}
+
 /** Walk every voice across every measure; emit one PlaybackEvent per
  *  attack (rests advance time silently; tied chains coalesce). */
 export function buildPlayback(model: ComposerModel): PlaybackEvent[] {
@@ -78,6 +156,7 @@ export function buildPlayback(model: ComposerModel): PlaybackEvent[] {
   const mei = new DOMParser().parseFromString(model.serialize(), 'application/xml');
   const tempo = readTempo(mei);
   const tickMs = tickMsFromTempo(tempo);
+  const velocity = buildVelocityLookup(mei);
 
   for (let voice: Voice = 1; voice <= 4; voice = (voice + 1) as Voice) {
     const staffN = voice <= 2 ? 1 : 2;
@@ -142,6 +221,7 @@ export function buildPlayback(model: ComposerModel): PlaybackEvent[] {
           durationMs: totalTicks * tickMs,
           notes,
           meiId,
+          velocity: velocity.at(tTicks),
         });
       }
       /* Advance time by the chain's total ticks; skip past coalesced pieces. */

@@ -26,6 +26,7 @@
 import type { ResolvedNote } from '../bridge/protocol.js';
 import { regroupBeams, readTimeSig } from './beams.js';
 import { computeAccidentalDisplay, alterFromCount, alterFromToken, tokenFromAlter, getNoteAlter } from './accidentals.js';
+import { ensureExpressionDefaults, type Moment } from './expressions.js';
 
 /* ── public types ────────────────────────────────────────────────────────── */
 
@@ -188,13 +189,30 @@ function emptyMeiDoc(setup: SetupDefaults = {}): Document {
   const tempoTextSpan = tempoText ? escapeXml(tempoText) + ' ' : '';
   const tempoDotsAttr = tempoDots > 0 ? ` mm.dots="${tempoDots}"` : '';
 
+  /* <extMeta> with HKL-namespaced config carries document-level performance
+     defaults (dynamic→velocity map, future tempo alteration). The xmlns:hkl
+     prefix declaration lives here so the prefixed elements parse cleanly. */
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<mei xmlns="${MEI_NS}" meiversion="5.0">
+<mei xmlns="${MEI_NS}" xmlns:hkl="https://hexkeylab.com/ns/mei" meiversion="5.0">
   <meiHead>
     <fileDesc>
       <titleStmt><title>${escapeXml(title)}</title>${composerBlock}</titleStmt>
       <pubStmt/>
     </fileDesc>
+    <extMeta>
+      <hkl:config>
+        <hkl:dynamicMap>
+          <hkl:level name="fff" velocity="127"/>
+          <hkl:level name="ff"  velocity="115"/>
+          <hkl:level name="f"   velocity="100"/>
+          <hkl:level name="mf"  velocity="85"/>
+          <hkl:level name="mp"  velocity="70"/>
+          <hkl:level name="p"   velocity="55"/>
+          <hkl:level name="pp"  velocity="40"/>
+          <hkl:level name="ppp" velocity="25"/>
+        </hkl:dynamicMap>
+      </hkl:config>
+    </extMeta>
   </meiHead>
   <music><body><mdiv><score>
     <scoreDef key.sig="${keySig}" meter.count="${count}" meter.unit="${unit}">
@@ -238,6 +256,7 @@ export class ComposerModel {
     } else {
       this.doc = emptyMeiDoc();
     }
+    ensureExpressionDefaults(this.doc);
     this.normalizePlaceholders();
   }
 
@@ -284,6 +303,8 @@ export class ComposerModel {
     }
     /* Migrate older .hkc files that used right="dbl" for the final barline. */
     this.setBarlines();
+    /* Seed <extMeta>/<hkl:config> defaults if the loaded doc lacks them. */
+    ensureExpressionDefaults(this.doc);
     this.normalizePlaceholders();
   }
 
@@ -789,6 +810,26 @@ export class ComposerModel {
   cursorToEnd(voice?: Voice): void {
     const v = voice ?? this.currentVoice;
     this.cursors[v] = this.getVoiceLength(v);
+  }
+
+  /** Translate the current voice's cursor position into an MEI (measureIdx,
+   *  tstamp) Moment. Used by voice-mode expression entry — the entered
+   *  dynam/hairpin lands at the time of the cursor's anchor element.
+   *
+   *  Anchor convention: the cursor's "moment" is the onset time of the
+   *  element AT the cursor (i.e., the element that would be replaced in
+   *  overwrite mode, or the element you'd skip past with Right-arrow in
+   *  insert mode). When the cursor is past the last element, returns the
+   *  last measure's end-of-content moment. */
+  momentForCursor(voice: Voice, cursor: number): Moment | null {
+    const layers = this.allLayers(voice);
+    if (layers.length === 0) return null;
+    const loc = this.locateCursor(voice, cursor);
+    if (!loc) return null;
+    const ticksInMeasure = this.timeWithinMeasure(voice, loc.measureIdx, loc.withinIdx);
+    const { unit } = this.getTimeSig();
+    const ticksPerBeat = 64 / unit;
+    return { measureIdx: loc.measureIdx, tstamp: 1 + ticksInMeasure / ticksPerBeat };
   }
 
   /* ── mutations ──────────────────────────────────────────────────────────── */

@@ -1,22 +1,25 @@
-// Cursor overlay. Two modes:
-//   - Editing mode (default): single bar (insert) or selection box
+// Cursor overlay. Three modes:
+//   - Voice editing (default): single bar (insert) or selection box
 //     (overwrite) at the model's current-element position.
-//   - Playback mode: per-voice bars, one for each voice currently sounding.
-//     The editing cursor is hidden; the editing cursor's model state is
-//     preserved so it can be restored when playback ends.
+//   - Expression editing: a vertical tick between staves 1 and 2 at the
+//     current expression-cursor moment. Selected dynam/hairpin SVG elements
+//     get a `.expr-selected` CSS class.
+//   - Playback: per-voice bars, one for each voice currently sounding.
 //
 // Insert mode anchor: cursor sits at the RIGHT edge of the just-entered
 // element (element at flat-index `cursor - 1`). At cursor === 0 it falls
 // back to a pre-staff position.
 //
 // Overwrite mode: cursor renders a translucent selection BOX around the
-// element at flat-index `cursor` (the one that would be replaced). At end
-// of voice (no current element) falls back to a thin right-edge bar.
+// element at flat-index `cursor`.
 
 import { renderer } from './render.js';
 import type { ComposerModel, Voice } from './model.js';
+import { type Moment, dynamAt, hairpinsAt } from './expressions.js';
+import { currentMoment, selectionAt, type ExpressionCursor } from './expressionCursor.js';
 
 const CURSOR_COLOR = '#7226e4';
+const EXPR_CURSOR_COLOR = '#e47226';
 const CURSOR_WIDTH = 2;
 const PLAYBACK_WIDTH = 3;
 const CURSOR_VPAD = 6;
@@ -27,10 +30,21 @@ const SELECTION_STROKE_OPACITY = 0.7;
 const DEBUG = typeof location !== 'undefined' &&
   new URLSearchParams(location.search).has('debugCursor');
 
+const EXPR_SELECTED_CLASS = 'expr-selected';
+
+export interface CursorUpdateOpts {
+  entryMode: 'insert' | 'overwrite';
+  cursorMode: 'voice' | 'expr';
+  exprCursor: ExpressionCursor;
+}
+
 class CursorOverlay {
   private svg: SVGSVGElement | null = null;
   private barRect: SVGRectElement | null = null;
   private voiceLabel: SVGTextElement | null = null;
+  private exprBar: SVGRectElement | null = null;
+  private exprLabel: SVGTextElement | null = null;
+  private lastSelectedIds: string[] = [];
 
   /* Playback-mode state. Per-voice bars layered over the editing cursor;
      editing cursor itself is hidden while playbackMode is true. */
@@ -42,6 +56,8 @@ class CursorOverlay {
     this.svg = svg;
     this.barRect = null;
     this.voiceLabel = null;
+    this.exprBar = null;
+    this.exprLabel = null;
     this.playbackBars.clear();
   }
 
@@ -60,24 +76,65 @@ class CursorOverlay {
       this.voiceLabel.setAttribute('font-weight', '600');
       this.svg.appendChild(this.voiceLabel);
     }
+    if (!this.exprBar) {
+      this.exprBar = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      this.exprBar.setAttribute('fill', EXPR_CURSOR_COLOR);
+      this.exprBar.setAttribute('opacity', '0');
+      this.svg.appendChild(this.exprBar);
+    }
+    if (!this.exprLabel) {
+      this.exprLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      this.exprLabel.setAttribute('fill', EXPR_CURSOR_COLOR);
+      this.exprLabel.setAttribute('font-family', 'system-ui, sans-serif');
+      this.exprLabel.setAttribute('font-size', '11');
+      this.exprLabel.setAttribute('font-weight', '600');
+      this.svg.appendChild(this.exprLabel);
+    }
   }
 
   /** Update editing cursor to reflect the model's current voice and cursor.
-   *  During playback the editing cursor is hidden (playback bars take over). */
-  update(model: ComposerModel, mode: 'insert' | 'overwrite'): void {
+   *  During playback the editing cursor is hidden (playback bars take over).
+   *
+   *  Backward-compatible: `opts` may be the old EntryMode string for callers
+   *  not yet updated. */
+  update(model: ComposerModel, opts: CursorUpdateOpts | 'insert' | 'overwrite'): void {
     if (!this.svg) return;
     this.ensureNodes();
 
+    const resolved: CursorUpdateOpts = typeof opts === 'string'
+      ? { entryMode: opts, cursorMode: 'voice', exprCursor: { index: 0, moments: [] } }
+      : opts;
+
     if (this.playbackMode) {
-      /* Hide editing cursor during playback. */
       this.barRect!.setAttribute('opacity', '0');
       this.voiceLabel!.textContent = '';
+      this.exprBar!.setAttribute('opacity', '0');
+      this.exprLabel!.textContent = '';
+      this.clearExpressionHighlights();
       for (const [voice, meiId] of this.playbackPositions) {
         this.positionPlaybackBar(voice, meiId);
       }
       return;
     }
 
+    if (resolved.cursorMode === 'expr') {
+      this.barRect!.setAttribute('opacity', '0');
+      this.voiceLabel!.textContent = '';
+      this.renderExpressionCursor(model, resolved.exprCursor);
+      this.updateExpressionHighlights(model, resolved.exprCursor);
+      return;
+    }
+
+    /* Voice mode: hide expression overlay and highlights. */
+    this.exprBar!.setAttribute('opacity', '0');
+    this.exprLabel!.textContent = '';
+    this.clearExpressionHighlights();
+    this.renderVoiceCursor(model, resolved.entryMode);
+  }
+
+  /* ── voice-cursor rendering (preserved verbatim from prior version) ────── */
+
+  private renderVoiceCursor(model: ComposerModel, mode: 'insert' | 'overwrite'): void {
     const voice = model.getCurrentVoice();
     const cursor = model.getCursor();
     const voiceLen = model.getVoiceLength();
@@ -86,19 +143,12 @@ class CursorOverlay {
     let isSelectionBox = false;
     let diag: Record<string, unknown> = { voice, cursor, voiceLen, mode };
 
-    /* Anchor the cursor on the active staff (the staff for this voice in
-       the measure containing the cursor). Used both for the truly-empty
-       fallback AND for placeholders, whose rendered bbox is degenerate
-       (Verovio emits an empty <g> for MEI <space>). */
     const anchorOnStaff = (): boolean => {
       const staffId = model.getStaffIdAtCursor(voice);
       if (!staffId) return false;
       const staffRect = renderer.rectForId(staffId);
       if (!staffRect) return false;
       const sigEndX = renderer.findSigEndXForStaff(staffId);
-      /* When this staff has rendered sigs (first measure of a system), put
-         the cursor just past them. Otherwise (mid-score measure without sig
-         changes) put it a small distance past the staff's left edge. */
       x = sigEndX !== null ? sigEndX + CURSOR_HPAD : staffRect.left + 10;
       y = staffRect.top - CURSOR_VPAD;
       h = staffRect.height + CURSOR_VPAD * 2;
@@ -115,8 +165,6 @@ class CursorOverlay {
       } else {
         const ref = model.getCurrentElement(voice, 'insert');
         if (!ref || isPlaceholderEl(ref.elem)) {
-          /* Placeholder bboxes are degenerate; anchor on the placeholder's
-             measure-staff. Same path for a missing ref (defensive). */
           if (anchorOnStaff()) diag.case = ref ? 'insert-placeholder-on-staff' : 'insert-no-ref-staff';
           else diag.case = 'insert-staff-fallback';
         } else {
@@ -133,9 +181,7 @@ class CursorOverlay {
         }
       }
     } else {
-      /* overwrite */
       if (voiceLen === 0 || cursor >= voiceLen) {
-        /* Past end — show a thin right-edge bar (no element to enclose). */
         if (voiceLen > 0) {
           const ref = model.getElementIdAt(voice, voiceLen - 1);
           const rect = ref ? renderer.rectForId(ref) : null;
@@ -154,8 +200,6 @@ class CursorOverlay {
       } else {
         const ref = model.getCurrentElement(voice, 'overwrite');
         if (ref && isPlaceholderEl(ref.elem)) {
-          /* Placeholder under overwrite cursor — anchor on its measure-
-             staff (no selection box since there's nothing visible). */
           if (anchorOnStaff()) diag.case = 'overwrite-placeholder-on-staff';
           else diag.case = 'overwrite-placeholder-fallback';
         } else {
@@ -204,9 +248,185 @@ class CursorOverlay {
 
     if (DEBUG) {
       diag = { ...diag, x, y, w, h, isSelectionBox,
-        svgSize: { w: this.svg.getAttribute('width'), h: this.svg.getAttribute('height') } };
+        svgSize: { w: this.svg!.getAttribute('width'), h: this.svg!.getAttribute('height') } };
       console.log('[cursor]', diag);
     }
+  }
+
+  /* ── expression-cursor rendering ───────────────────────────────────────── */
+
+  private renderExpressionCursor(model: ComposerModel, exprCursor: ExpressionCursor): void {
+    const m = currentMoment(exprCursor);
+    const bar = this.exprBar!;
+    const label = this.exprLabel!;
+    if (!m) {
+      bar.setAttribute('opacity', '0');
+      label.textContent = 'EXPR (empty)';
+      label.setAttribute('x', '80');
+      label.setAttribute('y', String(20));
+      return;
+    }
+    /* Find a coincident note (any voice) for x; prefer staff-1 voices (1, 2)
+       so the cursor sits between the staves. Fall back to the moment's
+       expression element if no note is co-located. */
+    const noteRect = this.findNoteRectAtMoment(model, m);
+    let staff1BottomGuess = noteRect?.bottom;
+    let cursorX = noteRect ? noteRect.left + noteRect.width / 2 : null;
+
+    if (cursorX === null) {
+      const exprId = this.findExprIdAtMoment(model, m);
+      if (exprId) {
+        const r = renderer.rectForId(exprId);
+        if (r) {
+          cursorX = r.left + r.width / 2;
+          if (staff1BottomGuess === undefined) staff1BottomGuess = r.top;
+        }
+      }
+    }
+
+    /* Determine vertical band between staves 1 and 2 for this moment.
+       Strategy: use the staff IDs at the cursor's measure to bound the band. */
+    const yBand = this.computeBetweenStavesY(model, m);
+
+    if (cursorX === null || !yBand) {
+      bar.setAttribute('opacity', '0');
+      label.textContent = 'EXPR m' + (m.measureIdx + 1) + ' β' + m.tstamp.toFixed(2).replace(/\.?0+$/, '');
+      label.setAttribute('x', '80');
+      label.setAttribute('y', '20');
+      return;
+    }
+
+    const x = cursorX - CURSOR_WIDTH / 2;
+    bar.setAttribute('x', String(x));
+    bar.setAttribute('y', String(yBand.top));
+    bar.setAttribute('width', String(CURSOR_WIDTH + 1));
+    bar.setAttribute('height', String(yBand.bottom - yBand.top));
+    bar.setAttribute('opacity', '0.85');
+
+    label.textContent = 'EXPR';
+    label.setAttribute('x', String(x + 4));
+    label.setAttribute('y', String(yBand.top - 2));
+  }
+
+  /** Find a note/chord at exactly the given moment. Prefer voice 1/2 (staff 1)
+   *  so the cursor naturally lands between the staves. */
+  private findNoteRectAtMoment(model: ComposerModel, m: Moment): { left: number; bottom: number; width: number; right: number } | null {
+    const measures = Array.from(model.getDoc().querySelectorAll('measure'));
+    const measure = measures[m.measureIdx];
+    if (!measure) return null;
+    const { unit } = model.getTimeSig();
+    const ticksPerBeat = 64 / unit;
+    const targetTicks = (m.tstamp - 1) * ticksPerBeat;
+
+    const voiceOrder: ReadonlyArray<Voice> = [1, 2, 3, 4];
+    for (const v of voiceOrder) {
+      const staffN = v <= 2 ? 1 : 2;
+      const layerN = (v === 1 || v === 3) ? 1 : 2;
+      const layer = Array.from(measure.querySelectorAll(`staff[n="${staffN}"] layer[n="${layerN}"]`))[0];
+      if (!layer) continue;
+      let cum = 0;
+      for (const child of Array.from(layer.children)) {
+        const ln = child.localName;
+        if (ln !== 'note' && ln !== 'chord' && ln !== 'rest' && ln !== 'space') continue;
+        if (Math.abs(cum - targetTicks) < 1e-6 && (ln === 'note' || ln === 'chord')) {
+          const id = child.getAttribute('xml:id');
+          if (id) {
+            const r = renderer.rectForId(id);
+            if (r) return { left: r.left, bottom: r.bottom, width: r.width, right: r.right };
+          }
+        }
+        cum += elementDurationTicks(child);
+      }
+    }
+    return null;
+  }
+
+  /** Returns the xml:id of the dynam-at-moment or first hairpin-at-moment, if
+   *  any. Used as a fallback x-anchor for orphan moments. */
+  private findExprIdAtMoment(model: ComposerModel, m: Moment): string | null {
+    const doc = model.getDoc();
+    const d = dynamAt(doc, m);
+    if (d) return d.getAttribute('xml:id');
+    const hairpins = hairpinsAt(doc, m);
+    if (hairpins.length > 0) return hairpins[0].getAttribute('xml:id');
+    return null;
+  }
+
+  /** Compute the vertical band between staff 1 and staff 2 at the moment's
+   *  measure. Falls back to a small region below the cursor x if the staff
+   *  ids can't be resolved. */
+  private computeBetweenStavesY(model: ComposerModel, m: Moment): { top: number; bottom: number } | null {
+    const measures = Array.from(model.getDoc().querySelectorAll('measure'));
+    const measure = measures[m.measureIdx];
+    if (!measure) return null;
+    const staffs = Array.from(measure.querySelectorAll('staff'));
+    const s1 = staffs.find((s) => s.getAttribute('n') === '1');
+    const s2 = staffs.find((s) => s.getAttribute('n') === '2');
+    const s1Id = s1?.getAttribute('xml:id');
+    const s2Id = s2?.getAttribute('xml:id');
+    if (!s1Id || !s2Id) return null;
+    const r1 = renderer.rectForId(s1Id);
+    const r2 = renderer.rectForId(s2Id);
+    if (!r1 || !r2) return null;
+    /* Use the smaller-on-screen staff as top, the larger as bottom. */
+    const top = Math.min(r1.bottom, r2.bottom);
+    const bottom = Math.max(r1.top, r2.top);
+    if (bottom <= top) {
+      /* The staves overlap (rare; shouldn't happen for a grand staff). Fall
+         back to a thin band right below staff 1. */
+      return { top: r1.bottom, bottom: r1.bottom + 24 };
+    }
+    return { top: top - CURSOR_VPAD, bottom: bottom + CURSOR_VPAD };
+  }
+
+  /** Tag the selected dynam / hairpin SVG elements with `.expr-selected`. */
+  private updateExpressionHighlights(model: ComposerModel, exprCursor: ExpressionCursor): void {
+    this.clearExpressionHighlights();
+    const m = currentMoment(exprCursor);
+    if (!m) return;
+    const sel = selectionAt(model.getDoc(), m);
+    const ids: string[] = [];
+    if (sel.dynam) {
+      const id = sel.dynam.getAttribute('xml:id');
+      if (id) ids.push(id);
+    }
+    for (const h of sel.hairpins) {
+      const id = h.getAttribute('xml:id');
+      if (id) ids.push(id);
+    }
+    const container = this.scoreContainer();
+    if (!container) return;
+    for (const id of ids) {
+      const node = container.querySelector('#' + CSS.escape(id));
+      if (node) node.classList.add(EXPR_SELECTED_CLASS);
+    }
+    this.lastSelectedIds = ids;
+  }
+
+  private clearExpressionHighlights(): void {
+    const container = this.scoreContainer();
+    if (!container) {
+      this.lastSelectedIds = [];
+      return;
+    }
+    /* Remove from the snapshot we recorded last time. */
+    for (const id of this.lastSelectedIds) {
+      const node = container.querySelector('#' + CSS.escape(id));
+      if (node) node.classList.remove(EXPR_SELECTED_CLASS);
+    }
+    /* Defensive: also clear any leftover .expr-selected nodes (e.g., after
+       re-render the snapshot ids may have lost their classes already but
+       new render could carry stale ones if id stayed the same). */
+    for (const node of Array.from(container.querySelectorAll('.' + EXPR_SELECTED_CLASS))) {
+      node.classList.remove(EXPR_SELECTED_CLASS);
+    }
+    this.lastSelectedIds = [];
+  }
+
+  private scoreContainer(): HTMLElement | null {
+    /* The cursor overlay's parent is #score; Verovio's SVG is a sibling. */
+    if (!this.svg) return null;
+    return this.svg.parentElement as HTMLElement | null;
   }
 
   /* ── playback mode ─────────────────────────────────────────────────────── */
@@ -258,8 +478,24 @@ class CursorOverlay {
   hide(): void {
     if (this.barRect) this.barRect.setAttribute('opacity', '0');
     if (this.voiceLabel) this.voiceLabel.textContent = '';
+    if (this.exprBar) this.exprBar.setAttribute('opacity', '0');
+    if (this.exprLabel) this.exprLabel.textContent = '';
     for (const bar of this.playbackBars.values()) bar.setAttribute('opacity', '0');
+    this.clearExpressionHighlights();
   }
+}
+
+/** Element duration in 64th-note ticks. Mirrors model.ts internals; kept
+ *  local so cursor.ts doesn't need a model.ts surface change. */
+function elementDurationTicks(el: Element): number {
+  const dur = el.getAttribute('dur');
+  const dots = parseInt(el.getAttribute('dots') ?? '0', 10);
+  const denom = dur ? parseInt(dur, 10) : NaN;
+  if (!Number.isFinite(denom) || denom <= 0) return 16;
+  const base = 64 / denom;
+  if (dots === 1) return base * 1.5;
+  if (dots === 2) return base * 1.75;
+  return base;
 }
 
 export const cursor = new CursorOverlay();

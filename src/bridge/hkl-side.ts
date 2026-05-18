@@ -163,11 +163,11 @@ function coordToKeyId(c: CoordRef): KeyId {
   return c.q + ',' + c.r;
 }
 
-function dispatchChord(notes: ReadonlyArray<CoordRef>, durationMs: number, pb: ActivePlayback): void {
+function dispatchChord(notes: ReadonlyArray<CoordRef>, durationMs: number, pb: ActivePlayback, velocity?: number): void {
   if (pb.cancelled) return;
   const keys: KeyId[] = notes.map(coordToKeyId);
   for (const k of keys) {
-    noteOn(k, audio.keyVelocity[k] ?? 80);
+    noteOn(k, velocity ?? audio.keyVelocity[k] ?? 80);
     pb.heldKeys.add(k);
     /* Add to selectedKeys for visual highlight via existing draw() path.
        Track ownership so we only remove keys that were not already held by
@@ -209,7 +209,7 @@ function playScore(events: ReadonlyArray<PlaybackEvent>): void {
     const onHandle = window.setTimeout(() => {
       pb.pending.delete(onHandle);
       if (pb.cancelled) return;
-      dispatchChord(ev.notes, ev.durationMs, pb);
+      dispatchChord(ev.notes, ev.durationMs, pb, ev.velocity);
       bridge.send({
         type: 'playback-position',
         meiId: ev.meiId ?? null,

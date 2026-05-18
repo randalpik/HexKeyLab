@@ -89,6 +89,19 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
 /* Toolbar Play button playing-state styling. */
 #composerToolbar .btn.playing { border-color: #FF4C79; color: #FF4C79 }
 
+/* Expression layer: selected dynam/hairpin in the rendered SVG. Applied by
+   cursor.ts whenever the expression cursor lands on a moment with an
+   existing dynamic or inside an existing hairpin's range. */
+#score svg .expr-selected,
+#score svg .expr-selected * {
+  fill: #e47226 !important;
+  stroke: #e47226;
+}
+#score svg g.hairpin.expr-selected path,
+#score svg g.hairpin.expr-selected line {
+  stroke-width: 1.5;
+}
+
 /* Document Setup modal. */
 .hkl-dialog {
   background: #1a1a1a; color: #ccc;
@@ -118,6 +131,9 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
 .hkl-dialog fieldset legend { color: #888; font-size: 11px; padding: 0 4px }
 .hkl-dialog fieldset input[type=text] { min-width: 0; flex: 1 }
 .hkl-dialog fieldset input[type=number] { width: 60px }
+.hkl-dialog fieldset.dyn-row { flex-wrap: wrap; gap: 8px }
+.hkl-dialog fieldset.dyn-row label { display: inline-flex; align-items: center; gap: 4px; color: #ccc; font-size: 11px }
+.hkl-dialog fieldset.dyn-row input[type=number] { width: 50px }
 .hkl-dialog .time-row { display: flex; gap: 6px; align-items: center }
 .hkl-dialog .actions {
   display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px;
@@ -198,6 +214,19 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
         <select id="setupTempoUnit"></select>
         <span>=</span>
         <input id="setupTempoBpm" type="number" min="20" max="300" step="1">
+      </fieldset>
+    </div>
+    <div class="row">
+      <span>Dynamics → velocity</span>
+      <fieldset class="dyn-row">
+        <label>fff <input id="setupDyn_fff" type="number" min="1" max="127" step="1"></label>
+        <label>ff  <input id="setupDyn_ff"  type="number" min="1" max="127" step="1"></label>
+        <label>f   <input id="setupDyn_f"   type="number" min="1" max="127" step="1"></label>
+        <label>mf  <input id="setupDyn_mf"  type="number" min="1" max="127" step="1"></label>
+        <label>mp  <input id="setupDyn_mp"  type="number" min="1" max="127" step="1"></label>
+        <label>p   <input id="setupDyn_p"   type="number" min="1" max="127" step="1"></label>
+        <label>pp  <input id="setupDyn_pp"  type="number" min="1" max="127" step="1"></label>
+        <label>ppp <input id="setupDyn_ppp" type="number" min="1" max="127" step="1"></label>
       </fieldset>
     </div>
     <div class="actions">

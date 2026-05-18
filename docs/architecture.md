@@ -859,8 +859,8 @@ Toolbar toggle between "Page" and "Scroll" views. Both use `svgViewBox: false` a
 ### 7.10 Out of scope (still)
 
 - Note-level edits in existing chords (change one pitch within a chord).
-- Tuplets, dynamics, articulations, slurs.
-- Anacrusis / partial-bar pickups.
+- Tuplets, anacrusis / partial-bar pickups.
+- Tempo changes mid-score, expressive text, slurs, articulations (planned; see §7.20 "Planned extensions").
 - Print / PDF export (Verovio supports this; integration deferred).
 - Undo / redo.
 - Microtonal / quarter-tone / HEJI accidentals.
@@ -982,6 +982,51 @@ Rests and durations ≥ quarter break the run. Singletons stay un-wrapped. An el
 ### 7.19 Headless inspection tool
 
 `tools/composer-inspect/inspect.mjs` — a Node script that launches headless Chromium via remote-debugging-port, navigates to the running dev server's `/composer.html`, waits for Verovio WASM to load and render, evaluates an arbitrary JS expression in the page context, and prints the result as JSON. Used heavily for iterating on engraving / accidental / barline rendering without manual browser cycles. Requires Node 22+ (native WebSocket) and chromium in PATH; no npm dependencies. See `tools/composer-inspect/inspect.mjs` for usage examples.
+
+### 7.20 Expression layer (dynamics + hairpins)
+
+A virtual fifth "voice" sitting between voices 2 and 3 in the navigation cycle, with its own cursor that snaps to the union of {every note onset across all four voices} ∪ {every existing dynam/hairpin moment}. Lives at `src/composer/expressions.ts` (CRUD + tstamp helpers + document-level defaults) and `src/composer/expressionCursor.ts` (moment-list construction + cursor navigation + selection).
+
+**Anchoring is by `@tstamp` / `@tstamp2`, not by `@startid`/`@endid`.** Dynamics and hairpins are siblings of `<staff>` inside their measure with `tstamp="beat"` (and for hairpins `tstamp2="Nm+beat"`). This is the time-based anchoring form supported by MEI 5 control events. The choice means an expression element **survives deletion of any nearby note** — the marking stays glued to its beat moment, which matches conventional notation semantics. The trade-off is that re-barring (changing meter) does NOT carry expressions with their original notes; if this becomes a real problem, fallback would be to migrate orphaned expressions on time-sig change. Slurs and articulations stay note-attached when those features land.
+
+Voice cycle: ArrowUp / ArrowDown cycles through five positions — **1 → 2 → expr → 3 → 4**. The voice indicator shows `E` in expression mode. The cursor mode lives in `InputState.cursorMode: 'voice' | 'expr'` alongside the existing `mode: 'insert' | 'overwrite'`.
+
+**Moment list** (`buildMomentList`): walks all four voices' layers in every measure, emits `(measureIdx, tstamp)` for each note/chord onset (tie-INITIAL only — terminal/medial continuations are not new onsets). Then adds every `<dynam>`'s tstamp and every `<hairpin>`'s start AND end moments (so orphaned expressions are always reachable). Sorted and deduplicated with float epsilon.
+
+**Input commands**:
+- Voice mode — `Shift+1`..`Shift+8` (`!@#$%^&*`) enter fff/ff/f/mf/mp/p/pp/ppp at the cursor's anchor moment (Finale order: 1 = loudest, 8 = softest). Insert mode anchors at cursor−1; overwrite mode at cursor. `<` / `>` mark hairpin start/end. Existing dynamic at the same moment is replaced.
+- Expression mode — `1`..`8` enter dynamics (same Finale order); `<` / `>` for hairpins; arrows step the moment cursor; `Backspace`/`Delete` removes the selected expression element; `Home`/`End` jump; `Escape` cancels pending hairpin.
+- Hairpins are entered in two steps regardless of mode: first key-press marks the start at the current moment, second key-press at a later moment closes the span. Pressing the OTHER form (e.g., `>` while pending a cres.) abandons the pending mark and re-starts. End-must-be-after-start; same-moment closes are rejected with a status hint.
+
+**Visual cursor + selection** (`cursor.ts`): in expression mode the voice-cursor bar is hidden; an orange vertical tick is drawn between the two staves at the moment's x-position. X is sourced from a coincident note's rendered rect (preferring staff-1 voices so the tick sits in the between-staves band), or from the expression element's own rect when the moment is orphan (no co-located note). When the cursor lands on a moment with an existing `<dynam>` or inside a `<hairpin>`'s range, those SVG groups are tagged with `.expr-selected` and highlighted in the same orange.
+
+**Playback** (`playback.ts`): a per-tick velocity timeline is built before walking voices for events:
+1. `collectDynams` and `collectHairpins` resolve every element's moment(s) to absolute 64th-note ticks via `absoluteTickForMoment(doc, m) = measureIdx * measureTicks + (tstamp − 1) * ticksPerBeat`.
+2. Per onset tick: the piecewise-constant level is "most recent `<dynam>` at-or-before this tick" (default `mf=85` before any dynam). The latest-started `<hairpin>` containing the tick adds linear interpolation between the level at-or-before its start and either (a) the next explicit dynam within its range, or (b) a synthesized end at startLevel ± 25.
+3. Each `PlaybackEvent` gets `velocity: <effective>` attached. HKL's `dispatchChord` (hkl-side.ts) reads `ev.velocity ?? audio.keyVelocity[k] ?? 80`.
+
+Per current MVP scope: held notes spanning a hairpin do NOT continuously change loudness — only newly-struck notes inside the span pick up interpolated levels. The bridge is already shaped to permit continuous shaping via `handleAftertouch`'s `pressureGain` ramp; that's a v1.1 extension.
+
+**Document-level defaults** (`<extMeta>`/`<hkl:config>`): the dynamic→velocity map lives in `<meiHead><extMeta><hkl:config><hkl:dynamicMap>` under the `https://hexkeylab.com/ns/mei` namespace. Defaults seeded at document creation; edited via the Setup dialog ("Dynamics → velocity" row). The Setup dialog reads/writes via `getDynamicMap` / `setDynamicMap` from `expressions.ts`. The block round-trips through `XMLSerializer.serializeToString` and is preserved by Verovio. `<extMeta>` is the MEI 5 spec-blessed extension point for non-MEI metadata.
+
+**Save / load**: extra `<measure>` children (`<dynam>`, `<hairpin>`) survive `serialize()` and `loadHkcFromFile` without special handling — they're just additional siblings to `<staff>`. `replaceDocument` calls `ensureExpressionDefaults` so older `.hkc` files without the `<extMeta>` config block get defaults seeded on load.
+
+#### Planned extensions
+
+The infrastructure landed in this iteration (`expressions.ts` Moment+tstamp helpers, `expressionCursor.ts` moment-snap cursor, `playback.ts` velocity timeline, `<extMeta>`/`<hkl:config>` defaults) is intentionally shaped so the following slot in without re-architecting:
+
+- **`<tempo>` mid-score** — `addTempo(doc, moment, opts)` in expressions.ts. Extend `buildPlayback` with a tempo timeline (piecewise-constant; `@func="continuous"` segments interpolate using a `<hkl:tempoAlteration>` percent curve). Bake variable BPM into per-event `atMs` / `durationMs`. Document defaults: `<hkl:tempoMap>` (text → BPM table, e.g., "Largo"=50, "Andante"=80) and `<hkl:tempoAlteration ritPercent="0.65" accelPercent="1.35">` for the curve shape. Setup dialog already has scaffold rows reserved.
+- **`<dir>` expressive text** — `addDir(doc, moment, opts)` for "espressivo", "molto", "pizz.", etc. Visual-only; no playback semantics. Same tstamp anchoring as dynamics.
+- **`<slur>`** — note-attached via `@startid` / `@endid` (slurs are inherently per-note, not time-based). Lives in its own helper (NOT the tstamp expression layer). Entry via voice mode: select a range of notes, press `(` to wrap them. Visual-only playback for v1; legato/portamento behavior deferred until the audio engine has a model for it.
+- **`<artic>` articulations** — children of `<note>`/`<chord>`, containment-based (no IDs). Per-note hotkeys in voice mode (e.g., `.` for staccato — conflicts with cycle-dots, keymap needs design). `@artic="acc stacc"` for stacked articulations. Playback: staccato shortens duration, tenuto extends, accent boosts velocity by a fixed Δ — all trivially layered on the existing per-note velocity/duration pipeline.
+- **Continuous-loudness shaping through hairpins** — held notes spanning a hairpin currently keep their strike velocity. The audio engine's `handleAftertouch(key, pressure)` already ramps `pressureGain` smoothly per voice; future work adds a new `ComposerEvent` type carrying timed `(meiId, pressureValue, atMs)` triples so HKL can schedule per-voice pressure events alongside the chord queue. The protocol-level `velocity?: number` field stays as-is for onset-only velocity; the new envelope rides separately.
+- **Click-to-select expressions** — Verovio emits xml:ids on rendered `<dynam>`/`<hairpin>` SVG groups; a click handler in `main.ts` can snap the expression cursor to that element's moment via `snapTo(c, moment)` (already exported from `expressionCursor.ts`).
+- **Per-staff or per-voice dynamic scoping** — currently `@place="between"` dynamics apply to all four voices in playback. If users need per-staff dynamics (e.g., a `f` on the right hand while the left stays `p`), the velocity-lookup in `playback.ts` would consult the `<dynam>`'s `@staff` attribute and apply only to voices on that staff.
+- **MusicXML export of expressions** — currently `save.ts`'s `exportMusicXml` ignores `<dynam>` / `<hairpin>`. Emit `<direction placement="below"><direction-type><dynamics><...></dynamics></direction-type></direction>` per dynam, `<wedge type="crescendo"/>` / `<wedge type="stop"/>` per hairpin. Lossy on `@val` overrides; document-level defaults are HKL-specific and don't translate.
+- **Tstamp orphan migration on meter change** — `setTimeSig` calls `truncateOverflowingMeasures` which truncates note content past the new bar line. Expressions are not touched: a dynam at `tstamp="3.5"` in 4/4 stays at 3.5 after switching to 3/4 — now past the bar. If real-world meter edits cause confusion, add `truncateOrMigrateExpressions(prevMeter, newMeter)` alongside. The lessons.md entry "Expression-layer tstamp anchoring trade-off" describes the hook.
+- **Continuous-tempo (`rit.`/`accel.`) baking** — when `<tempo @func="continuous">` lands, `buildPlayback`'s tick → ms conversion changes from a single `tickMsFromTempo` constant to a piecewise function with linear-or-cubic interpolation between flanking tempos. The `<hkl:tempoAlteration>` percentages determine the target tempo when no explicit "a tempo" follows.
+
+The user-facing entry point for all of the above is unchanged: cycle ArrowUp/ArrowDown to the appropriate voice or to the expression layer, press a hotkey. New element types are additions to the keymap and the moment-list construction, not restructuring.
 
 ---
 

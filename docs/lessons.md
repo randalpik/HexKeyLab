@@ -526,6 +526,18 @@ Verovio emits stems with `stroke-width="18"` in internal coordinates, which at o
 
 `shape-rendering: geometricPrecision` anti-aliases instead — every stroke renders to the same visual weight regardless of position. Also degrades gracefully at high zoom-out: a 1-px line that `crispEdges` would round to 0 (invisible) stays visibly faint with `geometricPrecision`. HKL Composer uses `geometricPrecision` on staff lines, ledger lines, bar lines, and stems — everything that's a `<path>` stroke. SMuFL glyphs (notehead, accidental, etc.) keep the default rendering since they're filled `<use>` references, not strokes.
 
+### Expression-layer tstamp anchoring trade-off
+
+Dynamics and hairpins anchor by `@tstamp` (and `@tstamp2`) instead of `@startid`/`@endid` (see decisions.md). Slurs and articulations stay note-attached. Different anchoring rules for different element classes is intentional — the semantics differ (time-anchored vs note-anchored).
+
+**Watch for**: a meter change with `setTimeSig` does NOT migrate tstamp positions. A dynam at `tstamp="3.5"` in 4/4 stays at `tstamp="3.5"` after switching to 3/4 — which is now past the bar line. Verovio handles this gracefully (the dynam either disappears or wraps depending on version), but the user's intent is lost. If this becomes a real source of confusion, add a `truncateOrMigrateExpressions(prevMeter, newMeter)` pass alongside `truncateOverflowingMeasures` that either drops out-of-range expressions or wraps them into the next measure. The infrastructure (`expressionMoments`, `formatTstamp2`) is in place — only the migration policy needs deciding.
+
+### `<dynam>` / `<hairpin>` insertion order in `<measure>` doesn't matter for Verovio rendering
+
+I put expression elements as the LAST children of their `<measure>` (after both `<staff>`s and any `<lv>` stub-tie elements). Verovio doesn't care about MEI element order within a measure — it reads the control events by their `@tstamp`/`@tstamp2` and lays them out in time-order regardless of XML position. This mirrors the existing `<lv>` placement convention (lv elements also appended after the staffs).
+
+If you ever need to query "all expressions in document order", do it by walking the measures first and then their `<dynam>`/`<hairpin>` children — not by DOM-order across the whole `<section>`, since `<measure>`s come in document order but their inner children don't have a meaningful order.
+
 ## LilyPond transcription quantization
 
 ### `TIE_COST` calibration matters more than `BOUNDARY_WEIGHT`

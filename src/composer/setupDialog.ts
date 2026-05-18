@@ -5,6 +5,7 @@
 // the measure rebuild).
 
 import type { ComposerModel } from './model.js';
+import { getDynamicMap, setDynamicMap, DYNAMIC_NAMES, DEFAULT_DYNAMIC_MAP } from './expressions.js';
 
 const $ = <T extends HTMLElement>(id: string): T | null =>
   document.getElementById(id) as T | null;
@@ -117,6 +118,7 @@ export function openSetupDialog(model: ComposerModel, onApply: () => void): void
   const cEl = $<HTMLInputElement>('setupComposer'); if (cEl) cEl.value = model.getComposer();
   const bEl = $<HTMLInputElement>('setupTempoBpm'); if (bEl) bEl.value = String(model.getTempo().bpm);
   const txt = $<HTMLInputElement>('setupTempoText'); if (txt) txt.value = model.getTempo().text;
+  populateDynamicInputs(model);
 
   const form = $<HTMLFormElement>('setupForm');
 
@@ -154,6 +156,7 @@ export function openSetupDialog(model: ComposerModel, onApply: () => void): void
     model.setComposer(values.composer);
     model.setKeySig(values.keySig);
     model.setTempo(values.tempoBpm, values.tempoUnit, values.tempoDots, values.tempoText);
+    applyDynamicInputs(model);
     if (meterChanged && proceedWithMeterChange) {
       model.setTimeSig(values.count, values.unit);
     } else if (meterChanged && !proceedWithMeterChange) {
@@ -175,6 +178,28 @@ export function openSetupDialog(model: ComposerModel, onApply: () => void): void
 
   dlg.returnValue = '';
   dlg.showModal();
+}
+
+function populateDynamicInputs(model: ComposerModel): void {
+  const map = getDynamicMap(model.getDoc());
+  for (const name of DYNAMIC_NAMES) {
+    const inp = $<HTMLInputElement>('setupDyn_' + name);
+    if (inp) inp.value = String(map[name] ?? DEFAULT_DYNAMIC_MAP[name]);
+  }
+}
+
+function applyDynamicInputs(model: ComposerModel): void {
+  const next: Record<string, number> = {};
+  for (const name of DYNAMIC_NAMES) {
+    const inp = $<HTMLInputElement>('setupDyn_' + name);
+    if (!inp) continue;
+    const raw = parseInt(inp.value, 10);
+    if (!isFinite(raw)) continue;
+    next[name] = Math.max(1, Math.min(127, raw));
+  }
+  if (Object.keys(next).length > 0) {
+    setDynamicMap(model.getDoc(), next);
+  }
 }
 
 function hasAnyNotes(model: ComposerModel): boolean {

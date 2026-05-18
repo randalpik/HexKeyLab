@@ -16,6 +16,7 @@ import { ComposerModel } from './model.js';
 import { renderer } from './render.js';
 import { cursor } from './cursor.js';
 import { initInput, getInputState } from './input.js';
+import type { CursorUpdateOpts } from './cursor.js';
 import { saveHkc, loadHkcFromFile, downloadMusicXml } from './save.js';
 import { buildPlayback, highlightElement, clearHighlights } from './playback.js';
 import { openSetupDialog } from './setupDialog.js';
@@ -53,9 +54,14 @@ function setConn(state: 'no-hkl' | 'connected' | 'standalone'): void {
 function refreshIndicators(): void {
   const s = getInputState();
   const voice = model.getCurrentVoice();
-  const v = $('voiceIndicator');         if (v) v.textContent = String(voice);
+  const v = $('voiceIndicator');         if (v) v.textContent = s.cursorMode === 'expr' ? 'E' : String(voice);
   const d = $('durationIndicator');      if (d) d.textContent = s.duration;
   const m = $('modeIndicator');          if (m) m.textContent = s.mode === 'insert' ? 'INS' : 'OVR';
+}
+
+function cursorOpts(): CursorUpdateOpts {
+  const s = getInputState();
+  return { entryMode: s.mode, cursorMode: s.cursorMode, exprCursor: s.exprCursor };
 }
 
 /* ── model + bridge ──────────────────────────────────────────────────────── */
@@ -140,7 +146,7 @@ function reRender(): void {
     }
     scoreEl.appendChild(overlay);
     cursor.attach(overlay);
-    cursor.update(model, getInputState().mode);
+    cursor.update(model, cursorOpts());
   } catch (e) {
     setStatus('render error: ' + (e as Error).message);
   }
@@ -175,7 +181,7 @@ initInput(model, {
   },
   onStateChange: () => {
     refreshIndicators();
-    cursor.update(model, getInputState().mode);
+    cursor.update(model, cursorOpts());
   },
   setStatus: (msg) => setStatus(msg),
   isPlaybackActive: () => isPlaying,
@@ -205,7 +211,7 @@ function startPlayback(): void {
   preplaybackCursor = model.getCursor();
   isPlaying = true;
   cursor.setPlaybackMode(true);
-  cursor.update(model, getInputState().mode);
+  cursor.update(model, cursorOpts());
   refreshPlayButton();
   bridge.send({ type: 'play-score', events });
   setStatus('Playing ' + events.length + ' event(s)…');
@@ -225,7 +231,7 @@ function finalizePlaybackEnd(statusMsg: string): void {
   model.setVoice(preplaybackVoice);
   model.setCursor(preplaybackCursor);
   clearHighlights($('score'));
-  cursor.update(model, getInputState().mode);
+  cursor.update(model, cursorOpts());
   refreshIndicators();
   refreshPlayButton();
   setStatus(statusMsg);

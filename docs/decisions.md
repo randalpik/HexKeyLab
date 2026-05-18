@@ -909,3 +909,53 @@ Pitch spelling reuses `noteName(q, r)` / `keyOctave(q, r)` from `src/tuning/note
 **Where**:
 - `tools/composer-inspect/inspect.mjs` — the script; ~110 lines.
 - Used heavily across the May 2026 Composer engraving sessions.
+
+## Composer expression layer: tstamp anchoring over startid (2026-05-17)
+
+**Picked**: `<dynam>` and `<hairpin>` anchor by `@tstamp` (and `@tstamp2` for hairpin spans), NOT by `@startid`/`@endid`. The expression element is a sibling of `<staff>` inside its measure, glued to a beat moment.
+
+**Rejected**: anchoring dynamics / hairpins by `@startid` to a note's `xml:id`. This was the initial proposal and is the more common MEI convention for editors that prioritize re-bar stability.
+
+**Why**:
+- The user's primary requirement was that expressions survive deletion of nearby notes. With `@startid`, deleting the anchor note either orphans the expression (Verovio can't render it) or requires cascade-delete logic that loses user intent. With `@tstamp`, the dynamic stays exactly where the user put it on the timeline regardless of what notes come and go.
+- Conventional notation behaves this way: an `f` marking on beat 2 of measure 3 is "at beat 2 of measure 3", not "attached to whatever note is here right now". The mental model is time-based.
+- Re-barring (changing meter) is a less common operation than note editing. The trade-off (tstamp positions don't move with a re-bar) is acceptable; if it bites in practice, we can migrate orphaned expressions at time-sig change.
+
+**Caveat (recorded in lessons.md)**: slurs and articulations DO stay note-attached. A slur is inherently "from this note to that note"; an articulation is inherently "on this note". Different semantics → different anchoring.
+
+**Where**:
+- `src/composer/expressions.ts:addDynam` / `addHairpin` emit `@tstamp` + `@tstamp2`.
+- `src/composer/playback.ts:buildVelocityLookup` resolves moments → absolute ticks via `absoluteTickForMoment` keyed off the document meter.
+
+## Composer expression layer: virtual "fifth voice" cursor over modal toggle (2026-05-17)
+
+**Picked**: a fifth navigation position between voices 2 and 3 (cycle `1 → 2 → expr → 3 → 4`), with its own moment-snapping cursor that visits the union of {all note onsets across all voices} ∪ {existing dynam/hairpin moments}. Selection is implicit — whatever dynam exists at the cursor's moment, plus any hairpin whose [start, end] range contains it, is "selected" and highlighted.
+
+**Rejected**:
+- Modal toggle (press `e` to enter expression-edit mode, press `Escape` to leave). Less discoverable; the user has to remember a special hotkey.
+- Per-voice expressions (each voice gets its own dynamic layer). The user explicitly wanted "applies to all staves" semantics; cluttering by voice would defeat that and the moment-snap dedup logic.
+
+**Why**:
+- Cycle-through navigation reuses the existing ArrowUp/Down voice-switch hotkeys — zero new keybindings to learn.
+- "Between voices 2 and 3" matches the visual placement of `@place="between"` dynamics in MEI grand-staff rendering, so the position in the cycle mirrors the position on the page.
+- Moment-snap guarantees no expression can ever be orphaned: even if a user enters a dynam at a moment, then deletes every note around it, the cursor can still reach that moment because the existing dynam contributes its moment to the snap-list.
+
+**Where**:
+- `src/composer/expressionCursor.ts` — moment list construction + cursor state.
+- `src/composer/input.ts:cycleVoice` — five-position cycle.
+
+## Composer velocity model: note-onset only for MVP (2026-05-17)
+
+**Picked**: each `PlaybackEvent` carries a single `velocity` computed from the dynamic-level-at-tick plus hairpin interpolation. Held notes spanning a hairpin keep their strike velocity throughout — only newly-struck notes within the hairpin's range pick up the interpolated level.
+
+**Rejected**: continuous-loudness shaping via synthesized aftertouch ramps on the existing `pressureGain` chain. The audio engine already supports this (`handleAftertouch(key, pressure)` ramps `pressureGain` smoothly), but driving it requires a new bridge message type that schedules timed pressure events per held note, which is non-trivial wiring.
+
+**Why**:
+- Onset-only velocity is the simplest possible playback semantics — pre-baked into the event list, no real-time control needed.
+- For most musical contexts (especially the user's piano use case where notes decay anyway), continuous shaping of held notes during a hairpin is a small refinement over per-onset levels.
+- The bridge protocol's new `velocity?: number` field on `PlaybackEvent` is forward-compatible: when continuous shaping lands, we can add an optional `pressureRamp?: ...` envelope alongside it without breaking anything.
+
+**Where**:
+- `src/bridge/protocol.ts` — `PlaybackEvent.velocity?: number`.
+- `src/composer/playback.ts:buildVelocityLookup` — piecewise + linear-interp lookup.
+- `src/bridge/hkl-side.ts:dispatchChord` — applies `ev.velocity ?? keyVelocity[k] ?? 80`.
