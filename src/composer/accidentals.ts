@@ -27,6 +27,8 @@
 //   3. Tie destinations (@tie="t" or "m") are always hidden, but they DO
 //      update carry state.
 
+import { realTicks } from './ticks.js';
+
 const SHARP_ORDER: ReadonlyArray<string> = ['f', 'c', 'g', 'd', 'a', 'e', 'b'];
 const FLAT_ORDER:  ReadonlyArray<string> = ['b', 'e', 'a', 'd', 'g', 'c', 'f'];
 
@@ -123,14 +125,7 @@ function hideAlter(note: Element, alter: number): void {
 }
 
 function elementDurationTicks(el: Element): number {
-  const dur = el.getAttribute('dur');
-  const dots = parseInt(el.getAttribute('dots') ?? '0', 10);
-  const denom = dur ? parseInt(dur, 10) : NaN;
-  if (!Number.isFinite(denom) || denom <= 0) return 16;
-  const base = 64 / denom;
-  if (dots === 1) return base * 1.5;
-  if (dots === 2) return base * 1.75;
-  return base;
+  return realTicks(el);
 }
 
 function notesInLayer(layer: Element): Array<{ note: Element; startTick: number; layerN: number }> {
@@ -150,6 +145,25 @@ function notesInLayer(layer: Element): Array<{ note: Element; startTick: number;
         if (n.localName === 'note') out.push({ note: n, startTick: t, layerN });
       }
       t += chordTicks;
+    } else if (ln === 'tuplet') {
+      /* Descend into the tuplet, accumulating real-time ticks per child.
+         realTicks() on a tuplet child returns its scaled (sounding) ticks
+         automatically, so layer-relative startTicks come out correct. */
+      for (const tChild of Array.from(child.children)) {
+        const tln = tChild.localName;
+        if (tln === 'rest' || tln === 'space') {
+          t += elementDurationTicks(tChild);
+        } else if (tln === 'note') {
+          out.push({ note: tChild, startTick: t, layerN });
+          t += elementDurationTicks(tChild);
+        } else if (tln === 'chord') {
+          const cTicks = elementDurationTicks(tChild);
+          for (const n of Array.from(tChild.children)) {
+            if (n.localName === 'note') out.push({ note: n, startTick: t, layerN });
+          }
+          t += cTicks;
+        }
+      }
     }
   }
   return out;

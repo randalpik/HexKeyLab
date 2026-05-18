@@ -14,6 +14,7 @@ import type { PlaybackEvent, CoordRef } from '../bridge/protocol.js';
 import {
   collectDynams, collectHairpins, getDynamicMap, absoluteTickForMoment,
 } from './expressions.js';
+import { realTicks } from './ticks.js';
 
 const DEFAULT_BPM = 120;
 const MS_PER_MIN = 60_000;
@@ -41,14 +42,7 @@ function tickMsFromTempo(tempo: TempoInfo): number {
 }
 
 function elementDurationTicks(el: Element): number {
-  const dur = el.getAttribute('dur');
-  const dots = parseInt(el.getAttribute('dots') ?? '0', 10);
-  const denom = dur ? parseInt(dur, 10) : NaN;
-  if (!Number.isFinite(denom) || denom <= 0) return 16;
-  const base = 64 / denom;
-  if (dots === 1) return base * 1.5;
-  if (dots === 2) return base * 1.75;
-  return base;
+  return realTicks(el);
 }
 
 function extractCoords(noteEl: Element): CoordRef | null {
@@ -245,6 +239,23 @@ function pushContentChildren(layer: Element, out: Element[]): void {
       for (const cc of Array.from(c.children)) {
         const ln2 = cc.localName;
         if (ln2 === 'chord' || ln2 === 'note' || ln2 === 'rest' || ln2 === 'space') out.push(cc);
+      }
+    } else if (ln === 'tuplet') {
+      /* Descend into tuplet wrappers. realTicks() automatically scales
+         child durations by numbase/num based on closest('tuplet'), so the
+         outer time-accumulator yields correct sounding times. */
+      for (const cc of Array.from(c.children)) {
+        const ln2 = cc.localName;
+        if (ln2 === 'chord' || ln2 === 'note' || ln2 === 'rest' || ln2 === 'space') {
+          out.push(cc);
+        } else if (ln2 === 'beam') {
+          /* Defensive: v1 never beams inside tuplets, but if some other
+             pipeline produces it, descend. */
+          for (const bc of Array.from(cc.children)) {
+            const bln = bc.localName;
+            if (bln === 'chord' || bln === 'note' || bln === 'rest' || bln === 'space') out.push(bc);
+          }
+        }
       }
     }
   }

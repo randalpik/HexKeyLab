@@ -95,15 +95,33 @@ function totalAlter(node: Element): number {
   return 0;
 }
 
-/* divisions per quarter — use 16 so we cover 32nd notes (= 2 divisions) and
-   dotted 16ths (= 6) without fractional values. */
-const DIVISIONS = 16;
+/* divisions per quarter — base 16 covers 32nd notes (= 2) and dotted 16ths
+ * (= 6). For tuplet support we multiply by the LCM of all tuplet `num`
+ * values found in the doc so each tuplet child's sounding ticks come out
+ * integer (e.g. triplet of 8ths needs divisions = LCM(16, 3) = 48). */
+const BASE_DIVISIONS = 16;
 
-function durationToTicks(dur: Duration, dots: Dots): number {
-  const base = (DIVISIONS * 4) / parseInt(dur, 10);
+function gcdN(a: number, b: number): number { return b === 0 ? a : gcdN(b, a % b); }
+function lcmN(a: number, b: number): number { return (a * b) / gcdN(a, b); }
+
+function computeDivisions(doc: Document): number {
+  let result = BASE_DIVISIONS;
+  for (const t of Array.from(doc.querySelectorAll('tuplet'))) {
+    const num = parseInt(t.getAttribute('num') ?? '1', 10);
+    if (num > 1) result = lcmN(result, num);
+  }
+  return result;
+}
+
+function durationToTicks(dur: Duration, dots: Dots, divisions: number): number {
+  const base = (divisions * 4) / parseInt(dur, 10);
   if (dots === 1) return base * 3 / 2;
   if (dots === 2) return base * 7 / 4;
   return base;
+}
+
+function isTupletPlaceholderEl(el: Element): boolean {
+  return el.localName === 'space' && el.getAttribute('data-tuplet-placeholder') === 'true';
 }
 
 function keySigToFifths(sig: string): number {
@@ -134,6 +152,13 @@ interface XmlNoteEvent {
   staff: 1 | 2;
   voice: number; /* MusicXML voice number, 1..4 globally */
   measureIdx: number; /* 0-based; emitted as @number = measureIdx + 1 */
+  /** Set when this event is inside a tuplet. `position` marks first/last/etc.
+   *  for the MusicXML `<tuplet>` notation start/stop tags. */
+  tuplet?: {
+    actualNotes: number;  /* @num */
+    normalNotes: number;  /* @numbase */
+    position: 'start' | 'middle' | 'stop' | 'solo';
+  };
 }
 
 function isMeiElement(elem: Element, name: string): boolean {
@@ -172,7 +197,7 @@ function readNote(node: Element): XmlNoteSpec {
   };
 }
 
-function gatherEventsFromDoc(doc: Document): XmlNoteEvent[] {
+function gatherEventsFromDoc(doc: Document, divisions: number): XmlNoteEvent[] {
   const out: XmlNoteEvent[] = [];
   const measures = Array.from(doc.querySelectorAll('measure'));
   for (let mi = 0; mi < measures.length; mi++) {
@@ -187,20 +212,67 @@ function gatherEventsFromDoc(doc: Document): XmlNoteEvent[] {
         continue;
       }
       for (const child of contentChildren(layer)) {
-        const local = child.localName;
+        if (child.localName === 'tuplet') {
+          const num = parseInt(child.getAttribute('num') ?? '3', 10);
+          const numbase = parseInt(child.getAttribute('numbase') ?? '2', 10);
+          /* Emit one event per filled tuplet child. Placeholders are skipped
+             — they're MEI-internal layout artifacts with no MusicXML form. */
+          const filled = Array.from(child.children).filter((c) =>
+            !isTupletPlaceholderEl(c) &&
+            (c.localName === 'note' || c.localName === 'chord' || c.localName === 'rest'));
+          for (let i = 0; i < filled.length; i++) {
+            const elem = filled[i];
+            const dur = (elem.getAttribute('dur') ?? '4') as Duration;
+            const dots = parseInt(elem.getAttribute('dots') ?? '0', 10) as Dots;
+            const writtenTicks = durationToTicks(dur, dots, divisions);
+            /* Sounding ticks = written × numbase / num. With divisions chosen
+               as LCM(BASE, num), this is always an integer. */
+            const soundingTicks = writtenTicks * numbase / num;
+            const position: 'start' | 'middle' | 'stop' | 'solo' =
+              filled.length === 1 ? 'solo' :
+              i === 0 ? 'start' :
+              i === filled.length - 1 ? 'stop' : 'middle';
+            const tupletInfo = { actualNotes: num, normalNotes: numbase, position };
+            if (elem.localName === 'rest') {
+              out.push({
+                notes: [], durTicks: soundingTicks,
+                durName: DURATION_NAME[dur] ?? 'quarter',
+                dots, staff: staff as 1 | 2, voice, measureIdx: mi,
+                tuplet: tupletInfo,
+              });
+            } else if (elem.localName === 'note') {
+              out.push({
+                notes: [readNote(elem)], durTicks: soundingTicks,
+                durName: DURATION_NAME[dur] ?? 'quarter',
+                dots, staff: staff as 1 | 2, voice, measureIdx: mi,
+                tuplet: tupletInfo,
+              });
+            } else if (elem.localName === 'chord') {
+              const noteEls = Array.from(elem.children).filter((c) => c.localName === 'note');
+              out.push({
+                notes: noteEls.map((n) => readNote(n)),
+                durTicks: soundingTicks,
+                durName: DURATION_NAME[dur] ?? 'quarter',
+                dots, staff: staff as 1 | 2, voice, measureIdx: mi,
+                tuplet: tupletInfo,
+              });
+            }
+          }
+          continue;
+        }
         const dur = (child.getAttribute('dur') ?? '4') as Duration;
         const dots = parseInt(child.getAttribute('dots') ?? '0', 10) as Dots;
         if (isMeiElement(child, 'rest')) {
           out.push({
             notes: [],
-            durTicks: durationToTicks(dur, dots),
+            durTicks: durationToTicks(dur, dots, divisions),
             durName: DURATION_NAME[dur] ?? 'quarter',
             dots, staff: staff as 1 | 2, voice, measureIdx: mi,
           });
         } else if (isMeiElement(child, 'note')) {
           out.push({
             notes: [readNote(child)],
-            durTicks: durationToTicks(dur, dots),
+            durTicks: durationToTicks(dur, dots, divisions),
             durName: DURATION_NAME[dur] ?? 'quarter',
             dots, staff: staff as 1 | 2, voice, measureIdx: mi,
           });
@@ -208,7 +280,7 @@ function gatherEventsFromDoc(doc: Document): XmlNoteEvent[] {
           const noteEls = Array.from(child.children).filter((c) => c.localName === 'note');
           out.push({
             notes: noteEls.map((n) => readNote(n)),
-            durTicks: durationToTicks(dur, dots),
+            durTicks: durationToTicks(dur, dots, divisions),
             durName: DURATION_NAME[dur] ?? 'quarter',
             dots, staff: staff as 1 | 2, voice, measureIdx: mi,
           });
@@ -221,11 +293,13 @@ function gatherEventsFromDoc(doc: Document): XmlNoteEvent[] {
 }
 
 function contentChildren(layer: Element): Element[] {
-  /* Layer may contain <beam> wrappers in the serialized MEI; flatten them. */
+  /* Layer may contain <beam> wrappers in the serialized MEI; flatten them.
+   * <tuplet> elements are returned as-is here — gatherEventsFromDoc handles
+   * the per-child descent so it can attach tuplet metadata. */
   const out: Element[] = [];
   for (const c of Array.from(layer.children)) {
     const ln = c.localName;
-    if (ln === 'chord' || ln === 'note' || ln === 'rest') {
+    if (ln === 'chord' || ln === 'note' || ln === 'rest' || ln === 'tuplet') {
       out.push(c);
     } else if (ln === 'beam') {
       for (const cc of Array.from(c.children)) {
@@ -248,7 +322,8 @@ export function exportMusicXml(model: ComposerModel): string {
   const ts = model.getTimeSig();
   const tempo = model.getTempo();
 
-  const events = gatherEventsFromDoc(doc);
+  const divisions = computeDivisions(doc);
+  const events = gatherEventsFromDoc(doc, divisions);
   const measureCount = Math.max(1, doc.querySelectorAll('measure').length);
 
   /* Group events by (measure, voice). */
@@ -259,7 +334,7 @@ export function exportMusicXml(model: ComposerModel): string {
   for (const ev of events) grouped[ev.measureIdx][ev.voice].push(ev);
 
   /* Measure-tick budget under current meter. */
-  const measureTicks = ts.count * DIVISIONS * 4 / ts.unit;
+  const measureTicks = ts.count * divisions * 4 / ts.unit;
 
   let body = '';
   for (let mi = 0; mi < measureCount; mi++) {
@@ -267,7 +342,7 @@ export function exportMusicXml(model: ComposerModel): string {
 
     if (mi === 0) {
       body += `    <attributes>\n`;
-      body += `      <divisions>${DIVISIONS}</divisions>\n`;
+      body += `      <divisions>${divisions}</divisions>\n`;
       body += `      <key><fifths>${fifths}</fifths></key>\n`;
       body += `      <time><beats>${ts.count}</beats><beat-type>${ts.unit}</beat-type></time>\n`;
       body += `      <staves>2</staves>\n`;
@@ -336,10 +411,13 @@ ${body}  </part>
 
 function emitEventXml(ev: XmlNoteEvent): string {
   if (ev.notes.length === 0) {
-    /* Rest */
-    return `    <note><rest/><duration>${ev.durTicks}</duration>` +
-      `<voice>${ev.voice}</voice>${dotXml(ev.dots)}<type>${ev.durName}</type>` +
-      `<staff>${ev.staff}</staff></note>\n`;
+    /* Rest. Tuplet rest carries time-modification too (for correct DAW
+       timing) but no <tuplet/> notation tag — only notes get brackets. */
+    let r = `    <note><rest/><duration>${ev.durTicks}</duration>` +
+      `<voice>${ev.voice}</voice>${dotXml(ev.dots)}<type>${ev.durName}</type>`;
+    if (ev.tuplet) r += timeModXml(ev.tuplet.actualNotes, ev.tuplet.normalNotes);
+    r += `<staff>${ev.staff}</staff></note>\n`;
+    return r;
   }
   let s = '';
   for (let i = 0; i < ev.notes.length; i++) {
@@ -356,18 +434,32 @@ function emitEventXml(ev: XmlNoteEvent): string {
     s += `<voice>${ev.voice}</voice>`;
     s += `${dotXml(ev.dots)}`;
     s += `<type>${ev.durName}</type>`;
+    /* Time-modification applies to ALL chord notes inside a tuplet, so
+       the DAW timing comes out right per voice. */
+    if (ev.tuplet) s += timeModXml(ev.tuplet.actualNotes, ev.tuplet.normalNotes);
     s += `<staff>${ev.staff}</staff>`;
     if (n.color) s += `<notehead color="${escapeXml(n.color)}">normal</notehead>`;
-    /* Engraving-layer ties. */
-    if (n.tieStart || n.tieStop) {
+    /* Engraving-layer ties + tuplet start/stop bracket. Only the chord's
+       PRIMARY note (i === 0) carries the <tuplet/> notation tag — standard
+       MusicXML practice (one bracket per chord, not one per chord member). */
+    const tStart = ev.tuplet && i === 0 && (ev.tuplet.position === 'start' || ev.tuplet.position === 'solo');
+    const tStop  = ev.tuplet && i === 0 && (ev.tuplet.position === 'stop'  || ev.tuplet.position === 'solo');
+    if (n.tieStart || n.tieStop || tStart || tStop) {
       s += `<notations>`;
       if (n.tieStart) s += `<tied type="start"/>`;
       if (n.tieStop) s += `<tied type="stop"/>`;
+      if (tStart) s += `<tuplet type="start" number="1"/>`;
+      if (tStop) s += `<tuplet type="stop" number="1"/>`;
       s += `</notations>`;
     }
     s += `</note>\n`;
   }
   return s;
+}
+
+function timeModXml(actual: number, normal: number): string {
+  return `<time-modification><actual-notes>${actual}</actual-notes>` +
+    `<normal-notes>${normal}</normal-notes></time-modification>`;
 }
 
 function dotXml(dots: number): string {

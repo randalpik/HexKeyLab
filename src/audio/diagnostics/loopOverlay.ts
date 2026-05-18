@@ -21,6 +21,7 @@
 // downstream.
 
 import { audio } from '../../state/audio.js';
+import { velocityCal } from '../velocityCal.js';
 
 export type SeamEvent = {
   ctxTime: number;       // audioCtx time of crossfade center (= actualSwitchTime)
@@ -526,6 +527,54 @@ function draw(): void {
       if (!started) { cctx.moveTo(x, y); started = true; } else cctx.lineTo(x, y);
     }
     cctx.stroke();
+    /* Per-event labels on the velocity trace. Each label sits at a local peak
+       (end of a rising sequence) and shows the emitted MIDI velocity plus the
+       press-time tick range that produced it, reverse-mapped through the
+       firmware's CMD 0x08 (identity LUT + wire-reversal) and CMD 0x20
+       (interval table). Note the inversion: HKL pushes identity to 0x08, so
+       firmware bin index = 127 - MIDI velocity (bin 0 is fastest/loudest).
+       Bin B's press-time range is [table[B-1], table[B]) — open at the ends. */
+    const intTable = velocityCal.buildIntervalTable();
+    const ctx = cctx;
+    const labelEvent = (ctxTime: number, vel: number, lastX: number): number => {
+      const x = xOf(ctxTime);
+      /* Cheap horizontal-overlap guard — events ≤ 36 px apart collapse into
+         the first one rendered. */
+      if (lastX >= 0 && x - lastX < 36) return lastX;
+      const bin = 127 - vel;
+      let rangeStr: string;
+      if (bin <= 0) rangeStr = '<' + intTable[0];
+      else if (bin >= 127) rangeStr = '≥' + intTable[126];
+      else rangeStr = intTable[bin - 1] + '–' + intTable[bin];
+      const label = 'v' + vel + ' (' + rangeStr + 't)';
+      ctx.font = '10px sans-serif';
+      ctx.fillStyle = COLOR_VEL;
+      ctx.textBaseline = 'bottom';
+      ctx.textAlign = 'left';
+      ctx.fillText(label, x + 3, yOf127(vel) - 3);
+      return x;
+    };
+    let prevRose = false;
+    let lastLabelX = -1;
+    for (let i = 1; i < inputBuf.length; i++) {
+      const a = inputBuf[i - 1];
+      const b = inputBuf[i];
+      const rose = b.vel > a.vel;
+      /* Falling/steady edge after a rise → a is the local peak. */
+      if (prevRose && !rose && a.vel > 0 && a.ctxTime >= tStart) {
+        lastLabelX = labelEvent(a.ctxTime, a.vel, lastLabelX);
+      }
+      prevRose = rose;
+    }
+    /* Tail case: velocity is still rising at buffer end (note just played, no
+       falling edge yet) — label the most recent frame so the user sees the
+       current value without waiting for release. */
+    if (prevRose && inputBuf.length > 0) {
+      const last = inputBuf[inputBuf.length - 1];
+      if (last.vel > 0 && last.ctxTime >= tStart) {
+        lastLabelX = labelEvent(last.ctxTime, last.vel, lastLabelX);
+      }
+    }
     cctx.strokeStyle = COLOR_PA;
     cctx.beginPath();
     started = false;

@@ -35,6 +35,20 @@ export interface VelocityCalPrefs {
   /** Persisted snapshot of per-key velocity stats. Raw samples are session-only
    *  in velocityCal.ts; only this aggregate persists. */
   stats?: Record<string, KeyStatsSnapshot>;
+  /** Velocity-input curve, applied to Lumatone-source MIDI velocity at the
+   *  midi/handler.ts entry point before storage/audio/recording. Same shape as
+   *  the audio-stage curve but the output domain is 0..127 (integer velocity),
+   *  not 0..1 (audio gain). Default identity (floor=0, ceiling=127, gamma=1)
+   *  is a no-op. Lives here, not above, because it's a Lumatone-only knob.
+   *  Phase C: superseded by `intervalCurve` (which shapes at the firmware level
+   *  via SysEx 0x20). Kept as a defensive identity layer; migration in
+   *  velocityCal.ts resets to identity once the user adopts intervalCurve. */
+  inputCurve?: { floor: number; ceiling: number; gamma: number };
+  /** Lumatone firmware velocity-interval (CMD 0x20) curve parameters. Defines
+   *  the press-time tick thresholds that separate the firmware's 128 velocity
+   *  bins, via the parametric `low + (high - low) · (i/126)^gamma` map. HKL
+   *  pushes the resolved table to the Lumatone via SysEx 0x20. */
+  intervalCurve?: { low: number; high: number; gamma: number };
 }
 
 export interface KeyStatsSnapshot {
@@ -250,7 +264,22 @@ function loadVelocityCal(o: unknown): VelocityCalPrefs | undefined {
     }
     if (Object.keys(s).length > 0) stats = s;
   }
-  return { floor: v.floor, ceiling: v.ceiling, gamma: v.gamma, perKey, statsEnabled, stats };
+  let inputCurve: { floor: number; ceiling: number; gamma: number } | undefined;
+  if (v.inputCurve && typeof v.inputCurve === 'object') {
+    const ic = v.inputCurve as Record<string, unknown>;
+    if (typeof ic.floor === 'number' && typeof ic.ceiling === 'number' && typeof ic.gamma === 'number') {
+      inputCurve = { floor: ic.floor, ceiling: ic.ceiling, gamma: ic.gamma };
+    }
+  }
+  let intervalCurve: { low: number; high: number; gamma: number } | undefined;
+  if (v.intervalCurve && typeof v.intervalCurve === 'object') {
+    const ic = v.intervalCurve as Record<string, unknown>;
+    if (typeof ic.low === 'number' && typeof ic.high === 'number' && typeof ic.gamma === 'number'
+        && ic.low >= 0 && ic.high <= 4095 && ic.low < ic.high && ic.gamma > 0) {
+      intervalCurve = { low: ic.low, high: ic.high, gamma: ic.gamma };
+    }
+  }
+  return { floor: v.floor, ceiling: v.ceiling, gamma: v.gamma, perKey, statsEnabled, stats, inputCurve, intervalCurve };
 }
 
 /* Merge a partial patch into the stored prefs and write back. Read-modify-write

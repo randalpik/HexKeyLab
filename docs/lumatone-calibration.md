@@ -166,9 +166,9 @@ An earlier attempt at spoofing the macro-button signal at the BBB level. **Doesn
 
 ---
 
-## Workflow: full-keyboard calibration (validated 2026-05)
+## Workflow: full-keyboard calibration
 
-Iterative widening with per-key rescue. Three to four global passes plus targeted rescues, converging in ~1 hour. The approach was developed empirically — see `docs/decisions.md` for the rejected alternatives.
+Diagnose the hardware envelope first, then choose between hardware MAX-raising (works on some units, fails on others) and software input-curve shaping (works on every unit). Phase 3 (per-key MIN tuning) is independent and useful regardless. ~1 hour total.
 
 ### Phase 0 — sane baseline
 
@@ -185,38 +185,63 @@ Iterative widening with per-key rescue. Three to four global passes plus targete
 
 3. Open `?lumadiag=1` in HKL. Enable "Collect" in the **Per-key velocity statistics** section.
 4. Play every key 30-50 times across the full range of forces you'd use in normal play. The scatter populates with each key's (p5, p95) point. Two clusters typically emerge:
-   - **Top-right cluster**: p5 >> 30, p95 close to 127. Keys saturate high — soft presses still register as forte. *Action: raise MAX.*
-   - **Diagonal-middle cluster**: p5 around 50-80, p95 around 80-100. Keys stuck in the middle of the velocity range. *Action: raise MAX to drop p5, or raise MIN to lift p95.*
+   - **Top-right cluster**: p5 >> 30, p95 close to 127. Keys saturate high — soft presses still register as forte.
+   - **Diagonal-middle cluster**: p5 around 50-80, p95 around 80-100. Keys stuck in the middle of the velocity range.
 
-### Phase 2 — iterative MAX raising
+### Phase 2 — probe the hardware envelope, then choose a lever
 
-5. **First raise (modest):**
+5. **One diagnostic MAX bump.** Push MAX from 70 → 80 globally:
+   ```bash
+   sudo python3 /home/debian/keydata-live.py --bulk-change 1 70 80
+   ```
+   Play every key. Count "dead" keys (no onset).
+   - **< ~5 dead keys**: hardware MAX-raising is viable on this unit. Continue with the **Phase 2a (hardware path)** below.
+   - **≥ ~10 dead keys**: the unit's ADC swing distribution is too tight for MAX-raising to pay off. Revert MAX:
+     ```bash
+     sudo python3 /home/debian/keydata-live.py --bulk-change 1 80 70
+     sudo python3 /home/debian/keydata-live.py --commit
+     ```
+     and skip to **Phase 2b (software path)**.
+
+   See `docs/lessons.md` → "Hardware MAX is not a reliable dynamic-range lever for narrow-ADC-swing keyboards" and `docs/decisions.md` → "Velocity shaping: software input curve over hardware MAX raising" for the reasoning.
+
+### Phase 2a — hardware path: iterative MAX raising (only if the diagnostic was friendly)
+
+6. **First raise (modest):**
    ```bash
    sudo python3 /home/debian/keydata-live.py --bulk-change 1 70 100
    ```
-   (bumps every key still at the 70 baseline to 100; on the first pass this is equivalent to `--bulk 1 100` since nothing has been rescued yet.)
-6. **Play every key.** Watch the lumadiag scatter and the "Can't play loud" outlier list. Some keys vanish from the scatter or stay at p95 ≈ 0 — those went dead (their physical ADC swing is below 100).
-7. **Rescue each newly-dead key individually**:
+   Play every key. Some go dead (physical ADC swing < 100). Rescue them individually:
    ```bash
-   sudo python3 /home/debian/keydata-live.py <q> <r> 1 80   # try 80; drop further if still dead
+   sudo python3 /home/debian/keydata-live.py <q> <r> 1 80   # pick a value not equal to the current baseline
    ```
-   Expect 5-20 rescues at this level. Pick a rescue value that isn't equal to the current baseline so subsequent `--bulk-change` passes won't catch it.
-8. **Second raise:** `--bulk-change 1 100 130`. Same play-through and rescue cycle. `--bulk-change` is the rescue-preserving primitive: it only touches keys still at the old baseline (100), so any rescue at 80 (or any other off-baseline value) is left alone.
-9. **Third raise:** `--bulk-change 1 130 160`. Fewer casualties each pass.
-10. **Stop** when further raises stop helping the "Can't play quiet" outlier list — you've hit the keyboard's physical ceiling for low-end reach.
+   so subsequent `--bulk-change` passes won't catch the rescue.
+7. **Second raise:** `--bulk-change 1 100 130`. Same play-through and rescue cycle. `--bulk-change` is the rescue-preserving primitive: it only touches keys still at the old baseline.
+8. **Third raise:** `--bulk-change 1 130 160`. Fewer casualties each pass.
+9. **Stop** when further raises stop helping the "Can't play quiet" outlier list — you've hit the keyboard's physical ceiling for low-end reach.
 
-### Phase 3 — MIN tuning for high-end reach
+### Phase 2b — firmware path: velocity interval table (CMD 0x20)
 
-11. For keys still in the "Can't play loud" list (p95 < 100) after MAX is dialed in:
+10. In the lumadiag panel, find the **Hardware velocity intervals (CMD 0x20)** subsection (between "Hardware foundation" and "HKL curve"). The faint trace on the preview canvas is the Terpstra factory default; the bright line is your current curve. Defaults match the factory (`low=1, high=310, gamma≈2.1`).
+11. With stats still collecting, narrow `high` toward the slowest press-time tick count your keyboard actually produces. The factory's `high=310` is generous; compressed-range keyboards live much lower (often 60–200). Lower `high` packs more bins into the press-time range you actually use → more distinct emitted velocities.
+12. `low` adjusts the fast-press end. Usually leave at 1 unless your fastest presses are slower than the factory assumes (rare).
+13. `gamma` controls bin distribution. Factory ~2.1 concentrates bins at fast presses. Lower gamma (e.g. 1.5) spreads bins more evenly; higher gamma (3+) tightens further at the fast end.
+14. Click **Push to Lumatone (CMD 0x20)**. The firmware accepts the table immediately and starts using it for the next note-on. Replay the keyboard and watch the (p5, p95) scatter — clusters should spread out (more distinct values reachable) and per-key histograms should show finer gradation.
+15. Iterate until further narrowing of `high` stops widening the scatter — you've packed the bins as tightly as the press-time data supports.
+16. **Persistence caveat**: CMD 0x20's EEPROM behavior is unverified. After a Lumatone power cycle, the firmware may revert to factory defaults — if so, click Push again. (`localStorage` retains your curve parameters across browser sessions, so re-pushing is one click.)
+
+### Phase 3 — MIN tuning for high-end reach (independent of Phase 2 path)
+
+14. For keys still in the "Can't play loud" list (p95 < 100):
     ```bash
     sudo python3 /home/debian/keydata-live.py <q> <r> 2 15
     ```
-    Try MIN = 10, 20, 30. This narrows the press-time measurement window, pushing reported velocities upward. Stop when p95 saturates or the soft end (p5) creeps back up.
+    Try MIN = 10, 20, 30. This narrows the press-time measurement window, pushing reported velocities upward. Stop when p95 saturates or p5 creeps back up.
 
 ### Phase 4 — persist + HKL-side residuals
 
-12. **Commit:** `sudo python3 /home/debian/keydata-live.py --commit`. Reboot to verify TC loads the persisted values cleanly.
-13. **Remaining range gaps** (e.g. keys whose physical sensor swing simply can't span 0-127): use HKL's per-key gain + global velocity curve in the lumadiag "HKL curve" section. The per-key gain adjusts loudness offset; the curve's `gamma` parameter compresses the low end so even a hardware floor of p5=50 can feel like ppp through the right curve shape.
+15. **Commit:** `sudo python3 /home/debian/keydata-live.py --commit`. Reboot to verify TC loads the persisted values cleanly.
+16. **Remaining range gaps** (e.g. a few outlier keys whose loudness still drifts after global shaping): use HKL's per-key gain + audio-stage curve in the lumadiag "HKL curve" section. The per-key gain adjusts per-key loudness offset; the curve's `gamma` parameter compresses the low end further in audio gain space.
 
 ### Tips
 

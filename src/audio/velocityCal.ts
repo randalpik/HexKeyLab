@@ -1,17 +1,30 @@
 // Velocity calibration: global curve + per-key gain + auto-capture + per-key
-// velocity statistics.
+// velocity statistics + Lumatone input-velocity curve.
 //
-// Two stages, applied at audio-engine entry (noteOn) so MIDI input, QWERTY,
-// mouse, and recording playback all benefit:
+// Two audio-stage transforms applied at audio-engine entry (noteOn) so MIDI
+// input, QWERTY, mouse, and recording playback all benefit:
 //   1. Per-key gain — multiplicative scalar on incoming velocity (default 1.0).
 //      Smooths out per-key mechanical variance on the physical Lumatone, since
 //      the firmware has no per-key threshold commands.
-//   2. Global curve — replaces the prior hardcoded `0.10 + 0.90·(v/127)²` in
-//      velocityBaseVol with `floor + (ceiling - floor) · (v/127)^gamma`.
+//   2. Audio-stage curve — replaces the prior hardcoded `0.10 + 0.90·(v/127)²`
+//      in velocityBaseVol with `floor + (ceiling - floor) · (v/127)^gamma`.
 //
-// Raw velocity is preserved in audio.keyVelocity[key] — recording captures the
-// raw value so playback can re-apply whatever transform is current at playback
-// time. The transform is *not* applied at MIDI ingestion.
+// Plus one MIDI-input-stage transform applied at midi/handler.ts before raw
+// velocity lands in audio.keyVelocity[key]:
+//   3. Input curve — `floor + (ceiling - floor) · (v/127)^gamma` in velocity
+//      space (0..127 → 0..127, integer-snapped). Applied ONLY to Lumatone-
+//      source MIDI velocity; QWERTY/mouse paths are untouched. Compensates
+//      for keyboards whose firmware emits a compressed velocity range (e.g.
+//      ~60-127 because the keys' physical ADC swing is narrow). Default is
+//      identity (floor=0, ceiling=127, gamma=1) so the build is a no-op until
+//      tuned in the lumadiag panel. Because it sits at the input boundary,
+//      everything downstream — audio, recording, MIDI export — sees the
+//      shaped value. Lumadiag stats keep sampling RAW velocity so they remain
+//      diagnostic of the firmware's natural output.
+//
+// Raw velocity is preserved in audio.keyVelocity[key] for the audio-stage
+// transforms — recording captures the post-input-curve value so playback can
+// re-apply per-key gain + audio curve at playback time.
 //
 // Auto-capture: while capturing, every note-on velocity is appended to a
 // per-key list. On stop, per-key gain = clamp(target / median(samples), 0.3..3.0)
@@ -39,11 +52,48 @@ export interface VelocityCalState {
   perKey: Record<KeyId, number>;
 }
 
+/** Lumatone MIDI input curve. Output is integer velocity 0..127 (NOT audio
+ *  gain). Default identity (floor=0, ceiling=127, gamma=1) — no-op. Phase C:
+ *  superseded by `IntervalCurveState` (firmware-level shaping); the input curve
+ *  is now an identity-default defensive layer with no UI. */
+export interface InputCurveState {
+  floor: number;
+  ceiling: number;
+  gamma: number;
+}
+
+/** Lumatone firmware velocity-interval curve (CMD 0x20). Generates a 127-entry
+ *  table of press-time tick thresholds via the parametric map
+ *    thresh[i] = low + (high - low) · (i/126)^gamma
+ *  HKL pushes the resolved table to the firmware; firmware then bins press_time
+ *  into 128 velocity bins by comparison. Defaults curve-fit to the Terpstra
+ *  factory table (`KeyboardDataStructure.cpp:49`). */
+export interface IntervalCurveState {
+  low: number;
+  high: number;
+  gamma: number;
+}
+
 export const DEFAULT_CAL: VelocityCalState = {
   floor: 0.10,
   ceiling: 1.0,
   gamma: 2.0,
   perKey: {},
+};
+
+export const DEFAULT_INPUT_CURVE: InputCurveState = {
+  floor: 0,
+  ceiling: 127,
+  gamma: 1.0,
+};
+
+/** Curve-fit to Terpstra DefaultVelocityIntervalTable (1, 2, ..., 58, 60, ...,
+ *  310): at i=57 the factory value is 58, solving 58 = 1 + 309·(57/126)^γ
+ *  gives γ ≈ 2.1. low=1, high=310 reproduce the factory endpoints. */
+export const DEFAULT_INTERVAL_CURVE: IntervalCurveState = {
+  low: 1,
+  high: 310,
+  gamma: 2.1,
 };
 
 const state: VelocityCalState = {
@@ -52,6 +102,9 @@ const state: VelocityCalState = {
   gamma: DEFAULT_CAL.gamma,
   perKey: {},
 };
+
+const inputCurve: InputCurveState = { ...DEFAULT_INPUT_CURVE };
+const intervalCurve: IntervalCurveState = { ...DEFAULT_INTERVAL_CURVE };
 
 /* Capture session state — lives in-module, not persisted. */
 let capturing = false;
@@ -130,6 +183,8 @@ function persist(): void {
     perKey: { ...state.perKey },
     statsEnabled,
     stats: Object.keys(snapshots).length > 0 ? { ...snapshots } : undefined,
+    inputCurve: { ...inputCurve },
+    intervalCurve: { ...intervalCurve },
   }});
 }
 
@@ -150,6 +205,31 @@ function loadFromPrefs(): void {
   if (typeof v.statsEnabled === 'boolean') statsEnabled = v.statsEnabled;
   if (v.stats && typeof v.stats === 'object') {
     snapshots = { ...v.stats };
+  }
+  if (v.inputCurve && typeof v.inputCurve === 'object') {
+    if (typeof v.inputCurve.floor === 'number') inputCurve.floor = v.inputCurve.floor;
+    if (typeof v.inputCurve.ceiling === 'number') inputCurve.ceiling = v.inputCurve.ceiling;
+    if (typeof v.inputCurve.gamma === 'number') inputCurve.gamma = v.inputCurve.gamma;
+  }
+  if (v.intervalCurve && typeof v.intervalCurve === 'object') {
+    intervalCurve.low = v.intervalCurve.low;
+    intervalCurve.high = v.intervalCurve.high;
+    intervalCurve.gamma = v.intervalCurve.gamma;
+    /* Phase A → Phase C migration: if the user has a non-identity input curve
+       saved from Phase A AND now has an interval curve, the firmware is doing
+       the shaping and the input curve should be identity to avoid double-
+       compression. Reset once and persist. */
+    const inputNonIdentity = inputCurve.floor !== DEFAULT_INPUT_CURVE.floor
+      || inputCurve.ceiling !== DEFAULT_INPUT_CURVE.ceiling
+      || inputCurve.gamma !== DEFAULT_INPUT_CURVE.gamma;
+    if (inputNonIdentity) {
+      console.log('[velocityCal] Phase C migration: input curve reset to identity (interval curve takes over hardware shaping)');
+      inputCurve.floor = DEFAULT_INPUT_CURVE.floor;
+      inputCurve.ceiling = DEFAULT_INPUT_CURVE.ceiling;
+      inputCurve.gamma = DEFAULT_INPUT_CURVE.gamma;
+      /* persist deferred to first explicit setter or end of load — safe to skip
+         here since loadFromPrefs is followed by normal use which will persist */
+    }
   }
 }
 
@@ -179,6 +259,101 @@ export const velocityCal = {
   clearPerKey(): void {
     state.perKey = {};
     persist();
+  },
+
+  /* ── Lumatone input velocity curve ────────────────────────────────────────
+     Applied at midi/handler.ts before storage. Output is integer velocity
+     0..127, not audio gain. Identity-by-default; the Phase A entry point for
+     compensating compressed firmware velocity output. */
+  get inputCurveFloor(): number { return inputCurve.floor; },
+  get inputCurveCeiling(): number { return inputCurve.ceiling; },
+  get inputCurveGamma(): number { return inputCurve.gamma; },
+
+  setInputCurveFloor(v: number): void { inputCurve.floor = v; persist(); },
+  setInputCurveCeiling(v: number): void { inputCurve.ceiling = v; persist(); },
+  setInputCurveGamma(v: number): void { inputCurve.gamma = v; persist(); },
+
+  resetInputCurve(): void {
+    inputCurve.floor = DEFAULT_INPUT_CURVE.floor;
+    inputCurve.ceiling = DEFAULT_INPUT_CURVE.ceiling;
+    inputCurve.gamma = DEFAULT_INPUT_CURVE.gamma;
+    persist();
+  },
+
+  /** True iff the input curve is the identity transform (no shaping). Lets
+   *  the MIDI handler take the fast path without arithmetic per note-on. */
+  isInputCurveIdentity(): boolean {
+    return inputCurve.floor === 0
+        && inputCurve.ceiling === 127
+        && inputCurve.gamma === 1;
+  },
+
+  /** Apply the input curve to a raw 0..127 velocity. Returns integer 0..127.
+   *  v=0 maps to 0 (preserve note-off semantics); v>0 maps through the curve
+   *  but is floor-clamped to 1 so a sounding note never becomes silent. */
+  applyInputCurve(v: number): number {
+    if (v <= 0) return 0;
+    const vn = (v >= 127 ? 127 : v) / 127;
+    const shaped = inputCurve.floor + (inputCurve.ceiling - inputCurve.floor) * Math.pow(vn, inputCurve.gamma);
+    if (shaped <= 0) return 1;
+    if (shaped >= 127) return 127;
+    return Math.max(1, Math.round(shaped));
+  },
+
+  /* ── Lumatone firmware velocity-interval table (CMD 0x20) ────────────────
+     127 press-time tick thresholds shape which press-times merge into which
+     bins. Built parametrically: thresh[i] = low + (high - low) · (i/126)^gamma.
+     buildIntervalTable() produces the integer array to push via SysEx 0x20. */
+  get intervalCurveLow(): number { return intervalCurve.low; },
+  get intervalCurveHigh(): number { return intervalCurve.high; },
+  get intervalCurveGamma(): number { return intervalCurve.gamma; },
+
+  setIntervalCurveLow(v: number): void {
+    intervalCurve.low = Math.max(0, Math.min(4094, Math.round(v)));
+    if (intervalCurve.low >= intervalCurve.high) intervalCurve.high = intervalCurve.low + 1;
+    persist();
+  },
+  setIntervalCurveHigh(v: number): void {
+    intervalCurve.high = Math.max(1, Math.min(4095, Math.round(v)));
+    if (intervalCurve.high <= intervalCurve.low) intervalCurve.low = intervalCurve.high - 1;
+    persist();
+  },
+  setIntervalCurveGamma(v: number): void {
+    intervalCurve.gamma = Math.max(0.1, Math.min(10, v));
+    persist();
+  },
+
+  resetIntervalCurve(): void {
+    intervalCurve.low = DEFAULT_INTERVAL_CURVE.low;
+    intervalCurve.high = DEFAULT_INTERVAL_CURVE.high;
+    intervalCurve.gamma = DEFAULT_INTERVAL_CURVE.gamma;
+    persist();
+  },
+
+  /** Build the 127-entry interval table from the parametric curve. Each entry
+   *  is an integer in [0, 4095] (12-bit). Monotonic non-decreasing — the
+   *  parametric form is naturally monotonic for gamma > 0, but rounding can
+   *  produce equal adjacent values, which the firmware accepts. */
+  buildIntervalTable(): number[] {
+    const { low, high, gamma } = intervalCurve;
+    const span = high - low;
+    const out: number[] = new Array(127);
+    for (let i = 0; i < 127; i++) {
+      const t = i / 126;
+      const v = low + span * Math.pow(t, gamma);
+      const clamped = Math.max(0, Math.min(4095, Math.round(v)));
+      out[i] = clamped;
+    }
+    return out;
+  },
+
+  /** True iff the interval curve matches Terpstra factory defaults — used by
+   *  the connection auto-push to skip the SysEx send when nothing's been
+   *  customised. */
+  isIntervalCurveFactory(): boolean {
+    return intervalCurve.low === DEFAULT_INTERVAL_CURVE.low
+        && intervalCurve.high === DEFAULT_INTERVAL_CURVE.high
+        && intervalCurve.gamma === DEFAULT_INTERVAL_CURVE.gamma;
   },
 
   /* Stage 1: per-key gain. Returns adjusted velocity (clamped 0..127). */

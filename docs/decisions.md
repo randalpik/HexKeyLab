@@ -959,3 +959,54 @@ Pitch spelling reuses `noteName(q, r)` / `keyOctave(q, r)` from `src/tuning/note
 - `src/bridge/protocol.ts` — `PlaybackEvent.velocity?: number`.
 - `src/composer/playback.ts:buildVelocityLookup` — piecewise + linear-interp lookup.
 - `src/bridge/hkl-side.ts:dispatchChord` — applies `ev.velocity ?? keyVelocity[k] ?? 80`.
+
+---
+
+## Velocity shaping: software input curve over hardware MAX raising (2026-05-17)
+
+**Picked**: Lumatone-input-only velocity remap inside HKL — a `floor + (ceiling - floor) · (v/127)^gamma` curve in velocity space, applied at `midi/handler.ts` before raw velocity lands in `audio.keyVelocity[key]`. Identity by default; dialed in via lumadiag. Lumadiag stats keep sampling RAW velocity so the (p5, p95) scatter continues to reflect the firmware envelope. Phase B (deferred): bake the dialed-in curve into a 128-entry SysEx 0x08 LUT and push it to the firmware so external consumers of raw Lumatone MIDI see the shaped values too.
+
+**Rejected**:
+- **Continued iterative hardware MAX raising via `--bulk-raise` / `--bulk-change`**: the prior strategy (`decisions.md` entry "Per-key calibration via bulk-raise + per-key rescue (2026-05-17)" above) assumed a manageable casualty distribution as MAX climbed. Empirically on Max's keyboard, dead-key count jumps from ~3 at MAX=70 to 20+ at MAX=80 — the asymmetric rescue search degenerates. And even on surviving keys, p5 doesn't drop when MAX rises; the firmware's press-time → velocity LUT is insensitive to where the measurement window sits within Max's narrow physical ADC swing.
+- **Audio-stage curve as the primary dynamic-range lever**: the existing `floor + gamma + ceiling` audio gain curve already handles tonal shaping, but it only fires inside the audio engine — recording and MIDI export still hold the raw firmware-compressed values. Putting the dynamic-range fix there leaves DAW round-trip exports flat.
+- **Per-input shaping for QWERTY / mouse-click**: those sources emit clean fixed velocities (typically 100); running them through the curve would unexpectedly crush them. Curve is Lumatone-MIDI-only.
+
+**Why**:
+- The hardware lever (MAX) is physically gated by the keyboard's ADC swing distribution. For keyboards with a tight swing distribution like Max's, it's exhausted. Software shaping is the only remaining lever.
+- Placing the curve at the MIDI input boundary makes it the single source of truth — audio engine, recording (`.hkr`), MIDI export (`.mid`), and bridge events to Composer all see the same shaped values.
+- Identity-by-default + lumadiag preview means it's invisible until tuned; existing setups don't break on upgrade.
+- The same parameter shape as the audio-stage curve keeps the user-facing model coherent (two curves, one in velocity space at input, one in gain space at audio).
+- Phase B (firmware LUT bake) gives external consumers the same benefit and increases input resolution (with identity LUT, firmware-side range compression halves the input bins HKL receives).
+
+**Constraint surfaced**: the prior `decisions.md` entry's optimism about asymmetric MAX-raising was unit-specific. The intrinsic-dynamic-range envelope (`decisions.md:749`) varies dramatically by keyboard; some units may need software shaping immediately and never need hardware MAX-raising at all.
+
+**Where**:
+- `src/audio/velocityCal.ts` — `inputCurve` state, `applyInputCurve`, `setInputCurveFloor/Ceiling/Gamma`, `resetInputCurve`, `isInputCurveIdentity`.
+- `src/midi/handler.ts` — Lumatone note-on entry: raw `d2` → `recordForStats` (diagnostic), then `applyInputCurve` → `audio.keyVelocity[key]` + `recordSample`.
+- `src/state/persistence.ts` — `VelocityCalPrefs.inputCurve` (optional, gracefully loaded).
+- `src/lumatone/lumadiag.ts` — "Input velocity curve (Lumatone)" subsection in the velocity calibration panel.
+
+---
+
+## Firmware velocity interval table (CMD 0x20) over HKL-side input curve (2026-05-18)
+
+**Picked**: Push a user-tuned 127-entry press-time threshold table to the Lumatone firmware via SysEx `0x20 SET_VELOCITY_INTERVALS`. Lumadiag exposes a parametric `low/high/gamma` editor that builds the table via `thresh[i] = low + (high − low) · (i/126)^gamma`. The Phase A HKL-side input curve is demoted to an identity-default defensive layer (code retained, UI removed). CMD `0x08 SET_VELOCITY_CONFIG` stays at identity — that's the output-relabeling table and HKL has always pushed identity there.
+
+**Rejected**:
+- **Continue tuning via Phase A HKL-side input curve only**: HKL only sees post-binning MIDI velocity. With Max's compressed press-time range, the firmware emits ~30 distinct values out of 128 possible bins. The HKL curve stretches those 30 values across 0–127 but cannot synthesize values in between. Hits a resolution ceiling that software-side shaping fundamentally cannot exceed.
+- **Bake the HKL curve into CMD 0x08 (the originally-planned Phase B)**: investigation showed CMD 0x08 is pure output relabeling, not bin distribution. Baking into 0x08 gives no resolution benefit over HKL-side shaping. Was a misread on my part; the user's intuition that the firmware exposed a *real* bin lever proved correct, just for a different command than I'd been targeting.
+- **Auto-push interval table on Lumatone connection**: ruled out for the MVP because `midi/engine.ts` explicitly documents "We DO NOT auto-configure the device without Auto-sync checked." Existing identity LUT push is button-only; keeping interval table push button-only matches the established convention. Can revisit later if 0x20 turns out to be volatile across power cycles and re-pushing becomes tedious.
+
+**Why**:
+- Per `TerpstraSysEx.2014/Source/TerpstraMidiDriver.cpp:366–380` and `KeyboardDataStructure.cpp:49`, the firmware splits velocity processing into two independent tables. `0x20` defines the press-time tick thresholds (127 × 12-bit), `0x08` defines the bin → MIDI-velocity output mapping (128 × 7-bit). Tightening `0x20` into the user's actual press-time range increases the number of distinct velocity values the firmware can physically emit — software downstream cannot synthesize bins.
+- 12-bit precision (0–4095) on tick thresholds is much higher than the 7-bit output space; this is the only place in the pipeline where that precision is exposed.
+- Parametric `low/high/gamma` model matches the HKL audio curve's UX and is enough resolution for the use case. A draggable-points editor was considered but deferred — three sliders cover the actually-useful curve shapes.
+- Migration: on `loadFromPrefs`, if a Phase A `inputCurve` is non-identity AND an `intervalCurve` exists, reset the inputCurve to identity. Prevents double-compression for users who tuned gamma=10 in Phase A and then upgrade.
+
+**Constraint surfaced**: CMD 0x20 persistence semantics are unverified. The Terpstra driver source has `SAVE_VELOCITY_CONFIG (0x09)` for 0x08 but no apparent analogue for 0x20. If 0x20 doesn't survive power cycles, the user will need to re-push after each Lumatone reboot. Mitigation: button-only push is acceptable for the MVP; if it becomes painful, add an opt-in auto-push gated on `lumatone.autoSyncEnabled`.
+
+**Where**:
+- `src/lumatone/protocol.ts` — `SYSEX_CMD_SET_VELOCITY_INTERVALS = 0x20`, `buildSetVelocityIntervalConfig`.
+- `src/audio/velocityCal.ts` — `intervalCurve` state, `setIntervalCurve{Low,High,Gamma}`, `resetIntervalCurve`, `buildIntervalTable`, `isIntervalCurveFactory`, Phase A migration in `loadFromPrefs`.
+- `src/state/persistence.ts` — `VelocityCalPrefs.intervalCurve` (optional, validated).
+- `src/lumatone/lumadiag.ts` — "Hardware velocity intervals (CMD 0x20)" subsection (replaces the Phase A "Input velocity curve" UI in the same slot), with factory-trace overlay on the preview canvas.

@@ -24,8 +24,14 @@ export const SYSEX_CMD_CALIBRATE_EXPRESSION_PEDAL = 0x38;
 export const SYSEX_CMD_RESET_EXPRESSION_PEDAL_BOUNDS = 0x39;
 export const SYSEX_CMD_PERIPHERAL_CALIBRATION_DATA = 0x3E;
 
-/* Velocity / aftertouch curve LUTs. 0x08 = SET, 0x0A = RESET to factory. */
+/* Velocity / aftertouch curve LUTs. 0x08 = SET, 0x0A = RESET to factory.
+   NOTE: 0x08 is "velocity config" — bin index → output MIDI velocity (128 × 7-bit).
+   It's an OUTPUT RELABELING table. The complementary 0x20 SET_VELOCITY_INTERVALS
+   (127 × 12-bit) is what controls the press-time → bin BOUNDARIES. The two are
+   independent and HKL drives both: 0x08 stays at identity, 0x20 is user-tuned. */
 export const SYSEX_CMD_SET_VELOCITY_CONFIG = 0x08;
+export const SYSEX_CMD_SET_VELOCITY_INTERVALS = 0x20;
+export const SYSEX_CMD_GET_VELOCITY_INTERVALS = 0x21;
 
 /* Per-board threshold & sensitivity calibration (firmware 1.0.7+ / 1.0.10+).
    The "SET_KEY_*" names are firmware-internal but apply to all keys on the
@@ -164,6 +170,27 @@ export function buildSetVelocityLut(lut: number[]): SysexMessage {
     0x00, SYSEX_CMD_SET_VELOCITY_CONFIG,
   ];
   for (let i = 0; i < 128; i++) bytes.push(lut[127 - i] & 0x7F);
+  bytes.push(0xF7);
+  return new Uint8Array(bytes) as SysexMessage;
+}
+
+/* CMD 0x20 SET_VELOCITY_INTERVALS: 127 × 12-bit press-time threshold values.
+   table[i] = tick count separating bin i from bin i+1. Monotonic non-decreasing.
+   Wire format (per Terpstra driver sendVelocityIntervalConfig, lines 366–380):
+   each 12-bit value splits into two 6-bit nibbles, high-first, totaling 254 bytes.
+   Natural order on the wire — no reversal, unlike CMD 0x08. */
+export function buildSetVelocityIntervalConfig(table: number[]): SysexMessage {
+  if (table.length !== 127) throw new Error('velocity interval table must have 127 entries');
+  const bytes: number[] = [
+    0xF0,
+    SYSEX_MANU[0], SYSEX_MANU[1], SYSEX_MANU[2],
+    0x00, SYSEX_CMD_SET_VELOCITY_INTERVALS,
+  ];
+  for (let i = 0; i < 127; i++) {
+    const v = Math.max(0, Math.min(0xFFF, Math.round(table[i])));
+    bytes.push((v >> 6) & 0x3F);
+    bytes.push(v & 0x3F);
+  }
   bytes.push(0xF7);
   return new Uint8Array(bytes) as SysexMessage;
 }

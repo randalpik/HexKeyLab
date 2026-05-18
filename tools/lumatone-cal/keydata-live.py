@@ -60,9 +60,14 @@
 #
 # NB: in-memory changes are VOLATILE. Run --commit to persist.
 #
-# === CALIBRATION WORKFLOW (proven 2026-05) ================================
+# === CALIBRATION WORKFLOW ================================================
 #
-# Iterative widening with per-key rescue. Converges in 3-4 passes.
+# DIAGNOSE FIRST. Whether the iterative MAX-raising loop converges depends on
+# the keyboard's physical ADC swing distribution. Some units survive a global
+# MAX bump with ~5 dead keys; others jump to 20+ at the first push past
+# baseline. See docs/lessons.md ("Hardware MAX is not a reliable dynamic-range
+# lever ...") and docs/decisions.md ("Velocity shaping: software input curve
+# over hardware MAX raising").
 #
 # 0. (one time) Push identity velocity LUT from HKL's lumadiag panel so the
 #    firmware emits its full 0-127 range. Set sane defaults across all
@@ -71,40 +76,45 @@
 # 1. Collect a baseline of per-key velocity statistics in HKL's lumadiag
 #    panel (Per-key velocity statistics section, "Collect" checkbox on).
 #    Play every key at the full range of forces you'd use in normal play
-#    (50+ strikes per key for stable p5/p95). The scatter shows two failure
-#    modes:
-#      - top-right cluster: keys saturate >100, can't play quiet (raise MAX)
-#      - middle / near-diagonal: keys stuck in mid-velocity, can't reach
-#        full dynamic range (raise MIN to push p95 up, or raise MAX to drop
-#        p5 down — they're independent monotonic knobs)
+#    (50+ strikes per key for stable p5/p95).
 #
-# 2. First raise (modest):
-#      sudo python3 keydata-live.py --bulk-change 1 70 100
-#    (bump every key still at the 70 baseline to 100; nothing else has been
-#    touched yet, so this is equivalent to --bulk 1 100 on the first pass)
-#    Then play every key. Watch the lumadiag scatter — dots should migrate
-#    left (p5 drops). Some keys vanish from the scatter / show no new
-#    samples → those went dead (their physical ADC swing < new MAX).
+# 2. ONE DIAGNOSTIC BUMP:
+#      sudo python3 keydata-live.py --bulk-change 1 70 80
+#    Play every key. Count dead keys (no onset, no new samples in lumadiag).
+#      - < ~5 dead: hardware path is viable. Continue to step 3.
+#      - >= ~10 dead: software path. Revert and skip to step 6.
+#        sudo python3 keydata-live.py --bulk-change 1 80 70
+#        sudo python3 keydata-live.py --commit
 #
-# 3. Rescue dead keys individually (probably 5-20 of them):
-#      sudo python3 keydata-live.py <q> <r> 1 80   # back down per dead key
-#    Use lumadiag's "Can't play loud" list (p95 < 100) as a starting point,
-#    confirm by playing the key after the rescue. Pick a rescue value that
-#    isn't equal to the current baseline so subsequent --bulk-change passes
-#    don't catch it.
+# === Hardware path (only if step 2 was friendly) ==========================
 #
-# 4. Second raise:
-#      sudo python3 keydata-live.py --bulk-change 1 100 130
-#    --bulk-change only touches keys still at the old baseline (100), so
-#    rescues at 80 (or any other value) are left alone. More rescues for
-#    newly-dead keys at the new baseline.
+# 3. First raise: sudo python3 keydata-live.py --bulk-change 1 70 100
+#    Play; rescue newly-dead keys individually with
+#      sudo python3 keydata-live.py <q> <r> 1 80
+#    (pick a rescue value ≠ the current baseline so later --bulk-change
+#    passes won't catch the rescue).
 #
-# 5. Third raise: e.g. --bulk-change 1 130 160. Fewer casualties at each
-#    pass. Stop when further raises don't improve "Can't play quiet"
-#    outliers.
+# 4. Second raise: --bulk-change 1 100 130, same play + rescue cycle.
+#    --bulk-change is the rescue-preserving primitive: it only touches keys
+#    still at the old baseline.
 #
-# 6. If keys still can't reach p95=127 after MAX is dialed in, raise their
-#    MIN selectively (section 2) to push the high end of velocity up.
+# 5. Third raise: --bulk-change 1 130 160. Stop when further raises stop
+#    helping the "Can't play quiet" outlier list.
+#
+# === Software path (use when step 2 indicates the hardware lever is dead) =
+#
+# 6. In HKL's lumadiag panel, open the "Input velocity curve (Lumatone)"
+#    subsection (between Hardware foundation and HKL curve). Raise gamma
+#    until soft-press audio drops to where you want it. Typical start:
+#    gamma 2.5, floor 1, ceiling 127. The curve shapes raw MIDI velocity at
+#    HKL's ingress; everything downstream (audio, recording, MIDI export)
+#    sees the shaped value. Lumadiag stats keep sampling raw input so the
+#    scatter still diagnoses the firmware envelope.
+#
+# === Phase 3: MIN tuning (independent of hardware/software path above) ====
+#
+# 7. If keys still can't reach p95=127 after dynamic range is shaped, raise
+#    their MIN selectively (section 2) to push the high end of velocity up.
 #    sudo python3 keydata-live.py <q> <r> 2 15
 #
 # 7. When happy: sudo python3 keydata-live.py --commit

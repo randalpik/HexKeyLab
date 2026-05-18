@@ -38,8 +38,9 @@
 
 import type { ResolvedNote } from '../bridge/protocol.js';
 import type {
-  ComposerModel, Duration, ChordInput, RestInput, Voice,
+  ComposerModel, Duration, Dots, ChordInput, RestInput, Voice,
 } from './model.js';
+import { ticksOf } from './model.js';
 import { alterFromCount } from './accidentals.js';
 import {
   type ExpressionCursor, rebuildCursor, currentMoment, step, moveToStart,
@@ -59,13 +60,36 @@ interface PendingHairpin {
   form: 'cres' | 'dim';
 }
 
+interface PendingTuplet {
+  num: number;       /* tuplet ratio numerator (e.g. 3 for triplet) */
+  numbase: number;   /* tuplet ratio denominator */
+  dotted: boolean;   /* whether the span duration is dotted (N=2,4) */
+  atomicK: number;   /* atomic = span-duration divided by K ranks (2/4/8) */
+}
+
 export interface InputState {
   duration: Duration;
   mode: EntryMode;
   cursorMode: CursorMode;
   exprCursor: ExpressionCursor;
   pendingHairpin: PendingHairpin | null;
+  pendingTuplet: PendingTuplet | null;
 }
+
+/* Ctrl+N → ratio + span-dotted-ness + atomic-rank-divisor. Per the agreed
+ * V1 keybinding table: 2/4 are duplets/quadruplets in dotted-span (typically
+ * compound-time swing), 3/5/6/7 are plain-span. Atomic written-duration
+ * derived as (span-duration's denom) × atomicK. */
+const TUPLET_CFG: Record<number, { numbase: number; dotted: boolean; atomicK: number }> = {
+  2: { numbase: 3, dotted: true,  atomicK: 2 },
+  3: { numbase: 2, dotted: false, atomicK: 2 },
+  4: { numbase: 6, dotted: true,  atomicK: 4 },
+  5: { numbase: 4, dotted: false, atomicK: 4 },
+  6: { numbase: 4, dotted: false, atomicK: 4 },
+  7: { numbase: 8, dotted: false, atomicK: 8 },
+};
+
+const ATOMIC_DENOM_VALID: ReadonlySet<number> = new Set([1, 2, 4, 8, 16, 32, 64]);
 
 export interface InputHooks {
   getHeldKeys: () => ReadonlyArray<ResolvedNote>;
@@ -118,6 +142,7 @@ const state: InputState = {
   cursorMode: 'voice',
   exprCursor: { index: 0, moments: [] },
   pendingHairpin: null,
+  pendingTuplet: null,
 };
 
 export function getInputState(): Readonly<InputState> {
@@ -320,18 +345,74 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     if (held.length < heldRaw.length) {
       hooks.setStatus?.('Some held keys had alteration > ±3 and were dropped.');
     }
+
+    /* In-tuplet gate: a tuplet's total written-tick budget is fixed. A
+       duration that exceeds the trailing-placeholder remainder is rejected
+       here rather than at the model layer so we can surface a status. */
+    if (model.isCursorInTuplet()) {
+      const remaining = model.cursorTupletRemainingWrittenTicks();
+      if (remaining !== null && ticksOf(dur, 0) > remaining) {
+        hooks.setStatus?.("Doesn't fit in remaining tuplet space.");
+        return;
+      }
+    }
+
     if (held.length > 0) {
       const chord: ChordInput = { notes: held, duration: dur };
       if (state.mode === 'overwrite') {
         const id = model.replaceChordAtCursor(chord);
-        if (id === null) model.insertChordAtCursor(chord);
-        else model.moveCursor('right');
+        if (id === null) {
+          if (model.insertChordAtCursor(chord) === null) {
+            hooks.setStatus?.("Doesn't fit.");
+            return;
+          }
+        } else {
+          model.moveCursor('right');
+        }
       } else {
-        model.insertChordAtCursor(chord);
+        if (model.insertChordAtCursor(chord) === null) {
+          hooks.setStatus?.("Doesn't fit.");
+          return;
+        }
       }
     } else {
       const rest: RestInput = { duration: dur };
-      model.insertRestAtCursor(rest);
+      if (model.insertRestAtCursor(rest) === null) {
+        hooks.setStatus?.("Doesn't fit.");
+        return;
+      }
+    }
+    hooks.onStateChange();
+    hooks.onChange();
+  }
+
+  function commitPendingTuplet(durKey: string): void {
+    const pending = state.pendingTuplet;
+    if (!pending) return;
+    const dur = DIGIT_TO_DUR[durKey];
+    state.pendingTuplet = null;
+    if (!dur) {
+      hooks.setStatus?.('Tuplet span: invalid digit.');
+      hooks.onStateChange();
+      return;
+    }
+    const dDenom = parseInt(dur, 10);
+    const atomicDenom = dDenom * pending.atomicK;
+    if (!ATOMIC_DENOM_VALID.has(atomicDenom)) {
+      hooks.setStatus?.('Tuplet atomic duration too small to represent.');
+      hooks.onStateChange();
+      return;
+    }
+    const atomicDur = String(atomicDenom) as Duration;
+    const spanDots: Dots = pending.dotted ? 1 : 0;
+    const r = model.createTupletAtCursor({
+      num: pending.num, numbase: pending.numbase,
+      spanDur: dur, spanDots, atomicDur,
+    });
+    if (!r.ok) {
+      hooks.setStatus?.(r.reason);
+    } else {
+      hooks.setStatus?.('Tuplet ' + pending.num + ':' + pending.numbase + ' added.');
     }
     hooks.onStateChange();
     hooks.onChange();
@@ -339,7 +420,36 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
 
   function handler(e: KeyboardEvent): void {
     if (shouldIgnore(e)) return;
+
+    /* Ctrl+2..7 begins tuplet creation. Must come BEFORE the bail-on-modifier
+       check below. preventDefault is critical: in Firefox/Chromium, Ctrl+1..8
+       is the tab-nav shortcut, but the browser respects preventDefault on
+       keydown for these. */
+    if (e.ctrlKey && !e.metaKey && !e.altKey && /^[2-7]$/.test(e.key)) {
+      e.preventDefault();
+      if (state.cursorMode !== 'voice') {
+        hooks.setStatus?.('Tuplet creation requires voice mode.');
+        return;
+      }
+      if (hooks.isPlaybackActive()) return;
+      const n = parseInt(e.key, 10);
+      const cfg = TUPLET_CFG[n];
+      state.pendingTuplet = { num: n, numbase: cfg.numbase, dotted: cfg.dotted, atomicK: cfg.atomicK };
+      hooks.setStatus?.('Tuplet ' + n + ':' + cfg.numbase + ' — press duration digit for span.');
+      hooks.onStateChange();
+      return;
+    }
+
     if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+    /* Pending-tuplet resolution: a digit press following Ctrl+N completes
+       the tuplet creation (digit = span duration). Must come BEFORE the
+       normal duration-digit handler so the digit is consumed here. */
+    if (state.pendingTuplet && state.cursorMode === 'voice' && DIGIT_TO_DUR[e.key]) {
+      e.preventDefault();
+      commitPendingTuplet(e.key);
+      return;
+    }
 
     /* Hairpin shortcuts (apply in BOTH voice and expression mode). Must come
        before the digit handlers so '<' and '>' aren't swallowed by Shift+,/. */
@@ -446,8 +556,15 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       return;
     }
 
-    /* Escape: cancel pending hairpin (works in either mode). */
+    /* Escape: cancel pending tuplet, then pending hairpin (works in either mode). */
     if (e.key === 'Escape') {
+      if (state.pendingTuplet) {
+        state.pendingTuplet = null;
+        hooks.setStatus?.('Tuplet cancelled.');
+        e.preventDefault();
+        hooks.onStateChange();
+        return;
+      }
       if (cancelPendingHairpin(hooks)) {
         e.preventDefault();
         return;

@@ -44,8 +44,9 @@ import {
   buildSetMinThreshold,
   buildSetBoardSens,
   buildSetVelocityLut,
+  buildSetVelocityIntervalConfig,
 } from './protocol.js';
-import { velocityCal, DEFAULT_CAL, STATS_MIN_N, STATS_HIGH_CV } from '../audio/velocityCal.js';
+import { velocityCal, DEFAULT_CAL, DEFAULT_INTERVAL_CURVE, STATS_MIN_N, STATS_HIGH_CV } from '../audio/velocityCal.js';
 import { baseKeys } from '../layout/baseKeys.js';
 
 /* Build (q,r-string) → board_group lookup once. Used by the per-key stats
@@ -363,6 +364,13 @@ const velCalUi: {
   calKeyCount?: HTMLSpanElement;
   targetSlider?: HTMLInputElement;
   targetVal?: HTMLSpanElement;
+  intLowSlider?: HTMLInputElement;
+  intLowVal?: HTMLSpanElement;
+  intHighSlider?: HTMLInputElement;
+  intHighVal?: HTMLSpanElement;
+  intGammaSlider?: HTMLInputElement;
+  intGammaVal?: HTMLSpanElement;
+  intervalPreview?: HTMLCanvasElement;
 } = {};
 
 let captureTicker: number | null = null;
@@ -378,6 +386,30 @@ function pushIdentityVelocityLut(): void {
   else console.warn('[lumadiag] no Lumatone connected — identity LUT not sent');
 }
 
+function pushVelocityIntervalTable(): void {
+  /* CMD 0x20: 127 × 12-bit press-time thresholds. Generated from the parametric
+     low/high/gamma curve in velocityCal. */
+  const table = velocityCal.buildIntervalTable();
+  const msg = buildSetVelocityIntervalConfig(table);
+  const ok = sysex.enqueueControl(msg);
+  if (ok) console.log('[lumadiag] pushed velocity interval table to Lumatone (CMD 0x20): low='
+    + velocityCal.intervalCurveLow + ' high=' + velocityCal.intervalCurveHigh
+    + ' gamma=' + velocityCal.intervalCurveGamma.toFixed(2));
+  else console.warn('[lumadiag] no Lumatone connected — interval table not sent');
+}
+
+/* Plot-area margins used by both curve preview canvases. Left margin holds
+   y-axis tick labels (right-aligned + tick marks) plus a rotated axis name.
+   Bottom margin holds x-axis tick labels + axis name. The canvas footprint
+   matches the per-key scatter (PREVIEW_W) so all three graphs line up in the
+   velocity panel. */
+const PREVIEW_W = 290;
+const PREVIEW_H = 120;
+const PREVIEW_PAD_L = 28;
+const PREVIEW_PAD_R = 6;
+const PREVIEW_PAD_T = 6;
+const PREVIEW_PAD_B = 22;
+
 function drawCurvePreview(): void {
   const cv = velCalUi.preview;
   if (!cv) return;
@@ -385,23 +417,56 @@ function drawCurvePreview(): void {
   if (!ctx) return;
   const w = cv.width, h = cv.height;
   ctx.clearRect(0, 0, w, h);
-  /* Frame + diagonal reference (identity floor=0, ceiling=1, gamma=1). */
+  const px = PREVIEW_PAD_L, py = PREVIEW_PAD_T;
+  const pw = w - PREVIEW_PAD_L - PREVIEW_PAD_R;
+  const ph = h - PREVIEW_PAD_T - PREVIEW_PAD_B;
+  /* Frame around plot area + identity diagonal reference. */
   ctx.strokeStyle = 'rgba(255,255,255,0.15)';
   ctx.lineWidth = 1;
-  ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
+  ctx.strokeRect(px + 0.5, py + 0.5, pw, ph);
   ctx.beginPath();
-  ctx.moveTo(0, h);
-  ctx.lineTo(w, 0);
+  ctx.moveTo(px, py + ph);
+  ctx.lineTo(px + pw, py);
   ctx.stroke();
+  /* Y-axis: audio gain 0..1. Three ticks, right-aligned in the left margin. */
+  ctx.font = '9px sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'right';
+  for (const t of [0, 0.5, 1.0]) {
+    const y = py + ph - t * ph;
+    ctx.fillText(t.toFixed(1), px - 3, y);
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.beginPath(); ctx.moveTo(px - 2, y); ctx.lineTo(px, y); ctx.stroke();
+  }
+  /* X-axis: velocity 0..127. */
+  ctx.textBaseline = 'top';
+  ctx.textAlign = 'center';
+  for (const t of [0, 64, 127]) {
+    const x = px + (t / 127) * pw;
+    ctx.fillText(String(t), x, py + ph + 3);
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.beginPath(); ctx.moveTo(x, py + ph); ctx.lineTo(x, py + ph + 2); ctx.stroke();
+  }
+  /* Axis names. */
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.fillText('input velocity', px + pw / 2, py + ph + 12);
+  ctx.save();
+  ctx.translate(8, py + ph / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('audio gain', 0, 0);
+  ctx.restore();
   /* Curve. */
   ctx.strokeStyle = '#9cf';
   ctx.lineWidth = 1.5;
   ctx.beginPath();
-  for (let x = 0; x <= w; x++) {
-    const v = (x / w) * 127;
+  for (let x = 0; x <= pw; x++) {
+    const v = (x / pw) * 127;
     const g = velocityCal.curveGain(v);
-    const y = h - g * h;
-    if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    const y = py + ph - g * ph;
+    if (x === 0) ctx.moveTo(px + x, y); else ctx.lineTo(px + x, y);
   }
   ctx.stroke();
 }
@@ -422,7 +487,120 @@ function refreshCurveUi(): void {
   if (velCalUi.calKeyCount) {
     velCalUi.calKeyCount.textContent = String(velocityCal.calibratedKeyCount);
   }
+  if (velCalUi.intLowSlider) {
+    velCalUi.intLowSlider.value = String(velocityCal.intervalCurveLow);
+    velCalUi.intLowVal!.textContent = String(velocityCal.intervalCurveLow);
+  }
+  if (velCalUi.intHighSlider) {
+    velCalUi.intHighSlider.value = String(velocityCal.intervalCurveHigh);
+    velCalUi.intHighVal!.textContent = String(velocityCal.intervalCurveHigh);
+  }
+  if (velCalUi.intGammaSlider) {
+    velCalUi.intGammaSlider.value = String(Math.round(velocityCal.intervalCurveGamma * 100));
+    velCalUi.intGammaVal!.textContent = velocityCal.intervalCurveGamma.toFixed(2);
+  }
   drawCurvePreview();
+  drawIntervalCurvePreview();
+}
+
+/* Terpstra factory default interval table (KeyboardDataStructure.cpp:49). Used
+   for the faint reference trace on the interval curve preview canvas. */
+const FACTORY_INTERVAL_TABLE: readonly number[] = [
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+  21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+  41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 60, 61,
+  62, 63, 64, 66, 67, 68, 70, 71, 72, 73, 74, 76, 77, 79, 81, 82, 84, 86, 88, 90,
+  92, 94, 96, 98, 101, 104, 107, 111, 115, 119, 124, 129, 134, 140, 146, 152, 159, 170, 171, 175,
+  180, 185, 190, 195, 200, 205, 210, 215, 220, 225, 230, 235, 240, 245, 250, 255, 260, 265, 270, 275,
+  280, 285, 290, 295, 300, 305, 310,
+];
+
+function drawIntervalCurvePreview(): void {
+  const cv = velCalUi.intervalPreview;
+  if (!cv) return;
+  const ctx = cv.getContext('2d');
+  if (!ctx) return;
+  const w = cv.width, h = cv.height;
+  ctx.clearRect(0, 0, w, h);
+  const px = PREVIEW_PAD_L, py = PREVIEW_PAD_T;
+  const pw = w - PREVIEW_PAD_L - PREVIEW_PAD_R;
+  const ph = h - PREVIEW_PAD_T - PREVIEW_PAD_B;
+  /* Y-scale covers both user curve and factory reference so neither clips. */
+  const yMax = Math.max(velocityCal.intervalCurveHigh, 310);
+  const yMin = 0;
+  /* Frame. */
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(px + 0.5, py + 0.5, pw, ph);
+  /* Y-axis ticks. Round to a nice number for the midpoint readout. */
+  ctx.font = '9px sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'right';
+  const yTicks = [yMin, Math.round(yMax / 2), yMax];
+  for (const t of yTicks) {
+    const y = py + ph - ((t - yMin) / (yMax - yMin)) * ph;
+    ctx.fillText(String(t), px - 3, y);
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.beginPath(); ctx.moveTo(px - 2, y); ctx.lineTo(px, y); ctx.stroke();
+  }
+  /* X-axis ticks: bin index 126..0 (reversed so the right edge corresponds to
+     louder output, matching the audio curve's left-to-right velocity axis). */
+  ctx.textBaseline = 'top';
+  ctx.textAlign = 'center';
+  for (const t of [126, 63, 0]) {
+    const x = px + ((126 - t) / 126) * pw;
+    ctx.fillText(String(t), x, py + ph + 3);
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.beginPath(); ctx.moveTo(x, py + ph); ctx.lineTo(x, py + ph + 2); ctx.stroke();
+  }
+  /* Axis names. */
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.fillText('bin index (slow/soft → fast/loud)', px + pw / 2, py + ph + 12);
+  ctx.save();
+  ctx.translate(8, py + ph / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('press-time ticks', 0, 0);
+  ctx.restore();
+  /* Factory trace (dim). X-axis reversed: bin i plots at the (126-i) screen
+     position so bin 0 (fast/loud) lands on the right. */
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let i = 0; i < 127; i++) {
+    const x = px + ((126 - i) / 126) * pw;
+    const y = py + ph - ((FACTORY_INTERVAL_TABLE[i] - yMin) / (yMax - yMin)) * ph;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  /* User curve (bright). */
+  const table = velocityCal.buildIntervalTable();
+  ctx.strokeStyle = '#fd9';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let i = 0; i < 127; i++) {
+    const x = px + ((126 - i) / 126) * pw;
+    const y = py + ph - ((table[i] - yMin) / (yMax - yMin)) * ph;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  /* Legend in the top-RIGHT of the plot area — with the reversed X, the curve
+     runs top-left (slow/soft, large ticks) to bottom-right (fast/loud, small
+     ticks), so top-right is the empty quadrant. */
+  ctx.font = '9px sans-serif';
+  ctx.textBaseline = 'top';
+  ctx.textAlign = 'left';
+  const lx = px + pw - 60, ly = py + 4;
+  ctx.strokeStyle = '#fd9'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(lx, ly + 4); ctx.lineTo(lx + 10, ly + 4); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.fillText('your curve', lx + 13, ly);
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(lx, ly + 14); ctx.lineTo(lx + 10, ly + 14); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.45)';
+  ctx.fillText('factory', lx + 13, ly + 10);
 }
 
 function startCaptureTicker(): void {
@@ -478,6 +656,125 @@ function makeVelocityCalSection(): HTMLDivElement {
   Object.assign(hwResetHint.style, { fontSize: '10px', color: 'rgba(255,255,255,0.4)', marginTop: '2px', marginBottom: '8px', lineHeight: '1.2' });
   sec.appendChild(hwResetHint);
 
+  /* ── Hardware velocity intervals (CMD 0x20) ──
+     Designs the 127-threshold press-time → bin table and pushes it to the
+     firmware. This is the real bin-distribution lever (CMD 0x08 stays at
+     identity; that's the output relabeling). Phase A's HKL-side input curve
+     is now a defensive identity layer with no UI — the firmware does the
+     shaping. */
+  const intLabel = document.createElement('div');
+  intLabel.textContent = 'Hardware velocity intervals (CMD 0x20)';
+  Object.assign(intLabel.style, { fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginBottom: '2px' });
+  sec.appendChild(intLabel);
+  const intHint = document.createElement('div');
+  intHint.textContent = 'Shapes press-time → velocity bin thresholds INSIDE the firmware. Tightening into your keyboard’s actual press-time range gives more distinct velocities. Faint trace = factory default. Push to apply.';
+  Object.assign(intHint.style, { fontSize: '10px', color: 'rgba(255,255,255,0.5)', marginBottom: '4px', lineHeight: '1.3' });
+  sec.appendChild(intHint);
+
+  const intPreviewWrap = document.createElement('div');
+  Object.assign(intPreviewWrap.style, { display: 'flex', justifyContent: 'center', marginBottom: '6px' });
+  const intPreview = document.createElement('canvas');
+  intPreview.width = PREVIEW_W; intPreview.height = PREVIEW_H;
+  Object.assign(intPreview.style, { background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.15)' });
+  intPreviewWrap.appendChild(intPreview);
+  sec.appendChild(intPreviewWrap);
+  velCalUi.intervalPreview = intPreview;
+
+  const mkIntSlider = (
+    label: string, tip: string, min: number, max: number, step: number,
+    valueOf: () => number, setter: (v: number) => void, format: (v: number) => string,
+  ): { row: HTMLDivElement; slider: HTMLInputElement; val: HTMLSpanElement } => {
+    const row = document.createElement('div');
+    Object.assign(row.style, {
+      display: 'grid', gridTemplateColumns: '50px 1fr 44px',
+      alignItems: 'center', gap: '6px', margin: '2px 0',
+    });
+    const lbl = document.createElement('span');
+    lbl.textContent = label;
+    lbl.title = tip;
+    Object.assign(lbl.style, { fontSize: '11px', color: 'rgba(255,255,255,0.75)' });
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = String(min); slider.max = String(max); slider.step = String(step);
+    slider.value = String(valueOf());
+    Object.assign(slider.style, { width: '100%' });
+    const val = document.createElement('span');
+    val.textContent = format(valueOf());
+    Object.assign(val.style, {
+      fontSize: '11px', fontFamily: 'monospace', textAlign: 'right',
+      color: 'rgba(255,255,255,0.9)',
+    });
+    slider.addEventListener('input', () => {
+      const raw = parseFloat(slider.value);
+      setter(raw);
+      val.textContent = format(raw);
+      drawIntervalCurvePreview();
+    });
+    row.appendChild(lbl);
+    row.appendChild(slider);
+    row.appendChild(val);
+    return { row, slider, val };
+  };
+
+  /* Interval curve sliders. Tick counts are 12-bit integers (0..4095) but in
+     practice the usable range is 0..~500 for fast keyboards, up to ~2000 for
+     very slow. gamma is × 100 to give 0.5..5.0 resolution on the slider. */
+  const intLowUi = mkIntSlider(
+    'low', 'Fastest-press threshold (tick count for highest velocity bin). Tighten toward your keyboard’s minimum press-time.',
+    0, 500, 1,
+    () => velocityCal.intervalCurveLow,
+    (v: number) => velocityCal.setIntervalCurveLow(v),
+    (v: number) => String(Math.round(v)),
+  );
+  const intHighUi = mkIntSlider(
+    'high', 'Slowest-press threshold (tick count for lowest velocity bin). Tighten toward your keyboard’s maximum press-time.',
+    50, 2000, 5,
+    () => velocityCal.intervalCurveHigh,
+    (v: number) => velocityCal.setIntervalCurveHigh(v),
+    (v: number) => String(Math.round(v)),
+  );
+  const intGammaUi = mkIntSlider(
+    'gamma', 'Distribution exponent (×100). >1 concentrates bins at fast presses; <1 at slow. Factory ≈ 2.1.',
+    50, 500, 5,
+    () => velocityCal.intervalCurveGamma * 100,
+    (v: number) => velocityCal.setIntervalCurveGamma(v / 100),
+    (v: number) => (v / 100).toFixed(2),
+  );
+  velCalUi.intLowSlider = intLowUi.slider; velCalUi.intLowVal = intLowUi.val;
+  velCalUi.intHighSlider = intHighUi.slider; velCalUi.intHighVal = intHighUi.val;
+  velCalUi.intGammaSlider = intGammaUi.slider; velCalUi.intGammaVal = intGammaUi.val;
+  sec.appendChild(intLowUi.row);
+  sec.appendChild(intHighUi.row);
+  sec.appendChild(intGammaUi.row);
+
+  const intBtnRow = document.createElement('div');
+  Object.assign(intBtnRow.style, { display: 'flex', gap: '4px', marginTop: '4px', marginBottom: '8px' });
+  const intPushBtn = document.createElement('button');
+  intPushBtn.textContent = 'Push to Lumatone (CMD 0x20)';
+  Object.assign(intPushBtn.style, {
+    fontSize: '11px', padding: '2px 6px',
+    background: 'rgba(255,255,255,0.08)', color: '#eee',
+    border: '1px solid rgba(255,255,255,0.2)', borderRadius: '2px',
+    cursor: 'pointer', flex: '1 1 auto',
+  });
+  intPushBtn.addEventListener('click', pushVelocityIntervalTable);
+  const intResetBtn = document.createElement('button');
+  intResetBtn.textContent = 'Reset (factory ' + DEFAULT_INTERVAL_CURVE.low + '/'
+    + DEFAULT_INTERVAL_CURVE.high + '/' + DEFAULT_INTERVAL_CURVE.gamma.toFixed(1) + ')';
+  Object.assign(intResetBtn.style, {
+    fontSize: '11px', padding: '2px 6px',
+    background: 'rgba(255,255,255,0.08)', color: '#eee',
+    border: '1px solid rgba(255,255,255,0.2)', borderRadius: '2px',
+    cursor: 'pointer',
+  });
+  intResetBtn.addEventListener('click', () => {
+    velocityCal.resetIntervalCurve();
+    refreshCurveUi();
+  });
+  intBtnRow.appendChild(intPushBtn);
+  intBtnRow.appendChild(intResetBtn);
+  sec.appendChild(intBtnRow);
+
   /* ── HKL curve ── */
   const curveLabel = document.createElement('div');
   curveLabel.textContent = 'HKL curve';
@@ -487,7 +784,7 @@ function makeVelocityCalSection(): HTMLDivElement {
   const previewWrap = document.createElement('div');
   Object.assign(previewWrap.style, { display: 'flex', justifyContent: 'center', marginBottom: '6px' });
   const preview = document.createElement('canvas');
-  preview.width = 200; preview.height = 80;
+  preview.width = PREVIEW_W; preview.height = PREVIEW_H;
   Object.assign(preview.style, { background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.15)' });
   previewWrap.appendChild(preview);
   sec.appendChild(previewWrap);
@@ -661,6 +958,7 @@ function makeVelocityCalSection(): HTMLDivElement {
   sec.appendChild(totalRow);
 
   drawCurvePreview();
+  drawIntervalCurvePreview();
   return sec;
 }
 

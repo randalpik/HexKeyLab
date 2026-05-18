@@ -18,6 +18,7 @@
 import {
   type Moment, momentCompare, momentEqual, dynamAt, hairpinsAt, readMeter,
 } from './expressions.js';
+import { realTicks } from './ticks.js';
 
 export interface ExpressionCursor {
   index: number;
@@ -72,20 +73,21 @@ function flatLayerChildren(layer: Element): Element[] {
         const ln2 = cc.localName;
         if (ln2 === 'chord' || ln2 === 'note' || ln2 === 'rest' || ln2 === 'space') out.push(cc);
       }
+    } else if (ln === 'tuplet') {
+      /* Descend into tuplets so tuplet-internal notes contribute onset
+         moments at fractional tstamps. realTicks() scales each child's
+         duration by numbase/num automatically. */
+      for (const cc of Array.from(c.children)) {
+        const ln2 = cc.localName;
+        if (ln2 === 'chord' || ln2 === 'note' || ln2 === 'rest' || ln2 === 'space') out.push(cc);
+      }
     }
   }
   return out;
 }
 
 function elementDurationTicks(el: Element): number {
-  const dur = el.getAttribute('dur');
-  const dots = parseInt(el.getAttribute('dots') ?? '0', 10);
-  const denom = dur ? parseInt(dur, 10) : NaN;
-  if (!isFinite(denom) || denom <= 0) return 16;
-  const base = 64 / denom;
-  if (dots === 1) return base * 1.5;
-  if (dots === 2) return base * 1.75;
-  return base;
+  return realTicks(el);
 }
 
 /** True when this element is a tied continuation (terminal-only or medial)

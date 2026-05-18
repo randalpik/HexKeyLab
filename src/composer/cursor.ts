@@ -17,6 +17,7 @@ import { renderer } from './render.js';
 import type { ComposerModel, Voice } from './model.js';
 import { type Moment, dynamAt, hairpinsAt } from './expressions.js';
 import { currentMoment, selectionAt, type ExpressionCursor } from './expressionCursor.js';
+import { realTicks } from './ticks.js';
 
 const CURSOR_COLOR = '#7226e4';
 const EXPR_CURSOR_COLOR = '#e47226';
@@ -485,17 +486,8 @@ class CursorOverlay {
   }
 }
 
-/** Element duration in 64th-note ticks. Mirrors model.ts internals; kept
- *  local so cursor.ts doesn't need a model.ts surface change. */
 function elementDurationTicks(el: Element): number {
-  const dur = el.getAttribute('dur');
-  const dots = parseInt(el.getAttribute('dots') ?? '0', 10);
-  const denom = dur ? parseInt(dur, 10) : NaN;
-  if (!Number.isFinite(denom) || denom <= 0) return 16;
-  const base = 64 / denom;
-  if (dots === 1) return base * 1.5;
-  if (dots === 2) return base * 1.75;
-  return base;
+  return realTicks(el);
 }
 
 export const cursor = new CursorOverlay();

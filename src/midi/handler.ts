@@ -123,15 +123,22 @@ export function handleMidiMessage(e: MIDIMessageEvent): void {
     }
     audio.sustainedKeys.delete(key); /* re-struck while sustained → back to normal */
     selection.selectedKeys.add(key);
-    audio.keyVelocity[key] = d2;
-    /* Per-key gain auto-capture: while a capture session is active, every
-       note-on velocity feeds a per-key sample list. Out of capture mode this
-       is a single boolean check. */
-    velocityCal.recordSample(key, d2);
     /* Per-key velocity statistics: always-on rolling sample collection when
-       statsEnabled (toggled in lumadiag). Independent of auto-capture; feeds
-       the dispersion / outlier view. Single boolean check when disabled. */
+       statsEnabled (toggled in lumadiag). RAW velocity here — the (p5, p95)
+       scatter must reflect the firmware's natural output, not whatever the
+       input curve has been tuned to, so we can keep diagnosing the
+       underlying hardware envelope. Single boolean check when disabled. */
     velocityCal.recordForStats(key, d2);
+    /* Lumatone-only input velocity curve. Identity by default; user dials it
+       in via lumadiag to compensate for compressed firmware velocity range.
+       Everything downstream (audio engine, recording, MIDI export) sees the
+       shaped value. */
+    const vShaped = velocityCal.isInputCurveIdentity() ? d2 : velocityCal.applyInputCurve(d2);
+    audio.keyVelocity[key] = vShaped;
+    /* Per-key gain auto-capture: capture the shaped value so per-key gain
+       compensates outliers in the same domain that audio sees. Out of capture
+       mode this is a single boolean check. */
+    velocityCal.recordSample(key, vShaped);
   } else if (status === 0x80 || (status === 0x90 && d2 === 0)) {
     if (audio.sustainPedalDown || audio.sostenutoLockedKeys.has(key)) {
       /* damper or sostenuto holds the note — keep sounding, mark as sustained */

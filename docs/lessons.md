@@ -552,6 +552,25 @@ The ranking under-the-hood:
 
 Both "starts on beat 1" and "starts on beat 2" produce idiomatic notation. With TIE_COST too low (0.15), the beat-1 case wrongly fragments; with TIE_COST too high (0.60+), ties stop winning when they should (e.g., half note from beat 2 in 4/4 should be quarter+quarter tied, not single half).
 
+### Lumatone has TWO velocity tables, not one
+
+The firmware splits velocity processing into two independent SysEx-controllable tables:
+
+- **CMD `0x08 SET_VELOCITY_CONFIG`** — 128 × 7-bit. **Output relabeling**: bin index N → MIDI velocity. HKL has always pushed identity here. The factory default (Terpstra's "EmptyVelocityCurveTable") is identity 0,1,2,…,127.
+- **CMD `0x20 SET_VELOCITY_INTERVALS`** — 127 × 12-bit. **Press-time bin boundaries**: tick-count thresholds that determine which press-time ranges merge into which bin. Factory default has fine granularity at fast presses (1, 2, 3, …, 58) and accelerates at slow presses (170, 175, …, 310).
+
+The two are entirely independent. External software (HKL, a DAW) can replicate CMD 0x08 by leaving the firmware LUT at identity and shaping its own MIDI velocity — *but it cannot replicate CMD 0x20*. By the time MIDI velocity reaches the host, the firmware has already binned press_time and the high-precision information is gone. CMD 0x20 is therefore the only lever that can increase the number of distinct velocities a given keyboard can physically emit.
+
+The wire format for CMD 0x20 splits each 12-bit value into two 6-bit nibbles, totaling 254 payload bytes. Natural order on the wire (no reversal — unlike 0x08).
+
+Sources: `/home/max/TerpstraSysEx.2014/Source/TerpstraMidiDriver.cpp:366–380` (sendVelocityIntervalConfig), `KeyboardDataStructure.cpp:49` (DefaultVelocityIntervalTable).
+
+### Hardware MAX is not a reliable dynamic-range lever for narrow-ADC-swing keyboards
+
+The MAX-raising workflow under "Per-key calibration converges in 3-4 passes" assumes the dead-key rate climbs gracefully as MAX rises. On Max's unit it doesn't — `MAX=70` produces ~3 dead keys, `MAX=80` produces 20+. The casualty distribution is unit-specific; some keyboards have so tight a physical ADC swing distribution that any meaningful MAX bump kills 5–10% of the keyboard. And even on surviving keys, p5 doesn't drop when MAX climbs, because the firmware's press-time → velocity mapping is insensitive to where the measurement window sits within Max's compressed swing range.
+
+Before assuming the iterative `--bulk-change` / rescue loop will work on a given unit, *diagnose first*: bump MAX by ~10 counts once, count dead keys. If the count jumps from a handful to 20+, the hardware lever is exhausted. Pivot to software input-curve shaping (`docs/decisions.md` → "Velocity shaping: software input curve over hardware MAX raising"). The Phase 3 MIN tuning (raising MIN selectively for keys with p95 < 100) still works — it's independent of the hardware envelope and addresses a different failure mode.
+
 ### Rest consolidation in voicing fixes the "mirroring" bug
 
 When `voicing.ts` splits a chord across staves via the middle-C threshold, the off-hand staff gets a rest of identical atom structure to the original chord. For a treble passage of 8 eighth notes, the bass would emit 8 eighth-rests mirroring the rhythm — visually wrong (an all-rest bar should be a single whole rest).

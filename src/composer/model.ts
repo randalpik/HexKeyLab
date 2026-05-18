@@ -27,6 +27,7 @@ import type { ResolvedNote } from '../bridge/protocol.js';
 import { regroupBeams, readTimeSig } from './beams.js';
 import { computeAccidentalDisplay, alterFromCount, alterFromToken, tokenFromAlter, getNoteAlter } from './accidentals.js';
 import { ensureExpressionDefaults, type Moment } from './expressions.js';
+import { realTicks, writtenTicks } from './ticks.js';
 
 /* ── public types ────────────────────────────────────────────────────────── */
 
@@ -71,8 +72,18 @@ const XML_NS = 'http://www.w3.org/XML/1998/namespace';
  *  in mid-score. See normalizePlaceholders. */
 const PLACEHOLDER_ATTR = 'data-placeholder';
 
+/** Custom attribute marking a <space> inside a <tuplet> that represents
+ *  unfilled written-ticks (the "fill anchor" chain). Distinct from the
+ *  measure-level PLACEHOLDER_ATTR — these live as direct children of
+ *  <tuplet>, never of <layer>. */
+const TUPLET_PLACEHOLDER_ATTR = 'data-tuplet-placeholder';
+
 function isPlaceholder(el: Element): boolean {
   return el.localName === 'space' && el.getAttribute(PLACEHOLDER_ATTR) === 'true';
+}
+
+function isTupletPlaceholder(el: Element): boolean {
+  return el.localName === 'space' && el.getAttribute(TUPLET_PLACEHOLDER_ATTR) === 'true';
 }
 
 function el(doc: Document, name: string, attrs?: Record<string, string | number | undefined>): Element {
@@ -111,24 +122,26 @@ function escapeXml(s: string): string {
 /* ── tick math ──────────────────────────────────────────────────────────── */
 
 /* 64th-note tick table for representable durations (greedy decomposition).
-   Largest first. */
+   Largest first. The @dur values here MUST be consistent with ticksOf —
+   e.g. dotted half = ticksOf('2', 1) = 48, so the 48-tick entry must carry
+   dur='2' dots=1, not dur='1' dots=1 (= 96). */
 const TICK_TABLE: ReadonlyArray<{ ticks: number; dur: Duration; dots: Dots }> = [
-  { ticks: 64, dur: '1',  dots: 0 },
-  { ticks: 56, dur: '1',  dots: 2 },
-  { ticks: 48, dur: '1',  dots: 1 },
-  { ticks: 32, dur: '2',  dots: 0 },
-  { ticks: 28, dur: '2',  dots: 2 },
-  { ticks: 24, dur: '2',  dots: 1 },
-  { ticks: 16, dur: '4',  dots: 0 },
-  { ticks: 14, dur: '4',  dots: 2 },
-  { ticks: 12, dur: '4',  dots: 1 },
-  { ticks: 8,  dur: '8',  dots: 0 },
-  { ticks: 7,  dur: '8',  dots: 2 },
-  { ticks: 6,  dur: '8',  dots: 1 },
-  { ticks: 4,  dur: '16', dots: 0 },
-  { ticks: 3,  dur: '16', dots: 1 },
-  { ticks: 2,  dur: '32', dots: 0 },
-  { ticks: 1,  dur: '64', dots: 0 },
+  { ticks: 64, dur: '1',  dots: 0 },   /* whole */
+  { ticks: 56, dur: '2',  dots: 2 },   /* double-dotted half */
+  { ticks: 48, dur: '2',  dots: 1 },   /* dotted half */
+  { ticks: 32, dur: '2',  dots: 0 },   /* half */
+  { ticks: 28, dur: '4',  dots: 2 },   /* double-dotted quarter */
+  { ticks: 24, dur: '4',  dots: 1 },   /* dotted quarter */
+  { ticks: 16, dur: '4',  dots: 0 },   /* quarter */
+  { ticks: 14, dur: '8',  dots: 2 },   /* double-dotted 8th */
+  { ticks: 12, dur: '8',  dots: 1 },   /* dotted 8th */
+  { ticks: 8,  dur: '8',  dots: 0 },   /* 8th */
+  { ticks: 7,  dur: '16', dots: 2 },   /* double-dotted 16th */
+  { ticks: 6,  dur: '16', dots: 1 },   /* dotted 16th */
+  { ticks: 4,  dur: '16', dots: 0 },   /* 16th */
+  { ticks: 3,  dur: '32', dots: 1 },   /* dotted 32nd */
+  { ticks: 2,  dur: '32', dots: 0 },   /* 32nd */
+  { ticks: 1,  dur: '64', dots: 0 },   /* 64th */
 ];
 
 export function ticksOf(dur: Duration, dots: Dots = 0): number {
@@ -157,17 +170,13 @@ export function decomposeTicks(n: number): Array<{ dur: Duration; dots: Dots }> 
   return out;
 }
 
-/** Element duration in 64th-note ticks. Returns 16 (quarter) as a safe
- *  fallback for elements with malformed/missing @dur. */
+/** Element duration in 64th-note ticks (real / sounding ticks). Tuplet-aware:
+ *  for a <tuplet> wrapper this returns the total real span (sum of children's
+ *  written ticks scaled by numbase/num); for an element inside a tuplet, this
+ *  returns its scaled (real) duration. Atomic non-tuplet elements get plain
+ *  writtenTicks. See src/composer/ticks.ts for the shared implementation. */
 function elementDurationTicks(el: Element): number {
-  const dur = el.getAttribute('dur');
-  const dots = parseInt(el.getAttribute('dots') ?? '0', 10);
-  const denom = dur ? parseInt(dur, 10) : NaN;
-  if (!Number.isFinite(denom) || denom <= 0) return 16;
-  const base = 64 / denom;
-  if (dots === 1) return base * 1.5;
-  if (dots === 2) return base * 1.75;
-  return base;
+  return realTicks(el);
 }
 
 /* ── initial empty document ─────────────────────────────────────────────── */
@@ -582,24 +591,24 @@ export class ComposerModel {
     return out;
   }
 
-  /** Flat navigable children across all measures for voice. Includes both
-   *  real content (chord/note/rest) AND placeholder spaces, so the cursor
-   *  can land in an otherwise-empty voice at a specific measure. */
+  /** Flat navigable children across all measures for voice. Uses
+   *  navigableChildren per-layer, which inlines tuplet nav stops so the
+   *  cursor walks through tuplet contents transparently. */
   flatChildren(voice: Voice): Element[] {
     const out: Element[] = [];
     for (const layer of this.allLayers(voice)) {
-      for (const c of Array.from(layer.children)) {
-        const ln = c.localName;
-        if (ln === 'chord' || ln === 'note' || ln === 'rest' || isPlaceholder(c)) out.push(c);
-      }
+      out.push(...this.navigableChildren(layer));
     }
     return out;
   }
 
   /** Translate a linear cursor (which counts placeholders) into an
    *  insertion point — (measureIdx, layer, withinIdx) — where withinIdx
-   *  is expressed in CONTENT-children terms (placeholders excluded) so
-   *  insertWithSplit's tick math works unchanged.
+   *  is expressed in CONTENT-children terms (top-level placeholders excluded,
+   *  tuplets counted as 1) so insertWithSplit's tick math works unchanged.
+   *  The optional `inTuplet` field is populated when the cursor lands inside
+   *  a tuplet (on one of its children); callers that handle in-tuplet
+   *  operations branch on this.
    *
    *  Boundary semantics: cursor=N means "before flat[N]". `<` (strict)
    *  is the right rule — when cursor sits at a measure boundary (e.g. the
@@ -609,6 +618,7 @@ export class ComposerModel {
    *  Past end: returns the last layer at its content-child length. */
   private locateCursor(voice: Voice, linearCursor: number): {
     measureIdx: number; layer: Element; withinIdx: number;
+    inTuplet: { tuplet: Element; tupletChildIdx: number } | null;
   } | null {
     const layers = this.allLayers(voice);
     if (layers.length === 0) return null;
@@ -618,30 +628,52 @@ export class ComposerModel {
       const navKids = this.navigableChildren(layer);
       if (linearCursor < consumed + navKids.length) {
         const navIdx = linearCursor - consumed;
-        let realIdx = 0;
-        for (let i = 0; i < navIdx; i++) {
-          if (!isPlaceholder(navKids[i])) realIdx++;
+        const target = navKids[navIdx];
+        /* If the target nav stop is INSIDE a tuplet, return an in-tuplet
+           location. The tuplet's withinIdx is its position in contentChildren. */
+        const tParent = target.parentElement;
+        if (tParent && tParent.localName === 'tuplet') {
+          const cc = this.contentChildren(layer);
+          const wIdx = cc.indexOf(tParent);
+          const tChildren = Array.from(tParent.children);
+          const tIdx = tChildren.indexOf(target);
+          return {
+            measureIdx: mi, layer, withinIdx: wIdx,
+            inTuplet: { tuplet: tParent, tupletChildIdx: tIdx },
+          };
         }
-        return { measureIdx: mi, layer, withinIdx: realIdx };
+        /* Top-level target: count content (not placeholders, but counting
+           tuplets as content) BEFORE this target to derive withinIdx. */
+        let realIdx = 0;
+        for (const c of Array.from(layer.children)) {
+          if (c === target) break;
+          if (c.localName === 'chord' || c.localName === 'note' || c.localName === 'rest' ||
+              c.localName === 'tuplet') realIdx++;
+        }
+        return { measureIdx: mi, layer, withinIdx: realIdx, inTuplet: null };
       }
       consumed += navKids.length;
     }
     /* Past end — return the last layer at its content-child length. */
     const last = layers.length - 1;
     const layer = layers[last];
-    return { measureIdx: last, layer, withinIdx: this.contentChildren(layer).length };
+    return {
+      measureIdx: last, layer,
+      withinIdx: this.contentChildren(layer).length,
+      inTuplet: null,
+    };
   }
 
   /** Locate the navigable element at flat-index `flatIdx`. Returns the
-   *  measure, layer, and withinIdx (CONTENT-children index) where the
-   *  element lives, or null if out of range. The returned element may be
-   *  either real content OR a placeholder; callers that care should check
-   *  via `isPlaceholder`. The returned `withinIdx` points at the real-
-   *  content element when the target IS real content; for a placeholder
-   *  target, withinIdx is the number of real-content children before it
-   *  (which may equal contentChildren.length when the layer has none). */
+   *  measure, layer, withinIdx (CONTENT-children index, treating tuplets as
+   *  atomic), and an inTuplet reference when the target is a tuplet child.
+   *  For top-level targets, withinIdx points to the target's position in
+   *  contentChildren when the target IS real content; for a layer-level
+   *  placeholder target, withinIdx is the count of content-children
+   *  preceding it. */
   private locateFlatElement(voice: Voice, flatIdx: number): {
     measureIdx: number; layer: Element; withinIdx: number;
+    inTuplet: { tuplet: Element; tupletChildIdx: number } | null;
   } | null {
     if (flatIdx < 0) return null;
     const layers = this.allLayers(voice);
@@ -649,11 +681,24 @@ export class ComposerModel {
     for (let mi = 0; mi < layers.length; mi++) {
       const navKids = this.navigableChildren(layers[mi]);
       if (remaining < navKids.length) {
-        let realIdx = 0;
-        for (let i = 0; i < remaining; i++) {
-          if (!isPlaceholder(navKids[i])) realIdx++;
+        const target = navKids[remaining];
+        const tParent = target.parentElement;
+        if (tParent && tParent.localName === 'tuplet') {
+          const cc = this.contentChildren(layers[mi]);
+          const wIdx = cc.indexOf(tParent);
+          const tIdx = Array.from(tParent.children).indexOf(target);
+          return {
+            measureIdx: mi, layer: layers[mi], withinIdx: wIdx,
+            inTuplet: { tuplet: tParent, tupletChildIdx: tIdx },
+          };
         }
-        return { measureIdx: mi, layer: layers[mi], withinIdx: realIdx };
+        let realIdx = 0;
+        for (const c of Array.from(layers[mi].children)) {
+          if (c === target) break;
+          if (c.localName === 'chord' || c.localName === 'note' || c.localName === 'rest' ||
+              c.localName === 'tuplet') realIdx++;
+        }
+        return { measureIdx: mi, layer: layers[mi], withinIdx: realIdx, inTuplet: null };
       }
       remaining -= navKids.length;
     }
@@ -671,29 +716,72 @@ export class ComposerModel {
     return t;
   }
 
-  /** Filter to actual musical content (chord/note/rest), skipping placeholders,
-   *  whitespace, and other element types. Used for layout / tick math and for
-   *  the within-layer index returned by locateCursor. */
+  /** Filter to actual musical content at the LAYER level: chord/note/rest
+   *  PLUS <tuplet> (which is atomic from the layer's POV). Used for layout /
+   *  tick math and for the within-layer index returned by locateCursor.
+   *  Tuplet contents are NOT included here — they're addressed via the
+   *  inTuplet field on the cursor location instead. */
   private contentChildren(layer: Element): Element[] {
     return Array.from(layer.children).filter((c) =>
-      c.localName === 'chord' || c.localName === 'note' || c.localName === 'rest');
+      c.localName === 'chord' || c.localName === 'note' || c.localName === 'rest' ||
+      c.localName === 'tuplet');
   }
 
-  /** Filter to cursor-navigable elements: content (chord/note/rest) PLUS
-   *  placeholder spaces. Used by flatChildren and locateCursor's outer
-   *  mapping so the cursor can land on a placeholder in a voice that's
-   *  empty in this measure. */
+  /** Compute the nav-stops contributed by a single tuplet. Filled content
+   *  elements are always nav stops. The leftmost trailing placeholder is a
+   *  nav stop iff either: (a) the tuplet is fully empty (no filled content
+   *  yet) — the "just-created" anchor; or (b) there's no content following
+   *  the tuplet in the layer (so the user can still fill it from the right).
+   *  All other trailing placeholders are layout-only and not stoppable. */
+  private tupletNavStops(tuplet: Element, hasPostTupletContent: boolean): Element[] {
+    const kids = Array.from(tuplet.children);
+    const filled: Element[] = [];
+    const trailing: Element[] = [];
+    for (const c of kids) {
+      if (isTupletPlaceholder(c)) trailing.push(c);
+      else if (c.localName === 'note' || c.localName === 'chord' || c.localName === 'rest') filled.push(c);
+    }
+    if (trailing.length === 0) return filled;
+    if (filled.length === 0) return [trailing[0]]; /* empty: always one stop */
+    if (!hasPostTupletContent) return [...filled, trailing[0]];
+    return filled;
+  }
+
+  /** Filter to cursor-navigable elements at the layer level. Tuplets are
+   *  transparent: their navigable children (per tupletNavStops) are inlined
+   *  here, so the flat cursor walks through them as siblings of the layer's
+   *  other content. */
   private navigableChildren(layer: Element): Element[] {
-    return Array.from(layer.children).filter((c) =>
-      c.localName === 'chord' || c.localName === 'note' || c.localName === 'rest' ||
-      isPlaceholder(c));
+    const out: Element[] = [];
+    const layerKids = Array.from(layer.children);
+    /* "hasPostTupletContent" predicate is computed lazily per-tuplet. */
+    for (let i = 0; i < layerKids.length; i++) {
+      const c = layerKids[i];
+      const ln = c.localName;
+      if (ln === 'tuplet') {
+        let hasAfter = false;
+        for (let j = i + 1; j < layerKids.length; j++) {
+          const ln2 = layerKids[j].localName;
+          if (ln2 === 'chord' || ln2 === 'note' || ln2 === 'rest' || ln2 === 'tuplet') {
+            hasAfter = true; break;
+          }
+        }
+        out.push(...this.tupletNavStops(c, hasAfter));
+      } else if (ln === 'chord' || ln === 'note' || ln === 'rest' || isPlaceholder(c)) {
+        out.push(c);
+      }
+    }
+    return out;
   }
 
   /** Strip and re-add <space data-placeholder> children on every layer so
    *  the document always satisfies the invariant: a layer either has at
-   *  least one real-content child (no placeholders) or it has only
-   *  placeholder spaces summing to the measure's full duration. Idempotent.
-   *  Called from every mutation entry point. */
+   *  least one real-content child (no measure-level placeholders) or it
+   *  has only placeholder spaces summing to the measure's full duration.
+   *  Idempotent. Called from every mutation entry point. Tuplets count as
+   *  real content (they're top-level layer children). Tuplet-internal
+   *  placeholders (data-tuplet-placeholder) are never touched here — those
+   *  live inside <tuplet> elements and are managed by tuplet-specific code. */
   private normalizePlaceholders(): void {
     const layers = this.doc.querySelectorAll('layer');
     const ticks = this.measureTicks();
@@ -703,7 +791,8 @@ export class ComposerModel {
       const toRemove: Element[] = [];
       for (const c of Array.from(layer.children)) {
         if (isPlaceholder(c)) toRemove.push(c);
-        else if (c.localName === 'chord' || c.localName === 'note' || c.localName === 'rest') hasReal = true;
+        else if (c.localName === 'chord' || c.localName === 'note' || c.localName === 'rest' ||
+                 c.localName === 'tuplet') hasReal = true;
       }
       for (const c of toRemove) layer.removeChild(c);
       if (hasReal) continue;
@@ -832,15 +921,104 @@ export class ComposerModel {
     return { measureIdx: loc.measureIdx, tstamp: 1 + ticksInMeasure / ticksPerBeat };
   }
 
+  /* ── tuplet helpers (public) ───────────────────────────────────────────── */
+
+  /** True when the current voice's cursor lands inside a <tuplet> element
+   *  (on either a filled child or the fill-anchor placeholder). */
+  isCursorInTuplet(voice?: Voice): boolean {
+    const v = voice ?? this.currentVoice;
+    const loc = this.locateCursor(v, this.cursors[v]);
+    return !!(loc && loc.inTuplet);
+  }
+
+  /** Remaining written-ticks of trailing placeholders in the tuplet at the
+   *  cursor. Null when the cursor is not in a tuplet. Used by input.ts to
+   *  gate duration entry — if the requested duration's written ticks exceed
+   *  this, the input is rejected with a status message. */
+  cursorTupletRemainingWrittenTicks(voice?: Voice): number | null {
+    const v = voice ?? this.currentVoice;
+    const loc = this.locateCursor(v, this.cursors[v]);
+    if (!loc || !loc.inTuplet) return null;
+    let total = 0;
+    for (const c of Array.from(loc.inTuplet.tuplet.children)) {
+      if (isTupletPlaceholder(c)) total += writtenTicks(c);
+    }
+    return total;
+  }
+
   /* ── mutations ──────────────────────────────────────────────────────────── */
+
+  /** Create a new <tuplet> at the cursor and step the cursor onto its first
+   *  placeholder (the fill anchor). Builds `num` placeholder slots of
+   *  `atomicDur`. Rejects if the tuplet's real-time span doesn't fit in the
+   *  remaining ticks of the current measure, or if the cursor is already
+   *  inside a tuplet (no nesting in v1). Returns the tuplet's xml:id on
+   *  success, null on rejection. */
+  createTupletAtCursor(opts: {
+    num: number;
+    numbase: number;
+    spanDur: Duration;
+    spanDots: Dots;
+    atomicDur: Duration;
+  }): { ok: true; id: string } | { ok: false; reason: string } {
+    const { num, numbase, spanDur, spanDots, atomicDur } = opts;
+    const v = this.currentVoice;
+    const cursor = this.cursors[v];
+    const loc = this.locateCursor(v, cursor);
+    if (!loc) return { ok: false, reason: 'no layer at cursor' };
+    if (loc.inTuplet) return { ok: false, reason: 'cannot nest tuplets' };
+
+    const spanTicks = ticksOf(spanDur, spanDots);
+    const usedBefore = this.timeWithinMeasure(v, loc.measureIdx, loc.withinIdx);
+    const remaining = this.measureTicks() - usedBefore;
+    if (spanTicks > remaining) {
+      return { ok: false, reason: 'Tuplet span exceeds remaining measure space' };
+    }
+
+    /* Sanity check: num atomic written-ticks scaled by numbase/num must
+       equal spanTicks. (Constructs a tuplet whose internal math is sound.) */
+    const atomicWritten = ticksOf(atomicDur, 0);
+    const computedSpan = num * atomicWritten * numbase / num;
+    if (Math.abs(computedSpan - spanTicks) > 1e-6) {
+      return { ok: false, reason: 'tuplet ratio/atomic mismatch with span' };
+    }
+
+    const tuplet = el(this.doc, 'tuplet', {
+      'xml:id': newId('t'),
+      num: String(num),
+      numbase: String(numbase),
+      'bracket.visible': 'true',
+      'num.visible': 'true',
+      'num.format': 'count',
+    });
+    for (let i = 0; i < num; i++) {
+      const sp = el(this.doc, 'space', {
+        'xml:id': newId('sp'),
+        dur: atomicDur,
+      });
+      sp.setAttribute(TUPLET_PLACEHOLDER_ATTR, 'true');
+      tuplet.appendChild(sp);
+    }
+
+    this.insertAt(loc.layer, tuplet, loc.withinIdx);
+    this.normalizePlaceholders();
+    /* Cursor stays at its pre-creation flat-index. After insertion, that
+       index now points to the new tuplet's fill anchor (the single
+       placeholder nav stop the new tuplet contributes) — so the next
+       digit press inserts INTO the tuplet rather than past it. */
+    this.cursors[v] = Math.min(this.cursors[v], this.getVoiceLength(v));
+    return { ok: true, id: tuplet.getAttribute('xml:id') ?? '' };
+  }
 
   /** Insert a chord at the current voice's cursor; advances cursor. May
    *  split across measure boundaries with ties. Returns the first new
-   *  element's xml:id. */
-  insertChordAtCursor(input: ChordInput): string {
+   *  element's xml:id, or null when an in-tuplet insert was rejected for
+   *  overflow. */
+  insertChordAtCursor(input: ChordInput): string | null {
     const v = this.currentVoice;
     const originalCursor = this.cursors[v];
     const id = this.insertWithSplit(input, false);
+    if (id === null) return null;
     this.resolvePendingTies(originalCursor);
     this.normalizePlaceholders();
     this.cursors[v] = Math.min(this.cursors[v], this.getVoiceLength(v));
@@ -850,9 +1028,10 @@ export class ComposerModel {
   /** Insert a rest at the current voice's cursor; advances cursor. May
    *  split across measure boundaries (no ties on rests). Inserting a rest
    *  does NOT resolve a pending tie (a rest has no matching pitch). */
-  insertRestAtCursor(input: RestInput): string {
+  insertRestAtCursor(input: RestInput): string | null {
     const v = this.currentVoice;
     const id = this.insertWithSplit({ ...input, notes: [] as ReadonlyArray<ResolvedNote> }, true);
+    if (id === null) return null;
     this.normalizePlaceholders();
     this.cursors[v] = Math.min(this.cursors[v], this.getVoiceLength(v));
     return id;
@@ -920,13 +1099,13 @@ export class ComposerModel {
   }
 
   /** Append a chord at the end of the current voice. */
-  appendChord(input: ChordInput): string {
+  appendChord(input: ChordInput): string | null {
     this.cursorToEnd();
     return this.insertChordAtCursor(input);
   }
 
   /** Append a rest at the end of the current voice. */
-  appendRest(input: RestInput): string {
+  appendRest(input: RestInput): string | null {
     this.cursorToEnd();
     return this.insertRestAtCursor(input);
   }
@@ -935,14 +1114,96 @@ export class ComposerModel {
    *  remains at its original position (the caller is expected to advance
    *  if desired — matches the historical replace contract). When overflow
    *  forces a split chain, cursor stays put even though the chain may have
-   *  >1 elements; this matches the simple-path semantics. */
+   *  >1 elements; this matches the simple-path semantics. Inside a tuplet,
+   *  tick differences are absorbed by trailing placeholders; if the new
+   *  duration grows past what's available, returns null (rejected). */
   replaceChordAtCursor(input: ChordInput): string | null {
     const v = this.currentVoice;
     const cursorAtCall = this.cursors[v];
     const loc = this.locateCursor(v, cursorAtCall);
     if (!loc) return null;
+
+    /* In-tuplet branch. */
+    if (loc.inTuplet) {
+      const { tuplet, tupletChildIdx } = loc.inTuplet;
+      const target = Array.from(tuplet.children)[tupletChildIdx];
+      if (!target) return null;
+      const newTicks = ticksOf(input.duration, input.dots ?? 0);
+      const trailingTicks = this.tupletPlaceholderTicks(tuplet);
+
+      if (isTupletPlaceholder(target)) {
+        /* Overwrite on fill anchor = fill the tuplet (same as insert). */
+        if (newTicks > trailingTicks) return null;
+        for (const c of Array.from(tuplet.children)) {
+          if (isTupletPlaceholder(c)) tuplet.removeChild(c);
+        }
+        const replaced = this.buildChordElement(input);
+        tuplet.appendChild(replaced);
+        const remainder = trailingTicks - newTicks;
+        if (remainder > 0) {
+          for (const p of decomposeTicks(remainder)) {
+            const sp = el(this.doc, 'space', {
+              'xml:id': newId('sp'),
+              dur: p.dur,
+              dots: p.dots > 0 ? p.dots : undefined,
+            });
+            sp.setAttribute(TUPLET_PLACEHOLDER_ATTR, 'true');
+            tuplet.appendChild(sp);
+          }
+        }
+        this.resolvePendingTies(cursorAtCall);
+        this.normalizePlaceholders();
+        return replaced.getAttribute('xml:id');
+      }
+
+      /* Replace a filled tuplet child. Tick delta absorbs into trailing
+         placeholders (grow if shrinking, consume if growing). */
+      const oldTicks = writtenTicks(target);
+      const delta = newTicks - oldTicks;
+      if (delta > trailingTicks) return null;
+      this.orphanTiePartners(target);
+      const replaced = this.buildChordElement(input);
+      tuplet.replaceChild(replaced, target);
+      for (const c of Array.from(tuplet.children)) {
+        if (isTupletPlaceholder(c)) tuplet.removeChild(c);
+      }
+      const newTrailing = trailingTicks - delta;
+      if (newTrailing > 0) {
+        for (const p of decomposeTicks(newTrailing)) {
+          const sp = el(this.doc, 'space', {
+            'xml:id': newId('sp'),
+            dur: p.dur,
+            dots: p.dots > 0 ? p.dots : undefined,
+          });
+          sp.setAttribute(TUPLET_PLACEHOLDER_ATTR, 'true');
+          tuplet.appendChild(sp);
+        }
+      }
+      this.resolvePendingTies(cursorAtCall);
+      this.normalizePlaceholders();
+      return replaced.getAttribute('xml:id');
+    }
+
     const kids = this.contentChildren(loc.layer);
     if (loc.withinIdx >= kids.length) return null; /* nothing to replace */
+    /* If the layer child to replace is a <tuplet>, route through a special
+       path: the tuplet is treated atomically and replaced by the new chord
+       (the chord's real-time ticks must equal the tuplet's real-time ticks
+       or fit the measure budget). */
+    const oldLayerChild = kids[loc.withinIdx];
+    if (oldLayerChild.localName === 'tuplet') {
+      /* Treat tuplet as an atomic replace target: remove it, then run
+         insertWithSplit. */
+      const totalTicks = ticksOf(input.duration, input.dots ?? 0);
+      this.orphanTiePartners(oldLayerChild);
+      loc.layer.removeChild(oldLayerChild);
+      void totalTicks;
+      const id = this.insertWithSplit(input, false);
+      this.cursors[v] = cursorAtCall;
+      this.resolvePendingTies(cursorAtCall);
+      this.normalizePlaceholders();
+      return id;
+    }
     /* Simple in-place replace WITHIN current measure if it fits. */
     const totalTicks = ticksOf(input.duration, input.dots ?? 0);
     const usedBefore = this.timeWithinMeasure(v, loc.measureIdx, loc.withinIdx);
@@ -985,8 +1246,37 @@ export class ComposerModel {
   deleteAtCursor(): boolean {
     const v = this.currentVoice;
     const c = this.cursors[v];
-    if (c <= 0) return false;
     const flat = this.flatChildren(v);
+
+    /* Tuplet case (a): cursor on the fill anchor of an empty tuplet —
+       delete the whole <tuplet> element. Cursor stays at c, which now
+       points at the next nav stop past where the tuplet was. */
+    if (c < flat.length) {
+      const here = flat[c];
+      if (isTupletPlaceholder(here)) {
+        const tuplet = here.parentElement;
+        if (tuplet && tuplet.localName === 'tuplet') {
+          const hasFilled = Array.from(tuplet.children).some((cc) => !isTupletPlaceholder(cc));
+          if (!hasFilled) {
+            const measureA = tuplet.closest('measure') as Element | null;
+            tuplet.parentNode?.removeChild(tuplet);
+            if (measureA && this.measureIsEmpty(measureA) && this.allMeasures().length > 1) {
+              measureA.parentNode?.removeChild(measureA);
+              this.renumberMeasures();
+            }
+            this.setBarlines();
+            this.normalizePlaceholders();
+            for (let vi = 1 as Voice; vi <= 4; vi = (vi + 1) as Voice) {
+              this.cursors[vi] = Math.min(this.cursors[vi], this.getVoiceLength(vi));
+              if (vi === 4) break;
+            }
+            return true;
+          }
+        }
+      }
+    }
+
+    if (c <= 0) return false;
     const target = flat[c - 1];
     if (!target) return false;
     if (isPlaceholder(target)) {
@@ -994,6 +1284,41 @@ export class ComposerModel {
       this.cursors[v] = c - 1;
       return true;
     }
+
+    /* Tuplet case (b): target is a filled child of a <tuplet>. Remove it
+       and grow trailing placeholders by writtenTicks(target) so the
+       tuplet's total duration stays constant. */
+    const tupletParent = target.parentElement?.localName === 'tuplet' ? target.parentElement : null;
+    if (tupletParent) {
+      const oldTicks = writtenTicks(target);
+      const trailingTicks = this.tupletPlaceholderTicks(tupletParent);
+      this.orphanTiePartners(target);
+      tupletParent.removeChild(target);
+      for (const cc of Array.from(tupletParent.children)) {
+        if (isTupletPlaceholder(cc)) tupletParent.removeChild(cc);
+      }
+      const newTrailing = trailingTicks + oldTicks;
+      if (newTrailing > 0) {
+        for (const p of decomposeTicks(newTrailing)) {
+          const sp = el(this.doc, 'space', {
+            'xml:id': newId('sp'),
+            dur: p.dur,
+            dots: p.dots > 0 ? p.dots : undefined,
+          });
+          sp.setAttribute(TUPLET_PLACEHOLDER_ATTR, 'true');
+          tupletParent.appendChild(sp);
+        }
+      }
+      this.cursors[v] = c - 1;
+      this.setBarlines();
+      this.normalizePlaceholders();
+      for (let vi = 1 as Voice; vi <= 4; vi = (vi + 1) as Voice) {
+        this.cursors[vi] = Math.min(this.cursors[vi], this.getVoiceLength(vi));
+        if (vi === 4) break;
+      }
+      return true;
+    }
+
     const loc = this.locateFlatElement(v, c - 1);
     if (!loc) return false;
     const kids = this.contentChildren(loc.layer);
@@ -1048,12 +1373,43 @@ export class ComposerModel {
     const ref = this.getCurrentElement(v, mode);
     if (!ref) return null;
     if (isPlaceholder(ref.elem)) return null; /* nothing to dot */
+    if (isTupletPlaceholder(ref.elem)) return null; /* fill anchors aren't dottable */
     const elem = ref.elem;
+    if (elem.localName === 'tuplet') return null; /* whole-tuplet dotting NYI */
     const isRest = elem.localName === 'rest';
     const curDots = parseInt(elem.getAttribute('dots') ?? '0', 10) as Dots;
     const nextDots = (((curDots + 1) % 3) as Dots);
     const dur = (elem.getAttribute('dur') ?? '4') as Duration;
     const newTotalTicks = ticksOf(dur, nextDots);
+
+    /* In-tuplet branch: absorb tick delta from trailing placeholders. */
+    const enclosingTuplet = elem.parentElement?.localName === 'tuplet' ? elem.parentElement : null;
+    if (enclosingTuplet) {
+      const oldTicks = ticksOf(dur, curDots);
+      const delta = newTotalTicks - oldTicks;
+      const trailingTicks = this.tupletPlaceholderTicks(enclosingTuplet);
+      if (delta > trailingTicks) return null; /* doesn't fit — reject */
+      if (nextDots > 0) elem.setAttribute('dots', String(nextDots));
+      else elem.removeAttribute('dots');
+      /* Rebuild trailing placeholders. */
+      for (const c of Array.from(enclosingTuplet.children)) {
+        if (isTupletPlaceholder(c)) enclosingTuplet.removeChild(c);
+      }
+      const newTrailing = trailingTicks - delta;
+      if (newTrailing > 0) {
+        for (const p of decomposeTicks(newTrailing)) {
+          const sp = el(this.doc, 'space', {
+            'xml:id': newId('sp'),
+            dur: p.dur,
+            dots: p.dots > 0 ? p.dots : undefined,
+          });
+          sp.setAttribute(TUPLET_PLACEHOLDER_ATTR, 'true');
+          enclosingTuplet.appendChild(sp);
+        }
+      }
+      this.normalizePlaceholders();
+      return { id: ref.id, newDots: nextDots };
+    }
 
     /* Determine fit within current measure. */
     const loc = this.locateCursor(v, ref.index);
@@ -1221,7 +1577,12 @@ export class ComposerModel {
     if (truncateAt < 0) return; /* fully fits — nothing to do */
     const overflowEl = kids[truncateAt];
     const remaining = cap - running;
-    if (remaining > 0) {
+    /* Tuplets are atomic — never split. If a tuplet overflows the new
+       budget, drop it whole (and everything after). */
+    if (overflowEl.localName === 'tuplet') {
+      this.orphanTiePartners(overflowEl);
+      layer.removeChild(overflowEl);
+    } else if (remaining > 0) {
       /* Shorten the overflowing element to fit. @dur (and @dots) live on
          the element itself (chord parent or bare note); inner notes of a
          chord don't carry @dur so a single setAttribute is enough.
@@ -1251,15 +1612,73 @@ export class ComposerModel {
 
   /** Core insert with measure-overflow splitting. For chords with notes
    *  arr.length > 0, splits notes-identical pieces with ties; for rests
-   *  (notes.length === 0), splits without ties. */
+   *  (notes.length === 0), splits without ties. Returns null when an
+   *  in-tuplet insert is rejected for overflow (cross-measure splits are
+   *  never performed inside a tuplet — the tuplet is the unit of fit). */
   private insertWithSplit(
     input: { duration: Duration; dots?: Dots; notes: ReadonlyArray<ResolvedNote> },
     isRest: boolean,
-  ): string {
+  ): string | null {
     const v = this.currentVoice;
     const cursor = this.cursors[v];
     let loc = this.locateCursor(v, cursor);
     if (!loc) throw new Error('no layer at cursor');
+
+    /* In-tuplet branch: consume trailing placeholders to fit the new element.
+       Never splits across measure boundaries — the tuplet's written-tick
+       budget is fixed and any overflow rejects outright (returns null). */
+    if (loc.inTuplet) {
+      const totalTicks = ticksOf(input.duration, input.dots ?? 0);
+      const { tuplet, tupletChildIdx } = loc.inTuplet;
+      const tKids = Array.from(tuplet.children);
+      /* Find the trailing placeholder run. Per the [filled*, placeholder*]
+         invariant, placeholders are always contiguous at the tail. */
+      let placeholderStart = tKids.length;
+      for (let i = 0; i < tKids.length; i++) {
+        if (isTupletPlaceholder(tKids[i])) { placeholderStart = i; break; }
+      }
+      let trailingTicks = 0;
+      for (let i = placeholderStart; i < tKids.length; i++) {
+        trailingTicks += writtenTicks(tKids[i]);
+      }
+      if (totalTicks > trailingTicks) return null; /* overflow — reject */
+
+      const element = isRest
+        ? this.buildRestElement({ duration: input.duration, dots: input.dots })
+        : this.buildChordElement({ notes: input.notes, duration: input.duration, dots: input.dots });
+
+      /* Remove all trailing placeholders. */
+      for (let i = tKids.length - 1; i >= placeholderStart; i--) {
+        tuplet.removeChild(tKids[i]);
+      }
+      /* Insert position: if the cursor was on the fill anchor (placeholder),
+         insertion happens at the tail (= placeholderStart). If the cursor
+         was on a filled child, insertion happens before that child. */
+      const insertPos = Math.min(tupletChildIdx, placeholderStart);
+      const remainingKids = Array.from(tuplet.children);
+      const insertBefore = remainingKids[insertPos] ?? null;
+      if (insertBefore) tuplet.insertBefore(element, insertBefore);
+      else tuplet.appendChild(element);
+
+      /* Refill placeholder remainder. */
+      const remainder = trailingTicks - totalTicks;
+      if (remainder > 0) {
+        const pieces = decomposeTicks(remainder);
+        for (const p of pieces) {
+          const sp = el(this.doc, 'space', {
+            'xml:id': newId('sp'),
+            dur: p.dur,
+            dots: p.dots > 0 ? p.dots : undefined,
+          });
+          sp.setAttribute(TUPLET_PLACEHOLDER_ATTR, 'true');
+          tuplet.appendChild(sp);
+        }
+      }
+
+      this.cursors[v] = Math.min(this.cursors[v] + 1, this.getVoiceLength(v));
+      return element.getAttribute('xml:id') ?? '';
+    }
+
     /* Boundary rule: locateCursor uses strict-less-than semantics so that
        cursor at a placeholder targets the placeholder's measure. But when
        the cursor is at a partial-real-measure / empty-next-measure
@@ -1282,6 +1701,7 @@ export class ComposerModel {
               measureIdx: prevMeasureIdx,
               layer: prevLayer,
               withinIdx: this.contentChildren(prevLayer).length,
+              inTuplet: null,
             };
           }
         }
@@ -1365,6 +1785,16 @@ export class ComposerModel {
     void firstPieceLayer;
     this.setBarlines();
     return firstId ?? '';
+  }
+
+  /** Sum of writtenTicks of placeholders inside a tuplet (the unfilled
+   *  budget). Used by tuplet-aware insertion/replacement to decide fit. */
+  private tupletPlaceholderTicks(tuplet: Element): number {
+    let t = 0;
+    for (const c of Array.from(tuplet.children)) {
+      if (isTupletPlaceholder(c)) t += writtenTicks(c);
+    }
+    return t;
   }
 
   private insertAt(parent: Element, child: Element, index: number): void {

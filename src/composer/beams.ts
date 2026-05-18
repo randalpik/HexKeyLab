@@ -19,6 +19,8 @@
 // before re-computing. This means the same function can be called repeatedly
 // on the same doc with no drift.
 
+import { realTicks } from './ticks.js';
+
 const MEI_NS = 'http://www.music-encoding.org/ns/mei';
 
 export interface TimeSigInfo {
@@ -102,6 +104,13 @@ function annotateLayer(layer: Element): StreamEntry[] {
   let t = 0;
   for (const c of Array.from(layer.children)) {
     const ln = c.localName;
+    if (ln === 'tuplet') {
+      /* Tuplet contents are not beamed at the layer level in v1; skip
+         the tuplet in beam grouping but advance the clock by its real
+         ticks so subsequent beat-group math is correct. */
+      t += elementDurationTicks(c);
+      continue;
+    }
     if (ln !== 'chord' && ln !== 'note' && ln !== 'rest') continue;
     const ticks = elementDurationTicks(c);
     out.push({ el: c, startTick: t, durTicks: ticks });
@@ -111,14 +120,7 @@ function annotateLayer(layer: Element): StreamEntry[] {
 }
 
 function elementDurationTicks(el: Element): number {
-  const dur = el.getAttribute('dur');
-  const dots = parseInt(el.getAttribute('dots') ?? '0', 10);
-  const denom = dur ? parseInt(dur, 10) : NaN;
-  if (!Number.isFinite(denom) || denom <= 0) return 16;
-  const base = 64 / denom;
-  if (dots === 1) return base * 1.5;
-  if (dots === 2) return base * 1.75;
-  return base;
+  return realTicks(el);
 }
 
 function beamablePredicate(el: Element): boolean {
