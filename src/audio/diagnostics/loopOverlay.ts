@@ -541,11 +541,23 @@ function draw(): void {
       /* Cheap horizontal-overlap guard — events ≤ 36 px apart collapse into
          the first one rendered. */
       if (lastX >= 0 && x - lastX < 36) return lastX;
+      /* Reverse-map MIDI velocity → firmware bin via the identity LUT
+         (`bin = 127 - vel`). With the identity-from-1 LUT (slowest bin → vel
+         1) the two slowest bins both emit vel 1; the label collapses to
+         "≥thresh[126]" in that case. Then bracket the bin with the two
+         adjacent CMD 0x20 thresholds. */
       const bin = 127 - vel;
       let rangeStr: string;
-      if (bin <= 0) rangeStr = '<' + intTable[0];
-      else if (bin >= 127) rangeStr = '≥' + intTable[126];
-      else rangeStr = intTable[bin - 1] + '–' + intTable[bin];
+      if (bin <= 0) {
+        rangeStr = '≤' + intTable[0];
+      } else if (bin >= 126) {
+        rangeStr = '>' + intTable[126];
+      } else {
+        const lo = intTable[bin - 1];
+        const hi = intTable[bin];
+        if (lo === hi) rangeStr = '~' + lo;
+        else rangeStr = lo + '–' + hi;
+      }
       const label = 'v' + vel + ' (' + rangeStr + 't)';
       ctx.font = '10px sans-serif';
       ctx.fillStyle = COLOR_VEL;

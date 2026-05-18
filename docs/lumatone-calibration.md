@@ -222,13 +222,40 @@ Diagnose the hardware envelope first, then choose between hardware MAX-raising (
 
 ### Phase 2b — firmware path: velocity interval table (CMD 0x20)
 
-10. In the lumadiag panel, find the **Hardware velocity intervals (CMD 0x20)** subsection (between "Hardware foundation" and "HKL curve"). The faint trace on the preview canvas is the Terpstra factory default; the bright line is your current curve. Defaults match the factory (`low=1, high=310, gamma≈2.1`).
-11. With stats still collecting, narrow `high` toward the slowest press-time tick count your keyboard actually produces. The factory's `high=310` is generous; compressed-range keyboards live much lower (often 60–200). Lower `high` packs more bins into the press-time range you actually use → more distinct emitted velocities.
-12. `low` adjusts the fast-press end. Usually leave at 1 unless your fastest presses are slower than the factory assumes (rare).
-13. `gamma` controls bin distribution. Factory ~2.1 concentrates bins at fast presses. Lower gamma (e.g. 1.5) spreads bins more evenly; higher gamma (3+) tightens further at the fast end.
-14. Click **Push to Lumatone (CMD 0x20)**. The firmware accepts the table immediately and starts using it for the next note-on. Replay the keyboard and watch the (p5, p95) scatter — clusters should spread out (more distinct values reachable) and per-key histograms should show finer gradation.
-15. Iterate until further narrowing of `high` stops widening the scatter — you've packed the bins as tightly as the press-time data supports.
-16. **Persistence caveat**: CMD 0x20's EEPROM behavior is unverified. After a Lumatone power cycle, the firmware may revert to factory defaults — if so, click Push again. (`localStorage` retains your curve parameters across browser sessions, so re-pushing is one click.)
+**The empirical recipe** (validated 2026-05-18, Max's unit; see `docs/decisions.md` → "Velocity calibration final form"):
+
+| Parameter | Value | What it does |
+|---|---|---|
+| `intervalCurve.low` | your fastest reliable press time (ticks) — Max=3 | lower boundary of bin 0 |
+| `intervalCurve.high` | **`low + 127`** (e.g. 130 for Max) | upper boundary; this width ensures the 127-entry table spans 128 distinct integer thresholds → no duplicates → no irregular reachable-bin pattern |
+| `intervalCurve.gamma` | **1.0** | linear distribution; the only sensible value given the high choice |
+| audio-stage `gamma` | **13.9** | empirical optimum to map your natural press range to the full ~30 dB audio range with smoothest dB-per-tick taper |
+| audio-stage `floor` | **0.03** | 30 dB curve range (digital-piano convention) |
+| audio-stage `ceiling` | 1.00 | unchanged |
+| CMD 0x08 LUT | **identity-from-1** (push via "Push identity LUT to Lumatone" button) | maps bin → MIDI velocity 1..127 (clamped from 0 so the slowest press doesn't emit note-off-semantic vel=0) |
+
+**Step-by-step:**
+
+10. Open the lumadiag panel. Find the **Hardware velocity intervals (CMD 0x20)** subsection.
+11. Enable the loopdiag overlay ("Show diagnostics" in the Playback toolbar) and turn on **Key data**. Play your fastest possible press several times across the keyboard. The orange velocity-event labels show `vN (Mt)` — note the *smallest* tick value (M) you can reliably produce. That's your `low`.
+12. Set `high = low + 127`. This makes the 127-entry table hold 128 distinct integer thresholds (low, low+1, ..., low+127), so binary_search exact-matches at a unique table index for every tick the keyboard can produce. Your natural press-time range (low..~50 for a typical keyboard) maps to bin indices ≈ 0..47, which under identity 0x08 LUT becomes MIDI vel 127..80 — i.e., your full play range lives in the upper half of MIDI velocity space.
+13. Set `gamma = 1.0`. (γ_int just changes the distribution of bin indices across the table; it doesn't change the reachable count. Linear is the simplest mental model under high = low + 127.)
+14. Click **Push to Lumatone (CMD 0x20)**.
+15. Above, click **Push identity LUT to Lumatone (CMD 0x08)** — this loads the "identity-from-1" mapping (bin 127 → vel 1 instead of vel 0).
+16. In the **HKL curve** subsection: set `floor=0.03`, `ceiling=1.00`, `gamma=13.9`. (The HKL curve gamma slider goes up to 20; high γ values like this only make sense once CMD 0x20 high is widened to cover the full 127-bin table as in step 12.)
+17. Play across the dynamic range. The "Distinct velocities observed" counter in the lumadiag velocity panel should converge to ~48–49 (one per integer tick in your physical range plus the two open-ended boundary bins).
+
+**Tuning by ear from this baseline:**
+- *Loud end feels twitchy:* lower audio `gamma` (13.9 → 12 → 11 → 10). Gives up 1–2 dB of total range but the loud-end per-tick step shrinks from ~0.94 dB to ~0.70 dB. γ=10 is the sweet spot for "uniform stepping across the whole range" if you don't mind giving up 2 dB.
+- *Bottom feels too quiet for the room:* raise audio `floor` (0.03 → 0.05 → 0.07). Trades curve range for soft-end audibility.
+- *Per-note loudness inconsistency:* use per-key auto-capture (per-key gain) — this is a per-key variance issue, not a global-curve issue.
+- *Two samples sound different at the same velocity:* sample-side concern; not addressable from the gain curve.
+
+**Per-tick dB steps under the recipe** (high=130, γ_audio=13.9): ~0.94 dB/tick at the loud end (T=3..15), tapering smoothly to ~0.1 dB/tick near the floor (T=45..50). This is intrinsic to power-law audio curves over a wide dynamic range — pianos have a similar shape (wide differentiation at loud dynamics, compression near floor).
+
+**Future piano-realism factors** (filed; not gain-curve work): velocity → low-pass cutoff (for hammer-brightness simulation), velocity → attack-time modulation, soft-clipping at extreme-high velocities. See `docs/decisions.md` → "Future piano-realism factors."
+
+**Persistence caveat**: CMD 0x20 and CMD 0x08's EEPROM behavior is unverified. After a Lumatone power cycle, the firmware may revert to factory defaults — if so, click both **Push to Lumatone** buttons again. `localStorage` retains your curve parameters across browser sessions, so re-pushing is two clicks. (If KMI confirms CMD 0x09 SAVE applies to 0x20, we can drop this caveat.)
 
 ### Phase 3 — MIN tuning for high-end reach (independent of Phase 2 path)
 

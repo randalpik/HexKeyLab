@@ -106,6 +106,14 @@ const state: VelocityCalState = {
 const inputCurve: InputCurveState = { ...DEFAULT_INPUT_CURVE };
 const intervalCurve: IntervalCurveState = { ...DEFAULT_INTERVAL_CURVE };
 
+/* Session-only counter of distinct MIDI velocities emitted by the firmware
+   since the last reset. Populated from midi/handler.ts on every real
+   keypress. Useful for verifying the expected count: under identity CMD 0x08
+   + CMD 0x20 with integer `low..high` thresholds, the count converges to
+   roughly `high - low + 2` (one bin per integer threshold, plus bin 0 for
+   sub-low presses and bin 127 for above-high). */
+const observedVelocities: Set<number> = new Set();
+
 /* Capture session state — lives in-module, not persisted. */
 let capturing = false;
 const captures: Map<KeyId, number[]> = new Map();
@@ -355,6 +363,18 @@ export const velocityCal = {
         && intervalCurve.high === DEFAULT_INTERVAL_CURVE.high
         && intervalCurve.gamma === DEFAULT_INTERVAL_CURVE.gamma;
   },
+
+  /* ── Distinct-velocity counter (session-only) ────────────────────────────
+     Populated by midi/handler.ts on every real Lumatone keypress. Useful for
+     verifying the BBB's binary_search produces the expected number of
+     distinct outputs (one per integer in `intervalCurve.[low, high]`, plus
+     the two open-ended early-return bins at the extremes). */
+  recordObservedVelocity(v: number): void {
+    if (v > 0 && v <= 127) observedVelocities.add(v);
+  },
+  getObservedVelocityCount(): number { return observedVelocities.size; },
+  getObservedVelocities(): ReadonlySet<number> { return observedVelocities; },
+  clearObservedVelocities(): void { observedVelocities.clear(); },
 
   /* Stage 1: per-key gain. Returns adjusted velocity (clamped 0..127). */
   applyPerKeyGain(key: KeyId, v: number): number {

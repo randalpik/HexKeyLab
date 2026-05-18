@@ -1010,3 +1010,112 @@ Pitch spelling reuses `noteName(q, r)` / `keyOctave(q, r)` from `src/tuning/note
 - `src/audio/velocityCal.ts` — `intervalCurve` state, `setIntervalCurve{Low,High,Gamma}`, `resetIntervalCurve`, `buildIntervalTable`, `isIntervalCurveFactory`, Phase A migration in `loadFromPrefs`.
 - `src/state/persistence.ts` — `VelocityCalPrefs.intervalCurve` (optional, validated).
 - `src/lumatone/lumadiag.ts` — "Hardware velocity intervals (CMD 0x20)" subsection (replaces the Phase A "Input velocity curve" UI in the same slot), with factory-trace overlay on the preview canvas.
+
+---
+
+## Velocity curve calibration: γ_int=1.10, γ_audio=3.58, floor=0.03 (empirical, 2026-05-18)
+
+**Picked**: After Phase C shipped, an empirical sweep against the full press-time → bin → velocity → audio-gain chain (sim at `/tmp/velocity_sim*.mjs`, regenerable) settled on:
+
+| Parameter | Value | Source |
+|---|---|---|
+| `intervalCurve.low` | 3 | fastest reliable press time on Max's unit, ticks |
+| `intervalCurve.high` | 50 | slower than the slowest natural "pp" press |
+| `intervalCurve.gamma` | 1.10 | minimizes std-dev of dB-per-press-time step (0.13 dB) |
+| audio-stage `gamma` | 3.58 | best-fit to preserve perceptual ramp with γ_int=1.10 |
+| audio-stage `floor` | 0.03 | 30 dB curve dynamic range — "digital piano" convention |
+| audio-stage `ceiling` | 1.00 | unchanged |
+
+**Rejected**:
+- **γ_int = 2 (matched to γ_audio=2)** — appealing theory ("matched power-law curves"), but math doesn't compose to uniform dB. Empirically: produces audible 1.7 dB stairsteps at the loud end because adjacent integer press-times land in non-adjacent bin indices (13-bin gaps). User can hear them in soft-of-loud passes.
+- **γ_int = 1.0 (pure linear)** — almost as good as 1.10 for dB-step uniformity but very slightly worse. 1.10 wins the sweep by a hair.
+- **Floor lower than 0.03** — produces full 40 dB acoustic-piano range, but ppp at −50 dB at the speaker (after polyphony clearance) drops near typical room noise floor. Defensible for headphone monitoring; impractical for typical home listening.
+- **Floor higher than 0.03** — narrower than digital-piano convention. With normalized samples (no sample-side dynamic range), all dynamic range must come from the curve, so we need 30+ dB.
+- **Range-shrinking fits (e.g. ceiling<1 to reduce dB-RMSE vs reference)** — the optimizer found these as numerical artifacts but they're cheating: smaller range divided by same step count gives smaller steps trivially. Reject by pinning ceiling=1.
+
+**Why**:
+- The composition of γ_int=k and γ_audio=k is *not* perceptually uniform — it's just a steeper power law. For true uniform dB-per-press-time, you'd want the press-time → velocity map to be exponential, not power-law, which the firmware can't produce. Linear is the closest power-law approximation that puts adjacent integer press-times in adjacent bins.
+- 30 dB curve range matches typical digital piano touch curves. With HKL's sample loudness normalization (no sample-side dynamic range), the curve has to carry all the expressivity itself, so the upper end of the convention range is the right target.
+- γ_audio=3.58 is the best-fit single power-law that reproduces the *shape* of the original (γ_int=2 + γ_audio=2) perceptual ramp when the input is a near-linear v(T). Loud end now flat (max 0.75 dB step), mid and soft within ~1 dB of the reference.
+
+**Three-way trade-off** (worth naming for future tuning):
+1. Uniform dB-per-press-time steps (achieved by γ_int=1.10)
+2. Full 0 to −20 dB curve range (achieved by floor=0.10, ceiling=1.00)
+3. Identical perceptual ramp shape to factory-style (γ_int=2 + γ_audio=2)
+
+Any two can coexist; all three cannot. We picked (1) and (2)-ish (with floor=0.03 expanding the range to 30 dB beyond the original 20), accepting that loud-end *shape* deviates by 1–2 dB from the reference in the T=4–10 region — which is exactly where the reference had its audible stairsteps anyway. This deviation is the cost paid for smoothness.
+
+**Where**:
+- `docs/lumatone-calibration.md` — Phase 2b recipe.
+- `src/audio/velocityCal.ts:DEFAULT_INTERVAL_CURVE`, audio `DEFAULT_CAL` defaults remain factory-shaped; user settings via lumadiag.
+- Simulation at `/tmp/velocity_sim*.mjs` (regenerable from this entry for future re-sweeps).
+
+---
+
+## Velocity-event label semantics: integer press-time, not threshold pair (2026-05-18)
+
+**Picked**: Loopdiag velocity-event labels show the actual integer press-time(s) that produce each emitted MIDI velocity, derived from the firmware's bin-rule `thresh[i-1] < T ≤ thresh[i]`. Format: `v124 (4t)` for single-integer bins, `v? (3–5t)` for multi-integer bins (rare with γ_int near 1), `v127 (≤3t)` and `v0 (>50t)` for the open-ended boundary bins.
+
+**Rejected**: The earlier format showed `intTable[bin-1] – intTable[bin]` (a threshold pair). For γ_int=1.10 with `intTable[2]=3, intTable[3]=4`, this rendered v124 as `(3–4t)` — which read as "press_times 3 and 4 both produce v124." Actually only T=4 produces v124; T=3 produces v127 via bin 0. The threshold-pair format is unambiguous to someone who knows the open-closed semantics, but confusing to anyone (including the author) glancing at the readout.
+
+**Why**: The integer press-time is what the user actually played. The threshold-pair was a leaky implementation detail.
+
+**Where**:
+- `src/audio/diagnostics/loopOverlay.ts` velocity-event label block.
+
+---
+
+## Velocity calibration final form: γ_int=1 + high=130 + γ_audio≈13.9 (2026-05-18)
+
+**Picked** (supersedes the 2026-05-18 γ_int=1.10/γ_audio=3.58 entry above and the bake-LUT exploration that briefly followed):
+
+| Knob | Value | Rationale |
+|---|---|---|
+| `intervalCurve.low` | 3 | user's fastest reliable press (PIC tick count) |
+| `intervalCurve.high` | **130** | gives ~128 distinct integer thresholds across the 127 entries → near-1:1 tick→bin mapping → no irregular reachable-bin pattern from binary_search-on-duplicates |
+| `intervalCurve.gamma` | 1.0 | linear distribution; only sensible value given the high=130 choice |
+| audio `floor` | 0.03 | 30 dB curve range, digital-piano convention |
+| audio `ceiling` | 1.00 | unchanged |
+| audio `gamma` | **13.9** | empirical sweep finds this minimises dB-step stddev *subject to achieving the full ~30 dB range* on the user's natural press range (T = 3..50, vel = 80..127 under 1:1) |
+| CMD 0x08 LUT | "identity-from-1" (`lut[0]=1`, rest identity) | gives emitted range 1..127 instead of 0..127 (a played note shouldn't emit MIDI vel 0 = note-off) |
+
+**Rejected**:
+- **`high=50`**: produces only 48 distinct integer thresholds across 127 table entries → binary_search on duplicates returns a non-uniform reachable bin pattern (alternating runs of 2 and 3 reachable bins). User's natural play range maps to 47 + 2 boundary bins ≈ 48 velocities, but the periodic step pattern (3 small dB steps + 1 big step) is audibly stuttered. The previously-recommended γ_audio=2.30 minimised dB-stddev under this constraint, but the max-step (1.43 dB) was visibly larger than the high=130 setup's (0.94 dB).
+- **CMD 0x08 "bake" LUT** (briefly explored and removed): tried to map binary_search-reachable bins to evenly-spaced velocities. Unnecessary once we accept γ_int=1 and choose high appropriately — the reachable bin count is determined by the threshold *integer range*, and CMD 0x08 identity is already correct for "bin index = velocity output." Bake just re-encoded what CMD 0x20 already controlled.
+- **Stevens-power-law-based γ_audio ≈ 1.67** (perceived-loudness-linear-in-tick): empirically valid as a theoretical target, but doesn't achieve the full 30 dB dynamic range pianists expect — gives ~7 dB range with high=130 or ~20 dB with high=50. Wrong tradeoff for piano feel.
+
+**Why**:
+- The integer-tick limit is the fundamental resolution floor. With low=3, high=50 you get exactly `high − low + 1 = 48` distinct integer thresholds, producing 48 + 2 ≈ 49 reachable velocity bins on the BBB's binary_search. Widening to high=130 gives 128 distinct thresholds, which is a 1:1 match for the 127-entry table — every adjacent tick produces an adjacent bin index, no irregular step pattern.
+- The user's *physical* press-time range is still 3..50, so widening high doesn't increase the velocity count they actually reach (still 48). But it eliminates the irregular step pattern by ensuring binary_search always finds an exact match.
+- Compressing the user's natural press range (vel 80..127) into the full 0 to −30 dB audio range requires a much steeper curve than the previous high=50 setup. γ_audio=13.9 fits.
+- The "identity-from-1" LUT is the minimal fix to avoid emitting vel=0 (note-off) for the slowest physical press. Two slowest bins both emit vel 1, but bin 126 isn't reachable in practice for this threshold table, so the merger is silent.
+
+**Constraint surfaced** (worth knowing if/when a future keyboard changes):
+- Per-tick dB steps are inherently non-uniform under a power-law audio curve: ~1.0 dB/tick at the loud end (vel ≈ 127) tapers to ~0.1 dB/tick at the soft end (vel ≈ 80). This is a property of the math, not a bug. Pianos behave similarly — wide differentiation at loud dynamics, compression near floor.
+- γ_audio is the only useful global lever once γ_int=1, low/high, and floor are fixed. Per-key residuals go to auto-capture (per-key gain). Sample-loudness residuals go to sample-side normalisation.
+
+**Where**:
+- `src/audio/velocityCal.ts:DEFAULT_INTERVAL_CURVE` (note: factory defaults left as `low=1, high=310, gamma=2.1` for first-time users; Max's per-unit calibration overrides via lumadiag).
+- `src/lumatone/lumadiag.ts:pushIdentityVelocityLut` — clamps `lut[0]=1`.
+- `src/lumatone/lumadiag.ts` — slider ranges: γ_audio 0.5..20, interval low 0..100, interval high 0..200 (step=1 for finer per-tick tuning).
+- Sweep scripts (regenerable): `/tmp/gamma_audio_sweep.mjs` (high=50), `/tmp/gamma_audio_sweep_h130_v2.mjs` (high=130).
+
+---
+
+## Future piano-realism factors (filed for later, 2026-05-18)
+
+**Filed but out of scope** for the current calibration cycle. None of these are gain-curve tweaks; they're sample-engine work.
+
+1. **Velocity → low-pass cutoff modulation**: real piano hammers excite more harmonics at higher velocities, so hard hits sound brighter. Without it, soft and loud notes have identical timbre. Probably the *single biggest* missing piece for piano realism given HKL's normalised single-layer samples. Implementation would be a per-voice biquad LPF with cutoff = `f(velocity)` — a 6 dB high-shelf delta between vel=1 and vel=127 in the 2–8 kHz region would be perceptually significant.
+
+2. **Velocity → attack-time modulation**: harder hits produce sharper attacks. ~5–15 ms shorter at vel=127 vs vel=1. Subtle but adds "bite" to loud notes.
+
+3. **Soft-clipping at high vel**: model a piano hammer reaching mechanical limits — slight compression of the vel=120..127 region. Subtle realism cue for extreme-loud passes.
+
+**Filed as NOT impactful enough to chase**:
+- Velocity-dependent reverb send
+- Loudness compensation (Fletcher-Munson)
+- Per-key velocity curve (per-key gain already covers most variance)
+- Velocity-dependent release-time
+
+**Where**: any of (1)-(3) would land in `src/audio/sampleEngine.ts` (or wherever per-voice gain is applied), wiring a velocity-dependent filter/envelope-time/clipper into the existing voice graph.

@@ -371,18 +371,22 @@ const velCalUi: {
   intGammaSlider?: HTMLInputElement;
   intGammaVal?: HTMLSpanElement;
   intervalPreview?: HTMLCanvasElement;
+  observedCount?: HTMLSpanElement;
 } = {};
 
 let captureTicker: number | null = null;
 
 function pushIdentityVelocityLut(): void {
-  /* Identity LUT: lut[i] = i, slowest (i=0) → softest, fastest (i=127) → loudest.
+  /* "Identity-from-1" LUT: lut[i] = max(1, i), slowest bin → vel 1, fastest →
+     vel 127. We clamp at 1 instead of letting bin 127 emit vel 0, because a
+     played note that emits MIDI velocity 0 is interpreted by every receiver
+     as a note-off — not what the user wants from their softest press.
      buildSetVelocityLut reverses internally to match the firmware wire order. */
-  const lut: number[] = [];
-  for (let i = 0; i < 128; i++) lut.push(i);
+  const lut: number[] = new Array(128);
+  for (let i = 0; i < 128; i++) lut[i] = i === 0 ? 1 : i;
   const msg = buildSetVelocityLut(lut);
   const ok = sysex.enqueueControl(msg);
-  if (ok) console.log('[lumadiag] pushed identity velocity LUT to Lumatone (CMD 0x08)');
+  if (ok) console.log('[lumadiag] pushed identity velocity LUT to Lumatone (CMD 0x08, range 1..127)');
   else console.warn('[lumadiag] no Lumatone connected — identity LUT not sent');
 }
 
@@ -396,6 +400,12 @@ function pushVelocityIntervalTable(): void {
     + velocityCal.intervalCurveLow + ' high=' + velocityCal.intervalCurveHigh
     + ' gamma=' + velocityCal.intervalCurveGamma.toFixed(2));
   else console.warn('[lumadiag] no Lumatone connected — interval table not sent');
+}
+
+function refreshObservedCounter(): void {
+  if (velCalUi.observedCount) {
+    velCalUi.observedCount.textContent = String(velocityCal.getObservedVelocityCount());
+  }
 }
 
 /* Plot-area margins used by both curve preview canvases. Left margin holds
@@ -501,6 +511,7 @@ function refreshCurveUi(): void {
   }
   drawCurvePreview();
   drawIntervalCurvePreview();
+  refreshObservedCounter();
 }
 
 /* Terpstra factory default interval table (KeyboardDataStructure.cpp:49). Used
@@ -650,7 +661,42 @@ function makeVelocityCalSection(): HTMLDivElement {
   hwBlock.appendChild(hwLabel);
   hwBlock.appendChild(hwHint);
   hwBlock.appendChild(hwBtn);
+
   sec.appendChild(hwBlock);
+
+  /* Unique-velocity counter + reset. The expected count under identity 0x08
+     plus an integer-range CMD 0x20 curve is ~(high − low + 2): one velocity
+     per integer threshold, plus the two open-ended boundary bins. */
+  const counterRow = document.createElement('div');
+  Object.assign(counterRow.style, {
+    display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px',
+    fontSize: '11px', color: 'rgba(255,255,255,0.7)',
+    marginBottom: '8px', marginTop: '4px', alignItems: 'center',
+  });
+  const observedCell = document.createElement('span');
+  observedCell.title = 'Distinct MIDI velocities emitted since last reset. Should converge to ~(high − low + 2) as you play across the full dynamic range.';
+  const observedVal = document.createElement('span');
+  Object.assign(observedVal.style, { fontFamily: 'monospace', color: '#fd9' });
+  observedCell.appendChild(document.createTextNode('Distinct velocities observed: '));
+  observedCell.appendChild(observedVal);
+  velCalUi.observedCount = observedVal;
+  const resetBtn = document.createElement('button');
+  resetBtn.textContent = 'Reset';
+  resetBtn.title = 'Clear observed-velocity counter.';
+  Object.assign(resetBtn.style, {
+    fontSize: '11px', padding: '1px 8px',
+    background: 'rgba(255,255,255,0.08)', color: '#eee',
+    border: '1px solid rgba(255,255,255,0.2)', borderRadius: '2px',
+    cursor: 'pointer',
+  });
+  resetBtn.addEventListener('click', () => {
+    velocityCal.clearObservedVelocities();
+    refreshObservedCounter();
+  });
+  counterRow.appendChild(observedCell);
+  counterRow.appendChild(resetBtn);
+  sec.appendChild(counterRow);
+
   const hwResetHint = document.createElement('div');
   hwResetHint.textContent = '(Use "Reset velocity LUT" below to revert to factory firmware curve.)';
   Object.assign(hwResetHint.style, { fontSize: '10px', color: 'rgba(255,255,255,0.4)', marginTop: '2px', marginBottom: '8px', lineHeight: '1.2' });
@@ -721,14 +767,14 @@ function makeVelocityCalSection(): HTMLDivElement {
      very slow. gamma is × 100 to give 0.5..5.0 resolution on the slider. */
   const intLowUi = mkIntSlider(
     'low', 'Fastest-press threshold (tick count for highest velocity bin). Tighten toward your keyboard’s minimum press-time.',
-    0, 500, 1,
+    0, 100, 1,
     () => velocityCal.intervalCurveLow,
     (v: number) => velocityCal.setIntervalCurveLow(v),
     (v: number) => String(Math.round(v)),
   );
   const intHighUi = mkIntSlider(
     'high', 'Slowest-press threshold (tick count for lowest velocity bin). Tighten toward your keyboard’s maximum press-time.',
-    50, 2000, 5,
+    0, 200, 1,
     () => velocityCal.intervalCurveHigh,
     (v: number) => velocityCal.setIntervalCurveHigh(v),
     (v: number) => String(Math.round(v)),
@@ -841,8 +887,8 @@ function makeVelocityCalSection(): HTMLDivElement {
     (v: number) => (v / 100).toFixed(2),
   );
   const gammaUi = mkCurveSlider(
-    'gamma', 'Curve exponent (× 100). >1 = soft notes get quieter (piano-like).',
-    50, 300, 5,
+    'gamma', 'Curve exponent (× 100). >1 = soft notes get quieter (piano-like). High values (10+) only make sense when CMD 0x20 high is set near 130, giving 1:1 tick→velocity mapping; with the default high=50, γ above ~3 over-compresses.',
+    50, 2000, 5,
     () => velocityCal.gamma * 100,
     (v: number) => velocityCal.setGamma(v / 100),
     (v: number) => (v / 100).toFixed(2),
@@ -1398,6 +1444,7 @@ function makePerKeyStatsSection(): HTMLDivElement {
     statsTickerId = window.setInterval(() => {
       if (!panel || panel.style.display === 'none') return;
       refreshStatsSection();
+      refreshObservedCounter();
     }, 1000);
   }
 

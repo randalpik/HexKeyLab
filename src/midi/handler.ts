@@ -129,6 +129,9 @@ export function handleMidiMessage(e: MIDIMessageEvent): void {
        input curve has been tuned to, so we can keep diagnosing the
        underlying hardware envelope. Single boolean check when disabled. */
     velocityCal.recordForStats(key, d2);
+    /* Distinct-velocity tracker — feeds the lumadiag counter and lets
+       loopdiag flag velocities outside the predicted-reachable-bin set. */
+    velocityCal.recordObservedVelocity(d2);
     /* Lumatone-only input velocity curve. Identity by default; user dials it
        in via lumadiag to compensate for compressed firmware velocity range.
        Everything downstream (audio engine, recording, MIDI export) sees the

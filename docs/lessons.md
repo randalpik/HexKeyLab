@@ -565,6 +565,51 @@ The wire format for CMD 0x20 splits each 12-bit value into two 6-bit nibbles, to
 
 Sources: `/home/max/TerpstraSysEx.2014/Source/TerpstraMidiDriver.cpp:366–380` (sendVelocityIntervalConfig), `KeyboardDataStructure.cpp:49` (DefaultVelocityIntervalTable).
 
+### Lumatone velocity pipeline: PIC measures, BBB binarises + relabels
+
+(Corrects an earlier-and-now-deleted lesson that claimed the BBB was a pure MIDI proxy.)
+
+The architecture, verified by disassembling `/home/max/lumatone/TerpstraController/TerpstraController` (offsets `0x11d30 binary_search`, `0x11e78 SendMidiKeyStroke`, `0x9c84 decodePicMessage`, `0x15f00 setMyVelocityInterval`):
+
+1. **PIC** (5 per-board microcontrollers) measures press-time as a 12-bit tick count and emits a UART message `[0x30, cmd, key, hi_byte, lo_nibble_byte, 0xFF]` to the BBB. `press_time = (hi_byte << 4) | (lo_nibble_byte & 0x0F)`.
+2. **BBB** (`TerpstraController`) decodes the message, then in `SendMidiKeyStroke`:
+   - Runs `binary_search(myVelocityInterval, press_time, 0, 126)` → bin index 0..127.
+   - Reads `myVelocityTable[bin]` → MIDI velocity 0..127.
+   - Looks up per-key channel/note from `kbd_preset_params` (per-board × 638-byte stride).
+   - Sends the 3-byte MIDI message via `writeToMidi`.
+3. **Host** (HKL) receives the final 3-byte MIDI note-on.
+
+So `myVelocityInterval` (CMD 0x20, 127 × 12-bit) and `myVelocityTable` (CMD 0x08, 128 × 7-bit) live on the **BBB**, not the PIC. They're consumed at runtime by every keypress. We have full read/write access via `/proc/<pid>/mem` and full edit power via the documented SysEx commands.
+
+Implications:
+- **Press-time precision is integer-tick** (12-bit, 0..4095) — the PIC's timer resolution. Anything finer is unreachable.
+- **The BBB's `binary_search` semantics matter**: on a threshold table with duplicate values, it returns one specific bin (the bisection-tree midpoint where the exact match is found), not all of them. This creates an irregular reachable-bin pattern that can stutter the dB-per-tick response — see the "binary_search on duplicates" lesson below.
+- **Anything we want to change about velocity** can be done from the BBB without touching the PIC.
+
+### Velocity resolution is exactly `high − low + 1 + 2` reachable bins (one per integer threshold, plus the two open-ended boundary bins)
+
+(Corrects an earlier-and-now-deleted lesson that claimed sub-tick firmware resolution. That conclusion came from a flawed simulation that fed fractional keys to my binary_search reproduction — but the PIC only emits integer 12-bit ticks, so fractional keys are physically unreachable.)
+
+Empirically validated: with γ_int=1, low=3, high=50, integer keys 0..4095 produce exactly 49 distinct bin outputs from binary_search. Add the two boundary bins (0 for key < low, 127 for key ≥ high) and that's 48 distinct integer thresholds + 1 = 49 reachable. The user observes ~47–48 in practice (depending on whether they ever reach the open-ended bins at both extremes during play).
+
+This means **widening the integer range** is the only way to increase reachable velocity count. Tightening `low/high` to the user's actual press-time range maximises information density (every velocity bin corresponds to an achievable physical press-time), but tightening *below* the range hardware can produce wastes bins and clips the dynamic range.
+
+### Binary_search on duplicate thresholds produces an irregular reachable-bin pattern
+
+When the CMD 0x20 integer threshold range is narrower than 127 entries (e.g. low=3, high=50 spans 48 integers across 127 entries), each integer value occupies a run of 2–3 adjacent table indices. The BBB's `binary_search` returns the index where an exact match is found via bisection — which lands at a specific mid in each run, not the first or last. Result: adjacent integer keys produce bin-index jumps that alternate between Δ=2 and Δ=4 (one extra step every ~3 ticks). After the CMD 0x08 identity LUT, this becomes alternating dB-step sizes (e.g., 0.31 / 0.31 / 0.31 / 0.65 / 0.31 / 0.31 / 0.31 / 0.65 / ... at γ_audio=2.3).
+
+**Fix**: widen `high` so the integer threshold count equals 127 (e.g., for low=3, set high=130 → 128 distinct integers fill the table with no duplicates). Every integer key then exact-matches at a unique index, and the reachable bins become contiguous 1:1 with tick count. Costs nothing on the user's natural play range (they still emit ~48 distinct velocities for 48 distinct press-times), but eliminates the structural step-doubling.
+
+Trade-off: full-range vels compress into the loud half of MIDI velocity space (vel ≈ 80..127 for press-times 3..50, with vel ≈ 1..79 for press-times the user doesn't physically produce). Compensate downstream with a much steeper audio γ (≈14 for full 30 dB range under high=130, vs ≈2.3 for the same range under high=50).
+
+### "Match audio gamma" intuition is wrong for the CMD 0x20 curve
+
+Tempting reasoning: if the audio curve is γ=2, setting CMD 0x20's γ_int=2 should "cancel" and give a uniform perceptual ramp. Empirically wrong — power-law composed with power-law is still a power law, not uniform in dB.
+
+What's actually correct: γ_int = 1 (linear), regardless of γ_audio. With γ_int = 1 the velocity output is a 1:1 monotonic function of press-time tick count, and the audio curve's shape is then the only thing affecting per-tick dB stepping. Any γ_int ≠ 1 just adds confusion about the bin distribution without changing the reachable-velocity count.
+
+For "uniform dB per tick" the press-time → gain composition would need to be exponential. Power laws can't produce that, so accept a residual taper: bigger dB steps at the loud end, smaller at the soft end. This is a property of `gain = floor + (1−floor)·(v/127)^γ`, not a defect.
+
 ### Hardware MAX is not a reliable dynamic-range lever for narrow-ADC-swing keyboards
 
 The MAX-raising workflow under "Per-key calibration converges in 3-4 passes" assumes the dead-key rate climbs gracefully as MAX rises. On Max's unit it doesn't — `MAX=70` produces ~3 dead keys, `MAX=80` produces 20+. The casualty distribution is unit-specific; some keyboards have so tight a physical ADC swing distribution that any meaningful MAX bump kills 5–10% of the keyboard. And even on surviving keys, p5 doesn't drop when MAX climbs, because the firmware's press-time → velocity mapping is insensitive to where the measurement window sits within Max's compressed swing range.

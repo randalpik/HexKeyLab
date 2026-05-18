@@ -36,7 +36,7 @@ import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import { qwertyKeyMap } from './qwerty.js';
 import type { KeyId, Voice } from '../types.js';
 
-const KEYBOARD_VELOCITY = 96;
+const KEYBOARD_VELOCITY = 120;
 
 /* Filled by the IIFE below so external modules (controls.ts) can ask for a
    migration of just the QWERTY-held voices when qwertyTranspose changes. */
