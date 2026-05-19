@@ -25,6 +25,7 @@
 
 import type { ResolvedNote } from '../bridge/protocol.js';
 import { regroupBeams, readTimeSig } from './beams.js';
+import { decomposeBeatAlignedRests } from './restfill.js';
 import { computeAccidentalDisplay, alterFromCount, alterFromToken, tokenFromAlter, getNoteAlter } from './accidentals.js';
 import { ensureExpressionDefaults, type Moment } from './expressions.js';
 import { realTicks, writtenTicks } from './ticks.js';
@@ -47,6 +48,15 @@ export interface RestInput {
 }
 
 export type CurrentRef = { index: number; id: string; elem: Element } | null;
+
+/** A single placement emitted by `planInsert`. `inserted` actions describe
+ *  pieces of the newly-typed note (split into chunks on bar lines, with
+ *  ties wired during apply); `reuse` actions describe existing post-cursor
+ *  elements that move wholesale (the element keeps its identity, attrs,
+ *  and any pre-existing ties). */
+type InsertAction =
+  | { kind: 'inserted'; dur: Duration; dots: Dots; targetMIdx: number; pieceIdx: number; pieceCount: number }
+  | { kind: 'reuse'; el: Element; targetMIdx: number };
 
 export interface SetupDefaults {
   title?: string;
@@ -218,13 +228,13 @@ function emptyMeiDoc(setup: SetupDefaults = {}): Document {
       <hkl:config>
         <hkl:dynamicMap>
           <hkl:level name="fff" velocity="127"/>
-          <hkl:level name="ff"  velocity="115"/>
-          <hkl:level name="f"   velocity="100"/>
-          <hkl:level name="mf"  velocity="85"/>
-          <hkl:level name="mp"  velocity="70"/>
-          <hkl:level name="p"   velocity="55"/>
-          <hkl:level name="pp"  velocity="40"/>
-          <hkl:level name="ppp" velocity="25"/>
+          <hkl:level name="ff"  velocity="124"/>
+          <hkl:level name="f"   velocity="120"/>
+          <hkl:level name="mf"  velocity="116"/>
+          <hkl:level name="mp"  velocity="112"/>
+          <hkl:level name="p"   velocity="108"/>
+          <hkl:level name="pp"  velocity="103"/>
+          <hkl:level name="ppp" velocity="96"/>
         </hkl:dynamicMap>
       </hkl:config>
     </extMeta>
@@ -237,15 +247,15 @@ function emptyMeiDoc(setup: SetupDefaults = {}): Document {
       </staffGrp>
     </scoreDef>
     <section>
-      <measure n="1" right="end" xml:id="${newId('m')}">
+      <measure n="1" right="end" xml:id="${newId("m")}">
         <tempo tstamp="1" staff="1" mm="${bpm}" mm.unit="${tempoUnit}"${tempoDotsAttr} midi.bpm="${bpm}">${tempoTextSpan}</tempo>
-        <staff n="1" xml:id="${newId('s')}">
-          <layer n="1" xml:id="${newId('l')}"/>
-          <layer n="2" xml:id="${newId('l')}"/>
+        <staff n="1" xml:id="${newId("s")}">
+          <layer n="1" xml:id="${newId("l")}"/>
+          <layer n="2" xml:id="${newId("l")}"/>
         </staff>
-        <staff n="2" xml:id="${newId('s')}">
-          <layer n="1" xml:id="${newId('l')}"/>
-          <layer n="2" xml:id="${newId('l')}"/>
+        <staff n="2" xml:id="${newId("s")}">
+          <layer n="1" xml:id="${newId("l")}"/>
+          <layer n="2" xml:id="${newId("l")}"/>
         </staff>
       </measure>
     </section>
@@ -263,9 +273,9 @@ export class ComposerModel {
 
   constructor(initialMei?: string) {
     if (initialMei) {
-      this.doc = new DOMParser().parseFromString(initialMei, 'application/xml');
-      if (this.doc.querySelector('parsererror')) {
-        throw new Error('Failed to parse initial MEI');
+      this.doc = new DOMParser().parseFromString(initialMei, "application/xml");
+      if (this.doc.querySelector("parsererror")) {
+        throw new Error("Failed to parse initial MEI");
       }
       this.stripBeamsInLiveDoc();
     } else {
@@ -278,43 +288,47 @@ export class ComposerModel {
   /** Replace the entire document in-place (used by Load .hkc to preserve
    *  bindings held by other modules). */
   replaceDocument(meiXml: string): void {
-    const newDoc = new DOMParser().parseFromString(meiXml, 'application/xml');
-    if (newDoc.querySelector('parsererror')) throw new Error('Invalid MEI in load');
+    const newDoc = new DOMParser().parseFromString(meiXml, "application/xml");
+    if (newDoc.querySelector("parsererror"))
+      throw new Error("Invalid MEI in load");
     this.doc = newDoc;
     this.currentVoice = 1;
     this.cursors = { 1: 0, 2: 0, 3: 0, 4: 0 };
     this.stripBeamsInLiveDoc();
     /* Migrate older .hkc files that lack bar.thru on the staffGrp. */
-    const sg = this.doc.querySelector('staffGrp');
-    if (sg && !sg.hasAttribute('bar.thru')) sg.setAttribute('bar.thru', 'true');
+    const sg = this.doc.querySelector("staffGrp");
+    if (sg && !sg.hasAttribute("bar.thru")) sg.setAttribute("bar.thru", "true");
     /* Migrate older .hkc files that lack xml:id on <staff> (cursor.ts looks
        these up to position the empty-voice cursor on the right staff). */
-    for (const staff of Array.from(this.doc.querySelectorAll('staff'))) {
-      if (!staff.getAttribute('xml:id')) {
-        staff.setAttributeNS(XML_NS, 'xml:id', newId('s'));
+    for (const staff of Array.from(this.doc.querySelectorAll("staff"))) {
+      if (!staff.getAttribute("xml:id")) {
+        staff.setAttributeNS(XML_NS, "xml:id", newId("s"));
       }
     }
     /* Migrate older .hkc files that used @accid="ss" for double sharps —
        Verovio renders that as a precomposed "##" glyph, not the canonical
        × (which is @accid="x"). Rewrite for visual consistency. */
-    for (const note of Array.from(this.doc.querySelectorAll('note'))) {
-      if (note.getAttribute('accid') === 'ss') note.setAttribute('accid', 'x');
-      if (note.getAttribute('accid.ges') === 'ss') note.setAttribute('accid.ges', 'x');
+    for (const note of Array.from(this.doc.querySelectorAll("note"))) {
+      if (note.getAttribute("accid") === "ss") note.setAttribute("accid", "x");
+      if (note.getAttribute("accid.ges") === "ss")
+        note.setAttribute("accid.ges", "x");
     }
     /* Migrate older .hkc files that emitted <accid> child elements for
        quadruple+ accidentals. Verovio's layout doesn't reserve space for
        extra accid children (they overlap), so we no longer use them.
        Collapse them into a single @accid clamped to ±3. */
-    for (const note of Array.from(this.doc.querySelectorAll('note'))) {
-      const accidChildren = Array.from(note.children).filter((c) => c.localName === 'accid');
+    for (const note of Array.from(this.doc.querySelectorAll("note"))) {
+      const accidChildren = Array.from(note.children).filter(
+        (c) => c.localName === "accid",
+      );
       if (accidChildren.length === 0) continue;
       let alter = 0;
       for (const c of accidChildren) {
-        alter += alterFromToken(c.getAttribute('accid') ?? '');
+        alter += alterFromToken(c.getAttribute("accid") ?? "");
         note.removeChild(c);
       }
       const token = tokenFromAlter(alter);
-      if (token) note.setAttribute('accid', token);
+      if (token) note.setAttribute("accid", token);
     }
     /* Migrate older .hkc files that used right="dbl" for the final barline. */
     this.setBarlines();
@@ -327,7 +341,7 @@ export class ComposerModel {
    *  always sees flat layer children. Beams are re-added at serialize() time
    *  by the beams.ts module. Safe no-op when there are no beams. */
   private stripBeamsInLiveDoc(): void {
-    const beams = this.doc.querySelectorAll('beam');
+    const beams = this.doc.querySelectorAll("beam");
     for (const b of Array.from(beams)) {
       const parent = b.parentNode;
       if (!parent) continue;
@@ -362,15 +376,42 @@ export class ComposerModel {
     return this.cursors[voice ?? this.currentVoice];
   }
 
+  /** Voice length = number of cursor positions, inclusive of the past-end
+   *  stop at `flat.length`. When the last measure is full and has no next
+   *  measure, this past-end position is the "next entry creates a new
+   *  measure" stop: locateCursor's past-end branch resolves it to
+   *  (lastMeasureIdx, withinIdx = contentChildren.length), and
+   *  insertWithSplit's tail path appends a new measure lazily. When the
+   *  last measure has trailing placeholders, those placeholders ARE the
+   *  cursor stops for that region; the past-end at flat.length is also
+   *  reachable but visually equivalent to "after the last placeholder". */
   getVoiceLength(voice?: Voice): number {
     return this.flatChildren(voice ?? this.currentVoice).length;
+  }
+
+  /** True iff this voice's cursor is at the past-end-of-full-last-measure
+   *  position — the rightmost layer is exactly full and there is no measure
+   *  after it. Lets the renderer style the cursor differently to signal
+   *  "next entry creates a new measure". */
+  isCursorAtPastEnd(voice?: Voice): boolean {
+    const v = voice ?? this.currentVoice;
+    if (this.cursors[v] !== this.getVoiceLength(v)) return false;
+    const layers = this.allLayers(v);
+    if (layers.length === 0) return false;
+    const last = layers[layers.length - 1];
+    for (const c of Array.from(last.children)) {
+      if (isPlaceholder(c)) return false;
+    }
+    let total = 0;
+    for (const c of this.contentChildren(last)) total += realTicks(c);
+    return total >= this.measureTicks();
   }
 
   /** Returns the MEI xml:id of the element at the given linear cursor. */
   getElementIdAt(voice: Voice, cursor: number): string | null {
     const flat = this.flatChildren(voice);
     if (cursor < 0 || cursor >= flat.length) return null;
-    return flat[cursor].getAttribute('xml:id');
+    return flat[cursor].getAttribute("xml:id");
   }
 
   /** Find which voice + index contains the element with the given xml:id.
@@ -379,7 +420,7 @@ export class ComposerModel {
     for (let voice: Voice = 1; voice <= 4; voice = (voice + 1) as Voice) {
       const flat = this.flatChildren(voice);
       for (let i = 0; i < flat.length; i++) {
-        if (flat[i].getAttribute('xml:id') === meiId) {
+        if (flat[i].getAttribute("xml:id") === meiId) {
           return { voice, index: i };
         }
       }
@@ -394,11 +435,11 @@ export class ComposerModel {
    *
    *  This is the single source of truth used by cursor positioning, dot
    *  cycling, and tie toggling. */
-  getCurrentElement(voice: Voice, mode: 'insert' | 'overwrite'): CurrentRef {
+  getCurrentElement(voice: Voice, mode: "insert" | "overwrite"): CurrentRef {
     const flat = this.flatChildren(voice);
     const cursor = this.cursors[voice];
     let idx: number;
-    if (mode === 'insert') {
+    if (mode === "insert") {
       if (cursor === 0) return null;
       idx = cursor - 1;
     } else {
@@ -407,7 +448,7 @@ export class ComposerModel {
     }
     const elem = flat[idx];
     if (!elem) return null;
-    const id = elem.getAttribute('xml:id');
+    const id = elem.getAttribute("xml:id");
     if (!id) return null;
     return { index: idx, id, elem };
   }
@@ -419,7 +460,7 @@ export class ComposerModel {
     const nextIdx = index + 1;
     if (nextIdx < 0 || nextIdx >= flat.length) return null;
     const elem = flat[nextIdx];
-    const id = elem.getAttribute('xml:id');
+    const id = elem.getAttribute("xml:id");
     if (!id) return null;
     return { index: nextIdx, id, elem };
   }
@@ -427,16 +468,16 @@ export class ComposerModel {
   /* ── setup setters / getters ──────────────────────────────────────────── */
 
   getTitle(): string {
-    const t = this.doc.querySelector('titleStmt > title');
-    return t?.textContent ?? 'Untitled';
+    const t = this.doc.querySelector("titleStmt > title");
+    return t?.textContent ?? "Untitled";
   }
 
   setTitle(title: string): void {
-    let t = this.doc.querySelector('titleStmt > title');
+    let t = this.doc.querySelector("titleStmt > title");
     if (!t) {
-      const titleStmt = this.doc.querySelector('titleStmt');
+      const titleStmt = this.doc.querySelector("titleStmt");
       if (!titleStmt) return;
-      t = el(this.doc, 'title');
+      t = el(this.doc, "title");
       titleStmt.insertBefore(t, titleStmt.firstChild);
     }
     t.textContent = title;
@@ -444,46 +485,47 @@ export class ComposerModel {
 
   getComposer(): string {
     const p = this.doc.querySelector('titleStmt persName[role="composer"]');
-    return p?.textContent ?? '';
+    return p?.textContent ?? "";
   }
 
   setComposer(name: string): void {
-    const titleStmt = this.doc.querySelector('titleStmt');
+    const titleStmt = this.doc.querySelector("titleStmt");
     if (!titleStmt) return;
-    let respStmt = titleStmt.querySelector('respStmt');
+    let respStmt = titleStmt.querySelector("respStmt");
     let persName = respStmt?.querySelector('persName[role="composer"]') ?? null;
     if (!name) {
       /* Empty composer: remove the respStmt entirely if it's empty. */
       if (persName) persName.parentNode?.removeChild(persName);
-      if (respStmt && respStmt.children.length === 0) respStmt.parentNode?.removeChild(respStmt);
+      if (respStmt && respStmt.children.length === 0)
+        respStmt.parentNode?.removeChild(respStmt);
       return;
     }
     if (!respStmt) {
-      respStmt = el(this.doc, 'respStmt');
+      respStmt = el(this.doc, "respStmt");
       titleStmt.appendChild(respStmt);
     }
     if (!persName) {
-      persName = el(this.doc, 'persName', { role: 'composer' });
+      persName = el(this.doc, "persName", { role: "composer" });
       respStmt.appendChild(persName);
     }
     persName.textContent = name;
   }
 
   getKeySig(): string {
-    const sd = this.doc.querySelector('scoreDef');
-    return sd?.getAttribute('key.sig') ?? '0';
+    const sd = this.doc.querySelector("scoreDef");
+    return sd?.getAttribute("key.sig") ?? "0";
   }
 
   setKeySig(sig: string): void {
-    const sd = this.doc.querySelector('scoreDef');
+    const sd = this.doc.querySelector("scoreDef");
     if (!sd) return;
-    sd.setAttribute('key.sig', sig);
+    sd.setAttribute("key.sig", sig);
   }
 
   getTimeSig(): { count: number; unit: number } {
-    const sd = this.doc.querySelector('scoreDef');
-    const count = parseInt(sd?.getAttribute('meter.count') ?? '4', 10);
-    const unit = parseInt(sd?.getAttribute('meter.unit') ?? '4', 10);
+    const sd = this.doc.querySelector("scoreDef");
+    const count = parseInt(sd?.getAttribute("meter.count") ?? "4", 10);
+    const unit = parseInt(sd?.getAttribute("meter.unit") ?? "4", 10);
     return { count, unit };
   }
 
@@ -492,48 +534,56 @@ export class ComposerModel {
    *  measure's tick budget. Measure count is preserved; enlarging is a
    *  no-op except for re-normalizing placeholders to the new duration. */
   setTimeSig(count: number, unit: number): void {
-    const sd = this.doc.querySelector('scoreDef');
+    const sd = this.doc.querySelector("scoreDef");
     if (!sd) return;
-    const prevCount = parseInt(sd.getAttribute('meter.count') ?? '4', 10);
-    const prevUnit = parseInt(sd.getAttribute('meter.unit') ?? '4', 10);
-    sd.setAttribute('meter.count', String(count));
-    sd.setAttribute('meter.unit', String(unit));
+    const prevCount = parseInt(sd.getAttribute("meter.count") ?? "4", 10);
+    const prevUnit = parseInt(sd.getAttribute("meter.unit") ?? "4", 10);
+    sd.setAttribute("meter.count", String(count));
+    sd.setAttribute("meter.unit", String(unit));
     if (count !== prevCount || unit !== prevUnit) {
       this.truncateOverflowingMeasures();
     }
   }
 
   getTempo(): { bpm: number; unit: string; dots: number; text: string } {
-    const t = this.doc.querySelector('tempo');
-    const bpm = parseInt(t?.getAttribute('mm') ?? t?.getAttribute('midi.bpm') ?? '120', 10);
-    const unit = t?.getAttribute('mm.unit') ?? '4';
-    const dots = parseInt(t?.getAttribute('mm.dots') ?? '0', 10);
-    const text = (t?.textContent ?? '').replace(/\s+$/, '');
+    const t = this.doc.querySelector("tempo");
+    const bpm = parseInt(
+      t?.getAttribute("mm") ?? t?.getAttribute("midi.bpm") ?? "120",
+      10,
+    );
+    const unit = t?.getAttribute("mm.unit") ?? "4";
+    const dots = parseInt(t?.getAttribute("mm.dots") ?? "0", 10);
+    const text = (t?.textContent ?? "").replace(/\s+$/, "");
     return { bpm, unit, dots, text };
   }
 
-  setTempo(bpm: number, mmUnit: '1' | '2' | '4' | '8', dots: 0 | 1, text = ''): void {
-    let t = this.doc.querySelector('tempo');
+  setTempo(
+    bpm: number,
+    mmUnit: "1" | "2" | "4" | "8",
+    dots: 0 | 1,
+    text = "",
+  ): void {
+    let t = this.doc.querySelector("tempo");
     if (!t) {
-      const firstMeasure = this.doc.querySelector('measure');
+      const firstMeasure = this.doc.querySelector("measure");
       if (!firstMeasure) return;
-      t = el(this.doc, 'tempo', { tstamp: '1', staff: '1' });
+      t = el(this.doc, "tempo", { tstamp: "1", staff: "1" });
       firstMeasure.insertBefore(t, firstMeasure.firstChild);
     }
-    t.setAttribute('mm', String(bpm));
-    t.setAttribute('mm.unit', mmUnit);
-    t.setAttribute('midi.bpm', String(bpm));
-    if (dots > 0) t.setAttribute('mm.dots', String(dots));
-    else t.removeAttribute('mm.dots');
+    t.setAttribute("mm", String(bpm));
+    t.setAttribute("mm.unit", mmUnit);
+    t.setAttribute("midi.bpm", String(bpm));
+    if (dots > 0) t.setAttribute("mm.dots", String(dots));
+    else t.removeAttribute("mm.dots");
     /* Tempo text rendered with a trailing space so the metronome glyph follows.
        Verovio renders text content + auto-formatted "♩ = 120" from mm/mm.unit. */
-    t.textContent = text ? text + ' ' : '';
+    t.textContent = text ? text + " " : "";
   }
 
   /* ── measure-aware structural helpers ─────────────────────────────────── */
 
   allMeasures(): Element[] {
-    return Array.from(this.doc.querySelectorAll('measure'));
+    return Array.from(this.doc.querySelectorAll("measure"));
   }
 
   /** Returns the xml:id of the <staff> the given voice maps to, in the
@@ -555,8 +605,8 @@ export class ComposerModel {
     const c = this.cursors[v];
     const flat = this.flatChildren(v);
     let measure: Element | null = null;
-    const target = c < flat.length ? flat[c] : (c > 0 ? flat[c - 1] : null);
-    if (target) measure = target.closest('measure');
+    const target = c < flat.length ? flat[c] : c > 0 ? flat[c - 1] : null;
+    if (target) measure = target.closest("measure");
     if (!measure) measure = this.allMeasures()[0] ?? null;
     if (!measure) return null;
     return this.staffIdInMeasure(measure, v);
@@ -564,9 +614,10 @@ export class ComposerModel {
 
   private staffIdInMeasure(measure: Element, voice: Voice): string | null {
     const staffN = voice <= 2 ? 1 : 2;
-    const staff = Array.from(measure.querySelectorAll('staff'))
-      .find((s) => s.getAttribute('n') === String(staffN));
-    return staff?.getAttribute('xml:id') ?? null;
+    const staff = Array.from(measure.querySelectorAll("staff")).find(
+      (s) => s.getAttribute("n") === String(staffN),
+    );
+    return staff?.getAttribute("xml:id") ?? null;
   }
 
   /** Total ticks in one measure under the current meter. */
@@ -579,11 +630,13 @@ export class ComposerModel {
   private layerInMeasure(measure: Element, voice: Voice): Element | null {
     const staffN = voice <= 2 ? 1 : 2;
     const layerN = voice === 1 || voice === 3 ? 1 : 2;
-    const staff = Array.from(measure.querySelectorAll('staff'))
-      .find((s) => s.getAttribute('n') === String(staffN));
+    const staff = Array.from(measure.querySelectorAll("staff")).find(
+      (s) => s.getAttribute("n") === String(staffN),
+    );
     if (!staff) return null;
-    const layer = Array.from(staff.querySelectorAll('layer'))
-      .find((l) => l.getAttribute('n') === String(layerN));
+    const layer = Array.from(staff.querySelectorAll("layer")).find(
+      (l) => l.getAttribute("n") === String(layerN),
+    );
     return layer ?? null;
   }
 
@@ -622,8 +675,13 @@ export class ComposerModel {
    *  insertion should target m_k, not m_(k-1)'s trailing edge.
    *
    *  Past end: returns the last layer at its content-child length. */
-  private locateCursor(voice: Voice, linearCursor: number): {
-    measureIdx: number; layer: Element; withinIdx: number;
+  private locateCursor(
+    voice: Voice,
+    linearCursor: number,
+  ): {
+    measureIdx: number;
+    layer: Element;
+    withinIdx: number;
     inTuplet: { tuplet: Element; tupletChildIdx: number } | null;
   } | null {
     const layers = this.allLayers(voice);
@@ -638,13 +696,15 @@ export class ComposerModel {
         /* If the target nav stop is INSIDE a tuplet, return an in-tuplet
            location. The tuplet's withinIdx is its position in contentChildren. */
         const tParent = target.parentElement;
-        if (tParent && tParent.localName === 'tuplet') {
+        if (tParent && tParent.localName === "tuplet") {
           const cc = this.contentChildren(layer);
           const wIdx = cc.indexOf(tParent);
           const tChildren = Array.from(tParent.children);
           const tIdx = tChildren.indexOf(target);
           return {
-            measureIdx: mi, layer, withinIdx: wIdx,
+            measureIdx: mi,
+            layer,
+            withinIdx: wIdx,
             inTuplet: { tuplet: tParent, tupletChildIdx: tIdx },
           };
         }
@@ -653,8 +713,13 @@ export class ComposerModel {
         let realIdx = 0;
         for (const c of Array.from(layer.children)) {
           if (c === target) break;
-          if (c.localName === 'chord' || c.localName === 'note' || c.localName === 'rest' ||
-              c.localName === 'tuplet') realIdx++;
+          if (
+            c.localName === "chord" ||
+            c.localName === "note" ||
+            c.localName === "rest" ||
+            c.localName === "tuplet"
+          )
+            realIdx++;
         }
         return { measureIdx: mi, layer, withinIdx: realIdx, inTuplet: null };
       }
@@ -664,7 +729,8 @@ export class ComposerModel {
     const last = layers.length - 1;
     const layer = layers[last];
     return {
-      measureIdx: last, layer,
+      measureIdx: last,
+      layer,
       withinIdx: this.contentChildren(layer).length,
       inTuplet: null,
     };
@@ -677,8 +743,13 @@ export class ComposerModel {
    *  contentChildren when the target IS real content; for a layer-level
    *  placeholder target, withinIdx is the count of content-children
    *  preceding it. */
-  private locateFlatElement(voice: Voice, flatIdx: number): {
-    measureIdx: number; layer: Element; withinIdx: number;
+  private locateFlatElement(
+    voice: Voice,
+    flatIdx: number,
+  ): {
+    measureIdx: number;
+    layer: Element;
+    withinIdx: number;
     inTuplet: { tuplet: Element; tupletChildIdx: number } | null;
   } | null {
     if (flatIdx < 0) return null;
@@ -689,22 +760,34 @@ export class ComposerModel {
       if (remaining < navKids.length) {
         const target = navKids[remaining];
         const tParent = target.parentElement;
-        if (tParent && tParent.localName === 'tuplet') {
+        if (tParent && tParent.localName === "tuplet") {
           const cc = this.contentChildren(layers[mi]);
           const wIdx = cc.indexOf(tParent);
           const tIdx = Array.from(tParent.children).indexOf(target);
           return {
-            measureIdx: mi, layer: layers[mi], withinIdx: wIdx,
+            measureIdx: mi,
+            layer: layers[mi],
+            withinIdx: wIdx,
             inTuplet: { tuplet: tParent, tupletChildIdx: tIdx },
           };
         }
         let realIdx = 0;
         for (const c of Array.from(layers[mi].children)) {
           if (c === target) break;
-          if (c.localName === 'chord' || c.localName === 'note' || c.localName === 'rest' ||
-              c.localName === 'tuplet') realIdx++;
+          if (
+            c.localName === "chord" ||
+            c.localName === "note" ||
+            c.localName === "rest" ||
+            c.localName === "tuplet"
+          )
+            realIdx++;
         }
-        return { measureIdx: mi, layer: layers[mi], withinIdx: realIdx, inTuplet: null };
+        return {
+          measureIdx: mi,
+          layer: layers[mi],
+          withinIdx: realIdx,
+          inTuplet: null,
+        };
       }
       remaining -= navKids.length;
     }
@@ -713,12 +796,17 @@ export class ComposerModel {
 
   /** Cumulative ticks for `voice` BEFORE its `withinIdx`-th content child
    *  in measure `measureIdx`. */
-  private timeWithinMeasure(voice: Voice, measureIdx: number, withinIdx: number): number {
+  private timeWithinMeasure(
+    voice: Voice,
+    measureIdx: number,
+    withinIdx: number,
+  ): number {
     const layers = this.allLayers(voice);
     if (measureIdx >= layers.length) return 0;
     const kids = this.contentChildren(layers[measureIdx]);
     let t = 0;
-    for (let i = 0; i < Math.min(withinIdx, kids.length); i++) t += elementDurationTicks(kids[i]);
+    for (let i = 0; i < Math.min(withinIdx, kids.length); i++)
+      t += elementDurationTicks(kids[i]);
     return t;
   }
 
@@ -728,9 +816,13 @@ export class ComposerModel {
    *  Tuplet contents are NOT included here — they're addressed via the
    *  inTuplet field on the cursor location instead. */
   private contentChildren(layer: Element): Element[] {
-    return Array.from(layer.children).filter((c) =>
-      c.localName === 'chord' || c.localName === 'note' || c.localName === 'rest' ||
-      c.localName === 'tuplet');
+    return Array.from(layer.children).filter(
+      (c) =>
+        c.localName === "chord" ||
+        c.localName === "note" ||
+        c.localName === "rest" ||
+        c.localName === "tuplet",
+    );
   }
 
   /** Compute the in-tuplet nav-stops contributed by a single tuplet:
@@ -748,7 +840,11 @@ export class ComposerModel {
     for (const c of kids) {
       if (isTupletPlaceholder(c)) {
         if (firstTrailing === null) firstTrailing = c;
-      } else if (c.localName === 'note' || c.localName === 'chord' || c.localName === 'rest') {
+      } else if (
+        c.localName === "note" ||
+        c.localName === "chord" ||
+        c.localName === "rest"
+      ) {
         filled.push(c);
       }
     }
@@ -765,10 +861,15 @@ export class ComposerModel {
     const out: Element[] = [];
     for (const c of Array.from(layer.children)) {
       const ln = c.localName;
-      if (ln === 'tuplet') {
+      if (ln === "tuplet") {
         out.push(c);
         out.push(...this.tupletNavStops(c));
-      } else if (ln === 'chord' || ln === 'note' || ln === 'rest' || isPlaceholder(c)) {
+      } else if (
+        ln === "chord" ||
+        ln === "note" ||
+        ln === "rest" ||
+        isPlaceholder(c)
+      ) {
         out.push(c);
       }
     }
@@ -784,7 +885,7 @@ export class ComposerModel {
    *  placeholders (data-tuplet-placeholder) are never touched here — those
    *  live inside <tuplet> elements and are managed by tuplet-specific code. */
   private normalizePlaceholders(): void {
-    const layers = this.doc.querySelectorAll('layer');
+    const layers = this.doc.querySelectorAll("layer");
     const ticks = this.measureTicks();
     const pieces = ticks > 0 ? decomposeTicks(ticks) : [];
     for (const layer of Array.from(layers)) {
@@ -792,18 +893,23 @@ export class ComposerModel {
       const toRemove: Element[] = [];
       for (const c of Array.from(layer.children)) {
         if (isPlaceholder(c)) toRemove.push(c);
-        else if (c.localName === 'chord' || c.localName === 'note' || c.localName === 'rest' ||
-                 c.localName === 'tuplet') hasReal = true;
+        else if (
+          c.localName === "chord" ||
+          c.localName === "note" ||
+          c.localName === "rest" ||
+          c.localName === "tuplet"
+        )
+          hasReal = true;
       }
       for (const c of toRemove) layer.removeChild(c);
       if (hasReal) continue;
       for (const p of pieces) {
-        const space = el(this.doc, 'space', {
-          'xml:id': newId('sp'),
+        const space = el(this.doc, "space", {
+          "xml:id": newId("sp"),
           dur: p.dur,
           dots: p.dots > 0 ? p.dots : undefined,
         });
-        space.setAttribute(PLACEHOLDER_ATTR, 'true');
+        space.setAttribute(PLACEHOLDER_ATTR, "true");
         layer.appendChild(space);
       }
     }
@@ -811,17 +917,17 @@ export class ComposerModel {
 
   /** Append a new empty measure with all four layers. Sets barlines. */
   private appendMeasure(): Element {
-    const section = this.doc.querySelector('section');
-    if (!section) throw new Error('section element missing');
+    const section = this.doc.querySelector("section");
+    if (!section) throw new Error("section element missing");
     const measures = this.allMeasures();
     const n = measures.length + 1;
-    const m = el(this.doc, 'measure', { n, 'xml:id': newId('m') });
-    const s1 = el(this.doc, 'staff', { n: 1, 'xml:id': newId('s') });
-    s1.appendChild(el(this.doc, 'layer', { n: 1, 'xml:id': newId('l') }));
-    s1.appendChild(el(this.doc, 'layer', { n: 2, 'xml:id': newId('l') }));
-    const s2 = el(this.doc, 'staff', { n: 2, 'xml:id': newId('s') });
-    s2.appendChild(el(this.doc, 'layer', { n: 1, 'xml:id': newId('l') }));
-    s2.appendChild(el(this.doc, 'layer', { n: 2, 'xml:id': newId('l') }));
+    const m = el(this.doc, "measure", { n, "xml:id": newId("m") });
+    const s1 = el(this.doc, "staff", { n: 1, "xml:id": newId("s") });
+    s1.appendChild(el(this.doc, "layer", { n: 1, "xml:id": newId("l") }));
+    s1.appendChild(el(this.doc, "layer", { n: 2, "xml:id": newId("l") }));
+    const s2 = el(this.doc, "staff", { n: 2, "xml:id": newId("s") });
+    s2.appendChild(el(this.doc, "layer", { n: 1, "xml:id": newId("l") }));
+    s2.appendChild(el(this.doc, "layer", { n: 2, "xml:id": newId("l") }));
     m.appendChild(s1);
     m.appendChild(s2);
     section.appendChild(m);
@@ -834,22 +940,27 @@ export class ComposerModel {
   setBarlines(): void {
     const measures = this.allMeasures();
     for (let i = 0; i < measures.length; i++) {
-      if (i < measures.length - 1) measures[i].removeAttribute('right');
-      else measures[i].setAttribute('right', 'end');
+      if (i < measures.length - 1) measures[i].removeAttribute("right");
+      else measures[i].setAttribute("right", "end");
     }
   }
 
   /* ── navigation ─────────────────────────────────────────────────────────── */
 
-  switchVoice(dir: 'up' | 'down'): Voice {
+  switchVoice(dir: "up" | "down"): Voice {
     const cur = this.currentVoice;
     let next: Voice;
-    if (dir === 'up') next = (cur > 1 ? cur - 1 : 1) as Voice;
-    else              next = (cur < 4 ? cur + 1 : 4) as Voice;
+    if (dir === "up") next = (cur > 1 ? cur - 1 : 1) as Voice;
+    else next = (cur < 4 ? cur + 1 : 4) as Voice;
     if (next === cur) return next;
+    const oldMIdx = this.cursorMeasureIdx(cur);
     const currentTime = this.getTimeAt(cur, this.cursors[cur]);
     this.currentVoice = next;
     this.cursors[next] = this.findCursorAtOrBefore(next, currentTime);
+    /* Switching voice abandons the old voice's cursor location → run the
+       autofill sweep on the old (voice, measure) so partial measures left
+       behind get visible beat-aligned rests. */
+    if (oldMIdx >= 0) this.autofillMeasure(cur, oldMIdx);
     return next;
   }
 
@@ -876,30 +987,83 @@ export class ComposerModel {
   }
 
   setVoice(v: Voice): void {
+    const oldV = this.currentVoice;
+    const oldMIdx = oldV !== v ? this.cursorMeasureIdx(oldV) : -1;
     this.currentVoice = v;
     const max = this.getVoiceLength(v);
     if (this.cursors[v] > max) this.cursors[v] = max;
+    if (oldV !== v && oldMIdx >= 0) this.autofillMeasure(oldV, oldMIdx);
   }
 
-  moveCursor(dir: 'left' | 'right'): number {
+  moveCursor(dir: "left" | "right"): number {
     const v = this.currentVoice;
     const len = this.getVoiceLength(v);
+    const prevMIdx = this.cursorMeasureIdx(v);
     let c = this.cursors[v];
-    if (dir === 'left' && c > 0) c--;
-    else if (dir === 'right' && c < len) c++;
+    if (dir === "left" && c > 0) c--;
+    else if (dir === "right" && c < len) c++;
     this.cursors[v] = c;
+    const newMIdx = this.cursorMeasureIdx(v);
+    if (prevMIdx >= 0 && prevMIdx !== newMIdx) this.autofillMeasure(v, prevMIdx);
     return c;
   }
 
   setCursor(c: number, voice?: Voice): void {
     const v = voice ?? this.currentVoice;
     const len = this.getVoiceLength(v);
+    const prevMIdx = this.cursorMeasureIdx(v);
     this.cursors[v] = Math.max(0, Math.min(len, c));
+    const newMIdx = this.cursorMeasureIdx(v);
+    if (prevMIdx >= 0 && prevMIdx !== newMIdx) this.autofillMeasure(v, prevMIdx);
   }
 
   cursorToEnd(voice?: Voice): void {
     const v = voice ?? this.currentVoice;
+    const prevMIdx = this.cursorMeasureIdx(v);
     this.cursors[v] = this.getVoiceLength(v);
+    const newMIdx = this.cursorMeasureIdx(v);
+    if (prevMIdx >= 0 && prevMIdx !== newMIdx) this.autofillMeasure(v, prevMIdx);
+  }
+
+  /** The measureIdx of this voice's current cursor location, or -1 when the
+   *  cursor doesn't resolve to a measure (no layers in this voice — only
+   *  happens transiently before the doc is initialized). */
+  private cursorMeasureIdx(voice: Voice): number {
+    const loc = this.locateCursor(voice, this.cursors[voice]);
+    return loc ? loc.measureIdx : -1;
+  }
+
+  /** Sweep called when the cursor leaves a (voice, measure). When the layer
+   *  has real content but isn't full, AND this voice has content in some
+   *  strictly-later measure, replace its trailing placeholder space with
+   *  visible beat-aligned rests. The rests are plain `<rest>` elements with
+   *  no special marker — once placed, they behave like manually-entered
+   *  rests (extending the measure requires deleting them first). */
+  private autofillMeasure(voice: Voice, measureIdx: number): void {
+    const layers = this.allLayers(voice);
+    if (measureIdx < 0 || measureIdx >= layers.length) return;
+    const layer = layers[measureIdx];
+    const cc = this.contentChildren(layer);
+    if (cc.length === 0) return;
+    let hasLaterContent = false;
+    for (let m = measureIdx + 1; m < layers.length; m++) {
+      if (this.contentChildren(layers[m]).length > 0) {
+        hasLaterContent = true;
+        break;
+      }
+    }
+    if (!hasLaterContent) return;
+    let total = 0;
+    for (const c of cc) total += realTicks(c);
+    const cap = this.measureTicks();
+    if (total >= cap) return;
+    for (const c of Array.from(layer.children)) {
+      if (isPlaceholder(c)) layer.removeChild(c);
+    }
+    const ts = readTimeSig(this.doc);
+    for (const r of decomposeBeatAlignedRests(total, cap - total, ts)) {
+      layer.appendChild(this.buildRestElement({ duration: r.dur, dots: r.dots }));
+    }
   }
 
   /** Translate the current voice's cursor position into an MEI (measureIdx,
@@ -916,10 +1080,17 @@ export class ComposerModel {
     if (layers.length === 0) return null;
     const loc = this.locateCursor(voice, cursor);
     if (!loc) return null;
-    const ticksInMeasure = this.timeWithinMeasure(voice, loc.measureIdx, loc.withinIdx);
+    const ticksInMeasure = this.timeWithinMeasure(
+      voice,
+      loc.measureIdx,
+      loc.withinIdx,
+    );
     const { unit } = this.getTimeSig();
     const ticksPerBeat = 64 / unit;
-    return { measureIdx: loc.measureIdx, tstamp: 1 + ticksInMeasure / ticksPerBeat };
+    return {
+      measureIdx: loc.measureIdx,
+      tstamp: 1 + ticksInMeasure / ticksPerBeat,
+    };
   }
 
   /* ── tuplet helpers (public) ───────────────────────────────────────────── */
@@ -957,11 +1128,14 @@ export class ComposerModel {
    *      the bar by the new note.
    *  Otherwise returns `{ ok: true }`. Callers should consult this first;
    *  the insert methods themselves still defensively reject on overflow. */
-  canInsertHere(duration: Duration, dots: Dots = 0): { ok: true } | { ok: false; reason: string } {
+  canInsertHere(
+    duration: Duration,
+    dots: Dots = 0,
+  ): { ok: true } | { ok: false; reason: string } {
     const v = this.currentVoice;
     const cursor = this.cursors[v];
-    const loc = this.locateCursor(v, cursor);
-    if (!loc) return { ok: false, reason: 'No layer at cursor.' };
+    let loc = this.locateCursor(v, cursor);
+    if (!loc) return { ok: false, reason: "No layer at cursor." };
     const totalTicks = ticksOf(duration, dots);
 
     if (loc.inTuplet) {
@@ -975,17 +1149,35 @@ export class ComposerModel {
       return { ok: true };
     }
 
-    const cc = this.contentChildren(loc.layer);
-    const postCursor = cc.slice(loc.withinIdx);
-    const postHasTuplet = postCursor.some((c) => c.localName === 'tuplet');
-    if (postHasTuplet) {
-      const usedBefore = this.timeWithinMeasure(v, loc.measureIdx, loc.withinIdx);
-      let usedAfter = 0;
-      for (const c of postCursor) usedAfter += realTicks(c);
-      if (usedBefore + totalTicks + usedAfter > this.measureTicks()) {
-        return { ok: false, reason: 'Insertion would push tuplet across bar line.' };
+    /* Apply the same boundary-rule re-aim used by insertWithSplit so the
+       pre-flight reflects the apply-time location precisely. */
+    if (cursor > 0) {
+      const flat = this.flatChildren(v);
+      const at = cursor < flat.length ? flat[cursor] : null;
+      const prev = flat[cursor - 1];
+      if (at && prev && isPlaceholder(at) && !isPlaceholder(prev)) {
+        const prevMeasure = prev.closest("measure");
+        const atMeasure = at.closest("measure");
+        if (prevMeasure && atMeasure && prevMeasure !== atMeasure) {
+          const prevLayer = prev.parentElement;
+          if (prevLayer) {
+            const prevMeasureIdx = this.allMeasures().indexOf(prevMeasure);
+            loc = {
+              measureIdx: prevMeasureIdx,
+              layer: prevLayer,
+              withinIdx: this.contentChildren(prevLayer).length,
+              inTuplet: null,
+            };
+          }
+        }
       }
     }
+
+    const plan = this.planInsert(
+      { measureIdx: loc.measureIdx, layer: loc.layer, withinIdx: loc.withinIdx },
+      totalTicks,
+    );
+    if (!plan.ok) return { ok: false, reason: plan.reason };
     return { ok: true };
   }
 
@@ -1008,35 +1200,38 @@ export class ComposerModel {
     const v = this.currentVoice;
     const cursor = this.cursors[v];
     const loc = this.locateCursor(v, cursor);
-    if (!loc) return { ok: false, reason: 'no layer at cursor' };
-    if (loc.inTuplet) return { ok: false, reason: 'cannot nest tuplets' };
+    if (!loc) return { ok: false, reason: "no layer at cursor" };
+    if (loc.inTuplet) return { ok: false, reason: "cannot nest tuplets" };
 
     const spanTicks = ticksOf(spanDur, spanDots);
     const usedBefore = this.timeWithinMeasure(v, loc.measureIdx, loc.withinIdx);
     const remaining = this.measureTicks() - usedBefore;
     if (spanTicks > remaining) {
-      return { ok: false, reason: 'Tuplet span exceeds remaining measure space' };
+      return {
+        ok: false,
+        reason: "Tuplet span exceeds remaining measure space",
+      };
     }
 
     /* Sanity check: num atomic written-ticks scaled by numbase/num must
        equal spanTicks. (Constructs a tuplet whose internal math is sound.) */
     const atomicWritten = ticksOf(atomicDur, 0);
-    const computedSpan = num * atomicWritten * numbase / num;
+    const computedSpan = (num * atomicWritten * numbase) / num;
     if (Math.abs(computedSpan - spanTicks) > 1e-6) {
-      return { ok: false, reason: 'tuplet ratio/atomic mismatch with span' };
+      return { ok: false, reason: "tuplet ratio/atomic mismatch with span" };
     }
 
-    const tuplet = el(this.doc, 'tuplet', {
-      'xml:id': newId('t'),
+    const tuplet = el(this.doc, "tuplet", {
+      "xml:id": newId("t"),
       num: String(num),
       numbase: String(numbase),
-      'bracket.visible': 'true',
-      'num.visible': 'true',
-      'num.format': 'count',
+      "bracket.visible": "true",
+      "num.visible": "true",
+      "num.format": "count",
     });
     /* Record the atomic so that `regenTupletPlaceholders` can preserve
        the atomic structure across fill/delete (perfectly reversible). */
-    tuplet.setAttribute('data-tuplet-atomic-dur', atomicDur);
+    tuplet.setAttribute("data-tuplet-atomic-dur", atomicDur);
     for (let i = 0; i < num; i++) {
       tuplet.appendChild(this.buildTupletPlaceholder(atomicDur, 0));
     }
@@ -1047,7 +1242,7 @@ export class ComposerModel {
        model, the tuplet wrapper itself is also a nav stop, occupying the
        pre-creation cursor index; the fill anchor is one position right. */
     this.cursors[v] = Math.min(this.cursors[v] + 1, this.getVoiceLength(v));
-    return { ok: true, id: tuplet.getAttribute('xml:id') ?? '' };
+    return { ok: true, id: tuplet.getAttribute("xml:id") ?? "" };
   }
 
   /** Insert a chord at the current voice's cursor; advances cursor. May
@@ -1070,7 +1265,10 @@ export class ComposerModel {
    *  does NOT resolve a pending tie (a rest has no matching pitch). */
   insertRestAtCursor(input: RestInput): string | null {
     const v = this.currentVoice;
-    const id = this.insertWithSplit({ ...input, notes: [] as ReadonlyArray<ResolvedNote> }, true);
+    const id = this.insertWithSplit(
+      { ...input, notes: [] as ReadonlyArray<ResolvedNote> },
+      true,
+    );
     if (id === null) return null;
     this.normalizePlaceholders();
     this.cursors[v] = Math.min(this.cursors[v], this.getVoiceLength(v));
@@ -1086,21 +1284,22 @@ export class ComposerModel {
     const notes = this.extractNoteElements(elem);
     for (const n of notes) {
       /* If this note IS a stub itself, drop its visual <lv>. */
-      if (n.hasAttribute('data-pending-tie')) removeLvForNote(n);
+      if (n.hasAttribute("data-pending-tie")) removeLvForNote(n);
       /* Then handle realized tie partners. */
-      const partnerId = n.getAttribute('data-tie-partner');
+      const partnerId = n.getAttribute("data-tie-partner");
       if (!partnerId) continue;
-      const partner = this.doc.querySelector('[*|id="' + partnerId + '"]')
-        ?? this.doc.querySelector('[id="' + partnerId + '"]');
+      const partner =
+        this.doc.querySelector('[*|id="' + partnerId + '"]') ??
+        this.doc.querySelector('[id="' + partnerId + '"]');
       if (!partner) continue;
-      const partnerTie = partner.getAttribute('tie');
-      if (partnerTie === 'i') {
+      const partnerTie = partner.getAttribute("tie");
+      if (partnerTie === "i") {
         clearTieFlag(partner);
         setStubTie(partner);
-      } else if (partnerTie === 't' || partnerTie === 'm') {
+      } else if (partnerTie === "t" || partnerTie === "m") {
         clearTieFlag(partner);
       }
-      partner.removeAttribute('data-tie-partner');
+      partner.removeAttribute("data-tie-partner");
     }
   }
 
@@ -1119,22 +1318,24 @@ export class ComposerModel {
     const prevElem = this.contentChildren(prev.layer)[prev.withinIdx];
     const currElem = this.contentChildren(curr.layer)[curr.withinIdx];
     if (!prevElem || !currElem) return;
-    if (currElem.localName === 'rest') return;
+    if (currElem.localName === "rest") return;
     const prevNotes = this.extractNoteElements(prevElem);
     const currNotes = this.extractNoteElements(currElem);
     for (const n of prevNotes) {
-      if (!n.hasAttribute('data-pending-tie')) continue;
-      const partner = currNotes.find((m) => notesMatch(n, m) && !m.hasAttribute('tie'));
+      if (!n.hasAttribute("data-pending-tie")) continue;
+      const partner = currNotes.find(
+        (m) => notesMatch(n, m) && !m.hasAttribute("tie"),
+      );
       if (!partner) continue;
       /* Replace the stub representation (<lv> + data-pending-tie) with a
          proper @tie="i"/@tie="t" pair. */
       clearStubTie(n);
-      setTieFlag(n, 'i');
-      setTieFlag(partner, 't');
-      const partnerId = partner.getAttribute('xml:id');
-      const nId = n.getAttribute('xml:id');
-      if (partnerId) n.setAttribute('data-tie-partner', partnerId);
-      if (nId) partner.setAttribute('data-tie-partner', nId);
+      setTieFlag(n, "i");
+      setTieFlag(partner, "t");
+      const partnerId = partner.getAttribute("xml:id");
+      const nId = n.getAttribute("xml:id");
+      if (partnerId) n.setAttribute("data-tie-partner", partnerId);
+      if (nId) partner.setAttribute("data-tie-partner", nId);
     }
   }
 
@@ -1179,12 +1380,15 @@ export class ComposerModel {
         }
         const replaced = this.buildChordElement(input);
         tuplet.appendChild(replaced);
-        for (const p of this.regenTupletPlaceholders(tuplet, trailingTicks - newTicks)) {
+        for (const p of this.regenTupletPlaceholders(
+          tuplet,
+          trailingTicks - newTicks,
+        )) {
           tuplet.appendChild(p);
         }
         this.resolvePendingTies(cursorAtCall);
         this.normalizePlaceholders();
-        return replaced.getAttribute('xml:id');
+        return replaced.getAttribute("xml:id");
       }
 
       /* Replace a filled tuplet child. Tick delta absorbs into trailing
@@ -1198,12 +1402,15 @@ export class ComposerModel {
       for (const c of Array.from(tuplet.children)) {
         if (isTupletPlaceholder(c)) tuplet.removeChild(c);
       }
-      for (const p of this.regenTupletPlaceholders(tuplet, trailingTicks - delta)) {
+      for (const p of this.regenTupletPlaceholders(
+        tuplet,
+        trailingTicks - delta,
+      )) {
         tuplet.appendChild(p);
       }
       this.resolvePendingTies(cursorAtCall);
       this.normalizePlaceholders();
-      return replaced.getAttribute('xml:id');
+      return replaced.getAttribute("xml:id");
     }
 
     const kids = this.contentChildren(loc.layer);
@@ -1213,7 +1420,7 @@ export class ComposerModel {
        (the chord's real-time ticks must equal the tuplet's real-time ticks
        or fit the measure budget). */
     const oldLayerChild = kids[loc.withinIdx];
-    if (oldLayerChild.localName === 'tuplet') {
+    if (oldLayerChild.localName === "tuplet") {
       /* Treat tuplet as an atomic replace target: remove it, then run
          insertWithSplit. */
       const totalTicks = ticksOf(input.duration, input.dots ?? 0);
@@ -1226,19 +1433,28 @@ export class ComposerModel {
       this.normalizePlaceholders();
       return id;
     }
-    /* Simple in-place replace WITHIN current measure if it fits. */
+    /* Simple in-place replace WITHIN current measure if it fits — checked
+       against the post-cursor content too, since the replaced element's
+       successors keep their position in the layer's child list and would
+       otherwise be pushed past the barline silently. */
     const totalTicks = ticksOf(input.duration, input.dots ?? 0);
     const usedBefore = this.timeWithinMeasure(v, loc.measureIdx, loc.withinIdx);
-    if (usedBefore + totalTicks <= this.measureTicks()) {
+    let postBlockTicks = 0;
+    for (let i = loc.withinIdx + 1; i < kids.length; i++) {
+      postBlockTicks += realTicks(kids[i]);
+    }
+    if (usedBefore + totalTicks + postBlockTicks <= this.measureTicks()) {
       const old = kids[loc.withinIdx];
       this.orphanTiePartners(old);
       const replaced = this.buildChordElement(input);
       loc.layer.replaceChild(replaced, old);
       this.resolvePendingTies(cursorAtCall);
       this.normalizePlaceholders();
-      return replaced.getAttribute('xml:id');
+      return replaced.getAttribute("xml:id");
     }
-    /* Overflow on replace: remove old, insertWithSplit, restore cursor. */
+    /* Overflow on replace: remove old, run the planning insertWithSplit
+       (which handles displacement of any remaining post-cursor content),
+       restore cursor to its pre-replace position. */
     const old = kids[loc.withinIdx];
     this.orphanTiePartners(old);
     loc.layer.removeChild(old);
@@ -1277,19 +1493,28 @@ export class ComposerModel {
       const here = flat[c];
       if (isTupletPlaceholder(here)) {
         const tuplet = here.parentElement;
-        if (tuplet && tuplet.localName === 'tuplet') {
-          const hasFilled = Array.from(tuplet.children).some((cc) => !isTupletPlaceholder(cc));
+        if (tuplet && tuplet.localName === "tuplet") {
+          const hasFilled = Array.from(tuplet.children).some(
+            (cc) => !isTupletPlaceholder(cc),
+          );
           if (!hasFilled) {
-            const measureA = tuplet.closest('measure') as Element | null;
+            const measureA = tuplet.closest("measure") as Element | null;
             tuplet.parentNode?.removeChild(tuplet);
-            if (measureA && this.measureIsEmpty(measureA) && this.allMeasures().length > 1) {
+            if (
+              measureA &&
+              this.measureIsEmpty(measureA) &&
+              this.allMeasures().length > 1
+            ) {
               measureA.parentNode?.removeChild(measureA);
               this.renumberMeasures();
             }
             this.setBarlines();
             this.normalizePlaceholders();
             for (let vi = 1 as Voice; vi <= 4; vi = (vi + 1) as Voice) {
-              this.cursors[vi] = Math.min(this.cursors[vi], this.getVoiceLength(vi));
+              this.cursors[vi] = Math.min(
+                this.cursors[vi],
+                this.getVoiceLength(vi),
+              );
               if (vi === 4) break;
             }
             return true;
@@ -1306,7 +1531,7 @@ export class ComposerModel {
       this.cursors[v] = c - 1;
       return true;
     }
-    if (target.localName === 'tuplet') {
+    if (target.localName === "tuplet") {
       /* Cursor is "inside the tuplet at its first nav stop" (= before first
          filled child or fill anchor). Backspace here means "back out of
          the tuplet to its layer-level left edge" — symmetric to the
@@ -1318,7 +1543,10 @@ export class ComposerModel {
     /* Tuplet case (b): target is a filled child of a <tuplet>. Remove it
        and grow trailing placeholders by writtenTicks(target) so the
        tuplet's total duration stays constant. */
-    const tupletParent = target.parentElement?.localName === 'tuplet' ? target.parentElement : null;
+    const tupletParent =
+      target.parentElement?.localName === "tuplet"
+        ? target.parentElement
+        : null;
     if (tupletParent) {
       const oldTicks = writtenTicks(target);
       const trailingTicks = this.tupletPlaceholderTicks(tupletParent);
@@ -1327,7 +1555,10 @@ export class ComposerModel {
       for (const cc of Array.from(tupletParent.children)) {
         if (isTupletPlaceholder(cc)) tupletParent.removeChild(cc);
       }
-      for (const p of this.regenTupletPlaceholders(tupletParent, trailingTicks + oldTicks)) {
+      for (const p of this.regenTupletPlaceholders(
+        tupletParent,
+        trailingTicks + oldTicks,
+      )) {
         tupletParent.appendChild(p);
       }
       this.cursors[v] = c - 1;
@@ -1344,7 +1575,7 @@ export class ComposerModel {
     if (!loc) return false;
     const kids = this.contentChildren(loc.layer);
     if (loc.withinIdx >= kids.length) return false;
-    const measure = loc.layer.closest('measure') as Element | null;
+    const measure = loc.layer.closest("measure") as Element | null;
     const victim = kids[loc.withinIdx];
     this.orphanTiePartners(victim);
     loc.layer.removeChild(victim);
@@ -1353,7 +1584,11 @@ export class ComposerModel {
        (unless it's the only measure left). measureIsEmpty uses
        contentChildren so it correctly treats "only placeholders" as
        empty. */
-    if (measure && this.measureIsEmpty(measure) && this.allMeasures().length > 1) {
+    if (
+      measure &&
+      this.measureIsEmpty(measure) &&
+      this.allMeasures().length > 1
+    ) {
       measure.parentNode?.removeChild(measure);
       this.renumberMeasures();
     }
@@ -1380,7 +1615,7 @@ export class ComposerModel {
   private renumberMeasures(): void {
     const measures = this.allMeasures();
     for (let i = 0; i < measures.length; i++) {
-      measures[i].setAttribute('n', String(i + 1));
+      measures[i].setAttribute("n", String(i + 1));
     }
   }
 
@@ -1389,34 +1624,41 @@ export class ComposerModel {
    *  exceeds remaining measure space, splits across the bar with ties
    *  (auto-tie-overflow behavior). Returns null when there's no current
    *  element. */
-  cycleDotsOnCurrent(mode: 'insert' | 'overwrite'): { id: string; newDots: Dots } | null {
+  cycleDotsOnCurrent(
+    mode: "insert" | "overwrite",
+  ): { id: string; newDots: Dots } | null {
     const v = this.currentVoice;
     const ref = this.getCurrentElement(v, mode);
     if (!ref) return null;
     if (isPlaceholder(ref.elem)) return null; /* nothing to dot */
-    if (isTupletPlaceholder(ref.elem)) return null; /* fill anchors aren't dottable */
+    if (isTupletPlaceholder(ref.elem))
+      return null; /* fill anchors aren't dottable */
     const elem = ref.elem;
-    if (elem.localName === 'tuplet') return null; /* whole-tuplet dotting NYI */
-    const isRest = elem.localName === 'rest';
-    const curDots = parseInt(elem.getAttribute('dots') ?? '0', 10) as Dots;
-    const nextDots = (((curDots + 1) % 3) as Dots);
-    const dur = (elem.getAttribute('dur') ?? '4') as Duration;
+    if (elem.localName === "tuplet") return null; /* whole-tuplet dotting NYI */
+    const isRest = elem.localName === "rest";
+    const curDots = parseInt(elem.getAttribute("dots") ?? "0", 10) as Dots;
+    const nextDots = ((curDots + 1) % 3) as Dots;
+    const dur = (elem.getAttribute("dur") ?? "4") as Duration;
     const newTotalTicks = ticksOf(dur, nextDots);
 
     /* In-tuplet branch: absorb tick delta from trailing placeholders. */
-    const enclosingTuplet = elem.parentElement?.localName === 'tuplet' ? elem.parentElement : null;
+    const enclosingTuplet =
+      elem.parentElement?.localName === "tuplet" ? elem.parentElement : null;
     if (enclosingTuplet) {
       const oldTicks = ticksOf(dur, curDots);
       const delta = newTotalTicks - oldTicks;
       const trailingTicks = this.tupletPlaceholderTicks(enclosingTuplet);
       if (delta > trailingTicks) return null; /* doesn't fit — reject */
-      if (nextDots > 0) elem.setAttribute('dots', String(nextDots));
-      else elem.removeAttribute('dots');
+      if (nextDots > 0) elem.setAttribute("dots", String(nextDots));
+      else elem.removeAttribute("dots");
       /* Rebuild trailing placeholders. */
       for (const c of Array.from(enclosingTuplet.children)) {
         if (isTupletPlaceholder(c)) enclosingTuplet.removeChild(c);
       }
-      for (const p of this.regenTupletPlaceholders(enclosingTuplet, trailingTicks - delta)) {
+      for (const p of this.regenTupletPlaceholders(
+        enclosingTuplet,
+        trailingTicks - delta,
+      )) {
         enclosingTuplet.appendChild(p);
       }
       this.normalizePlaceholders();
@@ -1434,8 +1676,8 @@ export class ComposerModel {
 
     if (newTotalTicks <= remaining) {
       /* Fits in measure: just set/remove @dots. */
-      if (nextDots > 0) elem.setAttribute('dots', String(nextDots));
-      else elem.removeAttribute('dots');
+      if (nextDots > 0) elem.setAttribute("dots", String(nextDots));
+      else elem.removeAttribute("dots");
       this.normalizePlaceholders();
       return { id: ref.id, newDots: nextDots };
     }
@@ -1463,7 +1705,8 @@ export class ComposerModel {
     loc.layer.removeChild(elem);
     /* Insert the split chain. */
     let firstId: string | null = null;
-    if (restInput) firstId = this.insertWithSplit({ ...restInput, notes: [] }, true);
+    if (restInput)
+      firstId = this.insertWithSplit({ ...restInput, notes: [] }, true);
     else if (chordInput) firstId = this.insertWithSplit(chordInput, false);
     /* Cursor has advanced past the chain pieces. Calculate net delta:
        original cursor at savedCursor; we replaced 1 element with N pieces.
@@ -1474,7 +1717,7 @@ export class ComposerModel {
          - overwrite mode: move cursor back to start of chain (so the new
            chain head is the current element)
     */
-    if (mode === 'overwrite') {
+    if (mode === "overwrite") {
       this.cursors[v] = ref.index;
     } else {
       /* For insert, leave cursor at the end of the chain — savedCursor was
@@ -1492,36 +1735,39 @@ export class ComposerModel {
   /** Toggle a tie on the current note/chord. Attaches to next element's
    *  matching pitches; stubs for non-matching. Returns null when there's
    *  no tieable current element (e.g. rest, no current). */
-  toggleTieOnCurrent(mode: 'insert' | 'overwrite'): { id: string; tied: boolean } | null {
+  toggleTieOnCurrent(
+    mode: "insert" | "overwrite",
+  ): { id: string; tied: boolean } | null {
     const v = this.currentVoice;
     const ref = this.getCurrentElement(v, mode);
     if (!ref) return null;
-    if (ref.elem.localName === 'rest') return null;
+    if (ref.elem.localName === "rest") return null;
     if (isPlaceholder(ref.elem)) return null; /* placeholders aren't tieable */
     const currentNotes = this.extractNoteElements(ref.elem);
     if (currentNotes.length === 0) return null;
 
     const alreadyTied = currentNotes.some((n) => {
-      const t = n.getAttribute('tie');
-      return t === 'i' || t === 'm' || n.hasAttribute('data-pending-tie');
+      const t = n.getAttribute("tie");
+      return t === "i" || t === "m" || n.hasAttribute("data-pending-tie");
     });
     if (alreadyTied) {
       /* Toggle off: clear ties / pending markers on current notes; find
          realized partners (via data-tie-partner) and clear them too. */
       for (const n of currentNotes) {
-        if (n.hasAttribute('data-pending-tie')) {
+        if (n.hasAttribute("data-pending-tie")) {
           clearStubTie(n);
           continue;
         }
-        const partnerId = n.getAttribute('data-tie-partner');
+        const partnerId = n.getAttribute("data-tie-partner");
         if (partnerId) {
-          const partner = this.doc.querySelector('[*|id="' + partnerId + '"]')
-            ?? this.doc.querySelector('[id="' + partnerId + '"]');
+          const partner =
+            this.doc.querySelector('[*|id="' + partnerId + '"]') ??
+            this.doc.querySelector('[id="' + partnerId + '"]');
           if (partner) {
             clearTieFlag(partner);
-            partner.removeAttribute('data-tie-partner');
+            partner.removeAttribute("data-tie-partner");
           }
-          n.removeAttribute('data-tie-partner');
+          n.removeAttribute("data-tie-partner");
         }
         clearTieFlag(n);
       }
@@ -1537,14 +1783,16 @@ export class ComposerModel {
     const next = this.getNextElement(v, ref.index);
     const nextNotes = next ? this.extractNoteElements(next.elem) : [];
     for (const n of currentNotes) {
-      const partner = nextNotes.find((m) => notesMatch(n, m) && !m.hasAttribute('tie'));
+      const partner = nextNotes.find(
+        (m) => notesMatch(n, m) && !m.hasAttribute("tie"),
+      );
       if (partner) {
-        setTieFlag(n, 'i');
-        setTieFlag(partner, 't');
-        const partnerId = partner.getAttribute('xml:id');
-        const nId = n.getAttribute('xml:id');
-        if (partnerId) n.setAttribute('data-tie-partner', partnerId);
-        if (nId) partner.setAttribute('data-tie-partner', nId);
+        setTieFlag(n, "i");
+        setTieFlag(partner, "t");
+        const partnerId = partner.getAttribute("xml:id");
+        const nId = n.getAttribute("xml:id");
+        if (partnerId) n.setAttribute("data-tie-partner", partnerId);
+        if (nId) partner.setAttribute("data-tie-partner", nId);
       } else {
         setStubTie(n);
       }
@@ -1583,7 +1831,10 @@ export class ComposerModel {
     let truncateAt = -1;
     for (let i = 0; i < kids.length; i++) {
       const ticks = elementDurationTicks(kids[i]);
-      if (running + ticks > cap) { truncateAt = i; break; }
+      if (running + ticks > cap) {
+        truncateAt = i;
+        break;
+      }
       running += ticks;
     }
     if (truncateAt < 0) return; /* fully fits — nothing to do */
@@ -1591,7 +1842,7 @@ export class ComposerModel {
     const remaining = cap - running;
     /* Tuplets are atomic — never split. If a tuplet overflows the new
        budget, drop it whole (and everything after). */
-    if (overflowEl.localName === 'tuplet') {
+    if (overflowEl.localName === "tuplet") {
       this.orphanTiePartners(overflowEl);
       layer.removeChild(overflowEl);
     } else if (remaining > 0) {
@@ -1605,9 +1856,9 @@ export class ComposerModel {
         layer.removeChild(overflowEl);
       } else {
         const first = pieces[0];
-        overflowEl.setAttribute('dur', first.dur);
-        if (first.dots > 0) overflowEl.setAttribute('dots', String(first.dots));
-        else overflowEl.removeAttribute('dots');
+        overflowEl.setAttribute("dur", first.dur);
+        if (first.dots > 0) overflowEl.setAttribute("dots", String(first.dots));
+        else overflowEl.removeAttribute("dots");
       }
     } else {
       /* Previous element exactly filled the measure — drop overflowEl. */
@@ -1628,13 +1879,17 @@ export class ComposerModel {
    *  in-tuplet insert is rejected for overflow (cross-measure splits are
    *  never performed inside a tuplet — the tuplet is the unit of fit). */
   private insertWithSplit(
-    input: { duration: Duration; dots?: Dots; notes: ReadonlyArray<ResolvedNote> },
+    input: {
+      duration: Duration;
+      dots?: Dots;
+      notes: ReadonlyArray<ResolvedNote>;
+    },
     isRest: boolean,
   ): string | null {
     const v = this.currentVoice;
     const cursor = this.cursors[v];
     let loc = this.locateCursor(v, cursor);
-    if (!loc) throw new Error('no layer at cursor');
+    if (!loc) throw new Error("no layer at cursor");
 
     /* In-tuplet branch: consume trailing placeholders to fit the new element.
        Never splits across measure boundaries — the tuplet's written-tick
@@ -1647,7 +1902,10 @@ export class ComposerModel {
          invariant, placeholders are always contiguous at the tail. */
       let placeholderStart = tKids.length;
       for (let i = 0; i < tKids.length; i++) {
-        if (isTupletPlaceholder(tKids[i])) { placeholderStart = i; break; }
+        if (isTupletPlaceholder(tKids[i])) {
+          placeholderStart = i;
+          break;
+        }
       }
       let trailingTicks = 0;
       for (let i = placeholderStart; i < tKids.length; i++) {
@@ -1657,7 +1915,11 @@ export class ComposerModel {
 
       const element = isRest
         ? this.buildRestElement({ duration: input.duration, dots: input.dots })
-        : this.buildChordElement({ notes: input.notes, duration: input.duration, dots: input.dots });
+        : this.buildChordElement({
+            notes: input.notes,
+            duration: input.duration,
+            dots: input.dots,
+          });
 
       /* Remove all trailing placeholders. */
       for (let i = tKids.length - 1; i >= placeholderStart; i--) {
@@ -1673,12 +1935,15 @@ export class ComposerModel {
       else tuplet.appendChild(element);
 
       /* Refill placeholder remainder, preferring atomic-sized rests. */
-      for (const p of this.regenTupletPlaceholders(tuplet, trailingTicks - totalTicks)) {
+      for (const p of this.regenTupletPlaceholders(
+        tuplet,
+        trailingTicks - totalTicks,
+      )) {
         tuplet.appendChild(p);
       }
 
       this.cursors[v] = Math.min(this.cursors[v] + 1, this.getVoiceLength(v));
-      return element.getAttribute('xml:id') ?? '';
+      return element.getAttribute("xml:id") ?? "";
     }
 
     /* Boundary rule: locateCursor uses strict-less-than semantics so that
@@ -1693,8 +1958,8 @@ export class ComposerModel {
       const at = cursor < flat.length ? flat[cursor] : null;
       const prev = flat[cursor - 1];
       if (at && prev && isPlaceholder(at) && !isPlaceholder(prev)) {
-        const prevMeasure = prev.closest('measure');
-        const atMeasure = at.closest('measure');
+        const prevMeasure = prev.closest("measure");
+        const atMeasure = at.closest("measure");
         if (prevMeasure && atMeasure && prevMeasure !== atMeasure) {
           const prevLayer = prev.parentElement;
           if (prevLayer) {
@@ -1710,100 +1975,190 @@ export class ComposerModel {
       }
     }
     const totalTicks = ticksOf(input.duration, input.dots ?? 0);
-    const usedBefore = this.timeWithinMeasure(v, loc.measureIdx, loc.withinIdx);
-    const remaining = this.measureTicks() - usedBefore;
+    const plan = this.planInsert(loc, totalTicks);
+    if (!plan.ok) return null;
 
-    /* Bar-line check: if any content at/after the cursor in this layer
-       includes a <tuplet>, the new note must fit WITHIN the remaining
-       measure space without splitting (because tuplets are atomic and
-       can't be pushed across a bar). Reject if it would overflow. */
-    {
-      const cc = this.contentChildren(loc.layer);
-      const postCursor = cc.slice(loc.withinIdx);
-      const postHasTuplet = postCursor.some((c) => c.localName === 'tuplet');
-      if (postHasTuplet) {
-        let usedAfter = 0;
-        for (const c of postCursor) usedAfter += realTicks(c);
-        if (usedBefore + totalTicks + usedAfter > this.measureTicks()) {
-          return null; /* "Insertion would push tuplet across bar line." */
-        }
+    /* Apply: lift any post-cursor elements out of the cursor's layer so the
+       plan can re-place them (some may have moved to subsequent measures). */
+    const cc = this.contentChildren(loc.layer);
+    const postCursor = cc.slice(loc.withinIdx);
+    for (const el of postCursor) loc.layer.removeChild(el);
+
+    /* Walk the plan, building/reusing elements at their target positions.
+       withinByMeasure tracks the next insertion index per target measure;
+       for the cursor's own measure it starts at loc.withinIdx (post-cursor
+       was removed), for any other measure it starts at 0 (validated empty). */
+    const withinByMeasure = new Map<number, number>();
+    const insertedElements: Element[] = [];
+    let firstInsertedElement: Element | null = null;
+
+    for (const action of plan.actions) {
+      let measures = this.allMeasures();
+      while (action.targetMIdx >= measures.length) {
+        this.appendMeasure();
+        measures = this.allMeasures();
       }
+      const targetLayer = this.layerInMeasure(measures[action.targetMIdx], v);
+      if (!targetLayer) throw new Error("layer not found in target measure");
+      const widx = withinByMeasure.get(action.targetMIdx) ??
+        (action.targetMIdx === loc.measureIdx ? loc.withinIdx : 0);
+
+      let placed: Element;
+      if (action.kind === "inserted") {
+        placed = isRest
+          ? this.buildRestElement({ duration: action.dur, dots: action.dots })
+          : this.buildChordElement({
+              notes: input.notes,
+              duration: action.dur,
+              dots: action.dots,
+            });
+        insertedElements.push(placed);
+        if (firstInsertedElement === null) firstInsertedElement = placed;
+      } else {
+        placed = action.el;
+      }
+      this.insertAt(targetLayer, placed, widx);
+      withinByMeasure.set(action.targetMIdx, widx + 1);
     }
 
-    if (totalTicks <= remaining) {
-      /* Fits in current measure: single element. */
-      const element = isRest
-        ? this.buildRestElement({ duration: input.duration, dots: input.dots })
-        : this.buildChordElement({ notes: input.notes, duration: input.duration, dots: input.dots });
-      this.insertAt(loc.layer, element, loc.withinIdx);
-      this.cursors[v]++;
-      return element.getAttribute('xml:id') ?? '';
-    }
-
-    /* Split. Head pieces fill the rest of current measure; tail pieces
-       continue in subsequent measures (creating new measures as needed). */
-    const headParts = remaining > 0 ? decomposeTicks(remaining) : [];
-    const tailParts = decomposeTicks(totalTicks - remaining);
-    const pieces = [...headParts, ...tailParts];
-
-    let firstId: string | null = null;
-    let measureCursor = loc.measureIdx;
-    let layerCursor = loc.layer;
-    let withinCursor = loc.withinIdx;
-    let firstPieceLayer = layerCursor;
-    let lastNoteEls: Element[] | null = null;
-
-    for (let pi = 0; pi < pieces.length; pi++) {
-      const p = pieces[pi];
-      /* Determine whether we're in head section (still in starting measure) or
-         tail (next measures). headParts.length pieces stay in starting measure. */
-      const isHead = pi < headParts.length;
-      if (!isHead) {
-        /* Advance to next measure's layer (create if needed). */
-        measureCursor++;
-        let measures = this.allMeasures();
-        if (measureCursor >= measures.length) {
-          this.appendMeasure();
-          measures = this.allMeasures();
-        }
-        const layer = this.layerInMeasure(measures[measureCursor], v);
-        if (!layer) throw new Error('layer not found in new measure');
-        layerCursor = layer;
-        withinCursor = 0;
-      }
-      const element = isRest
-        ? this.buildRestElement({ duration: p.dur, dots: p.dots })
-        : this.buildChordElement({ notes: input.notes, duration: p.dur, dots: p.dots });
-      this.insertAt(layerCursor, element, withinCursor);
-      withinCursor++;
-      if (!firstId) {
-        firstId = element.getAttribute('xml:id');
-        firstPieceLayer = layerCursor;
-      }
-      /* For non-rest, set ties on inner notes: 'i' on first, 'm' on middle,
-         't' on last. */
-      if (!isRest && pieces.length > 1) {
-        const innerNotes = this.extractNoteElements(element);
-        let flag: 'i' | 'm' | 't';
-        if (pi === 0) flag = 'i';
-        else if (pi === pieces.length - 1) flag = 't';
-        else flag = 'm';
+    /* Tie wiring on the inserted note's pieces (skipped for rests). */
+    if (!isRest && insertedElements.length > 1) {
+      let lastNoteEls: Element[] | null = null;
+      for (let pi = 0; pi < insertedElements.length; pi++) {
+        const innerNotes = this.extractNoteElements(insertedElements[pi]);
+        let flag: "i" | "m" | "t";
+        if (pi === 0) flag = "i";
+        else if (pi === insertedElements.length - 1) flag = "t";
+        else flag = "m";
         for (let ni = 0; ni < innerNotes.length; ni++) {
           setTieFlag(innerNotes[ni], flag);
-          /* Wire data-tie-partner on incoming-end pieces (medial + terminal):
-             partner is the corresponding note in the previous piece. */
-          if ((flag === 'm' || flag === 't') && lastNoteEls && lastNoteEls[ni]) {
-            const prevId = lastNoteEls[ni].getAttribute('xml:id');
-            if (prevId) innerNotes[ni].setAttribute('data-tie-partner', prevId);
+          if (
+            (flag === "m" || flag === "t") &&
+            lastNoteEls &&
+            lastNoteEls[ni]
+          ) {
+            const prevId = lastNoteEls[ni].getAttribute("xml:id");
+            if (prevId) innerNotes[ni].setAttribute("data-tie-partner", prevId);
           }
         }
         lastNoteEls = innerNotes;
       }
-      this.cursors[v]++;
     }
-    void firstPieceLayer;
+
+    /* Advance the cursor by the number of inserted pieces (one nav stop
+       per inserted-from-input element; reused post-cursor elements don't
+       count toward the cursor advance). */
+    this.cursors[v] += insertedElements.length;
     this.setBarlines();
-    return firstId ?? '';
+    return firstInsertedElement?.getAttribute("xml:id") ?? "";
+  }
+
+  /** Plan a layer-level insert by walking the would-be new sequence
+   *  (inserted note + post-cursor items), assigning each element a target
+   *  (measureIdx, time-offset). Returns either a list of insertion actions
+   *  or a block reason matching the user-facing status string.
+   *
+   *  Rules:
+   *   - The inserted note splits on barlines (decomposeTicks per chunk),
+   *     with i/m/t ties wired by the applier.
+   *   - Existing post-cursor items move wholesale to keep their identity;
+   *     a non-tuplet that wouldn't fit in the current measure bumps to the
+   *     next measure (leaving placeholder space in the current — autofill
+   *     later turns that into rests on cursor-leave).
+   *   - A tuplet is allowed to be pushed wholesale across a barline, but
+   *     any measure past the cursor's that would receive overflow content
+   *     must currently be empty in this voice (else BLOCK). Distinct
+   *     messages for tuplet-pushed-by-displacement vs. other overflow. */
+  private planInsert(
+    loc: { measureIdx: number; layer: Element; withinIdx: number },
+    totalTicks: number,
+  ): { ok: true; actions: InsertAction[] } | { ok: false; reason: string } {
+    const v = this.currentVoice;
+    const measureCap = this.measureTicks();
+    const layers = this.allLayers(v);
+    const cc = this.contentChildren(loc.layer);
+    const postCursor = cc.slice(loc.withinIdx);
+    const usedBefore = this.timeWithinMeasure(v, loc.measureIdx, loc.withinIdx);
+
+    /* If the target measure (past the cursor's) currently has any content
+       in this voice, block. Tuplets get a specific message per the project
+       convention; other items use the generic overflow message. Measures
+       beyond the current document length are fine — we'll append them. */
+    const checkTargetContent = (
+      m: number,
+      blockingIsTuplet: boolean,
+    ): string | null => {
+      if (m <= loc.measureIdx) return null;
+      if (m >= layers.length) return null;
+      if (this.contentChildren(layers[m]).length === 0) return null;
+      return blockingIsTuplet
+        ? "Insertion would push tuplet across bar line."
+        : "Insertion would overflow into next measure's content.";
+    };
+
+    const actions: InsertAction[] = [];
+    let mIdx = loc.measureIdx;
+    let mOff = usedBefore;
+
+    /* Place inserted note's pieces (split on barlines). */
+    const insertedRecorded: Array<Extract<InsertAction, { kind: "inserted" }>> = [];
+    let insertedRemaining = totalTicks;
+    while (insertedRemaining > 0) {
+      const space = measureCap - mOff;
+      const chunk = Math.min(insertedRemaining, space);
+      if (chunk > 0) {
+        for (const p of decomposeTicks(chunk)) {
+          const a: Extract<InsertAction, { kind: "inserted" }> = {
+            kind: "inserted",
+            dur: p.dur,
+            dots: p.dots,
+            targetMIdx: mIdx,
+            pieceIdx: insertedRecorded.length,
+            pieceCount: 0,
+          };
+          insertedRecorded.push(a);
+          actions.push(a);
+        }
+        mOff += chunk;
+        insertedRemaining -= chunk;
+      }
+      if (insertedRemaining > 0) {
+        const newMIdx = mIdx + 1;
+        const block = checkTargetContent(newMIdx, false);
+        if (block) return { ok: false, reason: block };
+        mIdx = newMIdx;
+        mOff = 0;
+      }
+    }
+    /* Backfill pieceCount now that the chain length is known. */
+    for (const a of insertedRecorded) a.pieceCount = insertedRecorded.length;
+
+    /* Place each post-cursor item wholesale at its new (mIdx, mOff). */
+    for (const el of postCursor) {
+      const elTicks = realTicks(el);
+      const isTuplet = el.localName === "tuplet";
+      if (mOff + elTicks > measureCap) {
+        const newMIdx = mIdx + 1;
+        const block = checkTargetContent(newMIdx, isTuplet);
+        if (block) return { ok: false, reason: block };
+        mIdx = newMIdx;
+        mOff = 0;
+      }
+      if (elTicks > measureCap) {
+        /* Element larger than any measure can hold — only possible with
+           an unusually tiny meter. Surface the most accurate message. */
+        return {
+          ok: false,
+          reason: isTuplet
+            ? "Insertion would push tuplet across bar line."
+            : "Doesn't fit.",
+        };
+      }
+      actions.push({ kind: "reuse", el, targetMIdx: mIdx });
+      mOff += elTicks;
+    }
+
+    return { ok: true, actions };
   }
 
   /** Sum of writtenTicks of placeholders inside a tuplet (the unfilled
@@ -1830,24 +2185,32 @@ export class ComposerModel {
       const n = input.notes[0];
       return this.buildNoteElement(n, dur, dots);
     }
-    const chord = el(doc, 'chord', {
-      'xml:id': newId('c'),
+    const chord = el(doc, "chord", {
+      "xml:id": newId("c"),
       dur,
       dots: dots > 0 ? dots : undefined,
     });
     const sorted = [...input.notes].sort((a, b) => a.midi - b.midi);
-    for (const n of sorted) chord.appendChild(this.buildNoteElement(n, dur, dots, /* inChord */ true));
+    for (const n of sorted)
+      chord.appendChild(
+        this.buildNoteElement(n, dur, dots, /* inChord */ true),
+      );
     return chord;
   }
 
-  private buildNoteElement(n: ResolvedNote, dur: Duration, dots: Dots, inChord = false): Element {
+  private buildNoteElement(
+    n: ResolvedNote,
+    dur: Duration,
+    dots: Dots,
+    inChord = false,
+  ): Element {
     const attrs: Record<string, string | number | undefined> = {
-      'xml:id': newId('n'),
+      "xml:id": newId("n"),
       pname: n.pname,
       oct: n.oct,
       color: n.colorHex,
-      'data-q': n.q,
-      'data-r': n.r,
+      "data-q": n.q,
+      "data-r": n.r,
     };
     if (!inChord) {
       attrs.dur = dur;
@@ -1857,18 +2220,18 @@ export class ComposerModel {
        'n' for explicit natural). HKL count-form string is parsed to an
        integer alter; values outside ±3 should never arrive here (entry
        path filters them) but we clamp to ±3 defensively just in case. */
-    if (n.accid === 'n') {
-      attrs.accid = 'n';
+    if (n.accid === "n") {
+      attrs.accid = "n";
     } else {
       const token = tokenFromAlter(alterFromCount(n.accid));
       if (token) attrs.accid = token;
     }
-    return el(this.doc, 'note', attrs);
+    return el(this.doc, "note", attrs);
   }
 
   private buildRestElement(input: RestInput): Element {
-    return el(this.doc, 'rest', {
-      'xml:id': newId('r'),
+    return el(this.doc, "rest", {
+      "xml:id": newId("r"),
       dur: input.duration,
       dots: input.dots && input.dots > 0 ? input.dots : undefined,
     });
@@ -1882,12 +2245,12 @@ export class ComposerModel {
    *  MEI's @visible="false" would be the spec-correct way, but Verovio
    *  doesn't honor it on rests (rism-digital/verovio#202, still open). */
   private buildTupletPlaceholder(dur: Duration, dots: Dots = 0): Element {
-    const sp = el(this.doc, 'rest', {
-      'xml:id': newId('sp'),
+    const sp = el(this.doc, "rest", {
+      "xml:id": newId("sp"),
       dur,
       dots: dots > 0 ? dots : undefined,
     });
-    sp.setAttribute(TUPLET_PLACEHOLDER_ATTR, 'true');
+    sp.setAttribute(TUPLET_PLACEHOLDER_ATTR, "true");
     return sp;
   }
 
@@ -1898,10 +2261,15 @@ export class ComposerModel {
    *  leftover (e.g. a written-dotted-8th inserted into a triplet-of-8ths
    *  leaves 4 of 12 ticks not divisible by atomic). Returns built elements
    *  for the caller to append. */
-  private regenTupletPlaceholders(tuplet: Element, remainingTicks: number): Element[] {
+  private regenTupletPlaceholders(
+    tuplet: Element,
+    remainingTicks: number,
+  ): Element[] {
     const out: Element[] = [];
     if (remainingTicks <= 0) return out;
-    const atomicDurStr = tuplet.getAttribute('data-tuplet-atomic-dur') as Duration | null;
+    const atomicDurStr = tuplet.getAttribute(
+      "data-tuplet-atomic-dur",
+    ) as Duration | null;
     let r = remainingTicks;
     if (atomicDurStr) {
       const atomicTicks = ticksOf(atomicDurStr, 0);
@@ -1919,9 +2287,9 @@ export class ComposerModel {
   }
 
   private extractNoteElements(elem: Element): Element[] {
-    if (elem.localName === 'note') return [elem];
-    if (elem.localName === 'chord') {
-      return Array.from(elem.children).filter((c) => c.localName === 'note');
+    if (elem.localName === "note") return [elem];
+    if (elem.localName === "chord") {
+      return Array.from(elem.children).filter((c) => c.localName === "note");
     }
     return [];
   }
@@ -1929,15 +2297,16 @@ export class ComposerModel {
   private extractResolvedFromElement(elem: Element): ResolvedNote[] {
     const noteEls = this.extractNoteElements(elem);
     return noteEls.map((n) => {
-      const q = parseInt(n.getAttribute('data-q') ?? '0', 10);
-      const r = parseInt(n.getAttribute('data-r') ?? '0', 10);
-      const pname = (n.getAttribute('pname') ?? 'c') as ResolvedNote['pname'];
+      const q = parseInt(n.getAttribute("data-q") ?? "0", 10);
+      const r = parseInt(n.getAttribute("data-r") ?? "0", 10);
+      const pname = (n.getAttribute("pname") ?? "c") as ResolvedNote["pname"];
       /* Reconstruct the count-form accidental string from whatever form the
          note carries (@accid attr, @accid.ges, or <accid> children). */
       const alter = getNoteAlter(n);
-      const accid = alter === 0 ? '' : (alter > 0 ? 's' : 'f').repeat(Math.abs(alter));
-      const oct = parseInt(n.getAttribute('oct') ?? '4', 10);
-      const colorHex = n.getAttribute('color') ?? '#000000';
+      const accid =
+        alter === 0 ? "" : (alter > 0 ? "s" : "f").repeat(Math.abs(alter));
+      const oct = parseInt(n.getAttribute("oct") ?? "4", 10);
+      const colorHex = n.getAttribute("color") ?? "#000000";
       /* MIDI is not used by buildChordElement except for sort order; reconstruct
          from coords: midi = 57 + 4q + 7r. */
       const midi = 57 + 4 * q + 7 * r;
@@ -1949,8 +2318,8 @@ export class ComposerModel {
   private elementHasTieInitial(elem: Element): boolean {
     const notes = this.extractNoteElements(elem);
     return notes.some((n) => {
-      const t = n.getAttribute('tie');
-      return t === 'i' || t === 'm';
+      const t = n.getAttribute("tie");
+      return t === "i" || t === "m";
     });
   }
 
@@ -1958,11 +2327,10 @@ export class ComposerModel {
   private elementHasTieTerminal(elem: Element): boolean {
     const notes = this.extractNoteElements(elem);
     return notes.some((n) => {
-      const t = n.getAttribute('tie');
-      return t === 't' || t === 'm';
+      const t = n.getAttribute("tie");
+      return t === "t" || t === "m";
     });
   }
-
 }
 
 /* ── helpers (module-scope) ──────────────────────────────────────────────── */

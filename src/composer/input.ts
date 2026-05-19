@@ -122,6 +122,9 @@ export interface InputHooks {
    *  navigation (arrow keys) is suppressed so the user can't fight the
    *  playback cursors. Other keys (digits, backspace) still work. */
   isPlaybackActive: () => boolean;
+  /** Step the renderer zoom one preset in the given direction. The owner
+   *  (main.ts) decides the actual preset list and reRenders. */
+  onZoomChange?: (dir: 'in' | 'out') => void;
 }
 
 const DIGIT_TO_DUR: Record<string, Duration> = {
@@ -487,6 +490,16 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       hooks.setStatus?.('Tuplet cancelled.');
       hooks.onStateChange();
       /* no return — handler below processes e */
+    }
+
+    /* Zoom shortcuts. Apply in any mode (voice / expression / mid-pending-tuplet).
+       e.key === '+' is Shift+= on US layouts; e.key === '_' is Shift+-. Neither
+       is produced unshifted, so the shifted-only intent holds without an extra
+       e.shiftKey check. */
+    if (e.key === '+' || e.key === '_') {
+      e.preventDefault();
+      hooks.onZoomChange?.(e.key === '+' ? 'in' : 'out');
+      return;
     }
 
     /* Hairpin shortcuts (apply in BOTH voice and expression mode). Must come

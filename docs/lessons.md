@@ -532,6 +532,44 @@ Dynamics and hairpins anchor by `@tstamp` (and `@tstamp2`) instead of `@startid`
 
 **Watch for**: a meter change with `setTimeSig` does NOT migrate tstamp positions. A dynam at `tstamp="3.5"` in 4/4 stays at `tstamp="3.5"` after switching to 3/4 — which is now past the bar line. Verovio handles this gracefully (the dynam either disappears or wraps depending on version), but the user's intent is lost. If this becomes a real source of confusion, add a `truncateOrMigrateExpressions(prevMeter, newMeter)` pass alongside `truncateOverflowingMeasures` that either drops out-of-range expressions or wraps them into the next measure. The infrastructure (`expressionMoments`, `formatTstamp2`) is in place — only the migration policy needs deciding.
 
+### Verovio doesn't honor `@visible="false"` on rests; `<space>` doesn't trigger the tuplet bracket
+
+For invisible tuplet placeholders we wanted "rest that takes layout width but draws no glyph AND counts as content so Verovio renders the bracket over it". MEI's spec-correct form is `<rest visible="false">` — but Verovio doesn't implement `@visible` (issue rism-digital/verovio#202 from 2016, still open as of v6.1). Set it on a rest, the glyph still draws.
+
+The other MEI invisible-rest form is `<space>` — but Verovio's tuplet-bracket-rendering pass only fires when the tuplet contains "content" children (notes/chords/rests). `<space>` is layout-only and excluded; an all-`<space>` tuplet renders no bracket.
+
+Workaround used in HKL Composer: tuplet placeholders are real `<rest>` elements marked with `data-tuplet-placeholder="true"`. Verovio draws the bracket because they're rests; the rest glyph is hidden in CSS:
+
+```css
+#score svg g.rest[data-data-tuplet-placeholder="true"] { visibility: hidden }
+```
+
+`visibility: hidden` preserves the layout slot (so the bracket spans the right range); `display: none` would collapse it. See the next entry for the `data-data-` prefix.
+
+### Verovio's `svgAdditionalAttribute` always prepends `data-` to attribute names
+
+The option is `svgAdditionalAttribute: ['note@data-q', 'note@data-r', 'note@color', 'rest@data-tuplet-placeholder']`. Verovio reads each entry as `element@attribute` and copies the named MEI attribute onto the rendered `<g>` group. But it ALWAYS prepends `data-` to the SVG output attribute name — `data-q` becomes `data-data-q`, `color` becomes `data-color`, etc.
+
+For HKL Composer's CSS selector hiding tuplet placeholder rest glyphs: the MEI attribute is `data-tuplet-placeholder`, the SVG attribute is `data-data-tuplet-placeholder`. The CSS targets the double-prefixed form. Internal HKL code that reads from the MEI doc (not the SVG) uses the single-prefix MEI form — only CSS / SVG-selecting code sees the double prefix.
+
+### `TICK_TABLE` decomposition entries were wrong for dotted/double-dotted ranks
+
+`src/composer/model.ts`'s `TICK_TABLE` is the greedy-decomposition lookup used by `decomposeTicks(n)`. Original entries had dur values off by one rank for the dotted/double-dotted rows — e.g. `{ ticks: 24, dur: '2', dots: 1 }` claimed "24 ticks = dotted half", but dotted half is actually 48 ticks (dotted quarter = 24). The dur values for ticks `{56, 48, 28, 24, 14, 12, 7, 6, 3}` were all one rank too coarse.
+
+This was latent in the existing code because the only consumer was the cross-measure split logic in `insertWithSplit`, which is rarely exercised (user typically enters notes left-to-right without overflow). Tuplet placeholder regeneration via `decomposeTicks` surfaced it — fill+delete should yield a dotted-quarter placeholder for 24 written ticks, but the buggy table emitted a dotted half (48 ticks claimed; the live MEI then had a 48-tick rest representing a 24-tick budget, which is incoherent).
+
+Fix: lines 127-142 of model.ts. Every value in the table now satisfies `ticksOf(dur, dots) === ticks` so `decomposeTicks` and `ticksOf` are mutually consistent. Anything that calls `decomposeTicks(n)` on a non-pow2 tick count benefits from the fix.
+
+### Cursor stop semantics: forward-facing locator vs backward-facing user-perceived target
+
+`locateCursor(v, c)` in `model.ts` is FORWARD-facing — it returns information based on `flat[c]` (the next element after the cursor's logical position). This is correct for INSERTION (the new element goes BEFORE `flat[c]`).
+
+But the user-perceived "current note" in insert mode is BACKWARD-facing — `getCurrentElement(voice, 'insert')` returns `flat[c-1]` (the previous element). This is what dots/ties/Backspace operate on. Visually, the cursor anchors at `flat[c-1]`'s right edge.
+
+The two perspectives mostly agree, but they diverge at element boundaries inside compound containers like `<tuplet>`. With an iter3 "between rule" (we tried it first), the cursor at "before F1 of a tuplet" was reinterpreted as layer-level "before tuplet" so insertions wouldn't false-fire as in-tuplet inserts. But that hid the legitimate "before F1 inside tuplet" position the user needs for prepending into the tuplet. The iter4 fix is to give every user-intent position a distinct flat-index: the tuplet wrapper itself is added to `navigableChildren` as a layer-level stop, separate from its in-tuplet stops. Cursor "before tuplet at layer level" (flat[c]=tuplet wrapper) and cursor "before F1 inside tuplet" (flat[c]=F1, flat[c-1]=tuplet wrapper) are now two adjacent flat-indices at the same visual x — and `locateCursor`'s forward-facing rule naturally distinguishes them.
+
+Takeaway: if your cursor model has compound containers (tuplets, beams, repetitions), the flat-index list must expose ALL boundary positions, not just element positions. The default "before each element" cursor stops handle the simple case; container boundaries need explicit pseudo-stops (in our case, the wrapper itself is also a stop).
+
 ### `<dynam>` / `<hairpin>` insertion order in `<measure>` doesn't matter for Verovio rendering
 
 I put expression elements as the LAST children of their `<measure>` (after both `<staff>`s and any `<lv>` stub-tie elements). Verovio doesn't care about MEI element order within a measure — it reads the control events by their `@tstamp`/`@tstamp2` and lays them out in time-order regardless of XML position. This mirrors the existing `<lv>` placement convention (lv elements also appended after the staffs).

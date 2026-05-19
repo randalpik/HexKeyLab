@@ -1119,3 +1119,112 @@ Any two can coexist; all three cannot. We picked (1) and (2)-ish (with floor=0.0
 - Velocity-dependent release-time
 
 **Where**: any of (1)-(3) would land in `src/audio/sampleEngine.ts` (or wherever per-voice gain is applied), wiring a velocity-dependent filter/envelope-time/clipper into the existing voice graph.
+
+---
+
+## Composer tuplets: opinionated Ctrl+N table, single-measure only (2026-05-18)
+
+**Picked**: Ctrl+N (N=2..7) followed by a duration digit creates a `<tuplet>` of opinionated ratio + atomic at the cursor. The ratio table is fixed (2:3 duplet, 3:2 triplet, 4:6 quadruplet, 5:4 quintuplet, 6:4 sextuplet, 7:8 septuplet), with N=2 and N=4 implying a dotted span. Atomic written-duration is derived from N and the digit (e.g. Ctrl+3,5 = triplet of 8ths in a quarter; Ctrl+5,5 = quintuplet of 16ths in a quarter). Nested tuplets and cross-bar `<tupletSpan>` are out of scope.
+
+**Rejected**:
+- A submenu / dialog asking for num, numbase, and atomic separately. Too many keystrokes for a common operation (especially triplets for localized swing). Finale's tuplet shortcut is also two-step; our design adds one more keystroke (explicit span duration) in exchange for never having to think about "atomic" — it's derived from the digit. This is the right trade for HKL Composer's flat-UX style.
+- Supporting arbitrary num:numbase ratios via a typed input. Same UX cost, rarely needed in practice. If a user wants e.g. 11:8, they'd have to wait for a custom-ratio entry path (filed as future work).
+- Nested tuplets. Schema-allowed in MEI but cursor model + bar-line check + status messaging all extend non-trivially. Cursor at any in-tuplet stop rejects Ctrl+N with "Cannot nest tuplets."
+
+**Why**: Triplets dominate practical tuplet use; quintuplets and septuplets are rare; nested and cross-bar are exotic. The fixed table covers the common-case space in two keystrokes (Ctrl+N + digit) without any modal UI. The atomic derivation is opinionated but unambiguous (e.g. "Ctrl+3,5" means "triplet 8ths in a quarter" — no possibility for the user to specify "triplet 16ths in a quarter" because that's a sextuplet, picked separately with Ctrl+6,5).
+
+**Where**:
+- `src/composer/input.ts` — `TUPLET_CFG` lookup table + `commitPendingTuplet`.
+- `src/composer/model.ts` — `createTupletAtCursor`, the `<tuplet>` builder, `data-tuplet-atomic-dur` attribute.
+
+---
+
+## Composer tuplet cursor stops: tuplet wrapper as a layer-level nav stop (iter4, 2026-05-18)
+
+**Picked**: `navigableChildren(layer)` adds the `<tuplet>` element itself to the flat list, IN ADDITION to its in-tuplet stops. The wrapper is the "before tuplet at layer level" stop; the in-tuplet stops come right after it (one per filled child + optionally one fill-anchor). Cursor "before tuplet at layer level" (flat[c]=tuplet wrapper) and cursor "before F1 inside tuplet" (flat[c]=F1) are two distinct adjacent flat-indices at the same visual x.
+
+**Rejected**:
+- **iter2's "tuplet transparent, locateCursor returns inTuplet for any in-tuplet target"**: failed because the first-filled-child position became ambiguous — `locateCursor` correctly flagged it as in-tuplet, but the user perceives it as "before the tuplet at layer level" (their cursor visually sits at pre-content's right edge, outside the bracket). False "Doesn't fit in remaining tuplet space" errors when trying to insert before the tuplet.
+- **iter3's "between rule" (locateCursorEffective)**: special-cased the first-filled-child position as layer-level OUTSIDE the tuplet. Fixed the false-fire, but hid the legitimate "inside before F1" position the user needs for prepending into a partial tuplet. Also still had iter1's "trailing placeholder isn't a nav stop when post-content exists" rule which made it impossible to APPEND to a partial tuplet once content follows.
+
+**Why iter4 is right**: each user-intent position needs a distinct flat-index. The wrapper-as-stop approach gives them: layer-level "before tuplet" and in-tuplet "before F1" are now two adjacent stops with distinct flat-indices. The trailing fill anchor is ALWAYS a nav stop (no iter1 hiding rule) — appending to a partial tuplet just works. Forward-facing `locateCursor` (without any "effective" wrapper / between-rule) naturally distinguishes them: flat[c]=tuplet wrapper has parent=layer → inTuplet=null; flat[c]=F1 has parent=tuplet → inTuplet=set.
+
+**Where**:
+- `src/composer/model.ts` — `navigableChildren` adds the wrapper to the flat list, `tupletNavStops` simplified to drop the `hasPostTupletContent` parameter. `locateCursorEffective` removed entirely; all callers use raw `locateCursor`.
+- `src/composer/cursor.ts` — new "entering a tuplet" anchor (LEFT of flat[c] when flat[c-1]=wrapper) and "exiting a tuplet" anchor (parent tuplet's right edge when flat[c-1] is a tuplet child and flat[c] is not in the same tuplet). Replaces the iter3 placeholder-specific anchor.
+- `src/composer/model.ts:deleteAtCursor` — new skip-left branch when target = tuplet wrapper (symmetric to placeholder skip-left). Backspace at "before F1 inside tuplet" moves the cursor to "before tuplet at layer level" without deleting.
+
+---
+
+## Composer tuplet placeholders: atomic-aware regeneration (iter4, 2026-05-18)
+
+**Picked**: Each `<tuplet>` records its atomic written-duration on creation via `data-tuplet-atomic-dur`. After any operation that changes the trailing-placeholder ticks (insert / replace / delete / dot-cycle), `regenTupletPlaceholders(tuplet, remainingTicks)` emits N atomic-sized `<rest>` placeholders, with `decomposeTicks` as a fallback for awkward remainders. Fill+delete is perfectly reversible: a freshly-created triplet of 8ths is `[P_8, P_8, P_8]`; insert + backspace returns to the same shape.
+
+**Rejected**:
+- Naive `decomposeTicks(remainingTicks)` (iter3 behavior): emits the smallest-possible-piece-count, e.g. `[P_dotted_quarter]` for 24 written ticks. That's semantically valid (total ticks correct) but visually collapses the tuplet's width — a single dotted-quarter rest renders narrower than three 8th rests in three layout slots. The bracket shrinks, the "perfectly reversible" invariant is broken visually.
+- Always emit N atomic placeholders (no `decomposeTicks` fallback): can't represent awkward leftovers, e.g. inserting a written-dotted-8th (12 ticks) into a triplet of 8ths (24 ticks budget) leaves 12 ticks unfilled, which `12 / 8 = 1` atomic + 4 ticks left over. Without the fallback we'd lose 4 ticks or fail. Hybrid is right.
+
+**Why**: visual stability of the tuplet bracket matters for user trust. After a fill+delete sequence, the bracket should look identical to its freshly-created state. The atomic-aware regen preserves that. The `decomposeTicks` fallback is rare in practice (only fires for non-atomic-aligned inserts) and is layout-equivalent to the iter3 behavior, so it costs nothing.
+
+**Where**:
+- `src/composer/model.ts:regenTupletPlaceholders` — the helper.
+- 5 call sites in model.ts use it: `insertWithSplit` in-tuplet branch, `replaceChordAtCursor` placeholder branch, `replaceChordAtCursor` filled-replace branch, `deleteAtCursor` case (b), `cycleDotsOnCurrent` in-tuplet branch.
+- `createTupletAtCursor` records `data-tuplet-atomic-dur` on the new tuplet element.
+
+---
+
+## Composer tuplet placeholders: `<rest>` + CSS-hide, not `<space>` (iter3, 2026-05-18)
+
+**Picked**: Tuplet-internal placeholders are real `<rest>` elements marked with `data-tuplet-placeholder="true"`. The rest glyph is hidden in CSS via `#score svg g.rest[data-data-tuplet-placeholder="true"] { visibility: hidden }`. Verovio sees them as "content" and draws the tuplet bracket; the user sees an empty (but layout-reserved) bracket area.
+
+**Rejected**:
+- **`<space>` placeholders**: layout-only, draw nothing. Verovio's tuplet bracket-rendering pass excludes `<space>` as non-content; the bracket doesn't draw. An empty just-created tuplet would render with no bracket at all — confusing for the user.
+- **`<rest visible="false">` placeholders**: spec-correct MEI 5 form. Verovio doesn't honor `@visible` on rests — issue rism-digital/verovio#202 from 2016, still open as of v6.1. The glyph draws regardless.
+
+**Why**: this is the only combination that gives "bracket visible + glyph hidden + layout width reserved". The CSS workaround is small and self-contained (one rule in composer.html). When/if Verovio fixes #202, we can drop the CSS and switch placeholders to `<rest visible="false">` cleanly (the `data-tuplet-placeholder` marker stays).
+
+**Where**:
+- `src/composer/model.ts:buildTupletPlaceholder` — element constructor.
+- `src/composer/render.ts` — `svgAdditionalAttribute: [..., 'rest@data-tuplet-placeholder']` so Verovio propagates the marker to the SVG output (with the `data-data-` prefix that Verovio always adds).
+- `composer.html` — the single CSS rule.
+
+---
+
+## Composer MusicXML export: full tuplet semantics with dynamic DIVISIONS (iter3, 2026-05-18)
+
+**Picked**: When the doc contains any `<tuplet>` elements, `exportMusicXml` computes `DIVISIONS = LCM(16, all tuplet @num values)` so every tuplet child's sounding ticks come out integer. Each child note inside a `<tuplet>` carries `<time-modification><actual-notes>num</actual-notes><normal-notes>numbase</normal-notes></time-modification>`. The first child's `<notations>` includes `<tuplet type="start" number="1"/>`; the last child gets `type="stop"`. Chords inside tuplets: only the chord's *primary* (first) `<note>` carries the `<tuplet>` notation; all chord members carry `<time-modification>`. Rests inside tuplets carry `<time-modification>` (for DAW timing accuracy) but no `<tuplet>` notation.
+
+**Rejected**:
+- Best-effort emit with no `<time-modification>` and a TODO: DAW import wouldn't recognize the tuplet — pitches/durations would import but the timing would be wrong (sounding ticks ≠ what the DAW expects). Round-trip to a DAW for further editing would be unusable for tuplet-containing scores.
+- Fixed `DIVISIONS = 16` (legacy): can't represent triplet 8th sounding ticks as integers (16/3 ≈ 5.33). Output would be lossy or invalid.
+
+**Why**: DAW round-trip is a v1 goal for HKL Composer's MusicXML export. Tuplets are common enough that lossy export would be a regression. Dynamic DIVISIONS is one helper function (`computeDivisions`) + LCM math; per-note `<time-modification>` and `<notations>` are mechanical adds to `emitEventXml`. Total: ~50 lines.
+
+**Where**:
+- `src/composer/save.ts:computeDivisions` — LCM(16, all tuplet num values).
+- `src/composer/save.ts:gatherEventsFromDoc` — descends into `<tuplet>` and attaches `tupletInfo` to each event.
+- `src/composer/save.ts:emitEventXml` — emits `<time-modification>` and `<notations><tuplet/>` per the event's `tupletInfo`.
+
+---
+
+## Composer measure-fill invariants: planner+applier insert path, navigation-only autofill (2026-05-19)
+
+**Picked**: A single `planInsert` walker validates every layer-level insertion before any DOM mutation. It walks `[inserted, ...post-cursor]` assigning each item a `(measureIdx, offset)`, splits the inserted note on barlines (with `i`/`m`/`t` ties), and moves post-cursor items wholesale. Three block reasons (mapped to existing/new status strings) cover the new invariants: (1) the inserted note's tail can never land in a measure whose layer for this voice already has content; (2) tuplets are allowed to be pushed wholesale across a barline as a unit, but only into an empty next-measure layer — else "Insertion would push tuplet across bar line."; (3) tuplets are atomic (never split themselves).
+
+Autofill rests run lazily — only when the cursor's `measureIdx` changes (via `moveCursor`/`setCursor`/`cursorToEnd`/`switchVoice`/`setVoice`). The abandoned measure's trailing placeholders become beat-aligned `<rest>` elements via `decomposeBeatAlignedRests` in `restfill.ts`. The rests are plain (no special attribute) — they behave like manually-entered rests once placed, and to extend the measure later the user deletes them.
+
+**Rejected**:
+- **Auto-fill rest "magic reversal"** (rests revert to placeholders on cursor-enter): adds non-obvious behavior tied to cursor location. Picked stays-as-rests instead so a rest at a given position means the same thing regardless of where the cursor is.
+- **Autofill on every mutation** (sweep all measures after every insert/delete): correct under all paths but pays an O(measures × voices) scan per keystroke. Picked the laziest variant: only on navigation, only on the measure the cursor just left.
+- **Splitting existing post-cursor non-tuplet elements with ties on overflow**: musically idiomatic but requires non-trivial tie-partner rewiring (an existing element's xml:id is what other ties point to; splitting forces head/tail to carry both incoming and outgoing tie state with proper `m` flags and `data-tie-partner` updates on third parties). Picked wholesale-move instead — existing elements keep their identity (and their xml:id, so their `data-tie-partner` cross-refs remain valid under a DOM move).
+- **Replacing all top-level `<space data-placeholder>` nav stops with a single synthetic trailing stop per gap** (more uniform model): broader refactor; existing placeholder-clicks would change semantics. Picked minimal change instead — past-end of full last measure already works via the existing `cursor >= voiceLen` past-end render branch; added `isCursorAtPastEnd` as a helper so the renderer can differentiate that case if desired in the future.
+
+**Why**: the user wants the same level of rigor for measure-fill that the tuplet work already established. The previous `insertWithSplit` had a latent bug where mid-measure inserts with real post-cursor content silently pushed elements past the barline — the single-element fit check was `usedBefore + totalTicks <= measureTicks` and ignored the post-cursor block. `replaceChordAtCursor`'s in-place path had the same gap. The planner-walker pattern fixes both with one code path and produces the right status messages for the new block reasons.
+
+**Where**:
+- `src/composer/model.ts:planInsert` — the walker. Validation + action list in one pass.
+- `src/composer/model.ts:insertWithSplit` — apply path (lifts post-cursor, places per actions, wires inserted-piece ties, advances cursor).
+- `src/composer/model.ts:canInsertHere` — dry-runs the planner so the input layer's status message matches the apply path's block reason exactly.
+- `src/composer/model.ts:replaceChordAtCursor` — simple-fit check now subtracts post-block ticks; overflow path falls through to the new `insertWithSplit`.
+- `src/composer/model.ts:autofillMeasure` + cursor entry points — lazy navigation-triggered sweep.
+- `src/composer/restfill.ts` — beat-aligned rest decomposition.

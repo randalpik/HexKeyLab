@@ -916,6 +916,19 @@ Backspace on a placeholder skips past without deleting (cursor moves left so the
 
 When the cursor visually anchors to a placeholder (empty layer), the rendered `<g class="space">` has degenerate 0×0 bbox, so `cursor.ts` falls back to anchoring on the staff: `model.getStaffIdAtCursor(voice)` returns the xml:id of the staff for the voice in the measure CONTAINING the cursor, and `renderer.findSigEndXForStaff(staffId)` returns the rightmost edge of any clef/keysig/meterSig inside that staff's bbox. The cursor lands at `sigEndX + small offset` for first-measure-of-system, or `staff.left + 10` for later measures with no sig changes.
 
+#### 7.13.1 Autofill rests on cursor-leave
+
+When the cursor leaves a partially-filled measure for a different measure (or voice), an autofill sweep finalizes it with visible beat-aligned rests. `autofillMeasure(voice, measureIdx)` in `model.ts` runs from `moveCursor`/`setCursor`/`cursorToEnd`/`switchVoice`/`setVoice` whenever the cursor's `measureIdx` actually changes. Rules:
+
+- Skip if the layer has no real content (fully-empty layers stay as placeholders so the user can still navigate to them and start fresh).
+- Skip if the voice has no content in any strictly-later measure (don't pad the trailing tail of a voice — only "abandoned" measures, ones with content following).
+- Skip if the layer is already full.
+- Otherwise replace trailing placeholder space with `decomposeBeatAlignedRests(startTick, remaining, timeSig)` from `restfill.ts`, which emits one rest per beat (or sub-beat) without crossing beat boundaries.
+
+Autofill rests are plain `<rest>` elements with no special marker — once placed, they behave like manually-entered rests. To extend the measure later the user must explicitly delete them.
+
+Autofill triggers only on navigation, never on mutation. Inserts/deletes/replaces inside the cursor's current measure don't fire the sweep; only when the user navigates away does the abandoned measure get finalized.
+
 ### 7.14 Ties
 
 `@tie="i"|"m"|"t"` on `<note>` (single MEI 5 values, not compound forms — Verovio rejects `"ti"`/`"it"`). Each tied pair carries a `data-tie-partner` attribute on both sides (custom; MEI ignores) pointing at the partner's xml:id. This makes orphan cleanup O(1) when one side of a pair is deleted.
@@ -929,6 +942,14 @@ Stub ties don't render visually (Verovio's `<lv>` element draws nothing reliably
 When an element is deleted (or replaced), `orphanTiePartners(elem)` walks each inner note's `data-tie-partner`; surviving initiators are demoted back to a pending stub, surviving terminators have their `@tie` cleared. Tie chains across multiple pieces (from §7.15 auto-tie-on-overflow) carry partner pointers between every adjacent pair so a chain unwinds cleanly when any piece is removed.
 
 Auto-tie-on-overflow: when an inserted note exceeds the remaining ticks in the current measure, `insertWithSplit` decomposes the duration into a representable head + tail chain via `decomposeTicks(ticks)` (greedy by 64ths down to a power-of-2 table). Each chain piece gets a `<note>` with the appropriate `@tie` value (i/m/t) and `data-tie-partner` pointing at the previous piece. New measures are appended as needed; `setBarlines()` keeps the final-barline (`@right="end"`) on the last measure.
+
+**Planner + applier** (`planInsert` + `insertWithSplit` in `model.ts`): every layer-level insert is validated by a single walker that simulates the new sequence — inserted note's pieces followed by any post-cursor items — assigning each a `(measureIdx, offset)`. The walker enforces three invariants and surfaces one of three rejection reasons via `canInsertHere`:
+
+- **Measures never exceed their length.** When the walker lands content in a measure past the cursor's, that target layer (for this voice) must currently be empty. Otherwise reject with `Insertion would overflow into next measure's content.` (Closes a latent bug where mid-measure inserts with real post-cursor content silently pushed elements past the barline — the old single-element path only checked `usedBefore + totalTicks <= measureTicks`, ignoring the post-cursor block.)
+- **Tuplets stay atomic and never straddle.** A `<tuplet>` that wouldn't fit in its current measure is moved wholesale to the next measure (the gap it leaves in the original measure is absorbed by trailing placeholders, then autofilled with visible rests on cursor-leave — see §7.13.1). If the target measure isn't empty in this voice, reject with `Insertion would push tuplet across bar line.`
+- **Existing post-cursor items keep their identity.** Only the freshly-inserted note splits with ties; existing non-tuplet items shift wholesale on overflow, preserving any pre-existing tie wiring (their `xml:id` and `data-tie-partner` cross-refs are invariant under a DOM move).
+
+`canInsertHere` runs the same planner in dry-run mode, so the input layer's status message always matches what the apply path would do.
 
 ### 7.15 Time-signature change: per-measure truncation
 
@@ -1027,6 +1048,101 @@ The infrastructure landed in this iteration (`expressions.ts` Moment+tstamp help
 - **Continuous-tempo (`rit.`/`accel.`) baking** — when `<tempo @func="continuous">` lands, `buildPlayback`'s tick → ms conversion changes from a single `tickMsFromTempo` constant to a piecewise function with linear-or-cubic interpolation between flanking tempos. The `<hkl:tempoAlteration>` percentages determine the target tempo when no explicit "a tempo" follows.
 
 The user-facing entry point for all of the above is unchanged: cycle ArrowUp/ArrowDown to the appropriate voice or to the expression layer, press a hotkey. New element types are additions to the keymap and the moment-list construction, not restructuring.
+
+### 7.21 Tuplets
+
+Single-measure, non-nested `<tuplet>` support. Ctrl+N (N=2..7) opens a "pending tuplet" state; the next duration digit completes creation by inserting a `<tuplet>` of opinionated ratio + atomic at the cursor. Nested tuplets are out of scope. A tuplet itself never straddles a barline (cross-measure splits inside a tuplet are never performed — the tuplet is the atomic unit of fit), but `insertWithSplit` IS allowed to push an existing tuplet wholesale across a barline if the insertion displaces it; see §7.14's planner.
+
+**Ratio table** (Ctrl+N followed by duration digit `d`):
+
+| N | num:numbase | span | atomic written-dur |
+|---|---|---|---|
+| 2 | 2:3 | dotted-d | d ÷ 2 |
+| 3 | 3:2 | d        | d ÷ 2 |
+| 4 | 4:6 | dotted-d | d ÷ 4 |
+| 5 | 5:4 | d        | d ÷ 4 |
+| 6 | 6:4 | d        | d ÷ 4 |
+| 7 | 7:8 | d        | d ÷ 8 |
+
+E.g. Ctrl+3,5 = triplet (3:2) of 8ths in the space of a quarter; Ctrl+7,5 = septuplet (7:8) of 32nds in the space of a quarter. The `num` and `numbase` are written to the MEI `<tuplet>` directly; Verovio renders the bracket and the numeral (count form, no ratio).
+
+**Pending-tuplet flow** (`input.ts`): Ctrl+N sets `state.pendingTuplet`, prompts via the status line, and `preventDefault`s the keydown (browser would otherwise switch tabs). The next plain digit completes via `commitPendingTuplet`. Any other non-modifier key cancels the pending and falls through to its normal handler (so e.g. Ctrl+3 then ArrowRight cancels and moves the cursor; Ctrl+3 then Shift alone is a no-op so the user can still chord with Shift+digit). Ctrl+N at a cursor position genuinely inside a tuplet rejects with "Cannot nest tuplets." (Ctrl+N at the layer-level boundary just before a tuplet is allowed.)
+
+**Data model** (live MEI). A `<tuplet>` element is a direct child of `<layer>`, sibling to `<chord>/<note>/<rest>`. Its `data-tuplet-atomic-dur` attribute records the atomic written-duration (e.g. `"8"`) for use by `regenTupletPlaceholders` (see below). Children are filled content elements (chord/note/rest) followed by zero or more trailing placeholder rests:
+
+```xml
+<tuplet xml:id="t-..." num="3" numbase="2"
+        bracket.visible="true" num.visible="true" num.format="count"
+        data-tuplet-atomic-dur="8">
+  <note dur="8" pname="a" oct="3" .../>   <!-- F1 -->
+  <rest dur="8" data-tuplet-placeholder="true"/>  <!-- fill anchor -->
+  <rest dur="8" data-tuplet-placeholder="true"/>  <!-- atomic-aware regen -->
+</tuplet>
+```
+
+Placeholders are `<rest>` (not `<space>`) because Verovio's tuplet-bracket-rendering pass only fires when the tuplet contains visible-content children — `<space>` is layout-only and excluded. The rest glyphs are hidden via CSS (see "Bracket workaround" below).
+
+**Cursor stops (iter4 model)** — `navigableChildren(layer)` in `model.ts`:
+
+Each `<tuplet>` element contributes `[tuplet-wrapper, ...in-tuplet-stops]` to the flat list. The wrapper itself is a layer-level stop ("before tuplet"). Its in-tuplet stops are:
+- One stop before each filled child Fi (= cursor "inside the tuplet between two children" or at the first filled position).
+- One stop on the first trailing placeholder (the "fill anchor") iff any trailing placeholders exist.
+
+The cursor "after the tuplet" at layer level is the natural "before the next layer element" stop (no extra element needed).
+
+Concretely:
+- Empty tuplet `[note, tuplet]` → flat `[note, tuplet, fill-anchor]`; cursor positions 0..3 (4 stops: before-note, after-note=before-tuplet, on-fill-anchor, after-tuplet=past-end).
+- Partial tuplet `[tuplet[F1], Q]` → flat `[tuplet, F1, fill-anchor, Q]`; cursor positions 0..4 (5 stops: before-tuplet, inside-before-F1, after-F1=on-fill-anchor, after-tuplet=before-Q, after-Q).
+- Complete tuplet `[F1, F2, F3]` (no trailing placeholders): tuplet contributes `[tuplet, F1, F2, F3]`; fill anchor is absent.
+
+This model gives the user-facing positions distinct flat-indices: cursor "before the tuplet at layer level" is distinct from cursor "before F1 inside the tuplet" (the former lets you insert AT layer level pushing the tuplet right; the latter lets you insert INSIDE the tuplet pushing F1 right within the bracket).
+
+**Insertion semantics**:
+- At "before tuplet at layer level" (`loc.inTuplet=null`, `withinIdx` points at the tuplet in `contentChildren`): layer-level insert via §7.14's planner. The tuplet may be pushed wholesale into the next measure when the insertion's tail leaves no room in the current one; the planner only rejects with "Insertion would push tuplet across bar line." when the target measure isn't empty in this voice. (The straddled-tuplet state is unreachable through any insertion path.)
+- At an in-tuplet stop (`loc.inTuplet` set): the new element replaces some trailing placeholders' written-ticks. Total written-tick budget of the tuplet (= num × atomic) is invariant; the fill operation consumes from the trailing placeholders and the regen helper recomposes them.
+- At "after tuplet at layer level" (cursor on flat[c]=post-content): layer-level insert before post-content.
+- Overflow inside a tuplet rejects with "Doesn't fit in remaining tuplet space."
+
+**Atomic-aware placeholder regeneration** — `regenTupletPlaceholders(tuplet, remainingTicks)`:
+
+After any operation that changes the trailing-placeholder ticks (insert, replace, delete, dot-cycle), we regenerate the placeholder run preferentially as N atomic-sized rests (per the tuplet's `data-tuplet-atomic-dur`), with `decomposeTicks` as a fallback for awkward remainders. This makes fill+delete perfectly reversible: create a triplet of 8ths → `[P_8, P_8, P_8]`; insert an 8th → `[F1_8, P_8, P_8]`; backspace → `[P_8, P_8, P_8]`. Without atomic-aware regen, `decomposeTicks(24)` would yield a single `[P_dotted_quarter]`, which renders narrower than three separate placeholders.
+
+For non-aligned remainders (e.g. inserting a written-dotted-8th = 12 ticks into a triplet of 8ths = 24 ticks budget leaves 12 ticks of placeholder): regen emits one atomic + the leftover decomposed, e.g. `[P_8, P_16]` (4 ticks of 16th-rest leftover from `decomposeTicks(4)`).
+
+**Backspace cases** (`deleteAtCursor`):
+- Cursor immediately to the right of the tuplet (or past its right edge): nibble the rightmost filled child, regrow trailing placeholders by its written-ticks. The tuplet's element survives until it's been emptied to all-placeholder state. N backspaces to empty an N-slot tuplet; one more removes the `<tuplet>` element entirely from the empty fill-anchor.
+- Cursor "before F1 inside tuplet" (Backspace target = tuplet wrapper itself): cursor moves left to "before tuplet at layer level". Symmetric with the existing skip-left for layer-level placeholders. No deletion.
+- Cursor between filled children (Backspace target = previous filled child of the tuplet): nibble that child; following filled content shifts left; trailing placeholders regrow.
+- Cursor on fill anchor of an *entirely empty* tuplet: delete the whole `<tuplet>` element.
+
+**Cursor visual rendering** — `cursor.ts:renderVoiceCursor` has two tuplet-specific anchor cases in insert mode (atop the default "right of flat[c-1]"):
+- **Entering a tuplet** (flat[c-1] = tuplet wrapper, flat[c] is its first nav child): anchor at the LEFT edge of flat[c] — just inside the bracket — instead of the wrapper's right edge.
+- **Exiting a tuplet** (flat[c-1] is a tuplet child, flat[c] doesn't exist or has a different parent): anchor at the parent tuplet's right edge — just past the bracket.
+
+These rules also handle the previous iter3 "cursor on a tuplet placeholder" case: the exit-tuplet rule fires because the placeholder's parent is the tuplet and the next nav stop (post-tuplet content or undef) doesn't share that parent.
+
+**Tuplet-internal beaming** — `beams.ts:regroupOneTuplet`:
+
+After the layer-level beam pass, a second pass walks `doc.querySelectorAll('tuplet')` and beams each tuplet's content children as a single beat group. Consecutive beam-eligible elements (`@dur ≥ 8`, not rests) get a `<beam>` wrapper. Rests inside a tuplet split runs. Placeholder rests are ignored (filtered by `isTupletPlaceholder`). The existing `splitIntoBeamableRuns` and `wrapInBeam` helpers are reused — they take any parent element, not just `<layer>`.
+
+**MusicXML export** — `save.ts:exportMusicXml`:
+
+DIVISIONS is computed as `LCM(16, all tuplet @num values in the doc)` so each tuplet child's sounding ticks come out integer (e.g. triplet of 8ths needs `LCM(16, 3) = 48` divisions per quarter). Each child note inside a `<tuplet>` carries `<time-modification><actual-notes>num</actual-notes><normal-notes>numbase</normal-notes></time-modification>`. The first child's `<notations>` includes `<tuplet type="start" number="1"/>`; the last child has `type="stop"`. For chords inside tuplets, only the chord's *primary* (first) `<note>` carries the `<tuplet>` notation tag; all chord-member notes carry `<time-modification>`. Rests inside tuplets carry `<time-modification>` too (for DAW timing) but no `<tuplet>` decoration.
+
+**Bracket workaround** — invisible tuplet placeholders:
+
+MEI canonical for "invisible rest" is `<space>`, but Verovio's bracket-rendering pass excludes `<space>` as non-content; the bracket doesn't draw over an all-`<space>` tuplet. `<rest visible="false">` would be the spec-correct alternative — but Verovio doesn't honor `@visible` on rests (issue rism-digital/verovio#202 from 2016, still open as of v6.1). So placeholders are real `<rest>` elements with a `data-tuplet-placeholder="true"` marker; the rest glyph is hidden via CSS in `composer.html`:
+
+```css
+#score svg g.rest[data-data-tuplet-placeholder="true"] { visibility: hidden }
+```
+
+The `data-data-` prefix is Verovio's normalization — it prepends `data-` to attributes exposed via `svgAdditionalAttribute`, so the MEI attribute `data-tuplet-placeholder` becomes `data-data-tuplet-placeholder` in the rendered SVG. `visibility: hidden` preserves layout width (the bracket spans the right range); `display: none` would collapse it.
+
+**Out of scope** (deliberately deferred):
+- Nested tuplets — schema-allowed but rare and UX-complex; would need cursor model + bar-line check + status messaging extended. Cursor at any in-tuplet stop rejects Ctrl+N with "Cannot nest tuplets."
+- `<tupletSpan>` (cross-bar tuplets) — also rare; can't be expressed atomically by the current placement model.
+- Mid-tuplet insertion when out of placeholder space — rejected with status. No "push F2 past the bar" behavior because tuplets can't cross bars.
 
 ---
 

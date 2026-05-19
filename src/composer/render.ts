@@ -1,54 +1,66 @@
 // Verovio renderer: loads the WASM toolkit, owns the score container, exposes
 // a single render(mei) entry point. View modes (page vs scroll) toggle the
-// `breaks` and page-dimensions options.
+// `breaks` and page-dimensions options; zoom adjusts the scale and (for the
+// 75% preset) per-element line widths.
 
 import './verovio-types.js';
 import type { VerovioToolkit } from './verovio-types.js';
 
 export type ViewMode = 'page' | 'scroll';
+export type ZoomLevel = 50 | 75 | 100;
+export const ZOOM_PRESETS: ReadonlyArray<ZoomLevel> = [50, 75, 100];
 
 const VEROVIO_CDN = 'https://www.verovio.org/javascript/latest/verovio-toolkit-wasm.js';
 
-/* Engraving options.
-   - svgViewBox INTENTIONALLY OMITTED — without it Verovio emits explicit
-     width/height in px so the SVG renders at its real intended size, not
-     scaled to container width.
-   - `scale: 100` (default) — natural Verovio rendering size.
-   - At scale: 100, Verovio's default `unit: 9` gives integer staff line
-     spacing (9 px), so no override needed for crispness.
-   - Scroll-mode `pageWidth` can be arbitrarily large — Verovio clips the
-     emitted SVG width to the actual content extent, so a huge pageWidth
-     doesn't make the SVG huge; it just gives breaks: 'none' headroom
-     for the content to lay out without being justified. */
-const BASE_OPTIONS = {
+/* Page geometry constants in Verovio's 1/100 mm units.
+ * US Letter = 8.5 × 11 in = 2159 × 2794. Margin 0.55 in = 13.97 mm → 140.
+ * Scroll mode wants a huge pageWidth so the content never breaks; Verovio
+ * clips the emitted SVG to actual content extent, so a large pageWidth
+ * doesn't make the SVG huge — it just gives breaks: 'none' headroom. */
+const PAGE_GEOM = {
+  pageWidth: 2159,
+  pageHeight: 2794,
+  pageMarginTop: 140,
+  pageMarginBottom: 140,
+  pageMarginLeft: 140,
+  pageMarginRight: 140,
+};
+
+const SCROLL_GEOM = {
+  pageWidth: 100000,
+  pageHeight: 400,
   pageMarginTop: 30,
   pageMarginBottom: 30,
   pageMarginLeft: 30,
   pageMarginRight: 30,
+};
+
+const BASE_OPTIONS = {
   svgAdditionalAttribute: ['note@data-q', 'note@data-r', 'note@color', 'rest@data-tuplet-placeholder'],
-  header: 'none',
   footer: 'none',
-  scale: 100,
 };
 
-const PAGE_OPTIONS = {
-  ...BASE_OPTIONS,
-  pageWidth: 2100,
-  pageHeight: 2970,
-  breaks: 'auto',
-};
-
-const SCROLL_OPTIONS = {
-  ...BASE_OPTIONS,
-  pageWidth: 100000,
-  pageHeight: 400,
-  breaks: 'none',
-};
+/* Verovio line-width defaults (in units of --unit):
+ *   barLineWidth 0.30, staffLineWidth 0.15, stemWidth 0.20, ledgerLineThickness 0.25.
+ * At scale 100, defaults give crisp ~2 px lines. Scale 50 halves them to crisp
+ * 1 px lines. Scale 75 would land them on sub-pixel widths (~1.5 px) that blur
+ * under shape-rendering: geometricPrecision. The 75% overrides multiply each
+ * default by 4/3 so post-scale pixel widths match the scale-100 output. */
+function lineWidthOverrides(zoom: ZoomLevel): object {
+  if (zoom !== 75) return {};
+  return {
+    barLineWidth: 0.40,
+    staffLineWidth: 0.20,
+    stemWidth: 0.27,
+    ledgerLineThickness: 0.33,
+  };
+}
 
 class Renderer {
   private tk: VerovioToolkit | null = null;
   private container: HTMLElement | null = null;
   private viewMode: ViewMode = 'page';
+  private zoom: ZoomLevel = 100;
   private readyPromise: Promise<void>;
 
   constructor() {
@@ -78,8 +90,19 @@ class Renderer {
     }
     v.module.onRuntimeInitialized = () => {
       this.tk = new v.toolkit();
-      this.tk.setOptions(this.viewMode === 'page' ? PAGE_OPTIONS : SCROLL_OPTIONS);
       resolve();
+    };
+  }
+
+  private buildOptions(): object {
+    const geom = this.viewMode === 'page' ? PAGE_GEOM : SCROLL_GEOM;
+    return {
+      ...BASE_OPTIONS,
+      ...geom,
+      breaks: this.viewMode === 'page' ? 'auto' : 'none',
+      header: this.viewMode === 'page' ? 'auto' : 'none',
+      scale: this.zoom,
+      ...lineWidthOverrides(this.zoom),
     };
   }
 
@@ -103,19 +126,26 @@ class Renderer {
   }
 
   setViewMode(mode: ViewMode): void {
-    if (mode === this.viewMode) return;
     this.viewMode = mode;
-    if (this.tk) this.tk.setOptions(mode === 'page' ? PAGE_OPTIONS : SCROLL_OPTIONS);
   }
 
   getViewMode(): ViewMode {
     return this.viewMode;
   }
 
+  setZoom(z: ZoomLevel): void {
+    this.zoom = z;
+  }
+
+  getZoom(): ZoomLevel {
+    return this.zoom;
+  }
+
   /** Render the given MEI string into the attached container. */
   render(mei: string): void {
     if (!this.tk) throw new Error('render() before ready()');
     if (!this.container) throw new Error('render() before attach()');
+    this.tk.setOptions(this.buildOptions());
     if (!this.tk.loadData(mei)) {
       this.container.innerHTML = '<div style="color:#c00;padding:20px">Verovio loadData failed (invalid MEI).</div>';
       return;
@@ -125,10 +155,13 @@ class Renderer {
          multi-page concatenation can't expand the canvas vertically. */
       this.container.innerHTML = this.tk.renderToSVG(1, {});
     } else {
+      /* Each page SVG wrapped in a .score-page div so CSS can give it
+         a white background, border, and surrounding margin against the
+         dark #score surround. */
       const pages = this.tk.getPageCount();
       let combined = '';
       for (let i = 1; i <= Math.max(1, pages); i++) {
-        combined += this.tk.renderToSVG(i, {});
+        combined += '<div class="score-page" data-page="' + i + '">' + this.tk.renderToSVG(i, {}) + '</div>';
       }
       this.container.innerHTML = combined;
     }

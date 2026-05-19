@@ -13,7 +13,7 @@
 import { createComposerBridge, PROTOCOL_VERSION } from '../bridge/channel.js';
 import type { HklEvent, ResolvedNote } from '../bridge/protocol.js';
 import { ComposerModel } from './model.js';
-import { renderer } from './render.js';
+import { renderer, ZOOM_PRESETS, type ZoomLevel } from './render.js';
 import { cursor } from './cursor.js';
 import { initInput, getInputState } from './input.js';
 import type { CursorUpdateOpts } from './cursor.js';
@@ -130,19 +130,25 @@ function reRender(): void {
   try {
     renderer.render(model.serialize());
     /* Verovio just rewrote #score's innerHTML — re-attach the cursor overlay
-       as a sibling of the rendered SVG inside #score, sized to match so it
-       covers the same scrollable area. Both scroll together as children of
-       #score. */
+       as a sibling of the rendered SVG (in scroll mode) or as a sibling of
+       the .score-page wrappers (in page mode), positioned absolute at #score's
+       (0, 0). The overlay is sized to cover from (0, 0) to the Verovio SVG's
+       bottom-right in container-local coords. That way, cursor markers drawn
+       at the container-local coordinates returned by renderer.rectForId()
+       land at the correct visual position over the SVG even when the SVG is
+       offset from #score's origin by a .score-page wrapper's margin. */
     const scoreEl = $('score');
     if (!scoreEl) return;
     const verovioSvg = scoreEl.querySelector('svg:not(#cursorOverlay)') as SVGSVGElement | null;
     const overlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     overlay.id = 'cursorOverlay';
     if (verovioSvg) {
-      const w = verovioSvg.getAttribute('width');
-      const h = verovioSvg.getAttribute('height');
-      if (w) overlay.setAttribute('width', w);
-      if (h) overlay.setAttribute('height', h);
+      const scoreRect = scoreEl.getBoundingClientRect();
+      const svgRect = verovioSvg.getBoundingClientRect();
+      const overlayW = svgRect.right - scoreRect.left + scoreEl.scrollLeft;
+      const overlayH = svgRect.bottom - scoreRect.top + scoreEl.scrollTop;
+      overlay.setAttribute('width', String(Math.max(0, overlayW)));
+      overlay.setAttribute('height', String(Math.max(0, overlayH)));
     }
     scoreEl.appendChild(overlay);
     cursor.attach(overlay);
@@ -174,6 +180,22 @@ async function bootRenderer(): Promise<void> {
 
 /* ── input wiring ────────────────────────────────────────────────────────── */
 
+function stepZoom(dir: 'in' | 'out'): void {
+  const cur = renderer.getZoom();
+  const idx = ZOOM_PRESETS.indexOf(cur);
+  const nextIdx = dir === 'in'
+    ? Math.min(ZOOM_PRESETS.length - 1, idx + 1)
+    : Math.max(0, idx - 1);
+  const next: ZoomLevel = ZOOM_PRESETS[nextIdx];
+  if (next === cur) {
+    setStatus('Zoom ' + cur + '% (' + (dir === 'in' ? 'max' : 'min') + ').');
+    return;
+  }
+  renderer.setZoom(next);
+  reRender();
+  setStatus('Zoom ' + next + '%.');
+}
+
 initInput(model, {
   getHeldKeys: () => lastHeldKeys,
   onChange: () => {
@@ -185,6 +207,7 @@ initInput(model, {
   },
   setStatus: (msg) => setStatus(msg),
   isPlaybackActive: () => isPlaying,
+  onZoomChange: (dir) => stepZoom(dir),
 });
 
 /* ── playback ────────────────────────────────────────────────────────────── */

@@ -38,15 +38,34 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
   overflow: auto;
   position: relative;
 }
+/* Page view: dark surround. The page-wrapper margins (below) supply the
+   gap between the page card and the #score edges, so absolute-positioned
+   children (the cursor overlay) can still sit at #score's (0, 0) without
+   any padding offset to compensate for. Horizontal margins are `auto` so
+   the page is centered when the score viewport is wider than the page;
+   when the page is wider (e.g. at 100% zoom on narrow screens) the auto
+   margins collapse to 0 per CSS block layout and the page aligns left
+   with horizontal scrolling. */
+#score.view-page { background: #111 }
+#score.view-page .score-page {
+  background: #fff;
+  border: 1px solid #3a3a3a;
+  margin: 24px auto 16px auto;
+  display: block;
+  width: max-content;       /* hug the SVG's intrinsic width */
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
 /* Verovio output renders at its real intrinsic pixel size (explicit
-   width/height when svgViewBox is off). Anchored top-left of #score — no
-   margin, no centering. Flows normally so it contributes to #score's
-   scrollable area; overflow: auto on #score handles scrolling when the
-   SVG exceeds visible dimensions. */
-#score > svg { display: block; margin: 0 }
+   width/height when svgViewBox is off). The SVG flows normally inside
+   either #score (scroll mode) or a .score-page wrapper (page mode), so
+   it contributes to #score's scrollable area. */
+#score svg:not(#cursorOverlay) { display: block; margin: 0 }
 /* Cursor overlay is sized to match Verovio's SVG dimensions in JS so it
-   covers the same scrollable area. Both children of #score scroll together. */
-#score > svg#cursorOverlay {
+   covers the same scrollable area. Both children of #score scroll together.
+   Positioned absolute at (0, 0); the overlay's width/height are extended
+   in JS to cover any page-wrapper margin offset so container-local cursor
+   coordinates (from rectForId) land at the correct visual position. */
+#score svg#cursorOverlay {
   position: absolute; left: 0; top: 0;
   pointer-events: none;
 }
