@@ -901,33 +901,71 @@ The dialog reads current values from the model on open and applies them in depen
 
 Time-signature changes prompt for confirmation only when the new meter is **smaller** than the current one AND the score has content — enlarging is non-destructive.
 
-### 7.13 Empty-voice placeholders
+### 7.13 Measure nav-stop model (parallels §7.21 tuplets)
 
-Every layer (per voice, per measure) that has no real content (note/chord/rest) carries one or more `<space dur="…" data-placeholder="true">` children whose tick durations sum to the measure's full duration. The placeholder is invisible to Verovio (no glyph drawn) but reserves the measure's horizontal layout space, which:
+Each (voice, measure) contributes a small set of cursor stops mirroring the tuplet nav-stop pattern: a **wrapper** stop (the `<measure>` element itself), one stop per real content child (with tuplets inlining their internal stops via `tupletNavStops`), and — for **partial** layers — a single **fill-anchor** stop (the first trailing `<space data-placeholder>`). Empty layers collapse the wrapper + fill-anchor to a single wrapper stop. A synthetic **past-end** stop sits one position past `flatChildren.length` for every voice; insertion there lazily appends a new measure via `appendMeasure`.
 
-- Fixes the empty-initial-measure bar-line / staff-line gap (Verovio would otherwise lay an empty measure out at a degenerate width, leaving the final barline ~15px short of where the staff lines end).
-- Lets the cursor navigate to an arbitrary measure of an otherwise-empty voice — placeholders count as flat-children, so the user can `↑` to voice 3 and `→` past placeholders to land in any specific measure, then press a duration to enter content there. No more manual whole-rest stuffing to reach a later measure.
+| Layer state of M_k                    | Stops emitted (in order)                              |
+|---------------------------------------|-------------------------------------------------------|
+| Empty + prev measure has content      | `[wrapper, fill-anchor]` — wrapper is "post-prev" nav, fill-anchor is delete target |
+| Empty otherwise (no prev content / first measure / single-measure doc) | `[wrapper]` — wrapper doubles as delete target |
+| Partial (some content + space)        | `[wrapper, ...content, fill-anchor]`                  |
+| Full (content sums to `cap`)          | `[wrapper, ...content]`                               |
+| **Collapsed**: M_{k-1} full + M_k has content | `[...content, fill-anchor?]` — wrapper omitted |
+| Past end of voice (synthetic)         | one stop at index `flat.length`                       |
 
-Invariant: each layer either has at least one real-content child (no placeholders) or has only placeholder spaces summing to `measureTicks()`. Enforced by the `normalizePlaceholders()` pass called from every mutation entry point and from `replaceDocument` after load.
+**Wrapper collapse rule** (`shouldEmitWrapper` in `model.ts`): emit the wrapper for M_k iff (a) M_k's layer for this voice has no real content (i.e., M_k is empty — wrapper is the empty-measure delete target), or (b) k > 0 AND M_{k-1}'s layer is *partial* (= has both real content AND placeholder space, so it emits a fill-anchor stop — the wrapper of M_k carries the distinct "enter M_k" intent versus the fill-anchor's "extend M_{k-1}" intent). Otherwise omit. The three collapse cases are:
+- **M_1 with content**: no predecessor to extend, cursor=0 anchors at sigEnd directly.
+- **M_k>0 with content + M_{k-1} full**: insertion at "after last content of M_{k-1}" overflows into M_k anyway, identical to "before first content of M_k" — one combined stop.
+- **M_k>0 with content + M_{k-1} empty**: M_{k-1} has only a wrapper stop (no fill-anchor), so its "after-stop" position is already the boundary; emitting M_k's wrapper would create two indistinguishable stops between adjacent wrappers.
 
-When the user inserts content at a placeholder's flat position, `insertWithSplit`'s normal logic handles it: the new content lands in the placeholder's layer, normalization strips the placeholder, the cursor advances naturally. When the cursor sits at a boundary BETWEEN real content (m₁) and a placeholder-only measure (m₂), the insertion is re-aimed at m₁'s trailing edge (extending the partial measure) rather than consuming m₂'s placeholder — see `insertWithSplit` in `model.ts`.
+**Cursor at a wrapper stop** anchors at the LEFT edge of the cursor's *current* measure (via `model.cursorMeasureIdx`), not the wrapper's measure. This handles both directions: cursor *before* a wrapper of an empty M_{k+1} and cursor *inside* M_k just past its own wrapper resolve to different measures and therefore different visual positions.
 
-Backspace on a placeholder skips past without deleting (cursor moves left so the next press reaches real content behind the empty area).
+**voiceLen and past-end**: `getVoiceLength` returns `flatChildren.length`. The past-end synthetic stop is at `cursor === voiceLen`; `moveCursor`'s `c < len` clamp lets the cursor reach `len`, and `locateCursor` treats any out-of-range cursor as past-end. There is NO +1 for past-end — that artifact (from a previous iteration) created a redundant cursor index that resolved to the same past-end loc as `flat.length`.
 
-When the cursor visually anchors to a placeholder (empty layer), the rendered `<g class="space">` has degenerate 0×0 bbox, so `cursor.ts` falls back to anchoring on the staff: `model.getStaffIdAtCursor(voice)` returns the xml:id of the staff for the voice in the measure CONTAINING the cursor, and `renderer.findSigEndXForStaff(staffId)` returns the rightmost edge of any clef/keysig/meterSig inside that staff's bbox. The cursor lands at `sigEndX + small offset` for first-measure-of-system, or `staff.left + 10` for later measures with no sig changes.
+The `<space data-placeholder>` children continue to live in the DOM so Verovio reserves measure width and accidental computation works (the empty-initial-measure / bar-line / staff-line gap that motivated placeholders is still fixed). `normalizePlaceholders` keeps every layer's `<space>` children summing to `measureTicks - realTicks(content)`.
 
-#### 7.13.1 Autofill rests on cursor-leave
+**Insertion semantics, per stop kind**:
+- **Wrapper** — `loc.withinIdx = 0`. Inserts at the front of the layer (pushes any existing content right, subject to §7.14's overflow + displacement rules). The cursor "before measure" position.
+- **Content** — `loc.withinIdx = position of that element in contentChildren`. Standard insert.
+- **Fill-anchor** — `loc.withinIdx = contentChildren.length`. Inserts at the back; extends the partial measure.
+- **Past-end synthetic** — `locateCursor` returns `(measureIdx = allMeasures.length, layer = fresh empty <layer>, withinIdx = 0)`. The applier creates the missing measure on demand.
 
-When the cursor leaves a partially-filled measure for a different measure (or voice), an autofill sweep finalizes it with visible beat-aligned rests. `autofillMeasure(voice, measureIdx)` in `model.ts` runs from `moveCursor`/`setCursor`/`cursorToEnd`/`switchVoice`/`setVoice` whenever the cursor's `measureIdx` actually changes. Rules:
+There's no "boundary rule re-aim". The user picks extend-vs-enter explicitly by choosing fill-anchor-of-M_k (extends) or wrapper-of-M_{k+1} (enters) — the two stops are at distinct visual positions (before and after the bar line respectively).
+
+**Backspace**, mirroring the tuplet pattern:
+- Cursor ON the fill-anchor of an empty tuplet → delete the tuplet (existing).
+- Cursor ON the wrapper of an empty measure → delete the measure (unless it's the only measure left). The wrapper is the only stop a fully-empty measure contributes, so this is where the explicit second-backspace lands.
+- Backspace target is a placeholder, tuplet wrapper, or measure wrapper → skip-left, no deletion.
+- Backspace target is real content → delete it. Measures that go content-empty after a delete are NOT auto-removed; the user must back into the wrapper for the explicit second-backspace.
+
+**Cursor rendering** (`src/composer/cursor.ts`):
+- Wrapper stop / past-end stop → `anchorAtMeasureLeft` / `anchorPastLastBar` use a fallback chain: `findSigEndXForStaff` (places the cursor past clef/keysig/timesig — covers M_1 and any mid-piece sig change), then the first real-content's left edge, then the first placeholder's left edge (Verovio reserves layout width for `<space>` elements), finally `measure.rect.left + 30` so the cursor is visibly inside M_k. Y/height come from the voice's staff bbox (one staff, not the whole grand staff), so the wrapper / past-end / fill-anchor cursors span only the staff the user is editing.
+- **Cursor "before a wrapper" anchors INSIDE the wrapper's measure** — when `flat[c]` is a `<measure>` wrapper, `nextRef.elem.localName === 'measure'` fires the `insert-before-measure-wrapper` path which calls `anchorAtMeasureLeft(nextRef.elem)`. This puts the cursor past the previous measure's bar line, visually in the measure it's about to act on. Backspace at this position fires the empty-measure case-2 delete (when applicable), and now the visual position matches the user's mental model of where the cursor is.
+- **Past-end of a full last measure anchors at the right of its last content**, not past the final bar. The past-end stop carries no ambiguity to resolve here — a full measure can't be extended, so typing at past-end always creates a new measure — so the cursor merges with the "right of last note" position. A past-bar anchor is used only when the last measure is partial or empty, where past-end disambiguates "fill / extend" from "start new". See `anchorPastLastBar` in `cursor.ts`.
+- Fill-anchor stop → anchor right of the layer's last real content (`anchorPastLayerContent`).
+
+**Verification tooling** (`tools/composer-inspect/`): `inspect.mjs --screenshot <path>` takes a PNG of the rendered composer. `cursor-trace-all.mjs` runs each of the canonical scenarios in `scenarios.mjs` (`emptyDoc`, `m1Quarter`, `m1Full`, `m1FullM2Quarter`, `m1FullM2Empty`, `m1PartialM3Full`), walks every cursor position 0..voiceLen, captures the rendered cursor-bar rect (via the `data-cursor-role="voice"` SVG attribute), and asserts that consecutive cursor positions have distinct rects (Manhattan delta > 3px). The "state changes but pixel doesn't" failure mode is detected programmatically; any new measure-model change should run this driver and verify zero violations before merging.
+
+#### 7.13.1 Autofill rests on every event
+
+When any mutation or navigation event happens, an autofill sweep finalizes abandoned partial measures with visible beat-aligned rests. `autofillAllAndReanchor(voice)` (in `model.ts`) is called from:
+
+- Every mutation entry point: `insertChordAtCursor`, `insertRestAtCursor`, `replaceChordAtCursor` (each branch), `deleteAtCursor` (each return-true path), `createTupletAtCursor`, `cycleDotsOnCurrent`, `toggleTieOnCurrent`, `setTimeSig`.
+- Every navigation entry point: `moveCursor`, `setCursor`, `cursorToEnd`, `switchVoice`, `setVoice`.
+
+The sweep walks every measure of the voice except the cursor's current measure, calling `autofillMeasure(voice, m)` on each. `autofillMeasure` applies the per-measure conditions and is a no-op for measures that don't qualify:
 
 - Skip if the layer has no real content (fully-empty layers stay as placeholders so the user can still navigate to them and start fresh).
 - Skip if the voice has no content in any strictly-later measure (don't pad the trailing tail of a voice — only "abandoned" measures, ones with content following).
 - Skip if the layer is already full.
-- Otherwise replace trailing placeholder space with `decomposeBeatAlignedRests(startTick, remaining, timeSig)` from `restfill.ts`, which emits one rest per beat (or sub-beat) without crossing beat boundaries.
+- Otherwise replace trailing placeholder space with `decomposeBeatAlignedRests(startTick, remaining, timeSig)` from `restfill.ts`.
 
-Autofill rests are plain `<rest>` elements with no special marker — once placed, they behave like manually-entered rests. To extend the measure later the user must explicitly delete them.
+Autofill rests are plain `<rest>` elements — once placed they behave like manually-entered rests, and to extend the measure later the user must explicitly delete them.
 
-Autofill triggers only on navigation, never on mutation. Inserts/deletes/replaces inside the cursor's current measure don't fire the sweep; only when the user navigates away does the abandoned measure get finalized.
+Triggering on every mutation catches the common abandonment pattern that the previous "only on cursor measureIdx change" trigger missed: type in M_k partial → move past → type in M_{k+1} → M_k gains a later-content sibling AT INSERT TIME, the sweep fires from `insertChordAtCursor`, and M_k auto-fills immediately. No navigation back-and-forth required.
+
+**Cursor re-anchoring**: the sweep can change the flat (placeholders → rests; fill-anchor disappears when a measure becomes full), so `autofillAllAndReanchor` captures the cursor's target element BEFORE the sweep and snaps the cursor to that element's new flat-index AFTER. A cursor that was at past-end stays at the (new) past-end.
 
 ### 7.14 Ties
 

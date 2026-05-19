@@ -7,34 +7,55 @@
 //
 // Usage:
 //   node tools/composer-inspect/inspect.mjs '<js-expression>'
+//   node tools/composer-inspect/inspect.mjs --screenshot <out.png> ['<js-expression>']
+//   SCREENSHOT=<out.png> node tools/composer-inspect/inspect.mjs '<js-expression>'
+//
+// Modes:
+//   • Eval only (no flags):     run the JS expression, print JSON to stdout.
+//   • Screenshot only:          --screenshot path (omit expression to skip eval).
+//   • Eval + screenshot:        --screenshot path '<expr>'  (or use SCREENSHOT env).
+//
+// When both eval and screenshot are requested, the eval runs first (allowing
+// it to set up DOM state for the shot), then the screenshot is taken.
 //
 // Examples:
 //   node tools/composer-inspect/inspect.mjs \
 //     'Array.from(document.querySelectorAll("g.barLine")).map(e => e.getBoundingClientRect())'
 //
-//   node tools/composer-inspect/inspect.mjs '({
-//     bars: [...document.querySelectorAll("g.barLine")].map(b => b.getBoundingClientRect()),
-//     staves: [...document.querySelectorAll("g.staff")].map(s => s.getBoundingClientRect())
-//   })'
+//   node tools/composer-inspect/inspect.mjs --screenshot /tmp/composer.png
+//
+//   node tools/composer-inspect/inspect.mjs --screenshot /tmp/m1.png \
+//     '(() => { const m = window.__hkl_composer.model; m.setCursor(0,1); m.insertRestAtCursor({duration:"4",dots:0}); return m.getCursor(1); })()'
 //
 // Optional env:
 //   COMPOSER_URL  — default http://localhost:5173/composer.html
 //   WAIT_MS       — extra wait after page load for Verovio render (default 2500)
+//   POST_EVAL_MS  — extra wait after the eval before screenshotting (default 250)
+//   SCREENSHOT    — same as --screenshot flag
 //
 // Requires: Node 22+ (native WebSocket), chromium in PATH, dev server up.
 
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const URL_DEFAULT = 'http://localhost:5173/composer.html';
 const url = process.env.COMPOSER_URL ?? URL_DEFAULT;
 const waitMs = Number(process.env.WAIT_MS ?? 2500);
-const expr = process.argv[2];
+const postEvalMs = Number(process.env.POST_EVAL_MS ?? 250);
 
-if (!expr) {
-  console.error('Usage: inspect.mjs <js-expression>');
+/* Argv parsing: support --screenshot <path>, optional expression as last arg. */
+let screenshotPath = process.env.SCREENSHOT ?? null;
+let expr = null;
+const args = process.argv.slice(2);
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === '--screenshot') { screenshotPath = args[++i]; continue; }
+  expr = args[i];
+}
+
+if (!expr && !screenshotPath) {
+  console.error('Usage: inspect.mjs [--screenshot <out.png>] [<js-expression>]');
   process.exit(1);
 }
 
@@ -126,21 +147,40 @@ try {
   });
   /* Verovio loads WASM from CDN and renders asynchronously after load. */
   await new Promise((res) => setTimeout(res, waitMs));
-  const result = await cdp.send('Runtime.evaluate', {
-    expression: `(async () => {
-      try { return JSON.stringify(await Promise.resolve(${expr})); }
-      catch (e) { return JSON.stringify({ __error: String(e) }); }
-    })()`,
-    returnByValue: true,
-    awaitPromise: true,
-  });
+
+  /* Optional eval — run first so DOM state is set up for the screenshot. */
+  let evalOutput = null;
+  if (expr) {
+    const result = await cdp.send('Runtime.evaluate', {
+      expression: `(async () => {
+        try { return JSON.stringify(await Promise.resolve(${expr})); }
+        catch (e) { return JSON.stringify({ __error: String(e) }); }
+      })()`,
+      returnByValue: true,
+      awaitPromise: true,
+    });
+    if (result.result.type === 'string') {
+      evalOutput = result.result.value;
+    } else {
+      evalOutput = JSON.stringify(result.result);
+    }
+  }
+
+  /* Optional screenshot — runs after eval, so the page reflects whatever
+     state the eval set up. Brief wait lets layout settle (cursor renderer
+     is sync; Verovio re-renders may be async after model mutation). */
+  if (screenshotPath) {
+    await new Promise((res) => setTimeout(res, postEvalMs));
+    const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    writeFileSync(screenshotPath, Buffer.from(shot.data, 'base64'));
+  }
+
   cdp.close();
-  if (result.result.type === 'string') {
-    /* Pretty-print for human readability. */
-    try { console.log(JSON.stringify(JSON.parse(result.result.value), null, 2)); }
-    catch { console.log(result.result.value); }
-  } else {
-    console.log(JSON.stringify(result.result, null, 2));
+  if (evalOutput !== null) {
+    try { console.log(JSON.stringify(JSON.parse(evalOutput), null, 2)); }
+    catch { console.log(evalOutput); }
+  } else if (screenshotPath) {
+    console.log('saved screenshot: ' + screenshotPath);
   }
   cleanup(0);
 } catch (e) {

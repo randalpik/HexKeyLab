@@ -1228,3 +1228,71 @@ Autofill rests run lazily — only when the cursor's `measureIdx` changes (via `
 - `src/composer/model.ts:replaceChordAtCursor` — simple-fit check now subtracts post-block ticks; overflow path falls through to the new `insertWithSplit`.
 - `src/composer/model.ts:autofillMeasure` + cursor entry points — lazy navigation-triggered sweep.
 - `src/composer/restfill.ts` — beat-aligned rest decomposition.
+
+---
+
+## Composer measure nav-stops mirror tuplets; explicit measure deletion (iter, 2026-05-19)
+
+**Picked**: each (voice, measure) contributes a wrapper stop (the `<measure>` element itself), one stop per real content child, and — for partial layers — a single trailing fill-anchor stop (the first `<space data-placeholder>`). Empty layers collapse to a single wrapper stop. A synthetic past-end "wrapper of the not-yet-existent next measure" sits at `flatChildren.length` for every voice. Backspace deletes containers (tuplet OR measure) only at the explicit empty-container anchor stop — fill-anchor for empty tuplets, wrapper for empty measures (its only stop). The "auto-delete measure when emptied via content backspace" branch is gone.
+
+**Rejected**:
+- **Keep all placeholders as nav stops + add a past-end stop only when the last measure is full** (the prior iteration's "minimal change" pick). It preserved the boundary-rule silent re-aim that had no way to express "enter the next measure" vs "extend this one"; user testing surfaced this as ambiguous and undesirable, and the past-end stop never actually appeared in practice because partial last measures left placeholders that swallowed the navigation.
+- **Auto-delete emptied measures** (existing behavior). The user can't fully replace a measure's contents this way — deleting all content makes the measure vanish, leaving nowhere to type the replacement.
+- **Two stops (wrapper + fill-anchor) on fully-empty measures** (matching tuplet's empty-tuplet behavior exactly). Two cursor positions at the same visual point produces a right-arrow with no visible motion; user picked the one-stop collapse for empty measures via AskUserQuestion.
+
+**Why**: the boundary-rule re-aim was load-bearing UX glue that papered over an ambiguity in the cursor model. Replacing it with two explicit stops (fill-anchor of M_k for "extend current"; wrapper of M_{k+1} for "enter next") makes the user's intent unambiguous AND fixes the premature autofill — cursor at fill-anchor stays in M_k, so `cursorMeasureIdx` doesn't change, so autofill doesn't fire. The tuplet container model already handled all these concerns; bringing measures into the same shape removes one set of special cases instead of adding another.
+
+**Where**:
+- `src/composer/model.ts:flatChildren` + `layerStops` — measure-level emission of wrapper + content + fill-anchor.
+- `src/composer/model.ts:locateCursor` + `resolveStopIndex` + `measureStopCount` — translate flat-index back to a `(measureIdx, layer, withinIdx)`. Past-end uses a fresh empty `<layer>` so downstream code sees `contentChildren = []`.
+- `src/composer/model.ts:getVoiceLength` — +1 for the synthetic past-end stop.
+- `src/composer/model.ts:normalizePlaceholders` — now emits trailing placeholders for partial layers too (so the fill-anchor stop has a real DOM element to anchor on).
+- `src/composer/model.ts:deleteAtCursor` — adds the empty-measure-wrapper delete branch and the wrapper skip-left arm; removes the auto-delete-on-empty branch.
+- `src/composer/model.ts:insertWithSplit` + `canInsertHere` — boundary-rule re-aim removed; cursor advance after insert uses `findIndex` to land just past the rightmost inserted element (handles the extra wrapper + fill-anchor stops a freshly-created measure contributes).
+- `src/composer/model.ts:autofillAndReanchor` — captures the cursor's target element BEFORE the autofill sweep and snaps to its new flat-index after, so right-arrow `fill-anchor → wrapper-of-next` doesn't visibly displace the cursor when autofill changes the flat.
+- `src/composer/cursor.ts:renderVoiceCursor` — three new render cases (wrapper stop, fill-anchor stop, past-end synthetic stop).
+
+---
+
+## Composer wrapper-collapse + doc-wide autofill sweep (iter, 2026-05-19)
+
+**Picked**: emit M_k's wrapper stop UNLESS the previous measure is full and M_k has at least one real-content child (in which case "after last content of M_{k-1}" and "wrapper of M_k" collapse to a single nav stop). The wrapper is always emitted for M_1, for fully-empty M_k, and when M_{k-1} is partial. Autofill is triggered on every mutation + every navigation event, scanning all measures except the cursor's current one.
+
+**Rejected**:
+- **Always emit wrapper of M_k** (the iteration before this). Surfaces the wrapper of M_{k+1} right at the bar line, visually indistinguishable from "still in M_k". When M_{k+1} is empty and the user is "visually in M_k" after the bar line, backspace there fires the empty-measure delete unexpectedly.
+- **Autofill only on cursor measureIdx change** (the previous iteration's trigger). Missed the common abandonment pattern where the abandoned measure's later-content sibling appears AFTER the cursor's move-out, so the autofill condition was checked at the wrong time.
+
+**Why**: the user explicitly identified both root causes in hands-on testing. Collapsing the wrapper when M_{k-1} is full removes a visually-confusing redundant stop while preserving the dot/tie operations the user expects from "after last note of previous measure" (those still work because the previous note is `flat[c-1]`). Scanning on every event is O(measures × voices) per keystroke — cheap — and catches the abandonment as soon as the conditions hold.
+
+**Where**:
+- `src/composer/model.ts:shouldEmitWrapper` (new), `layerIsFull` (new) — the per-measure wrapper-emission decision.
+- `src/composer/model.ts:flatChildren` / `measureStopCount` / `resolveStopIndex` / `locateCursor` / `locateFlatElement` — consume the emission decision, with `resolveStopIndex(idx=0)` returning the first content stop when the wrapper is collapsed.
+- `src/composer/model.ts:autofillAllAbandoned` / `autofillAllAndReanchor` — doc-wide sweep. Wired into every mutation entry point (`insertChord/Rest/Replace`, `deleteAtCursor` × 5 return paths, `createTupletAtCursor`, `cycleDotsOnCurrent`, `toggleTieOnCurrent`, `setTimeSig`) plus every navigation entry point.
+- `src/composer/cursor.ts:anchorAtMeasureLeft` — `findSigEndXForStaff` / first-content / first-placeholder / `measure.rect.left + 30` fallback chain. `setVerticalFromStaff` ensures the wrapper / past-end cursor spans only the voice's staff, not the whole grand staff.
+
+---
+
+## Composer cursor verification tooling + voiceLen no-+1 (iter, 2026-05-19)
+
+**Picked**: `tools/composer-inspect/inspect.mjs --screenshot` writes a PNG via CDP `Page.captureScreenshot`. `tools/composer-inspect/cursor-trace-all.mjs` runs every canonical scenario in `scenarios.mjs`, walks all cursor positions, and reports invariant violations (consecutive positions whose rendered cursor-bar rect is < 4px apart — the "state changes but pixel doesn't" failure mode). The `data-cursor-role="voice"` attribute on the cursor bar makes it queryable from inside the page.
+
+`getVoiceLength` returns `flatChildren.length` (no +1). Past-end is `cursor === voiceLen` directly; `moveCursor`'s `c < len` already lets the cursor reach `len`, and `locateCursor` resolves out-of-range cursor as past-end.
+
+`shouldEmitWrapper`: wrapper is emitted only for empty M_k OR when M_{k-1} is partial. M_1 with content has its wrapper collapsed (no predecessor to extend, cursor=0 already anchors at sigEnd).
+
+Cursor renderer: when `flat[c]` is a measure wrapper (`nextRef.elem.localName === 'measure'`), anchor at the wrapper's measure's LEFT edge — INSIDE the measure, past the previous bar line. This makes empty-measure-deletion semantics match where the cursor visually is.
+
+**Rejected**:
+- **Run scenarios as one big inspector invocation** (sharing Chromium across scenarios): more efficient but coupled — easier to debug per-scenario when each invocation has a fresh page.
+- **Hard-coded staff heights / per-scenario tolerances**: pure invariant-based check works without those.
+
+**Why**: three iterations in a row shipped cursor-model changes that compiled and passed model-only tests, then broke under hands-on testing because the rendered cursor positions weren't distinct from each other (cursor state changed without the visual moving). The user's request to "show me what steps you will take to improve your understanding before we do anything else" forced the right intervention: build the visual + numeric verification, run it against the broken state to surface the exact diagnoses (35 violations across 6 scenarios before the fix), then apply the fixes with the tooling-confirmed effect (0 violations after).
+
+**Where**:
+- `tools/composer-inspect/inspect.mjs` — `--screenshot` mode.
+- `tools/composer-inspect/cursor-trace.mjs` — in-page trace + invariant function.
+- `tools/composer-inspect/scenarios.mjs` — canonical doc-build snippets.
+- `tools/composer-inspect/cursor-trace-all.mjs` — driver, one PNG + one JSON per scenario.
+- `src/composer/model.ts:getVoiceLength` (no +1), `shouldEmitWrapper` (collapse M_1 with content), `autofillAllAndReanchor` (snap to `voiceLen`, not `voiceLen - 1`).
+- `src/composer/cursor.ts` — `data-cursor-role="voice"` attribute on the bar; `insert-before-measure-wrapper` render case that anchors inside the upcoming measure; `cursor === 0` branch routed through the same wrapper anchor logic.
+- `src/composer/main.ts` — exposes `reRender` on `window.__hkl_composer` so the headless tooling can trigger a Verovio re-render after model mutations.

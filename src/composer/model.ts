@@ -376,35 +376,20 @@ export class ComposerModel {
     return this.cursors[voice ?? this.currentVoice];
   }
 
-  /** Voice length = number of cursor positions, inclusive of the past-end
-   *  stop at `flat.length`. When the last measure is full and has no next
-   *  measure, this past-end position is the "next entry creates a new
-   *  measure" stop: locateCursor's past-end branch resolves it to
-   *  (lastMeasureIdx, withinIdx = contentChildren.length), and
-   *  insertWithSplit's tail path appends a new measure lazily. When the
-   *  last measure has trailing placeholders, those placeholders ARE the
-   *  cursor stops for that region; the past-end at flat.length is also
-   *  reachable but visually equivalent to "after the last placeholder". */
+  /** Voice length = number of reachable cursor positions, where
+   *  `cursor === flatChildren.length` is the past-end synthetic stop
+   *  ("wrapper of the not-yet-existent next measure"). Input at past-end
+   *  lazily creates a new measure via `insertWithSplit`'s `appendMeasure`
+   *  path. `moveCursor`'s `c < len` lets the cursor reach `len`, so
+   *  past-end is `cursor = voiceLen` (NOT one beyond — no +1 here). */
   getVoiceLength(voice?: Voice): number {
     return this.flatChildren(voice ?? this.currentVoice).length;
   }
 
-  /** True iff this voice's cursor is at the past-end-of-full-last-measure
-   *  position — the rightmost layer is exactly full and there is no measure
-   *  after it. Lets the renderer style the cursor differently to signal
-   *  "next entry creates a new measure". */
+  /** True iff this voice's cursor is at the past-end synthetic stop. */
   isCursorAtPastEnd(voice?: Voice): boolean {
     const v = voice ?? this.currentVoice;
-    if (this.cursors[v] !== this.getVoiceLength(v)) return false;
-    const layers = this.allLayers(v);
-    if (layers.length === 0) return false;
-    const last = layers[layers.length - 1];
-    for (const c of Array.from(last.children)) {
-      if (isPlaceholder(c)) return false;
-    }
-    let total = 0;
-    for (const c of this.contentChildren(last)) total += realTicks(c);
-    return total >= this.measureTicks();
+    return this.cursors[v] === this.flatChildren(v).length;
   }
 
   /** Returns the MEI xml:id of the element at the given linear cursor. */
@@ -542,6 +527,7 @@ export class ComposerModel {
     sd.setAttribute("meter.unit", String(unit));
     if (count !== prevCount || unit !== prevUnit) {
       this.truncateOverflowingMeasures();
+      this.autofillAllAndReanchor(this.currentVoice);
     }
   }
 
@@ -650,31 +636,160 @@ export class ComposerModel {
     return out;
   }
 
-  /** Flat navigable children across all measures for voice. Uses
-   *  navigableChildren per-layer, which inlines tuplet nav stops so the
-   *  cursor walks through tuplet contents transparently. */
+  /** Flat navigable children across all measures for voice. Per measure
+   *  contributes (mirroring the tuplet model): the <measure> element as a
+   *  wrapper stop (sometimes — see collapse rule below), the layer's content
+   *  stops (tuplets inlined with their internal stops), and — when the layer
+   *  is in the *partial* state (has some real content AND some trailing
+   *  placeholder space) — the FIRST `<space data-placeholder>` of the layer
+   *  as a single fill-anchor stop. Fully-empty layers collapse to just the
+   *  wrapper. Full layers omit the fill-anchor. A synthetic past-end stop
+   *  "wrapper of the not-yet-existent next measure" is implicit via
+   *  `getVoiceLength = flat.length + 1`.
+   *
+   *  **Wrapper collapse rule** (mirrors how tuplet wrappers are also their
+   *  own layer-level stops): the wrapper for M_k is omitted when M_{k-1}'s
+   *  layer is full AND M_k has at least one real-content child. In that
+   *  case, "after last content of M_{k-1}" and "wrapper of M_k" are at the
+   *  same time AND have identical insertion semantics (insertion goes into
+   *  M_k at front either way), so a single combined stop suffices. The
+   *  wrapper is always emitted for M_1, for empty layers (the stop becomes
+   *  the empty-measure delete target), and when M_{k-1} is partial (the
+   *  fill-anchor + wrapper distinction carries the extend-vs-enter intent
+   *  that issue 2 from the prior iteration introduced). */
   flatChildren(voice: Voice): Element[] {
     const out: Element[] = [];
-    for (const layer of this.allLayers(voice)) {
-      out.push(...this.navigableChildren(layer));
+    const measures = this.allMeasures();
+    for (let mi = 0; mi < measures.length; mi++) {
+      const measure = measures[mi];
+      const layer = this.layerInMeasure(measure, voice);
+      if (!layer) continue;
+      if (this.shouldEmitWrapper(measures, voice, mi)) out.push(measure);
+      out.push(...this.layerStops(layer));
+      /* Fill-anchor: first layer-level placeholder. Two emission rules
+         (mirrors the tuplet model where useful, falls back to wrapper-only
+         when the fill-anchor would visually collide with the wrapper):
+           - Partial layer (has both content AND placeholder): always emit.
+             Carries the "extend this measure" intent distinct from the
+             wrapper's "enter this measure" intent.
+           - Empty layer: emit only when the PREVIOUS measure has content
+             in this voice — that's the case where the post-prev navigation
+             stop (= the wrapper) must remain distinct from the explicit
+             empty-measure delete stop (= the fill-anchor). Otherwise emit
+             only the wrapper (deletion still works — `deleteAtCursor` case 2
+             falls back to wrapper-based delete when no fill-anchor is
+             emitted for that empty measure). */
+      const cc = this.contentChildren(layer);
+      const firstPh = Array.from(layer.children).find(isPlaceholder);
+      if (firstPh) {
+        if (cc.length > 0) {
+          out.push(firstPh);
+        } else if (this.emptyFillAnchorEmitted(measures, voice, mi)) {
+          out.push(firstPh);
+        }
+      }
     }
     return out;
   }
 
-  /** Translate a linear cursor (which counts placeholders) into an
-   *  insertion point — (measureIdx, layer, withinIdx) — where withinIdx
-   *  is expressed in CONTENT-children terms (top-level placeholders excluded,
-   *  tuplets counted as 1) so insertWithSplit's tick math works unchanged.
-   *  The optional `inTuplet` field is populated when the cursor lands inside
-   *  a tuplet (on one of its children); callers that handle in-tuplet
-   *  operations branch on this.
+  /** Whether to emit a fill-anchor stop for the empty layer at this
+   *  (voice, measureIdx). True iff the doc has multiple measures AND the
+   *  previous measure has content in this voice — i.e., the wrapper of
+   *  this empty measure also serves as a "post-prev" navigation stop that
+   *  must NOT trigger deletion. In all other empty cases the wrapper is
+   *  the only stop and itself serves as the delete target. */
+  private emptyFillAnchorEmitted(
+    measures: Element[],
+    voice: Voice,
+    measureIdx: number,
+  ): boolean {
+    if (measures.length <= 1) return false;
+    if (measureIdx === 0) return false;
+    const prevLayer = this.layerInMeasure(measures[measureIdx - 1], voice);
+    if (!prevLayer) return false;
+    return this.contentChildren(prevLayer).length > 0;
+  }
+
+  /** Whether layer's content sums to a full measure (no trailing placeholder
+   *  space). Used by the wrapper-collapse rule. */
+  private layerIsFull(layer: Element): boolean {
+    let total = 0;
+    for (const c of this.contentChildren(layer)) total += realTicks(c);
+    return total >= this.measureTicks();
+  }
+
+  /** Wrapper emission decision per measure. Emit iff:
+   *    - M_k is empty (the wrapper is the only stop AND the explicit
+   *      empty-measure delete target), OR
+   *    - M_{k-1} is *partial* (has a fill-anchor stop, so M_k's wrapper
+   *      carries the "enter M_k" intent distinct from M_{k-1}'s fill-anchor's
+   *      "extend M_{k-1}" intent).
+   *  Otherwise collapse — there's no semantic distinction between
+   *  "after last stop of M_{k-1}" and "before first stop of M_k":
+   *    - M_1 with content: no predecessor to extend, cursor=0 anchors at
+   *      sigEnd directly.
+   *    - M_k>0 with content + M_{k-1} full: extending M_{k-1} overflows
+   *      into M_k anyway, so one combined stop covers both intents.
+   *    - M_k>0 with content + M_{k-1} empty: M_{k-1} has only a wrapper
+   *      stop (no fill-anchor), so "after wrapper-of-M_{k-1}" IS the only
+   *      "boundary" position; collapsing M_k's wrapper avoids the
+   *      indistinguishable-twin stops between two adjacent wrappers. */
+  private shouldEmitWrapper(
+    measures: Element[],
+    voice: Voice,
+    measureIdx: number,
+  ): boolean {
+    const thisLayer = this.layerInMeasure(measures[measureIdx], voice);
+    if (!thisLayer) return false;
+    if (this.contentChildren(thisLayer).length === 0) return true;
+    if (measureIdx === 0) return false;
+    const prevLayer = this.layerInMeasure(measures[measureIdx - 1], voice);
+    if (!prevLayer) return true;
+    const prevContent = this.contentChildren(prevLayer);
+    if (prevContent.length === 0) return false; /* prev empty → collapse */
+    if (this.layerIsFull(prevLayer)) return false; /* prev full → collapse */
+    return true; /* prev partial → emit */
+  }
+
+  /** Cursor stops contributed by a layer: real content elements + tuplet
+   *  internal stops. Placeholders are NOT emitted here — the fill-anchor
+   *  (a single stop) is handled at the measure level by `flatChildren`. */
+  private layerStops(layer: Element): Element[] {
+    const out: Element[] = [];
+    for (const c of Array.from(layer.children)) {
+      const ln = c.localName;
+      if (ln === 'tuplet') {
+        out.push(c);
+        out.push(...this.tupletNavStops(c));
+      } else if (ln === 'chord' || ln === 'note' || ln === 'rest') {
+        out.push(c);
+      }
+    }
+    return out;
+  }
+
+  /** Translate a linear cursor into an insertion point — (measureIdx, layer,
+   *  withinIdx) — where withinIdx is expressed in CONTENT-children terms
+   *  (placeholders excluded, tuplets counted as 1). The `inTuplet` field is
+   *  populated when the cursor lands on a tuplet child stop.
    *
-   *  Boundary semantics: cursor=N means "before flat[N]". `<` (strict)
-   *  is the right rule — when cursor sits at a measure boundary (e.g. the
-   *  start of measure k = the position of the first nav element in m_k),
-   *  insertion should target m_k, not m_(k-1)'s trailing edge.
+   *  Stop kinds and their resolved location:
+   *    - `<measure>` wrapper stop → `(measureIdx, withinIdx: 0)`. Cursor
+   *      means "before this measure's content"; insertion goes at the front.
+   *    - Real content element → its position in `contentChildren`.
+   *    - Tuplet child → `inTuplet: { tuplet, tupletChildIdx }`; withinIdx
+   *      is the tuplet's position in `contentChildren`.
+   *    - `<space data-placeholder>` (fill-anchor) → `(measureIdx, withinIdx:
+   *      contentChildren.length)`. Cursor means "at the end of this
+   *      measure's content, in the placeholder area"; insertion appends.
    *
-   *  Past end: returns the last layer at its content-child length. */
+   *  Past-end (cursor === flat.length): returns the synthetic "next-measure
+   *  wrapper" location — `measureIdx = allMeasures.length` (one past the
+   *  last existing), `layer` is a fresh empty `<layer>` element (so
+   *  `contentChildren` returns empty and downstream code sees no
+   *  post-cursor content). The applier in `insertWithSplit` lazily creates
+   *  the measure via `appendMeasure` when an action's `targetMIdx` is
+   *  beyond the existing measure count. */
   private locateCursor(
     voice: Voice,
     linearCursor: number,
@@ -684,65 +799,116 @@ export class ComposerModel {
     withinIdx: number;
     inTuplet: { tuplet: Element; tupletChildIdx: number } | null;
   } | null {
-    const layers = this.allLayers(voice);
-    if (layers.length === 0) return null;
+    const measures = this.allMeasures();
+    if (measures.length === 0) return null;
     let consumed = 0;
-    for (let mi = 0; mi < layers.length; mi++) {
-      const layer = layers[mi];
-      const navKids = this.navigableChildren(layer);
-      if (linearCursor < consumed + navKids.length) {
-        const navIdx = linearCursor - consumed;
-        const target = navKids[navIdx];
-        /* If the target nav stop is INSIDE a tuplet, return an in-tuplet
-           location. The tuplet's withinIdx is its position in contentChildren. */
-        const tParent = target.parentElement;
-        if (tParent && tParent.localName === "tuplet") {
-          const cc = this.contentChildren(layer);
-          const wIdx = cc.indexOf(tParent);
-          const tChildren = Array.from(tParent.children);
-          const tIdx = tChildren.indexOf(target);
-          return {
-            measureIdx: mi,
-            layer,
-            withinIdx: wIdx,
-            inTuplet: { tuplet: tParent, tupletChildIdx: tIdx },
-          };
-        }
-        /* Top-level target: count content (not placeholders, but counting
-           tuplets as content) BEFORE this target to derive withinIdx. */
-        let realIdx = 0;
-        for (const c of Array.from(layer.children)) {
-          if (c === target) break;
-          if (
-            c.localName === "chord" ||
-            c.localName === "note" ||
-            c.localName === "rest" ||
-            c.localName === "tuplet"
-          )
-            realIdx++;
-        }
-        return { measureIdx: mi, layer, withinIdx: realIdx, inTuplet: null };
+    for (let mi = 0; mi < measures.length; mi++) {
+      const measure = measures[mi];
+      const layer = this.layerInMeasure(measure, voice);
+      if (!layer) continue;
+      const emitWrapper = this.shouldEmitWrapper(measures, voice, mi);
+      const stopCount = this.measureStopCount(measures, voice, mi, layer, emitWrapper);
+      if (linearCursor < consumed + stopCount) {
+        return this.resolveStopIndex(mi, layer, linearCursor - consumed, emitWrapper);
       }
-      consumed += navKids.length;
+      consumed += stopCount;
     }
-    /* Past end — return the last layer at its content-child length. */
-    const last = layers.length - 1;
-    const layer = layers[last];
+    /* Past-end: synthetic "wrapper of the next non-existent measure". */
     return {
-      measureIdx: last,
+      measureIdx: measures.length,
+      layer: this.doc.createElementNS(MEI_NS, 'layer'),
+      withinIdx: 0,
+      inTuplet: null,
+    };
+  }
+
+  /** Total nav-stops contributed by one (voice, layer) when `emitWrapper`
+   *  indicates whether the leading `<measure>` wrapper stop is included.
+   *  Matches `flatChildren`'s fill-anchor emission. */
+  private measureStopCount(
+    measures: Element[],
+    voice: Voice,
+    measureIdx: number,
+    layer: Element,
+    emitWrapper: boolean,
+  ): number {
+    let n = emitWrapper ? 1 : 0;
+    n += this.layerStops(layer).length;
+    const cc = this.contentChildren(layer);
+    const hasPh = Array.from(layer.children).some(isPlaceholder);
+    if (hasPh) {
+      if (cc.length > 0) n += 1;
+      else if (this.emptyFillAnchorEmitted(measures, voice, measureIdx)) n += 1;
+    }
+    return n;
+  }
+
+  /** Resolve a stop-within-measure index to a cursor location. When the
+   *  wrapper is emitted (`emitWrapper=true`), idx 0 is the wrapper, idx
+   *  1..N are layer stops, idx N+1 is the fill-anchor (if present).
+   *  When the wrapper is collapsed (`emitWrapper=false`), idx 0..N-1 are
+   *  layer stops and idx N is the fill-anchor (if present). */
+  private resolveStopIndex(
+    measureIdx: number,
+    layer: Element,
+    idx: number,
+    emitWrapper: boolean,
+  ): {
+    measureIdx: number;
+    layer: Element;
+    withinIdx: number;
+    inTuplet: { tuplet: Element; tupletChildIdx: number } | null;
+  } {
+    if (emitWrapper && idx === 0) {
+      /* Wrapper stop: at start of measure. */
+      return { measureIdx, layer, withinIdx: 0, inTuplet: null };
+    }
+    const layerStopIdx = emitWrapper ? idx - 1 : idx;
+    const layerStops = this.layerStops(layer);
+    if (layerStopIdx < layerStops.length) {
+      const target = layerStops[layerStopIdx];
+      const tParent = target.parentElement;
+      if (tParent && tParent.localName === 'tuplet') {
+        const cc = this.contentChildren(layer);
+        const wIdx = cc.indexOf(tParent);
+        const tChildren = Array.from(tParent.children);
+        const tIdx = tChildren.indexOf(target);
+        return {
+          measureIdx,
+          layer,
+          withinIdx: wIdx,
+          inTuplet: { tuplet: tParent, tupletChildIdx: tIdx },
+        };
+      }
+      /* Top-level content target: count content elements before it. */
+      let realIdx = 0;
+      for (const c of Array.from(layer.children)) {
+        if (c === target) break;
+        if (
+          c.localName === 'chord' ||
+          c.localName === 'note' ||
+          c.localName === 'rest' ||
+          c.localName === 'tuplet'
+        ) {
+          realIdx++;
+        }
+      }
+      return { measureIdx, layer, withinIdx: realIdx, inTuplet: null };
+    }
+    /* Fill-anchor stop: insertion appends to the layer's content. */
+    return {
+      measureIdx,
       layer,
       withinIdx: this.contentChildren(layer).length,
       inTuplet: null,
     };
   }
 
-  /** Locate the navigable element at flat-index `flatIdx`. Returns the
-   *  measure, layer, withinIdx (CONTENT-children index, treating tuplets as
-   *  atomic), and an inTuplet reference when the target is a tuplet child.
-   *  For top-level targets, withinIdx points to the target's position in
-   *  contentChildren when the target IS real content; for a layer-level
-   *  placeholder target, withinIdx is the count of content-children
-   *  preceding it. */
+  /** Locate the navigable element at flat-index `flatIdx`. Same resolution
+   *  rules as `locateCursor` for non-past-end indices; returns null when
+   *  `flatIdx` is out of range (no synthetic past-end fallback here — the
+   *  callers that use this for deletion targets only care about real
+   *  elements). */
   private locateFlatElement(
     voice: Voice,
     flatIdx: number,
@@ -753,43 +919,18 @@ export class ComposerModel {
     inTuplet: { tuplet: Element; tupletChildIdx: number } | null;
   } | null {
     if (flatIdx < 0) return null;
-    const layers = this.allLayers(voice);
-    let remaining = flatIdx;
-    for (let mi = 0; mi < layers.length; mi++) {
-      const navKids = this.navigableChildren(layers[mi]);
-      if (remaining < navKids.length) {
-        const target = navKids[remaining];
-        const tParent = target.parentElement;
-        if (tParent && tParent.localName === "tuplet") {
-          const cc = this.contentChildren(layers[mi]);
-          const wIdx = cc.indexOf(tParent);
-          const tIdx = Array.from(tParent.children).indexOf(target);
-          return {
-            measureIdx: mi,
-            layer: layers[mi],
-            withinIdx: wIdx,
-            inTuplet: { tuplet: tParent, tupletChildIdx: tIdx },
-          };
-        }
-        let realIdx = 0;
-        for (const c of Array.from(layers[mi].children)) {
-          if (c === target) break;
-          if (
-            c.localName === "chord" ||
-            c.localName === "note" ||
-            c.localName === "rest" ||
-            c.localName === "tuplet"
-          )
-            realIdx++;
-        }
-        return {
-          measureIdx: mi,
-          layer: layers[mi],
-          withinIdx: realIdx,
-          inTuplet: null,
-        };
+    const measures = this.allMeasures();
+    let consumed = 0;
+    for (let mi = 0; mi < measures.length; mi++) {
+      const measure = measures[mi];
+      const layer = this.layerInMeasure(measure, voice);
+      if (!layer) continue;
+      const emitWrapper = this.shouldEmitWrapper(measures, voice, mi);
+      const stopCount = this.measureStopCount(measures, voice, mi, layer, emitWrapper);
+      if (flatIdx < consumed + stopCount) {
+        return this.resolveStopIndex(mi, layer, flatIdx - consumed, emitWrapper);
       }
-      remaining -= navKids.length;
+      consumed += stopCount;
     }
     return null;
   }
@@ -852,28 +993,10 @@ export class ComposerModel {
     return filled;
   }
 
-  /** Filter to cursor-navigable elements at the layer level. Each tuplet
-   *  contributes [tuplet-wrapper, ...in-tuplet-stops]: the wrapper itself
-   *  is a layer-level stop ("before tuplet"), followed by the tuplet's
-   *  internal stops (in-tuplet positions). The cursor "after the tuplet"
-   *  is the natural "before the next layer element" stop. */
-  private navigableChildren(layer: Element): Element[] {
-    const out: Element[] = [];
-    for (const c of Array.from(layer.children)) {
-      const ln = c.localName;
-      if (ln === "tuplet") {
-        out.push(c);
-        out.push(...this.tupletNavStops(c));
-      } else if (
-        ln === "chord" ||
-        ln === "note" ||
-        ln === "rest" ||
-        isPlaceholder(c)
-      ) {
-        out.push(c);
-      }
-    }
-    return out;
+  /** @deprecated retained for any external probe; the live model walks via
+   *  `flatChildren` + `layerStops` now. */
+  private navigableChildren(_layer: Element): Element[] {
+    return this.layerStops(_layer);
   }
 
   /** Strip and re-add <space data-placeholder> children on every layer so
@@ -886,24 +1009,31 @@ export class ComposerModel {
    *  live inside <tuplet> elements and are managed by tuplet-specific code. */
   private normalizePlaceholders(): void {
     const layers = this.doc.querySelectorAll("layer");
-    const ticks = this.measureTicks();
-    const pieces = ticks > 0 ? decomposeTicks(ticks) : [];
+    const cap = this.measureTicks();
     for (const layer of Array.from(layers)) {
-      let hasReal = false;
-      const toRemove: Element[] = [];
+      /* Strip existing layer-level placeholders. */
       for (const c of Array.from(layer.children)) {
-        if (isPlaceholder(c)) toRemove.push(c);
-        else if (
+        if (isPlaceholder(c)) layer.removeChild(c);
+      }
+      /* Sum real-content ticks; append trailing placeholders to fill the
+         remainder. A fully-empty layer gets placeholders summing to the
+         whole measure; a partial layer gets placeholders summing to the
+         residual space (which serves as the fill-anchor's home in the
+         new nav-stop model); a full layer gets none. */
+      let used = 0;
+      for (const c of Array.from(layer.children)) {
+        if (
           c.localName === "chord" ||
           c.localName === "note" ||
           c.localName === "rest" ||
           c.localName === "tuplet"
-        )
-          hasReal = true;
+        ) {
+          used += realTicks(c);
+        }
       }
-      for (const c of toRemove) layer.removeChild(c);
-      if (hasReal) continue;
-      for (const p of pieces) {
+      const remaining = cap - used;
+      if (remaining <= 0) continue;
+      for (const p of decomposeTicks(remaining)) {
         const space = el(this.doc, "space", {
           "xml:id": newId("sp"),
           dur: p.dur,
@@ -953,14 +1083,15 @@ export class ComposerModel {
     if (dir === "up") next = (cur > 1 ? cur - 1 : 1) as Voice;
     else next = (cur < 4 ? cur + 1 : 4) as Voice;
     if (next === cur) return next;
-    const oldMIdx = this.cursorMeasureIdx(cur);
     const currentTime = this.getTimeAt(cur, this.cursors[cur]);
     this.currentVoice = next;
     this.cursors[next] = this.findCursorAtOrBefore(next, currentTime);
-    /* Switching voice abandons the old voice's cursor location → run the
-       autofill sweep on the old (voice, measure) so partial measures left
-       behind get visible beat-aligned rests. */
-    if (oldMIdx >= 0) this.autofillMeasure(cur, oldMIdx);
+    /* Switching voice abandons the old voice's cursor location; run the
+       autofill sweep on both voices so all abandoned partial measures
+       finalize (old voice's cursor stays put; new voice's cursor took its
+       new position above). */
+    this.autofillAllAndReanchor(cur);
+    this.autofillAllAndReanchor(next);
     return next;
   }
 
@@ -988,47 +1119,47 @@ export class ComposerModel {
 
   setVoice(v: Voice): void {
     const oldV = this.currentVoice;
-    const oldMIdx = oldV !== v ? this.cursorMeasureIdx(oldV) : -1;
     this.currentVoice = v;
-    const max = this.getVoiceLength(v);
-    if (this.cursors[v] > max) this.cursors[v] = max;
-    if (oldV !== v && oldMIdx >= 0) this.autofillMeasure(oldV, oldMIdx);
+    if (this.cursors[v] > this.getVoiceLength(v)) this.cursors[v] = this.getVoiceLength(v);
+    if (oldV !== v) {
+      this.autofillAllAndReanchor(oldV);
+      this.autofillAllAndReanchor(v);
+    } else {
+      this.autofillAllAndReanchor(v);
+    }
   }
 
   moveCursor(dir: "left" | "right"): number {
     const v = this.currentVoice;
     const len = this.getVoiceLength(v);
-    const prevMIdx = this.cursorMeasureIdx(v);
     let c = this.cursors[v];
     if (dir === "left" && c > 0) c--;
     else if (dir === "right" && c < len) c++;
     this.cursors[v] = c;
-    const newMIdx = this.cursorMeasureIdx(v);
-    if (prevMIdx >= 0 && prevMIdx !== newMIdx) this.autofillMeasure(v, prevMIdx);
-    return c;
+    this.autofillAllAndReanchor(v);
+    return this.cursors[v];
   }
 
   setCursor(c: number, voice?: Voice): void {
     const v = voice ?? this.currentVoice;
     const len = this.getVoiceLength(v);
-    const prevMIdx = this.cursorMeasureIdx(v);
     this.cursors[v] = Math.max(0, Math.min(len, c));
-    const newMIdx = this.cursorMeasureIdx(v);
-    if (prevMIdx >= 0 && prevMIdx !== newMIdx) this.autofillMeasure(v, prevMIdx);
+    this.autofillAllAndReanchor(v);
   }
 
   cursorToEnd(voice?: Voice): void {
     const v = voice ?? this.currentVoice;
-    const prevMIdx = this.cursorMeasureIdx(v);
     this.cursors[v] = this.getVoiceLength(v);
-    const newMIdx = this.cursorMeasureIdx(v);
-    if (prevMIdx >= 0 && prevMIdx !== newMIdx) this.autofillMeasure(v, prevMIdx);
+    this.autofillAllAndReanchor(v);
   }
 
   /** The measureIdx of this voice's current cursor location, or -1 when the
    *  cursor doesn't resolve to a measure (no layers in this voice — only
-   *  happens transiently before the doc is initialized). */
-  private cursorMeasureIdx(voice: Voice): number {
+   *  happens transiently before the doc is initialized). Past-end resolves
+   *  to `allMeasures.length` (= one past the last existing measure).
+   *  Exposed so the cursor renderer can anchor at the CURSOR'S current
+   *  measure rather than a neighboring wrapper's measure. */
+  cursorMeasureIdx(voice: Voice): number {
     const loc = this.locateCursor(voice, this.cursors[voice]);
     return loc ? loc.measureIdx : -1;
   }
@@ -1064,6 +1195,52 @@ export class ComposerModel {
     for (const r of decomposeBeatAlignedRests(total, cap - total, ts)) {
       layer.appendChild(this.buildRestElement({ duration: r.dur, dots: r.dots }));
     }
+  }
+
+  /** Scan every measure of `voice` (except the cursor's current measure)
+   *  and run `autofillMeasure` on each. Per the autofill rules, this is a
+   *  no-op for measures that don't qualify (fully-empty, full, or no
+   *  later-content sibling). Cheap O(measures) walk. */
+  private autofillAllAbandoned(voice: Voice): void {
+    const cursorMIdx = this.cursorMeasureIdx(voice);
+    const layers = this.allLayers(voice);
+    for (let m = 0; m < layers.length; m++) {
+      if (m === cursorMIdx) continue;
+      this.autofillMeasure(voice, m);
+    }
+  }
+
+  /** Run the doc-wide autofill sweep and re-anchor the cursor. The sweep
+   *  can vanish elements (placeholders consumed; wrappers collapsing when
+   *  shouldEmitWrapper flips), so we capture an ordered list of "look-forward
+   *  anchors" — the elements at or past the cursor in the OLD flat — and
+   *  snap to the first one that still exists in the NEW flat. This preserves
+   *  the cursor's semantic position (= "the cursor is about to enter / move
+   *  past element X") across structural shifts.
+   *
+   *  Time-based reanchoring was rejected because wrappers have zero realTicks,
+   *  so multiple consecutive cursor positions can share the same time;
+   *  `findCursorAtOrBefore` then picks the rightmost, advancing the cursor
+   *  on a no-op autofill (e.g. `setCursor(0)` in an empty doc snapping to
+   *  cursor=1 past the wrapper). The look-forward anchor list keeps the
+   *  cursor stable on a no-op sweep and advances it only when the look-forward
+   *  elements actually vanish. */
+  private autofillAllAndReanchor(voice: Voice): void {
+    const flat = this.flatChildren(voice);
+    const c = this.cursors[voice];
+    const lookForward: Element[] = c < flat.length ? flat.slice(c) : [];
+    this.autofillAllAbandoned(voice);
+    const newFlat = this.flatChildren(voice);
+    for (const el of lookForward) {
+      const idx = newFlat.indexOf(el);
+      if (idx >= 0) {
+        this.cursors[voice] = idx;
+        return;
+      }
+    }
+    /* No look-forward survivor (cursor was at past-end, OR every element
+       from the old cursor onward was consumed). Snap to the new past-end. */
+    this.cursors[voice] = this.getVoiceLength(voice);
   }
 
   /** Translate the current voice's cursor position into an MEI (measureIdx,
@@ -1149,30 +1326,6 @@ export class ComposerModel {
       return { ok: true };
     }
 
-    /* Apply the same boundary-rule re-aim used by insertWithSplit so the
-       pre-flight reflects the apply-time location precisely. */
-    if (cursor > 0) {
-      const flat = this.flatChildren(v);
-      const at = cursor < flat.length ? flat[cursor] : null;
-      const prev = flat[cursor - 1];
-      if (at && prev && isPlaceholder(at) && !isPlaceholder(prev)) {
-        const prevMeasure = prev.closest("measure");
-        const atMeasure = at.closest("measure");
-        if (prevMeasure && atMeasure && prevMeasure !== atMeasure) {
-          const prevLayer = prev.parentElement;
-          if (prevLayer) {
-            const prevMeasureIdx = this.allMeasures().indexOf(prevMeasure);
-            loc = {
-              measureIdx: prevMeasureIdx,
-              layer: prevLayer,
-              withinIdx: this.contentChildren(prevLayer).length,
-              inTuplet: null,
-            };
-          }
-        }
-      }
-    }
-
     const plan = this.planInsert(
       { measureIdx: loc.measureIdx, layer: loc.layer, withinIdx: loc.withinIdx },
       totalTicks,
@@ -1242,6 +1395,7 @@ export class ComposerModel {
        model, the tuplet wrapper itself is also a nav stop, occupying the
        pre-creation cursor index; the fill anchor is one position right. */
     this.cursors[v] = Math.min(this.cursors[v] + 1, this.getVoiceLength(v));
+    this.autofillAllAndReanchor(v);
     return { ok: true, id: tuplet.getAttribute("xml:id") ?? "" };
   }
 
@@ -1257,6 +1411,7 @@ export class ComposerModel {
     this.resolvePendingTies(originalCursor);
     this.normalizePlaceholders();
     this.cursors[v] = Math.min(this.cursors[v], this.getVoiceLength(v));
+    this.autofillAllAndReanchor(v);
     return id;
   }
 
@@ -1272,6 +1427,7 @@ export class ComposerModel {
     if (id === null) return null;
     this.normalizePlaceholders();
     this.cursors[v] = Math.min(this.cursors[v], this.getVoiceLength(v));
+    this.autofillAllAndReanchor(v);
     return id;
   }
 
@@ -1361,6 +1517,18 @@ export class ComposerModel {
   replaceChordAtCursor(input: ChordInput): string | null {
     const v = this.currentVoice;
     const cursorAtCall = this.cursors[v];
+    const flat = this.flatChildren(v);
+    /* On a wrapper or fill-anchor stop, there's no element to overwrite —
+       defer to the caller's insert fallback (input.ts already does this on
+       null return). Without this guard, an overwrite at wrapper-of-M_k would
+       silently replace M_k's first content; at a fill-anchor the
+       contentChildren-index check below would bail anyway but explicit is
+       clearer. */
+    if (cursorAtCall < flat.length) {
+      const here = flat[cursorAtCall];
+      if (here.localName === 'measure') return null;
+      if (isPlaceholder(here)) return null;
+    }
     const loc = this.locateCursor(v, cursorAtCall);
     if (!loc) return null;
 
@@ -1388,6 +1556,7 @@ export class ComposerModel {
         }
         this.resolvePendingTies(cursorAtCall);
         this.normalizePlaceholders();
+        this.autofillAllAndReanchor(v);
         return replaced.getAttribute("xml:id");
       }
 
@@ -1410,6 +1579,7 @@ export class ComposerModel {
       }
       this.resolvePendingTies(cursorAtCall);
       this.normalizePlaceholders();
+      this.autofillAllAndReanchor(v);
       return replaced.getAttribute("xml:id");
     }
 
@@ -1431,6 +1601,7 @@ export class ComposerModel {
       this.cursors[v] = cursorAtCall;
       this.resolvePendingTies(cursorAtCall);
       this.normalizePlaceholders();
+      this.autofillAllAndReanchor(v);
       return id;
     }
     /* Simple in-place replace WITHIN current measure if it fits — checked
@@ -1450,6 +1621,7 @@ export class ComposerModel {
       loc.layer.replaceChild(replaced, old);
       this.resolvePendingTies(cursorAtCall);
       this.normalizePlaceholders();
+      this.autofillAllAndReanchor(v);
       return replaced.getAttribute("xml:id");
     }
     /* Overflow on replace: remove old, run the planning insertWithSplit
@@ -1462,6 +1634,7 @@ export class ComposerModel {
     this.cursors[v] = cursorAtCall;
     this.resolvePendingTies(cursorAtCall);
     this.normalizePlaceholders();
+    this.autofillAllAndReanchor(v);
     return id;
   }
 
@@ -1474,21 +1647,26 @@ export class ComposerModel {
     return this.deleteAtCursor();
   }
 
-  /** Delete the element immediately to the left of the cursor. If that
-   *  deletion empties the entire measure (across all 4 voices), the
-   *  measure itself is removed — unless it's the only measure left.
+  /** Delete the element immediately to the left of the cursor. Containers
+   *  (tuplets, measures) require an explicit second backspace at their
+   *  anchor stop to drop them — mirroring the empty-tuplet pattern.
    *
-   *  Backspacing onto a placeholder doesn't delete it (placeholders are
-   *  not user-entered content); the cursor moves left so the next press
-   *  reaches whatever real content lies behind. */
+   *  Backspace cases (in priority order):
+   *    1. Cursor ON the fill-anchor of an *empty* tuplet → delete tuplet.
+   *    2. Cursor ON the wrapper of an *empty* measure → delete measure.
+   *    3. Target is a placeholder → skip-left (no deletion).
+   *    4. Target is a tuplet wrapper or measure wrapper → skip-left.
+   *    5. Target is a tuplet's filled child → remove it, grow trailing
+   *       placeholders to preserve the tuplet's written-tick budget.
+   *    6. Otherwise → remove the target content element. Emptied measures
+   *       are NOT auto-removed; the user must back into the wrapper and
+   *       press backspace again to drop them (case 2). */
   deleteAtCursor(): boolean {
     const v = this.currentVoice;
     const c = this.cursors[v];
     const flat = this.flatChildren(v);
 
-    /* Tuplet case (a): cursor on the fill anchor of an empty tuplet —
-       delete the whole <tuplet> element. Cursor stays at c, which now
-       points at the next nav stop past where the tuplet was. */
+    /* Case 1: cursor on the fill anchor of an empty tuplet. */
     if (c < flat.length) {
       const here = flat[c];
       if (isTupletPlaceholder(here)) {
@@ -1498,16 +1676,7 @@ export class ComposerModel {
             (cc) => !isTupletPlaceholder(cc),
           );
           if (!hasFilled) {
-            const measureA = tuplet.closest("measure") as Element | null;
             tuplet.parentNode?.removeChild(tuplet);
-            if (
-              measureA &&
-              this.measureIsEmpty(measureA) &&
-              this.allMeasures().length > 1
-            ) {
-              measureA.parentNode?.removeChild(measureA);
-              this.renumberMeasures();
-            }
             this.setBarlines();
             this.normalizePlaceholders();
             for (let vi = 1 as Voice; vi <= 4; vi = (vi + 1) as Voice) {
@@ -1517,9 +1686,56 @@ export class ComposerModel {
               );
               if (vi === 4) break;
             }
+            this.autofillAllAndReanchor(v);
             return true;
           }
         }
+      }
+    }
+
+    /* Case 2: cursor on an empty measure's delete-target stop. Mirrors
+       case 1 (empty tuplet → delete tuplet at its fill-anchor). The delete
+       target is the LAST stop the empty measure contributes:
+         - Fill-anchor (a layer-level placeholder) when the measure emits
+           one, i.e., when the previous measure has content in this voice.
+           This case lets cursor "on wrapper of empty M_k" sit as a
+           "post-prev" stop (= delete prev's last note), while cursor "on
+           fill-anchor of empty M_k" is the explicit delete-M_k target.
+         - Wrapper otherwise (single-stop empty measure: no prev content,
+           or prev is itself empty). The wrapper IS the only stop, so it
+           doubles as the delete target.
+       Skip when it's the only measure left. */
+    if (c < flat.length) {
+      const here = flat[c];
+      let measureToDelete: Element | null = null;
+      if (isPlaceholder(here)) {
+        const measureA = here.closest("measure") as Element | null;
+        if (measureA && this.measureIsEmpty(measureA)) measureToDelete = measureA;
+      } else if (here.localName === "measure" && this.measureIsEmpty(here)) {
+        /* Wrapper-of-empty fires ONLY when this empty measure doesn't
+           emit a fill-anchor — otherwise the wrapper is "post-prev" and
+           backspace there should delete prev's last note via the default
+           content-delete path below. The fill-anchor would be the very
+           next nav stop in `flat` and would belong to the same measure. */
+        const next = c + 1 < flat.length ? flat[c + 1] : null;
+        const nextIsThisFillAnchor =
+          next !== null && isPlaceholder(next) && next.closest("measure") === here;
+        if (!nextIsThisFillAnchor) measureToDelete = here;
+      }
+      if (measureToDelete && this.allMeasures().length > 1) {
+        measureToDelete.parentNode?.removeChild(measureToDelete);
+        this.renumberMeasures();
+        this.setBarlines();
+        this.normalizePlaceholders();
+        for (let vi = 1 as Voice; vi <= 4; vi = (vi + 1) as Voice) {
+          this.cursors[vi] = Math.min(
+            this.cursors[vi],
+            this.getVoiceLength(vi),
+          );
+          if (vi === 4) break;
+        }
+        this.autofillAllAndReanchor(v);
+        return true;
       }
     }
 
@@ -1531,11 +1747,8 @@ export class ComposerModel {
       this.cursors[v] = c - 1;
       return true;
     }
-    if (target.localName === "tuplet") {
-      /* Cursor is "inside the tuplet at its first nav stop" (= before first
-         filled child or fill anchor). Backspace here means "back out of
-         the tuplet to its layer-level left edge" — symmetric to the
-         placeholder skip-left above. No deletion. */
+    if (target.localName === "tuplet" || target.localName === "measure") {
+      /* Wrapper skip-left: "back out of the container" without deleting. */
       this.cursors[v] = c - 1;
       return true;
     }
@@ -1568,6 +1781,7 @@ export class ComposerModel {
         this.cursors[vi] = Math.min(this.cursors[vi], this.getVoiceLength(vi));
         if (vi === 4) break;
       }
+      this.autofillAllAndReanchor(v);
       return true;
     }
 
@@ -1575,31 +1789,22 @@ export class ComposerModel {
     if (!loc) return false;
     const kids = this.contentChildren(loc.layer);
     if (loc.withinIdx >= kids.length) return false;
-    const measure = loc.layer.closest("measure") as Element | null;
     const victim = kids[loc.withinIdx];
     this.orphanTiePartners(victim);
     loc.layer.removeChild(victim);
     this.cursors[v] = c - 1;
-    /* If the just-emptied measure has no content in ANY voice, drop it
-       (unless it's the only measure left). measureIsEmpty uses
-       contentChildren so it correctly treats "only placeholders" as
-       empty. */
-    if (
-      measure &&
-      this.measureIsEmpty(measure) &&
-      this.allMeasures().length > 1
-    ) {
-      measure.parentNode?.removeChild(measure);
-      this.renumberMeasures();
-    }
-    /* Always re-apply barlines (last measure may have changed). */
+    /* Emptied measures are NOT auto-removed — once empty across all voices,
+       each voice's layer collapses to a single wrapper nav stop, and one
+       more backspace at that wrapper is the explicit confirmation that
+       drops the measure (see case 2 above). */
     this.setBarlines();
     this.normalizePlaceholders();
-    /* Clamp cursor: dropping a measure shrank flat-children for every voice. */
+    /* Clamp cursor in case content-removal shortened flat. */
     for (let vi = 1 as Voice; vi <= 4; vi = (vi + 1) as Voice) {
       this.cursors[vi] = Math.min(this.cursors[vi], this.getVoiceLength(vi));
       if (vi === 4) break;
     }
+    this.autofillAllAndReanchor(v);
     return true;
   }
 
@@ -1635,6 +1840,7 @@ export class ComposerModel {
       return null; /* fill anchors aren't dottable */
     const elem = ref.elem;
     if (elem.localName === "tuplet") return null; /* whole-tuplet dotting NYI */
+    if (elem.localName === "measure") return null; /* wrapper stops aren't dottable */
     const isRest = elem.localName === "rest";
     const curDots = parseInt(elem.getAttribute("dots") ?? "0", 10) as Dots;
     const nextDots = ((curDots + 1) % 3) as Dots;
@@ -1662,6 +1868,7 @@ export class ComposerModel {
         enclosingTuplet.appendChild(p);
       }
       this.normalizePlaceholders();
+      this.autofillAllAndReanchor(v);
       return { id: ref.id, newDots: nextDots };
     }
 
@@ -1679,6 +1886,7 @@ export class ComposerModel {
       if (nextDots > 0) elem.setAttribute("dots", String(nextDots));
       else elem.removeAttribute("dots");
       this.normalizePlaceholders();
+      this.autofillAllAndReanchor(v);
       return { id: ref.id, newDots: nextDots };
     }
 
@@ -1729,6 +1937,7 @@ export class ComposerModel {
     this.normalizePlaceholders();
     this.cursors[v] = Math.min(this.cursors[v], this.getVoiceLength(v));
     if (!firstId) return null;
+    this.autofillAllAndReanchor(v);
     return { id: firstId, newDots: nextDots };
   }
 
@@ -1742,6 +1951,8 @@ export class ComposerModel {
     const ref = this.getCurrentElement(v, mode);
     if (!ref) return null;
     if (ref.elem.localName === "rest") return null;
+    if (ref.elem.localName === "measure") return null; /* wrapper stops aren't tieable */
+    if (ref.elem.localName === "tuplet") return null; /* whole-tuplet tie NYI */
     if (isPlaceholder(ref.elem)) return null; /* placeholders aren't tieable */
     const currentNotes = this.extractNoteElements(ref.elem);
     if (currentNotes.length === 0) return null;
@@ -1772,6 +1983,7 @@ export class ComposerModel {
         clearTieFlag(n);
       }
       this.normalizePlaceholders();
+      this.autofillAllAndReanchor(v);
       return { id: ref.id, tied: false };
     }
 
@@ -1798,6 +2010,7 @@ export class ComposerModel {
       }
     }
     this.normalizePlaceholders();
+    this.autofillAllAndReanchor(v);
     return { id: ref.id, tied: true };
   }
 
@@ -1946,34 +2159,8 @@ export class ComposerModel {
       return element.getAttribute("xml:id") ?? "";
     }
 
-    /* Boundary rule: locateCursor uses strict-less-than semantics so that
-       cursor at a placeholder targets the placeholder's measure. But when
-       the cursor is at a partial-real-measure / empty-next-measure
-       BOUNDARY (cursor=N where flat[N] is a placeholder and flat[N-1] is
-       real content in a different measure), the user's intent is to
-       extend the previous measure, not consume the placeholder. Re-aim
-       the insert at the end of the previous layer in that case. */
-    if (cursor > 0) {
-      const flat = this.flatChildren(v);
-      const at = cursor < flat.length ? flat[cursor] : null;
-      const prev = flat[cursor - 1];
-      if (at && prev && isPlaceholder(at) && !isPlaceholder(prev)) {
-        const prevMeasure = prev.closest("measure");
-        const atMeasure = at.closest("measure");
-        if (prevMeasure && atMeasure && prevMeasure !== atMeasure) {
-          const prevLayer = prev.parentElement;
-          if (prevLayer) {
-            const prevMeasureIdx = this.allMeasures().indexOf(prevMeasure);
-            loc = {
-              measureIdx: prevMeasureIdx,
-              layer: prevLayer,
-              withinIdx: this.contentChildren(prevLayer).length,
-              inTuplet: null,
-            };
-          }
-        }
-      }
-    }
+    /* No boundary-rule re-aim: extend-vs-enter is now resolved by the
+       cursor's explicit position (fill-anchor of M_k vs wrapper of M_k+1). */
     const totalTicks = ticksOf(input.duration, input.dots ?? 0);
     const plan = this.planInsert(loc, totalTicks);
     if (!plan.ok) return null;
@@ -2045,11 +2232,21 @@ export class ComposerModel {
       }
     }
 
-    /* Advance the cursor by the number of inserted pieces (one nav stop
-       per inserted-from-input element; reused post-cursor elements don't
-       count toward the cursor advance). */
-    this.cursors[v] += insertedElements.length;
     this.setBarlines();
+    /* Position the cursor just past the last inserted-from-input element.
+       The new flat picks up extra nav stops (wrapper, fill-anchor) when
+       inserting into a freshly-created measure, so a naive `cursor +=
+       insertedElements.length` would land in the wrong place; instead
+       locate the last inserted element by xml:id and snap one past it. */
+    if (insertedElements.length > 0) {
+      const lastInserted = insertedElements[insertedElements.length - 1];
+      const lastId = lastInserted.getAttribute('xml:id');
+      if (lastId) {
+        const flat = this.flatChildren(v);
+        const idx = flat.findIndex((e) => e.getAttribute('xml:id') === lastId);
+        if (idx >= 0) this.cursors[v] = idx + 1;
+      }
+    }
     return firstInsertedElement?.getAttribute("xml:id") ?? "";
   }
 

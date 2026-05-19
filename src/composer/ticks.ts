@@ -61,6 +61,11 @@ function tupletRatio(t: Element): { num: number; numbase: number } {
  *      for atomic elements; for <beam>, sum of children's realTicks. */
 export function realTicks(el: Element): number {
   const ln = el.localName;
+  /* Section-level wrapper elements have no @dur; they appear in
+     `flatChildren` as nav stops but contribute zero time to the voice's
+     tick line. Returning 0 (instead of falling through to writtenTicks's
+     16-tick fallback) keeps `getTimeAt` honest across cursor positions. */
+  if (ln === 'measure') return 0;
   if (ln === 'tuplet') {
     const { num, numbase } = tupletRatio(el);
     let totalWritten = 0;

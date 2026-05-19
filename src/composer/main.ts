@@ -347,7 +347,7 @@ void bootRenderer();
 
 /* DevTools handle. */
 (window as unknown as { __hkl_composer: unknown }).__hkl_composer = {
-  bridge, model, renderer, cursor,
+  bridge, model, renderer, cursor, reRender,
   getHeldKeys: () => lastHeldKeys,
   isHklConnected: () => hklConnected,
   inputState: getInputState,
