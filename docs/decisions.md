@@ -1296,3 +1296,23 @@ Cursor renderer: when `flat[c]` is a measure wrapper (`nextRef.elem.localName ==
 - `src/composer/model.ts:getVoiceLength` (no +1), `shouldEmitWrapper` (collapse M_1 with content), `autofillAllAndReanchor` (snap to `voiceLen`, not `voiceLen - 1`).
 - `src/composer/cursor.ts` — `data-cursor-role="voice"` attribute on the bar; `insert-before-measure-wrapper` render case that anchors inside the upcoming measure; `cursor === 0` branch routed through the same wrapper anchor logic.
 - `src/composer/main.ts` — exposes `reRender` on `window.__hkl_composer` so the headless tooling can trigger a Verovio re-render after model mutations.
+
+---
+
+## Auto-autofill disabled (2026-05-19)
+
+**Picked**: unwire automatic autofill triggers from cursor motion (`switchVoice`, `setVoice`, `moveCursor`, `setCursor`, `cursorToEnd`) and from `setTimeSig`. Cursors that leave a partial measure no longer materialize visible rests in its trailing placeholder space. The autofill primitives (`autofillMeasure`, `autofillAllAbandoned`, `autofillAllAndReanchor`, `autofillOnLeave`, plus the `restfill.ts` beat-aligned decomposer) are retained as dead code, queued for an explicit "fill all partial measures with rests now" command.
+
+`setTimeSig` keeps its post-truncate cursor re-anchor (inline `reanchorCursorAfter` with a captured `lookForward`), because per-measure truncation can still drop the element the cursor pointed at; that re-anchor is structural, not autofill-driven.
+
+**Rejected**:
+- **Keep the autofill triggers**: forced fill-on-leave produces surprise edits — the user's scratch measures get cemented with rests the moment the cursor crosses a bar, defeating the partial-measure scribble workflow.
+- **Delete the autofill code entirely**: the beat-aligned rest decomposition is non-trivial and useful as an explicit user-invoked sweep ("normalize the whole document"). Cheaper to leave it dormant than to re-derive later.
+
+**Why**: hands-on use revealed that automatic autofill removed agency more often than it helped. Composing partial-content measures is a normal mid-edit state, and the fill sweep kept overwriting that state every time the user navigated. The fix is the same shape as several other reverted "automatic" behaviors in this codebase — leave the primitive, remove the auto-trigger.
+
+**Where**:
+- `src/composer/model.ts:setTimeSig` — inline reanchor replaces the autofill-and-reanchor call.
+- `src/composer/model.ts:switchVoice` / `setVoice` / `moveCursor` / `setCursor` / `cursorToEnd` — `autofillOnLeave` calls removed; `prevMIdx` capture no longer needed.
+- `src/composer/model.ts` — autofill helpers retained in place with a docblock above `autofillMeasure` explaining the disable and the path to re-enable.
+- `src/composer/restfill.ts` — beat-aligned decomposer retained.

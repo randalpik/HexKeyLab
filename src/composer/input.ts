@@ -193,9 +193,13 @@ function refreshExprCursor(model: ComposerModel): void {
 function momentAtVoiceAnchor(model: ComposerModel): Moment | null {
   const v = model.getCurrentVoice();
   const c = model.getCursor();
-  /* Insert mode: anchor at the just-entered element (cursor−1). Overwrite
-     mode: anchor at the element under the cursor. */
-  const anchor = state.mode === 'insert' ? Math.max(0, c - 1) : c;
+  /* Both modes anchor on flat[c] (the element to the cursor's left under
+     the new cursor convention). `momentForCursor` uses locateCursor's
+     insertion-after semantics, so to get the moment AT flat[c]'s start we
+     pass `c - 1` (which makes locateCursor return withinIdx pointing to
+     flat[c]'s cc-position, then timeWithinMeasure sums everything before
+     it). */
+  const anchor = Math.max(0, c - 1);
   return model.momentForCursor(v, anchor);
 }
 
@@ -466,6 +470,44 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       const cfg = TUPLET_CFG[n];
       state.pendingTuplet = { num: n, numbase: cfg.numbase, dotted: cfg.dotted, atomicK: cfg.atomicK };
       hooks.setStatus?.('Tuplet ' + n + ':' + cfg.numbase + ' — press duration digit for span.');
+      hooks.onStateChange();
+      return;
+    }
+
+    /* Ctrl+Left / Ctrl+Right: bar-jump navigation, keyed off the cursor's
+     * VISUAL measure (where the cursor renders), not the insertion-target
+     * measure. Empty measures (for the voice) are NOT skipped — they each
+     * have one cursor stop (the placeholder, or wrapper-cursor in insert
+     * mode) that Ctrl-nav lands on.
+     * - Ctrl+Right → first visual stop of the next measure (past-end when
+     *   already in the last measure).
+     * - Ctrl+Left → first visual stop of the current measure, OR first
+     *   stop of the previous measure when the cursor is already there. */
+    if (e.ctrlKey && !e.metaKey && !e.altKey &&
+        (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      e.preventDefault();
+      if (state.cursorMode !== 'voice') return;
+      if (hooks.isPlaybackActive()) return;
+      const voice = model.getCurrentVoice();
+      const m = model.cursorMeasureIdx(voice, state.mode);
+      const total = model.allMeasures().length;
+      if (e.key === 'ArrowRight') {
+        if (m + 1 < total) {
+          const target = model.getFirstVisualCursorInMeasure(voice, m + 1, state.mode);
+          model.setCursor(target >= 0 ? target : model.getVoiceLength(voice));
+        } else {
+          model.setCursor(model.getVoiceLength(voice));
+        }
+      } else {
+        const curStart = model.getFirstVisualCursorInMeasure(voice, m, state.mode);
+        if (curStart >= 0 && model.getCursor() !== curStart) {
+          model.setCursor(curStart);
+        } else if (m > 0) {
+          const target = model.getFirstVisualCursorInMeasure(voice, m - 1, state.mode);
+          if (target >= 0) model.setCursor(target);
+        }
+      }
+      hooks.onChange();
       hooks.onStateChange();
       return;
     }

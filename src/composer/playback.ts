@@ -22,9 +22,9 @@ const MS_PER_MIN = 60_000;
 const DEFAULT_VELOCITY = DEFAULT_DYNAMIC_MAP.mf;
 const HAIRPIN_OPEN_END_DELTA = 25; /* synthesized cres/dim level when no flanking dynamic */
 
-interface TempoInfo { bpm: number; unitDenom: number; dots: number }
+export interface TempoInfo { bpm: number; unitDenom: number; dots: number }
 
-function readTempo(doc: Document): TempoInfo {
+export function readTempo(doc: Document): TempoInfo {
   const t = doc.querySelector('tempo');
   const bpmAttr = t?.getAttribute('mm') ?? t?.getAttribute('midi.bpm');
   const bpm = bpmAttr ? parseFloat(bpmAttr) : DEFAULT_BPM;
@@ -36,7 +36,7 @@ function readTempo(doc: Document): TempoInfo {
 /** ms per 64th-note tick given the tempo. The tempo's "beat" is a note of
  *  duration unitDenom (possibly dotted). One beat in ticks = (64/unitDenom)
  *  * (1, 1.5, 1.75 for dots 0/1/2). */
-function tickMsFromTempo(tempo: TempoInfo): number {
+export function tickMsFromTempo(tempo: TempoInfo): number {
   const beatTicks = (64 / tempo.unitDenom) * (tempo.dots === 1 ? 1.5 : tempo.dots === 2 ? 1.75 : 1);
   const msPerBeat = MS_PER_MIN / tempo.bpm;
   return msPerBeat / beatTicks;
@@ -145,8 +145,14 @@ function clampVel(v: number): number {
 }
 
 /** Walk every voice across every measure; emit one PlaybackEvent per
- *  attack (rests advance time silently; tied chains coalesce). */
-export function buildPlayback(model: ComposerModel): PlaybackEvent[] {
+ *  attack (rests advance time silently; tied chains coalesce).
+ *
+ *  When `startMs > 0`, events whose `atMs` falls before `startMs` are
+ *  dropped and the remaining events are shifted left by `startMs` — i.e.
+ *  the playhead starts at that offset; notes that were already sounding
+ *  at the cursor do NOT get re-attacked (DAW-standard non-retrigger
+ *  semantics; matches Pro Tools / FL Studio). */
+export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[] {
   const events: PlaybackEvent[] = [];
   const mei = new DOMParser().parseFromString(model.serialize(), 'application/xml');
   const tempo = readTempo(mei);
@@ -227,6 +233,11 @@ export function buildPlayback(model: ComposerModel): PlaybackEvent[] {
   }
 
   events.sort((a, b) => a.atMs - b.atMs);
+  if (startMs > 0) {
+    return events
+      .filter((e) => e.atMs >= startMs - 1e-6)
+      .map((e) => ({ ...e, atMs: e.atMs - startMs }));
+  }
   return events;
 }
 

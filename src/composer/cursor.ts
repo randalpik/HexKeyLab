@@ -6,12 +6,12 @@
 //     get a `.expr-selected` CSS class.
 //   - Playback: per-voice bars, one for each voice currently sounding.
 //
-// Insert mode anchor: cursor sits at the RIGHT edge of the just-entered
-// element (element at flat-index `cursor - 1`). At cursor === 0 it falls
-// back to a pre-staff position.
-//
-// Overwrite mode: cursor renders a translucent selection BOX around the
-// element at flat-index `cursor`.
+// Cursor index convention (post-refactor): cursor `c` means "past flat[c]".
+// The element to the cursor's LEFT is flat[c]. Both insert and overwrite
+// mode anchor on flat[c] — insert renders a bar just past it, overwrite
+// renders a selection box around it. There is no cursor === 0 special
+// case (flat[0] is always the wrapper of M_0 under rule 3 nonexistent
+// prev or rule 2 empty).
 
 import { renderer } from './render.js';
 import type { ComposerModel, Voice } from './model.js';
@@ -160,13 +160,12 @@ class CursorOverlay {
     const isPlaceholderEl = (el: Element): boolean =>
       el.localName === 'space' && el.getAttribute('data-placeholder') === 'true';
 
-    /* Tuplet-relative anchor helpers. With iter4's nav model, each <tuplet>
-     * adds itself to the flat list (one layer-level stop "before tuplet")
-     * AND inlines its in-tuplet stops. The cursor visually needs two new
-     * cases:
-     *   - Entering a tuplet: flat[c-1]=tuplet wrapper, flat[c]=its first
-     *     child. Anchor at LEFT of flat[c] (just inside the bracket).
-     *   - Exiting a tuplet: flat[c-1] is a tuplet child, flat[c] is not in
+    /* Tuplet-relative anchor helpers. Each <tuplet> adds itself to the flat
+     * list (one layer-level stop "entered tuplet") AND inlines its in-tuplet
+     * stops. Under the new cursor convention (cursor c = past flat[c]):
+     *   - Entering a tuplet: flat[c]=tuplet wrapper, flat[c+1]=its first
+     *     child. Anchor at LEFT of flat[c+1] (just inside the bracket).
+     *   - Exiting a tuplet: flat[c] is a tuplet child, flat[c+1] is not in
      *     the same tuplet (or doesn't exist). Anchor at parent tuplet's
      *     right edge (just past the bracket). */
     const parentTuplet = (el: Element | null): Element | null => {
@@ -196,8 +195,9 @@ class CursorOverlay {
        M_1 of the piece and mid-score sig changes), the first real-content
        element's left edge, the first placeholder's left edge (Verovio
        reserves layout width for placeholder spaces even when invisible),
-       finally the measure's own bbox + a wide inset. Y/height come from
-       the voice's staff bbox (not the whole measure). */
+       then the voice's staff bbox + small inset (consistent with
+       anchorOnStaff). Falls back to measure bbox if no staff is available.
+       Y/height come from the voice's staff bbox (not the whole measure). */
     const anchorAtMeasureLeft = (measureEl: Element): boolean => {
       const staffN = voice <= 2 ? 1 : 2;
       const staffEl = Array.from(measureEl.querySelectorAll('staff')).find(
@@ -205,6 +205,7 @@ class CursorOverlay {
       );
       const staffId = staffEl?.getAttribute('xml:id') ?? null;
       const sigEndX = staffId ? renderer.findSigEndXForStaff(staffId) : null;
+      const staffRect = staffId ? renderer.rectForId(staffId) : null;
       const layer = Array.from(measureEl.querySelectorAll('layer')).find(
         (l) => l.getAttribute('n') === String(voice === 1 || voice === 3 ? 1 : 2) &&
                l.parentElement?.getAttribute('n') === String(staffN),
@@ -233,6 +234,8 @@ class CursorOverlay {
         x = firstContentRect.left - CURSOR_HPAD;
       } else if (firstPhRect && firstPhRect.width > 0) {
         x = firstPhRect.left + CURSOR_HPAD;
+      } else if (staffRect) {
+        x = staffRect.left + 10;
       } else if (measureRect) {
         x = measureRect.left + 30;
       } else {
@@ -250,55 +253,17 @@ class CursorOverlay {
     };
 
     /* Anchor past the final bar of the last existing measure (synthetic
-       past-end stop). Y/height from the voice's staff bbox.
-       Exception — when the last measure is FULL in this voice, anchor at
-       the RIGHT of its last content element instead of past the bar. The
-       past-end stop is merged into the "right of last note" position
-       because there's no ambiguity to resolve: typing creates a new
-       measure either way (the measure can't be extended). A past-bar
-       anchor is only needed when the last measure is partial or empty,
-       where past-end disambiguates "extend / fill" vs "start new". */
+       past-end stop). Y/height from the voice's staff bbox. Past-end only
+       exists when the last measure has room (partial/empty layer); when
+       the last layer is full, `getVoiceLength` excludes the past-end
+       position entirely, so this function is only ever called for the
+       partial/empty case where "past the right bar" is the correct anchor. */
     const anchorPastLastBar = (): boolean => {
       const measures = model.getDoc().querySelectorAll('measure');
       const lastMeasure = measures[measures.length - 1];
       if (!lastMeasure) return false;
       const measureId = lastMeasure.getAttribute('xml:id');
       const measureRect = measureId ? renderer.rectForId(measureId) : null;
-
-      /* Locate the voice's layer in the last measure and check fullness. */
-      const staffN = voice <= 2 ? 1 : 2;
-      const layerN = voice === 1 || voice === 3 ? 1 : 2;
-      const staffEl = Array.from(lastMeasure.querySelectorAll('staff')).find(
-        (s) => s.getAttribute('n') === String(staffN),
-      );
-      const layerEl = staffEl
-        ? Array.from(staffEl.querySelectorAll('layer')).find(
-            (l) => l.getAttribute('n') === String(layerN),
-          )
-        : null;
-      const reals = layerEl
-        ? Array.from(layerEl.children).filter((c) =>
-            c.localName === 'chord' || c.localName === 'note' ||
-            c.localName === 'rest' || c.localName === 'tuplet')
-        : [];
-      let layerTicks = 0;
-      for (const c of reals) layerTicks += realTicks(c);
-      const layerFull = reals.length > 0 && layerTicks >= model.measureTicks();
-
-      if (layerFull) {
-        const last = reals[reals.length - 1];
-        const lastId = last.getAttribute('xml:id');
-        const lastRect = lastId ? renderer.rectForId(lastId) : null;
-        if (lastRect) {
-          x = lastRect.right + CURSOR_HPAD;
-          if (!setVerticalFromStaff(lastMeasure)) {
-            y = lastRect.top - CURSOR_VPAD;
-            h = lastRect.height + CURSOR_VPAD * 2;
-          }
-          return true;
-        }
-      }
-
       if (!measureRect) return false;
       x = measureRect.right + CURSOR_HPAD * 2;
       if (!setVerticalFromStaff(lastMeasure)) {
@@ -326,41 +291,27 @@ class CursorOverlay {
 
     /* Past-end synthetic stop (wrapper of the not-yet-existent next
        measure) — applies to both insert and overwrite mode. Past-end
-       is cursor === voiceLen (which equals flatChildren.length now that
-       the +1 has been dropped). */
-    if (cursor === voiceLen && voiceLen >= 0) {
+       exists ONLY when the last measure's voice-layer is partial/empty;
+       when it's full, `getVoiceLength()` excludes the past-end position
+       so the cursor never lands here in that case. */
+    if (model.isCursorAtPastEnd(voice)) {
       if (anchorPastLastBar()) diag.case = 'past-end-synth';
       else if (anchorOnStaff()) diag.case = 'past-end-synth-staff';
       else diag.case = 'past-end-synth-fallback';
     } else if (mode === 'insert') {
-      if (cursor === 0) {
-        /* cursor === 0 = "before flat[0]". With the wrapper-collapse rule
-           extended to M_1, flat[0] is either the first content of M_1 (when
-           M_1 has content; we want to anchor at sigEnd of M_1's staff)
-           or the wrapper of an empty M_1 (where anchorAtMeasureLeft handles
-           it). The default insert path uses `getCurrentElement('insert')`
-           which returns null at cursor=0, so we route through the
-           wrapper/staff anchor explicitly here. */
-        const m0 = model.getDoc().querySelector('measure');
-        if (m0 && anchorAtMeasureLeft(m0)) diag.case = 'insert-at-start-of-m1';
-        else if (anchorOnStaff()) diag.case = 'insert-empty-on-staff';
-        else diag.case = 'insert-empty-fallback';
-      } else {
+      {
+        /* Under the new cursor convention, cursor `c` means "past flat[c]".
+           `getCurrentElement(voice, 'insert')` returns flat[c]. The wrapper
+           of M_0 is emitted (rule 3 nonexistent prev), so c=0 has flat[0] =
+           wrapper of M_0 and the wrapper-anchor branch fires naturally — no
+           cursor === 0 special case needed. */
         const ref = model.getCurrentElement(voice, 'insert');
         const nextRef = ref ? model.getNextElement(voice, ref.index) : null;
         if (ref && ref.elem.localName === 'measure') {
-          /* Cursor sits just past a measure wrapper. Anchor at the LEFT
-             of the cursor's CURRENT measure (resolved via locateCursor) —
-             ref's wrapper may belong to a past empty measure, but the
-             cursor's "in-measure" position is the right anchor. When the
-             NEXT element is a measure wrapper (not handled here), we
-             instead want the default insert anchor (right of the previous
-             real-content ref) so the cursor sits "post-prev's-content"
-             rather than visually inside the upcoming empty measure. */
-          const measures = model.getDoc().querySelectorAll('measure');
-          const mIdx = model.cursorMeasureIdx(voice);
-          const target = mIdx >= 0 && mIdx < measures.length ? measures[mIdx] : null;
-          if (target && anchorAtMeasureLeft(target)) diag.case = 'insert-at-wrapper';
+          /* Cursor sits just past a measure wrapper. Under the new cursor
+             convention (cursor c = past flat[c]), ref IS the wrapper of
+             the cursor's measure — anchor directly at its left edge. */
+          if (anchorAtMeasureLeft(ref.elem)) diag.case = 'insert-at-wrapper';
           else if (anchorOnStaff()) diag.case = 'insert-at-wrapper-staff';
           else diag.case = 'insert-at-wrapper-fallback';
         } else if (!ref || isPlaceholderEl(ref.elem)) {

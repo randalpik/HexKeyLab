@@ -18,7 +18,7 @@ import { cursor } from './cursor.js';
 import { initInput, getInputState } from './input.js';
 import type { CursorUpdateOpts } from './cursor.js';
 import { saveHkc, loadHkcFromFile, downloadMusicXml } from './save.js';
-import { buildPlayback, highlightElement, clearHighlights } from './playback.js';
+import { buildPlayback, highlightElement, clearHighlights, readTempo, tickMsFromTempo } from './playback.js';
 import { openSetupDialog } from './setupDialog.js';
 
 const $ = <T extends HTMLElement>(id: string): T | null =>
@@ -30,6 +30,63 @@ let isPlaying = false;
 /* Editing cursor snapshot taken at playback start, restored on stop/finish. */
 let preplaybackVoice: 1 | 2 | 3 | 4 = 1;
 let preplaybackCursor = 0;
+const SCROLL_PAD = 24;
+
+/* Visibility-checked on every call: cheap (one getBoundingClientRect +
+   comparisons) and idempotent — when the measure is already in view, no
+   scrollTo fires. Skipping a same-measure-idx debounce was deliberate:
+   in page view, adding to a measure can reflow it to a new system, moving
+   the cursor off-screen even though the measure index hasn't changed. */
+function maybeScrollMeasureIntoView(measureIdx: number): void {
+  if (measureIdx < 0) return;
+  const measures = model.allMeasures();
+  if (measureIdx >= measures.length) return;
+  const id = measures[measureIdx]?.getAttribute('xml:id');
+  if (!id) return;
+  const rect = renderer.rectForId(id);
+  const score = $('score');
+  if (!rect || !score) return;
+  const PAD = SCROLL_PAD;
+  const cw = score.clientWidth;
+  const ch = score.clientHeight;
+  const visibleL = score.scrollLeft;
+  const visibleR = visibleL + cw;
+  const visibleT = score.scrollTop;
+  const visibleB = visibleT + ch;
+
+  /* Minimal-scroll: align the nearest off-screen edge to the viewport edge
+     (plus PAD breathing room), rather than always aligning the top/left.
+     Without this, scrolling to the last system in page view aligns its
+     top to the viewport top — overshooting badly when the system is
+     already mostly in view at the bottom. When the measure is larger than
+     the viewport (with PAD reserved), fall back to top/left alignment. */
+  let targetLeft = score.scrollLeft;
+  if (rect.width + 2 * PAD > cw) {
+    targetLeft = Math.max(0, rect.left - PAD);
+  } else if (rect.left < visibleL + PAD) {
+    targetLeft = Math.max(0, rect.left - PAD);
+  } else if (rect.right > visibleR - PAD) {
+    targetLeft = Math.max(0, rect.right - cw + PAD);
+  }
+
+  let targetTop = score.scrollTop;
+  if (rect.height + 2 * PAD > ch) {
+    targetTop = Math.max(0, rect.top - PAD);
+  } else if (rect.top < visibleT + PAD) {
+    targetTop = Math.max(0, rect.top - PAD);
+  } else if (rect.bottom > visibleB - PAD) {
+    targetTop = Math.max(0, rect.bottom - ch + PAD);
+  }
+
+  if (targetLeft !== score.scrollLeft || targetTop !== score.scrollTop) {
+    score.scrollTo({ left: targetLeft, top: targetTop, behavior: 'smooth' });
+  }
+}
+
+function visualCursorMeasure(): number {
+  const s = getInputState();
+  return model.cursorMeasureIdx(model.getCurrentVoice(), s.mode);
+}
 
 function setStatus(text: string): void {
   const el = $('composerStatus');
@@ -102,6 +159,8 @@ bridge.on((msg: HklEvent) => {
       if (msg.meiId) {
         const loc = model.findElement(msg.meiId);
         if (loc) cursor.setPlaybackPosition(loc.voice, msg.meiId);
+        const mIdx = model.getMeasureIdxForId(msg.meiId);
+        if (mIdx >= 0) maybeScrollMeasureIntoView(mIdx);
       }
       break;
     case 'playback-finished':
@@ -193,6 +252,7 @@ function stepZoom(dir: 'in' | 'out'): void {
   }
   renderer.setZoom(next);
   reRender();
+  maybeScrollMeasureIntoView(visualCursorMeasure());
   setStatus('Zoom ' + next + '%.');
 }
 
@@ -200,6 +260,13 @@ initInput(model, {
   getHeldKeys: () => lastHeldKeys,
   onChange: () => {
     reRender();
+    /* Scroll-into-view belongs after reRender so it sees the new layout —
+       crucial for reflow (a new measure created by insertion at past-end,
+       or an addition that pushes the current measure to a new system).
+       Several input.ts call sites fire onStateChange before onChange, so
+       running scroll in onChange ensures it always sees the post-reRender
+       geometry regardless of caller order. */
+    if (!isPlaying) maybeScrollMeasureIntoView(visualCursorMeasure());
   },
   onStateChange: () => {
     refreshIndicators();
@@ -224,13 +291,21 @@ function startPlayback(): void {
     setStatus('Open HKL in another tab to enable playback (it owns the audio engine).');
     return;
   }
-  const events = buildPlayback(model);
+  /* Compute startMs from the current cursor's absolute tick offset so
+     playback begins exactly where the cursor sits. cursor === 0 yields
+     startMs === 0 (identical to old "from start" behavior). */
+  const v = model.getCurrentVoice();
+  const startTicks = model.getCursorAbsoluteTicks(v);
+  const tempo = readTempo(model.getDoc());
+  const tickMs = tickMsFromTempo(tempo);
+  const startMs = startTicks * tickMs;
+  const events = buildPlayback(model, startMs);
   if (events.length === 0) {
-    setStatus('Nothing to play.');
+    setStatus(startMs > 0 ? 'Nothing left to play from cursor.' : 'Nothing to play.');
     return;
   }
   /* Snapshot editing cursor before playback so we can restore on stop/finish. */
-  preplaybackVoice = model.getCurrentVoice();
+  preplaybackVoice = v;
   preplaybackCursor = model.getCursor();
   isPlaying = true;
   cursor.setPlaybackMode(true);
@@ -257,12 +332,22 @@ function finalizePlaybackEnd(statusMsg: string): void {
   cursor.update(model, cursorOpts());
   refreshIndicators();
   refreshPlayButton();
+  maybeScrollMeasureIntoView(visualCursorMeasure());
   setStatus(statusMsg);
 }
 
 $('btnPlay')?.addEventListener('click', () => {
   if (isPlaying) stopPlayback();
   else startPlayback();
+});
+
+$('btnRewind')?.addEventListener('click', () => {
+  if (isPlaying) stopPlayback();
+  model.setCursor(0);
+  reRender();
+  refreshIndicators();
+  maybeScrollMeasureIntoView(visualCursorMeasure());
+  setStatus('Cursor at start.');
 });
 
 $('btnSetup')?.addEventListener('click', () => {
@@ -297,6 +382,7 @@ $<HTMLInputElement>('fileInputHkc')?.addEventListener('change', async (e) => {
     model.replaceDocument(loaded.serialize());
     reRender();
     refreshIndicators();
+    maybeScrollMeasureIntoView(visualCursorMeasure());
     setStatus('Loaded ' + file.name);
   } catch (err) {
     setStatus('Load failed: ' + (err as Error).message);
@@ -329,6 +415,7 @@ $('btnViewPage')?.addEventListener('click', () => {
   $('btnViewPage')?.classList.add('active');
   $('btnViewScroll')?.classList.remove('active');
   reRender();
+  maybeScrollMeasureIntoView(visualCursorMeasure());
 });
 $('btnViewScroll')?.addEventListener('click', () => {
   renderer.setViewMode('scroll');
@@ -336,6 +423,7 @@ $('btnViewScroll')?.addEventListener('click', () => {
   $('btnViewScroll')?.classList.add('active');
   $('btnViewPage')?.classList.remove('active');
   reRender();
+  maybeScrollMeasureIntoView(visualCursorMeasure());
 });
 
 /* Initial state matches the default view mode (page). */
