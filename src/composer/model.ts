@@ -72,18 +72,24 @@ const XML_NS = 'http://www.w3.org/XML/1998/namespace';
  *  in mid-score. See normalizePlaceholders. */
 const PLACEHOLDER_ATTR = 'data-placeholder';
 
-/** Custom attribute marking a <space> inside a <tuplet> that represents
+/** Custom attribute marking an element inside a <tuplet> that represents
  *  unfilled written-ticks (the "fill anchor" chain). Distinct from the
  *  measure-level PLACEHOLDER_ATTR — these live as direct children of
- *  <tuplet>, never of <layer>. */
+ *  <tuplet>, never of <layer>. Concretely the element is
+ *  `<rest visible="false">` (Verovio reserves layout width AND draws the
+ *  tuplet bracket over it, while suppressing the rest glyph). */
 const TUPLET_PLACEHOLDER_ATTR = 'data-tuplet-placeholder';
 
 function isPlaceholder(el: Element): boolean {
   return el.localName === 'space' && el.getAttribute(PLACEHOLDER_ATTR) === 'true';
 }
 
+/** Element-name-agnostic tuplet-placeholder predicate. Matches the canonical
+ *  `<rest visible="false" data-tuplet-placeholder="true">` form as well as
+ *  any legacy `<space data-tuplet-placeholder="true">` that might survive
+ *  in older docs. */
 function isTupletPlaceholder(el: Element): boolean {
-  return el.localName === 'space' && el.getAttribute(TUPLET_PLACEHOLDER_ATTR) === 'true';
+  return el.getAttribute(TUPLET_PLACEHOLDER_ATTR) === 'true';
 }
 
 function el(doc: Document, name: string, attrs?: Record<string, string | number | undefined>): Element {
@@ -727,46 +733,41 @@ export class ComposerModel {
       c.localName === 'tuplet');
   }
 
-  /** Compute the nav-stops contributed by a single tuplet. Filled content
-   *  elements are always nav stops. The leftmost trailing placeholder is a
-   *  nav stop iff either: (a) the tuplet is fully empty (no filled content
-   *  yet) — the "just-created" anchor; or (b) there's no content following
-   *  the tuplet in the layer (so the user can still fill it from the right).
-   *  All other trailing placeholders are layout-only and not stoppable. */
-  private tupletNavStops(tuplet: Element, hasPostTupletContent: boolean): Element[] {
+  /** Compute the in-tuplet nav-stops contributed by a single tuplet:
+   *  - Every filled content child (chord/note/rest) is a stop.
+   *  - The first trailing placeholder (fill anchor) is a stop iff any
+   *    trailing placeholders exist (regardless of post-tuplet content; the
+   *    user must be able to append to a partial tuplet even when there's
+   *    content after it).
+   *  Does NOT include the tuplet wrapper itself — that's added separately
+   *  in `navigableChildren` as a layer-level stop. */
+  private tupletNavStops(tuplet: Element): Element[] {
     const kids = Array.from(tuplet.children);
     const filled: Element[] = [];
-    const trailing: Element[] = [];
+    let firstTrailing: Element | null = null;
     for (const c of kids) {
-      if (isTupletPlaceholder(c)) trailing.push(c);
-      else if (c.localName === 'note' || c.localName === 'chord' || c.localName === 'rest') filled.push(c);
+      if (isTupletPlaceholder(c)) {
+        if (firstTrailing === null) firstTrailing = c;
+      } else if (c.localName === 'note' || c.localName === 'chord' || c.localName === 'rest') {
+        filled.push(c);
+      }
     }
-    if (trailing.length === 0) return filled;
-    if (filled.length === 0) return [trailing[0]]; /* empty: always one stop */
-    if (!hasPostTupletContent) return [...filled, trailing[0]];
+    if (firstTrailing) return [...filled, firstTrailing];
     return filled;
   }
 
-  /** Filter to cursor-navigable elements at the layer level. Tuplets are
-   *  transparent: their navigable children (per tupletNavStops) are inlined
-   *  here, so the flat cursor walks through them as siblings of the layer's
-   *  other content. */
+  /** Filter to cursor-navigable elements at the layer level. Each tuplet
+   *  contributes [tuplet-wrapper, ...in-tuplet-stops]: the wrapper itself
+   *  is a layer-level stop ("before tuplet"), followed by the tuplet's
+   *  internal stops (in-tuplet positions). The cursor "after the tuplet"
+   *  is the natural "before the next layer element" stop. */
   private navigableChildren(layer: Element): Element[] {
     const out: Element[] = [];
-    const layerKids = Array.from(layer.children);
-    /* "hasPostTupletContent" predicate is computed lazily per-tuplet. */
-    for (let i = 0; i < layerKids.length; i++) {
-      const c = layerKids[i];
+    for (const c of Array.from(layer.children)) {
       const ln = c.localName;
       if (ln === 'tuplet') {
-        let hasAfter = false;
-        for (let j = i + 1; j < layerKids.length; j++) {
-          const ln2 = layerKids[j].localName;
-          if (ln2 === 'chord' || ln2 === 'note' || ln2 === 'rest' || ln2 === 'tuplet') {
-            hasAfter = true; break;
-          }
-        }
-        out.push(...this.tupletNavStops(c, hasAfter));
+        out.push(c);
+        out.push(...this.tupletNavStops(c));
       } else if (ln === 'chord' || ln === 'note' || ln === 'rest' || isPlaceholder(c)) {
         out.push(c);
       }
@@ -923,8 +924,10 @@ export class ComposerModel {
 
   /* ── tuplet helpers (public) ───────────────────────────────────────────── */
 
-  /** True when the current voice's cursor lands inside a <tuplet> element
-   *  (on either a filled child or the fill-anchor placeholder). */
+  /** True when the current voice's cursor sits inside a <tuplet> per the
+   *  "between" rule (insert-mode interpretation): cursor on a tuplet
+   *  placeholder OR between two children of the same tuplet. The layer-edge
+   *  position (visually anchored to pre-tuplet content) is NOT inside. */
   isCursorInTuplet(voice?: Voice): boolean {
     const v = voice ?? this.currentVoice;
     const loc = this.locateCursor(v, this.cursors[v]);
@@ -932,9 +935,8 @@ export class ComposerModel {
   }
 
   /** Remaining written-ticks of trailing placeholders in the tuplet at the
-   *  cursor. Null when the cursor is not in a tuplet. Used by input.ts to
-   *  gate duration entry — if the requested duration's written ticks exceed
-   *  this, the input is rejected with a status message. */
+   *  cursor. Null when the cursor is not in a tuplet (per `isCursorInTuplet`).
+   *  Used by `canInsertHere` and by status-line displays. */
   cursorTupletRemainingWrittenTicks(voice?: Voice): number | null {
     const v = voice ?? this.currentVoice;
     const loc = this.locateCursor(v, this.cursors[v]);
@@ -944,6 +946,47 @@ export class ComposerModel {
       if (isTupletPlaceholder(c)) total += writtenTicks(c);
     }
     return total;
+  }
+
+  /** Pre-flight check for `insertChordAtCursor` / `insertRestAtCursor` that
+   *  surfaces a specific rejection reason when the duration cannot fit:
+   *    - "Doesn't fit in remaining tuplet space." — cursor inside a tuplet
+   *      and duration exceeds trailing-placeholder budget.
+   *    - "Insertion would push tuplet across bar line." — cursor at layer
+   *      level, but a tuplet at/after the cursor would be displaced past
+   *      the bar by the new note.
+   *  Otherwise returns `{ ok: true }`. Callers should consult this first;
+   *  the insert methods themselves still defensively reject on overflow. */
+  canInsertHere(duration: Duration, dots: Dots = 0): { ok: true } | { ok: false; reason: string } {
+    const v = this.currentVoice;
+    const cursor = this.cursors[v];
+    const loc = this.locateCursor(v, cursor);
+    if (!loc) return { ok: false, reason: 'No layer at cursor.' };
+    const totalTicks = ticksOf(duration, dots);
+
+    if (loc.inTuplet) {
+      let remaining = 0;
+      for (const c of Array.from(loc.inTuplet.tuplet.children)) {
+        if (isTupletPlaceholder(c)) remaining += writtenTicks(c);
+      }
+      if (totalTicks > remaining) {
+        return { ok: false, reason: "Doesn't fit in remaining tuplet space." };
+      }
+      return { ok: true };
+    }
+
+    const cc = this.contentChildren(loc.layer);
+    const postCursor = cc.slice(loc.withinIdx);
+    const postHasTuplet = postCursor.some((c) => c.localName === 'tuplet');
+    if (postHasTuplet) {
+      const usedBefore = this.timeWithinMeasure(v, loc.measureIdx, loc.withinIdx);
+      let usedAfter = 0;
+      for (const c of postCursor) usedAfter += realTicks(c);
+      if (usedBefore + totalTicks + usedAfter > this.measureTicks()) {
+        return { ok: false, reason: 'Insertion would push tuplet across bar line.' };
+      }
+    }
+    return { ok: true };
   }
 
   /* ── mutations ──────────────────────────────────────────────────────────── */
@@ -991,22 +1034,19 @@ export class ComposerModel {
       'num.visible': 'true',
       'num.format': 'count',
     });
+    /* Record the atomic so that `regenTupletPlaceholders` can preserve
+       the atomic structure across fill/delete (perfectly reversible). */
+    tuplet.setAttribute('data-tuplet-atomic-dur', atomicDur);
     for (let i = 0; i < num; i++) {
-      const sp = el(this.doc, 'space', {
-        'xml:id': newId('sp'),
-        dur: atomicDur,
-      });
-      sp.setAttribute(TUPLET_PLACEHOLDER_ATTR, 'true');
-      tuplet.appendChild(sp);
+      tuplet.appendChild(this.buildTupletPlaceholder(atomicDur, 0));
     }
 
     this.insertAt(loc.layer, tuplet, loc.withinIdx);
     this.normalizePlaceholders();
-    /* Cursor stays at its pre-creation flat-index. After insertion, that
-       index now points to the new tuplet's fill anchor (the single
-       placeholder nav stop the new tuplet contributes) — so the next
-       digit press inserts INTO the tuplet rather than past it. */
-    this.cursors[v] = Math.min(this.cursors[v], this.getVoiceLength(v));
+    /* Advance cursor by +1 to land on the fill anchor. With the iter4 nav
+       model, the tuplet wrapper itself is also a nav stop, occupying the
+       pre-creation cursor index; the fill anchor is one position right. */
+    this.cursors[v] = Math.min(this.cursors[v] + 1, this.getVoiceLength(v));
     return { ok: true, id: tuplet.getAttribute('xml:id') ?? '' };
   }
 
@@ -1139,17 +1179,8 @@ export class ComposerModel {
         }
         const replaced = this.buildChordElement(input);
         tuplet.appendChild(replaced);
-        const remainder = trailingTicks - newTicks;
-        if (remainder > 0) {
-          for (const p of decomposeTicks(remainder)) {
-            const sp = el(this.doc, 'space', {
-              'xml:id': newId('sp'),
-              dur: p.dur,
-              dots: p.dots > 0 ? p.dots : undefined,
-            });
-            sp.setAttribute(TUPLET_PLACEHOLDER_ATTR, 'true');
-            tuplet.appendChild(sp);
-          }
+        for (const p of this.regenTupletPlaceholders(tuplet, trailingTicks - newTicks)) {
+          tuplet.appendChild(p);
         }
         this.resolvePendingTies(cursorAtCall);
         this.normalizePlaceholders();
@@ -1167,17 +1198,8 @@ export class ComposerModel {
       for (const c of Array.from(tuplet.children)) {
         if (isTupletPlaceholder(c)) tuplet.removeChild(c);
       }
-      const newTrailing = trailingTicks - delta;
-      if (newTrailing > 0) {
-        for (const p of decomposeTicks(newTrailing)) {
-          const sp = el(this.doc, 'space', {
-            'xml:id': newId('sp'),
-            dur: p.dur,
-            dots: p.dots > 0 ? p.dots : undefined,
-          });
-          sp.setAttribute(TUPLET_PLACEHOLDER_ATTR, 'true');
-          tuplet.appendChild(sp);
-        }
+      for (const p of this.regenTupletPlaceholders(tuplet, trailingTicks - delta)) {
+        tuplet.appendChild(p);
       }
       this.resolvePendingTies(cursorAtCall);
       this.normalizePlaceholders();
@@ -1284,6 +1306,14 @@ export class ComposerModel {
       this.cursors[v] = c - 1;
       return true;
     }
+    if (target.localName === 'tuplet') {
+      /* Cursor is "inside the tuplet at its first nav stop" (= before first
+         filled child or fill anchor). Backspace here means "back out of
+         the tuplet to its layer-level left edge" — symmetric to the
+         placeholder skip-left above. No deletion. */
+      this.cursors[v] = c - 1;
+      return true;
+    }
 
     /* Tuplet case (b): target is a filled child of a <tuplet>. Remove it
        and grow trailing placeholders by writtenTicks(target) so the
@@ -1297,17 +1327,8 @@ export class ComposerModel {
       for (const cc of Array.from(tupletParent.children)) {
         if (isTupletPlaceholder(cc)) tupletParent.removeChild(cc);
       }
-      const newTrailing = trailingTicks + oldTicks;
-      if (newTrailing > 0) {
-        for (const p of decomposeTicks(newTrailing)) {
-          const sp = el(this.doc, 'space', {
-            'xml:id': newId('sp'),
-            dur: p.dur,
-            dots: p.dots > 0 ? p.dots : undefined,
-          });
-          sp.setAttribute(TUPLET_PLACEHOLDER_ATTR, 'true');
-          tupletParent.appendChild(sp);
-        }
+      for (const p of this.regenTupletPlaceholders(tupletParent, trailingTicks + oldTicks)) {
+        tupletParent.appendChild(p);
       }
       this.cursors[v] = c - 1;
       this.setBarlines();
@@ -1395,17 +1416,8 @@ export class ComposerModel {
       for (const c of Array.from(enclosingTuplet.children)) {
         if (isTupletPlaceholder(c)) enclosingTuplet.removeChild(c);
       }
-      const newTrailing = trailingTicks - delta;
-      if (newTrailing > 0) {
-        for (const p of decomposeTicks(newTrailing)) {
-          const sp = el(this.doc, 'space', {
-            'xml:id': newId('sp'),
-            dur: p.dur,
-            dots: p.dots > 0 ? p.dots : undefined,
-          });
-          sp.setAttribute(TUPLET_PLACEHOLDER_ATTR, 'true');
-          enclosingTuplet.appendChild(sp);
-        }
+      for (const p of this.regenTupletPlaceholders(enclosingTuplet, trailingTicks - delta)) {
+        enclosingTuplet.appendChild(p);
       }
       this.normalizePlaceholders();
       return { id: ref.id, newDots: nextDots };
@@ -1660,19 +1672,9 @@ export class ComposerModel {
       if (insertBefore) tuplet.insertBefore(element, insertBefore);
       else tuplet.appendChild(element);
 
-      /* Refill placeholder remainder. */
-      const remainder = trailingTicks - totalTicks;
-      if (remainder > 0) {
-        const pieces = decomposeTicks(remainder);
-        for (const p of pieces) {
-          const sp = el(this.doc, 'space', {
-            'xml:id': newId('sp'),
-            dur: p.dur,
-            dots: p.dots > 0 ? p.dots : undefined,
-          });
-          sp.setAttribute(TUPLET_PLACEHOLDER_ATTR, 'true');
-          tuplet.appendChild(sp);
-        }
+      /* Refill placeholder remainder, preferring atomic-sized rests. */
+      for (const p of this.regenTupletPlaceholders(tuplet, trailingTicks - totalTicks)) {
+        tuplet.appendChild(p);
       }
 
       this.cursors[v] = Math.min(this.cursors[v] + 1, this.getVoiceLength(v));
@@ -1710,6 +1712,23 @@ export class ComposerModel {
     const totalTicks = ticksOf(input.duration, input.dots ?? 0);
     const usedBefore = this.timeWithinMeasure(v, loc.measureIdx, loc.withinIdx);
     const remaining = this.measureTicks() - usedBefore;
+
+    /* Bar-line check: if any content at/after the cursor in this layer
+       includes a <tuplet>, the new note must fit WITHIN the remaining
+       measure space without splitting (because tuplets are atomic and
+       can't be pushed across a bar). Reject if it would overflow. */
+    {
+      const cc = this.contentChildren(loc.layer);
+      const postCursor = cc.slice(loc.withinIdx);
+      const postHasTuplet = postCursor.some((c) => c.localName === 'tuplet');
+      if (postHasTuplet) {
+        let usedAfter = 0;
+        for (const c of postCursor) usedAfter += realTicks(c);
+        if (usedBefore + totalTicks + usedAfter > this.measureTicks()) {
+          return null; /* "Insertion would push tuplet across bar line." */
+        }
+      }
+    }
 
     if (totalTicks <= remaining) {
       /* Fits in current measure: single element. */
@@ -1853,6 +1872,50 @@ export class ComposerModel {
       dur: input.duration,
       dots: input.dots && input.dots > 0 ? input.dots : undefined,
     });
+  }
+
+  /** Build a single tuplet-internal placeholder: a `<rest>` with the
+   *  `data-tuplet-placeholder="true"` marker. Verovio draws the bracket
+   *  over these (because rests count as content) but renders the rest
+   *  glyph too. We hide that glyph in CSS via the data attribute (which is
+   *  propagated to the SVG by `svgAdditionalAttribute` in render.ts).
+   *  MEI's @visible="false" would be the spec-correct way, but Verovio
+   *  doesn't honor it on rests (rism-digital/verovio#202, still open). */
+  private buildTupletPlaceholder(dur: Duration, dots: Dots = 0): Element {
+    const sp = el(this.doc, 'rest', {
+      'xml:id': newId('sp'),
+      dur,
+      dots: dots > 0 ? dots : undefined,
+    });
+    sp.setAttribute(TUPLET_PLACEHOLDER_ATTR, 'true');
+    return sp;
+  }
+
+  /** Regenerate the trailing placeholders of a tuplet to cover
+   *  `remainingTicks` written ticks. Prefers N atomic-sized rests (per the
+   *  tuplet's recorded `data-tuplet-atomic-dur`) so that fill+delete is
+   *  perfectly reversible; falls back to `decomposeTicks` for any awkward
+   *  leftover (e.g. a written-dotted-8th inserted into a triplet-of-8ths
+   *  leaves 4 of 12 ticks not divisible by atomic). Returns built elements
+   *  for the caller to append. */
+  private regenTupletPlaceholders(tuplet: Element, remainingTicks: number): Element[] {
+    const out: Element[] = [];
+    if (remainingTicks <= 0) return out;
+    const atomicDurStr = tuplet.getAttribute('data-tuplet-atomic-dur') as Duration | null;
+    let r = remainingTicks;
+    if (atomicDurStr) {
+      const atomicTicks = ticksOf(atomicDurStr, 0);
+      while (r >= atomicTicks) {
+        out.push(this.buildTupletPlaceholder(atomicDurStr, 0));
+        r -= atomicTicks;
+      }
+    }
+    if (r > 0) {
+      for (const p of decomposeTicks(r)) {
+        out.push(this.buildTupletPlaceholder(p.dur, p.dots));
+      }
+    }
+    return out;
   }
 
   private extractNoteElements(elem: Element): Element[] {

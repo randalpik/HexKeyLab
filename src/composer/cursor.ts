@@ -159,15 +159,54 @@ class CursorOverlay {
     const isPlaceholderEl = (el: Element): boolean =>
       el.localName === 'space' && el.getAttribute('data-placeholder') === 'true';
 
+    /* Tuplet-relative anchor helpers. With iter4's nav model, each <tuplet>
+     * adds itself to the flat list (one layer-level stop "before tuplet")
+     * AND inlines its in-tuplet stops. The cursor visually needs two new
+     * cases:
+     *   - Entering a tuplet: flat[c-1]=tuplet wrapper, flat[c]=its first
+     *     child. Anchor at LEFT of flat[c] (just inside the bracket).
+     *   - Exiting a tuplet: flat[c-1] is a tuplet child, flat[c] is not in
+     *     the same tuplet (or doesn't exist). Anchor at parent tuplet's
+     *     right edge (just past the bracket). */
+    const parentTuplet = (el: Element | null): Element | null => {
+      const p = el?.parentElement;
+      return p && p.localName === 'tuplet' ? p : null;
+    };
+
     if (mode === 'insert') {
       if (cursor === 0) {
         if (anchorOnStaff()) diag.case = 'insert-empty-on-staff';
         else diag.case = 'insert-empty-fallback';
       } else {
         const ref = model.getCurrentElement(voice, 'insert');
+        const nextRef = ref ? model.getNextElement(voice, ref.index) : null;
         if (!ref || isPlaceholderEl(ref.elem)) {
           if (anchorOnStaff()) diag.case = ref ? 'insert-placeholder-on-staff' : 'insert-no-ref-staff';
           else diag.case = 'insert-staff-fallback';
+        } else if (ref.elem.localName === 'tuplet' && nextRef && nextRef.elem.parentElement === ref.elem) {
+          /* Entering a tuplet: anchor at LEFT of the first in-tuplet stop. */
+          const nextRect = renderer.rectForId(nextRef.id);
+          if (nextRect) {
+            x = nextRect.left - CURSOR_HPAD;
+            y = nextRect.top - CURSOR_VPAD;
+            h = nextRect.height + CURSOR_VPAD * 2;
+            diag.case = 'insert-enter-tuplet';
+          } else {
+            diag.case = 'insert-enter-tuplet-no-rect';
+          }
+        } else if (parentTuplet(ref.elem) && parentTuplet(nextRef?.elem ?? null) !== parentTuplet(ref.elem)) {
+          /* Exiting a tuplet: anchor at the parent tuplet's right edge. */
+          const tParent = parentTuplet(ref.elem)!;
+          const tId = tParent.getAttribute('xml:id');
+          const tRect = tId ? renderer.rectForId(tId) : null;
+          if (tRect) {
+            x = tRect.right + CURSOR_HPAD;
+            y = tRect.top - CURSOR_VPAD;
+            h = tRect.height + CURSOR_VPAD * 2;
+            diag.case = 'insert-exit-tuplet';
+          } else {
+            diag.case = 'insert-exit-tuplet-no-rect';
+          }
         } else {
           const rect = renderer.rectForId(ref.id);
           diag = { ...diag, refId: ref.id, rect: rect ? { l: rect.left, t: rect.top, w: rect.width, h: rect.height } : null };

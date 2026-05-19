@@ -86,6 +86,18 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
 #score svg .dots,
 #score svg .dots * { color: #000 !important; fill: #000 !important }
 
+/* Tuplet placeholder: the <rest data-tuplet-placeholder="true"> elements
+ * we put inside <tuplet> to make Verovio draw the bracket. We want the
+ * bracket but NOT the rest glyphs. Verovio's @visible attribute on rests
+ * isn't honored (issue rism-digital/verovio#202); MEI's <space> isn't
+ * treated as bracket-triggering content. So we use real <rest>s and hide
+ * their glyphs in CSS. The selector has `data-data-` because Verovio
+ * prepends `data-` to attribute names exposed via svgAdditionalAttribute,
+ * so MEI's `data-tuplet-placeholder` becomes `data-data-tuplet-placeholder`
+ * in the SVG. `visibility: hidden` preserves layout width (so the bracket
+ * spans the right horizontal range); display:none would collapse it. */
+#score svg g.rest[data-data-tuplet-placeholder="true"] { visibility: hidden }
+
 /* Toolbar Play button playing-state styling. */
 #composerToolbar .btn.playing { border-color: #FF4C79; color: #FF4C79 }
 

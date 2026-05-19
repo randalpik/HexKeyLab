@@ -368,13 +368,14 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       hooks.setStatus?.('Some held keys had alteration > ±3 and were dropped.');
     }
 
-    /* In-tuplet gate: a tuplet's total written-tick budget is fixed. A
-       duration that exceeds the trailing-placeholder remainder is rejected
-       here rather than at the model layer so we can surface a status. */
-    if (model.isCursorInTuplet()) {
-      const remaining = model.cursorTupletRemainingWrittenTicks();
-      if (remaining !== null && ticksOf(dur, 0) > remaining) {
-        hooks.setStatus?.("Doesn't fit in remaining tuplet space.");
+    /* Pre-flight insertability check: surfaces specific rejection reasons
+       (in-tuplet overflow or bar-line displacement) before we attempt the
+       insert. The model's insert methods still defensively reject on
+       overflow, but those paths surface only a generic "Doesn't fit." */
+    {
+      const can = model.canInsertHere(dur, 0);
+      if (!can.ok) {
+        hooks.setStatus?.(can.reason);
         return;
       }
     }
@@ -454,6 +455,10 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         return;
       }
       if (hooks.isPlaybackActive()) return;
+      if (model.isCursorInTuplet()) {
+        hooks.setStatus?.('Cannot nest tuplets.');
+        return;
+      }
       const n = parseInt(e.key, 10);
       const cfg = TUPLET_CFG[n];
       state.pendingTuplet = { num: n, numbase: cfg.numbase, dotted: cfg.dotted, atomicK: cfg.atomicK };
@@ -464,13 +469,24 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
 
     if (e.ctrlKey || e.metaKey || e.altKey) return;
 
-    /* Pending-tuplet resolution: a digit press following Ctrl+N completes
-       the tuplet creation (digit = span duration). Must come BEFORE the
-       normal duration-digit handler so the digit is consumed here. */
-    if (state.pendingTuplet && state.cursorMode === 'voice' && DIGIT_TO_DUR[e.key]) {
-      e.preventDefault();
-      commitPendingTuplet(e.key);
-      return;
+    /* Pending-tuplet resolution. A digit press following Ctrl+N completes
+       the tuplet; ANY other non-modifier key cancels the pending and falls
+       through to its normal handling. Pure-modifier keypresses (Shift /
+       Control / Alt / Meta alone) don't count as "stray input". */
+    if (state.pendingTuplet) {
+      if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') {
+        return;
+      }
+      if (state.cursorMode === 'voice' && DIGIT_TO_DUR[e.key]) {
+        e.preventDefault();
+        commitPendingTuplet(e.key);
+        return;
+      }
+      /* Cancel and fall through to normal handling for this key. */
+      state.pendingTuplet = null;
+      hooks.setStatus?.('Tuplet cancelled.');
+      hooks.onStateChange();
+      /* no return — handler below processes e */
     }
 
     /* Hairpin shortcuts (apply in BOTH voice and expression mode). Must come
@@ -578,15 +594,9 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       return;
     }
 
-    /* Escape: cancel pending tuplet, then pending hairpin (works in either mode). */
+    /* Escape: cancel pending hairpin (works in either mode). Pending tuplet
+       is cancelled earlier in the handler by the stray-input branch. */
     if (e.key === 'Escape') {
-      if (state.pendingTuplet) {
-        state.pendingTuplet = null;
-        hooks.setStatus?.('Tuplet cancelled.');
-        e.preventDefault();
-        hooks.onStateChange();
-        return;
-      }
       if (cancelPendingHairpin(hooks)) {
         e.preventDefault();
         return;

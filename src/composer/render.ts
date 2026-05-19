@@ -25,7 +25,7 @@ const BASE_OPTIONS = {
   pageMarginBottom: 30,
   pageMarginLeft: 30,
   pageMarginRight: 30,
-  svgAdditionalAttribute: ['note@data-q', 'note@data-r', 'note@color'],
+  svgAdditionalAttribute: ['note@data-q', 'note@data-r', 'note@color', 'rest@data-tuplet-placeholder'],
   header: 'none',
   footer: 'none',
   scale: 100,
