@@ -10,6 +10,7 @@ import { audio } from '../state/audio.js';
 import { pedal } from '../state/pedal.js';
 import { nowSec } from './clock.js';
 import { captureSnapshot, snapshotMatchesLive } from './snapshot.js';
+import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
 import type {
   HkrEvent, HkrSession, LayoutSnapshot,
 } from './types.js';
@@ -75,7 +76,7 @@ export function startRecording(): void {
   for (const key in audio.activeOscs) {
     const parts = key.split(',');
     const q = +parts[0], r = +parts[1];
-    const v = audio.keyVelocity[key] ?? 100;
+    const v = audio.keyVelocity[key] ?? DEFAULT_DYNAMIC_MAP.f;
     pushEvent({ t: tNow(), k: 'on', q, r, v });
   }
 }

@@ -25,6 +25,7 @@ import { noteName, keyOctave, parseNote, accToVal } from '../tuning/notes.js';
 import { darkColorHex, coordToMidi } from '../transcription/pitch.js';
 import { noteOn, noteOff, stopAllNotes } from '../audio/engine.js';
 import { draw } from '../render/draw.js';
+import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
 import type { KeyId } from '../types.js';
 
 const bridge = createHklBridge();
@@ -58,7 +59,7 @@ function resolveKey(q: number, r: number): ResolvedNote {
     oct: keyOctave(q, r),
     midi: coordToMidi(q, r),
     colorHex: darkColorHex(q, r),
-    velocity: audio.keyVelocity[key] ?? 64,
+    velocity: audio.keyVelocity[key] ?? DEFAULT_DYNAMIC_MAP.mf,
   };
 }
 
@@ -167,7 +168,7 @@ function dispatchChord(notes: ReadonlyArray<CoordRef>, durationMs: number, pb: A
   if (pb.cancelled) return;
   const keys: KeyId[] = notes.map(coordToKeyId);
   for (const k of keys) {
-    noteOn(k, velocity ?? audio.keyVelocity[k] ?? 80);
+    noteOn(k, velocity ?? audio.keyVelocity[k] ?? DEFAULT_DYNAMIC_MAP.mf);
     pb.heldKeys.add(k);
     /* Add to selectedKeys for visual highlight via existing draw() path.
        Track ownership so we only remove keys that were not already held by

@@ -17,6 +17,8 @@
 // Moment = (measureIdx, tstamp). measureIdx is 0-based; tstamp is the MEI
 // beat float (1.0 = downbeat; 4/4 measure has tstamps [1.0, 5.0)).
 
+import { DYNAMIC_NAMES, DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
+
 export const MEI_NS = 'http://www.music-encoding.org/ns/mei';
 const XML_NS = 'http://www.w3.org/XML/1998/namespace';
 export const HKL_NS = 'https://hexkeylab.com/ns/mei';
@@ -25,13 +27,6 @@ export interface Moment {
   measureIdx: number;
   tstamp: number;
 }
-
-/** Loudest → softest order, matching Finale's Shift+1..Shift+8 entry order. */
-export const DYNAMIC_NAMES: ReadonlyArray<string> = ['fff', 'ff', 'f', 'mf', 'mp', 'p', 'pp', 'ppp'];
-
-export const DEFAULT_DYNAMIC_MAP: Readonly<Record<string, number>> = Object.freeze({
-  fff: 127, ff: 115, f: 100, mf: 85, mp: 70, p: 55, pp: 40, ppp: 25,
-});
 
 /* ── id minting (self-contained; doesn't share model.ts's counter) ───────── */
 

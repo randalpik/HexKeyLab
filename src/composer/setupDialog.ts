@@ -5,7 +5,8 @@
 // the measure rebuild).
 
 import type { ComposerModel } from './model.js';
-import { getDynamicMap, setDynamicMap, DYNAMIC_NAMES, DEFAULT_DYNAMIC_MAP } from './expressions.js';
+import { getDynamicMap, setDynamicMap } from './expressions.js';
+import { DYNAMIC_NAMES, DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
 
 const $ = <T extends HTMLElement>(id: string): T | null =>
   document.getElementById(id) as T | null;

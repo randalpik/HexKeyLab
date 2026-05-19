@@ -34,9 +34,10 @@ import { keyFreq } from '../tuning/frequency.js';
 import { animation } from '../render/animation.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import { qwertyKeyMap } from './qwerty.js';
+import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
 import type { KeyId, Voice } from '../types.js';
 
-const KEYBOARD_VELOCITY = 120;
+const KEYBOARD_VELOCITY = DEFAULT_DYNAMIC_MAP.f;
 
 /* Filled by the IIFE below so external modules (controls.ts) can ask for a
    migration of just the QWERTY-held voices when qwertyTranspose changes. */

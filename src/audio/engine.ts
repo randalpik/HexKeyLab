@@ -28,6 +28,7 @@ import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import {
   recordOn, recordOff, recordPa, recordPedalDepthsChange, recordSostenuto,
 } from '../recording/capture.js';
+import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
 import type { KeyId } from '../types.js';
 
 /* Damper smoothing time-constant for setTargetAtTime. CC4 arrives as 0–127
@@ -125,7 +126,7 @@ export function noteOn(key: KeyId, velocity?: number): void {
   /* Stage 1 velocity calibration: per-key gain applied once here, before the
      sample/oscillator branch. Raw `velocity` is preserved for the recording
      hook below so playback re-applies the current transform. */
-  const adjVel = velocityCal.applyPerKeyGain(key, velocity ?? 100);
+  const adjVel = velocityCal.applyPerKeyGain(key, velocity ?? DEFAULT_DYNAMIC_MAP.f);
   if (instrIsSample() && SampleEngine.isInstrumentLoaded(wf)) {
     SampleEngine.setInstrument(wf);
     /* Velocity drives initial volume (via baseVol in segGain); pressureGain stays
@@ -226,7 +227,7 @@ export function handleAftertouch(key: KeyId, pressure: number): void {
   /* Strike anchor must match the velocity actually used at noteOn — apply the
      same per-key gain so PA's baseVol(eqVel)/baseVol(strikeVel) ratio stays
      consistent with the voice's onset volume. */
-  const rawStrike = audio.keyVelocity[key] !== undefined ? audio.keyVelocity[key] : 100;
+  const rawStrike = audio.keyVelocity[key] !== undefined ? audio.keyVelocity[key] : DEFAULT_DYNAMIC_MAP.f;
   const strikeVel = velocityCal.applyPerKeyGain(key, rawStrike);
   const target = aftertouchTargetGain(pressure, strikeVel);
   const now = audio.audioCtx.currentTime;

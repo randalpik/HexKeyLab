@@ -20,6 +20,28 @@
 //   Insert     = toggle insert / overwrite mode.
 //   Home / End = jump to start / end of current voice.
 //
+// Tuplet creation (voice mode):
+//   Ctrl+2..7  = begin tuplet creation. Status line prompts for span
+//                duration. The next digit (1..7) press resolves the tuplet:
+//                  Ctrl+2,d = duplet (2:3)    in space of dotted-d
+//                  Ctrl+3,d = triplet (3:2)   in space of d
+//                  Ctrl+4,d = quadruplet (4:6) in space of dotted-d
+//                  Ctrl+5,d = quintuplet (5:4) in space of d
+//                  Ctrl+6,d = sextuplet (6:4)  in space of d
+//                  Ctrl+7,d = septuplet (7:8)  in space of d
+//                Atomic written duration = d divided by 2 / 4 / 8 ranks
+//                respectively. Span exceeding remaining measure → rejected.
+//   Escape     = cancel a pending tuplet (between Ctrl+N and the digit).
+//   Inside a tuplet: duration digits fill atomic slots; durations exceeding
+//                the remaining tuplet space reject with a status message.
+//                Filling the tuplet completely advances the cursor past it.
+//   Backspace  inside a tuplet nibbles one filled slot at a time, regrowing
+//                a trailing placeholder; a final Backspace on the empty-
+//                tuplet fill-anchor removes the <tuplet> element entirely.
+//   Beaming inside a tuplet is computed automatically at serialize time:
+//                consecutive beam-eligible children (dur ≥ 8, not rests)
+//                get a <beam> wrapper.
+//
 // Expression mode:
 //   ArrowLeft/Right = step through the unified moment list (note onsets
 //                     across all voices ∪ existing expression moments).

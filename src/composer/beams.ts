@@ -52,7 +52,10 @@ export function unwrapBeams(doc: Document): void {
 }
 
 /** Recompute <beam> wrappers for every layer in every measure of `doc`,
- *  based on the time signature `ts`. Idempotent. */
+ *  based on the time signature `ts`. Idempotent. Two passes:
+ *    1. Layer-level beaming (the standard beat-group logic).
+ *    2. Tuplet-internal beaming: each <tuplet> is treated as a single beat
+ *       group and its beam-eligible children are wrapped independently. */
 export function regroupBeams(doc: Document, ts: TimeSigInfo): void {
   unwrapBeams(doc);
 
@@ -65,6 +68,12 @@ export function regroupBeams(doc: Document, ts: TimeSigInfo): void {
     for (const layer of Array.from(layers)) {
       regroupOneLayer(doc, layer, groups);
     }
+  }
+
+  /* Tuplet-internal pass. Each tuplet is its own beat group; we beam any
+     run of consecutive beam-eligible children (rests split runs). */
+  for (const tuplet of Array.from(doc.querySelectorAll('tuplet'))) {
+    regroupOneTuplet(doc, tuplet);
   }
 }
 
@@ -95,6 +104,33 @@ function regroupOneLayer(doc: Document, layer: Element, groups: Array<{ lo: numb
       if (run.length >= 2) wrapInBeam(doc, layer, run.map((r) => r.el));
     }
   }
+}
+
+/** Tuplet-internal beam pass. The tuplet's content children form a single
+ *  beat group; we wrap any run of ≥ 2 consecutive beam-eligible children
+ *  (rests split runs; placeholders are ignored). */
+function regroupOneTuplet(doc: Document, tuplet: Element): void {
+  const stream = annotateTupletChildren(tuplet);
+  if (stream.length < 2) return;
+  const runs = splitIntoBeamableRuns(stream);
+  for (const run of runs) {
+    if (run.length >= 2) wrapInBeam(doc, tuplet, run.map((r) => r.el));
+  }
+}
+
+function annotateTupletChildren(tuplet: Element): StreamEntry[] {
+  const out: StreamEntry[] = [];
+  let t = 0;
+  for (const c of Array.from(tuplet.children)) {
+    const ln = c.localName;
+    /* Skip tuplet-internal placeholders — layout-only, never beam-eligible. */
+    if (ln === 'space' && c.getAttribute('data-tuplet-placeholder') === 'true') continue;
+    if (ln !== 'chord' && ln !== 'note' && ln !== 'rest') continue;
+    const ticks = elementDurationTicks(c);
+    out.push({ el: c, startTick: t, durTicks: ticks });
+    t += ticks;
+  }
+  return out;
 }
 
 interface StreamEntry { el: Element; startTick: number; durTicks: number }

@@ -15,10 +15,11 @@ import {
   collectDynams, collectHairpins, getDynamicMap, absoluteTickForMoment,
 } from './expressions.js';
 import { realTicks } from './ticks.js';
+import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
 
 const DEFAULT_BPM = 120;
 const MS_PER_MIN = 60_000;
-const DEFAULT_VELOCITY = 85; /* "mf" — matches DEFAULT_DYNAMIC_MAP['mf'] */
+const DEFAULT_VELOCITY = DEFAULT_DYNAMIC_MAP.mf;
 const HAIRPIN_OPEN_END_DELTA = 25; /* synthesized cres/dim level when no flanking dynamic */
 
 interface TempoInfo { bpm: number; unitDenom: number; dots: number }

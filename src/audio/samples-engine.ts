@@ -6,6 +6,7 @@
 import { recordSeamEvent } from './diagnostics/loopOverlay.js';
 import { inflightExpRampValue, velocityBaseVol } from './aftertouch.js';
 import { INSTRUMENTS } from './samples-data.js';
+import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
 
 const RELEASE_SCALE = 0.5;
 
@@ -274,7 +275,7 @@ const activeVoices: Record<string, any> = {};
     var instr=INSTRUMENTS[currentInstrument];
     var rate=freq*(instr.transpose||1)/nearest.freq;
     var instrVol=instr.volume||1.0;
-    var baseVol=velocityBaseVol(velocity!==undefined?velocity:108)*instrVol;
+    var baseVol=velocityBaseVol(velocity!==undefined?velocity:DEFAULT_DYNAMIC_MAP.f)*instrVol;
     /* ── ABOVE-RANGE VIBRATO ATTENUATION ──
        When a note is requested above the highest sampled pitch, the sample gets
        pitch-shifted up — which also speeds up its vibrato (cello's ~5Hz vibrato

@@ -20,6 +20,7 @@ import { keyFreq } from '../tuning/frequency.js';
 import { syncAudio } from '../audio/engine.js';
 import { sysex } from '../lumatone/sysex.js';
 import { syncLumatoneColors } from '../lumatone/sync.js';
+import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
 import type { KeyId } from '../types.js';
 
 interface MidiTarget {
@@ -78,7 +79,7 @@ export function midiNoteOn(key: KeyId): void {
   const parts = key.split(',');
   const m = keyToMidi(+parts[0], +parts[1]);
   if (!m) return;
-  midi.midiOut.send([0x90 + (m.channel - 1), m.note, 100]);
+  midi.midiOut.send([0x90 + (m.channel - 1), m.note, DEFAULT_DYNAMIC_MAP.f]);
   midi.activeMidiNotes[key] = m;
 }
 
