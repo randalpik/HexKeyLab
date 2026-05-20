@@ -58,7 +58,11 @@ export const CURSOR_TRACE_FN = `async function(voice, expectedZeroDeltaPairs) {
   const refresh = () => {
     if (typeof reRender === 'function') reRender();
     if (cursor && typeof cursor.update === 'function') {
-      cursor.update(m, { entryMode, cursorMode: 'voice', exprCursor: null });
+      /* Read the live cursorMode so we don't paint the voice cursor over
+       * a selection-mode state — that bled through to the visualCheck
+       * screenshot and made it look like the cursor was still visible. */
+      const liveMode = (window.__hkl_composer.inputState && window.__hkl_composer.inputState().cursorMode) || 'voice';
+      cursor.update(m, { entryMode, cursorMode: liveMode, exprCursor: null });
     }
   };
   const tick = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));

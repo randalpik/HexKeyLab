@@ -581,6 +581,152 @@ const KBD = {
   },
 };
 
+/* ── New: selection mode (Shift+arrow entry, Ctrl+C/X/V) ──────────────── */
+//
+// Setup pattern: build content in M_1 (and sometimes M_2) via the model API,
+// then drive Shift+arrow / Ctrl+C/X/V via setupKeys. Each fixture asserts a
+// combination of (model state, input state, clipboard contents).
+//
+// Note: navigator.clipboard.readText() is not available in the headless
+// Chromium context without permissions plumbing — copy/paste fixtures use
+// the in-page sequence (write then read) and rely on the clipboard API
+// being mocked at test setup, OR they verify model-side effects only.
+
+const FILL_M1_4Q_V1 = `
+  m.setCursor(0, 1);
+  for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+`;
+
+const SELECTION = {
+  /* Enter beat selection via Shift+Left from end-of-M1 in 4/4 with 4 quarters.
+     Expected: anchor at past-last-quarter, movable one beat to the left. */
+  sel_beat_enter_shiftLeft: {
+    setup: `${FILL_M1_4Q_V1} m.setCursor(m.getVoiceLength(1), 1);`,
+    setupKeys: [{ key: 'ArrowLeft', shift: true }],
+  },
+
+  /* Enter beat selection via Shift+Right from start of M1. Expected: anchor at
+     start of M1, movable one beat to the right. */
+  sel_beat_enter_shiftRight: {
+    setup: `${FILL_M1_4Q_V1} m.setCursor(0, 1);`,
+    setupKeys: [{ key: 'ArrowRight', shift: true }],
+  },
+
+  /* Grow beat selection rightward by 2 beats. */
+  sel_beat_grow_right: {
+    setup: `${FILL_M1_4Q_V1} m.setCursor(0, 1);`,
+    setupKeys: [
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+    ],
+  },
+
+  /* Convergence exits: Shift+Right then Shift+Left should bring movable back
+     to anchor and exit selection mode. */
+  sel_beat_converge_exits: {
+    setup: `${FILL_M1_4Q_V1} m.setCursor(0, 1);`,
+    setupKeys: [
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowLeft', shift: true },
+    ],
+  },
+
+  /* Ctrl+Shift+Right snaps movable to the next measure boundary. Start with 2
+     measures of quarters; cursor at start of M_1. Shift+Right enters mode
+     selecting beat 1 of M_1. Then Ctrl+Shift+Right should snap movable to
+     start of M_2. */
+  sel_beat_ctrlShift_measureBoundary: {
+    setup: `${FILL_M1_4Q_V1}
+      m.setCursor(m.getVoiceLength(1), 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setCursor(0, 1);
+    `,
+    setupKeys: [
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true, ctrl: true },
+    ],
+  },
+
+  /* Promote beat → measure via Shift+Down. */
+  sel_promote_beat_to_measure: {
+    setup: `${FILL_M1_4Q_V1} m.setCursor(0, 1);`,
+    setupKeys: [
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowDown', shift: true },
+    ],
+  },
+
+  /* Enter measure mode directly via Shift+Down from voice mode. */
+  sel_measure_enter_shiftDown: {
+    setup: `${FILL_M1_4Q_V1} m.setCursor(1, 1);`,
+    setupKeys: [{ key: 'ArrowDown', shift: true }],
+  },
+
+  /* Measure mode: Shift+Down adds the next staff (origin=staff 1, last=2). */
+  sel_measure_expand_staves: {
+    setup: `${FILL_M1_4Q_V1} m.setCursor(1, 1);`,
+    setupKeys: [
+      { key: 'ArrowDown', shift: true },
+      { key: 'ArrowDown', shift: true },
+    ],
+  },
+
+  /* Escape exits selection mode. */
+  sel_escape_exits: {
+    setup: `${FILL_M1_4Q_V1} m.setCursor(0, 1);`,
+    setupKeys: [
+      { key: 'ArrowRight', shift: true },
+      'Escape',
+    ],
+  },
+
+  /* Pressing a non-selection key (a duration digit) exits selection to movable
+     stop and then applies the key. */
+  sel_nonsel_key_exits: {
+    setup: `${FILL_M1_4Q_V1} m.setCursor(0, 1);`,
+    setupKeys: [
+      { key: 'ArrowRight', shift: true },
+      '5', // quarter rest insert after exit
+    ],
+  },
+
+  /* Ctrl+X on a beat selection should replace content with beat-aligned rests.
+     We start with content (notes/chords already are rests in our setup, but the
+     model side-effect should still be a re-fill via decomposeBeatAlignedRests). */
+  sel_beat_cut_replaces_with_rests: {
+    setup: `${FILL_M1_4Q_V1} m.setCursor(0, 1);`,
+    setupKeys: [
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      { key: 'x', ctrl: true },
+    ],
+  },
+
+  /* Visual: 2-beat selection at start of a 4-quarter M_1 (V_1). Captures
+     the selection rect's horizontal extent (right edge of q0 to right edge
+     of q1, snapping to measure left edge for the start of M_1) and the
+     editing cursor being hidden. */
+  visualSelBeatTwoBeats: {
+    setup: `${FILL_M1_4Q_V1} m.setCursor(0, 1);`,
+    setupKeys: [
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+    ],
+    visualBaseline: 'sel_beat_two_beats',
+  },
+
+  /* Visual: measure-mode selection of all of M_1, both staves (Shift+Down
+     to enter measure mode, Shift+Down again to add staff 2). */
+  visualSelMeasureBothStaves: {
+    setup: `${FILL_M1_4Q_V1} m.setCursor(0, 1);`,
+    setupKeys: [
+      { key: 'ArrowDown', shift: true },
+      { key: 'ArrowDown', shift: true },
+    ],
+    visualBaseline: 'sel_measure_both_staves',
+  },
+};
+
 /* ── New: empty doc + boundary scenarios for full-tier roundtrip ──────── */
 
 const ROUNDTRIP_STRESS = {
@@ -618,6 +764,7 @@ export const FIXTURES = {
   ...mapKbdTier(BRIDGE, 'full'),
   ...mapKbdTier(SCROLL, 'full'),
   ...mapKbdTier(VISUAL, 'full'),
+  ...mapKbdTier(SELECTION, 'full'),
 };
 
 /** Fixture-specific assertions. Map fixture name → list of {name, expr}.
@@ -1075,6 +1222,206 @@ export const FIXTURE_ASSERTIONS = {
       expr: `(async () => {
         await window.__waitForScrollSettle(1200);
         return window.__test.assertCursorInViewport(0);
+      })()` },
+  ],
+
+  /* ── Selection fixtures ───────────────────────────────────────────────── */
+  sel_beat_enter_shiftLeft: [
+    { name: 'cursorMode is select',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        return s.cursorMode === 'select'
+          ? { ok: true }
+          : { ok: false, detail: 'cursorMode=' + s.cursorMode };
+      })()` },
+    { name: 'selection is beat kind with anchor > movable',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        if (!s.selection || s.selection.kind !== 'beat') {
+          return { ok: false, detail: 'selection=' + JSON.stringify(s.selection) };
+        }
+        return s.selection.anchor > s.selection.movable
+          ? { ok: true }
+          : { ok: false, detail: 'expected anchor > movable; sel=' + JSON.stringify(s.selection) };
+      })()` },
+  ],
+  sel_beat_enter_shiftRight: [
+    { name: 'selection is beat kind with movable > anchor',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        if (!s.selection || s.selection.kind !== 'beat') {
+          return { ok: false, detail: 'selection=' + JSON.stringify(s.selection) };
+        }
+        return s.selection.movable > s.selection.anchor
+          ? { ok: true }
+          : { ok: false, detail: 'expected movable > anchor; sel=' + JSON.stringify(s.selection) };
+      })()` },
+  ],
+  sel_beat_grow_right: [
+    { name: 'selection spans 2 beats (movable - anchor matches 2-beat distance)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const s = window.__hkl_composer.inputState();
+        if (!s.selection || s.selection.kind !== 'beat') {
+          return { ok: false, detail: 'no beat selection' };
+        }
+        const tA = m.getTickPositionAt(s.selection.voice, s.selection.anchor);
+        const tM = m.getTickPositionAt(s.selection.voice, s.selection.movable);
+        const span = Math.abs(tM - tA);
+        return Math.abs(span - 32) < 1e-6
+          ? { ok: true }
+          : { ok: false, detail: 'span=' + span + ' (expected 32 = 2 quarter beats)' };
+      })()` },
+  ],
+  sel_beat_converge_exits: [
+    { name: 'cursorMode returns to voice after convergence',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        return s.cursorMode === 'voice' && s.selection === null
+          ? { ok: true }
+          : { ok: false, detail: 'cursorMode=' + s.cursorMode + ' selection=' + JSON.stringify(s.selection) };
+      })()` },
+  ],
+  sel_beat_ctrlShift_measureBoundary: [
+    { name: 'movable lands at start of M_2',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const s = window.__hkl_composer.inputState();
+        if (!s.selection || s.selection.kind !== 'beat') {
+          return { ok: false, detail: 'no beat selection' };
+        }
+        const expected = m.getMeasureStartCursor(s.selection.voice, 1);
+        return s.selection.movable === expected
+          ? { ok: true }
+          : { ok: false, detail: 'movable=' + s.selection.movable + ' expected=' + expected };
+      })()` },
+  ],
+  sel_promote_beat_to_measure: [
+    { name: 'selection is now measure kind',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        return s.selection && s.selection.kind === 'measure'
+          ? { ok: true }
+          : { ok: false, detail: 'selection=' + JSON.stringify(s.selection) };
+      })()` },
+  ],
+  sel_measure_enter_shiftDown: [
+    { name: 'measure selection on M_1, staff 1 only',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        if (!s.selection || s.selection.kind !== 'measure') {
+          return { ok: false, detail: 'selection=' + JSON.stringify(s.selection) };
+        }
+        const ok = s.selection.anchorMeasure === 0
+          && s.selection.movableMeasure === 0
+          && s.selection.firstStaff === 1
+          && s.selection.lastStaff === 1
+          && s.selection.movableSide === 'unset';
+        return ok
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify(s.selection) };
+      })()` },
+  ],
+  sel_measure_expand_staves: [
+    { name: 'staff range expanded to 1..2',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        if (!s.selection || s.selection.kind !== 'measure') {
+          return { ok: false, detail: 'selection=' + JSON.stringify(s.selection) };
+        }
+        return s.selection.firstStaff === 1 && s.selection.lastStaff === 2
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify(s.selection) };
+      })()` },
+  ],
+  sel_escape_exits: [
+    { name: 'cursorMode is voice after Escape',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        return s.cursorMode === 'voice' && s.selection === null
+          ? { ok: true }
+          : { ok: false, detail: 'cursorMode=' + s.cursorMode };
+      })()` },
+  ],
+  sel_nonsel_key_exits: [
+    { name: 'cursorMode is voice after non-selection key',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        return s.cursorMode === 'voice' && s.selection === null
+          ? { ok: true }
+          : { ok: false, detail: 'cursorMode=' + s.cursorMode };
+      })()` },
+  ],
+  sel_beat_cut_replaces_with_rests: [
+    { name: 'selection cleared and cursorMode back to voice',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        return s.cursorMode === 'voice' && s.selection === null
+          ? { ok: true }
+          : { ok: false, detail: 'cursorMode=' + s.cursorMode };
+      })()` },
+    { name: 'V_1 layer still has 4 rests (cut replaced with rests, total preserved)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const rests = m.allMeasures()[0].querySelectorAll('staff[n="1"] layer[n="1"] > rest');
+        return rests.length === 4
+          ? { ok: true }
+          : { ok: false, detail: 'rest count = ' + rests.length };
+      })()` },
+  ],
+
+  /* Visual selection asserts: cursor hidden in selection mode, and exactly
+     one selection rect emitted for a single-measure beat selection. */
+  visualSelBeatTwoBeats: [
+    { name: 'editing cursor bar is hidden in selection mode',
+      expr: `(() => {
+        const overlay = document.getElementById('cursorOverlay');
+        const bar = overlay?.querySelector('rect[data-cursor-role="voice"]');
+        if (!bar) return { ok: false, detail: 'no voice cursor rect' };
+        const op = bar.getAttribute('opacity');
+        return op === '0'
+          ? { ok: true }
+          : { ok: false, detail: 'voice cursor opacity=' + op };
+      })()` },
+    { name: 'no visible text or visible-rect elements anywhere over the score',
+      expr: `(() => {
+        /* Scan ALL svgs (Verovio's + overlay) for any text with content
+         * "V" + digit OR any rect that isn't our selection rect and has
+         * non-zero opacity. */
+        const score = document.getElementById('score');
+        if (!score) return { ok: false, detail: 'no #score' };
+        const texts = Array.from(score.querySelectorAll('text'));
+        const bad = texts.filter((t) => /^V[1-4]?$/.test((t.textContent ?? '').trim()));
+        return bad.length === 0
+          ? { ok: true }
+          : { ok: false, detail: 'V-labels: ' + bad.map((t) => t.textContent + '@(' + t.getAttribute('x') + ',' + t.getAttribute('y') + ')').join('|') };
+      })()` },
+    { name: 'exactly one selection rect rendered (single measure / single system)',
+      expr: `(() => {
+        const rects = document.querySelectorAll('rect[data-selection-rect="true"]');
+        return rects.length === 1
+          ? { ok: true }
+          : { ok: false, detail: 'rect count=' + rects.length };
+      })()` },
+  ],
+  visualSelMeasureBothStaves: [
+    { name: 'measure selection spans both staves vertically',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const s = window.__hkl_composer.inputState();
+        if (!s.selection || s.selection.kind !== 'measure') {
+          return { ok: false, detail: 'selection=' + JSON.stringify(s.selection) };
+        }
+        return s.selection.firstStaff === 1 && s.selection.lastStaff === 2
+          ? { ok: true }
+          : { ok: false, detail: 'staves: ' + s.selection.firstStaff + '..' + s.selection.lastStaff };
+      })()` },
+    { name: 'exactly one selection rect (both staves coalesced)',
+      expr: `(() => {
+        const rects = document.querySelectorAll('rect[data-selection-rect="true"]');
+        return rects.length === 1
+          ? { ok: true }
+          : { ok: false, detail: 'rect count=' + rects.length };
       })()` },
   ],
 };

@@ -696,8 +696,33 @@ Pragmatic interim: run probes in the foreground (don't background with `run_in_b
 
 ### Visual screenshots in page mode capture mostly empty paper
 
-CDP `Page.captureScreenshot` with `clip` set to the rendered SVG's `getBoundingClientRect()` should give a tight crop of the music. In page mode the rendered SVG IS the paper page — full-toolbar width by ~A4 height — with the music tucked into the top-left corner. The clip rect was correct (matched the SVG bbox); the BBOX was wrong relative to expectation. Visible content occupied < 5% of the clip area; any visual regression would be lost in the white expanse.
+CDP `Page.captureScreenshot` with `clip` set to the rendered SVG's `getBoundingClientRect()` should give a tight crop of the music. In page mode the rendered SVG IS the paper page — full-toolbar width by ~A4 height — with the music tucked into the top-left corner. The clip rect was correct (matched the SVG bbox); visible content occupied < 5% of the clip area; any visual regression would be lost in the white expanse.
 
-Fix: force scroll mode for tests (`renderer.setViewMode('scroll')` in `RESET_SNIPPET`). Scroll mode sizes the SVG to its content, so `getBoundingClientRect()` returns a tight box. The baselines now show the rendered music at ~1:1 fill, and pixel diffs are meaningful.
+Earlier fix (since superseded): force scroll mode in `RESET_SNIPPET`. That avoided the empty-paper problem but produced screenshots that didn't match live behavior (Max uses page mode), defeating the purpose of pixel tests.
 
-Generalizable rule: when scaling visual regression to "tight crops" for any web app, verify the SVG/canvas you're cropping to is content-sized, not page-sized. Layout modes that pad to paper or device dimensions need to be switched off in the test harness.
+Current fix in `tools/composer-test/lib/visual.mjs`: compute the clip bbox as the union of `<g class="system">` elements + selection overlay rects + any non-zero-opacity cursor overlay child, plus 16 px padding. The tests now render in the same view mode as live use, and the screenshot is still a tight crop of the content.
+
+Generalizable rule: don't force the page into a test-only render mode to make visual tests work — that bakes a "tests don't reflect live behavior" assumption into the suite. Compute a content-based crop instead.
+
+### Test invariants that mutate render state pollute later invariants' pixel reads
+
+The composer-test suite runs invariants in sequence per fixture: model assertions, then cursor-trace, then visualCheck. The cursor-trace helper walks every cursor position and calls `cursor.update(model, { cursorMode: 'voice', … })` to repaint the cursor at each position. It hardcoded `'voice'` because that was the cursor's only mode at the time it was written.
+
+When selection mode was added, this turned into a bug: a fixture that ends in selection mode (cursor hidden) would have its hidden state OVERWRITTEN by the cursor-trace pass's voice-mode repaint right before visualCheck took the screenshot. The DOM at screenshot time correctly showed `opacity="0"`, but the painted pixels were from the cursor-trace's forced voice-mode paint — depending on exactly when Chromium committed each paint to its frame buffer. Visually the cursor appeared in the baseline even though the assertion checking `opacity` passed.
+
+Fix: cursor-trace's `refresh()` now reads `cursorMode` from the live `inputState()` rather than hardcoding voice mode. Generalizable rule: any test invariant that touches render state must read the same state the production code reads — or be made fully read-only (e.g. snapshot bboxes without re-issuing renders). When invariants mutate state, the order in which they run becomes a load-bearing implementation detail, and adding a new state (like selection mode) silently breaks the suite.
+
+### Test/live divergence: diff the flows before hypothesizing
+
+When a test produces output that doesn't match live behavior on the same code: the *first* move should be to enumerate the concrete differences between the test flow and the live flow — every command the test runner issues that the live browser doesn't, in order. Speculation about caching, animations, paint timing, or framework quirks tends to be wrong and burns hours.
+
+Concrete things to compare:
+- What JS does the test harness inject into the page that a live browser doesn't? (assertion libs, mock channels, helper functions.)
+- What does the test harness call between the user's last input and the screenshot/observation? (cursor traces, model walks, RAF waits.)
+- Does the test harness force any mode/setting that production doesn't? (view modes, fixed window sizes, disabled GPU.)
+
+If those four questions don't surface the divergence, the actual cause is rare. Don't reach for rare causes first.
+
+### Verify file writes by checking mtime/size, not exit code
+
+`node run.mjs scenario X --update-baselines` exited cleanly multiple times while doing nothing, because scenario tier silently skipped the visual invariant. The fix was a one-line check (`mode === 'scenario'` doesn't satisfy `mode === 'visual' || mode === 'full'`), but it cost an hour because "the command succeeded" was treated as proof the file was rewritten. Always `stat` or `ls -la` the output file when verifying a write — the runtime didn't lie, it just wasn't asked to do anything.

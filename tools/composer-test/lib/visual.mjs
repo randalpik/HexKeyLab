@@ -33,23 +33,55 @@ mkdirSync(OUT_DIR, { recursive: true });
  *  page, leaving most of the viewport blank — the actual content gets a
  *  tiny patch and any regression goes unnoticed in a vast sea of white. */
 export async function visualCheck(cdp, name, { updateBaselines = false } = {}) {
-  /* Query the rendered SVG's bbox in viewport coords. Composer's score
-   * area is #score; the rendered Verovio SVG is its first svg child
-   * (excluding the cursor overlay #cursorOverlay). */
+  /* Compute a tight bbox covering just the rendered content (staves +
+   * selection overlay + any cursor visuals) — NOT the full Verovio SVG
+   * which in page mode is paper-sized (~2175 × 2810) and mostly empty.
+   * Union the bboxes of <g class="system"> elements (each system of
+   * staves Verovio emits), any selection overlay rects, and any visible
+   * cursor rects. Add PAD on all sides. */
   const bbox = await cdp.evalJSON(`(() => {
     const score = document.getElementById('score');
     if (!score) return null;
-    const svg = score.querySelector('svg:not(#cursorOverlay)');
-    if (!svg) return null;
-    const r = svg.getBoundingClientRect();
-    /* Round outward to integer pixels and add 8 px padding so anti-
-     * aliased glyphs on the edge aren't clipped. */
-    const PAD = 8;
+    const targets = [
+      ...score.querySelectorAll('g.system'),
+      ...score.querySelectorAll('rect[data-selection-rect="true"]'),
+    ];
+    /* Also include any cursor-overlay rects/text whose opacity is non-zero
+     * — so an entry-cursor visible inside the system stays in frame. */
+    for (const el of score.querySelectorAll('#cursorOverlay > *')) {
+      const op = parseFloat(el.getAttribute('opacity') ?? '1');
+      if (op > 0 && (el.tagName === 'rect' || el.tagName === 'text')) {
+        targets.push(el);
+      }
+    }
+    if (targets.length === 0) {
+      const svg = score.querySelector('svg:not(#cursorOverlay)');
+      if (!svg) return null;
+      const r = svg.getBoundingClientRect();
+      return {
+        x: Math.max(0, Math.floor(r.left)),
+        y: Math.max(0, Math.floor(r.top)),
+        width: Math.ceil(r.width),
+        height: Math.ceil(r.height),
+      };
+    }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const el of targets) {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) continue;
+      if (r.left < minX) minX = r.left;
+      if (r.top < minY) minY = r.top;
+      if (r.right > maxX) maxX = r.right;
+      if (r.bottom > maxY) maxY = r.bottom;
+    }
+    if (!isFinite(minX)) return null;
+    /* PAD on all sides so anti-aliased glyphs on the edge aren't clipped. */
+    const PAD = 16;
     return {
-      x: Math.max(0, Math.floor(r.left) - PAD),
-      y: Math.max(0, Math.floor(r.top) - PAD),
-      width: Math.ceil(r.width) + PAD * 2,
-      height: Math.ceil(r.height) + PAD * 2,
+      x: Math.max(0, Math.floor(minX) - PAD),
+      y: Math.max(0, Math.floor(minY) - PAD),
+      width: Math.ceil(maxX - minX) + PAD * 2,
+      height: Math.ceil(maxY - minY) + PAD * 2,
     };
   })()`);
 

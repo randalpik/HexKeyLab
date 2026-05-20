@@ -73,6 +73,12 @@ export async function openPage(wsUrl, url, { waitMs = 2500 } = {}) {
   await cdp.send('Page.enable');
   await cdp.send('Runtime.enable');
   await cdp.send('Log.enable');
+  /* Disable HTTP caching for the entire tab lifetime. Without this, the
+   * headless Chromium will honor cache headers from the Vite dev server
+   * (or any intermediate) and may serve a stale JS bundle on subsequent
+   * loads in the same process. */
+  await cdp.send('Network.enable');
+  await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
   const loaded = new Promise((res) => {
     const off = cdp.on('Page.loadEventFired', () => { off(); res(); });
   });

@@ -35,7 +35,7 @@ const EXPR_SELECTED_CLASS = 'expr-selected';
 
 export interface CursorUpdateOpts {
   entryMode: 'insert' | 'overwrite';
-  cursorMode: 'voice' | 'expr';
+  cursorMode: 'voice' | 'expr' | 'select';
   exprCursor: ExpressionCursor;
 }
 
@@ -116,6 +116,17 @@ class CursorOverlay {
       for (const [voice, meiId] of this.playbackPositions) {
         this.positionPlaybackBar(voice, meiId);
       }
+      return;
+    }
+
+    if (resolved.cursorMode === 'select') {
+      /* Selection mode: hide the editing cursor entirely; selectionOverlay
+         renders the visible region. */
+      this.barRect!.setAttribute('opacity', '0');
+      this.voiceLabel!.textContent = '';
+      this.exprBar!.setAttribute('opacity', '0');
+      this.exprLabel!.textContent = '';
+      this.clearExpressionHighlights();
       return;
     }
 

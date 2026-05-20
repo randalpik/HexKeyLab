@@ -73,9 +73,17 @@ import {
   hairpinsAt, momentCompare,
   type Moment,
 } from './expressions.js';
+import {
+  type SelectionState, type Dir,
+  enterBeatSelection, enterMeasureSelection,
+  moveBeatMovable, moveBeatMovableByMeasure, moveMeasureMovable,
+  adjustStaffRange, promoteBeatToMeasure, cursorAtMovable,
+  snapBeatBoundary,
+} from './selection.js';
+import { copySelection, readFromClipboard, type ClipboardContents } from './clipboard.js';
 
 export type EntryMode = 'insert' | 'overwrite';
-export type CursorMode = 'voice' | 'expr';
+export type CursorMode = 'voice' | 'expr' | 'select';
 
 interface PendingHairpin {
   start: Moment;
@@ -96,6 +104,7 @@ export interface InputState {
   exprCursor: ExpressionCursor;
   pendingHairpin: PendingHairpin | null;
   pendingTuplet: PendingTuplet | null;
+  selection: SelectionState | null;
 }
 
 /* Ctrl+N → ratio + span-dotted-ness + atomic-rank-divisor. Per the agreed
@@ -168,6 +177,7 @@ const state: InputState = {
   exprCursor: { index: 0, moments: [] },
   pendingHairpin: null,
   pendingTuplet: null,
+  selection: null,
 };
 
 export function getInputState(): Readonly<InputState> {
@@ -416,6 +426,349 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     hooks.onChange();
   }
 
+  /* ── selection-mode helpers ────────────────────────────────────────────── */
+
+  function formatSelectionStatus(sel: SelectionState): string {
+    if (sel.kind === 'beat') {
+      const lo = Math.min(sel.anchor, sel.movable);
+      const hi = Math.max(sel.anchor, sel.movable);
+      const loInfo = model.getFlatStopInfo(sel.voice, lo);
+      const hiInfo = model.getFlatStopInfo(sel.voice, hi);
+      const loM = (loInfo?.measureIdx ?? 0) + 1;
+      const hiM = Math.min(model.allMeasures().length, (hiInfo?.measureIdx ?? 0) + 1);
+      return 'Sel: V' + sel.voice + ' M' + loM + (loM === hiM ? '' : '–M' + hiM)
+        + ' (beat mode, Shift+arrow to adjust)';
+    }
+    const mLo = Math.min(sel.anchorMeasure, sel.movableMeasure) + 1;
+    const mHi = Math.max(sel.anchorMeasure, sel.movableMeasure) + 1;
+    const sLo = sel.firstStaff;
+    const sHi = sel.lastStaff;
+    return 'Sel: M' + mLo + (mLo === mHi ? '' : '–M' + mHi)
+      + ', staff ' + sLo + (sLo === sHi ? '' : '–' + sHi)
+      + ' (measure mode)';
+  }
+
+  function setStateAfterSelectionChange(): void {
+    if (state.selection) hooks.setStatus?.(formatSelectionStatus(state.selection));
+    hooks.onStateChange();
+    hooks.onChange();
+  }
+
+  /** Snap cursor to the movable end of the current selection, clear selection,
+   *  return to voice mode. Caller decides whether to emit status / trigger
+   *  re-render. */
+  function exitSelectionToMovable(): void {
+    if (!state.selection) return;
+    const pos = cursorAtMovable(model, state.selection);
+    model.setVoice(pos.voice);
+    model.setCursor(pos.flatIndex, pos.voice);
+    state.selection = null;
+    state.cursorMode = 'voice';
+  }
+
+  /** Enter selection mode from voice mode based on the Shift+arrow direction.
+   *  Returns true on success. */
+  function enterSelectionFromVoice(arrow: 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown'): boolean {
+    const v = model.getCurrentVoice();
+    const c = model.getCursor();
+    if (arrow === 'ArrowLeft' || arrow === 'ArrowRight') {
+      const dir: Dir = arrow === 'ArrowLeft' ? 'left' : 'right';
+      const sel = enterBeatSelection(model, v, c, dir);
+      if (!sel) {
+        hooks.setStatus?.('No beat boundary in that direction.');
+        return false;
+      }
+      state.selection = sel;
+      state.cursorMode = 'select';
+      return true;
+    }
+    // Shift+Up / Shift+Down — enter measure mode on current measure.
+    const mIdx = model.getCursorMeasureIdx(v);
+    if (mIdx < 0) {
+      hooks.setStatus?.('No measure under cursor.');
+      return false;
+    }
+    state.selection = enterMeasureSelection(model, v, mIdx);
+    state.cursorMode = 'select';
+    return true;
+  }
+
+  /** Apply a parsed clipboard contents at the model's current cursor. Sets
+   *  state.selection to cover the newly-pasted content per spec. */
+  function applyPaste(contents: ClipboardContents): boolean {
+    if (contents.kind === 'beat') {
+      const voice = model.getCurrentVoice();
+      const c = model.getCursor();
+      const beatStart = snapBeatBoundary(model, voice, c, 'left');
+      if (beatStart === null) {
+        hooks.setStatus?.('No beat boundary at cursor.');
+        return false;
+      }
+      const tLoAbs = model.getTickPositionAt(voice, beatStart);
+      const result = model.pasteBeatContent(
+        voice, tLoAbs, contents.elements, contents.durationTicks,
+      );
+      if (!result.ok) {
+        hooks.setStatus?.('Paste failed: ' + result.reason);
+        return false;
+      }
+      /* Re-enter beat selection covering the pasted content. anchor = beat
+         start (left edge of paste), movable = post-paste cursor (right edge). */
+      const tHiAbs = tLoAbs + contents.durationTicks;
+      const newAnchor = model.findCursorAtOrBefore(voice, tLoAbs);
+      const newMovable = model.findCursorAtOrBefore(voice, tHiAbs);
+      if (newAnchor !== newMovable) {
+        state.selection = {
+          kind: 'beat',
+          voice,
+          anchor: newAnchor,
+          movable: newMovable,
+        };
+        state.cursorMode = 'select';
+      } else {
+        state.selection = null;
+        state.cursorMode = 'voice';
+      }
+      hooks.setStatus?.('Pasted ' + contents.durationTicks + ' ticks.');
+      return true;
+    }
+    // Measure paste.
+    const destTs = (() => {
+      const ts = model.getTimeSig();
+      return ts.count + '/' + ts.unit;
+    })();
+    if (contents.sourceTimeSig !== destTs) {
+      hooks.setStatus?.(
+        'Cannot paste: source time-sig ' + contents.sourceTimeSig
+        + ' ≠ destination ' + destTs + '.',
+      );
+      return false;
+    }
+    const voice = model.getCurrentVoice();
+    const mDest = model.getCursorMeasureIdx(voice);
+    if (mDest < 0) {
+      hooks.setStatus?.('No measure at cursor.');
+      return false;
+    }
+    const result = model.pasteMeasureContent(
+      mDest,
+      contents.sourceStaffRange.first,
+      contents.sourceStaffRange.last,
+      contents.measures,
+      contents.expressions,
+    );
+    if (!result.ok) {
+      hooks.setStatus?.('Paste failed: ' + result.reason);
+      return false;
+    }
+    /* Re-enter measure selection covering the pasted measures × staves. The
+       cursor's voice's staff anchors as originStaff if it's in range, else
+       firstStaff. */
+    const curStaff: 1 | 2 = voice <= 2 ? 1 : 2;
+    const originStaff = curStaff >= contents.sourceStaffRange.first
+      && curStaff <= contents.sourceStaffRange.last
+      ? curStaff
+      : contents.sourceStaffRange.first;
+    state.selection = {
+      kind: 'measure',
+      originVoice: voice,
+      originStaff,
+      firstStaff: contents.sourceStaffRange.first,
+      lastStaff: contents.sourceStaffRange.last,
+      anchorMeasure: result.mLo,
+      movableMeasure: result.mHi,
+      movableSide: result.mLo === result.mHi ? 'unset' : 'right',
+    };
+    state.cursorMode = 'select';
+    hooks.setStatus?.('Pasted ' + (result.mHi - result.mLo + 1) + ' measure(s).');
+    return true;
+  }
+
+  /** Async paste from OS clipboard. Reads, parses, applies. */
+  function doPaste(): void {
+    hooks.setStatus?.('Pasting…');
+    void readFromClipboard().then((contents) => {
+      if (!contents) {
+        hooks.setStatus?.('Clipboard is empty or not HKL content.');
+        return;
+      }
+      const ok = applyPaste(contents);
+      if (ok) {
+        refreshExprCursor(model);
+        hooks.onStateChange();
+        hooks.onChange();
+      }
+    });
+  }
+
+  /** Delete the current selection without copying. Used by Ctrl+V in
+   *  selection mode (delete-then-paste). Cursor lands at the start of
+   *  the deleted range, in the appropriate voice. */
+  function deleteSelectionWithoutCopy(sel: SelectionState): void {
+    if (sel.kind === 'beat') {
+      const lo = Math.min(sel.anchor, sel.movable);
+      const hi = Math.max(sel.anchor, sel.movable);
+      const tLo = model.getTickPositionAt(sel.voice, lo);
+      const tHi = model.getTickPositionAt(sel.voice, hi);
+      model.clearBeatRange(sel.voice, tLo, tHi);
+      model.setVoice(sel.voice);
+      model.setCursor(model.findCursorAtOrBefore(sel.voice, tLo), sel.voice);
+    } else {
+      const mLo = Math.min(sel.anchorMeasure, sel.movableMeasure);
+      const mHi = Math.max(sel.anchorMeasure, sel.movableMeasure);
+      model.clearMeasureRange(mLo, mHi, sel.firstStaff, sel.lastStaff);
+      model.setVoice(sel.originVoice);
+      model.setCursor(model.getMeasureStartCursor(sel.originVoice, mLo), sel.originVoice);
+    }
+  }
+
+  /** Handle a keydown event while in selection mode. Returns true if the
+   *  event was consumed (handler should return); false if the event causes
+   *  exit-to-movable and should fall through to the rest of the handler. */
+  function dispatchSelectionMode(e: KeyboardEvent): boolean {
+    const sel = state.selection;
+    if (!sel) return false; // defensive
+    // Pure modifier keypresses — ignore, stay in selection mode.
+    if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') {
+      return true;
+    }
+    // Escape — exit to movable.
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      exitSelectionToMovable();
+      hooks.setStatus?.('Selection cancelled.');
+      hooks.onStateChange();
+      hooks.onChange();
+      return true;
+    }
+    // Shift+Arrow / Ctrl+Shift+Arrow — adjust selection.
+    if (e.shiftKey && !e.metaKey && !e.altKey) {
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        const dir: Dir = e.key === 'ArrowLeft' ? 'left' : 'right';
+        e.preventDefault();
+        if (sel.kind === 'beat') {
+          const r = e.ctrlKey
+            ? moveBeatMovableByMeasure(model, sel, dir)
+            : moveBeatMovable(model, sel, dir);
+          if (!r) return true;
+          if (r.exited) {
+            // Apply cursor at movable BEFORE clearing selection.
+            const pos = cursorAtMovable(model, r.sel);
+            model.setVoice(pos.voice);
+            model.setCursor(pos.flatIndex, pos.voice);
+            state.selection = null;
+            state.cursorMode = 'voice';
+            hooks.setStatus?.('Selection exited (converged).');
+            hooks.onStateChange();
+            hooks.onChange();
+            return true;
+          }
+          state.selection = r.sel;
+        } else {
+          // Measure mode — Ctrl is ignored.
+          state.selection = moveMeasureMovable(model, sel, dir);
+        }
+        setStateAfterSelectionChange();
+        return true;
+      }
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        const updir: 'up' | 'down' = e.key === 'ArrowUp' ? 'up' : 'down';
+        if (sel.kind === 'beat') {
+          // Promote to measure mode. Per spec, the first Shift+Up/Down from
+          // beat mode irreversibly switches to measure mode covering as many
+          // measures as the beat selection touched.
+          state.selection = promoteBeatToMeasure(model, sel);
+        } else {
+          state.selection = adjustStaffRange(sel, updir);
+        }
+        setStateAfterSelectionChange();
+        return true;
+      }
+    }
+    // Ctrl+C / Ctrl+X — copy / cut. Ctrl+V handled in a later phase.
+    if (e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey) {
+      if (e.key === 'c' || e.key === 'C') {
+        e.preventDefault();
+        const pos = cursorAtMovable(model, sel);
+        void copySelection(model, sel).then((r) => {
+          if (r.ok) hooks.setStatus?.('Copied to clipboard.');
+          else hooks.setStatus?.('Copy failed: clipboard write blocked.');
+        });
+        // Exit immediately (don't wait for async clipboard write) — the model
+        // is unchanged so the cursor placement is safe.
+        model.setVoice(pos.voice);
+        model.setCursor(pos.flatIndex, pos.voice);
+        state.selection = null;
+        state.cursorMode = 'voice';
+        hooks.onStateChange();
+        hooks.onChange();
+        return true;
+      }
+      if (e.key === 'x' || e.key === 'X') {
+        e.preventDefault();
+        const movablePosBefore = cursorAtMovable(model, sel);
+        // Capture movable's tstamp for beat mode (the post-deletion flat
+        // index for that tstamp is what we want to land on).
+        let beatTstamp: number | null = null;
+        if (sel.kind === 'beat') {
+          beatTstamp = model.getTickPositionAt(sel.voice, sel.movable);
+        }
+        void copySelection(model, sel).then((r) => {
+          if (r.ok) hooks.setStatus?.('Cut to clipboard.');
+          else hooks.setStatus?.('Clipboard write blocked; deletion still applied.');
+        });
+        // Apply deletion synchronously.
+        if (sel.kind === 'beat') {
+          const lo = Math.min(sel.anchor, sel.movable);
+          const hi = Math.max(sel.anchor, sel.movable);
+          const tLo = model.getTickPositionAt(sel.voice, lo);
+          const tHi = model.getTickPositionAt(sel.voice, hi);
+          model.clearBeatRange(sel.voice, tLo, tHi);
+          // Find post-deletion cursor for the original movable tstamp.
+          if (beatTstamp !== null) {
+            const newC = model.findCursorAtOrBefore(sel.voice, beatTstamp);
+            model.setVoice(sel.voice);
+            model.setCursor(newC, sel.voice);
+          } else {
+            model.setVoice(movablePosBefore.voice);
+            model.setCursor(movablePosBefore.flatIndex, movablePosBefore.voice);
+          }
+        } else {
+          const mLo = Math.min(sel.anchorMeasure, sel.movableMeasure);
+          const mHi = Math.max(sel.anchorMeasure, sel.movableMeasure);
+          model.clearMeasureRange(mLo, mHi, sel.firstStaff, sel.lastStaff);
+          model.setVoice(movablePosBefore.voice);
+          model.setCursor(movablePosBefore.flatIndex, movablePosBefore.voice);
+        }
+        state.selection = null;
+        state.cursorMode = 'voice';
+        refreshExprCursor(model);
+        hooks.onStateChange();
+        hooks.onChange();
+        return true;
+      }
+      if (e.key === 'v' || e.key === 'V') {
+        e.preventDefault();
+        /* Paste while in selection mode: delete current selection, then
+           paste at the resulting cursor position. The paste itself enters
+           selection mode covering the new content. */
+        deleteSelectionWithoutCopy(sel);
+        state.selection = null;
+        state.cursorMode = 'voice';
+        doPaste();
+        return true;
+      }
+    }
+    // Any other key → exit selection to movable, then fall through so the
+    // key triggers its normal handler at the post-exit cursor position.
+    exitSelectionToMovable();
+    hooks.onStateChange();
+    // Do NOT re-render yet — the fall-through handler may also mutate, and
+    // we want a single render at the end.
+    return false;
+  }
+
   function commitPendingTuplet(durKey: string): void {
     const pending = state.pendingTuplet;
     if (!pending) return;
@@ -451,6 +804,49 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
   function handler(e: KeyboardEvent): void {
     if (shouldIgnore(e)) return;
 
+    /* Selection mode dispatch — must come first. Selection-mode keys
+       (Shift+arrow, Ctrl+Shift+arrow, Ctrl+C/X/V, Escape) are handled here;
+       any other key exits selection mode (cursor → movable stop) and falls
+       through so the key applies at the post-exit cursor position. */
+    if (state.cursorMode === 'select' && state.selection) {
+      if (dispatchSelectionMode(e)) return;
+      /* Fell through: selection has been exited, voice mode restored. */
+    }
+
+    /* Shift+arrow from voice mode → enter selection mode. Must come BEFORE
+       the bail-on-modifier check (which only bails on Ctrl/Meta/Alt) and
+       BEFORE the navKeys block (which doesn't differentiate by shiftKey). */
+    if (state.cursorMode === 'voice' && e.shiftKey &&
+        !e.metaKey && !e.altKey &&
+        (e.key === 'ArrowLeft' || e.key === 'ArrowRight'
+          || e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      /* Ctrl+Shift+arrow from voice mode is reserved for in-selection use;
+         outside selection mode it's a no-op (we don't want to enter selection
+         and immediately jump by a measure on the same press). */
+      if (e.ctrlKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        e.preventDefault();
+        return;
+      }
+      e.preventDefault();
+      if (hooks.isPlaybackActive()) return;
+      const arrow = e.key as 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown';
+      if (enterSelectionFromVoice(arrow)) {
+        setStateAfterSelectionChange();
+      }
+      return;
+    }
+
+    /* Ctrl+V from voice mode: paste at cursor. Must come BEFORE the bail-on-
+       modifier check below (Ctrl+V would otherwise be silently dropped). */
+    if (e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey
+        && state.cursorMode === 'voice'
+        && (e.key === 'v' || e.key === 'V')) {
+      e.preventDefault();
+      if (hooks.isPlaybackActive()) return;
+      doPaste();
+      return;
+    }
+
     /* Ctrl+2..7 begins tuplet creation. Must come BEFORE the bail-on-modifier
        check below. preventDefault is critical: in Firefox/Chromium, Ctrl+1..8
        is the tab-nav shortcut, but the browser respects preventDefault on
@@ -483,7 +879,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
      *   already in the last measure).
      * - Ctrl+Left → first visual stop of the current measure, OR first
      *   stop of the previous measure when the cursor is already there. */
-    if (e.ctrlKey && !e.metaKey && !e.altKey &&
+    if (e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey &&
         (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
       e.preventDefault();
       if (state.cursorMode !== 'voice') return;

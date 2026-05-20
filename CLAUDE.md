@@ -100,6 +100,10 @@ The suite exposes `window.__hkl_composer.bridge` for direct send/receive, plus i
 
 **Every Composer bug fix or feature lands with a fixture.** This is how the suite grows naturally with the codebase. The fixtures file is grouped by concern — add to the matching group and define a `FIXTURE_ASSERTIONS[name]` entry if the universal invariants (placeholder, tie orphans, cursor-trace, roundtrip, console) don't already cover what changed. For visual coverage, add a `visualBaseline: '<name>'` key; the first run seeds `baselines/<name>.png` automatically. A bug fix without a fixture is a bug fix waiting to regress.
 
+**When a test's pixel output disagrees with live behavior on the same code**: don't hypothesize about caching, animations, or paint timing first. Diff the flows: list every command the test runner issues between the user's last input and the screenshot that a live browser doesn't (mock-channel injects, cursor-trace, RAF waits, forced view modes, etc.), in order. The cause is usually one of those concrete differences. See lessons.md "Test invariants that mutate render state pollute later invariants' pixel reads" and "Test/live divergence: diff the flows before hypothesizing."
+
+**When verifying a write (baseline update, file regen, etc.)**: check mtime/size with `stat` or `ls -la`. "The command exited cleanly" is not proof the file was rewritten — tools can silently skip work when their tier filters don't match. See lessons.md "Verify file writes by checking mtime/size, not exit code."
+
 ## Critical Lumatone protocol context
 
 - **SysEx envelope**: `F0 00 21 50 <board> <cmd> <data1-4> F7`

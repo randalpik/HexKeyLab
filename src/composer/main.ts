@@ -17,6 +17,7 @@ import { renderer, ZOOM_PRESETS, type ZoomLevel } from './render.js';
 import { cursor } from './cursor.js';
 import { initInput, getInputState } from './input.js';
 import type { CursorUpdateOpts } from './cursor.js';
+import { selectionOverlay } from './selectionOverlay.js';
 import { saveHkc, loadHkcFromFile, downloadMusicXml } from './save.js';
 import { buildPlayback, highlightElement, clearHighlights, readTempo, tickMsFromTempo } from './playback.js';
 import { openSetupDialog } from './setupDialog.js';
@@ -211,7 +212,9 @@ function reRender(): void {
     }
     scoreEl.appendChild(overlay);
     cursor.attach(overlay);
+    selectionOverlay.attach(overlay);
     cursor.update(model, cursorOpts());
+    selectionOverlay.update(model, getInputState().selection);
   } catch (e) {
     setStatus('render error: ' + (e as Error).message);
   }
@@ -271,6 +274,7 @@ initInput(model, {
   onStateChange: () => {
     refreshIndicators();
     cursor.update(model, cursorOpts());
+    selectionOverlay.update(model, getInputState().selection);
   },
   setStatus: (msg) => setStatus(msg),
   isPlaybackActive: () => isPlaying,

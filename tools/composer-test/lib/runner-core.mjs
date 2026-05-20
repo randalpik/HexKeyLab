@@ -46,13 +46,6 @@ export const RESET_SNIPPET = `
   const score = document.getElementById('score');
   if (score) { score.scrollLeft = 0; score.scrollTop = 0; }
 
-  /* Force scroll-mode rendering for tests. Page mode wraps content in
-   * a fixed-size paper, which makes the rendered SVG much larger than
-   * the actual music — visual clip rects come out mostly empty and
-   * page-break heuristics add layout variability between runs. Scroll
-   * mode is tight-fitting and deterministic. */
-  window.__hkl_composer.renderer.setViewMode('scroll');
-
   window.__hkl_composer.reRender();
   return true;
 })()

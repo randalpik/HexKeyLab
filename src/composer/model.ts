@@ -531,7 +531,20 @@ export class ComposerModel {
    *  returns the score's total tick length. */
   getCursorAbsoluteTicks(voice?: Voice): number {
     const v = voice ?? this.currentVoice;
-    const loc = this.locateCursor(v, this.cursors[v]);
+    return this.getTickPositionAt(v, this.cursors[v]);
+  }
+
+  /** Absolute tick offset for an arbitrary flat-cursor index `c` in `voice`.
+   *  Mirrors `getCursorAbsoluteTicks` but parameterized so callers (selection
+   *  beat-boundary detection) can query positions without disturbing the
+   *  cursor. Past-end (`c >= flat.length`) returns the score's total tick
+   *  length. */
+  getTickPositionAt(voice: Voice, c: number): number {
+    const flat = this.flatChildren(voice);
+    if (c >= flat.length) {
+      return this.allMeasures().length * this.measureTicks();
+    }
+    const loc = this.locateCursor(voice, c);
     if (!loc) return 0;
     let t = loc.measureIdx * this.measureTicks();
     const cc = this.contentChildren(loc.layer);
@@ -543,6 +556,18 @@ export class ComposerModel {
       for (let i = 0; i < tCap; i++) t += realTicks(tChildren[i]);
     }
     return t;
+  }
+
+  /** Public read-only summary of the cursor location at flat-index `c` in
+   *  `voice`. `inTuplet` is true iff the cursor falls strictly inside a
+   *  tuplet's body — the "exit-tuplet" stop (= visually past the tuplet)
+   *  reports false, because locateCursor's anchoring treats it as a
+   *  layer-level position. Past-end yields `measureIdx === allMeasures.length`
+   *  (synthetic next-measure slot). */
+  getFlatStopInfo(voice: Voice, c: number): { measureIdx: number; inTuplet: boolean } | null {
+    const loc = this.locateCursor(voice, c);
+    if (!loc) return null;
+    return { measureIdx: loc.measureIdx, inTuplet: loc.inTuplet !== null };
   }
 
   /** Returns the "current" element in the flat stream — the element to the
@@ -1149,8 +1174,10 @@ export class ComposerModel {
     }
   }
 
-  /** Append a new empty measure with all four layers. Sets barlines. */
-  private appendMeasure(): Element {
+  /** Append a new empty measure with all four layers. Sets barlines. Public
+   *  so paste-overflow paths and selection-mode shift-right (future) can
+   *  extend the score. */
+  appendMeasure(): Element {
     const section = this.doc.querySelector("section");
     if (!section) throw new Error("section element missing");
     const measures = this.allMeasures();
@@ -1993,6 +2020,400 @@ export class ComposerModel {
     this.normalizePlaceholders();
     clampCursors();
     return true;
+  }
+
+  /** Replace all source-voice content within the absolute-tick range
+   *  [tLoAbs, tHiAbs) with beat-aligned rests. Used by Ctrl+X on a beat
+   *  selection. Beat-aligned selection bounds guarantee no element is
+   *  bisected — every overlapping element is fully contained — so we just
+   *  remove them and fill the gap.
+   *
+   *  Important: this assumes the caller has already validated that [tLoAbs,
+   *  tHiAbs) starts and ends at beat boundaries in the voice's flat stream.
+   *  Otherwise tuplets straddling the range could be partially removed.
+   *
+   *  Runs normalizeTies + normalizePlaceholders at the end. */
+  clearBeatRange(voice: Voice, tLoAbs: number, tHiAbs: number): void {
+    if (tHiAbs <= tLoAbs) return;
+    const measures = this.allMeasures();
+    const cap = this.measureTicks();
+    const ts = readTimeSig(this.doc);
+    for (let mi = 0; mi < measures.length; mi++) {
+      const measureStart = mi * cap;
+      const measureEnd = measureStart + cap;
+      if (measureEnd <= tLoAbs) continue;
+      if (measureStart >= tHiAbs) break;
+      const layer = this.layerInMeasure(measures[mi], voice);
+      if (!layer) continue;
+      const tLoIn = Math.max(0, tLoAbs - measureStart);
+      const tHiIn = Math.min(cap, tHiAbs - measureStart);
+      /* Walk content children; collect those fully inside [tLoIn, tHiIn). */
+      let cursor = 0;
+      const toRemove: Element[] = [];
+      for (const c of this.contentChildren(layer)) {
+        const dur = realTicks(c);
+        const cEnd = cursor + dur;
+        if (cursor >= tLoIn - 1e-6 && cEnd <= tHiIn + 1e-6) {
+          toRemove.push(c);
+        }
+        cursor = cEnd;
+      }
+      /* Determine the cc-position where removals start (for re-insertion).
+       * If toRemove is empty, nothing to do in this measure. */
+      if (toRemove.length === 0) continue;
+      const firstToRemove = toRemove[0];
+      const cc = this.contentChildren(layer);
+      const insertIdx = cc.indexOf(firstToRemove);
+      /* Compute the actual removed-range tick span (it may be shorter than
+       * tHiIn - tLoIn if leading/trailing content in the layer doesn't
+       * actually span the full range — e.g. when the measure is partial). */
+      let removedTicks = 0;
+      for (const r of toRemove) {
+        this.orphanTiePartners(r);
+        removedTicks += realTicks(r);
+      }
+      for (const r of toRemove) {
+        r.parentNode?.removeChild(r);
+      }
+      /* Insert beat-aligned rests filling the removed span. We need a start
+       * tick within the measure for beat-alignment; that's just tLoIn. */
+      const rests = decomposeBeatAlignedRests(tLoIn, removedTicks, ts);
+      let insertBefore = this.contentChildren(layer)[insertIdx] ?? null;
+      for (const r of rests) {
+        const restEl = el(this.doc, 'rest', {
+          'xml:id': newId('r'),
+          dur: r.dur,
+          dots: r.dots > 0 ? r.dots : undefined,
+        });
+        if (insertBefore) layer.insertBefore(restEl, insertBefore);
+        else layer.appendChild(restEl);
+      }
+    }
+    this.setBarlines();
+    this.normalizeTies();
+    this.normalizePlaceholders();
+    for (let vi: Voice = 1; vi <= 4; vi = (vi + 1) as Voice) {
+      this.cursors[vi] = Math.min(this.cursors[vi], this.getVoiceLength(vi));
+      if (vi === 4) break;
+    }
+  }
+
+  /** Paste a list of cloned source elements (chord/note/rest/tuplet) into
+   *  `voice` at absolute tick position `tLoAbs`. The destination range
+   *  [tLoAbs, tLoAbs + srcDurationTicks) is cleared first (removing all
+   *  fully- AND partially-overlapping layer-level elements; tuplets that
+   *  partially overlap are removed atomically per spec). If the destination
+   *  range extends past end-of-score, empty measures are appended. After
+   *  insertion, any residual gap (from tuplet-expansion clearing) is filled
+   *  with beat-aligned rests.
+   *
+   *  Each source element is inserted via the existing infrastructure:
+   *    - chord/note: `insertChordAtCursor` (handles bar-line overflow with
+   *      auto-tie-on-overflow via insertWithSplit).
+   *    - rest: `insertRestAtCursor` (handles bar-line overflow).
+   *    - tuplet: atomic DOM placement at layer level; rejected if it doesn't
+   *      fit fully in the current measure (status warning surfaced by caller).
+   *
+   *  Returns the post-paste cursor index for the voice (= position right
+   *  past the inserted content), or null if any insertion failed.
+   */
+  pasteBeatContent(
+    voice: Voice,
+    tLoAbs: number,
+    srcElements: Element[],
+    srcDurationTicks: number,
+  ): { ok: true; postCursor: number } | { ok: false; reason: string } {
+    const cap = this.measureTicks();
+    let effectiveLo = tLoAbs;
+    let effectiveHi = tLoAbs + srcDurationTicks;
+
+    /* Expand effective range to swallow any tuplets in the source voice's
+       layers that partially overlap [tLoAbs, effectiveHi). */
+    const measures0 = this.allMeasures();
+    for (let mi = 0; mi < measures0.length; mi++) {
+      const mStart = mi * cap;
+      if (mStart >= effectiveHi) break;
+      if (mStart + cap <= tLoAbs) continue;
+      const layer = this.layerInMeasure(measures0[mi], voice);
+      if (!layer) continue;
+      let cursor = mStart;
+      for (const c of this.contentChildren(layer)) {
+        const dur = realTicks(c);
+        const cEnd = cursor + dur;
+        if (c.localName === 'tuplet') {
+          const overlapsLo = cursor < tLoAbs && cEnd > tLoAbs;
+          const overlapsHi = cursor < effectiveHi && cEnd > effectiveHi;
+          if (overlapsLo) effectiveLo = Math.min(effectiveLo, cursor);
+          if (overlapsHi) effectiveHi = Math.max(effectiveHi, cEnd);
+        }
+        cursor = cEnd;
+      }
+    }
+
+    /* Auto-append measures so effectiveHi fits. */
+    while (effectiveHi > this.allMeasures().length * cap) {
+      this.appendMeasure();
+    }
+
+    /* Remove all layer-level content in voice that intersects
+       [effectiveLo, effectiveHi). */
+    const measures = this.allMeasures();
+    for (let mi = 0; mi < measures.length; mi++) {
+      const mStart = mi * cap;
+      if (mStart >= effectiveHi) break;
+      if (mStart + cap <= effectiveLo) continue;
+      const layer = this.layerInMeasure(measures[mi], voice);
+      if (!layer) continue;
+      let cursor = mStart;
+      const toRemove: Element[] = [];
+      for (const c of this.contentChildren(layer)) {
+        const dur = realTicks(c);
+        const cEnd = cursor + dur;
+        if (cEnd > effectiveLo && cursor < effectiveHi) toRemove.push(c);
+        cursor = cEnd;
+      }
+      for (const r of toRemove) {
+        this.orphanTiePartners(r);
+        r.parentNode?.removeChild(r);
+      }
+      /* Strip layer-level placeholders introduced by previous normalizations
+         in this layer — paste insertion is about to refill from scratch. */
+      for (const c of Array.from(layer.children)) {
+        if (isPlaceholder(c)) layer.removeChild(c);
+      }
+    }
+
+    /* Position the cursor at effectiveLo in the source voice. */
+    const prevVoice = this.currentVoice;
+    this.currentVoice = voice;
+    this.cursors[voice] = this.findCursorAtOrBefore(voice, effectiveLo);
+    /* If the leading expansion (effectiveLo < tLoAbs) created a gap before
+       the paste's source-content, fill it with beat-aligned rests first. */
+    if (effectiveLo < tLoAbs) {
+      const leadingTicks = tLoAbs - effectiveLo;
+      const ts = readTimeSig(this.doc);
+      /* tLo within its measure for beat alignment. */
+      const measureIdxLeading = Math.floor(effectiveLo / cap);
+      const inMeasureLo = effectiveLo - measureIdxLeading * cap;
+      const restPieces = decomposeBeatAlignedRests(inMeasureLo, leadingTicks, ts);
+      for (const p of restPieces) {
+        if (this.insertRestAtCursor({ duration: p.dur, dots: p.dots }) === null) {
+          this.currentVoice = prevVoice;
+          return { ok: false, reason: 'Failed to fill leading gap' };
+        }
+      }
+    }
+
+    /* Insert each source element. */
+    for (const src of srcElements) {
+      const ok = this.insertClonedAtCursor(src);
+      if (!ok) {
+        this.currentVoice = prevVoice;
+        return { ok: false, reason: 'Failed to insert pasted element' };
+      }
+    }
+
+    /* Fill trailing gap (from tuplet expansion: effectiveHi > tLoAbs + srcDuration). */
+    const afterSrc = tLoAbs + srcDurationTicks;
+    if (effectiveHi > afterSrc) {
+      const trailingTicks = effectiveHi - afterSrc;
+      const ts = readTimeSig(this.doc);
+      const measureIdxTrailing = Math.floor(afterSrc / cap);
+      const inMeasureLo = afterSrc - measureIdxTrailing * cap;
+      const restPieces = decomposeBeatAlignedRests(inMeasureLo, trailingTicks, ts);
+      for (const p of restPieces) {
+        if (this.insertRestAtCursor({ duration: p.dur, dots: p.dots }) === null) {
+          this.currentVoice = prevVoice;
+          return { ok: false, reason: 'Failed to fill trailing gap' };
+        }
+      }
+    }
+
+    /* Restore voice; final post-cursor at effectiveHi. */
+    const postCursor = this.findCursorAtOrBefore(voice, effectiveHi);
+    this.cursors[voice] = postCursor;
+    this.currentVoice = prevVoice;
+    this.setBarlines();
+    this.normalizeTies();
+    this.normalizePlaceholders();
+    for (let vi: Voice = 1; vi <= 4; vi = (vi + 1) as Voice) {
+      this.cursors[vi] = Math.min(this.cursors[vi], this.getVoiceLength(vi));
+      if (vi === 4) break;
+    }
+    return { ok: true, postCursor: this.cursors[voice] };
+  }
+
+  /** Insert a single cloned source element at the current voice's cursor.
+   *  Routes to insertChordAtCursor / insertRestAtCursor / atomic tuplet
+   *  placement. */
+  private insertClonedAtCursor(src: Element): boolean {
+    const ln = src.localName;
+    if (ln === 'note' || ln === 'chord') {
+      const notes = this.extractResolvedFromElement(src);
+      const dur = (src.getAttribute('dur') ?? '4') as Duration;
+      const dots = (parseInt(src.getAttribute('dots') ?? '0', 10) || 0) as Dots;
+      if (notes.length === 0) return false;
+      return this.insertChordAtCursor({ notes, duration: dur, dots }) !== null;
+    }
+    if (ln === 'rest') {
+      const dur = (src.getAttribute('dur') ?? '4') as Duration;
+      const dots = (parseInt(src.getAttribute('dots') ?? '0', 10) || 0) as Dots;
+      return this.insertRestAtCursor({ duration: dur, dots }) !== null;
+    }
+    if (ln === 'tuplet') {
+      const v = this.currentVoice;
+      const loc = this.locateCursor(v, this.cursors[v]);
+      if (!loc || loc.inTuplet) return false;
+      const tupletTicks = realTicks(src);
+      const used = this.timeWithinMeasure(v, loc.measureIdx, loc.withinIdx);
+      if (used + tupletTicks > this.measureTicks() + 1e-6) return false;
+      /* Clone into our doc with fresh ids. */
+      const fresh = src.cloneNode(true) as Element;
+      this.regenerateIds(fresh);
+      this.insertAt(loc.layer, fresh, loc.withinIdx);
+      /* Advance cursor past the tuplet's contributed flat stops. The simplest
+         way is to compute the new cursor via tstamp lookup. */
+      const newTstamp = this.getCursorAbsoluteTicks(v) + tupletTicks;
+      this.normalizePlaceholders();
+      this.cursors[v] = this.findCursorAtOrBefore(v, newTstamp);
+      return true;
+    }
+    return false;
+  }
+
+  /** Recursively regenerate xml:id on `el` and all descendants, picking
+   *  prefix by localName (n, c, r, t, sp, m, s, l). Used when DOM-importing
+   *  cloned content from the clipboard or another part of the document. */
+  private regenerateIds(el: Element): void {
+    const ln = el.localName;
+    const prefix = ln === 'note' ? 'n'
+      : ln === 'chord' ? 'c'
+      : ln === 'rest' ? 'r'
+      : ln === 'tuplet' ? 't'
+      : ln === 'space' ? 'sp'
+      : ln === 'measure' ? 'm'
+      : ln === 'staff' ? 's'
+      : ln === 'layer' ? 'l'
+      : 'x';
+    el.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:id', newId(prefix));
+    for (const c of Array.from(el.children)) this.regenerateIds(c);
+  }
+
+  /** Paste a list of cloned source measures into the destination starting at
+   *  measure `mDest`, replacing the staves in [firstStaff..lastStaff] of
+   *  each destination measure with the corresponding source-measure's
+   *  staff layers. Auto-appends measures if mDest + sourceCount exceeds
+   *  current count. Source <dynam>/<hairpin> expressions (with
+   *  `data-hkl-src-measure-offset`) are re-anchored to the appropriate
+   *  destination measure. Returns the destination range covered.
+   *
+   *  Pre-check: source and destination time-signature must match (caller
+   *  enforces via the clipboard's `sourceTimeSig`). */
+  pasteMeasureContent(
+    mDest: number,
+    firstStaff: 1 | 2,
+    lastStaff: 1 | 2,
+    srcMeasures: Element[],
+    srcExpressions: Element[],
+  ): { ok: true; mLo: number; mHi: number } | { ok: false; reason: string } {
+    const N = srcMeasures.length;
+    if (N === 0) return { ok: false, reason: 'No measures to paste' };
+    /* Auto-append destination measures so mDest+N-1 exists. */
+    while (this.allMeasures().length < mDest + N) {
+      this.appendMeasure();
+    }
+    const destMeasures = this.allMeasures();
+    /* Clear destination range (staves + expressions). */
+    this.clearMeasureRange(mDest, mDest + N - 1, firstStaff, lastStaff);
+    /* For each (i, sourceMeasure): replace destination measure's selected
+       staves' layers with cloned source layers. */
+    for (let i = 0; i < N; i++) {
+      const srcM = srcMeasures[i];
+      const destM = destMeasures[mDest + i];
+      for (let sn = firstStaff; sn <= lastStaff; sn++) {
+        const srcStaff = Array.from(srcM.querySelectorAll('staff')).find(
+          (s) => s.getAttribute('n') === String(sn),
+        );
+        const destStaff = Array.from(destM.querySelectorAll('staff')).find(
+          (s) => s.getAttribute('n') === String(sn),
+        );
+        if (!srcStaff || !destStaff) continue;
+        /* Replace destStaff's layers with cloned srcStaff's layers (preserving
+           the destStaff's xml:id so cursor staff-lookups stay valid). */
+        const srcLayers = Array.from(srcStaff.querySelectorAll('layer'));
+        const destLayers = Array.from(destStaff.querySelectorAll('layer'));
+        for (const dl of destLayers) destStaff.removeChild(dl);
+        for (const sl of srcLayers) {
+          const fresh = sl.cloneNode(true) as Element;
+          this.regenerateIds(fresh);
+          destStaff.appendChild(fresh);
+        }
+      }
+    }
+    /* Re-anchor source expressions to destination measures. */
+    for (const expr of srcExpressions) {
+      const off = parseInt(expr.getAttribute('data-hkl-src-measure-offset') ?? '0', 10) || 0;
+      const targetIdx = mDest + off;
+      if (targetIdx < 0 || targetIdx >= this.allMeasures().length) continue;
+      const targetM = this.allMeasures()[targetIdx];
+      const fresh = expr.cloneNode(true) as Element;
+      fresh.removeAttribute('data-hkl-src-measure-offset');
+      this.regenerateIds(fresh);
+      /* Adjust @tstamp2 ("Nm+beat") if it points past the source range —
+         simplification: keep tstamp2 as-is; advanced re-anchoring TBD. */
+      targetM.appendChild(fresh);
+    }
+    this.setBarlines();
+    this.normalizeTies();
+    this.normalizePlaceholders();
+    for (let vi: Voice = 1; vi <= 4; vi = (vi + 1) as Voice) {
+      this.cursors[vi] = Math.min(this.cursors[vi], this.getVoiceLength(vi));
+      if (vi === 4) break;
+    }
+    return { ok: true, mLo: mDest, mHi: mDest + N - 1 };
+  }
+
+  /** Empty all layers of staves [firstStaff..lastStaff] in measures
+   *  [mLo..mHi] inclusive. Removes <dynam>/<hairpin> control events anchored
+   *  to those measures whose staff attribute is in range. normalizePlaceholders
+   *  re-fills emptied layers with placeholders so cursor navigation stays
+   *  consistent. Used by Ctrl+X on a measure selection. */
+  clearMeasureRange(mLo: number, mHi: number, firstStaff: 1 | 2, lastStaff: 1 | 2): void {
+    const measures = this.allMeasures();
+    for (let mi = Math.max(0, mLo); mi <= mHi && mi < measures.length; mi++) {
+      const m = measures[mi];
+      /* Clear staves in range. */
+      for (const staff of Array.from(m.querySelectorAll('staff'))) {
+        const sn = parseInt(staff.getAttribute('n') ?? '0', 10);
+        if (sn < firstStaff || sn > lastStaff) continue;
+        for (const layer of Array.from(staff.querySelectorAll('layer'))) {
+          for (const c of Array.from(layer.children)) {
+            const ln = c.localName;
+            if (ln === 'chord' || ln === 'note' || ln === 'rest' || ln === 'tuplet'
+                || ln === 'space') {
+              this.orphanTiePartners(c);
+              layer.removeChild(c);
+            }
+          }
+        }
+      }
+      /* Remove control events anchored to this measure for the staff range. */
+      for (const ctrl of Array.from(m.children)) {
+        const ln = ctrl.localName;
+        if (ln !== 'dynam' && ln !== 'hairpin') continue;
+        const sn = parseInt(ctrl.getAttribute('staff') ?? '0', 10);
+        if (sn >= firstStaff && sn <= lastStaff) {
+          m.removeChild(ctrl);
+        }
+      }
+    }
+    this.setBarlines();
+    this.normalizeTies();
+    this.normalizePlaceholders();
+    for (let vi: Voice = 1; vi <= 4; vi = (vi + 1) as Voice) {
+      this.cursors[vi] = Math.min(this.cursors[vi], this.getVoiceLength(vi));
+      if (vi === 4) break;
+    }
   }
 
   private measureIsEmpty(measure: Element): boolean {
