@@ -3,7 +3,7 @@
   "fixtures": 66,
   "passed": 66,
   "failed": 0,
-  "elapsedMs": 20970,
+  "elapsedMs": 21411,
   "results": [
     {
       "name": "emptyDoc",
@@ -454,11 +454,11 @@
       }
     },
     {
-      "name": "sel_beat_converge_exits",
+      "name": "sel_beat_shrink_to_origin",
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 8
+        "invariants": 9
       }
     },
     {

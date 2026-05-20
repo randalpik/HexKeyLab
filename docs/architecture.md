@@ -1222,6 +1222,104 @@ The `data-data-` prefix is Verovio's normalization — it prepends `data-` to at
 - `<tupletSpan>` (cross-bar tuplets) — also rare; can't be expressed atomically by the current placement model.
 - Mid-tuplet insertion when out of placeholder space — rejected with status. No "push F2 past the bar" behavior because tuplets can't cross bars.
 
+### 7.22 Selection / copy / paste
+
+A third `CursorMode` value (`'select'`) — orthogonal to the existing voice / expr modes and to `EntryMode` (insert / overwrite). Two granularities:
+
+- **Beat mode** — one voice, contiguous range of beats. Entered via Shift+Left / Shift+Right.
+- **Measure mode** — one or more two-voice staves, contiguous range of measures. Entered via Shift+Up / Shift+Down. Beat mode promotes to measure mode irreversibly via Shift+Up/Down.
+
+The design principle: useful selection in a notation editor is always bounded at musical boundaries (beats or measures). Free-form selection is much harder to implement correctly and barely useful in practice.
+
+**Beat-mode state shape** (`src/composer/selection.ts`):
+```ts
+{ kind: 'beat'; voice: Voice;
+  origin: number;          // beat index where selection started
+  first: number;           // leftmost selected beat index
+  last: number;            // rightmost selected beat index
+  lastMoved: 'first' | 'last';
+}
+```
+Invariant: `first ≤ origin ≤ last`. Either `first == origin` or `last == origin` (or both) at all times — the selection only grows from one side of `origin` at a time. The minimum selection is one beat (`first == origin == last`); zero-width is impossible, so there's no convergence-exit.
+
+A **beat** is the half-open interval between consecutive entries in `beatBoundariesInVoice(model, voice)` — cursor positions whose tstamp aligns with `beatTicks(timeSig)` and that aren't strictly inside a tuplet (tuplet atomicity: in-tuplet stops never qualify as beat boundaries; tuplets that span beat-aligned tstamps are selected as atomic units). The boundaries array is dedup'd by tstamp so the "past last content of full M_k" stop and the "past wrapper of M_{k+1}" stop (which share a tstamp) collapse to one entry, with the later (= measure-aligned) cursor index winning.
+
+`measureBoundariesInVoice` is the analogous list restricted to barline-aligned tstamps. Note it's tstamp-based, *not* `getMeasureStartCursor`-based — in the wrapper-collapsed case `getMeasureStartCursor` returns a position one nav stop *past* the visual barline, which would be the wrong stop for Ctrl+Shift+arrow's "stop at next measure boundary" rule.
+
+**Beat-mode transitions:**
+
+| State | Shift+Left | Shift+Right |
+|---|---|---|
+| `origin == last` (single-beat OR expanded leftward) | `first--`, lastMoved='first' | `last++` (if `origin == first` too — i.e. single-beat); else `first++` (shrink toward origin) |
+| `origin == first` (expanded rightward) | `last--` (shrink toward origin), lastMoved='last' | `last++`, lastMoved='last' |
+
+Ctrl+Shift+Arrow is exactly equivalent to repeated Shift+Arrow until the just-moved edge lands on a measure-aligned beat boundary (or the score edge is reached). The state transitions B → A → C happen naturally during the loop.
+
+**Entry direction sets `lastMoved`**: Shift+Left → 'first' (cursor exits at left edge); Shift+Right → 'last' (right edge). Matters for an immediate exit (Ctrl+X or non-selection-key) after entry.
+
+**Measure-mode state shape**:
+```ts
+{ kind: 'measure'; originVoice: Voice;
+  originStaff: 1|2; firstStaff: 1|2; lastStaff: 1|2;
+  anchorMeasure: number; movableMeasure: number;
+  movableSide: 'left' | 'right' | 'unset';
+}
+```
+`anchor`/`movable` accounting (left over from the original asymmetric model — measure mode wasn't reworked because it doesn't suffer from the convergence-exit problem). `originStaff` defines symmetric staff expansion via Shift+Up/Down; growth direction depends on the relationship between firstStaff, lastStaff, and originStaff.
+
+**Mode-exit cursor placement (`cursorAtMovable`)** — used by Ctrl+X, Escape, and any non-selection key. Beat mode: `boundaries[lastMoved === 'first' ? first : last + 1]`. Measure mode: derived from `movableSide`. Ctrl+C is the exception — it leaves the selection intact and doesn't reposition the cursor (copy doesn't mutate, so there's no reason to bail out of selection mode).
+
+**Clipboard format and OS clipboard I/O** (`src/composer/clipboard.ts`):
+
+Serialized to an `<hkl:clipboard>` MEI fragment carrying enough metadata to re-anchor on paste:
+```xml
+<hkl:clipboard kind="beat" voice="1" durationTicks="32" timeSig="4/4">
+  <hkl:content>… raw <chord>/<note>/<rest>/<tuplet>, ids stripped …</hkl:content>
+</hkl:clipboard>
+```
+or for measures:
+```xml
+<hkl:clipboard kind="measure" staffFirst="1" staffLast="2" measureCount="2" timeSig="4/4">
+  <hkl:measures><measure>…</measure></hkl:measures>
+  <hkl:expressions><dynam … data-hkl-src-measure-offset="0"/></hkl:expressions>
+</hkl:clipboard>
+```
+
+OS clipboard I/O uses the **DOM `copy` / `cut` / `paste` events**, NOT `navigator.clipboard.writeText` / `readText`. The latter is unreliable on Firefox: it triggers a "Paste" permission UI and frequently returns empty/stale data even after the user accepts. The DOM events fire synchronously on user gesture, expose `event.clipboardData` directly, and don't trigger any permission prompt.
+
+The keydown handler still does the model side-effects for Ctrl+C/X (so CDP-driven tests, which dispatch keydown but don't synthesize clipboard events, can observe state changes). The serialized text is stashed in a module-level `pendingClipboardText`, picked up by the DOM `copy`/`cut` handler in the same user-gesture tick to write to `event.clipboardData`. Paste is handled entirely in the DOM `paste` event — the model side-effect can't happen until the clipboard data is available, so there's nothing for the keydown handler to do.
+
+**Paste semantics (`pasteBeatContent`, `pasteMeasureContent` in `src/composer/model.ts`)**:
+
+- *Beat paste* — snap cursor to current beat boundary, clear destination range (including any partially-overlapping tuplets — expanded for atomic tuplet handling), insert source elements via existing `insertChordAtCursor` / `insertRestAtCursor` / atomic tuplet placement. Auto-appends measures if the paste extends past end-of-score. Re-enters beat selection covering the pasted range.
+- *Measure paste* — time-sig pre-check (mismatch → reject); per-measure wipe + replace of selected staves' layers; expression re-anchoring; auto-append measures as needed.
+- *Paste while in selection mode* — delete the current selection first, then paste at the resulting cursor; the final selection covers the pasted content.
+
+**Cursor convention bridge** (`findCursorByTickPosition`):
+
+The model has two cursor-position conventions that disagree by one element. `locateCursor` / `insertChordAtCursor` / `deleteAtCursor` / `getTickPositionAt` all anchor on `flat[c]` with "cursor c = past flat[c]" semantics. `getTimeAt` / `findCursorAtOrBefore` sum `flat[0..c-1]` — implicitly "cursor c = past flat[c-1]". The two are internally consistent in `switchVoice`'s round-trip (both use `getTimeAt`), but paste / cut paths that compute a tstamp via `getTickPositionAt` and then look up the cursor via `findCursorAtOrBefore` would be off by one — putting the post-deletion cursor one element too far right, causing inserts to go AFTER the next surviving element instead of into the just-deleted slot. `findCursorByTickPosition` is the locateCursor-convention version; new code that pairs `getTickPositionAt` with cursor placement uses it instead.
+
+**Selection overlay rendering (`src/composer/selectionOverlay.ts`):**
+
+One rect per `<g class="system">` ancestor the selection touches — measures sharing a system are coalesced via the DOM ancestor (not a tolerance-based y-distance heuristic, which was fragile). Within a group, x ranges union; y range depends on mode:
+- Measure mode: full staff bbox vertically, across `firstStaff..lastStaff`.
+- Beat mode: union of layer-level element bboxes (chord/note/rest/tuplet) in the voice's layer within the system, with `CURSOR_VPAD` padding. Hugs the actual notes/rests; makes it visually obvious *which* voice on a staff is selected.
+
+**Boundary x-coord rules:**
+- Past-end: right edge of last measure.
+- Cursor at a measure-start tstamp (= barline): `kind='start'` uses `M_k.contentLeft` (post-sig-block snap via `findSigEndXForStaff`); `kind='end'` uses `M_{k-1}.right`. The disambiguation matters across system breaks — at a system-break barline, the same tstamp has two distinct visual x's (right of last measure on system N vs left of first measure on system N+1).
+- Mid-content: left edge of `flat[c+1]` — represents the start of the next element's playing-time interval, which is the visual cursor position.
+- Sig-block snap: at measure-start positions, `measureContentLeft` queries the target measure's staff for clef/keySig/meterSig bbox right edges and uses that instead of `measureRect.left`. Means selection rects don't extend left of the music content at system starts.
+- Mid-system barline snap: `measureRightEdge(M_k)` prefers `M_{k+1}.bbox.left` when M_{k+1} exists on the same system — Verovio renders each measure's barLine glyph inside the measure group, so `M_k.bbox.right` extends past the visible bar line center by half the glyph's width.
+
+**Composer test surface** (`tools/composer-test/`):
+
+The selection fixtures group covers entry, growth, shrink-to-origin, Ctrl+Shift+measure-boundary jumps, beat → measure promotion, single-staff and multi-staff measure selection, Ctrl+X (cut + rest fill), and visual baselines. Beat mode's single-tier rule "selection always ≥ 1 beat" is enforced by `sel_beat_shrink_to_origin` (replaced the older `sel_beat_converge_exits` when the convergence-exit branch was removed).
+
+**Out of scope** (deferred):
+- Cross-system selection where the per-system rects don't visually connect across a line break — they're rendered correctly per-system but there's no "bridging" ribbon.
+- Paste from outside-HKL clipboard content — fails gracefully ("Clipboard is empty or not HKL content"); we don't attempt to interpret arbitrary MEI or MusicXML fragments.
+
 ---
 
 ## Module Structure

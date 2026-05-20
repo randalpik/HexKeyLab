@@ -9,6 +9,7 @@
 
 import { type ComposerModel, type Voice, MEI_NS } from './model.js';
 import type { SelectionState, Staff } from './selection.js';
+import { beatBoundariesInVoice } from './selection.js';
 import { readTimeSig } from './beams.js';
 import { realTicks } from './ticks.js';
 
@@ -195,8 +196,9 @@ export function serializeClipboard(model: ComposerModel, sel: SelectionState): s
   root.setAttribute('timeSig', timeSigString(model));
 
   if (sel.kind === 'beat') {
-    const lo = Math.min(sel.anchor, sel.movable);
-    const hi = Math.max(sel.anchor, sel.movable);
+    const boundaries = beatBoundariesInVoice(model, sel.voice);
+    const lo = boundaries[sel.first];
+    const hi = boundaries[sel.last + 1];
     const tLo = model.getTickPositionAt(sel.voice, lo);
     const tHi = model.getTickPositionAt(sel.voice, hi);
     const elements = collectBeatContent(model, sel.voice, tLo, tHi);

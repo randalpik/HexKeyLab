@@ -726,3 +726,34 @@ If those four questions don't surface the divergence, the actual cause is rare. 
 ### Verify file writes by checking mtime/size, not exit code
 
 `node run.mjs scenario X --update-baselines` exited cleanly multiple times while doing nothing, because scenario tier silently skipped the visual invariant. The fix was a one-line check (`mode === 'scenario'` doesn't satisfy `mode === 'visual' || mode === 'full'`), but it cost an hour because "the command succeeded" was treated as proof the file was rewritten. Always `stat` or `ls -la` the output file when verifying a write — the runtime didn't lie, it just wasn't asked to do anything.
+
+### Composer cursor convention split: `getTickPositionAt` vs `getTimeAt`
+
+`model.ts` has two functions for "what tstamp does cursor c sit at" that disagree by one element:
+
+- `getTickPositionAt(voice, c)` uses `locateCursor`'s anchor-on-`flat[c]` view: cursor c sits "past flat[c]". This is the convention used by `insertChordAtCursor`, `deleteAtCursor`, `replaceChordAtCursor`, and the rest of the user-facing mutation API.
+- `getTimeAt(voice, c)` sums `realTicks` of `flat[0..c-1]`: implicitly "cursor c sits past flat[c−1]" (= one element earlier). Paired with `findCursorAtOrBefore` in `switchVoice` for cursor preservation across voice switches.
+
+The two are internally consistent in `switchVoice`'s round-trip (both sides use `getTimeAt`'s convention so the offset cancels). But mixing them — computing a tstamp via `getTickPositionAt` and then converting back to a cursor via `findCursorAtOrBefore` — yields a cursor that's one element to the right of the locateCursor-convention answer. In a paste path, that meant `insertChordAtCursor` anchored on the wrong element and inserted AFTER the next surviving element instead of into the just-deleted slot.
+
+Fix: `findCursorByTickPosition(voice, t)` uses the locateCursor convention (walks via `getTickPositionAt`). New code that pairs tstamps with `insertChordAtCursor`-style mutations uses it. Old code (switchVoice) keeps `getTimeAt`/`findCursorAtOrBefore` because it's self-consistent in its own round-trip.
+
+Generalizable rule: when a model has two conventions for indexing into the same sequence (here: nav stops), don't paper over it by silent conversion. The off-by-one bug spent time hiding because each side of the pairing was internally consistent and produced plausible values when looked at in isolation. Naming the helpers after the conventions they obey (`findCursorByTickPosition` vs `findCursorAtOrBefore`) makes the call sites self-documenting.
+
+### Verovio measure bbox includes the barLine glyph (= "right edge" is past the visible bar line)
+
+Each Verovio `<g class="measure">` renders its right barLine as a child element, INSIDE the measure group. So `measureGroup.getBoundingClientRect().right` extends past the visible bar line center by half the barLine glyph's width.
+
+For a mid-system bar line (= a bar line that has a next measure on the same system), `M_{k+1}.bbox.left` is a better proxy for the visible bar line position — the next measure's content starts right where the barLine ends. For the last measure on a system (or the last measure of the score), there's no next measure to query and `M_k.bbox.right` IS the visible position (it's the system-ending bar line).
+
+Surfaces specifically as "selection rect ends a few pixels past the bar line when growing TO it (from the left), but looks correct when shrinking back TO it (from the right)" — because the left edge of the selection used `M_{k+1}.left` (correct) while the right used `M_k.right` (past).
+
+Fix lives in `src/composer/selectionOverlay.ts:measureRightEdge`. Generalizable rule: when aligning UI to musical-glyph boundaries, the glyph's own bbox isn't the visual edge — the adjacent glyph's start is more reliable.
+
+### Headless CDP doesn't synthesize clipboard events from keystroke dispatch
+
+`Input.dispatchKeyEvent` fires keyboard events at the renderer-input level but does NOT synthesize the `copy` / `cut` / `paste` DOM events that real browsers fire on Ctrl+C / X / V. So when copy/cut/paste behavior is split across keydown (model side-effects) and DOM events (OS clipboard I/O), only the keydown half is exercised by CDP tests.
+
+Workaround in HKL: the keydown handler keeps doing the model side-effects (selection serialize, deletion, etc.) AND stashes the serialized clipboard text in a module-level variable. The DOM event handler (real-browser-only) picks it up to write the OS clipboard. CDP tests observe model state via the keydown path; OS-clipboard round-trip is verified manually in real browsers.
+
+Generalizable rule: when splitting a user gesture's effects across multiple event types, ensure each individually testable path is observable. A test that drives Ctrl+C and asserts model state should pass even if the OS clipboard write requires a DOM event that the test harness doesn't synthesize.

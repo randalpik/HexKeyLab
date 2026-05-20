@@ -24,7 +24,10 @@
 
 import type { ComposerModel, Voice } from './model.js';
 import type { SelectionState, Staff } from './selection.js';
+import { beatBoundariesInVoice } from './selection.js';
 import { renderer } from './render.js';
+import { realTicks } from './ticks.js';
+import { CURSOR_VPAD } from './cursor.js';
 
 const SELECTION_FILL = '#3b82f6';
 const SELECTION_OPACITY = '0.18';
@@ -203,8 +206,9 @@ function selectionMeasureRange(model: ComposerModel, sel: SelectionState): { mLo
     };
   }
   const flat = model.flatChildren(sel.voice);
-  const a = Math.min(sel.anchor, sel.movable);
-  const b = Math.max(sel.anchor, sel.movable);
+  const boundaries = beatBoundariesInVoice(model, sel.voice);
+  const a = boundaries[sel.first];
+  const b = boundaries[sel.last + 1];
   let mLo = Infinity;
   let mHi = -Infinity;
   for (let i = a + 1; i <= b && i < flat.length; i++) {
@@ -228,30 +232,86 @@ function systemAncestor(measureMeiId: string): Element | null {
   return node.closest('g.system');
 }
 
-/** Y range of the staff(es) covered by the selection. Uses one representative
- *  measure on the relevant system — all measures on the same system render
- *  with identical staff y, so we only need one sample. */
+/** Y range covered by the selection within `measureIdx`. For measure mode,
+ *  spans the selected staves' full bbox. For beat mode, returns the union of
+ *  selected layer-level element bboxes in the voice's layer for this measure
+ *  (so the rect hugs the actual notes/rests vertically — makes it visually
+ *  obvious which voice is selected when a staff has two populated voices).
+ *  Falls back to the voice's staff bbox when no selected elements produce
+ *  a usable bbox in this measure. */
 function staffYRangeForMeasure(
   model: ComposerModel,
   sel: SelectionState,
   measureIdx: number,
 ): { top: number; bottom: number } | null {
-  const firstStaff: Staff = sel.kind === 'beat'
-    ? (sel.voice <= 2 ? 1 : 2)
-    : sel.firstStaff;
-  const lastStaff: Staff = sel.kind === 'beat'
-    ? firstStaff
-    : sel.lastStaff;
-  const firstId = staffIdForMeasure(model, measureIdx, firstStaff);
-  const lastId = staffIdForMeasure(model, measureIdx, lastStaff);
-  if (!firstId || !lastId) return null;
-  const firstRect = renderer.rectForId(firstId);
-  const lastRect = renderer.rectForId(lastId);
-  if (!firstRect || !lastRect) return null;
-  return {
-    top: Math.min(firstRect.top, lastRect.top),
-    bottom: Math.max(firstRect.bottom, lastRect.bottom),
+  if (sel.kind === 'measure') {
+    const firstId = staffIdForMeasure(model, measureIdx, sel.firstStaff);
+    const lastId = staffIdForMeasure(model, measureIdx, sel.lastStaff);
+    if (!firstId || !lastId) return null;
+    const firstRect = renderer.rectForId(firstId);
+    const lastRect = renderer.rectForId(lastId);
+    if (!firstRect || !lastRect) return null;
+    return {
+      top: Math.min(firstRect.top, lastRect.top),
+      bottom: Math.max(firstRect.bottom, lastRect.bottom),
+    };
+  }
+  // Beat mode: union of selected layer-level element bboxes.
+  const voice = sel.voice;
+  const staffN: Staff = voice <= 2 ? 1 : 2;
+  const measures = model.allMeasures();
+  if (measureIdx < 0 || measureIdx >= measures.length) return null;
+  const measure = measures[measureIdx];
+  const staffEl = Array.from(measure.querySelectorAll('staff')).find(
+    (s) => s.getAttribute('n') === String(staffN),
+  );
+  const layerN = voice === 1 || voice === 3 ? 1 : 2;
+  const layerEl = staffEl ? Array.from(staffEl.querySelectorAll('layer')).find(
+    (l) => l.getAttribute('n') === String(layerN),
+  ) : null;
+  const fallback = (): { top: number; bottom: number } | null => {
+    if (!staffEl) return null;
+    const staffId = staffEl.getAttribute('xml:id');
+    if (!staffId) return null;
+    const r = renderer.rectForId(staffId);
+    return r ? { top: r.top, bottom: r.bottom } : null;
   };
+  if (!layerEl) return fallback();
+
+  const boundaries = beatBoundariesInVoice(model, voice);
+  const tLo = model.getTickPositionAt(voice, boundaries[sel.first]);
+  const tHi = model.getTickPositionAt(voice, boundaries[sel.last + 1]);
+  const measureT = model.measureTicks();
+  const measureStart = measureIdx * measureT;
+  let top = Infinity;
+  let bottom = -Infinity;
+  let pos = measureStart;
+  for (const c of Array.from(layerEl.children)) {
+    const ln = c.localName;
+    if (ln !== 'chord' && ln !== 'note' && ln !== 'rest' && ln !== 'tuplet') {
+      continue;
+    }
+    const dur = realTicks(c);
+    const cEnd = pos + dur;
+    /* Element overlaps the selection range if it's not entirely before tLo
+     * AND not entirely after tHi. The cursor's visual y span for each
+     * element matches its rendered bbox (Verovio includes notehead + stem
+     * + ledger lines etc.). */
+    const overlaps = cEnd > tLo + 1e-6 && pos < tHi - 1e-6;
+    if (overlaps) {
+      const id = c.getAttribute('xml:id');
+      if (id) {
+        const r = renderer.rectForId(id);
+        if (r) {
+          if (r.top < top) top = r.top;
+          if (r.bottom > bottom) bottom = r.bottom;
+        }
+      }
+    }
+    pos = cEnd;
+  }
+  if (!isFinite(top)) return fallback();
+  return { top: top - CURSOR_VPAD, bottom: bottom + CURSOR_VPAD };
 }
 
 /** Compute the screen rectangles to render for the given selection. One
@@ -298,12 +358,14 @@ function computeRects(model: ComposerModel, sel: SelectionState): DrawRect[] {
     let xLeft = defaultLeft !== null ? defaultLeft : measureRect.left;
     let xRight = measureRect.right;
     if (isFirst && sel.kind === 'beat') {
-      const lo = Math.min(sel.anchor, sel.movable);
+      const boundaries = beatBoundariesInVoice(model, sel.voice);
+      const lo = boundaries[sel.first];
       const x = xAtCursorPos(model, sel.voice, lo, staffForSnap, 'start');
       if (x !== null) xLeft = x;
     }
     if (isLast && sel.kind === 'beat') {
-      const hi = Math.max(sel.anchor, sel.movable);
+      const boundaries = beatBoundariesInVoice(model, sel.voice);
+      const hi = boundaries[sel.last + 1];
       const x = xAtCursorPos(model, sel.voice, hi, staffForSnap, 'end');
       if (x !== null) xRight = x;
     }

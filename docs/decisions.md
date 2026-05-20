@@ -1366,3 +1366,40 @@ The runner reuses the existing `tools/composer-inspect/` CDP plumbing (factored 
 - `src/composer/model.ts:toggleTieOnCurrent` — simplified to intent-flip + `normalizeTies`.
 - `src/composer/model.ts:deleteAtCursor` / `replaceChordAtCursor` / `setTimeSig` / `replaceDocument` — every mutation path calls `normalizeTies()` after the structural change.
 - `tools/composer-test/fixtures.mjs` — 9 tie fixtures lock in the behavior, including the previously-broken chain-deletion cases.
+
+## Composer selection: origin+first+last over anchor+movable (2026-05-20)
+
+**Decision**: Beat-mode selection state stores `{ origin, first, last, lastMoved }` (beat indices) instead of `{ anchor, movable }` (flat indices). Both Shift+Left and Shift+Right at the same cursor enter beat mode with the same single-beat selection (`first == origin == last == currentBeatAt(cursor)`); `lastMoved` is set from the entry direction for natural exit-cursor placement.
+
+**Alternatives**:
+- **Original anchor+movable**: asymmetric entry (Shift+Left placed anchor on the right of the current beat with movable one left; Shift+Right vice versa). Allowed zero-width selection at convergence, with a special "convergence-exit" branch in the mover. Two issues motivated the rewrite: (a) entry direction has no real musical meaning — the user just wants to select the beat under the cursor — and (b) the zero-width case adds a special-case path everywhere selection state is consumed.
+- **Single-side mover** (mover tracks "active side", always-grow): would need a separate "switch active side" gesture; complicates the keybinding surface.
+
+**Why**: mirrors measure-mode's symmetric `originStaff`-anchored growth. Eliminates the convergence-exit path (selection is always ≥ 1 beat, so `Shift+Left` then `Shift+Right` shrinks back to the single-beat state rather than exiting). Makes the model trivially extensible to per-side asymmetric growth in either direction without bookkeeping "which side is movable".
+
+**Where**:
+- `src/composer/selection.ts`: new state shape, `currentBeatAt`, `moveBeatRange`, `moveBeatRangeByMeasure` (Ctrl+Shift+Arrow as a loop over `moveBeatRange` until measure-boundary).
+- `src/composer/input.ts`: `dispatchSelectionMode` Shift+Arrow branch no longer has the convergence-exit case.
+- `tools/composer-test/fixtures.mjs`: `sel_beat_converge_exits` replaced by `sel_beat_shrink_to_origin` (selection persists as single-beat at origin instead of exiting).
+
+## Composer clipboard via DOM events, not navigator.clipboard (2026-05-20)
+
+**Decision**: Copy / cut / paste use the DOM-level `copy` / `cut` / `paste` events with `event.clipboardData.setData('text/plain', …)` and `getData(...)`. The keydown handler stashes serialized text in a module-level `pendingClipboardText` variable for the same-tick DOM event to ferry into the OS clipboard.
+
+**Alternative**: `navigator.clipboard.writeText` / `readText` (the original implementation). `readText` is unreliable on Firefox — surfaces a "Paste" permission UI that often returns empty / stale data even after the user accepts. `writeText` is more reliable but pairing the two gives an asymmetric experience.
+
+**Why**: DOM clipboard events work in both Chromium and Firefox without permission prompts, fire synchronously on user gesture, and expose the OS clipboard via a stable API. Tradeoff: CDP-driven tests don't synthesize DOM clipboard events from keystroke dispatch — so the keydown handler keeps the model side-effects (serialize, delete, etc.) and the DOM event only owns the OS clipboard write. Tests observe model state via the keydown path; real browsers get both.
+
+**Where**:
+- `src/composer/input.ts`: `copyHandler` / `cutHandler` / `pasteHandler` registered on `document`. Keydown's Ctrl+C/X branches do the model side-effects + set `pendingClipboardText`; the DOM event picks it up. Ctrl+V keydown is a no-op; the paste event handles everything.
+- `src/composer/clipboard.ts`: `serializeClipboard` / `parseClipboard` are pure functions — no I/O.
+
+## Composer selection rendering: per-element vertical span (beat mode) (2026-05-20)
+
+**Decision**: Beat-mode selection rects use the union of selected element bboxes (chord / note / rest / tuplet) within each system's voice layer, padded with `CURSOR_VPAD` (= 6 px, same as the editing cursor's vertical extent). Measure-mode rects still use the full staff bbox.
+
+**Alternative**: Use the staff bbox for both modes. Simpler but makes it visually ambiguous WHICH voice is selected when both voices on a grand staff are populated — the rect fills the same y range either way.
+
+**Why**: at a glance, the selection rect should make voice-membership obvious. The cursor's own visual anchor uses the same per-element bbox-with-VPAD pattern, so the selection is consistent with where the user expects the cursor.
+
+**Where**: `src/composer/selectionOverlay.ts:staffYRangeForMeasure` — branches on `sel.kind`; for beat mode, walks the layer's content children and unions bboxes via `renderer.rectForId(element.id)`.

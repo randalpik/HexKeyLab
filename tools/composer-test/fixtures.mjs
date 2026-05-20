@@ -598,21 +598,23 @@ const FILL_M1_4Q_V1 = `
 `;
 
 const SELECTION = {
-  /* Enter beat selection via Shift+Left from end-of-M1 in 4/4 with 4 quarters.
-     Expected: anchor at past-last-quarter, movable one beat to the left. */
+  /* Enter beat selection via Shift+Left from end-of-M1 (= cursor past last
+     quarter, current beat = beat 3). Should select that single beat. */
   sel_beat_enter_shiftLeft: {
     setup: `${FILL_M1_4Q_V1} m.setCursor(m.getVoiceLength(1), 1);`,
     setupKeys: [{ key: 'ArrowLeft', shift: true }],
   },
 
-  /* Enter beat selection via Shift+Right from start of M1. Expected: anchor at
-     start of M1, movable one beat to the right. */
+  /* Enter beat selection via Shift+Right from start of M1 (= cursor at the
+     wrapper, current beat = beat 0). Should select that single beat — same
+     as Shift+Left at this cursor (entry direction no longer matters). */
   sel_beat_enter_shiftRight: {
     setup: `${FILL_M1_4Q_V1} m.setCursor(0, 1);`,
     setupKeys: [{ key: 'ArrowRight', shift: true }],
   },
 
-  /* Grow beat selection rightward by 2 beats. */
+  /* Grow beat selection rightward by 1 beat (entry selects beat 0, then
+     Shift+Right expands last to beat 1). */
   sel_beat_grow_right: {
     setup: `${FILL_M1_4Q_V1} m.setCursor(0, 1);`,
     setupKeys: [
@@ -621,20 +623,20 @@ const SELECTION = {
     ],
   },
 
-  /* Convergence exits: Shift+Right then Shift+Left should bring movable back
-     to anchor and exit selection mode. */
-  sel_beat_converge_exits: {
+  /* Shrink-back-to-origin: Shift+Right enters beat 0; Shift+Right expands to
+     beat 0–1; Shift+Left shrinks back to beat 0 only. No convergence-exit. */
+  sel_beat_shrink_to_origin: {
     setup: `${FILL_M1_4Q_V1} m.setCursor(0, 1);`,
     setupKeys: [
+      { key: 'ArrowRight', shift: true },
       { key: 'ArrowRight', shift: true },
       { key: 'ArrowLeft', shift: true },
     ],
   },
 
-  /* Ctrl+Shift+Right snaps movable to the next measure boundary. Start with 2
-     measures of quarters; cursor at start of M_1. Shift+Right enters mode
-     selecting beat 1 of M_1. Then Ctrl+Shift+Right should snap movable to
-     start of M_2. */
+  /* Ctrl+Shift+Right at start of a 2-measure score. Entry selects beat 0;
+     Ctrl+Shift+Right should grow last until the last beat of M_1 (the
+     just-moved edge lands at the M_1/M_2 measure boundary). */
   sel_beat_ctrlShift_measureBoundary: {
     setup: `${FILL_M1_4Q_V1}
       m.setCursor(m.getVoiceLength(1), 1);
@@ -1234,66 +1236,75 @@ export const FIXTURE_ASSERTIONS = {
           ? { ok: true }
           : { ok: false, detail: 'cursorMode=' + s.cursorMode };
       })()` },
-    { name: 'selection is beat kind with anchor > movable',
+    { name: 'single-beat selection: first === origin === last (beat 3 of 4)',
       expr: `(() => {
         const s = window.__hkl_composer.inputState();
         if (!s.selection || s.selection.kind !== 'beat') {
           return { ok: false, detail: 'selection=' + JSON.stringify(s.selection) };
         }
-        return s.selection.anchor > s.selection.movable
+        const sel = s.selection;
+        return sel.first === sel.origin && sel.last === sel.origin && sel.origin === 3
           ? { ok: true }
-          : { ok: false, detail: 'expected anchor > movable; sel=' + JSON.stringify(s.selection) };
+          : { ok: false, detail: 'expected first=origin=last=3, got ' + JSON.stringify(sel) };
       })()` },
   ],
   sel_beat_enter_shiftRight: [
-    { name: 'selection is beat kind with movable > anchor',
+    { name: 'single-beat selection: first === origin === last (beat 0)',
       expr: `(() => {
         const s = window.__hkl_composer.inputState();
         if (!s.selection || s.selection.kind !== 'beat') {
           return { ok: false, detail: 'selection=' + JSON.stringify(s.selection) };
         }
-        return s.selection.movable > s.selection.anchor
+        const sel = s.selection;
+        return sel.first === sel.origin && sel.last === sel.origin && sel.origin === 0
           ? { ok: true }
-          : { ok: false, detail: 'expected movable > anchor; sel=' + JSON.stringify(s.selection) };
+          : { ok: false, detail: 'expected first=origin=last=0, got ' + JSON.stringify(sel) };
       })()` },
   ],
   sel_beat_grow_right: [
-    { name: 'selection spans 2 beats (movable - anchor matches 2-beat distance)',
+    { name: 'selection spans 2 beats (first=0, last=1)',
       expr: `(() => {
-        const m = window.__hkl_composer.model;
         const s = window.__hkl_composer.inputState();
         if (!s.selection || s.selection.kind !== 'beat') {
           return { ok: false, detail: 'no beat selection' };
         }
-        const tA = m.getTickPositionAt(s.selection.voice, s.selection.anchor);
-        const tM = m.getTickPositionAt(s.selection.voice, s.selection.movable);
-        const span = Math.abs(tM - tA);
-        return Math.abs(span - 32) < 1e-6
+        const sel = s.selection;
+        return sel.first === 0 && sel.last === 1 && sel.origin === 0 && sel.lastMoved === 'last'
           ? { ok: true }
-          : { ok: false, detail: 'span=' + span + ' (expected 32 = 2 quarter beats)' };
+          : { ok: false, detail: JSON.stringify(sel) };
       })()` },
   ],
-  sel_beat_converge_exits: [
-    { name: 'cursorMode returns to voice after convergence',
+  sel_beat_shrink_to_origin: [
+    { name: 'still in selection mode (no convergence-exit)',
       expr: `(() => {
         const s = window.__hkl_composer.inputState();
-        return s.cursorMode === 'voice' && s.selection === null
+        return s.cursorMode === 'select' && s.selection && s.selection.kind === 'beat'
           ? { ok: true }
           : { ok: false, detail: 'cursorMode=' + s.cursorMode + ' selection=' + JSON.stringify(s.selection) };
       })()` },
-  ],
-  sel_beat_ctrlShift_measureBoundary: [
-    { name: 'movable lands at start of M_2',
+    { name: 'shrunk back to single-beat at origin (beat 0)',
       expr: `(() => {
-        const m = window.__hkl_composer.model;
         const s = window.__hkl_composer.inputState();
         if (!s.selection || s.selection.kind !== 'beat') {
           return { ok: false, detail: 'no beat selection' };
         }
-        const expected = m.getMeasureStartCursor(s.selection.voice, 1);
-        return s.selection.movable === expected
+        const sel = s.selection;
+        return sel.first === 0 && sel.last === 0 && sel.origin === 0
           ? { ok: true }
-          : { ok: false, detail: 'movable=' + s.selection.movable + ' expected=' + expected };
+          : { ok: false, detail: JSON.stringify(sel) };
+      })()` },
+  ],
+  sel_beat_ctrlShift_measureBoundary: [
+    { name: 'last advanced to the last beat of M_1 (beat 3) — measure boundary at boundaries[4]',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        if (!s.selection || s.selection.kind !== 'beat') {
+          return { ok: false, detail: 'no beat selection' };
+        }
+        const sel = s.selection;
+        return sel.first === 0 && sel.last === 3 && sel.lastMoved === 'last'
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify(sel) };
       })()` },
   ],
   sel_promote_beat_to_measure: [

@@ -4,7 +4,9 @@
 //
 // Two granularities:
 //   - beat:    one voice, anchored at beat boundaries (powered by tstamp
-//              alignment + tuplet atomicity).
+//              alignment + tuplet atomicity). The state stores BEAT INDICES
+//              (origin/first/last); conversion to/from cursor positions
+//              happens at the API boundary via beatBoundariesInVoice().
 //   - measure: one or more 2-voice staves, anchored at measure boundaries,
 //              with a designated origin staff so multi-staff growth is
 //              symmetric.
@@ -18,17 +20,20 @@ import { beatTicks } from './restfill.js';
 export type Staff = 1 | 2;
 export type MovableSide = 'left' | 'right' | 'unset';
 export type Dir = 'left' | 'right';
+export type BeatSide = 'first' | 'last';
 
 export type SelectionState =
   | {
       kind: 'beat';
       voice: Voice;
-      anchor: number;   // flat index, immutable for lifetime
-      movable: number;  // flat index, manipulated by shift+arrow
+      origin: number;          // beat index where selection started; invariant: first ≤ origin ≤ last
+      first: number;           // leftmost selected beat index
+      last: number;            // rightmost selected beat index
+      lastMoved: BeatSide;     // which side was last shifted; used for exit-cursor placement
     }
   | {
       kind: 'measure';
-      originVoice: Voice;   // cursor's voice before entry; preserved on exit
+      originVoice: Voice;
       originStaff: Staff;
       firstStaff: Staff;
       lastStaff: Staff;
@@ -43,24 +48,17 @@ function staffForVoice(voice: Voice): Staff {
   return voice <= 2 ? 1 : 2;
 }
 
-/** Returns the set of flat indices in `voice` that are beat boundaries.
- *  Sorted ascending; always includes 0 and `flatChildren.length` (past-end).
+/** Returns the set of cursor positions in `voice` that are beat boundaries.
+ *  Sorted ascending. Always includes 0 and the past-end position.
  *
- *  A flat index `c` qualifies iff:
+ *  Boundary criteria:
  *    (a) `getTickPositionAt(voice, c)` is beat-aligned within its measure
  *        (i.e. `inMeasureTicks % beatTicks(timeSig) === 0`), AND
- *    (b) `c` is NOT a strictly-interior in-tuplet stop (tuplet atomicity:
- *        only the entry stop (tuplet wrapper at flat-level) and exit stop
- *        (interpreted by locateCursor as layer-level past the tuplet) are
- *        eligible; in-tuplet stops report `inTuplet=true` via
- *        `getFlatStopInfo`).
- *  Past-end (c === flat.length) is always included.
+ *    (b) `c` is NOT a strictly-interior in-tuplet stop (tuplet atomicity).
  *
  *  Dedupe: when two cursor positions share a tstamp (e.g. "past last content
  *  of full M_k" and "past wrapper of M_{k+1}"), keep the LATER one — that's
- *  the measure-aligned position. This ensures selection bounds land on
- *  measure boundaries instead of on the prior measure's last-content stop.
- */
+ *  the measure-aligned position. */
 export function beatBoundariesInVoice(model: ComposerModel, voice: Voice): number[] {
   const flat = model.flatChildren(voice);
   const ts = readTimeSig(model.getDoc());
@@ -74,7 +72,7 @@ export function beatBoundariesInVoice(model: ComposerModel, voice: Voice): numbe
     } else {
       const info = model.getFlatStopInfo(voice, c);
       if (!info) continue;
-      if (info.inTuplet) continue; // tuplet atomicity
+      if (info.inTuplet) continue;
       t = model.getTickPositionAt(voice, c);
       const inMeas = ((t % measureT) + measureT) % measureT;
       const rem = inMeas % bt;
@@ -82,8 +80,6 @@ export function beatBoundariesInVoice(model: ComposerModel, voice: Voice): numbe
     }
     candidates.push({ c, t });
   }
-  /* Dedupe by tstamp: keep the highest c at each tstamp. Iterating in
-   * ascending c, overwrite on collision. */
   const byT = new Map<number, number>();
   for (const { c, t } of candidates) {
     const key = Math.round(t * 1e6);
@@ -92,121 +88,90 @@ export function beatBoundariesInVoice(model: ComposerModel, voice: Voice): numbe
   return Array.from(byT.values()).sort((a, b) => a - b);
 }
 
-/** Returns the set of flat indices in `voice` that are measure boundaries
- *  (starts of measures plus past-end). Sorted ascending. */
+/** Cursor positions that fall exactly on a measure barline (tstamp is a
+ *  multiple of measureTicks). Used by Ctrl+Shift+arrow to decide where to
+ *  stop. Note: this is tstamp-based — distinct from `getMeasureStartCursor`,
+ *  which returns the navigation-stop position (= past the first content of
+ *  the measure in the wrapper-collapsed case, which is one cursor INSIDE
+ *  the measure, not at the barline). */
 export function measureBoundariesInVoice(model: ComposerModel, voice: Voice): number[] {
-  const measures = model.allMeasures();
-  const out: number[] = [];
-  for (let mi = 0; mi < measures.length; mi++) {
-    out.push(model.getMeasureStartCursor(voice, mi));
-  }
-  out.push(model.getVoiceLength(voice));
-  // Deduplicate (an empty trailing measure could repeat) and sort.
-  return Array.from(new Set(out)).sort((a, b) => a - b);
-}
-
-/** Snap `from` to the nearest beat boundary in `dir`:
- *    - 'right': smallest boundary `b` with `b >= from`.
- *    - 'left':  largest boundary `b` with `b <= from`.
- *  Returns `from` itself if it's already a boundary. Returns null if no
- *  boundary exists in the requested direction (shouldn't happen — 0 and
- *  past-end are always boundaries).
- */
-export function snapBeatBoundary(
-  model: ComposerModel,
-  voice: Voice,
-  from: number,
-  dir: Dir,
-): number | null {
-  const bs = beatBoundariesInVoice(model, voice);
-  if (bs.length === 0) return null;
-  if (dir === 'right') {
-    for (const b of bs) if (b >= from) return b;
-    return null;
-  } else {
-    let best: number | null = null;
-    for (const b of bs) {
-      if (b <= from) best = b;
-      else break;
+  const flat = model.flatChildren(voice);
+  const measureT = model.measureTicks();
+  const candidates: Array<{ c: number; t: number }> = [];
+  for (let c = 0; c <= flat.length; c++) {
+    let t: number;
+    if (c === flat.length) {
+      t = model.allMeasures().length * measureT;
+    } else {
+      const info = model.getFlatStopInfo(voice, c);
+      if (!info) continue;
+      if (info.inTuplet) continue;
+      t = model.getTickPositionAt(voice, c);
     }
-    return best;
-  }
-}
-
-/** Step one beat boundary in `dir` from `from`. Returns null when no further
- *  boundary exists (clamp). */
-export function stepBeatBoundary(
-  model: ComposerModel,
-  voice: Voice,
-  from: number,
-  dir: Dir,
-): number | null {
-  const bs = beatBoundariesInVoice(model, voice);
-  if (dir === 'right') {
-    for (const b of bs) if (b > from) return b;
-    return null;
-  } else {
-    let prev: number | null = null;
-    for (const b of bs) {
-      if (b < from) prev = b;
-      else break;
+    const inMeas = ((t % measureT) + measureT) % measureT;
+    if (inMeas < TICK_EPS || measureT - inMeas < TICK_EPS) {
+      candidates.push({ c, t });
     }
-    return prev;
   }
+  const byT = new Map<number, number>();
+  for (const { c, t } of candidates) {
+    const key = Math.round(t * 1e6);
+    byT.set(key, c);
+  }
+  return Array.from(byT.values()).sort((a, b) => a - b);
 }
 
-/** Step to the first MEASURE boundary strictly in `dir` from `from`. Used by
- *  Ctrl+Shift+arrow in beat selection mode. */
-export function stepMeasureBoundary(
-  model: ComposerModel,
-  voice: Voice,
-  from: number,
-  dir: Dir,
-): number | null {
-  const ms = measureBoundariesInVoice(model, voice);
-  if (dir === 'right') {
-    for (const b of ms) if (b > from) return b;
-    return null;
-  } else {
-    let prev: number | null = null;
-    for (const b of ms) {
-      if (b < from) prev = b;
-      else break;
-    }
-    return prev;
+/** Which beat (= index into beatBoundariesInVoice) the cursor is "currently
+ *  in". Edge cases:
+ *    - At the very start of the score (cursor ≤ boundaries[0]): beat 0.
+ *    - At the very end (cursor ≥ last boundary): the last beat.
+ *    - At a mid-score boundary `boundaries[k]` (k > 0): beat k − 1 (= "just
+ *      past" that boundary's beat).
+ *    - Strictly between `boundaries[k]` and `boundaries[k+1]`: beat k. */
+export function currentBeatAt(model: ComposerModel, voice: Voice, cursor: number): number {
+  const boundaries = beatBoundariesInVoice(model, voice);
+  if (boundaries.length <= 1) return 0;
+  const numBeats = boundaries.length - 1;
+  let k = 0;
+  for (let i = 0; i < boundaries.length; i++) {
+    if (boundaries[i] <= cursor) k = i;
+    else break;
   }
+  if (boundaries[k] === cursor && k > 0) return Math.min(k - 1, numBeats - 1);
+  return Math.min(k, numBeats - 1);
 }
 
-/** Entry from voice mode via Shift+arrow. Snap cursor to the beat boundary
- *  toward `dir`'s anchor side, then place the movable bound one beat further
- *  in `dir`.
- *
- *    Shift+Left  → dir='left'.  anchor = snap('right'), movable = step('left').
- *    Shift+Right → dir='right'. anchor = snap('left'),  movable = step('right').
- *
- *  Returns null on impossible boundary (single-stop voice with no neighbor).
- */
+/** Entry from voice mode via Shift+arrow. Both directions select the
+ *  cursor's current beat (single-beat selection). `lastMoved` is set from
+ *  the entry direction: Shift+Left → 'first' (so an immediate exit lands
+ *  the cursor at the beat's LEFT edge), Shift+Right → 'last' (right edge).
+ *  This makes exit-cursor placement match the user's last-perceived
+ *  direction even when they bail immediately after entering. */
 export function enterBeatSelection(
   model: ComposerModel,
   voice: Voice,
-  fromFlat: number,
-  dir: Dir,
-): SelectionState | null {
-  // Anchor side opposes the arrow direction; movable goes in the arrow's dir.
-  const anchorSnap = snapBeatBoundary(model, voice, fromFlat, dir === 'left' ? 'right' : 'left');
-  if (anchorSnap === null) return null;
-  const movable = stepBeatBoundary(model, voice, anchorSnap, dir);
-  if (movable === null) return null;
-  return { kind: 'beat', voice, anchor: anchorSnap, movable };
+  fromCursor: number,
+  dir: Dir = 'right',
+): Extract<SelectionState, { kind: 'beat' }> | null {
+  const boundaries = beatBoundariesInVoice(model, voice);
+  if (boundaries.length <= 1) return null;
+  const k = currentBeatAt(model, voice, fromCursor);
+  return {
+    kind: 'beat',
+    voice,
+    origin: k,
+    first: k,
+    last: k,
+    lastMoved: dir === 'left' ? 'first' : 'last',
+  };
 }
 
-/** Entry from voice mode via Shift+Up or Shift+Down. Selects the current
- *  measure on the cursor's staff, with movableSide = 'unset'. */
+/** Entry from voice mode via Shift+Up or Shift+Down. */
 export function enterMeasureSelection(
   model: ComposerModel,
   voice: Voice,
   fromMeasureIdx: number,
-): SelectionState {
+): Extract<SelectionState, { kind: 'measure' }> {
   const originStaff = staffForVoice(voice);
   return {
     kind: 'measure',
@@ -220,50 +185,66 @@ export function enterMeasureSelection(
   };
 }
 
-/** Move the movable bound of a beat selection by one beat in `dir`. If the
- *  resulting position equals the anchor, returns null (signals "exit
- *  selection mode at convergence"). */
-export function moveBeatMovable(
+/** Shift+arrow in beat selection mode. Origin stays fixed; the active side
+ *  is determined by the current state shape:
+ *    - origin == last (single-beat OR expanded left): Shift+Left expands
+ *      first leftward; Shift+Right shrinks first rightward toward origin,
+ *      OR if origin == first (state A or C), expands last rightward.
+ *    - origin == first (expanded right): Shift+Left shrinks last leftward;
+ *      Shift+Right expands last rightward.
+ *  The invariant first ≤ origin ≤ last AND the rule that only one side
+ *  diverges from origin at a time means either origin == first OR
+ *  origin == last (or both) — never both first < origin AND last > origin.
+ *  Clamped at score edges (returns sel unchanged when clamped). */
+export function moveBeatRange(
   model: ComposerModel,
   sel: Extract<SelectionState, { kind: 'beat' }>,
   dir: Dir,
-): { sel: SelectionState; exited: boolean } | null {
-  const next = stepBeatBoundary(model, sel.voice, sel.movable, dir);
-  if (next === null) return { sel, exited: false }; // clamp
-  if (next === sel.anchor) {
-    return { sel: { ...sel, movable: next }, exited: true };
+): Extract<SelectionState, { kind: 'beat' }> {
+  const boundaries = beatBoundariesInVoice(model, sel.voice);
+  const numBeats = boundaries.length - 1;
+  if (dir === 'left') {
+    if (sel.origin === sel.last) {
+      // States A (single-beat) and B (expanded left): expand first leftward.
+      if (sel.first === 0) return sel;
+      return { ...sel, first: sel.first - 1, lastMoved: 'first' };
+    }
+    // State C (expanded right): shrink last leftward toward origin.
+    return { ...sel, last: sel.last - 1, lastMoved: 'last' };
   }
-  return { sel: { ...sel, movable: next }, exited: false };
+  // dir === 'right'
+  if (sel.origin === sel.first) {
+    // States A and C: expand last rightward.
+    if (sel.last >= numBeats - 1) return sel;
+    return { ...sel, last: sel.last + 1, lastMoved: 'last' };
+  }
+  // State B: shrink first rightward toward origin.
+  return { ...sel, first: sel.first + 1, lastMoved: 'first' };
 }
 
-/** Ctrl+Shift+arrow in beat selection mode: step one MEASURE boundary in
- *  `dir`. Same convergence-exit rule as moveBeatMovable. */
-export function moveBeatMovableByMeasure(
+/** Ctrl+Shift+arrow: repeat moveBeatRange until the just-moved edge lands
+ *  on a measure-aligned beat boundary, or we clamp. Minimum of one step. */
+export function moveBeatRangeByMeasure(
   model: ComposerModel,
   sel: Extract<SelectionState, { kind: 'beat' }>,
   dir: Dir,
-): { sel: SelectionState; exited: boolean } | null {
-  const next = stepMeasureBoundary(model, sel.voice, sel.movable, dir);
-  if (next === null) return { sel, exited: false };
-  if (next === sel.anchor) {
-    return { sel: { ...sel, movable: next }, exited: true };
+): Extract<SelectionState, { kind: 'beat' }> {
+  const boundaries = beatBoundariesInVoice(model, sel.voice);
+  const measureBoundarySet = new Set(measureBoundariesInVoice(model, sel.voice));
+  let cur = sel;
+  while (true) {
+    const next = moveBeatRange(model, cur, dir);
+    if (next.first === cur.first && next.last === cur.last) break; // clamped
+    cur = next;
+    const justMovedCursor = cur.lastMoved === 'first'
+      ? boundaries[cur.first]
+      : boundaries[cur.last + 1];
+    if (measureBoundarySet.has(justMovedCursor)) break;
   }
-  return { sel: { ...sel, movable: next }, exited: false };
+  return cur;
 }
 
-/** Shift+arrow in measure selection mode: move the movable bound by one
- *  measure in `dir`. Handles `movableSide` transitions:
- *
- *  Shift+Left:
- *    'unset' → 'left', movableMeasure-- (clamp ≥ 0)
- *    'left'  → movableMeasure--          (clamp ≥ 0)
- *    'right' → movableMeasure--          → if hits anchor, reset to 'unset'
- *
- *  Shift+Right (mirror):
- *    'unset' → 'right', movableMeasure++ (clamp ≤ allMeasures.length - 1)
- *    'right' → movableMeasure++          (clamp ≤ last)
- *    'left'  → movableMeasure++          → if hits anchor, reset to 'unset'
- */
+/** Shift+arrow in measure selection mode. Unchanged from prior design. */
 export function moveMeasureMovable(
   model: ComposerModel,
   sel: Extract<SelectionState, { kind: 'measure' }>,
@@ -275,36 +256,32 @@ export function moveMeasureMovable(
   if (dir === 'left') {
     if (sel.movableSide === 'unset') {
       const target = Math.max(0, sel.anchorMeasure - 1);
-      if (target === sel.anchorMeasure) return sel; // clamped at 0
+      if (target === sel.anchorMeasure) return sel;
       return { ...sel, movableSide: 'left', movableMeasure: target };
     }
     if (sel.movableSide === 'left') {
       const target = Math.max(0, sel.movableMeasure - 1);
       return { ...sel, movableMeasure: target };
     }
-    // 'right' — shrink right bound leftward
     const target = sel.movableMeasure - 1;
     if (target === sel.anchorMeasure) {
       return { ...sel, movableMeasure: target, movableSide: 'unset' };
     }
     if (target < sel.anchorMeasure) {
-      // Defensive: shouldn't happen since movable ≥ anchor when side='right'.
       return { ...sel, movableMeasure: sel.anchorMeasure, movableSide: 'unset' };
     }
     return { ...sel, movableMeasure: target };
   }
 
-  // dir === 'right'
   if (sel.movableSide === 'unset') {
     const target = Math.min(last, sel.anchorMeasure + 1);
-    if (target === sel.anchorMeasure) return sel; // clamped at last
+    if (target === sel.anchorMeasure) return sel;
     return { ...sel, movableSide: 'right', movableMeasure: target };
   }
   if (sel.movableSide === 'right') {
     const target = Math.min(last, sel.movableMeasure + 1);
     return { ...sel, movableMeasure: target };
   }
-  // 'left' — shrink left bound rightward
   const target = sel.movableMeasure + 1;
   if (target === sel.anchorMeasure) {
     return { ...sel, movableMeasure: target, movableSide: 'unset' };
@@ -315,19 +292,7 @@ export function moveMeasureMovable(
   return { ...sel, movableMeasure: target };
 }
 
-/** Shift+Up/Down in measure mode: adjust the staff range symmetrically
- *  around originStaff.
- *
- *  Shift+Down:
- *    firstStaff == origin AND lastStaff < maxStaff → lastStaff++
- *    firstStaff < origin → firstStaff++ (shrink from top)
- *
- *  Shift+Up:
- *    lastStaff == origin AND firstStaff > 1 → firstStaff--
- *    lastStaff > origin → lastStaff-- (shrink from bottom)
- *
- *  Currently maxStaff = 2 (single grand staff); the logic is N-staff-ready.
- */
+/** Shift+Up/Down in measure mode. Unchanged. */
 export function adjustStaffRange(
   sel: Extract<SelectionState, { kind: 'measure' }>,
   dir: 'up' | 'down',
@@ -340,9 +305,8 @@ export function adjustStaffRange(
     if (sel.firstStaff < sel.originStaff) {
       return { ...sel, firstStaff: (sel.firstStaff + 1) as Staff };
     }
-    return sel; // nothing to do
+    return sel;
   }
-  // up
   if (sel.lastStaff === sel.originStaff && sel.firstStaff > 1) {
     return { ...sel, firstStaff: (sel.firstStaff - 1) as Staff };
   }
@@ -352,25 +316,19 @@ export function adjustStaffRange(
   return sel;
 }
 
-/** Promote a beat selection to a measure selection. Origin = cursor's voice's
- *  staff. movableSide derives from beat-mode growth direction: grew right →
- *  'right', grew left → 'left'. Single-measure selection → 'unset'.
- */
+/** Promote a beat selection to a measure selection. `lastMoved` maps to
+ *  `movableSide`: 'first' → 'left', 'last' → 'right', single-measure
+ *  selections → 'unset'. */
 export function promoteBeatToMeasure(
   model: ComposerModel,
   sel: Extract<SelectionState, { kind: 'beat' }>,
 ): SelectionState {
-  const a = sel.anchor;
-  const m = sel.movable;
-  const leftFlat = Math.min(a, m);
-  const rightFlat = Math.max(a, m);
-
-  // Determine touched measure range. The flat positions are inclusive of the
-  // boundary stops; for measure containment, use getFlatStopInfo for each.
-  const leftInfo = model.getFlatStopInfo(sel.voice, leftFlat);
-  const rightInfo = model.getFlatStopInfo(sel.voice, rightFlat);
+  const boundaries = beatBoundariesInVoice(model, sel.voice);
+  const leftCursor = boundaries[sel.first];
+  const rightCursor = boundaries[sel.last + 1];
+  const leftInfo = model.getFlatStopInfo(sel.voice, leftCursor);
+  const rightInfo = model.getFlatStopInfo(sel.voice, rightCursor);
   if (!leftInfo || !rightInfo) {
-    // Defensive fallback: single-measure selection on current measure.
     const fallbackM = model.getCursorMeasureIdx(sel.voice);
     const staff = staffForVoice(sel.voice);
     return {
@@ -386,24 +344,14 @@ export function promoteBeatToMeasure(
   }
   let leftM = leftInfo.measureIdx;
   let rightM = rightInfo.measureIdx;
-  // The right boundary, if it sits exactly at the start of measure M+1 (the
-  // bar line), conceptually "touches" measure M as its right edge. To avoid
-  // selecting M+1 when the boundary is just-past M, treat a rightFlat that is
-  // the measure-start of (rightM) as actually touching (rightM - 1).
-  // Detection: rightFlat equals the wrapper-stop start of measure rightM AND
-  // rightM > leftM. (Past-end → rightM = measures.length; we treat that as
-  // last measure for selection.)
   const numMeasures = model.allMeasures().length;
   if (rightInfo.measureIdx >= numMeasures) {
     rightM = numMeasures - 1;
   } else if (rightM > leftM) {
     const startOfRightM = model.getMeasureStartCursor(sel.voice, rightM);
-    if (rightFlat === startOfRightM) {
-      rightM = rightM - 1;
-    }
+    if (rightCursor === startOfRightM) rightM = rightM - 1;
   }
-
-  const grewRight = m > a;
+  const grewRight = sel.lastMoved === 'last';
   const originStaff = staffForVoice(sel.voice);
   let anchorMeasure: number;
   let movableMeasure: number;
@@ -433,23 +381,25 @@ export function promoteBeatToMeasure(
   };
 }
 
-/** Visual bounds for rendering. For beat: range in voice's flat list and a
- *  single-staff strip. For measure: range of measures × range of staves. */
+/** Visual bounds for rendering. For beat: cursor positions of the left/right
+ *  edges + the measure range touched. For measure: measure range + staff
+ *  range. */
 export interface SelectionBounds {
   kind: 'beat' | 'measure';
-  voice?: Voice;           // beat only
-  firstFlat?: number;      // beat only
-  lastFlat?: number;       // beat only
-  measureFirst: number;    // inclusive
-  measureLast: number;     // inclusive
+  voice?: Voice;
+  firstCursor?: number;    // beat only — boundaries[first]
+  lastCursor?: number;     // beat only — boundaries[last + 1]
+  measureFirst: number;
+  measureLast: number;
   firstStaff: Staff;
   lastStaff: Staff;
 }
 
 export function selectionBounds(model: ComposerModel, sel: SelectionState): SelectionBounds {
   if (sel.kind === 'beat') {
-    const lo = Math.min(sel.anchor, sel.movable);
-    const hi = Math.max(sel.anchor, sel.movable);
+    const boundaries = beatBoundariesInVoice(model, sel.voice);
+    const lo = boundaries[sel.first];
+    const hi = boundaries[sel.last + 1];
     const loInfo = model.getFlatStopInfo(sel.voice, lo);
     const hiInfo = model.getFlatStopInfo(sel.voice, hi);
     const staff = staffForVoice(sel.voice);
@@ -457,8 +407,6 @@ export function selectionBounds(model: ComposerModel, sel: SelectionState): Sele
     const mLast = hiInfo
       ? Math.min(numMeasures - 1, hiInfo.measureIdx)
       : numMeasures - 1;
-    // If hi sits at the start of measure (mLast+1)'s wrapper, the right edge
-    // of the selection is the barline of mLast — same logic as in promote.
     let measureLast = mLast;
     if (hiInfo && hiInfo.measureIdx > (loInfo?.measureIdx ?? 0)
         && hiInfo.measureIdx < numMeasures) {
@@ -468,8 +416,8 @@ export function selectionBounds(model: ComposerModel, sel: SelectionState): Sele
     return {
       kind: 'beat',
       voice: sel.voice,
-      firstFlat: lo,
-      lastFlat: hi,
+      firstCursor: lo,
+      lastCursor: hi,
       measureFirst: loInfo?.measureIdx ?? 0,
       measureLast,
       firstStaff: staff,
@@ -487,25 +435,22 @@ export function selectionBounds(model: ComposerModel, sel: SelectionState): Sele
   };
 }
 
-/** Cursor position corresponding to the movable end of the selection — the
- *  "user's perceived current position". For exit-to-movable on Ctrl+C,
- *  Ctrl+X, Escape, or a non-selection key.
+/** Cursor position corresponding to the "user's perceived current
+ *  position" — used by exit-to-movable on Ctrl+X, Escape, or a
+ *  non-selection key. (Ctrl+C does not exit and does not reposition.)
  *
- *    beat:    { voice: sel.voice, flatIndex: sel.movable }
- *    measure: { voice: sel.originVoice, flatIndex: derived from movableSide }
- *
- *  Measure-mode mapping:
- *    'unset' → start of anchorMeasure (single-measure selection)
- *    'left'  → start of movableMeasure (the left bound is what user just moved)
- *    'right' → start of movableMeasure + 1 (the bar line to the right), or
- *              past-end voice length when movableMeasure is the last measure.
- */
+ *    beat:    `boundaries[lastMoved === 'first' ? first : last + 1]`.
+ *    measure: per movableSide, unchanged from prior design. */
 export function cursorAtMovable(
   model: ComposerModel,
   sel: SelectionState,
 ): { voice: Voice; flatIndex: number } {
   if (sel.kind === 'beat') {
-    return { voice: sel.voice, flatIndex: sel.movable };
+    const boundaries = beatBoundariesInVoice(model, sel.voice);
+    const flatIndex = sel.lastMoved === 'first'
+      ? boundaries[sel.first]
+      : boundaries[sel.last + 1];
+    return { voice: sel.voice, flatIndex };
   }
   const v = sel.originVoice;
   if (sel.movableSide === 'unset') {
@@ -514,7 +459,6 @@ export function cursorAtMovable(
   if (sel.movableSide === 'left') {
     return { voice: v, flatIndex: model.getMeasureStartCursor(v, sel.movableMeasure) };
   }
-  // 'right'
   const numMeasures = model.allMeasures().length;
   const target = sel.movableMeasure + 1;
   if (target >= numMeasures) {

@@ -76,9 +76,9 @@ import {
 import {
   type SelectionState, type Dir,
   enterBeatSelection, enterMeasureSelection,
-  moveBeatMovable, moveBeatMovableByMeasure, moveMeasureMovable,
+  moveBeatRange, moveBeatRangeByMeasure, moveMeasureMovable,
   adjustStaffRange, promoteBeatToMeasure, cursorAtMovable,
-  snapBeatBoundary,
+  beatBoundariesInVoice, currentBeatAt,
 } from './selection.js';
 import { serializeClipboard, parseClipboard, type ClipboardContents } from './clipboard.js';
 
@@ -435,14 +435,17 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
 
   function formatSelectionStatus(sel: SelectionState): string {
     if (sel.kind === 'beat') {
-      const lo = Math.min(sel.anchor, sel.movable);
-      const hi = Math.max(sel.anchor, sel.movable);
+      const boundaries = beatBoundariesInVoice(model, sel.voice);
+      const lo = boundaries[sel.first];
+      const hi = boundaries[sel.last + 1];
       const loInfo = model.getFlatStopInfo(sel.voice, lo);
       const hiInfo = model.getFlatStopInfo(sel.voice, hi);
       const loM = (loInfo?.measureIdx ?? 0) + 1;
       const hiM = Math.min(model.allMeasures().length, (hiInfo?.measureIdx ?? 0) + 1);
+      const beats = sel.last - sel.first + 1;
       return 'Sel: V' + sel.voice + ' M' + loM + (loM === hiM ? '' : '–M' + hiM)
-        + ' (beat mode, Shift+arrow to adjust)';
+        + ' (' + beats + ' beat' + (beats === 1 ? '' : 's')
+        + ', Shift+arrow to adjust)';
     }
     const mLo = Math.min(sel.anchorMeasure, sel.movableMeasure) + 1;
     const mHi = Math.max(sel.anchorMeasure, sel.movableMeasure) + 1;
@@ -472,7 +475,9 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
   }
 
   /** Enter selection mode from voice mode based on the Shift+arrow direction.
-   *  Returns true on success. */
+   *  Returns true on success. Both Shift+Left and Shift+Right enter beat
+   *  mode with the current beat selected (single-beat selection); the
+   *  asymmetric anchor/movable entry has been retired. */
   function enterSelectionFromVoice(arrow: 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown'): boolean {
     const v = model.getCurrentVoice();
     const c = model.getCursor();
@@ -480,7 +485,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       const dir: Dir = arrow === 'ArrowLeft' ? 'left' : 'right';
       const sel = enterBeatSelection(model, v, c, dir);
       if (!sel) {
-        hooks.setStatus?.('No beat boundary in that direction.');
+        hooks.setStatus?.('No beats available in this voice.');
         return false;
       }
       state.selection = sel;
@@ -504,11 +509,18 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     if (contents.kind === 'beat') {
       const voice = model.getCurrentVoice();
       const c = model.getCursor();
-      const beatStart = snapBeatBoundary(model, voice, c, 'left');
-      if (beatStart === null) {
-        hooks.setStatus?.('No beat boundary at cursor.');
+      const boundaries = beatBoundariesInVoice(model, voice);
+      if (boundaries.length <= 1) {
+        hooks.setStatus?.('No beats available in this voice.');
         return false;
       }
+      /* Snap to the boundary at-or-before the current cursor. */
+      let snapIdx = 0;
+      for (let i = 0; i < boundaries.length; i++) {
+        if (boundaries[i] <= c) snapIdx = i;
+        else break;
+      }
+      const beatStart = boundaries[snapIdx];
       const tLoAbs = model.getTickPositionAt(voice, beatStart);
       const result = model.pasteBeatContent(
         voice, tLoAbs, contents.elements, contents.durationTicks,
@@ -517,17 +529,24 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         hooks.setStatus?.('Paste failed: ' + result.reason);
         return false;
       }
-      /* Re-enter beat selection covering the pasted content. anchor = beat
-         start (left edge of paste), movable = post-paste cursor (right edge). */
+      /* Re-enter beat selection covering the pasted content. */
       const tHiAbs = tLoAbs + contents.durationTicks;
-      const newAnchor = model.findCursorByTickPosition(voice, tLoAbs);
-      const newMovable = model.findCursorByTickPosition(voice, tHiAbs);
-      if (newAnchor !== newMovable) {
+      const newBoundaries = beatBoundariesInVoice(model, voice);
+      const firstBeat = currentBeatAt(model, voice, model.findCursorByTickPosition(voice, tLoAbs));
+      const lastCursor = model.findCursorByTickPosition(voice, tHiAbs);
+      let lastBeat = currentBeatAt(model, voice, lastCursor);
+      /* If the right edge of the paste is exactly at a beat boundary, the
+       * "current beat" helper reports the beat just ended — which is what we
+       * want for `last`. If the paste was a single beat, firstBeat === lastBeat. */
+      if (lastBeat < firstBeat) lastBeat = firstBeat;
+      if (newBoundaries.length > 1) {
         state.selection = {
           kind: 'beat',
           voice,
-          anchor: newAnchor,
-          movable: newMovable,
+          origin: firstBeat,
+          first: firstBeat,
+          last: lastBeat,
+          lastMoved: 'last',
         };
         state.cursorMode = 'select';
       } else {
@@ -594,8 +613,9 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
    *  the deleted range, in the appropriate voice. */
   function deleteSelectionWithoutCopy(sel: SelectionState): void {
     if (sel.kind === 'beat') {
-      const lo = Math.min(sel.anchor, sel.movable);
-      const hi = Math.max(sel.anchor, sel.movable);
+      const boundaries = beatBoundariesInVoice(model, sel.voice);
+      const lo = boundaries[sel.first];
+      const hi = boundaries[sel.last + 1];
       const tLo = model.getTickPositionAt(sel.voice, lo);
       const tHi = model.getTickPositionAt(sel.voice, hi);
       model.clearBeatRange(sel.voice, tLo, tHi);
@@ -629,29 +649,17 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       hooks.onChange();
       return true;
     }
-    // Shift+Arrow / Ctrl+Shift+Arrow — adjust selection.
+    // Shift+Arrow / Ctrl+Shift+Arrow — adjust selection. Selection no
+    // longer collapses to zero width (the new beat model preserves at least
+    // one beat at all times), so there's no convergence-exit branch.
     if (e.shiftKey && !e.metaKey && !e.altKey) {
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         const dir: Dir = e.key === 'ArrowLeft' ? 'left' : 'right';
         e.preventDefault();
         if (sel.kind === 'beat') {
-          const r = e.ctrlKey
-            ? moveBeatMovableByMeasure(model, sel, dir)
-            : moveBeatMovable(model, sel, dir);
-          if (!r) return true;
-          if (r.exited) {
-            // Apply cursor at movable BEFORE clearing selection.
-            const pos = cursorAtMovable(model, r.sel);
-            model.setVoice(pos.voice);
-            model.setCursor(pos.flatIndex, pos.voice);
-            state.selection = null;
-            state.cursorMode = 'voice';
-            hooks.setStatus?.('Selection exited (converged).');
-            hooks.onStateChange();
-            hooks.onChange();
-            return true;
-          }
-          state.selection = r.sel;
+          state.selection = e.ctrlKey
+            ? moveBeatRangeByMeasure(model, sel, dir)
+            : moveBeatRange(model, sel, dir);
         } else {
           // Measure mode — Ctrl is ignored.
           state.selection = moveMeasureMovable(model, sel, dir);
@@ -696,19 +704,23 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       }
       if (e.key === 'x' || e.key === 'X') {
         pendingClipboardText = serializeClipboard(model, sel);
-        const beatTstamp = sel.kind === 'beat'
-          ? model.getTickPositionAt(sel.voice, sel.movable)
-          : null;
         if (sel.kind === 'beat') {
-          const lo = Math.min(sel.anchor, sel.movable);
-          const hi = Math.max(sel.anchor, sel.movable);
-          const tLo = model.getTickPositionAt(sel.voice, lo);
-          const tHi = model.getTickPositionAt(sel.voice, hi);
+          const boundaries = beatBoundariesInVoice(model, sel.voice);
+          /* Cursor lands at the lastMoved-side boundary post-deletion (= the
+           * "user's perceived current position"). Capture its tstamp before
+           * mutating; the model's flat indices shift but the tstamp is stable. */
+          const exitCursorTstamp = model.getTickPositionAt(
+            sel.voice,
+            sel.lastMoved === 'first' ? boundaries[sel.first] : boundaries[sel.last + 1],
+          );
+          const tLo = model.getTickPositionAt(sel.voice, boundaries[sel.first]);
+          const tHi = model.getTickPositionAt(sel.voice, boundaries[sel.last + 1]);
           model.clearBeatRange(sel.voice, tLo, tHi);
-          if (beatTstamp !== null) {
-            model.setVoice(sel.voice);
-            model.setCursor(model.findCursorByTickPosition(sel.voice, beatTstamp), sel.voice);
-          }
+          model.setVoice(sel.voice);
+          model.setCursor(
+            model.findCursorByTickPosition(sel.voice, exitCursorTstamp),
+            sel.voice,
+          );
         } else {
           const mLo = Math.min(sel.anchorMeasure, sel.movableMeasure);
           const mHi = Math.max(sel.anchorMeasure, sel.movableMeasure);
