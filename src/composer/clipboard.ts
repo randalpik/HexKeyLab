@@ -183,10 +183,15 @@ function collectMeasureExpressions(
 
 /** Build the <hkl:clipboard> wrapper XML string for the given selection. */
 export function serializeClipboard(model: ComposerModel, sel: SelectionState): string {
+  /* createDocument already declares xmlns:hkl on the root via the qualified
+   * name 'hkl:clipboard'. Re-declaring xmlns:hkl via setAttribute produced a
+   * duplicate-attribute error when Firefox parsed the round-tripped string
+   * (Chromium silently tolerated it). Set the default xmlns to the MEI
+   * namespace via setAttributeNS so MEI children (note/chord/rest/measure)
+   * resolve correctly; let createDocument own the hkl: declaration. */
   const doc = document.implementation.createDocument(HKL_NS, 'hkl:clipboard', null);
   const root = doc.documentElement;
-  root.setAttribute('xmlns', MEI_NS);
-  root.setAttribute('xmlns:hkl', HKL_NS);
+  root.setAttributeNS('http://www.w3.org/2000/xmlns/', 'xmlns', MEI_NS);
   root.setAttribute('timeSig', timeSigString(model));
 
   if (sel.kind === 'beat') {
@@ -292,34 +297,9 @@ export function parseClipboard(text: string): ClipboardContents | null {
   return null;
 }
 
-/** Write a serialized clipboard string to navigator.clipboard. */
-export async function writeToClipboard(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Read from navigator.clipboard and parse. Returns null on read failure or
- *  non-HKL content. */
-export async function readFromClipboard(): Promise<ClipboardContents | null> {
-  try {
-    const text = await navigator.clipboard.readText();
-    return parseClipboard(text);
-  } catch {
-    return null;
-  }
-}
-
-/** Convenience: serialize + write. Returns the serialized text on success
- *  (for status messages / round-trip tests). */
-export async function copySelection(
-  model: ComposerModel,
-  sel: SelectionState,
-): Promise<{ ok: boolean; text: string }> {
-  const text = serializeClipboard(model, sel);
-  const ok = await writeToClipboard(text);
-  return { ok, text };
-}
+/* OS clipboard I/O is done via the DOM `copy` / `cut` / `paste` events in
+ * input.ts — they fire synchronously on user gesture, expose
+ * `event.clipboardData` directly, and (critically) do NOT trigger Firefox's
+ * `clipboard-read` permission prompt. `navigator.clipboard.readText()` was
+ * the previous approach but it surfaces a "Paste" UI in Firefox and often
+ * resolves with empty/stale data even after the user accepts. */

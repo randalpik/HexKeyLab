@@ -80,7 +80,7 @@ import {
   adjustStaffRange, promoteBeatToMeasure, cursorAtMovable,
   snapBeatBoundary,
 } from './selection.js';
-import { copySelection, readFromClipboard, type ClipboardContents } from './clipboard.js';
+import { serializeClipboard, parseClipboard, type ClipboardContents } from './clipboard.js';
 
 export type EntryMode = 'insert' | 'overwrite';
 export type CursorMode = 'voice' | 'expr' | 'select';
@@ -179,6 +179,11 @@ const state: InputState = {
   pendingTuplet: null,
   selection: null,
 };
+
+/* Set by the keydown Ctrl+C/X handler; consumed by the DOM copy/cut event
+ * handler immediately afterwards (same user-gesture tick). The split-handler
+ * approach is documented at the keydown handler. */
+let pendingClipboardText: string | null = null;
 
 export function getInputState(): Readonly<InputState> {
   return state;
@@ -515,8 +520,8 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       /* Re-enter beat selection covering the pasted content. anchor = beat
          start (left edge of paste), movable = post-paste cursor (right edge). */
       const tHiAbs = tLoAbs + contents.durationTicks;
-      const newAnchor = model.findCursorAtOrBefore(voice, tLoAbs);
-      const newMovable = model.findCursorAtOrBefore(voice, tHiAbs);
+      const newAnchor = model.findCursorByTickPosition(voice, tLoAbs);
+      const newMovable = model.findCursorByTickPosition(voice, tHiAbs);
       if (newAnchor !== newMovable) {
         state.selection = {
           kind: 'beat',
@@ -584,23 +589,6 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     return true;
   }
 
-  /** Async paste from OS clipboard. Reads, parses, applies. */
-  function doPaste(): void {
-    hooks.setStatus?.('Pasting…');
-    void readFromClipboard().then((contents) => {
-      if (!contents) {
-        hooks.setStatus?.('Clipboard is empty or not HKL content.');
-        return;
-      }
-      const ok = applyPaste(contents);
-      if (ok) {
-        refreshExprCursor(model);
-        hooks.onStateChange();
-        hooks.onChange();
-      }
-    });
-  }
-
   /** Delete the current selection without copying. Used by Ctrl+V in
    *  selection mode (delete-then-paste). Cursor lands at the start of
    *  the deleted range, in the appropriate voice. */
@@ -612,7 +600,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       const tHi = model.getTickPositionAt(sel.voice, hi);
       model.clearBeatRange(sel.voice, tLo, tHi);
       model.setVoice(sel.voice);
-      model.setCursor(model.findCursorAtOrBefore(sel.voice, tLo), sel.voice);
+      model.setCursor(model.findCursorByTickPosition(sel.voice, tLo), sel.voice);
     } else {
       const mLo = Math.min(sel.anchorMeasure, sel.movableMeasure);
       const mHi = Math.max(sel.anchorMeasure, sel.movableMeasure);
@@ -686,77 +674,60 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         return true;
       }
     }
-    // Ctrl+C / Ctrl+X — copy / cut. Ctrl+V handled in a later phase.
+    /* Ctrl+C / Ctrl+X: do the model side-effects here (serialize the
+       selection, exit/delete) and stash the serialized text in
+       `pendingClipboardText` for the DOM copy/cut event to ferry into
+       `event.clipboardData`. This split lets us
+         (a) get reliable OS-clipboard I/O across browsers via DOM events
+             (Firefox blocks `navigator.clipboard.readText()` and surfaces
+             the "Paste" UI); AND
+         (b) keep model side-effects observable from CDP-driven tests
+             (which dispatch keydown but don't synthesize clipboard events).
+       Ctrl+V is handled entirely by the DOM `paste` event handler below —
+       the data isn't known until clipboardData is available. */
     if (e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey) {
       if (e.key === 'c' || e.key === 'C') {
-        e.preventDefault();
-        const pos = cursorAtMovable(model, sel);
-        void copySelection(model, sel).then((r) => {
-          if (r.ok) hooks.setStatus?.('Copied to clipboard.');
-          else hooks.setStatus?.('Copy failed: clipboard write blocked.');
-        });
-        // Exit immediately (don't wait for async clipboard write) — the model
-        // is unchanged so the cursor placement is safe.
-        model.setVoice(pos.voice);
-        model.setCursor(pos.flatIndex, pos.voice);
-        state.selection = null;
-        state.cursorMode = 'voice';
-        hooks.onStateChange();
-        hooks.onChange();
+        /* Copy leaves the selection intact — only cut/paste mutate state.
+           Just serialize into pendingClipboardText for the DOM copy event
+           handler to ferry into event.clipboardData; do NOT preventDefault. */
+        pendingClipboardText = serializeClipboard(model, sel);
+        hooks.setStatus?.('Copied to clipboard.');
         return true;
       }
       if (e.key === 'x' || e.key === 'X') {
-        e.preventDefault();
-        const movablePosBefore = cursorAtMovable(model, sel);
-        // Capture movable's tstamp for beat mode (the post-deletion flat
-        // index for that tstamp is what we want to land on).
-        let beatTstamp: number | null = null;
-        if (sel.kind === 'beat') {
-          beatTstamp = model.getTickPositionAt(sel.voice, sel.movable);
-        }
-        void copySelection(model, sel).then((r) => {
-          if (r.ok) hooks.setStatus?.('Cut to clipboard.');
-          else hooks.setStatus?.('Clipboard write blocked; deletion still applied.');
-        });
-        // Apply deletion synchronously.
+        pendingClipboardText = serializeClipboard(model, sel);
+        const beatTstamp = sel.kind === 'beat'
+          ? model.getTickPositionAt(sel.voice, sel.movable)
+          : null;
         if (sel.kind === 'beat') {
           const lo = Math.min(sel.anchor, sel.movable);
           const hi = Math.max(sel.anchor, sel.movable);
           const tLo = model.getTickPositionAt(sel.voice, lo);
           const tHi = model.getTickPositionAt(sel.voice, hi);
           model.clearBeatRange(sel.voice, tLo, tHi);
-          // Find post-deletion cursor for the original movable tstamp.
           if (beatTstamp !== null) {
-            const newC = model.findCursorAtOrBefore(sel.voice, beatTstamp);
             model.setVoice(sel.voice);
-            model.setCursor(newC, sel.voice);
-          } else {
-            model.setVoice(movablePosBefore.voice);
-            model.setCursor(movablePosBefore.flatIndex, movablePosBefore.voice);
+            model.setCursor(model.findCursorByTickPosition(sel.voice, beatTstamp), sel.voice);
           }
         } else {
           const mLo = Math.min(sel.anchorMeasure, sel.movableMeasure);
           const mHi = Math.max(sel.anchorMeasure, sel.movableMeasure);
           model.clearMeasureRange(mLo, mHi, sel.firstStaff, sel.lastStaff);
-          model.setVoice(movablePosBefore.voice);
-          model.setCursor(movablePosBefore.flatIndex, movablePosBefore.voice);
+          const pos = cursorAtMovable(model, sel);
+          model.setVoice(pos.voice);
+          model.setCursor(pos.flatIndex, pos.voice);
         }
         state.selection = null;
         state.cursorMode = 'voice';
         refreshExprCursor(model);
+        hooks.setStatus?.('Cut to clipboard.');
         hooks.onStateChange();
         hooks.onChange();
         return true;
       }
       if (e.key === 'v' || e.key === 'V') {
-        e.preventDefault();
-        /* Paste while in selection mode: delete current selection, then
-           paste at the resulting cursor position. The paste itself enters
-           selection mode covering the new content. */
-        deleteSelectionWithoutCopy(sel);
-        state.selection = null;
-        state.cursorMode = 'voice';
-        doPaste();
+        /* Paste handled exclusively by the DOM `paste` event — we can't
+           do the model side-effect until we have the clipboard data. */
         return true;
       }
     }
@@ -836,16 +807,8 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       return;
     }
 
-    /* Ctrl+V from voice mode: paste at cursor. Must come BEFORE the bail-on-
-       modifier check below (Ctrl+V would otherwise be silently dropped). */
-    if (e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey
-        && state.cursorMode === 'voice'
-        && (e.key === 'v' || e.key === 'V')) {
-      e.preventDefault();
-      if (hooks.isPlaybackActive()) return;
-      doPaste();
-      return;
-    }
+    /* Ctrl+V from voice mode is handled by the DOM `paste` event listener
+       below (no preventDefault here, no async clipboard read). */
 
     /* Ctrl+2..7 begins tuplet creation. Must come BEFORE the bail-on-modifier
        check below. preventDefault is critical: in Firefox/Chromium, Ctrl+1..8
@@ -1064,6 +1027,64 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     }
   }
 
+  /* DOM clipboard-event handlers. These fire on Ctrl+C/X/V (and on
+     right-click → Copy/Cut/Paste) BEFORE the browser's default behavior,
+     and crucially give us synchronous access to `event.clipboardData` —
+     no `navigator.clipboard.readText()`, no Firefox permission prompt. */
+  /* On Ctrl+C/X, the keydown handler stashed the serialized fragment in
+     `pendingClipboardText` and did all the model side-effects. Here we just
+     ferry the text into the event's clipboardData (the only browser-API
+     point at which Firefox lets us write the OS clipboard without prompting). */
+  function copyHandler(e: ClipboardEvent): void {
+    if (shouldIgnore(e as unknown as KeyboardEvent)) return;
+    if (pendingClipboardText === null) return;
+    e.preventDefault();
+    e.clipboardData?.setData('text/plain', pendingClipboardText);
+    pendingClipboardText = null;
+  }
+
+  function cutHandler(e: ClipboardEvent): void {
+    if (shouldIgnore(e as unknown as KeyboardEvent)) return;
+    if (pendingClipboardText === null) return;
+    e.preventDefault();
+    e.clipboardData?.setData('text/plain', pendingClipboardText);
+    pendingClipboardText = null;
+  }
+
+  function pasteHandler(e: ClipboardEvent): void {
+    if (shouldIgnore(e as unknown as KeyboardEvent)) return;
+    if (state.cursorMode === 'expr') return;
+    if (hooks.isPlaybackActive()) return;
+    const text = e.clipboardData?.getData('text/plain') ?? '';
+    const contents = parseClipboard(text);
+    if (!contents) {
+      hooks.setStatus?.('Clipboard is empty or not HKL content.');
+      return;
+    }
+    e.preventDefault();
+    /* In selection mode: delete the existing selection first, then paste at
+       the resulting cursor position. */
+    if (state.cursorMode === 'select' && state.selection) {
+      deleteSelectionWithoutCopy(state.selection);
+      state.selection = null;
+      state.cursorMode = 'voice';
+    }
+    const ok = applyPaste(contents);
+    if (ok) {
+      refreshExprCursor(model);
+      hooks.onStateChange();
+      hooks.onChange();
+    }
+  }
+
   document.addEventListener('keydown', handler);
-  return () => document.removeEventListener('keydown', handler);
+  document.addEventListener('copy', copyHandler);
+  document.addEventListener('cut', cutHandler);
+  document.addEventListener('paste', pasteHandler);
+  return () => {
+    document.removeEventListener('keydown', handler);
+    document.removeEventListener('copy', copyHandler);
+    document.removeEventListener('cut', cutHandler);
+    document.removeEventListener('paste', pasteHandler);
+  };
 }

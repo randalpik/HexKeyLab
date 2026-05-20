@@ -570,6 +570,25 @@ export class ComposerModel {
     return { measureIdx: loc.measureIdx, inTuplet: loc.inTuplet !== null };
   }
 
+  /** Largest cursor index `c` such that `getTickPositionAt(voice, c) <=
+   *  targetTime`. Uses the locateCursor convention ("cursor c is past
+   *  flat[c]") — the same convention insertChordAtCursor / deleteAtCursor /
+   *  etc. operate under. Distinct from `findCursorAtOrBefore`, which uses
+   *  an off-by-one accounting (sum of flat[0..c-1] without anchoring on
+   *  flat[c]) — keep that one for switchVoice / playback compat, but for
+   *  any newer code that pairs tstamps with locateCursor-based mutations,
+   *  this is the correct helper. */
+  findCursorByTickPosition(voice: Voice, targetTime: number): number {
+    const flat = this.flatChildren(voice);
+    let best = 0;
+    for (let c = 0; c <= flat.length; c++) {
+      const ct = this.getTickPositionAt(voice, c);
+      if (ct <= targetTime + 1e-6) best = c;
+      else break;
+    }
+    return best;
+  }
+
   /** Returns the "current" element in the flat stream — the element to the
    *  cursor's LEFT under the new convention. Both INSERT and OVERWRITE
    *  modes refer to the same element (flat[cursor]); the difference is
@@ -2183,10 +2202,15 @@ export class ComposerModel {
       }
     }
 
-    /* Position the cursor at effectiveLo in the source voice. */
+    /* Position the cursor at effectiveLo in the source voice. Use the
+     * locateCursor-convention helper since insertChordAtCursor (below) reads
+     * the cursor via locateCursor — `findCursorAtOrBefore` uses an off-by-one
+     * convention and would put the cursor one element too far right, causing
+     * the paste to insert AFTER the next surviving element instead of in
+     * the just-deleted slot. */
     const prevVoice = this.currentVoice;
     this.currentVoice = voice;
-    this.cursors[voice] = this.findCursorAtOrBefore(voice, effectiveLo);
+    this.cursors[voice] = this.findCursorByTickPosition(voice, effectiveLo);
     /* If the leading expansion (effectiveLo < tLoAbs) created a gap before
        the paste's source-content, fill it with beat-aligned rests first. */
     if (effectiveLo < tLoAbs) {
@@ -2230,7 +2254,7 @@ export class ComposerModel {
     }
 
     /* Restore voice; final post-cursor at effectiveHi. */
-    const postCursor = this.findCursorAtOrBefore(voice, effectiveHi);
+    const postCursor = this.findCursorByTickPosition(voice, effectiveHi);
     this.cursors[voice] = postCursor;
     this.currentVoice = prevVoice;
     this.setBarlines();
@@ -2275,7 +2299,7 @@ export class ComposerModel {
          way is to compute the new cursor via tstamp lookup. */
       const newTstamp = this.getCursorAbsoluteTicks(v) + tupletTicks;
       this.normalizePlaceholders();
-      this.cursors[v] = this.findCursorAtOrBefore(v, newTstamp);
+      this.cursors[v] = this.findCursorByTickPosition(v, newTstamp);
       return true;
     }
     return false;

@@ -89,14 +89,31 @@ function measureContentLeft(
 }
 
 /** Right edge of measure `measureIdx` — the visual position of "end of
- *  measure M_k" = the barline between M_k and M_{k+1} as drawn on M_k's
- *  system. */
+ *  measure M_k". Verovio renders each measure with its own barLine glyph at
+ *  the end, INSIDE the measure group; the measure's bbox `.right` therefore
+ *  extends past the visible bar-line center by half the glyph's width.
+ *  For mid-system boundaries, M_{k+1}'s bbox `.left` (= position where the
+ *  next measure's content starts) lands precisely at the visible bar line.
+ *  Fall back to M_k's bbox `.right` only when there's no next measure on
+ *  the same system (= end-of-system or end-of-score; in both cases the
+ *  barLine IS at the bbox edge). */
 function measureRightEdge(model: ComposerModel, measureIdx: number): number | null {
   const measures = model.allMeasures();
   if (measureIdx < 0 || measureIdx >= measures.length) return null;
-  const mid = measures[measureIdx].getAttribute('xml:id');
-  if (!mid) return null;
-  const r = renderer.rectForId(mid);
+  const cur = measures[measureIdx];
+  const curId = cur.getAttribute('xml:id');
+  if (!curId) return null;
+  const next = measures[measureIdx + 1];
+  const nextId = next?.getAttribute('xml:id') ?? null;
+  if (nextId) {
+    const curSys = systemAncestor(curId);
+    const nextSys = systemAncestor(nextId);
+    if (curSys && curSys === nextSys) {
+      const nr = renderer.rectForId(nextId);
+      if (nr) return nr.left;
+    }
+  }
+  const r = renderer.rectForId(curId);
   return r ? r.right : null;
 }
 
