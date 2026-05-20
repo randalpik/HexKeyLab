@@ -1316,3 +1316,53 @@ Cursor renderer: when `flat[c]` is a measure wrapper (`nextRef.elem.localName ==
 - `src/composer/model.ts:switchVoice` / `setVoice` / `moveCursor` / `setCursor` / `cursorToEnd` — `autofillOnLeave` calls removed; `prevMIdx` capture no longer needed.
 - `src/composer/model.ts` — autofill helpers retained in place with a docblock above `autofillMeasure` explaining the disable and the path to re-enable.
 - `src/composer/restfill.ts` — beat-aligned decomposer retained.
+
+---
+
+## Composer test suite — tiered, invariant-categorized, in-process bridge mock (2026-05-19)
+
+**Picked**: a dedicated `tools/composer-test/` runner with three tiers (`fast` ~10 s for inner-loop iteration; `full` ~15 s as the pre-merge gate; `visual` for baseline-diff). Fixtures are organized by concern (cursor-convention, single-voice, multi-voice, tuplets, ties, sig-changes, keystroke-dispatch, bridge, scroll, visual). Each fixture runs through whichever of the seven invariants apply (MODEL, CURSOR, RENDER, ROUNDTRIP, VISUAL, INPUT, CONSOLE). Universal invariants (placeholder, tie orphans, cursor-trace, roundtrip on full, console capture) auto-apply to every fixture; fixture-specific assertions in `FIXTURE_ASSERTIONS[name]` cover the rest.
+
+The runner reuses the existing `tools/composer-inspect/` CDP plumbing (factored into `lib/chromium.mjs` + `lib/cdp.mjs`). It launches headless Chromium once, navigates to the dev server (`http://localhost:5173/composer.html`), injects an assertion library + bridge-mock + cursor-trace fn under `window.__test` / `window.__bridgeMock` / `window.__cursorTrace`, then iterates fixtures with a fresh model state per fixture. Real-keystroke testing goes through CDP `Input.dispatchKeyEvent` so `input.ts`'s document-level keydown handler is exercised end-to-end. The bridge mock opens a second `BroadcastChannel('hkl-composer-bridge')` from inside the page — Composer's own `bridge.on` listener receives mock events as if from real HKL, and Composer→HKL emissions get captured by the mock's listener.
+
+**Rejected**:
+- **Vitest / Jest / Playwright**: heavyweight (config, runners, transformers); a direct CDP driver is ~50 lines and gives full control over the in-page state machine.
+- **State reset by full page reload**: ~3 s per scenario for the Verovio cold-start dominates wall time; instead `RESET_SNIPPET` calls `model.replaceDocument(emptySeed.serialize())`, resets `inputState.mode/cursorMode/pendingHairpin/pendingTuplet` (runtime-mutable despite the TS Readonly type), broadcasts an empty `held-keys` event to clear `lastHeldKeys`, zeroes `score.scrollLeft/scrollTop`, and forces scroll-mode rendering. The full reset takes <50 ms.
+- **Page-mode rendering for visual tests**: Verovio's page-mode SVG is sized to the paper, not the content — the screenshot clipped to the SVG bbox came back mostly empty. Scroll mode produces a tight-fit SVG that clips usefully.
+- **Pre-deletion partner cleanup as the correctness mechanism for ties** (see "Tie system" entry below): replaced with post-mutation `normalizeTies()`, which is chain-aware and idempotent. The suite's tie-stress fixtures (`m1TieDeleteInitiatorFromSplit`, `m1TieDeleteMiddleFromSplit`, `m1TieToggleOnTerminal*`) lock in the new behavior.
+
+**Why**: the previous tooling (`tools/composer-inspect/cursor-trace-all.mjs`) asserted ONE invariant (consecutive cursor positions render at distinct rects) over EIGHT scenarios. Necessary but not sufficient — wrong-position cursor, wrong content rendered, missing tuplet bracket, accidental glyph wrong, tie-partner orphan, color leak, MEI validation errors all slipped past. The new suite found six real bugs during construction (data-tie-partner asymmetry, cursor-stuck-at-tuplet-entry stale state, placeholder-id roundtrip drift, autoflow-overflow rest decomposition behavior, `setCursor`-at-past-end + `deleteAtCursor` semantics confusion, ASI bug in injected template literal — see lessons.md for each), then continued catching the user's "extend tie on terminal note" gap once shipped.
+
+**Where**:
+- `tools/composer-test/run.mjs` — entry point, parses tier/scenario args, orchestrates.
+- `tools/composer-test/fixtures.mjs` — every fixture's setup snippet + fixture-specific assertions.
+- `tools/composer-test/lib/` — chromium / cdp / assertions / keystroke / bridge-mock / scroll-helpers / cursor-trace / visual / console-capture / runner-core.
+- `tools/composer-test/baselines/*.png` — VISUAL reference PNGs (clipped to SVG bbox, scroll-mode).
+- `tools/composer-test/README.md` — how to run, how to add fixtures.
+- `package.json` — `test:composer` + `test:composer:fast` scripts.
+- `CLAUDE.md` workflow patterns — "before declaring any Composer change done" gate.
+
+---
+
+## Tie system: intent + realization, normalizeTies() as single source of truth (2026-05-19)
+
+**Picked**: split tie state into two concerns. Per-note INTENT (`wantsForward`: encoded as `@tie ∈ {"i","m"}` OR `data-pending-tie="true"`) is the persisted user expression. REALIZATION (`@tie` values for rendering, `data-tie-partner` forward-only xml:id references, `<lv>` hanging-arc elements) is **derived** by a single `normalizeTies()` function that runs after every structural mutation. `normalizeTies` strips all realization, snapshots intent, then forward-walks each voice's flat order and rebuilds. Idempotent.
+
+`data-tie-partner` is **forward-only** — `@tie="i"` or `"m"` notes point at the NEXT chain member; terminals (`@tie="t"`) carry no partner. A note can simultaneously hold `@tie="t"` (incoming) AND `data-pending-tie="true"` (outgoing intent unfulfilled), so "extend an already-tied-to note forward" works naturally.
+
+**Rejected**:
+- **Bidirectional `data-tie-partner` on each tie pair** (the original `toggleTieOnCurrent` approach): forced every cleanup site to handle two directions, and didn't generalize to chains of length 3+ from auto-tie-on-overflow.
+- **Backward-only `data-tie-partner` on the `m`/`t` side** (the original `insertWithSplit` approach): asymmetric — deleting the `i` initiator left the downstream `m`/`t` survivors with `data-tie-partner` pointing at a deleted note. Verovio emitted "Expected @tie median or terminal in note 'X'" warnings; the user reported "ties don't appear at all sometimes".
+- **Ad-hoc cleanup at each call site** (`orphanTiePartners` pre-deletion, `resolvePendingTies` post-insert, manual chain wiring in `insertWithSplit`): three independent passes with different conventions; any new mutation path had to remember to call all three in the right order. Centralizing into `normalizeTies` removes that maintenance burden.
+
+**Why**: the asymmetric `data-tie-partner` had been latent for months because typical use (toggle on two adjacent notes; delete the second) hit the symmetric code path. The auto-tie-on-overflow case (whole-note typed near a bar line; deletion of any chain piece) was rarer and surfaced only when the user pushed on it. Splitting intent from realization eliminates the entire class of "this mutation path forgot a cleanup step" bug: every mutation just needs to call `normalizeTies()` once, and the per-chain consistency is restored from scratch.
+
+`toggleTieOnCurrent` is simplified to a pure intent flip (set/clear `data-pending-tie` on each note in the chord, or downgrade `@tie="m"` to `"t"` when toggling off), then `normalizeTies`. The previous code had to look ahead, find same-pitch partners, set `@tie` on both sides, and wire `data-tie-partner` bidirectionally — all of which is now derived.
+
+**Where**:
+- `src/composer/model.ts:normalizeTies` — new; the centerpiece.
+- `src/composer/model.ts:orphanTiePartners` / `resolvePendingTies` — reduced to backward-compat stubs (no-op / alias for `normalizeTies`) so the dozen call sites don't all need rewriting in one commit.
+- `src/composer/model.ts:insertWithSplit` — tie wiring loop now sets only `@tie` intent per piece; `data-tie-partner` is derived.
+- `src/composer/model.ts:toggleTieOnCurrent` — simplified to intent-flip + `normalizeTies`.
+- `src/composer/model.ts:deleteAtCursor` / `replaceChordAtCursor` / `setTimeSig` / `replaceDocument` — every mutation path calls `normalizeTies()` after the structural change.
+- `tools/composer-test/fixtures.mjs` — 9 tie fixtures lock in the behavior, including the previously-broken chain-deletion cases.

@@ -1,0 +1,321 @@
+{
+  "mode": "fast",
+  "fixtures": 39,
+  "passed": 39,
+  "failed": 0,
+  "elapsedMs": 9814,
+  "results": [
+    {
+      "name": "emptyDoc",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 5
+      }
+    },
+    {
+      "name": "m1Quarter",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 5
+      }
+    },
+    {
+      "name": "m1Full",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 5
+      }
+    },
+    {
+      "name": "m1FullM2Quarter",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 5
+      }
+    },
+    {
+      "name": "m1FullM2Empty",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 5
+      }
+    },
+    {
+      "name": "m1PartialM3Full",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 5
+      }
+    },
+    {
+      "name": "m1FullM2EmptyM3Quarter",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 5
+      }
+    },
+    {
+      "name": "m1EmptyM2Quarter",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 5
+      }
+    },
+    {
+      "name": "pastEnd_fullLast",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "pastEnd_partialLast",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 6
+      }
+    },
+    {
+      "name": "pastEnd_emptyLast",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 6
+      }
+    },
+    {
+      "name": "m1WrapperCollapse",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 5
+      }
+    },
+    {
+      "name": "m1EmptyWrapperPresent",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 5
+      }
+    },
+    {
+      "name": "m1NoteA4Quarter",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "m1ChordCEG",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 6
+      }
+    },
+    {
+      "name": "m1AllDurations",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 5
+      }
+    },
+    {
+      "name": "m1DottedHalfTied",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 5
+      }
+    },
+    {
+      "name": "voiceSwitch_noAutofill",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "moveCursorAcrossBar_noAutofill",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 6
+      }
+    },
+    {
+      "name": "ctrlNav_twoFull",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 5
+      }
+    },
+    {
+      "name": "ctrlNav_fullEmptyFull",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 5
+      }
+    },
+    {
+      "name": "m1TieRealPair",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "m1TiePendingStub",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "m1TieOrphanForward",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 6
+      }
+    },
+    {
+      "name": "m1TieCrossBarSplit",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 6
+      }
+    },
+    {
+      "name": "m1TieThreePieceChain",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 6
+      }
+    },
+    {
+      "name": "m1TieDeleteInitiatorFromSplit",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 6
+      }
+    },
+    {
+      "name": "m1TieDeleteMiddleFromSplit",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 6
+      }
+    },
+    {
+      "name": "m1TieToggleOnTerminal",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "m1TieToggleOnTerminalNoPartner",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "m1Triplet8Empty",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "m1Triplet8Partial",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 5
+      }
+    },
+    {
+      "name": "m1Triplet8Full",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 5
+      }
+    },
+    {
+      "name": "m1Triplet8FilledThenDelete",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 6
+      }
+    },
+    {
+      "name": "m1TripletInsideTriplet",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "m1TupletExceedsMeasure",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "timeSig4to3Truncate",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "timeSig4to6_8",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 5
+      }
+    },
+    {
+      "name": "keySig3Sharps",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 6
+      }
+    }
+  ]
+}

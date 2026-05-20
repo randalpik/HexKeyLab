@@ -969,17 +969,29 @@ Triggering on every mutation catches the common abandonment pattern that the pre
 
 ### 7.14 Ties
 
-`@tie="i"|"m"|"t"` on `<note>` (single MEI 5 values, not compound forms — Verovio rejects `"ti"`/`"it"`). Each tied pair carries a `data-tie-partner` attribute on both sides (custom; MEI ignores) pointing at the partner's xml:id. This makes orphan cleanup O(1) when one side of a pair is deleted.
+**Intent vs. realization.** Tie state on each `<note>` is split into two concerns:
 
-`toggleTieOnCurrent` (bound to `=`):
-- If the current note has a tie, removes it (and clears its partner).
-- Else looks at the next layer element. For each note in the current chord, finds a same-pitch partner (same pname + alter + oct) in the next element. Matched: sets `@tie="i"` on current, `@tie="t"` on partner. Unmatched: leaves the current note as a STUB (no MEI tie attribute; tracked via `data-pending-tie="true"`).
+- **Intent (persisted across mutations):** `wantsForward` — this note wants to be tied to the next same-pitch note in its voice's flat order. Encoded as either `@tie ∈ {"i","m"}` OR `data-pending-tie="true"`.
+- **Realization (derived from intent + current flat order):**
+  - `@tie ∈ {"i","m","t"}` — MEI 5 value on each tied note (no compound forms; Verovio rejects `"ti"`/`"it"`).
+  - `data-tie-partner` — **forward-only** xml:id reference; each tied note points at the next chain member. Terminals (`@tie="t"`) carry no partner.
+  - `data-pending-tie="true"` + `<lv startid="#noteId" tstamp2="…"/>` — pending stub for intent that has no realizable forward partner yet. Renders as Verovio's "laissez vibrer" hanging arc.
 
-Stub ties don't render visually (Verovio's `<lv>` element draws nothing reliably; manual SVG overlay was rejected as too invasive). They auto-resolve into a real tie pair the moment a matching pitch is entered after them — `resolvePendingTies` runs at the end of every `insertChordAtCursor` / `replaceChordAtCursor`.
+A note can simultaneously hold `@tie="t"` (terminus of an incoming chain) AND `data-pending-tie="true"` (outgoing intent unfulfilled, ready to auto-resolve when a same-pitch note is inserted after it).
 
-When an element is deleted (or replaced), `orphanTiePartners(elem)` walks each inner note's `data-tie-partner`; surviving initiators are demoted back to a pending stub, surviving terminators have their `@tie` cleared. Tie chains across multiple pieces (from §7.15 auto-tie-on-overflow) carry partner pointers between every adjacent pair so a chain unwinds cleanly when any piece is removed.
+**`normalizeTies()` (`model.ts`)** is the single source of truth. It runs after every structural mutation and:
 
-Auto-tie-on-overflow: when an inserted note exceeds the remaining ticks in the current measure, `insertWithSplit` decomposes the duration into a representable head + tail chain via `decomposeTicks(ticks)` (greedy by 64ths down to a power-of-2 table). Each chain piece gets a `<note>` with the appropriate `@tie` value (i/m/t) and `data-tie-partner` pointing at the previous piece. New measures are appended as needed; `setBarlines()` keeps the final-barline (`@right="end"`) on the last measure.
+1. Snapshots per-note `wantsForward` from the current `@tie` / `data-pending-tie` state.
+2. Strips ALL realization attributes (`@tie`, `data-tie-partner`, `data-pending-tie`) and removes every `<lv>` element document-wide.
+3. Forward-walks each voice's flat order; for each note: if `wantsForward` AND the next flat slot has a same-pitch note, realize as `@tie="i"|"m"` + `data-tie-partner` → next; if there was incoming offer, also set `@tie="t"|"m"`; if forward intent can't be realized, set `data-pending-tie` + `<lv>`.
+
+Idempotent: re-running yields identical state. Replaces the older trio of ad-hoc passes (`orphanTiePartners` pre-deletion, `resolvePendingTies` post-insert, in-loop chain wiring in `insertWithSplit`), which were partial and asymmetric (the `i` side never got a back-pointer, so chains of length 3+ left stale `data-tie-partner` references and triggered Verovio's "Expected @tie median or terminal" warnings — see lessons.md).
+
+**`toggleTieOnCurrent` (bound to `=`):** flips the wantsForward intent on every note in the current chord. If at least one note in the chord currently expresses forward intent (`@tie ∈ {i,m}` OR `data-pending-tie`), toggling DROPS that intent (`@tie="m"` → `"t"` to preserve incoming arc; `@tie="i"` → cleared; pending → cleared). Otherwise toggling SETS `data-pending-tie="true"` on each. Then `normalizeTies` derives the final realization. This makes "extend an already-tied-to note forward" work naturally (a `@tie="t"` note + `data-pending-tie` is a valid combined state).
+
+**Auto-tie-on-overflow:** when an inserted note exceeds the remaining ticks in the current measure, `insertWithSplit` decomposes via `decomposeTicks(ticks)` (greedy by 64ths down through dotted forms) and tags each chain piece with `@tie="i"|"m"|"t"` — just the intent. `normalizeTies` (run by the caller) computes the forward partners.
+
+**Deletion semantics:** the surviving chain's correctness no longer depends on pre-deletion cleanup. Remove the element, call `normalizeTies()` (every delete path does), and the survivors get re-tagged consistently. Deleting an `i` from an i-t pair demotes `t` to a pending stub; deleting a middle `m` from i-m-t compacts to i-t; etc.
 
 **Planner + applier** (`planInsert` + `insertWithSplit` in `model.ts`): every layer-level insert is validated by a single walker that simulates the new sequence — inserted note's pieces followed by any post-cursor items — assigning each a `(measureIdx, offset)`. The walker enforces three invariants and surfaces one of three rejection reasons via `canInsertHere`:
 
@@ -1037,6 +1049,34 @@ Rests and durations ≥ quarter break the run. Singletons stay un-wrapped. An el
 - `bar.thru="true"` on `<staffGrp>` so bar lines render as one continuous line from the top of the treble staff to the bottom of the bass staff (grand-staff convention).
 - `@right="end"` on the last measure renders the final thin+thick barline (MEI 5 "final" form; `"dbl"` rendered as a regular double bar, which we don't want at score end).
 - CSS forces `shape-rendering: geometricPrecision` on all strokes (staff lines, ledger lines, bar lines, stems). See §7.5.
+
+### 7.18.1 Composer test suite (`tools/composer-test/`)
+
+The pre-merge gate for any Composer change. Run via `npm run test:composer` (full tier, ~15 s) or `npm run test:composer:fast` (~8 s). Requires `npm run dev` in another terminal.
+
+**Tiers:**
+- `fast` — MODEL + CURSOR + CONSOLE invariants on every fixture (inner-loop iteration).
+- `full` — fast + ROUNDTRIP + RENDER + INPUT-layer + VISUAL.
+- `visual` — pixel-level baselines only; first run seeds, `--update-baselines` re-accepts.
+- `scenario <name>` — single fixture, all applicable invariants, `--keep-open` to leave Chromium alive for inspection.
+
+**Seven invariants (categorized by failure mode, not by feature):**
+
+| Code      | What it asserts                                         | Catches                                         |
+|-----------|---------------------------------------------------------|-------------------------------------------------|
+| MODEL     | Direct model query post-setup matches expectation        | Off-by-one in flat list, cursor convention drift, past-end conditional violations, accidental clamp |
+| CURSOR    | Consecutive cursor positions render at distinct rects (>3 px Manhattan)  | "State changes but pixel doesn't"; stuck-cursor at boundaries |
+| RENDER    | DOM/SVG shape (bbox, glyph count, attr presence)         | Missing tuplet bracket, accid overlap, color leak to stems |
+| ROUNDTRIP | `serialize() → replaceDocument() → serialize()` is identical (modulo regenerated placeholder ids) | `xml:id` namespace bugs, accidental display non-idempotence, tie reconstruction |
+| VISUAL    | Pixel match against baseline PNG (clipped to SVG bbox)   | Font / color / line-rendering changes DOM metrics can't express |
+| INPUT     | Real keystrokes via CDP `Input.dispatchKeyEvent` reach the same end-state as direct model API calls | Keybinding registration, modifier handling, pending hairpin/tuplet flow |
+| CONSOLE   | Verovio + page emit no error-level messages during the run | Stale `@tie`, dangling references, MEI parse errors |
+
+CONSOLE is always-on; the runner attaches to CDP `Runtime.consoleAPICalled` + `Log.entryAdded` and fails any unfiltered error/warning.
+
+**State reset between fixtures.** `RESET_SNIPPET` in `lib/runner-core.mjs` clears the model (via `replaceDocument` with an empty seed), the input state machine (`mode`, `cursorMode`, pending hairpin/tuplet, held keys via a `held-keys: []` bridge broadcast), and the score scroll position. It also forces scroll mode for the renderer so visual clip rects are deterministic (page mode's paper-sized SVG made screenshots mostly white). Skipping any of these caused subtle cross-fixture leakage that was hard to diagnose; the runner's reset is the canonical pattern to follow if new state is introduced.
+
+**Growing the suite.** Every Composer bug fix should land with at least one fixture that locks in the corrected behavior; every new feature should add fixtures covering its happy path plus its rejection cases. The fixtures file (`fixtures.mjs`) is grouped by concern (cursor-convention, single-voice, multi-voice, tuplets, ties, sig-changes, keystroke-dispatch, bridge, scroll, visual) — append to the matching group and add a `FIXTURE_ASSERTIONS[name]` entry if the universal invariants don't already cover what changed. See `tools/composer-test/README.md` for the full how-to.
 
 ### 7.19 Headless inspection tool
 

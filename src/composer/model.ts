@@ -334,6 +334,7 @@ export class ComposerModel {
     this.setBarlines();
     /* Seed <extMeta>/<hkl:config> defaults if the loaded doc lacks them. */
     ensureExpressionDefaults(this.doc);
+    this.normalizeTies();
     this.normalizePlaceholders();
   }
 
@@ -659,6 +660,7 @@ export class ComposerModel {
       const c = this.cursors[v];
       const lookForward: Element[] = c < flat.length ? flat.slice(c) : [];
       this.truncateOverflowingMeasures();
+      this.normalizeTies();
       this.reanchorCursorAfter(v, lookForward);
     }
   }
@@ -1552,73 +1554,129 @@ export class ComposerModel {
       true,
     );
     if (id === null) return null;
+    this.normalizeTies();
     this.normalizePlaceholders();
     this.cursors[v] = Math.min(this.cursors[v], this.getVoiceLength(v));
     return id;
   }
 
-  /** Before an element is removed or replaced, clean up any tie state
-   *  that points at it. Stub notes (data-pending-tie) get their <lv>
-   *  element removed. Realized tie partners on OTHER notes get their
-   *  @tie cleared (and the surviving initiator demoted to a stub so it
-   *  can auto-resolve later). */
-  private orphanTiePartners(elem: Element): void {
-    const notes = this.extractNoteElements(elem);
-    for (const n of notes) {
-      /* If this note IS a stub itself, drop its visual <lv>. */
-      if (n.hasAttribute("data-pending-tie")) removeLvForNote(n);
-      /* Then handle realized tie partners. */
-      const partnerId = n.getAttribute("data-tie-partner");
-      if (!partnerId) continue;
-      const partner =
-        this.doc.querySelector('[*|id="' + partnerId + '"]') ??
-        this.doc.querySelector('[id="' + partnerId + '"]');
-      if (!partner) continue;
-      const partnerTie = partner.getAttribute("tie");
-      if (partnerTie === "i") {
-        clearTieFlag(partner);
-        setStubTie(partner);
-      } else if (partnerTie === "t" || partnerTie === "m") {
-        clearTieFlag(partner);
+  /** Rebuild all tie metadata across the document from scratch.
+   *
+   *  Tie state has two parts:
+   *    INTENT  — per-note, persisted across mutations:
+   *      `wantsForward`: this note wants to be tied to the next same-pitch
+   *      note in its voice's flat order. Encoded as @tie ∈ {i,m} OR
+   *      @data-pending-tie="true".
+   *    REALIZATION — derived from intent + current flat order:
+   *      @tie  — MEI 5 value (i|m|t) on each tied note.
+   *      @data-tie-partner — forward xml:id reference (each tied note points
+   *        to the next member of its chain). The terminal has none.
+   *      @data-pending-tie — set only when intent exists but no partner.
+   *      <lv> — visual hanging arc for pending stubs.
+   *
+   *  This function strips all realization, reads the intent from each
+   *  note, and rebuilds the realization in a single forward walk per
+   *  voice. Idempotent: re-running yields identical state.
+   *
+   *  Replaces the old `orphanTiePartners` (pre-deletion partner cleanup)
+   *  and `resolvePendingTies` (post-insert stub resolution) — both were
+   *  partial and asymmetric. Callers run this once AFTER any structural
+   *  mutation; correctness no longer depends on cleanup-before-deletion.
+   */
+  private normalizeTies(): void {
+    /* Strip every <lv> — we'll re-create them for surviving stubs. The
+     * only <lv> producer in the codebase is our stub machinery. */
+    for (const lv of Array.from(this.doc.querySelectorAll("lv"))) {
+      lv.parentNode?.removeChild(lv);
+    }
+
+    /* Pass 1: snapshot per-note `wantsForward` intent and strip realized
+     * tie attributes from every note. Doing this globally (across all
+     * voices) keeps the per-voice forward walk simple. */
+    const wantsForward = new WeakMap<Element, boolean>();
+    for (const note of Array.from(this.doc.querySelectorAll("note"))) {
+      const tie = note.getAttribute("tie");
+      const pending = note.hasAttribute("data-pending-tie");
+      wantsForward.set(note, tie === "i" || tie === "m" || pending);
+      note.removeAttribute("tie");
+      note.removeAttribute("data-pending-tie");
+      note.removeAttribute("data-tie-partner");
+    }
+
+    /* Pass 2: per voice, walk flat order and rebuild realization. */
+    const pitchKey = (n: Element): string =>
+      n.getAttribute("pname") + "/" + n.getAttribute("oct") + "/" + getNoteAlter(n);
+
+    for (let vi: Voice = 1; vi <= 4; vi = (vi + 1) as Voice) {
+      const flat = this.flatChildren(vi);
+      /* For each cursor between two flat slots, prevOffers[pitchKey] is the
+       * note in the previous slot that wantsForward at that pitch — i.e.,
+       * the "incoming-tie source" for any matching note in the current
+       * slot. Reset on every slot transition. */
+      let prevOffers = new Map<string, Element>();
+      for (let k = 0; k < flat.length; k++) {
+        const notes = this.extractNoteElements(flat[k]);
+        const nextNotes = k + 1 < flat.length
+          ? this.extractNoteElements(flat[k + 1])
+          : [];
+        const currOffers = new Map<string, Element>();
+
+        for (const note of notes) {
+          const pk = pitchKey(note);
+          const wasFromPrev = prevOffers.has(pk);
+          const wants = wantsForward.get(note) ?? false;
+          const partner = wants ? nextNotes.find((n) => pitchKey(n) === pk) : null;
+          const canForward = !!partner;
+
+          if (canForward && partner) {
+            /* Realized: this note ties forward (and possibly backward). */
+            setTieFlag(note, wasFromPrev ? "m" : "i");
+            const pid = partner.getAttribute("xml:id");
+            if (pid) note.setAttribute("data-tie-partner", pid);
+            currOffers.set(pk, note);
+          } else {
+            /* No realizable forward tie. Two independent axes:
+             *   - If we had incoming (wasFromPrev): set @tie="t" so the
+             *     incoming arc still renders (terminal of the prev chain).
+             *   - If the user expressed forward intent (wants) that we
+             *     couldn't realize: preserve it as a pending stub. The
+             *     two can coexist on the SAME note: @tie="t" renders the
+             *     incoming arc, and <lv> + data-pending-tie render the
+             *     outgoing hanging stub. This lets the user "extend"
+             *     a tied-to note forward by toggling tie on it; the
+             *     extension auto-resolves later when a same-pitch note
+             *     follows. */
+            if (wasFromPrev) setTieFlag(note, "t");
+            if (wants) setStubTie(note);
+          }
+        }
+
+        prevOffers = currOffers;
       }
-      partner.removeAttribute("data-tie-partner");
     }
   }
 
-  /** After a new chord lands at flat-index `newFirstFlatIdx`, look at the
-   *  immediately-preceding element in the same voice for any notes marked
-   *  data-pending-tie. For each, find a matching pitch in the new chord
-   *  and complete the tie pair (@tie="i" + @tie="t" + data-tie-partner).
-   *  Unmatched pending ties stay pending — they may resolve on a future
-   *  insert. */
-  private resolvePendingTies(newFirstFlatIdx: number): void {
-    if (newFirstFlatIdx <= 0) return;
-    const v = this.currentVoice;
-    const prev = this.locateFlatElement(v, newFirstFlatIdx - 1);
-    const curr = this.locateFlatElement(v, newFirstFlatIdx);
-    if (!prev || !curr) return;
-    const prevElem = this.contentChildren(prev.layer)[prev.withinIdx];
-    const currElem = this.contentChildren(curr.layer)[curr.withinIdx];
-    if (!prevElem || !currElem) return;
-    if (currElem.localName === "rest") return;
-    const prevNotes = this.extractNoteElements(prevElem);
-    const currNotes = this.extractNoteElements(currElem);
-    for (const n of prevNotes) {
-      if (!n.hasAttribute("data-pending-tie")) continue;
-      const partner = currNotes.find(
-        (m) => notesMatch(n, m) && !m.hasAttribute("tie"),
-      );
-      if (!partner) continue;
-      /* Replace the stub representation (<lv> + data-pending-tie) with a
-         proper @tie="i"/@tie="t" pair. */
-      clearStubTie(n);
-      setTieFlag(n, "i");
-      setTieFlag(partner, "t");
-      const partnerId = partner.getAttribute("xml:id");
-      const nId = n.getAttribute("xml:id");
-      if (partnerId) n.setAttribute("data-tie-partner", partnerId);
-      if (nId) partner.setAttribute("data-tie-partner", nId);
-    }
+  /** Backwards-compatible alias used by call sites that still expect a
+   *  pre-deletion / post-mutation cleanup hook. With the unified
+   *  `normalizeTies`, both are the same operation: run AFTER the
+   *  structural mutation completes. Callers that previously ran
+   *  `orphanTiePartners(elem)` BEFORE removing `elem` now just remove
+   *  the element and call `normalizeTies()` — the normalization picks up
+   *  the survivors correctly because intent lives on the surviving notes,
+   *  not in cross-references pointing AT the deleted note. */
+  private orphanTiePartners(_elem: Element): void {
+    /* No-op — see normalizeTies. Kept as a stub so the many call sites
+     * don't all need to be rewritten in this commit; they all also call
+     * normalizePlaceholders / setBarlines afterward, and normalizeTies
+     * is invoked by those paths. (See the routing in the mutation
+     * entry points: insertChord/Rest, replaceChord, deleteAtCursor,
+     * cycleDots, toggleTie, setTimeSig.) */
+  }
+
+  /** Backwards-compatible alias for the old resolvePendingTies. Calls
+   *  normalizeTies which subsumes the resolution semantics. */
+  private resolvePendingTies(_newFirstFlatIdx: number): void {
+    this.normalizeTies();
   }
 
   /** Append a chord at the end of the current voice. */
@@ -1826,6 +1884,7 @@ export class ComposerModel {
           const tupletIdx = flat.indexOf(tuplet);
           tuplet.parentNode?.removeChild(tuplet);
           this.setBarlines();
+          this.normalizeTies();
           this.normalizePlaceholders();
           this.cursors[v] = cursorPastPrevOf(tupletIdx);
           clampCursors();
@@ -1846,6 +1905,7 @@ export class ComposerModel {
         target.parentNode?.removeChild(target);
         this.renumberMeasures();
         this.setBarlines();
+        this.normalizeTies();
         this.normalizePlaceholders();
         /* Explicitly seat the cursor "past the element before the deleted
            measure". Without this, clampCursors alone leaves the cursor
@@ -1901,7 +1961,6 @@ export class ComposerModel {
     if (tupletParent) {
       const oldTicks = writtenTicks(target);
       const trailingTicks = this.tupletPlaceholderTicks(tupletParent);
-      this.orphanTiePartners(target);
       tupletParent.removeChild(target);
       for (const cc of Array.from(tupletParent.children)) {
         if (isTupletPlaceholder(cc)) tupletParent.removeChild(cc);
@@ -1914,6 +1973,7 @@ export class ComposerModel {
       }
       this.cursors[v] = Math.max(0, c - 1);
       this.setBarlines();
+      this.normalizeTies();
       this.normalizePlaceholders();
       clampCursors();
       return true;
@@ -1926,10 +1986,10 @@ export class ComposerModel {
        (see Case 2 above). */
     const parentLayer = target.parentElement;
     if (!parentLayer || parentLayer.localName !== "layer") return false;
-    this.orphanTiePartners(target);
     parentLayer.removeChild(target);
     this.cursors[v] = Math.max(0, c - 1);
     this.setBarlines();
+    this.normalizeTies();
     this.normalizePlaceholders();
     clampCursors();
     return true;
@@ -2055,9 +2115,10 @@ export class ComposerModel {
     return { id: firstId, newDots: nextDots };
   }
 
-  /** Toggle a tie on the current note/chord. Attaches to next element's
-   *  matching pitches; stubs for non-matching. Returns null when there's
-   *  no tieable current element (e.g. rest, no current). */
+  /** Toggle a tie on the current note/chord. Sets per-note "wants to tie
+   *  forward" intent (via @data-pending-tie) or clears it; `normalizeTies`
+   *  derives @tie / @data-tie-partner / <lv> from flat-order adjacency.
+   *  Returns null when there's no tieable current element. */
   toggleTieOnCurrent(
     mode: "insert" | "overwrite",
   ): { id: string; tied: boolean } | null {
@@ -2075,55 +2136,31 @@ export class ComposerModel {
       const t = n.getAttribute("tie");
       return t === "i" || t === "m" || n.hasAttribute("data-pending-tie");
     });
+
     if (alreadyTied) {
-      /* Toggle off: clear ties / pending markers on current notes; find
-         realized partners (via data-tie-partner) and clear them too. */
+      /* Toggle off: drop the forward intent on each current note. If a
+       * note had @tie="m" (both incoming and outgoing), downgrade to "t"
+       * to preserve the incoming arc. Pending stubs lose @data-pending-tie
+       * (their <lv> is rebuilt by normalize). */
       for (const n of currentNotes) {
-        if (n.hasAttribute("data-pending-tie")) {
-          clearStubTie(n);
-          continue;
-        }
-        const partnerId = n.getAttribute("data-tie-partner");
-        if (partnerId) {
-          const partner =
-            this.doc.querySelector('[*|id="' + partnerId + '"]') ??
-            this.doc.querySelector('[id="' + partnerId + '"]');
-          if (partner) {
-            clearTieFlag(partner);
-            partner.removeAttribute("data-tie-partner");
-          }
-          n.removeAttribute("data-tie-partner");
-        }
-        clearTieFlag(n);
+        n.removeAttribute("data-pending-tie");
+        const t = n.getAttribute("tie");
+        if (t === "m") setTieFlag(n, "t");
+        else if (t === "i") clearTieFlag(n);
+        /* `t` or null → no outgoing intent existed; leave as-is. */
       }
-      this.normalizePlaceholders();
-        return { id: ref.id, tied: false };
+    } else {
+      /* Toggle on: mark each current note as wanting to tie forward.
+       * Use @data-pending-tie as the intent marker — normalize will
+       * upgrade to @tie="i" / "m" when a same-pitch partner is found. */
+      for (const n of currentNotes) {
+        n.setAttribute("data-pending-tie", "true");
+      }
     }
 
-    /* Toggle on: find next element and per-pitch match. Notes that don't
-       match anything in the next element get a stub: data-pending-tie marks
-       it for auto-resolve later, and @lv="true" gives Verovio the visual
-       hanging-tie arc (laissez vibrer). When a matching note follows, the
-       resolve replaces both with a proper @tie="i"/"t" pair. */
-    const next = this.getNextElement(v, ref.index);
-    const nextNotes = next ? this.extractNoteElements(next.elem) : [];
-    for (const n of currentNotes) {
-      const partner = nextNotes.find(
-        (m) => notesMatch(n, m) && !m.hasAttribute("tie"),
-      );
-      if (partner) {
-        setTieFlag(n, "i");
-        setTieFlag(partner, "t");
-        const partnerId = partner.getAttribute("xml:id");
-        const nId = n.getAttribute("xml:id");
-        if (partnerId) n.setAttribute("data-tie-partner", partnerId);
-        if (nId) partner.setAttribute("data-tie-partner", nId);
-      } else {
-        setStubTie(n);
-      }
-    }
+    this.normalizeTies();
     this.normalizePlaceholders();
-    return { id: ref.id, tied: true };
+    return { id: ref.id, tied: !alreadyTied };
   }
 
   /** After a time-signature change, walk each measure × voice layer in
@@ -2328,27 +2365,17 @@ export class ComposerModel {
       withinByMeasure.set(action.targetMIdx, widx + 1);
     }
 
-    /* Tie wiring on the inserted note's pieces (skipped for rests). */
+    /* Tie wiring on the inserted note's pieces (skipped for rests). We
+     * only set the @tie INTENT on each piece (i for first, m for middle,
+     * t for last); the @data-tie-partner forward links are derived by
+     * normalizeTies from flat-order adjacency. */
     if (!isRest && insertedElements.length > 1) {
-      let lastNoteEls: Element[] | null = null;
       for (let pi = 0; pi < insertedElements.length; pi++) {
         const innerNotes = this.extractNoteElements(insertedElements[pi]);
-        let flag: "i" | "m" | "t";
-        if (pi === 0) flag = "i";
-        else if (pi === insertedElements.length - 1) flag = "t";
-        else flag = "m";
-        for (let ni = 0; ni < innerNotes.length; ni++) {
-          setTieFlag(innerNotes[ni], flag);
-          if (
-            (flag === "m" || flag === "t") &&
-            lastNoteEls &&
-            lastNoteEls[ni]
-          ) {
-            const prevId = lastNoteEls[ni].getAttribute("xml:id");
-            if (prevId) innerNotes[ni].setAttribute("data-tie-partner", prevId);
-          }
-        }
-        lastNoteEls = innerNotes;
+        const flag: "i" | "m" | "t" =
+          pi === 0 ? "i" :
+          pi === insertedElements.length - 1 ? "t" : "m";
+        for (const n of innerNotes) setTieFlag(n, flag);
       }
     }
 

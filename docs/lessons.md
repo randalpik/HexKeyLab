@@ -661,3 +661,43 @@ When `voicing.ts` splits a chord across staves via the middle-C threshold, the o
 Fix: after the voice split, walk each voice's stream; consecutive rests merge into one duration, slice at bar boundaries, re-fed through `splitDuration` (the duration DP). A treble bar of 8 eighth notes against an empty bass voice → bass gets a single `r1` after consolidation. A treble + a single quarter-note pickup in the bass → bass gets `quarter + half-rest` (the user's specific example).
 
 The re-fed DP runs per-bar slice so rests don't tie across bars (rests don't carry ties — `r2 ~ r2` is invalid LilyPond).
+
+### Asymmetric cross-references silently fail on the "rare" direction
+
+`data-tie-partner` had two writers with different conventions: `toggleTieOnCurrent` set it bidirectionally on each pair; `insertWithSplit` (auto-tie-on-overflow) set it backward-only (each `m`/`t` piece pointed at its predecessor; the `i` initiator had no back-reference). The orphan-cleanup code walked `data-tie-partner` from the deleted note to find the partner — which worked for `toggleTieOnCurrent`-created pairs (either side knew the other) but missed cases when the `i` side of an `insertWithSplit`-created chain was deleted. The downstream `m`/`t` survivors were left with `data-tie-partner` pointing at a deleted xml:id, and Verovio emitted "Expected @tie median or terminal in note 'X'".
+
+The asymmetry was latent for months because typical use (toggle on adjacent notes; delete the second) hit the symmetric path; the bug only fired when a chain's initiator was deleted, which the user reached via "tie a note, then backspace into the chain head". When a single attribute has multiple writers with different invariants, expect the rare direction to be wrong. Fix here: split persisted INTENT from derived REALIZATION, and centralize realization in one idempotent pass (`normalizeTies`) — see decisions.md.
+
+### State machines outside the model leak across automated tests
+
+`tools/composer-test/run.mjs`'s first cut reset Composer between fixtures by calling `model.replaceDocument(emptyMei)`. That works for the MEI document but NOT for the input.ts module-private `state` object (entry mode, cursor mode, pending hairpin/tuplet), `main.ts`'s `lastHeldKeys`, the score scroll position, or the renderer's view mode. A prior fixture pressing the `Insert` key left `mode='overwrite'` set for the next; a prior bridge test left A3 "held"; page mode left the viewport scrolled into a corner of empty paper.
+
+The toolbar gave it away the moment the visual baselines were inspected — "OVR" mode and "held: A3" both shown despite a fresh model. Fix: `RESET_SNIPPET` now explicitly clears every ambient state machine that lives outside the model — `getInputState()` returns a runtime-mutable reference (`Readonly<>` is a TS type only), `lastHeldKeys` clears via a `held-keys: []` bridge broadcast, `score.scrollLeft/scrollTop` zero directly, `renderer.setViewMode('scroll')` forces deterministic layout. Whenever new global state is added to Composer, the reset path needs the same treatment.
+
+### ASI bit me in a template-literal-injected IIFE
+
+`runner-core.mjs` initially wrote
+```js
+const INJECT_LIB = `(() => { window.__cursorTrace = ${CURSOR_TRACE_FN}; return ${ASSERTION_LIB}; })()`;
+```
+where `ASSERTION_LIB` was itself `(() => { ... })()`. After interpolation the embedded text started with a newline followed by `(...)`, and Automatic Semicolon Insertion parsed `return\n(() => { ... })()` as `return;` followed by an unreachable expression statement. `window.__test` never got defined; every assertion threw `Cannot read properties of undefined`.
+
+The injection LOOKED right and the surrounding eval succeeded — the result just came back `undefined`. Defeat ASI by always parenthesizing interpolated expressions in JS-string templates: `return (${EXPR});`. Same trap applies to any code generator that embeds expression text into a function body.
+
+### Headless Chromium leaks on parent-shell kill
+
+`lib/chromium.mjs` spawns Chromium and exposes a `stop()` callback that the runner's `main()` calls in a `finally`. That works for the normal exit path. It does NOT work when the parent shell of a background bash invocation gets killed mid-task — the `finally` doesn't run, and Chromium plus its `/tmp/hkl-composer-test-*` profile directory leak. Several hours of background-shell test runs left ~30 zombie processes pinning ~3 GB of memory and disk.
+
+Two fixes available, neither yet applied to `chromium.mjs`:
+1. Have the spawned Chromium inherit the parent's process group and rely on the kernel's reaper on SIGHUP — works if the launcher uses `setpgid(0)` and the parent dies cleanly.
+2. Write the Chromium PID to a known location at launch and clean up stale entries on the next runner start.
+
+Pragmatic interim: run probes in the foreground (don't background with `run_in_background: true` unless the task is genuinely long-lived), and periodically `pkill -f "hkl-composer-test-" ; rm -rf /tmp/hkl-composer-test-*`.
+
+### Visual screenshots in page mode capture mostly empty paper
+
+CDP `Page.captureScreenshot` with `clip` set to the rendered SVG's `getBoundingClientRect()` should give a tight crop of the music. In page mode the rendered SVG IS the paper page — full-toolbar width by ~A4 height — with the music tucked into the top-left corner. The clip rect was correct (matched the SVG bbox); the BBOX was wrong relative to expectation. Visible content occupied < 5% of the clip area; any visual regression would be lost in the white expanse.
+
+Fix: force scroll mode for tests (`renderer.setViewMode('scroll')` in `RESET_SNIPPET`). Scroll mode sizes the SVG to its content, so `getBoundingClientRect()` returns a tight box. The baselines now show the rendered music at ~1:1 fill, and pixel diffs are meaningful.
+
+Generalizable rule: when scaling visual regression to "tight crops" for any web app, verify the SVG/canvas you're cropping to is content-sized, not page-sized. Layout modes that pad to paper or device dimensions need to be switched off in the test harness.
