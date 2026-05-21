@@ -97,6 +97,17 @@ interface PendingTuplet {
   atomicK: number;   /* atomic = span-duration divided by K ranks (2/4/8) */
 }
 
+/** Per-note selection inside a chord. When set, Alt+Up/Down step through the
+ *  chord's notes (sorted ascending by MIDI; index 0 = bass); Alt+Left/Right
+ *  SC-transpose the selected note. `=` (tie) targets the single note when
+ *  this is set instead of the whole chord. Cleared by any non-Alt-arrow,
+ *  non-`=` keystroke, by cursor movement, and by voice switches. */
+export interface ChordInternalSel {
+  voice: Voice;
+  chordId: string;
+  noteIndex: number;
+}
+
 export interface InputState {
   duration: Duration;
   mode: EntryMode;
@@ -105,6 +116,7 @@ export interface InputState {
   pendingHairpin: PendingHairpin | null;
   pendingTuplet: PendingTuplet | null;
   selection: SelectionState | null;
+  chordInternalSel: ChordInternalSel | null;
 }
 
 /* Ctrl+N → ratio + span-dotted-ness + atomic-rank-divisor. Per the agreed
@@ -178,6 +190,7 @@ const state: InputState = {
   pendingHairpin: null,
   pendingTuplet: null,
   selection: null,
+  chordInternalSel: null,
 };
 
 /* Set by the keydown Ctrl+C/X handler; consumed by the DOM copy/cut event
@@ -369,6 +382,120 @@ function setVoicePreservingTime(model: ComposerModel, v: Voice): void {
   model.setVoice(v);
   const newCursor = model.findCursorAtOrBefore(v, prevTime);
   model.setCursor(newCursor, v);
+}
+
+/* ── chord-internal selection helpers ─────────────────────────────────────── */
+
+function chordNotesByMidiAscending(chord: Element): Element[] {
+  const out: Element[] = [];
+  for (const c of Array.from(chord.children)) {
+    if (c.localName === 'note') out.push(c);
+  }
+  return out;
+}
+
+/** Returns the chord at flat[cursor] when it has ≥2 notes; null otherwise.
+ *  The cursor convention is "cursor c targets flat[c]" — flat[cursor] is
+ *  the element under the cursor regardless of insert/overwrite mode. */
+function chordAtCursor(model: ComposerModel): Element | null {
+  const v = model.getCurrentVoice();
+  const ref = model.getCurrentElement(v, state.mode);
+  if (!ref) return null;
+  if (ref.elem.localName !== 'chord') return null;
+  const notes = chordNotesByMidiAscending(ref.elem);
+  return notes.length >= 2 ? ref.elem : null;
+}
+
+/** Validate that the saved selection still points at a chord at the cursor;
+ *  drop it if not. Called before any Alt-arrow action. */
+function reconcileChordInternalSel(model: ComposerModel): ChordInternalSel | null {
+  const sel = state.chordInternalSel;
+  if (!sel) return null;
+  if (sel.voice !== model.getCurrentVoice()) { state.chordInternalSel = null; return null; }
+  const cur = chordAtCursor(model);
+  if (!cur) { state.chordInternalSel = null; return null; }
+  const id = cur.getAttribute('xml:id');
+  if (id !== sel.chordId) { state.chordInternalSel = null; return null; }
+  const notes = chordNotesByMidiAscending(cur);
+  if (sel.noteIndex < 0 || sel.noteIndex >= notes.length) {
+    /* Note count may have shrunk under us (e.g. delete-and-replace edits).
+       Clamp; if still in range, keep the selection. */
+    sel.noteIndex = Math.max(0, Math.min(notes.length - 1, sel.noteIndex));
+  }
+  return sel;
+}
+
+function diagnoseChordTarget(model: ComposerModel): string {
+  const v = model.getCurrentVoice();
+  const ref = model.getCurrentElement(v, state.mode);
+  const cursor = model.getCursor(v);
+  if (!ref) return 'cursor at past-end (cursor=' + cursor + ', no element under cursor)';
+  const ln = ref.elem.localName;
+  if (ln !== 'chord') return 'cursor on <' + ln + '>, not <chord> (cursor=' + cursor + ')';
+  const notes = chordNotesByMidiAscending(ref.elem);
+  return 'chord has only ' + notes.length + ' <note> children (need ≥2 for chord-internal selection)';
+}
+
+function handleChordInternalArrow(
+  model: ComposerModel, hooks: InputHooks,
+  key: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight',
+): void {
+  const existing = reconcileChordInternalSel(model);
+  if (key === 'ArrowUp' || key === 'ArrowDown') {
+    if (!existing) {
+      const chord = chordAtCursor(model);
+      if (!chord) {
+        hooks.setStatus?.('Chord-internal: ' + diagnoseChordTarget(model));
+        return;
+      }
+      const notes = chordNotesByMidiAscending(chord);
+      const id = chord.getAttribute('xml:id');
+      if (!id) return;
+      /* Alt+Up enters at bass (index 0); Alt+Down enters at top. Subsequent
+         presses move in their respective directions, so starting at the
+         far end maximizes useful range without forcing direction switches. */
+      const noteIndex = key === 'ArrowUp' ? 0 : notes.length - 1;
+      state.chordInternalSel = { voice: model.getCurrentVoice(), chordId: id, noteIndex };
+      hooks.onStateChange();
+      return;
+    }
+    const chord = chordAtCursor(model);
+    if (!chord) { state.chordInternalSel = null; hooks.onStateChange(); return; }
+    const notes = chordNotesByMidiAscending(chord);
+    const max = notes.length - 1;
+    /* Alt+Up = move UP in the chord (increment toward top).
+       Alt+Down = move DOWN in the chord (decrement toward bass). */
+    if (key === 'ArrowUp') existing.noteIndex = Math.min(max, existing.noteIndex + 1);
+    else existing.noteIndex = Math.max(0, existing.noteIndex - 1);
+    hooks.onStateChange();
+    return;
+  }
+  /* ArrowLeft / ArrowRight → SC transposition. Wired in scTranspose task. */
+  if (!existing) {
+    hooks.setStatus?.('Alt+Up/Down selects a chord note first.');
+    return;
+  }
+  applySCTranspose(model, hooks, existing, key === 'ArrowRight' ? +1 : -1);
+}
+
+/** Stub: real implementation lives in scTranspose.ts (next task). Defined
+ *  here as a function reference so the dispatch above can call it; the
+ *  module-level binding is assigned in initInput when the scTranspose
+ *  module is available. */
+let applySCTranspose: (
+  model: ComposerModel, hooks: InputHooks,
+  sel: ChordInternalSel, dir: 1 | -1,
+) => void = (_m, hooks) => {
+  hooks.setStatus?.('SC transpose not wired (internal).');
+};
+
+/** Allow main.ts (or whoever imports the SC module) to install the real
+ *  implementation. Keeps the input handler free of a hard import on
+ *  scTranspose so that the keystroke wiring can be tested independently. */
+export function installSCTransposeImpl(
+  fn: (model: ComposerModel, hooks: InputHooks, sel: ChordInternalSel, dir: 1 | -1) => void,
+): void {
+  applySCTranspose = fn;
 }
 
 /* ── main dispatch ───────────────────────────────────────────────────────── */
@@ -787,6 +914,27 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
   function handler(e: KeyboardEvent): void {
     if (shouldIgnore(e)) return;
 
+    /* Chord-internal selection lifetime: preserved across Alt+arrow (the
+       navigation/transpose keys themselves) and across `=` (which we want
+       to retarget to the single note). Pure-modifier keypresses also
+       preserve. Every other keystroke clears it so the selection doesn't
+       silently outlive its useful scope. */
+    if (state.chordInternalSel) {
+      const isPureMod = e.key === 'Shift' || e.key === 'Control'
+        || e.key === 'Alt' || e.key === 'Meta';
+      const isAltArrow = e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey
+        && (e.key === 'ArrowUp' || e.key === 'ArrowDown'
+          || e.key === 'ArrowLeft' || e.key === 'ArrowRight');
+      const isTie = e.key === '=' && !e.ctrlKey && !e.metaKey && !e.altKey
+        && !e.shiftKey;
+      if (!isPureMod && !isAltArrow && !isTie) {
+        state.chordInternalSel = null;
+        /* No onStateChange here — fall through; downstream handlers fire
+           onStateChange/onChange as part of their normal work, which will
+           cause the cursor overlay to drop the horizontal line. */
+      }
+    }
+
     /* Selection mode dispatch — must come first. Selection-mode keys
        (Shift+arrow, Ctrl+Shift+arrow, Ctrl+C/X/V, Escape) are handled here;
        any other key exits selection mode (cursor → movable stop) and falls
@@ -883,6 +1031,22 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       return;
     }
 
+    /* Alt+arrow: chord-internal selection (Alt+Up/Down) and SC transposition
+       on the selected note (Alt+Left/Right). Must come before the modifier
+       bail below — Alt is otherwise unused. We preventDefault unconditionally
+       on Alt+Arrow even when no action runs, because Firefox uses Alt+Left
+       and Alt+Right as Back/Forward history nav — without preventDefault on
+       keydown the browser navigates away from Composer mid-edit. */
+    if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey
+        && (e.key === 'ArrowUp' || e.key === 'ArrowDown'
+          || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      e.preventDefault();
+      if (state.cursorMode === 'voice' && !hooks.isPlaybackActive()) {
+        handleChordInternalArrow(model, hooks, e.key);
+      }
+      return;
+    }
+
     if (e.ctrlKey || e.metaKey || e.altKey) return;
 
     /* Pending-tuplet resolution. A digit press following Ctrl+N completes
@@ -960,7 +1124,8 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     }
     if (state.cursorMode === 'voice' && e.key === '=') {
       e.preventDefault();
-      const r = model.toggleTieOnCurrent(state.mode);
+      const reconciled = reconcileChordInternalSel(model);
+      const r = model.toggleTieOnCurrent(state.mode, reconciled?.noteIndex);
       if (r === null) hooks.setStatus?.('No tieable note under cursor.');
       hooks.onChange();
       return;

@@ -60,6 +60,12 @@ export interface PlaybackEvent {
   velocity?: number;
 }
 
+/** Compact footprint cell tuple: [q, r, colorHex]. Used by footprint-changed
+ *  to ship the full active layout outline + per-cell color in one message.
+ *  Compact-array form (vs object form) cuts payload by ~3× across the ~280-
+ *  cell Lumatone footprint. */
+export type FootprintCell = readonly [number, number, string];
+
 /* ── HKL → Composer ───────────────────────────────────────────────────────── */
 
 export type HklEvent =
@@ -75,7 +81,13 @@ export type HklEvent =
   /** Playback queue exhausted. */
   | { type: 'playback-finished' }
   /** Tuning state changed (informational; Composer can update status text). */
-  | { type: 'tuning-changed'; mode: string; description: string };
+  | { type: 'tuning-changed'; mode: string; description: string }
+  /** Active layout outline + per-cell color, broadcast whenever the footprint
+   *  composition or colors change (layout switch, outline mode change, QWERTY
+   *  transpose, tuning toggle). Composer uses this to validate SC shifts
+   *  against the outline AND to compute fresh colors when a note's (q, r)
+   *  is rewritten. Empty `cells` means outline='none' — no constraint. */
+  | { type: 'footprint-changed'; cells: ReadonlyArray<FootprintCell> };
 
 /* ── Composer → HKL ───────────────────────────────────────────────────────── */
 
@@ -90,6 +102,11 @@ export type ComposerEvent =
    *  playback-position events as it advances. */
   | { type: 'play-score'; events: ReadonlyArray<PlaybackEvent> }
   /** Stop any in-progress playback. */
-  | { type: 'stop-playback' };
+  | { type: 'stop-playback' }
+  /** Set the reference note used to resolve piano-keyboard 12-TET input to
+   *  lattice (q, r). Composer derives this from its cursor position (most-
+   *  recent-prior note or chord bass; else closest tonic of current keysig
+   *  to origin). HKL stores and uses for the next piano keystroke. */
+  | { type: 'set-reference-note'; q: number; r: number };
 
 export type BridgeMessage = HklEvent | ComposerEvent;

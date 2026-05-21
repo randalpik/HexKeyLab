@@ -53,6 +53,23 @@ export function jiRatio(q1: number, r1: number, q2: number, r2: number): JiRatio
   return { num: num / g, den: den / g, e: [e2, e3, e5, e7] };
 }
 
+/** Tenney Height = log₂(num · den). Works only when num · den fits in a JS
+ *  number; for stacked-comma exponents that overflow, use
+ *  tenneyHeightFromExps below. */
+export function tenneyHeight(num: number, den: number): number {
+  return Math.log2(num * den);
+}
+
+/** Exact Tenney Height from a prime-exponent vector [e2, e3, e5, e7].
+ *  Preferred when the ratio's num/den may exceed 2^53 (jiRatio's docstring
+ *  warns about this for large exponents). */
+export function tenneyHeightFromExps(e: ReadonlyArray<number>): number {
+  return Math.abs(e[0])
+    + Math.abs(e[1]) * Math.log2(3)
+    + Math.abs(e[2]) * Math.log2(5)
+    + Math.abs(e[3]) * Math.log2(7);
+}
+
 export function intervalTier(num: number, den: number): IntervalTier {
   /* octave-reduce the ratio to [1, 2) */
   let n = num, d = den;
@@ -70,7 +87,7 @@ export function intervalTier(num: number, den: number): IntervalTier {
     n /= g3;
     d /= g3;
   }
-  const th = Math.log2(n * d);
+  const th = tenneyHeight(n, d);
   if (th < 8) return 'green';
   if (th < 12.5) return 'yellow';
   return 'red';

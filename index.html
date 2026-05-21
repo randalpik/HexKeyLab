@@ -146,6 +146,7 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <button class="tbtn" id="tbAnalysis">Analysis</button>
 <button class="tbtn" id="tbRecording">Recording</button>
 <button class="tbtn" id="tbLumatone">Lumatone</button>
+<button class="tbtn" id="tbPiano">Piano</button>
 <span class="cdiv"></span>
 <button class="push-btn" id="btnResetPrefs" title="Reset all toolbar settings and visibility to defaults">Reset</button>
 </div>
@@ -284,6 +285,11 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 </select></label>
 <button class="calib-btn luma-conn-only" id="btnCalibPedal" title="Calibrate the expression pedal jack — sweep pedal full range while active">Calibrate Pedal</button>
 <label class="luma-conn-only" title="Per-board key calibration overlay (Shift+\ also toggles)"><input type="checkbox" id="cbCalibrateKeys" autocomplete="off"> Calibrate Keys</label>
+</div>
+<div class="toolbar-group" id="tb-group-piano">
+<label title="Enable 12-TET piano-keyboard MIDI input. Notes are resolved to lattice cells via Tenney Height against the current reference note (broadcast by HKL Composer when connected; A3 otherwise)."><input type="checkbox" id="cbPianoEnabled" autocomplete="off"> Enable piano input</label>
+<label>Device: <select id="selPianoDevice" autocomplete="off"><option value="">(none)</option></select></label>
+<span id="pianoStatus" class="luma-disconnected">No device</span>
 </div>
 </div>
 <canvas id="cv"></canvas>

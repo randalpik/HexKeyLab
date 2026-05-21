@@ -729,6 +729,132 @@ const SELECTION = {
   },
 };
 
+/* ── New: chord-internal selection + SC transpose + tie-target + refNote ─ */
+
+/* C-E-G triad as a chord. Pitches: C4 at (-4,-2), E4 at (1,0), G4 at (0,1).
+   After insertChordAtCursor the cursor advances PAST the chord (to past-end
+   here) — this matches the post-entry position a real user faces. The
+   chord-internal selection accepts both "cursor at chord" (flat[cursor])
+   AND "cursor just past chord" (flat[cursor-1]), so no manual setCursor
+   here. */
+const CHORD_CEG_THEN_A = `
+  m.setCursor(0, 1);
+  m.insertChordAtCursor({
+    notes: [
+      { q: -4, r: -2, pname: 'c', accid: '', oct: 4, midi: 60, colorHex: '#888888', velocity: 80 },
+      { q:  1, r:  0, pname: 'e', accid: '', oct: 4, midi: 64, colorHex: '#888888', velocity: 80 },
+      { q:  0, r:  1, pname: 'g', accid: '', oct: 4, midi: 67, colorHex: '#888888', velocity: 80 },
+    ],
+    duration: '4', dots: 0,
+  });
+`;
+
+const CHORD_INTERNAL = {
+  /* Alt+Up with no selection on a chord → bass note selected (noteIndex 0). */
+  chord_internal_sel_bottom_via_up: {
+    setup: CHORD_CEG_THEN_A,
+    setupKeys: [{ key: 'ArrowUp', alt: true }],
+  },
+
+  /* Alt+Down with no selection on a chord → top note selected (noteIndex N-1). */
+  chord_internal_sel_top_via_down: {
+    setup: CHORD_CEG_THEN_A,
+    setupKeys: [{ key: 'ArrowDown', alt: true }],
+  },
+
+  /* Two Alt+Ups: first enters at bottom (0), second increments to 1. */
+  chord_internal_sel_increment: {
+    setup: CHORD_CEG_THEN_A,
+    setupKeys: [
+      { key: 'ArrowUp', alt: true },
+      { key: 'ArrowUp', alt: true },
+    ],
+  },
+
+  /* Two Alt+Downs: first enters at top (N-1=2), second decrements to 1. */
+  chord_internal_sel_decrement: {
+    setup: CHORD_CEG_THEN_A,
+    setupKeys: [
+      { key: 'ArrowDown', alt: true },
+      { key: 'ArrowDown', alt: true },
+    ],
+  },
+
+  /* Alt+Up to select bottom (C at q=-4, r=-2), Alt+Right hops +(7,-4). */
+  chord_internal_sc_transpose: {
+    setup: CHORD_CEG_THEN_A,
+    setupKeys: [
+      { key: 'ArrowUp', alt: true },
+      { key: 'ArrowRight', alt: true },
+    ],
+  },
+
+  /* Tie on a chord-internal note → only that note carries the forward
+     tie intent. We follow the chord with an identical chord so the partner
+     resolves: C-E-G then C-E-G, Alt+Up (selects bass C4), '='. */
+  chord_internal_tie_single_note: {
+    setup: `
+      m.setCursor(0, 1);
+      const notes = [
+        { q: -4, r: -2, pname: 'c', accid: '', oct: 4, midi: 60, colorHex: '#888888', velocity: 80 },
+        { q:  1, r:  0, pname: 'e', accid: '', oct: 4, midi: 64, colorHex: '#888888', velocity: 80 },
+        { q:  0, r:  1, pname: 'g', accid: '', oct: 4, midi: 67, colorHex: '#888888', velocity: 80 },
+      ];
+      m.insertChordAtCursor({ notes, duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes, duration: '4', dots: 0 });
+      /* Cursor at first chord. flat[0] = M_1 wrapper, flat[1] = chord1,
+         flat[2] = chord2. Park at flat[1] (= cursor 1, "past wrapper, at chord1"). */
+      m.setCursor(1, 1);
+    `,
+    setupKeys: [
+      { key: 'ArrowUp', alt: true },
+      '=',
+    ],
+  },
+
+  /* Empty voice with key.sig = 7 sharps → reference broadcast = C#.
+     Composer hasn't received hkl-hello yet at this point in setup. We
+     fire __bridgeMock.sendHklHello() so the connection bit flips and
+     the initial broadcast goes. */
+  ref_note_from_empty_voice_csharp: {
+    setup: `
+      m.setKeySig('7s');
+      window.__hkl_composer.reRender();
+      /* Trigger hkl-hello so hklConnected flips true and the initial
+         reference broadcast fires. */
+      window.__bridgeMock.reset();
+      window.__bridgeMock.sendHklHello();
+    `,
+  },
+
+  /* Insert a note; the broadcast captured should reflect that note's
+     coordinates as the reference (most-recent-prior-to-cursor). */
+  ref_note_broadcast_on_note_insert: {
+    setup: `
+      m.setCursor(0, 1);
+      window.__bridgeMock.reset();
+      window.__bridgeMock.sendHklHello();
+      /* Insert A4 at (0, 0) — note insertion fires onChange which calls
+         maybeBroadcastReference(). */
+      m.insertChordAtCursor({
+        notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }],
+        duration: '4', dots: 0,
+      });
+      /* Drive an onChange path through the renderer so the input hook
+         actually fires. The bridge mock captured set-reference-note
+         from the hkl-hello path (initial broadcast); after the insert,
+         the input dispatch fires onChange + onStateChange via setupKeys. */
+    `,
+    setupKeys: [
+      /* No-op keystroke that goes through the input handler and triggers
+         onStateChange + onChange via the model. ArrowRight moves cursor
+         (the model.moveCursor path calls onStateChange/onChange). */
+      'ArrowLeft',
+      'ArrowRight',
+    ],
+  },
+};
+
 /* ── New: empty doc + boundary scenarios for full-tier roundtrip ──────── */
 
 const ROUNDTRIP_STRESS = {
@@ -767,6 +893,7 @@ export const FIXTURES = {
   ...mapKbdTier(SCROLL, 'full'),
   ...mapKbdTier(VISUAL, 'full'),
   ...mapKbdTier(SELECTION, 'full'),
+  ...mapKbdTier(CHORD_INTERNAL, 'full'),
 };
 
 /** Fixture-specific assertions. Map fixture name → list of {name, expr}.
@@ -1433,6 +1560,140 @@ export const FIXTURE_ASSERTIONS = {
         return rects.length === 1
           ? { ok: true }
           : { ok: false, detail: 'rect count=' + rects.length };
+      })()` },
+  ],
+
+  /* Chord-internal selection + SC transpose + tie targeting. */
+  chord_internal_sel_bottom_via_up: [
+    { name: 'chord-internal selection is set, noteIndex = 0',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        const sel = s.chordInternalSel;
+        if (!sel) return { ok: false, detail: 'no chordInternalSel' };
+        return sel.noteIndex === 0
+          ? { ok: true }
+          : { ok: false, detail: 'noteIndex=' + sel.noteIndex };
+      })()` },
+  ],
+  chord_internal_sel_top_via_down: [
+    { name: 'chord-internal selection at top note (index 2)',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        const sel = s.chordInternalSel;
+        if (!sel) return { ok: false, detail: 'no chordInternalSel' };
+        return sel.noteIndex === 2
+          ? { ok: true }
+          : { ok: false, detail: 'noteIndex=' + sel.noteIndex };
+      })()` },
+  ],
+  chord_internal_sel_increment: [
+    { name: 'second Alt+Up incremented selection to noteIndex 1',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        const sel = s.chordInternalSel;
+        if (!sel) return { ok: false, detail: 'no chordInternalSel' };
+        return sel.noteIndex === 1
+          ? { ok: true }
+          : { ok: false, detail: 'noteIndex=' + sel.noteIndex };
+      })()` },
+  ],
+  chord_internal_sel_decrement: [
+    { name: 'second Alt+Down decremented selection to noteIndex 1',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        const sel = s.chordInternalSel;
+        if (!sel) return { ok: false, detail: 'no chordInternalSel' };
+        return sel.noteIndex === 1
+          ? { ok: true }
+          : { ok: false, detail: 'noteIndex=' + sel.noteIndex };
+      })()` },
+  ],
+  chord_internal_sc_transpose: [
+    { name: 'bass note (was C4 at (-4,-2)) hopped to (+7,-4) → (3,-6)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const chord = m.getDoc().querySelector('chord');
+        if (!chord) return { ok: false, detail: 'no chord' };
+        const notes = Array.from(chord.children).filter(c => c.localName === 'note');
+        /* After SC transpose, the chord re-sorts by MIDI ascending. The
+           transposed bass (C4 → ?) keeps the same MIDI (= 60), so it stays
+           at noteIndex 0 in the resorted chord (since C is now the lowest
+           letter regardless of spelling). */
+        const target = notes.find(n =>
+          n.getAttribute('data-q') === '3' && n.getAttribute('data-r') === '-6');
+        return target
+          ? { ok: true }
+          : { ok: false, detail: 'transposed note not found; notes=' +
+              notes.map(n => '(' + n.getAttribute('data-q') + ',' + n.getAttribute('data-r') + ')').join(',') };
+      })()` },
+    { name: 'all three notes still in chord post-transpose',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const chord = m.getDoc().querySelector('chord');
+        const notes = chord ? Array.from(chord.children).filter(c => c.localName === 'note') : [];
+        return notes.length === 3
+          ? { ok: true }
+          : { ok: false, detail: 'note count=' + notes.length };
+      })()` },
+  ],
+  chord_internal_tie_single_note: [
+    { name: 'only one note in the first chord carries forward tie state',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const chords = m.getDoc().querySelectorAll('chord');
+        if (chords.length < 2) return { ok: false, detail: 'expected 2 chords, got ' + chords.length };
+        const first = chords[0];
+        const notes = Array.from(first.children).filter(c => c.localName === 'note');
+        const withTie = notes.filter(n =>
+          n.getAttribute('tie') === 'i' || n.getAttribute('tie') === 'm' ||
+          n.hasAttribute('data-pending-tie'));
+        return withTie.length === 1
+          ? { ok: true }
+          : { ok: false, detail: 'expected exactly 1 note tied in chord1, found ' + withTie.length };
+      })()` },
+  ],
+  ref_note_from_empty_voice_csharp: [
+    { name: 'set-reference-note captured; (q,r) gives 12-TET pitch class C# (=1)',
+      expr: `(() => {
+        const cap = window.__bridgeMock.captured();
+        const ref = cap.filter(m => m.type === 'set-reference-note');
+        if (ref.length === 0) {
+          return { ok: false, detail: 'no set-reference-note captured; types=' + cap.map(m => m.type).join(',') };
+        }
+        const last = ref[ref.length - 1];
+        /* coordToMidi = 57 + 4q + 7r; pitch class = midi % 12. C# == 1. */
+        const midi = 57 + 4 * last.q + 7 * last.r;
+        const pc = ((midi % 12) + 12) % 12;
+        return pc === 1
+          ? { ok: true }
+          : { ok: false, detail: '(q,r)=(' + last.q + ',' + last.r + ') → pc=' + pc + ' (expected 1 = C#)' };
+      })()` },
+    { name: 'chosen (q,r) is closest to origin by taxicab among C# candidates',
+      expr: `(() => {
+        const cap = window.__bridgeMock.captured();
+        const ref = cap.filter(m => m.type === 'set-reference-note');
+        const last = ref[ref.length - 1];
+        const tax = Math.abs(last.q) + Math.abs(last.r);
+        /* The chosen cell must have a smaller-or-equal taxicab to (0,0)
+           than any other C# candidate in a reasonable grid. (1, 0) gives
+           taxicab 1; that's the global minimum for C#. */
+        return tax <= 1
+          ? { ok: true }
+          : { ok: false, detail: 'taxicab=' + tax + ' from (' + last.q + ',' + last.r + ')' };
+      })()` },
+  ],
+  ref_note_broadcast_on_note_insert: [
+    { name: 'reference broadcast reflects the just-inserted A note at (0,0)',
+      expr: `(() => {
+        const cap = window.__bridgeMock.captured();
+        const ref = cap.filter(m => m.type === 'set-reference-note');
+        if (ref.length === 0) {
+          return { ok: false, detail: 'no set-reference-note captured; types=' + cap.map(m => m.type).join(',') };
+        }
+        const last = ref[ref.length - 1];
+        return (last.q === 0 && last.r === 0)
+          ? { ok: true }
+          : { ok: false, detail: 'expected (0,0), got (' + last.q + ',' + last.r + ')' };
       })()` },
   ],
 };

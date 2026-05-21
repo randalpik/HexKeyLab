@@ -13,7 +13,7 @@ import { loadPrefs, savePrefs } from '../state/persistence.js';
 import type { ToolbarVisibility } from '../state/persistence.js';
 
 export type ToolbarName = keyof ToolbarVisibility;
-export const TOOLBAR_NAMES: ToolbarName[] = ['layout', 'playback', 'analysis', 'recording', 'lumatone'];
+export const TOOLBAR_NAMES: ToolbarName[] = ['layout', 'playback', 'analysis', 'recording', 'lumatone', 'piano'];
 
 const BUTTON_IDS: Record<ToolbarName, string> = {
   layout: 'tbLayout',
@@ -21,6 +21,7 @@ const BUTTON_IDS: Record<ToolbarName, string> = {
   analysis: 'tbAnalysis',
   recording: 'tbRecording',
   lumatone: 'tbLumatone',
+  piano: 'tbPiano',
 };
 
 const GROUP_IDS: Record<ToolbarName, string> = {
@@ -29,6 +30,7 @@ const GROUP_IDS: Record<ToolbarName, string> = {
   analysis: 'tb-group-analysis',
   recording: 'tb-group-recording',
   lumatone: 'tb-group-lumatone',
+  piano: 'tb-group-piano',
 };
 
 export function applyToolbarVisibility(vis: ToolbarVisibility): void {

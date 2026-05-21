@@ -22,6 +22,7 @@ import { tuning } from '../state/tuning.js';
 import { view } from '../state/view.js';
 import { selection, type DrawnKey } from '../state/selection.js';
 import { audio } from '../state/audio.js';
+import { referenceNote } from '../state/reference.js';
 import { whiteSet, hueC, computeHue } from './colors.js';
 import { sizeCanvas, getVisibleRange } from './canvas.js';
 import { animation } from './animation.js';
@@ -581,6 +582,29 @@ export function draw(): void {
       ctx.beginPath();
       seamSegs.forEach((s) => { ctx.moveTo(s[0], s[1]); ctx.lineTo(s[2], s[3]); });
       ctx.stroke();
+    }
+  }
+
+  /* Reference-note marker: dashed hex outline drawn OUTSIDE the hex perimeter
+     (in the inter-key gap), so it sits in the cracks between keys without
+     overlapping the fill or the note label. White (matches band seams' hue)
+     so it reads as structural, not tonal. Shown only while the Piano toolbar
+     is enabled — the marker is only meaningful in that context. */
+  const pianoCb = document.getElementById('cbPianoEnabled') as HTMLInputElement | null;
+  if (pianoCb && pianoCb.checked) {
+    const rk = posMap[referenceNote.q + ',' + referenceNote.r];
+    if (rk) {
+      ctx.save();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 4]);
+      /* Offset outward by ~2.5px so the dashed ring sits in the gap rather
+         than on the key. hexR is the in-radius of the inscribed circle of
+         a flat-topped hex; +2.5 lands clearly outside the (-0.5) selection
+         ring at hexR-0.5. */
+      drawHexPath(rk.ux, rk.uy, hexR + 2.5);
+      ctx.stroke();
+      ctx.restore();
     }
   }
 

@@ -37,6 +37,11 @@ export interface CursorUpdateOpts {
   entryMode: 'insert' | 'overwrite';
   cursorMode: 'voice' | 'expr' | 'select';
   exprCursor: ExpressionCursor;
+  /** Per-note selection inside the chord at the cursor. When set, the
+   *  cursor renders a horizontal line from the cursor bar to the selected
+   *  note. Cleared when the cursor moves or any non-Alt-arrow / non-`=`
+   *  keystroke fires. */
+  chordInternalSel?: { chordId: string; noteIndex: number } | null;
 }
 
 class CursorOverlay {
@@ -45,6 +50,7 @@ class CursorOverlay {
   private voiceLabel: SVGTextElement | null = null;
   private exprBar: SVGRectElement | null = null;
   private exprLabel: SVGTextElement | null = null;
+  private chordIntLine: SVGLineElement | null = null;
   private lastSelectedIds: string[] = [];
 
   /* Playback-mode state. Per-voice bars layered over the editing cursor;
@@ -59,6 +65,7 @@ class CursorOverlay {
     this.voiceLabel = null;
     this.exprBar = null;
     this.exprLabel = null;
+    this.chordIntLine = null;
     this.playbackBars.clear();
   }
 
@@ -92,6 +99,15 @@ class CursorOverlay {
       this.exprLabel.setAttribute('font-weight', '600');
       this.svg.appendChild(this.exprLabel);
     }
+    if (!this.chordIntLine) {
+      this.chordIntLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      this.chordIntLine.setAttribute('stroke', CURSOR_COLOR);
+      this.chordIntLine.setAttribute('stroke-width', '3');
+      this.chordIntLine.setAttribute('stroke-linecap', 'round');
+      this.chordIntLine.setAttribute('opacity', '0');
+      this.chordIntLine.setAttribute('data-cursor-role', 'chord-internal');
+      this.svg.appendChild(this.chordIntLine);
+    }
   }
 
   /** Update editing cursor to reflect the model's current voice and cursor.
@@ -112,6 +128,7 @@ class CursorOverlay {
       this.voiceLabel!.textContent = '';
       this.exprBar!.setAttribute('opacity', '0');
       this.exprLabel!.textContent = '';
+      this.chordIntLine?.setAttribute('opacity', '0');
       this.clearExpressionHighlights();
       for (const [voice, meiId] of this.playbackPositions) {
         this.positionPlaybackBar(voice, meiId);
@@ -126,6 +143,7 @@ class CursorOverlay {
       this.voiceLabel!.textContent = '';
       this.exprBar!.setAttribute('opacity', '0');
       this.exprLabel!.textContent = '';
+      this.chordIntLine?.setAttribute('opacity', '0');
       this.clearExpressionHighlights();
       return;
     }
@@ -133,6 +151,7 @@ class CursorOverlay {
     if (resolved.cursorMode === 'expr') {
       this.barRect!.setAttribute('opacity', '0');
       this.voiceLabel!.textContent = '';
+      this.chordIntLine?.setAttribute('opacity', '0');
       this.renderExpressionCursor(model, resolved.exprCursor);
       this.updateExpressionHighlights(model, resolved.exprCursor);
       return;
@@ -143,6 +162,57 @@ class CursorOverlay {
     this.exprLabel!.textContent = '';
     this.clearExpressionHighlights();
     this.renderVoiceCursor(model, resolved.entryMode);
+    this.renderChordInternalLine(resolved.chordInternalSel ?? null);
+  }
+
+  /** Draw a horizontal purple line from the voice cursor's bar to the
+   *  bounding box of the selected note inside the chord at the cursor.
+   *  Hides the line when there is no chord-internal selection or when the
+   *  required bbox isn't available (e.g. before first render). */
+  private renderChordInternalLine(
+    sel: { chordId: string; noteIndex: number } | null,
+  ): void {
+    if (!this.chordIntLine) return;
+    if (!sel) {
+      this.chordIntLine.setAttribute('opacity', '0');
+      return;
+    }
+    /* Locate the rendered <chord> and its <note> children. Verovio emits
+       chord notes as separate <g class="note"> elements per <note> xml:id,
+       in MEI document order — which matches sel.noteIndex since Composer
+       keeps the MEI sorted by MIDI ascending. */
+    const chordNode = document.querySelector('#' + (typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(sel.chordId) : sel.chordId));
+    if (!chordNode) { this.chordIntLine.setAttribute('opacity', '0'); return; }
+    const noteEls = chordNode.querySelectorAll('g.note');
+    if (sel.noteIndex < 0 || sel.noteIndex >= noteEls.length) {
+      this.chordIntLine.setAttribute('opacity', '0');
+      return;
+    }
+    const target = noteEls[sel.noteIndex] as SVGGElement | null;
+    if (!target) { this.chordIntLine.setAttribute('opacity', '0'); return; }
+    const svg = this.svg!;
+    const svgRect = svg.getBoundingClientRect();
+    const cRect = (chordNode as SVGGElement).getBoundingClientRect();
+    /* Use the notehead's bbox for the vertical anchor — `target` (g.note)
+       includes the accidental glyph as a child, which biases the union
+       bbox upward for flats / downward for sharps. The notehead itself
+       is `.notehead` inside the note group; that's what we want centered
+       on. Fall back to the note's bbox if the notehead can't be located
+       (defensive — Verovio's structure should always provide one). */
+    const noteheadEl = (target.querySelector('.notehead') ?? target) as SVGGElement;
+    const nRect = noteheadEl.getBoundingClientRect();
+    /* Line geometry: from the chord's LEFT edge to the cursor bar, at the
+       selected notehead's vertical center. The line passes over the middle
+       of the selected notehead (since the cursor sits past the chord and
+       the notehead is inside the chord). */
+    const x1 = cRect.left - svgRect.left;
+    const x2 = parseFloat(this.barRect?.getAttribute('x') ?? '0');
+    const y = nRect.top + nRect.height / 2 - svgRect.top;
+    this.chordIntLine.setAttribute('x1', String(x1));
+    this.chordIntLine.setAttribute('y1', String(y));
+    this.chordIntLine.setAttribute('x2', String(x2));
+    this.chordIntLine.setAttribute('y2', String(y));
+    this.chordIntLine.setAttribute('opacity', '1');
   }
 
   /* ── voice-cursor rendering (preserved verbatim from prior version) ────── */

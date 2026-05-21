@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 66,
-  "passed": 66,
+  "fixtures": 74,
+  "passed": 74,
   "failed": 0,
-  "elapsedMs": 21411,
+  "elapsedMs": 22765,
   "results": [
     {
       "name": "emptyDoc",
@@ -531,6 +531,70 @@
       "failures": [],
       "counts": {
         "invariants": 10
+      }
+    },
+    {
+      "name": "chord_internal_sel_bottom_via_up",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "chord_internal_sel_top_via_down",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "chord_internal_sel_increment",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "chord_internal_sel_decrement",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "chord_internal_sc_transpose",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "chord_internal_tie_single_note",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "ref_note_from_empty_voice_csharp",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "ref_note_broadcast_on_note_insert",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
       }
     }
   ]

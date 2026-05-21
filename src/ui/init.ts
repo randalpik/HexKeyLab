@@ -32,6 +32,7 @@ import {
 } from '../audio/engine.js';
 import { requestMidi } from '../midi/engine.js';
 import { handleMidiMessage } from '../midi/handler.js';
+import { initPiano } from '../midi/piano.js';
 import {
   setTuning, setOutline, setLayout, applyLayoutImmediate,
   setQwertyTranspose, clearSelection,
@@ -106,6 +107,11 @@ initAudio();
 changeWaveform();
 
 requestMidi(handleMidiMessage);
+
+/* Piano-keyboard MIDI input dispatch. Shares MIDIAccess with the Lumatone
+   path; selected device is held in midi.pianoIn separately. Hotplug aware
+   via a 1.5s identity poll on midi.midiAccess. */
+initPiano();
 
 /* HKL ↔ Composer bridge — broadcasts held-keys for the companion composer.html
    surface, dispatches play-chord/play-score from Composer. Idempotent; safe

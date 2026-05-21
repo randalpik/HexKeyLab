@@ -26,7 +26,7 @@ export const MOCK_BRIDGE_LIB = `
     if (m && typeof m.type === 'string' &&
         (m.type === 'play-score' || m.type === 'stop-playback' ||
          m.type === 'composer-hello' || m.type === 'composer-bye' ||
-         m.type === 'request-state')) {
+         m.type === 'request-state' || m.type === 'set-reference-note')) {
       captured.push(m);
     }
   });

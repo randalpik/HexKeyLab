@@ -21,6 +21,13 @@ export interface ToolbarVisibility {
   analysis: boolean;
   recording: boolean;
   lumatone: boolean;
+  piano: boolean;
+}
+
+export interface PianoGainCurvePrefs {
+  floor: number;
+  ceiling: number;
+  gamma: number;
 }
 
 /* Velocity calibration (curve + per-key gain + per-key stats).
@@ -85,6 +92,11 @@ export interface PrefsV1 {
   calibrateKeys: boolean;
   captureAudio: boolean;
   velocityCal?: VelocityCalPrefs;
+  /** Piano-toolbar input. Selected device is a Web MIDI input id (stable per
+   *  port across reloads in modern browsers). */
+  pianoInputDeviceId: string | null;
+  pianoEnabled: boolean;
+  pianoGainCurve?: PianoGainCurvePrefs;
 }
 
 /* Defaults mirror the HTML attributes + state/*.ts initial values, so a fresh
@@ -116,10 +128,13 @@ export const DEFAULT_PREFS: PrefsV1 = {
     analysis: false,
     recording: false,
     lumatone: false,
+    piano: false,
   },
   showDiagnostics: false,
   calibrateKeys: false,
   captureAudio: false,
+  pianoInputDeviceId: null,
+  pianoEnabled: false,
 };
 
 function isLayoutId(n: unknown): n is LayoutId {
@@ -162,7 +177,19 @@ function loadToolbars(o: unknown): ToolbarVisibility {
       typeof t.lumatone === "boolean"
         ? t.lumatone
         : DEFAULT_PREFS.toolbars.lumatone,
+    piano:
+      typeof t.piano === "boolean"
+        ? t.piano
+        : DEFAULT_PREFS.toolbars.piano,
   };
+}
+
+function loadPianoGainCurve(o: unknown): PianoGainCurvePrefs | undefined {
+  if (!o || typeof o !== 'object') return undefined;
+  const c = o as Record<string, unknown>;
+  if (typeof c.floor !== 'number' || typeof c.ceiling !== 'number' || typeof c.gamma !== 'number') return undefined;
+  if (c.gamma <= 0 || c.ceiling <= c.floor) return undefined;
+  return { floor: c.floor, ceiling: c.ceiling, gamma: c.gamma };
 }
 
 /* Read prefs from localStorage. Missing/invalid fields fall back per-field
@@ -232,6 +259,15 @@ export function loadPrefs(): PrefsV1 {
         ? o.captureAudio
         : DEFAULT_PREFS.captureAudio,
     velocityCal: loadVelocityCal(o.velocityCal),
+    pianoInputDeviceId:
+      typeof o.pianoInputDeviceId === 'string'
+        ? o.pianoInputDeviceId
+        : DEFAULT_PREFS.pianoInputDeviceId,
+    pianoEnabled:
+      typeof o.pianoEnabled === 'boolean'
+        ? o.pianoEnabled
+        : DEFAULT_PREFS.pianoEnabled,
+    pianoGainCurve: loadPianoGainCurve(o.pianoGainCurve),
   };
 }
 

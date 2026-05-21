@@ -11,16 +11,18 @@
 //   7. Re-render + update cursor on any model change.
 
 import { createComposerBridge, PROTOCOL_VERSION } from '../bridge/channel.js';
-import type { HklEvent, ResolvedNote } from '../bridge/protocol.js';
+import type { HklEvent, ResolvedNote, FootprintCell } from '../bridge/protocol.js';
 import { ComposerModel } from './model.js';
 import { renderer, ZOOM_PRESETS, type ZoomLevel } from './render.js';
 import { cursor } from './cursor.js';
-import { initInput, getInputState } from './input.js';
+import { initInput, getInputState, installSCTransposeImpl } from './input.js';
+import { scTransposeChordNote } from './scTranspose.js';
 import type { CursorUpdateOpts } from './cursor.js';
 import { selectionOverlay } from './selectionOverlay.js';
 import { saveHkc, loadHkcFromFile, downloadMusicXml } from './save.js';
 import { buildPlayback, highlightElement, clearHighlights, readTempo, tickMsFromTempo } from './playback.js';
 import { openSetupDialog } from './setupDialog.js';
+import { computeReferenceNote, refNoteChanged, invalidateRefNoteCache } from './refNote.js';
 
 const $ = <T extends HTMLElement>(id: string): T | null =>
   document.getElementById(id) as T | null;
@@ -28,6 +30,13 @@ const $ = <T extends HTMLElement>(id: string): T | null =>
 let hklConnected = false;
 let lastHeldKeys: ReadonlyArray<ResolvedNote> = [];
 let isPlaying = false;
+
+/* Cached HKL footprint: each cell carries q, r, and a fresh colorHex.
+ *   - `null` while we haven't received a footprint yet (no constraint).
+ *   - empty Map means outline='none' on HKL — also "no constraint".
+ * scTranspose uses this both for layout validation AND to write the new
+ * `color` attribute on a transposed note, keeping HKL/Composer in sync. */
+let footprintColors: Map<string, string> | null = null;
 /* Editing cursor snapshot taken at playback start, restored on stop/finish. */
 let preplaybackVoice: 1 | 2 | 3 | 4 = 1;
 let preplaybackCursor = 0;
@@ -119,7 +128,14 @@ function refreshIndicators(): void {
 
 function cursorOpts(): CursorUpdateOpts {
   const s = getInputState();
-  return { entryMode: s.mode, cursorMode: s.cursorMode, exprCursor: s.exprCursor };
+  return {
+    entryMode: s.mode,
+    cursorMode: s.cursorMode,
+    exprCursor: s.exprCursor,
+    chordInternalSel: s.chordInternalSel
+      ? { chordId: s.chordInternalSel.chordId, noteIndex: s.chordInternalSel.noteIndex }
+      : null,
+  };
 }
 
 /* ── model + bridge ──────────────────────────────────────────────────────── */
@@ -133,6 +149,10 @@ bridge.on((msg: HklEvent) => {
       hklConnected = true;
       setConn('connected');
       setStatus('HKL v' + msg.version + ' connected.');
+      /* (Re)connection: force a fresh reference broadcast so HKL starts
+         resolving piano input from the right anchor immediately. */
+      invalidateRefNoteCache();
+      maybeBroadcastReference();
       break;
     case 'hkl-bye':
       hklConnected = false;
@@ -140,6 +160,7 @@ bridge.on((msg: HklEvent) => {
       setStatus('HKL closed. Standalone mode.');
       lastHeldKeys = [];
       stopPlayback();
+      invalidateRefNoteCache();
       break;
     case 'held-keys':
       lastHeldKeys = msg.keys;
@@ -167,11 +188,39 @@ bridge.on((msg: HklEvent) => {
     case 'playback-finished':
       finalizePlaybackEnd('Playback finished.');
       break;
+    case 'footprint-changed': {
+      /* Rebuild the cache. Empty cells = outline='none' = no constraint. */
+      const map = new Map<string, string>();
+      for (const cell of msg.cells) {
+        map.set(cell[0] + ',' + cell[1], cell[2]);
+      }
+      footprintColors = map;
+      break;
+    }
   }
 });
 
+/** Read the cached footprint. Returns null when HKL hasn't broadcast one
+ *  yet (treat as "no constraint"), an empty map when HKL's outline is set
+ *  to 'none' (also "no constraint" — caller decides whether to allow), or
+ *  a populated map keyed by "q,r" with the fresh per-cell color. */
+export function getFootprintColors(): Map<string, string> | null {
+  return footprintColors;
+}
+
 bridge.send({ type: 'composer-hello', version: PROTOCOL_VERSION });
 bridge.send({ type: 'request-state' });
+
+/** Send the current reference note to HKL whenever it changes. Called from
+ *  cursor-move / voice-switch / content-change / keysig-change paths via
+ *  the input hooks (onChange, onStateChange). The diff filter in refNote.ts
+ *  drops redundant broadcasts cheaply. */
+function maybeBroadcastReference(): void {
+  const coord = computeReferenceNote(model);
+  if (refNoteChanged(coord)) {
+    bridge.send({ type: 'set-reference-note', q: coord.q, r: coord.r });
+  }
+}
 
 window.setTimeout(() => {
   if (!hklConnected) {
@@ -259,6 +308,17 @@ function stepZoom(dir: 'in' | 'out'): void {
   setStatus('Zoom ' + next + '%.');
 }
 
+/* Install the SC-transpose implementation that the Alt+Left/Right handler
+   in input.ts dispatches to. Wires via the indirection there to keep
+   input.ts free of a hard import on scTranspose (so the keystroke wiring
+   can be tested independently). */
+installSCTransposeImpl((m, hooks, sel, dir) => {
+  if (scTransposeChordNote(m, hooks, sel, dir, footprintColors)) {
+    hooks.onStateChange();
+    hooks.onChange();
+  }
+});
+
 initInput(model, {
   getHeldKeys: () => lastHeldKeys,
   onChange: () => {
@@ -270,11 +330,17 @@ initInput(model, {
        running scroll in onChange ensures it always sees the post-reRender
        geometry regardless of caller order. */
     if (!isPlaying) maybeScrollMeasureIntoView(visualCursorMeasure());
+    /* Content change: most recent prior-to-cursor element may have changed
+       (insert/delete) → recompute the reference note and broadcast. */
+    if (hklConnected) maybeBroadcastReference();
   },
   onStateChange: () => {
     refreshIndicators();
     cursor.update(model, cursorOpts());
     selectionOverlay.update(model, getInputState().selection);
+    /* Cursor or voice may have moved — recompute reference. The diff filter
+       short-circuits when (q, r) hasn't actually changed. */
+    if (hklConnected) maybeBroadcastReference();
   },
   setStatus: (msg) => setStatus(msg),
   isPlaybackActive: () => isPlaying,
@@ -359,6 +425,9 @@ $('btnSetup')?.addEventListener('click', () => {
     reRender();
     refreshIndicators();
     setStatus('Setup applied.');
+    /* Key signature may have changed — reference note depends on it when
+       the voice has no prior content, so re-broadcast. */
+    if (hklConnected) maybeBroadcastReference();
   });
 });
 

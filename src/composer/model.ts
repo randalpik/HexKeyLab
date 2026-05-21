@@ -2566,6 +2566,7 @@ export class ComposerModel {
    *  Returns null when there's no tieable current element. */
   toggleTieOnCurrent(
     mode: "insert" | "overwrite",
+    chordNoteIndex?: number,
   ): { id: string; tied: boolean } | null {
     const v = this.currentVoice;
     const ref = this.getCurrentElement(v, mode);
@@ -2574,8 +2575,17 @@ export class ComposerModel {
     if (ref.elem.localName === "measure") return null; /* wrapper stops aren't tieable */
     if (ref.elem.localName === "tuplet") return null; /* whole-tuplet tie NYI */
     if (isPlaceholder(ref.elem)) return null; /* placeholders aren't tieable */
-    const currentNotes = this.extractNoteElements(ref.elem);
-    if (currentNotes.length === 0) return null;
+    const allNotes = this.extractNoteElements(ref.elem);
+    if (allNotes.length === 0) return null;
+    /* Target a single chord member when chordNoteIndex is provided AND the
+       current element is a chord. Out-of-range or non-chord cases fall back
+       to the whole-element behavior (matches expectations: the caller is the
+       chord-internal selection, which only sets up an index on real chords). */
+    const isChord = ref.elem.localName === "chord";
+    const currentNotes = (isChord && typeof chordNoteIndex === "number"
+        && chordNoteIndex >= 0 && chordNoteIndex < allNotes.length)
+      ? [allNotes[chordNoteIndex]]
+      : allNotes;
 
     const alreadyTied = currentNotes.some((n) => {
       const t = n.getAttribute("tie");

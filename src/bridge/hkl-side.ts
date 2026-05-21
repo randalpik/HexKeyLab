@@ -24,8 +24,10 @@ import { tuning } from '../state/tuning.js';
 import { noteName, keyOctave, parseNote, accToVal } from '../tuning/notes.js';
 import { darkColorHex, coordToMidi } from '../transcription/pitch.js';
 import { noteOn, noteOff, stopAllNotes } from '../audio/engine.js';
-import { draw } from '../render/draw.js';
+import { draw, activeFootprintSet } from '../render/draw.js';
 import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
+import { setReferenceFromComposer, resetReferenceToDefault } from '../state/reference.js';
+import type { FootprintCell } from './protocol.js';
 import type { KeyId } from '../types.js';
 
 const bridge = createHklBridge();
@@ -123,10 +125,44 @@ function broadcastTuningIfChanged(): void {
   }
 }
 
+let lastFootprintSig = '';
+
+/** Compute the current footprint cell list (q, r, colorHex per cell) and
+ *  broadcast if its signature changed. When outline='none' the set is null;
+ *  we broadcast an empty array, meaning "no constraint" on the Composer
+ *  side. Polled by tick() once per RAF — same cadence as held-keys / tuning
+ *  change detection. */
+function broadcastFootprintIfChanged(): void {
+  const set = activeFootprintSet();
+  const cells: FootprintCell[] = [];
+  if (set) {
+    /* Sort by (q, r) so the signature is stable across iteration order. */
+    const ids = Array.from(set);
+    ids.sort();
+    for (const id of ids) {
+      const ci = id.indexOf(',');
+      if (ci < 0) continue;
+      const q = +id.slice(0, ci);
+      const r = +id.slice(ci + 1);
+      cells.push([q, r, darkColorHex(q, r)]);
+    }
+  }
+  /* Cheap signature: counts + first/last cells. Color changes propagate via
+     tuning-changed which forces a full re-broadcast; for layout-only swaps
+     the cell list shape changes (different (q, r) members), which we catch
+     by mixing the joined string. */
+  const sig = cells.length + ':' + cells.map((c) => c[0] + ',' + c[1] + ',' + c[2]).join('|');
+  if (sig !== lastFootprintSig) {
+    lastFootprintSig = sig;
+    bridge.send({ type: 'footprint-changed', cells });
+  }
+}
+
 let rafHandle = 0;
 function tick(): void {
   broadcastHeldKeysIfChanged();
   broadcastTuningIfChanged();
+  broadcastFootprintIfChanged();
   rafHandle = requestAnimationFrame(tick);
 }
 
@@ -237,9 +273,11 @@ function playScore(events: ReadonlyArray<PlaybackEvent>): void {
 function announce(): void {
   bridge.send({ type: 'hkl-hello', version: PROTOCOL_VERSION });
   bridge.send({ type: 'tuning-changed', mode: tuningMode(), description: tuningDescription() });
-  /* Force a held-keys broadcast even if empty. */
+  /* Force a held-keys + footprint broadcast even if empty. */
   lastHeldSerialized = 'force-resend';
+  lastFootprintSig = 'force-resend';
   broadcastHeldKeysIfChanged();
+  broadcastFootprintIfChanged();
 }
 
 bridge.on((msg: ComposerEvent) => {
@@ -250,8 +288,9 @@ bridge.on((msg: ComposerEvent) => {
       break;
     case 'composer-bye':
       /* Composer disconnected. Stop any playback in progress so we're not
-         left with stuck notes. */
+         left with stuck notes, and reset the piano-input reference note. */
       abortActive();
+      if (resetReferenceToDefault()) draw();
       break;
     case 'play-score':
       playScore(msg.events);
@@ -259,6 +298,9 @@ bridge.on((msg: ComposerEvent) => {
     case 'stop-playback':
       abortActive();
       bridge.send({ type: 'playback-finished' });
+      break;
+    case 'set-reference-note':
+      if (setReferenceFromComposer(msg.q, msg.r)) draw();
       break;
   }
 });
