@@ -116,7 +116,7 @@ function handleNoteOn(midiNote: number, vRaw: number): void {
        fall back to the full lattice; "none" is a render-only mode for the
        Lumatone outline display, and admitting unbounded resolution would
        defeat the user's choice. */
-    flashStatus('Outline must be Lumatone or QWERTY for piano input');
+    flashStatus('Outline must be Lumatone, QWERTY, or Piano for piano input');
     return;
   }
   const cell = resolve12TetToCoord(midiNote, referenceNote.q, referenceNote.r, footprint);

@@ -22,7 +22,11 @@ import { selectionOverlay } from './selectionOverlay.js';
 import { saveHkc, loadHkcFromFile, downloadMusicXml } from './save.js';
 import { buildPlayback, highlightElement, clearHighlights, readTempo, tickMsFromTempo } from './playback.js';
 import { openSetupDialog } from './setupDialog.js';
-import { computeReferenceNote, refNoteChanged, invalidateRefNoteCache } from './refNote.js';
+import {
+  computePrevNoteRef, computeSongKeyRef,
+  refNoteChanged, invalidateRefNoteCache,
+  songKeyChanged, invalidateSongKeyCache,
+} from './refNote.js';
 
 const $ = <T extends HTMLElement>(id: string): T | null =>
   document.getElementById(id) as T | null;
@@ -149,10 +153,13 @@ bridge.on((msg: HklEvent) => {
       hklConnected = true;
       setConn('connected');
       setStatus('HKL v' + msg.version + ' connected.');
-      /* (Re)connection: force a fresh reference broadcast so HKL starts
-         resolving piano input from the right anchor immediately. */
+      /* (Re)connection: force fresh broadcasts on both channels so HKL
+         starts with the right selection tier (if there's a prior note in
+         the voice) AND the right song-key tier. */
       invalidateRefNoteCache();
+      invalidateSongKeyCache();
       maybeBroadcastReference();
+      maybeBroadcastSongKey();
       break;
     case 'hkl-bye':
       hklConnected = false;
@@ -161,6 +168,7 @@ bridge.on((msg: HklEvent) => {
       lastHeldKeys = [];
       stopPlayback();
       invalidateRefNoteCache();
+      invalidateSongKeyCache();
       break;
     case 'held-keys':
       lastHeldKeys = msg.keys;
@@ -211,14 +219,31 @@ export function getFootprintColors(): Map<string, string> | null {
 bridge.send({ type: 'composer-hello', version: PROTOCOL_VERSION });
 bridge.send({ type: 'request-state' });
 
-/** Send the current reference note to HKL whenever it changes. Called from
- *  cursor-move / voice-switch / content-change / keysig-change paths via
- *  the input hooks (onChange, onStateChange). The diff filter in refNote.ts
- *  drops redundant broadcasts cheaply. */
+/** Send the current "most-recent-prior-to-cursor" note to HKL's selection
+ *  tier — but ONLY if such a note exists. If the cursor has no prior note,
+ *  stay silent (HKL retains whatever selection it already holds, possibly a
+ *  user Ctrl+click). The diff filter drops redundant broadcasts cheaply. */
 function maybeBroadcastReference(): void {
-  const coord = computeReferenceNote(model);
-  if (refNoteChanged(coord)) {
+  const coord = computePrevNoteRef(model);
+  if (coord !== null && refNoteChanged(coord)) {
     bridge.send({ type: 'set-reference-note', q: coord.q, r: coord.r });
+  } else if (coord === null) {
+    /* Mark cache so the next non-null coord re-broadcasts even if equal to
+       the prior broadcast (HKL's tier may have been cleared meanwhile). */
+    refNoteChanged(null);
+  }
+}
+
+/** Send the current key-sig tonic to HKL's song-key tier. Called on
+ *  connect / hello and on explicit key-signature change (Setup dialog),
+ *  NOT on every cursor move — the key sig is independent of cursor and
+ *  re-broadcasting it through cursor-driven paths risks the same "clobbers
+ *  manual" failure mode that motivated dropping set-reference-note's
+ *  key-sig fallback. */
+function maybeBroadcastSongKey(): void {
+  const coord = computeSongKeyRef(model);
+  if (songKeyChanged(coord)) {
+    bridge.send({ type: 'set-song-key', q: coord.q, r: coord.r });
   }
 }
 
@@ -441,9 +466,12 @@ $('btnSetup')?.addEventListener('click', () => {
     reRender();
     refreshIndicators();
     setStatus('Setup applied.');
-    /* Key signature may have changed — reference note depends on it when
-       the voice has no prior content, so re-broadcast. */
-    if (hklConnected) maybeBroadcastReference();
+    /* Key signature may have changed — broadcast the song-key tier. Do NOT
+     * re-broadcast the selection (reference-note) tier here: the key sig is
+     * independent of cursor position, and triggering the selection broadcast
+     * from a key-sig change is what would let an unrelated event clobber a
+     * user's manual Ctrl+click selection on HKL. */
+    if (hklConnected) maybeBroadcastSongKey();
   });
 });
 

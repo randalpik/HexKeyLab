@@ -24,13 +24,14 @@ import { selection, type DrawnKey } from '../state/selection.js';
 import { audio } from '../state/audio.js';
 import { referenceNote } from '../state/reference.js';
 import { whiteSet, hueC, computeHue } from './colors.js';
-import { sizeCanvas, getVisibleRange } from './canvas.js';
+import { sizeCanvas, getVisibleRange, computePianoViewCenter } from './canvas.js';
 import { animation } from './animation.js';
 import { updateInfo } from './info.js';
 import {
   parseNote, accToVal, noteName,
   SHARP, DBLSHARP, FLAT, DBLFLAT,
 } from '../tuning/notes.js';
+import { jiRatio, tenneyHeightFromExps } from '../tuning/ratios.js';
 import type { KeyId } from '../types.js';
 
 // ── canvas setup ───────────────────────────────────────────────────────────
@@ -134,22 +135,218 @@ function computeOutlinePaths(keys: ReadonlyArray<readonly [number, number]>): Po
 const lumatoneOutlinePaths: Point[][] = computeOutlinePaths(baseKeys);
 const qwertyOutlinePaths: Point[][] = computeOutlinePaths(qwertyKeys);
 
-type OutlineMode = 'lumatone' | 'qwerty' | 'none';
+/* Spatial index for seam-snap. snapVtx() is called twice per seam segment
+   (~thousands per frame in piano outline with a tall canvas) — a linear
+   scan over ~100-200 polygon vertices per call is the dominant per-frame
+   cost in the seam loop. A 2D bucket grid turns each query into a few
+   neighbor-bucket lookups, dropping ~800k inner-loop iterations to
+   ~30-40k. Built once per polygon-paths change; queried with the
+   per-frame snap offset (snapOX, snapOY). */
+/* Pack a lattice (q, r) into a single Smi-fast integer for use as a
+   Set<number> / Map<number, …> key inside hot loops (seam dedup,
+   neighbor checks). String concatenation (`q + ',' + r`) allocates one
+   short string per iteration; for ~12k iterations per draw that's
+   substantial GC pressure. Range comfortably covers any lattice cell we
+   touch (refNote validation caps refR at ±3, piano cells span ±30 q in
+   7-limit extremes — well inside ±5000). */
+function packQR(q: number, r: number): number {
+  return (q + 5000) * 100000 + (r + 5000);
+}
+
+const SNAP_CELL_SIZE = 16;  /* > seam snap radius (sqrt(36) = 6 px) */
+interface SnapIndex { buckets: Map<number, Array<[number, number]>>; }
+function snapBucketKey(gx: number, gy: number): number {
+  /* gx, gy fit in ±1000 for any canvas we render; encode without
+     bit-shifts to avoid 32-bit sign issues on negative coords. */
+  return (gx + 1000) * 10000 + (gy + 1000);
+}
+function buildSnapIndex(paths: Point[][]): SnapIndex {
+  const buckets = new Map<number, Array<[number, number]>>();
+  for (const poly of paths) {
+    for (let i = 0; i < poly.length; i++) {
+      const v = poly[i];
+      const gx = Math.floor(v[0] / SNAP_CELL_SIZE);
+      const gy = Math.floor(v[1] / SNAP_CELL_SIZE);
+      const k = snapBucketKey(gx, gy);
+      let arr = buckets.get(k);
+      if (!arr) { arr = []; buckets.set(k, arr); }
+      arr.push(v);
+    }
+  }
+  return { buckets };
+}
+const lumatoneSnapIndex = buildSnapIndex(lumatoneOutlinePaths);
+const qwertySnapIndex = buildSnapIndex(qwertyOutlinePaths);
+let pianoSnapIndex: SnapIndex = { buckets: new Map() };
+const emptySnapIndex: SnapIndex = { buckets: new Map() };
+
+type OutlineMode = 'lumatone' | 'qwerty' | 'piano' | 'none';
 function getOutlineMode(): OutlineMode {
   const sel = document.getElementById('selOutline') as HTMLSelectElement | null;
   const v = sel?.value;
   if (v === 'qwerty') return 'qwerty';
+  if (v === 'piano') return 'piano';
   if (v === 'none') return 'none';
   return 'lumatone';
+}
+
+/* ── piano outline (dynamic, refNote-anchored) ─────────────────────────────
+   The 88 cells that an A0..C8 MIDI piano resolves to under the current
+   reference note. Unlike Lumatone/QWERTY (static cell sets pre-shifted to
+   draw screen-stationary), the piano outline tracks lattice cells: it scrolls
+   with the lattice on layout shifts, and recomputes on refNote / tuning-mode /
+   septimal-shift change. Cache keyed by (refQ, refR, tuningMode, septShift). */
+let pianoOutlinePaths: Point[][] = [];
+let pianoFootprintSet: Set<KeyId> = new Set();
+let pianoBounds = { qMin: 0, qMax: 0, rMin: 0, rMax: 0 };
+let pianoOutlineCacheKey = '';
+
+export function invalidatePianoOutline(): void {
+  pianoOutlineCacheKey = '';
+  /* The hex layer's gridRange clamps to piano bounds when Extend is off —
+     stale bounds mean stale clipping. Force a rebuild on next draw. */
+  view.hexDirty = true;
+  view.textDirty = true;
+}
+
+/* For each MIDI 21..108, pick the (q, r) with `4q + 7r = midi − 57` that
+   minimizes reduced Tenney Height of the JI ratio to (refQ, refR), tiebroken
+   by largest syntonic-axis projection (octave-invariant — see resolve.ts
+   header for derivation). Solutions live on a 1-parameter family
+   (q0+7k, r0−4k); k ∈ [−20, 20] is comfortably wider than any sensible
+   enharmonic excursion. Exported for callers that need to inspect the
+   resulting cell set under a hypothetical refNote (e.g. Ctrl+click
+   validation in src/ui/init.ts). */
+export function compute88PianoCoords(refQ: number, refR: number): Array<[number, number]> {
+  const cells: Array<[number, number]> = [];
+  for (let midi = 21; midi <= 108; midi++) {
+    const N = midi - 57;
+    /* q ≡ 2N (mod 7) since 4·2 ≡ 1 (mod 7); start there. */
+    const q0 = (((2 * N) % 7) + 7) % 7;
+    let bestQ = q0, bestR = (N - 4 * q0) / 7;
+    let bestTh = Infinity, bestProj = -Infinity, found = false;
+    for (let k = -20; k <= 20; k++) {
+      const q = q0 + 7 * k;
+      const r = (N - 4 * q) / 7;
+      const ratio = jiRatio(refQ, refR, q, r);
+      const th = tenneyHeightFromExps(ratio.e);
+      const proj = 7 * (q - refQ) - 4 * (r - refR);
+      if (!found || th < bestTh || (th === bestTh && proj > bestProj)) {
+        bestTh = th; bestProj = proj; bestQ = q; bestR = r; found = true;
+      }
+    }
+    cells.push([bestQ, bestR]);
+  }
+  return cells;
+}
+
+/* Cached MIDI 64 (E4) cell for the current refNote + tuning. Updated by
+   ensurePianoOutline alongside the rest of the piano-outline cache. The
+   piano-mode view tracks this cell — see syncViewToOutline in controls.ts
+   for why centering on the lattice's midpoint-MIDI cell (not refNote) keeps
+   the outline on-screen regardless of where refNote sits in the range. */
+let pianoMidi64Cell: [number, number] = [0, 1];
+
+/** MIDI 64's lattice cell under the current refNote + tuning state. Ensures
+ *  the piano outline cache is up-to-date before reading. */
+export function currentMidi64Cell(): readonly [number, number] {
+  ensurePianoOutline();
+  return pianoMidi64Cell;
+}
+
+/** Snap view.viewQ/viewR to the position dictated by the active outline.
+ *  Called after rotation or tuning changes to re-solve the piano viewport
+ *  (tilt-dependent linear system; MIDI 64's cell can also shift in
+ *  7-limit). For non-piano outlines the view falls back to the current
+ *  layout-shift center. Caller handles hexDirty + redraw. Lives here
+ *  rather than in controls.ts to keep onTuningChanged free of a circular
+ *  import (controls → effects/onTuningChanged → controls). */
+export function snapViewForOutline(outline: OutlineMode): void {
+  if (outline === 'piano') {
+    const [m64Q, m64R] = currentMidi64Cell();
+    const [vQ, vR] = computePianoViewCenter(referenceNote.q, referenceNote.r, m64Q, m64R);
+    view.viewQ = vQ;
+    view.viewR = vR;
+  } else {
+    view.viewQ = layoutShifts[tuning.curLayout][0];
+    view.viewR = layoutShifts[tuning.curLayout][1];
+  }
+}
+
+/** Decide whether (q, r) is a sensible reference-note. Used by:
+ *   • ctrl+click handler (src/ui/init.ts) — blocks user from setting bad ref
+ *   • composer bridge handler (src/bridge/hkl-side.ts) — drops invalid
+ *     composer-broadcast refNotes before they hit state. Composer also has
+ *     an accidental-cap fallback when ENTERING notes, but rejecting at the
+ *     ref-note-set stage is smoother now that we have the validator on the
+ *     HKL side.
+ *
+ *  Rules:
+ *  1. coordToMidi(q, r) ∈ [21, 108] — refNote must be inside 88-key range.
+ *  2. Every cell in the 88-cell set the picker produces under this refNote
+ *     must spell with ≤ ±3 accidentals (matching Composer's own clamp). */
+export function validateRefNoteCandidate(q: number, r: number): string | null {
+  const midi = 57 + 4 * q + 7 * r;
+  if (midi < 21 || midi > 108) {
+    return 'Reference note out of 88-key piano range (MIDI ' + midi + ')';
+  }
+  const cells = compute88PianoCoords(q, r);
+  for (const [cq, cr] of cells) {
+    const name = noteName(cq, cr);
+    const acc = Math.abs(accToVal(parseNote(name).acc));
+    if (acc > 3) {
+      return 'Reference would require ' + acc + '× accidentals (' + name + ')';
+    }
+  }
+  return null;
+}
+
+/* ── tween-aware hex-layer rebuild ─────────────────────────────────────────
+   When the piano-mode view tweens between two MIDI 64 cells (because refNote
+   shifts to a SC-spelled variant, or composer pushes a new chromatic root),
+   the offscreen hex layer must cover BOTH endpoints — otherwise the moving
+   view crosses the layer edge mid-tween and reveals the cut-off-borders
+   artifact. Set the tween range BEFORE calling buildHexLayerForTween; the
+   sizeGridCanvases routine picks up the midpoint as gridRef and extends pad
+   by half the tween distance so the layer spans start..end inclusive. */
+let pendingTweenStart: [number, number] | null = null;
+let pendingTweenEnd: [number, number] | null = null;
+
+function ensurePianoOutline(): void {
+  const refQ = referenceNote.q, refR = referenceNote.r;
+  const tMode = tuning.equalEnabled ? 'E' : tuning.septimalEnabled ? '7' : '5';
+  const key = refQ + ',' + refR + ',' + tMode + ',' + tuning.septimalShift;
+  if (key === pianoOutlineCacheKey) return;
+  pianoOutlineCacheKey = key;
+  const cells = compute88PianoCoords(refQ, refR);
+  pianoFootprintSet = new Set<KeyId>();
+  let qLo = 1e9, qHi = -1e9, rLo = 1e9, rHi = -1e9;
+  for (const [q, r] of cells) {
+    pianoFootprintSet.add(q + ',' + r as KeyId);
+    if (q < qLo) qLo = q; if (q > qHi) qHi = q;
+    if (r < rLo) rLo = r; if (r > rHi) rHi = r;
+  }
+  pianoOutlinePaths = computeOutlinePaths(cells);
+  pianoSnapIndex = buildSnapIndex(pianoOutlinePaths);
+  pianoBounds = { qMin: qLo - 2, qMax: qHi + 2, rMin: rLo - 2, rMax: rHi + 2 };
+  /* MIDI 64 (E4) is the 44th key of an 88-key piano (MIDI 21..108) →
+     cells index 43. Cache for piano-mode view centering. */
+  pianoMidi64Cell = cells[64 - 21];
 }
 
 /* Set of (q,r) keys covered by the active outline at the current state.
    Returns null when outline is 'none' (no clipping applies). Lumatone is the
    layout-shifted Lumatone footprint; qwerty additionally rides with
-   qwertyTranspose to mirror the rendered outline position. */
+   qwertyTranspose to mirror the rendered outline position. Piano returns the
+   refNote-anchored 88-cell set (no layout shift — those cells are absolute
+   lattice positions, recomputed on refNote/tuning change). */
 export function activeFootprintSet(): Set<KeyId> | null {
   const outlineMode = getOutlineMode();
   if (outlineMode === 'none') return null;
+  if (outlineMode === 'piano') {
+    ensurePianoOutline();
+    return pianoFootprintSet;
+  }
   const sh = layoutShifts[tuning.curLayout];
   const set = new Set<KeyId>();
   if (outlineMode === 'lumatone') {
@@ -188,15 +385,26 @@ export function hexAtPoint(mx: number, my: number): KeyId | null {
   const showE = (document.getElementById('cbExtend') as HTMLInputElement | null)?.checked ?? true;
   const outlineMode = getOutlineMode();
   if (!showE && outlineMode !== 'none') {
-    /* qwerty outline rides with qwertyTranspose: render translates the path,
-       so here we translate the test point by the inverse to compare in path space. */
+    /* qwerty outline rides with qwertyTranspose; piano outline rides with the
+       lattice (viewQ/viewR offset). For both, translate the test point by the
+       inverse of the render-side translate to compare against the raw path. */
     let tx = ux, ty = uy;
-    if (outlineMode === 'qwerty' && tuning.qwertyTranspose !== 0) {
-      const ts = qwertyTransposeShift(tuning.qwertyTranspose);
-      tx -= ts[0] * dxH + ts[1] * dxH * 0.5;
-      ty -= -ts[1] * dyH;
+    let paths: Point[][];
+    if (outlineMode === 'piano') {
+      ensurePianoOutline();
+      tx += view.viewQ * dxH + view.viewR * dxH * 0.5;
+      ty -= view.viewR * dyH;
+      paths = pianoOutlinePaths;
+    } else if (outlineMode === 'qwerty') {
+      if (tuning.qwertyTranspose !== 0) {
+        const ts = qwertyTransposeShift(tuning.qwertyTranspose);
+        tx -= ts[0] * dxH + ts[1] * dxH * 0.5;
+        ty -= -ts[1] * dyH;
+      }
+      paths = qwertyOutlinePaths;
+    } else {
+      paths = lumatoneOutlinePaths;
     }
-    const paths = outlineMode === 'qwerty' ? qwertyOutlinePaths : lumatoneOutlinePaths;
     if (!pointInOutline(paths, tx, ty)) return null;
   }
   /* find nearest hex by unrotated distance */
@@ -318,7 +526,33 @@ let qwertyQMin: number, qwertyQMax: number, qwertyRMin: number, qwertyRMax: numb
 })();
 
 function sizeGridCanvases(): void {
-  gridRefQ = 0; gridRefR = 0;
+  /* In piano outline mode the view's hybrid anchor (refNote.q on Q axis,
+     MIDI 64 cell's r on R axis) can sit anywhere on the lattice depending
+     on the current refNote. Anchor the offscreen hex layer at that point
+     so a rebuild (triggered by invalidatePianoOutline on any refNote/
+     tuning change) re-centers the layer around the new view. Other
+     outlines keep gridRef at origin and pad for layout shifts only — the
+     zero-cost-blit invariant for ♭/♮/♯ switches stays intact.
+
+     During a piano-mode view tween, pendingTween{Start,End} are set by the
+     caller (controls.ts syncViewToOutline) so the layer covers the union of
+     both endpoints. gridRef sits at the midpoint and pad is extended by
+     half the tween distance. The expanded layer survives the whole tween
+     and shrinks back on the next normal rebuild. */
+  if (pendingTweenStart && pendingTweenEnd && getOutlineMode() === 'piano') {
+    gridRefQ = Math.round((pendingTweenStart[0] + pendingTweenEnd[0]) / 2);
+    gridRefR = Math.round((pendingTweenStart[1] + pendingTweenEnd[1]) / 2);
+  } else if (getOutlineMode() === 'piano') {
+    /* Match syncViewToOutline: viewport solved so refNote is at screen-X
+       center and MIDI 64's cell at screen-Y center. Round to integer so
+       the offscreen layer aligns on a lattice cell — small sub-cell
+       offsets are absorbed by the layer's padding. */
+    const [m64Q, m64R] = currentMidi64Cell();
+    const [vQ, vR] = computePianoViewCenter(referenceNote.q, referenceNote.r, m64Q, m64R);
+    gridRefQ = Math.round(vQ); gridRefR = Math.round(vR);
+  } else {
+    gridRefQ = 0; gridRefR = 0;
+  }
   let mxDx = 0, mxDy = 0;
   ([1, 2, 3] as const).forEach((li) => {
     const sh = layoutShifts[li];
@@ -326,10 +560,39 @@ function sizeGridCanvases(): void {
     mxDx = Math.max(mxDx, Math.abs(dux * cosT + duy * sinT));
     mxDy = Math.max(mxDy, Math.abs(-dux * sinT + duy * cosT));
   });
+  /* During a piano tween, extend pad by half the distance from start to end
+     (relative to the midpoint we picked as gridRef). */
+  if (pendingTweenStart && pendingTweenEnd) {
+    const halfDQ = (pendingTweenEnd[0] - pendingTweenStart[0]) / 2;
+    const halfDR = (pendingTweenEnd[1] - pendingTweenStart[1]) / 2;
+    const dux = halfDQ * dxH + halfDR * dxH * 0.5, duy = -halfDR * dyH;
+    mxDx = Math.max(mxDx, Math.abs(dux * cosT + duy * sinT));
+    mxDy = Math.max(mxDy, Math.abs(-dux * sinT + duy * cosT));
+  }
   gridPadX = Math.ceil(mxDx) + hexR * 3;
   gridPadY = Math.ceil(mxDy) + hexR * 3;
   gridW = view.CW + gridPadX * 2; gridH = view.CH + gridPadY * 2;
   gridDpr = window.devicePixelRatio || 1;
+}
+
+/** Rebuild the hex + text offscreen layers sized to cover both endpoints
+ *  of an upcoming view tween. Called by syncViewToOutline (controls.ts)
+ *  before animation.tweenTo() so the layer already spans start→end when
+ *  the first animation frame paints. The pending-tween state is cleared
+ *  immediately after the rebuild — future non-tween rebuilds use the
+ *  normal MIDI 64-anchored gridRef. */
+export function buildHexLayerForTween(
+  startQ: number, startR: number, endQ: number, endR: number,
+): void {
+  pendingTweenStart = [startQ, startR];
+  pendingTweenEnd = [endQ, endR];
+  try {
+    buildHexLayer();
+    buildTextLayer();
+  } finally {
+    pendingTweenStart = null;
+    pendingTweenEnd = null;
+  }
 }
 
 function gridRange(extended: boolean): GridRange {
@@ -351,6 +614,10 @@ function gridRange(extended: boolean): GridRange {
     if (mode === 'qwerty') {
       qLo = Math.max(qLo, qwertyQMin); qHi = Math.min(qHi, qwertyQMax);
       rLo = Math.max(rLo, qwertyRMin); rHi = Math.min(rHi, qwertyRMax);
+    } else if (mode === 'piano') {
+      ensurePianoOutline();
+      qLo = Math.max(qLo, pianoBounds.qMin); qHi = Math.min(qHi, pianoBounds.qMax);
+      rLo = Math.max(rLo, pianoBounds.rMin); rHi = Math.min(rHi, pianoBounds.rMax);
     } else {
       qLo = Math.max(qLo, kbQMin); qHi = Math.min(qHi, kbQMax);
       rLo = Math.max(rLo, kbRMin); rHi = Math.min(rHi, kbRMax);
@@ -524,46 +791,105 @@ export function draw(): void {
   /* lattice seams — skip in Equal mode (no seams) */
   if (showB && !tuning.equalEnabled) {
     const eHL = hexR * 0.55; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.lineCap = 'butt';
-    const drawnSeams = new Set<string>();
-    const allSet = new Set<string>(allKeys.map((k) => k.q + ',' + k.r));
-    const dirs: ReadonlyArray<readonly [number, number]> = [[1, 0], [-1, 0], [0, 1], [0, -1], [-1, 1], [1, -1]];
+    /* `allSet` is a number-keyed Set built via packQR to avoid the ~14k
+       string allocations the old `Set<string>` + `q + ',' + r`
+       per-iteration concatenation incurred each frame. Smi keys hash
+       cheaply in V8 and don't churn the heap.
+       Half-dirs iteration: by iterating only 3 of the 6 neighbor
+       directions per cell, each cell-pair is visited exactly once (the
+       opposite dir reaches it from the other cell). Removes the need
+       for a `drawnSeams` dedup Set and the ~4k `sk` string allocations
+       it used to require. */
+    const allSet = new Set<number>();
+    for (let i = 0; i < allKeys.length; i++) {
+      const ak = allKeys[i];
+      allSet.add(packQR(ak.q, ak.r));
+    }
+    const dirsHalf: ReadonlyArray<readonly [number, number]> = [[1, 0], [0, 1], [-1, 1]];
     const animT = animation.progress;
-    const seamBlend = animT < 0 ? 1 : Math.pow(Math.abs(2 * animT - 1), 6);
+    /* seamBlend dips to 0 at mid-tween so seams float to the geometric
+       cell-midpoint while cells animate from old to new layout positions
+       under a screen-fixed outline (Lumatone/QWERTY layout switches). In
+       piano outline the outline polygon translates with view, so the
+       outline + cells animate together and seam-snap stays correct
+       throughout — keep seamBlend=1 (full snap) to avoid spurious
+       unsnap-resnap jitter. */
+    const seamBlend = (animT < 0 || getOutlineMode() === 'piano')
+      ? 1
+      : Math.pow(Math.abs(2 * animT - 1), 6);
     /* snap seams to whichever outline is currently visible — a Lumatone snap
        under a hidden Lumatone outline would tug seams toward an invisible
-       reference. Both Lumatone and QWERTY ride with the active layout shift;
-       QWERTY additionally rides with qwertyTranspose. None mode: no snap. */
+       reference. Lumatone/QWERTY ride with the active layout shift (their
+       polygon vertices live in baseKeys-origin space, then offset by kbSh);
+       QWERTY additionally rides with qwertyTranspose. Piano outline's
+       vertices are in absolute lattice space, so its offset to seam-space
+       (where cells are at `(q-viewQ, r-viewR)`) is just (−viewQ, −viewR).
+       None mode: no snap. */
     const seamMode = getOutlineMode();
-    const snapPaths: Point[][] = seamMode === 'qwerty' ? qwertyOutlinePaths
-      : seamMode === 'lumatone' ? lumatoneOutlinePaths : [];
-    const qts = seamMode === 'qwerty' ? qwertyTransposeShift(tuning.qwertyTranspose) : [0, 0] as const;
-    const snapOX = (kbShQ - view.viewQ) * dxH + (kbShR - view.viewR) * dxH * 0.5
-      + qts[0] * dxH + qts[1] * dxH * 0.5;
-    const snapOY = -(kbShR - view.viewR) * dyH - qts[1] * dyH;
-    function snapVtx(px: number, py: number): { d: number; x: number; y: number } | null {
-      if (snapPaths.length === 0) return null;
-      let bd = Infinity, bpx = 0, bpy = 0;
-      for (let pi = 0; pi < snapPaths.length; pi++) {
-        const poly = snapPaths[pi];
-        for (let i = 0; i < poly.length; i++) {
-          const vx = poly[i][0] + snapOX, vy = poly[i][1] + snapOY;
-          const d2 = (px - vx) * (px - vx) + (py - vy) * (py - vy);
-          if (d2 < bd) { bd = d2; bpx = vx; bpy = vy; }
+    let snapIndex: SnapIndex;
+    let snapOX: number, snapOY: number;
+    if (seamMode === 'piano') {
+      ensurePianoOutline();
+      snapIndex = pianoSnapIndex;
+      snapOX = -view.viewQ * dxH - view.viewR * dxH * 0.5;
+      snapOY = view.viewR * dyH;
+    } else if (seamMode === 'qwerty') {
+      snapIndex = qwertySnapIndex;
+      const qts = qwertyTransposeShift(tuning.qwertyTranspose);
+      snapOX = (kbShQ - view.viewQ) * dxH + (kbShR - view.viewR) * dxH * 0.5
+        + qts[0] * dxH + qts[1] * dxH * 0.5;
+      snapOY = -(kbShR - view.viewR) * dyH - qts[1] * dyH;
+    } else if (seamMode === 'lumatone') {
+      snapIndex = lumatoneSnapIndex;
+      snapOX = (kbShQ - view.viewQ) * dxH + (kbShR - view.viewR) * dxH * 0.5;
+      snapOY = -(kbShR - view.viewR) * dyH;
+    } else {
+      snapIndex = emptySnapIndex;
+      snapOX = 0; snapOY = 0;
+    }
+    /* Spatial-indexed snap: build-time grid + 3×3 bucket scan per query.
+       Replaces a linear scan over the full vertex list (was the dominant
+       per-frame cost — see header on buildSnapIndex). */
+    function snapVtx(px: number, py: number): { x: number; y: number } | null {
+      if (snapIndex.buckets.size === 0) return null;
+      /* polygon-local query coord (undo the snapOX/snapOY translate). */
+      const qx = px - snapOX, qy = py - snapOY;
+      const gx = Math.floor(qx / SNAP_CELL_SIZE);
+      const gy = Math.floor(qy / SNAP_CELL_SIZE);
+      let bd = Infinity, bx = 0, by = 0;
+      for (let dgx = -1; dgx <= 1; dgx++) {
+        for (let dgy = -1; dgy <= 1; dgy++) {
+          const arr = snapIndex.buckets.get(snapBucketKey(gx + dgx, gy + dgy));
+          if (!arr) continue;
+          for (let i = 0; i < arr.length; i++) {
+            const v = arr[i];
+            const ddx = qx - v[0], ddy = qy - v[1];
+            const d2 = ddx * ddx + ddy * ddy;
+            if (d2 < bd) { bd = d2; bx = v[0]; by = v[1]; }
+          }
         }
       }
-      return bd < 36 ? { d: Math.sqrt(bd), x: bpx, y: bpy } : null;
+      return bd < 36 ? { x: bx + snapOX, y: by + snapOY } : null;
     }
     const seamSegs: [number, number, number, number][] = [];
-    allKeys.forEach((k) => {
-      dirs.forEach((d) => {
-        const nq = k.q + d[0], nr = k.r + d[1], nk = nq + ',' + nr;
-        if (!allSet.has(nk)) return;
-        const sameBand = bandOf(k.q) === bandOf(nq);
-        const sameRegion = !tuning.septimalEnabled || ((Math.floor((k.r - tuning.septimalShift) / tuning.septimalW) & 1) === (Math.floor((nr - tuning.septimalShift) / tuning.septimalW) & 1));
-        if (sameBand && sameRegion) return;
-        const sk = k.q < nq || (k.q === nq && k.r < nr) ? k.q + ',' + k.r + '/' + nq + ',' + nr : nq + ',' + nr + '/' + k.q + ',' + k.r;
-        if (drawnSeams.has(sk)) return; drawnSeams.add(sk);
-        const nb = posMap[nk]; if (!nb) return;
+    /* posMap is still string-keyed (used elsewhere with KeyId strings);
+       allocate the lookup key only after the cheap allSet + same-band
+       filters short-circuit. That cuts the string churn from
+       ~12k/frame to ~5k/frame. */
+    const septShift = tuning.septimalShift, septW = tuning.septimalW;
+    const septOn = tuning.septimalEnabled;
+    for (let ki = 0; ki < allKeys.length; ki++) {
+      const k = allKeys[ki];
+      const kq = k.q, kr = k.r;
+      for (let di = 0; di < dirsHalf.length; di++) {
+        const d = dirsHalf[di];
+        const nq = kq + d[0], nr = kr + d[1];
+        if (!allSet.has(packQR(nq, nr))) continue;
+        const sameBand = bandOf(kq) === bandOf(nq);
+        const sameRegion = !septOn || ((Math.floor((kr - septShift) / septW) & 1) === (Math.floor((nr - septShift) / septW) & 1));
+        if (sameBand && sameRegion) continue;
+        const nb = posMap[nq + ',' + nr];
+        if (!nb) continue;
         const mx = (k.ux + nb.ux) / 2, my = (k.uy + nb.uy) / 2;
         const dx2 = nb.ux - k.ux, dy2 = nb.uy - k.uy, len = Math.sqrt(dx2 * dx2 + dy2 * dy2);
         const nx = -dy2 / len, ny = dx2 / len;
@@ -576,8 +902,8 @@ export function draw(): void {
           if (r2) { p2x += (r2.x - p2x) * seamBlend; p2y += (r2.y - p2y) * seamBlend; }
         }
         seamSegs.push([p1x, p1y, p2x, p2y]);
-      });
-    });
+      }
+    }
     if (seamSegs.length) {
       ctx.beginPath();
       seamSegs.forEach((s) => { ctx.moveTo(s[0], s[1]); ctx.lineTo(s[2], s[3]); });
@@ -588,10 +914,12 @@ export function draw(): void {
   /* Reference-note marker: dashed hex outline drawn OUTSIDE the hex perimeter
      (in the inter-key gap), so it sits in the cracks between keys without
      overlapping the fill or the note label. White (matches band seams' hue)
-     so it reads as structural, not tonal. Shown only while the Piano toolbar
-     is enabled — the marker is only meaningful in that context. */
+     so it reads as structural, not tonal. Shown when the Piano-input toolbar
+     is enabled OR when the Piano outline is active — both contexts make the
+     reference note meaningful, and the Piano outline is constructed around
+     this anchor regardless of whether piano input is on. */
   const pianoCb = document.getElementById('cbPianoEnabled') as HTMLInputElement | null;
-  if (pianoCb && pianoCb.checked) {
+  if ((pianoCb && pianoCb.checked) || getOutlineMode() === 'piano') {
     const rk = posMap[referenceNote.q + ',' + referenceNote.r];
     if (rk) {
       ctx.save();
@@ -636,17 +964,29 @@ export function draw(): void {
     ctx.translate(view.CW / 2, cyC);
     ctx.rotate(-tiltAngle);
 
-    /* Both outlines ride with viewQ — keyboard input applies layoutShifts at
-       note-on time so QWERTY follows ♭/♮/♯ exactly like the Lumatone, and the
-       outline visually stays put on canvas as the lattice scrolls underneath.
-       QWERTY additionally rides with qwertyTranspose: this is a per-step
-       (+2q, -r) shift applied in canvas pixels here so the camera stays
-       fixed (selection visibility preserved) while the QWERTY slab slides. */
-    if (outlineMode === 'qwerty' && tuning.qwertyTranspose !== 0) {
-      const ts = qwertyTransposeShift(tuning.qwertyTranspose);
-      ctx.translate(ts[0] * dxH + ts[1] * dxH * 0.5, -ts[1] * dyH);
+    /* Lumatone/QWERTY outlines stay screen-stationary across layout shifts
+       (the cells they cover shift with layoutShifts at note-on time, so the
+       outline visually stays put on canvas as the lattice scrolls underneath).
+       QWERTY additionally rides with qwertyTranspose: a per-step (+2q, -r)
+       shift in canvas pixels here so the camera stays fixed while the QWERTY
+       slab slides.
+       Piano outline differs: its 88 cells are anchored to refNote in absolute
+       lattice space (see compute88PianoCoords). We translate by the lattice
+       scroll offset so the polygon tracks the cells it encompasses. */
+    let activePaths: Point[][];
+    if (outlineMode === 'piano') {
+      ensurePianoOutline();
+      ctx.translate(-view.viewQ * dxH - view.viewR * dxH * 0.5, view.viewR * dyH);
+      activePaths = pianoOutlinePaths;
+    } else if (outlineMode === 'qwerty') {
+      if (tuning.qwertyTranspose !== 0) {
+        const ts = qwertyTransposeShift(tuning.qwertyTranspose);
+        ctx.translate(ts[0] * dxH + ts[1] * dxH * 0.5, -ts[1] * dyH);
+      }
+      activePaths = qwertyOutlinePaths;
+    } else {
+      activePaths = lumatoneOutlinePaths;
     }
-    const activePaths = outlineMode === 'qwerty' ? qwertyOutlinePaths : lumatoneOutlinePaths;
 
     const diag = Math.ceil(Math.sqrt(view.CW * view.CW + view.CH * view.CH));
     ctx.beginPath();

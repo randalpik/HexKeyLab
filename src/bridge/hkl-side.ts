@@ -24,13 +24,24 @@ import { tuning } from '../state/tuning.js';
 import { noteName, keyOctave, parseNote, accToVal } from '../tuning/notes.js';
 import { darkColorHex, coordToMidi } from '../transcription/pitch.js';
 import { noteOn, noteOff, stopAllNotes } from '../audio/engine.js';
-import { draw, activeFootprintSet } from '../render/draw.js';
+import { draw, activeFootprintSet, invalidatePianoOutline, validateRefNoteCandidate } from '../render/draw.js';
+import { syncViewToOutline } from '../ui/controls.js';
 import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
-import { setReferenceFromComposer, resetReferenceToDefault } from '../state/reference.js';
+import { setSelectionFromComposer, setSongKey, onComposerBye } from '../state/reference.js';
 import type { FootprintCell } from './protocol.js';
 import type { KeyId } from '../types.js';
 
 const bridge = createHklBridge();
+
+/* Lightweight DOM read for the outline mode — the bridge handler runs on
+   incoming composer messages, well after the toolbar is wired, so the
+   #selOutline select is the simplest source of truth. */
+function currentOutlineForBridge(): import('../state/persistence.js').OutlineMode {
+  const sel = document.getElementById('selOutline') as HTMLSelectElement | null;
+  const v = sel?.value;
+  if (v === 'qwerty' || v === 'piano' || v === 'none') return v;
+  return 'lumatone';
+}
 
 /* ── resolution helpers ──────────────────────────────────────────────────── */
 
@@ -288,9 +299,14 @@ bridge.on((msg: ComposerEvent) => {
       break;
     case 'composer-bye':
       /* Composer disconnected. Stop any playback in progress so we're not
-         left with stuck notes, and reset the piano-input reference note. */
+         left with stuck notes, and drop composer-set ref-note tiers. A
+         user's manual Ctrl+click selection survives the bye. */
       abortActive();
-      if (resetReferenceToDefault()) draw();
+      if (onComposerBye()) {
+        invalidatePianoOutline();
+        syncViewToOutline(currentOutlineForBridge(), false);
+        draw();
+      }
       break;
     case 'play-score':
       playScore(msg.events);
@@ -300,7 +316,28 @@ bridge.on((msg: ComposerEvent) => {
       bridge.send({ type: 'playback-finished' });
       break;
     case 'set-reference-note':
-      if (setReferenceFromComposer(msg.q, msg.r)) draw();
+      /* Sets the selection tier from Composer. Last-writer-wins between
+         this and any user Ctrl+click. Composer broadcasts are validated
+         against the same MIDI-range + accidental constraints as
+         Ctrl+click — Composer has its own accidental-clamp fallback for
+         entering notes, but rejecting at the ref-note-set stage is
+         smoother (the dashed marker never moves to an unspellable cell
+         and the piano outline never reshapes to a >±3 layout). */
+      if (validateRefNoteCandidate(msg.q, msg.r) === null
+          && setSelectionFromComposer(msg.q, msg.r)) {
+        invalidatePianoOutline();
+        syncViewToOutline(currentOutlineForBridge(), false);
+        draw();
+      }
+      break;
+    case 'set-song-key':
+      /* Sets the song-key tier — surfaces as the effective ref only when
+         the selection tier is empty. */
+      if (setSongKey(msg.q, msg.r)) {
+        invalidatePianoOutline();
+        syncViewToOutline(currentOutlineForBridge(), false);
+        draw();
+      }
       break;
   }
 });

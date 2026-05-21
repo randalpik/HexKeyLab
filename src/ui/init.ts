@@ -22,9 +22,13 @@ import { tuning } from '../state/tuning.js';
 import { audio } from '../state/audio.js';
 import { lumatone } from '../state/lumatone.js';
 import { loadPrefs, savePrefs, clearPrefs, DEFAULT_PREFS } from '../state/persistence.js';
-import type { PrefsV1 } from '../state/persistence.js';
+import type { PrefsV1, OutlineMode } from '../state/persistence.js';
+import {
+  referenceNote, setSelectionFromManual,
+  clearSelection as clearRefSelection,
+} from '../state/reference.js';
 import { sizeCanvas } from '../render/canvas.js';
-import { cv, draw, hexAtPoint, activeFootprintSet } from '../render/draw.js';
+import { cv, draw, hexAtPoint, activeFootprintSet, invalidatePianoOutline, validateRefNoteCandidate } from '../render/draw.js';
 import { updateInfo } from '../render/info.js';
 import {
   initAudio, changeWaveform, toggleAudio,
@@ -36,7 +40,7 @@ import { initPiano } from '../midi/piano.js';
 import {
   setTuning, setOutline, setLayout, applyLayoutImmediate,
   setQwertyTranspose, clearSelection,
-  applyRotation, setRotationFromDom,
+  applyRotation, setRotationFromDom, syncViewToOutline,
 } from './controls.js';
 import './keyboard.js';
 import '../input/keyboard-notes.js';
@@ -166,6 +170,31 @@ cv.addEventListener('mousedown', function (e: MouseEvent) {
   const rect = cv.getBoundingClientRect();
   const key = hexAtPoint(e.clientX - rect.left, e.clientY - rect.top);
   if (!key) return;
+  /* Ctrl/Cmd+click: manage the reference-note selection tier. Clicking the
+     current effective ref clears the selection (revealing song-key tier or
+     default); clicking anywhere else sets manual=that-cell. Does NOT touch
+     the play selection. */
+  if (e.ctrlKey || e.metaKey) {
+    const [qs, rs] = key.split(',');
+    const q = +qs, r = +rs;
+    const isCurrentRef = (q === referenceNote.q && r === referenceNote.r);
+    if (!isCurrentRef) {
+      /* Validate the proposed refNote BEFORE mutating state. Rejected
+         clicks flash an explanation and leave everything as-is. */
+      const reason = validateRefNoteCandidate(q, r);
+      if (reason) { flashInfoLine(reason); return; }
+    }
+    const changed = isCurrentRef ? clearRefSelection() : setSelectionFromManual(q, r);
+    if (changed) {
+      /* Persist or drop the manual ref. Composer-set selections do not persist. */
+      if (isCurrentRef) savePrefs({ manualRef: undefined });
+      else savePrefs({ manualRef: { q, r } });
+      invalidatePianoOutline();
+      syncViewToOutline(getOutlineSelValue(), false);
+      draw();
+    }
+    return;
+  }
   if (e.shiftKey) { selection.selectedKeys.clear(); selection.selectedKeys.add(key); }
   else {
     if (selection.selectedKeys.has(key)) selection.selectedKeys.delete(key);
@@ -173,6 +202,27 @@ cv.addEventListener('mousedown', function (e: MouseEvent) {
   }
   onSelectionChanged();
 });
+
+function getOutlineSelValue(): OutlineMode {
+  const sel = document.getElementById('selOutline') as HTMLSelectElement | null;
+  const v = sel?.value;
+  if (v === 'qwerty' || v === 'piano' || v === 'none') return v;
+  return 'lumatone';
+}
+
+let infoLineFlashTimer: number | null = null;
+/** Briefly replace #infoLine with a transient message, then restore via
+ *  updateInfo(). Used for ctrl+click validation rejections. */
+function flashInfoLine(text: string, ms = 2000): void {
+  const el = document.getElementById('infoLine');
+  if (!el) return;
+  if (infoLineFlashTimer !== null) clearTimeout(infoLineFlashTimer);
+  el.innerHTML = '<span class="hint" style="color:#e88">' + text + '</span>';
+  infoLineFlashTimer = window.setTimeout(() => {
+    infoLineFlashTimer = null;
+    updateInfo();
+  }, ms);
+}
 cv.addEventListener('mousemove', function (e: MouseEvent) {
   const rect = cv.getBoundingClientRect();
   const key = hexAtPoint(e.clientX - rect.left, e.clientY - rect.top);
@@ -230,7 +280,7 @@ $<HTMLInputElement>('cbShortIvl').addEventListener('change', (e) => {
 
 // Tuning + outline + clear
 $<HTMLSelectElement>('selTuning').addEventListener('change', setTuning);
-$<HTMLSelectElement>('selOutline').addEventListener('change', setOutline);
+$<HTMLSelectElement>('selOutline').addEventListener('change', () => setOutline());
 $<HTMLSelectElement>('selRotation').addEventListener('change', setRotationFromDom);
 $<HTMLButtonElement>('btnClear').addEventListener('click', clearSelection);
 
@@ -305,7 +355,7 @@ function resetToDefaults(): void {
   }
 
   setTuning();
-  setOutline();
+  setOutline();  /* user-initiated path; tween view to new home position */
   applyRotation(p.rotation);
   setLayout(p.curLayout);
 
@@ -329,11 +379,23 @@ initRecorderUI();
 /* ── Init backfill: fire change-handlers so they read the prefs-primed DOM
    and propagate to JS state + side-effect targets (visibility toggles,
    layout view, color sync, etc.). Order is dependency-driven: tuning before
-   layout (color sync diffs against tuning state), outline visibility before
-   first paint. ── */
+   layout (color sync diffs against tuning state), layout-shift snap before
+   manualRef restore + outline (setOutline's view-sync snaps to refNote in
+   piano mode, which needs the persisted manualRef already in place). ── */
 setTuning();
-setOutline();
 applyLayoutImmediate(prefs.curLayout);
+if (prefs.manualRef) {
+  /* Silently drop a persisted manualRef that no longer validates under
+     the current tuning (e.g. user changed limit/septimal between sessions
+     and the stored cell would now require >±3 accidentals on some MIDI). */
+  const invalid = validateRefNoteCandidate(prefs.manualRef.q, prefs.manualRef.r);
+  if (invalid) {
+    savePrefs({ manualRef: undefined });
+  } else {
+    setSelectionFromManual(prefs.manualRef.q, prefs.manualRef.r);
+  }
+}
+setOutline();
 if (prefs.audioEnabled) toggleAudio();
 if (prefs.autoSync) toggleAutoSync();
 /* Apply showDiagnostics now that audio is initialized — the loop overlay

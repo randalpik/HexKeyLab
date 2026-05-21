@@ -1,15 +1,16 @@
-// Compute the reference note (q, r) that drives HKL's 12-TET piano-input
-// resolution. Broadcast over the bridge whenever it changes.
+// Compute the reference-note coordinates Composer publishes to HKL.
 //
-// Algorithm (per the user's design):
-//   1. Walk backward through the current voice's flat children from the
-//      cursor. If a <note> is found, return its (data-q, data-r).
-//   2. If a <chord> is found, return the bass note's (q, r) — chord children
-//      are sorted ascending by MIDI (model.ts maintains this invariant), so
-//      the first <note> child is the bass.
-//   3. If neither (empty voice before cursor), interpret the current key
-//      signature as a major-key tonic and return the (q, r) on the lattice
-//      whose noteName matches that tonic and is closest to (0, 0) by taxicab.
+// The previous single-message protocol entangled two facts: the most-recent-
+// prior-note in the cursor's voice (cursor-dependent) AND the song's key-sig
+// tonic (a global fallback). HKL now tracks them as separate tiers — see
+// src/state/reference.ts — so Composer publishes them as two messages,
+// `set-reference-note` (selection tier) and `set-song-key` (song-key tier).
+//
+// Composer is purely additive: it broadcasts only when it has a fresh fact
+// to publish. When the cursor's voice has no prior note, Composer stays
+// silent rather than sending a "clear" — otherwise an unrelated trigger
+// (e.g. a key-sig change firing the broadcast cycle) would blow away a
+// manual Ctrl+click selection the user just made on HKL.
 
 import type { ComposerModel } from './model.js';
 import { keySigToTonic } from './accidentals.js';
@@ -74,8 +75,11 @@ function chordBass(chord: Element): Element | null {
   return null;
 }
 
-/** Compute the reference note for the current voice + cursor + key sig. */
-export function computeReferenceNote(model: ComposerModel): RefCoord {
+/** Find the most-recent-prior-to-cursor note in the current voice. Returns
+ *  null if the voice has no prior note (cursor at start, or empty voice).
+ *  Composer's call site sends `set-reference-note` only when this is
+ *  non-null — see module header for why. */
+export function computePrevNoteRef(model: ComposerModel): RefCoord | null {
   const voice = model.getCurrentVoice();
   const cursor = model.getCursor(voice);
   const flat = model.flatChildren(voice);
@@ -100,29 +104,67 @@ export function computeReferenceNote(model: ComposerModel): RefCoord {
     }
     /* <measure> wrappers, <rest>, <space>, <tuplet> have no pitch — keep walking. */
   }
-  /* Empty voice before cursor: fall back to major-key tonic of current sig. */
+  return null;
+}
+
+/** Major-key tonic of the current key signature, as a lattice coord. Used
+ *  to populate HKL's song-key tier. */
+export function computeSongKeyRef(model: ComposerModel): RefCoord {
   const sig = model.getKeySig();
   const tonic = keySigToTonic(sig);
   return findTonicCoord(tonic);
 }
 
-/* Internal mutable last-broadcast snapshot — diff filter for noisy callers. */
-const lastBroadcast: RefCoord = { q: NaN, r: NaN };
+/* ── diff filters: skip redundant broadcasts of unchanged values ─────────── */
 
-/** True iff the reference note differs from what was last broadcast. Resets
- *  the snapshot. Caller should send only when this returns true. */
-export function refNoteChanged(coord: RefCoord): boolean {
-  if (lastBroadcast.q === coord.q && lastBroadcast.r === coord.r) return false;
-  lastBroadcast.q = coord.q;
-  lastBroadcast.r = coord.r;
+const lastRefBroadcast: RefCoord | null & { q?: number; r?: number } = { q: NaN, r: NaN } as RefCoord;
+let lastRefWasNull = true;
+
+/** Returns true iff `coord` differs from what was last broadcast for the
+ *  reference-note (selection-tier) channel. Updates the snapshot. Passing
+ *  null indicates "no prior note to publish"; never returns true for null
+ *  (Composer doesn't broadcast a clear — see module header). */
+export function refNoteChanged(coord: RefCoord | null): boolean {
+  if (coord === null) {
+    /* Mark that we currently have nothing to publish. Next non-null coord
+       must broadcast even if it equals the previously broadcast value,
+       because HKL's selection tier may have been cleared by a Ctrl+click
+       in between. */
+    lastRefWasNull = true;
+    return false;
+  }
+  if (!lastRefWasNull && lastRefBroadcast.q === coord.q && lastRefBroadcast.r === coord.r) {
+    return false;
+  }
+  lastRefBroadcast.q = coord.q;
+  lastRefBroadcast.r = coord.r;
+  lastRefWasNull = false;
   return true;
 }
 
 /** Force the next refNoteChanged() check to broadcast (e.g., after a
  *  composer-hello / connection event). */
 export function invalidateRefNoteCache(): void {
-  lastBroadcast.q = NaN;
-  lastBroadcast.r = NaN;
+  lastRefBroadcast.q = NaN;
+  lastRefBroadcast.r = NaN;
+  lastRefWasNull = true;
+}
+
+const lastSongKey: RefCoord = { q: NaN, r: NaN };
+
+/** Returns true iff `coord` differs from the last-broadcast song-key.
+ *  Updates the snapshot. */
+export function songKeyChanged(coord: RefCoord): boolean {
+  if (lastSongKey.q === coord.q && lastSongKey.r === coord.r) return false;
+  lastSongKey.q = coord.q;
+  lastSongKey.r = coord.r;
+  return true;
+}
+
+/** Force the next songKeyChanged() check to broadcast. */
+export function invalidateSongKeyCache(): void {
+  lastSongKey.q = NaN;
+  lastSongKey.r = NaN;
 }
 
 /* Re-export for callers that want the tonic helper without importing from

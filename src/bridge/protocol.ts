@@ -103,10 +103,20 @@ export type ComposerEvent =
   | { type: 'play-score'; events: ReadonlyArray<PlaybackEvent> }
   /** Stop any in-progress playback. */
   | { type: 'stop-playback' }
-  /** Set the reference note used to resolve piano-keyboard 12-TET input to
-   *  lattice (q, r). Composer derives this from its cursor position (most-
-   *  recent-prior note or chord bass; else closest tonic of current keysig
-   *  to origin). HKL stores and uses for the next piano keystroke. */
-  | { type: 'set-reference-note'; q: number; r: number };
+  /** Set the SELECTION tier of HKL's reference-note state to (q, r). Composer
+   *  derives this from its cursor position: most-recent-prior note or chord
+   *  bass. Composer broadcasts ONLY when such a prior note exists; if the
+   *  voice has no prior note Composer stays silent (it must not clear,
+   *  otherwise a key-sig-change broadcast cycle would blow away a manual
+   *  Ctrl+click selection the user just made). Tier clearing happens only on
+   *  HKL via Ctrl+click of the current ref or via composer-bye. */
+  | { type: 'set-reference-note'; q: number; r: number }
+  /** Set the SONG-KEY tier of HKL's reference-note state to (q, r) — the
+   *  lattice cell whose noteName matches the major-key tonic of the current
+   *  key signature, closest to the origin by taxicab. Composer sends this
+   *  on connect / hello / request-state, and whenever the key signature
+   *  changes (Setup dialog apply). Not sent on every cursor move — see
+   *  set-reference-note docstring for why broadcasting must be conservative. */
+  | { type: 'set-song-key'; q: number; r: number };
 
 export type BridgeMessage = HklEvent | ComposerEvent;

@@ -9,11 +9,11 @@
 
 const STORAGE_KEY = 'hkl.prefs.v1';
 
-export type OutlineMode = 'lumatone' | 'qwerty' | 'none';
+export type OutlineMode = 'lumatone' | 'qwerty' | 'piano' | 'none';
 export type TuningMode = '5' | '7' | 'E';
 export type PedalMode = 'sustain' | 'sostenuto';
 export type LayoutId = 1 | 2 | 3;
-export type RotationMode = 'verticalFreq' | 'lumatone' | 'qwerty';
+export type RotationMode = 'verticalFreq' | 'lumatone' | 'piano';
 
 export interface ToolbarVisibility {
   layout: boolean;
@@ -97,6 +97,12 @@ export interface PrefsV1 {
   pianoInputDeviceId: string | null;
   pianoEnabled: boolean;
   pianoGainCurve?: PianoGainCurvePrefs;
+  /** User's manual reference-note selection (set via Ctrl+click on a hex).
+   *  Absent if the user has never set one, or if they cleared it by
+   *  Ctrl+clicking the current effective ref. Persists across reloads;
+   *  composer-set selections + song-key tier do NOT persist (they're
+   *  re-broadcast on the next composer-hello). */
+  manualRef?: { q: number; r: number };
 }
 
 /* Defaults mirror the HTML attributes + state/*.ts initial values, so a fresh
@@ -141,10 +147,16 @@ function isLayoutId(n: unknown): n is LayoutId {
   return n === 1 || n === 2 || n === 3;
 }
 function isOutlineMode(s: unknown): s is OutlineMode {
-  return s === 'lumatone' || s === 'qwerty' || s === 'none';
+  return s === 'lumatone' || s === 'qwerty' || s === 'piano' || s === 'none';
 }
 function isRotationMode(s: unknown): s is RotationMode {
-  return s === 'verticalFreq' || s === 'lumatone' || s === 'qwerty';
+  return s === 'verticalFreq' || s === 'lumatone' || s === 'piano';
+}
+/* Accept legacy 'qwerty' rotation value (renamed to 'piano') from older
+   localStorage entries so existing users transition silently. */
+function normalizeRotation(s: unknown): RotationMode {
+  if (s === 'qwerty') return 'piano';
+  return isRotationMode(s) ? s : DEFAULT_PREFS.rotation;
 }
 function isTuningMode(s: unknown): s is TuningMode {
   return s === '5' || s === '7' || s === 'E';
@@ -227,7 +239,7 @@ export function loadPrefs(): PrefsV1 {
     shortIvl:
       typeof o.shortIvl === "boolean" ? o.shortIvl : DEFAULT_PREFS.shortIvl,
     outline: isOutlineMode(o.outline) ? o.outline : DEFAULT_PREFS.outline,
-    rotation: isRotationMode(o.rotation) ? o.rotation : DEFAULT_PREFS.rotation,
+    rotation: normalizeRotation(o.rotation),
     tuning: isTuningMode(o.tuning) ? o.tuning : DEFAULT_PREFS.tuning,
     septimalShift: isFiniteNumber(o.septimalShift)
       ? o.septimalShift
@@ -268,7 +280,16 @@ export function loadPrefs(): PrefsV1 {
         ? o.pianoEnabled
         : DEFAULT_PREFS.pianoEnabled,
     pianoGainCurve: loadPianoGainCurve(o.pianoGainCurve),
+    manualRef: loadManualRef(o.manualRef),
   };
+}
+
+function loadManualRef(o: unknown): { q: number; r: number } | undefined {
+  if (!o || typeof o !== 'object') return undefined;
+  const m = o as Record<string, unknown>;
+  if (typeof m.q !== 'number' || typeof m.r !== 'number') return undefined;
+  if (!Number.isFinite(m.q) || !Number.isFinite(m.r)) return undefined;
+  return { q: m.q, r: m.r };
 }
 
 function loadVelocityCal(o: unknown): VelocityCalPrefs | undefined {

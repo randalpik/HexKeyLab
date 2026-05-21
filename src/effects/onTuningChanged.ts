@@ -8,8 +8,10 @@
 
 import { view } from '../state/view.js';
 import { rampActiveFreqs } from '../audio/engine.js';
-import { draw } from '../render/draw.js';
+import { cv, draw, invalidatePianoOutline, snapViewForOutline } from '../render/draw.js';
+import { recomputeCanvasBounds } from '../render/canvas.js';
 import { syncLumatoneColors } from '../lumatone/sync.js';
+import type { OutlineMode } from '../state/persistence.js';
 
 export interface TuningChangedOpts {
   rampSec?: number;
@@ -21,6 +23,22 @@ export function onTuningChanged(opts?: TuningChangedOpts): void {
   const colorSync = !opts || opts.colorSync !== false;
   rampActiveFreqs(rampSec);
   view.hexDirty = true;
+  /* Tenney-Height ranking in compute88PianoCoords depends on tuning mode
+     and septimal-shift state via jiRatio — invalidate so the next draw
+     regenerates the 88-cell footprint with up-to-date region adjustments. */
+  invalidatePianoOutline();
+  /* Piano-outline canvas bounds are computed per-tuning (7-limit has to
+     accommodate the full septimal-shift wrap range, 5-limit/12-TET only
+     refQ × refR). Switching tuning mode (5 ↔ 7 ↔ E) can change the
+     required CH/kbMinW AND can shift MIDI 64's cell in 7-limit, so we
+     also re-snap the viewport — the stale viewQ/viewR would otherwise
+     leave the polygon and dark-overlay rect off-center. */
+  recomputeCanvasBounds();
+  cv.style.height = view.CH + 'px';
+  const sel = document.getElementById('selOutline') as HTMLSelectElement | null;
+  const outline: OutlineMode = (sel?.value === 'qwerty' || sel?.value === 'piano' || sel?.value === 'none')
+    ? sel.value : 'lumatone';
+  snapViewForOutline(outline);
   draw();
   if (colorSync) syncLumatoneColors();
 }

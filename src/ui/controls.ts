@@ -9,6 +9,7 @@
 import { tuning } from '../state/tuning.js';
 import { selection } from '../state/selection.js';
 import { audio } from '../state/audio.js';
+import { referenceNote } from '../state/reference.js';
 import { savePrefs } from '../state/persistence.js';
 import type { LayoutId, OutlineMode, RotationMode, TuningMode } from '../state/persistence.js';
 import {
@@ -16,7 +17,7 @@ import {
 } from '../layout/baseKeys.js';
 import { migrateHeldQwertyVoices } from '../input/keyboard-notes.js';
 import { dxH, dyH, cosT, sinT, setRotation } from '../layout/geometry.js';
-import { recomputeCanvasBounds } from '../render/canvas.js';
+import { recomputeCanvasBounds, computePianoViewCenter } from '../render/canvas.js';
 import { view } from '../state/view.js';
 import { keyFreq } from '../tuning/frequency.js';
 import { SampleEngine } from '../audio/samples.js';
@@ -26,11 +27,60 @@ import {
 } from '../audio/engine.js';
 import { stopAllMidi, syncMidi } from '../midi/engine.js';
 import { animation } from '../render/animation.js';
-import { cv, draw, startLayoutAnim } from '../render/draw.js';
+import { cv, draw, startLayoutAnim, currentMidi64Cell, buildHexLayerForTween, snapViewForOutline } from '../render/draw.js';
 import { syncLumatoneColors } from '../lumatone/sync.js';
 import { onTuningChanged } from '../effects/onTuningChanged.js';
 import { onLayoutChanged } from '../effects/onLayoutChanged.js';
 import type { KeyId, Voice } from '../types.js';
+
+/* In piano-outline mode the view is locked to the reference note (the lattice
+   scrolls so refNote stays at canvas center) — Layout buttons are meaningless
+   because each refNote position is its own freeform layout. Hide the button
+   group; restore on switch back. */
+function updateLayoutButtonsForOutline(outline: OutlineMode): void {
+  const grp = document.getElementById('layoutBtnGroup') as HTMLElement | null;
+  if (grp) grp.style.display = outline === 'piano' ? 'none' : '';
+}
+
+/* Compute the view-center the active outline wants and animate to it.
+   - piano: solve for the viewport that places refNote at screen-X = 0
+     (horizontal center) AND MIDI 64's cell at screen-Y = 0 (vertical
+     center). The 2×2 linear system in lattice coords is tilt-aware —
+     under any rotation the outline's vertical extent stays minimized
+     (MIDI 64 is at the midpoint of the 88-key pitch range) while the
+     lattice shifts horizontally as refNote moves.
+   - other outlines: the layout-shift center as usual.
+   For piano-mode tweens we pre-rebuild the hex layer covering BOTH
+   endpoints (start + target) — animating through a region the layer
+   wasn't rebuilt for produces the cut-off-borders artifact. The expanded
+   layer survives the whole tween and shrinks back on the next normal
+   rebuild. `immediate` skips the tween and snaps; used at init so a
+   fresh load lands without a startup animation, and for outline-switch
+   transitions (where snap was already the design). */
+export function syncViewToOutline(outline: OutlineMode, immediate: boolean): void {
+  let targetQ: number, targetR: number;
+  if (outline === 'piano') {
+    const [m64Q, m64R] = currentMidi64Cell();
+    [targetQ, targetR] = computePianoViewCenter(referenceNote.q, referenceNote.r, m64Q, m64R);
+  } else {
+    targetQ = layoutShifts[tuning.curLayout][0];
+    targetR = layoutShifts[tuning.curLayout][1];
+  }
+  if (immediate) {
+    view.viewQ = targetQ;
+    view.viewR = targetR;
+    return;
+  }
+  if (view.viewQ === targetQ && view.viewR === targetR) return;
+  if (outline === 'piano') {
+    /* Build the hex layer to cover [view → target] before the tween fires
+       so each animation frame blits from a layer that actually has the
+       in-flight view position covered. */
+    buildHexLayerForTween(view.viewQ, view.viewR, targetQ, targetR);
+  }
+  animation.tweenTo(targetQ, targetR);
+  startLayoutAnim();
+}
 
 export function setTuning(): void {
   const val = (document.getElementById('selTuning') as HTMLSelectElement).value;
@@ -46,6 +96,17 @@ export function applyRotation(mode: RotationMode): void {
   setRotation(mode);
   recomputeCanvasBounds();
   cv.style.height = view.CH + 'px';
+  /* Piano viewport solves a tilt-dependent linear system to place
+     refNote at sx=0 and MIDI 64 at sy=0. After a rotation change the
+     stale viewQ/viewR no longer satisfies that, so cells (and the
+     polygon translate) drift away from the canvas center, leaving the
+     dark-overlay rect with the wrong origin. Re-snap unconditionally —
+     it's a no-op for non-piano outlines beyond setting view to the
+     current layout-shift center (which it already is). */
+  const sel = document.getElementById('selOutline') as HTMLSelectElement | null;
+  const outline = (sel?.value === 'qwerty' || sel?.value === 'piano' || sel?.value === 'none')
+    ? sel.value as OutlineMode : 'lumatone';
+  snapViewForOutline(outline);
   view.hexDirty = true;
   view.textDirty = true;
 }
@@ -64,18 +125,31 @@ export function setOutline(): void {
      undefined region (no bounds), so we force the renderer to act as if
      Extend is on and disable the checkbox to communicate that. */
   const sel = document.getElementById('selOutline') as HTMLSelectElement;
+  const newOutline = sel.value as OutlineMode;
   const cbExtend = document.getElementById('cbExtend') as HTMLInputElement;
-  cbExtend.disabled = sel.value === 'none';
+  cbExtend.disabled = newOutline === 'none';
   /* QWERTY transpose stepper is QWERTY-only — toggle visibility (not display)
      so the slot stays reserved and the rest of the toolbar doesn't shift when
      the control appears. The transpose value persists across outline changes. */
   const qwTrCtrl = document.getElementById('qwertyTransposeCtrl') as HTMLElement;
-  qwTrCtrl.style.visibility = sel.value === 'qwerty' ? 'visible' : 'hidden';
+  qwTrCtrl.style.visibility = newOutline === 'qwerty' ? 'visible' : 'hidden';
+  updateLayoutButtonsForOutline(newOutline);
+  /* Each outline has its own canvas bounds — resize before redrawing. */
+  recomputeCanvasBounds(newOutline);
+  cv.style.height = view.CH + 'px';
   view.hexDirty = true;
   view.textDirty = true;
+  /* Snap the view to the new outline's "home" position (refNote for piano,
+     layout-shift for the others) WITHOUT animation. The canvas height also
+     changes instantly on outline switch, so animating just the view position
+     looks half-broken — content tweens while the canvas resizes around it.
+     Outline changes are otherwise not animated, so this matches convention.
+     Animated view changes only happen for refNote scroll in piano mode (see
+     bridge/hkl-side.ts where syncViewToOutline is called with immediate=false). */
+  syncViewToOutline(newOutline, true);
   draw();
   sel.blur();
-  savePrefs({ outline: sel.value as OutlineMode });
+  savePrefs({ outline: newOutline });
 }
 
 export function setQwertyTranspose(dir: number): void {
