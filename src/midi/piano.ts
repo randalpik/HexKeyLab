@@ -22,6 +22,7 @@ import { activeFootprintSet } from '../render/draw.js';
 import { resolve12TetToCoord } from '../tuning/resolve.js';
 import { normalizePianoVelocity } from '../audio/pianoVel.js';
 import { noteOff, triggerRearticulateFlash } from '../audio/engine.js';
+import { whenMidiAccessReady } from './engine.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import type { KeyId } from '../types.js';
 
@@ -39,28 +40,46 @@ let statusTimer: number | null = null;
 
 /* ── status text helpers ───────────────────────────────────────────────────── */
 
-function setStatus(text: string, cls: 'luma-connected' | 'luma-disconnected' = 'luma-disconnected'): void {
+/** Persistent status when no transient error is showing — restored when the
+ *  transient times out or is cleared by another keystroke. */
+let baseStatusText = 'No device';
+let baseStatusConnected = false;
+
+function applyBaseStatus(): void {
   if (!statusEl) return;
-  statusEl.textContent = text;
-  statusEl.classList.toggle('luma-connected', cls === 'luma-connected');
-  statusEl.classList.toggle('luma-disconnected', cls === 'luma-disconnected');
+  statusEl.textContent = baseStatusText;
+  statusEl.classList.toggle('luma-connected', baseStatusConnected);
+  statusEl.classList.toggle('luma-disconnected', !baseStatusConnected);
+}
+
+function setStatus(text: string, cls: 'luma-connected' | 'luma-disconnected' = 'luma-disconnected'): void {
+  baseStatusText = text;
+  baseStatusConnected = cls === 'luma-connected';
+  /* Cancel any in-flight transient so the base-status change actually shows. */
+  if (statusTimer !== null) { clearTimeout(statusTimer); statusTimer = null; }
+  applyBaseStatus();
 }
 
 function flashStatus(text: string, ms = 1800): void {
   if (!statusEl) return;
   if (statusTimer !== null) clearTimeout(statusTimer);
-  const prevText = statusEl.textContent ?? '';
-  const wasConnected = statusEl.classList.contains('luma-connected');
   statusEl.textContent = text;
   statusEl.classList.remove('luma-connected');
   statusEl.classList.add('luma-disconnected');
   statusTimer = window.setTimeout(() => {
     statusTimer = null;
-    if (!statusEl) return;
-    statusEl.textContent = prevText;
-    statusEl.classList.toggle('luma-connected', wasConnected);
-    statusEl.classList.toggle('luma-disconnected', !wasConnected);
+    applyBaseStatus();
   }, ms);
+}
+
+/** Cancel any active transient error so the base status returns immediately.
+ *  Called from the note-on / note-off handlers so playing another note
+ *  clears the "out of layout" / "outline must be…" message right away. */
+function clearTransientStatus(): void {
+  if (statusTimer === null) return;
+  clearTimeout(statusTimer);
+  statusTimer = null;
+  applyBaseStatus();
 }
 
 const MIDI_NOTE_LETTERS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
@@ -73,6 +92,10 @@ function midiName(n: number): string {
 /* ── note handlers ─────────────────────────────────────────────────────────── */
 
 function handleNoteOn(midiNote: number, vRaw: number): void {
+  /* Any prior transient error (out-of-layout, no-outline) is now stale —
+     the user is playing a fresh note and wants to see whether THIS one
+     resolved. Drop the message before potentially flashing a new one. */
+  clearTransientStatus();
   /* If this midi note is already mapped, treat the new event as a re-strike
      of the same physical cell — match Lumatone's re-articulation behavior. */
   const prev = activeMidiToKey.get(midiNote);
@@ -116,6 +139,7 @@ function handleNoteOn(midiNote: number, vRaw: number): void {
 }
 
 function handleNoteOff(midiNote: number): void {
+  clearTransientStatus();
   const key = activeMidiToKey.get(midiNote);
   if (!key) return;
   activeMidiToKey.delete(midiNote);
@@ -162,11 +186,21 @@ function bindPort(port: MIDIInput | null): void {
   midi.pianoIn = port;
   if (port) {
     port.onmidimessage = pianoMessage;
-    setStatus('Connected: ' + (port.name ?? port.id), 'luma-connected');
+    setStatus('Connected', 'luma-connected');
   } else {
     setStatus('No device');
   }
   onSelectionChanged();
+}
+
+/** Shorten a MIDI port name to a more readable display label. Many drivers
+ *  emit verbose names like `"USB-MIDI 2: USB-MIDI MIDI 1"` or
+ *  `"Some Keyboard: Port 1"`; the device's identity is in the prefix before
+ *  the colon. Falls back to the original when there's no colon. */
+function shortenDeviceName(name: string | null | undefined, id: string): string {
+  const raw = name ?? id;
+  const colon = raw.indexOf(':');
+  return colon > 0 ? raw.slice(0, colon).trim() : raw;
 }
 
 function findPortById(id: string | null): MIDIInput | null {
@@ -180,6 +214,13 @@ function findPortById(id: string | null): MIDIInput | null {
 export function refreshDeviceList(): void {
   const sel = document.getElementById('selPianoDevice') as HTMLSelectElement | null;
   if (!sel) return;
+  /* Pre-handshake bail: if MIDIAccess hasn't landed yet, we have no port
+     list to populate AND no way to verify whether the persisted device id
+     is still attached. Returning here preserves selectedDeviceId until the
+     promise resolves and a real refresh runs. Without this guard, the
+     "rebind" branch below clobbers selectedDeviceId to null because
+     sel.value is '' (no options yet), losing the saved selection. */
+  if (!midi.midiAccess) return;
   const prevValue = selectedDeviceId ?? sel.value;
   /* Rebuild options, preserving the placeholder. */
   while (sel.firstChild) sel.removeChild(sel.firstChild);
@@ -187,13 +228,13 @@ export function refreshDeviceList(): void {
   placeholder.value = '';
   placeholder.textContent = '(none)';
   sel.appendChild(placeholder);
-  if (midi.midiAccess) {
-    for (const port of midi.midiAccess.inputs.values()) {
-      const opt = document.createElement('option');
-      opt.value = port.id;
-      opt.textContent = port.name ?? port.id;
-      sel.appendChild(opt);
-    }
+  for (const port of midi.midiAccess.inputs.values()) {
+    const opt = document.createElement('option');
+    opt.value = port.id;
+    const label = shortenDeviceName(port.name, port.id);
+    opt.textContent = label;
+    opt.title = port.name ?? port.id;
+    sel.appendChild(opt);
   }
   /* Restore the previous selection if the port still exists; otherwise
      fall back to (none) and re-bind. */
@@ -256,12 +297,22 @@ export function initPiano(): void {
     });
   }
 
+  /* Initial populate (likely empty until MIDIAccess is granted). */
   refreshDeviceList();
 
-  /* Hotplug: when MIDI access state changes (Chromium statechange fires; on
-     Firefox the engine.ts hotplug poll periodically swaps midiAccess), the
-     Lumatone wiring re-runs findLumatone which mutates midi.midiAccess. We
-     observe that via a periodic refresh tied to access identity. */
+  /* Bind persisted device as soon as MIDIAccess lands — no need to wait for
+     the 1.5s hotplug poll on a cold load. Errors (no Web MIDI / denied)
+     are already logged by requestMidi; nothing to do here. */
+  whenMidiAccessReady().then(
+    (access) => {
+      access.addEventListener('statechange', refreshDeviceList);
+      refreshDeviceList();
+    },
+    () => { /* silent: status remains "No device" */ },
+  );
+
+  /* Fallback hotplug poll for the Firefox case where statechange isn't
+     fired AND engine.ts's hotplug refresh has swapped midi.midiAccess. */
   let lastAccess: MIDIAccess | null = null;
   setInterval(() => {
     if (midi.midiAccess !== lastAccess) {

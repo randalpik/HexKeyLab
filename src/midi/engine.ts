@@ -220,13 +220,42 @@ function refreshMidiAccess(handleMidiMessage: MidiMessageHandler): void {
   }).catch(function () { /* swallow poll-failure noise */ });
 }
 
+/** Resolves with the MIDIAccess once requestMidi's initial promise lands.
+ *  Other modules (e.g. midi/piano.ts) await this to bind to a persisted
+ *  device immediately on app load rather than waiting for a hotplug-poll
+ *  tick (~1.5s). Rejected if `navigator.requestMIDIAccess` isn't available
+ *  or the permission was denied. */
+let midiAccessReadyPromise: Promise<MIDIAccess> | null = null;
+let midiAccessReadyResolve: ((a: MIDIAccess) => void) | null = null;
+let midiAccessReadyReject: ((e: unknown) => void) | null = null;
+function ensureMidiAccessReadyPromise(): Promise<MIDIAccess> {
+  if (midiAccessReadyPromise) return midiAccessReadyPromise;
+  midiAccessReadyPromise = new Promise((resolve, reject) => {
+    midiAccessReadyResolve = resolve;
+    midiAccessReadyReject = reject;
+  });
+  return midiAccessReadyPromise;
+}
+export function whenMidiAccessReady(): Promise<MIDIAccess> {
+  return ensureMidiAccessReadyPromise();
+}
+
 export function requestMidi(handleMidiMessage: MidiMessageHandler): void {
-  if (!navigator.requestMIDIAccess) return;
+  if (!navigator.requestMIDIAccess) {
+    ensureMidiAccessReadyPromise();
+    if (midiAccessReadyReject) midiAccessReadyReject(new Error('Web MIDI not available'));
+    return;
+  }
+  ensureMidiAccessReadyPromise();
   navigator.requestMIDIAccess({ sysex: true }).then(function (access) {
     console.log('MIDI access granted');
     midi.midiAccess = access;
     findLumatone(handleMidiMessage);
     access.onstatechange = function () { findLumatone(handleMidiMessage); };
+    /* Fire the access-ready promise so listeners (Piano toolbar in
+       particular) can run their device-binding logic immediately rather
+       than waiting on the 1.5s hotplug poll. */
+    if (midiAccessReadyResolve) midiAccessReadyResolve(access);
     if (hotplugPollTimer === null) {
       hotplugPollTimer = window.setInterval(function () {
         if (midi.midiOut) return;
@@ -249,5 +278,8 @@ export function requestMidi(handleMidiMessage: MidiMessageHandler): void {
         refreshMidiAccess(handleMidiMessage);
       });
     }
-  }).catch(function (err) { console.error('MIDI access denied:', err); });
+  }).catch(function (err) {
+    console.error('MIDI access denied:', err);
+    if (midiAccessReadyReject) midiAccessReadyReject(err);
+  });
 }

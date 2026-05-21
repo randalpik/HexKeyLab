@@ -19,6 +19,7 @@ html,body{background:#111;height:100%;overflow:hidden}
 .ctrls select{background:#222;color:#999;border:1.5px solid #555;border-radius:4px;padding:2px 6px;font-size:12px;font-family:inherit;cursor:pointer;outline:none}
 .ctrls select:hover{border-color:#888}
 .ctrls select.wf-loading{border-color:#4C96FF;color:#4C96FF;opacity:1;font-variant-numeric:tabular-nums;pointer-events:none}
+.ctrls select.piano-device-sel{max-width:120px;text-overflow:ellipsis}
 .lsel{display:flex;gap:4px;align-items:center;margin-right:8px}
 .lsel span{font-weight:500;color:#ccc}
 .lsel .lbtn{padding:0 12px !important;border-radius:4px !important;border:1.5px solid #555 !important;background:#222 !important;color:#999 !important;cursor:pointer !important;font-size:20px !important;font-weight:500 !important;line-height:1.6 !important;min-height:0 !important;min-width:0 !important;margin:0 !important;box-shadow:none !important;text-transform:none !important;letter-spacing:normal !important;font-family:inherit !important;outline:none !important;-webkit-appearance:none !important;appearance:none !important}
@@ -287,9 +288,11 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <label class="luma-conn-only" title="Per-board key calibration overlay (Shift+\ also toggles)"><input type="checkbox" id="cbCalibrateKeys" autocomplete="off"> Calibrate Keys</label>
 </div>
 <div class="toolbar-group" id="tb-group-piano">
-<label title="Enable 12-TET piano-keyboard MIDI input. Notes are resolved to lattice cells via Tenney Height against the current reference note (broadcast by HKL Composer when connected; A3 otherwise)."><input type="checkbox" id="cbPianoEnabled" autocomplete="off"> Enable piano input</label>
-<label>Device: <select id="selPianoDevice" autocomplete="off"><option value="">(none)</option></select></label>
+<div class="luma-vstack">
 <span id="pianoStatus" class="luma-disconnected">No device</span>
+<label>Device: <select id="selPianoDevice" class="piano-device-sel" autocomplete="off"><option value="">(none)</option></select></label>
+</div>
+<label title="Enable 12-TET piano-keyboard MIDI input. Notes are resolved to lattice cells via Tenney Height against the current reference note (broadcast by HKL Composer when connected; A3 otherwise)."><input type="checkbox" id="cbPianoEnabled" autocomplete="off"> Piano input</label>
 </div>
 </div>
 <canvas id="cv"></canvas>

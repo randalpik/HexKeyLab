@@ -313,9 +313,25 @@ function stepZoom(dir: 'in' | 'out'): void {
    input.ts free of a hard import on scTranspose (so the keystroke wiring
    can be tested independently). */
 installSCTransposeImpl((m, hooks, sel, dir) => {
-  if (scTransposeChordNote(m, hooks, sel, dir, footprintColors)) {
-    hooks.onStateChange();
-    hooks.onChange();
+  const result = scTransposeChordNote(m, hooks, sel, dir, footprintColors);
+  if (!result.ok) return;
+  hooks.onStateChange();
+  hooks.onChange();
+  /* Audible preview: play the full vertical slice at the chord's start
+     moment (every sounding note in every voice) so the user hears how the
+     SC shift retuned the chord's harmony. Only fires when HKL is connected
+     — Composer doesn't own the audio engine. */
+  if (hklConnected && result.previewNotes.length > 0) {
+    const tickMs = tickMsFromTempo(readTempo(m.getDoc()));
+    const durationMs = Math.max(250, result.previewTicks * tickMs);
+    bridge.send({
+      type: 'play-score',
+      events: [{
+        atMs: 0,
+        durationMs,
+        notes: result.previewNotes,
+      }],
+    });
   }
 });
 
