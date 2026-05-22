@@ -72,6 +72,7 @@ function applyPrefsToDom(p: PrefsV1): void {
   $<HTMLInputElement>('cbBands').checked = p.showBands;
   $<HTMLInputElement>('cbAnalysis').checked = p.showAnalysis;
   $<HTMLInputElement>('cbExtend').checked = p.extendPattern;
+  $<HTMLInputElement>('cbValidRefBounds').checked = p.validRefBounds;
   $<HTMLInputElement>('cbCoords').checked = p.showCoords;
   $<HTMLInputElement>('cbShortIvl').checked = p.shortIvl;
   $<HTMLSelectElement>('selOutline').value = p.outline;
@@ -268,6 +269,10 @@ $<HTMLInputElement>('cbExtend').addEventListener('change', (e) => {
   }
   if (selectionMutated) onSelectionChanged(); else draw();
   savePrefs({ extendPattern: checked });
+});
+$<HTMLInputElement>('cbValidRefBounds').addEventListener('change', (e) => {
+  draw();
+  savePrefs({ validRefBounds: (e.target as HTMLInputElement).checked });
 });
 $<HTMLInputElement>('cbCoords').addEventListener('change', (e) => {
   updateInfo();

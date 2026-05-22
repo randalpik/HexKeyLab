@@ -9,7 +9,7 @@
 import { tuning } from '../state/tuning.js';
 import { selection } from '../state/selection.js';
 import { audio } from '../state/audio.js';
-import { referenceNote } from '../state/reference.js';
+import { referenceNote, clearSelection as clearRefSelection } from '../state/reference.js';
 import { savePrefs } from '../state/persistence.js';
 import type { LayoutId, OutlineMode, RotationMode, TuningMode } from '../state/persistence.js';
 import {
@@ -27,7 +27,7 @@ import {
 } from '../audio/engine.js';
 import { stopAllMidi, syncMidi } from '../midi/engine.js';
 import { animation } from '../render/animation.js';
-import { cv, draw, startLayoutAnim, currentMidi64Cell, buildHexLayerForTween, snapViewForOutline } from '../render/draw.js';
+import { cv, draw, startLayoutAnim, currentMidi64Cell, buildHexLayerForTween, snapViewForOutline, validateRefNoteCandidate } from '../render/draw.js';
 import { syncLumatoneColors } from '../lumatone/sync.js';
 import { onTuningChanged } from '../effects/onTuningChanged.js';
 import { onLayoutChanged } from '../effects/onLayoutChanged.js';
@@ -84,9 +84,22 @@ export function syncViewToOutline(outline: OutlineMode, immediate: boolean): voi
 
 export function setTuning(): void {
   const val = (document.getElementById('selTuning') as HTMLSelectElement).value;
+  const wasSeptimal = tuning.septimalEnabled;
   tuning.equalEnabled = val === 'E';
   tuning.septimalEnabled = val === '7';
   (document.getElementById('seamShiftCtrl') as HTMLElement).style.display = tuning.septimalEnabled ? '' : 'none';
+  /* Bucket switch (V5 ↔ V7) can orphan a ref note placed in the old gate
+     but invalid in the new one. 5-limit ↔ 12-TET share V5, so only check
+     when septimalEnabled flipped value. Seam shifts within 7-limit can't
+     orphan (V7 gate is shift-invariant by construction). songKey tier is
+     left intact: it's restricted to 15 keys clustered around A3=220, far
+     inside both gates. */
+  if (wasSeptimal !== tuning.septimalEnabled) {
+    if (validateRefNoteCandidate(referenceNote.q, referenceNote.r) !== null) {
+      clearRefSelection();
+      savePrefs({ manualRef: undefined });
+    }
+  }
   onTuningChanged();
   (document.getElementById('selTuning') as HTMLSelectElement).blur();
   savePrefs({ tuning: val as TuningMode });

@@ -293,7 +293,10 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <span id="pianoStatus" class="luma-disconnected">No device</span>
 <label>Device: <select id="selPianoDevice" class="piano-device-sel" autocomplete="off"><option value="">(none)</option></select></label>
 </div>
+<div class="luma-vstack">
 <label title="Enable 12-TET piano-keyboard MIDI input. Notes are resolved to lattice cells via Tenney Height against the current reference note (broadcast by HKL Composer when connected; A3 otherwise)."><input type="checkbox" id="cbPianoEnabled" autocomplete="off"> Piano input</label>
+<label title="Show a dotted outline marking the region where you can Ctrl+click to set a new reference note. Shape depends on the active tuning bucket (5-limit/12-TET vs 7-limit)."><input type="checkbox" id="cbValidRefBounds" autocomplete="off"> Valid ref bounds</label>
+</div>
 </div>
 </div>
 <canvas id="cv"></canvas>

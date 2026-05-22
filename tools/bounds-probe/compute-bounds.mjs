@@ -129,21 +129,26 @@ function tenney(e) {
 
 /** Mirrors compute88PianoCoords in src/render/draw.ts. For each MIDI 21..108,
  *  pick the (q, r) on the lattice that minimizes TH to (refQ, refR); break
- *  ties by smallest taxicab distance. */
+ *  ties by smallest |proj − octaveTarget| where octaveTarget = 21·round((midi
+ *  − refMidi)/12). Octave-normalized so same-pitch-class octaves pick
+ *  consistent lineages. */
 function pianoCells(refQ, refR, septimalShift = 0, septimalEnabled = false) {
+  const PROJ_PER_OCT = 7 * 3 - 4 * 0;
+  const refMidi = 57 + 4 * refQ + 7 * refR;
   const cells = [];
   for (let midi = 21; midi <= 108; midi++) {
     const N = midi - 57;
     const q0 = (((2 * N) % 7) + 7) % 7;
     let bestQ = q0, bestR = (N - 4 * q0) / 7;
-    let bestTh = Infinity, bestProj = -Infinity, found = false;
+    let bestTh = Infinity, bestAbsNProj = Infinity, found = false;
+    const projTarget = PROJ_PER_OCT * Math.round((midi - refMidi) / 12);
     for (let k = -20; k <= 20; k++) {
       const q = q0 + 7 * k;
       const r = (N - 4 * q) / 7;
       const th = tenney(jiExps(refQ, refR, q, r, septimalShift, septimalEnabled));
-      const proj = 7 * (q - refQ) - 4 * (r - refR);
-      if (!found || th < bestTh || (th === bestTh && proj > bestProj)) {
-        bestTh = th; bestProj = proj; bestQ = q; bestR = r; found = true;
+      const absNProj = Math.abs(7 * (q - refQ) - 4 * (r - refR) - projTarget);
+      if (!found || th < bestTh || (th === bestTh && absNProj < bestAbsNProj)) {
+        bestTh = th; bestAbsNProj = absNProj; bestQ = q; bestR = r; found = true;
       }
     }
     cells.push([bestQ, bestR]);

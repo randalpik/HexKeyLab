@@ -97,6 +97,9 @@ export interface PrefsV1 {
   pianoInputDeviceId: string | null;
   pianoEnabled: boolean;
   pianoGainCurve?: PianoGainCurvePrefs;
+  /** Show a dotted outline marking the valid ref-note placement region
+   *  (V5 in 5-limit/12-TET, V7-intersection in 7-limit). Off by default. */
+  validRefBounds: boolean;
   /** User's manual reference-note selection (set via Ctrl+click on a hex).
    *  Absent if the user has never set one, or if they cleared it by
    *  Ctrl+clicking the current effective ref. Persists across reloads;
@@ -141,6 +144,7 @@ export const DEFAULT_PREFS: PrefsV1 = {
   captureAudio: false,
   pianoInputDeviceId: null,
   pianoEnabled: false,
+  validRefBounds: false,
 };
 
 function isLayoutId(n: unknown): n is LayoutId {
@@ -280,6 +284,10 @@ export function loadPrefs(): PrefsV1 {
         ? o.pianoEnabled
         : DEFAULT_PREFS.pianoEnabled,
     pianoGainCurve: loadPianoGainCurve(o.pianoGainCurve),
+    validRefBounds:
+      typeof o.validRefBounds === 'boolean'
+        ? o.validRefBounds
+        : DEFAULT_PREFS.validRefBounds,
     manualRef: loadManualRef(o.manualRef),
   };
 }

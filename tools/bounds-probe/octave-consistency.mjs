@@ -67,25 +67,43 @@ function tenneyReduced(e) {
 }
 
 /** Tiebreak strategies for equal-TH candidates.
- *  'syntonic' (default, matches production) — pick candidate with larger
- *    7·(q−refQ) − 4·(r−refR). Octave-invariant: octave shift (+3q, 0r) adds
- *    21 to projection while syntonic-comma shift (±7q, ∓4r) adds ±65, so the
- *    larger-projection candidate is preserved across octaves.
+ *  'octNormProj' (default, matches production) — pick candidate with smallest
+ *    |proj − octaveTarget| where octaveTarget = 21·round((midi−refMidi)/12).
+ *    Octave-normalized projection: ref-pitch-class collapses to nProj=0
+ *    across all octaves, other pitch classes to their respective lineages.
+ *    Octave-invariant by construction (both proj and target shift by 21
+ *    per octave) AND keeps (refQ, refR) inside its own footprint.
+ *  'maxProj' (--max-proj) — earlier rule: largest proj. Octave-invariant
+ *    but asymmetric — in 7-limit it can exile the ref note to its
+ *    (refQ+7, refR−4) sibling at TH=0.
+ *  'minAbsProj' (--min-abs-proj) — smallest |proj| (0-anchored). Puts ref
+ *    inside outline but breaks octave invariance for non-ref pitch classes.
  *  'taxicab' (--taxicab) — historical rule. NOT octave-invariant. Kept for
  *    regression diagnosis. */
-const TIEBREAK = process.argv.includes('--taxicab') ? 'taxicab' : 'syntonic';
+const TIEBREAK = process.argv.includes('--taxicab') ? 'taxicab'
+  : process.argv.includes('--max-proj') ? 'maxProj'
+  : process.argv.includes('--min-abs-proj') ? 'minAbsProj'
+  : 'octNormProj';
+const PROJ_PER_OCT = 7 * 3 - 4 * 0;
 
 function pickCell(midi, refQ, refR, septimalShift, septimalEnabled, thFn) {
   const N = midi - 57;
   const q0 = (((2 * N) % 7) + 7) % 7;
+  const refMidi = 57 + 4 * refQ + 7 * refR;
+  const projTarget = PROJ_PER_OCT * Math.round((midi - refMidi) / 12);
   let bestQ = 0, bestR = 0, bestTh = Infinity, bestTie = Infinity, found = false;
   for (let k = -20; k <= 20; k++) {
     const q = q0 + 7 * k;
     const r = (N - 4 * q) / 7;
     const th = thFn(jiExps(refQ, refR, q, r, septimalShift, septimalEnabled));
-    const tie = TIEBREAK === 'syntonic'
-      ? -(7 * (q - refQ) - 4 * (r - refR))  // larger projection wins → negate so smaller comparator wins
-      : Math.abs(q - refQ) + Math.abs(r - refR);
+    const proj = 7 * (q - refQ) - 4 * (r - refR);
+    const tie = TIEBREAK === 'octNormProj'
+      ? Math.abs(proj - projTarget)                          // octave-normalized |proj|
+      : TIEBREAK === 'minAbsProj'
+      ? Math.abs(proj)                                       // 0-anchored |proj|
+      : TIEBREAK === 'maxProj'
+      ? -proj                                                // largest proj → negate so smaller comparator wins
+      : Math.abs(q - refQ) + Math.abs(r - refR);             // taxicab
     if (!found || th < bestTh || (th === bestTh && tie < bestTie)) {
       bestTh = th; bestTie = tie; bestQ = q; bestR = r; found = true;
     }

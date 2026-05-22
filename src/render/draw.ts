@@ -31,7 +31,8 @@ import {
   parseNote, accToVal, noteName,
   SHARP, DBLSHARP, FLAT, DBLFLAT,
 } from '../tuning/notes.js';
-import { jiRatio, tenneyHeightFromExps } from '../tuning/ratios.js';
+import { jiRatio, jiRatioWithState, tenneyHeightFromExps } from '../tuning/ratios.js';
+import type { TuningStateLike } from '../tuning/regions.js';
 import type { KeyId } from '../types.js';
 
 // ── canvas setup ───────────────────────────────────────────────────────────
@@ -209,6 +210,85 @@ export function invalidatePianoOutline(): void {
   view.textDirty = true;
 }
 
+/* ── valid-ref-region (static gate + outline, per tuning bucket) ────────────
+   Two static sets of (q, r) refNote candidates that pass the ±3-accidental
+   check across the relevant tuning bucket:
+     V5 — used in 5-limit + 12-TET (septimalEnabled=false, no shift dep).
+     V7 — used in 7-limit. INTERSECTION over septimalShift ∈ [0, 5] so the
+          gate is shift-invariant (seam shifts can never orphan a ref).
+   The outline polygons trace the boundary of each set. Built once on
+   module init; never invalidated (both sets are static functions of the
+   picker logic). The dotted outline rendered at draw time picks whichever
+   set is active for the live tuning bucket.
+   Cost notes / optimizations:
+   - V5 is one config per (q, r) — ~60 ms over the 61×61 scan.
+   - V7-intersection over the full ±21 septimalShift wrap range is ~5 s.
+     Validity is empirically PERIOD-6 in septimalShift (regionInfo's A/B
+     parity depends on floor((r − ss) / 3) & 1, which has period 6; the
+     aDepth magnitude shifts can change which (q+7k, r−4k) wins min-TH but
+     never expands the set of cells the picker might choose). Confirmed by
+     diffing the 42-shift and 6-shift intersections — identical. So we
+     check only ss ∈ {0..5}, dropping V7 cost to ~1 s.
+   - V7-intersection ⊆ V5 is empirical (every cell that survives every
+     7-limit shift also survives 5-limit). We restrict the V7 scan to
+     V5-valid candidates, halving the work again — and assert |V7 ⊆ V5|
+     in dev so we'd catch a divergence if the picker logic changes. */
+let validRefSet5: Set<KeyId> = new Set();
+let validRefSet7: Set<KeyId> = new Set();
+let validRefPaths5: Point[][] = [];
+let validRefPaths7: Point[][] = [];
+let validRefCachesBuilt = false;
+const VALID_REF_SCAN_Q_MIN = -30, VALID_REF_SCAN_Q_MAX = 30;
+const VALID_REF_SCAN_R_MIN = -30, VALID_REF_SCAN_R_MAX = 30;
+const V7_SHIFT_PERIOD = 6;
+
+function validRefForState(q: number, r: number, state: TuningStateLike): boolean {
+  const midi = 57 + 4 * q + 7 * r;
+  if (midi < 21 || midi > 108) return false;
+  const cells = compute88PianoCoords(q, r, state);
+  for (const [cq, cr] of cells) {
+    if (Math.abs(accToVal(parseNote(noteName(cq, cr)).acc)) > 3) return false;
+  }
+  return true;
+}
+
+function ensureValidRefCaches(): void {
+  if (validRefCachesBuilt) return;
+  const state5: TuningStateLike = { equalEnabled: false, septimalEnabled: false, septimalShift: 0, septimalW: 3 };
+  for (let q = VALID_REF_SCAN_Q_MIN; q <= VALID_REF_SCAN_Q_MAX; q++) {
+    for (let r = VALID_REF_SCAN_R_MIN; r <= VALID_REF_SCAN_R_MAX; r++) {
+      if (validRefForState(q, r, state5)) validRefSet5.add(q + ',' + r as KeyId);
+    }
+  }
+  /* V7 = intersection over ss ∈ {0..5}, restricted to V5 (see header). */
+  validRefSet5.forEach((k) => {
+    const [qs, rs] = (k as string).split(',');
+    const q = +qs, r = +rs;
+    for (let ss = 0; ss < V7_SHIFT_PERIOD; ss++) {
+      const state7: TuningStateLike = { equalEnabled: false, septimalEnabled: true, septimalShift: ss, septimalW: 3 };
+      if (!validRefForState(q, r, state7)) return;
+    }
+    validRefSet7.add(k);
+  });
+  const cells5: Array<[number, number]> = [];
+  const cells7: Array<[number, number]> = [];
+  validRefSet5.forEach((k) => { const [qs, rs] = (k as string).split(','); cells5.push([+qs, +rs]); });
+  validRefSet7.forEach((k) => { const [qs, rs] = (k as string).split(','); cells7.push([+qs, +rs]); });
+  validRefPaths5 = computeOutlinePaths(cells5);
+  validRefPaths7 = computeOutlinePaths(cells7);
+  validRefCachesBuilt = true;
+}
+
+function activeValidRefSet(): Set<KeyId> {
+  ensureValidRefCaches();
+  return tuning.septimalEnabled ? validRefSet7 : validRefSet5;
+}
+
+function activeValidRefPaths(): Point[][] {
+  ensureValidRefCaches();
+  return tuning.septimalEnabled ? validRefPaths7 : validRefPaths5;
+}
+
 /* For each MIDI 21..108, pick the (q, r) with `4q + 7r = midi − 57` that
    minimizes reduced Tenney Height of the JI ratio to (refQ, refR), tiebroken
    by largest syntonic-axis projection (octave-invariant — see resolve.ts
@@ -216,23 +296,48 @@ export function invalidatePianoOutline(): void {
    (q0+7k, r0−4k); k ∈ [−20, 20] is comfortably wider than any sensible
    enharmonic excursion. Exported for callers that need to inspect the
    resulting cell set under a hypothetical refNote (e.g. Ctrl+click
-   validation in src/ui/init.ts). */
-export function compute88PianoCoords(refQ: number, refR: number): Array<[number, number]> {
+   validation in src/ui/init.ts). The optional `state` lets callers compute
+   the picker output for a hypothetical tuning configuration without
+   mutating live state (used by the valid-ref-region cache below). */
+export function compute88PianoCoords(
+  refQ: number, refR: number, state?: TuningStateLike,
+): Array<[number, number]> {
   const cells: Array<[number, number]> = [];
+  /* Octave step in (q, r) lattice is (+3, 0): 4·3 + 7·0 = 12 semitones. The
+     syntonic projection 7(q−refQ) − 4(r−refR) shifts by 7·3 − 4·0 per octave
+     — derive PROJ_PER_OCT from the octave step so it stays in sync if the
+     lattice geometry ever changes. */
+  const Q_PER_OCT = 3, R_PER_OCT = 0;
+  const PROJ_PER_OCT = 7 * Q_PER_OCT - 4 * R_PER_OCT;
+  const refMidi = 57 + 4 * refQ + 7 * refR;
   for (let midi = 21; midi <= 108; midi++) {
     const N = midi - 57;
     /* q ≡ 2N (mod 7) since 4·2 ≡ 1 (mod 7); start there. */
     const q0 = (((2 * N) % 7) + 7) % 7;
     let bestQ = q0, bestR = (N - 4 * q0) / 7;
-    let bestTh = Infinity, bestProj = -Infinity, found = false;
+    let bestTh = Infinity, bestAbsNProj = Infinity, found = false;
+    /* Each MIDI lives in an "octave block" relative to ref; the natural
+       lineage of the ref-pitch-class at this MIDI has proj ≈ PROJ_PER_OCT ×
+       octaveDelta. Tiebreak by |proj − that target| so all pitch classes
+       collapse toward their own ref-aligned octave lineage. At the ref's
+       MIDI this picks (refQ, refR) (target = 0, proj = 0). At ref+12 it
+       picks (refQ+3, refR) (target = +21, proj = +21). At Eb3/Eb4 it picks
+       the same enharmonic at both octaves (octave-consistent, unlike a
+       0-centered |proj|). And in 7-limit, where a B-region cell can tie
+       TH=0 with the ref's natural lineage cell (the syntonic adjustment
+       cancels the (7,-4) shift's comma), the lineage cell wins — the ref
+       never falls outside its own footprint. */
+    const octaveDelta = Math.round((midi - refMidi) / 12);
+    const projTarget = PROJ_PER_OCT * octaveDelta;
     for (let k = -20; k <= 20; k++) {
       const q = q0 + 7 * k;
       const r = (N - 4 * q) / 7;
-      const ratio = jiRatio(refQ, refR, q, r);
+      const ratio = state ? jiRatioWithState(refQ, refR, q, r, state) : jiRatio(refQ, refR, q, r);
       const th = tenneyHeightFromExps(ratio.e);
       const proj = 7 * (q - refQ) - 4 * (r - refR);
-      if (!found || th < bestTh || (th === bestTh && proj > bestProj)) {
-        bestTh = th; bestProj = proj; bestQ = q; bestR = r; found = true;
+      const absNProj = Math.abs(proj - projTarget);
+      if (!found || th < bestTh || (th === bestTh && absNProj < bestAbsNProj)) {
+        bestTh = th; bestAbsNProj = absNProj; bestQ = q; bestR = r; found = true;
       }
     }
     cells.push([bestQ, bestR]);
@@ -290,15 +395,36 @@ export function validateRefNoteCandidate(q: number, r: number): string | null {
   if (midi < 21 || midi > 108) {
     return 'Reference note out of 88-key piano range (MIDI ' + midi + ')';
   }
-  const cells = compute88PianoCoords(q, r);
-  for (const [cq, cr] of cells) {
-    const name = noteName(cq, cr);
-    const acc = Math.abs(accToVal(parseNote(name).acc));
-    if (acc > 3) {
-      return 'Reference would require ' + acc + '× accidentals (' + name + ')';
+  /* Gate = active bucket's static valid set. V5 in 5-limit/12-TET, V7
+     (intersection over septimalShift wrap) in 7-limit. Shift-invariant
+     inside 7-limit so seam shifts can never orphan a placed ref. */
+  const gate = activeValidRefSet();
+  if (gate.has(q + ',' + r as KeyId)) return null;
+  /* Failing reason — for V5 just describe the live picker's offending cell;
+     for V7 the gate is stricter than any single live state, so report which
+     septimal shift breaks the placement. */
+  if (!tuning.septimalEnabled) {
+    const cells = compute88PianoCoords(q, r);
+    for (const [cq, cr] of cells) {
+      const name = noteName(cq, cr);
+      const acc = Math.abs(accToVal(parseNote(name).acc));
+      if (acc > 3) return 'Reference would require ' + acc + '× accidentals (' + name + ')';
+    }
+    return 'Reference out of valid region';
+  }
+  for (let ss = 0; ss < V7_SHIFT_PERIOD; ss++) {
+    const state: TuningStateLike = { equalEnabled: false, septimalEnabled: true, septimalShift: ss, septimalW: 3 };
+    if (validRefForState(q, r, state)) continue;
+    const cells = compute88PianoCoords(q, r, state);
+    for (const [cq, cr] of cells) {
+      const name = noteName(cq, cr);
+      const acc = Math.abs(accToVal(parseNote(name).acc));
+      if (acc > 3) {
+        return 'Reference would require ' + acc + '× accidentals (' + name + ') at septimal shift ' + ss;
+      }
     }
   }
-  return null;
+  return 'Reference out of valid region';
 }
 
 /* ── tween-aware hex-layer rebuild ─────────────────────────────────────────
@@ -1013,6 +1139,38 @@ export function draw(): void {
     ctx.stroke();
 
     ctx.restore();
+  }
+
+  /* === valid-ref-region outline (dotted, on top of main outline) ===
+     Gated by the "Valid ref bounds" checkbox in the Piano toolbar (off by
+     default). Lives in lattice space (coords are absolute (q, r) positions),
+     so applies the lattice-scroll translate in every outline mode, including
+     'none'. Stroke is sandwiched between the ref-note marker (1.5) and the
+     main outline (3.5). */
+  const showValidRef = (document.getElementById('cbValidRefBounds') as HTMLInputElement | null)?.checked ?? false;
+  if (showValidRef) {
+    const validPaths = activeValidRefPaths();
+    if (validPaths.length > 0) {
+      ctx.save();
+      ctx.translate(view.CW / 2, cyC);
+      ctx.rotate(-tiltAngle);
+      ctx.translate(-view.viewQ * dxH - view.viewR * dxH * 0.5, view.viewR * dyH);
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = 'butt';
+      ctx.lineJoin = 'round';
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      validPaths.forEach((poly) => {
+        for (let i = 0; i < poly.length; i++) {
+          if (i === 0) ctx.moveTo(poly[i][0], poly[i][1]);
+          else ctx.lineTo(poly[i][0], poly[i][1]);
+        }
+        ctx.closePath();
+      });
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
   updateInfo();
