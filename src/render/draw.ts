@@ -28,9 +28,10 @@ import {
   parseNote, accToVal, noteName,
   SHARP, DBLSHARP, FLAT, DBLFLAT,
 } from '../tuning/notes.js';
-import { jiRatio, jiRatioWithState, tenneyHeightFromExps } from '../tuning/ratios.js';
-import { regionInfo, type TuningStateLike } from '../tuning/regions.js';
+import { jiRatio, tenneyHeightFromExps } from '../tuning/ratios.js';
+import { regionInfo } from '../tuning/regions.js';
 import { refSpine } from '../tuning/refspine.js';
+import { VALID_REF_TABLE } from './refbounds-table.js';
 import type { KeyId } from '../types.js';
 
 // ── canvas setup ───────────────────────────────────────────────────────────
@@ -213,61 +214,20 @@ export function invalidatePianoOutline(): void {
    check across the relevant tuning bucket:
      V5         — used in 5-limit + 12-TET (septimalEnabled=false).
      V7-uniform — used in 7-limit (septimalEnabled=true; qm=2 all B-d1-upper).
-   The outline polygons trace the boundary of each set. Built once lazily;
-   never invalidated (both are static functions of the picker logic). */
-let validRefSet5: Set<KeyId> = new Set();
-let validRefSet7Uniform: Set<KeyId> = new Set();
-let validRefPaths5: Point[][] = [];
-let validRefPaths7Uniform: Point[][] = [];
-let validRefCachesBuilt = false;
-/* Scan the diagonal MIDI band 4q + 7r ∈ [-36, 51] (midi ∈ [21, 108]) with r
-   wide enough to cover anywhere accidentals could be ≤±3. Empirically r ∈
-   [-21, 19] holds for V5/uniform; ±25 gives margin. q is derived per-r from
-   the MIDI bounds so we never scan cells outside the band. */
-const VALID_REF_SCAN_R_MIN = -25, VALID_REF_SCAN_R_MAX = 25;
-function bandQRange(r: number): [number, number] {
-  /* 21 ≤ 57 + 4q + 7r ≤ 108  ↔  q ∈ [(−36 − 7r)/4, (51 − 7r)/4] */
-  return [Math.ceil((-36 - 7 * r) / 4), Math.floor((51 - 7 * r) / 4)];
-}
-
-function validRefForState(q: number, r: number, state: TuningStateLike): boolean {
-  const midi = 57 + 4 * q + 7 * r;
-  if (midi < 21 || midi > 108) return false;
-  const cells = compute88PianoCoords(q, r, state);
-  for (const [cq, cr] of cells) {
-    if (Math.abs(accToVal(parseNote(noteName(cq, cr)).acc)) > 3) return false;
-  }
-  return true;
-}
-
-function ensureValidRefCaches(): void {
-  if (validRefCachesBuilt) return;
-  const state5: TuningStateLike = { equalEnabled: false, septimalEnabled: false, septimalW: 3 };
-  const state7Uniform: TuningStateLike = { equalEnabled: false, septimalEnabled: true, septimalW: 3 };
-  for (let r = VALID_REF_SCAN_R_MIN; r <= VALID_REF_SCAN_R_MAX; r++) {
-    const [qLo, qHi] = bandQRange(r);
-    for (let q = qLo; q <= qHi; q++) {
-      const k = q + ',' + r as KeyId;
-      if (validRefForState(q, r, state5)) validRefSet5.add(k);
-      if (validRefForState(q, r, state7Uniform)) validRefSet7Uniform.add(k);
-    }
-  }
-  const cells5: Array<[number, number]> = [];
-  const cells7U: Array<[number, number]> = [];
-  validRefSet5.forEach((k) => { const [qs, rs] = (k as string).split(','); cells5.push([+qs, +rs]); });
-  validRefSet7Uniform.forEach((k) => { const [qs, rs] = (k as string).split(','); cells7U.push([+qs, +rs]); });
-  validRefPaths5 = computeOutlinePaths(cells5);
-  validRefPaths7Uniform = computeOutlinePaths(cells7U);
-  validRefCachesBuilt = true;
-}
+   Both are pure functions of the picker logic + accidental rule, so they're
+   precomputed offline by tools/bounds-probe/compute-refbounds.mjs and stored
+   in VALID_REF_TABLE. The outline polygons are cheap to derive (edge tracing
+   over the cell set); built once at module load. */
+const validRefSet5: Set<KeyId> = new Set(VALID_REF_TABLE['5'].map(([q, r]) => (q + ',' + r) as KeyId));
+const validRefSet7Uniform: Set<KeyId> = new Set(VALID_REF_TABLE['7'].map(([q, r]) => (q + ',' + r) as KeyId));
+const validRefPaths5: Point[][] = computeOutlinePaths(VALID_REF_TABLE['5']);
+const validRefPaths7Uniform: Point[][] = computeOutlinePaths(VALID_REF_TABLE['7']);
 
 function activeValidRefSet(): Set<KeyId> {
-  ensureValidRefCaches();
   return tuning.septimalEnabled ? validRefSet7Uniform : validRefSet5;
 }
 
 function activeValidRefPaths(): Point[][] {
-  ensureValidRefCaches();
   return tuning.septimalEnabled ? validRefPaths7Uniform : validRefPaths5;
 }
 
@@ -278,11 +238,11 @@ function activeValidRefPaths(): Point[][] {
    (q0+7k, r0−4k); k ∈ [−20, 20] is comfortably wider than any sensible
    enharmonic excursion. Exported for callers that need to inspect the
    resulting cell set under a hypothetical refNote (e.g. Ctrl+click
-   validation in src/ui/init.ts). The optional `state` lets callers compute
-   the picker output for a hypothetical tuning configuration without
-   mutating live state (used by the valid-ref-region cache below). */
+   validation in src/ui/init.ts). Tuning state is read from the live `tuning`
+   module via jiRatio — for hypothetical-state probing under non-live tuning,
+   see tools/bounds-probe/compute-refbounds.mjs. */
 export function compute88PianoCoords(
-  refQ: number, refR: number, state?: TuningStateLike,
+  refQ: number, refR: number,
 ): Array<[number, number]> {
   const cells: Array<[number, number]> = [];
   /* Octave step in (q, r) lattice is (+3, 0): 4·3 + 7·0 = 12 semitones. The
@@ -314,7 +274,7 @@ export function compute88PianoCoords(
     for (let k = -20; k <= 20; k++) {
       const q = q0 + 7 * k;
       const r = (N - 4 * q) / 7;
-      const ratio = state ? jiRatioWithState(refQ, refR, q, r, state) : jiRatio(refQ, refR, q, r);
+      const ratio = jiRatio(refQ, refR, q, r);
       const th = tenneyHeightFromExps(ratio.e);
       const proj = 7 * (q - refQ) - 4 * (r - refR);
       const absNProj = Math.abs(proj - projTarget);

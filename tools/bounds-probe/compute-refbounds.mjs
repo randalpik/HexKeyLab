@@ -1,0 +1,231 @@
+// Valid-ref-bounds probe for HKL.
+//
+// Computes the static set of (q, r) reference-note candidates that pass the
+// ±3-accidental check across the full 88-cell picker footprint, per tuning
+// bucket:
+//   • '5' — 5-limit + 12-TET (jiRatio identical when septimalEnabled=false)
+//   • '7' — 7-limit uniform septimal (qm=2 cells all B-d1-upper)
+//
+// Emits src/render/refbounds-table.ts. Re-run when:
+//   • src/render/draw.ts compute88PianoCoords (picker / tiebreak) changes,
+//   • src/tuning/ratios.ts (jiRatio / tenneyHeightFromExps) changes,
+//   • src/tuning/regions.ts (region adjustments) changes,
+//   • src/tuning/notes.ts (noteName / fifthName / accidental spelling) changes,
+//   • the ±3-accidental rule in validateRefNoteCandidate changes, or
+//   • the scan range (VALID_REF_SCAN_R_*) changes.
+//
+// Run:
+//   node tools/bounds-probe/compute-refbounds.mjs
+//
+// All math here mirrors src/{tuning,render}/* — the inlined copies MUST stay
+// in sync. compute-bounds.mjs has its own copy of the picker; if you change
+// compute88PianoCoords, update both probes.
+
+import { writeFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const REPO = join(HERE, '..', '..');
+
+// ── tuning math (mirrors src/tuning/{ratios,regions}.ts) ───────────────────
+const bandOf = (q) => Math.floor((q + 1) / 3);
+const posInBand = (q) => (((q + 1) % 3) + 3) % 3;
+
+function regionInfo(q, _r, septimalEnabled) {
+  if (!septimalEnabled) return { type: 'A', aDepth: 0, aUpper: false };
+  const qm = ((q % 3) + 3) % 3;
+  if (qm === 2) return { type: 'B', aDepth: 1, aUpper: true };
+  return { type: 'A', aDepth: 0, aUpper: false };
+}
+
+function jiExps(q1, r1, q2, r2, septimalEnabled) {
+  const db = bandOf(q2) - bandOf(q1), dp = posInBand(q2) - posInBand(q1), dr = r2 - r1;
+  let e2 = db - 2 * dp - dr, e3 = dr, e5 = dp, e7 = 0;
+  if (septimalEnabled) {
+    const ri1 = regionInfo(q1, r1, true);
+    const ri2 = regionInfo(q2, r2, true);
+    const applyAdj = (ri, sign) => {
+      if (ri.aDepth > 0) {
+        const d = ri.aDepth;
+        if (ri.aUpper) { e2 += sign * 4 * d; e5 += sign * d; e3 += sign * (-4) * d; }
+        else { e3 += sign * 4 * d; e2 += sign * (-4) * d; e5 += sign * (-d); }
+      }
+      if (ri.type === 'B') { e7 += sign; e3 += sign * 2; e2 += sign * (-6); }
+    };
+    applyAdj(ri2, +1);
+    applyAdj(ri1, -1);
+  }
+  return [e2, e3, e5, e7];
+}
+
+function tenney(e) {
+  const log2r = e[0] + e[1] * Math.log2(3) + e[2] * Math.log2(5) + e[3] * Math.log2(7);
+  const oct = Math.floor(log2r);
+  let r0 = e[0] - oct, r1 = e[1], r2 = e[2], r3 = e[3];
+  if (log2r - oct > 0.5) { r0 = 1 - r0; r1 = -r1; r2 = -r2; r3 = -r3; }
+  return Math.abs(r0) + Math.abs(r1) * Math.log2(3) + Math.abs(r2) * Math.log2(5) + Math.abs(r3) * Math.log2(7);
+}
+
+/** Mirrors compute88PianoCoords in src/render/draw.ts. */
+function pianoCells(refQ, refR, septimalEnabled) {
+  const PROJ_PER_OCT = 7 * 3 - 4 * 0;
+  const refMidi = 57 + 4 * refQ + 7 * refR;
+  const cells = [];
+  for (let midi = 21; midi <= 108; midi++) {
+    const N = midi - 57;
+    const q0 = (((2 * N) % 7) + 7) % 7;
+    let bestQ = q0, bestR = (N - 4 * q0) / 7;
+    let bestTh = Infinity, bestAbsNProj = Infinity, found = false;
+    const projTarget = PROJ_PER_OCT * Math.round((midi - refMidi) / 12);
+    for (let k = -20; k <= 20; k++) {
+      const q = q0 + 7 * k;
+      const r = (N - 4 * q) / 7;
+      const th = tenney(jiExps(refQ, refR, q, r, septimalEnabled));
+      const absNProj = Math.abs(7 * (q - refQ) - 4 * (r - refR) - projTarget);
+      if (!found || th < bestTh || (th === bestTh && absNProj < bestAbsNProj)) {
+        bestTh = th; bestAbsNProj = absNProj; bestQ = q; bestR = r; found = true;
+      }
+    }
+    cells.push([bestQ, bestR]);
+  }
+  return cells;
+}
+
+// ── note naming (mirrors src/tuning/notes.ts) ──────────────────────────────
+const letterSemi = { A: 0, B: 2, C: 3, D: 5, E: 7, F: 8, G: 10 };
+
+function accToVal(a) {
+  let v = 0;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] === '#') v++;
+    else if (a[i] === 'b') v--;
+  }
+  return v;
+}
+
+function valToAcc(v) {
+  if (v === 0) return '';
+  return (v > 0 ? '#' : 'b').repeat(Math.abs(v));
+}
+
+function parseNote(n) { return { letter: n[0], acc: n.slice(1) }; }
+
+function m3up(n) {
+  const p = parseNote(n);
+  const L = 'ABCDEFG';
+  const i = L.indexOf(p.letter);
+  const nl = L[(i + 2) % 7];
+  const nat = (letterSemi[nl] - letterSemi[p.letter] + 12) % 12;
+  const nv = 4 - nat + accToVal(p.acc);
+  return nl + valToAcc(nv);
+}
+
+function m3dn(n) {
+  const p = parseNote(n);
+  const L = 'ABCDEFG';
+  const i = L.indexOf(p.letter);
+  const nl = L[((i - 2) % 7 + 7) % 7];
+  const nat = (letterSemi[p.letter] - letterSemi[nl] + 12) % 12;
+  const nv = -(4 - nat) + accToVal(p.acc);
+  return nl + valToAcc(nv);
+}
+
+function fifthName(r) {
+  if (r >= 0) {
+    const letter = 'AEBFCGD'[r % 7];
+    const acc = Math.floor(r / 7) + ((r % 7 >= 3) ? 1 : 0);
+    return letter + valToAcc(acc);
+  }
+  const rr = -r;
+  const letter = 'ADGCFBE'[rr % 7];
+  const acc = Math.floor(rr / 7) + ((rr % 7 >= 5) ? 1 : 0);
+  return letter + valToAcc(-acc);
+}
+
+function noteName(q, r) {
+  const fn = fifthName(r);
+  const pos = ((q + 1) % 3 + 3) % 3;
+  if (pos === 1) return fn;
+  if (pos === 2) return m3up(fn);
+  return m3dn(fn);
+}
+
+// ── validation (mirrors validRefForState in src/render/draw.ts) ────────────
+const VALID_REF_SCAN_R_MIN = -25, VALID_REF_SCAN_R_MAX = 25;
+
+function bandQRange(r) {
+  /* 21 ≤ 57 + 4q + 7r ≤ 108  ↔  q ∈ [(−36 − 7r)/4, (51 − 7r)/4] */
+  return [Math.ceil((-36 - 7 * r) / 4), Math.floor((51 - 7 * r) / 4)];
+}
+
+function validRef(q, r, septimalEnabled) {
+  const midi = 57 + 4 * q + 7 * r;
+  if (midi < 21 || midi > 108) return false;
+  const cells = pianoCells(q, r, septimalEnabled);
+  for (const [cq, cr] of cells) {
+    if (Math.abs(accToVal(parseNote(noteName(cq, cr)).acc)) > 3) return false;
+  }
+  return true;
+}
+
+function scanValid(septimalEnabled) {
+  const cells = [];
+  for (let r = VALID_REF_SCAN_R_MIN; r <= VALID_REF_SCAN_R_MAX; r++) {
+    const [qLo, qHi] = bandQRange(r);
+    for (let q = qLo; q <= qHi; q++) {
+      if (validRef(q, r, septimalEnabled)) cells.push([q, r]);
+    }
+  }
+  return cells;
+}
+
+// ── output ─────────────────────────────────────────────────────────────────
+function fmtCellsByRow(cells) {
+  const byR = new Map();
+  for (const [q, r] of cells) {
+    if (!byR.has(r)) byR.set(r, []);
+    byR.get(r).push(q);
+  }
+  const rs = [...byR.keys()].sort((a, b) => a - b);
+  return rs.map((r) => {
+    const qs = byR.get(r).sort((a, b) => a - b);
+    return '    ' + qs.map((q) => `[${q}, ${r}]`).join(', ') + ',';
+  }).join('\n');
+}
+
+console.time('probe');
+const v5 = scanValid(false);
+const v7 = scanValid(true);
+console.timeEnd('probe');
+console.log(`V5 (5-limit / 12-TET): ${v5.length} valid refs`);
+console.log(`V7 (7-limit uniform):  ${v7.length} valid refs`);
+
+const out = `// Precomputed valid-reference-note coordinate sets per tuning bucket.
+//
+// GENERATED by tools/bounds-probe/compute-refbounds.mjs — DO NOT EDIT BY HAND.
+//
+// Bucket '5' covers 5-limit AND 12-TET (jiRatio is identical when
+// septimalEnabled is false). Bucket '7' covers 7-limit uniform septimal.
+// The sets feed the dotted "Valid ref bounds" overlay; src/render/draw.ts
+// rebuilds the Set<KeyId> and outline polygons from this table at module
+// load. Re-run the probe when:
+//   • src/render/draw.ts compute88PianoCoords changes,
+//   • src/tuning/ratios.ts or src/tuning/regions.ts changes,
+//   • src/tuning/notes.ts (accidental spelling) changes,
+//   • the ±3-accidental rule in validateRefNoteCandidate changes, or
+//   • the scan range in tools/bounds-probe/compute-refbounds.mjs changes.
+
+export const VALID_REF_TABLE: Record<'5' | '7', ReadonlyArray<readonly [number, number]>> = {
+  '5': [
+${fmtCellsByRow(v5)}
+  ],
+  '7': [
+${fmtCellsByRow(v7)}
+  ],
+};
+`;
+
+const outPath = join(REPO, 'src/render/refbounds-table.ts');
+writeFileSync(outPath, out);
+console.log(`Wrote ${outPath} (${out.length} bytes)`);
