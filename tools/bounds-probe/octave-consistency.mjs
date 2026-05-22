@@ -21,22 +21,21 @@
 
 const bandOf = (q) => Math.floor((q + 1) / 3);
 const posInBand = (q) => (((q + 1) % 3) + 3) % 3;
-const septimalW = 3;
 
-function regionInfo(q, r, septimalShift, septimalEnabled) {
+/* Uniform septimal: qm=2 cells are B-d1-upper, others A-d0. */
+function regionInfo(q, _r, septimalEnabled) {
   if (!septimalEnabled) return { aDepth: 0, aUpper: false, type: 'A' };
-  const bi = Math.floor((r - septimalShift) / septimalW);
-  const isB = (bi & 1) !== 0;
-  const aBI = isB ? bi + 1 : bi;
-  return { type: isB ? 'B' : 'A', aDepth: Math.abs(aBI) / 2, aUpper: aBI > 0 };
+  const qm = ((q % 3) + 3) % 3;
+  if (qm === 2) return { type: 'B', aDepth: 1, aUpper: true };
+  return { type: 'A', aDepth: 0, aUpper: false };
 }
 
-function jiExps(q1, r1, q2, r2, septimalShift, septimalEnabled) {
+function jiExps(q1, r1, q2, r2, septimalEnabled) {
   const db = bandOf(q2) - bandOf(q1), dp = posInBand(q2) - posInBand(q1), dr = r2 - r1;
   let e2 = db - 2 * dp - dr, e3 = dr, e5 = dp, e7 = 0;
   if (septimalEnabled) {
-    const ri1 = regionInfo(q1, r1, septimalShift, true);
-    const ri2 = regionInfo(q2, r2, septimalShift, true);
+    const ri1 = regionInfo(q1, r1, true);
+    const ri2 = regionInfo(q2, r2, true);
     const applyAdj = (ri, sign) => {
       if (ri.aDepth > 0) {
         const d = ri.aDepth;
@@ -86,7 +85,7 @@ const TIEBREAK = process.argv.includes('--taxicab') ? 'taxicab'
   : 'octNormProj';
 const PROJ_PER_OCT = 7 * 3 - 4 * 0;
 
-function pickCell(midi, refQ, refR, septimalShift, septimalEnabled, thFn) {
+function pickCell(midi, refQ, refR, septimalEnabled, thFn) {
   const N = midi - 57;
   const q0 = (((2 * N) % 7) + 7) % 7;
   const refMidi = 57 + 4 * refQ + 7 * refR;
@@ -95,7 +94,7 @@ function pickCell(midi, refQ, refR, septimalShift, septimalEnabled, thFn) {
   for (let k = -20; k <= 20; k++) {
     const q = q0 + 7 * k;
     const r = (N - 4 * q) / 7;
-    const th = thFn(jiExps(refQ, refR, q, r, septimalShift, septimalEnabled));
+    const th = thFn(jiExps(refQ, refR, q, r, septimalEnabled));
     const proj = 7 * (q - refQ) - 4 * (r - refR);
     const tie = TIEBREAK === 'octNormProj'
       ? Math.abs(proj - projTarget)                          // octave-normalized |proj|
@@ -117,18 +116,15 @@ function check(label, thFn, septimalEnabled) {
   let bad = 0, total = 0;
   const breaks = [];
   for (let refQ of [0, 1, 2]) {
-    const sShifts = septimalEnabled ? [-21, -10, 0, 10, 20] : [0];
-    for (const s of sShifts) {
-      for (let midi = 21; midi <= 96; midi++) {
-        const a = pickCell(midi, refQ, 0, s, septimalEnabled, thFn);
-        const b = pickCell(midi + 12, refQ, 0, s, septimalEnabled, thFn);
-        total++;
-        if (b[0] !== a[0] + 3 || b[1] !== a[1]) {
-          bad++;
-          if (breaks.length < 6) {
-            const pc = ((midi - 57) % 12 + 12) % 12;
-            breaks.push(`MIDI ${midi}→${midi+12} (${pcNames[pc]}) refQ=${refQ}${septimalEnabled?` s=${s}`:''}: (${a[0]},${a[1]}) vs (${b[0]},${b[1]})`);
-          }
+    for (let midi = 21; midi <= 96; midi++) {
+      const a = pickCell(midi, refQ, 0, septimalEnabled, thFn);
+      const b = pickCell(midi + 12, refQ, 0, septimalEnabled, thFn);
+      total++;
+      if (b[0] !== a[0] + 3 || b[1] !== a[1]) {
+        bad++;
+        if (breaks.length < 6) {
+          const pc = ((midi - 57) % 12 + 12) % 12;
+          breaks.push(`MIDI ${midi}→${midi+12} (${pcNames[pc]}) refQ=${refQ}: (${a[0]},${a[1]}) vs (${b[0]},${b[1]})`);
         }
       }
     }
@@ -143,7 +139,7 @@ console.log('Octave-consistency: does MIDI N+12 pick (q+3, r) when MIDI N picks 
 console.log('--- 5-limit (septimalEnabled=false) ---');
 const bad5old = check('OLD (unreduced TH)', tenneyUnreduced, false);
 const bad5new = check('REDUCED TH       ', tenneyReduced, false);
-console.log('\n--- 7-limit (septimalEnabled=true), sweeping septimalShift ∈ {-21, -10, 0, 10, 20} ---');
+console.log('\n--- 7-limit (uniform septimal) ---');
 const bad7old = check('OLD (unreduced TH)', tenneyUnreduced, true);
 const bad7new = check('REDUCED TH       ', tenneyReduced, true);
 

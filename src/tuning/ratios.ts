@@ -19,7 +19,7 @@ export function gcd(a: number, b: number): number {
 
 /** Like jiRatio() but takes the tuning state explicitly so callers can compute
  *  hypothetical ratios under non-live state (e.g. canvas-bounds enumeration
- *  across every (septimalShift × septimalEnabled) configuration). */
+ *  across every septimalEnabled configuration). */
 export function jiRatioWithState(
   q1: number, r1: number, q2: number, r2: number,
   state: TuningStateLike,

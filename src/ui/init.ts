@@ -6,12 +6,12 @@
 // 2. Initialize audio (creates AudioContext, loads the persisted instrument).
 // 3. Request MIDI access; on success, auto-detect Lumatone, wire input.
 // 4. Attach canvas mouse listeners for click selection + hover lighten.
-// 5. Wire toolbar controls (layout buttons, view checkboxes, tuning, audio,
-//    calibration, auto-sync) via addEventListener — each handler also writes
-//    its mutated field to persistence.
-// 6. Fire change-handlers once with the prefs-primed DOM so dependent visibility
-//    (qwertyTransposeCtrl, seamShiftCtrl) and downstream state (audio, layout,
-//    Lumatone color sync) line up with what the user had on their last reload.
+// 5. Wire toolbar controls (view checkboxes, tuning, audio, calibration,
+//    auto-sync) via addEventListener — each handler also writes its mutated
+//    field to persistence.
+// 6. Fire change-handlers once with the prefs-primed DOM so downstream state
+//    (audio, Lumatone color sync) lines up with what the user had on their
+//    last reload.
 // 7. First paint + info-panel size.
 // 8. Window resize handler + Reset-prefs button.
 
@@ -20,7 +20,6 @@ import { refSpine } from '../tuning/refspine.js';
 import { selection } from '../state/selection.js';
 import { view } from '../state/view.js';
 import { pedal } from '../state/pedal.js';
-import { tuning } from '../state/tuning.js';
 import { audio } from '../state/audio.js';
 import { lumatone } from '../state/lumatone.js';
 import { loadPrefs, savePrefs, clearPrefs, DEFAULT_PREFS } from '../state/persistence.js';
@@ -96,12 +95,7 @@ applyToolbarVisibility(prefs.toolbars);
 initToolbarSelector();
 
 /* State fields with no DOM mirror — set directly before any handlers run. */
-tuning.septimalShift = prefs.septimalShift;
 pedal.mode = prefs.pedalMode;
-
-/* Stepper indicator labels — no handler updates these from raw prefs. */
-const seamShiftInd = document.getElementById('seamShiftInd');
-if (seamShiftInd) seamShiftInd.textContent = String(prefs.septimalShift);
 
 initAudio();
 /* Load the persisted instrument. Fires regardless of audioEnabled so the
@@ -346,11 +340,8 @@ function resetToDefaults(): void {
   applyShowDiagnostics(p.showDiagnostics);
   applyCalibrateKeys(p.calibrateKeys);
 
-  /* Non-DOM state: pedal mode + seam shift get set directly. */
+  /* Non-DOM state: pedal mode is set directly. */
   pedal.mode = p.pedalMode;
-  tuning.septimalShift = p.septimalShift;
-  const ssi = document.getElementById('seamShiftInd');
-  if (ssi) ssi.textContent = String(p.septimalShift);
 
   setTuning();
   setOutline();  /* user-initiated path; tween view to new home position */

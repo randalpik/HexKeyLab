@@ -7,8 +7,7 @@
 //   • a new outline mode is added,
 //   • the lattice geometry (hexR, dxH, dyH, tilt angles) is changed,
 //   • the Tenney-Height-ranking logic in src/tuning/ratios.ts changes,
-//   • the QWERTY transpose range, layoutShifts, or septimalShift wrap range
-//     changes (any of these alters the cell-set union the canvas must fit).
+//   • the uniform-septimal region rule in src/tuning/regions.ts changes.
 //
 // Run:
 //   node tools/bounds-probe/compute-bounds.mjs
@@ -18,8 +17,8 @@
 // canvas-metrics formula from src/render/canvas.ts. baseKeys is parsed
 // directly from src/layout/baseKeys.ts so additions/removals there don't
 // require updating this script. The other inlined constants (qwertyKeys
-// row spec, layoutShifts, septimalShift range, hex/dx/dy, tilt angles)
-// MUST stay in sync manually — review the imports list when src/ changes.
+// row spec, hex/dx/dy, tilt angles) MUST stay in sync manually — review
+// the imports list when src/ changes.
 
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -49,12 +48,7 @@ const ROTATIONS = {
 };
 
 /* Mirrors the actual rendering transform (src/render/draw.ts main draw
-   loop): drawing at lattice (q, r) lands at screen offset
-   (ux*cos + uy*sin, -ux*sin + uy*cos) where ux = q*dxH + r*dxH/2 and
-   uy = -r*dyH. An older probe version used a sign-flipped variant that
-   happened to give correct bbox extents for cell sets symmetric around
-   the origin (Lumatone, QWERTY), but produced inflated bounds for piano
-   outline where cells sit around a non-origin viewport. */
+   loop). */
 function hexToScreen(q, r, tilt) {
   const ux = q * dxH + r * dxH * 0.5;
   const uy = -r * dyH;
@@ -68,8 +62,6 @@ const baseKeysMatch = baseKeysRaw.match(/export const baseKeys[^=]+=\s*(\[\[.*?\
 if (!baseKeysMatch) throw new Error('Could not parse baseKeys from src/layout/baseKeys.ts — file format changed?');
 const baseKeys = JSON.parse(baseKeysMatch[1]);
 
-const layoutShifts = { 1: [0, 0], 2: [7, -4], 3: [-7, 4] };
-
 // QWERTY keys — manually mirrors src/input/qwerty.ts row spec
 const qwertyRows = [
   { qStart: -7, r: 2, len: 12 },
@@ -81,28 +73,25 @@ const qwertyKeys = [];
 for (const row of qwertyRows) {
   for (let i = 0; i < row.len; i++) qwertyKeys.push([row.qStart + i, row.r]);
 }
-const QWERTY_TRANSPOSE_MIN = -3, QWERTY_TRANSPOSE_MAX = 3;
-const SEPTIMAL_SHIFT_MIN = -21, SEPTIMAL_SHIFT_MAX = 20; // wraps via [-21, 20] in src/ui/controls.ts
 
 // ── tuning math (mirrors src/tuning/{ratios,regions}.ts) ───────────────────
 const bandOf = (q) => Math.floor((q + 1) / 3);
 const posInBand = (q) => (((q + 1) % 3) + 3) % 3;
-const septimalW = 3;
 
-function regionInfo(q, r, septimalShift, septimalEnabled) {
+/* Uniform septimal: qm=2 cells are B-d1-upper, all others A-d0. */
+function regionInfo(q, _r, septimalEnabled) {
   if (!septimalEnabled) return { type: 'A', aDepth: 0, aUpper: false };
-  const bi = Math.floor((r - septimalShift) / septimalW);
-  const isB = (bi & 1) !== 0;
-  const aBI = isB ? bi + 1 : bi;
-  return { type: isB ? 'B' : 'A', aDepth: Math.abs(aBI) / 2, aUpper: aBI > 0 };
+  const qm = ((q % 3) + 3) % 3;
+  if (qm === 2) return { type: 'B', aDepth: 1, aUpper: true };
+  return { type: 'A', aDepth: 0, aUpper: false };
 }
 
-function jiExps(q1, r1, q2, r2, septimalShift, septimalEnabled) {
+function jiExps(q1, r1, q2, r2, septimalEnabled) {
   const db = bandOf(q2) - bandOf(q1), dp = posInBand(q2) - posInBand(q1), dr = r2 - r1;
   let e2 = db - 2 * dp - dr, e3 = dr, e5 = dp, e7 = 0;
   if (septimalEnabled) {
-    const ri1 = regionInfo(q1, r1, septimalShift, true);
-    const ri2 = regionInfo(q2, r2, septimalShift, true);
+    const ri1 = regionInfo(q1, r1, true);
+    const ri2 = regionInfo(q2, r2, true);
     const applyAdj = (ri, sign) => {
       if (ri.aDepth > 0) {
         const d = ri.aDepth;
@@ -127,12 +116,8 @@ function tenney(e) {
   return Math.abs(r0) + Math.abs(r1) * Math.log2(3) + Math.abs(r2) * Math.log2(5) + Math.abs(r3) * Math.log2(7);
 }
 
-/** Mirrors compute88PianoCoords in src/render/draw.ts. For each MIDI 21..108,
- *  pick the (q, r) on the lattice that minimizes TH to (refQ, refR); break
- *  ties by smallest |proj − octaveTarget| where octaveTarget = 21·round((midi
- *  − refMidi)/12). Octave-normalized so same-pitch-class octaves pick
- *  consistent lineages. */
-function pianoCells(refQ, refR, septimalShift = 0, septimalEnabled = false) {
+/** Mirrors compute88PianoCoords in src/render/draw.ts. */
+function pianoCells(refQ, refR, septimalEnabled = false) {
   const PROJ_PER_OCT = 7 * 3 - 4 * 0;
   const refMidi = 57 + 4 * refQ + 7 * refR;
   const cells = [];
@@ -145,7 +130,7 @@ function pianoCells(refQ, refR, septimalShift = 0, septimalEnabled = false) {
     for (let k = -20; k <= 20; k++) {
       const q = q0 + 7 * k;
       const r = (N - 4 * q) / 7;
-      const th = tenney(jiExps(refQ, refR, q, r, septimalShift, septimalEnabled));
+      const th = tenney(jiExps(refQ, refR, q, r, septimalEnabled));
       const absNProj = Math.abs(7 * (q - refQ) - 4 * (r - refR) - projTarget);
       if (!found || th < bestTh || (th === bestTh && absNProj < bestAbsNProj)) {
         bestTh = th; bestAbsNProj = absNProj; bestQ = q; bestR = r; found = true;
@@ -157,24 +142,18 @@ function pianoCells(refQ, refR, septimalShift = 0, septimalEnabled = false) {
 }
 
 // ── per-outline cell sets ──────────────────────────────────────────────────
-// Each function returns lattice (q, r) points whose projection through the
-// active tilt the canvas needs to fit. Unions span every state the user can
-// reach without further canvas resize (layoutShifts, qwertyTranspose,
-// septimalShift, refQ-mod-3 phase, tuning mode).
+// Lumatone and QWERTY outlines are statically positioned (the lattice slides
+// underneath via refSpine); their bounds come straight from baseKeys /
+// qwertyKeys. Piano outline cells are picked per-ref via the picker; we
+// union across a small refQ × refR neighborhood so the canvas fits any
+// reachable ref.
 
 function lumatonePoints(tilt) {
-  // Polygon screen-stationary across layout shifts → use literal baseKeys.
   return baseKeys.map(([q, r]) => hexToScreen(q, r, tilt));
 }
 
 function qwertyPoints(tilt) {
-  // Polygon shifts with qwertyTranspose ∈ [QWERTY_TRANSPOSE_MIN .. MAX].
-  const pts = [];
-  for (let t = QWERTY_TRANSPOSE_MIN; t <= QWERTY_TRANSPOSE_MAX; t++) {
-    const [tq, tr] = [2 * t, -t];
-    for (const [q, r] of qwertyKeys) pts.push(hexToScreen(q + tq, r + tr, tilt));
-  }
-  return pts;
+  return qwertyKeys.map(([q, r]) => hexToScreen(q, r, tilt));
 }
 
 function pianoViewCenter(refQ, refR, m64Q, m64R, tilt) {
@@ -182,9 +161,6 @@ function pianoViewCenter(refQ, refR, m64Q, m64R, tilt) {
   // sx=0 (horizontal center) and MIDI 64's cell at sy=0 (vertical
   // center). 2×2 linear system in lattice coords; determinant
   // A·D − B·C = −dxH·dyH is tilt-independent.
-  // hexToScreen factors (with y = r·dyH):
-  //   sx = A·q + B·r, A = dxH·cosT, B = dxH·0.5·cosT − dyH·sinT
-  //   sy = C·q + D·r, C = −dxH·sinT, D = −dxH·0.5·sinT − dyH·cosT
   const c = Math.cos(tilt), s = Math.sin(tilt);
   const A = dxH * c;
   const B = dxH * 0.5 * c - dyH * s;
@@ -199,10 +175,6 @@ function pianoViewCenter(refQ, refR, m64Q, m64R, tilt) {
   ];
 }
 
-/* Bounds per (refQ × refR), and septShift if 7-limit) with per-config
-   viewport: refNote at screen-X = 0, MIDI 64 at screen-Y = 0. Bounds
-   stay static within a tuning; tuning change (5-limit ↔ 7-limit)
-   triggers recompute. */
 function pianoPoints(tilt, septimalEnabled) {
   const pts = [];
   const REFR_MIN = -3, REFR_MAX = 3;
@@ -211,20 +183,15 @@ function pianoPoints(tilt, septimalEnabled) {
     const [vQ, vR] = pianoViewCenter(refQ, refR, m[0], m[1], tilt);
     for (const [q, r] of cells) pts.push(hexToScreen(q - vQ, r - vR, tilt));
   }
-  const septShifts = septimalEnabled
-    ? Array.from({ length: SEPTIMAL_SHIFT_MAX - SEPTIMAL_SHIFT_MIN + 1 }, (_, i) => SEPTIMAL_SHIFT_MIN + i)
-    : [0];
   for (let refQ = 0; refQ <= 2; refQ++) {
     for (let refR = REFR_MIN; refR <= REFR_MAX; refR++) {
-      for (const s of septShifts) accum(pianoCells(refQ, refR, s, septimalEnabled), refQ, refR);
+      accum(pianoCells(refQ, refR, septimalEnabled), refQ, refR);
     }
   }
   return pts;
 }
 
 function nonePoints(tilt, septimalEnabled) {
-  // "None" outline = no clipping → canvas must fit any cell-set the user could
-  // switch to without resize. Union of all three other outlines.
   return [...lumatonePoints(tilt), ...qwertyPoints(tilt), ...pianoPoints(tilt, septimalEnabled)];
 }
 
@@ -247,8 +214,6 @@ function bbox(pts) {
   return { minX: mnx, maxX: mxx, minY: mny, maxY: mxy };
 }
 
-/** kbOffY=0 always (cells centered around canvas vertical center), so CH must
- *  fit the symmetric vertical span. padX/padY match canvas.ts. */
 function canvasMetrics(b) {
   const padY = hexR + dxH * 0.5;
   const padX = dxH * 1.5 + hexR;
@@ -263,10 +228,6 @@ function canvasMetrics(b) {
 const outlines = ['lumatone', 'qwerty', 'piano', 'none'];
 const rotationNames = ['verticalFreq', 'lumatone', 'piano'];
 
-/* Two tables: 5-limit (and 12-TET) bounds — septimal off — and 7-limit
-   bounds — septimal on, accounting for the seam-shift wrap range.
-   Piano outline (and "none" union) varies between them; lumatone/qwerty
-   are tuning-independent and listed once for reference. */
 function printMatrix(septEnabled, label) {
   console.log(`\n${label} — kbMinW × CH (kbOffY=0):\n`);
   const colW = 15;
@@ -283,30 +244,21 @@ function printMatrix(septEnabled, label) {
   }
 }
 printMatrix(false, '5-limit / 12-TET');
-printMatrix(true, '7-limit (septimal on)');
+printMatrix(true, '7-limit (uniform septimal)');
 
 console.log('\nPiano cell span relative to refNote (sanity check, refR=0):');
 console.log('  5-limit (per refQ ∈ {0,1,2}):');
 for (let refQ = 0; refQ <= 2; refQ++) {
-  const pc = pianoCells(refQ, 0, 0, false);
+  const pc = pianoCells(refQ, 0, false);
   const rel = pc.map(([q, r]) => [q - refQ, r]);
   const qs = rel.map((c) => c[0]), rs = rel.map((c) => c[1]);
   console.log(`    refQ=${refQ}  q ∈ [${Math.min(...qs)}, ${Math.max(...qs)}]  r ∈ [${Math.min(...rs)}, ${Math.max(...rs)}]`);
 }
-console.log('  7-limit union over refQ × septimalShift ∈ [-21, 20]:');
-let uqMin = 1e9, uqMax = -1e9, urMin = 1e9, urMax = -1e9;
+console.log('  7-limit (per refQ ∈ {0,1,2}):');
 for (let refQ = 0; refQ <= 2; refQ++) {
-  for (let s = SEPTIMAL_SHIFT_MIN; s <= SEPTIMAL_SHIFT_MAX; s++) {
-    const pc = pianoCells(refQ, 0, s, true);
-    for (const [q, r] of pc) {
-      const rq = q - refQ, rr = r;
-      if (rq < uqMin) uqMin = rq;
-      if (rq > uqMax) uqMax = rq;
-      if (rr < urMin) urMin = rr;
-      if (rr > urMax) urMax = rr;
-    }
-  }
+  const pc = pianoCells(refQ, 0, true);
+  const rel = pc.map(([q, r]) => [q - refQ, r]);
+  const qs = rel.map((c) => c[0]), rs = rel.map((c) => c[1]);
+  console.log(`    refQ=${refQ}  q ∈ [${Math.min(...qs)}, ${Math.max(...qs)}]  r ∈ [${Math.min(...rs)}, ${Math.max(...rs)}]`);
 }
-const configs = 3 * (SEPTIMAL_SHIFT_MAX - SEPTIMAL_SHIFT_MIN + 1);
-console.log(`    q ∈ [${uqMin}, ${uqMax}]  r ∈ [${urMin}, ${urMax}]  (${configs} configurations)`);
 console.log('');

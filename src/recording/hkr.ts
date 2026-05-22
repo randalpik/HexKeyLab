@@ -9,9 +9,6 @@ export function serializeHkr(session: HkrSession): string {
   return JSON.stringify(session, null, 2);
 }
 
-function isLayoutId(n: unknown): n is 1 | 2 | 3 {
-  return n === 1 || n === 2 || n === 3;
-}
 function isTuningMode(s: unknown): s is '5' | '7' | 'E' {
   return s === '5' || s === '7' || s === 'E';
 }
@@ -22,23 +19,17 @@ function isPedalMode(s: unknown): s is 'sustain' | 'sostenuto' {
 function parseSnapshot(o: unknown): LayoutSnapshot {
   if (!o || typeof o !== 'object') throw new HkrParseError('snapshot missing');
   const s = o as Record<string, unknown>;
-  if (!isLayoutId(s.curLayout)) throw new HkrParseError('snapshot.curLayout invalid');
   if (!isTuningMode(s.tuning)) throw new HkrParseError('snapshot.tuning invalid');
   if (typeof s.septimalEnabled !== 'boolean') throw new HkrParseError('snapshot.septimalEnabled invalid');
   if (typeof s.equalEnabled !== 'boolean') throw new HkrParseError('snapshot.equalEnabled invalid');
-  if (typeof s.septimalShift !== 'number') throw new HkrParseError('snapshot.septimalShift invalid');
-  if (typeof s.qwertyTranspose !== 'number') throw new HkrParseError('snapshot.qwertyTranspose invalid');
   if (typeof s.septimalW !== 'number') throw new HkrParseError('snapshot.septimalW invalid');
   if (typeof s.instrument !== 'string') throw new HkrParseError('snapshot.instrument invalid');
   if (!isPedalMode(s.pedalMode)) throw new HkrParseError('snapshot.pedalMode invalid');
   if (typeof s.refHz !== 'number') throw new HkrParseError('snapshot.refHz invalid');
   return {
-    curLayout: s.curLayout,
     tuning: s.tuning,
     septimalEnabled: s.septimalEnabled,
     equalEnabled: s.equalEnabled,
-    septimalShift: s.septimalShift,
-    qwertyTranspose: s.qwertyTranspose,
     septimalW: s.septimalW,
     instrument: s.instrument,
     pedalMode: s.pedalMode,

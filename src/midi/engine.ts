@@ -31,11 +31,9 @@ interface MidiTarget {
 }
 
 /* build scale degree lookup: enumerate unique pitch classes in the baseKeys
-   footprint. Previously also iterated layoutShifts to union syntonic-comma
-   shifted variants, but that has been superseded by ref-driven layout shifts;
-   the union spans too many syntonic positions to enumerate up front. The
-   degreeMap covers the default-position PCs and is sufficient for the
-   Lumatone MIDI-out mapping. */
+   footprint. Ref-driven layout shifts span too many syntonic positions to
+   enumerate up front; degreeMap covers the default-position PCs and is
+   sufficient for the Lumatone MIDI-out mapping. */
 const degreeMap: Record<string, number> = {};
 (function () {
   const pcList: { pk: string; cents: number }[] = [];

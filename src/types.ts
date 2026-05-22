@@ -136,9 +136,9 @@ export type Voice = OscVoice | SampleVoice;
 
 // ── Animation ──────────────────────────────────────────────────────────────
 
-/** Layout-switch view tween. Encapsulated in render/animation.ts. */
+/** Ref-driven view tween. Encapsulated in render/animation.ts. */
 export interface AnimationModule {
-  /** ms — referenced by setLayout for audio ramp duration */
+  /** ms — also referenced for audio ramp duration on tween starts */
   readonly duration: number;
   /** true while a tween is in flight */
   readonly isAnimating: boolean;

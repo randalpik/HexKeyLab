@@ -20,7 +20,7 @@ let targetQ = 0, targetR = 0;
 let animStart = 0;
 
 export const animation: AnimationModule = {
-  /* tween duration in ms — referenced by setLayout for audio ramp duration */
+  /* tween duration in ms — also referenced for audio ramp duration */
   get duration(): number { return ANIM_DURATION; },
 
   /* true while a tween is in flight (between tweenTo and final step) */

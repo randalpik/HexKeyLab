@@ -1,8 +1,8 @@
 // Computer-keyboard note input — always-on listeners on `window`. Maps physical
 // keys (event.code) via qwertyKeyMap to a BASE (q, r); we then add the active
-// layoutShifts at note-on/off time, mirroring fixedMidiToKey(). The same
-// physical key plays a different lattice cell in each layout, so the keyboard
-// rides with ♭/♮/♯ exactly like the Lumatone.
+// refSpine offset at note-on/off time, mirroring fixedMidiToKey(). The same
+// physical key plays a different lattice cell at each ref, so the keyboard
+// rides with the ref shift exactly like the Lumatone.
 //
 // Skipped on:
 //   • form-field focus (typing must not play notes)
@@ -13,10 +13,10 @@
 // Sustain pedal interaction matches MIDI: if the pedal is down at keyup, the
 // note moves to audio.sustainedKeys instead of releasing.
 //
-// Tracking is by event.code (not KeyId) so a layout switch mid-hold still
-// resolves keyup to the correct (now-shifted) lattice cell — and the existing
-// setLayout migration of selectedKeys/activeOscs keeps audio + selection in
-// sync without us having to migrate anything in this module.
+// Tracking is by event.code (not KeyId) so a ref change mid-hold still
+// resolves keyup to the correct (now-shifted) lattice cell.
+// migrateHeldQwertyVoices, called from onRefChanged, re-targets active voices
+// and the selection set to follow the lattice shift.
 //
 // Side-effect import: ui/init.ts must `import './input/keyboard-notes.js'` to
 // activate the listeners.
@@ -76,12 +76,10 @@ export let migrateHeldQwertyVoices: (dq: number, dr: number) => void = () => {};
   }
 
   /* Smoothly migrate audio voices currently held via the computer keyboard
-     when the layout shifts under a ref change. Mirrors the sustained branch
-     of setLayout (controls.ts) but limited to QWERTY-originated voices.
-     Sustained / Lumatone-originated voices are left alone. Selection is
-     migrated for the same set of keys. Caller invokes this BEFORE the new
-     refSpine takes effect (i.e., with the OLD spine as cur and the new one's
-     delta as (dq, dr)). */
+     when the lattice shifts under a ref change. Limited to QWERTY-originated
+     voices; Lumatone-originated voices migrate separately in midi/handler.ts.
+     Selection is migrated for the same set of keys. Caller invokes this AFTER
+     the ref mutation, passing the spine delta (dq, dr). */
   migrateHeldQwertyVoices = function (dq: number, dr: number): void {
     if (heldCodes.size === 0) return;
     if (dq === 0 && dr === 0) return;

@@ -71,9 +71,8 @@ These are non-negotiable constraints. Always respect them.
 - **`'E'`** — 12-TET.
 - **`'5'`** — 5-limit JI. **Default**.
 - **`'7'`** — 7-limit JI, **uniform septimal**. Every qm=2 cell (`((q%3)+3)%3 === 2`) is region B with `aDepth=1, aUpper=true`; qm=0 and qm=1 are A-d0. Pure function of qmod3 — fully key-symmetric. Every qm=0 Pythagorean-spine cell has its harmonic 7th (7/4) exactly two rows up in qm=2 of the same r. Dominant 7 = 4:5:6:7 and half-dim 7 = 5:6:7:9 reachable everywhere. 5-limit minor (10:12:15) is the one musical loss; use `'5'` when you want it.
-- **`'7-legacy'`** — hidden from the dropdown but preserved end-to-end. The old global-septimal-shift behavior (`septimalMode='global'`, alternating A/B bands shifted along r by `septimalShift`, ▲/▼ seam-shift UI restored). Only reachable by editing `localStorage.hkl.prefs.v1`.
 
-Migration on load: old `'7'` saves become `'7-legacy'`; old `'7x'` saves become `'7'`.
+There is no `septimalMode` or `septimalShift` state — uniform is the only 7-limit mode. Persistence validation: any unrecognized `tuning` value reverts to the `'5'` default.
 
 ### Ref-driven layout shift (`refSpine` in `src/tuning/refspine.ts`)
 
@@ -97,7 +96,7 @@ When ref changes, voices originating from PHYSICAL inputs migrate with the latti
 1. `coordToMidi(q, r) ∈ [21, 108]` — refNote must be inside 88-key range.
 2. Every cell in the 88-cell footprint the picker produces under this ref spells with `≤ ±3` accidentals.
 
-For `'7-legacy'` the accidental check intersects over `septimalShift ∈ [0, 5]` so seam shifts can never orphan a placed ref. There is no extra "ref must be in V5 / V7" requirement — the dotted V5 / V7-uniform / V7-legacy outlines (drawn when "Valid ref bounds" is on) are visual aids built from this same check, not a separate gate.
+There is no extra "ref must be in V5 / V7" requirement — the dotted V5 / V7-uniform outlines (drawn when "Valid ref bounds" is on) are visual aids built from this same check, not a separate gate.
 
 ### Octave-consistent 88-cell picker
 

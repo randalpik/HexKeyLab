@@ -14,7 +14,6 @@ export function snapshotToTuningState(s: LayoutSnapshot): TuningStateLike {
   return {
     equalEnabled: s.equalEnabled,
     septimalEnabled: s.septimalEnabled,
-    septimalShift: s.septimalShift,
     septimalW: s.septimalW,
   };
 }

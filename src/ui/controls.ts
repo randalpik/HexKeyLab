@@ -1,18 +1,17 @@
-// Toolbar/keyboard control handlers: tuning select, seam shift up/down,
-// layout switch (♭/♮/♯), clear selection, transpose-by-(dq, dr) buttons.
+// Toolbar/keyboard control handlers: tuning select, clear selection,
+// transpose-by-(dq, dr) buttons.
 //
 // Each handler mutates state then fires a single `effects/on…Changed()` for
-// the fan-out — replaces the old chained sync-call pattern. The seam-shift
-// and transpose buttons also wire repeat-on-hold timers (400ms initial delay,
-// 80ms tick) and defer expensive color syncs until the user releases.
+// the fan-out — replaces the old chained sync-call pattern. The transpose
+// buttons wire repeat-on-hold timers (400ms initial delay, 80ms tick) and
+// defer expensive color syncs until the user releases.
 
 import { tuning } from '../state/tuning.js';
 import { selection } from '../state/selection.js';
 import { audio } from '../state/audio.js';
 import { referenceNote, clearSelection as clearRefSelection } from '../state/reference.js';
 import { savePrefs } from '../state/persistence.js';
-import type { LayoutId, OutlineMode, RotationMode, TuningMode } from '../state/persistence.js';
-import { layoutShifts } from '../layout/baseKeys.js';
+import type { OutlineMode, RotationMode, TuningMode } from '../state/persistence.js';
 import { refSpine } from '../tuning/refspine.js';
 import { dxH, dyH, cosT, sinT, setRotation } from '../layout/geometry.js';
 import { recomputeCanvasBounds, computePianoViewCenter } from '../render/canvas.js';
@@ -20,25 +19,14 @@ import { view } from '../state/view.js';
 import { keyFreq } from '../tuning/frequency.js';
 import { SampleEngine } from '../audio/samples.js';
 import {
-  noteOff, stopAllNotes, syncAudio, replayActiveNotes,
+  noteOff, syncAudio,
   instrReplaysOnTranspose,
 } from '../audio/engine.js';
 import { stopAllMidi, syncMidi } from '../midi/engine.js';
 import { animation } from '../render/animation.js';
 import { cv, draw, startLayoutAnim, currentMidi64Cell, buildHexLayerForTween, snapViewForOutline, validateRefNoteCandidate } from '../render/draw.js';
-import { syncLumatoneColors } from '../lumatone/sync.js';
 import { onTuningChanged } from '../effects/onTuningChanged.js';
-import { onLayoutChanged } from '../effects/onLayoutChanged.js';
 import type { KeyId, Voice } from '../types.js';
-
-/* In piano-outline mode the view is locked to the reference note (the lattice
-   scrolls so refNote stays at canvas center) — Layout buttons are meaningless
-   because each refNote position is its own freeform layout. With the
-   ref-driven layout system the buttons are gone entirely; this stub is
-   retained only because setOutline still calls it. */
-function updateLayoutButtonsForOutline(_outline: OutlineMode): void {
-  /* no-op */
-}
 
 /* Compute the view-center the active outline wants and animate to it.
    - piano: solve for the viewport that places refNote at screen-X = 0
@@ -86,23 +74,12 @@ export function syncViewToOutline(outline: OutlineMode, immediate: boolean): voi
 export function setTuning(): void {
   const val = (document.getElementById('selTuning') as HTMLSelectElement).value;
   const wasSeptimal = tuning.septimalEnabled;
-  const wasMode = tuning.septimalMode;
   tuning.equalEnabled = val === 'E';
-  tuning.septimalEnabled = val === '7' || val === '7-legacy';
-  tuning.septimalMode = val === '7-legacy' ? 'global' : 'uniform';
-  /* Seam shift only meaningful in legacy septimal mode (global alternating
-     bands). Hidden in the new uniform '7' which has no shift parameter. */
-  (document.getElementById('seamShiftCtrl') as HTMLElement).style.display =
-    (tuning.septimalEnabled && tuning.septimalMode === 'global') ? '' : 'none';
+  tuning.septimalEnabled = val === '7';
   /* Bucket switch can orphan a ref note placed in the old gate but invalid
-     in the new one. Three gates: V5 (non-septimal), V7-uniform (new '7'),
-     V7-legacy ('7-legacy'). 5-limit ↔ 12-TET share V5 so no reset needed
-     there; everything else needs a re-validate. songKey tier is left intact
-     (15 keys clustered around A3=220, far inside any gate). */
-  const bucketChanged =
-    wasSeptimal !== tuning.septimalEnabled ||
-    (wasSeptimal && tuning.septimalEnabled && wasMode !== tuning.septimalMode);
-  if (bucketChanged) {
+     in the new one. Two gates: V5 (non-septimal) and V7-uniform (7-limit).
+     5-limit ↔ 12-TET share V5 so no reset needed there. */
+  if (wasSeptimal !== tuning.septimalEnabled) {
     if (validateRefNoteCandidate(referenceNote.q, referenceNote.r) !== null) {
       clearRefSelection();
       savePrefs({ manualRef: undefined });
@@ -149,7 +126,6 @@ export function setOutline(): void {
   const newOutline = sel.value as OutlineMode;
   const cbExtend = document.getElementById('cbExtend') as HTMLInputElement;
   cbExtend.disabled = newOutline === 'none';
-  updateLayoutButtonsForOutline(newOutline);
   /* Each outline has its own canvas bounds — resize before redrawing. */
   recomputeCanvasBounds(newOutline);
   cv.style.height = view.CH + 'px';
@@ -168,43 +144,11 @@ export function setOutline(): void {
   savePrefs({ outline: newOutline });
 }
 
-export function shiftSeams(dir: number): void {
-  tuning.septimalShift = ((tuning.septimalShift + dir + 21) % 42 + 42) % 42 - 21;
-  document.getElementById('seamShiftInd')!.textContent = String(tuning.septimalShift);
-  onTuningChanged({ colorSync: false });
-  savePrefs({ septimalShift: tuning.septimalShift });
-}
-
-/* key-repeat for seam shift buttons */
-(function () {
-  let tid: number | null = null, iid: number | null = null;
-  function startRepeat(dir: number): void {
-    stopRepeat();
-    shiftSeams(dir);
-    tid = window.setTimeout(function () { iid = window.setInterval(function () { shiftSeams(dir); }, 80); }, 400);
-  }
-  function stopRepeat(): void {
-    /* only fire sync if a repeat was actually active — this runs on every document mouseup */
-    const wasActive = !!(tid || iid);
-    if (tid !== null) { clearTimeout(tid); tid = null; }
-    if (iid !== null) { clearInterval(iid); iid = null; }
-    if (wasActive) syncLumatoneColors();
-  }
-  ['btnSeamUp', 'btnSeamDn'].forEach(function (id) {
-    const dir = id === 'btnSeamUp' ? 1 : -1;
-    const el = document.getElementById(id)!;
-    el.addEventListener('mousedown', function (e) { e.preventDefault(); startRepeat(dir); });
-    el.addEventListener('touchstart', function (e) { e.preventDefault(); startRepeat(dir); }, { passive: false });
-  });
-  document.addEventListener('mouseup', stopRepeat);
-  document.addEventListener('touchend', stopRepeat);
-})();
-
 export function transposeSelection(dq: number, dr: number): void {
   if (selection.selectedKeys.size === 0) return;
   /* vertical bounds check — block if any note's center would leave the canvas */
   const cyC = view.CH / 2 + view.kbOffY;
-  const vq = layoutShifts[tuning.curLayout][0], vr = layoutShifts[tuning.curLayout][1];
+  const vq = view.viewQ, vr = view.viewR;
   let blocked = false;
   selection.selectedKeys.forEach(function (key) {
     const p = key.split(','), nq = +p[0] + dq, nr = +p[1] + dr;
@@ -273,22 +217,6 @@ export function transposeSelection(dq: number, dr: number): void {
   document.addEventListener('mouseup', stopRepeat);
   document.addEventListener('touchend', stopRepeat);
 })();
-
-/* Legacy setLayout: kept for recording playback back-compat (old .hkr files
-   store a curLayout 1/2/3 that we still parse). With ref-driven layouts the
-   visible region is fully determined by ref, so this becomes a no-op apart
-   from tracking curLayout for the persisted snapshot. */
-export function setLayout(n: number): void {
-  if (n === tuning.curLayout) return;
-  tuning.curLayout = n;
-  savePrefs({ curLayout: n as LayoutId });
-}
-
-/* Init-time no-op kept as a stable export until the recording schema drops
-   curLayout outright. */
-export function applyLayoutImmediate(n: number): void {
-  tuning.curLayout = n;
-}
 
 export function clearSelection(): void {
   selection.selectedKeys.clear();

@@ -31,8 +31,6 @@ The **Tuning** dropdown switches between three systems. The lattice doesn't chan
 
 Switching tunings ramps audio frequencies smoothly over 150ms — sustained notes glide from one tuning to the next.
 
-(Older recordings made with the legacy global-shift 7-limit mode still load and play; that mode is hidden from the dropdown but preserved end-to-end. It has a seam-shift ▲/▼ control that appears when it's loaded.)
-
 ---
 
 ## Reference note and layout positioning
@@ -233,7 +231,7 @@ This section is for the small audience that owns a Lumatone. None of it is neede
 
 When a Lumatone is plugged in over USB, HKL becomes a full controller for it:
 
-- **Auto-sync colors** — tick **Auto-sync** and the Lumatone's LEDs match the on-screen colors. Layout switches, tuning changes, septimal seam shifts, and selection highlights all push to the device. The sync is diff-based and message-throttled, so even a full layout switch only sends the bytes that actually need to change.
+- **Auto-sync colors** — tick **Auto-sync** and the Lumatone's LEDs match the on-screen colors. Reference-note shifts, tuning changes, and selection highlights all push to the device. The sync is diff-based and message-throttled, so only the bytes that actually need to change ride the wire.
 - **Status badge** — green "Lumatone Connected" / red "Not Connected", plus a sync activity indicator.
 - **MIDI input** — physical key presses route through HKL's audio engine using the same tuning math as on-screen play. Polyphonic aftertouch (per-key pressure, modulating per-voice volume) is supported.
 - **Pedal modes** — a dropdown selects between two interpretations of the sustain jack:

@@ -10,11 +10,12 @@
 // aftertouch + keystroke-light flags. Gated by lumatone.fixedLayoutSent so
 // re-syncs don't repeat the setup.
 
-import { tuning } from '../state/tuning.js';
 import { midi } from '../state/midi.js';
 import { lumatone } from '../state/lumatone.js';
 import { savePrefs } from '../state/persistence.js';
-import { baseKeys, layoutShifts } from '../layout/baseKeys.js';
+import { baseKeys } from '../layout/baseKeys.js';
+import { referenceNote } from '../state/reference.js';
+import { refSpine } from '../tuning/refspine.js';
 import { keyColorHex } from '../render/colors.js';
 import {
   sysexBoardMap, fixedMidiChannelMap,
@@ -29,11 +30,13 @@ import type { SysexMessage } from '../types.js';
 export function syncLumatoneColors(): void {
   if (!midi.midiOut || !lumatone.autoSyncEnabled) return;
 
-  /* Compute target colors for all 280 physical keys */
-  const sh = layoutShifts[tuning.curLayout];
+  /* Compute target colors for all 280 physical keys. The Lumatone outline
+     is statically positioned on screen; the lattice underneath shifts by
+     refSpine of the current reference note (§ refSpine). */
+  const sp = refSpine(referenceNote.q, referenceNote.r);
   const target: string[] = [];
   for (let i = 0; i < 280; i++) {
-    const q = baseKeys[i][0] + sh[0], r = baseKeys[i][1] + sh[1];
+    const q = baseKeys[i][0] + sp.q, r = baseKeys[i][1] + sp.r;
     target.push(keyColorHex(q, r));
   }
   if (!lumatone.deviceColors) lumatone.deviceColors = new Array<string | null>(280).fill(null);

@@ -10,9 +10,8 @@
 const STORAGE_KEY = 'hkl.prefs.v1';
 
 export type OutlineMode = 'lumatone' | 'qwerty' | 'piano' | 'none';
-export type TuningMode = '5' | '7' | '7-legacy' | 'E';
+export type TuningMode = '5' | '7' | 'E';
 export type PedalMode = 'sustain' | 'sostenuto';
-export type LayoutId = 1 | 2 | 3;
 export type RotationMode = 'verticalFreq' | 'lumatone' | 'piano';
 
 export interface ToolbarVisibility {
@@ -80,8 +79,6 @@ export interface PrefsV1 {
   outline: OutlineMode;
   rotation: RotationMode;
   tuning: TuningMode;
-  septimalShift: number;
-  curLayout: LayoutId;
   audioEnabled: boolean;
   waveform: string;
   pedalMode: PedalMode;
@@ -119,8 +116,6 @@ export const DEFAULT_PREFS: PrefsV1 = {
   outline: "lumatone",
   rotation: "verticalFreq",
   tuning: "5",
-  septimalShift: 0,
-  curLayout: 1,
   /* audio defaults to ON to match the long-standing "load piano + play on
      first reload" behavior of pre-persistence HKL */
   audioEnabled: true,
@@ -145,38 +140,17 @@ export const DEFAULT_PREFS: PrefsV1 = {
   validRefBounds: false,
 };
 
-function isLayoutId(n: unknown): n is LayoutId {
-  return n === 1 || n === 2 || n === 3;
-}
 function isOutlineMode(s: unknown): s is OutlineMode {
   return s === 'lumatone' || s === 'qwerty' || s === 'piano' || s === 'none';
 }
 function isRotationMode(s: unknown): s is RotationMode {
   return s === 'verticalFreq' || s === 'lumatone' || s === 'piano';
 }
-/* Accept legacy 'qwerty' rotation value (renamed to 'piano') from older
-   localStorage entries so existing users transition silently. */
-function normalizeRotation(s: unknown): RotationMode {
-  if (s === 'qwerty') return 'piano';
-  return isRotationMode(s) ? s : DEFAULT_PREFS.rotation;
-}
 function isTuningMode(s: unknown): s is TuningMode {
-  return s === '5' || s === '7' || s === '7-legacy' || s === 'E';
-}
-/* Migrate older saved values: the previous experimental '7x' becomes the new
-   '7' (uniform septimal qm=2), and the previous '7' (global septimal-shift)
-   becomes '7-legacy' so existing 7-limit users land on the legacy code path
-   that mirrors the old behavior. Anything else passes through unchanged. */
-function migrateTuningMode(s: unknown): TuningMode | undefined {
-  if (s === '7x') return '7';
-  if (s === '7') return '7-legacy';
-  return isTuningMode(s) ? s : undefined;
+  return s === '5' || s === '7' || s === 'E';
 }
 function isPedalMode(s: unknown): s is PedalMode {
   return s === 'sustain' || s === 'sostenuto';
-}
-function isFiniteNumber(n: unknown): n is number {
-  return typeof n === 'number' && Number.isFinite(n);
 }
 function loadToolbars(o: unknown): ToolbarVisibility {
   if (!o || typeof o !== "object") return { ...DEFAULT_PREFS.toolbars };
@@ -250,12 +224,8 @@ export function loadPrefs(): PrefsV1 {
     shortIvl:
       typeof o.shortIvl === "boolean" ? o.shortIvl : DEFAULT_PREFS.shortIvl,
     outline: isOutlineMode(o.outline) ? o.outline : DEFAULT_PREFS.outline,
-    rotation: normalizeRotation(o.rotation),
-    tuning: migrateTuningMode(o.tuning) ?? DEFAULT_PREFS.tuning,
-    septimalShift: isFiniteNumber(o.septimalShift)
-      ? o.septimalShift
-      : DEFAULT_PREFS.septimalShift,
-    curLayout: isLayoutId(o.curLayout) ? o.curLayout : DEFAULT_PREFS.curLayout,
+    rotation: isRotationMode(o.rotation) ? o.rotation : DEFAULT_PREFS.rotation,
+    tuning: isTuningMode(o.tuning) ? o.tuning : DEFAULT_PREFS.tuning,
     audioEnabled:
       typeof o.audioEnabled === "boolean"
         ? o.audioEnabled

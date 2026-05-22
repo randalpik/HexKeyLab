@@ -1561,3 +1561,55 @@ For `'7-legacy'` the accidental check intersects over `septimalShift ∈ [0, 5]`
 
 **Where**:
 - `src/render/draw.ts:compute88PianoCoords` — tiebreak uses `octaveDelta = Math.round((midi − refMidi) / 12); projTarget = PROJ_PER_OCT · octaveDelta; absNProj = |proj − projTarget|`.
+
+---
+
+## Legacy purge: back-compat-free pre-release cleanup (2026-05-22)
+
+**Picked**: While HKL is unreleased, delete all migration and back-compat code for the user's own intermediate states. Persistence validates strictly: any unrecognized scalar pref reverts to default; any unrecognized pref key is dropped. No multi-version `.hkr` parsing, no schema upshifts, no "this used to be called X" fallbacks.
+
+Specifically removed:
+
+| Item | Why it was there | Why deleted |
+|---|---|---|
+| `TuningMode = '7-legacy'` + the entire global-shift septimal mode | Preserved the old `septimalMode='global'` behavior (alternating A/B bands shifted along r by `septimalShift`, ▲/▼ seam-shift UI) for users who'd loaded a `.hkr` from a previous experimental version | No such users exist; one user is also the developer; uniform septimal is strictly better musically |
+| `septimalMode: 'global' \| 'uniform'` field | Distinguished the two modes | Only `'uniform'` survives, so the field is gone — uniform is the implicit default |
+| `septimalShift` state, `shiftSeams` handler, ▲/▼ seam-shift UI, ArrowUp/Down handler, `seamShiftCtrl`/`seamShiftInd` DOM | Legacy global-shift parameter | Uniform mode is `qmod3`-only with no shift parameter |
+| 3-layout system: `curLayout`, `setLayout`, `applyLayoutImmediate`, `layoutShifts {1: [0,0], 2: [7,-4], 3: [-7,4]}`, `updateLayoutButtonsForOutline`, ♭/♮/♯ button group, ArrowLeft/Right cycle | Replaced by `refSpine` but kept as no-ops for `.hkr` load back-compat | refSpine fully subsumes; old `.hkr` files won't load (acceptable pre-release) |
+| `qwertyTranspose` + `qwertyTransposeShift()` + `QWERTY_TRANSPOSE_MIN/MAX` | Per-step QWERTY semitone shift, replaced by refSpine | Same as 3-layout — refSpine subsumes |
+| `migrateTuningMode` (`'7x'` → `'7'`, `'7'` → `'7-legacy'`) | localStorage migration for users of pre-revamp experimental modes | No such users; strict validation handles bad values |
+| `normalizeRotation` (`'qwerty'` → `'piano'`) | localStorage migration for the rotation-rename | Same |
+| `isLayoutId`, `LayoutId` type | curLayout's type validator | curLayout gone |
+| `LayoutSnapshot.curLayout / septimalShift / qwertyTranspose` fields | Stored in `.hkr` for back-compat with future feature reintroductions | None planned; strict snapshot parser now rejects unrecognized layouts |
+| `EXP_REGION_MAP` + `setExpRegionMap`/`getExpRegionMap` (already deleted) + `exp-decisions.ts` | Per-hex experimental decision panel (pre-uniform) | Already gone; verified no lingering imports |
+| `onLayoutChanged` effect | Fan-out for the curLayout change that's no longer a thing | No callers |
+| `pairOf(r)` formula in `computeHue` (the syntonic-pair rotation) | Hue cycle correction for legacy global-shift mode | Uniform mode is qmod3-only; hue cycle stays at 5-limit baseline + B-region warm shift |
+| V7-legacy outline cache + `V7_SHIFT_PERIOD` shift-intersection loop in `ensureValidRefCaches` | Visual aid for `'7-legacy'` valid-ref region | No such mode |
+
+Migrations retained (still meaningful):
+- Unrecognized scalar pref → default value. E.g. `tuning: 'banana'` becomes `'5'` on load.
+- Missing pref key → the field is simply absent and `DEFAULT_PREFS` supplies the value via fallthrough in `loadPrefs`.
+
+**Rejected**:
+- **Keep `'7-legacy'` hidden but reachable**: would require keeping the entire global-shift code path, the seam-shift UI, the cache intersection logic, and the migration. No users.
+- **Keep `curLayout` in the snapshot for round-trip stability**: irrelevant pre-release; recording / DAW round-trip is the user's own workflow and he can re-record.
+- **Schema version bump on `.hkr`**: pre-release schema-version bumping is theater. Old recordings load nowhere; new recordings use the new schema.
+
+**Why**: every retained migration is permanent maintenance overhead — it has to keep working through every future refactor and is exercised only by a small finite set of legacy states. Pre-distribution is the cheapest moment to delete that overhead. Once the app ships, every migration becomes a load-bearing API.
+
+**Constraint surfaced**: typecheck + build catches every syntactic dangling reference (imports of deleted exports, references to gone-fields). What it doesn't catch is *runtime* behavioral references — e.g. a comment claiming "X happens when seam shifts" is now wrong but compiles fine. Grepping for the removed identifiers across the docs in this commit caught those.
+
+**Where**:
+- `src/state/persistence.ts` — `TuningMode = '5' | '7' | 'E'`; `PrefsV1` shrunk by 2 fields; validators slimmed.
+- `src/state/tuning.ts` — `{ septimalEnabled, equalEnabled, septimalW }` only.
+- `src/tuning/regions.ts` — uniform-only region rule; legacy bands and `isRegionB` / `regionBandIdx` deleted.
+- `src/tuning/frequency.ts` — `septimalShift` tempering line dropped.
+- `src/layout/baseKeys.ts` — `layoutShifts` and `qwertyTransposeShift` deleted.
+- `src/render/{colors, draw, canvas}.ts` — pair-shift hue correction dropped; valid-ref cache halved; PIANO_BOUNDS_TABLE regenerated.
+- `src/recording/{types, snapshot, apply, hkr}.ts` — snapshot fields trimmed; parser rejects extra-keys-missing.
+- `src/ui/{controls, init, keyboard}.ts` — `shiftSeams` IIFE, `setLayout`/`applyLayoutImmediate`, ArrowUp/Down handler all deleted.
+- `src/midi/engine.ts` — `degreeMap` comment updated; `buildMidiReverse` uses `refSpine` (unchanged in behavior).
+- `src/lumatone/sync.ts` — Lumatone target colors use `refSpine` instead of `layoutShifts[curLayout]`.
+- `src/effects/onLayoutChanged.ts` — DELETED.
+- `index.html` — seam-shift control block deleted.
+- `tools/bounds-probe/{compute-bounds,octave-consistency}.mjs` — `septimalShift` / `layoutShifts` / `qwertyTranspose` iterations replaced with uniform-only / single-refSpine logic.

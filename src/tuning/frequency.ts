@@ -19,8 +19,6 @@ export function keyFreqWithState(q: number, r: number, s: TuningStateLike): numb
     if (ri.aDepth > 0) f *= Math.pow(ri.aUpper ? 80 / 81 : 81 / 80, ri.aDepth);
     /* B bands additionally get septimal comma */
     if (ri.type === 'B') f *= 63 / 64;
-    /* global syntonic tempering: 1/6 comma per shift step smooths the mod-42 boundary */
-    if (s.septimalShift !== 0) f *= Math.pow(80 / 81, s.septimalShift / 6);
   }
   return f;
 }

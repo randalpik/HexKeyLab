@@ -141,7 +141,7 @@ Easy to misremember because the layout is called "Harmonic Table" and minor thir
 
 ### Uniform-septimal qm=2 = B-d1-upper: derivation gotcha
 
-The new 7-limit (`tuning='7'`, `septimalMode='uniform'`) makes every `qmod3=2` cell B-region with `(aDepth=1, aUpper=true)`. The non-obvious payoff: this places the harmonic 7th (7/4) of every qm=0 Pythag-spine cell exactly **two rows up in qm=2 at the same `r`** (the qm=2 cell at r=R+2 is 7/4 of the qm=0 cell at r=R, octave-equivalent). The geometry works because the qm=2 B-d1-upper syntonic adjustment cancels against the (q+1) major-third stack relative to the qm=0 reference.
+The 7-limit (`tuning='7'`) mode makes every `qmod3=2` cell B-region with `(aDepth=1, aUpper=true)`. The non-obvious payoff: this places the harmonic 7th (7/4) of every qm=0 Pythag-spine cell exactly **two rows up in qm=2 at the same `r`** (the qm=2 cell at r=R+2 is 7/4 of the qm=0 cell at r=R, octave-equivalent). The geometry works because the qm=2 B-d1-upper syntonic adjustment cancels against the (q+1) major-third stack relative to the qm=0 reference.
 
 Common confusion when reasoning about chord shapes in this mode:
 - Half-diminished 7th = dom7-with-9th-replacing-root. Rooted at qm=1, NOT qm=0. From qm=1 r=R the four tones live at `qm=1 r=R (5)`, `qm=0 r=R+1 (6)`, `qm=2 r=R+2 (7)`, `qm=0 r=R+2 (9)` — gives 5:6:7:9 exact.
@@ -167,9 +167,15 @@ The valid-ref-region cache must iterate the diagonal MIDI band `4q + 7r ∈ [−
 
 Fix: `bandQRange(r) = [⌈(−36 − 7r)/4⌉, ⌊(51 − 7r)/4⌋]` and a nested loop with `r ∈ [−25, 25]` (the wider range still covers all cells the picker would visit at any reachable ref). The live `validateRefNoteCandidate` doesn't consult the cache at all — the cache exists only for the dotted visual outline.
 
+### Pre-distribution code is allowed to break its own intermediate states
+
+While HKL is unreleased, prefs / `.hkr` schema migrations from the user's *own* intermediate experiments are dead weight. The whole-codebase purge in 2026-05 deleted: the `'7-legacy'` tuning mode (`septimalMode='global'`, septimal seam-shift UI, 6-shift V7-legacy intersection cache), the 3-layout system (`curLayout`, `setLayout`, `applyLayoutImmediate`, `layoutShifts`, ♭/♮/♯ button group, ArrowLeft/Right cycle, QWERTY transpose ▲/▼), the `migrateTuningMode` / `normalizeRotation` / `isLayoutId` validators, and the `qwertyTranspose` snapshot field. Replaced with strict-validation persistence: any unrecognized scalar pref reverts to default; any unrecognized pref key is dropped.
+
+This wouldn't be acceptable in a distributed app. Pre-release it's the right tradeoff: every retained migration is one more bit of state you have to keep working forever, and the only existing user is also the developer.
+
 ### Don't put validation rules in the cache, put them in the live validator
 
-`validateRefNoteCandidate(q, r)` is the authoritative check on a candidate ref. Two and only two conditions: MIDI ∈ [21, 108] AND every cell in the 88-cell footprint spells with ≤±3 accidentals. The cached V5 / V7-uniform / V7-legacy outline sets are precomputed visual aids; they are NOT a gate the validator consults.
+`validateRefNoteCandidate(q, r)` is the authoritative check on a candidate ref. Two and only two conditions: MIDI ∈ [21, 108] AND every cell in the 88-cell footprint spells with ≤±3 accidentals. The cached V5 / V7-uniform outline sets are precomputed visual aids; they are NOT a gate the validator consults.
 
 Mixing them up is how "Reference out of valid region" false-rejects happen: a ref outside the cache's bounding box (or outside the cached set due to a stale build) passed the live check but failed the cache lookup. Fix is one-directional: validator runs LIVE per candidate; cache is built once for the visual outline; the two never compare.
 
@@ -259,10 +265,6 @@ Tested:
 ### Seam endpoints must snap to outline vertices
 
 `snapVtx(px, py)` searches for the nearest outline vertex within 6 pixels. Use vertex search only — no segment projections, no flanking-hex logic. The simpler approach is correct here; cleverness produces visual artifacts at corners.
-
-### `Math.floor` boundaries need a +0.5 offset for symmetric animation
-
-`pairOf(r) = floor((r − septimalShift + 3.5) / 6)` — the +3.5 is not arbitrary. Without it, hex centers can sit on floor boundaries and animation timing becomes asymmetric (some hexes animate one frame ahead of their visual neighbors).
 
 ### Selection highlights live outside the offscreen build
 
