@@ -29,8 +29,87 @@ import {
 } from '../audio/engine.js';
 import { filterPA } from '../audio/aftertouch.js';
 import { velocityCal } from '../audio/velocityCal.js';
-import { fixedMidiToKey } from './engine.js';
+import { fixedMidiToKey, fixedMidiToKeyAt } from './engine.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
+import { refSpine } from '../tuning/refspine.js';
+import { referenceNote } from '../state/reference.js';
+import { keyFreq } from '../tuning/frequency.js';
+import { SampleEngine } from '../audio/samples.js';
+import { animation } from '../render/animation.js';
+import { instrReplaysOnTranspose, noteOn } from '../audio/engine.js';
+import type { KeyId, Voice } from '../types.js';
+
+/* Set of Lumatone physical inputs currently held. Used by
+   migrateHeldLumatoneVoices to find which voices to re-target when the
+   refSpine shifts under the static Lumatone outline. Format: "ch,note". */
+const heldLumatonePhys = new Set<string>();
+export function clearHeldLumatoneTracking(): void { heldLumatonePhys.clear(); }
+export function migrateHeldLumatoneVoices(dq: number, dr: number): void {
+  if (heldLumatonePhys.size === 0) return;
+  if (dq === 0 && dr === 0) return;
+  const sp = refSpine(referenceNote.q, referenceNote.r);
+  const oldSpQ = sp.q - dq, oldSpR = sp.r - dr;
+  const pairs: { oldKey: KeyId; newKey: KeyId }[] = [];
+  heldLumatonePhys.forEach((id) => {
+    const [chStr, noteStr] = id.split(',');
+    const ch = +chStr, note = +noteStr;
+    const oldKey = fixedMidiToKeyAt(ch, note, oldSpQ, oldSpR);
+    const newKey = fixedMidiToKeyAt(ch, note, sp.q, sp.r);
+    if (oldKey && newKey && oldKey !== newKey) pairs.push({ oldKey, newKey });
+  });
+  if (pairs.length === 0) return;
+  if (audio.audioEnabled && audio.audioCtx) {
+    if (instrReplaysOnTranspose()) {
+      pairs.forEach((p) => {
+        if (!audio.activeOscs[p.oldKey]) return;
+        noteOff(p.oldKey);
+        if (audio.keyVelocity[p.oldKey] !== undefined) {
+          audio.keyVelocity[p.newKey] = audio.keyVelocity[p.oldKey];
+          delete audio.keyVelocity[p.oldKey];
+        }
+        noteOn(p.newKey, audio.keyVelocity[p.newKey]);
+      });
+    } else {
+      const now = audio.audioCtx.currentTime;
+      const rampDur = animation.duration / 1000;
+      const sampleMoves: { oldKey: KeyId; newKey: KeyId; newFreq: number; vol?: number }[] = [];
+      pairs.forEach((p) => {
+        const e = audio.activeOscs[p.oldKey];
+        if (!e) return;
+        const np = p.newKey.split(','), nq = +np[0], nr = +np[1];
+        if (e.type === 'osc') {
+          e.osc.frequency.setValueAtTime(e.osc.frequency.value, now);
+          e.osc.frequency.exponentialRampToValueAtTime(keyFreq(nq, nr), now + rampDur);
+          audio.activeOscs[p.newKey] = e;
+          delete audio.activeOscs[p.oldKey];
+        } else if (e.type === 'sample') {
+          sampleMoves.push({ oldKey: p.oldKey, newKey: p.newKey, newFreq: keyFreq(nq, nr) });
+        }
+        if (audio.keyVelocity[p.oldKey] !== undefined) {
+          audio.keyVelocity[p.newKey] = audio.keyVelocity[p.oldKey];
+          delete audio.keyVelocity[p.oldKey];
+        }
+      });
+      sampleMoves.forEach((m) => { m.vol = SampleEngine.slideAndFadeOut(m.oldKey, m.newFreq, rampDur); });
+      sampleMoves.forEach((m) => {
+        SampleEngine.noteOnFaded(m.newKey, m.newFreq, m.vol!, rampDur);
+        audio.activeOscs[m.newKey] = { type: 'sample', freq: m.newFreq } as Voice;
+        delete audio.activeOscs[m.oldKey];
+      });
+    }
+  }
+  /* migrate selection entries so the highlight follows the physical key */
+  pairs.forEach((p) => {
+    if (selection.selectedKeys.has(p.oldKey)) {
+      selection.selectedKeys.delete(p.oldKey);
+      selection.selectedKeys.add(p.newKey);
+    }
+    if (audio.sustainedKeys.has(p.oldKey)) {
+      audio.sustainedKeys.delete(p.oldKey);
+      audio.sustainedKeys.add(p.newKey);
+    }
+  });
+}
 
 export function handleMidiMessage(e: MIDIMessageEvent): void {
   const data = e.data;
@@ -113,7 +192,9 @@ export function handleMidiMessage(e: MIDIMessageEvent): void {
   /* Note messages */
   const key = fixedMidiToKey(ch, d1);
   if (!key) return;
+  const physId = ch + ',' + d1;
   if (status === 0x90 && d2 > 0) {
+    heldLumatonePhys.add(physId);
     if (audio.activeOscs[key]) {
       /* Voice is already playing — typically because sustain pedal is holding it.
          Stop the old voice so syncAudio creates a fresh one with the new velocity,
@@ -143,6 +224,7 @@ export function handleMidiMessage(e: MIDIMessageEvent): void {
        mode this is a single boolean check. */
     velocityCal.recordSample(key, vShaped);
   } else if (status === 0x80 || (status === 0x90 && d2 === 0)) {
+    heldLumatonePhys.delete(physId);
     if (audio.sustainPedalDown || audio.sostenutoLockedKeys.has(key)) {
       /* damper or sostenuto holds the note — keep sounding, mark as sustained */
       audio.sustainedKeys.add(key);

@@ -23,9 +23,9 @@
 
 import { audio } from '../state/audio.js';
 import { selection } from '../state/selection.js';
-import { tuning } from '../state/tuning.js';
 import { view } from '../state/view.js';
-import { layoutShifts, qwertyTransposeShift } from '../layout/baseKeys.js';
+import { refSpine } from '../tuning/refspine.js';
+import { referenceNote } from '../state/reference.js';
 import {
   noteOn, noteOff, triggerRearticulateFlash, instrReplaysOnTranspose,
 } from '../audio/engine.js';
@@ -39,8 +39,9 @@ import type { KeyId, Voice } from '../types.js';
 
 const KEYBOARD_VELOCITY = DEFAULT_DYNAMIC_MAP.f;
 
-/* Filled by the IIFE below so external modules (controls.ts) can ask for a
-   migration of just the QWERTY-held voices when qwertyTranspose changes. */
+/* Filled by the IIFE below so external modules (e.g., the ref-change handler)
+   can ask for a smooth migration of QWERTY-held voices when the lattice
+   shifts under the slab. */
 export let migrateHeldQwertyVoices: (dq: number, dr: number) => void = () => {};
 
 (function () {
@@ -62,38 +63,36 @@ export let migrateHeldQwertyVoices: (dq: number, dr: number) => void = () => {};
   function codeToKey(code: string): KeyId | null {
     const base = qwertyKeyMap[code];
     if (!base) return null;
-    const sh = layoutShifts[tuning.curLayout];
-    const ts = qwertyTransposeShift(tuning.qwertyTranspose);
-    return (base[0] + sh[0] + ts[0]) + ',' + (base[1] + sh[1] + ts[1]);
+    const sp = refSpine(referenceNote.q, referenceNote.r);
+    return (base[0] + sp.q) + ',' + (base[1] + sp.r);
   }
 
-  /* Compute the KeyId a held event.code maps to under an arbitrary transpose,
-     so we can find OLD voices when transpose changes (codeToKey already
-     returns the NEW one if tuning.qwertyTranspose has been mutated, or the
-     OLD one if it hasn't — caller controls the order). */
+  /* Compute the KeyId a held event.code maps to under an arbitrary shift,
+     used to find OLD voices when ref changes. */
   function codeToKeyAt(code: string, qOff: number, rOff: number): KeyId | null {
     const base = qwertyKeyMap[code];
     if (!base) return null;
-    const sh = layoutShifts[tuning.curLayout];
-    return (base[0] + sh[0] + qOff) + ',' + (base[1] + sh[1] + rOff);
+    return (base[0] + qOff) + ',' + (base[1] + rOff);
   }
 
-  /* Smoothly migrate audio voices currently held via the computer keyboard by
-     a (dq, dr) lattice delta. Mirrors the sustained branch of setLayout
-     (controls.ts), but limited to QWERTY-originated voices identified via
-     heldCodes. Sustained / Lumatone-originated voices are left alone.
-     Selection is migrated for the same set of keys.
-     Caller invokes this BEFORE mutating tuning.qwertyTranspose. */
+  /* Smoothly migrate audio voices currently held via the computer keyboard
+     when the layout shifts under a ref change. Mirrors the sustained branch
+     of setLayout (controls.ts) but limited to QWERTY-originated voices.
+     Sustained / Lumatone-originated voices are left alone. Selection is
+     migrated for the same set of keys. Caller invokes this BEFORE the new
+     refSpine takes effect (i.e., with the OLD spine as cur and the new one's
+     delta as (dq, dr)). */
   migrateHeldQwertyVoices = function (dq: number, dr: number): void {
     if (heldCodes.size === 0) return;
     if (dq === 0 && dr === 0) return;
-    /* current transpose offsets (pre-mutation) */
-    const cur = qwertyTransposeShift(tuning.qwertyTranspose);
+    /* OLD refSpine offsets (pre-mutation). Subtract dq/dr to find the old spine. */
+    const sp = refSpine(referenceNote.q, referenceNote.r);
+    const curQ = sp.q - dq, curR = sp.r - dr;
     /* gather (oldKey, newKey) pairs */
     const pairs: { code: string; oldKey: KeyId; newKey: KeyId }[] = [];
     heldCodes.forEach((code) => {
-      const oldKey = codeToKeyAt(code, cur[0], cur[1]);
-      const newKey = codeToKeyAt(code, cur[0] + dq, cur[1] + dr);
+      const oldKey = codeToKeyAt(code, curQ, curR);
+      const newKey = codeToKeyAt(code, sp.q, sp.r);
       if (oldKey && newKey && oldKey !== newKey) pairs.push({ code, oldKey, newKey });
     });
     if (pairs.length === 0) return;

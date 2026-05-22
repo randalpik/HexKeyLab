@@ -7,6 +7,7 @@ import { keyFreq } from '../tuning/frequency.js';
 import { posInBand } from '../layout/coords.js';
 import { fmtNote, noteName, keyOctave, parseNote } from '../tuning/notes.js';
 import { jiRatio, intervalTier } from '../tuning/ratios.js';
+import { regionInfo } from '../tuning/regions.js';
 import {
   intervalName, shortenInterval, equalIntervalName, letterIdx,
 } from '../tuning/intervals.js';
@@ -53,7 +54,7 @@ export function updateInfo(): void {
   selection.selectedKeys.forEach(function (k) {
     const parts = k.split(','); const q = +parts[0], r = +parts[1];
     const f = keyFreq(q, r);
-    const inB = tuning.septimalEnabled && ((Math.floor((r - tuning.septimalShift) / tuning.septimalW) & 1) !== 0);
+    const inB = tuning.septimalEnabled && regionInfo(q, r).type === 'B';
     const mh = computeHue(q, r);
     const col = inB ? hueC[mh].sl! : hueC[mh].l;
     keys.push({ q, r, freq: f, name: fmtNote(noteName(q, r)), oct: keyOctave(q, r), col, inB });

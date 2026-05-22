@@ -11,10 +11,7 @@
 // call from the current view + layout shift; the click hit-test reads it as
 // the screen-space lookup table.
 
-import {
-  baseKeys, layoutShifts, qwertyTransposeShift,
-  QWERTY_TRANSPOSE_MIN, QWERTY_TRANSPOSE_MAX,
-} from '../layout/baseKeys.js';
+import { baseKeys, layoutShifts } from '../layout/baseKeys.js';
 import { bandOf } from '../layout/coords.js';
 import { hexR, dxH, dyH, tiltAngle, cosT, sinT } from '../layout/geometry.js';
 import { qwertyKeys } from '../input/qwerty.js';
@@ -32,7 +29,8 @@ import {
   SHARP, DBLSHARP, FLAT, DBLFLAT,
 } from '../tuning/notes.js';
 import { jiRatio, jiRatioWithState, tenneyHeightFromExps } from '../tuning/ratios.js';
-import type { TuningStateLike } from '../tuning/regions.js';
+import { regionInfo, type TuningStateLike } from '../tuning/regions.js';
+import { refSpine } from '../tuning/refspine.js';
 import type { KeyId } from '../types.js';
 
 // ── canvas setup ───────────────────────────────────────────────────────────
@@ -213,34 +211,35 @@ export function invalidatePianoOutline(): void {
 /* ── valid-ref-region (static gate + outline, per tuning bucket) ────────────
    Two static sets of (q, r) refNote candidates that pass the ±3-accidental
    check across the relevant tuning bucket:
-     V5 — used in 5-limit + 12-TET (septimalEnabled=false, no shift dep).
-     V7 — used in 7-limit. INTERSECTION over septimalShift ∈ [0, 5] so the
-          gate is shift-invariant (seam shifts can never orphan a ref).
-   The outline polygons trace the boundary of each set. Built once on
-   module init; never invalidated (both sets are static functions of the
-   picker logic). The dotted outline rendered at draw time picks whichever
-   set is active for the live tuning bucket.
-   Cost notes / optimizations:
-   - V5 is one config per (q, r) — ~60 ms over the 61×61 scan.
-   - V7-intersection over the full ±21 septimalShift wrap range is ~5 s.
-     Validity is empirically PERIOD-6 in septimalShift (regionInfo's A/B
-     parity depends on floor((r − ss) / 3) & 1, which has period 6; the
-     aDepth magnitude shifts can change which (q+7k, r−4k) wins min-TH but
-     never expands the set of cells the picker might choose). Confirmed by
-     diffing the 42-shift and 6-shift intersections — identical. So we
-     check only ss ∈ {0..5}, dropping V7 cost to ~1 s.
-   - V7-intersection ⊆ V5 is empirical (every cell that survives every
-     7-limit shift also survives 5-limit). We restrict the V7 scan to
-     V5-valid candidates, halving the work again — and assert |V7 ⊆ V5|
-     in dev so we'd catch a divergence if the picker logic changes. */
+     V5         — used in 5-limit + 12-TET (septimalEnabled=false). One
+                  config per (q, r); no shift dependency.
+     V7-uniform — used in new '7'. Single config: septimalEnabled=true with
+                  septimalMode='uniform' (qm=2 all B-d1-upper). One config
+                  per (q, r); no shift iteration needed. Cheaper to compute
+                  than V7-legacy and the boundary is smoother (no jaggedness
+                  from intersection-across-shifts).
+     V7-legacy  — used in hidden '7-legacy'. INTERSECTION over
+                  septimalShift ∈ [0, 5] under septimalMode='global'; gate
+                  is shift-invariant so seam shifts can never orphan a ref.
+   The outline polygons trace the boundary of each set. Built once lazily;
+   never invalidated (all three are static functions of the picker logic). */
 let validRefSet5: Set<KeyId> = new Set();
-let validRefSet7: Set<KeyId> = new Set();
+let validRefSet7Legacy: Set<KeyId> = new Set();
+let validRefSet7Uniform: Set<KeyId> = new Set();
 let validRefPaths5: Point[][] = [];
-let validRefPaths7: Point[][] = [];
+let validRefPaths7Legacy: Point[][] = [];
+let validRefPaths7Uniform: Point[][] = [];
 let validRefCachesBuilt = false;
-const VALID_REF_SCAN_Q_MIN = -30, VALID_REF_SCAN_Q_MAX = 30;
-const VALID_REF_SCAN_R_MIN = -30, VALID_REF_SCAN_R_MAX = 30;
+/* Scan the diagonal MIDI band 4q + 7r ∈ [-36, 51] (midi ∈ [21, 108]) with r
+   wide enough to cover anywhere accidentals could be ≤±3. Empirically r ∈
+   [-21, 19] holds for V5/uniform; ±25 gives margin. q is derived per-r from
+   the MIDI bounds so we never scan cells outside the band. */
+const VALID_REF_SCAN_R_MIN = -25, VALID_REF_SCAN_R_MAX = 25;
 const V7_SHIFT_PERIOD = 6;
+function bandQRange(r: number): [number, number] {
+  /* 21 ≤ 57 + 4q + 7r ≤ 108  ↔  q ∈ [(−36 − 7r)/4, (51 − 7r)/4] */
+  return [Math.ceil((-36 - 7 * r) / 4), Math.floor((51 - 7 * r) / 4)];
+}
 
 function validRefForState(q: number, r: number, state: TuningStateLike): boolean {
   const midi = 57 + 4 * q + 7 * r;
@@ -255,38 +254,48 @@ function validRefForState(q: number, r: number, state: TuningStateLike): boolean
 function ensureValidRefCaches(): void {
   if (validRefCachesBuilt) return;
   const state5: TuningStateLike = { equalEnabled: false, septimalEnabled: false, septimalShift: 0, septimalW: 3 };
-  for (let q = VALID_REF_SCAN_Q_MIN; q <= VALID_REF_SCAN_Q_MAX; q++) {
-    for (let r = VALID_REF_SCAN_R_MIN; r <= VALID_REF_SCAN_R_MAX; r++) {
-      if (validRefForState(q, r, state5)) validRefSet5.add(q + ',' + r as KeyId);
+  const state7Uniform: TuningStateLike = { equalEnabled: false, septimalEnabled: true, septimalShift: 0, septimalW: 3, septimalMode: 'uniform' };
+  for (let r = VALID_REF_SCAN_R_MIN; r <= VALID_REF_SCAN_R_MAX; r++) {
+    const [qLo, qHi] = bandQRange(r);
+    for (let q = qLo; q <= qHi; q++) {
+      const k = q + ',' + r as KeyId;
+      if (validRefForState(q, r, state5)) validRefSet5.add(k);
+      if (validRefForState(q, r, state7Uniform)) validRefSet7Uniform.add(k);
     }
   }
-  /* V7 = intersection over ss ∈ {0..5}, restricted to V5 (see header). */
+  /* V7-legacy = intersection over ss ∈ {0..5} under global septimal mode,
+     restricted to V5 (header note: V7-legacy ⊆ V5 empirically). */
   validRefSet5.forEach((k) => {
     const [qs, rs] = (k as string).split(',');
     const q = +qs, r = +rs;
     for (let ss = 0; ss < V7_SHIFT_PERIOD; ss++) {
-      const state7: TuningStateLike = { equalEnabled: false, septimalEnabled: true, septimalShift: ss, septimalW: 3 };
-      if (!validRefForState(q, r, state7)) return;
+      const state: TuningStateLike = { equalEnabled: false, septimalEnabled: true, septimalShift: ss, septimalW: 3, septimalMode: 'global' };
+      if (!validRefForState(q, r, state)) return;
     }
-    validRefSet7.add(k);
+    validRefSet7Legacy.add(k);
   });
   const cells5: Array<[number, number]> = [];
-  const cells7: Array<[number, number]> = [];
+  const cells7L: Array<[number, number]> = [];
+  const cells7U: Array<[number, number]> = [];
   validRefSet5.forEach((k) => { const [qs, rs] = (k as string).split(','); cells5.push([+qs, +rs]); });
-  validRefSet7.forEach((k) => { const [qs, rs] = (k as string).split(','); cells7.push([+qs, +rs]); });
+  validRefSet7Legacy.forEach((k) => { const [qs, rs] = (k as string).split(','); cells7L.push([+qs, +rs]); });
+  validRefSet7Uniform.forEach((k) => { const [qs, rs] = (k as string).split(','); cells7U.push([+qs, +rs]); });
   validRefPaths5 = computeOutlinePaths(cells5);
-  validRefPaths7 = computeOutlinePaths(cells7);
+  validRefPaths7Legacy = computeOutlinePaths(cells7L);
+  validRefPaths7Uniform = computeOutlinePaths(cells7U);
   validRefCachesBuilt = true;
 }
 
 function activeValidRefSet(): Set<KeyId> {
   ensureValidRefCaches();
-  return tuning.septimalEnabled ? validRefSet7 : validRefSet5;
+  if (!tuning.septimalEnabled) return validRefSet5;
+  return tuning.septimalMode === 'uniform' ? validRefSet7Uniform : validRefSet7Legacy;
 }
 
 function activeValidRefPaths(): Point[][] {
   ensureValidRefCaches();
-  return tuning.septimalEnabled ? validRefPaths7 : validRefPaths5;
+  if (!tuning.septimalEnabled) return validRefPaths5;
+  return tuning.septimalMode === 'uniform' ? validRefPaths7Uniform : validRefPaths7Legacy;
 }
 
 /* For each MIDI 21..108, pick the (q, r) with `4q + 7r = midi − 57` that
@@ -373,8 +382,11 @@ export function snapViewForOutline(outline: OutlineMode): void {
     view.viewQ = vQ;
     view.viewR = vR;
   } else {
-    view.viewQ = layoutShifts[tuning.curLayout][0];
-    view.viewR = layoutShifts[tuning.curLayout][1];
+    /* Lumatone/QWERTY/none modes: lattice slides under a static outline so
+       the ref's Pythag-spine cell lands at the outline's center. */
+    const sp = refSpine(referenceNote.q, referenceNote.r);
+    view.viewQ = sp.q;
+    view.viewR = sp.r;
   }
 }
 
@@ -395,26 +407,23 @@ export function validateRefNoteCandidate(q: number, r: number): string | null {
   if (midi < 21 || midi > 108) {
     return 'Reference note out of 88-key piano range (MIDI ' + midi + ')';
   }
-  /* Gate = active bucket's static valid set. V5 in 5-limit/12-TET, V7
-     (intersection over septimalShift wrap) in 7-limit. Shift-invariant
-     inside 7-limit so seam shifts can never orphan a placed ref. */
-  const gate = activeValidRefSet();
-  if (gate.has(q + ',' + r as KeyId)) return null;
-  /* Failing reason — for V5 just describe the live picker's offending cell;
-     for V7 the gate is stricter than any single live state, so report which
-     septimal shift breaks the placement. */
-  if (!tuning.septimalEnabled) {
+  /* Live picker check: only constraints are (1) MIDI range above and
+     (2) every 88-cell footprint cell having ≤±3 accidentals. The cached
+     gate sets exist only to draw the dotted boundary; they're not the
+     authoritative validator. */
+  if (!tuning.septimalEnabled || tuning.septimalMode === 'uniform') {
     const cells = compute88PianoCoords(q, r);
     for (const [cq, cr] of cells) {
       const name = noteName(cq, cr);
       const acc = Math.abs(accToVal(parseNote(name).acc));
       if (acc > 3) return 'Reference would require ' + acc + '× accidentals (' + name + ')';
     }
-    return 'Reference out of valid region';
+    return null;
   }
+  /* 7-legacy mode: gate must be shift-invariant (so seam shifts can't
+     orphan a placed ref), so the live check intersects over the wrap. */
   for (let ss = 0; ss < V7_SHIFT_PERIOD; ss++) {
-    const state: TuningStateLike = { equalEnabled: false, septimalEnabled: true, septimalShift: ss, septimalW: 3 };
-    if (validRefForState(q, r, state)) continue;
+    const state: TuningStateLike = { equalEnabled: false, septimalEnabled: true, septimalShift: ss, septimalW: 3, septimalMode: 'global' };
     const cells = compute88PianoCoords(q, r, state);
     for (const [cq, cr] of cells) {
       const name = noteName(cq, cr);
@@ -424,7 +433,7 @@ export function validateRefNoteCandidate(q: number, r: number): string | null {
       }
     }
   }
-  return 'Reference out of valid region';
+  return null;
 }
 
 /* ── tween-aware hex-layer rebuild ─────────────────────────────────────────
@@ -473,13 +482,13 @@ export function activeFootprintSet(): Set<KeyId> | null {
     ensurePianoOutline();
     return pianoFootprintSet;
   }
-  const sh = layoutShifts[tuning.curLayout];
+  const sp = refSpine(referenceNote.q, referenceNote.r);
+  const sh: readonly [number, number] = [sp.q, sp.r];
   const set = new Set<KeyId>();
   if (outlineMode === 'lumatone') {
     baseKeys.forEach((k) => { set.add((k[0] + sh[0]) + ',' + (k[1] + sh[1])); });
   } else {
-    const ts = qwertyTransposeShift(tuning.qwertyTranspose);
-    qwertyKeys.forEach((k) => { set.add((k[0] + sh[0] + ts[0]) + ',' + (k[1] + sh[1] + ts[1])); });
+    qwertyKeys.forEach((k) => { set.add((k[0] + sh[0]) + ',' + (k[1] + sh[1])); });
   }
   return set;
 }
@@ -522,11 +531,6 @@ export function hexAtPoint(mx: number, my: number): KeyId | null {
       ty -= view.viewR * dyH;
       paths = pianoOutlinePaths;
     } else if (outlineMode === 'qwerty') {
-      if (tuning.qwertyTranspose !== 0) {
-        const ts = qwertyTransposeShift(tuning.qwertyTranspose);
-        tx -= ts[0] * dxH + ts[1] * dxH * 0.5;
-        ty -= -ts[1] * dyH;
-      }
       paths = qwertyOutlinePaths;
     } else {
       paths = lumatoneOutlinePaths;
@@ -626,69 +630,57 @@ interface GridRange { qMin: number; qMax: number; rMin: number; rMax: number; }
 /* keyboard extent across all layouts for tight bounds when Extend is off.
    QWERTY bounds also span the full QWERTY-transpose range (-3..+3) so the
    precomputed union covers every reachable QWERTY position. */
-let kbQMin: number, kbQMax: number, kbRMin: number, kbRMax: number;
-let qwertyQMin: number, qwertyQMax: number, qwertyRMin: number, qwertyRMax: number;
+/* Baseline extents of the baseKeys / qwertyKeys cell sets, BEFORE applying
+   any layout shift or transpose. The runtime shift (refSpine for Lumatone +
+   QWERTY-transpose for QWERTY) is added at gridRange-time, so the clamp
+   tracks the lattice as it slides underneath the static outline. */
+let kbBaseQMin: number, kbBaseQMax: number, kbBaseRMin: number, kbBaseRMax: number;
+let qwertyBaseQMin: number, qwertyBaseQMax: number, qwertyBaseRMin: number, qwertyBaseRMax: number;
 (function () {
-  kbQMin = 1e9; kbQMax = -1e9; kbRMin = 1e9; kbRMax = -1e9;
-  qwertyQMin = 1e9; qwertyQMax = -1e9; qwertyRMin = 1e9; qwertyRMax = -1e9;
-  ([1, 2, 3] as const).forEach((li) => {
-    const sh = layoutShifts[li];
-    baseKeys.forEach((k) => {
-      const q = k[0] + sh[0], r = k[1] + sh[1];
-      if (q < kbQMin) kbQMin = q; if (q > kbQMax) kbQMax = q;
-      if (r < kbRMin) kbRMin = r; if (r > kbRMax) kbRMax = r;
-    });
-    for (let t = QWERTY_TRANSPOSE_MIN; t <= QWERTY_TRANSPOSE_MAX; t++) {
-      const ts = qwertyTransposeShift(t);
-      qwertyKeys.forEach((k) => {
-        const q = k[0] + sh[0] + ts[0], r = k[1] + sh[1] + ts[1];
-        if (q < qwertyQMin) qwertyQMin = q; if (q > qwertyQMax) qwertyQMax = q;
-        if (r < qwertyRMin) qwertyRMin = r; if (r > qwertyRMax) qwertyRMax = r;
-      });
-    }
+  kbBaseQMin = 1e9; kbBaseQMax = -1e9; kbBaseRMin = 1e9; kbBaseRMax = -1e9;
+  qwertyBaseQMin = 1e9; qwertyBaseQMax = -1e9; qwertyBaseRMin = 1e9; qwertyBaseRMax = -1e9;
+  baseKeys.forEach((k) => {
+    if (k[0] < kbBaseQMin) kbBaseQMin = k[0]; if (k[0] > kbBaseQMax) kbBaseQMax = k[0];
+    if (k[1] < kbBaseRMin) kbBaseRMin = k[1]; if (k[1] > kbBaseRMax) kbBaseRMax = k[1];
   });
-  kbQMin -= 2; kbQMax += 2; kbRMin -= 2; kbRMax += 2;
-  qwertyQMin -= 2; qwertyQMax += 2; qwertyRMin -= 2; qwertyRMax += 2;
+  qwertyKeys.forEach((k) => {
+    if (k[0] < qwertyBaseQMin) qwertyBaseQMin = k[0]; if (k[0] > qwertyBaseQMax) qwertyBaseQMax = k[0];
+    if (k[1] < qwertyBaseRMin) qwertyBaseRMin = k[1]; if (k[1] > qwertyBaseRMax) qwertyBaseRMax = k[1];
+  });
+  kbBaseQMin -= 2; kbBaseQMax += 2; kbBaseRMin -= 2; kbBaseRMax += 2;
+  qwertyBaseQMin -= 2; qwertyBaseQMax += 2; qwertyBaseRMin -= 2; qwertyBaseRMax += 2;
 })();
 
 function sizeGridCanvases(): void {
-  /* In piano outline mode the view's hybrid anchor (refNote.q on Q axis,
-     MIDI 64 cell's r on R axis) can sit anywhere on the lattice depending
-     on the current refNote. Anchor the offscreen hex layer at that point
-     so a rebuild (triggered by invalidatePianoOutline on any refNote/
-     tuning change) re-centers the layer around the new view. Other
-     outlines keep gridRef at origin and pad for layout shifts only — the
-     zero-cost-blit invariant for ♭/♮/♯ switches stays intact.
-
-     During a piano-mode view tween, pendingTween{Start,End} are set by the
-     caller (controls.ts syncViewToOutline) so the layer covers the union of
-     both endpoints. gridRef sits at the midpoint and pad is extended by
-     half the tween distance. The expanded layer survives the whole tween
-     and shrinks back on the next normal rebuild. */
-  if (pendingTweenStart && pendingTweenEnd && getOutlineMode() === 'piano') {
+  /* The offscreen hex layer is anchored at gridRef and padded to cover the
+     visible canvas. View position depends on outline mode:
+       piano   — viewport solved so refNote sits at screen-X center and MIDI
+                 64's cell at screen-Y center (hybrid 2x2 system).
+       else    — lattice slides under a static outline so the ref's qm=0
+                 spine cell lands at the outline's center (refSpine).
+     During a view tween (set up by buildHexLayerForTween via pendingTween*),
+     gridRef sits at the midpoint of start→end and pad is extended by half
+     the tween distance so the layer covers the union of both endpoints.
+     This used to be piano-only; now it applies to Lumatone/QWERTY too,
+     since ref-driven shifts can move the view anywhere on the lattice. */
+  const outlineMode = getOutlineMode();
+  let vQ: number, vR: number;
+  if (outlineMode === 'piano') {
+    const [m64Q, m64R] = currentMidi64Cell();
+    [vQ, vR] = computePianoViewCenter(referenceNote.q, referenceNote.r, m64Q, m64R);
+  } else {
+    const sp = refSpine(referenceNote.q, referenceNote.r);
+    vQ = sp.q; vR = sp.r;
+  }
+  if (pendingTweenStart && pendingTweenEnd) {
     gridRefQ = Math.round((pendingTweenStart[0] + pendingTweenEnd[0]) / 2);
     gridRefR = Math.round((pendingTweenStart[1] + pendingTweenEnd[1]) / 2);
-  } else if (getOutlineMode() === 'piano') {
-    /* Match syncViewToOutline: viewport solved so refNote is at screen-X
-       center and MIDI 64's cell at screen-Y center. Round to integer so
-       the offscreen layer aligns on a lattice cell — small sub-cell
-       offsets are absorbed by the layer's padding. */
-    const [m64Q, m64R] = currentMidi64Cell();
-    const [vQ, vR] = computePianoViewCenter(referenceNote.q, referenceNote.r, m64Q, m64R);
-    gridRefQ = Math.round(vQ); gridRefR = Math.round(vR);
   } else {
-    gridRefQ = 0; gridRefR = 0;
+    gridRefQ = Math.round(vQ); gridRefR = Math.round(vR);
   }
   let mxDx = 0, mxDy = 0;
-  ([1, 2, 3] as const).forEach((li) => {
-    const sh = layoutShifts[li];
-    const dux = sh[0] * dxH + sh[1] * dxH * 0.5, duy = -sh[1] * dyH;
-    mxDx = Math.max(mxDx, Math.abs(dux * cosT + duy * sinT));
-    mxDy = Math.max(mxDy, Math.abs(-dux * sinT + duy * cosT));
-  });
-  /* During a piano tween, extend pad by half the distance from start to end
-     (relative to the midpoint we picked as gridRef). */
   if (pendingTweenStart && pendingTweenEnd) {
+    /* Pad to half the tween span so the layer covers the union of endpoints. */
     const halfDQ = (pendingTweenEnd[0] - pendingTweenStart[0]) / 2;
     const halfDR = (pendingTweenEnd[1] - pendingTweenStart[1]) / 2;
     const dux = halfDQ * dxH + halfDR * dxH * 0.5, duy = -halfDR * dyH;
@@ -737,16 +729,19 @@ function gridRange(extended: boolean): GridRange {
      toggling Extend off would empty the canvas). */
   const mode = getOutlineMode();
   if (!extended && mode !== 'none') {
+    /* Add current ref-driven shift to the baseline extents so the clamp
+       moves with the lattice underneath the static Lumatone/QWERTY outline. */
+    const sp = refSpine(referenceNote.q, referenceNote.r);
     if (mode === 'qwerty') {
-      qLo = Math.max(qLo, qwertyQMin); qHi = Math.min(qHi, qwertyQMax);
-      rLo = Math.max(rLo, qwertyRMin); rHi = Math.min(rHi, qwertyRMax);
+      qLo = Math.max(qLo, qwertyBaseQMin + sp.q); qHi = Math.min(qHi, qwertyBaseQMax + sp.q);
+      rLo = Math.max(rLo, qwertyBaseRMin + sp.r); rHi = Math.min(rHi, qwertyBaseRMax + sp.r);
     } else if (mode === 'piano') {
       ensurePianoOutline();
       qLo = Math.max(qLo, pianoBounds.qMin); qHi = Math.min(qHi, pianoBounds.qMax);
       rLo = Math.max(rLo, pianoBounds.rMin); rHi = Math.min(rHi, pianoBounds.rMax);
     } else {
-      qLo = Math.max(qLo, kbQMin); qHi = Math.min(qHi, kbQMax);
-      rLo = Math.max(rLo, kbRMin); rHi = Math.min(rHi, kbRMax);
+      qLo = Math.max(qLo, kbBaseQMin + sp.q); qHi = Math.min(qHi, kbBaseQMax + sp.q);
+      rLo = Math.max(rLo, kbBaseRMin + sp.r); rHi = Math.min(rHi, kbBaseRMax + sp.r);
     }
   }
   return { qMin: qLo, qMax: qHi, rMin: rLo, rMax: rHi };
@@ -783,7 +778,7 @@ function buildHexLayer(): void {
   gKeys.forEach((k) => {
     const midi = 57 + 4 * k.q + 7 * k.r; const pc = ((midi % 12) + 12) % 12; const isW = whiteSet.has(pc);
     const mh = computeHue(k.q, k.r);
-    const inB = tuning.septimalEnabled && ((Math.floor((k.r - tuning.septimalShift) / tuning.septimalW) & 1) !== 0);
+    const inB = tuning.septimalEnabled && regionInfo(k.q, k.r).type === 'B';
     const col = inB ? (isW ? hueC[mh].sl! : hueC[mh].sd!) : (isW ? hueC[mh].l : hueC[mh].d);
     drawHexPath(k.ux, k.uy, hexR - 0.5); ctx.fillStyle = col; ctx.fill();
   });
@@ -843,8 +838,9 @@ export function draw(): void {
   }
 
   /* build allKeys for seams + click detection (arithmetic only, no rendering) */
-  const kbShQ = animation.isAnimating ? Math.round(view.viewQ) : layoutShifts[tuning.curLayout][0];
-  const kbShR = animation.isAnimating ? Math.round(view.viewR) : layoutShifts[tuning.curLayout][1];
+  const _sp = refSpine(referenceNote.q, referenceNote.r);
+  const kbShQ = animation.isAnimating ? Math.round(view.viewQ) : _sp.q;
+  const kbShR = animation.isAnimating ? Math.round(view.viewR) : _sp.r;
   const kbSet = new Set<string>(); baseKeys.forEach((k) => { kbSet.add((k[0] + kbShQ) + ',' + (k[1] + kbShR)); });
   const vis = getVisibleRange(view.viewQ, view.viewR);
   const allKeys: DrawnKey[] = [];
@@ -882,7 +878,7 @@ export function draw(): void {
     if (hk) {
       const hmidi = 57 + 4 * hk.q + 7 * hk.r; const hpc = ((hmidi % 12) + 12) % 12; const hW = whiteSet.has(hpc);
       const hmh = computeHue(hk.q, hk.r);
-      const hInB = tuning.septimalEnabled && ((Math.floor((hk.r - tuning.septimalShift) / tuning.septimalW) & 1) !== 0);
+      const hInB = tuning.septimalEnabled && regionInfo(hk.q, hk.r).type === 'B';
       const hCol = hInB ? (hW ? hueC[hmh].sl! : hueC[hmh].sd!) : (hW ? hueC[hmh].l : hueC[hmh].d);
       drawHexPath(hk.ux, hk.uy, hexR - 0.5); ctx.fillStyle = lightenHex(hCol, 30); ctx.fill();
     }
@@ -900,7 +896,7 @@ export function draw(): void {
     const k = posMap[key]; if (!k) return;
     const midi = 57 + 4 * k.q + 7 * k.r; const pc = ((midi % 12) + 12) % 12; const isW = whiteSet.has(pc);
     const mh = computeHue(k.q, k.r);
-    const inB = tuning.septimalEnabled && ((Math.floor((k.r - tuning.septimalShift) / tuning.septimalW) & 1) !== 0);
+    const inB = tuning.septimalEnabled && regionInfo(k.q, k.r).type === 'B';
     let col = inB ? (isW ? hueC[mh].sl! : hueC[mh].sd!) : (isW ? hueC[mh].l : hueC[mh].d);
     col = lightenHex(col, 90);
     drawHexPath(k.ux, k.uy, hexR - 0.5); ctx.fillStyle = col; ctx.fill();
@@ -961,10 +957,8 @@ export function draw(): void {
       snapOY = view.viewR * dyH;
     } else if (seamMode === 'qwerty') {
       snapIndex = qwertySnapIndex;
-      const qts = qwertyTransposeShift(tuning.qwertyTranspose);
-      snapOX = (kbShQ - view.viewQ) * dxH + (kbShR - view.viewR) * dxH * 0.5
-        + qts[0] * dxH + qts[1] * dxH * 0.5;
-      snapOY = -(kbShR - view.viewR) * dyH - qts[1] * dyH;
+      snapOX = (kbShQ - view.viewQ) * dxH + (kbShR - view.viewR) * dxH * 0.5;
+      snapOY = -(kbShR - view.viewR) * dyH;
     } else if (seamMode === 'lumatone') {
       snapIndex = lumatoneSnapIndex;
       snapOX = (kbShQ - view.viewQ) * dxH + (kbShR - view.viewR) * dxH * 0.5;
@@ -1004,6 +998,15 @@ export function draw(): void {
        ~12k/frame to ~5k/frame. */
     const septShift = tuning.septimalShift, septW = tuning.septimalW;
     const septOn = tuning.septimalEnabled;
+    const septUniform = septOn && tuning.septimalMode === 'uniform';
+    /* In global (legacy) mode: A/B alternates with floor((r - shift)/w)
+       parity along the r-axis, so the cheap inline comparator suffices. In
+       uniform mode regions vary along the qmod3 axis (qm=2 = B, else A);
+       route through regionInfo to honor the per-qmod3 lookup. */
+    function regionParity(q: number, r: number): number {
+      if (septUniform) return regionInfo(q, r).type === 'B' ? 1 : 0;
+      return (Math.floor((r - septShift) / septW) & 1);
+    }
     for (let ki = 0; ki < allKeys.length; ki++) {
       const k = allKeys[ki];
       const kq = k.q, kr = k.r;
@@ -1012,7 +1015,7 @@ export function draw(): void {
         const nq = kq + d[0], nr = kr + d[1];
         if (!allSet.has(packQR(nq, nr))) continue;
         const sameBand = bandOf(kq) === bandOf(nq);
-        const sameRegion = !septOn || ((Math.floor((kr - septShift) / septW) & 1) === (Math.floor((nr - septShift) / septW) & 1));
+        const sameRegion = !septOn || regionParity(kq, kr) === regionParity(nq, nr);
         if (sameBand && sameRegion) continue;
         const nb = posMap[nq + ',' + nr];
         if (!nb) continue;
@@ -1105,10 +1108,6 @@ export function draw(): void {
       ctx.translate(-view.viewQ * dxH - view.viewR * dxH * 0.5, view.viewR * dyH);
       activePaths = pianoOutlinePaths;
     } else if (outlineMode === 'qwerty') {
-      if (tuning.qwertyTranspose !== 0) {
-        const ts = qwertyTransposeShift(tuning.qwertyTranspose);
-        ctx.translate(ts[0] * dxH + ts[1] * dxH * 0.5, -ts[1] * dyH);
-      }
       activePaths = qwertyOutlinePaths;
     } else {
       activePaths = lumatoneOutlinePaths;

@@ -12,10 +12,8 @@ import { audio } from '../state/audio.js';
 import { referenceNote, clearSelection as clearRefSelection } from '../state/reference.js';
 import { savePrefs } from '../state/persistence.js';
 import type { LayoutId, OutlineMode, RotationMode, TuningMode } from '../state/persistence.js';
-import {
-  layoutShifts, QWERTY_TRANSPOSE_MIN, QWERTY_TRANSPOSE_MAX,
-} from '../layout/baseKeys.js';
-import { migrateHeldQwertyVoices } from '../input/keyboard-notes.js';
+import { layoutShifts } from '../layout/baseKeys.js';
+import { refSpine } from '../tuning/refspine.js';
 import { dxH, dyH, cosT, sinT, setRotation } from '../layout/geometry.js';
 import { recomputeCanvasBounds, computePianoViewCenter } from '../render/canvas.js';
 import { view } from '../state/view.js';
@@ -35,11 +33,11 @@ import type { KeyId, Voice } from '../types.js';
 
 /* In piano-outline mode the view is locked to the reference note (the lattice
    scrolls so refNote stays at canvas center) — Layout buttons are meaningless
-   because each refNote position is its own freeform layout. Hide the button
-   group; restore on switch back. */
-function updateLayoutButtonsForOutline(outline: OutlineMode): void {
-  const grp = document.getElementById('layoutBtnGroup') as HTMLElement | null;
-  if (grp) grp.style.display = outline === 'piano' ? 'none' : '';
+   because each refNote position is its own freeform layout. With the
+   ref-driven layout system the buttons are gone entirely; this stub is
+   retained only because setOutline still calls it. */
+function updateLayoutButtonsForOutline(_outline: OutlineMode): void {
+  /* no-op */
 }
 
 /* Compute the view-center the active outline wants and animate to it.
@@ -63,8 +61,11 @@ export function syncViewToOutline(outline: OutlineMode, immediate: boolean): voi
     const [m64Q, m64R] = currentMidi64Cell();
     [targetQ, targetR] = computePianoViewCenter(referenceNote.q, referenceNote.r, m64Q, m64R);
   } else {
-    targetQ = layoutShifts[tuning.curLayout][0];
-    targetR = layoutShifts[tuning.curLayout][1];
+    /* Lumatone / QWERTY / none: lattice slides under the static outline so
+       the ref's qm=0-normalized spine cell lands at the outline's center. */
+    const sp = refSpine(referenceNote.q, referenceNote.r);
+    targetQ = sp.q;
+    targetR = sp.r;
   }
   if (immediate) {
     view.viewQ = targetQ;
@@ -72,12 +73,12 @@ export function syncViewToOutline(outline: OutlineMode, immediate: boolean): voi
     return;
   }
   if (view.viewQ === targetQ && view.viewR === targetR) return;
-  if (outline === 'piano') {
-    /* Build the hex layer to cover [view → target] before the tween fires
-       so each animation frame blits from a layer that actually has the
-       in-flight view position covered. */
-    buildHexLayerForTween(view.viewQ, view.viewR, targetQ, targetR);
-  }
+  /* Build the hex layer to cover [view → target] before the tween fires so
+     each animation frame blits from a layer that actually has the in-flight
+     view position covered. Applies to all outline modes now — Lumatone /
+     QWERTY use ref-driven shifts that can move the view anywhere on the
+     lattice, same as piano mode does. */
+  buildHexLayerForTween(view.viewQ, view.viewR, targetQ, targetR);
   animation.tweenTo(targetQ, targetR);
   startLayoutAnim();
 }
@@ -85,16 +86,23 @@ export function syncViewToOutline(outline: OutlineMode, immediate: boolean): voi
 export function setTuning(): void {
   const val = (document.getElementById('selTuning') as HTMLSelectElement).value;
   const wasSeptimal = tuning.septimalEnabled;
+  const wasMode = tuning.septimalMode;
   tuning.equalEnabled = val === 'E';
-  tuning.septimalEnabled = val === '7';
-  (document.getElementById('seamShiftCtrl') as HTMLElement).style.display = tuning.septimalEnabled ? '' : 'none';
-  /* Bucket switch (V5 ↔ V7) can orphan a ref note placed in the old gate
-     but invalid in the new one. 5-limit ↔ 12-TET share V5, so only check
-     when septimalEnabled flipped value. Seam shifts within 7-limit can't
-     orphan (V7 gate is shift-invariant by construction). songKey tier is
-     left intact: it's restricted to 15 keys clustered around A3=220, far
-     inside both gates. */
-  if (wasSeptimal !== tuning.septimalEnabled) {
+  tuning.septimalEnabled = val === '7' || val === '7-legacy';
+  tuning.septimalMode = val === '7-legacy' ? 'global' : 'uniform';
+  /* Seam shift only meaningful in legacy septimal mode (global alternating
+     bands). Hidden in the new uniform '7' which has no shift parameter. */
+  (document.getElementById('seamShiftCtrl') as HTMLElement).style.display =
+    (tuning.septimalEnabled && tuning.septimalMode === 'global') ? '' : 'none';
+  /* Bucket switch can orphan a ref note placed in the old gate but invalid
+     in the new one. Three gates: V5 (non-septimal), V7-uniform (new '7'),
+     V7-legacy ('7-legacy'). 5-limit ↔ 12-TET share V5 so no reset needed
+     there; everything else needs a re-validate. songKey tier is left intact
+     (15 keys clustered around A3=220, far inside any gate). */
+  const bucketChanged =
+    wasSeptimal !== tuning.septimalEnabled ||
+    (wasSeptimal && tuning.septimalEnabled && wasMode !== tuning.septimalMode);
+  if (bucketChanged) {
     if (validateRefNoteCandidate(referenceNote.q, referenceNote.r) !== null) {
       clearRefSelection();
       savePrefs({ manualRef: undefined });
@@ -141,11 +149,6 @@ export function setOutline(): void {
   const newOutline = sel.value as OutlineMode;
   const cbExtend = document.getElementById('cbExtend') as HTMLInputElement;
   cbExtend.disabled = newOutline === 'none';
-  /* QWERTY transpose stepper is QWERTY-only — toggle visibility (not display)
-     so the slot stays reserved and the rest of the toolbar doesn't shift when
-     the control appears. The transpose value persists across outline changes. */
-  const qwTrCtrl = document.getElementById('qwertyTransposeCtrl') as HTMLElement;
-  qwTrCtrl.style.visibility = newOutline === 'qwerty' ? 'visible' : 'hidden';
   updateLayoutButtonsForOutline(newOutline);
   /* Each outline has its own canvas bounds — resize before redrawing. */
   recomputeCanvasBounds(newOutline);
@@ -163,21 +166,6 @@ export function setOutline(): void {
   draw();
   sel.blur();
   savePrefs({ outline: newOutline });
-}
-
-export function setQwertyTranspose(dir: number): void {
-  const next = Math.max(QWERTY_TRANSPOSE_MIN, Math.min(QWERTY_TRANSPOSE_MAX, tuning.qwertyTranspose + dir));
-  if (next === tuning.qwertyTranspose) return;
-  const ddir = next - tuning.qwertyTranspose;
-  /* migrate held QWERTY voices BEFORE mutating the transpose: the migrate fn
-     reads tuning.qwertyTranspose to compute OLD keys, then applies (dq, dr). */
-  migrateHeldQwertyVoices(2 * ddir, -ddir);
-  tuning.qwertyTranspose = next;
-  document.getElementById('qwertyTrInd')!.textContent = String(next);
-  view.hexDirty = true;
-  view.textDirty = true;
-  draw();
-  savePrefs({ qwertyTranspose: next });
 }
 
 export function shiftSeams(dir: number): void {
@@ -265,29 +253,6 @@ export function transposeSelection(dq: number, dr: number): void {
   draw();
 }
 
-/* key-repeat for QWERTY transpose stepper */
-(function () {
-  let tid: number | null = null, iid: number | null = null;
-  function startRepeat(dir: number): void {
-    stopRepeat();
-    setQwertyTranspose(dir);
-    tid = window.setTimeout(function () { iid = window.setInterval(function () { setQwertyTranspose(dir); }, 80); }, 400);
-  }
-  function stopRepeat(): void {
-    if (tid !== null) { clearTimeout(tid); tid = null; }
-    if (iid !== null) { clearInterval(iid); iid = null; }
-  }
-  ['btnQwertyTrUp', 'btnQwertyTrDn'].forEach(function (id) {
-    const dir = id === 'btnQwertyTrUp' ? 1 : -1;
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.addEventListener('mousedown', function (e) { e.preventDefault(); startRepeat(dir); });
-    el.addEventListener('touchstart', function (e) { e.preventDefault(); startRepeat(dir); }, { passive: false });
-  });
-  document.addEventListener('mouseup', stopRepeat);
-  document.addEventListener('touchend', stopRepeat);
-})();
-
 /* key-repeat for transpose buttons */
 (function () {
   let tid: number | null = null, iid: number | null = null;
@@ -309,81 +274,20 @@ export function transposeSelection(dq: number, dr: number): void {
   document.addEventListener('touchend', stopRepeat);
 })();
 
+/* Legacy setLayout: kept for recording playback back-compat (old .hkr files
+   store a curLayout 1/2/3 that we still parse). With ref-driven layouts the
+   visible region is fully determined by ref, so this becomes a no-op apart
+   from tracking curLayout for the persisted snapshot. */
 export function setLayout(n: number): void {
   if (n === tuning.curLayout) return;
-  const oldSh = layoutShifts[tuning.curLayout], newSh = layoutShifts[n];
-  const dq = newSh[0] - oldSh[0], dr = newSh[1] - oldSh[1];
-  /* ramp audio or retrigger for decaying instruments */
-  if (audio.audioEnabled && audio.audioCtx && Object.keys(audio.activeOscs).length > 0) {
-    const newOscs: Record<KeyId, Voice> = {};
-    if (instrReplaysOnTranspose()) {
-      /* decaying or replay-on-transpose: re-key dict to new coords, then
-         retrigger immediately so new pitches sound as soon as the shift
-         initiates — matches the selection-indicator move. */
-      for (const k in audio.activeOscs) {
-        const p = k.split(','), nq = +p[0] + dq, nr = +p[1] + dr;
-        newOscs[nq + ',' + nr] = audio.activeOscs[k];
-      }
-      audio.activeOscs = newOscs;
-      replayActiveNotes();
-    } else {
-      /* sustained: smooth ramp over animation duration */
-      const now = audio.audioCtx.currentTime;
-      const rampDur = animation.duration / 1000;
-      const layoutMoves: { oldKey: KeyId; newKey: KeyId; newFreq: number; vol?: number }[] = [];
-      for (const k in audio.activeOscs) {
-        const p = k.split(','), nq = +p[0] + dq, nr = +p[1] + dr;
-        const e = audio.activeOscs[k];
-        if (e.type === 'osc') {
-          e.osc.frequency.setValueAtTime(e.osc.frequency.value, now);
-          e.osc.frequency.exponentialRampToValueAtTime(keyFreq(nq, nr), now + rampDur);
-          newOscs[nq + ',' + nr] = e;
-        } else if (e.type === 'sample') {
-          layoutMoves.push({ oldKey: k, newKey: nq + ',' + nr, newFreq: keyFreq(nq, nr) });
-        }
-      }
-      layoutMoves.forEach(function (m) { m.vol = SampleEngine.slideAndFadeOut(m.oldKey, m.newFreq, rampDur); });
-      layoutMoves.forEach(function (m) {
-        SampleEngine.noteOnFaded(m.newKey, m.newFreq, m.vol!, rampDur);
-        newOscs[m.newKey] = { type: 'sample', freq: m.newFreq };
-      });
-    }
-    audio.activeOscs = newOscs;
-  } else {
-    stopAllNotes();
-  }
-  stopAllMidi();
-  if (selection.selectedKeys.size > 0) {
-    const shifted = new Set<KeyId>();
-    selection.selectedKeys.forEach(function (k) { const p = k.split(','); shifted.add((+p[0] + dq) + ',' + (+p[1] + dr)); });
-    selection.selectedKeys = shifted;
-  }
-  animation.tweenTo(newSh[0], newSh[1]);
   tuning.curLayout = n;
-  /* fire the color push as early as possible — runs in parallel with the 500ms
-     view animation and the subsequent audio/MIDI sync */
-  onLayoutChanged();
-  document.querySelectorAll('.lbtn').forEach(function (b) { b.classList.remove('active'); });
-  document.getElementById('lb' + n)!.classList.add('active');
-  startLayoutAnim();
   savePrefs({ curLayout: n as LayoutId });
 }
 
-/* Init-time variant of setLayout: snap directly to the persisted layout
-   without a 500 ms view tween or audio re-keying (no notes are playing yet,
-   and we don't want a startup animation flicker). Caller already set
-   tuning.curLayout via prefs; this just aligns view + button class + canvas. */
+/* Init-time no-op kept as a stable export until the recording schema drops
+   curLayout outright. */
 export function applyLayoutImmediate(n: number): void {
   tuning.curLayout = n;
-  const sh = layoutShifts[n];
-  view.viewQ = sh[0];
-  view.viewR = sh[1];
-  document.querySelectorAll('.lbtn').forEach(function (b) { b.classList.remove('active'); });
-  const btn = document.getElementById('lb' + n);
-  if (btn) btn.classList.add('active');
-  view.hexDirty = true;
-  view.textDirty = true;
-  draw();
 }
 
 export function clearSelection(): void {

@@ -1403,3 +1403,161 @@ The runner reuses the existing `tools/composer-inspect/` CDP plumbing (factored 
 **Why**: at a glance, the selection rect should make voice-membership obvious. The cursor's own visual anchor uses the same per-element bbox-with-VPAD pattern, so the selection is consistent with where the user expects the cursor.
 
 **Where**: `src/composer/selectionOverlay.ts:staffYRangeForMeasure` — branches on `sel.kind`; for beat mode, walks the layer's content children and unions bboxes via `renderer.rectForId(element.id)`.
+
+---
+
+## 7-limit mode revamp: uniform septimal qm=2 rule (2026-05-22)
+
+**Picked**: New 7-limit (`tuning='7'`, `septimalMode='uniform'`) replaces the prior experimental per-cell region map with a single rule: every cell with `qmod3 === 2` is region B with `(aDepth=1, aUpper=true)`; qm=0 and qm=1 are A-d0. Pure function of `qmod3` — three lines in `regionInfoWithState`. The old global-shift behavior is preserved as a hidden `'7-legacy'` mode (`septimalMode='global'`).
+
+`TuningMode = '5' | '7' | '7-legacy' | 'E'`. Dropdown shows three entries (`Equal / 5-limit / 7-limit`); `'7-legacy'` is only reachable by editing localStorage. Migration on load: old `'7'` → `'7-legacy'`; old experimental `'7x'` → `'7'`.
+
+**Rejected**:
+- **Per-cell `EXP_REGION_MAP` decision panel** (the experimental predecessor): exposed a 6-row decision grid in the UI for the user to pick A/B per `(qmod3, rmod6)` cell. Powerful but over-configurable: most settings made the lattice musically incoherent, and the optimal pick was always the same. Replacing it with a fixed `qmod3`-only rule is strictly simpler and produces the same musical result.
+- **Re-coloring the 7-limit gate as "9-limit" or similar**: the rule is intentionally a 7-limit story (the 7/4 harmonic 7th two rows up in qm=2). Renaming would obscure the actual ratio basis.
+- **Dropping `'7-legacy'` entirely**: hidden but kept, in case users have existing recordings or workflows that depend on global-shift behavior. The seam-shift UI control is restored conditionally on `septimalMode === 'global'`.
+
+**Why**:
+- Every qm=0 Pythagorean-spine cell now has its harmonic 7th (7/4) exactly two rows up in qm=2 of the same r, because the qm=2 B-d1-upper syntonic adjustment cancels against the (q+1) major-third stack. This collapses all alternate Pythagorean m3 problems back into the original heptachord.
+- Major triads stay 5-limit-pure (4:5:6) via qm=0 + qm=1; dominant 7 (4:5:6:7) reachable from any qm=0 root; half-dim 7 (5:6:7:9) reachable from any qm=1 root.
+- Fully key-symmetric. The Lumatone-layout root is selected via the ref note (the new ref-driven shift, §2.10), not via tuning-mode state.
+- The one musical trade is 5-limit minor (10:12:15) → Pythagorean (32:27) or septimal subminor (7:6). Use `'5'` for 5-limit minor.
+
+**Where**:
+- `src/tuning/regions.ts` — `uniformRegion()` branch; `EXP_REGION_MAP` removed; `setExpRegionMap`/`getExpRegionMap` removed.
+- `src/state/tuning.ts` — `septimalMode: 'global' | 'uniform'`.
+- `src/state/persistence.ts` — `TuningMode` union + `migrateTuningMode`.
+- `src/ui/controls.ts:setTuning` — maps `'7'` → uniform, `'7-legacy'` → global, hides seam-shift in uniform mode.
+- `index.html` — dropdown options; experimental decision panel UI removed.
+- `src/tuning/exp-decisions.ts` — DELETED.
+
+---
+
+## Ref-driven layout shift via refSpine (2026-05-22)
+
+**Picked**: The legacy 3-layout button group (♭ ♮ ♯) and the QWERTY transpose ▲/▼ are replaced by a continuous ref-driven mechanism. Selecting any cell as the reference note (Ctrl+click on any hex) slides the lattice under the static Lumatone / QWERTY / none outlines so that `refSpine(refQ, refR)` lands at the outline's center.
+
+```ts
+// src/tuning/refspine.ts
+refSpine(refQ, refR) = qmod3 === 0  → (refQ,     refR)
+                       qmod3 === 1  → (refQ - 1, refR)   5-limit M3 above same-row qm=0
+                       qmod3 === 2  → (refQ + 1, refR)   same-row Pythag spine
+```
+
+Applies to ALL outline modes (`'lumatone'`, `'qwerty'`, `'none'`) and ALL tuning modes (`'5'`, `'7'`, `'7-legacy'`, `'E'`). Ref change tweens via `animation.tweenTo` with the existing 500ms machinery; hex layer pre-built across `[view → target]` via `buildHexLayerForTween` so no cut-off-borders artifact appears mid-tween. `tuning.curLayout`, `setLayout`, `applyLayoutImmediate` are kept as vestigial back-compat for `.hkr` load.
+
+**Rejected**:
+- **Keep the 3-layout buttons + add ref-shift on top**: two layout-positioning mechanisms running in parallel created confusion (which one wins when they disagree?) and doubled the test surface. Pick one.
+- **Multi-step ref selection (e.g. click then confirm)**: Ctrl+click is the existing ref-set gesture in piano mode and works in all outline modes naturally.
+- **qm=2 normalizes via (q−1, r±1)** (5-limit-m3-below interpretation): tested and rejected. Same-row Pythag spine (q+1, r) lines up better with the user's mental model of "this key, its octave-equivalents, and its spine" — qm=2 cells are visually adjacent to their same-row qm=0 spine on the lattice.
+- **Bound the canvas to refSpine variance**: the Lumatone outline is visually static and the lattice slides underneath. Canvas bounds are determined by outline extent alone; refSpine adds no bounds dependency.
+
+**Why**:
+- The 3-layout system was a special case of ref-positioning. Generalizing it makes the 12 Pythagorean keys plus their syntonic siblings equally reachable from a single gesture, rather than three preset positions.
+- Holding the lattice positioning concept in one mechanism (ref note + refSpine) replaces three (layout buttons + QWERTY transpose + Composer-set song key) with one. Composer's ref-broadcast and the manual Ctrl+click both feed the same path.
+- Tweening via the existing `animation.tweenTo` reuses 500ms-smoothstep machinery already exercised by the layout-button system, so the animation behavior is unchanged in spirit.
+
+**Where**:
+- `src/tuning/refspine.ts` — NEW. The 3-line normalization helper.
+- `src/render/draw.ts` — Lumatone-side `kbShQ/kbShR` derived from `refSpine(referenceNote.q, referenceNote.r)`; `sizeGridCanvases` extended to tween hex layer across `[view → target]` for ALL outline modes.
+- `src/ui/controls.ts:syncViewToOutline` — calls `buildHexLayerForTween` for all outline modes; `setLayout`/`applyLayoutImmediate` reduced to no-ops; `updateLayoutButtonsForOutline` stubbed.
+- `src/midi/engine.ts:buildMidiReverse` + `fixedMidiToKey` + new `fixedMidiToKeyAt(ch, note, spQ, spR)` for migration lookups.
+- `src/input/keyboard-notes.ts:codeToKey` uses `refSpine` directly (no `qwertyTranspose`).
+- `src/render/canvas.ts:staticOutlineCells` — QWERTY just returns `qwertyKeys` (no union over transpose).
+- `index.html` — `#layoutBtnGroup` and `#qwertyTransposeCtrl` removed.
+
+---
+
+## Held physical voices migrate on ref change; click-sourced voices anchor (2026-05-22)
+
+**Picked**: When ref note changes (and the lattice shifts via refSpine), voices originating from PHYSICAL inputs migrate to follow their physical key: Lumatone MIDI voices (tracked in `midi/handler.ts:heldLumatonePhys` as `"ch,note"` strings) and QWERTY voices (tracked in `input/keyboard-notes.ts:heldCodes` as `e.code` strings) re-target from the old lattice cell to the new one. Voices originating from mouse clicks stay anchored to the lattice cell they were clicked on. Fan-out lives in `src/effects/onRefChanged.ts`, called after `referenceNote` mutates with the `(dq, dr)` delta.
+
+**Rejected**:
+- **All voices migrate (mouse clicks too)**: would mean ctrl+click on a hex moves a previously-clicked-and-held hex along with the lattice. The user-mental-model for a clicked hex is "this lattice cell", not "this screen position". Migrating clicks breaks that.
+- **No voices migrate (everything plays through to the old cell)**: Lumatone players would hear a held chord jump pitches when the lattice shifts. Wrong.
+- **A single combined held-voice store** (instead of two per-input): the input-source identity is load-bearing — mouse clicks have no `"ch,note"` or `e.code` analog. Keeping per-input stores makes the migration condition self-documenting.
+
+**Why**:
+- A held Lumatone key continues to send the same `(channel, note)` MIDI; the lattice cell that addresses lands on changes when refSpine moves. The user is still pressing the same physical key, so they expect the same physical-key-relative pitch.
+- Same logic for QWERTY: physical key = `e.code`, lattice cell = lookup under current refSpine. The key follows the lattice.
+- Mouse clicks have no physical persistence — the click event is one-shot and the held voice is identified by lattice cell, not by a persistent input identity. Migrating clicks would force a synthetic "phantom click on a different cell" semantic that doesn't match anything the user did.
+
+**Where**:
+- `src/effects/onRefChanged.ts` — NEW. `onRefChanged(dq, dr)` fan-out.
+- `src/midi/handler.ts` — `heldLumatonePhys: Set<string>`, `migrateHeldLumatoneVoices(dq, dr)`, `clearHeldLumatoneTracking()`.
+- `src/input/keyboard-notes.ts` — `heldCodes: Set<string>`, `migrateHeldQwertyVoices(dq, dr)`.
+- Callers: any code that mutates `referenceNote.q` / `referenceNote.r` calls `onRefChanged(dq, dr)` after the mutation.
+
+---
+
+## Ref validation: MIDI range + ≤±3 accidentals only (2026-05-22)
+
+**Picked**: `validateRefNoteCandidate(q, r)` checks exactly two conditions:
+1. `coordToMidi(q, r) = 57 + 4q + 7r ∈ [21, 108]` — MIDI range.
+2. Every cell in the 88-cell footprint the picker produces under this ref spells with `≤ ±3` accidentals.
+
+For `'7-legacy'` the accidental check intersects over `septimalShift ∈ [0, 5]` (the wrap period) so seam shifts can never orphan a placed ref. The validator runs LIVE (i.e., re-runs `compute88PianoCoords` per candidate); it does not consult the cached V5 / V7-uniform / V7-legacy outline sets that the "Valid ref bounds" overlay draws.
+
+**Rejected**:
+- **Use the cached valid-ref sets as the gate** (the prior approach): the cache was built by a square scan `q ∈ [−30, 30], r ∈ [−30, 30]`, which missed some valid refs at extreme q. Symptom: "Reference out of valid region" fallback fired on refs that passed accidental/MIDI checks. Fix: live check + a band-iterating cache (see below) for the visual outline.
+- **Drop the accidental cap entirely**: would let the user set a ref whose 88-cell footprint contains quadruple-flat/sharp spellings that Composer can't render and the lattice can't visually convey. The ±3 limit matches Composer's accidental clamp (§7.16).
+- **Cap accidentals at ±2 or ±4**: ±3 matches the canonical single-token MEI accidental glyphs (`s`, `ss/x`, `ts` and flat counterparts) — same threshold as Composer.
+
+**Why**: simpler is better. The validator's job is "would this ref produce a usable footprint", which decomposes into "is the ref note within the piano range" and "does any cell need more than 3 accidentals to spell". Adding extra gates (must be in V5; must be in cached set; etc.) created false negatives without a corresponding musical benefit.
+
+**Where**:
+- `src/render/draw.ts:validateRefNoteCandidate` — live two-condition check.
+- `src/render/draw.ts:ensureValidRefCaches` — band-scan cache for visual outlines only.
+- `src/ui/init.ts` — ctrl+click handler calls the validator before setting ref.
+
+---
+
+## Band-scan valid-ref cache iterates the diagonal MIDI band exactly (2026-05-22)
+
+**Picked**: The cache that powers the "Valid ref bounds" dotted outline iterates the lattice over `r ∈ [−25, 25]` and, per row, `q ∈ [⌈(−36 − 7r)/4⌉, ⌊(51 − 7r)/4⌋]` — the exact diagonal MIDI band `4q + 7r ∈ [−36, 51]` (= MIDI ∈ [21, 108]). For each `(q, r)` it runs `validRefForState(q, r, state)` against the three state vectors (V5, V7-uniform, V7-legacy-with-intersection-over-shifts) and accumulates the cells into three sets, then computes outline paths once.
+
+**Rejected**:
+- **Square scan `q ∈ [−30, 30], r ∈ [−30, 30]`** (the prior approach): missed valid refs at extreme q within the band. The band is diagonal — at `r = −20` the valid q range extends well past `+30`. Hand-checking found refs that passed `validateRefNoteCandidate` live but were not in the cached set, so the visual outline showed gaps and (when the cache was incorrectly the gate) refs were rejected.
+- **Iterate the full integer lattice with bounds-based early-out**: equivalent to the band scan but messier code. Direct band iteration is one helper function (`bandQRange`) and a clean nested loop.
+- **Cache as a single set per current mode** instead of three: would require rebuild on every mode switch. Three separate caches built once + active-set selector is cheaper.
+
+**Why**: the valid-ref region is bounded by the diagonal MIDI band, not by a square. Scanning the band exactly costs about the same as a generous square and never misses cells.
+
+**Where**:
+- `src/render/draw.ts:bandQRange(r)` — `[⌈(−36 − 7r)/4⌉, ⌊(51 − 7r)/4⌋]`.
+- `src/render/draw.ts:ensureValidRefCaches` — band-scan loop, lazy-built once.
+- `src/render/draw.ts:activeValidRefSet / activeValidRefPaths` — mode-aware selector.
+
+---
+
+## Hex layer expansion for ALL outline modes during view tween (2026-05-22)
+
+**Picked**: `sizeGridCanvases` uses `pendingTweenStart` / `pendingTweenEnd` (set by `buildHexLayerForTween`) as the source of truth for the offscreen layer's spatial coverage, irrespective of outline mode. When a tween is pending, `gridRef` sits at the midpoint of the tween range and the pad is extended by half the tween distance, so the layer covers both endpoints. `syncViewToOutline` calls `buildHexLayerForTween(view.viewQ, view.viewR, targetQ, targetR)` for every outline mode (was previously piano-only).
+
+**Rejected**:
+- **Pre-build only the destination layer**: causes cut-off-borders as the moving view crosses the offscreen edge before reaching the destination's center.
+- **Build a single oversized fixed-pad layer**: cheaper for short tweens but wastes memory for the common case (small tween distances). Tween-aware sizing scales with the actual movement.
+- **Skip the pre-build for non-piano outlines** (the previous behavior): assumed Lumatone/QWERTY tweens were always too short to cross the layer edge. Now that ref-driven shifts can move the view to any (q, r), this assumption no longer holds — any refSpine jump that moves the view by more than the static pad shows cut-off borders.
+
+**Why**: a single tween-aware sizing path eliminates the "piano works, Lumatone shows borders" asymmetry. The cost is one extra `buildHexLayerForTween` call per outline-mode ref change, which is dominated by the actual hex-layer rebuild cost anyway.
+
+**Where**:
+- `src/render/draw.ts:sizeGridCanvases` — unified `view = computePianoViewCenter` (piano) | `refSpine` (else); pendingTween-aware gridRef + pad.
+- `src/render/draw.ts:buildHexLayerForTween(startQ, startR, endQ, endR)` — sets pendingTween bounds, triggers a hex layer rebuild, then clears the pendingTween state.
+- `src/ui/controls.ts:syncViewToOutline` — calls `buildHexLayerForTween` for all outline modes when the view actually changes.
+
+---
+
+## Octave-normalized picker tiebreak preserves ref-on-lineage invariant (2026-05-22)
+
+**Picked**: `compute88PianoCoords(refQ, refR)` tiebreaks equal-Tenney-Height candidates by `|proj − PROJ_PER_OCT · round((midi − refMidi) / 12)|` where `proj = 7(q − refQ) − 4(r − refR)` and `PROJ_PER_OCT = 21` (= 7·Q_PER_OCT − 4·R_PER_OCT for octave step `(+3, 0)`). The octave-normalized target ensures each pitch class follows its own ref-aligned lineage: at the ref's own MIDI the picker returns `(refQ, refR)` exactly; Eb3 and Eb4 collapse to the same enharmonic spelling.
+
+**Rejected**:
+- **Zero-centered `|proj|` tiebreak** (the earlier attempt): at the ref's MIDI it correctly picks `(refQ, refR)` (proj = 0). But in 7-limit, a B-region cell can tie TH=0 with the ref's natural lineage cell because the syntonic adjustment cancels against the (7, −4) shift's comma. With zero-centered tiebreak, the picker can pick the syntonic sibling and relocate the ref to a different cell visually — the ref ends up outside its own 88-cell footprint, breaking the "validateRefNoteCandidate passes ⇒ ref ∈ footprint" invariant.
+- **Largest-`proj` tiebreak**: monotone in proj, breaks 469 octave-consistency cases. Same-pitch-class at adjacent octaves end up at different enharmonic spellings.
+- **Minimum `|proj|` tiebreak via Manhattan distance**: equivalent to the zero-centered case at the ref's octave; still broken at other octaves.
+
+**Why**: pitch-class lineage is the user-visible invariant. The picker's job per MIDI is "give me the spelling that fits the user's keyboard mental model" — and the mental model is "this pitch class follows its ref-aligned column up and down the octaves". Octave-normalization expresses that directly.
+
+**Where**:
+- `src/render/draw.ts:compute88PianoCoords` — tiebreak uses `octaveDelta = Math.round((midi − refMidi) / 12); projTarget = PROJ_PER_OCT · octaveDelta; absNProj = |proj − projTarget|`.

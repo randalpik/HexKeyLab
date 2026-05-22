@@ -15,6 +15,8 @@
 // 7. First paint + info-panel size.
 // 8. Window resize handler + Reset-prefs button.
 
+import { onRefChanged } from '../effects/onRefChanged.js';
+import { refSpine } from '../tuning/refspine.js';
 import { selection } from '../state/selection.js';
 import { view } from '../state/view.js';
 import { pedal } from '../state/pedal.js';
@@ -38,8 +40,7 @@ import { requestMidi } from '../midi/engine.js';
 import { handleMidiMessage } from '../midi/handler.js';
 import { initPiano } from '../midi/piano.js';
 import {
-  setTuning, setOutline, setLayout, applyLayoutImmediate,
-  setQwertyTranspose, clearSelection,
+  setTuning, setOutline, clearSelection,
   applyRotation, setRotationFromDom, syncViewToOutline,
 } from './controls.js';
 import './keyboard.js';
@@ -96,14 +97,11 @@ initToolbarSelector();
 
 /* State fields with no DOM mirror — set directly before any handlers run. */
 tuning.septimalShift = prefs.septimalShift;
-tuning.qwertyTranspose = prefs.qwertyTranspose;
 pedal.mode = prefs.pedalMode;
 
 /* Stepper indicator labels — no handler updates these from raw prefs. */
 const seamShiftInd = document.getElementById('seamShiftInd');
 if (seamShiftInd) seamShiftInd.textContent = String(prefs.septimalShift);
-const qwertyTrInd = document.getElementById('qwertyTrInd');
-if (qwertyTrInd) qwertyTrInd.textContent = String(prefs.qwertyTranspose);
 
 initAudio();
 /* Load the persisted instrument. Fires regardless of audioEnabled so the
@@ -185,8 +183,13 @@ cv.addEventListener('mousedown', function (e: MouseEvent) {
       const reason = validateRefNoteCandidate(q, r);
       if (reason) { flashInfoLine(reason); return; }
     }
+    /* Compute old refSpine BEFORE mutation so onRefChanged can pass the
+       delta to held-physical-voice migrators. */
+    const oldSp = refSpine(referenceNote.q, referenceNote.r);
     const changed = isCurrentRef ? clearRefSelection() : setSelectionFromManual(q, r);
     if (changed) {
+      const newSp = refSpine(referenceNote.q, referenceNote.r);
+      onRefChanged(newSp.q - oldSp.q, newSp.r - oldSp.r);
       /* Persist or drop the manual ref. Composer-set selections do not persist. */
       if (isCurrentRef) savePrefs({ manualRef: undefined });
       else savePrefs({ manualRef: { q, r } });
@@ -235,11 +238,6 @@ cv.addEventListener('mouseleave', function () {
 
 // ── Toolbar wiring ──
 
-// Layout buttons
-$<HTMLButtonElement>('lb2').addEventListener('click', () => setLayout(2));
-$<HTMLButtonElement>('lb1').addEventListener('click', () => setLayout(1));
-$<HTMLButtonElement>('lb3').addEventListener('click', () => setLayout(3));
-
 // View-toggle checkboxes (each persists its own field)
 $<HTMLInputElement>('cbNotes').addEventListener('change', (e) => {
   view.textDirty = true; draw();
@@ -285,6 +283,7 @@ $<HTMLInputElement>('cbShortIvl').addEventListener('change', (e) => {
 
 // Tuning + outline + clear
 $<HTMLSelectElement>('selTuning').addEventListener('change', setTuning);
+
 $<HTMLSelectElement>('selOutline').addEventListener('change', () => setOutline());
 $<HTMLSelectElement>('selRotation').addEventListener('change', setRotationFromDom);
 $<HTMLButtonElement>('btnClear').addEventListener('click', clearSelection);
@@ -353,16 +352,9 @@ function resetToDefaults(): void {
   const ssi = document.getElementById('seamShiftInd');
   if (ssi) ssi.textContent = String(p.septimalShift);
 
-  /* QWERTY transpose: route through setQwertyTranspose so any held QWERTY
-     voices migrate cleanly to the new transpose. */
-  if (tuning.qwertyTranspose !== p.qwertyTranspose) {
-    setQwertyTranspose(p.qwertyTranspose - tuning.qwertyTranspose);
-  }
-
   setTuning();
   setOutline();  /* user-initiated path; tween view to new home position */
   applyRotation(p.rotation);
-  setLayout(p.curLayout);
 
   if (audio.audioEnabled !== p.audioEnabled) toggleAudio();
   if (audio.activeWaveform !== p.waveform) changeWaveform();
@@ -384,11 +376,10 @@ initRecorderUI();
 /* ── Init backfill: fire change-handlers so they read the prefs-primed DOM
    and propagate to JS state + side-effect targets (visibility toggles,
    layout view, color sync, etc.). Order is dependency-driven: tuning before
-   layout (color sync diffs against tuning state), layout-shift snap before
-   manualRef restore + outline (setOutline's view-sync snaps to refNote in
-   piano mode, which needs the persisted manualRef already in place). ── */
+   layout (color sync diffs against tuning state) before manualRef restore
+   + outline (setOutline's view-sync snaps to refNote in piano mode, which
+   needs the persisted manualRef already in place). ── */
 setTuning();
-applyLayoutImmediate(prefs.curLayout);
 if (prefs.manualRef) {
   /* Silently drop a persisted manualRef that no longer validates under
      the current tuning (e.g. user changed limit/septimal between sessions

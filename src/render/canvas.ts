@@ -19,7 +19,7 @@
 // kbOffY is forced to 0 — content is symmetric about the canvas vertical
 // midline; CH grows to fit the larger of |minY| / |maxY|.
 
-import { baseKeys, qwertyTransposeShift, QWERTY_TRANSPOSE_MIN, QWERTY_TRANSPOSE_MAX } from '../layout/baseKeys.js';
+import { baseKeys } from '../layout/baseKeys.js';
 import { qwertyKeys } from '../input/qwerty.js';
 import { hexR, dxH, dyH, cosT, sinT, hexToScreen, currentRotationMode } from '../layout/geometry.js';
 import type { OutlineMode, RotationMode } from '../state/persistence.js';
@@ -73,12 +73,7 @@ const PIANO_BOUNDS_TABLE: Record<RotationMode, Record<'5' | '7', CanvasMetrics>>
    sets that aren't expensive. */
 function staticOutlineCells(outline: 'lumatone' | 'qwerty'): ReadonlyArray<readonly [number, number]> {
   if (outline === 'lumatone') return baseKeys;
-  const cells: Array<[number, number]> = [];
-  for (let t = QWERTY_TRANSPOSE_MIN; t <= QWERTY_TRANSPOSE_MAX; t++) {
-    const [tq, tr] = qwertyTransposeShift(t);
-    for (const [q, r] of qwertyKeys) cells.push([q + tq, r + tr]);
-  }
-  return cells;
+  return qwertyKeys;
 }
 
 interface ScreenBounds { minX: number; maxX: number; minY: number; maxY: number; }

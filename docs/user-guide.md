@@ -27,29 +27,27 @@ The **Tuning** dropdown switches between three systems. The lattice doesn't chan
 
 - **Equal (12-TET)** — the familiar even-tempered tuning. Three colors cycle by octave. Useful as a reference; intervals in the info panel are named in the standard way.
 - **5-limit JI** *(default)* — pure just intonation built from prime 2, 3, and 5. The keyboard divides into **3-key-wide bands** along the q-axis. Inside a band, every interval is a clean 5-limit ratio. Between bands you cross a **seam** where the ratios shift — these are visible as dark wedges if "Band seams" is on.
-- **7-limit JI** — adds prime 7. The fifths axis is subdivided into alternating **A regions** (pure 5-limit) and **B regions** (septimal — slightly warm-shifted in color). Crossing an A↔B seam changes the ratio by 64:63; crossing a B↔next-A seam by 36:35.
+- **7-limit JI** — adds prime 7 via a **uniform septimal** rule: every third column of the lattice (the qm=2 lineage) is tempered down by the septimal comma (64:63), making the harmonic 7th (7/4) directly reachable from every key. Major triads stay pure 4:5:6; dominant 7 = 4:5:6:7, half-diminished 7 = 5:6:7:9 — all reachable from any root. The trade-off vs 5-limit is that pure 5-limit minor (10:12:15) is unreachable in this mode; minor triads sound Pythagorean (32:27) or septimal subminor (7:6). Use 5-limit when you specifically want 5-limit minor.
 
 Switching tunings ramps audio frequencies smoothly over 150ms — sustained notes glide from one tuning to the next.
 
-### Septimal seam shift (7-limit only)
-
-When 7-limit is active, a **▲/▼ control** appears next to the dropdown. This slides the A/B region boundaries up and down along the r-axis, putting septimal coloring under whichever notes you want it under. Range −21 to +20 (wraps at 42).
-
-You can also use **ArrowUp / ArrowDown** on your keyboard to bump the shift. Holding the key auto-repeats at the same cadence as click-and-hold on the buttons.
+(Older recordings made with the legacy global-shift 7-limit mode still load and play; that mode is hidden from the dropdown but preserved end-to-end. It has a seam-shift ▲/▼ control that appears when it's loaded.)
 
 ---
 
-## Layouts (♭ ♮ ♯)
+## Reference note and layout positioning
 
-Three layout buttons sit at the top-left: **flat ♭**, **natural ♮**, and **sharp ♯**. Each layout offsets the lattice by a different amount, so the same physical key under your finger plays a different pitch in each.
+The reference note (ref) is the lattice cell that the Lumatone or QWERTY outline is centered on. **A3** is the default reference, sitting dead-center.
 
-- **Natural ♮** — center position. A3 sits dead-center.
-- **Flat ♭** — shifts the whole keyboard so flat-side keys land in comfortable positions.
-- **Sharp ♯** — symmetric counterpart for sharp-side keys.
+**Ctrl+click on any hex** sets that cell as the new reference. The lattice tweens smoothly so the new ref sits at the outline's center; held Lumatone and QWERTY notes follow the shift (so a held chord keeps playing the same pitches relative to the keys you're pressing); held mouse-clicked notes stay anchored to their original lattice cells.
 
-**Keyboard shortcuts**: ArrowLeft / ArrowRight cycle layouts (♭ → ♮ → ♯ → ♭).
+This replaces the older flat / natural / sharp button group. The 3-position system was a special case — Ctrl+click on F, C, or G of the Pythagorean spine reproduces the old ♭/♮/♯ positions, and any of the 12 Pythagorean keys (plus their syntonic-comma siblings) is now equally reachable.
 
-Layout switches animate over 500ms with smooth interpolation — sustained notes glide to their new pitches; decaying instruments retrigger at the end of the animation. Selected keys move along with the layout, so a chord you're playing follows the shift musically.
+The ref mechanism works in **all tuning modes** (12-TET, 5-limit, 7-limit) and in **all outline modes** (Lumatone, QWERTY, none).
+
+Ref selection is constrained: the ref must land within the 88-key piano MIDI range, and the resulting 88-cell footprint must spell with at most ±3 accidentals (≤ triple-sharp / triple-flat). If you Ctrl+click a cell that would violate either constraint, a status message explains why and the ref is unchanged. Tick **"Valid ref bounds"** in the Piano toolbar to see a dotted outline marking exactly where the ref is allowed to land for the current tuning.
+
+To clear a manual ref override and return to the default A3, Ctrl+click the cell that's currently serving as the ref.
 
 ---
 
@@ -70,9 +68,7 @@ This is the easiest way to play HKL melodically. **The H key is A3.** The four r
 
 Each row down is a minor third lower. Each step right is a major third higher. So `H J` is a major third, `H U` is a perfect fifth, `H G` is a major third down, `H J U` is a major triad (root, M3, P5), and so on.
 
-Held keys play polyphonically. Releasing a key stops the note (subject to the sustain / sostenuto state). The mapping rides with the active layout — switching layouts moves what each QWERTY key plays, the same way it moves the rest of the keyboard.
-
-**QWERTY transpose**: With the **Outline** dropdown set to "QWERTY", a small ▲/▼ control appears that slides the QWERTY slab by chromatic semitones (range −3 to +3) without moving the lattice or the layout. Useful when the QWERTY footprint isn't centered where you want to play.
+Held keys play polyphonically. Releasing a key stops the note (subject to the sustain / sostenuto state). The mapping rides with the current ref note — Ctrl+click a new ref and the QWERTY slab shifts with the lattice, just like the Lumatone outline does, so the same physical keys play the new key. Held QWERTY notes migrate with the shift, so a held chord keeps playing the same pitches relative to the keys you're pressing.
 
 ### 2. Mouse / click selection
 
@@ -257,7 +253,8 @@ A few things that aren't obvious on first contact:
 1. **Try the QWERTY keyboard first.** H is A3. Hold H, then add J (M3 up), then U (m3 up) — that's a major triad. Move the whole shape one row down (`H J U` → `N M J`) and you've transposed down a minor third.
 2. **Switch tunings while playing a chord.** Hold a major triad, then flip Tuning between Equal and 5-limit. The pure 5-limit version sounds visibly more locked-in.
 3. **Click a chord, then look at the info panel.** Every interval is named with full precision. There are no "just dim 7" approximations — every distinct ratio gets its own name.
-4. **Use 7-limit and the seam shift** to find barbershop-style harmonies. The dominant 7 with a 7:4 minor seventh sounds noticeably sweeter than the 12-TET version.
+4. **Use 7-limit and Ctrl+click a chord root as the ref.** With 7-limit active, every qm=0 key has its pure 7/4 harmonic 7th two rows up in the qm=2 column. A dominant 7 played on the lattice sounds noticeably sweeter than its 12-TET counterpart.
+5. **Re-key the keyboard with Ctrl+click.** Pick any cell as the new ref and the entire layout slides under the static outline. Held notes follow — useful for modulating mid-chord without lifting your fingers.
 
 ---
 

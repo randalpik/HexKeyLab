@@ -19,7 +19,9 @@ export function captureSnapshot(): LayoutSnapshot {
     septimalEnabled: tuning.septimalEnabled,
     equalEnabled: tuning.equalEnabled,
     septimalShift: tuning.septimalShift,
-    qwertyTranspose: tuning.qwertyTranspose,
+    /* qwertyTranspose removed from live state; preserved in snapshot schema
+       as 0 for back-compat with older HKR readers. */
+    qwertyTranspose: 0,
     septimalW: tuning.septimalW,
     instrument: audio.activeWaveform,
     pedalMode: pedal.mode,
@@ -34,7 +36,8 @@ export function snapshotMatchesLive(s: LayoutSnapshot): boolean {
     s.septimalEnabled === tuning.septimalEnabled &&
     s.equalEnabled === tuning.equalEnabled &&
     s.septimalShift === tuning.septimalShift &&
-    s.qwertyTranspose === tuning.qwertyTranspose &&
+    /* qwertyTranspose no longer live; compare to fixed 0. */
+    s.qwertyTranspose === 0 &&
     s.instrument === audio.activeWaveform &&
     s.pedalMode === pedal.mode
   );

@@ -14,7 +14,7 @@ import { pedal } from '../state/pedal.js';
 import { audio } from '../state/audio.js';
 import { SampleEngine } from '../audio/samples.js';
 import { savePrefs } from '../state/persistence.js';
-import { setTuning, setLayout, setQwertyTranspose } from '../ui/controls.js';
+import { setTuning, setLayout } from '../ui/controls.js';
 import { onTuningChanged } from '../effects/onTuningChanged.js';
 import type { LayoutSnapshot } from './types.js';
 
@@ -42,9 +42,8 @@ export async function applySnapshot(s: LayoutSnapshot): Promise<void> {
     savePrefs({ septimalShift: s.septimalShift });
     onTuningChanged({ colorSync: false });
   }
-  if (tuning.qwertyTranspose !== s.qwertyTranspose) {
-    setQwertyTranspose(s.qwertyTranspose - tuning.qwertyTranspose);
-  }
+  /* qwertyTranspose was removed from the live tuning model; old recordings
+     still carry the field for back-compat but it's now ignored. */
   if (tuning.curLayout !== s.curLayout) {
     setLayout(s.curLayout);
   }

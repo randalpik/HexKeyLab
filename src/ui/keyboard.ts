@@ -14,10 +14,9 @@
 import { tuning } from '../state/tuning.js';
 import { animation } from '../render/animation.js';
 import { syncLumatoneColors } from '../lumatone/sync.js';
-import { setLayout, shiftSeams } from './controls.js';
+import { shiftSeams } from './controls.js';
 
 (function () {
-  const layoutOrder = [2, 1, 3]; /* visual left→right: flat, natural, sharp */
   /* keyboard seam-shift repeat state — mirrors the mouse IIFE's 400ms/80ms */
   let seamTid: number | null = null, seamIid: number | null = null, seamActiveKey: string | null = null;
   function seamKbStart(dir: number, key: string): void {
@@ -60,17 +59,6 @@ import { setLayout, shiftSeams } from './controls.js';
       (document.activeElement as HTMLElement).blur();
     }
     switch (e.key) {
-      case 'ArrowLeft':
-      case 'ArrowRight': {
-        e.preventDefault();
-        /* cap auto-repeat to one shift per animation cycle — keeps held-arrow
-           smooth. Discrete keypresses (e.repeat===false) always go through. */
-        if (e.repeat && animation.isAnimating) break;
-        const i = layoutOrder.indexOf(tuning.curLayout);
-        const dir = e.key === 'ArrowLeft' ? -1 : 1;
-        setLayout(layoutOrder[(i + dir + 3) % 3]);
-        break;
-      }
       case 'ArrowUp':
         if (tuning.septimalEnabled) {
           e.preventDefault();

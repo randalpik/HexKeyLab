@@ -14,7 +14,9 @@ import { tuning } from '../state/tuning.js';
 import { selection } from '../state/selection.js';
 import { midi } from '../state/midi.js';
 import { lumatone } from '../state/lumatone.js';
-import { baseKeys, layoutShifts } from '../layout/baseKeys.js';
+import { baseKeys } from '../layout/baseKeys.js';
+import { refSpine } from '../tuning/refspine.js';
+import { referenceNote } from '../state/reference.js';
 import { posInBand } from '../layout/coords.js';
 import { keyFreq } from '../tuning/frequency.js';
 import { syncAudio } from '../audio/engine.js';
@@ -28,24 +30,26 @@ interface MidiTarget {
   channel: number;
 }
 
-/* build scale degree lookup: enumerate all unique pitch classes across all layouts */
+/* build scale degree lookup: enumerate unique pitch classes in the baseKeys
+   footprint. Previously also iterated layoutShifts to union syntonic-comma
+   shifted variants, but that has been superseded by ref-driven layout shifts;
+   the union spans too many syntonic positions to enumerate up front. The
+   degreeMap covers the default-position PCs and is sufficient for the
+   Lumatone MIDI-out mapping. */
 const degreeMap: Record<string, number> = {};
 (function () {
   const pcList: { pk: string; cents: number }[] = [];
   const pcSeen: Record<string, true> = {};
-  [1, 2, 3].forEach(function (li) {
-    const sh = layoutShifts[li];
-    baseKeys.forEach(function (k) {
-      const q = k[0] + sh[0], r = k[1] + sh[1];
-      const p = posInBand(q) - 1;
-      const pk = r + ',' + p;
-      if (!pcSeen[pk]) {
-        pcSeen[pk] = true;
-        let cents = 1200 * (p * Math.log2(5 / 4) + r * Math.log2(3 / 2));
-        cents = ((cents % 1200) + 1200) % 1200;
-        pcList.push({ pk, cents });
-      }
-    });
+  baseKeys.forEach(function (k) {
+    const q = k[0], r = k[1];
+    const p = posInBand(q) - 1;
+    const pk = r + ',' + p;
+    if (!pcSeen[pk]) {
+      pcSeen[pk] = true;
+      let cents = 1200 * (p * Math.log2(5 / 4) + r * Math.log2(3 / 2));
+      cents = ((cents % 1200) + 1200) % 1200;
+      pcList.push({ pk, cents });
+    }
   });
   pcList.sort(function (a, b) { return a.cents - b.cents; });
   pcList.forEach(function (pc, i) { degreeMap[pc.pk] = i; });
@@ -62,12 +66,14 @@ export function keyToMidi(q: number, r: number): MidiTarget | null {
   return { note: deg, channel: ch };
 }
 
-/* reverse lookup: (note,channel) → "q,r" for MIDI input */
+/* reverse lookup: (note,channel) → "q,r" for MIDI input. The lattice shift
+   under the static Lumatone outline is driven by refSpine, so the mapping
+   rebuilds on ref change (call sites: ctrl+click handler + onRefChanged). */
 export function buildMidiReverse(): void {
   midi.midiToKey = {};
-  const sh = layoutShifts[tuning.curLayout];
+  const sp = refSpine(referenceNote.q, referenceNote.r);
   baseKeys.forEach(function (k) {
-    const q = k[0] + sh[0], r = k[1] + sh[1];
+    const q = k[0] + sp.q, r = k[1] + sp.r;
     const m = keyToMidi(q, r);
     if (m) midi.midiToKey[m.note + ',' + m.channel] = q + ',' + r;
   });
@@ -104,13 +110,20 @@ export function syncMidi(): void {
 
 export function syncOutput(): void { syncAudio(); syncMidi(); }
 
-/* fixed MIDI: (channel 1-5, note 0-55) → baseKeys index → lattice (q,r) */
-export function fixedMidiToKey(ch: number, note: number): KeyId | null {
+/* fixed MIDI: (channel 1-5, note 0-55) → baseKeys index → lattice (q,r),
+   shifted by refSpine so the lattice slides under the static Lumatone outline
+   on ref change. The `sp` parameter lets callers compute the mapping under a
+   past/future spine (used by migrateHeldLumatoneVoices to look up OLD lattice
+   keys when ref has just changed). */
+export function fixedMidiToKeyAt(ch: number, note: number, spQ: number, spR: number): KeyId | null {
   const idx = (ch - 1) * 56 + note;
   if (idx < 0 || idx >= 280) return null;
   const base = baseKeys[idx];
-  const sh = layoutShifts[tuning.curLayout];
-  return (base[0] + sh[0]) + ',' + (base[1] + sh[1]);
+  return (base[0] + spQ) + ',' + (base[1] + spR);
+}
+export function fixedMidiToKey(ch: number, note: number): KeyId | null {
+  const sp = refSpine(referenceNote.q, referenceNote.r);
+  return fixedMidiToKeyAt(ch, note, sp.q, sp.r);
 }
 
 type MidiMessageHandler = (e: MIDIMessageEvent) => void;

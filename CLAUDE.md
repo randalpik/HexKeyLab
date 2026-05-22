@@ -66,6 +66,43 @@ These are non-negotiable constraints. Always respect them.
 - **Origin**: A3 sits at (q=0, r=0) with bandOf=0, posInBand=1.
 - **Constraint**: 5-limit mode constrains prime-5 exponent to ±2 (because posInBand ranges 0–2). Diesis (128:125) is unreachable in 5-limit; 7-limit syntonic adjustments can bring it within reach.
 
+### Tuning modes (`TuningMode` in `state/persistence.ts`)
+
+- **`'E'`** — 12-TET.
+- **`'5'`** — 5-limit JI. **Default**.
+- **`'7'`** — 7-limit JI, **uniform septimal**. Every qm=2 cell (`((q%3)+3)%3 === 2`) is region B with `aDepth=1, aUpper=true`; qm=0 and qm=1 are A-d0. Pure function of qmod3 — fully key-symmetric. Every qm=0 Pythagorean-spine cell has its harmonic 7th (7/4) exactly two rows up in qm=2 of the same r. Dominant 7 = 4:5:6:7 and half-dim 7 = 5:6:7:9 reachable everywhere. 5-limit minor (10:12:15) is the one musical loss; use `'5'` when you want it.
+- **`'7-legacy'`** — hidden from the dropdown but preserved end-to-end. The old global-septimal-shift behavior (`septimalMode='global'`, alternating A/B bands shifted along r by `septimalShift`, ▲/▼ seam-shift UI restored). Only reachable by editing `localStorage.hkl.prefs.v1`.
+
+Migration on load: old `'7'` saves become `'7-legacy'`; old `'7x'` saves become `'7'`.
+
+### Ref-driven layout shift (`refSpine` in `src/tuning/refspine.ts`)
+
+The legacy flat/natural/sharp layout buttons AND the QWERTY transpose ▲/▼ are gone. Lattice positioning under the static Lumatone / QWERTY outlines is now driven by the reference note: the lattice slides so that `refSpine(referenceNote.q, referenceNote.r)` lands at the outline's center.
+
+```
+refSpine(refQ, refR) = qmod3 === 0  → (refQ,     refR)   on Pythag spine
+                       qmod3 === 1  → (refQ - 1, refR)   5-limit M3 above qm=0
+                       qmod3 === 2  → (refQ + 1, refR)   same-row Pythag spine
+```
+
+The 3-layout system is a special case: ref ∈ {C, F, G} on the Pythag spine reproduces the old ♭/♮/♯ shifts. But any ref now works — including its syntonic-comma siblings (`(±7, ∓4)` neighbors) — and the rule is the same in all tuning modes including 12-TET.
+
+### Held-voice migration on ref change
+
+When ref changes, voices originating from PHYSICAL inputs migrate with the lattice: Lumatone MIDI voices (tracked in `midi/handler.ts:heldLumatonePhys` as `"ch,note"`) and QWERTY voices (tracked in `input/keyboard-notes.ts:heldCodes`) follow their physical key from the old lattice cell to the new one, so a held key keeps sounding the right relative pitch as the lattice slides. **Mouse-click voices stay anchored to the lattice cell they were clicked on** — they're lattice-bound, not input-bound. Fan-out lives in `src/effects/onRefChanged.ts`.
+
+### Ref validation
+
+`validateRefNoteCandidate(q, r)` (in `render/draw.ts`) checks two things only:
+1. `coordToMidi(q, r) ∈ [21, 108]` — refNote must be inside 88-key range.
+2. Every cell in the 88-cell footprint the picker produces under this ref spells with `≤ ±3` accidentals.
+
+For `'7-legacy'` the accidental check intersects over `septimalShift ∈ [0, 5]` so seam shifts can never orphan a placed ref. There is no extra "ref must be in V5 / V7" requirement — the dotted V5 / V7-uniform / V7-legacy outlines (drawn when "Valid ref bounds" is on) are visual aids built from this same check, not a separate gate.
+
+### Octave-consistent 88-cell picker
+
+`compute88PianoCoords(refQ, refR)` walks MIDI 21..108 and for each MIDI picks the (q, r) with that MIDI that minimizes reduced Tenney Height to the ref, **tiebroken by `|proj − PROJ_PER_OCT · round((midi − refMidi)/12)|`** where `proj = 7(q−refQ) − 4(r−refR)`. The octave-normalized target keeps each pitch class on its own ref-aligned lineage — at the ref's own MIDI the picker returns `(refQ, refR)` exactly, and Eb3 / Eb4 end up at the same enharmonic spelling. A 0-centered `|proj|` tiebreak (earlier attempt) silently relocated the ref to a syntonic sibling at TH=0 ties.
+
 ## Audio architecture (philosophy)
 
 HKL is **self-contained**. All tuning, layout interpretation, and audio synthesis happens inside HKL. The Lumatone sends MIDI on a fixed (channel, note) addressing scheme; HKL maps those addresses to the current lattice state, computes frequencies from the active tuning system, and renders audio directly through its sample/oscillator engine. No external synth, no Scala/SCL, no per-layout MIDI mappings — one static Lumatone configuration, all interpretation in software.

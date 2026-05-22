@@ -139,6 +139,40 @@ Do NOT use `--bulk` (without `-raise`) once you have rescues — it's unconditio
 
 Easy to misremember because the layout is called "Harmonic Table" and minor thirds have a natural place in harmonic tables. The r axis is **fifths** (3:2). Minor thirds are a derived direction (−1, +1) in (q, r). Verified empirically: lattice (0, 1) produces a frequency ratio of 3/2 above A3, i.e., a perfect fifth — not a minor third.
 
+### Uniform-septimal qm=2 = B-d1-upper: derivation gotcha
+
+The new 7-limit (`tuning='7'`, `septimalMode='uniform'`) makes every `qmod3=2` cell B-region with `(aDepth=1, aUpper=true)`. The non-obvious payoff: this places the harmonic 7th (7/4) of every qm=0 Pythag-spine cell exactly **two rows up in qm=2 at the same `r`** (the qm=2 cell at r=R+2 is 7/4 of the qm=0 cell at r=R, octave-equivalent). The geometry works because the qm=2 B-d1-upper syntonic adjustment cancels against the (q+1) major-third stack relative to the qm=0 reference.
+
+Common confusion when reasoning about chord shapes in this mode:
+- Half-diminished 7th = dom7-with-9th-replacing-root. Rooted at qm=1, NOT qm=0. From qm=1 r=R the four tones live at `qm=1 r=R (5)`, `qm=0 r=R+1 (6)`, `qm=2 r=R+2 (7)`, `qm=0 r=R+2 (9)` — gives 5:6:7:9 exact.
+- Major triad still 5-limit-pure (4:5:6) via qm=0 + qm=1 of the same r. Septimal adjustment only touches qm=2 cells.
+- 5-limit minor triad (10:12:15) is unreachable. Minor in this mode is Pythagorean (32:27, via qm=0) or septimal subminor (7:6, via qm=2). Use `'5'` mode when you want 5-limit minor.
+
+### Octave-consistency in the 88-cell picker requires octave-normalized tiebreak
+
+`compute88PianoCoords(refQ, refR)` walks MIDI 21..108 and picks the (q, r) per MIDI that minimizes TH to the ref. TH ties happen often (especially in 7-limit, where a B-region cell can tie TH=0 with the natural-lineage cell because the syntonic adjustment cancels against the (7,−4) shift's comma). The tiebreak has to keep each pitch class on its own ref-aligned octave lineage, otherwise Eb3 and Eb4 end up at different enharmonic spellings.
+
+Correct tiebreak: `|proj − PROJ_PER_OCT · round((midi − refMidi) / 12)|` where `proj = 7(q − refQ) − 4(r − refR)` and `PROJ_PER_OCT = 21`. At the ref's MIDI this is `|proj|` (target = 0). At ref+12 it's `|proj − 21|`. Each pitch class collapses toward its own ref-aligned octave lineage.
+
+Three earlier attempts that failed:
+- **Zero-centered `|proj|` tiebreak**: works at the ref's octave; at others, the picker can pick a syntonic sibling and visually relocate the ref outside its own 88-cell footprint. Broke the "ref ∈ footprint" invariant.
+- **Largest-`proj` tiebreak**: monotone, broke 469 octave-consistency cases empirically.
+- **Minimum-`|proj|` Manhattan**: same as zero-centered at the ref's octave; same breakage.
+
+The picker is in `src/render/draw.ts:compute88PianoCoords`.
+
+### Diagonal MIDI band, not a square: the valid-ref scan
+
+The valid-ref-region cache must iterate the diagonal MIDI band `4q + 7r ∈ [−36, 51]` exactly. The prior square scan `q ∈ [−30, 30], r ∈ [−30, 30]` missed valid refs at extreme q (e.g. at `r = −20` the band extends well past `q = 30`). Symptom: `validateRefNoteCandidate` passed the live check but the cached set didn't contain the ref, so the dotted outline showed false gaps and (when the cache was incorrectly the gate) refs were rejected with "Reference out of valid region."
+
+Fix: `bandQRange(r) = [⌈(−36 − 7r)/4⌉, ⌊(51 − 7r)/4⌋]` and a nested loop with `r ∈ [−25, 25]` (the wider range still covers all cells the picker would visit at any reachable ref). The live `validateRefNoteCandidate` doesn't consult the cache at all — the cache exists only for the dotted visual outline.
+
+### Don't put validation rules in the cache, put them in the live validator
+
+`validateRefNoteCandidate(q, r)` is the authoritative check on a candidate ref. Two and only two conditions: MIDI ∈ [21, 108] AND every cell in the 88-cell footprint spells with ≤±3 accidentals. The cached V5 / V7-uniform / V7-legacy outline sets are precomputed visual aids; they are NOT a gate the validator consults.
+
+Mixing them up is how "Reference out of valid region" false-rejects happen: a ref outside the cache's bounding box (or outside the cached set due to a stale build) passed the live check but failed the cache lookup. Fix is one-directional: validator runs LIVE per candidate; cache is built once for the visual outline; the two never compare.
+
 ### `reduce()` on large ratios loses precision past 2^53
 
 JS numbers are 64-bit floats; integer precision breaks at 2^53. Several reference intervals (Pythagorean comma 531441/524288) and any compound interval crossing many octaves can hit this. Solution: use the exact prime exponent vector `e = [e2, e3, e5, e7]` returned by `reduce()` rather than dividing num/den. Trial-dividing num/den silently produces wrong results.
@@ -234,9 +268,13 @@ Tested:
 
 Hex/text canvases are rebuilt on dirty flags (layout extent, septimal shift, note name visibility). Selection state is per-frame because it changes constantly. Don't try to bake selections into the offscreen canvases — the rebuild cost will dominate.
 
-### Layout switches are zero-cost via offset change
+### Layout switches are zero-cost via offset change — BUT ref shifts can exceed the static pad
 
-The offscreen canvases are built at fixed reference (0, 0) with padding covering all layout travel distances. Layout switches just change the blit offset; no rebuild. If you find yourself dirtying the offscreen on layout switch, you've broken this invariant.
+The offscreen canvases are built at a fixed reference (`gridRef`) with padding covering layout travel distances. A small-range layout shift (e.g. the old ♭/♮/♯ system's `(±7, ∓4)` travel) is just a blit offset; no rebuild.
+
+The ref-driven shift (§ refSpine) can move the view to ANY (q, r) — well beyond the static pad's coverage. For those shifts, `buildHexLayerForTween(startQ, startR, endQ, endR)` is called BEFORE the tween fires; `sizeGridCanvases` then sets `gridRef` at the midpoint of the tween range and adds half the tween distance to the pad. The hex layer covers both endpoints, no cut-off borders mid-tween. Applies to all outline modes (piano has always done this; Lumatone / QWERTY now do too because refSpine can move them anywhere).
+
+If you find yourself debugging "cut-off lattice borders during a tween", check that `buildHexLayerForTween` was called before `tweenTo` for that outline mode. The piano path has had it forever; the Lumatone/QWERTY path was added when ref-driven shifts replaced the 3-layout buttons.
 
 ---
 
@@ -344,6 +382,30 @@ The "post-MIDI-translation" framing for the recording capture point is right in 
 `recording/snapshot.ts` originally contained both `captureSnapshot` (used by `capture.ts`, hence `audio/engine.ts`) and `applySnapshot` (used by `ui/recorder.ts`, which calls `ui/controls.ts`, which transitively re-enters `audio/engine.ts` and back into `recording/capture.ts`). The cycle was broken with dynamic `await import('../ui/controls.js')` inside `applySnapshot`. It worked, but Vite emitted chunking warnings and the indirection was hard to follow.
 
 Fix: split into `snapshot.ts` (leaf, read-side: `captureSnapshot`, `snapshotMatchesLive`) and `apply.ts` (write-side: `applySnapshot`, imports `ui/controls.ts` statically). The split lets `recording/snapshot.ts` stay leaf-position, which is what makes the engine-side hook chain clean. Module-graph hygiene is worth a small file split.
+
+### Dynamic-import `.ts` and `.js` URLs give different module instances
+
+`await import('../foo.ts')` and `await import('../foo.js')` resolve to the SAME source file under Vite's TypeScript→JS transform, but the module registry caches them under their literal specifier strings. Two dynamic imports with different extensions yield two distinct module instances with independent module-level state. State you mutate in one is invisible to the other.
+
+Surfaces when refactoring an inline initializer into a dynamic-import-bound module setter: code path A imports `'foo.js'` (static), code path B imports `'foo.ts'` (dynamic), they see different `tuning` / `selection` / etc. exports. Workaround we used in the 7-limit revamp: prefer plain dropdown change events (which call the same statically-imported module everyone else uses) over dynamic-import state mutation. Don't mix extensions across dynamic and static import call sites.
+
+### Voice migration: physical inputs follow the lattice, mouse clicks anchor
+
+When the lattice shifts under the outline (refSpine ref change, layout change in the old system, etc.), voices originating from PHYSICAL inputs migrate with the shift. Mouse-click voices stay where they were clicked.
+
+The distinction is input identity: a Lumatone key has a persistent `(ch, note)` identity that survives the lattice shift; the user is still pressing the same physical key, so they expect the same physical-key-relative pitch. Same for QWERTY (`e.code` is the identity). A mouse click is one-shot — the click event has no identity beyond the lattice cell it produced.
+
+If you migrate clicks too, you have to invent a synthetic identity for them ("phantom click on cell X moves to cell Y"), which doesn't match anything the user actually did. If you don't migrate physical inputs, held chords on the Lumatone jump pitches mid-press when the ref shifts.
+
+The fan-out in `src/effects/onRefChanged.ts` calls `migrateHeldQwertyVoices(dq, dr)` + `migrateHeldLumatoneVoices(dq, dr)` + `buildMidiReverse()` AFTER the ref mutation, with the spine delta. Each input source maintains its own held-voice tracker (`heldCodes` for QWERTY, `heldLumatonePhys` for Lumatone) because the identity shape differs per source.
+
+### Outline polygon stays static; the lattice slides
+
+The Lumatone/QWERTY/none outline polygons are precomputed from `baseKeys` and `qwertyKeys` at fixed lattice coords. They never translate on screen. The lattice cells underneath them translate when refSpine changes.
+
+Canvas bounds depend on the outline's pixel extent, NOT on refSpine's possible range. The ref-driven shift adds zero bounds dependency. If you find yourself recomputing canvas bounds on ref change for a non-piano outline, you're doing something wrong — the outline is visually static.
+
+Piano outline is the exception: it's computed per-ref via `compute88PianoCoords` and IS recomputed on ref change.
 
 ### `midi-file` library conventions: pitch bend is signed, channel is 0-indexed
 

@@ -61,7 +61,40 @@ The keyboard is divided into **3-key-wide bands** along the q-axis:
 - This allows complex JI chord progressions that stay within bands and avoid seams
 - 5-limit mode constrains prime-5 exponent to ±2 (because `posInBand ∈ {0,1,2}`); diesis (128:125, requires |e5|=3) is unreachable in 5-limit but reachable in 7-limit via syntonic adjustments
 
-### 2.3 Frequency formulas
+### 2.3 Tuning modes
+
+`TuningMode = '5' | '7' | '7-legacy' | 'E'` in `src/state/persistence.ts`. Dropdown exposes three options (`Equal / 5-limit / 7-limit`); `'7-legacy'` is hidden but kept end-to-end for users who need the old global-shift behavior.
+
+| Mode | `septimalEnabled` | `septimalMode` | Description |
+|---|---|---|---|
+| `'E'` | false | n/a | 12-TET — pure equal temperament. |
+| `'5'` *(default)* | false | n/a | 5-limit JI, banded as above. |
+| `'7'` | true | `'uniform'` | Uniform septimal (§2.4). New default 7-limit. No seam shift control — region rule is `qmod3`-only and key-symmetric. |
+| `'7-legacy'` | true | `'global'` | Legacy global-shift septimal (§2.5). Alternating A/B bands along r, shifted by `septimalShift`. Seam-shift ▲/▼ control restored. Hidden from the dropdown. |
+
+Migration on `loadPrefs`: old `'7'` saves become `'7-legacy'`; old `'7x'` saves become `'7'`. The dropdown shows `Equal / 5-limit / 7-limit`. `'7-legacy'` is only reachable by editing `localStorage.hkl.prefs.v1`.
+
+### 2.4 Uniform septimal (`'7'`)
+
+Every cell with `qmod3 === 2` is region B with `(aDepth=1, aUpper=true)`. Every cell with `qmod3 ∈ {0, 1}` is region A with `(aDepth=0, aUpper=false)`. Pure function of `qmod3`, octave-invariant (since `(q,r)` and `(q+3,r)` share `qmod3`). Implemented as a 3-line branch in `src/tuning/regions.ts:regionInfoWithState`.
+
+**Why this works**: every qm=0 cell on the Pythagorean fifth-chain spine has its harmonic 7th (7/4) exactly two rows up in qm=2 at the same `r`, because the qm=2 B-d1-upper cell's syntonic adjustment cancels against the (q+1) major-third stack, leaving 7/4. So:
+- Major triads stay 5-limit-pure (4:5:6) via qm=0 + qm=1 of the same r.
+- Dominant 7 (4:5:6:7) reachable from any qm=0 root.
+- Half-diminished 7 (5:6:7:9) reachable from any qm=1 root (root = qm=1 r=R; 5/6 = qm=0 r=R+1; 7 = qm=2 r=R+2; 9 = qm=0 r=R+2).
+- Fully key-symmetric: nothing privileges C major. The Lumatone-layout "root" is selected via the ref note (§2.6), not via tuning state.
+
+**The one trade**: 5-limit minor triads (10:12:15) are unreachable in `'7'` — minor triads become Pythagorean (32:27, via qm=0) or septimal subminor (7:6, via qm=2). Use `'5'` when you specifically want 5-limit minor.
+
+Frequency formula for `'7'` mode is the standard 5-limit formula times `(63/64)^[qm===2]`. Implemented by `regionInfoWithState` returning B-d1-upper for qm=2 cells; the frequency builder in `tuning/frequency.ts` applies the standard region math.
+
+### 2.5 Legacy global-shift septimal (`'7-legacy'`)
+
+The fifths axis is divided into alternating **A (pure)** and **B (septimal)** regions of width `septimalW = 3`, determined by lattice r. A regions get syntonic comma cancellation per A-band depth from center. B regions inherit their paired A's adjustment then ×63/64 (septimal comma). Global tempering ×(80/81)^(septimalShift/6) smooths the 42-step cycle. Result: A↔B seams are 64:63, B↔nextA seams are 36:35.
+
+`septimalShift` is a runtime parameter (−21 to +20, wraps 42; ▲/▼ buttons + ArrowUp/Down keyboard) that slides the A/B band boundaries along r.
+
+### 2.6 Frequency formulas
 
 **5-limit**:
 ```
@@ -72,7 +105,7 @@ where:
 A3 (220 Hz) at (0, 0): bandOf=0, posInBand=1
 ```
 
-**7-limit**: same base, with region adjustments. The fifths axis is divided into alternating **A (pure)** and **B (septimal)** regions of width `septimalW = 3`, determined by lattice r (not physical rPhys). A regions get syntonic comma cancellation per A-band depth from center. B regions inherit their paired A's adjustment then ×63/64 (septimal comma). Global tempering ×(80/81)^(septimalShift/6) smooths the 42-step cycle. Result: A↔B seams are 64:63, B↔nextA seams are 36:35.
+**7-limit** (`'7'` and `'7-legacy'`): same base, with region adjustments per §2.4 or §2.5.
 
 **Equal temperament**:
 ```
@@ -80,7 +113,7 @@ freq(q, r) = 220 × 2^((4q + 7r) / 12)
 ```
 Pure 12-TET. No bands, no regions, no adjustments.
 
-### 2.4 JI ratio between two keys (5-limit)
+### 2.7 JI ratio between two keys (5-limit)
 
 The ratio `freq(q2,r2) / freq(q1,r1)` factors as `2^e2 × 3^e3 × 5^e5`:
 - `e5 = dp` where dp = posInBand(q2) − posInBand(q1)
@@ -89,40 +122,76 @@ The ratio `freq(q2,r2) / freq(q1,r1)` factors as `2^e2 × 3^e3 × 5^e5`:
 
 In 7-limit, `jiRatio()` extends with prime-7 exponent tracking. Each region adjustment modifies exponents: syntonic ×(81/80) shifts (e2, e3, e5), septimal ×(63/64) shifts (e2, e3, e7).
 
-### 2.5 Septimal seam shift (7-limit only)
+### 2.8 Septimal seam shift (`'7-legacy'` only)
 
-Controls position of the A/B region boundaries:
+Controls position of the A/B region boundaries in legacy mode:
 - Range: −21 to 20 (42 positions)
 - Wrap: `((s + dir + 21) % 42 + 42) % 42 − 21`
 - Controls: ▲/▼ buttons + ArrowUp/ArrowDown keyboard shortcuts (custom repeat timer at animation-frame cadence; browser auto-repeat suppressed)
 - ▲ increases septimalShift → seams move +r (upward)
+- The seam-shift UI is shown when `septimalEnabled && septimalMode === 'global'` (i.e. `'7-legacy'`), hidden in `'7'` (uniform mode is `qmod3`-only and has no shift parameter).
 
-### 2.6 Coordinate system summary
+### 2.9 Coordinate system summary
 
 - **q**: position along major-third axis (5:4)
 - **r**: position along **fifths** axis (3:2)
 - **p**: posInBand(q), position within the 3-wide octave band (0, 1, 2)
+- **qmod3**: `((q % 3) + 3) % 3` ∈ {0, 1, 2} — names the three q-axis lineages: 0 = Pythagorean fifth-chain spine; 1 = 5-limit major-third above qm=0; 2 = 5-limit minor-third above qm=0 (= same-row Pythag spine).
 - **Minor thirds**: derived direction (−1, +1) in (q, r)
 - **Origin**: A3, in the middle of the keyboard
 
-### 2.7 Coverage and analysis findings
+### 2.10 Ref-driven Lumatone layout shift
 
-- **5-limit**: 55 unique MIDI notes per layout, 79 combined across the 3 layouts
-- **7-limit**: 45–46 notes per layout, 118 combined
+The legacy 3-layout system (Natural ♮ / Flat ♭ / Sharp ♯, with hardcoded shifts `[0,0]`/`[+7,−4]`/`[−7,+4]`) is replaced by a continuous **ref-driven** mechanism. Selecting any cell as the reference note (Ctrl+click on any hex, or set via Composer / song-key tier) slides the lattice underneath the static outline so the ref's qm=0-normalized spine cell lands at the outline's center.
+
+```ts
+// src/tuning/refspine.ts
+refSpine(refQ, refR) = qmod3 === 0  → (refQ,     refR)   on Pythag spine
+                       qmod3 === 1  → (refQ - 1, refR)   5-limit M3 above qm=0
+                       qmod3 === 2  → (refQ + 1, refR)   same-row Pythag spine
+```
+
+Applies in **all** outline modes (`'lumatone'`, `'qwerty'`, `'none'`) and **all** tuning modes (`'5'`, `'7'`, `'7-legacy'`, `'E'`). The 3-layout system is a special case: ref at `(0, 0)`, `(7, −4)`, `(−7, +4)` reproduces the old ♮/♭/♯ positions exactly, and any of the 12 Pythagorean keys (plus their syntonic siblings) is now equally reachable.
+
+`tuning.curLayout` is vestigial — kept for `.hkr` load back-compat (recordings serialize a 1/2/3 layout id; the apply path tolerates and ignores it). `setLayout` and `applyLayoutImmediate` are kept as no-ops for back-compat with the same call sites. The `qwertyTranspose` ▲/▼ control is gone — QWERTY rides the ref-driven shift now too. The flat/natural/sharp button group is removed from `index.html`.
+
+**Tweening**: ref changes tween smoothly via the existing `animation.tweenTo(targetQ, targetR)` machinery in `src/render/animation.ts`. The hex layer is built across the union of `(view → target)` via `buildHexLayerForTween` before each tween, so no cut-off-borders artifact appears for any outline mode (the same logic piano mode has always needed for MIDI-64 cell movement applies to Lumatone / QWERTY now too).
+
+**Piano outline is different**: piano mode uses `computePianoViewCenter(refQ, refR, m64Q, m64R)` to solve a tilt-dependent linear system that places refNote at sx=0 and MIDI 64 at sy=0. The lattice slides via that solution, not via refSpine.
+
+### 2.11 Held-voice migration on ref change
+
+When ref changes, the lattice shifts under the outline. Voices originating from PHYSICAL inputs migrate with the shift — Lumatone MIDI voices (tracked as `"ch,note"` in `midi/handler.ts:heldLumatonePhys`) and QWERTY voices (tracked as `"e.code"` strings in `input/keyboard-notes.ts:heldCodes`) — so a held key keeps sounding the right relative pitch even as the lattice slides beneath it. Voices originating from **mouse clicks** stay anchored to the lattice cell they were clicked on — they're lattice-bound, not input-bound.
+
+Fan-out: `src/effects/onRefChanged.ts` is called after `referenceNote` mutates, passing the `(dq, dr)` delta of the refSpine shift. It calls `migrateHeldQwertyVoices(dq, dr)`, `migrateHeldLumatoneVoices(dq, dr)`, then rebuilds the MIDI reverse lookup (`buildMidiReverse`) so subsequent note-ons under the new spine land on the right (channel, note).
+
+### 2.12 Ref validation
+
+`validateRefNoteCandidate(q, r)` in `render/draw.ts` is the authoritative validator. Two and only two constraints:
+
+1. `coordToMidi(q, r) = 57 + 4q + 7r ∈ [21, 108]` — refNote must be inside the 88-key piano range.
+2. Every cell in the 88-cell footprint the picker produces under this ref spells with `≤ ±3` accidentals (Composer's clamp; see §7.16).
+
+For `'7-legacy'` the accidental check intersects over `septimalShift ∈ [0, 5]` (the 6-shift wrap period) so seam shifts can never orphan a placed ref. The dotted V5 / V7-uniform / V7-legacy outlines drawn when "Valid ref bounds" is on are computed from this same check, cached, and rendered as visual aids — they're **not** an extra gate the validator consults. (Earlier versions tried to use a square-scan cache as the gate; refs at extreme q outside the scan box were rejected even though they passed the live check. Fixed by iterating the diagonal MIDI band exactly via `bandQRange(r) → [⌈(−36−7r)/4⌉, ⌊(51−7r)/4⌋]`.)
+
+### 2.13 Octave-consistent 88-cell picker
+
+`compute88PianoCoords(refQ, refR)` walks MIDI 21..108 and for each MIDI picks the (q, r) with `4q + 7r = midi − 57` that minimizes reduced Tenney Height of the JI ratio to the ref. The 1-parameter family `(q0+7k, r0−4k)` covers all candidates; `k ∈ [−20, 20]` is wider than any sensible enharmonic excursion.
+
+Tiebreak: `|proj − PROJ_PER_OCT · round((midi − refMidi) / 12)|` where `proj = 7(q − refQ) − 4(r − refR)` and `PROJ_PER_OCT = 7 · 3 − 4 · 0 = 21`. The octave-normalized target keeps each pitch class on its own ref-aligned lineage: at the ref's own MIDI the picker returns `(refQ, refR)` exactly; Eb3 and Eb4 collapse to the same enharmonic spelling.
+
+A 0-centered `|proj|` tiebreak (the earlier attempt) silently relocated the ref to a syntonic sibling when a B-region cell tied TH=0 with the ref's natural lineage cell (syntonic adjustment cancels against the (7,−4) shift's comma in 7-limit). With octave-normalization the lineage cell wins — the ref never falls outside its own footprint.
+
+### 2.14 Coverage and analysis findings
+
+- **5-limit**: 55 unique MIDI notes per ref position; ~79 combined across SC-shifted ref positions
+- **7-limit uniform**: 88-cell footprint per ref position, syntonic-comma-equivalent refs share footprints
 - **7-limit unique pitches**: ~208–210 unique pitches reachable from any central key (280 keys minus ~70 duplicates from syntonic comma cancellation)
 - **Coverage proof**: Q ≡ 7V (mod 12) for all keyboard intervals, where V = 12-TET semitone equivalent and Q = (e3 + 4e5 − 2e7) mod 12. All 12 V-classes covered by the reference table.
 
-### 2.8 Tuning deliverables
+### 2.15 Tuning deliverables
 
-A single LTN file configures the Lumatone with the **fixed MIDI layout** — every physical key gets a stable (channel, note) address (see §4.12). HKL handles all tuning interpretation and layout switching at runtime. There are no per-layout LTN files, no .scl/.kbm files, and no external synth configuration to maintain in sync.
-
-Layouts (Natural ♮, Flat ♭, Sharp ♯) are pure software state in HKL; switching layouts changes which lattice positions the keys represent, but does not change the Lumatone's MIDI output addressing.
-
-| Layout | Lattice shift |
-|---|---|
-| Natural ♮ | (0, 0) |
-| Flat ♭ | (+7, −4) |
-| Sharp ♯ | (−7, +4) |
+A single LTN file configures the Lumatone with the **fixed MIDI layout** — every physical key gets a stable (channel, note) address (see §4.12). HKL handles all tuning interpretation and layout switching at runtime. There are no per-layout LTN files, no .scl/.kbm files, and no external synth configuration to maintain in sync. Layout shifts are pure software state in HKL (now driven by ref note rather than by a 3-position layout switch).
 
 ---
 
@@ -184,13 +253,14 @@ Determined by 12-TET equivalent pitch class `(57 + 4q + 7r) % 12`:
 
 ### 4.2 Controls (two rows, centered)
 
-**Row 1**: Layout selector (♭ ♮ ♯), Note names, Band seams, Extend pattern, Show coordinates, Short intervals.
+**Row 1**: Note names, Band seams, Extend pattern, Show coordinates, Short intervals, Outline selector, Rotation selector.
 
-**Row 2**: Tuning selector + seam shift | Transpose controls | Audio + Instrument | Clear | Lumatone status panel | Recording controls | Reset prefs.
+**Row 2**: Tuning selector + seam shift (legacy only) | Transpose controls | Audio + Instrument | Clear | Lumatone status panel | Recording controls | Reset prefs.
 
-- **Tuning selector**: dropdown {Equal, 5-limit, 7-limit}. Sets internal flags, shows/hides seam shift, ramps audio.
-- **Seam shift**: ▲/▼ buttons with value display; visible only in 7-limit. Key-repeat 400ms initial / 80ms subsequent. ArrowUp/Down keyboard shortcuts use a custom repeat timer.
-- **Transpose**: 5-axis ▲/▼ stacks (P5, M3, m3, P8, SC) always visible. Same key-repeat behavior.
+- **Tuning selector**: dropdown {Equal, 5-limit, 7-limit}. Sets `tuning.equalEnabled` / `tuning.septimalEnabled` / `tuning.septimalMode`, shows/hides seam shift, ramps audio. The dropdown value `'7'` maps to `septimalMode='uniform'`; the hidden value `'7-legacy'` maps to `septimalMode='global'` and only loads if stored in `localStorage`.
+- **Seam shift**: ▲/▼ buttons with value display; visible only when `septimalEnabled && septimalMode === 'global'` (i.e. `'7-legacy'`). Hidden in `'7'` (uniform). Key-repeat 400ms initial / 80ms subsequent. ArrowUp/Down keyboard shortcuts use a custom repeat timer.
+- **Outline selector**: dropdown {Lumatone, QWERTY, Piano, None}. Selects which footprint outline is drawn; the lattice slides via refSpine (Lumatone/QWERTY/None) or via piano-viewport math (Piano). The legacy ♭/♮/♯ layout button group is **gone** — use Ctrl+click on any hex to set the ref note, which now drives layout positioning (§2.10).
+- **Transpose**: 5-axis ▲/▼ stacks (P5, M3, m3, P8, SC) always visible. Same key-repeat behavior. NB: this is for selection transposition; layout positioning is via ref note.
 - **Audio**: toggle + instrument/waveform selector. Piano default. Samples lazy-load on first selection with blue "loading…" state.
 - **Clear**: deselects all.
 - **Lumatone status panel**: connection badge (green/red), **Pedals dropdown** (Sustain / Sostenuto+Sustain — controls how the sustain jack is interpreted, see §4.14), **Calibrate Pedal button**, Auto-sync checkbox + status badge.
@@ -198,11 +268,11 @@ Determined by 12-TET equivalent pitch class `(57 + 4q + 7r) % 12`:
 
 ### 4.3 Keyboard shortcuts
 
-- **ArrowLeft / ArrowRight**: cycle layout (♭ → ♮ → ♯ → ♭)
-- **ArrowUp / ArrowDown**: septimal seam shift (no-op outside 7-limit)
-- `shouldIgnore()` detects text input focus and lets keystrokes through; outside text inputs, focused checkbox/radio is blurred on arrow press
-- Browser auto-repeat suppressed; custom repeat timers handle held keys
-- Keyup only stops repeat if up-key matches active down-key (prevents stuck-key)
+- **ArrowUp / ArrowDown**: septimal seam shift (only in `'7-legacy'`; no-op in `'5'` / `'7'` / `'E'`). Custom repeat timer at 400ms/80ms cadence; browser auto-repeat suppressed.
+- ArrowLeft / ArrowRight were the legacy ♭/♮/♯ layout cycle. With the layout-button system removed they're now unbound (free for future use).
+- Ref note: set via **Ctrl+click on any hex**. The lattice tweens to position that ref's qm=0-normalized spine cell at the outline's center. Ctrl+click on the current effective ref clears the manual override.
+- `shouldIgnore()` detects text input focus and lets keystrokes through; outside text inputs, focused checkbox/radio is blurred on arrow press.
+- Keyup only stops repeat if up-key matches active down-key (prevents stuck-key).
 
 ### 4.4 Selection and interaction
 
@@ -212,13 +282,13 @@ Determined by 12-TET equivalent pitch class `(57 + 4q + 7r) % 12`:
 - **Mouse hover**: `hoverKey` tracks hovered key; renderer draws distinct highlight outside selection treatment; cleared on mouseleave
 - **Selected keys**: brightened fill (+90), white border ring at hex edge; persists through layout switches
 
-### 4.5 Layout animation (500ms)
+### 4.5 Ref-driven layout animation (500ms)
 
-- Smoothstep position easing
-- View center (`viewQ`, `viewR`) animates from old to new
-- Key selections shift by layout delta
-- Audio voices ramp frequencies over animation duration (sustained instruments glide; decaying instruments stop+retrigger at end)
-- Keyboard outline and dark overlay remain static (precomputed from baseKey geometry)
+- Smoothstep position easing via `src/render/animation.ts:tweenTo(targetQ, targetR)`.
+- View center (`viewQ`, `viewR`) animates from old to new on every ref change.
+- Audio voices ramp frequencies over animation duration (sustained instruments glide; decaying instruments stop+retrigger at end).
+- Keyboard outline and dark overlay remain static — the lattice slides underneath. The Lumatone polygon stays in the same pixel position; cells beneath it shift.
+- **Hex layer pre-built across `[view → target]`** via `buildHexLayerForTween(startQ, startR, endQ, endR)` so each animation frame blits from a layer that covers both endpoints. Applies to all outline modes: piano (MIDI-64 cell movement on ref shift) and Lumatone/QWERTY (refSpine-driven cell shift). Without this, the moving view crosses the offscreen-layer edge mid-tween and shows cut-off borders. `pendingTweenStart` / `pendingTweenEnd` carry the range into `sizeGridCanvases`, which uses the midpoint as gridRef and adds half the tween distance to pad.
 
 ### 4.6 Chord transposition (5 axes)
 
@@ -319,7 +389,7 @@ HKL records every performance — Lumatone, QWERTY, or mouse — as a stream of 
 
 #### Architecture
 
-- **`.hkr` (JSON, source of truth)**: layout snapshot (tuning system, 5-limit layout, 7-limit shift, instrument, pedal mode, A3 reference) + a flat event list `[{t, k, q, r, …}]`. Schema version-stamped (`format:"hkr", version:1`); event kinds are `on / off / pa / cc4 / cc64 / warn` keyed by `k`. Timing is `audioCtxSec` from `epoch=0` (the same clock the audio engine ramps schedule against).
+- **`.hkr` (JSON, source of truth)**: layout snapshot (tuning system, 5-limit layout id (vestigial, see §2.10), 7-limit shift, qwertyTranspose (vestigial — pinned to 0 on capture, skipped on apply), instrument, pedal mode, A3 reference, refNote (q, r)) + a flat event list `[{t, k, q, r, …}]`. Schema version-stamped (`format:"hkr", version:1`); event kinds are `on / off / pa / cc4 / cc64 / warn` keyed by `k`. Timing is `audioCtxSec` from `epoch=0` (the same clock the audio engine ramps schedule against).
 - **`.mid` (binary, derived view)**: exported and re-imported deterministically against the same snapshot. The two files travel separately — they are NOT bundled.
 - **MPE export**: single-track format-0 MIDI. Channel 1 is the manager (carries CC4/CC64 + MPE Configuration Message); channels 2–16 are members (one voice each). Per-member pitch-bend range = ±48 semitones via RPN 0, wide enough that any JI offset fits even when the 12-TET snap chooses an adjacent semitone. Tempo fixed at 120 BPM, PPQ 960.
 - **MIDI → `.hkr` inverse**: requires the originating snapshot (the UI prompts: "Load matching .hkr first"). Builds a frequency index over the lattice under the snapshot's tuning, then each MIDI noteOn's `(note, channel-bend)` triple is converted to frequency and nearest-matched against the index. 25-cent sanity gate — anything farther emits a `warn` event instead of a coordinate.
@@ -632,9 +702,10 @@ DAMPER_RELEASE_FLOOR   # below this depth, sustained voices release through norm
 - `equalHueCycle`: `['BL','PU','PK']`
 - `hueC`: hue code → {l, d, sl, sd} hex strings
 - `hueCycleOrder`: `['PU','PK','OR','YE','GR','TE','BL']`
-- `layoutShifts`: `{1: [0,0], 2: [7,−4], 3: [−7,4]}`
+- `layoutShifts`: `{1: [0,0], 2: [7,−4], 3: [−7,4]}` — legacy table kept in `layout/baseKeys.ts` for `.hkr` back-compat only; live layout shift is driven by `refSpine` (§2.10).
 - `degreeMap`: `(r,p) → scale degree (0–78)` — internal pitch-class index used by tuning math
-- `midiToKey`: fixed-layout reverse lookup `(channel,note) → "q,r"`
+- `refSpine(refQ, refR)`: `(q, r) → (q, r)` qm=0-normalized spine cell (§2.10). Drives Lumatone/QWERTY/none layout shift.
+- `midiToKey`: fixed-layout reverse lookup `(channel,note) → "q,r"`, recomputed via `buildMidiReverse()` whenever refSpine changes
 - `deviceColors`: 280-entry tracked device state for diff-based auto-sync
 - `kbOutlinePaths`: precomputed outline polygons
 - `kbBaseSet`: Set of `"bq,br"` strings for all baseKeys
@@ -1329,7 +1400,9 @@ src/
 ├── main.ts                     # entry point: import './ui/init.js'
 ├── types.ts                    # shared domain types (KeyCoord, JiRatio, SysexCmd, …)
 ├── state/                      # plain {…} objects, mutated directly
-│   ├── tuning.ts               # curLayout, septimal*/equal*, septimalShift, septimalW
+│   ├── tuning.ts               # curLayout (vestigial — back-compat for .hkr load),
+│   │                           #   septimalEnabled, septimalMode ('global'|'uniform'),
+│   │                           #   equalEnabled, septimalShift, septimalW
 │   ├── view.ts                 # CW, CH, kbMinW, kbOffY, viewQ, viewR, hexDirty, textDirty
 │   ├── selection.ts            # selectedKeys, drawnKeys, hoverKey
 │   ├── audio.ts                # audioCtx, oscGain, squareGain, audioEnabled, activeWaveform,
@@ -1344,17 +1417,22 @@ src/
 ├── effects/                    # one-call fan-outs per state-change domain
 │   ├── onTuningChanged.ts      # rampActiveFreqs + view.hexDirty + draw + (syncLumatoneColors)
 │   ├── onLayoutChanged.ts      # syncLumatoneColors + buildMidiReverse + syncOutput
+│   ├── onRefChanged.ts         # migrateHeldQwertyVoices + migrateHeldLumatoneVoices
+│   │                           #   + buildMidiReverse (§2.10/§2.11)
 │   └── onSelectionChanged.ts   # syncOutput + draw
 ├── tuning/                     # PURE math: no DOM, no audio, no MIDI
 │   ├── notes.ts                # note naming (handles any r), fmtNote, keyOctave
 │   ├── ratios.ts               # gcd, jiRatio, intervalTier
-│   ├── regions.ts              # 7-limit A/B region partitioning
+│   ├── regions.ts              # 7-limit A/B region partitioning (uniform + global modes)
+│   ├── refspine.ts             # refSpine(refQ, refR) — qm=0-normalized spine cell for
+│   │                           #   ref-driven Lumatone/QWERTY layout shift (§2.10)
+│   ├── resolve.ts              # picker tiebreaks, syntonic projection helpers
 │   ├── frequency.ts            # keyFreq for Equal / 5-limit / 7-limit
 │   ├── intervals.ts            # comma decomposition, REF table, intervalName,
 │   │                           #   shortenInterval, equalIntervalName
 │   └── chords.ts               # template-based chord recognition + classification
 ├── layout/                     # PURE math: lattice ↔ screen
-│   ├── baseKeys.ts             # 280-key map, layoutShifts {1, 2, 3}
+│   ├── baseKeys.ts             # 280-key map, legacy layoutShifts {1, 2, 3} (back-compat)
 │   ├── coords.ts               # bandOf, posInBand
 │   └── geometry.ts             # hexR/dxH/dyH, tilt, hexToScreen
 ├── render/

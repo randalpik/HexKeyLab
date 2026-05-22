@@ -10,7 +10,7 @@
 const STORAGE_KEY = 'hkl.prefs.v1';
 
 export type OutlineMode = 'lumatone' | 'qwerty' | 'piano' | 'none';
-export type TuningMode = '5' | '7' | 'E';
+export type TuningMode = '5' | '7' | '7-legacy' | 'E';
 export type PedalMode = 'sustain' | 'sostenuto';
 export type LayoutId = 1 | 2 | 3;
 export type RotationMode = 'verticalFreq' | 'lumatone' | 'piano';
@@ -82,7 +82,6 @@ export interface PrefsV1 {
   tuning: TuningMode;
   septimalShift: number;
   curLayout: LayoutId;
-  qwertyTranspose: number;
   audioEnabled: boolean;
   waveform: string;
   pedalMode: PedalMode;
@@ -122,7 +121,6 @@ export const DEFAULT_PREFS: PrefsV1 = {
   tuning: "5",
   septimalShift: 0,
   curLayout: 1,
-  qwertyTranspose: 0,
   /* audio defaults to ON to match the long-standing "load piano + play on
      first reload" behavior of pre-persistence HKL */
   audioEnabled: true,
@@ -163,7 +161,16 @@ function normalizeRotation(s: unknown): RotationMode {
   return isRotationMode(s) ? s : DEFAULT_PREFS.rotation;
 }
 function isTuningMode(s: unknown): s is TuningMode {
-  return s === '5' || s === '7' || s === 'E';
+  return s === '5' || s === '7' || s === '7-legacy' || s === 'E';
+}
+/* Migrate older saved values: the previous experimental '7x' becomes the new
+   '7' (uniform septimal qm=2), and the previous '7' (global septimal-shift)
+   becomes '7-legacy' so existing 7-limit users land on the legacy code path
+   that mirrors the old behavior. Anything else passes through unchanged. */
+function migrateTuningMode(s: unknown): TuningMode | undefined {
+  if (s === '7x') return '7';
+  if (s === '7') return '7-legacy';
+  return isTuningMode(s) ? s : undefined;
 }
 function isPedalMode(s: unknown): s is PedalMode {
   return s === 'sustain' || s === 'sostenuto';
@@ -244,14 +251,11 @@ export function loadPrefs(): PrefsV1 {
       typeof o.shortIvl === "boolean" ? o.shortIvl : DEFAULT_PREFS.shortIvl,
     outline: isOutlineMode(o.outline) ? o.outline : DEFAULT_PREFS.outline,
     rotation: normalizeRotation(o.rotation),
-    tuning: isTuningMode(o.tuning) ? o.tuning : DEFAULT_PREFS.tuning,
+    tuning: migrateTuningMode(o.tuning) ?? DEFAULT_PREFS.tuning,
     septimalShift: isFiniteNumber(o.septimalShift)
       ? o.septimalShift
       : DEFAULT_PREFS.septimalShift,
     curLayout: isLayoutId(o.curLayout) ? o.curLayout : DEFAULT_PREFS.curLayout,
-    qwertyTranspose: isFiniteNumber(o.qwertyTranspose)
-      ? o.qwertyTranspose
-      : DEFAULT_PREFS.qwertyTranspose,
     audioEnabled:
       typeof o.audioEnabled === "boolean"
         ? o.audioEnabled
