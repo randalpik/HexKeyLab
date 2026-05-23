@@ -26,6 +26,7 @@ import { stopAllMidi, syncMidi } from '../midi/engine.js';
 import { animation } from '../render/animation.js';
 import { cv, draw, startLayoutAnim, currentMidi64Cell, buildHexLayerForTween, snapViewForOutline, validateRefNoteCandidate } from '../render/draw.js';
 import { onTuningChanged } from '../effects/onTuningChanged.js';
+import { onRefChanged } from '../effects/onRefChanged.js';
 import { broadcastFootprint } from '../bridge/hkl-side.js';
 import type { KeyId, Voice } from '../types.js';
 
@@ -88,11 +89,18 @@ export function setTuning(): void {
      pinned to a ref the user just abandoned. */
   if (prevMode !== val) {
     if (validateRefNoteCandidate(referenceNote.q, referenceNote.r) !== null) {
+      /* Capture kbAnchor BEFORE the clear+reset so we can pass the delta to
+         onRefChanged. Without this, held physical voices stay at their old
+         (q,r) while the lattice slides under them — releasing the key resolves
+         noteOff through the NEW anchor, leaving orphan voices in audio. See
+         lessons: ref-tier reset that shifts kbAnchor without voice migration. */
+      const oldAQ = view.kbAnchorQ, oldAR = view.kbAnchorR;
       clearRefSelection();
       savePrefs({ manualRef: undefined });
       const sp = refSpine(referenceNote.q, referenceNote.r);
       view.kbAnchorQ = sp.q;
       view.kbAnchorR = sp.r;
+      onRefChanged(sp.q - oldAQ, sp.r - oldAR);
     }
   }
   onTuningChanged();

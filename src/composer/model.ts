@@ -27,7 +27,8 @@ import type { ResolvedNote } from '../bridge/protocol.js';
 import { regroupBeams, readTimeSig } from './beams.js';
 import { decomposeBeatAlignedRests } from './restfill.js';
 import { computeAccidentalDisplay, alterFromCount, alterFromToken, tokenFromAlter, getNoteAlter } from './accidentals.js';
-import { ensureExpressionDefaults, type Moment } from './expressions.js';
+import { ensureExpressionDefaults, getLayoutReq, setLayoutReq, type LayoutReq, type Moment } from './expressions.js';
+import type { TuningMode } from '../shared/freq.js';
 import { realTicks, writtenTicks } from './ticks.js';
 
 /* ── public types ────────────────────────────────────────────────────────── */
@@ -68,6 +69,10 @@ export interface SetupDefaults {
   tempoUnit?: '1' | '2' | '4' | '8';
   tempoDots?: 0 | 1;
   tempoText?: string;
+  /* Required layout for this score. Default is Ptolemaic / A3-at-origin if
+     omitted; the Setup dialog populates this with HKL's current state at
+     score creation. */
+  layoutReq?: LayoutReq;
 }
 
 /* ── XML namespace + utilities ───────────────────────────────────────────── */
@@ -213,6 +218,8 @@ function emptyMeiDoc(setup: SetupDefaults = {}): Document {
     : '';
   const tempoTextSpan = tempoText ? escapeXml(tempoText) + ' ' : '';
   const tempoDotsAttr = tempoDots > 0 ? ` mm.dots="${tempoDots}"` : '';
+  const lr = setup.layoutReq ?? { tuningMode: '5', refQ: 0, refR: 0 };
+  const layoutReqBlock = `<hkl:layoutReq tuningMode="${lr.tuningMode}" refQ="${lr.refQ}" refR="${lr.refR}"/>`;
 
   /* <extMeta> with HKL-namespaced config carries document-level performance
      defaults (dynamic→velocity map, future tempo alteration). The xmlns:hkl
@@ -226,6 +233,7 @@ function emptyMeiDoc(setup: SetupDefaults = {}): Document {
     </fileDesc>
     <extMeta>
       <hkl:config>
+        ${layoutReqBlock}
         <hkl:dynamicMap>
           <hkl:level name="fff" velocity="127"/>
           <hkl:level name="ff"  velocity="124"/>
@@ -673,6 +681,23 @@ export class ComposerModel {
     const sd = this.doc.querySelector("scoreDef");
     if (!sd) return;
     sd.setAttribute("key.sig", sig);
+  }
+
+  /** Read the score's required layout (tuning mode + ref note). The block is
+   *  seeded by ensureExpressionDefaults so this always returns a valid value. */
+  getLayoutReq(): LayoutReq {
+    return getLayoutReq(this.doc);
+  }
+
+  setLayoutReq(req: LayoutReq): void {
+    setLayoutReq(this.doc, req);
+  }
+
+  /** True iff the score contains at least one <note> element. Used by the
+   *  retune flow to decide whether changing tuning mode needs the warn+migrate
+   *  path vs. a silent overwrite. */
+  hasNotes(): boolean {
+    return this.doc.querySelector('note') !== null;
   }
 
   getTimeSig(): { count: number; unit: number } {

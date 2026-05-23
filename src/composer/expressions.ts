@@ -18,6 +18,7 @@
 // beat float (1.0 = downbeat; 4/4 measure has tstamps [1.0, 5.0)).
 
 import { DYNAMIC_NAMES, DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
+import { TUNING_MODES, type TuningMode } from '../shared/freq.js';
 
 export const MEI_NS = 'http://www.music-encoding.org/ns/mei';
 const XML_NS = 'http://www.w3.org/XML/1998/namespace';
@@ -363,6 +364,64 @@ function seedDefaults(cfg: Element, doc: Document): void {
     level.setAttribute('velocity', String(DEFAULT_DYNAMIC_MAP[name]));
     dm.appendChild(level);
   }
+  /* layoutReq — the tuning mode + ref note pinned by this score. Default '5'
+     (Ptolemaic) matches HKL's default tuning so legacy files without the block
+     load as Ptolemaic, which is what they almost certainly were entered in. */
+  let lr = childInHklNs(cfg, 'layoutReq');
+  if (!lr) {
+    lr = doc.createElementNS(HKL_NS, 'hkl:layoutReq');
+    lr.setAttribute('tuningMode', '5');
+    lr.setAttribute('refQ', '0');
+    lr.setAttribute('refR', '0');
+    cfg.appendChild(lr);
+  }
+}
+
+export interface LayoutReq {
+  tuningMode: TuningMode;
+  refQ: number;
+  refR: number;
+}
+
+function isTuningMode(s: string): s is TuningMode {
+  return (TUNING_MODES as ReadonlyArray<string>).indexOf(s) >= 0;
+}
+
+/** Read the score's required layout from <hkl:layoutReq>. Returns Ptolemaic
+ *  defaults if the block is missing or malformed — but seedDefaults runs on
+ *  every load, so this fallback is purely defensive. */
+export function getLayoutReq(doc: Document): LayoutReq {
+  const cfg = findHklConfig(doc);
+  if (cfg) {
+    const lr = childInHklNs(cfg, 'layoutReq');
+    if (lr) {
+      const m = lr.getAttribute('tuningMode') ?? '5';
+      const qStr = lr.getAttribute('refQ') ?? '0';
+      const rStr = lr.getAttribute('refR') ?? '0';
+      const q = parseInt(qStr, 10);
+      const r = parseInt(rStr, 10);
+      return {
+        tuningMode: isTuningMode(m) ? m : '5',
+        refQ: Number.isFinite(q) ? q : 0,
+        refR: Number.isFinite(r) ? r : 0,
+      };
+    }
+  }
+  return { tuningMode: '5', refQ: 0, refR: 0 };
+}
+
+/** Write the score's required layout. Creates the block via ensureExtMetaConfig
+ *  + seedDefaults if missing, then overwrites the attrs in place. */
+export function setLayoutReq(doc: Document, req: LayoutReq): void {
+  const cfg = ensureExtMetaConfig(doc);
+  let lr = childInHklNs(cfg, 'layoutReq');
+  if (!lr) {
+    lr = doc.createElementNS(HKL_NS, 'hkl:layoutReq');
+    cfg.appendChild(lr);
+  }
+  lr.setAttribute('tuningMode', req.tuningMode);
+  lr.setAttribute('refQ', String(req.refQ));
+  lr.setAttribute('refR', String(req.refR));
 }
 
 function childInHklNs(parent: Element, localName: string): Element | null {

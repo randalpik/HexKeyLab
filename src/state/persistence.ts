@@ -106,6 +106,10 @@ export interface PrefsV1 {
    *  composer-set selections + song-key tier do NOT persist (they're
    *  re-broadcast on the next composer-hello). */
   manualRef?: { q: number; r: number };
+  /** When on, HKL aggressively applies any Composer-broadcast layout
+   *  requirement (tuning mode + ref). When off, mismatches trigger a prompt
+   *  at playback start (no prompt for note entry — that lives Composer-side). */
+  syncToComposer: boolean;
 }
 
 /* Defaults mirror the HTML attributes + state/*.ts initial values, so a fresh
@@ -142,6 +146,7 @@ export const DEFAULT_PREFS: PrefsV1 = {
   pianoInputDeviceId: null,
   pianoEnabled: false,
   validRefBounds: false,
+  syncToComposer: false,
 };
 
 function isOutlineMode(s: unknown): s is OutlineMode {
@@ -267,6 +272,10 @@ export function loadPrefs(): PrefsV1 {
         ? o.validRefBounds
         : DEFAULT_PREFS.validRefBounds,
     manualRef: loadManualRef(o.manualRef),
+    syncToComposer:
+      typeof o.syncToComposer === 'boolean'
+        ? o.syncToComposer
+        : DEFAULT_PREFS.syncToComposer,
   };
 }
 

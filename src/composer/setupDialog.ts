@@ -5,8 +5,11 @@
 // the measure rebuild).
 
 import type { ComposerModel } from './model.js';
-import { getDynamicMap, setDynamicMap } from './expressions.js';
+import { getDynamicMap, setDynamicMap, type LayoutReq } from './expressions.js';
 import { DYNAMIC_NAMES, DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
+import { TUNING_MODES, type TuningMode, coordToMidi, MIDI_LOW, MIDI_HIGH } from '../shared/freq.js';
+import { noteName, keyOctave, fmtNote } from '../tuning/notes.js';
+import { planRetune, summarizePlan, applyRetune } from './retune.js';
 
 const $ = <T extends HTMLElement>(id: string): T | null =>
   document.getElementById(id) as T | null;
@@ -43,6 +46,14 @@ const TEMPO_UNIT_OPTIONS: ReadonlyArray<TempoUnitOption> = [
   { unit: '2', dots: 0, label: '𝅗𝅥 (half)' },
 ];
 
+const TUNING_LABELS: Record<TuningMode, string> = {
+  E: 'Equal (12-TET)',
+  '5': 'Ptolemaic',
+  P: 'Pythagorean',
+  D: 'Semiditonal',
+  '7': 'Septimal',
+};
+
 function populateSelect(sel: HTMLSelectElement, options: ReadonlyArray<{ value: string; label: string }>, current: string): void {
   sel.innerHTML = '';
   for (const o of options) {
@@ -61,6 +72,27 @@ function setupSelects(model: ComposerModel): void {
       KEY_OPTIONS.map((k) => ({ value: k.sig, label: k.label })),
       model.getKeySig());
   }
+
+  const layoutReq = model.getLayoutReq();
+  const tuningSel = $<HTMLSelectElement>('setupTuningMode');
+  if (tuningSel) {
+    populateSelect(tuningSel,
+      TUNING_MODES.map((m) => ({ value: m, label: TUNING_LABELS[m] })),
+      layoutReq.tuningMode);
+  }
+  const refQEl = $<HTMLInputElement>('setupRefQ');
+  const refREl = $<HTMLInputElement>('setupRefR');
+  if (refQEl) refQEl.value = String(layoutReq.refQ);
+  if (refREl) refREl.value = String(layoutReq.refR);
+  updateRefLabel(layoutReq.refQ, layoutReq.refR);
+  /* Live label update as the user edits (q, r). */
+  const updateFromForm = (): void => {
+    const q = parseInt(refQEl?.value ?? '0', 10);
+    const r = parseInt(refREl?.value ?? '0', 10);
+    if (Number.isFinite(q) && Number.isFinite(r)) updateRefLabel(q, r);
+  };
+  refQEl?.addEventListener('input', updateFromForm);
+  refREl?.addEventListener('input', updateFromForm);
 
   const numSel = $<HTMLSelectElement>('setupTimeNum');
   const denSel = $<HTMLSelectElement>('setupTimeDen');
@@ -92,6 +124,7 @@ function readForm(): {
   title: string; composer: string; keySig: string;
   count: number; unit: number;
   tempoBpm: number; tempoUnit: '1' | '2' | '4' | '8'; tempoDots: 0 | 1; tempoText: string;
+  layoutReq: LayoutReq;
 } | null {
   const title = $<HTMLInputElement>('setupTitle')?.value ?? 'Untitled';
   const composer = $<HTMLInputElement>('setupComposer')?.value ?? '';
@@ -107,10 +140,35 @@ function readForm(): {
   const tempoText = ($<HTMLInputElement>('setupTempoText')?.value ?? '').trim();
   if (!isFinite(count) || count < 1 || count > 16) return null;
   if (!isFinite(unit) || ![1, 2, 4, 8, 16].includes(unit)) return null;
-  return { title, composer, keySig, count, unit, tempoBpm, tempoUnit, tempoDots, tempoText };
+  const tuningRaw = $<HTMLSelectElement>('setupTuningMode')?.value ?? '5';
+  const tuningMode: TuningMode = isTuningMode(tuningRaw) ? tuningRaw : '5';
+  const refQ = parseInt($<HTMLInputElement>('setupRefQ')?.value ?? '0', 10);
+  const refR = parseInt($<HTMLInputElement>('setupRefR')?.value ?? '0', 10);
+  if (!Number.isFinite(refQ) || !Number.isFinite(refR)) return null;
+  const refMidi = coordToMidi(refQ, refR);
+  if (refMidi < MIDI_LOW || refMidi > MIDI_HIGH) return null;
+  const layoutReq: LayoutReq = { tuningMode, refQ, refR };
+  return { title, composer, keySig, count, unit, tempoBpm, tempoUnit, tempoDots, tempoText, layoutReq };
 }
 
-export function openSetupDialog(model: ComposerModel, onApply: () => void): void {
+function isTuningMode(s: string): s is TuningMode {
+  return (TUNING_MODES as ReadonlyArray<string>).indexOf(s) >= 0;
+}
+
+function updateRefLabel(q: number, r: number): void {
+  const label = $('setupRefLabel');
+  if (!label) return;
+  const midi = coordToMidi(q, r);
+  if (midi < MIDI_LOW || midi > MIDI_HIGH) {
+    label.textContent = '(out of range)';
+    return;
+  }
+  const name = noteName(q, r);
+  const oct = keyOctave(q, r);
+  label.textContent = '= ' + fmtNote(name) + oct;
+}
+
+export function openSetupDialog(model: ComposerModel, onApply: (layoutChanged: boolean) => void): void {
   const dlg = $<HTMLDialogElement>('setupDialog');
   if (!dlg) return;
 
@@ -152,12 +210,31 @@ export function openSetupDialog(model: ComposerModel, onApply: () => void): void
       }
     }
 
+    /* Layout requirement change. Tuning-mode change retunes existing notes
+       (frequency invariant: each note's old freq is preserved as closely as
+       possible by moving to a different (q, r) under the new mode). Ref
+       changes are informational — they don't affect (q, r) → Hz. */
+    const prevLayout = model.getLayoutReq();
+    const tuningChanged = prevLayout.tuningMode !== values.layoutReq.tuningMode;
+    const refChanged = prevLayout.refQ !== values.layoutReq.refQ || prevLayout.refR !== values.layoutReq.refR;
+    const layoutChanged = tuningChanged || refChanged;
+    let proceedWithLayout = true;
+    if (tuningChanged && model.hasNotes()) {
+      const plan = planRetune(model.getDoc(), prevLayout.tuningMode, values.layoutReq.tuningMode);
+      const summary = summarizePlan(plan);
+      proceedWithLayout = window.confirm(summary);
+      if (proceedWithLayout) applyRetune(model, plan);
+    }
+
     /* Apply in order. */
     model.setTitle(values.title);
     model.setComposer(values.composer);
     model.setKeySig(values.keySig);
     model.setTempo(values.tempoBpm, values.tempoUnit, values.tempoDots, values.tempoText);
     applyDynamicInputs(model);
+    if (proceedWithLayout) {
+      model.setLayoutReq(values.layoutReq);
+    }
     if (meterChanged && proceedWithMeterChange) {
       model.setTimeSig(values.count, values.unit);
     } else if (meterChanged && !proceedWithMeterChange) {
@@ -166,7 +243,7 @@ export function openSetupDialog(model: ComposerModel, onApply: () => void): void
       /* Same meter — still call setTimeSig to be idempotent. */
       model.setTimeSig(values.count, values.unit);
     }
-    onApply();
+    onApply(layoutChanged && proceedWithLayout);
   };
 
   /* Clean up listeners on dialog close (covers both submit and Escape). */

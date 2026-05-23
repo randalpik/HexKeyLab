@@ -16,6 +16,8 @@
 // 8. Window resize handler + Reset-prefs button.
 
 import { onRefChanged } from '../effects/onRefChanged.js';
+import { getComposerRequiredLayout, applyComposerLayout } from '../bridge/hkl-side.js';
+import { tuning } from '../state/tuning.js';
 import { refSpine } from '../tuning/refspine.js';
 import { selection } from '../state/selection.js';
 import { view } from '../state/view.js';
@@ -74,6 +76,7 @@ function applyPrefsToDom(p: PrefsV1): void {
   $<HTMLInputElement>('cbAnalysis').checked = p.showAnalysis;
   $<HTMLInputElement>('cbExtend').checked = p.extendPattern;
   $<HTMLInputElement>('cbValidRefBounds').checked = p.validRefBounds;
+  $<HTMLInputElement>('cbSyncToComposer').checked = p.syncToComposer;
   $<HTMLInputElement>('cbCoords').checked = p.showCoords;
   $<HTMLInputElement>('cbShortIvl').checked = p.shortIvl;
   $<HTMLSelectElement>('selOutline').value = p.outline;
@@ -270,6 +273,24 @@ $<HTMLInputElement>('cbExtend').addEventListener('change', (e) => {
 $<HTMLInputElement>('cbValidRefBounds').addEventListener('change', (e) => {
   draw();
   savePrefs({ validRefBounds: (e.target as HTMLInputElement).checked });
+});
+$<HTMLInputElement>('cbSyncToComposer').addEventListener('change', (e) => {
+  const on = (e.target as HTMLInputElement).checked;
+  savePrefs({ syncToComposer: on });
+  /* If turning Sync ON and Composer already has a different required layout
+     cached, apply immediately so the user doesn't have to flip a switch and
+     then trigger a separate action. */
+  if (on) {
+    const req = getComposerRequiredLayout();
+    if (req && req.tuningMode !== tuning.mode) {
+      /* Re-broadcast trick: send a manufactured layout-req-changed to our own
+         handler? Simpler: just dispatch the apply via the same path as the
+         message handler. The handler re-reads prefs.syncToComposer, so we
+         only need to nudge it. Re-broadcast a request-state to ourselves
+         won't work (Composer is the source). Use the exported applier. */
+      applyComposerLayout();
+    }
+  }
 });
 $<HTMLInputElement>('cbCoords').addEventListener('change', (e) => {
   updateInfo();

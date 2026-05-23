@@ -248,6 +248,15 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
         <input id="setupTempoBpm" type="number" min="20" max="300" step="1">
       </fieldset>
     </div>
+    <label class="row"><span>Tuning</span><select id="setupTuningMode"></select></label>
+    <div class="row">
+      <span>Reference note (q, r)</span>
+      <fieldset>
+        <input id="setupRefQ" type="number" step="1" style="width:5em">
+        <input id="setupRefR" type="number" step="1" style="width:5em">
+        <span id="setupRefLabel" style="opacity:0.7"></span>
+      </fieldset>
+    </div>
     <div class="row">
       <span>Dynamics → velocity</span>
       <fieldset class="dyn-row">

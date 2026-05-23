@@ -82,6 +82,17 @@ import {
 } from './selection.js';
 import { serializeClipboard, parseClipboard, type ClipboardContents } from './clipboard.js';
 
+const TUNING_LABELS: Record<string, string> = {
+  E: 'Equal',
+  '5': 'Ptolemaic',
+  P: 'Pythagorean',
+  D: 'Semiditonal',
+  '7': 'Septimal',
+};
+function tuningLabel(mode: string): string {
+  return TUNING_LABELS[mode] ?? mode;
+}
+
 export type EntryMode = 'insert' | 'overwrite';
 export type CursorMode = 'voice' | 'expr' | 'select';
 
@@ -146,6 +157,12 @@ export interface InputHooks {
   /** Step the renderer zoom one preset in the given direction. The owner
    *  (main.ts) decides the actual preset list and reRenders. */
   onZoomChange?: (dir: 'in' | 'out') => void;
+  /** HKL's most-recently-broadcast tuning mode, or null when HKL hasn't
+   *  identified yet. Used by the entry-mismatch gate. */
+  getHklTuningMode?: () => string | null;
+  /** Send an `apply-layout` bridge message asking HKL to switch to the
+   *  score's pinned layout. Wired in main.ts. */
+  requestApplyLayout?: () => void;
 }
 
 const DIGIT_TO_DUR: Record<string, Duration> = {
@@ -515,6 +532,30 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     }
     if (held.length < heldRaw.length) {
       hooks.setStatus?.('Some held keys had alteration > ±3 and were dropped.');
+    }
+
+    /* Layout-mismatch gate: keys entered now sound at HKL's current tuning,
+       but the score is pinned to a (possibly different) tuning mode. If they
+       disagree, the (q,r) values held aren't the ones the score wants. Block
+       the commit; offer to push the score's layout to HKL (Cancel-only when
+       held is empty — a rest insert is mode-independent). */
+    if (held.length > 0) {
+      const hklMode = hooks.getHklTuningMode?.() ?? null;
+      const required = model.getLayoutReq().tuningMode;
+      if (hklMode !== null && hklMode !== required) {
+        const apply = window.confirm(
+          'HKL is in "' + tuningLabel(hklMode) + '" but this score requires "' + tuningLabel(required) + '".\n\n' +
+          'Notes entered now would sound at HKL\'s current pitches, not the score\'s.\n\n' +
+          'Apply the score\'s layout to HKL? (then re-press your keys)'
+        );
+        if (apply) {
+          hooks.requestApplyLayout?.();
+          hooks.setStatus?.('Applied score\'s tuning to HKL. Re-press your keys.');
+        } else {
+          hooks.setStatus?.('Switch HKL to "' + tuningLabel(required) + '" to enter notes.');
+        }
+        return;
+      }
     }
 
     /* Pre-flight insertability check: surfaces specific rejection reasons

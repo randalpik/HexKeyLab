@@ -284,6 +284,16 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <label title="Show a dotted outline marking the region where you can Ctrl+click to set a new reference note. Shape depends on the active tuning bucket (5-limit/12-TET vs 7-limit)."><input type="checkbox" id="cbValidRefBounds" autocomplete="off"> Valid ref bounds</label>
 </div>
 </div>
+<div class="toolbar-group" id="tb-group-composer" style="display:none">
+<div class="luma-vstack">
+<span id="composerConnStatus" class="luma-disconnected">No Composer</span>
+<span id="composerScoreLayout" style="font-size:11px;opacity:0.8"></span>
+</div>
+<div class="luma-vstack">
+<label title="When on, HKL aggressively applies any layout requirement broadcast by Composer (tuning mode + ref note). When off, mismatches trigger a prompt at playback start."><input type="checkbox" id="cbSyncToComposer" autocomplete="off"> Sync to Composer</label>
+<span id="composerLayoutMatch" style="font-size:11px"></span>
+</div>
+</div>
 </div>
 <canvas id="cv"></canvas>
 <div class="calib-panel" id="calibPanel">

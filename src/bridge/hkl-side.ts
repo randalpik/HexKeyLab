@@ -35,7 +35,12 @@ import { noteOn, noteOff, stopAllNotes, triggerRearticulateFlash } from '../audi
 import { draw, activeFootprintSet, invalidatePianoOutline, validateRefNoteCandidate } from '../render/draw.js';
 import { syncViewToOutline } from '../ui/controls.js';
 import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
-import { setSelectionFromComposer, setSongKey, onComposerBye } from '../state/reference.js';
+import { setSelectionFromComposer, setSongKey, onComposerBye, referenceNote, setSelectionFromManual } from '../state/reference.js';
+import { refSpine } from '../tuning/refspine.js';
+import { view } from '../state/view.js';
+import { onRefChanged } from '../effects/onRefChanged.js';
+import { setTuning } from '../ui/controls.js';
+import { loadPrefs, savePrefs, type TuningMode } from '../state/persistence.js';
 import type { FootprintCell } from './protocol.js';
 import type { KeyId } from '../types.js';
 
@@ -154,6 +159,23 @@ export function broadcastTuning(): void {
   }
 }
 
+let lastLayoutStateSig = '';
+
+/** Broadcast HKL's full layout state (tuning + ref) when either field changes.
+ *  Distinct from `broadcastTuning` (mode-only, for status text). Composer uses
+ *  this to mirror HKL's layout when opening a blank score and to update the
+ *  match indicator on ref-only changes. */
+export function broadcastLayoutState(): void {
+  const mode = tuning.mode;
+  const q = referenceNote.q;
+  const r = referenceNote.r;
+  const sig = mode + ':' + q + ':' + r;
+  if (sig !== lastLayoutStateSig) {
+    lastLayoutStateSig = sig;
+    bridge.send({ type: 'hkl-layout-state', tuningMode: mode, refQ: q, refR: r });
+  }
+}
+
 let lastFootprintSig = '';
 
 /** Compute the current footprint cell list (q, r, colorHex per cell) and
@@ -186,12 +208,13 @@ export function broadcastFootprint(): void {
   }
 }
 
-/** Convenience: fire all three broadcasts. Used by fan-outs where multiple
+/** Convenience: fire all relevant broadcasts. Used by fan-outs where multiple
  *  bridge-relevant pieces of state can shift in one step (tuning change,
  *  ref-note change). Each is signature-gated, so unchanged ones no-op. */
 export function broadcastAllToComposer(): void {
   broadcastHeldKeys();
   broadcastTuning();
+  broadcastLayoutState();
   broadcastFootprint();
 }
 
@@ -328,21 +351,146 @@ function playScore(events: ReadonlyArray<PlaybackEvent>): void {
   pb.pending.add(finHandle);
 }
 
+/* ── composer required layout cache + apply ─────────────────────────────── */
+
+interface ComposerLayoutReq {
+  tuningMode: TuningMode;
+  refQ: number;
+  refR: number;
+}
+
+/** Most-recently-broadcast layout requirement from Composer's `<hkl:layoutReq>`.
+ *  Null until composer-hello + layout-req-changed handshake completes. Used by
+ *  the playback gate (mismatch prompt) and by the Sync-to-Composer auto-apply. */
+let composerRequiredLayout: ComposerLayoutReq | null = null;
+let composerConnected = false;
+
+export function getComposerRequiredLayout(): ComposerLayoutReq | null {
+  return composerRequiredLayout;
+}
+
+export function isComposerConnected(): boolean {
+  return composerConnected;
+}
+
+/** Refresh the HKL toolbar's Composer group — visibility, connection label,
+ *  score-layout label, and match indicator. Called from every state change
+ *  that can affect them: composer-hello / composer-bye / layout-req-changed /
+ *  setTuning() (via onTuningChanged). */
+function updateComposerToolbar(): void {
+  const group = document.getElementById('tb-group-composer') as HTMLElement | null;
+  if (!group) return;
+  group.style.display = composerConnected ? '' : 'none';
+  if (!composerConnected) return;
+  const connEl = document.getElementById('composerConnStatus');
+  if (connEl) {
+    connEl.textContent = 'Composer connected';
+    connEl.classList.remove('luma-disconnected');
+    connEl.classList.add('luma-connected');
+  }
+  const layoutEl = document.getElementById('composerScoreLayout');
+  if (layoutEl) {
+    if (composerRequiredLayout) {
+      layoutEl.textContent = 'Score: ' + tuningLabelFor(composerRequiredLayout.tuningMode);
+    } else {
+      layoutEl.textContent = '';
+    }
+  }
+  const matchEl = document.getElementById('composerLayoutMatch');
+  if (matchEl) {
+    if (!composerRequiredLayout) {
+      matchEl.textContent = '';
+    } else if (composerRequiredLayout.tuningMode === tuning.mode) {
+      matchEl.textContent = '✓ match';
+      matchEl.style.color = '#4ec466';
+    } else {
+      matchEl.textContent = '⚠ mismatch';
+      matchEl.style.color = '#e0a020';
+    }
+  }
+}
+
+/** Public update hook so other modules (onTuningChanged) can refresh the
+ *  match indicator when HKL's tuning changes. */
+export function refreshComposerToolbar(): void {
+  updateComposerToolbar();
+}
+
+/** Apply the currently-cached Composer required layout to HKL (no-op when
+ *  Composer hasn't broadcast one). Used by the Sync-to-Composer toggle to
+ *  push the catch-up apply when the user flips the switch on while there's
+ *  already a mismatch. */
+export function applyComposerLayout(): void {
+  if (composerRequiredLayout) applyLayoutFromComposer(composerRequiredLayout);
+}
+
+function isTuningMode(s: string): s is TuningMode {
+  return s === 'E' || s === '5' || s === 'P' || s === 'D' || s === '7';
+}
+
+const TUNING_LABELS: Record<TuningMode, string> = {
+  E: 'Equal',
+  '5': 'Ptolemaic',
+  P: 'Pythagorean',
+  D: 'Semiditonal',
+  '7': 'Septimal',
+};
+function tuningLabelFor(m: string): string {
+  return TUNING_LABELS[m as TuningMode] ?? m;
+}
+
+/** Push tuning + ref into HKL state as if the user had selected them via the
+ *  toolbar / Ctrl+click. Fires the same onTuningChanged / onRefChanged effects
+ *  so audio, view, MIDI, and Composer broadcasts all update normally. */
+function applyLayoutFromComposer(req: ComposerLayoutReq): void {
+  /* Tuning mode — drive through the toolbar select so persistence + listeners
+     stay coherent. setTuning() reads #selTuning, runs validation, mutates
+     state, persists, and fires onTuningChanged. */
+  const selTuning = document.getElementById('selTuning') as HTMLSelectElement | null;
+  if (selTuning && selTuning.value !== req.tuningMode) {
+    selTuning.value = req.tuningMode;
+    setTuning();
+  }
+  /* Ref — mirror the user Ctrl+click path: validate, advance kbAnchor, fire
+     onRefChanged so held physical voices migrate to the new lattice cells.
+     Persist as a manual ref so reloads come back anchored here. */
+  if (validateRefNoteCandidate(req.refQ, req.refR) !== null) return;
+  const oldAQ = view.kbAnchorQ, oldAR = view.kbAnchorR;
+  if (setSelectionFromManual(req.refQ, req.refR)) {
+    const sp = refSpine(referenceNote.q, referenceNote.r);
+    view.kbAnchorQ = sp.q;
+    view.kbAnchorR = sp.r;
+    onRefChanged(sp.q - oldAQ, sp.r - oldAR);
+    invalidatePianoOutline();
+    syncViewToOutline(currentOutlineForBridge(), false);
+    draw();
+    savePrefs({ manualRef: { q: req.refQ, r: req.refR } });
+  }
+}
+
 /* ── inbound message dispatch ────────────────────────────────────────────── */
 
 function announce(): void {
   bridge.send({ type: 'hkl-hello', version: PROTOCOL_VERSION });
   bridge.send({ type: 'tuning-changed', mode: tuningMode(), description: tuningDescription() });
-  /* Force a held-keys + footprint broadcast even if empty. */
+  /* Force a held-keys + footprint + layout-state broadcast even if empty.
+     Composer's blank-score auto-adopt path keys off hkl-layout-state, so
+     forcing a resend here ensures fresh-open Composer tabs receive it. */
   lastHeldSerialized = 'force-resend';
   lastFootprintSig = 'force-resend';
+  lastLayoutStateSig = 'force-resend';
   broadcastHeldKeys();
   broadcastFootprint();
+  broadcastLayoutState();
 }
 
 bridge.on((msg: ComposerEvent) => {
   switch (msg.type) {
     case 'composer-hello':
+      composerConnected = true;
+      updateComposerToolbar();
+      announce();
+      break;
     case 'request-state':
       announce();
       break;
@@ -350,6 +498,9 @@ bridge.on((msg: ComposerEvent) => {
       /* Composer disconnected. Stop any playback in progress so we're not
          left with stuck notes, and drop composer-set ref-note tiers. A
          user's manual Ctrl+click selection survives the bye. */
+      composerConnected = false;
+      composerRequiredLayout = null;
+      updateComposerToolbar();
       abortActive();
       if (onComposerBye()) {
         invalidatePianoOutline();
@@ -358,13 +509,51 @@ bridge.on((msg: ComposerEvent) => {
         broadcastAllToComposer();
       }
       break;
-    case 'play-score':
+    case 'play-score': {
+      /* Layout gate: playback frequency must match what the score was entered
+         in. If HKL's current tuning doesn't match the score's pinned mode,
+         Sync-to-Composer applies silently; otherwise we prompt. On cancel,
+         emit playback-finished so Composer's UI doesn't stall. */
+      const required = composerRequiredLayout;
+      if (required && tuning.mode !== required.tuningMode) {
+        const prefs = loadPrefs();
+        if (prefs.syncToComposer) {
+          applyLayoutFromComposer(required);
+        } else {
+          const apply = window.confirm(
+            'This score requires "' + tuningLabelFor(required.tuningMode) + '" but HKL is in "'
+            + tuningLabelFor(tuning.mode) + '".\n\n'
+            + 'Apply the score\'s tuning to HKL?'
+          );
+          if (apply) {
+            applyLayoutFromComposer(required);
+          } else {
+            bridge.send({ type: 'playback-finished' });
+            break;
+          }
+        }
+      }
       playScore(msg.events);
       break;
+    }
     case 'stop-playback':
       abortActive();
       bridge.send({ type: 'playback-finished' });
       break;
+    case 'layout-req-changed': {
+      const mode = isTuningMode(msg.tuningMode) ? msg.tuningMode : '5';
+      composerRequiredLayout = { tuningMode: mode, refQ: msg.refQ, refR: msg.refR };
+      updateComposerToolbar();
+      if (loadPrefs().syncToComposer) {
+        applyLayoutFromComposer(composerRequiredLayout);
+      }
+      break;
+    }
+    case 'apply-layout': {
+      const mode = isTuningMode(msg.tuningMode) ? msg.tuningMode : '5';
+      applyLayoutFromComposer({ tuningMode: mode, refQ: msg.refQ, refR: msg.refR });
+      break;
+    }
     case 'set-reference-note':
       /* Sets the selection tier from Composer. Last-writer-wins between
          this and any user Ctrl+click. Composer broadcasts are validated

@@ -34,6 +34,17 @@ const $ = <T extends HTMLElement>(id: string): T | null =>
 let hklConnected = false;
 let lastHeldKeys: ReadonlyArray<ResolvedNote> = [];
 let isPlaying = false;
+/* HKL's current tuning mode, cached from the `tuning-changed` broadcast. Null
+ * until first broadcast arrives. Used by the entry-mismatch gate (input.ts)
+ * to compare against the score's pinned layoutReq.tuningMode. */
+let hklTuningMode: string | null = null;
+/* Latched once we've consumed the first hkl-layout-state at this session's
+ * startup. The first arrival of that message on a blank score silently adopts
+ * HKL's tuning + ref into the score's layoutReq, so the user doesn't have to
+ * open Setup and copy it manually. Subsequent state changes leave the score
+ * alone (so a manual Setup edit is preserved). Reset when a file is loaded so
+ * the loaded layoutReq isn't overwritten. */
+let autoAdoptedHklLayout = false;
 
 /* Cached HKL footprint: each cell carries q, r, and a fresh colorHex.
  *   - `null` while we haven't received a footprint yet (no constraint).
@@ -160,6 +171,7 @@ bridge.on((msg: HklEvent) => {
       invalidateSongKeyCache();
       maybeBroadcastReference();
       maybeBroadcastSongKey();
+      broadcastLayoutReq();
       break;
     case 'hkl-bye':
       hklConnected = false;
@@ -178,9 +190,31 @@ bridge.on((msg: HklEvent) => {
       }
       break;
     case 'tuning-changed':
-      /* No status update — tuning changes are HKL-internal and Composer
-         already gets resolved (q,r,pname,...) per chord. */
+      /* Cache HKL's current tuning mode for the entry-mismatch gate. The
+         layoutReq pins what the score requires; comparing the two tells us
+         whether entry/playback would change pitch from what the user expects. */
+      hklTuningMode = msg.mode;
+      refreshLayoutMatchIndicator();
       break;
+    case 'hkl-layout-state': {
+      /* Blank-score auto-adopt: first arrival of HKL's full layout state on
+         a score with no notes silently mirrors HKL's tuning + ref into the
+         score's layoutReq. Reduces friction when starting a new piece against
+         a connected HKL instance. Latch so we only do this once per session;
+         a subsequent ref or tuning change on HKL doesn't override a Setup
+         edit the user may have made in between. */
+      hklTuningMode = msg.tuningMode;
+      if (!autoAdoptedHklLayout && !model.hasNotes()) {
+        autoAdoptedHklLayout = true;
+        const isMode = (s: string): s is 'E' | '5' | 'P' | 'D' | '7' =>
+          s === 'E' || s === '5' || s === 'P' || s === 'D' || s === '7';
+        const tuningMode = isMode(msg.tuningMode) ? msg.tuningMode : '5';
+        model.setLayoutReq({ tuningMode, refQ: msg.refQ, refR: msg.refR });
+        broadcastLayoutReq();
+      }
+      refreshLayoutMatchIndicator();
+      break;
+    }
     case 'playback-position':
       highlightElement(msg.meiId, $('score'));
       /* Route per-voice: each voice gets its own cursor bar at the chord
@@ -214,6 +248,53 @@ bridge.on((msg: HklEvent) => {
  *  a populated map keyed by "q,r" with the fresh per-cell color. */
 export function getFootprintColors(): Map<string, string> | null {
   return footprintColors;
+}
+
+/** HKL's most-recently-broadcast tuning mode, or null if no broadcast yet.
+ *  Used by the entry-mismatch gate to compare against the score's required
+ *  tuning. */
+export function getHklTuningMode(): string | null {
+  return hklTuningMode;
+}
+
+/** Broadcast the score's pinned layout requirement to HKL. Called on
+ *  composer-hello and on Setup save / file load. Idempotent on HKL side. */
+function broadcastLayoutReq(): void {
+  if (!hklConnected) return;
+  const lr = model.getLayoutReq();
+  bridge.send({
+    type: 'layout-req-changed',
+    tuningMode: lr.tuningMode,
+    refQ: lr.refQ,
+    refR: lr.refR,
+  });
+}
+
+/** Tell HKL to apply this exact layout right now, regardless of its Sync
+ *  setting. Used by the entry-mismatch prompt after the user confirms Apply.
+ *  HKL will emit a `tuning-changed` we can re-check against. */
+export function requestApplyLayout(): void {
+  if (!hklConnected) return;
+  const lr = model.getLayoutReq();
+  bridge.send({
+    type: 'apply-layout',
+    tuningMode: lr.tuningMode,
+    refQ: lr.refQ,
+    refR: lr.refR,
+  });
+}
+
+/** Update the toolbar match indicator. Visible only when HKL is connected. */
+function refreshLayoutMatchIndicator(): void {
+  const el = $('layoutMatch');
+  if (!el) return;
+  if (!hklConnected || hklTuningMode === null) {
+    el.textContent = '';
+    return;
+  }
+  const lr = model.getLayoutReq();
+  el.textContent = hklTuningMode === lr.tuningMode ? '✓' : '⚠ mismatch';
+  el.classList.toggle('mismatch', hklTuningMode !== lr.tuningMode);
 }
 
 bridge.send({ type: 'composer-hello', version: PROTOCOL_VERSION });
@@ -386,6 +467,8 @@ initInput(model, {
   setStatus: (msg) => setStatus(msg),
   isPlaybackActive: () => isPlaying,
   onZoomChange: (dir) => stepZoom(dir),
+  getHklTuningMode: () => hklTuningMode,
+  requestApplyLayout: () => requestApplyLayout(),
 });
 
 /* ── playback ────────────────────────────────────────────────────────────── */
@@ -462,7 +545,7 @@ $('btnRewind')?.addEventListener('click', () => {
 });
 
 $('btnSetup')?.addEventListener('click', () => {
-  openSetupDialog(model, () => {
+  openSetupDialog(model, (layoutChanged) => {
     reRender();
     refreshIndicators();
     setStatus('Setup applied.');
@@ -472,6 +555,12 @@ $('btnSetup')?.addEventListener('click', () => {
      * from a key-sig change is what would let an unrelated event clobber a
      * user's manual Ctrl+click selection on HKL. */
     if (hklConnected) maybeBroadcastSongKey();
+    /* Layout requirement may have changed — informational broadcast to HKL.
+       HKL caches it; whether HKL applies depends on its Sync toggle. */
+    if (layoutChanged) {
+      broadcastLayoutReq();
+      refreshLayoutMatchIndicator();
+    }
   });
 });
 
@@ -500,6 +589,12 @@ $<HTMLInputElement>('fileInputHkc')?.addEventListener('change', async (e) => {
     reRender();
     refreshIndicators();
     maybeScrollMeasureIntoView(visualCursorMeasure());
+    /* Treat the loaded layoutReq as authoritative — disable any future
+       blank-score auto-adopt so a stray hkl-layout-state can't overwrite it. */
+    autoAdoptedHklLayout = true;
+    /* The loaded file's layoutReq is now in the model; tell HKL. */
+    broadcastLayoutReq();
+    refreshLayoutMatchIndicator();
     setStatus('Loaded ' + file.name);
   } catch (err) {
     setStatus('Load failed: ' + (err as Error).message);

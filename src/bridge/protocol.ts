@@ -82,6 +82,13 @@ export type HklEvent =
   | { type: 'playback-finished' }
   /** Tuning state changed (informational; Composer can update status text). */
   | { type: 'tuning-changed'; mode: string; description: string }
+  /** Full HKL layout state: tuning mode + ref-note (q, r). Sent on handshake
+   *  and whenever either field changes. Distinct from `tuning-changed` (which
+   *  carries only the mode + human description for status text) — this message
+   *  exists so Composer can mirror HKL's full layout when opening a blank
+   *  score, and so the match indicator can re-check on ref changes (which
+   *  don't fire `tuning-changed`). */
+  | { type: 'hkl-layout-state'; tuningMode: string; refQ: number; refR: number }
   /** Active layout outline + per-cell color, broadcast whenever the footprint
    *  composition or colors change (layout switch, outline mode change, QWERTY
    *  transpose, tuning toggle). Composer uses this to validate SC shifts
@@ -117,6 +124,21 @@ export type ComposerEvent =
    *  on connect / hello / request-state, and whenever the key signature
    *  changes (Setup dialog apply). Not sent on every cursor move — see
    *  set-reference-note docstring for why broadcasting must be conservative. */
-  | { type: 'set-song-key'; q: number; r: number };
+  | { type: 'set-song-key'; q: number; r: number }
+  /** Inform HKL of the score's pinned layout requirement. Sent on
+   *  composer-hello / request-state and whenever the user saves Setup. HKL
+   *  caches this and uses it to gate playback (prompt on mismatch). When
+   *  HKL's "Sync to Composer" toggle is on, HKL aggressively applies this
+   *  layout on receipt; otherwise it's informational until the user takes
+   *  an action that requires the layouts to match. tuningMode is the hard
+   *  gate (it determines (q,r)→Hz). refQ/refR are informational — they only
+   *  affect physical-key→(q,r) mapping during entry, not playback frequency. */
+  | { type: 'layout-req-changed'; tuningMode: string; refQ: number; refR: number }
+  /** Tell HKL to apply this layout immediately. Sent by Composer after the
+   *  user confirms an entry-side mismatch prompt with "Apply". Distinct from
+   *  layout-req-changed: that one is informational (apply only if Sync is on);
+   *  this one is an explicit user-driven command. HKL switches tuning + ref
+   *  and emits tuning-changed so Composer can re-check and unblock entry. */
+  | { type: 'apply-layout'; tuningMode: string; refQ: number; refR: number };
 
 export type BridgeMessage = HklEvent | ComposerEvent;
