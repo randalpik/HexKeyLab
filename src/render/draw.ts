@@ -33,6 +33,7 @@ import { jiRatio, tenneyHeightFromExps } from '../tuning/ratios.js';
 import { regionInfo } from '../tuning/regions.js';
 import { refSpine } from '../tuning/refspine.js';
 import { VALID_REF_TABLE } from './refbounds-table.js';
+import { isCtrlHeld } from '../ui/keyboard.js';
 import type { KeyId } from '../types.js';
 
 // ── canvas setup ───────────────────────────────────────────────────────────
@@ -1004,6 +1005,39 @@ export function draw(): void {
     if (hk) {
       const hmidi = 57 + 4 * hk.q + 7 * hk.r; const hpc = ((hmidi % 12) + 12) % 12; const hW = whiteSet.has(hpc);
       drawNoteName(hk.sx, hk.sy, noteName(hk.q, hk.r), hW, false);
+    }
+  }
+
+  /* === Ctrl-held darkening: dim everything outside the valid-ref region ===
+     Transient cue that appears whenever Ctrl is held — the same gesture that
+     precedes a Ctrl+click ref-note pick (see src/ui/init.ts) — so the user
+     sees which cells are legal targets without having to enable the static
+     "Valid ref bounds" dotted outline. Drawn BEFORE the main outline pass so
+     that pass's white stroke stays crisp; an after-the-outline overlay would
+     dim the white stroke wherever it crosses outside-valid-ref territory.
+     Uses the same lattice-space transform as the dotted outline (which lives
+     in absolute (q, r) coords and therefore needs the lattice-scroll
+     translate in every outline mode). */
+  if (isCtrlHeld()) {
+    const validPaths = activeValidRefPaths();
+    if (validPaths.length > 0) {
+      ctx.save();
+      ctx.translate(view.CW / 2, cyC);
+      ctx.rotate(-tiltAngle);
+      ctx.translate(-view.viewQ * dxH - view.viewR * dxH * 0.5, view.viewR * dyH);
+      const diag = Math.ceil(Math.sqrt(view.CW * view.CW + view.CH * view.CH));
+      ctx.beginPath();
+      ctx.rect(-diag, -diag, diag * 2, diag * 2);
+      validPaths.forEach((poly) => {
+        for (let i = 0; i < poly.length; i++) {
+          if (i === 0) ctx.moveTo(poly[i][0], poly[i][1]);
+          else ctx.lineTo(poly[i][0], poly[i][1]);
+        }
+        ctx.closePath();
+      });
+      ctx.fillStyle = 'rgba(17,17,17,0.5)';
+      ctx.fill('evenodd');
+      ctx.restore();
     }
   }
 
