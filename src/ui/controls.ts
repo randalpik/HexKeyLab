@@ -26,6 +26,7 @@ import { stopAllMidi, syncMidi } from '../midi/engine.js';
 import { animation } from '../render/animation.js';
 import { cv, draw, startLayoutAnim, currentMidi64Cell, buildHexLayerForTween, snapViewForOutline, validateRefNoteCandidate } from '../render/draw.js';
 import { onTuningChanged } from '../effects/onTuningChanged.js';
+import { broadcastFootprint } from '../bridge/hkl-side.js';
 import type { KeyId, Voice } from '../types.js';
 
 /* Compute the view-center the active outline wants and animate to it.
@@ -144,6 +145,10 @@ export function setOutline(): void {
   draw();
   sel.blur();
   savePrefs({ outline: newOutline });
+  /* Outline switches the active footprint set Composer sees as the
+     constraint overlay. Previously this rode along on the rAF poll; with
+     event-driven broadcasts the switch must be announced explicitly. */
+  broadcastFootprint();
 }
 
 export function transposeSelection(dq: number, dr: number): void {

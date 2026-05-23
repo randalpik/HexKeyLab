@@ -1,18 +1,26 @@
 // HKL-side bridge. Lives in the main HKL app (index.html). Three jobs:
 //
-//   1. Broadcast held-keys to Composer whenever selection.selectedKeys
-//      changes. Polled at requestAnimationFrame; payloads are fully resolved
-//      (pname/accid/oct/midi/colorHex/velocity) so Composer doesn't need to
-//      import HKL's tuning logic.
+//   1. Broadcast held-keys / tuning / footprint to Composer whenever the
+//      corresponding HKL state mutates. Driven event-style from the existing
+//      effects/* fan-outs (broadcastHeldKeys, broadcastTuning,
+//      broadcastFootprint, broadcastAllToComposer are exported and called
+//      from onSelectionChanged / onTuningChanged / onRefChanged / setOutline).
+//      Payloads are fully resolved (pname/accid/oct/midi/colorHex/velocity)
+//      so Composer doesn't need to import HKL's tuning logic. Each broadcast
+//      bails on an unchanged signature, so callers can fire them liberally.
+//
+//      Why event-driven, not requestAnimationFrame: browsers throttle rAF to
+//      ~1 Hz or suspend it entirely in background tabs (HTML spec, Firefox +
+//      Chromium + Safari). With HKL in a background tab and Composer focused,
+//      a polled bridge stalls while audio keeps playing — Composer never sees
+//      the held notes. Event-driven dispatch runs in the same call stack as
+//      the input handler that fired noteOn, so it survives tab-throttling.
 //
 //   2. Respond to Composer handshake / state requests with hkl-hello plus
 //      a fresh held-keys + tuning-changed broadcast.
 //
 //   3. Receive play-chord / play-score / stop-playback. Dispatch to the
 //      audio engine; emit playback-position acks as each chord onset fires.
-//
-// No changes to existing HKL modules — this file imports the public
-// selection/tuning/audio state and the audio engine's noteOn/noteOff.
 
 import { createHklBridge, PROTOCOL_VERSION } from './channel.js';
 import type {
@@ -23,7 +31,7 @@ import { audio } from '../state/audio.js';
 import { tuning } from '../state/tuning.js';
 import { noteName, keyOctave, parseNote, accToVal } from '../tuning/notes.js';
 import { darkColorHex, coordToMidi } from '../transcription/pitch.js';
-import { noteOn, noteOff, stopAllNotes } from '../audio/engine.js';
+import { noteOn, noteOff, stopAllNotes, triggerRearticulateFlash } from '../audio/engine.js';
 import { draw, activeFootprintSet, invalidatePianoOutline, validateRefNoteCandidate } from '../render/draw.js';
 import { syncViewToOutline } from '../ui/controls.js';
 import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
@@ -105,7 +113,10 @@ let playbackActive = false;
    real held keys survive. */
 const playbackOwnedKeys: Set<KeyId> = new Set();
 
-function broadcastHeldKeysIfChanged(): void {
+/** Broadcast the current held-keys set if its signature changed. Safe to
+ *  call from any state-mutation site; no-op when nothing changed or when
+ *  playback is suppressing echoes. */
+export function broadcastHeldKeys(): void {
   if (playbackActive) return;
   const keys: ResolvedNote[] = [];
   for (const keyId of selection.selectedKeys) {
@@ -126,15 +137,16 @@ function broadcastHeldKeysIfChanged(): void {
   }
 }
 
-function broadcastTuningIfChanged(): void {
+/** Broadcast tuning mode if it changed since the last send. A tuning change
+ *  also implies spelling/color shifts for the same coords, so we force a
+ *  follow-up held-keys re-broadcast by invalidating its signature. */
+export function broadcastTuning(): void {
   const mode = tuningMode();
   if (mode !== lastTuningMode) {
     lastTuningMode = mode;
     bridge.send({ type: 'tuning-changed', mode, description: tuningDescription() });
-    /* Tuning change implies color/spelling may have shifted for the same
-       coords. Force a held-keys re-broadcast. */
     lastHeldSerialized = '';
-    broadcastHeldKeysIfChanged();
+    broadcastHeldKeys();
   }
 }
 
@@ -143,9 +155,8 @@ let lastFootprintSig = '';
 /** Compute the current footprint cell list (q, r, colorHex per cell) and
  *  broadcast if its signature changed. When outline='none' the set is null;
  *  we broadcast an empty array, meaning "no constraint" on the Composer
- *  side. Polled by tick() once per RAF — same cadence as held-keys / tuning
- *  change detection. */
-function broadcastFootprintIfChanged(): void {
+ *  side. */
+export function broadcastFootprint(): void {
   const set = activeFootprintSet();
   const cells: FootprintCell[] = [];
   if (set) {
@@ -171,12 +182,13 @@ function broadcastFootprintIfChanged(): void {
   }
 }
 
-let rafHandle = 0;
-function tick(): void {
-  broadcastHeldKeysIfChanged();
-  broadcastTuningIfChanged();
-  broadcastFootprintIfChanged();
-  rafHandle = requestAnimationFrame(tick);
+/** Convenience: fire all three broadcasts. Used by fan-outs where multiple
+ *  bridge-relevant pieces of state can shift in one step (tuning change,
+ *  ref-note change). Each is signature-gated, so unchanged ones no-op. */
+export function broadcastAllToComposer(): void {
+  broadcastHeldKeys();
+  broadcastTuning();
+  broadcastFootprint();
 }
 
 /* ── playback dispatch ───────────────────────────────────────────────────── */
@@ -185,12 +197,18 @@ interface ActivePlayback {
   cancelled: boolean;
   pending: Set<number>; /* setTimeout handles, so stop-playback can clear them */
   heldKeys: Set<KeyId>; /* keys we noteOn'd, for force-off on stop */
+  /* Monotonic per-key voice tag. Each dispatchChord noteOn bumps the key's
+     seq; each offHandle captures the seq it owns and only tears down if it
+     still matches. This is how back-to-back same-pitch events avoid the
+     previous event's offHandle killing the fresh voice. */
+  voiceSeq: Map<KeyId, number>;
+  nextSeq: number;
 }
 
 let active: ActivePlayback | null = null;
 
 function newPlayback(): ActivePlayback {
-  return { cancelled: false, pending: new Set(), heldKeys: new Set() };
+  return { cancelled: false, pending: new Set(), heldKeys: new Set(), voiceSeq: new Map(), nextSeq: 0 };
 }
 
 function abortActive(): void {
@@ -207,6 +225,9 @@ function abortActive(): void {
   active = null;
   playbackActive = false;
   draw();
+  /* Surface any drift in the user's real held-keys that accumulated while
+     broadcasts were suppressed during playback. */
+  broadcastHeldKeys();
 }
 
 function coordToKeyId(c: CoordRef): KeyId {
@@ -216,8 +237,21 @@ function coordToKeyId(c: CoordRef): KeyId {
 function dispatchChord(notes: ReadonlyArray<CoordRef>, durationMs: number, pb: ActivePlayback, velocity?: number): void {
   if (pb.cancelled) return;
   const keys: KeyId[] = notes.map(coordToKeyId);
+  const ownedSeq = new Map<KeyId, number>();
   for (const k of keys) {
+    if (audio.activeOscs[k]) {
+      /* Back-to-back same-pitch events: the next event's noteOn timer can
+         fire before the previous event's noteOff timer when they share a
+         deadline. Mirror the input-layer pedal-replay fix — stop the old
+         voice so syncAudio creates a fresh one, and flash to confirm. */
+      noteOff(k);
+      triggerRearticulateFlash(k);
+    }
+    audio.sustainedKeys.delete(k);
     noteOn(k, velocity ?? audio.keyVelocity[k] ?? DEFAULT_DYNAMIC_MAP.mf);
+    const seq = ++pb.nextSeq;
+    pb.voiceSeq.set(k, seq);
+    ownedSeq.set(k, seq);
     pb.heldKeys.add(k);
     /* Add to selectedKeys for visual highlight via existing draw() path.
        Track ownership so we only remove keys that were not already held by
@@ -231,15 +265,21 @@ function dispatchChord(notes: ReadonlyArray<CoordRef>, durationMs: number, pb: A
   const offHandle = window.setTimeout(() => {
     pb.pending.delete(offHandle);
     if (pb.cancelled) return;
+    let mutated = false;
     for (const k of keys) {
+      /* A later dispatchChord may have re-articulated this key; its own
+         offHandle will tear it down. Skip if our seq is no longer current. */
+      if (pb.voiceSeq.get(k) !== ownedSeq.get(k)) continue;
+      pb.voiceSeq.delete(k);
       noteOff(k);
       pb.heldKeys.delete(k);
       if (playbackOwnedKeys.has(k)) {
         selection.selectedKeys.delete(k);
         playbackOwnedKeys.delete(k);
       }
+      mutated = true;
     }
-    draw();
+    if (mutated) draw();
   }, durationMs);
   pb.pending.add(offHandle);
 }
@@ -277,6 +317,9 @@ function playScore(events: ReadonlyArray<PlaybackEvent>): void {
     bridge.send({ type: 'playback-finished' });
     playbackActive = false;
     if (active === pb) active = null;
+    /* Resync held-keys with the user's real selection (any input that
+       arrived during playback was broadcast-suppressed). */
+    broadcastHeldKeys();
   }, lastEnd + 50);
   pb.pending.add(finHandle);
 }
@@ -289,8 +332,8 @@ function announce(): void {
   /* Force a held-keys + footprint broadcast even if empty. */
   lastHeldSerialized = 'force-resend';
   lastFootprintSig = 'force-resend';
-  broadcastHeldKeysIfChanged();
-  broadcastFootprintIfChanged();
+  broadcastHeldKeys();
+  broadcastFootprint();
 }
 
 bridge.on((msg: ComposerEvent) => {
@@ -308,6 +351,7 @@ bridge.on((msg: ComposerEvent) => {
         invalidatePianoOutline();
         syncViewToOutline(currentOutlineForBridge(), false);
         draw();
+        broadcastAllToComposer();
       }
       break;
     case 'play-score':
@@ -330,6 +374,7 @@ bridge.on((msg: ComposerEvent) => {
         invalidatePianoOutline();
         syncViewToOutline(currentOutlineForBridge(), false);
         draw();
+        broadcastAllToComposer();
       }
       break;
     case 'set-song-key':
@@ -339,6 +384,7 @@ bridge.on((msg: ComposerEvent) => {
         invalidatePianoOutline();
         syncViewToOutline(currentOutlineForBridge(), false);
         draw();
+        broadcastAllToComposer();
       }
       break;
   }
@@ -356,7 +402,6 @@ export function initHklBridge(): void {
   if (initialized) return;
   initialized = true;
   announce();
-  rafHandle = requestAnimationFrame(tick);
 }
 
 /* DevTools handle. */
@@ -365,5 +410,7 @@ export function initHklBridge(): void {
   resolveKey,
   abortActive,
   stopAllNotes,
-  rafHandle: () => rafHandle,
+  broadcastHeldKeys,
+  broadcastTuning,
+  broadcastFootprint,
 };

@@ -1,9 +1,9 @@
 {
   "mode": "full",
   "fixtures": 74,
-  "passed": 74,
-  "failed": 0,
-  "elapsedMs": 22809,
+  "passed": 73,
+  "failed": 1,
+  "elapsedMs": 22751,
   "results": [
     {
       "name": "emptyDoc",
@@ -583,8 +583,19 @@
     },
     {
       "name": "ref_note_from_empty_voice_csharp",
-      "ok": true,
-      "failures": [],
+      "ok": false,
+      "failures": [
+        {
+          "kind": "assertion",
+          "name": "set-reference-note captured; (q,r) gives 12-TET pitch class C# (=1)",
+          "detail": "no set-reference-note captured; types="
+        },
+        {
+          "kind": "assertion",
+          "name": "chosen (q,r) is closest to origin by taxicab among C# candidates",
+          "detail": "TypeError: Cannot read properties of undefined (reading 'q')\n    at <anonymous>:6:35\n    at <anonymous>:13:9\n    at <anonymous>:15:9"
+        }
+      ],
       "counts": {
         "invariants": 8
       }

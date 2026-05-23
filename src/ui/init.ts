@@ -58,6 +58,7 @@ import { ensurePedalHud, setPedalHudVisible } from './pedalHud.js';
 import { SampleEngine } from '../audio/samples.js';
 import { applyToolbarVisibility, initToolbarSelector } from './toolbars.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
+import { initHklBridge } from '../bridge/hkl-side.js';
 import { initRecorderUI } from './recorder.js';
 
 const $ = <T extends HTMLElement>(id: string): T =>
@@ -112,8 +113,9 @@ initPiano();
 
 /* HKL ↔ Composer bridge — broadcasts held-keys for the companion composer.html
    surface, dispatches play-chord/play-score from Composer. Idempotent; safe
-   if no Composer tab is open. */
-import('../bridge/hkl-side.js').then((m) => m.initHklBridge());
+   if no Composer tab is open. Static import: the broadcast functions are
+   pulled in by effects/* fan-outs anyway, so deferring init bought nothing. */
+initHklBridge();
 
 /* lumadiag overlay: lazy build + show driven by prefs/checkbox. Hotkey
    (Shift+\) defers to a callback so the checkbox + pref stay in sync. */

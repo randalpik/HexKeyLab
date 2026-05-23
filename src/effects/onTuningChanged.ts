@@ -11,6 +11,7 @@ import { rampActiveFreqs } from '../audio/engine.js';
 import { cv, draw, invalidatePianoOutline, snapViewForOutline } from '../render/draw.js';
 import { recomputeCanvasBounds } from '../render/canvas.js';
 import { syncLumatoneColors } from '../lumatone/sync.js';
+import { broadcastAllToComposer } from '../bridge/hkl-side.js';
 import type { OutlineMode } from '../state/persistence.js';
 
 export interface TuningChangedOpts {
@@ -39,4 +40,8 @@ export function onTuningChanged(opts?: TuningChangedOpts): void {
   snapViewForOutline(outline);
   draw();
   if (colorSync) syncLumatoneColors();
+  /* Tuning shifts spelling/color for the same coords and can change which
+     cells the active outline considers valid; Composer needs all three
+     payloads refreshed. */
+  broadcastAllToComposer();
 }
