@@ -1613,3 +1613,60 @@ Migrations retained (still meaningful):
 - `src/effects/onLayoutChanged.ts` — DELETED.
 - `index.html` — seam-shift control block deleted.
 - `tools/bounds-probe/{compute-bounds,octave-consistency}.mjs` — `septimalShift` / `layoutShifts` / `qwertyTranspose` iterations replaced with uniform-only / single-refSpine logic.
+
+
+## Five-layout tuning system: rename + Pythagorean + Semiditonal (2026-05-23)
+
+**Picked**: Five-mode selector — `Equal · Ptolemaic · Pythagorean · Semiditonal · Septimal` — driven by a mode-keyed `regionInfoWithState`. Each cell's `RegionInfo` (type, aDepth, aUpper) is a pure function of `(mode, qmod3)`; the existing frequency/ratio loops apply whatever the RegionInfo dictates.
+
+Per qm column:
+- Ptolemaic `'5'`: A-d0 everywhere (5-limit base).
+- Pythagorean `'P'`: qm=0 A-d0, qm=1 A-d1-lower (+SC), qm=2 A-d1-upper (−SC). Every M3 → 81/64; every m3 → 32/27. No 5-limit ratios anywhere.
+- Semiditonal `'D'`: qm=2 A-d1-upper (−SC) only. qm=2 cells become enharmonic to their (+7,−4) 5-limit siblings — Pythagorean m3 reachable inside a band.
+- Septimal `'7'`: qm=2 B-d1-upper (current). Unchanged behavior.
+- Equal `'E'`: 12-TET early-return in frequency math; regions not consulted.
+
+Persistence values `'E' / '5' / '7'` stay (no migration); `'P'` and `'D'` are new. UI labels are descriptive (no numeric prime-limit suffixes); the conceptual names cover what numeric labels can't — "Ptolemaic" foregrounds that this is the 5-limit Ptolemaic-major tuning rather than any flexible 5-limit, and "Semiditonal" foregrounds the Pythagorean-minor-third (semiditone) coverage.
+
+**Rejected**:
+- **Migrate to descriptive slugs everywhere** (`'Pt' / 'Py' / 'Sd' / 'Sp' / 'Eq'`): would need a persistence migration, an `.hkr` parser branch, and bridge protocol bump for zero functional gain. Single-char codes stay; comments document the meaning.
+- **Three new color variant fields** (`.dl/.dd` for −SC, `.ul/.ud` for +SC) on `HueColors`: the colorTable already encodes the SC equivalence — an SC shift of `(q,r)` lands you in the cell whose hue is the SC-shifted sibling's hue. The keyColorVariant helper just looks up `computeHue(q±7·d, r∓4·d)`. No new tables.
+- **Seams on every region boundary** (full RegionInfo equality check): would draw seams between qm=0 / qm=1 / qm=2 in Pythagorean mode (three different shift profiles). User judgment was that the SC-shifted hue rotation already reads as the column boundary; adding seams on top is visual noise. Septimal stays the only mode that emits A↔B seams — the (subtle) septimal hue overlay benefits from the seam, the (more prominent) SC hue rotation does not.
+- **Mode-specific analysis labels**: not needed. The chord classifier in `tuning/chords.ts` is already prime-content-based (`hasFive` / `hasSeven` → prefix); in Pythagorean mode every triad's ratio vector is 3-limit and gets labeled "Pythagorean major triad" / "Pythagorean minor triad" without code changes. Interval naming via `tuning/intervals.ts` decomposes through the existing comma basis.
+
+**Constraint surfaced**: each mode's picker output differs because TH ranking uses mode-correct exponents. Pythagorean and Semiditonal canvas extents are larger than Ptolemaic / Septimal (1343×406 piano vs 1257×307 for refQ scan-window) because their pickers reach further along r for the SC-shifted siblings. PIANO_BOUNDS_TABLE and VALID_REF_TABLE both regenerated per-mode by the probes.
+
+**Where**:
+- `src/state/persistence.ts` — `TuningMode = 'E' | '5' | 'P' | 'D' | '7'`.
+- `src/state/tuning.ts` — adds `mode: TuningMode` as canonical source; `equalEnabled` / `septimalEnabled` kept as derived booleans.
+- `src/tuning/regions.ts` — mode-switched `regionInfoWithState`; new `modeHasShifts` helper.
+- `src/tuning/{frequency,ratios}.ts` — gates flipped from `septimalEnabled` to `modeHasShifts(mode)`.
+- `src/render/colors.ts` — new `keyColorVariant(q, r)` helper. For SC-only shifts (type='A', aDepth>0) computes hue at SC-shifted sibling coords; B-region keeps existing warm-shift variants.
+- `src/render/{draw,info}.ts` — call sites switched to `keyColorVariant`; seam gate is `tuning.mode === '7'` (A↔B only).
+- `src/render/{canvas,refbounds-table}.ts` — bucket tables now `Record<TuningMode, …>`, regenerated.
+- `src/ui/controls.ts` — `setTuning` sets `tuning.mode` and derives flags; revalidates ref on any mode change.
+- `src/bridge/hkl-side.ts`, `src/recording/{snapshot,hkr}.ts` — descriptors and snapshot serialization updated.
+- `index.html` — five-option selector with conceptual labels.
+- `tools/bounds-probe/{compute-bounds,compute-refbounds}.mjs` — iterate full TuningMode set.
+
+## Future-layout sketches (deferred from 2026-05-23)
+
+Ideas examined while landing the five-layout system, not pursued now but worth recording so we don't re-derive them later.
+
+### Two-B-column Septimal variant
+
+Adjacent to current Septimal in the design space: put **both qm=1 and qm=2 in region B** (`B-d1-lower` and `B-d1-upper` respectively, or some other combination) while keeping qm=0 as the 5-limit / Pythagorean spine. The current uniform Septimal trades 5-limit minor for 7-limit access through qm=2 alone; a two-B-column variant would retain qm=1's 5-limit major-third access while opening *two* septimal lineages relative to the root — useful for septimal voice leading that needs more than one B-cell reachable in a band.
+
+Concretely: qm=1 becomes some B-region (likely `B-d1-lower` mirroring qm=2's `B-d1-upper`, so its septimal-comma direction is opposite — gives 9/7 or similar where qm=2 gives 7/4 / 7/6 / 7/9). The 5-limit M3 in qm=1 is lost, but the surrounding 5-limit context survives via qm=0 chains. 5-limit minor (10:12:15) is still lost as in current Septimal.
+
+Open question: which exact `B-d?-?` profile for qm=1 produces the most useful septimal coverage. Worth a small notebook session.
+
+### 49-limit / deep septimal (`aDepth = 2`)
+
+Bump some column's `aDepth` from 1 to 2, surfacing 49-limit relations like 49/32 (`7^2 / 2^5`) and 49/48. Closest to Septimal's spirit but harmonically denser. The frequency / ratio math already handles arbitrary aDepth — only the region rule and the probe inputs need extending. Could live as "Septimal+" alongside the uniform variant.
+
+### Out-of-scope (recorded so we don't accidentally re-evaluate)
+
+- **Meantone family** (tempers r-axis fifth itself rather than redistributing commas across qm). Architecturally orthogonal — needs a `fifthTemperingCents` dimension. Interesting as a historical study layer but a different axis of variation than the qm-shift layouts.
+- **11-limit / 13-limit**: lattice has no third axis; would need a comma-equivalence trick analogous to how Septimal collapses 7 onto qm=2.
+- **Adaptive JI**: real-time tuning machinery already exists (audio-engine ramps), but out of scope for static-layout switching.

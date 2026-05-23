@@ -8,7 +8,7 @@ Max Randal. Music theorist, software engineer, and Lumatone player. Builds HKL a
 
 ## What HexKeyLab is
 
-A browser-based visualizer, audio engine, and Lumatone controller for hexagonal isomorphic keyboards with arbitrary tuning systems (currently 5-limit JI, 7-limit JI, and 12-TET). It does seven things:
+A browser-based visualizer, audio engine, and Lumatone controller for hexagonal isomorphic keyboards with arbitrary tuning systems (currently Equal, Ptolemaic, Pythagorean, Semiditonal, and Septimal — see Tuning modes below). It does seven things:
 
 1. **Visualizes** the hex lattice with band/seam structure, color-coded by tuning system
 2. **Plays audio** through sample-based instruments (piano, organs, strings, etc.) and oscillators with proper JI tuning
@@ -68,11 +68,23 @@ These are non-negotiable constraints. Always respect them.
 
 ### Tuning modes (`TuningMode` in `state/persistence.ts`)
 
-- **`'E'`** — 12-TET.
-- **`'5'`** — 5-limit JI. **Default**.
-- **`'7'`** — 7-limit JI, **uniform septimal**. Every qm=2 cell (`((q%3)+3)%3 === 2`) is region B with `aDepth=1, aUpper=true`; qm=0 and qm=1 are A-d0. Pure function of qmod3 — fully key-symmetric. Every qm=0 Pythagorean-spine cell has its harmonic 7th (7/4) exactly two rows up in qm=2 of the same r. Dominant 7 = 4:5:6:7 and half-dim 7 = 5:6:7:9 reachable everywhere. 5-limit minor (10:12:15) is the one musical loss; use `'5'` when you want it.
+`TuningMode = 'E' | '5' | 'P' | 'D' | '7'`. Selector displays them in this order with conceptual labels: **Equal · Ptolemaic · Pythagorean · Semiditonal · Septimal**. Persistence values stay the original `'E'/'5'/'7'` plus new `'P'/'D'` so old prefs and `.hkr` recordings load unchanged.
 
-There is no `septimalMode` or `septimalShift` state — uniform is the only 7-limit mode. Persistence validation: any unrecognized `tuning` value reverts to the `'5'` default.
+The canonical source of truth is `tuning.mode`; `tuning.equalEnabled` and `tuning.septimalEnabled` are derived booleans (true exactly when `mode === 'E'` / `'7'`) kept in lockstep by `setTuning()`. Sites that only ask "is this Equal?" or "is this Septimal?" continue to work via the flags; new sites use `tuning.mode` directly.
+
+Per qm column (`qmod3 = ((q%3)+3)%3`):
+
+- **`'E'`** Equal — 12-TET. Frequency uses the 12-TET formula directly; regions not consulted.
+- **`'5'`** Ptolemaic *(default)* — 5-limit JI base. All cells A-d0.
+- **`'P'`** Pythagorean — qm=1 cells get +SC shift (A-d1-lower), qm=2 cells get −SC shift (A-d1-upper). Every M3 = 81/64, every m3 = 32/27. No 5-limit ratios anywhere. Mostly a study layout (5-limit M3s preferred in practice).
+- **`'D'`** Semiditonal — qm=2 cells get −SC shift (A-d1-upper) only. qm=2 cells become enharmonic to their (+7, −4) 5-limit siblings, so the Pythagorean minor third (32/27) is reachable in qm=2 inside a band — much more compact than reaching to a distant 5-limit cell. 5-limit minor (10:12:15) is the trade.
+- **`'7'`** Septimal — qm=2 cells are B-region (B-d1-upper: −SC + 63/64). Every qm=0 Pythag-spine cell has its harmonic 7th (7/4) exactly two rows up in qm=2 of the same r. Dominant 7 = 4:5:6:7 and half-dim 7 = 5:6:7:9 reachable everywhere. 5-limit minor (10:12:15) is the trade — minor becomes Pythagorean (32:27, via qm=0) or septimal subminor (7:6, via qm=2).
+
+All shift dispatch lives in `src/tuning/regions.ts:regionInfoWithState` (3-line switch on `mode`). Frequency / ratio math is mode-agnostic — they apply whatever RegionInfo they're handed via `aDepth`/`aUpper`/`type`. Persistence validation: any unrecognized `tuning` value reverts to the `'5'` default.
+
+**Coloring**: SC-shifted cells (Pythagorean qm=1/qm=2, Semiditonal qm=2) reuse the colorTable via the SC equivalence — `lookupHue(q + 7·d, r − 4·d)` for −SC, `(−7, +4)` for +SC. An SC shift in (q,r) lands you on the cell whose hue is the SC sibling (purple → teal etc.). No new HueColors variants needed. Septimal qm=2 keeps its existing `.sl`/`.sd` warm-shifted variants. Helper: `keyColorVariant(q, r)` in `src/render/colors.ts`.
+
+**Seams**: only A↔B boundaries draw seams — i.e. only Septimal mode emits region seams. Pure-SC-shift modes (Pythagorean, Semiditonal) signal their column boundaries through the hue rotation alone; adding seams on top would be redundant noise. Septimal stays the only mode with the full visual treatment (warm-shift hue + seam).
 
 ### Ref-driven layout shift (`refSpine` in `src/tuning/refspine.ts`)
 

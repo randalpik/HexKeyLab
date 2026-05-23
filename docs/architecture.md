@@ -63,13 +63,17 @@ The keyboard is divided into **3-key-wide bands** along the q-axis:
 
 ### 2.3 Tuning modes
 
-`TuningMode = '5' | '7' | 'E'` in `src/state/persistence.ts`. Dropdown exposes all three options (`Equal / 5-limit / 7-limit`).
+`TuningMode = 'E' | '5' | 'P' | 'D' | '7'` in `src/state/persistence.ts`. Dropdown exposes five options in this order: **Equal · Ptolemaic · Pythagorean · Semiditonal · Septimal**.
 
-| Mode | `septimalEnabled` | Description |
-|---|---|---|
-| `'E'` | false | 12-TET — pure equal temperament. |
-| `'5'` *(default)* | false | 5-limit JI, banded as above. |
-| `'7'` | true | Uniform septimal (§2.4). Region rule is `qmod3`-only and key-symmetric. |
+Each cell's tuning offset is encoded by a `RegionInfo = {type: 'A'|'B', aDepth: number, aUpper: boolean}`. The frequency math applies whatever the RegionInfo dictates: `aDepth > 0` multiplies by `(80/81)^d` (aUpper=true → lower pitch) or `(81/80)^d` (aUpper=false → raise pitch); `type='B'` additionally multiplies by `63/64`. All five layouts are pure functions of `(mode, qmod3)` via `src/tuning/regions.ts:regionInfoWithState`:
+
+| Mode | qm=0 | qm=1 | qm=2 | What it produces |
+|---|---|---|---|---|
+| `'E'` Equal | (12-TET; regions not consulted) | | | Pure equal temperament. |
+| `'5'` Ptolemaic *(default)* | A-d0 | A-d0 | A-d0 | 5-limit JI base. Full 5-limit major + minor. |
+| `'P'` Pythagorean | A-d0 | A-d1-lower (+SC) | A-d1-upper (−SC) | Every M3 = 81/64, every m3 = 32/27. No 5-limit ratios anywhere. |
+| `'D'` Semiditonal | A-d0 | A-d0 | A-d1-upper (−SC) | 5-limit major from qm=0+qm=1; Pythagorean minor (32/27) reachable in qm=2 inside a band. |
+| `'7'` Septimal | A-d0 | A-d0 | B-d1-upper (−SC + 63/64) | Uniform 7-limit (§2.4). |
 
 Persistence is back-compat-free: any unrecognized `tuning` value in `localStorage.hkl.prefs.v1` reverts to the `'5'` default. Any unrecognized scalar pref does the same; any unrecognized pref key is dropped.
 
@@ -87,6 +91,16 @@ Every cell with `qmod3 === 2` is region B with `(aDepth=1, aUpper=true)`. Every 
 
 Frequency formula for `'7'` mode is the standard 5-limit formula times `(63/64)^[qm===2]`. Implemented by `regionInfoWithState` returning B-d1-upper for qm=2 cells; the frequency builder in `tuning/frequency.ts` applies the standard region math.
 
+### 2.4a Semiditonal (`'D'`) and Pythagorean (`'P'`) — pure-SC-shift layouts
+
+These two modes shift cell pitches by ±1 syntonic comma without invoking the septimal comma. Semiditonal shifts qm=2 by −SC: qm=2 cells become enharmonic to their (+7, −4) 5-limit siblings, so the Pythagorean minor third (32/27) is reachable in qm=2 of the same band as the qm=0 root — playable as a compact band-local figure rather than reaching to a distant 5-limit cell. The trade is the same as Septimal: 5-limit minor (10:12:15) is unreachable in `'D'`, replaced by Pythagorean minor (54:64:81).
+
+Pythagorean adds a +SC shift to qm=1 on top, replacing the 5-limit M3 (5/4) with the Pythagorean M3 (81/64). Every M3 and m3 in `'P'` is Pythagorean; no 5-limit ratios remain anywhere. Primarily a study layout — 5-limit M3s are musically preferred — but useful for examining Pythagorean voice leading symmetrically across major and minor.
+
+**Coloring**: qm=2 cells in `'D'` and `'P'` (and qm=1 cells in `'P'`) are colored as the SC-shifted sibling — `lookupHue(q + 7·d, r − 4·d)` for the −SC case, `(q − 7·d, r + 4·d)` for the +SC case. The colorTable already encodes this equivalence (an SC shift takes PU→TE around the warm cycle), so no new variant fields are needed; the existing `.l`/`.d` are sourced from the shifted coords via `keyColorVariant` in `src/render/colors.ts`.
+
+**Seams**: only A↔B seams are drawn. Pure-SC-shift modes signal their column boundaries through the hue rotation alone (purple → teal etc.); adding seams on top would be redundant noise, especially in Pythagorean where every qm boundary differs in shift profile. Septimal stays the only mode that emits region seams.
+
 ### 2.5 Frequency formulas
 
 **5-limit**:
@@ -98,7 +112,7 @@ where:
 A3 (220 Hz) at (0, 0): bandOf=0, posInBand=1
 ```
 
-**7-limit** (`'7'`): same base, with region adjustments per §2.4.
+**Mode region adjustments** (`'P'`, `'D'`, `'7'`): same base, with the RegionInfo-driven multiplications per §2.3 — `aDepth>0` adds `(80/81)^d` or `(81/80)^d`; `type='B'` additionally adds `63/64`.
 
 **Equal temperament**:
 ```
@@ -236,7 +250,7 @@ Determined by 12-TET equivalent pitch class `(57 + 4q + 7r) % 12`:
 
 **Row 2**: Tuning selector | Transpose controls | Audio + Instrument | Clear | Lumatone status panel | Recording controls | Reset prefs.
 
-- **Tuning selector**: dropdown {Equal, 5-limit, 7-limit}. Sets `tuning.equalEnabled` / `tuning.septimalEnabled`, ramps audio.
+- **Tuning selector**: dropdown {Equal, Ptolemaic, Pythagorean, Semiditonal, Septimal}. Sets `tuning.mode` (and derives `tuning.equalEnabled` / `tuning.septimalEnabled` for legacy call sites); ramps audio.
 - **Outline selector**: dropdown {Lumatone, QWERTY, Piano, None}. Selects which footprint outline is drawn; the lattice slides via refSpine (Lumatone/QWERTY/None) or via piano-viewport math (Piano). Use Ctrl+click on any hex to set the ref note, which drives layout positioning (§2.8).
 - **Transpose**: 5-axis ▲/▼ stacks (P5, M3, m3, P8, SC) always visible. Key-repeat 400ms initial / 80ms subsequent. NB: this is for selection transposition; layout positioning is via ref note.
 - **Audio**: toggle + instrument/waveform selector. Piano default. Samples lazy-load on first selection with blue "loading…" state.

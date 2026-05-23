@@ -75,23 +75,43 @@ for (const row of qwertyRows) {
 }
 
 // ── tuning math (mirrors src/tuning/{ratios,regions}.ts) ───────────────────
+const TUNING_MODES = ['E', '5', 'P', 'D', '7'];
+
 const bandOf = (q) => Math.floor((q + 1) / 3);
 const posInBand = (q) => (((q + 1) % 3) + 3) % 3;
 
-/* Uniform septimal: qm=2 cells are B-d1-upper, all others A-d0. */
-function regionInfo(q, _r, septimalEnabled) {
-  if (!septimalEnabled) return { type: 'A', aDepth: 0, aUpper: false };
+const A_D0 = { type: 'A', aDepth: 0, aUpper: false };
+const A_D1_UPPER = { type: 'A', aDepth: 1, aUpper: true };
+const A_D1_LOWER = { type: 'A', aDepth: 1, aUpper: false };
+const B_D1_UPPER = { type: 'B', aDepth: 1, aUpper: true };
+
+function regionInfo(q, _r, mode) {
   const qm = ((q % 3) + 3) % 3;
-  if (qm === 2) return { type: 'B', aDepth: 1, aUpper: true };
-  return { type: 'A', aDepth: 0, aUpper: false };
+  switch (mode) {
+    case 'E':
+    case '5':
+      return A_D0;
+    case 'D':
+      return qm === 2 ? A_D1_UPPER : A_D0;
+    case 'P':
+      return qm === 2 ? A_D1_UPPER : qm === 1 ? A_D1_LOWER : A_D0;
+    case '7':
+      return qm === 2 ? B_D1_UPPER : A_D0;
+    default:
+      throw new Error('unknown mode: ' + mode);
+  }
 }
 
-function jiExps(q1, r1, q2, r2, septimalEnabled) {
+function modeHasShifts(mode) {
+  return mode === 'P' || mode === 'D' || mode === '7';
+}
+
+function jiExps(q1, r1, q2, r2, mode) {
   const db = bandOf(q2) - bandOf(q1), dp = posInBand(q2) - posInBand(q1), dr = r2 - r1;
   let e2 = db - 2 * dp - dr, e3 = dr, e5 = dp, e7 = 0;
-  if (septimalEnabled) {
-    const ri1 = regionInfo(q1, r1, true);
-    const ri2 = regionInfo(q2, r2, true);
+  if (modeHasShifts(mode)) {
+    const ri1 = regionInfo(q1, r1, mode);
+    const ri2 = regionInfo(q2, r2, mode);
     const applyAdj = (ri, sign) => {
       if (ri.aDepth > 0) {
         const d = ri.aDepth;
@@ -117,7 +137,7 @@ function tenney(e) {
 }
 
 /** Mirrors compute88PianoCoords in src/render/draw.ts. */
-function pianoCells(refQ, refR, septimalEnabled = false) {
+function pianoCells(refQ, refR, mode = '5') {
   const PROJ_PER_OCT = 7 * 3 - 4 * 0;
   const refMidi = 57 + 4 * refQ + 7 * refR;
   const cells = [];
@@ -130,7 +150,7 @@ function pianoCells(refQ, refR, septimalEnabled = false) {
     for (let k = -20; k <= 20; k++) {
       const q = q0 + 7 * k;
       const r = (N - 4 * q) / 7;
-      const th = tenney(jiExps(refQ, refR, q, r, septimalEnabled));
+      const th = tenney(jiExps(refQ, refR, q, r, mode));
       const absNProj = Math.abs(7 * (q - refQ) - 4 * (r - refR) - projTarget);
       if (!found || th < bestTh || (th === bestTh && absNProj < bestAbsNProj)) {
         bestTh = th; bestAbsNProj = absNProj; bestQ = q; bestR = r; found = true;
@@ -175,7 +195,7 @@ function pianoViewCenter(refQ, refR, m64Q, m64R, tilt) {
   ];
 }
 
-function pianoPoints(tilt, septimalEnabled) {
+function pianoPoints(tilt, mode) {
   const pts = [];
   const REFR_MIN = -3, REFR_MAX = 3;
   function accum(cells, refQ, refR) {
@@ -185,21 +205,21 @@ function pianoPoints(tilt, septimalEnabled) {
   }
   for (let refQ = 0; refQ <= 2; refQ++) {
     for (let refR = REFR_MIN; refR <= REFR_MAX; refR++) {
-      accum(pianoCells(refQ, refR, septimalEnabled), refQ, refR);
+      accum(pianoCells(refQ, refR, mode), refQ, refR);
     }
   }
   return pts;
 }
 
-function nonePoints(tilt, septimalEnabled) {
-  return [...lumatonePoints(tilt), ...qwertyPoints(tilt), ...pianoPoints(tilt, septimalEnabled)];
+function nonePoints(tilt, mode) {
+  return [...lumatonePoints(tilt), ...qwertyPoints(tilt), ...pianoPoints(tilt, mode)];
 }
 
 const OUTLINE_GENERATORS = {
   lumatone: (tilt) => lumatonePoints(tilt),
   qwerty: (tilt) => qwertyPoints(tilt),
-  piano: (tilt, septEnabled) => pianoPoints(tilt, septEnabled),
-  none: (tilt, septEnabled) => nonePoints(tilt, septEnabled),
+  piano: (tilt, mode) => pianoPoints(tilt, mode),
+  none: (tilt, mode) => nonePoints(tilt, mode),
 };
 
 // ── canvas metrics (mirrors src/render/canvas.ts) ──────────────────────────
@@ -228,7 +248,15 @@ function canvasMetrics(b) {
 const outlines = ['lumatone', 'qwerty', 'piano', 'none'];
 const rotationNames = ['verticalFreq', 'lumatone', 'piano'];
 
-function printMatrix(septEnabled, label) {
+const MODE_LABEL = {
+  'E': 'Equal',
+  '5': 'Ptolemaic',
+  'P': 'Pythagorean',
+  'D': 'Semiditonal',
+  '7': 'Septimal',
+};
+
+function printMatrix(mode, label) {
   console.log(`\n${label} — kbMinW × CH (kbOffY=0):\n`);
   const colW = 15;
   console.log('              ' + outlines.map((o) => o.padEnd(colW)).join(''));
@@ -237,28 +265,48 @@ function printMatrix(septEnabled, label) {
     const tilt = ROTATIONS[rotName];
     let row = rotName.padEnd(14);
     for (const outline of outlines) {
-      const m = canvasMetrics(bbox(OUTLINE_GENERATORS[outline](tilt, septEnabled)));
+      const m = canvasMetrics(bbox(OUTLINE_GENERATORS[outline](tilt, mode)));
       row += `${m.kbMinW}×${m.CH}`.padEnd(colW);
     }
     console.log(row);
   }
 }
-printMatrix(false, '5-limit / 12-TET');
-printMatrix(true, '7-limit (uniform septimal)');
+
+/* Collect piano metrics so we can emit the PIANO_BOUNDS_TABLE block ready
+   to paste into src/render/canvas.ts. Lumatone/QWERTY are mode-independent
+   for canvas extent (the only tuning-sensitive outline is piano). */
+const pianoMetrics = {};
+for (const mode of TUNING_MODES) {
+  pianoMetrics[mode] = {};
+  for (const rotName of rotationNames) {
+    const tilt = ROTATIONS[rotName];
+    pianoMetrics[mode][rotName] = canvasMetrics(bbox(OUTLINE_GENERATORS.piano(tilt, mode)));
+  }
+}
+
+for (const mode of TUNING_MODES) {
+  printMatrix(mode, `${mode} — ${MODE_LABEL[mode]}`);
+}
+
+console.log('\nPIANO_BOUNDS_TABLE block for src/render/canvas.ts:\n');
+console.log('const PIANO_BOUNDS_TABLE: Record<RotationMode, Record<TuningMode, CanvasMetrics>> = {');
+for (const rotName of rotationNames) {
+  const entries = TUNING_MODES.map((m) => {
+    const x = pianoMetrics[m][rotName];
+    return `    '${m}': { kbMinW: ${x.kbMinW}, CH: ${x.CH} }`;
+  }).join(',\n');
+  console.log(`  ${rotName}: {\n${entries},\n  },`);
+}
+console.log('};');
 
 console.log('\nPiano cell span relative to refNote (sanity check, refR=0):');
-console.log('  5-limit (per refQ ∈ {0,1,2}):');
-for (let refQ = 0; refQ <= 2; refQ++) {
-  const pc = pianoCells(refQ, 0, false);
-  const rel = pc.map(([q, r]) => [q - refQ, r]);
-  const qs = rel.map((c) => c[0]), rs = rel.map((c) => c[1]);
-  console.log(`    refQ=${refQ}  q ∈ [${Math.min(...qs)}, ${Math.max(...qs)}]  r ∈ [${Math.min(...rs)}, ${Math.max(...rs)}]`);
-}
-console.log('  7-limit (per refQ ∈ {0,1,2}):');
-for (let refQ = 0; refQ <= 2; refQ++) {
-  const pc = pianoCells(refQ, 0, true);
-  const rel = pc.map(([q, r]) => [q - refQ, r]);
-  const qs = rel.map((c) => c[0]), rs = rel.map((c) => c[1]);
-  console.log(`    refQ=${refQ}  q ∈ [${Math.min(...qs)}, ${Math.max(...qs)}]  r ∈ [${Math.min(...rs)}, ${Math.max(...rs)}]`);
+for (const mode of TUNING_MODES) {
+  console.log(`  ${MODE_LABEL[mode]} (per refQ ∈ {0,1,2}):`);
+  for (let refQ = 0; refQ <= 2; refQ++) {
+    const pc = pianoCells(refQ, 0, mode);
+    const rel = pc.map(([q, r]) => [q - refQ, r]);
+    const qs = rel.map((c) => c[0]), rs = rel.map((c) => c[1]);
+    console.log(`    refQ=${refQ}  q ∈ [${Math.min(...qs)}, ${Math.max(...qs)}]  r ∈ [${Math.min(...rs)}, ${Math.max(...rs)}]`);
+  }
 }
 console.log('');

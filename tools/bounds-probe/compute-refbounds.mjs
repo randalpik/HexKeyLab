@@ -1,10 +1,14 @@
 // Valid-ref-bounds probe for HKL.
 //
 // Computes the static set of (q, r) reference-note candidates that pass the
-// ±3-accidental check across the full 88-cell picker footprint, per tuning
-// bucket:
-//   • '5' — 5-limit + 12-TET (jiRatio identical when septimalEnabled=false)
-//   • '7' — 7-limit uniform septimal (qm=2 cells all B-d1-upper)
+// ±3-accidental check across the full 88-cell picker footprint, one bucket
+// per tuning mode:
+//   • 'E' — Equal (12-TET; jiRatio identical to Ptolemaic when there are
+//          no region shifts).
+//   • '5' — Ptolemaic (5-limit JI base).
+//   • 'P' — Pythagorean (qm=1 +SC, qm=2 −SC).
+//   • 'D' — Semiditonal (qm=2 −SC only).
+//   • '7' — Septimal (qm=2 B-region: −SC + 63/64).
 //
 // Emits src/render/refbounds-table.ts. Re-run when:
 //   • src/render/draw.ts compute88PianoCoords (picker / tiebreak) changes,
@@ -28,23 +32,44 @@ import { dirname, join } from 'path';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..');
 
+const TUNING_MODES = ['E', '5', 'P', 'D', '7'];
+
 // ── tuning math (mirrors src/tuning/{ratios,regions}.ts) ───────────────────
 const bandOf = (q) => Math.floor((q + 1) / 3);
 const posInBand = (q) => (((q + 1) % 3) + 3) % 3;
 
-function regionInfo(q, _r, septimalEnabled) {
-  if (!septimalEnabled) return { type: 'A', aDepth: 0, aUpper: false };
+const A_D0 = { type: 'A', aDepth: 0, aUpper: false };
+const A_D1_UPPER = { type: 'A', aDepth: 1, aUpper: true };
+const A_D1_LOWER = { type: 'A', aDepth: 1, aUpper: false };
+const B_D1_UPPER = { type: 'B', aDepth: 1, aUpper: true };
+
+function regionInfo(q, _r, mode) {
   const qm = ((q % 3) + 3) % 3;
-  if (qm === 2) return { type: 'B', aDepth: 1, aUpper: true };
-  return { type: 'A', aDepth: 0, aUpper: false };
+  switch (mode) {
+    case 'E':
+    case '5':
+      return A_D0;
+    case 'D':
+      return qm === 2 ? A_D1_UPPER : A_D0;
+    case 'P':
+      return qm === 2 ? A_D1_UPPER : qm === 1 ? A_D1_LOWER : A_D0;
+    case '7':
+      return qm === 2 ? B_D1_UPPER : A_D0;
+    default:
+      throw new Error('unknown mode: ' + mode);
+  }
 }
 
-function jiExps(q1, r1, q2, r2, septimalEnabled) {
+function modeHasShifts(mode) {
+  return mode === 'P' || mode === 'D' || mode === '7';
+}
+
+function jiExps(q1, r1, q2, r2, mode) {
   const db = bandOf(q2) - bandOf(q1), dp = posInBand(q2) - posInBand(q1), dr = r2 - r1;
   let e2 = db - 2 * dp - dr, e3 = dr, e5 = dp, e7 = 0;
-  if (septimalEnabled) {
-    const ri1 = regionInfo(q1, r1, true);
-    const ri2 = regionInfo(q2, r2, true);
+  if (modeHasShifts(mode)) {
+    const ri1 = regionInfo(q1, r1, mode);
+    const ri2 = regionInfo(q2, r2, mode);
     const applyAdj = (ri, sign) => {
       if (ri.aDepth > 0) {
         const d = ri.aDepth;
@@ -68,7 +93,7 @@ function tenney(e) {
 }
 
 /** Mirrors compute88PianoCoords in src/render/draw.ts. */
-function pianoCells(refQ, refR, septimalEnabled) {
+function pianoCells(refQ, refR, mode) {
   const PROJ_PER_OCT = 7 * 3 - 4 * 0;
   const refMidi = 57 + 4 * refQ + 7 * refR;
   const cells = [];
@@ -81,7 +106,7 @@ function pianoCells(refQ, refR, septimalEnabled) {
     for (let k = -20; k <= 20; k++) {
       const q = q0 + 7 * k;
       const r = (N - 4 * q) / 7;
-      const th = tenney(jiExps(refQ, refR, q, r, septimalEnabled));
+      const th = tenney(jiExps(refQ, refR, q, r, mode));
       const absNProj = Math.abs(7 * (q - refQ) - 4 * (r - refR) - projTarget);
       if (!found || th < bestTh || (th === bestTh && absNProj < bestAbsNProj)) {
         bestTh = th; bestAbsNProj = absNProj; bestQ = q; bestR = r; found = true;
@@ -159,22 +184,22 @@ function bandQRange(r) {
   return [Math.ceil((-36 - 7 * r) / 4), Math.floor((51 - 7 * r) / 4)];
 }
 
-function validRef(q, r, septimalEnabled) {
+function validRef(q, r, mode) {
   const midi = 57 + 4 * q + 7 * r;
   if (midi < 21 || midi > 108) return false;
-  const cells = pianoCells(q, r, septimalEnabled);
+  const cells = pianoCells(q, r, mode);
   for (const [cq, cr] of cells) {
     if (Math.abs(accToVal(parseNote(noteName(cq, cr)).acc)) > 3) return false;
   }
   return true;
 }
 
-function scanValid(septimalEnabled) {
+function scanValid(mode) {
   const cells = [];
   for (let r = VALID_REF_SCAN_R_MIN; r <= VALID_REF_SCAN_R_MAX; r++) {
     const [qLo, qHi] = bandQRange(r);
     for (let q = qLo; q <= qHi; q++) {
-      if (validRef(q, r, septimalEnabled)) cells.push([q, r]);
+      if (validRef(q, r, mode)) cells.push([q, r]);
     }
   }
   return cells;
@@ -194,35 +219,45 @@ function fmtCellsByRow(cells) {
   }).join('\n');
 }
 
-console.time('probe');
-const v5 = scanValid(false);
-const v7 = scanValid(true);
-console.timeEnd('probe');
-console.log(`V5 (5-limit / 12-TET): ${v5.length} valid refs`);
-console.log(`V7 (7-limit uniform):  ${v7.length} valid refs`);
+const MODE_DESC = {
+  'E': 'Equal (12-TET)',
+  '5': 'Ptolemaic (5-limit base)',
+  'P': 'Pythagorean',
+  'D': 'Semiditonal',
+  '7': 'Septimal (uniform)',
+};
 
-const out = `// Precomputed valid-reference-note coordinate sets per tuning bucket.
+console.time('probe');
+const cellsByMode = {};
+for (const m of TUNING_MODES) {
+  cellsByMode[m] = scanValid(m);
+  console.log(`${m} (${MODE_DESC[m]}): ${cellsByMode[m].length} valid refs`);
+}
+console.timeEnd('probe');
+
+const bucketBlocks = TUNING_MODES.map((m) => `  '${m}': [
+${fmtCellsByRow(cellsByMode[m])}
+  ],`).join('\n');
+
+const out = `// Precomputed valid-reference-note coordinate sets per tuning mode.
 //
 // GENERATED by tools/bounds-probe/compute-refbounds.mjs — DO NOT EDIT BY HAND.
 //
-// Bucket '5' covers 5-limit AND 12-TET (jiRatio is identical when
-// septimalEnabled is false). Bucket '7' covers 7-limit uniform septimal.
-// The sets feed the dotted "Valid ref bounds" overlay; src/render/draw.ts
-// rebuilds the Set<KeyId> and outline polygons from this table at module
-// load. Re-run the probe when:
+// One bucket per TuningMode value (Equal / Ptolemaic / Pythagorean /
+// Semiditonal / Septimal). Each bucket lists the (q, r) cells whose 88-cell
+// piano footprint spells with ≤ ±3 accidentals under that mode's region
+// rules. src/render/draw.ts rebuilds the Set<KeyId> and outline polygons
+// from this table at module load. Re-run the probe when:
 //   • src/render/draw.ts compute88PianoCoords changes,
 //   • src/tuning/ratios.ts or src/tuning/regions.ts changes,
 //   • src/tuning/notes.ts (accidental spelling) changes,
 //   • the ±3-accidental rule in validateRefNoteCandidate changes, or
 //   • the scan range in tools/bounds-probe/compute-refbounds.mjs changes.
 
-export const VALID_REF_TABLE: Record<'5' | '7', ReadonlyArray<readonly [number, number]>> = {
-  '5': [
-${fmtCellsByRow(v5)}
-  ],
-  '7': [
-${fmtCellsByRow(v7)}
-  ],
+import type { TuningMode } from '../state/persistence.js';
+
+export const VALID_REF_TABLE: Record<TuningMode, ReadonlyArray<readonly [number, number]>> = {
+${bucketBlocks}
 };
 `;
 

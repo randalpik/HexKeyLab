@@ -77,15 +77,17 @@ function resolveKey(q: number, r: number): ResolvedNote {
 }
 
 function tuningDescription(): string {
-  if (tuning.equalEnabled) return '12-TET';
-  if (tuning.septimalEnabled) return '7-limit JI';
-  return '5-limit JI';
+  switch (tuning.mode) {
+    case 'E': return 'Equal (12-TET)';
+    case '5': return 'Ptolemaic JI';
+    case 'P': return 'Pythagorean JI';
+    case 'D': return 'Semiditonal JI';
+    case '7': return 'Septimal JI';
+  }
 }
 
 function tuningMode(): string {
-  if (tuning.equalEnabled) return 'E';
-  if (tuning.septimalEnabled) return '7';
-  return '5';
+  return tuning.mode;
 }
 
 /* ── held-keys polling ───────────────────────────────────────────────────── */

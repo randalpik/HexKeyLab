@@ -20,7 +20,8 @@ import { view } from '../state/view.js';
 import { selection, type DrawnKey } from '../state/selection.js';
 import { audio } from '../state/audio.js';
 import { referenceNote } from '../state/reference.js';
-import { whiteSet, hueC, computeHue } from './colors.js';
+import type { TuningMode } from '../state/persistence.js';
+import { whiteSet, hueC, computeHue, keyColorVariant } from './colors.js';
 import { sizeCanvas, getVisibleRange, computePianoViewCenter } from './canvas.js';
 import { animation } from './animation.js';
 import { updateInfo } from './info.js';
@@ -218,17 +219,27 @@ export function invalidatePianoOutline(): void {
    precomputed offline by tools/bounds-probe/compute-refbounds.mjs and stored
    in VALID_REF_TABLE. The outline polygons are cheap to derive (edge tracing
    over the cell set); built once at module load. */
-const validRefSet5: Set<KeyId> = new Set(VALID_REF_TABLE['5'].map(([q, r]) => (q + ',' + r) as KeyId));
-const validRefSet7Uniform: Set<KeyId> = new Set(VALID_REF_TABLE['7'].map(([q, r]) => (q + ',' + r) as KeyId));
-const validRefPaths5: Point[][] = computeOutlinePaths(VALID_REF_TABLE['5']);
-const validRefPaths7Uniform: Point[][] = computeOutlinePaths(VALID_REF_TABLE['7']);
+const validRefSetByMode: Record<TuningMode, Set<KeyId>> = {
+  'E': new Set(VALID_REF_TABLE['E'].map(([q, r]) => (q + ',' + r) as KeyId)),
+  '5': new Set(VALID_REF_TABLE['5'].map(([q, r]) => (q + ',' + r) as KeyId)),
+  'P': new Set(VALID_REF_TABLE['P'].map(([q, r]) => (q + ',' + r) as KeyId)),
+  'D': new Set(VALID_REF_TABLE['D'].map(([q, r]) => (q + ',' + r) as KeyId)),
+  '7': new Set(VALID_REF_TABLE['7'].map(([q, r]) => (q + ',' + r) as KeyId)),
+};
+const validRefPathsByMode: Record<TuningMode, Point[][]> = {
+  'E': computeOutlinePaths(VALID_REF_TABLE['E']),
+  '5': computeOutlinePaths(VALID_REF_TABLE['5']),
+  'P': computeOutlinePaths(VALID_REF_TABLE['P']),
+  'D': computeOutlinePaths(VALID_REF_TABLE['D']),
+  '7': computeOutlinePaths(VALID_REF_TABLE['7']),
+};
 
 function activeValidRefSet(): Set<KeyId> {
-  return tuning.septimalEnabled ? validRefSet7Uniform : validRefSet5;
+  return validRefSetByMode[tuning.mode];
 }
 
 function activeValidRefPaths(): Point[][] {
-  return tuning.septimalEnabled ? validRefPaths7Uniform : validRefPaths5;
+  return validRefPathsByMode[tuning.mode];
 }
 
 /* For each MIDI 21..108, pick the (q, r) with `4q + 7r = midi − 57` that
@@ -366,7 +377,7 @@ let pendingTweenEnd: [number, number] | null = null;
 
 function ensurePianoOutline(): void {
   const refQ = referenceNote.q, refR = referenceNote.r;
-  const tMode = tuning.equalEnabled ? 'E' : tuning.septimalEnabled ? '7' : '5';
+  const tMode = tuning.mode;
   const key = refQ + ',' + refR + ',' + tMode;
   if (key === pianoOutlineCacheKey) return;
   pianoOutlineCacheKey = key;
@@ -693,10 +704,8 @@ function buildHexLayer(): void {
   ctx.save(); ctx.translate(gcx, gcy); ctx.rotate(-tiltAngle);
   ctx.fillStyle = '#111'; gKeys.forEach((k) => { if (k.isKb) { drawHexPath(k.ux, k.uy, hexR + 0.5); ctx.fill(); } });
   gKeys.forEach((k) => {
-    const midi = 57 + 4 * k.q + 7 * k.r; const pc = ((midi % 12) + 12) % 12; const isW = whiteSet.has(pc);
-    const mh = computeHue(k.q, k.r);
-    const inB = tuning.septimalEnabled && regionInfo(k.q, k.r).type === 'B';
-    const col = inB ? (isW ? hueC[mh].sl! : hueC[mh].sd!) : (isW ? hueC[mh].l : hueC[mh].d);
+    const v = keyColorVariant(k.q, k.r);
+    const col = v.isB ? (v.isW ? hueC[v.hue].sl! : hueC[v.hue].sd!) : (v.isW ? hueC[v.hue].l : hueC[v.hue].d);
     drawHexPath(k.ux, k.uy, hexR - 0.5); ctx.fillStyle = col; ctx.fill();
   });
   ctx.restore();
@@ -793,10 +802,8 @@ export function draw(): void {
   if (selection.hoverKey) {
     const hk = posMap[selection.hoverKey];
     if (hk) {
-      const hmidi = 57 + 4 * hk.q + 7 * hk.r; const hpc = ((hmidi % 12) + 12) % 12; const hW = whiteSet.has(hpc);
-      const hmh = computeHue(hk.q, hk.r);
-      const hInB = tuning.septimalEnabled && regionInfo(hk.q, hk.r).type === 'B';
-      const hCol = hInB ? (hW ? hueC[hmh].sl! : hueC[hmh].sd!) : (hW ? hueC[hmh].l : hueC[hmh].d);
+      const hv = keyColorVariant(hk.q, hk.r);
+      const hCol = hv.isB ? (hv.isW ? hueC[hv.hue].sl! : hueC[hv.hue].sd!) : (hv.isW ? hueC[hv.hue].l : hueC[hv.hue].d);
       drawHexPath(hk.ux, hk.uy, hexR - 0.5); ctx.fillStyle = lightenHex(hCol, 30); ctx.fill();
     }
   }
@@ -811,10 +818,8 @@ export function draw(): void {
   selection.selectedKeys.forEach((key) => {
     if (flashingSet.has(key)) return;
     const k = posMap[key]; if (!k) return;
-    const midi = 57 + 4 * k.q + 7 * k.r; const pc = ((midi % 12) + 12) % 12; const isW = whiteSet.has(pc);
-    const mh = computeHue(k.q, k.r);
-    const inB = tuning.septimalEnabled && regionInfo(k.q, k.r).type === 'B';
-    let col = inB ? (isW ? hueC[mh].sl! : hueC[mh].sd!) : (isW ? hueC[mh].l : hueC[mh].d);
+    const v = keyColorVariant(k.q, k.r);
+    let col = v.isB ? (v.isW ? hueC[v.hue].sl! : hueC[v.hue].sd!) : (v.isW ? hueC[v.hue].l : hueC[v.hue].d);
     col = lightenHex(col, 90);
     drawHexPath(k.ux, k.uy, hexR - 0.5); ctx.fillStyle = col; ctx.fill();
   });
@@ -912,9 +917,14 @@ export function draw(): void {
        allocate the lookup key only after the cheap allSet + same-band
        filters short-circuit. That cuts the string churn from
        ~12k/frame to ~5k/frame. */
-    const septOn = tuning.septimalEnabled;
-    /* Uniform septimal: regions vary along the qmod3 axis (qm=2 = B, else A);
-       route through regionInfo. */
+    /* Seams are emitted (a) at band boundaries always, and (b) at A↔B
+       boundaries when any B-region cells exist — i.e. only in Septimal
+       mode. Pure-SC-shift modes (Pythagorean, Semiditonal) signal their
+       column boundaries through the SC-shifted hue rotation alone, which
+       reads as a subtle overlay; adding seams on top would be redundant
+       visual noise (especially Pythagorean, where every qm boundary
+       would seam). */
+    const septOn = tuning.mode === '7';
     function regionParity(q: number, r: number): number {
       return regionInfo(q, r).type === 'B' ? 1 : 0;
     }

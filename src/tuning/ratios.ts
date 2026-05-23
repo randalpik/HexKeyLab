@@ -1,7 +1,7 @@
 // JI ratio computation and harmonic-tier classification.
 
 import { bandOf, posInBand } from '../layout/coords.js';
-import { regionInfoWithState } from './regions.js';
+import { regionInfoWithState, modeHasShifts } from './regions.js';
 import type { TuningStateLike } from './regions.js';
 import { tuning } from '../state/tuning.js';
 import type { JiRatio, IntervalTier, RegionInfo } from '../types.js';
@@ -26,7 +26,7 @@ export function jiRatioWithState(
 ): JiRatio {
   const db = bandOf(q2) - bandOf(q1), dp = posInBand(q2) - posInBand(q1), dr = r2 - r1;
   let e2 = db - 2 * dp - dr, e3 = dr, e5 = dp, e7 = 0;
-  if (state.septimalEnabled) {
+  if (modeHasShifts(state.mode)) {
     const ri1 = regionInfoWithState(q1, r1, state), ri2 = regionInfoWithState(q2, r2, state);
     /* apply region adjustments: ratio gets adj2/adj1 */
     const applyAdj = (ri: RegionInfo, sign: number): void => {

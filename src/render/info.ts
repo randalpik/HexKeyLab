@@ -7,12 +7,11 @@ import { keyFreq } from '../tuning/frequency.js';
 import { posInBand } from '../layout/coords.js';
 import { fmtNote, noteName, keyOctave, parseNote } from '../tuning/notes.js';
 import { jiRatio, intervalTier } from '../tuning/ratios.js';
-import { regionInfo } from '../tuning/regions.js';
 import {
   intervalName, shortenInterval, equalIntervalName, letterIdx,
 } from '../tuning/intervals.js';
 import { analyzeChord } from '../tuning/chords.js';
-import { computeHue, hueC } from './colors.js';
+import { keyColorVariant, hueC } from './colors.js';
 
 interface InfoKey {
   q: number;
@@ -54,10 +53,11 @@ export function updateInfo(): void {
   selection.selectedKeys.forEach(function (k) {
     const parts = k.split(','); const q = +parts[0], r = +parts[1];
     const f = keyFreq(q, r);
-    const inB = tuning.septimalEnabled && regionInfo(q, r).type === 'B';
-    const mh = computeHue(q, r);
-    const col = inB ? hueC[mh].sl! : hueC[mh].l;
-    keys.push({ q, r, freq: f, name: fmtNote(noteName(q, r)), oct: keyOctave(q, r), col, inB });
+    const v = keyColorVariant(q, r);
+    /* note card always picks the light variant (text-on-dark legibility),
+       but uses the warm-shifted .sl for B-region cells to signal septimal. */
+    const col = v.isB ? hueC[v.hue].sl! : hueC[v.hue].l;
+    keys.push({ q, r, freq: f, name: fmtNote(noteName(q, r)), oct: keyOctave(q, r), col, inB: v.isB });
   });
   keys.sort(function (a, b) { return a.freq - b.freq; });
 

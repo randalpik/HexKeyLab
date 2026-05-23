@@ -72,14 +72,16 @@ export function syncViewToOutline(outline: OutlineMode, immediate: boolean): voi
 }
 
 export function setTuning(): void {
-  const val = (document.getElementById('selTuning') as HTMLSelectElement).value;
-  const wasSeptimal = tuning.septimalEnabled;
+  const val = (document.getElementById('selTuning') as HTMLSelectElement).value as TuningMode;
+  const prevMode = tuning.mode;
+  tuning.mode = val;
   tuning.equalEnabled = val === 'E';
   tuning.septimalEnabled = val === '7';
-  /* Bucket switch can orphan a ref note placed in the old gate but invalid
-     in the new one. Two gates: V5 (non-septimal) and V7-uniform (7-limit).
-     5-limit ↔ 12-TET share V5 so no reset needed there. */
-  if (wasSeptimal !== tuning.septimalEnabled) {
+  /* Mode change can orphan a ref note that was valid in the old bucket but
+     not the new one (each mode has its own picker output and therefore its
+     own valid-ref set). Conservative: on any mode change, re-check the ref
+     against the new bucket and clear if invalid. */
+  if (prevMode !== val) {
     if (validateRefNoteCandidate(referenceNote.q, referenceNote.r) !== null) {
       clearRefSelection();
       savePrefs({ manualRef: undefined });
@@ -87,7 +89,7 @@ export function setTuning(): void {
   }
   onTuningChanged();
   (document.getElementById('selTuning') as HTMLSelectElement).blur();
-  savePrefs({ tuning: val as TuningMode });
+  savePrefs({ tuning: val });
 }
 
 export function applyRotation(mode: RotationMode): void {

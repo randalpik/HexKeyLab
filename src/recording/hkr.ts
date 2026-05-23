@@ -9,8 +9,8 @@ export function serializeHkr(session: HkrSession): string {
   return JSON.stringify(session, null, 2);
 }
 
-function isTuningMode(s: unknown): s is '5' | '7' | 'E' {
-  return s === '5' || s === '7' || s === 'E';
+function isTuningMode(s: unknown): s is 'E' | '5' | 'P' | 'D' | '7' {
+  return s === 'E' || s === '5' || s === 'P' || s === 'D' || s === '7';
 }
 function isPedalMode(s: unknown): s is 'sustain' | 'sostenuto' {
   return s === 'sustain' || s === 'sostenuto';

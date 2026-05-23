@@ -10,7 +10,11 @@
 const STORAGE_KEY = 'hkl.prefs.v1';
 
 export type OutlineMode = 'lumatone' | 'qwerty' | 'piano' | 'none';
-export type TuningMode = '5' | '7' | 'E';
+/* 5-mode tuning system. Numeric codes ('5', '7', 'E') retained as
+   persistence values for back-compat with existing prefs and .hkr
+   recordings; new modes use single-letter mnemonics:
+     'E' Equal · '5' Ptolemaic · 'P' Pythagorean · 'D' Semiditonal · '7' Septimal */
+export type TuningMode = 'E' | '5' | 'P' | 'D' | '7';
 export type PedalMode = 'sustain' | 'sostenuto';
 export type RotationMode = 'verticalFreq' | 'lumatone' | 'piano';
 
@@ -147,7 +151,7 @@ function isRotationMode(s: unknown): s is RotationMode {
   return s === 'verticalFreq' || s === 'lumatone' || s === 'piano';
 }
 function isTuningMode(s: unknown): s is TuningMode {
-  return s === '5' || s === '7' || s === 'E';
+  return s === 'E' || s === '5' || s === 'P' || s === 'D' || s === '7';
 }
 function isPedalMode(s: unknown): s is PedalMode {
   return s === 'sustain' || s === 'sostenuto';

@@ -12,7 +12,7 @@ import type { TuningMode } from '../state/persistence.js';
 const REF_HZ = 220;
 
 export function captureSnapshot(): LayoutSnapshot {
-  const t: TuningMode = tuning.equalEnabled ? 'E' : tuning.septimalEnabled ? '7' : '5';
+  const t: TuningMode = tuning.mode;
   return {
     tuning: t,
     septimalEnabled: tuning.septimalEnabled,
@@ -27,8 +27,7 @@ export function captureSnapshot(): LayoutSnapshot {
 /* True iff every tuning/instrument/pedal field of `s` matches live state. */
 export function snapshotMatchesLive(s: LayoutSnapshot): boolean {
   return (
-    s.septimalEnabled === tuning.septimalEnabled &&
-    s.equalEnabled === tuning.equalEnabled &&
+    s.tuning === tuning.mode &&
     s.instrument === audio.activeWaveform &&
     s.pedalMode === pedal.mode
   );
