@@ -14,8 +14,7 @@ import { midi } from '../state/midi.js';
 import { lumatone } from '../state/lumatone.js';
 import { savePrefs } from '../state/persistence.js';
 import { baseKeys } from '../layout/baseKeys.js';
-import { referenceNote } from '../state/reference.js';
-import { refSpine } from '../tuning/refspine.js';
+import { view } from '../state/view.js';
 import { keyColorHex } from '../render/colors.js';
 import {
   sysexBoardMap, fixedMidiChannelMap,
@@ -32,11 +31,11 @@ export function syncLumatoneColors(): void {
 
   /* Compute target colors for all 280 physical keys. The Lumatone outline
      is statically positioned on screen; the lattice underneath shifts by
-     refSpine of the current reference note (§ refSpine). */
-  const sp = refSpine(referenceNote.q, referenceNote.r);
+     kbAnchor (only updated by user-driven ref changes). */
+  const aQ = view.kbAnchorQ, aR = view.kbAnchorR;
   const target: string[] = [];
   for (let i = 0; i < 280; i++) {
-    const q = baseKeys[i][0] + sp.q, r = baseKeys[i][1] + sp.r;
+    const q = baseKeys[i][0] + aQ, r = baseKeys[i][1] + aR;
     target.push(keyColorHex(q, r));
   }
   if (!lumatone.deviceColors) lumatone.deviceColors = new Array<string | null>(280).fill(null);

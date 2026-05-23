@@ -31,8 +31,7 @@ import { filterPA } from '../audio/aftertouch.js';
 import { velocityCal } from '../audio/velocityCal.js';
 import { fixedMidiToKey, fixedMidiToKeyAt } from './engine.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
-import { refSpine } from '../tuning/refspine.js';
-import { referenceNote } from '../state/reference.js';
+import { view } from '../state/view.js';
 import { keyFreq } from '../tuning/frequency.js';
 import { SampleEngine } from '../audio/samples.js';
 import { animation } from '../render/animation.js';
@@ -41,20 +40,22 @@ import type { KeyId, Voice } from '../types.js';
 
 /* Set of Lumatone physical inputs currently held. Used by
    migrateHeldLumatoneVoices to find which voices to re-target when the
-   refSpine shifts under the static Lumatone outline. Format: "ch,note". */
+   kbAnchor shifts under the static Lumatone outline. Format: "ch,note". */
 const heldLumatonePhys = new Set<string>();
 export function clearHeldLumatoneTracking(): void { heldLumatonePhys.clear(); }
 export function migrateHeldLumatoneVoices(dq: number, dr: number): void {
   if (heldLumatonePhys.size === 0) return;
   if (dq === 0 && dr === 0) return;
-  const sp = refSpine(referenceNote.q, referenceNote.r);
-  const oldSpQ = sp.q - dq, oldSpR = sp.r - dr;
+  /* kbAnchor has already been advanced to its new value by the caller; back-
+     derive the old anchor from the delta. */
+  const newAQ = view.kbAnchorQ, newAR = view.kbAnchorR;
+  const oldAQ = newAQ - dq, oldAR = newAR - dr;
   const pairs: { oldKey: KeyId; newKey: KeyId }[] = [];
   heldLumatonePhys.forEach((id) => {
     const [chStr, noteStr] = id.split(',');
     const ch = +chStr, note = +noteStr;
-    const oldKey = fixedMidiToKeyAt(ch, note, oldSpQ, oldSpR);
-    const newKey = fixedMidiToKeyAt(ch, note, sp.q, sp.r);
+    const oldKey = fixedMidiToKeyAt(ch, note, oldAQ, oldAR);
+    const newKey = fixedMidiToKeyAt(ch, note, newAQ, newAR);
     if (oldKey && newKey && oldKey !== newKey) pairs.push({ oldKey, newKey });
   });
   if (pairs.length === 0) return;

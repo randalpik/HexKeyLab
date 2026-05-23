@@ -31,7 +31,6 @@ import {
 } from '../tuning/notes.js';
 import { jiRatio, tenneyHeightFromExps } from '../tuning/ratios.js';
 import { regionInfo } from '../tuning/regions.js';
-import { refSpine } from '../tuning/refspine.js';
 import { VALID_REF_TABLE } from './refbounds-table.js';
 import { isCtrlHeld } from '../ui/keyboard.js';
 import type { KeyId } from '../types.js';
@@ -328,10 +327,11 @@ export function snapViewForOutline(outline: OutlineMode): void {
     view.viewR = vR;
   } else {
     /* Lumatone/QWERTY/none modes: lattice slides under a static outline so
-       the ref's Pythag-spine cell lands at the outline's center. */
-    const sp = refSpine(referenceNote.q, referenceNote.r);
-    view.viewQ = sp.q;
-    view.viewR = sp.r;
+       the kbAnchor cell lands at the outline's center. kbAnchor is updated
+       only by user-driven ref changes, so Composer-driven changes leave the
+       physical layout untouched. */
+    view.viewQ = view.kbAnchorQ;
+    view.viewR = view.kbAnchorR;
   }
 }
 
@@ -400,7 +400,7 @@ function ensurePianoOutline(): void {
 
 /* Set of (q,r) keys covered by the active outline at the current state.
    Returns null when outline is 'none' (no clipping applies). Lumatone/qwerty
-   are the refSpine-shifted footprints; piano returns the refNote-anchored
+   are the kbAnchor-shifted footprints; piano returns the refNote-anchored
    88-cell set (no lattice shift — those cells are absolute lattice
    positions, recomputed on refNote/tuning change). */
 export function activeFootprintSet(): Set<KeyId> | null {
@@ -410,8 +410,7 @@ export function activeFootprintSet(): Set<KeyId> | null {
     ensurePianoOutline();
     return pianoFootprintSet;
   }
-  const sp = refSpine(referenceNote.q, referenceNote.r);
-  const sh: readonly [number, number] = [sp.q, sp.r];
+  const sh: readonly [number, number] = [view.kbAnchorQ, view.kbAnchorR];
   const set = new Set<KeyId>();
   if (outlineMode === 'lumatone') {
     baseKeys.forEach((k) => { set.add((k[0] + sh[0]) + ',' + (k[1] + sh[1])); });
@@ -585,21 +584,20 @@ function sizeGridCanvases(): void {
      visible canvas. View position depends on outline mode:
        piano   — viewport solved so refNote sits at screen-X center and MIDI
                  64's cell at screen-Y center (hybrid 2x2 system).
-       else    — lattice slides under a static outline so the ref's qm=0
-                 spine cell lands at the outline's center (refSpine).
+       else    — lattice slides under a static outline so kbAnchor lands at
+                 the outline's center.
      During a view tween (set up by buildHexLayerForTween via pendingTween*),
      gridRef sits at the midpoint of start→end and pad is extended by half
      the tween distance so the layer covers the union of both endpoints.
      This used to be piano-only; now it applies to Lumatone/QWERTY too,
-     since ref-driven shifts can move the view anywhere on the lattice. */
+     since kbAnchor shifts can move the view anywhere on the lattice. */
   const outlineMode = getOutlineMode();
   let vQ: number, vR: number;
   if (outlineMode === 'piano') {
     const [m64Q, m64R] = currentMidi64Cell();
     [vQ, vR] = computePianoViewCenter(referenceNote.q, referenceNote.r, m64Q, m64R);
   } else {
-    const sp = refSpine(referenceNote.q, referenceNote.r);
-    vQ = sp.q; vR = sp.r;
+    vQ = view.kbAnchorQ; vR = view.kbAnchorR;
   }
   if (pendingTweenStart && pendingTweenEnd) {
     gridRefQ = Math.round((pendingTweenStart[0] + pendingTweenEnd[0]) / 2);
@@ -658,19 +656,19 @@ function gridRange(extended: boolean): GridRange {
      toggling Extend off would empty the canvas). */
   const mode = getOutlineMode();
   if (!extended && mode !== 'none') {
-    /* Add current ref-driven shift to the baseline extents so the clamp
+    /* Add the current kbAnchor shift to the baseline extents so the clamp
        moves with the lattice underneath the static Lumatone/QWERTY outline. */
-    const sp = refSpine(referenceNote.q, referenceNote.r);
+    const aQ = view.kbAnchorQ, aR = view.kbAnchorR;
     if (mode === 'qwerty') {
-      qLo = Math.max(qLo, qwertyBaseQMin + sp.q); qHi = Math.min(qHi, qwertyBaseQMax + sp.q);
-      rLo = Math.max(rLo, qwertyBaseRMin + sp.r); rHi = Math.min(rHi, qwertyBaseRMax + sp.r);
+      qLo = Math.max(qLo, qwertyBaseQMin + aQ); qHi = Math.min(qHi, qwertyBaseQMax + aQ);
+      rLo = Math.max(rLo, qwertyBaseRMin + aR); rHi = Math.min(rHi, qwertyBaseRMax + aR);
     } else if (mode === 'piano') {
       ensurePianoOutline();
       qLo = Math.max(qLo, pianoBounds.qMin); qHi = Math.min(qHi, pianoBounds.qMax);
       rLo = Math.max(rLo, pianoBounds.rMin); rHi = Math.min(rHi, pianoBounds.rMax);
     } else {
-      qLo = Math.max(qLo, kbBaseQMin + sp.q); qHi = Math.min(qHi, kbBaseQMax + sp.q);
-      rLo = Math.max(rLo, kbBaseRMin + sp.r); rHi = Math.min(rHi, kbBaseRMax + sp.r);
+      qLo = Math.max(qLo, kbBaseQMin + aQ); qHi = Math.min(qHi, kbBaseQMax + aQ);
+      rLo = Math.max(rLo, kbBaseRMin + aR); rHi = Math.min(rHi, kbBaseRMax + aR);
     }
   }
   return { qMin: qLo, qMax: qHi, rMin: rLo, rMax: rHi };
@@ -765,9 +763,8 @@ export function draw(): void {
   }
 
   /* build allKeys for seams + click detection (arithmetic only, no rendering) */
-  const _sp = refSpine(referenceNote.q, referenceNote.r);
-  const kbShQ = animation.isAnimating ? Math.round(view.viewQ) : _sp.q;
-  const kbShR = animation.isAnimating ? Math.round(view.viewR) : _sp.r;
+  const kbShQ = animation.isAnimating ? Math.round(view.viewQ) : view.kbAnchorQ;
+  const kbShR = animation.isAnimating ? Math.round(view.viewR) : view.kbAnchorR;
   const kbSet = new Set<string>(); baseKeys.forEach((k) => { kbSet.add((k[0] + kbShQ) + ',' + (k[1] + kbShR)); });
   const vis = getVisibleRange(view.viewQ, view.viewR);
   const allKeys: DrawnKey[] = [];

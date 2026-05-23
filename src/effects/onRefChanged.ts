@@ -11,6 +11,7 @@
 import { migrateHeldQwertyVoices } from '../input/keyboard-notes.js';
 import { migrateHeldLumatoneVoices } from '../midi/handler.js';
 import { buildMidiReverse } from '../midi/engine.js';
+import { syncLumatoneColors } from '../lumatone/sync.js';
 import { broadcastAllToComposer } from '../bridge/hkl-side.js';
 
 export function onRefChanged(dq: number, dr: number): void {
@@ -20,6 +21,10 @@ export function onRefChanged(dq: number, dr: number): void {
   /* Rebuild Lumatone MIDI output reverse-lookup so future note-ons land
      on the right (channel, note) for the new lattice shift. */
   buildMidiReverse();
+  /* Different lattice cells now sit under each physical Lumatone key —
+     push a color diff so the device LEDs follow. Self-gates on
+     autoSyncEnabled + midiOut, so this is a no-op when irrelevant. */
+  syncLumatoneColors();
   /* Resolved spelling/oct/midi of every held key changes when the lattice
      slides, even when the (q, r) set itself doesn't — and the piano-outline
      footprint tracks the ref. Push fresh payloads to Composer. */

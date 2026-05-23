@@ -1,8 +1,8 @@
 // Computer-keyboard note input — always-on listeners on `window`. Maps physical
 // keys (event.code) via qwertyKeyMap to a BASE (q, r); we then add the active
-// refSpine offset at note-on/off time, mirroring fixedMidiToKey(). The same
-// physical key plays a different lattice cell at each ref, so the keyboard
-// rides with the ref shift exactly like the Lumatone.
+// kbAnchor offset at note-on/off time, mirroring fixedMidiToKey(). The same
+// physical key plays a different lattice cell at each user-driven ref change,
+// so the keyboard rides with the layout shift exactly like the Lumatone.
 //
 // Skipped on:
 //   • form-field focus (typing must not play notes)
@@ -24,8 +24,6 @@
 import { audio } from '../state/audio.js';
 import { selection } from '../state/selection.js';
 import { view } from '../state/view.js';
-import { refSpine } from '../tuning/refspine.js';
-import { referenceNote } from '../state/reference.js';
 import {
   noteOn, noteOff, triggerRearticulateFlash, instrReplaysOnTranspose,
 } from '../audio/engine.js';
@@ -63,8 +61,7 @@ export let migrateHeldQwertyVoices: (dq: number, dr: number) => void = () => {};
   function codeToKey(code: string): KeyId | null {
     const base = qwertyKeyMap[code];
     if (!base) return null;
-    const sp = refSpine(referenceNote.q, referenceNote.r);
-    return (base[0] + sp.q) + ',' + (base[1] + sp.r);
+    return (base[0] + view.kbAnchorQ) + ',' + (base[1] + view.kbAnchorR);
   }
 
   /* Compute the KeyId a held event.code maps to under an arbitrary shift,
@@ -76,21 +73,23 @@ export let migrateHeldQwertyVoices: (dq: number, dr: number) => void = () => {};
   }
 
   /* Smoothly migrate audio voices currently held via the computer keyboard
-     when the lattice shifts under a ref change. Limited to QWERTY-originated
-     voices; Lumatone-originated voices migrate separately in midi/handler.ts.
-     Selection is migrated for the same set of keys. Caller invokes this AFTER
-     the ref mutation, passing the spine delta (dq, dr). */
+     when the lattice shifts under a user-driven ref change. Limited to
+     QWERTY-originated voices; Lumatone-originated voices migrate separately
+     in midi/handler.ts. Selection is migrated for the same set of keys.
+     Caller invokes this AFTER the kbAnchor mutation, passing the anchor
+     delta (dq, dr). */
   migrateHeldQwertyVoices = function (dq: number, dr: number): void {
     if (heldCodes.size === 0) return;
     if (dq === 0 && dr === 0) return;
-    /* OLD refSpine offsets (pre-mutation). Subtract dq/dr to find the old spine. */
-    const sp = refSpine(referenceNote.q, referenceNote.r);
-    const curQ = sp.q - dq, curR = sp.r - dr;
+    /* kbAnchor has already been advanced by the caller; back-derive the
+       pre-mutation anchor from the delta. */
+    const newAQ = view.kbAnchorQ, newAR = view.kbAnchorR;
+    const oldAQ = newAQ - dq, oldAR = newAR - dr;
     /* gather (oldKey, newKey) pairs */
     const pairs: { code: string; oldKey: KeyId; newKey: KeyId }[] = [];
     heldCodes.forEach((code) => {
-      const oldKey = codeToKeyAt(code, curQ, curR);
-      const newKey = codeToKeyAt(code, sp.q, sp.r);
+      const oldKey = codeToKeyAt(code, oldAQ, oldAR);
+      const newKey = codeToKeyAt(code, newAQ, newAR);
       if (oldKey && newKey && oldKey !== newKey) pairs.push({ code, oldKey, newKey });
     });
     if (pairs.length === 0) return;

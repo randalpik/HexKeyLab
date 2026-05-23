@@ -128,9 +128,13 @@ export function broadcastHeldKeys(): void {
     }
   }
   keys.sort((a, b) => a.midi - b.midi);
-  /* Use a coarse signature for change-detection (midi + velocity per note).
-     Re-resolving when only color/tuning changed is handled separately. */
-  const sig = keys.map((k) => k.midi + ':' + k.velocity).join(',');
+  /* Signature must include (q, r), not just midi: held-voice migration on a
+     user-driven ref change preserves pitch (same midi) but shifts (q, r) by
+     the kbAnchor delta. A midi-only signature suppresses the post-migration
+     broadcast, leaving Composer with stale coords and inserting notes off by
+     the ref difference at the next input. Re-resolving when only color/tuning
+     changed is handled separately via lastHeldSerialized = '' force-resend. */
+  const sig = keys.map((k) => k.q + ',' + k.r + ':' + k.velocity).join(',');
   if (sig !== lastHeldSerialized) {
     lastHeldSerialized = sig;
     bridge.send({ type: 'held-keys', keys });

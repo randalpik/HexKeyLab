@@ -179,13 +179,16 @@ cv.addEventListener('mousedown', function (e: MouseEvent) {
       const reason = validateRefNoteCandidate(q, r);
       if (reason) { flashInfoLine(reason); return; }
     }
-    /* Compute old refSpine BEFORE mutation so onRefChanged can pass the
-       delta to held-physical-voice migrators. */
-    const oldSp = refSpine(referenceNote.q, referenceNote.r);
+    /* Capture old kbAnchor BEFORE mutation; the delta drives onRefChanged's
+       held-physical-voice migrators. Ctrl+click is the only path that moves
+       the lattice anchor — Composer-driven ref changes leave kbAnchor alone. */
+    const oldAQ = view.kbAnchorQ, oldAR = view.kbAnchorR;
     const changed = isCurrentRef ? clearRefSelection() : setSelectionFromManual(q, r);
     if (changed) {
       const newSp = refSpine(referenceNote.q, referenceNote.r);
-      onRefChanged(newSp.q - oldSp.q, newSp.r - oldSp.r);
+      view.kbAnchorQ = newSp.q;
+      view.kbAnchorR = newSp.r;
+      onRefChanged(newSp.q - oldAQ, newSp.r - oldAR);
       /* Persist or drop the manual ref. Composer-set selections do not persist. */
       if (isCurrentRef) savePrefs({ manualRef: undefined });
       else savePrefs({ manualRef: { q, r } });
@@ -382,6 +385,12 @@ if (prefs.manualRef) {
     savePrefs({ manualRef: undefined });
   } else {
     setSelectionFromManual(prefs.manualRef.q, prefs.manualRef.r);
+    /* Restore kbAnchor to match — the persisted manualRef was a user-driven
+       ref change in a prior session, so the Lumatone/QWERTY layout should
+       come back anchored to it, not at the default (0, 0). */
+    const sp = refSpine(referenceNote.q, referenceNote.r);
+    view.kbAnchorQ = sp.q;
+    view.kbAnchorR = sp.r;
   }
 }
 setOutline();

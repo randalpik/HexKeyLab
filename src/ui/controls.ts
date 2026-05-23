@@ -51,10 +51,11 @@ export function syncViewToOutline(outline: OutlineMode, immediate: boolean): voi
     [targetQ, targetR] = computePianoViewCenter(referenceNote.q, referenceNote.r, m64Q, m64R);
   } else {
     /* Lumatone / QWERTY / none: lattice slides under the static outline so
-       the ref's qm=0-normalized spine cell lands at the outline's center. */
-    const sp = refSpine(referenceNote.q, referenceNote.r);
-    targetQ = sp.q;
-    targetR = sp.r;
+       kbAnchor lands at the outline's center. kbAnchor is only updated by
+       user-driven ref changes — Composer-driven changes leave it (and thus
+       the visible layout) untouched. */
+    targetQ = view.kbAnchorQ;
+    targetR = view.kbAnchorR;
   }
   if (immediate) {
     view.viewQ = targetQ;
@@ -81,11 +82,17 @@ export function setTuning(): void {
   /* Mode change can orphan a ref note that was valid in the old bucket but
      not the new one (each mode has its own picker output and therefore its
      own valid-ref set). Conservative: on any mode change, re-check the ref
-     against the new bucket and clear if invalid. */
+     against the new bucket and clear if invalid. Tuning-mode change is
+     user-driven, so re-anchor kbAnchor to the new effective ref (now A3
+     after the clear) — otherwise the Lumatone/QWERTY layout would stay
+     pinned to a ref the user just abandoned. */
   if (prevMode !== val) {
     if (validateRefNoteCandidate(referenceNote.q, referenceNote.r) !== null) {
       clearRefSelection();
       savePrefs({ manualRef: undefined });
+      const sp = refSpine(referenceNote.q, referenceNote.r);
+      view.kbAnchorQ = sp.q;
+      view.kbAnchorR = sp.r;
     }
   }
   onTuningChanged();

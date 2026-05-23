@@ -15,8 +15,7 @@ import { selection } from '../state/selection.js';
 import { midi } from '../state/midi.js';
 import { lumatone } from '../state/lumatone.js';
 import { baseKeys } from '../layout/baseKeys.js';
-import { refSpine } from '../tuning/refspine.js';
-import { referenceNote } from '../state/reference.js';
+import { view } from '../state/view.js';
 import { posInBand } from '../layout/coords.js';
 import { keyFreq } from '../tuning/frequency.js';
 import { syncAudio } from '../audio/engine.js';
@@ -65,13 +64,14 @@ export function keyToMidi(q: number, r: number): MidiTarget | null {
 }
 
 /* reverse lookup: (note,channel) → "q,r" for MIDI input. The lattice shift
-   under the static Lumatone outline is driven by refSpine, so the mapping
-   rebuilds on ref change (call sites: ctrl+click handler + onRefChanged). */
+   under the static Lumatone outline is driven by kbAnchor, so the mapping
+   rebuilds on user-driven ref change (call sites: ctrl+click handler +
+   onRefChanged). */
 export function buildMidiReverse(): void {
   midi.midiToKey = {};
-  const sp = refSpine(referenceNote.q, referenceNote.r);
+  const aQ = view.kbAnchorQ, aR = view.kbAnchorR;
   baseKeys.forEach(function (k) {
-    const q = k[0] + sp.q, r = k[1] + sp.r;
+    const q = k[0] + aQ, r = k[1] + aR;
     const m = keyToMidi(q, r);
     if (m) midi.midiToKey[m.note + ',' + m.channel] = q + ',' + r;
   });
@@ -109,10 +109,10 @@ export function syncMidi(): void {
 export function syncOutput(): void { syncAudio(); syncMidi(); }
 
 /* fixed MIDI: (channel 1-5, note 0-55) → baseKeys index → lattice (q,r),
-   shifted by refSpine so the lattice slides under the static Lumatone outline
-   on ref change. The `sp` parameter lets callers compute the mapping under a
-   past/future spine (used by migrateHeldLumatoneVoices to look up OLD lattice
-   keys when ref has just changed). */
+   shifted by kbAnchor so the lattice slides under the static Lumatone outline
+   on user-driven ref change. The `sp` parameter lets callers compute the
+   mapping under a past/future anchor (used by migrateHeldLumatoneVoices to
+   look up OLD lattice keys when the anchor has just changed). */
 export function fixedMidiToKeyAt(ch: number, note: number, spQ: number, spR: number): KeyId | null {
   const idx = (ch - 1) * 56 + note;
   if (idx < 0 || idx >= 280) return null;
@@ -120,8 +120,7 @@ export function fixedMidiToKeyAt(ch: number, note: number, spQ: number, spR: num
   return (base[0] + spQ) + ',' + (base[1] + spR);
 }
 export function fixedMidiToKey(ch: number, note: number): KeyId | null {
-  const sp = refSpine(referenceNote.q, referenceNote.r);
-  return fixedMidiToKeyAt(ch, note, sp.q, sp.r);
+  return fixedMidiToKeyAt(ch, note, view.kbAnchorQ, view.kbAnchorR);
 }
 
 type MidiMessageHandler = (e: MIDIMessageEvent) => void;
