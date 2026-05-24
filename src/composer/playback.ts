@@ -5,9 +5,11 @@
 // sounding element. `playback-finished` clears all highlights.
 //
 // Tempo is read from the MEI <tempo> element (mm + mm.unit + mm.dots).
-// Tied notes are coalesced: a chord with @tie="i" emits one event whose
-// durationMs includes all subsequent @tie="m"|"t" pieces; the tail pieces
-// don't trigger separate attacks.
+// Tied notes are coalesced PER NOTE via `data-tie-partner`: each note that
+// attacks (no tie, or @tie="i") absorbs the durations of its forward chain
+// partners into its own durationMs. Continuation notes (@tie="t" / "m")
+// emit no attack. Partial-tie chords (only some notes tied across) yield
+// multiple PlaybackEvents at the same atMs with different durationMs.
 
 import type { ComposerModel, Voice } from './model.js';
 import type { PlaybackEvent, CoordRef } from '../bridge/protocol.js';
@@ -55,21 +57,47 @@ function extractCoords(noteEl: Element): CoordRef | null {
   return Number.isFinite(q) && Number.isFinite(r) ? { q, r } : null;
 }
 
-function tieHas(el: Element, role: 'initial' | 'terminal'): boolean {
-  const test = (n: Element): boolean => {
-    const t = n.getAttribute('tie');
-    if (role === 'initial') return t === 'i' || t === 'm';
-    return t === 't' || t === 'm';
-  };
-  if (el.localName === 'note') return test(el);
-  if (el.localName === 'chord') {
-    return Array.from(el.children).some((n) => n.localName === 'note' && test(n));
-  }
-  return false;
+/** The slot-bearing element for a note. A note inside a chord inherits the
+ *  chord's duration; a top-level note carries its own. */
+function slotElementForNote(noteEl: Element): Element {
+  const p = noteEl.parentNode as Element | null;
+  return p && p.localName === 'chord' ? p : noteEl;
 }
 
-function elementHasTieInitial(el: Element): boolean { return tieHas(el, 'initial'); }
-function elementHasTieTerminal(el: Element): boolean { return tieHas(el, 'terminal'); }
+/** Build an `xml:id` → element map for all `<note>` elements in the doc.
+ *  `Document.getElementById` doesn't see `xml:id` in an XML-parsed document
+ *  (only DTD-declared ID attributes), so we materialize a lookup table for
+ *  the tie-partner chain walk. */
+function buildNoteIdIndex(mei: Document): Map<string, Element> {
+  const out = new Map<string, Element>();
+  for (const n of Array.from(mei.getElementsByTagName('note'))) {
+    const id = n.getAttribute('xml:id');
+    if (id) out.set(id, n);
+  }
+  return out;
+}
+
+/** Walk a note's forward `data-tie-partner` chain and return the total
+ *  coalesced duration in ticks (including the note's own slot). Caller
+ *  should only invoke this for notes that actually attack (i.e. not
+ *  `tie="t"` / `tie="m"`); if the note has no outgoing tie this returns
+ *  just its own slot's ticks. */
+function coalescedDurationTicks(noteEl: Element, noteById: Map<string, Element>): number {
+  let total = elementDurationTicks(slotElementForNote(noteEl));
+  const tie = noteEl.getAttribute('tie');
+  if (tie !== 'i') return total;
+  let current: Element | null = noteEl;
+  while (current) {
+    const partnerId = current.getAttribute('data-tie-partner');
+    if (!partnerId) break;
+    const next = noteById.get(partnerId);
+    if (!next) break;
+    total += elementDurationTicks(slotElementForNote(next));
+    if (next.getAttribute('tie') === 't') break;
+    current = next;
+  }
+  return total;
+}
 
 /* ── velocity timeline ───────────────────────────────────────────────────── */
 
@@ -158,6 +186,7 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
   const tempo = readTempo(mei);
   const tickMs = tickMsFromTempo(tempo);
   const velocity = buildVelocityLookup(mei);
+  const noteById = buildNoteIdIndex(mei);
 
   for (let voice: Voice = 1; voice <= 4; voice = (voice + 1) as Voice) {
     const staffN = voice <= 2 ? 1 : 2;
@@ -189,45 +218,47 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
         continue;
       }
 
-      /* Coalesce tied chain. */
-      let totalTicks = ticks;
-      let j = i + 1;
-      if (elementHasTieInitial(child)) {
-        while (j < stream.length) {
-          const e2 = stream[j];
-          if (e2.localName === 'rest') break;
-          if (!elementHasTieTerminal(e2)) break;
-          totalTicks += elementDurationTicks(e2);
-          if (!elementHasTieInitial(e2)) { j++; break; }
-          j++;
-        }
+      /* Per-note attack collection. Ties are followed individually via
+         `data-tie-partner` so partial-tie chords (only some notes tied)
+         produce correct per-pitch durations. Notes that are tie continuations
+         (`tie="t"` / `tie="m"`) emit no attack — they were already coalesced
+         into their predecessor's duration. */
+      const noteEls: Element[] = local === 'note'
+        ? [child]
+        : Array.from(child.children).filter((n) => n.localName === 'note');
+
+      const byDuration = new Map<number, CoordRef[]>();
+      for (const n of noteEls) {
+        const t = n.getAttribute('tie');
+        if (t === 't' || t === 'm') continue;
+        const coord = extractCoords(n);
+        if (!coord) continue;
+        const durTicks = coalescedDurationTicks(n, noteById);
+        const list = byDuration.get(durTicks) ?? [];
+        list.push(coord);
+        byDuration.set(durTicks, list);
       }
 
-      const notes: CoordRef[] = [];
-      if (local === 'note') {
-        const c = extractCoords(child);
-        if (c) notes.push(c);
-      } else if (local === 'chord') {
-        for (const n of Array.from(child.children)) {
-          if (n.localName !== 'note') continue;
-          const c = extractCoords(n);
-          if (c) notes.push(c);
-        }
-      }
-
-      if (notes.length > 0) {
+      if (byDuration.size > 0) {
         const meiId = child.getAttribute('xml:id') ?? undefined;
-        events.push({
-          atMs: tTicks * tickMs,
-          durationMs: totalTicks * tickMs,
-          notes,
-          meiId,
-          velocity: velocity.at(tTicks),
-        });
+        const vel = velocity.at(tTicks);
+        const atMs = tTicks * tickMs;
+        for (const [durTicks, notes] of byDuration) {
+          events.push({
+            atMs,
+            durationMs: durTicks * tickMs,
+            notes,
+            meiId,
+            velocity: vel,
+          });
+        }
       }
-      /* Advance time by the chain's total ticks; skip past coalesced pieces. */
-      tTicks += totalTicks;
-      i = (j === i + 1) ? i + 1 : j;
+
+      /* Always advance one slot. tie-terminal notes in later slots will
+         naturally emit no attacks; tie-initial notes already absorbed
+         their continuation pieces into their own durationMs above. */
+      tTicks += ticks;
+      i++;
     }
     if (voice === 4) break;
   }

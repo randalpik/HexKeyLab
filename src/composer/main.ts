@@ -690,4 +690,5 @@ void bootRenderer();
   isHklConnected: () => hklConnected,
   inputState: getInputState,
   history,
+  buildPlayback,
 };

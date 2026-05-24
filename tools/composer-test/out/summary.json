@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 87,
-  "passed": 87,
+  "fixtures": 89,
+  "passed": 89,
   "failed": 0,
-  "elapsedMs": 27731,
+  "elapsedMs": 28421,
   "results": [
     {
       "name": "emptyDoc",
@@ -579,6 +579,22 @@
       "failures": [],
       "counts": {
         "invariants": 8
+      }
+    },
+    {
+      "name": "playback_chord_fully_tied",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "playback_chord_partial_tie",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
       }
     },
     {

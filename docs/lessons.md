@@ -551,6 +551,14 @@ For HKL Composer, this hid a bug in tie-partner cleanup: the partner lookup used
 
 Fix: always use `element.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:id', value)`. The `el()` helper in `model.ts` has a special case for the `xml:id` key.
 
+### `Document.getElementById` doesn't see `xml:id` in XML-parsed docs
+
+Even when `xml:id` is set correctly (via `setAttributeNS` in the XML namespace), `Document.getElementById('foo')` on a doc parsed with `DOMParser.parseFromString(s, 'application/xml')` returns `null`. `getElementById` only recognizes attributes declared as ID type in a DTD — `xml:id` doesn't count without explicit DTD support, which our MEI docs lack.
+
+This bit the per-note tie playback fix: the `data-tie-partner` chain walker used `mei.getElementById(partnerId)` which silently returned null, so partial-tie chords were never coalesced and the all-tied case lost its extended duration.
+
+Fix: build a `Map<string, Element>` index over `mei.getElementsByTagName('note')` keyed by `getAttribute('xml:id')`, or use `querySelector('[xml\\:id="…"]')` (note the escaped colon). For repeated lookups, the map is faster and clearer.
+
 ### Save → load round-trip with the accidental-display pass
 
 The display pass runs on the SERIALIZE clone, not the live doc. Output MEI has `@accid.ges` for hidden notes (and `@accid` for visible ones). On load, the live doc has whichever form was saved.

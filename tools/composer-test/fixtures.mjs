@@ -836,6 +836,51 @@ const CHORD_INTERNAL = {
     ],
   },
 
+  /* Playback: every note in a chord tied to the next identical chord →
+     ONE coalesced event at t=0 with all three notes and double the slot
+     duration. Regression guard against the previous chord-level
+     coalescing semantics. */
+  playback_chord_fully_tied: {
+    setup: `
+      m.setCursor(0, 1);
+      const notes = [
+        { q: -4, r: -2, pname: 'c', accid: '', oct: 4, midi: 60, colorHex: '#888888', velocity: 80 },
+        { q:  1, r:  0, pname: 'e', accid: '', oct: 4, midi: 64, colorHex: '#888888', velocity: 80 },
+        { q:  0, r:  1, pname: 'g', accid: '', oct: 4, midi: 67, colorHex: '#888888', velocity: 80 },
+      ];
+      m.insertChordAtCursor({ notes, duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes, duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+    `,
+    setupKeys: [
+      /* No chord-internal selection → '=' ties the entire first chord. */
+      '=',
+    ],
+  },
+
+  /* Playback: partial tie — bass C of first chord is tied forward; E and
+     G are independent attacks. Covers both bugs at once:
+       - Leading-tie suppression: E and G must re-attack at slot 2.
+       - Trailing-tie no-cutoff: E and G must release at slot 1's own
+         duration, not the coalesced chain duration. */
+  playback_chord_partial_tie: {
+    setup: `
+      m.setCursor(0, 1);
+      const notes = [
+        { q: -4, r: -2, pname: 'c', accid: '', oct: 4, midi: 60, colorHex: '#888888', velocity: 80 },
+        { q:  1, r:  0, pname: 'e', accid: '', oct: 4, midi: 64, colorHex: '#888888', velocity: 80 },
+        { q:  0, r:  1, pname: 'g', accid: '', oct: 4, midi: 67, colorHex: '#888888', velocity: 80 },
+      ];
+      m.insertChordAtCursor({ notes, duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes, duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+    `,
+    setupKeys: [
+      { key: 'ArrowUp', alt: true },
+      '=',
+    ],
+  },
+
   /* Empty voice with key.sig = 7 sharps → song-key broadcast carries C#
      (the key's tonic), AND no set-reference-note is sent (the selection
      tier deliberately stays silent on empty voices so a manual HKL
@@ -1804,6 +1849,81 @@ export const FIXTURE_ASSERTIONS = {
         return withTie.length === 1
           ? { ok: true }
           : { ok: false, detail: 'expected exactly 1 note tied in chord1, found ' + withTie.length };
+      })()` },
+  ],
+  playback_chord_fully_tied: [
+    { name: 'every note tied → one coalesced event at t=0 spanning the whole chain',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const events = window.__hkl_composer.buildPlayback(m);
+        if (events.length !== 1) {
+          return { ok: false, detail: 'expected 1 event, got ' + events.length +
+            ' (' + events.map(e => 'atMs=' + e.atMs + ' dur=' + e.durationMs + ' n=' + e.notes.length).join('; ') + ')' };
+        }
+        const e = events[0];
+        if (e.atMs !== 0) return { ok: false, detail: 'event atMs=' + e.atMs + ' (expected 0)' };
+        if (e.notes.length !== 3) return { ok: false, detail: 'event has ' + e.notes.length + ' notes (expected 3)' };
+        /* Default tempo 120 bpm + quarter beat → 500 ms per quarter; two
+           quarters tied = 1000 ms. */
+        if (Math.abs(e.durationMs - 1000) > 1e-6) {
+          return { ok: false, detail: 'durationMs=' + e.durationMs + ' (expected 1000)' };
+        }
+        return { ok: true };
+      })()` },
+  ],
+  playback_chord_partial_tie: [
+    { name: 'slot 1 splits into two events: tied bass (long) + untied E,G (short)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const events = window.__hkl_composer.buildPlayback(m);
+        const atZero = events.filter(e => e.atMs === 0);
+        if (atZero.length !== 2) {
+          return { ok: false, detail: 'expected 2 events at atMs=0, got ' + atZero.length };
+        }
+        const long = atZero.find(e => Math.abs(e.durationMs - 1000) < 1e-6);
+        const short = atZero.find(e => Math.abs(e.durationMs - 500) < 1e-6);
+        if (!long || !short) {
+          return { ok: false, detail: 'expected one 1000ms + one 500ms event; got ' +
+            atZero.map(e => e.durationMs).join(',') };
+        }
+        /* Long event = the tied bass C at (-4,-2), alone. */
+        if (long.notes.length !== 1 || long.notes[0].q !== -4 || long.notes[0].r !== -2) {
+          return { ok: false, detail: 'long event notes=' +
+            JSON.stringify(long.notes) + ' (expected [{q:-4,r:-2}])' };
+        }
+        /* Short event = the un-tied E (1,0) and G (0,1) attacking with their
+           own quarter duration. */
+        if (short.notes.length !== 2) {
+          return { ok: false, detail: 'short event has ' + short.notes.length + ' notes (expected 2)' };
+        }
+        const coords = short.notes.map(n => n.q + ',' + n.r).sort();
+        if (coords[0] !== '0,1' || coords[1] !== '1,0') {
+          return { ok: false, detail: 'short event notes=' + coords.join(' | ') + ' (expected 0,1 | 1,0)' };
+        }
+        return { ok: true };
+      })()` },
+    { name: 'slot 2 re-attacks E and G; tied bass C does NOT re-attack',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const events = window.__hkl_composer.buildPlayback(m);
+        const atOneBeat = events.filter(e => Math.abs(e.atMs - 500) < 1e-6);
+        if (atOneBeat.length !== 1) {
+          return { ok: false, detail: 'expected 1 event at atMs=500, got ' + atOneBeat.length };
+        }
+        const ev = atOneBeat[0];
+        if (Math.abs(ev.durationMs - 500) > 1e-6) {
+          return { ok: false, detail: 'slot-2 event durationMs=' + ev.durationMs + ' (expected 500)' };
+        }
+        if (ev.notes.length !== 2) {
+          return { ok: false, detail: 'slot-2 event has ' + ev.notes.length + ' notes (expected 2: E and G)' };
+        }
+        const hasBass = ev.notes.some(n => n.q === -4 && n.r === -2);
+        if (hasBass) return { ok: false, detail: 'slot-2 event includes tied bass C (should not re-attack)' };
+        const coords = ev.notes.map(n => n.q + ',' + n.r).sort();
+        if (coords[0] !== '0,1' || coords[1] !== '1,0') {
+          return { ok: false, detail: 'slot-2 notes=' + coords.join(' | ') + ' (expected 0,1 | 1,0)' };
+        }
+        return { ok: true };
       })()` },
   ],
   song_key_csharp_from_empty_voice: [
