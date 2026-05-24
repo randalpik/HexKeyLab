@@ -9,6 +9,7 @@
 
 import { ComposerModel } from './model.js';
 import type { Voice, Duration, Dots } from './model.js';
+import type { VerovioToolkit } from './verovio-types.js';
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
 
@@ -473,4 +474,107 @@ export function downloadMusicXml(model: ComposerModel): void {
   const xml = exportMusicXml(model);
   const filename = 'hkc-' + isoStamp() + '.musicxml';
   downloadBlob(filename, new Blob([xml], { type: 'application/vnd.recordare.musicxml+xml' }));
+}
+
+/* ── .pdf export ─────────────────────────────────────────────────────────── */
+
+/* Verovio US-Letter geometry in 1/100 mm (mirrors render.ts PAGE_GEOM).
+ * 8.5 × 11 in = 2159 × 2794; 0.55 in margin = 140. We force these for
+ * export regardless of the user's current view mode so the PDF is always
+ * paginated. The on-screen view is restored by the `restore` callback. */
+const PDF_EXPORT_OPTS = {
+  pageWidth: 2159,
+  pageHeight: 2794,
+  pageMarginTop: 140,
+  pageMarginBottom: 140,
+  pageMarginLeft: 140,
+  pageMarginRight: 140,
+  breaks: 'auto',
+  header: 'auto',
+  footer: 'none',
+  scale: 100,
+  svgAdditionalAttribute: ['note@data-q', 'note@data-r', 'note@color', 'rest@data-tuplet-placeholder'],
+};
+
+/* Letter in PDF points (1 in = 72 pt). */
+const LETTER_PT_W = 612;
+const LETTER_PT_H = 792;
+
+/* MEI's @color attribute on <note> propagates to all descendants by default
+ * — notehead AND stem AND flag AND accidental AND dots — because Verovio
+ * emits the descendants with fill="currentColor". On screen, composer.html
+ * forces these non-notehead elements back to black via CSS. That CSS does
+ * NOT reach the detached SVG handed to svg2pdf, so without this normalize
+ * pass the PDF picks up the inherited color on every stem/flag/accid/etc.
+ * Walk the SVG and pin `color` + `fill` to black on the same selectors the
+ * stylesheet covers; descendants then resolve currentColor as black. */
+const NON_NOTEHEAD_BLACK_CLASSES = ['stem', 'flag', 'accid', 'ledgerLines', 'dots'];
+
+export function forceNonNoteheadBlack(svg: SVGSVGElement): void {
+  const sel = NON_NOTEHEAD_BLACK_CLASSES.map((c) => '.' + c).join(', ');
+  for (const container of Array.from(svg.querySelectorAll(sel))) {
+    container.setAttribute('color', '#000');
+    container.setAttribute('fill', '#000');
+    /* Belt and braces: any descendant with an explicit non-currentColor
+     * fill (would otherwise win over the container's color) also gets
+     * pinned to black. Mirrors the `.stem *` part of the stylesheet. */
+    for (const desc of Array.from(container.querySelectorAll('*'))) {
+      desc.setAttribute('fill', '#000');
+    }
+  }
+}
+
+/* Verovio emits each single-note <g class="note"> as [notehead, dots, stem];
+ * SVG z-order is document order, so the stem draws over the notehead. With
+ * colored noteheads + black stems, the stem intrudes visibly. Move each
+ * notehead to be the LAST child of its note so it draws on top. Chord
+ * stems live outside the per-note <g> already, so chords don't need this.
+ * Mirrors the same pass render.ts applies to the on-screen DOM. */
+export function liftNoteheadsAbove(svg: SVGSVGElement): void {
+  for (const note of Array.from(svg.querySelectorAll('g.note'))) {
+    const notehead = note.querySelector(':scope > g.notehead');
+    if (notehead) note.appendChild(notehead);
+  }
+}
+
+export async function downloadPdf(
+  model: ComposerModel,
+  tk: VerovioToolkit,
+  restore: () => void,
+): Promise<void> {
+  /* Lazy-load so the libraries only land in the composer bundle on first
+     export click. Both ship ESM. svg2pdf.js side-effect-patches jsPDF's
+     prototype with .svg(). */
+  const { jsPDF } = await import('jspdf');
+  await import('svg2pdf.js');
+
+  const savedOpts = tk.getOptions();
+  try {
+    tk.setOptions(PDF_EXPORT_OPTS);
+    tk.loadData(model.serialize());
+
+    const pdf = new jsPDF({ unit: 'pt', format: 'letter', orientation: 'portrait' });
+    const pageCount = Math.max(1, tk.getPageCount());
+    for (let i = 1; i <= pageCount; i++) {
+      const svgStr = tk.renderToSVG(i, {});
+      /* svg2pdf resolves <use href="#…"> against the SVG root, so each
+         page must keep its own <defs> block. Parse into a detached host
+         (not appended to document) and pass the live <svg> element. */
+      const host = document.createElement('div');
+      host.innerHTML = svgStr;
+      const svg = host.firstElementChild as SVGSVGElement | null;
+      if (!svg) throw new Error('Verovio produced no SVG for page ' + i);
+      forceNonNoteheadBlack(svg);
+      liftNoteheadsAbove(svg);
+      if (i > 1) pdf.addPage('letter', 'portrait');
+      /* Process pages sequentially — parallel pdf.svg() calls would
+         race addPage ordering. */
+      await pdf.svg(svg, { x: 0, y: 0, width: LETTER_PT_W, height: LETTER_PT_H });
+    }
+    pdf.save('hkc-' + isoStamp() + '.pdf');
+  } finally {
+    /* getOptions() returns a JSON string; parse before restoring. */
+    try { tk.setOptions(JSON.parse(savedOpts)); } catch { /* ignore */ }
+    restore();
+  }
 }

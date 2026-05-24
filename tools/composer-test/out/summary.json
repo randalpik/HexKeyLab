@@ -1,16 +1,16 @@
 {
-  "mode": "fast",
-  "fixtures": 39,
-  "passed": 39,
+  "mode": "full",
+  "fixtures": 75,
+  "passed": 75,
   "failed": 0,
-  "elapsedMs": 10579,
+  "elapsedMs": 23285,
   "results": [
     {
       "name": "emptyDoc",
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 5
+        "invariants": 6
       }
     },
     {
@@ -18,7 +18,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 5
+        "invariants": 6
       }
     },
     {
@@ -26,7 +26,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 5
+        "invariants": 6
       }
     },
     {
@@ -34,7 +34,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 5
+        "invariants": 6
       }
     },
     {
@@ -42,7 +42,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 5
+        "invariants": 6
       }
     },
     {
@@ -50,7 +50,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 5
+        "invariants": 6
       }
     },
     {
@@ -58,7 +58,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 5
+        "invariants": 6
       }
     },
     {
@@ -66,7 +66,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 5
+        "invariants": 6
       }
     },
     {
@@ -74,7 +74,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 8
       }
     },
     {
@@ -82,7 +82,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 7
       }
     },
     {
@@ -90,7 +90,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 7
       }
     },
     {
@@ -98,7 +98,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 5
+        "invariants": 6
       }
     },
     {
@@ -106,7 +106,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 5
+        "invariants": 6
       }
     },
     {
@@ -114,7 +114,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 8
       }
     },
     {
@@ -122,7 +122,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 7
       }
     },
     {
@@ -130,7 +130,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 5
+        "invariants": 6
       }
     },
     {
@@ -138,7 +138,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 5
+        "invariants": 6
       }
     },
     {
@@ -146,7 +146,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 8
       }
     },
     {
@@ -154,7 +154,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 7
       }
     },
     {
@@ -162,7 +162,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 5
+        "invariants": 6
       }
     },
     {
@@ -170,7 +170,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 5
+        "invariants": 6
       }
     },
     {
@@ -178,7 +178,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 8
       }
     },
     {
@@ -186,7 +186,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 8
       }
     },
     {
@@ -194,7 +194,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 7
       }
     },
     {
@@ -202,7 +202,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 7
       }
     },
     {
@@ -210,7 +210,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 7
       }
     },
     {
@@ -218,7 +218,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 7
       }
     },
     {
@@ -226,7 +226,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 7
       }
     },
     {
@@ -234,7 +234,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 8
       }
     },
     {
@@ -242,7 +242,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 8
       }
     },
     {
@@ -250,7 +250,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 8
+        "invariants": 9
       }
     },
     {
@@ -258,7 +258,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 5
+        "invariants": 6
       }
     },
     {
@@ -266,7 +266,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 5
+        "invariants": 6
       }
     },
     {
@@ -274,7 +274,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 7
       }
     },
     {
@@ -282,7 +282,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 8
       }
     },
     {
@@ -290,7 +290,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 8
       }
     },
     {
@@ -298,7 +298,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 8
       }
     },
     {
@@ -306,7 +306,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 5
+        "invariants": 6
       }
     },
     {
@@ -314,7 +314,295 @@
       "ok": true,
       "failures": [],
       "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "m1WholeNote",
+      "ok": true,
+      "failures": [],
+      "counts": {
         "invariants": 6
+      }
+    },
+    {
+      "name": "multiVoiceMixed",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 6
+      }
+    },
+    {
+      "name": "kbd_durationDigits",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "kbd_dotCycle",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "kbd_ctrlNavBarJump",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "kbd_voiceCycle",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "kbd_modeToggle",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "kbd_escClearsPending",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "bridgeHeldKeysReceived",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "bridgeComposerToHklCapture",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "scrollIntoView_idempotent",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "scrollIntoView_typingDeep",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "visualTupletBracket",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "visualMultiVoice",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "sel_beat_enter_shiftLeft",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "sel_beat_enter_shiftRight",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "sel_beat_grow_right",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "sel_beat_shrink_to_origin",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "sel_beat_ctrlShift_measureBoundary",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "sel_promote_beat_to_measure",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "sel_measure_enter_shiftDown",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "sel_measure_expand_staves",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "sel_escape_exits",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "sel_nonsel_key_exits",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "sel_beat_cut_replaces_with_rests",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "visualSelBeatTwoBeats",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 11
+      }
+    },
+    {
+      "name": "visualSelMeasureBothStaves",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 10
+      }
+    },
+    {
+      "name": "chord_internal_sel_bottom_via_up",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "chord_internal_sel_top_via_down",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "chord_internal_sel_increment",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "chord_internal_sel_decrement",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "chord_internal_sc_transpose",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "chord_internal_tie_single_note",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "song_key_csharp_from_empty_voice",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "ref_note_broadcast_on_note_insert",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "export_pdf_smoke",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
       }
     }
   ]

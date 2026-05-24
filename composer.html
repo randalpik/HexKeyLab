@@ -28,6 +28,24 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
 #composerToolbar .btn.active { border-color: #4CFFBA; color: #4CFFBA }
 #composerToolbar .spacer { flex: 1 }
 
+/* Export dropdown: HTML5 popover anchored to its trigger button via a
+   beforetoggle hook in main.ts (CSS anchor positioning isn't stable in
+   Firefox yet). The menu lives in the top layer so it sits above the
+   score and status bar without z-index gymnastics. Display rules are
+   gated on :popover-open so the menu stays hidden while closed — without
+   the gate, plain `display: flex` would override the popover spec's
+   default `display: none` and the items would render unconditionally. */
+#exportMenu {
+  margin: 0; padding: 6px;
+  background: #1a1a1a; border: 1px solid #444; border-radius: 4px;
+  inset: auto;
+}
+#exportMenu:popover-open {
+  position: absolute;
+  display: flex; flex-direction: column; gap: 4px;
+}
+#exportMenu .btn { width: 100%; text-align: left }
+
 #composerMain {
   flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
   background: #1a1a1a; overflow: hidden;
@@ -213,7 +231,11 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
   <div class="spacer"></div>
   <button class="btn" id="btnSave">Save .hkc</button>
   <button class="btn" id="btnLoad">Load .hkc</button>
-  <button class="btn" id="btnExportXml">Export .musicxml</button>
+  <button class="btn" id="btnExportMenu" popovertarget="exportMenu" aria-haspopup="menu">Export ▾</button>
+  <div id="exportMenu" popover="auto" role="menu">
+    <button class="btn" id="btnExportPdf" role="menuitem">.pdf</button>
+    <button class="btn" id="btnExportXml" role="menuitem">.musicxml</button>
+  </div>
   <div class="conn" id="connStatus">no HKL</div>
 </div>
 

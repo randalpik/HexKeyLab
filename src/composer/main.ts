@@ -19,7 +19,7 @@ import { initInput, getInputState, installSCTransposeImpl } from './input.js';
 import { scTransposeChordNote } from './scTranspose.js';
 import type { CursorUpdateOpts } from './cursor.js';
 import { selectionOverlay } from './selectionOverlay.js';
-import { saveHkc, loadHkcFromFile, downloadMusicXml } from './save.js';
+import { saveHkc, loadHkcFromFile, downloadMusicXml, downloadPdf } from './save.js';
 import { buildPlayback, highlightElement, clearHighlights, readTempo, tickMsFromTempo } from './playback.js';
 import { openSetupDialog } from './setupDialog.js';
 import {
@@ -603,13 +603,44 @@ $<HTMLInputElement>('fileInputHkc')?.addEventListener('change', async (e) => {
   }
 });
 
+function hideExportMenu(): void {
+  (document.getElementById('exportMenu') as HTMLElement & { hidePopover?: () => void } | null)
+    ?.hidePopover?.();
+}
+
 $('btnExportXml')?.addEventListener('click', () => {
   try {
     downloadMusicXml(model);
     setStatus('Exported .musicxml.');
   } catch (e) {
     setStatus('Export failed: ' + (e as Error).message);
+  } finally {
+    hideExportMenu();
   }
+});
+
+$('btnExportPdf')?.addEventListener('click', async () => {
+  setStatus('Rendering PDF…');
+  hideExportMenu();
+  try {
+    await downloadPdf(model, renderer.toolkit(), () => reRender());
+    setStatus('Exported .pdf.');
+  } catch (e) {
+    setStatus('PDF export failed: ' + (e as Error).message);
+  }
+});
+
+/* Position the popover under its trigger on each open. CSS anchor
+   positioning isn't stable in Firefox yet, so do it in JS. */
+document.getElementById('exportMenu')?.addEventListener('beforetoggle', (ev) => {
+  const e = ev as Event & { newState?: string };
+  if (e.newState !== 'open') return;
+  const anchor = document.getElementById('btnExportMenu');
+  const menu = ev.currentTarget as HTMLElement | null;
+  if (!anchor || !menu) return;
+  const r = anchor.getBoundingClientRect();
+  menu.style.top = (r.bottom + 4) + 'px';
+  menu.style.left = r.left + 'px';
 });
 
 /* ── view-mode toggle in toolbar ─────────────────────────────────────────── */

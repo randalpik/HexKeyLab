@@ -536,6 +536,30 @@ const BRIDGE = {
   },
 };
 
+/* ── Export fixtures ──────────────────────────────────────────────────── */
+
+const EXPORT = {
+  /* Smoke-test: downloadPdf() should produce a Blob with the `%PDF-` magic
+   * header. Captures the blob via the URL.createObjectURL hook that
+   * downloadBlob() uses, stubbing the anchor click so no actual file
+   * download fires. The export path lazy-imports jspdf + svg2pdf.js; a
+   * regression in that chain (missing dep, API drift, Verovio SVG quirks)
+   * surfaces here. */
+  export_pdf_smoke: {
+    setup: `
+      /* Insert a colored quarter note so the PDF exercises both the export
+       * pipeline AND the non-notehead color-coercion (stems/flags/accids
+       * must render black even when the note has an inherited color). */
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({
+        duration: '4', dots: 0,
+        notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69,
+                  colorHex: '#FF4C79', velocity: 80 }],
+      });
+    `,
+  },
+};
+
 /* ── New: real-keystroke (INPUT-layer) fixtures ───────────────────────── */
 
 const KBD = {
@@ -812,16 +836,17 @@ const CHORD_INTERNAL = {
     ],
   },
 
-  /* Empty voice with key.sig = 7 sharps → reference broadcast = C#.
-     Composer hasn't received hkl-hello yet at this point in setup. We
-     fire __bridgeMock.sendHklHello() so the connection bit flips and
-     the initial broadcast goes. */
-  ref_note_from_empty_voice_csharp: {
+  /* Empty voice with key.sig = 7 sharps → song-key broadcast carries C#
+     (the key's tonic), AND no set-reference-note is sent (the selection
+     tier deliberately stays silent on empty voices so a manual HKL
+     Ctrl+click isn't clobbered — see refNote.ts module header).
+     Composer hasn't received hkl-hello yet at this point in setup; we
+     fire __bridgeMock.sendHklHello() so hklConnected flips true and the
+     initial broadcast cycle runs. */
+  song_key_csharp_from_empty_voice: {
     setup: `
       m.setKeySig('7s');
       window.__hkl_composer.reRender();
-      /* Trigger hkl-hello so hklConnected flips true and the initial
-         reference broadcast fires. */
       window.__bridgeMock.reset();
       window.__bridgeMock.sendHklHello();
     `,
@@ -894,6 +919,7 @@ export const FIXTURES = {
   ...mapKbdTier(VISUAL, 'full'),
   ...mapKbdTier(SELECTION, 'full'),
   ...mapKbdTier(CHORD_INTERNAL, 'full'),
+  ...mapKbdTier(EXPORT, 'full'),
 };
 
 /** Fixture-specific assertions. Map fixture name → list of {name, expr}.
@@ -1652,15 +1678,15 @@ export const FIXTURE_ASSERTIONS = {
           : { ok: false, detail: 'expected exactly 1 note tied in chord1, found ' + withTie.length };
       })()` },
   ],
-  ref_note_from_empty_voice_csharp: [
-    { name: 'set-reference-note captured; (q,r) gives 12-TET pitch class C# (=1)',
+  song_key_csharp_from_empty_voice: [
+    { name: 'set-song-key captured; (q,r) gives 12-TET pitch class C# (=1)',
       expr: `(() => {
         const cap = window.__bridgeMock.captured();
-        const ref = cap.filter(m => m.type === 'set-reference-note');
-        if (ref.length === 0) {
-          return { ok: false, detail: 'no set-reference-note captured; types=' + cap.map(m => m.type).join(',') };
+        const sk = cap.filter(m => m.type === 'set-song-key');
+        if (sk.length === 0) {
+          return { ok: false, detail: 'no set-song-key captured; types=' + cap.map(m => m.type).join(',') };
         }
-        const last = ref[ref.length - 1];
+        const last = sk[sk.length - 1];
         /* coordToMidi = 57 + 4q + 7r; pitch class = midi % 12. C# == 1. */
         const midi = 57 + 4 * last.q + 7 * last.r;
         const pc = ((midi % 12) + 12) % 12;
@@ -1671,15 +1697,25 @@ export const FIXTURE_ASSERTIONS = {
     { name: 'chosen (q,r) is closest to origin by taxicab among C# candidates',
       expr: `(() => {
         const cap = window.__bridgeMock.captured();
-        const ref = cap.filter(m => m.type === 'set-reference-note');
-        const last = ref[ref.length - 1];
+        const sk = cap.filter(m => m.type === 'set-song-key');
+        const last = sk[sk.length - 1];
         const tax = Math.abs(last.q) + Math.abs(last.r);
-        /* The chosen cell must have a smaller-or-equal taxicab to (0,0)
-           than any other C# candidate in a reasonable grid. (1, 0) gives
-           taxicab 1; that's the global minimum for C#. */
+        /* (1, 0) gives taxicab 1; that's the global minimum for C#. */
         return tax <= 1
           ? { ok: true }
           : { ok: false, detail: 'taxicab=' + tax + ' from (' + last.q + ',' + last.r + ')' };
+      })()` },
+    /* Locks in the post-split contract: an empty voice must NOT trigger
+     * a set-reference-note broadcast, even when hkl-hello fires the
+     * initial broadcast cycle. Catches a regression where the song-key
+     * fallback creeps back into the selection-tier channel. */
+    { name: 'no set-reference-note captured (empty voice → selection tier silent)',
+      expr: `(() => {
+        const cap = window.__bridgeMock.captured();
+        const ref = cap.filter(m => m.type === 'set-reference-note');
+        return ref.length === 0
+          ? { ok: true }
+          : { ok: false, detail: 'unexpected set-reference-note: ' + JSON.stringify(ref) };
       })()` },
   ],
   ref_note_broadcast_on_note_insert: [
@@ -1694,6 +1730,99 @@ export const FIXTURE_ASSERTIONS = {
         return (last.q === 0 && last.r === 0)
           ? { ok: true }
           : { ok: false, detail: 'expected (0,0), got (' + last.q + ',' + last.r + ')' };
+      })()` },
+  ],
+
+  /* Export → PDF smoke test. Captures the produced Blob via URL.createObjectURL
+   * (the path downloadBlob uses), stubs HTMLAnchorElement.click so no actual
+   * file save fires, and verifies the blob's first bytes are the PDF magic
+   * header. Exercises the full jspdf + svg2pdf pipeline against a real
+   * Verovio-rendered SVG with a colored note. */
+  export_pdf_smoke: [
+    { name: 'downloadPdf produces a %PDF- blob',
+      expr: `(async () => {
+        const blobs = [];
+        const origCreate = URL.createObjectURL;
+        URL.createObjectURL = function(b) { blobs.push(b); return origCreate.call(this, b); };
+        const origClick = HTMLAnchorElement.prototype.click;
+        HTMLAnchorElement.prototype.click = function() { /* no-op */ };
+        try {
+          const handle = window.__hkl_composer;
+          const mod = await import('/src/composer/save.ts');
+          await mod.downloadPdf(handle.model, handle.renderer.toolkit(), () => handle.reRender());
+          const blob = blobs.find(b => b && b.size > 0);
+          if (!blob) return { ok: false, detail: 'no blob captured; count=' + blobs.length };
+          const head = String.fromCharCode.apply(null, new Uint8Array(await blob.arrayBuffer()).slice(0, 5));
+          return head === '%PDF-'
+            ? { ok: true, detail: 'size=' + blob.size }
+            : { ok: false, detail: 'head=' + head + ' size=' + blob.size };
+        } finally {
+          URL.createObjectURL = origCreate;
+          HTMLAnchorElement.prototype.click = origClick;
+        }
+      })()` },
+    /* The on-screen render keeps non-notehead glyphs black via composer.html
+     * CSS, but svg2pdf processes a detached SVG so that CSS doesn't reach it.
+     * forceNonNoteheadBlack must pin color="#000" on every .stem/.flag/.accid
+     * /.ledgerLines/.dots container so currentColor resolves to black on the
+     * Verovio-embedded `path {stroke: currentColor}` rule. Test against the
+     * setup's #FF4C79 note: render a page via the toolkit, apply the helper,
+     * and verify no matching container retains the note's color. */
+    { name: 'forceNonNoteheadBlack zeros out non-notehead colors',
+      expr: `(async () => {
+        const handle = window.__hkl_composer;
+        const mod = await import('/src/composer/save.ts');
+        const tk = handle.renderer.toolkit();
+        const host = document.createElement('div');
+        host.innerHTML = tk.renderToSVG(1, {});
+        const svg = host.firstElementChild;
+        if (!svg) return { ok: false, detail: 'no SVG' };
+        mod.forceNonNoteheadBlack(svg);
+        const sel = '.stem, .flag, .accid, .ledgerLines, .dots';
+        const stale = [];
+        for (const el of svg.querySelectorAll(sel)) {
+          const c = el.getAttribute('color');
+          const f = el.getAttribute('fill');
+          if (c !== '#000' || f !== '#000') {
+            stale.push(el.getAttribute('class') + ' color=' + c + ' fill=' + f);
+          }
+        }
+        /* Also confirm at least one stem exists (proves the fixture's note
+         * inserted correctly — otherwise the test would pass vacuously). */
+        const stemCount = svg.querySelectorAll('.stem').length;
+        if (stemCount === 0) return { ok: false, detail: 'no .stem in SVG (setup did not produce a note)' };
+        return stale.length === 0
+          ? { ok: true, detail: 'stems=' + stemCount }
+          : { ok: false, detail: 'stale: ' + stale.join(' | ') };
+      })()` },
+    /* Verovio emits per-note g as [notehead, ..., stem]; SVG z-order is
+     * document order so the stem otherwise paints over a colored notehead.
+     * liftNoteheadsAbove moves each notehead to be the LAST direct child
+     * of its g.note. Assert that order on every single-note g.note in a
+     * freshly-rendered page. */
+    { name: 'liftNoteheadsAbove puts notehead last in each g.note',
+      expr: `(async () => {
+        const handle = window.__hkl_composer;
+        const mod = await import('/src/composer/save.ts');
+        const tk = handle.renderer.toolkit();
+        const host = document.createElement('div');
+        host.innerHTML = tk.renderToSVG(1, {});
+        const svg = host.firstElementChild;
+        if (!svg) return { ok: false, detail: 'no SVG' };
+        mod.liftNoteheadsAbove(svg);
+        const offenders = [];
+        const notes = svg.querySelectorAll('g.note');
+        for (const note of notes) {
+          const head = note.querySelector(':scope > g.notehead');
+          if (!head) continue;  /* chord-internal notes may not have stems */
+          const last = note.lastElementChild;
+          if (last !== head) {
+            offenders.push(note.getAttribute('id') + ' last=' + (last && last.getAttribute('class')));
+          }
+        }
+        return notes.length > 0 && offenders.length === 0
+          ? { ok: true, detail: 'notes=' + notes.length }
+          : { ok: false, detail: 'noteCount=' + notes.length + ' offenders=' + offenders.join(' | ') };
       })()` },
   ],
 };

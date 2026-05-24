@@ -21,12 +21,16 @@ export const MOCK_BRIDGE_LIB = `
   ch.addEventListener('message', (e) => {
     const m = e.data;
     /* Only capture Composer→HKL events. Composer's own listener will get
-     * the events we send. We filter by type prefix to avoid recording our
-     * own emissions. */
+     * the events we send. We filter by an explicit allowlist to avoid
+     * recording the HKL→Composer events the mock itself emits. Keep this
+     * in sync with ComposerEvent in src/bridge/protocol.ts — new types
+     * silently drop otherwise. */
     if (m && typeof m.type === 'string' &&
         (m.type === 'play-score' || m.type === 'stop-playback' ||
          m.type === 'composer-hello' || m.type === 'composer-bye' ||
-         m.type === 'request-state' || m.type === 'set-reference-note')) {
+         m.type === 'request-state' || m.type === 'set-reference-note' ||
+         m.type === 'set-song-key' || m.type === 'layout-req-changed' ||
+         m.type === 'apply-layout')) {
       captured.push(m);
     }
   });

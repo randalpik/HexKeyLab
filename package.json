@@ -18,6 +18,8 @@
     "vite": "^6.0.0"
   },
   "dependencies": {
-    "midi-file": "1.2.4"
+    "jspdf": "4.2.1",
+    "midi-file": "1.2.4",
+    "svg2pdf.js": "2.7.0"
   }
 }
