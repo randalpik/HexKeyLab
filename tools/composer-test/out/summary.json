@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 89,
-  "passed": 89,
+  "fixtures": 95,
+  "passed": 95,
   "failed": 0,
-  "elapsedMs": 28421,
+  "elapsedMs": 30814,
   "results": [
     {
       "name": "emptyDoc",
@@ -579,6 +579,54 @@
       "failures": [],
       "counts": {
         "invariants": 8
+      }
+    },
+    {
+      "name": "alt_select_bare_note_left",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "alt_select_bare_note_up_backspace",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "chord_extend_insert",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 11
+      }
+    },
+    {
+      "name": "chord_extend_bare_to_chord",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 12
+      }
+    },
+    {
+      "name": "chord_extend_duplicate_blocked",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "backspace_collapse_chord",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 11
       }
     },
     {

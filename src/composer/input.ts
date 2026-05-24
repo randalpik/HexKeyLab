@@ -109,15 +109,25 @@ interface PendingTuplet {
   atomicK: number;   /* atomic = span-duration divided by K ranks (2/4/8) */
 }
 
-/** Per-note selection inside a chord. When set, Alt+Up/Down step through the
- *  chord's notes (sorted ascending by MIDI; index 0 = bass); Alt+Left/Right
- *  SC-transpose the selected note. `=` (tie) targets the single note when
- *  this is set instead of the whole chord. Cleared by any non-Alt-arrow,
- *  non-`=` keystroke, by cursor movement, and by voice switches. */
+/** Per-note selection of a single `<note>` element. Targets a chord-child
+ *  note OR a bare `<note>`. When set:
+ *    - Alt+Up/Down step through the parent chord's notes (sorted ascending by
+ *      MIDI); on a bare-note target, both are no-ops (only one note).
+ *    - Alt+Left/Right SC-transpose the selected note.
+ *    - `=` (tie) targets only the selected note (instead of the whole chord).
+ *    - Backspace deletes only the selected note; if the parent chord drops to
+ *      one note, it collapses to a bare note (the survivor becomes selected).
+ *    - In INS mode, pressing a duration digit with held HKL keys appends
+ *      those keys to the parent chord (or promotes a bare note into a chord)
+ *      without advancing the cursor; selection migrates to the lowest-MIDI of
+ *      the just-added notes.
+ *  Cleared by any other keystroke, by cursor movement, and by voice switches.
+ *  The note's xml:id is stable across SC-transpose (siblings reorder but the
+ *  element itself stays) and across bare→chord promotion (the original note
+ *  becomes a child of the new wrapper). */
 export interface ChordInternalSel {
   voice: Voice;
-  chordId: string;
-  noteIndex: number;
+  noteId: string;
 }
 
 export interface InputState {
@@ -424,35 +434,54 @@ function chordNotesByMidiAscending(chord: Element): Element[] {
   return out;
 }
 
-/** Returns the chord at flat[cursor] when it has ≥2 notes; null otherwise.
- *  The cursor convention is "cursor c targets flat[c]" — flat[cursor] is
- *  the element under the cursor regardless of insert/overwrite mode. */
-function chordAtCursor(model: ComposerModel): Element | null {
+/** Returns the cursor's target element when it's selectable: a `<chord>`
+ *  (any size) or a bare `<note>`. Returns null for rests/measures/tuplets/etc.
+ *  Cursor convention is "cursor c targets flat[c]". */
+function selectableTargetAtCursor(model: ComposerModel): Element | null {
   const v = model.getCurrentVoice();
   const ref = model.getCurrentElement(v, state.mode);
   if (!ref) return null;
-  if (ref.elem.localName !== 'chord') return null;
-  const notes = chordNotesByMidiAscending(ref.elem);
-  return notes.length >= 2 ? ref.elem : null;
+  if (ref.elem.localName === 'chord' || ref.elem.localName === 'note') {
+    return ref.elem;
+  }
+  return null;
 }
 
-/** Validate that the saved selection still points at a chord at the cursor;
- *  drop it if not. Called before any Alt-arrow action. */
+/** Walks `voice`'s flat stream and returns the `<note>` element with the
+ *  given xml:id, whether it's bare in a layer or a child of a `<chord>`.
+ *  Returns null when not found. */
+function findNoteById(model: ComposerModel, voice: Voice, noteId: string): Element | null {
+  const flat = model.flatChildren(voice);
+  for (const el of flat) {
+    if (el.localName === 'note' && el.getAttribute('xml:id') === noteId) return el;
+    if (el.localName === 'chord') {
+      for (const c of Array.from(el.children)) {
+        if (c.localName === 'note' && c.getAttribute('xml:id') === noteId) return c;
+      }
+    }
+  }
+  return null;
+}
+
+/** True when the note's parent element is a `<chord>` wrapper. */
+function noteIsInChord(noteEl: Element): boolean {
+  return noteEl.parentElement?.localName === 'chord';
+}
+
+/** Validate that the saved selection still points at a live `<note>`;
+ *  drop it if not. Called before any selection-targeted action. */
 function reconcileChordInternalSel(model: ComposerModel): ChordInternalSel | null {
   const sel = state.chordInternalSel;
   if (!sel) return null;
   if (sel.voice !== model.getCurrentVoice()) { state.chordInternalSel = null; return null; }
-  const cur = chordAtCursor(model);
-  if (!cur) { state.chordInternalSel = null; return null; }
-  const id = cur.getAttribute('xml:id');
-  if (id !== sel.chordId) { state.chordInternalSel = null; return null; }
-  const notes = chordNotesByMidiAscending(cur);
-  if (sel.noteIndex < 0 || sel.noteIndex >= notes.length) {
-    /* Note count may have shrunk under us (e.g. delete-and-replace edits).
-       Clamp; if still in range, keep the selection. */
-    sel.noteIndex = Math.max(0, Math.min(notes.length - 1, sel.noteIndex));
-  }
+  const note = findNoteById(model, sel.voice, sel.noteId);
+  if (!note) { state.chordInternalSel = null; return null; }
   return sel;
+}
+
+/** Resolve the selected note element (or null when sel is stale). */
+function selectedNoteElement(model: ComposerModel, sel: ChordInternalSel): Element | null {
+  return findNoteById(model, sel.voice, sel.noteId);
 }
 
 function diagnoseChordTarget(model: ComposerModel): string {
@@ -461,9 +490,10 @@ function diagnoseChordTarget(model: ComposerModel): string {
   const cursor = model.getCursor(v);
   if (!ref) return 'cursor at past-end (cursor=' + cursor + ', no element under cursor)';
   const ln = ref.elem.localName;
-  if (ln !== 'chord') return 'cursor on <' + ln + '>, not <chord> (cursor=' + cursor + ')';
-  const notes = chordNotesByMidiAscending(ref.elem);
-  return 'chord has only ' + notes.length + ' <note> children (need ≥2 for chord-internal selection)';
+  if (ln !== 'chord' && ln !== 'note') {
+    return 'cursor on <' + ln + '>, not <chord> or <note>';
+  }
+  return 'no selectable note under cursor (cursor=' + cursor + ')';
 }
 
 function handleChordInternalArrow(
@@ -473,45 +503,76 @@ function handleChordInternalArrow(
   const existing = reconcileChordInternalSel(model);
   if (key === 'ArrowUp' || key === 'ArrowDown') {
     if (!existing) {
-      const chord = chordAtCursor(model);
-      if (!chord) {
+      const target = selectableTargetAtCursor(model);
+      if (!target) {
         hooks.setStatus?.('Chord-internal: ' + diagnoseChordTarget(model));
         return;
       }
-      const notes = chordNotesByMidiAscending(chord);
-      const id = chord.getAttribute('xml:id');
-      if (!id) return;
-      /* Alt+Up enters at bass (index 0); Alt+Down enters at top. Subsequent
-         presses move in their respective directions, so starting at the
-         far end maximizes useful range without forcing direction switches. */
-      const noteIndex = key === 'ArrowUp' ? 0 : notes.length - 1;
-      state.chordInternalSel = { voice: model.getCurrentVoice(), chordId: id, noteIndex };
+      if (target.localName === 'note') {
+        /* Bare-note target: Alt+Up/Down both activate selection on the only
+           note. Subsequent presses are no-ops (clamp at the same note). */
+        const id = target.getAttribute('xml:id');
+        if (!id) return;
+        state.chordInternalSel = { voice: model.getCurrentVoice(), noteId: id };
+        hooks.onStateChange();
+        return;
+      }
+      /* Chord target: Alt+Up enters at bass; Alt+Down enters at top. */
+      const notes = chordNotesByMidiAscending(target);
+      if (notes.length === 0) return;
+      const initial = key === 'ArrowUp' ? notes[0] : notes[notes.length - 1];
+      const noteId = initial.getAttribute('xml:id');
+      if (!noteId) return;
+      state.chordInternalSel = { voice: model.getCurrentVoice(), noteId };
       hooks.onStateChange();
       return;
     }
-    const chord = chordAtCursor(model);
-    if (!chord) { state.chordInternalSel = null; hooks.onStateChange(); return; }
+    const noteEl = selectedNoteElement(model, existing);
+    if (!noteEl) { state.chordInternalSel = null; hooks.onStateChange(); return; }
+    if (!noteIsInChord(noteEl)) {
+      /* Bare-note selection: only one note — clamp (no-op). */
+      hooks.onStateChange();
+      return;
+    }
+    /* Chord-child selection: step within the chord's MIDI-ascending children. */
+    const chord = noteEl.parentElement!;
     const notes = chordNotesByMidiAscending(chord);
-    const max = notes.length - 1;
-    /* Alt+Up = move UP in the chord (increment toward top).
-       Alt+Down = move DOWN in the chord (decrement toward bass). */
-    if (key === 'ArrowUp') existing.noteIndex = Math.min(max, existing.noteIndex + 1);
-    else existing.noteIndex = Math.max(0, existing.noteIndex - 1);
+    const idx = notes.indexOf(noteEl);
+    if (idx < 0) { state.chordInternalSel = null; hooks.onStateChange(); return; }
+    const newIdx = key === 'ArrowUp'
+      ? Math.min(notes.length - 1, idx + 1)
+      : Math.max(0, idx - 1);
+    const newNote = notes[newIdx];
+    const newId = newNote.getAttribute('xml:id');
+    if (!newId) return;
+    existing.noteId = newId;
     hooks.onStateChange();
     return;
   }
-  /* ArrowLeft / ArrowRight → SC transposition. Wired in scTranspose task. */
-  if (!existing) {
-    hooks.setStatus?.('Alt+Up/Down selects a chord note first.');
-    return;
+  /* ArrowLeft / ArrowRight → SC transposition. */
+  let sel = existing;
+  if (!sel) {
+    /* Auto-select on bare notes — Alt+Left/Right is permitted without an
+       Alt+Up/Down step since there's only one note to act on. Chord ≥2
+       targets still require explicit selection (ambiguous which note). */
+    const target = selectableTargetAtCursor(model);
+    if (target && target.localName === 'note') {
+      const id = target.getAttribute('xml:id');
+      if (!id) return;
+      sel = { voice: model.getCurrentVoice(), noteId: id };
+      state.chordInternalSel = sel;
+      hooks.onStateChange();
+    } else {
+      hooks.setStatus?.('Alt+Up/Down selects a chord note first.');
+      return;
+    }
   }
-  applySCTranspose(model, hooks, existing, key === 'ArrowRight' ? +1 : -1);
+  applySCTranspose(model, hooks, sel, key === 'ArrowRight' ? +1 : -1);
 }
 
-/** Stub: real implementation lives in scTranspose.ts (next task). Defined
- *  here as a function reference so the dispatch above can call it; the
- *  module-level binding is assigned in initInput when the scTranspose
- *  module is available. */
+/** Stub: real implementation lives in scTranspose.ts. Defined here as a
+ *  function reference so the dispatch above can call it; the module-level
+ *  binding is assigned in initInput when the scTranspose module is available. */
 let applySCTranspose: (
   model: ComposerModel, hooks: InputHooks,
   sel: ChordInternalSel, dir: 1 | -1,
@@ -548,13 +609,93 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
   }
 
   function commitDuration(dur: Duration): void {
-    state.duration = dur;
     const heldRaw = hooks.getHeldKeys();
     /* Filter notes whose alteration exceeds ±3 — Verovio can't render
        compound accidentals legibly (the extra <accid> glyphs overlap
        without horizontal allocation). The user can re-spell or shift
        the lattice to bring them in range. */
     const held = heldRaw.filter((k) => Math.abs(alterFromCount(k.accid)) <= 3);
+
+    /* Chord-extend branch: when a chord-internal selection is set AND we're
+       in INS mode, the digit press appends held keys to the selected element
+       (chord or bare-note → chord) without advancing the cursor. Duration is
+       NOT updated from this digit — chord notes inherit the chord wrapper's
+       duration. */
+    const extendSel = reconcileChordInternalSel(model);
+    if (extendSel && state.mode === 'insert') {
+      if (heldRaw.length > 0 && held.length === 0) {
+        hooks.setStatus?.('All held keys have alteration > ±3; not added.');
+        return;
+      }
+      if (held.length === 0) {
+        hooks.setStatus?.('Hold keys to add to chord.');
+        return;
+      }
+      /* Layout-mismatch gate still applies: appended notes must match the
+         score's pinned tuning so (q, r) maps correctly. */
+      const hklMode = hooks.getHklTuningMode?.() ?? null;
+      const required = model.getLayoutReq().tuningMode;
+      if (hklMode !== null && hklMode !== required) {
+        const apply = window.confirm(
+          'HKL is in "' + tuningLabel(hklMode) + '" but this score requires "' + tuningLabel(required) + '".\n\n' +
+          'Notes added now would sound at HKL\'s current pitches, not the score\'s.\n\n' +
+          'Apply the score\'s layout to HKL? (then re-press your keys)'
+        );
+        if (apply) {
+          hooks.requestApplyLayout?.();
+          hooks.setStatus?.('Applied score\'s tuning to HKL. Re-press your keys.');
+        } else {
+          hooks.setStatus?.('Switch HKL to "' + tuningLabel(required) + '" to add notes.');
+        }
+        return;
+      }
+      withHistory('extend chord', () => {
+        const result = model.appendNotesToSelection(extendSel.noteId, held);
+        if (!result) {
+          hooks.setStatus?.('Cannot extend chord — selection lost.');
+          return false;
+        }
+        if (result.addedIds.length === 0) {
+          hooks.setStatus?.('All held keys already in chord.');
+          return false;
+        }
+        /* Selection migrates to the lowest-MIDI of the just-added notes
+           (per user choice). addedIds are pushed in iteration order; the
+           sort step rearranges chord children but addedIds order isn't
+           re-sorted. Compute lowest-MIDI explicitly by looking up each
+           added id's (q, r) and picking the min. Use a linear scan rather
+           than querySelector with the `xml\\:id` attribute escape, which
+           has had cross-environment quirks in testing. */
+        const allNotes = Array.from(model.getDoc().querySelectorAll('note'));
+        let lowest: string | null = null;
+        let lowestMidi = Infinity;
+        for (const id of result.addedIds) {
+          const note = allNotes.find((n) => n.getAttribute('xml:id') === id);
+          if (!note) continue;
+          const q = parseInt(note.getAttribute('data-q') ?? '0', 10);
+          const r = parseInt(note.getAttribute('data-r') ?? '0', 10);
+          const midi = 57 + 4 * q + 7 * r;
+          if (midi < lowestMidi) {
+            lowestMidi = midi;
+            lowest = id;
+          }
+        }
+        if (lowest) {
+          state.chordInternalSel = { voice: extendSel.voice, noteId: lowest };
+        }
+        if (result.skipped > 0) {
+          hooks.setStatus?.('Added ' + result.addedIds.length + '; skipped ' + result.skipped + ' duplicate(s).');
+        } else {
+          hooks.setStatus?.('Added ' + result.addedIds.length + ' to chord.');
+        }
+        return true;
+      });
+      hooks.onStateChange();
+      hooks.onChange();
+      return;
+    }
+
+    state.duration = dur;
     if (heldRaw.length > 0 && held.length === 0) {
       hooks.setStatus?.('All held keys have alteration > ±3; not entered.');
       return;
@@ -1043,10 +1184,12 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     if (dispatchUndoRedo(e)) return;
 
     /* Chord-internal selection lifetime: preserved across Alt+arrow (the
-       navigation/transpose keys themselves) and across `=` (which we want
-       to retarget to the single note). Pure-modifier keypresses also
-       preserve. Every other keystroke clears it so the selection doesn't
-       silently outlive its useful scope. */
+       navigation/transpose keys themselves), across `=` (which retargets to
+       the single note), across Backspace (which deletes only the selected
+       note, or collapses the chord; the handler manages sel afterward), and
+       across INS-mode duration digits (which become chord-extend appends in
+       this state; the handler manages sel afterward). Pure-modifier keys
+       also preserve. Every other keystroke clears it. */
     if (state.chordInternalSel) {
       const isPureMod = e.key === 'Shift' || e.key === 'Control'
         || e.key === 'Alt' || e.key === 'Meta';
@@ -1055,7 +1198,12 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
           || e.key === 'ArrowLeft' || e.key === 'ArrowRight');
       const isTie = e.key === '=' && !e.ctrlKey && !e.metaKey && !e.altKey
         && !e.shiftKey;
-      if (!isPureMod && !isAltArrow && !isTie) {
+      const isBackspace = e.key === 'Backspace' && !e.ctrlKey && !e.metaKey
+        && !e.altKey && !e.shiftKey;
+      const isInsertDigit = state.cursorMode === 'voice' && state.mode === 'insert'
+        && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
+        && DIGIT_TO_DUR[e.key] !== undefined;
+      if (!isPureMod && !isAltArrow && !isTie && !isBackspace && !isInsertDigit) {
         state.chordInternalSel = null;
         /* No onStateChange here — fall through; downstream handlers fire
            onStateChange/onChange as part of their normal work, which will
@@ -1256,8 +1404,21 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     if (state.cursorMode === 'voice' && e.key === '=') {
       e.preventDefault();
       const reconciled = reconcileChordInternalSel(model);
+      /* When a chord-internal selection is set, derive the note's index
+         within the chord's MIDI-ascending children to pass through to the
+         model. Bare-note selections (parent === <layer>) leave noteIndex
+         undefined; toggleTieOnCurrent then acts on the only note. */
+      let noteIndex: number | undefined;
+      if (reconciled) {
+        const noteEl = selectedNoteElement(model, reconciled);
+        if (noteEl && noteIsInChord(noteEl)) {
+          const siblings = chordNotesByMidiAscending(noteEl.parentElement!);
+          const idx = siblings.indexOf(noteEl);
+          if (idx >= 0) noteIndex = idx;
+        }
+      }
       withHistory('tie', () => {
-        const r = model.toggleTieOnCurrent(state.mode, reconciled?.noteIndex);
+        const r = model.toggleTieOnCurrent(state.mode, noteIndex);
         if (r === null) { hooks.setStatus?.('No tieable note under cursor.'); return false; }
         return true;
       });
@@ -1292,8 +1453,33 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         return;
       }
       let deleted = false;
+      /* Chord-internal selection branch: target ONLY the selected note (not
+         the whole chord). Bare-note selections fall through to the standard
+         whole-element deletion via deleteAtCursor, which already does the
+         right thing (the cursor is past the bare note). */
+      const delSel = reconcileChordInternalSel(model);
+      const delNote = delSel ? selectedNoteElement(model, delSel) : null;
+      const targetInChord = !!(delNote && noteIsInChord(delNote));
       withHistory('delete', () => {
+        if (delSel && targetInChord) {
+          const r = model.deleteNoteInChord(delSel.noteId);
+          if (!r) return false;
+          /* Selection update: when the chord collapsed to a bare note, the
+             survivor's xml:id is preserved as the new selection target.
+             When the chord remains a chord, clear sel (the user can re-enter
+             via Alt+arrow). */
+          if (r.collapsed && r.survivorId) {
+            state.chordInternalSel = { voice: delSel.voice, noteId: r.survivorId };
+          } else {
+            state.chordInternalSel = null;
+          }
+          deleted = true;
+          return true;
+        }
+        /* Bare-note selection or no selection: standard delete. Clear sel
+           after deletion (target gone). */
         deleted = model.deleteAtCursor();
+        if (deleted) state.chordInternalSel = null;
         return deleted;
       });
       if (deleted) {

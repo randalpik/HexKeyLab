@@ -37,11 +37,11 @@ export interface CursorUpdateOpts {
   entryMode: 'insert' | 'overwrite';
   cursorMode: 'voice' | 'expr' | 'select';
   exprCursor: ExpressionCursor;
-  /** Per-note selection inside the chord at the cursor. When set, the
-   *  cursor renders a horizontal line from the cursor bar to the selected
-   *  note. Cleared when the cursor moves or any non-Alt-arrow / non-`=`
-   *  keystroke fires. */
-  chordInternalSel?: { chordId: string; noteIndex: number } | null;
+  /** Per-note selection of a single `<note>` — either a chord-child note or
+   *  a bare note. When set, the cursor renders a horizontal line from the
+   *  cursor bar to the selected note's notehead. Cleared by cursor movement
+   *  and by non-preserved keystrokes (see input.ts). */
+  chordInternalSel?: { noteId: string } | null;
 }
 
 class CursorOverlay {
@@ -166,33 +166,32 @@ class CursorOverlay {
   }
 
   /** Draw a horizontal purple line from the voice cursor's bar to the
-   *  bounding box of the selected note inside the chord at the cursor.
-   *  Hides the line when there is no chord-internal selection or when the
-   *  required bbox isn't available (e.g. before first render). */
+   *  bounding box of the selected note. Works for both chord-child notes
+   *  (line anchored at the chord's left edge) and bare notes (line anchored
+   *  at the note's own left edge — yields a short horizontal mark across
+   *  the notehead). Hides the line when there is no chord-internal selection
+   *  or when the required bbox isn't available (e.g. before first render). */
   private renderChordInternalLine(
-    sel: { chordId: string; noteIndex: number } | null,
+    sel: { noteId: string } | null,
   ): void {
     if (!this.chordIntLine) return;
     if (!sel) {
       this.chordIntLine.setAttribute('opacity', '0');
       return;
     }
-    /* Locate the rendered <chord> and its <note> children. Verovio emits
-       chord notes as separate <g class="note"> elements per <note> xml:id,
-       in MEI document order — which matches sel.noteIndex since Composer
-       keeps the MEI sorted by MIDI ascending. */
-    const chordNode = document.querySelector('#' + (typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(sel.chordId) : sel.chordId));
-    if (!chordNode) { this.chordIntLine.setAttribute('opacity', '0'); return; }
-    const noteEls = chordNode.querySelectorAll('g.note');
-    if (sel.noteIndex < 0 || sel.noteIndex >= noteEls.length) {
-      this.chordIntLine.setAttribute('opacity', '0');
-      return;
-    }
-    const target = noteEls[sel.noteIndex] as SVGGElement | null;
+    /* Locate the rendered note. Verovio emits each <note> as <g class="note"
+       id="<xml:id>">. The id may be bare (top-level <note>) or nested inside
+       a g.chord wrapper. Use closest('g.chord') to find the visual chord
+       extent for the line's left anchor when applicable. */
+    const escapedId = typeof CSS !== 'undefined' && CSS.escape
+      ? CSS.escape(sel.noteId)
+      : sel.noteId;
+    const target = document.querySelector('#' + escapedId) as SVGGElement | null;
     if (!target) { this.chordIntLine.setAttribute('opacity', '0'); return; }
+    const anchorEl = (target.closest('g.chord') ?? target) as SVGGElement;
     const svg = this.svg!;
     const svgRect = svg.getBoundingClientRect();
-    const cRect = (chordNode as SVGGElement).getBoundingClientRect();
+    const cRect = anchorEl.getBoundingClientRect();
     /* Use the notehead's bbox for the vertical anchor — `target` (g.note)
        includes the accidental glyph as a child, which biases the union
        bbox upward for flats / downward for sharps. The notehead itself

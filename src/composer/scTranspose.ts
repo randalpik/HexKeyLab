@@ -1,14 +1,16 @@
-// SC transposition for a single note inside a chord. "SC" = enharmonic-axis
-// hop ±(7, −4) in lattice (q, r), which preserves 12-TET pitch class but
-// changes the lattice cell (and usually the spelling). Always changes the
-// note's lattice color/hue; sometimes changes letter + accidental.
+// SC transposition for a single note — either a chord-child note OR a bare
+// `<note>`. "SC" = enharmonic-axis hop ±(7, −4) in lattice (q, r), which
+// preserves 12-TET pitch class but changes the lattice cell (and usually
+// the spelling). Always changes the note's lattice color/hue; sometimes
+// changes letter + accidental.
 //
 // Blocked when the resulting spelling would need ≥ 4 accidentals (a
 // quadruple sharp / flat) — Verovio can't render those legibly.
 //
-// After mutation the chord's note children are re-sorted ascending by MIDI
-// to preserve the chord-sort invariant; the caller's noteIndex is updated
-// in-place so the same note remains selected after the resort.
+// Chord-child: after mutation, the chord's note children are re-sorted
+// ascending by MIDI to preserve the chord-sort invariant. The selected
+// note's xml:id stays stable (sel.noteId still points at the same element).
+// Bare note: no resort needed.
 
 import type { ComposerModel, Voice } from './model.js';
 import type { InputHooks, ChordInternalSel } from './input.js';
@@ -43,10 +45,17 @@ function chordNotes(chord: Element): Element[] {
   return out;
 }
 
-function findChordById(model: ComposerModel, voice: Voice, chordId: string): Element | null {
+/** Locate the `<note>` element with `noteId` in `voice`'s flat stream
+ *  (whether bare or inside a `<chord>`). Returns null when missing. */
+function findNoteById(model: ComposerModel, voice: Voice, noteId: string): Element | null {
   const flat = model.flatChildren(voice);
   for (const el of flat) {
-    if (el.localName === 'chord' && el.getAttribute('xml:id') === chordId) return el;
+    if (el.localName === 'note' && el.getAttribute('xml:id') === noteId) return el;
+    if (el.localName === 'chord') {
+      for (const c of Array.from(el.children)) {
+        if (c.localName === 'note' && c.getAttribute('xml:id') === noteId) return c;
+      }
+    }
   }
   return null;
 }
@@ -64,14 +73,12 @@ function noteMidiSortKey(note: Element): number {
   return coordToMidi(c.q, c.r);
 }
 
-/** Find the cursor index `c` at which flat[c] is the chord with the given id,
- *  in `voice`. Returns -1 when not found. */
-function findChordFlatIdx(model: ComposerModel, voice: Voice, chordId: string): number {
+/** Find the flat-index of `target` (a top-level element) in `voice`. Returns
+ *  -1 when not found. */
+function findFlatIdx(model: ComposerModel, voice: Voice, target: Element): number {
   const flat = model.flatChildren(voice);
   for (let i = 0; i < flat.length; i++) {
-    if (flat[i].localName === 'chord' && flat[i].getAttribute('xml:id') === chordId) {
-      return i;
-    }
+    if (flat[i] === target) return i;
   }
   return -1;
 }
@@ -113,12 +120,13 @@ function gatherSoundingAt(model: ComposerModel, atTick: number): CoordRef[] {
 
 const FAILED_SC: SCResult = { ok: false, previewNotes: [], previewTicks: 0 };
 
-/** Apply enharmonic-axis hop (±(7, −4)) to the note at sel.chordId/noteIndex.
- *  On success, also collects the post-shift vertical slice (every note from
- *  every voice that's sounding at the chord's start tick) for the caller to
- *  feed into a one-shot playback preview. Blocked by quadruple-accidental
- *  clamp, by the layout-outline constraint (when a non-empty footprint is
- *  passed), or by a missing target. */
+/** Apply enharmonic-axis hop (±(7, −4)) to the note identified by sel.noteId.
+ *  Handles both chord-child notes (parent is `<chord>`) and bare notes
+ *  (parent is `<layer>`). On success, also collects the post-shift vertical
+ *  slice (every note from every voice that's sounding at the element's start
+ *  tick) for the caller to feed into a one-shot playback preview. Blocked
+ *  by quadruple-accidental clamp, by the layout-outline constraint (when a
+ *  non-empty footprint is passed), or by a missing target. */
 export function scTransposeChordNote(
   model: ComposerModel,
   hooks: InputHooks,
@@ -126,17 +134,11 @@ export function scTransposeChordNote(
   dir: 1 | -1,
   footprint: FootprintColorMap,
 ): SCResult {
-  const chord = findChordById(model, sel.voice, sel.chordId);
-  if (!chord) {
-    hooks.setStatus?.('Chord no longer at cursor.');
+  const note = findNoteById(model, sel.voice, sel.noteId);
+  if (!note) {
+    hooks.setStatus?.('Selected note no longer exists.');
     return FAILED_SC;
   }
-  const notes = chordNotes(chord);
-  if (sel.noteIndex < 0 || sel.noteIndex >= notes.length) {
-    hooks.setStatus?.('Selected note out of range.');
-    return FAILED_SC;
-  }
-  const note = notes[sel.noteIndex];
   const oldCoord = noteCoord(note);
   if (!oldCoord) {
     hooks.setStatus?.('Note missing lattice coordinates.');
@@ -177,27 +179,33 @@ export function scTransposeChordNote(
   else note.removeAttribute('accid');
   const newColor = footprint?.get(newKey);
   if (newColor) note.setAttribute('color', newColor);
-  /* Re-sort chord children by MIDI ascending (chord-sort invariant). Mutate
-     sel.noteIndex so the same note stays selected after the resort. */
-  const before = notes.slice();
-  const after = before.slice().sort((a, b) => noteMidiSortKey(a) - noteMidiSortKey(b));
-  /* Re-append in sorted order. The chord may have non-<note> children
-     (verse/syl/lyric tags etc.) — preserve them in original order at the
-     end. */
-  const nonNotes = Array.from(chord.children).filter((c) => c.localName !== 'note');
-  for (const n of before) chord.removeChild(n);
-  for (const n of after) chord.appendChild(n);
-  for (const o of nonNotes) chord.appendChild(o);
-  sel.noteIndex = after.indexOf(note);
+
+  /* Re-sort the parent chord's children by MIDI ascending (chord-sort
+     invariant). Skipped for bare notes (only one note in the layer). The
+     note's xml:id is stable — sel.noteId still points at the same element. */
+  const parent = note.parentElement;
+  const isInChord = parent?.localName === 'chord';
+  const startElement = isInChord ? parent! : note;
+  if (isInChord) {
+    const chord = parent!;
+    const before = chordNotes(chord);
+    const after = before.slice().sort((a, b) => noteMidiSortKey(a) - noteMidiSortKey(b));
+    /* Re-append in sorted order. The chord may have non-<note> children
+       (verse/syl/lyric tags etc.) — preserve them in original order at the
+       end. */
+    const nonNotes = Array.from(chord.children).filter((c) => c.localName !== 'note');
+    for (const n of before) chord.removeChild(n);
+    for (const n of after) chord.appendChild(n);
+    for (const o of nonNotes) chord.appendChild(o);
+  }
 
   /* Gather the post-shift vertical slice for an audible preview. Use the
-     chord's start tick (cursor at chord_idx - 1 == past wrapper). The chord
-     is still at the same flat index post-edit (we only mutated children
-     order, not position in the voice's stream). */
-  const chordIdx = findChordFlatIdx(model, sel.voice, sel.chordId);
+     element's start tick (cursor at flatIdx - 1 == past it). For a bare note
+     the element IS the note; for a chord child it's the chord wrapper. */
+  const elemIdx = findFlatIdx(model, sel.voice, startElement);
   let startTick = 0;
-  if (chordIdx > 0) startTick = model.getTickPositionAt(sel.voice, chordIdx - 1);
+  if (elemIdx > 0) startTick = model.getTickPositionAt(sel.voice, elemIdx - 1);
   const previewNotes = gatherSoundingAt(model, startTick);
-  const previewTicks = realTicks(chord);
+  const previewTicks = realTicks(startElement);
   return { ok: true, previewNotes, previewTicks };
 }

@@ -149,7 +149,7 @@ function cursorOpts(): CursorUpdateOpts {
     cursorMode: s.cursorMode,
     exprCursor: s.exprCursor,
     chordInternalSel: s.chordInternalSel
-      ? { chordId: s.chordInternalSel.chordId, noteIndex: s.chordInternalSel.noteIndex }
+      ? { noteId: s.chordInternalSel.noteId }
       : null,
   };
 }

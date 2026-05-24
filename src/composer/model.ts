@@ -1687,6 +1687,181 @@ export class ComposerModel {
     return id;
   }
 
+  /** Look up a `<note>` element by its xml:id, scanning all voices. Returns
+   *  null when not present. Used by chord-internal selection operations.
+   *  Uses a linear scan rather than querySelector with the `xml\\:id`
+   *  attribute escape, which has had cross-environment quirks in testing. */
+  private findNoteByIdAnywhere(noteId: string): Element | null {
+    const notes = this.doc.querySelectorAll("note");
+    for (const n of Array.from(notes)) {
+      if (n.getAttribute("xml:id") === noteId) return n;
+    }
+    return null;
+  }
+
+  /** Delete a single `<note>` from its parent `<chord>`. The chord must
+   *  exist as the note's parent and must have ≥2 note children (the typical
+   *  invariant for a Composer-emitted chord). Behavior:
+   *
+   *    - Drops to ≥2 notes remaining: just removes the note child. Returns
+   *      { collapsed: false, survivorId: null }.
+   *    - Drops to 1 note remaining: collapses the chord wrapper to a bare
+   *      `<note>` in the parent layer. The chord's @dur/@dots transfer to
+   *      the survivor; @tie/@data-* on the chord wrapper are not used in
+   *      Composer's emission so are not transferred. The survivor's xml:id
+   *      is preserved (caller can migrate the chord-internal selection to
+   *      it). Returns { collapsed: true, survivorId: <survivor xml:id> }.
+   *
+   *  Returns null when the note isn't a chord-child (caller should fall
+   *  back to deleteAtCursor for bare-note deletion). After mutation:
+   *  setBarlines + normalizeTies + normalizePlaceholders. Cursor untouched —
+   *  the chord wrapper / bare-note replacement stays at the same flat index.
+   */
+  deleteNoteInChord(
+    noteId: string,
+  ): { collapsed: boolean; survivorId: string | null } | null {
+    const note = this.findNoteByIdAnywhere(noteId);
+    if (!note) return null;
+    const chord = note.parentElement;
+    if (!chord || chord.localName !== "chord") return null;
+    const noteChildren = Array.from(chord.children).filter(
+      (c) => c.localName === "note",
+    );
+    if (noteChildren.length < 2) return null;
+
+    chord.removeChild(note);
+
+    const remaining = Array.from(chord.children).filter(
+      (c) => c.localName === "note",
+    );
+    let collapsed = false;
+    let survivorId: string | null = null;
+    if (remaining.length === 1) {
+      /* Collapse: transfer @dur/@dots from chord wrapper to the surviving
+         <note>, replace the wrapper with the note in the layer. */
+      const survivor = remaining[0];
+      const dur = chord.getAttribute("dur");
+      const dots = chord.getAttribute("dots");
+      if (dur) survivor.setAttribute("dur", dur);
+      if (dots) survivor.setAttribute("dots", dots);
+      const layer = chord.parentElement;
+      if (layer) {
+        layer.replaceChild(survivor, chord);
+      }
+      collapsed = true;
+      survivorId = survivor.getAttribute("xml:id");
+    }
+
+    this.setBarlines();
+    this.normalizeTies();
+    this.normalizePlaceholders();
+    return { collapsed, survivorId };
+  }
+
+  /** Append `held` notes to the chord (or bare-note → chord) containing
+   *  `anchorNoteId`. Used by chord-extend in INS mode. Behavior:
+   *
+   *    - Anchor is a chord-child note: appends each non-duplicate as a
+   *      `<note>` child (inheriting chord wrapper's @dur/@dots). Re-sorts
+   *      ascending by MIDI.
+   *    - Anchor is a bare `<note>`: builds a new `<chord>` wrapper inheriting
+   *      the bare note's @dur/@dots (stripped from the note), moves the
+   *      original note into the wrapper, appends non-duplicates, sorts. The
+   *      original note's xml:id is preserved (caller may keep its selection).
+   *
+   *  Duplicate predicate: `(q, r)` equality with any existing note in the
+   *  chord (or with the bare-note anchor itself). Returns the added
+   *  `<note>` xml:ids in MIDI-ascending order, plus the count of skipped
+   *  duplicates. Returns null when the anchor isn't found or has no (q, r). */
+  appendNotesToSelection(
+    anchorNoteId: string,
+    held: ReadonlyArray<ResolvedNote>,
+  ): { addedIds: string[]; skipped: number } | null {
+    const anchor = this.findNoteByIdAnywhere(anchorNoteId);
+    if (!anchor) return null;
+    const parent = anchor.parentElement;
+    if (!parent) return null;
+
+    /* Determine the chord wrapper (creating one on bare-note promotion). */
+    let chord: Element;
+    if (parent.localName === "chord") {
+      chord = parent;
+    } else if (parent.localName === "layer") {
+      /* Promote bare note → chord. Build a fresh wrapper with the bare
+         note's @dur/@dots, strip them off the note, place it as the
+         wrapper's first child, then put the wrapper where the note was. */
+      const dur = anchor.getAttribute("dur");
+      const dots = anchor.getAttribute("dots");
+      if (!dur) return null;
+      chord = el(this.doc, "chord", {
+        "xml:id": newId("c"),
+        dur,
+        dots: dots && parseInt(dots, 10) > 0 ? dots : undefined,
+      });
+      anchor.removeAttribute("dur");
+      anchor.removeAttribute("dots");
+      parent.insertBefore(chord, anchor);
+      parent.removeChild(anchor);
+      chord.appendChild(anchor);
+    } else {
+      return null;
+    }
+
+    /* Duplicate predicate over (q, r). Existing notes' coords come from
+       data-q/data-r; held notes carry q/r directly. */
+    const existingKeys = new Set<string>();
+    for (const child of Array.from(chord.children)) {
+      if (child.localName !== "note") continue;
+      const q = child.getAttribute("data-q");
+      const r = child.getAttribute("data-r");
+      if (q !== null && r !== null) existingKeys.add(q + "," + r);
+    }
+
+    const addedIds: string[] = [];
+    let skipped = 0;
+    const dur = chord.getAttribute("dur") as Duration | null;
+    if (!dur) return null;
+    const dotsAttr = chord.getAttribute("dots");
+    const dots: Dots = (dotsAttr ? (parseInt(dotsAttr, 10) as Dots) : 0);
+
+    for (const k of held) {
+      const key = k.q + "," + k.r;
+      if (existingKeys.has(key)) {
+        skipped++;
+        continue;
+      }
+      existingKeys.add(key);
+      const noteEl = this.buildNoteElement(k, dur, dots, /* inChord */ true);
+      chord.appendChild(noteEl);
+      const id = noteEl.getAttribute("xml:id");
+      if (id) addedIds.push(id);
+    }
+
+    /* Re-sort chord's note children by MIDI ascending. */
+    if (addedIds.length > 0) {
+      const noteChildren = Array.from(chord.children).filter(
+        (c) => c.localName === "note",
+      );
+      const nonNotes = Array.from(chord.children).filter(
+        (c) => c.localName !== "note",
+      );
+      const sortKey = (n: Element): number => {
+        const q = parseInt(n.getAttribute("data-q") ?? "0", 10);
+        const r = parseInt(n.getAttribute("data-r") ?? "0", 10);
+        return 57 + 4 * q + 7 * r;
+      };
+      const sorted = noteChildren.slice().sort((a, b) => sortKey(a) - sortKey(b));
+      for (const n of noteChildren) chord.removeChild(n);
+      for (const n of sorted) chord.appendChild(n);
+      for (const o of nonNotes) chord.appendChild(o);
+    }
+
+    this.setBarlines();
+    this.normalizeTies();
+    this.normalizePlaceholders();
+    return { addedIds, skipped };
+  }
+
   /** Rebuild all tie metadata across the document from scratch.
    *
    *  Tie state has two parts:
