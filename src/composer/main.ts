@@ -137,8 +137,12 @@ function resetStatus(): void {
   setStatus('Ready.', 'info', 'default');
 }
 
-function clearStatusIfError(): void {
-  if (statusKind === 'error') resetStatus();
+function clearStatusIfTransient(): void {
+  /* Errors and post-action reports both go stale the moment the user does
+     anything else — clear both on the next keystroke. State messages
+     (blue) describe ongoing context (selection range, pending hairpin,
+     held keys, etc.) and clear via their own mechanisms instead. */
+  if (statusKind === 'error' || statusKind === 'action') resetStatus();
 }
 
 function clearStatusIfHeldKeys(): void {
@@ -500,7 +504,7 @@ initInput(model, {
     if (hklConnected) maybeBroadcastReference();
   },
   setStatus: (msg, kind) => setStatus(msg, kind),
-  clearStatusIfError: () => clearStatusIfError(),
+  clearStatusIfTransient: () => clearStatusIfTransient(),
   isPlaybackActive: () => isPlaying,
   onZoomChange: (dir) => stepZoom(dir),
   getHklTuningMode: () => hklTuningMode,

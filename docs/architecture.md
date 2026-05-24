@@ -889,6 +889,19 @@ Arrow keys are suppressed during playback (the `isPlaybackActive` hook in `Input
 
 Composer never sends entry-time playback to HKL. The user already hears their held Lumatone keys live; sending a `play-chord` back caused a noteOff race that cut held notes short.
 
+**Statusline kinds.** `#composerStatus` (bottom bar) is the only feedback surface for keystroke-driven actions. `setStatus(text, kind)` in `main.ts` toggles a CSS class on the element; four kinds with distinct colors against the dark background:
+
+- `error` (red, `#FF4C79`) — anything that blocks a user action or explains why an action was a no-op (`No tieable note under cursor`, `Doesn't fit`, `Save failed: …`, layout-mismatch blockers).
+- `state` (blue, `#4CB4FF`) — current-state info (`held: A3 C4`, `Expression layer.`, pending-hairpin/tuplet prompts, formatted selection range).
+- `action` (purple, `#C77AFF`) — post-action confirmations (`Copied to clipboard.`, `Pasted N ticks.`, `Saved .hkc.`, `Undo: <label>`).
+- `info` (default gray) — `Ready.` (the default) and transient progress text (`Loading Verovio WASM…`, `Rendering PDF…`).
+
+Clearing: the keystroke dispatcher in `input.ts` calls `hooks.clearStatusIfTransient?.()` at the top of every non-modifier keydown, which resets the statusline to `Ready.` whenever the current kind is `error` or `action` (both go stale the moment the user takes another action). State (blue) survives the keystroke since it describes ongoing context; it clears via its own mechanism (the next overwrite, e.g. hairpin commit/cancel replaces the pending-hairpin prompt with a purple confirmation). The held-keys broadcast has its own source-tagged clear path: when HKL broadcasts an empty key list, `clearStatusIfHeldKeys()` resets only if the bar is still showing the held-keys echo (`source: 'held-keys'`), so an unrelated state/action message stays put.
+
+HKL connection events (connect/disconnect/standalone) are NOT written to the statusline — they're surfaced via the toolbar's `#connStatus` badge only, to avoid duplicating the same signal in two places.
+
+**When adding a new `setStatus` call**: pick the kind by intent, not by the *content* of the message. "Tells the user their action was blocked" → `error`. "Describes ongoing state the user is in" → `state`. "Reports something just happened" → `action`. Default-kind (gray) is reserved for `Ready.` and progress text.
+
 ### 7.7 Playback orchestration (`src/composer/playback.ts`)
 
 `buildPlayback(model)` walks every measure of every voice in the MEI; for each chord/note (rests and placeholder spaces advance the voice clock but don't emit), it emits a `PlaybackEvent` with cumulative `atMs` per voice and `durationMs` from `elementDurationTicks` at the score's tempo (read from the `<tempo>` element in the first measure, fallback 120 BPM). Tied chains coalesce: a chord with `@tie="i"` emits ONE event with the chain's total duration; subsequent `@tie="m"|"t"` pieces in the same voice don't trigger re-attacks. Events are sorted by `atMs` so simultaneous voice attacks land together.

@@ -194,6 +194,7 @@ Most HKL work doesn't touch this. Documented here because deriving it again cost
 ## Documentation map
 
 - **`CLAUDE.md`** (this file) — entry point for sessions. Read first.
+- **`docs/backlog.md`** — Max's source of truth for future direction, conceptual framing of layouts, and current task backlog. Read-only for Claude: suggest changes but never edit without explicit permission, even for "obvious" updates like striking completed items.
 - **`docs/architecture.md`** — what HKL does and how it's organized. Feature-level reference.
 - **`docs/lessons.md`** — gotchas, dead-ends, anti-patterns, hard-won truths. Read before debugging anything that smells familiar.
 - **`docs/decisions.md`** — append-only log of non-obvious design choices. Add an entry when committing a decision worth remembering.
@@ -202,7 +203,7 @@ Most HKL work doesn't touch this. Documented here because deriving it again cost
 
 ## Workflow patterns
 
-- **For feature work**: skim CLAUDE.md (this file) → read relevant section of architecture.md → check lessons.md for related gotchas → propose design (if non-trivial) → implement → test.
+- **For feature work**: skim CLAUDE.md (this file) → read relevant section of architecture.md → check backlog.md for the matching category to surface Max's framing and any open items (proactively flag adjacent `?` items) → check lessons.md for related gotchas → propose design (if non-trivial) → implement → test.
 - **Before declaring any Composer change done**: `npm run typecheck` + `npm run build` + `npm run test:composer` (full tier, requires `npm run dev` in another terminal). The suite fails on any unhandled console error, cursor-position regression, model invariant break, roundtrip drift, or keystroke-dispatch issue. For visual diffs, open `tools/composer-test/out/<name>.png` against `tools/composer-test/baselines/<name>.png`; if the diff is intentional, re-run with `--update-baselines`.
 - **For debugging**: reproduce symptom → check lessons.md for similar past issues → narrow scope → propose hypothesis → test it before pursuing.
 - **For new modules**: place under appropriate `src/` subdirectory (audio, midi, midi-io, lumatone, tuning, layout, render, recording, transcription, ui, state, effects, input, bridge, composer, shared). Keep modules focused on one concern. Export a small surface; hold internal state private.
@@ -216,5 +217,6 @@ Most HKL work doesn't touch this. Documented here because deriving it again cost
 - **Constraints discovered** → add to lessons.md
 - **Non-obvious choices made** → append to decisions.md
 - **Hardware/protocol facts learned** → update CLAUDE.md (this file) under critical context
+- **Future intent / backlog state** → Max edits docs/backlog.md directly; Claude suggests but does not edit.
 
 When in doubt about whether something is worth recording: yes. Future-you will be glad.

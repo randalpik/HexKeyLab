@@ -161,11 +161,12 @@ export interface InputHooks {
   onChange: () => void;
   onStateChange: () => void;
   setStatus?: (msg: string, kind?: 'info' | 'error' | 'state' | 'action') => void;
-  /** Reset the statusline if its current message is an error. Called at the
-   *  top of every keystroke so any prior red message clears as soon as the
-   *  user starts a new action; if the new keystroke writes its own status,
-   *  that overrides naturally. */
-  clearStatusIfError?: () => void;
+  /** Reset the statusline if its current message is transient (error or
+   *  post-action confirmation). Called at the top of every keystroke so
+   *  any prior red/purple message clears as soon as the user starts a new
+   *  action; if the new keystroke writes its own status, that overrides
+   *  naturally. State (blue) messages clear via their own mechanisms. */
+  clearStatusIfTransient?: () => void;
   /** True while score playback is running. While true, cursor/voice
    *  navigation (arrow keys) is suppressed so the user can't fight the
    *  playback cursors. Other keys (digits, backspace) still work. */
@@ -1186,12 +1187,12 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     if (shouldIgnore(e)) return;
 
     /* Any non-modifier keystroke counts as "the user took a new action" —
-       clear any lingering red error message so it doesn't haunt unrelated
-       follow-up keys. The new keystroke may write its own status; if so,
-       that overrides the just-cleared default. Pure-modifier keys (the
-       user is still arming a combo) don't clear. */
+       clear any lingering red error or purple post-action message so it
+       doesn't haunt unrelated follow-up keys. The new keystroke may write
+       its own status; if so, that overrides the just-cleared default.
+       Pure-modifier keys (still arming a combo) don't clear. */
     if (e.key !== 'Shift' && e.key !== 'Control' && e.key !== 'Alt' && e.key !== 'Meta') {
-      hooks.clearStatusIfError?.();
+      hooks.clearStatusIfTransient?.();
     }
 
     /* Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z — undo/redo. Must fire before selection-

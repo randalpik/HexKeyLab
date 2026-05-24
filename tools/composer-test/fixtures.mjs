@@ -614,6 +614,16 @@ const KBD = {
   kbd_statusError_clearsOnNextKey: {
     setupKeys: [{ key: '=' }, { key: 'ArrowRight' }],
   },
+
+  /* Purple post-action message also clears on next keystroke. Press '<'
+     (start cres → state/blue), then Escape (cancel → action/purple
+     "Pending hairpin cancelled."), then ArrowRight — should be Ready. */
+  kbd_statusAction_pendingHairpinCancel: {
+    setupKeys: [{ key: '<', shift: true }, 'Escape'],
+  },
+  kbd_statusAction_clearsOnNextKey: {
+    setupKeys: [{ key: '<', shift: true }, 'Escape', 'ArrowRight'],
+  },
 };
 
 /* ── New: selection mode (Shift+arrow entry, Ctrl+C/X/V) ──────────────── */
@@ -1673,6 +1683,35 @@ export const FIXTURE_ASSERTIONS = {
   ],
   kbd_statusError_clearsOnNextKey: [
     { name: 'statusline cleared to Ready. with no kind class',
+      expr: `(() => {
+        const el = document.getElementById('composerStatus');
+        if (!el) return { ok: false, detail: 'no #composerStatus element' };
+        const hasKindClass = el.classList.contains('status-error')
+          || el.classList.contains('status-state')
+          || el.classList.contains('status-action');
+        if (hasKindClass) {
+          return { ok: false, detail: 'still has kind class: ' + el.className };
+        }
+        return el.textContent === 'Ready.'
+          ? { ok: true }
+          : { ok: false, detail: 'text=' + el.textContent };
+      })()` },
+  ],
+  kbd_statusAction_pendingHairpinCancel: [
+    { name: 'statusline shows post-action in purple',
+      expr: `(() => {
+        const el = document.getElementById('composerStatus');
+        if (!el) return { ok: false, detail: 'no #composerStatus element' };
+        if (!el.classList.contains('status-action')) {
+          return { ok: false, detail: 'classList=' + el.className + ' text=' + el.textContent };
+        }
+        return el.textContent.includes('cancelled')
+          ? { ok: true }
+          : { ok: false, detail: 'text=' + el.textContent };
+      })()` },
+  ],
+  kbd_statusAction_clearsOnNextKey: [
+    { name: 'purple post-action also clears on next keystroke',
       expr: `(() => {
         const el = document.getElementById('composerStatus');
         if (!el) return { ok: false, detail: 'no #composerStatus element' };
