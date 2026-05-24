@@ -32,6 +32,12 @@ import {
 import { jiRatio, tenneyHeightFromExps } from '../tuning/ratios.js';
 import { regionInfo } from '../tuning/regions.js';
 import { refSpine } from '../tuning/refspine.js';
+import {
+  hejiCommas,
+  hejiLabel,
+  type HejiLabel,
+  type HejiGlyphFamily,
+} from "../tuning/heji.js";
 import { VALID_REF_TABLE } from './refbounds-table.js';
 import { isCtrlHeld } from '../ui/keyboard.js';
 import type { KeyId } from '../types.js';
@@ -498,44 +504,82 @@ function lightenHex(hex: string, amt: number): string {
   r = Math.min(255, r + amt); g = Math.min(255, g + amt); b = Math.min(255, b + amt);
   return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
 }
-function drawNoteName(cx: number, cy: number, name: string, isW: boolean, isExt: boolean): void {
-  if (name === '?') return;
-  const p = parseNote(name); const v = accToVal(p.acc); const absV = Math.abs(v);
-  ctx.fillStyle = isW ? (isExt ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.8)') : (isExt ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.9)');
+function drawNoteName(
+  cx: number,
+  cy: number,
+  name: string,
+  isW: boolean,
+  isExt: boolean,
+  heji?: HejiLabel,
+): void {
+  if (name === "?") return;
+  ctx.fillStyle = isW
+    ? isExt
+      ? "rgba(0,0,0,0.45)"
+      : "rgba(0,0,0,0.8)"
+    : isExt
+      ? "rgba(255,255,255,0.5)"
+      : "rgba(255,255,255,0.9)";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  /* HEJI-on path: letter (sans-serif) + Bravura combined-glyph chain.
+     Falls back to the conventional path if Bravura isn't loaded yet, so the
+     label still reads correctly during the font's load window (the
+     document.fonts.load hook below triggers a redraw when it's ready). */
+  if (heji && heji.glyphs.length > 0 && bravuraLoaded) {
+    drawHejiLabel(cx, cy, heji);
+    return;
+  }
+  drawConventionalLabel(cx, cy, name);
+}
+
+/** Existing rendering path: letter + Unicode ♯/♭/𝄪/𝄫 in sans-serif. Handles
+ *  bare letters, all-conventional accidentals, and any cell when HEJI is off
+ *  or the Bravura font hasn't loaded yet. */
+function drawConventionalLabel(cx: number, cy: number, name: string): void {
+  const p = parseNote(name);
+  const v = accToVal(p.acc);
+  const absV = Math.abs(v);
   const baseFontSize = 14;
-  ctx.font = '500 ' + baseFontSize + 'px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  if (v === 0) { ctx.fillText(p.letter, cx, cy); return; }
+  ctx.font = "500 " + baseFontSize + "px sans-serif";
+  if (v === 0) {
+    ctx.fillText(p.letter, cx, cy);
+    return;
+  }
   /* decompose accidental into single+double glyphs */
-  const single = v > 0 ? SHARP : FLAT, dbl = v > 0 ? DBLSHARP : DBLFLAT;
+  const single = v > 0 ? SHARP : FLAT,
+    dbl = v > 0 ? DBLSHARP : DBLFLAT;
   const glyphs = [];
   if (absV % 2 === 1) glyphs.push(single);
   for (let i = 0; i < Math.floor(absV / 2); i++) glyphs.push(dbl);
   /* measure total width at base size to determine scale factor */
-  const dblFlatScale = 0.90;
+  const dblFlatScale = 0.9;
   const lw = ctx.measureText(p.letter).width;
   let totalW = lw;
   for (let i = 0; i < glyphs.length; i++) {
-    const gScale = (glyphs[i] === DBLFLAT) ? dblFlatScale : 1;
-    ctx.font = '500 ' + Math.round(baseFontSize * gScale) + 'px sans-serif';
+    const gScale = glyphs[i] === DBLFLAT ? dblFlatScale : 1;
+    ctx.font = "500 " + Math.round(baseFontSize * gScale) + "px sans-serif";
     totalW += ctx.measureText(glyphs[i]).width + 0.5;
     /* cascading nudge for double flats: count consecutive double flats */
     if (glyphs[i] === DBLFLAT) {
-      let dblIdx = 0; for (let j = 0; j < i; j++) if (glyphs[j] === DBLFLAT) dblIdx++;
+      let dblIdx = 0;
+      for (let j = 0; j < i; j++) if (glyphs[j] === DBLFLAT) dblIdx++;
       if (dblIdx > 0) totalW -= baseFontSize * 0.14 * dblIdx;
     }
   }
-  ctx.font = '500 ' + baseFontSize + 'px sans-serif';
+  ctx.font = "500 " + baseFontSize + "px sans-serif";
   const maxW = hexR * 1.3;
   const scale = Math.min(1, maxW / totalW);
   const fontSize = Math.max(6, Math.round(baseFontSize * scale));
   /* compute nudges and glyph widths at final size */
-  ctx.font = '500 ' + fontSize + 'px sans-serif';
+  ctx.font = "500 " + fontSize + "px sans-serif";
   const flw = ctx.measureText(p.letter).width;
-  const gws = [], nudges = [];
+  const gws = [],
+    nudges = [];
   let dblCount = 0;
   for (let i = 0; i < glyphs.length; i++) {
-    const gScale = (glyphs[i] === DBLFLAT) ? dblFlatScale : 1;
-    ctx.font = '500 ' + Math.round(fontSize * gScale) + 'px sans-serif';
+    const gScale = glyphs[i] === DBLFLAT ? dblFlatScale : 1;
+    ctx.font = "500 " + Math.round(fontSize * gScale) + "px sans-serif";
     gws.push(ctx.measureText(glyphs[i]).width);
     if (glyphs[i] === DBLFLAT) {
       nudges.push(dblCount > 0 ? -fontSize * 0.14 * dblCount : 0);
@@ -544,24 +588,126 @@ function drawNoteName(cx: number, cy: number, name: string, isW: boolean, isExt:
       nudges.push(0);
     }
   }
-  ctx.font = '500 ' + fontSize + 'px sans-serif';
+  ctx.font = "500 " + fontSize + "px sans-serif";
   /* compute total rendered width for centering */
-  let tw = flw; for (let i = 0; i < gws.length; i++) tw += gws[i] + 0.5 + nudges[i];
+  let tw = flw;
+  for (let i = 0; i < gws.length; i++) tw += gws[i] + 0.5 + nudges[i];
   let x = cx - tw / 2 + flw / 2;
   ctx.fillText(p.letter, x, cy);
   x += flw / 2;
   for (let i = 0; i < glyphs.length; i++) {
     x += 0.5 + gws[i] / 2 + nudges[i];
     if (glyphs[i] === DBLFLAT) {
-      ctx.font = '500 ' + Math.round(fontSize * dblFlatScale) + 'px sans-serif';
+      ctx.font = "500 " + Math.round(fontSize * dblFlatScale) + "px sans-serif";
       ctx.fillText(glyphs[i], x, cy - fontSize * 0.04);
-      ctx.font = '500 ' + fontSize + 'px sans-serif';
+      ctx.font = "500 " + fontSize + "px sans-serif";
     } else {
       const yOff = glyphs[i] === DBLSHARP ? fontSize * 0.22 : 0;
       ctx.fillText(glyphs[i], x, cy + yOff);
     }
     x += gws[i] / 2;
   }
+}
+
+/** HEJI-on rendering: letter in sans-serif followed by a chain of combined
+ *  Bravura SMuFL glyphs (each carrying one Pythagorean accidental + up to 2
+ *  syntonic-comma arrows), optionally ending in a septimal hook. Width
+ *  budget mirrors the conventional path — same hexR×1.3 maxW with a
+ *  shrink-to-fit floor at 6px. */
+/* Per-family vertical fine-tune for HEJI glyphs, in fractions of the
+ * Bravura font size. BravuraText's accidentals share a common musical Y
+ * anchor (the staff-line they're engraved to sit on), but their *visual*
+ * centers don't all align with that anchor — the symmetric glyphs
+ * (natural, sharp, double-sharp) center near the anchor, while flats/
+ * doubleFlats have asymmetric extents (round body below staff line, stem
+ * reaching above) and visually float higher than their anchor. A single
+ * shared offset (e.g. natural-bbox-based auto-calibration) under-corrects
+ * the symmetric family and over-corrects the flat family.
+ *
+ * These values are empirical — adjust them if the visual alignment drifts.
+ * Positive = shift DOWN (Y down in canvas). The chosen baseline puts the
+ * symmetric family centered with the letter; flats compensate downward.
+ *
+ * If you need to retune: render a cell whose label is, say, "Eb" or "F##"
+ * in HEJI mode and eyeball the accidental's visual midpoint against the
+ * letter. Adjust the family value by ±0.02 at a time. */
+const HEJI_FAMILY_Y_OFFSET: Record<HejiGlyphFamily, number> = {
+  natural:     0.06,
+  sharp:       0.06,
+  doubleSharp: 0.06,
+  flat:        0.13,
+  doubleFlat:  0.13,
+  septimal:    0.18,
+};
+
+function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
+  const baseFontSize = 14;
+  /* BravuraText is compiled with text-style metrics, but SMuFL accidental
+     glyphs still occupy only a fraction of the em box (engraved to fit a
+     5-line staff, so glyph extent is much smaller than the equivalent
+     Unicode ♯/♭ in a sans-serif font at the same font-size). To match the
+     visual weight of the conventional path, render Bravura glyphs at
+     ~1.8× the letter font size. */
+  const hejiScale = 1.8;
+  /* width pass at base size — letter (sans) + bravura glyphs */
+  ctx.font = '500 ' + baseFontSize + 'px sans-serif';
+  let totalW = ctx.measureText(label.letter).width;
+  ctx.font = '500 ' + Math.round(baseFontSize * hejiScale) + 'px "BravuraText", sans-serif';
+  for (const g of label.glyphs) totalW += ctx.measureText(g.ch).width + 0.5;
+  /* shrink to fit hex */
+  const maxW = hexR * 1.3;
+  const scale = Math.min(1, maxW / totalW);
+  const fontSize = Math.max(6, Math.round(baseFontSize * scale));
+  const hejiFontSize = Math.max(5, Math.round(fontSize * hejiScale));
+  /* measure at final sizes */
+  ctx.font = '500 ' + fontSize + 'px sans-serif';
+  const flw = ctx.measureText(label.letter).width;
+  ctx.font = '500 ' + hejiFontSize + 'px "BravuraText", sans-serif';
+  const gws = label.glyphs.map(g => ctx.measureText(g.ch).width);
+  let tw = flw; for (const w of gws) tw += w + 0.5;
+  let x = cx - tw / 2 + flw / 2;
+  ctx.font = '500 ' + fontSize + 'px sans-serif';
+  ctx.fillText(label.letter, x, cy);
+  x += flw / 2;
+  ctx.font = '500 ' + hejiFontSize + 'px "BravuraText", sans-serif';
+  for (let i = 0; i < label.glyphs.length; i++) {
+    const g = label.glyphs[i];
+    const yOff = HEJI_FAMILY_Y_OFFSET[g.family] * hejiFontSize;
+    x += 0.5 + gws[i] / 2;
+    ctx.fillText(g.ch, x, cy + yOff);
+    x += gws[i] / 2;
+  }
+  ctx.font = '500 ' + fontSize + 'px sans-serif';
+}
+
+/** Build the Bravura label for a cell. When HEJI is on the chain includes
+ *  syntonic-comma arrows / septimal hooks; when HEJI is off the chain is
+ *  just bare-accidental glyphs (engraved SMuFL ♯/♭/𝄪/𝄫 from Bravura — read
+ *  much cleaner than the Unicode equivalents at lattice scale). Bare-letter
+ *  cells (no accidentals, no commas) return an empty `glyphs` array;
+ *  drawNoteName's fast path skips Bravura entirely for those. */
+function hejiLabelForCell(q: number, r: number): HejiLabel {
+  const commas = tuning.hejiEnabled ? hejiCommas(q, r, tuning) : { syn5: 0, sept7: 0 };
+  return hejiLabel(displayedNoteName(q, r), commas);
+}
+
+/* BravuraText load tracker. Canvas can't synchronously check font readiness
+   the way DOM elements can — if we draw before the font is loaded, the
+   browser falls back to a system font for the U+E2C0+ codepoints, which
+   renders as tofu. Track loaded state and trigger one repaint when ready. */
+let bravuraLoaded = false;
+if (typeof document !== 'undefined' && document.fonts) {
+  /* `document.fonts.load` resolves once a face matching the spec is loaded
+     (or rejects if no @font-face matches). The 12px size is arbitrary —
+     fontFaceSet.load matches by family, the size only matters for caching. */
+  document.fonts.load('12px BravuraText').then(() => {
+    bravuraLoaded = true;
+    /* Trigger a redraw unconditionally — Bravura now renders all
+       accidentals (HEJI on or off), so the visual upgrade is universal
+       once the font is ready. */
+    view.textDirty = true;
+    draw();
+  }).catch(() => {/* font unreachable; conventional fallback path stays */});
 }
 
 // ── offscreen layers: hexCanvas (fills) + textCanvas (labels) ──────────────
@@ -742,7 +888,14 @@ function buildTextLayer(): void {
     const savedCtx = ctx; ctx = gc;
     gKeys.forEach((k) => {
       const midi = 57 + 4 * k.q + 7 * k.r; const pc = ((midi % 12) + 12) % 12; const isW = whiteSet.has(pc);
-      drawNoteName(k.sx, k.sy, displayedNoteName(k.q, k.r), isW, false);
+      drawNoteName(
+        k.sx,
+        k.sy,
+        displayedNoteName(k.q, k.r),
+        isW,
+        false,
+        hejiLabelForCell(k.q, k.r),
+      );
     });
     ctx = savedCtx;
   }
@@ -752,13 +905,18 @@ function buildTextLayer(): void {
 // ── main draw ──────────────────────────────────────────────────────────────
 export function draw(): void {
   const dpr = window.devicePixelRatio || 1;
-  cv.width = view.CW * dpr; cv.height = view.CH * dpr;
+  cv.width = view.CW * dpr;
+  cv.height = view.CH * dpr;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.fillStyle = '#111'; ctx.fillRect(0, 0, view.CW, view.CH);
+  ctx.fillStyle = "#111";
+  ctx.fillRect(0, 0, view.CW, view.CH);
   const cyC = view.CH / 2 + view.kbOffY;
-  const showN = (document.getElementById('cbNotes') as HTMLInputElement).checked;
-  const showB = (document.getElementById('cbBands') as HTMLInputElement).checked;
-  const showE = (document.getElementById('cbExtend') as HTMLInputElement).checked;
+  const showN = (document.getElementById("cbNotes") as HTMLInputElement)
+    .checked;
+  const showB = (document.getElementById("cbBands") as HTMLInputElement)
+    .checked;
+  const showE = (document.getElementById("cbExtend") as HTMLInputElement)
+    .checked;
 
   /* rebuild layers if needed (not during animation) */
   if (!animation.isAnimating) {
@@ -768,40 +926,72 @@ export function draw(): void {
 
   /* blit hex + text layers at current view offset */
   if (hexCanvas) {
-    const dQ = view.viewQ - gridRefQ, dR = view.viewR - gridRefR;
-    const dux = dQ * dxH + dR * dxH * 0.5, duy = -dR * dyH;
+    const dQ = view.viewQ - gridRefQ,
+      dR = view.viewR - gridRefR;
+    const dux = dQ * dxH + dR * dxH * 0.5,
+      duy = -dR * dyH;
     const offX = dux * cosT + duy * sinT;
     const offY = -dux * sinT + duy * cosT;
-    const srcX = (gridPadX + offX) * gridDpr, srcY = (gridPadY + offY) * gridDpr, srcW = view.CW * gridDpr, srcH = view.CH * gridDpr;
+    const srcX = (gridPadX + offX) * gridDpr,
+      srcY = (gridPadY + offY) * gridDpr,
+      srcW = view.CW * gridDpr,
+      srcH = view.CH * gridDpr;
     ctx.drawImage(hexCanvas, srcX, srcY, srcW, srcH, 0, 0, view.CW, view.CH);
-    if (textCanvas) ctx.drawImage(textCanvas, srcX, srcY, srcW, srcH, 0, 0, view.CW, view.CH);
+    if (textCanvas)
+      ctx.drawImage(textCanvas, srcX, srcY, srcW, srcH, 0, 0, view.CW, view.CH);
   }
 
   /* build allKeys for seams + click detection (arithmetic only, no rendering) */
   const kbShQ = animation.isAnimating ? Math.round(view.viewQ) : view.kbAnchorQ;
   const kbShR = animation.isAnimating ? Math.round(view.viewR) : view.kbAnchorR;
-  const kbSet = new Set<string>(); baseKeys.forEach((k) => { kbSet.add((k[0] + kbShQ) + ',' + (k[1] + kbShR)); });
+  const kbSet = new Set<string>();
+  baseKeys.forEach((k) => {
+    kbSet.add(k[0] + kbShQ + "," + (k[1] + kbShR));
+  });
   const vis = getVisibleRange(view.viewQ, view.viewR);
   const allKeys: DrawnKey[] = [];
-  for (let r = vis.rMax; r >= vis.rMin; r--) for (let q = vis.qMin; q <= vis.qMax; q++) {
-    const isKb = kbSet.has(q + ',' + r);
-    const ux = (q - view.viewQ) * dxH + (r - view.viewR) * dxH * 0.5;
-    const uy = -(r - view.viewR) * dyH;
-    const sx = ux * cosT + uy * sinT + view.CW / 2;
-    const sy = -ux * sinT + uy * cosT + cyC;
-    if (!isKb && (sx < -hexR * 3 || sx > view.CW + hexR * 3 || sy < -hexR * 3 || sy > view.CH + hexR * 3)) continue;
-    allKeys.push({ q: q, r: r, ux: ux, uy: uy, sx: sx, sy: sy, isKb: isKb });
-  }
+  for (let r = vis.rMax; r >= vis.rMin; r--)
+    for (let q = vis.qMin; q <= vis.qMax; q++) {
+      const isKb = kbSet.has(q + "," + r);
+      const ux = (q - view.viewQ) * dxH + (r - view.viewR) * dxH * 0.5;
+      const uy = -(r - view.viewR) * dyH;
+      const sx = ux * cosT + uy * sinT + view.CW / 2;
+      const sy = -ux * sinT + uy * cosT + cyC;
+      if (
+        !isKb &&
+        (sx < -hexR * 3 ||
+          sx > view.CW + hexR * 3 ||
+          sy < -hexR * 3 ||
+          sy > view.CH + hexR * 3)
+      )
+        continue;
+      allKeys.push({ q: q, r: r, ux: ux, uy: uy, sx: sx, sy: sy, isKb: isKb });
+    }
   selection.drawnKeys = allKeys;
   const posMap: Record<KeyId, DrawnKey> = {};
-  allKeys.forEach((k) => { posMap[k.q + ',' + k.r] = k; });
+  allKeys.forEach((k) => {
+    posMap[k.q + "," + k.r] = k;
+  });
   kbSet.forEach((key) => {
     if (!posMap[key]) {
-      const p = key.split(','), q = +p[0], r = +p[1];
-      const ux = (q - view.viewQ) * dxH + (r - view.viewR) * dxH * 0.5, uy = -(r - view.viewR) * dyH;
-      const sx = ux * cosT + uy * sinT + view.CW / 2, sy = -ux * sinT + uy * cosT + cyC;
-      const k: DrawnKey = { q: q, r: r, ux: ux, uy: uy, sx: sx, sy: sy, isKb: true };
-      allKeys.push(k); posMap[key] = k;
+      const p = key.split(","),
+        q = +p[0],
+        r = +p[1];
+      const ux = (q - view.viewQ) * dxH + (r - view.viewR) * dxH * 0.5,
+        uy = -(r - view.viewR) * dyH;
+      const sx = ux * cosT + uy * sinT + view.CW / 2,
+        sy = -ux * sinT + uy * cosT + cyC;
+      const k: DrawnKey = {
+        q: q,
+        r: r,
+        ux: ux,
+        uy: uy,
+        sx: sx,
+        sy: sy,
+        isKb: true,
+      };
+      allKeys.push(k);
+      posMap[key] = k;
     }
   });
 
@@ -816,8 +1006,16 @@ export function draw(): void {
     const hk = posMap[selection.hoverKey];
     if (hk) {
       const hv = keyColorVariant(hk.q, hk.r);
-      const hCol = hv.isB ? (hv.isW ? hueC[hv.hue].sl! : hueC[hv.hue].sd!) : (hv.isW ? hueC[hv.hue].l : hueC[hv.hue].d);
-      drawHexPath(hk.ux, hk.uy, hexR - 0.5); ctx.fillStyle = lightenHex(hCol, 30); ctx.fill();
+      const hCol = hv.isB
+        ? hv.isW
+          ? hueC[hv.hue].sl!
+          : hueC[hv.hue].sd!
+        : hv.isW
+          ? hueC[hv.hue].l
+          : hueC[hv.hue].d;
+      drawHexPath(hk.ux, hk.uy, hexR - 0.5);
+      ctx.fillStyle = lightenHex(hCol, 30);
+      ctx.fill();
     }
   }
 
@@ -830,24 +1028,42 @@ export function draw(): void {
   }
   selection.selectedKeys.forEach((key) => {
     if (flashingSet.has(key)) return;
-    const k = posMap[key]; if (!k) return;
+    const k = posMap[key];
+    if (!k) return;
     const v = keyColorVariant(k.q, k.r);
-    let col = v.isB ? (v.isW ? hueC[v.hue].sl! : hueC[v.hue].sd!) : (v.isW ? hueC[v.hue].l : hueC[v.hue].d);
+    let col = v.isB
+      ? v.isW
+        ? hueC[v.hue].sl!
+        : hueC[v.hue].sd!
+      : v.isW
+        ? hueC[v.hue].l
+        : hueC[v.hue].d;
     col = lightenHex(col, 90);
-    drawHexPath(k.ux, k.uy, hexR - 0.5); ctx.fillStyle = col; ctx.fill();
+    drawHexPath(k.ux, k.uy, hexR - 0.5);
+    ctx.fillStyle = col;
+    ctx.fill();
   });
 
   /* selection rings */
   selection.selectedKeys.forEach((key) => {
     if (flashingSet.has(key)) return;
-    const k = posMap[key]; if (!k) return;
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5;
-    drawHexPath(k.ux, k.uy, hexR - 0.5); ctx.stroke();
+    const k = posMap[key];
+    if (!k) return;
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 2.5;
+    drawHexPath(k.ux, k.uy, hexR - 0.5);
+    ctx.stroke();
   });
 
-  /* lattice seams — skip in Equal mode (no seams) */
-  if (showB && !tuning.equalEnabled) {
-    const eHL = hexR * 0.55; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.lineCap = 'butt';
+  /* lattice seams — skip in Equal mode (no seams) and Schismatic mode
+     (band boundaries don't carry a spelling change: V respells via the M3
+     chain so the qm=1 → qm=2 band-crossing reads as a 5-limit M3, not a
+     diminished 4th). */
+  if (showB && !tuning.equalEnabled && tuning.mode !== "V") {
+    const eHL = hexR * 0.55;
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 2;
+    ctx.lineCap = "butt";
     /* `allSet` is a number-keyed Set built via packQR to avoid the ~14k
        string allocations the old `Set<string>` + `q + ',' + r`
        per-iteration concatenation incurred each frame. Smi keys hash
@@ -862,7 +1078,11 @@ export function draw(): void {
       const ak = allKeys[i];
       allSet.add(packQR(ak.q, ak.r));
     }
-    const dirsHalf: ReadonlyArray<readonly [number, number]> = [[1, 0], [0, 1], [-1, 1]];
+    const dirsHalf: ReadonlyArray<readonly [number, number]> = [
+      [1, 0],
+      [0, 1],
+      [-1, 1],
+    ];
     const animT = animation.progress;
     /* seamBlend dips to 0 at mid-tween so seams float to the geometric
        cell-midpoint while cells animate from old to new layout positions
@@ -871,9 +1091,10 @@ export function draw(): void {
        outline + cells animate together and seam-snap stays correct
        throughout — keep seamBlend=1 (full snap) to avoid spurious
        unsnap-resnap jitter. */
-    const seamBlend = (animT < 0 || getOutlineMode() === 'piano')
-      ? 1
-      : Math.pow(Math.abs(2 * animT - 1), 6);
+    const seamBlend =
+      animT < 0 || getOutlineMode() === "piano"
+        ? 1
+        : Math.pow(Math.abs(2 * animT - 1), 6);
     /* snap seams to whichever outline is currently visible — a Lumatone snap
        under a hidden Lumatone outline would tug seams toward an invisible
        reference. Lumatone/QWERTY polygons are drawn statically in baseKeys-
@@ -884,22 +1105,23 @@ export function draw(): void {
     const seamMode = getOutlineMode();
     let snapIndex: SnapIndex;
     let snapOX: number, snapOY: number;
-    if (seamMode === 'piano') {
+    if (seamMode === "piano") {
       ensurePianoOutline();
       snapIndex = pianoSnapIndex;
       snapOX = -view.viewQ * dxH - view.viewR * dxH * 0.5;
       snapOY = view.viewR * dyH;
-    } else if (seamMode === 'qwerty') {
+    } else if (seamMode === "qwerty") {
       snapIndex = qwertySnapIndex;
       snapOX = (kbShQ - view.viewQ) * dxH + (kbShR - view.viewR) * dxH * 0.5;
       snapOY = -(kbShR - view.viewR) * dyH;
-    } else if (seamMode === 'lumatone') {
+    } else if (seamMode === "lumatone") {
       snapIndex = lumatoneSnapIndex;
       snapOX = (kbShQ - view.viewQ) * dxH + (kbShR - view.viewR) * dxH * 0.5;
       snapOY = -(kbShR - view.viewR) * dyH;
     } else {
       snapIndex = emptySnapIndex;
-      snapOX = 0; snapOY = 0;
+      snapOX = 0;
+      snapOY = 0;
     }
     /* Spatial-indexed snap: build-time grid + 3×3 bucket scan per query.
        Replaces a linear scan over the full vertex list (was the dominant
@@ -907,19 +1129,27 @@ export function draw(): void {
     function snapVtx(px: number, py: number): { x: number; y: number } | null {
       if (snapIndex.buckets.size === 0) return null;
       /* polygon-local query coord (undo the snapOX/snapOY translate). */
-      const qx = px - snapOX, qy = py - snapOY;
+      const qx = px - snapOX,
+        qy = py - snapOY;
       const gx = Math.floor(qx / SNAP_CELL_SIZE);
       const gy = Math.floor(qy / SNAP_CELL_SIZE);
-      let bd = Infinity, bx = 0, by = 0;
+      let bd = Infinity,
+        bx = 0,
+        by = 0;
       for (let dgx = -1; dgx <= 1; dgx++) {
         for (let dgy = -1; dgy <= 1; dgy++) {
           const arr = snapIndex.buckets.get(snapBucketKey(gx + dgx, gy + dgy));
           if (!arr) continue;
           for (let i = 0; i < arr.length; i++) {
             const v = arr[i];
-            const ddx = qx - v[0], ddy = qy - v[1];
+            const ddx = qx - v[0],
+              ddy = qy - v[1];
             const d2 = ddx * ddx + ddy * ddy;
-            if (d2 < bd) { bd = d2; bx = v[0]; by = v[1]; }
+            if (d2 < bd) {
+              bd = d2;
+              bx = v[0];
+              by = v[1];
+            }
           }
         }
       }
@@ -930,46 +1160,65 @@ export function draw(): void {
        allocate the lookup key only after the cheap allSet + same-band
        filters short-circuit. That cuts the string churn from
        ~12k/frame to ~5k/frame. */
-    /* Seams are emitted (a) at band boundaries always, and (b) at A↔B
-       boundaries when any B-region cells exist — i.e. only in Septimal
+    /* Seams are emitted (a) at band boundaries (5, P, D, 7), and (b) at
+       A↔B boundaries when any B-region cells exist — i.e. only in Septimal
        mode. Pure-SC-shift modes (Pythagorean, Semiditonal) signal their
        column boundaries through the SC-shifted hue rotation alone, which
        reads as a subtle overlay; adding seams on top would be redundant
        visual noise (especially Pythagorean, where every qm boundary
-       would seam). */
-    const septOn = tuning.mode === '7';
+       would seam). Equal and Schismatic skip seams entirely (see gate
+       above): both lack a different-spelled-interval at the band boundary. */
+    const septOn = tuning.mode === "7";
     function regionParity(q: number, r: number): number {
-      return regionInfo(q, r).type === 'B' ? 1 : 0;
+      return regionInfo(q, r).type === "B" ? 1 : 0;
     }
     for (let ki = 0; ki < allKeys.length; ki++) {
       const k = allKeys[ki];
-      const kq = k.q, kr = k.r;
+      const kq = k.q,
+        kr = k.r;
       for (let di = 0; di < dirsHalf.length; di++) {
         const d = dirsHalf[di];
-        const nq = kq + d[0], nr = kr + d[1];
+        const nq = kq + d[0],
+          nr = kr + d[1];
         if (!allSet.has(packQR(nq, nr))) continue;
         const sameBand = bandOf(kq) === bandOf(nq);
-        const sameRegion = !septOn || regionParity(kq, kr) === regionParity(nq, nr);
+        const sameRegion =
+          !septOn || regionParity(kq, kr) === regionParity(nq, nr);
         if (sameBand && sameRegion) continue;
-        const nb = posMap[nq + ',' + nr];
+        const nb = posMap[nq + "," + nr];
         if (!nb) continue;
-        const mx = (k.ux + nb.ux) / 2, my = (k.uy + nb.uy) / 2;
-        const dx2 = nb.ux - k.ux, dy2 = nb.uy - k.uy, len = Math.sqrt(dx2 * dx2 + dy2 * dy2);
-        const nx = -dy2 / len, ny = dx2 / len;
-        let p1x = mx + nx * eHL, p1y = my + ny * eHL;
-        let p2x = mx - nx * eHL, p2y = my - ny * eHL;
+        const mx = (k.ux + nb.ux) / 2,
+          my = (k.uy + nb.uy) / 2;
+        const dx2 = nb.ux - k.ux,
+          dy2 = nb.uy - k.uy,
+          len = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+        const nx = -dy2 / len,
+          ny = dx2 / len;
+        let p1x = mx + nx * eHL,
+          p1y = my + ny * eHL;
+        let p2x = mx - nx * eHL,
+          p2y = my - ny * eHL;
         if (seamBlend > 0.01) {
           const r1 = snapVtx(p1x, p1y);
-          if (r1) { p1x += (r1.x - p1x) * seamBlend; p1y += (r1.y - p1y) * seamBlend; }
+          if (r1) {
+            p1x += (r1.x - p1x) * seamBlend;
+            p1y += (r1.y - p1y) * seamBlend;
+          }
           const r2 = snapVtx(p2x, p2y);
-          if (r2) { p2x += (r2.x - p2x) * seamBlend; p2y += (r2.y - p2y) * seamBlend; }
+          if (r2) {
+            p2x += (r2.x - p2x) * seamBlend;
+            p2y += (r2.y - p2y) * seamBlend;
+          }
         }
         seamSegs.push([p1x, p1y, p2x, p2y]);
       }
     }
     if (seamSegs.length) {
       ctx.beginPath();
-      seamSegs.forEach((s) => { ctx.moveTo(s[0], s[1]); ctx.lineTo(s[2], s[3]); });
+      seamSegs.forEach((s) => {
+        ctx.moveTo(s[0], s[1]);
+        ctx.lineTo(s[2], s[3]);
+      });
       ctx.stroke();
     }
   }
@@ -981,12 +1230,14 @@ export function draw(): void {
      is enabled OR when the Piano outline is active — both contexts make the
      reference note meaningful, and the Piano outline is constructed around
      this anchor regardless of whether piano input is on. */
-  const pianoCb = document.getElementById('cbPianoEnabled') as HTMLInputElement | null;
-  if ((pianoCb && pianoCb.checked) || getOutlineMode() === 'piano') {
-    const rk = posMap[referenceNote.q + ',' + referenceNote.r];
+  const pianoCb = document.getElementById(
+    "cbPianoEnabled",
+  ) as HTMLInputElement | null;
+  if ((pianoCb && pianoCb.checked) || getOutlineMode() === "piano") {
+    const rk = posMap[referenceNote.q + "," + referenceNote.r];
     if (rk) {
       ctx.save();
-      ctx.strokeStyle = '#fff';
+      ctx.strokeStyle = "#fff";
       ctx.lineWidth = 1.5;
       ctx.setLineDash([5, 4]);
       /* Offset outward by ~2.5px so the dashed ring sits in the gap rather
@@ -1005,18 +1256,41 @@ export function draw(): void {
   if (showN && selection.selectedKeys.size > 0) {
     selection.selectedKeys.forEach((key) => {
       if (flashingSet.has(key)) return;
-      const k = posMap[key]; if (!k) return;
-      const midi = 57 + 4 * k.q + 7 * k.r; const pc = ((midi % 12) + 12) % 12; const isW = whiteSet.has(pc);
-      drawNoteName(k.sx, k.sy, displayedNoteName(k.q, k.r), isW, false);
+      const k = posMap[key];
+      if (!k) return;
+      const midi = 57 + 4 * k.q + 7 * k.r;
+      const pc = ((midi % 12) + 12) % 12;
+      const isW = whiteSet.has(pc);
+      drawNoteName(
+        k.sx,
+        k.sy,
+        displayedNoteName(k.q, k.r),
+        isW,
+        false,
+        hejiLabelForCell(k.q, k.r),
+      );
     });
   }
   /* re-render hovered key's note name on top of hover fill (skip if already
      handled by the selection re-render above). */
-  if (showN && selection.hoverKey && !selection.selectedKeys.has(selection.hoverKey)) {
+  if (
+    showN &&
+    selection.hoverKey &&
+    !selection.selectedKeys.has(selection.hoverKey)
+  ) {
     const hk = posMap[selection.hoverKey];
     if (hk) {
-      const hmidi = 57 + 4 * hk.q + 7 * hk.r; const hpc = ((hmidi % 12) + 12) % 12; const hW = whiteSet.has(hpc);
-      drawNoteName(hk.sx, hk.sy, displayedNoteName(hk.q, hk.r), hW, false);
+      const hmidi = 57 + 4 * hk.q + 7 * hk.r;
+      const hpc = ((hmidi % 12) + 12) % 12;
+      const hW = whiteSet.has(hpc);
+      drawNoteName(
+        hk.sx,
+        hk.sy,
+        displayedNoteName(hk.q, hk.r),
+        hW,
+        false,
+        hejiLabelForCell(hk.q, hk.r),
+      );
     }
   }
 
@@ -1036,7 +1310,10 @@ export function draw(): void {
       ctx.save();
       ctx.translate(view.CW / 2, cyC);
       ctx.rotate(-tiltAngle);
-      ctx.translate(-view.viewQ * dxH - view.viewR * dxH * 0.5, view.viewR * dyH);
+      ctx.translate(
+        -view.viewQ * dxH - view.viewR * dxH * 0.5,
+        view.viewR * dyH,
+      );
       const diag = Math.ceil(Math.sqrt(view.CW * view.CW + view.CH * view.CH));
       ctx.beginPath();
       ctx.rect(-diag, -diag, diag * 2, diag * 2);
@@ -1047,15 +1324,15 @@ export function draw(): void {
         }
         ctx.closePath();
       });
-      ctx.fillStyle = 'rgba(17,17,17,0.5)';
-      ctx.fill('evenodd');
+      ctx.fillStyle = "rgba(17,17,17,0.5)";
+      ctx.fill("evenodd");
       ctx.restore();
     }
   }
 
   /* === overlay + outline (rotated context, on top of everything) === */
   const outlineMode = getOutlineMode();
-  if (outlineMode !== 'none') {
+  if (outlineMode !== "none") {
     ctx.save();
     ctx.translate(view.CW / 2, cyC);
     ctx.rotate(-tiltAngle);
@@ -1067,11 +1344,14 @@ export function draw(): void {
        lattice space (see compute88PianoCoords). We translate by the lattice
        scroll offset so the polygon tracks the cells it encompasses. */
     let activePaths: Point[][];
-    if (outlineMode === 'piano') {
+    if (outlineMode === "piano") {
       ensurePianoOutline();
-      ctx.translate(-view.viewQ * dxH - view.viewR * dxH * 0.5, view.viewR * dyH);
+      ctx.translate(
+        -view.viewQ * dxH - view.viewR * dxH * 0.5,
+        view.viewR * dyH,
+      );
       activePaths = pianoOutlinePaths;
-    } else if (outlineMode === 'qwerty') {
+    } else if (outlineMode === "qwerty") {
       activePaths = qwertyOutlinePaths;
     } else {
       activePaths = lumatoneOutlinePaths;
@@ -1087,10 +1367,13 @@ export function draw(): void {
       }
       ctx.closePath();
     });
-    ctx.fillStyle = showE ? 'rgba(17,17,17,0.65)' : 'rgba(17,17,17,1.0)';
-    ctx.fill('evenodd');
+    ctx.fillStyle = showE ? "rgba(17,17,17,0.65)" : "rgba(17,17,17,1.0)";
+    ctx.fill("evenodd");
 
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 3.5; ctx.lineCap = 'butt'; ctx.lineJoin = 'round';
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 3.5;
+    ctx.lineCap = "butt";
+    ctx.lineJoin = "round";
     ctx.beginPath();
     activePaths.forEach((poly) => {
       for (let i = 0; i < poly.length; i++) {
@@ -1110,18 +1393,23 @@ export function draw(): void {
      so applies the lattice-scroll translate in every outline mode, including
      'none'. Stroke is sandwiched between the ref-note marker (1.5) and the
      main outline (3.5). */
-  const showValidRef = (document.getElementById('cbValidRefBounds') as HTMLInputElement | null)?.checked ?? false;
+  const showValidRef =
+    (document.getElementById("cbValidRefBounds") as HTMLInputElement | null)
+      ?.checked ?? false;
   if (showValidRef) {
     const validPaths = activeValidRefPaths();
     if (validPaths.length > 0) {
       ctx.save();
       ctx.translate(view.CW / 2, cyC);
       ctx.rotate(-tiltAngle);
-      ctx.translate(-view.viewQ * dxH - view.viewR * dxH * 0.5, view.viewR * dyH);
-      ctx.strokeStyle = '#fff';
+      ctx.translate(
+        -view.viewQ * dxH - view.viewR * dxH * 0.5,
+        view.viewR * dyH,
+      );
+      ctx.strokeStyle = "#fff";
       ctx.lineWidth = 2.5;
-      ctx.lineCap = 'butt';
-      ctx.lineJoin = 'round';
+      ctx.lineCap = "butt";
+      ctx.lineJoin = "round";
       ctx.setLineDash([5, 4]);
       ctx.beginPath();
       validPaths.forEach((poly) => {

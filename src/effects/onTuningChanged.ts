@@ -24,6 +24,11 @@ export function onTuningChanged(opts?: TuningChangedOpts): void {
   const colorSync = !opts || opts.colorSync !== false;
   rampActiveFreqs(rampSec);
   view.hexDirty = true;
+  /* Spelling (and HEJI commas, when enabled) varies with mode: V uses M3-chain
+     respelling, and HEJI's e5/e7 depend on region adjustments. Without this,
+     stale labels survive a mode switch and the cached text layer disagrees
+     with the active tuning. */
+  view.textDirty = true;
   /* Tenney-Height ranking in compute88PianoCoords depends on tuning mode
      via jiRatio — invalidate so the next draw regenerates the 88-cell
      footprint with up-to-date region adjustments. */

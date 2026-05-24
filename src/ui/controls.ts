@@ -80,6 +80,18 @@ export function setTuning(): void {
   tuning.mode = val;
   tuning.equalEnabled = val === 'E';
   tuning.septimalEnabled = val === '7';
+  /* HEJI auto-on for Schismatic: V mode without HEJI is the documented
+     unreadable case (stacked sharps with no comma context). Entering V
+     auto-enables; leaving V leaves the user's preference alone — once they've
+     seen HEJI on, they may want to keep it on in other modes too. The toolbar
+     checkbox `cbHeji` reflects the new state immediately. */
+  if (prevMode !== val && val === 'V' && !tuning.hejiEnabled) {
+    tuning.hejiEnabled = true;
+    const cb = document.getElementById('cbHeji') as HTMLInputElement | null;
+    if (cb) cb.checked = true;
+    savePrefs({ hejiEnabled: true });
+    view.textDirty = true;
+  }
   /* Mode change can orphan a ref note that was valid in the old bucket but
      not the new one (each mode has its own picker output and therefore its
      own valid-ref set). Conservative: on any mode change, re-check the ref

@@ -85,9 +85,28 @@ export function solveCommas(de: PrimeExp): [number, number, number] | null {
   return [s, z, h];
 }
 
-/* substitute derived commas to minimize displayed count
-   Pythagorean = syntonic+schisma, diaschisma = syntonic-schisma, sept.diesis = syntonic+septimal */
-export function optimizeCommas(s: number, z: number, h: number): CommaItem[] {
+/* Comma-decomposition into displayed CommaItems.
+ *
+ * Two vocabularies:
+ *   - `useDerived=false` (default, HEJI-aligned): emit raw counts of the three
+ *     primary commas (syntonic, septimal, schisma) — exactly what HEJI
+ *     accidentals notate. This is the "even outside of HEJI mode" alignment
+ *     called out in docs/backlog.md:89.
+ *   - `useDerived=true` (legacy): substitute derived commas where they reduce
+ *     the displayed group count (Pythagorean = syntonic+schisma, diaschisma =
+ *     syntonic−schisma, septimal diesis = syntonic+septimal). Kept for callers
+ *     that want the most compact textual phrasing regardless of HEJI semantics.
+ */
+export function optimizeCommas(s: number, z: number, h: number, useDerived = false): CommaItem[] {
+  if (!useDerived) {
+    /* primary-comma vocabulary: emit raw counts. Matches HEJI accidental
+       semantics — each item corresponds to one HEJI glyph (arrow, hook). */
+    const items: CommaItem[] = [];
+    for (let i = 0; i < Math.abs(s); i++) items.push([Math.sign(s), 'syntonic comma']);
+    for (let i = 0; i < Math.abs(z); i++) items.push([Math.sign(z), 'septimal comma']);
+    for (let i = 0; i < Math.abs(h); i++) items.push([Math.sign(h), 'schisma']);
+    return items;
+  }
   /* try all 6 orderings of 3 substitution rules to minimize display groups */
   const orders = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
   let bestItems: CommaItem[] | null = null;

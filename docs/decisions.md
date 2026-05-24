@@ -1630,7 +1630,7 @@ Persistence values `'E' / '5' / '7'` stay (no migration); `'P'` and `'D'` are ne
 
 **Rejected**:
 - **Migrate to descriptive slugs everywhere** (`'Pt' / 'Py' / 'Sd' / 'Sp' / 'Eq'`): would need a persistence migration, an `.hkr` parser branch, and bridge protocol bump for zero functional gain. Single-char codes stay; comments document the meaning.
-- **Three new color variant fields** (`.dl/.dd` for −SC, `.ul/.ud` for +SC) on `HueColors`: the colorTable already encodes the SC equivalence — an SC shift of `(q,r)` lands you in the cell whose hue is the SC-shifted sibling's hue. The keyColorVariant helper just looks up `computeHue(q±7·d, r∓4·d)`. No new tables.
+- **Three new color variant fields** (`.dl/.dd` for −SC, `.ul/.ud` for +SC) on `HueColors`: `computeHue` already encodes the SC equivalence — an SC shift of `(q,r)` lands you in the cell whose hue is the SC-shifted sibling's hue. The keyColorVariant helper just looks up `computeHue(q±7·d, r∓4·d)`. No new tables.
 - **Seams on every region boundary** (full RegionInfo equality check): would draw seams between qm=0 / qm=1 / qm=2 in Pythagorean mode (three different shift profiles). User judgment was that the SC-shifted hue rotation already reads as the column boundary; adding seams on top is visual noise. Septimal stays the only mode that emits A↔B seams — the (subtle) septimal hue overlay benefits from the seam, the (more prominent) SC hue rotation does not.
 - **Mode-specific analysis labels**: not needed. The chord classifier in `tuning/chords.ts` is already prime-content-based (`hasFive` / `hasSeven` → prefix); in Pythagorean mode every triad's ratio vector is 3-limit and gets labeled "Pythagorean major triad" / "Pythagorean minor triad" without code changes. Interval naming via `tuning/intervals.ts` decomposes through the existing comma basis.
 
@@ -1681,10 +1681,11 @@ Bump some column's `aDepth` from 1 to 2, surfacing 49-limit relations like 49/32
 
 **Railsback connection**: V mode's octave stretch magnitude (~1.95c/octave central, ~14c at 7-octave extreme) lands in the same range as the empirical Railsback curve of real pianos (~1–3c/octave central, ~25–35c extreme). Railsback's accepted cause is string inharmonicity; V mode is an independent schisma-driven stretch in the same direction. So pianistically-trained ears find V mode natural rather than jarring — the original "14c is unplayable" concern from the planning phase was wrong. V isolates the pure-thirds component of natural-sounding octave stretch from the inharmonicity component pianos add on top.
 
-**Three non-trivial dispatches diverge from Pythagorean**:
+**Four non-trivial dispatches diverge from Pythagorean**:
 1. `freqAt` in `src/shared/freq.ts` — multiplies by `Math.pow(SCHISMA, b)` for V.
 2. `jiRatioWithState` in `src/tuning/ratios.ts` — adds `db × (−15, +8, +1, 0)` to the prime-exponent vector (the schisma's prime decomposition 3^8·5/2^15) so the interval analyzer naturally surfaces "octave + schisma" annotations via the existing comma machinery.
-3. `keyColorVariant` in `src/render/colors.ts` — bypasses the SC-sibling redirect, returning `computeHue(q, r)` directly. So cell (q=2, r=0) — teal F4 in Pythagorean (via SC sibling at (9, −4)) — becomes yellow E#4 in V mode (its actual 5-limit hue, matching the respelled name).
+3. `keyColorVariant` in `src/render/colors.ts` — bypasses the SC-sibling redirect in favor of an M3-chain index: `chainStep = floor((2q+1)/3)`, `idx = (5 − midiOct − 2·chainStep) mod 7` in `hueCycle`. Cells share color iff on the same M3 chain in the same MIDI octave; the chain crosses bands (qm=1 of band b pairs with qm=2 of band b+1). This matches the Color Guide's V-mode principle — M3-related notes in the same octave share color, PM3 transitions change color. For ref=A, the Q-chain Db → F → A → C# → E# colors as TE, TE, PU, YE, YE.
+4. Lattice seams in `src/render/draw.ts` — V mode joins Equal in skipping band seams entirely (gate is `!tuning.equalEnabled && tuning.mode !== 'V'`). Other modes seam at band boundaries because the qm=1 → qm=2 band-crossing is a different-spelled interval (diminished 4th rather than M3). V mode respells via the M3 chain, so the same boundary reads as a 5-limit M3 — no spelling change, no seam.
 
 **Respelling**: `noteNameV(q, r, rsQ)` / `keyOctaveV(q, r, rsQ)` in `src/tuning/notes.ts` walk the M3 chain from refSpine: each Δq applies one `m3up`/`m3dn` step. Accidentals accumulate without clamping: A → C# → E# → G## → B## → D### → F#### at q=0..6. Cells in the same band as refSpine spell identically to standard naming; divergence begins one band away. `displayedNoteName` helper in `render/draw.ts` and the V branch in `bridge/hkl-side.ts:resolveKey` route through the new functions when `tuning.mode === 'V'`.
 
@@ -1697,3 +1698,111 @@ Bump some column's `aDepth` from 1 to 2, surfacing 49-limit relations like 49/32
 **Reused, not regenerated**: `VALID_REF_TABLE['V']` and `PIANO_BOUNDS_TABLE[*]['V']` alias the Pythagorean entries. Justification: V uses identical qm shifts to P, and the ~2c/band schisma drift falls well within picker-TH tie thresholds in the central play range. Re-probe `tools/bounds-probe/` if V's experimental status changes.
 
 **Files touched**: `src/shared/freq.ts` (TuningMode + TUNING_MODES + SCHISMA + freqAt), `src/state/persistence.ts` (TuningMode + isTuningMode), `src/tuning/regions.ts` (case V), `src/tuning/ratios.ts` (schisma exponent injection), `src/tuning/notes.ts` (noteNameV + keyOctaveV), `src/render/colors.ts` (V early return), `src/render/draw.ts` (displayedNoteName helper + validRefSetByMode/validRefPathsByMode V entries), `src/render/canvas.ts` (PIANO_BOUNDS_TABLE V entries), `src/render/refbounds-table.ts` (V alias to P via GENERATED.P), `src/bridge/hkl-side.ts` (description + isTuningMode + TUNING_LABELS + resolveKey V branch), `src/recording/hkr.ts` (isTuningMode), `src/composer/main.ts` (isMode), `src/composer/notation/retune.ts` (MODE_LABELS), `src/composer/setupDialog.ts` (TUNING_LABELS), `index.html` (option).
+
+## HEJI accidentals on the lattice (2026-05-24)
+
+**Decision**: Add an opt-in HEJI (Extended Helmholtz-Ellis JI Pitch Notation)
+display mode that decorates each lattice cell label with SMuFL combined
+"accidental + N syntonic-comma arrows" glyphs, plus standalone septimal
+hooks where needed. Scope is **lattice + analysis vocabulary only** —
+Composer rendering is deferred; V-mode M3-chain spelling is unchanged.
+
+**Why**:
+1. Backlog item `docs/backlog.md:89` — the interval analyzer was preferring
+   *derived* commas (Pythagorean comma = syntonic+schisma, diaschisma,
+   septimal diesis) over primary commas (syntonic, septimal, schisma). HEJI
+   notates only primary commas; aligning analysis text with HEJI vocabulary
+   ("syntonic comma" instead of "Pythagorean comma − schisma") makes the
+   analyzer's output read identically to HEJI annotations even when the
+   display toggle is off. This is a free correctness win and the default.
+2. Backlog item `docs/backlog.md:88` — V mode's M3-chain accidental stacks
+   are unreadable without a comma-context layer. HEJI doesn't *fix* the
+   stacking (that's a separate respelling decision Max is reserving), but
+   it adds back the harmonic-distance information the stacked accidentals
+   strip away.
+
+**Scope explicitly NOT in this iteration**:
+- Composer MEI emission. Verovio can encode HEJI via `<accid glyph.num>`,
+  but the Composer integration is deferred until Max wants to commit to
+  one rendering path (native Verovio vs. SVG overlay).
+- V-mode respelling redesign. `noteNameV` still walks the M3 chain
+  unbounded. The "octave + schisma → A7?" question is a separate decision.
+- 11-limit / 13-limit accidentals. HKL is 7-limit; no e11/e13 in the prime
+  vector.
+- Cents annotations above/below comma symbols.
+
+**Glyph strategy (after one dead-end)**: SMuFL's HEJI range contains
+*combined* glyphs only — `accidentalSharpOneArrowDown` (U+E2C3) is a sharp
+with the arrow attached as one composite, NOT a standalone arrow. So the
+rendering path can't be "sans-serif accidental + Bravura arrow alongside."
+Instead each Pythagorean accidental in the label is REPLACED by its
+combined Bravura SMuFL glyph carrying up to 2 attached arrows. Extras
+spill onto appended natural-sign carriers (also combined glyphs). Standalone
+septimal hooks (U+E2DE / U+E2DF) sit at the end — those *are* standalone in
+SMuFL since they don't combine with Pythagorean accidentals. See
+`docs/lessons.md` "SMuFL HEJI syntonic-comma arrows are combined glyphs"
+for the dead-end I hit first.
+
+**Label assembly rules** (in `src/tuning/heji.ts:hejiLabel`):
+1. Build the conventional accidental chain: `[single, doubles...]` per
+   accidental sign + count (e.g. accVal=+3 → `[♯, 𝄪]`).
+2. Distribute syntonic commas across the chain, up to 2 per glyph, filling
+   left to right. Each glyph becomes its "accidental + N arrows" SMuFL
+   variant.
+3. Extras spill onto natural-sign carriers (up to 2 arrows each) appended
+   after the accidental chain.
+4. One septimal hook glyph at the end if `sept7 ≠ 0`. (Current layouts
+   produce |sept7| ≤ 1; the 2× hook glyphs exist in SMuFL but are unused.)
+
+The only label form WITHOUT any full accidental glyph is the bare-letter
+Pythagorean-spine case (accVal=0 AND syn5=0 AND sept7=0). Even a
+"natural-letter" pitch with a syntonic comma (e.g. `E` from `m3up(C)` in
+Ptolemaic mode with e5=+1) renders as `E` + combined `natural + 1 arrow
+down` SMuFL glyph. No "naked arrows" — every arrow lives on a carrier.
+
+**Toolbar + auto-on behavior**: Single `cbHeji` checkbox in the Layout
+toolbar; persisted as `PrefsV1.hejiEnabled`. `setTuning()` auto-flips ON
+when the user enters V mode and HEJI is currently off (V mode's stacked
+accidentals are the load-bearing reason HEJI exists). Leaving V mode
+preserves the user's HEJI preference — once they've turned it on in V,
+they may want it elsewhere.
+
+**Analysis-vocabulary change**: `optimizeCommas(s, z, h)` in
+`src/tuning/intervals.ts` now defaults to emitting raw `(s, z, h)` counts
+of primary commas. The legacy six-permutation substitution search (which
+preferred derived commas to reduce displayed groups) is preserved behind a
+new `useDerived=true` flag, but no caller currently passes it. The
+phrasing in `fmtInterval` was already HEJI-compatible — only the
+optimizer's substitution preference changed.
+
+**Font**: Bravura (Steinberg, SIL OFL). Specifically BravuraText.woff2 —
+the text-style variant compiled with tight em-box cropping for inline use.
+Vendored at `public/BravuraText.woff2` (~335KB); jsdelivr URL is a `src:`
+fallback. Bravura glyphs render at 1.8× the letter font size in HEJI
+labels to match the visual weight of the conventional sans-serif path —
+see `docs/lessons.md` "Bravura SMuFL glyphs render much smaller…"
+
+**Rejected alternatives**:
+- *Unicode arrows in sans-serif* (`↑ ↓ ⇈ ⇊` for syntonic) alongside
+  sans-serif accidentals. Loses HEJI's visual identity; the combined SMuFL
+  glyphs convey the binding between accidental and arrow correctly.
+- *Render the whole label in Bravura including the letter*. BravuraText
+  doesn't include Latin letters in the normal way — it's a music-symbol
+  font. Letter rendering stays in sans-serif.
+- *Composer integration in this iteration*. Verovio's MEI parser
+  reportedly handles `<accid glyph.num="U+E2C3">` via the `@glyph.num`
+  attribute path, and Bravura ships with the WASM build, but the rendering
+  spike that would confirm horizontal layout is non-trivial. Deferred
+  until Max wants to commit.
+
+**Files touched**: `src/tuning/heji.ts` (new — `hejiCommas`, `hejiLabel`,
+SMuFL codepoint tables), `src/tuning/intervals.ts` (`optimizeCommas`
+default flip), `src/state/persistence.ts` (`hejiEnabled` field + load
+path), `src/state/tuning.ts` (`hejiEnabled` runtime flag), `src/ui/controls.ts`
+(setTuning V auto-on), `src/ui/init.ts` (cbHeji wiring +
+applyPrefsToDom), `src/render/draw.ts` (`drawHejiLabel`,
+`drawConventionalLabel` split + `hejiLabelForCell`),
+`src/effects/onTuningChanged.ts` (textDirty on mode change),
+`index.html` (cbHeji + `@font-face`), `public/BravuraText.woff2` (new),
+`tools/heji-check.mjs` (new — comma-count fixture), `package.json`
+(check:heji script).

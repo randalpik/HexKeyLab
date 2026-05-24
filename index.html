@@ -8,6 +8,22 @@
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <title>HexKeyLab</title>
 <style>
+/* BravuraText (SMuFL music font with text-style metrics) — used to render
+   HEJI comma-arrow / septimal-hook glyphs from the U+E2C0–E2FF range on
+   lattice cell labels when HEJI mode is on. Served from public/ (Vite
+   copies it to dist/ at build time); the steinbergmedia jsdelivr URL is a
+   fallback for offline-build or stale-cache scenarios. Loading is
+   non-blocking — if the font isn't ready by the first paint, drawNoteName
+   omits the comma glyphs (the conventional letter+accidental still
+   renders) until document.fonts.load() resolves and triggers a redraw. */
+@font-face {
+  font-family: 'BravuraText';
+  font-style: normal;
+  font-weight: normal;
+  font-display: swap;
+  src: url('/BravuraText.woff2') format('woff2'),
+       url('https://cdn.jsdelivr.net/gh/steinbergmedia/bravura@master/redist/woff/BravuraText.woff2') format('woff2');
+}
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{background:#111;height:100%;overflow:hidden}
 .wrap{background:#111;padding:8px 12px 12px;font-family:system-ui,-apple-system,sans-serif;display:flex;flex-direction:column;height:100vh;overflow-x:auto;overflow-y:hidden}
@@ -168,6 +184,7 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <label><input type="checkbox" id="cbNotes" autocomplete="off" checked> Note names</label>
 <label><input type="checkbox" id="cbBands" autocomplete="off" checked> Band seams</label>
 <label><input type="checkbox" id="cbExtend" autocomplete="off" checked> Extend pattern</label>
+<label title="Decorate note labels with Helmholtz-Ellis JI comma arrows / septimal hooks (auto-enabled in Schismatic mode)"><input type="checkbox" id="cbHeji" autocomplete="off"> HEJI accidentals</label>
 </div>
 <div class="lsel">
 <span>Rotation:</span>

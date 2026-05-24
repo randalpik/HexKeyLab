@@ -1,22 +1,33 @@
 // Stateful key-color computation. Reads tuning state (live bindings).
-// Pure data tables (colorTable, hueC, hueCycle, whiteSet, hueCycleOrder,
-// hueIdx, equalHueCycle) live in src/shared/colors.ts — re-exported here so
+// Pure data tables (hueC, hueCycle, whiteSet, hueCycleOrder, hueIdx,
+// equalHueCycle) live in src/shared/colors.ts — re-exported here so
 // existing callers continue to import from '../render/colors.js'.
+//
+// Four coloring regimes selected by tuning mode:
+//   Equal ('E')        — 3-hue octave cycle (equalHueCycle), aesthetic choice.
+//   Ptolemaic/Septimal — base 7-hue cycle (computeHue at (q, r)), with
+//   ('5','7')            Septimal qm=2 cells drawn from the warm-shifted
+//                        .sl/.sd variants to signal B-region tuning.
+//   Pythagorean/        — same 7-hue cycle, but SC-shifted cells (qm=1 and/or
+//   Semiditonal          qm=2) take the hue of their SC sibling at (q∓7, r±4),
+//   ('P','D')            because the SC shift makes them enharmonic with that
+//                        5-limit cell.
+//   Schismatic ('V')   — M3-chain coloring: chainStep = floor((2q+1)/3),
+//                        idx = (5 − midiOct − 2·chainStep) mod 7 in hueCycle.
+//                        Tracks the M3 chain (qm=1 of band b paired with qm=2
+//                        of band b+1) across MIDI octaves. No octave invariance
+//                        because +3Q = octave + schisma in V mode.
 
 import { bandOf } from '../layout/coords.js';
 import { tuning } from '../state/tuning.js';
 import { regionInfo } from '../tuning/regions.js';
 import {
   type Hue, type HueColors,
-  colorTable, hueC, hueCycle, whiteSet, hueCycleOrder, hueIdx, equalHueCycle,
+  hueC, hueCycle, whiteSet, hueCycleOrder, hueIdx, equalHueCycle,
 } from '../shared/colors.js';
 
 export type { Hue, HueColors };
-export { colorTable, hueC, hueCycle, whiteSet, hueCycleOrder, hueIdx, equalHueCycle };
-
-export function lookupHue(q: number, r: number): Hue {
-  return colorTable[((q % 3) + 3) % 3][((r % 12) + 12) % 12];
-}
+export { hueC, hueCycle, whiteSet, hueCycleOrder, hueIdx, equalHueCycle };
 
 /* Hue from `floor(midi/12) - bandOf(q)` modulo 7. Equal mode collapses to a
    3-hue octave cycle; everything else uses the 7-hue lineage. */
@@ -44,13 +55,16 @@ export function keyColorVariant(q: number, r: number): { hue: Hue; isW: boolean;
   const midi = 57 + 4 * q + 7 * r;
   const pc = ((midi % 12) + 12) % 12;
   const isW = whiteSet.has(pc);
-  /* V mode: no SC-sibling redirect. The mode's M3-distance respelling treats
-     every cell as a 5-limit Ptolemaic cell at its actual (q, r) — so coloring
-     should match. E.g. cell (2, 0) becomes E#4 (yellow at lookupHue(2, 0))
-     rather than F4 (teal via the (q+7, r−4) sibling). The result is a
-     consistent 5-limit M3-chain color progression. */
+  /* V mode: M3-chain coloring. Octave invariance is broken (+3Q = octave +
+     schisma), so color tracks position along the M3 chain (chainStep) and
+     MIDI octave. The M3 chain crosses band boundaries: qm=1 of band b shares
+     a chain with qm=2 of band b+1 — flat across the M3 step, +1 across each
+     PM3 step. Same chain + same MIDI octave = same color. */
   if (tuning.mode === 'V') {
-    return { hue: computeHue(q, r), isW, isB: false, isShifted: false };
+    const midiOct = Math.floor(midi / 12);
+    const chainStep = Math.floor((2 * q + 1) / 3);
+    const idx = (((5 - midiOct - 2 * chainStep) % 7) + 7) % 7;
+    return { hue: hueCycle[idx], isW, isB: false, isShifted: false };
   }
   const ri = regionInfo(q, r);
   if (ri.type === 'B') {

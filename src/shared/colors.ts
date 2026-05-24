@@ -22,11 +22,9 @@ export interface HueColors {
   sd?: string;
 }
 
-export const colorTable: ReadonlyArray<ReadonlyArray<Hue>> = [
-  ['PU','PK','PK','OR','YE','YE','GR','GR','TE','BL','BL','PU'],
-  ['PK','PK','OR','OR','YE','GR','GR','TE','TE','BL','BL','PU'],
-  ['PU','PK','PK','OR','OR','YE','YE','GR','TE','TE','BL','BL'],
-];
+/* No `colorTable` cache — `computeHue(q, r)` in src/render/colors.ts is
+   invariant under (q→q+3) and (r→r+12), so it depends only on (qmod3, r%12)
+   and is the single source of base hue. */
 
 export const hueC: Record<Hue, HueColors> = {
   PK: { l: '#FF4C79', d: '#59002C' },
@@ -57,8 +55,12 @@ export const hueCycle: ReadonlyArray<Hue> = ['PK', 'PU', 'BL', 'TE', 'GR', 'YE',
 
 export const whiteSet: ReadonlySet<number> = new Set([0, 2, 4, 5, 7, 9, 11]);
 
-/* hue cycle for octave-based color and diaschisma shifts */
-export const hueCycleOrder: ReadonlyArray<Hue> = ['PU', 'PK', 'OR', 'YE', 'GR', 'TE', 'BL'];
+/* hueCycle walked backward, starting at the A3 hue (PU). Used as the index
+   space for octave-based coloring and SC redirects in computeHue. */
+export const hueCycleOrder: ReadonlyArray<Hue> = (() => {
+  const start = hueCycle.indexOf('PU');
+  return Array.from({ length: 7 }, (_, i) => hueCycle[((start - i) % 7 + 7) % 7]);
+})();
 export const hueIdx: Record<Hue, number> = {} as Record<Hue, number>;
 for (let hi = 0; hi < 7; hi++) hueIdx[hueCycleOrder[hi]] = hi;
 

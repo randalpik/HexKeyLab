@@ -14,4 +14,8 @@ export const tuning = {
   equalEnabled: false,
   /* band width: alternating A/B regions along lattice r axis (constant) */
   septimalW: 3,
+  /* HEJI display toggle — when on, lattice cell labels decorate the
+     letter+accidental with syntonic-comma arrows / septimal-comma hooks
+     drawn from Bravura. Persisted in PrefsV1. */
+  hejiEnabled: false,
 };

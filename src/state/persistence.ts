@@ -114,6 +114,12 @@ export interface PrefsV1 {
    *  requirement (tuning mode + ref). When off, mismatches trigger a prompt
    *  at playback start (no prompt for note entry — that lives Composer-side). */
   syncToComposer: boolean;
+  /** Decorate each lattice cell label with HEJI (Helmholtz-Ellis Just
+   *  Intonation) comma-arrow / septimal-hook glyphs alongside the
+   *  conventional letter+accidental. Off by default; auto-flips on when the
+   *  user switches to Schismatic ('V') mode and back off when leaving V,
+   *  unless the user has explicitly toggled the checkbox themselves. */
+  hejiEnabled: boolean;
 }
 
 /* Defaults mirror the HTML attributes + state/*.ts initial values, so a fresh
@@ -151,6 +157,7 @@ export const DEFAULT_PREFS: PrefsV1 = {
   pianoEnabled: false,
   validRefBounds: false,
   syncToComposer: false,
+  hejiEnabled: false,
 };
 
 function isOutlineMode(s: unknown): s is OutlineMode {
@@ -280,6 +287,10 @@ export function loadPrefs(): PrefsV1 {
       typeof o.syncToComposer === 'boolean'
         ? o.syncToComposer
         : DEFAULT_PREFS.syncToComposer,
+    hejiEnabled:
+      typeof o.hejiEnabled === 'boolean'
+        ? o.hejiEnabled
+        : DEFAULT_PREFS.hejiEnabled,
   };
 }
 

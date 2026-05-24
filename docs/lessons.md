@@ -209,7 +209,7 @@ V mode reuses Pythagorean's region structure (same A_D1_LOWER for qm=1, A_D1_UPP
 
 1. **`freqAt`** (`src/shared/freq.ts`) multiplies by `Math.pow(SCHISMA, b)` — the per-band schisma drift, separate from the qm shifts.
 2. **`jiRatioWithState`** (`src/tuning/ratios.ts`) adds `db × (−15, +8, +1, 0)` to the prime-exponent vector after the standard region adjustments — the schisma's prime decomposition (3^8·5/2^15). Without this, cross-band intervals would compute incorrect ratios and the analyzer wouldn't surface "octave + schisma" annotations.
-3. **`keyColorVariant`** (`src/render/colors.ts`) short-circuits to `computeHue(q, r)` directly — V mode is the *only* mode that bypasses the SC-sibling redirect that other A-d1 cells use.
+3. **`keyColorVariant`** (`src/render/colors.ts`) computes a dedicated V-mode index — `chainStep = floor((2q+1)/3)`, `idx = (5 − midiOct − 2·chainStep) mod 7` in `hueCycle`. V mode is the *only* mode that bypasses the SC-sibling redirect, because octave invariance is broken; color tracks M3-chain position instead. The chain crosses bands: qm=1 of band b pairs with qm=2 of band b+1.
 
 If you add a V-like mode in the future, mirror all three. Region info alone isn't enough.
 
@@ -839,6 +839,59 @@ For a mid-system bar line (= a bar line that has a next measure on the same syst
 Surfaces specifically as "selection rect ends a few pixels past the bar line when growing TO it (from the left), but looks correct when shrinking back TO it (from the right)" — because the left edge of the selection used `M_{k+1}.left` (correct) while the right used `M_k.right` (past).
 
 Fix lives in `src/composer/selectionOverlay.ts:measureRightEdge`. Generalizable rule: when aligning UI to musical-glyph boundaries, the glyph's own bbox isn't the visual edge — the adjacent glyph's start is more reliable.
+
+### SMuFL HEJI syntonic-comma arrows are combined glyphs, not standalone arrows
+
+The SMuFL "Extended Helmholtz-Ellis accidentals (just intonation)" range
+(U+E2C0–E2FF) provides ONLY combined "accidental + N arrows" glyphs —
+e.g. U+E2C2 is a *natural sign with one down-arrow* as a single composite
+glyph, not a standalone arrow. There is no SMuFL codepoint for a bare
+syntonic-comma arrow; HEJI treats the arrows as inseparable from a
+Pythagorean carrier. (Standalone septimal hooks DO exist —
+`accidentalLowerOneSeptimalComma` U+E2DE and Raise U+E2DF — because those
+aren't conventionally combined with Pythagorean accidentals.)
+
+Practical consequence: you can't render "C#" in sans-serif followed by a
+Bravura arrow next to it. The whole accidental glyph must be replaced by
+the combined Bravura glyph. HKL's HEJI label-builder (`src/tuning/heji.ts`)
+distributes syntonic commas across the Pythagorean accidental chain (up to
+2 per glyph), then spills extras onto appended natural-sign carriers — so
+the only situation where a label has no full accidental glyph is the
+bare-letter Pythagorean-spine case (no accidentals, no commas, no hooks).
+
+Verify codepoints against `w3c/smufl/gh-pages/metadata/glyphnames.json`,
+NOT against ChatGPT-style summaries — both my first two guesses (0xE2C2 as
+a "standalone up arrow" and 0xE2D8–E2DB as septimal hooks) were wrong;
+0xE2D8 is "DoubleSharpThreeArrowsDown" and 0xE2C2 is the natural+1-down
+combined glyph. The canonical table is the spec JSON.
+
+### Bravura WOFF2 lives in `redist/woff/`, not `redist/woff2/`
+
+The steinbergmedia/bravura repo's `redist/` directory has `otf/`, `svg/`,
+and `woff/` subdirectories. The WOFF2 files (`Bravura.woff2`,
+`BravuraText.woff2`) live INSIDE `woff/` alongside the WOFF1 versions.
+There's no `redist/woff2/` directory. Don't guess the path. Also: the
+default branch is `master`, not `main`, so jsdelivr URLs need `@master`
+or an unversioned form.
+
+Working: `https://cdn.jsdelivr.net/gh/steinbergmedia/bravura@master/redist/woff/BravuraText.woff2`
+
+For HKL we host a local copy in `public/BravuraText.woff2` (Vite copies to
+`dist/` at build time) and keep the jsdelivr URL as a `src:` fallback.
+
+### Bravura SMuFL glyphs render much smaller than Unicode equivalents at the same px size
+
+Bravura's accidental glyphs are engraved to fit a 5-line music staff —
+roughly 1 staff-space tall (= 1/4 em). At the same font-size, a Bravura ♯
+appears noticeably smaller than the Unicode ♯ rendered in a sans-serif
+font. BravuraText (compiled with text-style metrics) helps but doesn't
+fully close the gap.
+
+In HKL's `drawHejiLabel`, the Bravura glyph font size is set to 1.8× the
+letter font size to match the visual weight of the conventional path
+(sans-serif Unicode ♯/♭). Without that scale-up, HEJI labels look tiny
+next to the conventional ones. Tune for legibility, not formal metric
+correctness — these are lattice cell labels, not staff notation.
 
 ### Headless CDP doesn't synthesize clipboard events from keystroke dispatch
 

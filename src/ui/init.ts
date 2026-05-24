@@ -79,6 +79,7 @@ function applyPrefsToDom(p: PrefsV1): void {
   $<HTMLInputElement>('cbSyncToComposer').checked = p.syncToComposer;
   $<HTMLInputElement>('cbCoords').checked = p.showCoords;
   $<HTMLInputElement>('cbShortIvl').checked = p.shortIvl;
+  $<HTMLInputElement>('cbHeji').checked = p.hejiEnabled;
   $<HTMLSelectElement>('selOutline').value = p.outline;
   $<HTMLSelectElement>('selRotation').value = p.rotation;
   $<HTMLSelectElement>('selTuning').value = p.tuning;
@@ -100,6 +101,7 @@ initToolbarSelector();
 
 /* State fields with no DOM mirror — set directly before any handlers run. */
 pedal.mode = prefs.pedalMode;
+tuning.hejiEnabled = prefs.hejiEnabled;
 
 initAudio();
 /* Load the persisted instrument. Fires regardless of audioEnabled so the
@@ -295,6 +297,13 @@ $<HTMLInputElement>('cbSyncToComposer').addEventListener('change', (e) => {
 $<HTMLInputElement>('cbCoords').addEventListener('change', (e) => {
   updateInfo();
   savePrefs({ showCoords: (e.target as HTMLInputElement).checked });
+});
+$<HTMLInputElement>('cbHeji').addEventListener('change', (e) => {
+  const checked = (e.target as HTMLInputElement).checked;
+  tuning.hejiEnabled = checked;
+  view.textDirty = true;
+  draw();
+  savePrefs({ hejiEnabled: checked });
 });
 $<HTMLInputElement>('cbShortIvl').addEventListener('change', (e) => {
   updateInfo();
