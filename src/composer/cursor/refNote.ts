@@ -12,9 +12,9 @@
 // (e.g. a key-sig change firing the broadcast cycle) would blow away a
 // manual Ctrl+click selection the user just made on HKL.
 
-import type { ComposerModel } from './model.js';
-import { keySigToTonic } from './accidentals.js';
-import { noteName, parseNote, accToVal } from '../tuning/notes.js';
+import type { ComposerModel } from '../model/index.js';
+import { keySigToTonic } from '../notation/accidentals.js';
+import { noteName, parseNote, accToVal } from '../../tuning/notes.js';
 
 export interface RefCoord { q: number; r: number; }
 

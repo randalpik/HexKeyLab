@@ -61,13 +61,13 @@
 import type { ResolvedNote } from '../bridge/protocol.js';
 import type {
   ComposerModel, Duration, Dots, ChordInput, RestInput, Voice,
-} from './model.js';
-import { ticksOf } from './model.js';
-import { alterFromCount } from './accidentals.js';
+} from './model/index.js';
+import { ticksOf } from './model/index.js';
+import { alterFromCount } from './notation/accidentals.js';
 import {
   type ExpressionCursor, rebuildCursor, currentMoment, step, moveToStart,
   moveToEnd,
-} from './expressionCursor.js';
+} from './cursor/expressionCursor.js';
 import {
   addDynam, addHairpin, removeExpression, dynamAt, setDynamText,
   hairpinsAt, momentCompare,
@@ -79,8 +79,8 @@ import {
   moveBeatRange, moveBeatRangeByMeasure, moveMeasureMovable,
   adjustStaffRange, promoteBeatToMeasure, cursorAtMovable,
   beatBoundariesInVoice, currentBeatAt,
-} from './selection.js';
-import { serializeClipboard, parseClipboard, type ClipboardContents } from './clipboard.js';
+} from './selection/selection.js';
+import { serializeClipboard, parseClipboard, type ClipboardContents } from './selection/clipboard.js';
 import type { HistoryManager } from './history.js';
 
 const TUNING_LABELS: Record<string, string> = {

@@ -4,12 +4,12 @@
 // tempo first, then time signature last — since time-sig change triggers
 // the measure rebuild).
 
-import type { ComposerModel } from './model.js';
+import type { ComposerModel } from './model/index.js';
 import { getDynamicMap, setDynamicMap, type LayoutReq } from './expressions.js';
 import { DYNAMIC_NAMES, DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
 import { TUNING_MODES, type TuningMode, coordToMidi, MIDI_LOW, MIDI_HIGH } from '../shared/freq.js';
 import { noteName, keyOctave, fmtNote } from '../tuning/notes.js';
-import { planRetune, summarizePlan, applyRetune } from './retune.js';
+import { planRetune, summarizePlan, applyRetune } from './notation/retune.js';
 import type { HistoryManager } from './history.js';
 
 const $ = <T extends HTMLElement>(id: string): T | null =>

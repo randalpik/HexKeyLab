@@ -7,9 +7,9 @@
 // Uses simple download/upload via Blob + <input type="file"> — no File System
 // Access API yet.
 
-import { ComposerModel } from './model.js';
-import type { Voice, Duration, Dots } from './model.js';
-import type { VerovioToolkit } from './verovio-types.js';
+import { ComposerModel } from './model/index.js';
+import type { Voice, Duration, Dots } from './model/index.js';
+import type { VerovioToolkit } from './render/verovio-types.js';
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
 

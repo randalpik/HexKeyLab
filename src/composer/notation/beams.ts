@@ -19,7 +19,7 @@
 // before re-computing. This means the same function can be called repeatedly
 // on the same doc with no drift.
 
-import { realTicks } from './ticks.js';
+import { realTicks } from '../model/ticks.js';
 
 const MEI_NS = 'http://www.music-encoding.org/ns/mei';
 

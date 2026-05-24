@@ -27,7 +27,7 @@
 //   3. Tie destinations (@tie="t" or "m") are always hidden, but they DO
 //      update carry state.
 
-import { realTicks } from './ticks.js';
+import { realTicks } from '../model/ticks.js';
 
 const SHARP_ORDER: ReadonlyArray<string> = ['f', 'c', 'g', 'd', 'a', 'e', 'b'];
 const FLAT_ORDER:  ReadonlyArray<string> = ['b', 'e', 'a', 'd', 'g', 'c', 'f'];

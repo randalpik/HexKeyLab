@@ -12,22 +12,22 @@
 
 import { createComposerBridge, PROTOCOL_VERSION } from '../bridge/channel.js';
 import type { HklEvent, ResolvedNote, FootprintCell } from '../bridge/protocol.js';
-import { ComposerModel } from './model.js';
-import { renderer, ZOOM_PRESETS, type ZoomLevel } from './render.js';
-import { cursor } from './cursor.js';
+import { ComposerModel } from './model/index.js';
+import { renderer, ZOOM_PRESETS, type ZoomLevel } from './render/render.js';
+import { cursor } from './cursor/cursor.js';
 import { initInput, getInputState, installSCTransposeImpl } from './input.js';
-import { scTransposeChordNote } from './scTranspose.js';
+import { scTransposeChordNote } from './notation/scTranspose.js';
 import { HistoryManager } from './history.js';
-import type { CursorUpdateOpts } from './cursor.js';
-import { selectionOverlay } from './selectionOverlay.js';
+import type { CursorUpdateOpts } from './cursor/cursor.js';
+import { selectionOverlay } from './selection/selectionOverlay.js';
 import { saveHkc, loadHkcFromFile, downloadMusicXml, downloadPdf } from './save.js';
-import { buildPlayback, highlightElement, clearHighlights, readTempo, tickMsFromTempo } from './playback.js';
+import { buildPlayback, highlightElement, clearHighlights, readTempo, tickMsFromTempo } from './render/playback.js';
 import { openSetupDialog } from './setupDialog.js';
 import {
   computePrevNoteRef, computeSongKeyRef,
   refNoteChanged, invalidateRefNoteCache,
   songKeyChanged, invalidateSongKeyCache,
-} from './refNote.js';
+} from './cursor/refNote.js';
 
 const $ = <T extends HTMLElement>(id: string): T | null =>
   document.getElementById(id) as T | null;

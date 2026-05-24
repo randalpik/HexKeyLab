@@ -9,8 +9,8 @@
 // rest that fits both the remaining-in-beat budget and the remaining-total
 // budget. Double dots aren't used — they're correct but uncommon as autofill.
 
-import type { Duration, Dots } from './model.js';
-import type { TimeSigInfo } from './beams.js';
+import type { Duration, Dots } from './index.js';
+import type { TimeSigInfo } from '../notation/beams.js';
 
 const REST_TABLE: ReadonlyArray<{ ticks: number; dur: Duration; dots: Dots }> = [
   { ticks: 24, dur: '4',  dots: 1 },   /* dotted quarter (compound beat) */

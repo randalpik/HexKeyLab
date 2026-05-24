@@ -20,9 +20,9 @@
 //   - Tie partner of a dropped note: data-tie-partner reference is cleared;
 //     @tie="i" loses its endpoint and is removed; @tie="m" downgrades to "t".
 
-import type { ComposerModel } from './model.js';
-import { freqAt, coordToMidi, MIDI_LOW, MIDI_HIGH, type TuningMode } from '../shared/freq.js';
-import { noteName, parseNote, accToVal, keyOctave } from '../tuning/notes.js';
+import type { ComposerModel } from '../model/index.js';
+import { freqAt, coordToMidi, MIDI_LOW, MIDI_HIGH, type TuningMode } from '../../shared/freq.js';
+import { noteName, parseNote, accToVal, keyOctave } from '../../tuning/notes.js';
 
 export interface RetuneNoteEntry {
   noteEl: Element;

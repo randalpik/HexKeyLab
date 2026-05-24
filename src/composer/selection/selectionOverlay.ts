@@ -22,12 +22,12 @@
 //     <measure> wrapper, that resolves to the measure's left edge; for
 //     any other element type it's the element's own left edge.
 
-import type { ComposerModel, Voice } from './model.js';
+import type { ComposerModel, Voice } from '../model/index.js';
 import type { SelectionState, Staff } from './selection.js';
 import { beatBoundariesInVoice } from './selection.js';
-import { renderer } from './render.js';
-import { realTicks } from './ticks.js';
-import { CURSOR_VPAD } from './cursor.js';
+import { renderer } from '../render/render.js';
+import { realTicks } from '../model/ticks.js';
+import { CURSOR_VPAD } from '../cursor/cursor.js';
 
 const SELECTION_FILL = '#3b82f6';
 const SELECTION_OPACITY = '0.18';

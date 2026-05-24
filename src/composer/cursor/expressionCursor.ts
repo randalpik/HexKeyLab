@@ -17,8 +17,8 @@
 
 import {
   type Moment, momentCompare, momentEqual, dynamAt, hairpinsAt, readMeter,
-} from './expressions.js';
-import { realTicks } from './ticks.js';
+} from '../expressions.js';
+import { realTicks } from '../model/ticks.js';
 
 export interface ExpressionCursor {
   index: number;

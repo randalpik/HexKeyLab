@@ -13,9 +13,9 @@
 //
 // See /home/max/.claude/plans/it-s-time-to-add-unified-barto.md.
 
-import type { ComposerModel, Voice } from './model.js';
-import { readTimeSig } from './beams.js';
-import { beatTicks } from './restfill.js';
+import type { ComposerModel, Voice } from '../model/index.js';
+import { readTimeSig } from '../notation/beams.js';
+import { beatTicks } from '../model/restfill.js';
 
 export type Staff = 1 | 2;
 export type MovableSide = 'left' | 'right' | 'unset';

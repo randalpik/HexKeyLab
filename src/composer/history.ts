@@ -27,8 +27,8 @@
  * leaves the user in voice mode).
  */
 
-import type { ComposerModel, Voice } from './model.js';
-import type { SelectionState } from './selection.js';
+import type { ComposerModel, Voice } from './model/index.js';
+import type { SelectionState } from './selection/selection.js';
 
 export interface Snapshot {
   mei: string;

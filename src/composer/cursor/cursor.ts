@@ -13,11 +13,11 @@
 // case (flat[0] is always the wrapper of M_0 under rule 3 nonexistent
 // prev or rule 2 empty).
 
-import { renderer } from './render.js';
-import type { ComposerModel, Voice } from './model.js';
-import { type Moment, dynamAt, hairpinsAt } from './expressions.js';
+import { renderer } from '../render/render.js';
+import type { ComposerModel, Voice } from '../model/index.js';
+import { type Moment, dynamAt, hairpinsAt } from '../expressions.js';
 import { currentMoment, selectionAt, type ExpressionCursor } from './expressionCursor.js';
-import { realTicks } from './ticks.js';
+import { realTicks } from '../model/ticks.js';
 
 const CURSOR_COLOR = '#7226e4';
 const EXPR_CURSOR_COLOR = '#e47226';

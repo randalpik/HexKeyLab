@@ -12,12 +12,12 @@
 // note's xml:id stays stable (sel.noteId still points at the same element).
 // Bare note: no resort needed.
 
-import type { ComposerModel, Voice } from './model.js';
-import type { InputHooks, ChordInternalSel } from './input.js';
-import type { CoordRef } from '../bridge/protocol.js';
-import { noteName, parseNote, accToVal, keyOctave } from '../tuning/notes.js';
-import { coordToMidi } from '../transcription/pitch.js';
-import { realTicks } from './ticks.js';
+import type { ComposerModel, Voice } from '../model/index.js';
+import type { InputHooks, ChordInternalSel } from '../input.js';
+import type { CoordRef } from '../../bridge/protocol.js';
+import { noteName, parseNote, accToVal, keyOctave } from '../../tuning/notes.js';
+import { coordToMidi } from '../../transcription/pitch.js';
+import { realTicks } from '../model/ticks.js';
 
 /** Cached HKL footprint passed in from main.ts. Keys are "q,r"; values are
  *  the fresh per-cell color. `null` means "no footprint cached yet" — no

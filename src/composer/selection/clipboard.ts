@@ -7,11 +7,11 @@
 // layer — no DOM-mutation of the model happens here (paste is sequenced
 // from input.ts so it can drive setStatus + reRender).
 
-import { type ComposerModel, type Voice, MEI_NS } from './model.js';
+import { type ComposerModel, type Voice, MEI_NS } from '../model/index.js';
 import type { SelectionState, Staff } from './selection.js';
 import { beatBoundariesInVoice } from './selection.js';
-import { readTimeSig } from './beams.js';
-import { realTicks } from './ticks.js';
+import { readTimeSig } from '../notation/beams.js';
+import { realTicks } from '../model/ticks.js';
 
 const HKL_NS = 'https://hexkeylab.com/ns/mei';
 const CLIPBOARD_LOCAL = 'clipboard';
