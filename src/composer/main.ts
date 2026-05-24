@@ -17,6 +17,7 @@ import { renderer, ZOOM_PRESETS, type ZoomLevel } from './render.js';
 import { cursor } from './cursor.js';
 import { initInput, getInputState, installSCTransposeImpl } from './input.js';
 import { scTransposeChordNote } from './scTranspose.js';
+import { HistoryManager } from './history.js';
 import type { CursorUpdateOpts } from './cursor.js';
 import { selectionOverlay } from './selectionOverlay.js';
 import { saveHkc, loadHkcFromFile, downloadMusicXml, downloadPdf } from './save.js';
@@ -157,6 +158,7 @@ function cursorOpts(): CursorUpdateOpts {
 
 const model = new ComposerModel();
 const bridge = createComposerBridge();
+const history = new HistoryManager();
 
 bridge.on((msg: HklEvent) => {
   switch (msg.type) {
@@ -419,8 +421,10 @@ function stepZoom(dir: 'in' | 'out'): void {
    input.ts free of a hard import on scTranspose (so the keystroke wiring
    can be tested independently). */
 installSCTransposeImpl((m, hooks, sel, dir) => {
+  const before = m.snapshotState();
   const result = scTransposeChordNote(m, hooks, sel, dir, footprintColors);
   if (!result.ok) return;
+  history.push(before, m.snapshotState(), 'sc-transpose');
   hooks.onStateChange();
   hooks.onChange();
   /* Audible preview: play the full vertical slice at the chord's start
@@ -469,6 +473,7 @@ initInput(model, {
   onZoomChange: (dir) => stepZoom(dir),
   getHklTuningMode: () => hklTuningMode,
   requestApplyLayout: () => requestApplyLayout(),
+  history,
 });
 
 /* ── playback ────────────────────────────────────────────────────────────── */
@@ -561,7 +566,7 @@ $('btnSetup')?.addEventListener('click', () => {
       broadcastLayoutReq();
       refreshLayoutMatchIndicator();
     }
-  });
+  }, history);
 });
 
 /* ── save / load / export ────────────────────────────────────────────────── */
@@ -586,6 +591,8 @@ $<HTMLInputElement>('fileInputHkc')?.addEventListener('change', async (e) => {
   try {
     const loaded = await loadHkcFromFile(file);
     model.replaceDocument(loaded.serialize());
+    /* File load resets editing history — undo must not cross file boundaries. */
+    history.clear();
     reRender();
     refreshIndicators();
     maybeScrollMeasureIntoView(visualCursorMeasure());
@@ -682,4 +689,5 @@ void bootRenderer();
   getHeldKeys: () => lastHeldKeys,
   isHklConnected: () => hklConnected,
   inputState: getInputState,
+  history,
 };

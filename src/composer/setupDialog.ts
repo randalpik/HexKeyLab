@@ -10,6 +10,7 @@ import { DYNAMIC_NAMES, DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
 import { TUNING_MODES, type TuningMode, coordToMidi, MIDI_LOW, MIDI_HIGH } from '../shared/freq.js';
 import { noteName, keyOctave, fmtNote } from '../tuning/notes.js';
 import { planRetune, summarizePlan, applyRetune } from './retune.js';
+import type { HistoryManager } from './history.js';
 
 const $ = <T extends HTMLElement>(id: string): T | null =>
   document.getElementById(id) as T | null;
@@ -168,7 +169,11 @@ function updateRefLabel(q: number, r: number): void {
   label.textContent = '= ' + fmtNote(name) + oct;
 }
 
-export function openSetupDialog(model: ComposerModel, onApply: (layoutChanged: boolean) => void): void {
+export function openSetupDialog(
+  model: ComposerModel,
+  onApply: (layoutChanged: boolean) => void,
+  history?: HistoryManager,
+): void {
   const dlg = $<HTMLDialogElement>('setupDialog');
   if (!dlg) return;
 
@@ -210,6 +215,11 @@ export function openSetupDialog(model: ComposerModel, onApply: (layoutChanged: b
       }
     }
 
+    /* All setup mutations bundle into a single undo entry. Snapshot BEFORE
+       the confirm prompts (so cancellation paths leave history untouched —
+       no-op push will be skipped by HistoryManager when before === after). */
+    const beforeSnapshot = history ? model.snapshotState() : null;
+
     /* Layout requirement change. Tuning-mode change retunes existing notes
        (frequency invariant: each note's old freq is preserved as closely as
        possible by moving to a different (q, r) under the new mode). Ref
@@ -242,6 +252,11 @@ export function openSetupDialog(model: ComposerModel, onApply: (layoutChanged: b
     } else {
       /* Same meter — still call setTimeSig to be idempotent. */
       model.setTimeSig(values.count, values.unit);
+    }
+
+    /* Push the entire setup apply-block as ONE history entry. */
+    if (history && beforeSnapshot) {
+      history.push(beforeSnapshot, model.snapshotState(), 'setup');
     }
     onApply(layoutChanged && proceedWithLayout);
   };

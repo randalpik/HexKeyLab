@@ -81,6 +81,7 @@ import {
   beatBoundariesInVoice, currentBeatAt,
 } from './selection.js';
 import { serializeClipboard, parseClipboard, type ClipboardContents } from './clipboard.js';
+import type { HistoryManager } from './history.js';
 
 const TUNING_LABELS: Record<string, string> = {
   E: 'Equal',
@@ -163,6 +164,10 @@ export interface InputHooks {
   /** Send an `apply-layout` bridge message asking HKL to switch to the
    *  score's pinned layout. Wired in main.ts. */
   requestApplyLayout?: () => void;
+  /** Undo/redo manager. Constructed once in main.ts and shared with any
+   *  module that performs user-initiated mutations (input dispatch, setup
+   *  dialog, SC-transpose callback). */
+  history: HistoryManager;
 }
 
 const DIGIT_TO_DUR: Record<string, Duration> = {
@@ -214,6 +219,14 @@ const state: InputState = {
  * handler immediately afterwards (same user-gesture tick). The split-handler
  * approach is documented at the keydown handler. */
 let pendingClipboardText: string | null = null;
+
+/* Source selection of the most recent copy/cut. On a future paste, the
+ * history entry carries this so that undoing the paste re-enters the source
+ * selection (cf. plan: "When undoing a copy-paste or cut-paste, the source
+ * selection should be re-selected"). Reset on every copy/cut to point at
+ * the new source. Not cleared on external clipboard overwrite — see plan
+ * edge case #11; tolerable in practice. */
+let lastCopySource: SelectionState | null = null;
 
 export function getInputState(): Readonly<InputState> {
   return state;
@@ -518,6 +531,22 @@ export function installSCTransposeImpl(
 /* ── main dispatch ───────────────────────────────────────────────────────── */
 
 export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
+  /** Snapshot-wrap a mutation. Pushes a history entry iff fn() returned
+   *  truthy (or void) and the before/after MEIs differ. fn returning false
+   *  explicitly aborts the push (used when the mutation was rejected). */
+  function withHistory(
+    label: string,
+    fn: () => boolean | void,
+    opts: { sourceSelection?: SelectionState; mergeable?: boolean; mergeIfTopMergeable?: boolean } = {},
+  ): boolean {
+    const before = model.snapshotState();
+    const result = fn();
+    if (result === false) return false;
+    const after = model.snapshotState();
+    hooks.history.push(before, after, label, opts);
+    return true;
+  }
+
   function commitDuration(dur: Duration): void {
     state.duration = dur;
     const heldRaw = hooks.getHeldKeys();
@@ -570,31 +599,35 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       }
     }
 
-    if (held.length > 0) {
-      const chord: ChordInput = { notes: held, duration: dur };
-      if (state.mode === 'overwrite') {
-        const id = model.replaceChordAtCursor(chord);
-        if (id === null) {
-          if (model.insertChordAtCursor(chord) === null) {
-            hooks.setStatus?.("Doesn't fit.");
-            return;
+    const ok = withHistory(held.length > 0 ? 'chord' : 'rest', () => {
+      if (held.length > 0) {
+        const chord: ChordInput = { notes: held, duration: dur };
+        if (state.mode === 'overwrite') {
+          const id = model.replaceChordAtCursor(chord);
+          if (id === null) {
+            if (model.insertChordAtCursor(chord) === null) {
+              hooks.setStatus?.("Doesn't fit.");
+              return false;
+            }
+          } else {
+            model.moveCursor('right');
           }
         } else {
-          model.moveCursor('right');
+          if (model.insertChordAtCursor(chord) === null) {
+            hooks.setStatus?.("Doesn't fit.");
+            return false;
+          }
         }
       } else {
-        if (model.insertChordAtCursor(chord) === null) {
+        const rest: RestInput = { duration: dur };
+        if (model.insertRestAtCursor(rest) === null) {
           hooks.setStatus?.("Doesn't fit.");
-          return;
+          return false;
         }
       }
-    } else {
-      const rest: RestInput = { duration: dur };
-      if (model.insertRestAtCursor(rest) === null) {
-        hooks.setStatus?.("Doesn't fit.");
-        return;
-      }
-    }
+      return true;
+    });
+    if (!ok) return;
     hooks.onStateChange();
     hooks.onChange();
   }
@@ -672,8 +705,9 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
   }
 
   /** Apply a parsed clipboard contents at the model's current cursor. Sets
-   *  state.selection to cover the newly-pasted content per spec. */
-  function applyPaste(contents: ClipboardContents): boolean {
+   *  state.selection to cover the newly-pasted content per spec. Callers
+   *  wrap this in `withHistory` so the merge-with-prior-cut rule fires. */
+  function applyPasteInner(contents: ClipboardContents): boolean {
     if (contents.kind === 'beat') {
       const voice = model.getCurrentVoice();
       const c = model.getCursor();
@@ -867,36 +901,42 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
            Just serialize into pendingClipboardText for the DOM copy event
            handler to ferry into event.clipboardData; do NOT preventDefault. */
         pendingClipboardText = serializeClipboard(model, sel);
+        lastCopySource = sel;
         hooks.setStatus?.('Copied to clipboard.');
         return true;
       }
       if (e.key === 'x' || e.key === 'X') {
         pendingClipboardText = serializeClipboard(model, sel);
-        if (sel.kind === 'beat') {
-          const boundaries = beatBoundariesInVoice(model, sel.voice);
-          /* Cursor lands at the lastMoved-side boundary post-deletion (= the
-           * "user's perceived current position"). Capture its tstamp before
-           * mutating; the model's flat indices shift but the tstamp is stable. */
-          const exitCursorTstamp = model.getTickPositionAt(
-            sel.voice,
-            sel.lastMoved === 'first' ? boundaries[sel.first] : boundaries[sel.last + 1],
-          );
-          const tLo = model.getTickPositionAt(sel.voice, boundaries[sel.first]);
-          const tHi = model.getTickPositionAt(sel.voice, boundaries[sel.last + 1]);
-          model.clearBeatRange(sel.voice, tLo, tHi);
-          model.setVoice(sel.voice);
-          model.setCursor(
-            model.findCursorByTickPosition(sel.voice, exitCursorTstamp),
-            sel.voice,
-          );
-        } else {
-          const mLo = Math.min(sel.anchorMeasure, sel.movableMeasure);
-          const mHi = Math.max(sel.anchorMeasure, sel.movableMeasure);
-          model.clearMeasureRange(mLo, mHi, sel.firstStaff, sel.lastStaff);
-          const pos = cursorAtMovable(model, sel);
-          model.setVoice(pos.voice);
-          model.setCursor(pos.flatIndex, pos.voice);
-        }
+        const capturedSel: SelectionState = sel;
+        lastCopySource = sel;
+        withHistory('cut', () => {
+          if (sel.kind === 'beat') {
+            const boundaries = beatBoundariesInVoice(model, sel.voice);
+            /* Cursor lands at the lastMoved-side boundary post-deletion (= the
+             * "user's perceived current position"). Capture its tstamp before
+             * mutating; the model's flat indices shift but the tstamp is stable. */
+            const exitCursorTstamp = model.getTickPositionAt(
+              sel.voice,
+              sel.lastMoved === 'first' ? boundaries[sel.first] : boundaries[sel.last + 1],
+            );
+            const tLo = model.getTickPositionAt(sel.voice, boundaries[sel.first]);
+            const tHi = model.getTickPositionAt(sel.voice, boundaries[sel.last + 1]);
+            model.clearBeatRange(sel.voice, tLo, tHi);
+            model.setVoice(sel.voice);
+            model.setCursor(
+              model.findCursorByTickPosition(sel.voice, exitCursorTstamp),
+              sel.voice,
+            );
+          } else {
+            const mLo = Math.min(sel.anchorMeasure, sel.movableMeasure);
+            const mHi = Math.max(sel.anchorMeasure, sel.movableMeasure);
+            model.clearMeasureRange(mLo, mHi, sel.firstStaff, sel.lastStaff);
+            const pos = cursorAtMovable(model, sel);
+            model.setVoice(pos.voice);
+            model.setCursor(pos.flatIndex, pos.voice);
+          }
+          return true;
+        }, { sourceSelection: capturedSel, mergeable: true });
         state.selection = null;
         state.cursorMode = 'voice';
         refreshExprCursor(model);
@@ -939,21 +979,68 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     }
     const atomicDur = String(atomicDenom) as Duration;
     const spanDots: Dots = pending.dotted ? 1 : 0;
-    const r = model.createTupletAtCursor({
-      num: pending.num, numbase: pending.numbase,
-      spanDur: dur, spanDots, atomicDur,
+    let success = false;
+    withHistory('tuplet', () => {
+      const r = model.createTupletAtCursor({
+        num: pending.num, numbase: pending.numbase,
+        spanDur: dur, spanDots, atomicDur,
+      });
+      if (!r.ok) {
+        hooks.setStatus?.(r.reason);
+        return false;
+      }
+      success = true;
+      return true;
     });
-    if (!r.ok) {
-      hooks.setStatus?.(r.reason);
-    } else {
+    if (success) {
       hooks.setStatus?.('Tuplet ' + pending.num + ':' + pending.numbase + ' added.');
     }
     hooks.onStateChange();
     hooks.onChange();
   }
 
+  /** Effects bag used by HistoryManager to apply selection / cursorMode
+   *  side-effects when undoing/redoing. Defined here so it closes over `state`
+   *  and survives across all initInput-scoped calls. */
+  const undoEffects = {
+    setSelection(sel: SelectionState | null): void { state.selection = sel; },
+    setCursorMode(mode: CursorMode): void { state.cursorMode = mode; },
+  };
+
+  function dispatchUndoRedo(e: KeyboardEvent): boolean {
+    if (!e.ctrlKey || e.metaKey || e.altKey) return false;
+    /* Ctrl+Z (undo). Ctrl+Y or Ctrl+Shift+Z (redo). */
+    const isUndo = !e.shiftKey && (e.key === 'z' || e.key === 'Z');
+    const isRedo = (!e.shiftKey && (e.key === 'y' || e.key === 'Y'))
+      || (e.shiftKey && (e.key === 'z' || e.key === 'Z'));
+    if (!isUndo && !isRedo) return false;
+    e.preventDefault();
+    if (hooks.isPlaybackActive()) return true;
+    /* Pending state references the model under the cursor; restoring an
+     * earlier snapshot may invalidate those references. Cancel first. */
+    if (state.pendingHairpin) { state.pendingHairpin = null; }
+    if (state.pendingTuplet) { state.pendingTuplet = null; }
+    state.chordInternalSel = null;
+    const entry = isUndo
+      ? hooks.history.undo(model, undoEffects)
+      : hooks.history.redo(model, undoEffects);
+    if (!entry) {
+      hooks.setStatus?.(isUndo ? 'Nothing to undo.' : 'Nothing to redo.');
+      return true;
+    }
+    refreshExprCursor(model);
+    hooks.setStatus?.((isUndo ? 'Undo: ' : 'Redo: ') + entry.label);
+    hooks.onStateChange();
+    hooks.onChange();
+    return true;
+  }
+
   function handler(e: KeyboardEvent): void {
     if (shouldIgnore(e)) return;
+
+    /* Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z — undo/redo. Must fire before selection-
+       mode dispatch so undo works while a selection is active. */
+    if (dispatchUndoRedo(e)) return;
 
     /* Chord-internal selection lifetime: preserved across Alt+arrow (the
        navigation/transpose keys themselves) and across `=` (which we want
@@ -1124,26 +1211,26 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
        before the digit handlers so '<' and '>' aren't swallowed by Shift+,/. */
     if (e.key === '<') {
       e.preventDefault();
-      commitHairpinStep(model, hooks, 'cres');
+      withHistory('hairpin', () => { commitHairpinStep(model, hooks, 'cres'); return true; });
       return;
     }
     if (e.key === '>') {
       e.preventDefault();
-      commitHairpinStep(model, hooks, 'dim');
+      withHistory('hairpin', () => { commitHairpinStep(model, hooks, 'dim'); return true; });
       return;
     }
 
     /* Voice-mode Shift+digit dynamics: !@#$%^ → pp p mp mf f ff. */
     if (state.cursorMode === 'voice' && SHIFT_DIGIT_TO_DYNAMIC[e.key]) {
       e.preventDefault();
-      commitDynamic(model, hooks, SHIFT_DIGIT_TO_DYNAMIC[e.key]);
+      withHistory('dynamic', () => { commitDynamic(model, hooks, SHIFT_DIGIT_TO_DYNAMIC[e.key]); return true; });
       return;
     }
 
     /* Expression-mode bare-digit dynamics: 1-8 → fff ff f mf mp p pp ppp. */
     if (state.cursorMode === 'expr' && DIGIT_TO_DYNAMIC[e.key]) {
       e.preventDefault();
-      commitDynamic(model, hooks, DIGIT_TO_DYNAMIC[e.key]);
+      withHistory('dynamic', () => { commitDynamic(model, hooks, DIGIT_TO_DYNAMIC[e.key]); return true; });
       return;
     }
 
@@ -1157,8 +1244,11 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     /* Voice-mode dot cycle + tie toggle. Both are no-ops in expression mode. */
     if (state.cursorMode === 'voice' && e.key === '.') {
       e.preventDefault();
-      const r = model.cycleDotsOnCurrent(state.mode);
-      if (r === null) hooks.setStatus?.('No note under cursor.');
+      withHistory('dot', () => {
+        const r = model.cycleDotsOnCurrent(state.mode);
+        if (r === null) { hooks.setStatus?.('No note under cursor.'); return false; }
+        return true;
+      });
       hooks.onStateChange();
       hooks.onChange();
       return;
@@ -1166,8 +1256,11 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     if (state.cursorMode === 'voice' && e.key === '=') {
       e.preventDefault();
       const reconciled = reconcileChordInternalSel(model);
-      const r = model.toggleTieOnCurrent(state.mode, reconciled?.noteIndex);
-      if (r === null) hooks.setStatus?.('No tieable note under cursor.');
+      withHistory('tie', () => {
+        const r = model.toggleTieOnCurrent(state.mode, reconciled?.noteIndex);
+        if (r === null) { hooks.setStatus?.('No tieable note under cursor.'); return false; }
+        return true;
+      });
       hooks.onChange();
       return;
     }
@@ -1195,10 +1288,15 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     if (e.key === 'Backspace') {
       e.preventDefault();
       if (state.cursorMode === 'expr') {
-        deleteSelectedExpression(model, hooks);
+        withHistory('delete-expression', () => deleteSelectedExpression(model, hooks));
         return;
       }
-      if (model.deleteAtCursor()) {
+      let deleted = false;
+      withHistory('delete', () => {
+        deleted = model.deleteAtCursor();
+        return deleted;
+      });
+      if (deleted) {
         /* Voice mutation may have changed the expression moment list. */
         refreshExprCursor(model);
         hooks.onStateChange();
@@ -1209,15 +1307,20 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     if (e.key === 'Delete') {
       e.preventDefault();
       if (state.cursorMode === 'expr') {
-        deleteSelectedExpression(model, hooks);
+        withHistory('delete-expression', () => deleteSelectedExpression(model, hooks));
         return;
       }
       const v = model.getCurrentVoice();
       const c = model.getCursor();
       const id = model.getElementIdAt(v, c);
       if (id !== null) {
-        model.moveCursor('right');
-        if (model.deleteAtCursor()) {
+        let deleted = false;
+        withHistory('delete', () => {
+          model.moveCursor('right');
+          deleted = model.deleteAtCursor();
+          return deleted;
+        });
+        if (deleted) {
           refreshExprCursor(model);
           hooks.onStateChange();
           hooks.onChange();
@@ -1280,14 +1383,26 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       return;
     }
     e.preventDefault();
-    /* In selection mode: delete the existing selection first, then paste at
-       the resulting cursor position. */
-    if (state.cursorMode === 'select' && state.selection) {
-      deleteSelectionWithoutCopy(state.selection);
-      state.selection = null;
-      state.cursorMode = 'voice';
-    }
-    const ok = applyPaste(contents);
+    /* One history entry covers (delete-selection-if-any) + paste. Merge into
+     * the prior `cut` entry when possible — cut→paste reads as a single
+     * "move" action, undoable in one step with source-selection restored. */
+    let ok = false;
+    const sourceSelForUndo = lastCopySource;
+    withHistory(
+      'paste',
+      () => {
+        /* In selection mode: delete the existing selection first, then paste at
+           the resulting cursor position. */
+        if (state.cursorMode === 'select' && state.selection) {
+          deleteSelectionWithoutCopy(state.selection);
+          state.selection = null;
+          state.cursorMode = 'voice';
+        }
+        ok = applyPasteInner(contents);
+        return ok;
+      },
+      { sourceSelection: sourceSelForUndo ?? undefined, mergeIfTopMergeable: true },
+    );
     if (ok) {
       refreshExprCursor(model);
       hooks.onStateChange();

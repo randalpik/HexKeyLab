@@ -35,6 +35,12 @@ export const RESET_SNIPPET = `
   inp.pendingHairpin = null;
   inp.pendingTuplet = null;
   inp.exprCursor = { index: 0, moments: [] };
+  inp.chordInternalSel = null;
+  inp.selection = null;
+
+  /* Clear undo/redo history between fixtures so cross-fixture state doesn't
+   * survive Ctrl+Z and pollute later assertions. */
+  if (window.__hkl_composer.history) window.__hkl_composer.history.clear();
 
   /* Clear held keys via a bridge broadcast — main.ts's bridge.on
    * handler is the only writer to lastHeldKeys. The test-side mock

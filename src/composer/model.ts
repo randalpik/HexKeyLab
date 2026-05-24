@@ -377,6 +377,62 @@ export class ComposerModel {
     return new XMLSerializer().serializeToString(clone);
   }
 
+  /* ── undo/redo snapshots ────────────────────────────────────────────────── */
+
+  /** Capture editable state (live MEI + voice + four cursors) for the history
+   *  stack. Serializes the live doc directly — no render passes — so the
+   *  output is round-trip-stable through restoreSnapshot. */
+  snapshotState(): { mei: string; voice: Voice; cursors: Record<Voice, number> } {
+    return {
+      mei: new XMLSerializer().serializeToString(this.doc),
+      voice: this.currentVoice,
+      cursors: { ...this.cursors },
+    };
+  }
+
+  /** Restore a snapshot in full (MEI + voice + cursors). Fast path — snapshots
+   *  are already in live form (beams stripped, accidentals normalized), so
+   *  the replaceDocument migrations are skipped; we still re-normalize ties
+   *  and placeholders defensively. */
+  restoreSnapshot(snap: { mei: string; voice: Voice; cursors: Record<Voice, number> }): void {
+    const newDoc = new DOMParser().parseFromString(snap.mei, 'application/xml');
+    if (newDoc.querySelector('parsererror')) throw new Error('Invalid MEI snapshot');
+    this.doc = newDoc;
+    this.currentVoice = snap.voice;
+    this.cursors = { ...snap.cursors };
+    ensureExpressionDefaults(this.doc);
+    this.normalizeTies();
+    this.normalizePlaceholders();
+    this.clampAllCursors();
+  }
+
+  /** Restore the MEI portion of a snapshot but keep the caller-supplied
+   *  voice/cursors (clamped). Used when the cursor-position-match check
+   *  fails and we want to leave the user's focus where they moved it. */
+  restoreSnapshotMeiOnly(
+    snap: { mei: string },
+    voice: Voice,
+    cursors: Record<Voice, number>,
+  ): void {
+    const newDoc = new DOMParser().parseFromString(snap.mei, 'application/xml');
+    if (newDoc.querySelector('parsererror')) throw new Error('Invalid MEI snapshot');
+    this.doc = newDoc;
+    this.currentVoice = voice;
+    this.cursors = { ...cursors };
+    ensureExpressionDefaults(this.doc);
+    this.normalizeTies();
+    this.normalizePlaceholders();
+    this.clampAllCursors();
+  }
+
+  private clampAllCursors(): void {
+    for (const v of [1, 2, 3, 4] as Voice[]) {
+      const len = this.getVoiceLength(v);
+      if (this.cursors[v] < 0) this.cursors[v] = 0;
+      else if (this.cursors[v] > len) this.cursors[v] = len;
+    }
+  }
+
   getCurrentVoice(): Voice {
     return this.currentVoice;
   }
