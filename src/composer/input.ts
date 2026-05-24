@@ -160,7 +160,12 @@ export interface InputHooks {
   getHeldKeys: () => ReadonlyArray<ResolvedNote>;
   onChange: () => void;
   onStateChange: () => void;
-  setStatus?: (msg: string) => void;
+  setStatus?: (msg: string, kind?: 'info' | 'error' | 'state' | 'action') => void;
+  /** Reset the statusline if its current message is an error. Called at the
+   *  top of every keystroke so any prior red message clears as soon as the
+   *  user starts a new action; if the new keystroke writes its own status,
+   *  that overrides naturally. */
+  clearStatusIfError?: () => void;
   /** True while score playback is running. While true, cursor/voice
    *  navigation (arrow keys) is suppressed so the user can't fight the
    *  playback cursors. Other keys (digits, backspace) still work. */
@@ -279,17 +284,17 @@ function momentAtCurrentCursor(model: ComposerModel): Moment | null {
 function commitDynamic(model: ComposerModel, hooks: InputHooks, name: string): void {
   const m = momentAtCurrentCursor(model);
   if (!m) {
-    hooks.setStatus?.('No cursor anchor for dynamic.');
+    hooks.setStatus?.('No cursor anchor for dynamic.', 'error');
     return;
   }
   const doc = model.getDoc();
   const existing = dynamAt(doc, m);
   if (existing) {
     setDynamText(existing, name);
-    hooks.setStatus?.('Replaced dynamic with "' + name + '".');
+    hooks.setStatus?.('Replaced dynamic with "' + name + '".', 'action');
   } else {
     addDynam(doc, m, { text: name });
-    hooks.setStatus?.('Dynamic "' + name + '" at m' + (m.measureIdx + 1) + ' beat ' + formatBeat(m.tstamp) + '.');
+    hooks.setStatus?.('Dynamic "' + name + '" at m' + (m.measureIdx + 1) + ' beat ' + formatBeat(m.tstamp) + '.', 'action');
   }
   if (state.cursorMode === 'expr') refreshExprCursor(model);
   hooks.onChange();
@@ -299,7 +304,7 @@ function commitDynamic(model: ComposerModel, hooks: InputHooks, name: string): v
 function commitHairpinStep(model: ComposerModel, hooks: InputHooks, form: 'cres' | 'dim'): void {
   const m = momentAtCurrentCursor(model);
   if (!m) {
-    hooks.setStatus?.('No cursor anchor for hairpin.');
+    hooks.setStatus?.('No cursor anchor for hairpin.', 'error');
     return;
   }
   const pending = state.pendingHairpin;
@@ -307,7 +312,7 @@ function commitHairpinStep(model: ComposerModel, hooks: InputHooks, form: 'cres'
     state.pendingHairpin = { start: m, form };
     hooks.setStatus?.((form === 'cres' ? 'Crescendo' : 'Decrescendo')
       + ' from m' + (m.measureIdx + 1) + ' beat ' + formatBeat(m.tstamp)
-      + ': navigate to end and press ' + (form === 'cres' ? '<' : '>') + '. (Esc to cancel.)');
+      + ': navigate to end and press ' + (form === 'cres' ? '<' : '>') + '. (Esc to cancel.)', 'state');
     hooks.onStateChange();
     return;
   }
@@ -315,7 +320,7 @@ function commitHairpinStep(model: ComposerModel, hooks: InputHooks, form: 'cres'
     /* Different form from the pending mark — abandon the old and start a new. */
     state.pendingHairpin = { start: m, form };
     hooks.setStatus?.('Replaced pending hairpin: now ' + (form === 'cres' ? 'crescendo' : 'decrescendo')
-      + ' from m' + (m.measureIdx + 1) + ' beat ' + formatBeat(m.tstamp) + '.');
+      + ' from m' + (m.measureIdx + 1) + ' beat ' + formatBeat(m.tstamp) + '.', 'state');
     hooks.onStateChange();
     return;
   }
@@ -323,7 +328,7 @@ function commitHairpinStep(model: ComposerModel, hooks: InputHooks, form: 'cres'
   if (momentCompare(m, pending.start) <= 0) {
     /* End must be strictly after start. */
     state.pendingHairpin = { start: m, form };
-    hooks.setStatus?.('End must be after start; re-marked start at m' + (m.measureIdx + 1) + ' beat ' + formatBeat(m.tstamp) + '.');
+    hooks.setStatus?.('End must be after start; re-marked start at m' + (m.measureIdx + 1) + ' beat ' + formatBeat(m.tstamp) + '.', 'state');
     hooks.onStateChange();
     return;
   }
@@ -331,9 +336,9 @@ function commitHairpinStep(model: ComposerModel, hooks: InputHooks, form: 'cres'
   const created = addHairpin(doc, pending.start, m, { form });
   state.pendingHairpin = null;
   if (created) {
-    hooks.setStatus?.((form === 'cres' ? 'Crescendo' : 'Decrescendo') + ' added.');
+    hooks.setStatus?.((form === 'cres' ? 'Crescendo' : 'Decrescendo') + ' added.', 'action');
   } else {
-    hooks.setStatus?.('Failed to add hairpin.');
+    hooks.setStatus?.('Failed to add hairpin.', 'error');
   }
   if (state.cursorMode === 'expr') refreshExprCursor(model);
   hooks.onChange();
@@ -343,7 +348,7 @@ function commitHairpinStep(model: ComposerModel, hooks: InputHooks, form: 'cres'
 function cancelPendingHairpin(hooks: InputHooks): boolean {
   if (!state.pendingHairpin) return false;
   state.pendingHairpin = null;
-  hooks.setStatus?.('Pending hairpin cancelled.');
+  hooks.setStatus?.('Pending hairpin cancelled.', 'action');
   hooks.onStateChange();
   return true;
 }
@@ -356,7 +361,7 @@ function deleteSelectedExpression(model: ComposerModel, hooks: InputHooks): bool
   if (dynam) {
     removeExpression(dynam);
     refreshExprCursor(model);
-    hooks.setStatus?.('Deleted dynamic.');
+    hooks.setStatus?.('Deleted dynamic.', 'action');
     hooks.onChange();
     hooks.onStateChange();
     return true;
@@ -365,12 +370,12 @@ function deleteSelectedExpression(model: ComposerModel, hooks: InputHooks): bool
   if (hairpins.length > 0) {
     removeExpression(hairpins[0]);
     refreshExprCursor(model);
-    hooks.setStatus?.('Deleted hairpin.');
+    hooks.setStatus?.('Deleted hairpin.', 'action');
     hooks.onChange();
     hooks.onStateChange();
     return true;
   }
-  hooks.setStatus?.('No expression element at this moment.');
+  hooks.setStatus?.('No expression element at this moment.', 'error');
   return false;
 }
 
@@ -386,7 +391,7 @@ function cycleVoice(model: ComposerModel, dir: 'up' | 'down', hooks: InputHooks)
     /* Up exits to voice 2, Down exits to voice 3. */
     const v: Voice = dir === 'up' ? 2 : 3;
     setVoicePreservingTime(model, v);
-    hooks.setStatus?.('Voice ' + v + '.');
+    hooks.setStatus?.('Voice ' + v + '.', 'state');
     return;
   }
   const v = model.getCurrentVoice();
@@ -396,7 +401,7 @@ function cycleVoice(model: ComposerModel, dir: 'up' | 'down', hooks: InputHooks)
     if (v === 3) {                                          /* 3 → expr */
       state.cursorMode = 'expr';
       refreshExprCursor(model);
-      hooks.setStatus?.('Expression layer.');
+      hooks.setStatus?.('Expression layer.', 'state');
       return;
     }
     if (v === 4) { model.switchVoice('up'); return; }       /* 4 → 3 */
@@ -405,7 +410,7 @@ function cycleVoice(model: ComposerModel, dir: 'up' | 'down', hooks: InputHooks)
     if (v === 2) {                                          /* 2 → expr */
       state.cursorMode = 'expr';
       refreshExprCursor(model);
-      hooks.setStatus?.('Expression layer.');
+      hooks.setStatus?.('Expression layer.', 'state');
       return;
     }
     if (v === 3) { model.switchVoice('down'); return; }     /* 3 → 4 */
@@ -505,7 +510,7 @@ function handleChordInternalArrow(
     if (!existing) {
       const target = selectableTargetAtCursor(model);
       if (!target) {
-        hooks.setStatus?.('Chord-internal: ' + diagnoseChordTarget(model));
+        hooks.setStatus?.('Chord-internal: ' + diagnoseChordTarget(model), 'error');
         return;
       }
       if (target.localName === 'note') {
@@ -563,7 +568,7 @@ function handleChordInternalArrow(
       state.chordInternalSel = sel;
       hooks.onStateChange();
     } else {
-      hooks.setStatus?.('Alt+Up/Down selects a chord note first.');
+      hooks.setStatus?.('Alt+Up/Down selects a chord note first.', 'error');
       return;
     }
   }
@@ -577,7 +582,7 @@ let applySCTranspose: (
   model: ComposerModel, hooks: InputHooks,
   sel: ChordInternalSel, dir: 1 | -1,
 ) => void = (_m, hooks) => {
-  hooks.setStatus?.('SC transpose not wired (internal).');
+  hooks.setStatus?.('SC transpose not wired (internal).', 'error');
 };
 
 /** Allow main.ts (or whoever imports the SC module) to install the real
@@ -624,11 +629,11 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     const extendSel = reconcileChordInternalSel(model);
     if (extendSel && state.mode === 'insert') {
       if (heldRaw.length > 0 && held.length === 0) {
-        hooks.setStatus?.('All held keys have alteration > ±3; not added.');
+        hooks.setStatus?.('All held keys have alteration > ±3; not added.', 'error');
         return;
       }
       if (held.length === 0) {
-        hooks.setStatus?.('Hold keys to add to chord.');
+        hooks.setStatus?.('Hold keys to add to chord.', 'error');
         return;
       }
       /* Layout-mismatch gate still applies: appended notes must match the
@@ -643,20 +648,20 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         );
         if (apply) {
           hooks.requestApplyLayout?.();
-          hooks.setStatus?.('Applied score\'s tuning to HKL. Re-press your keys.');
+          hooks.setStatus?.('Applied score\'s tuning to HKL. Re-press your keys.', 'action');
         } else {
-          hooks.setStatus?.('Switch HKL to "' + tuningLabel(required) + '" to add notes.');
+          hooks.setStatus?.('Switch HKL to "' + tuningLabel(required) + '" to add notes.', 'error');
         }
         return;
       }
       withHistory('extend chord', () => {
         const result = model.appendNotesToSelection(extendSel.noteId, held);
         if (!result) {
-          hooks.setStatus?.('Cannot extend chord — selection lost.');
+          hooks.setStatus?.('Cannot extend chord — selection lost.', 'error');
           return false;
         }
         if (result.addedIds.length === 0) {
-          hooks.setStatus?.('All held keys already in chord.');
+          hooks.setStatus?.('All held keys already in chord.', 'error');
           return false;
         }
         /* Selection migrates to the lowest-MIDI of the just-added notes
@@ -684,9 +689,9 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
           state.chordInternalSel = { voice: extendSel.voice, noteId: lowest };
         }
         if (result.skipped > 0) {
-          hooks.setStatus?.('Added ' + result.addedIds.length + '; skipped ' + result.skipped + ' duplicate(s).');
+          hooks.setStatus?.('Added ' + result.addedIds.length + '; skipped ' + result.skipped + ' duplicate(s).', 'action');
         } else {
-          hooks.setStatus?.('Added ' + result.addedIds.length + ' to chord.');
+          hooks.setStatus?.('Added ' + result.addedIds.length + ' to chord.', 'action');
         }
         return true;
       });
@@ -697,11 +702,11 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
 
     state.duration = dur;
     if (heldRaw.length > 0 && held.length === 0) {
-      hooks.setStatus?.('All held keys have alteration > ±3; not entered.');
+      hooks.setStatus?.('All held keys have alteration > ±3; not entered.', 'error');
       return;
     }
     if (held.length < heldRaw.length) {
-      hooks.setStatus?.('Some held keys had alteration > ±3 and were dropped.');
+      hooks.setStatus?.('Some held keys had alteration > ±3 and were dropped.', 'error');
     }
 
     /* Layout-mismatch gate: keys entered now sound at HKL's current tuning,
@@ -720,9 +725,9 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         );
         if (apply) {
           hooks.requestApplyLayout?.();
-          hooks.setStatus?.('Applied score\'s tuning to HKL. Re-press your keys.');
+          hooks.setStatus?.('Applied score\'s tuning to HKL. Re-press your keys.', 'action');
         } else {
-          hooks.setStatus?.('Switch HKL to "' + tuningLabel(required) + '" to enter notes.');
+          hooks.setStatus?.('Switch HKL to "' + tuningLabel(required) + '" to enter notes.', 'error');
         }
         return;
       }
@@ -735,7 +740,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     {
       const can = model.canInsertHere(dur, 0);
       if (!can.ok) {
-        hooks.setStatus?.(can.reason);
+        hooks.setStatus?.(can.reason, 'error');
         return;
       }
     }
@@ -747,7 +752,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
           const id = model.replaceChordAtCursor(chord);
           if (id === null) {
             if (model.insertChordAtCursor(chord) === null) {
-              hooks.setStatus?.("Doesn't fit.");
+              hooks.setStatus?.("Doesn't fit.", 'error');
               return false;
             }
           } else {
@@ -755,14 +760,14 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
           }
         } else {
           if (model.insertChordAtCursor(chord) === null) {
-            hooks.setStatus?.("Doesn't fit.");
+            hooks.setStatus?.("Doesn't fit.", 'error');
             return false;
           }
         }
       } else {
         const rest: RestInput = { duration: dur };
         if (model.insertRestAtCursor(rest) === null) {
-          hooks.setStatus?.("Doesn't fit.");
+          hooks.setStatus?.("Doesn't fit.", 'error');
           return false;
         }
       }
@@ -799,7 +804,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
   }
 
   function setStateAfterSelectionChange(): void {
-    if (state.selection) hooks.setStatus?.(formatSelectionStatus(state.selection));
+    if (state.selection) hooks.setStatus?.(formatSelectionStatus(state.selection), 'state');
     hooks.onStateChange();
     hooks.onChange();
   }
@@ -827,7 +832,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       const dir: Dir = arrow === 'ArrowLeft' ? 'left' : 'right';
       const sel = enterBeatSelection(model, v, c, dir);
       if (!sel) {
-        hooks.setStatus?.('No beats available in this voice.');
+        hooks.setStatus?.('No beats available in this voice.', 'error');
         return false;
       }
       state.selection = sel;
@@ -837,7 +842,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     // Shift+Up / Shift+Down — enter measure mode on current measure.
     const mIdx = model.getCursorMeasureIdx(v);
     if (mIdx < 0) {
-      hooks.setStatus?.('No measure under cursor.');
+      hooks.setStatus?.('No measure under cursor.', 'error');
       return false;
     }
     state.selection = enterMeasureSelection(model, v, mIdx);
@@ -854,7 +859,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       const c = model.getCursor();
       const boundaries = beatBoundariesInVoice(model, voice);
       if (boundaries.length <= 1) {
-        hooks.setStatus?.('No beats available in this voice.');
+        hooks.setStatus?.('No beats available in this voice.', 'error');
         return false;
       }
       /* Snap to the boundary at-or-before the current cursor. */
@@ -869,7 +874,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         voice, tLoAbs, contents.elements, contents.durationTicks,
       );
       if (!result.ok) {
-        hooks.setStatus?.('Paste failed: ' + result.reason);
+        hooks.setStatus?.('Paste failed: ' + result.reason, 'error');
         return false;
       }
       /* Re-enter beat selection covering the pasted content. */
@@ -896,7 +901,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         state.selection = null;
         state.cursorMode = 'voice';
       }
-      hooks.setStatus?.('Pasted ' + contents.durationTicks + ' ticks.');
+      hooks.setStatus?.('Pasted ' + contents.durationTicks + ' ticks.', 'action');
       return true;
     }
     // Measure paste.
@@ -908,13 +913,14 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       hooks.setStatus?.(
         'Cannot paste: source time-sig ' + contents.sourceTimeSig
         + ' ≠ destination ' + destTs + '.',
+        'error',
       );
       return false;
     }
     const voice = model.getCurrentVoice();
     const mDest = model.getCursorMeasureIdx(voice);
     if (mDest < 0) {
-      hooks.setStatus?.('No measure at cursor.');
+      hooks.setStatus?.('No measure at cursor.', 'error');
       return false;
     }
     const result = model.pasteMeasureContent(
@@ -925,7 +931,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       contents.expressions,
     );
     if (!result.ok) {
-      hooks.setStatus?.('Paste failed: ' + result.reason);
+      hooks.setStatus?.('Paste failed: ' + result.reason, 'error');
       return false;
     }
     /* Re-enter measure selection covering the pasted measures × staves. The
@@ -947,7 +953,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       movableSide: result.mLo === result.mHi ? 'unset' : 'right',
     };
     state.cursorMode = 'select';
-    hooks.setStatus?.('Pasted ' + (result.mHi - result.mLo + 1) + ' measure(s).');
+    hooks.setStatus?.('Pasted ' + (result.mHi - result.mLo + 1) + ' measure(s).', 'action');
     return true;
   }
 
@@ -987,7 +993,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     if (e.key === 'Escape') {
       e.preventDefault();
       exitSelectionToMovable();
-      hooks.setStatus?.('Selection cancelled.');
+      hooks.setStatus?.('Selection cancelled.', 'action');
       hooks.onStateChange();
       hooks.onChange();
       return true;
@@ -1043,7 +1049,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
            handler to ferry into event.clipboardData; do NOT preventDefault. */
         pendingClipboardText = serializeClipboard(model, sel);
         lastCopySource = sel;
-        hooks.setStatus?.('Copied to clipboard.');
+        hooks.setStatus?.('Copied to clipboard.', 'action');
         return true;
       }
       if (e.key === 'x' || e.key === 'X') {
@@ -1081,7 +1087,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         state.selection = null;
         state.cursorMode = 'voice';
         refreshExprCursor(model);
-        hooks.setStatus?.('Cut to clipboard.');
+        hooks.setStatus?.('Cut to clipboard.', 'action');
         hooks.onStateChange();
         hooks.onChange();
         return true;
@@ -1107,14 +1113,14 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     const dur = DIGIT_TO_DUR[durKey];
     state.pendingTuplet = null;
     if (!dur) {
-      hooks.setStatus?.('Tuplet span: invalid digit.');
+      hooks.setStatus?.('Tuplet span: invalid digit.', 'error');
       hooks.onStateChange();
       return;
     }
     const dDenom = parseInt(dur, 10);
     const atomicDenom = dDenom * pending.atomicK;
     if (!ATOMIC_DENOM_VALID.has(atomicDenom)) {
-      hooks.setStatus?.('Tuplet atomic duration too small to represent.');
+      hooks.setStatus?.('Tuplet atomic duration too small to represent.', 'error');
       hooks.onStateChange();
       return;
     }
@@ -1127,14 +1133,14 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         spanDur: dur, spanDots, atomicDur,
       });
       if (!r.ok) {
-        hooks.setStatus?.(r.reason);
+        hooks.setStatus?.(r.reason, 'error');
         return false;
       }
       success = true;
       return true;
     });
     if (success) {
-      hooks.setStatus?.('Tuplet ' + pending.num + ':' + pending.numbase + ' added.');
+      hooks.setStatus?.('Tuplet ' + pending.num + ':' + pending.numbase + ' added.', 'action');
     }
     hooks.onStateChange();
     hooks.onChange();
@@ -1166,11 +1172,11 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       ? hooks.history.undo(model, undoEffects)
       : hooks.history.redo(model, undoEffects);
     if (!entry) {
-      hooks.setStatus?.(isUndo ? 'Nothing to undo.' : 'Nothing to redo.');
+      hooks.setStatus?.(isUndo ? 'Nothing to undo.' : 'Nothing to redo.', 'error');
       return true;
     }
     refreshExprCursor(model);
-    hooks.setStatus?.((isUndo ? 'Undo: ' : 'Redo: ') + entry.label);
+    hooks.setStatus?.((isUndo ? 'Undo: ' : 'Redo: ') + entry.label, 'action');
     hooks.onStateChange();
     hooks.onChange();
     return true;
@@ -1178,6 +1184,15 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
 
   function handler(e: KeyboardEvent): void {
     if (shouldIgnore(e)) return;
+
+    /* Any non-modifier keystroke counts as "the user took a new action" —
+       clear any lingering red error message so it doesn't haunt unrelated
+       follow-up keys. The new keystroke may write its own status; if so,
+       that overrides the just-cleared default. Pure-modifier keys (the
+       user is still arming a combo) don't clear. */
+    if (e.key !== 'Shift' && e.key !== 'Control' && e.key !== 'Alt' && e.key !== 'Meta') {
+      hooks.clearStatusIfError?.();
+    }
 
     /* Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z — undo/redo. Must fire before selection-
        mode dispatch so undo works while a selection is active. */
@@ -1253,18 +1268,18 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     if (e.ctrlKey && !e.metaKey && !e.altKey && /^[2-7]$/.test(e.key)) {
       e.preventDefault();
       if (state.cursorMode !== 'voice') {
-        hooks.setStatus?.('Tuplet creation requires voice mode.');
+        hooks.setStatus?.('Tuplet creation requires voice mode.', 'error');
         return;
       }
       if (hooks.isPlaybackActive()) return;
       if (model.isCursorInTuplet()) {
-        hooks.setStatus?.('Cannot nest tuplets.');
+        hooks.setStatus?.('Cannot nest tuplets.', 'error');
         return;
       }
       const n = parseInt(e.key, 10);
       const cfg = TUPLET_CFG[n];
       state.pendingTuplet = { num: n, numbase: cfg.numbase, dotted: cfg.dotted, atomicK: cfg.atomicK };
-      hooks.setStatus?.('Tuplet ' + n + ':' + cfg.numbase + ' — press duration digit for span.');
+      hooks.setStatus?.('Tuplet ' + n + ':' + cfg.numbase + ' — press duration digit for span.', 'state');
       hooks.onStateChange();
       return;
     }
@@ -1340,7 +1355,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       }
       /* Cancel and fall through to normal handling for this key. */
       state.pendingTuplet = null;
-      hooks.setStatus?.('Tuplet cancelled.');
+      hooks.setStatus?.('Tuplet cancelled.', 'action');
       hooks.onStateChange();
       /* no return — handler below processes e */
     }
@@ -1394,7 +1409,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       e.preventDefault();
       withHistory('dot', () => {
         const r = model.cycleDotsOnCurrent(state.mode);
-        if (r === null) { hooks.setStatus?.('No note under cursor.'); return false; }
+        if (r === null) { hooks.setStatus?.('No note under cursor.', 'error'); return false; }
         return true;
       });
       hooks.onStateChange();
@@ -1419,7 +1434,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       }
       withHistory('tie', () => {
         const r = model.toggleTieOnCurrent(state.mode, noteIndex);
-        if (r === null) { hooks.setStatus?.('No tieable note under cursor.'); return false; }
+        if (r === null) { hooks.setStatus?.('No tieable note under cursor.', 'error'); return false; }
         return true;
       });
       hooks.onChange();
@@ -1565,7 +1580,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     const text = e.clipboardData?.getData('text/plain') ?? '';
     const contents = parseClipboard(text);
     if (!contents) {
-      hooks.setStatus?.('Clipboard is empty or not HKL content.');
+      hooks.setStatus?.('Clipboard is empty or not HKL content.', 'error');
       return;
     }
     e.preventDefault();

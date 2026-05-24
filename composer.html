@@ -200,6 +200,9 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
   font-family: 'SF Mono', ui-monospace, monospace; font-size: 11px; color: #888;
   flex: 0 0 auto;
 }
+#composerStatus.status-error  { color: #FF4C79; }
+#composerStatus.status-state  { color: #4CB4FF; }
+#composerStatus.status-action { color: #C77AFF; }
 </style>
 </head>
 <body>
@@ -243,7 +246,7 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
   <div id="score"></div>
 </div>
 
-<div id="composerStatus" id="composerStatus">Loading Verovio…</div>
+<div id="composerStatus">Loading Verovio…</div>
 
 <input type="file" id="fileInputHkc" accept=".hkc,.xml,.mei" style="display:none">
 

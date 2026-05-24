@@ -114,9 +114,35 @@ function visualCursorMeasure(): number {
   return model.cursorMeasureIdx(model.getCurrentVoice(), s.mode);
 }
 
-function setStatus(text: string): void {
+type StatusKind = 'info' | 'error' | 'state' | 'action';
+type StatusSource = 'default' | 'held-keys' | 'other';
+
+let statusKind: StatusKind = 'info';
+let statusSource: StatusSource = 'default';
+const STATUS_CLASSES = ['status-error', 'status-state', 'status-action'];
+
+function setStatus(text: string, kind: StatusKind = 'info', source: StatusSource = 'other'): void {
   const el = $('composerStatus');
-  if (el) el.textContent = text;
+  if (!el) return;
+  el.textContent = text;
+  el.classList.remove(...STATUS_CLASSES);
+  if (kind === 'error')  el.classList.add('status-error');
+  if (kind === 'state')  el.classList.add('status-state');
+  if (kind === 'action') el.classList.add('status-action');
+  statusKind = kind;
+  statusSource = source;
+}
+
+function resetStatus(): void {
+  setStatus('Ready.', 'info', 'default');
+}
+
+function clearStatusIfError(): void {
+  if (statusKind === 'error') resetStatus();
+}
+
+function clearStatusIfHeldKeys(): void {
+  if (statusSource === 'held-keys') resetStatus();
 }
 
 function setConn(state: 'no-hkl' | 'connected' | 'standalone'): void {
@@ -165,7 +191,6 @@ bridge.on((msg: HklEvent) => {
     case 'hkl-hello':
       hklConnected = true;
       setConn('connected');
-      setStatus('HKL v' + msg.version + ' connected.');
       /* (Re)connection: force fresh broadcasts on both channels so HKL
          starts with the right selection tier (if there's a prior note in
          the voice) AND the right song-key tier. */
@@ -178,7 +203,6 @@ bridge.on((msg: HklEvent) => {
     case 'hkl-bye':
       hklConnected = false;
       setConn('no-hkl');
-      setStatus('HKL closed. Standalone mode.');
       lastHeldKeys = [];
       stopPlayback();
       invalidateRefNoteCache();
@@ -186,9 +210,17 @@ bridge.on((msg: HklEvent) => {
       break;
     case 'held-keys':
       lastHeldKeys = msg.keys;
-      /* Optional status echo when held; quiet otherwise to avoid spamming. */
+      /* Echo held-keys as STATE while any are down; clear back to default
+         when the user releases — but only if the bar is still showing the
+         held-keys echo (don't clobber an unrelated state/action message). */
       if (msg.keys.length > 0) {
-        setStatus('held: ' + msg.keys.map((k) => k.pname.toUpperCase() + (k.accid || '') + k.oct).join(' '));
+        setStatus(
+          'held: ' + msg.keys.map((k) => k.pname.toUpperCase() + (k.accid || '') + k.oct).join(' '),
+          'state',
+          'held-keys',
+        );
+      } else {
+        clearStatusIfHeldKeys();
       }
       break;
     case 'tuning-changed':
@@ -333,7 +365,6 @@ function maybeBroadcastSongKey(): void {
 window.setTimeout(() => {
   if (!hklConnected) {
     setConn('standalone');
-    setStatus('No HKL — running standalone. Open index.html in another tab to enable entry.');
   }
 }, 1000);
 
@@ -373,27 +404,27 @@ function reRender(): void {
     cursor.update(model, cursorOpts());
     selectionOverlay.update(model, getInputState().selection);
   } catch (e) {
-    setStatus('render error: ' + (e as Error).message);
+    setStatus('render error: ' + (e as Error).message, 'error');
   }
 }
 
 async function bootRenderer(): Promise<void> {
   const scoreEl = $('score');
   if (!scoreEl) {
-    setStatus('FATAL: #score element missing.');
+    setStatus('FATAL: #score element missing.', 'error');
     return;
   }
-  setStatus('Loading Verovio WASM…');
+  setStatus('Loading Verovio WASM…', 'info');
   try {
     await renderer.ready();
   } catch (e) {
-    setStatus('Verovio failed to load: ' + (e as Error).message);
+    setStatus('Verovio failed to load: ' + (e as Error).message, 'error');
     return;
   }
   renderer.attach(scoreEl);
   reRender();
-  setStatus('Ready. Verovio ' + renderer.getVersion() + '. ' +
-    (hklConnected ? 'HKL connected.' : 'Standalone — open HKL in another tab to enter notes.'));
+  console.log('Verovio ' + renderer.getVersion());
+  resetStatus();
   refreshIndicators();
 }
 
@@ -407,13 +438,13 @@ function stepZoom(dir: 'in' | 'out'): void {
     : Math.max(0, idx - 1);
   const next: ZoomLevel = ZOOM_PRESETS[nextIdx];
   if (next === cur) {
-    setStatus('Zoom ' + cur + '% (' + (dir === 'in' ? 'max' : 'min') + ').');
+    setStatus('Zoom ' + cur + '% (' + (dir === 'in' ? 'max' : 'min') + ').', 'action');
     return;
   }
   renderer.setZoom(next);
   reRender();
   maybeScrollMeasureIntoView(visualCursorMeasure());
-  setStatus('Zoom ' + next + '%.');
+  setStatus('Zoom ' + next + '%.', 'action');
 }
 
 /* Install the SC-transpose implementation that the Alt+Left/Right handler
@@ -468,7 +499,8 @@ initInput(model, {
        short-circuits when (q, r) hasn't actually changed. */
     if (hklConnected) maybeBroadcastReference();
   },
-  setStatus: (msg) => setStatus(msg),
+  setStatus: (msg, kind) => setStatus(msg, kind),
+  clearStatusIfError: () => clearStatusIfError(),
   isPlaybackActive: () => isPlaying,
   onZoomChange: (dir) => stepZoom(dir),
   getHklTuningMode: () => hklTuningMode,
@@ -487,7 +519,7 @@ function refreshPlayButton(): void {
 
 function startPlayback(): void {
   if (!hklConnected) {
-    setStatus('Open HKL in another tab to enable playback (it owns the audio engine).');
+    setStatus('Open HKL in another tab to enable playback (it owns the audio engine).', 'error');
     return;
   }
   /* Compute startMs from the current cursor's absolute tick offset so
@@ -500,7 +532,7 @@ function startPlayback(): void {
   const startMs = startTicks * tickMs;
   const events = buildPlayback(model, startMs);
   if (events.length === 0) {
-    setStatus(startMs > 0 ? 'Nothing left to play from cursor.' : 'Nothing to play.');
+    setStatus(startMs > 0 ? 'Nothing left to play from cursor.' : 'Nothing to play.', 'error');
     return;
   }
   /* Snapshot editing cursor before playback so we can restore on stop/finish. */
@@ -511,7 +543,7 @@ function startPlayback(): void {
   cursor.update(model, cursorOpts());
   refreshPlayButton();
   bridge.send({ type: 'play-score', events });
-  setStatus('Playing ' + events.length + ' event(s)…');
+  setStatus('Playing ' + events.length + ' event(s)…', 'state');
 }
 
 function stopPlayback(): void {
@@ -532,7 +564,7 @@ function finalizePlaybackEnd(statusMsg: string): void {
   refreshIndicators();
   refreshPlayButton();
   maybeScrollMeasureIntoView(visualCursorMeasure());
-  setStatus(statusMsg);
+  setStatus(statusMsg, 'action');
 }
 
 $('btnPlay')?.addEventListener('click', () => {
@@ -546,14 +578,14 @@ $('btnRewind')?.addEventListener('click', () => {
   reRender();
   refreshIndicators();
   maybeScrollMeasureIntoView(visualCursorMeasure());
-  setStatus('Cursor at start.');
+  setStatus('Cursor at start.', 'action');
 });
 
 $('btnSetup')?.addEventListener('click', () => {
   openSetupDialog(model, (layoutChanged) => {
     reRender();
     refreshIndicators();
-    setStatus('Setup applied.');
+    setStatus('Setup applied.', 'action');
     /* Key signature may have changed — broadcast the song-key tier. Do NOT
      * re-broadcast the selection (reference-note) tier here: the key sig is
      * independent of cursor position, and triggering the selection broadcast
@@ -574,9 +606,9 @@ $('btnSetup')?.addEventListener('click', () => {
 $('btnSave')?.addEventListener('click', () => {
   try {
     saveHkc(model);
-    setStatus('Saved .hkc.');
+    setStatus('Saved .hkc.', 'action');
   } catch (e) {
-    setStatus('Save failed: ' + (e as Error).message);
+    setStatus('Save failed: ' + (e as Error).message, 'error');
   }
 });
 
@@ -602,9 +634,9 @@ $<HTMLInputElement>('fileInputHkc')?.addEventListener('change', async (e) => {
     /* The loaded file's layoutReq is now in the model; tell HKL. */
     broadcastLayoutReq();
     refreshLayoutMatchIndicator();
-    setStatus('Loaded ' + file.name);
+    setStatus('Loaded ' + file.name, 'action');
   } catch (err) {
-    setStatus('Load failed: ' + (err as Error).message);
+    setStatus('Load failed: ' + (err as Error).message, 'error');
   } finally {
     input.value = '';
   }
@@ -618,22 +650,22 @@ function hideExportMenu(): void {
 $('btnExportXml')?.addEventListener('click', () => {
   try {
     downloadMusicXml(model);
-    setStatus('Exported .musicxml.');
+    setStatus('Exported .musicxml.', 'action');
   } catch (e) {
-    setStatus('Export failed: ' + (e as Error).message);
+    setStatus('Export failed: ' + (e as Error).message, 'error');
   } finally {
     hideExportMenu();
   }
 });
 
 $('btnExportPdf')?.addEventListener('click', async () => {
-  setStatus('Rendering PDF…');
+  setStatus('Rendering PDF…', 'info');
   hideExportMenu();
   try {
     await downloadPdf(model, renderer.toolkit(), () => reRender());
-    setStatus('Exported .pdf.');
+    setStatus('Exported .pdf.', 'action');
   } catch (e) {
-    setStatus('PDF export failed: ' + (e as Error).message);
+    setStatus('PDF export failed: ' + (e as Error).message, 'error');
   }
 });
 

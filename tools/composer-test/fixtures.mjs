@@ -603,6 +603,17 @@ const KBD = {
   kbd_escClearsPending: {
     setupKeys: [{ key: '<', shift: true }, 'Escape'],
   },
+
+  /* Statusline kinds + clear-on-next-action. Press '=' (tie toggle) on
+     an empty measure where there's no note → error message in red. The
+     follow-up assertion (kbd_statusError_clearsOnNextKey) types ArrowRight
+     after the error and checks the red went away. */
+  kbd_statusError_onTieNoNote: {
+    setupKeys: [{ key: '=' }],
+  },
+  kbd_statusError_clearsOnNextKey: {
+    setupKeys: [{ key: '=' }, { key: 'ArrowRight' }],
+  },
 };
 
 /* ── New: selection mode (Shift+arrow entry, Ctrl+C/X/V) ──────────────── */
@@ -1645,6 +1656,35 @@ export const FIXTURE_ASSERTIONS = {
         return hp.length === 0
           ? { ok: true }
           : { ok: false, detail: hp.length + ' hairpins exist' };
+      })()` },
+  ],
+  kbd_statusError_onTieNoNote: [
+    { name: 'statusline shows error in red',
+      expr: `(() => {
+        const el = document.getElementById('composerStatus');
+        if (!el) return { ok: false, detail: 'no #composerStatus element' };
+        if (!el.classList.contains('status-error')) {
+          return { ok: false, detail: 'classList=' + el.className + ' text=' + el.textContent };
+        }
+        return el.textContent.includes('No tieable note')
+          ? { ok: true }
+          : { ok: false, detail: 'text=' + el.textContent };
+      })()` },
+  ],
+  kbd_statusError_clearsOnNextKey: [
+    { name: 'statusline cleared to Ready. with no kind class',
+      expr: `(() => {
+        const el = document.getElementById('composerStatus');
+        if (!el) return { ok: false, detail: 'no #composerStatus element' };
+        const hasKindClass = el.classList.contains('status-error')
+          || el.classList.contains('status-state')
+          || el.classList.contains('status-action');
+        if (hasKindClass) {
+          return { ok: false, detail: 'still has kind class: ' + el.className };
+        }
+        return el.textContent === 'Ready.'
+          ? { ok: true }
+          : { ok: false, detail: 'text=' + el.textContent };
       })()` },
   ],
 

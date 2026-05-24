@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 95,
-  "passed": 95,
+  "fixtures": 97,
+  "passed": 97,
   "failed": 0,
-  "elapsedMs": 30814,
+  "elapsedMs": 30061,
   "results": [
     {
       "name": "emptyDoc",
@@ -375,6 +375,22 @@
     },
     {
       "name": "kbd_escClearsPending",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "kbd_statusError_onTieNoNote",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "kbd_statusError_clearsOnNextKey",
       "ok": true,
       "failures": [],
       "counts": {

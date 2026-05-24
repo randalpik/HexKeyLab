@@ -136,12 +136,12 @@ export function scTransposeChordNote(
 ): SCResult {
   const note = findNoteById(model, sel.voice, sel.noteId);
   if (!note) {
-    hooks.setStatus?.('Selected note no longer exists.');
+    hooks.setStatus?.('Selected note no longer exists.', 'error');
     return FAILED_SC;
   }
   const oldCoord = noteCoord(note);
   if (!oldCoord) {
-    hooks.setStatus?.('Note missing lattice coordinates.');
+    hooks.setStatus?.('Note missing lattice coordinates.', 'error');
     return FAILED_SC;
   }
   const newQ = oldCoord.q + 7 * dir;
@@ -151,14 +151,14 @@ export function scTransposeChordNote(
      reject SC shifts that would land outside it. Empty footprint or null
      (= outline 'none' or pre-handshake) → no constraint. */
   if (footprint && footprint.size > 0 && !footprint.has(newKey)) {
-    hooks.setStatus?.('SC blocked — target (' + newQ + ',' + newR + ') outside HKL layout outline.');
+    hooks.setStatus?.('SC blocked — target (' + newQ + ',' + newR + ') outside HKL layout outline.', 'error');
     return FAILED_SC;
   }
   const newName = noteName(newQ, newR);
   const parsed = parseNote(newName);
   const alter = accToVal(parsed.acc);
   if (Math.abs(alter) >= 4) {
-    hooks.setStatus?.('Quadruple accidental — cannot display. SC blocked.');
+    hooks.setStatus?.('Quadruple accidental — cannot display. SC blocked.', 'error');
     return FAILED_SC;
   }
   const oct = keyOctave(newQ, newR);
