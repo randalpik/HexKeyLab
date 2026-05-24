@@ -37,6 +37,7 @@ import {
   hejiLabel,
   type HejiLabel,
   type HejiGlyphFamily,
+  type HejiGlyphInfo,
 } from "../tuning/heji.js";
 import { VALID_REF_TABLE } from './refbounds-table.js';
 import { isCtrlHeld } from '../ui/keyboard.js';
@@ -640,6 +641,31 @@ const HEJI_FAMILY_Y_OFFSET: Record<HejiGlyphFamily, number> = {
   septimal:    0.18,
 };
 
+/* Bare-accidental codepoints per family — used as the layout-slot reference
+ * regardless of what arrows are attached. Bravura's combined glyphs (e.g.
+ * U+E2C1 = flat+1arrowDown) have the accidental at the LEFT of a wider
+ * advance box, with the arrow extending RIGHT. Using the bare advance as
+ * the slot keeps the accidental at a consistent X whether arrows are
+ * present or not; the arrow extends past the slot's right edge without
+ * affecting layout. */
+const BARE_ACC_CODE: Record<HejiGlyphFamily, string | null> = {
+  natural:     '\u{E261}',
+  sharp:       '\u{E262}',
+  flat:        '\u{E260}',
+  doubleSharp: '\u{E263}',
+  doubleFlat:  '\u{E264}',
+  septimal:    null,           // no bare alternative — the hook IS the glyph
+};
+
+/** Width to reserve for a glyph in the chain. For accidental families this
+ *  is the BARE accidental's advance (ignoring any attached arrows); for
+ *  septimal hooks it's the hook's own advance. Caller must set ctx.font to
+ *  the Bravura font size first. */
+function slotAdvance(g: HejiGlyphInfo): number {
+  const bare = BARE_ACC_CODE[g.family];
+  return ctx.measureText(bare ?? g.ch).width;
+}
+
 function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
   const baseFontSize = 14;
   /* BravuraText is compiled with text-style metrics, but SMuFL accidental
@@ -649,11 +675,12 @@ function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
      visual weight of the conventional path, render Bravura glyphs at
      ~1.8× the letter font size. */
   const hejiScale = 1.8;
-  /* width pass at base size — letter (sans) + bravura glyphs */
+  /* width pass at base size — letter (sans) + bravura glyph SLOTS (bare
+     advances per family, so attaching arrows doesn't shift the chain). */
   ctx.font = '500 ' + baseFontSize + 'px sans-serif';
   let totalW = ctx.measureText(label.letter).width;
   ctx.font = '500 ' + Math.round(baseFontSize * hejiScale) + 'px "BravuraText", sans-serif';
-  for (const g of label.glyphs) totalW += ctx.measureText(g.ch).width + 0.5;
+  for (const g of label.glyphs) totalW += slotAdvance(g) + 0.5;
   /* shrink to fit hex */
   const maxW = hexR * 1.3;
   const scale = Math.min(1, maxW / totalW);
@@ -663,20 +690,26 @@ function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
   ctx.font = '500 ' + fontSize + 'px sans-serif';
   const flw = ctx.measureText(label.letter).width;
   ctx.font = '500 ' + hejiFontSize + 'px "BravuraText", sans-serif';
-  const gws = label.glyphs.map(g => ctx.measureText(g.ch).width);
-  let tw = flw; for (const w of gws) tw += w + 0.5;
-  let x = cx - tw / 2 + flw / 2;
+  const slotWs = label.glyphs.map(slotAdvance);
+  let tw = flw; for (const w of slotWs) tw += w + 0.5;
+  /* Render with textAlign='left' so each glyph's LEFT EDGE anchors at the
+     slot start. Combined accidental+arrow glyphs have the accidental at
+     the left of their advance box, so this keeps the accidental portion
+     aligned with the bare-accidental position regardless of arrows. */
+  ctx.textAlign = 'left';
+  let x = cx - tw / 2;
   ctx.font = '500 ' + fontSize + 'px sans-serif';
   ctx.fillText(label.letter, x, cy);
-  x += flw / 2;
+  x += flw + 0.5;
   ctx.font = '500 ' + hejiFontSize + 'px "BravuraText", sans-serif';
   for (let i = 0; i < label.glyphs.length; i++) {
     const g = label.glyphs[i];
     const yOff = HEJI_FAMILY_Y_OFFSET[g.family] * hejiFontSize;
-    x += 0.5 + gws[i] / 2;
     ctx.fillText(g.ch, x, cy + yOff);
-    x += gws[i] / 2;
+    x += slotWs[i] + 0.5;
   }
+  /* restore for next caller — drawNoteName sets it on entry, but defensive */
+  ctx.textAlign = 'center';
   ctx.font = '500 ' + fontSize + 'px sans-serif';
 }
 
