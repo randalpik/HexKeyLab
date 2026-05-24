@@ -126,7 +126,7 @@ export function noteOn(key: KeyId, velocity?: number): void {
   /* Stage 1 velocity calibration: per-key gain applied once here, before the
      sample/oscillator branch. Raw `velocity` is preserved for the recording
      hook below so playback re-applies the current transform. */
-  const adjVel = velocityCal.applyPerKeyGain(key, velocity ?? DEFAULT_DYNAMIC_MAP.f);
+  const adjVel = velocityCal.applyPerKeyGain(key, velocity ?? DEFAULT_DYNAMIC_MAP.mf);
   if (instrIsSample() && SampleEngine.isInstrumentLoaded(wf)) {
     SampleEngine.setInstrument(wf);
     /* Velocity drives initial volume (via baseVol in segGain); pressureGain stays

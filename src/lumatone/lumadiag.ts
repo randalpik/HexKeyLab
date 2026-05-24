@@ -805,8 +805,8 @@ function makeVelocityCalSection(): HTMLDivElement {
   });
   intPushBtn.addEventListener('click', pushVelocityIntervalTable);
   const intResetBtn = document.createElement('button');
-  intResetBtn.textContent = 'Reset (factory ' + DEFAULT_INTERVAL_CURVE.low + '/'
-    + DEFAULT_INTERVAL_CURVE.high + '/' + DEFAULT_INTERVAL_CURVE.gamma.toFixed(1) + ')';
+  intResetBtn.textContent = 'Reset (' + DEFAULT_INTERVAL_CURVE.low + '/'
+    + DEFAULT_INTERVAL_CURVE.high + '/' + DEFAULT_INTERVAL_CURVE.gamma.toFixed(2) + ')';
   Object.assign(intResetBtn.style, {
     fontSize: '11px', padding: '2px 6px',
     background: 'rgba(255,255,255,0.08)', color: '#eee',

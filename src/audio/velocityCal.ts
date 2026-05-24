@@ -77,7 +77,7 @@ export interface IntervalCurveState {
 export const DEFAULT_CAL: VelocityCalState = {
   floor: 0.10,
   ceiling: 1.0,
-  gamma: 2.0,
+  gamma: 15.5,
   perKey: {},
 };
 
@@ -87,13 +87,16 @@ export const DEFAULT_INPUT_CURVE: InputCurveState = {
   gamma: 1.0,
 };
 
-/** Curve-fit to Terpstra DefaultVelocityIntervalTable (1, 2, ..., 58, 60, ...,
- *  310): at i=57 the factory value is 58, solving 58 = 1 + 309·(57/126)^γ
- *  gives γ ≈ 2.1. low=1, high=310 reproduce the factory endpoints. */
+/** Identity-style table tuned for Max's Lumatone: low=1, high=127, gamma=1.0
+ *  gives press-time thresholds 1..127 linearly across velocity bins, which the
+ *  HKL audio curve (DEFAULT_CAL) is calibrated against. The Terpstra factory
+ *  table (low=1, high=310, gamma≈2.1) is a separate baseline — restoring it
+ *  without also reverting DEFAULT_CAL produces overly-loud playback because
+ *  velocities normalize to a curve that no longer matches the hardware. */
 export const DEFAULT_INTERVAL_CURVE: IntervalCurveState = {
   low: 1,
-  high: 310,
-  gamma: 2.1,
+  high: 127,
+  gamma: 1.0,
 };
 
 const state: VelocityCalState = {

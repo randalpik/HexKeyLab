@@ -275,7 +275,13 @@ function dispatchChord(notes: ReadonlyArray<CoordRef>, durationMs: number, pb: A
       triggerRearticulateFlash(k);
     }
     audio.sustainedKeys.delete(k);
-    noteOn(k, velocity ?? audio.keyVelocity[k] ?? DEFAULT_DYNAMIC_MAP.mf);
+    /* Seed audio.keyVelocity so this attack shows up in loopdiag's vel trace
+       like Lumatone / QWERTY / recording-playback do (all of which write
+       keyVelocity before noteOn). Without the seed, Composer-dispatched
+       notes are invisible to the diagnostic overlay. */
+    const v = velocity ?? audio.keyVelocity[k] ?? DEFAULT_DYNAMIC_MAP.mf;
+    audio.keyVelocity[k] = v;
+    noteOn(k, v);
     const seq = ++pb.nextSeq;
     pb.voiceSeq.set(k, seq);
     ownedSeq.set(k, seq);
