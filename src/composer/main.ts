@@ -244,8 +244,8 @@ bridge.on((msg: HklEvent) => {
       hklTuningMode = msg.tuningMode;
       if (!autoAdoptedHklLayout && !model.hasNotes()) {
         autoAdoptedHklLayout = true;
-        const isMode = (s: string): s is 'E' | '5' | 'P' | 'D' | '7' =>
-          s === 'E' || s === '5' || s === 'P' || s === 'D' || s === '7';
+        const isMode = (s: string): s is 'E' | '5' | 'P' | 'D' | '7' | 'V' =>
+          s === 'E' || s === '5' || s === 'P' || s === 'D' || s === '7' || s === 'V';
         const tuningMode = isMode(msg.tuningMode) ? msg.tuningMode : '5';
         model.setLayoutReq({ tuningMode, refQ: msg.refQ, refR: msg.refR });
         broadcastLayoutReq();

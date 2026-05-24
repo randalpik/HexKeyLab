@@ -44,6 +44,14 @@ export function keyColorVariant(q: number, r: number): { hue: Hue; isW: boolean;
   const midi = 57 + 4 * q + 7 * r;
   const pc = ((midi % 12) + 12) % 12;
   const isW = whiteSet.has(pc);
+  /* V mode: no SC-sibling redirect. The mode's M3-distance respelling treats
+     every cell as a 5-limit Ptolemaic cell at its actual (q, r) — so coloring
+     should match. E.g. cell (2, 0) becomes E#4 (yellow at lookupHue(2, 0))
+     rather than F4 (teal via the (q+7, r−4) sibling). The result is a
+     consistent 5-limit M3-chain color progression. */
+  if (tuning.mode === 'V') {
+    return { hue: computeHue(q, r), isW, isB: false, isShifted: false };
+  }
   const ri = regionInfo(q, r);
   if (ri.type === 'B') {
     return { hue: computeHue(q, r), isW, isB: true, isShifted: false };

@@ -42,6 +42,17 @@ export function jiRatioWithState(
     applyAdj(ri2, +1);
     applyAdj(ri1, -1);
   }
+  /* Schismatic: each band's q+3 step adds one schisma (32805:32768 =
+     3^8·5 / 2^15) on top of the standard Pythagorean octave. The frequency
+     math in freqAt encodes this via a schisma^b band factor; the exponent
+     vector here gets the matching prime decomposition per Δb so the interval
+     analyzer surfaces "octave + schisma" et al. via the existing comma
+     decomposition. */
+  if (state.mode === 'V' && db !== 0) {
+    e2 += db * -15;
+    e3 += db * 8;
+    e5 += db * 1;
+  }
   let num = 1, den = 1;
   const apply = (base: number, exp: number): void => {
     if (exp > 0) num *= Math.pow(base, exp);

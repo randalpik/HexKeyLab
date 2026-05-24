@@ -10,11 +10,15 @@
 const STORAGE_KEY = 'hkl.prefs.v1';
 
 export type OutlineMode = 'lumatone' | 'qwerty' | 'piano' | 'none';
-/* 5-mode tuning system. Numeric codes ('5', '7', 'E') retained as
-   persistence values for back-compat with existing prefs and .hkr
-   recordings; new modes use single-letter mnemonics:
-     'E' Equal · '5' Ptolemaic · 'P' Pythagorean · 'D' Semiditonal · '7' Septimal */
-export type TuningMode = 'E' | '5' | 'P' | 'D' | '7';
+/* Tuning system. Numeric codes ('5', '7', 'E') retained as persistence values
+   for back-compat with existing prefs and .hkr recordings; new modes use
+   single-letter mnemonics:
+     'E' Equal · '5' Ptolemaic · 'P' Pythagorean · 'D' Semiditonal · '7' Septimal
+     'V' Schismatic (experimental: PM3+M3+PM3 per band, ~2c octave drift —
+         every band sums to octave + schisma, hence the name; this is a
+         layout-level schisma stacking, NOT the historical schismatic
+         temperament of fifths) */
+export type TuningMode = 'E' | '5' | 'P' | 'D' | '7' | 'V';
 export type PedalMode = 'sustain' | 'sostenuto';
 export type RotationMode = 'verticalFreq' | 'lumatone' | 'piano';
 
@@ -156,7 +160,7 @@ function isRotationMode(s: unknown): s is RotationMode {
   return s === 'verticalFreq' || s === 'lumatone' || s === 'piano';
 }
 function isTuningMode(s: unknown): s is TuningMode {
-  return s === 'E' || s === '5' || s === 'P' || s === 'D' || s === '7';
+  return s === 'E' || s === '5' || s === 'P' || s === 'D' || s === '7' || s === 'V';
 }
 function isPedalMode(s: unknown): s is PedalMode {
   return s === 'sustain' || s === 'sostenuto';

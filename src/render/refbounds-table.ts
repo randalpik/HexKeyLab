@@ -15,7 +15,10 @@
 
 import type { TuningMode } from '../state/persistence.js';
 
-export const VALID_REF_TABLE: Record<TuningMode, ReadonlyArray<readonly [number, number]>> = {
+/* Generated entries (E/5/P/D/7). V is appended below as an alias of P since
+   the experimental Schismatic mode uses Pythagorean's region structure;
+   sub-cent schisma drift doesn't shift the ±3-accidental ref set meaningfully. */
+const GENERATED: Omit<Record<TuningMode, ReadonlyArray<readonly [number, number]>>, 'V'> = {
   'E': [
     [28, -21], [31, -21], [34, -21], [37, -21], [40, -21], [43, -21], [46, -21], [49, -21],
     [28, -20], [31, -20], [34, -20], [37, -20], [40, -20], [43, -20], [46, -20],
@@ -237,4 +240,9 @@ export const VALID_REF_TABLE: Record<TuningMode, ReadonlyArray<readonly [number,
     [-40, 18], [-37, 18], [-34, 18], [-31, 18], [-28, 18], [-25, 18], [-22, 18], [-19, 18],
     [-40, 19], [-37, 19], [-34, 19], [-31, 19], [-28, 19], [-25, 19], [-22, 19],
   ],
+};
+
+export const VALID_REF_TABLE: Record<TuningMode, ReadonlyArray<readonly [number, number]>> = {
+  ...GENERATED,
+  'V': GENERATED.P,
 };

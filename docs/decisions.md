@@ -1670,3 +1670,30 @@ Bump some column's `aDepth` from 1 to 2, surfacing 49-limit relations like 49/32
 - **Meantone family** (tempers r-axis fifth itself rather than redistributing commas across qm). Architecturally orthogonal — needs a `fifthTemperingCents` dimension. Interesting as a historical study layer but a different axis of variation than the qm-shift layouts.
 - **11-limit / 13-limit**: lattice has no third axis; would need a comma-equivalence trick analogous to how Septimal collapses 7 onto qm=2.
 - **Adaptive JI**: real-time tuning machinery already exists (audio-engine ramps), but out of scope for static-layout switching.
+
+## Schismatic ('V') tuning mode (2026-05-24)
+
+**Decision**: Added experimental `TuningMode = 'V'` ("Schismatic"). Sixth tuning option in the selector, marked study-only. Pythagorean's qm shifts unchanged; the band factor in `freqAt` gains a `SCHISMA^b` multiplier (schisma = 32805:32768 ≈ 1.954c). Result: every band is `(PM3, pure 5/4, PM3)` summing to octave + schisma — pure thirds everywhere at the cost of ~14c octave drift across the 7-octave span.
+
+**Name caveat**: "Schismatic" was picked to reflect the layout-level schisma stacking (each band contributes one schisma; play across many bands and the schismas accumulate). This is **NOT** the classical schismatic temperament of fifths (which tempers each fifth by ~⅛ schisma so that 8 fifths approximate a pure 5/4). HKL's r-axis fifth stays pure 3:2 here — only the band/q axis stacks schismas. The TS code retains the original `'V'` (for "variant") as the persistence key to disambiguate from any future literal schismatic-temperament mode and to avoid breaking prefs.
+
+**Why**: Max observed that 2·PM3 + M3 = octave + schisma is the identity behind Pythagorean's near-pure dim4 and Semiditonal's near-pure aug2. In existing modes the schisma is absorbed into the seam interval (making the dim4 tempered, ~2c flat of pure 5/4). V mode redistributes that schisma into the octave, leaving every third rationally pure.
+
+**Railsback connection**: V mode's octave stretch magnitude (~1.95c/octave central, ~14c at 7-octave extreme) lands in the same range as the empirical Railsback curve of real pianos (~1–3c/octave central, ~25–35c extreme). Railsback's accepted cause is string inharmonicity; V mode is an independent schisma-driven stretch in the same direction. So pianistically-trained ears find V mode natural rather than jarring — the original "14c is unplayable" concern from the planning phase was wrong. V isolates the pure-thirds component of natural-sounding octave stretch from the inharmonicity component pianos add on top.
+
+**Three non-trivial dispatches diverge from Pythagorean**:
+1. `freqAt` in `src/shared/freq.ts` — multiplies by `Math.pow(SCHISMA, b)` for V.
+2. `jiRatioWithState` in `src/tuning/ratios.ts` — adds `db × (−15, +8, +1, 0)` to the prime-exponent vector (the schisma's prime decomposition 3^8·5/2^15) so the interval analyzer naturally surfaces "octave + schisma" annotations via the existing comma machinery.
+3. `keyColorVariant` in `src/render/colors.ts` — bypasses the SC-sibling redirect, returning `computeHue(q, r)` directly. So cell (q=2, r=0) — teal F4 in Pythagorean (via SC sibling at (9, −4)) — becomes yellow E#4 in V mode (its actual 5-limit hue, matching the respelled name).
+
+**Respelling**: `noteNameV(q, r, rsQ)` / `keyOctaveV(q, r, rsQ)` in `src/tuning/notes.ts` walk the M3 chain from refSpine: each Δq applies one `m3up`/`m3dn` step. Accidentals accumulate without clamping: A → C# → E# → G## → B## → D### → F#### at q=0..6. Cells in the same band as refSpine spell identically to standard naming; divergence begins one band away. `displayedNoteName` helper in `render/draw.ts` and the V branch in `bridge/hkl-side.ts:resolveKey` route through the new functions when `tuning.mode === 'V'`.
+
+**Rejected alternatives**:
+- **Schisma-tempered Pythagorean** (octave-preserving, all thirds slightly off): connects to classical schismatic temperament. Cheap to implement (just temper each fifth by schisma/8) but breaks the JI ratio analysis since no third is rationally exact. Max's stated reaction: "the existing dim4 interval already sounds close enough to M3 anyway, so it would add a whole new dimension for almost no reason." V mode trades the other way — preserve pure thirds, accept octave drift.
+- **Schisma annotation overlay only** (no new layout): already exists in the interval analyzer (C#4→F4 in Pythagorean reads "M3 − schisma" today). Doesn't let Max *hear* the pure-thirds variant directly, which is the actual goal.
+
+**Known degradation, accepted**: Composer score view clamps accidentals at ±3 per Verovio's clean-render constraint (`CLAUDE.md` § Composer architecture). V mode produces ±4+ at far M3-distances; Composer's visual score degrades for those cells but bridge frequencies stay accurate, so playback works. V is HKL-side study; not a composition mode.
+
+**Reused, not regenerated**: `VALID_REF_TABLE['V']` and `PIANO_BOUNDS_TABLE[*]['V']` alias the Pythagorean entries. Justification: V uses identical qm shifts to P, and the ~2c/band schisma drift falls well within picker-TH tie thresholds in the central play range. Re-probe `tools/bounds-probe/` if V's experimental status changes.
+
+**Files touched**: `src/shared/freq.ts` (TuningMode + TUNING_MODES + SCHISMA + freqAt), `src/state/persistence.ts` (TuningMode + isTuningMode), `src/tuning/regions.ts` (case V), `src/tuning/ratios.ts` (schisma exponent injection), `src/tuning/notes.ts` (noteNameV + keyOctaveV), `src/render/colors.ts` (V early return), `src/render/draw.ts` (displayedNoteName helper + validRefSetByMode/validRefPathsByMode V entries), `src/render/canvas.ts` (PIANO_BOUNDS_TABLE V entries), `src/render/refbounds-table.ts` (V alias to P via GENERATED.P), `src/bridge/hkl-side.ts` (description + isTuningMode + TUNING_LABELS + resolveKey V branch), `src/recording/hkr.ts` (isTuningMode), `src/composer/main.ts` (isMode), `src/composer/notation/retune.ts` (MODE_LABELS), `src/composer/setupDialog.ts` (TUNING_LABELS), `index.html` (option).

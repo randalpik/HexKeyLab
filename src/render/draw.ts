@@ -26,14 +26,27 @@ import { sizeCanvas, getVisibleRange, computePianoViewCenter } from './canvas.js
 import { animation } from './animation.js';
 import { updateInfo } from './info.js';
 import {
-  parseNote, accToVal, noteName,
+  parseNote, accToVal, noteName, noteNameV,
   SHARP, DBLSHARP, FLAT, DBLFLAT,
 } from '../tuning/notes.js';
 import { jiRatio, tenneyHeightFromExps } from '../tuning/ratios.js';
 import { regionInfo } from '../tuning/regions.js';
+import { refSpine } from '../tuning/refspine.js';
 import { VALID_REF_TABLE } from './refbounds-table.js';
 import { isCtrlHeld } from '../ui/keyboard.js';
 import type { KeyId } from '../types.js';
+
+/** Resolve the displayed note name for a cell, accounting for V mode's
+ *  M3-distance respelling from refSpine. Other modes use the standard
+ *  octave-invariant `noteName(q, r)`. Read at call time so a ref change
+ *  re-spells without needing a cache invalidation step. */
+function displayedNoteName(q: number, r: number): string {
+  if (tuning.mode === 'V') {
+    const spine = refSpine(referenceNote.q, referenceNote.r);
+    return noteNameV(q, r, spine.q);
+  }
+  return noteName(q, r);
+}
 
 // ── canvas setup ───────────────────────────────────────────────────────────
 export const cv = document.getElementById('cv') as HTMLCanvasElement;
@@ -225,6 +238,7 @@ const validRefSetByMode: Record<TuningMode, Set<KeyId>> = {
   'P': new Set(VALID_REF_TABLE['P'].map(([q, r]) => (q + ',' + r) as KeyId)),
   'D': new Set(VALID_REF_TABLE['D'].map(([q, r]) => (q + ',' + r) as KeyId)),
   '7': new Set(VALID_REF_TABLE['7'].map(([q, r]) => (q + ',' + r) as KeyId)),
+  'V': new Set(VALID_REF_TABLE['V'].map(([q, r]) => (q + ',' + r) as KeyId)),
 };
 const validRefPathsByMode: Record<TuningMode, Point[][]> = {
   'E': computeOutlinePaths(VALID_REF_TABLE['E']),
@@ -232,6 +246,7 @@ const validRefPathsByMode: Record<TuningMode, Point[][]> = {
   'P': computeOutlinePaths(VALID_REF_TABLE['P']),
   'D': computeOutlinePaths(VALID_REF_TABLE['D']),
   '7': computeOutlinePaths(VALID_REF_TABLE['7']),
+  'V': computeOutlinePaths(VALID_REF_TABLE['V']),
 };
 
 function activeValidRefSet(): Set<KeyId> {
@@ -727,7 +742,7 @@ function buildTextLayer(): void {
     const savedCtx = ctx; ctx = gc;
     gKeys.forEach((k) => {
       const midi = 57 + 4 * k.q + 7 * k.r; const pc = ((midi % 12) + 12) % 12; const isW = whiteSet.has(pc);
-      drawNoteName(k.sx, k.sy, noteName(k.q, k.r), isW, false);
+      drawNoteName(k.sx, k.sy, displayedNoteName(k.q, k.r), isW, false);
     });
     ctx = savedCtx;
   }
@@ -992,7 +1007,7 @@ export function draw(): void {
       if (flashingSet.has(key)) return;
       const k = posMap[key]; if (!k) return;
       const midi = 57 + 4 * k.q + 7 * k.r; const pc = ((midi % 12) + 12) % 12; const isW = whiteSet.has(pc);
-      drawNoteName(k.sx, k.sy, noteName(k.q, k.r), isW, false);
+      drawNoteName(k.sx, k.sy, displayedNoteName(k.q, k.r), isW, false);
     });
   }
   /* re-render hovered key's note name on top of hover fill (skip if already
@@ -1001,7 +1016,7 @@ export function draw(): void {
     const hk = posMap[selection.hoverKey];
     if (hk) {
       const hmidi = 57 + 4 * hk.q + 7 * hk.r; const hpc = ((hmidi % 12) + 12) % 12; const hW = whiteSet.has(hpc);
-      drawNoteName(hk.sx, hk.sy, noteName(hk.q, hk.r), hW, false);
+      drawNoteName(hk.sx, hk.sy, displayedNoteName(hk.q, hk.r), hW, false);
     }
   }
 

@@ -29,7 +29,7 @@ import type {
 import { selection } from '../state/selection.js';
 import { audio } from '../state/audio.js';
 import { tuning } from '../state/tuning.js';
-import { noteName, keyOctave, parseNote, accToVal } from '../tuning/notes.js';
+import { noteName, noteNameV, keyOctave, keyOctaveV, parseNote, accToVal } from '../tuning/notes.js';
 import { darkColorHex, coordToMidi } from '../transcription/pitch.js';
 import { noteOn, noteOff, stopAllNotes, triggerRearticulateFlash } from '../audio/engine.js';
 import { draw, activeFootprintSet, invalidatePianoOutline, validateRefNoteCandidate } from '../render/draw.js';
@@ -75,14 +75,27 @@ function accToMei(acc: string): string {
 }
 
 function resolveKey(q: number, r: number): ResolvedNote {
-  const name = noteName(q, r);
+  /* V mode: respell relative to refSpine so HKL display and Composer's
+     incoming notes agree. Other modes use the standard octave-invariant
+     naming. Note: accumulated accidentals beyond ±3 will fall outside
+     Verovio's clean-render zone — Composer handles that as a known
+     degradation for the experimental mode. */
+  let name: string, oct: number;
+  if (tuning.mode === 'V') {
+    const spine = refSpine(referenceNote.q, referenceNote.r);
+    name = noteNameV(q, r, spine.q);
+    oct = keyOctaveV(q, r, spine.q);
+  } else {
+    name = noteName(q, r);
+    oct = keyOctave(q, r);
+  }
   const parsed = parseNote(name);
   const key: KeyId = q + ',' + r;
   return {
     q, r,
     pname: letterToPname(parsed.letter),
     accid: accToMei(parsed.acc),
-    oct: keyOctave(q, r),
+    oct,
     midi: coordToMidi(q, r),
     colorHex: darkColorHex(q, r),
     velocity: audio.keyVelocity[key] ?? DEFAULT_DYNAMIC_MAP.mf,
@@ -96,6 +109,7 @@ function tuningDescription(): string {
     case 'P': return 'Pythagorean JI';
     case 'D': return 'Semiditonal JI';
     case '7': return 'Septimal JI';
+    case 'V': return 'Schismatic JI';
   }
 }
 
@@ -431,7 +445,7 @@ export function applyComposerLayout(): void {
 }
 
 function isTuningMode(s: string): s is TuningMode {
-  return s === 'E' || s === '5' || s === 'P' || s === 'D' || s === '7';
+  return s === 'E' || s === '5' || s === 'P' || s === 'D' || s === '7' || s === 'V';
 }
 
 const TUNING_LABELS: Record<TuningMode, string> = {
@@ -440,6 +454,7 @@ const TUNING_LABELS: Record<TuningMode, string> = {
   P: 'Pythagorean',
   D: 'Semiditonal',
   '7': 'Septimal',
+  V: 'Schismatic',
 };
 function tuningLabelFor(m: string): string {
   return TUNING_LABELS[m as TuningMode] ?? m;

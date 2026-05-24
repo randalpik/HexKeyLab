@@ -53,6 +53,7 @@ const TUNING_LABELS: Record<TuningMode, string> = {
   P: 'Pythagorean',
   D: 'Semiditonal',
   '7': 'Septimal',
+  V: 'Schismatic',
 };
 
 function populateSelect(sel: HTMLSelectElement, options: ReadonlyArray<{ value: string; label: string }>, current: string): void {

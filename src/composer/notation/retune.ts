@@ -159,6 +159,7 @@ const MODE_LABELS: Record<TuningMode, string> = {
   P: 'Pythagorean',
   D: 'Semiditonal',
   '7': 'Septimal',
+  V: 'Schismatic',
 };
 
 function labelForMode(m: TuningMode): string {
