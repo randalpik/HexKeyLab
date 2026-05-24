@@ -1869,11 +1869,30 @@ export const FIXTURE_ASSERTIONS = {
   export_pdf_smoke: [
     { name: 'downloadPdf produces a %PDF- blob',
       expr: `(async () => {
+        /* Three nested stubs are required to prevent jsPDF from actually
+         * writing a file to the user's Downloads folder:
+         *   - URL.createObjectURL: capture the Blob but return a fake URL so
+         *     no real blob: URL escapes (a real one with anchor.href would
+         *     still trigger save on dispatchEvent below).
+         *   - HTMLAnchorElement.prototype.click: defense in depth; some
+         *     code paths call .click() directly.
+         *   - EventTarget.prototype.dispatchEvent: jsPDF's saveAs (jspdf.es.min)
+         *     uses anchor.dispatchEvent(new MouseEvent('click')), which is
+         *     NOT routed through .click() — without this stub the file lands
+         *     in Downloads even with the other two stubs in place.
+         * Verified against jspdf 3.0 source in node_modules. */
         const blobs = [];
         const origCreate = URL.createObjectURL;
-        URL.createObjectURL = function(b) { blobs.push(b); return origCreate.call(this, b); };
+        URL.createObjectURL = function(b) { blobs.push(b); return 'blob:test-suppressed'; };
         const origClick = HTMLAnchorElement.prototype.click;
         HTMLAnchorElement.prototype.click = function() { /* no-op */ };
+        const origDispatch = EventTarget.prototype.dispatchEvent;
+        EventTarget.prototype.dispatchEvent = function(ev) {
+          /* Suppress click events on anchors (the jsPDF save path) to avoid
+           * triggering a real download. Other dispatchEvent calls pass through. */
+          if (ev && ev.type === 'click' && this instanceof HTMLAnchorElement) return true;
+          return origDispatch.call(this, ev);
+        };
         try {
           const handle = window.__hkl_composer;
           const mod = await import('/src/composer/save.ts');
@@ -1887,6 +1906,7 @@ export const FIXTURE_ASSERTIONS = {
         } finally {
           URL.createObjectURL = origCreate;
           HTMLAnchorElement.prototype.click = origClick;
+          EventTarget.prototype.dispatchEvent = origDispatch;
         }
       })()` },
     /* The on-screen render keeps non-notehead glyphs black via composer.html
@@ -1961,12 +1981,11 @@ export const FIXTURE_ASSERTIONS = {
         const h = window.__hkl_composer.history;
         return { ok: !h.canUndo(), detail: 'canUndo=' + h.canUndo() };
       })()` },
-    { name: 'model has no notes/rests after undo',
+    { name: 'model has no real content after undo',
       expr: `(() => {
         const m = window.__hkl_composer.model;
-        /* Empty doc voice-length is 0 by convention. */
-        return { ok: m.getVoiceLength(1) === 0,
-                 detail: 'voiceLength=' + m.getVoiceLength(1) };
+        const real = m.getDoc().querySelectorAll('rest:not([data-placeholder=true]):not([data-tuplet-placeholder=true]), note, chord').length;
+        return { ok: real === 0, detail: 'realContent=' + real };
       })()` },
   ],
 
@@ -1977,10 +1996,11 @@ export const FIXTURE_ASSERTIONS = {
         return { ok: h.canUndo() && !h.canRedo(),
                  detail: 'canUndo=' + h.canUndo() + ' canRedo=' + h.canRedo() };
       })()` },
-    { name: 'model state matches post-insert after redo',
+    { name: 'one rest in voice 1 after redo',
       expr: `(() => {
         const m = window.__hkl_composer.model;
-        return { ok: m.getVoiceLength(1) === 1, detail: 'voiceLength=' + m.getVoiceLength(1) };
+        const real = m.getDoc().querySelectorAll('rest:not([data-placeholder=true]):not([data-tuplet-placeholder=true])').length;
+        return { ok: real === 1, detail: 'realRests=' + real };
       })()` },
   ],
 
@@ -2060,19 +2080,29 @@ export const FIXTURE_ASSERTIONS = {
   ],
 
   undo_redo_shiftZ_alias: [
-    { name: 'Ctrl+Shift+Z redoes (state matches post-insert)',
+    { name: 'Ctrl+Shift+Z redoes (one rest in voice 1)',
       expr: `(() => {
         const m = window.__hkl_composer.model;
-        return { ok: m.getVoiceLength(1) === 1, detail: 'voiceLength=' + m.getVoiceLength(1) };
+        const real = m.getDoc().querySelectorAll('rest:not([data-placeholder=true]):not([data-tuplet-placeholder=true])').length;
+        return { ok: real === 1, detail: 'realRests=' + real };
       })()` },
   ],
 
   undo_multi_voice: [
-    { name: 'V2 content removed; focus stays in V1',
+    { name: 'V2 has no real content; focus stays in V1',
       expr: `(() => {
         const m = window.__hkl_composer.model;
-        return { ok: m.getVoiceLength(2) === 0 && m.getCurrentVoice() === 1,
-                 detail: 'V2.len=' + m.getVoiceLength(2) + ' voice=' + m.getCurrentVoice() };
+        /* Count <rest> elements inside V2 layers (layer @n="2"), excluding placeholders. */
+        const doc = m.getDoc();
+        let v2Real = 0;
+        for (const layer of doc.querySelectorAll('layer[n="2"]')) {
+          for (const c of layer.children) {
+            if (c.localName === 'rest' && c.getAttribute('data-placeholder') !== 'true' && c.getAttribute('data-tuplet-placeholder') !== 'true') v2Real++;
+            else if (c.localName === 'note' || c.localName === 'chord') v2Real++;
+          }
+        }
+        return { ok: v2Real === 0 && m.getCurrentVoice() === 1,
+                 detail: 'V2.real=' + v2Real + ' voice=' + m.getCurrentVoice() };
       })()` },
   ],
 

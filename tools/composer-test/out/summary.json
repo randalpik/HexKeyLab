@@ -1,9 +1,9 @@
 {
   "mode": "full",
   "fixtures": 87,
-  "passed": 83,
-  "failed": 4,
-  "elapsedMs": 28757,
+  "passed": 87,
+  "failed": 0,
+  "elapsedMs": 27731,
   "results": [
     {
       "name": "emptyDoc",
@@ -607,28 +607,16 @@
     },
     {
       "name": "undo_basic_insert",
-      "ok": false,
-      "failures": [
-        {
-          "kind": "assertion",
-          "name": "model has no notes/rests after undo",
-          "detail": "voiceLength=1"
-        }
-      ],
+      "ok": true,
+      "failures": [],
       "counts": {
         "invariants": 8
       }
     },
     {
       "name": "undo_redo_roundtrip",
-      "ok": false,
-      "failures": [
-        {
-          "kind": "assertion",
-          "name": "model state matches post-insert after redo",
-          "detail": "voiceLength=2"
-        }
-      ],
+      "ok": true,
+      "failures": [],
       "counts": {
         "invariants": 8
       }
@@ -691,28 +679,16 @@
     },
     {
       "name": "undo_redo_shiftZ_alias",
-      "ok": false,
-      "failures": [
-        {
-          "kind": "assertion",
-          "name": "Ctrl+Shift+Z redoes (state matches post-insert)",
-          "detail": "voiceLength=2"
-        }
-      ],
+      "ok": true,
+      "failures": [],
       "counts": {
         "invariants": 7
       }
     },
     {
       "name": "undo_multi_voice",
-      "ok": false,
-      "failures": [
-        {
-          "kind": "assertion",
-          "name": "V2 content removed; focus stays in V1",
-          "detail": "V2.len=1 voice=1"
-        }
-      ],
+      "ok": true,
+      "failures": [],
       "counts": {
         "invariants": 8
       }
