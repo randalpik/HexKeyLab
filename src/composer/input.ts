@@ -70,7 +70,7 @@ import {
 } from './cursor/expressionCursor.js';
 import {
   addDynam, addHairpin, removeExpression, dynamAt, setDynamText,
-  hairpinsAt, momentCompare,
+  hairpinsAt, momentCompare, measureHasExpression,
   type Moment,
 } from './expressions.js';
 import {
@@ -391,7 +391,7 @@ function cycleVoice(model: ComposerModel, dir: 'up' | 'down', hooks: InputHooks)
     state.cursorMode = 'voice';
     /* Up exits to voice 2, Down exits to voice 3. */
     const v: Voice = dir === 'up' ? 2 : 3;
-    setVoicePreservingTime(model, v);
+    model.setVoicePreservingMeasure(v);
     hooks.setStatus?.('Voice ' + v + '.', 'state');
     return;
   }
@@ -399,35 +399,34 @@ function cycleVoice(model: ComposerModel, dir: 'up' | 'down', hooks: InputHooks)
   if (dir === 'up') {
     if (v === 1) return;
     if (v === 2) { model.switchVoice('up'); return; }       /* 2 → 1 */
-    if (v === 3) {                                          /* 3 → expr */
-      state.cursorMode = 'expr';
-      refreshExprCursor(model);
-      hooks.setStatus?.('Expression layer.', 'state');
+    if (v === 3) {                                          /* 3 → expr (skip if empty) */
+      if (measureHasExpression(model.getDoc(), model.cursorMeasureIdx(3))) {
+        state.cursorMode = 'expr';
+        refreshExprCursor(model);
+        hooks.setStatus?.('Expression layer.', 'state');
+      } else {
+        model.setVoicePreservingMeasure(2);
+        hooks.setStatus?.('Voice 2.', 'state');
+      }
       return;
     }
     if (v === 4) { model.switchVoice('up'); return; }       /* 4 → 3 */
   } else {
     if (v === 1) { model.switchVoice('down'); return; }     /* 1 → 2 */
-    if (v === 2) {                                          /* 2 → expr */
-      state.cursorMode = 'expr';
-      refreshExprCursor(model);
-      hooks.setStatus?.('Expression layer.', 'state');
+    if (v === 2) {                                          /* 2 → expr (skip if empty) */
+      if (measureHasExpression(model.getDoc(), model.cursorMeasureIdx(2))) {
+        state.cursorMode = 'expr';
+        refreshExprCursor(model);
+        hooks.setStatus?.('Expression layer.', 'state');
+      } else {
+        model.setVoicePreservingMeasure(3);
+        hooks.setStatus?.('Voice 3.', 'state');
+      }
       return;
     }
     if (v === 3) { model.switchVoice('down'); return; }     /* 3 → 4 */
     if (v === 4) return;
   }
-}
-
-/** Switch voice while approximately preserving the time position of the
- *  previous cursor (matches the existing switchVoice helper's contract). */
-function setVoicePreservingTime(model: ComposerModel, v: Voice): void {
-  const prevVoice = model.getCurrentVoice();
-  const prevCursor = model.getCursor(prevVoice);
-  const prevTime = model.getTimeAt(prevVoice, prevCursor);
-  model.setVoice(v);
-  const newCursor = model.findCursorAtOrBefore(v, prevTime);
-  model.setCursor(newCursor, v);
 }
 
 /* ── chord-internal selection helpers ─────────────────────────────────────── */

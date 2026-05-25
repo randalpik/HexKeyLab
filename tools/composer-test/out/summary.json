@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 99,
-  "passed": 99,
-  "failed": 0,
-  "elapsedMs": 30763,
+  "fixtures": 105,
+  "passed": 104,
+  "failed": 1,
+  "elapsedMs": 32953,
   "results": [
     {
       "name": "emptyDoc",
@@ -151,6 +151,38 @@
     },
     {
       "name": "moveCursorAcrossBar_noAutofill",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "voiceSwitch_measurePreserved_emptyToFull",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "voiceSwitch_measurePreserved_fullToEmpty",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "voiceSwitch_measurePreserved_partialMidMeasure",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "voiceSwitch_measurePreserved_exprExitPath",
       "ok": true,
       "failures": [],
       "counts": {
@@ -363,6 +395,27 @@
       "failures": [],
       "counts": {
         "invariants": 7
+      }
+    },
+    {
+      "name": "kbd_voiceCycle_skipsExprWhenMeasureEmpty",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "kbd_voiceCycle_entersExprWhenMeasureHasDynamic",
+      "ok": false,
+      "failures": [
+        {
+          "kind": "cursor-trace",
+          "detail": "TypeError: Cannot read properties of null (reading 'moments')\n    at currentMoment (http://localhost:5173/src/composer/cursor/expressionCursor.ts?t=1779742464639:124:9)\n    at CursorOverlay.renderExpressionCursor (http://localhost:5173/src/composer/cursor/cursor.ts?t=1779742464639:385:15)\n    at CursorOverlay.update (http://localhost:5173/src/composer/cursor/cursor.ts?t=1779742464639:111:12)\n    at refresh (<anonymous>:57:14)\n    at <anonymous>:61:3\n    at <anonymous>:2:66\n    at <anonymous>:4:9"
+        }
+      ],
+      "counts": {
+        "invariants": 9
       }
     },
     {

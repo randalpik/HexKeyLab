@@ -193,6 +193,85 @@ const MULTI_VOICE = {
     /* Cursor now in M_2 wrapper. M_1 must still have only 1 real rest +
      * placeholder space (autofill disabled). */
   `,
+
+  /* Voice switch preserves the visual measure even when the source
+   * measure is empty in the source voice but full in the target voice
+   * (the wrapper-stop aliasing case that broke the legacy
+   * time-based translation). V_1: empty M_1, content in M_2.
+   * V_2: full M_1, empty M_2. Cursor at V_1 M_2 wrapper → switch to V_2.
+   * Expectation: V_2 cursor lands in M_2 (idx 1), not M_1 (idx 0). */
+  voiceSwitch_measurePreserved_emptyToFull: `
+    /* V_2: fill M_1 with 4 quarters. */
+    m.setVoice(2);
+    m.setCursor(0, 2);
+    for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: "4", dots: 0 });
+    /* V_1: skip M_1 empty, place a quarter in M_2. */
+    m.setVoice(1);
+    m.setCursor(m.getVoiceLength(1), 1);
+    m.insertRestAtCursor({ duration: "4", dots: 0 });
+    /* Park V_1 cursor at the start of M_2 (the wrapper). flat = [M1, M2, rest];
+     * cursor=1 = before-M_2-wrapper. */
+    m.setCursor(1, 1);
+    /* Switch V_1 → V_2 via the model API exercised by ArrowDown. */
+    m.switchVoice('down');
+  `,
+
+  /* Symmetric: V_1 full M_1 + empty M_2; V_2 empty M_1 + content M_2.
+   * Cursor at V_1 M_2 wrapper. Switch to V_2 → must remain in M_2. */
+  voiceSwitch_measurePreserved_fullToEmpty: `
+    /* V_1: fill M_1, then create M_2 by extending past end. */
+    m.setCursor(0, 1);
+    for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: "4", dots: 0 });
+    /* V_2: empty M_1, content in M_2. */
+    m.setVoice(2);
+    m.setCursor(m.getVoiceLength(2), 2);
+    m.insertRestAtCursor({ duration: "4", dots: 0 });
+    /* Park V_1 cursor at start of M_2 wrapper. V_1 has M_1 full + M_2 empty,
+     * so flatChildren = [M1 wrapper, Q1..Q4, M2 wrapper]. Cursor=5 = before M2. */
+    m.setVoice(1);
+    m.setCursor(5, 1);
+    /* Switch to V_2. */
+    m.switchVoice('down');
+  `,
+
+  /* Mid-measure within-tick offset preserved. V_2 M_2 has Q1+Q2, cursor past
+   * Q2 (within = half-measure). V_1 M_2 has 4 quarter rests. Switch V_2 → V_1.
+   * Expectation: V_1 cursor lands in M_2 between R2 and R3 (still M_2). */
+  voiceSwitch_measurePreserved_partialMidMeasure: `
+    /* V_1: empty M_1, M_2 full of quarter rests. */
+    m.setCursor(m.getVoiceLength(1), 1);
+    for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: "4", dots: 0 });
+    /* V_2: empty M_1, M_2 has Q1+Q2. Park cursor at the M_2 wrapper anchor in
+     * V_2 (NOT past-end, which would create M_3) so inserts go INTO M_2.
+     * V_2 flat at this point = [M_1 wrapper, M_2 wrapper]; c=1 anchors on
+     * M_2 wrapper. */
+    m.setVoice(2);
+    m.setCursor(1, 2);
+    m.insertRestAtCursor({ duration: "4", dots: 0 });
+    m.insertRestAtCursor({ duration: "4", dots: 0 });
+    /* Cursor V_2 now past Q2 of M_2 (at the half-measure point). Switch up. */
+    m.switchVoice('up');
+  `,
+
+  /* Expression-layer exit (V_2 → expr → V_3) preserves measure. We can't drive
+   * expr-mode toggling from the model alone (it's input.ts state), so simulate
+   * the same translation path by going directly through the public model
+   * helper that the expr-exit code calls. */
+  voiceSwitch_measurePreserved_exprExitPath: `
+    /* V_2 has 3 measures of content; cursor parked in M_3. */
+    m.setVoice(2);
+    m.setCursor(0, 2);
+    for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: "4", dots: 0 });
+    m.setCursor(m.getVoiceLength(2), 2);
+    for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: "4", dots: 0 });
+    m.setCursor(m.getVoiceLength(2), 2);
+    for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: "4", dots: 0 });
+    /* V_3 is empty everywhere; placeholder invariant gives it a wrapper per
+     * measure. Park V_2 cursor in M_3 (past last quarter of M_3). */
+    m.setCursor(m.getVoiceLength(2), 2);
+    /* Direct call mirrors the expr-exit path. */
+    m.setVoicePreservingMeasure(3);
+  `,
 };
 
 /* ── New: Ctrl-nav (bar-jump) scenarios ───────────────────────────────── */
@@ -591,6 +670,28 @@ const KBD = {
   /* Voice cycle: Up arrow 5 times → 1→2→expr→3→4→1. */
   kbd_voiceCycle: {
     setupKeys: ['ArrowUp', 'ArrowUp', 'ArrowUp', 'ArrowUp', 'ArrowUp'],
+  },
+
+  /* Empty document has no expressions anywhere → ArrowDown ×2 from V_1
+   * should skip the expression layer and land at V_3 in voice mode. */
+  kbd_voiceCycle_skipsExprWhenMeasureEmpty: {
+    setupKeys: ['ArrowDown', 'ArrowDown'],
+  },
+
+  /* Insert a quarter rest in V_1 M_1 (gives the cursor a moment anchor),
+   * then Shift+5 commits an "mf" dynamic at that moment. ArrowDown ×2
+   * from V_1 should now enter expression mode since M_1 has an expression. */
+  kbd_voiceCycle_entersExprWhenMeasureHasDynamic: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+    `,
+    setupKeys: [
+      { key: '%', shift: true },   /* Shift+5 → "mf" */
+      'ArrowDown',                 /* V_1 → V_2 */
+      'ArrowDown',                 /* V_2 → expr (not skipped) */
+    ],
   },
 
   /* Insert key toggles mode. After one toggle, mode='overwrite'. */
@@ -1341,6 +1442,63 @@ export const FIXTURE_ASSERTIONS = {
       })()` },
   ],
 
+  /* Voice-switch measure-preservation: every fixture asserts the active
+   * voice/cursor pair lands in the originally-displayed measure. The fixtures
+   * leave the model with currentVoice = target voice after switching, so
+   * cursorMeasureIdx(target) IS the post-switch position. */
+  voiceSwitch_measurePreserved_emptyToFull: [
+    { name: 'V_2 cursor remains in M_2 after switch from V_1 M_2',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const cur = m.getCurrentVoice();
+        const mi = m.cursorMeasureIdx(cur);
+        return cur === 2 && mi === 1
+          ? { ok: true }
+          : { ok: false, detail: 'voice=' + cur + ' measureIdx=' + mi + ' (expected 2, 1)' };
+      })()` },
+  ],
+  voiceSwitch_measurePreserved_fullToEmpty: [
+    { name: 'V_2 cursor remains in M_2 after switch from V_1 M_2 wrapper',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const cur = m.getCurrentVoice();
+        const mi = m.cursorMeasureIdx(cur);
+        return cur === 2 && mi === 1
+          ? { ok: true }
+          : { ok: false, detail: 'voice=' + cur + ' measureIdx=' + mi + ' (expected 2, 1)' };
+      })()` },
+  ],
+  voiceSwitch_measurePreserved_partialMidMeasure: [
+    { name: 'V_1 cursor lands in M_2 with non-zero within-measure offset',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const cur = m.getCurrentVoice();
+        const mi = m.cursorMeasureIdx(cur);
+        if (cur !== 1 || mi !== 1) {
+          return { ok: false, detail: 'voice=' + cur + ' measureIdx=' + mi + ' (expected 1, 1)' };
+        }
+        const abs = m.getCursorAbsoluteTicks(cur);
+        const within = abs - mi * m.measureTicks();
+        /* Source within = 2 quarter-ticks; closest V_1 stop in M_2 should be
+         * past R2 (offset = 2 quarters). Accept any offset > 0 — exact match
+         * would over-constrain if quarter-tick representation changes. */
+        return within > 0
+          ? { ok: true }
+          : { ok: false, detail: 'within-measure tick offset = ' + within + ' (expected > 0)' };
+      })()` },
+  ],
+  voiceSwitch_measurePreserved_exprExitPath: [
+    { name: 'V_3 cursor lands in M_3 via setVoicePreservingMeasure',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const cur = m.getCurrentVoice();
+        const mi = m.cursorMeasureIdx(cur);
+        return cur === 3 && mi === 2
+          ? { ok: true }
+          : { ok: false, detail: 'voice=' + cur + ' measureIdx=' + mi + ' (expected 3, 2)' };
+      })()` },
+  ],
+
   /* Tuplets. */
   m1Triplet8Empty: [
     { name: 'tuplet exists with num=3 numbase=2',
@@ -1647,6 +1805,34 @@ export const FIXTURE_ASSERTIONS = {
         return v === 1
           ? { ok: true }
           : { ok: false, detail: 'voice=' + v + ' cursorMode=' + s.cursorMode };
+      })()` },
+  ],
+  kbd_voiceCycle_skipsExprWhenMeasureEmpty: [
+    { name: 'ArrowDown ×2 from V_1 lands on V_3 in voice mode (expr skipped)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const v = m.getCurrentVoice();
+        const s = window.__hkl_composer.inputState();
+        return v === 3 && s.cursorMode === 'voice'
+          ? { ok: true }
+          : { ok: false, detail: 'voice=' + v + ' cursorMode=' + s.cursorMode + ' (expected 3, voice)' };
+      })()` },
+  ],
+  kbd_voiceCycle_entersExprWhenMeasureHasDynamic: [
+    { name: 'M_1 contains a <dynam> after Shift+5',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const dyn = m.getDoc().querySelectorAll('dynam');
+        return dyn.length === 1
+          ? { ok: true }
+          : { ok: false, detail: 'expected 1 dynam, got ' + dyn.length };
+      })()` },
+    { name: 'ArrowDown ×2 from V_1 enters expression mode (not skipped)',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        return s.cursorMode === 'expr'
+          ? { ok: true }
+          : { ok: false, detail: 'cursorMode=' + s.cursorMode + ' (expected expr)' };
       })()` },
   ],
   kbd_modeToggle: [

@@ -998,11 +998,40 @@ export class ComposerModel {
     if (dir === "up") next = (cur > 1 ? cur - 1 : 1) as Voice;
     else next = (cur < 4 ? cur + 1 : 4) as Voice;
     if (next === cur) return next;
-    const currentTime = this.getTimeAt(cur, this.cursors[cur]);
-    this.currentVoice = next;
-    this.cursors[next] = this.findCursorAtOrBefore(next, currentTime);
-    /* Cursor-leave autofill disabled — see autofill docblock. */
-    return next;
+    return this.setVoicePreservingMeasure(next);
+  }
+
+  /** Switch the active voice to `tgtV` while preserving the cursor's visual
+   *  measure index and within-measure tick offset. The placeholder invariant
+   *  (every voice has at least one cursor stop per measure) guarantees a valid
+   *  target landing exists.
+   *
+   *  Replaces the legacy time-based translation (`getTimeAt` +
+   *  `findCursorAtOrBefore`) which silently flipped measures at wrapper-stop
+   *  boundaries: zero-tick wrappers alias with "past last content of prev
+   *  measure," so absolute-tick equality is structurally ambiguous and the
+   *  off-by-one accounting in `findCursorAtOrBefore` resolved it to whichever
+   *  measure came first in the target voice's flat stream — usually the wrong
+   *  one when the two voices had different content shapes. */
+  setVoicePreservingMeasure(tgtV: Voice): Voice {
+    const srcV = this.currentVoice;
+    if (srcV === tgtV) return tgtV;
+    const measures = this.allMeasures();
+    if (measures.length === 0) {
+      this.setVoice(tgtV);
+      return tgtV;
+    }
+    const srcMeasure = this.cursorMeasureIdx(srcV);
+    const mTicks = this.measureTicks();
+    const srcAbs = this.getCursorAbsoluteTicks(srcV);
+    const within = srcAbs - srcMeasure * mTicks;
+    this.setVoice(tgtV);
+    let cand = this.findCursorByTickPosition(tgtV, srcMeasure * mTicks + within);
+    if (this.cursorVisualMeasureAtIndex(tgtV, cand, "insert") !== srcMeasure) {
+      cand = this.getFirstVisualCursorInMeasure(tgtV, srcMeasure, "insert");
+    }
+    this.setCursor(cand, tgtV);
+    return tgtV;
   }
 
   /** Cumulative duration (in 64th-note ticks) of elements before `cursor`

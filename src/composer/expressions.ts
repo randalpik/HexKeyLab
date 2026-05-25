@@ -254,6 +254,28 @@ export function momentCompare(a: Moment, b: Moment): number {
   return a.tstamp - b.tstamp;
 }
 
+/** True iff `measureIdx` contains or is spanned by any expression element
+ *  (<dynam> or <hairpin>). Dynams live as direct children of their own
+ *  measure; hairpins live in their start measure but span [start, end]
+ *  inclusively, so a hairpin starting in M_1 and ending in M_3 reports
+ *  true for M_2 as well. Used by `cycleVoice` to skip the expression
+ *  layer when entering it would land on a measure with nothing to edit. */
+export function measureHasExpression(doc: Document, measureIdx: number): boolean {
+  const measures = getMeasures(doc);
+  if (measureIdx < 0 || measureIdx >= measures.length) return false;
+  const target = measures[measureIdx];
+  for (const child of Array.from(target.children)) {
+    if (child.localName === 'dynam') return true;
+  }
+  for (const el of Array.from(doc.querySelectorAll('hairpin'))) {
+    const s = readStartMoment(el, measures);
+    const e = readEndMoment(el, measures);
+    if (!s || !e) continue;
+    if (s.measureIdx <= measureIdx && measureIdx <= e.measureIdx) return true;
+  }
+  return false;
+}
+
 /** All <dynam> and <hairpin> moments (hairpins contribute BOTH start and
  *  end moments). Used by the expression cursor's moment-snap navigation
  *  so existing markings are reachable even when no note shares the moment. */
