@@ -908,3 +908,21 @@ If you need a baseline-stable measurement, set textBaseline='alphabetic' for the
 Workaround in HKL: the keydown handler keeps doing the model side-effects (selection serialize, deletion, etc.) AND stashes the serialized clipboard text in a module-level variable. The DOM event handler (real-browser-only) picks it up to write the OS clipboard. CDP tests observe model state via the keydown path; OS-clipboard round-trip is verified manually in real browsers.
 
 Generalizable rule: when splitting a user gesture's effects across multiple event types, ensure each individually testable path is observable. A test that drives Ctrl+C and asserts model state should pass even if the OS clipboard write requires a DOM event that the test harness doesn't synthesize.
+
+### Handshake feedback loop: symmetric hello-echo + reply-on-hello = infinite ping-pong
+
+The Composer ↔ HKL bridge has two `hello` lifecycle messages (`composer-hello`, `hkl-hello`) and HKL's `composer-hello` handler calls `announce()`, which broadcasts `hkl-hello`. That's fine as long as Composer's `hkl-hello` handler doesn't broadcast `composer-hello` in reply — but it's natural to want exactly that, so HKL can learn Composer is alive when HKL boots second (Composer's load-time `composer-hello` was lost to a then-absent listener).
+
+Wire that naively and you get: `hkl-hello` → `composer-hello` → `announce()` → `hkl-hello` → `composer-hello` → … forever. Each iteration also re-invalidates Composer's broadcast caches and re-fires `maybeBroadcastSongKey` etc., so the storm includes payload messages — `set-song-key` and friends get sent every cycle. Symptom: ref-tier updates appear to "stop working" because the channel is saturated.
+
+The cure isn't to drop the reply (you still need it for late-HKL-boot), it's to gate it on a *state change*: only echo `composer-hello` when Composer transitions from "no HKL" to "connected". A `wasConnected` snapshot taken before flipping `hklConnected = true` is enough:
+
+```ts
+const wasConnected = hklConnected;
+hklConnected = true;
+if (!wasConnected) {
+  bridge.send({ type: 'composer-hello', version: PROTOCOL_VERSION });
+}
+```
+
+`composer/main.ts:hkl-hello`. Generalizable rule: in any pub/sub handshake where receipt triggers a reply AND the reply triggers a re-receipt, gate the reply on a state transition — never on the event itself.

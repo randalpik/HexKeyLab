@@ -6,7 +6,10 @@
 //   1. selection — most recently set by user Ctrl+click or by Composer's
 //      "previous note in voice" broadcast. Last writer wins; the two sources
 //      coexist in one slot, distinguished only by `source` (for composer-bye
-//      semantics — manual selections survive a Composer disconnect).
+//      semantics — manual selections survive a Composer disconnect). A
+//      composer-source selection is gated on outline mode = 'piano' — the
+//      cursor's prior note is only relevant when the piano outline is showing.
+//      Manual selections apply regardless of outline mode.
 //   2. songKey — set by Composer when the key signature changes. Independent
 //      of cursor movement.
 //   3. default — A3 at (0, 0).
@@ -37,15 +40,33 @@ let songKey: RefSongKey | null = null;
  *  change. Consumers should read .q / .r and never mutate. */
 export const referenceNote: { q: number; r: number } = { q: 0, r: 0 };
 
+function readOutlineMode(): string {
+  const sel = document.getElementById('selOutline') as HTMLSelectElement | null;
+  return sel?.value ?? 'lumatone';
+}
+
+function selectionActive(): boolean {
+  if (selection === null) return false;
+  if (selection.source === 'manual') return true;
+  return readOutlineMode() === 'piano';
+}
+
 /** Recompute the effective ref from tiers. Mutates `referenceNote` in place.
  *  Returns true iff the effective coord changed. */
 function recompute(): boolean {
-  const tQ = selection ? selection.q : (songKey ? songKey.q : 0);
-  const tR = selection ? selection.r : (songKey ? songKey.r : 0);
+  const sel = selectionActive() ? selection : null;
+  const tQ = sel ? sel.q : (songKey ? songKey.q : 0);
+  const tR = sel ? sel.r : (songKey ? songKey.r : 0);
   if (tQ === referenceNote.q && tR === referenceNote.r) return false;
   referenceNote.q = tQ;
   referenceNote.r = tR;
   return true;
+}
+
+/** Called by setOutline() when the outline mode changes — a composer-source
+ *  selection may activate or deactivate, changing the effective ref. */
+export function recomputeReferenceForOutline(): boolean {
+  return recompute();
 }
 
 /** Set the selection tier from a user Ctrl+click. Survives composer-bye. */

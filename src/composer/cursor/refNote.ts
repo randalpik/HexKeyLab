@@ -14,41 +14,32 @@
 
 import type { ComposerModel } from '../model/index.js';
 import { keySigToTonic } from '../notation/accidentals.js';
-import { noteName, parseNote, accToVal } from '../../tuning/notes.js';
+import { fifthName, keyOctave } from '../../tuning/notes.js';
 
 export interface RefCoord { q: number; r: number; }
 
-/** Cache of "tonic name → closest-to-origin (q, r) by taxicab". The lattice
- *  is deterministic, so this is a one-time computation per process. */
+/** tonic → r on the qm=0 spine (fifth-chain from A). Derived once from
+ *  fifthName() so the table stays in sync with the lattice naming algorithm.
+ *  All 15 key-signature tonics live at integer r in [-10, 4]. */
+const TONIC_R: Map<string, number> = (() => {
+  const m = new Map<string, number>();
+  for (let r = -10; r <= 4; r++) m.set(fifthName(r), r);
+  return m;
+})();
+
 const tonicCache: Map<string, RefCoord> = new Map();
 
-/** Search a small bounded grid for the (q, r) where noteName(q, r) parses to
- *  the same letter and same alteration as the target tonic. */
+/** Place the song-key tonic on the qm=0 spine in the central octave region.
+ *  The spine *is* the fifth-chain, so r is fixed by tonic identity. Walk q
+ *  by ±3 (one octave per step) until keyOctave lands in {3, 4}. */
 function findTonicCoord(tonic: string): RefCoord {
   const cached = tonicCache.get(tonic);
   if (cached) return cached;
-  const parsed = parseNote(tonic);
-  const targetLetter = parsed.letter;
-  const targetAlter = accToVal(parsed.acc);
-  let bestQ = 0, bestR = 0;
-  let bestTax = Infinity;
-  /* Lattice scan: enharmonic-axis hop is (+7, -4), so all canonical tonics
-     (≤ ±7 sharps/flats) sit well within this range. */
-  for (let q = -5; q <= 5; q++) {
-    for (let r = -10; r <= 10; r++) {
-      const nm = noteName(q, r);
-      const p = parseNote(nm);
-      if (p.letter !== targetLetter) continue;
-      if (accToVal(p.acc) !== targetAlter) continue;
-      const tax = Math.abs(q) + Math.abs(r);
-      if (tax < bestTax) {
-        bestTax = tax;
-        bestQ = q;
-        bestR = r;
-      }
-    }
-  }
-  const found: RefCoord = { q: bestQ, r: bestR };
+  const r = TONIC_R.get(tonic) ?? -3; /* fall back to C-spine coord if somehow off-table */
+  let q = 0;
+  while (keyOctave(q, r) < 3) q += 3;
+  while (keyOctave(q, r) > 4) q -= 3;
+  const found: RefCoord = { q, r };
   tonicCache.set(tonic, found);
   return found;
 }

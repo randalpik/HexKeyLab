@@ -2395,16 +2395,20 @@ export const FIXTURE_ASSERTIONS = {
           ? { ok: true }
           : { ok: false, detail: '(q,r)=(' + last.q + ',' + last.r + ') → pc=' + pc + ' (expected 1 = C#)' };
       })()` },
-    { name: 'chosen (q,r) is closest to origin by taxicab among C# candidates',
+    { name: 'chosen (q,r) sits on the qm=0 spine in a central octave',
       expr: `(() => {
         const cap = window.__bridgeMock.captured();
         const sk = cap.filter(m => m.type === 'set-song-key');
         const last = sk[sk.length - 1];
-        const tax = Math.abs(last.q) + Math.abs(last.r);
-        /* (1, 0) gives taxicab 1; that's the global minimum for C#. */
-        return tax <= 1
-          ? { ok: true }
-          : { ok: false, detail: 'taxicab=' + tax + ' from (' + last.q + ',' + last.r + ')' };
+        const qm = ((last.q % 3) + 3) % 3;
+        /* keyOctave uses the natural-letter MIDI (strips the accidental). For
+         * C# the alter is +1, so natMidi = 57 + 4q + 7r - 1. The picker is
+         * required to land in octave 3 or 4 (centrally placed within a band). */
+        const natMidi = 57 + 4 * last.q + 7 * last.r - 1;
+        const oct = Math.floor(natMidi / 12) - 1;
+        if (qm !== 0) return { ok: false, detail: 'qm=' + qm + ' from (' + last.q + ',' + last.r + ') — expected qm=0 spine' };
+        if (oct !== 3 && oct !== 4) return { ok: false, detail: 'oct=' + oct + ' from (' + last.q + ',' + last.r + ') — expected 3 or 4' };
+        return { ok: true };
       })()` },
     /* Locks in the post-split contract: an empty voice must NOT trigger
      * a set-reference-note broadcast, even when hkl-hello fires the
@@ -2417,6 +2421,17 @@ export const FIXTURE_ASSERTIONS = {
         return ref.length === 0
           ? { ok: true }
           : { ok: false, detail: 'unexpected set-reference-note: ' + JSON.stringify(ref) };
+      })()` },
+    /* HKL-second-boot symmetry: Composer must rebroadcast composer-hello in
+     * response to hkl-hello so HKL flips composerConnected → true (otherwise
+     * its toolbar group stays hidden when HKL loads after Composer). */
+    { name: 'composer-hello rebroadcast in response to hkl-hello',
+      expr: `(() => {
+        const cap = window.__bridgeMock.captured();
+        const hello = cap.filter(m => m.type === 'composer-hello');
+        return hello.length >= 1
+          ? { ok: true }
+          : { ok: false, detail: 'no composer-hello captured; types=' + cap.map(m => m.type).join(',') };
       })()` },
   ],
   ref_note_broadcast_on_note_insert: [

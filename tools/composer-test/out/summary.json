@@ -3,7 +3,7 @@
   "fixtures": 99,
   "passed": 99,
   "failed": 0,
-  "elapsedMs": 31411,
+  "elapsedMs": 30763,
   "results": [
     {
       "name": "emptyDoc",
@@ -682,7 +682,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 9
+        "invariants": 10
       }
     },
     {

@@ -192,18 +192,28 @@ const history = new HistoryManager();
 
 bridge.on((msg: HklEvent) => {
   switch (msg.type) {
-    case 'hkl-hello':
+    case 'hkl-hello': {
+      /* Re-announce ourselves so HKL learns Composer is present when HKL
+         boots second. Composer's load-time composer-hello was lost (no HKL
+         listening yet); without this echo HKL would never set
+         composerConnected and the toolbar group stays hidden. Gate on the
+         pre-existing hklConnected flag so we ONLY echo on a fresh
+         connection — otherwise HKL's announce() (which it fires on every
+         composer-hello) ricochets back here as a second hkl-hello and we'd
+         echo composer-hello again, creating an infinite handshake loop. */
+      const wasConnected = hklConnected;
       hklConnected = true;
       setConn('connected');
-      /* (Re)connection: force fresh broadcasts on both channels so HKL
-         starts with the right selection tier (if there's a prior note in
-         the voice) AND the right song-key tier. */
+      if (!wasConnected) {
+        bridge.send({ type: 'composer-hello', version: PROTOCOL_VERSION });
+      }
       invalidateRefNoteCache();
       invalidateSongKeyCache();
       maybeBroadcastReference();
       maybeBroadcastSongKey();
       broadcastLayoutReq();
       break;
+    }
     case 'hkl-bye':
       hklConnected = false;
       setConn('no-hkl');

@@ -9,7 +9,7 @@
 import { tuning } from '../state/tuning.js';
 import { selection } from '../state/selection.js';
 import { audio } from '../state/audio.js';
-import { referenceNote, clearSelection as clearRefSelection } from '../state/reference.js';
+import { referenceNote, clearSelection as clearRefSelection, recomputeReferenceForOutline } from '../state/reference.js';
 import { savePrefs } from '../state/persistence.js';
 import type { OutlineMode, RotationMode, TuningMode } from '../state/persistence.js';
 import { refSpine } from '../tuning/refspine.js';
@@ -24,7 +24,7 @@ import {
 } from '../audio/engine.js';
 import { stopAllMidi, syncMidi } from '../midi/engine.js';
 import { animation } from '../render/animation.js';
-import { cv, draw, startLayoutAnim, currentMidi64Cell, buildHexLayerForTween, snapViewForOutline, validateRefNoteCandidate } from '../render/draw.js';
+import { cv, draw, startLayoutAnim, currentMidi64Cell, buildHexLayerForTween, snapViewForOutline, validateRefNoteCandidate, invalidatePianoOutline } from '../render/draw.js';
 import { onTuningChanged } from '../effects/onTuningChanged.js';
 import { onRefChanged } from '../effects/onRefChanged.js';
 import { broadcastFootprint } from '../bridge/hkl-side.js';
@@ -156,6 +156,19 @@ export function setOutline(): void {
   const newOutline = sel.value as OutlineMode;
   const cbExtend = document.getElementById('cbExtend') as HTMLInputElement;
   cbExtend.disabled = newOutline === 'none';
+  /* Composer-source selection only applies in piano outline; toggling between
+     piano and non-piano can therefore flip the effective ref. Capture old
+     kbAnchor BEFORE recompute so onRefChanged sees the correct delta and
+     migrates physical voices to the new lattice cells. */
+  const oldAQ = view.kbAnchorQ, oldAR = view.kbAnchorR;
+  const refChanged = recomputeReferenceForOutline();
+  if (refChanged) {
+    const newSp = refSpine(referenceNote.q, referenceNote.r);
+    view.kbAnchorQ = newSp.q;
+    view.kbAnchorR = newSp.r;
+    invalidatePianoOutline();
+    onRefChanged(newSp.q - oldAQ, newSp.r - oldAR);
+  }
   /* Each outline has its own canvas bounds — resize before redrawing. */
   recomputeCanvasBounds(newOutline);
   cv.style.height = view.CH + 'px';

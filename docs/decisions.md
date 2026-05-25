@@ -1877,3 +1877,76 @@ collapse decision in `hejiLabel`), `src/render/draw.ts` (collapse + exponent
 rendering in `drawHejiLabel`, bravuraLoaded gate in `drawNoteName`,
 `drawConventionalLabel` removed, dead `SHARP/FLAT/DBLSHARP/DBLFLAT`
 imports cleaned).
+
+---
+
+## Composer cursor-ref gated on piano outline mode
+
+**Picked**: HKL's selection tier accepts a `composer`-source value
+(`setSelectionFromComposer`) but only treats it as effective when outline
+mode = `'piano'`. In `'lumatone' | 'qwerty' | 'none'` the song-key tier
+takes over instead. Manual selections (Ctrl+click) apply in every outline
+mode.
+
+**Rejected**:
+- Cursor-ref always wins (prior behavior). The cursor's most-recent prior
+  note is genuinely useful when the user is staring at the 88-key piano
+  outline, but it's noise when the Lumatone outline is showing: opening
+  HKL second would land the lattice on whatever random note the cursor
+  was last next to (often "C" from a score's opening chord) instead of
+  on the song key.
+- Clearing composer-selection on every `set-song-key`. Too aggressive —
+  would interrupt live-edit cursor reference during a normal key-sig
+  change.
+- Clearing only at handshake (composer-hello). Doesn't help when set-
+  reference-note arrives after composer-hello in the same burst (which it
+  does — both fire from the same handler).
+
+**Why outline-gated**: the cursor-ref is conceptually a piano-outline
+feature — "where you're entering notes lives here on the 88 keys". The
+song-key is conceptually a band-orientation feature — "the key signature
+puts this tonic at the center of a band". Picking the right one per
+outline mode resolves the tension without either side having to back
+down.
+
+**Where**: `selectionActive()` + `readOutlineMode()` in
+`src/state/reference.ts`. `setOutline()` in `src/ui/controls.ts` now
+captures `view.kbAnchor`, calls `recomputeReferenceForOutline()`, and
+fans out via `onRefChanged` (with `invalidatePianoOutline`) when the
+effective ref flips on an outline-mode toggle.
+
+---
+
+## Song-key picker: qm=0 spine, octave 3 or 4
+
+**Picked**: `findTonicCoord` in `src/composer/cursor/refNote.ts` places
+the song-key tonic on the qm=0 Pythagorean spine in the central octave
+region. r is fixed by tonic identity (the spine *is* the fifth-chain
+from A — `fifthName(r)` is the canonical map, used to seed the
+`TONIC_R` lookup so the table stays in sync with the lattice naming
+algorithm). q starts at 0 and walks by ±3 (one octave per step) until
+`keyOctave(q, r) ∈ {3, 4}`.
+
+**Rejected**:
+- Bounded grid search minimizing taxicab `|q| + |r|` (prior behavior).
+  No qm or octave constraint, so distant-octave or off-spine cells could
+  win. Especially bad in Schismatic ('V') mode, where each band carries
+  a schisma — landing the ref on a distant band makes the lattice
+  visually drift.
+- Search with constraints + tiebreak. Unnecessary — for any tonic the
+  qm=0 spine has exactly one cell per octave, so once the band is
+  picked, the (q, r) is determined.
+
+**Why qm=0 + oct {3, 4}**: qm=0 is the band's center position, so the
+ref always lands in the visually central column of a band. Octave 3 or
+4 sits near MIDI A3, the canonical center of HKL's pitch range. The
+combination keeps the lattice visually anchored regardless of how many
+sharps/flats the key signature carries.
+
+**Coverage**: all 15 key-sig tonics (sharps and flats out to 7) reach a
+valid (q, r) — `(3, -3)` for C through `(15, -10)` for Cb. Verified by
+`song_key_csharp_from_empty_voice` fixture (which asserts qm=0 + oct ∈
+{3, 4} structurally rather than locking to a specific coordinate).
+
+**Where**: `TONIC_R` map (derived from `fifthName(r)` for r ∈ [-10, 4])
+and `findTonicCoord` in `src/composer/cursor/refNote.ts`.

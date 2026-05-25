@@ -116,11 +116,14 @@ requestMidi(handleMidiMessage);
    via a 1.5s identity poll on midi.midiAccess. */
 initPiano();
 
-/* HKL ↔ Composer bridge — broadcasts held-keys for the companion composer.html
-   surface, dispatches play-chord/play-score from Composer. Idempotent; safe
-   if no Composer tab is open. Static import: the broadcast functions are
-   pulled in by effects/* fan-outs anyway, so deferring init bought nothing. */
-initHklBridge();
+/* HKL ↔ Composer bridge: the listener is installed at module-load time
+   (top-level bridge.on() in hkl-side.ts) so Composer messages already arrive.
+   initHklBridge() only fires the initial announce() — defer until after
+   prefs are restored (manualRef + tuning) so the first hkl-layout-state we
+   broadcast reflects the user's actual state, not the default. Without this,
+   Composer's blank-score auto-adopt grabbed the default (0,0) and echoed it
+   back as a layoutReq before the restore happened. See `initHklBridge()`
+   call at end of init.ts. */
 
 /* lumadiag overlay: lazy build + show driven by prefs/checkbox. Hotkey
    (Shift+\) defers to a callback so the checkbox + pref stay in sync. */
@@ -432,6 +435,10 @@ if (prefs.autoSync) toggleAutoSync();
 if (prefs.showDiagnostics) applyShowDiagnostics(true);
 
 draw();
+
+/* Bridge announce: deferred until prefs are restored above so the first
+   hkl-layout-state reflects user state, not the boot-time default. */
+initHklBridge();
 
 function onResize(): void {
   const oldCW = view.CW;

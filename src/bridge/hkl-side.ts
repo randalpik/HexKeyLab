@@ -35,12 +35,12 @@ import { noteOn, noteOff, stopAllNotes, triggerRearticulateFlash } from '../audi
 import { draw, activeFootprintSet, invalidatePianoOutline, validateRefNoteCandidate } from '../render/draw.js';
 import { syncViewToOutline } from '../ui/controls.js';
 import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
-import { setSelectionFromComposer, setSongKey, onComposerBye, referenceNote, setSelectionFromManual } from '../state/reference.js';
+import { setSelectionFromComposer, setSongKey, onComposerBye, referenceNote } from '../state/reference.js';
 import { refSpine } from '../tuning/refspine.js';
 import { view } from '../state/view.js';
 import { onRefChanged } from '../effects/onRefChanged.js';
 import { setTuning } from '../ui/controls.js';
-import { loadPrefs, savePrefs, type TuningMode } from '../state/persistence.js';
+import { loadPrefs, type TuningMode } from '../state/persistence.js';
 import type { FootprintCell } from './protocol.js';
 import type { KeyId } from '../types.js';
 
@@ -460,12 +460,16 @@ function applyLayoutFromComposer(req: ComposerLayoutReq): void {
     selTuning.value = req.tuningMode;
     setTuning();
   }
-  /* Ref — mirror the user Ctrl+click path: validate, advance kbAnchor, fire
-     onRefChanged so held physical voices migrate to the new lattice cells.
-     Persist as a manual ref so reloads come back anchored here. */
+  /* Ref — apply as a composer-source selection (NOT manual). This means it
+     participates in the outline-mode gating in reference.ts: effective only
+     in piano outline mode; in lumatone/qwerty/none modes, song-key from the
+     key signature wins. Also do NOT persist as manualRef — the layoutReq is
+     a score-level pinning, not a user Ctrl+click, and the blank-score auto-
+     adopt path used to echo HKL's own default back as a permanent manualRef
+     that masked song-key forever after. */
   if (validateRefNoteCandidate(req.refQ, req.refR) !== null) return;
   const oldAQ = view.kbAnchorQ, oldAR = view.kbAnchorR;
-  if (setSelectionFromManual(req.refQ, req.refR)) {
+  if (setSelectionFromComposer(req.refQ, req.refR)) {
     const sp = refSpine(referenceNote.q, referenceNote.r);
     view.kbAnchorQ = sp.q;
     view.kbAnchorR = sp.r;
@@ -473,7 +477,6 @@ function applyLayoutFromComposer(req: ComposerLayoutReq): void {
     invalidatePianoOutline();
     syncViewToOutline(currentOutlineForBridge(), false);
     draw();
-    savePrefs({ manualRef: { q: req.refQ, r: req.refR } });
   }
 }
 
@@ -579,16 +582,32 @@ bridge.on((msg: ComposerEvent) => {
         broadcastAllToComposer();
       }
       break;
-    case 'set-song-key':
-      /* Sets the song-key tier — surfaces as the effective ref only when
-         the selection tier is empty. */
+    case 'set-song-key': {
+      /* Sets the song-key tier. When the song-key becomes the effective ref
+         (no manual override, no composer-cursor in piano mode), mirror the
+         Ctrl+click path: advance kbAnchor so the Lumatone/QWERTY outline
+         centers on the new song-key, and fire onRefChanged so any held
+         physical voices migrate to the new lattice cells. Cursor-derived
+         refs (set-reference-note) deliberately do NOT do this — they're
+         piano-outline-only and shouldn't drag the static outline around. */
+      const oldAQ = view.kbAnchorQ, oldAR = view.kbAnchorR;
       if (setSongKey(msg.q, msg.r)) {
+        const sp = refSpine(referenceNote.q, referenceNote.r);
+        view.kbAnchorQ = sp.q;
+        view.kbAnchorR = sp.r;
         invalidatePianoOutline();
         syncViewToOutline(currentOutlineForBridge(), false);
         draw();
+        onRefChanged(sp.q - oldAQ, sp.r - oldAR);
+        /* onRefChanged short-circuits when the spine delta is (0,0) — but
+           the footprint + layout-state still need to update because they
+           track referenceNote, not kbAnchor. Different refs can map to the
+           same refSpine. broadcastAllToComposer is sig-diff cached so this
+           is a no-op when onRefChanged did fire it. */
         broadcastAllToComposer();
       }
       break;
+    }
   }
 });
 
