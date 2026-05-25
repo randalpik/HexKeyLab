@@ -60,8 +60,12 @@ export const CURSOR_TRACE_FN = `async function(voice, expectedZeroDeltaPairs) {
     if (cursor && typeof cursor.update === 'function') {
       /* Read the live cursorMode so we don't paint the voice cursor over
        * a selection-mode state — that bled through to the visualCheck
-       * screenshot and made it look like the cursor was still visible. */
-      const liveMode = (window.__hkl_composer.inputState && window.__hkl_composer.inputState().cursorMode) || 'voice';
+       * screenshot and made it look like the cursor was still visible.
+       * Coerce 'expr' to 'voice' because the walker passes exprCursor: null
+       * and the expr renderer dereferences it; this walker tests the VOICE
+       * cursor regardless of which mode the fixture left the model in. */
+      const rawMode = (window.__hkl_composer.inputState && window.__hkl_composer.inputState().cursorMode) || 'voice';
+      const liveMode = rawMode === 'expr' ? 'voice' : rawMode;
       cursor.update(m, { entryMode, cursorMode: liveMode, exprCursor: null });
     }
   };

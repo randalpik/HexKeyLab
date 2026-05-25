@@ -171,6 +171,9 @@ export interface InputHooks {
    *  navigation (arrow keys) is suppressed so the user can't fight the
    *  playback cursors. Other keys (digits, backspace) still work. */
   isPlaybackActive: () => boolean;
+  /** Toggle score playback on/off. Bound to bare Space at the top of the
+   *  keydown dispatcher so Space works as the universal transport shortcut. */
+  togglePlayback: () => void;
   /** Step the renderer zoom one preset in the given direction. The owner
    *  (main.ts) decides the actual preset list and reRenders. */
   onZoomChange?: (dir: 'in' | 'out') => void;
@@ -821,6 +824,39 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     state.cursorMode = 'voice';
   }
 
+  /** Delete the content covered by `sel` and park the cursor at the lastMoved-
+   *  side boundary (beat) or movable end (measure). Shared by cut (Ctrl+X) and
+   *  Backspace/Delete-on-selection. Must run inside `withHistory(...)`; the
+   *  caller is responsible for status, selection/mode cleanup, and re-renders. */
+  function deleteSelectionContent(sel: SelectionState): boolean {
+    if (sel.kind === 'beat') {
+      const boundaries = beatBoundariesInVoice(model, sel.voice);
+      /* Cursor lands at the lastMoved-side boundary post-deletion (= the
+       * "user's perceived current position"). Capture its tstamp before
+       * mutating; the model's flat indices shift but the tstamp is stable. */
+      const exitCursorTstamp = model.getTickPositionAt(
+        sel.voice,
+        sel.lastMoved === 'first' ? boundaries[sel.first] : boundaries[sel.last + 1],
+      );
+      const tLo = model.getTickPositionAt(sel.voice, boundaries[sel.first]);
+      const tHi = model.getTickPositionAt(sel.voice, boundaries[sel.last + 1]);
+      model.clearBeatRange(sel.voice, tLo, tHi);
+      model.setVoice(sel.voice);
+      model.setCursor(
+        model.findCursorByTickPosition(sel.voice, exitCursorTstamp),
+        sel.voice,
+      );
+    } else {
+      const mLo = Math.min(sel.anchorMeasure, sel.movableMeasure);
+      const mHi = Math.max(sel.anchorMeasure, sel.movableMeasure);
+      model.clearMeasureRange(mLo, mHi, sel.firstStaff, sel.lastStaff);
+      const pos = cursorAtMovable(model, sel);
+      model.setVoice(pos.voice);
+      model.setCursor(pos.flatIndex, pos.voice);
+    }
+    return true;
+  }
+
   /** Enter selection mode from voice mode based on the Shift+arrow direction.
    *  Returns true on success. Both Shift+Left and Shift+Right enter beat
    *  mode with the current beat selected (single-beat selection); the
@@ -1056,34 +1092,11 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         pendingClipboardText = serializeClipboard(model, sel);
         const capturedSel: SelectionState = sel;
         lastCopySource = sel;
-        withHistory('cut', () => {
-          if (sel.kind === 'beat') {
-            const boundaries = beatBoundariesInVoice(model, sel.voice);
-            /* Cursor lands at the lastMoved-side boundary post-deletion (= the
-             * "user's perceived current position"). Capture its tstamp before
-             * mutating; the model's flat indices shift but the tstamp is stable. */
-            const exitCursorTstamp = model.getTickPositionAt(
-              sel.voice,
-              sel.lastMoved === 'first' ? boundaries[sel.first] : boundaries[sel.last + 1],
-            );
-            const tLo = model.getTickPositionAt(sel.voice, boundaries[sel.first]);
-            const tHi = model.getTickPositionAt(sel.voice, boundaries[sel.last + 1]);
-            model.clearBeatRange(sel.voice, tLo, tHi);
-            model.setVoice(sel.voice);
-            model.setCursor(
-              model.findCursorByTickPosition(sel.voice, exitCursorTstamp),
-              sel.voice,
-            );
-          } else {
-            const mLo = Math.min(sel.anchorMeasure, sel.movableMeasure);
-            const mHi = Math.max(sel.anchorMeasure, sel.movableMeasure);
-            model.clearMeasureRange(mLo, mHi, sel.firstStaff, sel.lastStaff);
-            const pos = cursorAtMovable(model, sel);
-            model.setVoice(pos.voice);
-            model.setCursor(pos.flatIndex, pos.voice);
-          }
-          return true;
-        }, { sourceSelection: capturedSel, mergeable: true });
+        withHistory(
+          'cut',
+          () => deleteSelectionContent(sel),
+          { sourceSelection: capturedSel, mergeable: true },
+        );
         state.selection = null;
         state.cursorMode = 'voice';
         refreshExprCursor(model);
@@ -1097,6 +1110,27 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
            do the model side-effect until we have the clipboard data. */
         return true;
       }
+    }
+    /* Bare Backspace / Delete: delete the selected content and exit to voice
+       mode. Same end state as cut, minus the clipboard write. Without this
+       branch, the key would fall through to the normal-mode Backspace/Delete
+       handler at the post-exit cursor and chew adjacent content. */
+    if ((e.key === 'Backspace' || e.key === 'Delete')
+        && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+      e.preventDefault();
+      const capturedSel: SelectionState = sel;
+      withHistory(
+        'delete-selection',
+        () => deleteSelectionContent(sel),
+        { sourceSelection: capturedSel, mergeable: true },
+      );
+      state.selection = null;
+      state.cursorMode = 'voice';
+      refreshExprCursor(model);
+      hooks.setStatus?.('Selection deleted.', 'action');
+      hooks.onStateChange();
+      hooks.onChange();
+      return true;
     }
     // Any other key → exit selection to movable, then fall through so the
     // key triggers its normal handler at the post-exit cursor position.
@@ -1192,6 +1226,17 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
        Pure-modifier keys (still arming a combo) don't clear. */
     if (e.key !== 'Shift' && e.key !== 'Control' && e.key !== 'Alt' && e.key !== 'Meta') {
       hooks.clearStatusIfTransient?.();
+    }
+
+    /* Bare Space → toggle playback. Browser default for Space on the document
+       body is page scroll, so we MUST preventDefault. Handled at the top so
+       Space works regardless of selection / chord-internal-sel / pending-tuplet
+       state — playback is a transport mode, orthogonal to editing state. Form
+       fields are already excluded by shouldIgnore() above. */
+    if (e.key === ' ' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+      e.preventDefault();
+      hooks.togglePlayback();
+      return;
     }
 
     /* Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z — undo/redo. Must fire before selection-

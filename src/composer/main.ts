@@ -516,6 +516,7 @@ initInput(model, {
   setStatus: (msg, kind) => setStatus(msg, kind),
   clearStatusIfTransient: () => clearStatusIfTransient(),
   isPlaybackActive: () => isPlaying,
+  togglePlayback: () => { if (isPlaying) stopPlayback(); else startPlayback(); },
   onZoomChange: (dir) => stepZoom(dir),
   getHklTuningMode: () => hklTuningMode,
   requestApplyLayout: () => requestApplyLayout(),
@@ -737,4 +738,17 @@ void bootRenderer();
   inputState: getInputState,
   history,
   buildPlayback,
+  /* Test-only reset: clears main.ts module state that RESET_SNIPPET in the
+   * Composer test runner can't reach (isPlaying, hklConnected). Without this,
+   * a fixture that starts playback or simulates an hkl-hello leaks state into
+   * every subsequent fixture (playback gates input.ts arrow handlers; hello
+   * state gates bridge broadcasts). Not for production use. */
+  __testReset: () => {
+    if (isPlaying) finalizePlaybackEnd('Test reset.');
+    hklConnected = false;
+    hklTuningMode = null;
+    autoAdoptedHklLayout = false;
+    footprintColors = null;
+    setConn('no-hkl');
+  },
 };

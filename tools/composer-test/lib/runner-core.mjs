@@ -42,6 +42,12 @@ export const RESET_SNIPPET = `
    * survive Ctrl+Z and pollute later assertions. */
   if (window.__hkl_composer.history) window.__hkl_composer.history.clear();
 
+  /* Reset main.ts module state (isPlaying, hklConnected, etc.) that we can't
+   * reach via the model or input handles. Fixtures that start playback or
+   * fire sendHklHello() would otherwise leak that state into every
+   * subsequent fixture. */
+  if (window.__hkl_composer.__testReset) window.__hkl_composer.__testReset();
+
   /* Clear held keys via a bridge broadcast — main.ts's bridge.on
    * handler is the only writer to lastHeldKeys. The test-side mock
    * channel is a different BroadcastChannel instance, so its sends

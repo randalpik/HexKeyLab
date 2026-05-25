@@ -613,6 +613,39 @@ const BRIDGE = {
       window.__hkl_composer.bridge.send({ type: 'request-state' });
     `,
   },
+
+  /* Bare Space → startPlayback → play-score event captured on bridge.
+   * sendHklHello flips hklConnected=true so playback isn't gated by the
+   * "Open HKL in another tab" check. Insert one note so buildPlayback has
+   * an event to emit (empty score → no play-score sent). */
+  space_starts_playback: {
+    setup: `
+      window.__bridgeMock.sendHklHello();
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({
+        notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }],
+        duration: '4', dots: 0,
+      });
+      m.setCursor(0, 1);
+      window.__bridgeMock.reset();
+    `,
+    setupKeys: [' '],
+  },
+
+  /* Space twice → first start, second stop. Both bridge events captured. */
+  space_stops_playback: {
+    setup: `
+      window.__bridgeMock.sendHklHello();
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({
+        notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }],
+        duration: '4', dots: 0,
+      });
+      m.setCursor(0, 1);
+      window.__bridgeMock.reset();
+    `,
+    setupKeys: [' ', ' '],
+  },
 };
 
 /* ── Export fixtures ──────────────────────────────────────────────────── */
@@ -847,6 +880,39 @@ const SELECTION = {
       { key: 'ArrowRight', shift: true },
       { key: 'ArrowRight', shift: true },
       { key: 'x', ctrl: true },
+    ],
+  },
+
+  /* Backspace on a beat selection should delete the selected content AND exit
+     selection mode (same end state as cut, minus the clipboard write). Before
+     this fix, Backspace fell through to the normal-mode handler at the post-
+     exit cursor and chewed adjacent content. */
+  sel_beat_backspace_deletes_and_exits: {
+    setup: `${FILL_M1_4Q_V1} m.setCursor(0, 1);`,
+    setupKeys: [
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      'Backspace',
+    ],
+  },
+
+  /* Delete (forward-delete) on a beat selection: same end state as Backspace. */
+  sel_beat_delete_deletes_and_exits: {
+    setup: `${FILL_M1_4Q_V1} m.setCursor(0, 1);`,
+    setupKeys: [
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      'Delete',
+    ],
+  },
+
+  /* Backspace on a measure-mode selection: clears measure content, exits to
+     voice mode. */
+  sel_measure_backspace_deletes_and_exits: {
+    setup: `${FILL_M1_4Q_V1} m.setCursor(0, 1);`,
+    setupKeys: [
+      { key: 'ArrowDown', shift: true },
+      'Backspace',
     ],
   },
 
@@ -1310,6 +1376,19 @@ const UNDO_REDO = {
       { key: 'ArrowRight', shift: true },  /* grow to beats 0–1 */
       { key: 'x', ctrl: true },            /* cut */
       { key: 'z', ctrl: true },            /* undo cut */
+    ],
+  },
+
+  /* Backspace-on-selection with source-selection re-entry on undo. Mirrors
+   * undo_cut_restores_source_sel — confirms withHistory('delete-selection')
+   * wires the sourceSelection through correctly. */
+  undo_backspace_selection_restores: {
+    setup: `${FILL_M1_4Q_V1} m.setCursor(0, 1);`,
+    setupKeys: [
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      'Backspace',
+      { key: 'z', ctrl: true },
     ],
   },
 };
@@ -1938,6 +2017,32 @@ export const FIXTURE_ASSERTIONS = {
           : { ok: false, detail: 'captured=' + JSON.stringify(captured.map((c) => c.type)) };
       })()` },
   ],
+  space_starts_playback: [
+    { name: 'bare Space sends play-score to bridge',
+      expr: `(async () => {
+        await new Promise((r) => requestAnimationFrame(() => r(true)));
+        await Promise.resolve();
+        const captured = window.__bridgeMock.captured();
+        return captured.some((m) => m.type === 'play-score')
+          ? { ok: true }
+          : { ok: false, detail: 'captured=' + JSON.stringify(captured.map((c) => c.type)) };
+      })()` },
+  ],
+  space_stops_playback: [
+    { name: 'two Spaces send play-score then stop-playback',
+      expr: `(async () => {
+        await new Promise((r) => requestAnimationFrame(() => r(true)));
+        await Promise.resolve();
+        const captured = window.__bridgeMock.captured();
+        const types = captured.map((c) => c.type);
+        const playIdx = types.indexOf('play-score');
+        const stopIdx = types.indexOf('stop-playback');
+        const ok = playIdx >= 0 && stopIdx > playIdx;
+        return ok
+          ? { ok: true }
+          : { ok: false, detail: 'captured=' + JSON.stringify(types) };
+      })()` },
+  ],
 
   /* Scroll-into-view. */
   scrollIntoView_idempotent: [
@@ -2109,6 +2214,49 @@ export const FIXTURE_ASSERTIONS = {
         return rests.length === 4
           ? { ok: true }
           : { ok: false, detail: 'rest count = ' + rests.length };
+      })()` },
+  ],
+  sel_beat_backspace_deletes_and_exits: [
+    { name: 'selection cleared and cursorMode back to voice',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        return s.cursorMode === 'voice' && s.selection === null
+          ? { ok: true }
+          : { ok: false, detail: 'cursorMode=' + s.cursorMode };
+      })()` },
+    { name: 'V_1 layer still has 4 rests (Backspace replaced selection with rests, total preserved)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const rests = m.allMeasures()[0].querySelectorAll('staff[n="1"] layer[n="1"] > rest');
+        return rests.length === 4
+          ? { ok: true }
+          : { ok: false, detail: 'rest count = ' + rests.length };
+      })()` },
+  ],
+  sel_beat_delete_deletes_and_exits: [
+    { name: 'selection cleared and cursorMode back to voice',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        return s.cursorMode === 'voice' && s.selection === null
+          ? { ok: true }
+          : { ok: false, detail: 'cursorMode=' + s.cursorMode };
+      })()` },
+    { name: 'V_1 layer still has 4 rests (Delete behaves same as Backspace)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const rests = m.allMeasures()[0].querySelectorAll('staff[n="1"] layer[n="1"] > rest');
+        return rests.length === 4
+          ? { ok: true }
+          : { ok: false, detail: 'rest count = ' + rests.length };
+      })()` },
+  ],
+  sel_measure_backspace_deletes_and_exits: [
+    { name: 'selection cleared and cursorMode back to voice',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        return s.cursorMode === 'voice' && s.selection === null
+          ? { ok: true }
+          : { ok: false, detail: 'cursorMode=' + s.cursorMode };
       })()` },
   ],
 
@@ -2886,6 +3034,20 @@ export const FIXTURE_ASSERTIONS = {
         const m = window.__hkl_composer.model;
         const inp = window.__hkl_composer.inputState();
         /* Four quarter rests should be back in V1. */
+        const flat = m.flatChildren(1);
+        const realRests = flat.filter(e => e.localName === 'rest' && e.getAttribute('data-placeholder') !== 'true' && e.getAttribute('data-tuplet-placeholder') !== 'true');
+        if (realRests.length !== 4) return { ok: false, detail: 'restCount=' + realRests.length };
+        if (inp.cursorMode !== 'select') return { ok: false, detail: 'cursorMode=' + inp.cursorMode };
+        if (!inp.selection || inp.selection.kind !== 'beat') return { ok: false, detail: 'sel=' + JSON.stringify(inp.selection) };
+        return { ok: inp.selection.first === 0 && inp.selection.last === 1,
+                 detail: 'sel=' + inp.selection.first + '..' + inp.selection.last };
+      })()` },
+  ],
+  undo_backspace_selection_restores: [
+    { name: 'deleted content restored and source beat-selection re-entered',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const inp = window.__hkl_composer.inputState();
         const flat = m.flatChildren(1);
         const realRests = flat.filter(e => e.localName === 'rest' && e.getAttribute('data-placeholder') !== 'true' && e.getAttribute('data-tuplet-placeholder') !== 'true');
         if (realRests.length !== 4) return { ok: false, detail: 'restCount=' + realRests.length };

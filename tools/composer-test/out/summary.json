@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 105,
-  "passed": 104,
-  "failed": 1,
-  "elapsedMs": 32953,
+  "fixtures": 111,
+  "passed": 111,
+  "failed": 0,
+  "elapsedMs": 34220,
   "results": [
     {
       "name": "emptyDoc",
@@ -407,13 +407,8 @@
     },
     {
       "name": "kbd_voiceCycle_entersExprWhenMeasureHasDynamic",
-      "ok": false,
-      "failures": [
-        {
-          "kind": "cursor-trace",
-          "detail": "TypeError: Cannot read properties of null (reading 'moments')\n    at currentMoment (http://localhost:5173/src/composer/cursor/expressionCursor.ts?t=1779742464639:124:9)\n    at CursorOverlay.renderExpressionCursor (http://localhost:5173/src/composer/cursor/cursor.ts?t=1779742464639:385:15)\n    at CursorOverlay.update (http://localhost:5173/src/composer/cursor/cursor.ts?t=1779742464639:111:12)\n    at refresh (<anonymous>:57:14)\n    at <anonymous>:61:3\n    at <anonymous>:2:66\n    at <anonymous>:4:9"
-        }
-      ],
+      "ok": true,
+      "failures": [],
       "counts": {
         "invariants": 9
       }
@@ -480,6 +475,22 @@
       "failures": [],
       "counts": {
         "invariants": 7
+      }
+    },
+    {
+      "name": "space_starts_playback",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "space_stops_playback",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
       }
     },
     {
@@ -600,6 +611,30 @@
       "failures": [],
       "counts": {
         "invariants": 9
+      }
+    },
+    {
+      "name": "sel_beat_backspace_deletes_and_exits",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "sel_beat_delete_deletes_and_exits",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "sel_measure_backspace_deletes_and_exits",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
       }
     },
     {
@@ -844,6 +879,14 @@
     },
     {
       "name": "undo_cut_restores_source_sel",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "undo_backspace_selection_restores",
       "ok": true,
       "failures": [],
       "counts": {
