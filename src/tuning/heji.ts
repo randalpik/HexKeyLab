@@ -2,7 +2,7 @@
 // display layer.
 //
 // HEJI sits ON TOP of the conventional Pythagorean letter+accidental spelling
-// produced by noteName() / noteNameV(). It adds two further glyph families:
+// produced by noteName(). It adds two further glyph families:
 //   - syntonic-comma arrows (5-limit), each 80:81 ≈ 21.5¢
 //   - septimal-comma hooks (7-limit), each 63:64 ≈ 27.3¢
 //
@@ -25,7 +25,7 @@
 //
 // SMuFL codepoints verified against w3c/smufl/gh-pages/metadata/glyphnames.json.
 
-import { bandOf, posInBand } from '../layout/coords.js';
+import { posInBand } from '../layout/coords.js';
 import { regionInfoWithState, modeHasShifts } from './regions.js';
 import { accToVal, parseNote } from './notes.js';
 import type { TuningStateLike } from './regions.js';
@@ -52,28 +52,29 @@ export function hejiCommas(q: number, r: number, state: TuningStateLike): HejiCo
      would carry phantom syntonic-comma arrows even though those cells are
      just enharmonic 12-TET pitches. */
   if (state.mode === 'E') return { syn5: 0, sept7: 0 };
-  const db = bandOf(q) - bandOf(0);
+  /* V (schismatic) mode intentionally does NOT add per-band schisma arrows
+     here. The schisma is signaled by V's band-distinguishing coloring +
+     band seam; making HEJI also indicate it would double-flag the same
+     fact, and the schisma's syntonic component (~2c) is much smaller than
+     a real syntonic comma arrow's nominal (~22c). The interval analyzer
+     surfaces octave+schisma via jiRatioWithState's prime decomposition. */
   const dp = posInBand(q) - posInBand(0);
-  const dr = r - 0;
-  let e3 = dr, e5 = dp, e7 = 0;
-  /* e2 not needed for HEJI; commas don't care about octave */
+  let e5 = dp, e7 = 0;
+  /* e2 / e3 not needed for HEJI; commas don't care about octave or pure
+     Pythagorean stacking. */
   if (modeHasShifts(state.mode)) {
     const ri1 = regionInfoWithState(0, 0, state);
     const ri2 = regionInfoWithState(q, r, state);
     const apply = (ri: RegionInfo, sign: number): void => {
       if (ri.aDepth > 0) {
         const d = ri.aDepth;
-        if (ri.aUpper) { e5 += sign * d; e3 += sign * (-4) * d; }
-        else { e3 += sign * 4 * d; e5 += sign * (-d); }
+        if (ri.aUpper) e5 += sign * d;
+        else e5 += sign * (-d);
       }
-      if (ri.type === 'B') { e7 += sign; e3 += sign * 2; }
+      if (ri.type === 'B') e7 += sign;
     };
     apply(ri2, +1);
     apply(ri1, -1);
-  }
-  if (state.mode === 'V' && db !== 0) {
-    e3 += db * 8;
-    e5 += db * 1;
   }
   return { syn5: e5, sept7: e7 };
 }
@@ -269,14 +270,17 @@ export function hejiLabel(noteNameStr: string, commas: HejiCommas): HejiLabel {
     }
   }
 
-  /* Step 2: distribute arrows over the chain, up to 2 per glyph,
-   * filling left to right. Sign carries through `combinedCode`. */
+  /* Step 2: balanced distribution — assign 1 arrow per glyph left to
+   * right, then a second pass for the 2nd arrow (also left to right).
+   * Visually uniform: F xx with one arrow renders as `x↓ x↓` rather than
+   * `x↓↓ x`. Capacity stays 2 per glyph; overflow falls through to Step 3. */
   const arrowSign = syn5Rem > 0 ? +1 : -1;
   let remaining = Math.abs(syn5Rem);
-  for (let i = 0; i < chain.length && remaining > 0; i++) {
-    const here = Math.min(remaining, 2);
-    chain[i].arrows = here * arrowSign;
-    remaining -= here;
+  for (let pass = 0; pass < 2 && remaining > 0; pass++) {
+    for (let i = 0; i < chain.length && remaining > 0; i++) {
+      chain[i].arrows += arrowSign;
+      remaining -= 1;
+    }
   }
 
   /* Step 3: extras spill onto natural-sign carriers. */

@@ -13,11 +13,14 @@
 //   Pythagorean ('P') | A-d0  A-d1↓ A-d1↑     (qm=1 raised by SC, qm=2 lowered)
 //   Semiditonal ('D') | A-d0  A-d0  A-d1↑     (qm=2 lowered by SC only)
 //   Septimal ('7')    | A-d0  A-d0  B-d1↑     (qm=2 −SC + septimal 63/64)
-//   Schismatic ('V') | A-d0  A-d1↓ A-d1↑     (same as Pythagorean; the
-//                                              schisma^b octave drift lives
-//                                              in freqAt's band factor, and
-//                                              jiRatioWithState adds its
-//                                              prime decomposition separately)
+//   Schismatic ('V') | A-d0  A-d0  A-d1↑     (same shifts as Semiditonal; V
+//                                              differs by an extra schisma^b
+//                                              octave-stacking factor in
+//                                              freqAt and a matching prime
+//                                              decomposition in jiRatioWithState.
+//                                              Within-band intervals become
+//                                              (PM3, M3); the band-crossing M3
+//                                              is spelled d4 and rings as a PM3.)
 //   Equal ('E')       — not consulted; frequency.ts has its own early return.
 
 import { tuning } from '../state/tuning.js';
@@ -46,9 +49,9 @@ export function regionInfoWithState(q: number, _r: number, s: TuningStateLike): 
     case '5':
       return A_D0;
     case 'D':
+    case 'V':
       return qm === 2 ? A_D1_UPPER : A_D0;
     case 'P':
-    case 'V':
       return qm === 2 ? A_D1_UPPER : qm === 1 ? A_D1_LOWER : A_D0;
     case '7':
       return qm === 2 ? B_D1_UPPER : A_D0;

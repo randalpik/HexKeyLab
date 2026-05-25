@@ -75,7 +75,7 @@ for (const row of qwertyRows) {
 }
 
 // ── tuning math (mirrors src/tuning/{ratios,regions}.ts) ───────────────────
-const TUNING_MODES = ['E', '5', 'P', 'D', '7'];
+const TUNING_MODES = ['E', '5', 'P', 'D', '7', 'V'];
 
 const bandOf = (q) => Math.floor((q + 1) / 3);
 const posInBand = (q) => (((q + 1) % 3) + 3) % 3;
@@ -92,6 +92,7 @@ function regionInfo(q, _r, mode) {
     case '5':
       return A_D0;
     case 'D':
+    case 'V':
       return qm === 2 ? A_D1_UPPER : A_D0;
     case 'P':
       return qm === 2 ? A_D1_UPPER : qm === 1 ? A_D1_LOWER : A_D0;
@@ -103,7 +104,7 @@ function regionInfo(q, _r, mode) {
 }
 
 function modeHasShifts(mode) {
-  return mode === 'P' || mode === 'D' || mode === '7';
+  return mode === 'P' || mode === 'D' || mode === '7' || mode === 'V';
 }
 
 function jiExps(q1, r1, q2, r2, mode) {
@@ -123,6 +124,9 @@ function jiExps(q1, r1, q2, r2, mode) {
     applyAdj(ri2, +1);
     applyAdj(ri1, -1);
   }
+  /* Schismatic: every Δband adds one schisma (32805:32768 = 3^8·5/2^15).
+     Mirrors the V branch in src/tuning/ratios.ts:jiRatioWithState. */
+  if (mode === 'V' && db !== 0) { e2 += db * -15; e3 += db * 8; e5 += db * 1; }
   return [e2, e3, e5, e7];
 }
 
@@ -254,6 +258,7 @@ const MODE_LABEL = {
   'P': 'Pythagorean',
   'D': 'Semiditonal',
   '7': 'Septimal',
+  'V': 'Schismatic',
 };
 
 function printMatrix(mode, label) {

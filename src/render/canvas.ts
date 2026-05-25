@@ -68,10 +68,11 @@ const PIANO_BOUNDS_TABLE: Record<RotationMode, Record<TuningMode, CanvasMetrics>
     'P': { kbMinW: 1265, CH: 418 },
     'D': { kbMinW: 1218, CH: 418 },
     '7': { kbMinW: 1115, CH: 418 },
-    /* V uses Pythagorean's region structure; ~sub-cent schisma drift doesn't
-       meaningfully shift picker output. Reusing 'P' bounds — re-probe if the
-       experimental mode ends up wanting its own canvas extents. */
-    'V': { kbMinW: 1265, CH: 418 },
+    /* V's picker prefers staying within the ref's band (schisma adds large
+       TH for cross-band intervals), so the 88-cell footprint hugs the ref
+       horizontally and stretches vertically along the fifth axis — yielding
+       a narrower kbMinW and taller CH than the SC-shift modes. */
+    'V': { kbMinW: 510, CH: 418 },
   },
   lumatone: {
     'E': { kbMinW: 1240, CH: 345 },
@@ -79,7 +80,7 @@ const PIANO_BOUNDS_TABLE: Record<RotationMode, Record<TuningMode, CanvasMetrics>
     'P': { kbMinW: 1363, CH: 416 },
     'D': { kbMinW: 1322, CH: 416 },
     '7': { kbMinW: 1226, CH: 345 },
-    'V': { kbMinW: 1363, CH: 416 },
+    'V': { kbMinW: 323, CH: 503 },
   },
   piano: {
     'E': { kbMinW: 1257, CH: 307 },
@@ -87,7 +88,7 @@ const PIANO_BOUNDS_TABLE: Record<RotationMode, Record<TuningMode, CanvasMetrics>
     'P': { kbMinW: 1343, CH: 406 },
     'D': { kbMinW: 1314, CH: 406 },
     '7': { kbMinW: 1229, CH: 307 },
-    'V': { kbMinW: 1343, CH: 406 },
+    'V': { kbMinW: 374, CH: 554 },
   },
 };
 

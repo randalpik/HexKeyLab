@@ -29,7 +29,7 @@ import type {
 import { selection } from '../state/selection.js';
 import { audio } from '../state/audio.js';
 import { tuning } from '../state/tuning.js';
-import { noteName, noteNameV, keyOctave, keyOctaveV, parseNote, accToVal } from '../tuning/notes.js';
+import { noteName, keyOctave, parseNote, accToVal } from '../tuning/notes.js';
 import { darkColorHex, coordToMidi } from '../transcription/pitch.js';
 import { noteOn, noteOff, stopAllNotes, triggerRearticulateFlash } from '../audio/engine.js';
 import { draw, activeFootprintSet, invalidatePianoOutline, validateRefNoteCandidate } from '../render/draw.js';
@@ -75,20 +75,8 @@ function accToMei(acc: string): string {
 }
 
 function resolveKey(q: number, r: number): ResolvedNote {
-  /* V mode: respell relative to refSpine so HKL display and Composer's
-     incoming notes agree. Other modes use the standard octave-invariant
-     naming. Note: accumulated accidentals beyond ±3 will fall outside
-     Verovio's clean-render zone — Composer handles that as a known
-     degradation for the experimental mode. */
-  let name: string, oct: number;
-  if (tuning.mode === 'V') {
-    const spine = refSpine(referenceNote.q, referenceNote.r);
-    name = noteNameV(q, r, spine.q);
-    oct = keyOctaveV(q, r, spine.q);
-  } else {
-    name = noteName(q, r);
-    oct = keyOctave(q, r);
-  }
+  const name = noteName(q, r);
+  const oct = keyOctave(q, r);
   const parsed = parseNote(name);
   const key: KeyId = q + ',' + r;
   return {

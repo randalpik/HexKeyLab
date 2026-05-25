@@ -26,11 +26,9 @@ import { sizeCanvas, getVisibleRange, computePianoViewCenter } from './canvas.js
 import { animation } from './animation.js';
 import { updateInfo } from './info.js';
 import {
-  parseNote, accToVal, noteName, noteNameV,
+  parseNote, accToVal, noteName,
 } from '../tuning/notes.js';
 import { jiRatio, tenneyHeightFromExps } from '../tuning/ratios.js';
-import { regionInfo } from '../tuning/regions.js';
-import { refSpine } from '../tuning/refspine.js';
 import {
   hejiCommas,
   hejiLabel,
@@ -42,15 +40,11 @@ import { VALID_REF_TABLE } from './refbounds-table.js';
 import { isCtrlHeld } from '../ui/keyboard.js';
 import type { KeyId } from '../types.js';
 
-/** Resolve the displayed note name for a cell, accounting for V mode's
- *  M3-distance respelling from refSpine. Other modes use the standard
- *  octave-invariant `noteName(q, r)`. Read at call time so a ref change
- *  re-spells without needing a cache invalidation step. */
+/** Resolve the displayed note name for a cell. All tuning modes now use the
+ *  standard octave-invariant `noteName(q, r)` — V mode's old M3-chain
+ *  respelling is gone (the schisma is signaled by color + band seam instead
+ *  of by accumulating accidentals across bands). */
 function displayedNoteName(q: number, r: number): string {
-  if (tuning.mode === 'V') {
-    const spine = refSpine(referenceNote.q, referenceNote.r);
-    return noteNameV(q, r, spine.q);
-  }
   return noteName(q, r);
 }
 
@@ -596,8 +590,9 @@ function slotAdvance(g: HejiGlyphInfo): number {
  *     sits relative to the accidental's visual top. 0.45 = baseline drops
  *     just below the accidental's apex so the digit overlaps slightly and
  *     reads as attached to it.
- * Tuned by inspection on V mode (refSpine=A, q=+12 → B#⁵). */
-const EXP_SCALE = 0.55;
+ * Tuned by inspection at the COLLAPSE_THRESHOLD boundary (|AD|=5 / |SD|=5
+ * collapse cases in Pythagorean mode). */
+const EXP_SCALE = 0.42;
 const EXP_ASCENT_FRAC = 0.45;
 
 function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
@@ -1083,11 +1078,15 @@ export function draw(): void {
     ctx.stroke();
   });
 
-  /* lattice seams — skip in Equal mode (no seams) and Schismatic mode
-     (band boundaries don't carry a spelling change: V respells via the M3
-     chain so the qm=1 → qm=2 band-crossing reads as a 5-limit M3, not a
-     diminished 4th). */
-  if (showB && !tuning.equalEnabled && tuning.mode !== "V") {
+  /* lattice seams — drawn at every band boundary (5, P, D, 7, V). Equal
+     mode is the only mode without a band concept; everything else has the
+     three-cells-per-band Q-axis structure where the band crossing carries
+     a spelled enharmonic change (a d4 in V, a varying spelling in the
+     others depending on shifts). Septimal no longer draws an extra
+     A↔B region seam — hue/HEJI hook/leftmost-of-band position already
+     flag the B region clearly enough that an additional seam would just
+     be visual noise. */
+  if (showB && !tuning.equalEnabled) {
     const eHL = hexR * 0.55;
     ctx.strokeStyle = "#fff";
     ctx.lineWidth = 2;
@@ -1188,18 +1187,13 @@ export function draw(): void {
        allocate the lookup key only after the cheap allSet + same-band
        filters short-circuit. That cuts the string churn from
        ~12k/frame to ~5k/frame. */
-    /* Seams are emitted (a) at band boundaries (5, P, D, 7), and (b) at
-       A↔B boundaries when any B-region cells exist — i.e. only in Septimal
-       mode. Pure-SC-shift modes (Pythagorean, Semiditonal) signal their
-       column boundaries through the SC-shifted hue rotation alone, which
-       reads as a subtle overlay; adding seams on top would be redundant
-       visual noise (especially Pythagorean, where every qm boundary
-       would seam). Equal and Schismatic skip seams entirely (see gate
-       above): both lack a different-spelled-interval at the band boundary. */
-    const septOn = tuning.mode === "7";
-    function regionParity(q: number, r: number): number {
-      return regionInfo(q, r).type === "B" ? 1 : 0;
-    }
+    /* Seams emit at band boundaries only — the universal "this crossing
+       carries a spelling change" indicator. In V mode the band crossing
+       is the d4-spelled-PM3; in P/D/5/7 it's the qm transition where the
+       sharp/flat orbits shift. No mode draws within-band seams under the
+       current design (Septimal's old A↔B seams were removed once the
+       B-region's hue + HEJI hook + leftmost-of-band position became the
+       canonical disambiguator). */
     for (let ki = 0; ki < allKeys.length; ki++) {
       const k = allKeys[ki];
       const kq = k.q,
@@ -1209,10 +1203,7 @@ export function draw(): void {
         const nq = kq + d[0],
           nr = kr + d[1];
         if (!allSet.has(packQR(nq, nr))) continue;
-        const sameBand = bandOf(kq) === bandOf(nq);
-        const sameRegion =
-          !septOn || regionParity(kq, kr) === regionParity(nq, nr);
-        if (sameBand && sameRegion) continue;
+        if (bandOf(kq) === bandOf(nq)) continue;
         const nb = posMap[nq + "," + nr];
         if (!nb) continue;
         const mx = (k.ux + nb.ux) / 2,

@@ -12,11 +12,18 @@
 //   Semiditonal          qm=2) take the hue of their SC sibling at (q∓7, r±4),
 //   ('P','D')            because the SC shift makes them enharmonic with that
 //                        5-limit cell.
-//   Schismatic ('V')   — M3-chain coloring: chainStep = floor((2q+1)/3),
-//                        idx = (5 − midiOct − 2·chainStep) mod 7 in hueCycle.
-//                        Tracks the M3 chain (qm=1 of band b paired with qm=2
-//                        of band b+1) across MIDI octaves. No octave invariance
-//                        because +3Q = octave + schisma in V mode.
+//   Schismatic ('V')   — Semiditonal coloring in the central band (the band
+//                        containing refSpine), rotated by 5 hue indices
+//                        (≡ −2 mod 7) per (band − centralBand). The central
+//                        band reads identically to Semiditonal so the in-band
+//                        M3 relationship (qm=2 and qm=0 share a hue at r=0)
+//                        carries over directly. Other bands carry the same
+//                        relationship internally but rotated, signaling
+//                        schisma accumulation — color becomes the sole
+//                        indicator that the spelled octave has been altered.
+//                        The +5 cadence preserves the old V mode's hues for
+//                        qm=0 and qm=2 cells across bands; only qm=1 cells
+//                        change (they now align with Semiditonal's qm=1).
 
 import { bandOf } from '../layout/coords.js';
 import { tuning } from '../state/tuning.js';
@@ -55,16 +62,29 @@ export function keyColorVariant(q: number, r: number): { hue: Hue; isW: boolean;
   const midi = 57 + 4 * q + 7 * r;
   const pc = ((midi % 12) + 12) % 12;
   const isW = whiteSet.has(pc);
-  /* V mode: M3-chain coloring. Octave invariance is broken (+3Q = octave +
-     schisma), so color tracks position along the M3 chain (chainStep) and
-     MIDI octave. The M3 chain crosses band boundaries: qm=1 of band b shares
-     a chain with qm=2 of band b+1 — flat across the M3 step, +1 across each
-     PM3 step. Same chain + same MIDI octave = same color. */
+  /* V mode: Semiditonal coloring in band 0 (the band containing the lattice
+     origin / default-ref A3), rotated by +5 hue indices per band offset
+     from band 0. Band 0 thus matches Semiditonal exactly — the in-band M3
+     relationship (qm=2 and qm=0 share a hue) carries straight over. Other
+     bands carry the same internal relationships but rotated, so the
+     "same letter, next band" cell gets a different hue, signaling that
+     the spelled octave has been altered by a schisma. The +5 (≡ −2 mod 7)
+     cadence preserves the old V mode's qm=0/qm=2 hues across bands —
+     only qm=1 cells change to align with Semiditonal's qm=1. Anchoring
+     on band 0 (not the current ref's band) makes the per-cell color a
+     pure function of (q, r): a ref change slides the lattice underneath
+     the outline but does NOT rotate the cell hues. */
   if (tuning.mode === 'V') {
-    const midiOct = Math.floor(midi / 12);
-    const chainStep = Math.floor((2 * q + 1) / 3);
-    const idx = (((5 - midiOct - 2 * chainStep) % 7) + 7) % 7;
-    return { hue: hueCycle[idx], isW, isB: false, isShifted: false };
+    const qm = ((q % 3) + 3) % 3;
+    /* Semiditonal-style: qm=2 cells redirect to the SC sibling at
+       (q+7, r−4); qm=0 / qm=1 use the cell's own coords. */
+    const sq = qm === 2 ? q + 7 : q;
+    const sr = qm === 2 ? r - 4 : r;
+    const isShifted = qm === 2;
+    const semHue = computeHue(sq, sr);
+    const db = bandOf(q);
+    const idx = (((hueIdx[semHue] + 5 * db) % 7) + 7) % 7;
+    return { hue: hueCycleOrder[idx], isW, isB: false, isShifted };
   }
   const ri = regionInfo(q, r);
   if (ri.type === 'B') {

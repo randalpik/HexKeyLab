@@ -102,30 +102,3 @@ export function keyOctave(q: number, r: number): number {
   return Math.floor(natMidi / 12) - 1;
 }
 
-/** Schismatic ('V') mode respelling: walks the M3 chain from refSpine to
- *  (q, r), applying one m3up/m3dn step per Δq unit. Cells in the same band
- *  as refSpine spell identically to `noteName(q, r)`; cells in other bands
- *  accumulate accidentals so the same physical key in successive bands
- *  reads as e.g. A → G## → ... instead of looping through octaves with the
- *  same letter. fifthName(r) anchors the fifth axis (which stays pure 3:2
- *  in V mode), so Δr is captured automatically without a separate walk.
- *
- *  Accidentals are NOT clamped — they grow as |Δq| grows. This is the
- *  honest representation of M3-distance from the reference. */
-export function noteNameV(q: number, r: number, rsQ: number): string {
-  let name = fifthName(r);
-  const dq = q - rsQ;
-  if (dq > 0) for (let i = 0; i < dq; i++) name = m3up(name);
-  else if (dq < 0) for (let i = 0; i < -dq; i++) name = m3dn(name);
-  return name;
-}
-
-/** Schismatic ('V') mode octave-label: same mechanism as `keyOctave` but
- *  using the V-mode accidental from `noteNameV`, so the natural-letter
- *  MIDI reflects the respelled letter. */
-export function keyOctaveV(q: number, r: number, rsQ: number): number {
-  const name = noteNameV(q, r, rsQ);
-  const v = accToVal(parseNote(name).acc);
-  const natMidi = 57 + 4 * q + 7 * r - v;
-  return Math.floor(natMidi / 12) - 1;
-}

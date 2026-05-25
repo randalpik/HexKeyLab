@@ -1746,11 +1746,15 @@ for the dead-end I hit first.
 **Label assembly rules** (in `src/tuning/heji.ts:hejiLabel`):
 1. Build the conventional accidental chain: `[single, doubles...]` per
    accidental sign + count (e.g. accVal=+3 → `[♯, 𝄪]`).
-2. Distribute syntonic commas across the chain, up to 2 per glyph, filling
-   left to right. Each glyph becomes its "accidental + N arrows" SMuFL
-   variant.
-3. Extras spill onto natural-sign carriers (up to 2 arrows each) appended
-   after the accidental chain.
+2. Distribute syntonic commas across the chain in a **balanced** pass —
+   one arrow per glyph left to right, then a second arrow per glyph left
+   to right (capacity stays 2/glyph). F#### with one syntonic comma
+   renders `x↓ x↓`, not `x↓↓ x`; the chain reads as visually uniform
+   instead of front-loaded. (Earlier draft was greedy left-to-right.)
+   Each glyph becomes its "accidental + N arrows" SMuFL variant.
+3. Extras (chain capacity exceeded) spill onto natural-sign carriers
+   greedily packed at 2 arrows each. Carriers exist only to carry arrows,
+   so packing them maximally minimizes glyph count.
 4. One septimal hook glyph at the end if `sept7 ≠ 0`. (Current layouts
    produce |sept7| ≤ 1; the 2× hook glyphs exist in SMuFL but are unused.)
 
