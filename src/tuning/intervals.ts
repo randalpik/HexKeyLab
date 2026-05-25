@@ -210,7 +210,7 @@ interface OverrideEntry {
 
 interface PairDecl {
   c1: ClassKey;
-  c2: ClassKey;
+  c2?: ClassKey;      /* omit for a single-class declaration (no auto-mirror) */
   pythag1?: string;
   pythag2?: string;
   entries: OverrideEntry[];
@@ -221,14 +221,17 @@ interface PairDecl {
 const PAIRS: PairDecl[] = [
   { c1: '3,M', c2: '6,m', entries: [
     { s: -1, name: 'major 3rd' },
+    { s: +1, name: 'acute major 3rd' },     /* 6561:5120 ≈ 430¢; auto → 'grave minor 6th' (10240:6561) */
     { z: +1, name: 'septimal major 3rd' },
   ]},
   { c1: '3,m', c2: '6,M', entries: [
     { s: +1, name: 'minor 3rd' },
+    { s: -1, name: 'grave minor 3rd' },     /* 2560:2187 ≈ 272¢; auto → 'acute major 6th' (2187:1280) */
     { z: -1, name: 'septimal minor 3rd' },
   ]},
   { c1: '2,M', c2: '7,m', entries: [
     { s: -1, name: 'major 2nd' },
+    { s: +1, name: 'acute major 2nd' },     /* 729:640 ≈ 226¢; auto → 'grave minor 7th' (1280:729) */
     { z: +1, name: 'septimal major 2nd', mirror: 'harmonic 7th' },
   ]},
   { c1: '2,m', c2: '7,M', entries: [
@@ -254,21 +257,42 @@ const PAIRS: PairDecl[] = [
     ]
   },
   { c1: '2,A', c2: '7,d', entries: [
-    { s: -2,        name: 'augmented 2nd' },          /* auto → 'diminished 7th' */
+    { s: -1,        name: 'greater augmented 2nd' },  /* auto → 'lesser diminished 7th' */
+    { s: -2,        name: 'lesser augmented 2nd' },   /* auto → 'greater diminished 7th' */
     { s: -2, z: +1, name: 'septimal augmented 2nd' }, /* auto → 'septimal diminished 7th' */
   ]},
   { c1: '3,d', c2: '6,A', entries: [
-    { s: +2,        name: 'diminished 3rd' },          /* auto → 'augmented 6th' */
+    { s: +1,        name: 'lesser diminished 3rd' },   /* auto → 'greater augmented 6th' */
+    { s: +2,        name: 'greater diminished 3rd' },  /* auto → 'lesser augmented 6th' */
     { s: +1, z: -1, name: 'septimal diminished 3rd' }, /* auto → 'septimal augmented 6th' */
   ]},
   { c1: '4,d', c2: '5,A', entries: [
-    { s: +2,        name: 'diminished 4th' },          /* auto → 'augmented 5th' */
+    { s: +1,        name: 'lesser diminished 4th' },   /* auto → 'greater augmented 5th' */
+    { s: +2,        name: 'greater diminished 4th' },  /* auto → 'lesser augmented 5th' */
     { s: +1, z: -1, name: 'septimal diminished 4th' }, /* auto → 'septimal augmented 5th' */
   ]},
   { c1: '3,A', c2: '6,d', entries: [
     { s: -1,        name: 'augmented 3rd' },           /* auto → 'diminished 6th' */
     { s: -1, z: +1, name: 'septimal augmented 3rd' },  /* auto → 'septimal diminished 6th' */
   ]},
+  /* (8, A) is single-class: its complement (1, d) is structurally unreachable
+     because classifyDiatonic normalizes to ascending direction, so qual='d'
+     never occurs for letters=0. Declared without c2 to avoid populating dead
+     overrides. */
+  { c1: '8,A', entries: [
+    { s: -1, name: 'greater augmented octave' },  /* 135:64 ≈ 1292¢ */
+    { s: -2, name: 'lesser augmented octave' },   /* 25:12 ≈ 1271¢ */
+  ]},
+  /* (7, A) ↔ (2, d): the diminished-2nd side is reachable (letters=1, semis=0,
+     e.g. C# → Db) — it's the Pythagorean-comma class. Pythag (2, d, s=0) gets
+     the conventional name. */
+  { c1: '7,A', c2: '2,d',
+    pythag2: 'Pythagorean comma',
+    entries: [
+      { s: -1, name: 'greater augmented 7th' },   /* 32805:16384 ≈ 1202¢; auto → 'lesser diminished 2nd' (schisma class) */
+      { s: -2, name: 'lesser augmented 7th'  },   /* 2025:1024 ≈ 1181¢; auto → 'greater diminished 2nd' */
+    ]
+  },
   { c1: '1,P', c2: '8,P', entries: [] },
 ];
 
@@ -294,6 +318,8 @@ function autoMirror(name: string, ord1: number, qual1: string, ord2: number, qua
   if (w1 !== w2) r = r.replace(new RegExp('\\b' + w1 + '\\b'), w2);
   /* flip lesser ↔ greater */
   r = r.replace(/\blesser\b/g, '\0L\0').replace(/\bgreater\b/g, 'lesser').replace(/\0L\0/g, 'greater');
+  /* flip acute ↔ grave (wider/narrower on the opposite side from the common 5-limit form) */
+  r = r.replace(/\bacute\b/g, '\0A\0').replace(/\bgrave\b/g, 'acute').replace(/\0A\0/g, 'grave');
   return r;
 }
 
@@ -306,14 +332,17 @@ const PYTHAG_OVERRIDES = new Map<ClassKey, string>();
 (function buildLookup(): void {
   for (const pair of PAIRS) {
     if (pair.pythag1) PYTHAG_OVERRIDES.set(pair.c1, pair.pythag1);
-    if (pair.pythag2) PYTHAG_OVERRIDES.set(pair.c2, pair.pythag2);
     const [ord1, qual1] = parseCK(pair.c1);
-    const [ord2, qual2] = parseCK(pair.c2);
+    const mirror = pair.c2 !== undefined ? parseCK(pair.c2) : null;
+    if (mirror && pair.pythag2) PYTHAG_OVERRIDES.set(pair.c2!, pair.pythag2);
     for (const e of pair.entries) {
       const s = e.s ?? 0, z = e.z ?? 0;
       OVERRIDES.set(lk(ord1, qual1, s, z), e.name);
-      const mName = e.mirror ?? autoMirror(e.name, ord1, qual1, ord2, qual2);
-      OVERRIDES.set(lk(ord2, qual2, -s, -z), mName);
+      if (mirror) {
+        const [ord2, qual2] = mirror;
+        const mName = e.mirror ?? autoMirror(e.name, ord1, qual1, ord2, qual2);
+        OVERRIDES.set(lk(ord2, qual2, -s, -z), mName);
+      }
     }
   }
 })();

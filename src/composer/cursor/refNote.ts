@@ -14,7 +14,8 @@
 
 import type { ComposerModel } from '../model/index.js';
 import { keySigToTonic } from '../notation/accidentals.js';
-import { fifthName, keyOctave } from '../../tuning/notes.js';
+import { fifthName } from '../../tuning/notes.js';
+import { coordToMidi } from '../../shared/freq.js';
 
 export interface RefCoord { q: number; r: number; }
 
@@ -29,16 +30,18 @@ const TONIC_R: Map<string, number> = (() => {
 
 const tonicCache: Map<string, RefCoord> = new Map();
 
-/** Place the song-key tonic on the qm=0 spine in the central octave region.
- *  The spine *is* the fifth-chain, so r is fixed by tonic identity. Walk q
- *  by ±3 (one octave per step) until keyOctave lands in {3, 4}. */
+/** Place the song-key tonic on the qm=0 spine at the lowest octave whose MIDI
+ *  is at-or-above F3 (53). The spine *is* the fifth-chain, so r is fixed by
+ *  tonic identity. Walk q by ±3 (one octave per step) into the window
+ *  [53, 64]. Floors the broadcast ref so Composer never drags HKL's piano
+ *  outline below F3 (e.g. C3 = MIDI 48 used to sneak through). */
 function findTonicCoord(tonic: string): RefCoord {
   const cached = tonicCache.get(tonic);
   if (cached) return cached;
   const r = TONIC_R.get(tonic) ?? -3; /* fall back to C-spine coord if somehow off-table */
   let q = 0;
-  while (keyOctave(q, r) < 3) q += 3;
-  while (keyOctave(q, r) > 4) q -= 3;
+  while (coordToMidi(q, r) < 53) q += 3;
+  while (coordToMidi(q, r) >= 65) q -= 3;
   const found: RefCoord = { q, r };
   tonicCache.set(tonic, found);
   return found;

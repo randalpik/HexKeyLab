@@ -816,7 +816,7 @@ Single source of truth: `src/bridge/protocol.ts`. One `BroadcastChannel` named `
 
 **Composer → HKL events** (`ComposerEvent`):
 - `composer-hello`, `composer-bye`, `request-state` — handshake / state refresh. Composer re-broadcasts `composer-hello` in response to every inbound `hkl-hello` so HKL learns Composer is alive when HKL boots second (Composer's load-time hello would otherwise be lost to a then-absent listener).
-- `set-song-key`, `set-reference-note` — the two ref-tier channels HKL routes through `src/state/reference.ts`. `set-song-key` carries the key-sig tonic (qm=0 spine, octave 3 or 4 — see decisions). `set-reference-note` carries the cursor's most-recent prior note, broadcast only when non-null. HKL's selection-tier (manual + composer) wins over song-key, but a `composer`-source selection is gated on outline mode = `'piano'` — in lumatone/qwerty/none modes the song-key tier is effective.
+- `set-song-key`, `set-reference-note` — the two ref-tier channels HKL routes through `src/state/reference.ts`. `set-song-key` carries the key-sig tonic (qm=0 spine, lowest MIDI ≥ F3 = 53 — see decisions). `set-reference-note` carries the cursor's most-recent prior note, broadcast only when non-null. HKL's selection-tier (manual + composer) wins over song-key, but a `composer`-source selection is gated on outline mode = `'piano'` — in lumatone/qwerty/none modes the song-key tier is effective.
 - `layout-req-changed` — score's pinned tuning + ref. HKL applies it automatically when "Sync layout" is enabled.
 - `play-score` — `{events: PlaybackEvent[]}` with per-event `{atMs, durationMs, notes, meiId?}`. HKL drives its audio engine off this.
 - `stop-playback` — cancel any active playback.

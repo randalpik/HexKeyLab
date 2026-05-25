@@ -1917,36 +1917,49 @@ effective ref flips on an outline-mode toggle.
 
 ---
 
-## Song-key picker: qm=0 spine, octave 3 or 4
+## Song-key picker: qm=0 spine, lowest MIDI ≥ F3
 
 **Picked**: `findTonicCoord` in `src/composer/cursor/refNote.ts` places
-the song-key tonic on the qm=0 Pythagorean spine in the central octave
-region. r is fixed by tonic identity (the spine *is* the fifth-chain
-from A — `fifthName(r)` is the canonical map, used to seed the
-`TONIC_R` lookup so the table stays in sync with the lattice naming
-algorithm). q starts at 0 and walks by ±3 (one octave per step) until
-`keyOctave(q, r) ∈ {3, 4}`.
+the song-key tonic on the qm=0 Pythagorean spine in the lowest octave
+at or above F3 (MIDI 53). r is fixed by tonic identity (the spine *is*
+the fifth-chain from A — `fifthName(r)` is the canonical map, used to
+seed the `TONIC_R` lookup so the table stays in sync with the lattice
+naming algorithm). q starts at 0 and walks by ±3 (one octave per step)
+into the MIDI window [53, 64].
+
+**History**: original rule was `keyOctave(q, r) ∈ {3, 4}` (spelled-octave
+target). Replaced 2026-05-25 because the spelled-octave check let
+tonics with MIDI < 53 sneak through (C3 = 48, D3 = 50, E3 = 52, B♭3 = 46,
+etc. all spell as octave 3). Floor now reads MIDI directly so the
+constraint is unambiguous.
 
 **Rejected**:
-- Bounded grid search minimizing taxicab `|q| + |r|` (prior behavior).
-  No qm or octave constraint, so distant-octave or off-spine cells could
-  win. Especially bad in Schismatic ('V') mode, where each band carries
-  a schisma — landing the ref on a distant band makes the lattice
-  visually drift.
+- Bounded grid search minimizing taxicab `|q| + |r|` (prior-prior
+  behavior). No qm or octave constraint, so distant-octave or off-spine
+  cells could win. Especially bad in Schismatic ('V') mode, where each
+  band carries a schisma — landing the ref on a distant band makes the
+  lattice visually drift.
 - Search with constraints + tiebreak. Unnecessary — for any tonic the
   qm=0 spine has exactly one cell per octave, so once the band is
   picked, the (q, r) is determined.
+- Putting the F3 floor inside HKL's `validateRefNoteCandidate`
+  (`src/render/draw.ts`). User-selectable refs (Ctrl+click, cursor
+  ref, pref restore) should remain free to land below F3 — the floor
+  is a property of the Composer→HKL broadcast, not of every ref the
+  user can manually choose. Keeping the rule in `findTonicCoord` keeps
+  the two tiers independent.
 
-**Why qm=0 + oct {3, 4}**: qm=0 is the band's center position, so the
-ref always lands in the visually central column of a band. Octave 3 or
-4 sits near MIDI A3, the canonical center of HKL's pitch range. The
-combination keeps the lattice visually anchored regardless of how many
-sharps/flats the key signature carries.
+**Why qm=0 + MIDI ≥ F3**: qm=0 is the band's center position, so the
+ref always lands in the visually central column of a band. F3 is the
+lowest pitch at which the 88-cell picker produces a clean lattice
+under the ±3-accidental rule; refs below F3 drag the outline into
+the lattice's bass tail where spellings get cramped.
 
-**Coverage**: all 15 key-sig tonics (sharps and flats out to 7) reach a
-valid (q, r) — `(3, -3)` for C through `(15, -10)` for Cb. Verified by
-`song_key_csharp_from_empty_voice` fixture (which asserts qm=0 + oct ∈
-{3, 4} structurally rather than locking to a specific coordinate).
+**Coverage**: all 15 key-sig tonics reach a valid (q, r) in [53, 64].
+Concrete sample: C → (3, −3) = C4, F → (4, −4) = F3, E → (−6, 4) = E4,
+G → (1, 1) = G3, A → (0, 0) = A3. Verified by
+`song_key_csharp_from_empty_voice` fixture (asserts qm=0 + MIDI window
+structurally rather than locking to a specific coordinate).
 
 **Where**: `TONIC_R` map (derived from `fifthName(r)` for r ∈ [-10, 4])
 and `findTonicCoord` in `src/composer/cursor/refNote.ts`.

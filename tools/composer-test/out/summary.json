@@ -3,7 +3,7 @@
   "fixtures": 113,
   "passed": 113,
   "failed": 0,
-  "elapsedMs": 34198,
+  "elapsedMs": 34379,
   "results": [
     {
       "name": "emptyDoc",
