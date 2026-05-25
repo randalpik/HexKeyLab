@@ -1806,3 +1806,70 @@ applyPrefsToDom), `src/render/draw.ts` (`drawHejiLabel`,
 `index.html` (cbHeji + `@font-face`), `public/BravuraText.woff2` (new),
 `tools/heji-check.mjs` (new — comma-count fixture), `package.json`
 (check:heji script).
+
+## Exponent collapse on high-AD/high-SD lattice cells (2026-05-24)
+
+**Decision**: Collapse the long accidental-and-arrow chain on lattice cells
+with |AD|>4 or |SD|>4 into a single accidental-form glyph + sans-serif
+typographic superscript (`#⁷`, `(#↑)⁵`, …). Implemented in
+`src/tuning/heji.ts:hejiLabel` (Step 0 of the label assembly) and rendered
+by `src/render/draw.ts:drawHejiLabel`. Lattice-only — Composer's ±3
+alteration entry gate stays untouched.
+
+**Why**: V mode's M3-chain respelling (`noteNameV` in `src/tuning/notes.ts`)
+produces unbounded accidental counts (`B#####` at q=+12 from refSpine A,
+etc.). With HEJI on, the chain piles arrows onto each accidental and
+spills extras to nat carriers. Either way, the label runs off the hex
+face. This is the unread-V-mode-cells item from `docs/backlog.md:88` that
+was explicitly deferred when HEJI shipped.
+
+**Algorithm** (greedy in both cases):
+- **Case A** — both |AD|>T and |SD|>T (T=4): collapse target =
+  accidental + 1 arrow (`#↑/#↓/♭↑/♭↓`). Exponent `k = min(|AD|, |SD|)`
+  absorbs one of each per unit. Leftover is the excess of whichever was
+  larger. Position 'before' (target carries an arrow).
+- **Case B** — `|AD−SD|>T`, NOT Case A: collapse target = bare accidental
+  (if AD-heavy) or natural + 1 arrow (if SD-heavy). Exponent
+  `k = ||AD| − |SD||` absorbs the entire excess. Position 'after' for
+  bare-target, 'before' for natural+arrow target. Leftover always has
+  equal residual AD/SD (= `min(|AD|, |SD|)` each), so the existing chain
+  distributor pairs them efficiently with no natural-carrier spillover.
+
+**Why the greedy formula for Case B**: an earlier draft used
+`k = AD − 2·⌈SD/2⌉`, reasoning that the leftover needed even-double
+carriers for the SD arrows. Max corrected: greedy is simpler, gives a
+shorter visual result in all cases, and leaves the same number of glyphs
+or fewer. Worked-case regression in the plan file confirms parity with
+his backlog examples.
+
+**Why "always at the end" septimal hook**: when Case B-a-heavy fires AND
+the cell carries a septimal hook (Septimal mode + high-r Pythagorean spine
+cell), the renderer must place the hook AFTER the collapse-after-chain
+glyph — not in its natural chain slot — to preserve the visual rule that
+the hook trails the entire label. Implemented by separating septimal
+glyphs out of the chain pre-layout in `drawHejiLabel`.
+
+**Why drop `drawConventionalLabel`**: the conventional Unicode-glyph path
+existed as a fallback during the Bravura font-load window. The font is
+bundled at `public/BravuraText.woff2`, so the load resolves on the first
+or second paint; the fallback was visually jarring (chain morphs from
+Unicode to Bravura on font-ready). New policy: paint nothing until
+`bravuraLoaded` is true, then paint the full Bravura-only label. The
+`document.fonts.load(...)` hook re-triggers `draw()` on ready.
+
+**Threshold**: `COLLAPSE_THRESHOLD = 4` (strict `>`, so collapse fires at
+|AD|≥5 or |SD|≥5). Matches `docs/backlog.md:88`. Common cases (F##, Bb,
+F# with one arrow) keep their existing multi-glyph rendering.
+
+**Typography**: superscript at `0.55 × hejiFontSize` in sans-serif. Vertical
+anchor computed from the collapse accidental's `actualBoundingBoxAscent`
+(see `docs/lessons.md` "`actualBoundingBoxAscent` is relative to the
+current textBaseline"). The two tuning constants (`EXP_SCALE`,
+`EXP_ASCENT_FRAC`) sit at the top of the typography block in `draw.ts`
+and are documented as empirically-tuned.
+
+**Files touched**: `src/tuning/heji.ts` (`COLLAPSE_THRESHOLD`, `CollapseSpec`,
+collapse decision in `hejiLabel`), `src/render/draw.ts` (collapse + exponent
+rendering in `drawHejiLabel`, bravuraLoaded gate in `drawNoteName`,
+`drawConventionalLabel` removed, dead `SHARP/FLAT/DBLSHARP/DBLFLAT`
+imports cleaned).

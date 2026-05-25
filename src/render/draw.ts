@@ -27,7 +27,6 @@ import { animation } from './animation.js';
 import { updateInfo } from './info.js';
 import {
   parseNote, accToVal, noteName, noteNameV,
-  SHARP, DBLSHARP, FLAT, DBLFLAT,
 } from '../tuning/notes.js';
 import { jiRatio, tenneyHeightFromExps } from '../tuning/ratios.js';
 import { regionInfo } from '../tuning/regions.js';
@@ -514,6 +513,12 @@ function drawNoteName(
   heji?: HejiLabel,
 ): void {
   if (name === "?") return;
+  /* Bravura is the sole rendering path now: the woff2 is bundled so its load
+     window is short (one repaint), and the document.fonts.load hook below
+     triggers a redraw the moment it's ready. Painting nothing pre-load
+     beats painting a Unicode chain that the eye expects to morph into
+     Bravura — the swap mid-session was visually jarring. */
+  if (!bravuraLoaded || !heji) return;
   ctx.fillStyle = isW
     ? isExt
       ? "rgba(0,0,0,0.45)"
@@ -523,91 +528,7 @@ function drawNoteName(
       : "rgba(255,255,255,0.9)";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  /* HEJI-on path: letter (sans-serif) + Bravura combined-glyph chain.
-     Falls back to the conventional path if Bravura isn't loaded yet, so the
-     label still reads correctly during the font's load window (the
-     document.fonts.load hook below triggers a redraw when it's ready). */
-  if (heji && heji.glyphs.length > 0 && bravuraLoaded) {
-    drawHejiLabel(cx, cy, heji);
-    return;
-  }
-  drawConventionalLabel(cx, cy, name);
-}
-
-/** Existing rendering path: letter + Unicode ♯/♭/𝄪/𝄫 in sans-serif. Handles
- *  bare letters, all-conventional accidentals, and any cell when HEJI is off
- *  or the Bravura font hasn't loaded yet. */
-function drawConventionalLabel(cx: number, cy: number, name: string): void {
-  const p = parseNote(name);
-  const v = accToVal(p.acc);
-  const absV = Math.abs(v);
-  const baseFontSize = 14;
-  ctx.font = "500 " + baseFontSize + "px sans-serif";
-  if (v === 0) {
-    ctx.fillText(p.letter, cx, cy);
-    return;
-  }
-  /* decompose accidental into single+double glyphs */
-  const single = v > 0 ? SHARP : FLAT,
-    dbl = v > 0 ? DBLSHARP : DBLFLAT;
-  const glyphs = [];
-  if (absV % 2 === 1) glyphs.push(single);
-  for (let i = 0; i < Math.floor(absV / 2); i++) glyphs.push(dbl);
-  /* measure total width at base size to determine scale factor */
-  const dblFlatScale = 0.9;
-  const lw = ctx.measureText(p.letter).width;
-  let totalW = lw;
-  for (let i = 0; i < glyphs.length; i++) {
-    const gScale = glyphs[i] === DBLFLAT ? dblFlatScale : 1;
-    ctx.font = "500 " + Math.round(baseFontSize * gScale) + "px sans-serif";
-    totalW += ctx.measureText(glyphs[i]).width + 0.5;
-    /* cascading nudge for double flats: count consecutive double flats */
-    if (glyphs[i] === DBLFLAT) {
-      let dblIdx = 0;
-      for (let j = 0; j < i; j++) if (glyphs[j] === DBLFLAT) dblIdx++;
-      if (dblIdx > 0) totalW -= baseFontSize * 0.14 * dblIdx;
-    }
-  }
-  ctx.font = "500 " + baseFontSize + "px sans-serif";
-  const maxW = hexR * 1.3;
-  const scale = Math.min(1, maxW / totalW);
-  const fontSize = Math.max(6, Math.round(baseFontSize * scale));
-  /* compute nudges and glyph widths at final size */
-  ctx.font = "500 " + fontSize + "px sans-serif";
-  const flw = ctx.measureText(p.letter).width;
-  const gws = [],
-    nudges = [];
-  let dblCount = 0;
-  for (let i = 0; i < glyphs.length; i++) {
-    const gScale = glyphs[i] === DBLFLAT ? dblFlatScale : 1;
-    ctx.font = "500 " + Math.round(fontSize * gScale) + "px sans-serif";
-    gws.push(ctx.measureText(glyphs[i]).width);
-    if (glyphs[i] === DBLFLAT) {
-      nudges.push(dblCount > 0 ? -fontSize * 0.14 * dblCount : 0);
-      dblCount++;
-    } else {
-      nudges.push(0);
-    }
-  }
-  ctx.font = "500 " + fontSize + "px sans-serif";
-  /* compute total rendered width for centering */
-  let tw = flw;
-  for (let i = 0; i < gws.length; i++) tw += gws[i] + 0.5 + nudges[i];
-  let x = cx - tw / 2 + flw / 2;
-  ctx.fillText(p.letter, x, cy);
-  x += flw / 2;
-  for (let i = 0; i < glyphs.length; i++) {
-    x += 0.5 + gws[i] / 2 + nudges[i];
-    if (glyphs[i] === DBLFLAT) {
-      ctx.font = "500 " + Math.round(fontSize * dblFlatScale) + "px sans-serif";
-      ctx.fillText(glyphs[i], x, cy - fontSize * 0.04);
-      ctx.font = "500 " + fontSize + "px sans-serif";
-    } else {
-      const yOff = glyphs[i] === DBLSHARP ? fontSize * 0.22 : 0;
-      ctx.fillText(glyphs[i], x, cy + yOff);
-    }
-    x += gws[i] / 2;
-  }
+  drawHejiLabel(cx, cy, heji);
 }
 
 /** HEJI-on rendering: letter in sans-serif followed by a chain of combined
@@ -666,6 +587,19 @@ function slotAdvance(g: HejiGlyphInfo): number {
   return ctx.measureText(bare ?? g.ch).width;
 }
 
+/* Collapse-exponent typography. The superscript number rides above-right of
+ * the collapse accidental in plain sans-serif. The two key numbers:
+ *   EXP_SCALE — superscript font size as a fraction of the Bravura font size.
+ *     0.55 reads as "small but legible at hex scale"; smaller becomes a dot,
+ *     larger competes visually with the accidental itself.
+ *   EXP_ASCENT_FRAC — where the digit's bottom (its alphabetic baseline)
+ *     sits relative to the accidental's visual top. 0.45 = baseline drops
+ *     just below the accidental's apex so the digit overlaps slightly and
+ *     reads as attached to it.
+ * Tuned by inspection on V mode (refSpine=A, q=+12 → B#⁵). */
+const EXP_SCALE = 0.55;
+const EXP_ASCENT_FRAC = 0.45;
+
 function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
   const baseFontSize = 14;
   /* BravuraText is compiled with text-style metrics, but SMuFL accidental
@@ -675,23 +609,61 @@ function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
      visual weight of the conventional path, render Bravura glyphs at
      ~1.8× the letter font size. */
   const hejiScale = 1.8;
-  /* width pass at base size — letter (sans) + bravura glyph SLOTS (bare
-     advances per family, so attaching arrows doesn't shift the chain). */
+  /* Layout order (left to right):
+       letter
+       collapse (if position === 'before')
+       chain (all non-septimal glyphs)
+       collapse (if position === 'after')
+       septimal hook (if present) — always last so it visually trails the
+         collapse exponent in case-B-a-heavy + Septimal-mode cells.
+     Slot widths are computed against the bare-accidental advance so attached
+     arrows extend past their slot's right edge without affecting layout. */
+  const chainGs: HejiGlyphInfo[] = [];
+  const septimalGs: HejiGlyphInfo[] = [];
+  for (const g of label.glyphs) {
+    (g.family === 'septimal' ? septimalGs : chainGs).push(g);
+  }
+  /* width pass at base size */
   ctx.font = '500 ' + baseFontSize + 'px sans-serif';
   let totalW = ctx.measureText(label.letter).width;
   ctx.font = '500 ' + Math.round(baseFontSize * hejiScale) + 'px "BravuraText", sans-serif';
-  for (const g of label.glyphs) totalW += slotAdvance(g) + 0.5;
+  if (label.collapse) totalW += slotAdvance(label.collapse.glyph) + 0.5;
+  for (const g of chainGs) totalW += slotAdvance(g) + 0.5;
+  for (const g of septimalGs) totalW += slotAdvance(g) + 0.5;
+  if (label.collapse) {
+    ctx.font = '500 ' + Math.round(baseFontSize * hejiScale * EXP_SCALE) + 'px sans-serif';
+    totalW += ctx.measureText(String(label.collapse.count)).width;
+  }
   /* shrink to fit hex */
   const maxW = hexR * 1.3;
   const scale = Math.min(1, maxW / totalW);
   const fontSize = Math.max(6, Math.round(baseFontSize * scale));
   const hejiFontSize = Math.max(5, Math.round(fontSize * hejiScale));
+  const expFontSize = Math.max(4, Math.round(hejiFontSize * EXP_SCALE));
   /* measure at final sizes */
   ctx.font = '500 ' + fontSize + 'px sans-serif';
   const flw = ctx.measureText(label.letter).width;
   ctx.font = '500 ' + hejiFontSize + 'px "BravuraText", sans-serif';
-  const slotWs = label.glyphs.map(slotAdvance);
-  let tw = flw; for (const w of slotWs) tw += w + 0.5;
+  const chainSlotWs = chainGs.map(slotAdvance);
+  const septimalSlotWs = septimalGs.map(slotAdvance);
+  let collapseSlotW = 0;
+  let collapseAscent = 0;
+  if (label.collapse) {
+    collapseSlotW = slotAdvance(label.collapse.glyph);
+    const bare = BARE_ACC_CODE[label.collapse.glyph.family] ?? label.collapse.glyph.ch;
+    /* actualBoundingBoxAscent reports the distance from the current
+       textBaseline (here, 'middle') to the top of the rendered bbox.
+       Firefox + Chromium both populate it for Bravura glyphs; fall back to
+       a fraction of the font size on engines that don't. */
+    const m = ctx.measureText(bare);
+    collapseAscent = m.actualBoundingBoxAscent || hejiFontSize * 0.6;
+  }
+  ctx.font = '500 ' + expFontSize + 'px sans-serif';
+  const expW = label.collapse ? ctx.measureText(String(label.collapse.count)).width : 0;
+  let tw = flw;
+  if (label.collapse) tw += collapseSlotW + 0.5 + expW;
+  for (const w of chainSlotWs) tw += w + 0.5;
+  for (const w of septimalSlotWs) tw += w + 0.5;
   /* Render with textAlign='left' so each glyph's LEFT EDGE anchors at the
      slot start. Combined accidental+arrow glyphs have the accidental at
      the left of their advance box, so this keeps the accidental portion
@@ -701,12 +673,36 @@ function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
   ctx.font = '500 ' + fontSize + 'px sans-serif';
   ctx.fillText(label.letter, x, cy);
   x += flw + 0.5;
+  const drawCollapse = (): void => {
+    if (!label.collapse) return;
+    const g = label.collapse.glyph;
+    const yOff = HEJI_FAMILY_Y_OFFSET[g.family] * hejiFontSize;
+    ctx.font = '500 ' + hejiFontSize + 'px "BravuraText", sans-serif';
+    ctx.fillText(g.ch, x, cy + yOff);
+    /* Anchor the digit's visual middle near the accidental's upper region:
+       cy + yOff is the glyph's musical baseline, ascent carries up to the
+       apex, then we drop EXP_ASCENT_FRAC of an ascent so the digit
+       overlaps with the top portion of the accidental. textBaseline is
+       'middle' so the y we pass is the digit's visual center. */
+    const expY = cy + yOff - collapseAscent + collapseAscent * EXP_ASCENT_FRAC;
+    ctx.font = '500 ' + expFontSize + 'px sans-serif';
+    ctx.fillText(String(label.collapse.count), x + collapseSlotW, expY);
+    x += collapseSlotW + 0.5 + expW;
+  };
+  if (label.collapse && label.collapse.position === 'before') drawCollapse();
   ctx.font = '500 ' + hejiFontSize + 'px "BravuraText", sans-serif';
-  for (let i = 0; i < label.glyphs.length; i++) {
-    const g = label.glyphs[i];
+  for (let i = 0; i < chainGs.length; i++) {
+    const g = chainGs[i];
     const yOff = HEJI_FAMILY_Y_OFFSET[g.family] * hejiFontSize;
     ctx.fillText(g.ch, x, cy + yOff);
-    x += slotWs[i] + 0.5;
+    x += chainSlotWs[i] + 0.5;
+  }
+  if (label.collapse && label.collapse.position === 'after') drawCollapse();
+  for (let i = 0; i < septimalGs.length; i++) {
+    const g = septimalGs[i];
+    const yOff = HEJI_FAMILY_Y_OFFSET[g.family] * hejiFontSize;
+    ctx.fillText(g.ch, x, cy + yOff);
+    x += septimalSlotWs[i] + 0.5;
   }
   /* restore for next caller — drawNoteName sets it on entry, but defensive */
   ctx.textAlign = 'center';
@@ -716,9 +712,10 @@ function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
 /** Build the Bravura label for a cell. When HEJI is on the chain includes
  *  syntonic-comma arrows / septimal hooks; when HEJI is off the chain is
  *  just bare-accidental glyphs (engraved SMuFL ♯/♭/𝄪/𝄫 from Bravura — read
- *  much cleaner than the Unicode equivalents at lattice scale). Bare-letter
- *  cells (no accidentals, no commas) return an empty `glyphs` array;
- *  drawNoteName's fast path skips Bravura entirely for those. */
+ *  much cleaner than the Unicode equivalents at lattice scale). High AD/SD
+ *  cells additionally receive a collapse-with-exponent spec (see
+ *  hejiLabel()'s docstring). Bare-letter cells (no accidentals, no commas)
+ *  return an empty `glyphs` array and no collapse. */
 function hejiLabelForCell(q: number, r: number): HejiLabel {
   const commas = tuning.hejiEnabled ? hejiCommas(q, r, tuning) : { syn5: 0, sept7: 0 };
   return hejiLabel(displayedNoteName(q, r), commas);
@@ -727,7 +724,8 @@ function hejiLabelForCell(q: number, r: number): HejiLabel {
 /* BravuraText load tracker. Canvas can't synchronously check font readiness
    the way DOM elements can — if we draw before the font is loaded, the
    browser falls back to a system font for the U+E2C0+ codepoints, which
-   renders as tofu. Track loaded state and trigger one repaint when ready. */
+   renders as tofu. Track loaded state, suppress note-name painting until
+   ready (see drawNoteName), and trigger one repaint when ready. */
 let bravuraLoaded = false;
 if (typeof document !== 'undefined' && document.fonts) {
   /* `document.fonts.load` resolves once a face matching the spec is loaded
@@ -735,12 +733,9 @@ if (typeof document !== 'undefined' && document.fonts) {
      fontFaceSet.load matches by family, the size only matters for caching. */
   document.fonts.load('12px BravuraText').then(() => {
     bravuraLoaded = true;
-    /* Trigger a redraw unconditionally — Bravura now renders all
-       accidentals (HEJI on or off), so the visual upgrade is universal
-       once the font is ready. */
     view.textDirty = true;
     draw();
-  }).catch(() => {/* font unreachable; conventional fallback path stays */});
+  }).catch(() => {/* font unreachable — note names will stay suppressed. */});
 }
 
 // ── offscreen layers: hexCanvas (fills) + textCanvas (labels) ──────────────

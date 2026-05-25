@@ -290,7 +290,13 @@ P5 (0, +1), M3 (+1, 0), m3 (−1, +1), P8 (+3, 0), SC (−7, +4).
 
 ### 4.7 Note naming
 
-`fifthName(r)` algorithmically computes note names for any fifths distance. Accidentals rendered as decomposed Unicode glyphs (♯, ♭, 𝄪, 𝄫) with continuous font scaling (`scale = min(1, maxW/totalW)` where `maxW = hexR × 1.3`) and double-flat cascade nudge (`i × −fontSize × 0.14`).
+`fifthName(r)` algorithmically computes note names for any fifths distance. Lattice labels render via a single Bravura SMuFL path (`drawHejiLabel` in `src/render/draw.ts`): sans-serif letter + Bravura combined-glyph chain at 1.8× scale, with continuous shrink-to-fit (`scale = min(1, hexR×1.3 / totalW)`). The chain is built by `hejiLabel()` in `src/tuning/heji.ts` — bare-accidental glyphs when HEJI is off, accidental-with-arrows + septimal hooks when on. `drawNoteName` early-returns until `bravuraLoaded` (the bundled `public/BravuraText.woff2` resolves on first paint), so the lattice paints nothing pre-load rather than flashing a Unicode chain that would morph into Bravura.
+
+**Exponent collapse** (`COLLAPSE_THRESHOLD = 4`): when a cell's accidental degree |AD| or syntonic degree |SD| exceeds 4, `hejiLabel()` produces a `collapse` spec — a single accidental-form glyph + sans-serif superscript count — rendered before or after the residual chain. Two cases (per `docs/backlog.md:88`):
+- **Case A** (both |AD|>4 AND |SD|>4): collapse glyph = accidental + 1 arrow, exponent `k = min(|AD|, |SD|)`. Position 'before' (target carries an arrow). Leftover is the excess of the larger count, distributed by the existing chain code.
+- **Case B** (|AD−SD|>4, greedy): exponent `k = ||AD| − |SD||` absorbs the entire excess. If |SD|>|AD|, target = natural + 1 arrow, position 'before'; if |AD|>|SD|, target = bare accidental, position 'after'. Leftover always has equal residual AD/SD so the chain distributor pairs them with no nat-carrier spillover.
+
+The septimal hook stays at the very end of the label regardless of collapse position (the renderer splits septimal glyphs out of the chain pre-layout). Composer's ±3 alteration entry gate is unchanged — collapse is lattice-only.
 
 ### 4.8 Info panel
 

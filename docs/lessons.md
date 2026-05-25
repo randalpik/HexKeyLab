@@ -893,6 +893,14 @@ letter font size to match the visual weight of the conventional path
 next to the conventional ones. Tune for legibility, not formal metric
 correctness — these are lattice cell labels, not staff notation.
 
+### `actualBoundingBoxAscent` is relative to the current textBaseline, not the alphabetic baseline
+
+`TextMetrics.actualBoundingBoxAscent` reports the distance from the **current** `ctx.textBaseline` to the top of the rendered bbox — not from the alphabetic baseline as the MDN doc skim might suggest. With `textBaseline='middle'` (used in `drawNoteName` so the y coordinate refers to the glyph's visual center), the same accidental's reported ascent is roughly half what it would be with `textBaseline='alphabetic'`.
+
+This matters when computing superscript positions for the exponent-collapse renderer (`drawHejiLabel` in `src/render/draw.ts`): the digit is positioned via `cy + yOff - collapseAscent + collapseAscent × EXP_ASCENT_FRAC`. Switch textBaseline mid-routine without remembering this and the superscript floats wildly off the glyph.
+
+If you need a baseline-stable measurement, set textBaseline='alphabetic' for the measurement, then restore. But for the common HKL pattern of "measure-and-draw at the same textBaseline", the value is internally consistent — just don't import it as a normalized ascent.
+
 ### Headless CDP doesn't synthesize clipboard events from keystroke dispatch
 
 `Input.dispatchKeyEvent` fires keyboard events at the renderer-input level but does NOT synthesize the `copy` / `cut` / `paste` DOM events that real browsers fire on Ctrl+C / X / V. So when copy/cut/paste behavior is split across keydown (model side-effects) and DOM events (OS clipboard I/O), only the keydown half is exercised by CDP tests.
