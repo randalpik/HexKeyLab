@@ -34,6 +34,8 @@ Vite is configured for **multi-page build**: `index.html` (HKL viewer) and `comp
 
 **Style**: Direct, peer-to-peer, technically dense when warranted. Match the register of the conversation. Don't over-explain things he already knows. Don't pad responses with framing. He prefers compact responses unless he asks for depth.
 
+**Speak before every tool call. No silent extended thinking.** Past sessions have racked up 10+ minutes and 50k+ tokens of internal deliberation with zero visible output; Max has had to interrupt to ask what's happening. This is unacceptable. Rules: (1) Before any tool call, write at least one sentence in the user-facing channel stating what you're about to do — even if it feels obvious. (2) Do not use thinking blocks to ruminate on which of two near-identical implementations is nicer; pick one and do it. (3) For a directive like "do X," reply with one short acknowledgement and start the tool call in the same turn — do not deliberate first. (4) If you have a clarifying question, ask it in one line and stop; do not produce a four-option AskUserQuestion or weigh options silently. (5) If you genuinely need to think, do it in 1-2 sentence chunks between tool calls, not in giant blocks. The user would always rather redirect a wrong action than wait through silence.
+
 **Trust pattern**: He catches subtle regressions through hands-on testing. Trust him on testable claims; ask before pursuing dead-ends; favor compact responses over comprehensive ones.
 
 **Stop and ask** when hitting circular reasoning, when a problem keeps not yielding to attempts, or when proceeding would commit to a direction he hasn't approved. Don't pursue unverified hypotheses.

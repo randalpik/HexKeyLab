@@ -1,9 +1,11 @@
 // Template-based chord recognition with prime-content classification
 // (septimal / Pythagorean / 5-limit).
 
-import { gcd, jiRatio } from './ratios.js';
+import { gcd, jiRatioWithState } from './ratios.js';
+import type { TuningStateLike } from './regions.js';
 import { noteName, parseNote } from './notes.js';
 import { letterIdx } from './intervals.js';
+import { bandOf } from '../layout/coords.js';
 
 interface ChordTemplate {
   /** semitone intervals from root */
@@ -63,6 +65,7 @@ interface ChordResult {
   quality: string;
   invName: string | null;
   ratio: string;
+  isSchismatic: boolean;
 }
 
 interface ChordNote {
@@ -76,7 +79,15 @@ interface ChordNote {
   r: number;
 }
 
-export function analyzeChord(keys: ChordInputKey[]): ChordResult | null {
+export function analyzeChord(keys: ChordInputKey[], state: TuningStateLike): ChordResult | null {
+  /* In V mode, chord-ratio math runs through a D-mode substitution so the
+     schisma stack doesn't contaminate prime-content classification (each
+     band-crossing schisma contributes e5+=1, which would otherwise trip
+     hasFive and block the Pythagorean classification on intrinsically
+     Pythagorean chords). The schismatic flag is layered on top via
+     band-crossing detection, independent of the ratio math. */
+  const mode = state.mode;
+  const ratState: TuningStateLike = mode === 'V' ? { ...state, mode: 'D' } : state;
   /* keys already sorted by freq; each has q, r, name, col */
   let notes: ChordNote[] = keys.map(k => {
     const midi = 57 + 4 * k.q + 7 * k.r;
@@ -85,6 +96,17 @@ export function analyzeChord(keys: ChordInputKey[]): ChordResult | null {
     return { pc: ((midi % 12) + 12) % 12, midi, name: k.name, col: k.col, rawName: nn, li, q: k.q, r: k.r };
   });
   notes.sort((a, b) => a.midi - b.midi);
+  /* V mode: any band-crossing pair stacks a schisma. Detect on the pre-dedup
+     notes so cross-band doublings (which get dedup'd later) still flag the
+     voicing. */
+  let isSchismatic = false;
+  if (mode === 'V') {
+    outer: for (let i = 0; i < notes.length; i++) {
+      for (let j = i + 1; j < notes.length; j++) {
+        if (bandOf(notes[i].q) !== bandOf(notes[j].q)) { isSchismatic = true; break outer; }
+      }
+    }
+  }
   /* reject if any same-name pair is not a pure octave multiple */
   const nameGroups: Record<string, ChordNote[]> = {};
   notes.forEach(note => {
@@ -94,7 +116,8 @@ export function analyzeChord(keys: ChordInputKey[]): ChordResult | null {
   for (const nm in nameGroups) {
     const grp = nameGroups[nm];
     for (let i = 0; i < grp.length; i++) for (let j = i + 1; j < grp.length; j++) {
-      const rat = jiRatio(grp[i].q, grp[i].r, grp[j].q, grp[j].r);
+      /* With V→D substitution, same-name cells across bands give pure octaves. */
+      const rat = jiRatioWithState(grp[i].q, grp[i].r, grp[j].q, grp[j].r, ratState);
       if (rat.den !== 1 || !isPow2(rat.num)) return null;
     }
   }
@@ -138,7 +161,7 @@ export function analyzeChord(keys: ChordInputKey[]): ChordResult | null {
       const chordRats: { num: number; den: number }[] = [];
       for (let ci = 0; ci < n; ci++) {
         if (ci === ri) { chordRats.push({ num: 1, den: 1 }); continue; }
-        const rat = jiRatio(root.q, root.r, notes[ci].q, notes[ci].r);
+        const rat = jiRatioWithState(root.q, root.r, notes[ci].q, notes[ci].r, ratState);
         let rnum: number, rden: number;
         if (notes[ci].midi >= rootMidi) { rnum = rat.num; rden = rat.den; }
         else { rnum = rat.den; rden = rat.num; }
@@ -165,13 +188,15 @@ export function analyzeChord(keys: ChordInputKey[]): ChordResult | null {
       const hasFive = terms.some(v => v % 5 === 0);
       const hasSeptimal = hasSeven && maxTerm <= 27;
       const isPythagorean = !hasSeven && !hasFive;
-      const qName = hasSeptimal ? 'septimal ' + t.name : (isPythagorean ? 'Pythagorean ' + t.name : t.name);
+      let qName = hasSeptimal ? 'septimal ' + t.name : (isPythagorean ? 'Pythagorean ' + t.name : t.name);
+      if (isSchismatic) qName = 'schismatic ' + qName;
       return {
         root: root.name,
         rootCol: root.col,
         quality: qName,
         invName: inv > 0 ? invNames[inv] : null,
         ratio: ratioStr,
+        isSchismatic,
       };
     }
   }

@@ -2019,3 +2019,24 @@ per-mode tables could alias V to D directly in code
 (`validRefSetByMode['V'] = validRefSetByMode['D']` and similar). Kept
 separate for now to preserve explicit per-mode dispatch; revisit if a
 later mode-related refactor benefits from deduping.
+
+## Interval naming is spelling-driven with per-complement-pair declarations (2026-05-25)
+
+**Picked**: `src/tuning/intervals.ts` now drives interval naming from the diatonic spelling of the endpoints, not from the ratio. `classifyDiatonic` → `pythagRefExp` (closed-form) → `solveCommas` → override lookup or algorithmic `"Pythagorean <bare>"` default. Overrides are declared in `PAIRS`, one entry per complement pair (`{c1, c2, entries[…], pythag1?, pythag2?}`); the second half is auto-mirrored by `mirrorName` (ord swap, M↔m/A↔d, lesser↔greater flip), with an explicit `mirror:` field for class-specific phrases that the auto-mirror can't synthesize (apotome, harmonic 7th, chromatic semitone, diminished octave). Schismas always render as a suffix; perfect intervals never carry the `"Pythagorean"` prefix.
+
+**Why**: Schismatic exposed the underlying bug — `intervalName(num, den)` was ratio-only, scoring against a REF table by Tenney height. F#→D in V mode collapsed onto "augmented 5th + syntonic comma" because aug 5th (25:16) outranks Pythag m6 (128:81) on TH and both have a one-comma decomp. Same class of failure exists in every JI mode whenever enharmonic spellings tie on cost.
+
+Considered alternatives:
+- **Expand the REF table** with more entries (e.g., add "Pythagorean diminished 4th" 8192:6561 etc.). Rejected: ratio shopping still picks the wrong base for cases like F#→D. Symptom, not cause.
+- **Flat bucket table** keyed by `(ord, qual, s, z) → name` for every named interval. Rejected during planning: ~60 entries, complement symmetry maintained by hand, every edit risks asymmetric drift, every "Pythagorean diminished 4th"-style niche needs its own entry. Max's directive after the first draft was specifically against this.
+- **Per-class profile objects** (one record per `(ord, qual)`). Rejected: still requires writing each half of every complement pair separately.
+
+The per-pair structure with auto-mirror was the right axis: complement symmetry is enforced *by data shape*, not by review discipline. Editing one half implies the other; the explicit `mirror:` field surfaces every place where naming convention breaks symmetry (and those are the actually-interesting cases — apotome's complement isn't "lesser/greater Pythag diminished octave", harmonic 7th's complement isn't "subharmonic 2nd"). The algorithmic Pythag default catches everything outside the table without an entry, so adding modes or coordinate gymnastics doesn't require an explicit name addition until/unless the user wants a non-default name for some specific `(ord, qual, s, z)`.
+
+**Renames carried in** (existing REF strings that didn't match the cleaner pattern): 9/8 was "greater major 2nd" → "Pythagorean major 2nd"; 10/9 was "lesser major 2nd" → "major 2nd"; 16/9 was "lesser minor 7th" → "Pythagorean minor 7th"; 9/5 was "greater minor 7th" → "minor 7th"; 7/5 was "lesser septimal tritone" → "septimal diminished 5th"; 10/7 was "greater septimal tritone" → "septimal augmented 4th"; 4096/2187 was unnamed → "Pythagorean diminished octave". The m7↔M2 pair is now Pythagorean/unaltered (matching m3↔M6 and M3↔m6); the m2↔M7 pair stays Pythagorean/lesser/greater (3-rung ladder). Both are valid per-class conventions kept symmetric across complements.
+
+**Gone**: the old `intervalName(num, den, preE?)` function, the REF array, the complement-decomposition fallback, and the `optimizeCommas(useDerived=true)` branch (the derived-comma substitution rules — diaschisma / Pythagorean comma / septimal diesis). Only one external caller (`render/info.ts:127`); migrated to `intervalNameFromCoords`. No backwards-compat shim — coords are always available at the analyzer callsite.
+
+**Smoke verification**: `tools/interval-names/smoke.ts` walks representative intervals across all six modes. Run with `npx tsx tools/interval-names/smoke.ts`. Confirms the V-mode A3→A4 case prints "perfect octave + schisma", A3→A5 prints "perfect 22nd + 2× schisma", E4→C5 (m6 across one band) prints "Pythagorean minor 6th + schisma".
+
+**Where**: `src/tuning/intervals.ts`, `src/render/info.ts:127`. `chords.ts` template names are unaffected — they're constructed from prime-content gates, not REF lookups.

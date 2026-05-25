@@ -187,6 +187,14 @@ JS numbers are 64-bit floats; integer precision breaks at 2^53. Several referenc
 
 Pure octave multiples (no reference interval, no commas) render as "perfect octave" / "perfect 15th" / "perfect 22nd" etc., matching ET conventions. Compound forms with commas like "2 octaves − syntonic comma" use `octStr` instead. Don't unify these — they reflect different musical situations.
 
+### Interval naming must be spelling-driven, not ratio-driven
+
+`intervalName(num, den)` — the prior ratio-only API — picked its base interval by Tenney-height ranking against a REF table. That collapsed enharmonic spellings: F#→D in V mode (rings near Pythag m6 + schisma) printed as "augmented 5th + syntonic comma" because aug 5th (25:16, TH ~8.6) outranks Pythag m6 (128:81, TH ~13.3) and both decompose to one comma. Same cents, same exponents, but two valid spellings; the scorer chose the wrong one.
+
+Fix: feed coordinates to the naming function (`intervalNameFromCoords`), classify the spelling first (`classifyDiatonic` → `(ord, qual, extraOct)`), look up the Pythagorean reference exp from the spelling (`pythagRefExp` — closed-form, no table), then decompose the residual into commas. The spelling is the ground truth; the ratio is downstream. Side benefit: any niche Pythagorean ratio (Pythag d4 = 8192:6561 etc.) self-names via the algorithmic default `"Pythagorean <bare>"` for free — no per-class table entry needed.
+
+Corollary: callers that only have `num:den` cannot do spelling-driven naming. There are none in the codebase now, and adding one would silently regress to the old bug. If a future caller appears, it must thread coords through, not invoke a ratio-only shortcut.
+
 ### Equal mode interval naming must use letter distance, not lattice displacement
 
 `equalIntervalName()` computes intervals from actual `noteName() + keyOctave()`, NOT from raw lattice displacement `(2·dq + 4·dr)`. Band structure means lattice displacement and letter distance can diverge in Equal mode (where the band concept doesn't apply). Use the letter-distance path or you'll mislabel d2 vs A1 etc.

@@ -8,7 +8,7 @@ import { posInBand } from '../layout/coords.js';
 import { fmtNote, noteName, keyOctave, parseNote } from '../tuning/notes.js';
 import { jiRatio, intervalTier } from '../tuning/ratios.js';
 import {
-  intervalName, shortenInterval, equalIntervalName, letterIdx,
+  intervalNameFromCoords, shortenInterval, equalIntervalName, letterIdx,
 } from '../tuning/intervals.js';
 import { analyzeChord } from '../tuning/chords.js';
 import { keyColorVariant, hueC } from './colors.js';
@@ -73,11 +73,11 @@ export function updateInfo(): void {
 
   /* chord analysis (above intervals) */
   if (keys.length >= 3) {
-    const chord = analyzeChord(keys);
+    const chord = analyzeChord(keys, tuning);
     if (chord) {
       html += '<div class="info-break"></div>';
       html += '<span class="chord-tag"><span style="color:' + chord.rootCol + '">' + chord.root + '</span><span class="chord-quality">' + (tuning.equalEnabled ? chord.quality.replace(/^(?:septimal|Pythagorean) /, '') : chord.quality) + (chord.invName ? ' ' + chord.invName : '') + '</span>';
-      if (!tuning.equalEnabled) html += '<span class="chord-detail">' + chord.ratio + '</span>';
+      if (!tuning.equalEnabled && !chord.isSchismatic) html += '<span class="chord-detail">' + chord.ratio + '</span>';
       html += '</span>';
     }
   }
@@ -124,7 +124,7 @@ export function updateInfo(): void {
         const jiIv = iv as IntervalCellJI;
         const cents = 1200 * Math.log2(jiIv.rat.num / jiIv.rat.den);
         const cStr = cents.toFixed(1) + '¢';
-        const iname = shortenInterval(intervalName(jiIv.rat.num, jiIv.rat.den, jiIv.rat.e), shortIvl);
+        const iname = shortenInterval(intervalNameFromCoords(keys[iv.i].q, keys[iv.i].r, keys[iv.j].q, keys[iv.j].r, tuning), shortIvl);
         const tier = intervalTier(jiIv.rat.num, jiIv.rat.den);
         /* for large ratios, show prime-power form (e.g. 3^36:2^57) rather
            than sprawling integers; 2^32 threshold keeps typical intervals

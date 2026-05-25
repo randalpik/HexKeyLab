@@ -319,27 +319,26 @@ A scrollable panel below the canvas (max-height constrained to viewport):
 
 Uses HTML entities for lesser/greater glyphs.
 
-### 4.10 Interval naming: reference table + comma decomposition
+### 4.10 Interval naming: spelling-driven + comma decomposition
 
-Every 5/7-limit interval is expressed as a named reference interval ± commas, with zero information loss.
+Every 5/7-limit interval is named as `<base interval> ± commas`, where the **base is chosen from the diatonic spelling of the endpoints**, never from ratio shopping. This means enharmonic-equivalent ratios are named according to how they're written on the lattice (F#→D is always a 6th, not an aug 5th), and band-crossings in V mode surface their schisma additively over the spelling-correct base.
 
-**Algorithm**:
-1. Factor the ratio into prime exponents (e2, e3, e5, e7) via `factor7()`. Large ratios whose num/den exceed 2^53 use the `e` vector returned by `reduce()` rather than trial-dividing num/den (which would silently lose precision).
-2. Octave-reduce to [1, 2), counting extra octaves
-3. Try **direct decomposition** against all reference entries
-4. Try **complement decomposition** (2/ratio against all refs)
-5. Pick result with fewest displayed comma groups, tiebreak by fewer total items, then lower TH, then direct over complement
-6. Format: compound ordinals absorb octaves ("minor 10th"); non-ordinals prepend ("2 octaves + apotome")
+**Algorithm** (in `src/tuning/intervals.ts`):
+1. `classifyDiatonic(q1, r1, q2, r2)` derives `{ord, qual, extraOct}` from `noteName + keyOctave` letter distance and 12-TET semitones. Same logic equalIntervalName uses; factored for reuse.
+2. `pythagRefExp(ord, qual)` returns the closed-form Pythagorean prime-exponent vector for that class. No table — derived from the natural fifths-position of the ordinal plus apotome stacks per qualifier.
+3. `jiRatioWithState` provides the actual exponent vector (with mode shifts and V-mode schisma stacking).
+4. The difference vector goes through `solveCommas` → `(s, z, h)` syntonic/septimal/schisma counts.
+5. Override lookup at `(ord, qual, s, z)`; otherwise the algorithmic default `"Pythagorean <bare>"` (or just `"<bare>"` for perfect intervals, since they have no 5-limit/Pythagorean distinction).
+6. Schisma `h` always renders as a suffix item; never absorbed into the base name.
+7. `fmtInterval` handles compound ordinals ("minor 10th") and octave-prefix forms ("2 octaves + apotome").
 
-**Octave-multiple naming**: pure octave multiples with no reference interval and no commas are named ET-style: "perfect octave" (2:1), "perfect 15th" (4:1), "perfect 22nd" (8:1), etc.
+**Override table structure**: `PAIRS` is an array of complement-pair declarations. Each declares overrides for one half (`c1`); the other half (`c2`) is auto-mirrored by an in-module `mirrorName` that swaps ord (`9 - ord`), M↔m/A↔d, and lesser↔greater. An explicit `mirror:` field overrides the auto-mirror for class-specific phrases (apotome, harmonic 7th, chromatic semitone, diminished octave). 11 pair declarations cover every named exception — about 30 entries total, half declared and half mirrored. Anything outside the table flows through the algorithmic default, which is why "Pythagorean diminished 4th" (8192:6561) and other niche Pythagorean ratios name themselves correctly even though no override exists.
 
-**Comma basis** (7 commas, 3 linearly independent): syntonic 81/80, septimal 64/63, schisma 32805/32768, Pythagorean comma 531441/524288, plus three derived commas. The optimizer tries all 6 permutation orderings of derived comma substitutions.
+**Renames from the prior REF-table system**: 9/8 → "Pythagorean major 2nd" (was "greater major 2nd"); 10/9 → "major 2nd"; 16/9 → "Pythagorean minor 7th" (was "lesser minor 7th"); 9/5 → "minor 7th"; 7/5 → "septimal diminished 5th" (was "lesser septimal tritone"); 10/7 → "septimal augmented 4th"; 4096/2187 → "Pythagorean diminished octave" (was unnamed).
 
-**Pythagorean reference entries**: 256:243 (m2), 9:8 (M2), 32:27 (m3), 81:64 (M3), 27:16 (M6), 243:128 (M7), 531441:524288 (Pythagorean comma).
+**Octave-multiple naming**: pure octave multiples render as "perfect octave" (2:1), "perfect 15th" (4:1), "perfect 22nd" (8:1) — handled by `fmtInterval`'s unison-with-extraOct branch.
 
-**Reference table size**: ~60 entries, covering full augmented/diminished interval space.
-
-**Score function**: `groups × 100 + items`, TH tiebreak.
+**Comma basis**: syntonic 81/80, septimal 64/63, schisma 32805/32768 (3 linearly independent commas spanning the 5/7-limit lattice). The old derived-comma optimizer (diaschisma / Pythagorean comma / septimal diesis substitutions) is gone — output sticks with primary commas to match HEJI accidental semantics.
 
 ### 4.11 Lumatone integration (output)
 
@@ -1436,8 +1435,10 @@ src/
 │   │                           #   ref-driven Lumatone/QWERTY layout shift (§2.8)
 │   ├── resolve.ts              # picker tiebreaks, syntonic projection helpers
 │   ├── frequency.ts            # keyFreq for Equal / 5-limit / 7-limit
-│   ├── intervals.ts            # comma decomposition, REF table, intervalName,
-│   │                           #   shortenInterval, equalIntervalName
+│   ├── intervals.ts            # spelling-driven naming: classifyDiatonic,
+│   │                           #   pythagRefExp, PAIRS overrides + auto-mirror,
+│   │                           #   intervalNameFromCoords, equalIntervalName,
+│   │                           #   shortenInterval, solveCommas
 │   └── chords.ts               # template-based chord recognition + classification
 ├── layout/                     # PURE math: lattice ↔ screen
 │   ├── baseKeys.ts             # 280-key map
