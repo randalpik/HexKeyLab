@@ -140,8 +140,12 @@ function tenney(e) {
   return Math.abs(r0) + Math.abs(r1) * Math.log2(3) + Math.abs(r2) * Math.log2(5) + Math.abs(r3) * Math.log2(7);
 }
 
-/** Mirrors compute88PianoCoords in src/render/draw.ts. */
+/** Mirrors compute88PianoCoords in src/render/draw.ts.
+ *  V-mode picker substitution: runs JI math under Semiditonal ('D') rules
+ *  so the schisma exponent doesn't inflate (3k, 0) lineage TH. See the
+ *  docstring on compute88PianoCoords for the full rationale. */
 function pianoCells(refQ, refR, mode = '5') {
+  const pickerMode = mode === 'V' ? 'D' : mode;
   const PROJ_PER_OCT = 7 * 3 - 4 * 0;
   const refMidi = 57 + 4 * refQ + 7 * refR;
   const cells = [];
@@ -154,7 +158,7 @@ function pianoCells(refQ, refR, mode = '5') {
     for (let k = -20; k <= 20; k++) {
       const q = q0 + 7 * k;
       const r = (N - 4 * q) / 7;
-      const th = tenney(jiExps(refQ, refR, q, r, mode));
+      const th = tenney(jiExps(refQ, refR, q, r, pickerMode));
       const absNProj = Math.abs(7 * (q - refQ) - 4 * (r - refR) - projTarget);
       if (!found || th < bestTh || (th === bestTh && absNProj < bestAbsNProj)) {
         bestTh = th; bestAbsNProj = absNProj; bestQ = q; bestR = r; found = true;

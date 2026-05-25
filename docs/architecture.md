@@ -178,6 +178,8 @@ Tiebreak: `|proj − PROJ_PER_OCT · round((midi − refMidi) / 12)|` where `pro
 
 A 0-centered `|proj|` tiebreak (the earlier attempt) silently relocated the ref to a syntonic sibling when a B-region cell tied TH=0 with the ref's natural lineage cell (syntonic adjustment cancels against the (7,−4) shift's comma in 7-limit). With octave-normalization the lineage cell wins — the ref never falls outside its own footprint.
 
+**V-mode picker substitution**: when `tuning.mode === 'V'`, the picker constructs a hypothetical state with `mode: 'D'` and uses it for the TH measurement. V's schisma exponent (added in `jiRatioWithState`) inflates the TH of (3k, 0) lineage cells linearly with |k|, which made the picker prefer diaschisma-spelled cells at octave-related MIDIs and arithmetic-coincidence cells (like "G##" at MIDI 105) elsewhere — both contrary to V's design that octave-related cells share spelling. Routing the picker through D rules collapses every (3k, 0) to TH 0 and the lineage wins by construction. Playback still uses `freqAt(…, 'V')`, so the audible schisma stretch is preserved; only the picker's mapping of MIDI → (q, r) is affected. As a side effect, `VALID_REF_TABLE['V']` and `PIANO_BOUNDS_TABLE[*]['V']` are byte-identical to D's. See `decisions.md` § "V-mode picker routes through D state (2026-05-25)".
+
 ### 2.12 Coverage and analysis findings
 
 - **5-limit**: 55 unique MIDI notes per ref position; ~79 combined across SC-shifted ref positions

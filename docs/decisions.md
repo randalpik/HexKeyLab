@@ -1950,3 +1950,72 @@ valid (q, r) — `(3, -3)` for C through `(15, -10)` for Cb. Verified by
 
 **Where**: `TONIC_R` map (derived from `fifthName(r)` for r ∈ [-10, 4])
 and `findTonicCoord` in `src/composer/cursor/refNote.ts`.
+
+## V-mode picker routes through D state (2026-05-25)
+
+**Decision**: `compute88PianoCoords` in `src/render/draw.ts` constructs a
+hypothetical `TuningStateLike` with `mode: 'D'` when the live
+`tuning.mode === 'V'`, and passes it to `jiRatioWithState` in place of
+the live state. The offline probes (`compute-refbounds.mjs`,
+`compute-bounds.mjs`) apply the same V→D substitution in their inlined
+`pianoCells` mirrors. `VALID_REF_TABLE['V']` and
+`PIANO_BOUNDS_TABLE[*]['V']` are regenerated and now byte-identical to
+D's entries.
+
+**Why**: V's per-band schisma exponent — added in `jiRatioWithState`
+lines 51–55 as `db × (−15, +8, +1, 0)` — is the prime decomposition of
+the schisma (32805:32768). When the picker measures TH against this
+adjusted exponent vector, the natural (3k, 0) lineage cells, which
+spell as the ref's letter at every octave (A3 → A4 → A5 → …),
+accumulate a schisma per band and rise to TH ≈ 30·|k|. Diaschisma-
+spelled alternates at the same MIDI come in lower (TH ≈ 22) and win
+the comparison. Concrete: at ref A3 = (0,0), MIDI 69 (A4) picked
+(−4, 4) at +19.55c off pure 2:1 over (3, 0) at +1.95c. At MIDI 105
+the picker landed on (−2, 8) "G##" with TH 0 — an arithmetic
+coincidence where V's schisma adjustment exactly canceled a 5-limit
+residue. Neither outcome is what V mode wants: the design is that
+qm=0 cells in successive bands spell as the same letter (per CLAUDE.md
+§ V mode), and the picker was breaking that invariant.
+
+**The fix is one line.** D mode shares V's qm shifts (qm=2 −SC, no
+others) but doesn't apply the schisma exponent, so under D rules
+(3k, 0) has exps (k, 0, 0, 0) → ratio = 2^k → TH 0 at every octave,
+and the projection tiebreak picks the lineage cell. Audio playback is
+untouched: `freqAt(…, 'V')` still applies the `SCHISMA^b` factor, so
+the audible schisma stretch (~2c/octave central, ~14c at the 7-octave
+extreme) is preserved. The picker is the *only* place that opts out;
+the interval analyzer, color logic, HEJI, and seam drawing all still
+see V's schisma exponent.
+
+**Rejected alternative**: a red-tier cents-to-pure tiebreak — when the
+picker's best-TH candidate is itself red-tier (TH ≥ 12.5), fall back
+to minimum cents distance to the nearest green-tier JI ratio
+(`tenneyHeightFromExps < 8`) at the candidate's pitch class mod 1200.
+Worked at the diaschisma case (MIDI 69 → (3, 0)) but had a fatal
+pathology: the green-tier-mod-1200 list contains arithmetic targets
+like 119.44c (some pure JI semitone) that lattice-exotic cells can
+land within 2c of via syntonic-comma stacking, even at TH 200+. The
+picker started preferring `(−28, 11)` "A#" — far on the lattice, TH
+240, but its pitch class is 1.84c from a green ratio — over the
+natural `(0, −5)` "Bb" at TH 16. Tightening with a `±1` accidental
+filter from `refAcc` didn't help; the exotic cells just spelled with
+one sharp. The V→D substitution avoids this entire class of
+arithmetic-coincidence picks by never assigning the cells a low-TH
+score in the first place.
+
+**Backlog items addressed**: `docs/backlog.md:86` (recompute V valid-
+ref bounds after mode is finalized) and `:88` (red-tier cents
+tiebreak) — both resolved by this change; the cents rule turned out
+to be unnecessary once the V→D substitution was in.
+
+**Where**: `src/render/draw.ts:compute88PianoCoords`,
+`tools/bounds-probe/compute-refbounds.mjs:pianoCells`,
+`tools/bounds-probe/compute-bounds.mjs:pianoCells`. Regenerated:
+`src/render/refbounds-table.ts` (`VALID_REF_TABLE['V']`) and
+`src/render/canvas.ts` (`PIANO_BOUNDS_TABLE[*]['V']`).
+
+**Future cleanup option**: since V's entries duplicate D's, the
+per-mode tables could alias V to D directly in code
+(`validRefSetByMode['V'] = validRefSetByMode['D']` and similar). Kept
+separate for now to preserve explicit per-mode dispatch; revisit if a
+later mode-related refactor benefits from deduping.

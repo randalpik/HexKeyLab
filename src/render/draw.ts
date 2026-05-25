@@ -28,7 +28,8 @@ import { updateInfo } from './info.js';
 import {
   parseNote, accToVal, noteName,
 } from '../tuning/notes.js';
-import { jiRatio, tenneyHeightFromExps } from '../tuning/ratios.js';
+import { jiRatioWithState, tenneyHeightFromExps } from '../tuning/ratios.js';
+import type { TuningStateLike } from '../tuning/regions.js';
 import {
   hejiCommas,
   hejiLabel,
@@ -266,7 +267,20 @@ function activeValidRefPaths(): Point[][] {
    resulting cell set under a hypothetical refNote (e.g. Ctrl+click
    validation in src/ui/init.ts). Tuning state is read from the live `tuning`
    module via jiRatio — for hypothetical-state probing under non-live tuning,
-   see tools/bounds-probe/compute-refbounds.mjs. */
+   see tools/bounds-probe/compute-refbounds.mjs.
+
+   V-mode picker substitution: when live mode is Schismatic ('V'), the
+   picker runs JI-ratio math under Semiditonal ('D') rules — same qm shifts,
+   no schisma exponent. Reason: V's per-band schisma factor inflates the TH
+   of the (3k, 0) lineage cells (each octave above ref carries one schisma
+   in V's exponent vector, so TH grows linearly with |k|), and the picker
+   ends up preferring diaschisma-spelled cells over the natural lineage
+   (e.g. MIDI 69 picks (−4, 4) over (3, 0); MIDI 105 lands on (−2, 8)
+   "G##" via arithmetic coincidence). Under D rules every (3k, 0) cell has
+   TH 0, so the lineage wins by construction at every octave, and the
+   picker output matches D mode exactly. Playback still uses freqAt(…, 'V')
+   so the schisma stretch remains audible — the substitution only affects
+   which cells get drawn under each MIDI in the piano outline. */
 export function compute88PianoCoords(
   refQ: number, refR: number,
 ): Array<[number, number]> {
@@ -278,6 +292,9 @@ export function compute88PianoCoords(
   const Q_PER_OCT = 3, R_PER_OCT = 0;
   const PROJ_PER_OCT = 7 * Q_PER_OCT - 4 * R_PER_OCT;
   const refMidi = 57 + 4 * refQ + 7 * refR;
+  const pickerState: TuningStateLike = tuning.mode === 'V'
+    ? { ...tuning, mode: 'D' }
+    : tuning;
   for (let midi = 21; midi <= 108; midi++) {
     const N = midi - 57;
     /* q ≡ 2N (mod 7) since 4·2 ≡ 1 (mod 7); start there. */
@@ -300,7 +317,7 @@ export function compute88PianoCoords(
     for (let k = -20; k <= 20; k++) {
       const q = q0 + 7 * k;
       const r = (N - 4 * q) / 7;
-      const ratio = jiRatio(refQ, refR, q, r);
+      const ratio = jiRatioWithState(refQ, refR, q, r, pickerState);
       const th = tenneyHeightFromExps(ratio.e);
       const proj = 7 * (q - refQ) - 4 * (r - refR);
       const absNProj = Math.abs(proj - projTarget);
