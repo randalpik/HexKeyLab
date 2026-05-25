@@ -238,6 +238,7 @@ const PAIRS: PairDecl[] = [
     { s: +1,        name: 'lesser minor 2nd' },
     { s: +2,        name: 'greater minor 2nd' },
     { s: +1, z: -1, name: 'septimal minor 2nd' },
+    { s:  0, z: -1, name: 'septimal subminor 2nd', mirror: 'septimal supermajor 7th' },  /* 28:27 ≈ 63¢ ↔ 27:14 ≈ 1137¢ */
   ]},
   { c1: '4,P', c2: '5,P', entries: [
     { s: +1, name: 'wolf 4th' },     /* auto → 'wolf 5th' */
@@ -246,7 +247,7 @@ const PAIRS: PairDecl[] = [
   { c1: '4,A', c2: '5,d', entries: [
     { s: -1,        name: 'greater augmented 4th' },  /* auto → 'lesser diminished 5th' */
     { s: -2,        name: 'lesser augmented 4th'  },  /* auto → 'greater diminished 5th' */
-    { s: -1, z: +1, name: 'septimal augmented 4th' }, /* auto → 'septimal diminished 5th' */
+    { s:  0, z: +1, name: 'septimal augmented 4th' }, /* 81:56 ≈ 638¢; auto → 'septimal diminished 5th' (112:81 ≈ 562¢). Most accessible septimal A4 on the Lumatone (dist=4 vs 10:7 at dist=7). */
   ]},
   { c1: '1,A', c2: '8,d',
     pythag1: 'apotome',
@@ -259,7 +260,7 @@ const PAIRS: PairDecl[] = [
   { c1: '2,A', c2: '7,d', entries: [
     { s: -1,        name: 'greater augmented 2nd' },  /* auto → 'lesser diminished 7th' */
     { s: -2,        name: 'lesser augmented 2nd' },   /* auto → 'greater diminished 7th' */
-    { s: -2, z: +1, name: 'septimal augmented 2nd' }, /* auto → 'septimal diminished 7th' */
+    { s: -1, z: +1, name: 'septimal augmented 2nd' }, /* 135:112 ≈ 324¢; auto → 'septimal diminished 7th' (224:135 ≈ 876¢). Most accessible septimal A2 on the Lumatone (dist=2 vs 25:21 unreachable). */
   ]},
   { c1: '3,d', c2: '6,A', entries: [
     { s: +1,        name: 'lesser diminished 3rd' },   /* auto → 'greater augmented 6th' */
@@ -280,8 +281,9 @@ const PAIRS: PairDecl[] = [
      never occurs for letters=0. Declared without c2 to avoid populating dead
      overrides. */
   { c1: '8,A', entries: [
-    { s: -1, name: 'greater augmented octave' },  /* 135:64 ≈ 1292¢ */
-    { s: -2, name: 'lesser augmented octave' },   /* 25:12 ≈ 1271¢ */
+    { s: -1,        name: 'greater augmented octave' },  /* 135:64 ≈ 1292¢ */
+    { s: -2,        name: 'lesser augmented octave' },   /* 25:12 ≈ 1271¢ */
+    { s: -1, z: +1, name: 'septimal augmented octave' }, /* 15:7 ≈ 1319¢; compound of septimal chromatic semitone (15:14) */
   ]},
   /* (7, A) ↔ (2, d): the diminished-2nd side is reachable (letters=1, semis=0,
      e.g. C# → Db) — it's the Pythagorean-comma class. Pythag (2, d, s=0) gets
