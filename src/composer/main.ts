@@ -23,6 +23,7 @@ import { selectionOverlay } from './selection/selectionOverlay.js';
 import { saveHkc, loadHkcFromFile, downloadMusicXml, downloadPdf } from './save.js';
 import { buildPlayback, highlightElement, clearHighlights, readTempo, tickMsFromTempo } from './render/playback.js';
 import { openSetupDialog } from './setupDialog.js';
+import { openHelpDialog } from './helpDialog.js';
 import {
   computePrevNoteRef, computeSongKeyRef,
   refNoteChanged, invalidateRefNoteCache,
@@ -614,6 +615,10 @@ $('btnSetup')?.addEventListener('click', () => {
       refreshLayoutMatchIndicator();
     }
   }, history);
+});
+
+$('btnHelp')?.addEventListener('click', () => {
+  openHelpDialog();
 });
 
 /* ── save / load / export ────────────────────────────────────────────────── */

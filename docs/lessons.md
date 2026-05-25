@@ -810,6 +810,14 @@ When selection mode was added, this turned into a bug: a fixture that ends in se
 
 Fix: cursor-trace's `refresh()` now reads `cursorMode` from the live `inputState()` rather than hardcoding voice mode. Generalizable rule: any test invariant that touches render state must read the same state the production code reads — or be made fully read-only (e.g. snapshot bboxes without re-issuing renders). When invariants mutate state, the order in which they run becomes a load-bearing implementation detail, and adding a new state (like selection mode) silently breaks the suite.
 
+### `visualCheck` clip bbox is scoped to `#score` only — overlays don't capture
+
+`tools/composer-test/lib/visual.mjs:visualCheck` computes its screenshot clip rect from `#score`-internal targets: `g.system` elements, selection-overlay rects, and the cursor overlay. The clip fits tight around music content (and is unaffected by Verovio's paper-sized SVG canvas; see §"Visual screenshots in page mode…").
+
+The consequence: fixtures whose primary visual target is a **top-level overlay** — `<dialog>`, popover, toast — won't be captured. The dialog lives outside `#score`, so the bbox routine treats its presence as invisible and the resulting baseline screenshots only the (probably empty) score area beneath. Adding `visualBaseline: '…'` to a help-modal / setup-modal / popover fixture produces a passing but useless baseline: the modal is shown, but the saved PNG doesn't include it.
+
+Two paths if you want overlay-aware visual coverage: (a) extend `visualCheck` with an explicit clip-mode arg (e.g. `bboxFrom: '#helpDialog' | 'viewport' | 'score'`), or (b) write a one-off screenshot via `Page.captureScreenshot` without a clip. The "just add `visualBaseline:`" path will silently produce a wrong baseline; resist it.
+
 ### Test/live divergence: diff the flows before hypothesizing
 
 When a test produces output that doesn't match live behavior on the same code: the *first* move should be to enumerate the concrete differences between the test flow and the live flow — every command the test runner issues that the live browser doesn't, in order. Speculation about caching, animations, paint timing, or framework quirks tends to be wrong and burns hours.

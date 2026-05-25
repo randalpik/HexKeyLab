@@ -1416,6 +1416,25 @@ const ROUNDTRIP_STRESS = {
   `,
 };
 
+/* ── Help modal (keybinding reference) ───────────────────────────────── */
+
+const HELP_MODAL = {
+  /* Clicking Help opens the modal; body contains rendered binding rows. */
+  help_button_opens_modal: {
+    setup: `document.getElementById('btnHelp').click();`,
+  },
+
+  /* Escape closes the open modal (native <dialog> behavior). */
+  help_modal_esc_closes: {
+    setup: `document.getElementById('btnHelp').click();`,
+    setupKeys: ['Escape'],
+  },
+
+  /* (no visual baseline: visualCheck's bbox is scoped to #score content,
+   * which doesn't cover the <dialog> overlay; a visual regression for the
+   * help modal would need a separate viewport-clip path in visual.mjs.) */
+};
+
 export const FIXTURES = {
   ...mapTier(EXISTING, 'fast'),
   ...mapTier(CURSOR_CONVENTION, 'fast'),
@@ -1434,6 +1453,7 @@ export const FIXTURES = {
   ...mapKbdTier(CHORD_INTERNAL, 'full'),
   ...mapKbdTier(EXPORT, 'full'),
   ...mapKbdTier(UNDO_REDO, 'full'),
+  ...mapKbdTier(HELP_MODAL, 'full'),
 };
 
 /** Fixture-specific assertions. Map fixture name → list of {name, expr}.
@@ -3055,6 +3075,37 @@ export const FIXTURE_ASSERTIONS = {
         if (!inp.selection || inp.selection.kind !== 'beat') return { ok: false, detail: 'sel=' + JSON.stringify(inp.selection) };
         return { ok: inp.selection.first === 0 && inp.selection.last === 1,
                  detail: 'sel=' + inp.selection.first + '..' + inp.selection.last };
+      })()` },
+  ],
+
+  /* Help modal. */
+  help_button_opens_modal: [
+    { name: 'helpDialog.open === true',
+      expr: `(() => {
+        const dlg = document.getElementById('helpDialog');
+        return { ok: !!(dlg && dlg.open), detail: 'open=' + (dlg && dlg.open) };
+      })()` },
+    { name: 'rendered body contains a known binding key',
+      expr: `(() => {
+        const dlg = document.getElementById('helpDialog');
+        const txt = dlg ? dlg.textContent || '' : '';
+        const hasCtrl = txt.includes('Ctrl+2 .. Ctrl+7');
+        const hasShiftDigit = txt.includes('Shift+1 .. Shift+8');
+        return { ok: hasCtrl && hasShiftDigit,
+                 detail: 'hasCtrl=' + hasCtrl + ' hasShiftDigit=' + hasShiftDigit };
+      })()` },
+    { name: 'all KEYBINDINGS sections rendered as <section>',
+      expr: `(() => {
+        const dlg = document.getElementById('helpDialog');
+        const sections = dlg ? dlg.querySelectorAll('section.help-section').length : 0;
+        return { ok: sections >= 5, detail: 'sectionCount=' + sections };
+      })()` },
+  ],
+  help_modal_esc_closes: [
+    { name: 'helpDialog.open === false after Escape',
+      expr: `(() => {
+        const dlg = document.getElementById('helpDialog');
+        return { ok: !!dlg && !dlg.open, detail: 'open=' + (dlg && dlg.open) };
       })()` },
   ],
 };

@@ -890,9 +890,10 @@ The cursor class deliberately resets its `barRect` / `voiceLabel` / `playbackBar
 - **`↑`/`↓`** — switch voice (cycles 1↔2↔3↔4, time-aligned per §7.4).
 - **`←`/`→`** — move cursor within current voice.
 - **`Home`/`End`** — jump to start/end of current voice.
-- **`Backspace`** — delete the element before the cursor. Skips over placeholders without deleting them; if the deletion empties an entire measure (across all voices), the measure itself is removed unless it's the only one.
-- **`Delete`** — delete the element after cursor.
+- **`Backspace`** — voice mode: delete the element before the cursor (skips placeholders without deleting; if the deletion empties an entire measure across all voices, the measure itself is removed unless it's the only one). Selection mode: delete the selected content and exit to voice mode — same end state as Ctrl+X, no clipboard write.
+- **`Delete`** — voice mode: delete the element after cursor. Selection mode: same delete-and-exit as Backspace.
 - **`Insert`** — toggle insert / overwrite mode.
+- **`Space`** — toggle playback (start ↔ stop). Bound at the top of the keydown dispatcher with `preventDefault` so the browser's page-scroll default doesn't fire. Works in any cursor mode (voice / expr / select); playback and selection coexist.
 
 Arrow keys are suppressed during playback (the `isPlaybackActive` hook in `InputHooks` short-circuits the navigation block).
 
@@ -1336,7 +1337,7 @@ A **beat** is the half-open interval between consecutive entries in `beatBoundar
 
 Ctrl+Shift+Arrow is exactly equivalent to repeated Shift+Arrow until the just-moved edge lands on a measure-aligned beat boundary (or the score edge is reached). The state transitions B → A → C happen naturally during the loop.
 
-**Entry direction sets `lastMoved`**: Shift+Left → 'first' (cursor exits at left edge); Shift+Right → 'last' (right edge). Matters for an immediate exit (Ctrl+X or non-selection-key) after entry.
+**Entry direction sets `lastMoved`**: Shift+Left → 'first' (cursor exits at left edge); Shift+Right → 'last' (right edge). Matters for an immediate exit (Ctrl+X, Backspace, Delete, or non-selection-key) after entry.
 
 **Measure-mode state shape**:
 ```ts
@@ -1348,7 +1349,7 @@ Ctrl+Shift+Arrow is exactly equivalent to repeated Shift+Arrow until the just-mo
 ```
 `anchor`/`movable` accounting (left over from the original asymmetric model — measure mode wasn't reworked because it doesn't suffer from the convergence-exit problem). `originStaff` defines symmetric staff expansion via Shift+Up/Down; growth direction depends on the relationship between firstStaff, lastStaff, and originStaff.
 
-**Mode-exit cursor placement (`cursorAtMovable`)** — used by Ctrl+X, Escape, and any non-selection key. Beat mode: `boundaries[lastMoved === 'first' ? first : last + 1]`. Measure mode: derived from `movableSide`. Ctrl+C is the exception — it leaves the selection intact and doesn't reposition the cursor (copy doesn't mutate, so there's no reason to bail out of selection mode).
+**Mode-exit cursor placement (`cursorAtMovable`)** — used directly by Escape and any non-selection key. Ctrl+X (cut) and Backspace/Delete (delete-and-exit) reuse the same lastMoved-side placement via `deleteSelectionContent(sel)`, which beats: places cursor at `boundaries[lastMoved === 'first' ? first : last + 1]` post-clear; measures: places cursor at `cursorAtMovable`. Ctrl+C is the exception — it leaves the selection intact and doesn't reposition the cursor (copy doesn't mutate, so there's no reason to bail out of selection mode). Backspace and Delete behave identically in selection mode; the only difference between them lives in voice mode (delete-left vs delete-right).
 
 **Clipboard format and OS clipboard I/O** (`src/composer/clipboard.ts`):
 
@@ -1400,6 +1401,14 @@ The selection fixtures group covers entry, growth, shrink-to-origin, Ctrl+Shift+
 **Out of scope** (deferred):
 - Cross-system selection where the per-system rects don't visually connect across a line break — they're rendered correctly per-system but there's no "bridging" ribbon.
 - Paste from outside-HKL clipboard content — fails gracefully ("Clipboard is empty or not HKL content"); we don't attempt to interpret arbitrary MEI or MusicXML fragments.
+
+### 7.23 Help modal (keybinding reference)
+
+`src/composer/helpDialog.ts` + `<dialog id="helpDialog">` in `composer.html`, opened by the toolbar's "Help" button (right of "Setup"). Read-only enumeration of every binding the dispatcher acts on, grouped by mode (Universal / Voice / Tuplet / Expression / Selection).
+
+The catalog lives in `src/composer/keybindings.ts` as a typed `KEYBINDINGS: KeySection[]` constant — **this is the canonical doc source for Composer keybindings**, replacing the former giant header docstring in `input.ts`. The modal builds its content from this array once on first open and caches the rendered HTML. Native `<dialog>.showModal()` provides focus trap + Escape-to-close; no keystroke suppression is needed in `input.ts` because the dispatcher's existing `shouldIgnore` check already drops events from focused form elements, and the modal focus trap keeps the rest out of the document.
+
+When adding or changing a binding in `input.ts`, update the matching entry in `keybindings.ts`. The catalog is documentation-as-data; it is NOT a dispatch table (see `docs/decisions.md`).
 
 ---
 

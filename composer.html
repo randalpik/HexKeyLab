@@ -195,6 +195,25 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
 .hkl-dialog .actions button:hover { border-color: #888 }
 .hkl-dialog .actions button#setupOk { border-color: #4CFFBA; color: #4CFFBA }
 
+/* Help (keybinding reference) modal — wider, scrollable, two-column grid. */
+.hkl-dialog-help { min-width: 560px; max-width: 720px; }
+.hkl-dialog-help .help-body { max-height: 70vh; overflow-y: auto; padding-right: 6px; }
+.hkl-dialog-help .help-section { margin-bottom: 16px; }
+.hkl-dialog-help .help-section h3 { font-size: 12px; font-weight: 600; color: #4CB4FF; margin: 6px 0 4px; text-transform: uppercase; letter-spacing: 0.06em; }
+.hkl-dialog-help .help-intro { color: #888; font-size: 11px; margin: 0 0 8px; font-style: italic; }
+.hkl-dialog-help .help-grid {
+  display: grid; grid-template-columns: minmax(140px, max-content) 1fr;
+  column-gap: 14px; row-gap: 6px; align-items: baseline; font-size: 12px;
+}
+.hkl-dialog-help kbd.help-keys {
+  font-family: 'SF Mono', ui-monospace, monospace; font-size: 11px;
+  color: #ccc; background: #222; border: 1px solid #2a2a2a; border-radius: 3px;
+  padding: 1px 6px; white-space: nowrap; justify-self: start;
+}
+.hkl-dialog-help .help-desc { color: #ccc; }
+.hkl-dialog-help .help-note { color: #888; font-size: 11px; margin-top: 2px; }
+.hkl-dialog-help .actions { margin-top: 14px; }
+
 #composerStatus {
   padding: 4px 12px; background: #1a1a1a; border-top: 1px solid #2a2a2a;
   font-family: 'SF Mono', ui-monospace, monospace; font-size: 11px; color: #888;
@@ -230,6 +249,7 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
   </div>
   <div class="group">
     <button class="btn" id="btnSetup" title="Document setup (title, composer, key, meter, tempo)">Setup</button>
+    <button class="btn" id="btnHelp" title="Keybinding reference">Help</button>
   </div>
   <div class="spacer"></div>
   <button class="btn" id="btnSave">Save .hkc</button>
@@ -301,6 +321,8 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
     </div>
   </form>
 </dialog>
+
+<dialog id="helpDialog" class="hkl-dialog hkl-dialog-help"></dialog>
 
 <script type="module" src="/src/composer/main.ts"></script>
 </body>

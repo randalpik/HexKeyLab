@@ -258,10 +258,16 @@ const PAIRS: PairDecl[] = [
     { s: -2, z: +1, name: 'septimal augmented 2nd' }, /* auto → 'septimal diminished 7th' */
   ]},
   { c1: '3,d', c2: '6,A', entries: [
-    { s: +2, name: 'diminished 3rd' }, /* auto → 'augmented 6th' */
+    { s: +2,        name: 'diminished 3rd' },          /* auto → 'augmented 6th' */
+    { s: +1, z: -1, name: 'septimal diminished 3rd' }, /* auto → 'septimal augmented 6th' */
   ]},
   { c1: '4,d', c2: '5,A', entries: [
-    { s: +2, name: 'diminished 4th' }, /* auto → 'augmented 5th' */
+    { s: +2,        name: 'diminished 4th' },          /* auto → 'augmented 5th' */
+    { s: +1, z: -1, name: 'septimal diminished 4th' }, /* auto → 'septimal augmented 5th' */
+  ]},
+  { c1: '3,A', c2: '6,d', entries: [
+    { s: -1,        name: 'augmented 3rd' },           /* auto → 'diminished 6th' */
+    { s: -1, z: +1, name: 'septimal augmented 3rd' },  /* auto → 'septimal diminished 6th' */
   ]},
   { c1: '1,P', c2: '8,P', entries: [] },
 ];
@@ -312,13 +318,47 @@ const PYTHAG_OVERRIDES = new Map<ClassKey, string>();
   }
 })();
 
-function lookupBaseName(ord: number, qual: string, s: number, z: number): string {
-  if (s === 0 && z === 0) {
-    const p = PYTHAG_OVERRIDES.get(ck(ord, qual));
-    if (p) return p;
-    return defaultPythagName(ord, qual);
+/* Index OVERRIDES by (ord, qual) for nearest-match lookup. */
+const OVERRIDES_BY_CLASS = new Map<ClassKey, Array<{ s: number; z: number; name: string }>>();
+(function buildIndex(): void {
+  for (const [k, name] of OVERRIDES) {
+    const i1 = k.indexOf(','), i2 = k.indexOf(',', i1 + 1), i3 = k.indexOf(',', i2 + 1);
+    const ord = +k.slice(0, i1), qual = k.slice(i1 + 1, i2);
+    const s = +k.slice(i2 + 1, i3), z = +k.slice(i3 + 1);
+    const key = ck(ord, qual);
+    let list = OVERRIDES_BY_CLASS.get(key);
+    if (!list) { list = []; OVERRIDES_BY_CLASS.set(key, list); }
+    list.push({ s, z, name });
   }
-  return OVERRIDES.get(lk(ord, qual, s, z)) ?? defaultPythagName(ord, qual);
+})();
+
+/* Find the base interval name and residual (s, z) commas. Picks the override
+   entry that minimizes |s − s_o| + |z − z_o|; the Pythagorean default sits
+   at (s_o=0, z_o=0). Ties prefer 5-limit overrides (z_o=0) over septimal,
+   and any override over the Pythagorean default — so (3,M,−2,0) renders as
+   "major 3rd − syntonic comma" instead of "Pythagorean major 3rd − 2× SC". */
+function findBaseName(ord: number, qual: string, s: number, z: number):
+  { name: string; sRes: number; zRes: number } {
+  const pythagName = PYTHAG_OVERRIDES.get(ck(ord, qual)) ?? defaultPythagName(ord, qual);
+  let bestDist = Math.abs(s) + Math.abs(z);
+  let bestTier = 2; /* Pythag default tier (least preferred basis) */
+  let bestName = pythagName;
+  let bestSRes = s, bestZRes = z;
+  const candidates = OVERRIDES_BY_CLASS.get(ck(ord, qual));
+  if (candidates) {
+    for (const c of candidates) {
+      const dist = Math.abs(s - c.s) + Math.abs(z - c.z);
+      const tier = c.z === 0 ? 0 : 1; /* 5-limit beats septimal in ties */
+      if (dist < bestDist || (dist === bestDist && tier < bestTier)) {
+        bestDist = dist;
+        bestTier = tier;
+        bestName = c.name;
+        bestSRes = s - c.s;
+        bestZRes = z - c.z;
+      }
+    }
+  }
+  return { name: bestName, sRes: bestSRes, zRes: bestZRes };
 }
 
 /* ───── Public entry point ───── */
@@ -364,22 +404,12 @@ export function intervalNameFromCoords(q1: number, r1: number, q2: number, r2: n
      double-counted ("major 9th" became "major 16th"). */
   const totalExtraOct = best.octs;
 
-  /* Override owns (s, z); only schisma h gets appended. Without an override,
-     fall back to defaultPythagName at (s=0, z=0) and surface all three counts. */
-  const overrideKey = (s === 0 && z === 0) ? null : OVERRIDES.get(lk(cls.ord, cls.qual, s, z));
-  let baseName: string;
-  let commaItems: CommaItem[];
-  if (s === 0 && z === 0) {
-    const p = PYTHAG_OVERRIDES.get(ck(cls.ord, cls.qual));
-    baseName = p ?? defaultPythagName(cls.ord, cls.qual);
-    commaItems = optimizeCommas(0, 0, h);
-  } else if (overrideKey !== undefined && overrideKey !== null) {
-    baseName = overrideKey;
-    commaItems = optimizeCommas(0, 0, h);
-  } else {
-    baseName = defaultPythagName(cls.ord, cls.qual);
-    commaItems = optimizeCommas(s, z, h);
-  }
+  /* Pick the closest override as the base; surface (s, z) residual + schisma
+     h as commas. Exact-match overrides have zero residual so they keep their
+     existing one-comma-or-less rendering. */
+  const base = findBaseName(cls.ord, cls.qual, s, z);
+  const baseName = base.name;
+  const commaItems = optimizeCommas(base.sRes, base.zRes, h);
 
   return fmtInterval({ name: baseName, ord: cls.ord, comma: 0 }, commaItems, totalExtraOct);
 }

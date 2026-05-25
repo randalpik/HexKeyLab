@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 111,
-  "passed": 111,
+  "fixtures": 113,
+  "passed": 113,
   "failed": 0,
-  "elapsedMs": 34220,
+  "elapsedMs": 34198,
   "results": [
     {
       "name": "emptyDoc",
@@ -887,6 +887,22 @@
     },
     {
       "name": "undo_backspace_selection_restores",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "help_button_opens_modal",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "help_modal_esc_closes",
       "ok": true,
       "failures": [],
       "counts": {

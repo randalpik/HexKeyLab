@@ -2040,3 +2040,18 @@ The per-pair structure with auto-mirror was the right axis: complement symmetry 
 **Smoke verification**: `tools/interval-names/smoke.ts` walks representative intervals across all six modes. Run with `npx tsx tools/interval-names/smoke.ts`. Confirms the V-mode A3→A4 case prints "perfect octave + schisma", A3→A5 prints "perfect 22nd + 2× schisma", E4→C5 (m6 across one band) prints "Pythagorean minor 6th + schisma".
 
 **Where**: `src/tuning/intervals.ts`, `src/render/info.ts:127`. `chords.ts` template names are unaffected — they're constructed from prime-content gates, not REF lookups.
+
+## Composer keybindings.ts is documentation-as-data, not a dispatch table (2026-05-25)
+
+**Picked**: `src/composer/keybindings.ts` is a typed `KEYBINDINGS: KeySection[]` constant that drives the Help modal and serves as the canonical reference for every Composer keystroke. The actual key-event dispatcher remains hand-written in `src/composer/input.ts` (~1600 lines of branching). Adding a binding requires editing BOTH files; they're kept in sync by review discipline + the Help-modal fixture's content assertion, not by code generation.
+
+**Why**: The backlog item asked for a reference modal that "becomes the doc source rather than the current giant input.ts header docstring." Two reasonable readings: (1) modal-as-doc only — replace the docstring, leave dispatch alone; (2) full unification — make `keybindings.ts` a dispatch table and have `input.ts` interpret it. Picked (1).
+
+Considered alternative — dispatch-driven-by-data — was rejected because:
+- The dispatch is rich: pending-state machines (tuplet armed → digit; hairpin start → hairpin end), mode predicates (voice vs expression vs select, with selection-mode having its own sub-dispatcher), context flags (chord-internal selection preserved across specific keys), platform quirks (Alt+arrow `preventDefault` to defeat Firefox back/forward nav, `Input.dispatchKeyEvent` in tests). Capturing all of this in declarative data would require either a complex DSL or rendering the data structure into something only marginally more readable than the existing switch-style code.
+- The expected drift risk (someone adds a binding to `input.ts` without updating `keybindings.ts`) is low because: (a) the modal renders the *complete* catalog, so missing entries are user-visible; (b) the Help fixture in `tools/composer-test/fixtures.mjs` asserts specific binding strings are present; (c) most binding changes are deliberate enough to touch both files.
+- The data-only catalog is also a useful future surface for searching/filtering bindings (Cmd-K palette), which a dispatch table is not.
+
+**Where**: `src/composer/keybindings.ts` (catalog + types), `src/composer/helpDialog.ts` (lazy render + open), `src/composer/input.ts:1` (one-line pointer where the docstring used to live), `tools/composer-test/fixtures.mjs:HELP_MODAL` (assertion that specific bindings render).
+
+If a future task DOES want to collapse the two files into a single dispatch-driven catalog, the seam to design around is the pending-state machinery in `input.ts` — that's where the declarative-data path gets hard, not the simple key-to-action mappings.
