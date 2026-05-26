@@ -1644,11 +1644,47 @@ function prepareLoop(buf, freq, opts){
     stats.failReason='segments: '+(segRes.diag.failReason||'fewer than 2 segments survived');
     return{trimStart:trimStart/sr,loopPts:null,segments:segRes.segments,stats:stats,diag:diagFinal,trend:trendForEmit};
   }
+  /* freqActual via pitch-curve median over the steady region.
+     pitchCurve.values[i] is the cents offset (positive = sharper than
+     T_actual_sec) of the per-cycle period at hop index i. Median of valid
+     hops inside the steady region recovers the mean fundamental: for vibrato
+     instruments it integrates the FM signal over many cycles (immune to
+     the 100ms-autocorrelation-window phase bias that previously made
+     adjacent vibrato samples disagree by tens of cents); for non-vibrato
+     instruments it averages over hundreds of clean cycles (at least as
+     precise as the single autocorrelation window). Falls back to the
+     autocorrelation value when fewer than 10 valid hops are inside the
+     steady region (defensive — pitch curve gaps on attack/decay-dominated
+     samples are normal but a near-empty curve indicates +ZC pairing broke
+     down and the autocorrelation value is the safer estimate). */
+  var freqActualEmitted=1/T_actual_sec;
+  if(pitchCurve&&Array.isArray(pitchCurve.values)&&pitchCurve.values.length>0){
+    var pcStart=pitchCurve.startSec,pcHop=pitchCurve.hopSec;
+    var lo2=Math.max(0,Math.ceil((steady.secStart-pcStart)/pcHop));
+    var hi2=Math.min(pitchCurve.values.length,Math.floor((steady.secEnd-pcStart)/pcHop)+1);
+    var inSteady=[];
+    for(var pi=lo2;pi<hi2;pi++){
+      var v=pitchCurve.values[pi];
+      if(typeof v==='number'&&!isNaN(v))inSteady.push(v);
+    }
+    if(inSteady.length>=10){
+      inSteady.sort(function(a,b){return a-b;});
+      var medCents=inSteady.length%2===1?inSteady[inSteady.length>>1]:(inSteady[(inSteady.length>>1)-1]+inSteady[inSteady.length>>1])/2;
+      /* pitchCurve cents are 1200*log2(T_actual/bestDt) — positive cents
+         means bestDt < T_actual i.e. higher frequency. Apply: */
+      freqActualEmitted=(1/T_actual_sec)*Math.pow(2,medCents/1200);
+      stats.pitchCurveMedianCents=+medCents.toFixed(2);
+      stats.pitchCurveNValid=inSteady.length;
+    } else {
+      stats.pitchCurveNValid=inSteady.length;
+      stats.pitchCurveFallback='autocorr (insufficient pitch-curve coverage)';
+    }
+  }
   return{
     trimStart:trimStart/sr,
     loopPts:endptList,
     segments:segRes.segments,
-    freqActual:1/T_actual_sec,
+    freqActual:freqActualEmitted,
     stats:stats,
     diag:diagFinal,
     trend:trendForEmit

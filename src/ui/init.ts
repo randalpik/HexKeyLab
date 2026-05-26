@@ -62,6 +62,8 @@ import { applyToolbarVisibility, initToolbarSelector } from './toolbars.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import { initHklBridge } from '../bridge/hkl-side.js';
 import { initRecorderUI } from './recorder.js';
+import * as InstrumentRegistry from '../state/instrumentRegistry.js';
+import { initInstrumentBundlesUi } from './instrumentBundles.js';
 
 const $ = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
@@ -90,6 +92,16 @@ function applyPrefsToDom(p: PrefsV1): void {
   $<HTMLInputElement>('cbShowDiag').checked = p.showDiagnostics;
   $<HTMLInputElement>('cbCalibrateKeys').checked = p.calibrateKeys;
 }
+
+/* Imported .hki bundles: open the IndexedDB-backed registry and append the
+   "Imported (.hki)" optgroup to the #waveform select BEFORE we apply the
+   persisted waveform value below. If the user's last session was on an
+   imported instrument, the optgroup has to exist or `<select>.value =
+   prefs.waveform` silently falls back to the first option. Top-level await
+   blocks the rest of bootstrap on this — IDB open is a one-time ~50ms delay
+   that's acceptable for a one-shot page load. */
+await InstrumentRegistry.init();
+initInstrumentBundlesUi();
 
 const prefs = loadPrefs();
 applyPrefsToDom(prefs);

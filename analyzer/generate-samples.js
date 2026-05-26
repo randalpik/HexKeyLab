@@ -23,7 +23,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { measureDecayLufs } from './k-weighting.js';
+import { measureDecayLufs, measureLufs } from './k-weighting.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -94,6 +94,70 @@ function loadConfig() {
   cfg.vibrato = cfg.vibrato === true;
   cfg.decays = cfg.decays === true;
   cfg.replayOnTranspose = cfg.replayOnTranspose === true;
+  /* Source dispatch. 'cdn' (default) → fetchOne uses curl against cfg.baseUrl.
+     'local' → fetchOne copies from cfg.sourceDir into the cache so every
+     downstream step (decodeOne writes `.raw` next to the source file) sees a
+     cache-local path and never writes back into the user's sample folder.
+     cfg.sourceDir is resolved relative to the config file's directory when
+     not absolute, so configs can live alongside their samples. */
+  cfg.source = cfg.source || 'cdn';
+  if (cfg.source === 'local') {
+    if (!cfg.sourceDir) {
+      console.error('source:"local" requires "sourceDir" in config');
+      process.exit(1);
+    }
+    if (!path.isAbsolute(cfg.sourceDir)) {
+      cfg.sourceDir = path.resolve(path.dirname(cfgPath), cfg.sourceDir);
+    }
+    if (!fs.existsSync(cfg.sourceDir) || !fs.statSync(cfg.sourceDir).isDirectory()) {
+      console.error(`sourceDir not found or not a directory: ${cfg.sourceDir}`);
+      process.exit(1);
+    }
+  } else if (cfg.source !== 'cdn') {
+    console.error(`unknown source "${cfg.source}" (expected "cdn" or "local")`);
+    process.exit(1);
+  }
+  /* Bundling defaults. Local configs auto-bundle (the whole reason for
+     source:"local"). CDN configs only bundle when --bundle is passed on the
+     command line, since their default emission target is samples-data.ts. */
+  cfg.bundle = !!cfg.bundle || cfg.source === 'local' || process.argv.includes('--bundle');
+  /* trustLabeledPitch: when on, the bundled per-sample `freq` field uses the
+     labeled ET frequency (from the filename) instead of the analyzer's
+     auto-detected fundamental. Default ON for source:"local" (the user owns
+     the samples and almost always has them pre-validated via Melodyne or
+     similar); OFF for source:"cdn" (CDN provenance is unknown — auto-detect
+     is the safer default).
+
+     Why: our +ZC-pair pitch estimator is exact for pure sines but biased for
+     spectrally rich signals (vowels, brass with strong formants). The bias
+     varies per-sample with the harmonic content / glottal asymmetry /
+     mic-DC. For samples the user has already pitch-validated, our estimate
+     is at best a noisy confirmation and at worst introduces ±3-8¢ inter-
+     sample disagreement by feeding the engine slightly-wrong "native"
+     freqs. The auto-detected value stays in res.freqActual for the report
+     (diagnostic) — only the EMITTED freq changes. */
+  if (cfg.trustLabeledPitch === undefined) {
+    cfg.trustLabeledPitch = (cfg.source === 'local');
+  }
+  /* keepAllGreenRange: optional ["lowNote", "highNote"] pair (inclusive) that
+     overrides the ~4-semitone picker inside this midi range — every green-tier
+     sample within bounds is kept. Used for voices, where the ear detects
+     timbre seams across adjacent semitones more readily than for instrumental
+     samples. The picker outside the range, and the blue/yellow fill pass
+     across the whole range, run unchanged. */
+  if (cfg.keepAllGreenRange) {
+    if (!Array.isArray(cfg.keepAllGreenRange) || cfg.keepAllGreenRange.length !== 2) {
+      console.error('keepAllGreenRange must be a 2-element array of note names, e.g. ["E2", "E4"]');
+      process.exit(1);
+    }
+    const [lo, hi] = cfg.keepAllGreenRange;
+    cfg.keepAllGreenLowMidi = noteNameToMidi(lo);
+    cfg.keepAllGreenHighMidi = noteNameToMidi(hi);
+    if (cfg.keepAllGreenLowMidi > cfg.keepAllGreenHighMidi) {
+      console.error(`keepAllGreenRange: low note (${lo}) must be at or below high note (${hi})`);
+      process.exit(1);
+    }
+  }
   return cfg;
 }
 
@@ -164,7 +228,13 @@ function buildUrls(cfg, note, midi) {
    configs (filePattern: '{NOTE}.mp3', etc.) end up with the same filename as
    before, so their caches transfer over cleanly. The old <NOTE>.<ext> +
    .pattern-sidecar layout is no longer written; legacy files just sit unused.
-   Returns {matchedFile, mp3, fromCache} or null on 404. */
+
+   Returns {matchedFile, mp3, fromCache} or null on missing.
+
+   For cfg.source==='local', the file is read from cfg.sourceDir and copied
+   into the cache directory (so decodeOne's `.raw` and `.s2.raw` artifacts
+   land in the cache instead of the user's sample folder). The matchedFile
+   path is what the user types in `filePattern` resolved against `sourceDir`. */
 function fetchOne(cfg, note, midi, patternIdx) {
   const patterns = cfg.filePatterns || [cfg.filePattern];
   if (patternIdx >= patterns.length) return null;
@@ -174,6 +244,14 @@ function fetchOne(cfg, note, midi, patternIdx) {
   fs.mkdirSync(path.dirname(cachedFile), { recursive: true });
   if (fs.existsSync(cachedFile) && fs.statSync(cachedFile).size > 0) {
     return { matchedFile, mp3: cachedFile, fromCache: true };
+  }
+  if (cfg.source === 'local') {
+    /* Local source — copy from cfg.sourceDir. Missing file == 'no such note'
+       (mirror CDN's 404 semantics for the multi-pattern fallback). */
+    const srcPath = path.join(cfg.sourceDir, matchedFile);
+    if (!fs.existsSync(srcPath) || fs.statSync(srcPath).size === 0) return null;
+    fs.copyFileSync(srcPath, cachedFile);
+    return { matchedFile, mp3: cachedFile, fromCache: false };
   }
   const url = cfg.baseUrl + matchedFile;
   const r = spawnSync('curl', ['-sLfo', cachedFile, url], { stdio: 'ignore' });
@@ -332,35 +410,45 @@ function stereoPeakOver(stereo, start, end) {
 }
 
 function measureRmsLoop(stereo, mono, res) {
-  /* Loudness measure for gain normalization. Two-tier:
-       (1) primary: RMS over the steady region — the analyzer's loop-body
-           span, which is what the user actually hears during sustained
-           playback. Matches the engine's playback regime.
-       (2) fallback: RMS over the loudest 1-second window in the post-trim
-           audio, for samples where steady detection yields a too-narrow
-           span (<200ms) or fails entirely. Used to be the only measure
-           but it overestimates loop loudness on soundfont samples whose
-           attack RMS far exceeds their sustain RMS — gain too small,
-           playback ~20 dB below target.
-     Both RMS and peak are computed from stereo (RMS as combined energy
-     sqrt(Σ(L²+R²)/2N), peak as per-frame max(|L|,|R|)) so the measurement
-     matches what the listener hears with both ears. See measureDecay
-     comment for why mono downmix breaks on decorrelated stereo. */
+  /* Loudness measure for loop-path gain normalization. Two-tier:
+       (1) primary: K-weighted integrated loudness over the analyzer's steady
+           region — the loop body the user actually hears during sustained
+           playback. Matches the engine's playback regime AND perceptual
+           weighting (frequency-dependent ear response).
+       (2) fallback: K-weighted loudness over the loudest 1-second window in
+           the post-trim audio, for samples where steady detection yields a
+           too-narrow span (<200ms) or fails entirely. Identical pipeline,
+           different region.
+
+     Previously this used plain stereo RMS over the steady region, which
+     produced ~6 dB perceived-loudness drift across a viola's range despite
+     matched RMS (a structurally identical failure to the decay-path's prior
+     200ms-post-trim RMS that K-weighting solved on the Maestro piano). The
+     decay docstring covers the rationale; the loop case is the same problem
+     with a different window. */
   const stats = res && res.stats;
   if (stats && stats.steadyStartSec != null && stats.steadyEndSec != null) {
     const start = Math.round(stats.steadyStartSec * SR);
     const end = Math.round(stats.steadyEndSec * SR);
-    if (end - start >= Math.round(SR * 0.2)) {
-      return { rms: stereoRmsOver(stereo, start, end), peak: stereoPeakOver(stereo, start, end) };
+    if (end - start >= Math.round(SR * 0.4)) {
+      /* 400ms minimum: measureLufs needs ≥1 momentary window (400ms). The
+         old 200ms RMS floor isn't valid here; under it we fall through to
+         the loudest-1s fallback. */
+      const m = measureLufs(stereo, mono, SR, { startSample: start, endSample: end });
+      if (m && m.rms != null) return m;
     }
   }
-  /* Fallback for samples with no usable steady region. */
+  /* Fallback for samples with no usable steady region. Scan for the loudest
+     1s window in post-trim audio and run K-weighting over that window. */
   const trimStartSec = (res && typeof res.trimStart === 'number') ? res.trimStart : 0;
   const start = Math.max(0, Math.round(trimStartSec * SR));
   const end = mono.length;
-  if (end - start < Math.round(SR * 0.2)) return null;
+  if (end - start < Math.round(SR * 0.4)) return null;
   const winSamp = Math.min(end - start, Math.round(SR * 1.0));
   const hopSamp = Math.max(1, Math.round(SR * 0.1));
+  /* Coarse RMS-based scan to find the loudest window (cheap), then run
+     K-weighting on the winning region. The scan doesn't need to be
+     perceptually weighted — we're just locating the right 1s slice. */
   let bestRms = 0, bestStart = start;
   for (let s = start; s + winSamp <= end; s += hopSamp) {
     const r = stereoRmsOver(stereo, s, s + winSamp);
@@ -372,7 +460,8 @@ function measureRmsLoop(stereo, mono, res) {
     if (r > bestRms) { bestRms = r; bestStart = lastStart; }
   }
   if (bestRms <= 0) return null;
-  return { rms: bestRms, peak: stereoPeakOver(stereo, bestStart, bestStart + winSamp) };
+  const m = measureLufs(stereo, mono, SR, { startSample: bestStart, endSample: bestStart + winSamp });
+  return (m && m.rms != null) ? m : null;
 }
 
 function computeGain(meas) {
@@ -484,10 +573,35 @@ function pickSamples(results, cfg) {
   // Pass 1: green spine. No min-sep — allow close greens (e.g. Ab3+Bb3 on
   // Iowa viola) since both are loop-quality samples and redundancy at the
   // green tier is fine.
+  //
+  // keepAllGreenRange (when set) carves the green tier into two slices:
+  //   - in-range greens: every one is kept unconditionally (no spacing).
+  //   - out-of-range greens: run the spine picker at ~4-st spacing as usual.
+  // The spine is the union of (in-range kept-all) ∪ (out-of-range spaced),
+  // sorted by midi. The blue/yellow fill pass downstream uses the union as
+  // its excludeFrom set so fills don't crowd the dense in-range section.
   const greens = usable.filter(r => r.tier === 'green');
-  const spine = greens.length > 0
-    ? spacedPick(greens, greens[0].midi, greens[greens.length - 1].midi)
-    : [];
+  let spine = [];
+  if (greens.length > 0) {
+    const loM = cfg.keepAllGreenLowMidi, hiM = cfg.keepAllGreenHighMidi;
+    const inRange = (loM != null && hiM != null)
+      ? greens.filter(g => g.midi >= loM && g.midi <= hiM)
+      : [];
+    const outOfRange = (loM != null && hiM != null)
+      ? greens.filter(g => g.midi < loM || g.midi > hiM)
+      : greens;
+    /* Out-of-range portion still gets the ~4-st spacing treatment, with one
+       caveat: a single-side gap adjacent to the kept-all block shouldn't
+       drop a pick that's <4 semitones from the block edge. spacedPick walks
+       startMidi → endMidi targeting at +4 each iteration; setting startMidi
+       to the first available midi (and endMidi to the last) keeps that
+       behavior, and the subsequent .concat + sort + fill pass exclusion
+       naturally guards against duplicates. */
+    const spaced = outOfRange.length > 0
+      ? spacedPick(outOfRange, outOfRange[0].midi, outOfRange[outOfRange.length - 1].midi)
+      : [];
+    spine = inRange.concat(spaced);
+  }
   spine.sort((a,b) => a.midi - b.midi);
 
   // Pass 2: blue + yellow fill in gaps > 4 semitones. Head/tail edges count
@@ -545,10 +659,29 @@ function pickSamples(results, cfg) {
 
 const fmt = (x, n) => (+x.toFixed(n)).toString();
 
+/* Mirror of analyzer/bundle.js:targetExt. Inlined to avoid importing the
+   bundler just for this. Keep in sync. */
+const LOSSY_EXTS = new Set(['.mp3', '.ogg', '.opus', '.aac', '.m4a']);
+const LOSSLESS_EXTS = new Set(['.wav', '.aiff', '.aif', '.flac']);
+function archiveExt(srcExt) {
+  const e = srcExt.toLowerCase();
+  if (LOSSY_EXTS.has(e)) return e;
+  if (LOSSLESS_EXTS.has(e)) return '.opus';
+  return e;
+}
+
 function emitSampleEntry(r, cfg) {
-  // freq = analyzer-measured actual audio fundamental
-  // (for decay this is res.freqActual; for loop pipelines we surface freqActual too)
-  const freq = (typeof r.res.freqActual === 'number') ? r.res.freqActual : r.labeledFreq / cfg.transpose;
+  /* Pitch source for the emitted `freq`:
+     - trustLabeledPitch (default for source:"local"): labeled ET / transpose.
+       Use when sample tuning has been externally validated (Melodyne, tuned
+       synth source, MIDI-keyboard capture).
+     - else: analyzer-detected fundamental from res.freqActual, falling back
+       to labeled ET if detection failed.
+     The auto-detected value is still surfaced in the diagnostic report so
+     you can see when measurement and label diverge. */
+  const detected = (typeof r.res.freqActual === 'number') ? r.res.freqActual : null;
+  const labeled = r.labeledFreq / cfg.transpose;
+  const freq = cfg.trustLabeledPitch ? labeled : (detected != null ? detected : labeled);
   const freqStr = fmt(freq, 3);
   /* gain: both paths target TARGET_RMS over their measurement window, with a
      peak ceiling at TARGET_PEAK that kicks in only when RMS targeting would
@@ -557,17 +690,28 @@ function emitSampleEntry(r, cfg) {
      pitch (freq), level (gain), then loop-specific fields. Falls back to 1.0
      silently at runtime if absent. */
   const gainStr = (typeof r.gain === 'number') ? `,gain:${fmt(r.gain, 4)}` : '';
-  /* Emit a per-sample `file` field whenever the resolved filename can't be
-     reconstructed from a simple `{NOTE}{ext}` substitution at runtime — i.e.
-     when filePatterns plural was used, or any of {MIDI}/{NOTE_LETTER}/
-     {NOTE_LOWER} appeared in the template. The runtime engine prefers this
-     over filePattern substitution. */
-  const defaultPattern = '{NOTE}' + cfg.ext;
-  const usesMulti = !!cfg.filePatterns;
-  const singleTemplate = cfg.filePattern || defaultPattern;
-  const usesNewPlaceholders = /\{MIDI(_RAW)?\}|\{NOTE_LETTER\}|\{NOTE_LOWER\}/.test(singleTemplate);
-  const needFile = usesMulti || usesNewPlaceholders;
-  const fileStr = (needFile && r.matchedFile) ? `,file:'${r.matchedFile}'` : '';
+  /* Emit a per-sample `file` field. Two shapes:
+       - source==='local' (shipped .hki bundle): the engine reads audio from
+         the bundle's in-memory map keyed by archive-internal path, so file
+         must be `samples/<NOTE><archiveExt>` matching bundle.js's layout.
+       - source==='cdn' (legacy): emit r.matchedFile (CDN-relative filename)
+         only when the runtime can't reconstruct the URL from a default
+         pattern. Multi-pattern configs and configs using new placeholders
+         always need it; simple configs don't.
+     archiveExt() picks .mp3/.opus/etc. per bundle.js's lossy-passthrough
+     vs lossless-to-Opus policy. */
+  let fileStr = '';
+  if (cfg.source === 'local') {
+    const srcExt = r.matchedFile ? path.extname(r.matchedFile) : cfg.ext;
+    fileStr = `,file:'samples/${r.note}${archiveExt(srcExt)}'`;
+  } else {
+    const defaultPattern = '{NOTE}' + cfg.ext;
+    const usesMulti = !!cfg.filePatterns;
+    const singleTemplate = cfg.filePattern || defaultPattern;
+    const usesNewPlaceholders = /\{MIDI(_RAW)?\}|\{NOTE_LETTER\}|\{NOTE_LOWER\}/.test(singleTemplate);
+    const needFile = usesMulti || usesNewPlaceholders;
+    fileStr = (needFile && r.matchedFile) ? `,file:'${r.matchedFile}'` : '';
+  }
 
   if (cfg.decays) {
     return `        {name:'${r.note}',freq:${freqStr}${gainStr}${fileStr}}`;
@@ -615,10 +759,23 @@ function defaultComment(cfg) {
 function emitBlock(picks, cfg) {
   const lines = [];
   lines.push(`    ${cfg.instrumentKey}:{`);
-  lines.push(`      name:'${cfg.displayName}',baseUrl:'${cfg.baseUrl}',`);
+  /* Header source line:
+       source==='local': hki-shipped — runtime fetches `bundleUrl` once, reads
+         per-sample bytes from the parsed bundle's audio map. No baseUrl/ext.
+       source==='cdn' (legacy): emits the CDN baseUrl + ext as before. */
+  if (cfg.source === 'local') {
+    lines.push(`      name:'${cfg.displayName}',source:'hki-shipped',bundleUrl:'/samples/${cfg.instrumentKey}.hki',`);
+  } else {
+    lines.push(`      name:'${cfg.displayName}',baseUrl:'${cfg.baseUrl}',`);
+  }
   const decayFlag = cfg.decays ? 'decays:true' : 'decays:false';
   const loopFlag  = cfg.decays ? 'loop:false' : 'loop:true';
-  let header = `      ext:'${cfg.ext}',releaseTime:${cfg.releaseTime},volume:${cfg.volume},${loopFlag},${decayFlag}`;
+  /* ext: only meaningful for CDN entries (used for default {NOTE}{ext}
+     filePattern substitution). HKI-shipped entries carry per-sample file
+     fields exclusively, so ext is omitted for them. */
+  let header = (cfg.source === 'local')
+    ? `      releaseTime:${cfg.releaseTime},volume:${cfg.volume},${loopFlag},${decayFlag}`
+    : `      ext:'${cfg.ext}',releaseTime:${cfg.releaseTime},volume:${cfg.volume},${loopFlag},${decayFlag}`;
   /* Opt-in: sustained instruments that should retrigger (not crossfade)
      on coordinate transposes — see audio/engine.ts:instrReplaysOnTranspose. */
   if (cfg.replayOnTranspose) header += ',replayOnTranspose:true';
@@ -629,7 +786,10 @@ function emitBlock(picks, cfg) {
   // (loadConfig defaults cfg.filePattern to '{NOTE}.mp3' which is wrong for
   // FLAC sources, and the value is never consulted at runtime either way).
   const defaultPattern = '{NOTE}' + cfg.ext;
-  if (!cfg.filePatterns && cfg.filePattern && cfg.filePattern !== defaultPattern) {
+  /* HKI-shipped entries carry per-sample file: fields keyed by archive path;
+     filePattern is meaningless (it described how to interpret CDN URLs / local
+     source filenames at analysis time, not bundle internals). */
+  if (cfg.source !== 'local' && !cfg.filePatterns && cfg.filePattern && cfg.filePattern !== defaultPattern) {
     header += `,filePattern:'${cfg.filePattern}'`;
   }
   lines.push(header + ',');
@@ -663,6 +823,7 @@ function buildReport(results, picks, cfg, fallbackNotes) {
   lines.push(`- Path: **${cfg.decays ? 'decay (freq-only)' : 'loop / unified'}**${cfg.vibrato ? ' (vibrato hint: looser phase defaults)' : ''}`);
   lines.push(`- Range: ${cfg.lowOct}–${cfg.highOct} (${results.length} samples analyzed)`);
   lines.push(`- Transpose: ${cfg.transpose}`);
+  lines.push(`- Pitch source: **${cfg.trustLabeledPitch ? 'labeled ET (filename)' : 'auto-detected (+ZC pair / pitch-curve median)'}**`);
   lines.push('');
   lines.push(`## Tier distribution`);
   lines.push('');
@@ -673,10 +834,13 @@ function buildReport(results, picks, cfg, fallbackNotes) {
   lines.push(`## Picks (${picks.length}, ~4-semitone spacing)`);
   lines.push('');
   const gainColLoop = (p) => {
-    if (typeof p.rms !== 'number' || p.rms <= 0) return '— | —';
-    const dBFS = (20 * Math.log10(p.rms)).toFixed(1);
+    /* Loop path now uses K-weighted measurement (see measureRmsLoop). Surface
+       LUFS like the decay path so the report tells the truth about what was
+       measured; p.rms is the K-weighted stereo-RMS-equivalent (~3 dB below
+       the LUFS value), not plain RMS. */
+    const lufs = (typeof p.lufs === 'number') ? p.lufs.toFixed(1) : '—';
     const g = (typeof p.gain === 'number') ? p.gain.toFixed(4) : '—';
-    return `${dBFS} | ${g}`;
+    return `${lufs} | ${g}`;
   };
   const gainColDecay = (p) => {
     const lufs = (typeof p.lufs === 'number') ? p.lufs.toFixed(1) : '—';
@@ -693,16 +857,27 @@ function buildReport(results, picks, cfg, fallbackNotes) {
       lines.push(`| ${p.note} | ${p.labeledFreq.toFixed(2)} | ${fa} | ${drift} | ${gainColDecay(p)} | ${p.tier} |`);
     });
   } else {
-    lines.push(`| Note | Hz | segments | SCC | bridges | steady (s) | RMS (dBFS) | gain | tier |`);
-    lines.push(`| --- | ---: | ---: | :---: | ---: | ---: | ---: | ---: | --- |`);
+    /* Loop-path picks: show Labeled / Measured / Drift so the diagnostic
+       value of the auto-detector survives even when trustLabeledPitch routes
+       the labeled value into the bundle. A large drift on a pitch-validated
+       source flags a real measurement bias (vowel formants, glottal
+       asymmetry, etc.) rather than a real tuning issue. */
+    lines.push(`| Note | Labeled (Hz) | Measured (Hz) | Drift (¢) | segments | SCC | bridges | steady (s) | LUFS | gain | tier |`);
+    lines.push(`| --- | ---: | ---: | ---: | ---: | :---: | ---: | ---: | ---: | ---: | --- |`);
     picks.forEach(p => {
       const s = p.res.stats || {};
-      const fa = p.res.freqActual != null ? p.res.freqActual.toFixed(2) : p.labeledFreq.toFixed(2);
+      const labeled = p.labeledFreq / (cfg.transpose || 1);
+      const detected = p.res.freqActual;
+      const drift = (typeof detected === 'number' && labeled > 0)
+        ? (1200 * Math.log2(detected / labeled)).toFixed(1)
+        : '—';
+      const labStr = labeled.toFixed(2);
+      const detStr = (typeof detected === 'number') ? detected.toFixed(2) : '—';
       const nSeg = (p.res.segments && p.res.segments.length) || 0;
       const scc = s.sccOk ? 'ok' : 'BRK';
       const br = (s.bridgeCount != null) ? s.bridgeCount : '—';
       const steady = (s.steadyDurSec != null) ? s.steadyDurSec.toFixed(2) : '—';
-      lines.push(`| ${p.note} | ${fa} | ${nSeg} | ${scc} | ${br} | ${steady} | ${gainColLoop(p)} | ${p.tier} |`);
+      lines.push(`| ${p.note} | ${labStr} | ${detStr} | ${drift} | ${nSeg} | ${scc} | ${br} | ${steady} | ${gainColLoop(p)} | ${p.tier} |`);
     });
   }
   // failures
@@ -807,4 +982,14 @@ function buildReport(results, picks, cfg, fallbackNotes) {
   fs.writeFileSync(reportPath, buildReport(results, picks, cfg, fallbackNotes));
   console.error(`\nwrote: ${blockPath}\nwrote: ${reportPath}`);
   console.error(`picks: ${picks.length}`);
+  /* Bundle emission. cfg.bundle is true when source==='local' OR --bundle was
+     passed; either way we additionally write out/<key>.hki alongside the
+     block + report. CDN configs default to off (their primary emission target
+     is samples-data.ts via insert-instrument.js). */
+  if (cfg.bundle && picks.length > 0) {
+    const { buildBundle } = await import('./bundle.js');
+    const cacheDir = path.join(CACHE_DIR, cfg.configName);
+    const hkiPath = buildBundle(cfg, picks, OUT_DIR, cacheDir);
+    console.error(`wrote: ${hkiPath}`);
+  }
 })();

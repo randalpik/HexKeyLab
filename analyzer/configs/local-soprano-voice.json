@@ -1,0 +1,24 @@
+{
+  "instrumentKey": "soprano_voice",
+  "displayName": "Soprano Voice",
+  "source": "local",
+  "sourceDir": "/home/max/musiquest-assets/audio/samples",
+  "ext": ".mp3",
+  "filePattern": "female_aaa_{NOTE_LOWER}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 3,
+  "highOct": 6,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "volume": 1.0,
+  "keepAllGreenRange": ["C4", "E6"],
+  "comment": [
+    "User-owned female 'aa' samples (sustained, vibrato) from",
+    "~/musiquest-assets/audio/samples. NB: source files are female_aaa_*,",
+    "not female_aah_*. Range 3-6.",
+    "keepAllGreenRange covers the natural soprano vocal range — every green",
+    "sample is kept in C4-E6 to minimize audible timbral seams in vocal play."
+  ]
+}

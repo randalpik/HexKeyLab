@@ -1,36 +1,53 @@
-/* K-weighted loudness measurement per ITU-R BS.1770-4, exported as
-   measureDecayLufs for use by the decay-path gain normalizer in both
-   generate-samples.js and backfill-gains.js.
+/* K-weighted loudness measurement per ITU-R BS.1770-4.
 
-   Why K-weighting (vs the previous 200ms post-trim RMS):
-     The 200ms window was dominated by the hammer/attack transient. Two
-     adjacent samples with matched attack RMS can have very different
-     sustained loudness if their sources have inconsistent attack-vs-sustain
-     ratios — a problem we hit on the Maestro grand piano (Eb5 ~8 dB louder
-     than E5 in absolute level; matched attack normalization left the
-     sustains drifting by 2–6 dB, audibly louder on E5 over the full
-     ring-down). K-weighted integrated loudness with BS.1770 momentary-window
-     gating measures over the audible portion of the entire decay, weighted
-     for frequency sensitivity, and tracks perceived loudness across
-     inconsistent source recordings far better than peak-anchored RMS.
+   Two entry points:
+     measureLufs(stereo, mono, sr, {startSample, endSample})
+       Region-aware. Runs the full pipeline over the [startSample, endSample)
+       frame window. Used by both the decay-path and loop-path gain
+       normalizers in generate-samples.js. Caller picks the region:
+         - Decay path: (trimStart, length) — full post-trim audio.
+         - Loop path: the analyzer's steady region (or a fallback 1s window).
+     measureDecayLufs(stereo, mono, sr)
+       Back-compat wrapper. Trims silence, then calls measureLufs over
+       (trimStart, length). Used by backfill-gains.js and any caller that
+       wants the original decay-path semantics.
+
+   Why K-weighting:
+     The previous 200ms post-trim RMS for decays was dominated by the
+     hammer/attack transient. Two adjacent samples with matched attack RMS
+     can have very different sustained loudness if their sources have
+     inconsistent attack-vs-sustain ratios — a problem we hit on the Maestro
+     grand piano (Eb5 ~8 dB louder than E5 in absolute level; matched attack
+     normalization left the sustains drifting by 2–6 dB, audibly louder on
+     E5 over the full ring-down). The loop path's prior stereo RMS over the
+     steady region had the same family of failure: timbrally-different
+     samples (e.g. viola across its range) measure identical RMS but sound
+     very different in perceived loudness. K-weighting frequency-weights
+     the energy to match the ear's response and tracks perceived loudness
+     across inconsistent recordings far better than plain RMS.
 
    Pipeline:
      1. Pre-filter (high-shelf @1681 Hz, +4 dB, Q=0.707) on each channel —
         approximates the head-related boost in the ear's response.
      2. RLB filter (high-pass @38 Hz, Q=0.5) on each channel — removes sub-
         audible low-frequency energy that doesn't contribute to loudness.
-     3. Momentary loudness curve: 400ms windows, 100ms hop, starting at the
-        trim point. L_M = -0.691 + 10*log10(meansq_L + meansq_R).
+        Filters run from sample 0 through the FULL buffer length so the IIR
+        transient settles before the analysis region begins (the region's
+        startSample may be arbitrary; we never restart the filter mid-buffer).
+     3. Momentary loudness curve: 400ms windows, 100ms hop, starting at
+        startSample and ending at endSample-winLen.
+        L_M = -0.691 + 10*log10(meansq_L + meansq_R).
      4. Absolute gate: discard windows below -70 LUFS.
      5. Relative gate: discard windows below (gate1_mean - 10 LU).
      6. Integrated loudness = mean of gated windows in the energy domain.
 
-   Return shape mirrors the legacy measureDecay so the gain calculation in
-   computeGain stays unchanged:
+   Return shape (both functions):
      rms  — stereo-RMS-equivalent (sqrt(integrated_combined/2)), matches the
             existing TARGET_RMS = sqrt(Σ(L²+R²)/2N) convention.
-     peak — unfiltered stereo peak over the analysis horizon (clip protection
-            is about raw sample values, not perceived loudness).
+     peak — unfiltered stereo peak over a peak-measurement region. For
+            measureLufs this is the same (startSample, endSample) window;
+            for measureDecayLufs it's the legacy (trimStart, trimStart+3s)
+            window (clip risk is dominated by the attack transient).
      lufs — integrated K-weighted loudness, for reporting.
 */
 
@@ -94,19 +111,31 @@ export function findTrimStart(mono, thresh = 0.003) {
   return 0;
 }
 
-export function measureDecayLufs(stereo, mono, sr) {
-  const trim = findTrimStart(mono);
+/* Core K-weighting measurement over an arbitrary frame region. Both the loop
+   and decay paths call this; the caller's job is to pick the right region
+   (steady region for loops; post-trim for decays). */
+export function measureLufs(stereo, mono, sr, opts) {
+  opts = opts || {};
   const frames = Math.floor(stereo.length / 2);
-  if (frames <= trim) return { rms: null, peak: null, failReason: 'sample empty after trim' };
+  const startSample = Math.max(0, Math.min(frames, opts.startSample | 0));
+  const endSample = Math.max(startSample, Math.min(frames, opts.endSample == null ? frames : opts.endSample | 0));
+  /* Peak window — if the caller wants peak measured over a different region
+     than the LUFS region (decay-path uses (trim, trim+3s) for clip-protection
+     headroom), they can pass {peakStartSample, peakEndSample} explicitly.
+     Default: same as the LUFS region. */
+  const peakStart = Math.max(0, Math.min(frames, opts.peakStartSample == null ? startSample : opts.peakStartSample | 0));
+  const peakEnd = Math.max(peakStart, Math.min(frames, opts.peakEndSample == null ? endSample : opts.peakEndSample | 0));
 
   const winLen = Math.round(sr * 0.4);
   const hop = Math.round(sr * 0.1);
-  if (frames - trim < winLen) {
-    return { rms: null, peak: null, failReason: 'sample shorter than 400ms after trim (need ≥1 momentary window)' };
+  if (endSample - startSample < winLen) {
+    return { rms: null, peak: null, failReason: 'region shorter than 400ms (need ≥1 momentary window)' };
   }
 
-  /* De-interleave and K-weight each channel from sample 0 (not from trim) so
-     the IIR filter has time to settle before the analysis windows begin. */
+  /* De-interleave and K-weight each channel from sample 0 through the full
+     buffer so the IIR filter settles before whatever startSample the caller
+     picked. Filtering only [startSample, endSample) would leave the first
+     ~10ms of the analysis region carrying the filter transient. */
   const L = new Float32Array(frames);
   const R = new Float32Array(frames);
   for (let i = 0; i < frames; i++) {
@@ -117,10 +146,10 @@ export function measureDecayLufs(stereo, mono, sr) {
   applyBiquadInPlace(L, coeffs.pre); applyBiquadInPlace(L, coeffs.rlb);
   applyBiquadInPlace(R, coeffs.pre); applyBiquadInPlace(R, coeffs.rlb);
 
-  /* Momentary windows starting at trim. BS.1770 L_M(t) over channels L,R
-     with channel-weighting G_L = G_R = 1.0 (stereo, no surround). */
+  /* Momentary windows within [startSample, endSample). BS.1770 L_M(t) over
+     channels L,R with channel-weighting G_L = G_R = 1.0 (stereo, no surround). */
   const windows = [];
-  for (let s = trim; s + winLen <= frames; s += hop) {
+  for (let s = startSample; s + winLen <= endSample; s += hop) {
     let sL = 0, sR = 0;
     for (let k = 0; k < winLen; k++) {
       const l = L[s + k], r = R[s + k];
@@ -161,16 +190,13 @@ export function measureDecayLufs(stereo, mono, sr) {
      stereoRmsOver convention sqrt(Σ(L²+R²)/2N), so the unchanged gain math
      (gain = TARGET_RMS / rms) operates on a K-weighted-equivalent stereo
      RMS. The absolute LUFS value drifts by a small offset relative to plain
-     stereo RMS (~3 dB), but all decay samples drift by the same offset so
+     stereo RMS (~3 dB), but all samples drift by the same offset so
      inter-sample loudness consistency is what improves. */
   const rmsEq = Math.sqrt(integrated / 2);
 
-  /* Peak on the UNFILTERED stereo over the post-trim region, capped at 3s.
-     Clipping risk is per-frame raw value; the attack peak (well within 3s)
-     dominates so the cap is safe. */
-  const peakEnd = Math.min(frames, trim + Math.round(sr * 3));
+  /* Peak on the UNFILTERED stereo over the peak window. */
   let peak = 0;
-  for (let i = trim; i < peakEnd; i++) {
+  for (let i = peakStart; i < peakEnd; i++) {
     const aL = Math.abs(stereo[2 * i]);
     const aR = Math.abs(stereo[2 * i + 1]);
     const a = aL > aR ? aL : aR;
@@ -178,4 +204,20 @@ export function measureDecayLufs(stereo, mono, sr) {
   }
 
   return { rms: rmsEq, peak, lufs: integratedLufs, nWindows: gated.length, region: 'lufs' };
+}
+
+/* Back-compat wrapper: trim silence, then measure LUFS over the post-trim
+   region. Peak window is capped at 3s past trimStart (the attack transient
+   dominates clip risk). Called by analyzer/backfill-gains.js and any other
+   legacy caller that expects "decay-style" semantics. */
+export function measureDecayLufs(stereo, mono, sr) {
+  const trim = findTrimStart(mono);
+  const frames = Math.floor(stereo.length / 2);
+  if (frames <= trim) return { rms: null, peak: null, failReason: 'sample empty after trim' };
+  return measureLufs(stereo, mono, sr, {
+    startSample: trim,
+    endSample: frames,
+    peakStartSample: trim,
+    peakEndSample: Math.min(frames, trim + Math.round(sr * 3)),
+  });
 }

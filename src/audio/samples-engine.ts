@@ -7,6 +7,35 @@ import { recordSeamEvent } from './diagnostics/loopOverlay.js';
 import { inflightExpRampValue, velocityBaseVol } from './aftertouch.js';
 import { INSTRUMENTS } from './samples-data.js';
 import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
+import * as InstrumentRegistry from '../state/instrumentRegistry.js';
+import { readHki } from '../shared/hki.js';
+
+/* Cache of shipped-bundle audio maps, keyed by instrument key. Each entry is
+   a Promise<{file → bytes}> that resolves to the bundle's archive contents.
+   Populated on first selection of a `source:'hki-shipped'` instrument; the
+   resolved audio is kept in memory until page reload. */
+const shippedBundleCache: Record<string, Promise<Record<string, Uint8Array>>> = {};
+
+function fetchShippedBundle(instr: any): Promise<Record<string, Uint8Array>> {
+  const url = instr.bundleUrl;
+  if (!url) return Promise.reject(new Error('Shipped HKI instrument missing bundleUrl'));
+  /* TS sees the indexed-access type as non-undefined, but a Record index that
+     was never assigned IS undefined at runtime — guard explicitly with `in`. */
+  if (url in shippedBundleCache) return shippedBundleCache[url];
+  shippedBundleCache[url] = fetch(url).then(r => {
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' fetching ' + url);
+    return r.arrayBuffer();
+  }).then(ab => {
+    const bundle = readHki(new Uint8Array(ab));
+    return bundle.audio;
+  }).catch(err => {
+    /* On failure, evict the cache entry so a retry on next selection can
+       attempt the fetch again rather than re-throwing the cached error. */
+    delete shippedBundleCache[url];
+    throw err;
+  });
+  return shippedBundleCache[url];
+}
 
 const RELEASE_SCALE = 0.5;
 
@@ -90,6 +119,31 @@ const activeVoices: Record<string, any> = {};
       if(buffers[key]){currentInstrument=key;return resolve();}
       var loaded=0,total=instr.samples.length,result: any[] = [];
       var aborted=false;
+      /* For HKI-backed instruments, pull all audio bytes up-front so the
+         per-sample loop below can be synchronous. Two flavors:
+           'hki'         user-imported, audio in IndexedDB (no network).
+           'hki-shipped' canonical shipped bundle, audio in public/samples/
+                         on first selection (network fetch, in-memory cached
+                         for subsequent selections).
+         CDN instruments skip this entirely. */
+      var hkiAudioPromise: Promise<Record<string, Uint8Array> | null>;
+      if (instr.source==='hki') {
+        hkiAudioPromise = InstrumentRegistry.getAudio(key);
+      } else if (instr.source==='hki-shipped') {
+        hkiAudioPromise = fetchShippedBundle(instr);
+      } else {
+        hkiAudioPromise = Promise.resolve(null);
+      }
+      hkiAudioPromise.then(function(hkiAudio){
+        if((instr.source==='hki' || instr.source==='hki-shipped') &&
+           (!hkiAudio || Object.keys(hkiAudio).length===0)){
+          var src=instr.source==='hki-shipped' ? 'shipped bundle' : 'imported bundle';
+          return reject(new Error('HKI instrument "'+key+'" has no audio in '+src+'.'));
+        }
+        runLoad(hkiAudio);
+      }, function(err){ reject(err); });
+      /* Body extracted so we can await hkiAudio above when applicable. */
+      function runLoad(hkiAudio: Record<string, Uint8Array> | null): void {
       function logLoopReport(){
         console.log('=== Loop points for '+instr.name+' ===');
         var tableRows: any[] = [];
@@ -136,23 +190,43 @@ const activeVoices: Record<string, any> = {};
       }
       instr.samples.forEach(function(s: any, i: number){
         if(aborted)return;
-        /* Per-sample s.file wins: the analyzer records the exact filename it
-           fetched per note, which is the only safe option when an instrument's
-           filePatterns array tries multiple URL templates (Iowa strings'
-           sul-string prefixes, VCSL harpsichord's Low/High registers) and
-           different notes resolved to different templates. For legacy
-           instruments without s.file, fall back to pattern substitution. */
-        var url;
-        if(s.file){
-          url=instr.baseUrl+s.file.replace(/#/g,'%23');
-        } else {
-          var pat=instr.filePattern||('{NOTE}'+instr.ext);
-          url=instr.baseUrl+pat.replace('{NOTE}',s.name).replace(/#/g,'%23');
-        }
+        /* Two audio-source paths:
+             CDN (source omitted or any non-'hki' value): fetch s.file (or
+               filePattern-substituted name) from instr.baseUrl.
+             HKI (source==='hki'): read s.file from the in-memory bundle audio
+               map we awaited above. No network.
+           Per-sample s.file wins for CDN: the analyzer records the exact
+           filename it fetched per note, which is the only safe option when an
+           instrument's filePatterns array tries multiple URL templates
+           (Iowa strings' sul-string prefixes, VCSL harpsichord's Low/High
+           registers) and different notes resolved to different templates. For
+           legacy instruments without s.file, fall back to pattern substitution. */
         var timer=setTimeout(function(){aborted=true;delete buffers[key];reject(new Error("Timeout loading "+s.name));},10000);
-        fetch(rewriteIowaUrl(url)).then(function(r){
-          if(!r.ok)throw new Error('HTTP '+r.status);return r.arrayBuffer();
-        }).then(function(ab){return ctx.decodeAudioData(ab);}).then(function(buf){
+        var arrayBufferPromise: Promise<ArrayBuffer>;
+        if(instr.source==='hki' || instr.source==='hki-shipped'){
+          var bytes=hkiAudio&&hkiAudio[s.file];
+          if(!bytes){
+            arrayBufferPromise=Promise.reject(new Error('Missing audio in bundle: '+s.file));
+          } else {
+            /* Copy into a fresh ArrayBuffer so decodeAudioData (which detaches
+               its input) doesn't strand the registry's cached Uint8Array. */
+            var copy=new Uint8Array(bytes.byteLength);
+            copy.set(bytes);
+            arrayBufferPromise=Promise.resolve(copy.buffer);
+          }
+        } else {
+          var url;
+          if(s.file){
+            url=instr.baseUrl+s.file.replace(/#/g,'%23');
+          } else {
+            var pat=instr.filePattern||('{NOTE}'+instr.ext);
+            url=instr.baseUrl+pat.replace('{NOTE}',s.name).replace(/#/g,'%23');
+          }
+          arrayBufferPromise=fetch(rewriteIowaUrl(url)).then(function(r){
+            if(!r.ok)throw new Error('HTTP '+r.status);return r.arrayBuffer();
+          });
+        }
+        arrayBufferPromise.then(function(ab){return ctx.decodeAudioData(ab);}).then(function(buf){
           clearTimeout(timer);if(aborted)return;
           /* Trend normalization — applied once at load, BEFORE loop-point
              snapping and silence-trim detection (both of which only read
@@ -245,6 +319,7 @@ const activeVoices: Record<string, any> = {};
             else{currentInstrument=key;resolve();}}
         });
       });
+      } /* end runLoad */
     });
   }
   function findNearest(freq: number): any {

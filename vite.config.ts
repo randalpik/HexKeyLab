@@ -115,6 +115,10 @@ export default defineConfig({
     strictPort: true,
   },
   build: {
+    /* es2022 enables top-level await (used in src/ui/init.ts to block boot
+       on IndexedDB-backed instrument registry init). Supported by Firefox
+       89+, Chrome 89+, Safari 15+ — all ≥4y old at time of writing. */
+    target: 'es2022',
     rollupOptions: {
       input: {
         main:     path.resolve(__dirname, 'index.html'),

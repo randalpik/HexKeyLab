@@ -948,3 +948,41 @@ if (!wasConnected) {
 ```
 
 `composer/main.ts:hkl-hello`. Generalizable rule: in any pub/sub handshake where receipt triggers a reply AND the reply triggers a re-receipt, gate the reply on a state transition — never on the event itself.
+
+### Vite's default build target is es2020 — top-level `await` needs `target: 'es2022'`
+
+The Vite default `build.target` rolls up to roughly `chrome87 / firefox78 / safari14 / es2020`. ES2020 doesn't have top-level await; trying to ship a module-level `await foo()` from src/ produces a cryptic build error:
+
+```
+[vite:esbuild-transpile] Transform failed with 1 error:
+ERROR: Top-level await is not available in the configured target environment
+```
+
+Fix is one line in `vite.config.ts`:
+```ts
+build: { target: 'es2022', /* ... */ }
+```
+
+That moves the floor to Firefox 89 / Chrome 89 / Safari 15 — all ≥4 years old at time of writing, so probably fine for any HKL feature. If a future feature has stricter compat requirements, the alternative is to wrap the async init in a Promise chain instead of top-level await (see `src/ui/init.ts` before 2026-05-25 for the synchronous-bootstrap pattern). Both work; top-level await reads cleaner when the rest of the file is sequential.
+
+`vite.config.ts:build.target` (set to `'es2022'` 2026-05-25 for the `InstrumentRegistry.init()` await in `src/ui/init.ts`).
+
+### Don't re-encode lossy audio
+
+When bundling audio files into any container, dispatch on source format: keep already-lossy sources verbatim (MP3, OGG, Opus, AAC, M4A), only encode lossless sources (WAV, AIFF, FLAC) to a lossy target codec. Transcoding e.g. MP3→Opus compounds quantization noise; the result sounds worse than either the original MP3 or a fresh Opus encode from the lossless original.
+
+This applies to the `.hki` bundler (`analyzer/bundle.js`), to any future preview-encoding pass, and to the eventual orchestrator (HKLO) which will capture audio output from MIDI keyboards — the orchestrator records to a lossless intermediate format BEFORE handing samples to the analyzer for `.hki` packaging, specifically so the encoder downstream has a clean source to work from.
+
+The pragmatic exception: when the user explicitly opts into a "re-encode everything to opus" mode (smaller bundle for distribution), document the audible cost. Default is preservation.
+
+`analyzer/bundle.js:LOSSY_EXTS` / `LOSSLESS_EXTS` / `targetExt()`.
+
+### `Proxy` over a typed Record is read-transparent but not iterable by default
+
+`INSTRUMENTS` in `src/audio/samples-data.ts` is a `Proxy` over the static map that falls through to the imported-bundle registry on miss. Consumers using `obj[key]` and `key in obj` work transparently because both go through the `get` / `has` traps. But `for..in`, `Object.keys`, `Object.entries`, `JSON.stringify` only enumerate keys reported by the `ownKeys` trap — which defaults to the target's own keys, not the Proxy's virtual ones.
+
+So adding a Proxy-backed virtual-key namespace to an existing typed `Record<string, T>` is safe for accessors but silently changes the iteration semantics: virtual keys vanish from any `for..in` loop. If iteration matters for the consumer, either (a) add an `ownKeys` trap (and a matching `getOwnPropertyDescriptor` — `ownKeys` alone won't enumerate properly), or (b) expose a separate enumeration function that hits the underlying source directly.
+
+HKL chose (b) — `InstrumentRegistry.listImported()` for the dropdown's `<optgroup>` populator, no `ownKeys` trap on `INSTRUMENTS`. There's currently no other consumer that iterates instruments. Adding one in the future would need to opt into the registry list explicitly.
+
+`src/audio/samples-data.ts` (Proxy definition), `src/ui/instrumentBundles.ts:refreshDropdown` (enumeration via `listImported`).

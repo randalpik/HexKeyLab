@@ -1,0 +1,20 @@
+{
+  "instrumentKey": "viola_pizz",
+  "displayName": "Viola Pizzicato",
+  "source": "local",
+  "sourceDir": "/home/max/musiquest-assets/audio/samples",
+  "ext": ".mp3",
+  "filePattern": "viola_pizz_{NOTE_LOWER}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 3,
+  "highOct": 5,
+  "transpose": 1,
+  "decays": true,
+  "vibrato": false,
+  "releaseTime": 0.15,
+  "volume": 1.0,
+  "comment": [
+    "User-owned viola pizzicato samples (plucked, decay path) from",
+    "~/musiquest-assets/audio/samples. Range 3-5."
+  ]
+}

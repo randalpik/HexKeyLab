@@ -620,6 +620,38 @@ The dropdown in `index.html` is hand-maintained — `samples-data.ts` is NOT aut
 
 `SampleEngine.INSTRUMENTS` registry contains `{name, baseUrl, ext, releaseTime, volume, loop, decays, [vibrato], [filePattern], samples[]}` per instrument, with each sample carrying `{name, freq, gain, [loopPts, validStartsByEnd, trimStart, slopeCV]}`. The `filePattern` field defaults to `'{NOTE}{ext}'` if absent; runtime URL builder applies `#`→`%23` encoding.
 
+`INSTRUMENTS` is a `Proxy` (defined in `src/audio/samples-data.ts`) that wraps the static map and falls through to the IndexedDB-backed imported-bundle registry on miss. Consumers using `INSTRUMENTS[key]` and `key in INSTRUMENTS` see imported entries transparently; the imported entries are synthesized lazily from each `HkiManifest` and carry `source: 'hki'` instead of a `baseUrl`. Iteration (`for..in`, `Object.keys`) does NOT include imported keys — there is no `ownKeys` trap — because the dropdown UI builds the imported-instrument `<optgroup>` from the registry directly. See §4.16.
+
+### 4.16 `.hki` sample bundles
+
+`.hki` is a self-contained instrument bundle format: a ZIP archive carrying analyzer-precomputed metadata plus encoded audio in one file. It exists so users can import sample sets that aren't on a public CDN (Modartt MQ piano renders, commercial libraries, anything download-only) without going through the source-and-paste workflow.
+
+Format (see `src/shared/hki.ts` for the canonical schema):
+```
+manifest.json                  // HkiManifest — instrument metadata + per-sample analyzer output
+samples/<sample-name>.<ext>    // one audio file per kept sample
+provenance.json                // optional — source URL/path, originalFiles, generator, createdAt
+```
+
+`HkiManifest` mirrors a single entry of `INSTRUMENTS` minus the `baseUrl` field; each sample carries its archive-relative `file` path. Loop instruments retain `segments` / `trend` / `trimStart`; decay instruments retain just `freq` / `gain` per sample. The reader/writer use `fflate` (`zipSync` / `unzipSync`) and run identically in Node and the browser.
+
+**Audio encoding policy** (in `analyzer/bundle.js`):
+- `.mp3 / .ogg / .opus / .aac / .m4a` sources → kept verbatim (never re-encode lossy)
+- `.wav / .aiff / .flac` sources → encoded to OGG/Opus 128 kbps via `ffmpeg -c:a libopus`
+- Anything else → kept verbatim
+
+**Production pipeline** (Node CLI):
+- `analyzer/configs/<key>.json` can set `"source": "local"` + `"sourceDir": "/abs/or/relative/to/config"` instead of CDN `baseUrl`. The existing `filePattern` / `filePatterns` machinery resolves files under `sourceDir`.
+- `node analyzer/generate-samples.js analyzer/configs/<key>.json` runs the same analyzer pipeline regardless of source (decode → analyze → tier → pick). For `source: "local"` (or when `--bundle` is passed on a CDN config), it additionally invokes `analyzer/bundle.js:buildBundle` to write `analyzer/out/<key>.hki`. The legacy `samples-data.ts` block.txt + report.md outputs are also produced; `analyzer/insert-instrument.js` is unaffected.
+
+**Consumption pipeline** (HKL browser):
+- `src/state/instrumentRegistry.ts` opens an IndexedDB `hkl-instrument-registry` database (separate stores for manifests and audio bytes), exposes `init` / `listImported` / `importBundle` / `removeBundle` / `getAudio`. Initialization is awaited at top-level in `src/ui/init.ts` before `applyPrefsToDom` so an imported persisted waveform restores correctly on reload.
+- `src/ui/instrumentBundles.ts` wires the toolbar UI: `+ .hki` opens a file picker → `importBundle` → auto-selects the new instrument; `Bundles…` opens a `<dialog>` listing imports with size info and Remove buttons.
+- Imported entries surface in the existing `#waveform` `<select>` under an `<optgroup label="Imported (.hki)">`, repopulated via `onChange` after every import/remove.
+- `samples-engine.ts:loadInstrument` branches on `instr.source === 'hki'`: awaits `getAudio(key)` once up-front, then per-sample reads from the in-memory blob map instead of `fetch()`. Decode (`decodeAudioData`) and metadata overlay (segments/trend/trimStart/gain) paths are unchanged — both CDN and HKI instruments produce identical voice records once loaded.
+
+Vite's `build.target` is set to `es2022` to permit the top-level `await` on registry init (Firefox 89+, Chrome 89+, Safari 15+; all ≥4y old).
+
 ---
 
 ## 5. Internal Subsystems

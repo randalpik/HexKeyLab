@@ -1,0 +1,24 @@
+{
+  "instrumentKey": "baritone_voice",
+  "displayName": "Baritone Voice",
+  "source": "local",
+  "sourceDir": "/home/max/musiquest-assets/audio/samples",
+  "ext": ".mp3",
+  "filePattern": "male_aah_{NOTE_LOWER}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 2,
+  "highOct": 5,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": false,
+  "releaseTime": 0.3,
+  "volume": 1.0,
+  "keepAllGreenRange": ["E2", "E4"],
+  "comment": [
+    "User-owned baritone vowel-'aa' samples from ~/musiquest-assets/audio/samples,",
+    "previously processed for non-looping use. Test run for the .hki pipeline at",
+    "octaves 2-5 (analyzed as non-vibrato sustained loop).",
+    "keepAllGreenRange covers the natural baritone vocal range — every green",
+    "sample is kept in E2-E4 to minimize audible timbral seams in vocal play."
+  ]
+}

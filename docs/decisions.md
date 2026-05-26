@@ -2153,3 +2153,86 @@ For (4) — keeping 10:7 / 7:5 as `septimal A4 / d5` per xen-wiki: those ratios 
 **Why**: HKL's interval analyzer surfaces names for whatever the user is *playing*, in real time. A naming scheme optimized for written-music theory (xen-wiki canonical ratios, Pythagorean defaults preferred) loses to one optimized for what the player's fingers reach. The nearest-match algorithm minimizes comma clutter; the adjective hierarchy gives consistent names to the SC-pair structure of the lattice; the septimal reassignment respects the geometry of Septimal mode specifically.
 
 **Where**: `src/tuning/intervals.ts` — `PairDecl` interface (optional `c2`), `findBaseName`, `autoMirror` (lesser↔greater + acute↔grave flips), `PAIRS` declarations. `tools/interval-names/enumerate.ts` for verification / gap-finding. `docs/architecture.md` §4.10.
+
+---
+
+## `.hki` is a ZIP archive, not a custom container or JSON-with-base64 (2026-05-25)
+
+**Picked**: `.hki` is a deflate ZIP with `manifest.json` + `samples/*.<ext>` + optional `provenance.json`. Reader/writer is `src/shared/hki.ts` over `fflate` (`zipSync` / `unzipSync`), pure-data per the `src/shared/` rules. Same library and code path used by the Node CLI bundler and the in-browser importer.
+
+**Why**: Considered three alternatives.
+
+1. **Custom binary container** (length-prefixed manifest header + raw audio blob concatenation). Rejected: reinvents the wheel; gains nothing over ZIP at HKL's bundle sizes (5-50 MB); harder to inspect with `unzip -l` during debugging.
+
+2. **JSON-only with base64-embedded audio**. Rejected: ~33% size overhead vs raw bytes; forces a full JSON parse + decode pass before any sample is usable; doesn't stream; doesn't let the user crack the bundle open in a normal archive viewer to sanity-check what's inside.
+
+3. **ZIP via `fflate`** (picked). Tiny dep (~30 KB gzipped, MIT, no transitives), works in Node + browser, deflate compression handles the lossless-and-already-encoded mix cleanly (encoded audio is incompressible — deflate adds ~0% overhead — and the manifest JSON compresses ~5×). `unzip -l <bundle>.hki` and `unzip -p <bundle>.hki manifest.json` work for debugging without writing a custom CLI.
+
+The format is producer-agnostic by design: a Phase 2 in-browser analyzer will write `.hki` via the same `writeHki` consumers use to read it. The format spec lives in the TypeScript types in `src/shared/hki.ts`; everything else implements that spec.
+
+**Where**: `src/shared/hki.ts` (schema + reader/writer), `analyzer/bundle.js` (Node producer), `src/state/instrumentRegistry.ts` (browser consumer + IndexedDB persistence), `docs/architecture.md` §4.16.
+
+---
+
+## `.hki` codec policy: keep lossy verbatim, re-encode lossless to Opus (2026-05-25)
+
+**Picked**: When building a `.hki` from cached source audio, the encoder dispatches on source extension:
+- `.mp3 / .ogg / .opus / .aac / .m4a` → kept byte-for-byte (no transcoding)
+- `.wav / .aiff / .flac` → encoded to OGG/Opus 128 kbps via `ffmpeg -c:a libopus -b:a 128k -ar 48000 -vbr on`
+- Unknown extensions → kept verbatim (engine attempts to decode whatever it is)
+
+**Why**: Re-encoding lossy audio compounds quantization noise — encoding an MP3 to Opus produces audibly worse output than either the original MP3 OR a fresh Opus encode from the original WAV. The CDN soundfonts HKL already ships are mostly MP3; bundling them via `.hki` (for distribution of a complete soundfont set, say) should preserve the original bytes. Conversely, when a user imports their own WAV-based sample library, encoding to Opus 128 kbps (which is transparent for almost all musical content) reduces bundle size 5-10× with no perceptible quality loss.
+
+Opus chosen over Vorbis: ~30-50% smaller at the same perceived quality; universally supported in Firefox + Chromium since 2017; preferred by every modern codec recommendation. FLAC was considered as the "no compromise" option but rejected — it produces bundles 2-4× the size of Opus, and `.hki` is meant to be cheap to distribute, not archival.
+
+User input on this choice was explicit ("OGG/Opus unless original source was mp3 already, then keep mp3"), generalized to the full lossy-vs-lossless extension list.
+
+**Where**: `analyzer/bundle.js` — `LOSSY_EXTS`, `LOSSLESS_EXTS`, `targetExt()`, `encodeOpus()`.
+
+---
+
+## `INSTRUMENTS` is a Proxy, not a function call surface, for imported-bundle fallthrough (2026-05-25)
+
+**Picked**: `src/audio/samples-data.ts` exports `INSTRUMENTS` as a `Proxy` over the static map. The `get` trap returns the static entry when present, else synthesizes-and-caches one from `getImportedManifest(key)` (with `source: 'hki'` marker). The `has` trap mirrors this. Iteration (`for..in`, `Object.keys`) is deliberately NOT intercepted — there's no `ownKeys` trap.
+
+**Why**: Considered three options.
+
+1. **Migrate consumers to `resolveInstrument(key): any`**. Touches `src/audio/samples-engine.ts` (4 sites: `loadInstrument`, `sNoteOn`, `sNoteOff`, plus the membership check in `engine.ts:instrIsSample`). Each site would need updating; future consumers might forget and call `INSTRUMENTS[key]` directly. The migration surface is large enough to introduce bugs and small enough to be annoying to maintain forever.
+
+2. **Always merge into a single object on every imported-bundle change**. Simple, no Proxy. But every imported manifest synthesizes a per-sample-object eagerly, and a re-import has to rebuild the merged map. With 280 keys on the Lumatone and ~50-100 samples per imported instrument, this is wasteful but not catastrophic. Loses the "lazy synthesis" property — useful when an imported instrument is in the registry but never gets selected this session.
+
+3. **Proxy with read-through** (picked). Zero changes to consumer call sites. `[key]` and `key in obj` work transparently. Lazy synthesis: imported entries are only built when first accessed, cached per-manifest-identity via WeakMap. Re-importing replaces the cache entry's identity, naturally invalidating the WeakMap entry.
+
+Iteration was deliberately left out because the only iteration HKL does over instruments is the toolbar `<optgroup>` build, which reads `InstrumentRegistry.listImported()` directly — bypassing INSTRUMENTS. Static instruments are enumerated in the HTML, not in code. Adding an `ownKeys` trap with no consumer is unused complexity.
+
+**Where**: `src/audio/samples-data.ts` — `STATIC_INSTRUMENTS` const, `manifestToInstrument`, `importedCache` (WeakMap), `INSTRUMENTS` Proxy export. `src/audio/samples-engine.ts:loadInstrument` branches on `instr.source === 'hki'`.
+
+---
+
+## HKL stores imported `.hki` bytes in IndexedDB, not File System Access (2026-05-25)
+
+**Picked**: On import, HKL copies the `.hki` bytes into IndexedDB (two object stores: `manifests` keyed by `instrumentKey`, `audio` keyed by `${instrumentKey}/${sampleFile}` with a `byInstrument` index for cleanup). The original on-disk file is never referenced after import — the user can move or delete it. Bundles persist across sessions; the registry's manifest cache is warmed synchronously after `init()` resolves, and audio bytes are pulled on-demand at `loadInstrument` time.
+
+**Why**: File System Access API would let the browser hold a persistent handle to the user's original `.hki` and re-read it on each session, avoiding the storage duplication. But:
+- Max's primary browser is Firefox, which doesn't fully support FSA (the persistent-permission half is Chromium-only).
+- FSA's "user grants access to a file" UX is friction-heavy: every reload prompts a permission re-grant for revoked handles.
+- HKL bundles are 5-50 MB typical; modern browsers allow at least 1 GB of IndexedDB storage in normal profiles. Cost of duplication is real but small.
+- "HKL remembers local file locations of hki bundles" (backlog wording) is satisfied by remembering the *bundle contents*, not the *file path*. The user experience is identical.
+
+Considered "ask every session" (no persistence). Rejected: contradicts backlog wording and produces a friction loop where the user re-picks the same file every reload to play notes.
+
+**Where**: `src/state/instrumentRegistry.ts` — `openDb`, `init`, `importBundle`, `removeBundle`, `getAudio`. Database name `hkl-instrument-registry`, version 1.
+
+---
+
+## Phase 1 (.hki format + CLI + import UI) shipped without Phase 2 (browser analyzer rewrite) (2026-05-25)
+
+**Picked**: Phase 1 is the minimum that unblocks "host samples locally and produce an importable bundle." The Node CLI gains a `source: "local"` mode and a `--bundle` flag; HKL gains an import/manage UI. The browser analyzer (`analyzer/HexKeyLab-analyzer.html`) is untouched — it still iterates the existing CDN-config matrix.
+
+**Why**: Phase 2 (focused single-instrument UI, in-browser OGG encoding, drag/drop local files, sample-engine preview playback inside the analyzer) is a separate workflow surface — most of the design lives in UI, not in shared modules. Bundling Phase 1+2 would have produced one large PR touching three apps (analyzer, HKL, eventually orchestrator), with the Phase 2 UI work blocking Phase 1's shipability for a feature Max needed to try MQ piano samples *now*.
+
+The `.hki` format is intentionally producer-agnostic — Phase 2 will produce bytes via the same `writeHki` from `src/shared/hki.ts` that the Node CLI uses, and HKL won't care which produced any given bundle. The Phase 2 preview-playback path is also one line on top of the existing import flow: the analyzer hands the in-progress manifest+blobs straight to `loadInstrument` via the registry path, no new engine support needed.
+
+If Phase 2 reveals a format change is warranted (e.g., per-velocity-layer audio for the orchestrator path described in backlog under ORCHESTRATOR), `HKI_MANIFEST_VERSION` bumps to 2 and `readHki` rejects v1 with a clear message. Both producer and consumer go through `validateManifest` so the migration is symmetric.
+
+**Where**: Phase 1 added `src/shared/hki.ts`, `analyzer/bundle.js`, `src/state/instrumentRegistry.ts`, `src/ui/instrumentBundles.ts`; modified `analyzer/generate-samples.js`, `src/audio/samples-data.ts`, `src/audio/samples-engine.ts`, `src/ui/init.ts`, `vite.config.ts`, `index.html`, `package.json`. Phase 2 scope is in the backlog under ANALYZER.

@@ -1,0 +1,20 @@
+{
+  "instrumentKey": "user_viola",
+  "displayName": "Viola",
+  "source": "local",
+  "sourceDir": "/home/max/musiquest-assets/audio/samples",
+  "ext": ".mp3",
+  "filePattern": "viola_{NOTE_LOWER}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 3,
+  "highOct": 5,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": false,
+  "releaseTime": 0.3,
+  "volume": 1.0,
+  "comment": [
+    "User-owned viola samples (sustained, non-vibrato) from",
+    "~/musiquest-assets/audio/samples. Range 3-5."
+  ]
+}
