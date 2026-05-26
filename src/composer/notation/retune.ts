@@ -23,7 +23,7 @@
 import type { ComposerModel } from '../model/index.js';
 import { freqAt, coordToMidi, MIDI_LOW, MIDI_HIGH, type TuningMode } from '../../shared/freq.js';
 import { noteName, parseNote, accToVal, keyOctave } from '../../tuning/notes.js';
-import { tokenFromAlter } from './accidentals.js';
+import { tokenFromAlter } from '../../notation/accidentals.js';
 
 export interface RetuneNoteEntry {
   noteEl: Element;

@@ -4,7 +4,7 @@
  * `elementHasTie*` read from existing elements. */
 
 import type { ResolvedNote } from '../../bridge/protocol.js';
-import { tokenFromAlter, alterFromCount, getNoteAlter } from '../notation/accidentals.js';
+import { tokenFromAlter, alterFromCount, getNoteAlter } from '../../notation/accidentals.js';
 import {
   el,
   newId,

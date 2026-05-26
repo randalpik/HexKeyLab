@@ -1,7 +1,8 @@
 // Pure HEJI (Extended Helmholtz-Ellis JI) glyph + comma math, shared between
-// HKL's lattice renderer (src/tuning/heji.ts wraps this) and HKL Composer's
-// score renderer (src/composer/notation/heji-render.ts). No runtime state, no
-// DOM, no Web Audio — pure data, per the src/shared/ contract.
+// HKL's lattice renderer (src/tuning/heji.ts wraps this) and the shared score
+// renderer (src/notation/heji-render.ts, used by both Composer and HKL's live
+// staff inset). No runtime state, no DOM, no Web Audio — pure data, per the
+// src/shared/ contract.
 //
 // Two responsibilities:
 //   1. hejiCommasFor(mode, q, r) — the signed syntonic/septimal comma counts

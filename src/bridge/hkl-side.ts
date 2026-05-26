@@ -32,8 +32,8 @@ import * as CdnConfigRegistry from '../state/cdnConfigRegistry.js';
 import { selection } from '../state/selection.js';
 import { audio } from '../state/audio.js';
 import { tuning } from '../state/tuning.js';
-import { noteName, keyOctave, parseNote, accToVal } from '../tuning/notes.js';
-import { darkColorHex, coordToMidi } from '../transcription/pitch.js';
+import { darkColorHex } from '../transcription/pitch.js';
+import { resolveNoteSpec } from '../tuning/spell.js';
 import { noteOn, noteOff, stopAllNotes, triggerRearticulateFlash } from '../audio/engine.js';
 import { draw, activeFootprintSet, invalidatePianoOutline, validateRefNoteCandidate } from '../render/draw.js';
 import { syncViewToOutline } from '../ui/controls.js';
@@ -62,34 +62,15 @@ function currentOutlineForBridge(): import('../state/persistence.js').OutlineMod
 
 /* ── resolution helpers ──────────────────────────────────────────────────── */
 
-function letterToPname(letter: string): ResolvedNote['pname'] {
-  return letter.toLowerCase() as ResolvedNote['pname'];
-}
-
-/** Convert HKL's internal accidental count string (`#`/`b`) to the bridge's
- *  MEI-style count string (`s`/`f`). Empty alteration becomes `''`. No
- *  clamping — Composer handles arbitrary alteration depth by decomposing
- *  into canonical glyphs (x / ts / tf / ff) and stacking `<accid>` children
- *  for ±4+. */
-function accToMei(acc: string): string {
-  const v = accToVal(acc);
-  if (v === 0) return '';
-  const sign = v > 0 ? 's' : 'f';
-  return sign.repeat(Math.abs(v));
-}
-
+/** Resolve (q, r) to a bridge ResolvedNote: the shared spelling/color core
+ *  plus this voice's most-recent velocity. The pname narrowing is safe —
+ *  resolveNoteSpec returns a lowercase letter 'a'..'g'. */
 function resolveKey(q: number, r: number): ResolvedNote {
-  const name = noteName(q, r);
-  const oct = keyOctave(q, r);
-  const parsed = parseNote(name);
   const key: KeyId = q + ',' + r;
+  const spec = resolveNoteSpec(q, r);
   return {
-    q, r,
-    pname: letterToPname(parsed.letter),
-    accid: accToMei(parsed.acc),
-    oct,
-    midi: coordToMidi(q, r),
-    colorHex: darkColorHex(q, r),
+    ...spec,
+    pname: spec.pname as ResolvedNote['pname'],
     velocity: audio.keyVelocity[key] ?? DEFAULT_DYNAMIC_MAP.mf,
   };
 }

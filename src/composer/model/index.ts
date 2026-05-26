@@ -26,9 +26,10 @@
 import type { ResolvedNote } from '../../bridge/protocol.js';
 import { regroupBeams, readTimeSig } from '../notation/beams.js';
 import { decomposeBeatAlignedRests } from './restfill.js';
-import { computeAccidentalDisplay, alterFromCount, alterFromToken, tokenFromAlter, getNoteAlter } from '../notation/accidentals.js';
+import { computeAccidentalDisplay } from '../notation/accidentals.js';
+import { alterFromCount, alterFromToken, tokenFromAlter, getNoteAlter } from '../../notation/accidentals.js';
 import { ensureExpressionDefaults, getLayoutReq, setLayoutReq, getHejiEnabled, setHejiEnabled, type LayoutReq, type Moment } from '../expressions.js';
-import { transformDocForHeji } from '../notation/heji-render.js';
+import { transformDocForHeji } from '../../notation/heji-render.js';
 import type { TuningMode } from '../../shared/freq.js';
 import { realTicks, writtenTicks } from './ticks.js';
 import {

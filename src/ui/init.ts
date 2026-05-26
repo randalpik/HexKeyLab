@@ -33,6 +33,7 @@ import {
 import { sizeCanvas } from '../render/canvas.js';
 import { cv, draw, hexAtPoint, activeFootprintSet, invalidatePianoOutline, validateRefNoteCandidate } from '../render/draw.js';
 import { updateInfo } from '../render/info.js';
+import { renderStaffInset } from '../render/staff-inset.js';
 import {
   initAudio, changeWaveform, toggleAudio,
   setDamperDepth, sostenutoOn, sostenutoOff,
@@ -83,6 +84,8 @@ function applyPrefsToDom(p: PrefsV1): void {
   $<HTMLInputElement>('cbCoords').checked = p.showCoords;
   $<HTMLInputElement>('cbShortIvl').checked = p.shortIvl;
   $<HTMLInputElement>('cbHeji').checked = p.hejiEnabled;
+  $<HTMLInputElement>('cbStaff').checked = p.showStaffNotation;
+  document.body.classList.toggle('staff-on', p.showStaffNotation);
   $<HTMLSelectElement>('selOutline').value = p.outline;
   $<HTMLSelectElement>('selRotation').value = p.rotation;
   $<HTMLSelectElement>('selTuning').value = p.tuning;
@@ -325,6 +328,12 @@ $<HTMLInputElement>('cbHeji').addEventListener('change', (e) => {
 $<HTMLInputElement>('cbShortIvl').addEventListener('change', (e) => {
   updateInfo();
   savePrefs({ shortIvl: (e.target as HTMLInputElement).checked });
+});
+$<HTMLInputElement>('cbStaff').addEventListener('change', (e) => {
+  const checked = (e.target as HTMLInputElement).checked;
+  document.body.classList.toggle('staff-on', checked);
+  savePrefs({ showStaffNotation: checked });
+  renderStaffInset();
 });
 
 // Tuning + outline + clear

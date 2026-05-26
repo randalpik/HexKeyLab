@@ -1,16 +1,7 @@
-// Compute accidental display visibility per engraving convention.
-//
-// HKL emits a count-form accidental string per note via the bridge:
-//   ''     no accidental         'n'     explicit natural sign
-//   's'    +1     'f'    -1
-//   'ss'   +2     'ff'   -2
-//   'sss'  +3     'fff'  -3
-//
-// The bridge passes values for ±4+ too, but Composer's entry path
-// (input.ts:commitDuration) filters those out — Verovio's multi-<accid>
-// rendering doesn't allocate horizontal space and the glyphs overlap.
-// Effectively the supported range is ±3, expressed as a single MEI
-// accidental token (s/f/x/ff/ts/tf, or n for explicit natural).
+// Compute accidental display visibility per engraving convention (Composer
+// measure-context logic). The pure token<->integer + (q,r)-alteration helpers
+// now live in src/notation/accidentals.ts; this module keeps the
+// measure/key-signature carry-state pass and the key-signature helpers.
 //
 // This pass operates on the rendered clone (not the live doc). Per note,
 // it reads the net integer alteration from either @accid attribute or
@@ -30,84 +21,16 @@
 import { realTicks } from '../model/ticks.js';
 import { hejiCommasFor } from '../../shared/heji.js';
 import type { TuningMode } from '../../shared/freq.js';
-import { noteName, parseNote, accToVal } from '../../tuning/notes.js';
+import { tokenFromAlter, noteAlter, getNoteAlter } from '../../notation/accidentals.js';
 
 const SHARP_ORDER: ReadonlyArray<string> = ['f', 'c', 'g', 'd', 'a', 'e', 'b'];
 const FLAT_ORDER:  ReadonlyArray<string> = ['b', 'e', 'a', 'd', 'g', 'c', 'f'];
-
-/** Convert a single MEI accidental token to signed integer alteration. */
-export function alterFromToken(t: string): number {
-  switch (t) {
-    case 's': return 1;
-    case 'f': return -1;
-    case 'n': case '': return 0;
-    case 'ss': case 'x': return 2;
-    case 'ff': return -2;
-    case 'ts': case 'xs': case 'sx': return 3;
-    case 'tf': return -3;
-    default: return 0;
-  }
-}
-
-/** Parse a count-form accidental string (HKL bridge format) to integer.
- *  '' / 'n' → 0; 's' → 1; 'ss' → 2; 'sss' → 3; same negative for 'f'.
- *  Values outside ±3 are still parsed correctly; the caller's entry filter
- *  (input.ts:commitDuration) decides what to do with them. */
-export function alterFromCount(s: string): number {
-  if (!s || s === 'n') return 0;
-  let n = 0;
-  for (const c of s) {
-    if (c === 's') n++;
-    else if (c === 'f') n--;
-  }
-  return n;
-}
-
-/** Return the canonical MEI single-glyph token for a given alteration in
- *  ±3 range. For 0 returns null (no accidental written; caller decides
- *  whether to emit 'n' for explicit cancellation). For |alter|>3, clamps
- *  to ±3 — Composer's entry filter should prevent this from ever reaching
- *  here, but the clamp keeps the function total. */
-export function tokenFromAlter(alter: number): string | null {
-  if (alter === 0) return null;
-  const sign = alter > 0 ? 1 : -1;
-  const n = Math.min(Math.abs(alter), 3);
-  if (n === 1) return sign > 0 ? 's' : 'f';
-  if (n === 2) return sign > 0 ? 'x' : 'ff';
-  return sign > 0 ? 'ts' : 'tf';
-}
-
-/** True alteration for a note, derived from its lattice coordinate (q, r) so
- *  any magnitude is represented (the @accid token caps at ±3). Falls back to
- *  the @accid token when no coordinate is present (e.g. MusicXML-imported
- *  notes). This is the authoritative alter for visibility + MusicXML export. */
-export function noteAlter(note: Element): number {
-  const qs = note.getAttribute('data-q');
-  const rs = note.getAttribute('data-r');
-  if (qs !== null && rs !== null) {
-    const q = parseInt(qs, 10);
-    const r = parseInt(rs, 10);
-    if (Number.isFinite(q) && Number.isFinite(r)) {
-      return accToVal(parseNote(noteName(q, r)).acc);
-    }
-  }
-  return getNoteAlter(note);
-}
-
-/** Net alteration on a note, reading from @accid then @accid.ges. */
-export function getNoteAlter(note: Element): number {
-  const a = note.getAttribute('accid');
-  if (a !== null) return alterFromToken(a);
-  const g = note.getAttribute('accid.ges');
-  if (g !== null) return alterFromToken(g);
-  return 0;
-}
 
 /** Tonic for a key-signature attribute. Returns the tonic spelled in HKL's
  *  note-name domain (capital letter + '#'/'b' suffix).
  *
  *  Major (default):
- *    sharps:  0→A?  no — convention is 0→C  1→G  2→D  3→A  4→E  5→B  6→F#  7→C#
+ *    sharps:  0→C  1→G  2→D  3→A  4→E  5→B  6→F#  7→C#
  *    flats:   1→F   2→Bb  3→Eb  4→Ab  5→Db  6→Gb  7→Cb
  *
  *  Minor (relative — same key sig, tonic three fifths up):

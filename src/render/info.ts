@@ -12,6 +12,7 @@ import {
 } from '../tuning/intervals.js';
 import { analyzeChord } from '../tuning/chords.js';
 import { keyColorVariant, hueC } from './colors.js';
+import { renderStaffInset } from './staff-inset.js';
 
 interface InfoKey {
   q: number;
@@ -40,6 +41,9 @@ interface IntervalCellJI {
 type IntervalCell = IntervalCellEqual | IntervalCellJI;
 
 export function updateInfo(): void {
+  /* Live staff inset renders independently of the analysis panel (its own
+     toggle), so drive it before the analysis early-returns below. */
+  renderStaffInset();
   const el = document.getElementById('infoLine')!;
   const showAnalysis = (
     document.getElementById("cbAnalysis") as HTMLInputElement

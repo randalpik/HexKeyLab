@@ -120,6 +120,10 @@ export interface PrefsV1 {
    *  user switches to Schismatic ('V') mode and back off when leaving V,
    *  unless the user has explicitly toggled the checkbox themselves. */
   hejiEnabled: boolean;
+  /** Show the live staff-notation inset (Verovio-rendered grand-staff chord of
+   *  the currently-held notes) in the bottom-right. Off by default; Verovio's
+   *  WASM is loaded lazily only when this is enabled. */
+  showStaffNotation: boolean;
 }
 
 /* Defaults mirror the HTML attributes + state/*.ts initial values, so a fresh
@@ -158,6 +162,7 @@ export const DEFAULT_PREFS: PrefsV1 = {
   validRefBounds: false,
   syncToComposer: false,
   hejiEnabled: false,
+  showStaffNotation: false,
 };
 
 function isOutlineMode(s: unknown): s is OutlineMode {
@@ -291,6 +296,10 @@ export function loadPrefs(): PrefsV1 {
       typeof o.hejiEnabled === 'boolean'
         ? o.hejiEnabled
         : DEFAULT_PREFS.hejiEnabled,
+    showStaffNotation:
+      typeof o.showStaffNotation === 'boolean'
+        ? o.showStaffNotation
+        : DEFAULT_PREFS.showStaffNotation,
   };
 }
 

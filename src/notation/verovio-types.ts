@@ -1,6 +1,7 @@
 // Minimal type declarations for Verovio's WASM toolkit, scoped to the methods
-// HKL Composer uses. The Verovio CDN script puts `verovio` on `window`; this
-// file teaches TypeScript what's there.
+// HKL uses. The Verovio CDN script puts `verovio` on `window`; this file
+// teaches TypeScript what's there. Shared between HKL Composer's full renderer
+// and HKL's live-chord staff inset.
 
 export interface VerovioToolkit {
   loadData(mei: string): boolean;

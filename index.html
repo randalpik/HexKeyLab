@@ -26,7 +26,7 @@
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{background:#111;height:100%;overflow:hidden}
-.wrap{background:#111;padding:8px 12px 12px;font-family:system-ui,-apple-system,sans-serif;display:flex;flex-direction:column;height:100vh;overflow-x:auto;overflow-y:hidden}
+.wrap{position:relative;background:#111;padding:8px 12px 12px;font-family:system-ui,-apple-system,sans-serif;display:flex;flex-direction:column;height:100vh;overflow-x:auto;overflow-y:hidden}
 .ctrls{display:flex;gap:2px 8px;align-items:center;font-size:12px;color:#999;margin:0 0 6px;flex-wrap:wrap;justify-content:center;user-select:none;-webkit-user-select:none}
 .ctrls label{display:flex;align-items:center;gap:4px;color:#999}
 .ctrls label:has(input){cursor:pointer}
@@ -43,7 +43,7 @@ html,body{background:#111;height:100%;overflow:hidden}
 .lsel .lbtn.active{border-color:#fff !important;background:#fff !important;color:#000 !important}
 canvas{display:block;background:#111;margin:0 auto;flex:0 0 auto}
 .info-line{
-  margin:8px 0 0;padding:8px 12px;min-height:36px;
+  margin:0;padding:8px 12px;min-height:36px;
   background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;
   font-size:13px;color:#888;
   font-family:'SF Mono',ui-monospace,'Cascadia Code','Fira Code',monospace,system-ui;
@@ -84,6 +84,23 @@ canvas{display:block;background:#111;margin:0 auto;flex:0 0 auto}
   display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:4px;
   background:#2a1528;border:1px solid #3d2038;color:#E44CBC;font-size:11px;font-weight:600;white-space:nowrap;
 }
+/* Bottom row: the analysis box (info-line) plus, when enabled, the live
+   staff-notation inset to its right. Flex row so both share the same height —
+   the inset is always exactly as tall as the analysis box, maximizing vertical
+   room for ledger lines. */
+.info-row{display:flex;flex-direction:row;align-items:stretch;gap:8px;margin:8px 0 0;flex:1 1 0;min-height:0}
+/* Live staff inset: a Verovio-rendered grand-staff chord of the held notes.
+   Hidden until "Show staff notation" is enabled (body.staff-on). The flex box
+   vertically centers and left-aligns the (native-size) SVG; tall ledger-heavy
+   chords scroll rather than rescale, so the staff position stays put. */
+#staffInset{
+  display:none;flex:0 0 220px;min-height:0;padding:4px 6px;overflow:auto;
+  align-items:center;justify-content:flex-start;
+  background:#fff;border:1px solid #2a2a2a;border-radius:6px;
+}
+body.staff-on #staffInset{display:flex}
+#staffInset svg{display:block;flex:0 0 auto}
+.staff-inset-hint{margin:auto;text-align:center;color:#999;font-size:12px;font-style:italic;font-family:system-ui,sans-serif}
 .title-bar{text-align:center;margin:0 0 6px;user-select:none;-webkit-user-select:none}
 .title-bar .title{font-size:22px;font-weight:700;letter-spacing:1px}
 .t-pk-d{color:#B03058}.t-pk-l{color:#FF4C79}
@@ -265,6 +282,9 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <label><input type="checkbox" id="cbShortIvl" autocomplete="off"> Short intervals</label>
 <label title="Decorate note labels with Helmholtz-Ellis JI comma arrows / septimal hooks (auto-enabled in Schismatic mode)"><input type="checkbox" id="cbHeji" autocomplete="off"> HEJI accidentals</label>
 </div>
+<div class="cb-column">
+<label title="Show the currently-held notes as a chord on a grand staff (Verovio), inset at the bottom-right. HEJI accidentals follow the HEJI toggle."><input type="checkbox" id="cbStaff" autocomplete="off"> Show staff notation</label>
+</div>
 </div>
 <div class="toolbar-group" id="tb-group-recording">
 <div class="btn-pair">
@@ -332,7 +352,10 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <span class="calib-stat"><span class="stat-label">valid:</span><span class="stat-val" id="calibValid">-</span></span>
 <button class="calib-btn" id="btnResetPedal" title="Reset firmware bounds to factory defaults (CMD 39h)">Reset to Factory</button>
 </div>
+<div class="info-row">
 <div class="info-line" id="infoLine"><span class="hint">Click any key to select &middot; shift+click for exclusive select</span></div>
+<div id="staffInset"></div>
+</div>
 </div>
 <dialog id="hkiManageDialog" class="hkl-dialog">
 <h3>Import instrument</h3>

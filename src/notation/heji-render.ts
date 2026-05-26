@@ -1,4 +1,5 @@
-// Render-time HEJI + arbitrary-stack accidental rendering for HKL Composer.
+// Render-time HEJI + arbitrary-stack accidental rendering. Shared between HKL
+// Composer's score renderer and HKL's live-chord staff inset.
 //
 // Verovio can't render the Extended Helmholtz-Ellis glyphs (no usable
 // glyph.num path in 6.x) and collapses repeated same-token <accid> children
@@ -21,8 +22,8 @@
 // commas are left untouched — Verovio draws them natively (and with the global
 // font:'Bravura' option they match the injected glyphs).
 
-import { hejiChain, hejiCommasFor, type HejiGlyphFamily } from '../../shared/heji.js';
-import type { TuningMode } from '../../shared/freq.js';
+import { hejiChain, hejiCommasFor, type HejiGlyphFamily } from '../shared/heji.js';
+import type { TuningMode } from '../shared/freq.js';
 import { noteAlter } from './accidentals.js';
 
 const MEI_NS = 'http://www.music-encoding.org/ns/mei';
@@ -46,12 +47,21 @@ const BARE_CODE: Record<HejiGlyphFamily, number | null> = {
 
 /* Per-family vertical fine-tune for injected glyphs, fraction of font size,
  * positive = down (SVG y down). Ported from HKL's HEJI_FAMILY_Y_OFFSET; tuned
- * against Verovio's baseline. The placeholder <use> ty already places the glyph
- * at the note's staff Y, so these are small corrections for BravuraText's
- * per-family asymmetry. */
+ * against Verovio's baseline. These are small corrections for BravuraText's
+ * per-family asymmetry, applied on top of ACCID_BASELINE_CORRECTION. */
 const FAMILY_Y_OFFSET: Record<HejiGlyphFamily, number> = {
   natural: 0, sharp: 0, doubleSharp: 0, flat: 0, doubleFlat: 0, septimal: 0,
 };
+
+/* A SMuFL accidental drawn as <text> sits with its baseline at the text y, but
+ * Verovio's <use> ty anchors the glyph a fourth (1.5 staff spaces) higher than
+ * that baseline. Every injected glyph must move down by 1.5 spaces to land on
+ * the note's staff position. 1 em = 4 staff spaces, so the correction is
+ * 1.5/4 = 0.375 of the font size (computed per-render from the read fontSize so
+ * it tracks any scale). */
+const ACCID_BASELINE_CORRECTION_SPACES = 1.5;
+const baselineCorrection = (fontSize: number): number =>
+  (ACCID_BASELINE_CORRECTION_SPACES / 4) * fontSize;
 
 /* Distinct placeholder tokens, ascending by approximate rendered width (px at
  * scale 100). The allocator picks the narrowest unused token still ≥ the target
@@ -91,12 +101,11 @@ function needsInjection(alter: number, syn5: number, sept7: number): boolean {
 }
 
 /** Step 1 — rewrite notes needing injection into tagged placeholder rows.
- *  Operates on the render clone AFTER computeAccidentalDisplay (so only notes
- *  with a visible @accid are touched). Idempotent. */
+ *  Operates on the render clone AFTER the visible @accid has been set (so only
+ *  notes with a visible @accid are touched). Idempotent. */
 export function transformDocForHeji(doc: Document, mode: TuningMode, hejiEnabled: boolean): void {
   for (const note of Array.from(doc.querySelectorAll('note'))) {
-    /* Only notes whose accidental is shown. computeAccidentalDisplay puts the
-       visible form on @accid and hides redundant ones via @accid.ges. */
+    /* Only notes whose accidental is shown. */
     if (!note.hasAttribute('accid')) continue;
     const alter = noteAlter(note);
     const qs = note.getAttribute('data-q');
@@ -196,8 +205,9 @@ export function injectHejiGlyphs(root: ParentNode): void {
     const txt = document.createElementNS(SVG_NS, 'text');
     txt.setAttribute('font-family', 'BravuraText');
     txt.setAttribute('font-size', String(fontSize));
+    txt.setAttribute('fill', '#000');
     txt.setAttribute('x', String(t?.tx ?? 0));
-    txt.setAttribute('y', String(t?.ty ?? 0));
+    txt.setAttribute('y', String((t?.ty ?? 0) + baselineCorrection(fontSize)));
     txt.textContent = String.fromCodePoint(cp);
     use.replaceWith(txt);
     g.setAttribute('data-hkl-injected', '1');
@@ -229,8 +239,9 @@ export function injectHejiGlyphs(root: ParentNode): void {
       const t = document.createElementNS(SVG_NS, 'text');
       t.setAttribute('font-family', 'BravuraText');
       t.setAttribute('font-size', String(fontSize));
+      t.setAttribute('fill', '#000');
       t.setAttribute('x', String(x));
-      t.setAttribute('y', String(baselineY + FAMILY_Y_OFFSET[tag.family] * fontSize));
+      t.setAttribute('y', String(baselineY + baselineCorrection(fontSize) + FAMILY_Y_OFFSET[tag.family] * fontSize));
       t.textContent = String.fromCodePoint(tag.codepoint);
       use.replaceWith(t);
       /* keep the class so the pass stays idempotent-detectable */
