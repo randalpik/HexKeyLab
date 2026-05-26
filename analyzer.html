@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="HexKeyLab Analyzer — build a HexKeyLab instrument from audio samples.">
+<meta name="theme-color" content="#111111">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<title>HKL Analyzer</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+html, body { background: #111; min-height: 100% }
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  color: #ccc;
+  font-size: 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* ── Top bar ──────────────────────────────────────────────────────── */
+#topBar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 16px;
+  background: #1a1a1a;
+  border-bottom: 1px solid #2a2a2a;
+  flex: 0 0 auto;
+}
+#topBar h1 {
+  font-size: 14px; font-weight: 600; color: #fff;
+  letter-spacing: 0.2px;
+}
+#topBar .subtitle { color: #888; font-size: 11px }
+#topBar .spacer { flex: 1 }
+#topBar .conn {
+  font-size: 11px; padding: 2px 8px; border-radius: 4px;
+  background: #2a1a1a; color: #FF4C79; border: 1px solid #4a2a3a;
+}
+#topBar .conn.connected { background: #1a2a1a; color: #4CFFBA; border-color: #2a4a3a }
+#topBar .conn.standalone { background: #2a2a1a; color: #FFF94C; border-color: #4a4a2a }
+/* Launcher slot reserved for a future cross-app launcher (see backlog L89).
+   Phase 1: hidden via [hidden] on the placeholder. */
+#launcherSlot[hidden] { display: none }
+
+/* ── Generic controls ─────────────────────────────────────────────── */
+button.btn, .btn {
+  padding: 4px 12px;
+  background: #222;
+  color: #ccc;
+  border: 1.5px solid #555;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+}
+button.btn:hover, .btn:hover { border-color: #888 }
+button.btn:disabled { opacity: 0.4; cursor: not-allowed }
+button.btn.primary { border-color: #4CFFBA; color: #4CFFBA }
+button.btn.primary:hover { background: #1a2a1a }
+
+input[type=text], input[type=number], input[type=url], select {
+  background: #181818;
+  color: #ddd;
+  border: 1px solid #333;
+  border-radius: 3px;
+  padding: 3px 6px;
+  font-family: inherit;
+  font-size: 12px;
+}
+input[type=text]:focus, input[type=number]:focus, input[type=url]:focus, select:focus {
+  outline: none;
+  border-color: #4CFFBA;
+}
+input::placeholder { color: #555; font-style: italic }
+
+label.field {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin: 2px 4px;
+}
+label.field > .lbl { color: #888; min-width: 90px; font-size: 11px }
+label.field.col { flex-direction: column; align-items: flex-start; gap: 2px }
+label.field.col > .lbl { min-width: 0 }
+
+/* ── Main content ─────────────────────────────────────────────────── */
+#main {
+  flex: 1 1 auto;
+  padding: 16px;
+  max-width: 1400px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+section.card {
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  padding: 12px;
+}
+section.card h2 {
+  font-size: 13px;
+  color: #fff;
+  font-weight: 600;
+  margin-bottom: 8px;
+  letter-spacing: 0.2px;
+}
+section.card.hidden { display: none }
+
+/* ── Source picker (tabs) ──────────────────────────────────────────── */
+.tabs { display: flex; gap: 4px; margin-bottom: 8px }
+.tab {
+  padding: 4px 12px;
+  background: #181818;
+  border: 1px solid #333;
+  border-radius: 4px 4px 0 0;
+  border-bottom: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 12px;
+}
+.tab.active { background: #222; color: #4CFFBA; border-color: #4CFFBA }
+.tab-panel { display: none }
+.tab-panel.active { display: block }
+
+#sourceLocalDrop {
+  border: 2px dashed #444;
+  border-radius: 4px;
+  padding: 20px;
+  text-align: center;
+  color: #888;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+#sourceLocalDrop:hover, #sourceLocalDrop.dragging {
+  border-color: #4CFFBA;
+  color: #4CFFBA;
+}
+#sourceFileList {
+  margin-top: 8px;
+  max-height: 120px;
+  overflow-y: auto;
+  font-size: 11px;
+  color: #999;
+}
+#sourceFileList .row {
+  display: flex; justify-content: space-between;
+  padding: 2px 4px;
+  border-bottom: 1px solid #222;
+}
+#sourceFileList .row .note { color: #ddd; min-width: 60px }
+#sourceFileList .row.unparsed .note { color: #FF4C79 }
+
+/* ── Config form ──────────────────────────────────────────────────── */
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 6px 12px;
+}
+#advancedSection summary {
+  cursor: pointer;
+  color: #888;
+  font-size: 12px;
+  user-select: none;
+  padding: 4px 0;
+}
+#advancedSection summary:hover { color: #ddd }
+#advancedSection[open] summary { color: #4CFFBA }
+#advancedSection .field-grid { margin-top: 8px }
+
+/* ── Analyze controls ─────────────────────────────────────────────── */
+#analyzeControls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap }
+#analyzeStatus { color: #888; font-size: 11px; flex: 1; min-width: 200px }
+#analyzeProgress {
+  flex: 0 0 100%;
+  height: 4px;
+  background: #222;
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 6px;
+}
+#analyzeProgress .bar {
+  height: 100%;
+  background: #4CFFBA;
+  width: 0%;
+  transition: width 0.2s;
+}
+
+/* ── Sample table ─────────────────────────────────────────────────── */
+#sampleTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+#sampleTable th, #sampleTable td {
+  padding: 4px 6px;
+  text-align: left;
+  border-bottom: 1px solid #222;
+  white-space: nowrap;
+}
+#sampleTable th { color: #888; font-weight: 500 }
+#sampleTable tr.tier-green   td.tier-cell { color: #4CFFBA }
+#sampleTable tr.tier-blue    td.tier-cell { color: #6FB4FF }
+#sampleTable tr.tier-yellow  td.tier-cell { color: #FFF94C }
+#sampleTable tr.tier-red     td.tier-cell { color: #FF4C79 }
+#sampleTable tr.tier-fail    td.tier-cell { color: #888 }
+#sampleTable tr.expanded     { background: #161616 }
+#sampleTable .inspect-cell {
+  padding: 0;
+  border-bottom: 1px solid #2a2a2a;
+  background: #161616;
+}
+#sampleTable .inspect-pane {
+  padding: 8px 12px;
+}
+#sampleTable .inspect-pane .diag-canvas {
+  display: block;
+  width: 100%;
+  max-width: 1100px;
+  background: #0a0a0a;
+}
+#sampleTable .inspect-pane .playhead-canvas {
+  /* Transparent overlay layered on top of .diag-canvas via position:absolute. */
+  background: transparent;
+}
+#sampleTable .inspect-pane .info {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: #aaa;
+  white-space: pre-wrap;
+  margin-top: 6px;
+  line-height: 1.4;
+}
+
+/* ── Output ────────────────────────────────────────────────────────── */
+#outputButtons { display: flex; gap: 8px; flex-wrap: wrap }
+#outputPreview {
+  margin-top: 10px;
+  max-height: 240px;
+  overflow: auto;
+  background: #0a0a0a;
+  border: 1px solid #222;
+  border-radius: 4px;
+  padding: 8px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: #888;
+  white-space: pre;
+}
+
+/* ── Status bar ───────────────────────────────────────────────────── */
+#statusBar {
+  padding: 6px 16px;
+  background: #1a1a1a;
+  border-top: 1px solid #2a2a2a;
+  color: #888;
+  font-size: 11px;
+  flex: 0 0 auto;
+}
+#statusBar .err { color: #FF4C79 }
+#statusBar .ok { color: #4CFFBA }
+</style>
+</head>
+<body>
+
+<div id="topBar">
+  <h1>HKL Analyzer</h1>
+  <span class="subtitle">Build a HexKeyLab instrument from audio samples</span>
+  <span class="spacer"></span>
+  <button class="btn" id="btnImportConfig">Import existing config…</button>
+  <input type="file" id="fileInputImport" accept=".json,.hkl-config" hidden>
+  <span id="launcherSlot" hidden></span>
+  <span class="conn" id="hklConn">no HKL</span>
+</div>
+
+<main id="main">
+
+  <!-- Source ─────────────────────────────────────────────────────── -->
+  <section class="card" id="sourceSection">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <h2 style="margin:0">1. Source</h2>
+      <button class="btn" id="btnClearSource"
+        title="Clear all loaded files, config, and analysis results, and wipe the saved draft.">
+        Clear
+      </button>
+    </div>
+    <div class="tabs">
+      <button class="tab active" data-tab="local" id="tabLocal">Local files</button>
+      <button class="tab" data-tab="cdn" id="tabCdn">CDN URL</button>
+    </div>
+
+    <div class="tab-panel active" id="tabPanelLocal">
+      <div id="sourceLocalDrop">
+        Drop audio files here, or click to browse.
+        <br><span style="font-size:11px">Note name (e.g. <code>C4</code>, <code>Db5</code>) detected anywhere in the filename — first match wins.</span>
+      </div>
+      <input type="file" id="sourceLocalInput" multiple accept="audio/*" hidden>
+      <div id="sourceFileList"></div>
+    </div>
+
+    <div class="tab-panel" id="tabPanelCdn">
+      <div class="field-grid">
+        <label class="field col">
+          <span class="lbl">Base URL</span>
+          <input type="url" id="cdnBaseUrl" placeholder="https://example.com/samples/">
+        </label>
+        <label class="field col">
+          <span class="lbl">File pattern</span>
+          <input type="text" id="cdnFilePattern" placeholder="{NOTE}.mp3">
+        </label>
+      </div>
+      <div id="cdnFilePatternsExtra" style="margin-top:6px"></div>
+      <button class="btn" id="btnAddFilePattern" style="margin-top:6px">+ Add fallback pattern</button>
+    </div>
+  </section>
+
+  <!-- Config ─────────────────────────────────────────────────────── -->
+  <section class="card" id="configSection">
+    <h2>2. Configuration</h2>
+    <div class="field-grid">
+      <label class="field col"><span class="lbl">Instrument key</span>
+        <input type="text" id="cfgInstrumentKey" placeholder="my_instrument"></label>
+      <label class="field col"><span class="lbl">Display name</span>
+        <input type="text" id="cfgDisplayName" placeholder="My Instrument"></label>
+      <label class="field col"><span class="lbl">Note style</span>
+        <select id="cfgNoteStyle">
+          <option value="flat">flat (C, Db, D, …)</option>
+          <option value="sharp">sharp (C, C#, D, …)</option>
+          <option value="sharp_s">sharp_s (C, Cs, D, …)</option>
+          <option value="sharp_lower">sharp_lower (c, c#, d, …)</option>
+        </select></label>
+      <label class="field col"><span class="lbl">Low octave</span>
+        <input type="number" id="cfgLowOct" value="2" min="0" max="8"></label>
+      <label class="field col"><span class="lbl">High octave</span>
+        <input type="number" id="cfgHighOct" value="6" min="0" max="8"></label>
+      <label class="field col"><span class="lbl">Transpose (semitones)</span>
+        <input type="number" id="cfgTranspose" value="0" min="-36" max="36" step="1"
+          title="Audio offset from filename label. 0 = audio matches label. -12 = audio is one octave below label (Hammond convention: filename C4 sounds at C3)."></label>
+      <label class="field col"><span class="lbl">Decays</span>
+        <select id="cfgDecays">
+          <option value="false">false — sustained (loop)</option>
+          <option value="true">true — natural decay (piano, plucked)</option>
+        </select></label>
+      <label class="field col"><span class="lbl">Vibrato (sustain only)</span>
+        <select id="cfgVibrato">
+          <option value="true">true — looser phase defaults</option>
+          <option value="false">false — strict phase defaults</option>
+        </select></label>
+      <label class="field col"><span class="lbl">Release time (s)</span>
+        <input type="number" id="cfgReleaseTime" value="0.3" min="0" step="0.05"></label>
+      <label class="field col"><span class="lbl">Volume</span>
+        <input type="number" id="cfgVolume" value="1.0" min="0" step="0.1"></label>
+    </div>
+
+    <details class="card" id="advancedSection" style="margin-top:8px;background:#161616">
+      <summary>Advanced — gate thresholds (empty = use engine default)</summary>
+      <div class="field-grid">
+        <label class="field col"><span class="lbl">RMS step</span>
+          <input type="number" id="gateRmsStep" placeholder="0.01" step="0.001" min="0" max="1"></label>
+        <label class="field col"><span class="lbl">Slope step</span>
+          <input type="number" id="gateSlopeStep" placeholder="0.01" step="0.001" min="0" max="1"></label>
+        <label class="field col"><span class="lbl">Slope stride (s)</span>
+          <input type="number" id="gateSlopeStride" placeholder="0.030" step="0.001" min="0.001" max="1"></label>
+        <label class="field col"><span class="lbl">Corr threshold</span>
+          <input type="number" id="gateCorrThreshold" placeholder="0.95" step="0.01" min="0" max="1"></label>
+        <label class="field col"><span class="lbl">Pitch step (¢)</span>
+          <input type="number" id="gatePitchStep" placeholder="5" step="1" min="0"></label>
+        <label class="field col"><span class="lbl">Tilt step</span>
+          <input type="number" id="gateTiltStep" placeholder="0.05" step="0.01" min="0"></label>
+        <label class="field col"><span class="lbl">Trust labeled pitch</span>
+          <select id="gateTrustLabeled">
+            <option value="">default (true for local, false for CDN)</option>
+            <option value="true">true</option>
+            <option value="false">false</option>
+          </select></label>
+      </div>
+    </details>
+  </section>
+
+  <!-- Analyze ─────────────────────────────────────────────────────── -->
+  <section class="card" id="analyzeSection">
+    <h2>3. Analyze</h2>
+    <div id="analyzeControls">
+      <button class="btn primary" id="btnAnalyze" disabled>Analyze all samples</button>
+      <label class="field" style="margin:0">
+        <input type="checkbox" id="cbAutoSelect" checked>
+        Auto-select good samples
+      </label>
+      <span id="analyzeStatus">Drop files or enter a CDN URL to begin.</span>
+      <div id="analyzeProgress"><div class="bar"></div></div>
+    </div>
+  </section>
+
+  <!-- Samples ─────────────────────────────────────────────────────── -->
+  <section class="card hidden" id="samplesSection">
+    <h2>4. Samples</h2>
+    <table id="sampleTable">
+      <thead>
+        <tr>
+          <th></th>
+          <th>Note</th>
+          <th>Freq (Hz)</th>
+          <th>Tier</th>
+          <th>Segments</th>
+          <th>Span (s)</th>
+          <th>Gain</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="sampleTableBody"></tbody>
+    </table>
+  </section>
+
+  <!-- Output ──────────────────────────────────────────────────────── -->
+  <section class="card hidden" id="outputSection">
+    <h2>5. Output</h2>
+    <div id="outputButtons">
+      <button class="btn primary" id="btnDownloadHki" hidden>Download .hki</button>
+      <button class="btn primary" id="btnDownloadConfig" hidden>Download config JSON</button>
+      <button class="btn" id="btnSendToHkl" disabled title="Coming soon (Phase 2)">Send to HKL</button>
+    </div>
+    <pre id="outputPreview" hidden></pre>
+  </section>
+
+</main>
+
+<div id="statusBar">
+  <span id="statusText">Ready.</span>
+</div>
+
+<script type="module" src="/src/analyzer/main.ts"></script>
+</body>
+</html>

@@ -9,6 +9,7 @@ import { INSTRUMENTS } from './samples-data.js';
 import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
 import * as InstrumentRegistry from '../state/instrumentRegistry.js';
 import { readHki } from '../shared/hki.js';
+import { pickNextSeam as pickSegmentSeam } from '../shared/segments.js';
 
 /* Cache of shipped-bundle audio maps, keyed by instrument key. Each entry is
    a Promise<{file → bytes}> that resolves to the bundle's archive contents.
@@ -532,20 +533,12 @@ const activeVoices: Record<string, any> = {};
        at segments[j].b → segments[j].a in a future iteration, and that wrap
        is again within-segment. */
     if(v.segments&&v.segments.length>=1){
-      var segs=v.segments;
-      var curIdx=v.currentSegIdx;
-      if(curIdx==null||curIdx<0||curIdx>=segs.length)curIdx=0;
-      var aTime=segs[curIdx].a;  /* loop back to current segment's a */
-      /* Reachable next-targets: any segment whose b lies past where we just
-         looped to. Include current segment in the candidate set so a
-         single-segment SCC still works (replay same pair). */
-      var cands:number[]=[];
-      for(var i=0;i<segs.length;i++){
-        if(segs[i].b>aTime)cands.push(i);
-      }
-      if(cands.length===0)cands.push(curIdx); /* dead-end fallback: replay */
-      var nextIdx=cands[Math.floor(Math.random()*cands.length)];
-      return {a:aTime,b:segs[nextIdx].b,nextSegIdx:nextIdx};
+      /* Delegate the segments-branch algorithm to the shared picker
+         (src/shared/segments.ts) so the analyzer's audition and any future
+         extracted engine library use the same code path. The legacy
+         validStartsByEnd branch below stays inline — it's samples-engine-
+         specific (loopPts indexing for commitPendingSwitch). */
+      return pickSegmentSeam(v.segments,v.currentSegIdx);
     }
     /* LEGACY PATH — validStartsByEnd-driven picker. Returns times AND the
        index pair so commit can update sourceLoopAIdx/BIdx. */

@@ -123,6 +123,7 @@ export default defineConfig({
       input: {
         main:     path.resolve(__dirname, 'index.html'),
         composer: path.resolve(__dirname, 'composer.html'),
+        analyzer: path.resolve(__dirname, 'analyzer.html'),
       },
     },
   },
