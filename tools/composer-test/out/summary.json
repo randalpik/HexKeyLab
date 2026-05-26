@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 113,
-  "passed": 113,
+  "fixtures": 117,
+  "passed": 117,
   "failed": 0,
-  "elapsedMs": 34379,
+  "elapsedMs": 35153,
   "results": [
     {
       "name": "emptyDoc",
@@ -347,6 +347,38 @@
       "failures": [],
       "counts": {
         "invariants": 7
+      }
+    },
+    {
+      "name": "keyModeMinor_0_BroadcastsA",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "keyModeMinor_7s_BroadcastsAsharp",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "keyModeMajor_3s_BroadcastsA",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "keyModeRoundtrip",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
       }
     },
     {

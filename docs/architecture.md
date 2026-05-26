@@ -328,17 +328,38 @@ Every 5/7-limit interval is named as `<base interval> ± commas`, where the **ba
 2. `pythagRefExp(ord, qual)` returns the closed-form Pythagorean prime-exponent vector for that class. No table — derived from the natural fifths-position of the ordinal plus apotome stacks per qualifier.
 3. `jiRatioWithState` provides the actual exponent vector (with mode shifts and V-mode schisma stacking).
 4. The difference vector goes through `solveCommas` → `(s, z, h)` syntonic/septimal/schisma counts.
-5. Override lookup at `(ord, qual, s, z)`; otherwise the algorithmic default `"Pythagorean <bare>"` (or just `"<bare>"` for perfect intervals, since they have no 5-limit/Pythagorean distinction).
+5. `findBaseName(ord, qual, s, z)` picks the **nearest** override entry: it enumerates all overrides for the `(ord, qual)` class plus the Pythagorean default at `(s_o=0, z_o=0)`, scores each by `|s − s_o| + |z − z_o|`, and emits the residual as commas. Ties prefer 5-limit overrides (`z_o = 0`) over septimal (`z_o ≠ 0`) and any override over the Pythagorean default. This is what makes `(3, M, s=−2)` render as "major 3rd − syntonic comma" rather than "Pythagorean major 3rd − 2× syntonic comma".
 6. Schisma `h` always renders as a suffix item; never absorbed into the base name.
 7. `fmtInterval` handles compound ordinals ("minor 10th") and octave-prefix forms ("2 octaves + apotome").
 
-**Override table structure**: `PAIRS` is an array of complement-pair declarations. Each declares overrides for one half (`c1`); the other half (`c2`) is auto-mirrored by an in-module `mirrorName` that swaps ord (`9 - ord`), M↔m/A↔d, and lesser↔greater. An explicit `mirror:` field overrides the auto-mirror for class-specific phrases (apotome, harmonic 7th, chromatic semitone, diminished octave). 11 pair declarations cover every named exception — about 30 entries total, half declared and half mirrored. Anything outside the table flows through the algorithmic default, which is why "Pythagorean diminished 4th" (8192:6561) and other niche Pythagorean ratios name themselves correctly even though no override exists.
+**Override table structure**: `PAIRS` is an array of complement-pair declarations. Each declares overrides for one half (`c1`); the other half (`c2`) is auto-mirrored by `autoMirror`, which swaps ord suffix (`3rd` ↔ `6th` etc.), quality word (`major` ↔ `minor`, `augmented` ↔ `diminished`), and the two adjective pairs **`lesser` ↔ `greater`** and **`acute` ↔ `grave`**. An explicit `mirror:` field overrides the auto-mirror for class-specific phrases (`apotome`, `harmonic 7th`, `chromatic semitone`, `diminished octave`, `subminor`/`supermajor`). `c2` is **optional**: when omitted, the declaration is single-class (no auto-mirror) — used for classes whose complement is structurally unreachable (e.g. `(8, A)`, whose complement `(1, d)` is never produced by `classifyDiatonic` because it normalizes to ascending direction).
 
-**Renames from the prior REF-table system**: 9/8 → "Pythagorean major 2nd" (was "greater major 2nd"); 10/9 → "major 2nd"; 16/9 → "Pythagorean minor 7th" (was "lesser minor 7th"); 9/5 → "minor 7th"; 7/5 → "septimal diminished 5th" (was "lesser septimal tritone"); 10/7 → "septimal augmented 4th"; 4096/2187 → "Pythagorean diminished octave" (was unnamed).
+**Naming conventions** (each is a fixed-meaning adjective in the override table, never positional):
+- **`lesser` / `greater`** — the two 5-limit (z=0) variants of a quality, differing by one SC. Used for closely-spaced pairs where both members are 5-limit-common: `lesser/greater augmented 4th`, `lesser/greater minor 2nd`, `lesser/greater diminished 4th`, etc. `greater` = higher cents; mirror auto-flips to its complement.
+- **`acute` / `grave`** — one-SC variant on the *opposite* side of a 5-limit common interval, much more exotic. Used where the 5-limit form is dominant and the variant is unusual: `acute major 2nd` (729:640, vs the common 10:9), `grave minor 7th` (1280:729, complement), and similarly for M3/m6, m3/M6. Mirror auto-flips acute↔grave.
+- **`septimal`** — one prime-7 factor relative to the relevant base. Most septimal-X names sit at one SC shift from the Pythagorean reference (`septimal major 3rd` = 9:7, `septimal minor 3rd` = 7:6); a few sit at the keyboard-accessible (s, z) tuple in Septimal mode rather than the xen-wiki canonical ratio (see "Septimal ratio assignment" below).
+- **`subminor` / `supermajor`** — used for the (2, m)/(7, M) extension that captures 28:27 / 27:14 (the septimal third-tone family). Explicit mirror required since `autoMirror`'s word-boundary regex won't transform `subminor` → `supermajor`.
+- **`wolf`** — fixed name for the narrowing-direction 5-limit P-class variants: `wolf 4th` (27:20) and mirror `wolf 5th` (40:27). The widening-direction P-class variants (243:160 etc.) currently have no override; they surface as "perfect X + syntonic comma" — a deliberate choice since no conventional name exists.
+
+**Septimal ratio assignment** (HKL-specific):
+Most `septimal X` names follow xen-wiki conventions (e.g. `septimal minor 3rd` = 7:6, `septimal major 3rd` = 9:7, `harmonic 7th` = 7:4). Four exceptions are bound to the most-accessible cell pair in Septimal mode on the Lumatone, not the canonical ratio:
+
+| Name | HKL ratio | Canonical ratio (xen-wiki) |
+|---|---|---|
+| septimal augmented 2nd | 135:112 | 25:21 |
+| septimal augmented 4th | 81:56 | 10:7 |
+| septimal diminished 5th | 112:81 | 7:5 |
+| septimal diminished 7th | 224:135 | (mirror of 25:21) |
+
+Consequence: 10:7 and 7:5 (the canonical septimal tritones) now read as "greater augmented 4th + septimal comma" and "lesser diminished 5th − septimal comma" respectively. Trade made because 10:7 sits at taxicab distance 7 from any ref cell in Septimal mode while 81:56 sits at distance 4. See decisions.md.
+
+**Renames from the prior REF-table system**: 9:8 → "Pythagorean major 2nd" (was "greater major 2nd"); 10:9 → "major 2nd"; 16:9 → "Pythagorean minor 7th" (was "lesser minor 7th"); 9:5 → "minor 7th"; 7:5 → "lesser diminished 5th − septimal comma" (was "lesser septimal tritone", then briefly "septimal diminished 5th"); 10:7 → "greater augmented 4th + septimal comma"; 4096:2187 → "Pythagorean diminished octave" (was unnamed); 531441:524288 → "Pythagorean comma" (via `pythag2` field on the `(7, A) ↔ (2, d)` pair).
 
 **Octave-multiple naming**: pure octave multiples render as "perfect octave" (2:1), "perfect 15th" (4:1), "perfect 22nd" (8:1) — handled by `fmtInterval`'s unison-with-extraOct branch.
 
 **Comma basis**: syntonic 81/80, septimal 64/63, schisma 32805/32768 (3 linearly independent commas spanning the 5/7-limit lattice). The old derived-comma optimizer (diaschisma / Pythagorean comma / septimal diesis substitutions) is gone — output sticks with primary commas to match HEJI accidental semantics.
+
+**Verification tooling**: `tools/interval-names/enumerate.ts` enumerates every key pair on the Lumatone in a given mode and surfaces (ord, qual, s, z, h) tuples grouped by taxicab distance — useful for identifying naming gaps. `tools/interval-names/smoke.ts` runs a small set of representative cases per mode.
 
 ### 4.11 Lumatone integration (output)
 
@@ -975,7 +996,7 @@ Two HTML entries at repo root, two output bundles. Verovio WASM is only pulled i
 
 - **Title** → `<titleStmt><title>`.
 - **Composer** → `<titleStmt><respStmt><persName role="composer">`.
-- **Key signature** → `<scoreDef key.sig="0|1s..7s|1f..7f">`. Drop-down lists all 15 major keys (Cb…C#); minor modes share key signatures.
+- **Key signature** → `<scoreDef key.sig="0|1s..7s|1f..7f">` plus `<scoreDef mode="major|minor">` (standard MEI `@mode`; defaults to `'major'` when absent so pre-keyMode `.hkc` files load unchanged). The drop-down lists all 15 key signatures; an adjacent **minor** checkbox toggles the displayed labels between major-tonic names (`C major`, `G major`, …) and relative-minor names (`a minor`, `e minor`, …) — the underlying `sig` value is shared between a major and its relative minor. The flag drives `computeSongKeyRef` so the song-key tier publishes the *actual* tonic (e.g. A at r=0 for a minor) rather than always the major one (C at r=−3). MusicXML export emits `<mode>` alongside `<fifths>` so external editors see the designation.
 - **Time signature** → `<scoreDef meter.count meter.unit>`. Numerator 1–16; denominator 1/2/4/8/16.
 - **Tempo** → `<tempo>` as the first child of measure 1, with `mm`, `mm.unit`, optional `mm.dots`, `midi.bpm`, and optional text content (e.g., "Allegro").
 

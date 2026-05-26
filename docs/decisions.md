@@ -1961,8 +1961,58 @@ G → (1, 1) = G3, A → (0, 0) = A3. Verified by
 `song_key_csharp_from_empty_voice` fixture (asserts qm=0 + MIDI window
 structurally rather than locking to a specific coordinate).
 
-**Where**: `TONIC_R` map (derived from `fifthName(r)` for r ∈ [-10, 4])
-and `findTonicCoord` in `src/composer/cursor/refNote.ts`.
+**Where**: `TONIC_R` map (derived from `fifthName(r)` for r ∈ [-10, 7] —
+upper bound was 4 pre-keyMode; see below) and `findTonicCoord` in
+`src/composer/cursor/refNote.ts`.
+
+## Composer keyMode: standard MEI `@mode` on `<scoreDef>` (2026-05-25)
+
+**Picked**: Composer carries an explicit `keyMode: 'major' | 'minor'`
+doc-level setting, persisted as standard MEI `@mode` on `<scoreDef>`
+(alongside `@key.sig`). Surfaced as a checkbox in Setup that relabels the
+key drop-down between major-tonic and relative-minor labels (only the
+active mode's name is shown). `computeSongKeyRef` reads `keyMode` and
+passes it to `keySigToTonic(sig, mode)` — minor returns the relative-minor
+tonic (`'0'` → `'A'`, `'7s'` → `'A#'`, etc) so the song-key broadcast lands
+on the actual tonic. `TONIC_R`'s precomputed range extends to r ∈ [-10, 7]
+to cover the three minor tonics (`g♯`/`d♯`/`a♯` at r=5/6/7) that fall
+above the major-only window.
+
+**Why now**: the ref-spine-driven layout slides the lattice so the ref
+note centers under the static Lumatone/QWERTY outlines. Pre-keyMode the
+song-key tier always resolved to the major-key tonic — a piece in A minor
+got C-major-centered geometry. Tuning modes that bias toward particular
+chord shapes (Septimal's clean dominant-7, Pythagorean/5-limit minor
+variants) compound the cost. The minor flag makes the lattice center
+match the music's actual tonic.
+
+**Rejected**:
+- HKL custom `hkl:mode` attribute alongside `hkl:layoutReq` in
+  `<extMeta><hkl:config>`. Consistent with the existing custom-attr
+  pattern, but wouldn't round-trip MusicXML mode without bespoke
+  serialization. `<scoreDef @mode>` is MEI 5 standard.
+- UI-only ephemeral toggle. Doesn't match how Setup's other settings
+  behave; loses state on reload.
+- Labeling both names in the drop-down ("a minor (C major)") and bolding
+  the active side. Useful but Firefox renders styled `<option>` text
+  inconsistently. The picked design shows only the active mode's name
+  and relies on the checkbox for the relationship.
+
+**Why MEI standard @mode**: portable across MEI consumers, survives `.hkc`
+roundtrip via the existing `<scoreDef>` element (snapshot/undo come along
+for free via MEI cloning), and maps cleanly to MusicXML `<mode>` on
+export. Defaults to `'major'` when absent, so older `.hkc` files load
+without migration.
+
+**Where**: `getKeyMode`/`setKeyMode` in `src/composer/model/index.ts`;
+`keySigToTonic(sig, mode)` in `src/composer/notation/accidentals.ts`;
+`computeSongKeyRef` + extended `TONIC_R` in
+`src/composer/cursor/refNote.ts`; `#setupKeyMinor` checkbox and live
+re-label in `src/composer/setupDialog.ts` + `composer.html`; `<mode>`
+emission in `src/composer/save.ts`. Fixtures:
+`keyModeMinor_0_BroadcastsA`, `keyModeMinor_7s_BroadcastsAsharp`,
+`keyModeMajor_3s_BroadcastsA`, `keyModeRoundtrip` in
+`tools/composer-test/fixtures.mjs`.
 
 ## V-mode picker routes through D state (2026-05-25)
 
@@ -2068,3 +2118,38 @@ Considered alternative — dispatch-driven-by-data — was rejected because:
 **Where**: `src/composer/keybindings.ts` (catalog + types), `src/composer/helpDialog.ts` (lazy render + open), `src/composer/input.ts:1` (one-line pointer where the docstring used to live), `tools/composer-test/fixtures.mjs:HELP_MODAL` (assertion that specific bindings render).
 
 If a future task DOES want to collapse the two files into a single dispatch-driven catalog, the seam to design around is the pending-state machinery in `input.ts` — that's where the declarative-data path gets hard, not the simple key-to-action mappings.
+
+---
+
+## Interval naming: nearest-match base + named adjective hierarchy + Lumatone-accessibility-driven septimal ratios
+
+**Picked**: A three-layer base-name selection scheme for `intervalNameFromCoords`, plus four fixed-meaning adjective conventions, plus four septimal-name reassignments tied to Lumatone reach rather than xen-wiki canonical ratios.
+
+1. **Nearest-match base name** (`findBaseName` in `src/tuning/intervals.ts`): enumerate every override entry for `(ord, qual)` plus the Pythagorean default at `(s_o=0, z_o=0)`; pick the entry minimizing `|s − s_o| + |z − z_o|`; emit the residual `(s − s_o, z − z_o)` as commas. Replaces the previous exact-match lookup, which fell through to `defaultPythagName` + full `(s, z)` residual whenever no override matched exactly. Eliminates outputs like "Pythagorean major 3rd − 2× syntonic comma" in favor of "major 3rd − syntonic comma" (using the 5-limit override as the closer base). Ties prefer `z_o=0` (5-limit) over `z_o≠0` (septimal) over Pythagorean default.
+
+2. **Named-adjective hierarchy**:
+   - `lesser / greater` — the two 5-limit (z=0) variants of a quality, both reasonably common. `greater` = higher cents.
+   - `acute / grave` — wider/narrower than the common 5-limit form, much more exotic. Mirror-flips acute↔grave.
+   - `septimal` — one prime-7 factor.
+   - `subminor / supermajor` — explicit mirror required, currently used only for the 28:27 / 27:14 family.
+   - `wolf` — fixed name for narrowing P-class variants (27:20, 40:27).
+
+   Both `lesser/greater` and `acute/grave` mirror-flip in `autoMirror`.
+
+3. **Single-class declarations** (`c2` optional in `PairDecl`): for classes whose complement is structurally unreachable. `(8, A)` is unreachable as `(1, d)` because `classifyDiatonic` normalizes to ascending direction (semis ≥ 0 always); ord=1 never produces qual='d'. Same logic applied to any future `(N, A)` whose mirror is `(1, d)`-family.
+
+4. **Septimal ratio reassignment**: `septimal augmented 2nd / 4th` and `septimal diminished 5th / 7th` are bound to the most-accessible cell pair on the Lumatone in Septimal mode, not the xen-wiki canonical ratio. Specifically: `septimal augmented 4th` = 81:56 (not 10:7); `septimal diminished 5th` = 112:81 (not 7:5); `septimal augmented 2nd` = 135:112 (not 25:21); `septimal diminished 7th` = 224:135 (mirror).
+
+**Rejected**:
+
+For (1) — keeping exact-match lookup: produced misleading "Pythagorean X − 2× syntonic comma" outputs even when the 5-limit override sat one comma away. Confusing, more verbose, more commas than necessary.
+
+For (2) — using lesser/greater for all SC-shift variants regardless of how exotic: would have over-decorated the common 5-limit names ("lesser major 2nd" for 10:9 instead of just "major 2nd"). The user wanted the bare names reserved for the common case. Hence acute/grave for the rarer side.
+
+For (3) — pairing (8, A) with (1, d) anyway and accepting dead overrides: simpler change, but populates the map with names that are unreachable in practice ("lesser diminished unison") and creates a forward-safety hazard if `classifyDiatonic` is ever reworked. Optional `c2` is structurally honest.
+
+For (4) — keeping 10:7 / 7:5 as `septimal A4 / d5` per xen-wiki: those ratios sit at taxicab distance 7 from any ref cell in Septimal mode on the Lumatone, while their replacements (81:56 / 112:81) sit at distance 4. Since the analyzer reads from played cells, the name on screen should match the more-frequent reach. Trade: 10:7 and 7:5 now read as `greater augmented 4th + septimal comma` and `lesser diminished 5th − septimal comma`.
+
+**Why**: HKL's interval analyzer surfaces names for whatever the user is *playing*, in real time. A naming scheme optimized for written-music theory (xen-wiki canonical ratios, Pythagorean defaults preferred) loses to one optimized for what the player's fingers reach. The nearest-match algorithm minimizes comma clutter; the adjective hierarchy gives consistent names to the SC-pair structure of the lattice; the septimal reassignment respects the geometry of Septimal mode specifically.
+
+**Where**: `src/tuning/intervals.ts` — `PairDecl` interface (optional `c2`), `findBaseName`, `autoMirror` (lesser↔greater + acute↔grave flips), `PAIRS` declarations. `tools/interval-names/enumerate.ts` for verification / gap-finding. `docs/architecture.md` §4.10.

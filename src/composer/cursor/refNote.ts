@@ -21,10 +21,11 @@ export interface RefCoord { q: number; r: number; }
 
 /** tonic → r on the qm=0 spine (fifth-chain from A). Derived once from
  *  fifthName() so the table stays in sync with the lattice naming algorithm.
- *  All 15 key-signature tonics live at integer r in [-10, 4]. */
+ *  Major tonics span r ∈ [-10, 4] (C♭ … C♯); relative-minor tonics shift up by
+ *  three fifths, so a♭…a♯ spans r ∈ [-7, 7]. The combined range is [-10, 7]. */
 const TONIC_R: Map<string, number> = (() => {
   const m = new Map<string, number>();
-  for (let r = -10; r <= 4; r++) m.set(fifthName(r), r);
+  for (let r = -10; r <= 7; r++) m.set(fifthName(r), r);
   return m;
 })();
 
@@ -101,11 +102,13 @@ export function computePrevNoteRef(model: ComposerModel): RefCoord | null {
   return null;
 }
 
-/** Major-key tonic of the current key signature, as a lattice coord. Used
- *  to populate HKL's song-key tier. */
+/** Tonic of the current key signature, as a lattice coord. Resolves to the
+ *  major or relative-minor tonic based on model.getKeyMode(). Used to populate
+ *  HKL's song-key tier. */
 export function computeSongKeyRef(model: ComposerModel): RefCoord {
   const sig = model.getKeySig();
-  const tonic = keySigToTonic(sig);
+  const mode = model.getKeyMode();
+  const tonic = keySigToTonic(sig, mode);
   return findTonicCoord(tonic);
 }
 

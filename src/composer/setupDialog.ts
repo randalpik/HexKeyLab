@@ -15,25 +15,32 @@ import type { HistoryManager } from './history.js';
 const $ = <T extends HTMLElement>(id: string): T | null =>
   document.getElementById(id) as T | null;
 
-interface KeyOption { sig: string; label: string }
+interface KeyOption { sig: string; major: string; minor: string }
 
+/** Only the active mode is shown in the dropdown; the checkbox toggles which
+ *  label table is used. The sig identifier (`'0'`, `'1s'`, …) is unchanged
+ *  across modes since major and its relative minor share a key signature. */
 const KEY_OPTIONS: ReadonlyArray<KeyOption> = [
-  { sig: '7f', label: 'C♭ major / a♭ minor (7♭)' },
-  { sig: '6f', label: 'G♭ major / e♭ minor (6♭)' },
-  { sig: '5f', label: 'D♭ major / b♭ minor (5♭)' },
-  { sig: '4f', label: 'A♭ major / f minor (4♭)' },
-  { sig: '3f', label: 'E♭ major / c minor (3♭)' },
-  { sig: '2f', label: 'B♭ major / g minor (2♭)' },
-  { sig: '1f', label: 'F major / d minor (1♭)' },
-  { sig: '0',  label: 'C major / a minor' },
-  { sig: '1s', label: 'G major / e minor (1♯)' },
-  { sig: '2s', label: 'D major / b minor (2♯)' },
-  { sig: '3s', label: 'A major / f♯ minor (3♯)' },
-  { sig: '4s', label: 'E major / c♯ minor (4♯)' },
-  { sig: '5s', label: 'B major / g♯ minor (5♯)' },
-  { sig: '6s', label: 'F♯ major / d♯ minor (6♯)' },
-  { sig: '7s', label: 'C♯ major / a♯ minor (7♯)' },
+  { sig: '7f', major: 'C♭ major (7♭)',  minor: 'a♭ minor (7♭)' },
+  { sig: '6f', major: 'G♭ major (6♭)',  minor: 'e♭ minor (6♭)' },
+  { sig: '5f', major: 'D♭ major (5♭)',  minor: 'b♭ minor (5♭)' },
+  { sig: '4f', major: 'A♭ major (4♭)',  minor: 'f minor (4♭)'  },
+  { sig: '3f', major: 'E♭ major (3♭)',  minor: 'c minor (3♭)'  },
+  { sig: '2f', major: 'B♭ major (2♭)',  minor: 'g minor (2♭)'  },
+  { sig: '1f', major: 'F major (1♭)',   minor: 'd minor (1♭)'  },
+  { sig: '0',  major: 'C major',        minor: 'a minor'        },
+  { sig: '1s', major: 'G major (1♯)',   minor: 'e minor (1♯)'  },
+  { sig: '2s', major: 'D major (2♯)',   minor: 'b minor (2♯)'  },
+  { sig: '3s', major: 'A major (3♯)',   minor: 'f♯ minor (3♯)' },
+  { sig: '4s', major: 'E major (4♯)',   minor: 'c♯ minor (4♯)' },
+  { sig: '5s', major: 'B major (5♯)',   minor: 'g♯ minor (5♯)' },
+  { sig: '6s', major: 'F♯ major (6♯)',  minor: 'd♯ minor (6♯)' },
+  { sig: '7s', major: 'C♯ major (7♯)',  minor: 'a♯ minor (7♯)' },
 ];
+
+function keyOptionsForMode(mode: 'major' | 'minor'): ReadonlyArray<{ value: string; label: string }> {
+  return KEY_OPTIONS.map((k) => ({ value: k.sig, label: mode === 'minor' ? k.minor : k.major }));
+}
 
 const TIME_NUM_OPTIONS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
 const TIME_DEN_OPTIONS = [1, 2, 4, 8, 16];
@@ -69,10 +76,21 @@ function populateSelect(sel: HTMLSelectElement, options: ReadonlyArray<{ value: 
 
 function setupSelects(model: ComposerModel): void {
   const keySel = $<HTMLSelectElement>('setupKey');
+  const minorChk = $<HTMLInputElement>('setupKeyMinor');
+  if (minorChk) minorChk.checked = model.getKeyMode() === 'minor';
   if (keySel) {
-    populateSelect(keySel,
-      KEY_OPTIONS.map((k) => ({ value: k.sig, label: k.label })),
-      model.getKeySig());
+    const mode: 'major' | 'minor' = minorChk?.checked ? 'minor' : 'major';
+    populateSelect(keySel, keyOptionsForMode(mode), model.getKeySig());
+  }
+  /* Live relabel without disturbing the current selection. */
+  if (minorChk && keySel) {
+    minorChk.addEventListener('change', () => {
+      const mode: 'major' | 'minor' = minorChk.checked ? 'minor' : 'major';
+      const opts = keyOptionsForMode(mode);
+      for (let i = 0; i < keySel.options.length && i < opts.length; i++) {
+        keySel.options[i].textContent = opts[i].label;
+      }
+    });
   }
 
   const layoutReq = model.getLayoutReq();
@@ -123,7 +141,7 @@ function setupSelects(model: ComposerModel): void {
 }
 
 function readForm(): {
-  title: string; composer: string; keySig: string;
+  title: string; composer: string; keySig: string; keyMode: 'major' | 'minor';
   count: number; unit: number;
   tempoBpm: number; tempoUnit: '1' | '2' | '4' | '8'; tempoDots: 0 | 1; tempoText: string;
   layoutReq: LayoutReq;
@@ -131,6 +149,7 @@ function readForm(): {
   const title = $<HTMLInputElement>('setupTitle')?.value ?? 'Untitled';
   const composer = $<HTMLInputElement>('setupComposer')?.value ?? '';
   const keySig = $<HTMLSelectElement>('setupKey')?.value ?? '0';
+  const keyMode: 'major' | 'minor' = $<HTMLInputElement>('setupKeyMinor')?.checked ? 'minor' : 'major';
   const count = parseInt($<HTMLSelectElement>('setupTimeNum')?.value ?? '4', 10);
   const unit = parseInt($<HTMLSelectElement>('setupTimeDen')?.value ?? '4', 10);
   const tempoBpmRaw = parseInt($<HTMLInputElement>('setupTempoBpm')?.value ?? '120', 10);
@@ -150,7 +169,7 @@ function readForm(): {
   const refMidi = coordToMidi(refQ, refR);
   if (refMidi < MIDI_LOW || refMidi > MIDI_HIGH) return null;
   const layoutReq: LayoutReq = { tuningMode, refQ, refR };
-  return { title, composer, keySig, count, unit, tempoBpm, tempoUnit, tempoDots, tempoText, layoutReq };
+  return { title, composer, keySig, keyMode, count, unit, tempoBpm, tempoUnit, tempoDots, tempoText, layoutReq };
 }
 
 function isTuningMode(s: string): s is TuningMode {
@@ -241,6 +260,7 @@ export function openSetupDialog(
     model.setTitle(values.title);
     model.setComposer(values.composer);
     model.setKeySig(values.keySig);
+    model.setKeyMode(values.keyMode);
     model.setTempo(values.tempoBpm, values.tempoUnit, values.tempoDots, values.tempoText);
     applyDynamicInputs(model);
     if (proceedWithLayout) {

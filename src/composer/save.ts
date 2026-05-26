@@ -320,6 +320,7 @@ export function exportMusicXml(model: ComposerModel): string {
   const composer = model.getComposer() || 'HKL Composer';
   const keySig = model.getKeySig();
   const fifths = keySigToFifths(keySig);
+  const keyMode = model.getKeyMode();
   const ts = model.getTimeSig();
   const tempo = model.getTempo();
 
@@ -344,7 +345,7 @@ export function exportMusicXml(model: ComposerModel): string {
     if (mi === 0) {
       body += `    <attributes>\n`;
       body += `      <divisions>${divisions}</divisions>\n`;
-      body += `      <key><fifths>${fifths}</fifths></key>\n`;
+      body += `      <key><fifths>${fifths}</fifths><mode>${keyMode}</mode></key>\n`;
       body += `      <time><beats>${ts.count}</beats><beat-type>${ts.unit}</beat-type></time>\n`;
       body += `      <staves>2</staves>\n`;
       body += `      <clef number="1"><sign>G</sign><line>2</line></clef>\n`;

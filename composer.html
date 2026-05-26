@@ -275,7 +275,13 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
     <h2>Document Setup</h2>
     <label class="row"><span>Title</span><input id="setupTitle" type="text" autocomplete="off"></label>
     <label class="row"><span>Composer</span><input id="setupComposer" type="text" autocomplete="off"></label>
-    <label class="row"><span>Key signature</span><select id="setupKey"></select></label>
+    <div class="row">
+      <span>Key signature</span>
+      <fieldset>
+        <select id="setupKey"></select>
+        <label style="margin-left:0.5em"><input type="checkbox" id="setupKeyMinor"> minor</label>
+      </fieldset>
+    </div>
     <div class="row">
       <span>Time signature</span>
       <div class="time-row">

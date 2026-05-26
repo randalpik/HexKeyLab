@@ -764,6 +764,20 @@ export class ComposerModel {
     sd.setAttribute("key.sig", sig);
   }
 
+  /** Read whether the key signature is being used as major or relative minor.
+   *  Stored as standard MEI @mode on <scoreDef>. Defaults to 'major' when
+   *  absent so pre-keyMode .hkc files load unchanged. */
+  getKeyMode(): 'major' | 'minor' {
+    const sd = this.doc.querySelector("scoreDef");
+    return sd?.getAttribute("mode") === "minor" ? "minor" : "major";
+  }
+
+  setKeyMode(mode: 'major' | 'minor'): void {
+    const sd = this.doc.querySelector("scoreDef");
+    if (!sd) return;
+    sd.setAttribute("mode", mode);
+  }
+
   /** Read the score's required layout (tuning mode + ref note). The block is
    *  seeded by ensureExpressionDefaults so this always returns a valid value. */
   getLayoutReq(): LayoutReq {

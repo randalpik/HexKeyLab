@@ -517,6 +517,46 @@ const SIG_CHANGES = {
   keySig3Sharps: `
     m.setKeySig('3s');
   `,
+
+  /* Minor flag + 0 flats: tonic becomes A (r=0) instead of C (r=-3). The
+   * broadcast is triggered by sendHklHello() which makes Composer
+   * re-broadcast the current song-key tier. */
+  keyModeMinor_0_BroadcastsA: `
+    m.setKeySig('0');
+    m.setKeyMode('minor');
+    window.__hkl_composer.__testReset();
+    window.__bridgeMock.reset();
+    window.__bridgeMock.sendHklHello();
+  `,
+
+  /* Minor + 7 sharps: tonic is a♯ at r=7 (sharp-extreme, exercises the
+   * extended TONIC_R range that pre-keyMode only needed to reach r=4). */
+  keyModeMinor_7s_BroadcastsAsharp: `
+    m.setKeySig('7s');
+    m.setKeyMode('minor');
+    window.__hkl_composer.__testReset();
+    window.__bridgeMock.reset();
+    window.__bridgeMock.sendHklHello();
+  `,
+
+  /* Major flag (default) + 3 sharps: tonic is A at r=0. Sanity-check that
+   * the major path still resolves correctly with the new mode parameter. */
+  keyModeMajor_3s_BroadcastsA: `
+    m.setKeySig('3s');
+    m.setKeyMode('major');
+    window.__hkl_composer.__testReset();
+    window.__bridgeMock.reset();
+    window.__bridgeMock.sendHklHello();
+  `,
+
+  /* Round-trip: set minor, serialize, reload via replaceDocument, confirm
+   * getKeyMode() still returns 'minor' (i.e. @mode survives MEI roundtrip). */
+  keyModeRoundtrip: `
+    m.setKeySig('1f');
+    m.setKeyMode('minor');
+    const xml = m.serialize();
+    m.replaceDocument(xml);
+  `,
 };
 
 /* ── New: visual baselines (small, high-signal) ───────────────────────── */
@@ -1858,6 +1898,57 @@ export const FIXTURE_ASSERTIONS = {
       expr: `(() => {
         const s = window.__hkl_composer.model.getKeySig();
         return s === '3s' ? { ok: true } : { ok: false, detail: 'keySig=' + s };
+      })()` },
+  ],
+  keyModeMinor_0_BroadcastsA: [
+    { name: 'getKeyMode returns minor',
+      expr: `(() => {
+        const k = window.__hkl_composer.model.getKeyMode();
+        return k === 'minor' ? { ok: true } : { ok: false, detail: 'mode=' + k };
+      })()` },
+    { name: 'set-song-key broadcast carries A spine coords (r=0)',
+      expr: `(() => {
+        const msgs = window.__bridgeMock.captured().filter((m) => m.type === 'set-song-key');
+        if (msgs.length === 0) return { ok: false, detail: 'no set-song-key captured' };
+        const last = msgs[msgs.length - 1];
+        return last.r === 0
+          ? { ok: true, detail: 'q=' + last.q + ' r=' + last.r }
+          : { ok: false, detail: 'q=' + last.q + ' r=' + last.r + ' (expected r=0)' };
+      })()` },
+  ],
+  keyModeMinor_7s_BroadcastsAsharp: [
+    { name: 'set-song-key broadcast carries a♯ spine coords (r=7)',
+      expr: `(() => {
+        const msgs = window.__bridgeMock.captured().filter((m) => m.type === 'set-song-key');
+        if (msgs.length === 0) return { ok: false, detail: 'no set-song-key captured' };
+        const last = msgs[msgs.length - 1];
+        return last.r === 7
+          ? { ok: true, detail: 'q=' + last.q + ' r=' + last.r }
+          : { ok: false, detail: 'q=' + last.q + ' r=' + last.r + ' (expected r=7)' };
+      })()` },
+  ],
+  keyModeMajor_3s_BroadcastsA: [
+    { name: 'set-song-key broadcast carries A spine coords (r=0) for A major',
+      expr: `(() => {
+        const msgs = window.__bridgeMock.captured().filter((m) => m.type === 'set-song-key');
+        if (msgs.length === 0) return { ok: false, detail: 'no set-song-key captured' };
+        const last = msgs[msgs.length - 1];
+        return last.r === 0
+          ? { ok: true, detail: 'q=' + last.q + ' r=' + last.r }
+          : { ok: false, detail: 'q=' + last.q + ' r=' + last.r + ' (expected r=0)' };
+      })()` },
+  ],
+  keyModeRoundtrip: [
+    { name: 'getKeyMode survives serialize→replaceDocument',
+      expr: `(() => {
+        const k = window.__hkl_composer.model.getKeyMode();
+        return k === 'minor' ? { ok: true } : { ok: false, detail: 'mode=' + k };
+      })()` },
+    { name: 'serialized MEI contains mode="minor" on scoreDef',
+      expr: `(() => {
+        const xml = window.__hkl_composer.model.serialize();
+        const has = /<scoreDef[^>]*\\bmode="minor"/.test(xml);
+        return has ? { ok: true } : { ok: false, detail: 'no mode=\"minor\" in <scoreDef>' };
       })()` },
   ],
 

@@ -83,24 +83,35 @@ export function getNoteAlter(note: Element): number {
   return 0;
 }
 
-/** Major-key tonic for a key-signature attribute. Returns the tonic spelled
- *  in HKL's note-name domain (capital letter + '#'/'b' suffix).
+/** Tonic for a key-signature attribute. Returns the tonic spelled in HKL's
+ *  note-name domain (capital letter + '#'/'b' suffix).
  *
+ *  Major (default):
  *    sharps:  0→A?  no — convention is 0→C  1→G  2→D  3→A  4→E  5→B  6→F#  7→C#
  *    flats:   1→F   2→Bb  3→Eb  4→Ab  5→Db  6→Gb  7→Cb
  *
- *  Returns 'C' for an unparseable sig (caller can treat as "no info"). */
-export function keySigToTonic(sig: string): string {
-  if (!sig || sig === '0') return 'C';
+ *  Minor (relative — same key sig, tonic three fifths up):
+ *    sharps:  0→A   1→E  2→B  3→F#  4→C#  5→G#  6→D#  7→A#
+ *    flats:   1→D   2→G  3→C   4→F   5→Bb  6→Eb  7→Ab
+ *
+ *  Returns the major 'C' / minor 'A' for an unparseable sig (caller can treat
+ *  as "no info"). */
+export function keySigToTonic(sig: string, mode: 'major' | 'minor' = 'major'): string {
+  const minor = mode === 'minor';
+  if (!sig || sig === '0') return minor ? 'A' : 'C';
   const n = parseInt(sig.slice(0, -1), 10);
-  if (!Number.isFinite(n) || n < 1 || n > 7) return 'C';
+  if (!Number.isFinite(n) || n < 1 || n > 7) return minor ? 'A' : 'C';
   if (sig.endsWith('s')) {
-    return ['G', 'D', 'A', 'E', 'B', 'F#', 'C#'][n - 1];
+    return (minor
+      ? ['E', 'B', 'F#', 'C#', 'G#', 'D#', 'A#']
+      : ['G', 'D', 'A', 'E', 'B', 'F#', 'C#'])[n - 1];
   }
   if (sig.endsWith('f')) {
-    return ['F', 'Bb', 'Eb', 'Ab', 'Db', 'Gb', 'Cb'][n - 1];
+    return (minor
+      ? ['D', 'G', 'C', 'F', 'Bb', 'Eb', 'Ab']
+      : ['F', 'Bb', 'Eb', 'Ab', 'Db', 'Gb', 'Cb'])[n - 1];
   }
-  return 'C';
+  return minor ? 'A' : 'C';
 }
 
 /** Decode a key-signature attribute into a map of pitch letter → ±1. */
