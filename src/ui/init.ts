@@ -63,6 +63,7 @@ import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import { initHklBridge } from '../bridge/hkl-side.js';
 import { initRecorderUI } from './recorder.js';
 import * as InstrumentRegistry from '../state/instrumentRegistry.js';
+import * as CdnConfigRegistry from '../state/cdnConfigRegistry.js';
 import { initInstrumentBundlesUi } from './instrumentBundles.js';
 
 const $ = <T extends HTMLElement>(id: string): T =>
@@ -101,6 +102,7 @@ function applyPrefsToDom(p: PrefsV1): void {
    blocks the rest of bootstrap on this — IDB open is a one-time ~50ms delay
    that's acceptable for a one-shot page load. */
 await InstrumentRegistry.init();
+await CdnConfigRegistry.init();
 initInstrumentBundlesUi();
 
 const prefs = loadPrefs();

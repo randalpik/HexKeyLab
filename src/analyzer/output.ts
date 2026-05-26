@@ -13,6 +13,7 @@ import {
 } from '../shared/cdnConfig.js';
 import { triggerDownload } from './download.js';
 import { setCdnSourceFromConfig } from './sourceCdn.js';
+import { sendHkiToHkl, sendCdnConfigToHkl, isHklConnected, onConnectionChange } from './bridge.js';
 
 const GENERATOR = 'hkl-analyzer-ui@1';
 
@@ -204,6 +205,27 @@ export function downloadCdnConfig(): void {
   triggerDownload(blob, `${state.config.instrumentKey || 'instrument'}-config.json`);
 }
 
+/* ── Send to HKL via bridge ───────────────────────────────────────── */
+
+/** Build the appropriate payload (.hki for local source, CDN config for
+ *  cdn source) and ship it to HKL via the analyzer bridge. Surfaces success
+ *  or failure in the analyzer's status bar. */
+export async function sendToHkl(): Promise<void> {
+  const state = getState();
+  if (state.source.mode === 'local') {
+    setStatus('Building .hki…');
+    const bundle = await buildHkiBundle();
+    setStatus('Sending to HKL…');
+    await sendHkiToHkl(bundle);
+    setStatus(`Sent "${bundle.manifest.name}" to HKL (.hki).`);
+  } else {
+    setStatus('Sending CDN config to HKL…');
+    const cfg = buildCdnConfigJson();
+    await sendCdnConfigToHkl(cfg);
+    setStatus(`Sent "${cfg.name}" to HKL (CDN config).`);
+  }
+}
+
 /* ── Re-import a CDN config (JSON only — .hki re-import goes through HKL) ── */
 
 export async function handleImportClick(file: File): Promise<void> {
@@ -283,6 +305,7 @@ function midiFromNoteName(name: string): number | null {
 export function initOutputControls(): void {
   const btnHki = document.getElementById('btnDownloadHki') as HTMLButtonElement | null;
   const btnCfg = document.getElementById('btnDownloadConfig') as HTMLButtonElement | null;
+  const btnSend = document.getElementById('btnSendToHkl') as HTMLButtonElement | null;
   const section = document.getElementById('outputSection');
   const preview = document.getElementById('outputPreview') as HTMLPreElement | null;
 
@@ -293,15 +316,29 @@ export function initOutputControls(): void {
     try { downloadCdnConfig(); }
     catch (e) { setStatus('Config build failed: ' + (e as Error).message); }
   });
+  if (btnSend) btnSend.addEventListener('click', () => {
+    void sendToHkl().catch(e => { setStatus('Send failed: ' + (e as Error).message); });
+  });
 
-  /* Show/hide buttons + preview based on source mode and whether any samples
-     are picked. */
-  onChange(() => {
+  /* Track HKL connection state so the Send button's enable/disable reflects
+     both "HKL is up" AND "we have picks to send". */
+  let hklConnected = isHklConnected();
+  onConnectionChange(c => { hklConnected = c; refreshButtons(); });
+
+  function refreshButtons(): void {
     const state = getState();
     const haveAny = state.samples.some(s => s.picked);
     if (section) section.classList.toggle('hidden', state.samples.length === 0);
     if (btnHki) btnHki.hidden = state.source.mode !== 'local' || !haveAny;
     if (btnCfg) btnCfg.hidden = state.source.mode !== 'cdn' || !haveAny;
+    if (btnSend) {
+      btnSend.disabled = !hklConnected || !haveAny;
+      btnSend.title = !hklConnected
+        ? 'Open HKL in another tab to enable'
+        : !haveAny
+          ? 'Pick at least one sample first'
+          : (state.source.mode === 'local' ? 'Send .hki to HKL' : 'Send CDN config to HKL');
+    }
     if (preview && haveAny) {
       try {
         if (state.source.mode === 'cdn') {
@@ -316,5 +353,8 @@ export function initOutputControls(): void {
     } else if (preview) {
       preview.hidden = true;
     }
-  });
+  }
+
+  onChange(refreshButtons);
+  refreshButtons();
 }

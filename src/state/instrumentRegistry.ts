@@ -73,6 +73,19 @@ export async function init(): Promise<void> {
   manifestCache = new Map(all.map(r => [r.instrumentKey, r]));
 }
 
+/**
+ * Re-read the manifest cache from IndexedDB. Used by the analyzer bridge
+ * handler in HKL after the Analyzer tab writes a new bundle — the HKL tab's
+ * in-memory cache is stale until reload picks up the cross-tab IDB write.
+ * Fires onChange so the dropdown rebuilds. No-op if init() hasn't run yet.
+ */
+export async function reload(): Promise<void> {
+  if (!db) return;
+  const all = await req<ManifestRecord[]>(txStore(STORE_MANIFESTS, 'readonly').getAll() as IDBRequest<ManifestRecord[]>);
+  manifestCache = new Map(all.map(r => [r.instrumentKey, r]));
+  notify();
+}
+
 /** Synchronous listing for dropdown rendering. Requires `init()` to have resolved. */
 export function listImported(): ManifestRecord[] {
   return [...manifestCache.values()].sort((a, b) => a.manifest.name.localeCompare(b.manifest.name));

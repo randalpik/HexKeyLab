@@ -22,10 +22,13 @@
 //   3. Receive play-chord / play-score / stop-playback. Dispatch to the
 //      audio engine; emit playback-position acks as each chord onset fires.
 
-import { createHklBridge, PROTOCOL_VERSION } from './channel.js';
+import { createHklBridge, createAnalyzerHklBridge, PROTOCOL_VERSION, ANALYZER_PROTOCOL_VERSION } from './channel.js';
 import type {
   ComposerEvent, PlaybackEvent, ResolvedNote, CoordRef,
 } from './protocol.js';
+import type { AnalyzerEvent } from './analyzer-protocol.js';
+import * as InstrumentRegistry from '../state/instrumentRegistry.js';
+import * as CdnConfigRegistry from '../state/cdnConfigRegistry.js';
 import { selection } from '../state/selection.js';
 import { audio } from '../state/audio.js';
 import { tuning } from '../state/tuning.js';
@@ -45,6 +48,7 @@ import type { FootprintCell } from './protocol.js';
 import type { KeyId } from '../types.js';
 
 const bridge = createHklBridge();
+const analyzerBridge = createAnalyzerHklBridge();
 
 /* Lightweight DOM read for the outline mode — the bridge handler runs on
    incoming composer messages, well after the toolbar is wired, so the
@@ -611,11 +615,80 @@ bridge.on((msg: ComposerEvent) => {
   }
 });
 
+/* ── analyzer bridge ─────────────────────────────────────────────────────── */
+
+/** Auto-select the imported instrument in the waveform dropdown so the user
+ *  hears it immediately. Same UX as the existing `+ .hki` file picker —
+ *  set value + dispatch change so the engine reloads. */
+function autoSelectImported(instrumentKey: string): void {
+  const sel = document.getElementById('waveform') as HTMLSelectElement | null;
+  if (!sel) return;
+  /* Only switch if the key actually appears in the dropdown (will only after
+     the registry's onChange has rebuilt the optgroup). */
+  if ([...sel.options].some(o => o.value === instrumentKey)) {
+    sel.value = instrumentKey;
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+}
+
+function announceToAnalyzer(): void {
+  analyzerBridge.send({ type: 'hkl-hello', version: ANALYZER_PROTOCOL_VERSION });
+}
+
+analyzerBridge.on((msg: AnalyzerEvent) => {
+  switch (msg.type) {
+    case 'analyzer-hello':
+      announceToAnalyzer();
+      break;
+    case 'analyzer-bye':
+      /* No held analyzer-side state to clean up. */
+      break;
+    case 'import-hki': {
+      /* Receive bytes inline + write to IDB ourselves (same path as the
+         `+ .hki` file picker in src/ui/instrumentBundles.ts). Keeps the
+         analyzer side from having to import src/state/. */
+      void (async () => {
+        try {
+          const manifest = await InstrumentRegistry.importBundle(msg.bytes);
+          autoSelectImported(manifest.instrumentKey);
+          analyzerBridge.send({ type: 'import-ack', instrumentKey: manifest.instrumentKey, ok: true });
+        } catch (err) {
+          analyzerBridge.send({
+            type: 'import-ack',
+            instrumentKey: msg.instrumentKey,
+            ok: false,
+            error: (err as Error).message,
+          });
+        }
+      })();
+      break;
+    }
+    case 'import-cdn-config': {
+      void (async () => {
+        try {
+          await CdnConfigRegistry.importConfig(msg.config);
+          autoSelectImported(msg.instrumentKey);
+          analyzerBridge.send({ type: 'import-ack', instrumentKey: msg.instrumentKey, ok: true });
+        } catch (err) {
+          analyzerBridge.send({
+            type: 'import-ack',
+            instrumentKey: msg.instrumentKey,
+            ok: false,
+            error: (err as Error).message,
+          });
+        }
+      })();
+      break;
+    }
+  }
+});
+
 /* ── lifecycle ───────────────────────────────────────────────────────────── */
 
 window.addEventListener('beforeunload', () => {
   abortActive();
   bridge.send({ type: 'hkl-bye' });
+  analyzerBridge.send({ type: 'hkl-bye' });
 });
 
 let initialized = false;
@@ -623,6 +696,7 @@ export function initHklBridge(): void {
   if (initialized) return;
   initialized = true;
   announce();
+  announceToAnalyzer();
 }
 
 /* DevTools handle. */

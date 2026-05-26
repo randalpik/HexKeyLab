@@ -8,7 +8,9 @@
 // rather than here.
 
 import { getImportedManifest, hasImported } from '../state/instrumentRegistry.js';
+import { getConfig as getImportedCdnConfig, hasConfig as hasImportedCdnConfig } from '../state/cdnConfigRegistry.js';
 import type { HkiManifest } from '../shared/hki.js';
+import type { CdnInstrumentConfig } from '../shared/cdnConfig.js';
 
 /* Static CDN-backed instruments, shipped with the app. The exported
    `INSTRUMENTS` Proxy below merges these with imported `.hki` bundles. */
@@ -1127,17 +1129,57 @@ function getImportedEntry(key: string): any | undefined {
   return entry;
 }
 
+/* Runtime-imported CDN config → INSTRUMENTS entry. Same shape rules as
+   manifestToInstrument: strip analyzer-only metadata (instrumentKey,
+   editorState, provenance, noteSemis) and emit only what the engine
+   reads. NO `source` field — the engine's CDN-fetch path is the default
+   branch, so omitting `source` puts runtime CDN configs on the same
+   code path as compile-time entries in STATIC_INSTRUMENTS. */
+function configToInstrument(cfg: CdnInstrumentConfig): any {
+  const entry: any = {
+    name: cfg.name,
+    baseUrl: cfg.baseUrl,
+    ext: cfg.ext,
+    filePattern: cfg.filePattern,
+    releaseTime: cfg.releaseTime,
+    volume: cfg.volume,
+    loop: cfg.loop,
+    decays: cfg.decays,
+    samples: cfg.samples,
+  };
+  if (cfg.filePatterns) entry.filePatterns = cfg.filePatterns;
+  if (cfg.transpose != null) entry.transpose = cfg.transpose;
+  if (cfg.vibrato) entry.vibrato = true;
+  if (cfg.replayOnTranspose) entry.replayOnTranspose = true;
+  return entry;
+}
+
+/* Lazy synthesis cache for CDN-config imports, mirrors importedCache.
+   Keyed by config record reference identity — re-import replaces the
+   stored CdnInstrumentConfig object, which invalidates the cache entry
+   automatically (new reference → no hit). */
+const cdnConfigCache = new WeakMap<CdnInstrumentConfig, any>();
+function getCdnConfigEntry(key: string): any | undefined {
+  const cfg = getImportedCdnConfig(key);
+  if (!cfg) return undefined;
+  let entry = cdnConfigCache.get(cfg);
+  if (!entry) { entry = configToInstrument(cfg); cdnConfigCache.set(cfg, entry); }
+  return entry;
+}
+
 /* Read-transparent proxy: every consumer that did `INSTRUMENTS[key]` keeps
-   working with zero change, and imported instruments are reachable through
-   the same surface. */
+   working with zero change. Fallback chain: static → HKI imports → CDN
+   config imports. */
 export const INSTRUMENTS: Record<string, any> = new Proxy(STATIC_INSTRUMENTS, {
   get(target, prop, _receiver) {
     if (typeof prop !== 'string') return Reflect.get(target, prop);
     if (prop in target) return target[prop];
-    return getImportedEntry(prop);
+    const hki = getImportedEntry(prop);
+    if (hki) return hki;
+    return getCdnConfigEntry(prop);
   },
   has(target, prop) {
     if (typeof prop !== 'string') return Reflect.has(target, prop);
-    return (prop in target) || hasImported(prop);
+    return (prop in target) || hasImported(prop) || hasImportedCdnConfig(prop);
   },
 });

@@ -243,8 +243,10 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <!-- Imported .hki bundles are appended at runtime by src/ui/instrumentBundles.ts as an <optgroup> -->
 </select>
 <button class="push-btn" id="btnHkiImport" title="Import a .hki sample bundle (created by the analyzer)">+ .hki</button>
-<button class="push-btn" id="btnHkiManage" title="Manage imported .hki bundles">Bundles…</button>
+<button class="push-btn" id="btnCdnConfigImport" title="Import a CDN-source instrument config (JSON, created by the analyzer)">+ JSON</button>
+<button class="push-btn" id="btnHkiManage" title="Manage imported instruments">Bundles…</button>
 <input type="file" id="fileInputHki" accept=".hki" style="display:none">
+<input type="file" id="fileInputCdnConfig" accept=".json,application/json" style="display:none">
 <span id="transposeCtrl" class="lsel">
 <span>Transpose:</span>
 <span class="tpax"><button class="tpab" data-dq="0" data-dr="1">&#x25B2;</button><span class="tpal">P5</span><button class="tpab" data-dq="0" data-dr="-1">&#x25BC;</button></span>
@@ -335,9 +337,12 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <div class="info-line" id="infoLine"><span class="hint">Click any key to select &middot; shift+click for exclusive select</span></div>
 </div>
 <dialog id="hkiManageDialog" class="hkl-dialog">
-<h3>Imported sample bundles</h3>
-<div id="hkiManageList" style="font-size:13px;min-width:380px;max-height:60vh;overflow:auto">
-  <!-- populated by src/ui/instrumentBundles.ts -->
+<h3>Imported instruments</h3>
+<div style="font-size:13px;min-width:380px;max-height:60vh;overflow:auto">
+  <h4 style="margin:4px 0 6px;color:#aaa;font-size:12px;text-transform:uppercase;letter-spacing:0.5px">Bundles (.hki)</h4>
+  <div id="hkiManageList"><!-- populated by src/ui/instrumentBundles.ts --></div>
+  <h4 style="margin:14px 0 6px;color:#aaa;font-size:12px;text-transform:uppercase;letter-spacing:0.5px">CDN configs (JSON)</h4>
+  <div id="cdnConfigManageList"><!-- populated by src/ui/instrumentBundles.ts --></div>
 </div>
 <div class="actions">
 <button type="button" id="hkiManageClose">Close</button>
