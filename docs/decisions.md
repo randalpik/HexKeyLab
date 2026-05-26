@@ -2236,3 +2236,92 @@ The `.hki` format is intentionally producer-agnostic — Phase 2 will produce by
 If Phase 2 reveals a format change is warranted (e.g., per-velocity-layer audio for the orchestrator path described in backlog under ORCHESTRATOR), `HKI_MANIFEST_VERSION` bumps to 2 and `readHki` rejects v1 with a clear message. Both producer and consumer go through `validateManifest` so the migration is symmetric.
 
 **Where**: Phase 1 added `src/shared/hki.ts`, `analyzer/bundle.js`, `src/state/instrumentRegistry.ts`, `src/ui/instrumentBundles.ts`; modified `analyzer/generate-samples.js`, `src/audio/samples-data.ts`, `src/audio/samples-engine.ts`, `src/ui/init.ts`, `vite.config.ts`, `index.html`, `package.json`. Phase 2 scope is in the backlog under ANALYZER.
+
+---
+
+## User-facing Analyzer UI (HKLA) shipped as third Vite multi-page entry (2026-05-26)
+
+**Picked**: `/analyzer.html` is a new Vite multi-page sibling of `index.html` (HKL) and `composer.html` (HKLC), with its own module tree under `src/analyzer/`. Single-instrument focus per backlog L144 ("Streamline analyzer UI ... focus should be on one instrument at a time"). Reuses the existing browser-runnable engine in `analyzer/*.js` (analysis-analysis.js, k-weighting.js, analyzer-visualization.js, analyzer-instruments.js) unchanged. Outputs `.hki` for local-source instruments and a new round-trippable `<key>-config.json` for CDN-source instruments. The per-sample diagnostic chart (envelope, slope, segments, candidates) is the existing HKLViz module reused as-is — strict parity with the dev sidecar so we can retire it.
+
+**Rejected**:
+- Embed the analyzer UI in HKL itself (modal/side-panel). Couples analyzer code into HKL's bundle, defeats the future monorepo separation (backlog "HKLA" surface), crowds the toolbar.
+- A different URL slug (e.g. `/hkla.html` or `/instruments.html`). Same-origin BroadcastChannel and IndexedDB work regardless of slug; `.html` parity with the other entries is enough.
+- Single-channel multi-tenant bridge sharing the Composer protocol file (see next entry).
+
+**Why**: The HKL ecosystem already has a same-origin sibling-app pattern (HKL ↔ HKLC), which works well with BroadcastChannel + IndexedDB. Adding HKLA as a third sibling fits the existing grain; the analyzer's `src/analyzer/` import constraints (no `src/audio/`, `src/midi/`, `src/state/`, `src/render/`, `src/lumatone/`, `src/composer/` — only `src/shared/`, `src/engine/`, `src/bridge/`, and the existing `analyzer/*.js` engine modules) keep the future monorepo split possible. Heavy analysis runs in a dedicated `pipeline-worker.ts` (Vite `?worker` import) so the UI stays responsive on 30+ second single-instrument runs.
+
+**Where**: New `analyzer.html` at project root; new `src/analyzer/` tree (~20 modules); new `src/shared/cdnConfig.ts` for the CDN config format; new `src/engine/segmentLooper.ts` for the shared loop chain (see next entry). `vite.config.ts` gains a third `rollupOptions.input` entry.
+
+---
+
+## `src/engine/` as its own top-level dir for shared Web Audio code (2026-05-26)
+
+**Picked**: A new `src/engine/` top-level directory hosts runtime audio code shared between HKL's main sample engine (`src/audio/samples-engine.ts`) and the Analyzer UI's audition. First inhabitant: `src/engine/segmentLooper.ts` (single-voice multi-segment crossfade chain). Modules under `src/engine/` may use Web Audio APIs and per-voice runtime state, but MUST NOT import `src/audio/`, `src/state/`, `src/midi/`, `src/render/`, or `src/composer/`. May import `src/shared/`.
+
+**Rejected**:
+- Put the source-chaining state machine in `src/shared/segments.ts` alongside `pickNextSeam`. Rejected: `src/shared/` is pure data per its rules ("no Web Audio, no DOM, no runtime state"). Mixing Web Audio in there would erode the boundary.
+- Leave the duplication: HKL's `samples-engine.ts:scheduleSegmentSwitch` AND a new copy inside `src/analyzer/audition.ts`. Rejected: same algorithm, two source-of-truths — drift is inevitable.
+- Make `src/audio/` shareable with the analyzer. Rejected: `src/audio/` is full of HKL-app state (voice tracking, MIDI velocity, range attenuation, INSTRUMENTS map) and the analyzer is supposed to be independent of HKL.
+
+**Why**: The "segment-loop executor" is exactly the HKLE (Engine) surface described in `docs/backlog.md` ENGINE section ("audio handler, normalizer, segment-loop executor"). Putting it in its own directory now seeds the eventual extracted library — the analyzer is the first non-HKL consumer, but the orchestrator will be the second. The split also forces the boundary at design time: the looper takes `AudioContext` + `AudioBuffer` + segments and produces audio, with no awareness of voices, MIDI, or instruments.
+
+The `pickNextSeam` algorithm is genuinely pure data (no Web Audio, no state) and lives in `src/shared/segments.ts`. The state machine that drives `AudioBufferSourceNode` lifecycles lives in `src/engine/segmentLooper.ts`. `samples-engine.ts` and `audition.ts` both call `pickNextSeam` from shared; audition uses `startSegmentLooper` from engine; samples-engine still owns its own scheduleSegmentSwitch because rate ramps + voice keys aren't yet factored out (future refactor, not Phase 2 scope).
+
+**Where**: `src/shared/segments.ts` (new, pickNextSeam + findInitialSegIdx), `src/engine/segmentLooper.ts` (new, startSegmentLooper). Modified `src/audio/samples-engine.ts` (delegates segments branch of pickNextSeam to shared), `src/analyzer/audition.ts` (uses startSegmentLooper). CLAUDE.md documents the new `src/engine/` rules.
+
+---
+
+## Two BroadcastChannels for HKL ↔ {Composer, Analyzer}, not one multi-tenant channel (2026-05-26)
+
+**Picked**: `'hkl-composer-bridge'` and `'hkl-analyzer-bridge'` are two physical BroadcastChannels with independent protocol modules (`src/bridge/protocol.ts` and `src/bridge/analyzer-protocol.ts`). Both reuse the same `BridgeChannel<In, Out>` generic class — the channel name is passed via constructor argument. HKL's `src/bridge/hkl-side.ts` instantiates both at module load; the dispatcher is a `bridge.on()` per channel rather than a single multi-tenant switch.
+
+**Rejected**:
+- One channel, one protocol union containing all message types from both clients. Rejected: HKL would have to filter messages by type-prefix to route them; analyzer messages and composer messages have nothing in common; future protocol changes to one client would risk breaking the other.
+- Two channels but a shared protocol file. Rejected: same problem — type-union pollution across clients.
+
+**Why**: BroadcastChannel is cheap (single-Map dispatch in modern browsers), so two channels cost nothing meaningful. Independent protocol files make message-type ownership explicit per client, and the `BridgeChannel<In, Out>` generic ensures TypeScript catches accidental cross-channel sends at compile time. The same pattern can extend to future clients (Orchestrator, Documentation) without further refactoring.
+
+**Where**: `src/bridge/analyzer-protocol.ts` (new, defines AnalyzerEvent + HklAnalyzerEvent), `src/bridge/channel.ts` (parameterized BridgeChannel constructor, added `createAnalyzerHklBridge` + `createHklAnalyzerBridge` factories), `src/bridge/hkl-side.ts` (second `analyzerBridge` instance + parallel switch handler).
+
+---
+
+## `.hki` bridge transport inlines bytes through structured clone, NOT shared-IDB rendezvous (2026-05-26)
+
+**Picked**: When the Analyzer's "Send to HKL" button fires a `.hki` import, the bundle's Uint8Array is inlined in the `import-hki { instrumentKey, bytes }` bridge message. HKL receives + calls `InstrumentRegistry.importBundle(bytes)` itself. CDN configs also inline (`import-cdn-config { instrumentKey, config }`).
+
+**Rejected**: Have the Analyzer write directly to the shared `hkl-instrument-registry` IDB (via `InstrumentRegistry.importBundle()`), then send only a small bridge ping (`import-hki { instrumentKey }`); HKL calls `InstrumentRegistry.reload()` to refresh its in-tab cache. This was the original Phase 2 plan.
+
+**Why the flip**: The IDB-rendezvous approach required `src/analyzer/` to import `src/state/instrumentRegistry.ts`. That violates the analyzer's import constraints in `CLAUDE.md` (Analyzer-side may NOT import `src/audio/`, `src/state/`, etc.). Two ways to resolve:
+- Loosen the constraint to allow IDB-only registry modules. Rejected: erodes the boundary that the constraints exist to enforce.
+- Inline the bytes through structured clone. ✓ Accepted: `.hki` bundles are 10–50 MB typical, structured-clone transfer cost is ~50 ms, dwarfed by the seconds the analyzer just spent doing analysis. The bridge stays stateless. The receiving tab uses the same code path as its own `+ .hki` file picker.
+
+`InstrumentRegistry.reload()` is still added (10 lines) as a defensive primitive for future cross-tab nudge scenarios (e.g. one HKL tab importing while another HKL tab is open), but the analyzer bridge doesn't use it.
+
+**Where**: `src/bridge/analyzer-protocol.ts` (`import-hki` carries `bytes: Uint8Array`), `src/analyzer/bridge.ts` (`sendHkiToHkl` serializes via `writeHki` and sends inline), `src/bridge/hkl-side.ts` (analyzer-side switch handler calls `InstrumentRegistry.importBundle(msg.bytes)` directly).
+
+---
+
+## CDN config registry parallels HKI registry, not unified `.hki` import (2026-05-26)
+
+**Picked**: A new `src/state/cdnConfigRegistry.ts` (parallel to `instrumentRegistry.ts`) stores runtime-imported `CdnInstrumentConfig` objects. The INSTRUMENTS proxy in `samples-data.ts` gets a third fallback: static → HKI → CDN config. The waveform dropdown gains a second `<optgroup label="Imported (CDN config)">`. Import surfaces: `+ JSON` file picker (parity with `+ .hki`) inside the Import modal, plus the analyzer bridge.
+
+**Rejected**:
+- Convert CDN configs to `.hki` at import time. Rejected: forces the user to download large audio bundles for an instrument that already lives on a public CDN. The whole point of CDN configs is to skip the byte-storage cost; converting at import-time defeats it.
+- Extend the `.hki` ZIP format to support a "CDN-only" manifest with no `samples/` directory. Rejected: `.hki` semantics ("instrument bundle, audio included") would become muddier; readHki would need a branch for the no-audio case; manifest validation would need to know which fields are required per source-type.
+- Stuff CDN configs into `INSTRUMENTS_LOCAL` localStorage with no IDB. Rejected: localStorage is 5-10 MB cap per origin and synchronous; IDB is the right primitive.
+
+**Why**: The CDN config is fundamentally a different artifact from `.hki` — it carries URLs + analyzer metadata only, no bytes. A parallel registry matches that asymmetry. The engine doesn't care: `configToInstrument` returns the same shape as a compile-time entry in `samples-data.ts`, so the engine's CDN-fetch path (line ~219 in samples-engine.ts) handles runtime-imported CDN configs unchanged. Zero engine changes — proven by Phase 2 shipping with `src/audio/samples-engine.ts` NOT in the modified-files list.
+
+**Where**: `src/state/cdnConfigRegistry.ts` (new), `src/shared/cdnConfig.ts` (Phase 1, defines the type), `src/audio/samples-data.ts` (extended INSTRUMENTS proxy + `configToInstrument` synth + `cdnConfigCache` WeakMap), `src/ui/instrumentBundles.ts` (second `<optgroup>` + second manage-dialog section + `+ JSON` button), `src/ui/init.ts` (one new `init()` call).
+
+---
+
+## Phase 2 (analyzer bridge to HKL) shipped (2026-05-26)
+
+**Picked**: Phase 2 is the bridge handoff from `/analyzer.html` to `/index.html` — Analyzer's "Send to HKL" button puts the new instrument in HKL's waveform dropdown without ever touching the filesystem. Both `.hki` and CDN-config payloads supported. Closes the Phase-1 → Phase-2 arc opened on 2026-05-25.
+
+**Why**: Phase 1 shipped the analyzer UI + download flow; Phase 2 closes the loop. The bridge transport is described above ("`.hki` bridge transport inlines bytes..."), the registry is described above ("CDN config registry parallels HKI registry..."), the two-channel architecture is described above ("Two BroadcastChannels..."). All four entries together describe the Phase 2 surface.
+
+The HKL toolbar button is renamed `Bundles…` → `Import`, with the two file-picker buttons (`+ .hki`, `+ JSON`) moved inside the modal. The "Import" verb is broader and accommodates the new CDN-config branch; the modal stays one-stop for any import action.
+
+**Where**: NEW `src/bridge/analyzer-protocol.ts`, `src/state/cdnConfigRegistry.ts`. MODIFIED `src/bridge/channel.ts`, `src/bridge/hkl-side.ts`, `src/state/instrumentRegistry.ts` (added `reload()`), `src/audio/samples-data.ts` (INSTRUMENTS proxy), `src/ui/instrumentBundles.ts`, `src/ui/init.ts`, `src/analyzer/bridge.ts` (replaced Phase 1 stub), `src/analyzer/output.ts` (Send-to-HKL wiring), `index.html` (button rename + modal restructure), `analyzer.html` (Send button title). NO CHANGE to `src/audio/samples-engine.ts` — the engine handles runtime CDN configs through the same code path as compile-time entries.

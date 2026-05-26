@@ -44,6 +44,9 @@ Plug in, click Auto-sync. On first connection HKL pushes a fixed (channel, note)
 - [`docs/decisions.md`](docs/decisions.md) — log of non-obvious design choices
 - [`CLAUDE.md`](CLAUDE.md) — context for AI-assisted sessions
 
-## Companion tool
+## Companion tools
 
-`analyzer/HexKeyLab-analyzer.html` is a dev-only sidecar that generates the loop-point data baked into the sample instruments. Not shipped as part of HKL.
+- **HKL Analyzer** (`/analyzer.html`) — user-facing tool for building your own instruments from local audio files or a CDN URL. Produces a `.hki` bundle (local samples) or a JSON config (CDN), importable into HKL directly via a same-origin bridge or via download → file picker.
+- **HKL Composer** (`/composer.html`) — keyboard-driven music-notation editor that uses HKL as its input device.
+
+Both are separate Vite entry points shipped alongside HKL. `analyzer/HexKeyLab-analyzer.html` is the legacy dev sidecar; the in-tree `/analyzer.html` supersedes it for end-user use, while the Node CLI under `analyzer/` remains the canonical pipeline for instruments shipped with the app.

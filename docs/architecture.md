@@ -645,10 +645,15 @@ provenance.json                // optional — source URL/path, originalFiles, g
 - `node analyzer/generate-samples.js analyzer/configs/<key>.json` runs the same analyzer pipeline regardless of source (decode → analyze → tier → pick). For `source: "local"` (or when `--bundle` is passed on a CDN config), it additionally invokes `analyzer/bundle.js:buildBundle` to write `analyzer/out/<key>.hki`. The legacy `samples-data.ts` block.txt + report.md outputs are also produced; `analyzer/insert-instrument.js` is unaffected.
 
 **Consumption pipeline** (HKL browser):
-- `src/state/instrumentRegistry.ts` opens an IndexedDB `hkl-instrument-registry` database (separate stores for manifests and audio bytes), exposes `init` / `listImported` / `importBundle` / `removeBundle` / `getAudio`. Initialization is awaited at top-level in `src/ui/init.ts` before `applyPrefsToDom` so an imported persisted waveform restores correctly on reload.
-- `src/ui/instrumentBundles.ts` wires the toolbar UI: `+ .hki` opens a file picker → `importBundle` → auto-selects the new instrument; `Bundles…` opens a `<dialog>` listing imports with size info and Remove buttons.
-- Imported entries surface in the existing `#waveform` `<select>` under an `<optgroup label="Imported (.hki)">`, repopulated via `onChange` after every import/remove.
+- `src/state/instrumentRegistry.ts` opens an IndexedDB `hkl-instrument-registry` database (separate stores for manifests and audio bytes), exposes `init` / `listImported` / `importBundle` / `removeBundle` / `getAudio` / `reload`. Initialization is awaited at top-level in `src/ui/init.ts` before `applyPrefsToDom` so an imported persisted waveform restores correctly on reload. `reload()` re-reads the in-memory cache from IDB — defensive primitive for future cross-tab refresh scenarios.
+- `src/ui/instrumentBundles.ts` wires the toolbar UI: a single `Import` button opens a `<dialog>` that hosts both file-picker buttons (`+ .hki` and `+ JSON`) and lists imported instruments in two sections (Bundles `.hki` and CDN configs JSON), each with Remove buttons.
+- Imported entries surface in the existing `#waveform` `<select>` under two `<optgroup>`s: `'Imported (.hki)'` and `'Imported (CDN config)'`. Both repopulate via `onChange` after every import/remove.
 - `samples-engine.ts:loadInstrument` branches on `instr.source === 'hki'`: awaits `getAudio(key)` once up-front, then per-sample reads from the in-memory blob map instead of `fetch()`. Decode (`decodeAudioData`) and metadata overlay (segments/trend/trimStart/gain) paths are unchanged — both CDN and HKI instruments produce identical voice records once loaded.
+
+**CDN config import** (parallel to `.hki`):
+- `src/state/cdnConfigRegistry.ts` is a sibling registry storing `CdnInstrumentConfig` objects (defined in `src/shared/cdnConfig.ts`) — JSON only, no audio bytes. Audio is fetched per-sample at playback time via the engine's existing CDN path.
+- The `INSTRUMENTS` Proxy in `src/audio/samples-data.ts` falls back through three layers: static map → HKI imports → CDN config imports. `configToInstrument(cfg)` synthesizes a runtime-shaped INSTRUMENTS entry from a `CdnInstrumentConfig`; the engine sees the same shape as a compile-time entry and uses its standard CDN fetch path. Zero engine changes.
+- Import path: the `+ JSON` button in the Import dialog, OR the analyzer bridge (see §7.2 + §8).
 
 Vite's `build.target` is set to `es2022` to permit the top-level `await` on registry init (Firefox 89+, Chrome 89+, Safari 15+; all ≥4y old).
 
@@ -763,9 +768,21 @@ DAMPER_RELEASE_FLOOR   # below this depth, sustained voices release through norm
 
 ---
 
-## 6. Companion Tool: HexKeyLab-analyzer
+## 6. Analyzer engine (dev/CLI surface)
 
-Not shipped with HKL. Used offline to generate `loopPts`, `validStartsByEnd`, `trimStart`, `slopeCV`, and `gain` baked into `SampleEngine.INSTRUMENTS`. Two entry points: the in-browser `analyzer/HexKeyLab-analyzer.html` (interactive, exposes the same algorithms) and the Node-based pipeline under `analyzer/` (`generate-samples.js` for new instruments, `backfill-gains.js` for adding `gain` to existing entries without disturbing loop points).
+This section describes the SIGNAL-PROCESSING engine — `loopPts`, `validStartsByEnd`, `trimStart`, `slopeCV`, `gain` computation — and its three consumers:
+
+1. **HKL Analyzer UI** (`/analyzer.html`) — user-facing, shipped with the app. **See §8 for the UI architecture.** The engine modules described here are imported into the analyzer's pipeline-worker.
+2. **Node CLI** (`analyzer/generate-samples.js`, `analyzer/backfill-gains.js`) — canonical source of truth for instruments shipped with HKL. Splices `samples-data.ts` blocks via `analyzer/insert-instrument.js`.
+3. **Legacy dev sidecar** (`analyzer/HexKeyLab-analyzer.html`) — original in-browser interactive tool. Superseded by the new Analyzer UI for end-user use; kept as a batch-inspection tool for adding shipped instruments. Drives the same engine modules.
+
+The engine is browser-runnable ES modules under `analyzer/`:
+- `analyzer-analysis.js` — `HKLAnalysis` namespace (`prepareLoop`, `refineFundamentalPeriod`, `trimSilence`, `applyConfigDefaults`, etc.). Pure DSP.
+- `analyzer-instruments.js` — `HKLInstruments` (URL construction, note enumeration, noteStyle dispatch, Iowa-proxy rewrite). Shared with the runtime engine for URL synthesis.
+- `k-weighting.js` — ITU-R BS.1770-4 loudness measurement (`measureLufs`, `measureDecayLufs`).
+- `analyzer-visualization.js` — `HKLViz` namespace (per-sample diagnostic canvas, status text). Reused by the new Analyzer UI's Inspect panel.
+
+The sections below describe the engine algorithms themselves.
 
 ### 6.1 URL templating
 
@@ -858,7 +875,14 @@ Composer is openable standalone (load/save/edit `.hkc` files works without HKL);
 
 ### 7.2 Bridge protocol (`src/bridge/`)
 
-Single source of truth: `src/bridge/protocol.ts`. One `BroadcastChannel` named `'hkl-composer-bridge'` carries both directions; per-side type safety via `BridgeChannel<In, Out>` generic in `src/bridge/channel.ts`.
+Two physical `BroadcastChannel`s live in `src/bridge/`:
+
+- `'hkl-composer-bridge'` — HKL ↔ Composer (this section).
+- `'hkl-analyzer-bridge'` — HKL ↔ Analyzer (see §8).
+
+Both reuse the same `BridgeChannel<In, Out>` generic class in `src/bridge/channel.ts`; the channel name is passed via constructor argument. Per-channel protocol modules (`protocol.ts` and `analyzer-protocol.ts`) define independent `In` / `Out` union types. HKL instantiates both at module load in `src/bridge/hkl-side.ts`. The pattern extends cleanly to future sibling apps (Orchestrator, Documentation).
+
+The Composer protocol lives in `src/bridge/protocol.ts`:
 
 **HKL → Composer events** (`HklEvent`):
 - `hkl-hello`, `hkl-bye` — lifecycle.
@@ -1462,6 +1486,93 @@ The selection fixtures group covers entry, growth, shrink-to-origin, Ctrl+Shift+
 The catalog lives in `src/composer/keybindings.ts` as a typed `KEYBINDINGS: KeySection[]` constant — **this is the canonical doc source for Composer keybindings**, replacing the former giant header docstring in `input.ts`. The modal builds its content from this array once on first open and caches the rendered HTML. Native `<dialog>.showModal()` provides focus trap + Escape-to-close; no keystroke suppression is needed in `input.ts` because the dispatcher's existing `shouldIgnore` check already drops events from focused form elements, and the modal focus trap keeps the rest out of the document.
 
 When adding or changing a binding in `input.ts`, update the matching entry in `keybindings.ts`. The catalog is documentation-as-data; it is NOT a dispatch table (see `docs/decisions.md`).
+
+---
+
+## 8. HKL Analyzer (HKLA)
+
+User-facing tool for building HKL instruments from audio. Shipped as `/analyzer.html`, a Vite multi-page sibling of `index.html` (HKL) and `composer.html` (Composer). Replaces the workflow that previously required the Node CLI + `samples-data.ts` splice. The CLI remains canonical for instruments shipped with the app; the new UI is the end-user path.
+
+### 8.1 Two-app architecture
+
+`/analyzer.html` is a separate Vite entry with its own module tree under `src/analyzer/`. Communicates with HKL over a same-origin `BroadcastChannel('hkl-analyzer-bridge')`. Per the analyzer-side import constraints in `CLAUDE.md`, `src/analyzer/*` may import:
+- `src/shared/*` — pure-data types (cdnConfig, hki, dynamics, segments, etc.)
+- `src/bridge/*` — bridge protocol + channel
+- `src/engine/*` — Web Audio code shared with HKL (currently `segmentLooper.ts`)
+- `analyzer/*.js` — engine modules (analysis-analysis, analyzer-instruments, k-weighting, analyzer-visualization)
+
+It must NOT import `src/audio/`, `src/midi/`, `src/state/`, `src/lumatone/`, `src/render/`, or `src/composer/`. This keeps the analyzer independent of HKL state and ready for the future HKLA library extraction (see backlog L20).
+
+### 8.2 Module layout (`src/analyzer/`)
+
+- **`main.ts`** — entry. Async-loads persisted state from IDB via `loadDraft()`, calls `hydrate(state)` BEFORE views init so form/source pickers populate from hydrated values on first read. Then mounts views, subscribes a debounced 250ms auto-save.
+- **`stage.ts`** — single mutable `AnalyzerState` + pub/sub (mirrors `instrumentRegistry.onChange()` pattern). Exports `getState`, `setConfig`, `setSource`, `setSamples`, `updateSample`, `hydrate`, `reset`, `onChange`.
+- **`state.ts`** — type definitions: `AnalyzerState`, `ConfigState`, `SourceState` (discriminated union of `LocalSourceState` | `CdnSourceState`), `SampleSlot`, `GateOpts`, `Tier`, `AnalysisResult`.
+- **`sourceLocal.ts`** / **`sourceCdn.ts`** — source pickers. Local: drag-drop + `<input type=file multiple>`, filename → note-name parsing via inverse `noteStyle` regex (note name detected anywhere in filename, first match wins). CDN: baseUrl + filePattern fields + fallback-pattern button, enumeration via `HKLInstruments.enumerateRange`.
+- **`pipeline.ts`** — analysis orchestrator. Owns the `AudioContext` (audio decode stays on main thread) and the lazy-created `pipeline-worker`. Per slot: decode via `decodeAudioData` → ship per-channel `Float32Array`s to the worker as transferables → receive `{result, gain, ...}` → classify tier → autoSelect if enabled.
+- **`pipeline-worker.ts`** — dedicated Web Worker (Vite `?worker` import). Hosts `HKLAnalysis.prepareLoop` (loop path) and a port of `generate-samples.js:analyzeDecay` (decay path) + gain measurement via `k-weighting.measureLufs` / `measureDecayLufs`. Wraps received `Float32Array` channels in an `AudioBuffer`-shaped duck (analyzer only touches `.getChannelData()` / `.numberOfChannels` / `.length` / `.sampleRate` / `.duration`).
+- **`normalize.ts`** — RMS / K-weighted gain math (TARGET_DBFS = −18, TARGET_PEAK_DBFS = −3, GAIN_MIN = 0.1). Lifted from `generate-samples.js`. `measureRmsLoop` (loop steady region or loudest-1s fallback), `measureDecay` (full post-trim K-weighted), `computeGain` (unified formula).
+- **`tier.ts`** — `classifyTier(result, decays)` branches on `decays`. Loop path: `fail` / `red` (segments<3 or SCC broken) / `yellow` (3 segments) / `blue` (4+ segs, bridges≥half) / `green` (4+ segs, bridges<half). Decay path: `fail` / `yellow` (drift >50¢) / `green`.
+- **`autoSelect.ts`** — port of `generate-samples.js:pickSamples`. Two-pass: spine (green at ~4-st spacing) + fill (blue/yellow filling >4-st gaps, min-sep 2). Decay path keeps every valid sample.
+- **`audition.ts`** — thin wrapper around `src/engine/segmentLooper.ts` for sustain audition; single-source + release envelope for decay. Exposes `audition(id, buffer, opts)`, `stopAudition()`, `onAuditionPosition`, `onAuditionStop`. rAF loop computes playback position deterministically from `ctx.currentTime` + `segmentLooper.getPosition()`.
+- **`playhead.ts`** — pure helpers for time→x mapping (mirrors HKLViz's `ml=50, mr=18` margins) and vertical-line render. Driven by audition position events; clears + redraws each frame.
+- **`charts.ts`** — thin adapter around `analyzer-visualization.js`. `drawSlotChart(slot, diagCanvas, info)` calls `HKLViz.renderGraphForEntry(entry)` with a minimal entry shape `{graphCanvas, graphInfo, rawRes, sample}`. Reusing HKLViz unchanged is the parity bar for retiring the dev sidecar.
+- **`configForm.ts`** — two-way-bound DOM form for `ConfigState` fields (instrumentKey, displayName, noteStyle, lowOct/highOct, transposeSemis, decays, vibrato, releaseTime, volume).
+- **`advancedPanel.ts`** — collapsible `gateOpts` panel mirroring the dev sidecar's threshold inputs; empty inputs use engine defaults (placeholder shows the default value in gray italic so the user knows what they're overriding).
+- **`sampleTable.ts`** — per-sample row (tier color, segments, span, gain, status, checkbox), Play/Stop button (▶ ↔ ■), Inspect expander mounting a stacked diag+playhead canvas via `charts.ts` + `playhead.ts`. Auto-select integration via `onChange`.
+- **`output.ts`** — builds `.hki` (via `writeHki` from `src/shared/hki.ts`) for local sources or `CdnInstrumentConfig` JSON for CDN sources. Download buttons + Send-to-HKL bridge dispatch (see §8.5). Import path for round-tripping previously-emitted JSON configs.
+- **`download.ts`** — Blob URL + `<a download>` shim.
+- **`persist.ts`** — IndexedDB draft store (`hkl-analyzer-drafts`, separate from the instrument registry). Stores `AnalyzerState` directly via structured clone — `File` handles round-trip, but `audioBuffer` references are stripped (not cloneable) and rehydrated on demand.
+- **`bridge.ts`** — analyzer-side bridge (see §8.5).
+- **`sourceClear.ts`** — wires the Clear button: `clearDraft()` + `reset()`.
+- **`state.ts`** — type definitions.
+
+### 8.3 Transpose semantics (semitones, not ratio)
+
+The form input is `Transpose (semitones)`, default 0, integer. Internal state: `transposeSemis: number`. Semantic: `audioFreq = labeledFreq * 2^(semis/12)`. `semis = -12` means audio is one octave below the filename label (Hammond drawbar convention: filename `C4.mp3` contains C3 audio).
+
+At output time, the legacy `transpose` field in `HkiManifest` / `CdnInstrumentConfig` (engine-side, a playback-rate multiplier per `samples-engine.ts:351`) is computed as `2^(-semis/12)` and emitted only when non-zero. Inverse on import: `semis = round(-log2(transpose) * 12)`.
+
+`slot.midi` carries the LABELED midi (matches the filename, used for `{MIDI}` placeholder substitution). `slot.freq` carries the AUDIO freq (analyzer hint + sample output). They differ when `transposeSemis !== 0`.
+
+### 8.4 Persistence + audio rehydration
+
+`persist.ts` writes the full `AnalyzerState` to IDB on every state change (debounced 250 ms). On reload, `main.ts` calls `loadDraft()` BEFORE view init so the form fields populate from the saved state. `File` handles survive structured clone — local-source files round-trip with their content intact, no re-pick needed.
+
+`audioBuffer` is stripped on save (not cloneable). On reload, slots have `result`, `tier`, `picked`, etc. populated but no decoded buffer. Click Audition → `ensureAudioBuffer(slot)` re-decodes the file (Firefox `decodeAudioData` quirk — see `lessons.md`) and writes the buffer back into state. Subsequent plays don't re-decode.
+
+The Clear button (in the Source section header) calls `clearDraft()` + `reset()`. Resets state to defaults; all form fields, source inputs, and sample table reflect the reset via the existing pub/sub.
+
+### 8.5 Bridge to HKL (`'hkl-analyzer-bridge'`)
+
+Same-origin `BroadcastChannel`, separate from the Composer channel. Reuses `BridgeChannel<In, Out>` from `src/bridge/channel.ts` with `ANALYZER_CHANNEL_NAME`.
+
+**Analyzer → HKL events** (`AnalyzerEvent` in `src/bridge/analyzer-protocol.ts`):
+- `analyzer-hello`, `analyzer-bye` — lifecycle.
+- `import-hki { instrumentKey, bytes: Uint8Array }` — built `.hki` bundle, inlined. HKL writes to its `InstrumentRegistry` and acks.
+- `import-cdn-config { instrumentKey, config: CdnInstrumentConfig }` — built CDN config, inlined. HKL writes to its `cdnConfigRegistry` and acks.
+
+**HKL → Analyzer events** (`HklAnalyzerEvent`):
+- `hkl-hello`, `hkl-bye` — lifecycle.
+- `import-ack { instrumentKey, ok, error? }` — per-import success/failure.
+
+**Why inline bytes, not IDB rendezvous**: `src/analyzer/` cannot import `src/state/` per CLAUDE.md import constraints. An IDB-rendezvous design (Analyzer writes to shared `hkl-instrument-registry` → ping → HKL reloads) would require crossing that boundary. Inlining a `Uint8Array` through structured clone handles 10–50 MB cleanly (~50 ms transfer) and keeps the bridge stateless. See `decisions.md`.
+
+**HKL-side handler** lives in `src/bridge/hkl-side.ts`: a parallel `analyzerBridge` instance at module load with its own `bridge.on()` switch. `import-hki` calls `InstrumentRegistry.importBundle(msg.bytes)` (same path as the `+ .hki` file picker) and auto-selects via the dropdown. `import-cdn-config` calls `cdnConfigRegistry.importConfig(msg.config)` and auto-selects. Both ack with `import-ack`. `initHklBridge()` also calls `announceToAnalyzer()` so the analyzer's connection badge flips when HKL boots second.
+
+**Analyzer-side handler** (`src/analyzer/bridge.ts`): `sendHkiToHkl(bundle)` serializes via `writeHki`, sends `import-hki`, awaits ack (10s timeout). `sendCdnConfigToHkl(config)` sends `import-cdn-config`, awaits ack. Connection state tracked via `onConnectionChange` subscribers — the top-bar `#hklConn` badge and the "Send to HKL" button both subscribe.
+
+### 8.6 Verification
+
+The dev server (`npm run dev`) serves `/analyzer.html` and `/index.html` simultaneously. The headless inspect tool (`tools/composer-inspect/`) accepts a `COMPOSER_URL` env override and can drive either page. Manual e2e:
+
+1. Open both pages in two Firefox tabs.
+2. Analyzer: pick a source (drag local files or enter CDN URL), fill config, click "Analyze all samples". Worker processes each sample, the table populates, auto-select picks at ~4-st spacing.
+3. Inspect a row: HKLViz chart + playhead (during Audition) appear inline.
+4. Click "Send to HKL". The instrument appears in HKL's waveform dropdown under one of the two imported optgroups and auto-selects. Play a note: the engine fetches from the imported CDN baseUrl OR the imported HKI bundle.
+5. Persistence: reload Analyzer; form + samples + picks restore from IDB. Audition re-decodes on demand.
+
+The Composer test suite doesn't cover the Analyzer; the analyzer's `state.ts`, `tier.ts`, `autoSelect.ts`, `normalize.ts`, and shared `src/shared/segments.ts` are pure functions and could be unit-tested in isolation (deferred; backlog ARCHITECTURE entry covers HKL test scaffolding).
 
 ---
 

@@ -986,3 +986,33 @@ So adding a Proxy-backed virtual-key namespace to an existing typed `Record<stri
 HKL chose (b) — `InstrumentRegistry.listImported()` for the dropdown's `<optgroup>` populator, no `ownKeys` trap on `INSTRUMENTS`. There's currently no other consumer that iterates instruments. Adding one in the future would need to opt into the registry list explicitly.
 
 `src/audio/samples-data.ts` (Proxy definition), `src/ui/instrumentBundles.ts:refreshDropdown` (enumeration via `listImported`).
+
+### Firefox `decodeAudioData` refuses some File-derived ArrayBuffers as "unknown content type"
+
+When the Analyzer reads a dropped local audio file via `file.arrayBuffer()` and passes the result straight to `AudioContext.decodeAudioData()`, Firefox **sometimes** throws `EncodingError: The buffer passed to decodeAudioData contains an unknown content type` — for byte-identical content that decodes fine when fetched from a URL. Chromium decodes either path silently, which masks the issue during headless testing.
+
+The root cause is empirical: certain `ArrayBuffer`s produced by the File API don't carry the format metadata Firefox's decoder dispatcher reads, even when the bytes themselves are valid MP3. The workaround is to route the bytes through a Blob URL + `fetch()` instead — `fetch` populates the response with a Content-Type derived from the Blob's `type` field, which the decoder accepts:
+
+```ts
+const url = URL.createObjectURL(file);
+try {
+  const r = await fetch(url);
+  return await r.arrayBuffer();
+} finally {
+  URL.revokeObjectURL(url);
+}
+```
+
+The Analyzer's `src/analyzer/pipeline.ts` uses a fast-path (`file.arrayBuffer()` + structured copy into a fresh `Uint8Array`, mirroring `samples-engine.ts:213-215`) and falls back to the Blob URL route only when the first `decodeAudioData` call throws. CDN paths don't hit this — `fetch(url).arrayBuffer()` already produces a "good" ArrayBuffer.
+
+`src/analyzer/pipeline.ts:readLocalBytesFast` + `readLocalBytesViaBlobUrl` + `ensureAudioBuffer` (Phase 1 fallback wiring).
+
+### Stacked-canvas overlay: dialog/section CSS background applies to ALL inner canvases
+
+The analyzer's per-sample diagnostic view stacks two canvases: a diag canvas (HKLViz plot) on the bottom, a playhead canvas (transparent, position:absolute overlay) on top. A naive CSS rule like `#sampleTable .inspect-pane canvas { background: #0a0a0a }` paints BOTH canvases with the dark background, making the playhead canvas opaque and OCCLUDING the diag content underneath — even though the diag bytes are correctly drawn (pixel-count probes confirm).
+
+The fix: scope the background by class. Diag canvas gets `.diag-canvas`, playhead canvas gets `.playhead-canvas`. CSS targets `.diag-canvas` only. The overlay stays transparent and the chart shows through.
+
+Same principle applies anywhere a section-level CSS rule targets a generic element type (canvas, div, etc.): if you later add a second element of the same type with different layering intent, the rule will silently break the new element. Default to class-scoped selectors for layered UI.
+
+`src/analyzer/sampleTable.ts` (canvas class assignment), `analyzer.html` (CSS rule for `.diag-canvas`).
