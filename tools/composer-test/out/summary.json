@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 117,
-  "passed": 117,
+  "fixtures": 122,
+  "passed": 122,
   "failed": 0,
-  "elapsedMs": 35153,
+  "elapsedMs": 36066,
   "results": [
     {
       "name": "emptyDoc",
@@ -551,6 +551,46 @@
     },
     {
       "name": "visualMultiVoice",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "heji_sharp_arrow",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "heji_septimal_hook",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "heji_acc_plus_hook",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "heji_off_native",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "heji_carry_diff_comma",
       "ok": true,
       "failures": [],
       "counts": {

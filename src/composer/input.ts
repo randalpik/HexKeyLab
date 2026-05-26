@@ -5,7 +5,6 @@ import type {
   ComposerModel, Duration, Dots, ChordInput, RestInput, Voice,
 } from './model/index.js';
 import { ticksOf } from './model/index.js';
-import { alterFromCount } from './notation/accidentals.js';
 import {
   type ExpressionCursor, rebuildCursor, currentMoment, step, moveToStart,
   moveToEnd,
@@ -560,11 +559,9 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
 
   function commitDuration(dur: Duration): void {
     const heldRaw = hooks.getHeldKeys();
-    /* Filter notes whose alteration exceeds ±3 — Verovio can't render
-       compound accidentals legibly (the extra <accid> glyphs overlap
-       without horizontal allocation). The user can re-spell or shift
-       the lattice to bring them in range. */
-    const held = heldRaw.filter((k) => Math.abs(alterFromCount(k.accid)) <= 3);
+    /* Any alteration magnitude is allowed: (q, r) is the source of truth and
+       the render pipeline stacks accidentals beyond ±3 (heji-render.ts). */
+    const held = heldRaw;
 
     /* Chord-extend branch: when a chord-internal selection is set AND we're
        in INS mode, the digit press appends held keys to the selected element
@@ -573,10 +570,6 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
        duration. */
     const extendSel = reconcileChordInternalSel(model);
     if (extendSel && state.mode === 'insert') {
-      if (heldRaw.length > 0 && held.length === 0) {
-        hooks.setStatus?.('All held keys have alteration > ±3; not added.', 'error');
-        return;
-      }
       if (held.length === 0) {
         hooks.setStatus?.('Hold keys to add to chord.', 'error');
         return;
@@ -646,13 +639,6 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     }
 
     state.duration = dur;
-    if (heldRaw.length > 0 && held.length === 0) {
-      hooks.setStatus?.('All held keys have alteration > ±3; not entered.', 'error');
-      return;
-    }
-    if (held.length < heldRaw.length) {
-      hooks.setStatus?.('Some held keys had alteration > ±3 and were dropped.', 'error');
-    }
 
     /* Layout-mismatch gate: keys entered now sound at HKL's current tuning,
        but the score is pinned to a (possibly different) tuning mode. If they

@@ -1174,24 +1174,26 @@ After the per-measure pass, `normalizePlaceholders()` regenerates placeholders i
 
 Measure count is preserved (no reflow into new measures). Enlarging is a no-op except for re-normalizing placeholders to the new tick budget. Tied chains that cross the truncation point unwind correctly via the existing orphan logic. This replaces an earlier `rebuildMeasureLayout` approach that flattened content and re-distributed — see decisions.md "Per-measure truncation over rebuild-and-reflow".
 
-### 7.16 Accidentals: carry-state display + clamp at ±3
+### 7.16 Accidentals: HEJI-aware carry-state + render-time glyph injection
 
-`src/composer/accidentals.ts` runs at serialize-time on the cloned doc (live doc stays untouched). Per measure × per staff (treble and bass independently; accidentals carry across voices within a staff):
+`src/composer/notation/accidentals.ts` runs `computeAccidentalDisplay` at serialize-time on the cloned doc (live doc stays untouched). Per measure × per staff (treble and bass independently; accidentals carry across voices within a staff):
 
-- Initial carry-state = key-signature alterations (a `Record<pname, number>` derived from `key.sig="3s"` → `{f:1, c:1, g:1}` etc.).
-- Walk all notes in the staff sorted by start tick (then by layer for ties).
-- For each note: compute its absolute alteration from `@accid` or `@accid.ges` (survives save/load); compare to the currently-expected alteration.
-  - Matches → hide via `@accid.ges` (remove `@accid`).
-  - Tie destination (`@tie="t"|"m"`) → always hide, but DO update carry state.
-  - Else → show via `@accid` (the canonical single-token glyph), update state. alter=0 with non-zero state writes `@accid="n"` (natural sign cancellation).
+- The authoritative alteration is `noteAlter(note)` — derived from `(q, r)` via `noteName()` so any magnitude is represented (the `@accid` token caps at ±3 and is just a display cache); falls back to the `@accid` token for coordinate-less (e.g. imported) notes.
+- Carry-state keys on the full **HEJI identity** `{alter, syn5, sept7}`, not just the integer alteration. With HEJI on, two notes sharing pname/oct/alter but differing in comma counts (e.g. F♯ vs F♯↑ a syntonic comma higher) are distinct pitches and BOTH show. A comma-bearing natural (no conventional accidental) is forced visible. With HEJI off, `syn5`/`sept7` stay 0 and this reduces to the classic conventional-accidental carry. Commas come from `hejiCommasFor(mode, q, r)` (shared module, see below).
+- Matches expected identity → hide via `@accid.ges`; tie destination → hide but update carry; else → show, update carry.
 
-Single-token canonical glyphs only — multi-`<accid>` child stacking was attempted but Verovio doesn't allocate horizontal space for additional children, so they overlap exactly. Composer therefore clamps at ±3:
+**No ±3 clamp.** `(q, r)` is the source of truth; the render pipeline stacks accidentals beyond ±3 and draws HEJI comma arrows / septimal hooks. The clamp that previously filtered entry (`input.ts`), transpose (`scTranspose.ts`), and retune (`retune.ts`) is gone — `@accid` still stores a clamped canonical token as a display cache, but it never limits capability.
 
-- `tokenFromAlter(alter)` returns `s`/`f`/`x`/`ff`/`ts`/`tf` for alter ∈ {±1, ±2, ±3}. `x` is the canonical double-sharp glyph (×, U+E263); `ss` would draw two single sharps stacked, which is undesirable. `ts`/`tf` are the triple-sharp/flat tokens (Verovio renders them visually as ×♯ / ♭♭♭ but they remain one MEI token from our side).
-- Notes whose HKL-spelled alteration exceeds ±3 are FILTERED OUT at entry by `commitDuration` in `input.ts`. The user sees a status message. To enter such notes the user would have to re-spell via lattice transformation.
-- Legacy `.hkc` files with `@accid="ss"` are migrated to `@accid="x"` on load. Legacy files with `<accid>` children (from a brief experimental period) are collapsed into a single clamped `@accid` on load.
+#### 7.16.1 HEJI / arbitrary-stack rendering (`src/composer/notation/heji-render.ts`)
 
-The bridge protocol's `accid` field is widened to `string` (count form: `''`, `'s'`, `'ss'`, `'sss'`, …, `'n'`); the bridge does NOT clamp. All clamping lives in Composer's entry path so the bridge stays a simple passthrough.
+Verovio can't draw the Extended Helmholtz-Ellis glyphs (the `@glyph.num` path is a no-op in 6.x) and collapses repeated same-token `<accid>` siblings onto one slot. The workaround is render-only (never touches the saved/`.hkc` doc — `(q, r)` stays canonical) and runs in two steps:
+
+1. **`transformDocForHeji`** (called from `model.serialize({ hejiEnabled })`, after `computeAccidentalDisplay`): for each note needing more than a single ≤±3 glyph — any syntonic arrow, any septimal hook, or `|alter| > 3` — replace its `@accid` with a row of DISTINCT placeholder `<accid>` children. Distinct tokens force Verovio to reserve a real horizontal slot per glyph; each is tagged via `@type="hklg-<seq>-<family>-<hex>"` (Verovio emits `@type` as both `data-type` and a CSS class). MEI sibling order is reversed from visual order (MEI-first renders rightmost, nearest the notehead).
+2. **`injectHejiGlyphs`** (called from `render.ts` after `renderToSVG`, gated on `document.fonts.load('BravuraText')`): re-draws **every** accidental as a BravuraText `<text>` — tagged HEJI placeholders become the combined U+E2C0+ glyphs (laid out by the bare-advance slot rule, snug to the notehead); plain native accidentals are re-drawn at their own SMuFL codepoint (parsed from the `<use>` href) at Verovio's assigned position. Glyph size = `1000 × scale` from the placeholder's transform (= 4 staff spaces).
+
+Net effect: **accidentals are uniformly Bravura; the rest of the score stays on Verovio's default Leipzig** (the global `font` option is NOT set — Bravura rests read worse). HKL's `hejiChain`/comma math lives in `src/shared/heji.ts` so both the lattice (`src/tuning/heji.ts` wrapper, with the readability "collapse" step) and Composer (no collapse — always the full chain) share it. The Composer HEJI toggle is a setup-dialog checkbox persisted on `<extMeta>/<hkl:config> @heji`, independent of HKL's own `hejiEnabled`. MusicXML export takes its `<alter>` from `noteAlter` (lossy on commas — no MusicXML HEJI standard; W3C #263 open).
+
+The bridge protocol's `accid` field is count form (`''`, `'s'`, `'ss'`, …, `'n'`); the bridge does NOT clamp.
 
 ### 7.17 Intelligent beaming
 

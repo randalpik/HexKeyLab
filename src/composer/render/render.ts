@@ -5,6 +5,7 @@
 
 import './verovio-types.js';
 import type { VerovioToolkit } from './verovio-types.js';
+import { injectHejiGlyphs } from '../notation/heji-render.js';
 
 export type ViewMode = 'page' | 'scroll';
 export type ZoomLevel = 50 | 75 | 100;
@@ -36,8 +37,13 @@ const SCROLL_GEOM = {
 };
 
 const BASE_OPTIONS = {
-  svgAdditionalAttribute: ['note@data-q', 'note@data-r', 'note@color', 'rest@data-tuplet-placeholder'],
+  svgAdditionalAttribute: ['note@data-q', 'note@data-r', 'note@color', 'rest@data-tuplet-placeholder', 'accid@type'],
   footer: 'none',
+  /* Keep Verovio's default Leipzig font for the score (rests, clefs,
+     noteheads). Accidentals are re-rendered in BravuraText by injectHejiGlyphs
+     so they're uniform with the injected HEJI glyphs — but ONLY accidentals;
+     a global font:'Bravura' would restyle the rests, which read worse. See
+     docs/lessons.md. */
 };
 
 /* Verovio line-width defaults (in units of --unit):
@@ -175,6 +181,9 @@ class Renderer {
       const notehead = note.querySelector(':scope > g.notehead');
       if (notehead) note.appendChild(notehead);
     }
+    /* Replace tagged placeholder accidentals with BravuraText HEJI / stacked
+       glyphs. No-op when the MEI carried no tagged placeholders. */
+    injectHejiGlyphs(this.container);
   }
 
   /** Resolve a clicked SVG element to its xml:id, walking up to the nearest

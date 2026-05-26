@@ -27,7 +27,8 @@ import type { ResolvedNote } from '../../bridge/protocol.js';
 import { regroupBeams, readTimeSig } from '../notation/beams.js';
 import { decomposeBeatAlignedRests } from './restfill.js';
 import { computeAccidentalDisplay, alterFromCount, alterFromToken, tokenFromAlter, getNoteAlter } from '../notation/accidentals.js';
-import { ensureExpressionDefaults, getLayoutReq, setLayoutReq, type LayoutReq, type Moment } from '../expressions.js';
+import { ensureExpressionDefaults, getLayoutReq, setLayoutReq, getHejiEnabled, setHejiEnabled, type LayoutReq, type Moment } from '../expressions.js';
+import { transformDocForHeji } from '../notation/heji-render.js';
 import type { TuningMode } from '../../shared/freq.js';
 import { realTicks, writtenTicks } from './ticks.js';
 import {
@@ -392,12 +393,22 @@ export class ComposerModel {
     return this.doc;
   }
 
-  serialize(): string {
+  /** Serialize to MEI. Pass `forRender` to apply the HEJI / arbitrary-stack
+   *  accidental transform (render path only — save/snapshot leave it off so
+   *  the stored doc stays clean conventional MEI; (q, r) is the truth). */
+  serialize(forRender?: { hejiEnabled: boolean }): string {
     /* Render-time passes operate on a clone so the live doc stays flat
        (cursor/mutation invariant). All passes are idempotent. Order:
-       accidentals first (operates on flat notes), then beams (wraps them). */
+       accidentals first (operates on flat notes), then the HEJI/stack
+       placeholder transform (reads the visible @accid the prior pass set),
+       then beams (wraps them). */
     const clone = this.doc.cloneNode(true) as Document;
-    computeAccidentalDisplay(clone, this.getKeySig());
+    const mode = this.getLayoutReq().tuningMode;
+    computeAccidentalDisplay(clone, this.getKeySig(),
+      forRender ? { mode, enabled: forRender.hejiEnabled } : undefined);
+    if (forRender) {
+      transformDocForHeji(clone, mode, forRender.hejiEnabled);
+    }
     regroupBeams(clone, readTimeSig(clone));
     return new XMLSerializer().serializeToString(clone);
   }
@@ -786,6 +797,15 @@ export class ComposerModel {
 
   setLayoutReq(req: LayoutReq): void {
     setLayoutReq(this.doc, req);
+  }
+
+  /** Document-level "show HEJI accidentals" flag. Render-only display state. */
+  getHejiEnabled(): boolean {
+    return getHejiEnabled(this.doc);
+  }
+
+  setHejiEnabled(on: boolean): void {
+    setHejiEnabled(this.doc, on);
   }
 
   /** True iff the score contains at least one <note> element. Used by the

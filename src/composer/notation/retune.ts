@@ -23,6 +23,7 @@
 import type { ComposerModel } from '../model/index.js';
 import { freqAt, coordToMidi, MIDI_LOW, MIDI_HIGH, type TuningMode } from '../../shared/freq.js';
 import { noteName, parseNote, accToVal, keyOctave } from '../../tuning/notes.js';
+import { tokenFromAlter } from './accidentals.js';
 
 export interface RetuneNoteEntry {
   noteEl: Element;
@@ -208,15 +209,14 @@ function rewriteNoteCoord(note: Element, q: number, r: number): void {
   note.setAttribute('pname', parsed.letter.toLowerCase());
   note.setAttribute('oct', String(oct));
   note.removeAttribute('accid.ges');
-  if (alter === 0) {
+  const token = tokenFromAlter(alter);
+  if (token === null) {
     note.removeAttribute('accid');
   } else {
-    /* Clamp to ±3 to match the codebase's accidental convention (Verovio
-       overlaps multiple <accid> children — see model.ts replaceDocument
-       migration). The pitch is still correct; only display is clamped. */
-    const sign = alter > 0 ? 's' : 'f';
-    const count = Math.min(3, Math.abs(alter));
-    note.setAttribute('accid', sign.repeat(count));
+    /* @accid is a display cache (clamped to a valid MEI token). (q, r) is the
+       source of truth; the render pipeline stacks accidentals beyond ±3 from it
+       (heji-render.ts). */
+    note.setAttribute('accid', token);
   }
   /* Color is footprint-derived and gets recomputed downstream via the next
      footprint-changed broadcast from HKL. Leave the existing @color in place;

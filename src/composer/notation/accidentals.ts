@@ -28,6 +28,9 @@
 //      update carry state.
 
 import { realTicks } from '../model/ticks.js';
+import { hejiCommasFor } from '../../shared/heji.js';
+import type { TuningMode } from '../../shared/freq.js';
+import { noteName, parseNote, accToVal } from '../../tuning/notes.js';
 
 const SHARP_ORDER: ReadonlyArray<string> = ['f', 'c', 'g', 'd', 'a', 'e', 'b'];
 const FLAT_ORDER:  ReadonlyArray<string> = ['b', 'e', 'a', 'd', 'g', 'c', 'f'];
@@ -72,6 +75,23 @@ export function tokenFromAlter(alter: number): string | null {
   if (n === 1) return sign > 0 ? 's' : 'f';
   if (n === 2) return sign > 0 ? 'x' : 'ff';
   return sign > 0 ? 'ts' : 'tf';
+}
+
+/** True alteration for a note, derived from its lattice coordinate (q, r) so
+ *  any magnitude is represented (the @accid token caps at ±3). Falls back to
+ *  the @accid token when no coordinate is present (e.g. MusicXML-imported
+ *  notes). This is the authoritative alter for visibility + MusicXML export. */
+export function noteAlter(note: Element): number {
+  const qs = note.getAttribute('data-q');
+  const rs = note.getAttribute('data-r');
+  if (qs !== null && rs !== null) {
+    const q = parseInt(qs, 10);
+    const r = parseInt(rs, 10);
+    if (Number.isFinite(q) && Number.isFinite(r)) {
+      return accToVal(parseNote(noteName(q, r)).acc);
+    }
+  }
+  return getNoteAlter(note);
 }
 
 /** Net alteration on a note, reading from @accid then @accid.ges. */
@@ -200,7 +220,22 @@ function notesInLayer(layer: Element): Array<{ note: Element; startTick: number;
   return out;
 }
 
-export function computeAccidentalDisplay(doc: Document, keySig: string): void {
+/** HEJI render context for visibility. When `enabled`, two notes that share
+ *  pname/oct/alter but differ in comma counts are distinct pitches and BOTH
+ *  must show — so carry-state keys on the full identity (alter, syn5, sept7),
+ *  and a comma-bearing natural (no conventional accidental) is forced visible.
+ *  When absent, classic conventional-accidental visibility is used. */
+export interface HejiDisplayCtx {
+  mode: TuningMode;
+  enabled: boolean;
+}
+
+interface AccidIdentity { alter: number; syn5: number; sept7: number; }
+function identityEq(a: AccidIdentity, b: AccidIdentity): boolean {
+  return a.alter === b.alter && a.syn5 === b.syn5 && a.sept7 === b.sept7;
+}
+
+export function computeAccidentalDisplay(doc: Document, keySig: string, heji?: HejiDisplayCtx): void {
   const keyAlters = keySigToAlter(keySig);
   const measures = doc.querySelectorAll('measure');
   for (const measure of Array.from(measures)) {
@@ -214,32 +249,47 @@ export function computeAccidentalDisplay(doc: Document, keySig: string): void {
       allNotes.sort((a, b) =>
         a.startTick !== b.startTick ? a.startTick - b.startTick : a.layerN - b.layerN);
 
-      /* (pname:oct) → currently-implied integer alteration for this measure-staff. */
-      const local: Record<string, number> = {};
+      /* (pname:oct) → currently-implied accidental identity for this
+         measure-staff. With HEJI off, syn5/sept7 stay 0 and this reduces to
+         the conventional integer-alteration carry. */
+      const local: Record<string, AccidIdentity> = {};
+
+      const commasOf = (note: Element): { syn5: number; sept7: number } => {
+        if (!heji?.enabled) return { syn5: 0, sept7: 0 };
+        const qs = note.getAttribute('data-q');
+        const rs = note.getAttribute('data-r');
+        if (qs === null || rs === null) return { syn5: 0, sept7: 0 };
+        const q = parseInt(qs, 10), r = parseInt(rs, 10);
+        if (!Number.isFinite(q) || !Number.isFinite(r)) return { syn5: 0, sept7: 0 };
+        return hejiCommasFor(heji.mode, q, r);
+      };
 
       for (const { note } of allNotes) {
         const pname = note.getAttribute('pname');
         const oct = note.getAttribute('oct');
         if (!pname || !oct) continue;
         const key = pname + ':' + oct;
-        const alter = getNoteAlter(note);
-        const expected = (key in local) ? local[key] : (keyAlters[pname] ?? 0);
+        const alter = heji ? noteAlter(note) : getNoteAlter(note);
+        const { syn5, sept7 } = commasOf(note);
+        const id: AccidIdentity = { alter, syn5, sept7 };
+        const expected: AccidIdentity = (key in local)
+          ? local[key]
+          : { alter: keyAlters[pname] ?? 0, syn5: 0, sept7: 0 };
         const tie = note.getAttribute('tie');
         const isTieDestination = tie === 't' || tie === 'm';
 
         if (isTieDestination) {
-          /* Hide (chain initiator already showed it). Update state to the
-             carried pitch so subsequent notes see it. */
+          /* Hide (chain initiator already showed it); update carry. */
           hideAlter(note, alter);
-          local[key] = alter;
+          local[key] = id;
           continue;
         }
 
-        if (alter === expected) {
+        if (identityEq(id, expected)) {
           hideAlter(note, alter);
         } else {
           showAlter(note, alter);
-          local[key] = alter;
+          local[key] = id;
         }
       }
     }

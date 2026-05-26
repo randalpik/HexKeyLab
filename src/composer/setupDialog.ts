@@ -100,6 +100,8 @@ function setupSelects(model: ComposerModel): void {
       TUNING_MODES.map((m) => ({ value: m, label: TUNING_LABELS[m] })),
       layoutReq.tuningMode);
   }
+  const hejiChk = $<HTMLInputElement>('setupHeji');
+  if (hejiChk) hejiChk.checked = model.getHejiEnabled();
   const refQEl = $<HTMLInputElement>('setupRefQ');
   const refREl = $<HTMLInputElement>('setupRefR');
   if (refQEl) refQEl.value = String(layoutReq.refQ);
@@ -144,7 +146,7 @@ function readForm(): {
   title: string; composer: string; keySig: string; keyMode: 'major' | 'minor';
   count: number; unit: number;
   tempoBpm: number; tempoUnit: '1' | '2' | '4' | '8'; tempoDots: 0 | 1; tempoText: string;
-  layoutReq: LayoutReq;
+  layoutReq: LayoutReq; hejiEnabled: boolean;
 } | null {
   const title = $<HTMLInputElement>('setupTitle')?.value ?? 'Untitled';
   const composer = $<HTMLInputElement>('setupComposer')?.value ?? '';
@@ -169,7 +171,8 @@ function readForm(): {
   const refMidi = coordToMidi(refQ, refR);
   if (refMidi < MIDI_LOW || refMidi > MIDI_HIGH) return null;
   const layoutReq: LayoutReq = { tuningMode, refQ, refR };
-  return { title, composer, keySig, keyMode, count, unit, tempoBpm, tempoUnit, tempoDots, tempoText, layoutReq };
+  const hejiEnabled = $<HTMLInputElement>('setupHeji')?.checked ?? false;
+  return { title, composer, keySig, keyMode, count, unit, tempoBpm, tempoUnit, tempoDots, tempoText, layoutReq, hejiEnabled };
 }
 
 function isTuningMode(s: string): s is TuningMode {
@@ -266,6 +269,7 @@ export function openSetupDialog(
     if (proceedWithLayout) {
       model.setLayoutReq(values.layoutReq);
     }
+    model.setHejiEnabled(values.hejiEnabled);
     if (meterChanged && proceedWithMeterChange) {
       model.setTimeSig(values.count, values.unit);
     } else if (meterChanged && !proceedWithMeterChange) {

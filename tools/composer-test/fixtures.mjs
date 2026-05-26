@@ -592,6 +592,73 @@ const VISUAL = {
   },
 };
 
+/* ── HEJI accidentals + arbitrary stacks (render-time injection) ───────── */
+
+const HEJI = {
+  /* Mode D, HEJI on: C#↓ at (1,0) → single combined glyph U+E2C3
+     (sharp + one down arrow). */
+  heji_sharp_arrow: {
+    setup: `
+      m.setLayoutReq({ tuningMode: 'D', refQ: 0, refR: 0 });
+      m.setHejiEnabled(true);
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 1, r: 0, pname: 'c', accid: 's', oct: 4, midi: 61, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+    `,
+    visualBaseline: 'heji_sharp_arrow',
+  },
+
+  /* Mode 7, HEJI on: F natural at (2,0) carries a septimal comma but no
+     conventional accidental → must still show the standalone hook U+E2DE
+     (the natural-comma visibility case). */
+  heji_septimal_hook: {
+    setup: `
+      m.setLayoutReq({ tuningMode: '7', refQ: 0, refR: 0 });
+      m.setHejiEnabled(true);
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 2, r: 0, pname: 'f', accid: '', oct: 4, midi: 65, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+    `,
+    visualBaseline: 'heji_septimal_hook',
+  },
+
+  /* Mode 7, HEJI on: F# at (-10,7) → two glyphs, sharp (E262) + septimal
+     hook (E2DE). Verifies ordering: sharp left, hook nearest the notehead. */
+  heji_acc_plus_hook: {
+    setup: `
+      m.setLayoutReq({ tuningMode: '7', refQ: 0, refR: 0 });
+      m.setHejiEnabled(true);
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: -10, r: 7, pname: 'f', accid: 's', oct: 4, midi: 66, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+    `,
+    visualBaseline: 'heji_acc_plus_hook',
+  },
+
+  /* HEJI OFF: the same C#↓ cell renders as a plain sharp (BravuraText, since
+     all accidentals are Bravura) with NO comma arrow — guards that the comma
+     decoration is gated on the HEJI flag. */
+  heji_off_native: {
+    setup: `
+      m.setLayoutReq({ tuningMode: 'D', refQ: 0, refR: 0 });
+      m.setHejiEnabled(false);
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 1, r: 0, pname: 'c', accid: 's', oct: 4, midi: 61, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+    `,
+  },
+
+  /* Carry-state: two A#3 in one measure — (-12,7) has no comma, (-5,3) is a
+     syntonic comma lower. Same pname/oct/alter, different pitch → BOTH must
+     show. The second's accidental must NOT be hidden as redundant. */
+  heji_carry_diff_comma: {
+    setup: `
+      m.setLayoutReq({ tuningMode: 'D', refQ: 0, refR: 0 });
+      m.setHejiEnabled(true);
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: -12, r: 7, pname: 'a', accid: 's', oct: 3, midi: 58, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(m.getVoiceLength(1), 1);
+      m.insertChordAtCursor({ notes: [{ q: -5, r: 3, pname: 'a', accid: 's', oct: 3, midi: 58, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+    `,
+  },
+};
+
 /* ── New: scroll-into-view ────────────────────────────────────────────── */
 
 const SCROLL = {
@@ -1489,6 +1556,7 @@ export const FIXTURES = {
   ...mapKbdTier(BRIDGE, 'full'),
   ...mapKbdTier(SCROLL, 'full'),
   ...mapKbdTier(VISUAL, 'full'),
+  ...mapKbdTier(HEJI, 'full'),
   ...mapKbdTier(SELECTION, 'full'),
   ...mapKbdTier(CHORD_INTERNAL, 'full'),
   ...mapKbdTier(EXPORT, 'full'),
@@ -1504,6 +1572,53 @@ export const FIXTURES = {
  *  invariant, no console errors) are applied to EVERY fixture by the
  *  runner — don't repeat them here. */
 export const FIXTURE_ASSERTIONS = {
+  /* HEJI injection. */
+  heji_sharp_arrow: [
+    { name: 'C#↓ injected as one U+E2C3 glyph',
+      expr: `(() => {
+        const cps = [...document.querySelectorAll('g.note g.accid text')].map(t => t.textContent.codePointAt(0).toString(16));
+        return cps.length === 1 && cps[0] === 'e2c3'
+          ? { ok: true } : { ok: false, detail: 'glyphs=' + JSON.stringify(cps) };
+      })()` },
+  ],
+  heji_septimal_hook: [
+    { name: 'F natural shows standalone septimal hook U+E2DE',
+      expr: `(() => {
+        const cps = [...document.querySelectorAll('g.note g.accid text')].map(t => t.textContent.codePointAt(0).toString(16));
+        return cps.length === 1 && cps[0] === 'e2de'
+          ? { ok: true } : { ok: false, detail: 'glyphs=' + JSON.stringify(cps) };
+      })()` },
+  ],
+  heji_acc_plus_hook: [
+    { name: 'F#+hook: sharp then hook, hook nearest notehead',
+      expr: `(() => {
+        const texts = [...document.querySelectorAll('g.note g.accid text')]
+          .map(t => ({ cp: t.textContent.codePointAt(0).toString(16), x: t.getBoundingClientRect().left }))
+          .sort((a, b) => a.x - b.x);
+        const cps = texts.map(t => t.cp);
+        return cps.length === 2 && cps[0] === 'e262' && cps[1] === 'e2de'
+          ? { ok: true } : { ok: false, detail: 'L→R glyphs=' + JSON.stringify(cps) };
+      })()` },
+  ],
+  heji_off_native: [
+    { name: 'HEJI off → plain sharp (E262), no comma arrow',
+      expr: `(() => {
+        const cps = [...document.querySelectorAll('g.note g.accid text')].map(t => t.textContent.codePointAt(0).toString(16));
+        return cps.length === 1 && cps[0] === 'e262'
+          ? { ok: true } : { ok: false, detail: 'glyphs=' + JSON.stringify(cps) };
+      })()` },
+  ],
+  heji_carry_diff_comma: [
+    { name: 'second A# (comma sibling) still shows its arrow glyph',
+      expr: `(() => {
+        const notes = [...document.querySelectorAll('g.note')];
+        if (notes.length !== 2) return { ok: false, detail: 'notes=' + notes.length };
+        const g2 = [...notes[1].querySelectorAll('g.accid text')].map(t => t.textContent.codePointAt(0).toString(16));
+        return g2.length === 1 && g2[0] === 'e2c3'
+          ? { ok: true } : { ok: false, detail: 'second-note glyphs=' + JSON.stringify(g2) };
+      })()` },
+  ],
+
   /* Cursor-convention probes. */
   pastEnd_fullLast: [
     { name: 'past-end excluded when last layer full',

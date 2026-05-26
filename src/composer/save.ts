@@ -9,6 +9,7 @@
 
 import { ComposerModel } from './model/index.js';
 import type { Voice, Duration, Dots } from './model/index.js';
+import { noteAlter } from './notation/accidentals.js';
 import type { VerovioToolkit } from './render/verovio-types.js';
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
@@ -71,29 +72,12 @@ const PNAME_TO_STEP: Record<string, string> = {
   a: 'A', b: 'B', c: 'C', d: 'D', e: 'E', f: 'F', g: 'G',
 };
 
-const ACCID_TO_ALTER: Record<string, number> = {
-  '':   0,
-  'n':  0,
-  's':  1,
-  'f':  -1,
-  'ss': 2,   /* precomposed ## */
-  'x':  2,   /* canonical double-sharp glyph */
-  'ff': -2,
-  'ts': 3,   /* canonical triple-sharp glyph */
-  'tf': -3,
-  'xs': 3,   /* alt triple sharp: × + ♯ */
-  'sx': 3,   /* alt triple sharp: ♯ + × */
-};
-
-/** Net alteration for a MusicXML <alter> element. Reads @accid then
- *  @accid.ges. HKL Composer clamps at ±3 in the entry path, so only
- *  single-token forms ever land in a saved doc. */
+/** Net alteration for a MusicXML <alter> element. Derives from (q, r) via
+ *  noteAlter so any magnitude (incl. >±3 stacks) exports correctly; falls back
+ *  to the @accid token for coordinate-less notes. HEJI commas are not
+ *  representable in MusicXML (W3C #263 open) and are intentionally dropped. */
 function totalAlter(node: Element): number {
-  const a = node.getAttribute('accid');
-  if (a !== null) return ACCID_TO_ALTER[a] ?? 0;
-  const g = node.getAttribute('accid.ges');
-  if (g !== null) return ACCID_TO_ALTER[g] ?? 0;
-  return 0;
+  return noteAlter(node);
 }
 
 /* divisions per quarter — base 16 covers 32nd notes (= 2) and dotted 16ths

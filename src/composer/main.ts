@@ -391,7 +391,7 @@ window.addEventListener('beforeunload', () => {
 
 function reRender(): void {
   try {
-    renderer.render(model.serialize());
+    renderer.render(model.serialize({ hejiEnabled: model.getHejiEnabled() }));
     /* Verovio just rewrote #score's innerHTML — re-attach the cursor overlay
        as a sibling of the rendered SVG (in scroll mode) or as a sibling of
        the .score-page wrappers (in page mode), positioned absolute at #score's
@@ -437,6 +437,9 @@ async function bootRenderer(): Promise<void> {
     return;
   }
   renderer.attach(scoreEl);
+  /* Warm BravuraText before the first render so HEJI / stacked-accidental
+     injection draws real glyphs instead of tofu (see injectHejiGlyphs). */
+  try { await document.fonts.load('100px BravuraText'); } catch { /* fall through */ }
   reRender();
   console.log('Verovio ' + renderer.getVersion());
   resetStatus();

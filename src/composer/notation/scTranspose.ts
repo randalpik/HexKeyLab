@@ -16,6 +16,7 @@ import type { ComposerModel, Voice } from '../model/index.js';
 import type { InputHooks, ChordInternalSel } from '../input.js';
 import type { CoordRef } from '../../bridge/protocol.js';
 import { noteName, parseNote, accToVal, keyOctave } from '../../tuning/notes.js';
+import { tokenFromAlter } from './accidentals.js';
 import { coordToMidi } from '../../transcription/pitch.js';
 import { realTicks } from '../model/ticks.js';
 
@@ -157,14 +158,11 @@ export function scTransposeChordNote(
   const newName = noteName(newQ, newR);
   const parsed = parseNote(newName);
   const alter = accToVal(parsed.acc);
-  if (Math.abs(alter) >= 4) {
-    hooks.setStatus?.('Quadruple accidental — cannot display. SC blocked.', 'error');
-    return FAILED_SC;
-  }
   const oct = keyOctave(newQ, newR);
-  const accidStr = alter === 0
-    ? ''
-    : (alter > 0 ? 's' : 'f').repeat(Math.abs(alter));
+  /* @accid is a display cache only (clamped to a valid MEI token); (newQ, newR)
+     is the source of truth and the render pipeline stacks accidentals beyond
+     ±3 from it (heji-render.ts). */
+  const accidStr = tokenFromAlter(alter) ?? '';
   /* Apply pitch + color attributes. The chord's @dur / @dots / @tie remain
      on the chord wrapper or per-note; we touch only spelling + lattice +
      color attrs. Color update is critical: HKL's notehead color is derived

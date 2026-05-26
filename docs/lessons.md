@@ -901,6 +901,50 @@ Working: `https://cdn.jsdelivr.net/gh/steinbergmedia/bravura@master/redist/woff/
 For HKL we host a local copy in `public/BravuraText.woff2` (Vite copies to
 `dist/` at build time) and keep the jsdelivr URL as a `src:` fallback.
 
+### Rendering HEJI / >±3 accidentals in Verovio: the four hard facts
+
+Spiked against Verovio 6.2.0 (the Composer's CDN build) while adding HEJI
+accidentals to the score editor. These cost a full investigation phase to
+discover; check them before re-deriving:
+
+1. **`@glyph.num` / `@glyph.name` on `<accid>` are silently ignored.** The
+   `book.verovio.org` SMuFL-codepoint path (`<accid glyph.auth="smufl"
+   glyph.num="U+E2D0"/>`) parses but emits an empty `<g class="accid">` with
+   zero reserved width — every format (`U+E2D0`, `0xE2D0`, `E2D0`, with/without
+   `glyph.auth`, and `<symbol>`) is a no-op in the WASM build. Dead path.
+2. **Verovio's native MEI accidental vocabulary is rich and correctly spaced.**
+   `s/f/n/x/ff/ts/tf` plus Gould quarter-tone arrows `su/sd/fu/fd/nu/nd`
+   (U+E270 block) and `1qs/1qf/3qs/3qf` all render with correct horizontal
+   space. We use these only as **width-reservation placeholders** and then swap
+   the rendered glyph in post-processing.
+3. **Multiple `<accid>` children: same token collapses, distinct tokens space.**
+   Two `<accid accid="x"/>` siblings render at the SAME x (overlap) — distinct
+   `xml:id`/`type` does NOT break the dedup; Verovio keys on the `accid` VALUE.
+   But `<accid accid="x"/>` + `<accid accid="su"/>` (different tokens) get
+   separate reserved slots, side by side. **MEI order is reversed from visual
+   order**: the MEI-first sibling renders rightmost (nearest the notehead).
+   This is the mechanism behind both the septimal hook (a 2nd distinct
+   placeholder) and arbitrary >±3 stacks (N distinct placeholders, glyph-swapped
+   to the real codepoint). `@ho` nudges a glyph but reserves no layout space.
+4. **`font: 'Bravura'` restyles EVERYTHING, not just accidentals.** Verovio's
+   default font is Leipzig. Setting the global `font` option to Bravura changes
+   rests, clefs, noteheads — the Bravura rests in particular look worse and it
+   re-baselines every visual fixture. Do NOT set the global font merely to make
+   native accidentals match injected BravuraText glyphs. Instead the injector
+   re-draws *every* accidental as BravuraText `<text>` (plain ones at their own
+   SMuFL codepoint parsed from the `<use>` href; HEJI ones at the U+E2C0+
+   combined codepoint) — so accidentals are uniformly Bravura while rests,
+   clefs, and noteheads stay on Leipzig. "Bravura accidentals only."
+
+Tagging for the post-process swap: put the target in `@type` — Verovio emits it
+both as `data-type` AND as a CSS class on the rendered `<g class="accid …">`,
+and `xml:id` survives as `id`. (See also §"`svgAdditionalAttribute` always
+prepends `data-`".) Injected `<text font-family="BravuraText">` needs the font
+loaded first or it renders tofu — gate injection on `document.fonts.load`.
+Glyph size: Verovio renders accidentals at `scale(0.72)` on 1000-unit symbols =
+em 720 user units = 4 staff spaces (the SMuFL standard); read the placeholder
+`<use>`'s transform for the per-note scale + staff-Y baseline.
+
 ### Bravura SMuFL glyphs render much smaller than Unicode equivalents at the same px size
 
 Bravura's accidental glyphs are engraved to fit a 5-line music staff —

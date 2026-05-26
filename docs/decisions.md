@@ -2325,3 +2325,19 @@ The `pickNextSeam` algorithm is genuinely pure data (no Web Audio, no state) and
 The HKL toolbar button is renamed `Bundles…` → `Import`, with the two file-picker buttons (`+ .hki`, `+ JSON`) moved inside the modal. The "Import" verb is broader and accommodates the new CDN-config branch; the modal stays one-stop for any import action.
 
 **Where**: NEW `src/bridge/analyzer-protocol.ts`, `src/state/cdnConfigRegistry.ts`. MODIFIED `src/bridge/channel.ts`, `src/bridge/hkl-side.ts`, `src/state/instrumentRegistry.ts` (added `reload()`), `src/audio/samples-data.ts` (INSTRUMENTS proxy), `src/ui/instrumentBundles.ts`, `src/ui/init.ts`, `src/analyzer/bridge.ts` (replaced Phase 1 stub), `src/analyzer/output.ts` (Send-to-HKL wiring), `index.html` (button rename + modal restructure), `analyzer.html` (Send button title). NO CHANGE to `src/audio/samples-engine.ts` — the engine handles runtime CDN configs through the same code path as compile-time entries.
+
+---
+
+## HEJI accidentals + arbitrary stacks in Composer (2026-05-26)
+
+**Picked**: Render HEJI comma arrows / septimal hooks AND >±3 accidental stacks in HKL Composer by (1) emitting distinct placeholder `<accid>` siblings to make Verovio reserve horizontal space, then (2) post-processing the rendered SVG to swap every accidental's glyph for a BravuraText `<text>` at the true codepoint. Accidentals are uniformly Bravura; rests/clefs/noteheads stay Leipzig. `(q, r)` is the source of truth; the transform is render-only and never persisted.
+
+**Rejected**:
+- `<accid glyph.auth="smufl" glyph.num="U+E2D0"/>` (the book.verovio.org SMuFL path). Verovio 6.2.0 silently ignores `@glyph.num`/`@glyph.name` — empty group, zero width. Dead in the WASM build.
+- Global `font: 'Bravura'` to align native accidentals with injected glyphs. It restyles the whole score; the Bravura rests read worse (Verovio's default is Leipzig). Chosen instead: inject ALL accidentals as BravuraText (plain ones at their own SMuFL codepoint), leaving everything else on Leipzig — "Bravura accidentals only."
+- Verovio's native Gould quarter-tone arrow tokens (`su`/`sd`/U+E270 block) for the ±1 syntonic case. They render but in a different visual style from the Ellis HEJI glyphs HKL uses; mixing Gould (singles) and Ellis (doubles, hooks) within one score is inconsistent. Used only as width-reservation placeholders, then swapped.
+- Persisting the HEJI/stack structure in the doc. Display is a pure function of `(q, r)` + tuning mode + the HEJI toggle, so it's recomputed at render; `.hkc` stays clean conventional MEI and the toggle re-renders instantly.
+
+**Why**: Information-theoretic completeness — anything the lattice renders (arbitrary stacks, ±1 syntonic arrow on the first glyph, appended septimal hook) the score editor renders too; only the lattice's readability "collapse" (`#⁷` superscript) is dropped. The ±3 clamp was purely a Verovio-collision workaround, not a musical limit, so it's lifted at entry/transpose/retune/render. Multi-`<accid>` siblings collapse only for *same* tokens; *distinct* tokens space correctly — that one fact unlocks both the hook and the stacks.
+
+**Where**: NEW `src/shared/heji.ts` (pure chain + comma math, shared with the lattice), `src/composer/notation/heji-render.ts` (transform + injection). MODIFIED `src/tuning/heji.ts` + `src/tuning/regions.ts` (slim to wrappers over shared), `src/composer/notation/accidentals.ts` (HEJI-aware carry-state + `noteAlter`), `src/composer/render/render.ts` (`accid@type`, call injection), `src/composer/model/index.ts` (`serialize({hejiEnabled})`), `src/composer/{input,notation/retune,notation/scTranspose}.ts` (clamp removed), `src/composer/expressions.ts` + `setupDialog.ts` + `composer.html` (toggle + `@font-face`), `src/composer/save.ts` (MusicXML alter via `noteAlter`). Spike findings + the four Verovio facts are in `docs/lessons.md`.

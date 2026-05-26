@@ -8,6 +8,18 @@
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <title>HKL Composer</title>
 <style>
+/* BravuraText (SMuFL music font) — used to inject HEJI comma-arrow / septimal-
+   hook glyphs and >±3 accidental stacks into the Verovio SVG (see
+   src/composer/notation/heji-render.ts). Served from public/; the steinbergmedia
+   jsdelivr URL is an offline/stale-cache fallback. */
+@font-face {
+  font-family: 'BravuraText';
+  font-style: normal;
+  font-weight: normal;
+  font-display: swap;
+  src: url('/BravuraText.woff2') format('woff2'),
+       url('https://cdn.jsdelivr.net/gh/steinbergmedia/bravura@master/redist/woff/BravuraText.woff2') format('woff2');
+}
 * { box-sizing: border-box; margin: 0; padding: 0 }
 html, body { background: #111; height: 100%; overflow: hidden }
 body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: flex; flex-direction: column }
@@ -300,6 +312,7 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
       </fieldset>
     </div>
     <label class="row"><span>Tuning</span><select id="setupTuningMode"></select></label>
+    <label class="row"><span>HEJI accidentals</span><span><input type="checkbox" id="setupHeji"> show comma arrows &amp; septimal hooks</span></label>
     <div class="row">
       <span>Reference note (q, r)</span>
       <fieldset>

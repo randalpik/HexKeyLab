@@ -446,6 +446,18 @@ export function setLayoutReq(doc: Document, req: LayoutReq): void {
   lr.setAttribute('refR', String(req.refR));
 }
 
+/** Document-level "show HEJI accidentals" flag, stored on <hkl:config>.
+ *  Independent of HKL's own hejiEnabled. Defaults false. */
+export function getHejiEnabled(doc: Document): boolean {
+  const cfg = findHklConfig(doc);
+  return cfg?.getAttribute('heji') === 'true';
+}
+
+export function setHejiEnabled(doc: Document, on: boolean): void {
+  const cfg = ensureExtMetaConfig(doc);
+  cfg.setAttribute('heji', on ? 'true' : 'false');
+}
+
 function childInHklNs(parent: Element, localName: string): Element | null {
   for (const c of Array.from(parent.children)) {
     if (c.namespaceURI === HKL_NS && c.localName === localName) return c;
