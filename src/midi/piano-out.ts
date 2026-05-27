@@ -92,7 +92,6 @@ function sendNoteOn(ch0: number, note: number, vel: number): void {
 
 function sendNoteOff(ch0: number, note: number): void {
   midi.pianoOut?.send([0x80 | (ch0 & 0x0f), note, 0]);
-  lastOffAt[(ch0 & 0x0f) + 1] = nowMs();
 }
 
 /** All-Notes-Off (CC123) on every channel of a port — used when disabling or
@@ -138,27 +137,6 @@ function clampVel(v: number): number {
   return Math.max(1, Math.min(127, Math.round(v)));
 }
 
-/* ── temporary diagnostics (remove once the channel-reuse bug is settled) ────
-   Set `window.__hklPianoOutLog = false` in the console to silence. The key
-   signal is `reuse-gap`: ms since the channel a new note grabs last got a
-   note-off. A gap shorter than a piano release tail (~1–2 s) means we reused a
-   channel whose previous note is still ringing — the suspected collision. */
-const T0 = typeof performance !== 'undefined' ? performance.now() : 0;
-const nowMs = (): number => (typeof performance !== 'undefined' ? performance.now() : 0);
-/** ms timestamp of the last note-off we sent on each channel (index = 1..16). */
-const lastOffAt: number[] = new Array(17).fill(0);
-
-function plog(...args: unknown[]): void {
-  if ((globalThis as { __hklPianoOutLog?: boolean }).__hklPianoOutLog === false) return;
-  console.log(`[pout +${(nowMs() - T0).toFixed(0)}ms]`, ...args);
-}
-
-function allocSummary(): string {
-  const s = alloc.debugState();
-  const used = s.inUse.map(([k, ch]) => `ch${ch}=${k}`).join(' ') || '∅';
-  return `inUse[${used}] free[${s.free.join(',')}]`;
-}
-
 /* ── voice management ──────────────────────────────────────────────────────── */
 
 function startVoice(key: KeyId): void {
@@ -172,19 +150,11 @@ function startVoice(key: KeyId): void {
     if (en !== undefined) sendNoteOff(ch0, en);
     voiceNote.delete(evicted);
     shed.add(evicted); /* still wanted but now voiceless — don't re-trigger it */
-    plog(`SHED ${evicted} (over 14-voice cap)`);
   }
   const vel = clampVel(audio.keyVelocity[key] ?? DEFAULT_DYNAMIC_MAP.mf);
   sendFineTune(ch0, fine14);
   sendNoteOn(ch0, note, vel);
   voiceNote.set(key, note);
-  const gap = lastOffAt[channel] ? `${(nowMs() - lastOffAt[channel]).toFixed(0)}ms` : 'fresh';
-  plog(
-    `ON  ch${channel} note${note} vel${vel} key=${key} fine=${fine14}` +
-    (evicted !== null ? ` EVICTED:${evicted}` : '') +
-    ` | reuse-gap=${gap}`,
-    '|', allocSummary(),
-  );
 }
 
 function stopVoice(key: KeyId): void {
@@ -193,7 +163,6 @@ function stopVoice(key: KeyId): void {
   const channel = alloc.release(key);
   if (channel !== null) sendNoteOff(channel - 1, note);
   voiceNote.delete(key);
-  plog(`OFF ch${channel} note${note} key=${key}`, '|', allocSummary());
 }
 
 function clearVoices(): void {
@@ -292,15 +261,9 @@ export function rebindPianoOut(): void {
 }
 
 /** Record the synth's selected program (from a Program Change on the input port)
- *  and mirror it across all output channels. Logged so the SP-250's
- *  program→instrument map can be built by ear. `srcChannel` is 0-indexed. */
-export function setOutputProgram(program: number, srcChannel?: number): void {
-  const p = program & 0x7f;
-  console.log(
-    `[piano-out] Program Change: ${p}` +
-    (srcChannel !== undefined ? ` (received on ch ${srcChannel + 1})` : ''),
-  );
-  currentProgram = p;
+ *  and mirror it across all output channels. */
+export function setOutputProgram(program: number): void {
+  currentProgram = program & 0x7f;
   broadcastProgram();
   broadcastChannelLevels(); /* some synths reset controllers on program change */
 }

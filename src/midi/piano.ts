@@ -178,9 +178,9 @@ function pianoMessage(e: MIDIMessageEvent): void {
   const status = data[0] & 0xf0;
   /* Program Change: capture regardless of the input-enabled gate below — it
      drives Piano output (mirror the synth's selected sound across all output
-     channels) and is logged for building the program→instrument map. */
+     channels). */
   if (status === 0xc0) {
-    setOutputProgram(data[1], data[0] & 0x0f);
+    setOutputProgram(data[1]);
     return;
   }
   if (!enabled) return;

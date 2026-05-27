@@ -93,10 +93,4 @@ export class MpeAllocator {
     const ch = this.inUse.get(key);
     return ch === undefined ? null : ch;
   }
-
-  /** Debug snapshot of internal state (channel assignments, free list, age
-   *  order). Read-only copies. Used by piano-out diagnostics. */
-  debugState(): { inUse: Array<[KeyId, number]>; free: number[]; order: KeyId[] } {
-    return { inUse: [...this.inUse.entries()], free: [...this.free], order: [...this.order] };
-  }
 }
