@@ -3,13 +3,42 @@
 // (sample-loop invariants: never source.loop=true, all wraps via
 // scheduleSegmentSwitch, commitRampSync integrates in-flight ramp position).
 
-import { recordSeamEvent } from './diagnostics/loopOverlay.js';
-import { inflightExpRampValue, velocityBaseVol } from './aftertouch.js';
 import { INSTRUMENTS } from './samples-data.js';
 import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
-import * as InstrumentRegistry from '../state/instrumentRegistry.js';
 import { readHki } from '../shared/hki.js';
 import { pickNextSeam as pickSegmentSeam } from '../shared/segments.js';
+
+/* ── Injected dependencies (set via init's config arg) ──
+   The engine is decoupled from HKL app state: the host supplies an instrument
+   audio provider, a velocity→gain curve, and an optional seam-event sink. This
+   is what lets the engine be lifted into a standalone @hkl/engine package. */
+export interface PaRampState { startVal: number; startTime: number; targetVal: number; endTime: number; }
+export interface SeamEvent {
+  ctxTime: number; voiceKey: string; sampleName: string; rate: number;
+  fromBIdx: number; toAIdx: number; fromTime: number; toTime: number; xfadeDur: number;
+}
+export interface SampleEngineConfig {
+  /** Audio bytes for an imported ('hki') instrument, keyed by sample file. */
+  instrumentProvider?: (key: string) => Promise<Record<string, Uint8Array> | null>;
+  /** Musical velocity (0–127) → linear gain. Defaults to a bare v/127 ramp. */
+  velocityToGain?: (v: number) => number;
+  /** Optional sink for loop-seam crossfade diagnostics. */
+  onSeamEvent?: (ev: SeamEvent) => void;
+}
+let instrumentProvider: ((key: string) => Promise<Record<string, Uint8Array> | null>) | null = null;
+let velocityToGain: (v: number) => number = (v) => v / 127;
+let onSeamEvent: ((ev: SeamEvent) => void) | null = null;
+
+/* Analytic in-flight value of an exponentialRampToValueAtTime, computed from
+   JS-tracked ramp state — polyfill for cancelAndHoldAtTime (absent in Firefox).
+   dB-linear curve: gain(t) = start·(target/start)^t. Pure; exported for the
+   host's pre-call anchor computation (see engine.ts handleAftertouch). */
+export function inflightExpRampValue(rs: PaRampState, now: number): number {
+  if (now <= rs.startTime) return rs.startVal;
+  if (now >= rs.endTime) return rs.targetVal;
+  const t = (now - rs.startTime) / (rs.endTime - rs.startTime);
+  return rs.startVal * Math.pow(rs.targetVal / rs.startVal, t);
+}
 
 /* Cache of shipped-bundle audio maps, keyed by instrument key. Each entry is
    a Promise<{file → bytes}> that resolves to the bundle's archive contents.
@@ -79,12 +108,17 @@ let currentInstrument: any = null;
 const buffers: Record<string, any> = {};
 const activeVoices: Record<string, any> = {};
 
-  export function init(audioCtx: AudioContext, destNode: AudioNode): void {
+  export function init(audioCtx: AudioContext, destNode: AudioNode, config?: SampleEngineConfig): void {
     ctx=audioCtx;
     sampleMaster=ctx.createGain();
     sampleMaster.gain.value=1.0;
     sampleMaster.connect(destNode);
     master=sampleMaster;
+    if(config){
+      if(config.instrumentProvider)instrumentProvider=config.instrumentProvider;
+      if(config.velocityToGain)velocityToGain=config.velocityToGain;
+      if(config.onSeamEvent)onSeamEvent=config.onSeamEvent;
+    }
   }
   /* Bakes the analyzer-generated trend envelope into the decoded PCM in place.
      The trend array is mean-normalized to ~1 over the sample's steady region
@@ -129,7 +163,7 @@ const activeVoices: Record<string, any> = {};
          CDN instruments skip this entirely. */
       var hkiAudioPromise: Promise<Record<string, Uint8Array> | null>;
       if (instr.source==='hki') {
-        hkiAudioPromise = InstrumentRegistry.getAudio(key);
+        hkiAudioPromise = instrumentProvider ? instrumentProvider(key) : Promise.resolve(null);
       } else if (instr.source==='hki-shipped') {
         hkiAudioPromise = fetchShippedBundle(instr);
       } else {
@@ -351,7 +385,7 @@ const activeVoices: Record<string, any> = {};
     var instr=INSTRUMENTS[currentInstrument];
     var rate=freq*(instr.transpose||1)/nearest.freq;
     var instrVol=instr.volume||1.0;
-    var baseVol=velocityBaseVol(velocity!==undefined?velocity:DEFAULT_DYNAMIC_MAP.f)*instrVol;
+    var baseVol=velocityToGain(velocity!==undefined?velocity:DEFAULT_DYNAMIC_MAP.f)*instrVol;
     /* ── ABOVE-RANGE VIBRATO ATTENUATION ──
        When a note is requested above the highest sampled pitch, the sample gets
        pitch-shifted up — which also speeds up its vibrato (cello's ~5Hz vibrato
@@ -713,7 +747,7 @@ const activeVoices: Record<string, any> = {};
       v.sourceLoopAIdx=p.aIdx;v.sourceLoopBIdx=p.bIdx;
     }
     v.sourceRate=p.newSrc.playbackRate.value;
-    recordSeamEvent({ctxTime:p.switchTime,voiceKey:voiceKey,sampleName:v.sampleName||'?',
+    if(onSeamEvent)onSeamEvent({ctxTime:p.switchTime,voiceKey:voiceKey,sampleName:v.sampleName||'?',
       rate:v.sourceRate||1,
       fromBIdx:p.bIdx!=null?v.sourceLoopBIdx:-1,toAIdx:p.aIdx!=null?p.aIdx:-1,
       fromTime:p.fromTime,toTime:p.toTime,xfadeDur:p.xfDur});
@@ -811,7 +845,7 @@ const activeVoices: Record<string, any> = {};
       v.sourceLoopAIdx=picked.aIdx;v.sourceLoopBIdx=picked.bIdx;
     }
     v.sourceRate=newSrc.playbackRate.value;
-    recordSeamEvent({ctxTime:st,voiceKey:voiceKey,sampleName:v.sampleName||'?',
+    if(onSeamEvent)onSeamEvent({ctxTime:st,voiceKey:voiceKey,sampleName:v.sampleName||'?',
       rate:v.sourceRate||1,
       fromBIdx:picked.bIdx!=null?v.sourceLoopBIdx:-1,toAIdx:picked.aIdx!=null?picked.aIdx:-1,
       fromTime:fromTime,toTime:aTime,xfadeDur:xfDur});

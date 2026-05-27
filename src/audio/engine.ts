@@ -16,12 +16,14 @@ import { pedal } from '../state/pedal.js';
 import { selection } from '../state/selection.js';
 import { savePrefs } from '../state/persistence.js';
 import { keyFreq } from '../tuning/frequency.js';
-import { SampleEngine } from './samples.js';
+import { SampleEngine, inflightExpRampValue } from './samples.js';
 import { initCapture } from './capture.js';
 import {
   AFTERTOUCH_RAMP_S,
-  aftertouchTargetGain, inflightExpRampValue, velocityBaseVol,
+  aftertouchTargetGain, velocityBaseVol,
 } from './aftertouch.js';
+import * as InstrumentRegistry from '../state/instrumentRegistry.js';
+import { recordSeamEvent } from './diagnostics/loopOverlay.js';
 import { draw } from '../render/draw.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import {
@@ -108,7 +110,11 @@ export function initAudio(): void {
      global mix tweaks have a single attachment point. */
   audio.oscGain = audio.audioCtx.createGain(); audio.oscGain.gain.value = 1.0; audio.oscGain.connect(audio.masterBus);
   audio.squareGain = audio.audioCtx.createGain(); audio.squareGain.gain.value = 1.0; audio.squareGain.connect(audio.masterBus);
-  SampleEngine.init(audio.audioCtx, audio.masterBus); /* sampleMaster at 0.9 */
+  SampleEngine.init(audio.audioCtx, audio.masterBus, {
+    instrumentProvider: (key) => InstrumentRegistry.getAudio(key),
+    velocityToGain: velocityBaseVol,
+    onSeamEvent: recordSeamEvent,
+  }); /* sampleMaster at 0.9 */
   /* Fire-and-forget worklet load for the audio-capture tap. Best-effort:
      a load failure leaves capture unsupported but doesn't affect the engine.
      Kept off the synchronous init path so existing callers (toggleAudio,

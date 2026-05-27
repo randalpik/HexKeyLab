@@ -5,6 +5,9 @@
 import * as engine from './samples-engine.js';
 import { INSTRUMENTS } from './samples-data.js';
 
+export { inflightExpRampValue } from './samples-engine.js';
+export type { PaRampState, SeamEvent, SampleEngineConfig } from './samples-engine.js';
+
 export const SampleEngine = {
   INSTRUMENTS,
   init: engine.init,

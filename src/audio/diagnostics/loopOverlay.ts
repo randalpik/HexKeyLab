@@ -22,22 +22,16 @@
 
 import { audio } from '../../state/audio.js';
 import { velocityCal } from '../velocityCal.js';
+import type { SeamEvent as EmittedSeamEvent } from '../samples.js';
 
-export type SeamEvent = {
-  ctxTime: number;       // audioCtx time of crossfade center (= actualSwitchTime)
-  voiceKey: string;
-  sampleName: string;    // e.g., "B3"
-  rate: number;          // playbackRate at the moment of switching
-  fromBIdx: number;      // index into loopPts we jumped FROM
-  toAIdx: number;        // index into loopPts we jumped TO
-  fromTime: number;      // pts[fromBIdx] (seconds into source buffer)
-  toTime: number;        // pts[toAIdx]
-  xfadeDur: number;      // crossfade duration (seconds)
-  /* Filled in deferred by measureSeams() once the envelope buffer covers the
-     window around this seam. midpointRms is the master-output RMS at
-     switchTime+xfadeDur/2 (the analyzer's xfadeDev midpoint); baselineRms
-     averages RMS at switchTime±50ms to anchor the measurement against slow
-     drift. dipDb = 20*log10(midpoint/baseline). */
+/* The engine emits the EmittedSeamEvent fields (ctxTime, voiceKey, sampleName,
+   rate, fromBIdx, toAIdx, fromTime, toTime, xfadeDur). The diagnostics layer
+   augments each event in-place with measurement results, filled deferred by
+   measureSeams() once the envelope buffer covers the window around the seam:
+   midpointRms is the master-output RMS at switchTime+xfadeDur/2 (the analyzer's
+   xfadeDev midpoint); baselineRms averages RMS at switchTime±50ms to anchor the
+   measurement against slow drift; dipDb = 20*log10(midpoint/baseline). */
+export type SeamEvent = EmittedSeamEvent & {
   midpointRms?: number;
   baselineRms?: number;
   dipDb?: number;

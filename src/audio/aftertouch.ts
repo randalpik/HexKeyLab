@@ -77,19 +77,6 @@ export function aftertouchHandoverDuration(target: number): number {
   );
 }
 
-/* Compute the in-flight value of an exponentialRampToValueAtTime analytically
-   from JS-tracked ramp state. Used as a polyfill for cancelAndHoldAtTime
-   (unavailable in our Firefox): when a new PA message arrives mid-ramp, we
-   anchor at the actual in-flight value rather than reading gain.value (which
-   can return the prior fixed anchor on cancel-and-anchor patterns, causing
-   audible backward steps). dB-linear curve: gain(t) = start * (target/start)^t. */
-export function inflightExpRampValue(rs: import('../types.js').PaRampState, now: number): number {
-  if (now <= rs.startTime) return rs.startVal;
-  if (now >= rs.endTime) return rs.targetVal;
-  const t = (now - rs.startTime) / (rs.endTime - rs.startTime);
-  return rs.startVal * Math.pow(rs.targetVal / rs.startVal, t);
-}
-
 /* Hysteresis-gate thresholds for filterPA. OPEN must be > CLOSE so the
    sensor's 0/1 onset flicker (raw range typically [0,1]) is rejected
    without false re-triggers when pressure briefly dips during play. */

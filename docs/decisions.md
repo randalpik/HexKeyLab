@@ -2392,3 +2392,22 @@ The HKL toolbar button is renamed `Bundles…` → `Import`, with the two file-p
 **Why**: separating *decompression* (per-device, input) from *velocity→gain* (gentle, shared) is what makes velocity portable: a soft hit is a low number on every device, and that number means the same thing to HKL's audio and to an external synth. `DEFAULT_DYNAMIC_MAP` was re-mapped down (`v_new = houseCurve⁻¹(steepCurve(v_old))`, e.g. f 120→74, ppp 96→21) so non-Lumatone **loudness is preserved, not amplified** — Max flagged that QWERTY/mouse/Composer were already pre-corrected for the steep curve and must be uncorrected in lockstep. `velocityCal` prefs versioned (v2) with a one-time migration (old audio γ → input-curve seed, house curve reset gentle). Aftertouch and Composer hairpin constants now live in the musical domain and are flagged for by-ear tuning rather than guessed transforms. **Verified by typecheck + build only — velocity feel is by-ear and Max's to confirm/re-tune (Lumatone decompression especially).**
 
 **Where**: `src/audio/velocityCal.ts` (gentle house curve default, decompression input-curve default, v1→v2 migration), DELETED `src/audio/pianoVel.ts` (`normalizePianoVelocity`/`pianoGainCurve`), `src/midi/piano.ts` (identity), `src/midi/handler.ts` (per-key gain + decompression at input), `src/audio/engine.ts` (dropped per-key prepass + aftertouch strike prepass), `src/shared/dynamics.ts` (re-mapped `DEFAULT_DYNAMIC_MAP`), `src/lumatone/lumadiag.ts` (sliders → input curve, composite preview), `src/state/persistence.ts` (velocityCal `version`, dropped `pianoGainCurve`), `src/composer/render/playback.ts` (hairpin delta), `src/audio/aftertouch.ts` (domain note).
+
+---
+
+## Sample engine: injected host dependencies (Phase 1 of the monorepo split, 2026-05-26)
+
+**Picked**: `src/audio/samples-engine.ts` no longer imports HKL app state directly. Its three former couplings are now host-injected via an optional `SampleEngineConfig` passed to `init(ctx, dest, config?)`:
+- `instrumentProvider(key) => Promise<Record<file, bytes> | null>` replaces the direct `state/instrumentRegistry.getAudio` call (the `source:'hki'` load path).
+- `velocityToGain(v) => gain` replaces the `aftertouch.velocityBaseVol` import (which transitively pulled `state/audio` + `velocityCal`). Defaults to a bare `v/127` so the engine is usable with no host curve.
+- `onSeamEvent(ev)` replaces the `diagnostics/loopOverlay.recordSeamEvent` import.
+
+HKL re-supplies all three at `engine.ts:initAudio` so runtime behavior is identical. The pure `inflightExpRampValue` (PA-ramp polyfill) moved out of `aftertouch.ts` into the engine and is re-exported from the `samples.ts` barrel; `loopOverlay`'s `SeamEvent` now `extends` the engine's emitted type rather than duplicating it.
+
+**Rejected**:
+- **Moving the instrument manifest (`INSTRUMENTS`) injection too.** `samples-engine` still imports `samples-data` (→ `INSTRUMENTS`), which reaches into the registry for imported-instrument manifests. That's a larger "manifest injection" refactor deferred to the package-extraction phase — Phase 1 was scoped to the three named state couplings to keep the audio-path change small and by-ear-verifiable.
+- **A workspace tool first.** Nx and even pnpm workspaces fix nothing about this coupling; the DI is the actual blocker to an importable `@hkl/engine` and is repo-shape-independent, so it lands in the current single-package repo where the test loop is simplest.
+
+**Why**: this is the first concrete step of the approved pnpm-monorepo plan (`@hkl/engine` = HKLE, importable outside HKL). The seam is deliberately a config object on `init` rather than module-level setters so a standalone consumer wires everything in one call and the engine has no implicit global host. **Verified by typecheck + build only — the DI sits in the audio path, so loop crossfades / aftertouch swells / transpose-glide / imported-`.hki` playback are Max's by-ear gate before commit.**
+
+**Where**: `src/audio/samples-engine.ts` (`SampleEngineConfig` + `PaRampState`/`SeamEvent` types, injected module vars, relocated `inflightExpRampValue`, `init` config arg), `src/audio/samples.ts` (re-export `inflightExpRampValue` + config types), `src/audio/engine.ts` (wires the three deps at `initAudio`, imports `inflightExpRampValue` from the barrel), `src/audio/aftertouch.ts` (dropped `inflightExpRampValue`), `src/audio/diagnostics/loopOverlay.ts` (`SeamEvent` extends the engine's emitted type). Plan: `~/.claude/plans/i-d-like-to-do-temporal-thimble.md`.
