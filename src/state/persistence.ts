@@ -31,16 +31,14 @@ export interface ToolbarVisibility {
   piano: boolean;
 }
 
-export interface PianoGainCurvePrefs {
-  floor: number;
-  ceiling: number;
-  gamma: number;
-}
-
 /* Velocity calibration (curve + per-key gain + per-key stats).
    Set by src/audio/velocityCal.ts.
-   Absent = defaults (matches prior hardcoded quadratic curve and no per-key gain). */
+   Absent = defaults. */
 export interface VelocityCalPrefs {
+  /** Schema version. v3 = canonical-musical-velocity architecture (gentle house
+   *  curve + Lumatone gain-space target curve in inputCurve). Absent/!=3 triggers
+   *  a one-time migration in velocityCal.ts. */
+  version?: number;
   floor: number;
   ceiling: number;
   gamma: number;
@@ -104,7 +102,6 @@ export interface PrefsV1 {
    *  pianoIn device's matching output port) using per-channel RPN fine-tuning
    *  for just-intonation pitches. Independent of audioEnabled. Off by default. */
   pianoOutputEnabled: boolean;
-  pianoGainCurve?: PianoGainCurvePrefs;
   /** Show a dotted outline marking the valid ref-note placement region
    *  (V5 in 5-limit/12-TET, V7-intersection in 7-limit). Off by default. */
   validRefBounds: boolean;
@@ -211,14 +208,6 @@ function loadToolbars(o: unknown): ToolbarVisibility {
   };
 }
 
-function loadPianoGainCurve(o: unknown): PianoGainCurvePrefs | undefined {
-  if (!o || typeof o !== 'object') return undefined;
-  const c = o as Record<string, unknown>;
-  if (typeof c.floor !== 'number' || typeof c.ceiling !== 'number' || typeof c.gamma !== 'number') return undefined;
-  if (c.gamma <= 0 || c.ceiling <= c.floor) return undefined;
-  return { floor: c.floor, ceiling: c.ceiling, gamma: c.gamma };
-}
-
 /* Read prefs from localStorage. Missing/invalid fields fall back per-field
    to DEFAULT_PREFS — a corrupted single field doesn't wipe valid ones. */
 export function loadPrefs(): PrefsV1 {
@@ -291,7 +280,6 @@ export function loadPrefs(): PrefsV1 {
       typeof o.pianoOutputEnabled === 'boolean'
         ? o.pianoOutputEnabled
         : DEFAULT_PREFS.pianoOutputEnabled,
-    pianoGainCurve: loadPianoGainCurve(o.pianoGainCurve),
     validRefBounds:
       typeof o.validRefBounds === 'boolean'
         ? o.validRefBounds
@@ -364,7 +352,8 @@ function loadVelocityCal(o: unknown): VelocityCalPrefs | undefined {
       intervalCurve = { low: ic.low, high: ic.high, gamma: ic.gamma };
     }
   }
-  return { floor: v.floor, ceiling: v.ceiling, gamma: v.gamma, perKey, statsEnabled, stats, inputCurve, intervalCurve };
+  const version = typeof v.version === 'number' ? v.version : undefined;
+  return { version, floor: v.floor, ceiling: v.ceiling, gamma: v.gamma, perKey, statsEnabled, stats, inputCurve, intervalCurve };
 }
 
 /* Merge a partial patch into the stored prefs and write back. Read-modify-write

@@ -46,7 +46,7 @@ import {
   buildSetVelocityLut,
   buildSetVelocityIntervalConfig,
 } from './protocol.js';
-import { velocityCal, DEFAULT_CAL, DEFAULT_INTERVAL_CURVE, STATS_MIN_N, STATS_HIGH_CV } from '../audio/velocityCal.js';
+import { velocityCal, DEFAULT_INPUT_CURVE, DEFAULT_INTERVAL_CURVE, STATS_MIN_N, STATS_HIGH_CV } from '../audio/velocityCal.js';
 import { baseKeys } from '../layout/baseKeys.js';
 
 /* Build (q,r-string) → board_group lookup once. Used by the per-key stats
@@ -474,7 +474,9 @@ function drawCurvePreview(): void {
   ctx.beginPath();
   for (let x = 0; x <= pw; x++) {
     const v = (x / pw) * 127;
-    const g = velocityCal.curveGain(v);
+    /* Composite: raw Lumatone velocity → input/decompression curve → musical →
+       house curve → audio gain. This is the effective loudness response. */
+    const g = velocityCal.curveGain(velocityCal.applyInputCurve(v));
     const y = py + ph - g * ph;
     if (x === 0) ctx.moveTo(px + x, y); else ctx.lineTo(px + x, y);
   }
@@ -483,16 +485,16 @@ function drawCurvePreview(): void {
 
 function refreshCurveUi(): void {
   if (velCalUi.floorSlider) {
-    velCalUi.floorSlider.value = String(Math.round(velocityCal.floor * 100));
-    velCalUi.floorVal!.textContent = velocityCal.floor.toFixed(2);
+    velCalUi.floorSlider.value = String(Math.round(velocityCal.inputCurveFloor * 100));
+    velCalUi.floorVal!.textContent = velocityCal.inputCurveFloor.toFixed(2);
   }
   if (velCalUi.ceilingSlider) {
-    velCalUi.ceilingSlider.value = String(Math.round(velocityCal.ceiling * 100));
-    velCalUi.ceilingVal!.textContent = velocityCal.ceiling.toFixed(2);
+    velCalUi.ceilingSlider.value = String(Math.round(velocityCal.inputCurveCeiling * 100));
+    velCalUi.ceilingVal!.textContent = velocityCal.inputCurveCeiling.toFixed(2);
   }
   if (velCalUi.gammaSlider) {
-    velCalUi.gammaSlider.value = String(Math.round(velocityCal.gamma * 100));
-    velCalUi.gammaVal!.textContent = velocityCal.gamma.toFixed(2);
+    velCalUi.gammaSlider.value = String(Math.round(velocityCal.inputCurveGamma * 100));
+    velCalUi.gammaVal!.textContent = velocityCal.inputCurveGamma.toFixed(2);
   }
   if (velCalUi.calKeyCount) {
     velCalUi.calKeyCount.textContent = String(velocityCal.calibratedKeyCount);
@@ -821,9 +823,14 @@ function makeVelocityCalSection(): HTMLDivElement {
   intBtnRow.appendChild(intResetBtn);
   sec.appendChild(intBtnRow);
 
-  /* ── HKL curve ── */
+  /* ── Lumatone velocity curve ──
+     The Lumatone's velocity→loudness shape (gain space). Internally the raw
+     velocity is converted to a canonical musical velocity that reproduces this
+     gain through the house curve, so keyVelocity stays device-neutral; the
+     preview below is this exact curve (raw velocity → audio gain). Tune by ear
+     as before. */
   const curveLabel = document.createElement('div');
-  curveLabel.textContent = 'HKL curve';
+  curveLabel.textContent = 'Lumatone velocity curve';
   Object.assign(curveLabel.style, { fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginBottom: '4px' });
   sec.appendChild(curveLabel);
 
@@ -870,27 +877,28 @@ function makeVelocityCalSection(): HTMLDivElement {
     row.appendChild(val);
     return { row, slider, val };
   };
-  /* Sliders work in integer hundredths (0..100, 0..300, etc.) so HTML range
-     resolution is fine. Setters convert back to fractional. */
+  /* Target-gain curve, in audio-gain space (the familiar floor/ceiling/gamma).
+     Sliders work in integer hundredths so HTML range resolution is fine; setters
+     convert back to fractional gain. The composite preview = this exact curve. */
   const floorUi = mkCurveSlider(
-    'floor', 'Audio gain at velocity 1 (× 100)',
+    'floor', 'Target audio gain at velocity 1 (× 100)',
     0, 30, 1,
-    () => velocityCal.floor * 100,
-    (v: number) => velocityCal.setFloor(v / 100),
+    () => velocityCal.inputCurveFloor * 100,
+    (v: number) => velocityCal.setInputCurveFloor(v / 100),
     (v: number) => (v / 100).toFixed(2),
   );
   const ceilingUi = mkCurveSlider(
-    'ceiling', 'Audio gain at velocity 127 (× 100)',
+    'ceiling', 'Target audio gain at velocity 127 (× 100)',
     60, 127, 1,
-    () => velocityCal.ceiling * 100,
-    (v: number) => velocityCal.setCeiling(v / 100),
+    () => velocityCal.inputCurveCeiling * 100,
+    (v: number) => velocityCal.setInputCurveCeiling(v / 100),
     (v: number) => (v / 100).toFixed(2),
   );
   const gammaUi = mkCurveSlider(
-    'gamma', 'Curve exponent (× 100). >1 = soft notes get quieter (piano-like). High values (10+) only make sense when CMD 0x20 high is set near 130, giving 1:1 tick→velocity mapping; with the default high=50, γ above ~3 over-compresses.',
+    'gamma', 'Target curve exponent (× 100). >1 = soft notes get quieter (piano-like). This is the Lumatone\'s velocity→loudness shape, reproduced exactly through the house curve.',
     50, 2000, 5,
-    () => velocityCal.gamma * 100,
-    (v: number) => velocityCal.setGamma(v / 100),
+    () => velocityCal.inputCurveGamma * 100,
+    (v: number) => velocityCal.setInputCurveGamma(v / 100),
     (v: number) => (v / 100).toFixed(2),
   );
   velCalUi.floorSlider = floorUi.slider; velCalUi.floorVal = floorUi.val;
@@ -901,8 +909,8 @@ function makeVelocityCalSection(): HTMLDivElement {
   sec.appendChild(gammaUi.row);
 
   const curveResetBtn = document.createElement('button');
-  curveResetBtn.textContent = 'Reset curve (' + DEFAULT_CAL.floor.toFixed(2) + ' / '
-    + DEFAULT_CAL.gamma.toFixed(2) + ' / ' + DEFAULT_CAL.ceiling.toFixed(2) + ')';
+  curveResetBtn.textContent = 'Reset curve (' + DEFAULT_INPUT_CURVE.floor.toFixed(2) + ' / '
+    + DEFAULT_INPUT_CURVE.gamma.toFixed(2) + ' / ' + DEFAULT_INPUT_CURVE.ceiling.toFixed(2) + ')';
   Object.assign(curveResetBtn.style, {
     fontSize: '11px', padding: '1px 6px', marginTop: '4px',
     background: 'rgba(255,255,255,0.08)', color: '#eee',
@@ -910,7 +918,7 @@ function makeVelocityCalSection(): HTMLDivElement {
     cursor: 'pointer',
   });
   curveResetBtn.addEventListener('click', () => {
-    velocityCal.resetCurve();
+    velocityCal.resetInputCurve();
     refreshCurveUi();
   });
   sec.appendChild(curveResetBtn);

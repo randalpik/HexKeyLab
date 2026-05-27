@@ -41,21 +41,32 @@ import { savePrefs, loadPrefs, type VelocityCalPrefs, type KeyStatsSnapshot } fr
 import type { KeyId } from '../types.js';
 
 export interface VelocityCalState {
-  /** Audio gain at velocity = 1 (smallest non-zero). 0..1. Default 0.10. */
+  /** Audio gain at velocity = 1 (smallest non-zero). 0..1. */
   floor: number;
-  /** Audio gain at velocity = 127. 0..1. Default 1.0. */
+  /** Audio gain at velocity = 127. 0..1. */
   ceiling: number;
-  /** Curve exponent. > 1 = soft notes get quieter; default 2.0 (matches prior
-   *  hardcoded quadratic curve). */
+  /** Curve exponent. This is the device-INDEPENDENT "house" curve: a canonical
+   *  musical velocity (0..127, normalized per device at input) → audio gain.
+   *  Gentle (≈1.5) so it matches how a normal synth maps velocity to loudness
+   *  and so a played velocity round-trips out to an external synth unchanged.
+   *  (Device-specific compensation — e.g. the Lumatone's compressed range —
+   *  lives in the per-device input curve below, NOT here.) */
   gamma: number;
   /** Multiplicative velocity gain per key. Absent entries default to 1.0. */
   perKey: Record<KeyId, number>;
 }
 
-/** Lumatone MIDI input curve. Output is integer velocity 0..127 (NOT audio
- *  gain). Default identity (floor=0, ceiling=127, gamma=1) — no-op. Phase C:
- *  superseded by `IntervalCurveState` (firmware-level shaping); the input curve
- *  is now an identity-default defensive layer with no UI. */
+/** Lumatone TARGET-GAIN curve — floor/ceiling/gamma in audio-gain space (0..1),
+ *  the same shape that used to be the audio curve and that the user tuned by ear.
+ *  It defines the gain a raw Lumatone velocity SHOULD produce. The handler maps
+ *  raw velocity through this to a target gain, then through the inverse of the
+ *  gentle house curve to the canonical musical velocity that reproduces that gain
+ *  (`musical = houseCurve⁻¹(targetGain(rawVel))`). So the composite
+ *  `houseCurve(applyInputCurve(rawVel))` equals this target curve EXACTLY — set
+ *  it to the old audio curve and the Lumatone feels identical to before, while
+ *  keyVelocity is still a canonical musical velocity that round-trips to external
+ *  synths. (A single power law in velocity space can't do this — the floor offset
+ *  makes the exact inverse non-power-law; expressing it in gain space is exact.) */
 export interface InputCurveState {
   floor: number;
   ceiling: number;
@@ -74,17 +85,24 @@ export interface IntervalCurveState {
   gamma: number;
 }
 
+/* House (musical velocity → gain) curve. Gentle: floor 0.05, ceiling 1.0,
+   gamma 1.5 — the former piano-feel curve, now the single device-independent
+   audio curve. */
 export const DEFAULT_CAL: VelocityCalState = {
-  floor: 0.10,
+  floor: 0.05,
   ceiling: 1.0,
-  gamma: 15.5,
+  gamma: 1.5,
   perKey: {},
 };
 
+/* Lumatone target-gain curve default = the legacy audio curve (floor 0.10,
+   ceiling 1.0, gamma 15.5). Through the house-curve inverse this reproduces the
+   pre-refactor Lumatone response exactly, so a fresh Lumatone feels as before;
+   the user tunes it (in gain space) in lumadiag. */
 export const DEFAULT_INPUT_CURVE: InputCurveState = {
-  floor: 0,
-  ceiling: 127,
-  gamma: 1.0,
+  floor: 0.10,
+  ceiling: 1.0,
+  gamma: 15.5,
 };
 
 /** Identity-style table tuned for Max's Lumatone: low=1, high=127, gamma=1.0
@@ -188,6 +206,7 @@ function clampVel(v: number): number {
 
 function persist(): void {
   savePrefs({ velocityCal: {
+    version: 3,
     floor: state.floor,
     ceiling: state.ceiling,
     gamma: state.gamma,
@@ -226,21 +245,31 @@ function loadFromPrefs(): void {
     intervalCurve.low = v.intervalCurve.low;
     intervalCurve.high = v.intervalCurve.high;
     intervalCurve.gamma = v.intervalCurve.gamma;
-    /* Phase A → Phase C migration: if the user has a non-identity input curve
-       saved from Phase A AND now has an interval curve, the firmware is doing
-       the shaping and the input curve should be identity to avoid double-
-       compression. Reset once and persist. */
-    const inputNonIdentity = inputCurve.floor !== DEFAULT_INPUT_CURVE.floor
-      || inputCurve.ceiling !== DEFAULT_INPUT_CURVE.ceiling
-      || inputCurve.gamma !== DEFAULT_INPUT_CURVE.gamma;
-    if (inputNonIdentity) {
-      console.log('[velocityCal] Phase C migration: input curve reset to identity (interval curve takes over hardware shaping)');
+  }
+
+  /* Migration to v3 (canonical musical velocity + gain-space Lumatone target
+     curve). Two prior shapes to handle:
+       • v1 (no version): state.{floor,ceiling,gamma} held the user's tuned AUDIO
+         curve — that IS the target-gain curve now; copy it verbatim (exact
+         reproduction), reset the house curve to gentle.
+       • v2 (the short-lived velocity-domain attempt): inputCurve held a velocity
+         power-law with gamma ≈ oldAudioGamma / 1.5; recover oldAudioGamma =
+         inputCurve.gamma × 1.5; floor/ceiling were lost, use the legacy default.
+     One-time; persist. The user then tunes in gain space in lumadiag. */
+  if (v.version !== 3) {
+    if (v.version === 2) {
+      inputCurve.gamma = Math.min(20, Math.max(0.5, inputCurve.gamma * DEFAULT_CAL.gamma));
       inputCurve.floor = DEFAULT_INPUT_CURVE.floor;
       inputCurve.ceiling = DEFAULT_INPUT_CURVE.ceiling;
-      inputCurve.gamma = DEFAULT_INPUT_CURVE.gamma;
-      /* persist deferred to first explicit setter or end of load — safe to skip
-         here since loadFromPrefs is followed by normal use which will persist */
+    } else {
+      inputCurve.floor = state.floor;
+      inputCurve.ceiling = state.ceiling;
+      inputCurve.gamma = state.gamma;
     }
+    state.floor = DEFAULT_CAL.floor;
+    state.ceiling = DEFAULT_CAL.ceiling;
+    state.gamma = DEFAULT_CAL.gamma;
+    persist();
   }
 }
 
@@ -299,16 +328,23 @@ export const velocityCal = {
         && inputCurve.gamma === 1;
   },
 
-  /** Apply the input curve to a raw 0..127 velocity. Returns integer 0..127.
-   *  v=0 maps to 0 (preserve note-off semantics); v>0 maps through the curve
-   *  but is floor-clamped to 1 so a sounding note never becomes silent. */
+  /** Map a raw 0..127 Lumatone velocity to the canonical musical velocity (int
+   *  0..127). Two steps: (1) the target-gain curve gives the gain this velocity
+   *  should produce; (2) invert the gentle house curve (state.floor/ceiling/gamma)
+   *  to find the musical velocity that yields that gain. So
+   *  `curveGain(applyInputCurve(v)) === targetGain(v)` (within rounding) — exact
+   *  reproduction of the target curve. v=0 → 0 (note-off); v>0 floor-clamped to 1. */
   applyInputCurve(v: number): number {
     if (v <= 0) return 0;
     const vn = (v >= 127 ? 127 : v) / 127;
-    const shaped = inputCurve.floor + (inputCurve.ceiling - inputCurve.floor) * Math.pow(vn, inputCurve.gamma);
-    if (shaped <= 0) return 1;
-    if (shaped >= 127) return 127;
-    return Math.max(1, Math.round(shaped));
+    const targetGain = inputCurve.floor + (inputCurve.ceiling - inputCurve.floor) * Math.pow(vn, inputCurve.gamma);
+    const den = state.ceiling - state.floor;
+    if (den <= 0) return 1;
+    const num = targetGain - state.floor;
+    if (num <= 0) return 1;                 /* below the house floor → softest audible */
+    const musical = 127 * Math.pow(num / den, 1 / state.gamma);
+    if (musical >= 127) return 127;
+    return Math.max(1, Math.round(musical));
   },
 
   /* ── Lumatone firmware velocity-interval table (CMD 0x20) ────────────────

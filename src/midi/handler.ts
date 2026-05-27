@@ -219,12 +219,14 @@ export function handleMidiMessage(e: MIDIMessageEvent): void {
        in via lumadiag to compensate for compressed firmware velocity range.
        Everything downstream (audio engine, recording, MIDI export) sees the
        shaped value. */
-    const vShaped = velocityCal.isInputCurveIdentity() ? d2 : velocityCal.applyInputCurve(d2);
-    audio.keyVelocity[key] = vShaped;
-    /* Per-key gain auto-capture: capture the shaped value so per-key gain
-       compensates outliers in the same domain that audio sees. Out of capture
-       mode this is a single boolean check. */
-    velocityCal.recordSample(key, vShaped);
+    /* Lumatone → canonical musical velocity: per-key gain (hardware variance
+       correction) then the decompression input curve, both at input time.
+       keyVelocity now holds musical velocity (the house curve maps it to gain at
+       audio time). */
+    audio.keyVelocity[key] = velocityCal.applyInputCurve(velocityCal.applyPerKeyGain(key, d2));
+    /* Per-key gain auto-capture samples RAW d2 — per-key gain corrects the raw
+       firmware velocity before the curve. Out of capture mode, a boolean check. */
+    velocityCal.recordSample(key, d2);
     restrikePianoOut(key); /* re-attack on the external synth if already sounding */
   } else if (status === 0x80 || (status === 0x90 && d2 === 0)) {
     heldLumatonePhys.delete(physId);

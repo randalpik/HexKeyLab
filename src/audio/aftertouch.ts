@@ -19,6 +19,10 @@ import { audio } from '../state/audio.js';
 import { velocityCal } from './velocityCal.js';
 import type { KeyId } from '../types.js';
 
+/* Pressure → "equivalent musical velocity" range. NOTE: these are now in the
+   canonical musical-velocity domain and feed the gentle house curve via
+   velocityBaseVol, so the aftertouch depth differs from the old steep-curve era
+   — re-tune by ear if it feels weak/strong. */
 export const AFTERTOUCH_VEL_FLOOR = 72;       /* velocity equivalent of aftertouch = 0   */
 export const AFTERTOUCH_VEL_CEIL = 127;       /* velocity equivalent of aftertouch = 127 */
 /* Per-message exp-ramp duration. Each PA message commits to a ramp of

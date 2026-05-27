@@ -101,6 +101,15 @@ function silencePort(port: MIDIOutput): void {
   for (let ch = 0; ch < 16; ch++) port.send([0xb0 | ch, 123, 0]);
 }
 
+/* MIDI Local Control (CC122): value 0 disconnects the keyboard's own keys from
+   its sound engine, so only HKL's JI MIDI-back is heard (not the raw 12-ET keys);
+   127 restores it. Broadcast on all channels — it's a global keyboard setting, so
+   this covers whatever the basic channel is. NB: the SP-250's published chart
+   doesn't list CC122, so this may be a no-op on some units. */
+function sendLocalControl(port: MIDIOutput, on: boolean): void {
+  for (let ch = 0; ch < 16; ch++) port.send([0xb0 | ch, 122, on ? 127 : 0]);
+}
+
 /** Push the current program to all 16 channels so every voice shares the synth's
  *  selected instrument. Sent outside the per-note bursts (the CH345 adapter drops
  *  bytes under load), and not per note. No-op until a program has been captured. */
@@ -265,7 +274,7 @@ export function rebindPianoOut(): void {
   }
   if (next === midi.pianoOut) return;
   const prev = midi.pianoOut;
-  if (prev) silencePort(prev);
+  if (prev) { sendLocalControl(prev, true); silencePort(prev); } /* re-enable local on the port we're leaving */
   midi.pianoOut = next;
   clearVoices();
   /* Explicitly open the output port. Unlike inputs (which wire their ALSA
@@ -276,7 +285,8 @@ export function rebindPianoOut(): void {
      note plays well after it resolves). */
   if (next) {
     next.open()
-      .then(() => { broadcastChannelLevels(); broadcastProgram(); }) /* normalize levels + re-assert program once wired */
+      /* once wired: mute the keyboard's local keys, normalize levels, re-assert program */
+      .then(() => { sendLocalControl(next, false); broadcastChannelLevels(); broadcastProgram(); })
       .catch(() => { /* port vanished mid-open; statechange will re-resolve */ });
   }
 }
@@ -304,7 +314,7 @@ export function setPianoOutEnabled(on: boolean): void {
     rebindPianoOut();
     syncPianoOut(); /* pick up any currently-held keys */
   } else {
-    if (midi.pianoOut) silencePort(midi.pianoOut);
+    if (midi.pianoOut) { sendLocalControl(midi.pianoOut, true); silencePort(midi.pianoOut); } /* restore the keyboard's local keys */
     clearVoices();
   }
 }
@@ -329,4 +339,9 @@ export function initPianoOut(): void {
     },
     () => { /* no Web MIDI / denied — stays unbound */ },
   );
+
+  /* Never leave the keyboard muted after HKL closes — restore local control. */
+  window.addEventListener('beforeunload', () => {
+    if (enabled && midi.pianoOut) sendLocalControl(midi.pianoOut, true);
+  });
 }

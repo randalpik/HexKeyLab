@@ -23,7 +23,11 @@ import { DEFAULT_DYNAMIC_MAP } from '../../shared/dynamics.js';
 const DEFAULT_BPM = 120;
 const MS_PER_MIN = 60_000;
 const DEFAULT_VELOCITY = DEFAULT_DYNAMIC_MAP.mf;
-const HAIRPIN_OPEN_END_DELTA = 25; /* synthesized cres/dim level when no flanking dynamic */
+/* Synthesized cres/dim swell when a hairpin has no flanking dynamic. Re-scaled
+   for the canonical musical-velocity domain (dynamics now span ~21..127 instead
+   of the old 96..127 cluster), so a similar perceptual swell needs a larger
+   delta. Tunable by ear. */
+const HAIRPIN_OPEN_END_DELTA = 45;
 
 export interface TempoInfo { bpm: number; unitDenom: number; dots: number }
 

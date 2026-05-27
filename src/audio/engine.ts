@@ -22,7 +22,6 @@ import {
   AFTERTOUCH_RAMP_S,
   aftertouchTargetGain, inflightExpRampValue, velocityBaseVol,
 } from './aftertouch.js';
-import { velocityCal } from './velocityCal.js';
 import { draw } from '../render/draw.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import {
@@ -123,10 +122,10 @@ export function noteOn(key: KeyId, velocity?: number): void {
   const parts = key.split(','), q = +parts[0], r = +parts[1];
   const freq = keyFreq(q, r);
   const wf = audio.activeWaveform;
-  /* Stage 1 velocity calibration: per-key gain applied once here, before the
-     sample/oscillator branch. Raw `velocity` is preserved for the recording
-     hook below so playback re-applies the current transform. */
-  const adjVel = velocityCal.applyPerKeyGain(key, velocity ?? DEFAULT_DYNAMIC_MAP.mf);
+  /* `velocity` is the canonical musical velocity (per-device input normalization,
+     incl. the Lumatone's per-key gain + decompression, already happened at input).
+     The house curve (velocityBaseVol / SampleEngine) maps it to gain. */
+  const adjVel = velocity ?? DEFAULT_DYNAMIC_MAP.mf;
   if (instrIsSample() && SampleEngine.isInstrumentLoaded(wf)) {
     SampleEngine.setInstrument(wf);
     /* Velocity drives initial volume (via baseVol in segGain); pressureGain stays
@@ -268,11 +267,9 @@ export function glideVoices(pairs: ReadonlyArray<{ oldKey: KeyId; newKey: KeyId 
 export function handleAftertouch(key: KeyId, pressure: number): void {
   if (!audio.audioEnabled || !audio.audioCtx || instrDecays()) return;
   const e = audio.activeOscs[key]; if (!e) return;
-  /* Strike anchor must match the velocity actually used at noteOn — apply the
-     same per-key gain so PA's baseVol(eqVel)/baseVol(strikeVel) ratio stays
-     consistent with the voice's onset volume. */
-  const rawStrike = audio.keyVelocity[key] !== undefined ? audio.keyVelocity[key] : DEFAULT_DYNAMIC_MAP.f;
-  const strikeVel = velocityCal.applyPerKeyGain(key, rawStrike);
+  /* Strike anchor = the musical velocity used at noteOn (per-key gain already
+     applied at input, not here). */
+  const strikeVel = audio.keyVelocity[key] !== undefined ? audio.keyVelocity[key] : DEFAULT_DYNAMIC_MAP.f;
   const target = aftertouchTargetGain(pressure, strikeVel);
   const now = audio.audioCtx.currentTime;
   /* Uniform short ramp on every PA message — the handover-duration scaling

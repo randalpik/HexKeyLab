@@ -16,12 +16,12 @@
 import { audio } from '../state/audio.js';
 import { midi } from '../state/midi.js';
 import { selection } from '../state/selection.js';
+import { pedal } from '../state/pedal.js';
 import { referenceNote } from '../state/reference.js';
 import { loadPrefs, savePrefs } from '../state/persistence.js';
 import { activeFootprintSet } from '../render/draw.js';
 import { resolve12TetToCoord } from '../tuning/resolve.js';
-import { normalizePianoVelocity } from '../audio/pianoVel.js';
-import { noteOff, triggerRearticulateFlash } from '../audio/engine.js';
+import { noteOff, triggerRearticulateFlash, setDamperDepth } from '../audio/engine.js';
 import { whenMidiAccessReady } from './engine.js';
 import { rebindPianoOut, setOutputProgram, restrikePianoOut } from './piano-out.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
@@ -107,7 +107,7 @@ function handleNoteOn(midiNote: number, vRaw: number): void {
     }
     audio.sustainedKeys.delete(prev);
     selection.selectedKeys.add(prev);
-    audio.keyVelocity[prev] = normalizePianoVelocity(vRaw);
+    audio.keyVelocity[prev] = vRaw; /* musical velocity: a weighted MIDI keyboard already sends it natural */
     restrikePianoOut(prev); /* re-attack on the external synth (membership unchanged) */
     onSelectionChanged();
     return;
@@ -135,7 +135,7 @@ function handleNoteOn(midiNote: number, vRaw: number): void {
   }
   audio.sustainedKeys.delete(key);
   selection.selectedKeys.add(key);
-  audio.keyVelocity[key] = normalizePianoVelocity(vRaw);
+  audio.keyVelocity[key] = vRaw; /* musical velocity: identity (no pre-curve) */
   activeMidiToKey.set(midiNote, key);
   restrikePianoOut(key); /* re-attack on the external synth if already sounding */
   onSelectionChanged();
@@ -157,6 +157,21 @@ function handleNoteOff(midiNote: number): void {
   onSelectionChanged();
 }
 
+/* Sustain pedal (CC 64) plugged into the piano device. Always acts as SUSTAIN
+   (damper), independent of the Lumatone toolbar's sustain/sostenuto `pedal.mode`
+   — that mode is a Lumatone-side control and users will have different piano +
+   Lumatone setups. If a separate sostenuto control is ever wanted for the piano
+   pedal, add it here. The SP-250 sends a continuous value, so it's a half-damper
+   depth (like the Lumatone expression jack's CC 4). Routed through the shared
+   pedal state so it integrates with note-off deferral — and thus the piano-out
+   sustain mirror (held JI notes ring on the external synth until release).
+   `setDamperDepth` fires `onSelectionChanged` itself on release, so no extra sync. */
+function handleSustainCC(d2: number): void {
+  pedal.lastCC64Value = d2;
+  pedal.cc64Depth = (d2 <= 1) ? 0 : d2 / 127;
+  setDamperDepth();
+}
+
 function pianoMessage(e: MIDIMessageEvent): void {
   const data = e.data;
   if (!data || data.length < 2) return;
@@ -169,12 +184,14 @@ function pianoMessage(e: MIDIMessageEvent): void {
     return;
   }
   if (!enabled) return;
-  /* Ignore the piano port's SysEx / CC / aftertouch entirely — those concerns
-     belong to the Lumatone path. A piano keyboard is just note + velocity. */
+  /* Note + velocity, plus the sustain pedal (CC 64) from a pedal plugged into
+     the piano device. Other CCs / aftertouch are ignored (Lumatone concerns). */
   if (status === 0x90 && (data[2] ?? 0) > 0) {
     handleNoteOn(data[1], data[2]);
   } else if (status === 0x80 || (status === 0x90 && (data[2] ?? 0) === 0)) {
     handleNoteOff(data[1]);
+  } else if (status === 0xb0 && data[1] === 64) {
+    handleSustainCC(data[2] ?? 0);
   }
 }
 
