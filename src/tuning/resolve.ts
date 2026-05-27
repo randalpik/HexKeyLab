@@ -17,7 +17,7 @@
 // its own footprint.
 
 import { jiRatio, tenneyHeightFromExps } from './ratios.js';
-import { coordToMidi } from '../transcription/pitch.js';
+import { coordToMidi } from '@hkl/shared/freq.js';
 import type { KeyId } from '../types.js';
 
 export interface ResolvedCoord { q: number; r: number; }

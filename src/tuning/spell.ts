@@ -7,7 +7,8 @@
 // pulling in the bridge's audio/MIDI/state dependencies.
 
 import { noteName, keyOctave, parseNote, accToVal } from '@hkl/shared/notes.js';
-import { darkColorHex, coordToMidi } from '../transcription/pitch.js';
+import { darkColorHex } from '../transcription/pitch.js';
+import { coordToMidi } from '@hkl/shared/freq.js';
 
 export interface NoteSpec {
   q: number;

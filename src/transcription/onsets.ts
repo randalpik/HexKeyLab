@@ -4,7 +4,8 @@
 
 import type { HkrSession } from '../recording/types.js';
 import type { Onset } from './types.js';
-import { coordToMidi, darkColorHex } from './pitch.js';
+import { darkColorHex } from './pitch.js';
+import { coordToMidi } from '@hkl/shared/freq.js';
 
 /** Window (seconds) for the density-bonus that nudges chord roots up in onset strength. */
 const DENSITY_WINDOW_SEC = 0.030;

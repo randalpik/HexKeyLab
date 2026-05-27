@@ -29,11 +29,6 @@ export function coordToLilyPitch(q: number, r: number): string {
   return lyLetter + suffix + oct;
 }
 
-/** Nominal 12-TET MIDI note from lattice coord (A3 = 57 anchor). */
-export function coordToMidi(q: number, r: number): number {
-  return 57 + 4 * q + 7 * r;
-}
-
 /* ── color helpers: darken a hex color for ink-on-paper readability ─────── */
 
 function hexToRgb(hex: string): [number, number, number] {

@@ -17,7 +17,7 @@ import type { InputHooks, ChordInternalSel } from '../input.js';
 import type { CoordRef } from '@hkl/bridge/protocol.js';
 import { noteName, parseNote, accToVal, keyOctave } from '@hkl/shared/notes.js';
 import { tokenFromAlter } from '@hkl/notation/accidentals.js';
-import { coordToMidi } from '../../transcription/pitch.js';
+import { coordToMidi } from '@hkl/shared/freq.js';
 import { realTicks } from '../model/ticks.js';
 
 /** Cached HKL footprint passed in from main.ts. Keys are "q,r"; values are
