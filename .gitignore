@@ -5,8 +5,8 @@ dist/
 .vite/
 .idea/
 .vscode/
-analyzer/.cache/
-analyzer/out/
+apps/analyzer/.cache/
+apps/analyzer/out/
 .iowa-cache/
 tools/finale-bridge/
 docs/backlog.md

@@ -23,18 +23,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { measureDecayLufs, measureLufs } from './k-weighting.js';
+import { measureDecayLufs, measureLufs } from '../analysis/k-weighting.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
-const REPO = path.resolve(__dirname, '..');
+const REPO = path.resolve(__dirname, '../..');
 /* analyzer-analysis.js holds the pure signal-processing module (prepareLoop,
    refineFundamentalPeriod, etc). The analyzer was split out of the single-
    file tools/HexKeyLab-analyzer.html into analyzer/*.js; we read only the
    analysis module since the visualization + harness need DOM/Canvas. */
-const ANALYZER_ANALYSIS_JS = path.join(__dirname, 'analyzer-analysis.js');
-const CACHE_DIR = path.join(__dirname, '.cache');
-const OUT_DIR = path.join(__dirname, 'out');
+const ANALYZER_ANALYSIS_JS = path.join(__dirname, '..', 'analysis', 'analyzer-analysis.js');
+const CACHE_DIR = path.join(__dirname, '..', '.cache');
+const OUT_DIR = path.join(__dirname, '..', 'out');
 
 const NOTES_FLAT  = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
 const NOTES_SHARP = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];

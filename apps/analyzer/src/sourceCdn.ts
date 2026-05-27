@@ -9,7 +9,7 @@ import { getState, setSource, setSamples, setStatus, onChange } from './stage.js
 import type { SampleSlot } from './state.js';
 
 // @ts-ignore .js module
-import { HKLInstruments } from '../../../analyzer/analyzer-instruments.js';
+import { HKLInstruments } from '../analysis/analyzer-instruments.js';
 
 interface EnumeratedNote {
   name: string;

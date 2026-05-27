@@ -8,7 +8,7 @@
 // Reuse — not rewrite — is the parity bar for retiring the dev sidecar.
 
 // @ts-ignore .js module
-import { HKLViz } from '../../../analyzer/analyzer-visualization.js';
+import { HKLViz } from '../analysis/analyzer-visualization.js';
 import type { SampleSlot, AnalysisResult } from './state.js';
 
 interface HKLVizEntry {

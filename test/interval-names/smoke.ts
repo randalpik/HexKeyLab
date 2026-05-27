@@ -1,5 +1,5 @@
 // Smoke test: enumerate representative (q,r)→(q',r') intervals per mode and print the
-// new spelling-driven names. Run: `npx tsx tools/interval-names/smoke.ts`.
+// new spelling-driven names. Run: `npx tsx test/interval-names/smoke.ts`.
 //
 // Used during the intervals.ts refactor (spelling-driven naming) to verify:
 //   - V mode A3→A4 across a band → "perfect octave + schisma"
@@ -7,10 +7,10 @@
 //   - All existing JI names preserved or improved
 //   - Complement symmetry holds
 
-import { intervalNameFromCoords, classifyDiatonic } from '../../src/tuning/intervals.ts';
-import { jiRatioWithState } from '../../src/tuning/ratios.ts';
-import type { TuningStateLike } from '../../src/tuning/regions.ts';
-import { noteName, keyOctave } from '../../src/tuning/notes.ts';
+import { intervalNameFromCoords, classifyDiatonic } from '../../apps/hkl/src/tuning/intervals.ts';
+import { jiRatioWithState } from '../../apps/hkl/src/tuning/ratios.ts';
+import type { TuningStateLike } from '../../apps/hkl/src/tuning/regions.ts';
+import { noteName, keyOctave } from '@hkl/shared/notes.js';
 
 function st(mode: 'E' | '5' | 'P' | 'D' | '7' | 'V'): TuningStateLike {
   return { mode, equalEnabled: mode === 'E', septimalEnabled: mode === '7', septimalW: 1 };

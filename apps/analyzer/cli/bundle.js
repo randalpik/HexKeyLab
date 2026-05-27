@@ -22,7 +22,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { writeHki, HKI_MANIFEST_VERSION } from '../packages/shared/src/hki.ts';
+import { writeHki, HKI_MANIFEST_VERSION } from '@hkl/shared/hki.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);

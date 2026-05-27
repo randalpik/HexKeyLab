@@ -26,7 +26,7 @@ const IMPORT_RE = /(?:import|export)\s[^'"]*?from\s*['"]([^'"]+)['"]|import\s*\(
 
 /** Allowed relative escapes, keyed by project dir (relative to repoRoot). */
 const RELATIVE_ESCAPE_ALLOW = {
-  'apps/analyzer': [path.join(repoRoot, 'analyzer')], // root CLI engine modules
+  
 };
 
 function listProjects() {

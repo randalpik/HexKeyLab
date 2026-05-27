@@ -2481,3 +2481,48 @@ Combined with the Phase 1 DI (instrument-audio provider, velocity→gain curve, 
 - **…pnpm already enforces the DAG at resolution time**: each package's `node_modules` holds only its declared deps, so an illegal cross-import fails to resolve in vite/build regardless. The checker adds a fast, explicit, CI-friendly assertion of the *intended* graph (catches a stray import before it even reaches a build) without disturbing the exports setup.
 
 **Where**: NEW `tools/check-boundaries.mjs`; `package.json` (`check:boundaries` script).
+
+---
+
+## Repo cleanup: analyzer domain into apps/analyzer, `test/` folder, dead-code prune (2026-05-27)
+
+**Picked**: Three top-level reorganizations after the monorepo split.
+- **Root `analyzer/` dissolved into `apps/analyzer/`.** It had tangled (a) shared analysis engine
+  modules imported at runtime by the analyzer UI *and* the CLI, (b) the Node batch CLI, (c) dead
+  files. Now: `apps/analyzer/analysis/` (the `.js` engine modules — `analyzer-analysis`,
+  `analyzer-instruments`, `analyzer-visualization`, `k-weighting`), `apps/analyzer/cli/` (the batch
+  pipeline — `generate-samples`/`insert-instrument`/`bundle`/`backfill-*`), `apps/analyzer/configs/`
+  (instrument source-of-truth). The CLI "runs through" the analyzer package (imports its in-package
+  `analysis/` + `@hkl/shared`) — **no separate `packages/analysis`** (Max's call: don't scope the
+  shared modules beyond the analyzer package that owns them). This also dropped the
+  `apps/analyzer → root analyzer/` relative-escape exception in the boundary checker.
+- **New top-level `test/`** holds all verification tooling: `composer-test`, `composer-inspect`,
+  `bounds-probe`, `interval-names`, `engine-smoke` (moved from `examples/`), `heji-check.mjs`,
+  `check-boundaries.mjs`. (Max: a future suite will run `bounds-probe` to check the committed
+  bounds tables, and `interval-names` is a future-test utility, so both are test scope.) `tools/`
+  is left with hardware/ops only (`lumatone-cal/`, `reset-calibration.sh`).
+- **Deleted**: `HexKeyLab-analyzer.html` (old standalone sidecar), `analyzer-output.js` (only the
+  HTML used it), `didgeridoo.js` (its only consumer of the HTML), and the finished spikes
+  `verovio-spike/` + `sp250-spike/` (git history + the decisions.md entries preserve them).
+
+**Why / found along the way**: the analyzer CLI, `bounds-probe`, and `interval-names` had all gone
+stale during the app split (they sit outside typecheck/build): the CLI wrote
+`REPO/src/audio/samples-data.ts` (now `apps/hkl/src/...`); `interval-names` imported
+`../../src/tuning/*` incl. `notes.ts` (which had moved to `@hkl/shared`). The cleanup doubles as
+fixing them. `bounds-probe` turned out NOT broken — its `'../state/persistence.js'` is part of the
+*generated* `refbounds-table.ts` output string (valid from `apps/hkl/src/render/`), and the scripts
+replicate the picker/geometry math inline, so they're self-contained. The boundary checker caught
+`bundle.js` reaching into `packages/shared` by relative path → switched to the bare `@hkl/shared/hki.js`.
+`interval-names` is a manual `npx tsx` utility (the app's `.js`-specifier imports only resolve under
+tsx/vite bundler resolution, not plain `node`) — paths fixed, runner unchanged.
+
+**Where**: MOVED `analyzer/{analyzer-*,k-weighting}.js` → `apps/analyzer/analysis/`;
+`analyzer/{generate-samples,insert-instrument,bundle,backfill-*}.js` → `apps/analyzer/cli/`;
+`analyzer/configs` + `README.md` → `apps/analyzer/`; `.cache`/`out` preserved (mv).
+`tools/{composer-test,composer-inspect,bounds-probe,interval-names}` + `{heji-check,check-boundaries}.mjs`
++ `examples/engine-smoke` → `test/`. REWIRED: app analysis imports (`../../../analyzer` → `../analysis`),
+CLI path constants (samples-data → `apps/hkl/src/...`, `.cache`/`out`/`configs`/analysis depth, `REPO`),
+`interval-names` imports, `package.json` scripts (`test/...` + `analyze` → `apps/analyzer/cli/`),
+`vite/dev-proxy.mjs` (configs path), `.gitignore` (`apps/analyzer/{.cache,out}`),
+`pnpm-workspace.yaml` (`examples/*` → `test/*`), `check-boundaries.mjs` (dropped analyzer exception).
+DELETED the 3 dead analyzer files + 2 spikes.

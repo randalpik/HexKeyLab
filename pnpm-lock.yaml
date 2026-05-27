@@ -66,12 +66,6 @@ importers:
         specifier: 1.2.4
         version: 1.2.4
 
-  examples/engine-smoke:
-    dependencies:
-      '@hkl/engine':
-        specifier: workspace:*
-        version: link:../../packages/engine
-
   packages/bridge:
     dependencies:
       '@hkl/shared':
@@ -95,6 +89,12 @@ importers:
       fflate:
         specifier: 0.8.3
         version: 0.8.3
+
+  test/engine-smoke:
+    dependencies:
+      '@hkl/engine':
+        specifier: workspace:*
+        version: link:../../packages/engine
 
 packages:
 

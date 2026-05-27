@@ -5,7 +5,7 @@
 // produce comma-decomposition names but are reachable close to the keyboard
 // reference and deserve explicit overrides.
 //
-// Run: `npx tsx tools/interval-names/enumerate.ts [options]`
+// Run: `npx tsx test/interval-names/enumerate.ts [options]`
 //
 // Options:
 //   --mode <E|5|P|D|7|V>    tuning mode (default '5')
@@ -19,18 +19,18 @@
 //
 // Examples:
 //   # Semiditonal-mode comma-decomp entries within ±2 bands, dist < 9
-//   npx tsx tools/interval-names/enumerate.ts --mode D --q-min -7 --q-max 7 --max-dist 9 --commas-only
+//   npx tsx test/interval-names/enumerate.ts --mode D --q-min -7 --q-max 7 --max-dist 9 --commas-only
 //
 //   # Septimal mode, group by class
-//   npx tsx tools/interval-names/enumerate.ts --mode 7 --by-class --commas-only
+//   npx tsx test/interval-names/enumerate.ts --mode 7 --by-class --commas-only
 //
 //   # All instances of (2, d) (the Pythagorean comma class)
-//   npx tsx tools/interval-names/enumerate.ts --mode D --include 'diminished 2nd|Pythagorean comma'
+//   npx tsx test/interval-names/enumerate.ts --mode D --include 'diminished 2nd|Pythagorean comma'
 
-import { intervalNameFromCoords, classifyDiatonic, solveCommas, pythagRefExp } from '../../src/tuning/intervals.ts';
-import { jiRatioWithState } from '../../src/tuning/ratios.ts';
-import { baseKeys } from '../../src/layout/baseKeys.ts';
-import type { TuningStateLike } from '../../src/tuning/regions.ts';
+import { intervalNameFromCoords, classifyDiatonic, solveCommas, pythagRefExp } from '../../apps/hkl/src/tuning/intervals.ts';
+import { jiRatioWithState } from '../../apps/hkl/src/tuning/ratios.ts';
+import { baseKeys } from '../../apps/hkl/src/layout/baseKeys.ts';
+import type { TuningStateLike } from '../../apps/hkl/src/tuning/regions.ts';
 
 type Mode = 'E' | '5' | 'P' | 'D' | '7' | 'V';
 
@@ -64,7 +64,7 @@ function parseArgs(): Args {
       case '--include':      a.include = new RegExp(v); i++; break;
       case '--limit':        a.limit = +v; i++; break;
       case '-h': case '--help':
-        console.log(`Usage: npx tsx tools/interval-names/enumerate.ts [options]\n` +
+        console.log(`Usage: npx tsx test/interval-names/enumerate.ts [options]\n` +
           `See header comment in ${import.meta.url} for option details.`);
         process.exit(0);
     }

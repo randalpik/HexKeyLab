@@ -63,7 +63,7 @@ process.on('SIGTERM', shutdown);
 const endpoints = [
   iowaMisTranscodeMiddleware('/iowa-mis', 'https://theremin.music.uiowa.edu/sound%20files/MIS%20Pitches%20-%202014', path.join(repoRoot, '.iowa-cache')),
   iowaMisTranscodeMiddleware('/iowa-mis-legacy', 'https://theremin.music.uiowa.edu/sound%20files/MIS', path.join(repoRoot, '.iowa-cache')),
-  analyzerConfigsManifest(path.join(repoRoot, 'analyzer/configs')),
+  analyzerConfigsManifest(path.join(repoRoot, 'apps/analyzer/configs')),
 ];
 
 function runEndpoints(req, res, done) {

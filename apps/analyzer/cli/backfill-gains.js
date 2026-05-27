@@ -29,20 +29,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { measureDecayLufs } from './k-weighting.js';
+import { measureDecayLufs } from '../analysis/k-weighting.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
-const REPO = path.resolve(__dirname, '..');
+const REPO = path.resolve(__dirname, '../..');
 /* findSteadyRegion etc. live in the modular ESM at analyzer-analysis.js
    (extracted from the old monolithic tools/HexKeyLab-analyzer.html). */
-const ANALYZER_ANALYSIS_JS = path.join(__dirname, 'analyzer-analysis.js');
+const ANALYZER_ANALYSIS_JS = path.join(__dirname, '..', 'analysis', 'analyzer-analysis.js');
 /* The INSTRUMENTS map was split out of samples.ts into samples-data.ts when
    the audio engine was modularized. */
-const SAMPLES_TS = path.join(REPO, 'src', 'audio', 'samples-data.ts');
-const CACHE_DIR = path.join(__dirname, '.cache');
-const CONFIGS_DIR = path.join(__dirname, 'configs');
-const OUT_DIR = path.join(__dirname, 'out');
+const SAMPLES_TS = path.join(REPO, 'apps', 'hkl', 'src', 'audio', 'samples-data.ts');
+const CACHE_DIR = path.join(__dirname, '..', '.cache');
+const CONFIGS_DIR = path.join(__dirname, '..', 'configs');
+const OUT_DIR = path.join(__dirname, '..', 'out');
 
 /* Build a baseUrl → config-basename index so we can reuse the same per-config
    cache directories generate-samples.js writes. Without this, backfill would
