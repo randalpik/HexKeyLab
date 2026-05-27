@@ -3216,7 +3216,7 @@ export const FIXTURE_ASSERTIONS = {
         };
         try {
           const handle = window.__hkl_composer;
-          const mod = await import('/src/composer/save.ts');
+          const mod = await import('/composer/src/save.ts');
           await mod.downloadPdf(handle.model, handle.renderer.toolkit(), () => handle.reRender());
           const blob = blobs.find(b => b && b.size > 0);
           if (!blob) return { ok: false, detail: 'no blob captured; count=' + blobs.length };
@@ -3240,7 +3240,7 @@ export const FIXTURE_ASSERTIONS = {
     { name: 'forceNonNoteheadBlack zeros out non-notehead colors',
       expr: `(async () => {
         const handle = window.__hkl_composer;
-        const mod = await import('/src/composer/save.ts');
+        const mod = await import('/composer/src/save.ts');
         const tk = handle.renderer.toolkit();
         const host = document.createElement('div');
         host.innerHTML = tk.renderToSVG(1, {});
@@ -3272,7 +3272,7 @@ export const FIXTURE_ASSERTIONS = {
     { name: 'liftNoteheadsAbove puts notehead last in each g.note',
       expr: `(async () => {
         const handle = window.__hkl_composer;
-        const mod = await import('/src/composer/save.ts');
+        const mod = await import('/composer/src/save.ts');
         const tk = handle.renderer.toolkit();
         const host = document.createElement('div');
         host.innerHTML = tk.renderToSVG(1, {});

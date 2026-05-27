@@ -15,7 +15,7 @@
 // small (≤30 samples typical); a pool can come later if needed.
 
 // @ts-ignore - .js module
-import { HKLInstruments } from '../../analyzer/analyzer-instruments.js';
+import { HKLInstruments } from '../../../analyzer/analyzer-instruments.js';
 import {
   getState,
   onChange,

@@ -25,7 +25,7 @@ import {
 
 // Engine modules — untyped, pulled in at worker init.
 // @ts-ignore .js module
-import { HKLAnalysis } from '../../analyzer/analyzer-analysis.js';
+import { HKLAnalysis } from '../../../analyzer/analyzer-analysis.js';
 
 interface AnalyzeRequest {
   type: 'analyze';

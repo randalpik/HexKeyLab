@@ -7,31 +7,6 @@ settings:
 importers:
 
   .:
-    dependencies:
-      '@hkl/bridge':
-        specifier: workspace:*
-        version: link:packages/bridge
-      '@hkl/engine':
-        specifier: workspace:*
-        version: link:packages/engine
-      '@hkl/notation':
-        specifier: workspace:*
-        version: link:packages/notation
-      '@hkl/shared':
-        specifier: workspace:*
-        version: link:packages/shared
-      fflate:
-        specifier: 0.8.3
-        version: 0.8.3
-      jspdf:
-        specifier: 4.2.1
-        version: 4.2.1
-      midi-file:
-        specifier: 1.2.4
-        version: 1.2.4
-      svg2pdf.js:
-        specifier: 2.7.0
-        version: 2.7.0(jspdf@4.2.1)
     devDependencies:
       '@types/node':
         specifier: 25.6.2
@@ -42,6 +17,54 @@ importers:
       vite:
         specifier: ^6.0.0
         version: 6.4.2(@types/node@25.6.2)
+
+  apps/analyzer:
+    dependencies:
+      '@hkl/bridge':
+        specifier: workspace:*
+        version: link:../../packages/bridge
+      '@hkl/engine':
+        specifier: workspace:*
+        version: link:../../packages/engine
+      '@hkl/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+
+  apps/composer:
+    dependencies:
+      '@hkl/bridge':
+        specifier: workspace:*
+        version: link:../../packages/bridge
+      '@hkl/notation':
+        specifier: workspace:*
+        version: link:../../packages/notation
+      '@hkl/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      jspdf:
+        specifier: 4.2.1
+        version: 4.2.1
+      svg2pdf.js:
+        specifier: 2.7.0
+        version: 2.7.0(jspdf@4.2.1)
+
+  apps/hkl:
+    dependencies:
+      '@hkl/bridge':
+        specifier: workspace:*
+        version: link:../../packages/bridge
+      '@hkl/engine':
+        specifier: workspace:*
+        version: link:../../packages/engine
+      '@hkl/notation':
+        specifier: workspace:*
+        version: link:../../packages/notation
+      '@hkl/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      midi-file:
+        specifier: 1.2.4
+        version: 1.2.4
 
   packages/bridge:
     dependencies:
@@ -61,7 +84,11 @@ importers:
         specifier: workspace:*
         version: link:../shared
 
-  packages/shared: {}
+  packages/shared:
+    dependencies:
+      fflate:
+        specifier: 0.8.3
+        version: 0.8.3
 
 packages:
 

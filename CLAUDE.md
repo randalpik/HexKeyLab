@@ -24,11 +24,15 @@ The companion tool at `analyzer/HexKeyLab-analyzer.html` is a dev-only sidecar t
 
 ## Project status (2026)
 
-Repo at `/home/max/HexKeyLab`, version `1.0.0`. Migration from the v0.9 single-file (`HexKeyLab.html`, ~4200 lines of inline CSS/JS) to a TypeScript + Vite project is complete (~57 modules under `src/`, strict end-to-end). v1.0 feature work is landing on top: pedal revamp, polyphonic aftertouch, persistence, recording/playback, and Lumatone diagnostics are all in.
+Repo at `/home/max/HexKeyLab`, version `1.0.0`. Migration from the v0.9 single-file (`HexKeyLab.html`, ~4200 lines of inline CSS/JS) to a strict TypeScript + Vite project is complete; that codebase is now being restructured into a pnpm monorepo (`apps/*` + `packages/*` — see the layout note below). v1.0 feature work is landing on top: pedal revamp, polyphonic aftertouch, persistence, recording/playback, and Lumatone diagnostics are all in.
 
 Stack: TypeScript + Vite + vanilla DOM, modular by domain. **No React, no Redux.** HKL is mostly engine code (audio, MIDI, render, SysEx state machines) — not a UI app. The toolbar UI is small enough to not need a framework. If a framework is later wanted *for the toolbar specifically*, Lit or Solid are the considered options. React was explicitly considered and rejected.
 
-Vite is configured for **multi-page build**: `index.html` (HKL viewer), `composer.html` (HKL Composer), and `analyzer.html` (HKL Analyzer UI) are separate entry points with separate bundles, sharing `src/*` modules. Verovio WASM is only pulled into the composer bundle; the analyzer pulls in its own `pipeline-worker` Web Worker bundle plus the existing `analyzer/*.js` engine modules.
+**Repo layout is a pnpm monorepo** (migration in progress — see decisions.md "Per-app split + same-origin dev proxy" and the two prior monorepo entries). There is no top-level `src/` anymore:
+- **`apps/{hkl,composer,analyzer}/`** — the three servable apps, each its own package with `index.html` + `vite.config.ts` + `package.json` + `src/`. (Granular paths in this doc written as `src/foo/bar.ts` now live at `apps/hkl/src/foo/bar.ts` unless they're composer/analyzer code.) Each runs its own dev server with scoped HMR.
+- **`packages/{shared,engine,notation,bridge}/`** — the library packages (`@hkl/shared`, `@hkl/engine` = HKLE nucleus, `@hkl/notation`, `@hkl/bridge`). DAG: `@hkl/shared ← {engine, notation, bridge} ← apps`. Imports use bare `@hkl/*` specifiers (subpath exports map `./*.js` → `./src/*.ts`); intra-package imports stay relative.
+
+**Running it: `pnpm dev`** spawns all three app servers + `vite/dev-proxy.mjs`, which reverse-proxies them under **one origin `http://localhost:5170`** (`/`→hkl, `/composer/`→composer, `/analyzer/`→analyzer). The single origin is mandatory — the HKL↔Composer/Analyzer `BroadcastChannel` bridge and the `IndexedDB` instrument registry are per-origin. `pnpm build` = `pnpm -r build` (each app to its own `dist/`); `pnpm typecheck` is one root `tsc --noEmit` over `apps` + `packages`. Verovio WASM is CDN-loaded by `@hkl/notation`; the analyzer app bundles its own `pipeline-worker` plus the root `analyzer/*.js` engine modules. Use **pnpm**, not npm (lockfile is `pnpm-lock.yaml`; `allowBuilds` in `pnpm-workspace.yaml` gates dependency install-scripts — esbuild must stay enabled).
 
 ## How to work with Max
 

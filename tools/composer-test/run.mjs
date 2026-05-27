@@ -11,7 +11,7 @@
 //   visual  — pixelmatch only (planned; not yet implemented)
 //
 // Requires: Vite dev server running (`npm run dev`) at
-// COMPOSER_URL (default http://localhost:5173/composer.html).
+// COMPOSER_URL (default http://localhost:5170/composer/).
 
 import { launchChromium, newTabWsUrl } from './lib/chromium.mjs';
 import { openPage } from './lib/cdp.mjs';
@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const URL_DEFAULT = process.env.COMPOSER_URL ?? 'http://localhost:5173/composer.html';
+const URL_DEFAULT = process.env.COMPOSER_URL ?? 'http://localhost:5170/composer/';
 const WAIT_MS = Number(process.env.WAIT_MS ?? 2500);
 
 function parseArgs() {

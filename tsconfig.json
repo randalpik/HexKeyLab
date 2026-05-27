@@ -15,5 +15,5 @@
     "useDefineForClassFields": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["apps", "packages"]
 }

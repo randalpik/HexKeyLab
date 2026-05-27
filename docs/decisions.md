@@ -2433,3 +2433,23 @@ HKL re-supplies all three at `engine.ts:initAudio` so runtime behavior is identi
 - Verified each package incrementally with `pnpm typecheck` + `pnpm build` + dev-server smoke (all three entry points + each `@hkl/*` specifier serve 200). `git mv` preserved rename history.
 
 **Where**: NEW `pnpm-workspace.yaml`, `packages/{shared,engine,notation,bridge}/package.json`. `package.json` (`packageManager`, four `@hkl/* workspace:*` deps). MOVED the files listed above into `packages/*/src/`. Import rewrites across ~50 `src/` files (relative → `@hkl/*`). Plan: `~/.claude/plans/i-d-like-to-do-temporal-thimble.md`.
+
+---
+
+## Per-app split + same-origin dev proxy (Phase 4 of the monorepo split, 2026-05-27)
+
+**Picked**: `src/` is gone; the three apps now live as workspace packages `apps/{hkl,composer,analyzer}`, each with its own `index.html`, `vite.config.ts`, `package.json` (isolated deps), and `src/`. The repo root holds no app code — `package.json` is a pure workspace root (`dev` → the proxy, `build` → `pnpm -r build`), and one root `tsconfig.json` with `include: ["apps","packages"]` typechecks the whole tree in a single `tsc --noEmit`. Per-app dev servers (hkl :5173, composer :5174, analyzer :5175) each get scoped HMR; **`vite/dev-proxy.mjs` reverse-proxies all three under ONE origin `http://localhost:5170`** (`pnpm dev` spawns the three + the proxy). Routing: `/composer/*`→5174, `/analyzer/*`→5175, else→5173; each app sets `base` to its sub-path and `server.hmr.clientPort: 5170` so HMR websockets dial the proxy and ride the same prefixes.
+
+**Why the proxy is non-negotiable**: the HKL↔Composer bridge is `BroadcastChannel` and the instrument registry is `IndexedDB` — **both are per-origin**. Separate dev-server ports are separate origins, which would break held-chord entry and the shared registry in dev. The proxy collapses them to one origin while keeping per-package HMR. (Max's call: he wanted separate servers for scoped reload + one spin-up script, with the proxy bridging — over option A's single multi-page server.) Production already serves the apps co-located (same origin), so this matches deploy. The dev-only `/iowa-mis*` + `/analyzer-configs-manifest` endpoints are mounted on the **proxy** (origin level, via `vite/middleware.mjs`), so any app's absolute `fetch` reaches them regardless of `base`; standalone `pnpm --filter @hkl/<app> dev` works for pure UI work but lacks those endpoints + the cross-app bridge.
+
+**Rejected**:
+- **Single multi-page root vite config** (option A): simpler + same-origin for free, but no per-package scoped HMR and not "self-contained servable apps."
+- **Per-app servers with no proxy** (different origins): breaks the bridge + registry in dev.
+- **TS project references**: still deferred (task #7). One root tsconfig with `include` globs keeps typecheck whole and green without per-package composite builds; pnpm dep lists already isolate packages at resolution/build time (composer's `node_modules` only has its declared deps — verified).
+- **Per-app middleware copies**: the dev endpoints live once, on the proxy.
+
+**Enabling refactor**: composer's last HKL-core edge (`scTranspose → transcription/pitch.coordToMidi`) was removed by deduping the redundant `coordToMidi` (canonical pure copy already in `@hkl/shared/freq.js`); `darkColorHex`/`coordToLilyPitch` stay in `transcription/pitch.ts` (HKL-side, stateful via `render/colors`). After that, composer reaches nothing outside its own subtree + `@hkl/*`.
+
+**Gotchas**: `public/` stays at repo root; each app points `publicDir` at `../../public` (shared favicon + Bravura font + shipped `.hki`s). Analyzer's imports into the root `analyzer/*.js` CLI engine gained one `../` level. `tools/composer-test` repointed to `http://localhost:5170/composer/` and the in-fixture dynamic `import('/src/composer/save.ts')` → `/composer/src/save.ts` (base-prefixed). 3 HEJI visual baselines were re-seeded — they predated a recent accidental-position fix and had never been re-run (a skipped plan step), NOT a split regression. Suite: 129/129 full.
+
+**Where**: NEW `apps/{hkl,composer,analyzer}/{index.html,vite.config.ts,package.json}`, `vite/dev-proxy.mjs`, `vite/middleware.mjs`. MOVED `src/*` → `apps/hkl/src` (HKL-core), `src/composer` → `apps/composer/src`, `src/analyzer` → `apps/analyzer/src`; root `*.html` → `apps/*/index.html`. DELETED root `vite.config.ts`. `package.json` (workspace root), `tsconfig.json` (`include`), `tools/composer-test/{run,fixtures}.mjs`. Re-seeded `tools/composer-test/baselines/heji_*.png`.
