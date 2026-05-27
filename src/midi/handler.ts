@@ -30,6 +30,7 @@ import {
 import { filterPA } from '../audio/aftertouch.js';
 import { velocityCal } from '../audio/velocityCal.js';
 import { fixedMidiToKey, fixedMidiToKeyAt } from './engine.js';
+import { restrikePianoOut } from './piano-out.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import { view } from '../state/view.js';
 import { keyFreq } from '../tuning/frequency.js';
@@ -224,6 +225,7 @@ export function handleMidiMessage(e: MIDIMessageEvent): void {
        compensates outliers in the same domain that audio sees. Out of capture
        mode this is a single boolean check. */
     velocityCal.recordSample(key, vShaped);
+    restrikePianoOut(key); /* re-attack on the external synth if already sounding */
   } else if (status === 0x80 || (status === 0x90 && d2 === 0)) {
     heldLumatonePhys.delete(physId);
     if (audio.sustainPedalDown || audio.sostenutoLockedKeys.has(key)) {

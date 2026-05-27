@@ -20,6 +20,7 @@
 import { getNoteAlter } from '../../notation/accidentals.js';
 import { extractNoteElements } from './note-elements.js';
 import { MEI_NS, type ComposerModel, type Voice } from './index.js';
+import { pruneDanglingSlurs } from '../slurs.js';
 
 export function normalizeTies(model: ComposerModel): void {
   const doc = model.getDoc();
@@ -89,6 +90,11 @@ export function normalizeTies(model: ComposerModel): void {
       prevOffers = currOffers;
     }
   }
+
+  /* This is the shared post-mutation hook (run after every structural edit),
+   * so it's also the natural place to drop slurs whose endpoint slots were
+   * deleted — same rationale as the tie-orphan cleanup above. */
+  pruneDanglingSlurs(doc);
 }
 
 /* ── per-note tie helpers ──────────────────────────────────────────────── */

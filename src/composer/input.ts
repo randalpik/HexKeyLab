@@ -14,6 +14,7 @@ import {
   hairpinsAt, momentCompare, measureHasExpression,
   type Moment,
 } from './expressions.js';
+import { addSlur, removeSlur, collectSlurs } from './slurs.js';
 import {
   type SelectionState, type Dir,
   enterBeatSelection, enterMeasureSelection,
@@ -50,6 +51,13 @@ interface PendingTuplet {
   atomicK: number;   /* atomic = span-duration divided by K ranks (2/4/8) */
 }
 
+interface PendingSlur {
+  /** xml:id of the start slot (note or chord). Resolved fresh at close time
+   *  so note entry between the two Ctrl+L presses doesn't invalidate it. */
+  startId: string;
+  voice: Voice;
+}
+
 /** Per-note selection of a single `<note>` element. Targets a chord-child
  *  note OR a bare `<note>`. When set:
  *    - Alt+Up/Down step through the parent chord's notes (sorted ascending by
@@ -78,6 +86,7 @@ export interface InputState {
   exprCursor: ExpressionCursor;
   pendingHairpin: PendingHairpin | null;
   pendingTuplet: PendingTuplet | null;
+  pendingSlur: PendingSlur | null;
   selection: SelectionState | null;
   chordInternalSel: ChordInternalSel | null;
 }
@@ -171,6 +180,7 @@ const state: InputState = {
   exprCursor: { index: 0, moments: [] },
   pendingHairpin: null,
   pendingTuplet: null,
+  pendingSlur: null,
   selection: null,
   chordInternalSel: null,
 };
@@ -296,6 +306,40 @@ function cancelPendingHairpin(hooks: InputHooks): boolean {
   hooks.setStatus?.('Pending hairpin cancelled.', 'action');
   hooks.onStateChange();
   return true;
+}
+
+function cancelPendingSlur(hooks: InputHooks): boolean {
+  if (!state.pendingSlur) return false;
+  state.pendingSlur = null;
+  hooks.setStatus?.('Pending slur cancelled.', 'action');
+  hooks.onStateChange();
+  return true;
+}
+
+/** The <slur> whose voice matches and whose [start, end] flat-index span
+ *  (inclusive) contains the given slot index — i.e. the cursor is "within
+ *  the slur". Null if none. */
+function findSlurCovering(model: ComposerModel, voice: Voice, index: number): Element | null {
+  for (const s of collectSlurs(model.getDoc())) {
+    if (s.voice !== voice) continue;
+    const a = model.findElement(s.startId);
+    const b = model.findElement(s.endId);
+    if (!a || !b || a.voice !== voice || b.voice !== voice) continue;
+    const lo = Math.min(a.index, b.index);
+    const hi = Math.max(a.index, b.index);
+    if (index >= lo && index <= hi) return s.el;
+  }
+  return null;
+}
+
+/** Silently drop a pending slur if the voice or cursor-mode changed since the
+ *  pre-navigation snapshot. Backlog: "Switching voices exits slur state."
+ *  Silent so the post-switch voice status (set by cycleVoice) stays visible. */
+function cancelSlurIfVoiceChanged(model: ComposerModel, beforeVoice: Voice, beforeMode: CursorMode): void {
+  if (!state.pendingSlur) return;
+  if (model.getCurrentVoice() !== beforeVoice || state.cursorMode !== beforeMode) {
+    state.pendingSlur = null;
+  }
 }
 
 function deleteSelectedExpression(model: ComposerModel, hooks: InputHooks): boolean {
@@ -790,6 +834,8 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
    *  mode with the current beat selected (single-beat selection); the
    *  asymmetric anchor/movable entry has been retired. */
   function enterSelectionFromVoice(arrow: 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown'): boolean {
+    /* Leaving voice mode exits any pending slur. */
+    state.pendingSlur = null;
     const v = model.getCurrentVoice();
     const c = model.getCursor();
     if (arrow === 'ArrowLeft' || arrow === 'ArrowRight') {
@@ -1129,6 +1175,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
      * earlier snapshot may invalidate those references. Cancel first. */
     if (state.pendingHairpin) { state.pendingHairpin = null; }
     if (state.pendingTuplet) { state.pendingTuplet = null; }
+    if (state.pendingSlur) { state.pendingSlur = null; }
     state.chordInternalSel = null;
     const entry = isUndo
       ? hooks.history.undo(model, undoEffects)
@@ -1254,6 +1301,69 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       state.pendingTuplet = { num: n, numbase: cfg.numbase, dotted: cfg.dotted, atomicK: cfg.atomicK };
       hooks.setStatus?.('Tuplet ' + n + ':' + cfg.numbase + ' — press duration digit for span.', 'state');
       hooks.onStateChange();
+      return;
+    }
+
+    /* Ctrl+L: slur entry (pending-state toggle). First press marks the start
+       slot; second press (after navigating) closes the slur; Ctrl+L on a slot
+       already under a slur deletes that slur. Switching voices exits the
+       pending state (handled at the arrow-nav call sites). preventDefault is
+       critical — Ctrl+L focuses the browser address bar. */
+    if (e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'l' || e.key === 'L')) {
+      e.preventDefault();
+      if (state.cursorMode !== 'voice') {
+        hooks.setStatus?.('Slurs require voice mode.', 'error');
+        return;
+      }
+      if (hooks.isPlaybackActive()) return;
+      const voice = model.getCurrentVoice();
+      const ref = model.getCurrentElement(voice, state.mode);
+      if (!ref || (ref.elem.localName !== 'note' && ref.elem.localName !== 'chord')) {
+        hooks.setStatus?.('Place the cursor on a note to slur.', 'error');
+        return;
+      }
+      /* Delete: cursor anywhere under an existing slur in this voice. */
+      const covering = findSlurCovering(model, voice, ref.index);
+      if (covering) {
+        withHistory('slur', () => { removeSlur(covering); return true; });
+        state.pendingSlur = null;
+        hooks.setStatus?.('Slur deleted.', 'action');
+        hooks.onStateChange();
+        hooks.onChange();
+        return;
+      }
+      /* Start: enter pending state (no document mutation, no history). */
+      if (!state.pendingSlur) {
+        state.pendingSlur = { startId: ref.id, voice };
+        hooks.setStatus?.('Slur started — navigate to the end note and press Ctrl+L. (Esc to cancel.)', 'state');
+        hooks.onStateChange();
+        return;
+      }
+      /* Close: resolve the start slot fresh (note entry may have shifted it). */
+      const pending = state.pendingSlur;
+      state.pendingSlur = null;
+      const startLoc = model.findElement(pending.startId);
+      if (!startLoc || startLoc.voice !== voice) {
+        hooks.setStatus?.('Slur start note is gone; cancelled.', 'error');
+        hooks.onStateChange();
+        return;
+      }
+      if (startLoc.index === ref.index) {
+        hooks.setStatus?.('Slur needs two different notes.', 'error');
+        hooks.onStateChange();
+        return;
+      }
+      const lowFirst = startLoc.index < ref.index;
+      const startId = lowFirst ? pending.startId : ref.id;
+      const endId = lowFirst ? ref.id : pending.startId;
+      let added = false;
+      withHistory('slur', () => {
+        added = addSlur(model.getDoc(), startId, endId, voice) !== null;
+        return added;
+      });
+      hooks.setStatus?.(added ? 'Slur added.' : 'Failed to add slur.', added ? 'action' : 'error');
+      hooks.onStateChange();
+      hooks.onChange();
       return;
     }
 
@@ -1418,8 +1528,8 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     const navKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'];
     if (navKeys.indexOf(e.key) >= 0) {
       if (hooks.isPlaybackActive()) { e.preventDefault(); return; }
-      if (e.key === 'ArrowUp')   { e.preventDefault(); cycleVoice(model, 'up', hooks);   hooks.onStateChange(); hooks.onChange(); return; }
-      if (e.key === 'ArrowDown') { e.preventDefault(); cycleVoice(model, 'down', hooks); hooks.onStateChange(); hooks.onChange(); return; }
+      if (e.key === 'ArrowUp')   { e.preventDefault(); const bv = model.getCurrentVoice(), bm = state.cursorMode; cycleVoice(model, 'up', hooks);   cancelSlurIfVoiceChanged(model, bv, bm); hooks.onStateChange(); hooks.onChange(); return; }
+      if (e.key === 'ArrowDown') { e.preventDefault(); const bv = model.getCurrentVoice(), bm = state.cursorMode; cycleVoice(model, 'down', hooks); cancelSlurIfVoiceChanged(model, bv, bm); hooks.onStateChange(); hooks.onChange(); return; }
       if (state.cursorMode === 'expr') {
         if (e.key === 'ArrowLeft')  { e.preventDefault(); state.exprCursor = step(state.exprCursor, -1); hooks.onStateChange(); hooks.onChange(); return; }
         if (e.key === 'ArrowRight') { e.preventDefault(); state.exprCursor = step(state.exprCursor, +1); hooks.onStateChange(); hooks.onChange(); return; }
@@ -1506,7 +1616,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     /* Escape: cancel pending hairpin (works in either mode). Pending tuplet
        is cancelled earlier in the handler by the stray-input branch. */
     if (e.key === 'Escape') {
-      if (cancelPendingHairpin(hooks)) {
+      if (cancelPendingHairpin(hooks) || cancelPendingSlur(hooks)) {
         e.preventDefault();
         return;
       }

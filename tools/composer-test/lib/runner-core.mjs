@@ -34,6 +34,7 @@ export const RESET_SNIPPET = `
   inp.duration = '4';
   inp.pendingHairpin = null;
   inp.pendingTuplet = null;
+  inp.pendingSlur = null;
   inp.exprCursor = { index: 0, moments: [] };
   inp.chordInternalSel = null;
   inp.selection = null;

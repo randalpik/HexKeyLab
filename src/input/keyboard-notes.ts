@@ -31,6 +31,7 @@ import { SampleEngine } from '../audio/samples.js';
 import { keyFreq } from '../tuning/frequency.js';
 import { animation } from '../render/animation.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
+import { restrikePianoOut } from '../midi/piano-out.js';
 import { qwertyKeyMap } from './qwerty.js';
 import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
 import type { KeyId, Voice } from '../types.js';
@@ -165,6 +166,7 @@ export let migrateHeldQwertyVoices: (dq: number, dr: number) => void = () => {};
     selection.selectedKeys.add(key);
     audio.keyVelocity[key] = KEYBOARD_VELOCITY;
     heldCodes.add(code);
+    restrikePianoOut(key); /* re-attack on the external synth if already sounding */
     onSelectionChanged();
   }
 

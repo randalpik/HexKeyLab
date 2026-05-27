@@ -1542,6 +1542,96 @@ const HELP_MODAL = {
    * help modal would need a separate viewport-clip path in visual.mjs.) */
 };
 
+/* ── Slurs (Ctrl+L pending-state entry; §7.20) ───────────────────────── */
+
+/* Three quarter notes in V1 M1. In insert mode the per-measure flat stream
+ * is [wrapper, note0, note1, note2], so note0 sits at cursor index 1. */
+const SLUR_3Q_V1 = `
+  m.setCursor(0, 1);
+  m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+  m.insertChordAtCursor({ notes: [{ q: 0, r: 1, pname: 'e', accid: '', oct: 4, midi: 64, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+  m.insertChordAtCursor({ notes: [{ q: 1, r: 0, pname: 'c', accid: 's', oct: 4, midi: 61, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+  m.setCursor(1, 1);
+`;
+
+const SLURS = {
+  /* Ctrl+L on note0, →, Ctrl+L on note1 → one <slur> binding the two slots. */
+  slur_create: {
+    setup: `${SLUR_3Q_V1}
+      window.__slur_ids = [...m.getDoc().querySelectorAll('note')].map(n => n.getAttribute('xml:id'));
+    `,
+    setupKeys: [
+      { key: 'l', ctrl: true },
+      { key: 'ArrowRight' },
+      { key: 'l', ctrl: true },
+    ],
+    visualBaseline: 'slur_create',
+  },
+
+  /* Slur over notes 0..2, then Ctrl+L on the interior note1 deletes it. */
+  slur_delete_interior: {
+    setup: SLUR_3Q_V1,
+    setupKeys: [
+      { key: 'l', ctrl: true },
+      { key: 'ArrowRight' },
+      { key: 'ArrowRight' },
+      { key: 'l', ctrl: true },
+      { key: 'ArrowLeft' },
+      { key: 'l', ctrl: true },
+    ],
+  },
+
+  /* Two Ctrl+L on the same slot → no-op + error; zero slurs. */
+  slur_sameNote_noop: {
+    setup: SLUR_3Q_V1,
+    setupKeys: [
+      { key: 'l', ctrl: true },
+      { key: 'l', ctrl: true },
+    ],
+  },
+
+  /* Start a slur, switch voices (ArrowDown) → pending slur cleared. */
+  slur_voiceSwitch_exits: {
+    setup: SLUR_3Q_V1,
+    setupKeys: [
+      { key: 'l', ctrl: true },
+      { key: 'ArrowDown' },
+    ],
+  },
+
+  /* Start a slur, Escape → pending cleared, no slur created. */
+  slur_esc_cancels: {
+    setup: SLUR_3Q_V1,
+    setupKeys: [
+      { key: 'l', ctrl: true },
+      { key: 'Escape' },
+    ],
+  },
+
+  /* Create slur note0→note1, then delete an endpoint → slur pruned. */
+  slur_prune_onEndpointDelete: {
+    setup: SLUR_3Q_V1,
+    setupKeys: [
+      { key: 'l', ctrl: true },
+      { key: 'ArrowRight' },
+      { key: 'l', ctrl: true },
+      { key: 'Backspace' },
+    ],
+  },
+
+  /* Slur note0→note1; buildPlayback should flag note0 slurredToNext and stamp
+   * voice=1 on every event. (Playback-metadata path; audio realization itself
+   * is verified by ear.) */
+  slur_playback_flags: {
+    setup: SLUR_3Q_V1,
+    setupKeys: [
+      { key: 'l', ctrl: true },
+      { key: 'ArrowRight' },
+      { key: 'l', ctrl: true },
+    ],
+  },
+};
+
 export const FIXTURES = {
   ...mapTier(EXISTING, 'fast'),
   ...mapTier(CURSOR_CONVENTION, 'fast'),
@@ -1562,6 +1652,7 @@ export const FIXTURES = {
   ...mapKbdTier(EXPORT, 'full'),
   ...mapKbdTier(UNDO_REDO, 'full'),
   ...mapKbdTier(HELP_MODAL, 'full'),
+  ...mapKbdTier(SLURS, 'full'),
 };
 
 /** Fixture-specific assertions. Map fixture name → list of {name, expr}.
@@ -1572,6 +1663,88 @@ export const FIXTURES = {
  *  invariant, no console errors) are applied to EVERY fixture by the
  *  runner — don't repeat them here. */
 export const FIXTURE_ASSERTIONS = {
+  /* Slurs. */
+  slur_create: [
+    { name: 'one <slur> bound to note0→note1, data-voice=1',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const slurs = [...m.getDoc().querySelectorAll('slur')];
+        if (slurs.length !== 1) return { ok: false, detail: 'slurs=' + slurs.length };
+        const ids = window.__slur_ids || [];
+        const s = slurs[0];
+        const want = { start: '#' + ids[0], end: '#' + ids[1] };
+        const got = { start: s.getAttribute('startid'), end: s.getAttribute('endid'), v: s.getAttribute('data-voice') };
+        return (got.start === want.start && got.end === want.end && got.v === '1')
+          ? { ok: true } : { ok: false, detail: JSON.stringify({ got, want }) };
+      })()` },
+    { name: 'slur renders as one g.slur arc',
+      expr: `(() => {
+        const n = document.querySelectorAll('g.slur').length;
+        return n === 1 ? { ok: true } : { ok: false, detail: 'g.slur=' + n };
+      })()` },
+  ],
+  slur_delete_interior: [
+    { name: 'Ctrl+L on interior note removes the whole slur',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const n = m.getDoc().querySelectorAll('slur').length;
+        return n === 0 ? { ok: true } : { ok: false, detail: 'slurs=' + n };
+      })()` },
+  ],
+  slur_sameNote_noop: [
+    { name: 'same-slot close is a no-op (no slur, pending cleared)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const n = m.getDoc().querySelectorAll('slur').length;
+        const p = window.__hkl_composer.inputState().pendingSlur;
+        return (n === 0 && p === null) ? { ok: true } : { ok: false, detail: 'slurs=' + n + ' pending=' + JSON.stringify(p) };
+      })()` },
+  ],
+  slur_voiceSwitch_exits: [
+    { name: 'voice switch clears pending slur; none created',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const n = m.getDoc().querySelectorAll('slur').length;
+        const p = window.__hkl_composer.inputState().pendingSlur;
+        return (n === 0 && p === null) ? { ok: true } : { ok: false, detail: 'slurs=' + n + ' pending=' + JSON.stringify(p) };
+      })()` },
+  ],
+  slur_esc_cancels: [
+    { name: 'Escape clears pending slur; none created',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const n = m.getDoc().querySelectorAll('slur').length;
+        const p = window.__hkl_composer.inputState().pendingSlur;
+        return (n === 0 && p === null) ? { ok: true } : { ok: false, detail: 'slurs=' + n + ' pending=' + JSON.stringify(p) };
+      })()` },
+  ],
+  slur_prune_onEndpointDelete: [
+    { name: 'deleting an endpoint note prunes the dangling slur',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const n = m.getDoc().querySelectorAll('slur').length;
+        return n === 0 ? { ok: true } : { ok: false, detail: 'slurs=' + n };
+      })()` },
+  ],
+  slur_playback_flags: [
+    { name: 'note0 slurredToNext; note1/note2 not; voice=1 on all events',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const events = window.__hkl_composer.buildPlayback(m);
+        if (!events.every(e => e.voice === 1)) {
+          return { ok: false, detail: 'voices=' + events.map(e => e.voice).join(',') };
+        }
+        const at = (ms) => events.find(e => Math.abs(e.atMs - ms) < 1e-6);
+        const e0 = at(0), e1 = at(500), e2 = at(1000);
+        if (!e0 || !e1 || !e2) {
+          return { ok: false, detail: 'atMs=' + events.map(e => e.atMs).join(',') };
+        }
+        return (e0.slurredToNext === true && !e1.slurredToNext && !e2.slurredToNext)
+          ? { ok: true }
+          : { ok: false, detail: 'flags=' + JSON.stringify([e0.slurredToNext, e1.slurredToNext, e2.slurredToNext]) };
+      })()` },
+  ],
+
   /* HEJI injection. */
   heji_sharp_arrow: [
     { name: 'C#↓ injected as one U+E2C3 glyph',

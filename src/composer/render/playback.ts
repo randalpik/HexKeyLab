@@ -16,6 +16,7 @@ import type { PlaybackEvent, CoordRef } from '../../bridge/protocol.js';
 import {
   collectDynams, collectHairpins, getDynamicMap, absoluteTickForMoment,
 } from '../expressions.js';
+import { collectSlurs } from '../slurs.js';
 import { realTicks } from '../model/ticks.js';
 import { DEFAULT_DYNAMIC_MAP } from '../../shared/dynamics.js';
 
@@ -202,6 +203,24 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
       pushContentChildren(layer, stream);
     }
 
+    /* Slur spans for this voice, as inclusive [lo, hi] stream-index ranges.
+       Endpoints are slot ids (note or chord), which are the stream elements. */
+    const voiceSlurs: Array<{ lo: number; hi: number }> = [];
+    for (const s of collectSlurs(mei)) {
+      if (s.voice !== voice) continue;
+      const si = stream.findIndex((e) => e.getAttribute('xml:id') === s.startId);
+      const ei = stream.findIndex((e) => e.getAttribute('xml:id') === s.endId);
+      if (si >= 0 && ei >= 0) voiceSlurs.push({ lo: Math.min(si, ei), hi: Math.max(si, ei) });
+    }
+    /* Two attacks at stream indices a < b are slur-joined iff one span
+       contains both. */
+    const slurJoins = (a: number, b: number): boolean =>
+      voiceSlurs.some((sp) => sp.lo <= a && b <= sp.hi);
+    /* The previous attack slot in this voice: its stream index + the indices
+       of the event(s) it emitted (a partial-tie chord emits several). When the
+       next attack is slur-joined, we back-patch slurredToNext onto those. */
+    let prevAttack: { streamIdx: number; eventIdxs: number[] } | null = null;
+
     let tTicks = 0;
     let i = 0;
     while (i < stream.length) {
@@ -243,15 +262,24 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
         const meiId = child.getAttribute('xml:id') ?? undefined;
         const vel = velocity.at(tTicks);
         const atMs = tTicks * tickMs;
+        const emittedIdxs: number[] = [];
         for (const [durTicks, notes] of byDuration) {
+          emittedIdxs.push(events.length);
           events.push({
             atMs,
             durationMs: durTicks * tickMs,
             notes,
             meiId,
             velocity: vel,
+            voice,
           });
         }
+        /* If this attack is slur-joined to the previous one in this voice,
+           mark the previous attack's events as slurredToNext. */
+        if (prevAttack && slurJoins(prevAttack.streamIdx, i)) {
+          for (const ei of prevAttack.eventIdxs) events[ei].slurredToNext = true;
+        }
+        prevAttack = { streamIdx: i, eventIdxs: emittedIdxs };
       }
 
       /* Always advance one slot. tie-terminal notes in later slots will

@@ -152,6 +152,35 @@
   </div>
 </div>
 
+<div class="panel" id="ji">
+  <h2 style="margin-top:0">JI chord player (RPN sequential retune)</h2>
+  <div class="hint">One voice per MIDI channel: each tone claims its own channel, that channel is fine-tuned (RPN 0001) to the tone's offset, then all note-ons fire together as a block chord. Distinct channels are the only way to hold distinct tunings at once — a single channel re-applies its current fine-tune to every voice at each note-on. 16 voices max, oldest stolen after that. Needs the SP-250 set to receive multiple channels (Omni On or multi-timbral) — if only some notes sound, check its MIDI receive mode.</div>
+  <div class="step">
+    <label for="ji-root">Root</label>
+    <input id="ji-root" type="number" min="36" max="84" value="60" style="width:60px; background:#2a2a2a; color:#e5e5e5; border:1px solid #444; padding:4px 6px;" />
+    <span class="muted" id="ji-rootname">C4</span>
+    &nbsp;&nbsp;<label for="ji-hold" style="min-width:auto">Hold (s)</label>
+    <input id="ji-hold" type="number" min="0.5" max="10" step="0.5" value="3" style="width:55px; background:#2a2a2a; color:#e5e5e5; border:1px solid #444; padding:4px 6px;" />
+  </div>
+  <div class="step">
+    <button data-chord="major">Just major (4:5:6)</button>
+    <button data-chord="minor">Just minor (10:12:15)</button>
+    <button data-chord="dom7">Harmonic 7th (4:5:6:7)</button>
+    <button data-chord="major" data-tet="1">12-TET major (reference)</button>
+  </div>
+  <div id="ji-status" class="hint"></div>
+</div>
+
+<div class="panel" id="apply-test">
+  <h2 style="margin-top:0">Tuning-apply test (channel rotation)</h2>
+  <div class="hint">Plays the root note 12 times, alternating its fine-tune <b>0¢ / +50¢</b>, with the RPN sent immediately before each note-on (no gap — like HKL). Same MIDI note in both modes, so anything you hear is purely the fine-tune applying or not. <b>Same channel</b> keeps it on ch1 (the in-tune LIFO case); <b>Rotating</b> moves to the next channel each note (the FIFO case). If Same alternates cleanly but Rotating doesn't, switching channels with an immediate note-on races the fine-tune.</div>
+  <div class="step">
+    <button id="apply-same">Same channel (ch1)</button>
+    <button id="apply-rotate">Rotating channels (1→16)</button>
+  </div>
+  <div id="apply-status" class="hint"></div>
+</div>
+
 <div class="panel">
   <h2 style="margin-top:0">Deliverable</h2>
   <pre id="results" class="results">(no results yet)</pre>
@@ -442,6 +471,133 @@ $('c-clear').addEventListener('click', () => {
   state.results.Clog = '';
   $('c-log').textContent = '';
 });
+
+// ---- JI chord player ----
+
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+function midiName(m) { return NOTE_NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1); }
+
+// RPN 0001 Fine Tuning, full 14-bit. Range ±100 cents over 0x0000..0x3FFF, 0x2000 = center.
+// 8192 steps per 100 cents → 81.92 steps/cent.
+function fineTuneCC(cents, ch = 0) {
+  const v = Math.max(0, Math.min(16383, Math.round(8192 + cents * 81.92)));
+  send([0xB0 | (ch & 0x0F), 101, 0x00]); // RPN MSB
+  send([0xB0 | (ch & 0x0F), 100, 0x01]); // RPN LSB → RPN 0001
+  send([0xB0 | (ch & 0x0F),   6, (v >> 7) & 0x7F]); // Data Entry MSB
+  send([0xB0 | (ch & 0x0F),  38, v & 0x7F]);        // Data Entry LSB
+  send([0xB0 | (ch & 0x0F), 101, 0x7F]); // RPN Null — deselect so stray data entry can't drift the param
+  send([0xB0 | (ch & 0x0F), 100, 0x7F]);
+}
+
+const CHORDS = {
+  major: { tones: [[1, '1/1'], [5 / 4, '5/4'], [3 / 2, '3/2']] },
+  minor: { tones: [[1, '1/1'], [6 / 5, '6/5'], [3 / 2, '3/2']] },
+  dom7:  { tones: [[1, '1/1'], [5 / 4, '5/4'], [3 / 2, '3/2'], [7 / 4, '7/4']] },
+};
+
+// 16-channel voice allocator: one voice per MIDI channel, each independently
+// fine-tuned. The SP-250 applies a channel's current fine-tune to every voice on
+// that channel at each note-on, so distinct simultaneous tunings require distinct
+// channels. When all 16 are busy, steal the oldest.
+const allocator = {
+  voices: Array.from({ length: 16 }, (_, ch) => ({ ch, active: false, note: null, seq: 0 })),
+  counter: 0,
+  acquire() {
+    let v = this.voices.find((x) => !x.active);
+    if (!v) {
+      v = this.voices.reduce((a, b) => (a.seq <= b.seq ? a : b)); // oldest active
+      noteOff(v.note, v.ch); // steal: release the old note before reusing the channel
+    }
+    v.active = true;
+    v.seq = ++this.counter;
+    return v;
+  },
+  release(v) {
+    if (!v || !v.active) return;
+    noteOff(v.note, v.ch);
+    v.active = false;
+    v.note = null;
+  },
+};
+
+async function playJIChord(rootMidi, tones, retune, holdMs) {
+  if (!ensureOut()) return;
+  const plan = tones.map(([ratio, label]) => {
+    const centsAbove = 1200 * Math.log2(ratio);
+    const semis = Math.round(centsAbove / 100);
+    return { midiNote: rootMidi + semis, offset: retune ? centsAbove - semis * 100 : 0, label };
+  });
+
+  setRunning(true, $('ji'));
+
+  // Pass 1: claim a channel per voice and pre-tune it (independent channels, no interference).
+  const voices = plan.map((p) => {
+    const v = allocator.acquire();
+    v.note = p.midiNote;
+    fineTuneCC(p.offset, v.ch);
+    return { v, ...p };
+  });
+  await sleep(15); // let the RPN sequences land before the onsets
+
+  // Pass 2: fire all note-ons together — true simultaneous block chord, each at its own tuning.
+  for (const x of voices) noteOn(x.midiNote, VEL, x.v.ch);
+
+  $('ji-status').textContent =
+    (retune ? 'JI: ' : '12-TET: ') +
+    voices.map((x) => {
+      const off = (x.offset >= 0 ? '+' : '') + x.offset.toFixed(1) + 'c';
+      return `${midiName(x.midiNote)} ${off} ch${x.v.ch + 1} (${x.label})`;
+    }).join('   ');
+
+  await sleep(holdMs);
+  for (const x of voices) allocator.release(x.v);
+  if (retune) for (const x of voices) fineTuneCC(0, x.v.ch); // recenter used channels
+  setRunning(false, $('ji'));
+}
+
+$('ji-root').addEventListener('input', (e) => {
+  const m = parseInt(e.target.value, 10);
+  $('ji-rootname').textContent = Number.isFinite(m) ? midiName(m) : '';
+});
+
+$('ji').querySelectorAll('button[data-chord]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const root = parseInt($('ji-root').value, 10) || 60;
+    const holdMs = (parseFloat($('ji-hold').value) || 3) * 1000;
+    const retune = btn.dataset.tet !== '1';
+    playJIChord(root, CHORDS[btn.dataset.chord].tones, retune, holdMs);
+  });
+});
+
+// ---- Tuning-apply test (channel rotation) ----
+
+async function tuningApplyTest(rotate) {
+  if (!ensureOut()) return;
+  const root = parseInt($('ji-root').value, 10) || 60;
+  const N = rotate ? 16 : 12;  // rotate: one note per MIDI channel 1..16
+  setRunning(true, $('apply-test'));
+  $('apply-status').textContent = rotate ? 'Rotating channels 1→16…' : 'Same channel (ch1)…';
+  for (let i = 0; i < N; i++) {
+    const ch = rotate ? i : 0;           // 0-indexed; MIDI channel = ch+1
+    const cents = (i % 2) ? 50 : 0;
+    console.log(`[apply] MIDI ch ${ch + 1}: ${cents >= 0 ? '+' : ''}${cents}c`);
+    fineTuneCC(cents, ch);   // RPN immediately before the note-on, no gap
+    noteOn(root, VEL, ch);
+    await sleep(220);
+    noteOff(root, ch);
+    await sleep(70);
+  }
+  /* Cleanup: all-notes-off + recenter every channel (clears any note a bad
+     channel left hanging by ignoring note-off). */
+  for (let ch = 0; ch < 16; ch++) { send([0xB0 | ch, 123, 0]); fineTuneCC(0, ch); }
+  $('apply-status').textContent = rotate
+    ? 'Done — watch the console: which MIDI channels were silent, stuck at 0¢, or hung?'
+    : 'Done — did the pitch alternate cleanly between 0¢ and +50¢?';
+  setRunning(false, $('apply-test'));
+}
+
+$('apply-same').addEventListener('click', () => tuningApplyTest(false));
+$('apply-rotate').addEventListener('click', () => tuningApplyTest(true));
 
 // ---- Results panel ----
 

@@ -100,6 +100,10 @@ export interface PrefsV1 {
    *  port across reloads in modern browsers). */
   pianoInputDeviceId: string | null;
   pianoEnabled: boolean;
+  /** When on, mirror HKL playback to an external MIDI synth (the selected
+   *  pianoIn device's matching output port) using per-channel RPN fine-tuning
+   *  for just-intonation pitches. Independent of audioEnabled. Off by default. */
+  pianoOutputEnabled: boolean;
   pianoGainCurve?: PianoGainCurvePrefs;
   /** Show a dotted outline marking the valid ref-note placement region
    *  (V5 in 5-limit/12-TET, V7-intersection in 7-limit). Off by default. */
@@ -159,6 +163,7 @@ export const DEFAULT_PREFS: PrefsV1 = {
   captureAudio: false,
   pianoInputDeviceId: null,
   pianoEnabled: false,
+  pianoOutputEnabled: false,
   validRefBounds: false,
   syncToComposer: false,
   hejiEnabled: false,
@@ -282,6 +287,10 @@ export function loadPrefs(): PrefsV1 {
       typeof o.pianoEnabled === 'boolean'
         ? o.pianoEnabled
         : DEFAULT_PREFS.pianoEnabled,
+    pianoOutputEnabled:
+      typeof o.pianoOutputEnabled === 'boolean'
+        ? o.pianoOutputEnabled
+        : DEFAULT_PREFS.pianoOutputEnabled,
     pianoGainCurve: loadPianoGainCurve(o.pianoGainCurve),
     validRefBounds:
       typeof o.validRefBounds === 'boolean'

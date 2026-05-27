@@ -23,6 +23,7 @@ import { resolve12TetToCoord } from '../tuning/resolve.js';
 import { normalizePianoVelocity } from '../audio/pianoVel.js';
 import { noteOff, triggerRearticulateFlash } from '../audio/engine.js';
 import { whenMidiAccessReady } from './engine.js';
+import { rebindPianoOut, setOutputProgram, restrikePianoOut } from './piano-out.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import type { KeyId } from '../types.js';
 
@@ -107,6 +108,7 @@ function handleNoteOn(midiNote: number, vRaw: number): void {
     audio.sustainedKeys.delete(prev);
     selection.selectedKeys.add(prev);
     audio.keyVelocity[prev] = normalizePianoVelocity(vRaw);
+    restrikePianoOut(prev); /* re-attack on the external synth (membership unchanged) */
     onSelectionChanged();
     return;
   }
@@ -135,6 +137,7 @@ function handleNoteOn(midiNote: number, vRaw: number): void {
   selection.selectedKeys.add(key);
   audio.keyVelocity[key] = normalizePianoVelocity(vRaw);
   activeMidiToKey.set(midiNote, key);
+  restrikePianoOut(key); /* re-attack on the external synth if already sounding */
   onSelectionChanged();
 }
 
@@ -155,10 +158,17 @@ function handleNoteOff(midiNote: number): void {
 }
 
 function pianoMessage(e: MIDIMessageEvent): void {
-  if (!enabled) return;
   const data = e.data;
   if (!data || data.length < 2) return;
   const status = data[0] & 0xf0;
+  /* Program Change: capture regardless of the input-enabled gate below — it
+     drives Piano output (mirror the synth's selected sound across all output
+     channels) and is logged for building the program→instrument map. */
+  if (status === 0xc0) {
+    setOutputProgram(data[1], data[0] & 0x0f);
+    return;
+  }
+  if (!enabled) return;
   /* Ignore the piano port's SysEx / CC / aftertouch entirely — those concerns
      belong to the Lumatone path. A piano keyboard is just note + velocity. */
   if (status === 0x90 && (data[2] ?? 0) > 0) {
@@ -190,6 +200,9 @@ function bindPort(port: MIDIInput | null): void {
   } else {
     setStatus('No device');
   }
+  /* Piano output auto-matches the input device by name — re-resolve whenever
+     the bound input port changes. No-op while Piano output is disabled. */
+  rebindPianoOut();
   onSelectionChanged();
 }
 

@@ -41,6 +41,7 @@ import {
 import { requestMidi } from '../midi/engine.js';
 import { handleMidiMessage } from '../midi/handler.js';
 import { initPiano } from '../midi/piano.js';
+import { initPianoOut } from '../midi/piano-out.js';
 import {
   setTuning, setOutline, clearSelection,
   applyRotation, setRotationFromDom, syncViewToOutline,
@@ -132,6 +133,11 @@ requestMidi(handleMidiMessage);
    path; selected device is held in midi.pianoIn separately. Hotplug aware
    via a 1.5s identity poll on midi.midiAccess. */
 initPiano();
+
+/* Piano output: mirror playback to an external synth (e.g. SP-250) via
+   per-channel RPN just-intonation tuning. Output port auto-matches the
+   selected piano input device by name. */
+initPianoOut();
 
 /* HKL ↔ Composer bridge: the listener is installed at module-load time
    (top-level bridge.on() in hkl-side.ts) so Composer messages already arrive.

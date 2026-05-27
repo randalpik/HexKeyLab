@@ -19,6 +19,7 @@ import { view } from '../state/view.js';
 import { posInBand } from '../layout/coords.js';
 import { keyFreq } from '../tuning/frequency.js';
 import { syncAudio } from '../audio/engine.js';
+import { syncPianoOut } from './piano-out.js';
 import { sysex } from '../lumatone/sysex.js';
 import { syncLumatoneColors } from '../lumatone/sync.js';
 import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
@@ -106,7 +107,7 @@ export function syncMidi(): void {
   });
 }
 
-export function syncOutput(): void { syncAudio(); syncMidi(); }
+export function syncOutput(): void { syncAudio(); syncMidi(); syncPianoOut(); }
 
 /* fixed MIDI: (channel 1-5, note 0-55) → baseKeys index → lattice (q,r),
    shifted by kbAnchor so the lattice slides under the static Lumatone outline

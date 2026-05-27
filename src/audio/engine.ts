@@ -221,6 +221,50 @@ export function noteOff(key: KeyId): void {
 
 export function stopAllNotes(): void { for (const k in audio.activeOscs) noteOff(k); }
 
+/** Glide sounding voices from their old keys to new keys over `rampMs`,
+ *  reusing the same voice (no re-attack) — the "transpose effect". This is the
+ *  same handoff the live pitch-transpose performs (keyboard-notes.ts sustained
+ *  branch): osc voices ramp `frequency`; sample voices crossfade via
+ *  `slideAndFadeOut` → `noteOnFaded`. Two-pass for samples so every old voice
+ *  is told to fade before any new voice starts (avoids key collisions when a
+ *  pair's newKey equals another pair's oldKey). Re-keys `activeOscs` and
+ *  `keyVelocity` old→new. Pairs whose oldKey isn't sounding are skipped.
+ *
+ *  Only the audio voice is migrated here; callers own any higher-level
+ *  per-key bookkeeping (selection highlight, playback voice tags). */
+export function glideVoices(pairs: ReadonlyArray<{ oldKey: KeyId; newKey: KeyId }>, rampMs: number): void {
+  if (!audio.audioEnabled || !audio.audioCtx) return;
+  const now = audio.audioCtx.currentTime;
+  const rampDur = Math.max(0.001, rampMs / 1000);
+  const sampleMoves: { oldKey: KeyId; newKey: KeyId; newFreq: number; vol?: number }[] = [];
+  for (const p of pairs) {
+    if (p.oldKey === p.newKey) continue;
+    const e = audio.activeOscs[p.oldKey];
+    if (!e) continue;
+    const np = p.newKey.split(','), nq = +np[0], nr = +np[1];
+    const newFreq = keyFreq(nq, nr);
+    if (e.type === 'osc') {
+      e.osc.frequency.cancelScheduledValues(now);
+      e.osc.frequency.setValueAtTime(e.osc.frequency.value, now);
+      e.osc.frequency.exponentialRampToValueAtTime(newFreq, now + rampDur);
+      audio.activeOscs[p.newKey] = e;
+      delete audio.activeOscs[p.oldKey];
+    } else {
+      sampleMoves.push({ oldKey: p.oldKey, newKey: p.newKey, newFreq });
+    }
+    if (audio.keyVelocity[p.oldKey] !== undefined) {
+      audio.keyVelocity[p.newKey] = audio.keyVelocity[p.oldKey];
+      delete audio.keyVelocity[p.oldKey];
+    }
+  }
+  for (const mv of sampleMoves) mv.vol = SampleEngine.slideAndFadeOut(mv.oldKey, mv.newFreq, rampDur);
+  for (const mv of sampleMoves) {
+    SampleEngine.noteOnFaded(mv.newKey, mv.newFreq, mv.vol!, rampDur);
+    audio.activeOscs[mv.newKey] = { type: 'sample', freq: mv.newFreq };
+    delete audio.activeOscs[mv.oldKey];
+  }
+}
+
 export function handleAftertouch(key: KeyId, pressure: number): void {
   if (!audio.audioEnabled || !audio.audioCtx || instrDecays()) return;
   const e = audio.activeOscs[key]; if (!e) return;

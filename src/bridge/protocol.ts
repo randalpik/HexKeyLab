@@ -58,6 +58,15 @@ export interface PlaybackEvent {
    *  instead of the falling-back per-key value. Composer's playback walker
    *  computes this from the document's dynamics + hairpin interpolation. */
   velocity?: number;
+  /** Composer voice (1..4) that emitted this attack. Lets HKL group a voice's
+   *  attacks into a sequence so slurs can connect consecutive notes. */
+  voice?: number;
+  /** True when this attack is joined under a slur to the NEXT attack in the
+   *  same voice. HKL realizes the join per the active instrument: a brief
+   *  pitch glide (one continuous voice) for replay-on-transpose:false
+   *  instruments, or a slight note-proportional overlap for the rest
+   *  (decay + replay-on-transpose). */
+  slurredToNext?: boolean;
 }
 
 /** Compact footprint cell tuple: [q, r, colorHex]. Used by footprint-changed

@@ -1060,3 +1060,13 @@ The fix: scope the background by class. Diag canvas gets `.diag-canvas`, playhea
 Same principle applies anywhere a section-level CSS rule targets a generic element type (canvas, div, etc.): if you later add a second element of the same type with different layering intent, the rule will silently break the new element. Default to class-scoped selectors for layered UI.
 
 `src/analyzer/sampleTable.ts` (canvas class assignment), `analyzer.html` (CSS rule for `.diag-canvas`).
+
+### Firefox Web MIDI: outputs need an explicit `open()`; inputs don't (Linux/ALSA)
+
+Symptom: Piano output produced no sound while Piano *input* worked fine, and `amidi -p hw:X,Y -S '90 3C 7F'` from the shell played the synth — so the hardware and cable OUT path were fine, but the browser's sends went nowhere. `aconnect -l` showed the `WebMIDI output` seq client present but with **no `Connecting To:`** line — connected to nothing — while `WebMIDI input` was correctly `Connected From` the device.
+
+Cause: on Linux/ALSA, an input port wires its sequencer subscription the instant you assign `onmidimessage`; an **output** port is not routed to hardware until `MIDIOutput.open()`. **Chrome opens eagerly** (it subscribes every output to every hardware dest at `requestMIDIAccess`), so implicit-open via `send()` works there. **Firefox does not** — without an explicit `open()`, every `send()` is silently dropped. A second trap: orphaned `WebMIDI output` seq clients from prior tabs/processes linger in `aconnect -l` (owned by dead PIDs) and add confusion; restarting the browser clears them, but the real fix is `open()`.
+
+Fix: call `port.open()` when binding an output (`rebindPianoOut` in `src/midi/piano-out.ts`). Don't rely on implicit-open. Diagnose MIDI-routing issues with `amidi -l` / `aconnect -l` / `aseqdump -p '<name>'` to split browser-side from hardware before hypothesizing.
+
+Bonus (same session): the cheap **CH345** USB-MIDI cable (QinHeng) has a flaky MIDI OUT — drops bytes under burst load and can't send SysEx — though simple sparse sends get through. Keep per-note message bursts minimal (we mirror Program Change to all 16 channels *outside* note bursts, never per-note) and don't send SysEx through it.

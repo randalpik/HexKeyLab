@@ -34,7 +34,8 @@ import { audio } from '../state/audio.js';
 import { tuning } from '../state/tuning.js';
 import { darkColorHex } from '../transcription/pitch.js';
 import { resolveNoteSpec } from '../tuning/spell.js';
-import { noteOn, noteOff, stopAllNotes, triggerRearticulateFlash } from '../audio/engine.js';
+import { noteOn, noteOff, stopAllNotes, triggerRearticulateFlash, instrReplaysOnTranspose, glideVoices } from '../audio/engine.js';
+import { syncPianoOut, restrikePianoOut } from '../midi/piano-out.js';
 import { draw, activeFootprintSet, invalidatePianoOutline, validateRefNoteCandidate } from '../render/draw.js';
 import { syncViewToOutline } from '../ui/controls.js';
 import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
@@ -238,6 +239,7 @@ function abortActive(): void {
   }
   active = null;
   playbackActive = false;
+  syncPianoOut(); /* stop any external-synth voices the aborted playback left sounding */
   draw();
   /* Surface any drift in the user's real held-keys that accumulated while
      broadcasts were suppressed during playback. */
@@ -248,45 +250,105 @@ function coordToKeyId(c: CoordRef): KeyId {
   return c.q + ',' + c.r;
 }
 
-function dispatchChord(notes: ReadonlyArray<CoordRef>, durationMs: number, pb: ActivePlayback, velocity?: number): void {
+/** Slur legato overlap: a slurred note's release is delayed this fraction of
+ *  its own duration past the next note's onset, so the tail blends into the
+ *  next attack. Note-proportional (longer notes get longer tails). Used for
+ *  decay + replay-on-transpose instruments. */
+const SLUR_OVERLAP_FRACTION = 0.12;
+
+/** Slur glide ramp (ms) for sustained instruments — a brief boundary
+ *  portamento, then hold. Clamped to half the predecessor's duration. */
+const SLUR_GLIDE_MS = 70;
+
+interface DispatchOpts {
+  velocity?: number;
+  /** Delay before noteOff (controls only the off timer, not reported
+   *  duration). Defaults to `durationMs`. */
+  offMs?: number;
+  /** Don't schedule a noteOff — the voice continues into a later glide. */
+  noOff?: boolean;
+  /** Glide a still-sounding voice from this key into the (single) attack pitch
+   *  instead of re-attacking — the sustained-instrument "transpose effect".
+   *  Falls back to a normal attack if the source voice isn't sounding. */
+  glideFromKey?: KeyId;
+  /** Glide ramp duration (ms); used only with glideFromKey. */
+  rampMs?: number;
+}
+
+function dispatchChord(notes: ReadonlyArray<CoordRef>, durationMs: number, pb: ActivePlayback, opts: DispatchOpts = {}): void {
   if (pb.cancelled) return;
   const keys: KeyId[] = notes.map(coordToKeyId);
   const ownedSeq = new Map<KeyId, number>();
-  for (const k of keys) {
-    if (audio.activeOscs[k]) {
-      /* Back-to-back same-pitch events: the next event's noteOn timer can
-         fire before the previous event's noteOff timer when they share a
-         deadline. Mirror the input-layer pedal-replay fix — stop the old
-         voice so syncAudio creates a fresh one, and flash to confirm. */
-      noteOff(k);
-      triggerRearticulateFlash(k);
+
+  const canGlide = opts.glideFromKey != null && keys.length === 1
+    && !!audio.activeOscs[opts.glideFromKey];
+  if (canGlide) {
+    /* Slur glide-in: hand the predecessor's still-sounding voice off to this
+       pitch (no re-attack). Migrate playback bookkeeping old→new so the
+       highlight follows and the off timer can still find the voice. */
+    const oldKey = opts.glideFromKey!;
+    const newKey = keys[0];
+    glideVoices([{ oldKey, newKey }], opts.rampMs ?? SLUR_GLIDE_MS);
+    pb.voiceSeq.delete(oldKey);
+    pb.heldKeys.delete(oldKey);
+    if (playbackOwnedKeys.has(oldKey)) {
+      playbackOwnedKeys.delete(oldKey);
+      selection.selectedKeys.delete(oldKey);
     }
-    audio.sustainedKeys.delete(k);
-    /* Seed audio.keyVelocity so this attack shows up in loopdiag's vel trace
-       like Lumatone / QWERTY / recording-playback do (all of which write
-       keyVelocity before noteOn). Without the seed, Composer-dispatched
-       notes are invisible to the diagnostic overlay. */
-    const v = velocity ?? audio.keyVelocity[k] ?? DEFAULT_DYNAMIC_MAP.mf;
-    audio.keyVelocity[k] = v;
-    noteOn(k, v);
+    audio.sustainedKeys.delete(newKey);
     const seq = ++pb.nextSeq;
-    pb.voiceSeq.set(k, seq);
-    ownedSeq.set(k, seq);
-    pb.heldKeys.add(k);
-    /* Add to selectedKeys for visual highlight via existing draw() path.
-       Track ownership so we only remove keys that were not already held by
-       the user. */
-    if (!selection.selectedKeys.has(k)) {
-      selection.selectedKeys.add(k);
-      playbackOwnedKeys.add(k);
+    pb.voiceSeq.set(newKey, seq);
+    ownedSeq.set(newKey, seq);
+    pb.heldKeys.add(newKey);
+    if (!selection.selectedKeys.has(newKey)) {
+      selection.selectedKeys.add(newKey);
+      playbackOwnedKeys.add(newKey);
+    }
+  } else {
+    for (const k of keys) {
+      restrikePianoOut(k); /* external-synth re-attack for back-to-back same pitch */
+      if (audio.activeOscs[k]) {
+        /* Back-to-back same-pitch events: the next event's noteOn timer can
+           fire before the previous event's noteOff timer when they share a
+           deadline. Mirror the input-layer pedal-replay fix — stop the old
+           voice so syncAudio creates a fresh one, and flash to confirm. */
+        noteOff(k);
+        triggerRearticulateFlash(k);
+      }
+      audio.sustainedKeys.delete(k);
+      /* Seed audio.keyVelocity so this attack shows up in loopdiag's vel trace
+         like Lumatone / QWERTY / recording-playback do (all of which write
+         keyVelocity before noteOn). Without the seed, Composer-dispatched
+         notes are invisible to the diagnostic overlay. */
+      const v = opts.velocity ?? audio.keyVelocity[k] ?? DEFAULT_DYNAMIC_MAP.mf;
+      audio.keyVelocity[k] = v;
+      noteOn(k, v);
+      const seq = ++pb.nextSeq;
+      pb.voiceSeq.set(k, seq);
+      ownedSeq.set(k, seq);
+      pb.heldKeys.add(k);
+      /* Add to selectedKeys for visual highlight via existing draw() path.
+         Track ownership so we only remove keys that were not already held by
+         the user. */
+      if (!selection.selectedKeys.has(k)) {
+        selection.selectedKeys.add(k);
+        playbackOwnedKeys.add(k);
+      }
     }
   }
+  syncPianoOut(); /* mirror this chord's attacks to the external synth */
   draw();
+
+  /* noOff: the voice rides on into a later glide, so this attack schedules no
+     release. The final note of a slur chain (noOff false) tears the chain down. */
+  if (opts.noOff) return;
+
+  const offKeys = canGlide ? [keys[0]] : keys;
   const offHandle = window.setTimeout(() => {
     pb.pending.delete(offHandle);
     if (pb.cancelled) return;
     let mutated = false;
-    for (const k of keys) {
+    for (const k of offKeys) {
       /* A later dispatchChord may have re-articulated this key; its own
          offHandle will tear it down. Skip if our seq is no longer current. */
       if (pb.voiceSeq.get(k) !== ownedSeq.get(k)) continue;
@@ -299,9 +361,59 @@ function dispatchChord(notes: ReadonlyArray<CoordRef>, durationMs: number, pb: A
       }
       mutated = true;
     }
-    if (mutated) draw();
-  }, durationMs);
+    if (mutated) { syncPianoOut(); draw(); }
+  }, opts.offMs ?? durationMs);
   pb.pending.add(offHandle);
+}
+
+interface LegatoStep {
+  offMs?: number;
+  noOff?: boolean;
+  glideFromKey?: KeyId;
+  rampMs?: number;
+}
+
+/** Per-event slur realization, decided HKL-side because it depends on the
+ *  active instrument. `glideMode` (sustained loopers): single-note slurred
+ *  transitions hand one voice off via a pitch glide; chord-involved joins
+ *  fall back to normal abutting playback. Otherwise (decay + replay-on-
+ *  transpose): slurred notes get a note-proportional release overlap. */
+function computeLegatoPlan(events: ReadonlyArray<PlaybackEvent>, glideMode: boolean): LegatoStep[] {
+  const plan: LegatoStep[] = events.map(() => ({}));
+  if (!glideMode) {
+    events.forEach((ev, i) => {
+      if (ev.slurredToNext) plan[i].offMs = ev.durationMs * (1 + SLUR_OVERLAP_FRACTION);
+    });
+    return plan;
+  }
+  /* Group each voice's events into same-onset slots (preserving the global
+     atMs order events already arrive in), then glide between consecutive
+     single-note slots where the earlier is slurred. */
+  const byVoice = new Map<number, number[]>();
+  events.forEach((ev, i) => {
+    const v = ev.voice ?? 0;
+    const list = byVoice.get(v);
+    if (list) list.push(i); else byVoice.set(v, [i]);
+  });
+  for (const list of byVoice.values()) {
+    const slots: Array<{ atMs: number; idxs: number[] }> = [];
+    for (const idx of list) {
+      const last = slots[slots.length - 1];
+      if (last && Math.abs(last.atMs - events[idx].atMs) < 1e-6) last.idxs.push(idx);
+      else slots.push({ atMs: events[idx].atMs, idxs: [idx] });
+    }
+    for (let s = 0; s + 1 < slots.length; s++) {
+      const cur = slots[s], nxt = slots[s + 1];
+      if (cur.idxs.length !== 1 || nxt.idxs.length !== 1) continue;
+      const ci = cur.idxs[0], ni = nxt.idxs[0];
+      if (!events[ci].slurredToNext) continue;
+      if (events[ci].notes.length !== 1 || events[ni].notes.length !== 1) continue;
+      plan[ci].noOff = true;
+      plan[ni].glideFromKey = coordToKeyId(events[ci].notes[0]);
+      plan[ni].rampMs = Math.min(SLUR_GLIDE_MS, events[ci].durationMs * 0.5);
+    }
+  }
+  return plan;
 }
 
 function playScore(events: ReadonlyArray<PlaybackEvent>): void {
@@ -314,12 +426,27 @@ function playScore(events: ReadonlyArray<PlaybackEvent>): void {
   active = pb;
   playbackActive = true;
 
+  /* Slur legato realization is instrument-dependent and the instrument is
+     HKL-side state, so the choice is made here (not in Composer): sustained
+     loopers glide one voice between slurred pitches; decay + replay-on-
+     transpose instruments overlap the release into the next attack. Mode is
+     fixed at playback start; mid-playback instrument changes are rare and
+     playback is short. */
+  const plan = computeLegatoPlan(events, !instrReplaysOnTranspose());
+
   let lastEnd = 0;
-  for (const ev of events) {
+  events.forEach((ev, idx) => {
+    const step = plan[idx];
     const onHandle = window.setTimeout(() => {
       pb.pending.delete(onHandle);
       if (pb.cancelled) return;
-      dispatchChord(ev.notes, ev.durationMs, pb, ev.velocity);
+      dispatchChord(ev.notes, ev.durationMs, pb, {
+        velocity: ev.velocity,
+        offMs: step.offMs,
+        noOff: step.noOff,
+        glideFromKey: step.glideFromKey,
+        rampMs: step.rampMs,
+      });
       bridge.send({
         type: 'playback-position',
         meiId: ev.meiId ?? null,
@@ -327,8 +454,8 @@ function playScore(events: ReadonlyArray<PlaybackEvent>): void {
       });
     }, ev.atMs);
     pb.pending.add(onHandle);
-    lastEnd = Math.max(lastEnd, ev.atMs + ev.durationMs);
-  }
+    lastEnd = Math.max(lastEnd, ev.atMs + (step.offMs ?? ev.durationMs));
+  });
 
   const finHandle = window.setTimeout(() => {
     pb.pending.delete(finHandle);

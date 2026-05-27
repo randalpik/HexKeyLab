@@ -24,6 +24,7 @@ import type { ComposerModel } from '../model/index.js';
 import { freqAt, coordToMidi, MIDI_LOW, MIDI_HIGH, type TuningMode } from '../../shared/freq.js';
 import { noteName, parseNote, accToVal, keyOctave } from '../../tuning/notes.js';
 import { tokenFromAlter } from '../../notation/accidentals.js';
+import { pruneDanglingSlurs } from '../slurs.js';
 
 export interface RetuneNoteEntry {
   noteEl: Element;
@@ -197,6 +198,12 @@ export function applyRetune(model: ComposerModel, plan: RetunePlan): void {
      new lattice. Sibling order matters for chord-internal cursor selection
      and for accidentals.ts's left-to-right rendering. */
   for (const chord of affectedChords) sortChordNotes(chord);
+
+  /* Dropped notes may have been slur endpoints. Kept notes are rewritten in
+     place (xml:id preserved), so their slurs survive; only drops can dangle.
+     applyRetune does its own tie cleanup rather than calling normalizeTies,
+     so prune slurs explicitly here. */
+  pruneDanglingSlurs(doc);
 }
 
 function rewriteNoteCoord(note: Element, q: number, r: number): void {
