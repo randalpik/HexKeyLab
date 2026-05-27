@@ -3,7 +3,6 @@
 // (sample-loop invariants: never source.loop=true, all wraps via
 // scheduleSegmentSwitch, commitRampSync integrates in-flight ramp position).
 
-import { INSTRUMENTS } from './samples-data.js';
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { readHki } from '@hkl/shared/hki.js';
 import { pickNextSeam as pickSegmentSeam } from '@hkl/shared/segments.js';
@@ -107,6 +106,7 @@ let sampleMaster: any = null;
 let currentInstrument: any = null;
 const buffers: Record<string, any> = {};
 const activeVoices: Record<string, any> = {};
+const loadedInstruments: Record<string, any> = {};
 
   export function init(audioCtx: AudioContext, destNode: AudioNode, config?: SampleEngineConfig): void {
     ctx=audioCtx;
@@ -147,9 +147,9 @@ const activeVoices: Record<string, any> = {};
       }
     }
   }
-  export function loadInstrument(key: string, onProgress?: (loaded: number, total: number, name: string) => void): Promise<void> {
+  export function loadInstrument(key: string, instrDef: any, onProgress?: (loaded: number, total: number, name: string) => void): Promise<void> {
     return new Promise<void>(function(resolve,reject){
-      var instr=INSTRUMENTS[key];
+      var instr=instrDef;loadedInstruments[key]=instrDef;
       if(!instr)return reject(new Error('Unknown instrument: '+key));
       if(buffers[key]){currentInstrument=key;return resolve();}
       var loaded=0,total=instr.samples.length,result: any[] = [];
@@ -382,7 +382,7 @@ const activeVoices: Record<string, any> = {};
     if(activeVoices[voiceKey])sNoteOff(voiceKey);
     var nearest=findNearest(freq);
     if(!nearest)return;
-    var instr=INSTRUMENTS[currentInstrument];
+    var instr=loadedInstruments[currentInstrument];
     var rate=freq*(instr.transpose||1)/nearest.freq;
     var instrVol=instr.volume||1.0;
     var baseVol=velocityToGain(velocity!==undefined?velocity:DEFAULT_DYNAMIC_MAP.f)*instrVol;
@@ -781,7 +781,7 @@ const activeVoices: Record<string, any> = {};
        new source doesn't continue playing (silently, behind the released
        voiceGain) and leak the BufferSource node. */
     if(v.pendingSwitch)cancelPendingSwitch(v);
-    var instr=INSTRUMENTS[currentInstrument];
+    var instr=loadedInstruments[currentInstrument];
     var release=(((instr&&instr.releaseTime)||0.3)*RELEASE_SCALE);var now=ctx.currentTime;
     if(v.alive){
       /* fade voiceGain — silences ALL sources routed through it */
@@ -1020,7 +1020,7 @@ const activeVoices: Record<string, any> = {};
     if(!ctx||!currentInstrument)return;
     if(activeVoices[voiceKey])sHardStop(voiceKey);
     var nearest=findNearest(freq);if(!nearest)return;
-    var instr=INSTRUMENTS[currentInstrument];
+    var instr=loadedInstruments[currentInstrument];
     var rate=freq*(instr.transpose||1)/nearest.freq;
     /* vol param is treated as baseVol (without range attenuation or per-sample
        gain); apply attenuation + the new sample's gain fresh based on current

@@ -1,17 +1,22 @@
-// Barrel: assembles the legacy SampleEngine surface from samples-data + samples-engine.
-// Consumers (engine.ts, ui/controls.ts, input/keyboard-notes.ts, diagnostics/loopOverlay.ts)
-// import SampleEngine from here and call it via the same shape the v0.9 IIFE returned.
+// Barrel: assembles the legacy SampleEngine surface from the HKL instrument
+// registry (samples-data) + the standalone playback engine (@hkl/engine).
+// Consumers (engine.ts, ui/controls.ts, input/keyboard-notes.ts,
+// diagnostics/loopOverlay.ts) import SampleEngine from here and call it via the
+// same shape the v0.9 IIFE returned. The engine is instrument-agnostic now:
+// loadInstrument takes the instrument definition, so this barrel injects
+// INSTRUMENTS[key] (the HKL-side Proxy that merges shipped + imported bundles).
 
-import * as engine from './samples-engine.js';
+import * as engine from '@hkl/engine/samples-engine.js';
 import { INSTRUMENTS } from './samples-data.js';
 
-export { inflightExpRampValue } from './samples-engine.js';
-export type { PaRampState, SeamEvent, SampleEngineConfig } from './samples-engine.js';
+export { inflightExpRampValue } from '@hkl/engine/samples-engine.js';
+export type { PaRampState, SeamEvent, SampleEngineConfig } from '@hkl/engine/samples-engine.js';
 
 export const SampleEngine = {
   INSTRUMENTS,
   init: engine.init,
-  loadInstrument: engine.loadInstrument,
+  loadInstrument: (key: string, onProgress?: (loaded: number, total: number, name: string) => void) =>
+    engine.loadInstrument(key, INSTRUMENTS[key], onProgress),
   noteOn: engine.sNoteOn,
   noteOff: engine.sNoteOff,
   rampFreq: engine.sRampFreq,

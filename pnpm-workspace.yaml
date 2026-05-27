@@ -5,6 +5,7 @@
 packages:
   - 'packages/*'
   - 'apps/*'
+  - 'examples/*'
 
 # Dependency install-script approvals. esbuild places Vite's native binary;
 # core-js's postinstall is only a donation banner.
