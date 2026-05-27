@@ -1,0 +1,13 @@
+# pnpm workspace — HKL monorepo.
+# Library packages (shared, engine, notation, bridge) and the servable apps
+# (hkl, composer, analyzer) are added under these globs as the per-app split
+# lands. Until then the root package still holds the monolithic src/ tree.
+packages:
+  - 'packages/*'
+  - 'apps/*'
+
+# Dependency install-script approvals. esbuild places Vite's native binary;
+# core-js's postinstall is only a donation banner.
+allowBuilds:
+  esbuild: true
+  core-js: false
