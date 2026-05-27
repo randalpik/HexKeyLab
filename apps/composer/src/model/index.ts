@@ -28,6 +28,15 @@ import { regroupBeams, readTimeSig } from '../notation/beams.js';
 import { decomposeBeatAlignedRests } from './restfill.js';
 import { computeAccidentalDisplay } from '../notation/accidentals.js';
 import { alterFromCount, alterFromToken, tokenFromAlter, getNoteAlter } from '@hkl/notation/accidentals.js';
+import {
+  el,
+  newId,
+  MEI_NS,
+  XML_NS,
+  emptyMeiDoc as buildSkeletonDoc,
+  type Duration,
+  type Dots,
+} from '@hkl/notation/mei-build.js';
 import { ensureExpressionDefaults, getLayoutReq, setLayoutReq, getHejiEnabled, setHejiEnabled, type LayoutReq, type Moment } from '../expressions.js';
 import { transformDocForHeji } from '@hkl/notation/heji-render.js';
 import type { TuningMode } from '@hkl/shared/freq.js';
@@ -76,8 +85,11 @@ import {
 /* ── public types ────────────────────────────────────────────────────────── */
 
 export type Voice = 1 | 2 | 3 | 4;
-export type Duration = '1' | '2' | '4' | '8' | '16' | '32' | '64';
-export type Dots = 0 | 1 | 2;
+/* Duration / Dots / el / newId / MEI_NS now live in @hkl/notation/mei-build
+   (single source of truth for the .hkc dialect). Re-exported here so the many
+   Composer modules that import them from './index.js' stay zero-touch. */
+export { el, newId, MEI_NS };
+export type { Duration, Dots };
 
 export interface ChordInput {
   notes: ReadonlyArray<ResolvedNote>;
@@ -115,9 +127,6 @@ export interface SetupDefaults {
 
 /* ── XML namespace + utilities ───────────────────────────────────────────── */
 
-export const MEI_NS = 'http://www.music-encoding.org/ns/mei';
-const XML_NS = 'http://www.w3.org/XML/1998/namespace';
-
 /** Custom attribute marking an element inside a <tuplet> that represents
  *  unfilled written-ticks (the "fill anchor" chain). Distinct from the
  *  measure-level PLACEHOLDER_ATTR — these live as direct children of
@@ -132,39 +141,6 @@ export const TUPLET_PLACEHOLDER_ATTR = 'data-tuplet-placeholder';
  *  in older docs. */
 export function isTupletPlaceholder(el: Element): boolean {
   return el.getAttribute(TUPLET_PLACEHOLDER_ATTR) === 'true';
-}
-
-export function el(doc: Document, name: string, attrs?: Record<string, string | number | undefined>): Element {
-  const e = doc.createElementNS(MEI_NS, name);
-  if (attrs) {
-    for (const k in attrs) {
-      const v = attrs[k];
-      if (v === undefined || v === null || v === '') continue;
-      if (k === 'xml:id') {
-        /* xml:id must live in the XML namespace — without setAttributeNS,
-           the attribute would have local name literally "xml:id" in the null
-           namespace, so selectors like `[*|id="…"]` fail to find it and our
-           tie-partner lookups silently bail. Serializing still emits
-           xml:id="…" exactly as before. */
-        e.setAttributeNS(XML_NS, 'xml:id', String(v));
-      } else {
-        e.setAttribute(k, String(v));
-      }
-    }
-  }
-  return e;
-}
-
-/* MEI id space — required for Verovio's xml:id → SVG id mapping. */
-let nextSeq = 0;
-export function newId(prefix: string): string {
-  nextSeq++;
-  return prefix + '-' + nextSeq.toString(36) + '-' + Math.floor(Math.random() * 1e6).toString(36);
-}
-
-function escapeXml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
 
 /* ── tick math ──────────────────────────────────────────────────────────── */
@@ -229,74 +205,10 @@ function elementDurationTicks(el: Element): number {
 
 /* ── initial empty document ─────────────────────────────────────────────── */
 
+/* Composer's SetupDefaults is structurally a superset of the shared
+   ScoreSkeletonSetup, so it passes straight through to the shared builder. */
 function emptyMeiDoc(setup: SetupDefaults = {}): Document {
-  const title = setup.title ?? 'Untitled';
-  const composer = setup.composer ?? '';
-  const keySig = setup.keySig ?? '0';
-  const count = setup.meterCount ?? 4;
-  const unit = setup.meterUnit ?? 4;
-  const bpm = setup.tempoBpm ?? 120;
-  const tempoUnit = setup.tempoUnit ?? '4';
-  const tempoDots = setup.tempoDots ?? 0;
-  const tempoText = setup.tempoText ?? '';
-
-  const composerBlock = composer
-    ? `<respStmt><persName role="composer">${escapeXml(composer)}</persName></respStmt>`
-    : '';
-  const tempoTextSpan = tempoText ? escapeXml(tempoText) + ' ' : '';
-  const tempoDotsAttr = tempoDots > 0 ? ` mm.dots="${tempoDots}"` : '';
-  const lr = setup.layoutReq ?? { tuningMode: '5', refQ: 0, refR: 0 };
-  const layoutReqBlock = `<hkl:layoutReq tuningMode="${lr.tuningMode}" refQ="${lr.refQ}" refR="${lr.refR}"/>`;
-
-  /* <extMeta> with HKL-namespaced config carries document-level performance
-     defaults (dynamic→velocity map, future tempo alteration). The xmlns:hkl
-     prefix declaration lives here so the prefixed elements parse cleanly. */
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<mei xmlns="${MEI_NS}" xmlns:hkl="https://hexkeylab.com/ns/mei" meiversion="5.0">
-  <meiHead>
-    <fileDesc>
-      <titleStmt><title>${escapeXml(title)}</title>${composerBlock}</titleStmt>
-      <pubStmt/>
-    </fileDesc>
-    <extMeta>
-      <hkl:config>
-        ${layoutReqBlock}
-        <hkl:dynamicMap>
-          <hkl:level name="fff" velocity="127"/>
-          <hkl:level name="ff"  velocity="124"/>
-          <hkl:level name="f"   velocity="120"/>
-          <hkl:level name="mf"  velocity="116"/>
-          <hkl:level name="mp"  velocity="112"/>
-          <hkl:level name="p"   velocity="108"/>
-          <hkl:level name="pp"  velocity="103"/>
-          <hkl:level name="ppp" velocity="96"/>
-        </hkl:dynamicMap>
-      </hkl:config>
-    </extMeta>
-  </meiHead>
-  <music><body><mdiv><score>
-    <scoreDef key.sig="${keySig}" meter.count="${count}" meter.unit="${unit}">
-      <staffGrp symbol="brace" bar.thru="true">
-        <staffDef n="1" lines="5" clef.shape="G" clef.line="2"/>
-        <staffDef n="2" lines="5" clef.shape="F" clef.line="4"/>
-      </staffGrp>
-    </scoreDef>
-    <section>
-      <measure n="1" right="end" xml:id="${newId("m")}">
-        <tempo tstamp="1" staff="1" mm="${bpm}" mm.unit="${tempoUnit}"${tempoDotsAttr} midi.bpm="${bpm}">${tempoTextSpan}</tempo>
-        <staff n="1" xml:id="${newId("s")}">
-          <layer n="1" xml:id="${newId("l")}"/>
-          <layer n="2" xml:id="${newId("l")}"/>
-        </staff>
-        <staff n="2" xml:id="${newId("s")}">
-          <layer n="1" xml:id="${newId("l")}"/>
-          <layer n="2" xml:id="${newId("l")}"/>
-        </staff>
-      </measure>
-    </section>
-  </score></mdiv></body></music>
-</mei>`;
-  return new DOMParser().parseFromString(xml, 'application/xml');
+  return buildSkeletonDoc(setup);
 }
 
 /* ── model class ─────────────────────────────────────────────────────────── */

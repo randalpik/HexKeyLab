@@ -1,6 +1,6 @@
-// Public surface for .hkr → LilyPond transcription. Thin orchestrator that
-// runs the pipeline and returns both the rendered .ly and the intermediate
-// representations (debug). v2's correction UI consumes the debug IRs.
+// Public surface for .hkr → .hkc (Composer-native MEI) transcription. Thin
+// orchestrator that runs the pipeline and returns both the emitted .hkc and the
+// intermediate representations (debug). v2's correction UI consumes the debug IRs.
 
 import type { HkrSession, TranscribeOpts, TranscribeResult } from './types.js';
 import { hkrToOnsets } from './onsets.js';
@@ -10,9 +10,9 @@ import { findDownbeatPhase } from './meter.js';
 import { groupChords } from './chords.js';
 import { quantizeDurations } from './quantize.js';
 import { splitVoices } from './voicing.js';
-import { emitLilypond } from './lyEmit.js';
+import { emitMei } from './meiEmit.js';
 
-export function sessionToLilypond(
+export function sessionToHkc(
   session: HkrSession,
   opts: TranscribeOpts,
 ): TranscribeResult {
@@ -23,13 +23,12 @@ export function sessionToLilypond(
   const chords = groupChords(onsets);
   const qnotes = quantizeDurations(chords, beats, meter);
   const voiced = splitVoices(qnotes, meter);
-  const ly = emitLilypond(voiced, {
+  const hkc = emitMei(voiced, meter, tempo, {
     numerator: meter.numerator,
-    bpm: tempo.bpm,
     title: opts.title,
-  });
+  }, session.snapshot);
   return {
-    ly,
+    hkc,
     debug: { onsets, tempo, beats, meter, chords, qnotes, voiced },
   };
 }

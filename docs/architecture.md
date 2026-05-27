@@ -174,9 +174,8 @@ TE `#4CFFBA`/`#005937`, GR `#55FF4C`/`#045900`, YE `#FFF94C`/`#595600`, OR `#FF8
 |---|---|---|
 | `.hkr` | Native recording: layout snapshot + flat coordinate-event stream. Source of identity is lattice coords, not pitch. | hkl.md "Recording & playback" |
 | `.mid` | MPE export/import of a recording (manager ch 1, members 2–16, ±48st bend) so per-voice JI survives a DAW round-trip. | hkl.md |
-| `.ly` | LilyPond emitted by the `.hkr` → sheet-music transcription pipeline (colored noteheads). | hkl.md "Transcription" |
 | `.hki` | Instrument bundle (manifest + audio) produced by the Analyzer CLI, consumed by `@hkl/engine`; imported ones persist in IndexedDB. | engine.md, analyzer.md |
-| `.hkc` | Composer document: MEI XML with HKL attrs (`data-q`, `data-r`) on each note. | composer.md |
+| `.hkc` | Composer document: MEI XML with HKL attrs (`data-q`, `data-r`) on each note. Also the output of the `.hkr` → sheet-music transcription pipeline (colored noteheads), which builds it via the shared `@hkl/notation/mei-build` builder. | composer.md, hkl.md "Transcription" |
 
 ---
 
@@ -184,7 +183,8 @@ TE `#4CFFBA`/`#005937`, GR `#55FF4C`/`#045900`, YE `#FFF94C`/`#595600`, OR `#FF8
 
 - **Play → record → sheet music**: input (QWERTY/mouse/Lumatone) → `@hkl/engine` voices, captured
   as a `.hkr` coordinate stream → playback drives the same engine path → the transcription pipeline
-  turns a `.hkr` into LilyPond/sheet music. (All HKL-side — see hkl.md.)
+  turns a `.hkr` into a Composer-native `.hkc`, which is either downloaded or bridged straight to
+  Composer (`import-score`) for editing. (Emit is HKL-side — see hkl.md.)
 - **HKL ↔ Composer**: same-origin `BroadcastChannel('hkl-composer-bridge')`. HKL sends resolved
   held-chord records (`{q,r,pname,accid,oct,midi,colorHex,velocity}`); Composer holds MEI state and
   emits `play-score` requests that HKL plays through `@hkl/engine`. Composer imports none of HKL's

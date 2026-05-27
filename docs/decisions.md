@@ -2526,3 +2526,44 @@ CLI path constants (samples-data → `apps/hkl/src/...`, `.cache`/`out`/`configs
 `vite/dev-proxy.mjs` (configs path), `.gitignore` (`apps/analyzer/{.cache,out}`),
 `pnpm-workspace.yaml` (`examples/*` → `test/*`), `check-boundaries.mjs` (dropped analyzer exception).
 DELETED the 3 dead analyzer files + 2 spikes.
+
+---
+
+## Transcription emits `.hkc` (Composer-native), not `.ly`; shared MEI builder in `@hkl/notation` (2026-05-27)
+
+The `.hkr` → sheet-music pipeline predated Composer and emitted LilyPond `.ly` — a dead-end
+artifact that couldn't be reopened or edited and duplicated spelling/color logic Composer already
+owns. Replaced the `lyEmit.ts` stage with `meiEmit.ts`, which produces a Composer-native `.hkc`
+(MEI 5) document. Two transports from the "Export to Composer" dialog: **Download `.hkc`** (always
+available) and **Send to Composer** (a new one-directional `import-score` `HklEvent` over the
+existing bridge; Composer confirms-if-dirty then `replaceDocument` + adopts `layoutReq`).
+
+**MEI construction is now a single source of truth.** Extracted Composer's MEI skeleton +
+note/chord/rest builders out of `apps/composer/src/model/` into **`@hkl/notation/mei-build.ts`**
+(`el`/`newId`/`escapeXml`, `Duration`/`Dots`, `NoteSpec`, `buildNoteElement`/`buildChordElement`/
+`buildRestElement`, `buildScoreSkeletonXml`/`emptyMeiDoc`). Composer re-exports them so its many
+`import { el, newId, MEI_NS, Duration } from './index.js'` sites stayed zero-touch; HKL's emitter
+imports the same builders. **Decision that made this clean**: the shared builders take a structural
+`NoteSpec` (`{q,r,pname,accid,oct,midi,colorHex}`), NOT the bridge's `ResolvedNote` — `@hkl/notation`
+and `@hkl/bridge` are siblings under `@hkl/shared`, so a bridge import would break
+`check:boundaries`. `ResolvedNote` is structurally assignable to `NoteSpec`, so Composer call sites
+pass it unchanged.
+
+**Tie correctness**: the `ComposerModel` *constructor* runs `normalizePlaceholders` but NOT
+`normalizeTies`; however the real load path (`main.ts` file-open, and the new `import-score`
+handler) routes through `replaceDocument`, which does. So the emitter only needs to bake correct
+`@tie i/m/t` tokens (per-atom within a QNote, and across bar lines where `quantize` marks the prior
+QNote's trailing atom tied); `data-tie-partner` is recomputed on load. `QNote` gained a
+`coords: {q,r}[]` field (replacing the LilyPond-only `lyPitches`) so the emitter spells from the
+exact lattice cell, not a MIDI-only guess (distinct `(q,r)` can collide to one MIDI).
+
+**Removed**: `lyEmit.ts`, `coordToLilyPitch`/`darkColorScheme` from `pitch.ts` (`darkColorHex` stays
+— it has live importers in `tuning/spell.ts`, `bridge/hkl-side.ts`, `transcription/onsets.ts`),
+`TranscribeResult.ly` → `.hkc`, `sessionToLilypond` → `sessionToHkc`.
+
+**Verified**: `pnpm typecheck` + `pnpm -r build` + `pnpm check:boundaries` + `pnpm test:composer`
+(129/129, proves the builder extraction didn't regress Composer) + a new
+`pnpm test:transcription` (`test/transcription-roundtrip/run.mjs`) two-page headless round-trip:
+emit on the HKL page → load on the Composer page → assert measures/coords/no-tie-orphans/
+placeholder-invariant/origin-spelling/serialize-stability. Visually confirmed the engraved
+grand staff (colored noteheads, cross-bar tie arc, accidentals) renders in Composer.

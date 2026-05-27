@@ -15,7 +15,7 @@ A browser-based visualizer, audio engine, and Lumatone controller for hexagonal 
 3. **Communicates with the Lumatone** via MIDI input (notes from physical play) and SysEx output (key colors, key remapping, calibration)
 4. **Analyzes intervals and chords** with comma-decomposition naming and JI ratio display
 5. **Records and plays back performances** with full coordinate fidelity, and exports/imports `.mid` files via MPE for editing in external DAWs
-6. **Transcribes recordings to sheet music** via a `.hkr` → LilyPond pipeline (tempo estimation + Ellis-DP beat tracking + per-bar duration Viterbi DP), emitting colored noteheads keyed to the lattice
+6. **Transcribes recordings to sheet music** via a `.hkr` → `.hkc` pipeline (tempo estimation + Ellis-DP beat tracking + per-bar duration Viterbi DP), emitting a Composer-native `.hkc` (MEI) with colored noteheads keyed to the lattice — downloadable or bridged straight to Composer for editing
 7. **Documents tuning theory** through interactive exploration
 
 The **HKL Analyzer** (`apps/analyzer/`) is the dev-facing companion: a browser UI plus a Node CLI (`apps/analyzer/cli/`) that batch-generates loop-point + gain data for sample-based instruments from CDN soundfonts. Dev tooling, not shipped to end users, but part of the project.

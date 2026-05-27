@@ -103,7 +103,13 @@ export type HklEvent =
    *  transpose, tuning toggle). Composer uses this to validate SC shifts
    *  against the outline AND to compute fresh colors when a note's (q, r)
    *  is rewritten. Empty `cells` means outline='none' — no constraint. */
-  | { type: 'footprint-changed'; cells: ReadonlyArray<FootprintCell> };
+  | { type: 'footprint-changed'; cells: ReadonlyArray<FootprintCell> }
+  /** Import a whole score into Composer — the result of transcribing an HKL
+   *  recording. `mei` is a complete `.hkc` (MEI 5) document string. Composer
+   *  confirms-if-dirty, then replaceDocument(mei) + re-render + adopts the
+   *  score's layoutReq. One-directional (HKL→Composer); the file-download
+   *  transport carries the same string. */
+  | { type: 'import-score'; mei: string };
 
 /* ── Composer → HKL ───────────────────────────────────────────────────────── */
 

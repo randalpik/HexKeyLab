@@ -12,6 +12,7 @@
     "analyze": "node --max-old-space-size=8192 --expose-gc apps/analyzer/cli/generate-samples.js",
     "test:composer": "node test/composer-test/run.mjs full",
     "test:composer:fast": "node test/composer-test/run.mjs fast",
+    "test:transcription": "node test/transcription-roundtrip/run.mjs",
     "check:heji": "node test/heji-check.mjs"
   },
   "devDependencies": {

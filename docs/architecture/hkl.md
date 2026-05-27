@@ -283,17 +283,17 @@ The span ends 1.5 s after Stop/playback-end so release tails land. `.wav` is a s
 - **Paused playback**: none.
 - **Bundled `.hkr` + `.mid`**: stay separate.
 - **Tempo / time signature in `.hkr`**: not modeled (MIDI export uses fixed 120 BPM 4/4 for DAW quantizers).
-- **LilyPond export**: see below.
+- **Composer export (`.hkc`)**: see below.
 
 ---
 
-## `.hkr` → LilyPond transcription
+## `.hkr` → `.hkc` transcription
 
-Takes a `.hkr` recorded at roughly constant tempo in a user-supplied time signature, produces a `.ly` colored-notehead grand staff. **v1 scope**: 8th-note minimum granularity, middle-C voice split, no microtonal accidentals (12-TET notation; lattice spelling from `noteName(q,r)` gives the enharmonics).
+Takes a `.hkr` recorded at roughly constant tempo in a user-supplied time signature, produces a Composer-native `.hkc` (MEI 5) colored-notehead grand staff — downloadable or sent straight to Composer over the bridge for editing. **v1 scope**: 8th-note minimum granularity, middle-C voice split, no microtonal accidentals (12-TET notation; lattice spelling from `noteName(q,r)` gives the enharmonics). The `.ly`/LilyPond emitter it replaced is gone.
 
 ### Pipeline
 
-`.hkr` → onsets → tempo → beats → meter → chords → qnotes → voiced → `.ly`. Eleven modules under `apps/hkl/src/transcription/`, one per stage. Identity (`Onset.id`, `QNote.sourceOnsetIds`) flows end-to-end for a future correction UI.
+`.hkr` → onsets → tempo → beats → meter → chords → qnotes → voiced → `.hkc`. Eleven modules under `apps/hkl/src/transcription/`, one per stage. Identity (`Onset.id`, `QNote.sourceOnsetIds`) flows end-to-end for a future correction UI; each `QNote` also carries a `coords: {q,r}[]` array (parallel to `pitches`) so the emitter spells from the exact lattice cell rather than a MIDI-only guess.
 
 **Tempo (`tempo.ts`)**: IOI autocorrelation on a 10 ms binned onset envelope, weighted by a log-Gaussian prior peaked at 100 BPM (σ=0.3 log). A BPM hint hard-constrains the lag search to ±15% of the hint period. Parabolic peak interpolation for sub-bin resolution. Octave (half/double) errors are the standard failure mode — mitigated, not eliminated.
 
@@ -305,7 +305,7 @@ Takes a `.hkr` recorded at roughly constant tempo in a user-supplied time signat
 
 **Duration quantization (`quantize.ts`)** — the load-bearing module. Per-bar Viterbi DP over an allowed atom set (64th-note ticks at `subdivisions: 32`/quarter):
 
-| Atom | Ticks | LilyPond | Complexity |
+| Atom | Ticks | Notation base | Complexity |
 |---|---|---|---|
 | 8th | 16 | `8` | 0.10 |
 | quarter | 32 | `4` | 0.00 |
@@ -326,9 +326,11 @@ total_cost = Σ atom.complexity + Σ TIE_COST × (atoms − 1) + Σ boundary_pen
 
 **Voicing (`voicing.ts`)**: middle-C (MIDI 60) threshold per chord. All-treble/all-bass → one staff; mixed → split (≥60 to treble voice 1 staff 1, <60 to bass voice 1 staff 2, same `startTick`). **Rest consolidation** runs after the split: consecutive `isRest` QNotes merge per voice, slice at bar boundaries, re-fed through `splitDuration` so an all-rest bar collapses to `r1` instead of mirroring the active staff's rhythm. → see `lessons.md` "Rest consolidation in voicing fixes the 'mirroring' bug."
 
-**LilyPond emission (`lyEmit.ts`)**: `\new PianoStaff << \new Staff = "RH" { } \\ \new Staff = "LH" { } >>`, Dutch syntax (`c`, `cis`, `ees`, `c'`, `c,`). Per-notehead color via `\tweak NoteHead.color #(rgb-color r g b)` — single-color chords get one `\colorNote`; heterogeneous use per-pitch `\tweak` inside `< >`. Source-onset ids ride along as `% onset-ids: [...]` comments. Pitch spelling reuses `noteName(q,r)` + `keyOctave(q,r)` from `@hkl/shared/notes.js` directly (sharps on +r, flats on −r); no key-signature inference in v1 (rendered "in C" with explicit accidentals).
+**MEI emission (`meiEmit.ts`)**: builds the `.hkc` via the shared `@hkl/notation/mei-build` builder — the single source of truth for the `.hkc` dialect, shared with Composer's model (`emptyMeiDoc`, `buildNoteElement`/`buildChordElement`/`buildRestElement` all live there now; Composer re-exports them). `emitMei` reuses the head/`hkl:config`/scoreDef skeleton (`layoutReq.tuningMode` from the recording's snapshot, `refQ/refR = 0,0`), then appends one `<measure>` per bar: treble → staff 1 / layer 1, bass → staff 2 / layer 1 (layer 2 left empty; Composer fills placeholders on load). Each note carries `data-q`/`data-r` + a pre-darkened `color`; spelling reuses `noteName(q,r)` + `keyOctave(q,r)` from `@hkl/shared/notes.js` (sharps on +r, flats on −r; no key-signature inference in v1). **Ties**: a sustained note split across atoms — within a `QNote` or across a bar line (where `quantize` marks the previous QNote's trailing atom tied) — becomes an MEI `@tie` chain (`i`/`m`/`t`) on each note; `data-tie-partner` is left for Composer's `normalizeTies`, which runs on load via `replaceDocument`.
 
-**UI**: "Export .ly" opens a modal (title, time-sig numerator default 4 / denominator fixed at 4, optional BPM hint); pipeline runs synchronously, downloads via `downloadBlob`. `?hklrec=1` exposes `window.__hkl_rec.transcribe(opts)` returning `{ ly, debug }` (debug = every intermediate IR: onsets, tempo, beats, meter, chords, qnotes, voiced).
+**UI / transports**: "Export to Composer" opens a modal (title, time-sig numerator default 4 / denominator fixed at 4, optional BPM hint) with two actions — **Download `.hkc`** (`downloadBlob`, always available) and **Send to Composer** (gated on a live bridge connection: `isComposerConnected()`; disabled with an explanatory toast otherwise — no silent download fallback). Send dispatches the `import-score` `HklEvent` (`{ type, mei }`); Composer confirms-if-dirty then `replaceDocument` + adopts the score's `layoutReq`. `?hklrec=1` exposes `window.__hkl_rec.transcribe(opts)` returning `{ hkc, debug }` (debug = every intermediate IR: onsets, tempo, beats, meter, chords, qnotes, voiced).
+
+**Round-trip test**: `pnpm test:transcription` (`test/transcription-roundtrip/run.mjs`, needs `pnpm dev`) is a two-page headless check — emit a `.hkc` from a synthetic recording on the HKL page, load it into the Composer page via `replaceDocument`, and assert measure count, per-note `data-q`/`data-r`/`color`, no tie orphans, placeholder invariant, origin spelling, and serialize round-trip stability.
 
 **Color handling**: `darkColorHex(q,r)` in `apps/hkl/src/transcription/pitch.ts` wraps `keyColorHex` with a per-hue table (`HUE_PROFILES`) remapping HKL's seven hues to paper-readable variants (OR/YE→goldenrod, GR→yellow-green, TE→cyan, PK→magenta) so the PK/OR and TE/GR confusion pairs on white become distinguishable. Stem/flag/accidental color suppressed (only the notehead carries lattice color).
 

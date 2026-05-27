@@ -15,7 +15,8 @@ import { applySnapshot } from '../recording/apply.js';
 import { serializeHkr, parseHkr, HkrParseError } from '../recording/hkr.js';
 import { sessionToMidi } from '../midi-io/export.js';
 import { midiToSession, selfTestRoundTrip } from '../midi-io/import.js';
-import { sessionToLilypond } from '../transcription/index.js';
+import { sessionToHkc } from '../transcription/index.js';
+import { isComposerConnected, importScoreToComposer } from '../bridge/hkl-side.js';
 import {
   startCapture, stopCapture, isCapturing, isCaptureSupported,
 } from '../audio/capture.js';
@@ -88,7 +89,7 @@ function updateButtons(): void {
   const btnLoad = $<HTMLButtonElement>('btnLoadHkr');
   const btnExport = $<HTMLButtonElement>('btnExportMidi');
   const btnImport = $<HTMLButtonElement>('btnImportMidi');
-  const btnLy = $<HTMLButtonElement>('btnExportLilypond');
+  const btnCmp = $<HTMLButtonElement>('btnExportComposer');
   if (btnRec) {
     btnRec.textContent = rec ? '■ Stop' : '● Rec';
     btnRec.classList.toggle('recording', rec);
@@ -104,7 +105,7 @@ function updateButtons(): void {
   if (btnExport) btnExport.disabled = !hasSession || rec || play;
   /* Import requires a loaded .hkr to merge MIDI into (see onImportMidiClick). */
   if (btnImport) btnImport.disabled = !hasSession || rec || play;
-  if (btnLy) btnLy.disabled = !hasSession || rec || play;
+  if (btnCmp) btnCmp.disabled = !hasSession || rec || play;
 }
 
 function updateStatus(): void {
@@ -265,40 +266,74 @@ function onImportMidiClick(): void {
   if (inp) { inp.value = ''; inp.click(); }
 }
 
-function onExportLilypondClick(): void {
+function onExportComposerClick(): void {
   if (!curSession || isRecording() || isPlaying()) return;
-  const dlg = $<HTMLDialogElement>('lyExportDialog');
+  const dlg = $<HTMLDialogElement>('composerExportDialog');
   if (!dlg) return;
-  const titleInp = $<HTMLInputElement>('lyTitle');
-  const numInp = $<HTMLInputElement>('lyNumerator');
-  const bpmInp = $<HTMLInputElement>('lyBpm');
+  const titleInp = $<HTMLInputElement>('cmpTitle');
+  const numInp = $<HTMLInputElement>('cmpNumerator');
+  const bpmInp = $<HTMLInputElement>('cmpBpm');
   if (titleInp && titleInp.value.trim() === '') titleInp.value = 'Untitled';
   if (numInp && numInp.value.trim() === '') numInp.value = '4';
   if (bpmInp) bpmInp.value = '';
+  /* "Send to Composer" needs a live, connected Composer tab — no silent
+     download fallback. Reflect that in the button each time the dialog opens. */
+  const sendBtn = $<HTMLButtonElement>('cmpSendBtn');
+  if (sendBtn) {
+    sendBtn.disabled = !isComposerConnected();
+    sendBtn.title = isComposerConnected()
+      ? 'Send the transcription straight to the connected Composer tab'
+      : 'No Composer tab is connected — open Composer first';
+  }
   dlg.showModal();
 }
 
-function onLyExportSubmit(e: Event): void {
-  e.preventDefault();
-  const dlg = $<HTMLDialogElement>('lyExportDialog');
-  if (!curSession || !dlg) { dlg?.close(); return; }
-  const title = ($<HTMLInputElement>('lyTitle')?.value ?? 'Untitled').trim() || 'Untitled';
-  const numerator = Math.max(1, Math.round(parseFloat($<HTMLInputElement>('lyNumerator')?.value ?? '4') || 4));
-  const bpmRaw = $<HTMLInputElement>('lyBpm')?.value ?? '';
+/** Transcribe the current recording using the dialog's title / numerator / BPM
+ *  fields. Returns the `.hkc` string, or null if there is no session. */
+function buildHkcFromDialog(): string | null {
+  if (!curSession) return null;
+  const title = ($<HTMLInputElement>('cmpTitle')?.value ?? 'Untitled').trim() || 'Untitled';
+  const numerator = Math.max(1, Math.round(parseFloat($<HTMLInputElement>('cmpNumerator')?.value ?? '4') || 4));
+  const bpmRaw = $<HTMLInputElement>('cmpBpm')?.value ?? '';
   const bpmHint = bpmRaw.trim() === '' ? null : (parseFloat(bpmRaw) || null);
+  return sessionToHkc(curSession, { numerator, bpmHint, title }).hkc;
+}
+
+function onComposerDownloadSubmit(e: Event): void {
+  e.preventDefault();
+  const dlg = $<HTMLDialogElement>('composerExportDialog');
+  if (!curSession || !dlg) { dlg?.close(); return; }
   try {
-    const result = sessionToLilypond(curSession, { numerator, bpmHint, title });
-    downloadBlob('hkl-' + isoStamp() + '.ly',
-      new Blob([result.ly], { type: 'text/plain' }));
+    const hkc = buildHkcFromDialog();
+    if (hkc !== null) {
+      downloadBlob('hkl-' + isoStamp() + '.hkc',
+        new Blob([hkc], { type: 'application/xml' }));
+    }
     dlg.close();
   } catch (err) {
-    setStatusText('LilyPond export failed: ' + (err as Error).message);
+    setStatusText('Transcription failed: ' + (err as Error).message);
     dlg.close();
   }
 }
 
-function onLyCancel(): void {
-  $<HTMLDialogElement>('lyExportDialog')?.close();
+function onSendToComposer(): void {
+  if (!isComposerConnected()) {
+    setStatusText('Open Composer first — no Composer tab is connected');
+    return;
+  }
+  const dlg = $<HTMLDialogElement>('composerExportDialog');
+  try {
+    const hkc = buildHkcFromDialog();
+    if (hkc !== null) importScoreToComposer(hkc);
+    dlg?.close();
+  } catch (err) {
+    setStatusText('Transcription failed: ' + (err as Error).message);
+    dlg?.close();
+  }
+}
+
+function onComposerExportCancel(): void {
+  $<HTMLDialogElement>('composerExportDialog')?.close();
 }
 
 async function onImportMidiChange(e: Event): Promise<void> {
@@ -331,12 +366,14 @@ export function initRecorderUI(): void {
   if (btnExport) btnExport.addEventListener('click', onExportMidiClick);
   const btnImport = $<HTMLButtonElement>('btnImportMidi');
   if (btnImport) btnImport.addEventListener('click', onImportMidiClick);
-  const btnLy = $<HTMLButtonElement>('btnExportLilypond');
-  if (btnLy) btnLy.addEventListener('click', onExportLilypondClick);
-  const lyForm = $<HTMLFormElement>('lyExportForm');
-  if (lyForm) lyForm.addEventListener('submit', onLyExportSubmit);
-  const lyCancel = $<HTMLButtonElement>('lyCancelBtn');
-  if (lyCancel) lyCancel.addEventListener('click', onLyCancel);
+  const btnCmp = $<HTMLButtonElement>('btnExportComposer');
+  if (btnCmp) btnCmp.addEventListener('click', onExportComposerClick);
+  const cmpForm = $<HTMLFormElement>('composerExportForm');
+  if (cmpForm) cmpForm.addEventListener('submit', onComposerDownloadSubmit);
+  const cmpSend = $<HTMLButtonElement>('cmpSendBtn');
+  if (cmpSend) cmpSend.addEventListener('click', onSendToComposer);
+  const cmpCancel = $<HTMLButtonElement>('cmpCancelBtn');
+  if (cmpCancel) cmpCancel.addEventListener('click', onComposerExportCancel);
   const fiH = $<HTMLInputElement>('fileInputHkr');
   if (fiH) fiH.addEventListener('change', (e) => { void onLoadHkrChange(e); });
   const fiM = $<HTMLInputElement>('fileInputMidi');
@@ -355,7 +392,7 @@ export function initRecorderUI(): void {
       setSession: (s: HkrSession): void => { curSession = s; updateButtons(); updateStatus(); },
       selfTestRoundTrip: (): unknown => curSession ? selfTestRoundTrip(curSession.snapshot) : [],
       transcribe: (opts?: { numerator?: number; bpmHint?: number | null; title?: string }): unknown =>
-        curSession ? sessionToLilypond(curSession, {
+        curSession ? sessionToHkc(curSession, {
           numerator: opts?.numerator ?? 4,
           bpmHint: opts?.bpmHint ?? null,
           title: opts?.title ?? 'Untitled',

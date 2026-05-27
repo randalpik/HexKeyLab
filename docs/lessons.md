@@ -499,7 +499,7 @@ LilyPond binary compile times are ~1–3 s on small scores (Guile startup domina
 
 `frescobaldi --line=N --column=M file.ly` does drive the cursor in a running single-instance Frescobaldi, but only the text cursor, not the PDF preview. PDF-side highlighting from outside isn't exposed.
 
-Net: Frescobaldi is a great editor for hand-tweaking `.ly` source, but cannot serve as a live preview surface for a streamed-write workflow. HKL Composer uses Verovio in-app for live; the `.hkr` → LilyPond transcription path writes `.ly` files for users to open in Frescobaldi when they want text-level polish on a finished score.
+Net: Frescobaldi is a great editor for hand-tweaking `.ly` source, but cannot serve as a live preview surface for a streamed-write workflow. HKL Composer uses Verovio in-app for live. (Historical: this informed dropping LilyPond entirely — the `.hkr` → sheet-music path now emits a Composer-native `.hkc` and opens directly in Composer for editing, rather than writing `.ly` for an external tool. See decisions.md "Transcription emits `.hkc` … not `.ly`".)
 
 ### Stale DOM refs across `innerHTML` rewrites are the most insidious overlay bug
 
@@ -674,7 +674,7 @@ I put expression elements as the LAST children of their `<measure>` (after both 
 
 If you ever need to query "all expressions in document order", do it by walking the measures first and then their `<dynam>`/`<hairpin>` children — not by DOM-order across the whole `<section>`, since `<measure>`s come in document order but their inner children don't have a meaningful order.
 
-## LilyPond transcription quantization
+## Transcription quantization
 
 ### `TIE_COST` calibration matters more than `BOUNDARY_WEIGHT`
 
@@ -758,7 +758,7 @@ When `voicing.ts` splits a chord across staves via the middle-C threshold, the o
 
 Fix: after the voice split, walk each voice's stream; consecutive rests merge into one duration, slice at bar boundaries, re-fed through `splitDuration` (the duration DP). A treble bar of 8 eighth notes against an empty bass voice → bass gets a single `r1` after consolidation. A treble + a single quarter-note pickup in the bass → bass gets `quarter + half-rest` (the user's specific example).
 
-The re-fed DP runs per-bar slice so rests don't tie across bars (rests don't carry ties — `r2 ~ r2` is invalid LilyPond).
+The re-fed DP runs per-bar slice so rests don't tie across bars (rests don't carry ties — a tie between rests is meaningless in any notation, and `meiEmit` only assigns `@tie` to note/chord atoms, never rests).
 
 ### Asymmetric cross-references silently fail on the "rare" direction
 

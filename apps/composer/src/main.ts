@@ -288,6 +288,20 @@ bridge.on((msg: HklEvent) => {
       footprintColors = map;
       break;
     }
+    case 'import-score': {
+      /* A transcription is a whole score → replace, not merge. Confirm first
+         if the current doc has content so we don't silently lose unsaved work. */
+      if (model.hasNotes()
+        && !window.confirm('Replace the current score with the imported transcription from HKL?')) {
+        break;
+      }
+      try {
+        applyLoadedDocument(msg.mei, 'Imported transcription from HKL.');
+      } catch (err) {
+        setStatus('Import failed: ' + (err as Error).message, 'error');
+      }
+      break;
+    }
   }
 });
 
@@ -639,25 +653,31 @@ $('btnLoad')?.addEventListener('click', () => {
   $<HTMLInputElement>('fileInputHkc')?.click();
 });
 
+/** Swap in a whole new document (file load or HKL transcription import) and run
+ *  the identical post-load wiring: reset history, re-render, refresh indicators,
+ *  scroll the cursor into view, and treat the loaded layoutReq as authoritative
+ *  (disabling blank-score auto-adopt so a stray hkl-layout-state can't overwrite
+ *  it) before telling HKL about it. */
+function applyLoadedDocument(meiXml: string, statusMsg: string): void {
+  model.replaceDocument(meiXml);
+  /* File load resets editing history — undo must not cross document boundaries. */
+  history.clear();
+  reRender();
+  refreshIndicators();
+  maybeScrollMeasureIntoView(visualCursorMeasure());
+  autoAdoptedHklLayout = true;
+  broadcastLayoutReq();
+  refreshLayoutMatchIndicator();
+  setStatus(statusMsg, 'action');
+}
+
 $<HTMLInputElement>('fileInputHkc')?.addEventListener('change', async (e) => {
   const input = e.target as HTMLInputElement;
   const file = input.files?.[0];
   if (!file) return;
   try {
     const loaded = await loadHkcFromFile(file);
-    model.replaceDocument(loaded.serialize());
-    /* File load resets editing history — undo must not cross file boundaries. */
-    history.clear();
-    reRender();
-    refreshIndicators();
-    maybeScrollMeasureIntoView(visualCursorMeasure());
-    /* Treat the loaded layoutReq as authoritative — disable any future
-       blank-score auto-adopt so a stray hkl-layout-state can't overwrite it. */
-    autoAdoptedHklLayout = true;
-    /* The loaded file's layoutReq is now in the model; tell HKL. */
-    broadcastLayoutReq();
-    refreshLayoutMatchIndicator();
-    setStatus('Loaded ' + file.name, 'action');
+    applyLoadedDocument(loaded.serialize(), 'Loaded ' + file.name);
   } catch (err) {
     setStatus('Load failed: ' + (err as Error).message, 'error');
   } finally {

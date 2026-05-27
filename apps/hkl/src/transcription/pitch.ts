@@ -1,33 +1,9 @@
-// Pitch and color helpers for transcription. Reuses the codebase's
-// lattice-driven note naming (sharps on +r, flats on −r) — no
-// enharmonic respelling, no key-signature inference. The LilyPond
-// converter emits Dutch syntax: c/d/e/f/g/a/b, "is" suffix per sharp,
-// "es" suffix per flat, "'" for each octave above C3, "," for each
-// below. Middle C (C4) is `c'`.
+// Color helpers for transcription: darken a lattice hex color for ink-on-paper
+// notehead readability. Reuses the codebase's lattice-driven note naming
+// elsewhere; spelling itself lives in @hkl/shared. The screen palette (tuned for
+// a dark UI) is remapped per-hue here so noteheads read on white paper.
 
-import { noteName, keyOctave, parseNote, accToVal } from '@hkl/shared/notes.js';
 import { keyColorHex } from '../render/colors.js';
-
-/** Convert a lattice coord to a LilyPond absolute pitch token. */
-export function coordToLilyPitch(q: number, r: number): string {
-  const name = noteName(q, r);
-  const parsed = parseNote(name);
-  const acc = accToVal(parsed.acc);
-  const octave = keyOctave(q, r);
-
-  const lyLetter = parsed.letter.toLowerCase();
-  const suffix =
-    acc > 0 ? 'is'.repeat(acc) :
-    acc < 0 ? 'es'.repeat(-acc) :
-    '';
-
-  const oct =
-    octave > 3 ? "'".repeat(octave - 3) :
-    octave < 3 ? ','.repeat(3 - octave) :
-    '';
-
-  return lyLetter + suffix + oct;
-}
 
 /* ── color helpers: darken a hex color for ink-on-paper readability ─────── */
 
@@ -114,12 +90,4 @@ export function darkColorHex(q: number, r: number): string {
   const p = profileForHue(h);
   const [r1, g1, b1] = hslToRgb(p.H / 360, p.S, p.L);
   return rgbToHex(r1, g1, b1);
-}
-
-/** LilyPond Scheme rgb-color literal (0..1 floats) for use in tweaks. */
-export function darkColorScheme(q: number, r: number): string {
-  const hex = darkColorHex(q, r);
-  const [r0, g0, b0] = hexToRgb(hex);
-  const f = (x: number): string => (x / 255).toFixed(3);
-  return '(rgb-color ' + f(r0) + ' ' + f(g0) + ' ' + f(b0) + ')';
 }

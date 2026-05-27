@@ -28,7 +28,7 @@ function asRest(q: QNote): QNote {
     atoms: clearTies(q.atoms),
     pitches: [],
     colors: [],
-    lyPitches: [],
+    coords: [],
     sourceOnsetIds: [],
     isRest: true,
   };
@@ -37,7 +37,7 @@ function asRest(q: QNote): QNote {
 interface SubsetIdx {
   pitches: number[];
   colors: string[];
-  lyPitches: string[];
+  coords: { q: number; r: number }[];
   sourceOnsetIds: number[];
 }
 
@@ -45,7 +45,7 @@ function pick(q: QNote, indices: number[]): SubsetIdx {
   return {
     pitches: indices.map((i) => q.pitches[i]),
     colors: indices.map((i) => q.colors[i]),
-    lyPitches: indices.map((i) => q.lyPitches[i]),
+    coords: indices.map((i) => q.coords[i]),
     sourceOnsetIds: indices.map((i) => q.sourceOnsetIds[i]),
   };
 }
@@ -87,7 +87,7 @@ function consolidateRests(
         atoms,
         pitches: [],
         colors: [],
-        lyPitches: [],
+        coords: [],
         sourceOnsetIds: [],
         isRest: true,
       });

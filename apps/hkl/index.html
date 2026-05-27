@@ -298,7 +298,7 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <button class="push-btn" id="btnImportMidi" disabled title="Import a .mid file (requires matching .hkr loaded for layout snapshot)">Import .mid</button>
 </div>
 <div class="btn-pair">
-<button class="push-btn" id="btnExportLilypond" disabled title="Transcribe the current recording to a .ly (LilyPond) sheet music source">Export .ly</button>
+<button class="push-btn" id="btnExportComposer" disabled title="Transcribe the current recording to a .hkc score — download it or send it straight to Composer">Export to Composer</button>
 </div>
 <input type="file" id="fileInputHkr" accept=".hkr,.json" style="display:none">
 <input type="file" id="fileInputMidi" accept=".mid,.midi" style="display:none">
@@ -372,16 +372,17 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <button type="button" id="hkiManageClose">Close</button>
 </div>
 </dialog>
-<dialog id="lyExportDialog" class="hkl-dialog">
-<form id="lyExportForm" method="dialog">
-<h3>Export LilyPond</h3>
-<div class="row"><label for="lyTitle">Title</label><input type="text" id="lyTitle" value="Untitled" autocomplete="off"></div>
-<div class="row"><label for="lyNumerator">Time signature</label><input type="number" id="lyNumerator" value="4" min="1" max="12" step="1"><span style="color:#666;font-size:12px">/ 4</span></div>
-<div class="row"><label for="lyBpm">BPM hint (optional)</label><input type="number" id="lyBpm" placeholder="auto" min="40" max="240" step="1"></div>
+<dialog id="composerExportDialog" class="hkl-dialog">
+<form id="composerExportForm" method="dialog">
+<h3>Export to Composer</h3>
+<div class="row"><label for="cmpTitle">Title</label><input type="text" id="cmpTitle" value="Untitled" autocomplete="off"></div>
+<div class="row"><label for="cmpNumerator">Time signature</label><input type="number" id="cmpNumerator" value="4" min="1" max="12" step="1"><span style="color:#666;font-size:12px">/ 4</span></div>
+<div class="row"><label for="cmpBpm">BPM hint (optional)</label><input type="number" id="cmpBpm" placeholder="auto" min="40" max="240" step="1"></div>
 <div style="color:#666;font-size:11px;margin-top:4px;max-width:330px">Best for performances played to a click or near-constant tempo. A BPM hint constrains the search to &plusmn;15% and prevents half/double-tempo errors.</div>
 <div class="actions">
-<button type="button" id="lyCancelBtn">Cancel</button>
-<button type="submit" id="lySubmitBtn">Export</button>
+<button type="button" id="cmpCancelBtn">Cancel</button>
+<button type="button" id="cmpSendBtn" title="Send the transcription straight to a connected Composer tab">Send to Composer</button>
+<button type="submit" id="cmpDownloadBtn">Download .hkc</button>
 </div>
 </form>
 </dialog>

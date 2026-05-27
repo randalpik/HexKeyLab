@@ -22,7 +22,6 @@
 import type {
   ChordEvent, BeatGrid, Meter, QNote, QNoteAtom, NotationBase,
 } from './types.js';
-import { coordToLilyPitch } from './pitch.js';
 
 const TICK_GRID = 16;       /* snap to 8th-note grid */
 const REST_MIN_TICKS = 16;  /* below this, fold silence into the preceding note */
@@ -312,17 +311,18 @@ export function quantizeDurations(
         atoms,
         pitches: [],
         colors: [],
-        lyPitches: [],
+        coords: [],
         sourceOnsetIds: [],
         isRest: true,
       });
     } else {
-      const pitches: { midi: number; color: string; ly: string; id: number }[] = [];
+      const pitches: { midi: number; color: string; q: number; r: number; id: number }[] = [];
       for (const o of ev.chord.onsets) {
         pitches.push({
           midi: o.midi,
           color: o.colorHex,
-          ly: coordToLilyPitch(o.q, o.r),
+          q: o.q,
+          r: o.r,
           id: o.id,
         });
       }
@@ -342,7 +342,7 @@ export function quantizeDurations(
         atoms,
         pitches: pitches.map((p) => p.midi),
         colors: pitches.map((p) => p.color),
-        lyPitches: pitches.map((p) => p.ly),
+        coords: pitches.map((p) => ({ q: p.q, r: p.r })),
         sourceOnsetIds: pitches.map((p) => p.id),
         isRest: false,
       });

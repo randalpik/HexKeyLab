@@ -215,9 +215,9 @@ The status pill on the right shows current state: *Idle*, *Recording 0:04*, *Pla
 
 `.hkr` is the canonical recording. `.mid` is a derived view for DAW interchange. Re-import always anchors against an `.hkr` snapshot so coordinate identity survives even if a DAW quantizes pitch-wheel data — the snapshot tells HKL exactly which lattice positions to map (note, bend) tuples onto.
 
-### Export to sheet music (LilyPond)
+### Export to sheet music (Composer)
 
-**Export LilyPond** turns the current recording into notation. HKL estimates the tempo, tracks the beats, picks a downbeat, and quantizes durations bar by bar, then emits a `.ly` (LilyPond source) file with **colored noteheads matching the key colors** and lattice-correct accidental spelling (sharps on +r, flats on −r). Compile the `.ly` with LilyPond to get an engraved PDF. For interactive score *editing* rather than automatic transcription, use **HKL Composer** (below).
+**Export to Composer** turns the current recording into notation. HKL estimates the tempo, tracks the beats, picks a downbeat, and quantizes durations bar by bar, then emits an `.hkc` score (HKL Composer's native format) with **colored noteheads matching the key colors** and lattice-correct accidental spelling (sharps on +r, flats on −r). The dialog offers two ways out: **Download `.hkc`** saves the file (open it later in Composer), and **Send to Composer** drops it straight into a connected Composer tab — no file needed. Either way the result opens in **HKL Composer** for interactive editing, playback, and further export (MusicXML, PDF).
 
 ---
 

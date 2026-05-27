@@ -4,7 +4,12 @@
  * `elementHasTie*` read from existing elements. */
 
 import type { ResolvedNote } from '@hkl/bridge/protocol.js';
-import { tokenFromAlter, alterFromCount, getNoteAlter } from '@hkl/notation/accidentals.js';
+import { getNoteAlter } from '@hkl/notation/accidentals.js';
+import {
+  buildNoteElement as meiBuildNote,
+  buildChordElement as meiBuildChord,
+  buildRestElement as meiBuildRest,
+} from '@hkl/notation/mei-build.js';
 import {
   el,
   newId,
@@ -17,22 +22,15 @@ import {
   type Dots,
 } from './index.js';
 
+/* The note/chord/rest builders live in @hkl/notation/mei-build (shared with
+   HKL's transcription emitter). These thin wrappers pin the Composer-facing
+   signatures (ChordInput / RestInput / ResolvedNote); ResolvedNote is
+   structurally a NoteSpec, so it passes straight through. The tuplet-placeholder
+   and extract* helpers below stay Composer-side — they lean on the cursor/tuplet
+   machinery and tick math that don't belong in the shared package. */
+
 export function buildChordElement(doc: Document, input: ChordInput): Element {
-  const dur = input.duration;
-  const dots = input.dots ?? 0;
-  if (input.notes.length === 1) {
-    return buildNoteElement(doc, input.notes[0], dur, dots);
-  }
-  const chord = el(doc, 'chord', {
-    'xml:id': newId('c'),
-    dur,
-    dots: dots > 0 ? dots : undefined,
-  });
-  const sorted = [...input.notes].sort((a, b) => a.midi - b.midi);
-  for (const n of sorted) {
-    chord.appendChild(buildNoteElement(doc, n, dur, dots, /* inChord */ true));
-  }
-  return chord;
+  return meiBuildChord(doc, input);
 }
 
 export function buildNoteElement(
@@ -42,37 +40,11 @@ export function buildNoteElement(
   dots: Dots,
   inChord = false,
 ): Element {
-  const attrs: Record<string, string | number | undefined> = {
-    'xml:id': newId('n'),
-    pname: n.pname,
-    oct: n.oct,
-    color: n.colorHex,
-    'data-q': n.q,
-    'data-r': n.r,
-  };
-  if (!inChord) {
-    attrs.dur = dur;
-    if (dots > 0) attrs.dots = dots;
-  }
-  /* Accidental: emit a single canonical MEI token (s/f/x/ff/ts/tf or
-     'n' for explicit natural). HKL count-form string is parsed to an
-     integer alter; values outside ±3 should never arrive here (entry
-     path filters them) but we clamp to ±3 defensively just in case. */
-  if (n.accid === 'n') {
-    attrs.accid = 'n';
-  } else {
-    const token = tokenFromAlter(alterFromCount(n.accid));
-    if (token) attrs.accid = token;
-  }
-  return el(doc, 'note', attrs);
+  return meiBuildNote(doc, n, dur, dots, inChord);
 }
 
 export function buildRestElement(doc: Document, input: RestInput): Element {
-  return el(doc, 'rest', {
-    'xml:id': newId('r'),
-    dur: input.duration,
-    dots: input.dots && input.dots > 0 ? input.dots : undefined,
-  });
+  return meiBuildRest(doc, input);
 }
 
 /** Build a single tuplet-internal placeholder: a `<rest>` with the

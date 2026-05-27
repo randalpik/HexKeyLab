@@ -1,5 +1,5 @@
 // Transcription intermediate representations. The pipeline is
-//   hkr → onsets → tempo → beats → meter → chords → qnotes → voiced → .ly
+//   hkr → onsets → tempo → beats → meter → chords → qnotes → voiced → .hkc
 // Each stage produces one of the types here; identity (Onset.id) flows
 // end-to-end so a future correction UI can map back from a notehead to the
 // raw events that produced it.
@@ -103,8 +103,9 @@ export interface QNote {
   pitches: number[];
   /** dark hex colors, parallel to pitches */
   colors: string[];
-  /** LilyPond pitch strings, parallel to pitches (e.g. "ees'", "fis''") */
-  lyPitches: string[];
+  /** origin lattice coords, parallel to pitches — the exact (q, r) the emitter
+   *  spells from (MIDI alone can't disambiguate enharmonic lattice cells) */
+  coords: { q: number; r: number }[];
   /** identity back-pointers */
   sourceOnsetIds: number[];
   /** true when this QNote represents a rest (pitches.length === 0) */
@@ -125,7 +126,7 @@ export interface TranscribeOpts {
   numerator: number;
   /** optional BPM hint; when supplied, tempo search is constrained to ±15% */
   bpmHint: number | null;
-  /** \header title */
+  /** score title (MEI fileDesc / titleStmt) */
   title: string;
 }
 
@@ -140,7 +141,8 @@ export interface TranscribeDebug {
 }
 
 export interface TranscribeResult {
-  ly: string;
+  /** complete `.hkc` (MEI 5) document string, ready to download or bridge */
+  hkc: string;
   debug: TranscribeDebug;
 }
 

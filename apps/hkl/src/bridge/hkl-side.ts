@@ -493,6 +493,12 @@ export function isComposerConnected(): boolean {
   return composerConnected;
 }
 
+/** Send a transcribed score to Composer for editing. The caller gates on
+ *  isComposerConnected() — there is no silent fallback. */
+export function importScoreToComposer(mei: string): void {
+  bridge.send({ type: 'import-score', mei });
+}
+
 /** Refresh the HKL toolbar's Composer group — visibility, connection label,
  *  score-layout label, and match indicator. Called from every state change
  *  that can affect them: composer-hello / composer-bye / layout-req-changed /
