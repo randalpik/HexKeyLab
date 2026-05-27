@@ -2152,7 +2152,7 @@ For (4) — keeping 10:7 / 7:5 as `septimal A4 / d5` per xen-wiki: those ratios 
 
 **Why**: HKL's interval analyzer surfaces names for whatever the user is *playing*, in real time. A naming scheme optimized for written-music theory (xen-wiki canonical ratios, Pythagorean defaults preferred) loses to one optimized for what the player's fingers reach. The nearest-match algorithm minimizes comma clutter; the adjective hierarchy gives consistent names to the SC-pair structure of the lattice; the septimal reassignment respects the geometry of Septimal mode specifically.
 
-**Where**: `src/tuning/intervals.ts` — `PairDecl` interface (optional `c2`), `findBaseName`, `autoMirror` (lesser↔greater + acute↔grave flips), `PAIRS` declarations. `tools/interval-names/enumerate.ts` for verification / gap-finding. `docs/architecture.md` §4.10.
+**Where**: `src/tuning/intervals.ts` — `PairDecl` interface (optional `c2`), `findBaseName`, `autoMirror` (lesser↔greater + acute↔grave flips), `PAIRS` declarations. `tools/interval-names/enumerate.ts` for verification / gap-finding. `docs/architecture/hkl.md` (interval naming).
 
 ---
 
@@ -2170,7 +2170,7 @@ For (4) — keeping 10:7 / 7:5 as `septimal A4 / d5` per xen-wiki: those ratios 
 
 The format is producer-agnostic by design: a Phase 2 in-browser analyzer will write `.hki` via the same `writeHki` consumers use to read it. The format spec lives in the TypeScript types in `src/shared/hki.ts`; everything else implements that spec.
 
-**Where**: `src/shared/hki.ts` (schema + reader/writer), `analyzer/bundle.js` (Node producer), `src/state/instrumentRegistry.ts` (browser consumer + IndexedDB persistence), `docs/architecture.md` §4.16.
+**Where**: `src/shared/hki.ts` (schema + reader/writer), `analyzer/bundle.js` (Node producer), `src/state/instrumentRegistry.ts` (browser consumer + IndexedDB persistence), `docs/architecture/engine.md`.
 
 ---
 
@@ -2350,7 +2350,7 @@ The HKL toolbar button is renamed `Bundles…` → `Import`, with the two file-p
 
 **Rejected**:
 - **Time-based (`@tstamp`/`@tstamp2`) anchoring** like dynamics/hairpins. A slur's identity is its two endpoint notes; tstamp anchoring is for markings that must survive nearby-note deletion. This is the deliberate exception to the "prefer tstamp" rule (lessons.md / the expressions.ts header comment). Trade-off: a deleted endpoint dangles the slur, handled by `pruneDanglingSlurs`.
-- **The older `(`-wraps-a-selection entry** described in a prior architecture.md draft. The backlog (Max's source of truth) specifies the `Ctrl+L` pending-state flow; that supersedes it. architecture.md §7.20 rewritten to match.
+- **The older `(`-wraps-a-selection entry** described in a prior architecture.md draft. The backlog (Max's source of truth) specifies the `Ctrl+L` pending-state flow; that supersedes it. docs/architecture/composer.md (slurs) rewritten to match.
 - **Deciding the legato mechanism Composer-side.** The instrument is HKL-side state, so Composer only ships slur *connectivity* (`voice`, `slurredToNext`) and HKL picks overlap-vs-glide from `instrReplaysOnTranspose()`.
 - **Refactoring the live pitch-transpose path to share the glide primitive.** The new batched `glideVoices(pairs, rampMs)` in `audio/engine.ts` was extracted for playback, but `keyboard-notes.ts`'s sustained-transpose branch (ear-tuned, working) was left calling its own inline handoff to avoid destabilizing it. A future dedup could route it through `glideVoices`.
 - **Per-event continuous-loudness shaping across a slur** and richer chord-slur handling — out of scope for v1. Chord-involved slur joins fall back to normal abutting playback.
@@ -2381,7 +2381,7 @@ The HKL toolbar button is renamed `Bundles…` → `Import`, with the two file-p
 
 ## Velocity: canonical "musical velocity" domain, device curves at input (2026-05-26)
 
-**Picked**: `audio.keyVelocity` now holds a **canonical musical velocity (0–127)**, normalized across input devices. Device-specific shaping moved to *input* (Lumatone: per-key gain + a decompression input curve; piano/SP-250: identity; QWERTY/Composer: re-mapped `DEFAULT_DYNAMIC_MAP`), and a single gentle device-independent **house curve** (`velocityCal.curveGain`, floor 0.05 / ceiling 1.0 / γ 1.5) maps musical velocity → audio gain at playback. `piano-out` sends `keyVelocity` unchanged so external synths round-trip. Lumadiag's curve sliders re-bind to the Lumatone input (decompression) curve. See architecture.md §4.15a.
+**Picked**: `audio.keyVelocity` now holds a **canonical musical velocity (0–127)**, normalized across input devices. Device-specific shaping moved to *input* (Lumatone: per-key gain + a decompression input curve; piano/SP-250: identity; QWERTY/Composer: re-mapped `DEFAULT_DYNAMIC_MAP`), and a single gentle device-independent **house curve** (`velocityCal.curveGain`, floor 0.05 / ceiling 1.0 / γ 1.5) maps musical velocity → audio gain at playback. `piano-out` sends `keyVelocity` unchanged so external synths round-trip. Lumadiag's curve sliders re-bind to the Lumatone input (decompression) curve. See docs/architecture/engine.md.
 
 **Rejected**:
 - **Status quo (Lumatone-domain keyVelocity).** The old design folded the Lumatone's velocity decompression into a steep γ≈15.5 audio gain curve and normalized every source into that domain — piano input pre-inverted it (`normalizePianoVelocity`). Fine when the Lumatone was the only physical instrument whose velocity mattered, but it (a) broke the SP-250 round-trip via `piano-out` (the SP-250 re-applied its own curve on top → compressed) and (b) squashed QWERTY/Composer.

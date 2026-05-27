@@ -23,11 +23,14 @@ A3 = 220 Hz sits at the center. Every key is colored by pitch class — same col
 
 ## Tunings
 
-The **Tuning** dropdown switches between three systems. The lattice doesn't change shape — only the frequencies and the colors do.
+The **Tuning** dropdown switches between six systems, shown as **Equal · Ptolemaic · Pythagorean · Semiditonal · Septimal · Schismatic**. The lattice doesn't change shape — only the frequencies and the colors do.
 
-- **Equal (12-TET)** — the familiar even-tempered tuning. Three colors cycle by octave. Useful as a reference; intervals in the info panel are named in the standard way.
-- **5-limit JI** *(default)* — pure just intonation built from prime 2, 3, and 5. The keyboard divides into **3-key-wide bands** along the q-axis. Inside a band, every interval is a clean 5-limit ratio. Between bands you cross a **seam** where the ratios shift — these are visible as dark wedges if "Band seams" is on.
-- **7-limit JI** — adds prime 7 via a **uniform septimal** rule: every third column of the lattice (the qm=2 lineage) is tempered down by the septimal comma (64:63), making the harmonic 7th (7/4) directly reachable from every key. Major triads stay pure 4:5:6; dominant 7 = 4:5:6:7, half-diminished 7 = 5:6:7:9 — all reachable from any root. The trade-off vs 5-limit is that pure 5-limit minor (10:12:15) is unreachable in this mode; minor triads sound Pythagorean (32:27) or septimal subminor (7:6). Use 5-limit when you specifically want 5-limit minor.
+- **Equal (12-TET)** — the familiar even-tempered tuning. Three colors cycle by octave; a reference, not a JI mode.
+- **Ptolemaic (5-limit JI)** *(default)* — pure just intonation from primes 2, 3, and 5. The keyboard divides into **3-key-wide bands** along the q-axis; inside a band every interval is a clean 5-limit ratio, and between bands you cross a **seam** (visible as dark wedges if "Band seams" is on).
+- **Pythagorean** — every major third is 81/64 and every minor third 32/27; no 5-limit ratios. A study layout for Pythagorean voice leading.
+- **Semiditonal** — 5-limit major, but the Pythagorean minor third (32/27) becomes reachable compactly within a band (5-limit minor is the trade).
+- **Septimal (7-limit JI)** — adds prime 7: every third lineage carries the harmonic 7th (7/4), so dominant 7 = 4:5:6:7 and half-diminished 7 = 5:6:7:9 are reachable from any root and major triads stay pure 4:5:6. The trade vs 5-limit is that pure 5-limit minor (10:12:15) is unreachable — minor sounds Pythagorean (32:27) or septimal subminor (7:6).
+- **Schismatic** — like Semiditonal but with a gentle pure-thirds octave stretch (~1–3¢ per octave, within the natural piano-stretch range); a study mode for hearing the schisma. Intervals stay in tune within each octave.
 
 Switching tunings ramps audio frequencies smoothly over 150ms — sustained notes glide from one tuning to the next.
 
@@ -41,7 +44,7 @@ The reference note (ref) is the lattice cell that the Lumatone or QWERTY outline
 
 This replaces the older flat / natural / sharp button group. The 3-position system was a special case — Ctrl+click on F, C, or G of the Pythagorean spine reproduces the old ♭/♮/♯ positions, and any of the 12 Pythagorean keys (plus their syntonic-comma siblings) is now equally reachable.
 
-The ref mechanism works in **all tuning modes** (12-TET, 5-limit, 7-limit) and in **all outline modes** (Lumatone, QWERTY, none).
+The ref mechanism works in **all tuning modes** and in **all outline modes** (Lumatone, QWERTY, none).
 
 Ref selection is constrained: the ref must land within the 88-key piano MIDI range, and the resulting 88-cell footprint must spell with at most ±3 accidentals (≤ triple-sharp / triple-flat). If you Ctrl+click a cell that would violate either constraint, a status message explains why and the ref is unchanged. Tick **"Valid ref bounds"** in the Piano toolbar to see a dotted outline marking exactly where the ref is allowed to land for the current tuning.
 
@@ -83,14 +86,15 @@ Audio is **off by default** to spare you from a surprise tone. Tick the **Audio*
 
 #### Instruments
 
-The **instrument dropdown** offers 16 voices:
+The **instrument dropdown** groups the available voices:
 
-- **Decaying** (struck/plucked, no sustain loop): Piano *(default)*, Electric Piano, Harp, Acoustic Guitar.
-- **Sustained without vibrato**: Reed Organ, Chamber Organ, Clarinet, Trombone.
-- **Sustained with vibrato**: Drawbar Organ, Violin, Viola, Cello, Flute.
-- **Oscillators**: Triangle, Sine, Square.
+- **Decaying** (struck/plucked): pianos *(Piano is the default)*, electric piano, harpsichord, harp, acoustic guitar, pizzicato strings.
+- **Sustained winds**: flute, clarinet, trombone, and others.
+- **Sustained bowed strings**: violin, viola, cello.
+- **Organs**: pipe, renaissance, drawbar.
+- **Oscillators**: triangle, sine, square.
 
-All sample instruments are RMS-normalized to the same loudness target, so switching instruments mid-session doesn't blow your ears out. Sustained instruments are stitched from real recordings via a custom loop-point analyzer; you can hold notes indefinitely without hearing the seam.
+(The dropdown lists the current set, which grows as instruments are added.) All sample instruments are RMS-normalized to the same loudness target, so switching mid-session doesn't blow your ears out. Sustained instruments are stitched from real recordings via a custom loop-point analyzer (see HKL Analyzer below), so you can hold notes indefinitely without hearing the seam.
 
 Aftertouch and pedal modulation work per-voice (see Lumatone section).
 
@@ -211,9 +215,9 @@ The status pill on the right shows current state: *Idle*, *Recording 0:04*, *Pla
 
 `.hkr` is the canonical recording. `.mid` is a derived view for DAW interchange. Re-import always anchors against an `.hkr` snapshot so coordinate identity survives even if a DAW quantizes pitch-wheel data — the snapshot tells HKL exactly which lattice positions to map (note, bend) tuples onto.
 
-### Future: Lilypond score export
+### Export to sheet music (LilyPond)
 
-The `.hkr` schema is designed so a future exporter can walk the events and emit Lilypond source with colored noteheads matching the key colors. That tool isn't shipped yet; the recordings you make today will work with it when it lands.
+**Export LilyPond** turns the current recording into notation. HKL estimates the tempo, tracks the beats, picks a downbeat, and quantizes durations bar by bar, then emits a `.ly` (LilyPond source) file with **colored noteheads matching the key colors** and lattice-correct accidental spelling (sharps on +r, flats on −r). Compile the `.ly` with LilyPond to get an engraved PDF. For interactive score *editing* rather than automatic transcription, use **HKL Composer** (below).
 
 ---
 
@@ -240,7 +244,16 @@ When a Lumatone is plugged in over USB, HKL becomes a full controller for it:
 
 HKL pushes a single fixed (channel, note) MIDI mapping to the Lumatone on first connect, then never re-maps the device. All tuning interpretation happens in software.
 
-> **Note**: the SysEx board map is hard-coded for the developer's specific Lumatone unit, on which physical boards 3 and 4 are swapped. Other units may need this constant adjusted in `src/lumatone/protocol.ts` before color sync looks correct.
+> **Note**: the SysEx board map is hard-coded for the developer's specific Lumatone unit, on which physical boards 3 and 4 are swapped. Other units may need this constant adjusted in `apps/hkl/src/lumatone/protocol.ts` before color sync looks correct.
+
+---
+
+## Companion apps
+
+HKL ships alongside two sibling apps, served from the same address (so they can talk to HKL live):
+
+- **HKL Composer** (at `/composer/`) — a keyboard-driven music-notation editor. It uses HKL as its input device: hold a chord on the HKL keyboard and it enters into the score with the correct just-intonation spelling and key colors. It plays scores back through HKL's audio engine. Composer can also open and edit its own `.hkc` files on its own; live chord entry needs an HKL tab open.
+- **HKL Analyzer** (at `/analyzer/`) — a tool for building your own sample-based instruments from audio (local files or a CDN soundfont URL). It detects clean loop points and normalizes loudness, then produces a `.hki` instrument bundle you can load straight into HKL.
 
 ---
 
