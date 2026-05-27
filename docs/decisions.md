@@ -2469,3 +2469,15 @@ Combined with the Phase 1 DI (instrument-audio provider, velocity→gain curve, 
 **Why / verification**: behavior is identical — the barrel feeds the same `INSTRUMENTS[key]` value the engine used to look up itself, and `loadedInstruments[currentInstrument]` resolves to the same cached def. typecheck + `pnpm -r build` + composer 129/129 green; hkl app serves the relocated engine via the dev umbrella. **But this is audio-path code — loop crossfades / aftertouch / transpose-glide / imported-`.hki` playback are Max's by-ear gate before relying on it** (same posture as the Phase 1 DI).
 
 **Where**: MOVED `apps/hkl/src/audio/samples-engine.ts` → `packages/engine/src/samples-engine.ts` (dropped the `INSTRUMENTS` import, added `loadedInstruments` cache + `instrDef` param). `apps/hkl/src/audio/samples.ts` (barrel: imports from `@hkl/engine`, injects `INSTRUMENTS[key]`). NEW `examples/engine-smoke/`, `pnpm-workspace.yaml` (`examples/*`).
+
+---
+
+## Boundary enforcement via a DAG-checker, not TS project references (2026-05-27)
+
+**Picked**: `tools/check-boundaries.mjs` (run by `pnpm check:boundaries`) — a dependency-free scanner that enforces the monorepo DAG with two rules per `packages/*` + `apps/*` project: (1) every bare `@hkl/<pkg>` import must be a declared dependency in that project's `package.json` (so the package.json dep list *is* the allow-list — `@hkl/shared` may import no `@hkl/*`, composer may not import `@hkl/engine`, an app may not import a sibling app); (2) relative imports may not escape the project dir (cross-package reaches must use a bare `@hkl/*` specifier). One documented exception: `apps/analyzer` may relatively import the repo-root `analyzer/*.js` CLI engine modules. Self-tested (injected an illegal `@hkl/engine` import + a relative escape → both caught, exit 1).
+
+**Rejected**:
+- **Full composite TS project references** (the original plan's task #7). Composite projects require `.d.ts` emit, which fights the deliberate "subpath exports point at `.ts` source" choice (the thing that made every import rewrite a clean prefix-swap) — I'd have to emit declarations to a types dir + add a `types` export condition, and switch `pnpm typecheck` to `tsc -b` build mode. Heavy machinery for marginal gain, because…
+- **…pnpm already enforces the DAG at resolution time**: each package's `node_modules` holds only its declared deps, so an illegal cross-import fails to resolve in vite/build regardless. The checker adds a fast, explicit, CI-friendly assertion of the *intended* graph (catches a stray import before it even reaches a build) without disturbing the exports setup.
+
+**Where**: NEW `tools/check-boundaries.mjs`; `package.json` (`check:boundaries` script).

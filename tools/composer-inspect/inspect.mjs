@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Headless inspection of the HKL Composer's rendered DOM.
 //
-// Launches Chromium with remote debugging, navigates to /composer.html on
+// Launches Chromium with remote debugging, navigates to /composer/ (umbrella :5170) on
 // the running Vite dev server, waits for Verovio to finish rendering, runs
 // a JS expression in the page context, and prints the result as JSON.
 //
@@ -28,7 +28,7 @@
 //     '(() => { const m = window.__hkl_composer.model; m.setCursor(0,1); m.insertRestAtCursor({duration:"4",dots:0}); return m.getCursor(1); })()'
 //
 // Optional env:
-//   COMPOSER_URL  — default http://localhost:5173/composer.html
+//   COMPOSER_URL  — default http://localhost:5170/composer/
 //   WAIT_MS       — extra wait after page load for Verovio render (default 2500)
 //   POST_EVAL_MS  — extra wait after the eval before screenshotting (default 250)
 //   SCREENSHOT    — same as --screenshot flag
@@ -40,7 +40,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const URL_DEFAULT = 'http://localhost:5173/composer.html';
+const URL_DEFAULT = 'http://localhost:5170/composer/';
 const url = process.env.COMPOSER_URL ?? URL_DEFAULT;
 const waitMs = Number(process.env.WAIT_MS ?? 2500);
 const postEvalMs = Number(process.env.POST_EVAL_MS ?? 250);
