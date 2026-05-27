@@ -9,8 +9,8 @@
 
 import { ComposerModel } from './model/index.js';
 import type { Voice, Duration, Dots } from './model/index.js';
-import { noteAlter } from '../notation/accidentals.js';
-import type { VerovioToolkit } from '../notation/verovio-types.js';
+import { noteAlter } from '@hkl/notation/accidentals.js';
+import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
 

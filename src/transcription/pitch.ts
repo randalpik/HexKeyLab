@@ -5,7 +5,7 @@
 // "es" suffix per flat, "'" for each octave above C3, "," for each
 // below. Middle C (C4) is `c'`.
 
-import { noteName, keyOctave, parseNote, accToVal } from '../tuning/notes.js';
+import { noteName, keyOctave, parseNote, accToVal } from '@hkl/shared/notes.js';
 import { keyColorHex } from '../render/colors.js';
 
 /** Convert a lattice coord to a LilyPond absolute pitch token. */

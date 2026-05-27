@@ -14,7 +14,7 @@
 // written by Analyzer into the shared `hkl-instrument-registry` IDB before
 // this message was sent; HKL reads them via InstrumentRegistry.reload().
 
-import type { CdnInstrumentConfig } from '../shared/cdnConfig.js';
+import type { CdnInstrumentConfig } from '@hkl/shared/cdnConfig.js';
 
 export const ANALYZER_CHANNEL_NAME = 'hkl-analyzer-bridge';
 export const ANALYZER_PROTOCOL_VERSION = 1;

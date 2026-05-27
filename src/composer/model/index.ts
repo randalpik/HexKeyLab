@@ -23,14 +23,14 @@
 // attributes so future tools can recover the lattice identity from a saved
 // .hkc file. MEI ignores unknown attributes.
 
-import type { ResolvedNote } from '../../bridge/protocol.js';
+import type { ResolvedNote } from '@hkl/bridge/protocol.js';
 import { regroupBeams, readTimeSig } from '../notation/beams.js';
 import { decomposeBeatAlignedRests } from './restfill.js';
 import { computeAccidentalDisplay } from '../notation/accidentals.js';
-import { alterFromCount, alterFromToken, tokenFromAlter, getNoteAlter } from '../../notation/accidentals.js';
+import { alterFromCount, alterFromToken, tokenFromAlter, getNoteAlter } from '@hkl/notation/accidentals.js';
 import { ensureExpressionDefaults, getLayoutReq, setLayoutReq, getHejiEnabled, setHejiEnabled, type LayoutReq, type Moment } from '../expressions.js';
-import { transformDocForHeji } from '../../notation/heji-render.js';
-import type { TuningMode } from '../../shared/freq.js';
+import { transformDocForHeji } from '@hkl/notation/heji-render.js';
+import type { TuningMode } from '@hkl/shared/freq.js';
 import { realTicks, writtenTicks } from './ticks.js';
 import {
   buildChordElement,

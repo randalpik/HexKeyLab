@@ -14,8 +14,8 @@
 
 import type { ComposerModel } from '../model/index.js';
 import { keySigToTonic } from '../notation/accidentals.js';
-import { fifthName } from '../../tuning/notes.js';
-import { coordToMidi } from '../../shared/freq.js';
+import { fifthName } from '@hkl/shared/notes.js';
+import { coordToMidi } from '@hkl/shared/freq.js';
 
 export interface RefCoord { q: number; r: number; }
 

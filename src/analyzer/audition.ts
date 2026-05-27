@@ -1,12 +1,12 @@
 // Audition — thin wrapper around the shared SegmentLooper for sustain
 // samples, plus a one-shot path with release envelope for decay samples.
 //
-// All the segment-switching state machine lives in src/engine/segmentLooper.ts.
+// All the segment-switching state machine lives in packages/engine/src/segmentLooper.ts.
 // This module just owns the AudioContext, manages the subscribe-based
 // position/stop event surface, and dispatches per-frame playhead updates
 // via requestAnimationFrame.
 
-import { startSegmentLooper, type SegmentLooper } from '../engine/segmentLooper.js';
+import { startSegmentLooper, type SegmentLooper } from '@hkl/engine/segmentLooper.js';
 
 let _ctx: AudioContext | null = null;
 let _looper: SegmentLooper | null = null;

@@ -3,7 +3,7 @@
 
 import { gcd, jiRatioWithState } from './ratios.js';
 import type { TuningStateLike } from './regions.js';
-import { noteName, parseNote } from './notes.js';
+import { noteName, parseNote } from '@hkl/shared/notes.js';
 import { letterIdx } from './intervals.js';
 import { bandOf } from '../layout/coords.js';
 

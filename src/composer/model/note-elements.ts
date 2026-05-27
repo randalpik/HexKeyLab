@@ -3,8 +3,8 @@
  * Element (no model state mutation). Counterparts: `extract*` and
  * `elementHasTie*` read from existing elements. */
 
-import type { ResolvedNote } from '../../bridge/protocol.js';
-import { tokenFromAlter, alterFromCount, getNoteAlter } from '../../notation/accidentals.js';
+import type { ResolvedNote } from '@hkl/bridge/protocol.js';
+import { tokenFromAlter, alterFromCount, getNoteAlter } from '@hkl/notation/accidentals.js';
 import {
   el,
   newId,

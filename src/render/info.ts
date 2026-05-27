@@ -5,7 +5,7 @@ import { tuning } from '../state/tuning.js';
 import { selection } from '../state/selection.js';
 import { keyFreq } from '../tuning/frequency.js';
 import { posInBand } from '../layout/coords.js';
-import { fmtNote, noteName, keyOctave, parseNote } from '../tuning/notes.js';
+import { fmtNote, noteName, keyOctave, parseNote } from '@hkl/shared/notes.js';
 import { jiRatio, intervalTier } from '../tuning/ratios.js';
 import {
   intervalNameFromCoords, shortenInterval, equalIntervalName, letterIdx,

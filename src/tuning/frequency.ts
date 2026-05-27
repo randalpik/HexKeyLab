@@ -3,7 +3,7 @@
 // without pulling in live HKL state. This file is the HKL-side wrapper.
 
 import type { TuningStateLike } from './regions.js';
-import { freqAt } from '../shared/freq.js';
+import { freqAt } from '@hkl/shared/freq.js';
 import { tuning } from '../state/tuning.js';
 
 /** Compute frequency under an arbitrary tuning state — used by the recording

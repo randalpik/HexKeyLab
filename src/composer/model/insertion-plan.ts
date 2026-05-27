@@ -9,7 +9,7 @@
  * insertRestAtCursor; it routes in-tuplet vs. layer-level inserts and
  * applies the plan from `planInsert`. */
 
-import type { ResolvedNote } from '../../bridge/protocol.js';
+import type { ResolvedNote } from '@hkl/bridge/protocol.js';
 import { realTicks, writtenTicks } from './ticks.js';
 import { locateCursor } from './cursor-location.js';
 import {

@@ -12,13 +12,13 @@
 // multiple PlaybackEvents at the same atMs with different durationMs.
 
 import type { ComposerModel, Voice } from '../model/index.js';
-import type { PlaybackEvent, CoordRef } from '../../bridge/protocol.js';
+import type { PlaybackEvent, CoordRef } from '@hkl/bridge/protocol.js';
 import {
   collectDynams, collectHairpins, getDynamicMap, absoluteTickForMoment,
 } from '../expressions.js';
 import { collectSlurs } from '../slurs.js';
 import { realTicks } from '../model/ticks.js';
-import { DEFAULT_DYNAMIC_MAP } from '../../shared/dynamics.js';
+import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 
 const DEFAULT_BPM = 120;
 const MS_PER_MIN = 60_000;

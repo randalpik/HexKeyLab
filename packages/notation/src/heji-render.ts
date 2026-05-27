@@ -22,8 +22,8 @@
 // commas are left untouched — Verovio draws them natively (and with the global
 // font:'Bravura' option they match the injected glyphs).
 
-import { hejiChain, hejiCommasFor, type HejiGlyphFamily } from '../shared/heji.js';
-import type { TuningMode } from '../shared/freq.js';
+import { hejiChain, hejiCommasFor, type HejiGlyphFamily } from '@hkl/shared/heji.js';
+import type { TuningMode } from '@hkl/shared/freq.js';
 import { noteAlter } from './accidentals.js';
 
 const MEI_NS = 'http://www.music-encoding.org/ns/mei';

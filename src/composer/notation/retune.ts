@@ -21,9 +21,9 @@
 //     @tie="i" loses its endpoint and is removed; @tie="m" downgrades to "t".
 
 import type { ComposerModel } from '../model/index.js';
-import { freqAt, coordToMidi, MIDI_LOW, MIDI_HIGH, type TuningMode } from '../../shared/freq.js';
-import { noteName, parseNote, accToVal, keyOctave } from '../../tuning/notes.js';
-import { tokenFromAlter } from '../../notation/accidentals.js';
+import { freqAt, coordToMidi, MIDI_LOW, MIDI_HIGH, type TuningMode } from '@hkl/shared/freq.js';
+import { noteName, parseNote, accToVal, keyOctave } from '@hkl/shared/notes.js';
+import { tokenFromAlter } from '@hkl/notation/accidentals.js';
 import { pruneDanglingSlurs } from '../slurs.js';
 
 export interface RetuneNoteEntry {

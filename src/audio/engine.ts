@@ -29,7 +29,7 @@ import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import {
   recordOn, recordOff, recordPa, recordPedalDepthsChange, recordSostenuto,
 } from '../recording/capture.js';
-import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
+import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import type { KeyId } from '../types.js';
 
 /* Damper smoothing time-constant for setTargetAtTime. CC4 arrives as 0–127

@@ -8,8 +8,8 @@
 // so transformDocForHeji draws its arrow (the isolated-chord analogue of
 // Composer's computeAccidentalDisplay comma-natural rule — no measure carry).
 
-import type { TuningMode } from '../shared/freq.js';
-import { hejiCommasFor } from '../shared/heji.js';
+import type { TuningMode } from '@hkl/shared/freq.js';
+import { hejiCommasFor } from '@hkl/shared/heji.js';
 import { alterFromCount, tokenFromAlter } from './accidentals.js';
 import { transformDocForHeji } from './heji-render.js';
 

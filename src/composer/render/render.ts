@@ -3,9 +3,9 @@
 // `breaks` and page-dimensions options; zoom adjusts the scale and (for the
 // 75% preset) per-element line widths.
 
-import '../../notation/verovio-types.js';
-import type { VerovioToolkit } from '../../notation/verovio-types.js';
-import { injectHejiGlyphs } from '../../notation/heji-render.js';
+import '@hkl/notation/verovio-types.js';
+import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
+import { injectHejiGlyphs } from '@hkl/notation/heji-render.js';
 
 export type ViewMode = 'page' | 'scroll';
 export type ZoomLevel = 50 | 75 | 100;

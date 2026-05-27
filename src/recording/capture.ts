@@ -10,7 +10,7 @@ import { audio } from '../state/audio.js';
 import { pedal } from '../state/pedal.js';
 import { nowSec } from './clock.js';
 import { captureSnapshot, snapshotMatchesLive } from './snapshot.js';
-import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
+import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import type {
   HkrEvent, HkrSession, LayoutSnapshot,
 } from './types.js';

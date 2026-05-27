@@ -13,7 +13,7 @@
 // Web Audio APIs are runtime, so this module lives under src/engine/ (not
 // src/shared/). The pure algorithm — pickNextSeam — is in shared/segments.ts.
 
-import { pickNextSeam, findInitialSegIdx, type Segment } from '../shared/segments.js';
+import { pickNextSeam, findInitialSegIdx, type Segment } from '@hkl/shared/segments.js';
 
 const DEFAULT_CROSSFADE_SEC = 0.030;
 

@@ -9,7 +9,7 @@
 //   'ss'   +2     'ff'   -2
 //   'sss'  +3     'fff'  -3
 
-import { noteName, parseNote, accToVal } from '../tuning/notes.js';
+import { noteName, parseNote, accToVal } from '@hkl/shared/notes.js';
 
 /** Convert a single MEI accidental token to signed integer alteration. */
 export function alterFromToken(t: string): number {

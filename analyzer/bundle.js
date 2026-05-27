@@ -13,7 +13,7 @@
  *   .wav / .aiff / .aif / .flac       → encoded to OGG/Opus (128 kbps)
  *   anything else                     → kept verbatim
  *
- * The format spec lives in src/shared/hki.ts; we import its writer so the
+ * The format spec lives in packages/shared/src/hki.ts; we import its writer so the
  * bundle is produced by exactly the same code path that the browser uses to
  * read it. fflate runs in both Node and the browser.
  */
@@ -22,7 +22,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { writeHki, HKI_MANIFEST_VERSION } from '../src/shared/hki.ts';
+import { writeHki, HKI_MANIFEST_VERSION } from '../packages/shared/src/hki.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);

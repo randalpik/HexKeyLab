@@ -7,8 +7,8 @@
 import { selection } from '../state/selection.js';
 import { tuning } from '../state/tuning.js';
 import { resolveNoteSpec, type NoteSpec } from '../tuning/spell.js';
-import { buildChordMei } from '../notation/chord-mei.js';
-import { renderMeiToContainer } from '../notation/verovio.js';
+import { buildChordMei } from '@hkl/notation/chord-mei.js';
+import { renderMeiToContainer } from '@hkl/notation/verovio.js';
 
 const EMPTY_HINT = '<span class="staff-inset-hint">No notes held</span>';
 

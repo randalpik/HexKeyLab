@@ -10,8 +10,8 @@
 //   6. Wire keyboard input.
 //   7. Re-render + update cursor on any model change.
 
-import { createComposerBridge, PROTOCOL_VERSION } from '../bridge/channel.js';
-import type { HklEvent, ResolvedNote, FootprintCell } from '../bridge/protocol.js';
+import { createComposerBridge, PROTOCOL_VERSION } from '@hkl/bridge/channel.js';
+import type { HklEvent, ResolvedNote, FootprintCell } from '@hkl/bridge/protocol.js';
 import { ComposerModel } from './model/index.js';
 import { renderer, ZOOM_PRESETS, type ZoomLevel } from './render/render.js';
 import { cursor } from './cursor/cursor.js';

@@ -1,0 +1,12 @@
+{
+  "name": "@hkl/notation",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*.js": "./src/*.ts"
+  },
+  "dependencies": {
+    "@hkl/shared": "workspace:*"
+  }
+}

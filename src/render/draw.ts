@@ -27,7 +27,7 @@ import { animation } from './animation.js';
 import { updateInfo } from './info.js';
 import {
   parseNote, accToVal, noteName,
-} from '../tuning/notes.js';
+} from '@hkl/shared/notes.js';
 import { jiRatioWithState, tenneyHeightFromExps } from '../tuning/ratios.js';
 import type { TuningStateLike } from '../tuning/regions.js';
 import {

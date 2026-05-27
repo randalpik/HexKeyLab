@@ -20,6 +20,10 @@
     "vite": "^6.0.0"
   },
   "dependencies": {
+    "@hkl/bridge": "workspace:*",
+    "@hkl/engine": "workspace:*",
+    "@hkl/notation": "workspace:*",
+    "@hkl/shared": "workspace:*",
     "fflate": "0.8.3",
     "jspdf": "4.2.1",
     "midi-file": "1.2.4",

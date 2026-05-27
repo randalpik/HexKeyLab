@@ -8,6 +8,18 @@ importers:
 
   .:
     dependencies:
+      '@hkl/bridge':
+        specifier: workspace:*
+        version: link:packages/bridge
+      '@hkl/engine':
+        specifier: workspace:*
+        version: link:packages/engine
+      '@hkl/notation':
+        specifier: workspace:*
+        version: link:packages/notation
+      '@hkl/shared':
+        specifier: workspace:*
+        version: link:packages/shared
       fflate:
         specifier: 0.8.3
         version: 0.8.3
@@ -30,6 +42,26 @@ importers:
       vite:
         specifier: ^6.0.0
         version: 6.4.2(@types/node@25.6.2)
+
+  packages/bridge:
+    dependencies:
+      '@hkl/shared':
+        specifier: workspace:*
+        version: link:../shared
+
+  packages/engine:
+    dependencies:
+      '@hkl/shared':
+        specifier: workspace:*
+        version: link:../shared
+
+  packages/notation:
+    dependencies:
+      '@hkl/shared':
+        specifier: workspace:*
+        version: link:../shared
+
+  packages/shared: {}
 
 packages:
 

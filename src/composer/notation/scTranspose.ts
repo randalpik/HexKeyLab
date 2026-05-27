@@ -14,9 +14,9 @@
 
 import type { ComposerModel, Voice } from '../model/index.js';
 import type { InputHooks, ChordInternalSel } from '../input.js';
-import type { CoordRef } from '../../bridge/protocol.js';
-import { noteName, parseNote, accToVal, keyOctave } from '../../tuning/notes.js';
-import { tokenFromAlter } from '../../notation/accidentals.js';
+import type { CoordRef } from '@hkl/bridge/protocol.js';
+import { noteName, parseNote, accToVal, keyOctave } from '@hkl/shared/notes.js';
+import { tokenFromAlter } from '@hkl/notation/accidentals.js';
 import { coordToMidi } from '../../transcription/pitch.js';
 import { realTicks } from '../model/ticks.js';
 

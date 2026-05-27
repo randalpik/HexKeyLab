@@ -7,7 +7,7 @@
 
 import { getState, onChange, setSource, setSamples, setStatus } from './stage.js';
 import type { SampleSlot } from './state.js';
-import type { NoteStyle } from '../shared/cdnConfig.js';
+import type { NoteStyle } from '@hkl/shared/cdnConfig.js';
 
 const LETTER_TO_SEMI: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
 

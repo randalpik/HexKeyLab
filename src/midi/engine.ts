@@ -22,7 +22,7 @@ import { syncAudio } from '../audio/engine.js';
 import { syncPianoOut } from './piano-out.js';
 import { sysex } from '../lumatone/sysex.js';
 import { syncLumatoneColors } from '../lumatone/sync.js';
-import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
+import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import type { KeyId } from '../types.js';
 
 interface MidiTarget {

@@ -17,8 +17,8 @@
 // Moment = (measureIdx, tstamp). measureIdx is 0-based; tstamp is the MEI
 // beat float (1.0 = downbeat; 4/4 measure has tstamps [1.0, 5.0)).
 
-import { DYNAMIC_NAMES, DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
-import { TUNING_MODES, type TuningMode } from '../shared/freq.js';
+import { DYNAMIC_NAMES, DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
+import { TUNING_MODES, type TuningMode } from '@hkl/shared/freq.js';
 
 export const MEI_NS = 'http://www.music-encoding.org/ns/mei';
 const XML_NS = 'http://www.w3.org/XML/1998/namespace';

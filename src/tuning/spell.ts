@@ -6,7 +6,7 @@
 // Kept in tuning/ (not bridge/) so render-layer code can import it without
 // pulling in the bridge's audio/MIDI/state dependencies.
 
-import { noteName, keyOctave, parseNote, accToVal } from './notes.js';
+import { noteName, keyOctave, parseNote, accToVal } from '@hkl/shared/notes.js';
 import { darkColorHex, coordToMidi } from '../transcription/pitch.js';
 
 export interface NoteSpec {

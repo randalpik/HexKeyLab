@@ -31,7 +31,7 @@ import { regionInfo } from '../tuning/regions.js';
 import {
   type Hue, type HueColors,
   hueC, hueCycle, whiteSet, hueCycleOrder, hueIdx, equalHueCycle,
-} from '../shared/colors.js';
+} from '@hkl/shared/colors.js';
 
 export type { Hue, HueColors };
 export { hueC, hueCycle, whiteSet, hueCycleOrder, hueIdx, equalHueCycle };

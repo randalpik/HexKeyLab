@@ -3,14 +3,14 @@
 
 import { getState, onChange, setConfig, setSource, setSamples, setOpts, setAutoSelectEnabled, setStatus } from './stage.js';
 import type { SampleSlot } from './state.js';
-import { writeHki, type HkiManifest, type HkiSampleEntry, type HkiBundle, type HkiProvenance } from '../shared/hki.js';
+import { writeHki, type HkiManifest, type HkiSampleEntry, type HkiBundle, type HkiProvenance } from '@hkl/shared/hki.js';
 import {
   CDN_CONFIG_VERSION,
   parseCdnConfig,
   stringifyCdnConfig,
   type CdnInstrumentConfig,
   type CdnConfigSampleEntry,
-} from '../shared/cdnConfig.js';
+} from '@hkl/shared/cdnConfig.js';
 import { triggerDownload } from './download.js';
 import { setCdnSourceFromConfig } from './sourceCdn.js';
 import { sendHkiToHkl, sendCdnConfigToHkl, isHklConnected, onConnectionChange } from './bridge.js';

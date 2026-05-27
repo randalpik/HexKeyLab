@@ -1,7 +1,7 @@
 // Config form — two-way binding between DOM and state.config.
 
 import { getState, setConfig, onChange } from './stage.js';
-import type { NoteStyle } from '../shared/cdnConfig.js';
+import type { NoteStyle } from '@hkl/shared/cdnConfig.js';
 
 function $<T extends HTMLElement>(id: string): T | null {
   return document.getElementById(id) as T | null;

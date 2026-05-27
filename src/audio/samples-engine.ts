@@ -4,9 +4,9 @@
 // scheduleSegmentSwitch, commitRampSync integrates in-flight ramp position).
 
 import { INSTRUMENTS } from './samples-data.js';
-import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
-import { readHki } from '../shared/hki.js';
-import { pickNextSeam as pickSegmentSeam } from '../shared/segments.js';
+import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
+import { readHki } from '@hkl/shared/hki.js';
+import { pickNextSeam as pickSegmentSeam } from '@hkl/shared/segments.js';
 
 /* ── Injected dependencies (set via init's config arg) ──
    The engine is decoupled from HKL app state: the host supplies an instrument

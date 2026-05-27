@@ -9,8 +9,8 @@
 
 import { getImportedManifest, hasImported } from '../state/instrumentRegistry.js';
 import { getConfig as getImportedCdnConfig, hasConfig as hasImportedCdnConfig } from '../state/cdnConfigRegistry.js';
-import type { HkiManifest } from '../shared/hki.js';
-import type { CdnInstrumentConfig } from '../shared/cdnConfig.js';
+import type { HkiManifest } from '@hkl/shared/hki.js';
+import type { CdnInstrumentConfig } from '@hkl/shared/cdnConfig.js';
 
 /* Static CDN-backed instruments, shipped with the app. The exported
    `INSTRUMENTS` Proxy below merges these with imported `.hki` bundles. */

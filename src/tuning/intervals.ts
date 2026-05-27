@@ -17,7 +17,7 @@
 
 import { jiRatioWithState } from './ratios.js';
 import type { TuningStateLike } from './regions.js';
-import { noteName, parseNote, keyOctave } from './notes.js';
+import { noteName, parseNote, keyOctave } from '@hkl/shared/notes.js';
 
 type PrimeExp = [number, number, number, number];
 type CommaItem = [number, string]; /* [sign, name] */

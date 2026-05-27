@@ -1,6 +1,6 @@
 // Keyboard input handler. Keybindings: see ./keybindings.ts (also displayed by the Help modal).
 
-import type { ResolvedNote } from '../bridge/protocol.js';
+import type { ResolvedNote } from '@hkl/bridge/protocol.js';
 import type {
   ComposerModel, Duration, Dots, ChordInput, RestInput, Voice,
 } from './model/index.js';

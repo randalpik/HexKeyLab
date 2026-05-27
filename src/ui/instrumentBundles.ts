@@ -24,7 +24,7 @@ import * as InstrumentRegistry from '../state/instrumentRegistry.js';
 import * as CdnConfigRegistry from '../state/cdnConfigRegistry.js';
 import type { ManifestRecord } from '../state/instrumentRegistry.js';
 import type { ConfigRecord } from '../state/cdnConfigRegistry.js';
-import { parseCdnConfig } from '../shared/cdnConfig.js';
+import { parseCdnConfig } from '@hkl/shared/cdnConfig.js';
 
 const HKI_OPTGROUP_ID = 'hkiOptgroup';
 const CDN_OPTGROUP_ID = 'cdnConfigOptgroup';

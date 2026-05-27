@@ -12,7 +12,7 @@
 // septimal-comma hooks (7-limit, 63:64). See src/shared/heji.ts for the sign
 // convention and SMuFL codepoint tables.
 
-import { accToVal, parseNote } from './notes.js';
+import { accToVal, parseNote } from '@hkl/shared/notes.js';
 import type { TuningStateLike } from './regions.js';
 import {
   combinedCode,
@@ -21,7 +21,7 @@ import {
   type HejiCommas,
   type HejiGlyphFamily,
   type HejiGlyphInfo,
-} from '../shared/heji.js';
+} from '@hkl/shared/heji.js';
 
 export type { HejiCommas, HejiGlyphFamily, HejiGlyphInfo };
 

@@ -22,11 +22,11 @@
 //   3. Receive play-chord / play-score / stop-playback. Dispatch to the
 //      audio engine; emit playback-position acks as each chord onset fires.
 
-import { createHklBridge, createAnalyzerHklBridge, PROTOCOL_VERSION, ANALYZER_PROTOCOL_VERSION } from './channel.js';
+import { createHklBridge, createAnalyzerHklBridge, PROTOCOL_VERSION, ANALYZER_PROTOCOL_VERSION } from '@hkl/bridge/channel.js';
 import type {
   ComposerEvent, PlaybackEvent, ResolvedNote, CoordRef,
-} from './protocol.js';
-import type { AnalyzerEvent } from './analyzer-protocol.js';
+} from '@hkl/bridge/protocol.js';
+import type { AnalyzerEvent } from '@hkl/bridge/analyzer-protocol.js';
 import * as InstrumentRegistry from '../state/instrumentRegistry.js';
 import * as CdnConfigRegistry from '../state/cdnConfigRegistry.js';
 import { selection } from '../state/selection.js';
@@ -38,14 +38,14 @@ import { noteOn, noteOff, stopAllNotes, triggerRearticulateFlash, instrReplaysOn
 import { syncPianoOut, restrikePianoOut } from '../midi/piano-out.js';
 import { draw, activeFootprintSet, invalidatePianoOutline, validateRefNoteCandidate } from '../render/draw.js';
 import { syncViewToOutline } from '../ui/controls.js';
-import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
+import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { setSelectionFromComposer, setSongKey, onComposerBye, referenceNote } from '../state/reference.js';
 import { refSpine } from '../tuning/refspine.js';
 import { view } from '../state/view.js';
 import { onRefChanged } from '../effects/onRefChanged.js';
 import { setTuning } from '../ui/controls.js';
 import { loadPrefs, type TuningMode } from '../state/persistence.js';
-import type { FootprintCell } from './protocol.js';
+import type { FootprintCell } from '@hkl/bridge/protocol.js';
 import type { KeyId } from '../types.js';
 
 const bridge = createHklBridge();

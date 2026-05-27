@@ -8,7 +8,7 @@
 //
 // Persists across sessions. Replaces same-key on re-import (idempotent).
 
-import { readHki, type HkiManifest, type HkiBundle } from '../shared/hki.js';
+import { readHki, type HkiManifest, type HkiBundle } from '@hkl/shared/hki.js';
 
 const DB_NAME = 'hkl-instrument-registry';
 const DB_VERSION = 1;

@@ -17,7 +17,7 @@
  * asymmetric. Callers run this once AFTER any structural mutation;
  * correctness no longer depends on cleanup-before-deletion. */
 
-import { getNoteAlter } from '../../notation/accidentals.js';
+import { getNoteAlter } from '@hkl/notation/accidentals.js';
 import { extractNoteElements } from './note-elements.js';
 import { MEI_NS, type ComposerModel, type Voice } from './index.js';
 import { pruneDanglingSlurs } from '../slurs.js';

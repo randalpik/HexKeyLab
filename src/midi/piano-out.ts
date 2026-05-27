@@ -21,7 +21,7 @@ import { selection } from '../state/selection.js';
 import { keyFreq } from '../tuning/frequency.js';
 import { loadPrefs, savePrefs } from '../state/persistence.js';
 import { MpeAllocator } from '../midi-io/allocator.js';
-import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
+import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { whenMidiAccessReady } from './engine.js';
 import type { KeyId } from '../types.js';
 

@@ -33,7 +33,7 @@ import { animation } from '../render/animation.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import { restrikePianoOut } from '../midi/piano-out.js';
 import { qwertyKeyMap } from './qwerty.js';
-import { DEFAULT_DYNAMIC_MAP } from '../shared/dynamics.js';
+import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import type { KeyId, Voice } from '../types.js';
 
 const KEYBOARD_VELOCITY = DEFAULT_DYNAMIC_MAP.f;

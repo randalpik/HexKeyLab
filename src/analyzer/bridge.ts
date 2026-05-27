@@ -18,10 +18,10 @@ import {
   createHklAnalyzerBridge,
   ANALYZER_PROTOCOL_VERSION,
   type HklAnalyzerBridge,
-} from '../bridge/channel.js';
-import type { HklAnalyzerEvent } from '../bridge/analyzer-protocol.js';
-import { writeHki, type HkiBundle } from '../shared/hki.js';
-import type { CdnInstrumentConfig } from '../shared/cdnConfig.js';
+} from '@hkl/bridge/channel.js';
+import type { HklAnalyzerEvent } from '@hkl/bridge/analyzer-protocol.js';
+import { writeHki, type HkiBundle } from '@hkl/shared/hki.js';
+import type { CdnInstrumentConfig } from '@hkl/shared/cdnConfig.js';
 import { setStatus } from './stage.js';
 
 let _bridge: HklAnalyzerBridge | null = null;

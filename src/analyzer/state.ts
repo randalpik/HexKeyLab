@@ -2,7 +2,7 @@
 // SampleSlot. All view modules read this via stage.ts and dispatch updates
 // through stage.setState / updateSample helpers.
 
-import type { NoteStyle } from '../shared/cdnConfig.js';
+import type { NoteStyle } from '@hkl/shared/cdnConfig.js';
 
 export type Tier = 'green' | 'blue' | 'yellow' | 'red' | 'fail';
 

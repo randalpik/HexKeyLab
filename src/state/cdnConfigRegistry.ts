@@ -12,8 +12,8 @@
 // the engine sees imported CDN configs through the same surface as
 // compile-time entries.
 
-import type { CdnInstrumentConfig } from '../shared/cdnConfig.js';
-import { parseCdnConfig } from '../shared/cdnConfig.js';
+import type { CdnInstrumentConfig } from '@hkl/shared/cdnConfig.js';
+import { parseCdnConfig } from '@hkl/shared/cdnConfig.js';
 
 const DB_NAME = 'hkl-cdn-config-registry';
 const DB_VERSION = 1;

@@ -19,9 +19,9 @@
 //      update carry state.
 
 import { realTicks } from '../model/ticks.js';
-import { hejiCommasFor } from '../../shared/heji.js';
-import type { TuningMode } from '../../shared/freq.js';
-import { tokenFromAlter, noteAlter, getNoteAlter } from '../../notation/accidentals.js';
+import { hejiCommasFor } from '@hkl/shared/heji.js';
+import type { TuningMode } from '@hkl/shared/freq.js';
+import { tokenFromAlter, noteAlter, getNoteAlter } from '@hkl/notation/accidentals.js';
 
 const SHARP_ORDER: ReadonlyArray<string> = ['f', 'c', 'g', 'd', 'a', 'e', 'b'];
 const FLAT_ORDER:  ReadonlyArray<string> = ['b', 'e', 'a', 'd', 'g', 'c', 'f'];

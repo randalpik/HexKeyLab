@@ -2411,3 +2411,25 @@ HKL re-supplies all three at `engine.ts:initAudio` so runtime behavior is identi
 **Why**: this is the first concrete step of the approved pnpm-monorepo plan (`@hkl/engine` = HKLE, importable outside HKL). The seam is deliberately a config object on `init` rather than module-level setters so a standalone consumer wires everything in one call and the engine has no implicit global host. **Verified by typecheck + build only — the DI sits in the audio path, so loop crossfades / aftertouch swells / transpose-glide / imported-`.hki` playback are Max's by-ear gate before commit.**
 
 **Where**: `src/audio/samples-engine.ts` (`SampleEngineConfig` + `PaRampState`/`SeamEvent` types, injected module vars, relocated `inflightExpRampValue`, `init` config arg), `src/audio/samples.ts` (re-export `inflightExpRampValue` + config types), `src/audio/engine.ts` (wires the three deps at `initAudio`, imports `inflightExpRampValue` from the barrel), `src/audio/aftertouch.ts` (dropped `inflightExpRampValue`), `src/audio/diagnostics/loopOverlay.ts` (`SeamEvent` extends the engine's emitted type). Plan: `~/.claude/plans/i-d-like-to-do-temporal-thimble.md`.
+
+---
+
+## pnpm workspace + first library packages (Phase 2–3 of the monorepo split, 2026-05-27)
+
+**Picked**: Migrated to a **pnpm workspace** and carved four pure library packages out of `src/`: `@hkl/shared` (was `src/shared/*` + the pure `tuning/notes.ts`), `@hkl/engine` (was `src/engine/segmentLooper.ts`), `@hkl/notation` (was `src/notation/*`), `@hkl/bridge` (was `src/bridge/{protocol,analyzer-protocol,channel}.ts`). The dependency DAG is `@hkl/shared ← {engine, notation, bridge}`; the root package consumes all four via `workspace:*`. Conventions:
+- **Subpath exports point at `.ts` source**, with a `.js`→`.ts` pattern: `"exports": { "./*.js": "./src/*.ts" }`. This keeps the codebase's existing NodeNext-style `.js` import specifiers a **pure prefix swap** (`'../shared/freq.js'` → `'@hkl/shared/freq.js'`) — no extension churn, no build step for internal consumption. Vite and `moduleResolution: bundler` both follow the pattern straight to source.
+- **Intra-package imports stay relative** (`./verovio-types.js`); only **cross-package** imports use the bare `@hkl/*` specifier. The import-rewrite was per-resolved-path, not blanket sed, because `../notation/` and `../bridge/` are **ambiguous** — `src/composer/notation/*` and `src/bridge/hkl-side.ts` are app code that must NOT be rewritten (see below).
+- **`packageManager: pnpm@11.3.0`** pinned; `package-lock.json` removed.
+
+**Rejected**:
+- **A single barrel per package** (`@hkl/shared` re-exporting everything). Subpath exports preserve granular imports + tree-shaking and made the migration mechanical.
+- **Moving `src/bridge/hkl-side.ts` and `src/composer/notation/*` into their packages.** `hkl-side.ts` imports `state/audio/render/midi` — it's HKL-app glue, so only the pure protocol/channel/types became `@hkl/bridge`; `hkl-side.ts` stays in `src/` (→ `apps/hkl` later). Likewise `src/composer/notation/*` (accidentals/beams/retune/scTranspose) is composer-app code, distinct from the shared `@hkl/notation` lib that shares the `notation/` basename.
+- **TS project references, for now.** Boundaries currently rest on pnpm's per-package dep lists (a package only resolves what it declares). Composite tsconfigs + root references (for `tsc -b` enforcement) are deferred to land with the per-app tsconfigs in Phase 4 (task #7).
+- **Moving `transcription/pitch.ts` into `@hkl/shared`.** It imports `render/colors.js` (not pure), so it can't join shared until decoupled — deferred to the composer split.
+
+**Why / gotchas**:
+- **`allowBuilds` in `pnpm-workspace.yaml` is load-bearing.** pnpm 11 blocks dependency install-scripts by default and *writes a placeholder `allowBuilds:` block with non-boolean values, then exits non-zero*. Because pnpm runs a pre-script deps-status-check (itself an `install`), that non-zero exit made **every `pnpm <script>` fail** until the block was filled: `allowBuilds: { esbuild: true, core-js: false }`. esbuild's postinstall places Vite's native binary; core-js's is only a donation banner.
+- `analyzer/bundle.js` (a Node CLI outside module resolution) imports the `.hki` writer by **relative path**, updated to `../packages/shared/src/hki.ts` rather than the bare specifier.
+- Verified each package incrementally with `pnpm typecheck` + `pnpm build` + dev-server smoke (all three entry points + each `@hkl/*` specifier serve 200). `git mv` preserved rename history.
+
+**Where**: NEW `pnpm-workspace.yaml`, `packages/{shared,engine,notation,bridge}/package.json`. `package.json` (`packageManager`, four `@hkl/* workspace:*` deps). MOVED the files listed above into `packages/*/src/`. Import rewrites across ~50 `src/` files (relative → `@hkl/*`). Plan: `~/.claude/plans/i-d-like-to-do-temporal-thimble.md`.
