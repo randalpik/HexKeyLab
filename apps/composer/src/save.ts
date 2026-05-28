@@ -493,7 +493,7 @@ const LETTER_PT_H = 792;
  * pass the PDF picks up the inherited color on every stem/flag/accid/etc.
  * Walk the SVG and pin `color` + `fill` to black on the same selectors the
  * stylesheet covers; descendants then resolve currentColor as black. */
-const NON_NOTEHEAD_BLACK_CLASSES = ['stem', 'flag', 'accid', 'ledgerLines', 'dots'];
+const NON_NOTEHEAD_BLACK_CLASSES = ['stem', 'flag', 'accid', 'ledgerLines', 'dots', 'artic', 'fermata', 'breath'];
 
 export function forceNonNoteheadBlack(svg: SVGSVGElement): void {
   const sel = NON_NOTEHEAD_BLACK_CLASSES.map((c) => '.' + c).join(', ');

@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 141,
-  "passed": 141,
+  "fixtures": 190,
+  "passed": 190,
   "failed": 0,
-  "elapsedMs": 42143,
+  "elapsedMs": 58876,
   "results": [
     {
       "name": "emptyDoc",
@@ -1131,6 +1131,398 @@
       "failures": [],
       "counts": {
         "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_dblbar_toggle_on_m1_of_2",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "phase1_dblbar_toggle_off",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_dblbar_lastMeasure_noop",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_hideRest_toggle_on",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "phase1_hideRest_toggle_off",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_hideRest_onNote_noop",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_parenCaut_bareNote_on",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "phase1_parenCaut_preserves_heji",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "phase1_parenCaut_toggle_off",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_parenCaut_chord_all",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_parenCaut_chord_singleViaAltSel",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_parenCaut_onRest_noop",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_playback_plainArrow_stopsAtHead",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "phase1_playback_ctrlArrow_seeks",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 10
+      }
+    },
+    {
+      "name": "phase1_playback_ctrlLeft_atBoundary_jumpsPrev",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_playback_ctrlLeft_midMeasure_jumpsCurrent",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_playback_ctrlArrow_seeks_repeatable",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 10
+      }
+    },
+    {
+      "name": "phase1_playback_staleFinishAck_ignored",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase1_click_movesCursorToNote",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase1_insertMeasure_atStart",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "phase1_insertMeasure_midMeasure",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "phase1_insertMeasure_atFirstNote_insertsAfter",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_insertMeasure_breaksSlur",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_insertMeasure_breaksTie",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_stemFlip_bareNote_freezes",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_stemFlip_secondPress_unfreezes",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_stemFlip_beamGroup_allFlip",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_stemFlip_respectsBeamBreak",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_slurFlip_setsAttr",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_beamSplit_marksThird",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "phase1_beamSplit_toggleOff",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_beamSplit_overridesBeatBoundary",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "phase1_beamSplit_onRest_noop",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_artic_staccato_on_note",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "phase1_artic_accent_on_note",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_artic_tenuto_on_note",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_artic_fermata_on_note",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_artic_breath_on_note",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "phase1_artic_fermata_on_rest",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_artic_staccato_on_rest_noop",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_artic_staccato_toggle_off",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_artic_multiple_stack",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_artic_accent_playback_velocity",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_artic_staccato_playback_duration",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_fillIncomplete_basic",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase1_titleBlock_all_fields",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 11
+      }
+    },
+    {
+      "name": "phase1_titleBlock_emptyFooter",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase1_click_chordInternal_switchesVoice",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase1_click_switchesVoice",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
       }
     }
   ]

@@ -37,7 +37,7 @@ const SCROLL_GEOM = {
 };
 
 const BASE_OPTIONS = {
-  svgAdditionalAttribute: ['note@data-q', 'note@data-r', 'note@color', 'rest@data-tuplet-placeholder', 'accid@type'],
+  svgAdditionalAttribute: ['note@data-q', 'note@data-r', 'note@color', 'note@hkl-paren-caut', 'rest@data-tuplet-placeholder', 'rest@visible', 'accid@type'],
   footer: 'none',
   /* Keep Verovio's default Leipzig font for the score (rests, clefs,
      noteheads). Accidentals are re-rendered in BravuraText by injectHejiGlyphs
@@ -182,7 +182,9 @@ class Renderer {
       if (notehead) note.appendChild(notehead);
     }
     /* Replace tagged placeholder accidentals with BravuraText HEJI / stacked
-       glyphs. No-op when the MEI carried no tagged placeholders. */
+       glyphs. Also swaps any paren <use> glyphs Verovio emitted (from
+       @enclose="paren" on a child accid) to BravuraText. No-op when the
+       MEI carried no tagged placeholders or parens. */
     injectHejiGlyphs(this.container);
   }
 
@@ -247,5 +249,6 @@ class Renderer {
     return rightmost - containerRect.left + this.container.scrollLeft;
   }
 }
+
 
 export const renderer = new Renderer();

@@ -46,6 +46,74 @@ export function readTimeSig(doc: Document): TimeSigInfo {
   return { count, unit, isCompound, is4_4 };
 }
 
+/** Return every layer-mate that would be wrapped in the same `<beam>` as
+ *  `elem` by `regroupBeams`. Single-element array when `elem` would render
+ *  as a flagged singleton (not in a beam). Used by the stem-direction-flip
+ *  hotkey to flip every member of a beam together: Verovio resolves beam
+ *  stem direction by majority, so leaving one member out would either fail
+ *  the flip visually or split the beam. */
+export function beamGroupForElement(doc: Document, elem: Element): Element[] {
+  const layer = elem.closest('layer');
+  if (!layer) return [elem];
+  /* Inside a tuplet, the tuplet-internal beam pass is what would beam it.
+     Tuplets don't have inter-beat boundaries inside them (the whole tuplet
+     is one beat group), so the XOR logic collapses to just the marker. */
+  const tuplet = elem.closest('tuplet');
+  if (tuplet) {
+    const stream = annotateTupletChildrenExported(tuplet);
+    const idx = stream.findIndex((s) => s.el === elem);
+    if (idx < 0) return [elem];
+    return findRunIncluding(stream, idx, new Set());
+  }
+  /* Layer-level: compute beat-group boundaries and the same per-element
+     "starts new beam" XOR (natural XOR marker) that regroupOneLayer uses. */
+  const ts = readTimeSig(doc);
+  const measureTicks = ts.count * (64 / ts.unit);
+  const stream = annotateLayerExported(layer);
+  const idx = stream.findIndex((s) => s.el === elem);
+  if (idx < 0) return [elem];
+  const groups = effectiveGroupsForLayerExported(stream, ts, measureTicks);
+  const groupStarts = new Set<number>();
+  for (const grp of groups) {
+    const firstIdx = stream.findIndex((s) => s.startTick >= grp.lo && s.startTick < grp.hi);
+    if (firstIdx >= 0) groupStarts.add(firstIdx);
+  }
+  return findRunIncluding(stream, idx, groupStarts);
+}
+
+/** Walk left+right from `idx` in `stream`, collecting consecutive beamable
+ *  entries that share `idx`'s beam. An element "starts a new beam" iff
+ *  XOR(naturalBoundary, marker) — i.e., either a natural beat boundary
+ *  with no override or an inserted marker mid-beat. `groupStarts` carries
+ *  the natural-boundary indices for this stream; pass an empty Set for
+ *  tuplet contexts (no inter-beat structure inside a tuplet). */
+function findRunIncluding(
+  stream: StreamEntry[],
+  idx: number,
+  groupStarts: Set<number>,
+): Element[] {
+  if (!beamablePredicate(stream[idx].el)) return [stream[idx].el];
+  const startsNewBeam = (i: number): boolean => {
+    const natural = i > 0 && groupStarts.has(i);
+    const marker = stream[i].el.getAttribute('hkl-beam-break') === 'true';
+    return natural !== marker;
+  };
+  let lo = idx, hi = idx;
+  while (lo > 0 && beamablePredicate(stream[lo - 1].el) && !startsNewBeam(lo)) lo--;
+  while (hi < stream.length - 1 && beamablePredicate(stream[hi + 1].el)
+         && !startsNewBeam(hi + 1)) hi++;
+  if (lo === hi) return [stream[idx].el];
+  return stream.slice(lo, hi + 1).map((s) => s.el);
+}
+
+/* Exported wrappers around the layer/tuplet stream annotators so the
+ * helper above can reuse them without duplicating logic. */
+function annotateLayerExported(layer: Element): StreamEntry[] { return annotateLayer(layer); }
+function annotateTupletChildrenExported(tuplet: Element): StreamEntry[] { return annotateTupletChildren(tuplet); }
+function effectiveGroupsForLayerExported(stream: StreamEntry[], ts: TimeSigInfo, measureTicks: number): Array<{ lo: number; hi: number }> {
+  return effectiveGroupsForLayer(stream, ts, measureTicks);
+}
+
 /** Strip every <beam> in the doc, lifting its children to the beam's parent
  *  position. Safe no-op when there are no beams. */
 export function unwrapBeams(doc: Document): void {
@@ -144,13 +212,45 @@ function regroupOneLayer(
   if (stream.length === 0) return;
   const groups = effectiveGroupsForLayer(stream, ts, measureTicks);
 
+  /* Per-element "starts a new beam" decision. Combines two signals:
+       - natural: this element sits at the start of an effective beat group
+         (a natural beam break in the absence of overrides);
+       - marker:  @hkl-beam-break="true" was placed on this element by `/`.
+     The decision is natural XOR marker:
+       - natural=false, marker=false → continue current beam   (mid-beat)
+       - natural=false, marker=true  → BREAK here              (manual mid-beat split)
+       - natural=true,  marker=false → BREAK here              (natural beat boundary)
+       - natural=true,  marker=true  → continue current beam   (cross-beat connect)
+     This lets `/` *override* either case: forcing a break mid-beat OR
+     dissolving a natural beat-boundary break to merge across beats. */
+  const groupStarts = new Set<number>();
   for (const grp of groups) {
-    const members = stream.filter((s) => s.startTick >= grp.lo && s.startTick < grp.hi);
-    if (members.length < 2) continue;
-    const runs = splitIntoBeamableRuns(members);
-    for (const run of runs) {
-      if (run.length >= 2) wrapInBeam(doc, layer, run.map((r) => r.el));
+    const firstIdx = stream.findIndex((s) => s.startTick >= grp.lo && s.startTick < grp.hi);
+    if (firstIdx >= 0) groupStarts.add(firstIdx);
+  }
+
+  const runs: StreamEntry[][] = [];
+  let current: StreamEntry[] = [];
+  for (let i = 0; i < stream.length; i++) {
+    const entry = stream[i];
+    if (!beamablePredicate(entry.el)) {
+      if (current.length > 0) { runs.push(current); current = []; }
+      continue;
     }
+    const natural = i > 0 && groupStarts.has(i);
+    const marker = entry.el.getAttribute('hkl-beam-break') === 'true';
+    const startsNew = natural !== marker;
+    if (startsNew) {
+      if (current.length > 0) runs.push(current);
+      current = [entry];
+    } else {
+      current.push(entry);
+    }
+  }
+  if (current.length > 0) runs.push(current);
+
+  for (const run of runs) {
+    if (run.length >= 2) wrapInBeam(doc, layer, run.map((r) => r.el));
   }
 }
 
@@ -217,16 +317,24 @@ function beamablePredicate(el: Element): boolean {
 }
 
 /** Split a group's members into runs of consecutive beamable elements
- *  (non-beamable elements split runs). */
+ *  (non-beamable elements split runs). An element carrying
+ *  `@hkl-beam-break="true"` starts a new run too — used by the `/`
+ *  hotkey for manual beam splits within a beat group. */
 function splitIntoBeamableRuns(members: StreamEntry[]): StreamEntry[][] {
   const runs: StreamEntry[][] = [];
   let current: StreamEntry[] = [];
   for (const m of members) {
-    if (beamablePredicate(m.el)) {
-      current.push(m);
-    } else {
+    if (!beamablePredicate(m.el)) {
       if (current.length > 0) { runs.push(current); current = []; }
+      continue;
     }
+    if (m.el.getAttribute('hkl-beam-break') === 'true') {
+      /* End the current run BEFORE this element, then start fresh including it. */
+      if (current.length > 0) runs.push(current);
+      current = [m];
+      continue;
+    }
+    current.push(m);
   }
   if (current.length > 0) runs.push(current);
   return runs;

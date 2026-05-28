@@ -98,6 +98,29 @@ function hideAlter(note: Element, alter: number): void {
   if (token) note.setAttribute('accid.ges', token);
 }
 
+/** Force the alter visible AS a `<accid enclose="paren">` CHILD of the note,
+ *  not as the inline @accid attribute. Verovio reserves layout space for the
+ *  parens around the child accid, which is what we need so the parens don't
+ *  collide with the notehead. The post-render BravuraText pass swaps
+ *  Verovio's paren `<use>` glyphs to BravuraText `<text>` at the same
+ *  positions. alter=0 with paren-caut still draws a parenthesized natural. */
+function showAlterAsParenChild(note: Element, alter: number): void {
+  clearAccidals(note);
+  /* Strip any prior <accid> children from a previous pass — idempotent. */
+  for (const c of Array.from(note.children)) {
+    if (c.localName === 'accid') note.removeChild(c);
+  }
+  const token = alter === 0 ? 'n' : tokenFromAlter(alter);
+  if (!token) return;
+  const accid = note.ownerDocument!.createElementNS(
+    'http://www.music-encoding.org/ns/mei',
+    'accid',
+  );
+  accid.setAttribute('accid', token);
+  accid.setAttribute('enclose', 'paren');
+  note.appendChild(accid);
+}
+
 function elementDurationTicks(el: Element): number {
   return realTicks(el);
 }
@@ -200,6 +223,24 @@ export function computeAccidentalDisplay(doc: Document, keySig: string, heji?: H
           : { alter: keyAlters[pname] ?? 0, syn5: 0, sept7: 0 };
         const tie = note.getAttribute('tie');
         const isTieDestination = tie === 't' || tie === 'm';
+
+        /* Parenthetical-cautionary intent set by the `P` toggle. Force the
+           accidental visible and let HEJI injection decorate it as usual;
+           a post-render pass wraps the resulting glyphs in parens. Carry
+           state still updates so subsequent same-pitch notes elide. */
+        if (note.getAttribute('hkl-paren-caut') === 'true') {
+          /* For paren-caut: ALWAYS use the (q, r)-derived alter. When the
+             note's accid lives ONLY on a child <accid enclose="paren"> (the
+             form we wrote on a previous pass), `getNoteAlter` returns 0
+             because it reads @accid from the note attribute only — without
+             this override the second round of computeAccidentalDisplay
+             would write `accid="n"` (natural) instead of the original
+             sharp/flat, breaking serialize→load→serialize equality. */
+          const parenAlter = noteAlter(note);
+          showAlterAsParenChild(note, parenAlter);
+          local[key] = id;
+          continue;
+        }
 
         if (isTieDestination) {
           /* Hide (chain initiator already showed it); update carry. */

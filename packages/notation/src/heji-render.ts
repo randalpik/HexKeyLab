@@ -105,8 +105,11 @@ function needsInjection(alter: number, syn5: number, sept7: number): boolean {
  *  notes with a visible @accid are touched). Idempotent. */
 export function transformDocForHeji(doc: Document, mode: TuningMode, hejiEnabled: boolean): void {
   for (const note of Array.from(doc.querySelectorAll('note'))) {
-    /* Only notes whose accidental is shown. */
-    if (!note.hasAttribute('accid')) continue;
+    /* Visible accidental can live either as the @accid attribute OR as an
+       <accid> child element (the latter is how paren-cautionary marks are
+       encoded, via @enclose="paren" on the child). Check both forms. */
+    const childAccid = Array.from(note.children).find((c) => c.localName === 'accid' && c.hasAttribute('accid')) as Element | undefined;
+    if (!note.hasAttribute('accid') && !childAccid) continue;
     const alter = noteAlter(note);
     const qs = note.getAttribute('data-q');
     const rs = note.getAttribute('data-r');
@@ -119,8 +122,12 @@ export function transformDocForHeji(doc: Document, mode: TuningMode, hejiEnabled
     const glyphs = hejiChain(alter, syn5, sept7); // visual left-to-right
     if (glyphs.length === 0) continue;
 
+    /* Preserve any @enclose marker from the child accid form so the
+       placeholders the chain renders into keep the paren spacing. */
+    const enclose = childAccid?.getAttribute('enclose') ?? null;
     note.removeAttribute('accid');
     note.removeAttribute('accid.ges');
+    if (childAccid) note.removeChild(childAccid);
 
     /* Allocate distinct placeholder tokens (narrowest unused ≥ target). */
     const used = new Set<string>();
@@ -140,12 +147,25 @@ export function transformDocForHeji(doc: Document, mode: TuningMode, hejiEnabled
     /* MEI order is reversed from visual (MEI-first renders rightmost, nearest
        the notehead). Emit the chain reversed so visual left-to-right matches
        HKL: arrowed first glyph … septimal hook, ending at the notehead. */
+    const created: Element[] = [];
     for (let vi = glyphs.length - 1; vi >= 0; vi--) {
       const g = glyphs[vi];
       const accid = doc.createElementNS(MEI_NS, 'accid');
       accid.setAttribute('accid', pickToken(BARE_ADVANCE[g.family]));
       accid.setAttribute('type', makeTag(vi, g.family, g.ch.codePointAt(0)!));
       note.appendChild(accid);
+      created.push(accid);
+    }
+    /* If the original child accid carried @enclose="paren", set it on BOTH
+       the leftmost-visual placeholder (= last appended = visually first;
+       Verovio adds the left paren before it) AND the rightmost-visual one
+       (= first appended; Verovio adds the right paren after it). Verovio
+       reserves layout space on both sides, so the chain renders as
+       "( …glyphs… )" without colliding with the notehead. The paren `<use>`
+       elements emitted by Verovio are swapped to BravuraText in step 2. */
+    if (enclose === 'paren' && created.length > 0) {
+      created[0].setAttribute('enclose', 'paren');
+      created[created.length - 1].setAttribute('enclose', 'paren');
     }
   }
 }
@@ -164,20 +184,65 @@ function hrefCodepoint(href: string | null): number | null {
  *  SMuFL codepoint and Verovio-assigned position. Requires BravuraText loaded
  *  (caller gates on document.fonts). Idempotent within a render. */
 export function injectHejiGlyphs(root: ParentNode): void {
-  /* Group tagged HEJI placeholders by note; collect plain accidentals. */
+  /* Group tagged HEJI placeholders by note; collect plain accidentals.
+     A single g.accid may contain MULTIPLE <use> elements when @enclose="paren"
+     was on the source <accid> — Verovio emits paren_left + main_accid +
+     paren_right as three siblings of g.accid. We must distinguish the
+     PAREN uses (SMuFL U+E26A / U+E26B) from the main accidental glyph and
+     route them separately:
+       - The main accid use anchors the HEJI combination (or, untagged,
+         becomes a plain BravuraText swap).
+       - All paren uses across a single note's g.accid groups are collected
+         and pruned to keep only the OUTERMOST left + OUTERMOST right; the
+         inner ones (right paren of placeholder N, left paren of N+1) are
+         removed so the chain reads "( …chain… )" instead of "(a)(b)". */
+  const PAREN_LEFT_CP = 0xE26A;
+  const PAREN_RIGHT_CP = 0xE26B;
+  const isParenCp = (cp: number | null): boolean =>
+    cp === PAREN_LEFT_CP || cp === PAREN_RIGHT_CP;
   const byNote = new Map<Element, Array<{ g: Element; tag: ParsedTag; use: Element }>>();
   const plain: Array<{ g: Element; use: Element }> = [];
+  const parensByNote = new Map<Element, Array<{ use: Element; cp: number; x: number }>>();
   for (const g of Array.from(root.querySelectorAll('g.accid'))) {
     if (g.getAttribute('data-hkl-injected')) continue;
-    const use = g.querySelector('use');
-    if (!use) continue;
+    const uses = Array.from(g.querySelectorAll('use'));
+    if (uses.length === 0) continue;
+    const note = g.closest('g.note') ?? g.parentElement!;
+    /* Partition this g.accid's uses into paren vs main-accid. */
+    const mainAccidUses: Element[] = [];
+    for (const u of uses) {
+      const cp = hrefCodepoint(u.getAttribute('xlink:href'));
+      if (cp !== null && isParenCp(cp)) {
+        const t = parseTransform(u.getAttribute('transform'));
+        const list = parensByNote.get(note) ?? [];
+        list.push({ use: u, cp, x: t?.tx ?? 0 });
+        parensByNote.set(note, list);
+      } else {
+        mainAccidUses.push(u);
+      }
+    }
     const tag = parseTag(g.getAttribute('class'));
-    if (tag) {
-      const note = g.closest('g.note') ?? g.parentElement!;
+    if (tag && mainAccidUses.length > 0) {
       if (!byNote.has(note)) byNote.set(note, []);
-      byNote.get(note)!.push({ g, tag, use });
+      byNote.get(note)!.push({ g, tag, use: mainAccidUses[0] });
     } else {
-      plain.push({ g, use });
+      for (const u of mainAccidUses) plain.push({ g, use: u });
+    }
+  }
+  /* Per note: keep only outermost paren-left + outermost paren-right;
+     remove the rest. The keepers will be swapped to BravuraText below. */
+  for (const [, parens] of parensByNote) {
+    const lefts = parens.filter((p) => p.cp === PAREN_LEFT_CP).sort((a, b) => a.x - b.x);
+    const rights = parens.filter((p) => p.cp === PAREN_RIGHT_CP).sort((a, b) => a.x - b.x);
+    const keepLeft = lefts[0] ?? null;
+    const keepRight = rights[rights.length - 1] ?? null;
+    for (const p of parens) {
+      if (p === keepLeft || p === keepRight) {
+        const parentG = p.use.parentElement;
+        if (parentG) plain.push({ g: parentG, use: p.use });
+      } else {
+        p.use.remove();
+      }
     }
   }
   if (byNote.size === 0 && plain.length === 0) return;
@@ -195,25 +260,34 @@ export function injectHejiGlyphs(root: ParentNode): void {
     return meas.getComputedTextLength();
   };
 
-  /* Plain accidentals: same codepoint + position, just BravuraText instead of
-     Verovio's default font. Verovio already spaced them, so keep its x/y. */
+  /* Plain accidentals: same codepoint + position, just BravuraText instead
+     of Verovio's default font. Verovio already spaced them, so keep its x/y.
+     For paren-caut notes (@hkl-paren-caut on the parent g.note), nudge the
+     inner accidental glyph ~2 viewport-px (≈14 SVG units) left so it
+     reads visually centered between Verovio's parens — BravuraText's left
+     sidebearing on sharps/naturals is slightly larger than the matching
+     paren spacing assumes. The parens themselves stay at Verovio's
+     positions. */
+  const PAREN_CAUT_LEFT_NUDGE = 14;
   for (const { g, use } of plain) {
     const cp = hrefCodepoint(use.getAttribute('xlink:href'));
     if (cp === null) continue;
     const t = parseTransform(use.getAttribute('transform'));
     const fontSize = 1000 * (t?.scale ?? 0.72);
+    const isParen = cp === PAREN_LEFT_CP || cp === PAREN_RIGHT_CP;
+    const inParenCaut = !isParen && (g.closest('g.note')?.getAttribute('data-hkl-paren-caut') === 'true');
     const txt = document.createElementNS(SVG_NS, 'text');
     txt.setAttribute('font-family', 'BravuraText');
     txt.setAttribute('font-size', String(fontSize));
     txt.setAttribute('fill', '#000');
-    txt.setAttribute('x', String(t?.tx ?? 0));
+    txt.setAttribute('x', String((t?.tx ?? 0) - (inParenCaut ? PAREN_CAUT_LEFT_NUDGE : 0)));
     txt.setAttribute('y', String((t?.ty ?? 0) + baselineCorrection(fontSize)));
     txt.textContent = String.fromCodePoint(cp);
     use.replaceWith(txt);
     g.setAttribute('data-hkl-injected', '1');
   }
 
-  for (const [, slots] of byNote) {
+  for (const [note, slots] of byNote) {
     /* Read Verovio's placement from the first placeholder: shared staff Y +
        glyph scale. font-size = 1000 * scale (Bravura em is 1000 design units;
        Verovio renders accidentals at scale ≈ 0.72 → 720 user units = 4 staff
@@ -221,8 +295,13 @@ export function injectHejiGlyphs(root: ParentNode): void {
     const t0 = parseTransform(slots[0].use.getAttribute('transform'));
     const fontSize = 1000 * (t0?.scale ?? 0.72);
     const baselineY = t0?.ty ?? 0;
-    /* Rightmost reserved edge = where the accidental block meets the notehead. */
-    const rightEdge = Math.max(...slots.map(s => rectRight(s.use)));
+    /* Rightmost reserved edge = where the accidental block meets the notehead.
+       For paren-caut HEJI notes, retract from the inner-paren-right gap that
+       was reserved by Verovio so the combined chain sits centered between
+       the outer parens. */
+    let rightEdge = Math.max(...slots.map(s => rectRight(s.use)));
+    const inParenCaut = (note as Element).getAttribute('data-hkl-paren-caut') === 'true';
+    if (inParenCaut) rightEdge -= PAREN_CAUT_LEFT_NUDGE;
 
     /* Order glyphs visual left-to-right by seq, compute slot advances. */
     const ordered = [...slots].sort((a, b) => a.tag.seq - b.tag.seq);

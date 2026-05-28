@@ -21,6 +21,7 @@ import { getNoteAlter } from '@hkl/notation/accidentals.js';
 import { extractNoteElements } from './note-elements.js';
 import { MEI_NS, type ComposerModel, type Voice } from './index.js';
 import { pruneDanglingSlurs } from '../slurs.js';
+import { pruneDanglingArticControls } from '../articulations.js';
 
 export function normalizeTies(model: ComposerModel): void {
   const doc = model.getDoc();
@@ -95,6 +96,10 @@ export function normalizeTies(model: ComposerModel): void {
    * so it's also the natural place to drop slurs whose endpoint slots were
    * deleted — same rationale as the tie-orphan cleanup above. */
   pruneDanglingSlurs(doc);
+  /* Also prune <fermata> / <breath> control events whose @startid anchor
+     was deleted. These bind to specific notes/chords/rests by xml:id and
+     are appended as measure children alongside slurs. */
+  pruneDanglingArticControls(doc);
 }
 
 /* ── per-note tie helpers ──────────────────────────────────────────────── */

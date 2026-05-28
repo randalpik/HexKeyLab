@@ -18,8 +18,50 @@ import {
   collectDynams, collectHairpins, getDynamicMap, absoluteTickForMoment,
 } from '../expressions.js';
 import { collectSlurs } from '../slurs.js';
+import { articulationsOn, type ArticKind } from '../articulations.js';
 import { realTicks } from '../model/ticks.js';
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
+
+/* Articulation playback shaping constants. Tuned by ear; all configurable
+ * here so a future Setup-dialog control can expose them. */
+const STACCATO_FRACTION = 0.5;       /* shorten to half its written value */
+const TENUTO_FRACTION = 1.0;         /* play to full written value (no gap) */
+const FERMATA_HOLD_FACTOR = 1.5;     /* extend by 50% */
+const ACCENT_VELOCITY_DELTA = 20;    /* +20 MIDI velocity */
+const BREATH_DUR_FACTOR = 0.85;      /* shorten current note by 15% to leave a gap */
+
+/** Read every articulation kind affecting the slot — on the slot element
+ *  itself AND on any contained `<note>`. (A chord-internal selection can
+ *  set the articulation on one note only; for playback we still flag the
+ *  whole chord, since the audio is the chord, not a single voice within
+ *  it.) */
+function articulationsOnSlot(slot: Element): ArticKind[] {
+  const acc = new Set<ArticKind>(articulationsOn(slot));
+  if (slot.localName === 'chord') {
+    for (const c of Array.from(slot.children)) {
+      if (c.localName === 'note') for (const k of articulationsOn(c)) acc.add(k);
+    }
+  }
+  return Array.from(acc);
+}
+
+interface ArticulationShape {
+  velocity: number;
+  durationFactor: number;
+}
+
+function shapeForArticulations(velocity: number, articKinds: ArticKind[]): ArticulationShape {
+  let v = velocity;
+  let durFactor = 1.0;
+  for (const k of articKinds) {
+    if (k === 'stacc') durFactor = Math.min(durFactor, STACCATO_FRACTION);
+    else if (k === 'ten') durFactor = Math.max(durFactor, TENUTO_FRACTION);
+    else if (k === 'fermata') durFactor = durFactor * FERMATA_HOLD_FACTOR;
+    else if (k === 'breath') durFactor = Math.min(durFactor, BREATH_DUR_FACTOR);
+    else if (k === 'accent') v = Math.max(1, Math.min(127, v + ACCENT_VELOCITY_DELTA));
+  }
+  return { velocity: v, durationFactor: durFactor };
+}
 
 const DEFAULT_BPM = 120;
 const MS_PER_MIN = 60_000;
@@ -287,17 +329,19 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
 
       if (byDuration.size > 0) {
         const meiId = child.getAttribute('xml:id') ?? undefined;
-        const vel = velocity.at(tTicks);
+        const baseVel = velocity.at(tTicks);
         const atMs = tTicks * tickMs;
+        const articKinds = articulationsOnSlot(child);
+        const shape = shapeForArticulations(baseVel, articKinds);
         const emittedIdxs: number[] = [];
         for (const [durTicks, notes] of byDuration) {
           emittedIdxs.push(events.length);
           events.push({
             atMs,
-            durationMs: durTicks * tickMs,
+            durationMs: durTicks * shape.durationFactor * tickMs,
             notes,
             meiId,
-            velocity: vel,
+            velocity: shape.velocity,
             voice,
           });
         }

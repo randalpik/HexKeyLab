@@ -2567,3 +2567,21 @@ exact lattice cell, not a MIDI-only guess (distinct `(q,r)` can collide to one M
 emit on the HKL page → load on the Composer page → assert measures/coords/no-tie-orphans/
 placeholder-invariant/origin-spelling/serialize-stability. Visually confirmed the engraved
 grand staff (colored noteheads, cross-bar tie arc, accidentals) renders in Composer.
+
+## Cross-staff slurs work natively in Verovio (2026-05-28)
+
+**Spike resolved.** A `<slur @startid @endid>` with endpoints on different staves (e.g. V1 in
+treble + V3 in bass) renders cleanly: one continuous `g.slur` arc curving between staves, no
+collision with the brace, no layout collapse. Verified by hand-crafted MEI fragment (screenshot:
+`test/composer-test/out/cross_staff_slur_spike.png` from the Phase 1 spike).
+
+**Code-side implication**: `apps/composer/src/slurs.ts` is already xml:id-based and the model's
+`findElement(meiId)` resolves IDs to (voice, index) across all four voices, so no slur-CRUD change
+is needed. The only thing currently preventing cross-staff entry is the `Ctrl+L` close handler in
+`input.ts`, which checks `startLoc.voice !== voice` and bails. Lifting that check (or relaxing it
+to "same staff group OR cross-staff explicit confirm") would enable user entry.
+
+**`data-voice` semantics for cross-staff slurs**: keep `@data-voice` = the START voice. The
+playback `slurredToNext` flag is per-voice (each voice walks its own attack stream), so a
+cross-staff slur primarily marks the start voice. Cross-staff legato playback (gliding the
+voice handoff across staves) is out of scope for v1.

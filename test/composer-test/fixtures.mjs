@@ -1786,6 +1786,695 @@ const SLURS = {
   },
 };
 
+/* ── Phase 1 items: barlines, hide rest, paren caut, articulations, etc. ── */
+
+const PHASE1 = {
+  /* `]` toggles @right="dbl" on the cursor's current measure. */
+  phase1_dblbar_toggle_on_m1_of_2: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setCursor(2, 1);  /* mid-M_1 */
+      m.appendMeasure();
+    `,
+    setupKeys: [{ key: ']' }],
+  },
+
+  /* Pressing `]` twice clears the marker (toggle semantics). */
+  phase1_dblbar_toggle_off: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setCursor(2, 1);
+      m.appendMeasure();
+    `,
+    setupKeys: [{ key: ']' }, { key: ']' }],
+  },
+
+  /* `]` is a no-op on the last measure (final bar always wins). */
+  phase1_dblbar_lastMeasure_noop: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setCursor(2, 1);
+    `,
+    setupKeys: [{ key: ']' }],
+  },
+
+  /* `H` on a rest sets @visible="false". Cursor parked PAST the rest so
+     flat[c] resolves to the rest (cursor-anchor rule). */
+  phase1_hideRest_toggle_on: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertRestAtCursor({ duration: '4', dots: 0 });
+    `,
+    setupKeys: [{ key: 'h' }],
+  },
+
+  /* Pressing H twice clears @visible. */
+  phase1_hideRest_toggle_off: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertRestAtCursor({ duration: '4', dots: 0 });
+    `,
+    setupKeys: [{ key: 'h' }, { key: 'h' }],
+  },
+
+  /* H on a non-rest element (note) is a no-op. */
+  phase1_hideRest_onNote_noop: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+    `,
+    setupKeys: [{ key: 'h' }],
+  },
+
+  /* P on a bare note sets @hkl-paren-caut. Visible @accid="n" in render. */
+  phase1_parenCaut_bareNote_on: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+    `,
+    setupKeys: [{ key: 'p' }],
+  },
+
+  /* P on a HEJI-decorated note (C#↓ in mode D) must keep the comma-arrow
+     glyph (U+E2C3) AND add parens around it. Regression: I originally
+     bypassed HEJI by writing <accid> child form. */
+  phase1_parenCaut_preserves_heji: {
+    setup: `
+      m.setLayoutReq({ tuningMode: 'D', refQ: 0, refR: 0 });
+      m.setHejiEnabled(true);
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 1, r: 0, pname: 'c', accid: 's', oct: 4, midi: 61, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+      r();
+    `,
+    setupKeys: [{ key: 'p' }],
+  },
+
+  /* P twice toggles off. */
+  phase1_parenCaut_toggle_off: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+    `,
+    setupKeys: [{ key: 'p' }, { key: 'p' }],
+  },
+
+  /* P on a chord (no alt-sel) sets flag on every chord note. */
+  phase1_parenCaut_chord_all: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [
+        { q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 },
+        { q: -1, r: 1, pname: 'c', accid: '', oct: 4, midi: 60, colorHex: '#888', velocity: 80 },
+        { q: 0, r: 1, pname: 'e', accid: '', oct: 4, midi: 64, colorHex: '#888', velocity: 80 },
+      ], duration: '4', dots: 0 });
+    `,
+    setupKeys: [{ key: 'p' }],
+  },
+
+  /* P with chord-internal selection (Alt+↑ first) sets flag on only the bass note. */
+  phase1_parenCaut_chord_singleViaAltSel: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [
+        { q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 },
+        { q: -1, r: 1, pname: 'c', accid: '', oct: 4, midi: 60, colorHex: '#888', velocity: 80 },
+        { q: 0, r: 1, pname: 'e', accid: '', oct: 4, midi: 64, colorHex: '#888', velocity: 80 },
+      ], duration: '4', dots: 0 });
+    `,
+    setupKeys: [{ key: 'ArrowUp', alt: true }, { key: 'p' }],
+  },
+
+  /* P on a rest is a no-op. */
+  phase1_parenCaut_onRest_noop: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertRestAtCursor({ duration: '4', dots: 0 });
+    `,
+    setupKeys: [{ key: 'p' }],
+  },
+
+  /* Plain → during playback stops at the most-recent playback head.
+     Simulate playback active and pointing at the SECOND rest's meiId. */
+  phase1_playback_plainArrow_stopsAtHead: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setCursor(0, 1);
+      const rests = [...m.getDoc().querySelectorAll('rest')];
+      const secondId = rests[1].getAttribute('xml:id');
+      window.__hkl_composer.__simulatePlaybackAt(secondId);
+    `,
+    setupKeys: [{ key: 'ArrowRight' }],
+  },
+
+  /* Ctrl+→ during playback SEEKS the audible head to the next measure
+     boundary: stop-playback then play-score are both sent, cursor lands
+     at the boundary, isPlaying stays true. */
+  phase1_playback_ctrlArrow_seeks: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setCursor(2, 1);  /* mid-M_1 */
+      const firstId = m.getDoc().querySelector('rest').getAttribute('xml:id');
+      window.__bridgeMock.sendHklHello();
+      window.__hkl_composer.__simulatePlaybackAt(firstId);
+      window.__bridgeMock.reset();
+    `,
+    setupKeys: [{ key: 'ArrowRight', ctrl: true }],
+  },
+
+  /* REGRESSION: Ctrl+← when the playhead just entered a measure should
+     jump back TWO measure boundaries (= start of previous measure),
+     not just one (= start of current measure). */
+  phase1_playback_ctrlLeft_atBoundary_jumpsPrev: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setCursor(0, 1);
+      /* Playback head simulated on the FIRST rest of M_2 — voice "just
+         entered M_2," so Ctrl+← should jump to start of M_1. */
+      const m2FirstId = m.flatChildren(1).filter(e => e.localName === 'rest')[4].getAttribute('xml:id');
+      window.__bridgeMock.sendHklHello();
+      window.__hkl_composer.__simulatePlaybackAt(m2FirstId);
+      window.__bridgeMock.reset();
+    `,
+    setupKeys: [{ key: 'ArrowLeft', ctrl: true }],
+  },
+
+  /* REGRESSION: Ctrl+← mid-measure should jump to start of CURRENT
+     measure (standard behavior — single step back). */
+  phase1_playback_ctrlLeft_midMeasure_jumpsCurrent: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setCursor(0, 1);
+      /* Playhead on the 3rd rest of M_2 (mid-measure). Ctrl+← should
+         jump to start of M_2 (not M_1). */
+      const m2ThirdId = m.flatChildren(1).filter(e => e.localName === 'rest')[6].getAttribute('xml:id');
+      window.__bridgeMock.sendHklHello();
+      window.__hkl_composer.__simulatePlaybackAt(m2ThirdId);
+      window.__bridgeMock.reset();
+    `,
+    setupKeys: [{ key: 'ArrowLeft', ctrl: true }],
+  },
+
+  /* REGRESSION: multiple Ctrl+→ in a row must remain in playback. A naive
+     impl gets a stale `playback-finished` from HKL after the first stop;
+     that ack must NOT finalize Composer's UI mid-second-session. */
+  phase1_playback_ctrlArrow_seeks_repeatable: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setCursor(0, 1);
+      const firstId = m.getDoc().querySelector('rest').getAttribute('xml:id');
+      window.__bridgeMock.sendHklHello();
+      window.__hkl_composer.__simulatePlaybackAt(firstId);
+      window.__bridgeMock.reset();
+    `,
+    setupKeys: [
+      { key: 'ArrowRight', ctrl: true },
+      { key: 'ArrowRight', ctrl: true },
+    ],
+  },
+
+  /* REGRESSION: a stale playback-finished from a Composer-initiated stop
+     must NOT finalize a fresh session that started after the stop. The
+     full sequence (seek → simulate stale ack) runs in setup since
+     setupKeys can't inject bridge messages between keystrokes. */
+  phase1_playback_staleFinishAck_ignored: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setCursor(0, 1);
+      const firstId = m.getDoc().querySelector('rest').getAttribute('xml:id');
+      window.__bridgeMock.sendHklHello();
+      window.__hkl_composer.__simulatePlaybackAt(firstId);
+      window.__bridgeMock.reset();
+      /* Dispatch Ctrl+→ to trigger seek (sends stop-playback + starts
+         new session via startPlayback). */
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', ctrlKey: true, bubbles: true }));
+      /* Now simulate HKL acking the stop with playback-finished, AFTER
+         the new session is live. Must NOT terminate Composer's UI. */
+      window.__bridgeMock.sendPlaybackFinished();
+    `,
+  },
+
+  /* Click on a rendered note moves the editing cursor to that note's
+     flat-index and switches voice. Simulate the click by dispatching a
+     `click` event on Verovio's <g class="note" id="<meiId>"> element. */
+  phase1_click_movesCursorToNote: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [{ q: 1, r: 0, pname: 'c', accid: 's', oct: 4, midi: 61, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 1, pname: 'e', accid: '', oct: 4, midi: 64, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(0, 1);  /* park cursor at start */
+      r();
+      /* Target the SECOND rendered g.note (= second note element in document
+         order = the C# at flat[1] of voice 1). */
+      const notes = [...document.querySelectorAll('#score g.note')];
+      const target = notes[1];
+      const rect = target.getBoundingClientRect();
+      const ev = new MouseEvent('click', {
+        bubbles: true,
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2,
+        button: 0,
+      });
+      target.dispatchEvent(ev);
+    `,
+  },
+
+  /* Ctrl+M at start of M_1 inserts a new measure at the front. */
+  phase1_insertMeasure_atStart: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertRestAtCursor({ duration: '1', dots: 0 });  /* fill M_1 */
+      m.setCursor(0, 1);  /* park at boundary of M_1 */
+    `,
+    setupKeys: [{ key: 'm', ctrl: true }],
+  },
+
+  /* Ctrl+M mid-measure inserts after current measure. */
+  phase1_insertMeasure_midMeasure: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setCursor(2, 1);  /* mid-M_1 */
+    `,
+    setupKeys: [{ key: 'm', ctrl: true }],
+  },
+
+  /* REGRESSION: cursor at the first note (cursor=1, past flat[1]=note) is
+     NOT a boundary — Ctrl+M must insert AFTER M_1, not before. */
+  phase1_insertMeasure_atFirstNote_insertsAfter: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);  /* past the first note */
+    `,
+    setupKeys: [{ key: 'm', ctrl: true }],
+  },
+
+  /* Ctrl+M severs slurs that straddle the new measure. M_1 ends with a
+     slurred note → M_2 starts with the slur destination; after Ctrl+M
+     inserted BETWEEN them, the slur should be removed. */
+  phase1_insertMeasure_breaksSlur: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 3; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 1, pname: 'e', accid: '', oct: 4, midi: 64, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      for (let i = 0; i < 3; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      const flat = m.flatChildren(1);
+      const notes = flat.filter(e => e.localName === 'note');
+      const sid = notes[0].getAttribute('xml:id');
+      const eid = notes[1].getAttribute('xml:id');
+      const measure = notes[0].closest('measure');
+      const slur = m.getDoc().createElementNS('http://www.music-encoding.org/ns/mei', 'slur');
+      slur.setAttribute('startid', '#' + sid);
+      slur.setAttribute('endid', '#' + eid);
+      slur.setAttribute('data-voice', '1');
+      slur.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:id', 's-fixture');
+      measure.appendChild(slur);
+      /* Park cursor at the M_1/M_2 boundary. measureBoundaryCursors is the
+         authoritative set (tstamp-aligned); use it directly. */
+      const boundary = m.measureBoundaryCursors(1).find(b =>
+        m.getTickPositionAt(1, b) === m.measureTicks());
+      m.setCursor(boundary, 1);
+      r();
+    `,
+    setupKeys: [{ key: 'm', ctrl: true }],
+  },
+
+  /* Ctrl+M severs ties that span the new measure. Pre-insert: M_1 ends
+     with an A4 tied to M_2's starting A4. Post-insert (M_2 = empty,
+     A4 now lives in M_3), the tie can no longer realize. */
+  phase1_insertMeasure_breaksTie: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 3; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      for (let i = 0; i < 3; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      /* Mark the first A as wanting forward tie; normalize so the tie realizes. */
+      const firstNote = m.getDoc().querySelector('note[pname="a"]');
+      firstNote.setAttribute('data-pending-tie', 'true');
+      window.__test.normalizeTies?.();  /* if a hook exists; else rely on next mutation */
+      /* Force a normalize by touching the cursor. */
+      m.setCursor(0, 1);
+      r();
+      const boundary = m.measureBoundaryCursors(1).find(b =>
+        m.getTickPositionAt(1, b) === m.measureTicks());
+      m.setCursor(boundary, 1);
+    `,
+    setupKeys: [{ key: 'm', ctrl: true }],
+  },
+
+  /* L on a bare note sets @stem.dir to opposite of rendered direction.
+     flat[0] is the measure wrapper, flat[1] is the just-inserted note —
+     park cursor there. */
+  phase1_stemFlip_bareNote_freezes: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+      r();
+    `,
+    setupKeys: [{ key: 'l' }],
+  },
+
+  /* L twice clears the @stem.dir (back to natural). */
+  phase1_stemFlip_secondPress_unfreezes: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+      r();
+    `,
+    setupKeys: [{ key: 'l' }, { key: 'l' }],
+  },
+
+  /* L on a note in a beam flips every member of the beam. Construct 4
+     eighth notes in V1 (auto-beamed in 4/4). flat[1..4] are the notes. */
+  phase1_stemFlip_beamGroup_allFlip: {
+    setup: `
+      m.setCursor(0, 1);
+      for (const oct of [4, 4, 4, 4]) {
+        m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct, midi: 69, colorHex: '#888', velocity: 80 }], duration: '8', dots: 0 });
+      }
+      m.setCursor(1, 1);  /* park on the first eighth */
+      r();
+    `,
+    setupKeys: [{ key: 'l' }],
+  },
+
+  /* REGRESSION: when `/` has split the beam, L on a member of the FIRST
+     sub-beam must only flip THAT sub-beam, not the whole pre-split run.
+     Setup: 4 eighths, beam-break marker on the 3rd → 2+2 split. L on
+     the 1st eighth should flip notes 1+2; notes 3+4 unaffected. */
+  phase1_stemFlip_respectsBeamBreak: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) {
+        m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '8', dots: 0 });
+      }
+      /* Manually set @hkl-beam-break on the 3rd note. */
+      const notes = [...m.getDoc().querySelectorAll('layer > note')];
+      notes[2].setAttribute('hkl-beam-break', 'true');
+      m.setCursor(1, 1);  /* park on the 1st eighth */
+      r();
+    `,
+    setupKeys: [{ key: 'l' }],
+  },
+
+  /* Shift+L on a slurred note sets @curvedir on the slur. Single-note
+     "chord" inputs serialize as bare <note> elements, so the IDs live on
+     notes, not chords. */
+  phase1_slurFlip_setsAttr: {
+    setup: `
+      m.setCursor(0, 1);
+      for (const _ of [0, 0]) {
+        m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      }
+      const flat = m.flatChildren(1);
+      const notes = flat.filter(e => e.localName === 'note' || e.localName === 'chord');
+      const startId = notes[0].getAttribute('xml:id');
+      const endId = notes[1].getAttribute('xml:id');
+      const measure = notes[0].closest('measure');
+      const slur = m.getDoc().createElementNS('http://www.music-encoding.org/ns/mei', 'slur');
+      slur.setAttribute('startid', '#' + startId);
+      slur.setAttribute('endid', '#' + endId);
+      slur.setAttribute('data-voice', '1');
+      slur.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:id', 's-fixture');
+      measure.appendChild(slur);
+      m.setCursor(1, 1);  /* park on the first slurred note (flat[1]) */
+      r();
+    `,
+    setupKeys: [{ key: 'L', shift: true }],
+  },
+
+  /* `/` at cursor=2 (between e2 and e3 of an 8-eighth measure) sets
+     @hkl-beam-break on e3. After serialize, beams should be 2+2+4. */
+  phase1_beamSplit_marksThird: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 8; i++) m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '8', dots: 0 });
+      m.setCursor(2, 1);  /* between e2 and e3 */
+      r();
+    `,
+    setupKeys: [{ key: '/' }],
+  },
+
+  /* Second `/` clears the marker. */
+  phase1_beamSplit_toggleOff: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 8; i++) m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '8', dots: 0 });
+      m.setCursor(2, 1);
+      r();
+    `,
+    setupKeys: [{ key: '/' }, { key: '/' }],
+  },
+
+  /* REGRESSION: `/` placed AT a natural beat boundary should connect
+     across the boundary (cross-beat beaming), not break (which is the
+     default). Setup: 8 eighths in 4/4 → naturally 4+4. Placing the
+     marker on note 5 (= start of beat 3) should merge the two beams
+     into ONE beam of 8. */
+  phase1_beamSplit_overridesBeatBoundary: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 8; i++) m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '8', dots: 0 });
+      m.setCursor(4, 1);  /* between notes 4 and 5 (= start of M_1 beat 3 = the half-measure boundary) */
+      r();
+    `,
+    setupKeys: [{ key: '/' }],
+  },
+
+  /* `/` is no-op when the upcoming element is a rest. */
+  phase1_beamSplit_onRest_noop: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '8', dots: 0 });
+      m.insertRestAtCursor({ duration: '8', dots: 0 });
+      m.setCursor(1, 1);  /* between note and rest */
+      r();
+    `,
+    setupKeys: [{ key: '/' }],
+  },
+
+  /* Articulations S/A/T/F/B add <artic> child to the current note. */
+  phase1_artic_staccato_on_note: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);  /* park on the note */
+    `,
+    setupKeys: [{ key: 's' }],
+  },
+
+  phase1_artic_accent_on_note: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+    `,
+    setupKeys: [{ key: 'a' }],
+  },
+
+  phase1_artic_tenuto_on_note: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+    `,
+    setupKeys: [{ key: 't' }],
+  },
+
+  phase1_artic_fermata_on_note: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+    `,
+    setupKeys: [{ key: 'f' }],
+  },
+
+  phase1_artic_breath_on_note: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+    `,
+    setupKeys: [{ key: 'b' }],
+  },
+
+  /* Fermata is the only articulation valid on a rest. */
+  phase1_artic_fermata_on_rest: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertRestAtCursor({ duration: '4', dots: 0 });
+    `,
+    setupKeys: [{ key: 'f' }],
+  },
+
+  /* Staccato on a rest is a no-op. */
+  phase1_artic_staccato_on_rest_noop: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertRestAtCursor({ duration: '4', dots: 0 });
+    `,
+    setupKeys: [{ key: 's' }],
+  },
+
+  /* Pressing S twice toggles staccato off. */
+  phase1_artic_staccato_toggle_off: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+    `,
+    setupKeys: [{ key: 's' }, { key: 's' }],
+  },
+
+  /* S + A on same note stacks both articulations. */
+  phase1_artic_multiple_stack: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+    `,
+    setupKeys: [{ key: 's' }, { key: 'a' }],
+  },
+
+  /* Accent boosts playback velocity by ACCENT_VELOCITY_DELTA. */
+  phase1_artic_accent_playback_velocity: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+    `,
+    setupKeys: [{ key: 'a' }],
+  },
+
+  /* Staccato halves playback durationMs. */
+  phase1_artic_staccato_playback_duration: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+    `,
+    setupKeys: [{ key: 's' }],
+  },
+
+  /* fillIncompleteMeasures fills M_1 (a single quarter rest, then quiet) when
+     M_2 has content. */
+  phase1_fillIncomplete_basic: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertRestAtCursor({ duration: '4', dots: 0 });  /* M_1 V_1 has 1 quarter rest */
+      m.appendMeasure();
+      m.setCursor(m.getVoiceLength(1), 1);
+      m.insertRestAtCursor({ duration: '1', dots: 0 });  /* M_2 V_1 has whole rest */
+      m.setCursor(0, 1);
+      m.fillIncompleteMeasures();
+    `,
+  },
+
+  /* Title + subtitle + composer + footer all populate the MEI + render
+     into the page SVG. */
+  phase1_titleBlock_all_fields: {
+    setup: `
+      m.setTitle('Sonata in A');
+      m.setSubtitle('for piano');
+      m.setComposer('J. S. Bach');
+      m.setFooter('Engraved with HKL Composer');
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      r();
+    `,
+  },
+
+  /* Empty footer suppresses the footer injection. */
+  phase1_titleBlock_emptyFooter: {
+    setup: `
+      m.setTitle('Untitled');
+      m.setFooter('');
+      r();
+    `,
+  },
+
+  /* REGRESSION: clicking an inner <note> of a chord in a different voice
+     must resolve to the chord wrapper (which IS in flatChildren of that
+     voice) — not the inner note's own xml:id (which isn't). */
+  phase1_click_chordInternal_switchesVoice: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [
+        { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 },
+        { q: -1, r: 1, pname: 'c', accid: '', oct: 5, midi: 72, colorHex: '#888', velocity: 80 },
+      ], duration: '4', dots: 0 });
+      m.setVoice(3); m.setCursor(0, 3);
+      m.insertChordAtCursor({ notes: [
+        { q: 0, r: -2, pname: 'e', accid: '', oct: 2, midi: 40, colorHex: '#888', velocity: 80 },
+        { q: -1, r: -1, pname: 'g', accid: '', oct: 2, midi: 43, colorHex: '#888', velocity: 80 },
+      ], duration: '4', dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+      /* Dispatch click on a V_3 chord-internal note. */
+      const v3Notes = [...document.querySelectorAll('#score g.note')].filter(n => {
+        let p = n; while (p && p.tagName !== 'svg' && (p.getAttribute && p.getAttribute('class') !== 'staff')) p = p.parentElement;
+        return p?.getAttribute('class') === 'staff' && [...p.parentElement?.querySelectorAll('g.staff') ?? []].indexOf(p) === 1;
+      });
+      const target = v3Notes[0];
+      const rect = target.getBoundingClientRect();
+      target.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: rect.left + rect.width/2, clientY: rect.top + rect.height/2, button: 0 }));
+    `,
+  },
+
+  /* Click on a different voice's note switches the active voice. */
+  phase1_click_switchesVoice: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setVoice(3);
+      m.setCursor(0, 3);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: -2, pname: 'e', accid: '', oct: 2, midi: 40, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setVoice(1);
+      m.setCursor(0, 1);
+      r();
+      /* Find the voice-3 note element (bass clef, lower staff) by data-q/r. */
+      const notes = [...document.querySelectorAll('#score g.note')];
+      const target = notes.find(n => {
+        const cls = n.parentElement; /* g.staff ancestor */
+        let p = n;
+        while (p && !(p.getAttribute && p.getAttribute('class')?.startsWith('staff'))) p = p.parentElement;
+        return p?.getAttribute('class') === 'staff' && p.getAttribute('data-n') === '2';
+      }) || notes[notes.length - 1];
+      const rect = target.getBoundingClientRect();
+      const ev = new MouseEvent('click', {
+        bubbles: true,
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2,
+        button: 0,
+      });
+      target.dispatchEvent(ev);
+    `,
+  },
+};
+
 export const FIXTURES = {
   ...mapTier(EXISTING, 'fast'),
   ...mapTier(CURSOR_CONVENTION, 'fast'),
@@ -1808,6 +2497,7 @@ export const FIXTURES = {
   ...mapKbdTier(UNDO_REDO, 'full'),
   ...mapKbdTier(HELP_MODAL, 'full'),
   ...mapKbdTier(SLURS, 'full'),
+  ...mapKbdTier(PHASE1, 'full'),
 };
 
 /** Fixture-specific assertions. Map fixture name → list of {name, expr}.
@@ -3838,6 +4528,693 @@ export const FIXTURE_ASSERTIONS = {
       expr: `(() => {
         const dlg = document.getElementById('helpDialog');
         return { ok: !!dlg && !dlg.open, detail: 'open=' + (dlg && dlg.open) };
+      })()` },
+  ],
+
+  /* ── Phase 1: double bar `]` ─────────────────────────────────────────── */
+  phase1_dblbar_toggle_on_m1_of_2: [
+    { name: 'M_1 has @right="dbl"; M_2 (last) has @right="end"',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const ms = m.allMeasures();
+        const m1r = ms[0].getAttribute('right');
+        const m2r = ms[1].getAttribute('right');
+        return (m1r === 'dbl' && m2r === 'end')
+          ? { ok: true }
+          : { ok: false, detail: 'm1=' + m1r + ' m2=' + m2r };
+      })()` },
+    { name: 'final-bar @right="end" preserved on last measure (setBarlines respects user dbl)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        m.appendMeasure(); /* triggers setBarlines */
+        const ms = m.allMeasures();
+        return (ms[0].getAttribute('right') === 'dbl'
+                && ms[1].getAttribute('right') === null
+                && ms[2].getAttribute('right') === 'end')
+          ? { ok: true }
+          : { ok: false, detail: 'attrs=' + ms.map((x, i) => 'm' + (i + 1) + '=' + x.getAttribute('right')).join(' ') };
+      })()` },
+  ],
+  phase1_dblbar_toggle_off: [
+    { name: 'two `]` presses clear @right; M_2 still @right="end"',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const ms = m.allMeasures();
+        return (ms[0].getAttribute('right') === null && ms[1].getAttribute('right') === 'end')
+          ? { ok: true }
+          : { ok: false, detail: 'm1=' + ms[0].getAttribute('right') + ' m2=' + ms[1].getAttribute('right') };
+      })()` },
+  ],
+  phase1_dblbar_lastMeasure_noop: [
+    { name: '`]` on last (only) measure is rejected; @right="end" preserved',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const ms = m.allMeasures();
+        return (ms.length === 1 && ms[0].getAttribute('right') === 'end')
+          ? { ok: true }
+          : { ok: false, detail: 'len=' + ms.length + ' right=' + ms[0].getAttribute('right') };
+      })()` },
+  ],
+
+  /* ── Phase 1: hide rest `H` ─────────────────────────────────────────── */
+  phase1_hideRest_toggle_on: [
+    { name: 'rest has @visible="false"',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const rest = m.getDoc().querySelector('rest');
+        if (!rest) return { ok: false, detail: 'no rest' };
+        const vis = rest.getAttribute('visible');
+        return vis === 'false' ? { ok: true } : { ok: false, detail: '@visible=' + vis };
+      })()` },
+    { name: 'rendered g.rest is visually hidden (CSS visibility:hidden via data-visible)',
+      expr: `(() => {
+        const r = document.querySelector('#score g.rest');
+        if (!r) return { ok: false, detail: 'no g.rest' };
+        const dv = r.getAttribute('data-visible');
+        const cv = getComputedStyle(r).visibility;
+        return (dv === 'false' && cv === 'hidden')
+          ? { ok: true } : { ok: false, detail: 'data-visible=' + dv + ' computed=' + cv };
+      })()` },
+  ],
+  phase1_hideRest_toggle_off: [
+    { name: '@visible removed after second toggle',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const rest = m.getDoc().querySelector('rest');
+        if (!rest) return { ok: false, detail: 'no rest' };
+        return rest.hasAttribute('visible')
+          ? { ok: false, detail: '@visible=' + rest.getAttribute('visible') }
+          : { ok: true };
+      })()` },
+  ],
+  phase1_hideRest_onNote_noop: [
+    { name: 'note has no @visible (H no-op on non-rest)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const note = m.getDoc().querySelector('note');
+        if (!note) return { ok: false, detail: 'no note' };
+        return note.hasAttribute('visible')
+          ? { ok: false, detail: '@visible=' + note.getAttribute('visible') }
+          : { ok: true };
+      })()` },
+  ],
+
+  /* ── Phase 1: parenthetical cautionary accidental `P` ────────────────── */
+  phase1_parenCaut_bareNote_on: [
+    { name: 'note has @hkl-paren-caut="true"',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const note = m.getDoc().querySelector('note');
+        return note?.getAttribute('hkl-paren-caut') === 'true'
+          ? { ok: true } : { ok: false, detail: 'attr=' + note?.getAttribute('hkl-paren-caut') };
+      })()` },
+    { name: 'rendered g.accid contains BravuraText paren-left (E26A) AND paren-right (E26B)',
+      expr: `(() => {
+        const accidG = document.querySelector('#score g.note g.accid');
+        if (!accidG) return { ok: false, detail: 'no g.accid' };
+        const cps = [...accidG.querySelectorAll('text')].map(t => t.textContent.codePointAt(0).toString(16));
+        const has = cps.includes('e26a') && cps.includes('e26b');
+        return has ? { ok: true } : { ok: false, detail: 'cps=' + JSON.stringify(cps) };
+      })()` },
+  ],
+  phase1_parenCaut_preserves_heji: [
+    { name: 'HEJI comma-arrow glyph (U+E2C3) still rendered',
+      expr: `(() => {
+        const cps = [...document.querySelectorAll('#score g.note g.accid text')].map(t => t.textContent.codePointAt(0).toString(16));
+        return cps.includes('e2c3')
+          ? { ok: true } : { ok: false, detail: 'accid cps=' + JSON.stringify(cps) };
+      })()` },
+    { name: 'paren glyphs (E26A + E26B) flank the HEJI combined glyph in g.accid',
+      expr: `(() => {
+        const accidG = document.querySelector('#score g.note g.accid');
+        if (!accidG) return { ok: false, detail: 'no g.accid' };
+        const cps = [...accidG.querySelectorAll('text')].map(t => t.textContent.codePointAt(0).toString(16));
+        return (cps.includes('e26a') && cps.includes('e26b') && cps.includes('e2c3'))
+          ? { ok: true } : { ok: false, detail: 'cps=' + JSON.stringify(cps) };
+      })()` },
+  ],
+  phase1_parenCaut_toggle_off: [
+    { name: '@hkl-paren-caut removed after second P',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const note = m.getDoc().querySelector('note');
+        return note && !note.hasAttribute('hkl-paren-caut')
+          ? { ok: true } : { ok: false, detail: 'attr=' + note?.getAttribute('hkl-paren-caut') };
+      })()` },
+  ],
+  phase1_parenCaut_chord_all: [
+    { name: 'every chord note has @hkl-paren-caut="true"',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const notes = [...m.getDoc().querySelectorAll('chord note')];
+        if (notes.length !== 3) return { ok: false, detail: 'noteCount=' + notes.length };
+        const allOn = notes.every(n => n.getAttribute('hkl-paren-caut') === 'true');
+        return allOn ? { ok: true } : { ok: false, detail: 'flags=' + notes.map(n => n.getAttribute('hkl-paren-caut')).join(',') };
+      })()` },
+  ],
+  phase1_parenCaut_chord_singleViaAltSel: [
+    { name: 'only the bass (lowest midi) note has @hkl-paren-caut',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const notes = [...m.getDoc().querySelectorAll('chord note')];
+        const flagged = notes.filter(n => n.getAttribute('hkl-paren-caut') === 'true');
+        if (flagged.length !== 1) return { ok: false, detail: 'flaggedCount=' + flagged.length };
+        const pname = flagged[0].getAttribute('pname');
+        const oct = flagged[0].getAttribute('oct');
+        /* Bass = A3. */
+        return (pname === 'a' && oct === '3') ? { ok: true } : { ok: false, detail: 'flagged=' + pname + oct };
+      })()` },
+  ],
+  phase1_parenCaut_onRest_noop: [
+    { name: 'rest has no @hkl-paren-caut',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const rest = m.getDoc().querySelector('rest');
+        return rest && !rest.hasAttribute('hkl-paren-caut')
+          ? { ok: true } : { ok: false, detail: 'attr=' + rest?.getAttribute('hkl-paren-caut') };
+      })()` },
+  ],
+
+  /* ── Phase 1: playback navigation (Ctrl/plain arrows during playback) ── */
+  phase1_playback_plainArrow_stopsAtHead: [
+    { name: 'isPlaying = false after plain ArrowRight',
+      expr: `(() => {
+        const playing = window.__hkl_composer.inputState; /* indirect — check via button class */
+        const btn = document.getElementById('btnPlay');
+        const stillPlaying = btn?.classList.contains('playing') ?? null;
+        return stillPlaying === false ? { ok: true } : { ok: false, detail: 'btn.playing=' + stillPlaying };
+      })()` },
+    { name: 'cursor parked at second rest (the simulated playback head)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const rests = [...m.getDoc().querySelectorAll('rest')];
+        const secondId = rests[1].getAttribute('xml:id');
+        const flat = m.flatChildren(1);
+        const idx = flat.findIndex(e => e.getAttribute('xml:id') === secondId);
+        const cur = m.getCursor(1);
+        return cur === idx ? { ok: true } : { ok: false, detail: 'cur=' + cur + ' want=' + idx };
+      })()` },
+  ],
+  phase1_playback_ctrlArrow_seeks: [
+    { name: 'isPlaying = true after Ctrl+ArrowRight (playback continues, just at new offset)',
+      expr: `(() => {
+        const btn = document.getElementById('btnPlay');
+        const stillPlaying = btn?.classList.contains('playing') ?? null;
+        return stillPlaying === true ? { ok: true } : { ok: false, detail: 'btn.playing=' + stillPlaying };
+      })()` },
+    { name: 'cursor advanced to the M_1→M_2 boundary',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const boundaries = m.measureBoundaryCursors(1);
+        const cur = m.getCursor(1);
+        return boundaries.includes(cur) && cur > 2
+          ? { ok: true } : { ok: false, detail: 'cur=' + cur + ' boundaries=' + boundaries.join(',') };
+      })()` },
+    { name: 'bridge captured both stop-playback and play-score (audio actually seeks)',
+      expr: `(() => {
+        const captured = window.__bridgeMock.captured();
+        const hasStop = captured.some(e => e.type === 'stop-playback');
+        const hasPlay = captured.some(e => e.type === 'play-score');
+        return (hasStop && hasPlay)
+          ? { ok: true }
+          : { ok: false, detail: 'types=' + captured.map(e => e.type).join(',') };
+      })()` },
+  ],
+  phase1_playback_ctrlLeft_atBoundary_jumpsPrev: [
+    { name: 'cursor lands at the start of M_1 (= boundary 0), not M_2',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const boundaries = m.measureBoundaryCursors(1);
+        const cur = m.getCursor(1);
+        return cur === boundaries[0]
+          ? { ok: true } : { ok: false, detail: 'cur=' + cur + ' boundaries=' + boundaries.join(',') };
+      })()` },
+  ],
+  phase1_playback_ctrlLeft_midMeasure_jumpsCurrent: [
+    { name: 'cursor lands at the start of M_2 (= boundary[1]), not M_1',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const boundaries = m.measureBoundaryCursors(1);
+        const cur = m.getCursor(1);
+        return cur === boundaries[1]
+          ? { ok: true } : { ok: false, detail: 'cur=' + cur + ' boundaries=' + boundaries.join(',') };
+      })()` },
+  ],
+  phase1_playback_ctrlArrow_seeks_repeatable: [
+    { name: 'after TWO Ctrl+→ in playback, isPlaying still true',
+      expr: `(() => {
+        const btn = document.getElementById('btnPlay');
+        const stillPlaying = btn?.classList.contains('playing') ?? null;
+        return stillPlaying === true ? { ok: true } : { ok: false, detail: 'btn.playing=' + stillPlaying };
+      })()` },
+    { name: 'cursor advanced by TWO measures from start',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const boundaries = m.measureBoundaryCursors(1);
+        const cur = m.getCursor(1);
+        /* Started at cursor=0 (= boundary 0); two seeks → boundaries[2]. */
+        return cur === boundaries[2]
+          ? { ok: true } : { ok: false, detail: 'cur=' + cur + ' boundaries=' + boundaries.join(',') };
+      })()` },
+    { name: 'bridge captured 2× stop-playback + 2× play-score (each seek is stop+start)',
+      expr: `(() => {
+        const captured = window.__bridgeMock.captured();
+        const stops = captured.filter(e => e.type === 'stop-playback').length;
+        const plays = captured.filter(e => e.type === 'play-score').length;
+        return (stops === 2 && plays === 2)
+          ? { ok: true }
+          : { ok: false, detail: 'stops=' + stops + ' plays=' + plays };
+      })()` },
+  ],
+  phase1_playback_staleFinishAck_ignored: [
+    { name: 'isPlaying = true after stale playback-finished ack (suppressed by pendingStopAcks)',
+      expr: `(() => {
+        const btn = document.getElementById('btnPlay');
+        const stillPlaying = btn?.classList.contains('playing') ?? null;
+        return stillPlaying === true ? { ok: true } : { ok: false, detail: 'btn.playing=' + stillPlaying };
+      })()` },
+  ],
+
+  /* ── Phase 1: insert measure `Ctrl+M` ───────────────────────────────── */
+  phase1_insertMeasure_atStart: [
+    { name: 'measure count = 2; new measure is M_1 (empty), original is M_2',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const ms = m.allMeasures();
+        if (ms.length !== 2) return { ok: false, detail: 'count=' + ms.length };
+        /* M_1 (new) has no notes; M_2 (original) has the whole rest. */
+        const m1Notes = ms[0].querySelectorAll('note, rest:not([data-placeholder])').length;
+        const m2Rests = [...ms[1].querySelectorAll('rest')].filter(r => r.getAttribute('data-placeholder') !== 'true').length;
+        return (m1Notes === 0 && m2Rests > 0)
+          ? { ok: true }
+          : { ok: false, detail: 'm1Notes=' + m1Notes + ' m2Rests=' + m2Rests };
+      })()` },
+    { name: 'cursor at start of new M_1 (= flat-index 0)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const cur = m.getCursor(1);
+        return cur === 0 ? { ok: true } : { ok: false, detail: 'cur=' + cur };
+      })()` },
+  ],
+  phase1_insertMeasure_midMeasure: [
+    { name: 'measure count = 2; M_1 still has 4 quarters; M_2 is the new empty one',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const ms = m.allMeasures();
+        if (ms.length !== 2) return { ok: false, detail: 'count=' + ms.length };
+        const m1Rests = [...ms[0].querySelectorAll('rest')].filter(r => r.getAttribute('data-placeholder') !== 'true').length;
+        const m2RealContent = [...ms[1].querySelectorAll('note, rest')].filter(r => r.getAttribute('data-placeholder') !== 'true').length;
+        return (m1Rests === 4 && m2RealContent === 0)
+          ? { ok: true }
+          : { ok: false, detail: 'm1Rests=' + m1Rests + ' m2RealContent=' + m2RealContent };
+      })()` },
+    { name: 'cursor at start of new M_2 (= first cursor stop in M_2)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const cur = m.getCursor(1);
+        const m2Start = m.getMeasureStartCursor(1, 1);
+        return cur === m2Start ? { ok: true } : { ok: false, detail: 'cur=' + cur + ' m2Start=' + m2Start };
+      })()` },
+  ],
+  phase1_insertMeasure_atFirstNote_insertsAfter: [
+    { name: 'M_1 still has the note; M_2 is the new empty measure',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const ms = m.allMeasures();
+        if (ms.length !== 2) return { ok: false, detail: 'count=' + ms.length };
+        const m1HasA = ms[0].querySelector('note[pname="a"]') !== null;
+        const m2Notes = ms[1].querySelectorAll('note').length;
+        return (m1HasA && m2Notes === 0)
+          ? { ok: true } : { ok: false, detail: 'm1HasA=' + m1HasA + ' m2Notes=' + m2Notes };
+      })()` },
+  ],
+  phase1_insertMeasure_breaksSlur: [
+    { name: 'slur covering M_1 → M_2 was pruned after Ctrl+M between them',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const slurs = m.getDoc().querySelectorAll('slur');
+        return slurs.length === 0
+          ? { ok: true } : { ok: false, detail: 'slurCount=' + slurs.length };
+      })()` },
+  ],
+  phase1_insertMeasure_breaksTie: [
+    { name: 'realized tie chain (@tie attrs) is gone after insertion',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const tied = m.getDoc().querySelectorAll('note[tie]');
+        return tied.length === 0
+          ? { ok: true } : { ok: false, detail: 'tiedCount=' + tied.length };
+      })()` },
+  ],
+
+  /* ── Phase 1: stem dir `L` + slur dir `Shift+L` ──────────────────────── */
+  phase1_stemFlip_bareNote_freezes: [
+    { name: 'note has @stem.dir set to "up" or "down" (opposite of natural)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const note = m.getDoc().querySelector('note');
+        const d = note?.getAttribute('stem.dir');
+        return (d === 'up' || d === 'down') ? { ok: true } : { ok: false, detail: 'stem.dir=' + d };
+      })()` },
+  ],
+  phase1_stemFlip_secondPress_unfreezes: [
+    { name: 'second L clears @stem.dir',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const note = m.getDoc().querySelector('note');
+        return note && !note.hasAttribute('stem.dir')
+          ? { ok: true } : { ok: false, detail: 'stem.dir=' + note?.getAttribute('stem.dir') };
+      })()` },
+  ],
+  phase1_stemFlip_beamGroup_allFlip: [
+    { name: 'all four eighths share the same @stem.dir',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const notes = [...m.getDoc().querySelectorAll('layer > note')];
+        if (notes.length !== 4) return { ok: false, detail: 'noteCount=' + notes.length };
+        const dirs = notes.map(c => c.getAttribute('stem.dir'));
+        const uniq = [...new Set(dirs)];
+        return (uniq.length === 1 && (uniq[0] === 'up' || uniq[0] === 'down'))
+          ? { ok: true } : { ok: false, detail: 'dirs=' + dirs.join(',') };
+      })()` },
+  ],
+  phase1_stemFlip_respectsBeamBreak: [
+    { name: 'only notes 1+2 have @stem.dir set; notes 3+4 have none',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const notes = [...m.getDoc().querySelectorAll('layer > note')];
+        if (notes.length !== 4) return { ok: false, detail: 'noteCount=' + notes.length };
+        const dirs = notes.map(c => c.getAttribute('stem.dir'));
+        const okFlipped = dirs[0] && dirs[1] && dirs[0] === dirs[1]
+                       && dirs[2] === null && dirs[3] === null;
+        return okFlipped
+          ? { ok: true } : { ok: false, detail: 'dirs=' + JSON.stringify(dirs) };
+      })()` },
+  ],
+  phase1_slurFlip_setsAttr: [
+    { name: 'slur has @curvedir set to "above" or "below"',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const slur = m.getDoc().querySelector('slur');
+        const d = slur?.getAttribute('curvedir');
+        return (d === 'above' || d === 'below') ? { ok: true } : { ok: false, detail: 'curvedir=' + d };
+      })()` },
+  ],
+
+  /* ── Phase 1: beam split `/` ────────────────────────────────────────── */
+  phase1_beamSplit_marksThird: [
+    { name: '3rd eighth has @hkl-beam-break="true"',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const notes = [...m.getDoc().querySelectorAll('layer > note')];
+        if (notes.length < 4) return { ok: false, detail: 'noteCount=' + notes.length };
+        return notes[2].getAttribute('hkl-beam-break') === 'true'
+          ? { ok: true } : { ok: false, detail: 'attr=' + notes[2].getAttribute('hkl-beam-break') };
+      })()` },
+    { name: 'rendered SVG shows 3 beams (2+2+4) for the 8-eighth measure',
+      expr: `(() => {
+        /* Verovio wraps beamed runs in g.beam. Count after the re-render
+           that fired on the keystroke. */
+        const beams = document.querySelectorAll('#score g.beam');
+        return beams.length === 3 ? { ok: true } : { ok: false, detail: 'beamCount=' + beams.length };
+      })()` },
+  ],
+  phase1_beamSplit_toggleOff: [
+    { name: '@hkl-beam-break absent after second `/`',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const notes = [...m.getDoc().querySelectorAll('layer > note')];
+        return notes[2] && !notes[2].hasAttribute('hkl-beam-break')
+          ? { ok: true } : { ok: false, detail: 'attr=' + notes[2]?.getAttribute('hkl-beam-break') };
+      })()` },
+  ],
+  phase1_beamSplit_onRest_noop: [
+    { name: 'no element has @hkl-beam-break',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const flagged = m.getDoc().querySelectorAll('[hkl-beam-break="true"]');
+        return flagged.length === 0
+          ? { ok: true } : { ok: false, detail: 'flaggedCount=' + flagged.length };
+      })()` },
+  ],
+  phase1_beamSplit_overridesBeatBoundary: [
+    { name: '5th eighth carries @hkl-beam-break="true"',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const notes = [...m.getDoc().querySelectorAll('layer > note')];
+        return notes[4]?.getAttribute('hkl-beam-break') === 'true'
+          ? { ok: true } : { ok: false, detail: 'attr=' + notes[4]?.getAttribute('hkl-beam-break') };
+      })()` },
+    { name: 'rendered SVG shows ONE beam of 8 (cross-beat connect)',
+      expr: `(() => {
+        const beams = document.querySelectorAll('#score g.beam');
+        return beams.length === 1 ? { ok: true } : { ok: false, detail: 'beamCount=' + beams.length };
+      })()` },
+  ],
+
+  /* ── Phase 1: articulations S/A/T/F/B ─────────────────────────────── */
+  phase1_artic_staccato_on_note: [
+    { name: 'note has child <artic @artic="stacc">',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const articEls = m.getDoc().querySelectorAll('note > artic[artic="stacc"]');
+        return articEls.length === 1 ? { ok: true } : { ok: false, detail: 'count=' + articEls.length };
+      })()` },
+    { name: 'rendered g.artic computed fill is black (not the notehead color)',
+      expr: `(() => {
+        const articG = document.querySelector('#score g.artic');
+        if (!articG) return { ok: false, detail: 'no g.artic' };
+        const fill = getComputedStyle(articG).fill;
+        return fill === 'rgb(0, 0, 0)'
+          ? { ok: true } : { ok: false, detail: 'fill=' + fill };
+      })()` },
+  ],
+  phase1_artic_accent_on_note: [
+    { name: 'note has child <artic @artic="acc"> (MEI accent value)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const articEls = m.getDoc().querySelectorAll('note > artic[artic="acc"]');
+        return articEls.length === 1 ? { ok: true } : { ok: false, detail: 'count=' + articEls.length };
+      })()` },
+  ],
+  phase1_artic_tenuto_on_note: [
+    { name: 'note has child <artic @artic="ten">',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const articEls = m.getDoc().querySelectorAll('note > artic[artic="ten"]');
+        return articEls.length === 1 ? { ok: true } : { ok: false, detail: 'count=' + articEls.length };
+      })()` },
+  ],
+  phase1_artic_fermata_on_note: [
+    { name: 'measure has <fermata @startid=#noteId> sibling',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const note = m.getDoc().querySelector('note');
+        const id = note?.getAttribute('xml:id');
+        const ferm = [...m.getDoc().querySelectorAll('measure > fermata')];
+        const matching = ferm.filter(f => f.getAttribute('startid') === '#' + id);
+        return matching.length === 1 ? { ok: true } : { ok: false, detail: 'ferm=' + ferm.length + ' matching=' + matching.length };
+      })()` },
+  ],
+  phase1_artic_breath_on_note: [
+    { name: 'measure has <breath @tstamp> sibling anchored to noteId via data-hkl-anchor',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const note = m.getDoc().querySelector('note');
+        const id = note?.getAttribute('xml:id');
+        const br = [...m.getDoc().querySelectorAll('measure > breath')];
+        const matching = br.filter(f => f.getAttribute('data-hkl-anchor') === id && f.hasAttribute('tstamp'));
+        return matching.length === 1 ? { ok: true } : { ok: false, detail: 'breath=' + br.length + ' matching=' + matching.length };
+      })()` },
+    { name: 'breath tstamp at end-of-note minus 5% (= 1.950 for a quarter starting at beat 1)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const breath = m.getDoc().querySelector('breath');
+        const ts = parseFloat(breath?.getAttribute('tstamp') ?? '0');
+        return (Math.abs(ts - 1.95) < 0.01)
+          ? { ok: true } : { ok: false, detail: 'tstamp=' + ts };
+      })()` },
+  ],
+  phase1_artic_fermata_on_rest: [
+    { name: 'measure has <fermata @startid=#restId> sibling',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const rest = m.getDoc().querySelector('rest');
+        const id = rest?.getAttribute('xml:id');
+        const ferm = [...m.getDoc().querySelectorAll('measure > fermata')];
+        const matching = ferm.filter(f => f.getAttribute('startid') === '#' + id);
+        return matching.length === 1 ? { ok: true } : { ok: false, detail: 'ferm=' + ferm.length + ' matching=' + matching.length };
+      })()` },
+  ],
+  phase1_artic_staccato_on_rest_noop: [
+    { name: 'rest has no <artic> child + no fermata/breath sibling',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const articEls = m.getDoc().querySelectorAll('rest > artic');
+        const ctrl = m.getDoc().querySelectorAll('measure > fermata, measure > breath');
+        return (articEls.length === 0 && ctrl.length === 0)
+          ? { ok: true } : { ok: false, detail: 'articChildren=' + articEls.length + ' siblings=' + ctrl.length };
+      })()` },
+  ],
+  phase1_artic_staccato_toggle_off: [
+    { name: 'no <artic> on the note after second S',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const articEls = m.getDoc().querySelectorAll('note > artic[artic="stacc"]');
+        return articEls.length === 0 ? { ok: true } : { ok: false, detail: 'count=' + articEls.length };
+      })()` },
+  ],
+  phase1_artic_multiple_stack: [
+    { name: 'note carries both stacc and acc (= accent)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const note = m.getDoc().querySelector('note');
+        const arts = [...(note?.children ?? [])].filter(c => c.localName === 'artic').map(c => c.getAttribute('artic')).sort();
+        return JSON.stringify(arts) === JSON.stringify(['acc', 'stacc'])
+          ? { ok: true } : { ok: false, detail: 'arts=' + JSON.stringify(arts) };
+      })()` },
+  ],
+  phase1_artic_accent_playback_velocity: [
+    { name: 'playback event velocity = default-mf + ACCENT_VELOCITY_DELTA',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const events = window.__hkl_composer.buildPlayback(m);
+        const ev = events.find(e => e.notes.length > 0);
+        if (!ev) return { ok: false, detail: 'no playback events' };
+        /* DEFAULT_DYNAMIC_MAP.mf = 55; accent adds 20 → 75. */
+        return ev.velocity === 75
+          ? { ok: true } : { ok: false, detail: 'velocity=' + ev.velocity };
+      })()` },
+  ],
+  phase1_artic_staccato_playback_duration: [
+    { name: 'playback event durationMs is half of the unshaped quarter-note value',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const events = window.__hkl_composer.buildPlayback(m);
+        const ev = events.find(e => e.notes.length > 0);
+        if (!ev) return { ok: false, detail: 'no playback events' };
+        /* Quarter at 120bpm = 500ms unshaped; staccato → 250ms. Allow some slack. */
+        return ev.durationMs > 240 && ev.durationMs < 260
+          ? { ok: true } : { ok: false, detail: 'durMs=' + ev.durationMs };
+      })()` },
+  ],
+
+  /* ── Phase 1: title block (subtitle + composer + footer) ─────────────── */
+  phase1_titleBlock_all_fields: [
+    { name: 'MEI carries subtitle, composer persName, and footer attr',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const subtitleEl = [...m.getDoc().querySelectorAll('titleStmt > title')].find(t => t.getAttribute('type') === 'subtitle');
+        const personName = m.getDoc().querySelector('titleStmt persName[role="composer"]');
+        const footerAttr = m.getFooter();
+        const fails = [];
+        if (subtitleEl?.textContent !== 'for piano') fails.push('subtitle="' + subtitleEl?.textContent + '"');
+        if (personName?.textContent !== 'J. S. Bach') fails.push('composer="' + personName?.textContent + '"');
+        if (footerAttr !== 'Engraved with HKL Composer') fails.push('footer="' + footerAttr + '"');
+        return fails.length === 0 ? { ok: true } : { ok: false, detail: fails.join(' ') };
+      })()` },
+    { name: 'rendered SVG includes <text class="hkl-injected-composer"> and <text class="hkl-injected-footer">',
+      expr: `(() => {
+        const composer = document.querySelectorAll('.hkl-injected-composer');
+        const footer = document.querySelectorAll('.hkl-injected-footer');
+        return (composer.length >= 1 && footer.length >= 1)
+          ? { ok: true } : { ok: false, detail: 'composer=' + composer.length + ' footer=' + footer.length };
+      })()` },
+    { name: 'subtitle "for piano" renders in Verovio header (pgHead has third tspan)',
+      expr: `(() => {
+        const head = document.querySelector('.score-page g.pgHead');
+        const txt = head?.textContent ?? '';
+        return txt.includes('for piano')
+          ? { ok: true } : { ok: false, detail: 'pgHead text=' + JSON.stringify(txt) };
+      })()` },
+    { name: 'composer rendered BELOW title baseline (viewport y greater)',
+      expr: `(() => {
+        const title = document.querySelector('.score-page g.pgHead .text')?.getBoundingClientRect();
+        const composer = document.querySelector('text.hkl-injected-composer')?.getBoundingClientRect();
+        if (!title || !composer) return { ok: false, detail: 'missing element' };
+        return composer.top > title.bottom - 1
+          ? { ok: true }
+          : { ok: false, detail: 'titleBottom=' + title.bottom + ' composerTop=' + composer.top };
+      })()` },
+    { name: 'footer is below the rendered score system + not italic',
+      expr: `(() => {
+        const system = document.querySelector('.score-page g.system')?.getBoundingClientRect();
+        const footer = document.querySelector('text.hkl-injected-footer');
+        const footerR = footer?.getBoundingClientRect();
+        if (!system || !footerR) return { ok: false, detail: 'missing' };
+        const style = footer.getAttribute('font-style');
+        return (footerR.top > system.bottom && style !== 'italic')
+          ? { ok: true }
+          : { ok: false, detail: 'systemBottom=' + system.bottom + ' footerTop=' + footerR.top + ' style=' + style };
+      })()` },
+  ],
+  phase1_titleBlock_emptyFooter: [
+    { name: 'no <text.hkl-injected-footer> when footer is empty',
+      expr: `(() => {
+        const footer = document.querySelectorAll('.hkl-injected-footer');
+        return footer.length === 0 ? { ok: true } : { ok: false, detail: 'count=' + footer.length };
+      })()` },
+  ],
+
+  /* ── Phase 1: fill incomplete measures ───────────────────────────────── */
+  phase1_fillIncomplete_basic: [
+    { name: 'M_1 V_1 now has rests summing to measureTicks (= 64 ticks @ 4/4)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const ms = m.allMeasures();
+        const layer = ms[0].querySelector('staff[n="1"] layer[n="1"]');
+        let t = 0;
+        for (const c of layer.children) {
+          if (c.localName === 'rest' || c.localName === 'note' || c.localName === 'chord') {
+            const dur = c.getAttribute('dur');
+            const dots = parseInt(c.getAttribute('dots') || '0', 10);
+            if (!dur) continue;
+            let ticks = 64 / parseInt(dur, 10);
+            if (dots === 1) ticks *= 1.5;
+            if (dots === 2) ticks *= 1.75;
+            t += ticks;
+          }
+        }
+        return t === 64 ? { ok: true } : { ok: false, detail: 'realContentTicks=' + t };
+      })()` },
+  ],
+
+  /* ── Phase 1: click-to-position ──────────────────────────────────────── */
+  phase1_click_movesCursorToNote: [
+    { name: 'cursor lands at flat-index of the C# note (the second rendered note)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const flat = m.flatChildren(1);
+        /* flat[0] is the measure wrapper; notes occupy flat[1..3]. The 2nd
+           rendered note = C# = flat[2]. */
+        const csharp = flat.find(e => e.localName === 'note' && e.getAttribute('pname') === 'c');
+        const wantIdx = flat.indexOf(csharp);
+        const cur = m.getCursor(1);
+        return cur === wantIdx ? { ok: true } : { ok: false, detail: 'cur=' + cur + ' want=' + wantIdx };
+      })()` },
+  ],
+  phase1_click_switchesVoice: [
+    { name: 'current voice = 3 after clicking the bass-staff note',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const v = m.getCurrentVoice();
+        return v === 3 ? { ok: true } : { ok: false, detail: 'voice=' + v };
+      })()` },
+  ],
+  phase1_click_chordInternal_switchesVoice: [
+    { name: 'current voice = 3 after clicking a chord-internal note in V_3',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const v = m.getCurrentVoice();
+        return v === 3 ? { ok: true } : { ok: false, detail: 'voice=' + v };
+      })()` },
+    { name: 'cursor at flat-index of the V_3 chord (= 1, past the wrapper at flat[0])',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const flat = m.flatChildren(3);
+        const chord = flat.find(e => e.localName === 'chord');
+        const wantIdx = flat.indexOf(chord);
+        return m.getCursor(3) === wantIdx ? { ok: true } : { ok: false, detail: 'cur=' + m.getCursor(3) + ' want=' + wantIdx };
       })()` },
   ],
 };

@@ -701,6 +701,14 @@ class CursorOverlay {
     }
   }
 
+  /** Snapshot of every active voice's playback meiId. Used by the seek
+   *  logic to decide whether ANY voice is at a measure boundary (= about
+   *  to play the first content of its measure), in which case Ctrl+←
+   *  should jump back one extra measure. */
+  getPlaybackPositions(): Map<Voice, string> {
+    return new Map(this.playbackPositions);
+  }
+
   setPlaybackPosition(voice: Voice, meiId: string | null): void {
     if (!this.svg) return;
     if (meiId === null) {

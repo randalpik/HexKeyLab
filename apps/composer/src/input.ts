@@ -15,6 +15,16 @@ import {
   type Moment,
 } from './expressions.js';
 import { addSlur, removeSlur, collectSlurs } from './slurs.js';
+import { beamGroupForElement } from './notation/beams.js';
+import type { ArticKind } from './articulations.js';
+
+const ARTIC_KEYS: Record<string, { kind: ArticKind; label: string }> = {
+  s: { kind: 'stacc',   label: 'staccato' },
+  a: { kind: 'accent',  label: 'accent' },
+  t: { kind: 'ten',     label: 'tenuto' },
+  f: { kind: 'fermata', label: 'fermata' },
+  b: { kind: 'breath',  label: 'breath mark' },
+};
 import {
   type SelectionState, type Dir,
   enterBeatSelection, enterMeasureSelection,
@@ -124,6 +134,14 @@ export interface InputHooks {
   /** Toggle score playback on/off. Bound to bare Space at the top of the
    *  keydown dispatcher so Space works as the universal transport shortcut. */
   togglePlayback: () => void;
+  /** Stop playback and place the editing cursor at the most-recent playback
+   *  head (instead of snapping back to its pre-playback position). Bound to
+   *  plain ←/→ during playback — "punch out where I hear the music." */
+  stopPlaybackAtHead?: () => void;
+  /** Seek the audible playback to the next/previous measure boundary
+   *  WITHOUT exiting playback. Bound to Ctrl+←/→ during playback —
+   *  audio actually jumps to the new position. */
+  seekPlaybackByMeasure?: (dir: 'left' | 'right') => void;
   /** Step the renderer zoom one preset in the given direction. The owner
    *  (main.ts) decides the actual preset list and reRenders. */
   onZoomChange?: (dir: 'in' | 'out') => void;
@@ -569,6 +587,22 @@ function handleChordInternalArrow(
     }
   }
   applySCTranspose(model, hooks, sel, key === 'ArrowRight' ? +1 : -1);
+}
+
+/** Read the rendered stem direction for an element with the given xml:id by
+ *  comparing its rendered stem and notehead positions. Returns null if the
+ *  element isn't currently in the SVG or has no stem (e.g. whole rest, or
+ *  a chord/note that hasn't rendered yet). */
+function readRenderedStemDir(meiId: string): 'up' | 'down' | null {
+  const g = document.getElementById(meiId);
+  if (!g) return null;
+  const stem = g.querySelector('g.stem, .stem') as Element | null;
+  const head = g.querySelector('g.notehead, .notehead') as Element | null;
+  if (!stem || !head) return null;
+  const sRect = (stem as HTMLElement).getBoundingClientRect();
+  const hRect = (head as HTMLElement).getBoundingClientRect();
+  if (sRect.width === 0 && sRect.height === 0) return null;
+  return sRect.top < hRect.top ? 'up' : 'down';
 }
 
 /** Stub: real implementation lives in scTranspose.ts. Defined here as a
@@ -1246,7 +1280,18 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       const isInsertDigit = state.cursorMode === 'voice' && state.mode === 'insert'
         && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
         && DIGIT_TO_DUR[e.key] !== undefined;
-      if (!isPureMod && !isAltArrow && !isTie && !isBackspace && !isInsertDigit) {
+      /* Note-decoration keys that respect the chord-internal sel for single-
+         note targeting: P (paren caut), L (stem flip), Shift+L (slur dir).
+         Articulations S/A/T/F/B attach to the whole slot, so they don't
+         use the sel and aren't preserved across (they clear it like any
+         non-chord-internal action). */
+      const isNoteDecoSingle = state.cursorMode === 'voice'
+        && !e.ctrlKey && !e.metaKey && !e.altKey
+        && (
+          (!e.shiftKey && /^[pPlL]$/.test(e.key))
+          || (e.shiftKey && (e.key === 'L' || e.key === 'l'))
+        );
+      if (!isPureMod && !isAltArrow && !isTie && !isBackspace && !isInsertDigit && !isNoteDecoSingle) {
         state.chordInternalSel = null;
         /* No onStateChange here — fall through; downstream handlers fire
            onStateChange/onChange as part of their normal work, which will
@@ -1309,6 +1354,53 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       state.pendingTuplet = { num: n, numbase: cfg.numbase, dotted: cfg.dotted, atomicK: cfg.atomicK };
       hooks.setStatus?.('Tuplet ' + n + ':' + cfg.numbase + ' — press duration digit for span.', 'state');
       hooks.onStateChange();
+      return;
+    }
+
+    /* Ctrl+M: insert an empty measure. Rule from the backlog: "at the next
+       measure boundary after the cursor (or AT the cursor if it's on a
+       measure boundary already)". We use `measureBoundaryCursors` (the
+       tstamp-aligned set Ctrl+arrow also lands on) as the authoritative
+       boundary set — this avoids the bug where `getMeasureStartCursor` for
+       a non-empty M_1 returns cursor=0 (past the leading edge), causing
+       cursor=0 to falsely qualify as a boundary even when it visually sits
+       on the wrapper between sigs and the first note. Boundaries from
+       `measureBoundaryCursors` include cursor=0 (start of score) and all
+       seams between existing measures, but NOT mid-measure cursor stops. */
+    if (e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey && (e.key === 'm' || e.key === 'M')) {
+      e.preventDefault();
+      if (state.cursorMode !== 'voice') {
+        hooks.setStatus?.('Insert-measure requires voice mode.', 'error');
+        return;
+      }
+      if (hooks.isPlaybackActive()) return;
+      const v = model.getCurrentVoice();
+      const curMIdx = model.cursorMeasureIdx(v, state.mode);
+      if (curMIdx < 0) return;
+      const cur = model.getCursor(v);
+      /* Use tick position to detect boundaries: cursor IS on a measure
+         boundary iff its absolute tick is an exact multiple of measureTicks
+         AND that boundary is BEFORE some existing measure (not at past-
+         end of the last measure). cursor=0 in M_1 qualifies (= start of
+         score, can push M_1 forward); past-end of last measure does NOT
+         (no measure exists there to push). Mid-measure cursors never
+         qualify; Ctrl+M inserts AFTER the current measure. */
+      const measureCount = model.allMeasures().length;
+      const measureTicks = model.measureTicks();
+      const tickPos = model.getTickPositionAt(v, cur);
+      const onBoundaryTick = measureTicks > 0
+        && (tickPos % measureTicks) === 0
+        && tickPos < measureCount * measureTicks;
+      const beforeIdx = onBoundaryTick ? Math.round(tickPos / measureTicks) : curMIdx + 1;
+      withHistory('insert-measure', () => {
+        model.insertMeasureAt(beforeIdx);
+        const newStart = model.getMeasureStartCursor(v, beforeIdx);
+        model.setCursor(newStart, v);
+        return true;
+      });
+      hooks.setStatus?.('Inserted measure m' + (beforeIdx + 1) + '.', 'action');
+      hooks.onStateChange();
+      hooks.onChange();
       return;
     }
 
@@ -1386,7 +1478,13 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
       e.preventDefault();
       if (state.cursorMode !== 'voice') return;
-      if (hooks.isPlaybackActive()) return;
+      /* During playback: Ctrl+←/→ SEEKS the audible head to the adjacent
+         measure boundary — playback restarts from there. Doesn't exit
+         playback. */
+      if (hooks.isPlaybackActive()) {
+        hooks.seekPlaybackByMeasure?.(e.key === 'ArrowLeft' ? 'left' : 'right');
+        return;
+      }
       const voice = model.getCurrentVoice();
       const boundaries = model.measureBoundaryCursors(voice);
       const cur = model.getCursor();
@@ -1509,6 +1607,254 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       return;
     }
 
+    /* Voice-mode `L` (no Ctrl): flip stem direction on the current note/chord.
+       If the element is in a beam group, every group member flips together
+       (Verovio resolves beam stem direction by majority — leaving members
+       behind would split or mis-direct the beam). Two-state: pressing L
+       when @stem.dir is set CLEARS it (back to natural); when @stem.dir is
+       absent SETS it to the opposite of the currently-rendered direction
+       (frozen at the override). `Shift+L` does the analogous thing for the
+       covering slur's @curvedir. */
+    if (state.cursorMode === 'voice' && (e.key === 'l' || e.key === 'L') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      if (e.shiftKey) {
+        e.preventDefault();
+        if (hooks.isPlaybackActive()) return;
+        const voice = model.getCurrentVoice();
+        const ref = model.getCurrentElement(voice, state.mode);
+        if (!ref) {
+          hooks.setStatus?.('Place the cursor on a slurred note.', 'error');
+          return;
+        }
+        const covering = findSlurCovering(model, voice, ref.index);
+        if (!covering) {
+          hooks.setStatus?.('No slur at cursor.', 'error');
+          return;
+        }
+        const cur = covering.getAttribute('curvedir');
+        if (cur === 'above' || cur === 'below') {
+          withHistory('slur-dir', () => { covering.removeAttribute('curvedir'); return true; });
+          hooks.setStatus?.('Slur direction cleared (natural).', 'action');
+        } else {
+          /* Read rendered slur arc direction from its bounding box vs its
+             endpoints. If the arc midpoint is above the higher endpoint's
+             notehead, it curves "above"; else "below". Heuristic — for v1
+             we just toggle in a default direction if reading fails. */
+          const arc = document.getElementById(covering.getAttribute('xml:id') ?? '');
+          let renderedAbove = true;
+          if (arc) {
+            const arcRect = (arc as HTMLElement).getBoundingClientRect();
+            const startId = covering.getAttribute('startid')?.replace('#', '') ?? '';
+            const startEl = startId ? document.getElementById(startId) : null;
+            const startRect = startEl ? (startEl as HTMLElement).getBoundingClientRect() : null;
+            if (startRect) renderedAbove = arcRect.top < startRect.top - 2;
+          }
+          const flipped = renderedAbove ? 'below' : 'above';
+          withHistory('slur-dir', () => { covering.setAttribute('curvedir', flipped); return true; });
+          hooks.setStatus?.('Slur direction = ' + flipped + '.', 'action');
+        }
+        hooks.onStateChange();
+        hooks.onChange();
+        return;
+      }
+      e.preventDefault();
+      if (hooks.isPlaybackActive()) return;
+      const voice = model.getCurrentVoice();
+      const ref = model.getCurrentElement(voice, state.mode);
+      if (!ref || (ref.elem.localName !== 'note' && ref.elem.localName !== 'chord')) {
+        hooks.setStatus?.('Place the cursor on a note to flip its stem.', 'error');
+        return;
+      }
+      const group = beamGroupForElement(model.getDoc(), ref.elem);
+      const anySet = group.some((g) => g.hasAttribute('stem.dir'));
+      if (anySet) {
+        withHistory('stem-dir', () => {
+          for (const g of group) g.removeAttribute('stem.dir');
+          return true;
+        });
+        hooks.setStatus?.('Stem direction cleared (natural)' + (group.length > 1 ? ' on ' + group.length + ' beamed notes.' : '.'), 'action');
+      } else {
+        const rendered = readRenderedStemDir(ref.id);
+        if (!rendered) {
+          hooks.setStatus?.('Could not determine current stem direction (re-render and retry).', 'error');
+          return;
+        }
+        const flipped: 'up' | 'down' = rendered === 'up' ? 'down' : 'up';
+        withHistory('stem-dir', () => {
+          for (const g of group) g.setAttribute('stem.dir', flipped);
+          return true;
+        });
+        hooks.setStatus?.('Stem flipped to ' + flipped + (group.length > 1 ? ' on ' + group.length + ' beamed notes.' : '.'), 'action');
+      }
+      hooks.onStateChange();
+      hooks.onChange();
+      return;
+    }
+
+    /* Voice-mode `P` toggles `@hkl-paren-caut` on the current note(s). With
+       a chord-internal selection set, targets only the selected note; else
+       targets every note under the current element (bare note → that note;
+       chord → all members). The display pass (accidentals.ts) reads the
+       flag and renders the accidental with @enclose="paren". */
+    if (state.cursorMode === 'voice' && (e.key === 'p' || e.key === 'P') && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+      e.preventDefault();
+      if (hooks.isPlaybackActive()) return;
+      const reconciled = reconcileChordInternalSel(model);
+      const targetNoteId = reconciled?.noteId;
+      let result: { set: boolean; count: number } | null = null;
+      withHistory('paren-caut', () => {
+        const r = model.toggleParenCautAtCursor(state.mode, targetNoteId);
+        if (!r) {
+          hooks.setStatus?.('No note under cursor.', 'error');
+          return false;
+        }
+        result = r;
+        return true;
+      });
+      if (result !== null) {
+        const rr = result as { set: boolean; count: number };
+        hooks.setStatus?.(rr.set
+          ? 'Cautionary parens added (' + rr.count + ' note' + (rr.count === 1 ? '' : 's') + ').'
+          : 'Cautionary parens removed.', 'action');
+      }
+      hooks.onStateChange();
+      hooks.onChange();
+      return;
+    }
+
+    /* Voice-mode `H` toggles `@visible="false"` on the current rest. Same
+       cursor-anchor rule as dynamics (cursor−1 in INS, cursor in OVR — both
+       resolve to flat[c] under the new convention). No-op on non-rest
+       elements. */
+    if (state.cursorMode === 'voice' && (e.key === 'h' || e.key === 'H') && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+      e.preventDefault();
+      if (hooks.isPlaybackActive()) return;
+      let result: { hidden: boolean } | null = null;
+      withHistory('hide-rest', () => {
+        const r = model.toggleHideRestAtCursor(state.mode);
+        if (!r) {
+          hooks.setStatus?.('No rest under cursor.', 'error');
+          return false;
+        }
+        result = r;
+        return true;
+      });
+      if (result !== null) {
+        hooks.setStatus?.((result as { hidden: boolean }).hidden ? 'Rest hidden.' : 'Rest visible.', 'action');
+      }
+      hooks.onStateChange();
+      hooks.onChange();
+      return;
+    }
+
+    /* Voice-mode articulations: S/A/T/F/B → <artic @artic="stacc|accent|
+       ten|fermata|breath"> child of the current note/chord. F (fermata) is
+       the only one that also accepts rests. With a chord-internal selection,
+       targets only the selected note; else the whole chord wrapper. Each key
+       toggles its OWN articulation, so a note can carry multiple (e.g. accent
+       + staccato). */
+    if (state.cursorMode === 'voice' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+      const lower = e.key.toLowerCase();
+      const ak = ARTIC_KEYS[lower];
+      if (ak && /^[a-zA-Z]$/.test(e.key)) {
+        e.preventDefault();
+        if (hooks.isPlaybackActive()) return;
+        let result: { on: boolean; target: 'chord' | 'note' | 'rest' } | null = null;
+        withHistory('artic-' + ak.kind, () => {
+          const r = model.toggleArticulationAtCursor(state.mode, ak.kind);
+          if (!r) {
+            const ref = model.getCurrentElement(model.getCurrentVoice(), state.mode);
+            const onRest = ref?.elem.localName === 'rest';
+            if (onRest && ak.kind !== 'fermata') {
+              hooks.setStatus?.(ak.label + ' is not allowed on rests.', 'error');
+            } else {
+              hooks.setStatus?.('No note under cursor for ' + ak.label + '.', 'error');
+            }
+            return false;
+          }
+          result = r;
+          return true;
+        });
+        if (result !== null) {
+          const rr = result as { on: boolean; target: 'chord' | 'note' | 'rest' };
+          hooks.setStatus?.((rr.on ? 'Added ' : 'Removed ') + ak.label + '.', 'action');
+        }
+        hooks.onStateChange();
+        hooks.onChange();
+        return;
+      }
+    }
+
+    /* Voice-mode `/` toggles `@hkl-beam-break` on the element immediately
+       after the cursor (= flat[cursor+1]). regroupBeams (notation/beams.ts)
+       treats the marker as "this element starts a new beam," producing a
+       manual split mid-beat. No-op when the next element isn't beamable
+       (rest, dur < 8, or past-end). */
+    if (state.cursorMode === 'voice' && e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+      e.preventDefault();
+      if (hooks.isPlaybackActive()) return;
+      const voice = model.getCurrentVoice();
+      const c = model.getCursor(voice);
+      /* Cursor c sits between flat[c-1] (just-passed) and flat[c]
+         (upcoming). The marker goes on the upcoming element. */
+      const next = model.getNextElement(voice, c);
+      if (!next) {
+        hooks.setStatus?.('No element after cursor for beam split.', 'error');
+        return;
+      }
+      const el = next.elem;
+      const dur = el.getAttribute('dur');
+      const beamable = el.localName !== 'rest'
+        && el.localName !== 'measure'
+        && dur !== null
+        && parseInt(dur, 10) >= 8;
+      if (!beamable) {
+        hooks.setStatus?.('Cursor not at a beamable boundary.', 'error');
+        return;
+      }
+      const cur = el.getAttribute('hkl-beam-break');
+      if (cur === 'true') {
+        withHistory('beam-break', () => { el.removeAttribute('hkl-beam-break'); return true; });
+        hooks.setStatus?.('Beam-break cleared.', 'action');
+      } else {
+        withHistory('beam-break', () => { el.setAttribute('hkl-beam-break', 'true'); return true; });
+        hooks.setStatus?.('Beam split at cursor.', 'action');
+      }
+      hooks.onStateChange();
+      hooks.onChange();
+      return;
+    }
+
+    /* Voice-mode `]` toggles a double bar on the cursor's current measure.
+       The last measure of the score is locked to @right="end" and rejects
+       the toggle (final bar takes precedence). Anchor is the measure
+       containing the cursor, irrespective of INS/OVR. */
+    if (state.cursorMode === 'voice' && e.key === ']') {
+      e.preventDefault();
+      if (hooks.isPlaybackActive()) return;
+      const v = model.getCurrentVoice();
+      const mIdx = model.cursorMeasureIdx(v, state.mode);
+      if (mIdx < 0) {
+        hooks.setStatus?.('No measure under cursor.', 'error');
+        return;
+      }
+      const measures = model.allMeasures();
+      if (mIdx >= measures.length - 1) {
+        hooks.setStatus?.('Last measure already has a final bar.', 'error');
+        return;
+      }
+      withHistory('double-bar', () => {
+        const result = model.toggleDoubleBarAt(mIdx);
+        if (result === null) return false;
+        hooks.setStatus?.(result === 'dbl'
+          ? 'Double bar at end of m' + (mIdx + 1) + '.'
+          : 'Cleared double bar at end of m' + (mIdx + 1) + '.', 'action');
+        return true;
+      });
+      hooks.onStateChange();
+      hooks.onChange();
+      return;
+    }
+
     /* Voice-mode dot cycle + tie toggle. Both are no-ops in expression mode. */
     if (state.cursorMode === 'voice' && e.key === '.') {
       e.preventDefault();
@@ -1546,10 +1892,19 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       return;
     }
 
-    /* Navigation: Arrow keys, Home/End. Suppressed during playback. */
+    /* Navigation: Arrow keys, Home/End. Mostly suppressed during playback —
+       except plain ←/→ which stops playback and parks the cursor at the
+       playback head (so the user can punch out at the audible position). */
     const navKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'];
     if (navKeys.indexOf(e.key) >= 0) {
-      if (hooks.isPlaybackActive()) { e.preventDefault(); return; }
+      if (hooks.isPlaybackActive()) {
+        e.preventDefault();
+        if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight')
+            && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+          hooks.stopPlaybackAtHead?.();
+        }
+        return;
+      }
       if (e.key === 'ArrowUp')   { e.preventDefault(); const bv = model.getCurrentVoice(), bm = state.cursorMode; state.chordInternalSel = null; cycleVoice(model, 'up', hooks);   cancelSlurIfVoiceChanged(model, bv, bm); hooks.onStateChange(); hooks.onChange(); return; }
       if (e.key === 'ArrowDown') { e.preventDefault(); const bv = model.getCurrentVoice(), bm = state.cursorMode; state.chordInternalSel = null; cycleVoice(model, 'down', hooks); cancelSlurIfVoiceChanged(model, bv, bm); hooks.onStateChange(); hooks.onChange(); return; }
       if (state.cursorMode === 'expr') {

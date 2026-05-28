@@ -38,6 +38,7 @@ import {
   type Dots,
 } from '@hkl/notation/mei-build.js';
 import { ensureExpressionDefaults, getLayoutReq, setLayoutReq, getHejiEnabled, setHejiEnabled, type LayoutReq, type Moment } from '../expressions.js';
+import { toggleArticulation, type ArticKind } from '../articulations.js';
 import { transformDocForHeji } from '@hkl/notation/heji-render.js';
 import type { TuningMode } from '@hkl/shared/freq.js';
 import { realTicks, writtenTicks } from './ticks.js';
@@ -715,6 +716,54 @@ export class ComposerModel {
     persName.textContent = name;
   }
 
+  /** Optional subtitle — stored as a second `<title type="subtitle">` in
+   *  `<titleStmt>` next to the main title. Empty string = no subtitle. */
+  getSubtitle(): string {
+    const titles = Array.from(this.doc.querySelectorAll('titleStmt > title'));
+    for (const t of titles) {
+      if (t.getAttribute('type') === 'subtitle') return t.textContent ?? '';
+    }
+    return '';
+  }
+
+  setSubtitle(subtitle: string): void {
+    const titleStmt = this.doc.querySelector('titleStmt');
+    if (!titleStmt) return;
+    let sub: Element | null = null;
+    for (const t of Array.from(titleStmt.querySelectorAll(':scope > title'))) {
+      if (t.getAttribute('type') === 'subtitle') { sub = t; break; }
+    }
+    if (!subtitle) {
+      if (sub) sub.parentNode?.removeChild(sub);
+      return;
+    }
+    if (!sub) {
+      sub = el(this.doc, 'title', { type: 'subtitle' });
+      titleStmt.appendChild(sub);
+    }
+    sub.textContent = subtitle;
+  }
+
+  /** Footer text appearing at the bottom of every page. Defaults to
+   *  "Engraved with HKL Composer" — set explicitly to "" to suppress. */
+  getFooter(): string {
+    const cfg = this.doc.getElementsByTagNameNS('https://hexkeylab.com/ns/mei', 'config')[0];
+    if (cfg && cfg.hasAttribute('footer')) return cfg.getAttribute('footer') ?? '';
+    return 'Engraved with HKL Composer';
+  }
+
+  setFooter(footer: string): void {
+    /* Always write the attribute so the user's explicit choice (including
+       empty string = suppress) is persisted. */
+    const HKL_NS = 'https://hexkeylab.com/ns/mei';
+    let cfg = this.doc.getElementsByTagNameNS(HKL_NS, 'config')[0];
+    if (!cfg) {
+      ensureExpressionDefaults(this.doc);
+      cfg = this.doc.getElementsByTagNameNS(HKL_NS, 'config')[0];
+    }
+    cfg?.setAttribute('footer', footer);
+  }
+
   getKeySig(): string {
     const sd = this.doc.querySelector("scoreDef");
     return sd?.getAttribute("key.sig") ?? "0";
@@ -962,17 +1011,254 @@ export class ComposerModel {
     m.appendChild(s2);
     section.appendChild(m);
     this.setBarlines();
+    /* Fill the new measure's four empty layers with full-measure placeholders
+       so the placeholder invariant holds without callers having to remember
+       to normalize. */
+    normalizePlaceholders(this.doc, this.measureTicks());
     return m;
   }
 
-  /** Set @right="end" on the last measure, clear it on the others. Called
-   *  whenever the measure list grows or shrinks. */
+  /** Set @right="end" on the last measure; preserve user-set @right values
+   *  ("dbl", future "rptend", etc.) on interior measures. Called whenever the
+   *  measure list grows or shrinks. Removing the final-bar from a non-last
+   *  measure (the measure that USED to be last) only clears @right if it was
+   *  the "end" sentinel — interior measures with explicit user markers stay
+   *  as the user left them. */
   setBarlines(): void {
     const measures = this.allMeasures();
     for (let i = 0; i < measures.length; i++) {
-      if (i < measures.length - 1) measures[i].removeAttribute("right");
-      else measures[i].setAttribute("right", "end");
+      if (i < measures.length - 1) {
+        if (measures[i].getAttribute("right") === "end") {
+          measures[i].removeAttribute("right");
+        }
+      } else {
+        measures[i].setAttribute("right", "end");
+      }
     }
+  }
+
+  /** Toggle an articulation `kind` on the current note/chord/rest. Returns
+   *  `{ id, on, target: 'chord'|'note'|'rest' }` on success, null on no-op.
+   *  Routing:
+   *    - chord-internal sel set → applies to that single `<note>` child;
+   *    - bare `<note>` → applies to the note itself;
+   *    - `<chord>` (no sel) → applies to the chord wrapper (Verovio renders
+   *      one glyph for the whole chord);
+   *    - `<rest>` → only `kind === 'fermata'` is accepted; others no-op. */
+  toggleArticulationAtCursor(
+    mode: "insert" | "overwrite",
+    kind: ArticKind,
+  ): { id: string; on: boolean; target: 'chord' | 'note' | 'rest' } | null {
+    const v = this.currentVoice;
+    const ref = this.getCurrentElement(v, mode);
+    if (!ref) return null;
+    if (isPlaceholder(ref.elem)) return null;
+    if (ref.elem.localName === 'measure' || ref.elem.localName === 'tuplet') return null;
+    /* Articulations attach to the SLOT element (chord wrapper or bare
+       note), not individual chord members — "staccato on the bass of a
+       chord" doesn't have a notational meaning. Fermata is the only kind
+       valid on a rest. */
+    let target: Element | null = null;
+    let kindOfTarget: 'chord' | 'note' | 'rest' = 'note';
+    if (ref.elem.localName === 'rest') {
+      if (kind !== 'fermata') return null;
+      target = ref.elem;
+      kindOfTarget = 'rest';
+    } else if (ref.elem.localName === 'note') {
+      target = ref.elem;
+      kindOfTarget = 'note';
+    } else if (ref.elem.localName === 'chord') {
+      target = ref.elem;
+      kindOfTarget = 'chord';
+    }
+    if (!target) return null;
+    const on = toggleArticulation(target, kind);
+    return { id: ref.id, on, target: kindOfTarget };
+  }
+
+  /** Toggle `@hkl-paren-caut="true"` on the current note/chord. When `noteId`
+   *  is supplied (chord-internal selection), targets that single note; else
+   *  applies to every `<note>` under the current element (bare note → that
+   *  note; chord → all members). Toggle semantics: if ANY target currently
+   *  lacks the flag, set on ALL; if all targets already have it, clear it
+   *  from all. Returns `{ id, set, count }` on success, null on no-op. */
+  toggleParenCautAtCursor(
+    mode: "insert" | "overwrite",
+    noteId?: string,
+  ): { id: string; set: boolean; count: number } | null {
+    const v = this.currentVoice;
+    const ref = this.getCurrentElement(v, mode);
+    if (!ref) return null;
+    if (ref.elem.localName === "rest") return null;
+    if (ref.elem.localName === "measure") return null;
+    if (ref.elem.localName === "tuplet") return null;
+    if (isPlaceholder(ref.elem)) return null;
+    let targets: Element[];
+    if (noteId) {
+      const single = Array.from(ref.elem.localName === "note"
+        ? [ref.elem]
+        : Array.from(ref.elem.children).filter((c) => c.localName === "note")
+      ).find((n) => n.getAttribute("xml:id") === noteId);
+      if (!single) return null;
+      targets = [single];
+    } else if (ref.elem.localName === "note") {
+      targets = [ref.elem];
+    } else {
+      targets = Array.from(ref.elem.children).filter((c) => c.localName === "note");
+    }
+    if (targets.length === 0) return null;
+    const anyOff = targets.some((n) => n.getAttribute("hkl-paren-caut") !== "true");
+    const set = anyOff; /* off → set true; else clear */
+    for (const n of targets) {
+      if (set) n.setAttribute("hkl-paren-caut", "true");
+      else n.removeAttribute("hkl-paren-caut");
+    }
+    return { id: ref.id, set, count: targets.length };
+  }
+
+  /** Toggle `@visible="false"` on the current `<rest>` (cursor anchor element
+   *  per the dynamics convention — cursor−1 in INS, cursor in OVR; both
+   *  resolve to `flat[c]` under the new convention). No-op on non-rest
+   *  elements (returns null). Returns `{ id, hidden }` on success. */
+  toggleHideRestAtCursor(
+    mode: "insert" | "overwrite",
+  ): { id: string; hidden: boolean } | null {
+    const v = this.currentVoice;
+    const ref = this.getCurrentElement(v, mode);
+    if (!ref) return null;
+    if (ref.elem.localName !== "rest") return null;
+    if (isPlaceholder(ref.elem)) return null;
+    const cur = ref.elem.getAttribute("visible");
+    if (cur === "false") {
+      ref.elem.removeAttribute("visible");
+      return { id: ref.id, hidden: false };
+    }
+    ref.elem.setAttribute("visible", "false");
+    return { id: ref.id, hidden: true };
+  }
+
+  /** Doc-level action: fill every partial-but-not-empty layer (across every
+   *  measure, every voice) with beat-aligned rests using `decomposeBeatAlignedRests`.
+   *  Empty layers stay empty (placeholders only — represent intentional silence);
+   *  full layers stay full; partial layers get their trailing placeholders
+   *  replaced with visible rests summing to the residual ticks. Cursor
+   *  reanchors per voice via the look-forward survival list. */
+  fillIncompleteMeasures(): { measuresAffected: number } {
+    const measures = this.allMeasures();
+    const ts = readTimeSig(this.doc);
+    const cap = this.measureTicks();
+    let measuresAffected = 0;
+    /* Per-voice cursor preservation: snapshot the look-forward anchors
+       before mutating. */
+    const looks: Record<Voice, Element[]> = { 1: [], 2: [], 3: [], 4: [] };
+    for (let v: Voice = 1; v <= 4; v = (v + 1) as Voice) {
+      const flat = this.flatChildren(v);
+      const c = this.cursors[v];
+      looks[v] = c < flat.length ? flat.slice(c) : [];
+    }
+    for (let mi = 0; mi < measures.length; mi++) {
+      for (let v: Voice = 1; v <= 4; v = (v + 1) as Voice) {
+        const layer = this.layerInMeasure(measures[mi], v);
+        if (!layer) continue;
+        const cc = this.contentChildren(layer);
+        if (cc.length === 0) continue;          /* fully empty — leave alone */
+        let total = 0;
+        for (const c of cc) total += realTicks(c);
+        if (total >= cap) continue;              /* full — nothing to add */
+        /* Replace any trailing placeholders with beat-aligned rests of
+           (cap - total) ticks, aligned to the current content's end. */
+        for (const c of Array.from(layer.children)) {
+          if (isPlaceholder(c)) layer.removeChild(c);
+        }
+        for (const r of decomposeBeatAlignedRests(total, cap - total, ts)) {
+          layer.appendChild(buildRestElement(this.doc, { duration: r.dur, dots: r.dots }));
+        }
+        measuresAffected++;
+      }
+    }
+    normalizePlaceholders(this.doc, this.measureTicks());
+    for (let v: Voice = 1; v <= 4; v = (v + 1) as Voice) {
+      this.reanchorCursorAfter(v, looks[v]);
+    }
+    return { measuresAffected };
+  }
+
+  /** Insert a new empty measure BEFORE `beforeMeasureIdx`. The new measure
+   *  carries the standard four layers, each filled with full-measure
+   *  placeholders. Also breaks any slurs/ties that would now span across
+   *  the new (empty) measure: slurs whose endpoints straddle the
+   *  insertion are pruned outright; ties are re-realized by `normalizeTies`,
+   *  which can no longer pair adjacent notes across the void and demotes
+   *  them to stubs. Returns the new measure element. */
+  insertMeasureAt(beforeMeasureIdx: number): Element {
+    const measures = this.allMeasures();
+    if (beforeMeasureIdx >= measures.length) {
+      return this.appendMeasure();
+    }
+    const idx = Math.max(0, beforeMeasureIdx);
+    /* Capture pre-insertion measure indexes for every slur endpoint so we
+       can detect which slurs straddle the new measure. */
+    const slurStraddle: Element[] = [];
+    for (const slur of Array.from(this.doc.querySelectorAll('slur'))) {
+      const sid = (slur.getAttribute('startid') ?? '').replace('#', '');
+      const eid = (slur.getAttribute('endid') ?? '').replace('#', '');
+      if (!sid || !eid) continue;
+      const startMi = measures.findIndex((meas) => meas.querySelector(`[*|id="${sid}"]`));
+      const endMi = measures.findIndex((meas) => meas.querySelector(`[*|id="${eid}"]`));
+      if (startMi < 0 || endMi < 0) continue;
+      const lo = Math.min(startMi, endMi);
+      const hi = Math.max(startMi, endMi);
+      /* A slur straddles iff the insertion point falls strictly between
+         the endpoints' measures. lo < idx <= hi means the new measure
+         (which inserts BEFORE measures[idx]) lands between them. */
+      if (lo < idx && idx <= hi) slurStraddle.push(slur);
+    }
+
+    const section = this.doc.querySelector("section");
+    if (!section) throw new Error("section element missing");
+    const m = el(this.doc, "measure", { "xml:id": newId("m") });
+    const s1 = el(this.doc, "staff", { n: 1, "xml:id": newId("s") });
+    s1.appendChild(el(this.doc, "layer", { n: 1, "xml:id": newId("l") }));
+    s1.appendChild(el(this.doc, "layer", { n: 2, "xml:id": newId("l") }));
+    const s2 = el(this.doc, "staff", { n: 2, "xml:id": newId("s") });
+    s2.appendChild(el(this.doc, "layer", { n: 1, "xml:id": newId("l") }));
+    s2.appendChild(el(this.doc, "layer", { n: 2, "xml:id": newId("l") }));
+    m.appendChild(s1);
+    m.appendChild(s2);
+    section.insertBefore(m, measures[idx]);
+    /* Renumber all <measure @n>. Cheap enough on document order. */
+    const updated = this.allMeasures();
+    for (let i = 0; i < updated.length; i++) {
+      updated[i].setAttribute("n", String(i + 1));
+    }
+    this.setBarlines();
+    /* Sever the slurs that now straddle the new (empty) measure. */
+    for (const slur of slurStraddle) slur.parentNode?.removeChild(slur);
+    normalizePlaceholders(this.doc, this.measureTicks());
+    /* Ties: re-realize with the new flat ordering. Notes that were tied
+       across the old measure boundary now have the new empty measure's
+       wrapper as their "next slot" — extractNoteElements returns [] for
+       a wrapper, so the realized tie can't pair and is demoted to a stub. */
+    normalizeTies(this);
+    return m;
+  }
+
+  /** Toggle the "double bar line" marker on the measure at `measureIdx`.
+   *  Sets @right="dbl" if currently unset (or any non-dbl value other than
+   *  "end"); clears it if currently "dbl". No-op on the last measure (which
+   *  always carries @right="end"). Returns the new state, or null on no-op. */
+  toggleDoubleBarAt(measureIdx: number): 'dbl' | 'cleared' | null {
+    const measures = this.allMeasures();
+    if (measureIdx < 0 || measureIdx >= measures.length) return null;
+    if (measureIdx === measures.length - 1) return null; /* final bar locked */
+    const m = measures[measureIdx];
+    const cur = m.getAttribute("right");
+    if (cur === "dbl") {
+      m.removeAttribute("right");
+      return 'cleared';
+    }
+    m.setAttribute("right", "dbl");
+    return 'dbl';
   }
 
   /* ── navigation ─────────────────────────────────────────────────────────── */

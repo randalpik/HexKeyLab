@@ -24,6 +24,7 @@ import { saveHkc, loadHkcFromFile, downloadMusicXml, downloadPdf } from './save.
 import { buildPlayback, highlightElement, clearHighlights, readTempo, tickMsFromTempo } from './render/playback.js';
 import { openSetupDialog } from './setupDialog.js';
 import { openHelpDialog } from './helpDialog.js';
+import { attachScoreClickHandler } from './click.js';
 import {
   computePrevNoteRef, computeSongKeyRef,
   refNoteChanged, invalidateRefNoteCache,
@@ -57,6 +58,21 @@ let footprintColors: Map<string, string> | null = null;
 /* Editing cursor snapshot taken at playback start, restored on stop/finish. */
 let preplaybackVoice: 1 | 2 | 3 | 4 = 1;
 let preplaybackCursor = 0;
+/* The most-recently-played element's meiId in the preplaybackVoice. Updated
+ * on every `playback-position` broadcast; consumed by stopPlaybackAtHead()
+ * (bound to plain ←/→ during playback) so the cursor lands on the audible
+ * element rather than snapping back to its pre-playback position. */
+let lastPlaybackHeadId: string | null = null;
+/* Count of `stop-playback` messages Composer has sent whose corresponding
+ * `playback-finished` ack should be SUPPRESSED. Every stop we initiate
+ * (Stop button, plain-arrow stop-at-head, seek) bumps this counter and
+ * runs finalizePlaybackEnd locally; HKL then echoes one playback-finished
+ * per stop, and we decrement instead of finalizing again. Without this,
+ * a seek sequence (stop-playback + play-score) races: HKL acks the stop
+ * AFTER Composer has started the new session, and the stale ack
+ * incorrectly stops Composer's UI mid-playback. Real natural-end acks
+ * have counter == 0 and finalize as usual. */
+let pendingStopAcks = 0;
 const SCROLL_PAD = 24;
 
 /* Visibility-checked on every call: cheap (one getBoundingClientRect +
@@ -271,12 +287,25 @@ bridge.on((msg: HklEvent) => {
          pre-playback position. */
       if (msg.meiId) {
         const loc = model.findElement(msg.meiId);
-        if (loc) cursor.setPlaybackPosition(loc.voice, msg.meiId);
+        if (loc) {
+          cursor.setPlaybackPosition(loc.voice, msg.meiId);
+          /* Track the latest played element in the pre-playback voice so a
+             plain ←/→ stop lands at the audible head. */
+          if (loc.voice === preplaybackVoice) lastPlaybackHeadId = msg.meiId;
+        }
         const mIdx = model.getMeasureIdxForId(msg.meiId);
         if (mIdx >= 0) maybeScrollMeasureIntoView(mIdx);
       }
       break;
     case 'playback-finished':
+      /* If Composer initiated a stop (Stop / plain-arrow / seek) and
+         already finalized locally, the matching HKL ack must NOT finalize
+         again — it could land mid-new-session and stop the UI while audio
+         is still playing. */
+      if (pendingStopAcks > 0) {
+        pendingStopAcks--;
+        break;
+      }
       finalizePlaybackEnd('Playback finished.');
       break;
     case 'footprint-changed': {
@@ -403,9 +432,87 @@ window.addEventListener('beforeunload', () => {
 
 /* ── render pipeline ─────────────────────────────────────────────────────── */
 
+/* Inject composer name (right-aligned, below title block) and footer
+ * (centered, bottom) into each rendered page SVG. Subtitle is rendered
+ * by Verovio's auto-header from `<title type="subtitle">`; the composer
+ * y position is computed DYNAMICALLY to sit below the full title block
+ * (title + optional subtitle) with breathing room before the first system.
+ *
+ * Coordinate system: we append into Verovio's `g.page-margin` group
+ * (translate(1400, 1400) for the page margin). Inside that group, the
+ * usable inner area runs (0, 0) to (pageWidth−2*margin, pageHeight−2*margin)
+ * = (18790, 25140). */
+const PAGE_INNER_W = 21590 - 2 * 1400; /* 18790 — usable width inside page-margin */
+const PAGE_INNER_H = 27940 - 2 * 1400; /* 25140 — usable height inside page-margin */
+/* Composer placement anchors to the FIRST SYSTEM's top edge rather than
+ * the title block's bottom. The system's y is what Verovio guarantees
+ * non-collision against (the layout reserves system-top whitespace); the
+ * title block extends only as far down as its content. With subtitle, the
+ * system moves further down naturally — so this anchor adapts. Padding is
+ * the gap between composer's baseline and the system's top edge. */
+const COMPOSER_FONT_SIZE = 324;
+const COMPOSER_SYSTEM_GAP = 120;        /* baseline-to-system-top */
+const COMPOSER_FALLBACK_Y = 900;        /* when no system has rendered yet */
+const FOOTER_Y = PAGE_INNER_H - 200;    /* hug page bottom */
+const HKL_SVG_NS = 'http://www.w3.org/2000/svg';
+
+function injectHeaderFooter(scoreEl: HTMLElement, composer: string, footer: string): void {
+  const margins = scoreEl.querySelectorAll('.score-page svg.definition-scale > g.page-margin');
+  for (const pageMargin of Array.from(margins)) {
+    if (composer) {
+      let existing = pageMargin.querySelector(':scope > text.hkl-injected-composer');
+      if (existing) existing.parentNode?.removeChild(existing);
+      /* Place the composer baseline `COMPOSER_SYSTEM_GAP` above the first
+         system's bbox.y — sits just above the staff regardless of title /
+         subtitle height. Falls back to a constant when no system has
+         rendered (empty doc). */
+      let y = COMPOSER_FALLBACK_Y;
+      const system = pageMargin.querySelector(':scope ~ g.system, :scope g.system')
+        ?? scoreEl.querySelector('.score-page g.system');
+      if (system) {
+        try {
+          const bb = (system as SVGGraphicsElement).getBBox();
+          if (bb.height > 0) y = bb.y - COMPOSER_SYSTEM_GAP;
+        } catch { /* getBBox may throw if element isn't fully laid out yet */ }
+      }
+      const t = pageMargin.ownerDocument!.createElementNS(HKL_SVG_NS, 'text');
+      t.setAttribute('class', 'hkl-injected-composer');
+      t.setAttribute('x', String(PAGE_INNER_W));
+      t.setAttribute('y', String(y));
+      t.setAttribute('text-anchor', 'end');
+      t.setAttribute('font-size', String(COMPOSER_FONT_SIZE));
+      t.setAttribute('font-family', 'Times, serif');
+      t.textContent = composer;
+      pageMargin.appendChild(t);
+    }
+    if (footer) {
+      let existing = pageMargin.querySelector(':scope > text.hkl-injected-footer');
+      if (existing) existing.parentNode?.removeChild(existing);
+      const t = pageMargin.ownerDocument!.createElementNS(HKL_SVG_NS, 'text');
+      t.setAttribute('class', 'hkl-injected-footer');
+      t.setAttribute('x', String(PAGE_INNER_W / 2));
+      t.setAttribute('y', String(FOOTER_Y));
+      t.setAttribute('text-anchor', 'middle');
+      t.setAttribute('font-size', '320px');
+      t.setAttribute('font-family', 'Times, serif');
+      t.setAttribute('fill', '#555');
+      t.textContent = footer;
+      pageMargin.appendChild(t);
+    }
+  }
+}
+
 function reRender(): void {
   try {
     renderer.render(model.serialize({ hejiEnabled: model.getHejiEnabled() }));
+    /* After Verovio's output lands, inject composer (right-aligned) + footer
+       (centered, bottom of page). Subtitle is handled by Verovio itself once
+       <title type="subtitle"> is present. Only affects page view (the
+       .score-page wrapper); scroll view skips the page header/footer. */
+    const scoreElForInject = $('score');
+    if (scoreElForInject) {
+      injectHeaderFooter(scoreElForInject, model.getComposer(), model.getFooter());
+    }
     /* Verovio just rewrote #score's innerHTML — re-attach the cursor overlay
        as a sibling of the rendered SVG (in scroll mode) or as a sibling of
        the .score-page wrappers (in page mode), positioned absolute at #score's
@@ -455,6 +562,17 @@ async function bootRenderer(): Promise<void> {
      injection draws real glyphs instead of tofu (see injectHejiGlyphs). */
   try { await document.fonts.load('100px BravuraText'); } catch { /* fall through */ }
   reRender();
+  /* Wire click-to-position. Lives in main.ts because it needs both the
+     model and the same onChange hook the keyboard handler uses. */
+  attachScoreClickHandler(scoreEl, model, {
+    onChange: () => {
+      reRender();
+      if (!isPlaying) maybeScrollMeasureIntoView(visualCursorMeasure());
+      if (hklConnected) maybeBroadcastReference();
+    },
+    setStatus: (msg, kind) => setStatus(msg, kind),
+    isPlaybackActive: () => isPlaying,
+  });
   console.log('Verovio ' + renderer.getVersion());
   resetStatus();
   refreshIndicators();
@@ -535,6 +653,8 @@ initInput(model, {
   clearStatusIfTransient: () => clearStatusIfTransient(),
   isPlaybackActive: () => isPlaying,
   togglePlayback: () => { if (isPlaying) stopPlayback(); else startPlayback(); },
+  stopPlaybackAtHead: () => stopPlaybackAtHead(),
+  seekPlaybackByMeasure: (dir) => seekPlaybackByMeasure(dir),
   onZoomChange: (dir) => stepZoom(dir),
   getHklTuningMode: () => hklTuningMode,
   requestApplyLayout: () => requestApplyLayout(),
@@ -571,6 +691,7 @@ function startPlayback(): void {
   /* Snapshot editing cursor before playback so we can restore on stop/finish. */
   preplaybackVoice = v;
   preplaybackCursor = model.getCursor();
+  lastPlaybackHeadId = null;
   isPlaying = true;
   cursor.setPlaybackMode(true);
   cursor.update(model, cursorOpts());
@@ -582,7 +703,103 @@ function startPlayback(): void {
 function stopPlayback(): void {
   if (!isPlaying) return;
   bridge.send({ type: 'stop-playback' });
+  pendingStopAcks++;
   finalizePlaybackEnd('Playback stopped.');
+}
+
+/** True iff ANY voice's playback head currently sits on the first content
+ *  element of its measure (= it's about to play / has just played the
+ *  first note/chord/rest of that measure). Used by Ctrl+← seek to decide
+ *  whether to jump back one extra measure: if a voice has just entered
+ *  measure M, the user usually wants to rewind to M-1, not back to M. */
+function anyPlaybackHeadAtMeasureStart(): boolean {
+  for (const [voice, meiId] of cursor.getPlaybackPositions()) {
+    const loc = model.findElement(meiId);
+    if (!loc) continue;
+    const flat = model.flatChildren(voice);
+    const elem = flat[loc.index];
+    if (!elem) continue;
+    const measure = elem.closest('measure');
+    if (!measure) continue;
+    const layer = model.layerInMeasure(measure, voice);
+    if (!layer) continue;
+    const cc = Array.from(layer.children).filter((c) =>
+      c.localName === 'note' || c.localName === 'chord'
+      || c.localName === 'rest' || c.localName === 'tuplet');
+    if (cc.length === 0) continue;
+    const slot = elem.parentElement?.localName === 'chord' ? elem.parentElement : elem;
+    if (cc[0] === slot) return true;
+  }
+  return false;
+}
+
+/** Seek the audible playback head to the next/previous measure boundary.
+ *  Per Max's spec: "stop playback, place cursor at the position where it
+ *  stopped, jump cursor by 1 measure, resume playback — repeatable, no
+ *  special logic." Composes stopPlaybackAtHead + setCursor + startPlayback;
+ *  the stop's stale `playback-finished` ack is suppressed by the
+ *  pendingStopAcks counter so it doesn't terminate the new session.
+ *
+ *  Ctrl+← extra step: if ANY voice's playhead is at the start of its
+ *  current measure ("just crossed into M"), Ctrl+← jumps to M-1 instead
+ *  of M. Without this, the user-expected "back one measure" feels like
+ *  a no-op because the standard `boundary < cur` lands on the very
+ *  measure they just entered. */
+function seekPlaybackByMeasure(dir: 'left' | 'right'): void {
+  if (!isPlaying) return;
+  const wantsExtraStepBack = dir === 'left' && anyPlaybackHeadAtMeasureStart();
+  /* Step 1: stop playback at the audible head (parks cursor on the
+     currently-sounding element in preplaybackVoice). */
+  stopPlaybackAtHead();
+  /* Step 2: jump cursor by one measure boundary from where it landed. */
+  const v = model.getCurrentVoice();
+  const boundaries = model.measureBoundaryCursors(v);
+  const cur = model.getCursor(v);
+  let target: number | undefined;
+  if (dir === 'right') {
+    target = boundaries.find((b) => b > cur);
+  } else {
+    for (const b of boundaries) {
+      if (b < cur) target = b;
+      else break;
+    }
+    /* Boundary-start case: an extra step back. The first `target` above
+       is the start of the CURRENT measure (just past the playhead). One
+       more pass below finds the boundary BEFORE that = start of M-1. */
+    if (wantsExtraStepBack && target !== undefined) {
+      let prevPrev: number | undefined;
+      for (const b of boundaries) {
+        if (b < target) prevPrev = b;
+        else break;
+      }
+      if (prevPrev !== undefined) target = prevPrev;
+    }
+  }
+  if (target === undefined || target === cur) return; /* edge of score */
+  model.setCursor(target, v);
+  /* Step 3: resume playback from the new cursor. */
+  startPlayback();
+}
+
+/** Stop playback and leave the editing cursor at the most-recent playback head
+ *  in the user's pre-playback voice (instead of snapping back to the cursor's
+ *  pre-playback position). Wired to plain ←/→ during playback so the user can
+ *  punch out exactly where they hear the music. Falls back to a normal stop
+ *  if no playback-position has arrived yet (e.g. very early plain-arrow). */
+function stopPlaybackAtHead(): void {
+  if (!isPlaying) return;
+  bridge.send({ type: 'stop-playback' });
+  pendingStopAcks++;
+  if (lastPlaybackHeadId) {
+    const loc = model.findElement(lastPlaybackHeadId);
+    if (loc) {
+      /* Override preplaybackVoice/cursor so finalize positions the cursor at
+         the head rather than restoring the pre-playback snapshot. */
+      preplaybackVoice = loc.voice;
+      preplaybackCursor = loc.index;
+    }
+  }
+  finalizePlaybackEnd('Playback stopped at playhead.');
 }
 
 function finalizePlaybackEnd(statusMsg: string): void {
@@ -779,5 +996,24 @@ void bootRenderer();
     autoAdoptedHklLayout = false;
     footprintColors = null;
     setConn('no-hkl');
+  },
+  /* Test-only: stage playback-active state pointing at a specific meiId so
+   * subsequent plain-arrow can exercise stopPlaybackAtHead without an actual
+   * BroadcastChannel round-trip with a real HKL. Snapshots the current cursor
+   * as the pre-playback position (matches startPlayback's behavior) and
+   * synchronously force-sets hklConnected so a seek's startPlayback doesn't
+   * bail on the connection gate. */
+  __simulatePlaybackAt: (meiId: string): void => {
+    const loc = model.findElement(meiId);
+    if (!loc) return;
+    hklConnected = true;
+    setConn('connected');
+    preplaybackVoice = model.getCurrentVoice();
+    preplaybackCursor = model.getCursor();
+    lastPlaybackHeadId = meiId;
+    isPlaying = true;
+    cursor.setPlaybackMode(true);
+    cursor.setPlaybackPosition(loc.voice, meiId);
+    refreshPlayButton();
   },
 };

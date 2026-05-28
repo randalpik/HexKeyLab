@@ -143,13 +143,19 @@ function setupSelects(model: ComposerModel): void {
 }
 
 function readForm(): {
-  title: string; composer: string; keySig: string; keyMode: 'major' | 'minor';
+  title: string; subtitle: string; composer: string; footer: string;
+  keySig: string; keyMode: 'major' | 'minor';
   count: number; unit: number;
   tempoBpm: number; tempoUnit: '1' | '2' | '4' | '8'; tempoDots: 0 | 1; tempoText: string;
   layoutReq: LayoutReq; hejiEnabled: boolean;
 } | null {
   const title = $<HTMLInputElement>('setupTitle')?.value ?? 'Untitled';
+  const subtitle = ($<HTMLInputElement>('setupSubtitle')?.value ?? '').trim();
   const composer = $<HTMLInputElement>('setupComposer')?.value ?? '';
+  /* Footer trimming preserves the user's explicit empty-string intent (= hide
+     the footer) — distinguish from "field not present" by reading the raw value. */
+  const footerRaw = $<HTMLInputElement>('setupFooter');
+  const footer = footerRaw ? footerRaw.value.trim() : 'Engraved with HKL Composer';
   const keySig = $<HTMLSelectElement>('setupKey')?.value ?? '0';
   const keyMode: 'major' | 'minor' = $<HTMLInputElement>('setupKeyMinor')?.checked ? 'minor' : 'major';
   const count = parseInt($<HTMLSelectElement>('setupTimeNum')?.value ?? '4', 10);
@@ -172,7 +178,7 @@ function readForm(): {
   if (refMidi < MIDI_LOW || refMidi > MIDI_HIGH) return null;
   const layoutReq: LayoutReq = { tuningMode, refQ, refR };
   const hejiEnabled = $<HTMLInputElement>('setupHeji')?.checked ?? false;
-  return { title, composer, keySig, keyMode, count, unit, tempoBpm, tempoUnit, tempoDots, tempoText, layoutReq, hejiEnabled };
+  return { title, subtitle, composer, footer, keySig, keyMode, count, unit, tempoBpm, tempoUnit, tempoDots, tempoText, layoutReq, hejiEnabled };
 }
 
 function isTuningMode(s: string): s is TuningMode {
@@ -202,10 +208,35 @@ export function openSetupDialog(
 
   setupSelects(model);
   const tEl = $<HTMLInputElement>('setupTitle');     if (tEl) tEl.value = model.getTitle();
+  const subEl = $<HTMLInputElement>('setupSubtitle'); if (subEl) subEl.value = model.getSubtitle();
   const cEl = $<HTMLInputElement>('setupComposer'); if (cEl) cEl.value = model.getComposer();
+  const ftEl = $<HTMLInputElement>('setupFooter');   if (ftEl) ftEl.value = model.getFooter();
   const bEl = $<HTMLInputElement>('setupTempoBpm'); if (bEl) bEl.value = String(model.getTempo().bpm);
   const txt = $<HTMLInputElement>('setupTempoText'); if (txt) txt.value = model.getTempo().text;
   populateDynamicInputs(model);
+
+  /* Fill-incomplete-measures button. Applies immediately as its own
+     history-tracked action (independent of Save / Cancel), then leaves the
+     dialog open so the user can continue editing other fields. */
+  const fillBtn = $<HTMLButtonElement>('setupFillIncompleteMeasures');
+  const onFillClick = (): void => {
+    const before = history ? model.snapshotState() : null;
+    const result = model.fillIncompleteMeasures();
+    if (history && before) {
+      history.push(before, model.snapshotState(), 'fill-incomplete-measures');
+    }
+    /* Signal a re-render via onApply with layoutChanged=false. */
+    onApply(false);
+    if (fillBtn) {
+      fillBtn.textContent = result.measuresAffected > 0
+        ? 'Filled ' + result.measuresAffected + ' measure(s).'
+        : 'No incomplete measures.';
+      window.setTimeout(() => {
+        if (fillBtn) fillBtn.textContent = 'Fill incomplete measures with rests';
+      }, 1500);
+    }
+  };
+  fillBtn?.addEventListener('click', onFillClick);
 
   const form = $<HTMLFormElement>('setupForm');
 
@@ -261,7 +292,9 @@ export function openSetupDialog(
 
     /* Apply in order. */
     model.setTitle(values.title);
+    model.setSubtitle(values.subtitle);
     model.setComposer(values.composer);
+    model.setFooter(values.footer);
     model.setKeySig(values.keySig);
     model.setKeyMode(values.keyMode);
     model.setTempo(values.tempoBpm, values.tempoUnit, values.tempoDots, values.tempoText);
@@ -289,6 +322,7 @@ export function openSetupDialog(
   /* Clean up listeners on dialog close (covers both submit and Escape). */
   const onClose = (): void => {
     form?.removeEventListener('submit', onSubmit);
+    fillBtn?.removeEventListener('click', onFillClick);
     dlg.removeEventListener('close', onClose);
   };
   form?.addEventListener('submit', onSubmit);

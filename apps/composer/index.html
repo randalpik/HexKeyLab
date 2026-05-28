@@ -140,7 +140,13 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
 #score svg .ledgerLines,
 #score svg .ledgerLines *,
 #score svg .dots,
-#score svg .dots * { color: #000 !important; fill: #000 !important }
+#score svg .dots *,
+#score svg .artic,
+#score svg .artic *,
+#score svg .fermata,
+#score svg .fermata *,
+#score svg .breath,
+#score svg .breath * { color: #000 !important; fill: #000 !important }
 
 /* Tuplet placeholder: the <rest data-tuplet-placeholder="true"> elements
  * we put inside <tuplet> to make Verovio draw the bracket. We want the
@@ -153,6 +159,11 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
  * in the SVG. `visibility: hidden` preserves layout width (so the bracket
  * spans the right horizontal range); display:none would collapse it. */
 #score svg g.rest[data-data-tuplet-placeholder="true"] { visibility: hidden }
+
+/* User-hidden rests (`H` toggle). Same Verovio quirk as above — @visible
+   isn't honored, so we expose it via svgAdditionalAttribute (which prepends
+   `data-`) and hide the glyph via CSS. Layout width preserved. */
+#score svg g.rest[data-visible="false"] { visibility: hidden }
 
 /* Toolbar Play button playing-state styling. */
 #composerToolbar .btn.playing { border-color: #FF4C79; color: #FF4C79 }
@@ -300,7 +311,9 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
   <form id="setupForm" method="dialog">
     <h2>Document Setup</h2>
     <label class="row"><span>Title</span><input id="setupTitle" type="text" autocomplete="off"></label>
+    <label class="row"><span>Subtitle</span><input id="setupSubtitle" type="text" autocomplete="off" placeholder="(optional)"></label>
     <label class="row"><span>Composer</span><input id="setupComposer" type="text" autocomplete="off"></label>
+    <label class="row"><span>Footer</span><input id="setupFooter" type="text" autocomplete="off" placeholder="(optional, blank to hide)"></label>
     <div class="row">
       <span>Key signature</span>
       <fieldset>
@@ -346,6 +359,12 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
         <label>p   <input id="setupDyn_p"   type="number" min="1" max="127" step="1"></label>
         <label>pp  <input id="setupDyn_pp"  type="number" min="1" max="127" step="1"></label>
         <label>ppp <input id="setupDyn_ppp" type="number" min="1" max="127" step="1"></label>
+      </fieldset>
+    </div>
+    <div class="row">
+      <span>Document actions</span>
+      <fieldset>
+        <button type="button" id="setupFillIncompleteMeasures">Fill incomplete measures with rests</button>
       </fieldset>
     </div>
     <div class="actions">
