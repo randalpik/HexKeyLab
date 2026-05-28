@@ -158,9 +158,16 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
   fill: #e47226 !important;
   stroke: #e47226;
 }
-#score svg g.hairpin.expr-selected path,
-#score svg g.hairpin.expr-selected line {
-  stroke-width: 1.5;
+/* Hairpin override: Verovio renders the wedge as a <polyline> with
+   fill="none" and a stroke that draws the V shape. The parent rule's
+   `fill: #e47226 !important` overrides the inline fill and fills the
+   implicit closed triangle solid orange — that's the glitch. Restoring
+   fill: none keeps only the stroke (which the parent rule still tints
+   orange via `stroke: #e47226`), so the wedge stays its normal weight
+   and just changes colour. */
+#score svg g.hairpin.expr-selected,
+#score svg g.hairpin.expr-selected * {
+  fill: none !important;
 }
 
 /* Document Setup modal. */

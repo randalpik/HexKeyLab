@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 132,
-  "passed": 132,
+  "fixtures": 135,
+  "passed": 135,
   "failed": 0,
-  "elapsedMs": 39783,
+  "elapsedMs": 40368,
   "results": [
     {
       "name": "emptyDoc",
@@ -459,6 +459,30 @@
       "failures": [],
       "counts": {
         "invariants": 7
+      }
+    },
+    {
+      "name": "kbd_pendingHairpin_cancelOnDigit",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "kbd_pendingHairpin_preservedOnArrowRight",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "kbd_pendingHairpin_cancelOnVoiceCycle",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
       }
     },
     {

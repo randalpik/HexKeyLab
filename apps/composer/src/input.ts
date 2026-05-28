@@ -1452,6 +1452,26 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       /* no return — handler below processes e */
     }
 
+    /* Pending-hairpin resolution. Cursor navigation within the same voice
+       (Left/Right/Home/End, no ctrl/meta/alt) preserves the pending so the
+       user can navigate from start to end. The hairpin keys '<' and '>' and
+       Escape are handled by their own blocks below. Anything else — note
+       entry, dynamics, voice cycling (Up/Down), Ctrl+L, etc. — cancels the
+       pending and falls through to its normal handling. Pure-modifier
+       keypresses don't count as stray input. */
+    if (state.pendingHairpin) {
+      if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') {
+        return;
+      }
+      const isPlainNav = !e.ctrlKey && !e.metaKey && !e.altKey
+        && (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Home' || e.key === 'End');
+      const isHairpinSelfKey = e.key === '<' || e.key === '>' || e.key === 'Escape';
+      if (!isPlainNav && !isHairpinSelfKey) {
+        cancelPendingHairpin(hooks);
+        /* no return — handler below processes e */
+      }
+    }
+
     /* Zoom shortcuts. Apply in any mode (voice / expression / mid-pending-tuplet).
        e.key === '+' is Shift+= on US layouts; e.key === '_' is Shift+-. Neither
        is produced unshifted, so the shifted-only intent holds without an extra

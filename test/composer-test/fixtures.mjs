@@ -845,6 +845,30 @@ const KBD = {
     setupKeys: [{ key: '<', shift: true }, 'Escape'],
   },
 
+  /* Pending hairpin cancels on any non-nav input and falls through to its
+   * normal handling. Press '<' (sets pendingHairpin), then '5' (quarter
+   * rest digit) — pending should be cleared AND the quarter rest inserted. */
+  kbd_pendingHairpin_cancelOnDigit: {
+    setupKeys: [{ key: '<', shift: true }, '5'],
+  },
+
+  /* Plain cursor navigation (ArrowLeft/Right/Home/End, no modifiers)
+   * preserves the pending so the user can navigate to the endpoint. */
+  kbd_pendingHairpin_preservedOnArrowRight: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setCursor(0, 1);
+    `,
+    setupKeys: [{ key: '<', shift: true }, 'ArrowRight'],
+  },
+
+  /* Voice cycling (ArrowDown/Up) cancels the pending — same shape as
+   * slurs dropping on voice change. */
+  kbd_pendingHairpin_cancelOnVoiceCycle: {
+    setupKeys: [{ key: '<', shift: true }, 'ArrowDown'],
+  },
+
   /* Statusline kinds + clear-on-next-action. Press '=' (tie toggle) on
      an empty measure where there's no note → error message in red. The
      follow-up assertion (kbd_statusError_clearsOnNextKey) types ArrowRight
@@ -2367,6 +2391,63 @@ export const FIXTURE_ASSERTIONS = {
         return hp.length === 0
           ? { ok: true }
           : { ok: false, detail: hp.length + ' hairpins exist' };
+      })()` },
+  ],
+  kbd_pendingHairpin_cancelOnDigit: [
+    { name: 'pendingHairpin cleared by digit',
+      expr: `(() => {
+        const p = window.__hkl_composer.inputState().pendingHairpin;
+        return p === null
+          ? { ok: true }
+          : { ok: false, detail: 'pending=' + JSON.stringify(p) };
+      })()` },
+    { name: 'digit fell through and inserted a rest',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const rests = [...m.getDoc().querySelectorAll('rest')];
+        return rests.length >= 1
+          ? { ok: true }
+          : { ok: false, detail: 'rests=' + rests.length };
+      })()` },
+    { name: 'no hairpin committed',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const hp = m.getDoc().querySelectorAll('hairpin');
+        return hp.length === 0
+          ? { ok: true }
+          : { ok: false, detail: hp.length + ' hairpins exist' };
+      })()` },
+  ],
+  kbd_pendingHairpin_preservedOnArrowRight: [
+    { name: 'pendingHairpin still set after ArrowRight',
+      expr: `(() => {
+        const p = window.__hkl_composer.inputState().pendingHairpin;
+        return (p && p.form === 'cres')
+          ? { ok: true }
+          : { ok: false, detail: 'pending=' + JSON.stringify(p) };
+      })()` },
+    { name: 'cursor advanced one slot',
+      expr: `(() => {
+        const c = window.__hkl_composer.model.getCursor();
+        return c === 1
+          ? { ok: true }
+          : { ok: false, detail: 'cursor=' + c };
+      })()` },
+  ],
+  kbd_pendingHairpin_cancelOnVoiceCycle: [
+    { name: 'pendingHairpin cleared by voice cycle',
+      expr: `(() => {
+        const p = window.__hkl_composer.inputState().pendingHairpin;
+        return p === null
+          ? { ok: true }
+          : { ok: false, detail: 'pending=' + JSON.stringify(p) };
+      })()` },
+    { name: 'voice cycled to V_2',
+      expr: `(() => {
+        const v = window.__hkl_composer.model.getCurrentVoice();
+        return v === 2
+          ? { ok: true }
+          : { ok: false, detail: 'voice=' + v };
       })()` },
   ],
   kbd_statusError_onTieNoNote: [
