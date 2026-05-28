@@ -377,7 +377,7 @@ const loadedInstruments: Record<string, any> = {};
     /* gentle taper: 1.0 → 1.0, 1.5 → 0.82, 2.0 → 0.64, ≥2.4 → 0.5 (clamped) */
     return Math.max(0.5,1.0-(overshoot-1.0)*0.36);
   }
-  export function sNoteOn(voiceKey: string, freq: number, velocity: number): void {
+  export function sNoteOn(voiceKey: string, freq: number, velocity: number, startAt?: number): void {
     if(!ctx||!currentInstrument)return;
     if(activeVoices[voiceKey])sNoteOff(voiceKey);
     var nearest=findNearest(freq);
@@ -428,8 +428,15 @@ const loadedInstruments: Record<string, any> = {};
        already pre-schedule with even more lead; this brings the first source
        in line. */
     /* Snap `when` to the integer-sample grid; pairs with the load-time
-       trimStart/pts snapping so rate=1 reads avoid interpolation. */
-    var startT=Math.ceil((ctx.currentTime+0.050)*ctx.sampleRate)/ctx.sampleRate;
+       trimStart/pts snapping so rate=1 reads avoid interpolation. If
+       `startAt` is passed, the caller (e.g. the playback lookahead
+       scheduler in hkl-side.ts) is anchoring the note on its own clock —
+       trust it and use it directly. The 50ms default remains for live-input
+       paths that don't pre-schedule. The +0.005 floor against currentTime
+       covers very-late deliveries (a tardy scheduler should still produce
+       sound, just at the floor — better than silent clamping). */
+    var target=startAt!=null?startAt:ctx.currentTime+0.050;
+    var startT=Math.ceil(Math.max(target,ctx.currentTime+0.005)*ctx.sampleRate)/ctx.sampleRate;
     segGain.gain.setValueAtTime(vol,startT);
     var source=ctx.createBufferSource();source.buffer=nearest.buffer;
     source.playbackRate.value=rate;
@@ -773,22 +780,33 @@ const loadedInstruments: Record<string, any> = {};
     p.oldSegGain.gain.linearRampToValueAtTime(v.vol,now+0.005);
     v.pendingSwitch=null;
   }
-  export function sNoteOff(voiceKey: string): void {
+  export function sNoteOff(voiceKey: string, releaseAt?: number): void {
     var v=activeVoices[voiceKey];if(!v)return;
     if(v.loopTimer){clearTimeout(v.loopTimer);v.loopTimer=null;}
     if(v.reAnchorTimer){clearTimeout(v.reAnchorTimer);v.reAnchorTimer=null;}
     /* If a switch was pre-scheduled but not yet committed, tear it down so the
        new source doesn't continue playing (silently, behind the released
-       voiceGain) and leak the BufferSource node. */
+       voiceGain) and leak the BufferSource node. With a future `releaseAt`,
+       this is still the right move: the loop's been ticking out a single
+       segment so far, so the source has plenty of buffer ahead to play
+       linearly through the brief release window without needing another wrap. */
     if(v.pendingSwitch)cancelPendingSwitch(v);
     var instr=loadedInstruments[currentInstrument];
-    var release=(((instr&&instr.releaseTime)||0.3)*RELEASE_SCALE);var now=ctx.currentTime;
+    var release=(((instr&&instr.releaseTime)||0.3)*RELEASE_SCALE);
+    /* `releaseAt` (when provided) anchors the release on the audio clock —
+       the playback lookahead scheduler uses this so the off time is sample-
+       accurate, not pinned to JS-timer firing. Floor against currentTime
+       (+1ms safety) so a slightly-stale releaseAt doesn't schedule in the
+       past. voiceGain.value is always 1.0 on sample voices (only release
+       modulates it), so setValueAtTime(1.0, releaseT) is correct regardless
+       of how far in the future releaseT is. */
+    var releaseT=Math.max(releaseAt!=null?releaseAt:ctx.currentTime,ctx.currentTime+0.001);
     if(v.alive){
       /* fade voiceGain — silences ALL sources routed through it */
-      v.voiceGain.gain.cancelScheduledValues(now);
-      v.voiceGain.gain.setValueAtTime(v.voiceGain.gain.value,now);
-      v.voiceGain.gain.linearRampToValueAtTime(0,now+release);
-      try{v.source.stop(now+release+0.05);}catch(e){}
+      v.voiceGain.gain.cancelScheduledValues(releaseT);
+      v.voiceGain.gain.setValueAtTime(1.0,releaseT);
+      v.voiceGain.gain.linearRampToValueAtTime(0,releaseT+release);
+      try{v.source.stop(releaseT+release+0.05);}catch(e){}
     }
     delete activeVoices[voiceKey];
   }
@@ -987,7 +1005,7 @@ const loadedInstruments: Record<string, any> = {};
     },durSec*1000+20);
     return true;
   }
-  export function sSlideAndFadeOut(voiceKey: string, targetFreq: number, dur: number): number {
+  export function sSlideAndFadeOut(voiceKey: string, targetFreq: number, dur: number, atTime?: number): number {
     var v=activeVoices[voiceKey];if(!v)return 0.7;
     /* Return baseVol (pre-attenuation) so the caller can pass it to sNoteOnFaded,
        which will reapply attenuation based on the NEW frequency. Falls back to v.vol
@@ -998,25 +1016,33 @@ const loadedInstruments: Record<string, any> = {};
        deleted anyway. */
     if(v.pendingSwitch)cancelPendingSwitch(v);
     if(v.loopTimer){clearTimeout(v.loopTimer);v.loopTimer=null;}
-    var now=ctx.currentTime;
+    /* `atTime` (when provided) anchors the slide on the audio clock instead
+       of "now" — used by the playback lookahead scheduler so the glide
+       boundary is sample-accurate, not pinned to JS-timer firing. Floor at
+       currentTime+1ms so a stale target doesn't schedule in the past. */
+    var anchor=Math.max(atTime!=null?atTime:ctx.currentTime,ctx.currentTime+0.001);
     if(v.alive){
       var targetRate=targetFreq*(v.transpose||1)/v.sampleFreq;
-      v.source.playbackRate.cancelScheduledValues(now);
-      v.source.playbackRate.setValueAtTime(v.source.playbackRate.value,now);
+      v.source.playbackRate.cancelScheduledValues(anchor);
+      v.source.playbackRate.setValueAtTime(v.source.playbackRate.value,anchor);
       /* exponential pitch glide: pitch perception is logarithmic so the
-         rate ramp must be too. Endpoints are always > 0 (positive freqs). */
-      v.source.playbackRate.exponentialRampToValueAtTime(targetRate,now+dur);
-      /* equal-power fade-out: scaled cos curve from current gain → 0. */
+         rate ramp must be too. Endpoints are always > 0 (positive freqs).
+         Pair with sNoteOnFaded's matching ramp (started at fromFreq) so
+         the crossfade happens between pitch-locked voices — equal-power
+         gain curves preserve constant amplitude. */
+      v.source.playbackRate.exponentialRampToValueAtTime(targetRate,anchor+dur);
+      /* equal-power fade-out: scaled cos curve from current gain → 0,
+         spanning the full glide window. */
       var startVal=v.voiceGain.gain.value;
       var out=new Float32Array(EQUAL_POWER_LEN);
       for(var oi=0;oi<EQUAL_POWER_LEN;oi++)out[oi]=_epFadeOut[oi]*startVal;
-      v.voiceGain.gain.cancelScheduledValues(now);
-      v.voiceGain.gain.setValueCurveAtTime(out,now,dur);
-      try{v.source.stop(now+dur+0.05);}catch(e){}
+      v.voiceGain.gain.cancelScheduledValues(anchor);
+      v.voiceGain.gain.setValueCurveAtTime(out,anchor,dur);
+      try{v.source.stop(anchor+dur+0.05);}catch(e){}
     }
     delete activeVoices[voiceKey];return savedVol;
   }
-  export function sNoteOnFaded(voiceKey: string, freq: number, vol: number, dur: number): void {
+  export function sNoteOnFaded(voiceKey: string, freq: number, vol: number, dur: number, atTime?: number, fromFreq?: number): void {
     if(!ctx||!currentInstrument)return;
     if(activeVoices[voiceKey])sHardStop(voiceKey);
     var nearest=findNearest(freq);if(!nearest)return;
@@ -1042,7 +1068,15 @@ const loadedInstruments: Record<string, any> = {};
       pts.sort(function(a:number,b:number){return a-b;});
     }
     var source=ctx.createBufferSource();source.buffer=nearest.buffer;
-    source.playbackRate.value=rate;
+    /* If `fromFreq` is given (lookahead-scheduler slur glide), start the
+       new voice at the predecessor's current pitch instead of the target.
+       The matching ramp scheduled below at `startT` slides this voice
+       from fromFreq to freq in lockstep with sSlideAndFadeOut's ramp on
+       the old voice — both sources play at the same pitch throughout, so
+       the equal-power crossfade behaves as it was designed (constant
+       summed amplitude, no chord effect from pitch-mismatched mixing). */
+    var startRate=(fromFreq!=null)?(fromFreq*(instr.transpose||1)/nearest.freq):rate;
+    source.playbackRate.value=startRate;
     /* start from loop region (no attack re-trigger) */
     var startOffset;
     if(instr.loop&&pts&&pts.length>=2){
@@ -1059,10 +1093,24 @@ const loadedInstruments: Record<string, any> = {};
     /* Pre-schedule 50ms ahead so source.start isn't clamped under any
        plausible JS stall — see the longer comment in sNoteOn for the
        full rationale. Snap `when` to the integer-sample grid (pairs with
-       load-time trimStart/pts snapping so rate=1 reads avoid interpolation). */
-    var startT=Math.ceil((ctx.currentTime+0.050)*ctx.sampleRate)/ctx.sampleRate;
+       load-time trimStart/pts snapping so rate=1 reads avoid interpolation).
+       `atTime` (lookahead-scheduler glide path) anchors the new voice on
+       the audio clock so the glide boundary is sample-accurate; live
+       transpose paths omit it and get the 50ms default lead. */
+    var fadedTarget=atTime!=null?atTime:ctx.currentTime+0.050;
+    var startT=Math.ceil(Math.max(fadedTarget,ctx.currentTime+0.005)*ctx.sampleRate)/ctx.sampleRate;
+    /* Matching pitch ramp: slide the new voice's playbackRate from
+       startRate → rate over `dur`, anchored at startT to lock to the old
+       voice's sSlideAndFadeOut ramp. Skip if same-pitch (startRate===rate)
+       to avoid a no-op event that would still consume an AudioParam slot. */
+    if(fromFreq!=null&&startRate!==rate){
+      source.playbackRate.cancelScheduledValues(startT);
+      source.playbackRate.setValueAtTime(startRate,startT);
+      source.playbackRate.exponentialRampToValueAtTime(rate,startT+dur);
+    }
     /* equal-power fade-in: scaled sin curve from 0 → vol. Pairs with the
-       cos fade-out in sSlideAndFadeOut so summed gain is ~constant. */
+       cos fade-out in sSlideAndFadeOut so summed gain is ~constant — and
+       with the pitch-matched ramp above, summed pitch is also constant. */
     var fin=new Float32Array(EQUAL_POWER_LEN);
     for(var fi=0;fi<EQUAL_POWER_LEN;fi++)fin[fi]=_epFadeIn[fi]*vol;
     segGain.gain.setValueCurveAtTime(fin,startT,dur);

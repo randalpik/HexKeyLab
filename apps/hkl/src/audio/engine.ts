@@ -122,7 +122,12 @@ export function initAudio(): void {
   void initCapture(audio.audioCtx);
 }
 
-export function noteOn(key: KeyId, velocity?: number): void {
+/** `startAt` (AudioContext seconds, optional): anchor the attack on the audio
+ *  clock instead of "now". Used by the playback lookahead scheduler in
+ *  hkl-side.ts so score-driven notes time on the sample-accurate audio clock
+ *  rather than JS-timer firing. Live-input paths (Lumatone, QWERTY, MIDI in)
+ *  omit it and get the existing immediate-attack behavior. */
+export function noteOn(key: KeyId, velocity?: number, startAt?: number): void {
   if (!audio.audioEnabled || !audio.audioCtx) return;
   if (audio.activeOscs[key]) return;
   const parts = key.split(','), q = +parts[0], r = +parts[1];
@@ -137,7 +142,7 @@ export function noteOn(key: KeyId, velocity?: number): void {
     /* Velocity drives initial volume (via baseVol in segGain); pressureGain stays
        at 1.0 until the first aftertouch message for a sustained instrument, then
        ramps to the aftertouch-dictated gain. */
-    SampleEngine.noteOn(key, freq, adjVel);
+    SampleEngine.noteOn(key, freq, adjVel, startAt);
     audio.activeOscs[key] = { type: 'sample', freq };
   } else if (!instrIsSample()) {
     const type = wf as OscillatorType;
@@ -165,7 +170,12 @@ export function noteOn(key: KeyId, velocity?: number): void {
        perceived bass. */
     if (simple) { const boost = Math.min(3, Math.sqrt(440 / freq)); vol *= boost; }
     const atk = simple ? 0.02 : 0.04;
-    const now = audio.audioCtx.currentTime;
+    /* `startAt` (lookahead playback): schedule the attack on the audio clock
+     *  at the requested future moment. Floor against currentTime so a stale
+     *  target doesn't try to schedule in the past. */
+    const now = startAt != null
+      ? Math.max(startAt, audio.audioCtx.currentTime + 0.001)
+      : audio.audioCtx.currentTime;
     gain.gain.setValueAtTime(0, now);
     gain.gain.linearRampToValueAtTime(vol, now + atk);
     const dest = (type === 'square') ? audio.squareGain! : audio.oscGain!;
@@ -179,7 +189,7 @@ export function noteOn(key: KeyId, velocity?: number): void {
     const pressureGain = audio.audioCtx.createGain(); pressureGain.gain.value = 1.0;
     osc.connect(gain); gain.connect(damperGain); damperGain.connect(pressureGain); pressureGain.connect(dest);
     osc.start(now);
-    audio.activeOscs[key] = { type: 'osc', osc, gain, damperGain, pressureGain, vol };
+    audio.activeOscs[key] = { type: 'osc', osc, gain, damperGain, pressureGain, vol, startTime: now };
   }
   /* Seed PA from the held filter state when a voice is recreated under a
      still-pressed key — e.g. instrument switch via changeWaveform, or any
@@ -204,14 +214,24 @@ export function noteOn(key: KeyId, velocity?: number): void {
   recordOn(key, velocity ?? 100);
 }
 
-export function noteOff(key: KeyId): void {
+/** `releaseAt` (AudioContext seconds, optional): anchor the release on the
+ *  audio clock instead of "now". Used by the playback lookahead scheduler
+ *  for sample-accurate off timing; live-input paths omit it. */
+export function noteOff(key: KeyId, releaseAt?: number): void {
   const e = audio.activeOscs[key]; if (!e) return;
   if (e.type === 'sample') {
-    SampleEngine.noteOff(key);
+    SampleEngine.noteOff(key, releaseAt);
   } else {
-    const now = audio.audioCtx!.currentTime;
+    /* Schedule the release on the audio clock at `releaseAt`; floor against
+       currentTime so a stale target doesn't try to schedule in the past.
+       Anchor at the voice's known steady-state `vol` (not e.gain.gain.value,
+       which reads as the AudioParam's base value, not the automation-curve
+       projection — wrong for the lookahead path where the attack ramp is
+       scheduled but hasn't fired yet). */
+    const ctxNow = audio.audioCtx!.currentTime;
+    const now = releaseAt != null ? Math.max(releaseAt, ctxNow + 0.001) : ctxNow;
     e.gain.gain.cancelScheduledValues(now);
-    e.gain.gain.setValueAtTime(e.gain.gain.value, now);
+    e.gain.gain.setValueAtTime(e.vol, now);
     e.gain.gain.linearRampToValueAtTime(0, now + 0.06);
     e.osc.stop(now + 0.08);
   }
@@ -237,11 +257,23 @@ export function stopAllNotes(): void { for (const k in audio.activeOscs) noteOff
  *
  *  Only the audio voice is migrated here; callers own any higher-level
  *  per-key bookkeeping (selection highlight, playback voice tags). */
-export function glideVoices(pairs: ReadonlyArray<{ oldKey: KeyId; newKey: KeyId }>, rampMs: number): void {
+export function glideVoices(pairs: ReadonlyArray<{ oldKey: KeyId; newKey: KeyId }>, rampMs: number, atTime?: number): void {
   if (!audio.audioEnabled || !audio.audioCtx) return;
-  const now = audio.audioCtx.currentTime;
+  /* `atTime` (AudioContext seconds, optional): anchor the glide on the audio
+   *  clock at a planned future moment instead of currentTime. Used by the
+   *  playback lookahead scheduler so slur boundaries are sample-accurate
+   *  even when consecutive notes pack tightly enough that the visual-on
+   *  setTimeouts fire on top of each other (a trill at fast tempo). Live-
+   *  input transpose paths omit it and get the immediate-glide behavior. */
+  const ctxNow = audio.audioCtx.currentTime;
+  const anchor = atTime != null ? Math.max(atTime, ctxNow + 0.001) : ctxNow;
   const rampDur = Math.max(0.001, rampMs / 1000);
-  const sampleMoves: { oldKey: KeyId; newKey: KeyId; newFreq: number; vol?: number }[] = [];
+  /* `fromFreq` is the predecessor voice's current target pitch; passed to
+     sNoteOnFaded so the new voice's playbackRate starts there and ramps to
+     the new pitch in lockstep with sSlideAndFadeOut's ramp on the old
+     voice. Two pitch-matched sources, equal-power crossfade — no chord
+     artifact at fast trill tempos. */
+  const sampleMoves: { oldKey: KeyId; newKey: KeyId; newFreq: number; fromFreq: number; vol?: number }[] = [];
   for (const p of pairs) {
     if (p.oldKey === p.newKey) continue;
     const e = audio.activeOscs[p.oldKey];
@@ -249,22 +281,36 @@ export function glideVoices(pairs: ReadonlyArray<{ oldKey: KeyId; newKey: KeyId 
     const np = p.newKey.split(','), nq = +np[0], nr = +np[1];
     const newFreq = keyFreq(nq, nr);
     if (e.type === 'osc') {
-      e.osc.frequency.cancelScheduledValues(now);
-      e.osc.frequency.setValueAtTime(e.osc.frequency.value, now);
-      e.osc.frequency.exponentialRampToValueAtTime(newFreq, now + rampDur);
+      e.osc.frequency.cancelScheduledValues(anchor);
+      e.osc.frequency.setValueAtTime(e.osc.frequency.value, anchor);
+      e.osc.frequency.exponentialRampToValueAtTime(newFreq, anchor + rampDur);
       audio.activeOscs[p.newKey] = e;
       delete audio.activeOscs[p.oldKey];
     } else {
-      sampleMoves.push({ oldKey: p.oldKey, newKey: p.newKey, newFreq });
+      /* e.freq tracks the voice's current target pitch (set at sNoteOn /
+         sNoteOnFaded creation; updated by glideVoices' own re-key for
+         sample voices on completion of a prior glide). For voices that
+         have just been faded-in by an earlier glide step in this same
+         tick, e.freq is already the post-ramp pitch — the right "from"
+         value for the next glide. */
+      sampleMoves.push({ oldKey: p.oldKey, newKey: p.newKey, newFreq, fromFreq: e.freq });
     }
     if (audio.keyVelocity[p.oldKey] !== undefined) {
       audio.keyVelocity[p.newKey] = audio.keyVelocity[p.oldKey];
       delete audio.keyVelocity[p.oldKey];
     }
   }
-  for (const mv of sampleMoves) mv.vol = SampleEngine.slideAndFadeOut(mv.oldKey, mv.newFreq, rampDur);
+  /* `atTime` propagates to both halves so the predecessor's fade-out and the
+     new voice's fade-in line up sample-accurately at the slur boundary.
+     `fromFreq` propagates only to noteOnFaded so the new voice's playbackRate
+     ramps from the old pitch to the new in lockstep with sSlideAndFadeOut's
+     ramp on the old voice. When `atTime` is undefined (live transpose),
+     fromFreq still flows through harmlessly — but live callers (handler.ts,
+     keyboard-notes.ts) build sampleMoves directly and don't go through this
+     path, so the live-input behavior is unchanged. */
+  for (const mv of sampleMoves) mv.vol = SampleEngine.slideAndFadeOut(mv.oldKey, mv.newFreq, rampDur, atTime);
   for (const mv of sampleMoves) {
-    SampleEngine.noteOnFaded(mv.newKey, mv.newFreq, mv.vol!, rampDur);
+    SampleEngine.noteOnFaded(mv.newKey, mv.newFreq, mv.vol!, rampDur, atTime, mv.fromFreq);
     audio.activeOscs[mv.newKey] = { type: 'sample', freq: mv.newFreq };
     delete audio.activeOscs[mv.oldKey];
   }

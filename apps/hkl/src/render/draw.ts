@@ -942,6 +942,21 @@ function buildTextLayer(): void {
   view.textDirty = false;
 }
 
+// ── coalesced draw ─────────────────────────────────────────────────────────
+/** rAF-coalesced wrapper around `draw()`. Multiple calls within the same
+ *  animation frame collapse into one `draw()` invocation. Used by the
+ *  playback lookahead scheduler — score playback can dispatch many cursor /
+ *  selection updates per frame, and a single redraw absorbs them cleanly
+ *  without N×canvas-blit cost on the main thread. Callers needing immediate
+ *  draw (input handlers, instrument changes, animation ticks) should keep
+ *  calling `draw()` directly. */
+let drawScheduled = false;
+export function requestDraw(): void {
+  if (drawScheduled) return;
+  drawScheduled = true;
+  requestAnimationFrame(() => { drawScheduled = false; draw(); });
+}
+
 // ── main draw ──────────────────────────────────────────────────────────────
 export function draw(): void {
   const dpr = window.devicePixelRatio || 1;

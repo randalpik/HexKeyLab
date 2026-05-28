@@ -36,7 +36,7 @@ import { darkColorHex } from '../transcription/pitch.js';
 import { resolveNoteSpec } from '../tuning/spell.js';
 import { noteOn, noteOff, stopAllNotes, triggerRearticulateFlash, instrReplaysOnTranspose, glideVoices } from '../audio/engine.js';
 import { syncPianoOut, restrikePianoOut } from '../midi/piano-out.js';
-import { draw, activeFootprintSet, invalidatePianoOutline, validateRefNoteCandidate } from '../render/draw.js';
+import { draw, requestDraw, activeFootprintSet, invalidatePianoOutline, validateRefNoteCandidate } from '../render/draw.js';
 import { syncViewToOutline } from '../ui/controls.js';
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { setSelectionFromComposer, setSongKey, onComposerBye, referenceNote } from '../state/reference.js';
@@ -210,14 +210,17 @@ export function broadcastAllToComposer(): void {
 
 interface ActivePlayback {
   cancelled: boolean;
-  pending: Set<number>; /* setTimeout handles, so stop-playback can clear them */
+  pending: Set<number>; /* visual setTimeout handles, so stop-playback can clear them */
   heldKeys: Set<KeyId>; /* keys we noteOn'd, for force-off on stop */
-  /* Monotonic per-key voice tag. Each dispatchChord noteOn bumps the key's
-     seq; each offHandle captures the seq it owns and only tears down if it
-     still matches. This is how back-to-back same-pitch events avoid the
-     previous event's offHandle killing the fresh voice. */
+  /* Monotonic per-key voice tag. Each audio-scheduled noteOn bumps the key's
+     seq; each off-visual snapshot captures the seq it owns and only tears
+     down if it still matches. This is how back-to-back same-pitch events
+     avoid the previous event's off handler killing the fresh voice. */
   voiceSeq: Map<KeyId, number>;
   nextSeq: number;
+  /* Recursive setTimeout for the lookahead driver. Separate from `pending`
+     so the driver lifecycle is clear in cancellation. */
+  driverHandle?: number;
 }
 
 let active: ActivePlayback | null = null;
@@ -229,7 +232,17 @@ function newPlayback(): ActivePlayback {
 function abortActive(): void {
   if (!active) return;
   active.cancelled = true;
+  if (active.driverHandle != null) {
+    clearTimeout(active.driverHandle);
+    active.driverHandle = undefined;
+  }
   for (const h of active.pending) clearTimeout(h);
+  /* heldKeys contains every voice the lookahead driver has scheduled but
+     not yet released. For voices already sounding, noteOff schedules a
+     normal release; for voices whose source.start is still in the future,
+     the engine's source.stop schedules a stop time before the start, which
+     the Web Audio spec specifies as producing no output. Either way the
+     voice is silenced. */
   for (const k of active.heldKeys) {
     noteOff(k);
     if (playbackOwnedKeys.has(k)) {
@@ -260,97 +273,198 @@ const SLUR_OVERLAP_FRACTION = 0.12;
  *  portamento, then hold. Clamped to half the predecessor's duration. */
 const SLUR_GLIDE_MS = 70;
 
-interface DispatchOpts {
-  velocity?: number;
-  /** Delay before noteOff (controls only the off timer, not reported
-   *  duration). Defaults to `durationMs`. */
-  offMs?: number;
-  /** Don't schedule a noteOff — the voice continues into a later glide. */
-  noOff?: boolean;
-  /** Glide a still-sounding voice from this key into the (single) attack pitch
-   *  instead of re-attacking — the sustained-instrument "transpose effect".
-   *  Falls back to a normal attack if the source voice isn't sounding. */
-  glideFromKey?: KeyId;
-  /** Glide ramp duration (ms); used only with glideFromKey. */
-  rampMs?: number;
-}
+/* ── lookahead playback scheduler ────────────────────────────────────────────
+ *
+ * Composer pre-computes a sorted PlaybackEvent[] with absolute atMs onsets;
+ * HKL's job is to hand those onsets to the audio thread with timing locked
+ * to the audio clock, not the JS event-loop clock. Previously each event got
+ * its own window.setTimeout, so attack timing absorbed any main-thread
+ * jitter (canvas redraws, GC, layout) directly into the audible sound.
+ *
+ * The standard Web Audio remedy (Chris Wilson, "A Tale of Two Clocks") is a
+ * lookahead scheduler: a slow JS driver scans events inside a small
+ * lookahead window and hands each one to the audio engine with an explicit
+ * future audio-clock time. The audio thread then renders the onset
+ * sample-accurately regardless of when the driver itself fires. The 100ms
+ * lookahead × 25ms driver interval gives ~4× redundancy on any single
+ * driver tick missing its target — plenty for a busy main thread.
+ *
+ * What's audio-clock and what's JS-clock:
+ *   • Attacks (noteOn): audio-clock, sample-accurate via `startAt`. THE FIX.
+ *   • Releases (noteOff): JS-clock, fired by a setTimeout at score-off time
+ *     (same as before). Release ramps are slow enough that ~10ms of JS
+ *     jitter on the release start is inaudible; trying to make them
+ *     sample-accurate runs into activeOscs lifecycle issues (the entry has
+ *     to stay populated through the release for sustain/aftertouch/syncAudio
+ *     to see the voice). Worth revisiting if the off jitter turns out to be
+ *     audible after the on jitter is gone.
+ *   • Visuals (cursor highlight, ack, draw, syncPianoOut): JS-clock at
+ *     score-on / score-off time. A few ms of jitter here is invisible since
+ *     the audio has already played. `draw()` is rAF-coalesced via
+ *     `requestDraw()` so multiple events firing in the same frame collapse
+ *     into one canvas blit.
+ *   • Glides (sustained-instrument slur portamento): JS-clock from the
+ *     visual-on track. The audio engine's sRampFreq anchors at currentTime,
+ *     so plumbing audio-clock timing through that path is a separate
+ *     change. With slurs short (≤70ms ramps), inheriting the ~10ms visual
+ *     jitter is acceptable.
+ */
 
-function dispatchChord(notes: ReadonlyArray<CoordRef>, durationMs: number, pb: ActivePlayback, opts: DispatchOpts = {}): void {
-  if (pb.cancelled) return;
-  const keys: KeyId[] = notes.map(coordToKeyId);
-  const ownedSeq = new Map<KeyId, number>();
+const LOOKAHEAD_MS = 100;
+const DRIVER_INTERVAL_MS = 25;
 
-  const canGlide = opts.glideFromKey != null && keys.length === 1
-    && !!audio.activeOscs[opts.glideFromKey];
+/** Schedule the audio attacks (and the pb-side voice bookkeeping) for an
+ *  event at driver tick time. Pure audio scheduling — no DOM, no canvas, no
+ *  MIDI mirror. voiceSeq / heldKeys are populated here so cancellation in
+ *  abortActive and the seq-based off-skip check in scheduleOffVisualAt see
+ *  consistent state from the moment the event is scheduled.
+ *
+ *  For canGlide (sustained-instrument slur): the audio handoff runs HERE,
+ *  not in scheduleOnVisualAt, with `atTime = audioOnSec` so the rate ramp +
+ *  voiceGain crossfade are anchored on the audio clock at the planned slur
+ *  boundary. The previous design did the glide in the visual-on setTimeout
+ *  (anchored at ctx.currentTime), which worked at slow tempos but lost
+ *  notes in fast trills: two consecutive visual-on fires inside each
+ *  other's ramp windows had their setValueCurveAtTime sequences collide
+ *  and skip pitches. Doing it at tick with sample-accurate atTime lets the
+ *  audio thread render each glide boundary precisely regardless of when
+ *  the JS callbacks fire. */
+function scheduleAudioForEvent(
+  ev: PlaybackEvent,
+  step: LegatoStep,
+  audioOnSec: number,
+  pb: ActivePlayback,
+  canGlide: boolean,
+): void {
   if (canGlide) {
-    /* Slur glide-in: hand the predecessor's still-sounding voice off to this
-       pitch (no re-attack). Migrate playback bookkeeping old→new so the
-       highlight follows and the off timer can still find the voice. */
-    const oldKey = opts.glideFromKey!;
-    const newKey = keys[0];
-    glideVoices([{ oldKey, newKey }], opts.rampMs ?? SLUR_GLIDE_MS);
-    pb.voiceSeq.delete(oldKey);
-    pb.heldKeys.delete(oldKey);
-    if (playbackOwnedKeys.has(oldKey)) {
-      playbackOwnedKeys.delete(oldKey);
-      selection.selectedKeys.delete(oldKey);
-    }
-    audio.sustainedKeys.delete(newKey);
+    const oldKey = step.glideFromKey!;
+    const newKey = coordToKeyId(ev.notes[0]);
+    /* Audio handoff on the audio clock. glideVoices rekeys audio.activeOscs
+       and audio.keyVelocity synchronously here, so a same-tick successor's
+       canGlide check sees the post-glide state. */
+    glideVoices([{ oldKey, newKey }], step.rampMs ?? SLUR_GLIDE_MS, audioOnSec);
+    /* Mirror the audio rekey in pb-state. voiceSeq is the claim ledger
+       checked at off-fire; heldKeys is the abort-target set. Both shift
+       oldKey→newKey to match audio.activeOscs. Later canGlide events in
+       the same tick that overwrite voiceSeq[newKey] are expected — see
+       the off-snapshot note in scheduleOffVisualAt. */
     const seq = ++pb.nextSeq;
     pb.voiceSeq.set(newKey, seq);
-    ownedSeq.set(newKey, seq);
+    pb.heldKeys.delete(oldKey);
     pb.heldKeys.add(newKey);
-    if (!selection.selectedKeys.has(newKey)) {
-      selection.selectedKeys.add(newKey);
-      playbackOwnedKeys.add(newKey);
+    return;
+  }
+  const keys: KeyId[] = ev.notes.map(coordToKeyId);
+  for (const k of keys) {
+    if (audio.activeOscs[k]) {
+      /* Back-to-back same-pitch: release the existing voice at the new
+         attack time. The audio engine schedules its release ramp on the
+         audio clock at audioOnSec, effectively cross-fading the old voice
+         out as the new one comes in. */
+      noteOff(k, audioOnSec);
     }
-  } else {
-    for (const k of keys) {
-      restrikePianoOut(k); /* external-synth re-attack for back-to-back same pitch */
-      if (audio.activeOscs[k]) {
-        /* Back-to-back same-pitch events: the next event's noteOn timer can
-           fire before the previous event's noteOff timer when they share a
-           deadline. Mirror the input-layer pedal-replay fix — stop the old
-           voice so syncAudio creates a fresh one, and flash to confirm. */
-        noteOff(k);
+    audio.sustainedKeys.delete(k);
+    /* Seed audio.keyVelocity so this attack shows up in loopdiag's vel trace
+       like Lumatone / QWERTY / recording-playback do (all of which write
+       keyVelocity before noteOn). Without the seed, Composer-dispatched
+       notes are invisible to the diagnostic overlay. */
+    const v = ev.velocity ?? audio.keyVelocity[k] ?? DEFAULT_DYNAMIC_MAP.mf;
+    audio.keyVelocity[k] = v;
+    noteOn(k, v, audioOnSec);
+    const seq = ++pb.nextSeq;
+    pb.voiceSeq.set(k, seq);
+    pb.heldKeys.add(k);
+  }
+}
+
+/** Visual side of the on-event: cursor highlight, slur glide (sustained-
+ *  instrument path), syncPianoOut, draw, playback-position ack. Runs at
+ *  score-on time via setTimeout. */
+function scheduleOnVisualAt(
+  ev: PlaybackEvent,
+  step: LegatoStep,
+  delayMs: number,
+  pb: ActivePlayback,
+  canGlide: boolean,
+  rearticulatedKeys: KeyId[],
+): void {
+  const h = window.setTimeout(() => {
+    pb.pending.delete(h);
+    if (pb.cancelled) return;
+    const keys = ev.notes.map(coordToKeyId);
+    if (canGlide) {
+      /* Slur glide-in — purely visual. The audio handoff (rate ramp +
+         voiceGain crossfade) already ran sample-accurately at tick time in
+         scheduleAudioForEvent with atTime=audioOnSec. Here we just sync the
+         user-visible selection highlight to the new pitch at score-on time
+         so it tracks what the listener hears. */
+      const oldKey = step.glideFromKey!;
+      const newKey = keys[0];
+      if (playbackOwnedKeys.has(oldKey)) {
+        playbackOwnedKeys.delete(oldKey);
+        selection.selectedKeys.delete(oldKey);
+      }
+      audio.sustainedKeys.delete(newKey);
+      if (!selection.selectedKeys.has(newKey)) {
+        selection.selectedKeys.add(newKey);
+        playbackOwnedKeys.add(newKey);
+      }
+    } else {
+      for (const k of keys) {
+        if (!selection.selectedKeys.has(k)) {
+          selection.selectedKeys.add(k);
+          playbackOwnedKeys.add(k);
+        }
+      }
+      /* External-synth restrike + visual flash for keys that were already
+         sounding at scheduling time (back-to-back same-pitch). These fire
+         at score-on time so the external MIDI message lands roughly with
+         the audio onset. */
+      for (const k of rearticulatedKeys) {
+        restrikePianoOut(k);
         triggerRearticulateFlash(k);
       }
-      audio.sustainedKeys.delete(k);
-      /* Seed audio.keyVelocity so this attack shows up in loopdiag's vel trace
-         like Lumatone / QWERTY / recording-playback do (all of which write
-         keyVelocity before noteOn). Without the seed, Composer-dispatched
-         notes are invisible to the diagnostic overlay. */
-      const v = opts.velocity ?? audio.keyVelocity[k] ?? DEFAULT_DYNAMIC_MAP.mf;
-      audio.keyVelocity[k] = v;
-      noteOn(k, v);
-      const seq = ++pb.nextSeq;
-      pb.voiceSeq.set(k, seq);
-      ownedSeq.set(k, seq);
-      pb.heldKeys.add(k);
-      /* Add to selectedKeys for visual highlight via existing draw() path.
-         Track ownership so we only remove keys that were not already held by
-         the user. */
-      if (!selection.selectedKeys.has(k)) {
-        selection.selectedKeys.add(k);
-        playbackOwnedKeys.add(k);
-      }
     }
+    syncPianoOut(); /* mirror this chord's attacks to the external synth */
+    requestDraw();
+    bridge.send({
+      type: 'playback-position',
+      meiId: ev.meiId ?? null,
+      timeMs: ev.atMs,
+    });
+  }, Math.max(0, delayMs));
+  pb.pending.add(h);
+}
+
+/** Schedule the off-side bookkeeping + audio release for an event. Runs at
+ *  score-off time via setTimeout; voiceSeq snapshot taken at scheduling
+ *  time guards against a later event re-articulating the same key (that
+ *  event's own off handler will tear it down). */
+function scheduleOffVisualAt(
+  ev: PlaybackEvent,
+  delayMs: number,
+  pb: ActivePlayback,
+  canGlide: boolean,
+): void {
+  /* canGlide: only the new key has an off pending; the old key was
+     handed off to the new one and its bookkeeping already moved. */
+  const offKeys: KeyId[] = canGlide
+    ? [coordToKeyId(ev.notes[0])]
+    : ev.notes.map(coordToKeyId);
+  /* Snapshot seq AT SCHEDULING TIME (right after scheduleAudioForEvent /
+     scheduleOnVisualAt populated it for this event). A later event
+     re-articulating the same key will increment pb.voiceSeq[k] past our
+     snapshot — we then skip the teardown so the live voice survives. */
+  const ownedSeq = new Map<KeyId, number>();
+  for (const k of offKeys) {
+    const s = pb.voiceSeq.get(k);
+    if (s !== undefined) ownedSeq.set(k, s);
   }
-  syncPianoOut(); /* mirror this chord's attacks to the external synth */
-  draw();
-
-  /* noOff: the voice rides on into a later glide, so this attack schedules no
-     release. The final note of a slur chain (noOff false) tears the chain down. */
-  if (opts.noOff) return;
-
-  const offKeys = canGlide ? [keys[0]] : keys;
-  const offHandle = window.setTimeout(() => {
-    pb.pending.delete(offHandle);
+  const h = window.setTimeout(() => {
+    pb.pending.delete(h);
     if (pb.cancelled) return;
     let mutated = false;
     for (const k of offKeys) {
-      /* A later dispatchChord may have re-articulated this key; its own
-         offHandle will tear it down. Skip if our seq is no longer current. */
       if (pb.voiceSeq.get(k) !== ownedSeq.get(k)) continue;
       pb.voiceSeq.delete(k);
       noteOff(k);
@@ -361,9 +475,9 @@ function dispatchChord(notes: ReadonlyArray<CoordRef>, durationMs: number, pb: A
       }
       mutated = true;
     }
-    if (mutated) { syncPianoOut(); draw(); }
-  }, opts.offMs ?? durationMs);
-  pb.pending.add(offHandle);
+    if (mutated) { syncPianoOut(); requestDraw(); }
+  }, Math.max(0, delayMs));
+  pb.pending.add(h);
 }
 
 interface LegatoStep {
@@ -422,6 +536,15 @@ function playScore(events: ReadonlyArray<PlaybackEvent>): void {
     bridge.send({ type: 'playback-finished' });
     return;
   }
+  /* Without an audio context we can't anchor on the audio clock at all —
+     fall through to the message ack so Composer's playback-finished
+     handshake completes. The recording-playback path has its own audio-
+     enabled check inside noteOn, so a missing context just produces a
+     silent playthrough; not worth replicating here. */
+  if (!audio.audioCtx) {
+    bridge.send({ type: 'playback-finished' });
+    return;
+  }
   const pb = newPlayback();
   active = pb;
   playbackActive = true;
@@ -434,45 +557,90 @@ function playScore(events: ReadonlyArray<PlaybackEvent>): void {
      playback is short. */
   const plan = computeLegatoPlan(events, !instrReplaysOnTranspose());
 
-  let lastEnd = 0;
-  events.forEach((ev, idx) => {
-    const step = plan[idx];
-    const onHandle = window.setTimeout(() => {
-      pb.pending.delete(onHandle);
-      if (pb.cancelled) return;
-      /* notes:[] is a silent rest pulse — emitted by Composer for cursor
-         advance; no audio dispatch, just the position ack. */
-      if (ev.notes.length > 0) {
-        dispatchChord(ev.notes, ev.durationMs, pb, {
-          velocity: ev.velocity,
-          offMs: step.offMs,
-          noOff: step.noOff,
-          glideFromKey: step.glideFromKey,
-          rampMs: step.rampMs,
-        });
-      }
-      bridge.send({
-        type: 'playback-position',
-        meiId: ev.meiId ?? null,
-        timeMs: ev.atMs,
-      });
-    }, ev.atMs);
-    pb.pending.add(onHandle);
-    lastEnd = Math.max(lastEnd, ev.atMs + (step.offMs ?? ev.durationMs));
-  });
+  /* Two clocks anchored at playback start:
+       t0Audio — base of all sample-accurate ON scheduling (audio seconds).
+                 +50ms matches the SampleEngine's live-input default lead;
+                 gives the audio thread headroom for the first source.
+       t0Wall  — base of all visual + off setTimeout delays (performance.now).
+     They drift on long playbacks (different clock sources), but for the
+     duration of a score that's invisible. */
+  const t0Audio = audio.audioCtx.currentTime + 0.050;
+  const t0Wall = performance.now();
 
-  const finHandle = window.setTimeout(() => {
-    pb.pending.delete(finHandle);
+  /* Precompute the latest off time so the finished-broadcast setTimeout can
+     be scheduled once when the driver drains. */
+  let lastEndMs = 0;
+  for (let i = 0; i < events.length; i++) {
+    const step = plan[i];
+    lastEndMs = Math.max(lastEndMs, events[i].atMs + (step.offMs ?? events[i].durationMs));
+  }
+
+  let nextIdx = 0;
+
+  function tick(): void {
     if (pb.cancelled) return;
-    bridge.send({ type: 'playback-position', meiId: null, timeMs: lastEnd });
-    bridge.send({ type: 'playback-finished' });
-    playbackActive = false;
-    if (active === pb) active = null;
-    /* Resync held-keys with the user's real selection (any input that
-       arrived during playback was broadcast-suppressed). */
-    broadcastHeldKeys();
-  }, lastEnd + 50);
-  pb.pending.add(finHandle);
+    const elapsedMs = performance.now() - t0Wall;
+    const horizonMs = elapsedMs + LOOKAHEAD_MS;
+    /* Schedule every event whose onset falls in [now, now+lookahead]. The
+       per-tick batch can be empty (driver firing between events) or hold
+       many (a dense passage). */
+    while (nextIdx < events.length && events[nextIdx].atMs <= horizonMs) {
+      const ev = events[nextIdx];
+      const step = plan[nextIdx];
+      const audioOnSec = t0Audio + ev.atMs / 1000;
+      const offEndMs = ev.atMs + (step.offMs ?? ev.durationMs);
+      /* Now that the audio glide runs at tick time (with sample-accurate
+         atTime), audio.activeOscs is the live engine state at this point
+         in the tick — earlier same-tick events that scheduled audio (noteOn
+         for non-canGlide, glideVoices for canGlide) have already rekeyed
+         it. Reading it here gives the correct answer for both same-tick
+         and cross-tick slur chains. */
+      const canGlide = step.glideFromKey != null
+        && ev.notes.length === 1
+        && !!audio.activeOscs[step.glideFromKey];
+      /* Capture which keys are about to be re-articulated (already in
+         activeOscs at scheduling time and not being glided). The visual-on
+         track uses this to fire restrikePianoOut + the rearticulate flash
+         at score-on time. Must be computed before scheduleAudioForEvent
+         since that call mutates activeOscs. */
+      const rearticulatedKeys: KeyId[] = [];
+      if (!canGlide && ev.notes.length > 0) {
+        for (const c of ev.notes) {
+          const k = coordToKeyId(c);
+          if (audio.activeOscs[k]) rearticulatedKeys.push(k);
+        }
+      }
+      if (ev.notes.length > 0) {
+        scheduleAudioForEvent(ev, step, audioOnSec, pb, canGlide);
+      }
+      scheduleOnVisualAt(ev, step, ev.atMs - elapsedMs, pb, canGlide, rearticulatedKeys);
+      if (ev.notes.length > 0 && !step.noOff) {
+        scheduleOffVisualAt(ev, offEndMs - elapsedMs, pb, canGlide);
+      }
+      nextIdx++;
+    }
+    if (nextIdx < events.length) {
+      pb.driverHandle = window.setTimeout(tick, DRIVER_INTERVAL_MS);
+    } else {
+      /* All events scheduled. Final position + finished broadcast at
+         lastEndMs+50, matching the legacy behavior. */
+      pb.driverHandle = undefined;
+      const finDelay = (lastEndMs + 50) - elapsedMs;
+      const finHandle = window.setTimeout(() => {
+        pb.pending.delete(finHandle);
+        if (pb.cancelled) return;
+        bridge.send({ type: 'playback-position', meiId: null, timeMs: lastEndMs });
+        bridge.send({ type: 'playback-finished' });
+        playbackActive = false;
+        if (active === pb) active = null;
+        /* Resync held-keys with the user's real selection (any input that
+           arrived during playback was broadcast-suppressed). */
+        broadcastHeldKeys();
+      }, Math.max(0, finDelay));
+      pb.pending.add(finHandle);
+    }
+  }
+  tick();
 }
 
 /* ── composer required layout cache + apply ─────────────────────────────── */

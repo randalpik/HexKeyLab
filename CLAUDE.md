@@ -36,9 +36,24 @@ Stack: TypeScript + Vite + vanilla DOM, modular by domain. **No React, no Redux.
 
 ## How to work with Max
 
-**Style**: Direct, peer-to-peer, technically dense when warranted. Match the register of the conversation. Don't over-explain things he already knows. Don't pad responses with framing. He prefers compact responses unless he asks for depth.
+### ⚠️ RULE ZERO — Speak before every tool call. No silent extended thinking. ⚠️
 
-**Speak before every tool call. No silent extended thinking.** Past sessions have racked up 10+ minutes and 50k+ tokens of internal deliberation with zero visible output; Max has had to interrupt to ask what's happening. This is unacceptable. Rules: (1) Before any tool call, write at least one sentence in the user-facing channel stating what you're about to do — even if it feels obvious. (2) Do not use thinking blocks to ruminate on which of two near-identical implementations is nicer; pick one and do it. (3) For a directive like "do X," reply with one short acknowledgement and start the tool call in the same turn — do not deliberate first. (4) If you have a clarifying question, ask it in one line and stop; do not produce a four-option AskUserQuestion or weigh options silently. (5) If you genuinely need to think, do it in 1-2 sentence chunks between tool calls, not in giant blocks. The user would always rather redirect a wrong action than wait through silence.
+**This is the rule Max has had to remind me about most often, including by interrupting silent thinking blocks after 10+ minutes of zero output. If you remember nothing else from this file, remember this. Past violations have included multi-minute, 50k+-token internal deliberations on routine debugging — completely unacceptable.**
+
+Concrete rules — these are not aspirational, they are mandatory:
+
+1. **Before any tool call, write at least one sentence in the user-facing channel** stating what you're about to do, even if it feels obvious. "Looking at X to confirm Y" is fine. Silence is not.
+2. **If you genuinely need to think, do it in 1–2 sentence chunks between tool calls**, not in giant blocks. Think → speak → act → repeat. Each thinking block must be small enough that an interruption from Max would only waste seconds, not minutes.
+3. **For complex debugging, narrate your hypotheses as you form them**, even half-formed ones. The user would always rather redirect a wrong direction early than wait through silent deliberation. Wrong hypotheses spoken aloud are useful; wrong hypotheses thought silently waste both of our time.
+4. **For a directive like "do X," reply with one short acknowledgement and start the tool call in the same turn** — do not deliberate first.
+5. **Do not ruminate on which of two near-identical implementations is nicer** — pick one and do it.
+6. **If you have a clarifying question, ask it in one line and stop**; do not produce a four-option AskUserQuestion or weigh options silently.
+
+If you catch yourself in a long thinking block, **stop the thinking, write a sentence, and continue**. The cost of breaking up thought is far smaller than the cost of silent walls.
+
+### Other style
+
+**Style**: Direct, peer-to-peer, technically dense when warranted. Match the register of the conversation. Don't over-explain things he already knows. Don't pad responses with framing. He prefers compact responses unless he asks for depth.
 
 **Trust pattern**: He catches subtle regressions through hands-on testing. Trust him on testable claims; ask before pursuing dead-ends; favor compact responses over comprehensive ones.
 

@@ -119,6 +119,11 @@ export interface OscVoice {
   damperGain: GainNode;
   pressureGain: GainNode;
   vol: number;
+  /** Audio-clock time at which `osc.start` was scheduled. Equals currentTime
+   *  for live-input voices; can be a future moment for playback voices
+   *  scheduled via the lookahead driver. Used by `abortActive` to stop voices
+   *  whose start is still pending. */
+  startTime: number;
   /** Set true on first aftertouch message after voice creation. */
   aftertouchSeen?: boolean;
   /** In-flight pressureGain ramp state (see PaRampState). */
