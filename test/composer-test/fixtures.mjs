@@ -559,6 +559,50 @@ const SIG_CHANGES = {
   `,
 };
 
+/* ── 4/4 beaming rules (beat-group + cross-beat super-group) ──────────── */
+
+const BEAMS = {
+  /* 4/4 with 8 eighth notes: each half-measure (32 ticks) is exactly 4
+   * eighths, so cross-beat super-beaming fires for both halves → two
+   * beams of 4 in the layer. */
+  beam4_4_eightEighths: `
+    m.setCursor(0, 1);
+    for (let i = 0; i < 8; i++) {
+      m.insertChordAtCursor({ notes: [${A_NOTE}], duration: '8', dots: 0 });
+    }
+  `,
+
+  /* 4/4 with [E E 16 16 E] × 2 (32 ticks per half). Each half has 5
+   * mixed-duration members, NOT four eighth notes, so the half falls
+   * back to per-beat groups: beat 1 = [E E] (beam of 2), beat 2 =
+   * [16 16 E] (beam of 3). Same shape repeats for beats 3-4. */
+  beam4_4_mixedSplitsPerBeat: `
+    m.setCursor(0, 1);
+    for (let half = 0; half < 2; half++) {
+      m.insertChordAtCursor({ notes: [${A_NOTE}], duration: '8', dots: 0 });
+      m.insertChordAtCursor({ notes: [${A_NOTE}], duration: '8', dots: 0 });
+      m.insertChordAtCursor({ notes: [${A_NOTE}], duration: '16', dots: 0 });
+      m.insertChordAtCursor({ notes: [${A_NOTE}], duration: '16', dots: 0 });
+      m.insertChordAtCursor({ notes: [${A_NOTE}], duration: '8', dots: 0 });
+    }
+  `,
+
+  /* 4/4 with first half = 4 eighths (super-beam) and second half =
+   * [E E 16 16 E] (per-beat split). Confirms each half is evaluated
+   * independently: one super-beam of 4, then two per-beat beams (2 + 3). */
+  beam4_4_mixedHalves: `
+    m.setCursor(0, 1);
+    for (let i = 0; i < 4; i++) {
+      m.insertChordAtCursor({ notes: [${A_NOTE}], duration: '8', dots: 0 });
+    }
+    m.insertChordAtCursor({ notes: [${A_NOTE}], duration: '8', dots: 0 });
+    m.insertChordAtCursor({ notes: [${A_NOTE}], duration: '8', dots: 0 });
+    m.insertChordAtCursor({ notes: [${A_NOTE}], duration: '16', dots: 0 });
+    m.insertChordAtCursor({ notes: [${A_NOTE}], duration: '16', dots: 0 });
+    m.insertChordAtCursor({ notes: [${A_NOTE}], duration: '8', dots: 0 });
+  `,
+};
+
 /* ── New: visual baselines (small, high-signal) ───────────────────────── */
 
 const VISUAL = {
@@ -1751,6 +1795,7 @@ export const FIXTURES = {
   ...mapTier(TIES, 'fast'),
   ...mapTier(TUPLETS, 'fast'),
   ...mapTier(SIG_CHANGES, 'fast'),
+  ...mapTier(BEAMS, 'fast'),
   ...mapTier(ROUNDTRIP_STRESS, 'full'),
   ...mapKbdTier(KBD, 'full'),
   ...mapKbdTier(BRIDGE, 'full'),
@@ -2347,6 +2392,56 @@ export const FIXTURE_ASSERTIONS = {
         const xml = window.__hkl_composer.model.serialize();
         const has = /<scoreDef[^>]*\\bmode="minor"/.test(xml);
         return has ? { ok: true } : { ok: false, detail: 'no mode=\"minor\" in <scoreDef>' };
+      })()` },
+  ],
+
+  /* 4/4 beaming rules. The shared helper parses serialized MEI (which has
+   * the regroupBeams pass applied), grabs measure 1's first layer, and
+   * returns the size of each top-level <beam> child counting <note>+<chord>
+   * descendants. Assert against the expected partition. */
+  beam4_4_eightEighths: [
+    { name: 'two cross-beat beams of 4',
+      expr: `(() => {
+        const xml = window.__hkl_composer.model.serialize();
+        const doc = new DOMParser().parseFromString(xml, 'application/xml');
+        const layer = doc.querySelector('measure layer');
+        if (!layer) return { ok: false, detail: 'no layer' };
+        const sizes = [...layer.children].filter(c => c.localName === 'beam')
+          .map(b => [...b.children].filter(c => c.localName === 'note' || c.localName === 'chord').length);
+        const want = [4, 4];
+        return JSON.stringify(sizes) === JSON.stringify(want)
+          ? { ok: true }
+          : { ok: false, detail: 'beam sizes=' + JSON.stringify(sizes) + ' want=' + JSON.stringify(want) };
+      })()` },
+  ],
+  beam4_4_mixedSplitsPerBeat: [
+    { name: 'four per-beat beams (2, 3, 2, 3)',
+      expr: `(() => {
+        const xml = window.__hkl_composer.model.serialize();
+        const doc = new DOMParser().parseFromString(xml, 'application/xml');
+        const layer = doc.querySelector('measure layer');
+        if (!layer) return { ok: false, detail: 'no layer' };
+        const sizes = [...layer.children].filter(c => c.localName === 'beam')
+          .map(b => [...b.children].filter(c => c.localName === 'note' || c.localName === 'chord').length);
+        const want = [2, 3, 2, 3];
+        return JSON.stringify(sizes) === JSON.stringify(want)
+          ? { ok: true }
+          : { ok: false, detail: 'beam sizes=' + JSON.stringify(sizes) + ' want=' + JSON.stringify(want) };
+      })()` },
+  ],
+  beam4_4_mixedHalves: [
+    { name: 'half 1 super-beam of 4; half 2 per-beat (2, 3)',
+      expr: `(() => {
+        const xml = window.__hkl_composer.model.serialize();
+        const doc = new DOMParser().parseFromString(xml, 'application/xml');
+        const layer = doc.querySelector('measure layer');
+        if (!layer) return { ok: false, detail: 'no layer' };
+        const sizes = [...layer.children].filter(c => c.localName === 'beam')
+          .map(b => [...b.children].filter(c => c.localName === 'note' || c.localName === 'chord').length);
+        const want = [4, 2, 3];
+        return JSON.stringify(sizes) === JSON.stringify(want)
+          ? { ok: true }
+          : { ok: false, detail: 'beam sizes=' + JSON.stringify(sizes) + ' want=' + JSON.stringify(want) };
       })()` },
   ],
 

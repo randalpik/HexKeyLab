@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 138,
-  "passed": 138,
+  "fixtures": 141,
+  "passed": 141,
   "failed": 0,
-  "elapsedMs": 41019,
+  "elapsedMs": 42143,
   "results": [
     {
       "name": "emptyDoc",
@@ -379,6 +379,30 @@
       "failures": [],
       "counts": {
         "invariants": 8
+      }
+    },
+    {
+      "name": "beam4_4_eightEighths",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "beam4_4_mixedSplitsPerBeat",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "beam4_4_mixedHalves",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
       }
     },
     {

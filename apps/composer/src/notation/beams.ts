@@ -8,8 +8,15 @@
 //     get a <beam> wrapper.
 //   - Compound meter (e.g. 6/8, 9/8, 12/8): beat = three meter.unit notes
 //     (dotted denominator). Same run logic.
-//   - 4/4 special case: instead of 4 quarter-beats, treat the measure as 2
-//     super-groups (beats 1-2 and 3-4) so 8 eighth notes form two beams of 4.
+//   - 4/4 special case: each half-measure (beats 1-2, beats 3-4) becomes a
+//     single super-group ONLY when its members are exactly four eighth notes
+//     (count=4, no rests, every @dur === '8'). Otherwise the half-measure
+//     falls back to per-beat quarter-note groups. This keeps the canonical
+//     8-eighths case beamed as two 4-beams while preventing over-beaming
+//     mixed rhythms like `E E 16 16 E` (which standard engraving renders
+//     as per-beat groups, not a cross-beat 5-beam). The two halves are
+//     evaluated independently — one half can keep its super-beam while
+//     the other splits.
 //   - Rests interrupt runs; quarter+ durations interrupt runs; singletons
 //     stay un-wrapped (Verovio renders a flag).
 //   - An element belongs to the beat-group containing its startTick. An
@@ -60,13 +67,12 @@ export function regroupBeams(doc: Document, ts: TimeSigInfo): void {
   unwrapBeams(doc);
 
   const measureTicks = ts.count * (64 / ts.unit);
-  const groups = beatGroupBoundaries(ts, measureTicks);
 
   const measures = doc.querySelectorAll('measure');
   for (const m of Array.from(measures)) {
     const layers = m.querySelectorAll('layer');
     for (const layer of Array.from(layers)) {
-      regroupOneLayer(doc, layer, groups);
+      regroupOneLayer(doc, layer, ts, measureTicks);
     }
   }
 
@@ -77,7 +83,9 @@ export function regroupBeams(doc: Document, ts: TimeSigInfo): void {
   }
 }
 
-/** Compute beat-group tick ranges given the time signature. */
+/** Base beat-group tick ranges given the time signature. In 4/4 this returns
+ *  the two half-measure super-groups; the per-layer pass may downgrade
+ *  either half to two quarter-beats via `effectiveGroupsForLayer`. */
 function beatGroupBoundaries(ts: TimeSigInfo, measureTicks: number): Array<{ lo: number; hi: number }> {
   if (ts.is4_4) {
     return [{ lo: 0, hi: 32 }, { lo: 32, hi: 64 }];
@@ -92,9 +100,49 @@ function beatGroupBoundaries(ts: TimeSigInfo, measureTicks: number): Array<{ lo:
   return out;
 }
 
-function regroupOneLayer(doc: Document, layer: Element, groups: Array<{ lo: number; hi: number }>): void {
+/** In 4/4, a half-measure super-group only survives if the layer's members
+ *  inside it are exactly four eighth notes (no rests, no other durations).
+ *  Otherwise the half-measure is split into two quarter-beat groups so
+ *  beaming stays inside the beat. The two halves are evaluated independently. */
+function effectiveGroupsForLayer(
+  stream: StreamEntry[],
+  ts: TimeSigInfo,
+  measureTicks: number,
+): Array<{ lo: number; hi: number }> {
+  const base = beatGroupBoundaries(ts, measureTicks);
+  if (!ts.is4_4) return base;
+  const out: Array<{ lo: number; hi: number }> = [];
+  for (const grp of base) {
+    const members = stream.filter((s) => s.startTick >= grp.lo && s.startTick < grp.hi);
+    if (isExactlyFourEighths(members)) {
+      out.push(grp);
+    } else {
+      const mid = (grp.lo + grp.hi) / 2;
+      out.push({ lo: grp.lo, hi: mid });
+      out.push({ lo: mid, hi: grp.hi });
+    }
+  }
+  return out;
+}
+
+function isExactlyFourEighths(members: StreamEntry[]): boolean {
+  if (members.length !== 4) return false;
+  for (const m of members) {
+    if (m.el.localName === 'rest') return false;
+    if (m.el.getAttribute('dur') !== '8') return false;
+  }
+  return true;
+}
+
+function regroupOneLayer(
+  doc: Document,
+  layer: Element,
+  ts: TimeSigInfo,
+  measureTicks: number,
+): void {
   const stream = annotateLayer(layer);
   if (stream.length === 0) return;
+  const groups = effectiveGroupsForLayer(stream, ts, measureTicks);
 
   for (const grp of groups) {
     const members = stream.filter((s) => s.startTick >= grp.lo && s.startTick < grp.hi);

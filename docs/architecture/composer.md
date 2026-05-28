@@ -236,7 +236,7 @@ Net: accidentals are uniformly Bravura, rest of the score stays on Leipzig (Brav
 Computed at serialize-time on the cloned doc (live doc has no `<beam>` wrappers). `regroupBeams(doc, timeSig)` removes existing beams, re-wraps consecutive beamable elements (`dur ≥ 8`, not a rest) per beat group:
 - **Simple** (n/{1,2,4}): one denominator-note per group.
 - **Compound** (n/{8,16}, n divisible by 3, ≥6): three per group.
-- **4/4 special**: beats 1–2 and 3–4 form two super-groups (8 eighths → two groups of 4).
+- **4/4 special**: each half-measure (beats 1–2, beats 3–4) is a super-group **only when its members are exactly four eighth notes** (no rests, every `@dur === '8'`). 8 eighths → two beams of 4; mixed rhythms (e.g. `E E 16 16 E E E E`) fall back to per-beat groups. The two halves are evaluated independently.
 
 Rests and durations ≥ quarter break the run; singletons stay unwrapped; an element belongs to the group containing its startTick.
 
