@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 135,
-  "passed": 135,
+  "fixtures": 138,
+  "passed": 138,
   "failed": 0,
-  "elapsedMs": 40155,
+  "elapsedMs": 41019,
   "results": [
     {
       "name": "emptyDoc",
@@ -415,6 +415,30 @@
     },
     {
       "name": "kbd_ctrlNavBarJump",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "kbd_ctrlRight_landsAtBarline_notPastFirstNote",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "kbd_ctrlLeft_staircase_currentThenPrev",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "kbd_ctrlRight_emptyNextMeasure",
       "ok": true,
       "failures": [],
       "counts": {

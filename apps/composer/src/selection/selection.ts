@@ -88,37 +88,12 @@ export function beatBoundariesInVoice(model: ComposerModel, voice: Voice): numbe
   return Array.from(byT.values()).sort((a, b) => a - b);
 }
 
-/** Cursor positions that fall exactly on a measure barline (tstamp is a
- *  multiple of measureTicks). Used by Ctrl+Shift+arrow to decide where to
- *  stop. Note: this is tstamp-based — distinct from `getMeasureStartCursor`,
- *  which returns the navigation-stop position (= past the first content of
- *  the measure in the wrapper-collapsed case, which is one cursor INSIDE
- *  the measure, not at the barline). */
+/** Cursor positions that fall exactly on a measure barline. Implementation
+ *  lives on the model now (`measureBoundaryCursors`) so non-selection bar-jump
+ *  in input.ts can share the same landing rule. Kept as a thin wrapper for
+ *  call sites that already import from this module. */
 export function measureBoundariesInVoice(model: ComposerModel, voice: Voice): number[] {
-  const flat = model.flatChildren(voice);
-  const measureT = model.measureTicks();
-  const candidates: Array<{ c: number; t: number }> = [];
-  for (let c = 0; c <= flat.length; c++) {
-    let t: number;
-    if (c === flat.length) {
-      t = model.allMeasures().length * measureT;
-    } else {
-      const info = model.getFlatStopInfo(voice, c);
-      if (!info) continue;
-      if (info.inTuplet) continue;
-      t = model.getTickPositionAt(voice, c);
-    }
-    const inMeas = ((t % measureT) + measureT) % measureT;
-    if (inMeas < TICK_EPS || measureT - inMeas < TICK_EPS) {
-      candidates.push({ c, t });
-    }
-  }
-  const byT = new Map<number, number>();
-  for (const { c, t } of candidates) {
-    const key = Math.round(t * 1e6);
-    byT.set(key, c);
-  }
-  return Array.from(byT.values()).sort((a, b) => a - b);
+  return model.measureBoundaryCursors(voice);
 }
 
 /** Which beat (= index into beatBoundariesInVoice) the cursor is "currently

@@ -795,7 +795,9 @@ const KBD = {
   },
 
   /* Type Ctrl+Right, Ctrl+Left to exercise bar-jump nav. Need at least
-   * two measures with content first. */
+   * two measures with content first. Lands AT the barline (= the cursor
+   * with tstamp exactly equal to a multiple of measureTicks), matching
+   * how Ctrl+Shift+Arrow extends selection. */
   kbd_ctrlNavBarJump: {
     setup: `
       m.setCursor(0, 1);
@@ -805,6 +807,53 @@ const KBD = {
       m.setCursor(2, 1);  /* Park cursor in middle of M_1. */
     `,
     setupKeys: [{ key: 'ArrowRight', ctrl: true }],
+  },
+
+  /* Ctrl+Right from mid-M_1 lands AT the barline between M_1 and M_2,
+   * NOT one slot past it (the old "first stop after the boundary" bug). */
+  kbd_ctrlRight_landsAtBarline_notPastFirstNote: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setCursor(m.getVoiceLength(1), 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setCursor(2, 1);  /* Mid-M_1. */
+    `,
+    setupKeys: [{ key: 'ArrowRight', ctrl: true }],
+  },
+
+  /* Two Ctrl+Lefts from mid-M_2: first press → start of M_2; second
+   * press → start of M_1. Staircase behavior matches selection-mode. */
+  kbd_ctrlLeft_staircase_currentThenPrev: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setCursor(6, 1);  /* Mid-M_2. */
+    `,
+    setupKeys: [
+      { key: 'ArrowLeft', ctrl: true },
+      { key: 'ArrowLeft', ctrl: true },
+    ],
+  },
+
+  /* Empty-measure pass-through: M_1 has a whole rest, M_2 is empty, M_3
+   * has a whole rest. Two Ctrl+Rights from start should land on M_2's
+   * barline cursor (start of empty M_2), then M_3's barline cursor. */
+  kbd_ctrlRight_emptyNextMeasure: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertRestAtCursor({ duration: '1', dots: 0 });
+      m.appendMeasure();  /* M_2 stays empty. */
+      m.appendMeasure();  /* M_3 will receive content. */
+      m.setCursor(m.getVoiceLength(1), 1);
+      m.insertRestAtCursor({ duration: '1', dots: 0 });
+      m.setCursor(0, 1);
+    `,
+    setupKeys: [
+      { key: 'ArrowRight', ctrl: true },
+      { key: 'ArrowRight', ctrl: true },
+    ],
   },
 
   /* Voice cycle: Up arrow 5 times → 1→2→expr→3→4→1. */
@@ -2323,13 +2372,46 @@ export const FIXTURE_ASSERTIONS = {
       })()` },
   ],
   kbd_ctrlNavBarJump: [
-    { name: 'cursor jumped to start of next measure',
+    { name: 'cursor landed at the M_1/M_2 barline (smallest boundary > 2)',
       expr: `(() => {
         const m = window.__hkl_composer.model;
-        const target = m.getFirstVisualCursorInMeasure(1, 1);
+        const boundaries = m.measureBoundaryCursors(1);
+        const target = boundaries.find(b => b > 2);
         return m.getCursor(1) === target
           ? { ok: true }
-          : { ok: false, detail: 'cursor=' + m.getCursor(1) + ' expected=' + target };
+          : { ok: false, detail: 'cursor=' + m.getCursor(1) + ' expected=' + target + ' boundaries=' + JSON.stringify(boundaries) };
+      })()` },
+  ],
+  kbd_ctrlRight_landsAtBarline_notPastFirstNote: [
+    { name: 'cursor tstamp equals one full measure (= M_2 barline)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const t = m.getTickPositionAt(1, m.getCursor(1));
+        const measureT = m.measureTicks();
+        return Math.abs(t - measureT) < 1e-6
+          ? { ok: true }
+          : { ok: false, detail: 'tstamp=' + t + ' measureTicks=' + measureT };
+      })()` },
+  ],
+  kbd_ctrlLeft_staircase_currentThenPrev: [
+    { name: 'cursor landed at start of M_1 after two Ctrl+Lefts',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const t = m.getTickPositionAt(1, m.getCursor(1));
+        return Math.abs(t - 0) < 1e-6
+          ? { ok: true }
+          : { ok: false, detail: 'tstamp=' + t + ' (expected 0 for start of M_1)' };
+      })()` },
+  ],
+  kbd_ctrlRight_emptyNextMeasure: [
+    { name: 'cursor advanced past empty M_2 to M_3 barline',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const t = m.getTickPositionAt(1, m.getCursor(1));
+        const measureT = m.measureTicks();
+        return Math.abs(t - 2 * measureT) < 1e-6
+          ? { ok: true }
+          : { ok: false, detail: 'tstamp=' + t + ' expected=' + (2 * measureT) };
       })()` },
   ],
   kbd_voiceCycle: [

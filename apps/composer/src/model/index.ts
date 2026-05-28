@@ -149,6 +149,10 @@ export function isTupletPlaceholder(el: Element): boolean {
    Largest first. The @dur values here MUST be consistent with ticksOf —
    e.g. dotted half = ticksOf('2', 1) = 48, so the 48-tick entry must carry
    dur='2' dots=1, not dur='1' dots=1 (= 96). */
+/* Tolerance for tstamp-equality comparisons in tick math (used by
+   measureBoundaryCursors). 1e-6 is the same tolerance selection.ts uses. */
+const TICK_EPS = 1e-6;
+
 const TICK_TABLE: ReadonlyArray<{ ticks: number; dur: Duration; dots: Dots }> = [
   { ticks: 64, dur: '1',  dots: 0 },   /* whole */
   { ticks: 56, dur: '2',  dots: 2 },   /* double-dotted half */
@@ -535,6 +539,40 @@ export class ComposerModel {
       }
     }
     return -1;
+  }
+
+  /** Cursor positions whose tick position is exactly a multiple of
+   *  `measureTicks()` (= barlines). Always includes 0 and the past-end
+   *  cursor. Tuplet-internal stops are filtered. Dedupe rule: when two
+   *  cursors share a tstamp (e.g. past-last-content of full M_k and
+   *  past-wrapper of M_{k+1}), the LATER one wins. Used by both
+   *  Ctrl+Shift+Arrow (selection-mode bar extension) and Ctrl+Arrow
+   *  (voice-mode bar jump) so the two land identically. */
+  measureBoundaryCursors(voice: Voice): number[] {
+    const flat = this.flatChildren(voice);
+    const measureT = this.measureTicks();
+    const candidates: Array<{ c: number; t: number }> = [];
+    for (let c = 0; c <= flat.length; c++) {
+      let t: number;
+      if (c === flat.length) {
+        t = this.allMeasures().length * measureT;
+      } else {
+        const info = this.getFlatStopInfo(voice, c);
+        if (!info) continue;
+        if (info.inTuplet) continue;
+        t = this.getTickPositionAt(voice, c);
+      }
+      const inMeas = ((t % measureT) + measureT) % measureT;
+      if (inMeas < TICK_EPS || measureT - inMeas < TICK_EPS) {
+        candidates.push({ c, t });
+      }
+    }
+    const byT = new Map<number, number>();
+    for (const { c, t } of candidates) {
+      const key = Math.round(t * 1e6);
+      byT.set(key, c);
+    }
+    return Array.from(byT.values()).sort((a, b) => a - b);
   }
 
   /** Absolute tick offset (in 64th-notes) of the cursor relative to the

@@ -1375,39 +1375,32 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       return;
     }
 
-    /* Ctrl+Left / Ctrl+Right: bar-jump navigation, keyed off the cursor's
-     * VISUAL measure (where the cursor renders), not the insertion-target
-     * measure. Empty measures (for the voice) are NOT skipped — they each
-     * have one cursor stop (the placeholder, or wrapper-cursor in insert
-     * mode) that Ctrl-nav lands on.
-     * - Ctrl+Right → first visual stop of the next measure (past-end when
-     *   already in the last measure).
-     * - Ctrl+Left → first visual stop of the current measure, OR first
-     *   stop of the previous measure when the cursor is already there. */
+    /* Ctrl+Left / Ctrl+Right: bar-jump navigation. Lands at barline cursors
+     * — the same set selection mode uses for Ctrl+Shift+Arrow — so the two
+     * navigation modes agree on "next/previous measure boundary." Empty
+     * measures still contribute a boundary (the wrapper cursor falls on
+     * tstamp = barline) so they're not skipped. The "staircase" Ctrl+Left
+     * behavior (first press → start of current measure; second press →
+     * start of prior measure) falls out naturally from `prev < cur`. */
     if (e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey &&
         (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
       e.preventDefault();
       if (state.cursorMode !== 'voice') return;
       if (hooks.isPlaybackActive()) return;
       const voice = model.getCurrentVoice();
-      const m = model.cursorMeasureIdx(voice, state.mode);
-      const total = model.allMeasures().length;
+      const boundaries = model.measureBoundaryCursors(voice);
+      const cur = model.getCursor();
       state.chordInternalSel = null;
       if (e.key === 'ArrowRight') {
-        if (m + 1 < total) {
-          const target = model.getFirstVisualCursorInMeasure(voice, m + 1, state.mode);
-          model.setCursor(target >= 0 ? target : model.getVoiceLength(voice));
-        } else {
-          model.setCursor(model.getVoiceLength(voice));
-        }
+        const next = boundaries.find((b) => b > cur);
+        if (next !== undefined) model.setCursor(next);
       } else {
-        const curStart = model.getFirstVisualCursorInMeasure(voice, m, state.mode);
-        if (curStart >= 0 && model.getCursor() !== curStart) {
-          model.setCursor(curStart);
-        } else if (m > 0) {
-          const target = model.getFirstVisualCursorInMeasure(voice, m - 1, state.mode);
-          if (target >= 0) model.setCursor(target);
+        let prev: number | undefined;
+        for (const b of boundaries) {
+          if (b < cur) prev = b;
+          else break;
         }
+        if (prev !== undefined) model.setCursor(prev);
       }
       hooks.onChange();
       hooks.onStateChange();
