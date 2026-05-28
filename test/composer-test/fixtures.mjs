@@ -1131,6 +1131,28 @@ const CHORD_INTERNAL = {
     ],
   },
 
+  /* ArrowLeft after Alt+Up: cursor moves AND the chord-internal selection
+     is cleared. Codifies the "cursor movement clears chordInternalSel"
+     invariant documented on ChordInternalSel. */
+  arrow_clears_chord_internal_sel: {
+    setup: CHORD_CEG_THEN_A,
+    setupKeys: [
+      { key: 'ArrowUp', alt: true },
+      'ArrowLeft',
+    ],
+  },
+
+  /* btnRewind click after Alt+Up: cursor returns to 0 AND the chord-internal
+     selection is cleared. The rewind handler in main.ts calls
+     clearChordInternalSel() before model.setCursor(0). The assertion fires
+     the click itself (no rewind keybinding exists). */
+  rewind_clears_chord_internal_sel: {
+    setup: CHORD_CEG_THEN_A,
+    setupKeys: [
+      { key: 'ArrowUp', alt: true },
+    ],
+  },
+
   /* Bare-note Alt+Left: SC-transposes the single note without requiring a
      prior Alt+Up selection step (auto-selects on the only note). The bare
      A3 at (0, 0) hops to (-7, 4). Auto-selection becomes visible (sel set
@@ -1314,6 +1336,21 @@ const CHORD_INTERNAL = {
       { key: 'ArrowUp', alt: true },
       '=',
     ],
+  },
+
+  /* Playback: a visible rest between two notes emits a silent PlaybackEvent
+     (notes:[]) so HKL's scheduler echoes a `playback-position` for the rest
+     and Composer's per-voice playback cursor steps THROUGH the rest. M_1
+     = quarter-note A4, quarter rest, quarter-note A4 (one beat each at
+     120 bpm → atMs 0, 500, 1000). */
+  playback_advances_over_rest: {
+    setup: `
+      m.setCursor(0, 1);
+      const note = [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888888', velocity: 80 }];
+      m.insertChordAtCursor({ notes: note, duration: '4', dots: 0 });
+      m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: note, duration: '4', dots: 0 });
+    `,
   },
 
   /* Empty voice with key.sig = 7 sharps → song-key broadcast carries C#
@@ -2856,6 +2893,64 @@ export const FIXTURE_ASSERTIONS = {
         return s.chordInternalSel === null
           ? { ok: true }
           : { ok: false, detail: 'chordInternalSel still set' };
+      })()` },
+  ],
+  arrow_clears_chord_internal_sel: [
+    { name: 'ArrowLeft clears chordInternalSel set by Alt+Up',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        return s.chordInternalSel === null
+          ? { ok: true }
+          : { ok: false, detail: 'chordInternalSel still set: ' + JSON.stringify(s.chordInternalSel) };
+      })()` },
+  ],
+  rewind_clears_chord_internal_sel: [
+    { name: 'btnRewind click clears chordInternalSel and parks cursor at 0',
+      expr: `(() => {
+        /* Pre-check: setupKeys (Alt+Up) should have set the sel. */
+        const before = window.__hkl_composer.inputState().chordInternalSel;
+        if (!before) return { ok: false, detail: 'pre-click: no chordInternalSel (Alt+Up failed)' };
+        document.getElementById('btnRewind').click();
+        const s = window.__hkl_composer.inputState();
+        const cur = window.__hkl_composer.model.getCursor(1);
+        if (s.chordInternalSel !== null)
+          return { ok: false, detail: 'chordInternalSel still set after rewind: ' + JSON.stringify(s.chordInternalSel) };
+        if (cur !== 0)
+          return { ok: false, detail: 'cursor not at 0 after rewind: ' + cur };
+        return { ok: true };
+      })()` },
+  ],
+  playback_advances_over_rest: [
+    { name: 'visible rest emits a silent PlaybackEvent (notes:[]) keyed to its xml:id',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const events = window.__hkl_composer.buildPlayback(m);
+        /* Three children → three events, in order: note attack, silent rest,
+           note attack. Each is a quarter at 120 bpm → 500 ms. */
+        if (events.length !== 3) {
+          return { ok: false, detail: 'expected 3 events, got ' + events.length +
+            ' (' + events.map(e => 'atMs=' + e.atMs + ' dur=' + e.durationMs + ' n=' + e.notes.length).join('; ') + ')' };
+        }
+        const rest = events[1];
+        if (rest.notes.length !== 0)
+          return { ok: false, detail: 'event[1] has ' + rest.notes.length + ' notes (expected 0 = silent rest)' };
+        if (Math.abs(rest.atMs - 500) > 1e-6)
+          return { ok: false, detail: 'event[1] atMs=' + rest.atMs + ' (expected 500)' };
+        if (Math.abs(rest.durationMs - 500) > 1e-6)
+          return { ok: false, detail: 'event[1] durationMs=' + rest.durationMs + ' (expected 500)' };
+        /* meiId must match the actual <rest> element in the doc so HKL's
+           ack lands on it and Composer's setPlaybackPosition can find it. */
+        const restEl = m.getDoc().querySelector('rest');
+        if (!restEl) return { ok: false, detail: 'no <rest> in doc' };
+        const restId = restEl.getAttribute('xml:id');
+        if (rest.meiId !== restId)
+          return { ok: false, detail: 'meiId=' + rest.meiId + ' (expected ' + restId + ')' };
+        /* Sandwich notes must still be there at the expected times. */
+        if (events[0].notes.length !== 1 || Math.abs(events[0].atMs) > 1e-6)
+          return { ok: false, detail: 'event[0] not a note attack at t=0: ' + JSON.stringify(events[0]) };
+        if (events[2].notes.length !== 1 || Math.abs(events[2].atMs - 1000) > 1e-6)
+          return { ok: false, detail: 'event[2] not a note attack at t=1000: ' + JSON.stringify(events[2]) };
+        return { ok: true };
       })()` },
   ],
   chord_extend_insert: [

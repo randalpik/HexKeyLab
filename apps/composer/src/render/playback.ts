@@ -12,6 +12,7 @@
 // multiple PlaybackEvents at the same atMs with different durationMs.
 
 import type { ComposerModel, Voice } from '../model/index.js';
+import { isTupletPlaceholder } from '../model/index.js';
 import type { PlaybackEvent, CoordRef } from '@hkl/bridge/protocol.js';
 import {
   collectDynams, collectHairpins, getDynamicMap, absoluteTickForMoment,
@@ -232,10 +233,32 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
       const local = child.localName;
       const ticks = elementDurationTicks(child);
 
-      if (local === 'rest' || local === 'space') {
-        /* Both rests and (placeholder) spaces advance the voice clock
-           silently. Including spaces in the stream lets a voice that's
-           empty in some measures correctly time-shift its later content. */
+      if (local === 'space') {
+        /* (placeholder) spaces advance the voice clock silently. Including
+           spaces in the stream lets a voice that's empty in some measures
+           correctly time-shift its later content. */
+        tTicks += ticks;
+        i++;
+        continue;
+      }
+      if (local === 'rest') {
+        /* Visible rests emit a silent PlaybackEvent (notes: []) so HKL's
+           scheduler echoes a `playback-position` with the rest's meiId at
+           its onset — the per-voice playback cursor steps through rests
+           instead of skipping past them. Tuplet placeholders are invisible
+           (suppressed by CSS) and not cursor stops, so they stay silent. */
+        if (!isTupletPlaceholder(child)) {
+          const meiId = child.getAttribute('xml:id') ?? undefined;
+          if (meiId) {
+            events.push({
+              atMs: tTicks * tickMs,
+              durationMs: ticks * tickMs,
+              notes: [],
+              meiId,
+              voice,
+            });
+          }
+        }
         tTicks += ticks;
         i++;
         continue;

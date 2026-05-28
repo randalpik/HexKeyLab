@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 129,
-  "passed": 129,
+  "fixtures": 132,
+  "passed": 132,
   "failed": 0,
-  "elapsedMs": 38497,
+  "elapsedMs": 39783,
   "results": [
     {
       "name": "emptyDoc",
@@ -774,6 +774,22 @@
       }
     },
     {
+      "name": "arrow_clears_chord_internal_sel",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "rewind_clears_chord_internal_sel",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
       "name": "alt_select_bare_note_left",
       "ok": true,
       "failures": [],
@@ -835,6 +851,14 @@
       "failures": [],
       "counts": {
         "invariants": 9
+      }
+    },
+    {
+      "name": "playback_advances_over_rest",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
       }
     },
     {

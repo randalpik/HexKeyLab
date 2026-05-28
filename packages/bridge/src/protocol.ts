@@ -44,13 +44,16 @@ export interface ResolvedNote {
  *  commands where HKL re-resolves the current tuning's frequency. */
 export interface CoordRef { q: number; r: number; }
 
-/** A single scheduled chord in a playback queue. */
+/** A single scheduled chord in a playback queue. An empty `notes` array
+ *  represents a silent rest pulse — HKL skips audio dispatch but still
+ *  acks `playback-position` with `meiId` at `atMs`, so Composer's per-voice
+ *  cursor advances through rests. */
 export interface PlaybackEvent {
   /** Onset time relative to playback start, in milliseconds. */
   atMs: number;
   /** Duration in milliseconds. */
   durationMs: number;
-  /** Notes in the chord, by lattice coord. */
+  /** Notes in the chord, by lattice coord. Empty array = silent rest pulse. */
   notes: ReadonlyArray<CoordRef>;
   /** Optional MEI id so HKL can echo a playback-position back keyed to it. */
   meiId?: string;

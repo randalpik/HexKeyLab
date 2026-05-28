@@ -202,6 +202,14 @@ export function getInputState(): Readonly<InputState> {
   return state;
 }
 
+/** Drop any chord-internal selection. Called from input.ts at every cursor-
+ *  moving keystroke and from main.ts on rewind, matching the invariant
+ *  documented on `ChordInternalSel`: cursor movement and voice switches
+ *  clear the sel. */
+export function clearChordInternalSel(): void {
+  state.chordInternalSel = null;
+}
+
 function shouldIgnore(e: KeyboardEvent): boolean {
   const t = e.target as HTMLElement | null;
   if (!t) return false;
@@ -1384,6 +1392,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       const voice = model.getCurrentVoice();
       const m = model.cursorMeasureIdx(voice, state.mode);
       const total = model.allMeasures().length;
+      state.chordInternalSel = null;
       if (e.key === 'ArrowRight') {
         if (m + 1 < total) {
           const target = model.getFirstVisualCursorInMeasure(voice, m + 1, state.mode);
@@ -1528,18 +1537,18 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     const navKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'];
     if (navKeys.indexOf(e.key) >= 0) {
       if (hooks.isPlaybackActive()) { e.preventDefault(); return; }
-      if (e.key === 'ArrowUp')   { e.preventDefault(); const bv = model.getCurrentVoice(), bm = state.cursorMode; cycleVoice(model, 'up', hooks);   cancelSlurIfVoiceChanged(model, bv, bm); hooks.onStateChange(); hooks.onChange(); return; }
-      if (e.key === 'ArrowDown') { e.preventDefault(); const bv = model.getCurrentVoice(), bm = state.cursorMode; cycleVoice(model, 'down', hooks); cancelSlurIfVoiceChanged(model, bv, bm); hooks.onStateChange(); hooks.onChange(); return; }
+      if (e.key === 'ArrowUp')   { e.preventDefault(); const bv = model.getCurrentVoice(), bm = state.cursorMode; state.chordInternalSel = null; cycleVoice(model, 'up', hooks);   cancelSlurIfVoiceChanged(model, bv, bm); hooks.onStateChange(); hooks.onChange(); return; }
+      if (e.key === 'ArrowDown') { e.preventDefault(); const bv = model.getCurrentVoice(), bm = state.cursorMode; state.chordInternalSel = null; cycleVoice(model, 'down', hooks); cancelSlurIfVoiceChanged(model, bv, bm); hooks.onStateChange(); hooks.onChange(); return; }
       if (state.cursorMode === 'expr') {
         if (e.key === 'ArrowLeft')  { e.preventDefault(); state.exprCursor = step(state.exprCursor, -1); hooks.onStateChange(); hooks.onChange(); return; }
         if (e.key === 'ArrowRight') { e.preventDefault(); state.exprCursor = step(state.exprCursor, +1); hooks.onStateChange(); hooks.onChange(); return; }
         if (e.key === 'Home')       { e.preventDefault(); state.exprCursor = moveToStart(state.exprCursor); hooks.onStateChange(); hooks.onChange(); return; }
         if (e.key === 'End')        { e.preventDefault(); state.exprCursor = moveToEnd(state.exprCursor); hooks.onStateChange(); hooks.onChange(); return; }
       } else {
-        if (e.key === 'ArrowLeft')  { e.preventDefault(); model.moveCursor('left');  hooks.onStateChange(); hooks.onChange(); return; }
-        if (e.key === 'ArrowRight') { e.preventDefault(); model.moveCursor('right'); hooks.onStateChange(); hooks.onChange(); return; }
-        if (e.key === 'Home')       { e.preventDefault(); model.setCursor(0); hooks.onStateChange(); hooks.onChange(); return; }
-        if (e.key === 'End')        { e.preventDefault(); model.cursorToEnd(); hooks.onStateChange(); hooks.onChange(); return; }
+        if (e.key === 'ArrowLeft')  { e.preventDefault(); state.chordInternalSel = null; model.moveCursor('left');  hooks.onStateChange(); hooks.onChange(); return; }
+        if (e.key === 'ArrowRight') { e.preventDefault(); state.chordInternalSel = null; model.moveCursor('right'); hooks.onStateChange(); hooks.onChange(); return; }
+        if (e.key === 'Home')       { e.preventDefault(); state.chordInternalSel = null; model.setCursor(0); hooks.onStateChange(); hooks.onChange(); return; }
+        if (e.key === 'End')        { e.preventDefault(); state.chordInternalSel = null; model.cursorToEnd(); hooks.onStateChange(); hooks.onChange(); return; }
       }
     }
 

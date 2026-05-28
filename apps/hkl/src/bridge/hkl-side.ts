@@ -440,13 +440,17 @@ function playScore(events: ReadonlyArray<PlaybackEvent>): void {
     const onHandle = window.setTimeout(() => {
       pb.pending.delete(onHandle);
       if (pb.cancelled) return;
-      dispatchChord(ev.notes, ev.durationMs, pb, {
-        velocity: ev.velocity,
-        offMs: step.offMs,
-        noOff: step.noOff,
-        glideFromKey: step.glideFromKey,
-        rampMs: step.rampMs,
-      });
+      /* notes:[] is a silent rest pulse — emitted by Composer for cursor
+         advance; no audio dispatch, just the position ack. */
+      if (ev.notes.length > 0) {
+        dispatchChord(ev.notes, ev.durationMs, pb, {
+          velocity: ev.velocity,
+          offMs: step.offMs,
+          noOff: step.noOff,
+          glideFromKey: step.glideFromKey,
+          rampMs: step.rampMs,
+        });
+      }
       bridge.send({
         type: 'playback-position',
         meiId: ev.meiId ?? null,

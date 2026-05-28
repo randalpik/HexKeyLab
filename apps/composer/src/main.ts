@@ -15,7 +15,7 @@ import type { HklEvent, ResolvedNote, FootprintCell } from '@hkl/bridge/protocol
 import { ComposerModel } from './model/index.js';
 import { renderer, ZOOM_PRESETS, type ZoomLevel } from './render/render.js';
 import { cursor } from './cursor/cursor.js';
-import { initInput, getInputState, installSCTransposeImpl } from './input.js';
+import { initInput, getInputState, installSCTransposeImpl, clearChordInternalSel } from './input.js';
 import { scTransposeChordNote } from './notation/scTranspose.js';
 import { HistoryManager } from './history.js';
 import type { CursorUpdateOpts } from './cursor/cursor.js';
@@ -607,6 +607,7 @@ $('btnPlay')?.addEventListener('click', () => {
 
 $('btnRewind')?.addEventListener('click', () => {
   if (isPlaying) stopPlayback();
+  clearChordInternalSel();
   model.setCursor(0);
   reRender();
   refreshIndicators();
