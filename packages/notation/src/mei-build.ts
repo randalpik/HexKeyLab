@@ -10,6 +10,7 @@
 // structurally assignable to `NoteSpec`, so Composer call sites pass it directly.
 
 import { tokenFromAlter, alterFromCount } from './accidentals.js';
+import { DYNAMIC_NAMES, DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 
 export const MEI_NS = 'http://www.music-encoding.org/ns/mei';
 export const XML_NS = 'http://www.w3.org/XML/1998/namespace';
@@ -177,6 +178,11 @@ export function buildScoreSkeletonXml(setup: ScoreSkeletonSetup = {}): string {
   const tempoDotsAttr = tempoDots > 0 ? ` mm.dots="${tempoDots}"` : '';
   const lr = setup.layoutReq ?? { tuningMode: '5', refQ: 0, refR: 0 };
   const layoutReqBlock = `<hkl:layoutReq tuningMode="${lr.tuningMode}" refQ="${lr.refQ}" refR="${lr.refR}"/>`;
+  /* Dynamic→velocity defaults are sourced from @hkl/shared so they track the
+     house curve; hardcoding them here let them go stale once already. */
+  const dynamicLevelsBlock = DYNAMIC_NAMES
+    .map((name) => `<hkl:level name="${name}" velocity="${DEFAULT_DYNAMIC_MAP[name]}"/>`)
+    .join('\n          ');
 
   /* <extMeta> with HKL-namespaced config carries document-level performance
      defaults (dynamic→velocity map). The xmlns:hkl prefix declaration lives
@@ -192,14 +198,7 @@ export function buildScoreSkeletonXml(setup: ScoreSkeletonSetup = {}): string {
       <hkl:config>
         ${layoutReqBlock}
         <hkl:dynamicMap>
-          <hkl:level name="fff" velocity="127"/>
-          <hkl:level name="ff"  velocity="124"/>
-          <hkl:level name="f"   velocity="120"/>
-          <hkl:level name="mf"  velocity="116"/>
-          <hkl:level name="mp"  velocity="112"/>
-          <hkl:level name="p"   velocity="108"/>
-          <hkl:level name="pp"  velocity="103"/>
-          <hkl:level name="ppp" velocity="96"/>
+          ${dynamicLevelsBlock}
         </hkl:dynamicMap>
       </hkl:config>
     </extMeta>
