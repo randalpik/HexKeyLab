@@ -90,6 +90,13 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
    either #score (scroll mode) or a .score-page wrapper (page mode), so
    it contributes to #score's scrollable area. */
 #score svg:not(#cursorOverlay) { display: block; margin: 0 }
+/* Scroll mode: the SVG sits directly in #score (no .score-page wrapper
+   supplying breathing room), so give it a small left margin. The cursor
+   overlay's width calculation (svgRect.right − scoreRect.left) naturally
+   includes this offset, and rectForId returns container-relative coords
+   that already account for it — cursor and selection markers land
+   correctly without further adjustment. */
+#score.view-scroll svg:not(#cursorOverlay) { margin-left: 24px }
 /* Cursor overlay is sized to match Verovio's SVG dimensions in JS so it
    covers the same scrollable area. Both children of #score scroll together.
    Positioned absolute at (0, 0); the overlay's width/height are extended
