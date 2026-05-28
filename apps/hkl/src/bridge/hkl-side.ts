@@ -597,7 +597,15 @@ function applyLayoutFromComposer(req: ComposerLayoutReq): void {
     view.kbAnchorR = sp.r;
     onRefChanged(sp.q - oldAQ, sp.r - oldAR);
     invalidatePianoOutline();
-    syncViewToOutline(currentOutlineForBridge(), false);
+    /* Snap (immediate=true), not tween. Composer-driven sync is programmatic
+       state adoption, not user navigation. Multi-message handshakes (composer-
+       hello → layout-req-changed → set-song-key, possibly + set-reference-note)
+       used to fire successive `syncViewToOutline(false)` calls inside one
+       microtask chain — each resetting the tween's startQ to the previous
+       call's frozen viewQ. Net effect: view stuck at an intermediate position
+       with seams/outline/note-names drifted from the lattice cells. Snapping
+       eliminates the in-flight animation state entirely. */
+    syncViewToOutline(currentOutlineForBridge(), true);
     draw();
   }
 }
@@ -638,7 +646,9 @@ bridge.on((msg: ComposerEvent) => {
       abortActive();
       if (onComposerBye()) {
         invalidatePianoOutline();
-        syncViewToOutline(currentOutlineForBridge(), false);
+        /* Snap — see applyLayoutFromComposer comment. Composer dropping a
+           ref-tier is structural, not navigational. */
+        syncViewToOutline(currentOutlineForBridge(), true);
         draw();
         broadcastAllToComposer();
       }
@@ -699,7 +709,11 @@ bridge.on((msg: ComposerEvent) => {
       if (validateRefNoteCandidate(msg.q, msg.r) === null
           && setSelectionFromComposer(msg.q, msg.r)) {
         invalidatePianoOutline();
-        syncViewToOutline(currentOutlineForBridge(), false);
+        /* Snap — see applyLayoutFromComposer comment. Cursor-follow used to
+           animate, but the multi-message reset race made even single
+           set-reference-note updates land mid-tween when the handshake
+           was still in flight. */
+        syncViewToOutline(currentOutlineForBridge(), true);
         draw();
         broadcastAllToComposer();
       }
@@ -718,7 +732,8 @@ bridge.on((msg: ComposerEvent) => {
         view.kbAnchorQ = sp.q;
         view.kbAnchorR = sp.r;
         invalidatePianoOutline();
-        syncViewToOutline(currentOutlineForBridge(), false);
+        /* Snap — see applyLayoutFromComposer comment. */
+        syncViewToOutline(currentOutlineForBridge(), true);
         draw();
         onRefChanged(sp.q - oldAQ, sp.r - oldAR);
         /* onRefChanged short-circuits when the spine delta is (0,0) — but
