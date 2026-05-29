@@ -2379,6 +2379,90 @@ const PHASE1 = {
     setupKeys: [{ key: 's' }],
   },
 
+  /* ── Phase 2.1: sustain pedal (Shift+P down / Shift+O up) ─────────────── */
+
+  /* Two quarter notes in M_1 V_1; Shift+P at note1 (beat 1) drops a pedal
+     down, ArrowRight advances the cursor, Shift+O at note2 (beat 2) drops a
+     pedal up. Both are tstamp-anchored <pedal> siblings on staff 2. */
+  phase2_pedal_down_and_up: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 1, pname: 'e', accid: '', oct: 5, midi: 76, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);  /* park on note1 (anchor = flat[0]) */
+    `,
+    setupKeys: [
+      { key: 'P', shift: true },   /* pedal down @ beat 1 */
+      'ArrowRight',                /* cursor → past note2 */
+      { key: 'O', shift: true },   /* pedal up @ beat 2 */
+    ],
+    visualBaseline: 'phase2_pedal_down_and_up',
+  },
+
+  /* Shift+P twice at the same moment toggles the pedal-down mark back off. */
+  phase2_pedal_toggle_off: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+    `,
+    setupKeys: [{ key: 'P', shift: true }, { key: 'P', shift: true }],
+  },
+
+  /* Pedal is tstamp-anchored, so it survives deletion of a nearby note (unlike
+     the note-attached fermata/breath). Pedal down at beat 1 on note1; then
+     delete note2; the pedal-down mark remains. */
+  phase2_pedal_survives_note_delete: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 1, pname: 'e', accid: '', oct: 5, midi: 76, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+    `,
+    setupKeys: [
+      { key: 'P', shift: true },   /* pedal down @ beat 1 */
+      'ArrowRight', 'ArrowRight',  /* cursor → end (past note2) */
+      'Backspace',                 /* delete note2 */
+    ],
+  },
+
+  /* Pedal LAYER (after V4, like expressions): two quarters + pedal down@beat1
+     / up@beat2, then ArrowDown ×4 cycles V1→V2→V3→V4→pedal (expr layer is
+     skipped — no dynamics). */
+  phase2_pedal_layer_enter: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 1, pname: 'e', accid: '', oct: 5, midi: 76, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+    `,
+    setupKeys: [
+      { key: 'P', shift: true },   /* pedal down @ beat 1 */
+      'ArrowRight',
+      { key: 'O', shift: true },   /* pedal up @ beat 2 */
+      'ArrowDown', 'ArrowDown', 'ArrowDown', 'ArrowDown',  /* → pedal layer */
+    ],
+  },
+
+  /* In the pedal layer, the cursor lands on the first moment (beat 1 = pedal
+     down). Backspace deletes that mark; the up@beat2 remains and we stay in
+     the pedal layer. */
+  phase2_pedal_layer_delete: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 1, pname: 'e', accid: '', oct: 5, midi: 76, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+    `,
+    setupKeys: [
+      { key: 'P', shift: true },
+      'ArrowRight',
+      { key: 'O', shift: true },
+      'ArrowDown', 'ArrowDown', 'ArrowDown', 'ArrowDown',  /* → pedal layer (at beat 1) */
+      'Backspace',                                          /* delete pedal-down */
+    ],
+  },
+
   /* fillIncompleteMeasures fills M_1 (a single quarter rest, then quiet) when
      M_2 has content. */
   phase1_fillIncomplete_basic: {
@@ -5096,6 +5180,109 @@ export const FIXTURE_ASSERTIONS = {
         /* Quarter at 120bpm = 500ms unshaped; staccato → 250ms. Allow some slack. */
         return ev.durationMs > 240 && ev.durationMs < 260
           ? { ok: true } : { ok: false, detail: 'durMs=' + ev.durationMs };
+      })()` },
+  ],
+
+  /* ── Phase 2.1: sustain pedal ─────────────────────────────────────────── */
+  phase2_pedal_down_and_up: [
+    { name: 'M_1 has <pedal dir="down" tstamp≈1 staff="2"> and <pedal dir="up" tstamp≈2 staff="2"> siblings',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const peds = [...m.getDoc().querySelectorAll('measure > pedal')];
+        const down = peds.filter(p => p.getAttribute('dir') === 'down');
+        const up = peds.filter(p => p.getAttribute('dir') === 'up');
+        if (peds.length !== 2 || down.length !== 1 || up.length !== 1)
+          return { ok: false, detail: 'pedals=' + peds.length + ' down=' + down.length + ' up=' + up.length };
+        const dts = parseFloat(down[0].getAttribute('tstamp') ?? '0');
+        const uts = parseFloat(up[0].getAttribute('tstamp') ?? '0');
+        const staffOk = down[0].getAttribute('staff') === '2' && up[0].getAttribute('staff') === '2';
+        return (Math.abs(dts - 1) < 0.01 && Math.abs(uts - 2) < 0.01 && staffOk)
+          ? { ok: true } : { ok: false, detail: 'downTs=' + dts + ' upTs=' + uts + ' staffOk=' + staffOk };
+      })()` },
+    { name: 'rendered SVG shows a Verovio pedal element (g.pedal)',
+      expr: `(() => {
+        const peds = document.querySelectorAll('g.pedal');
+        return peds.length >= 1 ? { ok: true } : { ok: false, detail: 'g.pedal count=' + peds.length };
+      })()` },
+    { name: 'buildPedalEvents emits down@0ms and up@500ms (quarter @120bpm)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const pe = window.__hkl_composer.buildPedalEvents(m);
+        if (pe.length !== 2) return { ok: false, detail: 'count=' + pe.length };
+        const down = pe.find(e => e.dir === 'down');
+        const up = pe.find(e => e.dir === 'up');
+        if (!down || !up) return { ok: false, detail: 'dirs=' + JSON.stringify(pe.map(e => e.dir)) };
+        return (Math.abs(down.atMs - 0) < 1 && Math.abs(up.atMs - 500) < 1)
+          ? { ok: true } : { ok: false, detail: 'down=' + down.atMs + ' up=' + up.atMs };
+      })()` },
+    { name: 'starting playback between down(0ms) and up(500ms) seeds a synthetic down@0',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        /* startMs=250 lands between the pedal-down (beat 1 = 0ms) and pedal-up
+           (beat 2 = 500ms): the down is windowed out, so a synthetic down@0
+           must be seeded and the up shifted to 250ms. */
+        const pe = window.__hkl_composer.buildPedalEvents(m, 250);
+        if (pe.length !== 2) return { ok: false, detail: 'count=' + pe.length + ' ' + JSON.stringify(pe) };
+        const downFirst = pe[0].dir === 'down' && Math.abs(pe[0].atMs - 0) < 1;
+        const upShifted = pe[1].dir === 'up' && Math.abs(pe[1].atMs - 250) < 1;
+        return (downFirst && upShifted)
+          ? { ok: true } : { ok: false, detail: JSON.stringify(pe) };
+      })()` },
+  ],
+  phase2_pedal_toggle_off: [
+    { name: 'no <pedal> remains after pressing Shift+P twice at the same moment',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const peds = m.getDoc().querySelectorAll('measure > pedal');
+        return peds.length === 0 ? { ok: true } : { ok: false, detail: 'count=' + peds.length };
+      })()` },
+  ],
+  phase2_pedal_survives_note_delete: [
+    { name: 'pedal-down at beat 1 survives deletion of note2',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const peds = [...m.getDoc().querySelectorAll('measure > pedal')];
+        const down = peds.filter(p => p.getAttribute('dir') === 'down');
+        if (down.length !== 1) return { ok: false, detail: 'down=' + down.length + ' total=' + peds.length };
+        const ts = parseFloat(down[0].getAttribute('tstamp') ?? '0');
+        return Math.abs(ts - 1) < 0.01 ? { ok: true } : { ok: false, detail: 'tstamp=' + ts };
+      })()` },
+  ],
+
+  phase2_pedal_layer_enter: [
+    { name: 'cursorMode is "pedal" after cycling past V4',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        return s.cursorMode === 'pedal'
+          ? { ok: true } : { ok: false, detail: 'cursorMode=' + s.cursorMode };
+      })()` },
+    { name: 'pedal cursor moments union note onsets + pedal marks (2 distinct moments)',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        const n = s.pedalCursor?.moments?.length ?? 0;
+        /* beat1 (note1 onset == pedal-down) + beat2 (note2 onset == pedal-up), deduped → 2. */
+        return n === 2 ? { ok: true } : { ok: false, detail: 'moments=' + n };
+      })()` },
+    { name: 'voice indicator shows P',
+      expr: `(() => {
+        const v = document.getElementById('voiceIndicator');
+        return v && v.textContent === 'P' ? { ok: true } : { ok: false, detail: 'indicator=' + (v?.textContent) };
+      })()` },
+  ],
+  phase2_pedal_layer_delete: [
+    { name: 'pedal-down at beat 1 deleted; only the up@beat2 remains',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const peds = [...m.getDoc().querySelectorAll('measure > pedal')];
+        if (peds.length !== 1) return { ok: false, detail: 'count=' + peds.length };
+        return peds[0].getAttribute('dir') === 'up'
+          ? { ok: true } : { ok: false, detail: 'dir=' + peds[0].getAttribute('dir') };
+      })()` },
+    { name: 'still in pedal layer (a mark remains)',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        return s.cursorMode === 'pedal'
+          ? { ok: true } : { ok: false, detail: 'cursorMode=' + s.cursorMode };
       })()` },
   ],
 

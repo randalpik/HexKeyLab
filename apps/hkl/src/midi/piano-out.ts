@@ -109,6 +109,17 @@ function sendLocalControl(port: MIDIOutput, on: boolean): void {
   for (let ch = 0; ch < 16; ch++) port.send([0xb0 | ch, 122, on ? 127 : 0]);
 }
 
+/** Mirror a sustain-pedal transition to the external synth as CC 64 on every
+ *  channel (down=127, up=0). Broadcast on all 16 channels because voices are
+ *  spread one-per-channel by the allocator, so the damper must apply to all.
+ *  No-op when piano output is disabled or no port is bound. Used by the
+ *  playback pedal timeline; live pedal is forwarded by the synth itself. */
+export function sendSustainPedal(on: boolean): void {
+  const port = midi.pianoOut;
+  if (!enabled || !port) return;
+  for (let ch = 0; ch < 16; ch++) port.send([0xb0 | ch, 64, on ? 127 : 0]);
+}
+
 /** Push the current program to all 16 channels so every voice shares the synth's
  *  selected instrument. Sent outside the per-note bursts (the CH345 adapter drops
  *  bytes under load), and not per note. No-op until a program has been captured. */

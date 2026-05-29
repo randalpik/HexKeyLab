@@ -21,7 +21,7 @@ import { HistoryManager } from './history.js';
 import type { CursorUpdateOpts } from './cursor/cursor.js';
 import { selectionOverlay } from './selection/selectionOverlay.js';
 import { saveHkc, loadHkcFromFile, downloadMusicXml, downloadPdf } from './save.js';
-import { buildPlayback, highlightElement, clearHighlights, readTempo, tickMsFromTempo } from './render/playback.js';
+import { buildPlayback, buildPedalEvents, highlightElement, clearHighlights, readTempo, tickMsFromTempo } from './render/playback.js';
 import { openSetupDialog } from './setupDialog.js';
 import { openHelpDialog } from './helpDialog.js';
 import { attachScoreClickHandler } from './click.js';
@@ -184,7 +184,7 @@ function setConn(state: 'no-hkl' | 'connected' | 'standalone'): void {
 function refreshIndicators(): void {
   const s = getInputState();
   const voice = model.getCurrentVoice();
-  const v = $('voiceIndicator');         if (v) v.textContent = s.cursorMode === 'expr' ? 'E' : String(voice);
+  const v = $('voiceIndicator');         if (v) v.textContent = s.cursorMode === 'expr' ? 'E' : s.cursorMode === 'pedal' ? 'P' : String(voice);
   const d = $('durationIndicator');      if (d) d.textContent = s.duration;
   const m = $('modeIndicator');          if (m) m.textContent = s.mode === 'insert' ? 'INS' : 'OVR';
 }
@@ -195,6 +195,7 @@ function cursorOpts(): CursorUpdateOpts {
     entryMode: s.mode,
     cursorMode: s.cursorMode,
     exprCursor: s.exprCursor,
+    pedalCursor: s.pedalCursor,
     chordInternalSel: s.chordInternalSel
       ? { noteId: s.chordInternalSel.noteId }
       : null,
@@ -688,6 +689,7 @@ function startPlayback(): void {
     setStatus(startMs > 0 ? 'Nothing left to play from cursor.' : 'Nothing to play.', 'error');
     return;
   }
+  const pedalEvents = buildPedalEvents(model, startMs);
   /* Snapshot editing cursor before playback so we can restore on stop/finish. */
   preplaybackVoice = v;
   preplaybackCursor = model.getCursor();
@@ -696,7 +698,7 @@ function startPlayback(): void {
   cursor.setPlaybackMode(true);
   cursor.update(model, cursorOpts());
   refreshPlayButton();
-  bridge.send({ type: 'play-score', events });
+  bridge.send({ type: 'play-score', events, pedalEvents });
   setStatus('Playing ' + events.length + ' event(s)…', 'state');
 }
 
@@ -984,6 +986,7 @@ void bootRenderer();
   inputState: getInputState,
   history,
   buildPlayback,
+  buildPedalEvents,
   /* Test-only reset: clears main.ts module state that RESET_SNIPPET in the
    * Composer test runner can't reach (isPlaying, hklConnected). Without this,
    * a fixture that starts playback or simulates an hkl-hello leaks state into

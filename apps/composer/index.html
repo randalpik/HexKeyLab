@@ -187,6 +187,14 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
 #score svg g.hairpin.expr-selected * {
   fill: none !important;
 }
+/* Pedal-layer selection: the <pedal> Ped./✱ SMuFL glyphs at the pedal
+   cursor's moment, tinted teal to match the PED cursor. (Symbol style renders
+   as text-like glyphs that need a fill, so no fill:none override here.) */
+#score svg .pedal-selected,
+#score svg .pedal-selected * {
+  fill: #0a9396 !important;
+  stroke: #0a9396;
+}
 
 /* Document Setup modal. */
 .hkl-dialog {

@@ -103,8 +103,14 @@ export const KEYBINDINGS: KeySection[] = [
         note: "Escape cancels a pending hairpin.",
       },
       {
+        keys: "Shift+P  /  Shift+O",
+        desc: "Sustain pedal down / up (off) at the cursor anchor.",
+        note: "Anchor: in INS mode, the just-entered element (cursor−1); in OVR mode, the element at cursor. Press again at the same moment to remove the mark.",
+      },
+      {
         keys: "↑  /  ↓",
-        desc: "Previous / next voice. Cycle: 1 → 2 → expr → 3 → 4.",
+        desc: "Previous / next voice. Cycle: 1 → 2 → expr → 3 → 4 → pedal.",
+        note: "The expression and pedal layers appear in the cycle only when they contain marks; create marks in voice mode, then navigate the layer to edit/delete.",
       },
       {
         keys: "←  /  →",
@@ -190,6 +196,24 @@ export const KEYBINDINGS: KeySection[] = [
         keys: "↓",
         desc: "Leave expression mode downward (forward to voice 3).",
       },
+    ],
+  },
+  {
+    title: "Pedal layer",
+    intro:
+      "A virtual layer after voice 4 in the cycle (reachable only when pedal marks exist). Navigates the same moment list as expression mode (note onsets ∪ pedal marks).",
+    bindings: [
+      { keys: "←  /  →", desc: "Step through the moment list." },
+      { keys: "Home  /  End", desc: "Jump to first / last moment." },
+      {
+        keys: "Shift+P  /  Shift+O",
+        desc: "Sustain pedal down / up at the current moment (same as voice mode, anchored to the layer cursor).",
+      },
+      {
+        keys: "Backspace  /  Delete",
+        desc: "Delete the pedal mark(s) at this moment. Deleting the last mark exits to voice 4.",
+      },
+      { keys: "↑", desc: "Leave the pedal layer upward (back to voice 4)." },
     ],
   },
   {

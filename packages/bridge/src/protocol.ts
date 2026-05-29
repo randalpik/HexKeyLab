@@ -72,6 +72,17 @@ export interface PlaybackEvent {
   slurredToNext?: boolean;
 }
 
+/** A sustain-pedal transition in a playback timeline. HKL maps `dir` to the
+ *  damper engine (down → hold released notes in audio.sustainedKeys; up →
+ *  release them) and mirrors it to external MIDI as CC 64 (down=127, up=0).
+ *  Anchored by `atMs` on the same playback clock as PlaybackEvent. */
+export interface PedalEvent {
+  /** Onset time relative to playback start, in milliseconds. */
+  atMs: number;
+  /** Pedal transition direction. */
+  dir: 'down' | 'up';
+}
+
 /** Compact footprint cell tuple: [q, r, colorHex]. Used by footprint-changed
  *  to ship the full active layout outline + per-cell color in one message.
  *  Compact-array form (vs object form) cuts payload by ~3× across the ~280-
@@ -124,8 +135,10 @@ export type ComposerEvent =
   /** Ask HKL to re-broadcast hkl-hello + current held-keys + tuning. */
   | { type: 'request-state' }
   /** Play a sequence of chords with HKL-driven timing. HKL will broadcast
-   *  playback-position events as it advances. */
-  | { type: 'play-score'; events: ReadonlyArray<PlaybackEvent> }
+   *  playback-position events as it advances. `pedalEvents`, when present,
+   *  is the parallel sustain-pedal timeline (down/up transitions on the same
+   *  atMs clock); HKL drives its damper engine + external CC 64 from it. */
+  | { type: 'play-score'; events: ReadonlyArray<PlaybackEvent>; pedalEvents?: ReadonlyArray<PedalEvent> }
   /** Stop any in-progress playback. */
   | { type: 'stop-playback' }
   /** Set the SELECTION tier of HKL's reference-note state to (q, r). Composer

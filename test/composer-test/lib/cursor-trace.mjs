@@ -61,12 +61,13 @@ export const CURSOR_TRACE_FN = `async function(voice, expectedZeroDeltaPairs) {
       /* Read the live cursorMode so we don't paint the voice cursor over
        * a selection-mode state — that bled through to the visualCheck
        * screenshot and made it look like the cursor was still visible.
-       * Coerce 'expr' to 'voice' because the walker passes exprCursor: null
-       * and the expr renderer dereferences it; this walker tests the VOICE
-       * cursor regardless of which mode the fixture left the model in. */
+       * Coerce 'expr'/'pedal' to 'voice' because the walker passes
+       * exprCursor/pedalCursor: null and those renderers dereference them;
+       * this walker tests the VOICE cursor regardless of which mode the
+       * fixture left the model in. */
       const rawMode = (window.__hkl_composer.inputState && window.__hkl_composer.inputState().cursorMode) || 'voice';
-      const liveMode = rawMode === 'expr' ? 'voice' : rawMode;
-      cursor.update(m, { entryMode, cursorMode: liveMode, exprCursor: null });
+      const liveMode = (rawMode === 'expr' || rawMode === 'pedal') ? 'voice' : rawMode;
+      cursor.update(m, { entryMode, cursorMode: liveMode, exprCursor: null, pedalCursor: null });
     }
   };
   const tick = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));

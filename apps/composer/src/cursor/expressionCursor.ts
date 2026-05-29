@@ -18,6 +18,7 @@
 import {
   type Moment, momentCompare, momentEqual, dynamAt, hairpinsAt, readMeter,
 } from '../expressions.js';
+import { pedalMoments } from '../pedal.js';
 import { realTicks } from '../model/ticks.js';
 
 export interface ExpressionCursor {
@@ -150,20 +151,31 @@ export function buildMomentList(doc: Document): Moment[] {
     }
   }
 
-  /* Sort then dedup. */
-  onsets.sort(momentCompare);
+  return dedupSorted(onsets);
+}
+
+/** Sort ascending and drop adjacent duplicates (by measure+tstamp epsilon). */
+function dedupSorted(moments: Moment[]): Moment[] {
+  moments.sort(momentCompare);
   const out: Moment[] = [];
-  for (const m of onsets) {
+  for (const m of moments) {
     if (out.length > 0 && approxEqMoment(out[out.length - 1], m)) continue;
     out.push(m);
   }
   return out;
 }
 
-/** Build a fresh cursor. If `prevMoment` is given, the cursor snaps to the
- *  closest surviving moment (binary search for the first moment ≥ prev). */
-export function rebuildCursor(doc: Document, prevMoment?: Moment | null): ExpressionCursor {
-  const moments = buildMomentList(doc);
+/** Pedal-layer moment list: note onsets ∪ <pedal> mark moments. Constructed
+ *  exactly like buildMomentList (the expression layer), substituting pedal
+ *  marks for dynam/hairpin moments. */
+export function buildPedalMomentList(doc: Document): Moment[] {
+  return dedupSorted([...noteOnsetMoments(doc), ...pedalMoments(doc)]);
+}
+
+/** Build a cursor over an explicit moment list, snapping to the moment closest
+ *  to `prevMoment` (lower-bound binary search). Shared by the expression and
+ *  pedal layers. */
+function cursorFromMoments(moments: Moment[], prevMoment?: Moment | null): ExpressionCursor {
   if (moments.length === 0) return { index: 0, moments };
   if (!prevMoment) return { index: 0, moments };
   /* Lower-bound binary search. */
@@ -176,6 +188,17 @@ export function rebuildCursor(doc: Document, prevMoment?: Moment | null): Expres
   /* Clamp to the last index if past end. */
   const index = Math.min(lo, moments.length - 1);
   return { index, moments };
+}
+
+/** Build a fresh expression cursor. If `prevMoment` is given, the cursor snaps
+ *  to the closest surviving moment. */
+export function rebuildCursor(doc: Document, prevMoment?: Moment | null): ExpressionCursor {
+  return cursorFromMoments(buildMomentList(doc), prevMoment);
+}
+
+/** Build a fresh pedal-layer cursor (same snapping as rebuildCursor). */
+export function rebuildPedalCursor(doc: Document, prevMoment?: Moment | null): ExpressionCursor {
+  return cursorFromMoments(buildPedalMomentList(doc), prevMoment);
 }
 
 export function currentMoment(c: ExpressionCursor): Moment | null {

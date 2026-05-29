@@ -24,7 +24,7 @@
 
 import { createHklBridge, createAnalyzerHklBridge, PROTOCOL_VERSION, ANALYZER_PROTOCOL_VERSION } from '@hkl/bridge/channel.js';
 import type {
-  ComposerEvent, PlaybackEvent, ResolvedNote, CoordRef,
+  ComposerEvent, PlaybackEvent, PedalEvent, ResolvedNote, CoordRef,
 } from '@hkl/bridge/protocol.js';
 import type { AnalyzerEvent } from '@hkl/bridge/analyzer-protocol.js';
 import * as InstrumentRegistry from '../state/instrumentRegistry.js';
@@ -35,7 +35,8 @@ import { tuning } from '../state/tuning.js';
 import { darkColorHex } from '../transcription/pitch.js';
 import { resolveNoteSpec } from '../tuning/spell.js';
 import { noteOn, noteOff, stopAllNotes, triggerRearticulateFlash, instrReplaysOnTranspose, glideVoices } from '../audio/engine.js';
-import { syncPianoOut, restrikePianoOut } from '../midi/piano-out.js';
+import { syncPianoOut, restrikePianoOut, sendSustainPedal } from '../midi/piano-out.js';
+import { pedal } from '../state/pedal.js';
 import { draw, requestDraw, activeFootprintSet, invalidatePianoOutline, validateRefNoteCandidate } from '../render/draw.js';
 import { syncViewToOutline } from '../ui/controls.js';
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
@@ -221,12 +222,80 @@ interface ActivePlayback {
   /* Recursive setTimeout for the lookahead driver. Separate from `pending`
      so the driver lifecycle is clear in cancellation. */
   driverHandle?: number;
+  /* Keys whose scheduled note-off was DEFERRED because the sustain pedal was
+     down at the time (mirrors the live release path in handler.ts). They keep
+     ringing and stay in audio.sustainedKeys until a pedal-up event releases
+     them (or playback ends / aborts). Their voiceSeq/heldKeys entries are left
+     intact so abort still tears them down. */
+  pedalSustained: Set<KeyId>;
+  /* True once any pedal-down event has fired in this run — gates the teardown
+     reset (release global damper flags + external CC 64) on stop/finish. */
+  pedalEngaged: boolean;
 }
 
 let active: ActivePlayback | null = null;
 
 function newPlayback(): ActivePlayback {
-  return { cancelled: false, pending: new Set(), heldKeys: new Set(), voiceSeq: new Map(), nextSeq: 0 };
+  return {
+    cancelled: false, pending: new Set(), heldKeys: new Set(), voiceSeq: new Map(),
+    nextSeq: 0, pedalSustained: new Set(), pedalEngaged: false,
+  };
+}
+
+/** Release any pedal-deferred playback voices and reset the global damper
+ *  state this run engaged. Used by both natural finish and abort. Uses the
+ *  playback teardown idiom (direct noteOff) rather than the live damper-
+ *  release machinery, so it stays consistent with the rest of the scheduler
+ *  and avoids re-entering onSelectionChanged mid-playback. */
+function releasePlaybackPedal(pb: ActivePlayback): void {
+  for (const k of pb.pedalSustained) {
+    audio.sustainedKeys.delete(k);
+    pb.voiceSeq.delete(k);
+    noteOff(k);
+    pb.heldKeys.delete(k);
+    if (playbackOwnedKeys.has(k)) {
+      selection.selectedKeys.delete(k);
+      playbackOwnedKeys.delete(k);
+    }
+  }
+  pb.pedalSustained.clear();
+  if (pb.pedalEngaged) {
+    pb.pedalEngaged = false;
+    /* Set the damper flags DIRECTLY — do NOT call setDamperDepth(), which runs
+       onSelectionChanged → syncAudio, the live-input reconciliation. syncAudio
+       note-offs any activeOscs key not in selectedKeys, and a note attacking at
+       this same moment is in activeOscs but its selectedKeys add (a separate
+       setTimeout) may not have fired yet — so the live path would clip the
+       fresh attack ("click then silence"). Playback owns its voices via the
+       explicit noteOff loop above; the global engine never reconciles them. */
+    pedal.cc64Depth = 0;
+    audio.sustainPedalDown = false;
+    audio.damperDepth = 0;
+    sendSustainPedal(false);
+  }
+}
+
+/** Apply one pedal transition at its scheduled (wall-clock) moment. Down →
+ *  engage the damper (subsequent note-offs defer into audio.sustainedKeys) +
+ *  CC 64 = 127. Up → release the deferred voices + CC 64 = 0. Binary sustain,
+ *  so ~driver-tick jitter on the transition is inaudible (matches the note-off
+ *  jitter tolerance documented above). */
+function applyPedalTransition(pb: ActivePlayback, dir: PedalEvent['dir']): void {
+  if (pb.cancelled) return;
+  if (dir === 'down') {
+    pb.pedalEngaged = true;
+    /* Flags set directly (see releasePlaybackPedal for why setDamperDepth is
+       avoided here). At pedal-down there are no deferred voices yet, so there's
+       nothing for the live damper walk to do anyway. */
+    pedal.cc64Depth = 1;
+    audio.sustainPedalDown = true;
+    audio.damperDepth = 1;
+    sendSustainPedal(true);
+    return;
+  }
+  releasePlaybackPedal(pb);
+  syncPianoOut();
+  requestDraw();
 }
 
 function abortActive(): void {
@@ -250,6 +319,9 @@ function abortActive(): void {
       playbackOwnedKeys.delete(k);
     }
   }
+  /* Drop any pedal-deferred voices from the global sustained set and reset the
+     damper flags + external CC 64 this run engaged. */
+  releasePlaybackPedal(active);
   active = null;
   playbackActive = false;
   syncPianoOut(); /* stop any external-synth voices the aborted playback left sounding */
@@ -339,6 +411,15 @@ function scheduleAudioForEvent(
   if (canGlide) {
     const oldKey = step.glideFromKey!;
     const newKey = coordToKeyId(ev.notes[0]);
+    /* Reconcile the pedal sets for the glide TARGET, mirroring the normal
+       attack path below. If this pitch was pedal-deferred earlier in the span
+       (recurring note), it's now being re-voiced by the glide: stop that stale
+       deferred voice (so glideVoices doesn't orphan it) and drop its deferral
+       tracking, else a later pedal-up's releasePlaybackPedal would note-off the
+       live glided voice — cutting the note after a pedal-off in a slur. */
+    if (audio.activeOscs[newKey] && newKey !== oldKey) noteOff(newKey, audioOnSec);
+    audio.sustainedKeys.delete(newKey);
+    pb.pedalSustained.delete(newKey);
     /* Audio handoff on the audio clock. glideVoices rekeys audio.activeOscs
        and audio.keyVelocity synchronously here, so a same-tick successor's
        canGlide check sees the post-glide state. */
@@ -364,6 +445,8 @@ function scheduleAudioForEvent(
       noteOff(k, audioOnSec);
     }
     audio.sustainedKeys.delete(k);
+    /* Re-attacked while pedal-sustained → no longer a deferred voice. */
+    pb.pedalSustained.delete(k);
     /* Seed audio.keyVelocity so this attack shows up in loopdiag's vel trace
        like Lumatone / QWERTY / recording-playback do (all of which write
        keyVelocity before noteOn). Without the seed, Composer-dispatched
@@ -391,6 +474,7 @@ function scheduleOnVisualAt(
   const h = window.setTimeout(() => {
     pb.pending.delete(h);
     if (pb.cancelled) return;
+    try {
     const keys = ev.notes.map(coordToKeyId);
     if (canGlide) {
       /* Slur glide-in — purely visual. The audio handoff (rate ramp +
@@ -432,6 +516,9 @@ function scheduleOnVisualAt(
       meiId: ev.meiId ?? null,
       timeMs: ev.atMs,
     });
+    } catch (err) {
+      logPlaybackError('visual-on', { meiId: ev.meiId, canGlide, ...playbackStateSnapshot(pb) }, err);
+    }
   }, Math.max(0, delayMs));
   pb.pending.add(h);
 }
@@ -445,6 +532,7 @@ function scheduleOffVisualAt(
   delayMs: number,
   pb: ActivePlayback,
   canGlide: boolean,
+  deferUnderPedal: boolean,
 ): void {
   /* canGlide: only the new key has an off pending; the old key was
      handed off to the new one and its bookkeeping already moved. */
@@ -463,9 +551,21 @@ function scheduleOffVisualAt(
   const h = window.setTimeout(() => {
     pb.pending.delete(h);
     if (pb.cancelled) return;
+    try {
     let mutated = false;
     for (const k of offKeys) {
       if (pb.voiceSeq.get(k) !== ownedSeq.get(k)) continue;
+      /* Pedal captures this note's release (decided deterministically from the
+         pedal timeline at schedule time — see pedalCapturesNoteEndingAt):
+         defer the off, keep the voice ringing and mark it sustained, like the
+         live release path (handler.ts). voiceSeq/heldKeys stay populated so
+         abort tears it down; selection stays lit. A pedal-up event, re-attack,
+         or playback end releases it. */
+      if (deferUnderPedal && !audio.sostenutoLockedKeys.has(k)) {
+        audio.sustainedKeys.add(k);
+        pb.pedalSustained.add(k);
+        continue;
+      }
       pb.voiceSeq.delete(k);
       noteOff(k);
       pb.heldKeys.delete(k);
@@ -476,6 +576,9 @@ function scheduleOffVisualAt(
       mutated = true;
     }
     if (mutated) { syncPianoOut(); requestDraw(); }
+    } catch (err) {
+      logPlaybackError('visual-off', { offKeys, deferUnderPedal, ...playbackStateSnapshot(pb) }, err);
+    }
   }, Math.max(0, delayMs));
   pb.pending.add(h);
 }
@@ -487,17 +590,61 @@ interface LegatoStep {
   rampMs?: number;
 }
 
+/** Is the sustain pedal down at moment `t` (ms)? Decided by the most-recent
+ *  transition at-or-before t in a pre-sorted pedal timeline. */
+function pedalDownAt(sortedPedals: ReadonlyArray<PedalEvent>, t: number): boolean {
+  let down = false;
+  for (const pe of sortedPedals) {
+    if (pe.atMs <= t + 1e-6) down = pe.dir === 'down';
+    else break;
+  }
+  return down;
+}
+
+/** Should a note whose release is at time `t` (ms) be captured (sustained) by
+ *  the pedal? Boundary semantics matter: a pedal-DOWN exactly at `t` does NOT
+ *  capture a note ending then (you press the pedal to catch notes still
+ *  sounding, not ones releasing at that instant), and a pedal-UP exactly at `t`
+ *  releases the note rather than deferring it. So: capture iff the pedal is
+ *  down per transitions STRICTLY before `t`, and not lifted by an up exactly
+ *  at `t`. Deciding from the timeline (not the live audio.sustainPedalDown
+ *  flag at off-fire) also removes the wall-clock race between a note-off and a
+ *  coincident pedal transition. */
+function pedalCapturesNoteEndingAt(sortedPedals: ReadonlyArray<PedalEvent>, t: number): boolean {
+  let down = false;
+  let upAtT = false;
+  for (const pe of sortedPedals) {
+    if (pe.atMs < t - 1e-6) down = pe.dir === 'down';
+    else if (pe.atMs <= t + 1e-6) { if (pe.dir === 'up') upAtT = true; /* down-at-t captures future notes, not this one */ }
+    else break;
+  }
+  return down && !upAtT;
+}
+
 /** Per-event slur realization, decided HKL-side because it depends on the
  *  active instrument. `glideMode` (sustained loopers): single-note slurred
  *  transitions hand one voice off via a pitch glide; chord-involved joins
  *  fall back to normal abutting playback. Otherwise (decay + replay-on-
- *  transpose): slurred notes get a note-proportional release overlap. */
-function computeLegatoPlan(events: ReadonlyArray<PlaybackEvent>, glideMode: boolean): LegatoStep[] {
+ *  transpose): slurred notes get a note-proportional release overlap.
+ *
+ *  Pedal rule (Max): when the sustain pedal is DOWN at a slur transition,
+ *  glide degrades to overlap there — the predecessor keeps ringing (and gets
+ *  pedal-deferred at its overlap-off) rather than being pitch-glided into the
+ *  successor. Because a glide is now never emitted while the pedal is down, a
+ *  glide can never rekey a pedal-sustained voice, so the glide/pedal
+ *  voice-tracking conflict is structurally impossible (deferred keys exist
+ *  only while the pedal is down). */
+function computeLegatoPlan(
+  events: ReadonlyArray<PlaybackEvent>,
+  glideMode: boolean,
+  sortedPedals: ReadonlyArray<PedalEvent> = [],
+): LegatoStep[] {
   const plan: LegatoStep[] = events.map(() => ({}));
+  const overlap = (i: number): void => {
+    plan[i].offMs = events[i].durationMs * (1 + SLUR_OVERLAP_FRACTION);
+  };
   if (!glideMode) {
-    events.forEach((ev, i) => {
-      if (ev.slurredToNext) plan[i].offMs = ev.durationMs * (1 + SLUR_OVERLAP_FRACTION);
-    });
+    events.forEach((ev, i) => { if (ev.slurredToNext) overlap(i); });
     return plan;
   }
   /* Group each voice's events into same-onset slots (preserving the global
@@ -518,9 +665,16 @@ function computeLegatoPlan(events: ReadonlyArray<PlaybackEvent>, glideMode: bool
     }
     for (let s = 0; s + 1 < slots.length; s++) {
       const cur = slots[s], nxt = slots[s + 1];
-      if (cur.idxs.length !== 1 || nxt.idxs.length !== 1) continue;
       const ci = cur.idxs[0], ni = nxt.idxs[0];
       if (!events[ci].slurredToNext) continue;
+      /* Pedal down at the transition → overlap the whole predecessor slot
+         (works for chords too) and let it ride/defer under the pedal, instead
+         of gliding. */
+      if (pedalDownAt(sortedPedals, nxt.atMs)) {
+        for (const i of cur.idxs) overlap(i);
+        continue;
+      }
+      if (cur.idxs.length !== 1 || nxt.idxs.length !== 1) continue;
       if (events[ci].notes.length !== 1 || events[ni].notes.length !== 1) continue;
       plan[ci].noOff = true;
       plan[ni].glideFromKey = coordToKeyId(events[ci].notes[0]);
@@ -530,7 +684,33 @@ function computeLegatoPlan(events: ReadonlyArray<PlaybackEvent>, glideMode: bool
   return plan;
 }
 
-function playScore(events: ReadonlyArray<PlaybackEvent>): void {
+/** Snapshot of the playback voice/pedal state, attached to error logs so an
+ *  intermittent throw can be diagnosed from a single repro. */
+function playbackStateSnapshot(pb: ActivePlayback): Record<string, unknown> {
+  return {
+    activeOscs: Object.keys(audio.activeOscs).length,
+    heldKeys: pb.heldKeys.size,
+    pedalSustained: Array.from(pb.pedalSustained),
+    sustainedKeys: audio.sustainedKeys.size,
+    pedalEngaged: pb.pedalEngaged,
+    sustainPedalDown: audio.sustainPedalDown,
+  };
+}
+
+/** Log a playback-path exception WITHOUT killing the transport. The driver and
+ *  the deferred setTimeout callbacks call this so one bad event/voice can't
+ *  silently freeze the whole piece (all cursors stop, deferred notes hang).
+ *  The detail bag + state snapshot pinpoint the offending note + voice state. */
+function logPlaybackError(label: string, detail: Record<string, unknown>, err: unknown): void {
+  try {
+    console.error('[playback] ' + label + ' threw; transport kept alive.',
+      { ...detail }, err);
+  } catch {
+    console.error('[playback] ' + label + ' threw', err);
+  }
+}
+
+function playScore(events: ReadonlyArray<PlaybackEvent>, pedalEvents: ReadonlyArray<PedalEvent> = []): void {
   abortActive();
   if (events.length === 0) {
     bridge.send({ type: 'playback-finished' });
@@ -549,13 +729,18 @@ function playScore(events: ReadonlyArray<PlaybackEvent>): void {
   active = pb;
   playbackActive = true;
 
+  /* Sorted pedal timeline — used both to shape the legato plan (glide degrades
+     to overlap under the pedal) and to drive the pedal transitions below. */
+  const pedals = pedalEvents.slice().sort((a, b) => a.atMs - b.atMs);
+
   /* Slur legato realization is instrument-dependent and the instrument is
      HKL-side state, so the choice is made here (not in Composer): sustained
      loopers glide one voice between slurred pitches; decay + replay-on-
-     transpose instruments overlap the release into the next attack. Mode is
-     fixed at playback start; mid-playback instrument changes are rare and
-     playback is short. */
-  const plan = computeLegatoPlan(events, !instrReplaysOnTranspose());
+     transpose instruments overlap the release into the next attack. The pedal
+     timeline overrides glide→overlap wherever the pedal is down. Mode is fixed
+     at playback start; mid-playback instrument changes are rare and playback
+     is short. */
+  const plan = computeLegatoPlan(events, !instrReplaysOnTranspose(), pedals);
 
   /* Two clocks anchored at playback start:
        t0Audio — base of all sample-accurate ON scheduling (audio seconds).
@@ -574,8 +759,13 @@ function playScore(events: ReadonlyArray<PlaybackEvent>): void {
     const step = plan[i];
     lastEndMs = Math.max(lastEndMs, events[i].atMs + (step.offMs ?? events[i].durationMs));
   }
+  /* A pedal can hold notes past their written end; let the finished-broadcast
+     wait until the last pedal transition too (a pedal-up releases the deferred
+     voices; a trailing pedal-down with no up is released at finish). */
+  for (const pe of pedals) lastEndMs = Math.max(lastEndMs, pe.atMs);
 
   let nextIdx = 0;
+  let pedalIdx = 0;
 
   function tick(): void {
     if (pb.cancelled) return;
@@ -585,10 +775,19 @@ function playScore(events: ReadonlyArray<PlaybackEvent>): void {
        per-tick batch can be empty (driver firing between events) or hold
        many (a dense passage). */
     while (nextIdx < events.length && events[nextIdx].atMs <= horizonMs) {
-      const ev = events[nextIdx];
-      const step = plan[nextIdx];
+      /* Advance the index BEFORE processing so a throw can't re-process (and
+         re-throw on) the same event, and so the per-event guard below can skip
+         it and let the driver carry on. */
+      const idx = nextIdx;
+      nextIdx++;
+      try {
+      const ev = events[idx];
+      const step = plan[idx];
       const audioOnSec = t0Audio + ev.atMs / 1000;
-      const offEndMs = ev.atMs + (step.offMs ?? ev.durationMs);
+      /* The note's WRITTEN end governs pedal capture (its musical release);
+         the slur overlap tail (step.offMs) is only a legato release shape. */
+      const writtenEndMs = ev.atMs + ev.durationMs;
+      const overlapEndMs = ev.atMs + (step.offMs ?? ev.durationMs);
       /* Now that the audio glide runs at tick time (with sample-accurate
          atTime), audio.activeOscs is the live engine state at this point
          in the tick — earlier same-tick events that scheduled audio (noteOn
@@ -615,11 +814,48 @@ function playScore(events: ReadonlyArray<PlaybackEvent>): void {
       }
       scheduleOnVisualAt(ev, step, ev.atMs - elapsedMs, pb, canGlide, rearticulatedKeys);
       if (ev.notes.length > 0 && !step.noOff) {
-        scheduleOffVisualAt(ev, offEndMs - elapsedMs, pb, canGlide);
+        /* Capture is evaluated at the WRITTEN end (not the overlap tail). When
+           captured, fire the deferring off at the written end too: the pedal —
+           not the slur tail — now governs release, and deferring at the written
+           end keeps the defer coincident with the capture decision, so a pedal
+           that lifts during the tail can't strand the voice. When not captured,
+           keep the legato overlap tail. */
+        const deferUnderPedal = pedalCapturesNoteEndingAt(pedals, writtenEndMs);
+        const offFireMs = deferUnderPedal ? writtenEndMs : overlapEndMs;
+        scheduleOffVisualAt(ev, offFireMs - elapsedMs, pb, canGlide, deferUnderPedal);
       }
-      nextIdx++;
+      } catch (err) {
+        const bad = events[idx];
+        logPlaybackError('event-schedule',
+          { idx, meiId: bad?.meiId, voice: bad?.voice, notes: bad?.notes,
+            glide: plan[idx]?.glideFromKey ?? null, ...playbackStateSnapshot(pb) }, err);
+      }
     }
-    if (nextIdx < events.length) {
+    /* Schedule pedal transitions in the same lookahead window. A pedal-down
+       must take effect before the note-offs it should hold; since pedal marks
+       are anchored at note onsets and the offs they hold fire a full note-
+       duration later, the ordering is correct in practice (see the exact-
+       coincidence caveat in applyPedalTransition). */
+    while (pedalIdx < pedals.length && pedals[pedalIdx].atMs <= horizonMs) {
+      const pIdx = pedalIdx;
+      pedalIdx++;
+      try {
+        const dir = pedals[pIdx].dir;
+        const delay = Math.max(0, pedals[pIdx].atMs - elapsedMs);
+        const h = window.setTimeout(() => {
+          pb.pending.delete(h);
+          try {
+            applyPedalTransition(pb, dir);
+          } catch (err) {
+            logPlaybackError('pedal-transition', { dir, ...playbackStateSnapshot(pb) }, err);
+          }
+        }, delay);
+        pb.pending.add(h);
+      } catch (err) {
+        logPlaybackError('pedal-schedule', { pIdx, dir: pedals[pIdx]?.dir }, err);
+      }
+    }
+    if (nextIdx < events.length || pedalIdx < pedals.length) {
       pb.driverHandle = window.setTimeout(tick, DRIVER_INTERVAL_MS);
     } else {
       /* All events scheduled. Final position + finished broadcast at
@@ -629,13 +865,24 @@ function playScore(events: ReadonlyArray<PlaybackEvent>): void {
       const finHandle = window.setTimeout(() => {
         pb.pending.delete(finHandle);
         if (pb.cancelled) return;
-        bridge.send({ type: 'playback-position', meiId: null, timeMs: lastEndMs });
-        bridge.send({ type: 'playback-finished' });
-        playbackActive = false;
-        if (active === pb) active = null;
-        /* Resync held-keys with the user's real selection (any input that
-           arrived during playback was broadcast-suppressed). */
-        broadcastHeldKeys();
+        try {
+          /* Release any voices still held by a pedal that never lifted, and
+             reset the damper flags + external CC 64 this run engaged. */
+          releasePlaybackPedal(pb);
+          syncPianoOut();
+          bridge.send({ type: 'playback-position', meiId: null, timeMs: lastEndMs });
+        } catch (err) {
+          logPlaybackError('finish', playbackStateSnapshot(pb), err);
+        } finally {
+          /* Always complete the handshake + tear down, even if release threw —
+             otherwise Composer's transport hangs waiting for playback-finished. */
+          bridge.send({ type: 'playback-finished' });
+          playbackActive = false;
+          if (active === pb) active = null;
+          /* Resync held-keys with the user's real selection (any input that
+             arrived during playback was broadcast-suppressed). */
+          broadcastHeldKeys();
+        }
       }, Math.max(0, finDelay));
       pb.pending.add(finHandle);
     }
@@ -845,7 +1092,7 @@ bridge.on((msg: ComposerEvent) => {
           }
         }
       }
-      playScore(msg.events);
+      playScore(msg.events, msg.pedalEvents);
       break;
     }
     case 'stop-playback':

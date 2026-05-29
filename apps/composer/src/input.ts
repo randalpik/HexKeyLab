@@ -6,7 +6,7 @@ import type {
 } from './model/index.js';
 import { ticksOf } from './model/index.js';
 import {
-  type ExpressionCursor, rebuildCursor, currentMoment, step, moveToStart,
+  type ExpressionCursor, rebuildCursor, rebuildPedalCursor, currentMoment, step, moveToStart,
   moveToEnd,
 } from './cursor/expressionCursor.js';
 import {
@@ -15,6 +15,7 @@ import {
   type Moment,
 } from './expressions.js';
 import { addSlur, removeSlur, collectSlurs } from './slurs.js';
+import { togglePedal, pedalMoments, removePedalsAt, type PedalDir } from './pedal.js';
 import { beamGroupForElement } from './notation/beams.js';
 import type { ArticKind } from './articulations.js';
 
@@ -47,7 +48,7 @@ function tuningLabel(mode: string): string {
 }
 
 export type EntryMode = 'insert' | 'overwrite';
-export type CursorMode = 'voice' | 'expr' | 'select';
+export type CursorMode = 'voice' | 'expr' | 'pedal' | 'select';
 
 interface PendingHairpin {
   start: Moment;
@@ -94,6 +95,7 @@ export interface InputState {
   mode: EntryMode;
   cursorMode: CursorMode;
   exprCursor: ExpressionCursor;
+  pedalCursor: ExpressionCursor;
   pendingHairpin: PendingHairpin | null;
   pendingTuplet: PendingTuplet | null;
   pendingSlur: PendingSlur | null;
@@ -196,6 +198,7 @@ const state: InputState = {
   mode: 'insert',
   cursorMode: 'voice',
   exprCursor: { index: 0, moments: [] },
+  pedalCursor: { index: 0, moments: [] },
   pendingHairpin: null,
   pendingTuplet: null,
   pendingSlur: null,
@@ -244,6 +247,11 @@ function refreshExprCursor(model: ComposerModel): void {
   state.exprCursor = rebuildCursor(model.getDoc(), prev);
 }
 
+function refreshPedalCursor(model: ComposerModel): void {
+  const prev = currentMoment(state.pedalCursor);
+  state.pedalCursor = rebuildPedalCursor(model.getDoc(), prev);
+}
+
 function momentAtVoiceAnchor(model: ComposerModel): Moment | null {
   const v = model.getCurrentVoice();
   const c = model.getCursor();
@@ -259,6 +267,7 @@ function momentAtVoiceAnchor(model: ComposerModel): Moment | null {
 
 function momentAtCurrentCursor(model: ComposerModel): Moment | null {
   if (state.cursorMode === 'expr') return currentMoment(state.exprCursor);
+  if (state.cursorMode === 'pedal') return currentMoment(state.pedalCursor);
   return momentAtVoiceAnchor(model);
 }
 
@@ -342,6 +351,55 @@ function cancelPendingSlur(hooks: InputHooks): boolean {
   return true;
 }
 
+/* Pedal down (Shift+P) / pedal up (Shift+O). Toggles a <pedal dir=…> at the
+   cursor anchor moment (same anchor rule as dynamics: flat[c]). Pressing the
+   same key at the same moment removes the mark. Time-anchored, so it survives
+   nearby-note deletion. */
+function commitPedal(model: ComposerModel, hooks: InputHooks, dir: PedalDir): void {
+  const m = momentAtCurrentCursor(model);
+  if (!m) {
+    hooks.setStatus?.('No cursor anchor for pedal.', 'error');
+    return;
+  }
+  const on = togglePedal(model.getDoc(), m, dir);
+  const label = dir === 'down' ? 'Pedal down' : 'Pedal up';
+  if (on) {
+    hooks.setStatus?.(label + ' at m' + (m.measureIdx + 1) + ' beat ' + formatBeat(m.tstamp) + '.', 'action');
+  } else {
+    hooks.setStatus?.(label + ' removed.', 'action');
+  }
+  if (state.cursorMode === 'expr') refreshExprCursor(model);
+  if (state.cursorMode === 'pedal') refreshPedalCursor(model);
+  hooks.onChange();
+  hooks.onStateChange();
+}
+
+/* Delete the <pedal> mark(s) at the pedal-layer cursor's moment. Mirrors
+   deleteSelectedExpression. */
+function deleteSelectedPedal(model: ComposerModel, hooks: InputHooks): boolean {
+  const m = currentMoment(state.pedalCursor);
+  if (!m) return false;
+  const n = removePedalsAt(model.getDoc(), m);
+  if (n === 0) {
+    hooks.setStatus?.('No pedal mark at this moment.', 'error');
+    return false;
+  }
+  refreshPedalCursor(model);
+  /* An empty pedal layer is a dead end (you place marks in voice mode), so
+     drop back to voice 4 when the last mark is gone. */
+  if (state.pedalCursor.moments.length === 0
+      || pedalMoments(model.getDoc()).length === 0) {
+    state.cursorMode = 'voice';
+    model.setVoicePreservingMeasure(4);
+    hooks.setStatus?.('Deleted pedal mark. Voice 4.', 'action');
+  } else {
+    hooks.setStatus?.('Deleted pedal mark.', 'action');
+  }
+  hooks.onChange();
+  hooks.onStateChange();
+  return true;
+}
+
 /** The <slur> whose voice matches and whose [start, end] flat-index span
  *  (inclusive) contains the given slot index — i.e. the cursor is "within
  *  the slur". Null if none. */
@@ -409,6 +467,16 @@ function cycleVoice(model: ComposerModel, dir: 'up' | 'down', hooks: InputHooks)
     hooks.setStatus?.('Voice ' + v + '.', 'state');
     return;
   }
+  if (state.cursorMode === 'pedal') {
+    /* Pedal layer sits below voice 4. Up exits back to V4; down is a no-op
+       (it's the bottom of the cycle). */
+    if (dir === 'up') {
+      state.cursorMode = 'voice';
+      model.setVoicePreservingMeasure(4);
+      hooks.setStatus?.('Voice 4.', 'state');
+    }
+    return;
+  }
   const v = model.getCurrentVoice();
   if (dir === 'up') {
     if (v === 1) return;
@@ -439,7 +507,14 @@ function cycleVoice(model: ComposerModel, dir: 'up' | 'down', hooks: InputHooks)
       return;
     }
     if (v === 3) { model.switchVoice('down'); return; }     /* 3 → 4 */
-    if (v === 4) return;
+    if (v === 4) {                                          /* 4 → pedal (skip if empty) */
+      if (pedalMoments(model.getDoc()).length > 0) {
+        state.cursorMode = 'pedal';
+        refreshPedalCursor(model);
+        hooks.setStatus?.('Pedal layer.', 'state');
+      }
+      return;
+    }
   }
 }
 
@@ -1227,6 +1302,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       return true;
     }
     refreshExprCursor(model);
+    refreshPedalCursor(model);
     hooks.setStatus?.((isUndo ? 'Undo: ' : 'Redo: ') + entry.label, 'action');
     hooks.onStateChange();
     hooks.onChange();
@@ -1607,6 +1683,20 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       return;
     }
 
+    /* Shift+P / Shift+O: sustain-pedal down / up at the cursor anchor (voice
+       mode) or at the pedal-layer cursor's moment (pedal mode). Plain P
+       (parenthetical cautionary accidental) is a separate binding disambiguated
+       by the Shift guard. */
+    if ((state.cursorMode === 'voice' || state.cursorMode === 'pedal')
+        && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey
+        && (e.key === 'P' || e.key === 'O' || e.key === 'p' || e.key === 'o')) {
+      e.preventDefault();
+      if (hooks.isPlaybackActive()) return;
+      const dir: PedalDir = (e.key === 'P' || e.key === 'p') ? 'down' : 'up';
+      withHistory('pedal', () => { commitPedal(model, hooks, dir); return true; });
+      return;
+    }
+
     /* Voice-mode `L` (no Ctrl): flip stem direction on the current note/chord.
        If the element is in a beam group, every group member flips together
        (Verovio resolves beam stem direction by majority — leaving members
@@ -1912,6 +2002,11 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         if (e.key === 'ArrowRight') { e.preventDefault(); state.exprCursor = step(state.exprCursor, +1); hooks.onStateChange(); hooks.onChange(); return; }
         if (e.key === 'Home')       { e.preventDefault(); state.exprCursor = moveToStart(state.exprCursor); hooks.onStateChange(); hooks.onChange(); return; }
         if (e.key === 'End')        { e.preventDefault(); state.exprCursor = moveToEnd(state.exprCursor); hooks.onStateChange(); hooks.onChange(); return; }
+      } else if (state.cursorMode === 'pedal') {
+        if (e.key === 'ArrowLeft')  { e.preventDefault(); state.pedalCursor = step(state.pedalCursor, -1); hooks.onStateChange(); hooks.onChange(); return; }
+        if (e.key === 'ArrowRight') { e.preventDefault(); state.pedalCursor = step(state.pedalCursor, +1); hooks.onStateChange(); hooks.onChange(); return; }
+        if (e.key === 'Home')       { e.preventDefault(); state.pedalCursor = moveToStart(state.pedalCursor); hooks.onStateChange(); hooks.onChange(); return; }
+        if (e.key === 'End')        { e.preventDefault(); state.pedalCursor = moveToEnd(state.pedalCursor); hooks.onStateChange(); hooks.onChange(); return; }
       } else {
         if (e.key === 'ArrowLeft')  { e.preventDefault(); state.chordInternalSel = null; model.moveCursor('left');  hooks.onStateChange(); hooks.onChange(); return; }
         if (e.key === 'ArrowRight') { e.preventDefault(); state.chordInternalSel = null; model.moveCursor('right'); hooks.onStateChange(); hooks.onChange(); return; }
@@ -1925,6 +2020,10 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       e.preventDefault();
       if (state.cursorMode === 'expr') {
         withHistory('delete-expression', () => deleteSelectedExpression(model, hooks));
+        return;
+      }
+      if (state.cursorMode === 'pedal') {
+        withHistory('delete-pedal', () => deleteSelectedPedal(model, hooks));
         return;
       }
       let deleted = false;
@@ -1969,6 +2068,10 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       e.preventDefault();
       if (state.cursorMode === 'expr') {
         withHistory('delete-expression', () => deleteSelectedExpression(model, hooks));
+        return;
+      }
+      if (state.cursorMode === 'pedal') {
+        withHistory('delete-pedal', () => deleteSelectedPedal(model, hooks));
         return;
       }
       const v = model.getCurrentVoice();
@@ -2035,7 +2138,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
 
   function pasteHandler(e: ClipboardEvent): void {
     if (shouldIgnore(e as unknown as KeyboardEvent)) return;
-    if (state.cursorMode === 'expr') return;
+    if (state.cursorMode === 'expr' || state.cursorMode === 'pedal') return;
     if (hooks.isPlaybackActive()) return;
     const text = e.clipboardData?.getData('text/plain') ?? '';
     const contents = parseClipboard(text);

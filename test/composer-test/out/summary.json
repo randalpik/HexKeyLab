@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 190,
-  "passed": 190,
+  "fixtures": 195,
+  "passed": 195,
   "failed": 0,
-  "elapsedMs": 58876,
+  "elapsedMs": 59808,
   "results": [
     {
       "name": "emptyDoc",
@@ -1483,6 +1483,46 @@
       "failures": [],
       "counts": {
         "invariants": 8
+      }
+    },
+    {
+      "name": "phase2_pedal_down_and_up",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 12
+      }
+    },
+    {
+      "name": "phase2_pedal_toggle_off",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase2_pedal_survives_note_delete",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase2_pedal_layer_enter",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 10
+      }
+    },
+    {
+      "name": "phase2_pedal_layer_delete",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
       }
     },
     {

@@ -13,10 +13,11 @@
 
 import type { ComposerModel, Voice } from '../model/index.js';
 import { isTupletPlaceholder } from '../model/index.js';
-import type { PlaybackEvent, CoordRef } from '@hkl/bridge/protocol.js';
+import type { PlaybackEvent, CoordRef, PedalEvent } from '@hkl/bridge/protocol.js';
 import {
   collectDynams, collectHairpins, getDynamicMap, absoluteTickForMoment,
 } from '../expressions.js';
+import { collectPedals } from '../pedal.js';
 import { collectSlurs } from '../slurs.js';
 import { articulationsOn, type ArticKind } from '../articulations.js';
 import { realTicks } from '../model/ticks.js';
@@ -369,6 +370,39 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
       .map((e) => ({ ...e, atMs: e.atMs - startMs }));
   }
   return events;
+}
+
+/** Parallel sustain-pedal timeline for a playback run. Maps each <pedal>
+ *  event's absolute tick to ms via the same tempo as buildPlayback, then
+ *  applies the same `startMs` window (drop events before the playhead, shift
+ *  the rest left). HKL consumes these to drive its damper engine + CC 64.
+ *
+ *  Inherited pedal state: when playback starts mid-piece (startMs > 0) at a
+ *  point where the pedal is already DOWN (a pedal-down before the playhead with
+ *  no up before it), the down event itself is dropped by the window — so we
+ *  seed a synthetic down at t=0 so playback behaves as if the pedal were held
+ *  from the start. */
+export function buildPedalEvents(model: ComposerModel, startMs = 0): PedalEvent[] {
+  const mei = new DOMParser().parseFromString(model.serialize(), 'application/xml');
+  const tickMs = tickMsFromTempo(readTempo(mei));
+  const evs: PedalEvent[] = collectPedals(mei).map((p) => ({ atMs: p.tick * tickMs, dir: p.dir }));
+  evs.sort((a, b) => a.atMs - b.atMs);
+  if (startMs > 0) {
+    /* Pedal state inherited from before the playhead: the most-recent
+       transition STRICTLY before startMs decides (a transition exactly at
+       startMs survives the window as a real event). */
+    let inheritedDown = false;
+    for (const e of evs) {
+      if (e.atMs < startMs - 1e-6) inheritedDown = e.dir === 'down';
+      else break;
+    }
+    const shifted = evs
+      .filter((e) => e.atMs >= startMs - 1e-6)
+      .map((e) => ({ ...e, atMs: e.atMs - startMs }));
+    if (inheritedDown) shifted.unshift({ atMs: 0, dir: 'down' });
+    return shifted;
+  }
+  return evs;
 }
 
 function pushContentChildren(layer: Element, out: Element[]): void {

@@ -1,8 +1,10 @@
 # Composer feature roadmap — multi-phase plan
 
-> **Status: working planning doc, not architecture.** This is the umbrella for the Composer feature push that was kicked off when Max bulk-added items to `backlog.md` lines 98–125. Updated as phases close. Once everything here is shipped (or absorbed into architecture.md), this file gets deleted.
+> **Status: working planning doc, not architecture.** Umbrella for the Composer feature push kicked off when Max bulk-added items to `backlog.md`. Updated as phases close.
 >
-> See also: `docs/composer-phase1.md` (current phase's focused implementation plan).
+> **Phase 1: ✅ shipped** (2026-05-28). 190/190 tests pass. See `docs/composer-phase1.md` for the historical detail; the inherited-by-Phase-2 surfaces are summarized below in **§ Phase 1 outcomes — what Phase 2 inherits**.
+>
+> **Phase 2: ready to scaffold on a fresh thread.** See **§ Phase 2 scaffold** below.
 
 ## Context
 
@@ -123,29 +125,18 @@ The 28 items, grouped into six sub-categories. Backlog block already reordered s
 
 Five phases. Each ships independently and unblocks the next.
 
-### Phase 1 — Quick wins + the P1 *(current; see `docs/composer-phase1.md`)*
-Goal: deliver the active blocker plus all items that build directly on existing patterns with zero new infrastructure.
+### Phase 1 — Quick wins + the P1 *(✅ shipped 2026-05-28; details in `docs/composer-phase1.md`)*
 
-- Articulations S/A/T/F/B *(P1)*
-- Ctrl+arrows during playback + plain-arrow exit-to-cursor
-- Insert measure Ctrl+M
-- Hide rest H
-- Parenthetical cautionary P
-- Stem direction L + slur direction Shift+L (2-state flip with freeze)
-- Beam split /
-- Double bar `]`
-- Click on/near a note to move cursor
-- Fill incomplete measures
-- Composer field + watermark
-- Cross-staff slurs `?` spike (cross-cutting)
+All 12 items shipped + ~15 follow-up fix rounds Max requested during smoke testing. Final state lives in code; tests gate at 190/190.
 
-### Phase 2 — Expression layer expansion
-Goal: extend the existing time-anchored expression infrastructure with three new element types and the first text-entry modal pattern.
+### Phase 2 — Expression layer expansion *(ready to scaffold)*
 
-- Pedal layer `Shift+P/Shift+O` — simplest concrete instance; forces the bridge-CC plumbing early
-- Expressive text modal `Ctrl+Shift+E` — first reusable text-entry modal; becomes the shell other modals inherit
-- Tempo modal `Ctrl+Shift+T` + rit/accel rendering — first non-trivial playback retiming
-- Above/below staff placement `Ctrl+↑/↓` — sits across all the above
+Goal: extend the time-anchored expression infrastructure (already shipped for `<dynam>` + `<hairpin>`) with three new element types and the first reusable text-entry modal.
+
+- **Pedal layer `Shift+P/Shift+O`** — simplest concrete instance; first to land. Forces the bridge → HKL sustain-CC routing.
+- **Expressive text modal `Ctrl+Shift+E`** — first reusable text-entry modal; becomes the shell tempo and (later) clef/sig modals inherit.
+- **Tempo modal `Ctrl+Shift+T`** + rit/accel rendering — uses the new modal shell; introduces the first non-trivial playback retiming.
+- **Above/below staff placement `Ctrl+↑/↓`** — touches all the above (`@place` on every expression element).
 
 ### Phase 3 — Score structure & playback structure
 Goal: repeats, endings, page layout, octave/trill extras.
@@ -199,3 +190,157 @@ Per CLAUDE.md, the suite gating Composer changes:
 - Visual coverage via `visualBaseline:` for any rendering change
 
 No new tooling needed for any phase except possibly Phase 5, where multi-instrument may need a fixture-suite expansion for instrument-aware scenarios.
+
+---
+
+## 6. Phase 1 outcomes — what Phase 2 inherits
+
+Phase 1 left several infrastructure pieces in place that Phase 2 should reuse, not reinvent.
+
+### Existing patterns to reuse
+
+- **Note-attached articulation infrastructure** (`apps/composer/src/articulations.ts`). Two encodings live side-by-side:
+  - `<artic @artic="…">` as a CHILD of `<note>` / `<chord>` (stacc, acc, ten).
+  - `<fermata>` / `<breath>` as siblings of `<staff>` with `@data-hkl-anchor` pointing at the slot's xml:id (Verovio's @startid can't position a breath at end-of-note, so we use `@tstamp` + a custom anchor attr).
+  - `pruneDanglingArticControls` runs inside `normalizeTies` to drop fermata/breath siblings whose anchor was deleted. Same hook for new sibling-encoded expressions.
+
+- **Paren-cautionary + HEJI integration** (`apps/composer/src/notation/accidentals.ts` + `packages/notation/src/heji-render.ts`). The pipeline now:
+  1. `computeAccidentalDisplay` writes `<accid accid="X" enclose="paren">` child for paren-caut notes (alter from `(q, r)`, not `@accid`).
+  2. `transformDocForHeji` reads accid from child OR attribute, propagates `@enclose` to placeholder accids' outermost pair.
+  3. `injectHejiGlyphs` identifies paren `<use>` by SMuFL codepoint (U+E26A / U+E26B), keeps only the outermost left + outermost right, swaps to BravuraText.
+
+- **Playback session protocol** (`apps/composer/src/main.ts`). `pendingStopAcks` counter suppresses HKL's `playback-finished` ack when Composer itself initiated the stop, so seeks (= stop + resume) don't terminate the new session prematurely. `seekPlaybackByMeasure(dir)` and the `anyPlaybackHeadAtMeasureStart()` helper handle "Ctrl+← jumps to previous measure" when any voice's playhead is at a measure start.
+
+- **Composer/footer post-render injection** (`injectHeaderFooter` in `main.ts`). Appends `<text class="hkl-injected-composer">` and `<text class="hkl-injected-footer">` into Verovio's `g.page-margin` group. The composer y is anchored to the first system's bbox.y (works whether or not a subtitle is present — Verovio shifts the system down for a subtitle automatically).
+
+- **Click-to-position** (`apps/composer/src/click.ts`). DOM click handler on `#score` with `~8px` near-hit. Walks ancestors to find the OUTERMOST `g.chord` (or bare `g.note`/`g.rest`) and resolves to model element via `findElement`. Switches voice and parks cursor.
+
+- **Beam-break override** (`apps/composer/src/notation/beams.ts`). `@hkl-beam-break` flips natural beam state per-element via XOR: mid-beat marker splits a beam; at-boundary marker joins one across beats. `findRunIncluding` uses the same logic for stem-direction-flip's beam group lookup.
+
+- **Insert-measure with severing** (`model.insertMeasureAt`). Slurs straddling the insertion are pruned outright; ties demote to stubs via `normalizeTies`.
+
+### Design conventions established
+
+- **Plain-letter anchor rule**: in INS mode → cursor−1 (just-entered); in OVR → cursor element. Both resolve to `flat[c]` under the cursor convention. Applied uniformly across H/P/L/Shift+L/S/A/T/F/B/`/`. Use the same anchor in Phase 2 for `Shift+P`/`Shift+O` (pedal).
+
+- **Modifier-tier convention** (locked in by Phase 1 hotkeys, ready for Phase 2 to follow):
+  - Plain letter → one-shot toggle/attribute on the current element.
+  - Shift+letter → "sibling" variant of the plain action OR a different element type.
+  - Ctrl+letter → measure / structural-scope action.
+  - Ctrl+Shift+letter → opens a configuration modal.
+
+- **Roundtrip-friendly attribute placement**: model state lives on the doc (e.g. `@hkl-paren-caut`, `@hkl-beam-break`, `@stem.dir`, `@hkl-anchor` on sibling control events). `computeAccidentalDisplay` and `transformDocForHeji` work on the SERIALIZATION CLONE — the live doc stays clean. Test invariant: `serialize → load → serialize` must be byte-stable (modulo placeholder xml:ids).
+
+- **Verovio coordinate trap**: `g.page-margin` carries `transform="translate(1400, 1400)"`. Anything injected into the inner SVG outside this group lands at the WRONG y. Always append into `g.page-margin` if you need to share coords with `g.pgHead` / `g.system`.
+
+### Open Phase 1 cleanup
+
+Nothing left from Phase 1 itself — but the **HEJI-cycle accidental cleanup** mentioned in Max's Phase 1 round wasn't a Phase 1 item and remains for whenever the user wants to address it. Not a Phase 2 blocker.
+
+---
+
+## 7. Phase 2 scaffold
+
+A fresh session should start here. The four items, in implementation order:
+
+### Phase 2.1 — Pedal layer `Shift+P` / `Shift+O`
+
+**Encoding:** MEI `<pedal @dir="down" @tstamp=…>` and `<pedal @dir="up" @tstamp=…>` as siblings of `<staff>` in their measure — same shape as `<fermata>`/`<breath>` already shipped in Phase 1.
+
+**Hotkeys:** `Shift+P` = pedal down; `Shift+O` = pedal up (off). Each places its own event at the cursor's moment. The pedal symbol renders BELOW the bottom staff (Verovio knows this; no manual @place).
+
+**Playback:** new bridge message `pedal-event` with `{ at: tickPos, dir: 'down'|'up' }`, OR piggyback as an additional field on `play-score` events. The cleanest: extend `buildPlayback` to emit a parallel sequence of pedal events with their own timestamps, and add a new bridge field `pedalEvents`. HKL routes them to sustain CC 64 on its audio engine. External MIDI out gets the same CC.
+
+**Files (likely):**
+- `apps/composer/src/pedal.ts` (new) — CRUD for `<pedal>` events: `addPedal(doc, moment, dir)`, `removePedal(doc, moment, dir)`, `collectPedals(doc)`, `pruneDanglingPedals(doc)` (sibling-of-staff cleanup; hook into `normalizeTies` like fermata/breath).
+- `apps/composer/src/input.ts` — `Shift+P` / `Shift+O` keystroke dispatch.
+- `apps/composer/src/keybindings.ts` — add to Voice mode section, plain-musician language.
+- `apps/composer/src/render/playback.ts` — extend `buildPlayback` to emit pedal events; bridge message extension.
+- `packages/bridge/src/protocol.ts` — add `pedalEvents` to `play-score` payload OR new `pedal-event` message type.
+- `apps/hkl/src/bridge/hkl-side.ts` — receive pedal events and apply sustain CC.
+
+**Decisions needed** (would benefit from Max's input before scaffolding):
+- **Bridge protocol**: piggyback on `play-score` (one transport for the whole timeline) vs separate `pedal-event` messages (cleaner separation, easier to extend with other CCs later). *Recommend piggyback for v1*.
+- **Anchoring**: time-based `@tstamp` (survives nearby note deletion — matches `feedback_expression_anchoring`) vs note-attached. *Recommend tstamp* (matches dynamics/hairpins).
+
+### Phase 2.2 — Expressive text modal `Ctrl+Shift+E`
+
+**Modal shell** (the most reusable Phase 2 deliverable). Currently `setupDialog.ts` is the only modal pattern; it's a one-off. Phase 2 should extract a reusable text-entry-modal abstraction that subsequent modals (tempo, future clef/sig) inherit.
+
+**Suggested shape** (under-specified — Max may have a different preference):
+- `apps/composer/src/ui/textEntryModal.ts` (new) — generic `openTextEntryModal({ title, fields: [...], onOk })` that builds a `<dialog>`, focuses the first text field, handles Enter→submit / Escape→cancel.
+- Or: a wrapper component like `apps/composer/src/expressionTextDialog.ts` that uses native `<dialog>` directly (matching `setupDialog.ts`'s pattern) without an over-engineered abstraction.
+
+**Encoding:** MEI `<dir>` element as sibling of `<staff>`, `@tstamp` anchored. Has `@place` (above/below — Phase 2.4 hotkey toggles it) and contains the text content. Optional `<rend @fontstyle="italic">` for italics.
+
+**Modal contents** (per backlog item):
+- Text input (single line for v1).
+- Italics checkbox.
+- "Common configurations" via arrow keys / Tab — e.g., pizz / arco / sul tasto / con sord. Could be a dropdown of presets OR autocomplete. *Defer detail to scaffold thread.*
+
+**Playback:** "we will directly interpret text" per the backlog — Phase 2 likely parses the literal text for known cues (pizz, arco) and applies them. Out of scope of the text-entry feature itself; lives in `render/playback.ts`. For v1, ship the text rendering and DEFER the playback parsing (mark as TODO with a clear hook).
+
+**Files:**
+- New: `apps/composer/src/expressionTextDialog.ts` or `ui/textEntryModal.ts`.
+- `apps/composer/src/input.ts` — `Ctrl+Shift+E` opens the dialog.
+- `apps/composer/src/expressions.ts` — add `<dir>` CRUD alongside dynam/hairpin.
+- `apps/composer/index.html` — modal markup.
+
+### Phase 2.3 — Tempo modal `Ctrl+Shift+T` + rit/accel
+
+**Encoding:** MEI `<tempo>` element. Phase 1 already supports a single global tempo via `setTempo()` in `setupDialog`. Phase 2 extends to MULTIPLE `<tempo>` elements at arbitrary moments, plus `<gradual>` (or equivalent) for rit/accel spans.
+
+**Verovio support**: Verovio renders `<tempo>` with `@mm` and text content (e.g. "Allegro ♩ = 120"). For rit/accel, the convention is `<tempo>` with text "rit." plus an optional dashed line. MEI 5 also supports `<dynam>`-style hairpins for gradual changes; check what Verovio renders.
+
+**Modal contents:**
+- Text (e.g. "Allegro", "rit.", "molto rit.").
+- Marking mode: "tempo marking" (bold + larger, e.g. "Allegro ♩=120") vs "expression" (italic, e.g. "rit.").
+- Note-symbol entry for "♩=120"-style markings (dropdown of note values).
+- For rit/accel: span endpoint (= when does the gradual change end).
+
+**Playback retiming:** this is the first non-trivial change to `buildPlayback`. The current velocity timeline is piecewise-constant (dynamics) + piecewise-linear (hairpins). Tempo gets a similar treatment:
+- Piecewise-constant for instant tempo changes.
+- Piecewise-linear interpolation for rit/accel (or curved — *decision needed*).
+- The `tickMs` constant becomes a `tickMsAt(tickPos)` function.
+
+**Files:**
+- `apps/composer/src/expressions.ts` (extend) — `<tempo>` CRUD as siblings of staff.
+- `apps/composer/src/input.ts` — `Ctrl+Shift+T` opens the modal.
+- New: `apps/composer/src/tempoDialog.ts` (using the shell from 2.2).
+- `apps/composer/src/render/playback.ts` — piecewise tempo timeline; mid-piece retiming.
+- `apps/composer/src/setupDialog.ts` — initial tempo control STAYS in Setup (the modal handles MID-PIECE changes); Setup writes to the first measure's `<tempo>` and the modal handles subsequent ones.
+
+**Decision needed:** rit/accel interpolation — linear, exponential, or user-selectable. *Recommend linear for v1*.
+
+### Phase 2.4 — Above/below staff placement `Ctrl+↑` / `Ctrl+↓`
+
+**Behavior:** in expression mode (or with a selected expression element at the cursor), `Ctrl+↑` and `Ctrl+↓` flip `@place="above"` ↔ `@place="below"` on the current expression element. Defaults per element type (dynamics: between staves; tempo: above; pedal: below) — but Phase 2 ships flat defaults (always above), since "defaults per instrument" requires Phase 5's multi-instrument concept.
+
+**Encoding:** `@place` on `<dynam>` / `<hairpin>` / `<dir>` / `<tempo>` / `<pedal>` — already a standard MEI attribute. Verovio honors it.
+
+**Files:**
+- `apps/composer/src/input.ts` — `Ctrl+↑/↓` in expression mode.
+- `apps/composer/src/expressions.ts` — `getPlace(el)` / `setPlace(el, place)` helpers (probably one-liners).
+
+### Phase 2 verification
+
+Per the standard suite gates. New fixtures:
+
+- **Pedal**: `<pedal @dir="down">` at moment, second key adds `@dir="up"`, both render; playback events include pedal CC.
+- **Expressive text modal**: `Ctrl+Shift+E` opens the modal; submitting writes a `<dir>` at the cursor's moment; renders.
+- **Tempo modal**: `Ctrl+Shift+T` opens; submitting writes a `<tempo>` mid-piece; playback retimes accordingly (assert event `atMs` shifted vs default-tempo computation).
+- **Above/below**: `Ctrl+↑/↓` toggles `@place` on the cursor's expression; renders position changes.
+
+### Cross-cutting decisions to surface to Max early in Phase 2
+
+(Repeated from above for convenience — a fresh thread should ask before scaffolding deep.)
+
+1. **Pedal bridge protocol**: piggyback on `play-score` (recommended) vs separate `pedal-event` messages.
+2. **Modal abstraction shape**: extract `textEntryModal.ts` generic shell vs per-feature dialogs that copy `setupDialog.ts`'s pattern.
+3. **Expressive text playback effects**: ship the text rendering only in v1, defer the "pizz"/"arco" auto-interpretation? Or fold it in?
+4. **Rit/accel interpolation curve**: linear (recommended) vs curved.
+5. **Initial tempo**: stays in Setup dialog (recommended) vs migrate fully to the new tempo modal.
+
+### Suggested kickoff prompt for the new thread
+
+> "Read `docs/composer-roadmap.md` § Phase 2. Confirm the five cross-cutting decisions, then write a focused implementation plan at `docs/composer-phase2.md` (mirror the structure of `composer-phase1.md`). Implement Phase 2.1 (pedal) first."
