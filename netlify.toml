@@ -1,9 +1,9 @@
 [build]
-  command = "npm run build"
+  command = "pnpm run build && pnpm run assemble"
   publish = "dist"
 
 [build.environment]
-  NODE_VERSION = "20"
+  NODE_VERSION = "22"
 
 [[headers]]
   for = "/assets/*"

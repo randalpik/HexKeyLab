@@ -217,6 +217,17 @@ export const KEYBINDINGS: KeySection[] = [
     ],
   },
   {
+    title: "Configuration modals",
+    intro:
+      "Ctrl+Shift+letter opens a configuration dialog anchored to the current moment. Enter confirms, Escape cancels.",
+    bindings: [
+      {
+        keys: "Ctrl+Shift+E",
+        desc: "Expressive text (pizz, dolce, sul tasto, …) at the cursor moment. Re-open on an existing mark to edit; submit empty to delete. Italic toggle + common-cue chips.",
+      },
+    ],
+  },
+  {
     title: "Selection mode",
     intro:
       "Entered from voice mode via Shift+arrow. Selects a contiguous range of beats (one voice) or measures (one or more two-voice staves).",

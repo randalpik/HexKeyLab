@@ -12,8 +12,10 @@ import {
 import {
   addDynam, addHairpin, removeExpression, dynamAt, setDynamText,
   hairpinsAt, momentCompare, measureHasExpression,
+  addDir, dirAt, dirText, dirIsItalic, setDirText,
   type Moment,
 } from './expressions.js';
+import { openTextEntryModal } from './ui/textEntryModal.js';
 import { addSlur, removeSlur, collectSlurs } from './slurs.js';
 import { togglePedal, pedalMoments, removePedalsAt, type PedalDir } from './pedal.js';
 import { beamGroupForElement } from './notation/beams.js';
@@ -454,6 +456,58 @@ function deleteSelectedExpression(model: ComposerModel, hooks: InputHooks): bool
 
 function formatBeat(t: number): string {
   return t.toFixed(2).replace(/\.?0+$/, '');
+}
+
+/* Common performance-text cues offered as quick-insert chips. */
+const EXPRESSIVE_TEXT_PRESETS = [
+  'pizz.', 'arco', 'sul tasto', 'sul pont.', 'con sord.', 'senza sord.',
+  'dolce', 'espr.', 'cantabile', 'marcato',
+];
+
+/* Ctrl+Shift+E: open the reusable text-entry modal to create / edit / delete a
+   <dir> (expressive text) at the cursor's moment. Edits in place when a <dir>
+   already sits at the moment; submitting empty text removes it. The onOk runs
+   after the modal closes, so it manages its own history entry via hooks.history
+   (it can't be wrapped by the synchronous withHistory at the dispatch site). */
+function openExpressiveText(model: ComposerModel, hooks: InputHooks): void {
+  const m = momentAtCurrentCursor(model);
+  if (!m) {
+    hooks.setStatus?.('No cursor anchor for expressive text.', 'error');
+    return;
+  }
+  const existing = dirAt(model.getDoc(), m);
+  openTextEntryModal({
+    title: existing ? 'Edit expressive text' : 'Expressive text',
+    fields: [
+      { name: 'text', type: 'text', label: 'Text',
+        value: existing ? dirText(existing) : '', placeholder: 'e.g. dolce' },
+      { name: 'italic', type: 'check', label: 'Italic',
+        value: existing ? dirIsItalic(existing) : true },
+    ],
+    presets: EXPRESSIVE_TEXT_PRESETS,
+    onOk: (values) => {
+      const text = String(values.text ?? '').trim();
+      const italic = !!values.italic;
+      const before = model.snapshotState();
+      const cur = dirAt(model.getDoc(), m); /* re-resolve: doc may have changed */
+      let changed = true;
+      if (text === '') {
+        if (cur) removeExpression(cur);
+        else changed = false;
+      } else if (cur) {
+        setDirText(cur, text, italic);
+      } else {
+        addDir(model.getDoc(), m, { text, italic });
+      }
+      if (changed) hooks.history.push(before, model.snapshotState(), 'expr-text');
+      if (state.cursorMode === 'expr') refreshExprCursor(model);
+      hooks.setStatus?.(text === ''
+        ? (changed ? 'Removed expressive text.' : 'No expressive text here.')
+        : 'Expressive text: "' + text + '".', 'action');
+      hooks.onChange();
+      hooks.onStateChange();
+    },
+  });
 }
 
 /* ── voice cycling: 1 → 2 → expr → 3 → 4 ─────────────────────────────────── */
@@ -1477,6 +1531,15 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       hooks.setStatus?.('Inserted measure m' + (beforeIdx + 1) + '.', 'action');
       hooks.onStateChange();
       hooks.onChange();
+      return;
+    }
+
+    /* Ctrl+Shift+E: expressive-text modal at the cursor moment (create / edit /
+       delete a <dir>). Opens the reusable text-entry shell. */
+    if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && (e.key === 'e' || e.key === 'E')) {
+      e.preventDefault();
+      if (hooks.isPlaybackActive()) return;
+      openExpressiveText(model, hooks);
       return;
     }
 

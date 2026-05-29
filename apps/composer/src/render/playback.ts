@@ -73,6 +73,14 @@ const DEFAULT_VELOCITY = DEFAULT_DYNAMIC_MAP.mf;
    delta. Tunable by ear. */
 const HAIRPIN_OPEN_END_DELTA = 45;
 
+/* TODO(phase5): interpret <dir> expressive-text cues during playback. Text
+ * like "pizz."/"arco"/"con sord." should switch articulation/timbre for the
+ * notes they govern (until the next contradicting cue). This needs the
+ * multi-instrument / per-note timbre concept from Phase 5, so for now <dir>
+ * is render-only — it draws but does not affect the audio timeline. Hook here:
+ * collect <dir> moments (collectDirs), build a piecewise cue lookup parallel to
+ * buildVelocityLookup, and apply at each note's onset. */
+
 export interface TempoInfo { bpm: number; unitDenom: number; dots: number }
 
 export function readTempo(doc: Document): TempoInfo {

@@ -209,6 +209,77 @@ export function removeExpression(el: Element): void {
   el.parentNode?.removeChild(el);
 }
 
+/* ── <dir> (expressive text: pizz, dolce, sul tasto, …) ──────────────────── */
+
+export interface DirOpts {
+  text: string;
+  italic?: boolean;
+  place?: 'above' | 'below' | 'between';
+  staff?: number;
+}
+
+/** Set a <dir>'s content. Italic wraps the text in <rend fontstyle="italic">;
+ *  otherwise it's a plain text node. Clears any prior content first. */
+function setDirContent(el: Element, text: string, italic: boolean): void {
+  while (el.firstChild) el.removeChild(el.firstChild);
+  if (italic) {
+    const rend = el.ownerDocument!.createElementNS(MEI_NS, 'rend');
+    rend.setAttribute('fontstyle', 'italic');
+    rend.textContent = text;
+    el.appendChild(rend);
+  } else {
+    el.textContent = text;
+  }
+}
+
+/** Add a <dir> (expressive text) at the moment, sibling of <staff>, @tstamp
+ *  anchored — same shape as <dynam>. Default place 'above' (the conventional
+ *  spot for performance text); 2.4 will toggle place. */
+export function addDir(doc: Document, at: Moment, opts: DirOpts): Element | null {
+  const measure = measureAtIdx(doc, at.measureIdx);
+  if (!measure) return null;
+  const el = createMei(doc, 'dir', {
+    'xml:id': newId('dir'),
+    tstamp: formatTstamp(at.tstamp),
+    place: opts.place ?? 'above',
+    staff: opts.staff ?? 1,
+  });
+  setDirContent(el, opts.text, !!opts.italic);
+  appendAtEnd(measure, el);
+  return el;
+}
+
+/** Find a <dir> exactly at the given moment (first match). */
+export function dirAt(doc: Document, m: Moment): Element | null {
+  const measures = getMeasures(doc);
+  const measure = measures[m.measureIdx];
+  if (!measure) return null;
+  for (const child of Array.from(measure.children)) {
+    if (child.localName !== 'dir') continue;
+    const t = readTstamp(child);
+    if (t !== null && approxEq(t, m.tstamp)) return child;
+  }
+  return null;
+}
+
+/** The plain text of a <dir> (recurses through any <rend> wrapper). */
+export function dirText(el: Element): string {
+  return (el.textContent ?? '').trim();
+}
+
+/** True iff the <dir>'s text is wrapped in an italic <rend>. */
+export function dirIsItalic(el: Element): boolean {
+  for (const c of Array.from(el.children)) {
+    if (c.localName === 'rend' && c.getAttribute('fontstyle') === 'italic') return true;
+  }
+  return false;
+}
+
+/** Replace a <dir>'s text + italic state in place. */
+export function setDirText(el: Element, text: string, italic: boolean): void {
+  setDirContent(el, text, italic);
+}
+
 /* ── queries ─────────────────────────────────────────────────────────────── */
 
 /** Find a <dynam> exactly at the given moment. */

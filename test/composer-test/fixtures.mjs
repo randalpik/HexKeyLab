@@ -2463,6 +2463,59 @@ const PHASE1 = {
     ],
   },
 
+  /* ── Phase 2.2: expressive text modal (Ctrl+Shift+E → <dir>) ──────────── */
+
+  /* Full flow driven in setup JS (the modal is a native <dialog>; we open it
+     via the real Ctrl+Shift+E keydown, fill the field, and requestSubmit the OK
+     button so the form's method="dialog" closes it and onOk writes the <dir>).
+     By the time invariants run, the modal is closed and the <dir> exists. */
+  phase2_exprtext_create: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'E', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      dlg.querySelector('[data-field="text"]').value = 'dolce';
+      dlg.querySelector('[data-field="italic"]').checked = true;
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+    `,
+  },
+
+  /* Re-open on the existing <dir> and change the text → still ONE <dir>, new text. */
+  phase2_exprtext_edit: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+      const open = () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'E', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const submit = (text) => {
+        const dlg = document.getElementById('textEntryDialog');
+        dlg.querySelector('[data-field="text"]').value = text;
+        dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+      };
+      open(); submit('pizz.');
+      open(); submit('arco');
+    `,
+  },
+
+  /* Re-open on the existing <dir> and submit empty → the <dir> is removed. */
+  phase2_exprtext_delete: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+      const open = () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'E', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const submit = (text) => {
+        const dlg = document.getElementById('textEntryDialog');
+        dlg.querySelector('[data-field="text"]').value = text;
+        dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+      };
+      open(); submit('dolce');
+      open(); submit('');
+    `,
+  },
+
   /* fillIncompleteMeasures fills M_1 (a single quarter rest, then quiet) when
      M_2 has content. */
   phase1_fillIncomplete_basic: {
@@ -5283,6 +5336,51 @@ export const FIXTURE_ASSERTIONS = {
         const s = window.__hkl_composer.inputState();
         return s.cursorMode === 'pedal'
           ? { ok: true } : { ok: false, detail: 'cursorMode=' + s.cursorMode };
+      })()` },
+  ],
+
+  /* ── Phase 2.2: expressive text ───────────────────────────────────────── */
+  phase2_exprtext_create: [
+    { name: 'M_1 has a <dir tstamp≈1 place="above"> with italic "dolce"',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const dirs = [...m.getDoc().querySelectorAll('measure > dir')];
+        if (dirs.length !== 1) return { ok: false, detail: 'dir count=' + dirs.length };
+        const d = dirs[0];
+        const ts = parseFloat(d.getAttribute('tstamp') ?? '0');
+        const text = (d.textContent ?? '').trim();
+        const rend = d.querySelector('rend[fontstyle="italic"]');
+        const placeOk = d.getAttribute('place') === 'above';
+        return (Math.abs(ts - 1) < 0.01 && text === 'dolce' && !!rend && placeOk)
+          ? { ok: true } : { ok: false, detail: 'ts=' + ts + ' text=' + text + ' italic=' + !!rend + ' place=' + d.getAttribute('place') };
+      })()` },
+    { name: 'modal closed after submit',
+      expr: `(() => {
+        const dlg = document.getElementById('textEntryDialog');
+        return dlg && !dlg.open ? { ok: true } : { ok: false, detail: 'open=' + dlg?.open };
+      })()` },
+    { name: 'rendered SVG shows a Verovio dir element (g.dir)',
+      expr: `(() => {
+        const n = document.querySelectorAll('g.dir');
+        return n.length >= 1 ? { ok: true } : { ok: false, detail: 'g.dir count=' + n.length };
+      })()` },
+  ],
+  phase2_exprtext_edit: [
+    { name: 'still ONE <dir>, text updated to "arco" (not italic this time)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const dirs = [...m.getDoc().querySelectorAll('measure > dir')];
+        if (dirs.length !== 1) return { ok: false, detail: 'count=' + dirs.length };
+        const text = (dirs[0].textContent ?? '').trim();
+        return text === 'arco' ? { ok: true } : { ok: false, detail: 'text=' + text };
+      })()` },
+  ],
+  phase2_exprtext_delete: [
+    { name: 'no <dir> remains after empty submit',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const dirs = m.getDoc().querySelectorAll('measure > dir');
+        return dirs.length === 0 ? { ok: true } : { ok: false, detail: 'count=' + dirs.length };
       })()` },
   ],
 

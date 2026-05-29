@@ -4,9 +4,13 @@
   "version": "1.0.0",
   "type": "module",
   "packageManager": "pnpm@11.3.0",
+  "engines": {
+    "node": ">=22.13"
+  },
   "scripts": {
     "dev": "node vite/dev-proxy.mjs",
     "build": "pnpm -r build",
+    "assemble": "node vite/assemble-dist.mjs",
     "typecheck": "tsc --noEmit",
     "check:boundaries": "node test/check-boundaries.mjs",
     "analyze": "node --max-old-space-size=8192 --expose-gc apps/analyzer/cli/generate-samples.js",

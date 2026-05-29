@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 195,
-  "passed": 195,
+  "fixtures": 198,
+  "passed": 198,
   "failed": 0,
-  "elapsedMs": 59808,
+  "elapsedMs": 59564,
   "results": [
     {
       "name": "emptyDoc",
@@ -1523,6 +1523,30 @@
       "failures": [],
       "counts": {
         "invariants": 9
+      }
+    },
+    {
+      "name": "phase2_exprtext_create",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "phase2_exprtext_edit",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase2_exprtext_delete",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
       }
     },
     {

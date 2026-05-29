@@ -239,6 +239,15 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
 }
 .hkl-dialog .actions button:hover { border-color: #888 }
 .hkl-dialog .actions button#setupOk { border-color: #4CFFBA; color: #4CFFBA }
+.hkl-dialog .actions button.te-ok { border-color: #4CFFBA; color: #4CFFBA }
+/* Text-entry modal preset chips. */
+.hkl-dialog fieldset.te-presets { flex-wrap: wrap; gap: 6px }
+.hkl-dialog button.te-preset {
+  padding: 2px 8px; background: #222; color: #bbb;
+  border: 1px solid #444; border-radius: 10px; cursor: pointer;
+  font: inherit; font-size: 11px;
+}
+.hkl-dialog button.te-preset:hover { border-color: #4CB4FF; color: #fff }
 
 /* Help (keybinding reference) modal — wider, scrollable, two-column grid. */
 .hkl-dialog-help { min-width: 560px; max-width: 720px; }
@@ -383,6 +392,10 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
 </dialog>
 
 <dialog id="helpDialog" class="hkl-dialog hkl-dialog-help"></dialog>
+
+<!-- Reusable text-entry modal (expressive text now; tempo etc. later). Content
+     is built dynamically by ui/textEntryModal.ts. -->
+<dialog id="textEntryDialog" class="hkl-dialog"></dialog>
 
 <script type="module" src="/src/main.ts"></script>
 </body>
