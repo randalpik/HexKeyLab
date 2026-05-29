@@ -173,7 +173,7 @@ export const KEYBINDINGS: KeySection[] = [
   {
     title: "Expression mode",
     intro:
-      "A virtual voice between voices 2 and 3 in the cycle. Edits expression marks (dynamics, hairpins).",
+      "A virtual voice between voices 2 and 3 in the cycle. Edits expression marks (dynamics, hairpins, expressive text).",
     bindings: [
       { keys: "←  /  →", desc: "Step through the unified moment list." },
       {
@@ -187,7 +187,7 @@ export const KEYBINDINGS: KeySection[] = [
       },
       {
         keys: "Backspace  /  Delete",
-        desc: "Delete the selected expression element at this moment (dynam first, then any containing hairpin).",
+        desc: "Delete the selected expression element at this moment (dynamic, then expressive text, then any containing hairpin).",
       },
       { keys: "Escape", desc: "Cancel pending hairpin." },
       { keys: "Home  /  End", desc: "Jump to first / last moment." },

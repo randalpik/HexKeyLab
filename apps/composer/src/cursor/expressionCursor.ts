@@ -16,7 +16,7 @@
 // reset to 0.
 
 import {
-  type Moment, momentCompare, momentEqual, dynamAt, hairpinsAt, readMeter,
+  type Moment, momentCompare, momentEqual, dynamAt, dirAt, hairpinsAt, readMeter,
 } from '../expressions.js';
 import { pedalMoments } from '../pedal.js';
 import { realTicks } from '../model/ticks.js';
@@ -28,6 +28,7 @@ export interface ExpressionCursor {
 
 export interface ExpressionSelection {
   dynam: Element | null;
+  dir: Element | null;
   hairpins: Element[];
 }
 
@@ -121,8 +122,8 @@ export function buildMomentList(doc: Document): Moment[] {
   const onsets = noteOnsetMoments(doc);
   const measures = Array.from(doc.querySelectorAll('measure'));
 
-  /* Dynam moments. */
-  for (const d of Array.from(doc.querySelectorAll('dynam'))) {
+  /* Dynam + dir moments (both are point expression marks like a tstamp). */
+  for (const d of Array.from(doc.querySelectorAll('dynam, dir'))) {
     const m = d.closest('measure');
     if (!m) continue;
     const idx = measures.indexOf(m);
@@ -261,6 +262,7 @@ function absDistance(a: Moment, b: Moment): number {
 export function selectionAt(doc: Document, m: Moment): ExpressionSelection {
   return {
     dynam: dynamAt(doc, m),
+    dir: dirAt(doc, m),
     hairpins: hairpinsAt(doc, m),
   };
 }

@@ -441,6 +441,15 @@ function deleteSelectedExpression(model: ComposerModel, hooks: InputHooks): bool
     hooks.onStateChange();
     return true;
   }
+  const dir = dirAt(doc, m);
+  if (dir) {
+    removeExpression(dir);
+    refreshExprCursor(model);
+    hooks.setStatus?.('Deleted expressive text.', 'action');
+    hooks.onChange();
+    hooks.onStateChange();
+    return true;
+  }
   const hairpins = hairpinsAt(doc, m);
   if (hairpins.length > 0) {
     removeExpression(hairpins[0]);
@@ -460,8 +469,14 @@ function formatBeat(t: number): string {
 
 /* Common performance-text cues offered as quick-insert chips. */
 const EXPRESSIVE_TEXT_PRESETS = [
-  'pizz.', 'arco', 'sul tasto', 'sul pont.', 'con sord.', 'senza sord.',
-  'dolce', 'espr.', 'cantabile', 'marcato',
+  "cresc.",
+  "dim.",
+  "dolce",
+  "espressivo",
+  "leggiero",
+  "rubato",
+  "pizz.",
+  "arco",
 ];
 
 /* Ctrl+Shift+E: open the reusable text-entry modal to create / edit / delete a

@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 198,
-  "passed": 198,
+  "fixtures": 199,
+  "passed": 199,
   "failed": 0,
-  "elapsedMs": 59564,
+  "elapsedMs": 60818,
   "results": [
     {
       "name": "emptyDoc",
@@ -1547,6 +1547,14 @@
       "failures": [],
       "counts": {
         "invariants": 7
+      }
+    },
+    {
+      "name": "phase2_exprtext_layer_delete",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
       }
     },
     {

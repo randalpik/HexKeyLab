@@ -695,6 +695,10 @@ class CursorOverlay {
       const id = sel.dynam.getAttribute('xml:id');
       if (id) ids.push(id);
     }
+    if (sel.dir) {
+      const id = sel.dir.getAttribute('xml:id');
+      if (id) ids.push(id);
+    }
     for (const h of sel.hairpins) {
       const id = h.getAttribute('xml:id');
       if (id) ids.push(id);

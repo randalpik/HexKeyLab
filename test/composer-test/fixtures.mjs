@@ -2516,6 +2516,27 @@ const PHASE1 = {
     `,
   },
 
+  /* Expressive text lives in the EXPRESSION layer: place a <dir>, cycle into
+     expr mode (V1 → V2 → expr, reachable because the measure now has the dir),
+     and Backspace deletes it. */
+  phase2_exprtext_layer_delete: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'E', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      dlg.querySelector('[data-field="text"]').value = 'dolce';
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+      m.setCursor(1, 1);
+    `,
+    setupKeys: [
+      'ArrowDown',   /* V1 → V2 */
+      'ArrowDown',   /* V2 → expr (measure has the dir) */
+      'Backspace',   /* delete the <dir> at the cursor moment */
+    ],
+  },
+
   /* fillIncompleteMeasures fills M_1 (a single quarter rest, then quiet) when
      M_2 has content. */
   phase1_fillIncomplete_basic: {
@@ -5341,7 +5362,7 @@ export const FIXTURE_ASSERTIONS = {
 
   /* ── Phase 2.2: expressive text ───────────────────────────────────────── */
   phase2_exprtext_create: [
-    { name: 'M_1 has a <dir tstamp≈1 place="above"> with italic "dolce"',
+    { name: 'M_1 has a <dir tstamp≈1 place="below"> with italic "dolce"',
       expr: `(() => {
         const m = window.__hkl_composer.model;
         const dirs = [...m.getDoc().querySelectorAll('measure > dir')];
@@ -5350,7 +5371,7 @@ export const FIXTURE_ASSERTIONS = {
         const ts = parseFloat(d.getAttribute('tstamp') ?? '0');
         const text = (d.textContent ?? '').trim();
         const rend = d.querySelector('rend[fontstyle="italic"]');
-        const placeOk = d.getAttribute('place') === 'above';
+        const placeOk = d.getAttribute('place') === 'below';
         return (Math.abs(ts - 1) < 0.01 && text === 'dolce' && !!rend && placeOk)
           ? { ok: true } : { ok: false, detail: 'ts=' + ts + ' text=' + text + ' italic=' + !!rend + ' place=' + d.getAttribute('place') };
       })()` },
@@ -5377,6 +5398,19 @@ export const FIXTURE_ASSERTIONS = {
   ],
   phase2_exprtext_delete: [
     { name: 'no <dir> remains after empty submit',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const dirs = m.getDoc().querySelectorAll('measure > dir');
+        return dirs.length === 0 ? { ok: true } : { ok: false, detail: 'count=' + dirs.length };
+      })()` },
+  ],
+  phase2_exprtext_layer_delete: [
+    { name: 'entered expression mode (measure has the dir)',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        return s.cursorMode === 'expr' ? { ok: true } : { ok: false, detail: 'cursorMode=' + s.cursorMode };
+      })()` },
+    { name: '<dir> deleted from the expression layer via Backspace',
       expr: `(() => {
         const m = window.__hkl_composer.model;
         const dirs = m.getDoc().querySelectorAll('measure > dir');

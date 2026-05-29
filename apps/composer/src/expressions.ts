@@ -233,15 +233,15 @@ function setDirContent(el: Element, text: string, italic: boolean): void {
 }
 
 /** Add a <dir> (expressive text) at the moment, sibling of <staff>, @tstamp
- *  anchored — same shape as <dynam>. Default place 'above' (the conventional
- *  spot for performance text); 2.4 will toggle place. */
+ *  anchored — same shape as <dynam>. Default place 'below' (the conventional
+ *  spot for performance text under the staff); 2.4 will toggle place. */
 export function addDir(doc: Document, at: Moment, opts: DirOpts): Element | null {
   const measure = measureAtIdx(doc, at.measureIdx);
   if (!measure) return null;
   const el = createMei(doc, 'dir', {
     'xml:id': newId('dir'),
     tstamp: formatTstamp(at.tstamp),
-    place: opts.place ?? 'above',
+    place: opts.place ?? 'below',
     staff: opts.staff ?? 1,
   });
   setDirContent(el, opts.text, !!opts.italic);
@@ -336,7 +336,7 @@ export function measureHasExpression(doc: Document, measureIdx: number): boolean
   if (measureIdx < 0 || measureIdx >= measures.length) return false;
   const target = measures[measureIdx];
   for (const child of Array.from(target.children)) {
-    if (child.localName === 'dynam') return true;
+    if (child.localName === 'dynam' || child.localName === 'dir') return true;
   }
   for (const el of Array.from(doc.querySelectorAll('hairpin'))) {
     const s = readStartMoment(el, measures);
