@@ -4,7 +4,9 @@
 >
 > **Phase 1: ✅ shipped** (2026-05-28). 190/190 tests pass. See `docs/composer-phase1.md` for the historical detail; the inherited-by-Phase-2 surfaces are summarized below in **§ Phase 1 outcomes — what Phase 2 inherits**.
 >
-> **Phase 2: ready to scaffold on a fresh thread.** See **§ Phase 2 scaffold** below.
+> **Phase 2: ✅ shipped** (2026-05-30). All four items (pedal layer, expressive-text modal + reusable shell, tempo modal + retiming + tempo layer, above/below placement) landed with fixtures; suite grew 190 → 207. The surfaces Phase 3 inherits are summarized in **§ Phase 2 outcomes — what Phase 3 inherits** below.
+>
+> **Phase 3: ready to scaffold on a fresh thread.** See **§ Phase 3 scaffold** below.
 
 ## Context
 
@@ -129,16 +131,14 @@ Five phases. Each ships independently and unblocks the next.
 
 All 12 items shipped + ~15 follow-up fix rounds Max requested during smoke testing. Final state lives in code; tests gate at 190/190.
 
-### Phase 2 — Expression layer expansion *(ready to scaffold)*
+### Phase 2 — Expression layer expansion *(✅ shipped 2026-05-30; see § Phase 2 outcomes below)*
 
-Goal: extend the time-anchored expression infrastructure (already shipped for `<dynam>` + `<hairpin>`) with three new element types and the first reusable text-entry modal.
+All four items shipped with fixtures (suite 190 → 207). Notable scope adjustments made with Max during the work:
+- Pedal and tempo each became their **own navigable layer** in the cursor cycle (pedal after V4, tempo above V1) — not part of the per-staff expression layer. Tempo is score-global (the only annotation spanning all instruments) and has fixed placement.
+- The pedal/tempo playback routing went deeper than "sustain-CC": HKL drives its damper engine from a pedal timeline (deferred note-offs), and tempo introduced a full piecewise-linear retiming (`tickMsAt`/trapezoidal `atMs`) — entirely Composer-side, no new bridge field for tempo.
+- Above/below placement (`Ctrl+↑/↓`) applies to dynamics/hairpins/expressive-text only; **tempo + pedal excluded** (fixed placement). Works in both the expression layer and voice mode.
 
-- **Pedal layer `Shift+P/Shift+O`** — simplest concrete instance; first to land. Forces the bridge → HKL sustain-CC routing.
-- **Expressive text modal `Ctrl+Shift+E`** — first reusable text-entry modal; becomes the shell tempo and (later) clef/sig modals inherit.
-- **Tempo modal `Ctrl+Shift+T`** + rit/accel rendering — uses the new modal shell; introduces the first non-trivial playback retiming.
-- **Above/below staff placement `Ctrl+↑/↓`** — touches all the above (`@place` on every expression element).
-
-### Phase 3 — Score structure & playback structure
+### Phase 3 — Score structure & playback structure *(ready to scaffold)*
 Goal: repeats, endings, page layout, octave/trill extras.
 
 - Repeats + endings `{` `}` `Ctrl+E` — biggest playback-builder change in the block
@@ -239,108 +239,100 @@ Nothing left from Phase 1 itself — but the **HEJI-cycle accidental cleanup** m
 
 ---
 
-## 7. Phase 2 scaffold
+## 7. Phase 2 outcomes — what Phase 3 inherits
 
-A fresh session should start here. The four items, in implementation order:
+Phase 2 (pedal, expressive text, tempo, placement) left substantial infrastructure Phase 3 should reuse, not reinvent. All in `apps/composer/` unless noted.
 
-### Phase 2.1 — Pedal layer `Shift+P` / `Shift+O`
+### The layer pattern (NEW — the most reusable Phase 2 structure)
 
-**Encoding:** MEI `<pedal @dir="down" @tstamp=…>` and `<pedal @dir="up" @tstamp=…>` as siblings of `<staff>` in their measure — same shape as `<fermata>`/`<breath>` already shipped in Phase 1.
+There are now **five cursor modes** (`CursorMode` in `src/input.ts`): `'voice' | 'expr' | 'pedal' | 'tempo' | 'select'`. The expression / pedal / tempo layers are "virtual voices" in the ↑/↓ cycle: **tempo (above V1) → 1 → 2 → expr → 3 → 4 → pedal**. Each non-voice layer is the same shape — copy it to add a new navigable layer:
 
-**Hotkeys:** `Shift+P` = pedal down; `Shift+O` = pedal up (off). Each places its own event at the cursor's moment. The pedal symbol renders BELOW the bottom staff (Verovio knows this; no manual @place).
+- A `state.<x>Cursor: ExpressionCursor` (`{ index, moments }`) + `refresh<X>Cursor(model)`.
+- A moment-list builder in `src/cursor/expressionCursor.ts` — `buildPedalMomentList` / `buildTempoMomentList` = `dedupSorted([...noteOnsetMoments(doc), ...<x>Moments(doc)])`. The shared snap helper is `cursorFromMoments(moments, prev)` (used by all three `rebuild*Cursor`).
+- `cycleVoice()` (`src/input.ts`) handles entry/exit; expr+pedal are skipped when empty (`measureHasExpression` / `pedalMoments().length`), tempo is always reachable (a tempo always conceptually exists).
+- Arrow nav (←/→/Home/End) + `Backspace`/`Delete` (per-layer `deleteSelected*`) branch on `cursorMode` in the keydown handler's nav block.
+- Rendering in `src/cursor/cursor.ts`: a colored cursor bar + label + a `.<x>-selected` highlight class. Expr renders between staves; pedal below staff 2 (`computeBelowStaff2Y`); tempo above staff 1 (`computeAboveStaff1Y`). `CursorUpdateOpts` carries every layer's cursor; `main.ts` `cursorOpts()` passes them; `refreshIndicators` shows E/P/T.
+- **Test-harness note:** `test/composer-test/lib/cursor-trace.mjs` coerces layer modes to `'voice'` and passes `<x>Cursor: null` — extend that coercion when adding a layer (else the trace's `cursor.update` dereferences a null cursor).
 
-**Playback:** new bridge message `pedal-event` with `{ at: tickPos, dir: 'down'|'up' }`, OR piggyback as an additional field on `play-score` events. The cleanest: extend `buildPlayback` to emit a parallel sequence of pedal events with their own timestamps, and add a new bridge field `pedalEvents`. HKL routes them to sustain CC 64 on its audio engine. External MIDI out gets the same CC.
+### Reusable modal shell (`src/ui/textEntryModal.ts`)
 
-**Files (likely):**
-- `apps/composer/src/pedal.ts` (new) — CRUD for `<pedal>` events: `addPedal(doc, moment, dir)`, `removePedal(doc, moment, dir)`, `collectPedals(doc)`, `pruneDanglingPedals(doc)` (sibling-of-staff cleanup; hook into `normalizeTies` like fermata/breath).
-- `apps/composer/src/input.ts` — `Shift+P` / `Shift+O` keystroke dispatch.
-- `apps/composer/src/keybindings.ts` — add to Voice mode section, plain-musician language.
-- `apps/composer/src/render/playback.ts` — extend `buildPlayback` to emit pedal events; bridge message extension.
-- `packages/bridge/src/protocol.ts` — add `pedalEvents` to `play-score` payload OR new `pedal-event` message type.
-- `apps/hkl/src/bridge/hkl-side.ts` — receive pedal events and apply sustain CC.
+`openTextEntryModal({ title, fields, presets?, okLabel?, onOk })` — native `<dialog id="textEntryDialog">` (markup is an empty `<dialog>` in `index.html`, built dynamically). Field types: `text | number | check | select`. **OK = submit (Enter), Cancel = button, Escape = native cancel.** Model-agnostic: `onOk(values)` does all mutation + history. Used by expressive-text (inline in `input.ts`) and `tempoDialog.ts`. Phase 4's clef/sig modals should inherit it. Async caveat: `onOk` runs after the modal closes, so it manages its own `history.push` (can't be wrapped by the synchronous `withHistory` at the dispatch site).
 
-**Decisions needed** (would benefit from Max's input before scaffolding):
-- **Bridge protocol**: piggyback on `play-score` (one transport for the whole timeline) vs separate `pedal-event` messages (cleaner separation, easier to extend with other CCs later). *Recommend piggyback for v1*.
-- **Anchoring**: time-based `@tstamp` (survives nearby note deletion — matches `feedback_expression_anchoring`) vs note-attached. *Recommend tstamp* (matches dynamics/hairpins).
+### Time-anchored expression CRUD (`src/expressions.ts`)
 
-### Phase 2.2 — Expressive text modal `Ctrl+Shift+E`
+`<dynam>` / `<hairpin>` / `<dir>` / `<tempo>` are all siblings of `<staff>`, `@tstamp`-anchored (survive nearby-note deletion — `feedback_expression_anchoring`). Helpers: `addDir`/`dirAt`/`dirText`/`dirIsItalic`/`setDirText`; `addTempo`/`tempoAt`/`readTempoEl`/`collectTempi`/`tempoMoments`. `<pedal>` CRUD is `src/pedal.ts`. The `data-hkl-*` attribute convention carries model state Verovio ignores (`data-hkl-gradual`, `data-hkl-mm-shown`, etc.).
 
-**Modal shell** (the most reusable Phase 2 deliverable). Currently `setupDialog.ts` is the only modal pattern; it's a one-off. Phase 2 should extract a reusable text-entry-modal abstraction that subsequent modals (tempo, future clef/sig) inherit.
+### Playback timeline (`src/render/playback.ts`) — IMPORTANT for Phase 3 repeats
 
-**Suggested shape** (under-specified — Max may have a different preference):
-- `apps/composer/src/ui/textEntryModal.ts` (new) — generic `openTextEntryModal({ title, fields: [...], onOk })` that builds a `<dialog>`, focuses the first text field, handles Enter→submit / Escape→cancel.
-- Or: a wrapper component like `apps/composer/src/expressionTextDialog.ts` that uses native `<dialog>` directly (matching `setupDialog.ts`'s pattern) without an over-engineered abstraction.
+- **Tempo retiming**: `buildTempoTimeline(mei)` → `{ tickMsAt(tick), atMsAt(tick) }`. `tickMsAt` is piecewise-LINEAR in beat-period (instant tempo = step, gradual = linear ramp); `atMsAt` is the trapezoidal integral from tick 0. Gradual target resolution: explicit `@tstamp2` → next instant tempo's bpm → intensity-% (poco/plain/molto = 20/40/60, in `<hkl:config>` via `getGradualPercents`); "a tempo" restores the pre-gradual bpm. Gradual intensity is DERIVED from the mark text (`deriveGradualIntensity`), not stored. `buildPlayback` and `buildPedalEvents` both run on `atMsAt`; `playbackStartMs(model, startTicks)` gives the cursor-seek offset.
+- **⚠️ Repeats will need to COMPOSE with this.** Today the timeline is a pure function of tick (`atMsAt(tick)` is monotonic). Repeats/voltas replay tick-spans, so a note's playback `atMs` is no longer `atMsAt(tick)` — it's the accumulated time over the *played order*, which visits some ticks more than once. Plan the repeat expansion as producing an ordered list of (tickSpan, repetition) and accumulate `atMs` by integrating `tickMsAt` over the played sequence. Velocity (`buildVelocityLookup`) and pedal lookups stay tick-based (a replayed note reuses the dynamics/pedal at its original tick), which is correct.
+- **HKL driver hardening** (`apps/hkl/src/bridge/hkl-side.ts`): the lookahead driver's per-event scheduling is wrapped in try/catch (`logPlaybackError` + `playbackStateSnapshot`) so one bad event can't silently freeze the transport; the finish handler always sends `playback-finished` (finally). The pedal timeline drives the damper engine via deferred note-offs (`pedalCapturesNoteEndingAt` decides capture deterministically from the timeline at each note's WRITTEN end; glide degrades to overlap under the pedal). Bridge: `play-score` carries an optional `pedalEvents` array (`packages/bridge/src/protocol.ts`).
 
-**Encoding:** MEI `<dir>` element as sibling of `<staff>`, `@tstamp` anchored. Has `@place` (above/below — Phase 2.4 hotkey toggles it) and contains the text content. Optional `<rend @fontstyle="italic">` for italics.
+### Metronome / SMuFL-in-text (relevant for trills/tremolo/8va glyphs)
 
-**Modal contents** (per backlog item):
-- Text input (single line for v1).
-- Italics checkbox.
-- "Common configurations" via arrow keys / Tab — e.g., pizz / arco / sul tasto / con sord. Could be a dropdown of presets OR autocomplete. *Defer detail to scaffold thread.*
+Verovio (6.2.0) does NOT render `@mm`/`@mm.unit` as a visible mark, and plain Unicode note chars (U+2669) render in the serif text font (ugly). The working encoding — confirmed by round-tripping a MusicXML metronome through `tk.getMEI()` — is a **SMuFL "Metronome marks" glyph as the content of `<rend glyph.auth="smufl">`**, which Verovio draws in the Leipzig music font: U+ECA3 half, U+ECA5 quarter, U+ECA7 eighth, U+ECB7 augmentation dot (see `mmGlyph` + `setTempoContent`). The same `<rend glyph.auth="smufl">{char}</rend>` pattern is the way to embed any SMuFL glyph in Verovio text. **Lesson:** for any "does Verovio render X" question, round-trip MusicXML→MEI via the toolkit to see the canonical form — don't assume attribute support.
 
-**Playback:** "we will directly interpret text" per the backlog — Phase 2 likely parses the literal text for known cues (pizz, arco) and applies them. Out of scope of the text-entry feature itself; lives in `render/playback.ts`. For v1, ship the text rendering and DEFER the playback parsing (mark as TODO with a clear hook).
+### Placement gesture
 
-**Files:**
-- New: `apps/composer/src/expressionTextDialog.ts` or `ui/textEntryModal.ts`.
-- `apps/composer/src/input.ts` — `Ctrl+Shift+E` opens the dialog.
-- `apps/composer/src/expressions.ts` — add `<dir>` CRUD alongside dynam/hairpin.
-- `apps/composer/index.html` — modal markup.
+`Ctrl+↑/↓` sets `@place` above/below on every expression element at the current moment (`commitExpressionPlace`), in BOTH the expression layer and voice mode (acts on the expression at the voice anchor). Always `preventDefault`s (no page scroll). Tempo + pedal are excluded (own layers, fixed placement).
 
-### Phase 2.3 — Tempo modal `Ctrl+Shift+T` + rit/accel
+### Verification
 
-**Encoding:** MEI `<tempo>` element. Phase 1 already supports a single global tempo via `setTempo()` in `setupDialog`. Phase 2 extends to MULTIPLE `<tempo>` elements at arbitrary moments, plus `<gradual>` (or equivalent) for rit/accel spans.
+Suite at **207 fixtures** (`test/composer-test/`). Phase 2 fixtures live in the `PHASE1` group (full tier). Pattern for **modal-driven fixtures**: drive the whole open→fill→submit flow in `setup` JS (dispatch the real `Ctrl+Shift+…` keydown, set field values, `form.requestSubmit(okBtn)`), so the modal is closed by the time invariants run. Layer-navigation fixtures use `setupKeys` (ArrowUp/Down to enter the layer, etc.).
 
-**Verovio support**: Verovio renders `<tempo>` with `@mm` and text content (e.g. "Allegro ♩ = 120"). For rit/accel, the convention is `<tempo>` with text "rit." plus an optional dashed line. MEI 5 also supports `<dynam>`-style hairpins for gradual changes; check what Verovio renders.
+---
 
-**Modal contents:**
-- Text (e.g. "Allegro", "rit.", "molto rit.").
-- Marking mode: "tempo marking" (bold + larger, e.g. "Allegro ♩=120") vs "expression" (italic, e.g. "rit.").
-- Note-symbol entry for "♩=120"-style markings (dropdown of note values).
-- For rit/accel: span endpoint (= when does the gradual change end).
+## 8. Phase 3 scaffold
 
-**Playback retiming:** this is the first non-trivial change to `buildPlayback`. The current velocity timeline is piecewise-constant (dynamics) + piecewise-linear (hairpins). Tempo gets a similar treatment:
-- Piecewise-constant for instant tempo changes.
-- Piecewise-linear interpolation for rit/accel (or curved — *decision needed*).
-- The `tickMs` constant becomes a `tickMsAt(tickPos)` function.
+A fresh session should start here. Four items; **repeats + endings is the big one** (the only fundamental playback-builder change) — do it first or last deliberately, not in the middle. None has a hard architectural blocker (§4).
 
-**Files:**
-- `apps/composer/src/expressions.ts` (extend) — `<tempo>` CRUD as siblings of staff.
-- `apps/composer/src/input.ts` — `Ctrl+Shift+T` opens the modal.
-- New: `apps/composer/src/tempoDialog.ts` (using the shell from 2.2).
-- `apps/composer/src/render/playback.ts` — piecewise tempo timeline; mid-piece retiming.
-- `apps/composer/src/setupDialog.ts` — initial tempo control STAYS in Setup (the modal handles MID-PIECE changes); Setup writes to the first measure's `<tempo>` and the modal handles subsequent ones.
+### Phase 3.1 — Repeats + endings `{` / `}` / `Ctrl+E`
 
-**Decision needed:** rit/accel interpolation — linear, exponential, or user-selectable. *Recommend linear for v1*.
+**Encoding:** repeat barlines via `<measure @left="rptstart">` / `@right="rptend"` (and `rptboth`); 1st/2nd endings (voltas) via `<ending n="1">…</ending>` wrapping measures, with `@lendsym`/`@startid` as needed. Verovio renders both natively. `]` (double bar, Phase 3-adjacent) sets `@right="dbl"`; `[` is still reserved (§1).
 
-### Phase 2.4 — Above/below staff placement `Ctrl+↑` / `Ctrl+↓`
+**Hotkeys:** `{` = repeat-start on the current measure, `}` = repeat-end; `Ctrl+E` = wrap/extend an ending over the selected measure(s). Confirm exact semantics with Max (toggle vs set; how endings interact with the selection layer).
 
-**Behavior:** in expression mode (or with a selected expression element at the cursor), `Ctrl+↑` and `Ctrl+↓` flip `@place="above"` ↔ `@place="below"` on the current expression element. Defaults per element type (dynamics: between staves; tempo: above; pedal: below) — but Phase 2 ships flat defaults (always above), since "defaults per instrument" requires Phase 5's multi-instrument concept.
+**Playback (the hard part):** `buildPlayback` must EXPAND the repeat/volta structure into the played measure order BEFORE walking voices, then accumulate `atMs` over that order via the tempo timeline (see the ⚠️ note in §7 — `atMsAt(tick)` is no longer sufficient; integrate `tickMsAt` over the played sequence). A replayed note reuses tick-based velocity/pedal/tempo at its ORIGINAL tick. Highlight echo (`meiId`) repeats too — the same element id sounds more than once, so the cursor highlight must handle revisits (today each event carries one `meiId`; that still works, but verify the per-voice playback bars don't get confused by a revisited id).
 
-**Encoding:** `@place` on `<dynam>` / `<hairpin>` / `<dir>` / `<tempo>` / `<pedal>` — already a standard MEI attribute. Verovio honors it.
+**Files:** `src/model/*` (repeat/ending CRUD + selection integration), `src/input.ts` (`{`/`}`/`Ctrl+E`), `src/render/playback.ts` (repeat expansion + composed retiming), `src/keybindings.ts`.
 
-**Files:**
-- `apps/composer/src/input.ts` — `Ctrl+↑/↓` in expression mode.
-- `apps/composer/src/expressions.ts` — `getPlace(el)` / `setPlace(el, place)` helpers (probably one-liners).
+### Phase 3.2 — Page break `Ctrl+B` + section headers
 
-### Phase 2 verification
+**Encoding:** `<pb>` (page break) / `<sb>` (system break) as section-level controls; Verovio honors them when `breaks: 'encoded'` (currently `'auto'`/`'none'` in `render.ts` `buildOptions` — a view-mode-aware change is needed so encoded breaks win in page mode). Section header = a rehearsal-style text (`<dir>` or a dedicated `<tempo>`-like block) at a measure; decide with Max whether it's a first-class element or reuses expressive text.
 
-Per the standard suite gates. New fixtures:
+**Hotkeys:** `Ctrl+B` toggles a page break before the current measure (collides with Firefox bookmark — already `preventDefault`'d for other Ctrl combos; do the same).
 
-- **Pedal**: `<pedal @dir="down">` at moment, second key adds `@dir="up"`, both render; playback events include pedal CC.
-- **Expressive text modal**: `Ctrl+Shift+E` opens the modal; submitting writes a `<dir>` at the cursor's moment; renders.
-- **Tempo modal**: `Ctrl+Shift+T` opens; submitting writes a `<tempo>` mid-piece; playback retimes accordingly (assert event `atMs` shifted vs default-tempo computation).
-- **Above/below**: `Ctrl+↑/↓` toggles `@place` on the cursor's expression; renders position changes.
+**Files:** `src/model/*`, `src/render/render.ts` (breaks option per view mode), `src/input.ts`, `src/keybindings.ts`.
 
-### Cross-cutting decisions to surface to Max early in Phase 2
+### Phase 3.3 — 8va `Ctrl+8` (octave lines)
 
-(Repeated from above for convenience — a fresh thread should ask before scaffolding deep.)
+**Encoding:** MEI `<octave @dis="8" @dis.place="above|below" @startid @endid>` (or `@tstamp`/`@tstamp2`). Verovio renders the ottava bracket. **Playback:** the spanned notes sound an octave higher/lower — but HKL playback is coord-based (`{q, r}` → frequency); an 8va must shift the played pitch. Decide: apply the octave shift in `buildPlayback` (adjust the emitted coord/octave for spanned notes) so HKL stays dumb. Note the lattice: an octave is +3 along q (band structure, 2:1 every 3 q-steps) — confirm the coord transform with the tuning rules (CLAUDE.md → coordinate axes).
 
-1. **Pedal bridge protocol**: piggyback on `play-score` (recommended) vs separate `pedal-event` messages.
-2. **Modal abstraction shape**: extract `textEntryModal.ts` generic shell vs per-feature dialogs that copy `setupDialog.ts`'s pattern.
-3. **Expressive text playback effects**: ship the text rendering only in v1, defer the "pizz"/"arco" auto-interpretation? Or fold it in?
-4. **Rit/accel interpolation curve**: linear (recommended) vs curved.
-5. **Initial tempo**: stays in Setup dialog (recommended) vs migrate fully to the new tempo modal.
+**Hotkeys:** `Ctrl+8` over a selection (selection layer) or the current note.
+
+**Files:** `src/expressions.ts` or a new `src/octave.ts` (CRUD), `src/render/playback.ts` (pitch shift), `src/input.ts`, `src/keybindings.ts`.
+
+### Phase 3.4 — Trills + tremolos `Ctrl+T`
+
+**Encoding:** `<trill>` (note-attached ornament, `@startid`; optional `@extender` wavy line via `@tstamp2`); tremolo via `<bTrem>` (single-note, wraps a `<note>`/`<chord>`) and `<fTrem>` (between two notes). Selection-mode tremolo logic: a multi-note tremolo spans the selection.
+
+**Hotkeys:** `Ctrl+T` (note: `Ctrl+Shift+T` is the tempo modal — distinct). Confirm trill vs tremolo disambiguation with Max (modifier? selection size?).
+
+**Playback:** trills/tremolos can stay render-only for v1 (like articulations were initially), or expand into rapid alternation in `buildPlayback`. Recommend render-only first with a clear TODO hook; surface to Max.
+
+**Files:** `src/articulations.ts` (trill is ornament-like, note-attached — extends the artic infra) or a new module, `src/input.ts`, `src/keybindings.ts`, `src/render/playback.ts` (TODO hook).
+
+### Phase 3 verification
+
+Standard gates (`pnpm typecheck` + `pnpm -r build` + `pnpm check:boundaries` + `pnpm test:composer`, with `pnpm dev` running). Each item lands ≥1 fixture in the `PHASE1` group with `visualBaseline` for the rendering. The repeat-expansion playback change especially needs assertions on the emitted `atMs` sequence (a repeated span should produce duplicate note events at the right times) — mirror the tempo-retiming fixtures (`phase2_tempo_instant_retimes`).
+
+### Cross-cutting decisions to surface to Max early in Phase 3
+
+1. **Repeat/ending semantics**: `{`/`}` toggle vs set; how `Ctrl+E` endings interact with the selection layer; nested/multiple endings scope.
+2. **Section headers**: first-class element vs reuse expressive text (`<dir>`).
+3. **8va playback**: shift pitch in `buildPlayback` (recommended, keeps HKL dumb) — confirm the +3-q octave coord transform against the tuning rules.
+4. **Trills/tremolo playback**: render-only v1 (recommended) vs expand to alternation; `Ctrl+T` trill-vs-tremolo disambiguation.
 
 ### Suggested kickoff prompt for the new thread
 
-> "Read `docs/composer-roadmap.md` § Phase 2. Confirm the five cross-cutting decisions, then write a focused implementation plan at `docs/composer-phase2.md` (mirror the structure of `composer-phase1.md`). Implement Phase 2.1 (pedal) first."
+> "Read `docs/composer-roadmap.md` §7 (Phase 2 outcomes) + §8 (Phase 3 scaffold). Confirm the four cross-cutting decisions, then implement Phase 3 in the suggested order — start with repeats + endings, since its playback-expansion change is the one that composes with the tempo timeline. Land each item with fixtures; gate on `pnpm test:composer`."

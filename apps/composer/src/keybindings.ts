@@ -103,14 +103,18 @@ export const KEYBINDINGS: KeySection[] = [
         note: "Escape cancels a pending hairpin.",
       },
       {
+        keys: "Ctrl+↑  /  Ctrl+↓",
+        desc: "Move the expression(s) at the current note above / below the staff (@place). Same as in the expression layer.",
+      },
+      {
         keys: "Shift+P  /  Shift+O",
         desc: "Sustain pedal down / up (off) at the cursor anchor.",
         note: "Anchor: in INS mode, the just-entered element (cursor−1); in OVR mode, the element at cursor. Press again at the same moment to remove the mark.",
       },
       {
         keys: "↑  /  ↓",
-        desc: "Previous / next voice. Cycle: 1 → 2 → expr → 3 → 4 → pedal.",
-        note: "The expression and pedal layers appear in the cycle only when they contain marks; create marks in voice mode, then navigate the layer to edit/delete.",
+        desc: "Previous / next voice. Cycle: tempo → 1 → 2 → expr → 3 → 4 → pedal.",
+        note: "Tempo is a top-level layer above V1 (it applies to all instruments). The expression and pedal layers appear only when they contain marks; create marks in voice mode, then navigate the layer to edit/delete.",
       },
       {
         keys: "←  /  →",
@@ -189,6 +193,10 @@ export const KEYBINDINGS: KeySection[] = [
         keys: "Backspace  /  Delete",
         desc: "Delete the selected expression element at this moment (dynamic, then expressive text, then any containing hairpin).",
       },
+      {
+        keys: "Ctrl+↑  /  Ctrl+↓",
+        desc: "Move the expression mark(s) at this moment above / below the staff (@place). Affects every expression element sharing the moment. Also works in voice mode (acts on the expression at the current note).",
+      },
       { keys: "Escape", desc: "Cancel pending hairpin." },
       { keys: "Home  /  End", desc: "Jump to first / last moment." },
       { keys: "↑", desc: "Leave expression mode upward (back to voice 2)." },
@@ -217,6 +225,18 @@ export const KEYBINDINGS: KeySection[] = [
     ],
   },
   {
+    title: "Tempo layer",
+    intro:
+      "A top-level layer ABOVE voice 1 (↑ from V1). Tempo applies to all instruments, so it lives in its own layer with a fixed placement above the staff. Navigates note onsets ∪ tempo marks.",
+    bindings: [
+      { keys: "←  /  →", desc: "Step through the moment list." },
+      { keys: "Home  /  End", desc: "Jump to first / last moment." },
+      { keys: "Ctrl+Shift+T", desc: "Open the tempo modal at the current moment (also works from voice mode at the cursor)." },
+      { keys: "Backspace  /  Delete", desc: "Delete the tempo mark at this moment." },
+      { keys: "↓", desc: "Leave the tempo layer downward (to voice 1)." },
+    ],
+  },
+  {
     title: "Configuration modals",
     intro:
       "Ctrl+Shift+letter opens a configuration dialog anchored to the current moment. Enter confirms, Escape cancels.",
@@ -224,6 +244,10 @@ export const KEYBINDINGS: KeySection[] = [
       {
         keys: "Ctrl+Shift+E",
         desc: "Expressive text (pizz, dolce, sul tasto, …) at the cursor moment. Re-open on an existing mark to edit; submit empty to delete. Italic toggle + common-cue chips.",
+      },
+      {
+        keys: "Ctrl+Shift+T",
+        desc: "Tempo at the cursor moment: instant marking (♩=bpm), ritardando / accelerando (with poco/plain/molto intensity), or a tempo. Retimes playback. Setup's Tempo… button opens the same dialog at measure 1.",
       },
     ],
   },

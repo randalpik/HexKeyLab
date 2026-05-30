@@ -15,7 +15,7 @@
 
 import { renderer } from '../render/render.js';
 import type { ComposerModel, Voice } from '../model/index.js';
-import { type Moment, dynamAt, hairpinsAt } from '../expressions.js';
+import { type Moment, dynamAt, hairpinsAt, tempoAt } from '../expressions.js';
 import { pedalsAt } from '../pedal.js';
 import { currentMoment, selectionAt, type ExpressionCursor } from './expressionCursor.js';
 import { realTicks } from '../model/ticks.js';
@@ -23,6 +23,7 @@ import { realTicks } from '../model/ticks.js';
 const CURSOR_COLOR = '#7226e4';
 const EXPR_CURSOR_COLOR = '#e47226';
 const PEDAL_CURSOR_COLOR = '#0a9396';
+const TEMPO_CURSOR_COLOR = '#3a86ff';
 const CURSOR_WIDTH = 2;
 const PLAYBACK_WIDTH = 3;
 export const CURSOR_VPAD = 6;
@@ -35,12 +36,14 @@ const DEBUG = typeof location !== 'undefined' &&
 
 const EXPR_SELECTED_CLASS = 'expr-selected';
 const PEDAL_SELECTED_CLASS = 'pedal-selected';
+const TEMPO_SELECTED_CLASS = 'tempo-selected';
 
 export interface CursorUpdateOpts {
   entryMode: 'insert' | 'overwrite';
-  cursorMode: 'voice' | 'expr' | 'pedal' | 'select';
+  cursorMode: 'voice' | 'expr' | 'pedal' | 'tempo' | 'select';
   exprCursor: ExpressionCursor;
   pedalCursor: ExpressionCursor;
+  tempoCursor: ExpressionCursor;
   /** Per-note selection of a single `<note>` — either a chord-child note or
    *  a bare note. When set, the cursor renders a horizontal line from the
    *  cursor bar to the selected note's notehead. Cleared by cursor movement
@@ -56,9 +59,12 @@ class CursorOverlay {
   private exprLabel: SVGTextElement | null = null;
   private pedalBar: SVGRectElement | null = null;
   private pedalLabel: SVGTextElement | null = null;
+  private tempoBar: SVGRectElement | null = null;
+  private tempoLabel: SVGTextElement | null = null;
   private chordIntLine: SVGLineElement | null = null;
   private lastSelectedIds: string[] = [];
   private lastPedalSelectedIds: string[] = [];
+  private lastTempoSelectedIds: string[] = [];
 
   /* Playback-mode state. Per-voice bars layered over the editing cursor;
      editing cursor itself is hidden while playbackMode is true. */
@@ -74,6 +80,8 @@ class CursorOverlay {
     this.exprLabel = null;
     this.pedalBar = null;
     this.pedalLabel = null;
+    this.tempoBar = null;
+    this.tempoLabel = null;
     this.chordIntLine = null;
     this.playbackBars.clear();
   }
@@ -122,6 +130,20 @@ class CursorOverlay {
       this.pedalLabel.setAttribute('font-weight', '600');
       this.svg.appendChild(this.pedalLabel);
     }
+    if (!this.tempoBar) {
+      this.tempoBar = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      this.tempoBar.setAttribute('fill', TEMPO_CURSOR_COLOR);
+      this.tempoBar.setAttribute('opacity', '0');
+      this.svg.appendChild(this.tempoBar);
+    }
+    if (!this.tempoLabel) {
+      this.tempoLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      this.tempoLabel.setAttribute('fill', TEMPO_CURSOR_COLOR);
+      this.tempoLabel.setAttribute('font-family', 'system-ui, sans-serif');
+      this.tempoLabel.setAttribute('font-size', '11');
+      this.tempoLabel.setAttribute('font-weight', '600');
+      this.svg.appendChild(this.tempoLabel);
+    }
     if (!this.chordIntLine) {
       this.chordIntLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
       this.chordIntLine.setAttribute('stroke', CURSOR_COLOR);
@@ -143,7 +165,7 @@ class CursorOverlay {
     this.ensureNodes();
 
     const resolved: CursorUpdateOpts = typeof opts === 'string'
-      ? { entryMode: opts, cursorMode: 'voice', exprCursor: { index: 0, moments: [] }, pedalCursor: { index: 0, moments: [] } }
+      ? { entryMode: opts, cursorMode: 'voice', exprCursor: { index: 0, moments: [] }, pedalCursor: { index: 0, moments: [] }, tempoCursor: { index: 0, moments: [] } }
       : opts;
 
     if (this.playbackMode) {
@@ -154,6 +176,7 @@ class CursorOverlay {
       this.chordIntLine?.setAttribute('opacity', '0');
       this.clearExpressionHighlights();
       this.hidePedal();
+      this.hideTempo();
       for (const [voice, meiId] of this.playbackPositions) {
         this.positionPlaybackBar(voice, meiId);
       }
@@ -170,6 +193,7 @@ class CursorOverlay {
       this.chordIntLine?.setAttribute('opacity', '0');
       this.clearExpressionHighlights();
       this.hidePedal();
+      this.hideTempo();
       return;
     }
 
@@ -178,6 +202,7 @@ class CursorOverlay {
       this.voiceLabel!.textContent = '';
       this.chordIntLine?.setAttribute('opacity', '0');
       this.hidePedal();
+      this.hideTempo();
       this.renderExpressionCursor(model, resolved.exprCursor);
       this.updateExpressionHighlights(model, resolved.exprCursor);
       return;
@@ -190,16 +215,31 @@ class CursorOverlay {
       this.exprLabel!.textContent = '';
       this.chordIntLine?.setAttribute('opacity', '0');
       this.clearExpressionHighlights();
+      this.hideTempo();
       this.renderPedalCursor(model, resolved.pedalCursor);
       this.updatePedalHighlights(model, resolved.pedalCursor);
       return;
     }
 
-    /* Voice mode: hide expression + pedal overlays and highlights. */
+    if (resolved.cursorMode === 'tempo') {
+      this.barRect!.setAttribute('opacity', '0');
+      this.voiceLabel!.textContent = '';
+      this.exprBar!.setAttribute('opacity', '0');
+      this.exprLabel!.textContent = '';
+      this.chordIntLine?.setAttribute('opacity', '0');
+      this.clearExpressionHighlights();
+      this.hidePedal();
+      this.renderTempoCursor(model, resolved.tempoCursor);
+      this.updateTempoHighlights(model, resolved.tempoCursor);
+      return;
+    }
+
+    /* Voice mode: hide expression + pedal + tempo overlays and highlights. */
     this.exprBar!.setAttribute('opacity', '0');
     this.exprLabel!.textContent = '';
     this.clearExpressionHighlights();
     this.hidePedal();
+    this.hideTempo();
     this.renderVoiceCursor(model, resolved.entryMode);
     this.renderChordInternalLine(resolved.chordInternalSel ?? null);
   }
@@ -208,6 +248,12 @@ class CursorOverlay {
     this.pedalBar?.setAttribute('opacity', '0');
     if (this.pedalLabel) this.pedalLabel.textContent = '';
     this.clearPedalHighlights();
+  }
+
+  private hideTempo(): void {
+    this.tempoBar?.setAttribute('opacity', '0');
+    if (this.tempoLabel) this.tempoLabel.textContent = '';
+    this.clearTempoHighlights();
   }
 
   /** Draw a horizontal purple line from the voice cursor's bar to the
@@ -823,6 +869,91 @@ class CursorOverlay {
     this.lastPedalSelectedIds = [];
   }
 
+  /* ── tempo-cursor rendering (mirrors pedal, but above staff 1) ─────────── */
+
+  private renderTempoCursor(model: ComposerModel, tempoCursor: ExpressionCursor): void {
+    const m = currentMoment(tempoCursor);
+    const bar = this.tempoBar!;
+    const label = this.tempoLabel!;
+    if (!m) {
+      bar.setAttribute('opacity', '0');
+      label.textContent = 'TEMPO (empty)';
+      label.setAttribute('x', '80');
+      label.setAttribute('y', '20');
+      return;
+    }
+    const noteRect = this.findNoteRectAtMoment(model, m);
+    let cursorX = noteRect ? noteRect.left + noteRect.width / 2 : null;
+    if (cursorX === null) {
+      const tid = this.findTempoIdAtMoment(model, m);
+      if (tid) {
+        const r = renderer.rectForId(tid);
+        if (r) cursorX = r.left + r.width / 2;
+      }
+    }
+    const yBand = this.computeAboveStaff1Y(model, m);
+    if (cursorX === null || !yBand) {
+      bar.setAttribute('opacity', '0');
+      label.textContent = 'TEMPO m' + (m.measureIdx + 1) + ' β' + m.tstamp.toFixed(2).replace(/\.?0+$/, '');
+      label.setAttribute('x', '80');
+      label.setAttribute('y', '20');
+      return;
+    }
+    const x = cursorX - CURSOR_WIDTH / 2;
+    bar.setAttribute('x', String(x));
+    bar.setAttribute('y', String(yBand.top));
+    bar.setAttribute('width', String(CURSOR_WIDTH + 1));
+    bar.setAttribute('height', String(yBand.bottom - yBand.top));
+    bar.setAttribute('opacity', '0.85');
+    label.textContent = 'TEMPO';
+    label.setAttribute('x', String(x + 4));
+    label.setAttribute('y', String(yBand.top - 2));
+  }
+
+  /** A band just above staff 1 (where Verovio renders tempo marks). */
+  private computeAboveStaff1Y(model: ComposerModel, m: Moment): { top: number; bottom: number } | null {
+    const measures = Array.from(model.getDoc().querySelectorAll('measure'));
+    const measure = measures[m.measureIdx];
+    if (!measure) return null;
+    const s1 = Array.from(measure.querySelectorAll('staff')).find((s) => s.getAttribute('n') === '1');
+    const s1Id = s1?.getAttribute('xml:id');
+    const r1 = s1Id ? renderer.rectForId(s1Id) : null;
+    if (!r1) return null;
+    const bottom = r1.top - CURSOR_VPAD;
+    return { top: bottom - 28, bottom };
+  }
+
+  private findTempoIdAtMoment(model: ComposerModel, m: Moment): string | null {
+    const t = tempoAt(model.getDoc(), m);
+    return t ? t.getAttribute('xml:id') : null;
+  }
+
+  private updateTempoHighlights(model: ComposerModel, tempoCursor: ExpressionCursor): void {
+    this.clearTempoHighlights();
+    const m = currentMoment(tempoCursor);
+    if (!m) return;
+    const t = tempoAt(model.getDoc(), m);
+    const id = t?.getAttribute('xml:id');
+    const container = this.scoreContainer();
+    if (!id || !container) return;
+    const node = container.querySelector('#' + CSS.escape(id));
+    if (node) node.classList.add(TEMPO_SELECTED_CLASS);
+    this.lastTempoSelectedIds = [id];
+  }
+
+  private clearTempoHighlights(): void {
+    const container = this.scoreContainer();
+    if (!container) { this.lastTempoSelectedIds = []; return; }
+    for (const id of this.lastTempoSelectedIds) {
+      const node = container.querySelector('#' + CSS.escape(id));
+      if (node) node.classList.remove(TEMPO_SELECTED_CLASS);
+    }
+    for (const node of Array.from(container.querySelectorAll('.' + TEMPO_SELECTED_CLASS))) {
+      node.classList.remove(TEMPO_SELECTED_CLASS);
+    }
+    this.lastTempoSelectedIds = [];
+  }
+
   private scoreContainer(): HTMLElement | null {
     /* The cursor overlay's parent is #score; Verovio's SVG is a sibling. */
     if (!this.svg) return null;
@@ -890,9 +1021,12 @@ class CursorOverlay {
     if (this.exprLabel) this.exprLabel.textContent = '';
     if (this.pedalBar) this.pedalBar.setAttribute('opacity', '0');
     if (this.pedalLabel) this.pedalLabel.textContent = '';
+    if (this.tempoBar) this.tempoBar.setAttribute('opacity', '0');
+    if (this.tempoLabel) this.tempoLabel.textContent = '';
     for (const bar of this.playbackBars.values()) bar.setAttribute('opacity', '0');
     this.clearExpressionHighlights();
     this.clearPedalHighlights();
+    this.clearTempoHighlights();
   }
 }
 

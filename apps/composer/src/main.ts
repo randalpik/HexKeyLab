@@ -21,7 +21,7 @@ import { HistoryManager } from './history.js';
 import type { CursorUpdateOpts } from './cursor/cursor.js';
 import { selectionOverlay } from './selection/selectionOverlay.js';
 import { saveHkc, loadHkcFromFile, downloadMusicXml, downloadPdf } from './save.js';
-import { buildPlayback, buildPedalEvents, highlightElement, clearHighlights, readTempo, tickMsFromTempo } from './render/playback.js';
+import { buildPlayback, buildPedalEvents, playbackStartMs, highlightElement, clearHighlights, readTempo, tickMsFromTempo } from './render/playback.js';
 import { openSetupDialog } from './setupDialog.js';
 import { openHelpDialog } from './helpDialog.js';
 import { attachScoreClickHandler } from './click.js';
@@ -184,7 +184,7 @@ function setConn(state: 'no-hkl' | 'connected' | 'standalone'): void {
 function refreshIndicators(): void {
   const s = getInputState();
   const voice = model.getCurrentVoice();
-  const v = $('voiceIndicator');         if (v) v.textContent = s.cursorMode === 'expr' ? 'E' : s.cursorMode === 'pedal' ? 'P' : String(voice);
+  const v = $('voiceIndicator');         if (v) v.textContent = s.cursorMode === 'expr' ? 'E' : s.cursorMode === 'pedal' ? 'P' : s.cursorMode === 'tempo' ? 'T' : String(voice);
   const d = $('durationIndicator');      if (d) d.textContent = s.duration;
   const m = $('modeIndicator');          if (m) m.textContent = s.mode === 'insert' ? 'INS' : 'OVR';
 }
@@ -196,6 +196,7 @@ function cursorOpts(): CursorUpdateOpts {
     cursorMode: s.cursorMode,
     exprCursor: s.exprCursor,
     pedalCursor: s.pedalCursor,
+    tempoCursor: s.tempoCursor,
     chordInternalSel: s.chordInternalSel
       ? { noteId: s.chordInternalSel.noteId }
       : null,
@@ -681,9 +682,7 @@ function startPlayback(): void {
      startMs === 0 (identical to old "from start" behavior). */
   const v = model.getCurrentVoice();
   const startTicks = model.getCursorAbsoluteTicks(v);
-  const tempo = readTempo(model.getDoc());
-  const tickMs = tickMsFromTempo(tempo);
-  const startMs = startTicks * tickMs;
+  const startMs = playbackStartMs(model, startTicks);
   const events = buildPlayback(model, startMs);
   if (events.length === 0) {
     setStatus(startMs > 0 ? 'Nothing left to play from cursor.' : 'Nothing to play.', 'error');

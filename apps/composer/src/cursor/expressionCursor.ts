@@ -17,6 +17,7 @@
 
 import {
   type Moment, momentCompare, momentEqual, dynamAt, dirAt, hairpinsAt, readMeter,
+  tempoMoments,
 } from '../expressions.js';
 import { pedalMoments } from '../pedal.js';
 import { realTicks } from '../model/ticks.js';
@@ -122,7 +123,8 @@ export function buildMomentList(doc: Document): Moment[] {
   const onsets = noteOnsetMoments(doc);
   const measures = Array.from(doc.querySelectorAll('measure'));
 
-  /* Dynam + dir moments (both are point expression marks like a tstamp). */
+  /* Dynam + dir moments (point expression marks anchored by tstamp). Tempo is
+     its own top-level layer (above V1), not part of the expression layer. */
   for (const d of Array.from(doc.querySelectorAll('dynam, dir'))) {
     const m = d.closest('measure');
     if (!m) continue;
@@ -200,6 +202,18 @@ export function rebuildCursor(doc: Document, prevMoment?: Moment | null): Expres
 /** Build a fresh pedal-layer cursor (same snapping as rebuildCursor). */
 export function rebuildPedalCursor(doc: Document, prevMoment?: Moment | null): ExpressionCursor {
   return cursorFromMoments(buildPedalMomentList(doc), prevMoment);
+}
+
+/** Tempo-layer moment list: note onsets ∪ <tempo> mark moments. Same
+ *  construction as the expression/pedal layers; tempo is a top-level layer
+ *  above V1 because it applies to all instruments, not one staff. */
+export function buildTempoMomentList(doc: Document): Moment[] {
+  return dedupSorted([...noteOnsetMoments(doc), ...tempoMoments(doc)]);
+}
+
+/** Build a fresh tempo-layer cursor (same snapping as rebuildCursor). */
+export function rebuildTempoCursor(doc: Document, prevMoment?: Moment | null): ExpressionCursor {
+  return cursorFromMoments(buildTempoMomentList(doc), prevMoment);
 }
 
 export function currentMoment(c: ExpressionCursor): Moment | null {

@@ -6,16 +6,17 @@ import type {
 } from './model/index.js';
 import { ticksOf } from './model/index.js';
 import {
-  type ExpressionCursor, rebuildCursor, rebuildPedalCursor, currentMoment, step, moveToStart,
-  moveToEnd,
+  type ExpressionCursor, rebuildCursor, rebuildPedalCursor, rebuildTempoCursor,
+  currentMoment, step, moveToStart, moveToEnd,
 } from './cursor/expressionCursor.js';
 import {
   addDynam, addHairpin, removeExpression, dynamAt, setDynamText,
   hairpinsAt, momentCompare, measureHasExpression,
-  addDir, dirAt, dirText, dirIsItalic, setDirText,
+  addDir, dirAt, dirText, dirIsItalic, setDirText, tempoAt,
   type Moment,
 } from './expressions.js';
 import { openTextEntryModal } from './ui/textEntryModal.js';
+import { openTempoModal } from './tempoDialog.js';
 import { addSlur, removeSlur, collectSlurs } from './slurs.js';
 import { togglePedal, pedalMoments, removePedalsAt, type PedalDir } from './pedal.js';
 import { beamGroupForElement } from './notation/beams.js';
@@ -50,7 +51,7 @@ function tuningLabel(mode: string): string {
 }
 
 export type EntryMode = 'insert' | 'overwrite';
-export type CursorMode = 'voice' | 'expr' | 'pedal' | 'select';
+export type CursorMode = 'voice' | 'expr' | 'pedal' | 'tempo' | 'select';
 
 interface PendingHairpin {
   start: Moment;
@@ -98,6 +99,7 @@ export interface InputState {
   cursorMode: CursorMode;
   exprCursor: ExpressionCursor;
   pedalCursor: ExpressionCursor;
+  tempoCursor: ExpressionCursor;
   pendingHairpin: PendingHairpin | null;
   pendingTuplet: PendingTuplet | null;
   pendingSlur: PendingSlur | null;
@@ -201,6 +203,7 @@ const state: InputState = {
   cursorMode: 'voice',
   exprCursor: { index: 0, moments: [] },
   pedalCursor: { index: 0, moments: [] },
+  tempoCursor: { index: 0, moments: [] },
   pendingHairpin: null,
   pendingTuplet: null,
   pendingSlur: null,
@@ -254,6 +257,11 @@ function refreshPedalCursor(model: ComposerModel): void {
   state.pedalCursor = rebuildPedalCursor(model.getDoc(), prev);
 }
 
+function refreshTempoCursor(model: ComposerModel): void {
+  const prev = currentMoment(state.tempoCursor);
+  state.tempoCursor = rebuildTempoCursor(model.getDoc(), prev);
+}
+
 function momentAtVoiceAnchor(model: ComposerModel): Moment | null {
   const v = model.getCurrentVoice();
   const c = model.getCursor();
@@ -270,6 +278,7 @@ function momentAtVoiceAnchor(model: ComposerModel): Moment | null {
 function momentAtCurrentCursor(model: ComposerModel): Moment | null {
   if (state.cursorMode === 'expr') return currentMoment(state.exprCursor);
   if (state.cursorMode === 'pedal') return currentMoment(state.pedalCursor);
+  if (state.cursorMode === 'tempo') return currentMoment(state.tempoCursor);
   return momentAtVoiceAnchor(model);
 }
 
@@ -402,6 +411,25 @@ function deleteSelectedPedal(model: ComposerModel, hooks: InputHooks): boolean {
   return true;
 }
 
+/* Delete the <tempo> mark at the tempo-layer cursor's moment. Unlike pedal, the
+   tempo layer is NOT exited when empty — a tempo conceptually always exists
+   (playback falls back to 120bpm), so the layer stays navigable to add one. */
+function deleteSelectedTempo(model: ComposerModel, hooks: InputHooks): boolean {
+  const m = currentMoment(state.tempoCursor);
+  if (!m) return false;
+  const el = tempoAt(model.getDoc(), m);
+  if (!el) {
+    hooks.setStatus?.('No tempo mark at this moment.', 'error');
+    return false;
+  }
+  removeExpression(el);
+  refreshTempoCursor(model);
+  hooks.setStatus?.('Deleted tempo mark.', 'action');
+  hooks.onChange();
+  hooks.onStateChange();
+  return true;
+}
+
 /** The <slur> whose voice matches and whose [start, end] flat-index span
  *  (inclusive) contains the given slot index — i.e. the cursor is "within
  *  the slur". Null if none. */
@@ -461,6 +489,35 @@ function deleteSelectedExpression(model: ComposerModel, hooks: InputHooks): bool
   }
   hooks.setStatus?.('No expression element at this moment.', 'error');
   return false;
+}
+
+/* Ctrl+↑ / Ctrl+↓ in the expression layer: move the expression mark(s) at the
+   cursor moment above / below the staff (@place). Applies to every expression
+   element sharing the moment (dynamic, expressive text, hairpins). Tempo and
+   pedal have fixed placement and live in their own layers, so they're excluded
+   by virtue of this being expression-mode only. */
+function commitExpressionPlace(
+  model: ComposerModel, hooks: InputHooks, place: 'above' | 'below',
+): boolean {
+  /* Expression layer → the expr-cursor moment; voice mode → the voice anchor
+     (flat[c−1]), so it acts on the expression at the current note. */
+  const m = momentAtCurrentCursor(model);
+  if (!m) { hooks.setStatus?.('No expression at cursor.', 'error'); return false; }
+  const doc = model.getDoc();
+  const els: Element[] = [];
+  const d = dynamAt(doc, m); if (d) els.push(d);
+  const dir = dirAt(doc, m); if (dir) els.push(dir);
+  for (const h of hairpinsAt(doc, m)) els.push(h);
+  if (els.length === 0) {
+    hooks.setStatus?.('No expression at this moment to place.', 'error');
+    return false;
+  }
+  for (const el of els) el.setAttribute('place', place);
+  if (state.cursorMode === 'expr') refreshExprCursor(model);
+  hooks.setStatus?.('Moved expression ' + place + ' the staff.', 'action');
+  hooks.onChange();
+  hooks.onStateChange();
+  return true;
 }
 
 function formatBeat(t: number): string {
@@ -546,9 +603,24 @@ function cycleVoice(model: ComposerModel, dir: 'up' | 'down', hooks: InputHooks)
     }
     return;
   }
+  if (state.cursorMode === 'tempo') {
+    /* Tempo layer sits ABOVE voice 1 (it's score-global). Down exits to V1;
+       up is a no-op (it's the top of the cycle). */
+    if (dir === 'down') {
+      state.cursorMode = 'voice';
+      model.setVoicePreservingMeasure(1);
+      hooks.setStatus?.('Voice 1.', 'state');
+    }
+    return;
+  }
   const v = model.getCurrentVoice();
   if (dir === 'up') {
-    if (v === 1) return;
+    if (v === 1) {                                          /* 1 → tempo (always present) */
+      state.cursorMode = 'tempo';
+      refreshTempoCursor(model);
+      hooks.setStatus?.('Tempo layer.', 'state');
+      return;
+    }
     if (v === 2) { model.switchVoice('up'); return; }       /* 2 → 1 */
     if (v === 3) {                                          /* 3 → expr (skip if empty) */
       if (measureHasExpression(model.getDoc(), model.cursorMeasureIdx(3))) {
@@ -1372,6 +1444,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     }
     refreshExprCursor(model);
     refreshPedalCursor(model);
+    refreshTempoCursor(model);
     hooks.setStatus?.((isUndo ? 'Undo: ' : 'Redo: ') + entry.label, 'action');
     hooks.onStateChange();
     hooks.onChange();
@@ -1558,6 +1631,25 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       return;
     }
 
+    /* Ctrl+Shift+T: tempo modal at the cursor moment (instant / rit / accel /
+       a tempo). Shared shell with the Setup "Tempo…" button. */
+    if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && (e.key === 't' || e.key === 'T')) {
+      e.preventDefault();
+      if (hooks.isPlaybackActive()) return;
+      const tm = momentAtCurrentCursor(model);
+      if (!tm) { hooks.setStatus?.('No cursor anchor for tempo.', 'error'); return; }
+      openTempoModal(model, tm, {
+        history: hooks.history,
+        onApply: () => {
+          if (state.cursorMode === 'tempo') refreshTempoCursor(model);
+          hooks.setStatus?.('Tempo updated.', 'action');
+          hooks.onChange();
+          hooks.onStateChange();
+        },
+      });
+      return;
+    }
+
     /* Ctrl+L: slur entry (pending-state toggle). First press marks the start
        slot; second press (after navigating) closes the slur; Ctrl+L on a slot
        already under a slur deletes that slur. Switching voices exits the
@@ -1671,6 +1763,23 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       e.preventDefault();
       if (state.cursorMode === 'voice' && !hooks.isPlaybackActive()) {
         handleChordInternalArrow(model, hooks, e.key);
+      }
+      return;
+    }
+
+    /* Ctrl+↑ / Ctrl+↓ moves the expression mark(s) at the current moment
+       above / below the staff (@place) — in the expression layer, or in voice
+       mode (the expression at the voice anchor, where Ctrl+↑/↓ is otherwise
+       unused). Always preventDefault so the browser doesn't scroll. Tempo +
+       pedal have fixed placement (own layers) and are left as no-ops. Must
+       precede the catch-all Ctrl/meta/alt return just below. */
+    if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
+        && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      e.preventDefault();
+      if (hooks.isPlaybackActive()) return;
+      if (state.cursorMode === 'expr' || state.cursorMode === 'voice') {
+        const place = e.key === 'ArrowUp' ? 'above' : 'below';
+        withHistory('expr-place', () => commitExpressionPlace(model, hooks, place));
       }
       return;
     }
@@ -2085,6 +2194,11 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         if (e.key === 'ArrowRight') { e.preventDefault(); state.pedalCursor = step(state.pedalCursor, +1); hooks.onStateChange(); hooks.onChange(); return; }
         if (e.key === 'Home')       { e.preventDefault(); state.pedalCursor = moveToStart(state.pedalCursor); hooks.onStateChange(); hooks.onChange(); return; }
         if (e.key === 'End')        { e.preventDefault(); state.pedalCursor = moveToEnd(state.pedalCursor); hooks.onStateChange(); hooks.onChange(); return; }
+      } else if (state.cursorMode === 'tempo') {
+        if (e.key === 'ArrowLeft')  { e.preventDefault(); state.tempoCursor = step(state.tempoCursor, -1); hooks.onStateChange(); hooks.onChange(); return; }
+        if (e.key === 'ArrowRight') { e.preventDefault(); state.tempoCursor = step(state.tempoCursor, +1); hooks.onStateChange(); hooks.onChange(); return; }
+        if (e.key === 'Home')       { e.preventDefault(); state.tempoCursor = moveToStart(state.tempoCursor); hooks.onStateChange(); hooks.onChange(); return; }
+        if (e.key === 'End')        { e.preventDefault(); state.tempoCursor = moveToEnd(state.tempoCursor); hooks.onStateChange(); hooks.onChange(); return; }
       } else {
         if (e.key === 'ArrowLeft')  { e.preventDefault(); state.chordInternalSel = null; model.moveCursor('left');  hooks.onStateChange(); hooks.onChange(); return; }
         if (e.key === 'ArrowRight') { e.preventDefault(); state.chordInternalSel = null; model.moveCursor('right'); hooks.onStateChange(); hooks.onChange(); return; }
@@ -2102,6 +2216,10 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       }
       if (state.cursorMode === 'pedal') {
         withHistory('delete-pedal', () => deleteSelectedPedal(model, hooks));
+        return;
+      }
+      if (state.cursorMode === 'tempo') {
+        withHistory('delete-tempo', () => deleteSelectedTempo(model, hooks));
         return;
       }
       let deleted = false;
@@ -2150,6 +2268,10 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       }
       if (state.cursorMode === 'pedal') {
         withHistory('delete-pedal', () => deleteSelectedPedal(model, hooks));
+        return;
+      }
+      if (state.cursorMode === 'tempo') {
+        withHistory('delete-tempo', () => deleteSelectedTempo(model, hooks));
         return;
       }
       const v = model.getCurrentVoice();
@@ -2216,7 +2338,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
 
   function pasteHandler(e: ClipboardEvent): void {
     if (shouldIgnore(e as unknown as KeyboardEvent)) return;
-    if (state.cursorMode === 'expr' || state.cursorMode === 'pedal') return;
+    if (state.cursorMode === 'expr' || state.cursorMode === 'pedal' || state.cursorMode === 'tempo') return;
     if (hooks.isPlaybackActive()) return;
     const text = e.clipboardData?.getData('text/plain') ?? '';
     const contents = parseClipboard(text);

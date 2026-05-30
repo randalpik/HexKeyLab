@@ -280,6 +280,253 @@ export function setDirText(el: Element, text: string, italic: boolean): void {
   setDirContent(el, text, italic);
 }
 
+/* ── <tempo> (instant tempo, gradual rit/accel, "a tempo") ───────────────── */
+
+export type GradualDir = 'rit' | 'accel';
+export type GradualIntensity = 'poco' | 'plain' | 'molto';
+
+/* SMuFL "Metronome marks" codepoints. Verovio renders these in its music font
+ *  (Leipzig) when they're the content of a <rend glyph.auth="smufl"> — which is
+ *  exactly the encoding Verovio itself emits from a MusicXML metronome. (The
+ *  @mm/@mm.unit attributes alone render nothing in this build; plain Unicode
+ *  note chars like U+2669 render in the serif text font and look wrong.) */
+const SMUFL_METRONOME_NOTE: Record<number, number> = {
+  2: 0xECA3, /* metNoteHalfUp */
+  4: 0xECA5, /* metNoteQuarterUp */
+  8: 0xECA7, /* metNote8thUp */
+};
+const SMUFL_METRONOME_DOT = 0xECB7; /* metAugmentationDot */
+
+/** The SMuFL beat-note glyph string for a metronome mark (note, plus a space +
+ *  augmentation dot when dotted — matching Verovio's own emitted form). */
+export function mmGlyph(unit: number, dots: number): string {
+  const note = String.fromCodePoint(SMUFL_METRONOME_NOTE[unit] ?? SMUFL_METRONOME_NOTE[4]);
+  return dots > 0 ? note + ' ' + String.fromCodePoint(SMUFL_METRONOME_DOT) : note;
+}
+
+/** Derive gradual intensity from the marking text (Max's rule): "molto" →
+ *  molto, "poco" → poco, else plain. The per-document Setup percentages then
+ *  supply the magnitude — no per-mark intensity field. */
+export function deriveGradualIntensity(text: string): GradualIntensity {
+  const t = text.toLowerCase();
+  if (t.includes('molto')) return 'molto';
+  if (t.includes('poco')) return 'poco';
+  return 'plain';
+}
+
+export interface TempoOpts {
+  /** Verbal marking text (no metronome — that's composed in via showMm). */
+  text: string;
+  /** Metronome bpm for an instant tempo marking. Omit / 0 for a verbal-only
+   *  or gradual mark. */
+  bpm?: number;
+  /** Beat note value (mm.unit): 1, 2, 4, 8. Default 4 (quarter). */
+  unit?: number;
+  dots?: number;
+  /** Show the "<glyph> = bpm" metronome after the text (composed into the
+   *  rendered text). The bpm/unit are still stored for playback either way. */
+  showMm?: boolean;
+  /** Render italic (expression style, e.g. "rit.") vs upright (tempo marking). */
+  italic?: boolean;
+  /** Gradual change direction; absent = instant. */
+  gradual?: GradualDir;
+  /** Explicit gradual endpoint. Absent = open-ended (resolved at playback;
+   *  intensity is derived from the text). */
+  end?: Moment | null;
+  /** Marks an "a tempo" — ends a preceding gradual and restores its prior bpm. */
+  aTempo?: boolean;
+  place?: 'above' | 'below' | 'between';
+  staff?: number;
+}
+
+/** Build a <tempo>'s content: the verbal text (optionally italic-wrapped), and
+ *  — when a metronome is requested — a SMuFL note glyph in a
+ *  <rend glyph.auth="smufl"> followed by " = bpm" (mixed content, the form
+ *  Verovio renders). */
+function setTempoContent(
+  el: Element, text: string, italic: boolean,
+  mm?: { bpm: number; unit: number; dots: number },
+): void {
+  const doc = el.ownerDocument!;
+  while (el.firstChild) el.removeChild(el.firstChild);
+  if (text) {
+    if (italic) {
+      const rend = doc.createElementNS(MEI_NS, 'rend');
+      rend.setAttribute('fontstyle', 'italic');
+      rend.textContent = text;
+      el.appendChild(rend);
+    } else {
+      el.appendChild(doc.createTextNode(text));
+    }
+  }
+  if (mm) {
+    /* Parenthesized metronome block: "(♩ = 120)". */
+    el.appendChild(doc.createTextNode(text ? ' (' : '('));
+    const glyph = doc.createElementNS(MEI_NS, 'rend');
+    glyph.setAttribute('glyph.auth', 'smufl');
+    glyph.textContent = mmGlyph(mm.unit, mm.dots);
+    el.appendChild(glyph);
+    el.appendChild(doc.createTextNode(' = ' + mm.bpm + ')'));
+  }
+}
+
+/** Add a <tempo> at the moment, sibling of <staff>, @tstamp anchored. Instant
+ *  markings carry @mm/@mm.unit (Verovio renders "text ♩=bpm"); gradual marks
+ *  carry data-hkl-gradual/-intensity + optional @tstamp2; "a tempo" carries
+ *  data-hkl-atempo. Default place 'above' (the conventional tempo spot). */
+export function addTempo(doc: Document, at: Moment, opts: TempoOpts): Element | null {
+  const measure = measureAtIdx(doc, at.measureIdx);
+  if (!measure) return null;
+  const attrs: Record<string, string | number | undefined> = {
+    'xml:id': newId('tempo'),
+    tstamp: formatTstamp(at.tstamp),
+    place: opts.place ?? 'above',
+    staff: opts.staff ?? 1,
+  };
+  const hasBpm = opts.bpm !== undefined && opts.bpm > 0 && !opts.gradual;
+  const unit = opts.unit ?? 4;
+  const dots = opts.dots ?? 0;
+  if (hasBpm) {
+    /* Always store the metronome data (playback + export); display is gated by
+       showMm via the composed text below. */
+    attrs.mm = opts.bpm;
+    attrs['midi.bpm'] = opts.bpm;
+    attrs['mm.unit'] = unit;
+    if (dots) attrs['mm.dots'] = dots;
+  }
+  if (opts.gradual) {
+    /* Direction is explicit; intensity is derived from the text at read time
+       (deriveGradualIntensity), so no data-hkl-intensity attribute. */
+    attrs['data-hkl-gradual'] = opts.gradual;
+    if (opts.end) attrs.tstamp2 = formatTstamp2(at, opts.end);
+  }
+  if (opts.aTempo) attrs['data-hkl-atempo'] = 'true';
+  const showMm = hasBpm && !!opts.showMm;
+  if (showMm) attrs['data-hkl-mm-shown'] = 'true';
+  const el = createMei(doc, 'tempo', attrs);
+  /* The verbal text stays plain text; the metronome (when shown) is a SMuFL
+     <rend> glyph + " = bpm" appended as mixed content. The bare verbal text is
+     recovered on edit via tempoVerbalText (text before the SMuFL rend). */
+  setTempoContent(el, opts.text, !!opts.italic,
+    showMm ? { bpm: opts.bpm!, unit, dots } : undefined);
+  appendAtEnd(measure, el);
+  return el;
+}
+
+/** The verbal text of a <tempo> — everything before the SMuFL metronome rend
+ *  (so an edit recovers "Allegro" from "Allegro ♩ = 120"). */
+function tempoVerbalText(el: Element): string {
+  let s = '';
+  for (const n of Array.from(el.childNodes)) {
+    if (n.nodeType === 1 && (n as Element).localName === 'rend'
+        && (n as Element).getAttribute('glyph.auth') === 'smufl') break;
+    s += n.textContent ?? '';
+  }
+  /* Drop the trailing "(" of the parenthesized metronome block, if present. */
+  return s.replace(/\s*\(\s*$/, '').trim();
+}
+
+/** Find a <tempo> exactly at the given moment (first match). */
+export function tempoAt(doc: Document, m: Moment): Element | null {
+  const measure = getMeasures(doc)[m.measureIdx];
+  if (!measure) return null;
+  for (const child of Array.from(measure.children)) {
+    if (child.localName !== 'tempo') continue;
+    const t = readTstamp(child);
+    if (t !== null && approxEq(t, m.tstamp)) return child;
+  }
+  return null;
+}
+
+export interface TempoRecord {
+  el: Element;
+  moment: Moment;
+  /** Bare verbal text (metronome suffix stripped). */
+  text: string;
+  /** Metronome bpm, or null for verbal-only / gradual marks. */
+  bpm: number | null;
+  unit: number;
+  dots: number;
+  /** Whether the metronome "<glyph> = bpm" is shown in the rendered text. */
+  showMm: boolean;
+  gradual: GradualDir | null;
+  /** Derived from the text (poco/molto/plain). */
+  intensity: GradualIntensity;
+  /** Explicit gradual endpoint, or null (open-ended). */
+  end: Moment | null;
+  aTempo: boolean;
+}
+
+function parseTempoEl(el: Element, measures: Element[]): TempoRecord | null {
+  const measure = el.closest('measure');
+  if (!measure) return null;
+  const idx = measures.indexOf(measure);
+  if (idx < 0) return null;
+  const t = readTstamp(el);
+  if (t === null) return null;
+  const moment: Moment = { measureIdx: idx, tstamp: t };
+  const mmAttr = el.getAttribute('mm') ?? el.getAttribute('midi.bpm');
+  const bpm = mmAttr !== null && isFinite(parseFloat(mmAttr)) ? parseFloat(mmAttr) : null;
+  const unit = parseInt(el.getAttribute('mm.unit') ?? '4', 10) || 4;
+  const dots = parseInt(el.getAttribute('mm.dots') ?? '0', 10) || 0;
+  const gradAttr = el.getAttribute('data-hkl-gradual');
+  const gradual: GradualDir | null = gradAttr === 'rit' || gradAttr === 'accel' ? gradAttr : null;
+  const ts2 = el.getAttribute('tstamp2');
+  const end = ts2 ? parseTstamp2(ts2, idx) : null;
+  const aTempo = el.getAttribute('data-hkl-atempo') === 'true';
+  const showMm = el.getAttribute('data-hkl-mm-shown') === 'true';
+  const text = tempoVerbalText(el);
+  const intensity = deriveGradualIntensity(text);
+  return { el, moment, text, bpm, unit, dots, showMm, gradual, intensity, end, aTempo };
+}
+
+/** All <tempo> elements with resolved moments + parsed fields, sorted. */
+export function collectTempi(doc: Document): TempoRecord[] {
+  const measures = getMeasures(doc);
+  const out: TempoRecord[] = [];
+  for (const el of Array.from(doc.querySelectorAll('tempo'))) {
+    const rec = parseTempoEl(el, measures);
+    if (rec) out.push(rec);
+  }
+  out.sort((a, b) => momentCompare(a.moment, b.moment));
+  return out;
+}
+
+/** Read a single <tempo> element's fields (for modal edit-in-place). */
+export function readTempoEl(el: Element): TempoRecord | null {
+  return parseTempoEl(el, getMeasures(el.ownerDocument!));
+}
+
+/** Moments of all <tempo> marks (for expression-layer navigation). */
+export function tempoMoments(doc: Document): Moment[] {
+  return collectTempi(doc).map((r) => r.moment);
+}
+
+/* ── gradual rit/accel intensity percentages (document config) ───────────── */
+
+export interface GradualPercents { poco: number; plain: number; molto: number }
+const DEFAULT_GRADUAL_PERCENTS: GradualPercents = { poco: 20, plain: 40, molto: 60 };
+
+/** Read the open-ended gradual magnitude percentages from <hkl:config>. */
+export function getGradualPercents(doc: Document): GradualPercents {
+  const cfg = findHklConfig(doc);
+  const out = { ...DEFAULT_GRADUAL_PERCENTS };
+  if (!cfg) return out;
+  for (const k of ['poco', 'plain', 'molto'] as const) {
+    const v = parseFloat(cfg.getAttribute('gradual_' + k) ?? '');
+    if (isFinite(v)) out[k] = Math.max(0, Math.min(99, v));
+  }
+  return out;
+}
+
+/** Write the gradual magnitude percentages to <hkl:config>. */
+export function setGradualPercents(doc: Document, p: GradualPercents): void {
+  const cfg = ensureExtMetaConfig(doc);
+  for (const k of ['poco', 'plain', 'molto'] as const) {
+    cfg.setAttribute('gradual_' + k, String(Math.max(0, Math.min(99, Math.round(p[k])))));
+  }
+}
+
 /* ── queries ─────────────────────────────────────────────────────────────── */
 
 /** Find a <dynam> exactly at the given moment. */

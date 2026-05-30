@@ -2537,6 +2537,145 @@ const PHASE1 = {
     ],
   },
 
+  /* ── Phase 2.3: tempo modal (Ctrl+Shift+T → <tempo>) + retiming ───────── */
+
+  /* Instant tempo marking 240 ♩= at m1 beat 1, written via the real modal.
+     Retiming: the 2nd quarter's onset moves from 500ms (120bpm) to 250ms. */
+  phase2_tempo_instant_retimes: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 1, pname: 'e', accid: '', oct: 5, midi: 76, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);  /* anchor beat 1 */
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'T', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      dlg.querySelector('[data-field="kind"]').value = 'instant';
+      dlg.querySelector('[data-field="text"]').value = 'Allegro';
+      dlg.querySelector('[data-field="bpm"]').value = '240';
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+    `,
+  },
+
+  /* Open-ended molto ritardando at beat 2 (no numeric target, no following
+     tempo) → ramps 120bpm toward 120×(1−0.6) over the rest of the piece, so
+     the 3rd quarter's onset lands LATER than the constant-tempo 1000ms. */
+  phase2_tempo_gradual_rit: {
+    setup: `
+      m.setCursor(0, 1);
+      for (const r of [0, 1, 2]) m.insertChordAtCursor({ notes: [{ q: 0, r, pname: 'a', accid: '', oct: 4, midi: 69 + r, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(2, 1);  /* anchor beat 2 (flat[1]) */
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'T', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      dlg.querySelector('[data-field="kind"]').value = 'rit';
+      dlg.querySelector('[data-field="text"]').value = 'molto rit.';  /* intensity derived from text */
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+    `,
+  },
+
+  /* Tempo has its OWN layer above V1 (↑ from V1). Place a beat-2 tempo, cycle
+     up into the tempo layer, navigate to it, Backspace deletes it. */
+  phase2_tempo_layer_delete: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 1, pname: 'e', accid: '', oct: 5, midi: 76, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(2, 1);  /* anchor beat 2 (flat[1]) */
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'T', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      dlg.querySelector('[data-field="kind"]').value = 'instant';
+      dlg.querySelector('[data-field="bpm"]').value = '90';
+      dlg.querySelector('[data-field="text"]').value = 'Andante';
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+      m.setCursor(1, 1);
+    `,
+    setupKeys: [
+      'ArrowUp',      /* V1 → tempo layer */
+      'ArrowRight',   /* beat 1 → beat 2 (the tempo's moment) */
+      'Backspace',    /* delete the beat-2 <tempo> */
+    ],
+  },
+
+  /* Metronome shown: instant marking with "Show ♩ = N" checked → the glyph +
+     value is composed into the rendered text. */
+  phase2_tempo_mm_shown: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'T', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      dlg.querySelector('[data-field="kind"]').value = 'instant';
+      dlg.querySelector('[data-field="text"]').value = 'Allegro';
+      dlg.querySelector('[data-field="bpm"]').value = '120';
+      dlg.querySelector('[data-field="showMm"]').checked = true;
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+    `,
+  },
+
+  /* Metronome hidden: same but "Show ♩ = N" unchecked → text is bare; @mm still
+     stored for playback. */
+  phase2_tempo_mm_hidden: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'T', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      dlg.querySelector('[data-field="kind"]').value = 'instant';
+      dlg.querySelector('[data-field="text"]').value = 'Allegro';
+      dlg.querySelector('[data-field="bpm"]').value = '120';
+      dlg.querySelector('[data-field="showMm"]').checked = false;
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+    `,
+  },
+
+  /* Dotted-quarter beat unit: mm.unit=4 + mm.dots=1. */
+  phase2_tempo_dotted_beat: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'T', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      dlg.querySelector('[data-field="kind"]').value = 'instant';
+      dlg.querySelector('[data-field="bpm"]').value = '80';
+      dlg.querySelector('[data-field="unit"]').value = '4|1';
+      dlg.querySelector('[data-field="showMm"]').checked = true;
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+    `,
+  },
+
+  /* Phase 2.4: above/below placement. Place an "mf" dynamic, enter the
+     expression layer, Ctrl+↓ moves it below, then Ctrl+↑ moves it above. */
+  phase2_expr_place_toggle: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+    `,
+    setupKeys: [
+      { key: '%', shift: true },   /* Shift+5 → mf dynamic at beat 1 */
+      'ArrowDown',                 /* V1 → V2 */
+      'ArrowDown',                 /* V2 → expr (measure has the dynamic) */
+      { key: 'ArrowDown', ctrl: true },  /* place below */
+      { key: 'ArrowUp', ctrl: true },    /* place above */
+    ],
+  },
+
+  /* Above/below placement also works in VOICE mode (no need to enter the
+     expression layer): the dynamic at the current note gets @place. */
+  phase2_expr_place_voicemode: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+    `,
+    setupKeys: [
+      { key: '%', shift: true },          /* mp dynamic at beat 1 */
+      { key: 'ArrowDown', ctrl: true },   /* place below — still in voice mode */
+    ],
+  },
+
   /* fillIncompleteMeasures fills M_1 (a single quarter rest, then quiet) when
      M_2 has content. */
   phase1_fillIncomplete_basic: {
@@ -5415,6 +5554,124 @@ export const FIXTURE_ASSERTIONS = {
         const m = window.__hkl_composer.model;
         const dirs = m.getDoc().querySelectorAll('measure > dir');
         return dirs.length === 0 ? { ok: true } : { ok: false, detail: 'count=' + dirs.length };
+      })()` },
+  ],
+
+  /* ── Phase 2.3: tempo ──────────────────────────────────────────────────── */
+  phase2_tempo_instant_retimes: [
+    { name: 'M_1 has <tempo mm="240" tstamp≈1>',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const ts = [...m.getDoc().querySelectorAll('measure > tempo')];
+        if (ts.length !== 1) return { ok: false, detail: 'count=' + ts.length };
+        const mm = ts[0].getAttribute('mm');
+        const t = parseFloat(ts[0].getAttribute('tstamp') ?? '0');
+        return (mm === '240' && Math.abs(t - 1) < 0.01)
+          ? { ok: true } : { ok: false, detail: 'mm=' + mm + ' tstamp=' + t };
+      })()` },
+    { name: '2nd quarter onset retimed to ~250ms (240bpm) not 500ms (120bpm)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const evs = window.__hkl_composer.buildPlayback(m).filter(e => e.notes.length > 0);
+        if (evs.length < 2) return { ok: false, detail: 'events=' + evs.length };
+        return Math.abs(evs[1].atMs - 250) < 5
+          ? { ok: true } : { ok: false, detail: 'atMs=' + evs[1].atMs };
+      })()` },
+  ],
+  phase2_tempo_gradual_rit: [
+    { name: 'M_1 has <tempo data-hkl-gradual="rit"> "molto rit." at beat 2 (intensity from text)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const ts = [...m.getDoc().querySelectorAll('measure > tempo')].filter(t => t.getAttribute('data-hkl-gradual') === 'rit');
+        if (ts.length !== 1) return { ok: false, detail: 'rit count=' + ts.length };
+        const txt = (ts[0].textContent ?? '').trim();
+        const t = parseFloat(ts[0].getAttribute('tstamp') ?? '0');
+        return (txt.includes('molto') && Math.abs(t - 2) < 0.01)
+          ? { ok: true } : { ok: false, detail: 'text=' + txt + ' tstamp=' + t };
+      })()` },
+    { name: '3rd quarter onset slowed past the constant-tempo 1000ms by the rit',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const evs = window.__hkl_composer.buildPlayback(m).filter(e => e.notes.length > 0);
+        if (evs.length < 3) return { ok: false, detail: 'events=' + evs.length };
+        /* beats 1/2 are before the rit (≈0 / 500ms); beat 3 is inside it → > 1000. */
+        return evs[2].atMs > 1010
+          ? { ok: true } : { ok: false, detail: 'beat3 atMs=' + evs[2].atMs };
+      })()` },
+  ],
+  phase2_tempo_layer_delete: [
+    { name: 'entered the tempo layer (↑ from V1)',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        return s.cursorMode === 'tempo' ? { ok: true } : { ok: false, detail: 'cursorMode=' + s.cursorMode };
+      })()` },
+    { name: 'beat-2 <tempo> deleted via Backspace (initial m1 tempo remains)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const ts = [...m.getDoc().querySelectorAll('measure > tempo')];
+        const atBeat2 = ts.filter(t => Math.abs(parseFloat(t.getAttribute('tstamp') ?? '0') - 2) < 0.01);
+        return atBeat2.length === 0 ? { ok: true } : { ok: false, detail: 'beat2 tempo count=' + atBeat2.length };
+      })()` },
+  ],
+
+  phase2_tempo_mm_shown: [
+    { name: 'metronome is a SMuFL <rend glyph.auth="smufl"> + " = 120"; @mm=120; flag set',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const t = m.getDoc().querySelector('measure > tempo');
+        if (!t) return { ok: false, detail: 'no tempo' };
+        const rend = [...t.children].find(c => c.localName === 'rend' && c.getAttribute('glyph.auth') === 'smufl');
+        const txt = (t.textContent ?? '');
+        const ok = !!rend && (rend.textContent ?? '').length > 0 && txt.includes('( ') === false
+          && txt.includes('= 120)') && txt.includes('(')
+          && t.getAttribute('mm') === '120' && t.getAttribute('data-hkl-mm-shown') === 'true';
+        return ok ? { ok: true } : { ok: false, detail: 'rend=' + !!rend + ' txt="' + txt + '" mm=' + t.getAttribute('mm') + ' flag=' + t.getAttribute('data-hkl-mm-shown') };
+      })()` },
+  ],
+  phase2_tempo_mm_hidden: [
+    { name: 'text is bare "Allegro" (no metronome); @mm=120 still stored; no flag',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const t = m.getDoc().querySelector('measure > tempo');
+        if (!t) return { ok: false, detail: 'no tempo' };
+        const txt = (t.textContent ?? '').trim();
+        return (txt === 'Allegro' && t.getAttribute('mm') === '120' && t.getAttribute('data-hkl-mm-shown') === null)
+          ? { ok: true } : { ok: false, detail: 'text="' + txt + '" mm=' + t.getAttribute('mm') + ' flag=' + t.getAttribute('data-hkl-mm-shown') };
+      })()` },
+  ],
+  phase2_tempo_dotted_beat: [
+    { name: '<tempo mm.unit="4" mm.dots="1"> (dotted quarter); SMuFL rend has the augmentation dot',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const t = m.getDoc().querySelector('measure > tempo');
+        if (!t) return { ok: false, detail: 'no tempo' };
+        const rend = [...t.children].find(c => c.localName === 'rend' && c.getAttribute('glyph.auth') === 'smufl');
+        const hasDot = !!rend && (rend.textContent ?? '').includes(String.fromCodePoint(0xECB7));
+        return (t.getAttribute('mm.unit') === '4' && t.getAttribute('mm.dots') === '1' && hasDot)
+          ? { ok: true } : { ok: false, detail: 'unit=' + t.getAttribute('mm.unit') + ' dots=' + t.getAttribute('mm.dots') + ' hasDot=' + hasDot };
+      })()` },
+  ],
+
+  phase2_expr_place_toggle: [
+    { name: 'dynamic @place ends "above" after Ctrl+↓ then Ctrl+↑',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const d = m.getDoc().querySelector('measure > dynam');
+        if (!d) return { ok: false, detail: 'no dynam' };
+        return d.getAttribute('place') === 'above'
+          ? { ok: true } : { ok: false, detail: 'place=' + d.getAttribute('place') };
+      })()` },
+  ],
+
+  phase2_expr_place_voicemode: [
+    { name: 'dynamic @place="below" set from voice mode; still in voice mode',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const d = m.getDoc().querySelector('measure > dynam');
+        if (!d) return { ok: false, detail: 'no dynam' };
+        const mode = window.__hkl_composer.inputState().cursorMode;
+        return (d.getAttribute('place') === 'below' && mode === 'voice')
+          ? { ok: true } : { ok: false, detail: 'place=' + d.getAttribute('place') + ' mode=' + mode };
       })()` },
   ],
 

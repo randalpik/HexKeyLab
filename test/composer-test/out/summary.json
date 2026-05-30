@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 199,
-  "passed": 199,
+  "fixtures": 207,
+  "passed": 207,
   "failed": 0,
-  "elapsedMs": 60818,
+  "elapsedMs": 62784,
   "results": [
     {
       "name": "emptyDoc",
@@ -1555,6 +1555,70 @@
       "failures": [],
       "counts": {
         "invariants": 9
+      }
+    },
+    {
+      "name": "phase2_tempo_instant_retimes",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase2_tempo_gradual_rit",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase2_tempo_layer_delete",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "phase2_tempo_mm_shown",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase2_tempo_mm_hidden",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase2_tempo_dotted_beat",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase2_expr_place_toggle",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase2_expr_place_voicemode",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
       }
     },
     {

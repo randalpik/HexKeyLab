@@ -16,6 +16,7 @@ import { isTupletPlaceholder } from '../model/index.js';
 import type { PlaybackEvent, CoordRef, PedalEvent } from '@hkl/bridge/protocol.js';
 import {
   collectDynams, collectHairpins, getDynamicMap, absoluteTickForMoment,
+  collectTempi, getGradualPercents, readMeter,
 } from '../expressions.js';
 import { collectPedals } from '../pedal.js';
 import { collectSlurs } from '../slurs.js';
@@ -99,6 +100,136 @@ export function tickMsFromTempo(tempo: TempoInfo): number {
   const beatTicks = (64 / tempo.unitDenom) * (tempo.dots === 1 ? 1.5 : tempo.dots === 2 ? 1.75 : 1);
   const msPerBeat = MS_PER_MIN / tempo.bpm;
   return msPerBeat / beatTicks;
+}
+
+/* ── tempo timeline (instant + gradual rit/accel retiming) ──────────────────
+ *
+ * The playback clock is no longer a single constant ms/tick. It's a piecewise-
+ * LINEAR-in-beat-period function `tickMsAt(tick)`: instant <tempo> marks step
+ * it; gradual rit/accel marks ramp it linearly between the bpm before the mark
+ * and a target bpm. `atMsAt(tick)` is the trapezoidal integral from tick 0, so
+ * a note's onset/duration reflect every preceding tempo change (including a
+ * tempo change mid-note). Gradual target resolution (confirmed with Max):
+ * explicit @tstamp2 / next instant tempo's bpm / intensity-% (poco·plain·molto);
+ * "a tempo" restores the bpm in effect before the gradual began. */
+
+function beatTicksFor(unit: number, dots: number): number {
+  return (64 / unit) * (dots === 1 ? 1.5 : dots === 2 ? 1.75 : 1);
+}
+function msPerTickAt(bpm: number, unit: number, dots: number): number {
+  return (MS_PER_MIN / Math.max(1, bpm)) / beatTicksFor(unit, dots);
+}
+
+interface TempoSegment {
+  startTick: number; endTick: number;
+  msStart: number; msEnd: number;
+  cumStartMs: number; /* integrated ms at startTick */
+}
+export interface TempoTimeline {
+  tickMsAt: (t: number) => number;
+  atMsAt: (t: number) => number;
+}
+
+export function buildTempoTimeline(mei: Document): TempoTimeline {
+  const { count, unit: meterUnit } = readMeter(mei);
+  const ticksPerMeasure = count * (64 / meterUnit);
+  const measureCount = mei.querySelectorAll('measure').length;
+  const pieceEndTick = Math.max(1, measureCount * ticksPerMeasure);
+  const pct = getGradualPercents(mei);
+
+  const tempi = collectTempi(mei)
+    .map((r) => ({
+      ...r,
+      tick: absoluteTickForMoment(mei, r.moment),
+      endTickAbs: r.end ? absoluteTickForMoment(mei, r.end) : null,
+    }))
+    .sort((a, b) => a.tick - b.tick);
+
+  let curBpm = DEFAULT_BPM, curUnit = 4, curDots = 0;
+  let preGradualBpm = curBpm;
+  let cursorTick = 0;
+  let cumMs = 0;
+  const segs: TempoSegment[] = [];
+  const pushSeg = (startTick: number, endTick: number, msStart: number, msEnd: number): void => {
+    if (endTick <= startTick) return;
+    segs.push({ startTick, endTick, msStart, msEnd, cumStartMs: cumMs });
+    cumMs += (msStart + msEnd) / 2 * (endTick - startTick);
+  };
+
+  for (let i = 0; i < tempi.length; i++) {
+    const ev = tempi[i];
+    const evTick = Math.max(cursorTick, Math.min(ev.tick, pieceEndTick));
+    if (evTick > cursorTick) {
+      const ms = msPerTickAt(curBpm, curUnit, curDots);
+      pushSeg(cursorTick, evTick, ms, ms);
+      cursorTick = evTick;
+    }
+    if (ev.gradual) {
+      preGradualBpm = curBpm;
+      const next = tempi[i + 1];
+      const nextTick = next ? next.tick : pieceEndTick;
+      let endTick = ev.endTickAbs ?? nextTick;
+      endTick = Math.min(endTick, nextTick, pieceEndTick);
+      endTick = Math.max(endTick, evTick + 1);
+      let targetBpm: number;
+      if (next && next.tick <= endTick + 1e-6 && next.bpm != null && !next.gradual && !next.aTempo) {
+        targetBpm = next.bpm; /* interpolate to the explicitly-defined next tempo */
+      } else {
+        const p = (pct[ev.intensity] ?? 0) / 100;
+        targetBpm = ev.gradual === 'rit' ? curBpm * (1 - p) : curBpm * (1 + p);
+      }
+      targetBpm = Math.max(10, targetBpm);
+      pushSeg(evTick, endTick, msPerTickAt(curBpm, curUnit, curDots), msPerTickAt(targetBpm, curUnit, curDots));
+      cursorTick = endTick;
+      curBpm = targetBpm;
+    } else if (ev.aTempo) {
+      curBpm = preGradualBpm;
+    } else if (ev.bpm != null) {
+      curBpm = ev.bpm; curUnit = ev.unit; curDots = ev.dots;
+    }
+    /* verbal-only instant marks have no timing effect */
+  }
+  if (pieceEndTick > cursorTick) {
+    const ms = msPerTickAt(curBpm, curUnit, curDots);
+    pushSeg(cursorTick, pieceEndTick, ms, ms);
+  }
+  if (segs.length === 0) {
+    const ms = msPerTickAt(DEFAULT_BPM, 4, 0);
+    segs.push({ startTick: 0, endTick: pieceEndTick, msStart: ms, msEnd: ms, cumStartMs: 0 });
+  }
+  const lastSeg = segs[segs.length - 1];
+
+  const segAt = (t: number): TempoSegment => {
+    if (t <= segs[0].startTick) return segs[0];
+    for (const s of segs) if (t >= s.startTick && t < s.endTick) return s;
+    return lastSeg;
+  };
+  return {
+    tickMsAt(t: number): number {
+      const s = segAt(t);
+      const L = s.endTick - s.startTick;
+      const u = L > 0 ? Math.max(0, Math.min(1, (t - s.startTick) / L)) : 0;
+      return s.msStart + (s.msEnd - s.msStart) * u;
+    },
+    atMsAt(t: number): number {
+      if (t <= 0) return 0;
+      const s = segAt(t);
+      const L = s.endTick - s.startTick;
+      const tau = Math.max(0, Math.min(t, s.endTick) - s.startTick);
+      const slope = L > 0 ? (s.msEnd - s.msStart) / L : 0;
+      let ms = s.cumStartMs + s.msStart * tau + 0.5 * slope * tau * tau;
+      if (t > lastSeg.endTick) ms += (t - lastSeg.endTick) * lastSeg.msEnd; /* extrapolate past end */
+      return ms;
+    },
+  };
+}
+
+/** Absolute playback ms at a tick offset, used to compute the cursor-seek
+ *  start offset under the live tempo timeline. */
+export function playbackStartMs(model: ComposerModel, startTicks: number): number {
+  if (startTicks <= 0) return 0;
+  const mei = new DOMParser().parseFromString(model.serialize(), 'application/xml');
+  return buildTempoTimeline(mei).atMsAt(startTicks);
 }
 
 function elementDurationTicks(el: Element): number {
@@ -240,8 +371,7 @@ function clampVel(v: number): number {
 export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[] {
   const events: PlaybackEvent[] = [];
   const mei = new DOMParser().parseFromString(model.serialize(), 'application/xml');
-  const tempo = readTempo(mei);
-  const tickMs = tickMsFromTempo(tempo);
+  const tempo = buildTempoTimeline(mei);
   const velocity = buildVelocityLookup(mei);
   const noteById = buildNoteIdIndex(mei);
 
@@ -302,8 +432,8 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
           const meiId = child.getAttribute('xml:id') ?? undefined;
           if (meiId) {
             events.push({
-              atMs: tTicks * tickMs,
-              durationMs: ticks * tickMs,
+              atMs: tempo.atMsAt(tTicks),
+              durationMs: tempo.atMsAt(tTicks + ticks) - tempo.atMsAt(tTicks),
               notes: [],
               meiId,
               voice,
@@ -339,15 +469,18 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
       if (byDuration.size > 0) {
         const meiId = child.getAttribute('xml:id') ?? undefined;
         const baseVel = velocity.at(tTicks);
-        const atMs = tTicks * tickMs;
+        const atMs = tempo.atMsAt(tTicks);
         const articKinds = articulationsOnSlot(child);
         const shape = shapeForArticulations(baseVel, articKinds);
         const emittedIdxs: number[] = [];
         for (const [durTicks, notes] of byDuration) {
           emittedIdxs.push(events.length);
+          /* Real elapsed ms over the note's tick span — correct even if a
+             tempo change falls inside the note. Articulation factor scales it. */
+          const writtenMs = tempo.atMsAt(tTicks + durTicks) - tempo.atMsAt(tTicks);
           events.push({
             atMs,
-            durationMs: durTicks * shape.durationFactor * tickMs,
+            durationMs: writtenMs * shape.durationFactor,
             notes,
             meiId,
             velocity: shape.velocity,
@@ -392,8 +525,8 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
  *  from the start. */
 export function buildPedalEvents(model: ComposerModel, startMs = 0): PedalEvent[] {
   const mei = new DOMParser().parseFromString(model.serialize(), 'application/xml');
-  const tickMs = tickMsFromTempo(readTempo(mei));
-  const evs: PedalEvent[] = collectPedals(mei).map((p) => ({ atMs: p.tick * tickMs, dir: p.dir }));
+  const tempo = buildTempoTimeline(mei);
+  const evs: PedalEvent[] = collectPedals(mei).map((p) => ({ atMs: tempo.atMsAt(p.tick), dir: p.dir }));
   evs.sort((a, b) => a.atMs - b.atMs);
   if (startMs > 0) {
     /* Pedal state inherited from before the playhead: the most-recent

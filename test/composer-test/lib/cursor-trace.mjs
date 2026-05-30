@@ -66,8 +66,8 @@ export const CURSOR_TRACE_FN = `async function(voice, expectedZeroDeltaPairs) {
        * this walker tests the VOICE cursor regardless of which mode the
        * fixture left the model in. */
       const rawMode = (window.__hkl_composer.inputState && window.__hkl_composer.inputState().cursorMode) || 'voice';
-      const liveMode = (rawMode === 'expr' || rawMode === 'pedal') ? 'voice' : rawMode;
-      cursor.update(m, { entryMode, cursorMode: liveMode, exprCursor: null, pedalCursor: null });
+      const liveMode = (rawMode === 'expr' || rawMode === 'pedal' || rawMode === 'tempo') ? 'voice' : rawMode;
+      cursor.update(m, { entryMode, cursorMode: liveMode, exprCursor: null, pedalCursor: null, tempoCursor: null });
     }
   };
   const tick = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));

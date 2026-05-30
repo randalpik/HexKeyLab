@@ -5,7 +5,11 @@
 // the measure rebuild).
 
 import type { ComposerModel } from './model/index.js';
-import { getDynamicMap, setDynamicMap, type LayoutReq } from './expressions.js';
+import {
+  getDynamicMap, setDynamicMap, getGradualPercents, setGradualPercents,
+  type LayoutReq, type GradualPercents,
+} from './expressions.js';
+import { openTempoModal } from './tempoDialog.js';
 import { DYNAMIC_NAMES, DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { TUNING_MODES, type TuningMode, coordToMidi, MIDI_LOW, MIDI_HIGH } from '@hkl/shared/freq.js';
 import { noteName, keyOctave, fmtNote } from '@hkl/shared/notes.js';
@@ -44,15 +48,6 @@ function keyOptionsForMode(mode: 'major' | 'minor'): ReadonlyArray<{ value: stri
 
 const TIME_NUM_OPTIONS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
 const TIME_DEN_OPTIONS = [1, 2, 4, 8, 16];
-
-interface TempoUnitOption { unit: '1' | '2' | '4' | '8'; dots: 0 | 1; label: string }
-
-const TEMPO_UNIT_OPTIONS: ReadonlyArray<TempoUnitOption> = [
-  { unit: '4', dots: 0, label: '♩ (quarter)' },
-  { unit: '4', dots: 1, label: '♩. (dotted quarter)' },
-  { unit: '8', dots: 0, label: '♪ (eighth)' },
-  { unit: '2', dots: 0, label: '𝅗𝅥 (half)' },
-];
 
 const TUNING_LABELS: Record<TuningMode, string> = {
   E: 'Equal (12-TET)',
@@ -130,23 +125,13 @@ function setupSelects(model: ComposerModel): void {
       String(ts.unit));
   }
 
-  const unitSel = $<HTMLSelectElement>('setupTempoUnit');
-  const tempo = model.getTempo();
-  if (unitSel) {
-    populateSelect(unitSel,
-      TEMPO_UNIT_OPTIONS.map((o) => ({
-        value: o.unit + '|' + o.dots,
-        label: o.label,
-      })),
-      tempo.unit + '|' + tempo.dots);
-  }
 }
 
 function readForm(): {
   title: string; subtitle: string; composer: string; footer: string;
   keySig: string; keyMode: 'major' | 'minor';
   count: number; unit: number;
-  tempoBpm: number; tempoUnit: '1' | '2' | '4' | '8'; tempoDots: 0 | 1; tempoText: string;
+  gradual: GradualPercents;
   layoutReq: LayoutReq; hejiEnabled: boolean;
 } | null {
   const title = $<HTMLInputElement>('setupTitle')?.value ?? 'Untitled';
@@ -160,13 +145,15 @@ function readForm(): {
   const keyMode: 'major' | 'minor' = $<HTMLInputElement>('setupKeyMinor')?.checked ? 'minor' : 'major';
   const count = parseInt($<HTMLSelectElement>('setupTimeNum')?.value ?? '4', 10);
   const unit = parseInt($<HTMLSelectElement>('setupTimeDen')?.value ?? '4', 10);
-  const tempoBpmRaw = parseInt($<HTMLInputElement>('setupTempoBpm')?.value ?? '120', 10);
-  const tempoBpm = Math.max(20, Math.min(300, isFinite(tempoBpmRaw) ? tempoBpmRaw : 120));
-  const tempoUnitRaw = $<HTMLSelectElement>('setupTempoUnit')?.value ?? '4|0';
-  const [tu, td] = tempoUnitRaw.split('|');
-  const tempoUnit = (tu === '1' || tu === '2' || tu === '4' || tu === '8') ? tu : '4';
-  const tempoDots = (td === '1' ? 1 : 0) as 0 | 1;
-  const tempoText = ($<HTMLInputElement>('setupTempoText')?.value ?? '').trim();
+  const gradPct = (id: string, dflt: number): number => {
+    const v = parseInt($<HTMLInputElement>(id)?.value ?? '', 10);
+    return isFinite(v) ? Math.max(0, Math.min(99, v)) : dflt;
+  };
+  const gradual: GradualPercents = {
+    poco: gradPct('setupGrad_poco', 20),
+    plain: gradPct('setupGrad_plain', 40),
+    molto: gradPct('setupGrad_molto', 60),
+  };
   if (!isFinite(count) || count < 1 || count > 16) return null;
   if (!isFinite(unit) || ![1, 2, 4, 8, 16].includes(unit)) return null;
   const tuningRaw = $<HTMLSelectElement>('setupTuningMode')?.value ?? '5';
@@ -178,7 +165,7 @@ function readForm(): {
   if (refMidi < MIDI_LOW || refMidi > MIDI_HIGH) return null;
   const layoutReq: LayoutReq = { tuningMode, refQ, refR };
   const hejiEnabled = $<HTMLInputElement>('setupHeji')?.checked ?? false;
-  return { title, subtitle, composer, footer, keySig, keyMode, count, unit, tempoBpm, tempoUnit, tempoDots, tempoText, layoutReq, hejiEnabled };
+  return { title, subtitle, composer, footer, keySig, keyMode, count, unit, gradual, layoutReq, hejiEnabled };
 }
 
 function isTuningMode(s: string): s is TuningMode {
@@ -211,9 +198,22 @@ export function openSetupDialog(
   const subEl = $<HTMLInputElement>('setupSubtitle'); if (subEl) subEl.value = model.getSubtitle();
   const cEl = $<HTMLInputElement>('setupComposer'); if (cEl) cEl.value = model.getComposer();
   const ftEl = $<HTMLInputElement>('setupFooter');   if (ftEl) ftEl.value = model.getFooter();
-  const bEl = $<HTMLInputElement>('setupTempoBpm'); if (bEl) bEl.value = String(model.getTempo().bpm);
-  const txt = $<HTMLInputElement>('setupTempoText'); if (txt) txt.value = model.getTempo().text;
   populateDynamicInputs(model);
+  populateGradualInputs(model);
+
+  /* Tempo… button — opens the shared tempo modal targeting measure 1, beat 1
+     (the initial tempo). Mid-piece tempo changes use Ctrl+Shift+T at the
+     cursor. Applies as its own history entry; the Setup dialog stays open. */
+  const tempoBtn = $<HTMLButtonElement>('setupTempoBtn');
+  const onTempoClick = (): void => {
+    if (!history) return;
+    openTempoModal(model, { measureIdx: 0, tstamp: 1 }, {
+      history,
+      onApply: () => onApply(false),
+      instantOnly: true,
+    });
+  };
+  tempoBtn?.addEventListener('click', onTempoClick);
 
   /* Fill-incomplete-measures button. Applies immediately as its own
      history-tracked action (independent of Save / Cancel), then leaves the
@@ -297,8 +297,8 @@ export function openSetupDialog(
     model.setFooter(values.footer);
     model.setKeySig(values.keySig);
     model.setKeyMode(values.keyMode);
-    model.setTempo(values.tempoBpm, values.tempoUnit, values.tempoDots, values.tempoText);
     applyDynamicInputs(model);
+    setGradualPercents(model.getDoc(), values.gradual);
     if (proceedWithLayout) {
       model.setLayoutReq(values.layoutReq);
     }
@@ -323,6 +323,7 @@ export function openSetupDialog(
   const onClose = (): void => {
     form?.removeEventListener('submit', onSubmit);
     fillBtn?.removeEventListener('click', onFillClick);
+    tempoBtn?.removeEventListener('click', onTempoClick);
     dlg.removeEventListener('close', onClose);
   };
   form?.addEventListener('submit', onSubmit);
@@ -351,6 +352,14 @@ function applyDynamicInputs(model: ComposerModel): void {
   }
   if (Object.keys(next).length > 0) {
     setDynamicMap(model.getDoc(), next);
+  }
+}
+
+function populateGradualInputs(model: ComposerModel): void {
+  const p = getGradualPercents(model.getDoc());
+  for (const k of ['poco', 'plain', 'molto'] as const) {
+    const inp = $<HTMLInputElement>('setupGrad_' + k);
+    if (inp) inp.value = String(p[k]);
   }
 }
 

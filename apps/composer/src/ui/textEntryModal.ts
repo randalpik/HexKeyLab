@@ -11,7 +11,9 @@
 
 export type TextEntryField =
   | { name: string; type: 'text'; label: string; value?: string; placeholder?: string }
-  | { name: string; type: 'check'; label: string; value?: boolean };
+  | { name: string; type: 'number'; label: string; value?: string; placeholder?: string; min?: number; max?: number }
+  | { name: string; type: 'check'; label: string; value?: boolean }
+  | { name: string; type: 'select'; label: string; value?: string; options: ReadonlyArray<{ value: string; label: string }> };
 
 export interface TextEntryModalOpts {
   title: string;
@@ -34,6 +36,17 @@ function fieldRowHtml(f: TextEntryField): string {
   if (f.type === 'check') {
     return `<label class="row"><span>${esc(f.label)}</span>`
       + `<span><input type="checkbox" data-field="${esc(f.name)}"></span></label>`;
+  }
+  if (f.type === 'select') {
+    const opts = f.options.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
+    return `<label class="row"><span>${esc(f.label)}</span>`
+      + `<select data-field="${esc(f.name)}">${opts}</select></label>`;
+  }
+  if (f.type === 'number') {
+    return `<label class="row"><span>${esc(f.label)}</span>`
+      + `<input type="number" data-field="${esc(f.name)}"`
+      + (f.min !== undefined ? ` min="${f.min}"` : '') + (f.max !== undefined ? ` max="${f.max}"` : '')
+      + (f.placeholder ? ` placeholder="${esc(f.placeholder)}"` : '') + `></label>`;
   }
   return `<label class="row"><span>${esc(f.label)}</span>`
     + `<input type="text" autocomplete="off" data-field="${esc(f.name)}"`

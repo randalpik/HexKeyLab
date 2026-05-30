@@ -195,6 +195,13 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
   fill: #0a9396 !important;
   stroke: #0a9396;
 }
+/* Tempo-layer selection: the <tempo> text at the tempo cursor's moment,
+   tinted blue to match the TEMPO cursor. */
+#score svg .tempo-selected,
+#score svg .tempo-selected * {
+  fill: #3a86ff !important;
+  stroke: #3a86ff;
+}
 
 /* Document Setup modal. */
 .hkl-dialog {
@@ -349,10 +356,7 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
     <div class="row">
       <span>Tempo</span>
       <fieldset>
-        <input id="setupTempoText" type="text" placeholder="(optional, e.g. Allegro)">
-        <select id="setupTempoUnit"></select>
-        <span>=</span>
-        <input id="setupTempoBpm" type="number" min="20" max="300" step="1">
+        <button type="button" id="setupTempoBtn">Tempo… (measure 1)</button>
       </fieldset>
     </div>
     <label class="row"><span>Tuning</span><select id="setupTuningMode"></select></label>
@@ -376,6 +380,14 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
         <label>p   <input id="setupDyn_p"   type="number" min="1" max="127" step="1"></label>
         <label>pp  <input id="setupDyn_pp"  type="number" min="1" max="127" step="1"></label>
         <label>ppp <input id="setupDyn_ppp" type="number" min="1" max="127" step="1"></label>
+      </fieldset>
+    </div>
+    <div class="row">
+      <span>Gradual tempo change (%)</span>
+      <fieldset class="dyn-row">
+        <label>poco <input id="setupGrad_poco" type="number" min="0" max="99" step="1"></label>
+        <label>(plain) <input id="setupGrad_plain" type="number" min="0" max="99" step="1"></label>
+        <label>molto <input id="setupGrad_molto" type="number" min="0" max="99" step="1"></label>
       </fieldset>
     </div>
     <div class="row">
