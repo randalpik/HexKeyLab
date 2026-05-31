@@ -6,7 +6,9 @@
 >
 > **Phase 2: ✅ shipped** (2026-05-30). All four items (pedal layer, expressive-text modal + reusable shell, tempo modal + retiming + tempo layer, above/below placement) landed with fixtures; suite grew 190 → 207. The surfaces Phase 3 inherits are summarized in **§ Phase 2 outcomes — what Phase 3 inherits** below.
 >
-> **Phase 3: ✅ shipped** (2026-05-30). All four items landed with fixtures (suite 207 → 218): repeats + endings (`{`/`}`/`Ctrl+E`) with start-aware playback repeat-expansion composing with the tempo timeline; 8va (`Ctrl+8`, per-staff, q±3 playback shift); trills + tremolos (`Ctrl+T`, render-only); page break (`Ctrl+B`); and section headers (`Ctrl+Shift+H`) as a custom-injected centered movement title that displaces the system. See **§ Phase 3 scaffold** below for the as-built notes and **§ Phase 3 outcomes** for the surfaces Phase 4 inherits.
+> **Phase 3: ✅ shipped** (2026-05-30). All items + post-review fixes landed with fixtures (suite 207 → 222): repeats + endings (`{`/`}`/`Ctrl+E`) with start-aware playback repeat-expansion composing with the tempo timeline; 8va (`Ctrl+8`, per-staff, q±3 playback shift); trills + tremolos (`Ctrl+R` — rebound off Ctrl+T which Firefox reserves) with alternating slur playback preserving the source notes' lattice cells; page break (`Ctrl+B`); and section headers (`Ctrl+Shift+H`) as a custom-injected centered movement title that displaces the system. Breaks render via `smart`+`breaksSmartSb:0` / two-pass bake so material after a break still auto-wraps. See **§ Phase 3 scaffold** for the as-built notes, **§ Phase 3 outcomes** for what Phase 4 inherits, and `decisions.md` (3 Phase-3 entries) for the non-obvious calls.
+>
+> **Phase 4: ready to scaffold on a fresh thread.** See **§ Phase 4 scaffold** below. ⚠️ This is the first phase with a true architectural blocker (the per-measure `<scoreDef>` schema rewrite — §4).
 
 ## Context
 
@@ -346,8 +348,58 @@ All in `apps/composer/` unless noted. Resolved cross-cutting decisions and notab
 - **Repeat-expansion playback** (`src/render/playback.ts`): `expandPlayOrder(mei, startIdx)` returns the played measure order (rptstart/rptend honored, voltas selected by pass, capped at 2 passes, **start-aware** — repeats whose body the seek falls inside don't replay). `buildPlayback` tags each canonical event with `_mi`, and when `hasRepeatStructure(mei)` it re-stamps `atMs` over the played order (accumulating per-measure ms) while velocity/tempo/octave stay keyed on the **original** tick. No-repeat docs keep the exact original linear path. Endings are MEI `<ending>` wrapping `<measure>`; `Ctrl+E` is one-measure-at-a-time, context-derived (`toggleEndingAt`). `insertMeasureAt` made robust to ending-wrapped reference measures.
 - **8va** (`src/expressions.ts` octave CRUD): Verovio renders `<octave>` only from `@startid`/`@endid` (an empty group results from `@tstamp` alone, and it **warns** if both are present). So the bracket uses note anchors for rendering and `data-hkl-t0`/`data-hkl-t1` (tick span) for the playback shift — `collectOctaves` reads the latter. Playback shifts coords `q ± 3` per octave (band structure). Per-staff (both voices).
 - **Selection-mode actions exit through `dispatchSelectionMode`**: it now whitelists `Ctrl+8`/`Ctrl+T` to fall through **without** exiting the selection (their handlers read the live beat selection, then exit themselves). Other keys still exit-to-movable first.
-- **Trills/tremolos** (`src/articulations.ts`): `<trill>` is a `@startid` sibling (same shape as fermata; prune extended). Selection-mode `toggleTrillOrTremoloOnSelection` requires exactly two equal-duration, undotted, non-tuplet slots combining to a single notehead; diatonic step → collapse to one combined-duration note + trill, else wrap the pair in `<fTrem beams=3>`. Render-only (playback TODO).
+- **Trills/tremolos** (`src/articulations.ts`, `model/index.ts`, `render/playback.ts`): `<trill>` is a `@startid` sibling (same shape as fermata; prune extended). Selection-mode `toggleTrillOrTremoloOnSelection` requires exactly two equal-duration, undotted, non-tuplet slots combining to a single notehead; diatonic step → collapse to one combined-duration note + trill (storing the discarded note's exact cell on `data-hkl-trill-q/r`), else wrap the pair in `<fTrem beams=3>` with both notes DRAWN at the combined value. **Playback** expands trill/tremolo into a slur of alternating notes (static `TRILL_NOTE_MS`), preserving the source notes' lattice cells — never computing pitches. A tremolo (`<fTrem>`/`<bTrem>`) needed first-class handling in ALL six tick/enumeration sites (`writtenTicks`, `contentChildren`, `layerStops`, `normalizePlaceholders`, `pushContentChildren`, harness `layerTicks`); a tremolo's time = ONE wrapped note's drawn value (not the sum). See decisions.md.
 - **Page break / section header break mode** (`src/render/render.ts`): section/system breaks (`<sb>`, no `<pb>`) render with `breaks:'smart'` + `breaksSmartSb:0` — honors every forced `<sb>` AND auto-wraps overflow. Page-break docs (`<pb>`) need `'encoded'`, so `layoutBreaks()` does a two-pass (smart layout → bake natural `<sb>` → encoded) so pages split AND content still wraps. (See decisions.md — supersedes the earlier "encoded, no auto-wrap" tradeoff.) Trill rebound Ctrl+T → **Ctrl+R** (Firefox reserves Ctrl+T).
 - **Section headers** (`src/main.ts` `injectSectionHeaders`): Verovio has no native centered mid-score title, so it's custom post-render injection — find the section's rendered `g.system`, translate it + every later system down by `SECTION_HEADER_RESERVE`, grow the page, and inject a page-centered `<text>` in the freed band. Model `setSectionHeaderAt` tags the measure (`data-hkl-section-title`), forces an `<sb>`, sets the prior measure's final barline, and resets numbering (`renumberMeasures` is now section-aware, restarting at each header). `Ctrl+Shift+H` modal.
 
 **Test-harness note:** Phase 3 added no new cursor layer, so `cursor-trace.mjs` needed no change. Two recurring fixture gotchas surfaced: `duration` is the MEI `@dur` (`'4'`=quarter), **not** the keyboard digit (`'5'`); and `const c`/`let c` in fixture `setup` collides with the injected global `c` (cursor) — use `cc`.
+
+---
+
+## 10. Phase 4 scaffold
+
+A fresh session starts here. Phase 4 = **mid-piece structural changes** (backlog lines 103–105): per-measure time/key signatures and per-staff clef changes. ⚠️ Unlike Phases 1–3, this phase has a **true architectural blocker** — the model currently assumes a single global `<scoreDef>` and `setupDialog.ts` writes there directly. Do the schema work first; the hotkeys are easy once the model supports per-measure metadata.
+
+### The architectural prerequisite (do this first)
+
+Today: one `<scoreDef>` at the score head holds meter (`@meter.count`/`@meter.unit`), key (`@key.sig`), and clefs (`<staffDef>`); `setupDialog.ts` mutates it; everything (measureTicks, beat boundaries, accidental display, playback retiming, MusicXML export) reads that one global. Mid-piece changes need **per-measure scoreDef deltas** — in MEI, a `<scoreDef>` (or `<staffDef>`) placed *inside* `<section>` before a `<measure>` overrides from that point. The model must:
+- represent and query "the meter/key/clef in effect AT measure *m*" (walk back to the most recent override), not just one global;
+- recompute `measureTicks()` **per measure** (it's currently uniform — a load-bearing assumption in `buildTempoTimeline`, `buildPlayback` repeat-expansion `W`, beat boundaries, `normalizePlaceholders`, cursor tick math). **This is the riskiest ripple** — every site that multiplies by a single `measureTicks()` needs a per-measure lookup.
+- carry accidental state across a key change (the HEJI/accidental pipeline assumes one key sig);
+- handle copy-paste across a signature boundary (backlog line 105 calls this out).
+
+**Recommend** landing this as its own step with no user-facing feature, gated by the full suite + a fixture proving a 2-measure doc with a mid-piece meter change still satisfies the placeholder invariant and round-trips.
+
+### Phase 4.1 — Time/key signature modal `Ctrl+Shift+S` (UI refactor first)
+
+Extract the existing key-sig dropdown + meter controls from `setupDialog.ts` into a modal on the reusable `openTextEntryModal` shell (Phase 2's `ui/textEntryModal.ts`; clef/sig modals were always the intended inheritors — see §7). `Ctrl+Shift+S` opens it anchored to the current measure; the Setup button still opens it for measure 1. Add cut-time/common-time displays and complex (additive, e.g. 2+3) time signatures (backlog line 104). **Pure UI refactor before any model change** — initially it still writes the global scoreDef.
+
+### Phase 4.2 — Switch time/key sig at measure boundaries
+
+The biggest model rewrite (depends on the prerequisite). `Ctrl+Shift+S` on measure *m* writes a per-measure override effective from *m*'s start until the next existing change; re-opening on a measure that already has a change populates the modal with it (backlog line 105). Playback retiming, MusicXML export, and accidental carry-state all consume the per-measure lookup.
+
+### Phase 4.3 — Per-staff clef changes `Ctrl+Shift+C`
+
+Mid-piece clef change on a staff via a modal (arrow-key clef picker), supporting tenor / alto / treble+8 (backlog line 103). MEI `<clef>` as a measure control event or a per-measure `<staffDef>`. Playback is clef-agnostic (coords carry pitch), so this is mostly notation + the per-measure-scoreDef plumbing from the prerequisite.
+
+### What Phase 4 inherits from Phase 3 (reuse, don't reinvent)
+
+- **Reusable modal shell** `ui/textEntryModal.ts` (`text|number|check|select` fields) — the clef/sig modals' intended home. Modal-driven fixtures: drive open→fill→submit in `setup` JS so the modal is closed before invariants run (see `phase3_section_header`).
+- **`data-hkl-*` attribute convention** for model state Verovio ignores (used by tempo, octave `data-hkl-t0/t1`, trill `data-hkl-trill-q/r`, section titles). Per-measure overrides that Verovio doesn't natively place may ride the same pattern.
+- **Section-aware `renumberMeasures` + derived `setBarlines`** already walk per-measure state — the natural hook points for per-measure metadata.
+- **`Ctrl+Shift+letter` = config modal** tier is established (E/T/H taken; S and C are Phase 4's).
+
+### Cross-cutting decisions to surface to Max early in Phase 4
+
+1. **`measureTicks()` per-measure migration**: confirm the approach (a `measureTicksAt(mi)` helper threaded through every current caller) before the rewrite — it's the highest-blast-radius change in the whole roadmap.
+2. **Signature-change encoding**: in-`<section>` `<scoreDef>`/`<staffDef>` vs measure-attribute deltas — pick one and confirm round-trip + MusicXML export behavior.
+3. **Accidental carry-state across key changes**: how the HEJI pipeline should reset/carry at a mid-piece key change.
+4. **Copy-paste across a signature boundary** (backlog line 105): what happens to pasted content whose source meter differs from the destination.
+
+### Phase 4 verification
+
+Standard gates (`pnpm typecheck` + `-r build` + `check:boundaries` + `pnpm test:composer`, `pnpm dev` running). The prerequisite especially needs fixtures proving per-measure `measureTicks` correctness (placeholder invariant on a mixed-meter doc, beat boundaries, playback timing across a meter change) and round-trip stability. Each item lands ≥1 fixture with `visualBaseline` for the rendered signature/clef change.
+
+### Suggested kickoff prompt for the new thread
+
+> "Read `docs/composer-roadmap.md` §9 (Phase 3 outcomes) + §10 (Phase 4 scaffold) and the §4 blocker note. Phase 4 is mid-piece time/key sig + per-staff clef. Confirm the four cross-cutting decisions — especially the per-measure `measureTicks()` migration — then land the per-measure-`<scoreDef>` model prerequisite FIRST (no user feature, full-suite gated), then the `Ctrl+Shift+S` modal (UI refactor), then mid-piece sig switching, then `Ctrl+Shift+C` clef changes. Land each with fixtures; gate on `pnpm test:composer`."
