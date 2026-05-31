@@ -2679,3 +2679,64 @@ stores the discarded note's exact `(q,r)` on the kept note as `data-hkl-trill-q/
 alternates between the two real cells. A voice-mode trill (single note, no second cell stored)
 plays as a plain note — there is no second lattice position to preserve and we don't synthesize
 one.
+
+## HKL Orchestrator (HKLO) + velocity-layered sampling (2026-05-30)
+
+A multi-part feature: sample a physical MIDI instrument's audio into a velocity-layered `.hki`.
+Non-obvious choices made along the way:
+
+**`@hkl/analysis` extraction.** The analyzer's DOM-free DSP (loop/decay analysis, k-weighting,
+normalize/computeGain, tier, autoSelect, instrument enumeration) moved to a new engine-tier
+package `packages/analysis` so both the Analyzer and the Orchestrator consume it (the boundary
+checker forbids one app importing another app's `src/`). Two refinements over the obvious port:
+(1) **clean type-split, not a wholesale `state.ts` move** — DSP types live in
+`packages/analysis/src/types.ts`; the analyzer's UI-state (`SampleSlot`'s `File`/`AudioBuffer`,
+`ConfigState`, `initialState`) stays app-local and re-exports the DSP types, so the package has
+**zero deps** and no app-UI leaks in, and the 9 app consumers needed no import changes. (2) The
+three `.js` DSP files stay `.js` (no `allowJs` — it would surface ~83 KB of untyped DSP to
+`tsc`), so the package's `exports` uses an **array fallback** `"./*.js": ["./src/*.js",
+"./src/*.ts"]` (the rest of the repo is `.ts`-only). Vite `?worker` entries stay in apps; the
+package exports pure functions only.
+
+**`.hki` v2 = flat `samples[]` + optional `vel?`, with a v1→v2 upcast (overrides the earlier
+"reject v1" intent).** A velocity-layered note is just multiple flat `samples[]` rows sharing
+`name`+`freq` at different `vel` — chosen over a nested `layers[]` shape because the engine
+already flattens `samples[]` into per-row buffers and groups by freq at load time, and the
+registry keys audio per-file; nesting would have forced a flatten/regroup and migrated every
+consumer that iterates `manifest.samples`. `readHki` **losslessly upcasts** v1→v2 (stamps the
+version; v1 has no `vel` = single-layer everywhere) rather than rejecting — every shipped and
+user bundle today is v1 and v1 data is a strict subset of v2, so rejecting would be a gratuitous
+regression.
+
+**Velocity-layer playback = discrete nearest-layer pick + gain-trim; the velocity curve owns
+loudness.** `findNearest(freq, velocity)` is two-stage: nearest pitch, then nearest layer by
+reference `vel`. The gain math is **unchanged** — because the analyzer normalizes every layer to
+the *same* TARGET (−18 dBFS), after `× nearest.gain` all layers play at one reference loudness, so
+the layer choice changes timbre, not level; loudness stays owned by the existing house velocity
+curve evaluated at the actual input velocity. A `curveGain(v)/curveGain(layerVel)` ratio would
+double-count velocity and is explicitly wrong. Single-layer notes (`vel` absent) short-circuit to
+byte-identical pre-feature behavior; the `pickLayer` tie rule resolves a midpoint to the lower
+layer.
+
+**Decay sampling holds the key for the full natural decay; note-off only at the stop.** Releasing
+the key after a short hold would engage a damper and truncate the decay. So the recorder holds
+note-on for the whole capture and sends note-off only when the held note's natural decay falls
+below −60 dBFS (or 12 s). Discovery probes use `fixedDuration` (hold the probe length, then off).
+
+**HKLO bridge = its own channel, mirroring the Analyzer.** `hkl-orchestrator-bridge` +
+`orchestrator-protocol.ts` + two factories; HKL gains an `orchestratorBridge`. The `import-hki`
+handler body is shared with the Analyzer via a factored `handleHkiImport()` helper in
+`hkl-side.ts`. `InstrumentRegistry.importBundle` needed no change (per-file audio keying already
+handles N files/note).
+
+**Lossless intermediate + bundle format = 32-bit float WAV.** The capture worklet emits raw
+Float32; the bundle encodes each layer to IEEE-float WAV (bit-exact, no WASM encoder,
+`decodeAudioData`-compatible, deflated by the `.hki` zip). Analysis runs on the main thread with
+yields (a worker is a deferred optimization — `computeGain`/`measureDecay` are fast).
+
+**Discovery = adjacent-distance peak-pick with an absolute floor.** Fingerprint each swept
+velocity (triangular-filterbank + log-compressed band shape + centroid + level), L2-distance
+adjacent fingerprints, peak-pick boundaries above `max(mean+1.5·std, absFloor)`. The **absFloor**
+is load-bearing: a velocity-invariant device produces all-tiny distances, where `mean+k·std`
+would threshold on noise. A warm-up discarded capture + a gap longer than the ring-out keep the
+first probe from reading as a false low-end boundary.

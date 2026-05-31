@@ -4,21 +4,26 @@ Tool for building HKL instruments from audio: loop-point detection, decay analys
 
 ## Package layout
 
+The DOM-free DSP now lives in **`@hkl/analysis`** (`packages/analysis/`), shared by the Analyzer
+and the Orchestrator (and the CLI): `analyzer-analysis.js` (HKLAnalysis: prepareLoop,
+refineFundamentalPeriod, trimSilence, applyConfigDefaults), `analyzer-instruments.js`
+(HKLInstruments: URL/note enumeration), `k-weighting.js` (ITU-R BS.1770-4 loudness), and the pure
+TS `normalize.ts` (measure*/computeGain/buffer builders), `tier.ts`, `autoSelect.ts`, `types.ts`.
+Only the DOM-bound `analyzer-visualization.js` (HKLViz canvas) stays app-local.
+
 ```
 apps/analyzer/
   index.html              browser UI entry (Vite)
-  src/                    browser UI modules → import @hkl/{shared,engine,bridge}
-  analysis/               DOM-free DSP engine (shared by UI + CLI)
-    analyzer-analysis.js      HKLAnalysis: prepareLoop, refineFundamentalPeriod, trimSilence, applyConfigDefaults
-    analyzer-instruments.js   HKLInstruments: URL construction, note enumeration, noteStyle dispatch
-    analyzer-visualization.js HKLViz: diagnostic canvas + status text (reused by UI Inspect panel)
-    k-weighting.js            ITU-R BS.1770-4 loudness (measureLufs, measureDecayLufs)
-  cli/                    Node batch CLI
+  src/                    browser UI modules → import @hkl/{shared,engine,bridge,analysis}
+  analysis/
+    analyzer-visualization.js HKLViz: diagnostic canvas + status text (DOM; stays app-local)
+  cli/                    Node batch CLI (imports @hkl/analysis for k-weighting etc.)
     generate-samples.js       run via `pnpm analyze`; emits a samples-data block
     insert-instrument.js      splices that block into apps/hkl/src/audio/samples-data.ts
     bundle.js, backfill-gains.js, backfill-patterns.js
   configs/*.json          per-instrument configs — source of truth for shipped instruments
   out/                    CLI artifacts: <key>-block.txt, <key>-report.md, <key>.hki
+packages/analysis/src/    @hkl/analysis — the DOM-free DSP listed above
 ```
 
 The CLI (`configs/*.json` → `samples-data.ts`) is canonical for shipped instruments; the browser UI is the end-user path.
@@ -115,7 +120,7 @@ Constants live in both `cli/generate-samples.js` and `cli/backfill-gains.js`. `g
 
 ## Browser UI
 
-`index.html` is a Vite entry. Per the analyzer import constraints in CLAUDE.md, `apps/analyzer/src/*` may import `@hkl/shared`, `@hkl/engine`, `@hkl/bridge`, and `apps/analyzer/analysis/*.js` — never HKL-side audio/midi/state/lumatone/render/composer code. This keeps the analyzer independent of HKL state.
+`index.html` is a Vite entry. Per the analyzer import constraints in CLAUDE.md, `apps/analyzer/src/*` may import `@hkl/shared`, `@hkl/engine`, `@hkl/bridge`, `@hkl/analysis`, and its app-local `apps/analyzer/analysis/analyzer-visualization.js` — never HKL-side audio/midi/state/lumatone/render/composer code. This keeps the analyzer independent of HKL state.
 
 ### Module map (`apps/analyzer/src/`)
 

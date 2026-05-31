@@ -9,9 +9,11 @@ and the repo map. Per-app deep-dives live alongside it:
 - [**composer.md**](architecture/composer.md) — HKL Composer: the Verovio score editor, bridge,
   MEI model, cursor/input, ties, tuplets, selection.
 - [**analyzer.md**](architecture/analyzer.md) — HKL Analyzer: the sample-analysis UI + Node CLI +
-  shared DSP engine.
+  the shared `@hkl/analysis` DSP.
+- [**orchestrator.md**](architecture/orchestrator.md) — HKL Orchestrator: samples a physical MIDI
+  device into a velocity-layered `.hki` (discovery + capture + quality gates).
 - [**engine.md**](architecture/engine.md) — `@hkl/engine`: the standalone sample playback library
-  (loop scheduling, crossfade, velocity, `.hki`), plus the other shared libs.
+  (loop scheduling, crossfade, velocity layers, `.hki`), plus the other shared libs.
 
 Design *rationale and history* live in [`decisions.md`](decisions.md); gotchas in
 [`lessons.md`](lessons.md); the agent operating-manual + critical hardware constants in
@@ -23,24 +25,27 @@ A pnpm monorepo. There is no top-level `src/`.
 
 ```
 apps/
-  hkl/        core viewer/player          (@hkl/hkl)      → hkl.md
-  composer/   score editor                (@hkl/composer) → composer.md
-  analyzer/   sample analyzer UI+CLI       (@hkl/analyzer) → analyzer.md
+  hkl/          core viewer/player        (@hkl/hkl)          → hkl.md
+  composer/     score editor              (@hkl/composer)     → composer.md
+  analyzer/     sample analyzer UI+CLI     (@hkl/analyzer)     → analyzer.md
+  orchestrator/ MIDI-device sampler        (@hkl/orchestrator) → orchestrator.md
 packages/
   shared/     pure data: tuning math, note naming, segments, dynamics, hki, colors, heji
   engine/     @hkl/engine — sample playback                → engine.md
   notation/   @hkl/notation — Verovio/MEI rendering
   bridge/     @hkl/bridge — BroadcastChannel protocol + message types
-test/         composer-test, composer-inspect, bounds-probe, interval-names, engine-smoke, *-check.mjs
+  analysis/   @hkl/analysis — DOM-free sample-analysis DSP (Analyzer + Orchestrator) → analyzer.md
+test/         composer-test, composer-inspect, bounds-probe, interval-names, engine-smoke, orchestrator-smoke, *-check.mjs
 tools/        lumatone-cal, reset-calibration.sh   (hardware/ops)
 vite/         dev-proxy.mjs + middleware (the dev umbrella)
 ```
 
-Dependency DAG: `@hkl/shared ← {engine, notation, bridge} ← apps`. `pnpm dev` runs all three app
-servers behind a single-origin reverse proxy at `http://localhost:5170` (`/`→hkl, `/composer/`,
-`/analyzer/`) — same origin is required because the HKL↔Composer/Analyzer `BroadcastChannel` bridge
-and the `IndexedDB` instrument registry are per-origin. See [CLAUDE.md](../CLAUDE.md) for the run/
-build/test commands.
+Dependency DAG: `@hkl/shared ← {engine, notation, bridge} ← apps`, plus `@hkl/analysis` (zero deps)
+← {analyzer, orchestrator}. `pnpm dev` runs all four app servers behind a single-origin reverse
+proxy at `http://localhost:5170` (`/`→hkl, `/composer/`, `/analyzer/`, `/orchestrator/`) — same
+origin is required because the HKL↔Composer/Analyzer/Orchestrator `BroadcastChannel` bridges and the
+`IndexedDB` instrument registry are per-origin. See [CLAUDE.md](../CLAUDE.md) for the run/build/test
+commands.
 
 ---
 

@@ -1070,3 +1070,43 @@ Cause: on Linux/ALSA, an input port wires its sequencer subscription the instant
 Fix: call `port.open()` when binding an output (`rebindPianoOut` in `src/midi/piano-out.ts`). Don't rely on implicit-open. Diagnose MIDI-routing issues with `amidi -l` / `aconnect -l` / `aseqdump -p '<name>'` to split browser-side from hardware before hypothesizing.
 
 Bonus (same session): the cheap **CH345** USB-MIDI cable (QinHeng) has a flaky MIDI OUT — drops bytes under burst load and can't send SysEx — though simple sparse sends get through. Keep per-note message bursts minimal (we mirror Program Change to all 16 channels *outside* note bursts, never per-note) and don't send SysEx through it.
+
+### Orchestrator (HKLO) capture/discovery gotchas (2026-05-30)
+
+These bit during the orchestrator build; all are about verifying audio-capture code.
+
+**Headless realtime audio is fine for plumbing, too noisy for outcomes.** A realtime
+`AudioContext` in headless Chromium delivers worklet quanta *unevenly* across rapid sequential
+captures (a velocity sweep), so identical inputs can yield fingerprints that differ enough to
+flip a boundary-detection result run-to-run. Don't assert detection OUTCOMES on a
+loopback-through-headless harness. Decompose: unit-test the pure logic deterministically
+(`detectBins`, `runGates` on synthesized PCM) and let the loopback smoke assert only that the
+PLUMBING runs (a sweep returns N fingerprints, a capture returns audio). `test/orchestrator-smoke/`
+is split exactly this way.
+
+**Node's native TS runner does NOT rewrite relative `.js`→`.ts` imports.** Node v22+ strips TS
+types on import, but only the package-`exports` map (for bare `@hkl/*` specifiers) and Vite
+rewrite a `.js` specifier to a `.ts` file. A relative `import './foo.js'` that points at `foo.ts`
+(the repo's bundler-mode convention) throws `ERR_MODULE_NOT_FOUND` under `node file.mjs`. So an
+app-module node unit test works ONLY if that module's imports are all type-only (erased at
+runtime) — `bins.ts` is node-testable, `gates.ts` (real runtime `../analysis/shim.js` import) is
+not, and must be exercised in-browser (via a `window.__hklo.*` hook through the CDP smoke).
+
+**`refineFundamentalPeriod` is blind to octave-UP errors.** Its autocorrelation searches near the
+*hint* lag, and a tone an octave (or any integer multiple) up is also periodic at that lag (it
+spans 2+ true cycles), so it confirms the wrong pitch as a match. The pitch gate adds a
+half-period normalized-autocorrelation guard: if `r(expectedLag/2)` is also strong (≥0.85), the
+true fundamental is an octave up → flag `pitch`. Non-harmonic intervals (tritone, fifth) don't
+align at the hint lag and are already caught by the null/drift check.
+
+**Sparse pure-sine spectra make normalized band fingerprints jitter.** A few-harmonic synth tone
+puts almost all energy in a handful of FFT bins; tiny capture/onset differences migrate a partial
+between adjacent log-bands and swing the *normalized* band vector wildly (distances near 1.0 for
+identical inputs). Fix that hardened the real detector: a **triangular (mel-style) overlapping
+filterbank + log compression** (a partial near a band edge splits smoothly across neighbors).
+Test fixtures (the loopback) should also use a dense `1/nᵏ` harmonic series, not a few sines.
+
+**A velocity sweep's first probe is a systematic outlier** unless you (a) warm up with a discarded
+capture (the first capture of a cold `AudioContext` can be near-silent) and (b) gap longer than the
+instrument's ring-out (every probe but the first otherwise captures its predecessor's decay tail;
+the unpolluted first probe then reads as a false low-end boundary). `runSweep` does both.

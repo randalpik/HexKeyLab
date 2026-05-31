@@ -49,6 +49,17 @@
     }
     .statusbar.err { color: var(--err); }
     .statusbar.ok { color: var(--ok); }
+    .field-row { display: flex; align-items: center; gap: 10px; margin: 10px 0; flex-wrap: wrap; }
+    .field-row > label { min-width: 110px; color: var(--muted); }
+    select, button, input {
+      font: inherit; color: var(--fg); background: var(--panel2);
+      border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;
+    }
+    button { cursor: pointer; background: var(--panel2); }
+    button:hover:not([disabled]) { border-color: var(--accent); }
+    button[disabled] { opacity: 0.5; cursor: not-allowed; }
+    .meter { width: 240px; height: 12px; background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+    .meter-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--ok), var(--warn) 80%, var(--err)); transition: width 60ms linear; }
   </style>
 </head>
 <body>
