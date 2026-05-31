@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HKL Orchestrator</title>
+  <style>
+    :root {
+      --bg: #1a1c20; --panel: #24272d; --panel2: #2c3038; --border: #3a3f48;
+      --fg: #e6e8ec; --muted: #9aa0aa; --accent: #6ea8fe; --ok: #5fd07a;
+      --warn: #e8c06a; --err: #e87a7a;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      background: var(--bg); color: var(--fg);
+      font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      display: flex; flex-direction: column;
+    }
+    .topbar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+    }
+    .topbar h1 { font-size: 16px; margin: 0; font-weight: 600; }
+    .topbar .spacer { flex: 1; }
+    .conn {
+      font-size: 12px; padding: 3px 9px; border-radius: 999px;
+      background: #3a2c2c; color: var(--err); border: 1px solid #5a3a3a;
+    }
+    .conn.connected { background: #2c3a2e; color: var(--ok); border-color: #3a5a40; }
+    .steps {
+      display: flex; gap: 6px; padding: 12px 16px; flex-wrap: wrap;
+      border-bottom: 1px solid var(--border); background: var(--panel);
+    }
+    .steps .crumb {
+      font-size: 12px; padding: 4px 12px; border-radius: 6px;
+      background: var(--panel2); color: var(--muted); border: 1px solid var(--border);
+    }
+    .steps .crumb.active { color: var(--fg); border-color: var(--accent); }
+    .steps .crumb.done { color: var(--ok); }
+    main { flex: 1; overflow: auto; padding: 20px; }
+    .step-panel { display: none; max-width: 900px; }
+    .step-panel.active { display: block; }
+    .step-panel h2 { margin-top: 0; font-size: 18px; }
+    .muted { color: var(--muted); }
+    .statusbar {
+      padding: 8px 16px; border-top: 1px solid var(--border);
+      background: var(--panel); font-size: 12px; color: var(--muted);
+    }
+    .statusbar.err { color: var(--err); }
+    .statusbar.ok { color: var(--ok); }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>HKL Orchestrator</h1>
+    <span class="muted">sample a MIDI instrument → velocity-layered .hki</span>
+    <span class="spacer"></span>
+    <span id="hklConn" class="conn">no HKL</span>
+  </div>
+  <nav class="steps" id="steps"></nav>
+  <main id="wizard"></main>
+  <div class="statusbar" id="statusText">Loading…</div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

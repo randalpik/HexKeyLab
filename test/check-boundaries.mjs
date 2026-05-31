@@ -12,8 +12,11 @@
 //   2. Relative imports may not escape the project's own directory (that would
 //      be a cross-package reach that should go through a bare @hkl/* specifier).
 //
-// Documented exception: apps/analyzer may relatively import the repo-root
-// analyzer/*.js CLI engine modules (browser-runnable, not a workspace package).
+// The DOM-free analysis DSP (loop/decay analysis, k-weighting, normalize/tier/
+// auto-select) lives in @hkl/analysis and is imported via bare @hkl/* specifiers
+// (rule 1). The analyzer's DOM-bound diagnostic canvas (analyzer-visualization.js)
+// stays app-local under apps/analyzer/analysis/ — imported relatively from within
+// the same project, so it is not an escape.
 
 import fs from 'node:fs';
 import path from 'node:path';

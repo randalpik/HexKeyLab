@@ -15,7 +15,7 @@
 // small (≤30 samples typical); a pool can come later if needed.
 
 // @ts-ignore - .js module
-import { HKLInstruments } from '../analysis/analyzer-instruments.js';
+import { HKLInstruments } from '@hkl/analysis/analyzer-instruments.js';
 import {
   getState,
   onChange,
@@ -24,8 +24,8 @@ import {
   updateSampleByName,
   updateSamples,
 } from './stage.js';
-import { classifyTier } from './tier.js';
-import { pickSamples } from './autoSelect.js';
+import { classifyTier } from '@hkl/analysis/tier.js';
+import { pickSamples } from '@hkl/analysis/autoSelect.js';
 import type { AnalysisResult, GateOpts, SampleSlot } from './state.js';
 import type { WorkerResultMessage, WorkerErrorMessage } from './pipeline-worker.js';
 

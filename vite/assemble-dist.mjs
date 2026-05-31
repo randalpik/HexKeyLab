@@ -22,6 +22,7 @@ const apps = [
   { name: 'hkl', dest: out },
   { name: 'composer', dest: path.join(out, 'composer') },
   { name: 'analyzer', dest: path.join(out, 'analyzer') },
+  { name: 'orchestrator', dest: path.join(out, 'orchestrator') },
 ];
 
 for (const { name } of apps) {

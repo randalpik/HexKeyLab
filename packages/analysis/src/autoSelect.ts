@@ -10,7 +10,7 @@
 //
 // Decay instruments: keep every valid (green/blue/yellow) sample.
 
-import type { SampleSlot, Tier } from './state.js';
+import type { SampleSlot, Tier } from './types.js';
 
 const TIER_RANK: Record<Tier, number> = { green: 4, blue: 3, yellow: 2, red: 1, fail: 0 };
 

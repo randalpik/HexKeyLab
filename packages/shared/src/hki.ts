@@ -22,7 +22,7 @@
 
 import { unzipSync, zipSync, strFromU8, strToU8 } from 'fflate';
 
-export const HKI_MANIFEST_VERSION = 1 as const;
+export const HKI_MANIFEST_VERSION = 2 as const;
 
 export interface HkiSampleEntry {
   /** Note name as it appears in the instrument's sample list (e.g. "C4"). */
@@ -33,6 +33,14 @@ export interface HkiSampleEntry {
   freq: number;
   /** Per-sample gain factor, normalizing to TARGET_DBFS. Defaults to 1.0. */
   gain?: number;
+  /** Reference velocity (1..127) this layer represents (bin center). Absent ⇒
+   *  single-layer note: matches any input velocity, behaving exactly as a v1
+   *  sample. Multiple entries may share `name` (and `freq`) at different `vel`
+   *  to form a velocity-layered note; the engine picks the nearest layer by
+   *  input velocity, then applies the normal velocity→gain curve (all layers
+   *  are normalized to the same loudness target, so the layer choice changes
+   *  timbre, not level). Produced by the orchestrator (HKLO). */
+  vel?: number;
   /** Loop pipeline only — segment (a, b) time pairs in seconds. */
   segments?: Array<{ a: number; b: number }>;
   /** Trend envelope (sustained loop only). Mean-normalized array. */
@@ -44,8 +52,10 @@ export interface HkiSampleEntry {
 }
 
 export interface HkiManifest {
-  /** Format version. Mismatched versions are rejected by readHki. */
-  version: typeof HKI_MANIFEST_VERSION;
+  /** Format version. v1 bundles are losslessly upcast to v2 on read (a v1
+   *  sample is a v2 single-layer note — no `vel`). Unknown versions are
+   *  rejected by readHki. */
+  version: 1 | typeof HKI_MANIFEST_VERSION;
   /** Stable key under which the instrument is registered (`INSTRUMENTS[key]`). */
   instrumentKey: string;
   /** Human-facing name shown in the dropdown. */
@@ -97,8 +107,8 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 
 function validateManifest(raw: unknown): HkiManifest {
   if (!isPlainObject(raw)) throw new Error('manifest.json is not a JSON object');
-  if (raw.version !== HKI_MANIFEST_VERSION) {
-    throw new Error(`unsupported manifest version ${String(raw.version)} (expected ${HKI_MANIFEST_VERSION})`);
+  if (raw.version !== 1 && raw.version !== HKI_MANIFEST_VERSION) {
+    throw new Error(`unsupported manifest version ${String(raw.version)} (expected 1 or ${HKI_MANIFEST_VERSION})`);
   }
   if (typeof raw.instrumentKey !== 'string' || !raw.instrumentKey) throw new Error('manifest.instrumentKey missing');
   if (typeof raw.name !== 'string') throw new Error('manifest.name missing');
@@ -112,8 +122,20 @@ function validateManifest(raw: unknown): HkiManifest {
     if (typeof s.name !== 'string') throw new Error('sample.name missing');
     if (typeof s.file !== 'string') throw new Error(`sample.file missing for ${String(s.name)}`);
     if (typeof s.freq !== 'number') throw new Error(`sample.freq missing for ${s.name}`);
+    if (s.vel !== undefined && (typeof s.vel !== 'number' || s.vel < 1 || s.vel > 127)) {
+      throw new Error(`sample.vel out of range (1..127) for ${s.name}`);
+    }
   }
-  return raw as unknown as HkiManifest;
+  return upcastV1(raw as unknown as HkiManifest);
+}
+
+/** v1 → v2 upcast. A v1 bundle has no `vel` on any sample and reads identically
+ *  as a v2 instrument of single-layer notes; the only change is the version
+ *  stamp, so downstream code that asserts `version === HKI_MANIFEST_VERSION` is
+ *  satisfied. Audio bytes and all per-sample fields are untouched (lossless). */
+function upcastV1(m: HkiManifest): HkiManifest {
+  if (m.version === HKI_MANIFEST_VERSION) return m;
+  return { ...m, version: HKI_MANIFEST_VERSION };
 }
 
 /** Parse a `.hki` byte buffer. Validates manifest shape; throws on malformed input. */

@@ -29,7 +29,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { measureDecayLufs } from '../analysis/k-weighting.js';
+import { measureDecayLufs } from '@hkl/analysis/k-weighting.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);

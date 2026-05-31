@@ -4,7 +4,7 @@
 // Keep these in sync if the CLI's heuristics change — the new UI must agree
 // with the CLI on tier assignment so the diagnostic report matches.
 
-import type { AnalysisResult, Tier } from './state.js';
+import type { AnalysisResult, Tier } from './types.js';
 
 const VALID_TIERS: ReadonlySet<Tier> = new Set(['green', 'blue', 'yellow']);
 

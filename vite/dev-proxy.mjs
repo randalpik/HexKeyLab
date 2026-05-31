@@ -3,9 +3,10 @@
 // the per-origin IndexedDB instrument registry work across HKL / Composer /
 // Analyzer tabs. Path-prefix routing:
 //
-//   /composer/*  -> :5174   (apps/composer, base /composer/)
-//   /analyzer/*  -> :5175   (apps/analyzer, base /analyzer/)
-//   everything   -> :5173   (apps/hkl,      base /)
+//   /composer/*     -> :5174   (apps/composer,     base /composer/)
+//   /analyzer/*     -> :5175   (apps/analyzer,     base /analyzer/)
+//   /orchestrator/* -> :5176   (apps/orchestrator, base /orchestrator/)
+//   everything      -> :5173   (apps/hkl,          base /)
 //
 // HMR websockets ride the same prefixes (each app's vite hmr.path matches its
 // base; hmr.clientPort is 5170 so the browser dials the proxy). The dev-only
@@ -25,12 +26,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 
 const PROXY_PORT = 5170;
-const HKL = 5173, COMPOSER = 5174, ANALYZER = 5175;
+const HKL = 5173, COMPOSER = 5174, ANALYZER = 5175, ORCHESTRATOR = 5176;
 
 const APPS = [
   ['@hkl/hkl', HKL],
   ['@hkl/composer', COMPOSER],
   ['@hkl/analyzer', ANALYZER],
+  ['@hkl/orchestrator', ORCHESTRATOR],
 ];
 
 /* ── spawn the three app dev servers ── */
@@ -79,6 +81,7 @@ function runEndpoints(req, res, done) {
 function targetFor(url) {
   if (url.startsWith('/composer')) return COMPOSER;
   if (url.startsWith('/analyzer')) return ANALYZER;
+  if (url.startsWith('/orchestrator')) return ORCHESTRATOR;
   return HKL;
 }
 
@@ -118,7 +121,8 @@ server.on('upgrade', (req, socket, head) => {
 
 server.listen(PROXY_PORT, () => {
   console.log(`\n  HKL dev umbrella → http://localhost:${PROXY_PORT}/`);
-  console.log(`    /          → HKL      (:${HKL})`);
-  console.log(`    /composer/ → Composer (:${COMPOSER})`);
-  console.log(`    /analyzer/ → Analyzer (:${ANALYZER})\n`);
+  console.log(`    /              → HKL          (:${HKL})`);
+  console.log(`    /composer/     → Composer     (:${COMPOSER})`);
+  console.log(`    /analyzer/     → Analyzer     (:${ANALYZER})`);
+  console.log(`    /orchestrator/ → Orchestrator (:${ORCHESTRATOR})\n`);
 });

@@ -11,11 +11,11 @@
 // ES module). This module passes through `stereo` (interleaved L,R Float32)
 // and `mono` (single-channel Float32) untouched.
 
-import type { AnalysisResult } from './state.js';
+import type { AnalysisResult } from './types.js';
 // k-weighting.js is an untyped engine module; the imports are runtime-checked
 // at the call sites below.
 // @ts-ignore - .js module with no .d.ts
-import { measureLufs, measureDecayLufs } from '../analysis/k-weighting.js';
+import { measureLufs, measureDecayLufs } from './k-weighting.js';
 
 const TARGET_DBFS = -18;
 const TARGET_RMS = Math.pow(10, TARGET_DBFS / 20);     /* ≈ 0.12589 */

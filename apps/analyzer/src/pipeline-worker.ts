@@ -21,11 +21,11 @@ import {
   measureDecay,
   computeGain,
   type MeasureResult,
-} from './normalize.js';
+} from '@hkl/analysis/normalize.js';
 
 // Engine modules — untyped, pulled in at worker init.
 // @ts-ignore .js module
-import { HKLAnalysis } from '../analysis/analyzer-analysis.js';
+import { HKLAnalysis } from '@hkl/analysis/analyzer-analysis.js';
 
 interface AnalyzeRequest {
   type: 'analyze';

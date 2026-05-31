@@ -11,6 +11,10 @@ import {
   ANALYZER_CHANNEL_NAME, ANALYZER_PROTOCOL_VERSION,
   AnalyzerEvent, HklAnalyzerEvent,
 } from './analyzer-protocol.js';
+import {
+  ORCHESTRATOR_CHANNEL_NAME, ORCHESTRATOR_PROTOCOL_VERSION,
+  OrchestratorEvent, HklOrchestratorEvent,
+} from './orchestrator-protocol.js';
 
 class BridgeChannel<In, Out> {
   private ch: BroadcastChannel;
@@ -68,4 +72,22 @@ export function createHklAnalyzerBridge(): HklAnalyzerBridge {
   return new BridgeChannel<HklAnalyzerEvent, AnalyzerEvent>(ANALYZER_CHANNEL_NAME);
 }
 
-export { PROTOCOL_VERSION, CHANNEL_NAME, ANALYZER_PROTOCOL_VERSION, ANALYZER_CHANNEL_NAME };
+/* ── HKL ↔ Orchestrator ─────────────────────────────────────────────────── */
+
+/** From HKL's perspective: receive Orchestrator events, send HKL→Orchestrator events. */
+export type OrchestratorHklBridge = BridgeChannel<OrchestratorEvent, HklOrchestratorEvent>;
+export function createOrchestratorHklBridge(): OrchestratorHklBridge {
+  return new BridgeChannel<OrchestratorEvent, HklOrchestratorEvent>(ORCHESTRATOR_CHANNEL_NAME);
+}
+
+/** From Orchestrator's perspective: receive HKL→Orchestrator events, send Orchestrator events. */
+export type HklOrchestratorBridge = BridgeChannel<HklOrchestratorEvent, OrchestratorEvent>;
+export function createHklOrchestratorBridge(): HklOrchestratorBridge {
+  return new BridgeChannel<HklOrchestratorEvent, OrchestratorEvent>(ORCHESTRATOR_CHANNEL_NAME);
+}
+
+export {
+  PROTOCOL_VERSION, CHANNEL_NAME,
+  ANALYZER_PROTOCOL_VERSION, ANALYZER_CHANNEL_NAME,
+  ORCHESTRATOR_PROTOCOL_VERSION, ORCHESTRATOR_CHANNEL_NAME,
+};

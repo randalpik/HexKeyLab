@@ -22,11 +22,12 @@
 //   3. Receive play-chord / play-score / stop-playback. Dispatch to the
 //      audio engine; emit playback-position acks as each chord onset fires.
 
-import { createHklBridge, createAnalyzerHklBridge, PROTOCOL_VERSION, ANALYZER_PROTOCOL_VERSION } from '@hkl/bridge/channel.js';
+import { createHklBridge, createAnalyzerHklBridge, createOrchestratorHklBridge, PROTOCOL_VERSION, ANALYZER_PROTOCOL_VERSION, ORCHESTRATOR_PROTOCOL_VERSION } from '@hkl/bridge/channel.js';
 import type {
   ComposerEvent, PlaybackEvent, PedalEvent, ResolvedNote, CoordRef,
 } from '@hkl/bridge/protocol.js';
 import type { AnalyzerEvent } from '@hkl/bridge/analyzer-protocol.js';
+import type { OrchestratorEvent } from '@hkl/bridge/orchestrator-protocol.js';
 import * as InstrumentRegistry from '../state/instrumentRegistry.js';
 import * as CdnConfigRegistry from '../state/cdnConfigRegistry.js';
 import { selection } from '../state/selection.js';
@@ -51,6 +52,7 @@ import type { KeyId } from '../types.js';
 
 const bridge = createHklBridge();
 const analyzerBridge = createAnalyzerHklBridge();
+const orchestratorBridge = createOrchestratorHklBridge();
 
 /* Lightweight DOM read for the outline mode — the bridge handler runs on
    incoming composer messages, well after the toolbar is wired, so the
@@ -1183,6 +1185,30 @@ function announceToAnalyzer(): void {
   analyzerBridge.send({ type: 'hkl-hello', version: ANALYZER_PROTOCOL_VERSION });
 }
 
+function announceToOrchestrator(): void {
+  orchestratorBridge.send({ type: 'hkl-hello', version: ORCHESTRATOR_PROTOCOL_VERSION });
+}
+
+/* Shared .hki import path for the Analyzer and Orchestrator bridges. Receives
+   bytes inline + writes to IDB ourselves (same path as the `+ .hki` file picker
+   in src/ui/instrumentBundles.ts), then auto-selects and acks via the caller's
+   reply. `fallbackKey` is acked on failure (when no manifest was parsed). */
+function handleHkiImport(
+  bytes: Uint8Array,
+  fallbackKey: string,
+  ack: (instrumentKey: string, ok: boolean, error?: string) => void,
+): void {
+  void (async () => {
+    try {
+      const manifest = await InstrumentRegistry.importBundle(bytes);
+      autoSelectImported(manifest.instrumentKey);
+      ack(manifest.instrumentKey, true);
+    } catch (err) {
+      ack(fallbackKey, false, (err as Error).message);
+    }
+  })();
+}
+
 analyzerBridge.on((msg: AnalyzerEvent) => {
   switch (msg.type) {
     case 'analyzer-hello':
@@ -1192,23 +1218,8 @@ analyzerBridge.on((msg: AnalyzerEvent) => {
       /* No held analyzer-side state to clean up. */
       break;
     case 'import-hki': {
-      /* Receive bytes inline + write to IDB ourselves (same path as the
-         `+ .hki` file picker in src/ui/instrumentBundles.ts). Keeps the
-         analyzer side from having to import src/state/. */
-      void (async () => {
-        try {
-          const manifest = await InstrumentRegistry.importBundle(msg.bytes);
-          autoSelectImported(manifest.instrumentKey);
-          analyzerBridge.send({ type: 'import-ack', instrumentKey: manifest.instrumentKey, ok: true });
-        } catch (err) {
-          analyzerBridge.send({
-            type: 'import-ack',
-            instrumentKey: msg.instrumentKey,
-            ok: false,
-            error: (err as Error).message,
-          });
-        }
-      })();
+      handleHkiImport(msg.bytes, msg.instrumentKey, (instrumentKey, ok, error) =>
+        analyzerBridge.send({ type: 'import-ack', instrumentKey, ok, error }));
       break;
     }
     case 'import-cdn-config': {
@@ -1231,12 +1242,29 @@ analyzerBridge.on((msg: AnalyzerEvent) => {
   }
 });
 
+orchestratorBridge.on((msg: OrchestratorEvent) => {
+  switch (msg.type) {
+    case 'orchestrator-hello':
+      announceToOrchestrator();
+      break;
+    case 'orchestrator-bye':
+      /* No held orchestrator-side state to clean up. */
+      break;
+    case 'import-hki': {
+      handleHkiImport(msg.bytes, msg.instrumentKey, (instrumentKey, ok, error) =>
+        orchestratorBridge.send({ type: 'import-ack', instrumentKey, ok, error }));
+      break;
+    }
+  }
+});
+
 /* ── lifecycle ───────────────────────────────────────────────────────────── */
 
 window.addEventListener('beforeunload', () => {
   abortActive();
   bridge.send({ type: 'hkl-bye' });
   analyzerBridge.send({ type: 'hkl-bye' });
+  orchestratorBridge.send({ type: 'hkl-bye' });
 });
 
 let initialized = false;
@@ -1245,6 +1273,7 @@ export function initHklBridge(): void {
   initialized = true;
   announce();
   announceToAnalyzer();
+  announceToOrchestrator();
 }
 
 /* DevTools handle. */

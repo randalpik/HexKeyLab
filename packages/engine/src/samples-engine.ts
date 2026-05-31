@@ -324,7 +324,7 @@ const loadedInstruments: Record<string, any> = {};
           }
           /* trim silence for decaying instruments too */
           if(!instr.loop){var _d=buf.getChannelData(0);for(var _s=0;_s<buf.length;_s++){if(Math.abs(_d[_s])>0.003){lp.trimStart=_s/buf.sampleRate;break;}}}
-          result[i]={buffer:buf,freq:s.freq,gain:(typeof s.gain==='number')?s.gain:1.0,lp:lp,name:s.name};loaded++;
+          result[i]={buffer:buf,freq:s.freq,gain:(typeof s.gain==='number')?s.gain:1.0,vel:(typeof s.vel==='number')?s.vel:null,lp:lp,name:s.name};loaded++;
           if(onProgress)onProgress(loaded,total,s.name);
           if(loaded===total&&!aborted){
             buffers[key]=result.filter(function(x){
@@ -357,12 +357,47 @@ const loadedInstruments: Record<string, any> = {};
       } /* end runLoad */
     });
   }
-  function findNearest(freq: number): any {
+  /* Discrete velocity-layer pick: among the layers of one note (entries sharing
+     a pitch), return the one whose reference velocity (`vel`) is nearest the input
+     velocity. Single-layer notes (≤1 entry, or no `vel` on any entry) return the
+     first entry unchanged — identical to pre-velocity-layer behavior. Ties resolve
+     to the lower-velocity layer (strict `<`). Pure; exported for unit testing. */
+  export function pickLayer(layers: any[], velocity: number): any {
+    if(!layers||layers.length===0)return null;
+    if(layers.length===1)return layers[0];
+    var anyVel=false;
+    for(var i=0;i<layers.length;i++){if(layers[i].vel!=null){anyVel=true;break;}}
+    if(!anyVel)return layers[0];
+    var v=(velocity!=null?velocity:64);
+    var pick=layers[0],pickDist=Infinity;
+    for(var k=0;k<layers.length;k++){
+      var lv=(layers[k].vel!=null?layers[k].vel:64);
+      var d=Math.abs(lv-v);
+      if(d<pickDist){pickDist=d;pick=layers[k];}
+    }
+    return pick;
+  }
+  /* Quantize a frequency to a 5-cent bucket so the velocity layers of one note
+     group together. Layers of a note share an exact freq (the analyzer reuses one
+     measured fundamental across a note's layers), but bucketing on cents avoids
+     float-equality fragility. Distinct notes are ≥100 cents apart, so one bucket
+     ⟺ one note. */
+  function freqKey(f: number): number { return Math.round(Math.log2(f)*1200/5); }
+  function findNearest(freq: number, velocity?: number): any {
     var samps=buffers[currentInstrument];
     if(!samps||samps.length===0)return null;
+    /* Stage 1: nearest sample by pitch (unchanged metric). */
     var best=0,bestDist=Infinity;
     for(var i=0;i<samps.length;i++){var dist=Math.abs(Math.log2(freq/samps[i].freq));if(dist<bestDist){bestDist=dist;best=i;}}
-    return samps[best];
+    /* Stage 2: among the layers sharing the chosen note's pitch, pick the layer
+       whose reference velocity is nearest the input. A note with ≤1 row, or no
+       `vel` on any row, short-circuits to the stage-1 pick — byte-for-byte
+       identical to pre-velocity-layer behavior. */
+    var chosenKey=freqKey(samps[best].freq);
+    var layers:any[]=[];
+    for(var j=0;j<samps.length;j++){if(freqKey(samps[j].freq)===chosenKey)layers.push(samps[j]);}
+    if(layers.length<=1)return samps[best];
+    return pickLayer(layers,(velocity!=null?velocity:64));
   }
   /* Range attenuation: pure function of frequency (no state). Returns gain factor
      for a given frequency — 1.0 within range, reducing toward 0.5 as freq exceeds
@@ -380,12 +415,16 @@ const loadedInstruments: Record<string, any> = {};
   export function sNoteOn(voiceKey: string, freq: number, velocity: number, startAt?: number): void {
     if(!ctx||!currentInstrument)return;
     if(activeVoices[voiceKey])sNoteOff(voiceKey);
-    var nearest=findNearest(freq);
+    /* Resolve velocity once: it both selects the velocity layer (findNearest)
+       and drives the gain curve (baseVol). Layer choice changes timbre; loudness
+       is owned by the curve, since all layers are normalized to the same target. */
+    var resolvedVel=(velocity!==undefined?velocity:DEFAULT_DYNAMIC_MAP.f);
+    var nearest=findNearest(freq,resolvedVel);
     if(!nearest)return;
     var instr=loadedInstruments[currentInstrument];
     var rate=freq*(instr.transpose||1)/nearest.freq;
     var instrVol=instr.volume||1.0;
-    var baseVol=velocityToGain(velocity!==undefined?velocity:DEFAULT_DYNAMIC_MAP.f)*instrVol;
+    var baseVol=velocityToGain(resolvedVel)*instrVol;
     /* ── ABOVE-RANGE VIBRATO ATTENUATION ──
        When a note is requested above the highest sampled pitch, the sample gets
        pitch-shifted up — which also speeds up its vibrato (cello's ~5Hz vibrato
@@ -517,7 +556,7 @@ const loadedInstruments: Record<string, any> = {};
       initialBIdx=(pts&&pts.length>=2)?pts.length-1:0;
     }
     var voice={source:source,segGain:segGain,voiceGain:voiceGain,damperGain:damperGain,pressureGain:pressureGain,freq:freq,sampleFreq:nearest.freq,transpose:(instr.transpose||1),sampleName:nearest.name,
-      vol:vol,baseVol:baseVol,alive:true,loopPts:pts,validStartsByEnd:vsbe,segments:segs,loopTimer:null,buffer:nearest.buffer,instr:instr,
+      vol:vol,baseVol:baseVol,keyVelocity:resolvedVel,alive:true,loopPts:pts,validStartsByEnd:vsbe,segments:segs,loopTimer:null,buffer:nearest.buffer,instr:instr,
       slopeCV:(nearest.lp&&typeof nearest.lp.slopeCV==='number')?nearest.lp.slopeCV:0.5,
       sourceStartTime:startT,sourceOffset:startOffset,
       sourceLoopA:initialA,
@@ -1045,7 +1084,10 @@ const loadedInstruments: Record<string, any> = {};
   export function sNoteOnFaded(voiceKey: string, freq: number, vol: number, dur: number, atTime?: number, fromFreq?: number): void {
     if(!ctx||!currentInstrument)return;
     if(activeVoices[voiceKey])sHardStop(voiceKey);
-    var nearest=findNearest(freq);if(!nearest)return;
+    /* Slide/glide path: only single-layer (sustained/loop) instruments slide —
+       layered decay instruments retrigger — so the neutral 64 short-circuits to
+       the single-layer pick, byte-identical to pre-velocity-layer behavior. */
+    var nearest=findNearest(freq,64);if(!nearest)return;
     var instr=loadedInstruments[currentInstrument];
     var rate=freq*(instr.transpose||1)/nearest.freq;
     /* vol param is treated as baseVol (without range attenuation or per-sample
