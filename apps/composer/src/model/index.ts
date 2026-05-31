@@ -38,7 +38,7 @@ import {
   type Dots,
 } from '@hkl/notation/mei-build.js';
 import { ensureExpressionDefaults, getLayoutReq, setLayoutReq, getHejiEnabled, setHejiEnabled, type LayoutReq, type Moment } from '../expressions.js';
-import { toggleArticulation, type ArticKind } from '../articulations.js';
+import { toggleArticulation, toggleTrill, type ArticKind } from '../articulations.js';
 import { transformDocForHeji } from '@hkl/notation/heji-render.js';
 import type { TuningMode } from '@hkl/shared/freq.js';
 import { realTicks, writtenTicks } from './ticks.js';
@@ -987,7 +987,9 @@ export class ComposerModel {
         c.localName === "chord" ||
         c.localName === "note" ||
         c.localName === "rest" ||
-        c.localName === "tuplet",
+        c.localName === "tuplet" ||
+        c.localName === "fTrem" ||
+        c.localName === "bTrem",
     );
   }
 
@@ -1027,12 +1029,20 @@ export class ComposerModel {
   setBarlines(): void {
     const measures = this.allMeasures();
     for (let i = 0; i < measures.length; i++) {
-      if (i < measures.length - 1) {
-        if (measures[i].getAttribute("right") === "end") {
-          measures[i].removeAttribute("right");
-        }
-      } else {
-        measures[i].setAttribute("right", "end");
+      const m = measures[i];
+      const right = m.getAttribute("right");
+      const isLast = i === measures.length - 1;
+      const next = isLast ? null : measures[i + 1];
+      const beforeSection = !!next && !!next.getAttribute("data-hkl-section-title");
+      /* The final measure, and any measure immediately before a section header,
+         carry a final barline (@right="end") — DERIVED from position so it's
+         never orphaned when measures are inserted/deleted around it. A backward
+         repeat (rptend) wins over the final bar. Everywhere else, clear a stray
+         "end" sentinel but leave user markers ("dbl") and repeats alone. */
+      if ((isLast || beforeSection) && right !== "rptend") {
+        m.setAttribute("right", "end");
+      } else if (!isLast && !beforeSection && right === "end") {
+        m.removeAttribute("right");
       }
     }
   }
@@ -1074,6 +1084,125 @@ export class ComposerModel {
     if (!target) return null;
     const on = toggleArticulation(target, kind);
     return { id: ref.id, on, target: kindOfTarget };
+  }
+
+  /** Toggle a `<trill>` ornament on the current note/chord (voice mode). The
+   *  trill is diatonic (Verovio alternates with the upper neighbour). No-op
+   *  on rests / placeholders / wrappers. Returns `{ id, on }` or null. */
+  toggleTrillAtCursor(mode: "insert" | "overwrite"): { id: string; on: boolean } | null {
+    const v = this.currentVoice;
+    const ref = this.getCurrentElement(v, mode);
+    if (!ref) return null;
+    if (isPlaceholder(ref.elem)) return null;
+    const ln = ref.elem.localName;
+    if (ln !== 'note' && ln !== 'chord') return null;
+    const on = toggleTrill(ref.elem);
+    return { id: ref.id, on };
+  }
+
+  /** Selection-mode trills + tremolos (backlog line 100). Operates on the two
+   *  note/chord slots whose onsets fall in [tLo, tHi). Requires EXACTLY two
+   *  equal-duration, undotted, non-tuplet slots whose combined value is a
+   *  single notehead (else returns null = no-op). Then:
+   *    - already wrapped in <fTrem> → unwrap (remove tremolo);
+   *    - two single notes a diatonic step apart → collapse to one
+   *      combined-duration note + a <trill>;
+   *    - otherwise → wrap the pair in <fTrem beams="3"> (two-note tremolo).
+   *  Render-only in v1 — playback shaping is deferred. */
+  toggleTrillOrTremoloOnSelection(voice: Voice, tLo: number, tHi: number):
+    { kind: 'trill' | 'tremolo'; removed: boolean } | null {
+    const flat = this.flatChildren(voice);
+    const slots: Element[] = [];
+    for (let c = 0; c < flat.length; c++) {
+      const el2 = flat[c];
+      if (el2.localName !== 'note' && el2.localName !== 'chord') continue;
+      /* getTickPositionAt is "past flat[c]" (= its end); onset = end − dur. */
+      const onset = this.getTickPositionAt(voice, c) - realTicks(el2);
+      if (onset >= tLo - 1e-6 && onset < tHi - 1e-6) slots.push(el2);
+    }
+    if (slots.length !== 2) return null;
+    const [a, b] = slots;
+
+    /* Unwrap an existing two-note tremolo. */
+    const ft = a.parentElement;
+    if (ft && ft.localName === 'fTrem' && b.parentElement === ft) {
+      const parent = ft.parentNode;
+      if (parent) {
+        while (ft.firstChild) parent.insertBefore(ft.firstChild, ft);
+        parent.removeChild(ft);
+      }
+      normalizeTies(this);
+      normalizePlaceholders(this.doc, this.measureTicks());
+      return { kind: 'tremolo', removed: true };
+    }
+
+    /* Validity gate: equal duration, undotted, not in a tuplet, and the
+       combined value must be a single notehead. */
+    if (a.closest('tuplet') || b.closest('tuplet')) return null;
+    const dotsOf = (e: Element) => parseInt(e.getAttribute('dots') ?? '0', 10) || 0;
+    if (dotsOf(a) !== 0 || dotsOf(b) !== 0) return null;
+    const wa = writtenTicks(a);
+    const wb = writtenTicks(b);
+    if (wa !== wb) return null;
+    const combined = decomposeTicks(wa + wb);
+    if (combined.length !== 1) return null;
+
+    /* They must be consecutive siblings to wrap/collapse cleanly. */
+    if (a.parentNode !== b.parentNode) return null;
+
+    /* Diatonic-step test (single notes only): adjacent letter names within a
+       2nd, compared as a diatonic pitch number (oct*7 + letterIndex). */
+    const LETTER: Record<string, number> = { c: 0, d: 1, e: 2, f: 3, g: 4, a: 5, b: 6 };
+    const diatonicNum = (n: Element): number | null => {
+      const p = (n.getAttribute('pname') ?? '').toLowerCase();
+      const o = parseInt(n.getAttribute('oct') ?? '', 10);
+      if (!(p in LETTER) || !Number.isFinite(o)) return null;
+      return o * 7 + LETTER[p];
+    };
+    const isStep = a.localName === 'note' && b.localName === 'note'
+      && (() => {
+        const da = diatonicNum(a);
+        const db = diatonicNum(b);
+        return da !== null && db !== null && Math.abs(da - db) === 1;
+      })();
+
+    if (isStep) {
+      /* Collapse to a single combined-duration note + trill. Total written
+         ticks are unchanged (a grows to a+b, b is removed), so placeholders
+         stay balanced. Preserve b's EXACT lattice position on `a` so playback
+         can alternate between the two real cells (data-hkl-trill-q/r). */
+      const bq = b.getAttribute('data-q');
+      const br = b.getAttribute('data-r');
+      a.setAttribute('dur', combined[0].dur);
+      if (combined[0].dots) a.setAttribute('dots', String(combined[0].dots));
+      else a.removeAttribute('dots');
+      if (bq !== null && br !== null) {
+        a.setAttribute('data-hkl-trill-q', bq);
+        a.setAttribute('data-hkl-trill-r', br);
+      }
+      b.parentNode?.removeChild(b);
+      toggleTrill(a);
+      normalizeTies(this);
+      normalizePlaceholders(this.doc, this.measureTicks());
+      return { kind: 'trill', removed: false };
+    }
+
+    /* Two-note tremolo: wrap the pair in <fTrem>. Each note is DRAWN at the
+       combined value (two quarters → two half-notes) and the tremolo occupies
+       that combined value — the standard fingered-tremolo convention. Verovio
+       draws 3 tremolo beams between them. */
+    for (const n of [a, b]) {
+      n.setAttribute('dur', combined[0].dur);
+      if (combined[0].dots) n.setAttribute('dots', String(combined[0].dots));
+      else n.removeAttribute('dots');
+    }
+    const fTrem = el(this.doc, 'fTrem', { 'xml:id': newId('ftrem'), beams: 3, 'beams.float': 3 });
+    a.parentNode!.insertBefore(fTrem, a);
+    fTrem.appendChild(a);
+    fTrem.appendChild(b);
+    normalizeTies(this);
+    normalizePlaceholders(this.doc, this.measureTicks());
+    return { kind: 'tremolo', removed: false };
   }
 
   /** Toggle `@hkl-paren-caut="true"` on the current note/chord. When `noteId`
@@ -1225,12 +1354,21 @@ export class ComposerModel {
     s2.appendChild(el(this.doc, "layer", { n: 2, "xml:id": newId("l") }));
     m.appendChild(s1);
     m.appendChild(s2);
-    section.insertBefore(m, measures[idx]);
-    /* Renumber all <measure @n>. Cheap enough on document order. */
-    const updated = this.allMeasures();
-    for (let i = 0; i < updated.length; i++) {
-      updated[i].setAttribute("n", String(i + 1));
+    /* measures[idx] may be wrapped in an <ending>; insertBefore needs a node
+       that is a direct child of <section>. Walk up to the section-level
+       ancestor (the <ending>, if any) so we insert before the whole volta. */
+    let ref: Node = measures[idx];
+    while (ref.parentNode && ref.parentNode !== section) ref = ref.parentNode;
+    /* If a section break (<sb data-hkl-section>) sits just before the
+       reference measure, insert BEFORE the break so the break + its section
+       title stay together and the new measure joins the PREVIOUS section. */
+    const sbPrev = (ref as Element).previousElementSibling;
+    if (sbPrev && sbPrev.localName === "sb" && sbPrev.getAttribute("data-hkl-section") === "true") {
+      ref = sbPrev;
     }
+    section.insertBefore(m, ref);
+    /* Renumber all <measure @n> (section-aware: restarts at each header). */
+    this.renumberMeasures();
     this.setBarlines();
     /* Sever the slurs that now straddle the new (empty) measure. */
     for (const slur of slurStraddle) slur.parentNode?.removeChild(slur);
@@ -1259,6 +1397,182 @@ export class ComposerModel {
     }
     m.setAttribute("right", "dbl");
     return 'dbl';
+  }
+
+  /** Toggle a forward (start) repeat barline on the measure at `measureIdx`.
+   *  Sets @left="rptstart" if currently unset; clears it if already a repeat
+   *  start. @left is otherwise unused (setBarlines never touches it), so no
+   *  measure is locked. Returns the new state, or null on bad index. */
+  toggleRepeatStartAt(measureIdx: number): 'rptstart' | 'cleared' | null {
+    const measures = this.allMeasures();
+    if (measureIdx < 0 || measureIdx >= measures.length) return null;
+    const m = measures[measureIdx];
+    if (m.getAttribute("left") === "rptstart") {
+      m.removeAttribute("left");
+      return 'cleared';
+    }
+    m.setAttribute("left", "rptstart");
+    return 'rptstart';
+  }
+
+  /** Toggle a backward (end) repeat barline on the measure at `measureIdx`.
+   *  Sets @right="rptend" if currently unset, "dbl", or "end"; clears it if
+   *  already a repeat end. Allowed on the final measure (setBarlines preserves
+   *  rptend there for whole-piece repeats). Returns the new state, or null on
+   *  bad index. */
+  toggleRepeatEndAt(measureIdx: number): 'rptend' | 'cleared' | null {
+    const measures = this.allMeasures();
+    if (measureIdx < 0 || measureIdx >= measures.length) return null;
+    const m = measures[measureIdx];
+    const isLast = measureIdx === measures.length - 1;
+    if (m.getAttribute("right") === "rptend") {
+      m.removeAttribute("right");
+      /* Restore the final-bar sentinel if we just cleared the last measure. */
+      if (isLast) m.setAttribute("right", "end");
+      return 'cleared';
+    }
+    m.setAttribute("right", "rptend");
+    return 'rptend';
+  }
+
+  /** Toggle a 1st/2nd ending (volta) on the measure at `measureIdx`, one
+   *  measure at a time. The MEI encoding wraps `<measure>` elements in an
+   *  `<ending n="…">` inside `<section>`; Verovio draws the volta bracket.
+   *
+   *  Type is context-derived (Max): a measure carrying a backward repeat
+   *  (`@right="rptend"`) starts a **1st** ending; the measure immediately
+   *  after a backward-repeat measure starts a **2nd** ending; any other
+   *  measure **extends an adjacent** ending (grows it by one measure). A
+   *  measure already in an ending toggles **off** (only at the ending's edge,
+   *  to keep each ending contiguous). Returns `{ n, action }` or null on
+   *  no-op. */
+  toggleEndingAt(measureIdx: number):
+    { n: number; action: 'created' | 'extended' | 'removed' } | null {
+    const measures = this.allMeasures();
+    if (measureIdx < 0 || measureIdx >= measures.length) return null;
+    const m = measures[measureIdx];
+    const section = this.doc.querySelector("section");
+    if (!section) return null;
+
+    /* Toggle off — only at an edge (interior removal would split the volta). */
+    const owner = m.closest("ending");
+    if (owner) {
+      const kids = Array.from(owner.children).filter((c) => c.localName === "measure");
+      const isFirst = kids[0] === m;
+      const isLast = kids[kids.length - 1] === m;
+      if (!isFirst && !isLast) return null;
+      const n = parseInt(owner.getAttribute("n") ?? "1", 10) || 1;
+      if (kids.length === 1) {
+        /* Last measure in the ending — unwrap and drop the ending. */
+        section.insertBefore(m, owner);
+        owner.parentNode?.removeChild(owner);
+      } else if (isFirst) {
+        section.insertBefore(m, owner); /* before the ending → order preserved */
+      } else {
+        section.insertBefore(m, owner.nextSibling); /* after the ending */
+      }
+      return { n, action: 'removed' };
+    }
+
+    /* Create or extend. */
+    const right = m.getAttribute("right");
+    const prev = measures[measureIdx - 1] ?? null;
+    const next = measures[measureIdx + 1] ?? null;
+    const prevEnding = prev?.closest("ending") ?? null;
+    const nextEnding = next?.closest("ending") ?? null;
+
+    if (right === "rptend" && !prevEnding) {
+      const ending = el(this.doc, "ending", { n: "1", "xml:id": newId("ending") });
+      section.insertBefore(ending, m);
+      ending.appendChild(m);
+      return { n: 1, action: 'created' };
+    }
+    if (prev?.getAttribute("right") === "rptend" && !nextEnding) {
+      const ending = el(this.doc, "ending", { n: "2", "xml:id": newId("ending") });
+      section.insertBefore(ending, m);
+      ending.appendChild(m);
+      return { n: 2, action: 'created' };
+    }
+    /* Extend an adjacent ending in either direction. */
+    if (prevEnding) {
+      prevEnding.appendChild(m); /* m sits right after prevEnding → stays in order */
+      const n = parseInt(prevEnding.getAttribute("n") ?? "1", 10) || 1;
+      return { n, action: 'extended' };
+    }
+    if (nextEnding) {
+      nextEnding.insertBefore(m, nextEnding.firstChild);
+      const n = parseInt(nextEnding.getAttribute("n") ?? "1", 10) || 1;
+      return { n, action: 'extended' };
+    }
+    return null; /* no repeat context + no adjacent ending → nothing sensible */
+  }
+
+  /** Toggle a page break (`<pb>`) BEFORE the measure at `measureIdx`. The
+   *  `<pb>` is a section-level sibling inserted just before the measure (or
+   *  its `<ending>` wrapper). Verovio honors it under breaks:'encoded' in page
+   *  view. No-op before the first measure (nothing to break onto a new page).
+   *  Returns true if added, false if removed, null on bad index. */
+  togglePageBreakAt(measureIdx: number): boolean | null {
+    const measures = this.allMeasures();
+    if (measureIdx <= 0 || measureIdx >= measures.length) return null;
+    const section = this.doc.querySelector("section");
+    if (!section) return null;
+    /* The section-level node containing this measure (itself, or its ending). */
+    let node: Node = measures[measureIdx];
+    while (node.parentNode && node.parentNode !== section) node = node.parentNode;
+    const prev = (node as Element).previousElementSibling;
+    if (prev && prev.localName === "pb") {
+      prev.parentNode?.removeChild(prev);
+      return false;
+    }
+    section.insertBefore(el(this.doc, "pb", { "xml:id": newId("pb") }), node);
+    return true;
+  }
+
+  /** Section header (movement title) at the measure `measureIdx`. Pass a
+   *  non-empty `title` to set/replace, or '' to remove. A section header:
+   *    - tags the measure with `data-hkl-section-title` (rendered centered,
+   *      displacing the system, by the post-render injector in main.ts);
+   *    - forces a system break (`<sb data-hkl-section>`) so it starts a new
+   *      system (Verovio honors it under breaks:'encoded');
+   *    - puts a final barline (`@right="end"`) on the preceding measure;
+   *    - restarts measure numbering at this measure.
+   *  No-op before the first measure (that's the title block's job). Returns
+   *  true if set, false if removed, null on bad index. */
+  setSectionHeaderAt(measureIdx: number, title: string): boolean | null {
+    const measures = this.allMeasures();
+    if (measureIdx <= 0 || measureIdx >= measures.length) return null;
+    const section = this.doc.querySelector("section");
+    if (!section) return null;
+    const m = measures[measureIdx];
+    let node: Node = m;
+    while (node.parentNode && node.parentNode !== section) node = node.parentNode;
+    const prev = (node as Element).previousElementSibling;
+    const sectionSb = prev && prev.localName === "sb"
+      && prev.getAttribute("data-hkl-section") === "true" ? prev : null;
+
+    if (!title) {
+      m.removeAttribute("data-hkl-section-title");
+      sectionSb?.parentNode?.removeChild(sectionSb);
+      this.setBarlines();
+      this.renumberMeasures();
+      return false;
+    }
+
+    m.setAttribute("data-hkl-section-title", title);
+    if (!sectionSb) {
+      section.insertBefore(
+        el(this.doc, "sb", { "xml:id": newId("sb"), "data-hkl-section": "true" }),
+        node,
+      );
+    }
+    /* Final barline on the measure before the section (unless it's a repeat). */
+    const prevMeasure = measures[measureIdx - 1];
+    if (prevMeasure && prevMeasure.getAttribute("right") !== "rptend") {
+      prevMeasure.setAttribute("right", "end");
+    }
+    this.renumberMeasures();
+    return true;
   }
 
   /* ── navigation ─────────────────────────────────────────────────────────── */
@@ -2425,10 +2739,15 @@ export class ComposerModel {
     return true;
   }
 
+  /** Renumber every `<measure @n>`, restarting at 1 wherever a section header
+   *  (`data-hkl-section-title`) begins, so section-aware numbering survives
+   *  inserts/deletes. */
   private renumberMeasures(): void {
-    const measures = this.allMeasures();
-    for (let i = 0; i < measures.length; i++) {
-      measures[i].setAttribute("n", String(i + 1));
+    let n = 1;
+    for (const mm of this.allMeasures()) {
+      if (mm.getAttribute("data-hkl-section-title")) n = 1;
+      mm.setAttribute("n", String(n));
+      n++;
     }
   }
 

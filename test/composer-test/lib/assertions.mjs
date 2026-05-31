@@ -149,6 +149,14 @@ export const ASSERTION_LIB = `
         const dur = c.getAttribute('dur');
         const dots = parseInt(c.getAttribute('dots') || '0', 10);
         if (dur) t += ticksOf(dur, dots);
+        else if (c.localName === 'fTrem' || c.localName === 'bTrem') {
+          /* Tremolo occupies ONE wrapped note's drawn value (both equal), not
+             the sum — the fingered-tremolo convention. */
+          for (const cc of Array.from(c.children)) {
+            const d = cc.getAttribute('dur');
+            if (d) { t += ticksOf(d, parseInt(cc.getAttribute('dots') || '0', 10)); break; }
+          }
+        }
         else if (c.localName === 'tuplet') {
           const num = parseInt(c.getAttribute('num') || '0', 10);
           const numbase = parseInt(c.getAttribute('numbase') || '0', 10);

@@ -100,16 +100,64 @@ class Renderer {
     };
   }
 
-  private buildOptions(): object {
+  /** Breaks strategy for a render:
+   *   - 'none'    : scroll view (one continuous system).
+   *   - 'auto'    : page view, no manual breaks — Verovio flows freely.
+   *   - 'smartSb0': page view with section/system breaks but no page breaks —
+   *                 'smart' + breaksSmartSb:0 honors EVERY encoded <sb> (even
+   *                 a 1-measure system) AND still auto-wraps overflow.
+   *   - 'encoded' : page view with page breaks present — only encoded breaks
+   *                 are honored, so the natural system breaks must already be
+   *                 baked into the data (see layoutBreaks). */
+  private buildOptions(strategy: 'none' | 'auto' | 'smartSb0' | 'encoded' = 'auto'): object {
     const geom = this.viewMode === 'page' ? PAGE_GEOM : SCROLL_GEOM;
+    const breaksOpt: Record<string, string | number> =
+      strategy === 'smartSb0' ? { breaks: 'smart', breaksSmartSb: 0 }
+      : { breaks: strategy };
     return {
       ...BASE_OPTIONS,
       ...geom,
-      breaks: this.viewMode === 'page' ? 'auto' : 'none',
+      ...breaksOpt,
       header: this.viewMode === 'page' ? 'auto' : 'none',
       scale: this.zoom,
       ...lineWidthOverrides(this.zoom),
     };
+  }
+
+  /** Bake natural system breaks into the MEI so page-break ('encoded') docs
+   *  still auto-wrap. Lays the data out once with 'smart' + breaksSmartSb:0
+   *  (honors every <sb> + wraps overflow; ignores <pb>), reads which measure
+   *  starts each rendered system, and inserts an `<sb>` before each of those
+   *  measures. The caller then renders the result with 'encoded' so the
+   *  forced <pb> page breaks AND the baked system breaks are all honored. */
+  private layoutBreaks(mei: string): string {
+    if (!this.tk) return mei;
+    this.tk.setOptions(this.buildOptions('smartSb0'));
+    if (!this.tk.loadData(mei)) return mei;
+    const starts = new Set<string>();
+    for (let p = 1; p <= this.tk.getPageCount(); p++) {
+      const doc = new DOMParser().parseFromString(this.tk.renderToSVG(p, {}), 'image/svg+xml');
+      for (const sys of Array.from(doc.querySelectorAll('g.system'))) {
+        const first = sys.querySelector('g.measure');
+        if (first?.id) starts.add(first.id);
+      }
+    }
+    if (!starts.size) return mei;
+    const MEI_NS = 'http://www.music-encoding.org/ns/mei';
+    const mdoc = new DOMParser().parseFromString(mei, 'application/xml');
+    const section = mdoc.querySelector('section');
+    if (!section) return mei;
+    for (const meas of Array.from(mdoc.querySelectorAll('measure'))) {
+      const id = meas.getAttribute('xml:id');
+      if (!id || !starts.has(id)) continue;
+      let node: Node = meas;
+      while (node.parentNode && node.parentNode !== section) node = node.parentNode;
+      const prev = (node as Element).previousElementSibling;
+      if (!prev) continue;                    /* first measure — no break needed */
+      if (prev.localName === 'sb') continue;  /* already broken here */
+      section.insertBefore(mdoc.createElementNS(MEI_NS, 'sb'), node);
+    }
+    return new XMLSerializer().serializeToString(mdoc);
   }
 
   /** Resolves once Verovio WASM is ready. */
@@ -151,8 +199,24 @@ class Renderer {
   render(mei: string): void {
     if (!this.tk) throw new Error('render() before ready()');
     if (!this.container) throw new Error('render() before attach()');
-    this.tk.setOptions(this.buildOptions());
-    if (!this.tk.loadData(mei)) {
+    /* Choose a breaks strategy. Section/system breaks alone → single-pass
+       'smart' (honors them + auto-wraps). Page breaks → bake the natural
+       system breaks first, then 'encoded' (honors pages + the baked wraps).
+       No manual breaks → plain 'auto'. Scroll view → 'none'. */
+    let data = mei;
+    let strategy: 'none' | 'auto' | 'smartSb0' | 'encoded';
+    if (this.viewMode !== 'page') {
+      strategy = 'none';
+    } else if (mei.includes('<pb')) {
+      data = this.layoutBreaks(mei);
+      strategy = 'encoded';
+    } else if (mei.includes('<sb')) {
+      strategy = 'smartSb0';
+    } else {
+      strategy = 'auto';
+    }
+    this.tk.setOptions(this.buildOptions(strategy));
+    if (!this.tk.loadData(data)) {
       this.container.innerHTML = '<div style="color:#c00;padding:20px">Verovio loadData failed (invalid MEI).</div>';
       return;
     }

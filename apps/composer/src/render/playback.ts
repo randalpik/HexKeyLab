@@ -19,6 +19,7 @@ import {
   collectTempi, getGradualPercents, readMeter,
 } from '../expressions.js';
 import { collectPedals } from '../pedal.js';
+import { collectOctaves } from '../expressions.js';
 import { collectSlurs } from '../slurs.js';
 import { articulationsOn, type ArticKind } from '../articulations.js';
 import { realTicks } from '../model/ticks.js';
@@ -360,6 +361,80 @@ function clampVel(v: number): number {
   return Math.max(1, Math.min(127, Math.round(v)));
 }
 
+/** Static trill/tremolo alternation speed: ms per alternation note. A
+ *  reasonable ~10/sec; tunable later alongside other playback refinements. */
+const TRILL_NOTE_MS = 100;
+
+/** One played occurrence of a measure: its document index plus which pass
+ *  (1 = first time through, 2 = repeat pass). `pass` drives volta selection. */
+export interface PlayedMeasure { measureIdx: number; pass: number; }
+
+/** A canonical (pre-repeat-expansion) event, tagged with the document index
+ *  of its measure so repeat expansion can re-stamp its `atMs` per played
+ *  occurrence. `_mi` is internal and never crosses the bridge. */
+type CanonEvent = PlaybackEvent & { _mi: number };
+
+/** True if the score has any repeat barline or ending (volta). When false,
+ *  buildPlayback keeps its original linear path unchanged. */
+function hasRepeatStructure(mei: Document): boolean {
+  for (const m of Array.from(mei.querySelectorAll('measure'))) {
+    if (m.getAttribute('left') === 'rptstart') return true;
+    const right = m.getAttribute('right');
+    if (right === 'rptend') return true;
+  }
+  return mei.querySelector('ending') !== null;
+}
+
+/** The ending number a measure belongs to (1, 2, …), or null if it's not
+ *  inside an <ending>. Reads the first token of @n ("1 2" → 1). */
+function endingNumberOf(measure: Element): number | null {
+  const ending = measure.closest('ending');
+  if (!ending) return null;
+  const tok = (ending.getAttribute('n') ?? '').trim().split(/\s+/)[0];
+  const v = parseInt(tok, 10);
+  return Number.isFinite(v) ? v : null;
+}
+
+/** Expand repeat barlines + voltas into the order measures actually sound.
+ *  Start-aware (backlog line 96): a backward repeat is honored only when its
+ *  repeat-start was seen at/after `startIdx` — or, for an implicit repeat
+ *  with no rptstart, only when starting from the top. Starting INSIDE a
+ *  repeated body plays it through linearly without replaying. Each repeat is
+ *  capped at 2 passes (no >2× or nested repeats in v1). */
+export function expandPlayOrder(mei: Document, startIdx = 0): PlayedMeasure[] {
+  const measures = Array.from(mei.querySelectorAll('measure'));
+  const n = measures.length;
+  const order: PlayedMeasure[] = [];
+  const takenRepeats = new Set<number>();
+  const passByStart = new Map<number, number>();
+  let repeatStart = -1; /* doc index of the most recent rptstart seen */
+  let curPass = 1;
+  let i = Math.max(0, startIdx);
+  let guard = 0;
+  while (i < n && guard++ < 100000) {
+    const m = measures[i];
+    if (m.getAttribute('left') === 'rptstart' && i >= startIdx) {
+      repeatStart = i;
+      curPass = passByStart.get(i) ?? 1;
+    }
+    const honored = repeatStart >= 0 || startIdx === 0;
+    const en = endingNumberOf(m);
+    if (en !== null && en !== curPass && honored) { i++; continue; }
+    order.push({ measureIdx: i, pass: curPass });
+    if (m.getAttribute('right') === 'rptend' && honored && !takenRepeats.has(i)) {
+      takenRepeats.add(i);
+      const target = repeatStart >= 0 ? repeatStart : 0;
+      const np = curPass + 1;
+      passByStart.set(target, np);
+      curPass = np;
+      i = target;
+      continue;
+    }
+    i++;
+  }
+  return order;
+}
+
 /** Walk every voice across every measure; emit one PlaybackEvent per
  *  attack (rests advance time silently; tied chains coalesce).
  *
@@ -369,24 +444,99 @@ function clampVel(v: number): number {
  *  at the cursor do NOT get re-attacked (DAW-standard non-retrigger
  *  semantics; matches Pro Tools / FL Studio). */
 export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[] {
-  const events: PlaybackEvent[] = [];
+  const events: CanonEvent[] = [];
   const mei = new DOMParser().parseFromString(model.serialize(), 'application/xml');
   const tempo = buildTempoTimeline(mei);
   const velocity = buildVelocityLookup(mei);
   const noteById = buildNoteIdIndex(mei);
+  /* 8va/8vb spans: a note on the bracketed staff within the span sounds an
+     octave shifted (q ± 3 per octave). Returns the q-shift for (staff, tick). */
+  const octaves = collectOctaves(mei);
+  const octaveQShift = (staff: number, tick: number): number => {
+    let shift = 0;
+    for (const o of octaves) {
+      if (o.staff === staff && tick >= o.startTick - 1e-6 && tick < o.endTick - 1e-6) shift += o.qShift;
+    }
+    return shift;
+  };
+
+  /* Trill anchors: slot xml:id → the alternation cell (the SECOND source note's
+     exact lattice position, preserved on the kept note as data-hkl-trill-q/r).
+     A trill with no stored alt cell (voice-mode, single note) plays as a plain
+     note. */
+  const trillAlt = new Map<string, CoordRef | null>();
+  for (const tr of Array.from(mei.querySelectorAll('trill'))) {
+    const sid = (tr.getAttribute('startid') ?? '').replace('#', '');
+    if (!sid) continue;
+    const slot = mei.querySelector(`[*|id="${sid}"]`);
+    const qs = slot?.getAttribute('data-hkl-trill-q');
+    const rs = slot?.getAttribute('data-hkl-trill-r');
+    const q = qs !== null && qs !== undefined ? parseInt(qs, 10) : NaN;
+    const r = rs !== null && rs !== undefined ? parseInt(rs, 10) : NaN;
+    trillAlt.set(sid, Number.isFinite(q) && Number.isFinite(r) ? { q, r } : null);
+  }
+
+  /* All coords (chord members or single note) of a slot, with the 8va shift
+     applied. */
+  const slotCoords = (slot: Element, qShift: number): CoordRef[] => {
+    const noteEls = slot.localName === 'note'
+      ? [slot]
+      : Array.from(slot.children).filter((n) => n.localName === 'note');
+    const out: CoordRef[] = [];
+    for (const n of noteEls) {
+      const c = extractCoords(n);
+      if (c) out.push(qShift !== 0 ? { q: c.q + qShift, r: c.r } : c);
+    }
+    return out;
+  };
+
+  /* Expand a trill/tremolo into a rapid alternation across [startTick,
+     startTick+spanTicks]. `groups` is the alternation cycle (e.g. [[main],
+     [upper]] for a trill, [[noteA],[noteB]] for a tremolo); each emitted note
+     is slurred to the next so HKL applies the instrument's glide/overlap. The
+     speed is a static ~TRILL_NOTE_MS per note (tunable later). */
+  const emitAlternation = (
+    groups: CoordRef[][], startTick: number, spanTicks: number,
+    meiId: string | undefined, vel: number, voice: Voice, mi: number,
+  ): void => {
+    const cycle = groups.filter((g) => g.length > 0);
+    if (!cycle.length || spanTicks <= 0) return;
+    const startMs = tempo.atMsAt(startTick);
+    const spanMs = tempo.atMsAt(startTick + spanTicks) - startMs;
+    if (spanMs <= 0) return;
+    const count = Math.max(cycle.length, Math.round(spanMs / TRILL_NOTE_MS));
+    const sliceMs = spanMs / count;
+    for (let k = 0; k < count; k++) {
+      events.push({
+        atMs: startMs + k * sliceMs,
+        durationMs: sliceMs,
+        notes: cycle[k % cycle.length],
+        meiId,
+        velocity: vel,
+        voice,
+        slurredToNext: k < count - 1,
+        _mi: mi,
+      });
+    }
+  };
 
   for (let voice: Voice = 1; voice <= 4; voice = (voice + 1) as Voice) {
     const staffN = voice <= 2 ? 1 : 2;
     const layerN = (voice === 1 || voice === 3) ? 1 : 2;
-    /* Walk all measures' layers for this voice. */
+    /* Walk all measures' layers for this voice. `streamMi[k]` records the
+       document measure index of stream element k, so events can be tagged
+       for repeat expansion. */
     const measures = Array.from(mei.querySelectorAll('measure'));
     const stream: Element[] = [];
-    for (const m of measures) {
-      const layer = Array.from(m.querySelectorAll(`staff[n="${staffN}"] layer[n="${layerN}"]`))[0];
+    const streamMi: number[] = [];
+    for (let mi = 0; mi < measures.length; mi++) {
+      const layer = Array.from(measures[mi].querySelectorAll(`staff[n="${staffN}"] layer[n="${layerN}"]`))[0];
       if (!layer) continue;
       /* Layer may have <beam> wrappers in the rendered MEI; descend to actual
          content children. */
+      const before = stream.length;
       pushContentChildren(layer, stream);
+      for (let k = before; k < stream.length; k++) streamMi[k] = mi;
     }
 
     /* Slur spans for this voice, as inclusive [lo, hi] stream-index ranges.
@@ -437,9 +587,41 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
               notes: [],
               meiId,
               voice,
+              _mi: streamMi[i],
             });
           }
         }
+        tTicks += ticks;
+        i++;
+        continue;
+      }
+
+      /* Tremolo: alternate between the two (or one) wrapped slots' EXACT
+         lattice cells across the wrapper's span. */
+      if (local === 'fTrem' || local === 'bTrem') {
+        const qShift = octaveQShift(staffN, tTicks);
+        const groups = Array.from(child.children)
+          .filter((n) => n.localName === 'note' || n.localName === 'chord')
+          .map((slot) => slotCoords(slot, qShift));
+        emitAlternation(groups, tTicks, ticks, child.getAttribute('xml:id') ?? undefined,
+          velocity.at(tTicks), voice, streamMi[i]);
+        prevAttack = null; /* a tremolo is its own legato unit */
+        tTicks += ticks;
+        i++;
+        continue;
+      }
+
+      /* Trill: a note/chord carrying a <trill>. Alternate between its cell and
+         the preserved alternation cell (the second source note); if none was
+         stored (voice-mode single-note trill), it plays as a plain note. */
+      const slotId = child.getAttribute('xml:id') ?? undefined;
+      if ((local === 'note' || local === 'chord') && slotId && trillAlt.has(slotId)) {
+        const qShift = octaveQShift(staffN, tTicks);
+        const base = slotCoords(child, qShift);
+        const alt = trillAlt.get(slotId);
+        const groups = alt ? [base, [{ q: alt.q + qShift, r: alt.r }]] : [base];
+        emitAlternation(groups, tTicks, ticks, slotId, velocity.at(tTicks), voice, streamMi[i]);
+        prevAttack = null;
         tTicks += ticks;
         i++;
         continue;
@@ -460,9 +642,11 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
         if (t === 't' || t === 'm') continue;
         const coord = extractCoords(n);
         if (!coord) continue;
+        const qShift = octaveQShift(staffN, tTicks);
+        const shifted = qShift !== 0 ? { q: coord.q + qShift, r: coord.r } : coord;
         const durTicks = coalescedDurationTicks(n, noteById);
         const list = byDuration.get(durTicks) ?? [];
-        list.push(coord);
+        list.push(shifted);
         byDuration.set(durTicks, list);
       }
 
@@ -485,6 +669,7 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
             meiId,
             velocity: shape.velocity,
             voice,
+            _mi: streamMi[i],
           });
         }
         /* If this attack is slur-joined to the previous one in this voice,
@@ -504,13 +689,69 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
     if (voice === 4) break;
   }
 
-  events.sort((a, b) => a.atMs - b.atMs);
-  if (startMs > 0) {
-    return events
-      .filter((e) => e.atMs >= startMs - 1e-6)
-      .map((e) => ({ ...e, atMs: e.atMs - startMs }));
+  /* Strip the internal `_mi` tag when handing PlaybackEvents back. */
+  const strip = (e: CanonEvent): PlaybackEvent => {
+    const { _mi, ...rest } = e;
+    void _mi;
+    return rest;
+  };
+
+  if (!hasRepeatStructure(mei)) {
+    /* Original linear path: atMs is a pure function of tick. */
+    events.sort((a, b) => a.atMs - b.atMs);
+    const out = events.map(strip);
+    if (startMs > 0) {
+      return out
+        .filter((e) => e.atMs >= startMs - 1e-6)
+        .map((e) => ({ ...e, atMs: e.atMs - startMs }));
+    }
+    return out;
   }
-  return events;
+
+  /* Repeat path: atMs accumulates over the PLAYED measure order, while every
+     other lookup (velocity, duration, tempo) stays keyed on the note's
+     ORIGINAL tick (already baked into the canonical events above). */
+  const W = model.measureTicks();
+  const measureCount = Array.from(mei.querySelectorAll('measure')).length;
+  const canonStart = (mi: number): number => tempo.atMsAt(mi * W);
+
+  /* Seek: find the measure whose canonical span contains startMs; repeats
+     whose body the seek falls inside are not replayed (expandPlayOrder). */
+  let startMi = 0;
+  if (startMs > 0) {
+    for (let mi = 0; mi < measureCount; mi++) {
+      if (canonStart(mi) <= startMs + 1e-6) startMi = mi; else break;
+    }
+  }
+  const playOrder = expandPlayOrder(mei, startMi);
+
+  const byMeasure = new Map<number, CanonEvent[]>();
+  for (const ev of events) {
+    const list = byMeasure.get(ev._mi);
+    if (list) list.push(ev); else byMeasure.set(ev._mi, [ev]);
+  }
+
+  const remapped: PlaybackEvent[] = [];
+  let playedMs = 0;
+  for (const occ of playOrder) {
+    const mi = occ.measureIdx;
+    const mStart = canonStart(mi);
+    const mDur = canonStart(mi + 1) - mStart;
+    for (const ev of byMeasure.get(mi) ?? []) {
+      remapped.push({ ...strip(ev), atMs: playedMs + (ev.atMs - mStart) });
+    }
+    playedMs += mDur;
+  }
+  remapped.sort((a, b) => a.atMs - b.atMs);
+
+  /* `playedMs` is measured from the start of `startMi`; shift to startMs. */
+  const withinOffset = startMs > 0 ? startMs - canonStart(startMi) : 0;
+  if (withinOffset > 1e-6) {
+    return remapped
+      .filter((e) => e.atMs >= withinOffset - 1e-6)
+      .map((e) => ({ ...e, atMs: e.atMs - withinOffset }));
+  }
+  return remapped;
 }
 
 /** Parallel sustain-pedal timeline for a playback run. Maps each <pedal>
@@ -549,7 +790,9 @@ export function buildPedalEvents(model: ComposerModel, startMs = 0): PedalEvent[
 function pushContentChildren(layer: Element, out: Element[]): void {
   for (const c of Array.from(layer.children)) {
     const ln = c.localName;
-    if (ln === 'chord' || ln === 'note' || ln === 'rest' || ln === 'space') {
+    if (ln === 'chord' || ln === 'note' || ln === 'rest' || ln === 'space' || ln === 'fTrem' || ln === 'bTrem') {
+      /* fTrem/bTrem (tremolos) are pushed as a single slot; buildPlayback
+         expands them into an alternating note sequence. */
       out.push(c);
     } else if (ln === 'beam') {
       /* Descend into beam wrappers. */

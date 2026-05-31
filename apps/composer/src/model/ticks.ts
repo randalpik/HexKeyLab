@@ -16,6 +16,18 @@
  *  malformed/missing attributes — matches the historical behavior of every
  *  pre-ticks.ts duplicate. */
 export function writtenTicks(el: Element): number {
+  /* A two-note tremolo (<fTrem>) / single-note tremolo (<bTrem>) has no @dur
+     of its own. By the fingered-tremolo convention each wrapped note is DRAWN
+     at the full combined value and the tremolo OCCUPIES that value — so the
+     tremolo's time is ONE wrapped note's written duration (both are equal),
+     NOT the sum. Without this it hits the 16-tick fallback below. */
+  const ln = el.localName;
+  if (ln === 'fTrem' || ln === 'bTrem') {
+    for (const c of Array.from(el.children)) {
+      if (c.localName === 'note' || c.localName === 'chord') return writtenTicks(c);
+    }
+    return 0;
+  }
   const dur = el.getAttribute('dur');
   const dots = parseInt(el.getAttribute('dots') ?? '0', 10);
   const denom = dur ? parseInt(dur, 10) : NaN;

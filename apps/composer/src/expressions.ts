@@ -199,6 +199,87 @@ export function addHairpin(doc: Document, start: Moment, end: Moment, opts: Hair
   return el;
 }
 
+/* ── <octave> (8va / 8vb ottava lines) ───────────────────────────────────── */
+
+export interface OctaveOpts {
+  /** Interval of transposition: 8 = one octave, 15 = two octaves. */
+  dis: 8 | 15;
+  /** Bracket placement: above = sounds higher (8va), below = lower (8vb). */
+  place: 'above' | 'below';
+  /** Target staff (1 = treble, 2 = bass). Shifts BOTH voices of that staff. */
+  staff: number;
+  /** xml:id of the first / last slot the bracket spans. Verovio renders an
+   *  ottava from @startid/@endid (it will NOT draw one from @tstamp alone —
+   *  an empty <octave> group results); @tstamp/@tstamp2 are kept for the
+   *  playback tick-span and toggle lookup. */
+  startId?: string;
+  endId?: string;
+}
+
+/** Add an <octave> spanning [start, end] on `opts.staff`. Verovio draws the
+ *  ottava bracket from @startid/@endid ONLY — it warns if @tstamp is also
+ *  present, so the playback tick-span is carried on Verovio-ignored
+ *  `data-hkl-t0`/`data-hkl-t1` attributes (the same convention as tempo's
+ *  data-hkl-* flags), read back by collectOctaves. */
+export function addOctave(doc: Document, start: Moment, end: Moment, opts: OctaveOpts): Element | null {
+  const measure = measureAtIdx(doc, start.measureIdx);
+  if (!measure) return null;
+  if (end.measureIdx < start.measureIdx) return null;
+  if (end.measureIdx === start.measureIdx && end.tstamp < start.tstamp - TS_EPSILON) return null;
+  const el = createMei(doc, 'octave', {
+    'xml:id': newId('oct'),
+    dis: opts.dis,
+    'dis.place': opts.place,
+    staff: opts.staff,
+    startid: opts.startId ? '#' + opts.startId : undefined,
+    endid: opts.endId ? '#' + opts.endId : undefined,
+    'data-hkl-t0': absoluteTickForMoment(doc, start),
+    'data-hkl-t1': absoluteTickForMoment(doc, end),
+  });
+  appendAtEnd(measure, el);
+  return el;
+}
+
+/** The <octave> on `staff` whose start tick matches `startTick` (toggle
+ *  lookup). */
+export function octaveAt(doc: Document, startTick: number, staff: number): Element | null {
+  for (const el of Array.from(doc.querySelectorAll('octave'))) {
+    if (parseInt(el.getAttribute('staff') ?? '0', 10) !== staff) continue;
+    const t0 = parseFloat(el.getAttribute('data-hkl-t0') ?? 'NaN');
+    if (isFinite(t0) && Math.abs(t0 - startTick) < 0.5) return el;
+  }
+  return null;
+}
+
+export interface OctaveRecord {
+  startTick: number;
+  endTick: number;
+  staff: number;
+  /** q-shift to apply to spanned notes: +3 per octave above, −3 per below. */
+  qShift: number;
+}
+
+/** Collect every <octave> as a tick-span record for playback pitch shifting. */
+export function collectOctaves(doc: Document): OctaveRecord[] {
+  const out: OctaveRecord[] = [];
+  for (const el of Array.from(doc.querySelectorAll('octave'))) {
+    const t0 = parseFloat(el.getAttribute('data-hkl-t0') ?? 'NaN');
+    const t1 = parseFloat(el.getAttribute('data-hkl-t1') ?? 'NaN');
+    if (!isFinite(t0) || !isFinite(t1)) continue;
+    const dis = parseInt(el.getAttribute('dis') ?? '8', 10);
+    const octaves = dis >= 15 ? 2 : 1;
+    const place = el.getAttribute('dis.place') ?? 'above';
+    const staff = parseInt(el.getAttribute('staff') ?? '1', 10);
+    out.push({
+      startTick: t0,
+      endTick: t1,
+      staff,
+      qShift: (place === 'below' ? -3 : 3) * octaves,
+    });
+  }
+  return out;
+}
+
 /** Set the text content of an existing <dynam>. */
 export function setDynamText(el: Element, text: string): void {
   el.textContent = text;

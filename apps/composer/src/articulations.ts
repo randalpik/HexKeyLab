@@ -123,14 +123,16 @@ function computeEndOfNoteTstamp(note: Element): { tstamp: number; staff: number 
   return { tstamp: endBeat, staff: staffN };
 }
 
-function addSibling(measure: Element, localName: 'fermata' | 'breath', anchorEl: Element): void {
+function addSibling(measure: Element, localName: 'fermata' | 'breath' | 'trill', anchorEl: Element): void {
   const doc = measure.ownerDocument!;
   const anchorId = anchorEl.getAttribute('xml:id');
   if (!anchorId) return;
   const el = doc.createElementNS(MEI_NS, localName);
   el.setAttributeNS(XML_NS, 'xml:id', newId(localName.charAt(0)));
-  if (localName === 'fermata') {
-    /* Anchors to the note via @startid — Verovio renders the arch above. */
+  if (localName === 'fermata' || localName === 'trill') {
+    /* Anchors to the note via @startid — Verovio renders the symbol above.
+       A trill is a diatonic ornament; Verovio draws the upper-neighbour
+       alternation glyph natively from <trill @startid>. */
     el.setAttribute('startid', '#' + anchorId);
   } else {
     /* Breath at END of note (per spec): @tstamp positioned between this
@@ -213,11 +215,35 @@ export function articulationsOn(parent: Element): ArticKind[] {
   return out;
 }
 
-/** Remove every `<fermata>` / `<breath>` whose @startid no longer resolves
- *  to a slot element. Mirrors `pruneDanglingSlurs`. Returns the count. */
+/* ── <trill> ornament (note-attached via @startid, like fermata) ────────── */
+
+/** True iff the slot carries a trill ornament. */
+export function hasTrill(parent: Element): boolean {
+  const anchorId = parent.getAttribute('xml:id');
+  const measure = parent.closest('measure');
+  if (!anchorId || !measure) return false;
+  return findSibling(measure, 'trill', anchorId) !== null;
+}
+
+/** Toggle a `<trill @startid>` ornament on a note/chord. Returns the new
+ *  state (true = added, false = removed). */
+export function toggleTrill(parent: Element): boolean {
+  const anchorId = parent.getAttribute('xml:id');
+  const measure = parent.closest('measure');
+  if (!anchorId || !measure) return false;
+  if (findSibling(measure, 'trill', anchorId)) {
+    removeSibling(measure, 'trill', anchorId);
+    return false;
+  }
+  addSibling(measure, 'trill', parent);
+  return true;
+}
+
+/** Remove every `<fermata>` / `<breath>` / `<trill>` whose @startid no longer
+ *  resolves to a slot element. Mirrors `pruneDanglingSlurs`. Returns count. */
 export function pruneDanglingArticControls(doc: Document): number {
   let removed = 0;
-  for (const el of Array.from(doc.querySelectorAll('fermata, breath'))) {
+  for (const el of Array.from(doc.querySelectorAll('fermata, breath, trill'))) {
     const anchorId = stripHash(el.getAttribute('startid'))
                   ?? el.getAttribute('data-hkl-anchor');
     if (!anchorId) { el.parentNode?.removeChild(el); removed++; continue; }

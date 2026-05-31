@@ -5,6 +5,7 @@ import type {
   ComposerModel, Duration, Dots, ChordInput, RestInput, Voice,
 } from './model/index.js';
 import { ticksOf } from './model/index.js';
+import { realTicks } from './model/ticks.js';
 import {
   type ExpressionCursor, rebuildCursor, rebuildPedalCursor, rebuildTempoCursor,
   currentMoment, step, moveToStart, moveToEnd,
@@ -13,6 +14,7 @@ import {
   addDynam, addHairpin, removeExpression, dynamAt, setDynamText,
   hairpinsAt, momentCompare, measureHasExpression,
   addDir, dirAt, dirText, dirIsItalic, setDirText, tempoAt,
+  addOctave, octaveAt,
   type Moment,
 } from './expressions.js';
 import { openTextEntryModal } from './ui/textEntryModal.js';
@@ -576,6 +578,39 @@ function openExpressiveText(model: ComposerModel, hooks: InputHooks): void {
       hooks.setStatus?.(text === ''
         ? (changed ? 'Removed expressive text.' : 'No expressive text here.')
         : 'Expressive text: "' + text + '".', 'action');
+      hooks.onChange();
+      hooks.onStateChange();
+    },
+  });
+}
+
+/** Section-header modal (Ctrl+Shift+H): set/edit/remove the movement title
+ *  on the cursor's current measure. Anchors to the measure index; rejects the
+ *  first measure (that's the title block). */
+function openSectionHeader(model: ComposerModel, hooks: InputHooks): void {
+  const v = model.getCurrentVoice();
+  const mIdx = model.cursorMeasureIdx(v, state.mode);
+  if (mIdx <= 0) {
+    hooks.setStatus?.('Section header needs a measure after the first.', 'error');
+    return;
+  }
+  const existing = model.allMeasures()[mIdx]?.getAttribute('data-hkl-section-title') ?? '';
+  openTextEntryModal({
+    title: existing ? 'Edit section header' : 'Section header',
+    fields: [
+      { name: 'title', type: 'text', label: 'Title',
+        value: existing, placeholder: 'e.g. II. Andante' },
+    ],
+    onOk: (values) => {
+      const title = String(values.title ?? '').trim();
+      const before = model.snapshotState();
+      const r = model.setSectionHeaderAt(mIdx, title);
+      if (r === null) {
+        hooks.setStatus?.('Can’t add a section header before the first measure.', 'error');
+        return;
+      }
+      hooks.history.push(before, model.snapshotState(), 'section-header');
+      hooks.setStatus?.(title ? 'Section header: "' + title + '".' : 'Removed section header.', 'action');
       hooks.onChange();
       hooks.onStateChange();
     },
@@ -1364,6 +1399,13 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       hooks.onChange();
       return true;
     }
+    // Ctrl+8 (8va) and Ctrl+T (trill/tremolo) operate ON the live selection —
+    // let them fall through WITHOUT exiting, so their handlers see the intact
+    // beat selection (they exit selection themselves after mutating).
+    if (e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey
+        && (e.key === '8' || e.key === 'r' || e.key === 'R')) {
+      return false;
+    }
     // Any other key → exit selection to movable, then fall through so the
     // key triggers its normal handler at the post-exit cursor position.
     exitSelectionToMovable();
@@ -1622,12 +1664,193 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       return;
     }
 
+    /* Ctrl+E: toggle a 1st/2nd ending (volta) on the cursor's current measure,
+       one measure at a time. Type is context-derived in the model (measure
+       with a backward repeat → 1st; measure after one → 2nd; else extend an
+       adjacent ending). preventDefault — Ctrl+E is a Firefox search shortcut. */
+    if (e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey && (e.key === 'e' || e.key === 'E')) {
+      e.preventDefault();
+      if (state.cursorMode !== 'voice') {
+        hooks.setStatus?.('Endings require voice mode.', 'error');
+        return;
+      }
+      if (hooks.isPlaybackActive()) return;
+      const v = model.getCurrentVoice();
+      const mIdx = model.cursorMeasureIdx(v, state.mode);
+      if (mIdx < 0) { hooks.setStatus?.('No measure under cursor.', 'error'); return; }
+      let res: { n: number; action: string } | null = null;
+      withHistory('ending', () => {
+        res = model.toggleEndingAt(mIdx);
+        return res !== null;
+      });
+      if (res === null) {
+        hooks.setStatus?.('No ending context here (need a repeat barline or an adjacent ending).', 'error');
+      } else {
+        const r = res as { n: number; action: string };
+        const nth = r.n + (r.n === 1 ? 'st' : r.n === 2 ? 'nd' : 'th');
+        hooks.setStatus?.(
+          r.action === 'removed'
+            ? 'Removed ending from m' + (mIdx + 1) + '.'
+            : (r.action === 'created' ? 'Created ' : 'Extended ') + nth + ' ending at m' + (mIdx + 1) + '.',
+          'action');
+      }
+      hooks.onStateChange();
+      hooks.onChange();
+      return;
+    }
+
+    /* Ctrl+8: 8va (ottava) over the selection (beat-selection mode) or the
+       current beat (voice mode), applied to the cursor's STAFF — affecting
+       both of that staff's voices. Toggling at the same start moment removes
+       it. preventDefault — Ctrl+8 has no default but be safe. */
+    if (e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey && e.key === '8') {
+      e.preventDefault();
+      if (hooks.isPlaybackActive()) return;
+      const doc = model.getDoc();
+      const { unit } = model.getTimeSig();
+      const measureT = model.measureTicks();
+      const ticksPerBeat = 64 / unit;
+      const tickToMoment = (absTick: number): Moment => {
+        const measureIdx = Math.floor(absTick / measureT);
+        const inMeasure = absTick - measureIdx * measureT;
+        return { measureIdx, tstamp: 1 + inMeasure / ticksPerBeat };
+      };
+      let voice: Voice;
+      let tLo: number;
+      let tHi: number;
+      if (state.cursorMode === 'select' && state.selection?.kind === 'beat') {
+        const sel = state.selection;
+        voice = sel.voice;
+        const b = beatBoundariesInVoice(model, voice);
+        tLo = model.getTickPositionAt(voice, b[sel.first]);
+        tHi = model.getTickPositionAt(voice, b[Math.min(sel.last + 1, b.length - 1)]);
+      } else if (state.cursorMode === 'voice') {
+        voice = model.getCurrentVoice();
+        const b = beatBoundariesInVoice(model, voice);
+        const beat = currentBeatAt(model, voice, model.getCursor(voice));
+        tLo = model.getTickPositionAt(voice, b[beat]);
+        tHi = model.getTickPositionAt(voice, b[Math.min(beat + 1, b.length - 1)]);
+      } else {
+        hooks.setStatus?.('8va needs voice or selection mode.', 'error');
+        return;
+      }
+      if (tHi <= tLo) { hooks.setStatus?.('Nothing to put under an 8va here.', 'error'); return; }
+      const staff = voice <= 2 ? 1 : 2;
+      const startM = tickToMoment(tLo);
+      const endM = tickToMoment(tHi);
+      /* Verovio anchors the ottava bracket to notes (@startid/@endid) — it
+         will NOT draw one from @tstamp alone. Find the first and last actual
+         note/chord slot whose onset falls in [tLo, tHi). */
+      const flat = model.flatChildren(voice);
+      let startId: string | undefined;
+      let endId: string | undefined;
+      for (let c = 0; c < flat.length; c++) {
+        const el = flat[c];
+        if (el.localName !== 'note' && el.localName !== 'chord') continue;
+        /* getTickPositionAt is "past flat[c]" (= its end); onset = end − dur. */
+        const onset = model.getTickPositionAt(voice, c) - realTicks(el);
+        if (onset >= tLo - 1e-6 && onset < tHi - 1e-6) {
+          if (startId === undefined) startId = el.getAttribute('xml:id') ?? undefined;
+          endId = el.getAttribute('xml:id') ?? undefined;
+        }
+      }
+      let added = false;
+      withHistory('octave', () => {
+        const existing = octaveAt(doc, tLo, staff);
+        if (existing) { removeExpression(existing); }
+        else { addOctave(doc, startM, endM, { dis: 8, place: 'above', staff, startId, endId }); added = true; }
+        return true;
+      });
+      if (state.cursorMode === 'select') { state.selection = null; state.cursorMode = 'voice'; }
+      hooks.setStatus?.(added ? '8va added on staff ' + staff + '.' : '8va removed.', 'action');
+      hooks.onStateChange();
+      hooks.onChange();
+      return;
+    }
+
+    /* Ctrl+B: toggle a page break (<pb>) before the cursor's current measure.
+       Verovio honors it in page view (breaks:'encoded'). preventDefault —
+       Ctrl+B is the Firefox bookmark shortcut. */
+    if (e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey && (e.key === 'b' || e.key === 'B')) {
+      e.preventDefault();
+      if (state.cursorMode !== 'voice') { hooks.setStatus?.('Page break requires voice mode.', 'error'); return; }
+      if (hooks.isPlaybackActive()) return;
+      const v = model.getCurrentVoice();
+      const mIdx = model.cursorMeasureIdx(v, state.mode);
+      let res: boolean | null = null;
+      withHistory('page-break', () => { res = model.togglePageBreakAt(mIdx); return res !== null; });
+      if (res === null) {
+        hooks.setStatus?.('Can’t break before the first measure.', 'error');
+      } else {
+        hooks.setStatus?.(res ? 'Page break before m' + (mIdx + 1) + '.' : 'Page break removed.', 'action');
+      }
+      hooks.onStateChange();
+      hooks.onChange();
+      return;
+    }
+
+    /* Ctrl+R: trills + tremolos (render-only in v1; playback deferred).
+       - Voice mode: toggle a diatonic <trill> on the current note/chord.
+       - Beat-selection mode: with exactly two selected notes whose combined
+         written duration is a single notehead value, a diatonic step → trill,
+         otherwise a two-note tremolo (<fTrem>, 3 beams). Any other selection
+         is a no-op. preventDefault blocks the browser reload. (Was Ctrl+T,
+         which Firefox reserves for new-tab; Ctrl+R reload IS page-cancelable.) */
+    if (e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey && (e.key === 'r' || e.key === 'R')) {
+      e.preventDefault();
+      if (hooks.isPlaybackActive()) return;
+      if (state.cursorMode === 'voice') {
+        let res: { id: string; on: boolean } | null = null;
+        withHistory('trill', () => { res = model.toggleTrillAtCursor(state.mode); return res !== null; });
+        if (res === null) hooks.setStatus?.('Place the cursor on a note to trill.', 'error');
+        else hooks.setStatus?.((res as { on: boolean }).on ? 'Trill added.' : 'Trill removed.', 'action');
+        hooks.onStateChange();
+        hooks.onChange();
+        return;
+      }
+      if (state.cursorMode === 'select' && state.selection?.kind === 'beat') {
+        const ssel = state.selection;
+        const sb = beatBoundariesInVoice(model, ssel.voice);
+        const stLo = model.getTickPositionAt(ssel.voice, sb[ssel.first]);
+        const stHi = model.getTickPositionAt(ssel.voice, sb[Math.min(ssel.last + 1, sb.length - 1)]);
+        let res: { kind: 'trill' | 'tremolo'; removed: boolean } | null = null;
+        withHistory('trill-tremolo', () => {
+          res = model.toggleTrillOrTremoloOnSelection(ssel.voice, stLo, stHi);
+          return res !== null;
+        });
+        if (res === null) {
+          hooks.setStatus?.('Select exactly two notes that combine to a single notehead value.', 'error');
+        } else {
+          const r = res as { kind: 'trill' | 'tremolo'; removed: boolean };
+          hooks.setStatus?.((r.removed ? 'Removed ' : 'Added ') + r.kind + '.', 'action');
+        }
+        state.selection = null;
+        state.cursorMode = 'voice';
+        hooks.onStateChange();
+        hooks.onChange();
+        return;
+      }
+      hooks.setStatus?.('Ctrl+T needs a note (voice mode) or two selected notes.', 'error');
+      return;
+    }
+
     /* Ctrl+Shift+E: expressive-text modal at the cursor moment (create / edit /
        delete a <dir>). Opens the reusable text-entry shell. */
     if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && (e.key === 'e' || e.key === 'E')) {
       e.preventDefault();
       if (hooks.isPlaybackActive()) return;
       openExpressiveText(model, hooks);
+      return;
+    }
+
+    /* Ctrl+Shift+H: section-header modal (movement title) on the current
+       measure. Centered title that displaces the system + starts a new
+       system + final barline + measure-number reset (see main.ts injector). */
+    if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && (e.key === 'h' || e.key === 'H')) {
+      e.preventDefault();
+      if (hooks.isPlaybackActive()) return;
+      if (state.cursorMode !== 'voice') { hooks.setStatus?.('Section header requires voice mode.', 'error'); return; }
+      openSectionHeader(model, hooks);
       return;
     }
 
@@ -2125,6 +2348,37 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         hooks.setStatus?.(result === 'dbl'
           ? 'Double bar at end of m' + (mIdx + 1) + '.'
           : 'Cleared double bar at end of m' + (mIdx + 1) + '.', 'action');
+        return true;
+      });
+      hooks.onStateChange();
+      hooks.onChange();
+      return;
+    }
+
+    /* Voice-mode `{` / `}` toggle a forward / backward repeat barline on the
+       cursor's current measure. `{` sets @left="rptstart" (any measure, incl.
+       the first); `}` sets @right="rptend" (any measure, incl. the last — a
+       whole-piece repeat). Anchor is the measure containing the cursor. */
+    if (state.cursorMode === 'voice' && (e.key === '{' || e.key === '}')) {
+      e.preventDefault();
+      if (hooks.isPlaybackActive()) return;
+      const v = model.getCurrentVoice();
+      const mIdx = model.cursorMeasureIdx(v, state.mode);
+      if (mIdx < 0) {
+        hooks.setStatus?.('No measure under cursor.', 'error');
+        return;
+      }
+      const start = e.key === '{';
+      withHistory(start ? 'repeat-start' : 'repeat-end', () => {
+        const result = start
+          ? model.toggleRepeatStartAt(mIdx)
+          : model.toggleRepeatEndAt(mIdx);
+        if (result === null) return false;
+        const where = start ? 'start of m' : 'end of m';
+        const set = result === 'rptstart' || result === 'rptend';
+        hooks.setStatus?.(
+          (set ? 'Repeat ' + (start ? 'start' : 'end') + ' at ' : 'Cleared repeat at ')
+          + where + (mIdx + 1) + '.', 'action');
         return true;
       });
       hooks.onStateChange();

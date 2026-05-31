@@ -41,7 +41,9 @@ export function normalizePlaceholders(doc: Document, measureTicks: number): void
         c.localName === 'chord' ||
         c.localName === 'note' ||
         c.localName === 'rest' ||
-        c.localName === 'tuplet'
+        c.localName === 'tuplet' ||
+        c.localName === 'fTrem' ||
+        c.localName === 'bTrem'
       ) {
         used += realTicks(c);
       }

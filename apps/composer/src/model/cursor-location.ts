@@ -82,7 +82,8 @@ export function layerStops(model: ComposerModel, layer: Element): Element[] {
     if (ln === 'tuplet') {
       out.push(c);
       out.push(...tupletNavStops(c));
-    } else if (ln === 'chord' || ln === 'note' || ln === 'rest') {
+    } else if (ln === 'chord' || ln === 'note' || ln === 'rest' || ln === 'fTrem' || ln === 'bTrem') {
+      /* A tremolo is one navigable slot (cursor lands before/after it). */
       out.push(c);
     }
   }

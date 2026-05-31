@@ -66,6 +66,31 @@ export const KEYBINDINGS: KeySection[] = [
         desc: "Double bar line at the end of the current measure.",
       },
       {
+        keys: "{  /  }",
+        desc: "Toggle a forward / backward repeat barline on the current measure.",
+        note: "{ = repeat-start (left barline, any measure); } = repeat-end (right barline, incl. the final measure for a whole-piece repeat). Press again to clear.",
+      },
+      {
+        keys: "Ctrl+E",
+        desc: "Toggle a 1st / 2nd ending (volta) on the current measure.",
+        note: "Type is context-derived: a measure with a backward repeat becomes a 1st ending, the measure after a backward repeat a 2nd ending, and any other measure extends an adjacent ending.",
+      },
+      {
+        keys: "Ctrl+8",
+        desc: "Toggle an 8va (ottava) over the selection, or the current beat in voice mode.",
+        note: "Applies to the cursor's whole staff (both voices). Spanned notes sound an octave higher. Press again at the same start to remove it.",
+      },
+      {
+        keys: "Ctrl+R",
+        desc: "Voice mode: trill on the current note. Selection: two equal notes → trill (diatonic step) or tremolo (otherwise).",
+        note: "The two selected notes must combine to a single notehead value.",
+      },
+      {
+        keys: "Ctrl+B",
+        desc: "Toggle a page break before the current measure (page view).",
+        note: "Verovio starts a new system/page at the break. No effect in scroll view.",
+      },
+      {
         keys: "H",
         desc: "Hide the current rest (still affects timing).",
       },
@@ -248,6 +273,11 @@ export const KEYBINDINGS: KeySection[] = [
       {
         keys: "Ctrl+Shift+T",
         desc: "Tempo at the cursor moment: instant marking (♩=bpm), ritardando / accelerando (with poco/plain/molto intensity), or a tempo. Retimes playback. Setup's Tempo… button opens the same dialog at measure 1.",
+      },
+      {
+        keys: "Ctrl+Shift+H",
+        desc: "Section header (movement title) on the current measure: a centered title that starts a new system, displacing it, with a final barline on the prior measure and measure numbers reset. Submit empty to remove.",
+        note: "Not available on the first measure (that's the title block).",
       },
     ],
   },

@@ -2585,3 +2585,97 @@ to "same staff group OR cross-staff explicit confirm") would enable user entry.
 playback `slurredToNext` flag is per-voice (each voice walks its own attack stream), so a
 cross-staff slur primarily marks the start voice. Cross-staff legato playback (gliding the
 voice handoff across staves) is out of scope for v1.
+
+## Phase 3 Composer: repeats, 8va, trills/tremolos, breaks, section headers (2026-05-30)
+
+Non-obvious choices made implementing Composer roadmap Phase 3. Full as-built notes in
+`docs/composer-roadmap.md` §9; the decisions worth remembering:
+
+**Repeat playback composes by re-stamping, not re-walking.** `buildPlayback` keeps its
+original single linear walk to produce *canonical* events tagged with their measure index
+(`_mi`), then — only when `hasRepeatStructure(mei)` — replays `expandPlayOrder()` and
+re-stamps each event's `atMs` by accumulating per-measure ms over the *played* order. Every
+other lookup (velocity, tempo rate, octave shift) stays keyed on the note's ORIGINAL tick, so
+a replayed note reuses its original-tick dynamics. No-repeat docs hit the untouched linear
+path verbatim (keeps the heavily-tested fast path byte-stable). Repeat expansion is
+**start-aware**: a backward repeat is honored only if its rptstart was seen at/after the seek
+measure — seeking *into* a repeated body plays it through once. Capped at 2 passes (no nested
+repeats v1).
+
+**Verovio `<octave>` needs `@startid`/`@endid`, and warns if `@tstamp` coexists.** An octave
+with only `@tstamp`/`@tstamp2` renders an EMPTY `g.octave` (no bracket); adding the note
+anchors fixes it but Verovio then warns "has both @startid and @tstamp" (the suite fails on
+console warnings). Resolution: octave carries note anchors for rendering and the playback
+tick-span on Verovio-ignored `data-hkl-t0`/`data-hkl-t1` (same convention as tempo's
+`data-hkl-*`). 8va pitch shift is `q ± 3` per octave (band structure: +3 q = exactly 2:1).
+
+**Verovio `breaks` is global, not mixable.** `'auto'` ignores encoded `<pb>`/`<sb>`;
+`'encoded'`/`'line'` honor them but disable auto-wrapping. There is no "honor my one break AND
+auto-wrap the rest." So page break (Ctrl+B) and section headers (which force an `<sb>`) switch
+page view to `breaks:'encoded'` only when the doc actually contains a manual break — once it
+does, the user owns all breaks. Accepted v1 tradeoff.
+
+**Section headers are custom post-render injection** (`main.ts:injectSectionHeaders`). Verovio
+has no native centered, space-reserving mid-score movement title (only the page-top pgHead
+centers; a `<section>` label doesn't render). So we translate the section's rendered
+`g.system` (and every later system in the page) DOWN by a fixed reserve, grow the page
+viewBox/height, and inject a page-centered `<text>` in the freed band. The model side
+(`setSectionHeaderAt`) tags the measure, forces an `<sb>`, sets the prior measure's final
+barline, and `renumberMeasures` is now section-aware (restarts at each `data-hkl-section-title`).
+
+**Selection-mode actions must opt out of the exit-to-movable catch-all.** `dispatchSelectionMode`
+exits the beat selection on any non-selection key before the main handler runs. `Ctrl+8` /
+`Ctrl+T` operate ON the live selection, so they're whitelisted to fall through WITHOUT exiting
+(their handlers read the selection, mutate, then exit themselves). Without this they silently
+ran their voice-mode branch on the post-exit cursor.
+
+## Composer breaks: smart+breaksSmartSb:0 for sections, two-pass bake for page breaks (2026-05-30)
+
+Refines the Phase 3 note above ("Verovio breaks is global"). The "once any manual break
+exists, no auto-wrap" tradeoff was unacceptable — a section header or page break made all
+following material cram onto one line regardless of measure count. Resolution (render.ts):
+
+- **Section/system breaks only** (`<sb>`, no `<pb>`): render with `breaks:'smart'` +
+  `breaksSmartSb:0`. `breaksSmartSb` is the threshold below which 'smart' DROPS an encoded
+  `<sb>` (to avoid tiny systems) — at the default ~0.66 it silently ignored our section break
+  (a 1-measure system). Setting it to **0** forces 'smart' to honor EVERY encoded `<sb>`
+  while still auto-wrapping overflow. This is the single-pass path for section headers.
+- **Page breaks** (`<pb>`): 'smart' ignores `<pb>` (it calculates pages), so page breaks
+  still require `breaks:'encoded'` — which alone won't wrap. So `layoutBreaks()` does a
+  **two-pass**: pass 1 renders with smart+breaksSmartSb:0 to get the ideal system layout,
+  reads which measure starts each rendered system, bakes an `<sb>` before each into the MEI,
+  then the caller renders with `'encoded'` so the forced `<pb>` AND the baked system breaks
+  are all honored (pages split + content wraps). The bake is render-only (never touches the
+  model, so roundtrip is unaffected).
+
+Also: the section final barline is now DERIVED in `setBarlines()` (every measure immediately
+before a `data-hkl-section-title` measure gets `@right="end"`), so inserting a measure near a
+section boundary can't orphan it. And `insertMeasureAt` inserts before a section `<sb>` (not
+between it and its title measure) so the break + title stay together.
+
+Trill rebound from Ctrl+T → **Ctrl+R**: Firefox reserves Ctrl+T (new tab) at the browser
+level and ignores page `preventDefault`; Ctrl+R (reload) IS page-cancelable, so preventDefault
+blocks it.
+
+## Tremolo/trill playback = alternation-as-slur; fTrem needs tick support everywhere (2026-05-30)
+
+Tremolos were doubly broken: they took half their intended duration on the page and were
+skipped entirely in playback (desyncing the voice). Root cause: `<fTrem>` (and `<bTrem>`) had
+no @dur and was unhandled in EVERY tick/enumeration path, so it hit `writtenTicks`'s 16-tick
+fallback and was invisible to placeholders, cursor nav, and the playback walk. Fix: treat a
+tremolo's sounding time as the SUM of its wrapped notes' written durations, and recognize
+`fTrem`/`bTrem` as a first-class content slot in all of: `writtenTicks` (model/ticks.ts),
+`contentChildren` (model/index.ts), `layerStops` (model/cursor-location.ts),
+`normalizePlaceholders` (model/placeholders.ts), `pushContentChildren` (render/playback.ts),
+and the test harness `layerTicks` (composer-test/lib/assertions.mjs). Anytime a new wrapper
+element is added, all six sites need it.
+
+Playback (per Max): a trill or tremolo plays as a **slur of alternating notes** — emit a rapid
+alternation across the wrapper's span, each note `slurredToNext` so HKL applies the
+instrument's glide/overlap. Speed is a static `TRILL_NOTE_MS` (~100ms, tunable later).
+**Lattice positions are preserved from the source notes, never computed**: a tremolo alternates
+between its two `<fTrem>` notes' real cells; the selection trill collapses to one notehead but
+stores the discarded note's exact `(q,r)` on the kept note as `data-hkl-trill-q/r` so playback
+alternates between the two real cells. A voice-mode trill (single note, no second cell stored)
+plays as a plain note — there is no second lattice position to preserve and we don't synthesize
+one.

@@ -504,6 +504,99 @@ function injectHeaderFooter(scoreEl: HTMLElement, composer: string, footer: stri
   }
 }
 
+/* Section headers (movement titles): a centered, space-reserving title above
+ * the system that begins the section. The section's first measure carries
+ * `data-hkl-section-title` (+ a forced <sb> so it starts a new system). We
+ * find that measure's rendered <g.system>, translate it (and everything below
+ * it in the page) DOWN to reserve room, grow the page, and inject the centered
+ * title into the freed space. */
+const SECTION_HEADER_FONT = 560;
+const SECTION_HEADER_RESERVE = 900;  /* vertical space carved out (Verovio units) */
+const SECTION_HEADER_BASELINE = 360; /* title baseline below the reserved top */
+
+function injectSectionHeaders(scoreEl: HTMLElement, model: ComposerModel): void {
+  const doc = model.getDoc();
+  const headers = Array.from(doc.querySelectorAll('measure[data-hkl-section-title]'));
+  for (const meas of headers) {
+    const id = meas.getAttribute('xml:id');
+    const title = meas.getAttribute('data-hkl-section-title');
+    if (!id || !title) continue;
+    const escId = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(id) : id;
+    const rendered = scoreEl.querySelector('g.measure#' + escId);
+    if (!rendered) continue;
+    const system = rendered.closest('g.system') as SVGGraphicsElement | null;
+    const pageMargin = rendered.closest('g.page-margin') as SVGGraphicsElement | null;
+    if (!system || !pageMargin) continue;
+    let sysbb: DOMRect;
+    try { sysbb = system.getBBox(); } catch { continue; }
+    if (!(sysbb.height > 0)) continue;
+
+    /* Reserve space: shift this system and every later system in the same page
+       down by SECTION_HEADER_RESERVE, then grow the page's height so nothing
+       clips. (The first system never gets a header — measureIdx 0 is rejected
+       — so there is always a system above to break from.) */
+    const systems = Array.from(pageMargin.querySelectorAll(':scope > g.system')) as SVGGraphicsElement[];
+    const fromIdx = systems.indexOf(system);
+    const headerTop = sysbb.y;
+    for (let i = fromIdx; i < systems.length; i++) {
+      const s = systems[i];
+      const base = s.transform.baseVal.consolidate();
+      const ty = base ? base.matrix.f : 0;
+      const tx = base ? base.matrix.e : 0;
+      s.setAttribute('transform', `translate(${tx}, ${ty + SECTION_HEADER_RESERVE})`);
+    }
+    /* Inject the centered title in the freed band above the (now lower) system. */
+    pageMargin.querySelector(`:scope > text.hkl-section-header[data-for="${id}"]`)?.remove();
+    const t = pageMargin.ownerDocument!.createElementNS(HKL_SVG_NS, 'text');
+    t.setAttribute('class', 'hkl-section-header');
+    t.setAttribute('data-for', id);
+    /* Centered on the page (not the system — a short final section would
+       otherwise pull the title to the left margin). */
+    t.setAttribute('x', String(PAGE_INNER_W / 2));
+    t.setAttribute('y', String(headerTop + SECTION_HEADER_BASELINE));
+    t.setAttribute('text-anchor', 'middle');
+    t.setAttribute('font-size', String(SECTION_HEADER_FONT));
+    t.setAttribute('font-family', 'Times, serif');
+    t.textContent = title;
+    pageMargin.appendChild(t);
+
+    /* Grow the page so the downshifted content isn't clipped. */
+    const pageSvg = pageMargin.closest('svg.definition-scale') as SVGSVGElement | null;
+    if (pageSvg) {
+      const vb = pageSvg.getAttribute('viewBox');
+      if (vb) {
+        const parts = vb.split(/\s+/).map(Number);
+        if (parts.length === 4) {
+          parts[3] += SECTION_HEADER_RESERVE;
+          pageSvg.setAttribute('viewBox', parts.join(' '));
+          const h = parseFloat(pageSvg.getAttribute('height') ?? '0');
+          if (h) pageSvg.setAttribute('height', String(h + SECTION_HEADER_RESERVE * (h / parts[3])));
+        }
+      }
+    }
+  }
+}
+
+/* Verovio draws volta (1st/2nd ending) numbers in a large, heavy default.
+ * Restyle the innermost numeric tspan to a lighter serif and append the
+ * conventional trailing period ("1." / "2."). */
+const VOLTA_NUMBER_FONT = 300;
+
+function styleVoltaNumbers(scoreEl: HTMLElement): void {
+  for (const vb of Array.from(scoreEl.querySelectorAll('g.voltaBracket'))) {
+    for (const ts of Array.from(vb.querySelectorAll('text tspan'))) {
+      /* The innermost tspan holds the bare number (no element children). */
+      if (ts.children.length > 0) continue;
+      const txt = (ts.textContent ?? '').trim();
+      if (!/^\d+\.?$/.test(txt)) continue;
+      ts.setAttribute('font-size', String(VOLTA_NUMBER_FONT));
+      ts.setAttribute('font-weight', 'normal');
+      ts.setAttribute('font-family', 'Times, serif');
+      if (!txt.endsWith('.')) ts.textContent = txt + '.';
+    }
+  }
+}
+
 function reRender(): void {
   try {
     renderer.render(model.serialize({ hejiEnabled: model.getHejiEnabled() }));
@@ -514,6 +607,8 @@ function reRender(): void {
     const scoreElForInject = $('score');
     if (scoreElForInject) {
       injectHeaderFooter(scoreElForInject, model.getComposer(), model.getFooter());
+      injectSectionHeaders(scoreElForInject, model);
+      styleVoltaNumbers(scoreElForInject);
     }
     /* Verovio just rewrote #score's innerHTML — re-attach the cursor overlay
        as a sibling of the rendered SVG (in scroll mode) or as a sibling of
@@ -525,14 +620,24 @@ function reRender(): void {
        offset from #score's origin by a .score-page wrapper's margin. */
     const scoreEl = $('score');
     if (!scoreEl) return;
-    const verovioSvg = scoreEl.querySelector('svg:not(#cursorOverlay)') as SVGSVGElement | null;
+    /* Size the overlay to cover EVERY page SVG, not just the first — in page
+       view with a page break there are multiple .score-page svgs stacked
+       vertically, and a cursor on a later page would otherwise fall outside
+       the overlay's bounds and not draw. */
+    const verovioSvgs = Array.from(
+      scoreEl.querySelectorAll('svg:not(#cursorOverlay)'),
+    ) as SVGSVGElement[];
     const overlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     overlay.id = 'cursorOverlay';
-    if (verovioSvg) {
+    if (verovioSvgs.length) {
       const scoreRect = scoreEl.getBoundingClientRect();
-      const svgRect = verovioSvg.getBoundingClientRect();
-      const overlayW = svgRect.right - scoreRect.left + scoreEl.scrollLeft;
-      const overlayH = svgRect.bottom - scoreRect.top + scoreEl.scrollTop;
+      let overlayW = 0;
+      let overlayH = 0;
+      for (const svg of verovioSvgs) {
+        const r = svg.getBoundingClientRect();
+        overlayW = Math.max(overlayW, r.right - scoreRect.left + scoreEl.scrollLeft);
+        overlayH = Math.max(overlayH, r.bottom - scoreRect.top + scoreEl.scrollTop);
+      }
       overlay.setAttribute('width', String(Math.max(0, overlayW)));
       overlay.setAttribute('height', String(Math.max(0, overlayH)));
     }

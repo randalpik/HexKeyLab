@@ -6,7 +6,7 @@
 >
 > **Phase 2: ✅ shipped** (2026-05-30). All four items (pedal layer, expressive-text modal + reusable shell, tempo modal + retiming + tempo layer, above/below placement) landed with fixtures; suite grew 190 → 207. The surfaces Phase 3 inherits are summarized in **§ Phase 2 outcomes — what Phase 3 inherits** below.
 >
-> **Phase 3: ready to scaffold on a fresh thread.** See **§ Phase 3 scaffold** below.
+> **Phase 3: ✅ shipped** (2026-05-30). All four items landed with fixtures (suite 207 → 218): repeats + endings (`{`/`}`/`Ctrl+E`) with start-aware playback repeat-expansion composing with the tempo timeline; 8va (`Ctrl+8`, per-staff, q±3 playback shift); trills + tremolos (`Ctrl+T`, render-only); page break (`Ctrl+B`); and section headers (`Ctrl+Shift+H`) as a custom-injected centered movement title that displaces the system. See **§ Phase 3 scaffold** below for the as-built notes and **§ Phase 3 outcomes** for the surfaces Phase 4 inherits.
 
 ## Context
 
@@ -336,3 +336,18 @@ Standard gates (`pnpm typecheck` + `pnpm -r build` + `pnpm check:boundaries` + `
 ### Suggested kickoff prompt for the new thread
 
 > "Read `docs/composer-roadmap.md` §7 (Phase 2 outcomes) + §8 (Phase 3 scaffold). Confirm the four cross-cutting decisions, then implement Phase 3 in the suggested order — start with repeats + endings, since its playback-expansion change is the one that composes with the tempo timeline. Land each item with fixtures; gate on `pnpm test:composer`."
+
+---
+
+## 9. Phase 3 outcomes — as-built deltas (what Phase 4 inherits)
+
+All in `apps/composer/` unless noted. Resolved cross-cutting decisions and notable deviations from the §8 scaffold:
+
+- **Repeat-expansion playback** (`src/render/playback.ts`): `expandPlayOrder(mei, startIdx)` returns the played measure order (rptstart/rptend honored, voltas selected by pass, capped at 2 passes, **start-aware** — repeats whose body the seek falls inside don't replay). `buildPlayback` tags each canonical event with `_mi`, and when `hasRepeatStructure(mei)` it re-stamps `atMs` over the played order (accumulating per-measure ms) while velocity/tempo/octave stay keyed on the **original** tick. No-repeat docs keep the exact original linear path. Endings are MEI `<ending>` wrapping `<measure>`; `Ctrl+E` is one-measure-at-a-time, context-derived (`toggleEndingAt`). `insertMeasureAt` made robust to ending-wrapped reference measures.
+- **8va** (`src/expressions.ts` octave CRUD): Verovio renders `<octave>` only from `@startid`/`@endid` (an empty group results from `@tstamp` alone, and it **warns** if both are present). So the bracket uses note anchors for rendering and `data-hkl-t0`/`data-hkl-t1` (tick span) for the playback shift — `collectOctaves` reads the latter. Playback shifts coords `q ± 3` per octave (band structure). Per-staff (both voices).
+- **Selection-mode actions exit through `dispatchSelectionMode`**: it now whitelists `Ctrl+8`/`Ctrl+T` to fall through **without** exiting the selection (their handlers read the live beat selection, then exit themselves). Other keys still exit-to-movable first.
+- **Trills/tremolos** (`src/articulations.ts`): `<trill>` is a `@startid` sibling (same shape as fermata; prune extended). Selection-mode `toggleTrillOrTremoloOnSelection` requires exactly two equal-duration, undotted, non-tuplet slots combining to a single notehead; diatonic step → collapse to one combined-duration note + trill, else wrap the pair in `<fTrem beams=3>`. Render-only (playback TODO).
+- **Page break / section header break mode** (`src/render/render.ts`): section/system breaks (`<sb>`, no `<pb>`) render with `breaks:'smart'` + `breaksSmartSb:0` — honors every forced `<sb>` AND auto-wraps overflow. Page-break docs (`<pb>`) need `'encoded'`, so `layoutBreaks()` does a two-pass (smart layout → bake natural `<sb>` → encoded) so pages split AND content still wraps. (See decisions.md — supersedes the earlier "encoded, no auto-wrap" tradeoff.) Trill rebound Ctrl+T → **Ctrl+R** (Firefox reserves Ctrl+T).
+- **Section headers** (`src/main.ts` `injectSectionHeaders`): Verovio has no native centered mid-score title, so it's custom post-render injection — find the section's rendered `g.system`, translate it + every later system down by `SECTION_HEADER_RESERVE`, grow the page, and inject a page-centered `<text>` in the freed band. Model `setSectionHeaderAt` tags the measure (`data-hkl-section-title`), forces an `<sb>`, sets the prior measure's final barline, and resets numbering (`renumberMeasures` is now section-aware, restarting at each header). `Ctrl+Shift+H` modal.
+
+**Test-harness note:** Phase 3 added no new cursor layer, so `cursor-trace.mjs` needed no change. Two recurring fixture gotchas surfaced: `duration` is the MEI `@dur` (`'4'`=quarter), **not** the keyboard digit (`'5'`); and `const c`/`let c` in fixture `setup` collides with the injected global `c` (cursor) — use `cc`.

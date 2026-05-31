@@ -1789,6 +1789,233 @@ const SLURS = {
 /* ── Phase 1 items: barlines, hide rest, paren caut, articulations, etc. ── */
 
 const PHASE1 = {
+  /* ── Phase 3.1: repeats + endings ────────────────────────────────────── */
+
+  /* `}` sets @right="rptend" (backward repeat) on the current measure. */
+  phase3_repeat_end_toggle: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setCursor(2, 1);
+      m.appendMeasure();
+    `,
+    setupKeys: [{ key: '}' }],
+    visualBaseline: 'phase3_repeat_end',
+  },
+
+  /* `{` sets @left="rptstart" (forward repeat) on the current measure. */
+  phase3_repeat_start_toggle: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setCursor(2, 1);
+      m.appendMeasure();
+    `,
+    setupKeys: [{ key: '{' }],
+    visualBaseline: 'phase3_repeat_start',
+  },
+
+  /* A 2-measure span wrapped in rptstart…rptend replays once: every note
+     sounds twice, the repeat pass offset by one full cycle (2 bars). */
+  phase3_repeat_replays_span: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.insertMeasureAt(1);
+      const c2 = m.getMeasureStartCursor(1, 1);
+      m.setCursor(c2, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 1, pname: 'e', accid: '', oct: 5, midi: 76, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.toggleRepeatStartAt(0);
+      m.toggleRepeatEndAt(1);
+    `,
+    visualBaseline: 'phase3_repeat_span',
+  },
+
+  /* 1st/2nd endings: m1 rptstart, m2 is the 1st ending carrying the backward
+     repeat, m3 is the 2nd ending. Play order = m1, m2, m1, m3. */
+  phase3_volta_1st_2nd: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.insertMeasureAt(1);
+      let cc = m.getMeasureStartCursor(1, 1); m.setCursor(cc, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 1, pname: 'e', accid: '', oct: 5, midi: 76, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.insertMeasureAt(2);
+      cc = m.getMeasureStartCursor(1, 2); m.setCursor(cc, 1);
+      m.insertChordAtCursor({ notes: [{ q: 1, r: 0, pname: 'c', accid: 's', oct: 5, midi: 73, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.toggleRepeatStartAt(0);
+      m.toggleRepeatEndAt(1);
+      m.toggleEndingAt(1);  /* m2 → 1st ending (it carries rptend) */
+      m.toggleEndingAt(2);  /* m3 → 2nd ending (after the rptend measure) */
+    `,
+    visualBaseline: 'phase3_volta',
+  },
+
+  /* Ctrl+E on a measure that carries a backward repeat creates a 1st ending. */
+  phase3_ending_first_via_ctrlE: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.appendMeasure();
+      m.toggleRepeatEndAt(0);
+      m.setCursor(0, 1);
+    `,
+    setupKeys: [{ key: 'e', ctrl: true }],
+  },
+
+  /* ── Phase 3.3: 8va ──────────────────────────────────────────────────── */
+
+  /* Beat-select two notes, Ctrl+8 → an <octave dis=8 place=above> anchored to
+     them; playback shifts both notes up an octave (q + 3). */
+  phase3_8va_shifts_pitch: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 1, pname: 'e', accid: '', oct: 5, midi: 76, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(0, 1);
+    `,
+    setupKeys: [
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      { key: '8', ctrl: true },
+    ],
+    visualBaseline: 'phase3_8va',
+  },
+
+  /* ── Phase 3.2b: section headers ──────────────────────────────────────── */
+
+  /* Ctrl+Shift+H on m2 → centered movement title that starts a new system
+     (forced <sb>), final barline on m1, measure-number reset. Modal flow is
+     driven inline so it's closed before invariants run. */
+  phase3_section_header: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '1', dots: 0 });
+      m.appendMeasure();
+      const cc = m.getMeasureStartCursor(1, 1); m.setCursor(cc, 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'H', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      dlg.querySelector('[data-field="title"]').value = 'II. Andante';
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+    `,
+    visualBaseline: 'phase3_section_header',
+  },
+
+  /* ── Phase 3.2a: page break ──────────────────────────────────────────── */
+
+  /* Ctrl+B before m2 inserts a <pb>; page view splits onto a second page. */
+  phase3_pagebreak: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.appendMeasure();
+      const cc = m.getMeasureStartCursor(1, 1); m.setCursor(cc, 1);
+    `,
+    setupKeys: [{ key: 'b', ctrl: true }],
+  },
+
+  /* The cursor overlay must span EVERY page, not just the first — else a
+     cursor on page 2 (after a page break) draws outside the overlay and
+     vanishes. Assert the overlay extends past page 1's bottom. */
+  phase3_cursor_across_pagebreak: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.appendMeasure();
+      const cc = m.getMeasureStartCursor(1, 1); m.setCursor(cc, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+    `,
+    setupKeys: [{ key: 'b', ctrl: true }],
+  },
+
+  /* A section header forces a new system AND the section must still auto-wrap
+     across many measures (not cram onto one line). 16 measures after the
+     header → several systems. */
+  phase3_section_overflow_wraps: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '1', dots: 0 });
+      for (let i = 0; i < 16; i++) m.appendMeasure();
+      for (let mi = 1; mi <= 16; mi++) { const cc = m.getMeasureStartCursor(1, mi); m.setCursor(cc, 1); for (let k = 0; k < 4; k++) m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'c', accid: '', oct: 4, midi: 60, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 }); }
+      m.setSectionHeaderAt(1, 'II');
+    `,
+  },
+
+  /* Same overflow guarantee for page breaks: the second page must wrap its
+     measures into multiple systems, not one. */
+  phase3_pagebreak_overflow_wraps: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '1', dots: 0 });
+      for (let i = 0; i < 16; i++) m.appendMeasure();
+      for (let mi = 1; mi <= 16; mi++) { const cc = m.getMeasureStartCursor(1, mi); m.setCursor(cc, 1); for (let k = 0; k < 4; k++) m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'c', accid: '', oct: 4, midi: 60, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 }); }
+      m.togglePageBreakAt(1);
+    `,
+  },
+
+  /* Inserting a measure adjacent to a section break must NOT lose the section's
+     final barline (it's derived from position). */
+  phase3_ctrlM_keeps_section_bar: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '1', dots: 0 });
+      m.appendMeasure();
+      const cc = m.getMeasureStartCursor(1, 1); m.setCursor(cc, 1);
+      m.insertChordAtCursor({ notes: [{ q: 1, r: 0, pname: 'c', accid: 's', oct: 5, midi: 73, colorHex: '#888', velocity: 80 }], duration: '1', dots: 0 });
+      m.setSectionHeaderAt(1, 'II');
+      m.setCursor(m.getMeasureStartCursor(1, 0), 1);
+    `,
+    setupKeys: [{ key: 'm', ctrl: true }],
+  },
+
+  /* ── Phase 3.4: trills + tremolos ────────────────────────────────────── */
+
+  /* Voice mode: Ctrl+T toggles a <trill> on the current note (cursor parked
+     past the note → INS anchor resolves to it). */
+  phase3_trill_voice: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+    `,
+    setupKeys: [{ key: 'r', ctrl: true }],
+    visualBaseline: 'phase3_trill_voice',
+  },
+
+  /* Selection of two notes a third apart (non-diatonic) → two-note tremolo
+     (<fTrem beams=3>). */
+  phase3_tremolo_select: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'c', accid: '', oct: 5, midi: 72, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [{ q: 1, r: 0, pname: 'e', accid: '', oct: 5, midi: 76, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(0, 1);
+    `,
+    setupKeys: [
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      { key: 'r', ctrl: true },
+    ],
+    visualBaseline: 'phase3_tremolo',
+  },
+
+  /* Selection of two notes a diatonic step apart → collapse to one
+     combined-duration note + <trill>. */
+  phase3_trill_select_step: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'c', accid: '', oct: 5, midi: 72, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [{ q: 3, r: -1, pname: 'd', accid: '', oct: 5, midi: 74, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(0, 1);
+    `,
+    setupKeys: [
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      { key: 'r', ctrl: true },
+    ],
+    visualBaseline: 'phase3_trill_select',
+  },
+
   /* `]` toggles @right="dbl" on the cursor's current measure. */
   phase1_dblbar_toggle_on_m1_of_2: {
     setup: `
@@ -4825,6 +5052,233 @@ export const FIXTURE_ASSERTIONS = {
       expr: `(() => {
         const dlg = document.getElementById('helpDialog');
         return { ok: !!dlg && !dlg.open, detail: 'open=' + (dlg && dlg.open) };
+      })()` },
+  ],
+
+  /* ── Phase 3.1: repeats + endings ────────────────────────────────────── */
+  phase3_repeat_end_toggle: [
+    { name: 'M_1 has @right="rptend"',
+      expr: `(() => {
+        const ms = window.__hkl_composer.model.allMeasures();
+        const r = ms[0].getAttribute('right');
+        return r === 'rptend' ? { ok: true } : { ok: false, detail: 'm1.right=' + r };
+      })()` },
+  ],
+  phase3_repeat_start_toggle: [
+    { name: 'M_1 has @left="rptstart"',
+      expr: `(() => {
+        const ms = window.__hkl_composer.model.allMeasures();
+        const l = ms[0].getAttribute('left');
+        return l === 'rptstart' ? { ok: true } : { ok: false, detail: 'm1.left=' + l };
+      })()` },
+  ],
+  phase3_repeat_replays_span: [
+    { name: 'each note sounds twice; repeat pass offset by one 2-bar cycle (4000ms)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const evs = window.__hkl_composer.buildPlayback(m).filter(e => e.notes.length > 0);
+        if (evs.length !== 4) return { ok: false, detail: 'noteEvents=' + evs.length };
+        const at = evs.map(e => Math.round(e.atMs));
+        const ok = at[0] === 0 && at[1] === 2000 && at[2] === 4000 && at[3] === 6000
+          && evs[0].meiId === evs[2].meiId && evs[1].meiId === evs[3].meiId;
+        return ok ? { ok: true } : { ok: false, detail: 'atMs=' + at.join(',') + ' ids=' + evs.map(e=>e.meiId).join(',') };
+      })()` },
+  ],
+  phase3_volta_1st_2nd: [
+    { name: 'm2 in <ending n=1>, m3 in <ending n=2>',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const ms = m.allMeasures();
+        const e2 = ms[1].closest('ending')?.getAttribute('n');
+        const e3 = ms[2].closest('ending')?.getAttribute('n');
+        return (e2 === '1' && e3 === '2') ? { ok: true } : { ok: false, detail: 'e2=' + e2 + ' e3=' + e3 };
+      })()` },
+    { name: 'play order m1,m2,m1,m3 (1st ending skipped on repeat pass)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const evs = window.__hkl_composer.buildPlayback(m).filter(e => e.notes.length > 0);
+        const qs = evs.map(e => e.notes[0].q + '/' + e.notes[0].r);
+        // m1=0/0, m2=0/1, m3=1/0  → expect 0/0, 0/1, 0/0, 1/0
+        const want = ['0/0', '0/1', '0/0', '1/0'].join(',');
+        return qs.join(',') === want ? { ok: true } : { ok: false, detail: 'order=' + qs.join(',') };
+      })()` },
+  ],
+  phase3_ending_first_via_ctrlE: [
+    { name: 'Ctrl+E on the rptend measure wraps it in <ending n=1>',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const ms = m.allMeasures();
+        const n = ms[0].closest('ending')?.getAttribute('n');
+        return n === '1' ? { ok: true } : { ok: false, detail: 'ending.n=' + n };
+      })()` },
+  ],
+
+  /* ── Phase 3.3: 8va ──────────────────────────────────────────────────── */
+  phase3_8va_shifts_pitch: [
+    { name: '<octave dis=8 dis.place=above staff=1> with note anchors',
+      expr: `(() => {
+        const oct = window.__hkl_composer.model.getDoc().querySelector('octave');
+        if (!oct) return { ok: false, detail: 'no <octave>' };
+        const ok = oct.getAttribute('dis') === '8'
+          && oct.getAttribute('dis.place') === 'above'
+          && oct.getAttribute('staff') === '1'
+          && !!oct.getAttribute('startid') && !!oct.getAttribute('endid');
+        return ok ? { ok: true } : { ok: false, detail: oct.outerHTML };
+      })()` },
+    { name: 'both spanned notes sound an octave up (q + 3)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const evs = window.__hkl_composer.buildPlayback(m).filter(e => e.notes.length > 0);
+        const qs = evs.map(e => e.notes[0].q);
+        return (qs.length === 2 && qs[0] === 3 && qs[1] === 3)
+          ? { ok: true } : { ok: false, detail: 'q=' + qs.join(',') };
+      })()` },
+    { name: 'ottava bracket actually renders (non-empty g.octave)',
+      expr: `(() => {
+        const g = document.querySelector('#score g.octave');
+        if (!g) return { ok: false, detail: 'no g.octave' };
+        const bb = g.getBBox();
+        return bb.width > 1 ? { ok: true } : { ok: false, detail: 'empty bracket w=' + bb.width };
+      })()` },
+  ],
+
+  /* ── Phase 3.2b: section headers ──────────────────────────────────────── */
+  phase3_section_header: [
+    { name: 'm2 tagged + forced <sb>, m1 final bar, m2 renumbered to 1',
+      expr: `(() => {
+        const ms = window.__hkl_composer.model.allMeasures();
+        const title = ms[1].getAttribute('data-hkl-section-title');
+        const sb = window.__hkl_composer.model.getDoc().querySelector('sb[data-hkl-section]');
+        const m1bar = ms[0].getAttribute('right');
+        const m2n = ms[1].getAttribute('n');
+        if (title !== 'II. Andante') return { ok: false, detail: 'title=' + title };
+        if (!sb) return { ok: false, detail: 'no <sb>' };
+        if (m1bar !== 'end') return { ok: false, detail: 'm1 bar=' + m1bar };
+        return m2n === '1' ? { ok: true } : { ok: false, detail: 'm2 n=' + m2n };
+      })()` },
+    { name: 'centered title text injected into the rendered SVG',
+      expr: `(() => {
+        const t = document.querySelector('#score text.hkl-section-header');
+        return (t && t.textContent === 'II. Andante' && t.getAttribute('text-anchor') === 'middle')
+          ? { ok: true } : { ok: false, detail: t ? t.outerHTML.slice(0,80) : 'no header text' };
+      })()` },
+  ],
+
+  /* ── Phase 3.2a: page break ──────────────────────────────────────────── */
+  phase3_pagebreak: [
+    { name: '<pb> inserted before m2 and page view splits to 2 pages',
+      expr: `(() => {
+        const h = window.__hkl_composer;
+        const pb = h.model.getDoc().querySelector('pb');
+        if (!pb) return { ok: false, detail: 'no <pb>' };
+        const pages = h.renderer.tk.getPageCount();
+        return pages === 2 ? { ok: true } : { ok: false, detail: 'pageCount=' + pages };
+      })()` },
+  ],
+  phase3_section_overflow_wraps: [
+    { name: 'section wraps to multiple systems; header still starts its system',
+      expr: `(() => {
+        const h = window.__hkl_composer;
+        const systems = document.querySelectorAll('#score g.system').length;
+        if (systems < 3) return { ok: false, detail: 'systems=' + systems };
+        const id = h.model.allMeasures()[1].getAttribute('xml:id');
+        const el = document.getElementById(id);
+        const starts = el?.closest('g.system')?.querySelector('g.measure')?.id === id;
+        return starts ? { ok: true } : { ok: false, detail: 'section measure not at system start' };
+      })()` },
+  ],
+  phase3_pagebreak_overflow_wraps: [
+    { name: 'two pages, and content wraps to multiple systems (not one line)',
+      expr: `(() => {
+        const h = window.__hkl_composer;
+        const pages = document.querySelectorAll('#score .score-page').length;
+        const systems = document.querySelectorAll('#score g.system').length;
+        if (pages !== 2) return { ok: false, detail: 'pages=' + pages };
+        return systems >= 3 ? { ok: true } : { ok: false, detail: 'systems=' + systems };
+      })()` },
+  ],
+  phase3_ctrlM_keeps_section_bar: [
+    { name: 'after Ctrl+M the measure before the section still has @right="end"',
+      expr: `(() => {
+        const ms = window.__hkl_composer.model.allMeasures();
+        const secIdx = ms.findIndex(x => x.getAttribute('data-hkl-section-title'));
+        if (secIdx <= 0) return { ok: false, detail: 'no section / at index ' + secIdx };
+        const before = ms[secIdx - 1].getAttribute('right');
+        return before === 'end' ? { ok: true } : { ok: false, detail: 'bar before section=' + before };
+      })()` },
+  ],
+  phase3_cursor_across_pagebreak: [
+    { name: 'cursor overlay spans past page 1 (covers page 2)',
+      expr: `(() => {
+        const score = document.getElementById('score');
+        const ov = document.getElementById('cursorOverlay');
+        const pages = score.querySelectorAll('.score-page');
+        if (pages.length !== 2) return { ok: false, detail: 'pages=' + pages.length };
+        if (!ov) return { ok: false, detail: 'no overlay' };
+        const sr = score.getBoundingClientRect();
+        const p1 = pages[0].querySelector('svg').getBoundingClientRect();
+        const p1bottom = p1.bottom - sr.top + score.scrollTop;
+        const ovH = parseFloat(ov.getAttribute('height'));
+        return ovH > p1bottom + 1 ? { ok: true } : { ok: false, detail: 'ovH=' + ovH + ' p1bottom=' + p1bottom };
+      })()` },
+  ],
+
+  /* ── Phase 3.4: trills + tremolos ────────────────────────────────────── */
+  phase3_trill_voice: [
+    { name: 'one <trill> anchored to the note; renders',
+      expr: `(() => {
+        const ts = [...window.__hkl_composer.model.getDoc().querySelectorAll('trill')];
+        if (ts.length !== 1) return { ok: false, detail: 'trills=' + ts.length };
+        if (!ts[0].getAttribute('startid')) return { ok: false, detail: 'no startid' };
+        const g = document.querySelector('#score g.trill');
+        return g ? { ok: true } : { ok: false, detail: 'no g.trill rendered' };
+      })()` },
+  ],
+  phase3_tremolo_select: [
+    { name: 'two notes wrapped in <fTrem beams=3>; renders',
+      expr: `(() => {
+        const ft = window.__hkl_composer.model.getDoc().querySelector('fTrem');
+        if (!ft) return { ok: false, detail: 'no <fTrem>' };
+        const notes = ft.querySelectorAll('note').length;
+        if (notes !== 2 || ft.getAttribute('beams') !== '3') return { ok: false, detail: 'notes=' + notes + ' beams=' + ft.getAttribute('beams') };
+        const g = document.querySelector('#score g.fTrem');
+        return (g && g.getBBox().width > 1) ? { ok: true } : { ok: false, detail: 'fTrem not rendered' };
+      })()` },
+    { name: 'playback alternates between the two cells, slurred, over the full (half-note) span',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const evs = window.__hkl_composer.buildPlayback(m).filter(e => e.notes.length > 0);
+        if (evs.length < 4) return { ok: false, detail: 'events=' + evs.length };
+        const qs = evs.map(e => e.notes[0].q);
+        const alternates = qs[0] !== qs[1] && qs[0] === qs[2] && qs[1] === qs[3];
+        const slurred = evs.slice(0, -1).every(e => e.slurredToNext);
+        const span = evs[evs.length - 1].atMs + evs[evs.length - 1].durationMs;
+        if (!alternates) return { ok: false, detail: 'qs=' + qs.join(',') };
+        if (!slurred) return { ok: false, detail: 'not all slurred' };
+        return Math.abs(span - 1000) < 30 ? { ok: true } : { ok: false, detail: 'span=' + Math.round(span) };
+      })()` },
+  ],
+  phase3_trill_select_step: [
+    { name: 'collapsed to one half-note + <trill>; second cell preserved for playback',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const notes = [...doc.querySelectorAll('layer[n="1"] note')];
+        const trills = doc.querySelectorAll('trill').length;
+        const noFtrem = doc.querySelector('fTrem') === null;
+        if (notes.length !== 1) return { ok: false, detail: 'notes=' + notes.length };
+        if (notes[0].getAttribute('dur') !== '2') return { ok: false, detail: 'dur=' + notes[0].getAttribute('dur') };
+        if (notes[0].getAttribute('data-hkl-trill-q') === null) return { ok: false, detail: 'alt cell not preserved' };
+        return (trills === 1 && noFtrem) ? { ok: true } : { ok: false, detail: 'trills=' + trills + ' noFtrem=' + noFtrem };
+      })()` },
+    { name: 'playback alternates between the two preserved cells, slurred',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const evs = window.__hkl_composer.buildPlayback(m).filter(e => e.notes.length > 0);
+        if (evs.length < 4) return { ok: false, detail: 'events=' + evs.length };
+        const cells = evs.map(e => e.notes[0].q + '/' + e.notes[0].r);
+        const alternates = cells[0] !== cells[1] && cells[0] === cells[2] && cells[1] === cells[3];
+        const slurred = evs.slice(0, -1).every(e => e.slurredToNext);
+        return (alternates && slurred) ? { ok: true } : { ok: false, detail: 'cells=' + cells.slice(0, 4).join(',') + ' slurred=' + slurred };
       })()` },
   ],
 
