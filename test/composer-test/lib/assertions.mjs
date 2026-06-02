@@ -168,12 +168,14 @@ export const ASSERTION_LIB = `
       }
       return t;
     };
-    const mTicks = m().measureTicks();
     const measures = m().allMeasures();
     const fails = [];
     for (let mi = 0; mi < measures.length; mi++) {
+      /* Per-measure budget (mid-piece meter changes give each measure its own
+         ticks-per-measure; measureTicksForLayer resolves the layer's measure). */
       const layers = measures[mi].querySelectorAll('layer');
       for (const layer of layers) {
+        const mTicks = m().measureTicksForLayer(layer);
         const t = layerTicks(layer);
         if (Math.abs(t - mTicks) > 0.001) {
           fails.push('measure ' + mi + ' staff/layer n=' +

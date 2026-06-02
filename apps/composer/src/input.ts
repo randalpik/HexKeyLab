@@ -19,6 +19,8 @@ import {
 } from './expressions.js';
 import { openTextEntryModal } from './ui/textEntryModal.js';
 import { openTempoModal } from './tempoDialog.js';
+import { openSignatureModal } from './sigDialog.js';
+import { openClefModal } from './clefDialog.js';
 import { addSlur, removeSlur, collectSlurs } from './slurs.js';
 import { togglePedal, pedalMoments, removePedalsAt, type PedalDir } from './pedal.js';
 import { beamGroupForElement } from './notation/beams.js';
@@ -1646,12 +1648,12 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
          (no measure exists there to push). Mid-measure cursors never
          qualify; Ctrl+M inserts AFTER the current measure. */
       const measureCount = model.allMeasures().length;
-      const measureTicks = model.measureTicks();
       const tickPos = model.getTickPositionAt(v, cur);
-      const onBoundaryTick = measureTicks > 0
-        && (tickPos % measureTicks) === 0
-        && tickPos < measureCount * measureTicks;
-      const beforeIdx = onBoundaryTick ? Math.round(tickPos / measureTicks) : curMIdx + 1;
+      const miAtTick = model.measureIdxAtTick(tickPos);
+      const totalTicks = model.measureStartTick(measureCount);
+      const onBoundaryTick = Math.abs(model.measureStartTick(miAtTick) - tickPos) < 1e-6
+        && tickPos < totalTicks;
+      const beforeIdx = onBoundaryTick ? miAtTick : curMIdx + 1;
       withHistory('insert-measure', () => {
         model.insertMeasureAt(beforeIdx);
         const newStart = model.getMeasureStartCursor(v, beforeIdx);
@@ -1708,11 +1710,10 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       if (hooks.isPlaybackActive()) return;
       const doc = model.getDoc();
       const { unit } = model.getTimeSig();
-      const measureT = model.measureTicks();
       const ticksPerBeat = 64 / unit;
       const tickToMoment = (absTick: number): Moment => {
-        const measureIdx = Math.floor(absTick / measureT);
-        const inMeasure = absTick - measureIdx * measureT;
+        const measureIdx = model.measureIdxAtTick(absTick);
+        const inMeasure = absTick - model.measureStartTick(measureIdx);
         return { measureIdx, tstamp: 1 + inMeasure / ticksPerBeat };
       };
       let voice: Voice;
@@ -1869,6 +1870,43 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
           hooks.onChange();
           hooks.onStateChange();
         },
+      });
+      return;
+    }
+
+    /* Ctrl+Shift+S: time/key-signature modal anchored to the cursor's measure.
+       (Phase 4.1: writes the global score-head signature, like Setup; Phase 4.2
+       makes it per-measure.) */
+    if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && (e.key === 's' || e.key === 'S')) {
+      e.preventDefault();
+      if (hooks.isPlaybackActive()) return;
+      const mi = Math.max(0, model.cursorMeasureIdx(undefined, state.mode));
+      openSignatureModal(model, mi, {
+        history: hooks.history,
+        onApply: () => {
+          hooks.setStatus?.('Signature updated.', 'action');
+          hooks.onChange();
+          hooks.onStateChange();
+        },
+      });
+      return;
+    }
+
+    /* Ctrl+Shift+C: clef modal — a mid-measure inline clef change for the
+       cursor's staff. preventDefault — Firefox uses Ctrl+Shift+C for the
+       inspector element-picker. Voice mode only (anchors on a layer position). */
+    if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && (e.key === 'c' || e.key === 'C')) {
+      e.preventDefault();
+      if (hooks.isPlaybackActive()) return;
+      if (state.cursorMode !== 'voice') { hooks.setStatus?.('Clef change requires voice mode.', 'error'); return; }
+      openClefModal(model, {
+        history: hooks.history,
+        onApply: () => {
+          hooks.setStatus?.('Clef changed.', 'action');
+          hooks.onChange();
+          hooks.onStateChange();
+        },
+        onError: (msg) => hooks.setStatus?.(msg, 'error'),
       });
       return;
     }

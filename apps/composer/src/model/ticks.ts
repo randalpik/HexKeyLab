@@ -78,6 +78,9 @@ export function realTicks(el: Element): number {
      tick line. Returning 0 (instead of falling through to writtenTicks's
      16-tick fallback) keeps `getTimeAt` honest across cursor positions. */
   if (ln === 'measure') return 0;
+  /* An inline <clef> (mid-measure clef change) is a zero-duration layer child —
+     like <measure>, it must not hit writtenTicks's 16-tick fallback. */
+  if (ln === 'clef') return 0;
   if (ln === 'tuplet') {
     const { num, numbase } = tupletRatio(el);
     let totalWritten = 0;

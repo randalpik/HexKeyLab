@@ -1092,12 +1092,26 @@ app-module node unit test works ONLY if that module's imports are all type-only 
 runtime) — `bins.ts` is node-testable, `gates.ts` (real runtime `../analysis/shim.js` import) is
 not, and must be exercised in-browser (via a `window.__hklo.*` hook through the CDP smoke).
 
-**`refineFundamentalPeriod` is blind to octave-UP errors.** Its autocorrelation searches near the
-*hint* lag, and a tone an octave (or any integer multiple) up is also periodic at that lag (it
-spans 2+ true cycles), so it confirms the wrong pitch as a match. The pitch gate adds a
-half-period normalized-autocorrelation guard: if `r(expectedLag/2)` is also strong (≥0.85), the
-true fundamental is an octave up → flag `pitch`. Non-harmonic intervals (tritone, fifth) don't
-align at the hint lag and are already caught by the null/drift check.
+**Don't pitch-detect to set a sample's frequency when you already know it — trust the claimed
+pitch.** When the source plays a commanded MIDI note, the target frequency is *given* (MIDI→12-TET).
+Period-detection then only *adds* error: on piano it reads systematically **sharp** (string
+inharmonicity pulls the autocorrelation toward the stretched upper partials — a real, register-
+dependent bias, ~16 ¢ in practice) and scatters at low SNR (±30 ¢), both worse than a digital
+instrument's own equal-temperament accuracy. So `buildHki` stores the claimed freq, not the detected
+one (mirrors the analyzer's `trustLabeledPitch`, default-on for local sources). Corollary: an octave
+guard is a dead end — autocorrelation can't tell a weak-fundamental high note from a real octave-up
+(both have energy at 2F, little at F), so any guard (absolute or `rHalf` vs `rFull` ratio) false-
+fails real high notes. Two attempts proved it; we removed octave detection entirely (the device plays
+the note we send, so the octave is given). The cents reading is kept as a display-only sanity number.
+
+**Capture/level gates must be SNR / noise-floor relative, not absolute dBFS.** A real input chain is
+padded (e.g. a cable's lo switch keeps loud notes from clipping the ADC, parking everything ~15–20 dB
+low) and every sample is later normalized — so absolute thresholds (peak < −24 dBFS = "quiet",
+< −60 dBFS = "stop") mis-fire: good padded samples read as silent/quiet, and tails never reach a
+fixed floor. Measure the noise floor from each capture's pre-attack pre-roll and judge in SNR (which
+survives normalization): quiet = SNR < 12 dB, stop = within ~1 dB of the floor, audible length =
+time above floor+margin. The scaffold's absolute thresholds (tuned against a clean full-level
+loopback) all had to be reworked the first time real padded audio hit them.
 
 **Sparse pure-sine spectra make normalized band fingerprints jitter.** A few-harmonic synth tone
 puts almost all energy in a handful of FFT bins; tiny capture/onset differences migrate a partial
@@ -1110,3 +1124,51 @@ Test fixtures (the loopback) should also use a dense `1/nᵏ` harmonic series, n
 capture (the first capture of a cold `AudioContext` can be near-silent) and (b) gap longer than the
 instrument's ring-out (every probe but the first otherwise captures its predecessor's decay tail;
 the unpolluted first probe then reads as a false low-end boundary). `runSweep` does both.
+
+### Capturing a hardware instrument's audio — the input chain is the fragile part (2026-05-31)
+
+When HKLO "won't see the input," the bug is almost always the analog/USB input device, not the code.
+Hard-won facts from sampling a Korg into a Framework laptop:
+
+**A combo headset jack is not a line input, and its capture is conditional + fragile.** Max's
+Framework **Audio Expansion Card** exposes its (mono, mic-level) capture endpoint *only* when its
+jack-detect senses a mic/headset plug; it failed three distinct ways across one project: (1) the input
+never enumerated with the wrong cable; (2) after a USB event it silently flipped to an *output-only*
+profile (`pactl` Active Profile `output:analog-stereo`, all profiles `sources: 0`); (3) after a
+suspend/resume it dropped the capture **USB interface entirely** (`/proc/asound/cardN/stream0` showed
+`Playback:` only, no `Capture:`; the USB descriptor had a Headphones output terminal and no input
+terminal). No PipeWire/profile/`pactl set-card-profile` action can route a capture endpoint the device
+isn't presenting.
+
+**Diagnose top-down to localize OS-vs-firmware:** `arecord -l` (is there a capture device at all?) →
+`pactl list cards` (active profile + `sources:` count + port availability) → USB descriptor
+(`lsusb -v`) / `/proc/asound/cardN/stream*` (Playback vs Capture endpoints). If the capture endpoint is
+absent at the `/proc/asound` / descriptor level, it's a device/firmware decision — stop poking PipeWire.
+
+**Recovery that actually worked:** a full **reboot + reseat the cable into the jack while the source is
+sounding**. Software re-enumeration (`echo 0/1 > .../authorized`, `usbreset`, driver unbind/rebind) and
+even a physical *card* reinsert were NOT enough on their own — the jack-detect needs to fire at
+enumeration with a signal present on the mic contact. (A cold reinsert that *fails* tells you it's the
+detection conditions/contact, not a stuck state a reset clears.)
+
+**Gain staging:** the source's hot output overloads a mic-style ADC; pad it (the cable's lo switch) so
+the loudest layer peaks near −3 dBFS without clipping — that's also the best SNR point since the noise
+floor is fixed. `tools/audio-noise-scan.mjs <wav>` reports RMS/peak/clipping + tonal-vs-broadband noise
+(uses the discovery FFT) for dialing this and identifying hum/whine.
+
+**The durable fix:** a dedicated class-compliant **USB line-in interface** presents a fixed stereo
+capture endpoint that survives suspend/resume and doesn't depend on jack-detect. The combo-jack path
+*can* work (Max shipped a Korg `.hki` from it) but is high-maintenance; everything downstream of a
+stable capture device "just works."
+
+## Composer: mid-measure clef vs the leading-signature region (cursor anchor)
+
+`renderer.findSigEndXForStaff` (render/render.ts) finds the right edge of a measure's **leading**
+clef/key/meter signatures so the start-of-measure cursor (`anchorAtMeasureLeft` in cursor/cursor.ts)
+sits just past them. It collected ALL `g.clef`/`g.keySig`/`g.meterSig` within the staff's bbox and
+took the rightmost — which, once mid-measure clef changes (Phase 4.3 inline `<clef>`) exist, wrongly
+included a clef change and dragged the cursor-0 anchor rightward past it. **Fix:** only count sig
+groups left of the staff's first notehead (`g.note`/`g.chord`/`g.rest`) — the leading region is, by
+definition, everything before the first note. A clef change sits after notes, so it's excluded; a
+measure that legitimately *starts* with a sig change (mid-score key/meter, or a start-of-measure
+clef) is still left of the first note, so it's kept. Fixture: `phase4_clef_cursor_start`.

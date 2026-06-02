@@ -63,18 +63,17 @@ export function beatBoundariesInVoice(model: ComposerModel, voice: Voice): numbe
   const flat = model.flatChildren(voice);
   const ts = readTimeSig(model.getDoc());
   const bt = beatTicks(ts);
-  const measureT = model.measureTicks();
   const candidates: Array<{ c: number; t: number }> = [];
   for (let c = 0; c <= flat.length; c++) {
     let t: number;
     if (c === flat.length) {
-      t = model.allMeasures().length * measureT;
+      t = model.measureStartTick(model.allMeasures().length);
     } else {
       const info = model.getFlatStopInfo(voice, c);
       if (!info) continue;
       if (info.inTuplet) continue;
       t = model.getTickPositionAt(voice, c);
-      const inMeas = ((t % measureT) + measureT) % measureT;
+      const inMeas = t - model.measureStartTick(model.measureIdxAtTick(t));
       const rem = inMeas % bt;
       if (!(rem < TICK_EPS || bt - rem < TICK_EPS)) continue;
     }

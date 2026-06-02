@@ -279,6 +279,14 @@ export const KEYBINDINGS: KeySection[] = [
         desc: "Section header (movement title) on the current measure: a centered title that starts a new system, displacing it, with a final barline on the prior measure and measure numbers reset. Submit empty to remove.",
         note: "Not available on the first measure (that's the title block).",
       },
+      {
+        keys: "Ctrl+Shift+S",
+        desc: "Time / key signature, anchored to the cursor's measure. Key picker (major + relative minor) + beats / beat-unit. Setup's controls open the same signature at measure 1.",
+      },
+      {
+        keys: "Ctrl+Shift+C",
+        desc: "Clef change for the cursor's staff at the cursor position (mid-measure allowed). Treble / bass / alto / tenor / octave (treble±8, bass −8). Re-open at the same spot to edit.",
+      },
     ],
   },
   {

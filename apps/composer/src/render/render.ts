@@ -297,6 +297,20 @@ class Renderer {
        (vertically AND horizontally — bass staves on different measures
        share the same y range, so a vertical-only filter would pull in
        sigs from the wrong measure). */
+    /* Leftmost notehead/rest in THIS staff — the leading-signature region is
+       everything to its left. A mid-measure clef change renders as a g.clef
+       too, but it sits AFTER some notes; without this bound it would be picked
+       up and the measure-left cursor anchor would jump past it (see lessons.md
+       "mid-measure clef vs sig-end"). */
+    let firstContentLeft = Infinity;
+    for (const n of Array.from(this.container.querySelectorAll('g.note, g.chord, g.rest'))) {
+      const r = (n as Element).getBoundingClientRect();
+      const cy = (r.top + r.bottom) / 2;
+      const cx = (r.left + r.right) / 2;
+      if (cy < staffRect.top || cy > staffRect.bottom) continue;
+      if (cx < staffRect.left || cx > staffRect.right) continue;
+      if (r.left < firstContentLeft) firstContentLeft = r.left;
+    }
     const candidates = Array.from(
       this.container.querySelectorAll('g.clef, g.keySig, g.meterSig')
     );
@@ -307,6 +321,9 @@ class Renderer {
       const cx = (r.left + r.right) / 2;
       if (cy < staffRect.top || cy > staffRect.bottom) continue;
       if (cx < staffRect.left || cx > staffRect.right) continue;
+      /* Only the LEADING sig group (left of the first notehead), so a
+         mid-measure clef change doesn't drag the anchor rightward. */
+      if (r.left >= firstContentLeft) continue;
       if (r.right > rightmost) rightmost = r.right;
     }
     if (rightmost === -Infinity) return null;

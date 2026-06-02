@@ -91,12 +91,41 @@ export function readMeter(doc: Document): { count: number; unit: number } {
   return { count: isFinite(count) ? count : 4, unit: isFinite(unit) ? unit : 4 };
 }
 
-/** Absolute 64th-note tick offset for a Moment, assuming uniform meter. */
+/** Cumulative start tick of measure `measureIdx` and the beat unit in effect
+ *  there — walking in-section `<scoreDef>` meter overrides (mid-piece meter
+ *  changes), seeded by the head meter. Doc-local (no model), mirroring the
+ *  per-measure key walk in computeAccidentalDisplay. Out-of-range indices
+ *  extrapolate past the last measure with the last-known meter. */
+function measureTickInfo(doc: Document, measureIdx: number): { startTick: number; ticksPerBeat: number } {
+  const head = readMeter(doc);
+  let count = head.count;
+  let unit = head.unit;
+  const section = doc.querySelector('section');
+  const nodes = section
+    ? Array.from(section.querySelectorAll('scoreDef, measure'))
+    : Array.from(doc.querySelectorAll('measure'));
+  let tick = 0;
+  let mi = 0;
+  for (const node of nodes) {
+    if (node.localName === 'scoreDef') {
+      const c = node.getAttribute('meter.count');
+      const u = node.getAttribute('meter.unit');
+      if (c) count = parseInt(c, 10);
+      if (u) unit = parseInt(u, 10);
+    } else {
+      if (mi === measureIdx) return { startTick: tick, ticksPerBeat: 64 / unit };
+      tick += count * (64 / unit);
+      mi++;
+    }
+  }
+  return { startTick: tick, ticksPerBeat: 64 / unit };
+}
+
+/** Absolute 64th-note tick offset for a Moment. Per-measure-meter aware: the
+ *  measure's cumulative start plus `(tstamp-1)` beats of THAT measure's meter. */
 export function absoluteTickForMoment(doc: Document, m: Moment): number {
-  const { count, unit } = readMeter(doc);
-  const ticksPerMeasure = count * (64 / unit);
-  const ticksPerBeat = 64 / unit;
-  return m.measureIdx * ticksPerMeasure + (m.tstamp - 1) * ticksPerBeat;
+  const { startTick, ticksPerBeat } = measureTickInfo(doc, m.measureIdx);
+  return startTick + (m.tstamp - 1) * ticksPerBeat;
 }
 
 /* ── element CRUD ────────────────────────────────────────────────────────── */

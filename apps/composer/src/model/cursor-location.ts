@@ -52,7 +52,7 @@ export function flatChildren(model: ComposerModel, voice: Voice): Element[] {
 export function layerIsFull(model: ComposerModel, layer: Element): boolean {
   let total = 0;
   for (const c of model.contentChildren(layer)) total += realTicks(c);
-  return total >= model.measureTicks();
+  return total >= model.measureTicksForLayer(layer);
 }
 
 /** Wrapper emission decision per measure. See flatChildren rules above. */

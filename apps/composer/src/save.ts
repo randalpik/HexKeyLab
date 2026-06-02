@@ -296,21 +296,66 @@ function contentChildren(layer: Element): Element[] {
   return out;
 }
 
+interface ClefSpec { sign: string; line: string; oct: number }
+
+function clefEq(a: ClefSpec, b: ClefSpec): boolean {
+  return a.sign === b.sign && a.line === b.line && a.oct === b.oct;
+}
+
+/** MEI `@clef.dis`/`@clef.dis.place` (or `@dis`/`@dis.place`) → MusicXML
+ *  clef-octave-change (+1/-1 for 8va/8vb, +2/-2 for 15ma/15mb). */
+function disToOct(dis: string | null, place: string | null): number {
+  if (!dis) return 0;
+  const n = parseInt(dis, 10);
+  const steps = n === 15 ? 2 : n === 8 ? 1 : 0;
+  return place === 'below' ? -steps : steps;
+}
+
+/** Opening clef for a staff from the head `<staffDef>` (defaults treble/bass). */
+function headClefForStaff(doc: Document, staffN: number): ClefSpec {
+  const sd = Array.from(doc.querySelectorAll('scoreDef staffDef'))
+    .find((d) => d.getAttribute('n') === String(staffN));
+  return {
+    sign: sd?.getAttribute('clef.shape') ?? (staffN === 1 ? 'G' : 'F'),
+    line: sd?.getAttribute('clef.line') ?? (staffN === 1 ? '2' : '4'),
+    oct: disToOct(sd?.getAttribute('clef.dis') ?? null, sd?.getAttribute('clef.dis.place') ?? null),
+  };
+}
+
+/** The last inline `<clef>` in a staff's layers within a measure, or null. */
+function lastClefInMeasure(measureEl: Element, staffN: number): ClefSpec | null {
+  const staff = Array.from(measureEl.querySelectorAll('staff'))
+    .find((s) => s.getAttribute('n') === String(staffN));
+  if (!staff) return null;
+  const clefs = Array.from(staff.querySelectorAll('layer > clef'));
+  if (clefs.length === 0) return null;
+  const c = clefs[clefs.length - 1];
+  return {
+    sign: c.getAttribute('shape') ?? 'G',
+    line: c.getAttribute('line') ?? '2',
+    oct: disToOct(c.getAttribute('dis'), c.getAttribute('dis.place')),
+  };
+}
+
+function clefXml(number: number, c: ClefSpec): string {
+  let s = `      <clef number="${number}"><sign>${c.sign}</sign><line>${c.line}</line>`;
+  if (c.oct) s += `<clef-octave-change>${c.oct}</clef-octave-change>`;
+  s += `</clef>\n`;
+  return s;
+}
+
 export function exportMusicXml(model: ComposerModel): string {
   const xml = model.serialize();
   const doc = new DOMParser().parseFromString(xml, 'application/xml');
 
   const title = model.getTitle();
   const composer = model.getComposer() || 'HKL Composer';
-  const keySig = model.getKeySig();
-  const fifths = keySigToFifths(keySig);
-  const keyMode = model.getKeyMode();
-  const ts = model.getTimeSig();
   const tempo = model.getTempo();
 
   const divisions = computeDivisions(doc);
   const events = gatherEventsFromDoc(doc, divisions);
   const measureCount = Math.max(1, doc.querySelectorAll('measure').length);
+  const measureEls = Array.from(doc.querySelectorAll('measure'));
 
   /* Group events by (measure, voice). */
   const grouped: Record<number, Record<number, XmlNoteEvent[]>> = {};
@@ -319,22 +364,60 @@ export function exportMusicXml(model: ComposerModel): string {
   }
   for (const ev of events) grouped[ev.measureIdx][ev.voice].push(ev);
 
-  /* Measure-tick budget under current meter. */
-  const measureTicks = ts.count * divisions * 4 / ts.unit;
+  /* Per-staff clef tracking. Best-effort for mid-piece sigs/clefs: meter+key
+     come from the model's per-measure resolvers; a clef change is emitted in
+     the opening <attributes> of the measure it occurs in — a truly mid-measure
+     change is approximated to that measure's start (inline MusicXML clef
+     positioning is not emitted). Untested against external readers. */
+  const curClef: Record<number, ClefSpec> = {
+    1: headClefForStaff(doc, 1),
+    2: headClefForStaff(doc, 2),
+  };
+  let prevKeySig: string | null = null;
+  let prevCount = -1;
+  let prevUnit = -1;
 
   let body = '';
   for (let mi = 0; mi < measureCount; mi++) {
     body += `  <measure number="${mi + 1}">\n`;
 
-    if (mi === 0) {
+    const mMeter = model.meterAt(mi);
+    const mKeySig = model.keySigAt(mi);
+    const mKeyMode = model.keyModeAt(mi);
+    const measureTicks = mMeter.count * divisions * 4 / mMeter.unit;
+
+    /* Clef changes within this measure (per staff), vs the entering clef. */
+    const clefToEmit: Record<number, ClefSpec | null> = { 1: null, 2: null };
+    for (const staffN of [1, 2]) {
+      const cl = lastClefInMeasure(measureEls[mi], staffN);
+      if (cl && !clefEq(cl, curClef[staffN])) {
+        clefToEmit[staffN] = cl;
+        curClef[staffN] = cl;
+      }
+    }
+    const keyChanged = mKeySig !== prevKeySig;
+    const meterChanged = mMeter.count !== prevCount || mMeter.unit !== prevUnit;
+
+    if (mi === 0 || keyChanged || meterChanged || clefToEmit[1] || clefToEmit[2]) {
       body += `    <attributes>\n`;
-      body += `      <divisions>${divisions}</divisions>\n`;
-      body += `      <key><fifths>${fifths}</fifths><mode>${keyMode}</mode></key>\n`;
-      body += `      <time><beats>${ts.count}</beats><beat-type>${ts.unit}</beat-type></time>\n`;
-      body += `      <staves>2</staves>\n`;
-      body += `      <clef number="1"><sign>G</sign><line>2</line></clef>\n`;
-      body += `      <clef number="2"><sign>F</sign><line>4</line></clef>\n`;
+      if (mi === 0) body += `      <divisions>${divisions}</divisions>\n`;
+      if (mi === 0 || keyChanged) body += `      <key><fifths>${keySigToFifths(mKeySig)}</fifths><mode>${mKeyMode}</mode></key>\n`;
+      if (mi === 0 || meterChanged) body += `      <time><beats>${mMeter.count}</beats><beat-type>${mMeter.unit}</beat-type></time>\n`;
+      if (mi === 0) body += `      <staves>2</staves>\n`;
+      if (mi === 0) {
+        body += clefXml(1, curClef[1]);
+        body += clefXml(2, curClef[2]);
+      } else {
+        if (clefToEmit[1]) body += clefXml(1, clefToEmit[1]);
+        if (clefToEmit[2]) body += clefXml(2, clefToEmit[2]);
+      }
       body += `    </attributes>\n`;
+    }
+    prevKeySig = mKeySig;
+    prevCount = mMeter.count;
+    prevUnit = mMeter.unit;
+
+    if (mi === 0) {
       body += `    <sound tempo="${tempo.bpm}"/>\n`;
       const beatUnitName = DURATION_NAME[(String(tempo.unit) as Duration) ?? '4'] ?? 'quarter';
       body += `    <direction placement="above">\n`;

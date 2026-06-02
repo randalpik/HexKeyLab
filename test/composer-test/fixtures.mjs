@@ -2997,6 +2997,187 @@ const PHASE1 = {
       target.dispatchEvent(ev);
     `,
   },
+
+  /* Phase 4 prerequisite: a 2-measure doc with a synthetic in-section
+     <scoreDef> meter override (M1 = 4/4 → 64 ticks, M2 = 3/4 → 48 ticks).
+     No UI writes overrides yet, so the override is injected directly into the
+     live <section> before M2. Validates the per-measure tick table: the
+     universal placeholder invariant must accept M2 filled to 48 (not 64), the
+     roundtrip invariant must preserve the injected <scoreDef> byte-stably, and
+     the MODEL assertion checks measureStartTick / measureTicksAt across the
+     boundary + playback atMs accumulation. */
+  phase4_mixed_meter_prereq: {
+    setup: `
+      /* M1: a note on beat 1 + 3 quarter rests → full 4/4 (64 ticks). */
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      for (let i = 0; i < 3; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      /* M2: a note on beat 1 (created by inserting past the end of full M1). */
+      m.setCursor(m.getVoiceLength(1), 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 1, pname: 'e', accid: '', oct: 5, midi: 76, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      /* Inject an in-section <scoreDef meter.count=3 meter.unit=4> before M2,
+         in the head scoreDef's namespace so the meter-table walk matches it. */
+      const doc = m.getDoc();
+      const section = doc.querySelector('section');
+      const measures = doc.querySelectorAll('measure');
+      const head = doc.querySelector('scoreDef');
+      const sd = doc.createElementNS(head.namespaceURI, 'scoreDef');
+      sd.setAttribute('meter.count', '3');
+      sd.setAttribute('meter.unit', '4');
+      section.insertBefore(sd, measures[1]);
+      m.invalidateMeterCache();
+      m.normalizePlaceholdersAll();
+      m.setBarlines();
+      r();
+    `,
+  },
+
+  /* Phase 4.1: the Ctrl+Shift+S signature modal (UI refactor — still writes the
+     global score-head signature). Drive open → set key + meter → submit, on the
+     empty default doc (no notes → no truncation confirm). */
+  phase4_sig_modal: {
+    setup: `
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'S', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      dlg.querySelector('[data-field="key"]').value = '2s|major';
+      dlg.querySelector('[data-field="count"]').value = '3';
+      dlg.querySelector('[data-field="unit"]').value = '4';
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+    `,
+  },
+
+  /* Phase 4.2: a key-signature change anchored to measure 2 must take effect
+     ONLY from measure 2 forward — measure 1 keeps the head key. Builds a
+     2-measure doc, parks the cursor in M2, opens Ctrl+Shift+S, sets E♭ major. */
+  phase4_keysig_midpiece: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      for (let i = 0; i < 3; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setCursor(m.getVoiceLength(1), 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 1, pname: 'e', accid: '', oct: 5, midi: 76, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      /* Park the cursor at the start of measure 2 (index 1) so Ctrl+Shift+S anchors there. */
+      m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'S', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      dlg.querySelector('[data-field="key"]').value = '3f|major';
+      dlg.querySelector('[data-field="count"]').value = '4';
+      dlg.querySelector('[data-field="unit"]').value = '4';
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+    `,
+  },
+
+  /* Phase 4.2: submitting Ctrl+Shift+S on a later measure WITHOUT changing key
+     or meter must NOT write an in-section override (no redundant sig change). */
+  phase4_sig_unchanged_no_override: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      for (let i = 0; i < 3; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setCursor(m.getVoiceLength(1), 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 1, pname: 'e', accid: '', oct: 5, midi: 76, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'S', ctrlKey: true, shiftKey: true, bubbles: true }));
+      /* Submit immediately — fields pre-populated with the inherited values. */
+      const dlg = document.getElementById('textEntryDialog');
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+    `,
+  },
+
+  /* Phase 4.1: Setup relegates time/key to a button (like Tempo) — the inline
+     key/time selects are gone; #setupSigBtn opens the signature modal. */
+  phase4_setup_sig_button: {
+    setup: `/* static DOM check — no model mutation */`,
+  },
+
+  /* Phase 4.2 (deferred-item #1): the expression layer's moment→tick mapping is
+     per-measure. A tempo placed at measure 3 (after a 4/4→3/4 change) must
+     anchor at the true cumulative tick (112), not measureIdx×head (128), so a
+     note after it is retimed correctly. M0 whole (4/4), M1 dotted-half (3/4),
+     M2 three quarters (3/4); tempo 240 at M2 start. */
+  phase4_tempo_after_meter: {
+    setup: `
+      const A = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [A], duration: '1', dots: 0 }); /* M0 whole = 4/4 */
+      m.appendMeasure();
+      m.appendMeasure();
+      m.setMeterAt(1, 3, 4); /* 3/4 from M1 */
+      m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+      m.insertChordAtCursor({ notes: [A], duration: '2', dots: 1 }); /* M1 dotted half = 3/4 */
+      m.setCursor(m.getMeasureStartCursor(1, 2), 1);
+      for (let i = 0; i < 3; i++) m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 }); /* M2 = 3 quarters */
+      m.setCursor(m.getMeasureStartCursor(1, 2), 1); /* anchor tempo at M2 start */
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'T', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      dlg.querySelector('[data-field="kind"]').value = 'instant';
+      dlg.querySelector('[data-field="bpm"]').value = '240';
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+    `,
+  },
+
+  /* Phase 4.2 (deferred-item #2): per-measure beaming. A mid-piece 6/8 measure
+     beams its 6 eighths as 3+3 (dotted-quarter beats), not 2+2+2 (the head
+     4/4 grouping). M0 4/4 content, M1 = 6/8 with six eighths. */
+  phase4_beaming_compound: {
+    setup: `
+      const A = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 }); /* M0 4/4 */
+      m.appendMeasure();
+      m.setMeterAt(1, 6, 8); /* 6/8 from M1 */
+      m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+      for (let i = 0; i < 6; i++) m.insertChordAtCursor({ notes: [A], duration: '8', dots: 0 }); /* M1 six eighths */
+      r();
+    `,
+  },
+
+  /* Phase 4.2 (deferred-item #3): MusicXML export is per-measure (best-effort).
+     A 4/4→3/4 + key-change doc must export a SECOND <time> and <key> without
+     throwing. */
+  phase4_export_midpiece: {
+    setup: `
+      const A = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 });
+      m.appendMeasure();
+      m.setMeterAt(1, 3, 4);
+      m.setKeySigAt(1, '3f', 'major');
+      m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+      for (let i = 0; i < 3; i++) m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 });
+      r();
+    `,
+  },
+
+  /* Phase 4.3 regression: a mid-measure clef change in M1 must NOT drag the
+     start-of-measure cursor anchor (cursor 0) past it. The leading-signature
+     region is only what's left of the first notehead. */
+  phase4_clef_cursor_start: {
+    setup: `
+      const A = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 });
+      m.setCursor(2, 1);
+      m.setClefAt('F', '4', null, null); /* bass clef after the 2nd note */
+      m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* Phase 4.3: a mid-measure clef change. Fill M1 with 4 quarters, park the
+     cursor in the middle, open Ctrl+Shift+C, choose Bass. Asserts an inline
+     <clef> sits BETWEEN notes in the layer (mid-measure). */
+  phase4_clef_midmeasure: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(2, 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'C', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      dlg.querySelector('[data-field="clef"]').value = 'F|4||';
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+    `,
+  },
 };
 
 export const FIXTURES = {
@@ -3032,6 +3213,173 @@ export const FIXTURES = {
  *  invariant, no console errors) are applied to EVERY fixture by the
  *  runner — don't repeat them here. */
 export const FIXTURE_ASSERTIONS = {
+  /* Phase 4.1: signature modal writes the (global) key + meter. */
+  phase4_sig_modal: [
+    { name: 'modal applied D major + 3/4 to the score head',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        if (m.getKeySig() !== '2s') return { ok: false, detail: 'keySig=' + m.getKeySig() + ' (expected 2s)' };
+        if (m.getKeyMode() !== 'major') return { ok: false, detail: 'keyMode=' + m.getKeyMode() };
+        const ts = m.getTimeSig();
+        if (ts.count !== 3 || ts.unit !== 4) return { ok: false, detail: 'meter=' + ts.count + '/' + ts.unit + ' (expected 3/4)' };
+        /* The dialog must be closed (submit path ran). */
+        const dlg = document.getElementById('textEntryDialog');
+        if (dlg && dlg.open) return { ok: false, detail: 'dialog still open' };
+        return { ok: true };
+      })()` },
+  ],
+  phase4_keysig_midpiece: [
+    { name: 'key change at m2 only: m1 keeps head C, m2 onward = E♭, head scoreDef untouched',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        if (m.keySigAt(0) !== '0') return { ok: false, detail: 'keySigAt(0)=' + m.keySigAt(0) + ' (expected 0 / C major)' };
+        if (m.keySigAt(1) !== '3f') return { ok: false, detail: 'keySigAt(1)=' + m.keySigAt(1) + ' (expected 3f)' };
+        if (m.getKeySig() !== '0') return { ok: false, detail: 'head getKeySig()=' + m.getKeySig() + ' (must stay 0)' };
+        /* Exactly one in-section <scoreDef> override, carrying key.sig=3f. */
+        const doc = m.getDoc();
+        const overrides = [...doc.querySelectorAll('section > scoreDef')];
+        if (overrides.length !== 1) return { ok: false, detail: 'in-section scoreDefs=' + overrides.length + ' (expected 1)' };
+        if (overrides[0].getAttribute('key.sig') !== '3f') return { ok: false, detail: 'override key.sig=' + overrides[0].getAttribute('key.sig') };
+        return { ok: true };
+      })()` },
+  ],
+  phase4_sig_unchanged_no_override: [
+    { name: 'unchanged submit at m2 writes no in-section scoreDef',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const overrides = [...m.getDoc().querySelectorAll('section > scoreDef')];
+        if (overrides.length !== 0) return { ok: false, detail: 'in-section scoreDefs=' + overrides.length + ' (expected 0)' };
+        /* And the modal closed cleanly. */
+        const dlg = document.getElementById('textEntryDialog');
+        if (dlg && dlg.open) return { ok: false, detail: 'dialog still open' };
+        return { ok: true };
+      })()` },
+  ],
+  phase4_setup_sig_button: [
+    { name: 'Setup has #setupSigBtn and no inline key/time selects',
+      expr: `(() => {
+        if (!document.getElementById('setupSigBtn')) return { ok: false, detail: 'missing #setupSigBtn' };
+        for (const id of ['setupKey', 'setupKeyMinor', 'setupTimeNum', 'setupTimeDen']) {
+          if (document.getElementById(id)) return { ok: false, detail: id + ' still present in Setup' };
+        }
+        return { ok: true };
+      })()` },
+  ],
+  phase4_tempo_after_meter: [
+    { name: 'tempo at m3 (post meter-change) retimes the following note correctly',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const evs = window.__hkl_composer.buildPlayback(m).filter(e => e.notes.length > 0);
+        /* Onsets: M0 whole @0, M1 dotted-half @2000, then M2 q1/q2/q3.
+           Tempo 240 starts at tick 112 (M2 start). q1@112 = 3500 (tempo affects
+           AFTER its tick); q2@128 = 3500 + 16*15.625 = 3750. The bug would put
+           the tempo at 128, leaving q2 @ 4000. */
+        const at = (ms) => evs.find(e => Math.abs(e.atMs - ms) < 1) ;
+        if (!at(0)) return { ok: false, detail: 'no note @0; atMs=' + evs.map(e => Math.round(e.atMs)).join(',') };
+        if (!at(2000)) return { ok: false, detail: 'M1 not @2000; atMs=' + evs.map(e => Math.round(e.atMs)).join(',') };
+        if (!at(3500)) return { ok: false, detail: 'M2 q1 not @3500; atMs=' + evs.map(e => Math.round(e.atMs)).join(',') };
+        if (!at(3750)) return { ok: false, detail: 'M2 q2 not @3750 (tempo mis-anchored); atMs=' + evs.map(e => Math.round(e.atMs)).join(',') };
+        return { ok: true };
+      })()` },
+  ],
+  phase4_beaming_compound: [
+    { name: '6/8 measure beams its six eighths as 3+3, not 2+2+2',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const xml = m.serialize();
+        const doc = new DOMParser().parseFromString(xml, 'application/xml');
+        const measures = [...doc.querySelectorAll('measure')];
+        const m1 = measures[1];
+        /* Voice-1 layer (staff 1, layer 1). */
+        const staff = [...m1.querySelectorAll('staff')].find(s => s.getAttribute('n') === '1');
+        const layer = [...staff.querySelectorAll('layer')].find(l => l.getAttribute('n') === '1');
+        const beams = [...layer.querySelectorAll('beam')];
+        if (beams.length !== 2) return { ok: false, detail: 'beams=' + beams.length + ' (expected 2 for 3+3)' };
+        const sizes = beams.map(b => [...b.children].filter(c => c.localName === 'note' || c.localName === 'chord').length);
+        if (sizes.some(s => s !== 3)) return { ok: false, detail: 'beam sizes=' + sizes.join(',') + ' (expected 3,3)' };
+        return { ok: true };
+      })()` },
+  ],
+  phase4_export_midpiece: [
+    { name: 'MusicXML export emits a 2nd <time> + <key> for the mid-piece change',
+      expr: `(() => {
+        const h = window.__hkl_composer;
+        let xml;
+        try { xml = h.exportMusicXml(h.model); }
+        catch (e) { return { ok: false, detail: 'export threw: ' + (e && e.message) }; }
+        const times = (xml.match(/<time>/g) || []).length;
+        const keys = (xml.match(/<key>/g) || []).length;
+        if (times < 2) return { ok: false, detail: '<time> count=' + times + ' (expected ≥2)' };
+        if (keys < 2) return { ok: false, detail: '<key> count=' + keys + ' (expected ≥2)' };
+        if (!xml.includes('<beats>3</beats>')) return { ok: false, detail: 'no 3/4 time in export' };
+        if (!xml.includes('<fifths>-3</fifths>')) return { ok: false, detail: 'no E♭ (−3) key in export' };
+        return { ok: true };
+      })()` },
+  ],
+  phase4_clef_cursor_start: [
+    { name: 'cursor at start anchors LEFT of the mid-measure clef change',
+      expr: `(() => {
+        const bar = document.querySelector('[data-cursor-role="voice"]');
+        if (!bar) return { ok: false, detail: 'no voice cursor bar' };
+        const barLeft = bar.getBoundingClientRect().left;
+        const clefs = [...document.querySelectorAll('#score g.clef')];
+        if (clefs.length < 3) return { ok: false, detail: 'g.clef=' + clefs.length + ' (expected ≥3: 2 opening + 1 change)' };
+        /* The mid-measure change is the rightmost clef glyph. */
+        const midClefLeft = Math.max(...clefs.map(c => c.getBoundingClientRect().left));
+        if (!(barLeft < midClefLeft)) return { ok: false, detail: 'cursor left=' + Math.round(barLeft) + ' not < mid-clef left=' + Math.round(midClefLeft) };
+        return { ok: true };
+      })()` },
+  ],
+  phase4_clef_midmeasure: [
+    { name: 'one inline bass <clef> placed BETWEEN notes in the layer',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const clefs = [...m.getDoc().querySelectorAll('layer > clef')];
+        if (clefs.length !== 1) return { ok: false, detail: 'layer clefs=' + clefs.length + ' (expected 1)' };
+        const cl = clefs[0];
+        if (cl.getAttribute('shape') !== 'F' || cl.getAttribute('line') !== '4')
+          return { ok: false, detail: 'clef shape/line=' + cl.getAttribute('shape') + '/' + cl.getAttribute('line') };
+        const sibs = [...cl.parentElement.children];
+        const idx = sibs.indexOf(cl);
+        const isContent = (e) => e && ['note', 'chord', 'rest', 'tuplet'].includes(e.localName);
+        const before = sibs.slice(0, idx).some(isContent);
+        const after = sibs.slice(idx + 1).some(isContent);
+        if (!before || !after) return { ok: false, detail: 'clef not mid-measure (before=' + before + ' after=' + after + ')' };
+        /* Verovio rendered a mid-measure clef change (a g.clef beyond the staff's opening clef). */
+        const rendered = document.querySelectorAll('#score g.clef').length;
+        if (rendered < 3) return { ok: false, detail: 'rendered g.clef=' + rendered + ' (expected ≥3: 2 opening + 1 change)' };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Phase 4 prerequisite: per-measure meter table. */
+  phase4_mixed_meter_prereq: [
+    { name: 'tick table: M1=64 (4/4), M2=48 (3/4), cumulative starts 0/64/112',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const t0 = m.measureTicksAt(0), t1 = m.measureTicksAt(1);
+        const s1 = m.measureStartTick(1), s2 = m.measureStartTick(2);
+        if (t0 !== 64) return { ok: false, detail: 'measureTicksAt(0)=' + t0 + ' (expected 64)' };
+        if (t1 !== 48) return { ok: false, detail: 'measureTicksAt(1)=' + t1 + ' (expected 48)' };
+        if (s1 !== 64) return { ok: false, detail: 'measureStartTick(1)=' + s1 + ' (expected 64)' };
+        if (s2 !== 112) return { ok: false, detail: 'measureStartTick(2)=' + s2 + ' (expected 112)' };
+        /* Lynchpin: past-end cursor sits at the score's total ticks = 112,
+           NOT the old uniform 2 * 64 = 128. */
+        const end = m.getTickPositionAt(1, m.flatChildren(1).length);
+        if (end !== 112) return { ok: false, detail: 'getTickPositionAt(end)=' + end + ' (expected 112)' };
+        return { ok: true };
+      })()` },
+    { name: 'playback: M1 note at 0ms, M2 note at 2000ms (after 64 ticks @120bpm)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const evs = window.__hkl_composer.buildPlayback(m).filter(e => e.notes.length > 0);
+        if (evs.length !== 2) return { ok: false, detail: 'note events=' + evs.length + ' atMs=' + evs.map(e => e.atMs).join(',') };
+        if (Math.abs(evs[0].atMs - 0) > 1e-6) return { ok: false, detail: 'event[0] atMs=' + evs[0].atMs + ' (expected 0)' };
+        if (Math.abs(evs[1].atMs - 2000) > 1e-6) return { ok: false, detail: 'event[1] atMs=' + evs[1].atMs + ' (expected 2000)' };
+        return { ok: true };
+      })()` },
+  ],
+
   /* Slurs. */
   slur_create: [
     { name: 'one <slur> bound to note0→note1, data-voice=1',

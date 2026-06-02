@@ -2740,3 +2740,159 @@ adjacent fingerprints, peak-pick boundaries above `max(mean+1.5·std, absFloor)`
 is load-bearing: a velocity-invariant device produces all-tiny distances, where `mean+k·std`
 would threshold on noise. A warm-up discarded capture + a gap longer than the ring-out keep the
 first probe from reading as a false low-end boundary.
+
+## Composer Phase 4.1/4.2 — the Ctrl+Shift+S signature modal + mid-piece sigs
+
+**One flat "Key" select (30 entries), not a select + minor checkbox.** The reusable
+`textEntryModal` shell renders static fields and can't live-relabel a select when a checkbox
+toggles (the way Setup's bespoke form does). So `sigDialog.ts` flattens major + relative-minor
+into one select with `value="<sig>|<mode>"` (e.g. `"3s|minor"`). KEY_OPTIONS is exported from
+setupDialog.ts and shared, not duplicated.
+
+**The modal writes FROM the anchored measure forward, via `setKeySigAt`/`setMeterAt`.** Measure 0
+writes the head `<scoreDef>` (= the old global path); a later measure gets an in-section
+`<scoreDef>` override inserted immediately before it (`ensureScoreDefBefore`, mirroring
+insertMeasureAt's `<ending>`/`<sb>` ref-walk; reuses an existing override sibling). `setMeterAt`
+truncates only `[mi .. nextMeterOverrideIdx-1]`. The `meterTable()` walk gained `meterByEl` +
+`keyByEl` maps so `meterAt`/`keySigAt`/`keyModeAt`/`keySigForMeasure` resolve the real (count,unit)
+and key in effect at any measure (NOT ticks-derived — 6/8 vs 3/4 are distinguishable).
+
+**The setters are diff-aware, so submitting an unchanged signature writes nothing.** Each setter
+compares against what the measure INHERITS (`meterAt(mi-1)` / `keySigAt(mi-1)`); if equal it clears
+that attribute from the measure's own override and prunes the override node when it goes empty
+(`overrideScoreDefBefore` + `pruneEmptyScoreDef`). Without this, re-submitting the modal on a later
+measure rendered a redundant key+meter change there. The modal also POPULATES from the effective
+sig at the anchored measure (`keySigAt`/`meterAt(measureIdx)`), so re-opening shows current state.
+
+**Setup relegates time/key to a "Time / key… (measure 1)" button** that opens the same modal at
+measure 0 (mirroring the existing Tempo… button) — the inline key/time selects were removed from
+the Setup form. KEY_OPTIONS moved into `sigDialog.ts` (its only consumer now; avoids a
+setupDialog↔sigDialog import cycle). Setup's Save no longer touches key/meter.
+
+## Composer Phase 4.3 — mid-measure per-staff clef (Ctrl+Shift+C)
+
+**A clef change is an inline `<clef>` layer child, not a measure-boundary `<staffDef>`.** That's the
+only encoding Verovio renders MID-measure (the user's requirement). `model.setClefAt(shape, line,
+dis, disPlace)` inserts/edits it at the cursor's tick — before the content child at `withinIdx`, or
+before the first trailing placeholder when the cursor is past content (so it lands at the cursor's
+x, not after the invisible padding). Re-running at the same spot edits the clef already there.
+Inside a tuplet → returns false (unsupported v1). Per-staff: it goes in the cursor's layer.
+
+**An inline `<clef>` is a zero-duration layer child — it rides the existing content whitelists.**
+`contentChildren`, `pushContentChildren`, `normalizePlaceholders`, `layerStops`, and the harness
+`layerTicks` all whitelist note/chord/rest/tuplet/fTrem/bTrem, so a `<clef>` is transparent (not a
+cursor stop, not counted toward the measure budget). Two guards were still needed: `realTicks`/
+`writtenTicks` now return 0 for `clef` (else the 16-tick fallback), and `annotateLayer` (beams)
+marks the note after a clef `breakBefore` so a clef splits a beam run — otherwise `wrapInBeam`
+(which moves a run's notes together) would reorder the clef out from between them.
+
+**Clef is playback-irrelevant** (coords carry pitch — `buildPlayback` never reads clef), so the
+whole feature is notation-only: DOM insert + re-render + history, no meter-cache/placeholder churn.
+
+**Per-measure accidental spelling is computed inside `computeAccidentalDisplay`, from the doc it's
+handed — NOT from a model-keyed map.** The accidental pass runs on the serialize CLONE, whose
+elements differ from the live doc, so a `Map<liveMeasureEl,key>` can't be looked up. Instead the
+function walks the clone's own `<section>` `scoreDef`/`measure` nodes (seeded by the head key) to
+build a clone-local per-measure key map, resetting carry-state to the new key at each change
+(silent switch — no courtesy naturals; a required accidental like E♮ in E♭ major still shows).
+`serialize()` is unchanged — it still passes `this.getKeySig()` as the head seed.
+
+**The whole expression-layer moment→tick mapping (`absoluteTickForMoment`) is now per-measure.**
+This was initially deferred and mislabeled "tempo-ramp tick math" — it's broader: `absoluteTickForMoment`
+(expressions.ts) maps `{measureIdx, tstamp}` → absolute tick for tempo, dynamics, hairpins, 8va
+spans, and pedal. It was `measureIdx × head-ticks-per-measure`; any of those anchored at/after a
+mid-piece METER change landed at the wrong tick (e.g. a forte on m3 of `[4/4,3/4,3/4]` registered at
+128 not 112, so m3's notes got the pre-forte velocity). Fixed with a doc-local cumulative walk over
+in-section `<scoreDef>` meter overrides (same pattern as the per-measure key walk), using the
+measure's OWN beat unit for the `(tstamp-1)` term. `momentForCursor` (the model-side inverse) now
+uses `meterAt(measureIdx).unit` so creation/playback round-trip consistently. `buildTempoTimeline`'s
+`pieceEndTick` uses the true cumulative total. (Note: mid-piece KEY changes never needed this —
+key doesn't affect ticks.)
+
+**Beaming is per-measure** (`regroupBeams` + `beamGroupForElement`): a `perMeasureTimeSig(doc, head)`
+walk gives each measure its own `TimeSigInfo`, so a mid-piece 6/8 measure beams 3+3 (dotted-quarter)
+instead of the head meter's grouping.
+
+**MusicXML export is per-measure (best-effort, untested against external readers).** `save.ts` emits
+a fresh `<attributes>` with `<key>`/`<time>` in any measure where they change (vs the previous
+measure), uses per-measure `measureTicks` for rest-padding, and tracks per-staff clefs — a clef
+change is emitted in the opening `<attributes>` of the measure it occurs in (a truly mid-measure
+change is approximated to the measure start; inline-position MusicXML clefs aren't emitted).
+`exportMusicXml` is exposed on `window.__hkl_composer` for the test harness.
+
+## Composer Phase 4 prerequisite — per-measure meter model
+
+**Per-measure meter/key/clef rides in-`<section>` `<scoreDef>` overrides, NOT data attributes.**
+MEI 5 lets a `<scoreDef>` placed as a child of the single `<section>` before a `<measure>` override
+meter/key/clef from that point; Verovio renders it natively. The clincher: `querySelector("scoreDef")`
+returns the *head* scoreDef in document order, so the existing global getters (`getTimeSig`/`getKeySig`/
+`getKeyMode`) keep working unchanged as "score default" — only the new per-measure walk reads the
+overrides. (Clef is the exception — mid-measure clef changes can't be a measure-boundary override, so
+clef will use an inline `<clef>` in the `<layer>`; that's Phase 4.3.)
+
+**The uniform `measureTicks()` assumption is replaced by a cached cumulative tick table, not
+compute-on-demand.** `meterTable()` walks the section's `scoreDef`/`measure` nodes once, producing
+`perMeasure[]` + `prefix[]` + a `Map<measureEl, budget>`. `measureStartTick(mi)` (= `prefix[mi]`)
+replaces every `mi * measureTicks()`; `measureTicksAt(mi)` replaces single-measure capacity checks;
+`measureIdxAtTick(t)` replaces `Math.floor(t / W)`. On-demand would be O(n²) because `measureStartTick`
+runs inside O(flat) cursor loops. **Cache invalidation is centralized in `normalizePlaceholdersAll()`**
+(which invalidates then rebuilds): nearly every structural mutation already ends in a placeholder
+normalize, and the table depends only on the measure set + meter — not note content — so content
+mutations never stale it. `setTimeSig` invalidates explicitly as belt-and-suspenders. The lynchpin
+was `getTickPositionAt` (`loc.measureIdx * measureTicks()` → `measureStartTick(loc.measureIdx)`).
+
+**`normalizePlaceholders` takes a per-layer budget callback, not a single number.** Signature is now
+`normalizePlaceholders(doc, (layer) => ticks)`; the model wraps it as `normalizePlaceholdersAll()` with
+`measureTicksForLayer`. This keeps the placeholders module model-free (no DAG violation) while filling
+each layer to ITS measure's budget. The deprecated `measureTicks()` is retained as the score-default
+alias for the ~20 sites that legitimately want the head meter (deleting it would be gratuitous churn).
+
+## HKLO capture/gate/pitch/NR refinements — from a real Korg capture session (2026-05-31)
+
+The scaffold's gates were calibrated against the clean, full-level loopback; a real session (Korg
+headphone-out → audio-interface line-in, padded by the cable's lo switch to ~−15 dBFS, with a fixed
+noise floor) surfaced that **absolute-dBFS thresholds are wrong** for a padded-then-normalized chain.
+
+**Gates went noise-floor-relative.** Each capture's pre-attack pre-roll is a clean noise sample, so
+gates self-measure the floor and judge in **SNR** (preserved by normalization) rather than absolute
+level: `quiet` = SNR < 12 dB (not peak < −24 dBFS), `short` = audible-*above-noise* length < 0.12 s
+(not 0.5 s absolute — fast-decaying high notes are real, and padded soft notes aren't "silent"),
+`clip` stays absolute (−0.1 dBFS). Final knobs: **quiet 12 dB, short 0.12 s.**
+
+**Recorder stop is noise-floor-relative too.** Hold the note through the natural decay; stop when the
+trailing RMS comes within **1 dB** of the measured floor (was an absolute −60 dBFS, which chopped loud
+tails early and never triggered on padded-quiet ones). 1 dB lets the tail ring into the floor; the
+residual is removed by NR.
+
+**Trust the claimed pitch; pitch detection is informational only** (the big one). Period-detection
+reads systematically **sharp** on piano — string inharmonicity pulls the autocorrelation toward the
+stretched upper partials — and is noisy at low SNR, i.e. measurably *worse* than the digital
+instrument's own equal-temperament accuracy (a uniform ~16 ¢-sharp + ±30 ¢ scatter in practice). So
+`buildHki` stores the **claimed MIDI→12-TET frequency (A440)** as each sample's `freq`, never the
+detected one — mirroring the analyzer's `trustLabeledPitch` (default-on for local sources,
+`generate-samples.js:140`). The JI correction is computed from the tuning system at playback. The
+pitch gate no longer rejects anything (only displays cents). **Two octave-guard attempts were removed**
+(absolute `rHalf≥0.85`, then ratio `rHalf≥rFull·0.9`): autocorrelation can't distinguish a
+weak-fundamental high note from an octave-up, so any guard false-fails real high notes — and we don't
+need octave detection (the device plays the MIDI note we send).
+
+**Noise reduction = spectral subtraction with the pre-roll as the per-capture profile** (`denoise.ts`,
+run in `buildHki` before WAV encode). WOLA STFT (Hann, 75 % overlap, zero-padded edges), subtract
+`α·noiseMag` with spectral floor `β·|X|`; defaults **α 1.5, β 0.04** (conservative; the floor kills
+musical noise). Strong on tonal noise (hum/whine, ~20–28 dB), modest on broadband; the note body is
+left intact. This is what keeps the soft layers (intrinsically near the floor at the lo cable setting)
+and stacked chords clean — and is why `quiet` could relax to 12 dB.
+
+**localStorage persistence** (`persist.ts`): config + velocity bins + last device IDs survive reload
+(and Vite HMR, which was wiping the session on every edit). The live `CaptureDevice` and captured PCM
+are deliberately NOT persisted (unserializable / too large) — the dropdowns repopulate, you re-Connect.
+
+**The non-repeat playback path needed NO change.** It accumulates each event's absolute tick by summing
+content+placeholder durations per voice — so once placeholders fill to per-measure budgets it is
+automatically mixed-meter-correct. Only the repeat path's `canonStart(mi) = mi * W` became
+`tempo.atMsAt(measureStartTick(mi))`. `buildTempoTimeline` (tempo-ramp tick math) and `beams.ts`
+beat-grouping still read the head meter — deferred to 4.2, since both are visual/timing-ramp concerns
+and there are no mid-piece meters until then. The `setMeterAt(mi>0)`/`setKeySigAt`/`setClefAt` setters
+were deliberately NOT landed in the prerequisite (no caller yet → would be dead/lint-flagged code);
+they are 4.2's first step. The harness's universal placeholder invariant now reads
+`measureTicksForLayer` so a mixed-meter doc validates correctly (fixture `phase4_mixed_meter_prereq`).

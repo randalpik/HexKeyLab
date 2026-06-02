@@ -20,7 +20,7 @@ import { scTransposeChordNote } from './notation/scTranspose.js';
 import { HistoryManager } from './history.js';
 import type { CursorUpdateOpts } from './cursor/cursor.js';
 import { selectionOverlay } from './selection/selectionOverlay.js';
-import { saveHkc, loadHkcFromFile, downloadMusicXml, downloadPdf } from './save.js';
+import { saveHkc, loadHkcFromFile, downloadMusicXml, downloadPdf, exportMusicXml } from './save.js';
 import { buildPlayback, buildPedalEvents, playbackStartMs, highlightElement, clearHighlights, readTempo, tickMsFromTempo } from './render/playback.js';
 import { openSetupDialog } from './setupDialog.js';
 import { openHelpDialog } from './helpDialog.js';
@@ -1091,6 +1091,7 @@ void bootRenderer();
   history,
   buildPlayback,
   buildPedalEvents,
+  exportMusicXml,
   /* Test-only reset: clears main.ts module state that RESET_SNIPPET in the
    * Composer test runner can't reach (isPlaying, hklConnected). Without this,
    * a fixture that starts playback or simulates an hkl-hello leaks state into

@@ -153,9 +153,8 @@ function xAtCursorPos(
   // Measure-boundary disambiguation: if the cursor's tstamp is exactly a
   // multiple of measureTicks, the cursor sits at a barline.
   const t = model.getTickPositionAt(voice, c);
-  const measureT = model.measureTicks();
-  const measureIdx = Math.round(t / measureT);
-  if (Math.abs(measureIdx * measureT - t) < TICK_EPS) {
+  const measureIdx = model.measureIdxAtTick(t);
+  if (Math.abs(model.measureStartTick(measureIdx) - t) < TICK_EPS) {
     if (kind === 'start') {
       // Use M_{measureIdx}'s content-left.
       if (measureIdx >= measures.length) return endOfScoreX(measures);
@@ -281,8 +280,7 @@ function staffYRangeForMeasure(
   const boundaries = beatBoundariesInVoice(model, voice);
   const tLo = model.getTickPositionAt(voice, boundaries[sel.first]);
   const tHi = model.getTickPositionAt(voice, boundaries[sel.last + 1]);
-  const measureT = model.measureTicks();
-  const measureStart = measureIdx * measureT;
+  const measureStart = model.measureStartTick(measureIdx);
   let top = Infinity;
   let bottom = -Infinity;
   let pos = measureStart;

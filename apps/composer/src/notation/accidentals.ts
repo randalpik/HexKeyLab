@@ -181,10 +181,30 @@ function identityEq(a: AccidIdentity, b: AccidIdentity): boolean {
   return a.alter === b.alter && a.syn5 === b.syn5 && a.sept7 === b.sept7;
 }
 
-export function computeAccidentalDisplay(doc: Document, keySig: string, heji?: HejiDisplayCtx): void {
-  const keyAlters = keySigToAlter(keySig);
+export function computeAccidentalDisplay(doc: Document, headKeySig: string, heji?: HejiDisplayCtx): void {
+  /* Per-measure key signature: walk the section's in-order <scoreDef>/<measure>
+     nodes, seeded by the head key, so an in-section <scoreDef key.sig="…">
+     resets the accidental carry-state to the NEW key from that measure forward
+     (mid-piece key change). Computed from `doc` directly — this runs on the
+     serialize CLONE, whose elements differ from the live doc, so a model-keyed
+     map can't be used. With no overrides every measure maps to headKeySig. */
+  const keyByMeasure = new Map<Element, string>();
+  {
+    const section = doc.querySelector('section');
+    let cur = headKeySig;
+    const nodes = section ? Array.from(section.querySelectorAll('scoreDef, measure')) : [];
+    for (const node of nodes) {
+      if (node.localName === 'scoreDef') {
+        const ks = node.getAttribute('key.sig');
+        if (ks !== null) cur = ks;
+      } else {
+        keyByMeasure.set(node, cur);
+      }
+    }
+  }
   const measures = doc.querySelectorAll('measure');
   for (const measure of Array.from(measures)) {
+    const keyAlters = keySigToAlter(keyByMeasure.get(measure) ?? headKeySig);
     for (const staffN of [1, 2]) {
       const staff = Array.from(measure.querySelectorAll('staff'))
         .find((s) => s.getAttribute('n') === String(staffN));

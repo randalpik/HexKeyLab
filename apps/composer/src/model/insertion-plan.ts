@@ -49,10 +49,14 @@ export function planInsert(
   | { ok: true; actions: InsertAction[]; evicted: Map<number, Element[]> }
   | { ok: false; reason: string } {
   const v = model.getCurrentVoice();
-  const cap = model.measureTicks();
-  const layers = model.allLayers(v);
   const M0 = loc.measureIdx;
   const W0 = loc.withinIdx;
+  /* Per-measure budgets: M_0 and its immediate overflow target M_1 may carry
+     different meters once mid-piece signatures land (Phase 4.2). Under a
+     single-meter doc capM0 === capM1 === the global budget. */
+  const capM0 = model.measureTicksAt(M0);
+  const capM1 = model.measureTicksAt(M0 + 1);
+  const layers = model.allLayers(v);
   const usedBefore = model.timeWithinMeasure(v, M0, W0);
   const postCursorM0 = model.contentChildren(loc.layer).slice(W0);
 
@@ -63,7 +67,7 @@ export function planInsert(
   const actions: InsertAction[] = [];
 
   /* Fast path: everything fits in M_0. */
-  if (usedBefore + totalTicks + postCursorTicks <= cap) {
+  if (usedBefore + totalTicks + postCursorTicks <= capM0) {
     const insertedRecorded: Array<Extract<InsertAction, { kind: 'inserted' }>> = [];
     for (const p of decomposeTicks(totalTicks)) {
       const a: Extract<InsertAction, { kind: 'inserted' }> = {
@@ -90,7 +94,9 @@ export function planInsert(
   let postM1Ticks = 0;
   for (const el of postM1) postM1Ticks += realTicks(el);
 
-  if (usedBefore + totalTicks + postCursorTicks + postM1Ticks > 2 * cap) {
+  /* Target measures are only ever M_0 or M_1; each uses its own budget. */
+  const capAt = (m: number): number => (m <= M0 ? capM0 : capM1);
+  if (usedBefore + totalTicks + postCursorTicks + postM1Ticks > capM0 + capM1) {
     return { ok: false, reason: "Doesn't fit in next measure." };
   }
 
@@ -104,7 +110,7 @@ export function planInsert(
   let mOff = usedBefore;
   let insertedRemaining = totalTicks;
   while (insertedRemaining > 0) {
-    const space = cap - mOff;
+    const space = capAt(mIdx) - mOff;
     const chunk = Math.min(insertedRemaining, space);
     if (chunk > 0) {
       for (const p of decomposeTicks(chunk)) {
@@ -138,7 +144,7 @@ export function planInsert(
   const displaced = [...postCursorM0, ...postM1];
   for (const el of displaced) {
     const t = realTicks(el);
-    if (t > cap) {
+    if (t > Math.max(capM0, capM1)) {
       return {
         ok: false,
         reason:
@@ -147,7 +153,7 @@ export function planInsert(
             : "Doesn't fit.",
       };
     }
-    if (mOff + t > cap) {
+    if (mOff + t > capAt(mIdx)) {
       if (mIdx >= M1) {
         return { ok: false, reason: "Doesn't fit in next measure." };
       }

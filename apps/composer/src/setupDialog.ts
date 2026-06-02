@@ -10,6 +10,7 @@ import {
   type LayoutReq, type GradualPercents,
 } from './expressions.js';
 import { openTempoModal } from './tempoDialog.js';
+import { openSignatureModal } from './sigDialog.js';
 import { DYNAMIC_NAMES, DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { TUNING_MODES, type TuningMode, coordToMidi, MIDI_LOW, MIDI_HIGH } from '@hkl/shared/freq.js';
 import { noteName, keyOctave, fmtNote } from '@hkl/shared/notes.js';
@@ -18,36 +19,6 @@ import type { HistoryManager } from './history.js';
 
 const $ = <T extends HTMLElement>(id: string): T | null =>
   document.getElementById(id) as T | null;
-
-interface KeyOption { sig: string; major: string; minor: string }
-
-/** Only the active mode is shown in the dropdown; the checkbox toggles which
- *  label table is used. The sig identifier (`'0'`, `'1s'`, …) is unchanged
- *  across modes since major and its relative minor share a key signature. */
-const KEY_OPTIONS: ReadonlyArray<KeyOption> = [
-  { sig: '7f', major: 'C♭ major (7♭)',  minor: 'a♭ minor (7♭)' },
-  { sig: '6f', major: 'G♭ major (6♭)',  minor: 'e♭ minor (6♭)' },
-  { sig: '5f', major: 'D♭ major (5♭)',  minor: 'b♭ minor (5♭)' },
-  { sig: '4f', major: 'A♭ major (4♭)',  minor: 'f minor (4♭)'  },
-  { sig: '3f', major: 'E♭ major (3♭)',  minor: 'c minor (3♭)'  },
-  { sig: '2f', major: 'B♭ major (2♭)',  minor: 'g minor (2♭)'  },
-  { sig: '1f', major: 'F major (1♭)',   minor: 'd minor (1♭)'  },
-  { sig: '0',  major: 'C major',        minor: 'a minor'        },
-  { sig: '1s', major: 'G major (1♯)',   minor: 'e minor (1♯)'  },
-  { sig: '2s', major: 'D major (2♯)',   minor: 'b minor (2♯)'  },
-  { sig: '3s', major: 'A major (3♯)',   minor: 'f♯ minor (3♯)' },
-  { sig: '4s', major: 'E major (4♯)',   minor: 'c♯ minor (4♯)' },
-  { sig: '5s', major: 'B major (5♯)',   minor: 'g♯ minor (5♯)' },
-  { sig: '6s', major: 'F♯ major (6♯)',  minor: 'd♯ minor (6♯)' },
-  { sig: '7s', major: 'C♯ major (7♯)',  minor: 'a♯ minor (7♯)' },
-];
-
-function keyOptionsForMode(mode: 'major' | 'minor'): ReadonlyArray<{ value: string; label: string }> {
-  return KEY_OPTIONS.map((k) => ({ value: k.sig, label: mode === 'minor' ? k.minor : k.major }));
-}
-
-const TIME_NUM_OPTIONS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
-const TIME_DEN_OPTIONS = [1, 2, 4, 8, 16];
 
 const TUNING_LABELS: Record<TuningMode, string> = {
   E: 'Equal (12-TET)',
@@ -70,24 +41,6 @@ function populateSelect(sel: HTMLSelectElement, options: ReadonlyArray<{ value: 
 }
 
 function setupSelects(model: ComposerModel): void {
-  const keySel = $<HTMLSelectElement>('setupKey');
-  const minorChk = $<HTMLInputElement>('setupKeyMinor');
-  if (minorChk) minorChk.checked = model.getKeyMode() === 'minor';
-  if (keySel) {
-    const mode: 'major' | 'minor' = minorChk?.checked ? 'minor' : 'major';
-    populateSelect(keySel, keyOptionsForMode(mode), model.getKeySig());
-  }
-  /* Live relabel without disturbing the current selection. */
-  if (minorChk && keySel) {
-    minorChk.addEventListener('change', () => {
-      const mode: 'major' | 'minor' = minorChk.checked ? 'minor' : 'major';
-      const opts = keyOptionsForMode(mode);
-      for (let i = 0; i < keySel.options.length && i < opts.length; i++) {
-        keySel.options[i].textContent = opts[i].label;
-      }
-    });
-  }
-
   const layoutReq = model.getLayoutReq();
   const tuningSel = $<HTMLSelectElement>('setupTuningMode');
   if (tuningSel) {
@@ -110,27 +63,10 @@ function setupSelects(model: ComposerModel): void {
   };
   refQEl?.addEventListener('input', updateFromForm);
   refREl?.addEventListener('input', updateFromForm);
-
-  const numSel = $<HTMLSelectElement>('setupTimeNum');
-  const denSel = $<HTMLSelectElement>('setupTimeDen');
-  const ts = model.getTimeSig();
-  if (numSel) {
-    populateSelect(numSel,
-      TIME_NUM_OPTIONS.map((n) => ({ value: String(n), label: String(n) })),
-      String(ts.count));
-  }
-  if (denSel) {
-    populateSelect(denSel,
-      TIME_DEN_OPTIONS.map((d) => ({ value: String(d), label: String(d) })),
-      String(ts.unit));
-  }
-
 }
 
 function readForm(): {
   title: string; subtitle: string; composer: string; footer: string;
-  keySig: string; keyMode: 'major' | 'minor';
-  count: number; unit: number;
   gradual: GradualPercents;
   layoutReq: LayoutReq; hejiEnabled: boolean;
 } | null {
@@ -141,10 +77,6 @@ function readForm(): {
      the footer) — distinguish from "field not present" by reading the raw value. */
   const footerRaw = $<HTMLInputElement>('setupFooter');
   const footer = footerRaw ? footerRaw.value.trim() : 'Engraved with HKL Composer';
-  const keySig = $<HTMLSelectElement>('setupKey')?.value ?? '0';
-  const keyMode: 'major' | 'minor' = $<HTMLInputElement>('setupKeyMinor')?.checked ? 'minor' : 'major';
-  const count = parseInt($<HTMLSelectElement>('setupTimeNum')?.value ?? '4', 10);
-  const unit = parseInt($<HTMLSelectElement>('setupTimeDen')?.value ?? '4', 10);
   const gradPct = (id: string, dflt: number): number => {
     const v = parseInt($<HTMLInputElement>(id)?.value ?? '', 10);
     return isFinite(v) ? Math.max(0, Math.min(99, v)) : dflt;
@@ -154,8 +86,6 @@ function readForm(): {
     plain: gradPct('setupGrad_plain', 40),
     molto: gradPct('setupGrad_molto', 60),
   };
-  if (!isFinite(count) || count < 1 || count > 16) return null;
-  if (!isFinite(unit) || ![1, 2, 4, 8, 16].includes(unit)) return null;
   const tuningRaw = $<HTMLSelectElement>('setupTuningMode')?.value ?? '5';
   const tuningMode: TuningMode = isTuningMode(tuningRaw) ? tuningRaw : '5';
   const refQ = parseInt($<HTMLInputElement>('setupRefQ')?.value ?? '0', 10);
@@ -165,7 +95,7 @@ function readForm(): {
   if (refMidi < MIDI_LOW || refMidi > MIDI_HIGH) return null;
   const layoutReq: LayoutReq = { tuningMode, refQ, refR };
   const hejiEnabled = $<HTMLInputElement>('setupHeji')?.checked ?? false;
-  return { title, subtitle, composer, footer, keySig, keyMode, count, unit, gradual, layoutReq, hejiEnabled };
+  return { title, subtitle, composer, footer, gradual, layoutReq, hejiEnabled };
 }
 
 function isTuningMode(s: string): s is TuningMode {
@@ -215,6 +145,16 @@ export function openSetupDialog(
   };
   tempoBtn?.addEventListener('click', onTempoClick);
 
+  /* Time / key signature… button — opens the shared signature modal targeting
+     measure 1 (the score defaults). Mid-piece changes use Ctrl+Shift+S at the
+     cursor. Applies as its own history entry; the Setup dialog stays open. */
+  const sigBtn = $<HTMLButtonElement>('setupSigBtn');
+  const onSigClick = (): void => {
+    if (!history) return;
+    openSignatureModal(model, 0, { history, onApply: () => onApply(false) });
+  };
+  sigBtn?.addEventListener('click', onSigClick);
+
   /* Fill-incomplete-measures button. Applies immediately as its own
      history-tracked action (independent of Save / Cancel), then leaves the
      dialog open so the user can continue editing other fields. */
@@ -251,23 +191,8 @@ export function openSetupDialog(
     const values = readForm();
     if (!values) return;
 
-    const prev = model.getTimeSig();
-    const meterChanged = prev.count !== values.count || prev.unit !== values.unit;
-    let proceedWithMeterChange = true;
-    if (meterChanged) {
-      /* Per-measure truncation only drops content when the new measure's
-         tick budget is SMALLER than the current one. Enlarging is
-         non-destructive (existing measures just have unfilled space), so
-         no confirmation needed. */
-      const prevTicks = prev.count * (64 / prev.unit);
-      const newTicks = values.count * (64 / values.unit);
-      const wouldTruncate = newTicks < prevTicks && hasAnyNotes(model);
-      if (wouldTruncate) {
-        proceedWithMeterChange = window.confirm(
-          'Changing time signature may truncate notes that don’t fit in the new measure. Continue?'
-        );
-      }
-    }
+    /* Time / key signature are no longer Setup fields — they live in the
+       Signature… button → signature modal (applied independently above). */
 
     /* All setup mutations bundle into a single undo entry. Snapshot BEFORE
        the confirm prompts (so cancellation paths leave history untouched —
@@ -295,22 +220,12 @@ export function openSetupDialog(
     model.setSubtitle(values.subtitle);
     model.setComposer(values.composer);
     model.setFooter(values.footer);
-    model.setKeySig(values.keySig);
-    model.setKeyMode(values.keyMode);
     applyDynamicInputs(model);
     setGradualPercents(model.getDoc(), values.gradual);
     if (proceedWithLayout) {
       model.setLayoutReq(values.layoutReq);
     }
     model.setHejiEnabled(values.hejiEnabled);
-    if (meterChanged && proceedWithMeterChange) {
-      model.setTimeSig(values.count, values.unit);
-    } else if (meterChanged && !proceedWithMeterChange) {
-      /* No-op — keep existing meter. */
-    } else {
-      /* Same meter — still call setTimeSig to be idempotent. */
-      model.setTimeSig(values.count, values.unit);
-    }
 
     /* Push the entire setup apply-block as ONE history entry. */
     if (history && beforeSnapshot) {
@@ -324,6 +239,7 @@ export function openSetupDialog(
     form?.removeEventListener('submit', onSubmit);
     fillBtn?.removeEventListener('click', onFillClick);
     tempoBtn?.removeEventListener('click', onTempoClick);
+    sigBtn?.removeEventListener('click', onSigClick);
     dlg.removeEventListener('close', onClose);
   };
   form?.addEventListener('submit', onSubmit);
@@ -363,10 +279,3 @@ function populateGradualInputs(model: ComposerModel): void {
   }
 }
 
-function hasAnyNotes(model: ComposerModel): boolean {
-  for (let v = 1 as 1 | 2 | 3 | 4; v <= 4; v = (v + 1) as 1 | 2 | 3 | 4) {
-    if (model.getVoiceLength(v) > 0) return true;
-    if (v === 4) break;
-  }
-  return false;
-}

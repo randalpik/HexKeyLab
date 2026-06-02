@@ -339,19 +339,10 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
     <label class="row"><span>Composer</span><input id="setupComposer" type="text" autocomplete="off"></label>
     <label class="row"><span>Footer</span><input id="setupFooter" type="text" autocomplete="off" placeholder="(optional, blank to hide)"></label>
     <div class="row">
-      <span>Key signature</span>
+      <span>Signature</span>
       <fieldset>
-        <select id="setupKey"></select>
-        <label style="margin-left:0.5em"><input type="checkbox" id="setupKeyMinor"> minor</label>
+        <button type="button" id="setupSigBtn">Time / key… (measure 1)</button>
       </fieldset>
-    </div>
-    <div class="row">
-      <span>Time signature</span>
-      <div class="time-row">
-        <select id="setupTimeNum"></select>
-        <span>/</span>
-        <select id="setupTimeDen"></select>
-      </div>
     </div>
     <div class="row">
       <span>Tempo</span>

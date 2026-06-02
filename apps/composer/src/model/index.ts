@@ -222,6 +222,23 @@ export class ComposerModel {
   private doc: Document;
   private currentVoice: Voice = 1;
   private cursors: Record<Voice, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
+  /** Cached per-measure tick budgets + cumulative prefix sums. Built lazily by
+   *  meterTable(); cleared by invalidateMeterCache() on any structural/meter
+   *  change. Depends only on the measure set + meter overrides, NOT on note
+   *  content — so it survives the content mutations that dominate the call
+   *  sites and only rebuilds when measures are added/removed or meter changes
+   *  (every such path runs through normalizePlaceholdersAll, which invalidates
+   *  first). See docs/composer-roadmap.md §10. */
+  private meterCache:
+    | {
+        measures: Element[];
+        perMeasure: number[];
+        prefix: number[];
+        budgetByEl: Map<Element, number>;
+        meterByEl: Map<Element, { count: number; unit: number }>;
+        keyByEl: Map<Element, { sig: string; mode: 'major' | 'minor' }>;
+      }
+    | null = null;
 
   constructor(initialMei?: string) {
     if (initialMei) {
@@ -234,7 +251,7 @@ export class ComposerModel {
       this.doc = emptyMeiDoc();
     }
     ensureExpressionDefaults(this.doc);
-    normalizePlaceholders(this.doc, this.measureTicks());
+    this.normalizePlaceholdersAll();
   }
 
   /** Replace the entire document in-place (used by Load .hkc to preserve
@@ -287,7 +304,7 @@ export class ComposerModel {
     /* Seed <extMeta>/<hkl:config> defaults if the loaded doc lacks them. */
     ensureExpressionDefaults(this.doc);
     normalizeTies(this);
-    normalizePlaceholders(this.doc, this.measureTicks());
+    this.normalizePlaceholdersAll();
   }
 
   /** Strip any <beam> wrappers from the live doc so cursor/mutation code
@@ -356,7 +373,7 @@ export class ComposerModel {
     this.cursors = { ...snap.cursors };
     ensureExpressionDefaults(this.doc);
     normalizeTies(this);
-    normalizePlaceholders(this.doc, this.measureTicks());
+    this.normalizePlaceholdersAll();
     this.clampAllCursors();
   }
 
@@ -375,7 +392,7 @@ export class ComposerModel {
     this.cursors = { ...cursors };
     ensureExpressionDefaults(this.doc);
     normalizeTies(this);
-    normalizePlaceholders(this.doc, this.measureTicks());
+    this.normalizePlaceholdersAll();
     this.clampAllCursors();
   }
 
@@ -551,20 +568,25 @@ export class ComposerModel {
    *  (voice-mode bar jump) so the two land identically. */
   measureBoundaryCursors(voice: Voice): number[] {
     const flat = this.flatChildren(voice);
-    const measureT = this.measureTicks();
     const candidates: Array<{ c: number; t: number }> = [];
     for (let c = 0; c <= flat.length; c++) {
       let t: number;
       if (c === flat.length) {
-        t = this.allMeasures().length * measureT;
+        t = this.measureStartTick(this.allMeasures().length);
       } else {
         const info = this.getFlatStopInfo(voice, c);
         if (!info) continue;
         if (info.inTuplet) continue;
         t = this.getTickPositionAt(voice, c);
       }
-      const inMeas = ((t % measureT) + measureT) % measureT;
-      if (inMeas < TICK_EPS || measureT - inMeas < TICK_EPS) {
+      /* A position is a barline iff its absolute tick coincides with some
+         measure start. measureIdxAtTick(t) is the measure whose start is the
+         greatest ≤ t, so inMeas≈0 captures both "start of M_k" and "end of a
+         full M_{k-1}" (whose tick equals M_k's start). */
+      const mi = this.measureIdxAtTick(t);
+      const inMeas = t - this.measureStartTick(mi);
+      const budget = this.measureTicksAt(mi);
+      if (inMeas < TICK_EPS || budget - inMeas < TICK_EPS) {
         candidates.push({ c, t });
       }
     }
@@ -594,11 +616,11 @@ export class ComposerModel {
   getTickPositionAt(voice: Voice, c: number): number {
     const flat = this.flatChildren(voice);
     if (c >= flat.length) {
-      return this.allMeasures().length * this.measureTicks();
+      return this.measureStartTick(this.allMeasures().length);
     }
     const loc = locateCursor(this, voice, c);
     if (!loc) return 0;
-    let t = loc.measureIdx * this.measureTicks();
+    let t = this.measureStartTick(loc.measureIdx);
     const cc = this.contentChildren(loc.layer);
     const upto = Math.min(loc.withinIdx, cc.length);
     for (let i = 0; i < upto; i++) t += realTicks(cc[i]);
@@ -833,6 +855,10 @@ export class ComposerModel {
     const prevUnit = parseInt(sd.getAttribute("meter.unit") ?? "4", 10);
     sd.setAttribute("meter.count", String(count));
     sd.setAttribute("meter.unit", String(unit));
+    /* Head meter changed → the cached per-measure budgets are stale. (truncate
+       below also invalidates via normalizePlaceholdersAll, but invalidate here
+       too so any read between this point and truncate sees the new budget.) */
+    this.invalidateMeterCache();
     if (count !== prevCount || unit !== prevUnit) {
       /* Capture look-forward anchors BEFORE truncation so the cursor can
          re-seat onto the first surviving element afterwards (truncate may
@@ -924,10 +950,382 @@ export class ComposerModel {
     return staff?.getAttribute("xml:id") ?? null;
   }
 
-  /** Total ticks in one measure under the current meter. */
+  /** Total ticks in one measure under the SCORE-DEFAULT meter (the head
+   *  `<scoreDef>`). Retained as the default-budget alias for the many sites
+   *  that legitimately want the score default; for a SPECIFIC measure's budget
+   *  use `measureTicksAt(mi)`. Under a single-meter doc the two are identical. */
   measureTicks(): number {
     const { count, unit } = this.getTimeSig();
     return count * (64 / unit);
+  }
+
+  /** Drop the cached meter table. Call after any change to the measure set or
+   *  to a meter (head or in-section override). normalizePlaceholdersAll() and
+   *  the meter setters call this; most callers get it for free because nearly
+   *  every structural mutation ends in normalizePlaceholdersAll(). */
+  invalidateMeterCache(): void {
+    this.meterCache = null;
+  }
+
+  /** Lazily build the per-measure tick table. Walks the single `<section>`'s
+   *  `<scoreDef>` overrides + `<measure>` nodes in document order, tracking the
+   *  meter in effect (seeded from the head `<scoreDef>`). An in-section
+   *  `<scoreDef>` with `@meter.count`/`@meter.unit` changes the budget from
+   *  that point forward (MEI 5 idiom — see roadmap §10). With no overrides
+   *  (the only case until Phase 4.2 lands), every measure gets the head
+   *  budget, so this is byte-for-byte equivalent to the old global path. */
+  private meterTable(): {
+    measures: Element[];
+    perMeasure: number[];
+    prefix: number[];
+    budgetByEl: Map<Element, number>;
+    meterByEl: Map<Element, { count: number; unit: number }>;
+    keyByEl: Map<Element, { sig: string; mode: 'major' | 'minor' }>;
+  } {
+    if (this.meterCache) return this.meterCache;
+    const head = this.getTimeSig();
+    let count = head.count;
+    let unit = head.unit;
+    let keySig = this.getKeySig();
+    let keyMode = this.getKeyMode();
+    const measures: Element[] = [];
+    const perMeasure: number[] = [];
+    const budgetByEl = new Map<Element, number>();
+    const meterByEl = new Map<Element, { count: number; unit: number }>();
+    const keyByEl = new Map<Element, { sig: string; mode: 'major' | 'minor' }>();
+    const section = this.doc.querySelector('section');
+    /* scoreDef + measure nodes in document order. The head scoreDef lives
+       under <score> (outside <section>) so it is not matched here — it seeds
+       count/unit/key above. An in-section <scoreDef> overrides meter and/or
+       key from that point forward (MEI 5 idiom — see roadmap §10). Measures
+       nested in <ending> wrappers are still matched (querySelectorAll is
+       depth-agnostic) and stay in order. */
+    const nodes = section
+      ? Array.from(section.querySelectorAll('scoreDef, measure'))
+      : this.allMeasures();
+    for (const node of nodes) {
+      if (node.localName === 'scoreDef') {
+        const c = node.getAttribute('meter.count');
+        const u = node.getAttribute('meter.unit');
+        if (c) count = parseInt(c, 10);
+        if (u) unit = parseInt(u, 10);
+        const ks = node.getAttribute('key.sig');
+        if (ks !== null) keySig = ks;
+        const km = node.getAttribute('mode');
+        if (km === 'major' || km === 'minor') keyMode = km;
+      } else {
+        const ticks = count * (64 / unit);
+        measures.push(node);
+        perMeasure.push(ticks);
+        budgetByEl.set(node, ticks);
+        meterByEl.set(node, { count, unit });
+        keyByEl.set(node, { sig: keySig, mode: keyMode });
+      }
+    }
+    const prefix: number[] = new Array(measures.length + 1);
+    prefix[0] = 0;
+    for (let i = 0; i < measures.length; i++) prefix[i + 1] = prefix[i] + perMeasure[i];
+    this.meterCache = { measures, perMeasure, prefix, budgetByEl, meterByEl, keyByEl };
+    return this.meterCache;
+  }
+
+  /** Tick budget of measure `mi` (its meter's ticks-per-measure). Out-of-range
+   *  indices fall back to the score-default budget (used for the synthetic
+   *  "one past the last measure" slot). */
+  measureTicksAt(mi: number): number {
+    const t = this.meterTable();
+    if (mi < 0 || mi >= t.perMeasure.length) return this.measureTicks();
+    return t.perMeasure[mi];
+  }
+
+  /** Absolute tick at the START of measure `mi` — the cumulative sum of all
+   *  earlier measures' budgets. `measureStartTick(measureCount)` is the score's
+   *  total tick length. Replaces the old uniform `mi * measureTicks()`. */
+  measureStartTick(mi: number): number {
+    const t = this.meterTable();
+    if (mi <= 0) return 0;
+    if (mi >= t.prefix.length) return t.prefix[t.prefix.length - 1];
+    return t.prefix[mi];
+  }
+
+  /** Measure index whose span contains absolute tick `tAbs` (the largest `mi`
+   *  with `measureStartTick(mi) <= tAbs`). Replaces `Math.floor(tAbs / W)`. */
+  measureIdxAtTick(tAbs: number): number {
+    const t = this.meterTable();
+    const n = t.measures.length;
+    if (n === 0) return 0;
+    /* prefix is monotonic non-decreasing; linear scan is fine (measure counts
+       are small) and avoids binary-search edge cases at exact boundaries. */
+    let mi = 0;
+    for (let i = 0; i < n; i++) {
+      if (t.prefix[i] <= tAbs + TICK_EPS) mi = i;
+      else break;
+    }
+    return mi;
+  }
+
+  /** Index of a `<measure>` element in document order, or -1. */
+  measureIdxOf(measure: Element): number {
+    return this.meterTable().measures.indexOf(measure);
+  }
+
+  /** The `<measure>` ancestor of an arbitrary node (layer/staff/etc.), or null. */
+  measureElementOf(node: Element | null): Element | null {
+    let n: Element | null = node;
+    while (n && n.localName !== 'measure') n = n.parentElement;
+    return n;
+  }
+
+  /** Tick budget for the measure containing `layer`. Falls back to the
+   *  score-default budget if the layer has no measure ancestor (defensive). */
+  measureTicksForLayer(layer: Element): number {
+    const m = this.measureElementOf(layer);
+    if (!m) return this.measureTicks();
+    const b = this.meterTable().budgetByEl.get(m);
+    return b ?? this.measureTicks();
+  }
+
+  /** Meter (count, unit) in effect at measure `mi` (nearest in-section
+   *  `<scoreDef>` meter override at or before `mi`, else the head). */
+  meterAt(mi: number): { count: number; unit: number } {
+    const t = this.meterTable();
+    if (mi < 0 || mi >= t.measures.length) return this.getTimeSig();
+    return t.meterByEl.get(t.measures[mi]) ?? this.getTimeSig();
+  }
+
+  /** Key signature in effect at measure `mi` (nearest in-section `<scoreDef>`
+   *  key override at or before `mi`, else the head). */
+  keySigAt(mi: number): string {
+    const t = this.meterTable();
+    if (mi < 0 || mi >= t.measures.length) return this.getKeySig();
+    return t.keyByEl.get(t.measures[mi])?.sig ?? this.getKeySig();
+  }
+
+  /** Key mode (major/minor) in effect at measure `mi`. */
+  keyModeAt(mi: number): 'major' | 'minor' {
+    const t = this.meterTable();
+    if (mi < 0 || mi >= t.measures.length) return this.getKeyMode();
+    return t.keyByEl.get(t.measures[mi])?.mode ?? this.getKeyMode();
+  }
+
+  /** Key signature in effect for the `<measure>` element (used by the accidental
+   *  pipeline, which walks measures in document order). */
+  keySigForMeasure(measure: Element): string {
+    return this.meterTable().keyByEl.get(measure)?.sig ?? this.getKeySig();
+  }
+
+  /** Ensure an in-section `<scoreDef>` override sits immediately before measure
+   *  `mi` and return it. For `mi <= 0` returns the head `<scoreDef>` (the score
+   *  default — no override node needed). Reuses an existing override scoreDef
+   *  that is already the measure's previous section sibling. Mirrors the
+   *  `<ending>`/`<sb>` ref-walk used by insertMeasureAt. */
+  private ensureScoreDefBefore(mi: number): Element | null {
+    const head = this.doc.querySelector('scoreDef');
+    if (mi <= 0) return head;
+    const measures = this.allMeasures();
+    if (mi >= measures.length) return head;
+    const section = this.doc.querySelector('section');
+    if (!section || !head) return head;
+    /* The measure may be wrapped in an <ending>; the override must precede the
+       whole wrapper so it applies to the wrapper's first measure. */
+    let ref: Node = measures[mi];
+    while (ref.parentNode && ref.parentNode !== section) ref = ref.parentNode;
+    const prev = (ref as Element).previousElementSibling;
+    if (prev && prev.localName === 'scoreDef') return prev;
+    const sd = this.doc.createElementNS(head.namespaceURI, 'scoreDef');
+    section.insertBefore(sd, ref);
+    return sd;
+  }
+
+  /** Set the time signature effective FROM measure `mi` forward (until the next
+   *  existing override). `mi === 0` writes the head scoreDef (= setTimeSig).
+   *  Truncates overflow only within the affected span.
+   *
+   *  Diff-aware: if (count, unit) equals what `mi` already INHERITS (the meter
+   *  in effect at `mi-1`), no override is written — and any existing meter
+   *  attributes on `mi`'s own override are cleared (so submitting an unchanged
+   *  meter never renders a redundant meter change). */
+  setMeterAt(mi: number, count: number, unit: number): void {
+    if (mi <= 0) { this.setTimeSig(count, unit); return; }
+    const inherited = this.meterAt(mi - 1);
+    const sameAsInherited = inherited.count === count && inherited.unit === unit;
+    /* Find an existing override sibling without creating one. */
+    const existing = this.overrideScoreDefBefore(mi);
+    if (sameAsInherited) {
+      if (!existing || !existing.hasAttribute('meter.count')) return; /* nothing to do */
+      existing.removeAttribute('meter.count');
+      existing.removeAttribute('meter.unit');
+      existing.removeAttribute('meter.sym');
+      this.pruneEmptyScoreDef(existing);
+      this.invalidateMeterCache();
+      this.normalizePlaceholdersAll();
+      return;
+    }
+    const sd = this.ensureScoreDefBefore(mi);
+    if (!sd) return;
+    sd.setAttribute('meter.count', String(count));
+    sd.setAttribute('meter.unit', String(unit));
+    this.invalidateMeterCache();
+    /* Truncate from mi up to (but not including) the next measure that carries
+       its own meter override. */
+    const hi = this.nextMeterOverrideIdx(mi) - 1;
+    const v = this.currentVoice;
+    const flat = this.flatChildren(v);
+    const c = this.cursors[v];
+    const lookForward: Element[] = c < flat.length ? flat.slice(c) : [];
+    this.truncateOverflowingMeasuresInRange(mi, hi);
+    normalizeTies(this);
+    this.reanchorCursorAfter(v, lookForward);
+  }
+
+  /** Set the key signature effective FROM measure `mi` forward. `mi === 0`
+   *  writes the head scoreDef (= setKeySig + setKeyMode). Notes before `mi`
+   *  keep the prior key's spelling; the accidental pipeline resets carry-state
+   *  to the new key at `mi` (silent switch — no courtesy naturals).
+   *
+   *  Diff-aware (keyed on `sig` — the rendered key signature): equal to the
+   *  inherited sig → no override written + existing key attrs cleared, so an
+   *  unchanged key never renders a redundant key change at `mi`. */
+  setKeySigAt(mi: number, sig: string, mode: 'major' | 'minor'): void {
+    if (mi <= 0) { this.setKeySig(sig); this.setKeyMode(mode); this.invalidateMeterCache(); return; }
+    const inheritedSig = this.keySigAt(mi - 1);
+    const existing = this.overrideScoreDefBefore(mi);
+    if (sig === inheritedSig) {
+      if (existing && existing.hasAttribute('key.sig')) {
+        existing.removeAttribute('key.sig');
+        existing.removeAttribute('mode');
+        this.pruneEmptyScoreDef(existing);
+      }
+      this.invalidateMeterCache();
+      return;
+    }
+    const sd = this.ensureScoreDefBefore(mi);
+    if (!sd) return;
+    sd.setAttribute('key.sig', sig);
+    sd.setAttribute('mode', mode);
+    this.invalidateMeterCache();
+  }
+
+  /** The in-section override `<scoreDef>` immediately before measure `mi`, if
+   *  one already exists (never creates). */
+  private overrideScoreDefBefore(mi: number): Element | null {
+    const measures = this.allMeasures();
+    if (mi <= 0 || mi >= measures.length) return null;
+    const section = this.doc.querySelector('section');
+    if (!section) return null;
+    let ref: Node = measures[mi];
+    while (ref.parentNode && ref.parentNode !== section) ref = ref.parentNode;
+    const prev = (ref as Element).previousElementSibling;
+    return prev && prev.localName === 'scoreDef' ? (prev as Element) : null;
+  }
+
+  /** Remove an in-section override `<scoreDef>` once it carries no attributes
+   *  (so reverting a measure to fully-inherited leaves no empty node). */
+  private pruneEmptyScoreDef(sd: Element | null): void {
+    if (!sd) return;
+    if (sd === this.doc.querySelector('scoreDef')) return; /* never the head */
+    if (sd.attributes.length === 0) sd.parentNode?.removeChild(sd);
+  }
+
+  /** Clef in effect at the current cursor for its staff: the most recent inline
+   *  `<clef>` at/before the cursor in the cursor's layer, else the head
+   *  `<staffDef>` for that staff. Used to pre-select the clef modal. */
+  clefAtCursor(): { shape: string; line: string; dis: string | null; disPlace: string | null } {
+    const v = this.currentVoice;
+    const staffN = v <= 2 ? 1 : 2;
+    let shape = staffN === 1 ? 'G' : 'F';
+    let line = staffN === 1 ? '2' : '4';
+    let dis: string | null = null;
+    let disPlace: string | null = null;
+    const headDef = Array.from(this.doc.querySelectorAll('scoreDef staffDef'))
+      .find((d) => d.getAttribute('n') === String(staffN));
+    if (headDef) {
+      shape = headDef.getAttribute('clef.shape') ?? shape;
+      line = headDef.getAttribute('clef.line') ?? line;
+      dis = headDef.getAttribute('clef.dis');
+      disPlace = headDef.getAttribute('clef.dis.place');
+    }
+    const loc = locateCursor(this, v, this.cursors[v]);
+    if (loc && !loc.inTuplet) {
+      const content = this.contentChildren(loc.layer);
+      const limit = loc.withinIdx < content.length ? content[loc.withinIdx] : null;
+      for (const c of Array.from(loc.layer.children)) {
+        if (limit && c === limit) break;
+        if (c.localName === 'clef') {
+          shape = c.getAttribute('shape') ?? shape;
+          line = c.getAttribute('line') ?? line;
+          dis = c.getAttribute('dis');
+          disPlace = c.getAttribute('dis.place');
+        }
+      }
+    }
+    return { shape, line, dis, disPlace };
+  }
+
+  /** Insert (or replace) an inline `<clef>` at the current cursor — a
+   *  mid-measure clef change for the cursor's staff. Zero-duration: it changes
+   *  no ticks/placeholders, only notation. Returns false if the cursor is
+   *  inside a tuplet (unsupported in v1). Re-running at the same spot edits the
+   *  clef already there. `dis`/`disPlace` give octave clefs (treble+8 etc.). */
+  setClefAt(shape: string, line: string, dis: string | null, disPlace: string | null): boolean {
+    const v = this.currentVoice;
+    const loc = locateCursor(this, v, this.cursors[v]);
+    if (!loc || loc.inTuplet) return false;
+    const layer = loc.layer;
+    const content = this.contentChildren(layer);
+    /* Insertion ref = the element at the cursor's tick: the content child at
+       withinIdx, else the first trailing placeholder (cursor past content), so
+       the clef lands at the cursor's x — not after the invisible padding. */
+    let ref: Element | null = loc.withinIdx < content.length ? content[loc.withinIdx] : null;
+    if (!ref) ref = Array.from(layer.children).find((c) => isPlaceholder(c)) ?? null;
+    /* Reuse a clef already at this spot (re-edit), else create one. */
+    const prev = ref ? ref.previousElementSibling : layer.lastElementChild;
+    let clef: Element;
+    if (prev && prev.localName === 'clef') {
+      clef = prev;
+    } else {
+      clef = el(this.doc, 'clef', { 'xml:id': newId('clf') });
+      if (ref) layer.insertBefore(clef, ref);
+      else layer.appendChild(clef);
+    }
+    clef.setAttribute('shape', shape);
+    clef.setAttribute('line', line);
+    if (dis) {
+      clef.setAttribute('dis', dis);
+      clef.setAttribute('dis.place', disPlace ?? 'above');
+    } else {
+      clef.removeAttribute('dis');
+      clef.removeAttribute('dis.place');
+    }
+    return true;
+  }
+
+  /** First measure index > `mi` that carries its OWN meter override (so a
+   *  ranged truncation knows where the changed span ends), or measure count. */
+  private nextMeterOverrideIdx(mi: number): number {
+    const measures = this.allMeasures();
+    const section = this.doc.querySelector('section');
+    if (!section) return measures.length;
+    for (let i = mi + 1; i < measures.length; i++) {
+      let ref: Node = measures[i];
+      while (ref.parentNode && ref.parentNode !== section) ref = ref.parentNode;
+      const prev = (ref as Element).previousElementSibling;
+      if (prev && prev.localName === 'scoreDef'
+        && (prev.hasAttribute('meter.count') || prev.hasAttribute('meter.unit'))) {
+        return i;
+      }
+    }
+    return measures.length;
+  }
+
+  /** Normalize layer-level placeholders across the whole doc, each layer filled
+   *  to ITS measure's budget (per-measure-meter aware). Invalidates the meter
+   *  cache first so the table reflects whatever structural/meter mutation just
+   *  ran. Replaces the old `normalizePlaceholders(this.doc, this.measureTicks())`
+   *  pattern at every call site. */
+  normalizePlaceholdersAll(): void {
+    this.invalidateMeterCache();
+    normalizePlaceholders(this.doc, (layer) => this.measureTicksForLayer(layer));
   }
 
   /** Return the <layer> for (voice, measure). */
@@ -1016,7 +1414,7 @@ export class ComposerModel {
     /* Fill the new measure's four empty layers with full-measure placeholders
        so the placeholder invariant holds without callers having to remember
        to normalize. */
-    normalizePlaceholders(this.doc, this.measureTicks());
+    this.normalizePlaceholdersAll();
     return m;
   }
 
@@ -1132,7 +1530,7 @@ export class ComposerModel {
         parent.removeChild(ft);
       }
       normalizeTies(this);
-      normalizePlaceholders(this.doc, this.measureTicks());
+      this.normalizePlaceholdersAll();
       return { kind: 'tremolo', removed: true };
     }
 
@@ -1183,7 +1581,7 @@ export class ComposerModel {
       b.parentNode?.removeChild(b);
       toggleTrill(a);
       normalizeTies(this);
-      normalizePlaceholders(this.doc, this.measureTicks());
+      this.normalizePlaceholdersAll();
       return { kind: 'trill', removed: false };
     }
 
@@ -1201,7 +1599,7 @@ export class ComposerModel {
     fTrem.appendChild(a);
     fTrem.appendChild(b);
     normalizeTies(this);
-    normalizePlaceholders(this.doc, this.measureTicks());
+    this.normalizePlaceholdersAll();
     return { kind: 'tremolo', removed: false };
   }
 
@@ -1275,7 +1673,6 @@ export class ComposerModel {
   fillIncompleteMeasures(): { measuresAffected: number } {
     const measures = this.allMeasures();
     const ts = readTimeSig(this.doc);
-    const cap = this.measureTicks();
     let measuresAffected = 0;
     /* Per-voice cursor preservation: snapshot the look-forward anchors
        before mutating. */
@@ -1286,6 +1683,7 @@ export class ComposerModel {
       looks[v] = c < flat.length ? flat.slice(c) : [];
     }
     for (let mi = 0; mi < measures.length; mi++) {
+      const cap = this.measureTicksAt(mi);
       for (let v: Voice = 1; v <= 4; v = (v + 1) as Voice) {
         const layer = this.layerInMeasure(measures[mi], v);
         if (!layer) continue;
@@ -1305,7 +1703,7 @@ export class ComposerModel {
         measuresAffected++;
       }
     }
-    normalizePlaceholders(this.doc, this.measureTicks());
+    this.normalizePlaceholdersAll();
     for (let v: Voice = 1; v <= 4; v = (v + 1) as Voice) {
       this.reanchorCursorAfter(v, looks[v]);
     }
@@ -1372,7 +1770,7 @@ export class ComposerModel {
     this.setBarlines();
     /* Sever the slurs that now straddle the new (empty) measure. */
     for (const slur of slurStraddle) slur.parentNode?.removeChild(slur);
-    normalizePlaceholders(this.doc, this.measureTicks());
+    this.normalizePlaceholdersAll();
     /* Ties: re-realize with the new flat ordering. Notes that were tied
        across the old measure boundary now have the new empty measure's
        wrapper as their "next slot" — extractNoteElements returns [] for
@@ -1607,11 +2005,11 @@ export class ComposerModel {
       return tgtV;
     }
     const srcMeasure = this.cursorMeasureIdx(srcV);
-    const mTicks = this.measureTicks();
+    const srcStart = this.measureStartTick(srcMeasure);
     const srcAbs = this.getCursorAbsoluteTicks(srcV);
-    const within = srcAbs - srcMeasure * mTicks;
+    const within = srcAbs - srcStart;
     this.setVoice(tgtV);
-    let cand = this.findCursorByTickPosition(tgtV, srcMeasure * mTicks + within);
+    let cand = this.findCursorByTickPosition(tgtV, srcStart + within);
     if (this.cursorVisualMeasureAtIndex(tgtV, cand, "insert") !== srcMeasure) {
       cand = this.getFirstVisualCursorInMeasure(tgtV, srcMeasure, "insert");
     }
@@ -1719,7 +2117,7 @@ export class ComposerModel {
     if (!hasLaterContent) return;
     let total = 0;
     for (const c of cc) total += realTicks(c);
-    const cap = this.measureTicks();
+    const cap = this.measureTicksForLayer(layer);
     if (total >= cap) return;
     for (const c of Array.from(layer.children)) {
       if (isPlaceholder(c)) layer.removeChild(c);
@@ -1815,7 +2213,10 @@ export class ComposerModel {
       loc.measureIdx,
       loc.withinIdx,
     );
-    const { unit } = this.getTimeSig();
+    /* tstamp is in beats of the measure's OWN meter (mid-piece meter change),
+       so the beat unit must be the one in effect at loc.measureIdx — not the
+       head. absoluteTickForMoment uses the same local unit to invert this. */
+    const { unit } = this.meterAt(loc.measureIdx);
     const ticksPerBeat = 64 / unit;
     return {
       measureIdx: loc.measureIdx,
@@ -1868,7 +2269,7 @@ export class ComposerModel {
     const id = insertWithSplit(this, input, false);
     if (id === null) return null;
     this.resolvePendingTies(originalCursor);
-    normalizePlaceholders(this.doc, this.measureTicks());
+    this.normalizePlaceholdersAll();
     this.cursors[v] = Math.min(this.cursors[v], this.getVoiceLength(v));
     return id;
   }
@@ -1884,7 +2285,7 @@ export class ComposerModel {
     );
     if (id === null) return null;
     normalizeTies(this);
-    normalizePlaceholders(this.doc, this.measureTicks());
+    this.normalizePlaceholdersAll();
     this.cursors[v] = Math.min(this.cursors[v], this.getVoiceLength(v));
     return id;
   }
@@ -1956,7 +2357,7 @@ export class ComposerModel {
 
     this.setBarlines();
     normalizeTies(this);
-    normalizePlaceholders(this.doc, this.measureTicks());
+    this.normalizePlaceholdersAll();
     return { collapsed, survivorId };
   }
 
@@ -2060,7 +2461,7 @@ export class ComposerModel {
 
     this.setBarlines();
     normalizeTies(this);
-    normalizePlaceholders(this.doc, this.measureTicks());
+    this.normalizePlaceholdersAll();
     return { addedIds, skipped };
   }
 
@@ -2167,7 +2568,7 @@ export class ComposerModel {
           tuplet.appendChild(p);
         }
         this.resolvePendingTies(cursorAtCall);
-        normalizePlaceholders(this.doc, this.measureTicks());
+        this.normalizePlaceholdersAll();
             return replaced.getAttribute("xml:id");
       }
 
@@ -2189,7 +2590,7 @@ export class ComposerModel {
         tuplet.appendChild(p);
       }
       this.resolvePendingTies(cursorAtCall);
-      normalizePlaceholders(this.doc, this.measureTicks());
+      this.normalizePlaceholdersAll();
         return replaced.getAttribute("xml:id");
     }
 
@@ -2217,7 +2618,7 @@ export class ComposerModel {
       const id = insertWithSplit(this, input, false);
       this.cursors[v] = cursorAtCall;
       this.resolvePendingTies(cursorAtCall);
-      normalizePlaceholders(this.doc, this.measureTicks());
+      this.normalizePlaceholdersAll();
         return id;
     }
     /* Simple in-place replace WITHIN current measure if it fits — checked
@@ -2229,12 +2630,12 @@ export class ComposerModel {
     for (let i = idxInLayer + 1; i < kids.length; i++) {
       postBlockTicks += realTicks(kids[i]);
     }
-    if (usedBefore + newTicks + postBlockTicks <= this.measureTicks()) {
+    if (usedBefore + newTicks + postBlockTicks <= this.measureTicksAt(measureIdx)) {
       this.orphanTiePartners(target);
       const replaced = buildChordElement(this.doc, input);
       layer.replaceChild(replaced, target);
       this.resolvePendingTies(cursorAtCall);
-      normalizePlaceholders(this.doc, this.measureTicks());
+      this.normalizePlaceholdersAll();
         return replaced.getAttribute("xml:id");
     }
     /* Overflow on replace: remove old, run the planning insertWithSplit
@@ -2246,7 +2647,7 @@ export class ComposerModel {
     const id = insertWithSplit(this, input, false);
     this.cursors[v] = cursorAtCall;
     this.resolvePendingTies(cursorAtCall);
-    normalizePlaceholders(this.doc, this.measureTicks());
+    this.normalizePlaceholdersAll();
     return id;
   }
 
@@ -2316,7 +2717,7 @@ export class ComposerModel {
           tuplet.parentNode?.removeChild(tuplet);
           this.setBarlines();
           normalizeTies(this);
-          normalizePlaceholders(this.doc, this.measureTicks());
+          this.normalizePlaceholdersAll();
           this.cursors[v] = cursorPastPrevOf(tupletIdx);
           clampCursors();
           return true;
@@ -2337,7 +2738,7 @@ export class ComposerModel {
         this.renumberMeasures();
         this.setBarlines();
         normalizeTies(this);
-        normalizePlaceholders(this.doc, this.measureTicks());
+        this.normalizePlaceholdersAll();
         /* Explicitly seat the cursor "past the element before the deleted
            measure". Without this, clampCursors alone leaves the cursor
            at past-end whenever the surviving prev measure is partial/empty
@@ -2366,7 +2767,7 @@ export class ComposerModel {
         const tupletIdx = c; /* flat[c] === target === tuplet wrapper */
         target.parentNode?.removeChild(target);
         this.setBarlines();
-        normalizePlaceholders(this.doc, this.measureTicks());
+        this.normalizePlaceholdersAll();
         this.cursors[v] = cursorPastPrevOf(tupletIdx);
         clampCursors();
         return true;
@@ -2405,7 +2806,7 @@ export class ComposerModel {
       this.cursors[v] = Math.max(0, c - 1);
       this.setBarlines();
       normalizeTies(this);
-      normalizePlaceholders(this.doc, this.measureTicks());
+      this.normalizePlaceholdersAll();
       clampCursors();
       return true;
     }
@@ -2421,7 +2822,7 @@ export class ComposerModel {
     this.cursors[v] = Math.max(0, c - 1);
     this.setBarlines();
     normalizeTies(this);
-    normalizePlaceholders(this.doc, this.measureTicks());
+    this.normalizePlaceholdersAll();
     clampCursors();
     return true;
   }
@@ -2466,7 +2867,6 @@ export class ComposerModel {
     srcElements: Element[],
     srcDurationTicks: number,
   ): { ok: true; postCursor: number } | { ok: false; reason: string } {
-    const cap = this.measureTicks();
     let effectiveLo = tLoAbs;
     let effectiveHi = tLoAbs + srcDurationTicks;
 
@@ -2474,9 +2874,10 @@ export class ComposerModel {
        layers that partially overlap [tLoAbs, effectiveHi). */
     const measures0 = this.allMeasures();
     for (let mi = 0; mi < measures0.length; mi++) {
-      const mStart = mi * cap;
+      const mStart = this.measureStartTick(mi);
+      const mEnd = this.measureStartTick(mi + 1);
       if (mStart >= effectiveHi) break;
-      if (mStart + cap <= tLoAbs) continue;
+      if (mEnd <= tLoAbs) continue;
       const layer = this.layerInMeasure(measures0[mi], voice);
       if (!layer) continue;
       let cursor = mStart;
@@ -2494,7 +2895,7 @@ export class ComposerModel {
     }
 
     /* Auto-append measures so effectiveHi fits. */
-    while (effectiveHi > this.allMeasures().length * cap) {
+    while (effectiveHi > this.measureStartTick(this.allMeasures().length)) {
       this.appendMeasure();
     }
 
@@ -2502,9 +2903,10 @@ export class ComposerModel {
        [effectiveLo, effectiveHi). */
     const measures = this.allMeasures();
     for (let mi = 0; mi < measures.length; mi++) {
-      const mStart = mi * cap;
+      const mStart = this.measureStartTick(mi);
+      const mEnd = this.measureStartTick(mi + 1);
       if (mStart >= effectiveHi) break;
-      if (mStart + cap <= effectiveLo) continue;
+      if (mEnd <= effectiveLo) continue;
       const layer = this.layerInMeasure(measures[mi], voice);
       if (!layer) continue;
       let cursor = mStart;
@@ -2541,8 +2943,8 @@ export class ComposerModel {
       const leadingTicks = tLoAbs - effectiveLo;
       const ts = readTimeSig(this.doc);
       /* tLo within its measure for beat alignment. */
-      const measureIdxLeading = Math.floor(effectiveLo / cap);
-      const inMeasureLo = effectiveLo - measureIdxLeading * cap;
+      const measureIdxLeading = this.measureIdxAtTick(effectiveLo);
+      const inMeasureLo = effectiveLo - this.measureStartTick(measureIdxLeading);
       const restPieces = decomposeBeatAlignedRests(inMeasureLo, leadingTicks, ts);
       for (const p of restPieces) {
         if (this.insertRestAtCursor({ duration: p.dur, dots: p.dots }) === null) {
@@ -2566,8 +2968,8 @@ export class ComposerModel {
     if (effectiveHi > afterSrc) {
       const trailingTicks = effectiveHi - afterSrc;
       const ts = readTimeSig(this.doc);
-      const measureIdxTrailing = Math.floor(afterSrc / cap);
-      const inMeasureLo = afterSrc - measureIdxTrailing * cap;
+      const measureIdxTrailing = this.measureIdxAtTick(afterSrc);
+      const inMeasureLo = afterSrc - this.measureStartTick(measureIdxTrailing);
       const restPieces = decomposeBeatAlignedRests(inMeasureLo, trailingTicks, ts);
       for (const p of restPieces) {
         if (this.insertRestAtCursor({ duration: p.dur, dots: p.dots }) === null) {
@@ -2583,7 +2985,7 @@ export class ComposerModel {
     this.currentVoice = prevVoice;
     this.setBarlines();
     normalizeTies(this);
-    normalizePlaceholders(this.doc, this.measureTicks());
+    this.normalizePlaceholdersAll();
     for (let vi: Voice = 1; vi <= 4; vi = (vi + 1) as Voice) {
       this.cursors[vi] = Math.min(this.cursors[vi], this.getVoiceLength(vi));
       if (vi === 4) break;
@@ -2614,7 +3016,7 @@ export class ComposerModel {
       if (!loc || loc.inTuplet) return false;
       const tupletTicks = realTicks(src);
       const used = this.timeWithinMeasure(v, loc.measureIdx, loc.withinIdx);
-      if (used + tupletTicks > this.measureTicks() + 1e-6) return false;
+      if (used + tupletTicks > this.measureTicksAt(loc.measureIdx) + 1e-6) return false;
       /* Clone into our doc with fresh ids. */
       const fresh = src.cloneNode(true) as Element;
       this.regenerateIds(fresh);
@@ -2622,7 +3024,7 @@ export class ComposerModel {
       /* Advance cursor past the tuplet's contributed flat stops. The simplest
          way is to compute the new cursor via tstamp lookup. */
       const newTstamp = this.getCursorAbsoluteTicks(v) + tupletTicks;
-      normalizePlaceholders(this.doc, this.measureTicks());
+      this.normalizePlaceholdersAll();
       this.cursors[v] = this.findCursorByTickPosition(v, newTstamp);
       return true;
     }
@@ -2713,7 +3115,7 @@ export class ComposerModel {
     }
     this.setBarlines();
     normalizeTies(this);
-    normalizePlaceholders(this.doc, this.measureTicks());
+    this.normalizePlaceholdersAll();
     for (let vi: Voice = 1; vi <= 4; vi = (vi + 1) as Voice) {
       this.cursors[vi] = Math.min(this.cursors[vi], this.getVoiceLength(vi));
       if (vi === 4) break;
@@ -2794,7 +3196,7 @@ export class ComposerModel {
       )) {
         enclosingTuplet.appendChild(p);
       }
-      normalizePlaceholders(this.doc, this.measureTicks());
+      this.normalizePlaceholdersAll();
         return { id: ref.id, newDots: nextDots };
     }
 
@@ -2805,13 +3207,13 @@ export class ComposerModel {
     const idxInLayer = kids.indexOf(elem);
     if (idxInLayer < 0) return null;
     const ticksBefore = this.timeWithinMeasure(v, loc.measureIdx, idxInLayer);
-    const remaining = this.measureTicks() - ticksBefore;
+    const remaining = this.measureTicksAt(loc.measureIdx) - ticksBefore;
 
     if (newTotalTicks <= remaining) {
       /* Fits in measure: just set/remove @dots. */
       if (nextDots > 0) elem.setAttribute("dots", String(nextDots));
       else elem.removeAttribute("dots");
-      normalizePlaceholders(this.doc, this.measureTicks());
+      this.normalizePlaceholdersAll();
         return { id: ref.id, newDots: nextDots };
     }
 
@@ -2849,7 +3251,7 @@ export class ComposerModel {
     if (mode === "overwrite") {
       this.cursors[v] = ref.index;
     }
-    normalizePlaceholders(this.doc, this.measureTicks());
+    this.normalizePlaceholdersAll();
     this.cursors[v] = Math.min(this.cursors[v], this.getVoiceLength(v));
     if (!firstId) return null;
     return { id: firstId, newDots: nextDots };
@@ -2909,7 +3311,7 @@ export class ComposerModel {
     }
 
     normalizeTies(this);
-    normalizePlaceholders(this.doc, this.measureTicks());
+    this.normalizePlaceholdersAll();
     return { id: ref.id, tied: !alreadyTied };
   }
 
@@ -2921,15 +3323,26 @@ export class ComposerModel {
    *  truncation point get orphaned cleanly (orphanTiePartners demotes
    *  surviving partners back to stubs). */
   private truncateOverflowingMeasures(): void {
-    const cap = this.measureTicks();
-    for (const measure of this.allMeasures()) {
+    this.truncateOverflowingMeasuresInRange(0, this.allMeasures().length - 1);
+  }
+
+  /** Truncate overflow in measures [miLo..miHi] only, each against ITS own
+   *  meter budget. A global meter change truncates the whole doc (miLo=0,
+   *  miHi=last); a future per-measure change (Phase 4.2) truncates only the
+   *  span from the change point to the next override. */
+  private truncateOverflowingMeasuresInRange(miLo: number, miHi: number): void {
+    const measures = this.allMeasures();
+    const lo = Math.max(0, miLo);
+    const hi = Math.min(miHi, measures.length - 1);
+    for (let mi = lo; mi <= hi; mi++) {
+      const cap = this.measureTicksAt(mi);
       for (let v: Voice = 1; v <= 4; v = (v + 1) as Voice) {
-        const layer = this.layerInMeasure(measure, v);
+        const layer = this.layerInMeasure(measures[mi], v);
         if (layer) this.truncateLayer(layer, cap);
         if (v === 4) break;
       }
     }
-    normalizePlaceholders(this.doc, this.measureTicks());
+    this.normalizePlaceholdersAll();
     for (let v: Voice = 1; v <= 4; v = (v + 1) as Voice) {
       this.cursors[v] = Math.min(this.cursors[v], this.getVoiceLength(v));
       if (v === 4) break;

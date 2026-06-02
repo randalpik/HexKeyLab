@@ -85,12 +85,11 @@ function collectBeatContent(
   tHi: number,
 ): Element[] {
   const measures = model.allMeasures();
-  const measureT = model.measureTicks();
   const out: Element[] = [];
   for (let mi = 0; mi < measures.length; mi++) {
-    const measureStart = mi * measureT;
+    const measureStart = model.measureStartTick(mi);
     if (measureStart >= tHi) break;
-    if (measureStart + measureT <= tLo) continue;
+    if (model.measureStartTick(mi + 1) <= tLo) continue;
     const m = measures[mi];
     const staffN = voice <= 2 ? 1 : 2;
     const layerN = voice === 1 || voice === 3 ? 1 : 2;

@@ -26,7 +26,10 @@ export function isPlaceholder(elem: Element): boolean {
  *  Tuplet-internal placeholders (data-tuplet-placeholder) are never touched
  *  here — those live inside <tuplet> elements and are managed by
  *  tuplet-specific code. */
-export function normalizePlaceholders(doc: Document, measureTicks: number): void {
+export function normalizePlaceholders(
+  doc: Document,
+  ticksForLayer: (layer: Element) => number,
+): void {
   const layers = doc.querySelectorAll('layer');
   for (const layer of Array.from(layers)) {
     /* Strip existing layer-level placeholders. */
@@ -48,7 +51,7 @@ export function normalizePlaceholders(doc: Document, measureTicks: number): void
         used += realTicks(c);
       }
     }
-    const remaining = measureTicks - used;
+    const remaining = ticksForLayer(layer) - used;
     if (remaining <= 0) continue;
     for (const p of decomposeTicks(remaining)) {
       const space = el(doc, 'space', {

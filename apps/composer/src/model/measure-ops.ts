@@ -14,7 +14,6 @@ import { readTimeSig } from '../notation/beams.js';
 import { realTicks } from './ticks.js';
 import { decomposeBeatAlignedRests } from './restfill.js';
 import { normalizeTies } from './ties.js';
-import { normalizePlaceholders } from './placeholders.js';
 import { el, newId, type ComposerModel, type Voice } from './index.js';
 
 export function clearBeatRange(
@@ -25,11 +24,11 @@ export function clearBeatRange(
 ): void {
   if (tHiAbs <= tLoAbs) return;
   const measures = model.allMeasures();
-  const cap = model.measureTicks();
   const doc = model.getDoc();
   const ts = readTimeSig(doc);
   for (let mi = 0; mi < measures.length; mi++) {
-    const measureStart = mi * cap;
+    const cap = model.measureTicksAt(mi);
+    const measureStart = model.measureStartTick(mi);
     const measureEnd = measureStart + cap;
     if (measureEnd <= tLoAbs) continue;
     if (measureStart >= tHiAbs) break;
@@ -76,7 +75,7 @@ export function clearBeatRange(
   }
   model.setBarlines();
   normalizeTies(model);
-  normalizePlaceholders(doc, model.measureTicks());
+  model.normalizePlaceholdersAll();
   for (let vi: Voice = 1; vi <= 4; vi = (vi + 1) as Voice) {
     model.setCursor(Math.min(model.getCursor(vi), model.getVoiceLength(vi)), vi);
     if (vi === 4) break;
@@ -125,7 +124,7 @@ export function clearMeasureRange(
   }
   model.setBarlines();
   normalizeTies(model);
-  normalizePlaceholders(model.getDoc(), model.measureTicks());
+  model.normalizePlaceholdersAll();
   /* Clamp out-of-range cursors after wholesale measure-clearing. */
   for (let vi: Voice = 1; vi <= 4; vi = (vi + 1) as Voice) {
     model.setCursor(Math.min(model.getCursor(vi), model.getVoiceLength(vi)), vi);

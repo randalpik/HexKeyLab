@@ -37,13 +37,41 @@ export interface TimeSigInfo {
   is4_4: boolean;
 }
 
+function timeSigInfo(count: number, unit: number): TimeSigInfo {
+  const isCompound = unit >= 8 && count >= 6 && count % 3 === 0;
+  const is4_4 = count === 4 && unit === 4;
+  return { count, unit, isCompound, is4_4 };
+}
+
 export function readTimeSig(doc: Document): TimeSigInfo {
   const sd = doc.querySelector('scoreDef');
   const count = parseInt(sd?.getAttribute('meter.count') ?? '4', 10);
   const unit = parseInt(sd?.getAttribute('meter.unit') ?? '4', 10);
-  const isCompound = unit >= 8 && count >= 6 && count % 3 === 0;
-  const is4_4 = count === 4 && unit === 4;
-  return { count, unit, isCompound, is4_4 };
+  return timeSigInfo(count, unit);
+}
+
+/** Map each `<measure>` to the meter in effect there, walking in-section
+ *  `<scoreDef>` meter overrides seeded by `head`. Doc-local (mirrors the same
+ *  walk used for per-measure ticks/keys). */
+function perMeasureTimeSig(doc: Document, head: TimeSigInfo): Map<Element, TimeSigInfo> {
+  let count = head.count;
+  let unit = head.unit;
+  const out = new Map<Element, TimeSigInfo>();
+  const section = doc.querySelector('section');
+  const nodes = section
+    ? Array.from(section.querySelectorAll('scoreDef, measure'))
+    : Array.from(doc.querySelectorAll('measure'));
+  for (const node of nodes) {
+    if (node.localName === 'scoreDef') {
+      const c = node.getAttribute('meter.count');
+      const u = node.getAttribute('meter.unit');
+      if (c) count = parseInt(c, 10);
+      if (u) unit = parseInt(u, 10);
+    } else {
+      out.set(node, timeSigInfo(count, unit));
+    }
+  }
+  return out;
 }
 
 /** Return every layer-mate that would be wrapped in the same `<beam>` as
@@ -66,8 +94,11 @@ export function beamGroupForElement(doc: Document, elem: Element): Element[] {
     return findRunIncluding(stream, idx, new Set());
   }
   /* Layer-level: compute beat-group boundaries and the same per-element
-     "starts new beam" XOR (natural XOR marker) that regroupOneLayer uses. */
-  const ts = readTimeSig(doc);
+     "starts new beam" XOR (natural XOR marker) that regroupOneLayer uses.
+     Uses the meter in effect at THIS element's measure (mid-piece changes). */
+  const head = readTimeSig(doc);
+  const measureEl = elem.closest('measure');
+  const ts = (measureEl ? perMeasureTimeSig(doc, head).get(measureEl) : null) ?? head;
   const measureTicks = ts.count * (64 / ts.unit);
   const stream = annotateLayerExported(layer);
   const idx = stream.findIndex((s) => s.el === elem);
@@ -134,13 +165,18 @@ export function unwrapBeams(doc: Document): void {
 export function regroupBeams(doc: Document, ts: TimeSigInfo): void {
   unwrapBeams(doc);
 
-  const measureTicks = ts.count * (64 / ts.unit);
+  /* Per-measure meter: an in-section <scoreDef> override changes the beat
+     grouping from that measure forward (e.g. a 6/8 measure beams eighths by
+     dotted-quarter, not by the head meter's beat). */
+  const perMeasure = perMeasureTimeSig(doc, ts);
 
   const measures = doc.querySelectorAll('measure');
   for (const m of Array.from(measures)) {
+    const mts = perMeasure.get(m) ?? ts;
+    const measureTicks = mts.count * (64 / mts.unit);
     const layers = m.querySelectorAll('layer');
     for (const layer of Array.from(layers)) {
-      regroupOneLayer(doc, layer, ts, measureTicks);
+      regroupOneLayer(doc, layer, mts, measureTicks);
     }
   }
 
@@ -239,7 +275,9 @@ function regroupOneLayer(
     }
     const natural = i > 0 && groupStarts.has(i);
     const marker = entry.el.getAttribute('hkl-beam-break') === 'true';
-    const startsNew = natural !== marker;
+    /* A clef immediately before this note forces a new run (breakBefore), so
+       notes across a mid-measure clef change are never wrapped together. */
+    const startsNew = (natural !== marker) || entry.breakBefore === true;
     if (startsNew) {
       if (current.length > 0) runs.push(current);
       current = [entry];
@@ -281,13 +319,18 @@ function annotateTupletChildren(tuplet: Element): StreamEntry[] {
   return out;
 }
 
-interface StreamEntry { el: Element; startTick: number; durTicks: number }
+interface StreamEntry { el: Element; startTick: number; durTicks: number; breakBefore?: boolean }
 
 function annotateLayer(layer: Element): StreamEntry[] {
   const out: StreamEntry[] = [];
   let t = 0;
+  /* An inline <clef> (mid-measure clef change) must break a beam: notes on
+     either side of it can't be wrapped into one <beam> (wrapInBeam moves the
+     run's notes together, which would reorder the clef). Mark the next note. */
+  let pendingBreak = false;
   for (const c of Array.from(layer.children)) {
     const ln = c.localName;
+    if (ln === 'clef') { pendingBreak = true; continue; }
     if (ln === 'tuplet') {
       /* Tuplet contents are not beamed at the layer level in v1; skip
          the tuplet in beam grouping but advance the clock by its real
@@ -297,7 +340,8 @@ function annotateLayer(layer: Element): StreamEntry[] {
     }
     if (ln !== 'chord' && ln !== 'note' && ln !== 'rest') continue;
     const ticks = elementDurationTicks(c);
-    out.push({ el: c, startTick: t, durTicks: ticks });
+    out.push({ el: c, startTick: t, durTicks: ticks, breakBefore: pendingBreak });
+    pendingBreak = false;
     t += ticks;
   }
   return out;

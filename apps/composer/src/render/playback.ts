@@ -16,7 +16,7 @@ import { isTupletPlaceholder } from '../model/index.js';
 import type { PlaybackEvent, CoordRef, PedalEvent } from '@hkl/bridge/protocol.js';
 import {
   collectDynams, collectHairpins, getDynamicMap, absoluteTickForMoment,
-  collectTempi, getGradualPercents, readMeter,
+  collectTempi, getGradualPercents,
 } from '../expressions.js';
 import { collectPedals } from '../pedal.js';
 import { collectOctaves } from '../expressions.js';
@@ -132,10 +132,10 @@ export interface TempoTimeline {
 }
 
 export function buildTempoTimeline(mei: Document): TempoTimeline {
-  const { count, unit: meterUnit } = readMeter(mei);
-  const ticksPerMeasure = count * (64 / meterUnit);
   const measureCount = mei.querySelectorAll('measure').length;
-  const pieceEndTick = Math.max(1, measureCount * ticksPerMeasure);
+  /* True total tick = cumulative start of the past-end measure (per-measure
+     meter aware — handles mid-piece meter changes). */
+  const pieceEndTick = Math.max(1, absoluteTickForMoment(mei, { measureIdx: measureCount, tstamp: 1 }));
   const pct = getGradualPercents(mei);
 
   const tempi = collectTempi(mei)
@@ -711,9 +711,11 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
   /* Repeat path: atMs accumulates over the PLAYED measure order, while every
      other lookup (velocity, duration, tempo) stays keyed on the note's
      ORIGINAL tick (already baked into the canonical events above). */
-  const W = model.measureTicks();
   const measureCount = Array.from(mei.querySelectorAll('measure')).length;
-  const canonStart = (mi: number): number => tempo.atMsAt(mi * W);
+  /* Absolute tick at each measure's start — per-measure-meter aware (the
+     non-repeat path already accumulates ticks from content+placeholders, so it
+     needs no change; only this canonical-order remap used the uniform width). */
+  const canonStart = (mi: number): number => tempo.atMsAt(model.measureStartTick(mi));
 
   /* Seek: find the measure whose canonical span contains startMs; repeats
      whose body the seek falls inside are not replayed (expandPlayOrder). */

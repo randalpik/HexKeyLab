@@ -29,6 +29,7 @@ Decay instruments only (sustained is out of scope). Output provenance is tagged
 ```
 main.ts          wizard bootstrap + step router; window.__hklo test hook
 state.ts         session: active CaptureDevice, discovered bins, CaptureConfig (pub/sub)
+persist.ts       localStorage: config + bins + last device IDs (survives reload/HMR)
 bridge.ts        HKLO↔HKL bridge (hkl-orchestrator-bridge): sendHkiToHkl + conn badge
 
 device/
@@ -55,7 +56,8 @@ capture/
 
 analysis/
   shim.ts            single import point for @hkl/analysis DSP (computeGain, measureDecay, …)
-  buildHki.ts        analyze each layer → normalize gain → float-WAV encode → v2 HkiBundle
+  denoise.ts         spectral-subtraction NR (pre-roll noise profile, WOLA)
+  buildHki.ts        denoise → normalize gain → float-WAV encode → v2 HkiBundle (claimed pitch)
 
 ui/
   dom.ts, download.ts
@@ -74,9 +76,12 @@ to the main thread (transferred, no re-encode) — never `MediaRecorder` (opus/l
 
 **Recorder.** Sampling a decay instrument means holding the key and recording the *natural* decay
 (releasing early would damp/truncate it), so the recorder holds note-on for the whole capture and
-sends note-off only at the stop. Stop = elapsed ≥ 12 s, OR (after a minimum hold past the attack)
-trailing RMS < −60 dBFS held for 250 ms. Note-on alignment need not be sample-accurate — the
-analyzer trims leading silence itself.
+sends note-off only at the stop. The ~120 ms pre-roll (armed silence before note-on) is both
+captured (the analyzer/denoise trim it later) and measured for the **noise floor**. Stop = elapsed
+≥ 12 s, OR (after a minimum hold past the attack) trailing RMS within **1 dB of the measured noise
+floor** for 250 ms — *noise-floor relative*, not an absolute −60 dBFS, so the tail rings all the way
+down into the floor regardless of how padded the capture level is (a fixed level would either chop
+a loud tail early or never trigger on a quiet one). Note-on alignment need not be sample-accurate.
 
 **Loopback.** `LoopbackDevice` implements the same `CaptureDevice` over an internal additive synth
 through the same `CaptureGraph`, with **discrete velocity layers** (flat within a layer, jumps
@@ -96,11 +101,42 @@ boundaries → N even bins. `detectBins` is pure (unit-tested in `bins-test.mjs`
 
 ## Quality gates
 
-Per capture (reusing `@hkl/analysis`): **quiet** (post-onset peak < −24 dBFS), **clip** (≥ −0.1
-dBFS), **short** (audible length < 0.5 s), **pitch** (no fundamental near the expected MIDI pitch,
-or > 50¢ drift). The pitch check uses `refineFundamentalPeriod` plus a half-period autocorrelation
-guard to catch octave-up errors (which align at the hint lag). UI tiers: green pass, yellow
-recoverable (quiet/short), red hard-fail (clip/pitch).
+The level/duration gates are **noise-floor relative**, not absolute dBFS — the chain may be padded
+(e.g. a cable's lo switch) and every sample is later normalized, so SNR and decay-relative-to-peak
+are what survive normalization. The noise floor is self-measured from each capture's pre-attack
+pre-roll. Failing flags:
+- **quiet** — SNR (peak − noise floor) < 12 dB. (12, not 24: the noise-reduction step recovers
+  ~15–20 dB, so a modestly-above-floor sample is still usable.)
+- **clip** — any sample ≥ −0.1 dBFS (the one absolute test).
+- **short** — audible-above-noise length < 0.12 s (a missed/dead note; a fast-decaying high note
+  with a real attack still clears it).
+
+**Pitch is informational only — never a failure.** We TRUST the claimed MIDI→12-TET pitch (see
+Pitch/tuning below); the cents deviation is still measured (via `refineFundamentalPeriod`) and shown
+in the capture table for the user to eyeball, but it never rejects a sample or sets its stored pitch.
+UI tiers: green pass, yellow recoverable (quiet/short), red hard-fail (clip).
+
+## Noise reduction
+
+Each captured layer is denoised before encoding (`analysis/denoise.ts`) by **spectral subtraction**:
+the pre-roll silence is a clean per-capture noise profile, so we STFT the signal (Hann, 75 % overlap,
+zero-padded edges for clean WOLA reconstruction), subtract `α·noiseMag` per bin with a spectral
+floor `β·|X|`, and invert. Defaults α = 1.5, β = 0.04 (≈ conservative; the floor prevents musical
+noise). It's dramatic on tonal noise (mains hum, device whine — ~20–28 dB) and modest on broadband
+hiss (~5 dB), and leaves the note body essentially untouched (signal ≫ noise there), so it mainly
+cleans the decay tail + inter-note silence — the chord-hiss source.
+
+## Pitch / tuning — trust the claimed pitch
+
+We do **not** detect pitch to set the sample frequency: `buildHki` stores the **claimed MIDI→12-TET
+frequency (A440)** as each sample's `freq`. Rationale: a digital instrument holds equal temperament
+to a fraction of a cent, whereas period-detection on piano reads systematically **sharp** (string
+inharmonicity pulls the autocorrelation toward the stretched upper partials) and is noisy at low SNR
+— so "correcting" by detection would *add* error. This mirrors the analyzer's `trustLabeledPitch`
+(default-on for local sources). The JI cents-correction is computed from the tuning system at
+playback (engine freq-matching), landing the fundamental exactly on target; inharmonic partials stay
+in the audio for timbre. (An earlier autocorrelation octave-guard was removed — it can't distinguish
+a weak-fundamental high note from an octave-up, and only ever produced false failures.)
 
 ## `.hki` v2 + velocity layers
 
@@ -110,7 +146,8 @@ The bundle is the same `.hki` format bumped to version 2 (`packages/shared/src/h
 −18 dBFS target** with the analyzer's gain finder, so at play time the engine picks the nearest
 layer by velocity (`pickLayer` in `@hkl/engine`) and the existing house velocity curve owns
 loudness — the layer choice changes timbre, not level. Single-layer notes omit `vel` and behave
-identically to v1. `readHki` losslessly upcasts v1 bundles. Audio is encoded to 32-bit float WAV.
+identically to v1. `readHki` losslessly upcasts v1 bundles. Audio is the denoised capture encoded to
+32-bit float WAV.
 
 ## Bridge to HKL
 
@@ -127,11 +164,21 @@ capture/discovery gotchas"):
   `detectBins` boundary positions on synthetic fingerprints. `pickLayer` is in
   `test/engine-smoke`.
 - **Plumbing + browser-only logic** — `test/orchestrator-smoke/smoke.mjs` drives a headless
-  Chromium against a dev server and calls `window.__hklo.*` hooks: loopback capture returns audio,
-  a sweep runs end-to-end, the gates fire on synthesized PCM, a capture loop runs, and an
-  end-to-end export builds a v2 `.hki` that round-trips and decodes (asserting the equal-loudness
-  normalization invariant across layers).
-- **Hardware** — interactive in a real browser with the user's MIDI device + interface (the meter,
-  real discovery, real capture, Send-to-HKL).
+  Chromium and calls `window.__hklo.*` hooks: loopback capture returns audio, a sweep runs
+  end-to-end, the gates fire on synthesized PCM (with a pre-roll noise floor so the SNR-relative
+  logic is exercised), noise reduction drops the floor while preserving the note body, a capture
+  loop runs, and an end-to-end export builds a v2 `.hki` that round-trips, decodes, normalizes
+  layers to within ~1 dB, and stores the **claimed** pitch. Point it at the running umbrella with
+  `HKLO_URL=http://localhost:5170/orchestrator/` — do **not** spawn a competing server on 5176 or
+  kill by port (it hits the umbrella's child; the proxy doesn't respawn). `persist-test.mjs` checks
+  the localStorage reload round-trip.
+- **Hardware** — interactive in a real browser with the user's MIDI device + audio input (the
+  meter, real discovery, real capture, Send-to-HKL). `tools/audio-noise-scan.mjs <wav>` reports a
+  recording's RMS/peak/clipping + tonal-vs-broadband noise signature (uses the discovery FFT) — for
+  dialing input gain and diagnosing hum/whine before capturing.
+
+The capture **input chain** is the fragile part, not the code — see lessons.md "Capturing a
+hardware instrument's audio". A clean line-in source (the audio Connect step lists whatever ALSA
+exposes) makes everything downstream just work.
 
 Standard gates: `pnpm typecheck`, `pnpm -r build`, `pnpm check:boundaries`.

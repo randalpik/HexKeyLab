@@ -2,7 +2,6 @@
 
 import { writtenTicks } from './ticks.js';
 import { locateCursor } from './cursor-location.js';
-import { normalizePlaceholders } from './placeholders.js';
 import { buildTupletPlaceholder } from './note-elements.js';
 import { planInsert, insertAt } from './insertion-plan.js';
 import {
@@ -107,7 +106,7 @@ export function createTupletAtCursor(
 
   const spanTicks = ticksOf(spanDur, spanDots);
   const usedBefore = model.timeWithinMeasure(v, loc.measureIdx, loc.withinIdx);
-  const remaining = model.measureTicks() - usedBefore;
+  const remaining = model.measureTicksAt(loc.measureIdx) - usedBefore;
   if (spanTicks > remaining) {
     return {
       ok: false,
@@ -140,7 +139,7 @@ export function createTupletAtCursor(
   }
 
   insertAt(model, loc.layer, tuplet, loc.withinIdx);
-  normalizePlaceholders(doc, model.measureTicks());
+  model.normalizePlaceholdersAll();
   /* Advance cursor by +1 to land on the "entered tuplet" stop (= past
      the tuplet wrapper). */
   model.setCursor(Math.min(model.getCursor(v) + 1, model.getVoiceLength(v)), v);

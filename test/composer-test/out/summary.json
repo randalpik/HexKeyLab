@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 222,
-  "passed": 222,
+  "fixtures": 232,
+  "passed": 232,
   "failed": 0,
-  "elapsedMs": 75168,
+  "elapsedMs": 78612,
   "results": [
     {
       "name": "emptyDoc",
@@ -1775,6 +1775,86 @@
     },
     {
       "name": "phase1_click_switchesVoice",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase4_mixed_meter_prereq",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase4_sig_modal",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase4_keysig_midpiece",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase4_sig_unchanged_no_override",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase4_setup_sig_button",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase4_tempo_after_meter",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase4_beaming_compound",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase4_export_midpiece",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase4_clef_cursor_start",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase4_clef_midmeasure",
       "ok": true,
       "failures": [],
       "counts": {
