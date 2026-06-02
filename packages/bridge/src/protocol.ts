@@ -70,6 +70,11 @@ export interface PlaybackEvent {
    *  instruments, or a slight note-proportional overlap for the rest
    *  (decay + replay-on-transpose). */
   slurredToNext?: boolean;
+  /** Sample-set key of the instrument this attack belongs to (multi-instrument
+   *  scores). When set and loaded, HKL plays this attack with that instrument's
+   *  timbre; absent ⇒ HKL falls back to its current active instrument (the
+   *  historic single-instrument behavior). */
+  instrumentKey?: string;
 }
 
 /** A sustain-pedal transition in a playback timeline. HKL maps `dir` to the
@@ -81,6 +86,10 @@ export interface PedalEvent {
   atMs: number;
   /** Pedal transition direction. */
   dir: 'down' | 'up';
+  /** Sample-set key of the grand-staff instrument this pedal belongs to. HKL
+   *  captures only that instrument's note-offs (per-instrument damper). Absent
+   *  ⇒ applies globally (single-instrument behavior). */
+  instrumentKey?: string;
 }
 
 /** Compact footprint cell tuple: [q, r, colorHex]. Used by footprint-changed
@@ -170,6 +179,19 @@ export type ComposerEvent =
    *  layout-req-changed: that one is informational (apply only if Sync is on);
    *  this one is an explicit user-driven command. HKL switches tuning + ref
    *  and emits tuning-changed so Composer can re-check and unblock entry. */
-  | { type: 'apply-layout'; tuningMode: string; refQ: number; refR: number };
+  | { type: 'apply-layout'; tuningMode: string; refQ: number; refR: number }
+  /** The instrument (sample-set key) the Composer editing cursor currently sits
+   *  in. Sent on cursor moves between instruments in voice mode (multi-instrument
+   *  scores). When HKL's "Sync to Composer" toggle is on, HKL switches its active
+   *  playback instrument to this so note-entry preview is heard in the correct
+   *  timbre; otherwise it's ignored. Absent instrumentKey ⇒ the score's single
+   *  instrument (no follow needed). */
+  | { type: 'composer-active-instrument'; instrumentKey: string }
+  /** The distinct instrument (sample-set) keys of EVERY instrument in the
+   *  score. Sent on connect and whenever the instrument set changes (add /
+   *  remove / reorder). When Sync-to-Composer is on, HKL proactively loads them
+   *  all so cursor-follow during note entry is always ready in the right
+   *  timbre. Empty for single-instrument scores (no per-instrument follow). */
+  | { type: 'composer-instruments'; instrumentKeys: ReadonlyArray<string> };
 
 export type BridgeMessage = HklEvent | ComposerEvent;

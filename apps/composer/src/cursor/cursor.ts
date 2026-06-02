@@ -42,7 +42,11 @@ export interface CursorUpdateOpts {
   entryMode: 'insert' | 'overwrite';
   cursorMode: 'voice' | 'expr' | 'pedal' | 'tempo' | 'select';
   exprCursor: ExpressionCursor;
+  /** Instrument index the expr/pedal layers are scoped to (per-instrument
+   *  expression/pedal). Default 0 (single-instrument doc). */
+  exprInstrIdx?: number;
   pedalCursor: ExpressionCursor;
+  pedalInstrIdx?: number;
   tempoCursor: ExpressionCursor;
   /** Per-note selection of a single `<note>` — either a chord-child note or
    *  a bare note. When set, the cursor renders a horizontal line from the
@@ -203,8 +207,8 @@ class CursorOverlay {
       this.chordIntLine?.setAttribute('opacity', '0');
       this.hidePedal();
       this.hideTempo();
-      this.renderExpressionCursor(model, resolved.exprCursor);
-      this.updateExpressionHighlights(model, resolved.exprCursor);
+      this.renderExpressionCursor(model, resolved.exprCursor, resolved.exprInstrIdx ?? 0);
+      this.updateExpressionHighlights(model, resolved.exprCursor, resolved.exprInstrIdx ?? 0);
       return;
     }
 
@@ -216,8 +220,8 @@ class CursorOverlay {
       this.chordIntLine?.setAttribute('opacity', '0');
       this.clearExpressionHighlights();
       this.hideTempo();
-      this.renderPedalCursor(model, resolved.pedalCursor);
-      this.updatePedalHighlights(model, resolved.pedalCursor);
+      this.renderPedalCursor(model, resolved.pedalCursor, resolved.pedalInstrIdx ?? 0);
+      this.updatePedalHighlights(model, resolved.pedalCursor, resolved.pedalInstrIdx ?? 0);
       return;
     }
 
@@ -349,7 +353,7 @@ class CursorOverlay {
        user is editing (not the whole grand staff). Returns false when the
        staff bbox isn't available; the caller should fall through. */
     const setVerticalFromStaff = (measureEl: Element): boolean => {
-      const staffN = voice <= 2 ? 1 : 2;
+      const staffN = model.staffForVoice(voice);
       const staffEl = Array.from(measureEl.querySelectorAll('staff')).find(
         (s) => s.getAttribute('n') === String(staffN),
       );
@@ -370,7 +374,7 @@ class CursorOverlay {
        anchorOnStaff). Falls back to measure bbox if no staff is available.
        Y/height come from the voice's staff bbox (not the whole measure). */
     const anchorAtMeasureLeft = (measureEl: Element): boolean => {
-      const staffN = voice <= 2 ? 1 : 2;
+      const staffN = model.staffForVoice(voice);
       const staffEl = Array.from(measureEl.querySelectorAll('staff')).find(
         (s) => s.getAttribute('n') === String(staffN),
       );
@@ -378,7 +382,7 @@ class CursorOverlay {
       const sigEndX = staffId ? renderer.findSigEndXForStaff(staffId) : null;
       const staffRect = staffId ? renderer.rectForId(staffId) : null;
       const layer = Array.from(measureEl.querySelectorAll('layer')).find(
-        (l) => l.getAttribute('n') === String(voice === 1 || voice === 3 ? 1 : 2) &&
+        (l) => l.getAttribute('n') === String(model.layerForVoice(voice)) &&
                l.parentElement?.getAttribute('n') === String(staffN),
       );
       const firstContent = layer
@@ -606,7 +610,7 @@ class CursorOverlay {
 
   /* ── expression-cursor rendering ───────────────────────────────────────── */
 
-  private renderExpressionCursor(model: ComposerModel, exprCursor: ExpressionCursor): void {
+  private renderExpressionCursor(model: ComposerModel, exprCursor: ExpressionCursor, instrIdx: number): void {
     const m = currentMoment(exprCursor);
     const bar = this.exprBar!;
     const label = this.exprLabel!;
@@ -620,12 +624,12 @@ class CursorOverlay {
     /* Find a coincident note (any voice) for x; prefer staff-1 voices (1, 2)
        so the cursor sits between the staves. Fall back to the moment's
        expression element if no note is co-located. */
-    const noteRect = this.findNoteRectAtMoment(model, m);
+    const noteRect = this.findNoteRectAtMoment(model, m, model.voicesForInstrument(instrIdx));
     let staff1BottomGuess = noteRect?.bottom;
     let cursorX = noteRect ? noteRect.left + noteRect.width / 2 : null;
 
     if (cursorX === null) {
-      const exprId = this.findExprIdAtMoment(model, m);
+      const exprId = this.findExprIdAtMoment(model, m, model.instruments()[instrIdx]?.staffNs);
       if (exprId) {
         const r = renderer.rectForId(exprId);
         if (r) {
@@ -635,9 +639,9 @@ class CursorOverlay {
       }
     }
 
-    /* Determine vertical band between staves 1 and 2 for this moment.
-       Strategy: use the staff IDs at the cursor's measure to bound the band. */
-    const yBand = this.computeBetweenStavesY(model, m);
+    /* Determine the vertical band for this instrument at this moment: between
+       its two staves (grand staff) or just above its single staff. */
+    const yBand = this.computeBetweenStavesY(model, m, instrIdx);
 
     if (cursorX === null || !yBand) {
       bar.setAttribute('opacity', '0');
@@ -661,7 +665,7 @@ class CursorOverlay {
 
   /** Find a note/chord at exactly the given moment. Prefer voice 1/2 (staff 1)
    *  so the cursor naturally lands between the staves. */
-  private findNoteRectAtMoment(model: ComposerModel, m: Moment): { left: number; bottom: number; width: number; right: number } | null {
+  private findNoteRectAtMoment(model: ComposerModel, m: Moment, voices?: ReadonlyArray<number>): { left: number; bottom: number; width: number; right: number } | null {
     const measures = Array.from(model.getDoc().querySelectorAll('measure'));
     const measure = measures[m.measureIdx];
     if (!measure) return null;
@@ -669,10 +673,14 @@ class CursorOverlay {
     const ticksPerBeat = 64 / unit;
     const targetTicks = (m.tstamp - 1) * ticksPerBeat;
 
-    const voiceOrder: ReadonlyArray<Voice> = [1, 2, 3, 4];
+    /* Default: scan all voices (used by the score-global tempo cursor).
+       The expr/pedal cursors pass their instrument's voices so the X anchor
+       prefers that instrument's notes. */
+    const voiceOrder: ReadonlyArray<number> =
+      voices ?? Array.from({ length: model.totalVoices() }, (_, i) => i + 1);
     for (const v of voiceOrder) {
-      const staffN = v <= 2 ? 1 : 2;
-      const layerN = (v === 1 || v === 3) ? 1 : 2;
+      const staffN = model.staffForVoice(v);
+      const layerN = model.layerForVoice(v);
       const layer = Array.from(measure.querySelectorAll(`staff[n="${staffN}"] layer[n="${layerN}"]`))[0];
       if (!layer) continue;
       let cum = 0;
@@ -694,11 +702,11 @@ class CursorOverlay {
 
   /** Returns the xml:id of the dynam-at-moment or first hairpin-at-moment, if
    *  any. Used as a fallback x-anchor for orphan moments. */
-  private findExprIdAtMoment(model: ComposerModel, m: Moment): string | null {
+  private findExprIdAtMoment(model: ComposerModel, m: Moment, staffFilter?: ReadonlyArray<number>): string | null {
     const doc = model.getDoc();
-    const d = dynamAt(doc, m);
+    const d = dynamAt(doc, m, staffFilter);
     if (d) return d.getAttribute('xml:id');
-    const hairpins = hairpinsAt(doc, m);
+    const hairpins = hairpinsAt(doc, m, staffFilter);
     if (hairpins.length > 0) return hairpins[0].getAttribute('xml:id');
     return null;
   }
@@ -706,36 +714,46 @@ class CursorOverlay {
   /** Compute the vertical band between staff 1 and staff 2 at the moment's
    *  measure. Falls back to a small region below the cursor x if the staff
    *  ids can't be resolved. */
-  private computeBetweenStavesY(model: ComposerModel, m: Moment): { top: number; bottom: number } | null {
+  private computeBetweenStavesY(model: ComposerModel, m: Moment, instrIdx: number): { top: number; bottom: number } | null {
     const measures = Array.from(model.getDoc().querySelectorAll('measure'));
     const measure = measures[m.measureIdx];
     if (!measure) return null;
+    const inst = model.instruments()[instrIdx];
+    const staffNs = inst?.staffNs ?? [1, 2];
     const staffs = Array.from(measure.querySelectorAll('staff'));
-    const s1 = staffs.find((s) => s.getAttribute('n') === '1');
-    const s2 = staffs.find((s) => s.getAttribute('n') === '2');
-    const s1Id = s1?.getAttribute('xml:id');
-    const s2Id = s2?.getAttribute('xml:id');
-    if (!s1Id || !s2Id) return null;
-    const r1 = renderer.rectForId(s1Id);
-    const r2 = renderer.rectForId(s2Id);
+    const rectFor = (n: number) => {
+      const s = staffs.find((st) => st.getAttribute('n') === String(n));
+      const id = s?.getAttribute('xml:id');
+      return id ? renderer.rectForId(id) : null;
+    };
+    if (staffNs.length < 2) {
+      /* Single-staff instrument: band just above its one staff (same math as
+         the tempo band, but anchored to this instrument's staff). */
+      const r = rectFor(staffNs[0]);
+      if (!r) return null;
+      const bottom = r.top - CURSOR_VPAD;
+      return { top: bottom - 28, bottom };
+    }
+    const r1 = rectFor(staffNs[0]);
+    const r2 = rectFor(staffNs[1]);
     if (!r1 || !r2) return null;
     /* Use the smaller-on-screen staff as top, the larger as bottom. */
     const top = Math.min(r1.bottom, r2.bottom);
     const bottom = Math.max(r1.top, r2.top);
     if (bottom <= top) {
       /* The staves overlap (rare; shouldn't happen for a grand staff). Fall
-         back to a thin band right below staff 1. */
+         back to a thin band right below the top staff. */
       return { top: r1.bottom, bottom: r1.bottom + 24 };
     }
     return { top: top - CURSOR_VPAD, bottom: bottom + CURSOR_VPAD };
   }
 
   /** Tag the selected dynam / hairpin SVG elements with `.expr-selected`. */
-  private updateExpressionHighlights(model: ComposerModel, exprCursor: ExpressionCursor): void {
+  private updateExpressionHighlights(model: ComposerModel, exprCursor: ExpressionCursor, instrIdx: number): void {
     this.clearExpressionHighlights();
     const m = currentMoment(exprCursor);
     if (!m) return;
-    const sel = selectionAt(model.getDoc(), m);
+    const sel = selectionAt(model.getDoc(), m, model.instruments()[instrIdx]?.staffNs);
     const ids: string[] = [];
     if (sel.dynam) {
       const id = sel.dynam.getAttribute('xml:id');
@@ -780,7 +798,7 @@ class CursorOverlay {
 
   /* ── pedal-cursor rendering (mirrors expression, but below staff 2) ────── */
 
-  private renderPedalCursor(model: ComposerModel, pedalCursor: ExpressionCursor): void {
+  private renderPedalCursor(model: ComposerModel, pedalCursor: ExpressionCursor, instrIdx: number): void {
     const m = currentMoment(pedalCursor);
     const bar = this.pedalBar!;
     const label = this.pedalLabel!;
@@ -792,16 +810,16 @@ class CursorOverlay {
       return;
     }
     /* x: center on a coincident note if any; else the pedal glyph itself. */
-    const noteRect = this.findNoteRectAtMoment(model, m);
+    const noteRect = this.findNoteRectAtMoment(model, m, model.voicesForInstrument(instrIdx));
     let cursorX = noteRect ? noteRect.left + noteRect.width / 2 : null;
     if (cursorX === null) {
-      const pid = this.findPedalIdAtMoment(model, m);
+      const pid = this.findPedalIdAtMoment(model, m, instrIdx);
       if (pid) {
         const r = renderer.rectForId(pid);
         if (r) cursorX = r.left + r.width / 2;
       }
     }
-    const yBand = this.computeBelowStaff2Y(model, m);
+    const yBand = this.computeBelowInstrumentY(model, m, instrIdx);
     if (cursorX === null || !yBand) {
       bar.setAttribute('opacity', '0');
       label.textContent = 'PED m' + (m.measureIdx + 1) + ' β' + m.tstamp.toFixed(2).replace(/\.?0+$/, '');
@@ -820,30 +838,40 @@ class CursorOverlay {
     label.setAttribute('y', String(yBand.bottom + 12));
   }
 
-  /** A band just below staff 2 (where Verovio renders the pedal lane). */
-  private computeBelowStaff2Y(model: ComposerModel, m: Moment): { top: number; bottom: number } | null {
+  /** A band just below the instrument's LAST staff (where Verovio renders the
+   *  pedal lane). Per-instrument: the pedal belongs to one grand-staff
+   *  instrument and sits below its bottom staff. */
+  private computeBelowInstrumentY(model: ComposerModel, m: Moment, instrIdx: number): { top: number; bottom: number } | null {
     const measures = Array.from(model.getDoc().querySelectorAll('measure'));
     const measure = measures[m.measureIdx];
     if (!measure) return null;
-    const s2 = Array.from(measure.querySelectorAll('staff')).find((s) => s.getAttribute('n') === '2');
-    const s2Id = s2?.getAttribute('xml:id');
-    const r2 = s2Id ? renderer.rectForId(s2Id) : null;
-    if (!r2) return null;
-    const top = r2.bottom + CURSOR_VPAD;
+    const inst = model.instruments()[instrIdx];
+    const lastStaffN = inst ? inst.staffNs[inst.staffNs.length - 1] : 2;
+    const sLast = Array.from(measure.querySelectorAll('staff')).find((s) => s.getAttribute('n') === String(lastStaffN));
+    const sId = sLast?.getAttribute('xml:id');
+    const r = sId ? renderer.rectForId(sId) : null;
+    if (!r) return null;
+    const top = r.bottom + CURSOR_VPAD;
     return { top, bottom: top + 28 };
   }
 
-  private findPedalIdAtMoment(model: ComposerModel, m: Moment): string | null {
-    const ps = pedalsAt(model.getDoc(), m);
+  private findPedalIdAtMoment(model: ComposerModel, m: Moment, instrIdx = 0): string | null {
+    const ps = pedalsAt(model.getDoc(), m, this.pedalStaffOf(model, instrIdx));
     return ps.length > 0 ? ps[0].getAttribute('xml:id') : null;
   }
 
-  private updatePedalHighlights(model: ComposerModel, pedalCursor: ExpressionCursor): void {
+  /** Bottom staff of the instrument the pedal layer is scoped to. */
+  private pedalStaffOf(model: ComposerModel, instrIdx: number): number | undefined {
+    const ns = model.instruments()[instrIdx]?.staffNs;
+    return ns ? ns[ns.length - 1] : undefined;
+  }
+
+  private updatePedalHighlights(model: ComposerModel, pedalCursor: ExpressionCursor, instrIdx: number): void {
     this.clearPedalHighlights();
     const m = currentMoment(pedalCursor);
     if (!m) return;
     const ids: string[] = [];
-    for (const el of pedalsAt(model.getDoc(), m)) {
+    for (const el of pedalsAt(model.getDoc(), m, this.pedalStaffOf(model, instrIdx))) {
       const id = el.getAttribute('xml:id');
       if (id) ids.push(id);
     }

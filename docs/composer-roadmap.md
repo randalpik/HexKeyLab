@@ -8,7 +8,9 @@
 >
 > **Phase 3: ✅ shipped** (2026-05-30). All items + post-review fixes landed with fixtures (suite 207 → 222): repeats + endings (`{`/`}`/`Ctrl+E`) with start-aware playback repeat-expansion composing with the tempo timeline; 8va (`Ctrl+8`, per-staff, q±3 playback shift); trills + tremolos (`Ctrl+R` — rebound off Ctrl+T which Firefox reserves) with alternating slur playback preserving the source notes' lattice cells; page break (`Ctrl+B`); and section headers (`Ctrl+Shift+H`) as a custom-injected centered movement title that displaces the system. Breaks render via `smart`+`breaksSmartSb:0` / two-pass bake so material after a break still auto-wraps. See **§ Phase 3 scaffold** for the as-built notes, **§ Phase 3 outcomes** for what Phase 4 inherits, and `decisions.md` (3 Phase-3 entries) for the non-obvious calls.
 >
-> **Phase 4: feature-complete (2026-05-31).** Shipped: the per-measure meter model prerequisite (suite 222 → 223), **4.1** the `Ctrl+Shift+S` time/key-sig modal (224), **4.2** mid-piece time + key signatures via in-section `<scoreDef>` overrides (225 — diff-aware so an unchanged submit writes nothing; per-measure accidental spelling; Setup's selects relegated to a button), and **4.3** mid-measure per-staff clef via inline `<clef>` (`Ctrl+Shift+C`, 228 — verified rendering a clef change mid-measure with subsequent notes re-positioned). The mid-piece-meter follow-ups are now **closed** (231): the expression-layer moment→tick mapping (`absoluteTickForMoment`) is per-measure (a tempo/dynamic/8va after a meter change anchors correctly), beaming is per-measure (6/8 beams 3+3), and MusicXML export emits per-measure `<key>`/`<time>`/clefs (best-effort, untested against external readers). See decisions.md ("Phase 4.1/4.2", "4.3", "prerequisite") and §10. **Phase 4 done — ready for Phase 5 (multi-instrument).**
+> **Phase 5: ✅ shipped** (2026-06-01). Multi-instrument prerequisite + per-instrument audio, all with fixtures (suite 232 → 235): the instrument-table model layer (`Voice`→`number`, `staffForVoice`/`layerForVoice`/`instruments`/`totalVoices` mirroring `meterTable`), N-staff cursor rendering, a stop-list cursor cycle with **per-instrument expr + pedal** layers (tempo stays score-global), `addInstrument`/`removeInstrument` with promote/demote (add-then-remove round-trips byte-identical), N-staff accidentals + multi-staff MusicXML, `PlaybackEvent`/`PedalEvent.instrumentKey` with per-instrument legato + damper (tagged only for multi-instrument scores → single-instrument back-compat exact), and a minimal Setup "Instruments" Add/Remove UI. The four specialization features (single-part export, pizz/arco, string harmonic, ignore-color) + multi-instrument selection-mode remain deferred follow-ons. See **§13 Phase 5 outcomes**, decisions.md (Phase-5 entry), and the kickoff prompt in §12.
+>
+> **Phase 4: ✅ shipped** (2026-05-31 – 06-01). Mid-piece structural changes, all with fixtures (suite 222 → 232): the per-measure meter model prerequisite (223), **4.1** the `Ctrl+Shift+S` time/key-sig modal (224), **4.2** mid-piece time + key signatures via in-section `<scoreDef>` overrides (225 — diff-aware so an unchanged submit writes nothing; per-measure accidental spelling; Setup's selects relegated to a button), and **4.3** mid-measure per-staff clef via inline `<clef>` (`Ctrl+Shift+C`, 228). The initially-deferred mid-piece-meter follow-ups were then closed (231): per-measure expression-layer moment→tick mapping (`absoluteTickForMoment`), per-measure beaming (6/8 beams 3+3), and per-measure MusicXML export (best-effort, untested against external readers); plus a cursor-anchor regression fix so a mid-measure clef doesn't drag the start-of-measure cursor (232). See **§11 Phase 4 outcomes** for what Phase 5 inherits, **§12 Phase 5 scaffold**, decisions.md (Phase-4 entries), and lessons.md ("mid-measure clef vs the leading-signature region").
 
 ## Context
 
@@ -155,7 +157,7 @@ Goal: the model schema rewrite for per-measure metadata.
 - Switch time/key sig at measure boundaries — biggest model rewrite in the block
 - Clef changes per-staff `Ctrl+Shift+C` (incl. tenor/alto/treble+8)
 
-### Phase 5 — Multi-instrument & specialization
+### Phase 5 — Multi-instrument & specialization *(ready to scaffold — see §12)*
 Goal: lift the 2-staff, 4-voice ceiling.
 
 - Multi-instrument support — architectural prerequisite for the rest of this phase
@@ -405,3 +407,114 @@ Standard gates (`pnpm typecheck` + `-r build` + `check:boundaries` + `pnpm test:
 ### Suggested kickoff prompt for the new thread
 
 > "Read `docs/composer-roadmap.md` §9 (Phase 3 outcomes) + §10 (Phase 4 scaffold) and the §4 blocker note. Phase 4 is mid-piece time/key sig + per-staff clef. Confirm the four cross-cutting decisions — especially the per-measure `measureTicks()` migration — then land the per-measure-`<scoreDef>` model prerequisite FIRST (no user feature, full-suite gated), then the `Ctrl+Shift+S` modal (UI refactor), then mid-piece sig switching, then `Ctrl+Shift+C` clef changes. Land each with fixtures; gate on `pnpm test:composer`."
+
+---
+
+## 11. Phase 4 outcomes — as-built deltas (what Phase 5 inherits)
+
+All in `apps/composer/` unless noted. The big inheritance is the **per-measure model layer** — Phase 5's multi-instrument work threads through the same `ComposerModel` and will reuse these.
+
+### Per-measure metadata model (the prerequisite — reuse, don't reinvent)
+
+- **`meterTable()`** (`model/index.ts`) — one cached walk of the single `<section>`'s `<scoreDef>`/`<measure>` nodes producing `perMeasure[]` + cumulative `prefix[]` + `Map<measureEl,…>` for budget, meter `(count,unit)`, and key `(sig,mode)`. Query API: `measureTicksAt(mi)`, `measureStartTick(mi)`, `measureIdxAtTick(t)`, `measureTicksForLayer(layer)`, `measureIdxOf`, `measureElementOf`, `meterAt(mi)`, `keySigAt(mi)`, `keyModeAt(mi)`, `keySigForMeasure(el)`. The old uniform `measureTicks()` survives as the score-default alias.
+- **Cache invalidation is centralized in `normalizePlaceholdersAll()`** (invalidate → rebuild), which nearly every structural mutation already calls; meter setters invalidate explicitly. The table depends only on the measure set + meter overrides, never note content. If Phase 5 adds per-instrument structure, keep this invariant (invalidate on any change to the measure/scoreDef set).
+- **In-section `<scoreDef>` override pattern**: `ensureScoreDefBefore(mi)` (mirrors `insertMeasureAt`'s `<ending>`/`<sb>` ref-walk; reuses an existing sibling), diff-aware `setMeterAt`/`setKeySigAt` (write nothing when equal to the inherited value), `pruneEmptyScoreDef`, `nextMeterOverrideIdx` for ranged truncation.
+- **Doc-local per-measure walks** (NOT the model's element-keyed map) where a pass runs on the serialize CLONE: `computeAccidentalDisplay` (per-measure key), `absoluteTickForMoment`/`measureTickInfo` in `expressions.ts` (per-measure tick+beat), `perMeasureTimeSig` in `beams.ts` (per-measure beaming). Pattern: walk the given doc's `section > scoreDef, measure` seeded by the head. Reuse this for any future clone-side per-measure resolution.
+
+### Modal + Setup conventions
+
+- The reusable `ui/textEntryModal.ts` shell now hosts **four** dialogs (expressive-text, tempo, signature `sigDialog.ts`, clef `clefDialog.ts`). Setup relegates time/key (and tempo) to **buttons** that open the modal at measure 0 — the established pattern for "a setting that's also reachable per-measure/per-moment." `Ctrl+Shift+letter` config-modal tier now uses E/T/H/S/C; B/V… open.
+- `exportMusicXml` is exposed on `window.__hkl_composer` for the harness.
+
+### Zero-duration layer-child precedent (relevant if Phase 5 adds per-instrument layer markers)
+
+Inline `<clef>` (4.3) is a zero-duration `<layer>` child. It rides the existing content whitelists (`contentChildren`/`pushContentChildren`/`normalizePlaceholders`/`layerStops`/harness `layerTicks` all whitelist note/chord/rest/tuplet/fTrem/bTrem), so it's transparent to ticks/cursor. Two guards were still required and are the checklist for any new zero-duration layer child: (1) `realTicks`/`writtenTicks` must return 0 for it (else the 16-tick fallback); (2) it must break beam runs (`annotateLayer` `breakBefore`) so `wrapInBeam` doesn't reorder it. Also `findSigEndXForStaff` bounds the leading-signature region to "left of the first notehead" (lessons.md) — keep that in mind for any new staff-level glyph.
+
+### The 2-staff / 4-voice hard-coding Phase 5 must lift (concrete sites)
+
+The ceiling is wired into: `layerInMeasure`/`allLayers`/`getStaffIdForVoice` (`staffN = voice<=2?1:2`, `layerN` from voice parity); the cursor voice cycle (1→2→expr→3→4); the fixed `<staffGrp>` with two `<staffDef>` in `@hkl/notation` `mei-build.ts`; the bridge protocol (single instrument owned by HKL — `@hkl/bridge`); and HKL audio routing. `setClefAt`/`clefAtCursor`, the accidental/beam staff loops (`for staffN of [1,2]`), and MusicXML export's `<staves>2</staves>` + hardcoded two clefs all assume two staves. None of these are blockers for the *prerequisite* model rewrite, but each is a touch-point.
+
+### Verification
+
+Suite at **232 fixtures** (`test/composer-test/`). Phase 4 fixtures live in the `PHASE1` group; the universal placeholder invariant now reads `measureTicksForLayer` (per-measure aware). Multi-instrument will likely need a fixture-suite expansion for instrument-aware scenarios (the only phase §5 flagged as possibly needing new tooling).
+
+---
+
+## 12. Phase 5 scaffold
+
+A fresh session starts here. Phase 5 = **multi-instrument & specialization** (backlog §F). ⚠️ This is **the largest single architectural change in the whole roadmap** (§4) — the 2-staff/4-voice ceiling is load-bearing across model, cursor, bridge, and HKL audio. As with Phase 4, land the architectural prerequisite (multi-instrument support) as its own step before the dependent features; everything else in §F collapses without it.
+
+### Order (each ships independently and unblocks the next)
+
+1. **Multi-instrument support** — the architectural prerequisite. Generalize the fixed 2-staff/4-voice structure to N instruments (each with its own staff/clef/voice set), the cursor voice cycle, the bridge protocol (today HKL owns one instrument), and HKL audio routing (per-instrument timbre). See §11's hard-coding list for the concrete sites. Recommend: model + cursor + render first (no per-instrument *sound* yet), gated by the full suite proving the existing 2-staff docs are byte-identical, then the bridge/audio plumbing.
+2. **Single-part view + export** — depends on #1. A per-instrument view filter + a single-part MusicXML/print export.
+3. **Pizz/arco toggle** — depends on #1 + a new HKL bridge concept (per-note articulation that changes timbre, not just notation).
+4. **String harmonic `Alt+H`** — depends on #1 + per-note timbre/pitch adjustment. (Note the `Alt+H` vs plain-`H` hide-rest coexistence flagged in §1.)
+5. **Ignore color in setup** — independent; can land any time.
+
+### Cross-cutting decisions to surface to Max early in Phase 5
+
+1. **Instrument model shape**: how an "instrument" is represented in MEI (`<staffGrp>`/`<staffDef>` per instrument, `@label`, `@n` numbering) and in `ComposerModel` (does `Voice` become `(instrument, voice)`? how does the cursor cycle enumerate them?).
+2. **Bridge protocol**: HKL today owns a single instrument/timbre. How does Composer tell HKL which instrument a note belongs to, and how does HKL route per-instrument audio? (`@hkl/bridge` protocol change + HKL audio-engine routing.)
+3. **Staff-count assumptions**: confirm the migration approach for the `voice<=2?1:2` / `[1,2]` staff loops (a `staffForVoice(v)` / `instrumentOf(v)` indirection threaded through, mirroring the per-measure `measureTicksAt` migration).
+4. **Default/back-compat**: existing 2-staff `.hkc` docs must load unchanged (one piano instrument, two staves).
+
+### Phase 5 verification
+
+Standard gates (`pnpm typecheck` + `-r build` + `check:boundaries` + `pnpm test:composer`, `pnpm dev` running). The prerequisite especially needs fixtures proving existing 2-staff docs are unaffected, plus new instrument-aware scenarios (the harness may need an expansion to drive N-instrument layouts). Each feature lands ≥1 fixture; visual coverage via `visualBaseline` for new layouts.
+
+### Suggested kickoff prompt for the new thread
+
+> "Read `docs/composer-roadmap.md` §11 (Phase 4 outcomes) + §12 (Phase 5 scaffold) and the §4 multi-instrument blocker note. Phase 5 is multi-instrument & specialization. Confirm the four cross-cutting decisions — especially the instrument model shape and the bridge/audio-routing protocol — then land multi-instrument support as the prerequisite FIRST (model + cursor + render, full-suite gated so existing 2-staff docs stay byte-identical), then single-part view+export, pizz/arco, string harmonic, and ignore-color. Land each with fixtures; gate on `pnpm test:composer`."
+
+---
+
+## 13. Phase 5 outcomes — as-built (what later phases / follow-ons inherit)
+
+All in `apps/composer/` unless noted. The headline inheritance is the **instrument table** — the
+flat-voice ↔ (instrument, staff, layer) indirection that every multi-instrument-aware site routes
+through. Suite 232 → 235.
+
+### Instrument-table model layer (reuse, don't reinvent)
+- **`instrumentTable()`** (`model/index.ts`) — one cached walk of the head `<scoreDef>`'s root
+  `<staffGrp>` producing `InstrumentEntry[]` + flat `staffForVoice[]`/`layerForVoice[]`/`instrForVoice[]`
+  arrays + `staffNToInstr`. Query API: `instruments()`, `staffForVoice(v)`, `layerForVoice(v)`,
+  `instrumentOf(v)`, `voicesForInstrument(i)`, `totalVoices()`, `totalStaves()`. Cache invalidated in
+  `normalizePlaceholdersAll()` beside the meter cache (same pattern as Phase 4). `Voice` is now
+  `number`; cursors are seeded `1..totalVoices()` via `ensureCursorSlots()`.
+- **MEI**: legacy single-piano = root staffGrp with direct `<staffDef>`s = one implicit instrument,
+  never rewritten on load. Multi-instrument = nested `<staffGrp>` per instrument, each with
+  `hkl:instr="<sample-set-key>"` + `<label>`. `addInstrument` promotes the implicit shape on the first
+  add; `removeInstrument` renumbers all staves + remaps every control-event `@staff`, and demotes back
+  to the implicit shape when a sole default piano remains (byte-identical add↔remove, modulo
+  placeholder ids). `appendMeasureStaves` emits the per-instrument `<staff>` skeleton.
+
+### Cursor cycle + per-instrument layers
+- `buildVoiceStopList(model)` (`input.ts`) derives the ↑/↓ stop order from the instrument table; a
+  single 2-staff piano is byte-identical to the old `tempo→1→2→expr→3→4→pedal`. **Expr + pedal are
+  per-instrument** (`state.exprInstrIdx`/`pedalInstrIdx`); tempo is score-global. Moment builders,
+  `measureHasExpression`, `pedalMoments`, `dynamAt`/`dirAt`/`hairpinsAt`/`pedalsAt`, and the render
+  bands (`computeBetweenStavesY`/`computeBelowInstrumentY`) all take an optional staff-filter
+  (default = all = historic). New expr marks attach to the active instrument's top staff, pedal to its
+  bottom staff.
+
+### Audio (`@hkl/bridge`, `apps/hkl`)
+- `PlaybackEvent.instrumentKey` + `PedalEvent.instrumentKey` (protocol.ts), tagged in `buildPlayback`/
+  `buildPedalEvents` **only when `model.instruments().length > 1`** — single-instrument scores leave it
+  absent so HKL plays through its active instrument (back-compat). HKL: `noteOn(…, instrumentKey?)`,
+  per-voice `computeLegatoPlan` (glide-vs-overlap per instrument), per-instrument damper
+  (`pb.pedalSustained: Map<KeyId, instrumentKey>`, `pedalEngagedInstr`), `playScore` lazy-loads needed
+  sample-sets. External CC-64 stays global (per-instrument external routing deferred).
+
+### Deferred follow-ons (NOT in the prerequisite)
+Single-part view + per-instrument MusicXML `<part>` split (export today is one multi-staff part,
+best-effort); pizz/arco; string harmonic `Alt+H`; ignore-color-in-setup; per-instrument external pedal
+CC; **multi-instrument selection-mode** (`Staff = 1|2` measure-selection stayed 2-staff; single-
+instrument selection unchanged). The timbre picker in Setup is a hard-coded subset of HKL sample-set
+keys — a live registry query would need a new bridge message.
+
+### Verification
+Suite at **235 fixtures**: `phase5_add_instrument` (+ instrument-table + per-voice instrumentKey
+assertions, `visualBaseline`), `phase5_add_remove_roundtrip` (demote), `phase5_two_grand_staves`.
+`scenarios.mjs` gained a `multiInstrument` cursor-trace scenario (0 violations). Steps 2–8 produced
+zero baseline churn — the proof the indirection is faithful.

@@ -48,7 +48,7 @@ export function normalizeTies(model: ComposerModel): void {
   const pitchKey = (n: Element): string =>
     n.getAttribute('pname') + '/' + n.getAttribute('oct') + '/' + getNoteAlter(n);
 
-  for (let vi: Voice = 1; vi <= 4; vi = (vi + 1) as Voice) {
+  for (let vi = 1; vi <= model.totalVoices(); vi++) {
     const flat = model.flatChildren(vi);
     /* For each cursor between two flat slots, prevOffers[pitchKey] is the
      * note in the previous slot that wantsForward at that pitch — i.e.,

@@ -5,12 +5,13 @@
 //   1 mdiv / 1 score / 1 section
 //   <scoreDef> carries key.sig, meter.count, meter.unit
 //   <section> contains a flat ordered list of <measure> elements
-//   Each <measure> has a <staffGrp> of two <staff>, each with two <layer>
-//   Voices map to (staff, layer):
-//     voice 1 → staff 1, layer 1   (treble top)
-//     voice 2 → staff 1, layer 2   (treble bottom)
-//     voice 3 → staff 2, layer 1   (bass top)
-//     voice 4 → staff 2, layer 2   (bass bottom)
+//   The head <scoreDef>'s root <staffGrp> declares the instruments (see the
+//   instrument table, instrumentTable()): the default doc is one implicit
+//   2-staff "Piano" instrument; multi-instrument docs nest one <staffGrp> per
+//   instrument (each 1–2 staves, 2 layers per staff). Each <measure> carries a
+//   <staff> for every staff @n, each with its <layer>s.
+//   A flat voice index maps to (instrument, staff, layer) via the table. For
+//   the default piano: v1→s1l1, v2→s1l2, v3→s2l1, v4→s2l2.
 //   Per voice, per measure: an ordered list of <chord>, <note>, or <rest>
 //   elements as immediate children of the layer.
 //
@@ -37,7 +38,7 @@ import {
   type Duration,
   type Dots,
 } from '@hkl/notation/mei-build.js';
-import { ensureExpressionDefaults, getLayoutReq, setLayoutReq, getHejiEnabled, setHejiEnabled, type LayoutReq, type Moment } from '../expressions.js';
+import { ensureExpressionDefaults, getLayoutReq, setLayoutReq, getHejiEnabled, setHejiEnabled, HKL_NS, type LayoutReq, type Moment } from '../expressions.js';
 import { toggleArticulation, toggleTrill, type ArticKind } from '../articulations.js';
 import { transformDocForHeji } from '@hkl/notation/heji-render.js';
 import type { TuningMode } from '@hkl/shared/freq.js';
@@ -85,12 +86,39 @@ import {
 
 /* ── public types ────────────────────────────────────────────────────────── */
 
-export type Voice = 1 | 2 | 3 | 4;
+/** A flat voice index, 1-based. For the default single-piano doc the range is
+ *  1..4 (the historic v1→s1l1 … v4→s2l2 grand-staff mapping); with multiple
+ *  instruments it extends to `totalVoices()`. The voice→(instrument, staff,
+ *  layer) mapping is owned by the instrument table — never recompute it from a
+ *  `voice<=2?1:2` ternary; route through `staffForVoice`/`layerForVoice`. */
+export type Voice = number;
 /* Duration / Dots / el / newId / MEI_NS now live in @hkl/notation/mei-build
    (single source of truth for the .hkc dialect). Re-exported here so the many
    Composer modules that import them from './index.js' stay zero-touch. */
 export { el, newId, MEI_NS };
 export type { Duration, Dots };
+
+/** One instrument in the score: a (possibly nested) `<staffGrp>` owning 1–2
+ *  staves, 2 layers each. `instrumentTable()` derives these from the head
+ *  `<scoreDef>`'s root staffGrp and maps the flat voice index onto
+ *  (instrument, staff, layer). The historic single-piano doc is one implicit
+ *  2-staff instrument. See docs/composer-roadmap.md §12. */
+export interface InstrumentEntry {
+  /** 0-based position in the score. */
+  index: number;
+  /** Display name from `<label>`, else a default ("Piano" for index 0). */
+  name: string;
+  /** `hkl:instr` sample-set key, else 'piano'. */
+  instrKey: string;
+  /** The owning `<staffGrp>` (the root staffGrp for the implicit single instrument). */
+  staffGrp: Element;
+  /** Global `<staff>` @n of this instrument's staves, in order (length 1 or 2). */
+  staffNs: number[];
+  /** Flat voice index (1-based) of this instrument's first voice. */
+  voiceBase: number;
+  /** Number of voices: 2 (single-staff) or 4 (grand staff). */
+  voiceCount: number;
+}
 
 export interface ChordInput {
   notes: ReadonlyArray<ResolvedNote>;
@@ -239,6 +267,22 @@ export class ComposerModel {
         keyByEl: Map<Element, { sig: string; mode: 'major' | 'minor' }>;
       }
     | null = null;
+  /** Cached instrument table: the flat-voice ↔ (instrument, staff, layer) map
+   *  derived from the head `<scoreDef>`'s root staffGrp. Mirrors meterCache —
+   *  built lazily by instrumentTable(), cleared by invalidateInstrumentCache()
+   *  on any change to the staffGrp set (add/remove instrument). Depends only on
+   *  the staffGrp structure, NEVER on note content. See roadmap §12. */
+  private instrCache:
+    | {
+        instruments: InstrumentEntry[];
+        staffForVoice: number[];   // [voiceIdx] → global staff @n (1-based; idx 0 unused)
+        layerForVoice: number[];   // [voiceIdx] → layer @n (1|2)
+        instrForVoice: number[];   // [voiceIdx] → instrument index
+        staffNToInstr: Map<number, InstrumentEntry>;
+        totalVoices: number;
+        totalStaves: number;
+      }
+    | null = null;
 
   constructor(initialMei?: string) {
     if (initialMei) {
@@ -252,6 +296,7 @@ export class ComposerModel {
     }
     ensureExpressionDefaults(this.doc);
     this.normalizePlaceholdersAll();
+    this.ensureCursorSlots();
   }
 
   /** Replace the entire document in-place (used by Load .hkc to preserve
@@ -261,6 +306,7 @@ export class ComposerModel {
     if (newDoc.querySelector("parsererror"))
       throw new Error("Invalid MEI in load");
     this.doc = newDoc;
+    this.invalidateInstrumentCache();
     this.currentVoice = 1;
     this.cursors = { 1: 0, 2: 0, 3: 0, 4: 0 };
     this.stripBeamsInLiveDoc();
@@ -305,6 +351,7 @@ export class ComposerModel {
     ensureExpressionDefaults(this.doc);
     normalizeTies(this);
     this.normalizePlaceholdersAll();
+    this.ensureCursorSlots();
   }
 
   /** Strip any <beam> wrappers from the live doc so cursor/mutation code
@@ -396,8 +443,20 @@ export class ComposerModel {
     this.clampAllCursors();
   }
 
+  /** Seed a 0 cursor for every voice 1..totalVoices() that lacks one. Cheap;
+   *  idempotent. Called after any doc swap / instrument change so voices added
+   *  by a new instrument have a valid cursor slot (reads default-type to
+   *  `number`, so an unseeded slot would be NaN in arithmetic). */
+  private ensureCursorSlots(): void {
+    const n = this.totalVoices();
+    for (let v = 1; v <= n; v++) {
+      if (typeof this.cursors[v] !== 'number') this.cursors[v] = 0;
+    }
+  }
+
   private clampAllCursors(): void {
-    for (const v of [1, 2, 3, 4] as Voice[]) {
+    this.ensureCursorSlots();
+    for (let v = 1; v <= this.totalVoices(); v++) {
       const len = this.getVoiceLength(v);
       if (this.cursors[v] < 0) this.cursors[v] = 0;
       else if (this.cursors[v] > len) this.cursors[v] = len;
@@ -454,14 +513,13 @@ export class ComposerModel {
   /** Find which voice + index contains the element with the given xml:id.
    *  Used by playback to advance the cursor to the currently-sounding chord. */
   findElement(meiId: string): { voice: Voice; index: number } | null {
-    for (let voice: Voice = 1; voice <= 4; voice = (voice + 1) as Voice) {
+    for (let voice = 1; voice <= this.totalVoices(); voice++) {
       const flat = this.flatChildren(voice);
       for (let i = 0; i < flat.length; i++) {
         if (flat[i].getAttribute("xml:id") === meiId) {
           return { voice, index: i };
         }
       }
-      if (voice === 4) break;
     }
     return null;
   }
@@ -943,7 +1001,7 @@ export class ComposerModel {
   }
 
   private staffIdInMeasure(measure: Element, voice: Voice): string | null {
-    const staffN = voice <= 2 ? 1 : 2;
+    const staffN = this.staffForVoice(voice);
     const staff = Array.from(measure.querySelectorAll("staff")).find(
       (s) => s.getAttribute("n") === String(staffN),
     );
@@ -1114,6 +1172,331 @@ export class ComposerModel {
     return this.meterTable().keyByEl.get(measure)?.sig ?? this.getKeySig();
   }
 
+  /* ── instrument table ─────────────────────────────────────────────────────
+     The flat voice index ↔ (instrument, staff, layer) map. Mirrors the meter
+     table (lazy cache + central invalidation). For the historic single-piano
+     doc this is one implicit 2-staff instrument, reproducing the v1→s1l1 …
+     v4→s2l2 mapping exactly — so every site routed through staffForVoice /
+     layerForVoice is byte-identical on pre-multi-instrument docs. */
+
+  /** Drop the cached instrument table. Call after any change to the head
+   *  `<scoreDef>`'s staffGrp set (add/remove instrument). normalizePlaceholdersAll
+   *  calls this, so most callers get it for free. */
+  invalidateInstrumentCache(): void {
+    this.instrCache = null;
+  }
+
+  /** Lazily build the instrument table from the head `<scoreDef>`'s root
+   *  `<staffGrp>`. Two shapes are recognised:
+   *   • IMPLICIT (old/default doc): the root staffGrp's direct children are
+   *     `<staffDef>`s → ONE instrument ("Piano"), the root staffGrp itself.
+   *     This shape is never rewritten on load (byte-identity for legacy .hkc).
+   *   • EXPLICIT: the root staffGrp's children are nested `<staffGrp>`s, one per
+   *     instrument; each carries `hkl:instr` + an optional `<label>`.
+   *  Staff @n is global-sequential across instruments in document order; each
+   *  staff contributes 2 voices (layer 1 then 2). */
+  private instrumentTable(): {
+    instruments: InstrumentEntry[];
+    staffForVoice: number[];
+    layerForVoice: number[];
+    instrForVoice: number[];
+    staffNToInstr: Map<number, InstrumentEntry>;
+    totalVoices: number;
+    totalStaves: number;
+  } {
+    if (this.instrCache) return this.instrCache;
+    const head = this.doc.querySelector('scoreDef');
+    const rootGrp = head?.querySelector('staffGrp') ?? null;
+    const instruments: InstrumentEntry[] = [];
+    if (rootGrp) {
+      const nestedGrps = Array.from(rootGrp.children).filter(
+        (c) => c.localName === 'staffGrp',
+      );
+      /* Nested groups present → each is an instrument; else the root staffGrp
+         (with its direct <staffDef>s) is the single implicit instrument. */
+      const grpEls = nestedGrps.length > 0 ? nestedGrps : [rootGrp];
+      let idx = 0;
+      for (const grp of grpEls) {
+        const staffNs = Array.from(grp.children)
+          .filter((c) => c.localName === 'staffDef')
+          .map((d) => parseInt(d.getAttribute('n') ?? '0', 10))
+          .filter((n) => n > 0);
+        if (staffNs.length === 0) continue;
+        const labelEl = Array.from(grp.children).find((c) => c.localName === 'label');
+        const name =
+          labelEl?.textContent?.trim() ||
+          (idx === 0 ? 'Piano' : `Instrument ${idx + 1}`);
+        const instrKey =
+          grp.getAttributeNS(HKL_NS, 'instr') ||
+          grp.getAttribute('hkl:instr') ||
+          'piano';
+        instruments.push({
+          index: idx,
+          name,
+          instrKey,
+          staffGrp: grp,
+          staffNs,
+          voiceBase: 0,
+          voiceCount: 0,
+        });
+        idx++;
+      }
+    }
+    /* 1-based flat voice arrays (index 0 unused, matching 1-based voices). */
+    const staffForVoice: number[] = [0];
+    const layerForVoice: number[] = [0];
+    const instrForVoice: number[] = [0];
+    const staffNToInstr = new Map<number, InstrumentEntry>();
+    let voice = 1;
+    let totalStaves = 0;
+    for (const inst of instruments) {
+      inst.voiceBase = voice;
+      for (const staffN of inst.staffNs) {
+        staffNToInstr.set(staffN, inst);
+        totalStaves++;
+        for (const layerN of [1, 2]) {
+          staffForVoice[voice] = staffN;
+          layerForVoice[voice] = layerN;
+          instrForVoice[voice] = inst.index;
+          voice++;
+        }
+      }
+      inst.voiceCount = voice - inst.voiceBase;
+    }
+    this.instrCache = {
+      instruments,
+      staffForVoice,
+      layerForVoice,
+      instrForVoice,
+      staffNToInstr,
+      totalVoices: voice - 1,
+      totalStaves,
+    };
+    return this.instrCache;
+  }
+
+  /** The score's instruments in document order. */
+  instruments(): readonly InstrumentEntry[] {
+    return this.instrumentTable().instruments;
+  }
+
+  /** Global `<staff>` @n that flat voice `v` lives on (defaults to 1). */
+  staffForVoice(v: number): number {
+    return this.instrumentTable().staffForVoice[v] ?? 1;
+  }
+
+  /** Layer @n (1|2) that flat voice `v` lives on (defaults to 1). */
+  layerForVoice(v: number): number {
+    return this.instrumentTable().layerForVoice[v] ?? 1;
+  }
+
+  /** The instrument owning flat voice `v` (defaults to the first instrument). */
+  instrumentOf(v: number): InstrumentEntry {
+    const t = this.instrumentTable();
+    return t.instruments[t.instrForVoice[v] ?? 0] ?? t.instruments[0];
+  }
+
+  /** Flat voice indices belonging to instrument `i`, in order. */
+  voicesForInstrument(i: number): number[] {
+    const inst = this.instrumentTable().instruments[i];
+    if (!inst) return [];
+    return Array.from({ length: inst.voiceCount }, (_, k) => inst.voiceBase + k);
+  }
+
+  /** Total voices across all instruments (4 for the default doc). */
+  totalVoices(): number {
+    return this.instrumentTable().totalVoices;
+  }
+
+  /** Total staves across all instruments (2 for the default doc). */
+  totalStaves(): number {
+    return this.instrumentTable().totalStaves;
+  }
+
+  /* ── instrument mutations ──────────────────────────────────────────────────
+     Add/remove an instrument: structural edits to the head <scoreDef>'s
+     staffGrp set + every measure's <staff> blocks. The first add PROMOTES the
+     implicit single-piano shape into nested form; a remove that leaves a sole
+     default piano DEMOTES back to the implicit shape, so add-then-remove
+     round-trips to byte-identical original MEI. */
+
+  /** Append a `<staff n=N>` (2 empty layers) for each of `staffNs` to
+   *  `measure`, keeping `<staff>` elements in ascending-@n document order. */
+  private addStavesToMeasure(measure: Element, staffNs: number[]): void {
+    for (const staffN of staffNs) {
+      const staff = el(this.doc, "staff", { n: staffN, "xml:id": newId("s") });
+      staff.appendChild(el(this.doc, "layer", { n: 1, "xml:id": newId("l") }));
+      staff.appendChild(el(this.doc, "layer", { n: 2, "xml:id": newId("l") }));
+      const after = Array.from(measure.querySelectorAll("staff")).find(
+        (s) => parseInt(s.getAttribute("n") ?? "0", 10) > staffN,
+      );
+      const lastStaff = Array.from(measure.querySelectorAll("staff")).pop() ?? null;
+      if (after) measure.insertBefore(staff, after);
+      else if (lastStaff) measure.insertBefore(staff, lastStaff.nextSibling);
+      else measure.appendChild(staff);
+    }
+  }
+
+  /** Add a new instrument (1- or 2-staff) after the existing ones. Promotes the
+   *  implicit single-piano shape to nested form on the first add. Default
+   *  clefs: G/2 (+ F/4 for the bottom staff of a grand staff). */
+  addInstrument(opts: { name: string; instrKey: string; staffCount: 1 | 2 }): void {
+    const head = this.doc.querySelector("scoreDef");
+    let root = head?.querySelector("staffGrp") ?? null;
+    if (!head || !root) return;
+    /* Promote the implicit shape → nested, making the existing piano the first
+       instrument. (Direct <staffDef> children ⇒ implicit shape.) */
+    if (Array.from(root.children).some((c) => c.localName === "staffDef")) {
+      const newRoot = this.doc.createElementNS(MEI_NS, "staffGrp");
+      head.replaceChild(newRoot, root);
+      if (!root.getAttributeNS(HKL_NS, "instr") && !root.getAttribute("hkl:instr"))
+        root.setAttributeNS(HKL_NS, "hkl:instr", "piano");
+      if (!Array.from(root.children).some((c) => c.localName === "label")) {
+        const lbl = el(this.doc, "label");
+        lbl.textContent = "Piano";
+        root.insertBefore(lbl, root.firstChild);
+      }
+      newRoot.appendChild(root);
+      root = newRoot;
+    }
+    const existingNs = Array.from(root.querySelectorAll("staffDef"))
+      .map((d) => parseInt(d.getAttribute("n") ?? "0", 10));
+    let nextN = (existingNs.length ? Math.max(...existingNs) : 0) + 1;
+    const grp = this.doc.createElementNS(MEI_NS, "staffGrp");
+    grp.setAttributeNS(HKL_NS, "hkl:instr", opts.instrKey);
+    if (opts.staffCount === 2) {
+      grp.setAttribute("symbol", "brace");
+      grp.setAttribute("bar.thru", "true");
+    }
+    const lbl = el(this.doc, "label");
+    lbl.textContent = opts.name;
+    grp.appendChild(lbl);
+    const newStaffNs: number[] = [];
+    for (let s = 0; s < opts.staffCount; s++) {
+      const n = nextN++;
+      newStaffNs.push(n);
+      const bottom = opts.staffCount === 2 && s === 1;
+      grp.appendChild(el(this.doc, "staffDef", {
+        n, lines: 5,
+        "clef.shape": bottom ? "F" : "G",
+        "clef.line": bottom ? "4" : "2",
+      }));
+    }
+    root.appendChild(grp);
+    for (const m of this.allMeasures()) this.addStavesToMeasure(m, newStaffNs);
+    this.invalidateInstrumentCache();
+    normalizeTies(this);
+    this.normalizePlaceholdersAll();
+    this.ensureCursorSlots();
+  }
+
+  /** Remove instrument `i`: drop its staffGrp + per-measure staves + its
+   *  control events, renumber the survivors, then demote if a sole default
+   *  piano remains. Resets the cursor (voice identity shifts on renumber). */
+  removeInstrument(i: number): void {
+    const insts = this.instruments();
+    if (i < 0 || i >= insts.length || insts.length <= 1) return;
+    const inst = insts[i];
+    const drop = new Set(inst.staffNs);
+    inst.staffGrp.parentNode?.removeChild(inst.staffGrp);
+    for (const m of this.allMeasures()) {
+      for (const s of Array.from(m.querySelectorAll("staff"))) {
+        if (drop.has(parseInt(s.getAttribute("n") ?? "0", 10))) s.parentNode?.removeChild(s);
+      }
+    }
+    for (const ce of Array.from(this.doc.querySelectorAll(
+      "dynam, dir, hairpin, pedal, tempo, octave, trill, fermata, breath",
+    ))) {
+      const sn = parseInt(ce.getAttribute("staff") ?? "0", 10);
+      if (drop.has(sn)) ce.parentNode?.removeChild(ce);
+    }
+    this.renumberStaves();
+    this.maybeDemoteToImplicit();
+    this.invalidateInstrumentCache();
+    this.currentVoice = 1;
+    this.cursors = {};
+    normalizeTies(this);
+    this.normalizePlaceholdersAll();
+    this.ensureCursorSlots();
+  }
+
+  /** Reorder the instruments to `order` (a permutation of the current instrument
+   *  indices, top-to-bottom). Re-sequences the nested `<staffGrp>`s, then
+   *  renumbers staves + remaps `@staff` + reorders each measure's `<staff>`
+   *  (content travels). Resets the cursor (voice identity shifts). No-op unless
+   *  there are ≥2 instruments and `order` is a full permutation. */
+  reorderInstruments(order: number[]): void {
+    const head = this.doc.querySelector("scoreDef");
+    const root = head?.querySelector("staffGrp");
+    if (!root) return;
+    const groups = Array.from(root.children).filter((c) => c.localName === "staffGrp");
+    if (groups.length < 2 || order.length !== groups.length) return;
+    const seen = new Set(order);
+    if (seen.size !== groups.length || order.some((i) => i < 0 || i >= groups.length)) return;
+    /* appendChild moves each group to the end; iterating `order` rebuilds it. */
+    for (const idx of order) root.appendChild(groups[idx]);
+    this.renumberStaves();
+    this.invalidateInstrumentCache();
+    this.currentVoice = 1;
+    this.cursors = {};
+    normalizeTies(this);
+    this.normalizePlaceholdersAll();
+    this.ensureCursorSlots();
+  }
+
+  /** Renumber all `<staffDef>` globally 1..N (document order) and remap every
+   *  `<staff>` @n and control-event @staff to match. */
+  private renumberStaves(): void {
+    const head = this.doc.querySelector("scoreDef");
+    const root = head?.querySelector("staffGrp");
+    if (!root) return;
+    const staffDefs = Array.from(root.querySelectorAll("staffDef"));
+    const map = new Map<number, number>();
+    staffDefs.forEach((d, k) => map.set(parseInt(d.getAttribute("n") ?? "0", 10), k + 1));
+    staffDefs.forEach((d, k) => d.setAttribute("n", String(k + 1)));
+    const remap = (n: number) => map.get(n) ?? n;
+    for (const m of this.allMeasures()) {
+      const updates = Array.from(m.querySelectorAll("staff"))
+        .map((s) => [s, remap(parseInt(s.getAttribute("n") ?? "0", 10))] as const);
+      for (const [s, n] of updates) s.setAttribute("n", String(n));
+      /* Re-order the <staff> elements (content travels with them) so document
+         order matches ascending @n — needed after an instrument REORDER, where
+         the new @n no longer matches the existing element order. */
+      const staves = Array.from(m.querySelectorAll("staff"))
+        .sort((a, b) => parseInt(a.getAttribute("n") ?? "0", 10) - parseInt(b.getAttribute("n") ?? "0", 10));
+      for (const s of staves) m.appendChild(s);
+    }
+    for (const ce of Array.from(this.doc.querySelectorAll(
+      "dynam, dir, hairpin, pedal, tempo, octave, trill, fermata, breath",
+    ))) {
+      const a = ce.getAttribute("staff");
+      if (a === null) continue;
+      ce.setAttribute("staff", a.trim().split(/\s+/).map((t) => String(remap(parseInt(t, 10)))).join(" "));
+    }
+  }
+
+  /** If exactly one instrument remains and it's a default 2-staff piano in
+   *  nested form, unwrap it back to the implicit root-staffGrp shape (strips
+   *  the hkl:instr + <label> added by promote) so add-then-remove round-trips
+   *  to the byte-identical original MEI. */
+  private maybeDemoteToImplicit(): void {
+    const head = this.doc.querySelector("scoreDef");
+    const root = head?.querySelector("staffGrp");
+    if (!head || !root) return;
+    const nested = Array.from(root.children).filter((c) => c.localName === "staffGrp");
+    if (nested.length !== 1) return;
+    const only = nested[0];
+    const staffDefs = Array.from(only.children).filter((c) => c.localName === "staffDef");
+    if (staffDefs.length !== 2) return;
+    const instrKey = only.getAttributeNS(HKL_NS, "instr") || only.getAttribute("hkl:instr") || "piano";
+    if (instrKey !== "piano") return;
+    only.removeAttributeNS(HKL_NS, "instr");
+    only.removeAttribute("hkl:instr");
+    for (const lbl of Array.from(only.children).filter((c) => c.localName === "label"))
+      only.removeChild(lbl);
+    head.replaceChild(only, root);
+  }
+
   /** Ensure an in-section `<scoreDef>` override sits immediately before measure
    *  `mi` and return it. For `mi <= 0` returns the head `<scoreDef>` (the score
    *  default — no override node needed). Reuses an existing override scoreDef
@@ -1232,7 +1615,7 @@ export class ComposerModel {
    *  `<staffDef>` for that staff. Used to pre-select the clef modal. */
   clefAtCursor(): { shape: string; line: string; dis: string | null; disPlace: string | null } {
     const v = this.currentVoice;
-    const staffN = v <= 2 ? 1 : 2;
+    const staffN = this.staffForVoice(v);
     let shape = staffN === 1 ? 'G' : 'F';
     let line = staffN === 1 ? '2' : '4';
     let dis: string | null = null;
@@ -1325,13 +1708,14 @@ export class ComposerModel {
    *  pattern at every call site. */
   normalizePlaceholdersAll(): void {
     this.invalidateMeterCache();
+    this.invalidateInstrumentCache();
     normalizePlaceholders(this.doc, (layer) => this.measureTicksForLayer(layer));
   }
 
   /** Return the <layer> for (voice, measure). */
   layerInMeasure(measure: Element, voice: Voice): Element | null {
-    const staffN = voice <= 2 ? 1 : 2;
-    const layerN = voice === 1 || voice === 3 ? 1 : 2;
+    const staffN = this.staffForVoice(voice);
+    const layerN = this.layerForVoice(voice);
     const staff = Array.from(measure.querySelectorAll("staff")).find(
       (s) => s.getAttribute("n") === String(staffN),
     );
@@ -1392,6 +1776,21 @@ export class ComposerModel {
   }
 
 
+  /** Append a `<staff n=…>` (with 2 empty `<layer>`s) to `measure` for every
+   *  staff in the score, in global-@n order. The single source for the
+   *  per-instrument measure skeleton — used by appendMeasure / insertMeasureAt.
+   *  For the default single-piano doc this emits staves 1+2 exactly as before. */
+  private appendMeasureStaves(measure: Element): void {
+    for (const inst of this.instruments()) {
+      for (const staffN of inst.staffNs) {
+        const staff = el(this.doc, "staff", { n: staffN, "xml:id": newId("s") });
+        staff.appendChild(el(this.doc, "layer", { n: 1, "xml:id": newId("l") }));
+        staff.appendChild(el(this.doc, "layer", { n: 2, "xml:id": newId("l") }));
+        measure.appendChild(staff);
+      }
+    }
+  }
+
   /** Append a new empty measure with all four layers. Sets barlines. Public
    *  so paste-overflow paths and selection-mode shift-right (future) can
    *  extend the score. */
@@ -1401,14 +1800,7 @@ export class ComposerModel {
     const measures = this.allMeasures();
     const n = measures.length + 1;
     const m = el(this.doc, "measure", { n, "xml:id": newId("m") });
-    const s1 = el(this.doc, "staff", { n: 1, "xml:id": newId("s") });
-    s1.appendChild(el(this.doc, "layer", { n: 1, "xml:id": newId("l") }));
-    s1.appendChild(el(this.doc, "layer", { n: 2, "xml:id": newId("l") }));
-    const s2 = el(this.doc, "staff", { n: 2, "xml:id": newId("s") });
-    s2.appendChild(el(this.doc, "layer", { n: 1, "xml:id": newId("l") }));
-    s2.appendChild(el(this.doc, "layer", { n: 2, "xml:id": newId("l") }));
-    m.appendChild(s1);
-    m.appendChild(s2);
+    this.appendMeasureStaves(m);
     section.appendChild(m);
     this.setBarlines();
     /* Fill the new measure's four empty layers with full-measure placeholders
@@ -1676,15 +2068,15 @@ export class ComposerModel {
     let measuresAffected = 0;
     /* Per-voice cursor preservation: snapshot the look-forward anchors
        before mutating. */
-    const looks: Record<Voice, Element[]> = { 1: [], 2: [], 3: [], 4: [] };
-    for (let v: Voice = 1; v <= 4; v = (v + 1) as Voice) {
+    const looks: Record<number, Element[]> = {};
+    for (let v = 1; v <= this.totalVoices(); v++) {
       const flat = this.flatChildren(v);
       const c = this.cursors[v];
       looks[v] = c < flat.length ? flat.slice(c) : [];
     }
     for (let mi = 0; mi < measures.length; mi++) {
       const cap = this.measureTicksAt(mi);
-      for (let v: Voice = 1; v <= 4; v = (v + 1) as Voice) {
+      for (let v = 1; v <= this.totalVoices(); v++) {
         const layer = this.layerInMeasure(measures[mi], v);
         if (!layer) continue;
         const cc = this.contentChildren(layer);
@@ -1704,8 +2096,8 @@ export class ComposerModel {
       }
     }
     this.normalizePlaceholdersAll();
-    for (let v: Voice = 1; v <= 4; v = (v + 1) as Voice) {
-      this.reanchorCursorAfter(v, looks[v]);
+    for (let v = 1; v <= this.totalVoices(); v++) {
+      this.reanchorCursorAfter(v, looks[v] ?? []);
     }
     return { measuresAffected };
   }
@@ -1744,14 +2136,7 @@ export class ComposerModel {
     const section = this.doc.querySelector("section");
     if (!section) throw new Error("section element missing");
     const m = el(this.doc, "measure", { "xml:id": newId("m") });
-    const s1 = el(this.doc, "staff", { n: 1, "xml:id": newId("s") });
-    s1.appendChild(el(this.doc, "layer", { n: 1, "xml:id": newId("l") }));
-    s1.appendChild(el(this.doc, "layer", { n: 2, "xml:id": newId("l") }));
-    const s2 = el(this.doc, "staff", { n: 2, "xml:id": newId("s") });
-    s2.appendChild(el(this.doc, "layer", { n: 1, "xml:id": newId("l") }));
-    s2.appendChild(el(this.doc, "layer", { n: 2, "xml:id": newId("l") }));
-    m.appendChild(s1);
-    m.appendChild(s2);
+    this.appendMeasureStaves(m);
     /* measures[idx] may be wrapped in an <ending>; insertBefore needs a node
        that is a direct child of <section>. Walk up to the section-level
        ancestor (the <ending>, if any) so we insert before the whole volta. */
@@ -1977,9 +2362,10 @@ export class ComposerModel {
 
   switchVoice(dir: "up" | "down"): Voice {
     const cur = this.currentVoice;
+    const maxV = this.totalVoices();
     let next: Voice;
-    if (dir === "up") next = (cur > 1 ? cur - 1 : 1) as Voice;
-    else next = (cur < 4 ? cur + 1 : 4) as Voice;
+    if (dir === "up") next = cur > 1 ? cur - 1 : 1;
+    else next = cur < maxV ? cur + 1 : maxV;
     if (next === cur) return next;
     return this.setVoicePreservingMeasure(next);
   }
@@ -2684,12 +3070,12 @@ export class ComposerModel {
     const target = flat[c];
     if (!target) return false;
     const clampCursors = (): void => {
-      for (let vi = 1 as Voice; vi <= 4; vi = (vi + 1) as Voice) {
+      for (let vi = 1 as Voice; vi <= this.totalVoices(); vi++) {
         this.cursors[vi] = Math.min(
           this.cursors[vi],
           this.getVoiceLength(vi),
         );
-        if (vi === 4) break;
+        if (vi === this.totalVoices()) break;
       }
     };
 
@@ -2986,9 +3372,9 @@ export class ComposerModel {
     this.setBarlines();
     normalizeTies(this);
     this.normalizePlaceholdersAll();
-    for (let vi: Voice = 1; vi <= 4; vi = (vi + 1) as Voice) {
+    for (let vi: Voice = 1; vi <= this.totalVoices(); vi++) {
       this.cursors[vi] = Math.min(this.cursors[vi], this.getVoiceLength(vi));
-      if (vi === 4) break;
+      if (vi === this.totalVoices()) break;
     }
     return { ok: true, postCursor: this.cursors[voice] };
   }
@@ -3116,9 +3502,9 @@ export class ComposerModel {
     this.setBarlines();
     normalizeTies(this);
     this.normalizePlaceholdersAll();
-    for (let vi: Voice = 1; vi <= 4; vi = (vi + 1) as Voice) {
+    for (let vi: Voice = 1; vi <= this.totalVoices(); vi++) {
       this.cursors[vi] = Math.min(this.cursors[vi], this.getVoiceLength(vi));
-      if (vi === 4) break;
+      if (vi === this.totalVoices()) break;
     }
     return { ok: true, mLo: mDest, mHi: mDest + N - 1 };
   }
@@ -3133,10 +3519,10 @@ export class ComposerModel {
   }
 
   private measureIsEmpty(measure: Element): boolean {
-    for (let v: Voice = 1; v <= 4; v = (v + 1) as Voice) {
+    for (let v: Voice = 1; v <= this.totalVoices(); v++) {
       const layer = this.layerInMeasure(measure, v);
       if (layer && this.contentChildren(layer).length > 0) return false;
-      if (v === 4) break;
+      if (v === this.totalVoices()) break;
     }
     return true;
   }
@@ -3336,16 +3722,16 @@ export class ComposerModel {
     const hi = Math.min(miHi, measures.length - 1);
     for (let mi = lo; mi <= hi; mi++) {
       const cap = this.measureTicksAt(mi);
-      for (let v: Voice = 1; v <= 4; v = (v + 1) as Voice) {
+      for (let v: Voice = 1; v <= this.totalVoices(); v++) {
         const layer = this.layerInMeasure(measures[mi], v);
         if (layer) this.truncateLayer(layer, cap);
-        if (v === 4) break;
+        if (v === this.totalVoices()) break;
       }
     }
     this.normalizePlaceholdersAll();
-    for (let v: Voice = 1; v <= 4; v = (v + 1) as Voice) {
+    for (let v: Voice = 1; v <= this.totalVoices(); v++) {
       this.cursors[v] = Math.min(this.cursors[v], this.getVoiceLength(v));
-      if (v === 4) break;
+      if (v === this.totalVoices()) break;
     }
     this.setBarlines();
   }

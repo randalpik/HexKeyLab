@@ -2896,3 +2896,137 @@ and there are no mid-piece meters until then. The `setMeterAt(mi>0)`/`setKeySigA
 were deliberately NOT landed in the prerequisite (no caller yet → would be dead/lint-flagged code);
 they are 4.2's first step. The harness's universal placeholder invariant now reads
 `measureTicksForLayer` so a mixed-meter doc validates correctly (fixture `phase4_mixed_meter_prereq`).
+
+## Composer Phase 5 — multi-instrument (2026-06-01)
+
+**Instrument model = an instrument table over the staffGrp set, NOT a `Voice` tuple.** `Voice`
+stayed a `number` (was `1|2|3|4`); a cached `instrumentTable()` (mirrors Phase 4's `meterTable()`:
+lazy build, invalidated in `normalizePlaceholdersAll`) walks the head `<scoreDef>`'s root `<staffGrp>`
+and maps the flat voice index → `(instrument, global staff @n, layer @n)`. Every `voice<=2?1:2` /
+`voice===1||voice===3?1:2` ternary became `model.staffForVoice(v)` / `layerForVoice(v)`. This kept the
+blast radius to indirection (one source of truth) rather than a type-surface rewrite, and a single
+2-staff instrument reproduces the historic v1→s1l1 … v4→s2l2 mapping exactly — so steps 2–8 are pure
+refactors with zero baseline churn (the proof the indirection is faithful).
+
+**MEI encoding: nested `<staffGrp>` per instrument + `hkl:instr` namespaced attr + `<label>`.** An
+A0 probe (Verovio toolkit, headless) confirmed Verovio renders nested staffGrps with N staves,
+preserves the `hkl:`-namespaced attribute through round-trip, and draws `<label>` as the brace-group
+name — chose `hkl:instr` over `data-hkl-instr` to avoid any Verovio data-attr stripping on structural
+elements. The legacy single-piano doc (root staffGrp with direct `<staffDef>`s) is treated as ONE
+implicit instrument and **never rewritten on load** (the hard byte-identity gate). The first
+`addInstrument` PROMOTES it to nested form; a remove that leaves a sole default piano DEMOTES back
+(strips the added `hkl:instr` + `<label>`) — so add-then-remove round-trips to byte-identical MEI
+(modulo placeholder ids, the documented exception).
+
+**Layers: expr + pedal are PER-INSTRUMENT, tempo stays score-global.** The cursor cycle is now a stop
+list derived from the instrument table (`buildVoiceStopList`): `tempo → (per instrument: its voices,
+its expr between/above its staves, its pedal below — pedal only for 2-staff instruments)`. One 2-staff
+piano yields exactly `tempo→1→2→expr→3→4→pedal` (identical). Expr/pedal moment-lists,
+`measureHasExpression`, `pedalMoments`, `dynamAt`/`dirAt`/`hairpinsAt`/`pedalsAt`, and the render bands
+all gained an optional staff-filter (default = all staves = historic behavior); new dynam/dir/hairpin
+attach to the active instrument's top staff, pedal to its bottom staff. Pedal is per-grand-staff-
+instrument (Max): below the last staff of each 2-staff instrument, affecting only that instrument's
+playback.
+
+**Audio: `PlaybackEvent.instrumentKey` / `PedalEvent.instrumentKey`, tagged ONLY for multi-instrument
+scores.** A single-instrument score leaves the key absent so HKL plays through its current active
+instrument (the user picks the sound in HKL, not the model's "piano" default) — exact back-compat.
+`computeLegatoPlan` went global→per-voice (each voice's instrument decides glide-vs-overlap, so one run
+mixes both); `noteOn(…, instrumentKey?)` overrides the waveform per-event (the `SampleEngine.setInstrument`
+call was already per-call); the damper went per-instrument (`pb.pedalSustained` is now `Map<KeyId,
+instrumentKey>`, `pedalEngagedInstr` a per-instrument set, `pedalCapturesNoteEndingAt`/`pedalDownAt`
+filter by the note's own instrumentKey, a pedal-up releases only its instrument's deferred voices).
+**External CC-64 mirroring stays global/unchanged** (per-instrument external routing deferred — Max).
+`playScore` pre-scans + lazy-loads any per-event sample-set not already loaded.
+
+**MusicXML export: all staves/voices under ONE `<part>` (best-effort), not yet per-instrument parts.**
+`<staves>` = totalStaves, voice loop = totalVoices, per-staff clefs — so nothing is silently dropped,
+but a proper one-`<part>`-per-instrument split is the deferred single-part/export follow-on (§12).
+
+**Deferred follow-ons (NOT in the prerequisite):** single-part view + per-instrument MusicXML export,
+pizz/arco, string harmonic `Alt+H`, ignore-color-in-setup, per-instrument external pedal CC, and
+multi-instrument **selection-mode** (the `Staff = 1|2` measure-selection in `selection.ts`/`input.ts`
+stayed 2-staff; single-instrument selection is unchanged).
+
+### Phase 5 post-ship fixes (2026-06-02)
+
+**Instrument reorder = a dedicated draggable modal, not a textEntryModal.** `instrumentsDialog.ts`
+(`openInstrumentsModal`) renders a vertical HTML5-DnD list (drag handle / name / staff badge / remove
+✕ / Add) in a new `<dialog id="instrumentsDialog">`; each mutation (add / remove / drag-drop reorder)
+applies immediately with its own history entry + re-render (the Tempo/Signature independent-apply
+pattern). Model side: `reorderInstruments(order)` re-sequences the nested `<staffGrp>`s then calls
+`renumberStaves`, which now **also reorders each measure's `<staff>` elements by their new @n** — the
+content travels with the staff element, so a moved instrument keeps its notes. (The `appendChild`-in-
+sorted-order dance is a no-op for add/remove, so the byte-identical demote round-trip still holds.)
+Setup's inline Add/Remove buttons collapsed into one "Manage…" button.
+
+**The playback-cursor-missing bug for added instruments was the `1..4` all-voices caps** — see
+lessons.md "Widening `Voice` to a `number`". `findElement` + ~8 other model loops + `save.ts`
+gather-break + `scTranspose` + `history.snapshotCursors` now bound on `totalVoices()`. (Selection-mode's
+`Staff = 1|2` loops stay 2-staff — multi-instrument selection is still a deferred follow-on.)
+
+**Sync-to-Composer now follows the cursor's instrument.** New `composer-active-instrument`
+(`{instrumentKey}`) ComposerEvent, broadcast diff-filtered from `onStateChange` (and on connect) **only
+for multi-instrument scores**. HKL applies it via a new `setActiveWaveform(wf)` (load-on-demand, updates
+the #waveform selector, does NOT persist to prefs) **only when `prefs.syncToComposer` is on** — so
+note-entry preview is heard in the cursor's instrument's timbre. External CC-64 + the user's saved
+default instrument are untouched.
+
+**Same-pitch / same-onset cross-instrument conflict → topmost instrument wins (no separate streams).**
+HKL keys audio voices by `(q, r)`, so two instruments sounding the same pitch at the same time collide
+on one KeyId (cancel/retrigger). Rather than run separate per-instrument audio streams for Composer
+playback (a large engine change), `buildPlayback` resolves the conflict at the event level: within each
+onset group (voice-ascending = topmost-first), the first instrument to claim a `(q, r)` keeps it and any
+OTHER instrument's duplicate of that pitch is dropped (an emptied chord becomes a silent pulse that still
+echoes its meiId, so that voice's cursor still advances). Scoped to DIFFERENT instruments (a same-
+instrument unison is left alone) and gated on `isMultiInstrument`, so single-instrument playback is
+byte-identical. Accepted tradeoff (Max): not ideal voicing, but preferable to building Composer-only
+playback streams.
+
+**Per-instrument playback NEVER falls back to a different timbre (2026-06-02).** The original Phase 5
+wiring let `noteOn` fall back to `audio.activeWaveform` when an event's `instrumentKey` wasn't loaded —
+combined with a fire-and-forget lazy load in `playScore`, this raced: if an instrument's sample-set
+hadn't finished loading when playback started, that ENTIRE instrument played with the active
+instrument's timbre ("occasionally an entire instrument plays as the wrong one"). Fixed two ways:
+(1) `playScore` is now `async` and **awaits** all needed sample-set loads before starting the driver
+(so a multi-instrument score's first play may pause briefly while violin/etc. load; cached thereafter),
+and (2) `noteOn` with an `instrumentKey` plays ONLY that instrument — if it isn't loaded it **skips the
+note** (silent) rather than sounding the wrong one (Max: "rather not play at all than play with the
+wrong voice, if the voice exists"). A note with NO instrumentKey (single-instrument scores / live
+input) still uses `audio.activeWaveform` — that's the intended instrument, not a fallback. A play-score
+superseded during the load (newer play-score / stop) bails without double-driving.
+
+**Glide slurs are per-instrument (2026-06-02).** A sustained-instrument slur hands one voice off via
+`glideVoices` (crossfade old→new pitch). But `glideVoices` created the new voice through
+`SampleEngine.noteOnFaded`, which uses the SampleEngine's GLOBAL current instrument — left at whatever
+the last `noteOn` set. In multi-instrument playback that's often a DIFFERENT instrument, so a glide
+crossfaded into the wrong timbre and garbled the whole slurred passage ("a glide slur completely breaks
+playback"). Fix: `glideVoices(pairs, rampMs, atTime?, instrumentKey?)` calls `SampleEngine.setInstrument`
+up front (a slur is within one voice = one instrument); the playback driver passes `ev.instrumentKey`.
+Live-input callers omit it and keep the global instrument. Additionally, `canGlide` now requires the
+live voice at `glideFromKey` to belong to the event's instrument (`pb.voiceInstr` tracks per-KeyId
+instrument) — so a unison pitch shared by two instruments can't have one instrument's slur steal the
+other's voice; on mismatch the slur target re-attacks fresh in its own instrument instead of gliding.
+
+**Sync-to-Composer proactively loads the whole instrument set (2026-06-02).** Cursor-follow
+(`composer-active-instrument` → `setActiveWaveform`) lazy-loads on demand, so until the load finished,
+live note-entry preview played the previously-active instrument (wrong). Per "never play wrong" extended
+to composition: Composer now also broadcasts `composer-instruments` (the score's distinct sample-set
+keys) on connect and on any instrument-set change (add/remove; reorder is diff-filtered out since the
+SET is unchanged). HKL caches it and — when Sync is on — eagerly loads every one (also on the
+Sync-toggle-on, via the exported `preloadComposerInstruments`). So moving the cursor between instruments
+switches HKL's active instrument instantly to an already-loaded sample-set; live input (no instrumentKey
+→ `audio.activeWaveform`) then previews in the correct timbre. Multi-instrument only (single-instrument
+sends `[]` and keeps the user's chosen HKL instrument). Loads stay fire-and-forget here (a brief gap on
+first cursor-visit to a still-loading instrument is acceptable for live preview; playback itself still
+hard-awaits — see the playback no-fallback entry).
+
+**Instrument edits are STAGED to Setup's Save (2026-06-02).** Superseding the earlier "each
+add/remove/reorder applies immediately as its own history entry": the Manage… modal now edits a working
+`InstrEdit[]` list (each row carries an `origIndex` identity, or null for new) and touches nothing.
+Setup's Save calls `reconcileInstruments(model, edits)` — remove dropped originals (high→low), append
+news, reorder to the edit sequence (content travels via origIndex) — folded into Setup's single history
+entry; a no-op edit set is detected and skipped (so an unrelated Save doesn't reset the cursor). Cancel/
+Escape discards (the model was never touched). Consistent with the rest of Setup (edit → Save commits /
+Cancel discards) rather than the Tempo/Signature buttons' independent-apply pattern. (Also fixed: the
+Manage button's click listener wasn't removed in the dialog's onClose, so it stacked across Setup opens.)

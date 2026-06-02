@@ -1172,3 +1172,19 @@ groups left of the staff's first notehead (`g.note`/`g.chord`/`g.rest`) — the 
 definition, everything before the first note. A clef change sits after notes, so it's excluded; a
 measure that legitimately *starts* with a sig change (mid-score key/meter, or a start-of-measure
 clef) is still left of the first note, so it's kept. Fixture: `phase4_clef_cursor_start`.
+
+## Widening `Voice` to a `number`: the `1..4` all-voices loops are silent caps
+
+Phase 5 changed `Voice` from `1|2|3|4` to `number` and added the instrument table, but the many
+**"iterate all voices" loops** scattered across the model (`findElement`, `fillIncompleteMeasures`,
+`normalizeTies`, `measure-ops`, deletion-ripple, `scTranspose.gatherSoundingAt`, `history.snapshotCursors`)
+kept their hard-coded `for (v = 1; v <= 4; …)` / `if (v === 4) break;`. These compile fine and are
+**correct for single-instrument docs**, so the full suite stayed green — but they're silent caps that
+only bite once a doc actually has voices ≥ 5. The first symptom was subtle: an added instrument played
+audio but showed **no playback cursor**, because `findElement(meiId)` (which maps the `playback-position`
+echo's meiId → voice) stopped at voice 4 and returned null for the new instrument's notes. Fix: every
+all-voices loop must bound on `this.totalVoices()` / `model.totalVoices()`. **Lesson:** when you widen a
+union type to an open one, grep for *every* loop/break that hard-codes the old bound — they won't
+typecheck-fail and won't suite-fail until the new range is exercised. (Deferring them "until the owning
+step" only works if the owning step actually revisits them; here several were missed until hands-on
+multi-instrument testing surfaced the playback-cursor gap.)

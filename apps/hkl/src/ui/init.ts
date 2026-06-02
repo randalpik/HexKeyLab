@@ -16,7 +16,7 @@
 // 8. Window resize handler + Reset-prefs button.
 
 import { onRefChanged } from '../effects/onRefChanged.js';
-import { getComposerRequiredLayout, applyComposerLayout } from '../bridge/hkl-side.js';
+import { getComposerRequiredLayout, applyComposerLayout, preloadComposerInstruments } from '../bridge/hkl-side.js';
 import { tuning } from '../state/tuning.js';
 import { refSpine } from '../tuning/refspine.js';
 import { selection } from '../state/selection.js';
@@ -318,6 +318,10 @@ $<HTMLInputElement>('cbSyncToComposer').addEventListener('change', (e) => {
          won't work (Composer is the source). Use the exported applier. */
       applyComposerLayout();
     }
+    /* Eagerly load the score's instruments + switch to the cursor's, so
+       note-entry preview is immediately in the right timbre (never the wrong
+       one while a sample-set is still loading). */
+    preloadComposerInstruments();
   }
 });
 $<HTMLInputElement>('cbCoords').addEventListener('change', (e) => {

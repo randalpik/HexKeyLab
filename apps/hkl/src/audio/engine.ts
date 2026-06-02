@@ -51,7 +51,7 @@ export function triggerRearticulateFlash(key: KeyId): void {
   setTimeout(draw, REARTICULATE_FLASH_MS + 5);
 }
 
-export function instrIsSample(): boolean { return !!SampleEngine.INSTRUMENTS[audio.activeWaveform]; }
+export function instrIsSample(wf?: string): boolean { return !!SampleEngine.INSTRUMENTS[wf ?? audio.activeWaveform]; }
 export function instrDecays(): boolean {
   const i = SampleEngine.INSTRUMENTS[audio.activeWaveform];
   return i ? !!i.decays : false;
@@ -60,8 +60,8 @@ export function instrDecays(): boolean {
    instrument decays naturally, or it's opted into stop+retrigger via
    replayOnTranspose (sustained keyboards whose looping samples sound
    phasey under crossfade). */
-export function instrReplaysOnTranspose(): boolean {
-  const i = SampleEngine.INSTRUMENTS[audio.activeWaveform];
+export function instrReplaysOnTranspose(wf?: string): boolean {
+  const i = SampleEngine.INSTRUMENTS[wf ?? audio.activeWaveform];
   if (!i) return false;
   return !!i.decays || !!i.replayOnTranspose;
 }
@@ -127,24 +127,36 @@ export function initAudio(): void {
  *  hkl-side.ts so score-driven notes time on the sample-accurate audio clock
  *  rather than JS-timer firing. Live-input paths (Lumatone, QWERTY, MIDI in)
  *  omit it and get the existing immediate-attack behavior. */
-export function noteOn(key: KeyId, velocity?: number, startAt?: number): void {
+export function noteOn(key: KeyId, velocity?: number, startAt?: number, instrumentKey?: string): void {
   if (!audio.audioEnabled || !audio.audioCtx) return;
   if (audio.activeOscs[key]) return;
   const parts = key.split(','), q = +parts[0], r = +parts[1];
   const freq = keyFreq(q, r);
-  const wf = audio.activeWaveform;
+  /* Per-event instrument (multi-instrument playback): play ONLY with the
+     requested instrument — never fall back to a DIFFERENT timbre. If its
+     sample-set isn't loaded (load failed, or somehow not awaited), skip the
+     note entirely rather than sound the wrong instrument. A note with no
+     instrumentKey (single-instrument scores / live input) uses HKL's active
+     instrument as before. */
+  let wf: string;
+  if (instrumentKey) {
+    if (!SampleEngine.isInstrumentLoaded(instrumentKey)) return;
+    wf = instrumentKey;
+  } else {
+    wf = audio.activeWaveform;
+  }
   /* `velocity` is the canonical musical velocity (per-device input normalization,
      incl. the Lumatone's per-key gain + decompression, already happened at input).
      The house curve (velocityBaseVol / SampleEngine) maps it to gain. */
   const adjVel = velocity ?? DEFAULT_DYNAMIC_MAP.mf;
-  if (instrIsSample() && SampleEngine.isInstrumentLoaded(wf)) {
+  if (instrIsSample(wf) && SampleEngine.isInstrumentLoaded(wf)) {
     SampleEngine.setInstrument(wf);
     /* Velocity drives initial volume (via baseVol in segGain); pressureGain stays
        at 1.0 until the first aftertouch message for a sustained instrument, then
        ramps to the aftertouch-dictated gain. */
     SampleEngine.noteOn(key, freq, adjVel, startAt);
     audio.activeOscs[key] = { type: 'sample', freq };
-  } else if (!instrIsSample()) {
+  } else if (!instrIsSample(wf)) {
     const type = wf as OscillatorType;
     const osc = audio.audioCtx.createOscillator();
     const gain = audio.audioCtx.createGain();
@@ -257,8 +269,16 @@ export function stopAllNotes(): void { for (const k in audio.activeOscs) noteOff
  *
  *  Only the audio voice is migrated here; callers own any higher-level
  *  per-key bookkeeping (selection highlight, playback voice tags). */
-export function glideVoices(pairs: ReadonlyArray<{ oldKey: KeyId; newKey: KeyId }>, rampMs: number, atTime?: number): void {
+export function glideVoices(pairs: ReadonlyArray<{ oldKey: KeyId; newKey: KeyId }>, rampMs: number, atTime?: number, instrumentKey?: string): void {
   if (!audio.audioEnabled || !audio.audioCtx) return;
+  /* Multi-instrument playback: a slur is within one voice = one instrument, so
+     the glide's new voice (noteOnFaded below) must be created from THAT
+     instrument's buffers — not whatever the global SampleEngine instrument was
+     left at by another voice's note. Set it once up front, mirroring noteOn.
+     (Live-input callers omit instrumentKey and keep the global instrument.) */
+  if (instrumentKey && SampleEngine.isInstrumentLoaded(instrumentKey)) {
+    SampleEngine.setInstrument(instrumentKey);
+  }
   /* `atTime` (AudioContext seconds, optional): anchor the glide on the audio
    *  clock at a planned future moment instead of currentTime. Used by the
    *  playback lookahead scheduler so slur boundaries are sample-accurate
@@ -427,6 +447,38 @@ export function changeWaveform(): void {
   const playing = Object.keys(audio.activeOscs);
   playing.forEach(function (k) { noteOff(k); });
   playing.forEach(function (k) { noteOn(k, audio.keyVelocity[k]); });
+}
+
+/** Programmatically switch the active instrument to `wf` (a sample-set key or
+ *  oscillator type) — used by Sync-to-Composer instrument-follow. Loads a
+ *  not-yet-loaded sample-set on demand (switch applies on completion), updates
+ *  the #waveform selector to reflect it, and — unlike changeWaveform — does NOT
+ *  persist it to prefs (note-entry following shouldn't overwrite the user's
+ *  chosen default). No-op for an unknown key, while another load is in flight,
+ *  or when already active. */
+export function setActiveWaveform(wf: string): void {
+  const isOsc = wf === 'sine' || wf === 'square' || wf === 'sawtooth' || wf === 'triangle';
+  if (!isOsc && !SampleEngine.INSTRUMENTS[wf]) return;
+  if (audio.wfLoadingKey) return;
+  if (audio.activeWaveform === wf) return;
+  const sel = document.getElementById('waveform') as HTMLSelectElement | null;
+  const reflect = (): void => { if (sel && sel.value !== wf) sel.value = wf; };
+  if (!isOsc && !SampleEngine.isInstrumentLoaded(wf)) {
+    audio.wfLoadingKey = wf;
+    initAudio();
+    SampleEngine.loadInstrument(wf).then(function () {
+      audio.wfLoadingKey = null;
+      audio.activeWaveform = wf;
+      reflect();
+    }).catch(function (err: unknown) {
+      audio.wfLoadingKey = null;
+      SampleEngine.unloadInstrument(wf);
+      console.error('sync-to-composer instrument load failed: ' + wf, err);
+    });
+    return;
+  }
+  audio.activeWaveform = wf;
+  reflect();
 }
 
 /* Set a voice's damperGain target (with smoothing). Sample voices delegate to

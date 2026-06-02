@@ -11,6 +11,7 @@ import {
 } from './expressions.js';
 import { openTempoModal } from './tempoDialog.js';
 import { openSignatureModal } from './sigDialog.js';
+import { openInstrumentsModal, instrEditsFromModel, summarizeInstrEdits, reconcileInstruments, type InstrEdit } from './instrumentsDialog.js';
 import { DYNAMIC_NAMES, DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { TUNING_MODES, type TuningMode, coordToMidi, MIDI_LOW, MIDI_HIGH } from '@hkl/shared/freq.js';
 import { noteName, keyOctave, fmtNote } from '@hkl/shared/notes.js';
@@ -178,6 +179,21 @@ export function openSetupDialog(
   };
   fillBtn?.addEventListener('click', onFillClick);
 
+  /* ── Instruments (multi-instrument) ────────────────────────────────────────
+     STAGED: the Manage… modal edits this working list; nothing touches the
+     model until Save (reconcileInstruments below), consistent with the rest of
+     Setup. Cancel/Escape discards (the model was never touched). */
+  let instrEdits: InstrEdit[] = instrEditsFromModel(model);
+  const instrListEl = $<HTMLSpanElement>('setupInstrList');
+  const refreshInstrList = (): void => {
+    if (instrListEl) instrListEl.textContent = summarizeInstrEdits(instrEdits);
+  };
+  refreshInstrList();
+
+  const instrumentsBtn = $<HTMLButtonElement>('setupInstrumentsBtn');
+  const onInstrumentsClick = (): void => { openInstrumentsModal(instrEdits, refreshInstrList); };
+  instrumentsBtn?.addEventListener('click', onInstrumentsClick);
+
   const form = $<HTMLFormElement>('setupForm');
 
   const onSubmit = (e: SubmitEvent): void => {
@@ -215,7 +231,9 @@ export function openSetupDialog(
       if (proceedWithLayout) applyRetune(model, plan);
     }
 
-    /* Apply in order. */
+    /* Apply in order. Instruments first (structural: add/remove/reorder via the
+       staged working list); folded into the single setup history entry. */
+    reconcileInstruments(model, instrEdits);
     model.setTitle(values.title);
     model.setSubtitle(values.subtitle);
     model.setComposer(values.composer);
@@ -240,6 +258,7 @@ export function openSetupDialog(
     fillBtn?.removeEventListener('click', onFillClick);
     tempoBtn?.removeEventListener('click', onTempoClick);
     sigBtn?.removeEventListener('click', onSigClick);
+    instrumentsBtn?.removeEventListener('click', onInstrumentsClick);
     dlg.removeEventListener('close', onClose);
   };
   form?.addEventListener('submit', onSubmit);

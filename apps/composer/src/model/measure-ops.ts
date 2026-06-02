@@ -76,9 +76,8 @@ export function clearBeatRange(
   model.setBarlines();
   normalizeTies(model);
   model.normalizePlaceholdersAll();
-  for (let vi: Voice = 1; vi <= 4; vi = (vi + 1) as Voice) {
+  for (let vi = 1; vi <= model.totalVoices(); vi++) {
     model.setCursor(Math.min(model.getCursor(vi), model.getVoiceLength(vi)), vi);
-    if (vi === 4) break;
   }
 }
 
@@ -126,9 +125,8 @@ export function clearMeasureRange(
   normalizeTies(model);
   model.normalizePlaceholdersAll();
   /* Clamp out-of-range cursors after wholesale measure-clearing. */
-  for (let vi: Voice = 1; vi <= 4; vi = (vi + 1) as Voice) {
+  for (let vi = 1; vi <= model.totalVoices(); vi++) {
     model.setCursor(Math.min(model.getCursor(vi), model.getVoiceLength(vi)), vi);
-    if (vi === 4) break;
   }
 }
 

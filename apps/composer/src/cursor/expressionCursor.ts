@@ -35,7 +35,7 @@ export interface ExpressionSelection {
 
 /* ── moment list construction ────────────────────────────────────────────── */
 
-function noteOnsetMoments(doc: Document): Moment[] {
+function noteOnsetMoments(doc: Document, staffFilter?: ReadonlyArray<number>): Moment[] {
   const out: Moment[] = [];
   const measures = Array.from(doc.querySelectorAll('measure'));
   const { unit } = readMeter(doc);
@@ -43,22 +43,27 @@ function noteOnsetMoments(doc: Document): Moment[] {
 
   for (let mi = 0; mi < measures.length; mi++) {
     const measure = measures[mi];
-    for (let voice = 1; voice <= 4; voice++) {
-      const staffN = voice <= 2 ? 1 : 2;
-      const layerN = (voice === 1 || voice === 3) ? 1 : 2;
-      const layer = Array.from(measure.querySelectorAll(`staff[n="${staffN}"] layer[n="${layerN}"]`))[0];
-      if (!layer) continue;
-      let cumTicks = 0;
-      for (const child of flatLayerChildren(layer)) {
-        const local = child.localName;
-        const ticks = elementDurationTicks(child);
-        if (local === 'note' || local === 'chord') {
-          /* Skip tie-terminal continuations — they are not new onsets. */
-          if (!isTieTerminalOnly(child)) {
-            out.push({ measureIdx: mi, tstamp: 1 + cumTicks / ticksPerBeat });
+    /* Scan staves directly (not by voice number) so the walk is instrument-
+       agnostic. `staffFilter` (when given) restricts onsets to one
+       instrument's staves — used by the per-instrument expression/pedal
+       layers; undefined = all staves (score-global tempo + the historic
+       single-instrument behavior). */
+    for (const staff of Array.from(measure.querySelectorAll('staff'))) {
+      const sn = parseInt(staff.getAttribute('n') ?? '0', 10);
+      if (staffFilter && !staffFilter.includes(sn)) continue;
+      for (const layer of Array.from(staff.querySelectorAll('layer'))) {
+        let cumTicks = 0;
+        for (const child of flatLayerChildren(layer)) {
+          const local = child.localName;
+          const ticks = elementDurationTicks(child);
+          if (local === 'note' || local === 'chord') {
+            /* Skip tie-terminal continuations — they are not new onsets. */
+            if (!isTieTerminalOnly(child)) {
+              out.push({ measureIdx: mi, tstamp: 1 + cumTicks / ticksPerBeat });
+            }
           }
+          cumTicks += ticks;
         }
-        cumTicks += ticks;
       }
     }
   }
@@ -118,16 +123,21 @@ function approxEqMoment(a: Moment, b: Moment): boolean {
   return a.measureIdx === b.measureIdx && Math.abs(a.tstamp - b.tstamp) < TS_EPSILON;
 }
 
-/** Build the sorted, deduplicated moment list. */
-export function buildMomentList(doc: Document): Moment[] {
-  const onsets = noteOnsetMoments(doc);
+/** Build the sorted, deduplicated moment list. `staffFilter` (when given)
+ *  restricts onsets + dynam/dir/hairpin marks to one instrument's staves (the
+ *  per-instrument expression layer); undefined = all staves. */
+export function buildMomentList(doc: Document, staffFilter?: ReadonlyArray<number>): Moment[] {
+  const onsets = noteOnsetMoments(doc, staffFilter);
   const measures = Array.from(doc.querySelectorAll('measure'));
+  const inFilter = (el: Element): boolean =>
+    !staffFilter || staffFilter.includes(parseInt(el.getAttribute('staff') ?? '0', 10));
 
   /* Dynam + dir moments (point expression marks anchored by tstamp). Tempo is
      its own top-level layer (above V1), not part of the expression layer. */
   for (const d of Array.from(doc.querySelectorAll('dynam, dir'))) {
     const m = d.closest('measure');
     if (!m) continue;
+    if (!inFilter(d)) continue;
     const idx = measures.indexOf(m);
     if (idx < 0) continue;
     const t = parseFloat(d.getAttribute('tstamp') ?? '');
@@ -137,6 +147,7 @@ export function buildMomentList(doc: Document): Moment[] {
   for (const h of Array.from(doc.querySelectorAll('hairpin'))) {
     const m = h.closest('measure');
     if (!m) continue;
+    if (!inFilter(h)) continue;
     const idx = measures.indexOf(m);
     if (idx < 0) continue;
     const t = parseFloat(h.getAttribute('tstamp') ?? '');
@@ -171,8 +182,8 @@ function dedupSorted(moments: Moment[]): Moment[] {
 /** Pedal-layer moment list: note onsets ∪ <pedal> mark moments. Constructed
  *  exactly like buildMomentList (the expression layer), substituting pedal
  *  marks for dynam/hairpin moments. */
-export function buildPedalMomentList(doc: Document): Moment[] {
-  return dedupSorted([...noteOnsetMoments(doc), ...pedalMoments(doc)]);
+export function buildPedalMomentList(doc: Document, staffFilter?: ReadonlyArray<number>): Moment[] {
+  return dedupSorted([...noteOnsetMoments(doc, staffFilter), ...pedalMoments(doc, staffFilter)]);
 }
 
 /** Build a cursor over an explicit moment list, snapping to the moment closest
@@ -195,13 +206,13 @@ function cursorFromMoments(moments: Moment[], prevMoment?: Moment | null): Expre
 
 /** Build a fresh expression cursor. If `prevMoment` is given, the cursor snaps
  *  to the closest surviving moment. */
-export function rebuildCursor(doc: Document, prevMoment?: Moment | null): ExpressionCursor {
-  return cursorFromMoments(buildMomentList(doc), prevMoment);
+export function rebuildCursor(doc: Document, prevMoment?: Moment | null, staffFilter?: ReadonlyArray<number>): ExpressionCursor {
+  return cursorFromMoments(buildMomentList(doc, staffFilter), prevMoment);
 }
 
 /** Build a fresh pedal-layer cursor (same snapping as rebuildCursor). */
-export function rebuildPedalCursor(doc: Document, prevMoment?: Moment | null): ExpressionCursor {
-  return cursorFromMoments(buildPedalMomentList(doc), prevMoment);
+export function rebuildPedalCursor(doc: Document, prevMoment?: Moment | null, staffFilter?: ReadonlyArray<number>): ExpressionCursor {
+  return cursorFromMoments(buildPedalMomentList(doc, staffFilter), prevMoment);
 }
 
 /** Tempo-layer moment list: note onsets ∪ <tempo> mark moments. Same
@@ -273,10 +284,10 @@ function absDistance(a: Moment, b: Moment): number {
 
 /* ── selection ───────────────────────────────────────────────────────────── */
 
-export function selectionAt(doc: Document, m: Moment): ExpressionSelection {
+export function selectionAt(doc: Document, m: Moment, staffFilter?: ReadonlyArray<number>): ExpressionSelection {
   return {
-    dynam: dynamAt(doc, m),
-    dir: dirAt(doc, m),
-    hairpins: hairpinsAt(doc, m),
+    dynam: dynamAt(doc, m, staffFilter),
+    dir: dirAt(doc, m, staffFilter),
+    hairpins: hairpinsAt(doc, m, staffFilter),
   };
 }

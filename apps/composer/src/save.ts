@@ -134,7 +134,7 @@ interface XmlNoteEvent {
   durTicks: number;
   durName: string;
   dots: number;
-  staff: 1 | 2;
+  staff: number;
   voice: number; /* MusicXML voice number, 1..4 globally */
   measureIdx: number; /* 0-based; emitted as @number = measureIdx + 1 */
   /** Set when this event is inside a tuplet. `position` marks first/last/etc.
@@ -182,18 +182,19 @@ function readNote(node: Element): XmlNoteSpec {
   };
 }
 
-function gatherEventsFromDoc(doc: Document, divisions: number): XmlNoteEvent[] {
+function gatherEventsFromDoc(doc: Document, divisions: number, model: ComposerModel): XmlNoteEvent[] {
   const out: XmlNoteEvent[] = [];
   const measures = Array.from(doc.querySelectorAll('measure'));
+  const totalVoices = model.totalVoices();
   for (let mi = 0; mi < measures.length; mi++) {
     const measure = measures[mi];
-    for (let voice = 1 as Voice; voice <= 4; voice = (voice + 1) as Voice) {
-      const staff = (voice <= 2) ? 1 : 2;
-      const staffN = staff;
-      const layerN = (voice === 1 || voice === 3) ? 1 : 2;
+    for (let voice = 1 as Voice; voice <= totalVoices; voice = (voice + 1) as Voice) {
+      const staffN = model.staffForVoice(voice);
+      const staff = staffN;
+      const layerN = model.layerForVoice(voice);
       const layer = Array.from(measure.querySelectorAll(`staff[n="${staffN}"] layer[n="${layerN}"]`))[0];
       if (!layer) {
-        if (voice === 4) break;
+        if (voice === totalVoices) break;
         continue;
       }
       for (const child of contentChildren(layer)) {
@@ -222,14 +223,14 @@ function gatherEventsFromDoc(doc: Document, divisions: number): XmlNoteEvent[] {
               out.push({
                 notes: [], durTicks: soundingTicks,
                 durName: DURATION_NAME[dur] ?? 'quarter',
-                dots, staff: staff as 1 | 2, voice, measureIdx: mi,
+                dots, staff, voice, measureIdx: mi,
                 tuplet: tupletInfo,
               });
             } else if (elem.localName === 'note') {
               out.push({
                 notes: [readNote(elem)], durTicks: soundingTicks,
                 durName: DURATION_NAME[dur] ?? 'quarter',
-                dots, staff: staff as 1 | 2, voice, measureIdx: mi,
+                dots, staff, voice, measureIdx: mi,
                 tuplet: tupletInfo,
               });
             } else if (elem.localName === 'chord') {
@@ -238,7 +239,7 @@ function gatherEventsFromDoc(doc: Document, divisions: number): XmlNoteEvent[] {
                 notes: noteEls.map((n) => readNote(n)),
                 durTicks: soundingTicks,
                 durName: DURATION_NAME[dur] ?? 'quarter',
-                dots, staff: staff as 1 | 2, voice, measureIdx: mi,
+                dots, staff, voice, measureIdx: mi,
                 tuplet: tupletInfo,
               });
             }
@@ -252,14 +253,14 @@ function gatherEventsFromDoc(doc: Document, divisions: number): XmlNoteEvent[] {
             notes: [],
             durTicks: durationToTicks(dur, dots, divisions),
             durName: DURATION_NAME[dur] ?? 'quarter',
-            dots, staff: staff as 1 | 2, voice, measureIdx: mi,
+            dots, staff, voice, measureIdx: mi,
           });
         } else if (isMeiElement(child, 'note')) {
           out.push({
             notes: [readNote(child)],
             durTicks: durationToTicks(dur, dots, divisions),
             durName: DURATION_NAME[dur] ?? 'quarter',
-            dots, staff: staff as 1 | 2, voice, measureIdx: mi,
+            dots, staff, voice, measureIdx: mi,
           });
         } else if (isMeiElement(child, 'chord')) {
           const noteEls = Array.from(child.children).filter((c) => c.localName === 'note');
@@ -267,11 +268,11 @@ function gatherEventsFromDoc(doc: Document, divisions: number): XmlNoteEvent[] {
             notes: noteEls.map((n) => readNote(n)),
             durTicks: durationToTicks(dur, dots, divisions),
             durName: DURATION_NAME[dur] ?? 'quarter',
-            dots, staff: staff as 1 | 2, voice, measureIdx: mi,
+            dots, staff, voice, measureIdx: mi,
           });
         }
       }
-      if (voice === 4) break;
+      if (voice === totalVoices) break;
     }
   }
   return out;
@@ -353,14 +354,22 @@ export function exportMusicXml(model: ComposerModel): string {
   const tempo = model.getTempo();
 
   const divisions = computeDivisions(doc);
-  const events = gatherEventsFromDoc(doc, divisions);
+  const events = gatherEventsFromDoc(doc, divisions, model);
   const measureCount = Math.max(1, doc.querySelectorAll('measure').length);
   const measureEls = Array.from(doc.querySelectorAll('measure'));
+  const totalVoices = model.totalVoices();
+  const totalStaves = model.totalStaves();
+  const allStaffNs = Array.from({ length: totalStaves }, (_, i) => i + 1);
 
-  /* Group events by (measure, voice). */
+  /* Group events by (measure, voice). NOTE: all instruments' staves are
+     exported under a SINGLE <part> with <staves>N</staves> — this preserves
+     every note (no silent truncation) but does not yet split into one <part>
+     per instrument. Proper multi-part export is the deferred single-part /
+     export follow-on (roadmap §12). */
   const grouped: Record<number, Record<number, XmlNoteEvent[]>> = {};
   for (let mi = 0; mi < measureCount; mi++) {
-    grouped[mi] = { 1: [], 2: [], 3: [], 4: [] };
+    grouped[mi] = {};
+    for (let v = 1; v <= totalVoices; v++) grouped[mi][v] = [];
   }
   for (const ev of events) grouped[ev.measureIdx][ev.voice].push(ev);
 
@@ -369,10 +378,8 @@ export function exportMusicXml(model: ComposerModel): string {
      the opening <attributes> of the measure it occurs in — a truly mid-measure
      change is approximated to that measure's start (inline MusicXML clef
      positioning is not emitted). Untested against external readers. */
-  const curClef: Record<number, ClefSpec> = {
-    1: headClefForStaff(doc, 1),
-    2: headClefForStaff(doc, 2),
-  };
+  const curClef: Record<number, ClefSpec> = {};
+  for (const sn of allStaffNs) curClef[sn] = headClefForStaff(doc, sn);
   let prevKeySig: string | null = null;
   let prevCount = -1;
   let prevUnit = -1;
@@ -387,8 +394,9 @@ export function exportMusicXml(model: ComposerModel): string {
     const measureTicks = mMeter.count * divisions * 4 / mMeter.unit;
 
     /* Clef changes within this measure (per staff), vs the entering clef. */
-    const clefToEmit: Record<number, ClefSpec | null> = { 1: null, 2: null };
-    for (const staffN of [1, 2]) {
+    const clefToEmit: Record<number, ClefSpec | null> = {};
+    for (const staffN of allStaffNs) {
+      clefToEmit[staffN] = null;
       const cl = lastClefInMeasure(measureEls[mi], staffN);
       if (cl && !clefEq(cl, curClef[staffN])) {
         clefToEmit[staffN] = cl;
@@ -397,19 +405,17 @@ export function exportMusicXml(model: ComposerModel): string {
     }
     const keyChanged = mKeySig !== prevKeySig;
     const meterChanged = mMeter.count !== prevCount || mMeter.unit !== prevUnit;
+    const anyClefChange = allStaffNs.some((sn) => clefToEmit[sn]);
 
-    if (mi === 0 || keyChanged || meterChanged || clefToEmit[1] || clefToEmit[2]) {
+    if (mi === 0 || keyChanged || meterChanged || anyClefChange) {
       body += `    <attributes>\n`;
       if (mi === 0) body += `      <divisions>${divisions}</divisions>\n`;
       if (mi === 0 || keyChanged) body += `      <key><fifths>${keySigToFifths(mKeySig)}</fifths><mode>${mKeyMode}</mode></key>\n`;
       if (mi === 0 || meterChanged) body += `      <time><beats>${mMeter.count}</beats><beat-type>${mMeter.unit}</beat-type></time>\n`;
-      if (mi === 0) body += `      <staves>2</staves>\n`;
-      if (mi === 0) {
-        body += clefXml(1, curClef[1]);
-        body += clefXml(2, curClef[2]);
-      } else {
-        if (clefToEmit[1]) body += clefXml(1, clefToEmit[1]);
-        if (clefToEmit[2]) body += clefXml(2, clefToEmit[2]);
+      if (mi === 0) body += `      <staves>${totalStaves}</staves>\n`;
+      for (const sn of allStaffNs) {
+        if (mi === 0) body += clefXml(sn, curClef[sn]);
+        else if (clefToEmit[sn]) body += clefXml(sn, clefToEmit[sn]!);
       }
       body += `    </attributes>\n`;
     }
@@ -432,8 +438,9 @@ export function exportMusicXml(model: ComposerModel): string {
     }
 
     /* Per-voice streams within this measure, separated by <backup>. */
-    const voiceTicks: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
-    for (let voice = 1 as 1 | 2 | 3 | 4; voice <= 4; voice = (voice + 1) as 1 | 2 | 3 | 4) {
+    const voiceTicks: Record<number, number> = {};
+    for (let v = 1; v <= totalVoices; v++) voiceTicks[v] = 0;
+    for (let voice = 1; voice <= totalVoices; voice++) {
       if (voice > 1) body += `    <backup><duration>${voiceTicks[voice - 1]}</duration></backup>\n`;
       for (const ev of grouped[mi][voice]) {
         body += emitEventXml(ev);
@@ -442,10 +449,9 @@ export function exportMusicXml(model: ComposerModel): string {
       /* Pad to measure end if voice short. */
       const remaining = measureTicks - voiceTicks[voice];
       if (remaining > 0) {
-        body += `    <note><rest/><duration>${remaining}</duration><staff>${voice <= 2 ? 1 : 2}</staff><voice>${voice}</voice></note>\n`;
+        body += `    <note><rest/><duration>${remaining}</duration><staff>${model.staffForVoice(voice)}</staff><voice>${voice}</voice></note>\n`;
         voiceTicks[voice] = measureTicks;
       }
-      if (voice === 4) break;
     }
 
     /* Final barline on the last measure. */

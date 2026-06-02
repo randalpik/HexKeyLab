@@ -6,6 +6,18 @@
 export const SCENARIOS = {
   emptyDoc: `/* no setup — default 1-measure empty doc */`,
 
+  /* Phase 5: piano + single-staff violin (6 voices, 3 staves). Notes in the
+     piano's voice 1 and the violin's voice 5. Exercises the voice cursor on a
+     multi-instrument layout (the trace walks voice 1; voices 5/6 are reachable
+     via the generalized cycle). */
+  multiInstrument: `
+    const N = (oct) => ({ q: 0, r: 0, pname: "a", accid: "", oct, midi: 69, colorHex: "#888", velocity: 80 });
+    m.addInstrument({ name: "Violin", instrKey: "violin", staffCount: 1 });
+    m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [N(4)], duration: "4", dots: 0 });
+    m.setVoice(5); m.setCursor(0, 5); m.insertChordAtCursor({ notes: [N(5)], duration: "4", dots: 0 });
+    m.setVoice(1); m.setCursor(0, 1);
+  `,
+
   m1Quarter: `
     m.setCursor(0, 1);
     m.insertRestAtCursor({ duration: "4", dots: 0 });

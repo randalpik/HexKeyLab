@@ -91,7 +91,7 @@ function findFlatIdx(model: ComposerModel, voice: Voice, target: Element): numbe
 function gatherSoundingAt(model: ComposerModel, atTick: number): CoordRef[] {
   const out: CoordRef[] = [];
   const EPS = 1e-6;
-  for (let v: Voice = 1; v <= 4; v = (v + 1) as Voice) {
+  for (let v = 1; v <= model.totalVoices(); v++) {
     const flat = model.flatChildren(v);
     for (let c = 0; c < flat.length; c++) {
       const elem = flat[c];
@@ -114,7 +114,6 @@ function gatherSoundingAt(model: ComposerModel, atTick: number): CoordRef[] {
         }
       }
     }
-    if (v === 4) break;
   }
   return out;
 }

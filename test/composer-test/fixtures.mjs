@@ -3178,6 +3178,99 @@ const PHASE1 = {
       dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
     `,
   },
+
+  /* ── Phase 5: multi-instrument ──────────────────────────────────────────── */
+
+  /* Add a single-staff violin to the default piano. Notes in voice 1 (piano,
+     staff 1) and voice 5 (violin, staff 3). Universal invariants check the
+     per-instrument placeholder budget, roundtrip stability, and no console
+     errors; the custom assertion checks the instrument table shape. */
+  phase5_add_instrument: {
+    setup: `
+      /* Distinct pitches per instrument (q,r differ) so this exercises
+         instrumentKey TAGGING, not the same-pitch conflict resolution. */
+      const N = (q, r, oct, midi) => ({ q, r, pname: 'a', accid: '', oct, midi, colorHex: '#888', velocity: 80 });
+      m.addInstrument({ name: 'Violin', instrKey: 'violin', staffCount: 1 });
+      m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [N(0, 0, 4, 69)], duration: '4', dots: 0 });
+      m.setVoice(5); m.setCursor(0, 5); m.insertChordAtCursor({ notes: [N(0, 1, 5, 81)], duration: '4', dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+    visualBaseline: 'phase5_add_instrument',
+  },
+
+  /* Add a grand-staff organ then remove it — exercises promote-on-add and
+     demote-on-remove. The universal roundtrip invariant (placeholder-id-
+     normalized) confirms the doc returns to a clean single-piano shape. */
+  phase5_add_remove_roundtrip: {
+    setup: `
+      m.addInstrument({ name: 'Organ', instrKey: 'pipe_organ', staffCount: 2 });
+      m.removeInstrument(1);
+      r();
+    `,
+  },
+
+  /* Reorder: piano + violin, distinct notes, then move violin to the top. The
+     violin's note must travel to staff 1 (content travels with the staff). */
+  phase5_reorder_instruments: {
+    setup: `
+      m.addInstrument({ name: 'Violin', instrKey: 'violin', staffCount: 1 });
+      m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'c', accid: '', oct: 3, midi: 48, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setVoice(5); m.setCursor(0, 5); m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'c', accid: '', oct: 6, midi: 84, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.reorderInstruments([1, 0]);
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* Instruments modal is STAGED: adding in the modal must NOT touch the model
+     until Setup's Save. Drives Setup → Manage → Add → close → Save and asserts
+     the violin only exists after Save. */
+  phase5_instruments_staged_save: {
+    setup: `
+      const setVal = (dlg, name, v) => { dlg.querySelector('[data-field="' + name + '"]').value = v; };
+      document.getElementById('btnSetup').click();
+      document.getElementById('setupInstrumentsBtn').click();
+      document.getElementById('instrAddBtn').click();
+      const te = document.getElementById('textEntryDialog');
+      setVal(te, 'name', 'Violin'); setVal(te, 'timbre', 'violin'); setVal(te, 'staves', '1');
+      te.querySelector('form').requestSubmit(te.querySelector('.te-ok'));
+      /* Staged: model still has only the piano at this point. */
+      window.__staged_count = m.instruments().length;
+      document.getElementById('instrCloseBtn').click();
+      document.getElementById('setupForm').requestSubmit(document.getElementById('setupOk'));
+      r();
+    `,
+  },
+
+  /* Cross-instrument same-pitch / same-onset conflict: piano + violin both
+     play (0,0) at beat 1. Playback must let the TOPMOST instrument (piano)
+     sound it and drop the violin's duplicate (else they collide on one HKL
+     KeyId). Asserted in FIXTURE_ASSERTIONS via buildPlayback. */
+  phase5_same_note_conflict: {
+    setup: `
+      const N = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
+      m.addInstrument({ name: 'Violin', instrKey: 'violin', staffCount: 1 });
+      m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [N], duration: '4', dots: 0 });
+      m.setVoice(5); m.setCursor(0, 5); m.insertChordAtCursor({ notes: [N], duration: '4', dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* Two grand-staff instruments: piano (voices 1-4) + a second piano-ish organ
+     (voices 5-8). Confirms the cursor cycle + per-instrument layers don't throw
+     and the placeholder budget holds across 8 voices / 4 staves. */
+  phase5_two_grand_staves: {
+    setup: `
+      const N = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
+      m.addInstrument({ name: 'Organ', instrKey: 'pipe_organ', staffCount: 2 });
+      m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [N], duration: '4', dots: 0 });
+      m.setVoice(7); m.setCursor(0, 7); m.insertChordAtCursor({ notes: [N], duration: '4', dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+  },
 };
 
 export const FIXTURES = {
@@ -3376,6 +3469,91 @@ export const FIXTURE_ASSERTIONS = {
         if (evs.length !== 2) return { ok: false, detail: 'note events=' + evs.length + ' atMs=' + evs.map(e => e.atMs).join(',') };
         if (Math.abs(evs[0].atMs - 0) > 1e-6) return { ok: false, detail: 'event[0] atMs=' + evs[0].atMs + ' (expected 0)' };
         if (Math.abs(evs[1].atMs - 2000) > 1e-6) return { ok: false, detail: 'event[1] atMs=' + evs[1].atMs + ' (expected 2000)' };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Phase 5: instrument table shape + per-voice instrumentKey on playback. */
+  phase5_add_instrument: [
+    { name: 'table: 2 instruments, totalVoices=6, totalStaves=3, violin on staff 3',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        if (m.totalVoices() !== 6) return { ok: false, detail: 'totalVoices=' + m.totalVoices() };
+        if (m.totalStaves() !== 3) return { ok: false, detail: 'totalStaves=' + m.totalStaves() };
+        const insts = m.instruments();
+        if (insts.length !== 2) return { ok: false, detail: 'instruments=' + insts.length };
+        if (insts[1].instrKey !== 'violin') return { ok: false, detail: 'instr1 key=' + insts[1].instrKey };
+        if (m.staffForVoice(5) !== 3) return { ok: false, detail: 'staffForVoice(5)=' + m.staffForVoice(5) };
+        if (m.instrumentOf(5).index !== 1) return { ok: false, detail: 'instrumentOf(5)=' + m.instrumentOf(5).index };
+        return { ok: true };
+      })()` },
+    { name: 'playback: piano note tagged instrumentKey=piano, violin note=violin',
+      expr: `(() => {
+        const h = window.__hkl_composer;
+        const evs = h.buildPlayback(h.model).filter(e => e.notes.length > 0);
+        const piano = evs.find(e => e.voice === 1);
+        const violin = evs.find(e => e.voice === 5);
+        if (!piano || piano.instrumentKey !== 'piano') return { ok: false, detail: 'piano key=' + (piano && piano.instrumentKey) };
+        if (!violin || violin.instrumentKey !== 'violin') return { ok: false, detail: 'violin key=' + (violin && violin.instrumentKey) };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Phase 5: instruments modal stages; only Setup Save commits. */
+  phase5_instruments_staged_save: [
+    { name: 'add was staged (1 instrument before Save), committed after Save (Piano+Violin)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        if (window.__staged_count !== 1) return { ok: false, detail: 'staged count=' + window.__staged_count + ' (expected 1 — not applied until Save)' };
+        const names = m.instruments().map(i => i.name);
+        if (names.length !== 2 || names[0] !== 'Piano' || names[1] !== 'Violin')
+          return { ok: false, detail: 'after save=' + names.join(',') };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Phase 5: cross-instrument same-pitch/onset → topmost wins, other dropped. */
+  phase5_same_note_conflict: [
+    { name: 'piano (voice 1) sounds (0,0); violin (voice 5) dropped to empty',
+      expr: `(() => {
+        const h = window.__hkl_composer;
+        const evs = h.buildPlayback(h.model);
+        const v1 = evs.find(e => e.voice === 1);
+        const v5 = evs.find(e => e.voice === 5);
+        if (!v1 || v1.notes.length !== 1 || v1.notes[0].q !== 0 || v1.notes[0].r !== 0)
+          return { ok: false, detail: 'piano notes=' + JSON.stringify(v1 && v1.notes) };
+        if (!v5 || v5.notes.length !== 0)
+          return { ok: false, detail: 'violin notes=' + JSON.stringify(v5 && v5.notes) + ' (expected empty)' };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Phase 5: reorder moves the violin to the top; its note rides staff 1. */
+  phase5_reorder_instruments: [
+    { name: 'violin first, its oct-6 note now on staff 1; piano on staves 2-3',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const insts = m.instruments();
+        if (insts[0].name !== 'Violin' || insts[1].name !== 'Piano')
+          return { ok: false, detail: 'order=' + insts.map(i => i.name).join(',') };
+        if (insts[0].staffNs.join(',') !== '1' || insts[1].staffNs.join(',') !== '2,3')
+          return { ok: false, detail: 'staffNs=' + insts.map(i => i.staffNs.join('/')).join(' ') };
+        const s1 = [...m.getDoc().querySelectorAll('measure staff')].find(s => s.getAttribute('n') === '1');
+        const oct = s1 && s1.querySelector('note') && s1.querySelector('note').getAttribute('oct');
+        if (oct !== '6') return { ok: false, detail: 'staff1 note oct=' + oct + ' (expected 6=violin)' };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Phase 5: add-then-remove returns to one piano (demote). */
+  phase5_add_remove_roundtrip: [
+    { name: 'one piano instrument remains, totalVoices=4',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const insts = m.instruments();
+        if (insts.length !== 1) return { ok: false, detail: 'instruments=' + insts.length };
+        if (m.totalVoices() !== 4) return { ok: false, detail: 'totalVoices=' + m.totalVoices() };
+        if (insts[0].staffNs.length !== 2) return { ok: false, detail: 'staffNs=' + insts[0].staffNs.join(',') };
         return { ok: true };
       })()` },
   ],

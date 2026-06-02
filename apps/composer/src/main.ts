@@ -12,7 +12,7 @@
 
 import { createComposerBridge, PROTOCOL_VERSION } from '@hkl/bridge/channel.js';
 import type { HklEvent, ResolvedNote, FootprintCell } from '@hkl/bridge/protocol.js';
-import { ComposerModel } from './model/index.js';
+import { ComposerModel, type Voice } from './model/index.js';
 import { renderer, ZOOM_PRESETS, type ZoomLevel } from './render/render.js';
 import { cursor } from './cursor/cursor.js';
 import { initInput, getInputState, installSCTransposeImpl, clearChordInternalSel } from './input.js';
@@ -56,7 +56,7 @@ let autoAdoptedHklLayout = false;
  * `color` attribute on a transposed note, keeping HKL/Composer in sync. */
 let footprintColors: Map<string, string> | null = null;
 /* Editing cursor snapshot taken at playback start, restored on stop/finish. */
-let preplaybackVoice: 1 | 2 | 3 | 4 = 1;
+let preplaybackVoice: Voice = 1;
 let preplaybackCursor = 0;
 /* The most-recently-played element's meiId in the preplaybackVoice. Updated
  * on every `playback-position` broadcast; consumed by stopPlaybackAtHead()
@@ -195,7 +195,9 @@ function cursorOpts(): CursorUpdateOpts {
     entryMode: s.mode,
     cursorMode: s.cursorMode,
     exprCursor: s.exprCursor,
+    exprInstrIdx: s.exprInstrIdx,
     pedalCursor: s.pedalCursor,
+    pedalInstrIdx: s.pedalInstrIdx,
     tempoCursor: s.tempoCursor,
     chordInternalSel: s.chordInternalSel
       ? { noteId: s.chordInternalSel.noteId }
@@ -228,8 +230,12 @@ bridge.on((msg: HklEvent) => {
       }
       invalidateRefNoteCache();
       invalidateSongKeyCache();
+      lastBroadcastInstrKey = null;
+      lastBroadcastInstrSet = null;
       maybeBroadcastReference();
       maybeBroadcastSongKey();
+      maybeBroadcastInstruments();
+      maybeBroadcastActiveInstrument();
       broadcastLayoutReq();
       break;
     }
@@ -419,6 +425,38 @@ function maybeBroadcastSongKey(): void {
   const coord = computeSongKeyRef(model);
   if (songKeyChanged(coord)) {
     bridge.send({ type: 'set-song-key', q: coord.q, r: coord.r });
+  }
+}
+
+/** Last instrument SET broadcast to HKL (diff filter). */
+let lastBroadcastInstrSet: string | null = null;
+/** Tell HKL the full set of instruments in the score so it can proactively
+ *  load them all (when Sync is on) — so cursor-follow during note entry is
+ *  always ready in the right timbre. Multi-instrument only; a single-instrument
+ *  score sends [] (HKL keeps the user's chosen instrument). Diff-filtered. */
+function maybeBroadcastInstruments(): void {
+  const keys = model.instruments().length > 1
+    ? [...new Set(model.instruments().map((i) => i.instrKey))]
+    : [];
+  const sig = keys.join(',');
+  if (sig !== lastBroadcastInstrSet) {
+    lastBroadcastInstrSet = sig;
+    bridge.send({ type: 'composer-instruments', instrumentKeys: keys });
+  }
+}
+
+/** Last instrument key broadcast to HKL (diff filter for the cursor-follow). */
+let lastBroadcastInstrKey: string | null = null;
+/** Tell HKL which instrument the editing cursor sits in, so Sync-to-Composer
+ *  can preview note entry in the right timbre. Only for multi-instrument scores
+ *  (a single-instrument score has no per-instrument concept — HKL keeps its own
+ *  active instrument). Diff-filtered so it fires only on instrument changes. */
+function maybeBroadcastActiveInstrument(): void {
+  if (model.instruments().length <= 1) { lastBroadcastInstrKey = null; return; }
+  const key = model.instrumentOf(model.getCurrentVoice()).instrKey;
+  if (key !== lastBroadcastInstrKey) {
+    lastBroadcastInstrKey = key;
+    bridge.send({ type: 'composer-active-instrument', instrumentKey: key });
   }
 }
 
@@ -753,8 +791,9 @@ initInput(model, {
     cursor.update(model, cursorOpts());
     selectionOverlay.update(model, getInputState().selection);
     /* Cursor or voice may have moved — recompute reference. The diff filter
-       short-circuits when (q, r) hasn't actually changed. */
-    if (hklConnected) maybeBroadcastReference();
+       short-circuits when (q, r) hasn't actually changed. maybeBroadcastInstruments
+       catches add/remove/reorder (diff-filtered, so it's a no-op otherwise). */
+    if (hklConnected) { maybeBroadcastReference(); maybeBroadcastInstruments(); maybeBroadcastActiveInstrument(); }
   },
   setStatus: (msg, kind) => setStatus(msg, kind),
   clearStatusIfTransient: () => clearStatusIfTransient(),
@@ -949,6 +988,10 @@ $('btnSetup')?.addEventListener('click', () => {
      * from a key-sig change is what would let an unrelated event clobber a
      * user's manual Ctrl+click selection on HKL. */
     if (hklConnected) maybeBroadcastSongKey();
+    /* Instruments may have changed (add / remove / reorder via the Instruments
+       modal routes through here) — re-broadcast the set + the cursor's
+       instrument so HKL can (pre)load and follow. Diff-filtered. */
+    if (hklConnected) { maybeBroadcastInstruments(); maybeBroadcastActiveInstrument(); }
     /* Layout requirement may have changed — informational broadcast to HKL.
        HKL caches it; whether HKL applies depends on its Sync toggle. */
     if (layoutChanged) {

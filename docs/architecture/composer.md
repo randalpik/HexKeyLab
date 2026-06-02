@@ -48,7 +48,7 @@ RAF-polled loop resolves each `selectedKeys` `(q, r)` and broadcasts on signatur
 
 The MEI document is a `Document` (DOMParser XML). Initial doc: one measure, two staves (grand staff, `bar.thru="true"`), two layers per staff. Metadata (`<titleStmt>`, `<scoreDef>`, `<tempo>`) lives on the document. Mutations are direct DOM ops; the doc re-serializes to a string for Verovio's `loadData()` every render.
 
-Voice numbering (top-to-bottom):
+Voice numbering (top-to-bottom) for the default single-piano doc:
 
 | Voice | Staff | Layer |
 |---|---|---|
@@ -57,7 +57,9 @@ Voice numbering (top-to-bottom):
 | 3 | 2 (bass) | 1 |
 | 4 | 2 (bass) | 2 |
 
-Each voice has its own cursor in `cursors: Record<Voice, number>`, indexing the **linear flat stream** (concatenated `chord|note|rest|space-placeholder` across all measures, in order). Multi-measure traversal is transparent to the cursor.
+**Multi-instrument (Phase 5):** `Voice` is a flat `number` index over **all** instruments, not capped at 4. An **instrument table** (`instrumentTable()` — cached, invalidated alongside the meter table) walks the head `<scoreDef>`'s root `<staffGrp>` and maps each flat voice → `(instrument, global staff @n, layer @n)`. The default doc is one implicit 2-staff "Piano" instrument (root staffGrp with direct `<staffDef>`s — never rewritten on load); adding an instrument nests one `<staffGrp>` per instrument (1–2 staves, 2 layers each) carrying `hkl:instr="<sample-set-key>"` + `<label>`. Every staff/layer lookup routes through `model.staffForVoice(v)` / `layerForVoice(v)` / `instrumentOf(v)` / `voicesForInstrument(i)` / `totalVoices()` / `totalStaves()` — there is no `voice<=2?1:2` ternary anymore. `addInstrument`/`removeInstrument` (promote/demote, staff renumber + `@staff` remap) live on the model; the Setup dialog's "Instruments" Add/Remove buttons drive them. The above table is exactly `instrumentOf`'s output for the single 2-staff instrument.
+
+Each voice has its own cursor in `cursors` (keyed by the flat voice index, seeded `1..totalVoices()`), indexing the **linear flat stream** (concatenated `chord|note|rest|space-placeholder` across all measures, in order). Multi-measure traversal is transparent to the cursor.
 
 - `switchVoice` is time-aligned: snapshots cumulative-time-at-cursor (`getTimeAt`), switches, then `findCursorAtOrBefore(newVoice, time)`. Durations in 64th-note ticks via `elementDurationTicks`.
 - Two locator helpers, deliberately different boundary semantics: `locateCursor` (insertion point, strict `<` so cursor=N at a boundary lands in the NEXT measure at `withinIdx=0`) vs `locateFlatElement` (element-at-index, strict-decrement walker for `deleteAtCursor`).
@@ -88,7 +90,7 @@ The cursor resets its refs in `attach()` because Verovio's `loadData()+renderToS
 | `1`–`7` | duration (1=64th … 5=quarter … 7=whole). Held keys → chord; none → rest. Held keys with `|alter|>±3` filtered before commit. |
 | `.` | cycle dots (0→1→2→0) on current note/chord/rest. Overflow auto-ties across the bar. |
 | `=` | toggle tie on current note/chord (per-pitch; see [Ties](#ties)). |
-| `↑`/`↓` | switch voice (cycles 1↔2↔expr↔3↔4, time-aligned). |
+| `↑`/`↓` | switch voice / layer, time-aligned. The cycle is a stop list built from the instrument table (`buildVoiceStopList`): `tempo → (per instrument: its voices, its expr layer between/above its staves, its pedal below — 2-staff instruments only)`. A single piano = `tempo↔1↔2↔expr↔3↔4↔pedal`. Expr + pedal are per-instrument; tempo is score-global. |
 | `←`/`→` | move cursor within voice. |
 | `Home`/`End` | jump to voice start/end. |
 | `Backspace` | voice mode: delete element before cursor (skips placeholders; removes a measure if a delete empties it across all voices, unless it's the only one). Selection mode: delete-and-exit (no clipboard write). |
@@ -406,7 +408,7 @@ OS clipboard uses the **DOM `copy`/`cut`/`paste` events**, NOT `navigator.clipbo
 - Tempo changes mid-score, expressive text, articulations (planned — see expression-layer extensions).
 - Print / PDF export (deferred).
 - Undo / redo.
-- Multi-instrument scores beyond grand staff.
+- Multi-instrument *specialization* (Phase 5 landed N-instrument model/cursor/render/audio; these remain deferred): single-part view + per-instrument MusicXML `<part>` split (export today is one multi-staff part), pizz/arco, string harmonic `Alt+H`, ignore-color-in-setup, per-instrument external pedal CC, and multi-instrument **selection-mode** (measure-selection stayed 2-staff).
 - Tie-chain re-coalescence under time-sig change (currently per-measure truncation).
 
 ### Planned extensions (expression-layer infrastructure)

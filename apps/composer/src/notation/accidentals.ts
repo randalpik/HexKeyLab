@@ -205,7 +205,14 @@ export function computeAccidentalDisplay(doc: Document, headKeySig: string, heji
   const measures = doc.querySelectorAll('measure');
   for (const measure of Array.from(measures)) {
     const keyAlters = keySigToAlter(keyByMeasure.get(measure) ?? headKeySig);
-    for (const staffN of [1, 2]) {
+    /* Accidental carry-state is per-staff (each staff tracks independently
+       within a measure). Iterate every staff present — 2 for the default
+       grand staff, more with multiple instruments. */
+    const staffNs = Array.from(measure.querySelectorAll('staff'))
+      .map((s) => parseInt(s.getAttribute('n') ?? '0', 10))
+      .filter((n) => n > 0)
+      .sort((a, b) => a - b);
+    for (const staffN of staffNs) {
       const staff = Array.from(measure.querySelectorAll('staff'))
         .find((s) => s.getAttribute('n') === String(staffN));
       if (!staff) continue;

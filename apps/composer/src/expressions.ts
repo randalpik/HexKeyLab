@@ -360,12 +360,13 @@ export function addDir(doc: Document, at: Moment, opts: DirOpts): Element | null
 }
 
 /** Find a <dir> exactly at the given moment (first match). */
-export function dirAt(doc: Document, m: Moment): Element | null {
+export function dirAt(doc: Document, m: Moment, staffFilter?: ReadonlyArray<number>): Element | null {
   const measures = getMeasures(doc);
   const measure = measures[m.measureIdx];
   if (!measure) return null;
   for (const child of Array.from(measure.children)) {
     if (child.localName !== 'dir') continue;
+    if (staffFilter && !staffFilter.includes(parseInt(child.getAttribute('staff') ?? '0', 10))) continue;
     const t = readTstamp(child);
     if (t !== null && approxEq(t, m.tstamp)) return child;
   }
@@ -640,12 +641,13 @@ export function setGradualPercents(doc: Document, p: GradualPercents): void {
 /* ── queries ─────────────────────────────────────────────────────────────── */
 
 /** Find a <dynam> exactly at the given moment. */
-export function dynamAt(doc: Document, m: Moment): Element | null {
+export function dynamAt(doc: Document, m: Moment, staffFilter?: ReadonlyArray<number>): Element | null {
   const measures = getMeasures(doc);
   const measure = measures[m.measureIdx];
   if (!measure) return null;
   for (const child of Array.from(measure.children)) {
     if (child.localName !== 'dynam') continue;
+    if (staffFilter && !staffFilter.includes(parseInt(child.getAttribute('staff') ?? '0', 10))) continue;
     const t = readTstamp(child);
     if (t !== null && approxEq(t, m.tstamp)) return child;
   }
@@ -654,10 +656,11 @@ export function dynamAt(doc: Document, m: Moment): Element | null {
 
 /** Return all <hairpin> elements whose [start, end] range (inclusive)
  *  contains the given moment. */
-export function hairpinsAt(doc: Document, m: Moment): Element[] {
+export function hairpinsAt(doc: Document, m: Moment, staffFilter?: ReadonlyArray<number>): Element[] {
   const measures = getMeasures(doc);
   const out: Element[] = [];
   for (const el of Array.from(doc.querySelectorAll('hairpin'))) {
+    if (staffFilter && !staffFilter.includes(parseInt(el.getAttribute('staff') ?? '0', 10))) continue;
     const s = readStartMoment(el, measures);
     const e = readEndMoment(el, measures);
     if (!s || !e) continue;
@@ -688,14 +691,17 @@ export function momentCompare(a: Moment, b: Moment): number {
  *  inclusively, so a hairpin starting in M_1 and ending in M_3 reports
  *  true for M_2 as well. Used by `cycleVoice` to skip the expression
  *  layer when entering it would land on a measure with nothing to edit. */
-export function measureHasExpression(doc: Document, measureIdx: number): boolean {
+export function measureHasExpression(doc: Document, measureIdx: number, staffFilter?: ReadonlyArray<number>): boolean {
   const measures = getMeasures(doc);
   if (measureIdx < 0 || measureIdx >= measures.length) return false;
+  const inFilter = (el: Element): boolean =>
+    !staffFilter || staffFilter.includes(parseInt(el.getAttribute('staff') ?? '0', 10));
   const target = measures[measureIdx];
   for (const child of Array.from(target.children)) {
-    if (child.localName === 'dynam' || child.localName === 'dir') return true;
+    if ((child.localName === 'dynam' || child.localName === 'dir') && inFilter(child)) return true;
   }
   for (const el of Array.from(doc.querySelectorAll('hairpin'))) {
+    if (!inFilter(el)) continue;
     const s = readStartMoment(el, measures);
     const e = readEndMoment(el, measures);
     if (!s || !e) continue;

@@ -446,6 +446,7 @@ export function expandPlayOrder(mei: Document, startIdx = 0): PlayedMeasure[] {
 export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[] {
   const events: CanonEvent[] = [];
   const mei = new DOMParser().parseFromString(model.serialize(), 'application/xml');
+  const isMultiInstrument = model.instruments().length > 1;
   const tempo = buildTempoTimeline(mei);
   const velocity = buildVelocityLookup(mei);
   const noteById = buildNoteIdIndex(mei);
@@ -520,9 +521,17 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
     }
   };
 
-  for (let voice: Voice = 1; voice <= 4; voice = (voice + 1) as Voice) {
-    const staffN = voice <= 2 ? 1 : 2;
-    const layerN = (voice === 1 || voice === 3) ? 1 : 2;
+  for (let voice: Voice = 1; voice <= model.totalVoices(); voice = (voice + 1) as Voice) {
+    const staffN = model.staffForVoice(voice);
+    const layerN = model.layerForVoice(voice);
+    /* The instrument this voice belongs to — tags every event it emits so HKL
+       can route per-instrument timbre. (Structural: the model's instrument
+       table matches the serialized `mei`.) Only tagged for MULTI-instrument
+       scores; a single-instrument score leaves instrumentKey absent so HKL
+       plays through its current active instrument (the historic behavior —
+       the user picks the sound in HKL, not from the model's "piano" default). */
+    const voiceInstrKey = isMultiInstrument ? model.instrumentOf(voice).instrKey : undefined;
+    const voiceEventStart = events.length;
     /* Walk all measures' layers for this voice. `streamMi[k]` records the
        document measure index of stream element k, so events can be tagged
        for repeat expansion. */
@@ -686,7 +695,47 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
       tTicks += ticks;
       i++;
     }
-    if (voice === 4) break;
+    /* Tag every event this voice emitted (incl. emitAlternation pushes) with
+       its instrument's sample-set key for per-instrument playback routing. */
+    if (voiceInstrKey)
+      for (let k = voiceEventStart; k < events.length; k++) events[k].instrumentKey = voiceInstrKey;
+    if (voice >= model.totalVoices()) break;
+  }
+
+  /* Cross-instrument same-pitch / same-onset conflict resolution. HKL keys
+     audio voices by (q, r), so two instruments sounding the SAME pitch at the
+     SAME time would collide on one KeyId (cancel/retrigger). We don't run
+     separate per-instrument audio streams; instead the TOPMOST instrument
+     (lowest voice index) wins each pitch and the other instruments' duplicates
+     are dropped from the played stream. Scoped to DIFFERENT instruments — a
+     pitch already claimed by the same instrument is left alone, so single-
+     instrument playback (and within-instrument unisons) is byte-identical. An
+     event whose notes all drop becomes a silent pulse (still echoes its meiId,
+     so that voice's playback cursor still advances). */
+  if (isMultiInstrument) {
+    const ONSET_EPS = 1e-6;
+    const order = events.map((_, i) => i).sort(
+      (a, b) => events[a].atMs - events[b].atMs || (events[a].voice ?? 0) - (events[b].voice ?? 0),
+    );
+    let g = 0;
+    while (g < order.length) {
+      let hi = g + 1;
+      while (hi < order.length && Math.abs(events[order[hi]].atMs - events[order[g]].atMs) < ONSET_EPS) hi++;
+      const claimed = new Map<string, number>(); /* "q,r" → claiming instrument index */
+      for (let k = g; k < hi; k++) {
+        const ev = events[order[k]];
+        if (ev.notes.length === 0) continue;
+        const instr = model.instrumentOf(ev.voice ?? 1).index;
+        const kept = ev.notes.filter((n) => {
+          const key = n.q + ',' + n.r;
+          const owner = claimed.get(key);
+          if (owner === undefined) { claimed.set(key, instr); return true; }
+          return owner === instr; /* same instrument → keep; other → drop */
+        });
+        if (kept.length !== ev.notes.length) ev.notes = kept;
+      }
+      g = hi;
+    }
   }
 
   /* Strip the internal `_mi` tag when handing PlaybackEvents back. */
@@ -769,21 +818,32 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
 export function buildPedalEvents(model: ComposerModel, startMs = 0): PedalEvent[] {
   const mei = new DOMParser().parseFromString(model.serialize(), 'application/xml');
   const tempo = buildTempoTimeline(mei);
-  const evs: PedalEvent[] = collectPedals(mei).map((p) => ({ atMs: tempo.atMsAt(p.tick), dir: p.dir }));
+  /* staff @n → owning instrument's sample-set key, so each pedal mark routes to
+     its grand-staff instrument's damper. Single-instrument scores leave
+     instrumentKey absent (global damper = historic behavior). */
+  const multi = model.instruments().length > 1;
+  const staffToInstrKey = new Map<number, string>();
+  for (const inst of model.instruments())
+    for (const sn of inst.staffNs) staffToInstrKey.set(sn, inst.instrKey);
+  const evs: PedalEvent[] = collectPedals(mei).map((p) => ({
+    atMs: tempo.atMsAt(p.tick), dir: p.dir,
+    instrumentKey: multi ? staffToInstrKey.get(p.staff) : undefined,
+  }));
   evs.sort((a, b) => a.atMs - b.atMs);
   if (startMs > 0) {
-    /* Pedal state inherited from before the playhead: the most-recent
-       transition STRICTLY before startMs decides (a transition exactly at
-       startMs survives the window as a real event). */
-    let inheritedDown = false;
+    /* Inherited pedal state PER INSTRUMENT: the most-recent transition strictly
+       before startMs (for each instrumentKey) decides whether that instrument
+       enters the window pedal-down. */
+    const inheritedDown = new Map<string | undefined, boolean>();
     for (const e of evs) {
-      if (e.atMs < startMs - 1e-6) inheritedDown = e.dir === 'down';
+      if (e.atMs < startMs - 1e-6) inheritedDown.set(e.instrumentKey, e.dir === 'down');
       else break;
     }
     const shifted = evs
       .filter((e) => e.atMs >= startMs - 1e-6)
       .map((e) => ({ ...e, atMs: e.atMs - startMs }));
-    if (inheritedDown) shifted.unshift({ atMs: 0, dir: 'down' });
+    for (const [key, down] of inheritedDown)
+      if (down) shifted.unshift({ atMs: 0, dir: 'down', instrumentKey: key });
     return shifted;
   }
   return evs;

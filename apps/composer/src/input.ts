@@ -102,7 +102,13 @@ export interface InputState {
   mode: EntryMode;
   cursorMode: CursorMode;
   exprCursor: ExpressionCursor;
+  /** Instrument index the expr layer is currently scoped to (per-instrument
+   *  expression). 0 for the default single-instrument doc. */
+  exprInstrIdx: number;
   pedalCursor: ExpressionCursor;
+  /** Instrument index the pedal layer is currently scoped to (per-grand-staff-
+   *  instrument pedal). 0 for the default single-instrument doc. */
+  pedalInstrIdx: number;
   tempoCursor: ExpressionCursor;
   pendingHairpin: PendingHairpin | null;
   pendingTuplet: PendingTuplet | null;
@@ -206,7 +212,9 @@ const state: InputState = {
   mode: 'insert',
   cursorMode: 'voice',
   exprCursor: { index: 0, moments: [] },
+  exprInstrIdx: 0,
   pedalCursor: { index: 0, moments: [] },
+  pedalInstrIdx: 0,
   tempoCursor: { index: 0, moments: [] },
   pendingHairpin: null,
   pendingTuplet: null,
@@ -251,14 +259,51 @@ function shouldIgnore(e: KeyboardEvent): boolean {
 
 /* ── helpers used by both modes ──────────────────────────────────────────── */
 
+/** Staves of the instrument the expr/pedal layer is scoped to (per-instrument
+ *  expression/pedal). Falls back to all staves if the index is stale. */
+function instrStaves(model: ComposerModel, idx: number): number[] | undefined {
+  return model.instruments()[idx]?.staffNs;
+}
+
+/** Index of the instrument the expr layer currently targets: the expr layer's
+ *  instrument in expr mode, else the instrument owning the current voice. */
+function activeExprInstrIdx(model: ComposerModel): number {
+  return state.cursorMode === 'expr'
+    ? state.exprInstrIdx
+    : model.instrumentOf(model.getCurrentVoice()).index;
+}
+
+/** All staves of the active expr instrument — the filter for finding/matching
+ *  this instrument's dynam/dir/hairpin marks. */
+function activeExprStaves(model: ComposerModel): number[] | undefined {
+  return model.instruments()[activeExprInstrIdx(model)]?.staffNs;
+}
+
+/** Top staff of the instrument new dynam/dir/hairpin marks attach to.
+ *  Defaults to staff 1 (single-piano). */
+function activeExprStaff(model: ComposerModel): number {
+  return model.instruments()[activeExprInstrIdx(model)]?.staffNs[0] ?? 1;
+}
+
+/** Bottom staff of the instrument new pedal marks attach to: the pedal layer's
+ *  instrument when in pedal mode, else the instrument owning the current voice.
+ *  Defaults to staff 2 (single-piano). */
+function activePedalStaff(model: ComposerModel): number {
+  const idx = state.cursorMode === 'pedal'
+    ? state.pedalInstrIdx
+    : model.instrumentOf(model.getCurrentVoice()).index;
+  const staffNs = model.instruments()[idx]?.staffNs;
+  return staffNs ? staffNs[staffNs.length - 1] : 2;
+}
+
 function refreshExprCursor(model: ComposerModel): void {
   const prev = currentMoment(state.exprCursor);
-  state.exprCursor = rebuildCursor(model.getDoc(), prev);
+  state.exprCursor = rebuildCursor(model.getDoc(), prev, instrStaves(model, state.exprInstrIdx));
 }
 
 function refreshPedalCursor(model: ComposerModel): void {
   const prev = currentMoment(state.pedalCursor);
-  state.pedalCursor = rebuildPedalCursor(model.getDoc(), prev);
+  state.pedalCursor = rebuildPedalCursor(model.getDoc(), prev, instrStaves(model, state.pedalInstrIdx));
 }
 
 function refreshTempoCursor(model: ComposerModel): void {
@@ -293,12 +338,12 @@ function commitDynamic(model: ComposerModel, hooks: InputHooks, name: string): v
     return;
   }
   const doc = model.getDoc();
-  const existing = dynamAt(doc, m);
+  const existing = dynamAt(doc, m, activeExprStaves(model));
   if (existing) {
     setDynamText(existing, name);
     hooks.setStatus?.('Replaced dynamic with "' + name + '".', 'action');
   } else {
-    addDynam(doc, m, { text: name });
+    addDynam(doc, m, { text: name, staff: activeExprStaff(model) });
     hooks.setStatus?.('Dynamic "' + name + '" at m' + (m.measureIdx + 1) + ' beat ' + formatBeat(m.tstamp) + '.', 'action');
   }
   if (state.cursorMode === 'expr') refreshExprCursor(model);
@@ -338,7 +383,7 @@ function commitHairpinStep(model: ComposerModel, hooks: InputHooks, form: 'cres'
     return;
   }
   const doc = model.getDoc();
-  const created = addHairpin(doc, pending.start, m, { form });
+  const created = addHairpin(doc, pending.start, m, { form, staff: activeExprStaff(model) });
   state.pendingHairpin = null;
   if (created) {
     hooks.setStatus?.((form === 'cres' ? 'Crescendo' : 'Decrescendo') + ' added.', 'action');
@@ -376,7 +421,7 @@ function commitPedal(model: ComposerModel, hooks: InputHooks, dir: PedalDir): vo
     hooks.setStatus?.('No cursor anchor for pedal.', 'error');
     return;
   }
-  const on = togglePedal(model.getDoc(), m, dir);
+  const on = togglePedal(model.getDoc(), m, dir, activePedalStaff(model));
   const label = dir === 'down' ? 'Pedal down' : 'Pedal up';
   if (on) {
     hooks.setStatus?.(label + ' at m' + (m.measureIdx + 1) + ' beat ' + formatBeat(m.tstamp) + '.', 'action');
@@ -394,19 +439,25 @@ function commitPedal(model: ComposerModel, hooks: InputHooks, dir: PedalDir): vo
 function deleteSelectedPedal(model: ComposerModel, hooks: InputHooks): boolean {
   const m = currentMoment(state.pedalCursor);
   if (!m) return false;
-  const n = removePedalsAt(model.getDoc(), m);
+  const staves = instrStaves(model, state.pedalInstrIdx);
+  const pedalStaff = staves ? staves[staves.length - 1] : 2;
+  const n = removePedalsAt(model.getDoc(), m, pedalStaff);
   if (n === 0) {
     hooks.setStatus?.('No pedal mark at this moment.', 'error');
     return false;
   }
   refreshPedalCursor(model);
   /* An empty pedal layer is a dead end (you place marks in voice mode), so
-     drop back to voice 4 when the last mark is gone. */
+     drop back to the instrument's last voice when its last mark is gone. */
+  const lastVoice = (() => {
+    const vs = model.voicesForInstrument(state.pedalInstrIdx);
+    return vs.length ? vs[vs.length - 1] : 4;
+  })();
   if (state.pedalCursor.moments.length === 0
-      || pedalMoments(model.getDoc()).length === 0) {
+      || pedalMoments(model.getDoc(), staves).length === 0) {
     state.cursorMode = 'voice';
-    model.setVoicePreservingMeasure(4);
-    hooks.setStatus?.('Deleted pedal mark. Voice 4.', 'action');
+    model.setVoicePreservingMeasure(lastVoice);
+    hooks.setStatus?.('Deleted pedal mark. Voice ' + lastVoice + '.', 'action');
   } else {
     hooks.setStatus?.('Deleted pedal mark.', 'action');
   }
@@ -464,7 +515,8 @@ function deleteSelectedExpression(model: ComposerModel, hooks: InputHooks): bool
   const m = currentMoment(state.exprCursor);
   if (!m) return false;
   const doc = model.getDoc();
-  const dynam = dynamAt(doc, m);
+  const staves = activeExprStaves(model);
+  const dynam = dynamAt(doc, m, staves);
   if (dynam) {
     removeExpression(dynam);
     refreshExprCursor(model);
@@ -473,7 +525,7 @@ function deleteSelectedExpression(model: ComposerModel, hooks: InputHooks): bool
     hooks.onStateChange();
     return true;
   }
-  const dir = dirAt(doc, m);
+  const dir = dirAt(doc, m, staves);
   if (dir) {
     removeExpression(dir);
     refreshExprCursor(model);
@@ -482,7 +534,7 @@ function deleteSelectedExpression(model: ComposerModel, hooks: InputHooks): bool
     hooks.onStateChange();
     return true;
   }
-  const hairpins = hairpinsAt(doc, m);
+  const hairpins = hairpinsAt(doc, m, staves);
   if (hairpins.length > 0) {
     removeExpression(hairpins[0]);
     refreshExprCursor(model);
@@ -509,9 +561,10 @@ function commitExpressionPlace(
   if (!m) { hooks.setStatus?.('No expression at cursor.', 'error'); return false; }
   const doc = model.getDoc();
   const els: Element[] = [];
-  const d = dynamAt(doc, m); if (d) els.push(d);
-  const dir = dirAt(doc, m); if (dir) els.push(dir);
-  for (const h of hairpinsAt(doc, m)) els.push(h);
+  const staves = activeExprStaves(model);
+  const d = dynamAt(doc, m, staves); if (d) els.push(d);
+  const dir = dirAt(doc, m, staves); if (dir) els.push(dir);
+  for (const h of hairpinsAt(doc, m, staves)) els.push(h);
   if (els.length === 0) {
     hooks.setStatus?.('No expression at this moment to place.', 'error');
     return false;
@@ -551,7 +604,7 @@ function openExpressiveText(model: ComposerModel, hooks: InputHooks): void {
     hooks.setStatus?.('No cursor anchor for expressive text.', 'error');
     return;
   }
-  const existing = dirAt(model.getDoc(), m);
+  const existing = dirAt(model.getDoc(), m, activeExprStaves(model));
   openTextEntryModal({
     title: existing ? 'Edit expressive text' : 'Expressive text',
     fields: [
@@ -565,7 +618,7 @@ function openExpressiveText(model: ComposerModel, hooks: InputHooks): void {
       const text = String(values.text ?? '').trim();
       const italic = !!values.italic;
       const before = model.snapshotState();
-      const cur = dirAt(model.getDoc(), m); /* re-resolve: doc may have changed */
+      const cur = dirAt(model.getDoc(), m, activeExprStaves(model)); /* re-resolve: doc may have changed */
       let changed = true;
       if (text === '') {
         if (cur) removeExpression(cur);
@@ -573,7 +626,7 @@ function openExpressiveText(model: ComposerModel, hooks: InputHooks): void {
       } else if (cur) {
         setDirText(cur, text, italic);
       } else {
-        addDir(model.getDoc(), m, { text, italic });
+        addDir(model.getDoc(), m, { text, italic, staff: activeExprStaff(model) });
       }
       if (changed) hooks.history.push(before, model.snapshotState(), 'expr-text');
       if (state.cursorMode === 'expr') refreshExprCursor(model);
@@ -619,81 +672,102 @@ function openSectionHeader(model: ComposerModel, hooks: InputHooks): void {
   });
 }
 
-/* ── voice cycling: 1 → 2 → expr → 3 → 4 ─────────────────────────────────── */
+/* ── voice cycling ───────────────────────────────────────────────────────────
+   The ↑/↓ nav order is an ordered stop list derived from the instrument table.
+   Tempo is a score-global singleton at the top; each instrument contributes its
+   voices, a per-instrument expression stop (between its two staves for a grand
+   staff, or above its single staff), and — for grand-staff instruments only — a
+   per-instrument pedal stop below it. For the default single piano this is
+   exactly: tempo → 1 → 2 → expr → 3 → 4 → pedal (byte-identical behavior). */
+
+type VoiceStop =
+  | { kind: 'tempo' }
+  | { kind: 'voice'; voice: number }
+  | { kind: 'expr'; instr: number }
+  | { kind: 'pedal'; instr: number };
+
+function buildVoiceStopList(model: ComposerModel): VoiceStop[] {
+  const stops: VoiceStop[] = [{ kind: 'tempo' }];
+  for (const inst of model.instruments()) {
+    const voices = model.voicesForInstrument(inst.index);
+    if (inst.staffNs.length >= 2) {
+      /* Grand staff: top-staff voices, expr between staves, bottom-staff
+         voices, pedal below. */
+      stops.push({ kind: 'voice', voice: voices[0] });
+      stops.push({ kind: 'voice', voice: voices[1] });
+      stops.push({ kind: 'expr', instr: inst.index });
+      stops.push({ kind: 'voice', voice: voices[2] });
+      stops.push({ kind: 'voice', voice: voices[3] });
+      stops.push({ kind: 'pedal', instr: inst.index });
+    } else {
+      /* Single staff: both voices, then the expr stop above the staff. No
+         pedal (a pedal is a grand-staff/keyboard concept). */
+      stops.push({ kind: 'voice', voice: voices[0] });
+      stops.push({ kind: 'voice', voice: voices[1] });
+      stops.push({ kind: 'expr', instr: inst.index });
+    }
+  }
+  return stops;
+}
+
+function enterExprLayer(model: ComposerModel, instr: number, hooks: InputHooks): void {
+  state.cursorMode = 'expr';
+  state.exprInstrIdx = instr;
+  refreshExprCursor(model);
+  hooks.setStatus?.('Expression layer.', 'state');
+}
+
+function enterPedalLayer(model: ComposerModel, instr: number, hooks: InputHooks): void {
+  state.cursorMode = 'pedal';
+  state.pedalInstrIdx = instr;
+  refreshPedalCursor(model);
+  hooks.setStatus?.('Pedal layer.', 'state');
+}
 
 function cycleVoice(model: ComposerModel, dir: 'up' | 'down', hooks: InputHooks): void {
-  if (state.cursorMode === 'expr') {
-    state.cursorMode = 'voice';
-    /* Up exits to voice 2, Down exits to voice 3. */
-    const v: Voice = dir === 'up' ? 2 : 3;
-    model.setVoicePreservingMeasure(v);
-    hooks.setStatus?.('Voice ' + v + '.', 'state');
-    return;
-  }
-  if (state.cursorMode === 'pedal') {
-    /* Pedal layer sits below voice 4. Up exits back to V4; down is a no-op
-       (it's the bottom of the cycle). */
-    if (dir === 'up') {
-      state.cursorMode = 'voice';
-      model.setVoicePreservingMeasure(4);
-      hooks.setStatus?.('Voice 4.', 'state');
-    }
-    return;
-  }
-  if (state.cursorMode === 'tempo') {
-    /* Tempo layer sits ABOVE voice 1 (it's score-global). Down exits to V1;
-       up is a no-op (it's the top of the cycle). */
-    if (dir === 'down') {
-      state.cursorMode = 'voice';
-      model.setVoicePreservingMeasure(1);
-      hooks.setStatus?.('Voice 1.', 'state');
-    }
-    return;
-  }
-  const v = model.getCurrentVoice();
-  if (dir === 'up') {
-    if (v === 1) {                                          /* 1 → tempo (always present) */
+  const stops = buildVoiceStopList(model);
+  const delta = dir === 'up' ? -1 : 1;
+  const matchesCurrent = (s: VoiceStop): boolean => {
+    if (state.cursorMode === 'tempo') return s.kind === 'tempo';
+    if (state.cursorMode === 'expr') return s.kind === 'expr' && s.instr === state.exprInstrIdx;
+    if (state.cursorMode === 'pedal') return s.kind === 'pedal' && s.instr === state.pedalInstrIdx;
+    return s.kind === 'voice' && s.voice === model.getCurrentVoice();
+  };
+  let curIdx = stops.findIndex(matchesCurrent);
+  if (curIdx < 0) curIdx = stops.findIndex((s) => s.kind === 'voice');
+  if (curIdx < 0) return;
+  /* Reference measure for the empty-layer skip checks: the measure of the
+     voice we're currently on (layer stops are only ever adjacent to voices). */
+  const refVoice = state.cursorMode === 'voice' ? model.getCurrentVoice() : model.getCurrentVoice();
+  const refMi = model.cursorMeasureIdx(refVoice);
+
+  for (let i = curIdx + delta; i >= 0 && i < stops.length; i += delta) {
+    const stop = stops[i];
+    if (stop.kind === 'tempo') {
       state.cursorMode = 'tempo';
       refreshTempoCursor(model);
       hooks.setStatus?.('Tempo layer.', 'state');
       return;
     }
-    if (v === 2) { model.switchVoice('up'); return; }       /* 2 → 1 */
-    if (v === 3) {                                          /* 3 → expr (skip if empty) */
-      if (measureHasExpression(model.getDoc(), model.cursorMeasureIdx(3))) {
-        state.cursorMode = 'expr';
-        refreshExprCursor(model);
-        hooks.setStatus?.('Expression layer.', 'state');
-      } else {
-        model.setVoicePreservingMeasure(2);
-        hooks.setStatus?.('Voice 2.', 'state');
-      }
+    if (stop.kind === 'expr') {
+      const staves = model.instruments()[stop.instr]?.staffNs;
+      if (!measureHasExpression(model.getDoc(), refMi, staves)) continue; /* skip empty */
+      enterExprLayer(model, stop.instr, hooks);
       return;
     }
-    if (v === 4) { model.switchVoice('up'); return; }       /* 4 → 3 */
-  } else {
-    if (v === 1) { model.switchVoice('down'); return; }     /* 1 → 2 */
-    if (v === 2) {                                          /* 2 → expr (skip if empty) */
-      if (measureHasExpression(model.getDoc(), model.cursorMeasureIdx(2))) {
-        state.cursorMode = 'expr';
-        refreshExprCursor(model);
-        hooks.setStatus?.('Expression layer.', 'state');
-      } else {
-        model.setVoicePreservingMeasure(3);
-        hooks.setStatus?.('Voice 3.', 'state');
-      }
+    if (stop.kind === 'pedal') {
+      const staves = model.instruments()[stop.instr]?.staffNs;
+      if (pedalMoments(model.getDoc(), staves).length === 0) continue; /* skip empty */
+      enterPedalLayer(model, stop.instr, hooks);
       return;
     }
-    if (v === 3) { model.switchVoice('down'); return; }     /* 3 → 4 */
-    if (v === 4) {                                          /* 4 → pedal (skip if empty) */
-      if (pedalMoments(model.getDoc()).length > 0) {
-        state.cursorMode = 'pedal';
-        refreshPedalCursor(model);
-        hooks.setStatus?.('Pedal layer.', 'state');
-      }
-      return;
-    }
+    /* voice stop */
+    state.cursorMode = 'voice';
+    model.setVoicePreservingMeasure(stop.voice);
+    hooks.setStatus?.('Voice ' + stop.voice + '.', 'state');
+    return;
   }
+  /* Off the top/bottom of the cycle — stay put. */
 }
 
 /* ── chord-internal selection helpers ─────────────────────────────────────── */
@@ -1736,7 +1810,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         return;
       }
       if (tHi <= tLo) { hooks.setStatus?.('Nothing to put under an 8va here.', 'error'); return; }
-      const staff = voice <= 2 ? 1 : 2;
+      const staff = model.staffForVoice(voice);
       const startM = tickToMoment(tLo);
       const endM = tickToMoment(tHi);
       /* Verovio anchors the ottava bracket to notes (@startid/@endid) — it

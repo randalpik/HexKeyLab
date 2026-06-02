@@ -350,6 +350,13 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
         <button type="button" id="setupTempoBtn">Tempo… (measure 1)</button>
       </fieldset>
     </div>
+    <div class="row">
+      <span>Instruments</span>
+      <fieldset>
+        <span id="setupInstrList" style="opacity:0.8"></span>
+        <button type="button" id="setupInstrumentsBtn">Manage…</button>
+      </fieldset>
+    </div>
     <label class="row"><span>Tuning</span><select id="setupTuningMode"></select></label>
     <label class="row"><span>HEJI accidentals</span><span><input type="checkbox" id="setupHeji"> show comma arrows &amp; septimal hooks</span></label>
     <div class="row">
@@ -399,6 +406,7 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
 <!-- Reusable text-entry modal (expressive text now; tempo etc. later). Content
      is built dynamically by ui/textEntryModal.ts. -->
 <dialog id="textEntryDialog" class="hkl-dialog"></dialog>
+<dialog id="instrumentsDialog" class="hkl-dialog"></dialog>
 
 <script type="module" src="/src/main.ts"></script>
 </body>

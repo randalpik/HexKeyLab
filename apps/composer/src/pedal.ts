@@ -46,8 +46,10 @@ function readTstamp(el: Element): number | null {
 
 /* ── CRUD ────────────────────────────────────────────────────────────────── */
 
-/** Find a <pedal> at the given moment (optionally constrained to a direction). */
-export function pedalAt(doc: Document, m: Moment, dir?: PedalDir): Element | null {
+/** Find a <pedal> at the given moment (optionally constrained to a direction
+ *  and/or a staff — staff scoping makes the per-instrument pedal layer match
+ *  only its own instrument's marks). */
+export function pedalAt(doc: Document, m: Moment, dir?: PedalDir, staff?: number): Element | null {
   const measure = getMeasures(doc)[m.measureIdx];
   if (!measure) return null;
   for (const child of Array.from(measure.children)) {
@@ -55,6 +57,7 @@ export function pedalAt(doc: Document, m: Moment, dir?: PedalDir): Element | nul
     const t = readTstamp(child);
     if (t === null || Math.abs(t - m.tstamp) > TS_EPSILON) continue;
     if (dir && child.getAttribute('dir') !== dir) continue;
+    if (staff !== undefined && parseInt(child.getAttribute('staff') ?? '0', 10) !== staff) continue;
     return child;
   }
   return null;
@@ -62,25 +65,26 @@ export function pedalAt(doc: Document, m: Moment, dir?: PedalDir): Element | nul
 
 /** Add a <pedal dir=…> at the moment. No-op-safe: a same-direction event
  *  already at this moment is returned as-is rather than duplicated. */
-export function addPedal(doc: Document, at: Moment, dir: PedalDir): Element | null {
+export function addPedal(doc: Document, at: Moment, dir: PedalDir, staff = 2): Element | null {
   const measure = getMeasures(doc)[at.measureIdx];
   if (!measure) return null;
-  const existing = pedalAt(doc, at, dir);
+  const existing = pedalAt(doc, at, dir, staff);
   if (existing) return existing;
   const el = doc.createElementNS(MEI_NS, 'pedal');
   el.setAttributeNS(XML_NS, 'xml:id', newId('p'));
   el.setAttribute('dir', dir);
   el.setAttribute('tstamp', formatTstamp(at.tstamp));
-  /* Bottom staff → Verovio renders the pedal glyph below the grand staff. */
-  el.setAttribute('staff', '2');
+  /* Bottom staff of the owning (grand-staff) instrument → Verovio renders the
+     pedal glyph below it. Defaults to staff 2 (the single-piano case). */
+  el.setAttribute('staff', String(staff));
   measure.appendChild(el);
   return el;
 }
 
 /** Remove the <pedal> of `dir` at the moment, if present. Returns true if one
  *  was removed. */
-export function removePedalAt(doc: Document, m: Moment, dir: PedalDir): boolean {
-  const el = pedalAt(doc, m, dir);
+export function removePedalAt(doc: Document, m: Moment, dir: PedalDir, staff?: number): boolean {
+  const el = pedalAt(doc, m, dir, staff);
   if (el && el.parentNode) {
     el.parentNode.removeChild(el);
     return true;
@@ -89,10 +93,11 @@ export function removePedalAt(doc: Document, m: Moment, dir: PedalDir): boolean 
 }
 
 /** Toggle the <pedal> of `dir` at the moment: remove if present, else add.
- *  Returns the new state (true = present, false = removed). */
-export function togglePedal(doc: Document, at: Moment, dir: PedalDir): boolean {
-  if (removePedalAt(doc, at, dir)) return false;
-  addPedal(doc, at, dir);
+ *  Returns the new state (true = present, false = removed). `staff` scopes the
+ *  toggle to one instrument's pedal lane (defaults to staff 2 = single piano). */
+export function togglePedal(doc: Document, at: Moment, dir: PedalDir, staff = 2): boolean {
+  if (removePedalAt(doc, at, dir, staff)) return false;
+  addPedal(doc, at, dir, staff);
   return true;
 }
 
@@ -103,6 +108,9 @@ export interface PedalRecord {
    *  absoluteTickForMoment used by the dynamics/hairpin velocity timeline). */
   tick: number;
   dir: PedalDir;
+  /** The staff @n this pedal attaches to (its owning instrument's bottom
+   *  staff). Lets playback route the pedal to one instrument's damper. */
+  staff: number;
 }
 
 /** All <pedal> events with resolved absolute ticks, sorted ascending. */
@@ -117,7 +125,8 @@ export function collectPedals(doc: Document): PedalRecord[] {
     const t = readTstamp(el);
     if (t === null) continue;
     const dir: PedalDir = el.getAttribute('dir') === 'up' ? 'up' : 'down';
-    out.push({ tick: absoluteTickForMoment(doc, { measureIdx: idx, tstamp: t }), dir });
+    const staff = parseInt(el.getAttribute('staff') ?? '2', 10);
+    out.push({ tick: absoluteTickForMoment(doc, { measureIdx: idx, tstamp: t }), dir, staff });
   }
   out.sort((a, b) => a.tick - b.tick);
   return out;
@@ -128,12 +137,13 @@ export function collectPedals(doc: Document): PedalRecord[] {
 /** Resolved moments of every <pedal> mark (sorted ascending). The pedal-layer
  *  cursor unions these with note onsets — the same construction the expression
  *  cursor uses for its dynam/hairpin moments. */
-export function pedalMoments(doc: Document): Moment[] {
+export function pedalMoments(doc: Document, staffFilter?: ReadonlyArray<number>): Moment[] {
   const measures = getMeasures(doc);
   const out: Moment[] = [];
   for (const el of Array.from(doc.querySelectorAll('pedal'))) {
     const measure = el.closest('measure');
     if (!measure) continue;
+    if (staffFilter && !staffFilter.includes(parseInt(el.getAttribute('staff') ?? '0', 10))) continue;
     const idx = measures.indexOf(measure);
     if (idx < 0) continue;
     const t = readTstamp(el);
@@ -146,21 +156,24 @@ export function pedalMoments(doc: Document): Moment[] {
 
 /** Every <pedal> element at the given moment (usually one; a coincident
  *  down+up is possible). */
-export function pedalsAt(doc: Document, m: Moment): Element[] {
+export function pedalsAt(doc: Document, m: Moment, staff?: number): Element[] {
   const measure = getMeasures(doc)[m.measureIdx];
   if (!measure) return [];
   const out: Element[] = [];
   for (const child of Array.from(measure.children)) {
     if (child.localName !== 'pedal') continue;
     const t = readTstamp(child);
-    if (t !== null && Math.abs(t - m.tstamp) <= TS_EPSILON) out.push(child);
+    if (t === null || Math.abs(t - m.tstamp) > TS_EPSILON) continue;
+    if (staff !== undefined && parseInt(child.getAttribute('staff') ?? '0', 10) !== staff) continue;
+    out.push(child);
   }
   return out;
 }
 
-/** Remove every <pedal> at the moment. Returns the count removed. */
-export function removePedalsAt(doc: Document, m: Moment): number {
-  const els = pedalsAt(doc, m);
+/** Remove every <pedal> at the moment (optionally scoped to one staff). Returns
+ *  the count removed. */
+export function removePedalsAt(doc: Document, m: Moment, staff?: number): number {
+  const els = pedalsAt(doc, m, staff);
   for (const el of els) el.parentNode?.removeChild(el);
   return els.length;
 }

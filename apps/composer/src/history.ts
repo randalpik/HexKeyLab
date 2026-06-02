@@ -71,7 +71,9 @@ function focusEquals(curVoice: Voice, curCursors: Record<Voice, number>, snap: S
 function snapshotsEqual(a: Snapshot, b: Snapshot): boolean {
   if (a.mei !== b.mei) return false;
   if (a.voice !== b.voice) return false;
-  for (const v of [1, 2, 3, 4] as Voice[]) {
+  const keys = new Set([...Object.keys(a.cursors), ...Object.keys(b.cursors)]);
+  for (const k of keys) {
+    const v = Number(k) as Voice;
     if (a.cursors[v] !== b.cursors[v]) return false;
   }
   return true;
@@ -183,6 +185,8 @@ export class HistoryManager {
   }
 
   private snapshotCursors(model: ComposerModel): Record<Voice, number> {
-    return { 1: model.getCursor(1), 2: model.getCursor(2), 3: model.getCursor(3), 4: model.getCursor(4) };
+    const out: Record<Voice, number> = {};
+    for (let v = 1; v <= model.totalVoices(); v++) out[v] = model.getCursor(v);
+    return out;
   }
 }
