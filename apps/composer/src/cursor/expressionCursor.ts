@@ -17,7 +17,7 @@
 
 import {
   type Moment, momentCompare, momentEqual, dynamAt, dirAt, hairpinsAt, readMeter,
-  tempoMoments,
+  tempoMoments, parseTstamp2,
 } from '../expressions.js';
 import { pedalMoments } from '../pedal.js';
 import { realTicks } from '../model/ticks.js';
@@ -132,40 +132,108 @@ export function buildMomentList(doc: Document, staffFilter?: ReadonlyArray<numbe
   const inFilter = (el: Element): boolean =>
     !staffFilter || staffFilter.includes(parseInt(el.getAttribute('staff') ?? '0', 10));
 
-  /* Dynam + dir moments (point expression marks anchored by tstamp). Tempo is
-     its own top-level layer (above V1), not part of the expression layer. */
+  /* Dynam/dir/hairpin marks (point + span expression marks). Tempo is its own
+     top-level layer (above V1), not part of the expression layer. */
+  onsets.push(...layerElementMoments(doc, 'expr', staffFilter));
+  return dedupSorted(onsets);
+}
+
+/** Element-anchor moments for ONE virtual layer — the moments at which a real
+ *  mark exists (skipping bare note onsets). For `'expr'`: every <dynam>/<dir>
+ *  tstamp plus every <hairpin> start AND end. For `'pedal'`/`'tempo'`: the
+ *  corresponding mark moments. `staffFilter` scopes expr/pedal to one
+ *  instrument's staves (tempo is score-global). Sorted ascending, deduped.
+ *
+ *  Used by Ctrl+←/→ to jump mark-to-mark and by layer entry to snap to the
+ *  nearest existing mark. */
+export function layerElementMoments(
+  doc: Document,
+  mode: 'expr' | 'pedal' | 'tempo',
+  staffFilter?: ReadonlyArray<number>,
+  includeHairpinEnd = true,
+): Moment[] {
+  if (mode === 'pedal') return dedupSorted(pedalMoments(doc, staffFilter));
+  if (mode === 'tempo') return dedupSorted(tempoMoments(doc));
+  const measures = Array.from(doc.querySelectorAll('measure'));
+  const inFilter = (el: Element): boolean =>
+    !staffFilter || staffFilter.includes(parseInt(el.getAttribute('staff') ?? '0', 10));
+  const out: Moment[] = [];
   for (const d of Array.from(doc.querySelectorAll('dynam, dir'))) {
+    if (!inFilter(d)) continue;
     const m = d.closest('measure');
     if (!m) continue;
-    if (!inFilter(d)) continue;
     const idx = measures.indexOf(m);
     if (idx < 0) continue;
     const t = parseFloat(d.getAttribute('tstamp') ?? '');
-    if (isFinite(t)) onsets.push({ measureIdx: idx, tstamp: t });
+    if (isFinite(t)) out.push({ measureIdx: idx, tstamp: t });
   }
-  /* Hairpin start + end moments. */
   for (const h of Array.from(doc.querySelectorAll('hairpin'))) {
+    if (!inFilter(h)) continue;
     const m = h.closest('measure');
     if (!m) continue;
-    if (!inFilter(h)) continue;
     const idx = measures.indexOf(m);
     if (idx < 0) continue;
     const t = parseFloat(h.getAttribute('tstamp') ?? '');
-    if (isFinite(t)) onsets.push({ measureIdx: idx, tstamp: t });
-    const ts2 = h.getAttribute('tstamp2');
-    if (ts2) {
-      const match = ts2.match(/^(?:(\d+)m\+)?(\d+(?:\.\d+)?)$/);
-      if (match) {
-        const dm = match[1] !== undefined ? parseInt(match[1], 10) : 0;
-        const beat = parseFloat(match[2]);
-        if (isFinite(dm) && isFinite(beat)) {
-          onsets.push({ measureIdx: idx + dm, tstamp: beat });
-        }
-      }
+    if (isFinite(t)) out.push({ measureIdx: idx, tstamp: t });
+    /* The hairpin END is a navigable moment (plain ←/→) but NOT a distinct
+       selectable item — Ctrl-jump and entry-snap exclude it so each stop lands
+       on a real mark (the hairpin is reached via its start). */
+    if (includeHairpinEnd) {
+      const end = parseTstamp2(h.getAttribute('tstamp2') ?? '', idx);
+      if (end) out.push(end);
     }
   }
+  return dedupSorted(out);
+}
 
-  return dedupSorted(onsets);
+/** Step to the next (`dir=1`) or previous (`dir=-1`) EXISTING mark in the
+ *  layer, relative to the cursor's current moment. Returns the snapped cursor,
+ *  or the cursor unchanged when there is no mark in that direction. */
+export function stepToElement(
+  c: ExpressionCursor,
+  doc: Document,
+  mode: 'expr' | 'pedal' | 'tempo',
+  dir: -1 | 1,
+  staffFilter?: ReadonlyArray<number>,
+): ExpressionCursor {
+  const cur = currentMoment(c);
+  const elems = layerElementMoments(doc, mode, staffFilter, false /* item anchors only */);
+  if (elems.length === 0) return c;
+  if (!cur) return snapTo(c, dir > 0 ? elems[0] : elems[elems.length - 1]);
+  let target: Moment | null = null;
+  if (dir > 0) {
+    for (const m of elems) { if (momentCompare(m, cur) > 0) { target = m; break; } }
+  } else {
+    for (let i = elems.length - 1; i >= 0; i--) {
+      if (momentCompare(elems[i], cur) < 0) { target = elems[i]; break; }
+    }
+  }
+  if (!target) return c;
+  return snapTo(c, target);
+}
+
+/** Snap a freshly-built cursor to the nearest existing mark in the layer (used
+ *  on layer entry). If the layer has no marks, snaps to `prefer` (the
+ *  carried-over moment) instead, falling back to the cursor as built. */
+export function snapToNearestElement(
+  c: ExpressionCursor,
+  doc: Document,
+  mode: 'expr' | 'pedal' | 'tempo',
+  prefer: Moment | null,
+  staffFilter?: ReadonlyArray<number>,
+): ExpressionCursor {
+  const elems = layerElementMoments(doc, mode, staffFilter, false /* item anchors only */);
+  if (elems.length === 0) return prefer ? snapTo(c, prefer) : c;
+  const anchor = prefer ?? currentMoment(c);
+  if (!anchor) return snapTo(c, elems[0]);
+  /* Closest mark to the anchor moment. */
+  let best = elems[0];
+  let bestD = absDistance(best, anchor);
+  for (const m of elems) {
+    const d = absDistance(m, anchor);
+    if (d < bestD) { best = m; bestD = d; }
+  }
+  return snapTo(c, best);
 }
 
 /** Sort ascending and drop adjacent duplicates (by measure+tstamp epsilon). */

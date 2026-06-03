@@ -206,6 +206,11 @@ export const KEYBINDINGS: KeySection[] = [
     bindings: [
       { keys: "←  /  →", desc: "Step through the unified moment list." },
       {
+        keys: "Ctrl+←  /  Ctrl+→",
+        desc: "Jump to the previous / next existing mark, skipping bare note onsets.",
+        note: "Also in the pedal and tempo layers. No-op when there is no mark in that direction.",
+      },
+      {
         keys: "1 .. 8",
         desc: "Enter dynamic at the current moment: fff, ff, f, mf, mp, p, pp, ppp.",
         note: "Bare digit (no Shift) in expression mode. Existing dynamic at this moment is replaced.",

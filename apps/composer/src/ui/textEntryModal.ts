@@ -15,6 +15,18 @@ export type TextEntryField =
   | { name: string; type: 'check'; label: string; value?: boolean }
   | { name: string; type: 'select'; label: string; value?: string; options: ReadonlyArray<{ value: string; label: string }> };
 
+/** Live-field manipulation surface handed to `onChange`, letting a modal behave
+ *  as a builder (reflect a select choice into another field's placeholder,
+ *  grey out fields that don't apply, etc.). */
+export interface TextEntryFieldApi {
+  setPlaceholder(name: string, text: string): void;
+  setValue(name: string, value: string): void;
+  setDisabled(name: string, disabled: boolean): void;
+  /** Show/hide a field's whole row (display:none) — for fields that don't apply
+   *  to the current builder state. */
+  setHidden(name: string, hidden: boolean): void;
+}
+
 export interface TextEntryModalOpts {
   title: string;
   fields: TextEntryField[];
@@ -25,6 +37,13 @@ export interface TextEntryModalOpts {
   /** Called with field values keyed by `name` when the user confirms (OK /
    *  Enter). Not called on Cancel / Escape. */
   onOk: (values: Record<string, string | boolean>) => void;
+  /** Fired once at open and on every field input/change. Use the `api` to keep
+   *  dependent fields in sync (placeholder hints, disabling). `changed` is the
+   *  field name that triggered it, or null for the initial call. */
+  onChange?: (values: Record<string, string | boolean>, changed: string | null, api: TextEntryFieldApi) => void;
+  /** Field name to focus on open. Defaults to the first text field (or, absent
+   *  one, the first field). */
+  focusField?: string;
 }
 
 function esc(s: string): string {
@@ -99,8 +118,54 @@ export function openTextEntryModal(opts: TextEntryModalOpts): void {
   dlg.querySelector('.te-presets')?.addEventListener('click', onPresetClick);
 
   const cancelBtn = dlg.querySelector('.te-cancel') as HTMLButtonElement | null;
+  const okBtn = dlg.querySelector('.te-ok') as HTMLButtonElement | null;
   const onCancel = (): void => dlg.close();
   cancelBtn?.addEventListener('click', onCancel);
+
+  /* Enter finalizes from ANY field — including a focused <select>, where the
+     browser would otherwise just close the dropdown without submitting. We
+     preventDefault and submit explicitly so the gesture is uniform across
+     text/number/select fields (the clef/sig modals are select-only). A focused
+     BUTTON is left to its native Enter behavior, so Enter on Cancel dismisses
+     (and on OK submits) rather than always committing. */
+  const onKeydown = (e: KeyboardEvent): void => {
+    if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.target instanceof HTMLButtonElement) return;
+    e.preventDefault();
+    if (okBtn) form?.requestSubmit(okBtn);
+  };
+  form?.addEventListener('keydown', onKeydown);
+
+  /* Builder hook: collect current values and let the caller adjust dependent
+     fields (placeholders/disabled). Fired at open and on every change/input. */
+  const collectValues = (): Record<string, string | boolean> => {
+    const v: Record<string, string | boolean> = {};
+    for (const f of opts.fields) {
+      const el = fieldEl(f.name);
+      v[f.name] = f.type === 'check' ? !!el?.checked : (el?.value ?? '');
+    }
+    return v;
+  };
+  const fieldApi: TextEntryFieldApi = {
+    setPlaceholder: (name, text) => { const el = fieldEl(name); if (el) el.placeholder = text; },
+    setValue: (name, value) => { const el = fieldEl(name); if (el) el.value = value; },
+    setDisabled: (name, disabled) => {
+      const el = fieldEl(name); if (el) el.disabled = disabled;
+      el?.closest('.row')?.classList.toggle('te-disabled', disabled);
+    },
+    setHidden: (name, hidden) => {
+      const row = fieldEl(name)?.closest('.row') as HTMLElement | null;
+      if (row) row.style.display = hidden ? 'none' : '';
+    },
+  };
+  const onFieldChange = (e: Event): void => {
+    const name = (e.target as HTMLElement)?.getAttribute('data-field');
+    opts.onChange?.(collectValues(), name ?? null, fieldApi);
+  };
+  if (opts.onChange) {
+    form?.addEventListener('change', onFieldChange);
+    form?.addEventListener('input', onFieldChange);
+  }
 
   const onSubmit = (e: SubmitEvent): void => {
     const submitter = e.submitter as HTMLButtonElement | null;
@@ -118,14 +183,22 @@ export function openTextEntryModal(opts: TextEntryModalOpts): void {
      drops all the per-open listeners with the nodes they were bound to. */
   const onClose = (): void => {
     form?.removeEventListener('submit', onSubmit);
+    form?.removeEventListener('keydown', onKeydown);
+    form?.removeEventListener('change', onFieldChange);
+    form?.removeEventListener('input', onFieldChange);
     cancelBtn?.removeEventListener('click', onCancel);
     dlg.removeEventListener('close', onClose);
     dlg.innerHTML = '';
   };
   dlg.addEventListener('close', onClose);
 
+  /* Initial builder sync (placeholders/disabled reflect the seeded values). */
+  opts.onChange?.(collectValues(), null, fieldApi);
+
   dlg.returnValue = '';
   dlg.showModal();
-  /* Focus the first text field for immediate typing. */
-  if (firstText) fieldEl(firstText.name)?.focus();
+  /* Focus the requested field, else the first text field, else the first field
+     of any kind (so a select-led modal lands on its first control). */
+  const focusName = opts.focusField ?? firstText?.name ?? opts.fields[0]?.name;
+  if (focusName) fieldEl(focusName)?.focus();
 }

@@ -1238,3 +1238,33 @@ element lacking a `stroke-width` attribute.
 `<style>` (stroke, font-style/weight on dir/dynam/tempo) from computed style on an attached element —
 but inline stroke ONLY where Verovio intended it (`stroke-width` present), or filled glyphs get
 spurious outlines.
+
+**Verovio draws `@tstamp` at the NOTE GLYPH for that beat, not the bar-grid x.** A dynam/hairpin at
+`tstamp=N` lands exactly on the note at beat N — even in a clef-less measure. The trap that cost a whole
+detour: in measure 1 a `tstamp=1` mark coincides with the first note *because the leading clef/time-sig
+pushes the beat-1 grid to the note*; in measure 2+ there's no leading block, so it's easy to *assume*
+`tstamp=1` renders on the bar line. It doesn't. If a mark looks like it's on the bar line, the bug is
+the stored MOMENT being in the wrong measure (`{prevMeasure, beat count+1}` instead of `{thisMeasure, 1}`
+— see decisions.md "Expression moments anchor to the cursor's visual measure"), not the `@tstamp`→x
+mapping. Measure first with `inspect.mjs` (compare the rendered mark's left to the note's left and the
+bar line's left) before "fixing" placement; a render-time inset hack built on the wrong premise just
+moved the mark somewhere else wrong.
+
+**Headless Chromium never gives its window OS focus, so `:focus` never matches.** A programmatically
+`.focus()`'d element IS `document.activeElement`, but `el.matches(':focus')` is `false` and no `:focus`
+CSS (yours or the UA ring) renders — `getComputedStyle` shows `outline-style: none`. So focus rings
+**cannot be screenshot/computed-style verified** in `inspect.mjs`/the test harness. Verify the rule is
+present and unopposed instead (enumerate `document.styleSheets` for rules targeting the element); it'll
+render in a real (window-focused) browser. Don't chase a "missing" focus ring as a CSS bug under headless.
+
+**Verovio emits a leading zero-size positioning `<text>` per control event; read the LATER tspans for
+font weight/style.** Inspecting a `<g class="tempo">`/`g.dir`, the first `<text>` is an empty/`font-size:0`
+placeholder that reports the element's *default* weight (e.g. 700); the actually-rendered glyphs are the
+subsequent `<tspan>`s. Querying `text,tspan` and reading `[0]` gives a misleading bold/normal answer —
+filter to elements with real `textContent` and check those.
+
+**Inline `<clef>` changes persist forward across measures (Verovio renders them so), but the model only
+tracked the current layer.** `clefAtCursor` scanned just the cursor's measure/layer, so after a clef
+change in an earlier bar it fell back to the staffDef default (staff 1 → treble) — wrong for the modal
+seed AND any diff-aware redundancy/removal logic. Resolving a clef "in effect" must walk every prior
+measure's clefs in the voice's layer (`effectiveClefForVoice`), not just the current one.

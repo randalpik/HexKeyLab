@@ -332,14 +332,15 @@ export interface DirOpts {
  *  otherwise it's a plain text node. Clears any prior content first. */
 function setDirContent(el: Element, text: string, italic: boolean): void {
   while (el.firstChild) el.removeChild(el.firstChild);
-  if (italic) {
-    const rend = el.ownerDocument!.createElementNS(MEI_NS, 'rend');
-    rend.setAttribute('fontstyle', 'italic');
-    rend.textContent = text;
-    el.appendChild(rend);
-  } else {
-    el.textContent = text;
-  }
+  if (!text) return;
+  /* Verovio renders <dir> italic BY DEFAULT, so "italic off" must be explicit:
+     wrap the text in a <rend> with fontstyle=normal to override it (plain text
+     would still render italic). fontstyle=italic is set explicitly too so the
+     stored doc unambiguously records the choice. */
+  const rend = el.ownerDocument!.createElementNS(MEI_NS, 'rend');
+  rend.setAttribute('fontstyle', italic ? 'italic' : 'normal');
+  rend.textContent = text;
+  el.appendChild(rend);
 }
 
 /** Add a <dir> (expressive text) at the moment, sibling of <staff>, @tstamp
@@ -462,8 +463,12 @@ function setTempoContent(
   while (el.firstChild) el.removeChild(el.firstChild);
   if (text) {
     if (italic) {
+      /* Gradual (rit./accel.) and "a tempo" render italic AND non-bold; the
+         <tempo> element is bold by default, so the rend must override BOTH:
+         fontstyle=italic + fontweight=normal. */
       const rend = doc.createElementNS(MEI_NS, 'rend');
       rend.setAttribute('fontstyle', 'italic');
+      rend.setAttribute('fontweight', 'normal');
       rend.textContent = text;
       el.appendChild(rend);
     } else {

@@ -1631,10 +1631,13 @@ export class ComposerModel {
     if (sd.attributes.length === 0) sd.parentNode?.removeChild(sd);
   }
 
-  /** Clef in effect at the current cursor for its staff: the most recent inline
-   *  `<clef>` at/before the cursor in the cursor's layer, else the head
-   *  `<staffDef>` for that staff. Used to pre-select the clef modal. */
-  clefAtCursor(): { shape: string; line: string; dis: string | null; disPlace: string | null } {
+  /** Clef in effect at the current cursor for its staff. Inline `<clef>` changes
+   *  persist FORWARD across measures (like Verovio renders them), so this walks
+   *  every measure up to the cursor's — applying each inline `<clef>` in the
+   *  voice's layer — then the cursor measure up to the cursor; falling back to
+   *  the head `<staffDef>`. `exclude` skips one inline clef (the one being
+   *  edited) so callers can ask "what would be in effect WITHOUT this clef". */
+  private effectiveClefForVoice(exclude?: Element | null): { shape: string; line: string; dis: string | null; disPlace: string | null } {
     const v = this.currentVoice;
     const staffN = this.staffForVoice(v);
     let shape = staffN === 1 ? 'G' : 'F';
@@ -1650,11 +1653,22 @@ export class ComposerModel {
       disPlace = headDef.getAttribute('clef.dis.place');
     }
     const loc = locateCursor(this, v, this.cursors[v]);
-    if (loc && !loc.inTuplet) {
-      const content = this.contentChildren(loc.layer);
-      const limit = loc.withinIdx < content.length ? content[loc.withinIdx] : null;
-      for (const c of Array.from(loc.layer.children)) {
+    const cursorMi = loc && !loc.inTuplet ? loc.measureIdx : -1;
+    const measures = this.allMeasures();
+    const lastMi = cursorMi >= 0 ? cursorMi : measures.length - 1;
+    for (let mi = 0; mi <= lastMi && mi < measures.length; mi++) {
+      const layer = this.layerInMeasure(measures[mi], v);
+      if (!layer) continue;
+      /* In the cursor's own measure, stop at the cursor; earlier measures
+         contribute every clef they hold (a clef change carries forward). */
+      let limit: Element | null = null;
+      if (mi === cursorMi && loc) {
+        const content = this.contentChildren(loc.layer);
+        limit = loc.withinIdx < content.length ? content[loc.withinIdx] : null;
+      }
+      for (const c of Array.from(layer.children)) {
         if (limit && c === limit) break;
+        if (c === exclude) continue;
         if (c.localName === 'clef') {
           shape = c.getAttribute('shape') ?? shape;
           line = c.getAttribute('line') ?? line;
@@ -1664,6 +1678,12 @@ export class ComposerModel {
       }
     }
     return { shape, line, dis, disPlace };
+  }
+
+  /** Clef in effect at the current cursor for its staff (head staffDef + inline
+   *  clef changes carried forward). Used to pre-select the clef modal. */
+  clefAtCursor(): { shape: string; line: string; dis: string | null; disPlace: string | null } {
+    return this.effectiveClefForVoice();
   }
 
   /** Insert (or replace) an inline `<clef>` at the current cursor — a
@@ -1684,9 +1704,25 @@ export class ComposerModel {
     if (!ref) ref = Array.from(layer.children).find((c) => isPlaceholder(c)) ?? null;
     /* Reuse a clef already at this spot (re-edit), else create one. */
     const prev = ref ? ref.previousElementSibling : layer.lastElementChild;
+    const here = prev && prev.localName === 'clef' ? prev : null;
+
+    /* Diff-aware (mirrors setMeterAt/setKeySigAt): if the requested clef equals
+       the clef INHERITED at this spot — the staffDef default plus every inline
+       clef carried forward from earlier in the staff, EXCLUDING the one here —
+       then writing it would be redundant. Remove the inline clef here instead
+       (or no-op if none), so setting a clef back to the prevailing one clears
+       the override rather than stacking a redundant clef. */
+    const inh = this.effectiveClefForVoice(here);
+    const redundant = inh.shape === shape && inh.line === line
+      && (inh.dis ?? '') === (dis ?? '') && (inh.disPlace ?? '') === (disPlace ?? '');
+    if (redundant) {
+      if (here) here.remove();
+      return true;
+    }
+
     let clef: Element;
-    if (prev && prev.localName === 'clef') {
-      clef = prev;
+    if (here) {
+      clef = here;
     } else {
       clef = el(this.doc, 'clef', { 'xml:id': newId('clf') });
       if (ref) layer.insertBefore(clef, ref);

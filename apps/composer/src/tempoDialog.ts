@@ -54,9 +54,30 @@ export function openTempoModal(
     { name: 'showMm', type: 'check', label: 'Show ♩ = N', value: ex ? ex.showMm : true },
   );
 
+  /* Default label per gradual/a-tempo kind, so the Text field's placeholder
+     advertises what's used when left blank — no need to type the word. */
+  const defaultLabelFor = (kind: string): string =>
+    kind === 'rit' ? 'rit.' : kind === 'accel' ? 'accel.' : kind === 'atempo' ? 'a tempo' : '';
+
   openTextEntryModal({
     title: ex ? 'Edit tempo' : 'Tempo',
     fields,
+    /* Lead with the Kind selector (the choice that shapes the rest of the form),
+       not the Text field. Setup's instant-only flow has no Kind field, so it
+       falls back to focusing Text. */
+    focusField: opts.instantOnly ? undefined : 'kind',
+    onChange: (values, _changed, api) => {
+      const kind = opts.instantOnly ? 'instant' : String(values.kind ?? 'instant');
+      /* The ♩= metronome machinery (bpm / beat note / show-mm) only applies to
+         a Tempo marking; hide it entirely for gradual rit/accel and "a tempo". */
+      const instant = kind === 'instant';
+      api.setHidden('bpm', !instant);
+      api.setHidden('unit', !instant);
+      api.setHidden('showMm', !instant);
+      api.setPlaceholder('text', instant
+        ? 'e.g. Allegro / poco rit.'
+        : defaultLabelFor(kind) + ' (default)');
+    },
     onOk: (values) => {
       const kind = opts.instantOnly ? 'instant' : String(values.kind);
       const text = String(values.text ?? '').trim();

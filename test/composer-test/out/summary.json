@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 247,
-  "passed": 247,
+  "fixtures": 270,
+  "passed": 270,
   "failed": 0,
-  "elapsedMs": 81541,
+  "elapsedMs": 91992,
   "results": [
     {
       "name": "emptyDoc",
@@ -566,6 +566,54 @@
       }
     },
     {
+      "name": "kbd_p1_enterExpr_snapsToNearestMark",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "kbd_p1_ctrlRight_jumpsToNextMark",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "kbd_p1_ctrlRight_stopsAtLastMark",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "kbd_p1_ctrlRight_skipsHairpinEnd",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "kbd_p1_modalEnterOnCancelDoesNotCommit",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "kbd_p1_modalEnterOnSelectSubmits",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
       "name": "bridgeHeldKeysReceived",
       "ok": true,
       "failures": [],
@@ -667,6 +715,14 @@
       "failures": [],
       "counts": {
         "invariants": 7
+      }
+    },
+    {
+      "name": "heji_keysig_bravura",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
       }
     },
     {
@@ -1102,7 +1158,31 @@
       }
     },
     {
-      "name": "slur_voiceSwitch_exits",
+      "name": "slur_voiceSwitch_preservesPending",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "slur_layerStop_preservesPending",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "slur_cross_staff",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "slur_cross_staff_through_expr",
       "ok": true,
       "failures": [],
       "counts": {
@@ -1654,6 +1734,14 @@
       }
     },
     {
+      "name": "phase2_exprtext_italicOff",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
       "name": "phase2_exprtext_edit",
       "ok": true,
       "failures": [],
@@ -1678,6 +1766,22 @@
       }
     },
     {
+      "name": "hairpin_startAlignsToNote",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "hairpin_firstNoteOfMeasure_anchorsToMeasure",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
       "name": "phase2_tempo_instant_retimes",
       "ok": true,
       "failures": [],
@@ -1690,7 +1794,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 8
+        "invariants": 9
       }
     },
     {
@@ -1699,6 +1803,14 @@
       "failures": [],
       "counts": {
         "invariants": 9
+      }
+    },
+    {
+      "name": "phase2_tempo_modal_kindShapesForm",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
       }
     },
     {
@@ -1854,6 +1966,22 @@
       }
     },
     {
+      "name": "phase4_clef_setBackToInherited_removes",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase4_clef_inheritsAcrossMeasures",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
       "name": "phase4_clef_midmeasure",
       "ok": true,
       "failures": [],
@@ -1975,6 +2103,62 @@
     },
     {
       "name": "phase5_multi_instr_selection",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "click_emptyStaff_snapsAfterLastNote",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "click_emptyStaff_snapsBeforeFirstNote",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "click_emptyMeasure_snapsToMeasureStart",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "click_betweenNotes_snapsToLeftNote",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "click_whitespace_resolvesToNearest",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "click_dynam_selectsExpr_thenDeletes",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "click_tempo_selectsTempoLayer",
       "ok": true,
       "failures": [],
       "counts": {

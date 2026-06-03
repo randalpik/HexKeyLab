@@ -8,7 +8,7 @@ import { ticksOf } from './model/index.js';
 import { realTicks } from './model/ticks.js';
 import {
   type ExpressionCursor, rebuildCursor, rebuildPedalCursor, rebuildTempoCursor,
-  currentMoment, step, moveToStart, moveToEnd,
+  currentMoment, step, moveToStart, moveToEnd, stepToElement, snapToNearestElement,
 } from './cursor/expressionCursor.js';
 import {
   addDynam, addHairpin, removeExpression, dynamAt, setDynamText,
@@ -343,7 +343,17 @@ function momentAtVoiceAnchor(model: ComposerModel): Moment | null {
      flat[c]'s cc-position, then timeWithinMeasure sums everything before
      it). */
   const anchor = Math.max(0, c - 1);
-  return model.momentForCursor(v, anchor);
+  const m = model.momentForCursor(v, anchor);
+  if (!m) return null;
+  /* `momentForCursor` expresses a bar-line position as the PREVIOUS measure's
+     end ({m, beat count+1}); the cursor renderer's `cursorMeasureIdx` treats
+     the same position as the START of the visual measure. When they disagree
+     the cursor is on a measure's first element, so anchor the expression to
+     that measure's downbeat — where the note glyph (and the cursor) actually
+     are — instead of the prior measure's end (which Verovio draws on the bar
+     line). Interior positions agree, so the moment passes through unchanged. */
+  const visualMi = model.cursorMeasureIdx(v);
+  return visualMi === m.measureIdx ? m : { measureIdx: visualMi, tstamp: 1 };
 }
 
 function momentAtCurrentCursor(model: ComposerModel): Moment | null {
@@ -512,25 +522,23 @@ function deleteSelectedTempo(model: ComposerModel, hooks: InputHooks): boolean {
  *  the slur". Null if none. */
 function findSlurCovering(model: ComposerModel, voice: Voice, index: number): Element | null {
   for (const s of collectSlurs(model.getDoc())) {
-    if (s.voice !== voice) continue;
     const a = model.findElement(s.startId);
     const b = model.findElement(s.endId);
-    if (!a || !b || a.voice !== voice || b.voice !== voice) continue;
-    const lo = Math.min(a.index, b.index);
-    const hi = Math.max(a.index, b.index);
-    if (index >= lo && index <= hi) return s.el;
+    if (!a || !b) continue;
+    /* Same-voice slur: cursor anywhere within the endpoint span deletes it. */
+    if (a.voice === voice && b.voice === voice) {
+      const lo = Math.min(a.index, b.index);
+      const hi = Math.max(a.index, b.index);
+      if (index >= lo && index <= hi) return s.el;
+    }
+    /* Cross-staff slur (endpoints in different voices): the span isn't a
+       single-voice index range, so delete when the cursor sits exactly on
+       one of its endpoint slots (in that endpoint's own voice). */
+    if ((a.voice === voice && a.index === index) || (b.voice === voice && b.index === index)) {
+      return s.el;
+    }
   }
   return null;
-}
-
-/** Silently drop a pending slur if the voice or cursor-mode changed since the
- *  pre-navigation snapshot. Backlog: "Switching voices exits slur state."
- *  Silent so the post-switch voice status (set by cycleVoice) stays visible. */
-function cancelSlurIfVoiceChanged(model: ComposerModel, beforeVoice: Voice, beforeMode: CursorMode): void {
-  if (!state.pendingSlur) return;
-  if (model.getCurrentVoice() !== beforeVoice || state.cursorMode !== beforeMode) {
-    state.pendingSlur = null;
-  }
 }
 
 function deleteSelectedExpression(model: ComposerModel, hooks: InputHooks): boolean {
@@ -603,18 +611,6 @@ function formatBeat(t: number): string {
   return t.toFixed(2).replace(/\.?0+$/, '');
 }
 
-/* Common performance-text cues offered as quick-insert chips. */
-const EXPRESSIVE_TEXT_PRESETS = [
-  "cresc.",
-  "dim.",
-  "dolce",
-  "espressivo",
-  "leggiero",
-  "rubato",
-  "pizz.",
-  "arco",
-];
-
 /* Ctrl+Shift+E: open the reusable text-entry modal to create / edit / delete a
    <dir> (expressive text) at the cursor's moment. Edits in place when a <dir>
    already sits at the moment; submitting empty text removes it. The onOk runs
@@ -635,7 +631,6 @@ function openExpressiveText(model: ComposerModel, hooks: InputHooks): void {
       { name: 'italic', type: 'check', label: 'Italic',
         value: existing ? dirIsItalic(existing) : true },
     ],
-    presets: EXPRESSIVE_TEXT_PRESETS,
     onOk: (values) => {
       const text = String(values.text ?? '').trim();
       const italic = !!values.italic;
@@ -741,15 +736,83 @@ function buildVoiceStopList(model: ComposerModel): VoiceStop[] {
 function enterExprLayer(model: ComposerModel, instr: number, hooks: InputHooks): void {
   state.cursorMode = 'expr';
   state.exprInstrIdx = instr;
-  refreshExprCursor(model);
+  /* Snap to the nearest existing mark in the layer, biased by where we were in
+     the voice we just left, so arrowing into the layer lands on something
+     editable instead of moment 0. */
+  const staves = instrStaves(model, instr);
+  const anchor = momentAtVoiceAnchor(model);
+  state.exprCursor = rebuildCursor(model.getDoc(), anchor, staves);
+  state.exprCursor = snapToNearestElement(state.exprCursor, model.getDoc(), 'expr', anchor, staves);
   hooks.setStatus?.('Expression layer.', 'state');
 }
 
 function enterPedalLayer(model: ComposerModel, instr: number, hooks: InputHooks): void {
   state.cursorMode = 'pedal';
   state.pedalInstrIdx = instr;
-  refreshPedalCursor(model);
+  const staves = instrStaves(model, instr);
+  const anchor = momentAtVoiceAnchor(model);
+  state.pedalCursor = rebuildPedalCursor(model.getDoc(), anchor, staves);
+  state.pedalCursor = snapToNearestElement(state.pedalCursor, model.getDoc(), 'pedal', anchor, staves);
   hooks.setStatus?.('Pedal layer.', 'state');
+}
+
+function enterTempoLayer(model: ComposerModel, hooks: InputHooks): void {
+  state.cursorMode = 'tempo';
+  const anchor = momentAtVoiceAnchor(model);
+  state.tempoCursor = rebuildTempoCursor(model.getDoc(), anchor);
+  state.tempoCursor = snapToNearestElement(state.tempoCursor, model.getDoc(), 'tempo', anchor);
+  hooks.setStatus?.('Tempo layer.', 'state');
+}
+
+/** Instrument index owning global staff `staffN` (the one whose staff set
+ *  contains it), or 0 (single-piano default). */
+function instrIdxForStaff(model: ComposerModel, staffN: number): number {
+  for (const inst of model.instruments()) {
+    if (inst.staffNs.includes(staffN)) return inst.index;
+  }
+  return 0;
+}
+
+/** Select a clicked expression-family control (`<dynam>`/`<dir>`/`<hairpin>`/
+ *  `<pedal>`/`<tempo>`) by its xml:id: switch into the matching virtual layer
+ *  and snap that layer's cursor to the element's (start) moment, so the next
+ *  Backspace/Delete removes it. Returns false when the id resolves to nothing
+ *  selectable. Called from the score click handler. */
+export function selectLayerElementById(
+  model: ComposerModel,
+  id: string,
+  setStatus?: (msg: string, kind?: 'info' | 'error' | 'state' | 'action') => void,
+): boolean {
+  const doc = model.getDoc();
+  let el: Element | null = null;
+  for (const e of Array.from(doc.querySelectorAll('dynam, dir, hairpin, pedal, tempo'))) {
+    if (e.getAttribute('xml:id') === id) { el = e; break; }
+  }
+  const measureEl = el?.closest('measure') ?? null;
+  if (!el || !measureEl) return false;
+  const mi = model.measureIdxOf(measureEl);
+  if (mi < 0) return false;
+  const tstamp = parseFloat(el.getAttribute('tstamp') ?? '1');
+  const moment: Moment = { measureIdx: mi, tstamp: isFinite(tstamp) ? tstamp : 1 };
+  const ln = el.localName;
+  if (ln === 'tempo') {
+    state.cursorMode = 'tempo';
+    state.tempoCursor = rebuildTempoCursor(doc, moment);
+    setStatus?.('Tempo layer.', 'state');
+  } else if (ln === 'pedal') {
+    const instr = instrIdxForStaff(model, parseInt(el.getAttribute('staff') ?? '0', 10));
+    state.cursorMode = 'pedal';
+    state.pedalInstrIdx = instr;
+    state.pedalCursor = rebuildPedalCursor(doc, moment, instrStaves(model, instr));
+    setStatus?.('Pedal layer.', 'state');
+  } else {
+    const instr = instrIdxForStaff(model, parseInt(el.getAttribute('staff') ?? '0', 10));
+    state.cursorMode = 'expr';
+    state.exprInstrIdx = instr;
+    state.exprCursor = rebuildCursor(doc, moment, instrStaves(model, instr));
+    setStatus?.('Expression layer.', 'state');
+  }
+  return true;
 }
 
 function cycleVoice(model: ComposerModel, dir: 'up' | 'down', hooks: InputHooks): void {
@@ -772,9 +835,7 @@ function cycleVoice(model: ComposerModel, dir: 'up' | 'down', hooks: InputHooks)
   for (let i = curIdx + delta; i >= 0 && i < stops.length; i += delta) {
     const stop = stops[i];
     if (stop.kind === 'tempo') {
-      state.cursorMode = 'tempo';
-      refreshTempoCursor(model);
-      hooks.setStatus?.('Tempo layer.', 'state');
+      enterTempoLayer(model, hooks);
       return;
     }
     if (stop.kind === 'expr') {
@@ -2052,22 +2113,29 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       const pending = state.pendingSlur;
       state.pendingSlur = null;
       const startLoc = model.findElement(pending.startId);
-      if (!startLoc || startLoc.voice !== voice) {
+      if (!startLoc) {
         hooks.setStatus?.('Slur start note is gone; cancelled.', 'error');
         hooks.onStateChange();
         return;
       }
-      if (startLoc.index === ref.index) {
+      /* Same slot? (cross-voice notes at the same index are still distinct). */
+      if (startLoc.voice === voice && startLoc.index === ref.index) {
         hooks.setStatus?.('Slur needs two different notes.', 'error');
         hooks.onStateChange();
         return;
       }
-      const lowFirst = startLoc.index < ref.index;
-      const startId = lowFirst ? pending.startId : ref.id;
-      const endId = lowFirst ? ref.id : pending.startId;
+      /* Order endpoints by ABSOLUTE onset tick so startid precedes endid even
+         when the two notes live in different voices/staves (cross-staff slur).
+         data-voice = the (time-)first endpoint's voice. */
+      const startTick = model.getTickPositionAt(startLoc.voice, startLoc.index);
+      const endTick = model.getTickPositionAt(voice, ref.index);
+      const startFirst = startTick <= endTick;
+      const startId = startFirst ? pending.startId : ref.id;
+      const endId = startFirst ? ref.id : pending.startId;
+      const ownerVoice = startFirst ? startLoc.voice : voice;
       let added = false;
       withHistory('slur', () => {
-        added = addSlur(model.getDoc(), startId, endId, voice) !== null;
+        added = addSlur(model.getDoc(), startId, endId, ownerVoice) !== null;
         return added;
       });
       hooks.setStatus?.(added ? 'Slur added.' : 'Failed to add slur.', added ? 'action' : 'error');
@@ -2086,6 +2154,28 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     if (e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey &&
         (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
       e.preventDefault();
+      /* In an expr/pedal/tempo layer, Ctrl+←/→ jumps mark-to-mark (skipping
+         bare note onsets) instead of the no-op it used to be. */
+      if (state.cursorMode === 'expr' || state.cursorMode === 'pedal' || state.cursorMode === 'tempo') {
+        if (hooks.isPlaybackActive()) return;
+        const dir: -1 | 1 = e.key === 'ArrowRight' ? 1 : -1;
+        const mode = state.cursorMode;
+        const staves = mode === 'tempo' ? undefined
+          : instrStaves(model, mode === 'expr' ? state.exprInstrIdx : state.pedalInstrIdx);
+        const cursor = mode === 'expr' ? state.exprCursor
+          : mode === 'pedal' ? state.pedalCursor : state.tempoCursor;
+        const moved = stepToElement(cursor, model.getDoc(), mode, dir, staves);
+        if (moved === cursor) {
+          hooks.setStatus?.('No ' + (dir > 0 ? 'next' : 'previous') + ' mark in layer.', 'info');
+          return;
+        }
+        if (mode === 'expr') state.exprCursor = moved;
+        else if (mode === 'pedal') state.pedalCursor = moved;
+        else state.tempoCursor = moved;
+        hooks.onChange();
+        hooks.onStateChange();
+        return;
+      }
       if (state.cursorMode !== 'voice') return;
       /* During playback: Ctrl+←/→ SEEKS the audible head to the adjacent
          measure boundary — playback restarts from there. Doesn't exit
@@ -2603,8 +2693,12 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         }
         return;
       }
-      if (e.key === 'ArrowUp')   { e.preventDefault(); const bv = model.getCurrentVoice(), bm = state.cursorMode; state.chordInternalSel = null; cycleVoice(model, 'up', hooks);   cancelSlurIfVoiceChanged(model, bv, bm); hooks.onStateChange(); hooks.onChange(); return; }
-      if (e.key === 'ArrowDown') { e.preventDefault(); const bv = model.getCurrentVoice(), bm = state.cursorMode; state.chordInternalSel = null; cycleVoice(model, 'down', hooks); cancelSlurIfVoiceChanged(model, bv, bm); hooks.onStateChange(); hooks.onChange(); return; }
+      /* Arrow navigation (including UP/DOWN through the expr/pedal/tempo layers
+         to reach the other staff) PRESERVES a pending slur, so the user can
+         close a cross-staff slur after traversing layers. The pending slur is
+         only dropped on Escape, select-mode entry, or undo. */
+      if (e.key === 'ArrowUp')   { e.preventDefault(); state.chordInternalSel = null; cycleVoice(model, 'up', hooks);   hooks.onStateChange(); hooks.onChange(); return; }
+      if (e.key === 'ArrowDown') { e.preventDefault(); state.chordInternalSel = null; cycleVoice(model, 'down', hooks); hooks.onStateChange(); hooks.onChange(); return; }
       if (state.cursorMode === 'expr') {
         if (e.key === 'ArrowLeft')  { e.preventDefault(); state.exprCursor = step(state.exprCursor, -1); hooks.onStateChange(); hooks.onChange(); return; }
         if (e.key === 'ArrowRight') { e.preventDefault(); state.exprCursor = step(state.exprCursor, +1); hooks.onStateChange(); hooks.onChange(); return; }

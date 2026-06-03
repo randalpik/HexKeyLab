@@ -701,6 +701,19 @@ const HEJI = {
       m.insertChordAtCursor({ notes: [{ q: -5, r: 3, pname: 'a', accid: 's', oct: 3, midi: 58, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
     `,
   },
+
+  /* Phase 3a: key-signature accidentals are redrawn in BravuraText (matching
+     note accidentals), not left on Verovio's Leipzig <use> glyphs. E major =
+     4 sharps; every g.keyAccid must end up as a BravuraText <text> at the SMuFL
+     sharp codepoint (U+E262), with no surviving <use>. */
+  heji_keysig_bravura: {
+    setup: `
+      m.setKeySigAt(0, '4s', 'major');
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 1, r: 0, pname: 'c', accid: 's', oct: 4, midi: 61, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+    `,
+    visualBaseline: 'heji_keysig_bravura',
+  },
 };
 
 /* ── New: scroll-into-view ────────────────────────────────────────────── */
@@ -981,6 +994,119 @@ const KBD = {
   },
   kbd_statusAction_clearsOnNextKey: {
     setupKeys: [{ key: '<', shift: true }, 'Escape', 'ArrowRight'],
+  },
+
+  /* ── Phase 1: expr-layer nav + modal ergonomics ────────────────────────── */
+
+  /* 1a: arrowing INTO the expression layer snaps to the nearest existing mark,
+     not moment 0. Four quarter notes (onsets at beats 1-4); a single dynam at
+     beat 4 (committed via Shift+5 with the cursor anchored there). ArrowDown ×2
+     (V1→V2→expr) must land the expr cursor ON the beat-4 dynam, not beat 1. */
+  kbd_p1_enterExpr_snapsToNearestMark: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(4, 1);  /* anchor flat[3] = beat 4 */
+    `,
+    setupKeys: [
+      { key: '%', shift: true },   /* Shift+5 → "mf" dynam at beat 4 */
+      'ArrowDown',                 /* V1 → V2 */
+      'ArrowDown',                 /* V2 → expr (snaps to nearest mark) */
+    ],
+  },
+
+  /* 1b: Ctrl+→ in the expression layer jumps mark-to-mark, skipping bare note
+     onsets. Two dynams at beats 2 and 4; enter expr, Home to beat-1 onset,
+     Ctrl+→ should skip the beat-1/beat-3 onsets and land on the beat-2 dynam. */
+  kbd_p1_ctrlRight_jumpsToNextMark: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(4, 1);  /* anchor flat[3] = beat 4 */
+    `,
+    setupKeys: [
+      { key: '%', shift: true },   /* dynam at beat 4 */
+      'ArrowLeft', 'ArrowLeft',    /* cursor 4 → 2 (anchor flat[1] = beat 2) */
+      { key: '%', shift: true },   /* dynam at beat 2 */
+      'ArrowDown', 'ArrowDown',    /* V1 → V2 → expr */
+      'Home',                      /* → beat-1 onset moment */
+      { key: 'ArrowRight', ctrl: true },  /* skip beat-1 onset → beat-2 dynam */
+    ],
+  },
+
+  /* 1b (cont.): two Ctrl+→ from the beat-1 onset reach the LAST mark (beat 4);
+     a third Ctrl+→ is a no-op (no later mark). */
+  kbd_p1_ctrlRight_stopsAtLastMark: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(4, 1);
+    `,
+    setupKeys: [
+      { key: '%', shift: true },
+      'ArrowLeft', 'ArrowLeft',
+      { key: '%', shift: true },
+      'ArrowDown', 'ArrowDown',
+      'Home',
+      { key: 'ArrowRight', ctrl: true },  /* → beat 2 */
+      { key: 'ArrowRight', ctrl: true },  /* → beat 4 */
+      { key: 'ArrowRight', ctrl: true },  /* no-op (stays beat 4) */
+    ],
+  },
+
+  /* 1b (cont.): Ctrl+→ in the expr layer lands only on selectable ITEMS, never
+     on a bare hairpin END. A hairpin beat1→beat3 + a dynam at beat4: from the
+     hairpin start, Ctrl+→ skips the beat-3 hairpin end and lands on beat-4. */
+  kbd_p1_ctrlRight_skipsHairpinEnd: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      const doc = m.getDoc(); const MEI = 'http://www.music-encoding.org/ns/mei'; const meas = doc.querySelectorAll('measure')[0];
+      const hp = doc.createElementNS(MEI, 'hairpin'); hp.setAttribute('xml:id', 'h-skip'); hp.setAttribute('tstamp', '1'); hp.setAttribute('tstamp2', '0m+3'); hp.setAttribute('form', 'cres'); hp.setAttribute('place', 'between'); hp.setAttribute('staff', '1'); meas.appendChild(hp);
+      const d = doc.createElementNS(MEI, 'dynam'); d.setAttribute('xml:id', 'd-skip'); d.setAttribute('tstamp', '4'); d.setAttribute('place', 'between'); d.setAttribute('staff', '1'); d.textContent = 'f'; meas.appendChild(d);
+      m.setVoice(1); m.setCursor(1, 1);
+    `,
+    setupKeys: [
+      'ArrowDown', 'ArrowDown',           /* V1 → expr (snaps to beat-1 hairpin start) */
+      { key: 'ArrowRight', ctrl: true },  /* skip beat-3 hairpin END → beat-4 dynam */
+    ],
+  },
+
+  /* Enter while the CANCEL button is focused must NOT commit (it should dismiss
+     in a real browser). Open the clef modal, set the select to Alto, focus
+     Cancel, press Enter — no clef may be written. (Synthetic keydown doesn't
+     fire the native button click, so we just assert "no commit" and close.) */
+  kbd_p1_modalEnterOnCancelDoesNotCommit: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'C', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      dlg.querySelector('[data-field="clef"]').value = 'C|3||';
+      const cancel = dlg.querySelector('.te-cancel');
+      cancel.focus();
+      cancel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      dlg.close();  /* clean up (native click that would close doesn't fire under synthetic dispatch) */
+    `,
+  },
+
+  /* 1c: pressing Enter while a <select> inside a modal has focus finalizes the
+     form (the browser would otherwise just close the dropdown). Open the clef
+     modal, focus its select set to Alto (C/3), dispatch Enter on the select —
+     the modal must close AND the C/3 clef must be written. */
+  kbd_p1_modalEnterOnSelectSubmits: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'C', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      const sel = dlg.querySelector('[data-field="clef"]');
+      sel.value = 'C|3||';
+      sel.focus();
+      sel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    `,
   },
 };
 
@@ -1744,12 +1870,78 @@ const SLURS = {
     ],
   },
 
-  /* Start a slur, switch voices (ArrowDown) → pending slur cleared. */
-  slur_voiceSwitch_exits: {
+  /* Phase 3c: start a slur, switch voices (ArrowDown, voice→voice) → pending
+     slur is PRESERVED (so the user can close a slur whose endpoints span two
+     staves). Was previously cleared; the "voice reset" is lifted. */
+  slur_voiceSwitch_preservesPending: {
     setup: SLUR_3Q_V1,
     setupKeys: [
       { key: 'l', ctrl: true },
       { key: 'ArrowDown' },
+    ],
+  },
+
+  /* Phase 3c: a pending slur SURVIVES traversing into a non-voice layer
+     (ArrowUp → tempo layer), so the user can pass through the expr/pedal/tempo
+     layers to reach the other staff before closing a cross-staff slur. Only
+     Escape / select-mode / undo drop it. */
+  slur_layerStop_preservesPending: {
+    setup: SLUR_3Q_V1,
+    setupKeys: [
+      { key: 'l', ctrl: true },
+      { key: 'ArrowUp' },   /* V1 → tempo layer (mode changes, slur survives) */
+    ],
+  },
+
+  /* Phase 3c: a cross-staff slur — start on a V1 (treble) beat-1 note, arrow
+     down to V3 (bass), step onto its beat-2 note, close. One <slur> binds slots
+     on staff 1 and staff 2; it renders an arc. Endpoints are at DIFFERENT times
+     (Verovio rejects a startid/endid pair sharing a timestamp). */
+  slur_cross_staff: {
+    setup: `
+      m.setVoice(1); m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 1, pname: 'e', accid: '', oct: 4, midi: 64, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setVoice(3); m.setCursor(0, 3);
+      m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 2, midi: 45, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setVoice(1); m.setCursor(1, 1);
+    `,
+    setupKeys: [
+      { key: 'l', ctrl: true },     /* start on V1 beat-1 note */
+      { key: 'ArrowDown' },         /* V1 → V2 */
+      { key: 'ArrowDown' },         /* V2 → V3 (expr empty, skipped) */
+      { key: 'ArrowRight' },        /* wrapper → V3 beat-1 rest */
+      { key: 'ArrowRight' },        /* → onto V3 beat-2 note */
+      { key: 'l', ctrl: true },     /* close: cross-staff slur */
+    ],
+  },
+
+  /* Phase 3c (regression): the same cross-staff slur, but traversing a
+     NON-EMPTY expression layer en route (a dynam in M1 makes ↓ stop in expr
+     mode). The pending slur must survive that stop — the user's reported bug
+     was that traversing the expr layer dropped the slur. */
+  slur_cross_staff_through_expr: {
+    setup: `
+      m.setVoice(1); m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 1, pname: 'e', accid: '', oct: 4, midi: 64, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setVoice(3); m.setCursor(0, 3);
+      m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 2, midi: 45, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      const doc = m.getDoc(); const MEI = 'http://www.music-encoding.org/ns/mei';
+      const d = doc.createElementNS(MEI, 'dynam');
+      d.setAttribute('xml:id', 'd-expr-stop'); d.setAttribute('tstamp', '1');
+      d.setAttribute('place', 'between'); d.setAttribute('staff', '1'); d.textContent = 'mf';
+      doc.querySelectorAll('measure')[0].appendChild(d);
+      m.setVoice(1); m.setCursor(1, 1);
+    `,
+    setupKeys: [
+      { key: 'l', ctrl: true },     /* start on V1 beat-1 note */
+      { key: 'ArrowDown' },         /* V1 → V2 */
+      { key: 'ArrowDown' },         /* V2 → expr (NON-empty: stops here) */
+      { key: 'ArrowDown' },         /* expr → V3 (slur must survive the expr stop) */
+      { key: 'ArrowRight' },        /* wrapper → V3 beat-1 rest */
+      { key: 'ArrowRight' },        /* → onto V3 beat-2 note */
+      { key: 'l', ctrl: true },     /* close: cross-staff slur */
     ],
   },
 
@@ -2709,6 +2901,22 @@ const PHASE1 = {
     `,
   },
 
+  /* Italic UNCHECKED must render non-italic. <dir> is italic by default in
+     Verovio, so "off" must explicitly store fontstyle=normal (plain text would
+     still render italic). */
+  phase2_exprtext_italicOff: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'E', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      dlg.querySelector('[data-field="text"]').value = 'marcato';
+      dlg.querySelector('[data-field="italic"]').checked = false;
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+    `,
+  },
+
   /* Re-open on the existing <dir> and change the text → still ONE <dir>, new text. */
   phase2_exprtext_edit: {
     setup: `
@@ -2761,6 +2969,46 @@ const PHASE1 = {
       'ArrowDown',   /* V1 → V2 */
       'ArrowDown',   /* V2 → expr (measure has the dir) */
       'Backspace',   /* delete the <dir> at the cursor moment */
+    ],
+  },
+
+  /* Hairpin placement: a hairpin starting on a measure's DOWNBEAT (tstamp=1)
+     aligns to the first note's glyph, NOT the bar line — Verovio anchors
+     @tstamp to the note. Guards against re-introducing a tstamp "inset" hack.
+     M1 = 4 quarters (full), M2 = 2 quarters; hairpin over M2 beats 1→2. */
+  hairpin_startAlignsToNote: {
+    setup: `
+      const A = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 });
+      m.appendMeasure();
+      m.setCursor(m.getVoiceLength(1), 1);
+      for (let i = 0; i < 2; i++) m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 });
+      const doc = m.getDoc(); const MEI = 'http://www.music-encoding.org/ns/mei';
+      const ms = doc.querySelectorAll('measure'); const m2 = ms[ms.length - 1];
+      const hp = doc.createElementNS(MEI, 'hairpin');
+      hp.setAttribute('xml:id', 'h-align'); hp.setAttribute('tstamp', '1'); hp.setAttribute('tstamp2', '0m+2');
+      hp.setAttribute('form', 'cres'); hp.setAttribute('place', 'below'); hp.setAttribute('staff', '1');
+      m2.appendChild(hp);
+    `,
+  },
+
+  /* Real voice-mode flow: marking a hairpin with the cursor on the FIRST note
+     of a measure must anchor to THAT measure's downbeat ({measure 1, tstamp 1}),
+     not the previous measure's end ({measure 0, tstamp count+1} — which Verovio
+     would draw on the bar line). 6 quarters → M1 full + M2 two notes; cursor on
+     M2's first note (flat 5), "<" … →  … "<". */
+  hairpin_firstNoteOfMeasure_anchorsToMeasure: {
+    setup: `
+      const A = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
+      m.setCursor(0, 1);
+      for (let i = 0; i < 6; i++) m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 });
+      m.setCursor(5, 1);  /* M2's first note */
+    `,
+    setupKeys: [
+      { key: '<', shift: true },   /* crescendo start at M2 beat 1 */
+      { key: 'ArrowRight' },       /* → M2's second note */
+      { key: '<', shift: true },   /* close */
     ],
   },
 
@@ -2820,6 +3068,26 @@ const PHASE1 = {
       'ArrowRight',   /* beat 1 → beat 2 (the tempo's moment) */
       'Backspace',    /* delete the beat-2 <tempo> */
     ],
+  },
+
+  /* Tempo modal ergonomics: opens focused on Kind (not Text); the ♩= / beat-note
+     / show-mm rows are visible for an instant marking but HIDDEN for a gradual
+     kind. Captures state to a window global, then closes the modal so it doesn't
+     disturb later invariants. */
+  phase2_tempo_modal_kindShapesForm: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'T', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      const vis = (f) => { const r = dlg.querySelector('[data-field="' + f + '"]')?.closest('.row'); return r ? (r.style.display === 'none' ? 'hidden' : 'shown') : 'missing'; };
+      const snap = () => ({ bpm: vis('bpm'), unit: vis('unit'), showMm: vis('showMm'), text: vis('text'), kind: vis('kind') });
+      window.__tempoProbe = { focused: document.activeElement?.getAttribute('data-field'), instant: snap() };
+      const sel = dlg.querySelector('[data-field="kind"]'); sel.value = 'rit'; sel.dispatchEvent(new Event('change', { bubbles: true }));
+      window.__tempoProbe.rit = snap();
+      dlg.close();
+    `,
   },
 
   /* Metronome shown: instant marking with "Show ♩ = N" checked → the glyph +
@@ -3164,6 +3432,36 @@ const PHASE1 = {
     `,
   },
 
+  /* Setting a clef back to the INHERITED clef removes the override rather than
+     stacking a redundant clef (diff-aware, like setMeterAt/setKeySigAt). Empty
+     V1 grand staff: Bass → one clef; Treble (= staffDef default) → no clefs;
+     Alto (≠ default) → one clef again. */
+  phase4_clef_setBackToInherited_removes: {
+    setup: `
+      m.setVoice(1); m.setCursor(0, 1);
+      m.setClefAt('F', '4', null, null);   /* bass */
+      m.setClefAt('G', '2', null, null);   /* back to inherited treble → remove */
+      r();
+    `,
+  },
+
+  /* Clef inheritance carries forward across measures: a Bass clef in M1 makes
+     M2 inherit Bass, so setting Bass again in M2 is redundant (no new clef) and
+     setting Treble in M2 is a real change. Guards the "staff 1 always treated as
+     treble after an earlier clef change" bug. M1 4 quarters + M2 4 quarters. */
+  phase4_clef_inheritsAcrossMeasures: {
+    setup: `
+      const A = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
+      m.setVoice(1); m.setCursor(0, 1);
+      for (let i = 0; i < 8; i++) m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 });
+      m.setCursor(0, 1);
+      m.setClefAt('F', '4', null, null);          /* bass at M1 start */
+      m.setCursor(m.getMeasureStartCursor(1, 1), 1); /* → M2 start */
+      m.setClefAt('F', '4', null, null);          /* Bass again = redundant (inherited) */
+      r();
+    `,
+  },
+
   /* Phase 4.3: a mid-measure clef change. Fill M1 with 4 quarters, park the
      cursor in the middle, open Ctrl+Shift+C, choose Bass. Asserts an inline
      <clef> sits BETWEEN notes in the layer (mid-measure). */
@@ -3416,6 +3714,134 @@ const PHASE1 = {
   },
 };
 
+/* ── Phase 2: mouse (click-to-position) ──────────────────────────────────── */
+//
+// Click fixtures drive a real MouseEvent at computed on-screen coordinates in
+// the setup snippet (no setupKeys mouse support). The click handler lives on
+// #score and uses document.elementFromPoint, so coordinates must be derived
+// from rendered glyph rects after r().
+
+const A4 = `{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }`;
+
+const CLICK = {
+  /* Clicking the empty right portion of a staff (past the last note) snaps the
+     cursor to the "after last note" stop — flat[0] is the measure wrapper, so
+     two notes sit at indices 1,2 and "after note 2" is cursor 3. */
+  click_emptyStaff_snapsAfterLastNote: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 2; i++) m.insertChordAtCursor({ notes: [${A4}], duration: '4', dots: 0 });
+      m.setCursor(0, 1);
+      r();
+      const notes = document.querySelectorAll('#score svg g.note');
+      const last = notes[notes.length - 1].getBoundingClientRect();
+      document.getElementById('score').dispatchEvent(new MouseEvent('click',
+        { clientX: last.right + 14, clientY: last.top + last.height / 2, button: 0, bubbles: true }));
+    `,
+  },
+
+  /* Clicking left of the first note (in the clef/sig region) snaps to the
+     "before first note" stop — cursor 1. */
+  click_emptyStaff_snapsBeforeFirstNote: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 2; i++) m.insertChordAtCursor({ notes: [${A4}], duration: '4', dots: 0 });
+      m.setCursor(2, 1);
+      r();
+      const notes = document.querySelectorAll('#score svg g.note');
+      const first = notes[0].getBoundingClientRect();
+      document.getElementById('score').dispatchEvent(new MouseEvent('click',
+        { clientX: first.left - 20, clientY: first.top + first.height / 2, button: 0, bubbles: true }));
+    `,
+  },
+
+  /* Clicking a fully-empty measure's staff places the cursor at that measure's
+     start stop (was a no-op). Empty single-measure doc; park on voice 3, then
+     click M1's (on-screen, leftmost) treble staff → cursor jumps to voice 1 at
+     the M1 start stop (cursor 0). */
+  click_emptyMeasure_snapsToMeasureStart: {
+    setup: `
+      m.setVoice(3); m.setCursor(0, 3);
+      r();
+      const m1t = document.querySelector('#score svg g.staff');  /* M1 treble */
+      const rect = m1t.getBoundingClientRect();
+      document.getElementById('score').dispatchEvent(new MouseEvent('click',
+        { clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, button: 0, bubbles: true }));
+    `,
+  },
+
+  /* Clicking in the gap BETWEEN two notes snaps to the LEFT note (cursor to its
+     right, where the INS cursor renders) — even in the half nearer the right
+     note. 4 quarters; click 3/4 of the way through the n1→n2 gap (nearer n2);
+     cursor lands at 2 = right of n1, not 3. */
+  click_betweenNotes_snapsToLeftNote: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [${A4}], duration: '4', dots: 0 });
+      r();
+      const N = [...document.querySelectorAll('#score svg g.note')].map((g) => g.getBoundingClientRect());
+      const x = N[0].right + (N[1].left - N[0].right) * 0.75;  /* gap, nearer n2 */
+      document.getElementById('score').dispatchEvent(new MouseEvent('click',
+        { clientX: x, clientY: N[0].top + N[0].height / 2, button: 0, bubbles: true }));
+    `,
+  },
+
+  /* A click in WHITESPACE far from any note still resolves (no no-op) — the
+     global nearest-target search picks the closest stop. Parked on V1; click
+     just below the (empty) bass staff → cursor jumps to a bass voice's
+     measure-start stop. */
+  click_whitespace_resolvesToNearest: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [${A4}], duration: '4', dots: 0 });
+      m.setVoice(1); m.setCursor(1, 1);
+      r();
+      const staves = [...document.querySelectorAll('#score svg g.staff')];
+      const bass = staves[1].getBoundingClientRect();  /* M1 bass (empty) */
+      document.getElementById('score').dispatchEvent(new MouseEvent('click',
+        { clientX: bass.left + bass.width / 2, clientY: bass.bottom + 15, button: 0, bubbles: true }));
+    `,
+  },
+
+  /* Clicking a rendered <dynam> selects it in the expression layer (switches
+     cursorMode to expr, snaps to its moment); a follow-up Backspace deletes it
+     — the "easy delete" path the backlog asks for. */
+  click_dynam_selectsExpr_thenDeletes: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [${A4}], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '%', shiftKey: true, bubbles: true }));
+      r();
+      const dyn = document.querySelector('#score svg g.dynam');
+      const rect = dyn.getBoundingClientRect();
+      document.getElementById('score').dispatchEvent(new MouseEvent('click',
+        { clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, button: 0, bubbles: true }));
+    `,
+    setupKeys: ['Backspace'],
+  },
+
+  /* Clicking a rendered <tempo> selects it in the tempo layer. */
+  click_tempo_selectsTempoLayer: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [${A4}], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'T', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      dlg.querySelector('[data-field="kind"]').value = 'instant';
+      dlg.querySelector('[data-field="bpm"]').value = '100';
+      dlg.querySelector('[data-field="text"]').value = 'Allegro';
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+      r();
+      const tg = document.querySelector('#score svg g.tempo');
+      const rect = tg.getBoundingClientRect();
+      document.getElementById('score').dispatchEvent(new MouseEvent('click',
+        { clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, button: 0, bubbles: true }));
+    `,
+  },
+};
+
 export const FIXTURES = {
   ...mapTier(EXISTING, 'fast'),
   ...mapTier(CURSOR_CONVENTION, 'fast'),
@@ -3439,6 +3865,7 @@ export const FIXTURES = {
   ...mapKbdTier(HELP_MODAL, 'full'),
   ...mapKbdTier(SLURS, 'full'),
   ...mapKbdTier(PHASE1, 'full'),
+  ...mapKbdTier(CLICK, 'full'),
 };
 
 /** Fixture-specific assertions. Map fixture name → list of {name, expr}.
@@ -3564,6 +3991,24 @@ export const FIXTURE_ASSERTIONS = {
         const midClefLeft = Math.max(...clefs.map(c => c.getBoundingClientRect().left));
         if (!(barLeft < midClefLeft)) return { ok: false, detail: 'cursor left=' + Math.round(barLeft) + ' not < mid-clef left=' + Math.round(midClefLeft) };
         return { ok: true };
+      })()` },
+  ],
+  phase4_clef_setBackToInherited_removes: [
+    { name: 'clef set back to inherited treble removes the override (zero <clef>)',
+      expr: `(() => {
+        const n = window.__hkl_composer.model.getDoc().querySelectorAll('clef').length;
+        return n === 0 ? { ok: true } : { ok: false, detail: 'clef count=' + n + ' (expected 0 after set-back)' };
+      })()` },
+  ],
+  phase4_clef_inheritsAcrossMeasures: [
+    { name: 'M2 inherits M1 Bass: clefAtCursor=F/4 and re-setting Bass in M2 is redundant (one clef total)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const n = m.getDoc().querySelectorAll('clef').length;
+        const c = m.clefAtCursor();   /* cursor is at M2 start */
+        return n === 1 && c.shape === 'F' && c.line === '4'
+          ? { ok: true }
+          : { ok: false, detail: 'clefCount=' + n + ' clefAtCursor=' + c.shape + '/' + c.line + ' (expected 1, F/4)' };
       })()` },
   ],
   phase4_clef_midmeasure: [
@@ -3934,13 +4379,58 @@ export const FIXTURE_ASSERTIONS = {
         return (n === 0 && p === null) ? { ok: true } : { ok: false, detail: 'slurs=' + n + ' pending=' + JSON.stringify(p) };
       })()` },
   ],
-  slur_voiceSwitch_exits: [
-    { name: 'voice switch clears pending slur; none created',
+  slur_voiceSwitch_preservesPending: [
+    { name: 'voice→voice switch PRESERVES the pending slur (cross-staff enabled)',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        const v = window.__hkl_composer.model.getCurrentVoice();
+        return (s.cursorMode === 'voice' && v === 2 && s.pendingSlur !== null)
+          ? { ok: true }
+          : { ok: false, detail: 'voice=' + v + ' mode=' + s.cursorMode + ' pending=' + JSON.stringify(s.pendingSlur) };
+      })()` },
+  ],
+  slur_layerStop_preservesPending: [
+    { name: 'pending slur survives entering the tempo layer',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        return (s.cursorMode === 'tempo' && s.pendingSlur !== null)
+          ? { ok: true }
+          : { ok: false, detail: 'mode=' + s.cursorMode + ' pending=' + JSON.stringify(s.pendingSlur) };
+      })()` },
+  ],
+  slur_cross_staff: [
+    { name: 'one slur binds a staff-1 slot to a staff-2 slot and renders',
       expr: `(() => {
         const m = window.__hkl_composer.model;
-        const n = m.getDoc().querySelectorAll('slur').length;
-        const p = window.__hkl_composer.inputState().pendingSlur;
-        return (n === 0 && p === null) ? { ok: true } : { ok: false, detail: 'slurs=' + n + ' pending=' + JSON.stringify(p) };
+        const doc = m.getDoc();
+        const slurs = doc.querySelectorAll('slur');
+        if (slurs.length !== 1) return { ok: false, detail: 'slur count=' + slurs.length };
+        const slur = slurs[0];
+        const strip = (v) => v && v.charAt(0) === '#' ? v.slice(1) : v;
+        const find = (id) => [...doc.querySelectorAll('note,chord')].find((n) => n.getAttribute('xml:id') === id);
+        const se = find(strip(slur.getAttribute('startid')));
+        const ee = find(strip(slur.getAttribute('endid')));
+        const ss = se && se.closest('staff') && se.closest('staff').getAttribute('n');
+        const es = ee && ee.closest('staff') && ee.closest('staff').getAttribute('n');
+        if (ss === es) return { ok: false, detail: 'endpoints on same staff ' + ss + ' (expected cross-staff)' };
+        const rendered = !!document.querySelector('#score svg g.slur');
+        return rendered ? { ok: true } : { ok: false, detail: 'slur not rendered (staffs ' + ss + '/' + es + ')' };
+      })()` },
+  ],
+  slur_cross_staff_through_expr: [
+    { name: 'cross-staff slur closes after traversing a non-empty expr layer',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const doc = m.getDoc();
+        const slurs = doc.querySelectorAll('slur');
+        if (slurs.length !== 1) return { ok: false, detail: 'slur count=' + slurs.length };
+        const strip = (v) => v && v.charAt(0) === '#' ? v.slice(1) : v;
+        const find = (id) => [...doc.querySelectorAll('note,chord')].find((n) => n.getAttribute('xml:id') === id);
+        const se = find(strip(slurs[0].getAttribute('startid')));
+        const ee = find(strip(slurs[0].getAttribute('endid')));
+        const ss = se && se.closest('staff') && se.closest('staff').getAttribute('n');
+        const es = ee && ee.closest('staff') && ee.closest('staff').getAttribute('n');
+        return ss !== es ? { ok: true } : { ok: false, detail: 'endpoints same staff ' + ss };
       })()` },
   ],
   slur_esc_cancels: [
@@ -4628,6 +5118,207 @@ export const FIXTURE_ASSERTIONS = {
         return s.cursorMode === 'expr'
           ? { ok: true }
           : { ok: false, detail: 'cursorMode=' + s.cursorMode + ' (expected expr)' };
+      })()` },
+  ],
+  kbd_p1_enterExpr_snapsToNearestMark: [
+    { name: 'entering expr layer lands on the beat-4 dynam, not moment 0',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        if (s.cursorMode !== 'expr') return { ok: false, detail: 'cursorMode=' + s.cursorMode };
+        const cur = s.exprCursor.moments[s.exprCursor.index];
+        return cur && cur.measureIdx === 0 && Math.abs(cur.tstamp - 4) < 1e-6
+          ? { ok: true }
+          : { ok: false, detail: 'moment=' + JSON.stringify(cur) };
+      })()` },
+  ],
+  kbd_p1_ctrlRight_jumpsToNextMark: [
+    { name: 'Ctrl+Right from beat-1 onset jumps to the beat-2 dynam',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        if (s.cursorMode !== 'expr') return { ok: false, detail: 'cursorMode=' + s.cursorMode };
+        const cur = s.exprCursor.moments[s.exprCursor.index];
+        return cur && cur.measureIdx === 0 && Math.abs(cur.tstamp - 2) < 1e-6
+          ? { ok: true }
+          : { ok: false, detail: 'moment=' + JSON.stringify(cur) };
+      })()` },
+  ],
+  kbd_p1_ctrlRight_stopsAtLastMark: [
+    { name: 'Ctrl+Right ×3 stops at the last (beat-4) dynam',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        if (s.cursorMode !== 'expr') return { ok: false, detail: 'cursorMode=' + s.cursorMode };
+        const cur = s.exprCursor.moments[s.exprCursor.index];
+        return cur && cur.measureIdx === 0 && Math.abs(cur.tstamp - 4) < 1e-6
+          ? { ok: true }
+          : { ok: false, detail: 'moment=' + JSON.stringify(cur) };
+      })()` },
+  ],
+  kbd_p1_ctrlRight_skipsHairpinEnd: [
+    { name: 'Ctrl+Right skips the hairpin END (beat 3) and lands on the beat-4 dynam',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        if (s.cursorMode !== 'expr') return { ok: false, detail: 'cursorMode=' + s.cursorMode };
+        const cur = s.exprCursor.moments[s.exprCursor.index];
+        return cur && cur.measureIdx === 0 && Math.abs(cur.tstamp - 4) < 1e-6
+          ? { ok: true }
+          : { ok: false, detail: 'moment=' + JSON.stringify(cur) + ' (expected beat 4, not beat 3)' };
+      })()` },
+  ],
+  kbd_p1_modalEnterOnCancelDoesNotCommit: [
+    { name: 'Enter while Cancel is focused commits nothing (no clef written)',
+      expr: `(() => {
+        const n = window.__hkl_composer.model.getDoc().querySelectorAll('clef').length;
+        return n === 0 ? { ok: true } : { ok: false, detail: 'clef count=' + n + ' (Enter on Cancel should not commit)' };
+      })()` },
+  ],
+  kbd_p1_modalEnterOnSelectSubmits: [
+    { name: 'Enter on focused <select> submitted the clef modal (C/3 written, modal closed)',
+      expr: `(() => {
+        const dlg = document.getElementById('textEntryDialog');
+        if (dlg && dlg.open) return { ok: false, detail: 'modal still open (Enter did not submit)' };
+        const clef = window.__hkl_composer.model.getDoc().querySelector('clef[shape="C"]');
+        return clef && clef.getAttribute('line') === '3'
+          ? { ok: true }
+          : { ok: false, detail: 'no C/3 clef: ' + (clef ? clef.outerHTML : 'none') };
+      })()` },
+  ],
+  click_emptyStaff_snapsAfterLastNote: [
+    { name: 'click past last note → cursor 2 (selects note 2; INS cursor at its right)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const v = m.getCurrentVoice(), c = m.getCursor(1);
+        return v === 1 && c === 2
+          ? { ok: true }
+          : { ok: false, detail: 'voice=' + v + ' cursor=' + c + ' (expected voice 1, cursor 2)' };
+      })()` },
+  ],
+  click_emptyStaff_snapsBeforeFirstNote: [
+    { name: 'click left of first note → cursor 0 (before note 1 = measure start), voice 1',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const v = m.getCurrentVoice(), c = m.getCursor(1);
+        return v === 1 && c === 0
+          ? { ok: true }
+          : { ok: false, detail: 'voice=' + v + ' cursor=' + c + ' (expected voice 1, cursor 0)' };
+      })()` },
+  ],
+  click_emptyMeasure_snapsToMeasureStart: [
+    { name: 'click empty M1 treble (parked on V3) → cursor jumps to V1 M1 start',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const v = m.getCurrentVoice(), c = m.getCursor(v);
+        return v === 1 && c === 0
+          ? { ok: true }
+          : { ok: false, detail: 'voice=' + v + ' cursor=' + c + ' (expected voice 1, cursor 0)' };
+      })()` },
+  ],
+  click_betweenNotes_snapsToLeftNote: [
+    { name: 'click in n1→n2 gap (nearer n2) lands cursor 1 = selects n1 (INS cursor at its right)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const v = m.getCurrentVoice(), c = m.getCursor(1);
+        return v === 1 && c === 1
+          ? { ok: true }
+          : { ok: false, detail: 'voice=' + v + ' cursor=' + c + ' (expected voice 1, cursor 1)' };
+      })()` },
+  ],
+  click_whitespace_resolvesToNearest: [
+    { name: 'whitespace click below bass staff resolves to a bass voice (no no-op)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const s = window.__hkl_composer.inputState();
+        const v = m.getCurrentVoice();
+        return s.cursorMode === 'voice' && (v === 3 || v === 4)
+          ? { ok: true }
+          : { ok: false, detail: 'voice=' + v + ' mode=' + s.cursorMode + ' (expected a bass voice 3/4)' };
+      })()` },
+  ],
+  click_dynam_selectsExpr_thenDeletes: [
+    { name: 'clicking the dynam entered expr mode; Backspace deleted it',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const s = window.__hkl_composer.inputState();
+        const n = m.getDoc().querySelectorAll('dynam').length;
+        return s.cursorMode === 'expr' && n === 0
+          ? { ok: true }
+          : { ok: false, detail: 'cursorMode=' + s.cursorMode + ' dynamCount=' + n };
+      })()` },
+  ],
+  click_tempo_selectsTempoLayer: [
+    { name: 'clicking the tempo mark entered tempo mode at its moment',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        if (s.cursorMode !== 'tempo') return { ok: false, detail: 'cursorMode=' + s.cursorMode };
+        const cur = s.tempoCursor.moments[s.tempoCursor.index];
+        return cur && cur.measureIdx === 0 && Math.abs(cur.tstamp - 1) < 1e-6
+          ? { ok: true }
+          : { ok: false, detail: 'moment=' + JSON.stringify(cur) };
+      })()` },
+  ],
+  phase2_tempo_modal_kindShapesForm: [
+    { name: 'modal focuses Kind; ♩=/beat-note/show-mm visible for instant, hidden for gradual',
+      expr: `(() => {
+        const p = window.__tempoProbe;
+        if (!p) return { ok: false, detail: 'no probe' };
+        if (p.focused !== 'kind') return { ok: false, detail: 'focused=' + p.focused + ' (expected kind)' };
+        const i = p.instant, r = p.rit;
+        const instantOk = i.bpm === 'shown' && i.unit === 'shown' && i.showMm === 'shown' && i.kind === 'shown' && i.text === 'shown';
+        const ritOk = r.bpm === 'hidden' && r.unit === 'hidden' && r.showMm === 'hidden' && r.kind === 'shown' && r.text === 'shown';
+        return instantOk && ritOk
+          ? { ok: true }
+          : { ok: false, detail: 'instant=' + JSON.stringify(i) + ' rit=' + JSON.stringify(r) };
+      })()` },
+  ],
+  hairpin_firstNoteOfMeasure_anchorsToMeasure: [
+    { name: 'hairpin on M2 first note stores in measure 1 at tstamp 1 (not measure 0, count+1)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const doc = m.getDoc();
+        const hp = doc.querySelector('hairpin');
+        if (!hp) return { ok: false, detail: 'no hairpin created' };
+        const mi = [...doc.querySelectorAll('measure')].indexOf(hp.closest('measure'));
+        const ts = hp.getAttribute('tstamp');
+        return mi === 1 && ts === '1'
+          ? { ok: true }
+          : { ok: false, detail: 'measureIdx=' + mi + ' tstamp=' + ts + ' (expected measure 1, tstamp 1)' };
+      })()` },
+  ],
+  hairpin_startAlignsToNote: [
+    { name: 'hairpin start aligns to the M2 downbeat note glyph, not the bar line; @tstamp left at 1',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const doc = m.getDoc();
+        const ms = doc.querySelectorAll('measure'); const m2 = ms[ms.length - 1];
+        const note0Id = m2.querySelector('note').getAttribute('xml:id');
+        const gById = (id) => [...document.querySelectorAll('#score svg g')].find((g) => g.getAttribute('id') === id);
+        const noteG = gById(note0Id);
+        const hpG = document.querySelector('#score svg g.hairpin');
+        const m2g = [...document.querySelectorAll('#score svg g.measure')].pop();
+        if (!noteG || !hpG || !m2g) return { ok: false, detail: 'missing rendered note/hairpin/measure' };
+        const noteLeft = noteG.getBoundingClientRect().left;
+        const hpLeft = hpG.getBoundingClientRect().left;
+        const barLeft = m2g.getBoundingClientRect().left;
+        const ts = m.serialize({ hejiEnabled: false }).match(/<hairpin[^>]*\\btstamp="([^"]*)"/);
+        const alignedToNote = Math.abs(hpLeft - noteLeft) < 12;
+        const offBarline = hpLeft > barLeft + 5;
+        const tstampKept = ts && ts[1] === '1';
+        return alignedToNote && offBarline && tstampKept
+          ? { ok: true }
+          : { ok: false, detail: 'hpLeft=' + Math.round(hpLeft) + ' noteLeft=' + Math.round(noteLeft) + ' barLeft=' + Math.round(barLeft) + ' tstamp=' + (ts ? ts[1] : 'none') };
+      })()` },
+  ],
+  heji_keysig_bravura: [
+    { name: 'key-sig accidentals are BravuraText <text> at U+E262, no <use> left',
+      expr: `(() => {
+        const accs = [...document.querySelectorAll('#score svg g.keyAccid')];
+        if (accs.length < 4) return { ok: false, detail: 'keyAccid count=' + accs.length + ' (expected ≥4 for E major)' };
+        for (const a of accs) {
+          if (a.querySelector('use')) return { ok: false, detail: 'a keyAccid still has a <use>' };
+          const t = a.querySelector('text');
+          if (!t || t.getAttribute('font-family') !== 'BravuraText') return { ok: false, detail: 'keyAccid not BravuraText text' };
+          if (t.textContent.codePointAt(0) !== 0xE262) return { ok: false, detail: 'codepoint=' + t.textContent.codePointAt(0).toString(16) };
+        }
+        return { ok: true };
       })()` },
   ],
   kbd_modeToggle: [
@@ -6844,6 +7535,19 @@ export const FIXTURE_ASSERTIONS = {
         return n.length >= 1 ? { ok: true } : { ok: false, detail: 'g.dir count=' + n.length };
       })()` },
   ],
+  phase2_exprtext_italicOff: [
+    { name: 'italic-off <dir> stores fontstyle=normal (renders non-italic, not Verovio default italic)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const dir = m.getDoc().querySelector('measure > dir');
+        if (!dir) return { ok: false, detail: 'no dir' };
+        const rend = dir.querySelector('rend');
+        if (!rend) return { ok: false, detail: 'no rend (plain text would render italic)' };
+        return rend.getAttribute('fontstyle') === 'normal' && !dir.querySelector('rend[fontstyle="italic"]')
+          ? { ok: true }
+          : { ok: false, detail: 'fontstyle=' + rend.getAttribute('fontstyle') };
+      })()` },
+  ],
   phase2_exprtext_edit: [
     { name: 'still ONE <dir>, text updated to "arco" (not italic this time)',
       expr: `(() => {
@@ -6907,6 +7611,15 @@ export const FIXTURE_ASSERTIONS = {
         const t = parseFloat(ts[0].getAttribute('tstamp') ?? '0');
         return (txt.includes('molto') && Math.abs(t - 2) < 0.01)
           ? { ok: true } : { ok: false, detail: 'text=' + txt + ' tstamp=' + t };
+      })()` },
+    { name: 'gradual tempo text is italic AND non-bold (rend fontstyle=italic + fontweight=normal)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const rend = m.getDoc().querySelector('tempo[data-hkl-gradual="rit"] rend');
+        if (!rend) return { ok: false, detail: 'no <rend> in gradual tempo' };
+        return rend.getAttribute('fontstyle') === 'italic' && rend.getAttribute('fontweight') === 'normal'
+          ? { ok: true }
+          : { ok: false, detail: 'fontstyle=' + rend.getAttribute('fontstyle') + ' fontweight=' + rend.getAttribute('fontweight') };
       })()` },
     { name: '3rd quarter onset slowed past the constant-tempo 1000ms by the rit',
       expr: `(() => {
@@ -7076,12 +7789,13 @@ export const FIXTURE_ASSERTIONS = {
 
   /* ── Phase 1: click-to-position ──────────────────────────────────────── */
   phase1_click_movesCursorToNote: [
-    { name: 'cursor lands at flat-index of the C# note (the second rendered note)',
+    { name: 'cursor lands at the clicked C# note (cursor = its flat index; INS draws at its right)',
       expr: `(() => {
         const m = window.__hkl_composer.model;
         const flat = m.flatChildren(1);
         /* flat[0] is the measure wrapper; notes occupy flat[1..3]. The 2nd
-           rendered note = C# = flat[2]. */
+           rendered note = C# = flat[2]. Clicking it selects it: cursor = its
+           flat index (the INS cursor draws at the note's right edge). */
         const csharp = flat.find(e => e.localName === 'note' && e.getAttribute('pname') === 'c');
         const wantIdx = flat.indexOf(csharp);
         const cur = m.getCursor(1);
@@ -7103,7 +7817,7 @@ export const FIXTURE_ASSERTIONS = {
         const v = m.getCurrentVoice();
         return v === 3 ? { ok: true } : { ok: false, detail: 'voice=' + v };
       })()` },
-    { name: 'cursor at flat-index of the V_3 chord (= 1, past the wrapper at flat[0])',
+    { name: 'cursor at the V_3 chord (cursor = its flat index; INS draws at its right)',
       expr: `(() => {
         const m = window.__hkl_composer.model;
         const flat = m.flatChildren(3);

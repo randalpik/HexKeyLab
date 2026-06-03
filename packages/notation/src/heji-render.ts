@@ -245,6 +245,16 @@ export function injectHejiGlyphs(root: ParentNode): void {
       }
     }
   }
+  /* Key-signature accidentals (g.keyAccid > use) are plain SMuFL sharps/flats
+     with no HEJI/paren complications. Swap them to BravuraText exactly like
+     note accidentals so the whole score's accidentals are uniformly Bravura
+     (otherwise the key sig stays on Verovio's Leipzig and reads inconsistent). */
+  for (const g of Array.from(root.querySelectorAll('g.keyAccid'))) {
+    if (g.getAttribute('data-hkl-injected')) continue;
+    const use = g.querySelector('use');
+    if (use) plain.push({ g, use });
+  }
+
   if (byNote.size === 0 && plain.length === 0) return;
 
   const svg = (root as Element).querySelector?.('svg') ?? (root as Element).closest?.('svg') ?? root;

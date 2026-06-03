@@ -15,7 +15,7 @@ import type { HklEvent, ResolvedNote, FootprintCell } from '@hkl/bridge/protocol
 import { ComposerModel, type Voice } from './model/index.js';
 import { renderer, ZOOM_PRESETS, type ZoomLevel } from './render/render.js';
 import { cursor } from './cursor/cursor.js';
-import { initInput, getInputState, setViewInstr, installSCTransposeImpl, clearChordInternalSel } from './input.js';
+import { initInput, getInputState, setViewInstr, installSCTransposeImpl, clearChordInternalSel, selectLayerElementById } from './input.js';
 import { scTransposeChordNote } from './notation/scTranspose.js';
 import { HistoryManager } from './history.js';
 import type { CursorUpdateOpts } from './cursor/cursor.js';
@@ -774,6 +774,7 @@ async function bootRenderer(): Promise<void> {
     },
     setStatus: (msg, kind) => setStatus(msg, kind),
     isPlaybackActive: () => isPlaying,
+    onSelectLayerElement: (id) => selectLayerElementById(model, id, setStatus),
   });
   console.log('Verovio ' + renderer.getVersion());
   resetStatus();

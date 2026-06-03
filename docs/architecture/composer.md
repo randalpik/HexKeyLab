@@ -4,6 +4,27 @@ Keyboard-driven, Verovio-backed score editor that uses HKL as its input device. 
 
 Composer holds the MEI/score state; HKL holds the audio/MIDI/tuning state. They run as separate browser tabs and share no module imports beyond the bridge protocol.
 
+> **⚠️ TEMPORARY — next thread's focus: "Phase 4" (signatures & structure).** The 2026-06 round
+> (interaction polish: expr-layer nav, click-to-position, Bravura key sigs, cross-staff slurs,
+> expression-moment anchoring, modal ergonomics, diff-aware/cross-measure clefs) is done. The
+> remaining `COMPOSER` backlog items were scoped as a separate "Phase 4", to be tackled next:
+> - **4a — Selection-driven sig/clef/key change.** In select mode, `Ctrl+Shift+S`/`Ctrl+Shift+C`
+>   should apply over the selected span (measures for time/key with a bounded restore after the
+>   range; beats for clef) instead of anchoring to one measure / reverting to voice mode.
+> - **4b — Cut/common-time display + additive (2+3) meters.** Cut/common = `meter.sym` on the
+>   scoreDef (Verovio renders ¢/C; `meterTable` already consumes count/unit so the budget is
+>   unaffected). Additive is **beaming-only per Max** — store the grouping (e.g. `@hkl:beat-groups="2+2+3"`)
+>   while `meter.count` stays the sum (display stays a plain numeral); thread the pattern through
+>   `perMeasureTimeSig` → `beatGroupBoundaries` in `notation/beams.ts`. Both behind a `sigDialog.ts`
+>   revamp. (The "supports cut/common + additive" claim was previously FALSE here — now corrected below.)
+> - **4c — Per-section pickup / anacrusis** (`Ctrl+Shift+A`). Measure budgets are already per-measure
+>   variable (mid-piece sig changes), so a pickup = measure 0 with a reduced budget; the new work is a
+>   per-measure budget override, Verovio `@metcon="false"` (spike first), `renumberMeasures` skipping
+>   the pickup, and autofill/truncation honoring the reduced budget. Currently listed Out-of-scope below.
+>
+> Each lands with a fixture (`test/composer-test/`); see the matching `COMPOSER` items in
+> `docs/backlog.md` (first block). Delete this block once Phase 4 ships.
+
 ## Two-tab architecture
 
 - **HKL tab** (`apps/hkl/index.html`) — Lumatone input, audio engine, tuning state, lattice rendering. Unchanged by Composer's existence.
@@ -83,15 +104,15 @@ The cursor resets its refs in `attach()` because Verovio's `loadData()+renderToS
 
 ## Input model (keyboard-driven)
 
-`apps/composer/src/input.ts`. No mouse-to-document handlers — Speedy-Entry flow, Finale bindings:
+`apps/composer/src/input.ts`. Keyboard-first (Speedy-Entry flow, Finale bindings); a single mouse handler (`click.ts`, see [Click-to-position](#click-to-position-appscomposersrcclickts)) places the cursor:
 
 | Key | Action |
 |---|---|
 | `1`–`7` | duration (1=64th … 5=quarter … 7=whole). Held keys → chord; none → rest. Held keys with `|alter|>±3` filtered before commit. |
 | `.` | cycle dots (0→1→2→0) on current note/chord/rest. Overflow auto-ties across the bar. |
 | `=` | toggle tie on current note/chord (per-pitch; see [Ties](#ties)). |
-| `↑`/`↓` | switch voice / layer, time-aligned. The cycle is a stop list built from the instrument table (`buildVoiceStopList`): `tempo → (per instrument: its voices, its expr layer between/above its staves, its pedal below — 2-staff instruments only)`. A single piano = `tempo↔1↔2↔expr↔3↔4↔pedal`. Expr + pedal are per-instrument; tempo is score-global. |
-| `←`/`→` | move cursor within voice. |
+| `↑`/`↓` | switch voice / layer, time-aligned. The cycle is a stop list built from the instrument table (`buildVoiceStopList`): `tempo → (per instrument: its voices, its expr layer between/above its staves, its pedal below — 2-staff instruments only)`. A single piano = `tempo↔1↔2↔expr↔3↔4↔pedal`. Expr + pedal are per-instrument; tempo is score-global. Entering an expr/pedal/tempo layer snaps to the **nearest existing mark** (not moment 0). |
+| `←`/`→` | move cursor within voice. In an expr/pedal/tempo layer, plain `←`/`→` step the moment list; **`Ctrl+←`/`Ctrl+→` jump mark-to-mark** (skipping bare note onsets and bare hairpin-ends — each stop lands on a real selectable mark). |
 | `Home`/`End` | jump to voice start/end. |
 | `Backspace` | voice mode: delete element before cursor (skips placeholders; removes a measure if a delete empties it across all voices, unless it's the only one). Selection mode: delete-and-exit (no clipboard write). |
 | `Delete` | voice mode: delete element after cursor. Selection mode: delete-and-exit. |
@@ -107,6 +128,15 @@ Arrow keys suppressed during playback (`isPlaybackActive` short-circuits navigat
 - `info` (gray) — `Ready.` default + transient progress.
 
 `clearStatusIfTransient()` fires at the top of every non-modifier keydown and resets to `Ready.` if the current kind is `error`/`action`. State (blue) survives the keystroke; it clears via its own overwrite. Held-keys echoes clear via a source-tagged `clearStatusIfHeldKeys()`. Connection events go to the `#connStatus` badge only, never the statusline. Pick kind by intent, not message content.
+
+### Click-to-position (`apps/composer/src/click.ts`)
+
+A single `click` listener on `#score`. **Every** click resolves — a global nearest-target search (point-to-bounding-box distance, 0 when inside) over three first-class target kinds; the closest wins:
+- **note/chord/rest glyph** → voice mode; cursor lands *on* the glyph (`= flat index`, which the INS cursor draws at its right edge) when the click is at/right of its left edge, else *before* it (`index − 1`). A click in the gap between two notes resolves to the left note either way.
+- **empty-measure staff region** (a `<g class="staff">` with no real glyph — placeholder-only) → voice mode at that measure's start stop (resolved via the staff's xml:id → measure → first voice on that staff → `getMeasureStartCursor`).
+- **dynam/hairpin/pedal/dir/tempo control** → its expression-family layer (`onSelectLayerElement` → `selectLayerElementById`).
+
+Replaced the old point-hit-test (which no-op'd on whitespace clicks). Each click logs a `[click]` line (coords, candidate counts, chosen kind/distance, action) for debugging. → decisions.md "Click-to-position: global nearest-target".
 
 ## Playback orchestration (`apps/composer/src/render/playback.ts`)
 
@@ -253,7 +283,7 @@ Rests and durations ≥ quarter break the run; singletons stay unwrapped; an ele
 
 A navigable virtual layer in the ↑/↓ cycle (see [Input model](#input-model-keyboard-driven) — the cycle is built from the instrument table; for a single piano it sits between voices 2 and 3), with its own cursor snapping to {every note onset across the instrument's voices} ∪ {every existing dynam/hairpin moment}. **Per-instrument in multi-instrument scores** (`state.exprInstrIdx`; new marks attach to the active instrument's top staff). Pedal/tempo/expressive-text are sibling layers — see [Pedal, tempo & expressive-text layers](#pedal-tempo-expressive-text-layers-phase-2). `apps/composer/src/expressions.ts` (CRUD + tstamp helpers + doc defaults), `apps/composer/src/cursor/expressionCursor.ts` (moment list + navigation + selection).
 
-**Anchoring by `@tstamp`/`@tstamp2`, not `@startid`/`@endid`.** Dynamics/hairpins are siblings of `<staff>` in their measure; an expression survives deletion of any nearby note. Trade-off: re-barring doesn't carry expressions. → see decisions.md / MEMORY "Expression-layer tstamp anchoring trade-off".
+**Anchoring by `@tstamp`/`@tstamp2`, not `@startid`/`@endid`.** Dynamics/hairpins are siblings of `<staff>` in their measure; an expression survives deletion of any nearby note. Trade-off: re-barring doesn't carry expressions. → see decisions.md / MEMORY "Expression-layer tstamp anchoring trade-off". Verovio draws a `@tstamp` **at the note glyph** for that beat (not the bar-grid x), so a mark on beat 1 sits on the downbeat note — provided the moment is expressed in the right measure: `momentAtVoiceAnchor` normalizes a bar-line anchor to the cursor's **visual measure** (`model.cursorMeasureIdx`), so a mark on a measure's first note anchors to `{thatMeasure, beat 1}` rather than `{prevMeasure, beat count+1}` (which Verovio would draw ON the bar line). → see decisions.md "Expression moment anchors to the cursor's visual measure" + lessons.md "@tstamp aligns to the note glyph, not the bar grid".
 
 - **Voice cycle**: ArrowUp/Down steps the instrument-table stop list (single piano: `tempo → 1 → 2 → expr → 3 → 4 → pedal`); indicator shows `T`/`E`/`P` for tempo/expr/pedal. `InputState.cursorMode: 'voice' | 'expr' | 'pedal' | 'tempo' | 'select'` (alongside `mode: 'insert' | 'overwrite'`).
 - **Moment list** (`buildMomentList`): all four voices' note/chord onsets (tie-initial only) + every dynam tstamp + every hairpin start AND end moment; sorted, deduped with float epsilon.
@@ -418,19 +448,19 @@ Plain-letter toggles on the note/chord (or rest) at the cursor anchor (INS → `
 ## Mid-piece time/key signatures & clefs (Phase 4)
 
 The model carries **per-measure metadata** via in-`<section>` `<scoreDef>`/`<staffDef>` overrides (NOT data attributes), keyed by a cached **meter/instrument table** (`meterTable()` — per-measure budget + cumulative `prefix[]`; `measureTicksAt`/`measureStartTick`/`meterAt`/`keySigAt`/`clefAtCursor`). The old uniform `measureTicks()` is now `measureTicksAt(mi)` threaded through every caller — the highest-blast-radius migration in the roadmap. Cache invalidation is centralized in `normalizePlaceholdersAll()`.
-- **`Ctrl+Shift+S`** (sig modal, `sigDialog.ts`) writes meter/key from the anchored measure forward via diff-aware `setMeterAt`/`setKeySigAt` (an unchanged submit writes nothing); supports cut/common time + additive meters. Setup relegates time/key to a button opening the same modal at measure 0.
-- **`Ctrl+Shift+C`** (clef modal, `clefDialog.ts`) writes a mid-measure inline `<clef>` (a zero-duration `<layer>` child — rides the content whitelists; `realTicks`=0; breaks beam runs). Playback is clef-agnostic (coords carry pitch).
+- **`Ctrl+Shift+S`** (sig modal, `sigDialog.ts`) writes meter/key from the anchored measure forward via diff-aware `setMeterAt`/`setKeySigAt` (an unchanged submit writes nothing). Plain numeric meters only — **cut/common-time symbols and additive (2+3) meters are NOT yet implemented** (planned; see the Phase-4 TODO below). Setup relegates time/key to a button opening the same modal at measure 0.
+- **`Ctrl+Shift+C`** (clef modal, `clefDialog.ts`) writes a mid-measure inline `<clef>` (a zero-duration `<layer>` child — rides the content whitelists; `realTicks`=0; breaks beam runs). Diff-aware (mirrors `setMeterAt`): setting a clef equal to the one already in effect **removes** the inline `<clef>` instead of stacking a redundant one. Clef inheritance carries forward across measures — `effectiveClefForVoice` walks every prior measure's clefs in the voice's layer (not just the current measure), so the modal seeds correctly and the redundancy check works after a clef change in an earlier bar. Playback is clef-agnostic (coords carry pitch).
 - Per-measure accidental spelling, beaming (6/8 = 3+3), and MusicXML export all consume the per-measure lookup. → decisions.md (Phase-4 entries), lessons.md ("mid-measure clef vs the leading-signature region").
 
 ## Pedal, tempo, expressive-text layers (Phase 2)
 
 The expression layer (below) generalized into **navigable virtual layers** in the ↑/↓ cycle:
 - **Pedal** (`Shift+P` down / `Shift+O` lift) — `<pedal>` siblings, `@tstamp`-anchored. Playback drives HKL's damper engine via deferred note-offs (`pedalCapturesNoteEndingAt`); `play-score` carries an optional `pedalEvents` array.
-- **Tempo** (`Ctrl+Shift+T` modal) — score-global, fixed placement above staff 1. `buildTempoTimeline` gives `tickMsAt`/`atMsAt` (piecewise-linear beat-period; gradual ramps interpolate; "a tempo" restores). All playback runs on `atMsAt`.
-- **Expressive text** (`Ctrl+Shift+E` modal) — `<dir>`, `@tstamp`-anchored, italic option, preset chips (incl. "pizz."/"arco" — see Multi-instrument). Render-only except the pizz/arco articulation cue.
+- **Tempo** (`Ctrl+Shift+T` modal) — score-global, fixed placement above staff 1. `buildTempoTimeline` gives `tickMsAt`/`atMsAt` (piecewise-linear beat-period; gradual ramps interpolate; "a tempo" restores). All playback runs on `atMsAt`. Rendering: an instant tempo marking is **bold, non-italic** (Verovio's `<tempo>` default — plain text); gradual rit./accel. and "a tempo" are **italic, non-bold**, which needs an explicit `<rend fontstyle="italic" fontweight="normal">` (fontstyle alone leaves it bold-italic — see lessons.md). The modal is a builder: focuses Kind, and hides the ♩=/beat-note/show-mm fields unless Kind is an instant marking.
+- **Expressive text** (`Ctrl+Shift+E` modal) — `<dir>`, `@tstamp`-anchored, italic checkbox. `<dir>` is **italic by default** in Verovio, so the text is always wrapped in a `<rend>` with an explicit `fontstyle` (`italic` or `normal`) — "italic off" must write `fontstyle="normal"` or it still renders italic. Render-only except the pizz/arco articulation cue (matched on the typed `<dir>` text — see Multi-instrument).
 - **Above/below placement** `Ctrl+↑`/`Ctrl+↓` — sets `@place` on dynamics/hairpins/expressive-text at the moment (tempo + pedal excluded, fixed placement); works in expr and voice mode.
 
-The reusable modal shell `ui/textEntryModal.ts` (`text|number|check|select` fields) hosts the expressive-text, tempo, signature, and clef dialogs.
+The reusable modal shell `ui/textEntryModal.ts` (`text|number|check|select` fields) hosts the expressive-text, tempo, signature, and clef dialogs. Keyboard-first: **Enter submits from any field** (incl. a focused `<select>`, where the browser would otherwise just close the dropdown) but NOT from a focused button (so Enter on Cancel dismisses, on OK submits). Optional `onChange(values, changed, api)` builder hook with `api.setPlaceholder/setValue/setDisabled/setHidden`, plus a `focusField` to choose the initially-focused control (tempo focuses Kind). Composer modals restore a visible **checkbox focus ring** (HKL globally suppresses it; `.hkl-dialog input[type=checkbox]:focus` adds one back) since these dialogs are keyboard-driven.
 
 ## Multi-instrument specialization (Phase 5)
 

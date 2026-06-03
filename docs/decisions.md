@@ -3113,3 +3113,53 @@ non-obvious calls here, and gotchas in lessons.md.
 @ignore-color>` (getter/setter beside `getHejiEnabled`) + a Setup checkbox; `model.serialize`'s
 render path drops `@color` from every `<note>` on the clone when set, so noteheads draw black on
 screen while the live/saved doc keeps lattice color (export already blacks via `forceNonNoteheadBlack`).
+
+**Click-to-position: global nearest-target search, not point-hit-testing (2026-06-03).** `click.ts`
+originally mapped a click to a note/rest via `elementFromPoint` + a tiny expanding cross, so clicks in
+whitespace no-op'd. Replaced with a single nearest-target search over the whole rendered score
+(point-to-bounding-box distance, 0 when inside): candidates are note/chord/rest glyphs, **empty-measure
+staff regions** (first-class — a click nearest an empty bar lands at its measure-start stop, not a
+fallback), and dynam/hairpin/pedal/dir/tempo controls; closest wins and switches to the appropriate
+cursor. Glyph placement follows the INS-cursor convention (cursor renders to a note's right): click
+at/right of a glyph's left edge → cursor = its flat index (drawn at its right edge), else `index − 1`;
+so the gap between two notes resolves to the left note from either side. Per-click `[click]` console
+logging (kept for now). Verified live behavior matters here — fixtures exercise it via `dispatchEvent`,
+but a click below the staff resolves to the bass staff's empty region, etc.
+
+**Expression moments anchor to the cursor's VISUAL measure (2026-06-03).** A bar-line cursor position is
+the same instant as both "prev measure, beat count+1" and "next measure, beat 1". `momentForCursor`
+returns the former; Verovio draws a `@tstamp` at the note glyph for that beat, so storing a mark on a
+measure's first note in the PREVIOUS measure at beat count+1 drew it on the bar line. Fix:
+`momentAtVoiceAnchor` re-expresses the moment in `model.cursorMeasureIdx` (the cursor renderer's visual
+measure, via `flat[c].closest('measure')`) — when it differs from `momentForCursor`'s measure, anchor to
+`{visualMeasure, beat 1}`. Narrow (voice-mode expression source only); `momentForCursor` and the broader
+measure-index system are untouched. **Abandoned** a render-time "hairpin inset" hack (`insetBoundaryHairpins`,
+nudging tstamp 1→1.5) — it was built on the false premise that `@tstamp` touches the bar line; once the
+moment is in the right measure, `@tstamp` aligns to the note glyph natively, so the inset (which actually
+pushed the start *between* the notes) was deleted.
+
+**Verovio rend needs explicit fontstyle AND fontweight to control italic/bold (2026-06-03).** `<tempo>`
+renders **bold** by default and `<dir>` renders **italic** by default. To make a gradual tempo (rit./
+accel./a tempo) italic-AND-non-bold, the text `<rend>` needs BOTH `fontstyle="italic"` + `fontweight="normal"`
+(fontstyle alone leaves it bold-italic). To make a `<dir>` non-italic, "italic off" must write an explicit
+`<rend fontstyle="normal">` — plain text still renders italic. So both `setTempoContent`/`setDirContent`
+always wrap text in a `<rend>` with explicit style attrs rather than relying on the element default.
+
+**Clef setter is diff-aware and clef inheritance carries across measures (2026-06-03).** `setClefAt`
+mirrors `setMeterAt`/`setKeySigAt`: if the requested clef equals the one already in effect, it REMOVES
+the inline `<clef>` instead of stacking a redundant one (so setting a clef back to the prevailing one
+clears the override — previously only `undo` could). The "in effect" computation is
+`effectiveClefForVoice(exclude?)`, which walks the staffDef default + every inline `<clef>` in the
+voice's layer across ALL measures up to the cursor (clef changes persist forward, as Verovio renders
+them) — the old `clefAtCursor` only scanned the current layer, so it (and the redundancy check, and the
+modal seed) wrongly treated staff 1 as treble after a clef change in an earlier bar. `clefAtCursor` now
+delegates to the helper.
+
+**textEntryModal shell: keyboard-first submit + builder hooks (2026-06-03).** Enter submits from any
+field — including a focused `<select>`, where the browser would otherwise just close the dropdown — but
+NOT from a focused `<button>` (left to native activation, so Enter on Cancel dismisses and on OK submits;
+forcing submit on any Enter made Cancel commit). Added an `onChange(values, changed, api)` builder hook
+(`api.setPlaceholder/setValue/setDisabled/setHidden`) and a `focusField` option; the tempo modal uses
+them to focus Kind and hide the ♩=/beat-note/show-mm rows for non-instant kinds. Composer modals also
+restore a checkbox focus ring (`.hkl-dialog input[type=checkbox]:focus`) that HKL suppresses globally —
+these dialogs are keyboard-driven, so a focused checkbox needs a visible cue.
