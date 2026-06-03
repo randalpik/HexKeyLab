@@ -21,6 +21,7 @@ import { openTextEntryModal } from './ui/textEntryModal.js';
 import { openTempoModal } from './tempoDialog.js';
 import { openSignatureModal } from './sigDialog.js';
 import { openClefModal } from './clefDialog.js';
+import { openPickupModal } from './pickupDialog.js';
 import { addSlur, removeSlur, collectSlurs } from './slurs.js';
 import { togglePedal, pedalMoments, removePedalsAt, type PedalDir } from './pedal.js';
 import { beamGroupForElement } from './notation/beams.js';
@@ -1242,6 +1243,25 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     hooks.onChange();
   }
 
+  /** Inclusive 0-based measure span the selection touches — used to apply a
+   *  signature/key change over the selection (Phase 4a). Beat mode resolves the
+   *  measures of its first and last SELECTED beats (boundaries[last], not
+   *  last+1, which would be the exclusive next-beat start). */
+  function selectionMeasureSpan(sel: SelectionState): { lo: number; hi: number } {
+    if (sel.kind === 'measure') {
+      return {
+        lo: Math.min(sel.anchorMeasure, sel.movableMeasure),
+        hi: Math.max(sel.anchorMeasure, sel.movableMeasure),
+      };
+    }
+    const boundaries = beatBoundariesInVoice(model, sel.voice);
+    const loInfo = model.getFlatStopInfo(sel.voice, boundaries[sel.first]);
+    const hiInfo = model.getFlatStopInfo(sel.voice, boundaries[Math.min(sel.last, boundaries.length - 1)]);
+    const lo = loInfo?.measureIdx ?? 0;
+    const hi = Math.max(lo, hiInfo?.measureIdx ?? lo);
+    return { lo, hi };
+  }
+
   /** Snap cursor to the movable end of the current selection, clear selection,
    *  return to voice mode. Caller decides whether to emit status / trigger
    *  re-render. */
@@ -1570,6 +1590,59 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     if (e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey
         && (e.key === '8' || e.key === 'r' || e.key === 'R')) {
       return false;
+    }
+    /* Ctrl+Shift+S — time/key signature OVER the selected measure span, with a
+       bounded restore after the range (Phase 4a). Works for beat or measure
+       selection (the touched measures). The modal opens over the live
+       selection; on apply we exit to voice mode. */
+    if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && (e.key === 's' || e.key === 'S')) {
+      e.preventDefault();
+      if (hooks.isPlaybackActive()) return true;
+      const span = selectionMeasureSpan(sel);
+      const spanLabel = span.lo === span.hi ? 'm' + (span.lo + 1) : 'm' + (span.lo + 1) + '–m' + (span.hi + 1);
+      openSignatureModal(model, span.lo, {
+        history: hooks.history,
+        rangeEndIdx: span.hi,
+        onApply: () => {
+          exitSelectionToMovable();
+          hooks.setStatus?.('Signature applied to ' + spanLabel + '.', 'action');
+          hooks.onStateChange();
+          hooks.onChange();
+        },
+        onError: (msg) => hooks.setStatus?.(msg, 'error'),
+      });
+      return true;
+    }
+    /* Ctrl+Shift+C — clef OVER the selected beats, confined to the span (insert
+       at the start, restore the prior clef after it; Phase 4a). Beat-mode only
+       (clef is beat-granular); a measure selection is rejected with a hint. */
+    if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && (e.key === 'c' || e.key === 'C')) {
+      e.preventDefault();
+      if (hooks.isPlaybackActive()) return true;
+      if (sel.kind !== 'beat') {
+        hooks.setStatus?.('Clef change needs a beat selection (Shift+←/→).', 'error');
+        return true;
+      }
+      const boundaries = beatBoundariesInVoice(model, sel.voice);
+      const startCursor = boundaries[sel.first];
+      const endCursor = boundaries[Math.min(sel.last + 1, boundaries.length - 1)];
+      const voice = sel.voice;
+      /* The clef modal anchors its pre-selected value on the CURRENT cursor, so
+         seat the cursor at the span start first. */
+      model.setVoice(voice);
+      model.setCursor(startCursor, voice);
+      openClefModal(model, {
+        history: hooks.history,
+        range: { voice, startCursor, endCursor },
+        onApply: () => {
+          exitSelectionToMovable();
+          hooks.setStatus?.('Clef applied to selection.', 'action');
+          hooks.onStateChange();
+          hooks.onChange();
+        },
+        onError: (msg) => hooks.setStatus?.(msg, 'error'),
+      });
+      return true;
     }
     // Any other key → exit selection to movable, then fall through so the
     // key triggers its normal handler at the post-exit cursor position.
@@ -2037,9 +2110,10 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       return;
     }
 
-    /* Ctrl+Shift+S: time/key-signature modal anchored to the cursor's measure.
-       (Phase 4.1: writes the global score-head signature, like Setup; Phase 4.2
-       makes it per-measure.) */
+    /* Ctrl+Shift+S: time/key-signature modal anchored to the cursor's measure
+       (effective FROM that measure forward). In select mode it applies over the
+       selected measure span with a bounded restore — handled in
+       dispatchSelectionMode (Phase 4a), which runs before this. */
     if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && (e.key === 's' || e.key === 'S')) {
       e.preventDefault();
       if (hooks.isPlaybackActive()) return;
@@ -2051,6 +2125,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
           hooks.onChange();
           hooks.onStateChange();
         },
+        onError: (msg) => hooks.setStatus?.(msg, 'error'),
       });
       return;
     }
@@ -2066,6 +2141,26 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         history: hooks.history,
         onApply: () => {
           hooks.setStatus?.('Clef changed.', 'action');
+          hooks.onChange();
+          hooks.onStateChange();
+        },
+        onError: (msg) => hooks.setStatus?.(msg, 'error'),
+      });
+      return;
+    }
+
+    /* Ctrl+Shift+A: pickup / anacrusis modal at the start of the cursor's
+       section. preventDefault — Ctrl+A is select-all. Voice mode only (anchors
+       on the cursor's section). */
+    if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && (e.key === 'a' || e.key === 'A')) {
+      e.preventDefault();
+      if (hooks.isPlaybackActive()) return;
+      if (state.cursorMode !== 'voice') { hooks.setStatus?.('Pickup change requires voice mode.', 'error'); return; }
+      const sectionStart = model.sectionStartIdxForCursor();
+      openPickupModal(model, sectionStart, {
+        history: hooks.history,
+        onApply: () => {
+          hooks.setStatus?.('Pickup updated.', 'action');
           hooks.onChange();
           hooks.onStateChange();
         },

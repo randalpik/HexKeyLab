@@ -286,11 +286,15 @@ export const KEYBINDINGS: KeySection[] = [
       },
       {
         keys: "Ctrl+Shift+S",
-        desc: "Time / key signature, anchored to the cursor's measure. Key picker (major + relative minor) + beats / beat-unit. Setup's controls open the same signature at measure 1.",
+        desc: "Time / key signature, anchored to the cursor's measure. Key picker (major + relative minor) + beats / beat-unit, a Symbol (common C / cut ¢), and an optional additive beat-group pattern (e.g. 2+2+3, beaming only). Setup's controls open the same signature at measure 1. In selection mode, applies over the selected measures with a bounded restore after the range.",
       },
       {
         keys: "Ctrl+Shift+C",
-        desc: "Clef change for the cursor's staff at the cursor position (mid-measure allowed). Treble / bass / alto / tenor / octave (treble±8, bass −8). Re-open at the same spot to edit.",
+        desc: "Clef change for the cursor's staff at the cursor position (mid-measure allowed). Treble / bass / alto / tenor / octave (treble±8, bass −8). Re-open at the same spot to edit. In selection mode (beat selection), applies over the selected beats and restores the prior clef after.",
+      },
+      {
+        keys: "Ctrl+Shift+A",
+        desc: "Pickup / anacrusis at the start of the cursor's section: choose 0..(beats−1) pickup beats. A pickup is a short measure 0 (full time signature still shown); the following measure stays numbered 1. Set to 0 to remove it.",
       },
     ],
   },

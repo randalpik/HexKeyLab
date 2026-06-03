@@ -29,25 +29,45 @@
 import { realTicks } from '../model/ticks.js';
 
 const MEI_NS = 'http://www.music-encoding.org/ns/mei';
+const HKL_NS = 'https://hexkeylab.com/ns/mei';
 
 export interface TimeSigInfo {
   count: number;
   unit: number;
   isCompound: boolean;
   is4_4: boolean;
+  /** Additive beat-group pattern (e.g. `[2,2,3]` for a 7/8 grouped 2+2+3),
+   *  beaming-only. When present it drives beat-group boundaries directly,
+   *  overriding the simple/compound/4-4 logic. `meter.count` stays the sum. */
+  beatGroups: number[] | null;
 }
 
-function timeSigInfo(count: number, unit: number): TimeSigInfo {
+/** Parse `"2+2+3"` → `[2,2,3]`; empty/malformed → null (local copy of the
+ *  model helper — beams.ts must not import the model, which imports beams). */
+function parseBeatGroups(s: string | null): number[] | null {
+  if (!s) return null;
+  const out: number[] = [];
+  for (const p of s.split('+').map((t) => t.trim())) {
+    if (!/^\d+$/.test(p)) return null;
+    const n = parseInt(p, 10);
+    if (n <= 0) return null;
+    out.push(n);
+  }
+  return out.length > 0 ? out : null;
+}
+
+function timeSigInfo(count: number, unit: number, beatGroups: number[] | null = null): TimeSigInfo {
   const isCompound = unit >= 8 && count >= 6 && count % 3 === 0;
   const is4_4 = count === 4 && unit === 4;
-  return { count, unit, isCompound, is4_4 };
+  return { count, unit, isCompound, is4_4, beatGroups };
 }
 
 export function readTimeSig(doc: Document): TimeSigInfo {
   const sd = doc.querySelector('scoreDef');
   const count = parseInt(sd?.getAttribute('meter.count') ?? '4', 10);
   const unit = parseInt(sd?.getAttribute('meter.unit') ?? '4', 10);
-  return timeSigInfo(count, unit);
+  const groups = parseBeatGroups(sd?.getAttributeNS(HKL_NS, 'beat-groups') ?? null);
+  return timeSigInfo(count, unit, groups);
 }
 
 /** Map each `<measure>` to the meter in effect there, walking in-section
@@ -56,6 +76,7 @@ export function readTimeSig(doc: Document): TimeSigInfo {
 function perMeasureTimeSig(doc: Document, head: TimeSigInfo): Map<Element, TimeSigInfo> {
   let count = head.count;
   let unit = head.unit;
+  let beatGroups = head.beatGroups;
   const out = new Map<Element, TimeSigInfo>();
   const section = doc.querySelector('section');
   const nodes = section
@@ -65,10 +86,15 @@ function perMeasureTimeSig(doc: Document, head: TimeSigInfo): Map<Element, TimeS
     if (node.localName === 'scoreDef') {
       const c = node.getAttribute('meter.count');
       const u = node.getAttribute('meter.unit');
-      if (c) count = parseInt(c, 10);
-      if (u) unit = parseInt(u, 10);
+      /* A scoreDef touching meter resets count+unit+beat-groups together
+         (mirrors the model's meterTable walk). */
+      if (c !== null || u !== null) {
+        if (c) count = parseInt(c, 10);
+        if (u) unit = parseInt(u, 10);
+        beatGroups = parseBeatGroups(node.getAttributeNS(HKL_NS, 'beat-groups'));
+      }
     } else {
-      out.set(node, timeSigInfo(count, unit));
+      out.set(node, timeSigInfo(count, unit, beatGroups));
     }
   }
   return out;
@@ -191,6 +217,22 @@ export function regroupBeams(doc: Document, ts: TimeSigInfo): void {
  *  the two half-measure super-groups; the per-layer pass may downgrade
  *  either half to two quarter-beats via `effectiveGroupsForLayer`. */
 function beatGroupBoundaries(ts: TimeSigInfo, measureTicks: number): Array<{ lo: number; hi: number }> {
+  /* Additive grouping (e.g. 2+2+3) takes precedence: each group is N
+     denominator-notes wide, laid end to end. Overrides the 4/4 super-group
+     and compound logic. */
+  if (ts.beatGroups && ts.beatGroups.length > 0) {
+    const unitTicks = 64 / ts.unit;
+    const out: Array<{ lo: number; hi: number }> = [];
+    let lo = 0;
+    for (const g of ts.beatGroups) {
+      const hi = Math.min(lo + g * unitTicks, measureTicks);
+      if (hi > lo) out.push({ lo, hi });
+      lo = hi;
+    }
+    /* Any remainder (groups summed < measure) falls into one trailing group. */
+    if (lo < measureTicks) out.push({ lo, hi: measureTicks });
+    return out;
+  }
   if (ts.is4_4) {
     return [{ lo: 0, hi: 32 }, { lo: 32, hi: 64 }];
   }
@@ -214,6 +256,9 @@ function effectiveGroupsForLayer(
   measureTicks: number,
 ): Array<{ lo: number; hi: number }> {
   const base = beatGroupBoundaries(ts, measureTicks);
+  /* Explicit additive grouping is authoritative — never apply the 4/4
+     four-eighths downgrade on top of a user-specified pattern. */
+  if (ts.beatGroups && ts.beatGroups.length > 0) return base;
   if (!ts.is4_4) return base;
   const out: Array<{ lo: number; hi: number }> = [];
   for (const grp of base) {

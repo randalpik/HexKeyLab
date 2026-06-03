@@ -131,6 +131,96 @@ export interface RestInput {
   dots?: Dots;
 }
 
+/** Meter-symbol display: `null` = plain numeral, `'common'` = C (4/4),
+ *  `'cut'` = ¢ (2/2). Rendered by Verovio via `meter.sym`; the tick budget
+ *  still comes from count/unit (common=64t, cut=64t), so symbols never affect
+ *  measure capacity. */
+export type MeterSym = 'common' | 'cut' | null;
+
+/** Optional extras carried alongside a meter (count, unit): the display symbol
+ *  and an additive beat-group pattern (e.g. `[2,2,3]` for a 7/8 grouped 2+2+3).
+ *  Beat groups are beaming-only — `meter.count` stays the sum so the displayed
+ *  numeral is unchanged. Both ride the `<scoreDef>` (head or in-section). */
+export interface MeterOpts {
+  sym?: MeterSym;
+  beatGroups?: number[] | null;
+}
+
+/** A fully-resolved meter descriptor at a measure. */
+export interface MeterInfo {
+  count: number;
+  unit: number;
+  sym: MeterSym;
+  beatGroups: number[] | null;
+}
+
+const BEAT_GROUPS_ATTR = 'beat-groups';
+
+/** Parse a `"2+2+3"` beat-group string into `[2,2,3]`. Returns null for
+ *  empty/malformed input (any non-positive-integer token rejects the whole). */
+export function parseBeatGroups(s: string | null | undefined): number[] | null {
+  if (!s) return null;
+  const parts = s.split('+').map((t) => t.trim());
+  const out: number[] = [];
+  for (const p of parts) {
+    if (!/^\d+$/.test(p)) return null;
+    const n = parseInt(p, 10);
+    if (n <= 0) return null;
+    out.push(n);
+  }
+  return out.length > 0 ? out : null;
+}
+
+/** Serialize `[2,2,3]` → `"2+2+3"`; null/empty → null (clear the attr). */
+export function formatBeatGroups(g: number[] | null | undefined): string | null {
+  if (!g || g.length === 0) return null;
+  return g.join('+');
+}
+
+const PICKUP_TICKS_ATTR = 'pickup-ticks';
+
+/** Read an explicit reduced tick budget (`hkl:pickup-ticks`) off a measure, or
+ *  null when the measure uses its meter's full budget. */
+function readPickupTicks(measure: Element): number | null {
+  const v = measure.getAttributeNS(HKL_NS, PICKUP_TICKS_ATTR);
+  if (!v) return null;
+  const n = parseInt(v, 10);
+  return isFinite(n) && n > 0 ? n : null;
+}
+
+/** Read `meter.sym` off a scoreDef element, normalised to MeterSym. */
+function readMeterSym(sd: Element | null): MeterSym {
+  const v = sd?.getAttribute('meter.sym');
+  return v === 'common' || v === 'cut' ? v : null;
+}
+
+/** Read the `hkl:beat-groups` attr off a scoreDef element. */
+function readBeatGroups(sd: Element | null): number[] | null {
+  return parseBeatGroups(sd?.getAttributeNS(HKL_NS, BEAT_GROUPS_ATTR) ?? null);
+}
+
+/** Write/clear `meter.sym` + `hkl:beat-groups` on a scoreDef from MeterOpts.
+ *  Only mutates an attr when the corresponding opt key is PRESENT (undefined
+ *  leaves it untouched; null/falsy clears). */
+function applyMeterOpts(sd: Element, opts: MeterOpts | undefined): void {
+  if (!opts) return;
+  if ('sym' in opts) {
+    if (opts.sym === 'common' || opts.sym === 'cut') sd.setAttribute('meter.sym', opts.sym);
+    else sd.removeAttribute('meter.sym');
+  }
+  if ('beatGroups' in opts) {
+    const s = formatBeatGroups(opts.beatGroups);
+    if (s) sd.setAttributeNS(HKL_NS, 'hkl:' + BEAT_GROUPS_ATTR, s);
+    else sd.removeAttributeNS(HKL_NS, BEAT_GROUPS_ATTR);
+  }
+}
+
+/** Deep-equal for beat-group arrays (null-safe). */
+function beatGroupsEqual(a: number[] | null, b: number[] | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
 export type CurrentRef = { index: number; id: string; elem: Element } | null;
 
 /** A single placement emitted by `planInsert`. `inserted` actions describe
@@ -263,7 +353,7 @@ export class ComposerModel {
         perMeasure: number[];
         prefix: number[];
         budgetByEl: Map<Element, number>;
-        meterByEl: Map<Element, { count: number; unit: number }>;
+        meterByEl: Map<Element, MeterInfo>;
         keyByEl: Map<Element, { sig: string; mode: 'major' | 'minor' }>;
       }
     | null = null;
@@ -927,13 +1017,14 @@ export class ComposerModel {
    *  walks each layer and shortens/drops content that doesn't fit the new
    *  measure's tick budget. Measure count is preserved; enlarging is a
    *  no-op except for re-normalizing placeholders to the new duration. */
-  setTimeSig(count: number, unit: number): void {
+  setTimeSig(count: number, unit: number, opts?: MeterOpts): void {
     const sd = this.doc.querySelector("scoreDef");
     if (!sd) return;
     const prevCount = parseInt(sd.getAttribute("meter.count") ?? "4", 10);
     const prevUnit = parseInt(sd.getAttribute("meter.unit") ?? "4", 10);
     sd.setAttribute("meter.count", String(count));
     sd.setAttribute("meter.unit", String(unit));
+    applyMeterOpts(sd, opts);
     /* Head meter changed → the cached per-measure budgets are stale. (truncate
        below also invalidates via normalizePlaceholdersAll, but invalidate here
        too so any read between this point and truncate sees the new budget.) */
@@ -1058,19 +1149,22 @@ export class ComposerModel {
     perMeasure: number[];
     prefix: number[];
     budgetByEl: Map<Element, number>;
-    meterByEl: Map<Element, { count: number; unit: number }>;
+    meterByEl: Map<Element, MeterInfo>;
     keyByEl: Map<Element, { sig: string; mode: 'major' | 'minor' }>;
   } {
     if (this.meterCache) return this.meterCache;
+    const headSd = this.doc.querySelector('scoreDef');
     const head = this.getTimeSig();
     let count = head.count;
     let unit = head.unit;
+    let sym: MeterSym = readMeterSym(headSd);
+    let beatGroups: number[] | null = readBeatGroups(headSd);
     let keySig = this.getKeySig();
     let keyMode = this.getKeyMode();
     const measures: Element[] = [];
     const perMeasure: number[] = [];
     const budgetByEl = new Map<Element, number>();
-    const meterByEl = new Map<Element, { count: number; unit: number }>();
+    const meterByEl = new Map<Element, MeterInfo>();
     const keyByEl = new Map<Element, { sig: string; mode: 'major' | 'minor' }>();
     const section = this.doc.querySelector('section');
     /* scoreDef + measure nodes in document order. The head scoreDef lives
@@ -1086,18 +1180,31 @@ export class ComposerModel {
       if (node.localName === 'scoreDef') {
         const c = node.getAttribute('meter.count');
         const u = node.getAttribute('meter.unit');
-        if (c) count = parseInt(c, 10);
-        if (u) unit = parseInt(u, 10);
+        /* A scoreDef that TOUCHES meter (has count and/or unit) resets the full
+           meter descriptor — count, unit, sym, and beat-groups — from this node
+           (absent sym/beat-groups = cleared). A pure key-only override leaves
+           the running meter (incl. sym/groups) untouched. Mirrors how the
+           setters write count+unit+sym+groups together. */
+        if (c !== null || u !== null) {
+          if (c) count = parseInt(c, 10);
+          if (u) unit = parseInt(u, 10);
+          sym = readMeterSym(node);
+          beatGroups = readBeatGroups(node);
+        }
         const ks = node.getAttribute('key.sig');
         if (ks !== null) keySig = ks;
         const km = node.getAttribute('mode');
         if (km === 'major' || km === 'minor') keyMode = km;
       } else {
-        const ticks = count * (64 / unit);
+        /* Pickup/anacrusis: a measure may carry an explicit reduced tick budget
+           (hkl:pickup-ticks) that overrides the meter's count*unit budget while
+           the displayed meter stays full. */
+        const meterTicks = count * (64 / unit);
+        const ticks = readPickupTicks(node) ?? meterTicks;
         measures.push(node);
         perMeasure.push(ticks);
         budgetByEl.set(node, ticks);
-        meterByEl.set(node, { count, unit });
+        meterByEl.set(node, { count, unit, sym, beatGroups });
         keyByEl.set(node, { sig: keySig, mode: keyMode });
       }
     }
@@ -1166,10 +1273,18 @@ export class ComposerModel {
 
   /** Meter (count, unit) in effect at measure `mi` (nearest in-section
    *  `<scoreDef>` meter override at or before `mi`, else the head). */
-  meterAt(mi: number): { count: number; unit: number } {
+  meterAt(mi: number): MeterInfo {
     const t = this.meterTable();
-    if (mi < 0 || mi >= t.measures.length) return this.getTimeSig();
-    return t.meterByEl.get(t.measures[mi]) ?? this.getTimeSig();
+    if (mi < 0 || mi >= t.measures.length) return this.getMeterInfo();
+    return t.meterByEl.get(t.measures[mi]) ?? this.getMeterInfo();
+  }
+
+  /** The score-default meter descriptor (head `<scoreDef>`), incl. symbol +
+   *  beat-groups. The head fallback for `meterAt` out-of-range queries. */
+  getMeterInfo(): MeterInfo {
+    const headSd = this.doc.querySelector('scoreDef');
+    const { count, unit } = this.getTimeSig();
+    return { count, unit, sym: readMeterSym(headSd), beatGroups: readBeatGroups(headSd) };
   }
 
   /** Key signature in effect at measure `mi` (nearest in-section `<scoreDef>`
@@ -1549,10 +1664,13 @@ export class ComposerModel {
    *  in effect at `mi-1`), no override is written — and any existing meter
    *  attributes on `mi`'s own override are cleared (so submitting an unchanged
    *  meter never renders a redundant meter change). */
-  setMeterAt(mi: number, count: number, unit: number): void {
-    if (mi <= 0) { this.setTimeSig(count, unit); return; }
+  setMeterAt(mi: number, count: number, unit: number, opts?: MeterOpts): void {
+    const sym: MeterSym = opts?.sym ?? null;
+    const beatGroups: number[] | null = opts?.beatGroups ?? null;
+    if (mi <= 0) { this.setTimeSig(count, unit, { sym, beatGroups }); return; }
     const inherited = this.meterAt(mi - 1);
-    const sameAsInherited = inherited.count === count && inherited.unit === unit;
+    const sameAsInherited = inherited.count === count && inherited.unit === unit
+      && inherited.sym === sym && beatGroupsEqual(inherited.beatGroups, beatGroups);
     /* Find an existing override sibling without creating one. */
     const existing = this.overrideScoreDefBefore(mi);
     if (sameAsInherited) {
@@ -1560,6 +1678,7 @@ export class ComposerModel {
       existing.removeAttribute('meter.count');
       existing.removeAttribute('meter.unit');
       existing.removeAttribute('meter.sym');
+      existing.removeAttributeNS(HKL_NS, BEAT_GROUPS_ATTR);
       this.pruneEmptyScoreDef(existing);
       this.invalidateMeterCache();
       this.normalizePlaceholdersAll();
@@ -1569,6 +1688,7 @@ export class ComposerModel {
     if (!sd) return;
     sd.setAttribute('meter.count', String(count));
     sd.setAttribute('meter.unit', String(unit));
+    applyMeterOpts(sd, { sym, beatGroups });
     this.invalidateMeterCache();
     /* Truncate from mi up to (but not including) the next measure that carries
        its own meter override. */
@@ -1610,6 +1730,32 @@ export class ComposerModel {
     this.invalidateMeterCache();
   }
 
+  /** Set the meter over the inclusive measure span `[lo, hi]`, then restore the
+   *  PRIOR meter at `hi+1` so the change is confined to the span ("bounded
+   *  restore after the range"). Each call is diff-aware, so the restore at
+   *  `hi+1` self-elides when the span change didn't actually alter what `hi+1`
+   *  inherits. Used by selection-driven signature changes (Phase 4a). */
+  setMeterRange(lo: number, hi: number, count: number, unit: number, opts?: MeterOpts): void {
+    const measures = this.allMeasures();
+    if (lo < 0 || lo > hi) return;
+    /* Capture what hi+1 currently shows so we can pin it back after the span
+       change propagates forward. */
+    const after = hi + 1 < measures.length ? this.meterAt(hi + 1) : null;
+    this.setMeterAt(lo, count, unit, opts);
+    if (after) this.setMeterAt(hi + 1, after.count, after.unit, { sym: after.sym, beatGroups: after.beatGroups });
+  }
+
+  /** Set the key signature over the inclusive measure span `[lo, hi]`, restoring
+   *  the prior key at `hi+1` (bounded restore — Phase 4a). */
+  setKeySigRange(lo: number, hi: number, sig: string, mode: 'major' | 'minor'): void {
+    const measures = this.allMeasures();
+    if (lo < 0 || lo > hi) return;
+    const afterSig = hi + 1 < measures.length ? this.keySigAt(hi + 1) : null;
+    const afterMode = hi + 1 < measures.length ? this.keyModeAt(hi + 1) : 'major';
+    this.setKeySigAt(lo, sig, mode);
+    if (afterSig !== null) this.setKeySigAt(hi + 1, afterSig, afterMode);
+  }
+
   /** The in-section override `<scoreDef>` immediately before measure `mi`, if
    *  one already exists (never creates). */
   private overrideScoreDefBefore(mi: number): Element | null {
@@ -1637,8 +1783,8 @@ export class ComposerModel {
    *  voice's layer — then the cursor measure up to the cursor; falling back to
    *  the head `<staffDef>`. `exclude` skips one inline clef (the one being
    *  edited) so callers can ask "what would be in effect WITHOUT this clef". */
-  private effectiveClefForVoice(exclude?: Element | null): { shape: string; line: string; dis: string | null; disPlace: string | null } {
-    const v = this.currentVoice;
+  private effectiveClefForVoice(voice: Voice, cursor: number, exclude?: Element | null): { shape: string; line: string; dis: string | null; disPlace: string | null } {
+    const v = voice;
     const staffN = this.staffForVoice(v);
     let shape = staffN === 1 ? 'G' : 'F';
     let line = staffN === 1 ? '2' : '4';
@@ -1652,7 +1798,7 @@ export class ComposerModel {
       dis = headDef.getAttribute('clef.dis');
       disPlace = headDef.getAttribute('clef.dis.place');
     }
-    const loc = locateCursor(this, v, this.cursors[v]);
+    const loc = locateCursor(this, v, cursor);
     const cursorMi = loc && !loc.inTuplet ? loc.measureIdx : -1;
     const measures = this.allMeasures();
     const lastMi = cursorMi >= 0 ? cursorMi : measures.length - 1;
@@ -1683,7 +1829,8 @@ export class ComposerModel {
   /** Clef in effect at the current cursor for its staff (head staffDef + inline
    *  clef changes carried forward). Used to pre-select the clef modal. */
   clefAtCursor(): { shape: string; line: string; dis: string | null; disPlace: string | null } {
-    return this.effectiveClefForVoice();
+    const v = this.currentVoice;
+    return this.effectiveClefForVoice(v, this.cursors[v]);
   }
 
   /** Insert (or replace) an inline `<clef>` at the current cursor — a
@@ -1693,7 +1840,16 @@ export class ComposerModel {
    *  clef already there. `dis`/`disPlace` give octave clefs (treble+8 etc.). */
   setClefAt(shape: string, line: string, dis: string | null, disPlace: string | null): boolean {
     const v = this.currentVoice;
-    const loc = locateCursor(this, v, this.cursors[v]);
+    return this.setClefAtCursor(v, this.cursors[v], shape, line, dis, disPlace);
+  }
+
+  /** Insert/replace an inline `<clef>` at an EXPLICIT (voice, cursor) — the
+   *  cursor-parameterized core that `setClefAt` (current cursor) and
+   *  `setClefRange` (span endpoints) both call. Zero-duration; clefs aren't
+   *  content children, so inserting one never shifts flat-cursor indices. */
+  setClefAtCursor(voice: Voice, cursor: number, shape: string, line: string, dis: string | null, disPlace: string | null): boolean {
+    const v = voice;
+    const loc = locateCursor(this, v, cursor);
     if (!loc || loc.inTuplet) return false;
     const layer = loc.layer;
     const content = this.contentChildren(layer);
@@ -1712,7 +1868,7 @@ export class ComposerModel {
        then writing it would be redundant. Remove the inline clef here instead
        (or no-op if none), so setting a clef back to the prevailing one clears
        the override rather than stacking a redundant clef. */
-    const inh = this.effectiveClefForVoice(here);
+    const inh = this.effectiveClefForVoice(v, cursor, here);
     const redundant = inh.shape === shape && inh.line === line
       && (inh.dis ?? '') === (dis ?? '') && (inh.disPlace ?? '') === (disPlace ?? '');
     if (redundant) {
@@ -1738,6 +1894,160 @@ export class ComposerModel {
       clef.removeAttribute('dis.place');
     }
     return true;
+  }
+
+  /** Apply a clef across the beat span `[startCursor, endCursor)` for `voice`,
+   *  confined to the span: the new clef is inserted at `startCursor` and the
+   *  clef that prevailed at `endCursor` is restored there (Phase 4a, selection-
+   *  driven). Captures the restore clef BEFORE mutating. Returns false if either
+   *  endpoint is inside a tuplet. */
+  setClefRange(voice: Voice, startCursor: number, endCursor: number, shape: string, line: string, dis: string | null, disPlace: string | null): boolean {
+    /* The clef in effect just before endCursor today — restored after the new
+       clef is laid down so the change doesn't leak past the selection. */
+    const restore = this.effectiveClefForVoice(voice, endCursor);
+    if (!this.setClefAtCursor(voice, startCursor, shape, line, dis, disPlace)) return false;
+    /* endCursor at/after the voice end has nothing to restore onto. */
+    if (endCursor < this.getVoiceLength(voice)) {
+      this.setClefAtCursor(voice, endCursor, restore.shape, restore.line, restore.dis, restore.disPlace);
+    }
+    return true;
+  }
+
+  /* ── pickup / anacrusis (Phase 4c) ────────────────────────────────────────
+     A pickup is a dedicated measure carrying a reduced tick budget
+     (hkl:pickup-ticks) + @metcon="false" (Verovio skips the meter-conformance
+     check, so the short bar renders without padding). It sits as the first
+     measure of a section and is numbered 0 by renumberMeasures. */
+
+  /** First measure index of the section the cursor is in: the nearest measure
+   *  at or before the cursor carrying a section title, else 0. */
+  sectionStartIdxForCursor(voice?: Voice): number {
+    const mi = Math.max(0, this.cursorMeasureIdx(voice));
+    const measures = this.allMeasures();
+    for (let i = Math.min(mi, measures.length - 1); i > 0; i--) {
+      if (measures[i].getAttribute('data-hkl-section-title')) return i;
+    }
+    return 0;
+  }
+
+  /** Pickup length in BEATS (denominator units) for the section starting at
+   *  `sectionStartIdx`, or 0 when the section has no pickup. The pickup, once
+   *  added, IS the section's first measure. */
+  pickupBeatsForSection(sectionStartIdx: number): number {
+    const measures = this.allMeasures();
+    if (sectionStartIdx < 0 || sectionStartIdx >= measures.length) return 0;
+    const ticks = readPickupTicks(measures[sectionStartIdx]);
+    if (ticks === null) return 0;
+    const { unit } = this.meterAt(sectionStartIdx);
+    return Math.round(ticks / (64 / unit));
+  }
+
+  /** Add / resize / remove the pickup at the start of the section beginning at
+   *  `sectionStartIdx`. `beats` in 1..count-1 sets the pickup length (inserting
+   *  a measure 0 if none exists); `beats === 0` removes the pickup measure
+   *  (no content confirmation — it's one short bar). Returns true on change. */
+  setPickupAt(sectionStartIdx: number, beats: number): boolean {
+    const measures = this.allMeasures();
+    if (sectionStartIdx < 0 || sectionStartIdx >= measures.length) return false;
+    const meter = this.meterAt(sectionStartIdx);
+    const unitTicks = 64 / meter.unit;
+    const startEl = measures[sectionStartIdx];
+    const existing = readPickupTicks(startEl) !== null ? startEl : null;
+
+    if (beats <= 0) {
+      if (!existing) return false;
+      this.removePickupMeasure(existing);
+      return true;
+    }
+    if (beats >= meter.count) return false; /* a full bar isn't a pickup */
+
+    const budget = beats * unitTicks;
+    const pickup = existing ?? this.insertSectionPickup(sectionStartIdx);
+    pickup.setAttributeNS(HKL_NS, 'hkl:' + PICKUP_TICKS_ATTR, String(budget));
+    pickup.setAttribute('metcon', 'false');
+    this.invalidateMeterCache();
+    const mi = this.measureIdxOf(pickup);
+    /* Truncate any content that no longer fits the reduced budget, then refill
+       placeholders to the new budget. */
+    this.truncateOverflowingMeasuresInRange(mi, mi);
+    normalizeTies(this);
+    this.renumberMeasures();
+    this.setBarlines();
+    this.normalizePlaceholdersAll();
+    for (let v: Voice = 1; v <= this.totalVoices(); v++) {
+      this.cursors[v] = Math.min(this.cursors[v], this.getVoiceLength(v));
+      if (v === this.totalVoices()) break;
+    }
+    return true;
+  }
+
+  /** Insert a fresh empty measure at the front of the section beginning at
+   *  `sectionStartIdx` (becomes the new section-first measure). If that measure
+   *  carried a section title, the title moves to the pickup so the pickup heads
+   *  the section. */
+  private insertSectionPickup(sectionStartIdx: number): Element {
+    const section = this.doc.querySelector('section');
+    const measures = this.allMeasures();
+    const startEl = measures[sectionStartIdx];
+    const m = el(this.doc, 'measure', { 'xml:id': newId('m') });
+    this.appendMeasureStaves(m);
+    if (!section) return m;
+    /* Section-level node for startEl (unwrap any <ending>). Insert the pickup
+       right before it — i.e. after any <sb data-hkl-section> break, so the
+       break still precedes the (now pickup-led) section. */
+    let ref: Node = startEl;
+    while (ref.parentNode && ref.parentNode !== section) ref = ref.parentNode;
+    section.insertBefore(m, ref);
+    const title = startEl.getAttribute('data-hkl-section-title');
+    if (title !== null) {
+      m.setAttribute('data-hkl-section-title', title);
+      startEl.removeAttribute('data-hkl-section-title');
+    }
+    /* A tempo marking on the section's downbeat governs the music from its
+       start — including the anacrusis — so move it onto the pickup. */
+    this.moveDownbeatTempos(startEl, m);
+    this.invalidateMeterCache();
+    return m;
+  }
+
+  /** Move beat-1 INSTANT tempo marks from `from` to the front of `to` (keeping
+   *  tstamp=1). Used when a pickup is added/removed so the score's tempo stays
+   *  on the section's first sounding moment. Gradual marks (with a tstamp2 span)
+   *  stay put — re-encoding their span across a short pickup is ambiguous. */
+  private moveDownbeatTempos(from: Element, to: Element): void {
+    for (const t of Array.from(from.children)) {
+      if (t.localName !== 'tempo') continue;
+      if (t.getAttribute('data-hkl-gradual')) continue;
+      const ts = parseFloat(t.getAttribute('tstamp') ?? '1');
+      if (Math.abs((isFinite(ts) ? ts : 1) - 1) > 1e-6) continue;
+      to.insertBefore(t, to.firstChild);
+      t.setAttribute('tstamp', '1');
+    }
+  }
+
+  /** Remove a pickup measure, handing its section title (if any) to the next
+   *  measure so the section keeps its heading. */
+  private removePickupMeasure(pickup: Element): void {
+    const section = this.doc.querySelector('section');
+    let node: Node = pickup;
+    while (node.parentNode && section && node.parentNode !== section) node = node.parentNode;
+    const nextMeasure = this.allMeasures()[this.measureIdxOf(pickup) + 1] ?? null;
+    const title = pickup.getAttribute('data-hkl-section-title');
+    if (title !== null && nextMeasure) nextMeasure.setAttribute('data-hkl-section-title', title);
+    /* Hand any downbeat tempo back to the measure that becomes the section start. */
+    if (nextMeasure) this.moveDownbeatTempos(pickup, nextMeasure);
+    /* Orphan any ties leaving the pickup's content so survivors re-tag. */
+    for (const c of Array.from(pickup.querySelectorAll('note, chord'))) this.orphanTiePartners(c);
+    (node as Element).parentNode?.removeChild(node as Element);
+    this.invalidateMeterCache();
+    this.renumberMeasures();
+    this.setBarlines();
+    normalizeTies(this);
+    this.normalizePlaceholdersAll();
+    for (let v: Voice = 1; v <= this.totalVoices(); v++) {
+      this.cursors[v] = Math.min(this.cursors[v], this.getVoiceLength(v));
+      if (v === this.totalVoices()) break;
+    }
   }
 
   /** First measure index > `mi` that carries its OWN meter override (so a
@@ -3631,6 +3941,13 @@ export class ComposerModel {
     let n = 1;
     for (const mm of this.allMeasures()) {
       if (mm.getAttribute("data-hkl-section-title")) n = 1;
+      /* A pickup/anacrusis measure is numbered 0 and does NOT advance the
+         counter, so the section's first FULL measure stays "1". */
+      if (readPickupTicks(mm) !== null) {
+        mm.setAttribute("n", "0");
+        n = 1;
+        continue;
+      }
       mm.setAttribute("n", String(n));
       n++;
     }

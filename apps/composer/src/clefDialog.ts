@@ -22,7 +22,14 @@ const CLEF_OPTIONS = [
 
 export function openClefModal(
   model: ComposerModel,
-  opts: { history: HistoryManager; onApply: () => void; onError?: (msg: string) => void },
+  opts: {
+    history: HistoryManager;
+    onApply: () => void;
+    onError?: (msg: string) => void;
+    /** When set, apply the clef across the beat span (selection-driven, Phase
+     *  4a): insert at `startCursor`, restore the prior clef at `endCursor`. */
+    range?: { voice: number; startCursor: number; endCursor: number };
+  },
 ): void {
   const cur = model.clefAtCursor();
   const curValue = `${cur.shape}|${cur.line}|${cur.dis ?? ''}|${cur.disPlace ?? ''}`;
@@ -39,7 +46,10 @@ export function openClefModal(
     onOk: (values) => {
       const [shape, line, dis, disPlace] = String(values.clef ?? 'G|2||').split('|');
       const before = model.snapshotState();
-      const ok = model.setClefAt(shape, line, dis || null, disPlace || null);
+      const r = opts.range;
+      const ok = r
+        ? model.setClefRange(r.voice, r.startCursor, r.endCursor, shape, line, dis || null, disPlace || null)
+        : model.setClefAt(shape, line, dis || null, disPlace || null);
       if (!ok) {
         opts.onError?.('Clef change not supported inside a tuplet.');
         return;

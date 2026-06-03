@@ -3712,6 +3712,143 @@ const PHASE1 = {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true, bubbles: true }));
     `,
   },
+
+  /* ── Phase 4b: cut/common-time symbol + additive beat groups ───────────── */
+
+  /* Cut time: the signature modal's Symbol=Cut forces 2/2 and stamps
+     meter.sym="cut" on the head scoreDef (Verovio renders ¢). */
+  phase4_cut_time: {
+    setup: `
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'S', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      const symSel = dlg.querySelector('[data-field="symbol"]');
+      symSel.value = 'cut';
+      symSel.dispatchEvent(new Event('change', { bubbles: true }));
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+      r();
+    `,
+    visualBaseline: 'phase4_cut_time',
+  },
+
+  /* Additive 2+2+3 grouping in 7/8: seven eighths beam as 2+2+3 (three beams),
+     not a uniform per-eighth grouping; meter.count stays 7 (plain numeral). */
+  phase4_additive_beaming: {
+    setup: `
+      const A = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
+      m.setTimeSig(7, 8, { beatGroups: [2, 2, 3] });
+      m.setCursor(0, 1);
+      for (let i = 0; i < 7; i++) m.insertChordAtCursor({ notes: [A], duration: '8', dots: 0 });
+      r();
+    `,
+    visualBaseline: 'phase4_additive_beaming',
+  },
+
+  /* ── Phase 4a: selection-driven signature / clef change ─────────────────── */
+
+  /* Measure-mode selection over M2–M3 (idx 1–2) of a 4-measure doc + Ctrl+Shift+S
+     to 3/4 applies the meter to the span with a bounded restore at M4 (idx 3). */
+  phase4_sel_sig_span: {
+    setup: `
+      window.confirm = () => true;
+      const A = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
+      m.setCursor(0, 1);
+      for (let i = 0; i < 16; i++) m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 }); /* 4 measures × 4 quarters */
+      m.setCursor(m.getMeasureStartCursor(1, 1), 1); /* M2 start (idx 1) */
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true, bubbles: true }));   /* enter measure sel @M2 */
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', shiftKey: true, bubbles: true })); /* extend → M3 */
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'S', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      dlg.querySelector('[data-field="count"]').value = '3';
+      dlg.querySelector('[data-field="unit"]').value = '4';
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+      r();
+    `,
+  },
+
+  /* Beat-mode selection + Ctrl+Shift+C applies a clef over the selected beats,
+     confined: a bass clef at the span start and a restore (treble) clef after. */
+  phase4_sel_clef_span: {
+    setup: `
+      const A = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 }); /* 4 quarters in 4/4 */
+      m.setCursor(1, 1); /* on the 2nd beat boundary */
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', shiftKey: true, bubbles: true })); /* enter beat sel */
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', shiftKey: true, bubbles: true })); /* extend one beat */
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'C', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      dlg.querySelector('[data-field="clef"]').value = 'F|4||';
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+      r();
+    `,
+  },
+
+  /* ── Phase 4c: pickup / anacrusis ───────────────────────────────────────── */
+
+  /* Ctrl+Shift+A → 2 beats inserts a pickup measure 0 (reduced 32-tick budget,
+     metcon="false") in 4/4; the following measure stays numbered 1. */
+  phase4_pickup_add: {
+    setup: `
+      const A = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 });
+      m.setCursor(0, 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'A', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      dlg.querySelector('[data-field="beats"]').value = '2';
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+      r();
+    `,
+    visualBaseline: 'phase4_pickup_add',
+  },
+
+  /* Setting the pickup back to 0 removes the pickup measure entirely. */
+  phase4_pickup_remove: {
+    setup: `
+      const A = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 });
+      m.setPickupAt(0, 2);   /* add a pickup */
+      m.setPickupAt(0, 0);   /* …then remove it */
+      r();
+    `,
+  },
+
+  /* Adding a pickup displaces the downbeat tempo onto the pickup, and playback
+     applies that tempo from the very start (no default-120 lead-in). */
+  phase4_pickup_tempo: {
+    setup: `
+      const A = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
+      m.setTimeSig(4, 4);
+      m.setTempo(240, '4', 0, '');
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 });
+      m.setPickupAt(0, 2);
+      m.setVoice(1); m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 }); /* a pickup note */
+      r();
+    `,
+  },
+
+  /* A mid-piece (non-downbeat) tempo must resolve to the correct absolute tick
+     once a pickup's reduced budget is in play — buildPlayback's note clock
+     (budget-aware) and the tempo timeline (absoluteTickForMoment) must agree. */
+  phase4_pickup_midpiece_tempo_align: {
+    setup: `
+      const A = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
+      m.setTimeSig(4, 4);
+      m.setCursor(0, 1);
+      for (let i = 0; i < 8; i++) m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 }); /* 2 measures */
+      const doc = m.getDoc();
+      const meas2 = doc.querySelectorAll('measure')[1]; /* measure 2 (idx 1) downbeat */
+      const t = doc.createElementNS('http://www.music-encoding.org/ns/mei', 'tempo');
+      t.setAttribute('tstamp', '1'); t.setAttribute('staff', '1');
+      t.setAttribute('mm', '240'); t.setAttribute('mm.unit', '4'); t.setAttribute('midi.bpm', '240');
+      meas2.insertBefore(t, meas2.firstChild);
+      m.setPickupAt(0, 2); /* pickup pushes everything; tempo (mid-piece) stays at its measure */
+      r();
+    `,
+  },
 };
 
 /* ── Phase 2: mouse (click-to-position) ──────────────────────────────────── */
@@ -4029,6 +4166,134 @@ export const FIXTURE_ASSERTIONS = {
         /* Verovio rendered a mid-measure clef change (a g.clef beyond the staff's opening clef). */
         const rendered = document.querySelectorAll('#score g.clef').length;
         if (rendered < 3) return { ok: false, detail: 'rendered g.clef=' + rendered + ' (expected ≥3: 2 opening + 1 change)' };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Phase 4b: cut time → meter.sym + forced 2/2. */
+  phase4_cut_time: [
+    { name: 'Symbol=Cut forces 2/2 and stamps meter.sym="cut" on the head scoreDef',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const info = m.meterAt(0);
+        if (info.sym !== 'cut') return { ok: false, detail: 'meterAt(0).sym=' + info.sym + ' (expected cut)' };
+        if (info.count !== 2 || info.unit !== 2) return { ok: false, detail: 'meter=' + info.count + '/' + info.unit + ' (expected 2/2)' };
+        const sd = m.getDoc().querySelector('scoreDef');
+        if (sd.getAttribute('meter.sym') !== 'cut') return { ok: false, detail: 'head meter.sym=' + sd.getAttribute('meter.sym') };
+        return { ok: true };
+      })()` },
+  ],
+  /* Phase 4b: additive 2+2+3 grouping in 7/8 beams as three beams of 2,2,3. */
+  phase4_additive_beaming: [
+    { name: '7/8 “2+2+3” beams seven eighths as 2,2,3 (count stays 7)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const info = m.meterAt(0);
+        if (info.count !== 7 || info.unit !== 8) return { ok: false, detail: 'meter=' + info.count + '/' + info.unit };
+        if (!info.beatGroups || info.beatGroups.join('+') !== '2+2+3') return { ok: false, detail: 'beatGroups=' + JSON.stringify(info.beatGroups) };
+        const doc = new DOMParser().parseFromString(m.serialize(), 'application/xml');
+        const layer = [...doc.querySelectorAll('measure')][0]
+          .querySelector('staff[n="1"] layer[n="1"]');
+        const sizes = [...layer.querySelectorAll('beam')].map(b =>
+          [...b.children].filter(c => c.localName === 'note' || c.localName === 'chord').length);
+        if (sizes.join(',') !== '2,2,3') return { ok: false, detail: 'beam sizes=' + sizes.join(',') + ' (expected 2,2,3)' };
+        return { ok: true };
+      })()` },
+  ],
+  /* Phase 4a: selection sig over M2–M3 with bounded restore at M4. */
+  phase4_sel_sig_span: [
+    { name: 'meter 3/4 over idx 1–2 only; idx 0 + idx 3 stay 4/4 (bounded restore)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const ms = m.allMeasures();
+        if (ms.length < 4) return { ok: false, detail: 'measures=' + ms.length + ' (expected 4)' };
+        const at = (i) => m.meterAt(i);
+        if (at(0).count !== 4) return { ok: false, detail: 'M1=' + at(0).count + '/' + at(0).unit + ' (expected 4/4)' };
+        if (at(1).count !== 3 || at(1).unit !== 4) return { ok: false, detail: 'M2=' + at(1).count + '/' + at(1).unit + ' (expected 3/4)' };
+        if (at(2).count !== 3 || at(2).unit !== 4) return { ok: false, detail: 'M3=' + at(2).count + '/' + at(2).unit + ' (expected 3/4)' };
+        if (at(3).count !== 4 || at(3).unit !== 4) return { ok: false, detail: 'M4=' + at(3).count + '/' + at(3).unit + ' (expected 4/4 restored)' };
+        return { ok: true };
+      })()` },
+  ],
+  /* Phase 4a: clef over a beat span — bass at the start, restore clef after. */
+  phase4_sel_clef_span: [
+    { name: 'two inline clefs: bass at span start, treble restore after (left→right)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const clefs = [...m.getDoc().querySelectorAll('layer[n="1"] > clef')];
+        if (clefs.length !== 2) return { ok: false, detail: 'inline clefs=' + clefs.length + ' (expected 2)' };
+        if (clefs[0].getAttribute('shape') !== 'F') return { ok: false, detail: 'first clef shape=' + clefs[0].getAttribute('shape') + ' (expected F/bass)' };
+        if (clefs[1].getAttribute('shape') !== 'G') return { ok: false, detail: 'second clef shape=' + clefs[1].getAttribute('shape') + ' (expected G/treble restore)' };
+        return { ok: true };
+      })()` },
+  ],
+  /* Phase 4c: pickup add — measure 0, reduced budget, metcon, numbering. */
+  phase4_pickup_add: [
+    { name: 'pickup measure 0 (32-tick budget, metcon=false); next measure stays n=1',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const ms = m.allMeasures();
+        if (ms.length !== 2) return { ok: false, detail: 'measures=' + ms.length + ' (expected 2: pickup + body)' };
+        const pk = ms[0];
+        if (pk.getAttribute('n') !== '0') return { ok: false, detail: 'pickup @n=' + pk.getAttribute('n') + ' (expected 0)' };
+        if (pk.getAttribute('metcon') !== 'false') return { ok: false, detail: 'pickup metcon=' + pk.getAttribute('metcon') };
+        if (pk.getAttributeNS('https://hexkeylab.com/ns/mei', 'pickup-ticks') !== '32')
+          return { ok: false, detail: 'pickup-ticks=' + pk.getAttributeNS('https://hexkeylab.com/ns/mei', 'pickup-ticks') + ' (expected 32)' };
+        if (ms[1].getAttribute('n') !== '1') return { ok: false, detail: 'body @n=' + ms[1].getAttribute('n') + ' (expected 1)' };
+        if (m.measureTicksAt(0) !== 32) return { ok: false, detail: 'measureTicksAt(0)=' + m.measureTicksAt(0) + ' (expected 32)' };
+        if (m.pickupBeatsForSection(0) !== 2) return { ok: false, detail: 'pickupBeats=' + m.pickupBeatsForSection(0) };
+        return { ok: true };
+      })()` },
+  ],
+  /* Phase 4c: pickup remove — back to a single full measure. */
+  phase4_pickup_remove: [
+    { name: 'removing the pickup leaves one full 64-tick measure, no pickup attrs',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const ms = m.allMeasures();
+        if (ms.length !== 1) return { ok: false, detail: 'measures=' + ms.length + ' (expected 1)' };
+        if (ms[0].getAttributeNS('https://hexkeylab.com/ns/mei', 'pickup-ticks'))
+          return { ok: false, detail: 'pickup-ticks still set' };
+        if (m.pickupBeatsForSection(0) !== 0) return { ok: false, detail: 'pickupBeats=' + m.pickupBeatsForSection(0) + ' (expected 0)' };
+        if (m.measureTicksAt(0) !== 64) return { ok: false, detail: 'measureTicksAt(0)=' + m.measureTicksAt(0) + ' (expected 64)' };
+        return { ok: true };
+      })()` },
+  ],
+  /* Phase 4c: pickup displaces the downbeat tempo + playback applies it from t0. */
+  phase4_pickup_tempo: [
+    { name: 'downbeat tempo moved onto the pickup (measure 0, tstamp 1)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const ms = m.allMeasures();
+        const tempoIdx = ms.findIndex(mm => mm.querySelector('tempo'));
+        if (tempoIdx !== 0) return { ok: false, detail: 'tempo in measure idx ' + tempoIdx + ' (expected 0/pickup)' };
+        const t = ms[0].querySelector('tempo');
+        if (t.getAttribute('tstamp') !== '1') return { ok: false, detail: 'tempo tstamp=' + t.getAttribute('tstamp') };
+        return { ok: true };
+      })()` },
+    { name: 'playback runs at 240bpm from the very start (quarter = 250ms, no 120 lead-in)',
+      expr: `(() => {
+        const C = window.__hkl_composer;
+        const evs = C.buildPlayback(C.model).filter(e => e.notes.length > 0).sort((a, b) => a.atMs - b.atMs);
+        if (evs.length === 0) return { ok: false, detail: 'no note events' };
+        if (Math.round(evs[0].atMs) !== 0) return { ok: false, detail: 'first onset atMs=' + Math.round(evs[0].atMs) };
+        const bad = evs.find(e => Math.abs(e.durationMs - 250) > 1);
+        if (bad) return { ok: false, detail: 'a quarter is ' + Math.round(bad.durationMs) + 'ms (expected 250 @240bpm)' };
+        return { ok: true };
+      })()` },
+  ],
+  /* Phase 4c: a mid-piece tempo resolves to the correct tick despite the pickup. */
+  phase4_pickup_midpiece_tempo_align: [
+    { name: 'tempo change lands exactly at its measure: 4 quarters @120 then 4 @240',
+      expr: `(() => {
+        const C = window.__hkl_composer;
+        const evs = C.buildPlayback(C.model).filter(e => e.notes.length > 0).sort((a, b) => a.atMs - b.atMs);
+        const durs = evs.map(e => Math.round(e.durationMs));
+        /* Pickup is empty; 8 note events = measure idx1 (120bpm) then idx2 (240bpm). */
+        if (durs.length !== 8) return { ok: false, detail: 'note events=' + durs.length + ' (expected 8)' };
+        const want = [500, 500, 500, 500, 250, 250, 250, 250];
+        for (let i = 0; i < 8; i++) if (Math.abs(durs[i] - want[i]) > 1)
+          return { ok: false, detail: 'durs=' + durs.join(',') + ' (expected ' + want.join(',') + ')' };
         return { ok: true };
       })()` },
   ],

@@ -3163,3 +3163,30 @@ forcing submit on any Enter made Cancel commit). Added an `onChange(values, chan
 them to focus Kind and hide the ♩=/beat-note/show-mm rows for non-instant kinds. Composer modals also
 restore a checkbox focus ring (`.hkl-dialog input[type=checkbox]:focus`) that HKL suppresses globally —
 these dialogs are keyboard-driven, so a focused checkbox needs a visible cue.
+
+**Phase 4b/4c: meter symbol + additive beat-groups + pickup ride existing scoreDef/budget machinery (2026-06-03).**
+Three structural features added with almost no new architecture, because the per-measure meter/budget
+table (`meterTable()`) was already the single chokepoint:
+- **Cut/common time** = `meter.sym ∈ {"common","cut"}` on the `<scoreDef>` (Verovio renders C/¢ natively).
+  The budget still comes from count×unit (common=4/4, cut=2/2), so capacity is untouched. The sig modal's
+  Symbol select forces the numerals (common→4/4, cut→2/2).
+- **Additive meters** (e.g. 7/8 = 2+2+3) = `hkl:beat-groups="2+2+3"` (HKL ns) on the same `<scoreDef>`,
+  **beaming-only** per Max: `meter.count` stays the sum so the displayed numeral is plain. Threaded through
+  `TimeSigInfo.beatGroups` → `perMeasureTimeSig` → `beatGroupBoundaries` (authoritative, overrides the
+  simple/compound/4-4 logic). A `<scoreDef>` that touches meter resets the whole descriptor
+  (count/unit/sym/groups) together — `meterAt(mi)` returns the `MeterInfo` quad.
+- **Pickup / anacrusis** = a dedicated measure 0 with `hkl:pickup-ticks` (reduced budget) + `@metcon="false"`
+  (Verovio skips meter-conformance and renders the short bar without padding — spiked & confirmed before
+  building the API). `meterTable.budgetByEl` honors `hkl:pickup-ticks`, so autofill/truncation/placeholder
+  normalization respect it for free. `renumberMeasures` numbers the pickup 0. Chose **insert a dedicated
+  measure** (beats=0 deletes it; title travels to/from the pickup) over converting the first measure.
+
+**Phase 4a: selection-driven span sig/clef/key = two diff-aware calls, not a new mutator (2026-06-03).**
+`setMeterRange(lo,hi,…)`/`setKeySigRange` capture the value at `hi+1` first, set at `lo`, then restore the
+captured value at `hi+1` — the "bounded restore after the range". Because `setMeterAt`/`setKeySigAt` are
+already diff-aware, the restore self-elides when the span change didn't actually alter what `hi+1` inherits.
+`setClefRange` mirrors it over beat cursors (capture the clef at `endCursor`, insert at `startCursor`,
+restore at `endCursor`); `setClefAt`/`setClefRange` both delegate to the cursor-parameterized
+`setClefAtCursor`. Dispatch is intercepted in `dispatchSelectionMode` (before the voice-mode handlers) so
+select-mode Ctrl+Shift+S/C apply over the span instead of falling through to single-measure/voice mode.
+Time/key work over the measures any selection touches; clef is beat-mode only (measure selection rejected).

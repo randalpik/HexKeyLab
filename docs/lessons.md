@@ -1268,3 +1268,25 @@ tracked the current layer.** `clefAtCursor` scanned just the cursor's measure/la
 change in an earlier bar it fell back to the staffDef default (staff 1 → treble) — wrong for the modal
 seed AND any diff-aware redundancy/removal logic. Resolving a clef "in effect" must walk every prior
 measure's clefs in the voice's layer (`effectiveClefForVoice`), not just the current one.
+
+**Verovio renders a short measure correctly when `@metcon="false"` is set; no padding, no error (2026-06-03).**
+For pickup/anacrusis bars (content summing to less than the meter), set `@metcon="false"` on the `<measure>`
+so Verovio skips its meter-conformance check. Spiked before building the API: a 4/4 measure holding a single
+quarter note rendered as a narrow bar with the note adjacent to the barline (not padded to full width), and
+Verovio raised nothing. The reduced budget itself lives in `hkl:pickup-ticks`, honored by `meterTable.budgetByEl`
+so autofill/truncation/placeholder-normalization all use it — don't add a parallel budget path.
+
+**Don't import the model into `notation/beams.ts` — it's a cycle (2026-06-03).** `model/index.ts` imports
+`regroupBeams`/`readTimeSig` from `beams.ts`, so `beams.ts` importing the model back (e.g. to reuse
+`parseBeatGroups`) is circular. Keep a small local copy of such pure helpers in `beams.ts` (it already has
+its own `MEI_NS`; the HKL ns + a 3-line beat-group parser are cheap to duplicate).
+
+**Two playback clocks must agree on per-measure budget — pickups exposed the gap (2026-06-03).** Composer
+resolves ticks two ways: the NOTE clock walks element durations + `model.measureStartTick` (budget-aware
+via `meterTable.prefix`), while the CONTROL-EVENT clock (tempo/dynamics/hairpins/pedal) uses the doc-based
+`absoluteTickForMoment` → `measureTickInfo` in `expressions.ts`. That second walk summed `count*(64/unit)`
+per measure and ignored `hkl:pickup-ticks`, so after a pickup the two clocks disagreed by the pickup's
+missing ticks — a tempo marked on the first real downbeat applied a beat or two late on playback even
+though it rendered in the right place. Fix: `measureTickInfo` honors `hkl:pickup-ticks` too. Lesson: any
+new per-measure budget concept must be threaded through BOTH the model budget table AND the doc-based
+moment→tick walk, or the audio drifts while the engraving looks correct.

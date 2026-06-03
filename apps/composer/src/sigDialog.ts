@@ -6,7 +6,7 @@
 // gets an in-section <scoreDef> override, so notes before it keep the prior
 // signature. setMeterAt/setKeySigAt encapsulate the placement.
 
-import type { ComposerModel } from './model/index.js';
+import { type ComposerModel, type MeterSym, parseBeatGroups, formatBeatGroups } from './model/index.js';
 import type { HistoryManager } from './history.js';
 import { openTextEntryModal, type TextEntryField } from './ui/textEntryModal.js';
 
@@ -32,8 +32,23 @@ const KEY_OPTIONS: ReadonlyArray<KeyOption> = [
   { sig: '7s', major: 'C♯ major (7♯)',  minor: 'a♯ minor (7♯)' },
 ];
 
-const TIME_NUM_OPTIONS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+const TIME_NUM_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
 const TIME_DEN_OPTIONS = [1, 2, 4, 8, 16];
+
+/** Meter-symbol options. `common` forces 4/4 (renders C), `cut` forces 2/2
+ *  (renders ¢); `numeric` is a plain numeral. */
+const SYMBOL_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: 'numeric', label: 'Numeric' },
+  { value: 'common', label: 'Common time (C)' },
+  { value: 'cut', label: 'Cut time (¢)' },
+];
+
+/** The count/unit a meter symbol forces (common = 4/4, cut = 2/2). */
+function symbolMeter(sym: MeterSym): { count: number; unit: number } | null {
+  if (sym === 'common') return { count: 4, unit: 4 };
+  if (sym === 'cut') return { count: 2, unit: 2 };
+  return null;
+}
 
 /** One flat "Key" select combining major + relative-minor (the shell's static
  *  fields can't live-relabel on a mode checkbox the way Setup does). Value is
@@ -63,32 +78,88 @@ function meterWouldTruncate(model: ComposerModel, measureIdx: number, count: num
 export function openSignatureModal(
   model: ComposerModel,
   measureIdx: number,
-  opts: { history: HistoryManager; onApply: () => void },
+  opts: {
+    history: HistoryManager;
+    onApply: () => void;
+    /** Surfaces a validation error (e.g. bad beat-groups) to the statusline.
+     *  When set, an invalid submit reports + applies nothing. */
+    onError?: (msg: string) => void;
+    /** When set, apply over the inclusive measure span `[measureIdx, rangeEndIdx]`
+     *  with a bounded restore after the range (selection-driven — Phase 4a),
+     *  instead of "FROM measureIdx forward". */
+    rangeEndIdx?: number;
+  },
 ): void {
   /* Populate with the signature in EFFECT at the anchored measure (an existing
      override, or the inherited value), so re-opening shows the current state. */
   const curSig = model.keySigAt(measureIdx);
   const curMode = model.keyModeAt(measureIdx);
   const ts = model.meterAt(measureIdx);
+  const curSym: MeterSym = ts.sym;
+
+  const ranged = opts.rangeEndIdx != null && opts.rangeEndIdx >= measureIdx;
+  const hi = ranged ? (opts.rangeEndIdx as number) : measureIdx;
+  const spanLabel = ranged
+    ? 'm' + (measureIdx + 1) + '–m' + (hi + 1)
+    : 'm' + (measureIdx + 1);
 
   const fields: TextEntryField[] = [
     { name: 'key', type: 'select', label: 'Key', value: curSig + '|' + curMode, options: combinedKeyOptions() },
+    { name: 'symbol', type: 'select', label: 'Symbol', value: curSym ?? 'numeric', options: SYMBOL_OPTIONS },
     { name: 'count', type: 'select', label: 'Beats', value: String(ts.count),
       options: TIME_NUM_OPTIONS.map((n) => ({ value: String(n), label: String(n) })) },
     { name: 'unit', type: 'select', label: 'Beat unit', value: String(ts.unit),
       options: TIME_DEN_OPTIONS.map((d) => ({ value: String(d), label: String(d) })) },
+    { name: 'beatGroups', type: 'text', label: 'Beat groups', value: formatBeatGroups(ts.beatGroups) ?? '',
+      placeholder: 'e.g. 2+2+3 (beaming only)' },
   ];
 
   openTextEntryModal({
-    title: 'Time / Key signature — m' + (measureIdx + 1),
+    title: 'Time / Key signature — ' + spanLabel,
     fields,
+    focusField: 'key',
+    /* Symbol coupling: Common forces 4/4, Cut forces 2/2 and hides the numeral
+       selects entirely (they no longer apply); Numeric reveals them. */
+    onChange: (values, _changed, api) => {
+      const sym = String(values.symbol ?? 'numeric') as MeterSym | 'numeric';
+      const forced = symbolMeter(sym === 'numeric' ? null : (sym as MeterSym));
+      if (forced) {
+        api.setValue('count', String(forced.count));
+        api.setValue('unit', String(forced.unit));
+        api.setHidden('count', true);
+        api.setHidden('unit', true);
+        /* Additive grouping doesn't apply to a symbol meter — clear + hide it. */
+        api.setValue('beatGroups', '');
+        api.setHidden('beatGroups', true);
+      } else {
+        api.setHidden('count', false);
+        api.setHidden('unit', false);
+        api.setHidden('beatGroups', false);
+      }
+    },
     onOk: (values) => {
       const [sig, modeRaw] = String(values.key ?? '0|major').split('|');
       const mode: 'major' | 'minor' = modeRaw === 'minor' ? 'minor' : 'major';
-      const count = parseInt(String(values.count), 10);
-      const unit = parseInt(String(values.unit), 10);
+      const symRaw = String(values.symbol ?? 'numeric');
+      const sym: MeterSym = symRaw === 'common' ? 'common' : symRaw === 'cut' ? 'cut' : null;
+      const forced = symbolMeter(sym);
+      const count = forced ? forced.count : parseInt(String(values.count), 10);
+      const unit = forced ? forced.unit : parseInt(String(values.unit), 10);
       if (!isFinite(count) || count < 1 || count > 16) return;
       if (!isFinite(unit) || !TIME_DEN_OPTIONS.includes(unit)) return;
+
+      /* Beat groups (optional). Must sum to the beat count, else reject the
+         whole submit (nothing applied) and report. */
+      const groupsText = String(values.beatGroups ?? '').trim();
+      let beatGroups: number[] | null = null;
+      if (groupsText) {
+        beatGroups = parseBeatGroups(groupsText);
+        const sum = beatGroups ? beatGroups.reduce((a, b) => a + b, 0) : -1;
+        if (!beatGroups || sum !== count) {
+          opts.onError?.('Beat groups must be “+”-separated positive integers summing to ' + count + '.');
+          return;
+        }
+      }
 
       if (meterWouldTruncate(model, measureIdx, count, unit)) {
         const ok = window.confirm(
@@ -98,9 +169,14 @@ export function openSignatureModal(
       }
 
       const before = model.snapshotState();
-      /* Effective FROM the anchored measure forward (measure 0 = score head). */
-      model.setKeySigAt(measureIdx, sig, mode);
-      model.setMeterAt(measureIdx, count, unit);
+      if (ranged) {
+        model.setKeySigRange(measureIdx, hi, sig, mode);
+        model.setMeterRange(measureIdx, hi, count, unit, { sym, beatGroups });
+      } else {
+        /* Effective FROM the anchored measure forward (measure 0 = score head). */
+        model.setKeySigAt(measureIdx, sig, mode);
+        model.setMeterAt(measureIdx, count, unit, { sym, beatGroups });
+      }
       opts.history.push(before, model.snapshotState(), 'signature');
       opts.onApply();
     },

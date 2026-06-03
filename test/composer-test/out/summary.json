@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 270,
-  "passed": 270,
+  "fixtures": 278,
+  "passed": 278,
   "failed": 0,
-  "elapsedMs": 91992,
+  "elapsedMs": 91664,
   "results": [
     {
       "name": "emptyDoc",
@@ -2103,6 +2103,70 @@
     },
     {
       "name": "phase5_multi_instr_selection",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase4_cut_time",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase4_additive_beaming",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase4_sel_sig_span",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase4_sel_clef_span",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase4_pickup_add",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase4_pickup_remove",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase4_pickup_tempo",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase4_pickup_midpiece_tempo_align",
       "ok": true,
       "failures": [],
       "counts": {

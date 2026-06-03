@@ -114,7 +114,13 @@ function measureTickInfo(doc: Document, measureIdx: number): { startTick: number
       if (u) unit = parseInt(u, 10);
     } else {
       if (mi === measureIdx) return { startTick: tick, ticksPerBeat: 64 / unit };
-      tick += count * (64 / unit);
+      /* A pickup/anacrusis measure carries a reduced tick budget; honor it so
+         moments after a pickup land at the right absolute tick (matching the
+         model's budget-aware measureStartTick — else tempo/dynamics/hairpins
+         drift by the pickup's missing ticks). */
+      const pk = node.getAttributeNS(HKL_NS, 'pickup-ticks');
+      const pkTicks = pk ? parseInt(pk, 10) : NaN;
+      tick += isFinite(pkTicks) && pkTicks > 0 ? pkTicks : count * (64 / unit);
       mi++;
     }
   }

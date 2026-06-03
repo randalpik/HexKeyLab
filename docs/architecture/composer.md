@@ -4,27 +4,6 @@ Keyboard-driven, Verovio-backed score editor that uses HKL as its input device. 
 
 Composer holds the MEI/score state; HKL holds the audio/MIDI/tuning state. They run as separate browser tabs and share no module imports beyond the bridge protocol.
 
-> **⚠️ TEMPORARY — next thread's focus: "Phase 4" (signatures & structure).** The 2026-06 round
-> (interaction polish: expr-layer nav, click-to-position, Bravura key sigs, cross-staff slurs,
-> expression-moment anchoring, modal ergonomics, diff-aware/cross-measure clefs) is done. The
-> remaining `COMPOSER` backlog items were scoped as a separate "Phase 4", to be tackled next:
-> - **4a — Selection-driven sig/clef/key change.** In select mode, `Ctrl+Shift+S`/`Ctrl+Shift+C`
->   should apply over the selected span (measures for time/key with a bounded restore after the
->   range; beats for clef) instead of anchoring to one measure / reverting to voice mode.
-> - **4b — Cut/common-time display + additive (2+3) meters.** Cut/common = `meter.sym` on the
->   scoreDef (Verovio renders ¢/C; `meterTable` already consumes count/unit so the budget is
->   unaffected). Additive is **beaming-only per Max** — store the grouping (e.g. `@hkl:beat-groups="2+2+3"`)
->   while `meter.count` stays the sum (display stays a plain numeral); thread the pattern through
->   `perMeasureTimeSig` → `beatGroupBoundaries` in `notation/beams.ts`. Both behind a `sigDialog.ts`
->   revamp. (The "supports cut/common + additive" claim was previously FALSE here — now corrected below.)
-> - **4c — Per-section pickup / anacrusis** (`Ctrl+Shift+A`). Measure budgets are already per-measure
->   variable (mid-piece sig changes), so a pickup = measure 0 with a reduced budget; the new work is a
->   per-measure budget override, Verovio `@metcon="false"` (spike first), `renumberMeasures` skipping
->   the pickup, and autofill/truncation honoring the reduced budget. Currently listed Out-of-scope below.
->
-> Each lands with a fixture (`test/composer-test/`); see the matching `COMPOSER` items in
-> `docs/backlog.md` (first block). Delete this block once Phase 4 ships.
-
 ## Two-tab architecture
 
 - **HKL tab** (`apps/hkl/index.html`) — Lumatone input, audio engine, tuning state, lattice rendering. Unchanged by Composer's existence.
@@ -267,6 +246,7 @@ Net: accidentals are uniformly Bravura, rest of the score stays on Leipzig (Brav
 ## Intelligent beaming (`apps/composer/src/notation/beams.ts`)
 
 Computed at serialize-time on the cloned doc (live doc has no `<beam>` wrappers). `regroupBeams(doc, timeSig)` removes existing beams, re-wraps consecutive beamable elements (`dur ≥ 8`, not a rest) per beat group:
+- **Additive** (`hkl:beat-groups` present, e.g. 7/8 = 2+2+3): each group is N denominator-notes wide, laid end to end — **authoritative**, overriding the simple/compound/4-4 logic (no 4/4 downgrade). `TimeSigInfo.beatGroups` is read by `perMeasureTimeSig` (reset whenever a `<scoreDef>` touches meter) and consumed first in `beatGroupBoundaries`.
 - **Simple** (n/{1,2,4}): one denominator-note per group.
 - **Compound** (n/{8,16}, n divisible by 3, ≥6): three per group.
 - **4/4 special**: each half-measure (beats 1–2, beats 3–4) is a super-group **only when its members are exactly four eighth notes** (no rests, every `@dur === '8'`). 8 eighths → two beams of 4; mixed rhythms (e.g. `E E 16 16 E E E E`) fall back to per-beat groups. The two halves are evaluated independently.
@@ -448,9 +428,15 @@ Plain-letter toggles on the note/chord (or rest) at the cursor anchor (INS → `
 ## Mid-piece time/key signatures & clefs (Phase 4)
 
 The model carries **per-measure metadata** via in-`<section>` `<scoreDef>`/`<staffDef>` overrides (NOT data attributes), keyed by a cached **meter/instrument table** (`meterTable()` — per-measure budget + cumulative `prefix[]`; `measureTicksAt`/`measureStartTick`/`meterAt`/`keySigAt`/`clefAtCursor`). The old uniform `measureTicks()` is now `measureTicksAt(mi)` threaded through every caller — the highest-blast-radius migration in the roadmap. Cache invalidation is centralized in `normalizePlaceholdersAll()`.
-- **`Ctrl+Shift+S`** (sig modal, `sigDialog.ts`) writes meter/key from the anchored measure forward via diff-aware `setMeterAt`/`setKeySigAt` (an unchanged submit writes nothing). Plain numeric meters only — **cut/common-time symbols and additive (2+3) meters are NOT yet implemented** (planned; see the Phase-4 TODO below). Setup relegates time/key to a button opening the same modal at measure 0.
-- **`Ctrl+Shift+C`** (clef modal, `clefDialog.ts`) writes a mid-measure inline `<clef>` (a zero-duration `<layer>` child — rides the content whitelists; `realTicks`=0; breaks beam runs). Diff-aware (mirrors `setMeterAt`): setting a clef equal to the one already in effect **removes** the inline `<clef>` instead of stacking a redundant one. Clef inheritance carries forward across measures — `effectiveClefForVoice` walks every prior measure's clefs in the voice's layer (not just the current measure), so the modal seeds correctly and the redundancy check works after a clef change in an earlier bar. Playback is clef-agnostic (coords carry pitch).
-- Per-measure accidental spelling, beaming (6/8 = 3+3), and MusicXML export all consume the per-measure lookup. → decisions.md (Phase-4 entries), lessons.md ("mid-measure clef vs the leading-signature region").
+- **`Ctrl+Shift+S`** (sig modal, `sigDialog.ts`) writes meter/key from the anchored measure forward via diff-aware `setMeterAt`/`setKeySigAt` (an unchanged submit writes nothing). Setup relegates time/key to a button opening the same modal at measure 0. The modal also carries:
+  - **Symbol** select — `meter.sym ∈ {"common","cut"}` (Verovio renders C / ¢). Choosing Common forces 4/4, Cut forces 2/2 (the numeral selects lock); the budget still comes from count×unit so capacity is unaffected.
+  - **Beat groups** — an optional additive pattern (`hkl:beat-groups="2+2+3"`, ns `https://hexkeylab.com/ns/mei`). **Beaming-only**: `meter.count` stays the sum (display is a plain numeral), the pattern just drives `beatGroupBoundaries`. Validated to sum to the beat count (mismatch → `onError`, nothing applied). Both `meter.sym` + `hkl:beat-groups` ride the same `<scoreDef>`; a meter-touching `<scoreDef>` resets the full descriptor (count/unit/sym/groups) — `meterAt(mi)` returns the `MeterInfo` quad.
+- **Selection-driven (Phase 4a)** — in select mode `Ctrl+Shift+S`/`Ctrl+Shift+C` apply over the **selected span** instead of reverting to voice mode (handled in `dispatchSelectionMode`, before the voice-mode handlers). Time/key span over the touched measures `[lo,hi]` via `setMeterRange`/`setKeySigRange` (each = two diff-aware calls: set at `lo`, **bounded restore** of the prior value at `hi+1`). Clef span over the selected **beats** via `setClefRange` (beat-mode only — measure selection is rejected): insert at the start cursor, restore the prevailing clef at the end cursor.
+- **`Ctrl+Shift+C`** (clef modal, `clefDialog.ts`) writes a mid-measure inline `<clef>` (a zero-duration `<layer>` child — rides the content whitelists; `realTicks`=0; breaks beam runs). Diff-aware (mirrors `setMeterAt`): setting a clef equal to the one already in effect **removes** the inline `<clef>` instead of stacking a redundant one. Clef inheritance carries forward across measures — `effectiveClefForVoice(voice, cursor, exclude?)` walks every prior measure's clefs in the voice's layer (not just the current measure), so the modal seeds correctly and the redundancy check works after a clef change in an earlier bar. `setClefAt` (current cursor) and `setClefRange` (span) both delegate to the cursor-parameterized `setClefAtCursor`. Playback is clef-agnostic (coords carry pitch).
+- **Pickup / anacrusis (Phase 4c, `Ctrl+Shift+A`)** — `pickupDialog.ts`: a beats field (`0..count-1`) at the start of the cursor's section. A pickup is a **dedicated measure 0** carrying a reduced tick budget (`hkl:pickup-ticks`) + `@metcon="false"` (Verovio skips meter-conformance and renders the short bar without padding — verified). `meterTable`'s `budgetByEl` honors `hkl:pickup-ticks`, so `measureTicksAt` → autofill / `truncateOverflowingMeasures` / `normalizePlaceholders` all respect the reduced budget for free. `renumberMeasures` numbers the pickup `0` (next measure stays `1`). `setPickupAt(sectionStartIdx, beats)`: beats≥1 inserts (`insertSectionPickup`, moving any section title onto the pickup) or resizes; beats=0 removes the measure (`removePickupMeasure`, handing the title back). `sectionStartIdxForCursor` walks back to the nearest section title (else 0).
+  - **Downbeat tempo travels with the pickup** (`moveDownbeatTempos`): an instant `<tempo>` at the section's beat 1 moves onto the pickup on add (and back to the new first measure on remove), so the tempo governs the anacrusis. Gradual tempos (with a `tstamp2` span) stay put — re-encoding their span across a short bar is ambiguous.
+  - **Pickup-aware tick resolution**: the doc-based `absoluteTickForMoment` (`expressions.ts:measureTickInfo`) — the clock for tempo/dynamics/hairpins/pedal — now subtracts the pickup's reduced budget per measure, matching the model's budget-aware `measureStartTick` (the note clock). Without this, every mark after a pickup drifted by the pickup's missing ticks (tempo applied a beat or two late). → lessons.md "two playback clocks must agree on per-measure budget".
+- Per-measure accidental spelling, beaming (6/8 = 3+3, additive = explicit groups), and MusicXML export all consume the per-measure lookup. → decisions.md (Phase-4 entries), lessons.md ("mid-measure clef vs the leading-signature region", "Verovio short measures + metcon").
 
 ## Pedal, tempo, expressive-text layers (Phase 2)
 
@@ -479,7 +465,6 @@ Built on the instrument table (see [MEI model](#mei-model-appscomposersrcmodelin
 ## Out of scope (Composer overall)
 
 - Note-level *pitch* edits inside an existing chord beyond `Alt+↑/↓` step + `Alt+←/→` SC-transpose.
-- Anacrusis / partial-bar pickups.
 - Continuous-loudness shaping through hairpins (held notes spanning a hairpin don't ramp; only newly-struck notes pick up interpolated levels) — would need a `ComposerEvent` carrying timed `(meiId, pressureValue, atMs)` triples for HKL's `handleAftertouch`.
 - MusicXML export of dynamics/hairpins/repeats (pitches/rhythms/colors/sigs/clefs round-trip; expression marks don't yet).
 - Per-instrument **external** pedal CC (internal damper is per-instrument; outbound CC-64 mirroring stays single-channel global).
