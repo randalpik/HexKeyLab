@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 238,
-  "passed": 238,
+  "fixtures": 247,
+  "passed": 247,
   "failed": 0,
-  "elapsedMs": 83711,
+  "elapsedMs": 81541,
   "results": [
     {
       "name": "emptyDoc",
@@ -1907,6 +1907,78 @@
       "failures": [],
       "counts": {
         "invariants": 6
+      }
+    },
+    {
+      "name": "phase5_ignore_color",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase5_single_part_view",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase5_musicxml_split",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase5_pizz_arco",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase5_string_harmonic",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase5_string_harmonic_artificial",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase5_pdf_split_view",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase5_string_harmonic_chord",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase5_multi_instr_selection",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
       }
     }
   ]

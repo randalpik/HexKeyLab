@@ -38,7 +38,7 @@ import {
   type Duration,
   type Dots,
 } from '@hkl/notation/mei-build.js';
-import { ensureExpressionDefaults, getLayoutReq, setLayoutReq, getHejiEnabled, setHejiEnabled, HKL_NS, type LayoutReq, type Moment } from '../expressions.js';
+import { ensureExpressionDefaults, getLayoutReq, setLayoutReq, getHejiEnabled, setHejiEnabled, getIgnoreColor, setIgnoreColor, HKL_NS, type LayoutReq, type Moment } from '../expressions.js';
 import { toggleArticulation, toggleTrill, type ArticKind } from '../articulations.js';
 import { transformDocForHeji } from '@hkl/notation/heji-render.js';
 import type { TuningMode } from '@hkl/shared/freq.js';
@@ -378,7 +378,7 @@ export class ComposerModel {
   /** Serialize to MEI. Pass `forRender` to apply the HEJI / arbitrary-stack
    *  accidental transform (render path only — save/snapshot leave it off so
    *  the stored doc stays clean conventional MEI; (q, r) is the truth). */
-  serialize(forRender?: { hejiEnabled: boolean }): string {
+  serialize(forRender?: { hejiEnabled: boolean }, viewStaves?: number[] | null): string {
     /* Render-time passes operate on a clone so the live doc stays flat
        (cursor/mutation invariant). All passes are idempotent. Order:
        accidentals first (operates on flat notes), then the HEJI/stack
@@ -390,7 +390,18 @@ export class ComposerModel {
       forRender ? { mode, enabled: forRender.hejiEnabled } : undefined);
     if (forRender) {
       transformDocForHeji(clone, mode, forRender.hejiEnabled);
+      /* Ignore-color (render-only): drop the lattice @color so noteheads draw
+         plain black. Stays on the render clone — the saved doc keeps (q, r) +
+         color truth. Export (save.ts) blacks output via forceNonNoteheadBlack. */
+      if (getIgnoreColor(clone)) {
+        for (const n of Array.from(clone.querySelectorAll('note'))) n.removeAttribute('color');
+      }
     }
+    /* Single-part view (render/PDF only): keep only the viewed instrument's
+       staves. Orthogonal to forRender (PDF filters without the HEJI pass). The
+       model/snapshot doc is untouched; staff @n are preserved (not renumbered)
+       so the cursor's xml:id lookups still resolve. */
+    if (viewStaves) filterToStaves(clone, new Set(viewStaves));
     regroupBeams(clone, readTimeSig(clone));
     return new XMLSerializer().serializeToString(clone);
   }
@@ -886,6 +897,16 @@ export class ComposerModel {
 
   setHejiEnabled(on: boolean): void {
     setHejiEnabled(this.doc, on);
+  }
+
+  /** Document-level "ignore lattice color" flag. Render-only display state:
+   *  when on, noteheads draw plain black. */
+  getIgnoreColor(): boolean {
+    return getIgnoreColor(this.doc);
+  }
+
+  setIgnoreColor(on: boolean): void {
+    setIgnoreColor(this.doc, on);
   }
 
   /** True iff the score contains at least one <note> element. Used by the
@@ -2054,6 +2075,46 @@ export class ComposerModel {
     }
     ref.elem.setAttribute("visible", "false");
     return { id: ref.id, hidden: true };
+  }
+
+  /** Toggle a string-harmonic mark on the note/chord at the cursor anchor.
+   *  Sets `data-hkl-harmonic` on the slot (read by playback for the sounding-
+   *  pitch shift) and `@head.shape="diamond"` on the slot's highest written
+   *  note (the touched/sounding node; for a single note, the note itself).
+   *  No-op on rests/placeholders. */
+  toggleHarmonicAtCursor(
+    mode: "insert" | "overwrite",
+  ): { id: string; on: boolean } | null {
+    const v = this.currentVoice;
+    const ref = this.getCurrentElement(v, mode);
+    if (!ref) return null;
+    const slot = ref.elem;
+    if (slot.localName !== "note" && slot.localName !== "chord") return null;
+    if (isPlaceholder(slot)) return null;
+    const notes = slot.localName === "note"
+      ? [slot]
+      : Array.from(slot.children).filter((n) => n.localName === "note");
+    if (notes.length === 0) return null;
+    if (slot.getAttribute("data-hkl-harmonic") === "true") {
+      slot.removeAttribute("data-hkl-harmonic");
+      for (const n of notes) { n.removeAttribute("head.shape"); n.removeAttribute("head.fill"); }
+      return { id: ref.id, on: false };
+    }
+    slot.setAttribute("data-hkl-harmonic", "true");
+    /* Diamond on the highest-pitched written note (diatonic oct·7 + step).
+       `head.fill="void"` forces the OPEN diamond (SMuFL noteheadDiamondHalf)
+       regardless of duration, so the harmonic is unfilled (a quarter would
+       otherwise draw the filled black diamond). */
+    const rank = (n: Element): number => {
+      const oct = parseInt(n.getAttribute("oct") ?? "4", 10);
+      const pn = (n.getAttribute("pname") ?? "c").toLowerCase();
+      return (Number.isFinite(oct) ? oct : 4) * 7 + Math.max(0, "cdefgab".indexOf(pn));
+    };
+    let top = notes[0];
+    for (const n of notes) if (rank(n) > rank(top)) top = n;
+    top.setAttribute("head.shape", "diamond");
+    top.setAttribute("head.fill", "void");
+    return { id: ref.id, on: true };
   }
 
   /** Doc-level action: fill every partial-but-not-empty layer (across every
@@ -3447,8 +3508,8 @@ export class ComposerModel {
    *  enforces via the clipboard's `sourceTimeSig`). */
   pasteMeasureContent(
     mDest: number,
-    firstStaff: 1 | 2,
-    lastStaff: 1 | 2,
+    firstStaff: number,
+    lastStaff: number,
     srcMeasures: Element[],
     srcExpressions: Element[],
   ): { ok: true; mLo: number; mHi: number } | { ok: false; reason: string } {
@@ -3514,7 +3575,7 @@ export class ComposerModel {
    *  to those measures whose staff attribute is in range. normalizePlaceholders
    *  re-fills emptied layers with placeholders so cursor navigation stays
    *  consistent. Used by Ctrl+X on a measure selection. */
-  clearMeasureRange(mLo: number, mHi: number, firstStaff: 1 | 2, lastStaff: 1 | 2): void {
+  clearMeasureRange(mLo: number, mHi: number, firstStaff: number, lastStaff: number): void {
     clearMeasureRangeImpl(this, mLo, mHi, firstStaff, lastStaff);
   }
 
@@ -3798,6 +3859,44 @@ export class ComposerModel {
 }
 
 /* ── helpers (module-scope) ──────────────────────────────────────────────── */
+
+/** Render-clone single-part filter: drop every `<staff>`, `<staffDef>`, and
+ *  staff-anchored control event whose `@n`/`@staff` is not in `keep`, then
+ *  prune emptied `<staffGrp>`s. Operates IN PLACE on a serialize clone — never
+ *  the live doc. Staff @n are NOT renumbered (the cursor resolves staves by
+ *  the doc's @n → xml:id, which must stay stable). Spanning controls whose
+ *  `@startid` points at a dropped note are removed too (else Verovio warns). */
+function filterToStaves(clone: Document, keep: ReadonlySet<number>): void {
+  /* Collect the xml:ids of notes/chords/rests on dropped staves so we can also
+     drop slurs/ties/octaves/etc. that reference them via @startid/@endid. */
+  const droppedIds = new Set<string>();
+  for (const staff of Array.from(clone.querySelectorAll('measure staff'))) {
+    const n = parseInt(staff.getAttribute('n') ?? '0', 10);
+    if (keep.has(n)) continue;
+    for (const e of Array.from(staff.querySelectorAll('[*|id]'))) {
+      const id = e.getAttribute('xml:id');
+      if (id) droppedIds.add(id);
+    }
+    staff.parentNode?.removeChild(staff);
+  }
+  /* Drop staffDefs for hidden staves, then any staffGrp left with none. */
+  for (const sd of Array.from(clone.querySelectorAll('scoreDef staffDef'))) {
+    const n = parseInt(sd.getAttribute('n') ?? '0', 10);
+    if (!keep.has(n)) sd.parentNode?.removeChild(sd);
+  }
+  for (const grp of Array.from(clone.querySelectorAll('scoreDef staffGrp'))) {
+    if (!grp.querySelector('staffDef')) grp.parentNode?.removeChild(grp);
+  }
+  /* Drop control events anchored to a hidden staff or a dropped note. */
+  for (const ev of Array.from(clone.querySelectorAll('measure > *'))) {
+    if (ev.localName === 'staff') continue;
+    const st = ev.getAttribute('staff');
+    if (st != null && !keep.has(parseInt(st, 10))) { ev.parentNode?.removeChild(ev); continue; }
+    const refAttr = ev.getAttribute('startid') ?? ev.getAttribute('endid');
+    const refId = refAttr?.replace(/^#/, '');
+    if (refId && droppedIds.has(refId)) ev.parentNode?.removeChild(ev);
+  }
+}
 
 
 /* ── chord input builder from bridge held-keys ──────────────────────────── */

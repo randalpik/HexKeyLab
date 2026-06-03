@@ -51,6 +51,8 @@ function setupSelects(model: ComposerModel): void {
   }
   const hejiChk = $<HTMLInputElement>('setupHeji');
   if (hejiChk) hejiChk.checked = model.getHejiEnabled();
+  const ignoreColorChk = $<HTMLInputElement>('setupIgnoreColor');
+  if (ignoreColorChk) ignoreColorChk.checked = model.getIgnoreColor();
   const refQEl = $<HTMLInputElement>('setupRefQ');
   const refREl = $<HTMLInputElement>('setupRefR');
   if (refQEl) refQEl.value = String(layoutReq.refQ);
@@ -69,7 +71,7 @@ function setupSelects(model: ComposerModel): void {
 function readForm(): {
   title: string; subtitle: string; composer: string; footer: string;
   gradual: GradualPercents;
-  layoutReq: LayoutReq; hejiEnabled: boolean;
+  layoutReq: LayoutReq; hejiEnabled: boolean; ignoreColor: boolean;
 } | null {
   const title = $<HTMLInputElement>('setupTitle')?.value ?? 'Untitled';
   const subtitle = ($<HTMLInputElement>('setupSubtitle')?.value ?? '').trim();
@@ -96,7 +98,8 @@ function readForm(): {
   if (refMidi < MIDI_LOW || refMidi > MIDI_HIGH) return null;
   const layoutReq: LayoutReq = { tuningMode, refQ, refR };
   const hejiEnabled = $<HTMLInputElement>('setupHeji')?.checked ?? false;
-  return { title, subtitle, composer, footer, gradual, layoutReq, hejiEnabled };
+  const ignoreColor = $<HTMLInputElement>('setupIgnoreColor')?.checked ?? false;
+  return { title, subtitle, composer, footer, gradual, layoutReq, hejiEnabled, ignoreColor };
 }
 
 function isTuningMode(s: string): s is TuningMode {
@@ -244,6 +247,7 @@ export function openSetupDialog(
       model.setLayoutReq(values.layoutReq);
     }
     model.setHejiEnabled(values.hejiEnabled);
+    model.setIgnoreColor(values.ignoreColor);
 
     /* Push the entire setup apply-block as ONE history entry. */
     if (history && beforeSnapshot) {

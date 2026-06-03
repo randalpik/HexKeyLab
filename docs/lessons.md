@@ -1188,3 +1188,53 @@ union type to an open one, grep for *every* loop/break that hard-codes the old b
 typecheck-fail and won't suite-fail until the new range is exercised. (Deferring them "until the owning
 step" only works if the owning step actually revisits them; here several were missed until hands-on
 multi-instrument testing surfaced the playback-cursor gap.)
+
+## A new `Alt+<letter>` voice-mode handler must precede the catch-all modifier bail
+
+The Composer keydown handler (`input.ts`) has a catch-all `if (e.ctrlKey || e.metaKey || e.altKey)
+return;` partway down — everything below it is unreachable for any modified key. Adding the `Alt+H`
+string-harmonic handler in the natural spot (next to the plain-`H` hide-rest block, which is *below*
+that bail) made it dead code: the model method worked when called directly, the keystroke did nothing,
+and **nothing flagged it** (typecheck passes, and the suite had no fixture yet). The fix is to place any
+new `Alt+`/`Ctrl+` voice-mode handler **above** that bail (the existing Alt+arrow and Ctrl+↑/↓ handlers
+are there for the same reason — they even say "must precede the catch-all"). **Lesson:** before wiring a
+modified-key handler, find the bail line and insert above it; when a keystroke silently no-ops but the
+underlying model op works in isolation, suspect an earlier `return` in the dispatch chain, not the op.
+
+## Composer test visual baselines capture POST-cursor-trace state, not the fixture's end state
+
+A single-part-view fixture asserted (and confirmed) `getCurrentVoice() === 5`, yet its `visualBaseline`
+screenshot showed the cursor labeled "V1". Not a bug: the visual invariant runs AFTER the cursor-trace
+invariant, which walks the cursor and leaves it at voice 1. The screenshot reflects that post-trace
+state, not the state the fixture set up. (Cross-checking live via `composer-inspect` showed the correct
+"V5".) **Lesson:** a baseline PNG proves the *rendering* (here: only the violin staff shows) but its
+cursor position is whatever the last state-mutating invariant left — don't read fixture-end cursor state
+off the baseline; assert it in the fixture's `expr` and confirm interactive behavior with `inspect.mjs`.
+See "Test invariants that mutate render state pollute later invariants' pixel reads."
+
+## svg-to-pdfkit ignores Verovio's embedded `<style>` — stroke-only lines vanish in PDF
+
+Verovio strokes staff lines, barlines, and stems via an embedded
+`<style>… #<svgid> path,rect,ellipse,polygon,polyline {stroke:currentColor}</style>` block, NOT inline
+`stroke` attributes — the line paths carry only `d` + `stroke-width`. The browser applies that scoped
+stylesheet on screen, but **svg-to-pdfkit does not process `<style>` selector blocks** (it reads
+presentation attributes + inline `style=` only). Result after the PDFKit migration: glyphs (noteheads,
+clefs — *fill*-based paths) rendered fine, but every *stroke-only* element (staff/bar lines, stems)
+was invisible in the exported PDF. Fix (`inlineComputedStroke` in `save.ts`): with the page SVG parsed
+into an **attached** off-screen host (so the scoped style + `currentColor` actually resolve),
+`getComputedStyle(el).stroke` yields the concrete rgb per element — write it back as an explicit
+`stroke` attribute that svg-to-pdfkit honors. Must run AFTER `forceNonNoteheadBlack` so the resolved
+stroke picks up its `color` overrides (non-noteheads → black, colored noteheads → their color).
+
+**Gate the inlining on `stroke-width`, or every glyph grows a gray outline.** The embedded style
+strokes ALL `path/rect/…`, but only staff lines / barlines / stems / ledger lines / hairpins are meant
+to be *stroke-drawn* — exactly the elements Verovio gives an explicit `stroke-width` (13/18/27/90…).
+Noteheads/accidentals/clefs are `<use>` of FILLED `<path>`s in `<defs>` with no stroke-width; inlining
+a stroke on them (or the shared defs path) gives every glyph a hairline that antialiases to a visible
+gray edge in the PDF (on screen it's sub-pixel and unnoticed). So `inlineComputedStroke` skips any
+element lacking a `stroke-width` attribute.
+
+**Lesson:** when porting Verovio SVG to a non-browser renderer, inline what it pulls from the embedded
+`<style>` (stroke, font-style/weight on dir/dynam/tempo) from computed style on an attached element —
+but inline stroke ONLY where Verovio intended it (`stroke-width` present), or filled glyphs get
+spurious outlines.

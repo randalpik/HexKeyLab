@@ -292,6 +292,10 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
     <span class="label">Voice</span>
     <span class="value" id="voiceIndicator">1</span>
   </div>
+  <div class="group" id="viewInstrGroup" style="display:none">
+    <span class="label">View</span>
+    <select id="viewInstrSelect" title="Show one instrument's part (cursor stays within it)"></select>
+  </div>
   <div class="group">
     <span class="label">Duration</span>
     <span class="value" id="durationIndicator">4</span>
@@ -359,6 +363,7 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
     </div>
     <label class="row"><span>Tuning</span><select id="setupTuningMode"></select></label>
     <label class="row"><span>HEJI accidentals</span><span><input type="checkbox" id="setupHeji"> show comma arrows &amp; septimal hooks</span></label>
+    <label class="row"><span>Ignore color</span><span><input type="checkbox" id="setupIgnoreColor"> render noteheads plain black</span></label>
     <div class="row">
       <span>Reference note (q, r)</span>
       <fieldset>

@@ -91,8 +91,8 @@ function collectBeatContent(
     if (measureStart >= tHi) break;
     if (model.measureStartTick(mi + 1) <= tLo) continue;
     const m = measures[mi];
-    const staffN = voice <= 2 ? 1 : 2;
-    const layerN = voice === 1 || voice === 3 ? 1 : 2;
+    const staffN = model.staffForVoice(voice);
+    const layerN = model.layerForVoice(voice);
     const staff = Array.from(m.querySelectorAll('staff')).find(
       (s) => s.getAttribute('n') === String(staffN),
     );
@@ -273,7 +273,7 @@ export function parseClipboard(text: string): ClipboardContents | null {
   if (kind === 'measure') {
     const sf = parseInt(root.getAttribute('staffFirst') ?? '1', 10);
     const sl = parseInt(root.getAttribute('staffLast') ?? '1', 10);
-    if (!((sf === 1 || sf === 2) && (sl === 1 || sl === 2))) return null;
+    if (!(Number.isInteger(sf) && Number.isInteger(sl) && sf >= 1 && sl >= sf)) return null;
     const mWrap = root.getElementsByTagNameNS(HKL_NS, 'measures')[0];
     if (!mWrap) return null;
     const measures: Element[] = [];

@@ -758,6 +758,28 @@ export function collectDynams(doc: Document, dynamicMap: Record<string, number>)
   return out;
 }
 
+/** A <dir> (expressive-text) cue with its resolved start moment + staff. Used
+ *  by playback to interpret articulation cues (pizz./arco) that switch a
+ *  voice's sounding timbre for the notes they govern. */
+export interface DirRecord {
+  el: Element;
+  moment: Moment;
+  staff: number;
+  text: string;
+}
+export function collectDirs(doc: Document): DirRecord[] {
+  const measures = getMeasures(doc);
+  const out: DirRecord[] = [];
+  for (const el of Array.from(doc.querySelectorAll('dir'))) {
+    const moment = readStartMoment(el, measures);
+    if (!moment) continue;
+    const staff = parseInt(el.getAttribute('staff') ?? '1', 10);
+    out.push({ el, moment, staff, text: (el.textContent ?? '').trim() });
+  }
+  out.sort((a, b) => momentCompare(a.moment, b.moment));
+  return out;
+}
+
 /** All <hairpin> elements with resolved start/end moments. */
 export interface HairpinRecord {
   el: Element;
@@ -890,6 +912,18 @@ export function getHejiEnabled(doc: Document): boolean {
 export function setHejiEnabled(doc: Document, on: boolean): void {
   const cfg = ensureExtMetaConfig(doc);
   cfg.setAttribute('heji', on ? 'true' : 'false');
+}
+
+/** Document-level "ignore lattice color" flag, stored on <hkl:config>. When on,
+ *  noteheads render plain black instead of color-coded. Defaults false. */
+export function getIgnoreColor(doc: Document): boolean {
+  const cfg = findHklConfig(doc);
+  return cfg?.getAttribute('ignore-color') === 'true';
+}
+
+export function setIgnoreColor(doc: Document, on: boolean): void {
+  const cfg = ensureExtMetaConfig(doc);
+  cfg.setAttribute('ignore-color', on ? 'true' : 'false');
 }
 
 function childInHklNs(parent: Element, localName: string): Element | null {

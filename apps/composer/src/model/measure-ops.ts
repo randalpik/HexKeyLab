@@ -85,8 +85,8 @@ export function clearMeasureRange(
   model: ComposerModel,
   mLo: number,
   mHi: number,
-  firstStaff: 1 | 2,
-  lastStaff: 1 | 2,
+  firstStaff: number,
+  lastStaff: number,
 ): void {
   const measures = model.allMeasures();
   for (let mi = Math.max(0, mLo); mi <= mHi && mi < measures.length; mi++) {

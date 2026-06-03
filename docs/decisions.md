@@ -3030,3 +3030,70 @@ entry; a no-op edit set is detected and skipped (so an unrelated Save doesn't re
 Escape discards (the model was never touched). Consistent with the rest of Setup (edit → Save commits /
 Cancel discards) rather than the Tempo/Signature buttons' independent-apply pattern. (Also fixed: the
 Manage button's click listener wasn't removed in the dialog's onClose, so it stacked across Setup opens.)
+
+**Pizz/arco is `<dir>`-driven, not a per-note flag (2026-06-02).** A "pizz."/"arco" expressive-text
+`<dir>` (already in the chips) switches a voice's sounding timbre for the notes it governs, via a
+per-staff piecewise cue lookup (`buildArticCueLookup`, keyed on absolute written tick so it's
+repeat-invariant like velocity) that overrides the emitted `instrumentKey` to a variant from
+`ARTIC_VARIANTS` (`render/playback.ts`). Chosen over a dedicated per-note flag: reuses the existing
+chips + render path, and the cue genuinely spans notes. The variant map currently holds only
+`{ viola: 'viola_pizz' }` — the sole shipped `_pizz` bundle. A pizz cue on an instrument without a
+variant stays **render-only** (text draws, timbre unchanged) rather than going silent under `noteOn`'s
+never-fall-back rule. Composer can't read HKL's sample registry (package boundary), so the map is a
+hand-maintained Composer-side constant (like `TIMBRE_OPTIONS`); extend it + ship the matching `.hki` to
+add instruments. `maybeBroadcastInstruments` adds the variants to the preload set. Multi-instrument only
+(matches the instrumentKey-tagging gate — a single-instrument score leaves instrumentKey absent so HKL
+owns the timbre).
+
+**String-harmonic playback = pitch-shift the emitted coord, not a harmonic timbre (2026-06-02).**
+`Alt+H` marks a note/chord harmonic: `data-hkl-harmonic` on the slot + `@head.shape="diamond"` AND
+`@head.fill="void"` on the highest written note. `head.fill="void"` forces the OPEN diamond (SMuFL
+noteheadDiamondHalf E0D9) regardless of duration so it's unfilled (a quarter would otherwise draw the
+filled black diamond; lattice @color then tints the open outline). Playback (`harmonicParts` +
+`harmonicSoundingCoord`): the diamond's sounding pitch is computed from the **next-lowest note directly
+below it** (the reference / stopped note) — natural (nothing below) → +1 octave (`q+3`); **P4**
+(Δ = `q+3, r−1`) → 2 octaves above the reference (`q+6`); **M3** (Δ = `q+1`) → 2 octaves + P5
+(`q+6, r+1`); else → +1 octave above the diamond. Coord deltas: octave = `q+3`, P5 = `r+1`, M3 = `q+1`.
+In a chord ONLY the diamond is transformed and the reference is dropped (stopped note silent); **every
+other note plays at its written pitch**, so a harmonic in a larger chord never silences the rest (the
+first cut collapsed the whole slot to one pitch — a 3-note chord lost its other notes). The diamond is
+identified by `@head.shape`, ordering by diatonic `oct·7+step` rank. 8va composes on top. Chosen over a
+dedicated harmonic sample-set (no new bundle; stays in the score's timbre).
+
+**Single-part view filters the render clone WITHOUT renumbering staff @n (2026-06-02).**
+`model.serialize({viewStaves})` drops the non-viewed instrument's `<staff>`/`<staffDef>` (+ emptied
+`<staffGrp>` + staff-/startid-anchored control events) from the render clone only — the live/saved doc
+is whole. Staff @n are deliberately left at their global values (a violin viewed alone still renders as
+staff n=3) because the cursor overlay resolves staves by the doc's @n → xml:id via `rectForId`, and
+`cloneNode` preserves xml:ids; renumbering would break that lookup. The cursor never targets a hidden
+staff because `buildVoiceStopList` restricts the ↑/↓ cycle to the viewed instrument and `setViewInstr`
+parks the cursor inside it. MusicXML export, by contrast, DOES renumber staves/voices part-local (one
+`<part>` per instrument) — different consumer, different requirement (a part's clef `number`/`<staves>`
+must be part-local).
+
+**Composer PDF export uses PDFKit, not jsPDF (2026-06-02).** PDF must be WYSIWYG with the screen,
+including HEJI accidentals — which are injected post-render as `<text font-family="BravuraText">`
+(comma arrows / septimal hooks), not Verovio glyphs. jsPDF renders text with its OWN embedded-font
+system and supports only TrueType-`glyf`; a spike confirmed it **silently drops** the Bravura OTF
+(CFF) — `glyphFor` throws, the error is swallowed, and the PDF embeds no font (no FontFile2/3), so
+HEJI would vanish. Bravura ships only as OTF/woff/woff2 (no TTF), so jsPDF can't be made to work.
+Spiked the alternative: **PDFKit + svg-to-pdfkit + fontkit** embeds the Bravura OTF as a `FontFile3`
+(CFF subset) AND renders Verovio's SVG faithfully (clefs/noteheads via `<use>`/`<path>`, colored
+noteheads, HEJI `<text>`), validated by rasterizing real output. So `downloadPdf` now: serializes
+with the same `{hejiEnabled}` + view-filter the screen uses → for each page parses the SVG into an
+**off-screen-but-attached** host (HEJI injection's `getComputedTextLength` needs layout) → runs the
+screen pipeline (`injectHejiGlyphs` → `forceNonNoteheadBlack` → `liftNoteheadsAbove`) → `SVGtoPDF`
+into a PDFKit page with `Bravura` registered (a `fontCallback` maps `bravura|leipzig|smufl|…` →
+Bravura, serif → Times, else Helvetica). The doc is its own stream — chunks are collected into a Blob
+directly (blob-stream references a Node `global` and breaks in-browser). Import the **standalone**
+build (`pdfkit/js/pdfkit.standalone.js`); the `.es.js` build still imports Node builtins (fs/events)
+and won't bundle. `BravuraText.otf` ships in `/public` (repo-root, the composer's `publicDir`). The
+1.38 MB pdfkit chunk is lazy-loaded on first export. Removed `jspdf` + `svg2pdf.js`. PDF export is
+WYSIWYG with the toolbar instrument-view selector (single-part view prints just that part).
+
+**Pizz falls back to any library pizzicato when an instrument lacks its own (2026-06-02).** We ship
+only `viola_pizz`, so `pizzVariantFor(baseKey)` returns the instrument's own variant if present
+(`ARTIC_VARIANTS`), else **any** library pizz (currently viola_pizz) — Max: "I'd rather hear viola
+pizz than no pizz for any other string." The preload broadcast (`maybeBroadcastInstruments`) now sends
+the whole `PIZZ_VARIANTS` set (not per-instrument) since any instrument can route to any of them.
+Supersedes the §14.3 "render-only when no own variant" note in the earlier Phase-5 entry.

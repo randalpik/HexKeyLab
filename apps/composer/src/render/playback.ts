@@ -16,7 +16,7 @@ import { isTupletPlaceholder } from '../model/index.js';
 import type { PlaybackEvent, CoordRef, PedalEvent } from '@hkl/bridge/protocol.js';
 import {
   collectDynams, collectHairpins, getDynamicMap, absoluteTickForMoment,
-  collectTempi, getGradualPercents,
+  collectTempi, getGradualPercents, collectDirs,
 } from '../expressions.js';
 import { collectPedals } from '../pedal.js';
 import { collectOctaves } from '../expressions.js';
@@ -75,13 +75,62 @@ const DEFAULT_VELOCITY = DEFAULT_DYNAMIC_MAP.mf;
    delta. Tunable by ear. */
 const HAIRPIN_OPEN_END_DELTA = 45;
 
-/* TODO(phase5): interpret <dir> expressive-text cues during playback. Text
- * like "pizz."/"arco"/"con sord." should switch articulation/timbre for the
- * notes they govern (until the next contradicting cue). This needs the
- * multi-instrument / per-note timbre concept from Phase 5, so for now <dir>
- * is render-only — it draws but does not affect the audio timeline. Hook here:
- * collect <dir> moments (collectDirs), build a piecewise cue lookup parallel to
- * buildVelocityLookup, and apply at each note's onset. */
+/* Pizz/arco (phase 5): a "pizz."/"arco" <dir> cue switches a voice's sounding
+ * timbre to a pizzicato sample-set variant for the notes it governs, until the
+ * next contradicting cue. ARTIC_VARIANTS maps a base instrument key → its OWN
+ * shipped pizzicato variant. We only ship viola_pizz so far, so an instrument
+ * without its own variant falls back to ANY library pizz (Max: "I'd rather
+ * hear viola pizz than no pizz for any other string"). Extend this map (and
+ * ship the matching `<key>_pizz.hki`) to give an instrument its true pizz.
+ * main.ts's preload broadcast loads all these variants before playback. */
+export const ARTIC_VARIANTS: Readonly<Record<string, string>> = { viola: 'viola_pizz' };
+
+/** All pizzicato variant keys shipped in the library (for the preload set). */
+export const PIZZ_VARIANTS: ReadonlyArray<string> = [...new Set(Object.values(ARTIC_VARIANTS))];
+
+/** The pizzicato sample-set to sound for `baseKey` under a pizz cue: its own
+ *  variant if it has one, else any library pizz (fallback). null only if the
+ *  library ships no pizz at all. */
+export function pizzVariantFor(baseKey: string): string | null {
+  return ARTIC_VARIANTS[baseKey] ?? PIZZ_VARIANTS[0] ?? null;
+}
+
+/** Classify a <dir>'s text as a sounding-articulation cue, or null if it's not
+ *  one. Tolerant of a trailing period and case ("Pizz." → 'pizz'). */
+function articCue(text: string): 'pizz' | 'arco' | null {
+  const t = text.trim().toLowerCase().replace(/\.$/, '');
+  if (t === 'pizz') return 'pizz';
+  if (t === 'arco') return 'arco';
+  return null;
+}
+
+/** Build a per-staff piecewise lookup of the active articulation cue. Returns
+ *  `cueAt(staff, tick)` = the latest pizz/arco cue on that staff at-or-before
+ *  the tick (null if none). Mirrors buildVelocityLookup's piecewise-constant
+ *  shape; cue ticks are absolute written ticks (repeat-invariant, like
+ *  velocity — a replayed note reuses the cue at its original tick). */
+function buildArticCueLookup(doc: Document): (staff: number, tick: number) => 'pizz' | 'arco' | null {
+  const byStaff = new Map<number, Array<{ tick: number; cue: 'pizz' | 'arco' }>>();
+  for (const d of collectDirs(doc)) {
+    const cue = articCue(d.text);
+    if (!cue) continue;
+    const tick = absoluteTickForMoment(doc, d.moment);
+    const list = byStaff.get(d.staff) ?? [];
+    list.push({ tick, cue });
+    byStaff.set(d.staff, list);
+  }
+  for (const list of byStaff.values()) list.sort((a, b) => a.tick - b.tick);
+  return (staff, tick) => {
+    const list = byStaff.get(staff);
+    if (!list) return null;
+    let cue: 'pizz' | 'arco' | null = null;
+    for (const c of list) {
+      if (c.tick <= tick + 1e-6) cue = c.cue;
+      else break;
+    }
+    return cue;
+  };
+}
 
 export interface TempoInfo { bpm: number; unitDenom: number; dots: number }
 
@@ -246,6 +295,50 @@ function extractCoords(noteEl: Element): CoordRef | null {
   return Number.isFinite(q) && Number.isFinite(r) ? { q, r } : null;
 }
 
+/** Diatonic pitch rank (oct·7 + step) for ordering a chord's written notes. */
+function pitchRank(noteEl: Element): number {
+  const oct = parseInt(noteEl.getAttribute('oct') ?? '4', 10);
+  const pn = (noteEl.getAttribute('pname') ?? 'c').toLowerCase();
+  return (Number.isFinite(oct) ? oct : 4) * 7 + Math.max(0, 'cdefgab'.indexOf(pn));
+}
+
+/** The diamond (harmonic) note of a slot + its reference: the NEXT-LOWEST note
+ *  directly below the diamond (the stopped note of an artificial harmonic).
+ *  Reference is null for a natural harmonic (diamond alone / lowest). The
+ *  diamond is the `head.shape="diamond"` note (toggle marks the highest), else
+ *  the highest note as a fallback. */
+function harmonicParts(noteEls: Element[]): { diamond: Element | null; ref: Element | null } {
+  if (noteEls.length === 0) return { diamond: null, ref: null };
+  let diamond = noteEls.find((n) => n.getAttribute('head.shape') === 'diamond') ?? null;
+  if (!diamond) diamond = noteEls.reduce((a, b) => (pitchRank(b) > pitchRank(a) ? b : a), noteEls[0]);
+  const dRank = pitchRank(diamond);
+  let ref: Element | null = null;
+  for (const n of noteEls) {
+    if (n === diamond) continue;
+    if (pitchRank(n) < dRank && (ref === null || pitchRank(n) > pitchRank(ref))) ref = n;
+  }
+  return { diamond, ref };
+}
+
+/** Compute the SOUNDING coord of a string harmonic from its diamond + the
+ *  next-lowest reference note (Max's rules):
+ *   - Natural (no reference below the diamond): +1 octave (q+3) above diamond.
+ *   - Artificial: the interval from the reference up to the diamond decides —
+ *     P4 → 2 octaves above the reference (q+6); M3 → 2 octaves + P5 above the
+ *     reference (q+6, r+1); anything else → +1 octave above the diamond.
+ *  Coord deltas: octave = q+3 (band structure), P5 = r+1, M3 = q+1,
+ *  P4 = octave−P5 = (q+3, r−1). Returns null if the diamond lacks coords. */
+function harmonicSoundingCoord(diamond: Element, ref: Element | null): CoordRef | null {
+  const d = extractCoords(diamond);
+  if (!d) return null;
+  const lo = ref ? extractCoords(ref) : null;
+  if (!lo) return { q: d.q + 3, r: d.r };                          /* natural → +octave */
+  const dq = d.q - lo.q, dr = d.r - lo.r;
+  if (dq === 1 && dr === 0) return { q: lo.q + 6, r: lo.r + 1 };    /* M3 → 2 oct + P5 */
+  if (dq === 3 && dr === -1) return { q: lo.q + 6, r: lo.r };       /* P4 → 2 oct */
+  return { q: d.q + 3, r: d.r };                                    /* fallback → +octave */
+}
+
 /** The slot-bearing element for a note. A note inside a chord inherits the
  *  chord's duration; a top-level note carries its own. */
 function slotElementForNote(noteEl: Element): Element {
@@ -372,7 +465,7 @@ export interface PlayedMeasure { measureIdx: number; pass: number; }
 /** A canonical (pre-repeat-expansion) event, tagged with the document index
  *  of its measure so repeat expansion can re-stamp its `atMs` per played
  *  occurrence. `_mi` is internal and never crosses the bridge. */
-type CanonEvent = PlaybackEvent & { _mi: number };
+type CanonEvent = PlaybackEvent & { _mi: number; _tick?: number };
 
 /** True if the score has any repeat barline or ending (volta). When false,
  *  buildPlayback keeps its original linear path unchanged. */
@@ -449,6 +542,7 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
   const isMultiInstrument = model.instruments().length > 1;
   const tempo = buildTempoTimeline(mei);
   const velocity = buildVelocityLookup(mei);
+  const articCueAt = buildArticCueLookup(mei);
   const noteById = buildNoteIdIndex(mei);
   /* 8va/8vb spans: a note on the bracketed staff within the span sounds an
      octave shifted (q ± 3 per octave). Returns the q-shift for (staff, tick). */
@@ -517,6 +611,7 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
         voice,
         slurredToNext: k < count - 1,
         _mi: mi,
+        _tick: startTick,
       });
     }
   };
@@ -597,6 +692,7 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
               meiId,
               voice,
               _mi: streamMi[i],
+              _tick: tTicks,
             });
           }
         }
@@ -646,17 +742,38 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
         : Array.from(child.children).filter((n) => n.localName === 'note');
 
       const byDuration = new Map<number, CoordRef[]>();
-      for (const n of noteEls) {
-        const t = n.getAttribute('tie');
-        if (t === 't' || t === 'm') continue;
-        const coord = extractCoords(n);
-        if (!coord) continue;
+      const isHarmonic = child.getAttribute('data-hkl-harmonic') === 'true';
+      const { diamond, ref } = isHarmonic ? harmonicParts(noteEls) : { diamond: null, ref: null };
+      const harmonicCoord = diamond ? harmonicSoundingCoord(diamond, ref) : null;
+      if (harmonicCoord) {
+        /* String harmonic: the diamond sounds its computed harmonic pitch; the
+           reference (next-lowest, the stopped note) is consumed (silent); every
+           OTHER chord note sounds at its written pitch (so a harmonic in a
+           larger chord never silences the rest). 8va composes on top. */
         const qShift = octaveQShift(staffN, tTicks);
-        const shifted = qShift !== 0 ? { q: coord.q + qShift, r: coord.r } : coord;
-        const durTicks = coalescedDurationTicks(n, noteById);
-        const list = byDuration.get(durTicks) ?? [];
-        list.push(shifted);
-        byDuration.set(durTicks, list);
+        const coords: CoordRef[] = [];
+        for (const n of noteEls) {
+          const t = n.getAttribute('tie');
+          if (t === 't' || t === 'm') continue;
+          if (n === ref) continue;
+          const c = n === diamond ? harmonicCoord : extractCoords(n);
+          if (!c) continue;
+          coords.push(qShift !== 0 ? { q: c.q + qShift, r: c.r } : c);
+        }
+        if (coords.length > 0) byDuration.set(elementDurationTicks(child), coords);
+      } else {
+        for (const n of noteEls) {
+          const t = n.getAttribute('tie');
+          if (t === 't' || t === 'm') continue;
+          const coord = extractCoords(n);
+          if (!coord) continue;
+          const qShift = octaveQShift(staffN, tTicks);
+          const shifted = qShift !== 0 ? { q: coord.q + qShift, r: coord.r } : coord;
+          const durTicks = coalescedDurationTicks(n, noteById);
+          const list = byDuration.get(durTicks) ?? [];
+          list.push(shifted);
+          byDuration.set(durTicks, list);
+        }
       }
 
       if (byDuration.size > 0) {
@@ -679,6 +796,7 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
             velocity: shape.velocity,
             voice,
             _mi: streamMi[i],
+            _tick: tTicks,
           });
         }
         /* If this attack is slur-joined to the previous one in this voice,
@@ -696,9 +814,21 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
       i++;
     }
     /* Tag every event this voice emitted (incl. emitAlternation pushes) with
-       its instrument's sample-set key for per-instrument playback routing. */
-    if (voiceInstrKey)
-      for (let k = voiceEventStart; k < events.length; k++) events[k].instrumentKey = voiceInstrKey;
+       its instrument's sample-set key for per-instrument playback routing. A
+       pizz./arco <dir> cue on this voice's staff overrides the key to the
+       pizzicato variant for the notes it governs (until the next contradicting
+       cue); the cue is keyed on the event's ORIGINAL written tick, so it's
+       repeat-invariant like velocity. */
+    if (voiceInstrKey) {
+      const pizzKey = pizzVariantFor(voiceInstrKey);
+      for (let k = voiceEventStart; k < events.length; k++) {
+        let key = voiceInstrKey;
+        if (pizzKey && events[k]._tick !== undefined && articCueAt(staffN, events[k]._tick!) === 'pizz') {
+          key = pizzKey;
+        }
+        events[k].instrumentKey = key;
+      }
+    }
     if (voice >= model.totalVoices()) break;
   }
 
@@ -738,10 +868,10 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
     }
   }
 
-  /* Strip the internal `_mi` tag when handing PlaybackEvents back. */
+  /* Strip the internal `_mi`/`_tick` tags when handing PlaybackEvents back. */
   const strip = (e: CanonEvent): PlaybackEvent => {
-    const { _mi, ...rest } = e;
-    void _mi;
+    const { _mi, _tick, ...rest } = e;
+    void _mi; void _tick;
     return rest;
   };
 

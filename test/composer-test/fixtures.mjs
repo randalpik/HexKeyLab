@@ -3271,6 +3271,149 @@ const PHASE1 = {
       r();
     `,
   },
+
+  /* Ignore-color: a colored note rendered with the flag set draws a plain-black
+     notehead (the render clone drops @color; the live doc keeps it). */
+  phase5_ignore_color: {
+    setup: `
+      const N = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#cc0000', velocity: 80 };
+      m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [N], duration: '4', dots: 0 });
+      m.setIgnoreColor(true);
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+    visualBaseline: 'phase5_ignore_color',
+  },
+
+  /* Single-part view: piano + violin, select "view violin only". The render
+     clone must show ONLY the violin staff; the live model keeps both. Cursor
+     parks in the violin's voice. */
+  phase5_single_part_view: {
+    setup: `
+      const N = (q, r, oct, midi) => ({ q, r, pname: 'a', accid: '', oct, midi, colorHex: '#888', velocity: 80 });
+      m.addInstrument({ name: 'Violin', instrKey: 'violin', staffCount: 1 });
+      m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [N(0, 0, 4, 69)], duration: '4', dots: 0 });
+      m.setVoice(5); m.setCursor(0, 5); m.insertChordAtCursor({ notes: [N(0, 1, 5, 81)], duration: '4', dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+      /* Drive the real toolbar selector → view violin (index 1). */
+      const sel = document.getElementById('viewInstrSelect');
+      sel.value = '1';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    `,
+    visualBaseline: 'phase5_single_part_view',
+  },
+
+  /* MusicXML per-instrument <part> split: piano (grand staff) + violin. Export
+     must emit two <part>s with a 2-entry <part-list>; the violin's staff is
+     renumbered part-local (1, not the global 3). */
+  phase5_musicxml_split: {
+    setup: `
+      const N = (q, r, oct, midi) => ({ q, r, pname: 'a', accid: '', oct, midi, colorHex: '#888', velocity: 80 });
+      m.addInstrument({ name: 'Violin', instrKey: 'violin', staffCount: 1 });
+      m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [N(0, 0, 4, 69)], duration: '4', dots: 0 });
+      m.setVoice(5); m.setCursor(0, 5); m.insertChordAtCursor({ notes: [N(0, 1, 5, 81)], duration: '4', dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* Pizz/arco (§14.3): piano + violin; a "pizz." <dir> on the violin staff
+     switches its notes to a pizzicato timbre until an "arco" cue reverts them.
+     The violin has NO own pizz variant, so it falls back to the library's
+     viola_pizz (Max: hear viola pizz rather than no pizz). Four violin quarter
+     notes: beats 1-2 pizz, beats 3-4 arco. */
+  phase5_pizz_arco: {
+    setup: `
+      const N = (q, r, oct, midi) => ({ q, r, pname: 'a', accid: '', oct, midi, colorHex: '#888', velocity: 80 });
+      m.addInstrument({ name: 'Violin', instrKey: 'violin', staffCount: 1 });
+      /* Piano at a low, distinct cell so it never collides with the violin. */
+      m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [N(0, -1, 3, 53)], duration: '4', dots: 0 });
+      m.setVoice(5); m.setCursor(0, 5);
+      /* Four distinct violin pitches (ascending fifths) — no same-pitch dedup. */
+      for (let k = 0; k < 4; k++) m.insertChordAtCursor({ notes: [N(0, k + 1, 5, 76 + k)], duration: '4', dots: 0 });
+      /* Violin is staff 3. pizz. at beat 1 (tstamp 1), arco at beat 3 (tstamp 3). */
+      window.__hkl_composer.__addDir(0, 1, 'pizz.', 3);
+      window.__hkl_composer.__addDir(0, 3, 'arco', 3);
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* String harmonic (§14.4) — natural: Alt+H on a single note sets a diamond
+     notehead + data-hkl-harmonic; playback sounds it +1 octave (q+3). */
+  phase5_string_harmonic: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setCursor(1, 1);  /* park on the note */
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', altKey: true, bubbles: true }));
+    `,
+    visualBaseline: 'phase5_string_harmonic',
+  },
+
+  /* String harmonic — artificial M3: a stopped C + touched E (M3 above) marked
+     harmonic sounds 2 octaves + a P5 above the stopped note (lower q+6, r+1). */
+  phase5_string_harmonic_artificial: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [
+        { q: 0, r: 0, pname: 'c', accid: '', oct: 4, midi: 60, colorHex: '#888', velocity: 80 },
+        { q: 1, r: 0, pname: 'e', accid: '', oct: 4, midi: 64, colorHex: '#888', velocity: 80 },
+      ], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', altKey: true, bubbles: true }));
+    `,
+  },
+
+  /* PDF/print split: PDF export is WYSIWYG with the view selector — a
+     single-part view prints just that part — AND uses PDFKit so the Bravura
+     OTF embeds and HEJI accidentals render. piano + violin (HEJI on, viewing
+     violin whose major-third pitch carries a syntonic comma arrow). */
+  phase5_pdf_split_view: {
+    setup: `
+      const N = (q, r, oct, midi) => ({ q, r, pname: 'a', accid: '', oct, midi, colorHex: '#888', velocity: 80 });
+      m.addInstrument({ name: 'Violin', instrKey: 'violin', staffCount: 1 });
+      m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [N(0, 0, 4, 69)], duration: '4', dots: 0 });
+      m.setVoice(5); m.setCursor(0, 5); m.insertChordAtCursor({ notes: [N(1, 0, 5, 85)], duration: '4', dots: 0 });
+      m.setHejiEnabled(true);
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* String harmonic in a 3-note chord: only the diamond (top) becomes a
+     harmonic (computed from the next-lowest note below it); the next-lowest
+     reference is dropped (stopped note); every OTHER note plays written. The
+     chord must NOT go silent. C + E + G(diamond): plays C written + G harmonic,
+     E (reference) dropped. */
+  phase5_string_harmonic_chord: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [
+        { q: 0, r: 0, pname: 'c', accid: '', oct: 4, midi: 60, colorHex: '#888', velocity: 80 },
+        { q: 1, r: 0, pname: 'e', accid: '', oct: 4, midi: 64, colorHex: '#888', velocity: 80 },
+        { q: 0, r: 1, pname: 'g', accid: '', oct: 4, midi: 67, colorHex: '#888', velocity: 80 },
+      ], duration: '4', dots: 0 });
+      m.setCursor(1, 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', altKey: true, bubbles: true }));
+    `,
+  },
+
+  /* Multi-instrument selection-mode (§14.5 generalization): enter measure
+     selection from a violin voice (5). The selection's staff must be the
+     violin's GLOBAL staff @n (3), not clamped to the old 1|2 grand-staff. */
+  phase5_multi_instr_selection: {
+    setup: `
+      const N = (q, r, oct, midi) => ({ q, r, pname: 'a', accid: '', oct, midi, colorHex: '#888', velocity: 80 });
+      m.addInstrument({ name: 'Violin', instrKey: 'violin', staffCount: 1 });
+      m.setVoice(5); m.setCursor(0, 5); m.insertChordAtCursor({ notes: [N(0, 1, 5, 81)], duration: '4', dots: 0 });
+      m.setVoice(5); m.setCursor(0, 5);
+      r();
+      /* Shift+Up enters measure selection on the current (violin) voice. */
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true, bubbles: true }));
+    `,
+  },
 };
 
 export const FIXTURES = {
@@ -3554,6 +3697,202 @@ export const FIXTURE_ASSERTIONS = {
         if (insts.length !== 1) return { ok: false, detail: 'instruments=' + insts.length };
         if (m.totalVoices() !== 4) return { ok: false, detail: 'totalVoices=' + m.totalVoices() };
         if (insts[0].staffNs.length !== 2) return { ok: false, detail: 'staffNs=' + insts[0].staffNs.join(',') };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Phase 5: ignore-color flag drops the notehead @color on the render clone
+     while the live doc keeps it (so save/export still carry color). */
+  phase5_ignore_color: [
+    { name: 'render clone notes carry no @color; live doc keeps it',
+      expr: `(() => {
+        const h = window.__hkl_composer;
+        const m = h.model;
+        if (!m.getIgnoreColor()) return { ok: false, detail: 'flag not set' };
+        /* Live doc still has the lattice color. */
+        const liveNote = m.getDoc().querySelector('note');
+        if (!liveNote || liveNote.getAttribute('color') !== '#cc0000')
+          return { ok: false, detail: 'live note color=' + (liveNote && liveNote.getAttribute('color')) };
+        /* Render serialization strips it. */
+        const rendered = new DOMParser().parseFromString(m.serialize({ hejiEnabled: m.getHejiEnabled() }), 'application/xml');
+        const rn = rendered.querySelector('note');
+        if (rn && rn.getAttribute('color')) return { ok: false, detail: 'render note still colored=' + rn.getAttribute('color') };
+        /* And the on-screen SVG notehead has no color. */
+        const svgNote = document.querySelector('#score g.note');
+        if (svgNote && svgNote.getAttribute('color')) return { ok: false, detail: 'svg note colored=' + svgNote.getAttribute('color') };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Phase 5: single-part view renders only the viewed instrument's staff while
+     the live model keeps all staves; the cursor parks in the viewed voice. */
+  phase5_single_part_view: [
+    { name: 'rendered SVG shows 1 staff (violin); live model keeps 3; cursor in violin voice',
+      expr: `(() => {
+        const h = window.__hkl_composer;
+        const m = h.model;
+        if (h.inputState().viewInstrIdx !== 1) return { ok: false, detail: 'viewInstrIdx=' + h.inputState().viewInstrIdx };
+        /* Live model intact: 3 staves total. */
+        if (m.totalStaves() !== 3) return { ok: false, detail: 'live totalStaves=' + m.totalStaves() };
+        /* Render clone for the active view shows only staff 3 (the violin). */
+        const rendered = new DOMParser().parseFromString(
+          m.serialize({ hejiEnabled: m.getHejiEnabled() }, [3]), 'application/xml');
+        const staffDefs = [...rendered.querySelectorAll('scoreDef staffDef')].map(s => s.getAttribute('n'));
+        if (staffDefs.length !== 1 || staffDefs[0] !== '3')
+          return { ok: false, detail: 'render staffDefs=' + staffDefs.join(',') };
+        const m0Staves = [...rendered.querySelectorAll('measure')][0].querySelectorAll('staff');
+        if (m0Staves.length !== 1 || m0Staves[0].getAttribute('n') !== '3')
+          return { ok: false, detail: 'm0 staves=' + [...m0Staves].map(s => s.getAttribute('n')).join(',') };
+        /* On-screen SVG: exactly one rendered staff. */
+        const svgStaves = document.querySelectorAll('#score g.staff');
+        if (svgStaves.length !== 1) return { ok: false, detail: 'svg staves=' + svgStaves.length };
+        /* Cursor parked in a violin voice (5 or 6). */
+        const v = m.getCurrentVoice();
+        if (v !== 5 && v !== 6) return { ok: false, detail: 'cursor voice=' + v };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Phase 5: MusicXML splits into one <part> per instrument with part-local
+     staff numbering. */
+  phase5_musicxml_split: [
+    { name: 'two <part>s, 2-entry <part-list>, violin staff renumbered to 1',
+      expr: `(() => {
+        const h = window.__hkl_composer;
+        const xml = h.exportMusicXml(h.model);
+        const doc = new DOMParser().parseFromString(xml, 'application/xml');
+        const parts = [...doc.querySelectorAll('part')];
+        if (parts.length !== 2) return { ok: false, detail: 'parts=' + parts.length };
+        const scoreParts = [...doc.querySelectorAll('part-list score-part')];
+        if (scoreParts.length !== 2) return { ok: false, detail: 'score-parts=' + scoreParts.length };
+        const names = scoreParts.map(p => p.querySelector('part-name')?.textContent);
+        if (names[0] !== 'Piano' || names[1] !== 'Violin') return { ok: false, detail: 'names=' + names.join(',') };
+        /* Piano part declares 2 staves; violin part has no <staves> (single). */
+        const pianoStaves = parts[0].querySelector('attributes staves')?.textContent;
+        if (pianoStaves !== '2') return { ok: false, detail: 'piano staves=' + pianoStaves };
+        if (parts[1].querySelector('attributes staves')) return { ok: false, detail: 'violin should omit <staves>' };
+        /* Violin note staff is part-local 1 (not the global 3). */
+        const vStaff = parts[1].querySelector('note staff')?.textContent;
+        if (vStaff !== '1') return { ok: false, detail: 'violin note staff=' + vStaff };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Phase 5: pizz./arco <dir> cues switch the violin voice's instrumentKey to a
+     pizz variant for spanned notes, reverting on arco. Violin has no own pizz,
+     so the pizz span falls back to the library's viola_pizz. */
+  phase5_pizz_arco: [
+    { name: 'violin beats 1-2 → viola_pizz (fallback), beats 3-4 → violin; piano unaffected',
+      expr: `(() => {
+        const h = window.__hkl_composer;
+        const evs = h.buildPlayback(h.model).filter(e => e.notes.length > 0);
+        const violin = evs.filter(e => e.voice === 5).sort((a, b) => a.atMs - b.atMs);
+        if (violin.length !== 4) return { ok: false, detail: 'violin events=' + violin.length };
+        const keys = violin.map(e => e.instrumentKey);
+        if (keys[0] !== 'viola_pizz' || keys[1] !== 'viola_pizz')
+          return { ok: false, detail: 'pizz span keys=' + keys.join(',') + ' (expected viola_pizz fallback)' };
+        if (keys[2] !== 'violin' || keys[3] !== 'violin')
+          return { ok: false, detail: 'arco span keys=' + keys.join(',') };
+        const piano = evs.find(e => e.voice === 1);
+        if (!piano || piano.instrumentKey !== 'piano')
+          return { ok: false, detail: 'piano key=' + (piano && piano.instrumentKey) };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Phase 5: natural string harmonic → diamond notehead + +octave playback. */
+  phase5_string_harmonic: [
+    { name: 'note has @head.shape=diamond + data-hkl-harmonic; sounds q+3',
+      expr: `(() => {
+        const h = window.__hkl_composer;
+        const m = h.model;
+        const note = m.getDoc().querySelector('note');
+        if (!note || note.getAttribute('head.shape') !== 'diamond')
+          return { ok: false, detail: 'head.shape=' + (note && note.getAttribute('head.shape')) };
+        const slot = note.closest('chord') ?? note;
+        if (slot.getAttribute('data-hkl-harmonic') !== 'true')
+          return { ok: false, detail: 'no data-hkl-harmonic' };
+        const ev = h.buildPlayback(m).find(e => e.notes.length > 0);
+        if (!ev || ev.notes[0].q !== 3 || ev.notes[0].r !== 0)
+          return { ok: false, detail: 'sounded=' + JSON.stringify(ev && ev.notes) + ' (expected q3,r0)' };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Phase 5: artificial M3 harmonic → sounds lower + 2 octaves + P5 (q+6,r+1). */
+  phase5_string_harmonic_artificial: [
+    { name: 'diamond on E (upper); sounds C+2oct+P5 = (6,1)',
+      expr: `(() => {
+        const h = window.__hkl_composer;
+        const m = h.model;
+        const dia = [...m.getDoc().querySelectorAll('note')].filter(n => n.getAttribute('head.shape') === 'diamond');
+        if (dia.length !== 1 || dia[0].getAttribute('pname') !== 'e')
+          return { ok: false, detail: 'diamond notes=' + dia.map(n => n.getAttribute('pname')).join(',') };
+        const ev = h.buildPlayback(m).find(e => e.notes.length > 0);
+        if (!ev || ev.notes.length !== 1 || ev.notes[0].q !== 6 || ev.notes[0].r !== 1)
+          return { ok: false, detail: 'sounded=' + JSON.stringify(ev && ev.notes) + ' (expected one note q6,r1)' };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Phase 5: PDF export honors the view filter (prints one part) and embeds
+     the Bravura OTF via PDFKit (FontFile3) so HEJI glyphs render. */
+  phase5_pdf_split_view: [
+    { name: 'downloadPdf([violin staff]) yields a %PDF- blob with an embedded font',
+      expr: `(async () => {
+        const h = window.__hkl_composer;
+        const blobs = [];
+        const origCreate = URL.createObjectURL;
+        URL.createObjectURL = (b) => { blobs.push(b); return 'blob:x'; };
+        const origClick = HTMLAnchorElement.prototype.click;
+        HTMLAnchorElement.prototype.click = function(){};
+        try {
+          const mod = await import('/composer/src/save.ts');
+          const violinStaves = h.model.instruments()[1].staffNs;
+          await mod.downloadPdf(h.model, h.renderer.toolkit(), () => h.reRender(), violinStaves);
+          const blob = blobs.find(b => b && b.size > 0);
+          if (!blob) return { ok: false, detail: 'no blob; n=' + blobs.length };
+          const bytes = new Uint8Array(await blob.arrayBuffer());
+          let bin = ''; for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+          if (bin.slice(0, 5) !== '%PDF-') return { ok: false, detail: 'head=' + bin.slice(0, 5) };
+          if (!bin.includes('FontFile3')) return { ok: false, detail: 'no embedded font (FontFile3)' };
+          return { ok: true };
+        } finally {
+          URL.createObjectURL = origCreate;
+          HTMLAnchorElement.prototype.click = origClick;
+        }
+      })()` },
+  ],
+
+  /* Phase 5: harmonic in a 3-note chord keeps the other notes (no silence). */
+  phase5_string_harmonic_chord: [
+    { name: 'top=open diamond (head.fill=void); plays C written + G harmonic, E dropped',
+      expr: `(() => {
+        const h = window.__hkl_composer; const m = h.model;
+        const diamonds = [...m.getDoc().querySelectorAll('note')].filter(n => n.getAttribute('head.shape') === 'diamond');
+        if (diamonds.length !== 1 || diamonds[0].getAttribute('pname') !== 'g')
+          return { ok: false, detail: 'diamonds=' + diamonds.map(n => n.getAttribute('pname')).join(',') };
+        if (diamonds[0].getAttribute('head.fill') !== 'void')
+          return { ok: false, detail: 'diamond not void: head.fill=' + diamonds[0].getAttribute('head.fill') };
+        const ev = h.buildPlayback(m).find(e => e.notes.length > 0);
+        if (!ev) return { ok: false, detail: 'no sounding event (chord went silent!)' };
+        const set = ev.notes.map(n => n.q + ',' + n.r).sort().join(' | ');
+        /* C=(0,0) written + G harmonic G=(0,1)->+oct=(3,1); E=(1,0) reference dropped. */
+        if (set !== '0,0 | 3,1') return { ok: false, detail: 'sounded=' + set + ' (expected 0,0 | 3,1)' };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Phase 5: measure selection from a violin voice uses the global staff @n. */
+  phase5_multi_instr_selection: [
+    { name: 'measure selection on voice 5 spans staff 3 (violin), not clamped to 1|2',
+      expr: `(() => {
+        const h = window.__hkl_composer;
+        const sel = h.inputState().selection;
+        if (!sel || sel.kind !== 'measure') return { ok: false, detail: 'selection=' + JSON.stringify(sel) };
+        if (sel.originVoice !== 5) return { ok: false, detail: 'originVoice=' + sel.originVoice };
+        if (sel.firstStaff !== 3 || sel.lastStaff !== 3)
+          return { ok: false, detail: 'staff range=' + sel.firstStaff + '..' + sel.lastStaff + ' (expected 3..3)' };
         return { ok: true };
       })()` },
   ],

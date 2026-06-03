@@ -17,7 +17,9 @@ import type { ComposerModel, Voice } from '../model/index.js';
 import { readTimeSig } from '../notation/beams.js';
 import { beatTicks } from '../model/restfill.js';
 
-export type Staff = 1 | 2;
+/** A global staff @n (1-based, 1..model.totalStaves()). Was `1 | 2` when the
+ *  model was a fixed grand staff; now any staff in a multi-instrument score. */
+export type Staff = number;
 export type MovableSide = 'left' | 'right' | 'unset';
 export type Dir = 'left' | 'right';
 export type BeatSide = 'first' | 'last';
@@ -44,8 +46,8 @@ export type SelectionState =
 
 const TICK_EPS = 1e-6;
 
-function staffForVoice(voice: Voice): Staff {
-  return voice <= 2 ? 1 : 2;
+function staffForVoice(model: ComposerModel, voice: Voice): Staff {
+  return model.staffForVoice(voice);
 }
 
 /** Returns the set of cursor positions in `voice` that are beat boundaries.
@@ -146,7 +148,7 @@ export function enterMeasureSelection(
   voice: Voice,
   fromMeasureIdx: number,
 ): Extract<SelectionState, { kind: 'measure' }> {
-  const originStaff = staffForVoice(voice);
+  const originStaff = staffForVoice(model, voice);
   return {
     kind: 'measure',
     originVoice: voice,
@@ -270,22 +272,22 @@ export function moveMeasureMovable(
 export function adjustStaffRange(
   sel: Extract<SelectionState, { kind: 'measure' }>,
   dir: 'up' | 'down',
-  maxStaff: Staff = 2,
+  maxStaff: Staff,
 ): SelectionState {
   if (dir === 'down') {
     if (sel.firstStaff === sel.originStaff && sel.lastStaff < maxStaff) {
-      return { ...sel, lastStaff: (sel.lastStaff + 1) as Staff };
+      return { ...sel, lastStaff: sel.lastStaff + 1 };
     }
     if (sel.firstStaff < sel.originStaff) {
-      return { ...sel, firstStaff: (sel.firstStaff + 1) as Staff };
+      return { ...sel, firstStaff: sel.firstStaff + 1 };
     }
     return sel;
   }
   if (sel.lastStaff === sel.originStaff && sel.firstStaff > 1) {
-    return { ...sel, firstStaff: (sel.firstStaff - 1) as Staff };
+    return { ...sel, firstStaff: sel.firstStaff - 1 };
   }
   if (sel.lastStaff > sel.originStaff) {
-    return { ...sel, lastStaff: (sel.lastStaff - 1) as Staff };
+    return { ...sel, lastStaff: sel.lastStaff - 1 };
   }
   return sel;
 }
@@ -304,7 +306,7 @@ export function promoteBeatToMeasure(
   const rightInfo = model.getFlatStopInfo(sel.voice, rightCursor);
   if (!leftInfo || !rightInfo) {
     const fallbackM = model.getCursorMeasureIdx(sel.voice);
-    const staff = staffForVoice(sel.voice);
+    const staff = staffForVoice(model, sel.voice);
     return {
       kind: 'measure',
       originVoice: sel.voice,
@@ -326,7 +328,7 @@ export function promoteBeatToMeasure(
     if (rightCursor === startOfRightM) rightM = rightM - 1;
   }
   const grewRight = sel.lastMoved === 'last';
-  const originStaff = staffForVoice(sel.voice);
+  const originStaff = staffForVoice(model, sel.voice);
   let anchorMeasure: number;
   let movableMeasure: number;
   let movableSide: MovableSide;
@@ -376,7 +378,7 @@ export function selectionBounds(model: ComposerModel, sel: SelectionState): Sele
     const hi = boundaries[sel.last + 1];
     const loInfo = model.getFlatStopInfo(sel.voice, lo);
     const hiInfo = model.getFlatStopInfo(sel.voice, hi);
-    const staff = staffForVoice(sel.voice);
+    const staff = staffForVoice(model, sel.voice);
     const numMeasures = model.allMeasures().length;
     const mLast = hiInfo
       ? Math.min(numMeasures - 1, hiInfo.measureIdx)

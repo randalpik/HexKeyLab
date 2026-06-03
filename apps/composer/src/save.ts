@@ -8,8 +8,9 @@
 // Access API yet.
 
 import { ComposerModel } from './model/index.js';
-import type { Voice, Duration, Dots } from './model/index.js';
+import type { Voice, Duration, Dots, InstrumentEntry } from './model/index.js';
 import { noteAlter } from '@hkl/notation/accidentals.js';
+import { injectHejiGlyphs } from '@hkl/notation/heji-render.js';
 import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
@@ -358,14 +359,11 @@ export function exportMusicXml(model: ComposerModel): string {
   const measureCount = Math.max(1, doc.querySelectorAll('measure').length);
   const measureEls = Array.from(doc.querySelectorAll('measure'));
   const totalVoices = model.totalVoices();
-  const totalStaves = model.totalStaves();
-  const allStaffNs = Array.from({ length: totalStaves }, (_, i) => i + 1);
 
-  /* Group events by (measure, voice). NOTE: all instruments' staves are
-     exported under a SINGLE <part> with <staves>N</staves> — this preserves
-     every note (no silent truncation) but does not yet split into one <part>
-     per instrument. Proper multi-part export is the deferred single-part /
-     export follow-on (roadmap §12). */
+  /* Group events by (measure, GLOBAL voice). The score splits into one <part>
+     per instrument (roadmap §14.2): each part renumbers its staves and voices
+     part-local (1-based) so a non-first instrument's staff @n=3 doesn't leak a
+     bogus clef number. A single-instrument doc degenerates to one <part>. */
   const grouped: Record<number, Record<number, XmlNoteEvent[]>> = {};
   for (let mi = 0; mi < measureCount; mi++) {
     grouped[mi] = {};
@@ -373,94 +371,108 @@ export function exportMusicXml(model: ComposerModel): string {
   }
   for (const ev of events) grouped[ev.measureIdx][ev.voice].push(ev);
 
-  /* Per-staff clef tracking. Best-effort for mid-piece sigs/clefs: meter+key
-     come from the model's per-measure resolvers; a clef change is emitted in
-     the opening <attributes> of the measure it occurs in — a truly mid-measure
-     change is approximated to that measure's start (inline MusicXML clef
-     positioning is not emitted). Untested against external readers. */
-  const curClef: Record<number, ClefSpec> = {};
-  for (const sn of allStaffNs) curClef[sn] = headClefForStaff(doc, sn);
-  let prevKeySig: string | null = null;
-  let prevCount = -1;
-  let prevUnit = -1;
+  const instruments = model.instruments();
 
-  let body = '';
-  for (let mi = 0; mi < measureCount; mi++) {
-    body += `  <measure number="${mi + 1}">\n`;
+  /* Build the body for one instrument's <part>. staffMap/voiceMap convert the
+     global staff @n / voice index to part-local (1-based). Tempo direction is
+     emitted only in the first part (score-global). */
+  const buildPartBody = (inst: InstrumentEntry, isFirstPart: boolean): string => {
+    const partStaffNs = inst.staffNs;
+    const partStaffCount = partStaffNs.length;
+    const staffMap = (globalN: number): number => partStaffNs.indexOf(globalN) + 1;
+    const partVoices = model.voicesForInstrument(inst.index);
+    const voiceMap = (globalV: number): number => partVoices.indexOf(globalV) + 1;
 
-    const mMeter = model.meterAt(mi);
-    const mKeySig = model.keySigAt(mi);
-    const mKeyMode = model.keyModeAt(mi);
-    const measureTicks = mMeter.count * divisions * 4 / mMeter.unit;
+    /* Per-staff clef tracking (part-local), best-effort for mid-piece changes. */
+    const curClef: Record<number, ClefSpec> = {};
+    for (const sn of partStaffNs) curClef[sn] = headClefForStaff(doc, sn);
+    let prevKeySig: string | null = null;
+    let prevCount = -1;
+    let prevUnit = -1;
 
-    /* Clef changes within this measure (per staff), vs the entering clef. */
-    const clefToEmit: Record<number, ClefSpec | null> = {};
-    for (const staffN of allStaffNs) {
-      clefToEmit[staffN] = null;
-      const cl = lastClefInMeasure(measureEls[mi], staffN);
-      if (cl && !clefEq(cl, curClef[staffN])) {
-        clefToEmit[staffN] = cl;
-        curClef[staffN] = cl;
+    let body = '';
+    for (let mi = 0; mi < measureCount; mi++) {
+      body += `  <measure number="${mi + 1}">\n`;
+
+      const mMeter = model.meterAt(mi);
+      const mKeySig = model.keySigAt(mi);
+      const mKeyMode = model.keyModeAt(mi);
+      const measureTicks = mMeter.count * divisions * 4 / mMeter.unit;
+
+      const clefToEmit: Record<number, ClefSpec | null> = {};
+      for (const staffN of partStaffNs) {
+        clefToEmit[staffN] = null;
+        const cl = lastClefInMeasure(measureEls[mi], staffN);
+        if (cl && !clefEq(cl, curClef[staffN])) {
+          clefToEmit[staffN] = cl;
+          curClef[staffN] = cl;
+        }
       }
-    }
-    const keyChanged = mKeySig !== prevKeySig;
-    const meterChanged = mMeter.count !== prevCount || mMeter.unit !== prevUnit;
-    const anyClefChange = allStaffNs.some((sn) => clefToEmit[sn]);
+      const keyChanged = mKeySig !== prevKeySig;
+      const meterChanged = mMeter.count !== prevCount || mMeter.unit !== prevUnit;
+      const anyClefChange = partStaffNs.some((sn) => clefToEmit[sn]);
 
-    if (mi === 0 || keyChanged || meterChanged || anyClefChange) {
-      body += `    <attributes>\n`;
-      if (mi === 0) body += `      <divisions>${divisions}</divisions>\n`;
-      if (mi === 0 || keyChanged) body += `      <key><fifths>${keySigToFifths(mKeySig)}</fifths><mode>${mKeyMode}</mode></key>\n`;
-      if (mi === 0 || meterChanged) body += `      <time><beats>${mMeter.count}</beats><beat-type>${mMeter.unit}</beat-type></time>\n`;
-      if (mi === 0) body += `      <staves>${totalStaves}</staves>\n`;
-      for (const sn of allStaffNs) {
-        if (mi === 0) body += clefXml(sn, curClef[sn]);
-        else if (clefToEmit[sn]) body += clefXml(sn, clefToEmit[sn]!);
+      if (mi === 0 || keyChanged || meterChanged || anyClefChange) {
+        body += `    <attributes>\n`;
+        if (mi === 0) body += `      <divisions>${divisions}</divisions>\n`;
+        if (mi === 0 || keyChanged) body += `      <key><fifths>${keySigToFifths(mKeySig)}</fifths><mode>${mKeyMode}</mode></key>\n`;
+        if (mi === 0 || meterChanged) body += `      <time><beats>${mMeter.count}</beats><beat-type>${mMeter.unit}</beat-type></time>\n`;
+        if (mi === 0 && partStaffCount > 1) body += `      <staves>${partStaffCount}</staves>\n`;
+        for (const sn of partStaffNs) {
+          if (mi === 0) body += clefXml(staffMap(sn), curClef[sn]);
+          else if (clefToEmit[sn]) body += clefXml(staffMap(sn), clefToEmit[sn]!);
+        }
+        body += `    </attributes>\n`;
       }
-      body += `    </attributes>\n`;
-    }
-    prevKeySig = mKeySig;
-    prevCount = mMeter.count;
-    prevUnit = mMeter.unit;
+      prevKeySig = mKeySig;
+      prevCount = mMeter.count;
+      prevUnit = mMeter.unit;
 
-    if (mi === 0) {
-      body += `    <sound tempo="${tempo.bpm}"/>\n`;
-      const beatUnitName = DURATION_NAME[(String(tempo.unit) as Duration) ?? '4'] ?? 'quarter';
-      body += `    <direction placement="above">\n`;
-      body += `      <direction-type>\n`;
-      if (tempo.text) body += `        <words>${escapeXml(tempo.text)} </words>\n`;
-      body += `        <metronome><beat-unit>${beatUnitName}</beat-unit>`;
-      if (tempo.dots > 0) body += `<beat-unit-dot/>`;
-      body += `<per-minute>${tempo.bpm}</per-minute></metronome>\n`;
-      body += `      </direction-type>\n`;
-      body += `      <sound tempo="${tempo.bpm}"/>\n`;
-      body += `    </direction>\n`;
-    }
-
-    /* Per-voice streams within this measure, separated by <backup>. */
-    const voiceTicks: Record<number, number> = {};
-    for (let v = 1; v <= totalVoices; v++) voiceTicks[v] = 0;
-    for (let voice = 1; voice <= totalVoices; voice++) {
-      if (voice > 1) body += `    <backup><duration>${voiceTicks[voice - 1]}</duration></backup>\n`;
-      for (const ev of grouped[mi][voice]) {
-        body += emitEventXml(ev);
-        voiceTicks[voice] += ev.durTicks;
+      if (mi === 0 && isFirstPart) {
+        body += `    <sound tempo="${tempo.bpm}"/>\n`;
+        const beatUnitName = DURATION_NAME[(String(tempo.unit) as Duration) ?? '4'] ?? 'quarter';
+        body += `    <direction placement="above">\n`;
+        body += `      <direction-type>\n`;
+        if (tempo.text) body += `        <words>${escapeXml(tempo.text)} </words>\n`;
+        body += `        <metronome><beat-unit>${beatUnitName}</beat-unit>`;
+        if (tempo.dots > 0) body += `<beat-unit-dot/>`;
+        body += `<per-minute>${tempo.bpm}</per-minute></metronome>\n`;
+        body += `      </direction-type>\n`;
+        body += `      <sound tempo="${tempo.bpm}"/>\n`;
+        body += `    </direction>\n`;
       }
-      /* Pad to measure end if voice short. */
-      const remaining = measureTicks - voiceTicks[voice];
-      if (remaining > 0) {
-        body += `    <note><rest/><duration>${remaining}</duration><staff>${model.staffForVoice(voice)}</staff><voice>${voice}</voice></note>\n`;
-        voiceTicks[voice] = measureTicks;
+
+      /* Per-voice streams within this measure, separated by <backup>. */
+      const voiceTicks: Record<number, number> = {};
+      for (const v of partVoices) voiceTicks[v] = 0;
+      partVoices.forEach((voice, i) => {
+        if (i > 0) body += `    <backup><duration>${voiceTicks[partVoices[i - 1]]}</duration></backup>\n`;
+        for (const ev of grouped[mi][voice]) {
+          body += emitEventXml(ev, staffMap(ev.staff), voiceMap(ev.voice));
+          voiceTicks[voice] += ev.durTicks;
+        }
+        const remaining = measureTicks - voiceTicks[voice];
+        if (remaining > 0) {
+          body += `    <note><rest/><duration>${remaining}</duration><staff>${staffMap(model.staffForVoice(voice))}</staff><voice>${voiceMap(voice)}</voice></note>\n`;
+          voiceTicks[voice] = measureTicks;
+        }
+      });
+
+      if (mi === measureCount - 1) {
+        body += `    <barline location="right"><bar-style>light-heavy</bar-style></barline>\n`;
       }
-    }
 
-    /* Final barline on the last measure. */
-    if (mi === measureCount - 1) {
-      body += `    <barline location="right"><bar-style>light-heavy</bar-style></barline>\n`;
+      body += `  </measure>\n`;
     }
+    return body;
+  };
 
-    body += `  </measure>\n`;
-  }
+  const partList = instruments
+    .map((inst, pi) => `    <score-part id="P${pi + 1}">\n      <part-name>${escapeXml(inst.name)}</part-name>\n    </score-part>`)
+    .join('\n');
+  const parts = instruments
+    .map((inst, pi) => `  <part id="P${pi + 1}">\n${buildPartBody(inst, pi === 0)}  </part>`)
+    .join('\n');
 
   return `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
@@ -474,24 +486,21 @@ export function exportMusicXml(model: ComposerModel): string {
     </encoding>
   </identification>
   <part-list>
-    <score-part id="P1">
-      <part-name>Piano</part-name>
-    </score-part>
+${partList}
   </part-list>
-  <part id="P1">
-${body}  </part>
+${parts}
 </score-partwise>
 `;
 }
 
-function emitEventXml(ev: XmlNoteEvent): string {
+function emitEventXml(ev: XmlNoteEvent, staff: number, voice: number): string {
   if (ev.notes.length === 0) {
     /* Rest. Tuplet rest carries time-modification too (for correct DAW
        timing) but no <tuplet/> notation tag — only notes get brackets. */
     let r = `    <note><rest/><duration>${ev.durTicks}</duration>` +
-      `<voice>${ev.voice}</voice>${dotXml(ev.dots)}<type>${ev.durName}</type>`;
+      `<voice>${voice}</voice>${dotXml(ev.dots)}<type>${ev.durName}</type>`;
     if (ev.tuplet) r += timeModXml(ev.tuplet.actualNotes, ev.tuplet.normalNotes);
-    r += `<staff>${ev.staff}</staff></note>\n`;
+    r += `<staff>${staff}</staff></note>\n`;
     return r;
   }
   let s = '';
@@ -506,13 +515,13 @@ function emitEventXml(ev: XmlNoteEvent): string {
     /* Sound-layer ties. */
     if (n.tieStart) s += `<tie type="start"/>`;
     if (n.tieStop) s += `<tie type="stop"/>`;
-    s += `<voice>${ev.voice}</voice>`;
+    s += `<voice>${voice}</voice>`;
     s += `${dotXml(ev.dots)}`;
     s += `<type>${ev.durName}</type>`;
     /* Time-modification applies to ALL chord notes inside a tuplet, so
        the DAW timing comes out right per voice. */
     if (ev.tuplet) s += timeModXml(ev.tuplet.actualNotes, ev.tuplet.normalNotes);
-    s += `<staff>${ev.staff}</staff>`;
+    s += `<staff>${staff}</staff>`;
     if (n.color) s += `<notehead color="${escapeXml(n.color)}">normal</notehead>`;
     /* Engraving-layer ties + tuplet start/stop bracket. Only the chord's
        PRIMARY note (i === 0) carries the <tuplet/> notation tag — standard
@@ -567,7 +576,10 @@ const PDF_EXPORT_OPTS = {
   header: 'auto',
   footer: 'none',
   scale: 100,
-  svgAdditionalAttribute: ['note@data-q', 'note@data-r', 'note@color', 'rest@data-tuplet-placeholder'],
+  /* Mirror render.ts's set so the PDF SVG carries the attributes the export
+     passes act on — esp. `rest@visible` (→ data-visible) so user-hidden rests
+     can be stripped, matching the on-screen CSS that hides them. */
+  svgAdditionalAttribute: ['note@data-q', 'note@data-r', 'note@color', 'note@hkl-paren-caut', 'rest@data-tuplet-placeholder', 'rest@visible', 'accid@type'],
 };
 
 /* Letter in PDF points (1 in = 72 pt). */
@@ -578,7 +590,7 @@ const LETTER_PT_H = 792;
  * — notehead AND stem AND flag AND accidental AND dots — because Verovio
  * emits the descendants with fill="currentColor". On screen, composer.html
  * forces these non-notehead elements back to black via CSS. That CSS does
- * NOT reach the detached SVG handed to svg2pdf, so without this normalize
+ * NOT reach the off-screen SVG handed to svg-to-pdfkit, so without this normalize
  * pass the PDF picks up the inherited color on every stem/flag/accid/etc.
  * Walk the SVG and pin `color` + `fill` to black on the same selectors the
  * stylesheet covers; descendants then resolve currentColor as black. */
@@ -611,42 +623,125 @@ export function liftNoteheadsAbove(svg: SVGSVGElement): void {
   }
 }
 
+/* svg-to-pdfkit asks us which PDF font to draw each SVG <text> in. Verovio's
+ * music symbols (clefs, noteheads, time sigs) are vector <path>/<use> — no font
+ * — but the title/composer/footer text and the HEJI accidentals injected by
+ * injectHejiGlyphs ARE <text>. Map the injected HEJI/music family to the
+ * embedded Bravura OTF; everything else to a built-in PDFKit font. */
+function pdfFontFor(family: string, bold: boolean, italic: boolean): string {
+  if (/bravura|leipzig|smufl|vero|music/i.test(family)) return 'Bravura';
+  const serif = /times|serif|georgia/i.test(family);
+  if (serif) return bold ? (italic ? 'Times-BoldItalic' : 'Times-Bold') : (italic ? 'Times-Italic' : 'Times-Roman');
+  return bold ? (italic ? 'Helvetica-BoldOblique' : 'Helvetica-Bold') : (italic ? 'Helvetica-Oblique' : 'Helvetica');
+}
+
+/* On screen, composer CSS hides two kinds of rests: tuplet-placeholder rests
+ * (`data-data-tuplet-placeholder="true"` — only there to make Verovio draw the
+ * bracket) and user-hidden rests (`data-visible="false"`, the `H` toggle).
+ * Verovio doesn't honor @visible (rism-digital/verovio#202), so this is CSS —
+ * which doesn't reach svg-to-pdfkit. Remove those rests outright before the PDF
+ * draws them (removal, not visibility, since svg-to-pdfkit ignores both). */
+function removeHiddenRests(svg: SVGSVGElement): void {
+  for (const el of Array.from(svg.querySelectorAll(
+    'g.rest[data-data-tuplet-placeholder="true"], g.rest[data-visible="false"]',
+  ))) {
+    el.parentNode?.removeChild(el);
+  }
+}
+
+/* Verovio strokes staff lines / barlines / stems via an embedded
+ * `<style>… path,rect,…{stroke:currentColor}</style>` block rather than inline
+ * `stroke` attributes (the line paths carry only `d` + `stroke-width`). On
+ * screen the browser applies that scoped style; svg-to-pdfkit does NOT process
+ * `<style>` selector blocks, so stroke-only lines render invisible in the PDF
+ * (fill-based glyphs are unaffected). Resolve each strokable element's COMPUTED
+ * stroke — which the off-screen-but-attached host resolves from the scoped
+ * style + `currentColor` (incl. forceNonNoteheadBlack's color overrides) — into
+ * an explicit `stroke` attribute svg-to-pdfkit honors.
+ *
+ * ONLY elements Verovio gave an explicit `stroke-width` (staff lines, barlines,
+ * stems, ledger lines, hairpins) are stroke-drawn; we gate on that. Filled
+ * glyphs (noteheads, accidentals, clefs — `<use>` of filled `<path>`s in
+ * `<defs>`, which have no stroke-width) must NOT be stroked, else every glyph
+ * picks up a hairline outline that antialiases to a gray edge in the PDF. */
+function inlineComputedStroke(svg: SVGSVGElement): void {
+  for (const el of Array.from(svg.querySelectorAll('path, rect, line, polyline, polygon'))) {
+    if (el.getAttribute('stroke')) continue;
+    if (!el.getAttribute('stroke-width')) continue;
+    const stroke = getComputedStyle(el).stroke;
+    if (stroke && stroke !== 'none') el.setAttribute('stroke', stroke);
+  }
+}
+
 export async function downloadPdf(
   model: ComposerModel,
   tk: VerovioToolkit,
   restore: () => void,
+  viewStaves?: number[] | null,
 ): Promise<void> {
-  /* Lazy-load so the libraries only land in the composer bundle on first
-     export click. Both ship ESM. svg2pdf.js side-effect-patches jsPDF's
-     prototype with .svg(). */
-  const { jsPDF } = await import('jspdf');
-  await import('svg2pdf.js');
+  /* Lazy-load so the PDF stack only lands in the bundle on first export. We use
+     PDFKit (not jsPDF) because it embeds the Bravura OTF (CFF) via fontkit —
+     jsPDF supports only TrueType-`glyf` and silently drops Bravura, so HEJI
+     accidentals wouldn't render. svg-to-pdfkit draws Verovio's SVG, including
+     the injected HEJI <text>, into the PDFKit doc as vectors + embedded glyphs.
+     See decisions.md "Composer PDF export uses PDFKit, not jsPDF". */
+  const PDFDocument = (await import('pdfkit/js/pdfkit.standalone.js')).default;
+  const SVGtoPDF = (await import('svg-to-pdfkit')).default;
+
+  /* HEJI glyph injection measures BravuraText advances via getComputedTextLength,
+     which only works on a laid-out (in-document) element — so each page SVG is
+     parsed into an off-screen-but-attached host before injection. */
+  const host = document.createElement('div');
+  host.style.cssText = 'position:absolute; left:-100000px; top:0; visibility:hidden';
+  document.body.appendChild(host);
 
   const savedOpts = tk.getOptions();
   try {
-    tk.setOptions(PDF_EXPORT_OPTS);
-    tk.loadData(model.serialize());
+    const otf = await fetch('/BravuraText.otf').then((r) => r.arrayBuffer());
 
-    const pdf = new jsPDF({ unit: 'pt', format: 'letter', orientation: 'portrait' });
+    tk.setOptions(PDF_EXPORT_OPTS);
+    /* WYSIWYG with the on-screen render: same HEJI prep + the toolbar's
+       instrument-view selector (single-part view prints just that part). */
+    tk.loadData(model.serialize({ hejiEnabled: model.getHejiEnabled() }, viewStaves));
+
+    const doc = new PDFDocument({ size: 'letter', margin: 0, autoFirstPage: false });
+    /* PDFKit's doc is itself a readable stream — collect its chunks into a Blob
+       directly (avoids blob-stream, which references a Node `global`). */
+    const chunks: BlobPart[] = [];
+    const ended = new Promise<void>((resolve) => {
+      doc.on('data', (c: Uint8Array) => chunks.push(c.slice()));
+      doc.on('end', () => resolve());
+    });
+    doc.registerFont('Bravura', otf);
+
     const pageCount = Math.max(1, tk.getPageCount());
     for (let i = 1; i <= pageCount; i++) {
-      const svgStr = tk.renderToSVG(i, {});
-      /* svg2pdf resolves <use href="#…"> against the SVG root, so each
-         page must keep its own <defs> block. Parse into a detached host
-         (not appended to document) and pass the live <svg> element. */
-      const host = document.createElement('div');
-      host.innerHTML = svgStr;
+      host.innerHTML = tk.renderToSVG(i, {});
       const svg = host.firstElementChild as SVGSVGElement | null;
       if (!svg) throw new Error('Verovio produced no SVG for page ' + i);
+      /* Match the on-screen render pipeline (render.ts): HEJI glyph swap →
+         non-notehead black → noteheads on top. */
+      removeHiddenRests(svg);
+      injectHejiGlyphs(host);
       forceNonNoteheadBlack(svg);
       liftNoteheadsAbove(svg);
-      if (i > 1) pdf.addPage('letter', 'portrait');
-      /* Process pages sequentially — parallel pdf.svg() calls would
-         race addPage ordering. */
-      await pdf.svg(svg, { x: 0, y: 0, width: LETTER_PT_W, height: LETTER_PT_H });
+      /* Inline the embedded-style stroke so svg-to-pdfkit draws staff lines /
+         barlines / stems (must run AFTER forceNonNoteheadBlack so the resolved
+         stroke reflects its color overrides). */
+      inlineComputedStroke(svg);
+      doc.addPage({ size: 'letter', margin: 0 });
+      SVGtoPDF(doc, svg, 0, 0, {
+        width: LETTER_PT_W,
+        height: LETTER_PT_H,
+        preserveAspectRatio: 'xMinYMin meet',
+        fontCallback: pdfFontFor,
+      });
     }
-    pdf.save('hkc-' + isoStamp() + '.pdf');
+    doc.end();
+    await ended;
+    downloadBlob('hkc-' + isoStamp() + '.pdf', new Blob(chunks, { type: 'application/pdf' }));
   } finally {
+    document.body.removeChild(host);
     /* getOptions() returns a JSON string; parse before restoring. */
     try { tk.setOptions(JSON.parse(savedOpts)); } catch { /* ignore */ }
     restore();

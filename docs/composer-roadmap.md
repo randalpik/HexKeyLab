@@ -8,7 +8,7 @@
 >
 > **Phase 3: ✅ shipped** (2026-05-30). All items + post-review fixes landed with fixtures (suite 207 → 222): repeats + endings (`{`/`}`/`Ctrl+E`) with start-aware playback repeat-expansion composing with the tempo timeline; 8va (`Ctrl+8`, per-staff, q±3 playback shift); trills + tremolos (`Ctrl+R` — rebound off Ctrl+T which Firefox reserves) with alternating slur playback preserving the source notes' lattice cells; page break (`Ctrl+B`); and section headers (`Ctrl+Shift+H`) as a custom-injected centered movement title that displaces the system. Breaks render via `smart`+`breaksSmartSb:0` / two-pass bake so material after a break still auto-wraps. See **§ Phase 3 scaffold** for the as-built notes, **§ Phase 3 outcomes** for what Phase 4 inherits, and `decisions.md` (3 Phase-3 entries) for the non-obvious calls.
 >
-> **Phase 5: ✅ shipped** (2026-06-01). Multi-instrument prerequisite + per-instrument audio, all with fixtures (suite 232 → 235): the instrument-table model layer (`Voice`→`number`, `staffForVoice`/`layerForVoice`/`instruments`/`totalVoices` mirroring `meterTable`), N-staff cursor rendering, a stop-list cursor cycle with **per-instrument expr + pedal** layers (tempo stays score-global), `addInstrument`/`removeInstrument` with promote/demote (add-then-remove round-trips byte-identical), N-staff accidentals + multi-staff MusicXML, `PlaybackEvent`/`PedalEvent.instrumentKey` with per-instrument legato + damper (tagged only for multi-instrument scores → single-instrument back-compat exact), and a minimal Setup "Instruments" Add/Remove UI. The four specialization features (single-part export, pizz/arco, string harmonic, ignore-color) + multi-instrument selection-mode remain deferred follow-ons. See **§13 Phase 5 outcomes**, decisions.md (Phase-5 entry), and the kickoff prompt in §12.
+> **Phase 5: ✅ shipped** (2026-06-01). Multi-instrument prerequisite + per-instrument audio, all with fixtures (suite 232 → 235): the instrument-table model layer (`Voice`→`number`, `staffForVoice`/`layerForVoice`/`instruments`/`totalVoices` mirroring `meterTable`), N-staff cursor rendering, a stop-list cursor cycle with **per-instrument expr + pedal** layers (tempo stays score-global), `addInstrument`/`removeInstrument` with promote/demote (add-then-remove round-trips byte-identical), N-staff accidentals + multi-staff MusicXML, `PlaybackEvent`/`PedalEvent.instrumentKey` with per-instrument legato + damper (tagged only for multi-instrument scores → single-instrument back-compat exact), and a minimal Setup "Instruments" Add/Remove UI. The four specialization features (single-part view+export, pizz/arco, string harmonic, ignore-color) + multi-instrument selection-mode **all subsequently landed (2026-06-02; suite 238 → 245) — Phase 5 is COMPLETE.** See **§13 Phase 5 prerequisite outcomes**, **§15 remaining-items outcomes**, decisions.md (Phase-5 entries), and lessons.md.
 >
 > **Phase 4: ✅ shipped** (2026-05-31 – 06-01). Mid-piece structural changes, all with fixtures (suite 222 → 232): the per-measure meter model prerequisite (223), **4.1** the `Ctrl+Shift+S` time/key-sig modal (224), **4.2** mid-piece time + key signatures via in-section `<scoreDef>` overrides (225 — diff-aware so an unchanged submit writes nothing; per-measure accidental spelling; Setup's selects relegated to a button), and **4.3** mid-measure per-staff clef via inline `<clef>` (`Ctrl+Shift+C`, 228). The initially-deferred mid-piece-meter follow-ups were then closed (231): per-measure expression-layer moment→tick mapping (`absoluteTickForMoment`), per-measure beaming (6/8 beams 3+3), and per-measure MusicXML export (best-effort, untested against external readers); plus a cursor-anchor regression fix so a mid-measure clef doesn't drag the start-of-measure cursor (232). See **§11 Phase 4 outcomes** for what Phase 5 inherits, **§12 Phase 5 scaffold**, decisions.md (Phase-4 entries), and lessons.md ("mid-measure clef vs the leading-signature region").
 
@@ -444,13 +444,15 @@ Suite at **232 fixtures** (`test/composer-test/`). Phase 4 fixtures live in the 
 
 A fresh session starts here. Phase 5 = **multi-instrument & specialization** (backlog §F). ⚠️ This is **the largest single architectural change in the whole roadmap** (§4) — the 2-staff/4-voice ceiling is load-bearing across model, cursor, bridge, and HKL audio. As with Phase 4, land the architectural prerequisite (multi-instrument support) as its own step before the dependent features; everything else in §F collapses without it.
 
+> **Prerequisite ✅ shipped + audio refinements (2026-06-01 – 06-02).** Multi-instrument support (model + cursor + render + per-instrument audio) landed. The as-built surfaces are in **§13**; the remaining dependent features are scaffolded in **§14**. A fresh session continuing Phase 5 should read §13 (inherited surfaces) + §14 (remaining items), not re-plan the prerequisite.
+
 ### Order (each ships independently and unblocks the next)
 
-1. **Multi-instrument support** — the architectural prerequisite. Generalize the fixed 2-staff/4-voice structure to N instruments (each with its own staff/clef/voice set), the cursor voice cycle, the bridge protocol (today HKL owns one instrument), and HKL audio routing (per-instrument timbre). See §11's hard-coding list for the concrete sites. Recommend: model + cursor + render first (no per-instrument *sound* yet), gated by the full suite proving the existing 2-staff docs are byte-identical, then the bridge/audio plumbing.
-2. **Single-part view + export** — depends on #1. A per-instrument view filter + a single-part MusicXML/print export.
-3. **Pizz/arco toggle** — depends on #1 + a new HKL bridge concept (per-note articulation that changes timbre, not just notation).
-4. **String harmonic `Alt+H`** — depends on #1 + per-note timbre/pitch adjustment. (Note the `Alt+H` vs plain-`H` hide-rest coexistence flagged in §1.)
-5. **Ignore color in setup** — independent; can land any time.
+1. **Multi-instrument support** — the architectural prerequisite. ✅ **shipped** — see §13. Generalized the fixed 2-staff/4-voice structure to N instruments via the **instrument table** indirection, the cursor cycle (per-instrument expr+pedal), `addInstrument`/`removeInstrument`/`reorderInstruments` (staged through Setup's Save), and per-instrument audio (`PlaybackEvent.instrumentKey`, per-voice legato/damper, never-fall-back, proactive Sync load).
+2. **Single-part view + export** — depends on #1. A per-instrument view filter + a single-part MusicXML/print export. (MusicXML export today is one multi-staff `<part>`; this is where it splits per instrument.) → §14.
+3. **Pizz/arco toggle** — depends on #1 + a new HKL bridge concept (per-note articulation that changes timbre, not just notation). → §14.
+4. **String harmonic `Alt+H`** — depends on #1 + per-note timbre/pitch adjustment. (Note the `Alt+H` vs plain-`H` hide-rest coexistence flagged in §1.) → §14.
+5. **Ignore color in setup** — independent; can land any time. → §14.
 
 ### Cross-cutting decisions to surface to Max early in Phase 5
 
@@ -469,11 +471,13 @@ Standard gates (`pnpm typecheck` + `-r build` + `check:boundaries` + `pnpm test:
 
 ---
 
-## 13. Phase 5 outcomes — as-built (what later phases / follow-ons inherit)
+## 13. Phase 5 prerequisite outcomes — as-built (what the §14 dependents inherit)
 
 All in `apps/composer/` unless noted. The headline inheritance is the **instrument table** — the
 flat-voice ↔ (instrument, staff, layer) indirection that every multi-instrument-aware site routes
-through. Suite 232 → 235.
+through. Suite 232 → **238** (10 step-gated sub-steps + post-ship audio/UX refinements; see decisions.md
+Phase-5 entries). The prerequisite is complete: N-instrument model/cursor/render **and** per-instrument
+audio, with single-instrument docs byte/pixel-identical throughout.
 
 ### Instrument-table model layer (reuse, don't reinvent)
 - **`instrumentTable()`** (`model/index.ts`) — one cached walk of the head `<scoreDef>`'s root
@@ -498,23 +502,183 @@ through. Suite 232 → 235.
   (default = all = historic). New expr marks attach to the active instrument's top staff, pedal to its
   bottom staff.
 
-### Audio (`@hkl/bridge`, `apps/hkl`)
+### Instrument management UI (staged)
+- `instrumentsDialog.ts` `openInstrumentsModal(edits, onChange)` is a drag-to-reorder list editing a
+  working `InstrEdit[]` (each row's `origIndex` = its model identity, or null = new). It touches NOTHING
+  live; Setup's **Save** calls `reconcileInstruments(model, edits)` (remove dropped → append new →
+  reorder, content traveling via `origIndex`), folded into Setup's single history entry; **Cancel
+  discards**. The Setup "Instruments" row shows a live summary. `model.reorderInstruments(order)` +
+  `renumberStaves` (which now also sorts each measure's `<staff>` by @n so content follows). Timbre
+  picker is a hard-coded `TIMBRE_OPTIONS` subset of HKL sample-set keys.
+
+### Audio (`@hkl/bridge`, `apps/hkl`) — "never play wrong"
 - `PlaybackEvent.instrumentKey` + `PedalEvent.instrumentKey` (protocol.ts), tagged in `buildPlayback`/
   `buildPedalEvents` **only when `model.instruments().length > 1`** — single-instrument scores leave it
-  absent so HKL plays through its active instrument (back-compat). HKL: `noteOn(…, instrumentKey?)`,
-  per-voice `computeLegatoPlan` (glide-vs-overlap per instrument), per-instrument damper
-  (`pb.pedalSustained: Map<KeyId, instrumentKey>`, `pedalEngagedInstr`), `playScore` lazy-loads needed
-  sample-sets. External CC-64 stays global (per-instrument external routing deferred).
-
-### Deferred follow-ons (NOT in the prerequisite)
-Single-part view + per-instrument MusicXML `<part>` split (export today is one multi-staff part,
-best-effort); pizz/arco; string harmonic `Alt+H`; ignore-color-in-setup; per-instrument external pedal
-CC; **multi-instrument selection-mode** (`Staff = 1|2` measure-selection stayed 2-staff; single-
-instrument selection unchanged). The timbre picker in Setup is a hard-coded subset of HKL sample-set
-keys — a live registry query would need a new bridge message.
+  absent so HKL plays through its active instrument (back-compat).
+- **Never falls back to a different timbre.** `noteOn(…, instrumentKey?)` plays ONLY the requested
+  instrument — if its sample-set isn't loaded it SKIPS the note (silent) rather than sounding the wrong
+  one. `playScore` is `async` and **awaits** all needed loads before the driver starts.
+- **Per-instrument glide + damper.** `computeLegatoPlan` decides glide-vs-overlap per voice from its
+  instrumentKey; `glideVoices(…, instrumentKey?)` sets the instrument before the crossfade; `canGlide`
+  requires the live voice at the glide-from key to belong to the same instrument (`pb.voiceInstr`), so a
+  unison-dropped slur can't steal another instrument's voice. Damper is per-instrument
+  (`pb.pedalSustained: Map<KeyId, instrumentKey>`, `pedalEngagedInstr`). External CC-64 stays global.
+- **Same-pitch/same-onset cross-instrument conflict → topmost instrument wins** (lowest voice claims the
+  pitch; others drop it, becoming silent pulses that still echo their meiId). `buildPlayback` dedup,
+  scoped to different instruments, gated on multi-instrument.
+- **Sync-to-Composer follows the cursor's instrument + proactively loads the whole set.** Composer
+  broadcasts `composer-active-instrument` (cursor's instrument, diff-filtered) and `composer-instruments`
+  (the full set, on connect / set change). HKL (`setActiveWaveform`, `preloadComposerInstruments`)
+  eagerly loads every score instrument when Sync is on, so cursor-follow during note entry switches
+  instantly to an already-loaded sample-set (live input has no instrumentKey → uses
+  `audio.activeWaveform`, now correctly the cursor's instrument).
 
 ### Verification
-Suite at **235 fixtures**: `phase5_add_instrument` (+ instrument-table + per-voice instrumentKey
-assertions, `visualBaseline`), `phase5_add_remove_roundtrip` (demote), `phase5_two_grand_staves`.
-`scenarios.mjs` gained a `multiInstrument` cursor-trace scenario (0 violations). Steps 2–8 produced
-zero baseline churn — the proof the indirection is faithful.
+Suite at **238 fixtures** (all in the `PHASE1` group): `phase5_add_instrument` (instrument-table +
+per-voice instrumentKey, `visualBaseline`), `phase5_add_remove_roundtrip` (demote), `phase5_reorder_
+instruments`, `phase5_same_note_conflict` (topmost-wins), `phase5_instruments_staged_save` (modal
+stages; Save commits), `phase5_two_grand_staves`. `scenarios.mjs` has a `multiInstrument` cursor-trace
+scenario (0 violations). The model prereq steps produced zero baseline churn — the proof the indirection
+is faithful.
+
+---
+
+## 14. Phase 5 remaining items — scaffold (the §12 dependents)
+
+The prerequisite (§13) is shipped; these four backlog §F features now build on it, plus two deferred
+infra items. None has an architectural blocker — the instrument table + per-instrument audio are the
+hard parts and they're done. Suggested order: **ignore-color** (independent warm-up) → **single-part
+view+export** → **pizz/arco** → **string harmonic**. Land each with ≥1 fixture; gate on
+`pnpm typecheck` + `-r build` + `check:boundaries` + `pnpm test:composer`.
+
+### 14.1 Ignore color in setup *(independent — can land any time)*
+Render noteheads in plain black instead of lattice-color-coded. **Approach:** a doc-level boolean on
+`<hkl:config>` (mirror the HEJI flag — `getHejiEnabled`/`setHejiEnabled` in `expressions.ts` is the
+template) + a Setup checkbox (next to the HEJI checkbox in `index.html` + `setupDialog.ts` readForm/
+apply). **Touch-point:** the notehead-color injection in the render pipeline (`@hkl/notation`
+`heji-render.ts` / wherever `color`/`data-q,r`→fill is applied on `<note>`); gate it on the flag.
+Unrelated to multi-instrument — small, self-contained. Fixture: a colored doc with the flag set renders
+black noteheads (`visualBaseline`).
+
+### 14.2 Single-part view + export *(depends on §13)*
+Two pieces. **(a) Single-part VIEW:** a per-instrument filter so the user sees only one instrument's
+staves. Inherits `model.instruments()` / `staffForVoice` / `voicesForInstrument`. Likely a render-side
+filter (hide non-selected instruments' `<staffGrp>`/`<staff>` in the serialize clone before Verovio,
+or a Verovio `staffGrp` selection) + a toolbar selector. Cursor stays in the viewed instrument's
+voices. **(b) Per-instrument MusicXML `<part>` split:** today `save.ts` emits ONE multi-staff `<part>`
+(see §13 / the "best-effort" note) — split into one `<part>` per instrument with a `<part-list>` of
+`<score-part>` (name from `<label>`), per-part `<staves>` + staff-local clefs/voices. This is the bulk
+of `save.ts`'s deferred polish. **Decisions for Max:** view = single-instrument-only vs
+multi-select; print/PDF scope; whether export always splits or only in single-part mode.
+
+### 14.3 Pizz/arco toggle *(depends on §13 + the per-note-timbre hook)*
+A per-note (or spanning) articulation that changes the **sounding timbre**, not just notation.
+**Inherits the exact hook left in `render/playback.ts` (the `TODO(phase5)` near the top):** collect
+`<dir>` cues (`collectDirs`), build a piecewise per-voice cue lookup parallel to `buildVelocityLookup`,
+and at each note's onset OVERRIDE its `instrumentKey` to the pizz/arco variant until the next
+contradicting cue. **Sample-sets exist** (`viola_pizz` is already in `samples-data.ts`; add
+`violin_pizz`/`cello_pizz` as needed). **Decisions for Max:** encoding — reuse expressive-text `<dir>`
+"pizz."/"arco" (already in the common-cue chips) that switches the instrumentKey for spanned notes, vs a
+dedicated per-note flag; and the instrumentKey→variant mapping (e.g. `violin`→`violin_pizz`). Render is
+just the `<dir>` text (already supported); the new work is the playback cue lookup + instrumentKey
+override. Note `noteOn`'s never-fall-back rule (§13) means the pizz variant must be in the preload set —
+extend `composer-instruments` to include variants the score can switch to.
+
+### 14.4 String harmonic `Alt+H` *(depends on §13 + per-note pitch/timbre adjust)*
+Mark a note as a string harmonic: diamond/cued notehead + the sounding pitch (and/or timbre) adjusted on
+playback. **Encoding:** a per-note `data-hkl-harmonic` flag (rides the existing `data-hkl-*` convention).
+**Notation:** diamond notehead (MEI `@head.shape="diamond"` or a `<note>` child). **Playback:** shift
+the emitted coord/pitch to the harmonic (or route to a harmonic timbre) in `buildPlayback`, analogous to
+the 8va `q±3` shift. **Hotkey:** `Alt+H` — confirm it coexists with plain-`H` (hide rest, on rests) per
+§1; both are fine (rest vs note targets). Fixture + `visualBaseline` for the diamond notehead.
+
+### 14.5 Deferred infra (do when a dependent needs it)
+- **Multi-instrument selection-mode.** The prerequisite intentionally left selection-mode 2-staff: the
+  `Staff = 1|2` type + `voice<=2?1:2` ternaries in `selection/selection.ts` (`staffForVoice`),
+  `selection/clipboard.ts`, `selection/selectionOverlay.ts`, and `input.ts` (the paste/8va `curStaff`
+  sites). Single-instrument selection is unchanged. Generalize (mirror the model's `staffForVoice`
+  indirection) when cross-instrument measure-selection / copy-paste is needed — likely alongside
+  single-part view or as its own step.
+- **Per-instrument external pedal CC.** Playback's internal damper is per-instrument, but outbound CC-64
+  mirroring stays on one channel (global). Per-instrument external routing (MPE-style per-channel)
+  is deferred until there's a use case.
+
+### Cross-cutting decisions to surface to Max (the dependents)
+1. **Pizz/arco encoding** (§14.3): `<dir>`-driven instrumentKey switch vs per-note flag; the
+   variant-key mapping; extending the preload/`composer-instruments` set with switchable variants.
+2. **Single-part view** (§14.2): single vs multi-select instrument view; export-always-splits vs
+   only-in-single-part-mode; print/PDF.
+3. **String harmonic** (§14.4): playback = pitch-shift vs harmonic timbre.
+
+### Suggested kickoff prompt for the new thread
+> "Read `docs/composer-roadmap.md` §13 (Phase 5 prerequisite outcomes) + §14 (remaining items). The
+> multi-instrument prerequisite is shipped. Implement the remaining Phase 5 dependents in §14's
+> suggested order (ignore-color → single-part view+export → pizz/arco → string harmonic), reusing the
+> §13 inherited surfaces (instrument table, per-instrument audio, the `playback.ts` pizz/arco TODO hook).
+> Confirm §14's cross-cutting decisions first. Land each with a fixture; gate on `pnpm test:composer`."
+
+---
+
+## 15. Phase 5 remaining-items outcomes — as-built (Phase 5 COMPLETE)
+
+All four §14 dependents + the deferred multi-instrument selection-mode infra (§14.5) shipped with
+fixtures (suite 238 → **245**). Decisions confirmed with Max up front: pizz/arco = `<dir>`-driven;
+harmonic = pitch-shift coord (not timbre); single-part = single-select view + always-split export.
+Zero existing baseline churn throughout. All in `apps/composer/` unless noted.
+
+- **14.1 Ignore-color** — `getIgnoreColor`/`setIgnoreColor` on `<hkl:config ignore-color>`
+  (`expressions.ts`, mirrors the HEJI flag) + model wrappers + a Setup checkbox (`#setupIgnoreColor`).
+  Gated render-only: `model.serialize()` strips `@color` from every `<note>` on the render clone when
+  the flag is set (inside the `forRender` block, beside the heji transform) — the live/saved doc keeps
+  its lattice color, and export's `forceNonNoteheadBlack` is unaffected. Fixture `phase5_ignore_color`
+  (`visualBaseline`).
+- **14.2 Single-part view + export** — (a) VIEW: `state.viewInstrIdx: number|null` (`input.ts`) +
+  a toolbar `<select id="viewInstrSelect">`; `serialize({viewStaves})` filters the render clone to one
+  instrument's staves via `filterToStaves(clone, keep)` (drops non-kept `<staff>`/`<staffDef>`, prunes
+  emptied `<staffGrp>`, and removes control events anchored to a hidden staff or a dropped `@startid`).
+  **Staff @n are NOT renumbered** — the cursor resolves staves by the doc's @n→xml:id (which
+  `cloneNode` preserves), and the stop-list restriction (`buildVoiceStopList`) + `setViewInstr`'s
+  cursor-parking keep the cursor on a visible voice. `reRender` rebuilds the selector each render
+  (diff-filtered). (b) EXPORT: `exportMusicXml` (`save.ts`) now loops `model.instruments()` → one
+  `<part>` each with a 2-entry+ `<part-list>`, **part-local** staff/voice renumbering (a non-first
+  instrument's global staff @n=3 → part-local 1), `<staves>` only when >1, tempo only in part 0;
+  single-instrument degenerates to one `<part>`. Fixtures `phase5_single_part_view` (visual),
+  `phase5_musicxml_split`.
+- **14.5 Selection-mode generalization** — `Staff` is now `number` (was `1|2`); the `voice<=2?1:2`
+  ternaries across `selection/{selection,clipboard,selectionOverlay}.ts` + the `input.ts` paste site
+  route through `model.staffForVoice`/`layerForVoice`; `adjustStaffRange` takes `maxStaff =
+  model.totalStaves()`; model staff-range params (`pasteMeasureContent`/`clearMeasureRange`/
+  `measure-ops`) widened to `number`; the clipboard staff-range validity check is `sf>=1 && sl>=sf`.
+  Fixture `phase5_multi_instr_selection`.
+- **14.3 Pizz/arco** — `<dir>`-driven (reuses the existing "pizz."/"arco" expressive-text chips, no
+  new UI). `playback.ts` `TODO(phase5)` hook implemented: `collectDirs` (`expressions.ts`) +
+  `buildArticCueLookup` (per-staff piecewise cue, keyed on absolute written tick = repeat-invariant
+  like velocity). A pizz cue overrides the voice's `instrumentKey` via `pizzVariantFor(base)`: the
+  instrument's own variant (`ARTIC_VARIANTS = { viola: 'viola_pizz' }`) if present, **else any library
+  pizz** (fallback to viola_pizz — Max prefers hearing viola pizz over none). `maybeBroadcastInstruments`
+  preloads the whole `PIZZ_VARIANTS` set (never-fall-back). Multi-instrument only. Fixture
+  `phase5_pizz_arco` (violin → viola_pizz fallback).
+- **14.4 String harmonic `Alt+H`** — `toggleHarmonicAtCursor` (`model/index.ts`) sets
+  `data-hkl-harmonic` on the slot + `@head.shape="diamond"` on the highest written note; `Alt+H`
+  handler in `input.ts` (placed **before** the catch-all `if (ctrlKey||metaKey||altKey) return` bail —
+  see lessons.md). Playback (`harmonicSoundingCoord` in `playback.ts`) sounds ONE pitch per Max's
+  rules: natural (diamond alone) → +octave (q+3); artificial → interval lower→diamond decides — P4
+  (Δ q+3,r−1) → 2 octaves above lower (q+6); M3 (Δ q+1) → 2 octaves + P5 (q+6,r+1); else → +octave
+  from diamond. 8va composes on top. Fixtures `phase5_string_harmonic` (visual diamond),
+  `phase5_string_harmonic_artificial`.
+
+- **PDF/print split + HEJI parity (added 2026-06-02)** — PDF export migrated off jsPDF to **PDFKit +
+  svg-to-pdfkit + fontkit** so it embeds the Bravura OTF and is fully WYSIWYG (HEJI accidentals,
+  colored noteheads, view-split). jsPDF couldn't embed Bravura (OTF/CFF; jsPDF is TrueType-only) — see
+  decisions.md "Composer PDF export uses PDFKit". `BravuraText.otf` ships in `/public`; the pdfkit
+  chunk is lazy-loaded. PDF honors the instrument-view selector (single-part view prints that part).
+  Fixture `phase5_pdf_split_view`.
+
+### Still deferred (no current use case)
+- **Per-instrument external pedal CC** (§14.5) — internal damper is per-instrument; outbound CC-64
+  mirroring stays single-channel global.
+- **Pizz bundles beyond viola** — the mechanism is general (pizz already falls back to viola_pizz for
+  any string); add `violin_pizz`/`cello_pizz` to `ARTIC_VARIANTS` + ship the matching `.hki` (via the
+  analyzer/orchestrator pipeline) to give those instruments their true pizz timbre.
+- **Test handle additions**: `__addDir(measureIdx, tstamp, text, staff)` (deterministic `<dir>`
+  placement, bypassing the async modal) for fixtures.

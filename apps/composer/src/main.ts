@@ -15,13 +15,14 @@ import type { HklEvent, ResolvedNote, FootprintCell } from '@hkl/bridge/protocol
 import { ComposerModel, type Voice } from './model/index.js';
 import { renderer, ZOOM_PRESETS, type ZoomLevel } from './render/render.js';
 import { cursor } from './cursor/cursor.js';
-import { initInput, getInputState, installSCTransposeImpl, clearChordInternalSel } from './input.js';
+import { initInput, getInputState, setViewInstr, installSCTransposeImpl, clearChordInternalSel } from './input.js';
 import { scTransposeChordNote } from './notation/scTranspose.js';
 import { HistoryManager } from './history.js';
 import type { CursorUpdateOpts } from './cursor/cursor.js';
 import { selectionOverlay } from './selection/selectionOverlay.js';
 import { saveHkc, loadHkcFromFile, downloadMusicXml, downloadPdf, exportMusicXml } from './save.js';
-import { buildPlayback, buildPedalEvents, playbackStartMs, highlightElement, clearHighlights, readTempo, tickMsFromTempo } from './render/playback.js';
+import { buildPlayback, buildPedalEvents, playbackStartMs, highlightElement, clearHighlights, readTempo, tickMsFromTempo, PIZZ_VARIANTS } from './render/playback.js';
+import { addDir } from './expressions.js';
 import { openSetupDialog } from './setupDialog.js';
 import { openHelpDialog } from './helpDialog.js';
 import { attachScoreClickHandler } from './click.js';
@@ -435,14 +436,66 @@ let lastBroadcastInstrSet: string | null = null;
  *  always ready in the right timbre. Multi-instrument only; a single-instrument
  *  score sends [] (HKL keeps the user's chosen instrument). Diff-filtered. */
 function maybeBroadcastInstruments(): void {
-  const keys = model.instruments().length > 1
+  const baseKeys = model.instruments().length > 1
     ? [...new Set(model.instruments().map((i) => i.instrKey))]
+    : [];
+  /* Include every pizzicato variant in the library so HKL preloads them before
+     playback (noteOn never falls back to a different timbre — an unloaded
+     variant goes silent). Any instrument can switch to ANY library pizz via the
+     pizz-fallback, so we preload the whole pizz set, not just per-instrument. */
+  const keys = baseKeys.length > 0
+    ? [...new Set([...baseKeys, ...PIZZ_VARIANTS])]
     : [];
   const sig = keys.join(',');
   if (sig !== lastBroadcastInstrSet) {
     lastBroadcastInstrSet = sig;
     bridge.send({ type: 'composer-instruments', instrumentKeys: keys });
   }
+}
+
+/** Resolve the active single-part view filter to a list of staff @n, or null
+ *  (= show all). Clamps a stale index (instrument removed) to null. */
+function viewStavesFilter(): number[] | null {
+  const idx = getInputState().viewInstrIdx;
+  if (idx == null) return null;
+  const inst = model.instruments()[idx];
+  return inst ? inst.staffNs.slice() : null;
+}
+
+/** Rebuild the toolbar instrument-view selector from the current instrument
+ *  set. Shows the group only for multi-instrument scores (single-part view is
+ *  meaningless with one instrument). Diff-filtered on the instrument signature
+ *  so repeated calls during nav are cheap no-ops. Resets a now-invalid
+ *  selection to "All". */
+let lastViewSelectorSig: string | null = null;
+function refreshViewSelector(): void {
+  const sel = $('viewInstrSelect') as HTMLSelectElement | null;
+  const group = $('viewInstrGroup');
+  if (!sel || !group) return;
+  const insts = model.instruments();
+  const sig = insts.map((i) => i.name).join('|');
+  const multi = insts.length > 1;
+  group.style.display = multi ? '' : 'none';
+  if (!multi) {
+    /* Collapsing to one instrument drops any active single-part view. */
+    if (getInputState().viewInstrIdx != null) { setViewInstr(model, null); }
+    lastViewSelectorSig = sig;
+    return;
+  }
+  const cur = getInputState().viewInstrIdx;
+  if (sig !== lastViewSelectorSig) {
+    lastViewSelectorSig = sig;
+    sel.innerHTML = '';
+    const allOpt = document.createElement('option');
+    allOpt.value = 'all'; allOpt.textContent = 'All parts';
+    sel.appendChild(allOpt);
+    insts.forEach((inst, i) => {
+      const opt = document.createElement('option');
+      opt.value = String(i); opt.textContent = inst.name;
+      sel.appendChild(opt);
+    });
+  }
+  sel.value = cur == null ? 'all' : String(cur);
 }
 
 /** Last instrument key broadcast to HKL (diff filter for the cursor-follow). */
@@ -637,7 +690,11 @@ function styleVoltaNumbers(scoreEl: HTMLElement): void {
 
 function reRender(): void {
   try {
-    renderer.render(model.serialize({ hejiEnabled: model.getHejiEnabled() }));
+    /* Keep the instrument-view selector in sync with the current instrument
+       set on every render (diff-filtered, so cheap) — robust regardless of
+       which code path mutated the instruments. */
+    refreshViewSelector();
+    renderer.render(model.serialize({ hejiEnabled: model.getHejiEnabled() }, viewStavesFilter()));
     /* After Verovio's output lands, inject composer (right-aligned) + footer
        (centered, bottom of page). Subtitle is handled by Verovio itself once
        <title type="subtitle"> is present. Only affects page view (the
@@ -721,6 +778,7 @@ async function bootRenderer(): Promise<void> {
   console.log('Verovio ' + renderer.getVersion());
   resetStatus();
   refreshIndicators();
+  refreshViewSelector();
 }
 
 /* ── input wiring ────────────────────────────────────────────────────────── */
@@ -788,6 +846,7 @@ initInput(model, {
   },
   onStateChange: () => {
     refreshIndicators();
+    refreshViewSelector();
     cursor.update(model, cursorOpts());
     selectionOverlay.update(model, getInputState().selection);
     /* Cursor or voice may have moved — recompute reference. The diff filter
@@ -979,6 +1038,11 @@ $('btnRewind')?.addEventListener('click', () => {
 
 $('btnSetup')?.addEventListener('click', () => {
   openSetupDialog(model, (layoutChanged) => {
+    /* Instruments may have been added/removed/reordered via the modal — a
+       stale single-part view must be dropped and the selector rebuilt before
+       rendering (else viewStavesFilter() points at the wrong staves). */
+    if (model.instruments()[getInputState().viewInstrIdx ?? -1] == null) setViewInstr(model, null);
+    refreshViewSelector();
     reRender();
     refreshIndicators();
     setStatus('Setup applied.', 'action');
@@ -1029,6 +1093,10 @@ function applyLoadedDocument(meiXml: string, statusMsg: string): void {
   model.replaceDocument(meiXml);
   /* File load resets editing history — undo must not cross document boundaries. */
   history.clear();
+  /* A new document may have a different instrument set — drop any single-part
+     view and rebuild the selector before rendering. */
+  setViewInstr(model, null);
+  refreshViewSelector();
   reRender();
   refreshIndicators();
   maybeScrollMeasureIntoView(visualCursorMeasure());
@@ -1072,7 +1140,7 @@ $('btnExportPdf')?.addEventListener('click', async () => {
   setStatus('Rendering PDF…', 'info');
   hideExportMenu();
   try {
-    await downloadPdf(model, renderer.toolkit(), () => reRender());
+    await downloadPdf(model, renderer.toolkit(), () => reRender(), viewStavesFilter());
     setStatus('Exported .pdf.', 'action');
   } catch (e) {
     setStatus('PDF export failed: ' + (e as Error).message, 'error');
@@ -1117,6 +1185,20 @@ $('btnViewScroll')?.addEventListener('click', () => {
   reRender();
   maybeScrollMeasureIntoView(visualCursorMeasure());
 });
+$('viewInstrSelect')?.addEventListener('change', (e) => {
+  const val = (e.target as HTMLSelectElement).value;
+  const idx = val === 'all' ? null : parseInt(val, 10);
+  setViewInstr(model, idx);
+  reRender();
+  refreshIndicators();
+  cursor.update(model, cursorOpts());
+  selectionOverlay.update(model, getInputState().selection);
+  refreshViewSelector();
+  maybeScrollMeasureIntoView(visualCursorMeasure());
+  if (hklConnected) maybeBroadcastActiveInstrument();
+  const name = idx == null ? 'All parts' : model.instruments()[idx]?.name;
+  setStatus(idx == null ? 'Showing all parts.' : 'Viewing ' + name + ' only.', 'action');
+});
 
 /* Initial state matches the default view mode (page). */
 applyViewModeClass('page');
@@ -1135,6 +1217,11 @@ void bootRenderer();
   buildPlayback,
   buildPedalEvents,
   exportMusicXml,
+  /* Test-only: add an expressive-text <dir> directly (bypasses the async modal
+     flow) so fixtures can place pizz./arco cues deterministically. */
+  __addDir: (measureIdx: number, tstamp: number, text: string, staff: number): void => {
+    addDir(model.getDoc(), { measureIdx, tstamp }, { text, staff });
+  },
   /* Test-only reset: clears main.ts module state that RESET_SNIPPET in the
    * Composer test runner can't reach (isPlaying, hklConnected). Without this,
    * a fixture that starts playback or simulates an hkl-hello leaks state into

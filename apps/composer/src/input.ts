@@ -110,6 +110,10 @@ export interface InputState {
    *  instrument pedal). 0 for the default single-instrument doc. */
   pedalInstrIdx: number;
   tempoCursor: ExpressionCursor;
+  /** Single-part VIEW filter: when non-null, only this instrument's staves
+   *  render and the ↑/↓ cursor cycle is restricted to its voices. null = show
+   *  all instruments (the historic full-score view). */
+  viewInstrIdx: number | null;
   pendingHairpin: PendingHairpin | null;
   pendingTuplet: PendingTuplet | null;
   pendingSlur: PendingSlur | null;
@@ -216,6 +220,7 @@ const state: InputState = {
   pedalCursor: { index: 0, moments: [] },
   pedalInstrIdx: 0,
   tempoCursor: { index: 0, moments: [] },
+  viewInstrIdx: null,
   pendingHairpin: null,
   pendingTuplet: null,
   pendingSlur: null,
@@ -238,6 +243,23 @@ let lastCopySource: SelectionState | null = null;
 
 export function getInputState(): Readonly<InputState> {
   return state;
+}
+
+/** Set the single-part VIEW filter. null = show all instruments. Drops to
+ *  voice mode and parks the cursor inside the viewed instrument (so the cursor
+ *  is never stranded on a hidden staff or in a hidden instrument's expr/pedal
+ *  layer). Callers (main.ts toolbar selector) re-render + refresh afterwards. */
+export function setViewInstr(model: ComposerModel, idx: number | null): void {
+  state.viewInstrIdx = idx;
+  if (idx == null) return;
+  const inst = model.instruments()[idx];
+  if (!inst) { state.viewInstrIdx = null; return; }
+  const voices = model.voicesForInstrument(idx);
+  const inView = state.cursorMode === 'voice' && model.instrumentOf(model.getCurrentVoice()).index === idx;
+  if (!inView) {
+    state.cursorMode = 'voice';
+    model.setVoicePreservingMeasure(voices[0]);
+  }
 }
 
 /** Drop any chord-internal selection. Called from input.ts at every cursor-
@@ -688,7 +710,13 @@ type VoiceStop =
 
 function buildVoiceStopList(model: ComposerModel): VoiceStop[] {
   const stops: VoiceStop[] = [{ kind: 'tempo' }];
-  for (const inst of model.instruments()) {
+  const all = model.instruments();
+  /* Single-part view restricts the cycle to the viewed instrument (tempo
+     stays — it's score-global). Out-of-range index (instrument removed) falls
+     back to all. */
+  const view = state.viewInstrIdx;
+  const insts = (view != null && view >= 0 && view < all.length) ? [all[view]] : all;
+  for (const inst of insts) {
     const voices = model.voicesForInstrument(inst.index);
     if (inst.staffNs.length >= 2) {
       /* Grand staff: top-staff voices, expr between staves, bottom-staff
@@ -1316,7 +1344,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     /* Re-enter measure selection covering the pasted measures × staves. The
        cursor's voice's staff anchors as originStaff if it's in range, else
        firstStaff. */
-    const curStaff: 1 | 2 = voice <= 2 ? 1 : 2;
+    const curStaff = model.staffForVoice(voice);
     const originStaff = curStaff >= contents.sourceStaffRange.first
       && curStaff <= contents.sourceStaffRange.last
       ? curStaff
@@ -1404,7 +1432,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
           // measures as the beat selection touched.
           state.selection = promoteBeatToMeasure(model, sel);
         } else {
-          state.selection = adjustStaffRange(sel, updir);
+          state.selection = adjustStaffRange(sel, updir, model.totalStaves());
         }
         setStateAfterSelectionChange();
         return true;
@@ -2116,6 +2144,33 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         const place = e.key === 'ArrowUp' ? 'above' : 'below';
         withHistory('expr-place', () => commitExpressionPlace(model, hooks, place));
       }
+      return;
+    }
+
+    /* Voice-mode `Alt+H` toggles a string harmonic on the current note/chord:
+       a diamond notehead + a sounding-pitch shift on playback (per the natural/
+       artificial-harmonic rules in playback.ts). Coexists with plain-`H` (hide
+       rest) — different targets (note/chord vs rest). Same cursor-anchor rule.
+       Must precede the catch-all Ctrl/meta/alt return just below. */
+    if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey
+        && state.cursorMode === 'voice' && (e.key === 'h' || e.key === 'H')) {
+      e.preventDefault();
+      if (hooks.isPlaybackActive()) return;
+      let result: { on: boolean } | null = null;
+      withHistory('harmonic', () => {
+        const r = model.toggleHarmonicAtCursor(state.mode);
+        if (!r) {
+          hooks.setStatus?.('No note under cursor for harmonic.', 'error');
+          return false;
+        }
+        result = r;
+        return true;
+      });
+      if (result !== null) {
+        hooks.setStatus?.((result as { on: boolean }).on ? 'String harmonic.' : 'Removed harmonic.', 'action');
+      }
+      hooks.onStateChange();
+      hooks.onChange();
       return;
     }
 

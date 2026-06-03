@@ -257,14 +257,14 @@ function staffYRangeForMeasure(
   }
   // Beat mode: union of selected layer-level element bboxes.
   const voice = sel.voice;
-  const staffN: Staff = voice <= 2 ? 1 : 2;
+  const staffN: Staff = model.staffForVoice(voice);
   const measures = model.allMeasures();
   if (measureIdx < 0 || measureIdx >= measures.length) return null;
   const measure = measures[measureIdx];
   const staffEl = Array.from(measure.querySelectorAll('staff')).find(
     (s) => s.getAttribute('n') === String(staffN),
   );
-  const layerN = voice === 1 || voice === 3 ? 1 : 2;
+  const layerN = model.layerForVoice(voice);
   const layerEl = staffEl ? Array.from(staffEl.querySelectorAll('layer')).find(
     (l) => l.getAttribute('n') === String(layerN),
   ) : null;
@@ -336,7 +336,7 @@ function computeRects(model: ComposerModel, sel: SelectionState): DrawRect[] {
    * own staff. For measure mode all selected staves on a given system share
    * the same sig-block x, so the first staff is sufficient. */
   const staffForSnap: Staff = sel.kind === 'beat'
-    ? (sel.voice <= 2 ? 1 : 2)
+    ? model.staffForVoice(sel.voice)
     : sel.firstStaff;
 
   for (let mi = range.mLo; mi <= range.mHi; mi++) {
