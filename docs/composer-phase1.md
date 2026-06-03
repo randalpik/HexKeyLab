@@ -1,6 +1,6 @@
 # Composer Phase 1 — Quick wins + the P1 articulation
 
-> Phase 1 of the multi-phase Composer push. Umbrella plan: `docs/composer-roadmap.md`.
+> Phase 1 of the multi-phase Composer push (the `docs/composer-roadmap.md` umbrella is closed/deleted; the shipped Composer behavior now lives in `docs/architecture/composer.md`).
 >
 > **Status: implementation pass complete (2026-05-28).** All 12 items shipped, 34 new fixtures, full suite 179/179, `pnpm typecheck` + `pnpm -r build` + `pnpm check:boundaries` clean. Awaiting Max's smoke test.
 

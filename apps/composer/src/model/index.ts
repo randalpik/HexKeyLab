@@ -102,7 +102,7 @@ export type { Duration, Dots };
  *  staves, 2 layers each. `instrumentTable()` derives these from the head
  *  `<scoreDef>`'s root staffGrp and maps the flat voice index onto
  *  (instrument, staff, layer). The historic single-piano doc is one implicit
- *  2-staff instrument. See docs/composer-roadmap.md §12. */
+ *  2-staff instrument. See docs/architecture/composer.md "MEI model". */
 export interface InstrumentEntry {
   /** 0-based position in the score. */
   index: number;
@@ -256,7 +256,7 @@ export class ComposerModel {
    *  content — so it survives the content mutations that dominate the call
    *  sites and only rebuilds when measures are added/removed or meter changes
    *  (every such path runs through normalizePlaceholdersAll, which invalidates
-   *  first). See docs/composer-roadmap.md §10. */
+   *  first). See docs/architecture/composer.md "Mid-piece time/key signatures & clefs". */
   private meterCache:
     | {
         measures: Element[];

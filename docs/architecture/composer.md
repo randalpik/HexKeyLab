@@ -44,7 +44,7 @@ RAF-polled loop resolves each `selectedKeys` `(q, r)` and broadcasts on signatur
 - `playbackOwnedKeys: Set<KeyId>` tracks which `selectedKeys` playback added; only those are removed on noteOff/abort, so user-held keys survive.
 - `draw()` after each onset/offset so the lattice highlights what's sounding.
 
-## MEI model (`apps/composer/src/model.ts`)
+## MEI model (`apps/composer/src/model/index.ts`)
 
 The MEI document is a `Document` (DOMParser XML). Initial doc: one measure, two staves (grand staff, `bar.thru="true"`), two layers per staff. Metadata (`<titleStmt>`, `<scoreDef>`, `<tempo>`) lives on the document. Mutations are direct DOM ops; the doc re-serializes to a string for Verovio's `loadData()` every render.
 
@@ -68,15 +68,15 @@ Every `<note>` carries `data-q`/`data-r` (lattice identity survives roundtrip; M
 
 ## Render & cursor overlay
 
-`apps/composer/src/render.ts` owns the Verovio toolkit lifecycle. WASM is CDN-loaded via script injection (no npm dep; ~6–8 MB gzipped, 200–800 ms first render). Engraving options:
+`apps/composer/src/render/render.ts` owns the Verovio toolkit lifecycle. WASM is CDN-loaded via script injection (no npm dep; ~6–8 MB gzipped, 200–800 ms first render). Engraving options:
 - `svgViewBox: false`, `scale: 100` — intrinsic-size render, no fit-to-container scaling.
 - Page mode: `pageWidth: 2100`/`pageHeight: 2970`, breaks `'auto'`. Scroll mode: `pageWidth: 100000`/`pageHeight: 400`, breaks `'none'`.
-- `header`/`footer: 'none'`; `svgAdditionalAttribute: ['note@data-q', 'note@data-r', 'note@color']`.
+- `header`/`footer: 'none'`; `svgAdditionalAttribute` exposes `note@data-q`/`data-r`/`color`/`hkl-paren-caut`, `rest@data-tuplet-placeholder`/`visible`, `accid@type` onto the SVG (Verovio prefixes a `data-`, so e.g. `data-data-tuplet-placeholder`).
 
 Post-render SVG processing: each note's `<g class="notehead">` is moved to last sibling so the colored notehead draws on top of the (black) stem; CSS forces stems/flags/accidentals/ledgers/dots black (only the notehead carries lattice color). All strokes use `shape-rendering: geometricPrecision` (consistent stem widths, correct bar-line overhang, zoom-safe). → see decisions.md "geometricPrecision over crispEdges".
 
-Cursor overlay (`apps/composer/src/cursor.ts`) is a separate `<svg>` appended in `#score` after each render, sized to match Verovio's dimensions. Two modes:
-- **Editing** — bar/box at the active voice's cursor. Insert mode anchors to the RIGHT edge of `flat[cursor-1]`; overwrite draws a translucent box around `flat[cursor]`. Empty-voice / at-placeholder cases anchor on the active staff. Shows "V1"–"V4" label.
+Cursor overlay (`apps/composer/src/cursor/cursor.ts`) is a separate `<svg>` appended in `#score` after each render, sized to match Verovio's dimensions. Two modes:
+- **Editing** — bar/box at the active voice's cursor. Insert mode anchors to the RIGHT edge of `flat[cursor-1]`; overwrite draws a translucent box around `flat[cursor]`. Empty-voice / at-placeholder cases anchor on the active staff. Shows a `V<n>` voice label (or `T`/`E`/`P` in the tempo/expr/pedal layers).
 - **Playback** — per-voice bars, editing cursor hidden. Toggled via `setPlaybackMode`.
 
 The cursor resets its refs in `attach()` because Verovio's `loadData()+renderToSVG()` rewrites `#score` innerHTML, orphaning the prior overlay. → see decisions.md "Stale DOM refs across innerHTML rewrites".
@@ -108,7 +108,7 @@ Arrow keys suppressed during playback (`isPlaybackActive` short-circuits navigat
 
 `clearStatusIfTransient()` fires at the top of every non-modifier keydown and resets to `Ready.` if the current kind is `error`/`action`. State (blue) survives the keystroke; it clears via its own overwrite. Held-keys echoes clear via a source-tagged `clearStatusIfHeldKeys()`. Connection events go to the `#connStatus` badge only, never the statusline. Pick kind by intent, not message content.
 
-## Playback orchestration (`apps/composer/src/playback.ts`)
+## Playback orchestration (`apps/composer/src/render/playback.ts`)
 
 `buildPlayback(model)` walks every measure of every voice; each chord/note emits a `PlaybackEvent` with cumulative `atMs` per voice and `durationMs` from `elementDurationTicks` at the score tempo (`<tempo>` in measure 1, fallback 120 BPM). Rests/placeholders advance the clock but don't emit. Tied chains coalesce: `@tie="i"` emits ONE event with the chain's total duration; `m`/`t` pieces don't re-attack. Events sorted by `atMs`.
 
@@ -117,7 +117,8 @@ Arrow keys suppressed during playback (`isPlaybackActive` short-circuits navigat
 ## Save / load / export (`apps/composer/src/save.ts`)
 
 - **`.hkc`** — canonical. MEI XML string incl. `data-q`/`data-r`. `saveHkc` serializes, `loadHkcFromFile` parses → new `ComposerModel`.
-- **`.musicxml`** — one-way. `<score-partwise>`, grand-staff, per-voice `<note>`/`<chord>`/`<rest>`, `<backup>` to align voices, `<notehead color>` for lattice color. Lossy on dynamics/repeats/articulations; pitches/rhythms/colors round-trip to MuseScore/Finale/Sibelius. `divisions: 16` (or `LCM(16, tuplet @num values)` when tuplets present).
+- **`.musicxml`** — one-way. `<score-partwise>` with **one `<part>` per instrument** (`<part-list>` of `<score-part>` named from each `<label>`; part-local staff/voice renumbering — a single-instrument doc degenerates to one part), per-voice `<note>`/`<chord>`/`<rest>`, `<backup>` to align voices, `<notehead color>` for lattice color, per-measure meter/key/clef. Lossy on dynamics/hairpins/repeats; pitches/rhythms/colors/sigs round-trip to MuseScore/Finale/Sibelius (per-measure export best-effort, untested against external readers). `divisions: 16` (or `LCM(16, tuplet @num values)` when tuplets present).
+- **`.pdf`** — vector, WYSIWYG (PDFKit). See [PDF export](#pdf-export-appscomposersrcsavets-pdfkit).
 
 ## View modes
 
@@ -169,7 +170,7 @@ The user picks extend-vs-enter explicitly via fill-anchor-of-Mₖ (extends) vs w
 - Target is a placeholder / tuplet wrapper / measure wrapper → skip-left, no deletion.
 - Target is real content → delete it. Content-emptied measures are NOT auto-removed; user backs into the wrapper for the explicit second backspace.
 
-**Cursor rendering** (`cursor.ts`): wrapper / past-end stops use a fallback chain `findSigEndXForStaff` (past clef/keysig/timesig) → first content left edge → first placeholder left edge → `measure.rect.left + 30`. Y/height from the voice's single staff bbox (not the grand staff). "Before a wrapper" anchors INSIDE the wrapper's measure (`anchorAtMeasureLeft`). Past-end of a full last measure merges with "right of last content" (a full measure can't be extended). Fill-anchor anchors right of last real content (`anchorPastLayerContent`).
+**Cursor rendering** (`cursor/cursor.ts`): wrapper / past-end stops use a fallback chain `findSigEndXForStaff` (past clef/keysig/timesig) → first content left edge → first placeholder left edge → `measure.rect.left + 30`. Y/height from the voice's single staff bbox (not the grand staff). "Before a wrapper" anchors INSIDE the wrapper's measure (`anchorAtMeasureLeft`). Past-end of a full last measure merges with "right of last content" (a full measure can't be extended). Fill-anchor anchors right of last real content (`anchorPastLayerContent`).
 
 The `<space data-placeholder>` children stay in the DOM so Verovio reserves measure width and accidental computation works. `normalizePlaceholders` keeps each layer's `<space>` summing to `measureTicks − realTicks(content)`. → see decisions.md "past-end has no +1 redundant index".
 
@@ -227,13 +228,13 @@ Then `normalizePlaceholders()`, `setBarlines()`, and clamp each voice's cursor. 
 
 **No ±3 clamp** anywhere in capability — `(q, r)` is the source of truth; the entry/transpose/retune clamps are gone. `@accid` still stores a clamped canonical token as a display cache only.
 
-**HEJI / arbitrary-stack rendering** (`apps/composer/src/notation/heji-render.ts`) — Verovio can't draw EHE glyphs (`@glyph.num` is a no-op in 6.x) and collapses repeated same-token `<accid>` siblings. Render-only workaround (never touches `.hkc`):
+**HEJI / arbitrary-stack rendering** (`packages/notation/src/heji-render.ts`) — Verovio can't draw EHE glyphs (`@glyph.num` is a no-op in 6.x) and collapses repeated same-token `<accid>` siblings. Render-only workaround (never touches `.hkc`):
 1. **`transformDocForHeji`** (from `model.serialize({ hejiEnabled })`, after `computeAccidentalDisplay`): for any note needing more than one ≤±3 glyph, replace `@accid` with DISTINCT placeholder `<accid>` children (distinct tokens force a real horizontal slot each), tagged `@type="hklg-<seq>-<family>-<hex>"`. MEI order reversed from visual (MEI-first renders rightmost, nearest the notehead).
-2. **`injectHejiGlyphs`** (from `render.ts` after `renderToSVG`, gated on `document.fonts.load('BravuraText')`): redraws *every* accidental as a BravuraText `<text>` — placeholders become combined U+E2C0+ glyphs; native ones redraw at their SMuFL codepoint. Size `1000 × scale`.
+2. **`injectHejiGlyphs`** (from `render/render.ts` after `renderToSVG`, gated on `document.fonts.load('BravuraText')`): redraws *every* accidental as a BravuraText `<text>` — placeholders become combined U+E2C0+ glyphs; native ones redraw at their SMuFL codepoint. Size `1000 × scale`.
 
 Net: accidentals are uniformly Bravura, rest of the score stays on Leipzig (Bravura rests read worse). Comma math in `@hkl/shared` `heji.ts`, shared by lattice (with readability collapse) and Composer (full chain, no collapse). The HEJI toggle is a setup-dialog checkbox on `<extMeta>/<hkl:config> @heji`, independent of HKL's `hejiEnabled`. MusicXML `<alter>` from `noteAlter` (lossy on commas; no MusicXML HEJI standard).
 
-## Intelligent beaming (`apps/composer/src/beams.ts`)
+## Intelligent beaming (`apps/composer/src/notation/beams.ts`)
 
 Computed at serialize-time on the cloned doc (live doc has no `<beam>` wrappers). `regroupBeams(doc, timeSig)` removes existing beams, re-wraps consecutive beamable elements (`dur ≥ 8`, not a rest) per beat group:
 - **Simple** (n/{1,2,4}): one denominator-note per group.
@@ -250,15 +251,15 @@ Rests and durations ≥ quarter break the run; singletons stay unwrapped; an ele
 
 ## Expression layer (dynamics + hairpins)
 
-A virtual fifth "voice" between voices 2 and 3 in the nav cycle, with its own cursor snapping to {every note onset across all four voices} ∪ {every existing dynam/hairpin moment}. `apps/composer/src/expressions.ts` (CRUD + tstamp helpers + doc defaults), `apps/composer/src/expressionCursor.ts` (moment list + navigation + selection).
+A navigable virtual layer in the ↑/↓ cycle (see [Input model](#input-model-keyboard-driven) — the cycle is built from the instrument table; for a single piano it sits between voices 2 and 3), with its own cursor snapping to {every note onset across the instrument's voices} ∪ {every existing dynam/hairpin moment}. **Per-instrument in multi-instrument scores** (`state.exprInstrIdx`; new marks attach to the active instrument's top staff). Pedal/tempo/expressive-text are sibling layers — see [Pedal, tempo & expressive-text layers](#pedal-tempo-expressive-text-layers-phase-2). `apps/composer/src/expressions.ts` (CRUD + tstamp helpers + doc defaults), `apps/composer/src/cursor/expressionCursor.ts` (moment list + navigation + selection).
 
 **Anchoring by `@tstamp`/`@tstamp2`, not `@startid`/`@endid`.** Dynamics/hairpins are siblings of `<staff>` in their measure; an expression survives deletion of any nearby note. Trade-off: re-barring doesn't carry expressions. → see decisions.md / MEMORY "Expression-layer tstamp anchoring trade-off".
 
-- **Voice cycle**: ArrowUp/Down → `1 → 2 → expr → 3 → 4`; indicator shows `E`. `InputState.cursorMode: 'voice' | 'expr'` (alongside `mode: 'insert' | 'overwrite'`).
+- **Voice cycle**: ArrowUp/Down steps the instrument-table stop list (single piano: `tempo → 1 → 2 → expr → 3 → 4 → pedal`); indicator shows `T`/`E`/`P` for tempo/expr/pedal. `InputState.cursorMode: 'voice' | 'expr' | 'pedal' | 'tempo' | 'select'` (alongside `mode: 'insert' | 'overwrite'`).
 - **Moment list** (`buildMomentList`): all four voices' note/chord onsets (tie-initial only) + every dynam tstamp + every hairpin start AND end moment; sorted, deduped with float epsilon.
 - **Input** — voice mode: `Shift+1..8` (`!@#$%^&*`) enter fff…ppp at the cursor anchor (1=loudest); `<`/`>` mark hairpin start/end. Expr mode: `1..8` dynamics, `<`/`>` hairpins, arrows step moments, `Backspace`/`Delete` remove, `Escape` cancels pending. Hairpins are two-step in either mode (start moment, then a later end; pressing the other form re-starts; same-moment close rejected).
-- **Visual** (`cursor.ts`): voice bar hidden; orange vertical tick between staves at the moment's x (from a coincident staff-1 note, or the element's own rect when orphan). Existing dynam/hairpin in range gets `.expr-selected` highlight.
-- **Playback** (`playback.ts`): a per-tick velocity timeline built before walking voices. `collectDynams`/`collectHairpins` resolve moments to absolute 64th ticks via `absoluteTickForMoment`. Per onset: most-recent dynam at-or-before (default `mf=85`); the latest-started containing hairpin adds linear interpolation to the next explicit dynam or a synthesized ±25 endpoint. Each event gets `velocity`; HKL's `dispatchChord` reads `ev.velocity ?? keyVelocity[k] ?? 80`. MVP: held notes spanning a hairpin don't continuously change loudness (only newly-struck notes pick up interpolated levels).
+- **Visual** (`cursor/cursor.ts`): voice bar hidden; orange vertical tick between staves at the moment's x (from a coincident staff-1 note, or the element's own rect when orphan). Existing dynam/hairpin in range gets `.expr-selected` highlight.
+- **Playback** (`render/playback.ts`): a per-tick velocity timeline built before walking voices. `collectDynams`/`collectHairpins` resolve moments to absolute 64th ticks via `absoluteTickForMoment`. Per onset: most-recent dynam at-or-before (default `mf=85`); the latest-started containing hairpin adds linear interpolation to the next explicit dynam or a synthesized ±25 endpoint. Each event gets `velocity`; HKL's `dispatchChord` reads `ev.velocity ?? keyVelocity[k] ?? 80`. MVP: held notes spanning a hairpin don't continuously change loudness (only newly-struck notes pick up interpolated levels).
 - **Doc defaults**: dynamic→velocity map in `<meiHead><extMeta><hkl:config><hkl:dynamicMap>` (ns `https://hexkeylab.com/ns/mei`), seeded at creation, edited via Setup ("Dynamics → velocity"). Round-trips through `XMLSerializer`; `<extMeta>` is the MEI 5 extension point. `replaceDocument` calls `ensureExpressionDefaults` so older `.hkc` get defaults seeded.
 - **Save/load**: `<dynam>`/`<hairpin>` are just extra `<measure>` siblings; survive serialize/load with no special handling.
 
@@ -325,9 +326,9 @@ Placeholders are `<rest>` (not `<space>`) because Verovio's bracket-rendering pa
 - Between filled children: nibble that child, following content shifts left, placeholders regrow.
 - On fill anchor of an entirely empty tuplet: delete the whole `<tuplet>`.
 
-**Cursor rendering** (`cursor.ts:renderVoiceCursor`), two tuplet anchor cases in insert mode: entering (flat[c-1]=wrapper) → LEFT edge of flat[c], just inside the bracket; exiting (flat[c-1] is a tuplet child, flat[c] has a different parent) → parent tuplet's right edge.
+**Cursor rendering** (`cursor/cursor.ts:renderVoiceCursor`), two tuplet anchor cases in insert mode: entering (flat[c-1]=wrapper) → LEFT edge of flat[c], just inside the bracket; exiting (flat[c-1] is a tuplet child, flat[c] has a different parent) → parent tuplet's right edge.
 
-**Beaming** (`beams.ts:regroupOneTuplet`): a second pass beams each tuplet's content as one beat group (rests split runs, placeholders filtered by `isTupletPlaceholder`); reuses `splitIntoBeamableRuns`/`wrapInBeam`.
+**Beaming** (`notation/beams.ts:regroupOneTuplet`): a second pass beams each tuplet's content as one beat group (rests split runs, placeholders filtered by `isTupletPlaceholder`); reuses `splitIntoBeamableRuns`/`wrapInBeam`.
 
 **MusicXML** (`exportMusicXml`): `DIVISIONS = LCM(16, all tuplet @num)`. Each child carries `<time-modification>` (`num`/`numbase`); first child's `<notations>` has `<tuplet type="start">`, last `"stop"`. Chord-in-tuplet: only the primary note carries the `<tuplet>` tag; all members carry `<time-modification>`. Rests carry `<time-modification>` but no `<tuplet>`.
 
@@ -347,7 +348,7 @@ A third `CursorMode` value (`'select'`), orthogonal to voice/expr and to `EntryM
 - **Beat mode** — one voice, contiguous beats. Entered via Shift+Left/Right.
 - **Measure mode** — one+ two-voice staves, contiguous measures. Entered via Shift+Up/Down. Beat mode promotes to measure mode irreversibly via Shift+Up/Down.
 
-**Beat-mode state** (`apps/composer/src/selection.ts`):
+**Beat-mode state** (`apps/composer/src/selection/selection.ts`):
 ```ts
 { kind: 'beat'; voice: Voice;
   origin: number; first: number; last: number;
@@ -367,7 +368,7 @@ Ctrl+Shift+Arrow = repeated Shift+Arrow until the moved edge lands on a measure-
 **Measure-mode state:**
 ```ts
 { kind: 'measure'; originVoice: Voice;
-  originStaff: 1|2; firstStaff: 1|2; lastStaff: 1|2;
+  originStaff: number; firstStaff: number; lastStaff: number;  // global staff @n (Phase 5: was 1|2)
   anchorMeasure: number; movableMeasure: number;
   movableSide: 'left' | 'right' | 'unset'; }
 ```
@@ -375,7 +376,7 @@ Ctrl+Shift+Arrow = repeated Shift+Arrow until the moved edge lands on a measure-
 
 **Mode-exit cursor placement** (`cursorAtMovable`) — used by Escape and any non-selection key. Ctrl+X and Backspace/Delete reuse the lastMoved-side placement via `deleteSelectionContent(sel)` (beats: `boundaries[lastMoved==='first' ? first : last+1]` post-clear; measures: `cursorAtMovable`). Ctrl+C is the exception — leaves selection intact, doesn't reposition. Backspace and Delete are identical in selection mode.
 
-**Clipboard format + OS I/O** (`apps/composer/src/clipboard.ts`): an `<hkl:clipboard>` MEI fragment carrying re-anchor metadata:
+**Clipboard format + OS I/O** (`apps/composer/src/selection/clipboard.ts`): an `<hkl:clipboard>` MEI fragment carrying re-anchor metadata:
 ```xml
 <hkl:clipboard kind="beat" voice="1" durationTicks="32" timeSig="4/4">
   <hkl:content>… raw chord/note/rest/tuplet, ids stripped …</hkl:content>
@@ -390,40 +391,71 @@ Ctrl+Shift+Arrow = repeated Shift+Arrow until the moved edge lands on a measure-
 
 OS clipboard uses the **DOM `copy`/`cut`/`paste` events**, NOT `navigator.clipboard.writeText`/`readText` (unreliable on Firefox — permission UI + stale/empty data). The keydown handler still does the model side-effects for Ctrl+C/X (so CDP tests observe state changes); the serialized text is stashed in module-level `pendingClipboardText`, written to `event.clipboardData` by the DOM `copy`/`cut` handler in the same gesture tick. Paste is handled entirely in the DOM `paste` event.
 
-**Paste semantics** (`pasteBeatContent` / `pasteMeasureContent` in `model.ts`):
+**Paste semantics** (`pasteBeatContent` / `pasteMeasureContent` in `model/index.ts`):
 - *Beat*: snap to current beat boundary, clear destination range (incl. partially-overlapping tuplets expanded atomically), insert source via existing helpers, auto-append measures past end-of-score, re-enter beat selection over the pasted range.
 - *Measure*: time-sig pre-check (mismatch → reject); per-measure wipe + replace of selected staves' layers; expression re-anchoring; auto-append.
 - *In selection mode*: delete current selection first, paste at the resulting cursor; final selection covers pasted content.
 
 **Cursor convention bridge** (`findCursorByTickPosition`): the model has two cursor conventions off by one — `locateCursor`/`insertChordAtCursor`/`deleteAtCursor`/`getTickPositionAt` use "cursor c = past flat[c]"; `getTimeAt`/`findCursorAtOrBefore` use "past flat[c-1]". Paste/cut paths pairing `getTickPositionAt` with cursor placement use `findCursorByTickPosition` (the locateCursor-convention version) to avoid off-by-one. → see decisions.md "two cursor-position conventions".
 
-**Selection overlay** (`apps/composer/src/selectionOverlay.ts`): one rect per `<g class="system">` ancestor touched (coalesced via DOM ancestor, not a y-distance heuristic). X ranges union within a group; Y depends on mode — measure: full staff bbox across `firstStaff..lastStaff`; beat: union of layer-element bboxes in the voice, `CURSOR_VPAD` padded (hugs the actual voice). Boundary x rules: past-end → last measure right edge; measure-start tstamp → `kind='start'` uses `Mₖ.contentLeft` (sig-block snap via `findSigEndXForStaff`), `kind='end'` uses `Mₖ₋₁.right` (disambiguates across system breaks); mid-content → left edge of `flat[c+1]`; mid-system barline → prefer `Mₖ₊₁.bbox.left` (Verovio renders the barLine glyph inside the measure group, so `Mₖ.bbox.right` overshoots).
+**Selection overlay** (`apps/composer/src/selection/selectionOverlay.ts`): one rect per `<g class="system">` ancestor touched (coalesced via DOM ancestor, not a y-distance heuristic). X ranges union within a group; Y depends on mode — measure: full staff bbox across `firstStaff..lastStaff`; beat: union of layer-element bboxes in the voice, `CURSOR_VPAD` padded (hugs the actual voice). Boundary x rules: past-end → last measure right edge; measure-start tstamp → `kind='start'` uses `Mₖ.contentLeft` (sig-block snap via `findSigEndXForStaff`), `kind='end'` uses `Mₖ₋₁.right` (disambiguates across system breaks); mid-content → left edge of `flat[c+1]`; mid-system barline → prefer `Mₖ₊₁.bbox.left` (Verovio renders the barLine glyph inside the measure group, so `Mₖ.bbox.right` overshoots).
 
 **Out of scope**: cross-system selection bridging ribbon (rects render correctly per-system, just not connected); paste of non-HKL clipboard content (fails gracefully with "Clipboard is empty or not HKL content").
 
+## Note decorations & articulations (Phase 1)
+
+Plain-letter toggles on the note/chord (or rest) at the cursor anchor (INS → `flat[cursor−1]`, OVR → `flat[cursor]`):
+- **Articulations** `S`/`A`/`T`/`F`/`B` → staccato/accent/tenuto/fermata/breath. Stacc/acc/ten are `<artic>` CHILDREN of the note/chord; fermata/breath are siblings of `<staff>` anchored by `@tstamp` + `@data-hkl-anchor` (Verovio can't position a breath at end-of-note via `@startid`). `pruneDanglingArticControls` (inside `normalizeTies`) drops fermata/breath siblings whose anchor was deleted. Playback shapes velocity/duration (accent boosts, staccato shortens, tenuto extends).
+- **Parenthetical cautionary accidental** `P` (`@hkl-paren-caut` → `<accid enclose="paren">`), **hide rest** `H` (`@visible="false"`, CSS-hidden — Verovio ignores `@visible`), **beam split/join** `/` (`@hkl-beam-break`, XOR on the natural beam state), **stem direction** `L` / **slur direction** `Shift+L` (2-state flip: frozen when opposite the natural default, else follows layout).
+
+## Score structure (Phase 3)
+
+- **Repeats + endings** `{` / `}` / `Ctrl+E`: repeat barlines (`@left="rptstart"` / `@right="rptend"`), 1st/2nd endings as `<ending>` wrapping measures (`Ctrl+E` toggles one measure at a time, context-derived). `]` sets a double bar (`@right="dbl"`). **Playback** expands the repeat/volta structure: `expandPlayOrder(mei, startIdx)` returns the played measure order (rptstart/rptend honored, voltas selected by pass, capped at 2, **start-aware** — a repeat whose body the seek falls inside doesn't replay); `buildPlayback` re-stamps `atMs` over that order while velocity/tempo/octave stay keyed on the **original** tick. No-repeat docs keep the exact linear path.
+- **8va** `Ctrl+8`: MEI `<octave>` rendered from `@startid`/`@endid` (Verovio needs note anchors), with `data-hkl-t0`/`t1` (tick span) driving the playback pitch shift — spanned notes sound `q ± 3` per octave (band structure). Per-staff.
+- **Trills + tremolos** `Ctrl+R` (rebound off `Ctrl+T`, which Firefox reserves): `<trill>` (note-attached, `@startid`) or, on a 2-slot equal-duration selection, a diatonic-step trill (collapse to one note + `<trill>`, discarded cell stashed on `data-hkl-trill-q/r`) else an `<fTrem>` of the pair. **Playback** expands into a slur of alternating notes (static `TRILL_NOTE_MS`) preserving the source notes' lattice cells. A tremolo's time = ONE wrapped note's drawn value (needs first-class handling in all six tick/enumeration sites).
+- **Page break** `Ctrl+B` (`<pb>`) + **section headers** `Ctrl+Shift+H` (custom post-render centered movement title that displaces the system; `renumberMeasures` restarts numbering at each header). Breaks render via `breaks:'smart'` + `breaksSmartSb:0` (system breaks) / a two-pass bake (page breaks) so material after a break still auto-wraps. → decisions.md (3 Phase-3 entries).
+
+## Mid-piece time/key signatures & clefs (Phase 4)
+
+The model carries **per-measure metadata** via in-`<section>` `<scoreDef>`/`<staffDef>` overrides (NOT data attributes), keyed by a cached **meter/instrument table** (`meterTable()` — per-measure budget + cumulative `prefix[]`; `measureTicksAt`/`measureStartTick`/`meterAt`/`keySigAt`/`clefAtCursor`). The old uniform `measureTicks()` is now `measureTicksAt(mi)` threaded through every caller — the highest-blast-radius migration in the roadmap. Cache invalidation is centralized in `normalizePlaceholdersAll()`.
+- **`Ctrl+Shift+S`** (sig modal, `sigDialog.ts`) writes meter/key from the anchored measure forward via diff-aware `setMeterAt`/`setKeySigAt` (an unchanged submit writes nothing); supports cut/common time + additive meters. Setup relegates time/key to a button opening the same modal at measure 0.
+- **`Ctrl+Shift+C`** (clef modal, `clefDialog.ts`) writes a mid-measure inline `<clef>` (a zero-duration `<layer>` child — rides the content whitelists; `realTicks`=0; breaks beam runs). Playback is clef-agnostic (coords carry pitch).
+- Per-measure accidental spelling, beaming (6/8 = 3+3), and MusicXML export all consume the per-measure lookup. → decisions.md (Phase-4 entries), lessons.md ("mid-measure clef vs the leading-signature region").
+
+## Pedal, tempo, expressive-text layers (Phase 2)
+
+The expression layer (below) generalized into **navigable virtual layers** in the ↑/↓ cycle:
+- **Pedal** (`Shift+P` down / `Shift+O` lift) — `<pedal>` siblings, `@tstamp`-anchored. Playback drives HKL's damper engine via deferred note-offs (`pedalCapturesNoteEndingAt`); `play-score` carries an optional `pedalEvents` array.
+- **Tempo** (`Ctrl+Shift+T` modal) — score-global, fixed placement above staff 1. `buildTempoTimeline` gives `tickMsAt`/`atMsAt` (piecewise-linear beat-period; gradual ramps interpolate; "a tempo" restores). All playback runs on `atMsAt`.
+- **Expressive text** (`Ctrl+Shift+E` modal) — `<dir>`, `@tstamp`-anchored, italic option, preset chips (incl. "pizz."/"arco" — see Multi-instrument). Render-only except the pizz/arco articulation cue.
+- **Above/below placement** `Ctrl+↑`/`Ctrl+↓` — sets `@place` on dynamics/hairpins/expressive-text at the moment (tempo + pedal excluded, fixed placement); works in expr and voice mode.
+
+The reusable modal shell `ui/textEntryModal.ts` (`text|number|check|select` fields) hosts the expressive-text, tempo, signature, and clef dialogs.
+
+## Multi-instrument specialization (Phase 5)
+
+Built on the instrument table (see [MEI model](#mei-model-appscomposersrcmodelindexts)). All single-instrument docs stay byte/pixel-identical.
+- **Instrument management** — `instrumentsDialog.ts` (drag-to-reorder list editing a working `InstrEdit[]`) is **staged**: it touches nothing until Setup's **Save** calls `reconcileInstruments` (remove → append → reorder, content traveling via `origIndex`), folded into Setup's single history entry; Cancel discards.
+- **Single-part view + export** — a toolbar instrument selector (`viewInstrSelect`) sets `state.viewInstrIdx`; `serialize(forRender, viewStaves)` filters the render clone to one instrument's staves (`filterToStaves` — drops non-kept `<staff>`/`<staffDef>`, prunes emptied `<staffGrp>`, removes control events anchored to a hidden staff or dropped `@startid`). **Staff @n are NOT renumbered** (the cursor resolves staves by the doc's @n→xml:id; the ↑/↓ stop list restricts to the viewed instrument and parks the cursor there). MusicXML export splits **one `<part>` per instrument** (part-local staff/voice renumbering, `<part-list>` from `<label>`); PDF export honors the view (prints just that part). → decisions.md "Single-part view filters the render clone WITHOUT renumbering".
+- **Pizz/arco** — a "pizz."/"arco" `<dir>` cue switches the spanned notes' `instrumentKey` to a pizzicato variant (`buildArticCueLookup`, keyed on original written tick). `pizzVariantFor(base)` returns the instrument's own variant (`ARTIC_VARIANTS`, only `viola_pizz` shipped) else **any library pizz** (fallback). Multi-instrument only; `maybeBroadcastInstruments` preloads the variants (never-fall-back).
+- **String harmonic** `Alt+H` — `data-hkl-harmonic` on the slot + `@head.shape="diamond"`/`@head.fill="void"` (open diamond) on the highest note. Playback sounds the diamond at a pitch computed from the **next-lowest note below it** (natural → +octave; P4 → 2 octaves above the reference; M3 → 2 octaves + P5); the reference (stopped note) is dropped, every OTHER chord note plays at its written pitch (no whole-chord silencing). → decisions.md "String-harmonic playback".
+- **Ignore color** — a `<hkl:config @ignore-color>` flag (mirrors the HEJI flag) + Setup checkbox; `serialize` strips `@color` from notes on the render clone only (live/saved doc keeps lattice color).
+- **Selection-mode** is now N-staff: `Staff` is `number` (was `1|2`), all `voice<=2?1:2` ternaries route through `model.staffForVoice`/`layerForVoice`, `adjustStaffRange` clamps to `totalStaves()`.
+
+## PDF export (`apps/composer/src/save.ts`, PDFKit)
+
+`downloadPdf` renders a **vector, WYSIWYG** PDF using **PDFKit + svg-to-pdfkit + fontkit** (not jsPDF — jsPDF can't embed the Bravura OTF/CFF, so HEJI accidentals would vanish; see decisions.md "Composer PDF export uses PDFKit"). Per page: serialize with the same `{hejiEnabled}` + view filter as the screen → parse into an off-screen-but-attached host (HEJI injection's `getComputedTextLength` needs layout) → run the screen pipeline (`injectHejiGlyphs` → `forceNonNoteheadBlack` → `inlineComputedStroke` → notehead-lift) → `SVGtoPDF` into a PDFKit page with the embedded `BravuraText.otf` (shipped in `/public`). Two non-obvious passes (svg-to-pdfkit ignores Verovio's embedded `<style>`): `inlineComputedStroke` inlines the computed stroke ONLY on elements with a `stroke-width` (staff lines/barlines/stems — else filled glyphs grow gray outlines), and `removeHiddenRests` strips tuplet-placeholder + user-hidden rests the CSS would hide. The pdfkit chunk is lazy-loaded. → lessons.md (two svg-to-pdfkit entries).
+
 ## Out of scope (Composer overall)
 
-- Note-level edits inside an existing chord.
+- Note-level *pitch* edits inside an existing chord beyond `Alt+↑/↓` step + `Alt+←/→` SC-transpose.
 - Anacrusis / partial-bar pickups.
-- Tempo changes mid-score, expressive text, articulations (planned — see expression-layer extensions).
-- Print / PDF export (deferred).
-- Undo / redo.
-- Multi-instrument *specialization* (Phase 5 landed N-instrument model/cursor/render/audio; these remain deferred): single-part view + per-instrument MusicXML `<part>` split (export today is one multi-staff part), pizz/arco, string harmonic `Alt+H`, ignore-color-in-setup, per-instrument external pedal CC, and multi-instrument **selection-mode** (measure-selection stayed 2-staff).
+- Continuous-loudness shaping through hairpins (held notes spanning a hairpin don't ramp; only newly-struck notes pick up interpolated levels) — would need a `ComposerEvent` carrying timed `(meiId, pressureValue, atMs)` triples for HKL's `handleAftertouch`.
+- MusicXML export of dynamics/hairpins/repeats (pitches/rhythms/colors/sigs/clefs round-trip; expression marks don't yet).
+- Per-instrument **external** pedal CC (internal damper is per-instrument; outbound CC-64 mirroring stays single-channel global).
+- Pizzicato sample bundles beyond viola (mechanism is general; add to `ARTIC_VARIANTS` + ship the `.hki`).
 - Tie-chain re-coalescence under time-sig change (currently per-measure truncation).
-
-### Planned extensions (expression-layer infrastructure)
-
-The Moment/tstamp helpers, moment-snap cursor, and velocity timeline are shaped so these slot in without re-architecting:
-- **`<tempo>` mid-score** — `addTempo`; extend `buildPlayback` with a tempo timeline (`@func="continuous"` interpolates via `<hkl:tempoAlteration>`); `<hkl:tempoMap>` text→BPM defaults.
-- **`<dir>` expressive text** — `addDir`; visual-only, tstamp-anchored.
-- **`<artic>` articulations** — children of note/chord, containment-based; staccato shortens / tenuto extends / accent boosts velocity. (`.` conflicts with cycle-dots; keymap needs design.)
-- **Continuous-loudness shaping through hairpins** — a new `ComposerEvent` carrying timed `(meiId, pressureValue, atMs)` triples so HKL schedules per-voice `handleAftertouch` pressure ramps.
-- **Click-to-select expressions** — click handler snaps the expression cursor via `snapTo`.
-- **Per-staff dynamic scoping** — velocity lookup consults `<dynam> @staff`.
-- **MusicXML export of expressions** — `<direction>`/`<wedge>` per dynam/hairpin.
-- **Tstamp orphan migration on meter change** — `truncateOrMigrateExpressions(prevMeter, newMeter)`.
-
-User-facing entry is unchanged: cycle to the voice/expr layer, press a hotkey.
+- Cross-system selection bridging ribbon (rects render per-system, just unconnected); nested tuplets; `<tupletSpan>` cross-bar tuplets.
 
 ## Help modal (`apps/composer/src/helpDialog.ts`)
 

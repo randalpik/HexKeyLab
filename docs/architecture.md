@@ -181,6 +181,8 @@ TE `#4CFFBA`/`#005937`, GR `#55FF4C`/`#045900`, YE `#FFF94C`/`#595600`, OR `#FF8
 | `.mid` | MPE export/import of a recording (manager ch 1, members 2–16, ±48st bend) so per-voice JI survives a DAW round-trip. | hkl.md |
 | `.hki` | Instrument bundle (manifest + audio) produced by the Analyzer CLI, consumed by `@hkl/engine`; imported ones persist in IndexedDB. | engine.md, analyzer.md |
 | `.hkc` | Composer document: MEI XML with HKL attrs (`data-q`, `data-r`) on each note. Also the output of the `.hkr` → sheet-music transcription pipeline (colored noteheads), which builds it via the shared `@hkl/notation/mei-build` builder. | composer.md, hkl.md "Transcription" |
+| `.musicxml` | Composer one-way export: one `<part>` per instrument, per-measure sigs/clefs, lattice color on noteheads. Lossy on dynamics/hairpins/repeats. | composer.md "Save / load / export" |
+| `.pdf` | Composer one-way export: vector, WYSIWYG (PDFKit + embedded Bravura OTF), honors the single-part view. | composer.md "PDF export" |
 
 ---
 

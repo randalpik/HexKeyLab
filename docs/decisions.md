@@ -3097,3 +3097,19 @@ only `viola_pizz`, so `pizzVariantFor(baseKey)` returns the instrument's own var
 pizz than no pizz for any other string." The preload broadcast (`maybeBroadcastInstruments`) now sends
 the whole `PIZZ_VARIANTS` set (not per-instrument) since any instrument can route to any of them.
 Supersedes the §14.3 "render-only when no own variant" note in the earlier Phase-5 entry.
+
+**Phase 5 dependents + the deferred infra all shipped (2026-06-02) — Composer roadmap CLOSED.** The
+"Deferred follow-ons" listed in the Phase-5 prerequisite entry above all landed: single-part view +
+per-instrument MusicXML `<part>` split, pizz/arco (with library fallback), string harmonic `Alt+H`,
+ignore-color-in-setup, and the multi-instrument **selection-mode** generalization (`Staff` widened
+`1|2`→`number`; the `voice<=2?1:2` ternaries in `selection/{selection,clipboard,selectionOverlay}.ts`
++ `input.ts` now route through `model.staffForVoice`/`layerForVoice`; `adjustStaffRange` clamps to
+`totalStaves()`). Plus PDF/print export (PDFKit migration — see its entry). Only per-instrument
+EXTERNAL pedal CC remains deferred (no use case). The `docs/composer-roadmap.md` planning doc was
+deleted at this point; its durable how-it-works now lives in `docs/architecture/composer.md`, the
+non-obvious calls here, and gotchas in lessons.md.
+
+**Ignore-color is a render-clone strip, mirroring the HEJI flag (2026-06-02).** `<hkl:config
+@ignore-color>` (getter/setter beside `getHejiEnabled`) + a Setup checkbox; `model.serialize`'s
+render path drops `@color` from every `<note>` on the clone when set, so noteheads draw black on
+screen while the live/saved doc keeps lattice color (export already blacks via `forceNonNoteheadBlack`).
