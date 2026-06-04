@@ -1290,3 +1290,15 @@ missing ticks — a tempo marked on the first real downbeat applied a beat or tw
 though it rendered in the right place. Fix: `measureTickInfo` honors `hkl:pickup-ticks` too. Lesson: any
 new per-measure budget concept must be threaded through BOTH the model budget table AND the doc-based
 moment→tick walk, or the audio drifts while the engraving looks correct.
+
+**`getBBox`/`getBoundingClientRect` on an SVG `<text>` returns the font em-box, not the glyph ink
+(2026-06-03).** While empirically centering injected accidentals (`heji-render.ts`), measuring a
+BravuraText `<text>` glyph's vertical centre with `getBBox()` gave a box whose height was exactly the
+font-size (the 1em ascent+descent envelope) — its centre is unrelated to where the sharp/flat/natural ink
+actually sits, so the numbers said "slightly low" while the glyph was visibly HIGH. For glyph-positioning
+work, measure from rendered PIXELS instead: screenshot via `test/composer-inspect`, find the coloured
+notehead centroid (= its staff line) and the accidental's BLACK ink centroid in the column beside it
+(excluding the full-width staff-line rows), and compare. Also: in Composer essentially every accidental
+goes through the BravuraText injection swap (even plain ±1 sharps with HEJI off), and Verovio's own native
+placement of accidentals reads slightly high — so "centred on the line" is a deliberate house offset, not a
+bug (see decisions.md). When a screenshot and a measured number disagree, trust the pixels.

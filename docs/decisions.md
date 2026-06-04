@@ -3190,3 +3190,49 @@ restore at `endCursor`); `setClefAt`/`setClefRange` both delegate to the cursor-
 `setClefAtCursor`. Dispatch is intercepted in `dispatchSelectionMode` (before the voice-mode handlers) so
 select-mode Ctrl+Shift+S/C apply over the span instead of falling through to single-measure/voice mode.
 Time/key work over the measures any selection touches; clef is beat-mode only (measure selection rejected).
+
+**Composer accidentals: deliberate downward house-offset, not Verovio's default (2026-06-03).**
+All accidentals in Composer render as BravuraText `<text>` swapped in by `injectHejiGlyphs`
+(`@hkl/notation/heji-render.ts`) — note accidentals, key-sig accidentals, and HEJI comma stacks alike,
+so the whole score is uniformly Bravura. Empirically (measured on-a-line via `test/composer-inspect`)
+Verovio's own placement left every accidental reading slightly HIGH — its optical centre sits above the
+notehead's staff line. Our injected glyph matched Verovio within ~0.07 space, so this is not an injection
+bug; centering on the line is a deliberate deviation from the engraving default. Lever: the single global
+`ACCID_BASELINE_CORRECTION_SPACES`, tuned **1.5 → 1.6** (≈0.1 space further down) — it moves every injected
+glyph the same amount. Only the septimal hook (U+E2DE/E2DF) still sat ~0.2 space high at that baseline, so
+its per-family `FAMILY_Y_OFFSET.septimal` → **0.05** (≈0.2 space down) to match the flat it trails. The five
+conventional families share offset 0. Values are empirical (verified glyph-centred on a staff line for
+natural/flat/sharp/double-sharp/double-flat + ±arrow variants + flat+hook); re-tune against the same
+on-a-line probe if the font or scale changes, never against `getBBox`/`getBoundingClientRect` (see lessons).
+
+**Composer status-message taxonomy: purple ⇔ undoable edit; only `state` persists (2026-06-03).**
+`setStatus(text, kind, source)` kinds map to colour and lifetime: **info** (gray) = neutral/loading +
+benign "nothing happened" + any action that does NOT mutate the model (layer/mode switches, navigation,
+zoom, view-filter, rewind, save/load/export, copy, cancels); **action** (purple) = confirmation of a real
+**undoable** model edit, and every purple call site must accompany one (audited); **error** (red) =
+failures + blocked attempts; **state** (blue) = genuinely persistent context that must survive keystrokes
+(pending hairpin/slur/tuplet, held-keys echo, selection-span readout). `clearStatusIfTransient` now clears
+EVERYTHING except `state` (and the resting `Ready.` default) on the next keystroke — the fix for "messages
+persist too long". Voice-switch `Voice N.` messages were dropped entirely (the top-bar `#voiceIndicator`
+already shows voice / E / P / T live), and the E/P/T layer-entry messages demoted blue→gray since they
+don't mutate the model.
+
+**Composer voice switch selects the target element SOUNDING at the source note's onset (2026-06-03).**
+`setVoicePreservingMeasure` (model). The cursor "selects" the element to its LEFT (`flat[c]`; cursor.ts:
+c is "past flat[c]"). Moving vertically between voices must land ON the target voice's note at the same
+moment, so we (1) take the source current element's absolute ONSET (`getCursorAbsoluteTicks − realTicks`),
+(2) find the target element with `onset ≤ srcOnset < onset+dur`, and (3) set the cursor to THAT element's
+flat index (= past it → it becomes current). Matching the onset TICK instead lands the cursor at the note's
+left edge — i.e. the measure start when the note begins at tick 0 — which reads as "dropped to the start of
+the bar" (the bug). Matching the END tick (the older behaviour) jumps when the target has a longer note
+spanning the source end with no stop there. A zero-duration current element (measure-start wrapper /
+past-end) has no note to select, so it falls back to the positional `findCursorByTickPosition`. The
+visual-measure fallback (`getFirstVisualCursorInMeasure`) is unchanged.
+
+**Composer Shift+arrow beat selection is direction-aware on a boundary (2026-06-03).**
+`enterBeatSelection` (selection.ts). When the cursor sits exactly on a mid-score beat boundary (= end of
+note A / start of note B), Shift+Right selects the beat to the RIGHT (note B = that boundary's own beat)
+and Shift+Left the beat to the LEFT (note A), so the selection matches the cursor's visual position.
+Strictly-inside-a-beat is direction-independent (the containing beat). Implemented with a module-private
+`boundaryAt`; `currentBeatAt` is left untouched because paste-range (`input.ts`) and 8va depend on its
+existing "just-ended beat" semantics at a boundary.

@@ -61,7 +61,7 @@ Voice numbering (top-to-bottom) for the default single-piano doc:
 
 Each voice has its own cursor in `cursors` (keyed by the flat voice index, seeded `1..totalVoices()`), indexing the **linear flat stream** (concatenated `chord|note|rest|space-placeholder` across all measures, in order). Multi-measure traversal is transparent to the cursor.
 
-- `switchVoice` is time-aligned: snapshots cumulative-time-at-cursor (`getTimeAt`), switches, then `findCursorAtOrBefore(newVoice, time)`. Durations in 64th-note ticks via `elementDurationTicks`.
+- `switchVoice`/layer-exit delegate to `setVoicePreservingMeasure`, which **selects the target voice's element sounding at the source note's onset**: take the current element's absolute onset (`getCursorAbsoluteTicks − realTicks(flat[c])`), find the target element with `onset ≤ srcOnset < onset+dur`, and put the cursor PAST it (its flat index) so it becomes the current element. Moving vertically between voices thus lands ON the note at the same moment, not at its left edge / the bar start. A zero-duration current element (measure-start wrapper / past-end) has no note to select → positional `findCursorByTickPosition` fallback; a wrong visual measure → `getFirstVisualCursorInMeasure`. → decisions.md "voice switch selects the target element sounding at the source note's onset".
 - Two locator helpers, deliberately different boundary semantics: `locateCursor` (insertion point, strict `<` so cursor=N at a boundary lands in the NEXT measure at `withinIdx=0`) vs `locateFlatElement` (element-at-index, strict-decrement walker for `deleteAtCursor`).
 
 Every `<note>` carries `data-q`/`data-r` (lattice identity survives roundtrip; MEI ignores unknown attrs so `.hkc` opens in other viewers) and `xml:id` set via `setAttributeNS(XML_NS, …)` so `[*|id]` selectors resolve. Every `<staff>`/`<measure>` also carries `xml:id` for cursor-overlay rect lookup. → see decisions.md "Manually-set xml:id without setAttributeNS".
@@ -90,7 +90,7 @@ The cursor resets its refs in `attach()` because Verovio's `loadData()+renderToS
 | `1`–`7` | duration (1=64th … 5=quarter … 7=whole). Held keys → chord; none → rest. Held keys with `|alter|>±3` filtered before commit. |
 | `.` | cycle dots (0→1→2→0) on current note/chord/rest. Overflow auto-ties across the bar. |
 | `=` | toggle tie on current note/chord (per-pitch; see [Ties](#ties)). |
-| `↑`/`↓` | switch voice / layer, time-aligned. The cycle is a stop list built from the instrument table (`buildVoiceStopList`): `tempo → (per instrument: its voices, its expr layer between/above its staves, its pedal below — 2-staff instruments only)`. A single piano = `tempo↔1↔2↔expr↔3↔4↔pedal`. Expr + pedal are per-instrument; tempo is score-global. Entering an expr/pedal/tempo layer snaps to the **nearest existing mark** (not moment 0). |
+| `↑`/`↓` | switch voice / layer; voice stops land on the target's note at the same moment (`setVoicePreservingMeasure`, see above). The cycle is a stop list built from the instrument table (`buildVoiceStopList`): `tempo → (per instrument: its voices, its expr layer between/above its staves, its pedal below — 2-staff instruments only)`. A single piano = `tempo↔1↔2↔expr↔3↔4↔pedal`. Expr + pedal are per-instrument; tempo is score-global. Entering an expr/pedal/tempo layer snaps to the **nearest existing mark** (not moment 0). |
 | `←`/`→` | move cursor within voice. In an expr/pedal/tempo layer, plain `←`/`→` step the moment list; **`Ctrl+←`/`Ctrl+→` jump mark-to-mark** (skipping bare note onsets and bare hairpin-ends — each stop lands on a real selectable mark). |
 | `Home`/`End` | jump to voice start/end. |
 | `Backspace` | voice mode: delete element before cursor (skips placeholders; removes a measure if a delete empties it across all voices, unless it's the only one). Selection mode: delete-and-exit (no clipboard write). |
@@ -100,13 +100,13 @@ The cursor resets its refs in `attach()` because Verovio's `loadData()+renderToS
 
 Arrow keys suppressed during playback (`isPlaybackActive` short-circuits navigation).
 
-**Statusline** `#composerStatus` — the sole feedback surface for keystroke actions. `setStatus(text, kind)` toggles a CSS class; four kinds:
-- `error` (red) — blocked actions / no-op reasons.
-- `state` (blue) — current-state info (`held: A3 C4`, pending-hairpin/tuplet prompts).
-- `action` (purple) — post-action confirmations.
-- `info` (gray) — `Ready.` default + transient progress.
+**Statusline** `#composerStatus` — the sole feedback surface for keystroke actions. `setStatus(text, kind)` toggles a CSS class; four kinds, picked by intent (does it mutate the model?), not message content:
+- `error` (red) — failures + blocked attempts / no-op reasons.
+- `state` (blue) — genuinely persistent context that must survive keystrokes: `held: A3 C4`, pending hairpin/slur/tuplet prompts, selection-span readout.
+- `action` (purple) — confirmation of a real **undoable model edit**; every purple call site must accompany one (audited). Non-mutating "actions" (layer/mode switch, nav, zoom, view-filter, rewind, save/load/export, copy, cancels) are `info`, not purple.
+- `info` (gray) — `Ready.` default, transient progress, benign "nothing happened", and all non-mutating feedback.
 
-`clearStatusIfTransient()` fires at the top of every non-modifier keydown and resets to `Ready.` if the current kind is `error`/`action`. State (blue) survives the keystroke; it clears via its own overwrite. Held-keys echoes clear via a source-tagged `clearStatusIfHeldKeys()`. Connection events go to the `#connStatus` badge only, never the statusline. Pick kind by intent, not message content.
+`clearStatusIfTransient()` fires at the top of every non-modifier keydown and clears **everything except `state`** (and the resting `Ready.` default) — info/action/error are all transient. State (blue) survives the keystroke and clears via its own context change. Held-keys echoes clear via a source-tagged `clearStatusIfHeldKeys()`. Voice switching emits NO statusline message (the top-bar `#voiceIndicator` shows voice / E / P / T live). Connection events go to the `#connStatus` badge only. → decisions.md "status-message taxonomy".
 
 ### Click-to-position (`apps/composer/src/click.ts`)
 
@@ -239,7 +239,7 @@ Then `normalizePlaceholders()`, `setBarlines()`, and clamp each voice's cursor. 
 
 **HEJI / arbitrary-stack rendering** (`packages/notation/src/heji-render.ts`) — Verovio can't draw EHE glyphs (`@glyph.num` is a no-op in 6.x) and collapses repeated same-token `<accid>` siblings. Render-only workaround (never touches `.hkc`):
 1. **`transformDocForHeji`** (from `model.serialize({ hejiEnabled })`, after `computeAccidentalDisplay`): for any note needing more than one ≤±3 glyph, replace `@accid` with DISTINCT placeholder `<accid>` children (distinct tokens force a real horizontal slot each), tagged `@type="hklg-<seq>-<family>-<hex>"`. MEI order reversed from visual (MEI-first renders rightmost, nearest the notehead).
-2. **`injectHejiGlyphs`** (from `render/render.ts` after `renderToSVG`, gated on `document.fonts.load('BravuraText')`): redraws *every* accidental as a BravuraText `<text>` — placeholders become combined U+E2C0+ glyphs; native ones redraw at their SMuFL codepoint. Size `1000 × scale`.
+2. **`injectHejiGlyphs`** (from `render/render.ts` after `renderToSVG`, gated on `document.fonts.load('BravuraText')`): redraws *every* accidental as a BravuraText `<text>` — placeholders become combined U+E2C0+ glyphs; native ones redraw at their SMuFL codepoint. Size `1000 × scale`. Vertical placement = `nativeTy + baselineCorrection(fontSize) + FAMILY_Y_OFFSET[family]·fontSize`; `ACCID_BASELINE_CORRECTION_SPACES = 1.6` is a deliberate, empirically-tuned downward house-offset (Verovio's default reads slightly high) that centers accidentals on the staff line, and `FAMILY_Y_OFFSET.septimal = 0.05` brings the septimal hook down to match. → decisions.md "deliberate downward house-offset", lessons.md (`getBBox` em-box trap).
 
 Net: accidentals are uniformly Bravura, rest of the score stays on Leipzig (Bravura rests read worse). Comma math in `@hkl/shared` `heji.ts`, shared by lattice (with readability collapse) and Composer (full chain, no collapse). The HEJI toggle is a setup-dialog checkbox on `<extMeta>/<hkl:config> @heji`, independent of HKL's `hejiEnabled`. MusicXML `<alter>` from `noteAlter` (lossy on commas; no MusicXML HEJI standard).
 
@@ -355,7 +355,7 @@ Placeholders are `<rest>` (not `<space>`) because Verovio's bracket-rendering pa
 ## Selection, copy & paste
 
 A third `CursorMode` value (`'select'`), orthogonal to voice/expr and to `EntryMode`. Two granularities, always bounded at musical boundaries:
-- **Beat mode** — one voice, contiguous beats. Entered via Shift+Left/Right.
+- **Beat mode** — one voice, contiguous beats. Entered via Shift+Left/Right. Entry is direction-aware when the cursor sits exactly on a mid-score beat boundary (end of note A / start of note B): Shift+Right selects the beat to the RIGHT (note B), Shift+Left the LEFT (note A), so the selection matches the cursor's visual position; strictly inside a beat, both select the containing beat. (`enterBeatSelection` + `boundaryAt`; `currentBeatAt` keeps its "just-ended beat" boundary semantics for paste/8va.) → decisions.md "Shift+arrow beat selection is direction-aware on a boundary".
 - **Measure mode** — one+ two-voice staves, contiguous measures. Entered via Shift+Up/Down. Beat mode promotes to measure mode irreversibly via Shift+Up/Down.
 
 **Beat-mode state** (`apps/composer/src/selection/selection.ts`):

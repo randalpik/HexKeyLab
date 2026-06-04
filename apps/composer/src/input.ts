@@ -431,7 +431,7 @@ function commitHairpinStep(model: ComposerModel, hooks: InputHooks, form: 'cres'
 function cancelPendingHairpin(hooks: InputHooks): boolean {
   if (!state.pendingHairpin) return false;
   state.pendingHairpin = null;
-  hooks.setStatus?.('Pending hairpin cancelled.', 'action');
+  hooks.setStatus?.('Pending hairpin cancelled.', 'info');
   hooks.onStateChange();
   return true;
 }
@@ -439,7 +439,7 @@ function cancelPendingHairpin(hooks: InputHooks): boolean {
 function cancelPendingSlur(hooks: InputHooks): boolean {
   if (!state.pendingSlur) return false;
   state.pendingSlur = null;
-  hooks.setStatus?.('Pending slur cancelled.', 'action');
+  hooks.setStatus?.('Pending slur cancelled.', 'info');
   hooks.onStateChange();
   return true;
 }
@@ -490,7 +490,8 @@ function deleteSelectedPedal(model: ComposerModel, hooks: InputHooks): boolean {
       || pedalMoments(model.getDoc(), staves).length === 0) {
     state.cursorMode = 'voice';
     model.setVoicePreservingMeasure(lastVoice);
-    hooks.setStatus?.('Deleted pedal mark. Voice ' + lastVoice + '.', 'action');
+    /* Dropped to voice mode; the voice indicator shows where. */
+    hooks.setStatus?.('Deleted pedal mark.', 'action');
   } else {
     hooks.setStatus?.('Deleted pedal mark.', 'action');
   }
@@ -744,7 +745,7 @@ function enterExprLayer(model: ComposerModel, instr: number, hooks: InputHooks):
   const anchor = momentAtVoiceAnchor(model);
   state.exprCursor = rebuildCursor(model.getDoc(), anchor, staves);
   state.exprCursor = snapToNearestElement(state.exprCursor, model.getDoc(), 'expr', anchor, staves);
-  hooks.setStatus?.('Expression layer.', 'state');
+  hooks.setStatus?.('Expression layer.', 'info');
 }
 
 function enterPedalLayer(model: ComposerModel, instr: number, hooks: InputHooks): void {
@@ -754,7 +755,7 @@ function enterPedalLayer(model: ComposerModel, instr: number, hooks: InputHooks)
   const anchor = momentAtVoiceAnchor(model);
   state.pedalCursor = rebuildPedalCursor(model.getDoc(), anchor, staves);
   state.pedalCursor = snapToNearestElement(state.pedalCursor, model.getDoc(), 'pedal', anchor, staves);
-  hooks.setStatus?.('Pedal layer.', 'state');
+  hooks.setStatus?.('Pedal layer.', 'info');
 }
 
 function enterTempoLayer(model: ComposerModel, hooks: InputHooks): void {
@@ -762,7 +763,7 @@ function enterTempoLayer(model: ComposerModel, hooks: InputHooks): void {
   const anchor = momentAtVoiceAnchor(model);
   state.tempoCursor = rebuildTempoCursor(model.getDoc(), anchor);
   state.tempoCursor = snapToNearestElement(state.tempoCursor, model.getDoc(), 'tempo', anchor);
-  hooks.setStatus?.('Tempo layer.', 'state');
+  hooks.setStatus?.('Tempo layer.', 'info');
 }
 
 /** Instrument index owning global staff `staffN` (the one whose staff set
@@ -799,19 +800,19 @@ export function selectLayerElementById(
   if (ln === 'tempo') {
     state.cursorMode = 'tempo';
     state.tempoCursor = rebuildTempoCursor(doc, moment);
-    setStatus?.('Tempo layer.', 'state');
+    setStatus?.('Tempo layer.', 'info');
   } else if (ln === 'pedal') {
     const instr = instrIdxForStaff(model, parseInt(el.getAttribute('staff') ?? '0', 10));
     state.cursorMode = 'pedal';
     state.pedalInstrIdx = instr;
     state.pedalCursor = rebuildPedalCursor(doc, moment, instrStaves(model, instr));
-    setStatus?.('Pedal layer.', 'state');
+    setStatus?.('Pedal layer.', 'info');
   } else {
     const instr = instrIdxForStaff(model, parseInt(el.getAttribute('staff') ?? '0', 10));
     state.cursorMode = 'expr';
     state.exprInstrIdx = instr;
     state.exprCursor = rebuildCursor(doc, moment, instrStaves(model, instr));
-    setStatus?.('Expression layer.', 'state');
+    setStatus?.('Expression layer.', 'info');
   }
   return true;
 }
@@ -854,7 +855,7 @@ function cycleVoice(model: ComposerModel, dir: 'up' | 'down', hooks: InputHooks)
     /* voice stop */
     state.cursorMode = 'voice';
     model.setVoicePreservingMeasure(stop.voice);
-    hooks.setStatus?.('Voice ' + stop.voice + '.', 'state');
+    /* No status message: the top-bar voice indicator already shows the voice. */
     return;
   }
   /* Off the top/bottom of the cycle — stay put. */
@@ -1089,7 +1090,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         );
         if (apply) {
           hooks.requestApplyLayout?.();
-          hooks.setStatus?.('Applied score\'s tuning to HKL. Re-press your keys.', 'action');
+          hooks.setStatus?.('Applied score\'s tuning to HKL. Re-press your keys.', 'info');
         } else {
           hooks.setStatus?.('Switch HKL to "' + tuningLabel(required) + '" to add notes.', 'error');
         }
@@ -1159,7 +1160,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         );
         if (apply) {
           hooks.requestApplyLayout?.();
-          hooks.setStatus?.('Applied score\'s tuning to HKL. Re-press your keys.', 'action');
+          hooks.setStatus?.('Applied score\'s tuning to HKL. Re-press your keys.', 'info');
         } else {
           hooks.setStatus?.('Switch HKL to "' + tuningLabel(required) + '" to enter notes.', 'error');
         }
@@ -1481,7 +1482,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     if (e.key === 'Escape') {
       e.preventDefault();
       exitSelectionToMovable();
-      hooks.setStatus?.('Selection cancelled.', 'action');
+      hooks.setStatus?.('Selection cancelled.', 'info');
       hooks.onStateChange();
       hooks.onChange();
       return true;
@@ -1537,7 +1538,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
            handler to ferry into event.clipboardData; do NOT preventDefault. */
         pendingClipboardText = serializeClipboard(model, sel);
         lastCopySource = sel;
-        hooks.setStatus?.('Copied to clipboard.', 'action');
+        hooks.setStatus?.('Copied to clipboard.', 'info');
         return true;
       }
       if (e.key === 'x' || e.key === 'X') {
@@ -1719,7 +1720,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       ? hooks.history.undo(model, undoEffects)
       : hooks.history.redo(model, undoEffects);
     if (!entry) {
-      hooks.setStatus?.(isUndo ? 'Nothing to undo.' : 'Nothing to redo.', 'error');
+      hooks.setStatus?.(isUndo ? 'Nothing to undo.' : 'Nothing to redo.', 'info');
       return true;
     }
     refreshExprCursor(model);
@@ -2376,7 +2377,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       }
       /* Cancel and fall through to normal handling for this key. */
       state.pendingTuplet = null;
-      hooks.setStatus?.('Tuplet cancelled.', 'action');
+      hooks.setStatus?.('Tuplet cancelled.', 'info');
       hooks.onStateChange();
       /* no return — handler below processes e */
     }

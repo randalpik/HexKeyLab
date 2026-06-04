@@ -272,6 +272,40 @@ const MULTI_VOICE = {
     /* Direct call mirrors the expr-exit path. */
     m.setVoicePreservingMeasure(3);
   `,
+
+  /* Onset alignment on voice switch: match the START moment of the current
+   * note, not its END. V_1 M_1 = four quarter rests, cursor parked past Q2
+   * (current note Q2: onset = 1 quarter, end = 2 quarters). V_2 M_1 = two half
+   * rests, so the source's current-note ONSET (1 quarter) lands inside V_2's
+   * 1st half (no stop there → onset of that half = 0), while end-matching would
+   * snap to V_2's 2nd half at the half-measure. */
+  voiceSwitch_onsetAlignment_longerTargetNote: `
+    m.setVoice(1);
+    m.setCursor(0, 1);
+    for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: "4", dots: 0 });
+    m.setVoice(2);
+    m.setCursor(0, 2);
+    m.insertRestAtCursor({ duration: "2", dots: 0 });
+    m.insertRestAtCursor({ duration: "2", dots: 0 });
+    /* Park V_1 cursor past Q2 (= half-measure end tick), then switch down. */
+    m.setVoice(1);
+    m.setCursor(m.findCursorByTickPosition(1, m.measureTicks() / 2), 1);
+    m.switchVoice('down');
+  `,
+
+  /* The MRE: V_1 and V_2 each have one note of the same length, both starting at
+   * the measure start. With the V_1 note selected (cursor past it), switching to
+   * V_2 must SELECT V_2's note (cursor past it), not drop to the measure start. */
+  voiceSwitch_sameOnset_selectsNote: `
+    m.setVoice(1); m.setCursor(0, 1);
+    m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+    m.setVoice(2); m.setCursor(0, 2);
+    m.insertChordAtCursor({ notes: [{ q: -4, r: -2, pname: 'c', accid: '', oct: 4, midi: 60, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+    /* Select the V_1 note (cursor past it = 1 quarter into the bar), then switch down. */
+    m.setVoice(1);
+    m.setCursor(m.findCursorByTickPosition(1, m.measureTicks() / 4), 1);
+    m.switchVoice('down');
+  `,
 };
 
 /* ── New: Ctrl-nav (bar-jump) scenarios ───────────────────────────────── */
@@ -676,6 +710,22 @@ const HEJI = {
     visualBaseline: 'heji_acc_plus_hook',
   },
 
+  /* Accidental vertical placement: a sharp whose notehead sits ON a staff line
+     (G#4, mode P) must read centered on that line. Pins the empirically-tuned
+     ACCID_BASELINE_CORRECTION_SPACES (1.6) + FAMILY_Y_OFFSET in heji-render.ts;
+     Verovio's own default left accidentals reading slightly high. The trailing
+     note adds a flat + septimal hook (mode 7) so the per-family septimal nudge
+     is covered by the same baseline. */
+  accidental_centered_on_line: {
+    setup: `
+      m.setLayoutReq({ tuningMode: 'P', refQ: 0, refR: 0 });
+      m.setHejiEnabled(false);
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 4, pname: 'g', accid: 's', oct: 4, midi: 68, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+    `,
+    visualBaseline: 'accidental_centered_on_line',
+  },
+
   /* HEJI OFF: the same C#↓ cell renders as a plain sharp (BravuraText, since
      all accidentals are Bravura) with NO comma arrow — guards that the comma
      decoration is gated on the HEJI flag. */
@@ -986,14 +1036,34 @@ const KBD = {
     setupKeys: [{ key: '=' }, { key: 'ArrowRight' }],
   },
 
-  /* Purple post-action message also clears on next keystroke. Press '<'
-     (start cres → state/blue), then Escape (cancel → action/purple
-     "Pending hairpin cancelled."), then ArrowRight — should be Ready. */
-  kbd_statusAction_pendingHairpinCancel: {
+  /* Cancelling a pending gesture does NOT change the model, so it is an info
+     cue (gray), not a purple action. Press '<' (start cres → state/blue), then
+     Escape (cancel → info "Pending hairpin cancelled."). */
+  kbd_statusInfo_pendingHairpinCancel: {
     setupKeys: [{ key: '<', shift: true }, 'Escape'],
   },
+
+  /* Purple ('action') is reserved for real undoable edits. Ctrl+M inserts a
+     measure (pushed onto undo history) → purple "Inserted measure m…". */
+  kbd_statusAction_insertMeasure: {
+    setupKeys: [{ key: 'm', ctrl: true }],
+  },
+  /* …and that purple post-action clears on the next keystroke. */
   kbd_statusAction_clearsOnNextKey: {
-    setupKeys: [{ key: '<', shift: true }, 'Escape', 'ArrowRight'],
+    setupKeys: [{ key: 'm', ctrl: true }, 'ArrowRight'],
+  },
+
+  /* Switching voice emits NO status message — the top-bar voice indicator
+     already shows the voice. ArrowDown cycles V1→V2; status stays Ready. */
+  kbd_statusVoiceSwitch_noMessage: {
+    setup: `
+      m.setVoice(1); m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setVoice(2); m.setCursor(0, 2);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+    `,
+    setupKeys: ['ArrowDown'],
   },
 
   /* ── Phase 1: expr-layer nav + modal ergonomics ────────────────────────── */
@@ -1140,6 +1210,21 @@ const SELECTION = {
   sel_beat_enter_shiftRight: {
     setup: `${FILL_M1_4Q_V1} m.setCursor(0, 1);`,
     setupKeys: [{ key: 'ArrowRight', shift: true }],
+  },
+
+  /* Direction-aware entry when the cursor sits EXACTLY on a mid-score beat
+     boundary (past Q1 = end of beat 0 / start of beat 1). Shift+Right should
+     select the beat to the RIGHT (beat 1 = note B); Shift+Left the beat to the
+     LEFT (beat 0 = note A). Guards the off-by-one fix in enterBeatSelection. */
+  sel_beat_onBoundary_shiftRight: {
+    setup: `${FILL_M1_4Q_V1} m.setCursor(m.findCursorByTickPosition(1, m.measureTicks() / 4), 1);`,
+    setupKeys: [{ key: 'ArrowRight', shift: true }],
+    visualBaseline: 'sel_beat_onBoundary_shiftRight',
+  },
+  sel_beat_onBoundary_shiftLeft: {
+    setup: `${FILL_M1_4Q_V1} m.setCursor(m.findCursorByTickPosition(1, m.measureTicks() / 4), 1);`,
+    setupKeys: [{ key: 'ArrowLeft', shift: true }],
+    visualBaseline: 'sel_beat_onBoundary_shiftLeft',
   },
 
   /* Grow beat selection rightward by 1 beat (entry selects beat 0, then
@@ -4914,6 +4999,42 @@ export const FIXTURE_ASSERTIONS = {
           : { ok: false, detail: 'voice=' + cur + ' measureIdx=' + mi + ' (expected 3, 2)' };
       })()` },
   ],
+  voiceSwitch_onsetAlignment_longerTargetNote: [
+    { name: 'V_2 cursor selects the half-note covering the source onset (not the measure start)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const cur = m.getCurrentVoice();
+        if (cur !== 2) return { ok: false, detail: 'voice=' + cur + ' (expected 2)' };
+        const mi = m.cursorMeasureIdx(cur);
+        if (mi !== 0) return { ok: false, detail: 'measureIdx=' + mi + ' (expected 0)' };
+        /* Source current note (Q2) onset = 1 quarter-tick, inside V_2's first
+         * half-note [0, half). Switching selects that half-note: cursor sits
+         * PAST it, so getCursorAbsoluteTicks = the half-measure. (The earlier
+         * onset-tick bug landed at 0 = measure start.) */
+        const within = m.getCursorAbsoluteTicks(cur) - mi * m.measureTicks();
+        const fl = m.flatChildren(cur); const el = fl[m.getCursor(cur)];
+        const tag = el ? el.localName : 'none';
+        return within === m.measureTicks() / 2 && (tag === 'note' || tag === 'chord' || tag === 'rest')
+          ? { ok: true }
+          : { ok: false, detail: 'within=' + within + ' tag=' + tag + ' (expected half-measure, on the covering element)' };
+      })()` },
+  ],
+  voiceSwitch_sameOnset_selectsNote: [
+    { name: 'switching down selects V_2 note at the same onset (not the measure start)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const cur = m.getCurrentVoice();
+        if (cur !== 2) return { ok: false, detail: 'voice=' + cur + ' (expected 2)' };
+        const fl = m.flatChildren(cur); const c = m.getCursor(cur);
+        const el = fl[c]; const tag = el ? el.localName : 'none';
+        /* Cursor must sit PAST V_2's note (current element = the note), i.e. its
+         * end tick (1 quarter), not at the measure start (tick 0). */
+        const abs = m.getCursorAbsoluteTicks(cur);
+        return (tag === 'note' || tag === 'chord') && abs === m.measureTicks() / 4
+          ? { ok: true }
+          : { ok: false, detail: 'cursor=' + c + ' tag=' + tag + ' abs=' + abs + ' (expected on a note at 1 quarter)' };
+      })()` },
+  ],
 
   /* Tuplets. */
   m1Triplet8Empty: [
@@ -5691,15 +5812,31 @@ export const FIXTURE_ASSERTIONS = {
           : { ok: false, detail: 'text=' + el.textContent };
       })()` },
   ],
-  kbd_statusAction_pendingHairpinCancel: [
-    { name: 'statusline shows post-action in purple',
+  kbd_statusInfo_pendingHairpinCancel: [
+    { name: 'cancel is an info cue (gray, no kind class), not purple',
+      expr: `(() => {
+        const el = document.getElementById('composerStatus');
+        if (!el) return { ok: false, detail: 'no #composerStatus element' };
+        const hasKindClass = el.classList.contains('status-error')
+          || el.classList.contains('status-state')
+          || el.classList.contains('status-action');
+        if (hasKindClass) {
+          return { ok: false, detail: 'should be info (no kind class), got ' + el.className + ' text=' + el.textContent };
+        }
+        return el.textContent.includes('cancelled')
+          ? { ok: true }
+          : { ok: false, detail: 'text=' + el.textContent };
+      })()` },
+  ],
+  kbd_statusAction_insertMeasure: [
+    { name: 'real undoable edit shows post-action in purple',
       expr: `(() => {
         const el = document.getElementById('composerStatus');
         if (!el) return { ok: false, detail: 'no #composerStatus element' };
         if (!el.classList.contains('status-action')) {
           return { ok: false, detail: 'classList=' + el.className + ' text=' + el.textContent };
         }
-        return el.textContent.includes('cancelled')
+        return el.textContent.includes('Inserted measure')
           ? { ok: true }
           : { ok: false, detail: 'text=' + el.textContent };
       })()` },
@@ -5718,6 +5855,22 @@ export const FIXTURE_ASSERTIONS = {
         return el.textContent === 'Ready.'
           ? { ok: true }
           : { ok: false, detail: 'text=' + el.textContent };
+      })()` },
+  ],
+  kbd_statusVoiceSwitch_noMessage: [
+    { name: 'voice switch emits no status message (indicator shows the voice)',
+      expr: `(() => {
+        const el = document.getElementById('composerStatus');
+        if (!el) return { ok: false, detail: 'no #composerStatus element' };
+        const v = window.__hkl_composer.model.getCurrentVoice();
+        if (v !== 2) return { ok: false, detail: 'expected voice 2 after ArrowDown, got ' + v };
+        const hasKindClass = el.classList.contains('status-error')
+          || el.classList.contains('status-state')
+          || el.classList.contains('status-action');
+        if (hasKindClass || /Voice/.test(el.textContent)) {
+          return { ok: false, detail: 'unexpected status: class=' + el.className + ' text=' + el.textContent };
+        }
+        return { ok: true };
       })()` },
   ],
 
@@ -5824,6 +5977,32 @@ export const FIXTURE_ASSERTIONS = {
         return sel.first === sel.origin && sel.last === sel.origin && sel.origin === 0
           ? { ok: true }
           : { ok: false, detail: 'expected first=origin=last=0, got ' + JSON.stringify(sel) };
+      })()` },
+  ],
+  sel_beat_onBoundary_shiftRight: [
+    { name: 'on-boundary Shift+Right selects the beat to the RIGHT (beat 1 = note B)',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        if (!s.selection || s.selection.kind !== 'beat') {
+          return { ok: false, detail: 'selection=' + JSON.stringify(s.selection) };
+        }
+        const sel = s.selection;
+        return sel.first === 1 && sel.last === 1 && sel.origin === 1 && sel.lastMoved === 'last'
+          ? { ok: true }
+          : { ok: false, detail: 'expected first=origin=last=1, lastMoved=last, got ' + JSON.stringify(sel) };
+      })()` },
+  ],
+  sel_beat_onBoundary_shiftLeft: [
+    { name: 'on-boundary Shift+Left selects the beat to the LEFT (beat 0 = note A)',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        if (!s.selection || s.selection.kind !== 'beat') {
+          return { ok: false, detail: 'selection=' + JSON.stringify(s.selection) };
+        }
+        const sel = s.selection;
+        return sel.first === 0 && sel.last === 0 && sel.origin === 0 && sel.lastMoved === 'first'
+          ? { ok: true }
+          : { ok: false, detail: 'expected first=origin=last=0, lastMoved=first, got ' + JSON.stringify(sel) };
       })()` },
   ],
   sel_beat_grow_right: [

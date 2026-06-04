@@ -38,6 +38,9 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
 #composerToolbar .btn { padding: 3px 12px; background: #222; color: #ccc; border: 1.5px solid #555; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 12px }
 #composerToolbar .btn:hover { border-color: #888 }
 #composerToolbar .btn.active { border-color: #4CFFBA; color: #4CFFBA }
+/* Icon-only transport buttons: larger, optically-matched glyphs (⏮ renders
+   smaller than ▶ at the toolbar's 12px), padded to a consistent square. */
+#composerToolbar .btn.transport { font-size: 15px; line-height: 1; padding: 2px 9px }
 #composerToolbar .spacer { flex: 1 }
 
 /* Export dropdown: HTML5 popover anchored to its trigger button via a
@@ -302,10 +305,6 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
     <select id="viewInstrSelect" title="Show one instrument's part (cursor stays within it)"></select>
   </div>
   <div class="group">
-    <span class="label">Duration</span>
-    <span class="value" id="durationIndicator">4</span>
-  </div>
-  <div class="group">
     <span class="label">Mode</span>
     <span class="value" id="modeIndicator">INS</span>
   </div>
@@ -314,8 +313,8 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
     <button class="btn" id="btnViewScroll">Scroll</button>
   </div>
   <div class="group">
-    <button class="btn" id="btnRewind" title="Move cursor to start of score">⏮</button>
-    <button class="btn" id="btnPlay" title="Play from cursor (Rewind to play from start)">▶ Play</button>
+    <button class="btn transport" id="btnRewind" title="Move cursor to start of score">⏮</button>
+    <button class="btn transport" id="btnPlay" title="Play from cursor (Rewind to play from start)">▶</button>
   </div>
   <div class="group">
     <button class="btn" id="btnSetup" title="Document setup (title, composer, key, meter, tempo)">Setup</button>

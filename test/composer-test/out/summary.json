@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 278,
-  "passed": 278,
+  "fixtures": 285,
+  "passed": 285,
   "failed": 0,
-  "elapsedMs": 91664,
+  "elapsedMs": 93316,
   "results": [
     {
       "name": "emptyDoc",
@@ -183,6 +183,22 @@
     },
     {
       "name": "voiceSwitch_measurePreserved_exprExitPath",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "voiceSwitch_onsetAlignment_longerTargetNote",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "voiceSwitch_sameOnset_selectsNote",
       "ok": true,
       "failures": [],
       "counts": {
@@ -550,7 +566,15 @@
       }
     },
     {
-      "name": "kbd_statusAction_pendingHairpinCancel",
+      "name": "kbd_statusInfo_pendingHairpinCancel",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "kbd_statusAction_insertMeasure",
       "ok": true,
       "failures": [],
       "counts": {
@@ -563,6 +587,14 @@
       "failures": [],
       "counts": {
         "invariants": 7
+      }
+    },
+    {
+      "name": "kbd_statusVoiceSwitch_noMessage",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
       }
     },
     {
@@ -702,6 +734,14 @@
       }
     },
     {
+      "name": "accidental_centered_on_line",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
       "name": "heji_off_native",
       "ok": true,
       "failures": [],
@@ -739,6 +779,22 @@
       "failures": [],
       "counts": {
         "invariants": 8
+      }
+    },
+    {
+      "name": "sel_beat_onBoundary_shiftRight",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
+      }
+    },
+    {
+      "name": "sel_beat_onBoundary_shiftLeft",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
       }
     },
     {

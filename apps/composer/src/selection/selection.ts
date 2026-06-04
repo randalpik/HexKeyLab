@@ -117,12 +117,25 @@ export function currentBeatAt(model: ComposerModel, voice: Voice, cursor: number
   return Math.min(k, numBeats - 1);
 }
 
-/** Entry from voice mode via Shift+arrow. Both directions select the
- *  cursor's current beat (single-beat selection). `lastMoved` is set from
- *  the entry direction: Shift+Left → 'first' (so an immediate exit lands
- *  the cursor at the beat's LEFT edge), Shift+Right → 'last' (right edge).
- *  This makes exit-cursor placement match the user's last-perceived
- *  direction even when they bail immediately after entering. */
+/** Index `k` of the beat boundary the cursor sits *exactly* on (mid-score
+ *  only, so 0 < k < numBeats), or -1 if the cursor is strictly between
+ *  boundaries (or at the start/end of the score). Used to make Shift+arrow
+ *  entry direction-aware at a boundary; `currentBeatAt`'s callers (paste, 8va)
+ *  keep its "just-ended beat" semantics untouched. */
+function boundaryAt(model: ComposerModel, voice: Voice, cursor: number): number {
+  const b = beatBoundariesInVoice(model, voice);
+  for (let i = 1; i < b.length - 1; i++) if (b[i] === cursor) return i;
+  return -1;
+}
+
+/** Entry from voice mode via Shift+arrow. Selects a single beat. When the
+ *  cursor sits strictly inside a beat, both directions select that beat. When
+ *  it sits exactly on a mid-score boundary (= end of note A / start of note B),
+ *  the selection is direction-aware so it matches the cursor visually:
+ *  Shift+Right selects the beat to the RIGHT (note B = beat k), Shift+Left the
+ *  beat to the LEFT (note A = beat k−1). `lastMoved` is set from the entry
+ *  direction: Shift+Left → 'first' (immediate exit lands the cursor at the
+ *  beat's LEFT edge), Shift+Right → 'last' (right edge). */
 export function enterBeatSelection(
   model: ComposerModel,
   voice: Voice,
@@ -131,7 +144,11 @@ export function enterBeatSelection(
 ): Extract<SelectionState, { kind: 'beat' }> | null {
   const boundaries = beatBoundariesInVoice(model, voice);
   if (boundaries.length <= 1) return null;
-  const k = currentBeatAt(model, voice, fromCursor);
+  const numBeats = boundaries.length - 1;
+  const onB = boundaryAt(model, voice, fromCursor);
+  const k = onB > 0
+    ? (dir === 'right' ? Math.min(onB, numBeats - 1) : onB - 1)
+    : currentBeatAt(model, voice, fromCursor);
   return {
     kind: 'beat',
     voice,

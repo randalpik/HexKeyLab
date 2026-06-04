@@ -46,20 +46,25 @@ const BARE_CODE: Record<HejiGlyphFamily, number | null> = {
 };
 
 /* Per-family vertical fine-tune for injected glyphs, fraction of font size,
- * positive = down (SVG y down). Ported from HKL's HEJI_FAMILY_Y_OFFSET; tuned
- * against Verovio's baseline. These are small corrections for BravuraText's
- * per-family asymmetry, applied on top of ACCID_BASELINE_CORRECTION. */
+ * positive = down (SVG y down). Applied on top of ACCID_BASELINE_CORRECTION to
+ * correct per-family glyph-metric asymmetry. Empirically the five conventional
+ * accidentals all center on the staff line at the shared baseline correction
+ * below; only the septimal hook (U+E2DE/E2DF) sits ~0.2 staff space high at
+ * that baseline, so it gets +0.05 em (≈0.2 space) down to match the flat it
+ * trails. (Verified against on-a-line renders via test/composer-inspect.) */
 const FAMILY_Y_OFFSET: Record<HejiGlyphFamily, number> = {
-  natural: 0, sharp: 0, doubleSharp: 0, flat: 0, doubleFlat: 0, septimal: 0,
+  natural: 0, sharp: 0, doubleSharp: 0, flat: 0, doubleFlat: 0, septimal: 0.05,
 };
 
 /* A SMuFL accidental drawn as <text> sits with its baseline at the text y, but
- * Verovio's <use> ty anchors the glyph a fourth (1.5 staff spaces) higher than
- * that baseline. Every injected glyph must move down by 1.5 spaces to land on
- * the note's staff position. 1 em = 4 staff spaces, so the correction is
- * 1.5/4 = 0.375 of the font size (computed per-render from the read fontSize so
- * it tracks any scale). */
-const ACCID_BASELINE_CORRECTION_SPACES = 1.5;
+ * Verovio's <use> ty anchors the glyph higher than that baseline, so every
+ * injected glyph must move down to land centered on the note's staff position.
+ * 1 em = 4 staff spaces, so the correction is SPACES/4 of the font size
+ * (computed per-render from the read fontSize so it tracks any scale). The
+ * value was tuned empirically (test/composer-inspect, accidental centered on a
+ * staff line): Verovio's own default left every accidental reading slightly
+ * high, so this is intentionally ~0.1 space past the geometric 1.5. */
+const ACCID_BASELINE_CORRECTION_SPACES = 1.6;
 const baselineCorrection = (fontSize: number): number =>
   (ACCID_BASELINE_CORRECTION_SPACES / 4) * fontSize;
 

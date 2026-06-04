@@ -126,12 +126,11 @@ export function attachScoreClickHandler(
       if (model.staffForVoice(v) === staffN) { voice = v; break; }
     }
     if (voice == null) return false;
-    const prevVoice = model.getCurrentVoice();
     model.setVoice(voice as Voice);
     const cur = model.getMeasureStartCursor(voice as Voice, mi);
     model.setCursor(cur, voice as Voice);
     console.log('[click] → emptyStaff: staff @' + staffN + ' measure ' + mi + ' → voice ' + voice + ' cursor ' + cur);
-    if (prevVoice !== voice) hooks.setStatus?.('Voice ' + voice + '.', 'state');
+    /* No status message: the top-bar voice indicator already shows the voice. */
     return true;
   }
 
@@ -185,11 +184,10 @@ export function attachScoreClickHandler(
        the right note (→ right.index − 1 = left.index). */
     const side: 'before' | 'after' = x >= best.rect.left ? 'after' : 'before';
     const cursor = side === 'after' ? loc.index : loc.index - 1;
-    const prevVoice = model.getCurrentVoice();
     model.setVoice(loc.voice as Voice);
     model.setCursor(cursor, loc.voice as Voice);
     console.log('[click] → glyph: voice ' + loc.voice + ' flat[' + loc.index + '] side=' + side + ' cursor=' + cursor);
-    if (prevVoice !== loc.voice) hooks.setStatus?.('Voice ' + loc.voice + '.', 'state');
+    /* No status message: the top-bar voice indicator already shows the voice. */
     hooks.onChange();
   }
 

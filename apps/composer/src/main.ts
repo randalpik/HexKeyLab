@@ -156,11 +156,14 @@ function resetStatus(): void {
 }
 
 function clearStatusIfTransient(): void {
-  /* Errors and post-action reports both go stale the moment the user does
-     anything else — clear both on the next keystroke. State messages
-     (blue) describe ongoing context (selection range, pending hairpin,
-     held keys, etc.) and clear via their own mechanisms instead. */
-  if (statusKind === 'error' || statusKind === 'action') resetStatus();
+  /* Every transient message — info cues, post-action reports, errors — goes
+     stale the moment the user does anything else, so all clear on the next
+     keystroke. Only 'state' (blue) survives: it describes ongoing context
+     (selection range, pending hairpin/slur/tuplet, held keys) and clears via
+     its own mechanism. The resting 'Ready.' default is already cleared, so skip
+     it to avoid pointless DOM churn. */
+  if (statusKind === 'state' || statusSource === 'default') return;
+  resetStatus();
 }
 
 function clearStatusIfHeldKeys(): void {
@@ -186,7 +189,6 @@ function refreshIndicators(): void {
   const s = getInputState();
   const voice = model.getCurrentVoice();
   const v = $('voiceIndicator');         if (v) v.textContent = s.cursorMode === 'expr' ? 'E' : s.cursorMode === 'pedal' ? 'P' : s.cursorMode === 'tempo' ? 'T' : String(voice);
-  const d = $('durationIndicator');      if (d) d.textContent = s.duration;
   const m = $('modeIndicator');          if (m) m.textContent = s.mode === 'insert' ? 'INS' : 'OVR';
 }
 
@@ -792,13 +794,13 @@ function stepZoom(dir: 'in' | 'out'): void {
     : Math.max(0, idx - 1);
   const next: ZoomLevel = ZOOM_PRESETS[nextIdx];
   if (next === cur) {
-    setStatus('Zoom ' + cur + '% (' + (dir === 'in' ? 'max' : 'min') + ').', 'action');
+    setStatus('Zoom ' + cur + '% (' + (dir === 'in' ? 'max' : 'min') + ').', 'info');
     return;
   }
   renderer.setZoom(next);
   reRender();
   maybeScrollMeasureIntoView(visualCursorMeasure());
-  setStatus('Zoom ' + next + '%.', 'action');
+  setStatus('Zoom ' + next + '%.', 'info');
 }
 
 /* Install the SC-transpose implementation that the Alt+Left/Right handler
@@ -872,7 +874,8 @@ initInput(model, {
 function refreshPlayButton(): void {
   const btn = $('btnPlay');
   if (!btn) return;
-  btn.textContent = isPlaying ? '■ Stop' : '▶ Play';
+  btn.textContent = isPlaying ? '■' : '▶';
+  btn.title = isPlaying ? 'Stop playback' : 'Play from cursor (Rewind to play from start)';
   btn.classList.toggle('playing', isPlaying);
 }
 
@@ -1019,7 +1022,8 @@ function finalizePlaybackEnd(statusMsg: string): void {
   refreshIndicators();
   refreshPlayButton();
   maybeScrollMeasureIntoView(visualCursorMeasure());
-  setStatus(statusMsg, 'action');
+  /* Playback end is not a model edit — info, not action. */
+  setStatus(statusMsg, 'info');
 }
 
 $('btnPlay')?.addEventListener('click', () => {
@@ -1034,7 +1038,7 @@ $('btnRewind')?.addEventListener('click', () => {
   reRender();
   refreshIndicators();
   maybeScrollMeasureIntoView(visualCursorMeasure());
-  setStatus('Cursor at start.', 'action');
+  setStatus('Cursor at start.', 'info');
 });
 
 $('btnSetup')?.addEventListener('click', () => {
@@ -1075,7 +1079,7 @@ $('btnHelp')?.addEventListener('click', () => {
 $('btnSave')?.addEventListener('click', () => {
   try {
     saveHkc(model);
-    setStatus('Saved .hkc.', 'action');
+    setStatus('Saved .hkc.', 'info');
   } catch (e) {
     setStatus('Save failed: ' + (e as Error).message, 'error');
   }
@@ -1104,7 +1108,8 @@ function applyLoadedDocument(meiXml: string, statusMsg: string): void {
   autoAdoptedHklLayout = true;
   broadcastLayoutReq();
   refreshLayoutMatchIndicator();
-  setStatus(statusMsg, 'action');
+  /* Loading replaces the doc and clears history — not an undoable edit. */
+  setStatus(statusMsg, 'info');
 }
 
 $<HTMLInputElement>('fileInputHkc')?.addEventListener('change', async (e) => {
@@ -1129,7 +1134,7 @@ function hideExportMenu(): void {
 $('btnExportXml')?.addEventListener('click', () => {
   try {
     downloadMusicXml(model);
-    setStatus('Exported .musicxml.', 'action');
+    setStatus('Exported .musicxml.', 'info');
   } catch (e) {
     setStatus('Export failed: ' + (e as Error).message, 'error');
   } finally {
@@ -1142,7 +1147,7 @@ $('btnExportPdf')?.addEventListener('click', async () => {
   hideExportMenu();
   try {
     await downloadPdf(model, renderer.toolkit(), () => reRender(), viewStavesFilter());
-    setStatus('Exported .pdf.', 'action');
+    setStatus('Exported .pdf.', 'info');
   } catch (e) {
     setStatus('PDF export failed: ' + (e as Error).message, 'error');
   }
@@ -1198,7 +1203,7 @@ $('viewInstrSelect')?.addEventListener('change', (e) => {
   maybeScrollMeasureIntoView(visualCursorMeasure());
   if (hklConnected) maybeBroadcastActiveInstrument();
   const name = idx == null ? 'All parts' : model.instruments()[idx]?.name;
-  setStatus(idx == null ? 'Showing all parts.' : 'Viewing ' + name + ' only.', 'action');
+  setStatus(idx == null ? 'Showing all parts.' : 'Viewing ' + name + ' only.', 'info');
 });
 
 /* Initial state matches the default view mode (page). */

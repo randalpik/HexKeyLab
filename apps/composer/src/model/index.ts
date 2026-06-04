@@ -2798,11 +2798,36 @@ export class ComposerModel {
       return tgtV;
     }
     const srcMeasure = this.cursorMeasureIdx(srcV);
-    const srcStart = this.measureStartTick(srcMeasure);
     const srcAbs = this.getCursorAbsoluteTicks(srcV);
-    const within = srcAbs - srcStart;
+    /* The cursor "selects" the element to its LEFT, flat[c] (cursor.ts: c is
+     * "past flat[c]"). To move VERTICALLY onto the target voice's note at the
+     * same moment, find the target element SOUNDING at the source note's onset
+     * (onset ≤ srcOnset < onset+dur) and put the cursor PAST it (cursor = that
+     * element's flat index), so it becomes the current element. Matching the
+     * onset TICK instead would land the cursor at the note's left edge (= the
+     * measure start when the note starts at tick 0), not on the note. */
+    const srcFlat = this.flatChildren(srcV);
+    const srcC = this.cursors[srcV];
+    const srcDur = srcC < srcFlat.length ? realTicks(srcFlat[srcC]) : 0;
+    const srcOnset = srcAbs - srcDur;
     this.setVoice(tgtV);
-    let cand = this.findCursorByTickPosition(tgtV, srcStart + within);
+    let cand: number;
+    if (srcDur > 0) {
+      /* Real current note → select the target element covering its onset. */
+      const tgtFlat = this.flatChildren(tgtV);
+      cand = -1;
+      for (let j = 0; j < tgtFlat.length; j++) {
+        const dur = realTicks(tgtFlat[j]);
+        if (dur <= 0) continue;                       // skip zero-tick wrappers/placeholders
+        const end = this.getTickPositionAt(tgtV, j);  // "past flat[j]" = its end tick
+        if (end - dur <= srcOnset + TICK_EPS && srcOnset < end - TICK_EPS) { cand = j; break; }
+      }
+      if (cand < 0) cand = this.findCursorByTickPosition(tgtV, srcOnset);
+    } else {
+      /* No real current element (cursor at a measure-start wrapper / past-end):
+       * preserve the cursor's tick position rather than selecting a note. */
+      cand = this.findCursorByTickPosition(tgtV, srcOnset);
+    }
     if (this.cursorVisualMeasureAtIndex(tgtV, cand, "insert") !== srcMeasure) {
       cand = this.getFirstVisualCursorInMeasure(tgtV, srcMeasure, "insert");
     }
