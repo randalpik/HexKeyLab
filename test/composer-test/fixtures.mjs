@@ -1751,6 +1751,70 @@ const CHORD_INTERNAL = {
     `,
   },
 
+  /* Item 3: the per-voice playback bar must HIDE on a user-hidden rest
+     (visible="false" → CSS visibility:hidden but still laid out) rather than
+     park on its invisible coordinates, while still showing on visible notes.
+     Score: note A4, hidden quarter rest, note A4. Asserted in
+     FIXTURE_ASSERTIONS.playback_bar_hidden_on_hidden_rest by driving the
+     playback cursor onto the hidden rest then a visible note. */
+  playback_bar_hidden_on_hidden_rest: {
+    setup: `
+      window.__bridgeMock.sendHklHello();
+      m.setCursor(0, 1);
+      const note = [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888888', velocity: 80 }];
+      const noteId = m.insertChordAtCursor({ notes: note, duration: '4', dots: 0 });
+      const restId = m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.toggleHideRestAtCursor('overwrite');   /* hides the just-inserted rest */
+      m.insertChordAtCursor({ notes: note, duration: '4', dots: 0 });
+      m.setCursor(0, 1);
+      window.__hkl_composer.reRender();
+      window.__hiddenRestId = restId;
+      window.__visibleNoteId = noteId;
+      window.__bridgeMock.reset();
+    `,
+    /* Space → startPlayback → cursor.setPlaybackMode(true) so the per-voice
+       playback bars (not the editing cursor) are what render. */
+    setupKeys: [' '],
+  },
+
+  /* Item 4: when playback ends, Composer must broadcast a composer-cursor so
+     HKL's read-only frame resyncs its editing anchor (finalizePlaybackEnd
+     bypasses the usual onStateChange broadcast path). Start playback (Space),
+     then simulate HKL's playback-finished; assert composer-cursor is emitted.
+     Asserted in FIXTURE_ASSERTIONS.playback_end_resyncs_hkl_cursor. */
+  playback_end_resyncs_hkl_cursor: {
+    setup: `
+      window.__bridgeMock.sendHklHello();
+      m.setCursor(0, 1);
+      const note = [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888888', velocity: 80 }];
+      m.insertChordAtCursor({ notes: note, duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: note, duration: '4', dots: 0 });
+      m.setCursor(0, 1);
+      window.__bridgeMock.reset();
+    `,
+    setupKeys: [' '],
+  },
+
+  /* A voice whose content ends before the score does must have its per-voice
+     playback bar cleared (playback-position with meiId=null + that voice),
+     not leave it orphaned. Two-voice score; the assertion shows both bars,
+     then clears voice 2 and checks only voice 1 remains. Asserted in
+     FIXTURE_ASSERTIONS.playback_clears_orphaned_voice. */
+  playback_clears_orphaned_voice: {
+    setup: `
+      window.__bridgeMock.sendHklHello();
+      m.setVoice(1); m.setCursor(0, 1);
+      const v1id = m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setVoice(2); m.setCursor(0, 2);
+      const v2id = m.insertChordAtCursor({ notes: [{ q: -4, r: -2, pname: 'c', accid: '', oct: 4, midi: 60, colorHex: '#888888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+      window.__hkl_composer.reRender();
+      window.__v1id = v1id; window.__v2id = v2id;
+      window.__bridgeMock.reset();
+    `,
+    setupKeys: [' '],
+  },
+
   /* Empty voice with key.sig = 7 sharps → song-key broadcast carries C#
      (the key's tonic), AND no set-reference-note is sent (the selection
      tier deliberately stays silent on empty voices so a manual HKL
@@ -6099,6 +6163,70 @@ export const FIXTURE_ASSERTIONS = {
         return ok
           ? { ok: true }
           : { ok: false, detail: 'captured=' + JSON.stringify(types) };
+      })()` },
+  ],
+  playback_bar_hidden_on_hidden_rest: [
+    { name: 'playback bar hides on a hidden rest, shows on a visible note',
+      expr: `(async () => {
+        const frames = async () => { for (let i = 0; i < 3; i++) { await new Promise((r) => requestAnimationFrame(() => r(true))); await Promise.resolve(); } };
+        await frames();
+        const restId = window.__hiddenRestId;
+        const restEl = document.getElementById(restId);
+        if (!restEl) return { ok: false, detail: 'hidden rest not in DOM: ' + restId };
+        if (restEl.getAttribute('data-visible') !== 'false') return { ok: false, detail: 'rest not data-visible=false' };
+        const barOpacities = () => [...document.querySelectorAll('#cursorOverlay rect[data-cursor-role="playback"]')]
+          .map((b) => parseFloat(b.getAttribute('opacity') || '1'));
+        /* Drive the per-voice playback cursor onto the hidden rest. */
+        window.__bridgeMock.sendPlaybackPosition(restId, 500);
+        await frames();
+        const onRest = barOpacities();
+        if (onRest.some((o) => o > 0)) return { ok: false, detail: 'playback bar visible on hidden rest: ' + JSON.stringify(onRest) };
+        /* Drive onto a visible note → the bar must reappear (proves the hide is
+           specific to the hidden rest, not a blanket suppression). */
+        const noteEl = document.querySelector('#score svg g.note');
+        if (!noteEl || !noteEl.id) return { ok: false, detail: 'no visible note in DOM' };
+        window.__bridgeMock.sendPlaybackPosition(noteEl.id, 0);
+        await frames();
+        const onNote = barOpacities();
+        if (!onNote.some((o) => o > 0)) return { ok: false, detail: 'playback bar not visible on a visible note: ' + JSON.stringify(onNote) };
+        return { ok: true };
+      })()` },
+  ],
+  playback_end_resyncs_hkl_cursor: [
+    { name: 'playback end broadcasts composer-cursor to resync HKL frame',
+      expr: `(async () => {
+        const frames = async () => { for (let i = 0; i < 4; i++) { await new Promise((r) => requestAnimationFrame(() => r(true))); await Promise.resolve(); } };
+        await frames();
+        /* Space already started playback (play-score captured). Clear capture,
+           then simulate HKL finishing playback → finalizePlaybackEnd. */
+        window.__bridgeMock.reset();
+        window.__bridgeMock.sendPlaybackFinished();
+        await frames();
+        const cap = window.__bridgeMock.captured();
+        const cur = cap.find((m) => m.type === 'composer-cursor');
+        if (!cur) return { ok: false, detail: 'no composer-cursor after playback-finished; captured=' + JSON.stringify(cap.map((c) => c.type)) };
+        return { ok: true };
+      })()` },
+  ],
+  playback_clears_orphaned_voice: [
+    { name: 'voice clear (meiId:null + voice) removes only that voice bar',
+      expr: `(async () => {
+        const frames = async () => { for (let i = 0; i < 3; i++) { await new Promise((r) => requestAnimationFrame(() => r(true))); await Promise.resolve(); } };
+        await frames();
+        const c = window.__hkl_composer.cursor;
+        /* Both voices sounding → both bars present. */
+        window.__bridgeMock.sendPlaybackPosition(window.__v1id, 0);
+        window.__bridgeMock.sendPlaybackPosition(window.__v2id, 0);
+        await frames();
+        let pos = c.getPlaybackPositions();
+        if (!pos.has(1) || !pos.has(2)) return { ok: false, detail: 'both voices not active before clear: ' + JSON.stringify([...pos.keys()]) };
+        /* Voice 2 stops → clear ONLY voice 2. */
+        window.__bridgeMock.sendPlaybackPosition(null, 0, 2);
+        await frames();
+        pos = c.getPlaybackPositions();
+        if (pos.has(2)) return { ok: false, detail: 'voice 2 bar not cleared: ' + JSON.stringify([...pos.keys()]) };
+        if (!pos.has(1)) return { ok: false, detail: 'voice 1 bar wrongly cleared: ' + JSON.stringify([...pos.keys()]) };
+        return { ok: true };
       })()` },
   ],
 

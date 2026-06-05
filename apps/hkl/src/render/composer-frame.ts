@@ -26,7 +26,11 @@ import {
 } from '@hkl/shared/cursor-geom.js';
 
 const HINT = '<span class="composer-frame-hint">Composer view — open HKL Composer in another tab to mirror its score here.</span>';
-const CURSOR_COLOR = '#7226e4';            /* Composer CURSOR_COLOR */
+/* Mirrors Composer's CURSOR_COLOR: the shared --cursor-color theme var (set on
+   the themed #composerFrame container in dark mode by notation-theme.ts) with
+   the light-mode purple as fallback. The cursor rects live inside the themed
+   container's Verovio svg, so they inherit the var. */
+const CURSOR_COLOR = 'var(--cursor-color, #7226e4)'; /* Composer CURSOR_COLOR */
 const SELECTION_FILL_OPACITY = 0.18;       /* Composer SELECTION_FILL_OPACITY */
 const SELECTION_STROKE_OPACITY = 0.7;      /* Composer SELECTION_STROKE_OPACITY */
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -72,7 +76,13 @@ export function setComposerPlaybackMode(on: boolean): void {
   scrollToActive();
 }
 
-export function setComposerPlaybackBar(voice: number, meiId: string): void {
+export function setComposerPlaybackBar(voice: number, meiId: string | null): void {
+  if (meiId === null) {
+    /* Voice's content ended before the score — drop its bar so it doesn't
+       stay orphaned at the last note. */
+    if (playbackBars.delete(voice) && playbackMode) drawCursors();
+    return;
+  }
   playbackBars.set(voice, meiId);
   if (playbackMode) { drawCursors(); scrollToId(meiId); }
 }
@@ -207,6 +217,11 @@ function drawCursors(): void {
 
   if (playbackMode) {
     for (const meiId of playbackBars.values()) {
+      /* Skip user-hidden rests (visible="false" → g.rest[data-visible="false"],
+         CSS-hidden but still laid out): don't park a bar on an invisible rest.
+         Mirrors Composer's positionPlaybackBar. */
+      const el = findById(svg, meiId);
+      if (el && el.classList.contains('rest') && el.getAttribute('data-visible') === 'false') continue;
       const geom = computePlaybackBarRect(meiId, q);
       if (geom) drawGeom(svg, inv, geom);
     }

@@ -41,8 +41,10 @@ export const MOCK_BRIDGE_LIB = `
     sendHeldKeys(notes) {
       ch.postMessage({ type: 'held-keys', keys: notes });
     },
-    sendPlaybackPosition(meiId, timeMs) {
-      ch.postMessage({ type: 'playback-position', meiId, timeMs });
+    sendPlaybackPosition(meiId, timeMs, voice) {
+      const msg = { type: 'playback-position', meiId, timeMs };
+      if (voice != null) msg.voice = voice;
+      ch.postMessage(msg);
     },
     sendPlaybackFinished() {
       ch.postMessage({ type: 'playback-finished' });

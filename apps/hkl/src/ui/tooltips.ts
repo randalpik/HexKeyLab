@@ -22,10 +22,10 @@ export const TOOLTIPS: Record<string, string> = {
   btnResetPrefs: 'Reset all toolbar settings and visibility to defaults',
 
   // ── Layout ──────────────────────────────────────────────────────────
-  selTuning: 'Active tuning system: sets the just-intonation interpretation of every key (Equal · Ptolemaic · Pythagorean · Semiditonal · Septimal · Schismatic).',
+  selTuning: 'Active tuning system: sets the just-intonation interpretation of every key.',
   cbNotes: 'Draw note names on each key.',
   cbBands: 'Draw the octave-band seams (every key is one octave above the key three positions to its left along the q-axis).',
-  cbExtend: 'Extend the repeating key pattern beyond the physical Lumatone outline to fill the canvas.',
+  cbExtend: 'Extend the repeating key pattern beyond the physical outline to fill the canvas.',
   selRotation: 'Lattice orientation: Vertical Freq (pitch rises straight up), Lumatone (physical board tilt), or Piano.',
   selOutline: 'Which key outline to overlay on the lattice: Lumatone, QWERTY, Piano, or none.',
 

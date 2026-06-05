@@ -24,7 +24,12 @@ import { pedalsAt } from '../pedal.js';
 import { currentMoment, selectionAt, type ExpressionCursor } from './expressionCursor.js';
 import { realTicks } from '../model/ticks.js';
 
-const CURSOR_COLOR = '#7226e4';
+/* Edit/playback cursor color. Driven by the shared --cursor-color theme var
+   (set on the themed score container in dark mode by notation-theme.ts) with
+   the light-mode purple as fallback. Applied via inline `style` (not a
+   presentation attribute) since SVG presentation attributes don't resolve
+   var(); the overlay is a child of #score so it inherits the var. */
+const CURSOR_COLOR = 'var(--cursor-color, #7226e4)';
 const EXPR_CURSOR_COLOR = '#e47226';
 const PEDAL_CURSOR_COLOR = '#0a9396';
 const TEMPO_CURSOR_COLOR = '#3a86ff';
@@ -65,6 +70,17 @@ const COMPOSER_QUERY: CursorRectQuery = {
   rectForId: (id) => renderer.rectForId(id),
   sigEndXForStaff: (id) => renderer.findSigEndXForStaff(id),
 };
+
+/** True when the rendered element for `meiId` is a user-hidden rest (the `H`
+ *  toggle → `visible="false"`, surfaced as `g.rest[data-visible="false"]`).
+ *  Verovio still draws such rests (it ignores @visible) and CSS only sets
+ *  `visibility:hidden` — so they keep layout coords and the playback bar would
+ *  otherwise step onto an invisible element. Used to suppress the bar there. */
+function renderedIsHiddenRest(meiId: string): boolean {
+  const esc = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(meiId) : meiId;
+  const el = document.querySelector('#' + esc);
+  return !!el && el.classList.contains('rest') && el.getAttribute('data-visible') === 'false';
+}
 
 const isPlaceholderEl = (el: Element): boolean =>
   el.localName === 'space' && el.getAttribute('data-placeholder') === 'true';
@@ -180,13 +196,13 @@ class CursorOverlay {
     if (!this.svg) return;
     if (!this.barRect) {
       this.barRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-      this.barRect.setAttribute('fill', CURSOR_COLOR);
+      this.barRect.style.fill = CURSOR_COLOR;
       this.barRect.setAttribute('data-cursor-role', 'voice');
       this.svg.appendChild(this.barRect);
     }
     if (!this.voiceLabel) {
       this.voiceLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      this.voiceLabel.setAttribute('fill', CURSOR_COLOR);
+      this.voiceLabel.style.fill = CURSOR_COLOR;
       this.voiceLabel.setAttribute('font-family', 'system-ui, sans-serif');
       this.voiceLabel.setAttribute('font-size', '11');
       this.voiceLabel.setAttribute('font-weight', '600');
@@ -236,7 +252,7 @@ class CursorOverlay {
     }
     if (!this.chordIntLine) {
       this.chordIntLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-      this.chordIntLine.setAttribute('stroke', CURSOR_COLOR);
+      this.chordIntLine.style.stroke = CURSOR_COLOR;
       this.chordIntLine.setAttribute('stroke-width', '3');
       this.chordIntLine.setAttribute('stroke-linecap', 'round');
       this.chordIntLine.setAttribute('opacity', '0');
@@ -414,16 +430,16 @@ class CursorOverlay {
     bar.setAttribute('width', String(w));
     bar.setAttribute('height', String(h));
     if (isSelectionBox) {
-      bar.setAttribute('fill', CURSOR_COLOR);
+      bar.style.fill = CURSOR_COLOR;
       bar.setAttribute('fill-opacity', String(SELECTION_FILL_OPACITY));
-      bar.setAttribute('stroke', CURSOR_COLOR);
+      bar.style.stroke = CURSOR_COLOR;
       bar.setAttribute('stroke-opacity', String(SELECTION_STROKE_OPACITY));
       bar.setAttribute('stroke-width', '1.5');
       bar.setAttribute('opacity', '1');
     } else {
-      bar.setAttribute('fill', CURSOR_COLOR);
+      bar.style.fill = CURSOR_COLOR;
       bar.setAttribute('fill-opacity', '1');
-      bar.removeAttribute('stroke');
+      bar.style.stroke = '';
       bar.removeAttribute('stroke-opacity');
       bar.removeAttribute('stroke-width');
       bar.setAttribute('opacity', '0.85');
@@ -855,12 +871,16 @@ class CursorOverlay {
     let bar = this.playbackBars.get(voice);
     if (!bar) {
       bar = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-      bar.setAttribute('fill', CURSOR_COLOR);
+      bar.style.fill = CURSOR_COLOR;
+      bar.setAttribute('data-cursor-role', 'playback');
       bar.setAttribute('opacity', '0.85');
       bar.setAttribute('width', String(PLAYBACK_WIDTH));
       this.svg.appendChild(bar);
       this.playbackBars.set(voice, bar);
     }
+    /* Hide the bar on a user-hidden rest rather than parking it on the
+       (invisible) rest's coordinates. */
+    if (renderedIsHiddenRest(meiId)) { bar.setAttribute('opacity', '0'); return; }
     /* Shared geometry — identical to HKL's Composer-view playback bar. */
     const geom = computePlaybackBarRect(meiId, COMPOSER_QUERY);
     if (!geom) {

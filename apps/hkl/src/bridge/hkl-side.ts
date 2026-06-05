@@ -631,6 +631,25 @@ function scheduleOffVisualAt(
   pb.pending.add(h);
 }
 
+/** Clear a single voice's playback bar at `delayMs` from now — both the HKL
+ *  Composer-view frame and (via the bridge) Composer. Scheduled at a voice's
+ *  last note's written end when its content stops before the score does, so
+ *  the per-voice bar disappears when the note expires instead of staying
+ *  orphaned at that position for the rest of playback. */
+function scheduleVoiceClearAt(voice: number, timeMs: number, delayMs: number, pb: ActivePlayback): void {
+  const h = window.setTimeout(() => {
+    pb.pending.delete(h);
+    if (pb.cancelled) return;
+    try {
+      bridge.send({ type: 'playback-position', meiId: null, voice, timeMs });
+      setComposerPlaybackBar(voice, null);
+    } catch (err) {
+      logPlaybackError('voice-clear', { voice, ...playbackStateSnapshot(pb) }, err);
+    }
+  }, Math.max(0, delayMs));
+  pb.pending.add(h);
+}
+
 interface LegatoStep {
   offMs?: number;
   noOff?: boolean;
@@ -847,6 +866,22 @@ async function playScore(events: ReadonlyArray<PlaybackEvent>, pedalEvents: Read
      voices; a trailing pedal-down with no up is released at finish). */
   for (const pe of pedals) lastEndMs = Math.max(lastEndMs, pe.atMs);
 
+  /* Onset of the next event in the SAME voice for each event (Infinity if it's
+     that voice's last). Lets the driver clear a voice's playback bar at its
+     last note's written end when the voice stops before the score does (a gap
+     or end-of-voice) — otherwise the bar stays orphaned at that note. Events
+     are sorted by atMs, so a backward sweep records the next same-voice onset. */
+  const nextVoiceOnset = new Array<number>(events.length).fill(Infinity);
+  {
+    const lastSeen = new Map<number, number>();
+    for (let i = events.length - 1; i >= 0; i--) {
+      const v = events[i].voice ?? 1;
+      const nxt = lastSeen.get(v);
+      if (nxt !== undefined) nextVoiceOnset[i] = events[nxt].atMs;
+      lastSeen.set(v, i);
+    }
+  }
+
   let nextIdx = 0;
   let pedalIdx = 0;
 
@@ -909,6 +944,13 @@ async function playScore(events: ReadonlyArray<PlaybackEvent>, pedalEvents: Read
         const deferUnderPedal = pedalCapturesNoteEndingAt(pedals, writtenEndMs, ev.instrumentKey);
         const offFireMs = deferUnderPedal ? writtenEndMs : overlapEndMs;
         scheduleOffVisualAt(ev, offFireMs - elapsedMs, pb, canGlide, deferUnderPedal);
+      }
+      /* If no same-voice event starts by this one's written end (a gap or the
+         voice's last element — note OR rest), clear the voice's bar then so it
+         doesn't stay orphaned. The 1ms slack avoids clearing when the next
+         note is contiguous (it repositions the bar itself). */
+      if (nextVoiceOnset[idx] - writtenEndMs > 1) {
+        scheduleVoiceClearAt(ev.voice ?? 1, writtenEndMs, writtenEndMs - elapsedMs, pb);
       }
       } catch (err) {
         const bad = events[idx];
@@ -1405,13 +1447,39 @@ window.addEventListener('beforeunload', () => {
 });
 
 let initialized = false;
-export function initHklBridge(): void {
-  if (initialized) return;
-  initialized = true;
+function announceAll(): void {
   announce();
   announceToAnalyzer();
   announceToOrchestrator();
 }
+export function initHklBridge(): void {
+  if (initialized) return;
+  initialized = true;
+  announceAll();
+}
+
+/* Re-announce on focus / tab-visible. BroadcastChannel has no buffering: a
+   hello posted before the peer's channel exists is dropped, and each side
+   otherwise announces only once at load. When BOTH tabs (re)load together —
+   e.g. HMR on a shared package reloads HKL + Composer at once — each one-shot
+   hello can land in the other's pre-listener window and both are lost, leaving
+   the apps wedged until one is reopened. Re-announcing whenever HKL is focused
+   makes the handshake self-heal on the one action Max already performs (focus
+   HKL to start the AudioContext). Debounced so focus+visibilitychange (which
+   often fire together) and rapid toggles coalesce into one burst; announce()'s
+   diff filters make repeats cheap regardless. */
+let reannounceHandle: number | undefined;
+function scheduleReannounce(): void {
+  if (!initialized || reannounceHandle !== undefined) return;
+  reannounceHandle = window.setTimeout(() => {
+    reannounceHandle = undefined;
+    announceAll();
+  }, 100);
+}
+window.addEventListener('focus', scheduleReannounce);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') scheduleReannounce();
+});
 
 /* DevTools handle. */
 (window as unknown as { __hkl_bridge: unknown }).__hkl_bridge = {

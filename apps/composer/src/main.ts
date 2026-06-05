@@ -295,6 +295,13 @@ bridge.on((msg: HklEvent) => {
       break;
     }
     case 'playback-position':
+      /* meiId null + voice set = clear that one voice's bar (its content ended
+         before the score did). Handled before highlightElement so this doesn't
+         disturb the single note-playing highlight other voices still own. */
+      if (!msg.meiId && msg.voice != null) {
+        cursor.setPlaybackPosition(msg.voice, null);
+        break;
+      }
       highlightElement(msg.meiId, $('score'));
       /* Route per-voice: each voice gets its own cursor bar at the chord
          it's currently sounding. The editing cursor stays parked at the
@@ -594,6 +601,29 @@ window.setTimeout(() => {
 
 window.addEventListener('beforeunload', () => {
   bridge.send({ type: 'composer-bye' });
+});
+
+/* Re-handshake on focus / tab-visible. BroadcastChannel doesn't buffer, and
+   each side otherwise sends its hello only once at load — so when both tabs
+   (re)load together (e.g. shared-package HMR reloading Composer + HKL at once)
+   each one-shot hello can land in the other's pre-listener window and both are
+   lost, leaving the apps wedged until one is reopened. Re-sending hello +
+   request-state on focus lets HKL's hkl-hello reply re-drive broadcastComposerView
+   (main.ts:218-246), so the handshake self-heals on focus. Debounced so
+   focus+visibilitychange (often fired together) coalesce; the broadcasts it
+   ultimately triggers are diff-gated, so repeats are cheap. */
+let reHandshakeHandle: number | undefined;
+function scheduleReHandshake(): void {
+  if (reHandshakeHandle !== undefined) return;
+  reHandshakeHandle = window.setTimeout(() => {
+    reHandshakeHandle = undefined;
+    bridge.send({ type: 'composer-hello', version: PROTOCOL_VERSION });
+    bridge.send({ type: 'request-state' });
+  }, 100);
+}
+window.addEventListener('focus', scheduleReHandshake);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') scheduleReHandshake();
 });
 
 /* ── render pipeline ─────────────────────────────────────────────────────── */
@@ -1114,6 +1144,13 @@ function finalizePlaybackEnd(statusMsg: string): void {
   model.setCursor(preplaybackCursor);
   clearHighlights($('score'));
   cursor.update(model, cursorOpts());
+  /* Resync HKL's read-only frame cursor to the restored editing position.
+     finalizePlaybackEnd bypasses composerOnStateChange (the usual cursor-
+     broadcast path), so without this HKL is never told the cursor left the
+     playback position — its frame redraws a stale anchor (the last note it
+     played). Force past the diff-gate so it fires even when the restored
+     position equals the pre-playback one HKL last saw. */
+  if (hklConnected) { lastComposerCursorSig = null; maybeBroadcastComposerCursor(); }
   refreshIndicators();
   refreshPlayButton();
   maybeScrollMeasureIntoView(visualCursorMeasure());
@@ -1351,6 +1388,10 @@ void bootRenderer();
    * state gates bridge broadcasts). Not for production use. */
   __testReset: () => {
     if (isPlaying) finalizePlaybackEnd('Test reset.');
+    /* A fixture that stops/seeks playback leaves pendingStopAcks > 0 (the test
+       mock never sends the matching HKL ack), which would otherwise swallow the
+       next fixture's playback-finished. Clear it like the other playback state. */
+    pendingStopAcks = 0;
     hklConnected = false;
     hklTuningMode = null;
     autoAdoptedHklLayout = false;

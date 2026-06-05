@@ -1389,3 +1389,27 @@ tall and offset everything below by 0.594. Fix = integer px line-height on the b
 integer panel top → integer staff rows → crisp). The WRONG fix (which I tried first) was an after-render JS
 `transform: translate` snap on the SVG — never patch layout after render; fix the element whose fractional
 size shifts the panel. Also mirror Composer's `geometricPrecision` line-rendering CSS on the frame.
+
+**BroadcastChannel drops messages posted before the peer channel exists (2026-06-05).**
+`BroadcastChannel` does no buffering or replay — `postMessage` reaches only channels that exist
+at post time, and a message arriving before a peer registers its `bridge.on` handler iterates an
+empty handler set (also dropped). The HKL↔Composer bridge worked for sequential tab loads (the
+later loader's hello reaches the earlier, which replies; even a lost first-hello self-heals via
+the reply) but wedged on near-SIMULTANEOUS load — when both tabs post their one-shot hello during
+the other's pre-existence window, BOTH are lost and neither re-announces, so the apps sit
+disconnected until one is reopened. The common trigger is shared-package HMR (`@hkl/bridge`,
+`@hkl/shared`, `@hkl/notation`), which full-reloads HKL + Composer at the same instant. Don't
+diagnose this as "the handshake is broken" — it's specifically the double-loss race. Fix without a
+retry loop: re-announce on `focus`/`visibilitychange` (debounced), so any drop heals the moment a
+tab is focused. → decisions.md "Bridge handshake self-heals on focus, not via retry loop".
+
+**Composer test fixtures leak module state the runner's reset must clear — pendingStopAcks (2026-06-05).**
+A new playback fixture passed in `scenario` mode but failed in the `full` suite with `captured=[]`.
+Cause: `space_stops_playback` (an earlier fixture) sends `stop-playback`, which increments
+`pendingStopAcks`; the test mock never sends the matching HKL `playback-finished` ack, so the
+counter leaks. The next fixture's `playback-finished` then hit the `pendingStopAcks-- ; break`
+guard and never called `finalizePlaybackEnd` — so no `composer-cursor` was broadcast. `__testReset`
+cleared `isPlaying`/`hklConnected` but not `pendingStopAcks`. Lesson: any main.ts module counter a
+fixture can leave non-zero (here `pendingStopAcks`) must be reset in `__testReset`, and a
+scenario-pass / full-fail split is the tell for cross-fixture state leak — diff the fixture order,
+not the code.

@@ -3309,3 +3309,42 @@ shared package is the right home (apps + bridge both reach it; the type is re-ex
 `@hkl/bridge/protocol`). It's pure number-in/number-out (a `CursorRectQuery` abstracts the DOM), so it stays
 within `@hkl/shared`'s "no DOM/state" rule. Verified: at 50% scroll the bar sits at note.right+4 / note.top−6,
 width 2, height note+12 in BOTH. → lessons.md "A mirrored view's cursor must SHARE geometry code".
+
+**Bridge handshake self-heals on focus, not via retry loop (2026-06-05).**
+`BroadcastChannel` has no buffering: a message is delivered only to channels that already
+exist at post time. Each app posts its hello exactly once at load (Composer: `composer-hello`
++ `request-state` at module eval; HKL: `announce()` via one-shot `initHklBridge`). Sequential
+load is robust — the second loader's hello always reaches the first (which is up + listening)
+and the first replies, and even a lost first-hello self-heals because the second's hello
+triggers a fresh reply. The ONLY wedge is losing the hello in BOTH directions, which needs
+near-simultaneous (re)load of both tabs — exactly what shared-package HMR causes (it reloads
+HKL + Composer at once). Fix is NOT a retry loop: both apps re-announce on `focus` /
+`visibilitychange` (HKL `announce()`; Composer re-sends hello + request-state, whose `hkl-hello`
+reply re-drives `broadcastComposerView`). Since Max already focuses HKL to start the
+AudioContext, the handshake completes on the one action he performs. Debounced 100ms so
+focus+visibilitychange coalesce; the broadcasts it triggers are diff-gated so repeats are cheap.
+→ lessons.md "BroadcastChannel drops messages posted before the peer channel exists".
+
+**Dark-mode cursor + staff/bar lines are theme vars in the shared notation stylesheet (2026-06-05).**
+`notation-theme.ts` dark block defines `--cursor-color` (#a96bff, brighter than the light-mode
+#7226e4) and `--notation-line` (#9a9a9a, a darker silver than `--notation-ink` #f2f2f2). The
+cursor overlays (`cursor.ts` + `composer-frame.ts`) live inside the themed container, so they
+consume `var(--cursor-color, #7226e4)` via INLINE `style.fill`/`stroke` (SVG presentation
+attributes don't resolve `var()`; inline style does). Staff lines (the 5 bare `<path>` DIRECT
+children of `g.staff` — clef/keySig/layers are all `<g>`, so `g.staff > path` isolates the lines
+from notes/stems/beams under `g.layer`), bar lines (`.barLine`/`.barLineAttr`), and the
+grand-staff system-initial connecting line (the lone bare `<path>` DIRECT child of `g.system`,
+right of the brace — `g.system > path`) all get `--notation-line` via a rule that out-specifies
+the blanket `color` recolor. The brace symbol itself (`g.grpSym`) and ledger lines stay ink (they
+read as part of the note/decoration, not the ruling). Both apply to Composer + the HKL frame from
+one stylesheet.
+
+**Per-voice playback bar clears at note-expiry; meiId:null + voice = clear one voice (2026-06-05).**
+The per-voice playback bar only moved on the next event's onset, so a voice whose content ended
+before the score did left its bar orphaned at the last note for the rest of playback. Fix: the HKL
+scheduler precomputes each event's next same-voice onset (`nextVoiceOnset`, a backward sweep over
+the atMs-sorted events) and, when no same-voice event starts by an event's WRITTEN end (a gap or
+the voice's last element, note OR rest), schedules a clear at that written end. The clear extends
+the `playback-position` message with an optional `voice`: meiId=null + voice clears ONLY that
+voice's bar (both the HKL frame via `setComposerPlaybackBar(voice, null)` and Composer via the
+handler), distinct from the meiId=null-no-voice finish signal that drops all bars.

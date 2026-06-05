@@ -120,8 +120,11 @@ export type HklEvent =
   /** Currently-held keys, fully resolved. Fires on every change. */
   | { type: 'held-keys'; keys: ReadonlyArray<ResolvedNote> }
   /** Playback advance ack. meiId is the MEI element id of the chord now
-   *  sounding; null when between events or finished. */
-  | { type: 'playback-position'; meiId: string | null; timeMs: number }
+   *  sounding; null when finished (clears all bars). When meiId is null AND
+   *  `voice` is set, it clears ONLY that voice's bar — emitted at a voice's
+   *  last note's written end so a voice that stops before the score ends
+   *  doesn't leave an orphaned bar stuck for the rest of playback. */
+  | { type: 'playback-position'; meiId: string | null; voice?: number; timeMs: number }
   /** Playback queue exhausted. */
   | { type: 'playback-finished' }
   /** Tuning state changed (informational; Composer can update status text). */
