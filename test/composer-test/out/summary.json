@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 285,
-  "passed": 285,
+  "fixtures": 291,
+  "passed": 291,
   "failed": 0,
-  "elapsedMs": 93316,
+  "elapsedMs": 98642,
   "results": [
     {
       "name": "emptyDoc",
@@ -662,6 +662,14 @@
       }
     },
     {
+      "name": "composerViewBroadcasts",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
       "name": "space_starts_playback",
       "ok": true,
       "failures": [],
@@ -675,6 +683,14 @@
       "failures": [],
       "counts": {
         "invariants": 8
+      }
+    },
+    {
+      "name": "viewModeDropdownSwitch",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
       }
     },
     {
@@ -707,6 +723,22 @@
       "failures": [],
       "counts": {
         "invariants": 7
+      }
+    },
+    {
+      "name": "visualDarkTheme",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "pageViewMultiSystemCrisp",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
       }
     },
     {
@@ -1195,6 +1227,14 @@
       "failures": [],
       "counts": {
         "invariants": 10
+      }
+    },
+    {
+      "name": "visualDarkSlur",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
       }
     },
     {
@@ -2223,6 +2263,14 @@
     },
     {
       "name": "phase4_pickup_midpiece_tempo_align",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "clickClearsSelAndBroadcasts",
       "ok": true,
       "failures": [],
       "counts": {

@@ -668,6 +668,46 @@ const VISUAL = {
     `,
     visualBaseline: 'multi_voice_dense',
   },
+
+  /* Dark theme: a colored chord rendered with theme='dark'. High-signal for
+   * the shared notation theming — staff lines / stems / clefs / accidentals
+   * must flip to the light --notation-ink token, and noteheads must repaint
+   * from their baked data-light-color (bright lattice variant) rather than the
+   * ink @color. Notes carry both colorHex (ink) and lightColorHex. */
+  visualDarkTheme: {
+    setup: `
+      window.__hkl_composer.renderer.setTheme('dark');
+      m.setCursor(0, 1);
+      /* Sanctioned ink + light-source pairs (BL / YE / GR) — dark mode shows
+         the bright light variant; unsanctioned colors would render white. */
+      m.insertChordAtCursor({ notes: [
+        { q: -4, r: -2, pname: 'c', accid: '', oct: 4, midi: 60, colorHex: '#055ad1', lightColorHex: '#4C96FF', velocity: 80 },
+        { q:  1, r:  0, pname: 'e', accid: '', oct: 4, midi: 64, colorHex: '#bd890f', lightColorHex: '#FFF94C', velocity: 80 },
+        { q:  0, r:  1, pname: 'g', accid: '', oct: 4, midi: 67, colorHex: '#52b80a', lightColorHex: '#55FF4C', velocity: 80 },
+      ], duration: '4', dots: 0 });
+    `,
+    visualBaseline: 'dark_theme_chord',
+  },
+
+  /* Page view stacks multiple systems whose heights are content-dependent, so
+   * each lands at its own sub-pixel device-y phase — staff lines would blur
+   * differently per system. renderer.snapSystems() lands every system on the
+   * grid (crisp). This builds a multi-system page (alternating high-ledger /
+   * mid notes → varying system heights) at the default 100% preset (2px lines →
+   * integer phase) and asserts EVERY system's staff lines share the on-grid
+   * phase. Asserted in FIXTURE_ASSERTIONS.pageViewMultiSystemCrisp. */
+  pageViewMultiSystemCrisp: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 48; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [high ? mk('g', 6) : mk('b', 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+    visualBaseline: 'pageview_multisystem_crisp',
+  },
 };
 
 /* ── HEJI accidentals + arbitrary stacks (render-time injection) ───────── */
@@ -769,6 +809,20 @@ const HEJI = {
 /* ── New: scroll-into-view ────────────────────────────────────────────── */
 
 const SCROLL = {
+  /* The page/scroll selector is a <select id="viewModeSelect"> (replacing the
+   * old Page/Scroll button pair). Changing it to 'scroll' must drive the
+   * renderer's view mode and #score's view-* class. Asserted via
+   * FIXTURE_ASSERTIONS.viewModeDropdownSwitch. */
+  viewModeDropdownSwitch: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertRestAtCursor({ duration: '4', dots: 0 });
+      const sel = document.getElementById('viewModeSelect');
+      sel.value = 'scroll';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    `,
+  },
+
   /* Idempotent: cursor in the visible first measure; trigger a re-render
    * via setCursor (no-op move) and assert scroll didn't change. */
   scrollIntoView_idempotent: {
@@ -825,6 +879,22 @@ const BRIDGE = {
     setup: `
       window.__bridgeMock.reset();
       window.__hkl_composer.bridge.send({ type: 'request-state' });
+    `,
+  },
+
+  /* Composer → HKL: the "Composer view in HKL" streams. On connect (hkl-hello)
+   * Composer broadcasts composer-score (the cursor instrument's MEI) and
+   * composer-cursor (the editing cursor's measure). Asserted via
+   * FIXTURE_ASSERTIONS.composerViewBroadcasts. */
+  composerViewBroadcasts: {
+    setup: `
+      window.__bridgeMock.reset();
+      window.__bridgeMock.sendHklHello();
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({
+        notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', lightColorHex: '#ffcc66', velocity: 80 }],
+        duration: '4', dots: 0,
+      });
     `,
   },
 
@@ -1931,6 +2001,19 @@ const SLURS = {
       { key: 'l', ctrl: true },
     ],
     visualBaseline: 'slur_create',
+  },
+
+  /* Dark theme + a slur. Guards that slurs/ties (filled Verovio <path>s, NOT
+   * stroked) recolor to --notation-ink in dark — an early version put them in
+   * the stroke-only rule, so they stayed black/invisible on the dark staff. */
+  visualDarkSlur: {
+    setup: `${SLUR_3Q_V1} window.__hkl_composer.renderer.setTheme('dark');`,
+    setupKeys: [
+      { key: 'l', ctrl: true },
+      { key: 'ArrowRight' },
+      { key: 'l', ctrl: true },
+    ],
+    visualBaseline: 'dark_slur',
   },
 
   /* Slur over notes 0..2, then Ctrl+L on the interior note1 deletes it. */
@@ -3946,6 +4029,26 @@ const PHASE1 = {
 const A4 = `{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }`;
 
 const CLICK = {
+  /* Click-to-select must behave like arrow nav: clear any active selection +
+     return to voice mode, AND broadcast composer-cursor to HKL. Earlier the
+     click path used a minimal onChange that did neither. Connect (sendHklHello)
+     so broadcasts fire; make a beat selection via Shift+Right; reset the mock;
+     then click note 0. Asserted via FIXTURE_ASSERTIONS.clickClearsSelAndBroadcasts. */
+  clickClearsSelAndBroadcasts: {
+    setup: `
+      window.__bridgeMock.sendHklHello();
+      m.setCursor(0, 1);
+      for (let i = 0; i < 3; i++) m.insertChordAtCursor({ notes: [${A4}], duration: '4', dots: 0 });
+      m.setCursor(1, 1); r();
+      /* Make a range selection (Shift+Right) so there's something to clear. */
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', shiftKey: true, bubbles: true }));
+      window.__bridgeMock.reset();
+      const N = [...document.querySelectorAll('#score svg g.note')].map((g) => g.getBoundingClientRect());
+      document.getElementById('score').dispatchEvent(new MouseEvent('click',
+        { clientX: N[0].left + N[0].width / 2, clientY: N[0].top + N[0].height / 2, button: 0, bubbles: true }));
+    `,
+  },
+
   /* Clicking the empty right portion of a staff (past the last note) snaps the
      cursor to the "after last note" stop — flat[0] is the measure wrapper, so
      two notes sit at indices 1,2 and "after note 2" is cursor 3. */
@@ -4098,6 +4201,46 @@ export const FIXTURES = {
  *  invariant, no console errors) are applied to EVERY fixture by the
  *  runner — don't repeat them here. */
 export const FIXTURE_ASSERTIONS = {
+  /* Every system's staff lines must land on the device-pixel grid (crisp) in a
+   * multi-system page, despite content-dependent system heights. At the 100%
+   * preset (2px lines, even width) the target phase is integer (0). */
+  pageViewMultiSystemCrisp: [
+    { name: 'all systems land on the device-pixel grid (no cross-system drift)',
+      expr: `(() => {
+        const systems = [...document.querySelectorAll('#score g.system')];
+        if (systems.length < 2) return { ok: false, detail: 'only ' + systems.length + ' system(s); need >=2 to test cross-system alignment' };
+        const phases = [];
+        for (const s of systems) {
+          let line = null;
+          for (const p of s.querySelectorAll('.staff path')) { try { if (p.getBBox().height < 1) { line = p; break; } } catch (e) {} }
+          if (!line) continue;
+          const c = line.getScreenCTM();
+          phases.push(((c.f + line.getBBox().y * c.d) % 1 + 1) % 1);
+        }
+        /* 2px (even) lines are crisp on an integer phase → distance to nearest integer ~0. */
+        const off = phases.filter(ph => Math.min(ph, 1 - ph) > 0.05).map(x => x.toFixed(3));
+        if (off.length) return { ok: false, detail: phases.length + ' systems; off-grid: ' + off.join(',') };
+        return { ok: true, detail: phases.length + ' systems all on-grid' };
+      })()` },
+  ],
+  /* The view-mode <select> drives renderer view mode + #score class, and the
+   * old toggle buttons are gone. */
+  viewModeDropdownSwitch: [
+    { name: 'viewModeSelect=scroll drives renderer + #score.view-scroll; old buttons removed',
+      expr: `(() => {
+        if (document.getElementById('btnViewPage') || document.getElementById('btnViewScroll')) {
+          return { ok: false, detail: 'old Page/Scroll buttons still present' };
+        }
+        const sel = document.getElementById('viewModeSelect');
+        if (!sel) return { ok: false, detail: 'missing #viewModeSelect' };
+        if (window.__hkl_composer.renderer.getViewMode() !== 'scroll') {
+          return { ok: false, detail: 'renderer view mode=' + window.__hkl_composer.renderer.getViewMode() };
+        }
+        const score = document.getElementById('score');
+        if (!score.classList.contains('view-scroll')) return { ok: false, detail: '#score class=' + score.className };
+        return { ok: true };
+      })()` },
+  ],
   /* Phase 4.1: signature modal writes the (global) key + meter. */
   phase4_sig_modal: [
     { name: 'modal applied D major + 3/4 to the score head',
@@ -5886,6 +6029,39 @@ export const FIXTURE_ASSERTIONS = {
         return keys.length === 1 && keys[0].pname === 'a'
           ? { ok: true }
           : { ok: false, detail: 'getHeldKeys()=' + JSON.stringify(keys) };
+      })()` },
+  ],
+  clickClearsSelAndBroadcasts: [
+    { name: 'click clears selection + returns to voice mode + broadcasts composer-cursor',
+      expr: `(async () => {
+        for (let i = 0; i < 3; i++) { await new Promise((r) => requestAnimationFrame(() => r(true))); await Promise.resolve(); }
+        const s = window.__hkl_composer.inputState();
+        if (s.selection != null) return { ok: false, detail: 'selection not cleared: ' + JSON.stringify(s.selection) };
+        if (s.cursorMode !== 'voice') return { ok: false, detail: 'cursorMode=' + s.cursorMode };
+        const cap = window.__bridgeMock.captured();
+        if (!cap.some((m) => m.type === 'composer-cursor')) {
+          return { ok: false, detail: 'no composer-cursor after click; captured=' + JSON.stringify(cap.map((c) => c.type)) };
+        }
+        return { ok: true };
+      })()` },
+  ],
+  composerViewBroadcasts: [
+    { name: 'composer-score (single-instrument MEI) + composer-cursor emitted on connect',
+      expr: `(async () => {
+        for (let i = 0; i < 4; i++) { await new Promise((r) => requestAnimationFrame(() => r(true))); await Promise.resolve(); }
+        const cap = window.__bridgeMock.captured();
+        const score = cap.find((m) => m.type === 'composer-score');
+        const cursor = cap.find((m) => m.type === 'composer-cursor');
+        if (!score) return { ok: false, detail: 'no composer-score; captured=' + JSON.stringify(cap.map((c) => c.type)) };
+        if (typeof score.mei !== 'string' || !score.mei.includes('<note')) return { ok: false, detail: 'composer-score mei missing notes' };
+        if (!cursor) return { ok: false, detail: 'no composer-cursor; captured=' + JSON.stringify(cap.map((c) => c.type)) };
+        if (typeof cursor.measureIdx !== 'number') return { ok: false, detail: 'composer-cursor.measureIdx not a number' };
+        if (typeof cursor.voice !== 'number') return { ok: false, detail: 'composer-cursor.voice not a number' };
+        const a = cursor.anchor;
+        if (!a || typeof a.xMode !== 'string' || typeof a.vMode !== 'string') {
+          return { ok: false, detail: 'composer-cursor.anchor shape: ' + JSON.stringify(a) };
+        }
+        return { ok: true };
       })()` },
   ],
   bridgeComposerToHklCapture: [

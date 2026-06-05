@@ -30,7 +30,9 @@ export const MOCK_BRIDGE_LIB = `
          m.type === 'composer-hello' || m.type === 'composer-bye' ||
          m.type === 'request-state' || m.type === 'set-reference-note' ||
          m.type === 'set-song-key' || m.type === 'layout-req-changed' ||
-         m.type === 'apply-layout')) {
+         m.type === 'apply-layout' || m.type === 'composer-active-instrument' ||
+         m.type === 'composer-instruments' || m.type === 'composer-score' ||
+         m.type === 'composer-cursor')) {
       captured.push(m);
     }
   });

@@ -1,13 +1,20 @@
 // Verovio renderer: loads the WASM toolkit, owns the score container, exposes
 // a single render(mei) entry point. View modes (page vs scroll) toggle the
-// `breaks` and page-dimensions options; zoom adjusts the scale and (for the
-// 75% preset) per-element line widths.
+// `breaks` and page-dimensions options; zoom selects a crisp preset
+// (scale/unit/line-widths/margin parity — see @hkl/notation/render-presets) that
+// keeps staff lines on the device-pixel grid at each zoom level.
 
 import '@hkl/notation/verovio-types.js';
 import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
 import { injectHejiGlyphs } from '@hkl/notation/heji-render.js';
+import { applyNotationTheme } from '@hkl/notation/verovio.js';
+import { CRISP_PRESETS, crispMarginTop, lineWidthOptions, pinExactScale, snapStaffLinesToGrid, snapBarlines, snapSystemRightEdge } from '@hkl/notation/render-presets.js';
 
 export type ViewMode = 'page' | 'scroll';
+/** Score theme. 'transparent' renders like 'dark' (light-source noteheads,
+ *  light ink) but with no background fill, so the score can be exported / read
+ *  into HKL or an OBS overlay. */
+export type ScoreTheme = 'light' | 'dark' | 'transparent';
 export type ZoomLevel = 50 | 75 | 100;
 export const ZOOM_PRESETS: ReadonlyArray<ZoomLevel> = [50, 75, 100];
 
@@ -37,7 +44,7 @@ const SCROLL_GEOM = {
 };
 
 const BASE_OPTIONS = {
-  svgAdditionalAttribute: ['note@data-q', 'note@data-r', 'note@color', 'note@hkl-paren-caut', 'rest@data-tuplet-placeholder', 'rest@visible', 'accid@type'],
+  svgAdditionalAttribute: ['note@data-q', 'note@data-r', 'note@color', 'note@data-light-color', 'note@hkl-paren-caut', 'rest@data-tuplet-placeholder', 'rest@visible', 'accid@type'],
   footer: 'none',
   /* Keep Verovio's default Leipzig font for the score (rests, clefs,
      noteheads). Accidentals are re-rendered in BravuraText by injectHejiGlyphs
@@ -46,27 +53,12 @@ const BASE_OPTIONS = {
      docs/lessons.md. */
 };
 
-/* Verovio line-width defaults (in units of --unit):
- *   barLineWidth 0.30, staffLineWidth 0.15, stemWidth 0.20, ledgerLineThickness 0.25.
- * At scale 100, defaults give crisp ~2 px lines. Scale 50 halves them to crisp
- * 1 px lines. Scale 75 would land them on sub-pixel widths (~1.5 px) that blur
- * under shape-rendering: geometricPrecision. The 75% overrides multiply each
- * default by 4/3 so post-scale pixel widths match the scale-100 output. */
-function lineWidthOverrides(zoom: ZoomLevel): object {
-  if (zoom !== 75) return {};
-  return {
-    barLineWidth: 0.40,
-    staffLineWidth: 0.20,
-    stemWidth: 0.27,
-    ledgerLineThickness: 0.33,
-  };
-}
-
 class Renderer {
   private tk: VerovioToolkit | null = null;
   private container: HTMLElement | null = null;
   private viewMode: ViewMode = 'page';
   private zoom: ZoomLevel = 100;
+  private theme: ScoreTheme = 'light';
   private readyPromise: Promise<void>;
 
   constructor() {
@@ -114,14 +106,38 @@ class Renderer {
     const breaksOpt: Record<string, string | number> =
       strategy === 'smartSb0' ? { breaks: 'smart', breaksSmartSb: 0 }
       : { breaks: strategy };
+    /* Crisp preset for this zoom: scale/unit chosen so the staff-space is whole
+       pixels, whole-px line widths, and a pageMarginTop whose parity puts staff
+       lines on the phase their width needs (½-pixel for 1px, integer for 2px).
+       The zoom LABEL (50/75/100) maps to the preset's actual Verovio scale
+       (50/70/100). pinExactScale() in render() then pins the device scale. */
+    const preset = CRISP_PRESETS[this.zoom];
     return {
       ...BASE_OPTIONS,
       ...geom,
+      pageMarginTop: crispMarginTop(geom.pageMarginTop, preset.scale, preset.evenWidth),
       ...breaksOpt,
       header: this.viewMode === 'page' ? 'auto' : 'none',
-      scale: this.zoom,
-      ...lineWidthOverrides(this.zoom),
+      scale: preset.scale,
+      unit: preset.unit,
+      ...lineWidthOptions(preset),
     };
+  }
+
+  /** The active preset's Verovio scale (for pinExactScale). */
+  private currentScale(): number {
+    return CRISP_PRESETS[this.zoom].scale;
+  }
+
+  /** Snap every rendered system's staff lines onto the device-pixel grid for the
+   *  active zoom preset. Page view stacks content-height-dependent systems that
+   *  each land at their own sub-pixel phase; this lands them all on the crisp
+   *  phase. Call AFTER any post-render injections that move systems (section
+   *  headers) and before measuring cursor/overlay geometry. Single-system renders
+   *  (scroll) are a no-op (margin parity already aligned them). */
+  snapSystems(container: HTMLElement): void {
+    const preset = CRISP_PRESETS[this.zoom];
+    snapStaffLinesToGrid(container, preset.scale, preset.evenWidth);
   }
 
   /** Bake natural system breaks into the MEI so page-break ('encoded') docs
@@ -187,6 +203,14 @@ class Renderer {
     return this.viewMode;
   }
 
+  setTheme(t: ScoreTheme): void {
+    this.theme = t;
+  }
+
+  getTheme(): ScoreTheme {
+    return this.theme;
+  }
+
   setZoom(z: ZoomLevel): void {
     this.zoom = z;
   }
@@ -235,6 +259,14 @@ class Renderer {
       }
       this.container.innerHTML = combined;
     }
+    /* Pin every page's device scale exact so thin staff lines stay grid-aligned
+       (crisp) — counters Verovio's whole-px ceil of the root <svg> box. */
+    pinExactScale(this.container, this.currentScale());
+    /* Crisp the verticals: snap intermediate barlines onto their pixel phase,
+       then land each system's right edge (final barline + staff-line ends) on the
+       grid (no sliver past the final bar). */
+    snapBarlines(this.container, this.currentScale(), CRISP_PRESETS[this.zoom].evenWidth);
+    snapSystemRightEdge(this.container, this.currentScale());
     /* Bring noteheads to the front. Verovio renders each <g class="note">
        as [notehead, dots, stem]; SVG z-order is document order, so the
        stem draws over the notehead. With our colored noteheads + black
@@ -250,6 +282,13 @@ class Renderer {
        @enclose="paren" on a child accid) to BravuraText. No-op when the
        MEI carried no tagged placeholders or parens. */
     injectHejiGlyphs(this.container);
+    /* Theme the score: tag the container for the shared notation-theme CSS
+       (staff/stems/accidentals/HEJI follow --notation-ink) and repaint
+       noteheads with their light-source variant in dark/transparent themes.
+       'transparent' shares dark's ink/notehead treatment; the .theme-
+       transparent class (toggled here) drops all background fills in CSS. */
+    applyNotationTheme(this.container, this.theme === 'light' ? 'light' : 'dark');
+    this.container.classList.toggle('theme-transparent', this.theme === 'transparent');
   }
 
   /** Resolve a clicked SVG element to its xml:id, walking up to the nearest

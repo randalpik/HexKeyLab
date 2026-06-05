@@ -15,6 +15,10 @@
 
 import { renderer } from '../render/render.js';
 import type { ComposerModel, Voice } from '../model/index.js';
+import {
+  computeVoiceCursorRect, computePlaybackBarRect,
+  type VoiceCursorAnchor, type CursorRectQuery,
+} from '@hkl/shared/cursor-geom.js';
 import { type Moment, dynamAt, hairpinsAt, tempoAt } from '../expressions.js';
 import { pedalsAt } from '../pedal.js';
 import { currentMoment, selectionAt, type ExpressionCursor } from './expressionCursor.js';
@@ -53,6 +57,88 @@ export interface CursorUpdateOpts {
    *  cursor bar to the selected note's notehead. Cleared by cursor movement
    *  and by non-preserved keystrokes (see input.ts). */
   chordInternalSel?: { noteId: string } | null;
+}
+
+/** Cursor-geometry query backed by the Composer renderer (container-local px).
+ *  DOMRect structurally satisfies CursorGeomRect. */
+const COMPOSER_QUERY: CursorRectQuery = {
+  rectForId: (id) => renderer.rectForId(id),
+  sigEndXForStaff: (id) => renderer.findSigEndXForStaff(id),
+};
+
+const isPlaceholderEl = (el: Element): boolean =>
+  el.localName === 'space' && el.getAttribute('data-placeholder') === 'true';
+const isReal = (el: Element): boolean =>
+  el.localName === 'chord' || el.localName === 'note' || el.localName === 'rest' || el.localName === 'tuplet';
+const parentTupletOf = (el: Element | null): Element | null => {
+  const p = el?.parentElement;
+  return p && p.localName === 'tuplet' ? p : null;
+};
+const idOf = (el: Element | null): string | null => el?.getAttribute('xml:id') ?? null;
+
+/** Resolve the voice cursor to a render-agnostic anchor, mirroring the case
+ *  decisions below (past-end / measure-start / tuplet enter+exit / right-of-
+ *  prev / overwrite box). Lives here (needs the model) and is shipped over the
+ *  bridge so HKL's frame computes the SAME cursor via computeVoiceCursorRect. */
+export function resolveVoiceCursorAnchor(
+  model: ComposerModel, voice: Voice, mode: 'insert' | 'overwrite',
+): VoiceCursorAnchor {
+  const doc = model.getDoc();
+  const staffN = model.staffForVoice(voice);
+  const layerN = model.layerForVoice(voice);
+  const staffIdIn = (measure: Element | null): string | null =>
+    measure ? idOf(Array.from(measure.querySelectorAll('staff')).find((s) => s.getAttribute('n') === String(staffN)) ?? null) : null;
+  const layerIn = (measure: Element | null): Element | null =>
+    measure ? (Array.from(measure.querySelectorAll('layer')).find(
+      (l) => l.getAttribute('n') === String(layerN) && l.parentElement?.getAttribute('n') === String(staffN)) ?? null) : null;
+  const staffStart = (): VoiceCursorAnchor => ({
+    xMode: 'measureLeft', vMode: 'staff', elementId: null, staffId: model.getStaffIdAtCursor(voice),
+    firstContentId: null, firstPlaceholderId: null, measureId: null,
+  });
+  const measureLeftOf = (measure: Element): VoiceCursorAnchor => {
+    const layer = layerIn(measure);
+    const kids = layer ? Array.from(layer.children) : [];
+    return {
+      xMode: 'measureLeft', vMode: 'staff', elementId: null, staffId: staffIdIn(measure),
+      firstContentId: idOf(kids.find(isReal) ?? null),
+      firstPlaceholderId: idOf(kids.find(isPlaceholderEl) ?? null),
+      measureId: idOf(measure),
+    };
+  };
+  const pastLayerContent = (layer: Element | null): VoiceCursorAnchor | null => {
+    const reals = layer ? Array.from(layer.children).filter(isReal) : [];
+    const last = reals[reals.length - 1] ?? null;
+    return last ? { xMode: 'elementRight', vMode: 'element', elementId: idOf(last), staffId: null, firstContentId: null, firstPlaceholderId: null, measureId: null } : null;
+  };
+  const ofElement = (id: string | null, xMode: 'elementRight' | 'elementLeft' | 'box'): VoiceCursorAnchor =>
+    ({ xMode, vMode: 'element', elementId: id, staffId: null, firstContentId: null, firstPlaceholderId: null, measureId: null });
+
+  if (model.isCursorAtPastEnd(voice)) {
+    const measures = doc.querySelectorAll('measure');
+    const lastMeasure = measures[measures.length - 1] ?? null;
+    if (lastMeasure) {
+      return { xMode: 'pastEndRight', vMode: 'staff', elementId: null, staffId: staffIdIn(lastMeasure), firstContentId: null, firstPlaceholderId: null, measureId: idOf(lastMeasure) };
+    }
+    return staffStart();
+  }
+
+  if (mode === 'insert') {
+    const ref = model.getCurrentElement(voice, 'insert');
+    const nextRef = ref ? model.getNextElement(voice, ref.index) : null;
+    if (ref && ref.elem.localName === 'measure') return measureLeftOf(ref.elem);
+    if (!ref || isPlaceholderEl(ref.elem)) return pastLayerContent(ref?.elem.parentElement ?? null) ?? staffStart();
+    if (ref.elem.localName === 'tuplet' && nextRef && nextRef.elem.parentElement === ref.elem) return ofElement(nextRef.id, 'elementLeft');
+    if (parentTupletOf(ref.elem) && parentTupletOf(nextRef?.elem ?? null) !== parentTupletOf(ref.elem)) return ofElement(idOf(parentTupletOf(ref.elem)), 'elementRight');
+    return ofElement(ref.id, 'elementRight');
+  }
+
+  /* overwrite */
+  if (model.getVoiceLength(voice) === 0) return staffStart();
+  const ref = model.getCurrentElement(voice, 'overwrite');
+  if (ref && ref.elem.localName === 'measure') return measureLeftOf(ref.elem);
+  if (ref && isPlaceholderEl(ref.elem)) return pastLayerContent(ref.elem.parentElement) ?? staffStart();
+  if (ref) return ofElement(ref.id, 'box');
+  return staffStart();
 }
 
 class CursorOverlay {
@@ -313,266 +399,14 @@ class CursorOverlay {
 
   private renderVoiceCursor(model: ComposerModel, mode: 'insert' | 'overwrite'): void {
     const voice = model.getCurrentVoice();
-    const cursor = model.getCursor();
-    const voiceLen = model.getVoiceLength();
-
-    let x = 80, y = 60 + (voice - 1) * 50, w = CURSOR_WIDTH, h = 60;
-    let isSelectionBox = false;
-    let diag: Record<string, unknown> = { voice, cursor, voiceLen, mode };
-
-    const anchorOnStaff = (): boolean => {
-      const staffId = model.getStaffIdAtCursor(voice);
-      if (!staffId) return false;
-      const staffRect = renderer.rectForId(staffId);
-      if (!staffRect) return false;
-      const sigEndX = renderer.findSigEndXForStaff(staffId);
-      x = sigEndX !== null ? sigEndX + CURSOR_HPAD : staffRect.left + 10;
-      y = staffRect.top - CURSOR_VPAD;
-      h = staffRect.height + CURSOR_VPAD * 2;
-      return true;
-    };
-
-    const isPlaceholderEl = (el: Element): boolean =>
-      el.localName === 'space' && el.getAttribute('data-placeholder') === 'true';
-
-    /* Tuplet-relative anchor helpers. Each <tuplet> adds itself to the flat
-     * list (one layer-level stop "entered tuplet") AND inlines its in-tuplet
-     * stops. Under the new cursor convention (cursor c = past flat[c]):
-     *   - Entering a tuplet: flat[c]=tuplet wrapper, flat[c+1]=its first
-     *     child. Anchor at LEFT of flat[c+1] (just inside the bracket).
-     *   - Exiting a tuplet: flat[c] is a tuplet child, flat[c+1] is not in
-     *     the same tuplet (or doesn't exist). Anchor at parent tuplet's
-     *     right edge (just past the bracket). */
-    const parentTuplet = (el: Element | null): Element | null => {
-      const p = el?.parentElement;
-      return p && p.localName === 'tuplet' ? p : null;
-    };
-
-    /* Set y/height from the voice's staff bbox in the given measure, so
-       the wrapper / past-end cursor visually spans only the staff the
-       user is editing (not the whole grand staff). Returns false when the
-       staff bbox isn't available; the caller should fall through. */
-    const setVerticalFromStaff = (measureEl: Element): boolean => {
-      const staffN = model.staffForVoice(voice);
-      const staffEl = Array.from(measureEl.querySelectorAll('staff')).find(
-        (s) => s.getAttribute('n') === String(staffN),
-      );
-      const staffId = staffEl?.getAttribute('xml:id');
-      const staffRect = staffId ? renderer.rectForId(staffId) : null;
-      if (!staffRect) return false;
-      y = staffRect.top - CURSOR_VPAD;
-      h = staffRect.height + CURSOR_VPAD * 2;
-      return true;
-    };
-
-    /* Anchor at the inside-left edge of a measure: prefer (in order)
-       sigEnd (handles the leading clef/keysig/timesig area, including
-       M_1 of the piece and mid-score sig changes), the first real-content
-       element's left edge, the first placeholder's left edge (Verovio
-       reserves layout width for placeholder spaces even when invisible),
-       then the voice's staff bbox + small inset (consistent with
-       anchorOnStaff). Falls back to measure bbox if no staff is available.
-       Y/height come from the voice's staff bbox (not the whole measure). */
-    const anchorAtMeasureLeft = (measureEl: Element): boolean => {
-      const staffN = model.staffForVoice(voice);
-      const staffEl = Array.from(measureEl.querySelectorAll('staff')).find(
-        (s) => s.getAttribute('n') === String(staffN),
-      );
-      const staffId = staffEl?.getAttribute('xml:id') ?? null;
-      const sigEndX = staffId ? renderer.findSigEndXForStaff(staffId) : null;
-      const staffRect = staffId ? renderer.rectForId(staffId) : null;
-      const layer = Array.from(measureEl.querySelectorAll('layer')).find(
-        (l) => l.getAttribute('n') === String(model.layerForVoice(voice)) &&
-               l.parentElement?.getAttribute('n') === String(staffN),
-      );
-      const firstContent = layer
-        ? Array.from(layer.children).find((c) =>
-            c.localName === 'chord' || c.localName === 'note' ||
-            c.localName === 'rest' || c.localName === 'tuplet')
-        : null;
-      const firstContentRect = firstContent
-        ? renderer.rectForId(firstContent.getAttribute('xml:id') ?? '')
-        : null;
-      const firstPh = layer
-        ? Array.from(layer.children).find((c) =>
-            c.localName === 'space' && c.getAttribute('data-placeholder') === 'true')
-        : null;
-      const firstPhRect = firstPh
-        ? renderer.rectForId(firstPh.getAttribute('xml:id') ?? '')
-        : null;
-      const measureId = measureEl.getAttribute('xml:id');
-      const measureRect = measureId ? renderer.rectForId(measureId) : null;
-
-      if (sigEndX !== null) {
-        x = sigEndX + CURSOR_HPAD;
-      } else if (firstContentRect) {
-        x = firstContentRect.left - CURSOR_HPAD;
-      } else if (firstPhRect && firstPhRect.width > 0) {
-        x = firstPhRect.left + CURSOR_HPAD;
-      } else if (staffRect) {
-        x = staffRect.left + 10;
-      } else if (measureRect) {
-        x = measureRect.left + 30;
-      } else {
-        return false;
-      }
-      if (!setVerticalFromStaff(measureEl)) {
-        if (measureRect) {
-          y = measureRect.top - CURSOR_VPAD;
-          h = measureRect.height + CURSOR_VPAD * 2;
-        } else {
-          return false;
-        }
-      }
-      return true;
-    };
-
-    /* Anchor past the final bar of the last existing measure (synthetic
-       past-end stop). Y/height from the voice's staff bbox. Past-end only
-       exists when the last measure has room (partial/empty layer); when
-       the last layer is full, `getVoiceLength` excludes the past-end
-       position entirely, so this function is only ever called for the
-       partial/empty case where "past the right bar" is the correct anchor. */
-    const anchorPastLastBar = (): boolean => {
-      const measures = model.getDoc().querySelectorAll('measure');
-      const lastMeasure = measures[measures.length - 1];
-      if (!lastMeasure) return false;
-      const measureId = lastMeasure.getAttribute('xml:id');
-      const measureRect = measureId ? renderer.rectForId(measureId) : null;
-      if (!measureRect) return false;
-      x = measureRect.right + CURSOR_HPAD * 2;
-      if (!setVerticalFromStaff(lastMeasure)) {
-        y = measureRect.top - CURSOR_VPAD;
-        h = measureRect.height + CURSOR_VPAD * 2;
-      }
-      return true;
-    };
-
-    const anchorPastLayerContent = (layer: Element | null): boolean => {
-      if (!layer) return false;
-      const reals = Array.from(layer.children).filter((c) =>
-        c.localName === 'chord' || c.localName === 'note' || c.localName === 'rest' || c.localName === 'tuplet'
-      );
-      const last = reals[reals.length - 1];
-      if (!last) return false;
-      const id = last.getAttribute('xml:id');
-      const rect = id ? renderer.rectForId(id) : null;
-      if (!rect) return false;
-      x = rect.right + CURSOR_HPAD;
-      y = rect.top - CURSOR_VPAD;
-      h = rect.height + CURSOR_VPAD * 2;
-      return true;
-    };
-
-    /* Past-end synthetic stop (wrapper of the not-yet-existent next
-       measure) — applies to both insert and overwrite mode. Past-end
-       exists ONLY when the last measure's voice-layer is partial/empty;
-       when it's full, `getVoiceLength()` excludes the past-end position
-       so the cursor never lands here in that case. */
-    if (model.isCursorAtPastEnd(voice)) {
-      if (anchorPastLastBar()) diag.case = 'past-end-synth';
-      else if (anchorOnStaff()) diag.case = 'past-end-synth-staff';
-      else diag.case = 'past-end-synth-fallback';
-    } else if (mode === 'insert') {
-      {
-        /* Under the new cursor convention, cursor `c` means "past flat[c]".
-           `getCurrentElement(voice, 'insert')` returns flat[c]. The wrapper
-           of M_0 is emitted (rule 3 nonexistent prev), so c=0 has flat[0] =
-           wrapper of M_0 and the wrapper-anchor branch fires naturally — no
-           cursor === 0 special case needed. */
-        const ref = model.getCurrentElement(voice, 'insert');
-        const nextRef = ref ? model.getNextElement(voice, ref.index) : null;
-        if (ref && ref.elem.localName === 'measure') {
-          /* Cursor sits just past a measure wrapper. Under the new cursor
-             convention (cursor c = past flat[c]), ref IS the wrapper of
-             the cursor's measure — anchor directly at its left edge. */
-          if (anchorAtMeasureLeft(ref.elem)) diag.case = 'insert-at-wrapper';
-          else if (anchorOnStaff()) diag.case = 'insert-at-wrapper-staff';
-          else diag.case = 'insert-at-wrapper-fallback';
-        } else if (!ref || isPlaceholderEl(ref.elem)) {
-          /* Just past a fill-anchor (placeholder): anchor right of the
-             last real content of this measure's layer, not the placeholder
-             itself (degenerate bbox). */
-          const layer = ref?.elem.parentElement ?? null;
-          if (layer && anchorPastLayerContent(layer)) diag.case = 'insert-after-fill-anchor';
-          else if (anchorOnStaff()) diag.case = ref ? 'insert-placeholder-on-staff' : 'insert-no-ref-staff';
-          else diag.case = 'insert-staff-fallback';
-        } else if (ref.elem.localName === 'tuplet' && nextRef && nextRef.elem.parentElement === ref.elem) {
-          /* Entering a tuplet: anchor at LEFT of the first in-tuplet stop. */
-          const nextRect = renderer.rectForId(nextRef.id);
-          if (nextRect) {
-            x = nextRect.left - CURSOR_HPAD;
-            y = nextRect.top - CURSOR_VPAD;
-            h = nextRect.height + CURSOR_VPAD * 2;
-            diag.case = 'insert-enter-tuplet';
-          } else {
-            diag.case = 'insert-enter-tuplet-no-rect';
-          }
-        } else if (parentTuplet(ref.elem) && parentTuplet(nextRef?.elem ?? null) !== parentTuplet(ref.elem)) {
-          /* Exiting a tuplet: anchor at the parent tuplet's right edge. */
-          const tParent = parentTuplet(ref.elem)!;
-          const tId = tParent.getAttribute('xml:id');
-          const tRect = tId ? renderer.rectForId(tId) : null;
-          if (tRect) {
-            x = tRect.right + CURSOR_HPAD;
-            y = tRect.top - CURSOR_VPAD;
-            h = tRect.height + CURSOR_VPAD * 2;
-            diag.case = 'insert-exit-tuplet';
-          } else {
-            diag.case = 'insert-exit-tuplet-no-rect';
-          }
-        } else {
-          const rect = renderer.rectForId(ref.id);
-          diag = { ...diag, refId: ref.id, rect: rect ? { l: rect.left, t: rect.top, w: rect.width, h: rect.height } : null };
-          if (rect) {
-            x = rect.right + CURSOR_HPAD;
-            y = rect.top - CURSOR_VPAD;
-            h = rect.height + CURSOR_VPAD * 2;
-            diag.case = 'insert-right-of-prev';
-          } else {
-            diag.case = 'insert-rect-missing';
-          }
-        }
-      }
-    } else {
-      if (voiceLen === 0) {
-        if (anchorOnStaff()) diag.case = 'overwrite-empty-on-staff';
-        else diag.case = 'overwrite-empty-fallback';
-      } else {
-        const ref = model.getCurrentElement(voice, 'overwrite');
-        if (ref && ref.elem.localName === 'measure') {
-          /* Wrapper stop in overwrite mode: anchor at LEFT of M_k. The
-             wrapper isn't an overwrite target (there's no content yet); fall
-             through to a bar-style cursor at the measure's start. */
-          if (anchorAtMeasureLeft(ref.elem)) diag.case = 'overwrite-on-measure-wrapper';
-          else if (anchorOnStaff()) diag.case = 'overwrite-on-measure-wrapper-staff';
-          else diag.case = 'overwrite-on-measure-wrapper-fallback';
-        } else if (ref && isPlaceholderEl(ref.elem)) {
-          /* Fill-anchor in overwrite mode: anchor at the end of the layer's
-             real content (the placeholder area). */
-          if (anchorPastLayerContent(ref.elem.parentElement)) {
-            diag.case = 'overwrite-on-fill-anchor';
-          } else if (anchorOnStaff()) {
-            diag.case = 'overwrite-placeholder-on-staff';
-          } else {
-            diag.case = 'overwrite-placeholder-fallback';
-          }
-        } else {
-          const rect = ref ? renderer.rectForId(ref.id) : null;
-          diag = { ...diag, refId: ref?.id, rect: rect ? { l: rect.left, t: rect.top, w: rect.width, h: rect.height } : null };
-          if (rect) {
-            x = rect.left - CURSOR_HPAD;
-            y = rect.top - CURSOR_VPAD;
-            w = rect.width + CURSOR_HPAD * 2;
-            h = rect.height + CURSOR_VPAD * 2;
-            isSelectionBox = true;
-            diag.case = 'overwrite-selection-box';
-          } else {
-            diag.case = ref ? 'overwrite-rect-missing' : 'overwrite-no-ref';
-          }
-        }
-      }
-    }
+    /* Resolve the render-agnostic anchor, then compute geometry via the SHARED
+       function (the same one HKL's Composer-view frame uses) so the two cursors
+       are pixel-identical over identical renders. Fallback to a default bar if
+       the anchor's elements aren't rendered yet. */
+    const anchor = resolveVoiceCursorAnchor(model, voice, mode);
+    const geom = computeVoiceCursorRect(anchor, COMPOSER_QUERY)
+      ?? { x: 80, y: 60 + (voice - 1) * 50, w: CURSOR_WIDTH, h: 60, isBox: false };
+    const { x, y, w, h, isBox: isSelectionBox } = geom;
 
     const bar = this.barRect!;
     bar.setAttribute('x', String(x));
@@ -601,11 +435,7 @@ class CursorOverlay {
     label.setAttribute('x', String(labelX));
     label.setAttribute('y', String(y - 2));
 
-    if (DEBUG) {
-      diag = { ...diag, x, y, w, h, isSelectionBox,
-        svgSize: { w: this.svg!.getAttribute('width'), h: this.svg!.getAttribute('height') } };
-      console.log('[cursor]', diag);
-    }
+    if (DEBUG) console.log('[cursor]', { voice, mode, anchor, x, y, w, h, isSelectionBox });
   }
 
   /* ── expression-cursor rendering ───────────────────────────────────────── */
@@ -1031,14 +861,16 @@ class CursorOverlay {
       this.svg.appendChild(bar);
       this.playbackBars.set(voice, bar);
     }
-    const rect = renderer.rectForId(meiId);
-    if (!rect) {
+    /* Shared geometry — identical to HKL's Composer-view playback bar. */
+    const geom = computePlaybackBarRect(meiId, COMPOSER_QUERY);
+    if (!geom) {
       bar.setAttribute('opacity', '0');
       return;
     }
-    bar.setAttribute('x', String(rect.left - 4));
-    bar.setAttribute('y', String(rect.top - CURSOR_VPAD));
-    bar.setAttribute('height', String(rect.height + CURSOR_VPAD * 2));
+    bar.setAttribute('x', String(geom.x));
+    bar.setAttribute('y', String(geom.y));
+    bar.setAttribute('width', String(geom.w));
+    bar.setAttribute('height', String(geom.h));
     bar.setAttribute('opacity', '0.85');
   }
 

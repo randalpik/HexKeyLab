@@ -34,12 +34,14 @@ import { selection } from '../state/selection.js';
 import { audio } from '../state/audio.js';
 import { tuning } from '../state/tuning.js';
 import { darkColorHex } from '../transcription/pitch.js';
+import { lightSourceHex } from '../render/colors.js';
 import { resolveNoteSpec } from '../tuning/spell.js';
 import { noteOn, noteOff, stopAllNotes, triggerRearticulateFlash, instrReplaysOnTranspose, glideVoices, setActiveWaveform } from '../audio/engine.js';
 import { SampleEngine } from '../audio/samples.js';
 import { syncPianoOut, restrikePianoOut, sendSustainPedal } from '../midi/piano-out.js';
 import { pedal } from '../state/pedal.js';
 import { draw, requestDraw, activeFootprintSet, invalidatePianoOutline, validateRefNoteCandidate } from '../render/draw.js';
+import { setComposerScore, setComposerCursor, setComposerPlaybackMode, setComposerPlaybackBar, clearComposerFrame } from '../render/composer-frame.js';
 import { syncViewToOutline } from '../ui/controls.js';
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { setSelectionFromComposer, setSongKey, onComposerBye, referenceNote } from '../state/reference.js';
@@ -186,7 +188,7 @@ export function broadcastFootprint(): void {
       if (ci < 0) continue;
       const q = +id.slice(0, ci);
       const r = +id.slice(ci + 1);
-      cells.push([q, r, darkColorHex(q, r)]);
+      cells.push([q, r, darkColorHex(q, r), lightSourceHex(q, r)]);
     }
   }
   /* Cheap signature: counts + first/last cells. Color changes propagate via
@@ -361,6 +363,7 @@ function abortActive(): void {
   releasePlaybackPedal(active);
   active = null;
   playbackActive = false;
+  setComposerPlaybackMode(false); /* frame: drop playback bars, restore editing cursor */
   syncPianoOut(); /* stop any external-synth voices the aborted playback left sounding */
   draw();
   /* Surface any drift in the user's real held-keys that accumulated while
@@ -556,6 +559,11 @@ function scheduleOnVisualAt(
       meiId: ev.meiId ?? null,
       timeMs: ev.atMs,
     });
+    /* Move this voice's playback bar in the read-only Composer-view frame. HKL
+       drives playback, so it has the voice + element id per event — Composer
+       shows per-voice playback bars, so the frame must too. Resolves only for
+       the cursor instrument's notes (the frame's part); others aren't found. */
+    if (ev.meiId) setComposerPlaybackBar(ev.voice ?? 1, ev.meiId);
     } catch (err) {
       logPlaybackError('visual-on', { meiId: ev.meiId, canGlide, ...playbackStateSnapshot(pb) }, err);
     }
@@ -776,6 +784,7 @@ async function playScore(events: ReadonlyArray<PlaybackEvent>, pedalEvents: Read
   const pb = newPlayback();
   active = pb;
   playbackActive = true;
+  setComposerPlaybackMode(true); /* frame: switch to per-voice playback bars */
 
   /* Sorted pedal timeline — used both to shape the legato plan (glide degrades
      to overlap under the pedal) and to drive the pedal transitions below. */
@@ -956,6 +965,7 @@ async function playScore(events: ReadonlyArray<PlaybackEvent>, pedalEvents: Read
              otherwise Composer's transport hangs waiting for playback-finished. */
           bridge.send({ type: 'playback-finished' });
           playbackActive = false;
+          setComposerPlaybackMode(false); /* frame: drop playback bars, restore editing cursor */
           if (active === pb) active = null;
           /* Resync held-keys with the user's real selection (any input that
              arrived during playback was broadcast-suppressed). */
@@ -1158,6 +1168,7 @@ bridge.on((msg: ComposerEvent) => {
       composerConnected = false;
       composerRequiredLayout = null;
       updateComposerToolbar();
+      clearComposerFrame();
       abortActive();
       if (onComposerBye()) {
         invalidatePianoOutline();
@@ -1230,6 +1241,16 @@ bridge.on((msg: ComposerEvent) => {
          ("never play wrong" during composition). */
       composerInstrumentKeys = msg.instrumentKeys.slice();
       if (loadPrefs().syncToComposer) preloadComposerInstruments();
+      break;
+    case 'composer-score':
+      /* Mirror of the cursor instrument's part for the read-only "Composer
+         view" frame. Cached even when the frame is off so toggling it on shows
+         the current score immediately. */
+      setComposerScore(msg.mei);
+      break;
+    case 'composer-cursor':
+      /* Editing-cursor anchor → draw a pixel-identical read-only bar + scroll. */
+      setComposerCursor(msg.voice, msg.anchor);
       break;
     case 'set-reference-note':
       /* Sets the selection tier from Composer. Last-writer-wins between

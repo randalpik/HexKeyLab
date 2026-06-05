@@ -26,6 +26,10 @@ export interface StaffChordNote {
   oct: number;
   midi: number;
   colorHex: string;
+  /** Bright "light source" notehead color for dark-theme rendering. Baked as
+   *  data-light-color so a themed render (applyNotationTheme 'dark') can swap
+   *  the notehead fill. Optional — omitted callers render ink-only. */
+  lightColorHex?: string;
 }
 
 function escapeAttr(s: string): string {
@@ -43,7 +47,8 @@ function noteXml(n: StaffChordNote, mode: TuningMode, hejiEnabled: boolean): str
     if (syn5 !== 0 || sept7 !== 0) token = 'n';
   }
   const accidAttr = token ? ` accid="${token}"` : '';
-  return `<note pname="${n.pname}" oct="${n.oct}" color="${escapeAttr(n.colorHex)}"`
+  const lightAttr = n.lightColorHex ? ` data-light-color="${escapeAttr(n.lightColorHex)}"` : '';
+  return `<note pname="${n.pname}" oct="${n.oct}" color="${escapeAttr(n.colorHex)}"${lightAttr}`
     + ` data-q="${n.q}" data-r="${n.r}"${accidAttr}/>`;
 }
 

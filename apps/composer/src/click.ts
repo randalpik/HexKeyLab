@@ -13,8 +13,11 @@
 import type { ComposerModel, Voice } from './model/index.js';
 
 export interface ClickHooks {
-  /** Trigger a re-render + state refresh. */
-  onChange: () => void;
+  /** Trigger a re-render + state refresh. `placedVoiceCursor` is true when the
+   *  click moved the voice (editing) cursor (glyph / empty staff) — the host
+   *  clears any active selection and returns to voice mode, matching arrow-key
+   *  navigation; false/omitted for a layer-element selection. */
+  onChange: (placedVoiceCursor?: boolean) => void;
   /** Surface a status message (e.g. on voice switch). */
   setStatus?: (msg: string, kind?: 'info' | 'error' | 'state' | 'action') => void;
   /** Suppress while playback is active. */
@@ -157,7 +160,7 @@ export function attachScoreClickHandler(
     if (best.kind === 'control') {
       if (hooks.onSelectLayerElement && hooks.onSelectLayerElement(best.id)) {
         console.log('[click] → control selected in its layer: ' + best.id);
-        hooks.onChange();
+        hooks.onChange(false);
       } else {
         console.log('[click] control did not resolve to a selectable layer element: ' + best.id);
       }
@@ -165,7 +168,7 @@ export function attachScoreClickHandler(
     }
 
     if (best.kind === 'emptyStaff') {
-      if (placeCursorAtEmptyStaff(best.staffG)) hooks.onChange();
+      if (placeCursorAtEmptyStaff(best.staffG)) hooks.onChange(true);
       else console.log('[click] emptyStaff did not resolve to a model staff/voice');
       return;
     }
@@ -188,7 +191,7 @@ export function attachScoreClickHandler(
     model.setCursor(cursor, loc.voice as Voice);
     console.log('[click] → glyph: voice ' + loc.voice + ' flat[' + loc.index + '] side=' + side + ' cursor=' + cursor);
     /* No status message: the top-bar voice indicator already shows the voice. */
-    hooks.onChange();
+    hooks.onChange(true);
   }
 
   scoreEl.addEventListener('click', onClick);

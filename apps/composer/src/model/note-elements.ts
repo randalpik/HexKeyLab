@@ -119,10 +119,14 @@ export function extractResolvedFromElement(elem: Element): ResolvedNote[] {
     const accid = alter === 0 ? '' : (alter > 0 ? 's' : 'f').repeat(Math.abs(alter));
     const oct = parseInt(n.getAttribute('oct') ?? '4', 10);
     const colorHex = n.getAttribute('color') ?? '#000000';
+    /* Light-theme/dark-theme notehead colors. Older .hkc docs predate
+       data-light-color; fall back to the ink color so a re-insert round-trips
+       without inventing a brighter variant we can't derive here. */
+    const lightColorHex = n.getAttribute('data-light-color') ?? colorHex;
     /* MIDI is not used by buildChordElement except for sort order; reconstruct
        from coords: midi = 57 + 4q + 7r. */
     const midi = 57 + 4 * q + 7 * r;
-    return { q, r, pname, accid, oct, midi, colorHex, velocity: 80 };
+    return { q, r, pname, accid, oct, midi, colorHex, lightColorHex, velocity: 80 };
   });
 }
 

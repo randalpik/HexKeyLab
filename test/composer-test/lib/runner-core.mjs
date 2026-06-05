@@ -59,6 +59,27 @@ export const RESET_SNIPPET = `
   const score = document.getElementById('score');
   if (score) { score.scrollLeft = 0; score.scrollTop = 0; }
 
+  /* Reset renderer view mode + theme AND the #score view/theme CSS classes so
+   * a fixture that switches to scroll or dark/transparent doesn't leak its
+   * rendering into later fixtures (their visual baselines + cursor-trace pixel
+   * reads would otherwise drift). The renderer mode and the #score class are
+   * tracked separately (handlers normally keep them in sync), so reset must
+   * restore both. Also clear the persisted view/theme keys, since fixtures that
+   * exercise the dropdown handlers write localStorage, which would otherwise
+   * make Composer boot in scroll/dark on the next page load. */
+  if (window.__hkl_composer.renderer) {
+    window.__hkl_composer.renderer.setViewMode('page');
+    window.__hkl_composer.renderer.setTheme('light');
+  }
+  if (score) {
+    score.classList.add('view-page');
+    score.classList.remove('view-scroll', 'theme-transparent');
+  }
+  try {
+    localStorage.removeItem('hkl.composer.viewMode');
+    localStorage.removeItem('hkl.composer.theme');
+  } catch { /* ignore */ }
+
   window.__hkl_composer.reRender();
   return true;
 })()

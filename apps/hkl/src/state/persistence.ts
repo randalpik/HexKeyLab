@@ -125,6 +125,14 @@ export interface PrefsV1 {
    *  the currently-held notes) in the bottom-right. Off by default; Verovio's
    *  WASM is loaded lazily only when this is enabled. */
   showStaffNotation: boolean;
+  /** Render the staff-notation inset dark (dark surface, light staff/ink,
+   *  bright on-screen lattice noteheads). Distinct from Composer's theme.
+   *  Off by default. */
+  staffNotationDark: boolean;
+  /** Replace the bottom analysis/staff area with a read-only scrollable frame
+   *  mirroring the current HKL Composer score (cursor instrument's part),
+   *  auto-scrolling to follow the Composer cursor + playback. Off by default. */
+  composerView: boolean;
 }
 
 /* Defaults mirror the HTML attributes + state/*.ts initial values, so a fresh
@@ -165,6 +173,8 @@ export const DEFAULT_PREFS: PrefsV1 = {
   syncToComposer: false,
   hejiEnabled: false,
   showStaffNotation: false,
+  staffNotationDark: false,
+  composerView: false,
 };
 
 function isOutlineMode(s: unknown): s is OutlineMode {
@@ -297,6 +307,14 @@ export function loadPrefs(): PrefsV1 {
       typeof o.showStaffNotation === 'boolean'
         ? o.showStaffNotation
         : DEFAULT_PREFS.showStaffNotation,
+    staffNotationDark:
+      typeof o.staffNotationDark === 'boolean'
+        ? o.staffNotationDark
+        : DEFAULT_PREFS.staffNotationDark,
+    composerView:
+      typeof o.composerView === 'boolean'
+        ? o.composerView
+        : DEFAULT_PREFS.composerView,
   };
 }
 

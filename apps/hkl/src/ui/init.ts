@@ -34,6 +34,7 @@ import { sizeCanvas } from '../render/canvas.js';
 import { cv, draw, hexAtPoint, activeFootprintSet, invalidatePianoOutline, validateRefNoteCandidate } from '../render/draw.js';
 import { updateInfo } from '../render/info.js';
 import { renderStaffInset } from '../render/staff-inset.js';
+import { renderComposerFrame } from '../render/composer-frame.js';
 import {
   initAudio, changeWaveform, toggleAudio,
   setDamperDepth, sostenutoOn, sostenutoOff,
@@ -87,6 +88,10 @@ function applyPrefsToDom(p: PrefsV1): void {
   $<HTMLInputElement>('cbHeji').checked = p.hejiEnabled;
   $<HTMLInputElement>('cbStaff').checked = p.showStaffNotation;
   document.body.classList.toggle('staff-on', p.showStaffNotation);
+  $<HTMLInputElement>('cbStaffDark').checked = p.staffNotationDark;
+  document.body.classList.toggle('staff-dark', p.staffNotationDark);
+  $<HTMLInputElement>('cbComposerView').checked = p.composerView;
+  document.body.classList.toggle('composer-view', p.composerView);
   $<HTMLSelectElement>('selOutline').value = p.outline;
   $<HTMLSelectElement>('selRotation').value = p.rotation;
   $<HTMLSelectElement>('selTuning').value = p.tuning;
@@ -344,6 +349,19 @@ $<HTMLInputElement>('cbStaff').addEventListener('change', (e) => {
   document.body.classList.toggle('staff-on', checked);
   savePrefs({ showStaffNotation: checked });
   renderStaffInset();
+});
+$<HTMLInputElement>('cbStaffDark').addEventListener('change', (e) => {
+  const checked = (e.target as HTMLInputElement).checked;
+  document.body.classList.toggle('staff-dark', checked);
+  savePrefs({ staffNotationDark: checked });
+  renderStaffInset();
+});
+$<HTMLInputElement>('cbComposerView').addEventListener('change', (e) => {
+  const checked = (e.target as HTMLInputElement).checked;
+  document.body.classList.toggle('composer-view', checked);
+  savePrefs({ composerView: checked });
+  /* Paint the cached mirrored score when turning the frame on. */
+  if (checked) renderComposerFrame();
 });
 
 // Tuning + outline + clear

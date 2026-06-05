@@ -49,8 +49,14 @@ async function doRender(container: HTMLElement): Promise<void> {
     container.innerHTML = EMPTY_HINT;
     return;
   }
+  /* Dark mode: render on a dark surface with light staff/ink; noteheads swap
+     to the bright "light source" lattice color. resolveNoteSpec already carries
+     both colorHex (ink) and lightColorHex, baked as color + data-light-color;
+     the 'dark' theme repaints noteheads from the latter (the ink variant is
+     unreadable on dark). */
+  const dark = cbChecked('cbStaffDark');
   const mei = buildChordMei(notes, tuning.mode, cbChecked('cbHeji'));
-  await renderMeiToContainer(mei, container);
+  await renderMeiToContainer(mei, container, { theme: dark ? 'dark' : 'light' });
   /* A newer render was requested while Verovio was loading — let it own the
      final DOM write so we don't clobber it with stale content. */
   if (seq !== renderSeq) return;

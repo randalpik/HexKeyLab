@@ -28,6 +28,7 @@ import {
 } from '@hkl/notation/mei-build.js';
 import { noteName, keyOctave, parseNote, accToVal } from '@hkl/shared/notes.js';
 import { coordToMidi } from '@hkl/shared/freq.js';
+import { lightSourceHex } from '../render/colors.js';
 
 export interface EmitMeiOpts {
   title: string;
@@ -49,6 +50,10 @@ function noteSpecFromCoord(q: number, r: number, colorHex: string): NoteSpec {
     oct: keyOctave(q, r),
     midi: coordToMidi(q, r),
     colorHex,
+    /* Bake the bright "light source" variant too, so the transcribed .hkc
+       renders correctly in dark theme (Composer's dark mode / HKL's Composer
+       view) instead of falling back to a lossy hue-merging brightness filter. */
+    lightColorHex: lightSourceHex(q, r),
   };
 }
 

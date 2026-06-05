@@ -1302,3 +1302,90 @@ notehead centroid (= its staff line) and the accidental's BLACK ink centroid in 
 goes through the BravuraText injection swap (even plain ±1 sharps with HEJI off), and Verovio's own native
 placement of accidentals reads slightly high — so "centred on the line" is a deliberate house offset, not a
 bug (see decisions.md). When a screenshot and a measured number disagree, trust the pixels.
+
+**Verovio prepends `data-` to `svgAdditionalAttribute` names (2026-06-03).** A MEI attribute exposed via
+`svgAdditionalAttribute: ['note@data-light-color']` surfaces in the rendered SVG as `data-data-light-color`
+(and `data-q` → `data-data-q`, `color` → `data-color`). Reading it back off a `g.note` with
+`getAttribute('data-light-color')` returns null. When this fed a notehead recolor (`applyNotationTheme`),
+the null silently triggered a brightness-filter FALLBACK that looked plausibly bright — so the dark-theme
+screenshot looked "fine" while never using the real light color. When you bake an MEI attr to read back off
+the SVG, expect the double `data-` prefix; verify by dumping `[...g.attributes]`, not by eyeballing.
+
+**Composer-test fixtures that write `localStorage` pollute later runs via boot state (2026-06-03).** The
+`viewModeDropdownSwitch` fixture dispatched a real `change` on `#viewModeSelect`, whose handler persists
+`viewMode='scroll'` to `localStorage`. Composer reads that at boot, so EVERY subsequent page load (and the
+next full suite run in the same Chromium profile) booted in scroll mode — and `RESET_SNIPPET` reset the
+renderer's view mode but not the separately-tracked `#score` `view-*` CSS class, so ~29 visual baselines
+silently rendered on the wrong background (`#fafafa` vs the page card `#fff`) and failed with a 93%-pixel
+diff that LOOKED identical to the eye (whole-background tint). Fix: `RESET_SNIPPET` now restores the view
+class AND clears the persisted view/theme keys. Lesson: when a fixture exercises a handler with a
+persistence side effect, reset must undo BOTH the in-memory state and the persisted key, and any state with
+two parallel representations (renderer mode + DOM class) must reset both.
+
+**Recolor a Verovio SVG with THREE structural rules, not a per-class list — and never `!important`
+(2026-06-03).** Verovio emits an in-SVG `<style>` of the form `#musXXXX path,polygon,polyline,rect,ellipse
+{ stroke: currentColor }` (an **ID** selector, so it outranks class rules for `stroke`), sets NO
+`color`/`fill` rules itself, renders SMuFL glyphs as `<g class="…"><use></g>`, the brace as `<g><path></g>`,
+and lots of structural marks (the system-bracket line, bar lines, …) as **bare `<path>`s directly under
+`g.system`/etc with NO distinguishing class**. A per-class recolor list is therefore whack-a-mole — every
+review surfaces another unclassed stroked element. The robust recolor is three rules on
+`[data-notation-theme="dark"] svg:not(#cursorOverlay)`:
+1. `{ color: var(--notation-ink) }` (+ the same on `g.note *`, which re-asserts over the note's own
+   `@color` attribute). Verovio strokes everything via `currentColor`, so this recolors EVERY stroke at
+   once — staff/ledger/bar lines, the bare system line, stems, braces, slurs, beams, hairpins, tuplet/octave
+   brackets — with nothing to keep in sync. Recoloring a stroke can never create a fill artifact, so it's
+   always safe and needs no `!important` (Verovio sets no `color` rule to fight).
+2. `use, text { fill: … }` — universal glyph + text fill. `<use>` = every SMuFL glyph (notehead, clef,
+   accid, rest, flag, sigs, fermata, …), `<text>` = titles/measure-numbers/labels/dynamics/tuplet numbers.
+   Neither is ever an open shape, so filling is always safe; no per-glyph class list.
+3. `.grpSym, .slur, .tie, .beam, .dots { fill: … }` (+ `*`) — the COMPLETE set of Verovio's filled
+   non-glyph shapes (filled `<path>`/`<polygon>`/`<ellipse>`). Every other bare shape is an open stroked
+   path, intentionally left out so it shows only its now-ink stroke (rule 1), never a filled triangle/box.
+- **Noteheads:** `applyNotationTheme` gives them an INLINE `color`+`fill` (the light-source color, NO
+  `!important`). Inline beats the ordinary rules, so they keep their color even though `use`/`g.note *`
+  match them; matching inline `color` to fill means their own currentColor stroke draws no ink outline. The
+  earlier `!important` stylesheet version was the bug — it overrode the inline notehead fill, so **beamed
+  noteheads** (matched by `.beam *`) lost their color. `!important` here is a lazy fix that creates more
+  problems than it solves.
+
+**Click-to-select must run the SAME post-move path as arrow nav (2026-06-04).** The click handler
+(`click.ts`) moved the model cursor then called a *minimal* `onChange` (reRender + scroll + reference
+broadcast only), bypassing the keyboard's `onStateChange`. Two bugs resulted: (1) a click didn't broadcast
+`composer-cursor`, so HKL's Composer-view frame cursor didn't follow click-to-select (arrows worked); (2) a
+click didn't clear an active range / chord-internal selection or exit to voice mode, so a stale
+"alt-selection" lingered (arrows clear it). Fix: extract the keyboard hooks into shared
+`composerOnContentChange()` + `composerOnStateChange()` and have BOTH the keyboard and click handlers call
+them; the click handler also calls `resetToVoiceMode()` when it places a voice cursor (glyph / empty staff —
+NOT when selecting a dynam/pedal/tempo layer element). Lesson: when two input paths (keyboard, click,
+drag, …) mutate the same cursor/selection state, route their post-mutation refresh through ONE shared
+function — a parallel "lite" version silently drifts (missed broadcasts, uncleared selection).
+
+**A mirrored view's cursor must SHARE geometry code, not reconstruct it (2026-06-04).** HKL's "Composer
+view" frame must be pixel-identical to Composer's 50%-scroll view, cursor included. Re-deriving the cursor
+geometry HKL-side (anchor edge + staff span) kept drifting from Composer's `cursor.ts` — wrong by the fixed
+HPAD/VPAD offsets, wrong height (Composer's insert bar spans the NOTE's box, not the staff), and missing the
+sig-end / tuplet / past-end / overwrite-box cases. The fix: extract a single pure geometry function
+`computeVoiceCursorRect(anchor, query)` + `computePlaybackBarRect` into `@hkl/shared/cursor-geom.ts`. The
+CASE DECISION (which element/edge — needs the model) stays in Composer as `resolveVoiceCursorAnchor`, ships
+over the bridge as a render-agnostic `VoiceCursorAnchor`, and BOTH sides compute geometry from it: Composer's
+own `cursor.ts` calls the shared fn too (so its drawn bar IS the shared output — verified by the
+cursor-trace suite), and HKL's frame calls it with a query over its identical re-render. Because the renders
+are pixel-identical and the geometry code + fixed-px constants are the same, the cursors match exactly.
+Lesson: to keep two views' overlays identical, share the geometry function and pass a resolved,
+render-agnostic spec — never reconstruct the geometry on the second side. (The fixed-px offsets are also why
+you can't just scale one render's cursor coords into another: HPAD/VPAD are constant px at any zoom, so the
+cursor at 50% ≠ scale(cursor at 100%) — you must recompute at the target render.)
+
+**A mirrored render must use byte-identical Verovio options AND land on an integer pixel (2026-06-04).**
+For HKL's Composer-view frame to be pixel-identical to Composer's 50%-scroll view, two things beyond the
+score data must match: (1) the Verovio options — the frame's scroll geometry was drifting (pageHeight 60000 +
+adjustPageHeight vs Composer's 400, margins 60/40 vs 30, a missing `note@hkl-paren-caut` attr); making
+`SCROLL_OPTIONS` byte-identical to Composer's SCROLL_GEOM+BASE_OPTIONS+scale-50 gave the SAME svg dimensions
+and element positions. (2) Device-pixel alignment — staff lines looked blurry only in HKL because the frame
+box sat on a fractional device-pixel row (`top=…​.594`), so the 1px horizontal lines (anti-aliased under
+`shape-rendering:geometricPrecision`) straddled two rows. Root cause was a toolbar button using
+`line-height:1.8` (12px×1.8 = 21.6px, rendering to a sub-pixel 21.594), which made that toolbar row 23.594px
+tall and offset everything below by 0.594. Fix = integer px line-height on the button (→ integer row →
+integer panel top → integer staff rows → crisp). The WRONG fix (which I tried first) was an after-render JS
+`transform: translate` snap on the SVG — never patch layout after render; fix the element whose fractional
+size shifts the panel. Also mirror Composer's `geometricPrecision` line-rendering CSS on the frame.

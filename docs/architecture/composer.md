@@ -22,7 +22,7 @@ Per-channel protocol modules define independent `In`/`Out` unions. HKL instantia
 
 **HKL → Composer** (`HklEvent`):
 - `hkl-hello`, `hkl-bye` — lifecycle.
-- `held-keys` — array of `ResolvedNote` `{q, r, pname, accid, oct, midi, colorHex, velocity}`. Broadcast on every `selection.selectedKeys` change (RAF-polled, signature-diffed).
+- `held-keys` — array of `ResolvedNote` `{q, r, pname, accid, oct, midi, colorHex, lightColorHex, velocity}`. Broadcast on every `selection.selectedKeys` change (RAF-polled, signature-diffed). `colorHex` is the ink-on-white variant (light theme); `lightColorHex` is the bright on-screen variant (dark theme) — see decisions.md "Two notehead color variants over the bridge".
 - `playback-position` — `{meiId, timeMs}` per chord onset; final has `meiId: null`.
 - `playback-finished`, `tuning-changed` — `{mode, description}` informational.
 
@@ -32,6 +32,8 @@ Per-channel protocol modules define independent `In`/`Out` unions. HKL instantia
 - `layout-req-changed` — score's pinned tuning + ref; applied when "Sync layout" on.
 - `play-score` — `{events: PlaybackEvent[]}`, per-event `{atMs, durationMs, notes, meiId?}`.
 - `stop-playback`.
+- `composer-active-instrument` / `composer-instruments` — cursor instrument + full instrument set (multi-instrument cursor-follow).
+- `composer-score` / `composer-cursor` — drive HKL's read-only "Composer view" frame: the cursor instrument's single-instrument MEI (on content/instrument change) + the editing cursor (on cursor move). `composer-cursor` carries a render-agnostic `VoiceCursorAnchor` (`@hkl/shared/cursor-geom`) — the resolved case (right-of-element / measure-start / tuplet / past-end / overwrite-box) — so HKL draws a cursor PIXEL-IDENTICAL to Composer's via the shared `computeVoiceCursorRect`. Composer's own `cursor.ts` uses the same resolver + geometry fn. See decisions.md "Composer view in HKL streams MEI, not SVG".
 
 `ResolvedNote` is fully resolved by HKL (pname/accid/oct/midi/colorHex derived from `(q, r)` + tuning), so Composer never needs HKL's tuning to render. `accid` is count-form (`''`, `'s'`, `'ss'`, …, `'f'`, …, `'n'`); not clamped at the bridge.
 
@@ -129,9 +131,9 @@ Replaced the old point-hit-test (which no-op'd on whitespace clicks). Each click
 - **`.musicxml`** — one-way. `<score-partwise>` with **one `<part>` per instrument** (`<part-list>` of `<score-part>` named from each `<label>`; part-local staff/voice renumbering — a single-instrument doc degenerates to one part), per-voice `<note>`/`<chord>`/`<rest>`, `<backup>` to align voices, `<notehead color>` for lattice color, per-measure meter/key/clef. Lossy on dynamics/hairpins/repeats; pitches/rhythms/colors/sigs round-trip to MuseScore/Finale/Sibelius (per-measure export best-effort, untested against external readers). `divisions: 16` (or `LCM(16, tuplet @num values)` when tuplets present).
 - **`.pdf`** — vector, WYSIWYG (PDFKit). See [PDF export](#pdf-export-appscomposersrcsavets-pdfkit).
 
-## View modes
+## View modes + theme
 
-Toolbar "Page"/"Scroll" toggle. Both use `svgViewBox: false`, `scale: 100`; differ in `pageWidth`/`pageHeight`/`breaks`. Verovio `setOptions()` + re-render on toggle.
+Two top-bar `<select>`s (persisted to `localStorage`): **view mode** (`#viewModeSelect`, Page/Scroll — both `svgViewBox: false`, `scale: 100`, differing in `pageWidth`/`pageHeight`/`breaks`; Verovio `setOptions()` + re-render on toggle) and **theme** (`#themeSelect`, Light/Dark/Transparent). Theme is threaded into `Renderer` (`setTheme`), which calls `@hkl/notation` `applyNotationTheme` after each render: dark/transparent tag `#score` `data-notation-theme="dark"` so the shared notation-theme CSS recolors staff/ink/HEJI and noteheads repaint to their `data-light-color` variant; light is a strict no-op. Transparent adds `.theme-transparent` (drops all background fills, for export/overlay/HKL import). → decisions.md "Dark notation theming is a shared, light-is-no-op mechanism".
 
 ## Build / bundling
 

@@ -8,6 +8,10 @@ export interface VerovioToolkit {
   renderToSVG(pageNo: number, options?: object): string;
   renderToMIDI(): string;
   setOptions(options: object): boolean;
+  /** Reset ALL options to Verovio defaults. setOptions merges, so callers that
+   *  share one toolkit across different option sets must reset first to avoid
+   *  one render's options (e.g. spacing) leaking into the next. */
+  resetOptions(): void;
   getOptions(): string;
   getMEI(options?: object): string;
   getElementAttr(xmlId: string): string;

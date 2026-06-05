@@ -8,6 +8,9 @@
 // Messages are POJOs (structured-cloneable). No methods, no Dates, no class
 // instances — they cross the BroadcastChannel and must survive structuredClone.
 
+import type { VoiceCursorAnchor } from '@hkl/shared/cursor-geom.js';
+export type { VoiceCursorAnchor };
+
 export const CHANNEL_NAME = 'hkl-composer-bridge';
 export const PROTOCOL_VERSION = 1;
 
@@ -34,8 +37,15 @@ export interface ResolvedNote {
   oct: number;
   /** 12-TET nominal MIDI note = 57 + 4q + 7r. */
   midi: number;
-  /** Notehead color, hex '#rrggbb'. Pre-darkened for paper readability. */
+  /** Notehead color, hex '#rrggbb'. Pre-darkened for paper readability —
+   *  the ink-on-white variant, used as the notehead color in light theme. */
   colorHex: string;
+  /** Notehead color, hex '#rrggbb' — HKL's bright "light source" lattice
+   *  variant (the on-screen palette). Used as the notehead color in dark
+   *  theme, where the ink variant would be too dark to read on a dark
+   *  background. Composer bakes this alongside `colorHex` so a themed render
+   *  can pick the readable variant without re-deriving it from (q, r). */
+  lightColorHex: string;
   /** MIDI velocity 0..127 (most recent strike). */
   velocity: number;
 }
@@ -43,6 +53,7 @@ export interface ResolvedNote {
 /** A coordinate-only reference to a key on HKL's lattice. Used for playback
  *  commands where HKL re-resolves the current tuning's frequency. */
 export interface CoordRef { q: number; r: number; }
+
 
 /** A single scheduled chord in a playback queue. An empty `notes` array
  *  represents a silent rest pulse — HKL skips audio dispatch but still
@@ -92,11 +103,12 @@ export interface PedalEvent {
   instrumentKey?: string;
 }
 
-/** Compact footprint cell tuple: [q, r, colorHex]. Used by footprint-changed
- *  to ship the full active layout outline + per-cell color in one message.
- *  Compact-array form (vs object form) cuts payload by ~3× across the ~280-
- *  cell Lumatone footprint. */
-export type FootprintCell = readonly [number, number, string];
+/** Compact footprint cell tuple: [q, r, colorHex, lightColorHex]. Used by
+ *  footprint-changed to ship the full active layout outline + per-cell colors
+ *  in one message. `colorHex` is the ink-on-white variant (light theme);
+ *  `lightColorHex` is the bright lattice variant (dark theme). Compact-array
+ *  form (vs object form) cuts payload across the ~280-cell Lumatone footprint. */
+export type FootprintCell = readonly [number, number, string, string];
 
 /* ── HKL → Composer ───────────────────────────────────────────────────────── */
 
@@ -192,6 +204,25 @@ export type ComposerEvent =
    *  remove / reorder). When Sync-to-Composer is on, HKL proactively loads them
    *  all so cursor-follow during note entry is always ready in the right
    *  timbre. Empty for single-instrument scores (no per-instrument follow). */
-  | { type: 'composer-instruments'; instrumentKeys: ReadonlyArray<string> };
+  | { type: 'composer-instruments'; instrumentKeys: ReadonlyArray<string> }
+  /** The current single-instrument MEI of the instrument the editing cursor
+   *  sits in — the score HKL renders in its read-only "Composer view" frame.
+   *  Composer serializes only the cursor instrument's staves (grand staff is
+   *  the target; multi-instrument scores degrade to showing the one part at
+   *  the cursor). Re-sent only when the document or the cursor instrument
+   *  changes (signature-gated), not on every cursor move. */
+  | { type: 'composer-score'; mei: string }
+  /** The Composer editing cursors, so HKL's Composer-view frame can auto-scroll
+   *  to follow live composition AND draw read-only per-voice cursor bars. One
+   *  `CursorBar` per in-use voice (each bar spans only ITS staff, not the whole
+   *  grand staff): `anchorId` + `edge` give the horizontal position (the bar
+   *  sits at the left/right edge of that element — a note/chord/rest/tuplet/
+   *  measure), and `staffId` gives the vertical extent (the voice's `<staff>`).
+   *  All ids are resolved in HKL's OWN render of the same MEI, so positions are
+   *  exact regardless of scale/justification. `voice` is the active editing
+   *  voice (highlighted + scroll target); `meiId`/`measureIdx` are its measure
+   *  (scroll target). Throttled / diff-gated. The playback head needs no
+   *  message — HKL drives playback and already knows the sounding meiId. */
+  | { type: 'composer-cursor'; meiId: string | null; measureIdx: number; voice: number; anchor: VoiceCursorAnchor };
 
 export type BridgeMessage = HklEvent | ComposerEvent;

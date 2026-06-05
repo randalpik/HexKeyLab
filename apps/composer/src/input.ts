@@ -271,6 +271,16 @@ export function clearChordInternalSel(): void {
   state.chordInternalSel = null;
 }
 
+/** Reset to a clean voice-mode cursor: drop any range selection + chord-internal
+ *  selection and exit expr/pedal/tempo/select mode. Used by click-to-select so
+ *  placing the voice cursor by click clears a lingering selection exactly like
+ *  an arrow-key move does. */
+export function resetToVoiceMode(): void {
+  state.selection = null;
+  state.chordInternalSel = null;
+  state.cursorMode = 'voice';
+}
+
 function shouldIgnore(e: KeyboardEvent): boolean {
   const t = e.target as HTMLElement | null;
   if (!t) return false;

@@ -64,7 +64,7 @@ const FAMILY_Y_OFFSET: Record<HejiGlyphFamily, number> = {
  * value was tuned empirically (test/composer-inspect, accidental centered on a
  * staff line): Verovio's own default left every accidental reading slightly
  * high, so this is intentionally ~0.1 space past the geometric 1.5. */
-const ACCID_BASELINE_CORRECTION_SPACES = 1.6;
+const ACCID_BASELINE_CORRECTION_SPACES = 1.58;
 const baselineCorrection = (fontSize: number): number =>
   (ACCID_BASELINE_CORRECTION_SPACES / 4) * fontSize;
 
@@ -330,16 +330,26 @@ export function injectHejiGlyphs(root: ParentNode): void {
 
     for (let i = 0; i < ordered.length; i++) {
       const { g, tag, use } = ordered[i];
-      const t = document.createElementNS(SVG_NS, 'text');
-      t.setAttribute('font-family', 'BravuraText');
-      t.setAttribute('font-size', String(fontSize));
-      t.setAttribute('fill', '#000');
-      t.setAttribute('x', String(x));
-      t.setAttribute('y', String(baselineY + baselineCorrection(fontSize) + FAMILY_Y_OFFSET[tag.family] * fontSize));
+      const t = document.createElementNS(SVG_NS, "text");
+      t.setAttribute("font-family", "BravuraText");
+      t.setAttribute("font-size", String(fontSize));
+      /* Black by default; the shared notation-theme CSS recolors injected
+         HEJI glyphs (they live inside the .accid group) to --notation-ink in
+         dark theme via an !important rule, so no inline override is needed. */
+      t.setAttribute("fill", "#000");
+      t.setAttribute("x", String(x));
+      t.setAttribute(
+        "y",
+        String(
+          baselineY +
+            baselineCorrection(fontSize) +
+            FAMILY_Y_OFFSET[tag.family] * fontSize,
+        ),
+      );
       t.textContent = String.fromCodePoint(tag.codepoint);
       use.replaceWith(t);
       /* keep the class so the pass stays idempotent-detectable */
-      g.setAttribute('data-hkl-injected', '1');
+      g.setAttribute("data-hkl-injected", "1");
       x += slotW[i] + gap;
     }
   }

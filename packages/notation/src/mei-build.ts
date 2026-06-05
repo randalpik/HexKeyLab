@@ -30,6 +30,11 @@ export interface NoteSpec {
   oct: number;
   midi: number;
   colorHex: string;
+  /** Bright "light source" notehead color for dark-theme rendering. Optional:
+   *  producers that never render in dark theme (e.g. transcription emit) may
+   *  omit it. When present it is baked as `data-light-color` so a themed
+   *  renderer can swap the notehead fill without re-deriving from (q, r). */
+  lightColorHex?: string;
 }
 
 export function el(
@@ -85,6 +90,7 @@ export function buildNoteElement(
     pname: n.pname,
     oct: n.oct,
     color: n.colorHex,
+    'data-light-color': n.lightColorHex,
     'data-q': n.q,
     'data-r': n.r,
   };

@@ -113,6 +113,13 @@ Scrollable panel below the canvas (max-height to viewport).
   - 5/7-limit: JI ratio shown; color by complement-reduced Tenney Height — green (<8), yellow (8–12.5), red (≥12.5).
   - Equal: no ratio; names via `equalIntervalName()` (from actual note names + octaves, not lattice displacement). `semis % 12 === 0` → green (rational: unisons, octaves, d2/A7); else red.
 
+### Staff-notation inset + Composer view (bottom `.info-row`)
+
+The `.info-row` holds the analysis line (`#infoLine`) plus, on the right, two optional Verovio insets sharing the `@hkl/notation` render path (`renderStaffInset` / `composer-frame.ts`).
+
+- **Show staff notation** (`#cbStaff`) — live grand-staff chord of the held notes (`buildChordMei` → `renderMeiToContainer`), inset bottom-right. **Dark staff notation** (`#cbStaffDark`, body class `staff-dark`) flips it to the dark notation theme: dark surface, light staff/ink, and noteheads in the bright `lightSourceHex` lattice color (the on-screen palette; the ink variant `darkColorHex` is for light/paper). Both colors are baked per note (`color` + `data-light-color`); the theme picks one. → decisions.md "Dark notation theming" / "Two notehead color variants".
+- **Composer view** (`#cbComposerView`, body class `composer-view`, `apps/hkl/src/render/composer-frame.ts`) — replaces the analysis line + staff inset with a full-width, horizontally-scrollable read-only mirror of the HKL Composer score (the **cursor instrument's** part), rendered dark in scroll mode, so you can compose while watching only the HKL screen. Fed over the bridge by `composer-score` (MEI) + `composer-cursor`. The cursor is PIXEL-IDENTICAL to Composer's 50%-scroll view: HKL computes it with the shared `computeVoiceCursorRect`/`computePlaybackBarRect` (`@hkl/shared/cursor-geom`) — the exact functions Composer's `cursor.ts` uses — fed the render-agnostic `VoiceCursorAnchor` Composer ships, queried over the frame's identical re-render (client-px rects mapped into the SVG via its screen-CTM, so the bar scrolls with the score and inline `stroke:none` avoids Verovio's currentColor outline). Voice mode → one bar at the active voice (from `composer-cursor`); playback → one bar per sounding voice at its note (HKL's scheduler knows each event's voice + `meiId`). Auto-scrolls to follow. Mirrors Composer's render quirks: `renderMeiToContainer` exposes `rest@data-tuplet-placeholder`/`rest@visible` and the frame CSS hides those rests (Verovio ignores `@visible`). Grand staff is the target; multi-instrument degrades to one part. → decisions.md "Composer view in HKL streams MEI, not SVG".
+
 ### Short intervals mode
 
 `shortenInterval(name)` post-processor, three phases:

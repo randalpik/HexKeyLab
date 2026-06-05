@@ -37,6 +37,11 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
 #composerToolbar .conn.standalone { background: #2a2a1a; color: #FFF94C; border-color: #4a4a2a }
 #composerToolbar .btn { padding: 3px 12px; background: #222; color: #ccc; border: 1.5px solid #555; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 12px }
 #composerToolbar .btn:hover { border-color: #888 }
+/* Top-bar dropdowns: bare, dark-styled (matches the setup dialog's selects +
+   the toolbar buttons) — no surrounding .group box, no label. */
+#composerToolbar select { padding: 3px 8px; background: #222; color: #ccc; border: 1.5px solid #555; border-radius: 4px; cursor: pointer; font: inherit; min-height: 28px }
+#composerToolbar select:hover { border-color: #888 }
+#composerToolbar select:focus { outline: none; border-color: #4CFFBA }
 #composerToolbar .btn.active { border-color: #4CFFBA; color: #4CFFBA }
 /* Icon-only transport buttons: larger, optically-matched glyphs (⏮ renders
    smaller than ▶ at the toolbar's 12px), padded to a consistent square. */
@@ -87,6 +92,24 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
   display: block;
   width: max-content;       /* hug the SVG's intrinsic width */
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+/* Dark theme: scroll surface + page cards go dark (noteheads/staff are
+   recolored by the shared notation-theme CSS via --notation-ink). Light theme
+   is left exactly as above so existing visual baselines don't shift. */
+#score[data-notation-theme="dark"] { background: var(--notation-bg) }
+#score[data-notation-theme="dark"].view-page .score-page {
+  background: var(--notation-bg);
+  border-color: #444;
+}
+/* Transparent theme: drop every background fill so the score can be exported
+   or read into HKL / an OBS overlay. Uses dark-mode ink + noteheads (set by
+   the renderer applying the 'dark' notation theme). */
+#score.theme-transparent,
+#score.theme-transparent.view-page,
+#score.theme-transparent.view-page .score-page {
+  background: transparent !important;
+  border-color: transparent;
+  box-shadow: none;
 }
 /* Verovio output renders at its real intrinsic pixel size (explicit
    width/height when svgViewBox is off). The SVG flows normally inside
@@ -149,7 +172,7 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
 #score svg .fermata,
 #score svg .fermata *,
 #score svg .breath,
-#score svg .breath * { color: #000 !important; fill: #000 !important }
+#score svg .breath * { color: var(--notation-ink, #000) !important; fill: var(--notation-ink, #000) !important }
 
 /* Tuplet placeholder: the <rest data-tuplet-placeholder="true"> elements
  * we put inside <tuplet> to make Verovio draw the bracket. We want the
@@ -300,18 +323,20 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
     <span class="label">Voice</span>
     <span class="value" id="voiceIndicator">1</span>
   </div>
-  <div class="group" id="viewInstrGroup" style="display:none">
-    <span class="label">View</span>
-    <select id="viewInstrSelect" title="Show one instrument's part (cursor stays within it)"></select>
-  </div>
+  <select id="viewInstrSelect" style="display:none" title="Show one instrument's part (cursor stays within it)"></select>
   <div class="group">
     <span class="label">Mode</span>
     <span class="value" id="modeIndicator">INS</span>
   </div>
-  <div class="group">
-    <button class="btn active" id="btnViewPage">Page</button>
-    <button class="btn" id="btnViewScroll">Scroll</button>
-  </div>
+  <select id="viewModeSelect" title="Page view (paginated, US Letter) or Scroll view (one continuous system)">
+    <option value="page">Page view</option>
+    <option value="scroll">Scroll view</option>
+  </select>
+  <select id="themeSelect" title="Score color theme. Transparent uses dark-mode colors with no background, for export / overlay / import into HKL.">
+    <option value="light">Light theme</option>
+    <option value="dark">Dark theme</option>
+    <option value="transparent">Transparent</option>
+  </select>
   <div class="group">
     <button class="btn transport" id="btnRewind" title="Move cursor to start of score">⏮</button>
     <button class="btn transport" id="btnPlay" title="Play from cursor (Rewind to play from start)">▶</button>

@@ -8,6 +8,7 @@
 
 import { noteName, keyOctave, parseNote, accToVal } from '@hkl/shared/notes.js';
 import { darkColorHex } from '../transcription/pitch.js';
+import { lightSourceHex } from '../render/colors.js';
 import { coordToMidi } from '@hkl/shared/freq.js';
 
 export interface NoteSpec {
@@ -17,7 +18,10 @@ export interface NoteSpec {
   accid: string;   // MEI count-form: '', 's', 'ff', 'sss' …
   oct: number;
   midi: number;
+  /** Ink-on-white notehead color — readable in light theme. */
   colorHex: string;
+  /** Bright on-screen "light source" lattice color — readable in dark theme. */
+  lightColorHex: string;
 }
 
 /** HKL's internal accidental count string (`#`/`b`) → MEI count string
@@ -40,5 +44,6 @@ export function resolveNoteSpec(q: number, r: number): NoteSpec {
     oct: keyOctave(q, r),
     midi: coordToMidi(q, r),
     colorHex: darkColorHex(q, r),
+    lightColorHex: lightSourceHex(q, r),
   };
 }

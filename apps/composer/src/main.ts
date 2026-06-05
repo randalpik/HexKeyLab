@@ -13,10 +13,10 @@
 import { createComposerBridge, PROTOCOL_VERSION } from '@hkl/bridge/channel.js';
 import type { HklEvent, ResolvedNote, FootprintCell } from '@hkl/bridge/protocol.js';
 import { ComposerModel, type Voice } from './model/index.js';
-import { renderer, ZOOM_PRESETS, type ZoomLevel } from './render/render.js';
-import { cursor } from './cursor/cursor.js';
-import { initInput, getInputState, setViewInstr, installSCTransposeImpl, clearChordInternalSel, selectLayerElementById } from './input.js';
-import { scTransposeChordNote } from './notation/scTranspose.js';
+import { renderer, ZOOM_PRESETS, type ZoomLevel, type ViewMode, type ScoreTheme } from './render/render.js';
+import { cursor, resolveVoiceCursorAnchor } from './cursor/cursor.js';
+import { initInput, getInputState, setViewInstr, installSCTransposeImpl, clearChordInternalSel, resetToVoiceMode, selectLayerElementById } from './input.js';
+import { scTransposeChordNote, type FootprintColorMap } from './notation/scTranspose.js';
 import { HistoryManager } from './history.js';
 import type { CursorUpdateOpts } from './cursor/cursor.js';
 import { selectionOverlay } from './selection/selectionOverlay.js';
@@ -50,12 +50,13 @@ let hklTuningMode: string | null = null;
  * the loaded layoutReq isn't overwritten. */
 let autoAdoptedHklLayout = false;
 
-/* Cached HKL footprint: each cell carries q, r, and a fresh colorHex.
+/* Cached HKL footprint: each cell carries q, r, and fresh ink + light colors.
  *   - `null` while we haven't received a footprint yet (no constraint).
  *   - empty Map means outline='none' on HKL — also "no constraint".
  * scTranspose uses this both for layout validation AND to write the new
- * `color` attribute on a transposed note, keeping HKL/Composer in sync. */
-let footprintColors: Map<string, string> | null = null;
+ * `color` / `data-light-color` attributes on a transposed note, keeping
+ * HKL/Composer in sync. */
+let footprintColors: FootprintColorMap = null;
 /* Editing cursor snapshot taken at playback start, restored on stop/finish. */
 let preplaybackVoice: Voice = 1;
 let preplaybackCursor = 0;
@@ -240,6 +241,8 @@ bridge.on((msg: HklEvent) => {
       maybeBroadcastInstruments();
       maybeBroadcastActiveInstrument();
       broadcastLayoutReq();
+      lastScoreInstrKey = null;
+      broadcastComposerView();
       break;
     }
     case 'hkl-bye':
@@ -321,9 +324,9 @@ bridge.on((msg: HklEvent) => {
       break;
     case 'footprint-changed': {
       /* Rebuild the cache. Empty cells = outline='none' = no constraint. */
-      const map = new Map<string, string>();
+      const map: NonNullable<FootprintColorMap> = new Map();
       for (const cell of msg.cells) {
-        map.set(cell[0] + ',' + cell[1], cell[2]);
+        map.set(cell[0] + ',' + cell[1], { ink: cell[2], light: cell[3] });
       }
       footprintColors = map;
       break;
@@ -349,7 +352,7 @@ bridge.on((msg: HklEvent) => {
  *  yet (treat as "no constraint"), an empty map when HKL's outline is set
  *  to 'none' (also "no constraint" — caller decides whether to allow), or
  *  a populated map keyed by "q,r" with the fresh per-cell color. */
-export function getFootprintColors(): Map<string, string> | null {
+export function getFootprintColors(): FootprintColorMap {
   return footprintColors;
 }
 
@@ -472,12 +475,11 @@ function viewStavesFilter(): number[] | null {
 let lastViewSelectorSig: string | null = null;
 function refreshViewSelector(): void {
   const sel = $('viewInstrSelect') as HTMLSelectElement | null;
-  const group = $('viewInstrGroup');
-  if (!sel || !group) return;
+  if (!sel) return;
   const insts = model.instruments();
   const sig = insts.map((i) => i.name).join('|');
   const multi = insts.length > 1;
-  group.style.display = multi ? '' : 'none';
+  sel.style.display = multi ? '' : 'none';
   if (!multi) {
     /* Collapsing to one instrument drops any active single-part view. */
     if (getInputState().viewInstrIdx != null) { setViewInstr(model, null); }
@@ -513,6 +515,75 @@ function maybeBroadcastActiveInstrument(): void {
     lastBroadcastInstrKey = key;
     bridge.send({ type: 'composer-active-instrument', instrumentKey: key });
   }
+}
+
+/* ── Composer-view-in-HKL broadcasts ──────────────────────────────────────
+ * HKL's optional bottom-bar "Composer view" frame renders the cursor
+ * instrument's part (grand staff is the target; multi-instrument degrades to
+ * the one part at the cursor) and auto-scrolls to follow the editing cursor.
+ * Two streams: the single-instrument MEI (on content / instrument change) and
+ * the cursor position (on cursor move). Both gated on hklConnected. */
+
+/** Staff @n filter for the instrument the editing cursor currently sits in
+ *  (vs. viewStavesFilter, which follows the toolbar "View" selector). */
+function cursorStavesFilter(): number[] | null {
+  const inst = model.instrumentOf(model.getCurrentVoice());
+  return inst ? inst.staffNs.slice() : null;
+}
+
+let lastComposerScoreSig: string | null = null;
+/** Serialize the cursor instrument's part and broadcast it if it changed.
+ *  Called on content changes and instrument switches — NOT on every cursor
+ *  move (serializing per keystroke-nav would be wasteful); the string diff
+ *  makes redundant calls cheap no-ops anyway. */
+function maybeBroadcastComposerScore(): void {
+  if (!hklConnected) return;
+  const mei = model.serialize({ hejiEnabled: model.getHejiEnabled() }, cursorStavesFilter());
+  if (mei !== lastComposerScoreSig) {
+    lastComposerScoreSig = mei;
+    bridge.send({ type: 'composer-score', mei });
+  }
+}
+
+let lastComposerCursorSig: string | null = null;
+/** Broadcast the editing cursor so HKL's frame can draw a PIXEL-IDENTICAL bar
+ *  (via the shared computeVoiceCursorRect over its identical re-render) and
+ *  scroll to follow. Sends the resolved render-agnostic anchor (the same one
+ *  Composer's own cursor.ts uses). During playback HKL draws per-voice playback
+ *  bars from its scheduler instead. Diff-gated. */
+function maybeBroadcastComposerCursor(): void {
+  if (!hklConnected) return;
+  const curVoice = model.getCurrentVoice();
+  const mode = getInputState().mode;
+  const anchor = resolveVoiceCursorAnchor(model, curVoice, mode);
+  const measureIdx = model.cursorMeasureIdx(curVoice, mode);
+  const meiId = model.allMeasures()[measureIdx]?.getAttribute('xml:id') ?? null;
+  const sig = curVoice + '|' + measureIdx + '|' + JSON.stringify(anchor);
+  if (sig !== lastComposerCursorSig) {
+    lastComposerCursorSig = sig;
+    bridge.send({ type: 'composer-cursor', meiId, measureIdx, voice: curVoice, anchor });
+  }
+}
+
+/** Cursor-instrument key tracked so onStateChange re-broadcasts the score only
+ *  when the part being viewed actually changes (cheap guard before serialize). */
+let lastScoreInstrKey: string | null = null;
+function maybeBroadcastComposerScoreOnInstrChange(): void {
+  if (!hklConnected) return;
+  const key = model.instruments().length > 1
+    ? model.instrumentOf(model.getCurrentVoice()).instrKey
+    : '<single>';
+  if (key !== lastScoreInstrKey) {
+    lastScoreInstrKey = key;
+    maybeBroadcastComposerScore();
+  }
+}
+
+/** Fire all Composer-view broadcasts (score + cursor). Used on (re)connect. */
+function broadcastComposerView(): void {
+  lastComposerScoreSig = null; /* force a fresh score push on connect */
+  maybeBroadcastComposerScore();
+  maybeBroadcastComposerCursor();
 }
 
 window.setTimeout(() => {
@@ -706,6 +777,10 @@ function reRender(): void {
       injectHeaderFooter(scoreElForInject, model.getComposer(), model.getFooter());
       injectSectionHeaders(scoreElForInject, model);
       styleVoltaNumbers(scoreElForInject);
+      /* Land every system's staff lines on the device-pixel grid (crisp). Must
+         run AFTER the injections above that move systems (section-header reserve
+         shift) and before the cursor overlay geometry is measured below. */
+      renderer.snapSystems(scoreElForInject);
     }
     /* Verovio just rewrote #score's innerHTML — re-attach the cursor overlay
        as a sibling of the rendered SVG (in scroll mode) or as a sibling of
@@ -769,10 +844,17 @@ async function bootRenderer(): Promise<void> {
   /* Wire click-to-position. Lives in main.ts because it needs both the
      model and the same onChange hook the keyboard handler uses. */
   attachScoreClickHandler(scoreEl, model, {
-    onChange: () => {
-      reRender();
-      if (!isPlaying) maybeScrollMeasureIntoView(visualCursorMeasure());
-      if (hklConnected) maybeBroadcastReference();
+    onChange: (placedVoiceCursor) => {
+      /* Placing a voice cursor by click must behave exactly like an arrow-key
+         move: drop any active selection / chord-internal selection and return
+         to voice mode BEFORE refreshing, so a stale alt-selection doesn't
+         linger. (The layer-element path passes false — onSelectLayerElement
+         has already set the right expression mode.) */
+      if (placedVoiceCursor) resetToVoiceMode();
+      /* Same update path as the keyboard handler — including the composer-cursor
+         broadcast, so the HKL frame's cursor follows click-to-select too. */
+      composerOnStateChange();
+      composerOnContentChange();
     },
     setStatus: (msg, kind) => setStatus(msg, kind),
     isPlaybackActive: () => isPlaying,
@@ -832,31 +914,44 @@ installSCTransposeImpl((m, hooks, sel, dir) => {
   }
 });
 
+/** Content changed (insert/delete) or cursor moved within the rendered score:
+ *  re-render, scroll into view, and push the affected bridge state. Shared by
+ *  the keyboard handler AND click-to-select so both update HKL identically. */
+function composerOnContentChange(): void {
+  reRender();
+  /* Scroll-into-view belongs after reRender so it sees the new layout —
+     crucial for reflow (a new measure created by insertion at past-end, or an
+     addition that pushes the current measure to a new system). Several call
+     sites fire onStateChange before onChange, so running scroll here ensures it
+     always sees the post-reRender geometry regardless of caller order. */
+  if (!isPlaying) maybeScrollMeasureIntoView(visualCursorMeasure());
+  /* Content change: most recent prior-to-cursor element may have changed
+     (insert/delete) → recompute the reference note and broadcast. The score
+     changed, so push the updated part to HKL's Composer-view frame too. */
+  if (hklConnected) { maybeBroadcastReference(); maybeBroadcastComposerScore(); maybeBroadcastComposerCursor(); }
+}
+
+/** Cursor/voice/mode changed (no necessarily content): refresh indicators +
+ *  overlays and push cursor/instrument bridge state. Shared by keyboard + click
+ *  so click-to-select updates the HKL cursor exactly like the arrow keys. */
+function composerOnStateChange(): void {
+  refreshIndicators();
+  refreshViewSelector();
+  cursor.update(model, cursorOpts());
+  selectionOverlay.update(model, getInputState().selection);
+  /* Cursor or voice may have moved — recompute reference. The diff filter
+     short-circuits when (q, r) hasn't actually changed. maybeBroadcastInstruments
+     catches add/remove/reorder (diff-filtered, so it's a no-op otherwise). */
+  if (hklConnected) {
+    maybeBroadcastReference(); maybeBroadcastInstruments(); maybeBroadcastActiveInstrument();
+    maybeBroadcastComposerScoreOnInstrChange(); maybeBroadcastComposerCursor();
+  }
+}
+
 initInput(model, {
   getHeldKeys: () => lastHeldKeys,
-  onChange: () => {
-    reRender();
-    /* Scroll-into-view belongs after reRender so it sees the new layout —
-       crucial for reflow (a new measure created by insertion at past-end,
-       or an addition that pushes the current measure to a new system).
-       Several input.ts call sites fire onStateChange before onChange, so
-       running scroll in onChange ensures it always sees the post-reRender
-       geometry regardless of caller order. */
-    if (!isPlaying) maybeScrollMeasureIntoView(visualCursorMeasure());
-    /* Content change: most recent prior-to-cursor element may have changed
-       (insert/delete) → recompute the reference note and broadcast. */
-    if (hklConnected) maybeBroadcastReference();
-  },
-  onStateChange: () => {
-    refreshIndicators();
-    refreshViewSelector();
-    cursor.update(model, cursorOpts());
-    selectionOverlay.update(model, getInputState().selection);
-    /* Cursor or voice may have moved — recompute reference. The diff filter
-       short-circuits when (q, r) hasn't actually changed. maybeBroadcastInstruments
-       catches add/remove/reorder (diff-filtered, so it's a no-op otherwise). */
-    if (hklConnected) { maybeBroadcastReference(); maybeBroadcastInstruments(); maybeBroadcastActiveInstrument(); }
-  },
+  onChange: composerOnContentChange,
+  onStateChange: composerOnStateChange,
   setStatus: (msg, kind) => setStatus(msg, kind),
   clearStatusIfTransient: () => clearStatusIfTransient(),
   isPlaybackActive: () => isPlaying,
@@ -1175,21 +1270,25 @@ function applyViewModeClass(mode: 'page' | 'scroll'): void {
   el.classList.toggle('view-scroll', mode === 'scroll');
 }
 
-$('btnViewPage')?.addEventListener('click', () => {
-  renderer.setViewMode('page');
-  applyViewModeClass('page');
-  $('btnViewPage')?.classList.add('active');
-  $('btnViewScroll')?.classList.remove('active');
+const THEME_KEY = 'hkl.composer.theme';
+const VIEWMODE_KEY = 'hkl.composer.viewMode';
+
+function applyViewMode(mode: ViewMode): void {
+  renderer.setViewMode(mode);
+  applyViewModeClass(mode);
   reRender();
   maybeScrollMeasureIntoView(visualCursorMeasure());
+}
+$('viewModeSelect')?.addEventListener('change', (e) => {
+  const mode = (e.target as HTMLSelectElement).value as ViewMode;
+  applyViewMode(mode);
+  try { localStorage.setItem(VIEWMODE_KEY, mode); } catch { /* private mode / quota — ignore */ }
 });
-$('btnViewScroll')?.addEventListener('click', () => {
-  renderer.setViewMode('scroll');
-  applyViewModeClass('scroll');
-  $('btnViewScroll')?.classList.add('active');
-  $('btnViewPage')?.classList.remove('active');
+$('themeSelect')?.addEventListener('change', (e) => {
+  const theme = (e.target as HTMLSelectElement).value as ScoreTheme;
+  renderer.setTheme(theme);
   reRender();
-  maybeScrollMeasureIntoView(visualCursorMeasure());
+  try { localStorage.setItem(THEME_KEY, theme); } catch { /* ignore */ }
 });
 $('viewInstrSelect')?.addEventListener('change', (e) => {
   const val = (e.target as HTMLSelectElement).value;
@@ -1206,8 +1305,25 @@ $('viewInstrSelect')?.addEventListener('change', (e) => {
   setStatus(idx == null ? 'Showing all parts.' : 'Viewing ' + name + ' only.', 'info');
 });
 
-/* Initial state matches the default view mode (page). */
-applyViewModeClass('page');
+/* Restore persisted view mode + theme (defaults: page / light). Set on the
+   renderer before the boot render so the first paint already reflects them. */
+{
+  let savedMode: ViewMode = 'page';
+  let savedTheme: ScoreTheme = 'light';
+  try {
+    const m = localStorage.getItem(VIEWMODE_KEY);
+    if (m === 'page' || m === 'scroll') savedMode = m;
+    const t = localStorage.getItem(THEME_KEY);
+    if (t === 'light' || t === 'dark' || t === 'transparent') savedTheme = t;
+  } catch { /* ignore */ }
+  renderer.setViewMode(savedMode);
+  renderer.setTheme(savedTheme);
+  applyViewModeClass(savedMode);
+  const vmSel = $('viewModeSelect') as HTMLSelectElement | null;
+  if (vmSel) vmSel.value = savedMode;
+  const thSel = $('themeSelect') as HTMLSelectElement | null;
+  if (thSel) thSel.value = savedTheme;
+}
 
 /* ── boot ────────────────────────────────────────────────────────────────── */
 

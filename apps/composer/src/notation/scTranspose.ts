@@ -20,11 +20,15 @@ import { tokenFromAlter } from '@hkl/notation/accidentals.js';
 import { coordToMidi } from '@hkl/shared/freq.js';
 import { realTicks } from '../model/ticks.js';
 
+/** Fresh per-cell notehead colors: `ink` for light theme (the @color attr),
+ *  `light` for dark theme (the data-light-color attr). */
+export interface FootprintCellColor { ink: string; light: string }
+
 /** Cached HKL footprint passed in from main.ts. Keys are "q,r"; values are
- *  the fresh per-cell color. `null` means "no footprint cached yet" — no
+ *  the fresh per-cell colors. `null` means "no footprint cached yet" — no
  *  constraint enforced, no color update. Empty Map means HKL's outline is
  *  'none' — also no constraint, no color update. */
-export type FootprintColorMap = Map<string, string> | null;
+export type FootprintColorMap = Map<string, FootprintCellColor> | null;
 
 /** Outcome of an SC-transpose attempt. */
 export interface SCResult {
@@ -175,7 +179,10 @@ export function scTransposeChordNote(
   if (accidStr) note.setAttribute('accid', accidStr);
   else note.removeAttribute('accid');
   const newColor = footprint?.get(newKey);
-  if (newColor) note.setAttribute('color', newColor);
+  if (newColor) {
+    note.setAttribute('color', newColor.ink);
+    note.setAttribute('data-light-color', newColor.light);
+  }
 
   /* Re-sort the parent chord's children by MIDI ascending (chord-sort
      invariant). Skipped for bare notes (only one note in the layer). The

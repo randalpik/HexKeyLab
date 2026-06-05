@@ -3236,3 +3236,76 @@ and Shift+Left the beat to the LEFT (note A), so the selection matches the curso
 Strictly-inside-a-beat is direction-independent (the containing beat). Implemented with a module-private
 `boundaryAt`; `currentBeatAt` is left untouched because paste-range (`input.ts`) and 8va depend on its
 existing "just-ended beat" semantics at a boundary.
+
+**Dark notation theming is a shared, light-is-no-op mechanism in @hkl/notation (2026-06-03).**
+Dark mode for both Composer (score) and the HKL staff inset is driven by one stylesheet
+(`packages/notation/src/notation-theme.ts`, injected once by `applyNotationTheme`) scoped under
+`[data-notation-theme="dark"]`, plus `--notation-ink`/`--notation-bg` tokens. **Light theme sets NO
+attribute** — `applyNotationTheme(el,'light')` deletes `data-notation-theme` so the shared rules don't
+match and the SVG renders byte-identically to the unthemed path (this is what keeps the ~30 existing visual
+baselines passing; an early version that tagged `="light"` perturbed every baseline's background by an
+imperceptible amount and failed them all). Dark recoloring is THREE structural rules, NOT a per-class list
+and NO `!important` (a per-class list is whack-a-mole — Verovio renders many marks, e.g. the system-bracket
+line, as bare unclassed `<path>`s): (1) `color: --notation-ink` on the whole svg (+ `g.note *`) — Verovio
+strokes every shape with `stroke: currentColor`, so this recolors EVERY stroke at once with no list to
+maintain; (2) `use, text { fill }` — universal SMuFL-glyph + text fill (neither is ever an open shape); (3)
+`.grpSym/.slur/.tie/.beam/.dots { fill }` — the complete set of filled non-glyph shapes. Open stroked
+spanners (hairpins, tuplet/octave brackets) are caught by rule 1 and deliberately excluded from fills.
+Noteheads are repainted by `applyNotationTheme` with an INLINE `color`+`fill` (the `data-light-color`
+light-source variant): inline beats the ordinary rules so beamed/grouped noteheads keep their color, and
+matching `color` to `fill` means their own currentColor stroke draws no ink outline. An earlier `!important`
+version was wrong — it overrode the inline notehead fill, so beamed noteheads (matched by `.beam *`) lost
+their color. → lessons.md "Recolor a Verovio SVG with THREE structural rules".
+
+**Verovio prefixes `svgAdditionalAttribute` names with `data-` (2026-06-03).**
+A MEI attribute `data-light-color` surfaces in the rendered SVG as `data-data-light-color` (same as
+`data-q` → `data-data-q`). `applyNotationTheme` reads `data-data-light-color`. An early version read
+`data-light-color`, silently missed it, and fell through to a brightness-filter fallback that *looked*
+plausible (bright-ish noteheads) — masking the bug. When reading a baked MEI attr back off the SVG, expect
+the double prefix.
+
+**Two notehead color variants over the bridge: ink vs light source (2026-06-03).**
+`ResolvedNote.colorHex` stays the ink-on-white variant (`darkColorHex`, for light theme); a new
+`lightColorHex` carries the bright on-screen variant for dark theme. The dark variant is `lightSourceHex`
+(`render/colors.ts`) — ALWAYS the `.l`/`.sl` light hue, *not* `keyColorHex` (which returns the dark `.d`
+variant for black keys; those are near-invisible on a dark staff). The accidental glyph already conveys
+sharp/flat, so dropping the white/black `.l`-vs-`.d` distinction on noteheads is fine. Both colors are baked
+(`color` + `data-light-color`) into the MEI by `mei-build.ts`/`chord-mei.ts` (and the transcription emitter,
+`meiEmit.ts`); `FootprintCell` gained a 4th tuple element so SC-transpose recolor updates both.
+
+**Imported files without `data-light-color`: reverse-map to a SANCTIONED color, never approximate
+(2026-06-04).** A dark notehead must be one of our sanctioned light-source colors. The renderer
+(`applyNotationTheme`) picks it as: the baked `data-light-color` if it's a sanctioned light hex; else the
+sanctioned light reverse-mapped from the baked ink `color`; else **white** (an obvious "bad import" flag —
+NOT a graceful approximation). The reverse-map works because `darkColorHex`'s outputs are exactly 7 fixed
+hexes (one per `HUE_PROFILE`), so `@hkl/shared/colors.ts` builds `SANCTIONED_INK_TO_LIGHT` (ink→`.l`) +
+`SANCTIONED_LIGHT` (every `.l`/`.sl`) using the SAME hsl→rgb→hex path `darkColorHex` uses, so keys match its
+outputs exactly. (An earlier attempt used a CSS `brightness(2.2)` filter as the fallback — it clipped RGB
+channels and MERGED adjacent hues, e.g. yellow↔green and blue↔teal, which is why imported scores looked
+wrong in dark mode. Hue-preserving HSL lightening was also rejected: the rule is sanctioned-or-flagged, not
+"closest looking".) `HUE_PROFILES` + the hsl/rgb helpers now live in `@hkl/shared`; `pitch.ts`'s
+`darkColorHex` imports them. → lessons.md "Recolor a Verovio SVG with THREE structural rules".
+
+**"Composer view in HKL" streams MEI, not SVG; renders the cursor instrument only (2026-06-03).**
+HKL's optional bottom-bar frame (`apps/hkl/src/render/composer-frame.ts`, body class `composer-view`,
+replacing the analysis line + staff inset) renders a read-only mirror of the Composer score. Composer
+broadcasts the **cursor instrument's** single-instrument MEI (`composer-score`, gated on content/instrument
+change) + the editing-cursor measure (`composer-cursor`, on cursor move); HKL re-renders it via
+`@hkl/notation` `renderMeiToContainer({geometry:'scroll',theme:'dark'})` and horizontally scrolls to follow.
+Grand staff is the target; multi-instrument degrades to the one part at the cursor (no room for the full
+score). No new message carries the playback head — HKL drives playback and already knows the sounding
+`meiId` it echoes via `playback-position`, so it scrolls the frame directly (resolves only for the cursor
+instrument's notes; others are simply not found = no-op).
+
+**Cursor geometry is a single shared function; the mirror reproduces, never reconstructs (2026-06-04).**
+HKL's Composer-view frame must show a cursor PIXEL-IDENTICAL to Composer's 50%-scroll view. Rather than
+re-derive it HKL-side (which repeatedly drifted from `cursor.ts` — fixed-px HPAD/VPAD offsets, note-box vs
+staff-box height, sig-end/tuplet/past-end/overwrite cases), the geometry is ONE pure function
+`computeVoiceCursorRect(anchor, query)` (+ `computePlaybackBarRect`) in `@hkl/shared/cursor-geom.ts`. Split:
+the case DECISION needs the model, so it lives in Composer (`resolveVoiceCursorAnchor`) and ships over the
+bridge as a render-agnostic `VoiceCursorAnchor`; the GEOMETRY is the shared fn, called by BOTH Composer's
+`cursor.ts` (its drawn bar IS the shared output) and HKL's frame (queried over its identical re-render). The
+shared package is the right home (apps + bridge both reach it; the type is re-exported through
+`@hkl/bridge/protocol`). It's pure number-in/number-out (a `CursorRectQuery` abstracts the DOM), so it stays
+within `@hkl/shared`'s "no DOM/state" rule. Verified: at 50% scroll the bar sits at note.right+4 / note.top−6,
+width 2, height note+12 in BOTH. → lessons.md "A mirrored view's cursor must SHARE geometry code".

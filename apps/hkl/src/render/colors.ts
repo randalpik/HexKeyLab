@@ -107,3 +107,14 @@ export function keyColorHex(q: number, r: number): string {
   if (v.isB) return v.isW ? hueC[v.hue].sl! : hueC[v.hue].sd!;
   return v.isW ? hueC[v.hue].l : hueC[v.hue].d;
 }
+
+/* Bright "light source" hue for a key — always the light variant (.l / .sl),
+   ignoring the white/black .l-vs-.d distinction keyColorHex makes. Used as the
+   notehead color on a DARK notation surface, where the .d black-key variant is
+   too dark to read (the accidental glyph already conveys sharp/flat, so the
+   notehead only needs to carry the hue). */
+export function lightSourceHex(q: number, r: number): string {
+  const v = keyColorVariant(q, r);
+  if (v.isB) return hueC[v.hue].sl!;
+  return hueC[v.hue].l;
+}
