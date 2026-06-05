@@ -195,7 +195,11 @@ body.composer-view #composerFrame{display:flex}
 .tbtn.active{border-color:#B266FF;color:#B266FF}
 .tbtn.active:hover{border-color:#C99CFF;color:#C99CFF}
 .toolbar-row{margin-top:2px}
-.toolbar-group{display:inline-flex;flex-wrap:nowrap;flex-shrink:0;align-items:center;gap:4px 8px;padding:3px 8px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;min-height:54px}
+/* Fixed integer height (not min-height) so every toolbar group is identical —
+   the tallest content is the Recording group's stacked button-pairs (~57.2px),
+   so 58px clears it without clipping. Integer keeps the row off a fractional
+   device pixel (see the .tbtn note above re: blurred Composer-view staff lines). */
+.toolbar-group{display:inline-flex;flex-wrap:nowrap;flex-shrink:0;align-items:center;gap:4px 8px;padding:3px 8px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;height:58px}
 .tb-hidden{display:none !important}
 .cb-column{display:inline-flex;flex-direction:column;align-items:flex-start;gap:0}
 .cb-column label{height:16px;line-height:16px}
@@ -233,7 +237,7 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <button class="tbtn" id="tbLumatone">Lumatone</button>
 <button class="tbtn" id="tbPiano">Piano</button>
 <span class="cdiv"></span>
-<button class="push-btn" id="btnResetPrefs" title="Reset all toolbar settings and visibility to defaults">Reset</button>
+<button class="push-btn" id="btnResetPrefs">Reset</button>
 </div>
 <div class="ctrls toolbar-row">
 <div class="toolbar-group" id="tb-group-layout">
@@ -310,7 +314,7 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <option value="square">Square Wave</option>
 <!-- Imported .hki bundles are appended at runtime by src/ui/instrumentBundles.ts as an <optgroup> -->
 </select>
-<button class="push-btn" id="btnHkiManage" title="Import and manage instruments">Import</button>
+<button class="push-btn" id="btnHkiManage">Import</button>
 <input type="file" id="fileInputHki" accept=".hki" style="display:none">
 <input type="file" id="fileInputCdnConfig" accept=".json,application/json" style="display:none">
 <span id="transposeCtrl" class="lsel">
@@ -322,40 +326,42 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <span class="tpax"><button class="tpab" data-dq="-7" data-dr="4">&#x25B2;</button><span class="tpal">SC</span><button class="tpab" data-dq="7" data-dr="-4">&#x25BC;</button></span>
 </span>
 <button class="push-btn" id="btnClear">Clear</button>
-<label title="Loop-seam diagnostics overlay — visualizes master-output RMS, seam crossfades, and per-key input traces (requires Audio enabled)"><input type="checkbox" id="cbShowDiag" autocomplete="off"> Show diagnostics</label>
+<label><input type="checkbox" id="cbShowDiag" autocomplete="off"> Show diagnostics</label>
 </div>
 <div class="toolbar-group" id="tb-group-analysis">
 <div class="cb-column">
 <label><input type="checkbox" id="cbAnalysis" autocomplete="off"> Show analysis</label>
 <label><input type="checkbox" id="cbCoords" autocomplete="off"> Show coordinates</label>
-<label title="Show the currently-held notes as a chord on a grand staff (Verovio), inset at the bottom-right. HEJI accidentals follow the HEJI toggle."><input type="checkbox" id="cbStaff" autocomplete="off"> Show staff notation</label>
-<label title="Render the staff-notation inset dark: dark background, light staff lines and accidentals, and noteheads in the bright on-screen lattice colors. Distinct from Composer's theme."><input type="checkbox" id="cbStaffDark" autocomplete="off"> Dark staff notation</label>
-<label title="Replace the analysis/staff area with a read-only, scrollable frame mirroring the current HKL Composer score (the cursor instrument's part), auto-scrolling to follow the Composer cursor and playback. Requires HKL Composer open in another tab."><input type="checkbox" id="cbComposerView" autocomplete="off"> Composer view</label>
+</div>
+<div class="cb-column">
+<label><input type="checkbox" id="cbStaff" autocomplete="off"> Show staff notation</label>
+<label><input type="checkbox" id="cbStaffDark" autocomplete="off"> Dark staff notation</label>
+<label><input type="checkbox" id="cbComposerView" autocomplete="off"> Composer view</label>
 </div>
 <div class="cb-column">
 <label><input type="checkbox" id="cbShortIvl" autocomplete="off"> Short intervals</label>
-<label title="Decorate note labels with Helmholtz-Ellis JI comma arrows / septimal hooks (auto-enabled in Schismatic mode)"><input type="checkbox" id="cbHeji" autocomplete="off"> HEJI accidentals</label>
+<label><input type="checkbox" id="cbHeji" autocomplete="off"> HEJI accidentals</label>
 </div>
 </div>
 <div class="toolbar-group" id="tb-group-recording">
 <div class="btn-pair">
-<button class="push-btn rec-btn" id="btnRecord" title="Start/stop recording">● Rec</button>
-<button class="push-btn" id="btnPlay" disabled title="Play current recording">▶ Play</button>
+<button class="push-btn rec-btn" id="btnRecord">● Rec</button>
+<button class="push-btn" id="btnPlay" disabled>▶ Play</button>
 </div>
 <div class="btn-pair">
-<button class="push-btn" id="btnSaveHkr" disabled title="Save the current recording as .hkr (HexKeyLab native format)">Save .hkr</button>
-<button class="push-btn" id="btnLoadHkr" title="Load a .hkr recording">Load .hkr</button>
+<button class="push-btn" id="btnSaveHkr" disabled>Save .hkr</button>
+<button class="push-btn" id="btnLoadHkr">Load .hkr</button>
 </div>
 <div class="btn-pair">
-<button class="push-btn" id="btnExportMidi" disabled title="Export the current recording as a .mid file (MPE)">Export .mid</button>
-<button class="push-btn" id="btnImportMidi" disabled title="Import a .mid file (requires matching .hkr loaded for layout snapshot)">Import .mid</button>
+<button class="push-btn" id="btnExportMidi" disabled>Export .mid</button>
+<button class="push-btn" id="btnImportMidi" disabled>Import .mid</button>
 </div>
 <div class="btn-pair">
-<button class="push-btn" id="btnExportComposer" disabled title="Transcribe the current recording to a .hkc score — download it or send it straight to Composer">Export to Composer</button>
+<button class="push-btn" id="btnExportComposer" disabled>Export to Composer</button>
 </div>
 <input type="file" id="fileInputHkr" accept=".hkr,.json" style="display:none">
 <input type="file" id="fileInputMidi" accept=".mid,.midi" style="display:none">
-<label title="Download a .wav of the engine output alongside each .hkr record or playback (44.1kHz / 16-bit stereo PCM)"><input type="checkbox" id="cbCaptureAudio" autocomplete="off"> Capture audio</label>
+<label><input type="checkbox" id="cbCaptureAudio" autocomplete="off"> Capture audio</label>
 <span class="recording-status" id="recStatus">Idle</span>
 </div>
 <div class="toolbar-group" id="tb-group-lumatone">
@@ -366,22 +372,22 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <div class="sync-status" id="syncStatus">Idle</div>
 </div>
 </div>
-<label title="Sustain mode: sustain jack = damper. Sostenuto mode: sustain jack = sostenuto, expression jack = continuous damper.">Pedals: <select id="pedalMode" autocomplete="off">
+<label>Pedals: <select id="pedalMode" autocomplete="off">
 <option value="sustain" selected>Sustain</option>
 <option value="sostenuto">Sostenuto + Sustain</option>
 </select></label>
-<button class="calib-btn luma-conn-only" id="btnCalibPedal" title="Calibrate the expression pedal jack — sweep pedal full range while active">Calibrate Pedal</button>
-<label class="luma-conn-only" title="Per-board key calibration overlay (Shift+\ also toggles)"><input type="checkbox" id="cbCalibrateKeys" autocomplete="off"> Calibrate Keys</label>
+<button class="calib-btn luma-conn-only" id="btnCalibPedal">Calibrate Pedal</button>
+<label class="luma-conn-only"><input type="checkbox" id="cbCalibrateKeys" autocomplete="off"> Calibrate Keys</label>
 </div>
 <div class="toolbar-group" id="tb-group-piano">
 <div class="luma-vstack">
 <span id="pianoStatus" class="luma-disconnected">No device</span>
 <label>Device: <select id="selPianoDevice" class="piano-device-sel" autocomplete="off"><option value="">(none)</option></select></label>
 </div>
-<div class="luma-vstack">
-<label title="Enable 12-TET piano-keyboard MIDI input. Notes are resolved to lattice cells via Tenney Height against the current reference note (broadcast by HKL Composer when connected; A3 otherwise)."><input type="checkbox" id="cbPianoEnabled" autocomplete="off"> Piano input</label>
-<label title="Mirror HKL playback to the selected device's audio engine, tuned to true just intonation via per-channel RPN fine-tuning (one voice per MIDI channel). Independent of the Audio toggle — mute Audio to make the external synth the only sound source. Needs a synth set to receive on all MIDI channels (Omni On)."><input type="checkbox" id="cbPianoOutput" autocomplete="off"> Piano output</label>
-<label title="Show a dotted outline marking the region where you can Ctrl+click to set a new reference note. Shape depends on the active tuning bucket (5-limit/12-TET vs 7-limit)."><input type="checkbox" id="cbValidRefBounds" autocomplete="off"> Valid ref bounds</label>
+<div class="cb-column">
+<label><input type="checkbox" id="cbPianoEnabled" autocomplete="off"> Piano input</label>
+<label><input type="checkbox" id="cbPianoOutput" autocomplete="off"> Piano output</label>
+<label><input type="checkbox" id="cbValidRefBounds" autocomplete="off"> Valid ref bounds</label>
 </div>
 </div>
 <div class="toolbar-group" id="tb-group-composer" style="display:none">
@@ -390,7 +396,7 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <span id="composerScoreLayout" style="font-size:11px;opacity:0.8"></span>
 </div>
 <div class="luma-vstack">
-<label title="When on, HKL aggressively applies any layout requirement broadcast by Composer (tuning mode + ref note). When off, mismatches trigger a prompt at playback start."><input type="checkbox" id="cbSyncToComposer" autocomplete="off"> Sync to Composer</label>
+<label><input type="checkbox" id="cbSyncToComposer" autocomplete="off"> Sync to Composer</label>
 <span id="composerLayoutMatch" style="font-size:11px"></span>
 </div>
 </div>

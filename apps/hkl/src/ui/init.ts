@@ -62,6 +62,7 @@ import {
 import { ensurePedalHud, setPedalHudVisible } from './pedalHud.js';
 import { SampleEngine } from '../audio/samples.js';
 import { applyToolbarVisibility, initToolbarSelector } from './toolbars.js';
+import { applyTooltips } from './tooltips.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import { initHklBridge } from '../bridge/hkl-side.js';
 import { initRecorderUI } from './recorder.js';
@@ -121,6 +122,8 @@ applyPrefsToDom(prefs);
 applyRotation(prefs.rotation);
 applyToolbarVisibility(prefs.toolbars);
 initToolbarSelector();
+/* Static tooltips for every toolbar control — text lives in tooltips.ts. */
+applyTooltips();
 
 /* State fields with no DOM mirror — set directly before any handlers run. */
 pedal.mode = prefs.pedalMode;
