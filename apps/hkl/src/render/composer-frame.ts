@@ -69,22 +69,27 @@ export function setComposerCursor(voice: number, anchor: VoiceCursorAnchor): voi
   if (!playbackMode) { drawCursors(); scrollToActive(); }
 }
 
-export function setComposerPlaybackMode(on: boolean): void {
+/** Mirror Composer's COMPLETE playback overlay (mode + every per-voice bar).
+ *  Composer is the single source of truth — it self-publishes this on any
+ *  mode/bar change, so the frame stays identical across clock playback,
+ *  Performance mode, and any future cursor source. Wholesale replace (a voice
+ *  absent from `bars` drops its bar); scroll-follows whichever bar moved. */
+export function setComposerPlaybackBars(
+  on: boolean,
+  bars: ReadonlyArray<{ voice: number; meiId: string }>,
+): void {
   playbackMode = on;
-  if (!on) playbackBars.clear();
-  drawCursors();
-  scrollToActive();
-}
-
-export function setComposerPlaybackBar(voice: number, meiId: string | null): void {
-  if (meiId === null) {
-    /* Voice's content ended before the score — drop its bar so it doesn't
-       stay orphaned at the last note. */
-    if (playbackBars.delete(voice) && playbackMode) drawCursors();
-    return;
+  let scrollTarget: string | null = null;
+  const next = new Map<number, string>();
+  for (const b of bars) {
+    next.set(b.voice, b.meiId);
+    if (playbackBars.get(b.voice) !== b.meiId) scrollTarget = b.meiId;
   }
-  playbackBars.set(voice, meiId);
-  if (playbackMode) { drawCursors(); scrollToId(meiId); }
+  playbackBars.clear();
+  for (const [v, id] of next) playbackBars.set(v, id);
+  drawCursors();
+  if (on && scrollTarget) scrollToId(scrollTarget);
+  else if (!on) scrollToActive();
 }
 
 export function renderComposerFrame(): void {
@@ -96,6 +101,7 @@ export function clearComposerFrame(): void {
   if (el) el.innerHTML = HINT;
   editingAnchor = null;
   playbackBars.clear();
+  playbackMode = false;
 }
 
 function scheduleRender(): void {

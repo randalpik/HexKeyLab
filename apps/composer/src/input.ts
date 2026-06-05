@@ -155,6 +155,9 @@ export interface InputHooks {
   /** Toggle score playback on/off. Bound to bare Space at the top of the
    *  keydown dispatcher so Space works as the universal transport shortcut. */
   togglePlayback: () => void;
+  /** Toggle Performance mode (input-driven playback) on/off. Bound to
+   *  Shift+Space, parallel to bare Space = clock playback. */
+  togglePerformance?: () => void;
   /** Stop playback and place the editing cursor at the most-recent playback
    *  head (instead of snapping back to its pre-playback position). Bound to
    *  plain ←/→ during playback — "punch out where I hear the music." */
@@ -1762,6 +1765,14 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     if (e.key === ' ' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
       e.preventDefault();
       hooks.togglePlayback();
+      return;
+    }
+
+    /* Shift+Space → toggle Performance mode (input-driven playback). Parallel
+       to bare Space; same orthogonal-to-editing-state rationale. */
+    if (e.key === ' ' && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      hooks.togglePerformance?.();
       return;
     }
 

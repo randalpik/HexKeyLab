@@ -22,6 +22,7 @@ import type { CursorUpdateOpts } from './cursor/cursor.js';
 import { selectionOverlay } from './selection/selectionOverlay.js';
 import { saveHkc, loadHkcFromFile, downloadMusicXml, downloadPdf, exportMusicXml } from './save.js';
 import { buildPlayback, buildPedalEvents, playbackStartMs, highlightElement, clearHighlights, readTempo, tickMsFromTempo, PIZZ_VARIANTS } from './render/playback.js';
+import { PerformanceMatcher } from './render/performance.js';
 import { addDir } from './expressions.js';
 import { openSetupDialog } from './setupDialog.js';
 import { openHelpDialog } from './helpDialog.js';
@@ -38,6 +39,12 @@ const $ = <T extends HTMLElement>(id: string): T | null =>
 let hklConnected = false;
 let lastHeldKeys: ReadonlyArray<ResolvedNote> = [];
 let isPlaying = false;
+/* Performance mode (input-driven playback): the player plays the Lumatone live
+ * and Composer advances each voice's bar as its notes are struck (see
+ * render/performance.ts). Mutually exclusive with clock-driven `isPlaying`;
+ * both share the per-voice playback bars + the pre-playback cursor snapshot. */
+let performanceActive = false;
+let perfMatcher: PerformanceMatcher | null = null;
 /* HKL's current tuning mode, cached from the `tuning-changed` broadcast. Null
  * until first broadcast arrives. Used by the entry-mismatch gate (input.ts)
  * to compare against the score's pinned layoutReq.tuningMode. */
@@ -250,6 +257,7 @@ bridge.on((msg: HklEvent) => {
       setConn('no-hkl');
       lastHeldKeys = [];
       stopPlayback();
+      stopPerformance('HKL disconnected.');
       invalidateRefNoteCache();
       invalidateSongKeyCache();
       break;
@@ -267,6 +275,9 @@ bridge.on((msg: HklEvent) => {
       } else {
         clearStatusIfHeldKeys();
       }
+      break;
+    case 'player-note-struck':
+      onPlayerNoteStruck(msg.note);
       break;
     case 'tuning-changed':
       /* Cache HKL's current tuning mode for the entry-mismatch gate. The
@@ -572,6 +583,23 @@ function maybeBroadcastComposerCursor(): void {
   }
 }
 
+let lastComposerPlaybackSig: string | null = null;
+/** Broadcast the complete per-voice playback overlay (mode + bars) so HKL's
+ *  frame mirrors it. Single source of truth: Composer's `Cursor` self-publishes
+ *  this (via `onPlaybackChange`) on every mode / bar change, so clock playback,
+ *  Performance mode, and any future cursor source reflect in both views with no
+ *  per-feature wiring. Diff-gated. */
+function maybeBroadcastComposerPlayback(): void {
+  if (!hklConnected) return;
+  const on = cursor.isPlaybackMode();
+  const bars = [...cursor.getPlaybackPositions()].map(([voice, meiId]) => ({ voice, meiId }));
+  const sig = on + '|' + bars.map((b) => b.voice + ':' + b.meiId).sort().join(',');
+  if (sig !== lastComposerPlaybackSig) {
+    lastComposerPlaybackSig = sig;
+    bridge.send({ type: 'composer-playback', on, bars });
+  }
+}
+
 /** Cursor-instrument key tracked so onStateChange re-broadcasts the score only
  *  when the part being viewed actually changes (cheap guard before serialize). */
 let lastScoreInstrKey: string | null = null;
@@ -586,11 +614,14 @@ function maybeBroadcastComposerScoreOnInstrChange(): void {
   }
 }
 
-/** Fire all Composer-view broadcasts (score + cursor). Used on (re)connect. */
+/** Fire all Composer-view broadcasts (score + cursor + playback overlay). Used
+ *  on (re)connect. */
 function broadcastComposerView(): void {
   lastComposerScoreSig = null; /* force a fresh score push on connect */
+  lastComposerPlaybackSig = null; /* force a fresh playback-overlay push too */
   maybeBroadcastComposerScore();
   maybeBroadcastComposerCursor();
+  maybeBroadcastComposerPlayback();
 }
 
 window.setTimeout(() => {
@@ -887,7 +918,7 @@ async function bootRenderer(): Promise<void> {
       composerOnContentChange();
     },
     setStatus: (msg, kind) => setStatus(msg, kind),
-    isPlaybackActive: () => isPlaying,
+    isPlaybackActive: () => isPlaying || performanceActive,
     onSelectLayerElement: (id) => selectLayerElementById(model, id, setStatus),
   });
   console.log('Verovio ' + renderer.getVersion());
@@ -978,14 +1009,20 @@ function composerOnStateChange(): void {
   }
 }
 
+/* Single source of truth for the HKL frame's playback bars: the Cursor object
+   self-publishes its overlay on every mode/bar change, so no cursor feature
+   needs to remember to sync the frame. */
+cursor.onPlaybackChange = () => maybeBroadcastComposerPlayback();
+
 initInput(model, {
   getHeldKeys: () => lastHeldKeys,
   onChange: composerOnContentChange,
   onStateChange: composerOnStateChange,
   setStatus: (msg, kind) => setStatus(msg, kind),
   clearStatusIfTransient: () => clearStatusIfTransient(),
-  isPlaybackActive: () => isPlaying,
+  isPlaybackActive: () => isPlaying || performanceActive,
   togglePlayback: () => { if (isPlaying) stopPlayback(); else startPlayback(); },
+  togglePerformance: () => { if (performanceActive) stopPerformance('Performance mode off.'); else startPerformance(); },
   stopPlaybackAtHead: () => stopPlaybackAtHead(),
   seekPlaybackByMeasure: (dir) => seekPlaybackByMeasure(dir),
   onZoomChange: (dir) => stepZoom(dir),
@@ -996,10 +1033,19 @@ initInput(model, {
 
 /* ── playback ────────────────────────────────────────────────────────────── */
 
+/* Transport glyphs drawn as 13×15 SVG shapes (not font characters) so they
+   center exactly and stay uniform across the transport buttons. currentColor
+   picks up the .playing accent. Both transports share one STOP square. */
+const svgGlyph = (inner: string): string =>
+  '<svg width="13" height="15" viewBox="0 0 13 15" aria-hidden="true">' + inner + '</svg>';
+const GLYPH_PLAY = svgGlyph('<polygon points="3,3 3,12 11.5,7.5" fill="currentColor"/>');
+const GLYPH_STOP = svgGlyph('<rect x="2.5" y="3" width="8" height="9" rx="1" fill="currentColor"/>');
+const GLYPH_RECORD = svgGlyph('<circle cx="6.5" cy="7.5" r="4.6" fill="currentColor"/>');
+
 function refreshPlayButton(): void {
   const btn = $('btnPlay');
   if (!btn) return;
-  btn.textContent = isPlaying ? '■' : '▶';
+  btn.innerHTML = isPlaying ? GLYPH_STOP : GLYPH_PLAY;
   btn.title = isPlaying ? 'Stop playback' : 'Play from cursor (Rewind to play from start)';
   btn.classList.toggle('playing', isPlaying);
 }
@@ -1138,6 +1184,14 @@ function stopPlaybackAtHead(): void {
 function finalizePlaybackEnd(statusMsg: string): void {
   if (!isPlaying) return;
   isPlaying = false;
+  restoreEditingTransport(statusMsg);
+}
+
+/** Shared transport teardown for both clock playback and performance mode:
+ *  drop the per-voice bars, restore the editing cursor to its pre-playback
+ *  snapshot, resync HKL's frame, and refresh UI. The caller has already cleared
+ *  its own active flag (isPlaying / performanceActive). */
+function restoreEditingTransport(statusMsg: string): void {
   cursor.setPlaybackMode(false);
   /* Restore the editing cursor's pre-playback voice + position. */
   model.setVoice(preplaybackVoice);
@@ -1145,22 +1199,95 @@ function finalizePlaybackEnd(statusMsg: string): void {
   clearHighlights($('score'));
   cursor.update(model, cursorOpts());
   /* Resync HKL's read-only frame cursor to the restored editing position.
-     finalizePlaybackEnd bypasses composerOnStateChange (the usual cursor-
-     broadcast path), so without this HKL is never told the cursor left the
-     playback position — its frame redraws a stale anchor (the last note it
-     played). Force past the diff-gate so it fires even when the restored
-     position equals the pre-playback one HKL last saw. */
+     This bypasses composerOnStateChange (the usual cursor-broadcast path), so
+     without this HKL is never told the cursor left the playback position — its
+     frame redraws a stale anchor (the last note it played). Force past the
+     diff-gate so it fires even when the restored position equals the
+     pre-playback one HKL last saw. */
   if (hklConnected) { lastComposerCursorSig = null; maybeBroadcastComposerCursor(); }
   refreshIndicators();
   refreshPlayButton();
+  refreshPerformButton();
   maybeScrollMeasureIntoView(visualCursorMeasure());
-  /* Playback end is not a model edit — info, not action. */
+  /* Transport end is not a model edit — info, not action. */
   setStatus(statusMsg, 'info');
+}
+
+function refreshPerformButton(): void {
+  const btn = $('btnPerform');
+  if (!btn) return;
+  btn.innerHTML = performanceActive ? GLYPH_STOP : GLYPH_RECORD;
+  btn.title = performanceActive
+    ? 'Stop Performance mode'
+    : 'Performance mode: play your part live, the score follows (single-instrument)';
+  btn.classList.toggle('playing', performanceActive);
+}
+
+/** Enter Performance mode. Builds the matcher from the whole score, parks each
+ *  voice's bar on its first expected element, and tells HKL to forward live
+ *  strikes. Audio is the live instrument — we send no play-score. */
+function startPerformance(): void {
+  if (isPlaying) stopPlayback();
+  if (!hklConnected) {
+    setStatus('Open HKL in another tab to enable Performance mode (it owns the input + audio).', 'error');
+    return;
+  }
+  if (model.instruments().length !== 1) {
+    setStatus('Performance mode is only available on single-instrument scores.', 'error');
+    return;
+  }
+  const matcher = new PerformanceMatcher(model);
+  if (!matcher.hasContent()) {
+    setStatus('Nothing to perform.', 'error');
+    return;
+  }
+  /* Snapshot the editing cursor so we can restore it on exit. */
+  preplaybackVoice = model.getCurrentVoice();
+  preplaybackCursor = model.getCursor();
+  lastPlaybackHeadId = null;
+  perfMatcher = matcher;
+  performanceActive = true;
+  cursor.setPlaybackMode(true);
+  for (const a of matcher.initialPositions()) cursor.setPlaybackPosition(a.voice, a.meiId);
+  cursor.update(model, cursorOpts());
+  refreshPerformButton();
+  bridge.send({ type: 'start-performance' });
+  setStatus('Performance mode — play your part to advance.', 'state');
+}
+
+function stopPerformance(statusMsg: string): void {
+  if (!performanceActive) return;
+  performanceActive = false;
+  perfMatcher = null;
+  bridge.send({ type: 'stop-performance' });
+  restoreEditingTransport(statusMsg);
+}
+
+/** Handle one live strike in Performance mode. Feeds the matcher; each voice it
+ *  advances repositions that voice's playback bar (and scrolls into view). A
+ *  strike that matches no current-frontier voice is a no-op. Finishing the last
+ *  voice ends the mode. */
+function onPlayerNoteStruck(note: ResolvedNote): void {
+  if (!performanceActive || !perfMatcher) return;
+  for (const a of perfMatcher.onStrike(note)) {
+    cursor.setPlaybackPosition(a.voice, a.meiId);
+    if (a.meiId) {
+      if (a.voice === preplaybackVoice) lastPlaybackHeadId = a.meiId;
+      const mIdx = model.getMeasureIdxForId(a.meiId);
+      if (mIdx >= 0) maybeScrollMeasureIntoView(mIdx);
+    }
+  }
+  if (perfMatcher.isFinished()) stopPerformance('Performance finished.');
 }
 
 $('btnPlay')?.addEventListener('click', () => {
   if (isPlaying) stopPlayback();
   else startPlayback();
+});
+
+$('btnPerform')?.addEventListener('click', () => {
+  if (performanceActive) stopPerformance('Performance mode off.');
+  else startPerformance();
 });
 
 $('btnRewind')?.addEventListener('click', () => {
@@ -1388,6 +1515,7 @@ void bootRenderer();
    * state gates bridge broadcasts). Not for production use. */
   __testReset: () => {
     if (isPlaying) finalizePlaybackEnd('Test reset.');
+    if (performanceActive) stopPerformance('Test reset.');
     /* A fixture that stops/seeks playback leaves pendingStopAcks > 0 (the test
        mock never sends the matching HKL ack), which would otherwise swallow the
        next fixture's playback-finished. Clear it like the other playback state. */
@@ -1416,5 +1544,21 @@ void bootRenderer();
     cursor.setPlaybackMode(true);
     cursor.setPlaybackPosition(loc.voice, meiId);
     refreshPlayButton();
+  },
+  /* Test-only Performance-mode driver. Drives the REAL startPerformance +
+   * strike handler + stopPerformance synchronously (no BroadcastChannel
+   * round-trip, which is async and wouldn't settle inside a sync fixture
+   * setup). `start` force-connects like __simulatePlaybackAt so the
+   * single-instrument + connection gates pass. */
+  __performance: {
+    start: (): void => {
+      hklConnected = true;
+      setConn('connected');
+      startPerformance();
+    },
+    strike: (note: ResolvedNote): void => { onPlayerNoteStruck(note); },
+    isActive: (): boolean => performanceActive,
+    positions: (): Record<number, string> =>
+      Object.fromEntries(cursor.getPlaybackPositions()) as Record<number, string>,
   },
 };

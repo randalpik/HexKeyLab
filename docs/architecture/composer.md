@@ -125,6 +125,17 @@ Replaced the old point-hit-test (which no-op'd on whitespace clicks). Each click
 
 `startPlayback` (in `main.ts`): snapshot editing cursor → send `play-score` → `setPlaybackMode(true)`. On each `playback-position`: look up voice via `findElement(meiId)`, call `setPlaybackPosition` (editing cursor model state untouched — bars are pure overlay). On `playback-finished`/`stop-playback`: `finalizePlaybackEnd()` exits, restores the snapshot.
 
+### Performance mode — input-driven playback (`apps/composer/src/render/performance.ts`)
+
+The **inverse** of clock-driven playback: the player performs the part live on the Lumatone and the per-voice bars advance as the matching notes are struck — for recording polished scrolling-score videos to one's own performance. Single-instrument only (`model.instruments().length === 1`); entered via **Shift+Space** or the **◉ toolbar button** (`#btnPerform`), parallel to Space = clock playback. Composer sends **no** `play-score` — audio is the live instrument.
+
+- **Wire**: Composer sends `start-performance`/`stop-performance`; HKL forwards every live note-on as `player-note-struck { ResolvedNote }` (gated to perf mode, suppressed during a `play-score`; emitted from `apps/hkl/src/midi/handler.ts` via `broadcastPlayerNote`).
+- **Matcher** (`PerformanceMatcher`): built from `buildPlayback(model)` (reused for per-voice ordered attacks, sounding coords post-8va, tie-chain coalescing, rest-skipping) — filtered to `notes.length > 0`, grouped per voice, same-onset attacks merged into one step. Each step holds the expected notes as identity keys.
+- **Match identity** = exact frequency, expressed as `(note name, octave, color)` (`idKey = noteName(q,r) | keyOctave(q,r) | color`; name/octave via `@hkl/shared`, color from the written `<note>`'s `@color` for expected / `ResolvedNote.colorHex` for played — both are `darkColorHex(q,r)`, octave-invariant). Distinguishes enharmonic/comma variants in Equal/JI; in the duplicate-key modes **Pythagorean (`P`) / Semiditonal (`D`)** a `freqAt` fallback additionally accepts any same-pitch variant.
+- **Strict matching**: a voice advances only when its current step's full set has been struck since it became current; voices advance **independently** (melody runs ahead of a held bass); a struck note matching no current-frontier voice is silently **ignored** (no failure state). Each advance moves that voice's `setPlaybackPosition` bar (cleared on the voice's last step) and scrolls into view; all voices done → `finalizePlaybackEnd`-style restore.
+- **Known v1 limits**: harmonics (sounding ≠ written by a non-octave interval — color taken from the written note) and play-ahead of the current frontier aren't followed; mid-piece start isn't supported (whole score from the top).
+- → decisions.md "Performance mode is input-driven playback".
+
 ## Save / load / export (`apps/composer/src/save.ts`)
 
 - **`.hkc`** — canonical. MEI XML string incl. `data-q`/`data-r`. `saveHkc` serializes, `loadHkcFromFile` parses → new `ComposerModel`.

@@ -178,6 +178,12 @@ class CursorOverlay {
   private playbackBars: Map<Voice, SVGRectElement> = new Map();
   private playbackPositions: Map<Voice, string> = new Map();
 
+  /** Fired whenever the playback overlay (mode or any per-voice bar) changes.
+   *  main.ts wires this to broadcast the overlay to HKL's Composer-view frame,
+   *  so the bars stay identical across both views for EVERY cursor source
+   *  (clock playback, Performance mode, future) with no per-feature wiring. */
+  onPlaybackChange?: () => void;
+
   attach(svg: SVGSVGElement): void {
     this.svg = svg;
     this.barRect = null;
@@ -844,6 +850,11 @@ class CursorOverlay {
         bar.setAttribute('opacity', '0');
       }
     }
+    this.onPlaybackChange?.();
+  }
+
+  isPlaybackMode(): boolean {
+    return this.playbackMode;
   }
 
   /** Snapshot of every active voice's playback meiId. Used by the seek
@@ -860,10 +871,12 @@ class CursorOverlay {
       this.playbackPositions.delete(voice);
       const bar = this.playbackBars.get(voice);
       if (bar) bar.setAttribute('opacity', '0');
+      this.onPlaybackChange?.();
       return;
     }
     this.playbackPositions.set(voice, meiId);
     this.positionPlaybackBar(voice, meiId);
+    this.onPlaybackChange?.();
   }
 
   private positionPlaybackBar(voice: Voice, meiId: string): void {

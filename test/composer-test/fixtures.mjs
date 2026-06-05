@@ -932,6 +932,41 @@ const BRIDGE = {
   },
 };
 
+/* ── Performance mode (input-driven playback) ─────────────────────────── */
+
+const PERFORMANCE = {
+  /* Two voices: V1 = quarter A3 + quarter E4; V3 = half C4. The matcher's
+   * per-voice frontiers are asserted by FIXTURE_ASSERTIONS.perfTwoVoiceFrontier,
+   * which drives __performance (start + strikes) and checks independent advance,
+   * a no-op on a non-matching strike, per-voice bar clearing, and finish. */
+  perfTwoVoiceFrontier: {
+    setup: `
+      window.__bridgeMock.reset();
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', lightColorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 1, pname: 'e', accid: '', oct: 4, midi: 64, colorHex: '#888', lightColorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.setVoice(3);
+      m.setCursor(0, 3);
+      m.insertChordAtCursor({ notes: [{ q: -4, r: -2, pname: 'c', accid: '', oct: 4, midi: 60, colorHex: '#888', lightColorHex: '#888', velocity: 80 }], duration: '2', dots: 0 });
+    `,
+  },
+
+  /* One voice, one triad chord [A3, C4, E4]: striking a single member must NOT
+   * advance (wait for ALL notes); striking all three advances/finishes.
+   * Asserted by FIXTURE_ASSERTIONS.perfChordWaitsForAll. */
+  perfChordWaitsForAll: {
+    setup: `
+      window.__bridgeMock.reset();
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [
+        { q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', lightColorHex: '#888', velocity: 80 },
+        { q: -4, r: -2, pname: 'c', accid: '', oct: 4, midi: 60, colorHex: '#888', lightColorHex: '#888', velocity: 80 },
+        { q: 0, r: 1, pname: 'e', accid: '', oct: 4, midi: 64, colorHex: '#888', lightColorHex: '#888', velocity: 80 },
+      ], duration: '4', dots: 0 });
+    `,
+  },
+};
+
 /* ── Export fixtures ──────────────────────────────────────────────────── */
 
 const EXPORT = {
@@ -4244,6 +4279,7 @@ export const FIXTURES = {
   ...mapTier(ROUNDTRIP_STRESS, 'full'),
   ...mapKbdTier(KBD, 'full'),
   ...mapKbdTier(BRIDGE, 'full'),
+  ...mapKbdTier(PERFORMANCE, 'full'),
   ...mapKbdTier(SCROLL, 'full'),
   ...mapKbdTier(VISUAL, 'full'),
   ...mapKbdTier(HEJI, 'full'),
@@ -4265,6 +4301,89 @@ export const FIXTURES = {
  *  invariant, no console errors) are applied to EVERY fixture by the
  *  runner — don't repeat them here. */
 export const FIXTURE_ASSERTIONS = {
+  /* Performance mode: per-voice frontier matching. Drives the real
+   * startPerformance + strike handler synchronously via __performance (the
+   * bridge transport is async and wouldn't settle in a sync fixture). Verifies
+   * independent per-voice advance, no-op on a non-matching strike, per-voice
+   * bar clearing on completion, and overall finish + start/stop-performance
+   * bridge sends. */
+  perfTwoVoiceFrontier: [
+    { name: 'frontier advances per voice; non-match is a no-op; finishes cleanly',
+      expr: `(() => {
+        const M = window.__hkl_composer;
+        const m = M.model;
+        const evs = M.buildPlayback(m).filter(e => e.notes.length && e.meiId);
+        const v1 = evs.filter(e => e.voice === 1), v3 = evs.filter(e => e.voice === 3);
+        if (v1.length !== 2 || v3.length !== 1)
+          return { ok: false, detail: 'events v1=' + v1.length + ' v3=' + v3.length + ' (expected 2,1)' };
+        const a3 = v1[0].meiId, e4 = v1[1].meiId, c4 = v3[0].meiId;
+        /* Use each note's stored @color so the strike identity matches exactly,
+           regardless of any hex normalization on insert. pname/accid/oct in the
+           strike object are ignored — the matcher recomputes name/oct from q,r. */
+        const colorOf = (meiId) => {
+          const loc = m.findElement(meiId);
+          const el = m.flatChildren(loc.voice)[loc.index];
+          const n = el.localName === 'chord' ? el.querySelector('note') : el;
+          return n.getAttribute('color');
+        };
+        const strike = (q, r) => M.__performance.strike(
+          { q, r, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: colorOf(a3), lightColorHex: '#888', velocity: 80 });
+        const strikeAt = (q, r, color) => M.__performance.strike(
+          { q, r, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: color, lightColorHex: '#888', velocity: 80 });
+        M.__performance.start();
+        if (!M.__performance.isActive()) return { ok: false, detail: 'not active after start' };
+        let p = M.__performance.positions();
+        if (p[1] !== a3 || p[3] !== c4) return { ok: false, detail: 'initial bars ' + JSON.stringify(p) };
+        /* Non-matching strike (B3 = q0,r2): nothing advances. */
+        strikeAt(0, 2, colorOf(a3));
+        p = M.__performance.positions();
+        if (p[1] !== a3 || p[3] !== c4) return { ok: false, detail: 'non-match advanced ' + JSON.stringify(p) };
+        /* Strike A3 → V1 advances to E4; V3 (expects C4) unaffected. */
+        strikeAt(0, 0, colorOf(a3));
+        p = M.__performance.positions();
+        if (p[1] !== e4) return { ok: false, detail: 'V1 did not advance to E4: ' + JSON.stringify(p) };
+        if (p[3] !== c4) return { ok: false, detail: 'V3 moved on an A3 strike: ' + JSON.stringify(p) };
+        /* Strike C4 → V3 done (its bar clears); V1 still pending on E4. */
+        strikeAt(-4, -2, colorOf(c4));
+        p = M.__performance.positions();
+        if (p[3] != null) return { ok: false, detail: 'V3 bar not cleared on finish: ' + JSON.stringify(p) };
+        if (!M.__performance.isActive()) return { ok: false, detail: 'ended before V1 finished' };
+        /* Strike E4 → V1 done → whole performance finishes. */
+        strikeAt(0, 1, colorOf(e4));
+        if (M.__performance.isActive()) return { ok: false, detail: 'still active after all voices done' };
+        return { ok: true, detail: 'advance + no-op + per-voice finish OK' };
+      })()` },
+  ],
+  perfChordWaitsForAll: [
+    { name: 'a chord advances only when every member is struck',
+      expr: `(() => {
+        const M = window.__hkl_composer;
+        const m = M.model;
+        const evs = M.buildPlayback(m).filter(e => e.notes.length && e.meiId);
+        const v1 = evs.filter(e => e.voice === 1);
+        if (v1.length !== 1) return { ok: false, detail: 'expected 1 chord event, got ' + v1.length };
+        const chordId = v1[0].meiId;
+        const loc = m.findElement(chordId);
+        const el = m.flatChildren(loc.voice)[loc.index];
+        const color = el.querySelector('note').getAttribute('color');
+        const strike = (q, r) => M.__performance.strike(
+          { q, r, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: color, lightColorHex: '#888', velocity: 80 });
+        M.__performance.start();
+        let p = M.__performance.positions();
+        if (p[1] !== chordId) return { ok: false, detail: 'initial bar ' + JSON.stringify(p) };
+        /* One member (A3): chord incomplete → no advance, still active. */
+        strike(0, 0);
+        if (!M.__performance.isActive()) return { ok: false, detail: 'finished on a single member' };
+        if (M.__performance.positions()[1] !== chordId) return { ok: false, detail: 'advanced on a single member' };
+        /* Second member (C4): still incomplete. */
+        strike(-4, -2);
+        if (!M.__performance.isActive()) return { ok: false, detail: 'finished on two of three members' };
+        /* Third member (E4): chord complete → finish. */
+        strike(0, 1);
+        if (M.__performance.isActive()) return { ok: false, detail: 'did not finish after all three members' };
+        return { ok: true, detail: 'chord waits for all members' };
+      })()` },
+  ],
   /* Every system's staff lines must land on the device-pixel grid (crisp) in a
    * multi-system page, despite content-dependent system heights. At the 100%
    * preset (2px lines, even width) the target phase is integer (0). */

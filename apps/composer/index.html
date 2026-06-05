@@ -45,7 +45,10 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
 #composerToolbar .btn.active { border-color: #4CFFBA; color: #4CFFBA }
 /* Icon-only transport buttons: larger, optically-matched glyphs (⏮ renders
    smaller than ▶ at the toolbar's 12px), padded to a consistent square. */
-#composerToolbar .btn.transport { font-size: 15px; line-height: 1; padding: 2px 9px }
+/* Transport buttons (rewind / play-stop / record-stop) draw 13×15 SVG shapes
+   instead of font glyphs, flex-centered so they sit dead-center vertically and
+   are uniform in size. */
+#composerToolbar .btn.transport { font-size: 15px; line-height: 1; padding: 2px 9px; display: inline-flex; align-items: center; justify-content: center }
 #composerToolbar .spacer { flex: 1 }
 
 /* Export dropdown: HTML5 popover anchored to its trigger button via a
@@ -338,8 +341,9 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
     <option value="transparent">Transparent</option>
   </select>
   <div class="group">
-    <button class="btn transport" id="btnRewind" title="Move cursor to start of score">⏮</button>
-    <button class="btn transport" id="btnPlay" title="Play from cursor (Rewind to play from start)">▶</button>
+    <button class="btn transport" id="btnRewind" title="Move cursor to start of score"><svg width="13" height="15" viewBox="0 0 13 15" aria-hidden="true"><rect x="2" y="3" width="1.8" height="9" fill="currentColor"/><polygon points="11.5,3 11.5,12 5,7.5" fill="currentColor"/></svg></button>
+    <button class="btn transport" id="btnPlay" title="Play from cursor (Rewind to play from start)"><svg width="13" height="15" viewBox="0 0 13 15" aria-hidden="true"><polygon points="3,3 3,12 11.5,7.5" fill="currentColor"/></svg></button>
+    <button class="btn transport" id="btnPerform" title="Performance mode: play your part live, the score follows (single-instrument)"><svg width="13" height="15" viewBox="0 0 13 15" aria-hidden="true"><circle cx="6.5" cy="7.5" r="4.6" fill="currentColor"/></svg></button>
   </div>
   <div class="group">
     <button class="btn" id="btnSetup" title="Document setup (title, composer, key, meter, tempo)">Setup</button>

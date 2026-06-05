@@ -119,6 +119,15 @@ export type HklEvent =
   | { type: 'hkl-bye' }
   /** Currently-held keys, fully resolved. Fires on every change. */
   | { type: 'held-keys'; keys: ReadonlyArray<ResolvedNote> }
+  /** A single live note strike (note-on), fully resolved. Emitted ONLY while
+   *  Performance mode is active (gated by start-performance / stop-performance)
+   *  — one per physical note-on, including re-articulations of an already-held
+   *  key. Drives Composer's input-driven playback cursor: Composer matches the
+   *  note's identity (pname/accid/oct/colorHex) against each voice's current
+   *  expected chord and advances voices that are satisfied. Distinct from
+   *  held-keys (which is the set of currently-down keys, signature-diffed and
+   *  blind to re-strikes). */
+  | { type: 'player-note-struck'; note: ResolvedNote }
   /** Playback advance ack. meiId is the MEI element id of the chord now
    *  sounding; null when finished (clears all bars). When meiId is null AND
    *  `voice` is set, it clears ONLY that voice's bar — emitted at a voice's
@@ -165,6 +174,13 @@ export type ComposerEvent =
   | { type: 'play-score'; events: ReadonlyArray<PlaybackEvent>; pedalEvents?: ReadonlyArray<PedalEvent> }
   /** Stop any in-progress playback. */
   | { type: 'stop-playback' }
+  /** Enter Performance mode: tell HKL to forward each live note-on to Composer
+   *  as a `player-note-struck` event. Audio is the live instrument (the player
+   *  plays the Lumatone) — Composer sends NO play-score in this mode. HKL keeps
+   *  the strike stream quiet otherwise (no always-on per-note chatter). */
+  | { type: 'start-performance' }
+  /** Leave Performance mode: HKL stops forwarding strikes. */
+  | { type: 'stop-performance' }
   /** Set the SELECTION tier of HKL's reference-note state to (q, r). Composer
    *  derives this from its cursor position: most-recent-prior note or chord
    *  bass. Composer broadcasts ONLY when such a prior note exists; if the
@@ -226,6 +242,15 @@ export type ComposerEvent =
    *  voice (highlighted + scroll target); `meiId`/`measureIdx` are its measure
    *  (scroll target). Throttled / diff-gated. The playback head needs no
    *  message — HKL drives playback and already knows the sounding meiId. */
-  | { type: 'composer-cursor'; meiId: string | null; measureIdx: number; voice: number; anchor: VoiceCursorAnchor };
+  | { type: 'composer-cursor'; meiId: string | null; measureIdx: number; voice: number; anchor: VoiceCursorAnchor }
+  /** The complete per-voice PLAYBACK overlay, so HKL's Composer-view frame draws
+   *  the exact same bars Composer does — in EVERY mode (clock playback,
+   *  Performance mode, and any future cursor source), with no per-feature
+   *  wiring. Composer's `Cursor` is the single owner: it self-publishes this on
+   *  every playback-mode / per-voice-bar change. `on` = playback overlay active
+   *  (editing cursor hidden, bars shown); `bars` = one entry per sounding voice
+   *  (its current meiId). HKL renders it via the shared `computePlaybackBarRect`
+   *  and never derives bars itself. */
+  | { type: 'composer-playback'; on: boolean; bars: ReadonlyArray<{ voice: number; meiId: string }> };
 
 export type BridgeMessage = HklEvent | ComposerEvent;

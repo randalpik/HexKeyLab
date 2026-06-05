@@ -32,7 +32,8 @@ export const MOCK_BRIDGE_LIB = `
          m.type === 'set-song-key' || m.type === 'layout-req-changed' ||
          m.type === 'apply-layout' || m.type === 'composer-active-instrument' ||
          m.type === 'composer-instruments' || m.type === 'composer-score' ||
-         m.type === 'composer-cursor')) {
+         m.type === 'composer-cursor' ||
+         m.type === 'start-performance' || m.type === 'stop-performance')) {
       captured.push(m);
     }
   });
@@ -51,6 +52,9 @@ export const MOCK_BRIDGE_LIB = `
     },
     sendHklHello() {
       ch.postMessage({ type: 'hkl-hello', version: 1 });
+    },
+    sendPlayerNoteStruck(note) {
+      ch.postMessage({ type: 'player-note-struck', note });
     },
     captured() { return captured.slice(); },
     drain() { const s = captured.slice(); captured.length = 0; return s; },

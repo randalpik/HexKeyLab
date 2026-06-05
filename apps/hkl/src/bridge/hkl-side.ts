@@ -41,7 +41,7 @@ import { SampleEngine } from '../audio/samples.js';
 import { syncPianoOut, restrikePianoOut, sendSustainPedal } from '../midi/piano-out.js';
 import { pedal } from '../state/pedal.js';
 import { draw, requestDraw, activeFootprintSet, invalidatePianoOutline, validateRefNoteCandidate } from '../render/draw.js';
-import { setComposerScore, setComposerCursor, setComposerPlaybackMode, setComposerPlaybackBar, clearComposerFrame } from '../render/composer-frame.js';
+import { setComposerScore, setComposerCursor, setComposerPlaybackBars, clearComposerFrame } from '../render/composer-frame.js';
 import { syncViewToOutline } from '../ui/controls.js';
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { setSelectionFromComposer, setSongKey, onComposerBye, referenceNote } from '../state/reference.js';
@@ -112,6 +112,13 @@ let playbackActive = false;
    real held keys survive. */
 const playbackOwnedKeys: Set<KeyId> = new Set();
 
+/* Performance mode (Composer-driven): when active, every live note-on is
+   forwarded to Composer as a `player-note-struck` event so Composer's
+   input-driven playback cursor can advance. Gated so the strike stream stays
+   silent otherwise. Suppressed during playbackActive (a play-score in flight
+   would otherwise echo its own audio as player input). */
+let performanceMode = false;
+
 /** Broadcast the current held-keys set if its signature changed. Safe to
  *  call from any state-mutation site; no-op when nothing changed or when
  *  playback is suppressing echoes. */
@@ -138,6 +145,15 @@ export function broadcastHeldKeys(): void {
     lastHeldSerialized = sig;
     bridge.send({ type: 'held-keys', keys });
   }
+}
+
+/** Forward a single live note strike to Composer for Performance mode. Called
+ *  from the MIDI note-on path. No-op unless Performance mode is active and no
+ *  play-score is in flight. Reuses `resolveKey` so the strike's identity
+ *  (pname/accid/oct/colorHex) is byte-identical to what held-keys resolves. */
+export function broadcastPlayerNote(q: number, r: number): void {
+  if (!performanceMode || playbackActive) return;
+  bridge.send({ type: 'player-note-struck', note: resolveKey(q, r) });
 }
 
 /** Broadcast tuning mode if it changed since the last send. A tuning change
@@ -363,7 +379,6 @@ function abortActive(): void {
   releasePlaybackPedal(active);
   active = null;
   playbackActive = false;
-  setComposerPlaybackMode(false); /* frame: drop playback bars, restore editing cursor */
   syncPianoOut(); /* stop any external-synth voices the aborted playback left sounding */
   draw();
   /* Surface any drift in the user's real held-keys that accumulated while
@@ -559,11 +574,6 @@ function scheduleOnVisualAt(
       meiId: ev.meiId ?? null,
       timeMs: ev.atMs,
     });
-    /* Move this voice's playback bar in the read-only Composer-view frame. HKL
-       drives playback, so it has the voice + element id per event — Composer
-       shows per-voice playback bars, so the frame must too. Resolves only for
-       the cursor instrument's notes (the frame's part); others aren't found. */
-    if (ev.meiId) setComposerPlaybackBar(ev.voice ?? 1, ev.meiId);
     } catch (err) {
       logPlaybackError('visual-on', { meiId: ev.meiId, canGlide, ...playbackStateSnapshot(pb) }, err);
     }
@@ -642,7 +652,6 @@ function scheduleVoiceClearAt(voice: number, timeMs: number, delayMs: number, pb
     if (pb.cancelled) return;
     try {
       bridge.send({ type: 'playback-position', meiId: null, voice, timeMs });
-      setComposerPlaybackBar(voice, null);
     } catch (err) {
       logPlaybackError('voice-clear', { voice, ...playbackStateSnapshot(pb) }, err);
     }
@@ -803,7 +812,6 @@ async function playScore(events: ReadonlyArray<PlaybackEvent>, pedalEvents: Read
   const pb = newPlayback();
   active = pb;
   playbackActive = true;
-  setComposerPlaybackMode(true); /* frame: switch to per-voice playback bars */
 
   /* Sorted pedal timeline — used both to shape the legato plan (glide degrades
      to overlap under the pedal) and to drive the pedal transitions below. */
@@ -1007,7 +1015,6 @@ async function playScore(events: ReadonlyArray<PlaybackEvent>, pedalEvents: Read
              otherwise Composer's transport hangs waiting for playback-finished. */
           bridge.send({ type: 'playback-finished' });
           playbackActive = false;
-          setComposerPlaybackMode(false); /* frame: drop playback bars, restore editing cursor */
           if (active === pb) active = null;
           /* Resync held-keys with the user's real selection (any input that
              arrived during playback was broadcast-suppressed). */
@@ -1252,6 +1259,15 @@ bridge.on((msg: ComposerEvent) => {
       abortActive();
       bridge.send({ type: 'playback-finished' });
       break;
+    case 'start-performance':
+      /* Composer-driven Performance mode: forward live note-ons. Audio is the
+         live instrument (the player plays the Lumatone) — no play-score arrives
+         in this mode, so the normal input path handles sound + held-keys. */
+      performanceMode = true;
+      break;
+    case 'stop-performance':
+      performanceMode = false;
+      break;
     case 'layout-req-changed': {
       const mode = isTuningMode(msg.tuningMode) ? msg.tuningMode : '5';
       composerRequiredLayout = { tuningMode: mode, refQ: msg.refQ, refR: msg.refR };
@@ -1293,6 +1309,11 @@ bridge.on((msg: ComposerEvent) => {
     case 'composer-cursor':
       /* Editing-cursor anchor → draw a pixel-identical read-only bar + scroll. */
       setComposerCursor(msg.voice, msg.anchor);
+      break;
+    case 'composer-playback':
+      /* Composer-owned playback overlay (clock playback, Performance mode, any
+         future cursor source) → mirror its mode + per-voice bars verbatim. */
+      setComposerPlaybackBars(msg.on, msg.bars);
       break;
     case 'set-reference-note':
       /* Sets the selection tier from Composer. Last-writer-wins between

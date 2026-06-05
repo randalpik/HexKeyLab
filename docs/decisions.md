@@ -3348,3 +3348,23 @@ the voice's last element, note OR rest), schedules a clear at that written end. 
 the `playback-position` message with an optional `voice`: meiId=null + voice clears ONLY that
 voice's bar (both the HKL frame via `setComposerPlaybackBar(voice, null)` and Composer via the
 handler), distinct from the meiId=null-no-voice finish signal that drops all bars.
+
+**Performance mode is input-driven playback (2026-06-05).**
+A second Composer transport (Shift+Space / `#btnPerform`, single-instrument only) that inverts
+clock playback: the player performs live on the Lumatone and the per-voice bars advance as the
+matching notes are struck — for recording scrolling-score videos to one's own performance. HKL
+forwards each live note-on as `player-note-struck { ResolvedNote }` (new HklEvent, gated by
+`start-performance`/`stop-performance` ComposerEvents, suppressed during a `play-score`); Composer
+sends NO `play-score` (audio is the live instrument). The matcher (`render/performance.ts`) reuses
+`buildPlayback` for per-voice ordered attacks (sounding coords, tie coalescing, rest-skipping) and
+holds a strict per-voice frontier: a voice advances only when its current chord's full expected set
+is struck; voices advance independently; a strike matching no current frontier is ignored (the only
+leniency — Max's framing: polished recordings, a mistake means restart). Match identity = exact
+frequency expressed as `(note name, octave, color)` — `noteName(q,r) | keyOctave(q,r) | color`,
+where color is `darkColorHex(q,r)` (octave-invariant: `profileForHue(hue)`), read off `@color`
+(expected) / `ResolvedNote.colorHex` (played). This distinguishes enharmonic/comma variants in
+Equal/JI; in the duplicate-key modes Pythagorean/Semiditonal a `freqAt` fallback additionally
+accepts any same-pitch variant. Color resolution stays on the score side because `darkColorHex`
+lives in apps/hkl (Composer can't import it), but `@color` is already stamped on every `<note>` at
+insert — so no cross-app color recompute is needed. v1 doesn't follow harmonics, frontier
+play-ahead, or mid-piece starts.

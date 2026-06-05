@@ -32,6 +32,7 @@ import { velocityCal } from '../audio/velocityCal.js';
 import { fixedMidiToKey, fixedMidiToKeyAt } from './engine.js';
 import { restrikePianoOut } from './piano-out.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
+import { broadcastPlayerNote } from '../bridge/hkl-side.js';
 import { view } from '../state/view.js';
 import { keyFreq } from '../tuning/frequency.js';
 import { SampleEngine } from '../audio/samples.js';
@@ -227,6 +228,13 @@ export function handleMidiMessage(e: MIDIMessageEvent): void {
     /* Per-key gain auto-capture samples RAW d2 — per-key gain corrects the raw
        firmware velocity before the curve. Out of capture mode, a boolean check. */
     velocityCal.recordSample(key, d2);
+    /* Forward the strike to Composer for Performance mode. No-op unless that
+       mode is active; fires on every note-on (incl. re-articulations) in the
+       MIDI handler's synchronous call stack (low-latency, tab-throttle-proof). */
+    {
+      const ci = key.indexOf(',');
+      broadcastPlayerNote(+key.slice(0, ci), +key.slice(ci + 1));
+    }
     restrikePianoOut(key); /* re-attack on the external synth if already sounding */
   } else if (status === 0x80 || (status === 0x90 && d2 === 0)) {
     heldLumatonePhys.delete(physId);
