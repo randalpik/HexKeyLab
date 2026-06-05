@@ -14,7 +14,9 @@
 // Playback mode → one bar per sounding voice at its note (HKL's scheduler knows
 // the voice + element id of every event).
 //
-// Renders dark; the shared @hkl/notation theming recolors staff/ink/noteheads.
+// Follows the "Dark staff notation" toggle (body.staff-dark, same as the staff
+// inset); the shared @hkl/notation theming recolors staff/ink/noteheads for the
+// chosen theme.
 
 import { renderMeiToContainer } from '@hkl/notation/verovio.js';
 import type { VoiceCursorAnchor } from '@hkl/bridge/protocol.js';
@@ -100,7 +102,8 @@ async function doRender(): Promise<void> {
   if (!el || !active()) return;
   if (!latestMei) { el.innerHTML = HINT; return; }
   const seq = ++renderSeq;
-  await renderMeiToContainer(latestMei, el, { geometry: 'scroll', theme: 'dark' });
+  const dark = document.body.classList.contains('staff-dark');
+  await renderMeiToContainer(latestMei, el, { geometry: 'scroll', theme: dark ? 'dark' : 'light' });
   if (seq !== renderSeq) return;
   drawCursors();
   scrollToActive();

@@ -104,13 +104,15 @@ canvas{display:block;background:#111;margin:0 auto;flex:0 0 auto}
    (the renderer tags the inset data-notation-theme="dark"); this just paints
    the surrounding box to match (--notation-bg = #161616). */
 body.staff-dark #staffInset{background:#161616;border-color:#333}
+body.staff-dark #composerFrame{background:#161616;border-color:#333}
 body.staff-dark .staff-inset-hint{color:#bbb}
 body.staff-on #staffInset{display:flex}
 /* Composer view: a read-only, horizontally-scrollable frame mirroring the
    cursor instrument's part from HKL Composer (scroll-view render). When active
    it replaces the analysis line + staff inset, taking the full info-row width.
-   Dark surface to match the HKL chrome (the rendered staff/ink/noteheads are
-   themed by the shared notation-theme CSS). */
+   Light surface by default; body.staff-dark flips it to #161616 to match the
+   staff inset (the rendered staff/ink/noteheads are themed by the shared
+   notation-theme CSS, keyed off the same toggle). */
 #composerFrame{
   display:none;flex:1 1 0;min-height:0;overflow-x:auto;overflow-y:hidden;
   /* Top-align (NOT center): centering lands the SVG on a fractional device-px
@@ -118,7 +120,7 @@ body.staff-on #staffInset{display:flex}
      Composer's scroll view (system at the top) and keeps the SVG at an integer
      offset so lines stay crisp / pixel-identical. */
   align-items:flex-start;padding:4px 6px;position:relative;
-  background:#161616;border:1px solid #333;border-radius:6px;
+  background:#fff;border:1px solid #2a2a2a;border-radius:6px;
 }
 #composerFrame svg{display:block;flex:0 0 auto}
 /* Mirror Composer's #score line rendering so the frame is pixel-identical to

@@ -358,6 +358,7 @@ $<HTMLInputElement>('cbStaffDark').addEventListener('change', (e) => {
   document.body.classList.toggle('staff-dark', checked);
   savePrefs({ staffNotationDark: checked });
   renderStaffInset();
+  renderComposerFrame();
 });
 $<HTMLInputElement>('cbComposerView').addEventListener('change', (e) => {
   const checked = (e.target as HTMLInputElement).checked;
