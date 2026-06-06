@@ -112,6 +112,7 @@ A row of checkboxes at the top of the toolbar controls what's drawn:
 - **Band seams** *(on by default)* — draws the wedge-shaped boundaries between 5-limit bands (or 7-limit A/B regions). Off in 12-TET (no seams there).
 - **Extend pattern** *(on by default)* — fills the canvas with the lattice pattern beyond the physical Lumatone footprint. With it off, only the actual Lumatone-shaped region is colored.
 - **Show coordinates** — adds `(q=…, r=…, p=…)` to each note in the info panel for studying the lattice math.
+- **Show factors** — renders every interval's JI ratio in prime-factored form (`5:4` → `5:2²`, `7:6` → `7:2·3`) instead of plain integers, so you can read its prime content at a glance.
 - **Short intervals** — abbreviates interval names in the info panel: "perfect fifth" → "P5", "minor third" → "m3", "syntonic comma" → "SC", and so on. Useful for fitting more onto the screen.
 
 ### Outline selector

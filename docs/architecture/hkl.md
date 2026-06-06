@@ -112,7 +112,7 @@ Scrollable panel below the canvas (max-height to viewport).
 - **Row 1 — Note cards**: each selected key as a colored tag (name in keyboard hue, octave, Hz), sorted low→high. With "Show coordinates" also shows `(q= r= p=)`.
 - **Row 2 — Chord analysis** (3–4 unique pitch classes): root (colored), quality, inversion, root-position JI ratio. Template matching uses semitone intervals + letter distances over **25 templates**: triads (major, minor, dim, aug, sus4, sus2, Pythagorean); 7ths (major, dominant, minor, minor-major, dim, half-dim, aug, aug-major); added-2nd; aug-6ths (Italian, French, German); incomplete 7ths (dom, minor, major, minor-major, dim). Labeled "septimal" when root-position ratio has a factor of 7 AND max term ≤ 27. Equal mode hides ratio and strips "septimal".
 - **Rows 3+ — Intervals**: all pairwise intervals grouped by generic size; colored note names + octaves, cents, named interval.
-  - 5/7-limit: JI ratio shown; color by complement-reduced Tenney Height — green (<8), yellow (8–12.5), red (≥12.5).
+  - 5/7-limit: JI ratio shown; color by complement-reduced Tenney Height — green (<8), yellow (8–12.5), red (≥12.5). With **"Show factors"** the ratio renders in prime-power form for every interval (`5:4` → `5:2²`); otherwise plain `num:den`, with the factored form as a fallback above `2³²` where the integers would round off. Cents + tier are computed from the exact exponent vector, not `num/den`.
   - Equal: no ratio; names via `equalIntervalName()` (from actual note names + octaves, not lattice displacement). `semis % 12 === 0` → green (rational: unisons, octaves, d2/A7); else red.
 
 ### Staff-notation inset + Composer view (bottom `.info-row`)
@@ -155,7 +155,7 @@ Every 5/7-limit interval is named `<base interval> ± commas`, where the **base 
 **Algorithm** (`apps/hkl/src/tuning/intervals.ts`):
 1. `classifyDiatonic(q1,r1,q2,r2)` → `{ord, qual, extraOct}` from `noteName`+`keyOctave` letter distance + 12-TET semitones (same logic as `equalIntervalName`).
 2. `pythagRefExp(ord, qual)` → closed-form Pythagorean prime-exponent vector (no table; from natural fifths-position + apotome stacks).
-3. `jiRatioWithState` → actual exponent vector (mode shifts + V-mode schisma stacking).
+3. `jiRatioWithState` → actual exponent vector, as the difference of the two endpoints' `coordExps` (the canonical per-cell exp vector in `@hkl/shared/freq.js`, which also backs `freqAt`); mode shifts + V-mode schisma stacking live there, so frequency and ratio can't drift.
 4. Difference vector → `solveCommas` → `(s, z, h)` syntonic/septimal/schisma counts.
 5. `findBaseName(ord, qual, s, z)` picks the **nearest** override: enumerates all `(ord,qual)` overrides + Pythagorean default at `(0,0)`, scores by `|s−s_o| + |z−z_o|`, emits residual as commas. Ties prefer 5-limit (`z_o=0`) over septimal, and any override over the Pythagorean default. (So `(3,M,s=−2)` → "major 3rd − syntonic comma", not "Pythagorean major 3rd − 2× SC".)
 6. Schisma `h` always renders as a suffix; never absorbed into the base.

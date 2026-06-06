@@ -87,6 +87,7 @@ function applyPrefsToDom(p: PrefsV1): void {
   $<HTMLInputElement>('cbValidRefBounds').checked = p.validRefBounds;
   $<HTMLInputElement>('cbSyncToComposer').checked = p.syncToComposer;
   $<HTMLInputElement>('cbCoords').checked = p.showCoords;
+  $<HTMLInputElement>('cbFactors').checked = p.showFactors;
   $<HTMLInputElement>('cbShortIvl').checked = p.shortIvl;
   $<HTMLInputElement>('cbHeji').checked = p.hejiEnabled;
   $<HTMLInputElement>('cbStaff').checked = p.showStaffNotation;
@@ -348,6 +349,10 @@ $<HTMLInputElement>('cbCoords').addEventListener('change', (e) => {
   updateInfo();
   savePrefs({ showCoords: (e.target as HTMLInputElement).checked });
 });
+$<HTMLInputElement>('cbFactors').addEventListener('change', (e) => {
+  updateInfo();
+  savePrefs({ showFactors: (e.target as HTMLInputElement).checked });
+});
 $<HTMLInputElement>('cbHeji').addEventListener('change', (e) => {
   const checked = (e.target as HTMLInputElement).checked;
   tuning.hejiEnabled = checked;
@@ -461,7 +466,7 @@ function resetToDefaults(): void {
   if (lumatone.autoSyncEnabled !== p.autoSync) toggleAutoSync();
 
   /* View-toggle checkboxes have no handler we fired above — drive their
-     side effects directly so cbNotes/cbBands/cbExtend/cbCoords/cbShortIvl
+     side effects directly so cbNotes/cbBands/cbExtend/cbCoords/cbFactors/cbShortIvl
      visual changes take effect immediately. */
   view.hexDirty = true;
   view.textDirty = true;

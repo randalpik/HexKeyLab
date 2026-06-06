@@ -117,9 +117,14 @@ Equal:    freq(q,r) = 220 · 2^((4q + 7r)/12)
 ```
 
 Modes `'P'/'D'/'7'/'V'` use the 5-limit base times the RegionInfo multiplications above (`'V'` adds
-`SCHISMA^band`). **JI ratio** between two keys factors as `2^e2·3^e3·5^e5` with `e5=Δp`, `e3=Δr`,
-`e2=Δb − 2Δp − Δr`; 7-limit extends with a prime-7 exponent, and each region adjustment shifts the
-exponent vector. Implemented in `@hkl/shared/freq.js` + `apps/hkl/src/tuning/`.
+`SCHISMA^band`). The canonical quantity is `coordExps(q, r, mode)` (`@hkl/shared/freq.js`): a cell's
+prime-exponent vector `[e2,e3,e5,e7]` relative to 220 Hz, with the per-mode region/schisma shifts
+baked in. `freqAt` multiplies it into Hz once (`220·2^e2·3^e3·5^e5·7^e7`); the **JI ratio** between
+two keys is just the difference of their `coordExps` vectors (base layout: `e5=Δp`, `e3=Δr`,
+`e2=Δb − 2Δp − Δr`, plus the shift deltas). One source of truth means frequency and interval
+analysis can't diverge. Tenney Height derives from the exponent vector too — the only place exps are
+multiplied into integers/Hz for *display* is the analysis box. Implemented in `@hkl/shared/freq.js` +
+`apps/hkl/src/tuning/`.
 
 ### Ref-driven layout shift
 

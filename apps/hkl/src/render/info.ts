@@ -6,7 +6,7 @@ import { selection } from '../state/selection.js';
 import { keyFreq } from '../tuning/frequency.js';
 import { posInBand } from '../layout/coords.js';
 import { fmtNote, noteName, keyOctave, parseNote } from '@hkl/shared/notes.js';
-import { jiRatio, intervalTier } from '../tuning/ratios.js';
+import { jiRatio, intervalTierFromExps, fmtFactors } from '../tuning/ratios.js';
 import {
   intervalNameFromCoords, shortenInterval, equalIntervalName, letterIdx,
 } from '../tuning/intervals.js';
@@ -109,6 +109,7 @@ export function updateInfo(): void {
     ivls.sort(function (a, b) { return a.intNum !== b.intNum ? a.intNum - b.intNum : a.i - b.i; });
     let prevNum = -1;
     const shortIvl = (document.getElementById('cbShortIvl') as HTMLInputElement).checked;
+    const showFactors = (document.getElementById('cbFactors') as HTMLInputElement).checked;
     for (let idx = 0; idx < ivls.length; idx++) {
       const iv = ivls[idx];
       if (iv.intNum !== prevNum) { html += '<div class="info-break"></div>'; prevNum = iv.intNum; }
@@ -126,26 +127,20 @@ export function updateInfo(): void {
         html += ' <span class="interval-name">' + iname + '</span>';
       } else {
         const jiIv = iv as IntervalCellJI;
-        const cents = 1200 * Math.log2(jiIv.rat.num / jiIv.rat.den);
+        const e = jiIv.rat.e;
+        /* cents + tier from the exact exponent vector (num/den round off for
+           large Pythagorean stacks; exps never do) */
+        const cents = 1200 * (e[0] + e[1] * Math.log2(3) + e[2] * Math.log2(5) + e[3] * Math.log2(7));
         const cStr = cents.toFixed(1) + '¢';
         const iname = shortenInterval(intervalNameFromCoords(keys[iv.i].q, keys[iv.i].r, keys[iv.j].q, keys[iv.j].r, tuning), shortIvl);
-        const tier = intervalTier(jiIv.rat.num, jiIv.rat.den);
-        /* for large ratios, show prime-power form (e.g. 3^36:2^57) rather
-           than sprawling integers; 2^32 threshold keeps typical intervals
-           in plain num:den while compacting anything beyond ~21 fifths */
-        let ratioStr: string;
+        const tier = intervalTierFromExps(e);
+        /* "Show factors" → prime-power form for every interval (5:4 → 5:2²).
+           Otherwise plain num:den, falling back to factored form above 2^32
+           where the integers would sprawl (~21 fifths) and round off. */
         const BIG = 4294967296; /* 2^32 */
-        if (jiIv.rat.num <= BIG && jiIv.rat.den <= BIG) {
-          ratioStr = jiIv.rat.num + ':' + jiIv.rat.den;
-        } else {
-          const primes = [2, 3, 5, 7], nParts: string[] = [], dParts: string[] = [];
-          for (let pi = 0; pi < 4; pi++) {
-            const pe = jiIv.rat.e[pi];
-            if (pe > 0) nParts.push(pe === 1 ? String(primes[pi]) : primes[pi] + '^' + pe);
-            else if (pe < 0) dParts.push(-pe === 1 ? String(primes[pi]) : primes[pi] + '^' + (-pe));
-          }
-          ratioStr = (nParts.join('·') || '1') + ':' + (dParts.join('·') || '1');
-        }
+        const ratioStr = (showFactors || jiIv.rat.num > BIG || jiIv.rat.den > BIG)
+          ? fmtFactors(e)
+          : jiIv.rat.num + ':' + jiIv.rat.den;
         html += '<span class="ratio-tag tier-' + tier + '">';
         html += '<span style="color:' + keys[iv.i].col + '">' + keys[iv.i].name + keys[iv.i].oct + '</span>';
         html += '–';

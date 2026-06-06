@@ -3496,3 +3496,30 @@ logs only a couple of silent connection-refused lines before stopping. Removed: 
 tooltip (tooltips.ts). Firefox (loopback-exempt) and the localhost dev origin (loopback→loopback)
 never prompt regardless. Files: `apps/hkl/index.html`, `apps/hkl/src/ui/{init,tooltips}.ts`,
 `apps/hkl/src/state/persistence.ts`, `apps/hkl/src/bridge/overlay-publish.ts`.
+
+
+---
+
+## Prime-exponent vectors as the canonical tuning quantity (`coordExps`)
+
+**Picked**: One function `coordExps(q, r, mode)` in `@hkl/shared/freq.js` returns a cell's
+prime-exponent vector `[e2,e3,e5,e7]` relative to 220 Hz, with all per-mode region/schisma shifts
+baked in. `freqAt` multiplies it into Hz once; `jiRatioWithState` takes the difference of two cells'
+vectors; Tenney Height reads the vector directly (`tenneyHeightFromExps`). Integer/Hz multiplication
+of exps for *display* happens only in the analysis box (`fmtFactors` / `num:den`).
+
+**Rejected**: the prior split where `freqAt` (shared) and `jiRatioWithState` (apps/hkl, via
+`regions.ts` deltas) each encoded the qm-region + schisma math independently — two copies that had
+to stay in sync, and a `num/den` that rounds off for large Pythagorean stacks (>2^53).
+
+**Why**: single source of truth — frequency and interval analysis provably can't drift (verified
+bit-exact against a pre-refactor baseline over the lattice × all modes). Exps are always exact, so
+cents/tier/ratio for huge intervals no longer depend on rounded integers. Enabled the "Show factors"
+analysis-box toggle (prime-power form for every interval) as a thin render-time formatter. `regions.ts`
+stays as the source of `RegionInfo` for *coloring* (A/B septimal semantics beyond the exp vector);
+`ratios.ts` no longer imports it. Files: `packages/shared/src/freq.ts` (`coordExps`, `freqAt`),
+`apps/hkl/src/tuning/ratios.ts`, `apps/hkl/src/render/info.ts`.
+
+**Note**: the bounds-probe scripts `test/bounds-probe/compute-bounds.mjs` +
+`compute-refbounds.mjs` still read old pre-monorepo `src/...` paths and error on launch (unrelated
+monorepo-migration breakage); `octave-consistency.mjs` runs and passes.

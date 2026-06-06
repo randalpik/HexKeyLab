@@ -40,6 +40,7 @@ export const TOOLTIPS: Record<string, string> = {
   // ── Analysis ────────────────────────────────────────────────────────
   cbAnalysis: 'Show the interval/chord analysis box (comma-decomposition names and JI ratios for the held notes).',
   cbCoords: 'Show each key’s (q, r) lattice coordinates.',
+  cbFactors: 'Show every interval ratio in prime-factored form (e.g. 5:2² instead of 5:4).',
   cbStaff: 'Show the currently-held notes as a chord on a grand staff (Verovio), inset at the bottom-right. HEJI accidentals follow the HEJI toggle.',
   cbStaffDark: 'Render the staff-notation inset dark: dark background, light staff lines and accidentals, and noteheads in the bright on-screen lattice colors. Distinct from Composer’s theme.',
   cbComposerView: 'Replace the analysis/staff area with a read-only, scrollable frame mirroring the current HKL Composer score (the cursor instrument’s part), auto-scrolling to follow the Composer cursor and playback. Requires HKL Composer open in another tab.',

@@ -28,30 +28,42 @@ export function coordToMidi(q: number, r: number): number {
   return 57 + 4 * q + 7 * r;
 }
 
-/** Frequency in Hz of (q, r) under `mode`. Independent of reference note. */
-export function freqAt(q: number, r: number, mode: TuningMode): number {
-  if (mode === 'E') return 220 * Math.pow(2, (4 * q + 7 * r) / 12);
+/** Prime-exponent vector [e2, e3, e5, e7] of (q, r)'s frequency under a JI
+ *  `mode`, relative to 220 Hz (A3). This is the canonical tuning quantity:
+ *  both `freqAt` (multiply once into Hz) and the interval analyzer (subtract
+ *  two vectors → exact JI ratio) derive from it, so the per-mode region math
+ *  lives in exactly one place. NOT valid for mode 'E' (12-TET is not rational);
+ *  callers in Equal take a separate path and never request exps.
+ *
+ *  Base layout: 220 · 2^b · (5/4)^(p−1) · (3/2)^r where b = band, p = position
+ *  in band. Per-mode region shift mirrors the qm column rules in
+ *  src/tuning/regions.ts (Ptolemaic = none; the rest shift by a syntonic comma
+ *  and, for Septimal, a septimal comma; Schismatic adds schisma^b octave
+ *  stacking — see SCHISMA above). */
+export function coordExps(q: number, r: number, mode: TuningMode): [number, number, number, number] {
   const b = Math.floor((q + 1) / 3);
   const p = ((q + 1) % 3 + 3) % 3;
-  let f = 220 * Math.pow(2, b) * Math.pow(5 / 4, p - 1) * Math.pow(3 / 2, r);
+  /* 2^b·(5/4)^(p−1)·(3/2)^r decomposed: (5/4)=5·2⁻², (3/2)=3·2⁻¹ */
+  let e2 = b - 2 * (p - 1) - r, e3 = r, e5 = p - 1, e7 = 0;
   const qm = ((q % 3) + 3) % 3;
-  /* Per-mode region adjustment (mirrors src/tuning/regions.ts). Only Pythagorean,
-     Semiditonal, Septimal, and 'V' have non-trivial regions; Equal already
-     returned above and Ptolemaic returns the base 5-limit JI value.
-     'V' (schismatic) uses Semiditonal's qm shifts but multiplies the band
-     factor by schisma^b. Within-band intervals are (PM3, M3); the band-
-     crossing M3 is spelled d4 and rings as a pure 81:64 PM3 — every band
-     sums to octave + schisma, and octaves accumulate ~2c of drift per band.
-     Name reflects the layout-level schisma stacking — not the historical
-     schismatic temperament of fifths, which is a different beast. */
-  if (mode === 'V') f *= Math.pow(SCHISMA, b);
+  /* Schismatic: schisma^b = (3⁸·5/2¹⁵)^b on top of the Pythagorean octave. */
+  if (mode === 'V') { e2 += -15 * b; e3 += 8 * b; e5 += b; }
   if (mode === 'D' || mode === 'V') {
-    if (qm === 2) f *= 80 / 81;          /* A-d1 upper: −SC */
+    if (qm === 2) { e2 += 4; e3 += -4; e5 += 1; }              /* A-d1 upper: −SC (80/81) */
   } else if (mode === 'P') {
-    if (qm === 1) f *= 81 / 80;          /* A-d1 lower: +SC */
-    else if (qm === 2) f *= 80 / 81;     /* A-d1 upper: −SC */
+    if (qm === 1) { e2 += -4; e3 += 4; e5 += -1; }             /* A-d1 lower: +SC (81/80) */
+    else if (qm === 2) { e2 += 4; e3 += -4; e5 += 1; }         /* A-d1 upper: −SC (80/81) */
   } else if (mode === '7') {
-    if (qm === 2) f *= (80 / 81) * (63 / 64); /* B-d1 upper: −SC + septimal */
+    if (qm === 2) { e2 += 4 - 6; e3 += -4 + 2; e5 += 1; e7 += 1; } /* −SC·septimal (80/81·63/64) */
   }
-  return f;
+  return [e2, e3, e5, e7];
+}
+
+/** Frequency in Hz of (q, r) under `mode`. Independent of reference note.
+ *  JI modes multiply the canonical exponent vector (`coordExps`) into Hz once;
+ *  Equal is 12-TET and returns directly. */
+export function freqAt(q: number, r: number, mode: TuningMode): number {
+  if (mode === 'E') return 220 * Math.pow(2, (4 * q + 7 * r) / 12);
+  const [e2, e3, e5, e7] = coordExps(q, r, mode);
+  return 220 * Math.pow(2, e2) * Math.pow(3, e3) * Math.pow(5, e5) * Math.pow(7, e7);
 }

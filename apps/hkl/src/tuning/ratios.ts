@@ -1,10 +1,9 @@
 // JI ratio computation and harmonic-tier classification.
 
-import { bandOf, posInBand } from '../layout/coords.js';
-import { regionInfoWithState, modeHasShifts } from './regions.js';
+import { coordExps } from '@hkl/shared/freq.js';
 import type { TuningStateLike } from './regions.js';
 import { tuning } from '../state/tuning.js';
-import type { JiRatio, IntervalTier, RegionInfo } from '../types.js';
+import type { JiRatio, IntervalTier } from '../types.js';
 
 export function gcd(a: number, b: number): number {
   a = Math.abs(a);
@@ -24,35 +23,11 @@ export function jiRatioWithState(
   q1: number, r1: number, q2: number, r2: number,
   state: TuningStateLike,
 ): JiRatio {
-  const db = bandOf(q2) - bandOf(q1), dp = posInBand(q2) - posInBand(q1), dr = r2 - r1;
-  let e2 = db - 2 * dp - dr, e3 = dr, e5 = dp, e7 = 0;
-  if (modeHasShifts(state.mode)) {
-    const ri1 = regionInfoWithState(q1, r1, state), ri2 = regionInfoWithState(q2, r2, state);
-    /* apply region adjustments: ratio gets adj2/adj1 */
-    const applyAdj = (ri: RegionInfo, sign: number): void => {
-      /* syntonic from corresponding A: upper ×(80/81)^d, lower ×(81/80)^d */
-      if (ri.aDepth > 0) {
-        const d = ri.aDepth;
-        if (ri.aUpper) { e2 += sign * 4 * d; e5 += sign * d; e3 += sign * (-4) * d; }
-        else { e3 += sign * 4 * d; e2 += sign * (-4) * d; e5 += sign * (-d); }
-      }
-      /* septimal: ×63/64 = ×(7·3²/2^6) */
-      if (ri.type === 'B') { e7 += sign; e3 += sign * 2; e2 += sign * (-6); }
-    };
-    applyAdj(ri2, +1);
-    applyAdj(ri1, -1);
-  }
-  /* Schismatic: each band's q+3 step adds one schisma (32805:32768 =
-     3^8·5 / 2^15) on top of the standard Pythagorean octave. The frequency
-     math in freqAt encodes this via a schisma^b band factor; the exponent
-     vector here gets the matching prime decomposition per Δb so the interval
-     analyzer surfaces "octave + schisma" et al. via the existing comma
-     decomposition. */
-  if (state.mode === 'V' && db !== 0) {
-    e2 += db * -15;
-    e3 += db * 8;
-    e5 += db * 1;
-  }
+  /* Interval exps = vector difference of the two cells' canonical exponent
+     vectors. coordExps (in @hkl/shared) owns the per-mode region/schisma math,
+     so the frequency and interval paths can't drift. */
+  const a = coordExps(q1, r1, state.mode), c = coordExps(q2, r2, state.mode);
+  let e2 = c[0] - a[0], e3 = c[1] - a[1], e5 = c[2] - a[2], e7 = c[3] - a[3];
   let num = 1, den = 1;
   const apply = (base: number, exp: number): void => {
     if (exp > 0) num *= Math.pow(base, exp);
@@ -126,9 +101,39 @@ export function tenneyHeightFromExps(e: ReadonlyArray<number>): number {
     + Math.abs(r[3]) * Math.log2(7);
 }
 
-export function intervalTier(num: number, den: number): IntervalTier {
-  const th = tenneyHeight(num, den);
+function tierOf(th: number): IntervalTier {
   if (th < 8) return 'green';
   if (th < 12.5) return 'yellow';
   return 'red';
+}
+
+export function intervalTier(num: number, den: number): IntervalTier {
+  return tierOf(tenneyHeight(num, den));
+}
+
+/** Harmonic tier straight from the exponent vector — exact even when num/den
+ *  overflow 2^53 (large Pythagorean stacks). Preferred in the analysis box. */
+export function intervalTierFromExps(e: ReadonlyArray<number>): IntervalTier {
+  return tierOf(tenneyHeightFromExps(e));
+}
+
+const SUP = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
+function superscript(n: number): string {
+  return String(n).split('').map((d) => SUP[+d] ?? d).join('');
+}
+
+/** Prime-power form of an interval's exponent vector, e.g. [−2,0,1,0] → "5:2²",
+ *  [−6,2,−1,1] → "3²·7:2⁶·5". Positive exponents form the numerator, negative
+ *  the denominator; exponent 1 prints bare; unison → "1:1". Used for the
+ *  "Show factors" display and as the large-ratio fallback. The exponent vector
+ *  is exact, so this never loses precision the way a rounded num:den can. */
+export function fmtFactors(e: ReadonlyArray<number>): string {
+  const primes = [2, 3, 5, 7];
+  const nParts: string[] = [], dParts: string[] = [];
+  for (let i = 0; i < 4; i++) {
+    const pe = e[i] ?? 0;
+    if (pe > 0) nParts.push(pe === 1 ? String(primes[i]) : primes[i] + superscript(pe));
+    else if (pe < 0) dParts.push(-pe === 1 ? String(primes[i]) : primes[i] + superscript(-pe));
+  }
+  return (nParts.join('·') || '1') + ':' + (dParts.join('·') || '1');
 }

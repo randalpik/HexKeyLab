@@ -85,6 +85,7 @@ export interface PrefsV1 {
   extendPattern: boolean;
   showAnalysis: boolean;
   showCoords: boolean;
+  showFactors: boolean;
   shortIvl: boolean;
   outline: OutlineMode;
   rotation: RotationMode;
@@ -150,6 +151,7 @@ export const DEFAULT_PREFS: PrefsV1 = {
   extendPattern: true,
   showAnalysis: true,
   showCoords: false,
+  showFactors: false,
   shortIvl: false,
   outline: "lumatone",
   rotation: "verticalFreq",
@@ -261,6 +263,10 @@ export function loadPrefs(): PrefsV1 {
       typeof o.showCoords === "boolean"
         ? o.showCoords
         : DEFAULT_PREFS.showCoords,
+    showFactors:
+      typeof o.showFactors === "boolean"
+        ? o.showFactors
+        : DEFAULT_PREFS.showFactors,
     shortIvl:
       typeof o.shortIvl === "boolean" ? o.shortIvl : DEFAULT_PREFS.shortIvl,
     outline: isOutlineMode(o.outline) ? o.outline : DEFAULT_PREFS.outline,
