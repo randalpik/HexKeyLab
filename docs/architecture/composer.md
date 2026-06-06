@@ -28,7 +28,7 @@ Per-channel protocol modules define independent `In`/`Out` unions. HKL instantia
 
 **Composer → HKL** (`ComposerEvent`):
 - `composer-hello` / `composer-bye` / `request-state` — handshake. Composer re-broadcasts `composer-hello` on every inbound `hkl-hello` so HKL learns it's alive when HKL boots second.
-- `set-song-key` (key-sig tonic, qm=0 spine, lowest MIDI ≥ F3=53) / `set-reference-note` (cursor's prior note, sent only when non-null) — HKL's two ref-tier channels via `apps/hkl/src/state/reference.ts`. Selection-tier wins over song-key, but a `composer`-source selection is gated on outline mode = `'piano'`.
+- `set-score-ref` (the score's Setup-dialog ref coordinates) / `set-reference-note` (cursor's prior note, sent only when non-null) — HKL's two ref-tier channels via `apps/hkl/src/state/reference.ts`. Selection-tier wins over the score-ref fallback, but a `composer`-source selection is gated on outline mode = `'piano'`. The key-sig tonic (`computeSongKeyRef`, qm=0 spine, lowest MIDI ≥ F3=53) is **no longer broadcast** — it only seeds the Setup dialog's ref-coordinate default. When HKL's "Sync to Composer" is on, a `set-score-ref` also clears the selection tier so the lattice matches the score exactly; sync off leaves the user's selection. → decisions.md "Setup ref drives HKL's score-ref tier; sync-gated selection clear".
 - `layout-req-changed` — score's pinned tuning + ref; applied when "Sync layout" on.
 - `play-score` — `{events: PlaybackEvent[]}`, per-event `{atMs, durationMs, notes, meiId?}`.
 - `stop-playback`.
@@ -127,7 +127,13 @@ Replaced the old point-hit-test (which no-op'd on whitespace clicks). Each click
 
 ### Performance mode — input-driven playback (`apps/composer/src/render/performance.ts`)
 
-The **inverse** of clock-driven playback: the player performs the part live on the Lumatone and the per-voice bars advance as the matching notes are struck — for recording polished scrolling-score videos to one's own performance. Single-instrument only (`model.instruments().length === 1`); entered via **Shift+Space** or the **◉ toolbar button** (`#btnPerform`), parallel to Space = clock playback. Composer sends **no** `play-score` — audio is the live instrument.
+The **inverse** of clock-driven playback: the player performs the part live on the Lumatone and the per-voice bars advance as the matching notes are struck — for recording polished scrolling-score videos to one's own performance. Single-instrument only (`model.instruments().length === 1`); Composer sends **no** `play-score` — audio is the live instrument.
+
+**Transport mutual-exclusion** (clock playback and Performance mode never run together):
+- **Space** (`spaceTransport`): stops whichever transport is running; if neither, starts clock playback.
+- **Shift+Space** (`shiftSpaceTransport`): starts Performance mode **only if neither** transport is running; otherwise a no-op (Space is the stop key).
+- The **◑ `#btnPlay` / ◉ `#btnPerform` buttons** are *switch-to-this-transport* controls (deliberately NOT the same as the keys): each shows the STOP glyph while its own transport runs, and pressing one while the other is active deactivates the other and activates this one (e.g. Play during performance → stop performance AND start playback).
+- → decisions.md "Transport mutual-exclusion: keys stop-or-start, buttons switch".
 
 - **Wire**: Composer sends `start-performance`/`stop-performance`; HKL forwards every live note-on as `player-note-struck { ResolvedNote }` (gated to perf mode, suppressed during a `play-score`; emitted from `apps/hkl/src/midi/handler.ts` via `broadcastPlayerNote`).
 - **Matcher** (`PerformanceMatcher`): built from `buildPlayback(model)` (reused for per-voice ordered attacks, sounding coords post-8va, tie-chain coalescing, rest-skipping) — filtered to `notes.length > 0`, grouped per voice, same-onset attacks merged into one step. Each step holds the expected notes as identity keys.
@@ -154,7 +160,7 @@ Composer is its own workspace package (`@hkl/composer`) with its own Vite config
 
 A native `<dialog>` opened by the "Setup…" button:
 - **Title** → `<titleStmt><title>`; **Composer** → `<persName role="composer">`.
-- **Key signature** → `<scoreDef key.sig>` + `<scoreDef mode="major|minor">` (defaults `'major'`). A **minor** checkbox switches displayed labels major↔relative-minor (the `sig` value is shared); drives `computeSongKeyRef` so the song-key tier publishes the actual tonic. MusicXML emits `<mode>`.
+- **Key signature** → `<scoreDef key.sig>` + `<scoreDef mode="major|minor">` (defaults `'major'`). A **minor** checkbox switches displayed labels major↔relative-minor (the `sig` value is shared); drives `computeSongKeyRef`, which now only seeds the Setup dialog's ref-coordinate default (no longer broadcast to HKL). MusicXML emits `<mode>`.
 - **Time signature** → `<scoreDef meter.count meter.unit>` (num 1–16, denom 1/2/4/8/16).
 - **Tempo** → `<tempo>` first child of measure 1 (`mm`, `mm.unit`, `mm.dots`, `midi.bpm`, optional text).
 

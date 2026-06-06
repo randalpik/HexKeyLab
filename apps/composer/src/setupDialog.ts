@@ -16,6 +16,7 @@ import { DYNAMIC_NAMES, DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { TUNING_MODES, type TuningMode, coordToMidi, MIDI_LOW, MIDI_HIGH } from '@hkl/shared/freq.js';
 import { noteName, keyOctave, fmtNote } from '@hkl/shared/notes.js';
 import { planRetune, summarizePlan, applyRetune } from './notation/retune.js';
+import { computeSongKeyRef } from './cursor/refNote.js';
 import type { HistoryManager } from './history.js';
 
 const $ = <T extends HTMLElement>(id: string): T | null =>
@@ -55,9 +56,18 @@ function setupSelects(model: ComposerModel): void {
   if (ignoreColorChk) ignoreColorChk.checked = model.getIgnoreColor();
   const refQEl = $<HTMLInputElement>('setupRefQ');
   const refREl = $<HTMLInputElement>('setupRefR');
-  if (refQEl) refQEl.value = String(layoutReq.refQ);
-  if (refREl) refREl.value = String(layoutReq.refR);
-  updateRefLabel(layoutReq.refQ, layoutReq.refR);
+  /* When the score's ref is still the doc default (0, 0 = A3), seed the field
+     from the key-signature tonic instead — the key tonic is the suggested
+     ref for a fresh score. A ref the user has explicitly set (non-default) is
+     shown verbatim. This is the ONLY place the key tonic feeds the ref. */
+  let seedQ = layoutReq.refQ, seedR = layoutReq.refR;
+  if (seedQ === 0 && seedR === 0) {
+    const tonic = computeSongKeyRef(model);
+    seedQ = tonic.q; seedR = tonic.r;
+  }
+  if (refQEl) refQEl.value = String(seedQ);
+  if (refREl) refREl.value = String(seedR);
+  updateRefLabel(seedQ, seedR);
   /* Live label update as the user edits (q, r). */
   const updateFromForm = (): void => {
     const q = parseInt(refQEl?.value ?? '0', 10);

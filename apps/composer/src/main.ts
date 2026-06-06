@@ -28,9 +28,9 @@ import { openSetupDialog } from './setupDialog.js';
 import { openHelpDialog } from './helpDialog.js';
 import { attachScoreClickHandler } from './click.js';
 import {
-  computePrevNoteRef, computeSongKeyRef,
+  computePrevNoteRef,
   refNoteChanged, invalidateRefNoteCache,
-  songKeyChanged, invalidateSongKeyCache,
+  scoreRefChanged, invalidateScoreRefCache,
 } from './cursor/refNote.js';
 
 const $ = <T extends HTMLElement>(id: string): T | null =>
@@ -240,11 +240,11 @@ bridge.on((msg: HklEvent) => {
         bridge.send({ type: 'composer-hello', version: PROTOCOL_VERSION });
       }
       invalidateRefNoteCache();
-      invalidateSongKeyCache();
+      invalidateScoreRefCache();
       lastBroadcastInstrKey = null;
       lastBroadcastInstrSet = null;
       maybeBroadcastReference();
-      maybeBroadcastSongKey();
+      maybeBroadcastScoreRef();
       maybeBroadcastInstruments();
       maybeBroadcastActiveInstrument();
       broadcastLayoutReq();
@@ -259,7 +259,7 @@ bridge.on((msg: HklEvent) => {
       stopPlayback();
       stopPerformance('HKL disconnected.');
       invalidateRefNoteCache();
-      invalidateSongKeyCache();
+      invalidateScoreRefCache();
       break;
     case 'held-keys':
       lastHeldKeys = msg.keys;
@@ -439,16 +439,15 @@ function maybeBroadcastReference(): void {
   }
 }
 
-/** Send the current key-sig tonic to HKL's song-key tier. Called on
- *  connect / hello and on explicit key-signature change (Setup dialog),
- *  NOT on every cursor move — the key sig is independent of cursor and
- *  re-broadcasting it through cursor-driven paths risks the same "clobbers
- *  manual" failure mode that motivated dropping set-reference-note's
- *  key-sig fallback. */
-function maybeBroadcastSongKey(): void {
-  const coord = computeSongKeyRef(model);
-  if (songKeyChanged(coord)) {
-    bridge.send({ type: 'set-song-key', q: coord.q, r: coord.r });
+/** Send the score's Setup-dialog ref coordinates to HKL's score-ref tier.
+ *  Called on connect / hello and on Setup save / file load, NOT on every
+ *  cursor move — the score ref is independent of cursor. HKL decides (per its
+ *  Sync-to-Composer toggle) whether this also clears its selection tier. */
+function maybeBroadcastScoreRef(): void {
+  const lr = model.getLayoutReq();
+  const coord = { q: lr.refQ, r: lr.refR };
+  if (scoreRefChanged(coord)) {
+    bridge.send({ type: 'set-score-ref', q: coord.q, r: coord.r });
   }
 }
 
@@ -1021,8 +1020,15 @@ initInput(model, {
   setStatus: (msg, kind) => setStatus(msg, kind),
   clearStatusIfTransient: () => clearStatusIfTransient(),
   isPlaybackActive: () => isPlaying || performanceActive,
-  togglePlayback: () => { if (isPlaying) stopPlayback(); else startPlayback(); },
-  togglePerformance: () => { if (performanceActive) stopPerformance('Performance mode off.'); else startPerformance(); },
+  spaceTransport: () => {
+    if (isPlaying) stopPlayback();
+    else if (performanceActive) stopPerformance('Performance mode off.');
+    else startPlayback();
+  },
+  shiftSpaceTransport: () => {
+    if (isPlaying || performanceActive) return;
+    startPerformance();
+  },
   stopPlaybackAtHead: () => stopPlaybackAtHead(),
   seekPlaybackByMeasure: (dir) => seekPlaybackByMeasure(dir),
   onZoomChange: (dir) => stepZoom(dir),
@@ -1280,9 +1286,15 @@ function onPlayerNoteStruck(note: ResolvedNote): void {
   if (perfMatcher.isFinished()) stopPerformance('Performance finished.');
 }
 
+/* The transport BUTTONS are switch-to-this-transport controls (distinct from
+   the Space / Shift+Space keys): each shows the STOP glyph while its own
+   transport runs, and pressing one while the other is active deactivates the
+   other and activates this one. btnPerform gets that for free — startPerformance
+   stops playback first — so only btnPlay needs an explicit stopPerformance. */
 $('btnPlay')?.addEventListener('click', () => {
-  if (isPlaying) stopPlayback();
-  else startPlayback();
+  if (isPlaying) { stopPlayback(); return; }
+  if (performanceActive) stopPerformance('Performance mode off.');
+  startPlayback();
 });
 
 $('btnPerform')?.addEventListener('click', () => {
@@ -1310,12 +1322,11 @@ $('btnSetup')?.addEventListener('click', () => {
     reRender();
     refreshIndicators();
     setStatus('Setup applied.', 'action');
-    /* Key signature may have changed — broadcast the song-key tier. Do NOT
-     * re-broadcast the selection (reference-note) tier here: the key sig is
-     * independent of cursor position, and triggering the selection broadcast
-     * from a key-sig change is what would let an unrelated event clobber a
-     * user's manual Ctrl+click selection on HKL. */
-    if (hklConnected) maybeBroadcastSongKey();
+    /* The Setup ref coordinates may have changed — broadcast the score-ref
+     * tier. Do NOT re-broadcast the selection (reference-note) tier here: it's
+     * cursor-driven, and triggering it from a Setup apply is what would let an
+     * unrelated event clobber a user's manual Ctrl+click selection on HKL. */
+    if (hklConnected) maybeBroadcastScoreRef();
     /* Instruments may have changed (add / remove / reorder via the Instruments
        modal routes through here) — re-broadcast the set + the cursor's
        instrument so HKL can (pre)load and follow. Diff-filtered. */
@@ -1366,6 +1377,7 @@ function applyLoadedDocument(meiXml: string, statusMsg: string): void {
   maybeScrollMeasureIntoView(visualCursorMeasure());
   autoAdoptedHklLayout = true;
   broadcastLayoutReq();
+  if (hklConnected) maybeBroadcastScoreRef();
   refreshLayoutMatchIndicator();
   /* Loading replaces the doc and clears history — not an undoable edit. */
   setStatus(statusMsg, 'info');

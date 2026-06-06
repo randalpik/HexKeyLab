@@ -45,7 +45,7 @@ import { setComposerScore, setComposerCursor, setComposerPlaybackBars, clearComp
 import { publishComposerScore, publishComposerPlayback } from './overlay-publish.js';
 import { syncViewToOutline } from '../ui/controls.js';
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
-import { setSelectionFromComposer, setSongKey, onComposerBye, referenceNote } from '../state/reference.js';
+import { setSelectionFromComposer, setScoreRef, clearSelection, selectionDiffersFromScoreRef, onComposerBye, referenceNote } from '../state/reference.js';
 import { refSpine } from '../tuning/refspine.js';
 import { view } from '../state/view.js';
 import { onRefChanged } from '../effects/onRefChanged.js';
@@ -1129,6 +1129,25 @@ export function applyComposerLayout(): void {
   if (composerRequiredLayout) applyLayoutFromComposer(composerRequiredLayout);
 }
 
+/** Called when the user enables "Sync to Composer" with Composer connected:
+ *  the lattice must match the score exactly, so drop any selection tier that
+ *  differs from the score-ref tier (letting the score-ref become the effective
+ *  ref). No-op if there's no selection or it already matches the score-ref. */
+export function reconcileSelectionOnSyncEnable(): void {
+  if (!composerConnected || !selectionDiffersFromScoreRef()) return;
+  const oldAQ = view.kbAnchorQ, oldAR = view.kbAnchorR;
+  if (clearSelection()) {
+    const sp = refSpine(referenceNote.q, referenceNote.r);
+    view.kbAnchorQ = sp.q;
+    view.kbAnchorR = sp.r;
+    invalidatePianoOutline();
+    syncViewToOutline(currentOutlineForBridge(), true);
+    draw();
+    onRefChanged(sp.q - oldAQ, sp.r - oldAR);
+    broadcastAllToComposer();
+  }
+}
+
 function isTuningMode(s: string): s is TuningMode {
   return s === 'E' || s === '5' || s === 'P' || s === 'D' || s === '7' || s === 'V';
 }
@@ -1157,32 +1176,11 @@ function applyLayoutFromComposer(req: ComposerLayoutReq): void {
     selTuning.value = req.tuningMode;
     setTuning();
   }
-  /* Ref — apply as a composer-source selection (NOT manual). This means it
-     participates in the outline-mode gating in reference.ts: effective only
-     in piano outline mode; in lumatone/qwerty/none modes, song-key from the
-     key signature wins. Also do NOT persist as manualRef — the layoutReq is
-     a score-level pinning, not a user Ctrl+click, and the blank-score auto-
-     adopt path used to echo HKL's own default back as a permanent manualRef
-     that masked song-key forever after. */
-  if (validateRefNoteCandidate(req.refQ, req.refR) !== null) return;
-  const oldAQ = view.kbAnchorQ, oldAR = view.kbAnchorR;
-  if (setSelectionFromComposer(req.refQ, req.refR)) {
-    const sp = refSpine(referenceNote.q, referenceNote.r);
-    view.kbAnchorQ = sp.q;
-    view.kbAnchorR = sp.r;
-    onRefChanged(sp.q - oldAQ, sp.r - oldAR);
-    invalidatePianoOutline();
-    /* Snap (immediate=true), not tween. Composer-driven sync is programmatic
-       state adoption, not user navigation. Multi-message handshakes (composer-
-       hello → layout-req-changed → set-song-key, possibly + set-reference-note)
-       used to fire successive `syncViewToOutline(false)` calls inside one
-       microtask chain — each resetting the tween's startQ to the previous
-       call's frozen viewQ. Net effect: view stuck at an intermediate position
-       with seams/outline/note-names drifted from the lattice cells. Snapping
-       eliminates the in-flight animation state entirely. */
-    syncViewToOutline(currentOutlineForBridge(), true);
-    draw();
-  }
+  /* Ref is NOT applied here. The score's ref reaches HKL via its own
+     `set-score-ref` message → the score-ref tier (reference.ts), independent
+     of this layout (tuning) sync and of the Sync-to-Composer gate's piano-
+     outline constraint. Keeping layout (tuning) and ref on separate paths is
+     what lets the score-ref drive the lattice even when Sync is off. */
 }
 
 /* ── inbound message dispatch ────────────────────────────────────────────── */
@@ -1341,16 +1339,25 @@ bridge.on((msg: ComposerEvent) => {
         broadcastAllToComposer();
       }
       break;
-    case 'set-song-key': {
-      /* Sets the song-key tier. When the song-key becomes the effective ref
-         (no manual override, no composer-cursor in piano mode), mirror the
-         Ctrl+click path: advance kbAnchor so the Lumatone/QWERTY outline
-         centers on the new song-key, and fire onRefChanged so any held
-         physical voices migrate to the new lattice cells. Cursor-derived
-         refs (set-reference-note) deliberately do NOT do this — they're
-         piano-outline-only and shouldn't drag the static outline around. */
+    case 'set-score-ref': {
+      /* Sets the score-ref tier (the score's cursor-independent fallback ref,
+         from the Setup-dialog coordinates). Validate against the same MIDI +
+         accidental constraints as Ctrl+click / set-reference-note so the ref
+         never lands on an unspellable cell. When this becomes the effective
+         ref, mirror the Ctrl+click path: advance kbAnchor so the
+         Lumatone/QWERTY outline centers on it, and fire onRefChanged so any
+         held physical voices migrate. Cursor-derived refs (set-reference-note)
+         deliberately do NOT recenter — they're piano-outline-only. */
+      if (validateRefNoteCandidate(msg.q, msg.r) !== null) break;
+      /* Sync on → the lattice must match the score exactly, so a score-ref
+         update clears any selection (manual or cursor) that would otherwise
+         mask it. Sync off → leave the user's explicit selection alone (they're
+         deliberately using their own ref/layout against a mismatched score). */
       const oldAQ = view.kbAnchorQ, oldAR = view.kbAnchorR;
-      if (setSongKey(msg.q, msg.r)) {
+      let changed = false;
+      if (loadPrefs().syncToComposer) changed = clearSelection() || changed;
+      changed = setScoreRef(msg.q, msg.r) || changed;
+      if (changed) {
         const sp = refSpine(referenceNote.q, referenceNote.r);
         view.kbAnchorQ = sp.q;
         view.kbAnchorR = sp.r;

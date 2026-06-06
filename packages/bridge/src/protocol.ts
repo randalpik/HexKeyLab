@@ -189,13 +189,16 @@ export type ComposerEvent =
    *  Ctrl+click selection the user just made). Tier clearing happens only on
    *  HKL via Ctrl+click of the current ref or via composer-bye. */
   | { type: 'set-reference-note'; q: number; r: number }
-  /** Set the SONG-KEY tier of HKL's reference-note state to (q, r) — the
-   *  lattice cell whose noteName matches the major-key tonic of the current
-   *  key signature, closest to the origin by taxicab. Composer sends this
-   *  on connect / hello / request-state, and whenever the key signature
-   *  changes (Setup dialog apply). Not sent on every cursor move — see
-   *  set-reference-note docstring for why broadcasting must be conservative. */
-  | { type: 'set-song-key'; q: number; r: number }
+  /** Set the SCORE-REF tier of HKL's reference-note state to (q, r) — the
+   *  cursor-independent fallback ref, fed by the score's Setup-dialog ref
+   *  coordinates (NOT the key-sig tonic, which now only seeds the Setup field
+   *  default). Composer sends this on connect / hello / request-state, and
+   *  whenever the user saves Setup. Not sent on every cursor move — see
+   *  set-reference-note docstring for why broadcasting must be conservative.
+   *  HKL gates whether this also clears the selection tier on its
+   *  "Sync to Composer" toggle (sync on → clear, so the lattice matches the
+   *  score exactly; sync off → leave the user's explicit selection alone). */
+  | { type: 'set-score-ref'; q: number; r: number }
   /** Inform HKL of the score's pinned layout requirement. Sent on
    *  composer-hello / request-state and whenever the user saves Setup. HKL
    *  caches this and uses it to gate playback (prompt on mismatch). When

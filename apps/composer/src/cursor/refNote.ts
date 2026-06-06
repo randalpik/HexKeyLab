@@ -1,10 +1,12 @@
 // Compute the reference-note coordinates Composer publishes to HKL.
 //
 // The previous single-message protocol entangled two facts: the most-recent-
-// prior-note in the cursor's voice (cursor-dependent) AND the song's key-sig
-// tonic (a global fallback). HKL now tracks them as separate tiers — see
-// src/state/reference.ts — so Composer publishes them as two messages,
-// `set-reference-note` (selection tier) and `set-song-key` (song-key tier).
+// prior-note in the cursor's voice (cursor-dependent) AND a global fallback.
+// HKL now tracks them as separate tiers — see src/state/reference.ts — so
+// Composer publishes them as two messages, `set-reference-note` (selection
+// tier, cursor prior-note) and `set-score-ref` (score-ref fallback tier, the
+// Setup-dialog ref coordinates). The key-sig tonic (computeSongKeyRef) is no
+// longer broadcast — it only seeds the Setup dialog's ref-coordinate default.
 //
 // Composer is purely additive: it broadcasts only when it has a fresh fact
 // to publish. When the cursor's voice has no prior note, Composer stays
@@ -103,8 +105,9 @@ export function computePrevNoteRef(model: ComposerModel): RefCoord | null {
 }
 
 /** Tonic of the current key signature, as a lattice coord. Resolves to the
- *  major or relative-minor tonic based on model.getKeyMode(). Used to populate
- *  HKL's song-key tier. */
+ *  major or relative-minor tonic based on model.getKeyMode(). Used ONLY to
+ *  seed the Setup dialog's ref-coordinate default (no longer broadcast to
+ *  HKL — the Setup ref coordinates drive HKL's score-ref tier instead). */
 export function computeSongKeyRef(model: ComposerModel): RefCoord {
   const sig = model.getKeySig();
   const mode = model.getKeyMode();
@@ -147,21 +150,21 @@ export function invalidateRefNoteCache(): void {
   lastRefWasNull = true;
 }
 
-const lastSongKey: RefCoord = { q: NaN, r: NaN };
+const lastScoreRef: RefCoord = { q: NaN, r: NaN };
 
-/** Returns true iff `coord` differs from the last-broadcast song-key.
+/** Returns true iff `coord` differs from the last-broadcast score-ref.
  *  Updates the snapshot. */
-export function songKeyChanged(coord: RefCoord): boolean {
-  if (lastSongKey.q === coord.q && lastSongKey.r === coord.r) return false;
-  lastSongKey.q = coord.q;
-  lastSongKey.r = coord.r;
+export function scoreRefChanged(coord: RefCoord): boolean {
+  if (lastScoreRef.q === coord.q && lastScoreRef.r === coord.r) return false;
+  lastScoreRef.q = coord.q;
+  lastScoreRef.r = coord.r;
   return true;
 }
 
-/** Force the next songKeyChanged() check to broadcast. */
-export function invalidateSongKeyCache(): void {
-  lastSongKey.q = NaN;
-  lastSongKey.r = NaN;
+/** Force the next scoreRefChanged() check to broadcast. */
+export function invalidateScoreRefCache(): void {
+  lastScoreRef.q = NaN;
+  lastScoreRef.r = NaN;
 }
 
 /* Re-export for callers that want the tonic helper without importing from

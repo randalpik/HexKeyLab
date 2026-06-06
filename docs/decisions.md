@@ -3445,3 +3445,32 @@ uses same-origin so it tracks any `HKL_OVERLAY_PORT`; else (dev/Netlify performe
 dials `ws://127.0.0.1:OVERLAY_RELAY_PORT` (5190). Also: the lean build now bundles `BravuraText.woff2`
 locally (publicDir:false had dropped it → /BravuraText.woff2 404; the CDN @font-face fallback proved
 unreliable in OBS-CEF), so the distributable's font is self-contained (Verovio WASM still CDN).
+
+**Transport mutual-exclusion: keys stop-or-start, buttons switch (2026-06-06).**
+Clock playback (`isPlaying`) and Performance mode (`performanceActive`) are mutually exclusive, with
+keyboard and buttons given DELIBERATELY DIFFERENT semantics (Max). Keys: **Space** (`spaceTransport`)
+stops whichever transport runs, else starts playback; **Shift+Space** (`shiftSpaceTransport`) starts
+Performance only if neither runs, else no-op (Space is the universal stop). Buttons `#btnPlay`/`#btnPerform`
+are *switch-to-this-transport* controls: each shows the STOP glyph while its OWN transport runs, and
+pressing one while the other is active deactivates the other and activates this one (Play during
+performance → stop performance AND start playback). `startPerformance` already stops playback, so only
+`#btnPlay` needed an explicit `stopPerformance` before `startPlayback`. All in `apps/composer/src/main.ts`
+(hook bodies + button click handlers) + `apps/composer/src/input.ts` (hook names; the old `togglePlayback`/
+`togglePerformance` were renamed since they're no longer toggles). HKL unchanged — it already gates
+`broadcastPlayerNote` on `!performanceMode || playbackActive`.
+
+**Setup ref drives HKL's score-ref tier; sync-gated selection clear (2026-06-06).**
+The song-key tier was renamed **score-ref** (`set-song-key`→`set-score-ref`; reference.ts
+`songKey`→`scoreRef`) and repointed: HKL's cursor-independent fallback ref is now fed by the score's
+Setup-dialog ref coordinates (`layoutReq.refQ/refR`), not the key-sig tonic. The key-sig tonic
+(`computeSongKeyRef`) survives but ONLY seeds the Setup dialog's ref-coordinate default when the stored
+ref is the doc default (0,0). Fixes "Setup ref overridden by song key" — previously the Setup ref reached
+HKL only via `applyLayoutFromComposer`'s selection-tier write, gated on `syncToComposer` AND piano
+outline, so the key-tonic song-key tier won whenever those gates failed. `applyLayoutFromComposer` is now
+tuning-only; the ref arrives via `set-score-ref` regardless of sync/outline. Sync interaction (Max):
+**sync ON** → a `set-score-ref` also `clearSelection()` (lattice must match the score exactly);
+**sync OFF** → updates the score-ref tier but leaves the user's explicit selection (they keep their own
+ref/layout against a mismatched score); **toggling sync ON** with Composer connected →
+`reconcileSelectionOnSyncEnable()` clears the selection iff it differs from the score-ref tier. Files:
+`packages/bridge/src/protocol.ts`, `apps/hkl/src/{state/reference.ts,bridge/hkl-side.ts,ui/init.ts}`,
+`apps/composer/src/{main.ts,cursor/refNote.ts,setupDialog.ts}`.

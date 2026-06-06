@@ -152,12 +152,13 @@ export interface InputHooks {
    *  navigation (arrow keys) is suppressed so the user can't fight the
    *  playback cursors. Other keys (digits, backspace) still work. */
   isPlaybackActive: () => boolean;
-  /** Toggle score playback on/off. Bound to bare Space at the top of the
-   *  keydown dispatcher so Space works as the universal transport shortcut. */
-  togglePlayback: () => void;
-  /** Toggle Performance mode (input-driven playback) on/off. Bound to
-   *  Shift+Space, parallel to bare Space = clock playback. */
-  togglePerformance?: () => void;
+  /** Bare-Space transport. If either clock playback or Performance mode is
+   *  running, stop it; otherwise start clock playback. Space is the universal
+   *  "stop whatever's running, else play" shortcut. */
+  spaceTransport: () => void;
+  /** Shift+Space transport. Start Performance mode ONLY if neither clock
+   *  playback nor Performance mode is running; otherwise no-op (Space stops). */
+  shiftSpaceTransport?: () => void;
   /** Stop playback and place the editing cursor at the most-recent playback
    *  head (instead of snapping back to its pre-playback position). Bound to
    *  plain ←/→ during playback — "punch out where I hear the music." */
@@ -1757,22 +1758,24 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       hooks.clearStatusIfTransient?.();
     }
 
-    /* Bare Space → toggle playback. Browser default for Space on the document
-       body is page scroll, so we MUST preventDefault. Handled at the top so
-       Space works regardless of selection / chord-internal-sel / pending-tuplet
-       state — playback is a transport mode, orthogonal to editing state. Form
-       fields are already excluded by shouldIgnore() above. */
+    /* Bare Space → stop whichever transport is running, else start playback.
+       Browser default for Space on the document body is page scroll, so we
+       MUST preventDefault. Handled at the top so Space works regardless of
+       selection / chord-internal-sel / pending-tuplet state — playback is a
+       transport mode, orthogonal to editing state. Form fields are already
+       excluded by shouldIgnore() above. */
     if (e.key === ' ' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
       e.preventDefault();
-      hooks.togglePlayback();
+      hooks.spaceTransport();
       return;
     }
 
-    /* Shift+Space → toggle Performance mode (input-driven playback). Parallel
-       to bare Space; same orthogonal-to-editing-state rationale. */
+    /* Shift+Space → start Performance mode only if neither transport is
+       running (no-op otherwise; Space is the stop key). Parallel to bare
+       Space; same orthogonal-to-editing-state rationale. */
     if (e.key === ' ' && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
       e.preventDefault();
-      hooks.togglePerformance?.();
+      hooks.shiftSpaceTransport?.();
       return;
     }
 

@@ -18,6 +18,13 @@ import { SCROLL_SETTLE } from './scroll-helpers.mjs';
  *  and a prior bridge held-keys event leaves notes "held" indefinitely. */
 export const RESET_SNIPPET = `
 (() => {
+  /* Close any modal <dialog> a fixture opened (Setup, etc.). showModal()
+   * traps focus + overlays the page, so an unclosed dialog blocks keyboard
+   * input for every subsequent fixture (the page is not reloaded between
+   * fixtures). close() fires the dialog's 'close' handler, detaching its
+   * listeners cleanly. */
+  document.querySelectorAll('dialog[open]').forEach((d) => { try { d.close(); } catch (e) {} });
+
   /* Fresh model. */
   const old = window.__hkl_composer.model;
   const cls = old.constructor;

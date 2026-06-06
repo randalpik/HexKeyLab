@@ -16,7 +16,7 @@
 // 8. Window resize handler + Reset-prefs button.
 
 import { onRefChanged } from '../effects/onRefChanged.js';
-import { getComposerRequiredLayout, applyComposerLayout, preloadComposerInstruments } from '../bridge/hkl-side.js';
+import { getComposerRequiredLayout, applyComposerLayout, reconcileSelectionOnSyncEnable, preloadComposerInstruments } from '../bridge/hkl-side.js';
 import { tuning } from '../state/tuning.js';
 import { refSpine } from '../tuning/refspine.js';
 import { selection } from '../state/selection.js';
@@ -334,6 +334,11 @@ $<HTMLInputElement>('cbSyncToComposer').addEventListener('change', (e) => {
          won't work (Composer is the source). Use the exported applier. */
       applyComposerLayout();
     }
+    /* The lattice must now match the score: drop any selection (manual or
+       cursor) that differs from the score's ref so the score-ref tier becomes
+       the effective ref. No-op if Composer isn't connected or it already
+       matches. */
+    reconcileSelectionOnSyncEnable();
     /* Eagerly load the score's instruments + switch to the cursor's, so
        note-entry preview is immediately in the right timbre (never the wrong
        one while a sample-set is still loading). */

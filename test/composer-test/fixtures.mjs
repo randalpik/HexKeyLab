@@ -552,15 +552,14 @@ const SIG_CHANGES = {
     m.setKeySig('3s');
   `,
 
-  /* Minor flag + 0 flats: tonic becomes A (r=0) instead of C (r=-3). The
-   * broadcast is triggered by sendHklHello() which makes Composer
-   * re-broadcast the current song-key tier. */
+  /* Minor flag + 0 flats: tonic becomes A (r=0) instead of C (r=-3). The key
+   * tonic now only seeds the Setup dialog's ref-coordinate default (it's no
+   * longer broadcast); opening Setup on a default-ref doc seeds #setupRefR
+   * from computeSongKeyRef. */
   keyModeMinor_0_BroadcastsA: `
     m.setKeySig('0');
     m.setKeyMode('minor');
-    window.__hkl_composer.__testReset();
-    window.__bridgeMock.reset();
-    window.__bridgeMock.sendHklHello();
+    document.getElementById('btnSetup').click();
   `,
 
   /* Minor + 7 sharps: tonic is a♯ at r=7 (sharp-extreme, exercises the
@@ -568,9 +567,7 @@ const SIG_CHANGES = {
   keyModeMinor_7s_BroadcastsAsharp: `
     m.setKeySig('7s');
     m.setKeyMode('minor');
-    window.__hkl_composer.__testReset();
-    window.__bridgeMock.reset();
-    window.__bridgeMock.sendHklHello();
+    document.getElementById('btnSetup').click();
   `,
 
   /* Major flag (default) + 3 sharps: tonic is A at r=0. Sanity-check that
@@ -578,9 +575,7 @@ const SIG_CHANGES = {
   keyModeMajor_3s_BroadcastsA: `
     m.setKeySig('3s');
     m.setKeyMode('major');
-    window.__hkl_composer.__testReset();
-    window.__bridgeMock.reset();
-    window.__bridgeMock.sendHklHello();
+    document.getElementById('btnSetup').click();
   `,
 
   /* Round-trip: set minor, serialize, reload via replaceDocument, confirm
@@ -929,6 +924,135 @@ const BRIDGE = {
       window.__bridgeMock.reset();
     `,
     setupKeys: [' ', ' '],
+  },
+
+  /* Transport mutual-exclusion. A reusable single-note single-instrument
+     setup (so both clock playback and Performance mode can start), then the
+     transport keys/buttons drive the state transitions asserted below. */
+
+  /* Shift+Space then Space: Performance starts, then Space STOPS it (not
+     start playback). Asserts start-performance then stop-performance, and no
+     play-score (Space did not fall through to playback). */
+  space_stops_performance: {
+    setup: `
+      window.__bridgeMock.sendHklHello();
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({
+        notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }],
+        duration: '4', dots: 0,
+      });
+      m.setCursor(0, 1);
+      window.__bridgeMock.reset();
+    `,
+    setupKeys: [{ key: ' ', shift: true }, ' '],
+  },
+
+  /* Space (start playback) then Shift+Space: Shift+Space is a no-op while a
+     transport runs. Asserts play-score present, NO start-performance. */
+  shift_space_noop_during_playback: {
+    setup: `
+      window.__bridgeMock.sendHklHello();
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({
+        notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }],
+        duration: '4', dots: 0,
+      });
+      m.setCursor(0, 1);
+      window.__bridgeMock.reset();
+    `,
+    setupKeys: [' ', { key: ' ', shift: true }],
+  },
+
+  /* Shift+Space twice: the second is a no-op (Performance already running).
+     Asserts exactly one start-performance and zero stop-performance. */
+  shift_space_noop_during_performance: {
+    setup: `
+      window.__bridgeMock.sendHklHello();
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({
+        notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }],
+        duration: '4', dots: 0,
+      });
+      m.setCursor(0, 1);
+      window.__bridgeMock.reset();
+    `,
+    setupKeys: [{ key: ' ', shift: true }, { key: ' ', shift: true }],
+  },
+
+  /* Shift+Space from idle starts Performance. Asserts start-performance. */
+  shift_space_starts_performance_idle: {
+    setup: `
+      window.__bridgeMock.sendHklHello();
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({
+        notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }],
+        duration: '4', dots: 0,
+      });
+      m.setCursor(0, 1);
+      window.__bridgeMock.reset();
+    `,
+    setupKeys: [{ key: ' ', shift: true }],
+  },
+
+  /* Play BUTTON during Performance switches transports: stop performance AND
+     start playback (the buttons differ from the keys). hkl-hello is async, so
+     poll until the connection indicator flips before clicking (the transports
+     bail if not connected). Asserts stop-performance then play-score. */
+  play_button_switches_from_performance: {
+    setup: `
+      window.__bridgeMock.sendHklHello();
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({
+        notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }],
+        duration: '4', dots: 0,
+      });
+      m.setCursor(0, 1);
+      window.__bridgeMock.reset();
+      (function whenConnected(tries) {
+        const conn = document.getElementById('connStatus');
+        if (conn && conn.classList.contains('connected')) {
+          document.getElementById('btnPerform').click();
+          document.getElementById('btnPlay').click();
+        } else if (tries > 0) {
+          setTimeout(() => whenConnected(tries - 1), 5);
+        }
+      })(60);
+    `,
+  },
+
+  /* Perform BUTTON during playback switches transports: stop playback AND
+     start performance. Asserts stop-playback then start-performance. */
+  perform_button_switches_from_playback: {
+    setup: `
+      window.__bridgeMock.sendHklHello();
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({
+        notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }],
+        duration: '4', dots: 0,
+      });
+      m.setCursor(0, 1);
+      window.__bridgeMock.reset();
+      (function whenConnected(tries) {
+        const conn = document.getElementById('connStatus');
+        if (conn && conn.classList.contains('connected')) {
+          document.getElementById('btnPlay').click();
+          document.getElementById('btnPerform').click();
+        } else if (tries > 0) {
+          setTimeout(() => whenConnected(tries - 1), 5);
+        }
+      })(60);
+    `,
+  },
+
+  /* The score's Setup ref coordinates (layoutReq), not the key-sig tonic,
+     drive HKL's score-ref tier. With a non-default ref set, a hello-triggered
+     rebroadcast carries those exact coords as set-score-ref. */
+  score_ref_broadcast_carries_setup_coords: {
+    setup: `
+      m.setLayoutReq({ tuningMode: '5', refQ: 0, refR: 2 });
+      window.__bridgeMock.reset();
+      window.__bridgeMock.sendHklHello();
+    `,
   },
 };
 
@@ -1863,6 +1987,12 @@ const CHORD_INTERNAL = {
       window.__hkl_composer.reRender();
       window.__bridgeMock.reset();
       window.__bridgeMock.sendHklHello();
+      /* 7 sharps major = C# major. The key tonic now seeds the Setup ref-field
+         default (it's no longer broadcast); open Setup to read the seeded
+         coords, which come from computeSongKeyRef. The hello above still
+         exercises the empty-voice selection-tier silence + composer-hello echo
+         contract below. */
+      document.getElementById('btnSetup').click();
     `,
   },
 
@@ -5630,36 +5760,33 @@ export const FIXTURE_ASSERTIONS = {
         const k = window.__hkl_composer.model.getKeyMode();
         return k === 'minor' ? { ok: true } : { ok: false, detail: 'mode=' + k };
       })()` },
-    { name: 'set-song-key broadcast carries A spine coords (r=0)',
+    { name: 'Setup seeds ref field with A spine coords (r=0)',
       expr: `(() => {
-        const msgs = window.__bridgeMock.captured().filter((m) => m.type === 'set-song-key');
-        if (msgs.length === 0) return { ok: false, detail: 'no set-song-key captured' };
-        const last = msgs[msgs.length - 1];
-        return last.r === 0
-          ? { ok: true, detail: 'q=' + last.q + ' r=' + last.r }
-          : { ok: false, detail: 'q=' + last.q + ' r=' + last.r + ' (expected r=0)' };
+        const r = document.getElementById('setupRefR');
+        if (!r) return { ok: false, detail: 'no #setupRefR' };
+        return r.value === '0'
+          ? { ok: true, detail: 'r=' + r.value }
+          : { ok: false, detail: 'r=' + r.value + ' (expected 0)' };
       })()` },
   ],
   keyModeMinor_7s_BroadcastsAsharp: [
-    { name: 'set-song-key broadcast carries a♯ spine coords (r=7)',
+    { name: 'Setup seeds ref field with a♯ spine coords (r=7)',
       expr: `(() => {
-        const msgs = window.__bridgeMock.captured().filter((m) => m.type === 'set-song-key');
-        if (msgs.length === 0) return { ok: false, detail: 'no set-song-key captured' };
-        const last = msgs[msgs.length - 1];
-        return last.r === 7
-          ? { ok: true, detail: 'q=' + last.q + ' r=' + last.r }
-          : { ok: false, detail: 'q=' + last.q + ' r=' + last.r + ' (expected r=7)' };
+        const r = document.getElementById('setupRefR');
+        if (!r) return { ok: false, detail: 'no #setupRefR' };
+        return r.value === '7'
+          ? { ok: true, detail: 'r=' + r.value }
+          : { ok: false, detail: 'r=' + r.value + ' (expected 7)' };
       })()` },
   ],
   keyModeMajor_3s_BroadcastsA: [
-    { name: 'set-song-key broadcast carries A spine coords (r=0) for A major',
+    { name: 'Setup seeds ref field with A spine coords (r=0) for A major',
       expr: `(() => {
-        const msgs = window.__bridgeMock.captured().filter((m) => m.type === 'set-song-key');
-        if (msgs.length === 0) return { ok: false, detail: 'no set-song-key captured' };
-        const last = msgs[msgs.length - 1];
-        return last.r === 0
-          ? { ok: true, detail: 'q=' + last.q + ' r=' + last.r }
-          : { ok: false, detail: 'q=' + last.q + ' r=' + last.r + ' (expected r=0)' };
+        const r = document.getElementById('setupRefR');
+        if (!r) return { ok: false, detail: 'no #setupRefR' };
+        return r.value === '0'
+          ? { ok: true, detail: 'r=' + r.value }
+          : { ok: false, detail: 'r=' + r.value + ' (expected 0)' };
       })()` },
   ],
   keyModeRoundtrip: [
@@ -6282,6 +6409,95 @@ export const FIXTURE_ASSERTIONS = {
         return ok
           ? { ok: true }
           : { ok: false, detail: 'captured=' + JSON.stringify(types) };
+      })()` },
+  ],
+  space_stops_performance: [
+    { name: 'Shift+Space starts performance, Space stops it (no play-score)',
+      expr: `(async () => {
+        await new Promise((r) => requestAnimationFrame(() => r(true)));
+        await Promise.resolve();
+        const types = window.__bridgeMock.captured().map((c) => c.type);
+        const startIdx = types.indexOf('start-performance');
+        const stopIdx = types.indexOf('stop-performance');
+        const ok = startIdx >= 0 && stopIdx > startIdx && !types.includes('play-score');
+        return ok
+          ? { ok: true }
+          : { ok: false, detail: 'captured=' + JSON.stringify(types) };
+      })()` },
+  ],
+  shift_space_noop_during_playback: [
+    { name: 'Shift+Space during playback is a no-op (no start-performance)',
+      expr: `(async () => {
+        await new Promise((r) => requestAnimationFrame(() => r(true)));
+        await Promise.resolve();
+        const types = window.__bridgeMock.captured().map((c) => c.type);
+        const ok = types.includes('play-score') && !types.includes('start-performance');
+        return ok
+          ? { ok: true }
+          : { ok: false, detail: 'captured=' + JSON.stringify(types) };
+      })()` },
+  ],
+  shift_space_noop_during_performance: [
+    { name: 'second Shift+Space is a no-op (one start-performance, no stop)',
+      expr: `(async () => {
+        await new Promise((r) => requestAnimationFrame(() => r(true)));
+        await Promise.resolve();
+        const types = window.__bridgeMock.captured().map((c) => c.type);
+        const starts = types.filter((t) => t === 'start-performance').length;
+        const stops = types.filter((t) => t === 'stop-performance').length;
+        const ok = starts === 1 && stops === 0;
+        return ok
+          ? { ok: true }
+          : { ok: false, detail: 'starts=' + starts + ' stops=' + stops + ' captured=' + JSON.stringify(types) };
+      })()` },
+  ],
+  shift_space_starts_performance_idle: [
+    { name: 'Shift+Space from idle sends start-performance',
+      expr: `(async () => {
+        await new Promise((r) => requestAnimationFrame(() => r(true)));
+        await Promise.resolve();
+        const types = window.__bridgeMock.captured().map((c) => c.type);
+        return types.includes('start-performance')
+          ? { ok: true }
+          : { ok: false, detail: 'captured=' + JSON.stringify(types) };
+      })()` },
+  ],
+  play_button_switches_from_performance: [
+    { name: 'Play button during performance: stop-performance then play-score',
+      expr: `(async () => {
+        for (let i = 0; i < 80; i++) {
+          const types = window.__bridgeMock.captured().map((c) => c.type);
+          const stopIdx = types.indexOf('stop-performance');
+          const playIdx = types.indexOf('play-score');
+          if (stopIdx >= 0 && playIdx > stopIdx) return { ok: true };
+          await new Promise((r) => setTimeout(r, 10));
+        }
+        return { ok: false, detail: 'captured=' + JSON.stringify(window.__bridgeMock.captured().map((c) => c.type)) };
+      })()` },
+  ],
+  perform_button_switches_from_playback: [
+    { name: 'Perform button during playback: stop-playback then start-performance',
+      expr: `(async () => {
+        for (let i = 0; i < 80; i++) {
+          const types = window.__bridgeMock.captured().map((c) => c.type);
+          const stopIdx = types.indexOf('stop-playback');
+          const perfIdx = types.indexOf('start-performance');
+          if (stopIdx >= 0 && perfIdx > stopIdx) return { ok: true };
+          await new Promise((r) => setTimeout(r, 10));
+        }
+        return { ok: false, detail: 'captured=' + JSON.stringify(window.__bridgeMock.captured().map((c) => c.type)) };
+      })()` },
+  ],
+
+  score_ref_broadcast_carries_setup_coords: [
+    { name: 'set-score-ref carries the Setup ref coords (0, 2)',
+      expr: `(() => {
+        const sr = window.__bridgeMock.captured().filter((m) => m.type === 'set-score-ref');
+        if (sr.length === 0) return { ok: false, detail: 'no set-score-ref captured' };
+        const last = sr[sr.length - 1];
+        return last.q === 0 && last.r === 2
+          ? { ok: true, detail: 'q=' + last.q + ' r=' + last.r }
+          : { ok: false, detail: 'q=' + last.q + ' r=' + last.r + ' (expected 0, 2)' };
       })()` },
   ],
   playback_bar_hidden_on_hidden_rest: [
@@ -7103,14 +7319,12 @@ export const FIXTURE_ASSERTIONS = {
       })()` },
   ],
   song_key_csharp_from_empty_voice: [
-    { name: 'set-song-key captured; (q,r) gives 12-TET pitch class C# (=1)',
+    { name: 'Setup seeds ref field; (q,r) gives 12-TET pitch class C# (=1)',
       expr: `(() => {
-        const cap = window.__bridgeMock.captured();
-        const sk = cap.filter(m => m.type === 'set-song-key');
-        if (sk.length === 0) {
-          return { ok: false, detail: 'no set-song-key captured; types=' + cap.map(m => m.type).join(',') };
-        }
-        const last = sk[sk.length - 1];
+        const qEl = document.getElementById('setupRefQ');
+        const rEl = document.getElementById('setupRefR');
+        if (!qEl || !rEl) return { ok: false, detail: 'no #setupRefQ/#setupRefR' };
+        const last = { q: parseInt(qEl.value, 10), r: parseInt(rEl.value, 10) };
         /* coordToMidi = 57 + 4q + 7r; pitch class = midi % 12. C# == 1. */
         const midi = 57 + 4 * last.q + 7 * last.r;
         const pc = ((midi % 12) + 12) % 12;
@@ -7118,11 +7332,11 @@ export const FIXTURE_ASSERTIONS = {
           ? { ok: true }
           : { ok: false, detail: '(q,r)=(' + last.q + ',' + last.r + ') → pc=' + pc + ' (expected 1 = C#)' };
       })()` },
-    { name: 'chosen (q,r) sits on the qm=0 spine in a central octave',
+    { name: 'seeded (q,r) sits on the qm=0 spine in a central octave',
       expr: `(() => {
-        const cap = window.__bridgeMock.captured();
-        const sk = cap.filter(m => m.type === 'set-song-key');
-        const last = sk[sk.length - 1];
+        const qEl = document.getElementById('setupRefQ');
+        const rEl = document.getElementById('setupRefR');
+        const last = { q: parseInt(qEl.value, 10), r: parseInt(rEl.value, 10) };
         const qm = ((last.q % 3) + 3) % 3;
         /* keyOctave uses the natural-letter MIDI (strips the accidental). For
          * C# the alter is +1, so natMidi = 57 + 4q + 7r - 1. The picker is
