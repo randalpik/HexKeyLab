@@ -897,9 +897,16 @@ function gridRange(extended: boolean): GridRange {
   qLo = Math.floor(qLo) - 2; qHi = Math.ceil(qHi) + 2; rLo = Math.floor(rLo) - 2; rHi = Math.ceil(rHi) + 2;
   /* Extend off → clamp to the active outline's bounds so we don't render
      hexes that will be masked anyway. None mode never clamps (otherwise
-     toggling Extend off would empty the canvas). */
+     toggling Extend off would empty the canvas).
+     During a view tween the single layer must cover BOTH view endpoints, but
+     the clamp can only target one outline position; under a screen-stationary
+     Lumatone/QWERTY outline the start-of-slide cells (baseKeys + oldAnchor)
+     fall outside the new-anchor clamp and flash as gaps. So skip the clamp
+     while a tween is pending and let the per-frame outline mask in draw() do
+     the real clipping (same unclamped behavior as Extend-on / canvas bounds). */
   const mode = getOutlineMode();
-  if (!extended && mode !== 'none') {
+  const tweening = pendingTweenStart !== null && pendingTweenEnd !== null;
+  if (!extended && mode !== 'none' && !tweening) {
     /* Add the current kbAnchor shift to the baseline extents so the clamp
        moves with the lattice underneath the static Lumatone/QWERTY outline. */
     const aQ = view.kbAnchorQ, aR = view.kbAnchorR;
