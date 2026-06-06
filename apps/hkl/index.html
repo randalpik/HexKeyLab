@@ -122,6 +122,20 @@ body.staff-on #staffInset{display:flex}
   align-items:flex-start;padding:4px 6px;position:relative;
   background:#fff;border:1px solid #2a2a2a;border-radius:6px;
 }
+/* OBS overlay (?overlay on <html>): transparent surfaces + no chrome, so an OBS
+   Browser Source composites just the lattice (+ Composer frame) over video. The
+   canvas paints transparent via setTransparentBg(); these rules strip every
+   surrounding fill and hide the toolbar / title / analysis line / staff inset.
+   Class lives on <html> (not <body>) so the page-root background goes
+   transparent too — body.composer-view / body.staff-dark stay independent. */
+html.overlay, html.overlay body, html.overlay .wrap,
+html.overlay canvas, html.overlay #composerFrame, html.overlay #staffInset{
+  background:transparent !important;border-color:transparent !important;box-shadow:none !important;
+}
+html.overlay .wrap{padding:0}
+html.overlay .title-bar, html.overlay .ctrls,
+html.overlay .info-line, html.overlay #staffInset,
+html.overlay .composer-frame-hint{display:none !important}
 #composerFrame svg{display:block;flex:0 0 auto}
 /* Mirror Composer's #score line rendering so the frame is pixel-identical to
    Composer's 50% scroll view: geometricPrecision (not the browser default /
@@ -347,6 +361,7 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <label><input type="checkbox" id="cbStaff" autocomplete="off"> Show staff notation</label>
 <label><input type="checkbox" id="cbStaffDark" autocomplete="off"> Dark staff notation</label>
 <label><input type="checkbox" id="cbComposerView" autocomplete="off"> Composer view</label>
+<label><input type="checkbox" id="cbObsOverlay" autocomplete="off"> OBS overlay</label>
 </div>
 <div class="cb-column">
 <label><input type="checkbox" id="cbShortIvl" autocomplete="off"> Short intervals</label>

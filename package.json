@@ -11,6 +11,9 @@
     "dev": "node vite/dev-proxy.mjs",
     "build": "pnpm -r build",
     "assemble": "node vite/assemble-dist.mjs",
+    "assemble:overlay-host": "node vite/assemble-overlay-host.mjs",
+    "overlay:dist": "pnpm --filter @hkl/hkl build:overlay && pnpm assemble:overlay-host",
+    "overlay:host": "pnpm --filter @hkl/overlay-host start",
     "typecheck": "tsc --noEmit",
     "check:boundaries": "node test/check-boundaries.mjs",
     "analyze": "node --max-old-space-size=8192 --expose-gc apps/analyzer/cli/generate-samples.js",
@@ -21,7 +24,9 @@
   },
   "devDependencies": {
     "@types/node": "25.6.2",
+    "@types/ws": "^8.18.1",
     "typescript": "^5.6.0",
-    "vite": "^6.0.0"
+    "vite": "^6.0.0",
+    "ws": "^8.21.0"
   }
 }

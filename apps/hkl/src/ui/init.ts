@@ -66,6 +66,7 @@ import { applyToolbarVisibility, initToolbarSelector } from './toolbars.js';
 import { applyTooltips } from './tooltips.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import { initHklBridge } from '../bridge/hkl-side.js';
+import { setOverlayPublishing, publishComposerView } from '../bridge/overlay-publish.js';
 import { initRecorderUI } from './recorder.js';
 import * as InstrumentRegistry from '../state/instrumentRegistry.js';
 import * as CdnConfigRegistry from '../state/cdnConfigRegistry.js';
@@ -94,6 +95,7 @@ function applyPrefsToDom(p: PrefsV1): void {
   document.body.classList.toggle('staff-dark', p.staffNotationDark);
   $<HTMLInputElement>('cbComposerView').checked = p.composerView;
   document.body.classList.toggle('composer-view', p.composerView);
+  $<HTMLInputElement>('cbObsOverlay').checked = p.obsOverlay;
   $<HTMLSelectElement>('selOutline').value = p.outline;
   $<HTMLSelectElement>('selRotation').value = p.rotation;
   $<HTMLSelectElement>('selTuning').value = p.tuning;
@@ -372,6 +374,16 @@ $<HTMLInputElement>('cbComposerView').addEventListener('change', (e) => {
   savePrefs({ composerView: checked });
   /* Paint the cached mirrored score when turning the frame on. */
   if (checked) renderComposerFrame();
+  /* Mirror the frame on/off to the OBS overlay. */
+  publishComposerView(checked);
+});
+$<HTMLInputElement>('cbObsOverlay').addEventListener('change', (e) => {
+  const checked = (e.target as HTMLInputElement).checked;
+  setOverlayPublishing(checked);
+  /* Seed the overlay's Composer-frame on/off from current state immediately
+     (the snapshot covers the lattice; this covers the frame toggle). */
+  if (checked) publishComposerView(document.body.classList.contains('composer-view'));
+  savePrefs({ obsOverlay: checked });
 });
 
 // Tuning + outline + clear
@@ -502,6 +514,13 @@ draw();
 /* Bridge announce: deferred until prefs are restored above so the first
    hkl-layout-state reflects user state, not the boot-time default. */
 initHklBridge();
+
+/* OBS overlay publishing: restore the toggle. Seed the cached Composer-frame
+   on/off so the first snapshot the overlay receives matches current state. */
+if (prefs.obsOverlay) {
+  setOverlayPublishing(true);
+  publishComposerView(prefs.composerView);
+}
 
 function onResize(): void {
   const oldCW = view.CW;

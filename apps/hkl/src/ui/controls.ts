@@ -13,8 +13,7 @@ import { referenceNote, clearSelection as clearRefSelection, recomputeReferenceF
 import { savePrefs } from '../state/persistence.js';
 import type { HexSize, OutlineMode, RotationMode, TuningMode } from '../state/persistence.js';
 import { refSpine } from '../tuning/refspine.js';
-import { dxH, dyH, cosT, sinT, setRotation, setHexSize } from '../layout/geometry.js';
-import { recomputeCanvasBounds, computePianoViewCenter } from '../render/canvas.js';
+import { dxH, dyH, cosT, sinT } from '../layout/geometry.js';
 import { view } from '../state/view.js';
 import { keyFreq } from '../tuning/frequency.js';
 import { SampleEngine } from '../audio/samples.js';
@@ -23,56 +22,17 @@ import {
   instrReplaysOnTranspose,
 } from '../audio/engine.js';
 import { stopAllMidi, syncMidi } from '../midi/engine.js';
-import { animation } from '../render/animation.js';
-import { cv, draw, startLayoutAnim, currentMidi64Cell, buildHexLayerForTween, snapViewForOutline, validateRefNoteCandidate, invalidatePianoOutline, rebuildScaleGeometry } from '../render/draw.js';
+import { draw, validateRefNoteCandidate, invalidatePianoOutline } from '../render/draw.js';
+import { syncViewToOutline, applyRotation, applyHexSize, applyOutlineRender } from '../render/controls-core.js';
 import { onTuningChanged } from '../effects/onTuningChanged.js';
 import { onRefChanged } from '../effects/onRefChanged.js';
 import { broadcastFootprint } from '../bridge/hkl-side.js';
 import type { KeyId, Voice } from '../types.js';
 
-/* Compute the view-center the active outline wants and animate to it.
-   - piano: solve for the viewport that places refNote at screen-X = 0
-     (horizontal center) AND MIDI 64's cell at screen-Y = 0 (vertical
-     center). The 2×2 linear system in lattice coords is tilt-aware —
-     under any rotation the outline's vertical extent stays minimized
-     (MIDI 64 is at the midpoint of the 88-key pitch range) while the
-     lattice shifts horizontally as refNote moves.
-   - other outlines: the layout-shift center as usual.
-   For piano-mode tweens we pre-rebuild the hex layer covering BOTH
-   endpoints (start + target) — animating through a region the layer
-   wasn't rebuilt for produces the cut-off-borders artifact. The expanded
-   layer survives the whole tween and shrinks back on the next normal
-   rebuild. `immediate` skips the tween and snaps; used at init so a
-   fresh load lands without a startup animation, and for outline-switch
-   transitions (where snap was already the design). */
-export function syncViewToOutline(outline: OutlineMode, immediate: boolean): void {
-  let targetQ: number, targetR: number;
-  if (outline === 'piano') {
-    const [m64Q, m64R] = currentMidi64Cell();
-    [targetQ, targetR] = computePianoViewCenter(referenceNote.q, referenceNote.r, m64Q, m64R);
-  } else {
-    /* Lumatone / QWERTY / none: lattice slides under the static outline so
-       kbAnchor lands at the outline's center. kbAnchor is only updated by
-       user-driven ref changes — Composer-driven changes leave it (and thus
-       the visible layout) untouched. */
-    targetQ = view.kbAnchorQ;
-    targetR = view.kbAnchorR;
-  }
-  if (immediate) {
-    view.viewQ = targetQ;
-    view.viewR = targetR;
-    return;
-  }
-  if (view.viewQ === targetQ && view.viewR === targetR) return;
-  /* Build the hex layer to cover [view → target] before the tween fires so
-     each animation frame blits from a layer that actually has the in-flight
-     view position covered. Applies to all outline modes now — Lumatone /
-     QWERTY use ref-driven shifts that can move the view anywhere on the
-     lattice, same as piano mode does. */
-  buildHexLayerForTween(view.viewQ, view.viewR, targetQ, targetR);
-  animation.tweenTo(targetQ, targetR);
-  startLayoutAnim();
-}
+/* Render-only primitives now live in render/controls-core.ts (engine-free, so
+   the OBS-overlay subscriber can reuse them). Re-exported here so existing
+   importers (ui/init.ts, bridge/hkl-side.ts) keep their import path unchanged. */
+export { syncViewToOutline, applyRotation, applyHexSize };
 
 export function setTuning(): void {
   const val = (document.getElementById('selTuning') as HTMLSelectElement).value as TuningMode;
@@ -120,25 +80,6 @@ export function setTuning(): void {
   savePrefs({ tuning: val });
 }
 
-export function applyRotation(mode: RotationMode): void {
-  setRotation(mode);
-  recomputeCanvasBounds();
-  cv.style.height = view.CH + 'px';
-  /* Piano viewport solves a tilt-dependent linear system to place
-     refNote at sx=0 and MIDI 64 at sy=0. After a rotation change the
-     stale viewQ/viewR no longer satisfies that, so cells (and the
-     polygon translate) drift away from the canvas center, leaving the
-     dark-overlay rect with the wrong origin. Re-snap unconditionally —
-     it's a no-op for non-piano outlines beyond setting view to the
-     current layout-shift center (which it already is). */
-  const sel = document.getElementById('selOutline') as HTMLSelectElement | null;
-  const outline = (sel?.value === 'qwerty' || sel?.value === 'piano' || sel?.value === 'none')
-    ? sel.value as OutlineMode : 'lumatone';
-  snapViewForOutline(outline);
-  view.hexDirty = true;
-  view.textDirty = true;
-}
-
 export function setRotationFromDom(): void {
   const sel = document.getElementById('selRotation') as HTMLSelectElement;
   const mode = sel.value as RotationMode;
@@ -146,25 +87,6 @@ export function setRotationFromDom(): void {
   draw();
   sel.blur();
   savePrefs({ rotation: mode });
-}
-
-/* Apply a hex-size preset: rescale geometry, rebuild scale-dependent caches,
-   recompute bounds, and re-snap the view (same lattice cell stays centered —
-   hexToScreen is center-relative). A size change genuinely changes rendered
-   geometry, so it legitimately dirties the offscreen hex/text layers (unlike a
-   layout switch). Canvas width is window-driven and unchanged; only height
-   tracks the rescaled outline. Modeled on applyRotation. */
-export function applyHexSize(size: HexSize): void {
-  setHexSize(size);
-  rebuildScaleGeometry();
-  recomputeCanvasBounds();
-  cv.style.height = view.CH + 'px';
-  const sel = document.getElementById('selOutline') as HTMLSelectElement | null;
-  const outline = (sel?.value === 'qwerty' || sel?.value === 'piano' || sel?.value === 'none')
-    ? sel.value as OutlineMode : 'lumatone';
-  snapViewForOutline(outline);
-  view.hexDirty = true;
-  view.textDirty = true;
 }
 
 export function setHexSizeFromDom(): void {
@@ -197,20 +119,9 @@ export function setOutline(): void {
     invalidatePianoOutline();
     onRefChanged(newSp.q - oldAQ, newSp.r - oldAR);
   }
-  /* Each outline has its own canvas bounds — resize before redrawing. */
-  recomputeCanvasBounds(newOutline);
-  cv.style.height = view.CH + 'px';
-  view.hexDirty = true;
-  view.textDirty = true;
-  /* Snap the view to the new outline's "home" position (refNote for piano,
-     layout-shift for the others) WITHOUT animation. The canvas height also
-     changes instantly on outline switch, so animating just the view position
-     looks half-broken — content tweens while the canvas resizes around it.
-     Outline changes are otherwise not animated, so this matches convention.
-     Animated view changes only happen for refNote scroll in piano mode (see
-     bridge/hkl-side.ts where syncViewToOutline is called with immediate=false). */
-  syncViewToOutline(newOutline, true);
-  draw();
+  /* Render fan-out: resize to the new outline's bounds + snap (immediate) +
+     redraw. Shared with the overlay subscriber via render/controls-core. */
+  applyOutlineRender(newOutline);
   sel.blur();
   savePrefs({ outline: newOutline });
   /* Outline switches the active footprint set Composer sees as the

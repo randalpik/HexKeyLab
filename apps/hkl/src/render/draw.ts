@@ -39,6 +39,7 @@ import {
 } from "../tuning/heji.js";
 import { VALID_REF_TABLE } from './refbounds-table.js';
 import { isCtrlHeld } from '../ui/keyboard.js';
+import { overlayPublishTick } from '../bridge/overlay-publish.js';
 import type { KeyId } from '../types.js';
 
 /** Resolve the displayed note name for a cell. All tuning modes now use the
@@ -56,6 +57,19 @@ cv.style.width = view.CW + 'px';
 cv.style.height = view.CH + 'px';
 (cv.parentElement as HTMLElement).style.minWidth = '424px'; /* 400px canvas + 24px wrap padding */
 export let ctx: CanvasRenderingContext2D = cv.getContext('2d')!;
+
+/** OBS-overlay transparent render. The lattice still renders fully opaque
+ *  (solid #111 base → clean, gap-free dark seams, exactly like HKL); the ONLY
+ *  thing this flag changes is the out-of-outline mask in draw(), which switches
+ *  from an opaque #111 fill to a destination-out ERASE — so everything outside
+ *  the keyboard outline becomes transparent for compositing over OBS video,
+ *  while the keyboard interior is untouched. Set by the ?overlay subscriber. */
+export let transparentBg = false;
+export function setTransparentBg(on: boolean): void {
+  if (transparentBg === on) return;
+  transparentBg = on;
+  view.hexDirty = true;
+}
 
 // ── layout-anim raf scheduler ──────────────────────────────────────────────
 let layoutAnimId: number | null = null;
@@ -927,6 +941,9 @@ function buildHexLayer(): void {
   hexCanvas.width = gridW * gridDpr; hexCanvas.height = gridH * gridDpr;
   const gc = hexCanvas.getContext('2d')!;
   gc.setTransform(gridDpr, 0, 0, gridDpr, 0, 0);
+  /* Solid #111 base — in BOTH modes. The overlay's transparency comes from the
+     destination-out outline mask in draw(), not from a transparent layer; a
+     solid base keeps the dark inter-hex seams gap-free (no sub-pixel leaks). */
   gc.fillStyle = '#111'; gc.fillRect(0, 0, gridW, gridH);
   const gcx = gridW / 2, gcy = gridH / 2 + view.kbOffY;
   const savedCtx = ctx; ctx = gc;
@@ -992,6 +1009,11 @@ export function draw(): void {
   cv.width = view.CW * dpr;
   cv.height = view.CH * dpr;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  /* Always fill #111 — even in overlay mode. The keyboard interior must render
+     exactly like HKL (solid backing → clean, gap-free dark seams); transparency
+     is produced LATER by erasing everything outside the outline (destination-out
+     mask below). Clearing here instead would leave the dark inter-hex seams
+     backed only by the per-hex beds, whose sub-pixel overlap leaks transparency. */
   ctx.fillStyle = "#111";
   ctx.fillRect(0, 0, view.CW, view.CH);
   const cyC = view.CH / 2 + view.kbOffY;
@@ -1437,6 +1459,9 @@ export function draw(): void {
       activePaths = lumatoneOutlinePaths;
     }
 
+    /* Out-of-bounds mask: covers everything outside the active outline (evenodd
+       between a huge rect and the outline polygons) — this is what clips the
+       animation-margin hexes the layer renders just beyond the outline. */
     const diag = Math.ceil(Math.sqrt(view.CW * view.CW + view.CH * view.CH));
     ctx.beginPath();
     ctx.rect(-diag, -diag, diag * 2, diag * 2);
@@ -1447,8 +1472,22 @@ export function draw(): void {
       }
       ctx.closePath();
     });
-    ctx.fillStyle = showE ? "rgba(17,17,17,0.65)" : "rgba(17,17,17,1.0)";
-    ctx.fill("evenodd");
+    if (transparentBg && !showE) {
+      /* Overlay mode: instead of painting the out-of-outline area opaque #111
+         (which reads as a solid black rectangle over the OBS video), ERASE it to
+         transparent with destination-out — same clip, but the masked area shows
+         the video through. Still runs per-frame, so animation-margin hexes stay
+         clipped during any layout tween (no need for a separate static mode).
+         Extend-on keeps the dim paint below (it mirrors the performer's ghost
+         tiling); only extend-off — the floating-keyboard overlay — erases. */
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.fillStyle = '#000';
+      ctx.fill('evenodd');
+      ctx.globalCompositeOperation = 'source-over';
+    } else {
+      ctx.fillStyle = showE ? "rgba(17,17,17,0.65)" : "rgba(17,17,17,1.0)";
+      ctx.fill("evenodd");
+    }
 
     ctx.strokeStyle = "#fff";
     ctx.lineWidth = 3.5 * hexScale;
@@ -1504,5 +1543,12 @@ export function draw(): void {
     }
   }
 
-  updateInfo();
+  /* The info panel + staff inset are hidden in overlay mode, so skip the
+     analysis + staff-inset Verovio render entirely there (transparentBg is the
+     overlay signal). */
+  if (!transparentBg) updateInfo();
+
+  /* OBS overlay: mirror this frame's state to the relay (no-op unless the
+     publisher toggle is on). Last statement so it sees the final view/keys. */
+  overlayPublishTick();
 }

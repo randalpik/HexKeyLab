@@ -3368,3 +3368,80 @@ accepts any same-pitch variant. Color resolution stays on the score side because
 lives in apps/hkl (Composer can't import it), but `@color` is already stamped on every `<note>` at
 insert — so no cross-app color recompute is needed. v1 doesn't follow harmonics, frontier
 play-ahead, or mid-piece starts.
+
+**OBS live overlay = HKL-only WebSocket mirror (2026-06-06).**
+Goal (backlog LAYOUT #1): composite the hex lattice + Composer view over a performance video in OBS,
+transparent and live-synced to Max's own performing instance. Plain window capture can't carry alpha
+(the OS flattens the window before OBS sees it) and chroma key is unreliable (the palette spans the
+whole hue wheel). So OBS renders the content itself: a second HKL instance loaded as a Browser Source
+at `?overlay` (true alpha, chrome-free), driven by a WebSocket mirror from the performer. Decided
+HKL is the ONLY node — it already renders the Composer view itself (`render/composer-frame.ts`), so
+both surfaces publish from one place; the Composer app is untouched. Transport: a dev-only relay
+(`vite/overlay-relay.mjs`, `ws` noServer mode) attached to the dev-proxy at `/overlay-ws` (single
+origin, no extra port), with retained-last-value per message type so a late-joining OBS source
+reconstructs immediately. Protocol types in `@hkl/bridge/overlay-protocol.ts` (pure data; outline/
+rotation/hexSize typed `string` to avoid reaching into the app), WS client in
+`@hkl/bridge/overlay-ws.ts`; transport stays out of `@hkl/shared`, boundaries green. Publisher
+(`bridge/overlay-publish.ts`) taps the ONE convergence point — end of `draw()` — and diff-gates three
+signals: a full `snapshot` on structural change, a `keys` delta when `selection.selectedKeys`
+changes, a `view` delta on pan (streamed per-frame during tweens; trivial on localhost and gives the
+overlay an exact pan match with no tween-reproduction). Composer-frame state is forwarded explicitly
+from the existing `hkl-side.ts` handlers (`composer-score`/`composer-playback`; NOT `composer-cursor`
+— overlay is bars-only, no editing caret, per Max). Subscriber (`bridge/overlay-subscribe.ts`,
+loaded by main.ts INSTEAD of ui/init.ts under `?overlay`) reconstructs state via the same high-level
+apply functions the toolbar uses (`setTuning`/`applyRotation`/`applyHexSize`/`setOutline`/
+`setSelectionFromManual`) — their audio/MIDI/Lumatone side effects all self-gate on uninitialised
+subsystems, and `savePrefs` is suppressed under `?overlay` so opening the overlay never clobbers the
+real instance's prefs (shared origin/localStorage). Transparent render: a `transparentBg` flag in
+draw.ts clears the main canvas + hex-layer base to transparent (vs filling `#111`); the keyboard bed
+stays opaque `#111` so inter-hex seams are solid black (Max: 1–2px of video through the seams reads
+as noise). The out-of-outline mask — which also clips the animation-margin hexes the layer renders
+just beyond the outline — was the real "black rectangle" culprit: it even-odd-filled outside the
+keyboard with opaque `#111` (invisible on a `#111` page, solid black over OBS video). Fix: when
+transparent + extend-off, that mask switches to a `destination-out` ERASE (same per-frame clip, but
+the masked area becomes transparent so the video shows through); extend-on keeps the dim paint
+(mirrors the performer's ghost tiling) — no separate static display mode needed.
+Chrome hidden via `html.overlay` CSS. Verified: `test/overlay-inspect/relay-roundtrip.mjs` (fan-out +
+retained replay) and `inspect.mjs` (transparent render, chrome hidden, painted). The live
+two-browser path is the manual OBS acceptance step.
+
+**OBS overlay distributable = lean read-only build + standalone relay/host (2026-06-06).**
+Shipping the OBS overlay to users without the dev stack, given two hard constraints: (1) HKL
+production is static Netlify hosting (no server, so no relay there); (2) OBS-CEF blocks a public
+page → ws://127.0.0.1 via Local Network Access (Chrome 142/147+), and CEF can't show the permission
+prompt. Solution (Max's framing — NOT bundling all of HKL): a small distributable that serves a
+**lean read-only overlay build** (lattice + score visuals only) AND the relay on one LOCAL origin, so
+OBS loads `http://127.0.0.1:5190/?overlay` (local→local WS, no LNA). The performer stays on
+production HKL (Netlify) in Firefox, which exempts localhost WebSockets + loopback mixed-content.
+Three parts: (a) **render/audio decoupling** — `render/controls-core.ts` holds the engine-free render
+primitives (`syncViewToOutline`/`applyRotation`/`applyHexSize` + extracted `applyTuningRender`/
+`applyOutlineRender`); `ui/controls.ts` re-exports them and keeps the engine-coupled
+transpose/clear + `setTuning`/`setOutline`; `onTuningChanged` calls `applyTuningRender` then its
+audio/Lumatone/Composer effects; `overlay-subscribe.ts` uses controls-core + direct state writes, so
+its import graph never reaches audio/MIDI/samples/recording. `draw()` skips `updateInfo()` when
+`transparentBg` (info panel hidden in overlay). (b) **lean build** — `src/overlay-main.ts` entry +
+`vite.overlay.config.ts` (reuses index.html via an `order:'pre'` `transformIndexHtml` script-swap to
+avoid markup/CSS drift; `publicDir:false` so no samples; font/Verovio via CDN) → `dist-overlay/`
+(~110KB, verified to exclude requestMIDIAccess/AudioContext/SampleEngine/recordOn). (c) **distributable**
+`apps/overlay-host` (`@hkl/overlay-host`) — Node `.mjs` server: `static.mjs` (dependency-free file
+server) + the relay (moved here from `vite/`; dev-proxy now imports it from here), binds 127.0.0.1:5190,
+embeds `dist-overlay` via `vite/assemble-overlay-host.mjs` (no-op `build` so `pnpm -r build` ordering
+is untouched). Client URL (`overlay-ws.ts`): local origin → same-origin `/overlay-ws` (dev-proxy AND
+distributable); remote origin (Netlify performer) → `ws://127.0.0.1:OVERLAY_RELAY_PORT` (5190,
+`localStorage.hklOverlayPort` override). Publisher gives up after 6 failed connects (never-opened) so
+public Netlify visitors don't poke localhost; the `cbObsOverlay` publisher gate is KEPT off-by-default
+(reversing the earlier drop-it idea) so public visitors never dial out at all. Verified: relay
+round-trip, lean-bundle engine-exclusion scan, and a live publisher→relay→browser-subscriber e2e
+through the running distributable (extend-off snapshot → 74% transparent). Future single-exe (bun
+compile / Node SEA) noted, not built.
+
+**OBS overlay: single relay (overlay-host only), no dev-proxy relay (2026-06-06).**
+Consolidated to ONE relay — the `apps/overlay-host` distributable — rather than maintaining a second
+copy in `vite/dev-proxy.mjs` (Max: don't maintain two). Dev now runs `pnpm overlay:host` alongside
+`pnpm dev`; the 5170 tabs dial the 5190 host relay. `overlay-ws.ts` URL resolution: `?obsrelay=PORT`
+/`localStorage.hklOverlayPort` override wins; else a host-served overlay (flagged via
+`window.__HKL_OVERLAY_SAME_ORIGIN`, injected into the lean build's HTML by the overlay vite config)
+uses same-origin so it tracks any `HKL_OVERLAY_PORT`; else (dev/Netlify performer, non-host overlay)
+dials `ws://127.0.0.1:OVERLAY_RELAY_PORT` (5190). Also: the lean build now bundles `BravuraText.woff2`
+locally (publicDir:false had dropped it → /BravuraText.woff2 404; the CDN @font-face fallback proved
+unreliable in OBS-CEF), so the distributable's font is self-contained (Verovio WASM still CDN).

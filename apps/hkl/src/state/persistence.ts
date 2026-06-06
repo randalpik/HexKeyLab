@@ -140,6 +140,10 @@ export interface PrefsV1 {
    *  mirroring the current HKL Composer score (cursor instrument's part),
    *  auto-scrolling to follow the Composer cursor + playback. Off by default. */
   composerView: boolean;
+  /** Publish this instance's render state to the OBS-overlay relay so a second
+   *  HKL instance loaded as an OBS Browser Source (?overlay) mirrors it
+   *  transparently. Off by default. */
+  obsOverlay: boolean;
 }
 
 /* Defaults mirror the HTML attributes + state/*.ts initial values, so a fresh
@@ -183,6 +187,7 @@ export const DEFAULT_PREFS: PrefsV1 = {
   showStaffNotation: false,
   staffNotationDark: false,
   composerView: false,
+  obsOverlay: false,
 };
 
 function isOutlineMode(s: unknown): s is OutlineMode {
@@ -327,6 +332,10 @@ export function loadPrefs(): PrefsV1 {
       typeof o.composerView === 'boolean'
         ? o.composerView
         : DEFAULT_PREFS.composerView,
+    obsOverlay:
+      typeof o.obsOverlay === 'boolean'
+        ? o.obsOverlay
+        : DEFAULT_PREFS.obsOverlay,
   };
 }
 
@@ -389,6 +398,11 @@ function loadVelocityCal(o: unknown): VelocityCalPrefs | undefined {
 /* Merge a partial patch into the stored prefs and write back. Read-modify-write
    so concurrent saves from independent handlers don't clobber each other's fields. */
 export function savePrefs(patch: Partial<PrefsV1>): void {
+  /* Overlay mode (?overlay) drives state from the WS mirror via the same
+     controls a user would (setTuning/setOutline/…), which call savePrefs as a
+     side effect. Suppress writes so opening the overlay never clobbers the
+     real instance's persisted prefs (they share an origin / localStorage). */
+  if (new URLSearchParams(location.search).has('overlay')) return;
   const cur = loadPrefs();
   const next = { ...cur, ...patch };
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); }

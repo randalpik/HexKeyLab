@@ -42,6 +42,7 @@ import { syncPianoOut, restrikePianoOut, sendSustainPedal } from '../midi/piano-
 import { pedal } from '../state/pedal.js';
 import { draw, requestDraw, activeFootprintSet, invalidatePianoOutline, validateRefNoteCandidate } from '../render/draw.js';
 import { setComposerScore, setComposerCursor, setComposerPlaybackBars, clearComposerFrame } from '../render/composer-frame.js';
+import { publishComposerScore, publishComposerPlayback } from './overlay-publish.js';
 import { syncViewToOutline } from '../ui/controls.js';
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { setSelectionFromComposer, setSongKey, onComposerBye, referenceNote } from '../state/reference.js';
@@ -1305,15 +1306,20 @@ bridge.on((msg: ComposerEvent) => {
          view" frame. Cached even when the frame is off so toggling it on shows
          the current score immediately. */
       setComposerScore(msg.mei);
+      /* Forward to the OBS overlay (no-op unless the overlay toggle is on). */
+      publishComposerScore(msg.mei);
       break;
     case 'composer-cursor':
-      /* Editing-cursor anchor → draw a pixel-identical read-only bar + scroll. */
+      /* Editing-cursor anchor → draw a pixel-identical read-only bar + scroll.
+         Deliberately NOT forwarded to the overlay: the overlay is bars-only
+         (no editing caret in a performance capture). */
       setComposerCursor(msg.voice, msg.anchor);
       break;
     case 'composer-playback':
       /* Composer-owned playback overlay (clock playback, Performance mode, any
          future cursor source) → mirror its mode + per-voice bars verbatim. */
       setComposerPlaybackBars(msg.on, msg.bars);
+      publishComposerPlayback(msg.on, msg.bars);
       break;
     case 'set-reference-note':
       /* Sets the selection tier from Composer. Last-writer-wins between

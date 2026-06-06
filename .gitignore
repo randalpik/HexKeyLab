@@ -1,5 +1,7 @@
 node_modules/
 dist/
+dist-overlay/
+apps/overlay-host/embedded/
 .DS_Store
 *.log
 .vite/

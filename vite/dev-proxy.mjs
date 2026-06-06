@@ -98,7 +98,11 @@ const server = http.createServer((req, res) => {
   runEndpoints(req, res, () => proxyHttp(req, res, targetFor(req.url || '/')));
 });
 
-/* ── HMR websocket upgrades, routed by the same prefixes ── */
+/* ── HMR websocket upgrades, routed by the same prefixes ──
+   The OBS-overlay relay is NOT here — it's owned solely by the standalone
+   overlay-host (apps/overlay-host, port 5190). In dev, run `pnpm overlay:host`
+   alongside `pnpm dev`; the performer + overlay tabs (5170) dial that one
+   relay. One relay, no dev/prod divergence. */
 server.on('upgrade', (req, socket, head) => {
   const port = targetFor(req.url || '/');
   const pReq = http.request({ hostname: '127.0.0.1', port, path: req.url, method: req.method, headers: req.headers });
