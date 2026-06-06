@@ -23,9 +23,11 @@ A **pnpm monorepo**. There is no top-level `src/`.
 
 ```
 apps/
-  hkl/        core viewer/player        (@hkl/hkl)
-  composer/   score editor              (@hkl/composer)
-  analyzer/   sample analyzer UI + CLI  (@hkl/analyzer)
+  hkl/          core viewer/player          (@hkl/hkl)
+  composer/     score editor                (@hkl/composer)
+  analyzer/     sample analyzer UI + CLI    (@hkl/analyzer)
+  orchestrator/ MIDI-device sampler         (@hkl/orchestrator)
+  overlay-host/ OBS overlay distributable   (@hkl/overlay-host — Node relay + lean overlay build)
 packages/
   shared/     @hkl/shared    pure data: tuning math, note naming, segments, dynamics, hki, colors
   engine/     @hkl/engine    sample playback (loop scheduling, crossfade, velocity)
@@ -48,10 +50,12 @@ pnpm install
 pnpm dev          # dev umbrella → http://localhost:5170
 ```
 
-`pnpm dev` spawns the three app dev servers (each with scoped HMR) behind a single-origin reverse
-proxy: **HKL at `/`, Composer at `/composer/`, Analyzer at `/analyzer/`**. The shared origin is
-required — the HKL↔Composer/Analyzer `BroadcastChannel` bridge and the `IndexedDB` instrument
-registry are per-origin. To run one app standalone: `pnpm --filter @hkl/<app> dev`.
+`pnpm dev` spawns the four app dev servers (each with scoped HMR) behind a single-origin reverse
+proxy: **HKL at `/`, Composer at `/composer/`, Analyzer at `/analyzer/`, Orchestrator at
+`/orchestrator/`**. The shared origin is required — the HKL↔Composer/Analyzer/Orchestrator
+`BroadcastChannel` bridges and the `IndexedDB` instrument registry are per-origin. To run one app
+standalone: `pnpm --filter @hkl/<app> dev`. (The OBS overlay host is a separate Node server, not part
+of the dev proxy — `pnpm overlay:host`; see Companion apps.)
 
 ## Build & check
 
@@ -70,7 +74,7 @@ or HTTPS); `file://` doesn't work. Chromium also works for testing.
 
 - [`CLAUDE.md`](CLAUDE.md) — entry point for AI-assisted sessions (agent guardrails + navigation).
 - [`docs/architecture.md`](docs/architecture.md) + [`docs/architecture/`](docs/architecture/) —
-  source-of-truth reference: overview + per-app deep-dives (hkl, composer, analyzer, engine).
+  source-of-truth reference: overview + per-app deep-dives (hkl, composer, analyzer, engine, overlay).
 - [`docs/user-guide.md`](docs/user-guide.md) — end-user guide for the HKL viewer.
 - [`docs/lessons.md`](docs/lessons.md) — gotchas, anti-patterns, hard-won truths.
 - [`docs/decisions.md`](docs/decisions.md) — append-only log of non-obvious design choices.
@@ -84,6 +88,10 @@ or HTTPS); `file://` doesn't work. Chromium also works for testing.
 - **HKL Analyzer** (`/analyzer/`) — builds instruments from audio: a browser UI plus a Node CLI
   (`apps/analyzer/cli/`, run via `pnpm analyze`) that batch-generates loop/gain data and `.hki`
   bundles. Dev-facing.
+- **OBS overlay host** (`apps/overlay-host`) — a small Node server that serves a lean, read-only
+  transparent overlay (lattice + Composer view) + a WebSocket relay, so OBS can composite HKL over a
+  performance video. `pnpm overlay:dist && pnpm overlay:host`, then add an OBS Browser Source at
+  `http://127.0.0.1:5190/?overlay`. See [`docs/architecture/overlay.md`](docs/architecture/overlay.md).
 
 ## Connecting a Lumatone
 

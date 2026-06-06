@@ -14,6 +14,8 @@ and the repo map. Per-app deep-dives live alongside it:
   device into a velocity-layered `.hki` (discovery + capture + quality gates).
 - [**engine.md**](architecture/engine.md) — `@hkl/engine`: the standalone sample playback library
   (loop scheduling, crossfade, velocity layers, `.hki`), plus the other shared libs.
+- [**overlay.md**](architecture/overlay.md) — OBS live overlay: transparent lattice + Composer view
+  into OBS via the `apps/overlay-host` distributable (relay + lean read-only build).
 
 Design *rationale and history* live in [`decisions.md`](decisions.md); gotchas in
 [`lessons.md`](lessons.md); the agent operating-manual + critical hardware constants in
@@ -29,6 +31,8 @@ apps/
   composer/     score editor              (@hkl/composer)     → composer.md
   analyzer/     sample analyzer UI+CLI     (@hkl/analyzer)     → analyzer.md
   orchestrator/ MIDI-device sampler        (@hkl/orchestrator) → orchestrator.md
+  overlay-host/ OBS overlay distributable  (@hkl/overlay-host) → overlay.md
+                (Node relay + serves the lean read-only overlay build; NOT a dev-proxy app)
 packages/
   shared/     pure data: tuning math, note naming, segments, dynamics, hki, colors, heji
   engine/     @hkl/engine — sample playback                → engine.md
@@ -199,3 +203,8 @@ TE `#4CFFBA`/`#005937`, GR `#55FF4C`/`#045900`, YE `#FFF94C`/`#595600`, OR `#FF8
 - **Analyzer → HKL**: the Analyzer CLI generates instrument blocks (spliced into
   `apps/hkl/src/audio/samples-data.ts`) and `.hki` bundles; the Analyzer tab writes imported
   bundles to the shared IndexedDB registry that HKL reads (same origin). See analyzer.md, engine.md.
+- **HKL → OBS overlay**: the performing HKL (publisher) mirrors its lattice + Composer-frame render
+  state over a **localhost WebSocket relay** to a read-only `?overlay` instance loaded as an OBS
+  Browser Source. Unlike the same-origin bridges above, OBS's CEF is a separate browser, so this hop
+  is WebSocket (not BroadcastChannel) and is served by the standalone `apps/overlay-host`. See
+  overlay.md.

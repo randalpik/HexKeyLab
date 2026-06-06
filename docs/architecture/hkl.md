@@ -122,14 +122,19 @@ The `.info-row` holds the analysis line (`#infoLine`) plus, on the right, two op
 
 ### OBS live overlay (`#cbObsOverlay`, `?overlay`)
 
-Composite the lattice + Composer view over a performance video in OBS, transparent and live-synced to your own performing instance. Plain window capture can't carry alpha, so OBS renders the content itself in its Browser Source (its own Chromium/CEF). Because CEF is a separate browser, the same-origin `BroadcastChannel` bridge can't reach it — state crosses via a **localhost WebSocket relay**. HKL is the only node — it already renders the Composer view (`composer-frame.ts`), so both surfaces publish from one place; the Composer app is untouched. Bars-only (no editing caret).
+Composite the lattice + Composer view over a performance video in OBS, transparent and live-synced
+to the performer's own instance, via a localhost WebSocket relay (the OBS Browser Source is a
+separate Chromium that the same-origin bridge can't reach). **Full system → [overlay.md](overlay.md)**
+(constraints, the `apps/overlay-host` distributable, the lean build, transport, dev/prod flows).
 
-- **One relay, the `apps/overlay-host` distributable.** Build + run it: `pnpm overlay:dist && pnpm overlay:host` → serves a **lean read-only overlay build** + the WebSocket relay on one local origin (`127.0.0.1:5190`). Production: OBS Browser Source loads `…:5190/?overlay` (local origin → no Local Network Access prompt — since Chrome 142/147 a *public* page → `ws://127.0.0.1` is blocked, but local→local isn't) and the performer stays on production HKL (Netlify) in Firefox. Dev: run `pnpm overlay:host` alongside `pnpm dev`; the performer + overlay tabs at `localhost:5170` (HMR) both dial the same `:5190` relay. There is no dev-proxy relay — one relay, no dev/prod divergence. See `apps/overlay-host/README.md` + decisions.md.
-- **Publisher** `#cbObsOverlay` (Analysis group, pref `obsOverlay`, **off by default** so public Netlify visitors never dial localhost). `bridge/overlay-publish.ts` taps the end of `draw()` — the one convergence point — and diff-gates a full `snapshot` (structural change), a `keys` delta (`selection.selectedKeys`), and a `view` delta (pan, streamed per-frame for an exact match). Composer-frame state is forwarded from the `hkl-side.ts` `composer-score`/`composer-playback` handlers.
-- **Relay** `apps/overlay-host/src/overlay-relay.mjs` (`ws` noServer, retains last-value per message type so a late OBS source reconstructs immediately), attached only by the host's `server.mjs`. Protocol/client: `@hkl/bridge` `overlay-protocol.ts` + `overlay-ws.ts`. URL resolution: `?obsrelay=PORT`/`localStorage.hklOverlayPort` override wins; else the **host-served** overlay (flagged in its built HTML) uses same-origin (tracks any host port); else (dev/Netlify performer, non-host overlay) dials `ws://127.0.0.1:OVERLAY_RELAY_PORT` (5190).
-- **Subscriber** `bridge/overlay-subscribe.ts` (loaded by `main.ts` instead of `ui/init.ts` under `?overlay`). Reconstructs via the **engine-free** render primitives in `render/controls-core.ts` (`applyRotation`/`applyHexSize`/`applyTuningRender`/`applyOutlineRender`) + direct state writes — deliberately NOT `ui/controls.ts` (which imports the audio/MIDI engines). This is what keeps the **lean overlay bundle** (`vite.overlay.config.ts` → `dist-overlay`, ~110 KB) free of audio/MIDI/samples/recording. No audio, MIDI, or input; `savePrefs` suppressed under `?overlay`.
-- **Transparent render**: the lattice renders fully opaque (solid `#111` base → clean gap-free dark seams, identical to HKL). Transparency comes ONLY from the out-of-outline mask in `draw()`, which — when `transparentBg` (overlay) + extend-off — switches from an opaque `#111` even-odd fill to a `destination-out` **erase**, so everything outside the keyboard outline becomes transparent while still clipping the animation-margin hexes per-frame. Extend-on keeps the dim paint (mirrors the performer's ghost tiling). Chrome hidden via the `html.overlay` CSS block in `index.html`.
-- **Verify**: `test/overlay-inspect/` (`relay-roundtrip.mjs` transport; `inspect.mjs` transparent render). → decisions.md "OBS overlay distributable…".
+HKL-side touch-points only: the **publisher** `#cbObsOverlay` (off by default) lives in
+`bridge/overlay-publish.ts`, tapping the end of `draw()` (the convergence point) plus the
+`hkl-side.ts` `composer-score`/`composer-playback` handlers (bars-only); the **subscriber**
+`bridge/overlay-subscribe.ts` (loaded by `main.ts` under `?overlay`) drives the lattice via the
+**engine-free** primitives in `render/controls-core.ts` (split out of `ui/controls.ts` so the overlay
+bundle excludes audio/MIDI); and `draw.ts`'s `transparentBg` flag flips the out-of-outline mask to a
+`destination-out` erase (everything outside the keyboard outline → transparent; opaque `#111` base
+keeps seams clean).
 
 ### Short intervals mode
 
