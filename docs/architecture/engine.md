@@ -67,7 +67,9 @@ Per-voice: `sourceStartTime`, `sourceStartOffset`, `sourceLoopA`, `sourceLoopB`,
 
 ## Polyphonic aftertouch
 
-Per-voice `pressureGain`, velocity-anchored handover: on an AT message the voice gain ramps from current to the AT-implied target with `AFTERTOUCH_RAMP_S` smoothing. `inflightExpRampValue` is exported as the host's pre-call anchor polyfill (Firefox lacks `cancelAndHoldAtTime`).
+Per-voice `pressureGain` modulated by poly AT (0xA0), as a **continuous swell upward from the strike volume**. `aftertouchTargetGain(pressure, strikeVel)` (`audio/aftertouch.ts`) is dB-linear in pressure: `(ceilGain / baseVol(strikeVel)) ^ (pressure/127)`, where `ceilGain = baseVol(127) · 10^(AFTERTOUCH_CEIL_HEADROOM_DB/20)` is a common ceiling sitting `AFTERTOUCH_CEIL_HEADROOM_DB` (default 12 dB) **above** the loudest strike. So pressure 0 → gain 1.0 (continuous with the strike, no gate-open jump), and full press → that ceiling regardless of strike — every strike swells (a v127 strike by exactly the headroom; softer strikes more, converging to the same ceiling). The headroom is for voicing; the master limiter (−3 dBFS, ratio 20) absorbs the peak. Decaying instruments (piano/harp, `instrDecays()`) skip AT entirely.
+
+On an AT message the gain ramps from its in-flight value to the new target with `AFTERTOUCH_RAMP_S` smoothing; `inflightExpRampValue` is exported as the host's pre-call anchor polyfill (Firefox lacks `cancelAndHoldAtTime`). The input is gated by `filterPA` (hysteresis open>5/close<2) to reject the sensor's 0↔1 onset flicker.
 
 ## Pedal semantics
 

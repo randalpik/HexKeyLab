@@ -3523,3 +3523,35 @@ stays as the source of `RegionInfo` for *coloring* (A/B septimal semantics beyon
 **Note**: the bounds-probe scripts `test/bounds-probe/compute-bounds.mjs` +
 `compute-refbounds.mjs` still read old pre-monorepo `src/...` paths and error on launch (unrelated
 monorepo-migration breakage); `octave-consistency.mjs` runs and passes.
+
+
+---
+
+## Polyphonic aftertouch = continuous dB swell from strike to an above-v127 ceiling
+
+**Picked**: `aftertouchTargetGain(pressure, strikeVel)` (`apps/hkl/src/audio/aftertouch.ts`) is
+dB-linear in pressure: `(ceilGain / baseVol(strikeVel)) ^ (pressure/127)`, where
+`ceilGain = baseVol(127) · 10^(AFTERTOUCH_CEIL_HEADROOM_DB/20)` is a common ceiling sitting
+`AFTERTOUCH_CEIL_HEADROOM_DB` (default 12 dB) **above** the loudest possible strike. Pressure 0 →
+gain exactly 1.0 (continuous with the strike volume); full press → that ceiling regardless of strike.
+The floor is the note's own strike volume, not a constant. The master limiter (−3 dBFS, ratio 20)
+absorbs the resulting peaks. Decaying instruments (piano/harp) still skip AT.
+
+**Rejected**:
+- The original fixed-floor remap `eqVel = 72 + t·55; gain = baseVol(eqVel)/baseVol(strikeVel)` —
+  the `FLOOR=72` came from a pre-calibration observation ("AT only fires past the velocity-80 zone").
+  After per-key onset calibration that floor is stale: it made gain *jump* the instant `filterPA`'s
+  gate opened (up for soft strikes, down for hard), and coupled the swell range to strike velocity.
+- An interim "strike → v127, linear in eqVel" model (capped the swell at `baseVol(127)`): fixed the
+  discontinuity but gave a v127 strike *zero* headroom and the loudest swell only ~+8 dB. Too
+  conservative — a single hard strike already sits ~−15 dBFS, leaving room Max wanted for voicing.
+- A strike-independent fixed dB swell (e.g. always +6 dB): rejected because it doesn't converge
+  fully-pressed voices to a common loudness, which is what makes voicing a chord tone read clearly.
+
+**Why**: now that onsets are calibrated and the post-onset pressure range is wide, AT should give
+*wide, consistent, click-free* expression. dB-linear converging-to-a-common-ceiling gives a
+perceptually even crescendo where every strike — including a full-velocity one — can swell to bring
+a held tone out above the others (voicing). The ≥10 dB ceiling above max strike was Max's explicit
+target; 12 dB is the default and the one knob to tune by ear (a lumadiag slider for it is deferred).
+Files: `apps/hkl/src/audio/aftertouch.ts` (whole change); `handleAftertouch` in `audio/engine.ts`
+is unchanged (already passes `strikeVel` and ramps `pressureGain` over `AFTERTOUCH_RAMP_S`).

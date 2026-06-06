@@ -441,6 +441,7 @@ animDuration = 500 # layout animation ms
 sysexBoardMap = [1,2,3,5,4]
 fixedMidiChannelMap = [0,1,2,3,4]
 AFTERTOUCH_RAMP_S
+AFTERTOUCH_CEIL_HEADROOM_DB  # poly-AT full-press swell ceiling, dB above v127 (default 12)
 REARTICULATE_FLASH_MS
 DAMPER_SMOOTH_TAU      # ~25ms exponential τ for setTargetAtTime damper smoothing
 DAMPER_RELEASE_FLOOR   # below this depth, sustained voices release via normal noteOff
