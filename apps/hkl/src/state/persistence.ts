@@ -21,6 +21,10 @@ export type OutlineMode = 'lumatone' | 'qwerty' | 'piano' | 'none';
 export type TuningMode = 'E' | '5' | 'P' | 'D' | '7' | 'V';
 export type PedalMode = 'sustain' | 'sostenuto';
 export type RotationMode = 'verticalFreq' | 'lumatone' | 'piano';
+/* Hex-size preset. Scales hex geometry, text, and stroke widths uniformly;
+   display-only (does not affect recordings, audio, or Composer footprint).
+   Maps to inradius px in layout/geometry.ts (small 12 · medium 16 · large 24). */
+export type HexSize = 'small' | 'medium' | 'large';
 
 export interface ToolbarVisibility {
   layout: boolean;
@@ -85,6 +89,9 @@ export interface PrefsV1 {
   outline: OutlineMode;
   rotation: RotationMode;
   tuning: TuningMode;
+  /** Hex-size preset (display-only). Default 'medium' (the historical fixed
+   *  size). 'small'/'large' rescale the whole lattice + text + strokes. */
+  hexSize: HexSize;
   audioEnabled: boolean;
   waveform: string;
   pedalMode: PedalMode;
@@ -147,6 +154,7 @@ export const DEFAULT_PREFS: PrefsV1 = {
   outline: "lumatone",
   rotation: "verticalFreq",
   tuning: "5",
+  hexSize: "medium",
   /* audio defaults to ON to match the long-standing "load piano + play on
      first reload" behavior of pre-persistence HKL */
   audioEnabled: true,
@@ -182,6 +190,9 @@ function isOutlineMode(s: unknown): s is OutlineMode {
 }
 function isRotationMode(s: unknown): s is RotationMode {
   return s === 'verticalFreq' || s === 'lumatone' || s === 'piano';
+}
+function isHexSize(s: unknown): s is HexSize {
+  return s === 'small' || s === 'medium' || s === 'large';
 }
 function isTuningMode(s: unknown): s is TuningMode {
   return s === 'E' || s === '5' || s === 'P' || s === 'D' || s === '7' || s === 'V';
@@ -255,6 +266,7 @@ export function loadPrefs(): PrefsV1 {
     outline: isOutlineMode(o.outline) ? o.outline : DEFAULT_PREFS.outline,
     rotation: isRotationMode(o.rotation) ? o.rotation : DEFAULT_PREFS.rotation,
     tuning: isTuningMode(o.tuning) ? o.tuning : DEFAULT_PREFS.tuning,
+    hexSize: isHexSize(o.hexSize) ? o.hexSize : DEFAULT_PREFS.hexSize,
     audioEnabled:
       typeof o.audioEnabled === "boolean"
         ? o.audioEnabled

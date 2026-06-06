@@ -46,6 +46,7 @@ import { initPianoOut } from '../midi/piano-out.js';
 import {
   setTuning, setOutline, clearSelection,
   applyRotation, setRotationFromDom, syncViewToOutline,
+  applyHexSize, setHexSizeFromDom,
 } from './controls.js';
 import './keyboard.js';
 import '../input/keyboard-notes.js';
@@ -96,6 +97,7 @@ function applyPrefsToDom(p: PrefsV1): void {
   $<HTMLSelectElement>('selOutline').value = p.outline;
   $<HTMLSelectElement>('selRotation').value = p.rotation;
   $<HTMLSelectElement>('selTuning').value = p.tuning;
+  $<HTMLSelectElement>('selHexSize').value = p.hexSize;
   $<HTMLInputElement>('cbAudio').checked = p.audioEnabled;
   $<HTMLSelectElement>('waveform').value = p.waveform;
   $<HTMLSelectElement>('pedalMode').value = p.pedalMode;
@@ -120,6 +122,10 @@ applyPrefsToDom(prefs);
 /* Apply persisted rotation before first paint — resets geometry tilt,
    canvas bounds, and cv.style.height to match the saved mode. */
 applyRotation(prefs.rotation);
+/* Apply persisted hex size before first paint — rescales geometry, rebuilds
+   scale-dependent outline/snap caches, and recomputes bounds at the saved
+   scale. After applyRotation so its bounds recompute reads the active mode. */
+applyHexSize(prefs.hexSize);
 applyToolbarVisibility(prefs.toolbars);
 initToolbarSelector();
 /* Static tooltips for every toolbar control — text lives in tooltips.ts. */
@@ -373,6 +379,7 @@ $<HTMLSelectElement>('selTuning').addEventListener('change', setTuning);
 
 $<HTMLSelectElement>('selOutline').addEventListener('change', () => setOutline());
 $<HTMLSelectElement>('selRotation').addEventListener('change', setRotationFromDom);
+$<HTMLSelectElement>('selHexSize').addEventListener('change', setHexSizeFromDom);
 $<HTMLButtonElement>('btnClear').addEventListener('click', clearSelection);
 
 // Audio
@@ -439,6 +446,7 @@ function resetToDefaults(): void {
   setTuning();
   setOutline();  /* user-initiated path; tween view to new home position */
   applyRotation(p.rotation);
+  applyHexSize(p.hexSize);
 
   if (audio.audioEnabled !== p.audioEnabled) toggleAudio();
   if (audio.activeWaveform !== p.waveform) changeWaveform();

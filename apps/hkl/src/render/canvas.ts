@@ -20,7 +20,7 @@
 
 import { baseKeys } from '../layout/baseKeys.js';
 import { qwertyKeys } from '../input/qwerty.js';
-import { hexR, dxH, dyH, cosT, sinT, hexToScreen, currentRotationMode } from '../layout/geometry.js';
+import { hexR, dxH, dyH, hexScale, cosT, sinT, hexToScreen, currentRotationMode } from '../layout/geometry.js';
 import type { OutlineMode, RotationMode, TuningMode } from '../state/persistence.js';
 import { tuning } from '../state/tuning.js';
 import { view } from '../state/view.js';
@@ -140,9 +140,11 @@ export function recomputeCanvasBounds(outlineOverride?: OutlineMode): void {
     /* Piano table is keyed by tuning mode — each mode has its own picker
        output and therefore its own canvas extent. */
     const m = PIANO_BOUNDS_TABLE[currentRotationMode][tuning.mode];
+    /* Table values are raw px baked at the medium baseline (hexR=16). Bounds
+       are linear in scale, so scale by hexScale for small/large presets. */
     /* For "none", take the max of piano vs lumatone+qwerty already computed. */
-    kbMinW = Math.max(kbMinW, m.kbMinW);
-    CH = Math.max(CH, m.CH);
+    kbMinW = Math.max(kbMinW, Math.round(m.kbMinW * hexScale));
+    CH = Math.max(CH, Math.round(m.CH * hexScale));
   }
   view.kbMinW = kbMinW;
   view.CH = CH;

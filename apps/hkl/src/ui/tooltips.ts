@@ -28,6 +28,7 @@ export const TOOLTIPS: Record<string, string> = {
   cbExtend: 'Extend the repeating key pattern beyond the physical outline to fill the canvas.',
   selRotation: 'Lattice orientation: Vertical Freq (pitch rises straight up), Lumatone (physical board tilt), or Piano.',
   selOutline: 'Which key outline to overlay on the lattice: Lumatone, QWERTY, Piano, or none.',
+  selHexSize: 'Hex size: rescale the whole lattice — keys, labels, and outlines — to Small, Medium, or Large.',
 
   // ── Playback ────────────────────────────────────────────────────────
   cbAudio: 'Enable the built-in audio engine (sample / oscillator playback at true JI tuning).',

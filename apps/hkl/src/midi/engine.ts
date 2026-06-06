@@ -183,7 +183,7 @@ export function findLumatone(handleMidiMessage: MidiMessageHandler): void {
   const lumaGroup = document.getElementById('tb-group-lumatone');
   if (midi.midiOut) {
     const isNewConnection = oldOutId !== newOutId;
-    statusEl.textContent = 'Lumatone Connected';
+    statusEl.textContent = "Lumatone connected";
     statusEl.className = 'luma-connected';
     if (lumaGroup) lumaGroup.classList.add('lumatone-connected');
     if (isNewConnection) {

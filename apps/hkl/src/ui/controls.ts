@@ -11,9 +11,9 @@ import { selection } from '../state/selection.js';
 import { audio } from '../state/audio.js';
 import { referenceNote, clearSelection as clearRefSelection, recomputeReferenceForOutline } from '../state/reference.js';
 import { savePrefs } from '../state/persistence.js';
-import type { OutlineMode, RotationMode, TuningMode } from '../state/persistence.js';
+import type { HexSize, OutlineMode, RotationMode, TuningMode } from '../state/persistence.js';
 import { refSpine } from '../tuning/refspine.js';
-import { dxH, dyH, cosT, sinT, setRotation } from '../layout/geometry.js';
+import { dxH, dyH, cosT, sinT, setRotation, setHexSize } from '../layout/geometry.js';
 import { recomputeCanvasBounds, computePianoViewCenter } from '../render/canvas.js';
 import { view } from '../state/view.js';
 import { keyFreq } from '../tuning/frequency.js';
@@ -24,7 +24,7 @@ import {
 } from '../audio/engine.js';
 import { stopAllMidi, syncMidi } from '../midi/engine.js';
 import { animation } from '../render/animation.js';
-import { cv, draw, startLayoutAnim, currentMidi64Cell, buildHexLayerForTween, snapViewForOutline, validateRefNoteCandidate, invalidatePianoOutline } from '../render/draw.js';
+import { cv, draw, startLayoutAnim, currentMidi64Cell, buildHexLayerForTween, snapViewForOutline, validateRefNoteCandidate, invalidatePianoOutline, rebuildScaleGeometry } from '../render/draw.js';
 import { onTuningChanged } from '../effects/onTuningChanged.js';
 import { onRefChanged } from '../effects/onRefChanged.js';
 import { broadcastFootprint } from '../bridge/hkl-side.js';
@@ -146,6 +146,34 @@ export function setRotationFromDom(): void {
   draw();
   sel.blur();
   savePrefs({ rotation: mode });
+}
+
+/* Apply a hex-size preset: rescale geometry, rebuild scale-dependent caches,
+   recompute bounds, and re-snap the view (same lattice cell stays centered —
+   hexToScreen is center-relative). A size change genuinely changes rendered
+   geometry, so it legitimately dirties the offscreen hex/text layers (unlike a
+   layout switch). Canvas width is window-driven and unchanged; only height
+   tracks the rescaled outline. Modeled on applyRotation. */
+export function applyHexSize(size: HexSize): void {
+  setHexSize(size);
+  rebuildScaleGeometry();
+  recomputeCanvasBounds();
+  cv.style.height = view.CH + 'px';
+  const sel = document.getElementById('selOutline') as HTMLSelectElement | null;
+  const outline = (sel?.value === 'qwerty' || sel?.value === 'piano' || sel?.value === 'none')
+    ? sel.value as OutlineMode : 'lumatone';
+  snapViewForOutline(outline);
+  view.hexDirty = true;
+  view.textDirty = true;
+}
+
+export function setHexSizeFromDom(): void {
+  const sel = document.getElementById('selHexSize') as HTMLSelectElement;
+  const size = sel.value as HexSize;
+  applyHexSize(size);
+  draw();
+  sel.blur();
+  savePrefs({ hexSize: size });
 }
 
 export function setOutline(): void {

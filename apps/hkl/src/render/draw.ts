@@ -13,7 +13,7 @@
 
 import { baseKeys } from '../layout/baseKeys.js';
 import { bandOf } from '../layout/coords.js';
-import { hexR, dxH, dyH, tiltAngle, cosT, sinT } from '../layout/geometry.js';
+import { hexR, dxH, dyH, hexScale, tiltAngle, cosT, sinT } from '../layout/geometry.js';
 import { qwertyKeys } from '../input/qwerty.js';
 import { tuning } from '../state/tuning.js';
 import { view } from '../state/view.js';
@@ -70,8 +70,10 @@ export function startLayoutAnim(): void {
   layoutAnimId = requestAnimationFrame(animateLayout);
 }
 
-// ── outline geometry (precomputed at module load) ──────────────────────────
-const outR = hexR + 1;
+// ── outline geometry (precomputed at module load; rebuilt on hex-size change
+//    via rebuildScaleGeometry — outR scales with hexR, the hdx/hdy/epx/epy
+//    direction arrays are normalized and therefore scale-invariant) ──────────
+let outR = hexR + 1;
 const olDirs: ReadonlyArray<readonly [number, number]> = [[1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1]];
 const hdx: number[] = [], hdy: number[] = [], epx: number[] = [], epy: number[] = [];
 for (let _di = 0; _di < 6; _di++) {
@@ -147,8 +149,8 @@ function computeOutlinePaths(keys: ReadonlyArray<readonly [number, number]>): Po
   return paths;
 }
 
-const lumatoneOutlinePaths: Point[][] = computeOutlinePaths(baseKeys);
-const qwertyOutlinePaths: Point[][] = computeOutlinePaths(qwertyKeys);
+let lumatoneOutlinePaths: Point[][] = computeOutlinePaths(baseKeys);
+let qwertyOutlinePaths: Point[][] = computeOutlinePaths(qwertyKeys);
 
 /* Spatial index for seam-snap. snapVtx() is called twice per seam segment
    (~thousands per frame in piano outline with a tall canvas) — a linear
@@ -190,8 +192,8 @@ function buildSnapIndex(paths: Point[][]): SnapIndex {
   }
   return { buckets };
 }
-const lumatoneSnapIndex = buildSnapIndex(lumatoneOutlinePaths);
-const qwertySnapIndex = buildSnapIndex(qwertyOutlinePaths);
+let lumatoneSnapIndex = buildSnapIndex(lumatoneOutlinePaths);
+let qwertySnapIndex = buildSnapIndex(qwertyOutlinePaths);
 let pianoSnapIndex: SnapIndex = { buckets: new Map() };
 const emptySnapIndex: SnapIndex = { buckets: new Map() };
 
@@ -241,7 +243,7 @@ const validRefSetByMode: Record<TuningMode, Set<KeyId>> = {
   '7': new Set(VALID_REF_TABLE['7'].map(([q, r]) => (q + ',' + r) as KeyId)),
   'V': new Set(VALID_REF_TABLE['V'].map(([q, r]) => (q + ',' + r) as KeyId)),
 };
-const validRefPathsByMode: Record<TuningMode, Point[][]> = {
+let validRefPathsByMode: Record<TuningMode, Point[][]> = {
   'E': computeOutlinePaths(VALID_REF_TABLE['E']),
   '5': computeOutlinePaths(VALID_REF_TABLE['5']),
   'P': computeOutlinePaths(VALID_REF_TABLE['P']),
@@ -249,6 +251,29 @@ const validRefPathsByMode: Record<TuningMode, Point[][]> = {
   '7': computeOutlinePaths(VALID_REF_TABLE['7']),
   'V': computeOutlinePaths(VALID_REF_TABLE['V']),
 };
+
+/** Rebuild every scale-dependent cache after a hex-size change. The cell sets
+ *  (baseKeys, qwertyKeys, VALID_REF_TABLE, validRefSetByMode) are in lattice
+ *  coords and unchanged; only their pixel projections + the derived snap
+ *  indices + outR depend on hexR. `validRefSetByMode` (string-keyed gate) is
+ *  scale-invariant and intentionally not rebuilt. Mirrors the inline module-
+ *  load initializers above. */
+export function rebuildScaleGeometry(): void {
+  outR = hexR + 1;
+  lumatoneOutlinePaths = computeOutlinePaths(baseKeys);
+  qwertyOutlinePaths = computeOutlinePaths(qwertyKeys);
+  lumatoneSnapIndex = buildSnapIndex(lumatoneOutlinePaths);
+  qwertySnapIndex = buildSnapIndex(qwertyOutlinePaths);
+  validRefPathsByMode = {
+    'E': computeOutlinePaths(VALID_REF_TABLE['E']),
+    '5': computeOutlinePaths(VALID_REF_TABLE['5']),
+    'P': computeOutlinePaths(VALID_REF_TABLE['P']),
+    'D': computeOutlinePaths(VALID_REF_TABLE['D']),
+    '7': computeOutlinePaths(VALID_REF_TABLE['7']),
+    'V': computeOutlinePaths(VALID_REF_TABLE['V']),
+  };
+  invalidatePianoOutline();
+}
 
 function activeValidRefSet(): Set<KeyId> {
   return validRefSetByMode[tuning.mode];
@@ -613,7 +638,11 @@ const EXP_SCALE = 0.42;
 const EXP_ASCENT_FRAC = 0.45;
 
 function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
-  const baseFontSize = 14;
+  /* Scale the base label size with the hex-size preset. maxW (= hexR*1.3)
+     scales by the same factor, so the shrink-to-fit ratio below is unchanged
+     relative to medium — labels grow at Large and shrink at Small while
+     keeping identical fit behavior. The 6/5/4px floors stay absolute. */
+  const baseFontSize = 14 * hexScale;
   /* BravuraText is compiled with text-style metrics, but SMuFL accidental
      glyphs still occupy only a fraction of the em box (engraved to fit a
      5-line staff, so glyph extent is much smaller than the equivalent
@@ -1105,7 +1134,7 @@ export function draw(): void {
     const k = posMap[key];
     if (!k) return;
     ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 2.5;
+    ctx.lineWidth = 2.5 * hexScale;
     drawHexPath(k.ux, k.uy, hexR - 0.5);
     ctx.stroke();
   });
@@ -1121,7 +1150,7 @@ export function draw(): void {
   if (showB && !tuning.equalEnabled) {
     const eHL = hexR * 0.55;
     ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 2 * hexScale;
     ctx.lineCap = "butt";
     /* `allSet` is a number-keyed Set built via packQR to avoid the ~14k
        string allocations the old `Set<string>` + `q + ',' + r`
@@ -1289,8 +1318,8 @@ export function draw(): void {
     if (rk) {
       ctx.save();
       ctx.strokeStyle = "#fff";
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([5, 4]);
+      ctx.lineWidth = 1.5 * hexScale;
+      ctx.setLineDash([5 * hexScale, 4 * hexScale]);
       /* Offset outward by ~2.5px so the dashed ring sits in the gap rather
          than on the key. hexR is the in-radius of the inscribed circle of
          a flat-topped hex; +2.5 lands clearly outside the (-0.5) selection
@@ -1422,7 +1451,7 @@ export function draw(): void {
     ctx.fill("evenodd");
 
     ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 3.5;
+    ctx.lineWidth = 3.5 * hexScale;
     ctx.lineCap = "butt";
     ctx.lineJoin = "round";
     ctx.beginPath();
@@ -1458,10 +1487,10 @@ export function draw(): void {
         view.viewR * dyH,
       );
       ctx.strokeStyle = "#fff";
-      ctx.lineWidth = 2.5;
+      ctx.lineWidth = 2.5 * hexScale;
       ctx.lineCap = "butt";
       ctx.lineJoin = "round";
-      ctx.setLineDash([5, 4]);
+      ctx.setLineDash([5 * hexScale, 4 * hexScale]);
       ctx.beginPath();
       validPaths.forEach((poly) => {
         for (let i = 0; i < poly.length; i++) {

@@ -9,11 +9,31 @@
 // tiltAngle/cosT/sinT are `let` exports; ES module live bindings propagate
 // updates to every importer without re-importing.
 
-import type { RotationMode } from '../state/persistence.js';
+import type { HexSize, RotationMode } from '../state/persistence.js';
 
-export const hexR = 16;
-export const dxH = hexR * 1.78;
-export const dyH = hexR * 1.54;
+/* Hex inradius (px) and derived axis pitches. `let` exports: setHexSize()
+   reassigns them and ES module live bindings propagate to every importer.
+   The tilt block below uses dxH/dyH only as ratios, so it's scale-invariant
+   and is NOT recomputed on a size change. */
+export let hexR = 16;
+export let dxH = hexR * 1.78;
+export let dyH = hexR * 1.54;
+/** Stroke/dash scale factor = hexR / 16 (the medium baseline). Multiply
+ *  hardcoded canvas line widths and dash lengths by this so they stay
+ *  visually balanced at every preset. */
+export let hexScale = 1;
+
+const HEX_PX: Record<HexSize, number> = { small: 12, medium: 16, large: 24 };
+
+/** Apply a hex-size preset: reassign inradius, axis pitches, and the stroke
+ *  scale factor. Callers must then rebuild scale-dependent caches
+ *  (render/draw.ts rebuildScaleGeometry) + recompute canvas bounds + redraw. */
+export function setHexSize(size: HexSize): void {
+  hexR = HEX_PX[size];
+  dxH = hexR * 1.78;
+  dyH = hexR * 1.54;
+  hexScale = hexR / 16;
+}
 
 const TILT_VERTICAL_FREQ = (function (): number {
   const avgR = Math.log(3 / 2) - Math.log(81 / 80) / 12;
