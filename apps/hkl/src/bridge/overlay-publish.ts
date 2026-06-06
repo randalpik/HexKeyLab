@@ -1,6 +1,9 @@
 // OBS-overlay publisher. The performing HKL instance mirrors its render state
 // to the relay so a second instance (?overlay, an OBS Browser Source) can draw
-// it transparent. Enabled by the "OBS overlay" toolbar toggle.
+// it transparent. Auto-started at boot (no toolbar toggle): a refused connection
+// (no relay running) is silent on Chromium — the Local Network Access prompt only
+// fires once a connection actually establishes, i.e. when a relay is genuinely
+// present — so dialing unconditionally never bothers non-OBS visitors.
 //
 // One tap point for the lattice: overlayPublishTick() runs at the END of draw()
 // — the single convergence point every state change funnels through (selection,
@@ -99,10 +102,12 @@ function structSigOf(s: OverlaySnapshot): string {
 /** Enable/disable overlay publishing. Opens (or tears down) the WS connection. */
 export function setOverlayPublishing(on: boolean): void {
   if (on && !channel) {
-    /* giveUpAfter: a performer on the public Netlify origin with no local relay
-       running shouldn't poke localhost forever — bail after a handful of tries.
-       Once connected (relay present), reconnect is unbounded. */
-    channel = new OverlayChannel({ giveUpAfter: 6 });
+    /* giveUpAfter: with no relay listening the connect is refused (silently —
+       the LNA prompt only fires on an established connection). Keep the retry
+       count low so a non-OBS visitor logs only a couple of connection-refused
+       lines before stopping. Once connected (relay present), reconnect is
+       unbounded. */
+    channel = new OverlayChannel({ giveUpAfter: 3 });
     channel.onOpen(sendFullState);
   } else if (!on && channel) {
     channel.close();

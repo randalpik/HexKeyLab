@@ -1413,3 +1413,25 @@ cleared `isPlaying`/`hklConnected` but not `pendingStopAcks`. Lesson: any main.t
 fixture can leave non-zero (here `pendingStopAcks`) must be reset in `__testReset`, and a
 scenario-pass / full-fail split is the tell for cross-fixture state leak — diff the fixture order,
 not the code.
+
+### Chromium LNA prompts only AFTER a connection establishes — a closed port is silent
+
+Chrome's Local Network Access (Chrome 142+ for fetch/subresource/subframe; **147+ for WebSockets**)
+gates a public/loopback origin reaching loopback behind a permission prompt ("…wants to access other
+apps and services on this device"). The non-obvious part, verified against the WICG spec
+(https://wicg.github.io/local-network-access/): the permission check is inserted **right after the
+connection is obtained and found not-failure** — so a **refused / closed-port connection never reaches
+the prompt**. Only an actually-listening endpoint prompts.
+
+Consequences that bit us on the OBS overlay (see decisions.md "drop the off-by-default checkbox"):
+- A bare `new WebSocket('ws://127.0.0.1:5190')` is **already a silent presence-probe**. No relay →
+  silent connection-refused (a couple of un-catchable `WebSocket … failed` console lines, nothing
+  more). Relay up → one prompt, exactly when warranted. So you do **not** need a checkbox/opt-in gate
+  to keep non-users from being prompted — just dial unconditionally and keep `giveUpAfter` low.
+- A `fetch()`/HTTP **probe is strictly worse**, not safer: it's the one thing that triggers the prompt
+  on a *closed* port too. Never "probe first, then connect."
+- Firefox doesn't LNA-gate loopback at all; a localhost *origin* → localhost is loopback→loopback and
+  exempt. So the whole concern is Chromium-on-a-remote-origin only.
+- `navigator.permissions.query({name:'local-network-access'})` reads grant state **without** prompting
+  (returns `prompt`/`granted`/`denied`; always `denied` on HTTP) — available if you ever want to gate
+  on an existing grant, but unnecessary given closed-port silence.

@@ -95,7 +95,6 @@ function applyPrefsToDom(p: PrefsV1): void {
   document.body.classList.toggle('staff-dark', p.staffNotationDark);
   $<HTMLInputElement>('cbComposerView').checked = p.composerView;
   document.body.classList.toggle('composer-view', p.composerView);
-  $<HTMLInputElement>('cbObsOverlay').checked = p.obsOverlay;
   $<HTMLSelectElement>('selOutline').value = p.outline;
   $<HTMLSelectElement>('selRotation').value = p.rotation;
   $<HTMLSelectElement>('selTuning').value = p.tuning;
@@ -382,14 +381,6 @@ $<HTMLInputElement>('cbComposerView').addEventListener('change', (e) => {
   /* Mirror the frame on/off to the OBS overlay. */
   publishComposerView(checked);
 });
-$<HTMLInputElement>('cbObsOverlay').addEventListener('change', (e) => {
-  const checked = (e.target as HTMLInputElement).checked;
-  setOverlayPublishing(checked);
-  /* Seed the overlay's Composer-frame on/off from current state immediately
-     (the snapshot covers the lattice; this covers the frame toggle). */
-  if (checked) publishComposerView(document.body.classList.contains('composer-view'));
-  savePrefs({ obsOverlay: checked });
-});
 
 // Tuning + outline + clear
 $<HTMLSelectElement>('selTuning').addEventListener('change', setTuning);
@@ -520,12 +511,15 @@ draw();
    hkl-layout-state reflects user state, not the boot-time default. */
 initHklBridge();
 
-/* OBS overlay publishing: restore the toggle. Seed the cached Composer-frame
-   on/off so the first snapshot the overlay receives matches current state. */
-if (prefs.obsOverlay) {
-  setOverlayPublishing(true);
-  publishComposerView(prefs.composerView);
-}
+/* OBS overlay publishing: always attempt. A refused connection (no relay
+   running) is silent on Chromium — the LNA permission prompt only fires once a
+   connection is actually established, i.e. when a relay is genuinely present
+   (see docs/decisions.md). So there's no checkbox: non-OBS visitors get a few
+   silent connection-refused tries then giveUpAfter stops; an OBS user running
+   the relay gets the prompt exactly when it's warranted. Seed the cached
+   Composer-frame on/off so the first snapshot matches current state. */
+setOverlayPublishing(true);
+publishComposerView(prefs.composerView);
 
 function onResize(): void {
   const oldCW = view.CW;

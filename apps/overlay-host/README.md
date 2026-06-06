@@ -44,8 +44,11 @@ Prints the URLs. Then, on the same machine:
 
 - **OBS**: add a **Browser Source** → `http://127.0.0.1:5190/?overlay` (set its size
   to the lattice resolution; the background is transparent).
-- **Perform**: open your production HKL in **Firefox**, enable **OBS overlay** in
-  the toolbar (Analysis group), and play. The overlay mirrors it live.
+- **Perform**: open your production HKL in **Firefox** and play — publishing
+  auto-starts (no toggle); this relay being up is what activates it. The overlay
+  mirrors it live. (On Chromium you'll get a one-time "access other apps and
+  services" prompt while the relay is running — grant it. With no relay running the
+  dial-out is silently refused, so HKL never prompts users who don't stream.)
 
 Port defaults to **5190** (`HKL_OVERLAY_PORT` env or first CLI arg overrides it; if
 you change it, also set `localStorage.hklOverlayPort` in the performing tab so it
@@ -64,7 +67,7 @@ pnpm dev          # apps on :5170 (HMR)
 pnpm overlay:host # the relay + host on :5190   (run `pnpm overlay:dist` first if serving its overlay)
 ```
 
-Then the **performer** at `http://localhost:5170/` (tick OBS overlay) and an
+Then the **performer** at `http://localhost:5170/` and an
 **overlay** at `http://localhost:5170/?overlay` (HMR) both auto-dial the host's
 relay at `ws://127.0.0.1:5190` — one relay, dev or prod. (Custom port: set
 `HKL_OVERLAY_PORT` and `localStorage.hklOverlayPort` / `?obsrelay=PORT` to match.)

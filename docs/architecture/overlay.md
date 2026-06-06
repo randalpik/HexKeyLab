@@ -8,7 +8,7 @@ directly into OBS".)
 
 ```
  Performer: production HKL (Netlify, Firefox)  ──ws://127.0.0.1:5190──┐
-   #cbObsOverlay on → publishes lattice + composer-frame state         ▼
+   auto-dials on boot → publishes lattice + composer-frame state       ▼
  OBS Browser Source ── http://127.0.0.1:5190/?overlay ──▶  apps/overlay-host  (the distributable)
    read-only lean visuals, transparent, local origin        Node server: serves the lean overlay
                                                              build + the WebSocket relay (one origin)
@@ -133,8 +133,14 @@ The relay lives in `apps/overlay-host` (not `@hkl/bridge`) so the package stays 
 
 ## Publisher (performing HKL)
 
-`apps/hkl/src/bridge/overlay-publish.ts`, gated by **`#cbObsOverlay`** ("OBS overlay", Analysis
-group, pref `obsOverlay`, **off by default** — so public Netlify visitors never dial localhost).
+`apps/hkl/src/bridge/overlay-publish.ts`, **auto-started on boot** (no checkbox). Dialing
+`ws://127.0.0.1:5190` unconditionally is safe: a refused connection (no relay) is **silent** on
+Chromium — the Local Network Access prompt only fires once a connection actually *establishes* (i.e.
+a relay is genuinely present; the LNA check is inserted right after connection-not-failure per the
+WICG spec). So non-OBS Netlify visitors just log a couple of connection-refused lines
+(`giveUpAfter: 3`) and stop; an OBS user running the relay gets the prompt exactly when warranted.
+(Was a `#cbObsOverlay` off-by-default toggle in the Analysis group — see decisions.md for why that
+was dropped.)
 
 - **Lattice**: `overlayPublishTick()` runs at the END of `draw()` — the one convergence point every
   state change funnels through — and diff-gates a full `snapshot` (structural change), a `keys` delta
@@ -168,10 +174,12 @@ suppressed under `?overlay` so opening the overlay never clobbers the real insta
 
 **Production / OBS.** `pnpm overlay:dist && pnpm overlay:host`. In OBS add a **Browser Source** →
 `http://127.0.0.1:5190/?overlay` (size it to the lattice; background is transparent). Perform on
-production HKL (Netlify) in **Firefox**, tick **OBS overlay**.
+production HKL (Netlify) in **Firefox** — publishing auto-starts (no toggle); the relay being up is
+what activates it. On Chromium you'll get a one-time "access other apps and services" prompt when the
+relay is running; grant it.
 
 **Dev** (one relay, with HMR). Run `pnpm overlay:host` alongside `pnpm dev`. The performer at
-`localhost:5170/` (tick OBS overlay) and an overlay at `localhost:5170/?overlay` both auto-dial the
+`localhost:5170/` and an overlay at `localhost:5170/?overlay` both auto-dial the
 host's `:5190` relay — HMR for both, no `?obsrelay` needed for the default port. (There is **no**
 dev-proxy relay — one relay, no dev/prod divergence.)
 
@@ -199,4 +207,4 @@ dev-proxy relay — one relay, no dev/prod divergence.)
 | Publisher / subscriber | `apps/hkl/src/bridge/overlay-publish.ts`, `overlay-subscribe.ts`, `overlay-mode.ts` |
 | Composer-frame mirror | `apps/hkl/src/bridge/hkl-side.ts`, `apps/hkl/src/render/composer-frame.ts` |
 | Protocol / client | `packages/bridge/src/overlay-protocol.ts`, `overlay-ws.ts` |
-| Publisher toggle | `apps/hkl/index.html` (`#cbObsOverlay`), `apps/hkl/src/ui/init.ts`, `state/persistence.ts` |
+| Publisher auto-start | `apps/hkl/src/ui/init.ts` (unconditional `setOverlayPublishing(true)` at boot) |

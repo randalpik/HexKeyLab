@@ -43,7 +43,6 @@ export const TOOLTIPS: Record<string, string> = {
   cbStaff: 'Show the currently-held notes as a chord on a grand staff (Verovio), inset at the bottom-right. HEJI accidentals follow the HEJI toggle.',
   cbStaffDark: 'Render the staff-notation inset dark: dark background, light staff lines and accidentals, and noteheads in the bright on-screen lattice colors. Distinct from Composer’s theme.',
   cbComposerView: 'Replace the analysis/staff area with a read-only, scrollable frame mirroring the current HKL Composer score (the cursor instrument’s part), auto-scrolling to follow the Composer cursor and playback. Requires HKL Composer open in another tab.',
-  cbObsOverlay: 'Publish this instance’s lattice + Composer view to a local relay so a second HKL tab opened at ?overlay (added to OBS as a Browser Source) mirrors it with a transparent background — for compositing over a performance video. Live-synced to this instance.',
   cbShortIvl: 'Use compact (short) interval names in the analysis box.',
   cbHeji: 'Decorate note labels with Helmholtz-Ellis JI comma arrows / septimal hooks (auto-enabled in Schismatic mode)',
 

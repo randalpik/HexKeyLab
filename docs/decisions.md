@@ -3474,3 +3474,25 @@ ref/layout against a mismatched score); **toggling sync ON** with Composer conne
 `reconcileSelectionOnSyncEnable()` clears the selection iff it differs from the score-ref tier. Files:
 `packages/bridge/src/protocol.ts`, `apps/hkl/src/{state/reference.ts,bridge/hkl-side.ts,ui/init.ts}`,
 `apps/composer/src/{main.ts,cursor/refNote.ts,setupDialog.ts}`.
+
+**OBS overlay: drop the off-by-default checkbox, auto-publish on boot (2026-06-06).**
+Reverses the earlier "KEEP `#cbObsOverlay` off-by-default" decision (above). The overlay item also
+overflowed the Analysis toolbar and never belonged there (it's output, not analysis). Why dropping
+the gate is now safe — and why the original prompt-fear was misdiagnosed: per the WICG Local Network
+Access spec (https://wicg.github.io/local-network-access/), the LNA permission check is inserted into
+HTTP-network fetch **"right after checking that the newly-obtained connection is not failure"** — i.e.
+**after** the TCP connection is established. So a **closed port (no relay) is refused before the check
+runs → no prompt, fully silent**; only an **established** connection (a relay is actually present)
+reaches the prompt. WICG issue #96 confirms a refused connection leaks "no new information vs. any
+closed port." The spec text is for fetch; WS gating is the Chrome 147+ extension and necessarily rides
+the same ordering (a WS upgrade can't happen without an established TCP connection) — confirmed by the
+A/B test on Max's Chromium 148 (relay down → no prompt; relay up → the "access other apps and
+services on this device" prompt). Net: the bare WebSocket attempt is itself the silent presence-probe
+Max wanted — a `fetch()` probe would be strictly worse (it's the one thing that DOES prompt on a
+closed port). So: no checkbox, no probe, no UA-sniff, no `?obs`. `ui/init.ts` calls
+`setOverlayPublishing(true)` unconditionally at boot; `giveUpAfter` lowered 6→3 so a non-OBS visitor
+logs only a couple of silent connection-refused lines before stopping. Removed: `#cbObsOverlay`
+(index.html), its listener + startup gate (init.ts), the `obsOverlay` pref (persistence.ts), the
+tooltip (tooltips.ts). Firefox (loopback-exempt) and the localhost dev origin (loopback→loopback)
+never prompt regardless. Files: `apps/hkl/index.html`, `apps/hkl/src/ui/{init,tooltips}.ts`,
+`apps/hkl/src/state/persistence.ts`, `apps/hkl/src/bridge/overlay-publish.ts`.
