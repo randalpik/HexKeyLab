@@ -213,7 +213,7 @@ function bindPort(port: MIDIInput | null): void {
   midi.pianoIn = port;
   if (port) {
     port.onmidimessage = pianoMessage;
-    setStatus('Connected', 'luma-connected');
+    setStatus("Piano connected", "luma-connected");
   } else {
     setStatus('No device');
   }

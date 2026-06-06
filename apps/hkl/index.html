@@ -38,6 +38,10 @@ html,body{background:#111;height:100%;overflow:hidden}
 .ctrls select.piano-device-sel{max-width:120px;text-overflow:ellipsis}
 .lsel{display:flex;gap:4px;align-items:center;margin-right:8px}
 .lsel span{font-weight:500;color:#ccc}
+.lsel-col{display:inline-flex;flex-direction:column;gap:2px;align-items:stretch}
+.lsel-col .lsel{margin-right:0}
+.lsel-col .lsel span{min-width:54px}
+.lsel-col .lsel select{flex:1}
 .lsel .lbtn{padding:0 12px !important;border-radius:4px !important;border:1.5px solid #555 !important;background:#222 !important;color:#999 !important;cursor:pointer !important;font-size:20px !important;font-weight:500 !important;line-height:1.6 !important;min-height:0 !important;min-width:0 !important;margin:0 !important;box-shadow:none !important;text-transform:none !important;letter-spacing:normal !important;font-family:inherit !important;outline:none !important;-webkit-appearance:none !important;appearance:none !important}
 .lsel .lbtn:hover{border-color:#888 !important}
 .lsel .lbtn.active{border-color:#fff !important;background:#fff !important;color:#000 !important}
@@ -257,6 +261,7 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 </div>
 <div class="ctrls toolbar-row">
 <div class="toolbar-group" id="tb-group-layout">
+<div class="lsel-col">
 <div class="lsel">
 <span>Tuning:</span>
 <select id="selTuning" autocomplete="off">
@@ -268,19 +273,21 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <option value="V">Schismatic</option>
 </select>
 </div>
+<div class="lsel">
+<span>Hex size:</span>
+<select id="selHexSize" autocomplete="off">
+<option value="small">Small</option>
+<option value="medium" selected>Medium</option>
+<option value="large">Large</option>
+</select>
+</div>
+</div>
 <div class="cb-column">
 <label><input type="checkbox" id="cbNotes" autocomplete="off" checked> Note names</label>
 <label><input type="checkbox" id="cbBands" autocomplete="off" checked> Band seams</label>
 <label><input type="checkbox" id="cbExtend" autocomplete="off" checked> Extend pattern</label>
 </div>
-<div class="lsel">
-<span>Rotation:</span>
-<select id="selRotation" autocomplete="off">
-<option value="verticalFreq" selected>Vertical Freq</option>
-<option value="lumatone">Lumatone</option>
-<option value="piano">Piano</option>
-</select>
-</div>
+<div class="lsel-col">
 <div class="lsel">
 <span>Outline:</span>
 <select id="selOutline" autocomplete="off">
@@ -291,16 +298,20 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 </select>
 </div>
 <div class="lsel">
-<span>Hex size:</span>
-<select id="selHexSize" autocomplete="off">
-<option value="small">Small</option>
-<option value="medium" selected>Medium</option>
-<option value="large">Large</option>
+<span>Rotation:</span>
+<select id="selRotation" autocomplete="off">
+<option value="verticalFreq" selected>Vertical Freq</option>
+<option value="lumatone">Lumatone</option>
+<option value="piano">Piano</option>
 </select>
 </div>
 </div>
+</div>
 <div class="toolbar-group" id="tb-group-playback">
+<div class="cb-column">
 <label><input type="checkbox" id="cbAudio" autocomplete="off"> Audio</label>
+<label><input type="checkbox" id="cbShowDiag" autocomplete="off"> Diagnostics</label>
+</div>
 <select id="waveform" autocomplete="off">
 <!-- Decay-path instruments (piano on top, keyboards then plucked/struck) -->
 <option value="maestro_piano">Piano</option>
@@ -350,7 +361,6 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <span class="tpax"><button class="tpab" data-dq="-7" data-dr="4">&#x25B2;</button><span class="tpal">SC</span><button class="tpab" data-dq="7" data-dr="-4">&#x25BC;</button></span>
 </span>
 <button class="push-btn" id="btnClear">Clear</button>
-<label><input type="checkbox" id="cbShowDiag" autocomplete="off"> Show diagnostics</label>
 </div>
 <div class="toolbar-group" id="tb-group-analysis">
 <div class="cb-column">
@@ -396,11 +406,13 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <div class="sync-status" id="syncStatus">Idle</div>
 </div>
 </div>
+<div class="luma-vstack">
 <label>Pedals: <select id="pedalMode" autocomplete="off">
 <option value="sustain" selected>Sustain</option>
 <option value="sostenuto">Sostenuto + Sustain</option>
 </select></label>
 <button class="calib-btn luma-conn-only" id="btnCalibPedal">Calibrate Pedal</button>
+</div>
 <label class="luma-conn-only"><input type="checkbox" id="cbCalibrateKeys" autocomplete="off"> Calibrate Keys</label>
 </div>
 <div class="toolbar-group" id="tb-group-piano">

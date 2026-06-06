@@ -52,10 +52,12 @@ The Lumatone sends MIDI on a fixed (channel, note) scheme. HKL maps those addres
 
 ### Controls
 
-Two centered rows.
+A **tabbed toolbar** (`apps/hkl/src/ui/toolbars.ts`): a selector row (`Layout · Playback · Analysis · Recording · Lumatone · Piano`, plus a `Reset` prefs button) shows one fixed-height `.toolbar-group` at a time — tabs just flip `.tb-hidden`. Within a group, controls are stacked vertically wherever they fit, to keep the row narrow:
 
-- **Row 1**: Note names · Band seams · Extend pattern · Show coordinates · Short intervals · Outline selector · Rotation selector.
-- **Row 2**: Tuning selector · Transpose controls · Audio + Instrument · Clear · Lumatone status panel · Recording controls · Reset prefs.
+- **Layout**: two columns of stacked selectors — Tuning + Hex size, and Outline + Rotation (paired selects made equal-width via `.lsel-col`) — flanking the Note names / Band seams / Extend pattern checkbox column.
+- **Playback**: Audio + Diagnostics checkboxes stacked, then instrument/waveform selector · Import · Transpose · Clear.
+- **Lumatone**: Calibrate Pedal stacked beneath the Pedals selector (`luma-conn-only`, so it shows only when connected).
+- **Analysis / Recording / Piano**: checkbox columns and button pairs (see the table below and the Recording section).
 
 | Control | Behavior |
 |---|---|
