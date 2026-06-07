@@ -14,7 +14,8 @@ directly into OBS".)
                                                              build + the WebSocket relay (one origin)
 ```
 
-Operational/run instructions live in [`apps/overlay-host/README.md`](../../apps/overlay-host/README.md);
+**For how to *use* it — set up the overlay in OBS — see the [Overlay guide](../guide/overlay.md).**
+Operational/run instructions also live in [`apps/overlay-host/README.md`](../../apps/overlay-host/README.md);
 design rationale + history in [`decisions.md`](../decisions.md) ("OBS live overlay…", "OBS overlay
 distributable…", "OBS overlay: single relay…").
 

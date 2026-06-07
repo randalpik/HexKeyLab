@@ -1,6 +1,8 @@
-# HKL Composer
+# HKL Composer — Architecture Reference
 
-Keyboard-driven, Verovio-backed score editor that uses HKL as its input device. Part of [the HexKeyLab architecture](../architecture.md); tuning/coordinate concepts live there, audio playback in [engine.md](engine.md).
+Keyboard-driven, Verovio-backed score editor that uses HKL as its input device. **For how to *use* Composer — the keystroke reference and feature walkthrough — see the [Composer guide](../guide/composer.md).** Part of [the HexKeyLab architecture](../architecture.md); tuning/coordinate concepts live there, audio playback in [engine.md](engine.md).
+
+The "Phase N" labels on some sections below are historical (the order features were built), not a roadmap — every one is shipping.
 
 Composer holds the MEI/score state; HKL holds the audio/MIDI/tuning state. They run as separate browser tabs and share no module imports beyond the bridge protocol.
 
@@ -72,7 +74,7 @@ Every `<note>` carries `data-q`/`data-r` (lattice identity survives roundtrip; M
 
 `apps/composer/src/render/render.ts` owns the Verovio toolkit lifecycle. WASM is CDN-loaded via script injection (no npm dep; ~6–8 MB gzipped, 200–800 ms first render). Engraving options:
 - `svgViewBox: false`, `scale: 100` — intrinsic-size render, no fit-to-container scaling.
-- Page mode: `pageWidth: 2100`/`pageHeight: 2970`, breaks `'auto'`. Scroll mode: `pageWidth: 100000`/`pageHeight: 400`, breaks `'none'`.
+- Page mode: `pageWidth: 2159`/`pageHeight: 2794` (US Letter, 1/100 mm), breaks `'auto'`. Scroll mode: `pageWidth: 100000`/`pageHeight: 400`, breaks `'none'`.
 - `header`/`footer: 'none'`; `svgAdditionalAttribute` exposes `note@data-q`/`data-r`/`color`/`hkl-paren-caut`, `rest@data-tuplet-placeholder`/`visible`, `accid@type` onto the SVG (Verovio prefixes a `data-`, so e.g. `data-data-tuplet-placeholder`).
 
 Post-render SVG processing: each note's `<g class="notehead">` is moved to last sibling so the colored notehead draws on top of the (black) stem; CSS forces stems/flags/accidentals/ledgers/dots black (only the notehead carries lattice color). All strokes use `shape-rendering: geometricPrecision` (consistent stem widths, correct bar-line overhang, zoom-safe). → see decisions.md "geometricPrecision over crispEdges".

@@ -1,6 +1,6 @@
 # HKL Analyzer (HKLA)
 
-Tool for building HKL instruments from audio: loop-point detection, decay analysis, and RMS/loudness gain normalization. One package (`apps/analyzer/`) with three faces — a browser UI, a Node batch CLI, and the DOM-free DSP engine they share. Back to [architecture overview](../architecture.md). Audio audition/playback internals live in [engine.md](./engine.md); tuning concepts in [../architecture.md](../architecture.md).
+Tool for building HKL instruments from audio: loop-point detection, decay analysis, and RMS/loudness gain normalization. One package (`apps/analyzer/`) with three faces — a browser UI, a Node batch CLI, and the DOM-free DSP engine they share. **For how to *use* it — the build-an-instrument workflow — see the [Analyzer guide](../guide/analyzer.md).** Back to [architecture overview](../architecture.md). Audio audition/playback internals live in [engine.md](./engine.md); tuning concepts in [../architecture.md](../architecture.md).
 
 ## Package layout
 

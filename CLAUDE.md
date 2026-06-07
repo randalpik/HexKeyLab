@@ -163,12 +163,13 @@ Most HKL work doesn't touch this. Documented here because deriving it again cost
 
 - **`CLAUDE.md`** (this file) — entry point for sessions. Read first.
 - **`docs/backlog.md`** — Max's source of truth for future direction, conceptual framing of layouts, and current task backlog. Read-only for Claude: suggest changes but never edit without explicit permission, even for "obvious" updates like striking completed items.
-- **`docs/architecture.md`** + **`docs/architecture/{hkl,composer,analyzer,engine,overlay}.md`** — the human-readable source-of-truth reference: overview (tuning/color/coords/formats/flows) + per-app deep-dives.
+- **`docs/architecture.md`** + **`docs/architecture/{hkl,composer,analyzer,orchestrator,engine,overlay}.md`** — the developer architecture reference: overview (tuning/color/coords/formats/flows) + per-app deep-dives.
+- **`docs/guide/{core,composer,analyzer,orchestrator,overlay}.md`** — the **user-facing guides** (how to *use* each app). Functionality-first; the architecture docs are the dev reference they cross-link to. (No `engine` guide — it's a library with no end-user surface.) Served by the HKL Guide app.
 - **`docs/lessons.md`** — gotchas, dead-ends, anti-patterns, hard-won truths. Read before debugging anything that smells familiar.
 - **`docs/decisions.md`** — append-only log of non-obvious design choices. Add an entry when committing a decision worth remembering.
 - **`docs/lumatone-calibration.md`** — how to do per-key hardware calibration via SSH + scripts in `tools/lumatone-cal/`. Only needed when working around the broken macro buttons on Max's unit.
 - **`README.md`** — contributor-facing repo description (structure, run/build).
-- **`docs/user-guide.md`** — end-user guide for the HKL viewer app.
+- **`docs/guide/core.md`** — end-user guide for the HKL viewer app (the rest of the guide set is listed above; this was formerly `docs/user-guide.md`).
 
 ## Workflow patterns
 
@@ -181,7 +182,7 @@ Most HKL work doesn't touch this. Documented here because deriving it again cost
 
 ## What to update when
 
-- **Behavior changes** → update the relevant `docs/architecture/<app>.md` (or `docs/architecture.md` for cross-cutting)
+- **Behavior changes** → update the relevant `docs/architecture/<app>.md` (or `docs/architecture.md` for cross-cutting); if the change affects what a user *does* (a control, keystroke, or workflow), also update the matching `docs/guide/<app>.md`
 - **Constraints discovered** → add to lessons.md
 - **Non-obvious choices made** → append to decisions.md
 - **Hardware/protocol facts learned** → update CLAUDE.md (this file) under critical context

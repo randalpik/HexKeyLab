@@ -17,6 +17,10 @@ and the repo map. Per-app deep-dives live alongside it:
 - [**overlay.md**](architecture/overlay.md) — OBS live overlay: transparent lattice + Composer view
   into OBS via the `apps/overlay-host` distributable (relay + lean read-only build).
 
+**User-facing guides** — how to *use* each app — live in [`guide/`](guide/): [core](guide/core.md),
+[composer](guide/composer.md), [analyzer](guide/analyzer.md), [orchestrator](guide/orchestrator.md),
+[overlay](guide/overlay.md). The architecture docs above are the developer reference.
+
 Design *rationale and history* live in [`decisions.md`](decisions.md); gotchas in
 [`lessons.md`](lessons.md); the agent operating-manual + critical hardware constants in
 [`CLAUDE.md`](../CLAUDE.md).

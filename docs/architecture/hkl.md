@@ -1,6 +1,6 @@
-# HKL Core — Architecture & Feature Reference
+# HKL Core — Architecture Reference
 
-Human-readable source of truth for the HKL viewer app (`apps/hkl/`). For the project overview, tuning theory, and coordinate system see [`../architecture.md`](../architecture.md). For sample playback internals see [`engine.md`](engine.md) (the `@hkl/engine` package).
+Architecture source of truth for the HKL viewer app (`apps/hkl/`). **For how to *use* HKL — controls, tunings, playing, recording — see the [Core guide](../guide/core.md).** For the project overview, tuning theory, and coordinate system see [`../architecture.md`](../architecture.md); for sample playback internals see [`engine.md`](engine.md) (the `@hkl/engine` package).
 
 ---
 
@@ -61,7 +61,7 @@ A **tabbed toolbar** (`apps/hkl/src/ui/toolbars.ts`): a selector row (`Layout ·
 
 | Control | Behavior |
 |---|---|
-| Tuning selector | {Equal, Ptolemaic, Pythagorean, Semiditonal, Septimal}. Sets `tuning.mode` (derives `equalEnabled`/`septimalEnabled` for legacy sites); ramps audio. |
+| Tuning selector | {Equal, Ptolemaic, Pythagorean, Semiditonal, Septimal, Schismatic}. Sets `tuning.mode` (derives `equalEnabled`/`septimalEnabled` for legacy sites); ramps audio. |
 | Outline selector | {Lumatone, QWERTY, Piano, None}. Selects the footprint outline; lattice slides via refSpine (Lumatone/QWERTY/None) or piano-viewport math (Piano). Ctrl+click any hex sets the ref note → drives positioning. |
 | Transpose | 5-axis ▲/▼ stacks (P5, M3, m3, P8, SC), always visible. Key-repeat 400ms initial / 80ms subsequent. Selection transpose only — positioning is via ref note. |
 | Audio | Toggle + instrument/waveform selector. Piano default. Samples lazy-load with a blue "loading…" state. |
@@ -110,7 +110,7 @@ Axes: P5 (0,+1), M3 (+1,0), m3 (−1,+1), P8 (+3,0), SC (−7,+4).
 Scrollable panel below the canvas (max-height to viewport).
 
 - **Row 1 — Note cards**: each selected key as a colored tag (name in keyboard hue, octave, Hz), sorted low→high. With "Show coordinates" also shows `(q= r= p=)`.
-- **Row 2 — Chord analysis** (3–4 unique pitch classes): root (colored), quality, inversion, root-position JI ratio. Template matching uses semitone intervals + letter distances over **25 templates**: triads (major, minor, dim, aug, sus4, sus2, Pythagorean); 7ths (major, dominant, minor, minor-major, dim, half-dim, aug, aug-major); added-2nd; aug-6ths (Italian, French, German); incomplete 7ths (dom, minor, major, minor-major, dim). Labeled "septimal" when root-position ratio has a factor of 7 AND max term ≤ 27. Equal mode hides ratio and strips "septimal".
+- **Row 2 — Chord analysis** (3–4 unique pitch classes): root (colored), quality, inversion, root-position JI ratio. Template matching uses semitone intervals + letter distances over **24 templates**: triads (major, minor, dim, aug, sus4, sus2); 7ths (major, dominant, minor, minor-major, dim, half-dim, aug, aug-major); added-2nd; aug-6ths (Italian, French, German); incomplete 7ths (dom, minor, major, minor-major, dim). Labeled "septimal" when root-position ratio has a factor of 7 AND max term ≤ 27. Equal mode hides ratio and strips "septimal".
 - **Rows 3+ — Intervals**: all pairwise intervals grouped by generic size; colored note names + octaves, cents, named interval.
   - 5/7-limit: JI ratio shown; color by complement-reduced Tenney Height — green (<8), yellow (8–12.5), red (≥12.5). With **"Show factors"** the ratio renders in prime-power form for every interval (`5:4` → `5:2²`); otherwise plain `num:den`, with the factored form as a fallback above `2³²` where the integers would round off. Cents + tier are computed from the exact exponent vector, not `num/den`.
   - Equal: no ratio; names via `equalIntervalName()` (from actual note names + octaves, not lattice displacement). `semis % 12 === 0` → green (rational: unisons, octaves, d2/A7); else red.
@@ -461,4 +461,4 @@ DAMPER_RELEASE_FLOOR   # below this depth, sustained voices release via normal n
 - `kbOutlinePaths`: precomputed outline polygons.
 - `kbBaseSet`: Set of `"bq,br"` for all baseKeys.
 - `REF`: ~60 reference interval entries.
-- `chordTemplates`: 25 chord templates.
+- `chordTemplates`: 24 chord templates.

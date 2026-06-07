@@ -2,8 +2,9 @@
 
 Browser app that samples a physical MIDI instrument's audio output into a velocity-layered `.hki`
 instrument bundle, so users can play their own keyboard's sound inside HKL — legally, without
-bundling someone else's samples. Served at `/orchestrator/` (port 5176 standalone). Back to
-[architecture overview](../architecture.md). Format details in [the `.hki` v2 section
+bundling someone else's samples. Served at `/orchestrator/` (port 5176 standalone). **For how to
+*use* it — the five-step capture wizard — see the [Orchestrator guide](../guide/orchestrator.md).**
+Back to [architecture overview](../architecture.md). Format details in [the `.hki` v2 section
 below](#hki-v2--velocity-layers); shared DSP in [analyzer.md](./analyzer.md) / `@hkl/analysis`.
 
 ## What it does

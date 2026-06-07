@@ -11,6 +11,8 @@ The sample playback library: voice lifecycle, loop scheduling, and segment cross
 
 Depends **only** on `@hkl/shared`. The HKL app wires it up through the barrel `apps/hkl/src/audio/samples.ts`.
 
+**Library vs. host boundary.** This doc covers the audio engine as a whole, but two layers are involved: the **library** (`packages/engine` — sample-voice lifecycle, loop scheduling, segment crossfade) and the **HKL host audio layer** (`apps/hkl/src/audio/engine.ts`) that drives it. Oscillator synthesis (sine/square/triangle), the damper/pedal model, polyphonic-aftertouch shaping, and the layout/tuning/transpose frequency-ramp orchestration are all **host-side** — their constants (`DAMPER_SMOOTH_TAU`, `AFTERTOUCH_RAMP_S`, the oscillator amplitudes, the ramp durations) live in `apps/hkl/src/audio/engine.ts` and `effects/`, not in `packages/engine`. The library exposes the per-voice primitives those features call; it has no oscillators and no pedal/AT logic of its own.
+
 ## Host injection (DI)
 
 `init(ctx, dest, config?)` takes the `AudioContext`, a destination `AudioNode`, and an optional `SampleEngineConfig`:

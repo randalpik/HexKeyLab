@@ -15,7 +15,7 @@ A3 = 220 Hz; the Harmonic Table maps the q-axis to major thirds (5:4) and the r-
 tuning/layout interpretation is runtime software state.
 
 This README is for contributors. End users want the live link above; players' docs are in
-[`docs/user-guide.md`](docs/user-guide.md).
+[`docs/guide/`](docs/guide/) (start with [`core.md`](docs/guide/core.md)).
 
 ## Repo structure
 
@@ -35,7 +35,7 @@ packages/
   bridge/     @hkl/bridge    BroadcastChannel protocol + message types
 test/         test suites + verification tooling (composer-test, bounds-probe, …)
 tools/        hardware/ops (lumatone-cal)
-docs/         architecture/, user-guide, lessons, decisions, lumatone-calibration
+docs/         guide/ (user-facing), architecture/ (dev reference), lessons, decisions, lumatone-calibration
 ```
 
 Dependency DAG: `@hkl/shared ← {engine, notation, bridge} ← apps`, enforced by
@@ -73,9 +73,11 @@ or HTTPS); `file://` doesn't work. Chromium also works for testing.
 ## Documentation
 
 - [`CLAUDE.md`](CLAUDE.md) — entry point for AI-assisted sessions (agent guardrails + navigation).
+- [`docs/guide/`](docs/guide/) — **user-facing guides** (how to use each app): core, composer,
+  analyzer, orchestrator, overlay. Start with [`core.md`](docs/guide/core.md).
 - [`docs/architecture.md`](docs/architecture.md) + [`docs/architecture/`](docs/architecture/) —
-  source-of-truth reference: overview + per-app deep-dives (hkl, composer, analyzer, engine, overlay).
-- [`docs/user-guide.md`](docs/user-guide.md) — end-user guide for the HKL viewer.
+  developer architecture reference: overview + per-app deep-dives (hkl, composer, analyzer,
+  orchestrator, engine, overlay).
 - [`docs/lessons.md`](docs/lessons.md) — gotchas, anti-patterns, hard-won truths.
 - [`docs/decisions.md`](docs/decisions.md) — append-only log of non-obvious design choices.
 - [`docs/lumatone-calibration.md`](docs/lumatone-calibration.md) — per-key hardware calibration.
