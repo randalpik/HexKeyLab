@@ -1,0 +1,152 @@
+:root {
+  --bg: #1a1c20;
+  --panel: #24272d;
+  --panel2: #2c3038;
+  --border: #3a3f48;
+  --fg: #e6e8ec;
+  --muted: #9aa0aa;
+  --accent: #6ea8fe;
+  --code: #b6e3ff;
+}
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; height: 100%; }
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.65 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ── Tab bar ── */
+.g-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 16px 0;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+  overflow-x: auto;
+}
+
+.g-tab {
+  font: inherit;
+  font-size: 13px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  padding: 8px 16px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.g-tab:hover { color: var(--fg); }
+
+.g-tab.active {
+  color: var(--fg);
+  background: var(--bg);
+  border-color: var(--border);
+  margin-bottom: -1px;
+}
+
+/* ── Content ── */
+.g-content {
+  flex: 1 1 0;
+  overflow-y: auto;
+}
+
+.g-doc {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 32px 28px 96px;
+}
+
+.g-doc[hidden] { display: none; }
+
+/* ── Markdown typography ── */
+.g-doc h1, .g-doc h2, .g-doc h3, .g-doc h4 {
+  color: #fff;
+  line-height: 1.25;
+  margin: 1.6em 0 0.5em;
+}
+.g-doc h1 { font-size: 30px; margin-top: 0; }
+.g-doc h2 {
+  font-size: 22px;
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid var(--border);
+}
+.g-doc h3 { font-size: 18px; }
+.g-doc h4 { font-size: 15px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+
+.g-doc p, .g-doc ul, .g-doc ol, .g-doc blockquote { margin: 0.75em 0; }
+
+.g-doc ul, .g-doc ol { padding-left: 1.5em; }
+.g-doc li { margin: 0.3em 0; }
+
+.g-doc a { color: var(--accent); text-decoration: none; }
+.g-doc a:hover { text-decoration: underline; }
+
+.g-doc strong { color: #fff; }
+
+.g-doc code {
+  font-family: "SF Mono", ui-monospace, "Cascadia Code", "Fira Code", monospace;
+  font-size: 0.86em;
+  background: var(--panel2);
+  color: var(--code);
+  padding: 0.12em 0.4em;
+  border-radius: 4px;
+}
+
+.g-doc pre {
+  background: #0f1114;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  line-height: 1.5;
+}
+.g-doc pre code {
+  background: none;
+  padding: 0;
+  color: var(--fg);
+  font-size: 0.85em;
+}
+
+.g-doc blockquote {
+  border-left: 3px solid var(--accent);
+  margin-left: 0;
+  padding: 0.1em 1em;
+  color: var(--muted);
+}
+
+.g-doc table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1em 0;
+  font-size: 0.92em;
+}
+.g-doc th, .g-doc td {
+  border: 1px solid var(--border);
+  padding: 7px 11px;
+  text-align: left;
+  vertical-align: top;
+}
+.g-doc th { background: var(--panel2); color: var(--fg); font-weight: 600; }
+.g-doc tr:nth-child(even) td { background: rgba(255, 255, 255, 0.02); }
+
+.g-doc hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 2em 0;
+}
+
+.g-doc img { max-width: 100%; }

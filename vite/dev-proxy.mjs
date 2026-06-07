@@ -6,6 +6,7 @@
 //   /composer/*     -> :5174   (apps/composer,     base /composer/)
 //   /analyzer/*     -> :5175   (apps/analyzer,     base /analyzer/)
 //   /orchestrator/* -> :5176   (apps/orchestrator, base /orchestrator/)
+//   /guide/*        -> :5177   (apps/guide,        base /guide/)
 //   everything      -> :5173   (apps/hkl,          base /)
 //
 // HMR websockets ride the same prefixes (each app's vite hmr.path matches its
@@ -26,13 +27,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 
 const PROXY_PORT = 5170;
-const HKL = 5173, COMPOSER = 5174, ANALYZER = 5175, ORCHESTRATOR = 5176;
+const HKL = 5173, COMPOSER = 5174, ANALYZER = 5175, ORCHESTRATOR = 5176, GUIDE = 5177;
 
 const APPS = [
   ['@hkl/hkl', HKL],
   ['@hkl/composer', COMPOSER],
   ['@hkl/analyzer', ANALYZER],
   ['@hkl/orchestrator', ORCHESTRATOR],
+  ['@hkl/guide', GUIDE],
 ];
 
 /* ── spawn the three app dev servers ── */
@@ -82,6 +84,7 @@ function targetFor(url) {
   if (url.startsWith('/composer')) return COMPOSER;
   if (url.startsWith('/analyzer')) return ANALYZER;
   if (url.startsWith('/orchestrator')) return ORCHESTRATOR;
+  if (url.startsWith('/guide')) return GUIDE;
   return HKL;
 }
 
@@ -128,5 +131,6 @@ server.listen(PROXY_PORT, () => {
   console.log(`    /              → HKL          (:${HKL})`);
   console.log(`    /composer/     → Composer     (:${COMPOSER})`);
   console.log(`    /analyzer/     → Analyzer     (:${ANALYZER})`);
-  console.log(`    /orchestrator/ → Orchestrator (:${ORCHESTRATOR})\n`);
+  console.log(`    /orchestrator/ → Orchestrator (:${ORCHESTRATOR})`);
+  console.log(`    /guide/        → Guide        (:${GUIDE})\n`);
 });

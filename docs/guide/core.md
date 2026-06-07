@@ -1,52 +1,54 @@
-# HexKeyLab v1.0 — User Guide
+# HexKeyLab: User Guide
 
-HexKeyLab is a browser-based hex-keyboard playground for just intonation. It runs at <https://hexkeylab.maxrandalmusic.com> with no install, no login, and nothing to set up. Open it in Firefox or any Chromium browser and you're ready.
+HexKeyLab is a browser-based hexagonal keyboard playground for exploring just intonation. This guide walks through what's on screen and how to use it.
 
-This guide walks through what's on screen and how to use it. Most of HKL works without any external hardware — you can play it on your computer keyboard, click chords on screen, hear them in real just intonation, and read off the interval structure. A short Lumatone section at the end covers what changes when one is plugged in.
+Most of HKL works without any external hardware: you can play it on your computer keyboard, click chords on screen, hear them in just intonation through a variety of instrument sounds, and see them analyzed in real time. Additional features are available for use with a MIDI piano keyboard or Lumatone.
+
+HKL also serves as the gateway to three [companion apps](#companion-apps): Composer for engraving colorful just intonation scores, and Analyzer and Orchestrator for creating custom sets of instrument samples.
 
 ---
 
 ## What you're looking at
 
-The big shape on screen is a **hexagonal isomorphic keyboard** — every cell plays a pitch, and stepping in a given direction always moves by the same musical interval, no matter where you are.
+The big shape on screen is a **hexagonal isomorphic keyboard**: every cell plays a pitch, and stepping in a given direction always moves by the same musical interval, no matter where you are.
 
 The two axes of the lattice are:
 
-- **q-axis** — major thirds (5:4)
-- **r-axis** — perfect fifths (3:2)
+- **q-axis**: major thirds (5:4)
+- **r-axis**: perfect fifths (3:2)
 
 Minor thirds, octaves, and everything else fall out as combinations of those two. Because the layout is isomorphic, a chord shape transposes by sliding it without changing its fingering.
 
-A3 = 220 Hz sits at the center. Every key is colored by pitch class — same color = same note name in 12-TET terms — and the colors light up white-or-dark depending on whether the key is a "white-key" or "black-key" pitch.
+A3 = 220 Hz sits at the center. Every key is colored by pitch class (same color = same note name in 12-TET terms), and the colors light up white-or-dark depending on whether the key is a "white-key" or "black-key" pitch.
 
 ---
 
 ## Tunings
 
-The **Tuning** dropdown switches between six systems, shown as **Equal · Ptolemaic · Pythagorean · Semiditonal · Septimal · Schismatic**. The lattice doesn't change shape — only the frequencies and the colors do.
+The **Tuning** dropdown switches between six systems, shown as **Equal · Ptolemaic · Pythagorean · Semiditonal · Septimal · Schismatic**. The lattice doesn't change shape: only the frequencies and the colors do.
 
-- **Equal (12-TET)** — the familiar even-tempered tuning. Three colors cycle by octave; a reference, not a JI mode.
-- **Ptolemaic (5-limit JI)** *(default)* — pure just intonation from primes 2, 3, and 5. The keyboard divides into **3-key-wide bands** along the q-axis; inside a band every interval is a clean 5-limit ratio, and between bands you cross a **seam** (visible as dark wedges if "Band seams" is on).
-- **Pythagorean** — every major third is 81/64 and every minor third 32/27; no 5-limit ratios. A study layout for Pythagorean voice leading.
-- **Semiditonal** — 5-limit major, but the Pythagorean minor third (32/27) becomes reachable compactly within a band (5-limit minor is the trade).
-- **Septimal (7-limit JI)** — adds prime 7: every third lineage carries the harmonic 7th (7/4), so dominant 7 = 4:5:6:7 and half-diminished 7 = 5:6:7:9 are reachable from any root and major triads stay pure 4:5:6. The trade vs 5-limit is that pure 5-limit minor (10:12:15) is unreachable — minor sounds Pythagorean (32:27) or septimal subminor (7:6).
-- **Schismatic** — like Semiditonal but with a gentle pure-thirds octave stretch (2¢ per octave, within the natural piano-stretch range); a study mode for hearing the schisma. In this mode, the diminished 4th across octave seams becomes identical to a Pythagorean major 3rd, allowing the most fluid isomorphic play across seams.
+- **Equal (12-TET)**: the familiar even-tempered tuning. Three colors cycle by octave; a reference, not a JI mode.
+- **Ptolemaic (5-limit JI)** *(default)*: pure just intonation from primes 2, 3, and 5. The keyboard divides into **3-key-wide bands** along the q-axis; inside a band every interval is a clean 5-limit ratio, and between bands you cross a **seam** (visible as dark wedges if "Band seams" is on).
+- **Pythagorean**: every major third is 81/64 and every minor third 32/27; no 5-limit ratios are available. A symmetrical study layout.
+- **Semiditonal**: 5-limit major, but the Pythagorean minor third (semiditone) becomes reachable compactly from the root while keeping some 5-limit intervals. Most practical for playing tonal harmony.
+- **Septimal (7-limit JI)**: adds prime 7. Every third column is flattened by a septimal diesis (35/36), turning a minor 7th into the harmonic 7th (7/4), so "barbershop" 7th chords (4:5:6:7) and half-diminished 7th chords (5:6:7:9) are reachable from any root.
+- **Schismatic**: like Semiditonal, but octaves are stretched out by a schisma (about 2 cents). In this mode, the diminished 4th across octave seams becomes identical to a Pythagorean major 3rd, allowing the most fluid isomorphic play across seams.
 
-Switching tunings ramps audio frequencies smoothly over 150ms — sustained notes glide from one tuning to the next.
+Switching tunings ramps audio frequencies smoothly over 150ms; sustained notes glide from one tuning to the next.
 
 ---
 
 ## Reference note and layout positioning
 
-The reference note (ref) is the lattice cell that the Lumatone or QWERTY outline is centered on. **A3** is the default reference, sitting dead-center.
+The reference note (ref) is the lattice cell that the Lumatone, QWERTY, or piano outline is centered on. **A3** is the default reference, sitting dead-center.
 
 **Ctrl+click on any hex** sets that cell as the new reference. The lattice tweens smoothly so the new ref sits at the outline's center; held Lumatone and QWERTY notes follow the shift (so a held chord keeps playing the same pitches relative to the keys you're pressing); held mouse-clicked notes stay anchored to their original lattice cells.
 
-This replaces the older flat / natural / sharp button group. The 3-position system was a special case — Ctrl+click on F, C, or G of the Pythagorean spine reproduces the old ♭/♮/♯ positions, and any of the 12 Pythagorean keys (plus their syntonic-comma siblings) is now equally reachable.
+Any key on the lattice can serve as the ref. Ctrl+click F, C, or G on the Pythagorean spine for the three common ♭/♮/♯ home positions.
 
-The ref mechanism works in **all tuning modes** and in **all outline modes** (Lumatone, QWERTY, none).
+The ref mechanism works in **all tuning modes** and in **all outline modes** (Lumatone, QWERTY, Piano, none).
 
-Ref selection is constrained: the ref must land within the 88-key piano MIDI range, and the resulting 88-cell footprint must spell with at most ±3 accidentals (≤ triple-sharp / triple-flat). If you Ctrl+click a cell that would violate either constraint, a status message explains why and the ref is unchanged. Tick **"Valid ref bounds"** in the Piano toolbar to see a dotted outline marking exactly where the ref is allowed to land for the current tuning.
+Ref selection is constrained: the ref must land within the 88-key piano MIDI range, and the resulting 88-cell footprint must spell with at most ±3 accidentals (≤ triple-sharp / triple-flat). If you Ctrl+click a cell that would violate either constraint, a status message explains why and the ref is unchanged. Tick **"Valid ref bounds"** (on the [Piano tab](#playing-from-a-midi-keyboard-piano-tab)) to see a dotted outline marking exactly where the ref is allowed to land for the current tuning.
 
 To clear a manual ref override and return to the default A3, Ctrl+click the cell that's currently serving as the ref.
 
@@ -54,7 +56,7 @@ To clear a manual ref override and return to the default A3, Ctrl+click the cell
 
 ## Playing notes
 
-There are four ways to make sound. The first three need no hardware.
+There are five ways to make sound. The first three need no hardware; the last two (a Lumatone or a MIDI keyboard) use external gear.
 
 ### 1. Computer keyboard (QWERTY)
 
@@ -69,7 +71,7 @@ This is the easiest way to play HKL melodically. **The H key is A3.** The four r
 
 Each row down is a minor third lower. Each step right is a major third higher. So `H J` is a major third, `H U` is a perfect fifth, `H G` is a major third down, `H J U` is a major triad (root, M3, P5), and so on.
 
-Held keys play polyphonically. Releasing a key stops the note (subject to the sustain / sostenuto state). The mapping rides with the current ref note — Ctrl+click a new ref and the QWERTY slab shifts with the lattice, just like the Lumatone outline does, so the same physical keys play the new key. Held QWERTY notes migrate with the shift, so a held chord keeps playing the same pitches relative to the keys you're pressing.
+Held keys play polyphonically. Releasing a key stops the note (subject to the sustain / sostenuto state). The mapping rides with the current ref note: Ctrl+click a new ref and the QWERTY slab shifts with the lattice, just like the Lumatone outline does, so the same physical keys play the new key. Held QWERTY notes migrate with the shift, so a held chord keeps playing the same pitches relative to the keys you're pressing.
 
 ### 2. Mouse / click selection
 
@@ -78,9 +80,9 @@ Held keys play polyphonically. Releasing a key stops the note (subject to the su
 - **Hover** over keys to highlight them without selecting.
 - **Clear** button (or its keyboard equivalent: keep selecting and clearing manually) clears the selection.
 
-Selected keys ring with a white outline and play continuously. Mouse selections are how you build chords for the analyzer to identify — see "Info panel" below.
+Selected keys ring with a white outline and play continuously. Mouse selections are how you build chords for the analyzer to identify. See [Info panel](#info-panel) below.
 
-### 3. Listening — the Audio toggle
+### 3. Listening: the Audio toggle
 
 Audio is **off by default** to spare you from a surprise tone. Tick the **Audio** checkbox to enable it. The first toggle creates the Web Audio context and loads your selected instrument's samples (you'll see a brief blue "loading…" state on the dropdown for sample-based instruments).
 
@@ -88,63 +90,75 @@ Audio is **off by default** to spare you from a surprise tone. Tick the **Audio*
 
 The **instrument dropdown** groups the available voices:
 
-- **Decaying** (struck/plucked): pianos *(Piano is the default)*, electric piano, harpsichord, harp, acoustic guitar, pizzicato strings.
-- **Sustained winds**: flute, clarinet, trombone, and others.
-- **Sustained bowed strings**: violin, viola, cello.
+- **Decaying** (struck/plucked): piano *(default)*, electric piano, harpsichord, harp, acoustic guitar, pizzicato viola.
+- **Winds**: flute, oboe, clarinet, trombone.
+- **Bowed strings**: violin, viola, cello.
 - **Organs**: pipe, renaissance, drawbar.
+- **Voices**: baritone, soprano.
 - **Oscillators**: triangle, sine, square.
 
-(The dropdown lists the current set, which grows as instruments are added.) All sample instruments are RMS-normalized to the same loudness target, so switching mid-session doesn't blow your ears out. Sustained instruments are stitched from real recordings via a custom loop-point analyzer (see HKL Analyzer below), so you can hold notes indefinitely without hearing the seam.
+(The dropdown lists the current set, which grows as instruments are added.) All sample instruments are RMS-normalized to the same loudness target, so switching mid-session doesn't blow your ears out. Sustained instruments are stitched from real recordings via a custom loop-point analyzer (see the [Analyzer guide](analyzer.md)), so you can hold notes indefinitely without hearing the seam.
 
-The **Import** button (Playback tab) loads your own instrument: a `.hki` sample bundle (built in the Analyzer or Orchestrator — see Companion apps) or a CDN-config `.json`. Imported instruments appear at the bottom of the dropdown and persist across reloads. The **Diagnostics** checkbox surfaces a developer overlay that visualizes sample loop-seam crossfades (when each held note jumps between loop segments) — useful for vetting a new sustained instrument, otherwise off.
+The **Import** button (Playback tab) loads your own instrument: a `.hki` sample bundle (built in the Analyzer or Orchestrator; see [Companion apps](#companion-apps)) or a CDN-config `.json`. Imported instruments appear at the bottom of the dropdown and persist across reloads.
 
-Aftertouch and pedal modulation work per-voice (see Lumatone section).
+Aftertouch and pedal modulation work per-voice (see [Lumatone integration](#lumatone-integration)).
+
+#### Diagnostics overlay (Playback tab)
+
+The **Diagnostics** checkbox opens a developer overlay for vetting sustained instruments. It draws a scrolling RMS/dB envelope of the audio output with a vertical marker at every loop-seam crossfade (where a held note jumps between loop segments), so you can see whether a volume dip lands *on* a seam (a sample- or seam-data problem) or *between* seams (a crossfade-curve problem). It also overlays the held notes' velocity and aftertouch on the same scale. Hotkeys while open: `D` freezes the trace, `Shift+D` dumps the seam data to the console. Leave it off for normal play.
 
 ### 4. Lumatone (optional)
 
-If you have a Lumatone hex keyboard, see the Lumatone section near the end. Everything else in HKL works without one.
+If you have a Lumatone hex keyboard, see [Lumatone integration](#lumatone-integration) near the end. Everything else in HKL works without one.
+
+### 5. MIDI keyboard (optional)
+
+Plug in any MIDI keyboard and enable **Piano input** to play HKL from it, using the same tuning math as on-screen play. HKL can also mirror its playback back *out* to an external synth in true just intonation. See [Playing from a MIDI keyboard](#playing-from-a-midi-keyboard-piano-tab) for setup.
 
 ---
 
 ## The toolbar
 
-The toolbar is organized into tabs — **Layout · Playback · Analysis · Recording · Lumatone · Piano** — plus a **Reset** button. Click a tab to show its controls; only one tab's controls are visible at a time, which keeps the bar narrow. Most settings persist across reloads (see Persistence, below). The sections that follow are grouped by what you're doing rather than strictly by tab, but each control's tab is noted.
+The toolbar is organized into tabs (**Layout · Playback · Analysis · Recording · Lumatone · Piano**) plus a **Reset** button. Click a tab to show its controls; only one tab's controls are visible at a time, which keeps the bar narrow. Most settings persist across reloads (see [Persistence](#persistence), below). The sections that follow are grouped by what you're doing rather than strictly by tab, but each control's tab is noted.
 
-## Visual aids (Layout tab)
+## Layout tab
 
-What's drawn on the lattice:
+The first control is the **Tuning** dropdown (covered above under [Tunings](#tunings)). The rest of the tab, left to right:
 
-- **Note names** *(on by default)* — letter names + accidentals on each hex. Accidentals scale and stack continuously; a triple-flat looks visibly distinct from a double-flat. Turn on **HEJI accidentals** (Analysis tab) to switch these to microtonal HEJI notation — comma arrows and septimal hooks that show the exact just-intonation spelling.
-- **Band seams** *(on by default)* — draws the wedge-shaped boundaries between 5-limit bands (or 7-limit A/B regions). Off in 12-TET (no seams there).
-- **Extend pattern** *(on by default)* — fills the canvas with the lattice pattern beyond the physical Lumatone footprint. With it off, only the actual Lumatone-shaped region is colored.
-- **Hex size** — Small / Medium *(default)* / Large. Scales the on-screen hexes; handy on small screens or for projection.
-- **Rotation** — the lattice orientation: **Vertical Freq** *(default, pitch rises straight up)* · **Lumatone** *(matches the physical Lumatone's tilt)* · **Piano** *(piano-oriented)*. Purely visual; the tuning and key positions are unchanged.
+- **Hex size**: Small / Medium *(default)* / Large. Scales the on-screen hexes; handy on small screens or for projection.
+- **Note names** *(on by default)*: letter names + accidentals on each hex. Accidentals scale and stack continuously; a triple-flat looks visibly distinct from a double-flat. Turn on **HEJI accidentals** (Analysis tab) to switch these to microtonal HEJI notation: comma arrows and septimal hooks that show the exact just-intonation spelling.
+- **Band seams** *(on by default)*: draws the wedge-shaped boundaries between octave bands, except in the Equal layout.
+- **Extend pattern** *(on by default)*: fills the canvas with the lattice pattern beyond the physical Lumatone footprint. With it off, only the actual Lumatone-shaped region is colored.
 
-### Outline selector (Layout tab)
+### Outline (Layout tab)
 
 The **Outline** dropdown picks which keyboard footprint is drawn as a white outline:
 
-- **Lumatone** *(default)* — the 280-key Lumatone shape.
-- **QWERTY** — the rectangular footprint of the four QWERTY rows. Helpful if you're playing on the computer keyboard and want a visual cue for which hexes correspond to which keys.
-- **Piano** — a piano-style footprint covering the 88-key MIDI range from the current reference note.
-- **None** — no outline, just the lattice.
+- **Lumatone** *(default)*: the 280-key Lumatone shape.
+- **QWERTY**: the rectangular footprint of the four QWERTY rows. Helpful if you're playing on the computer keyboard and want a visual cue for which hexes correspond to which keys.
+- **Piano**: a piano-style footprint covering the 88-key MIDI range from the current reference note.
+- **None**: no outline, just the lattice.
+
+The **Rotation** dropdown sets the lattice orientation: **Vertical Freq** *(default, pitch rises straight up)* · **Lumatone** *(matches the physical Lumatone's tilt)* · **Piano** *(piano-oriented)*. Purely visual; the tuning and key positions are unchanged.
 
 ### Analysis-panel toggles (Analysis tab)
 
 These control the readout below the canvas (see [Info panel](#info-panel)) and the optional notation insets:
 
-- **Show analysis** — reveals the chord + interval analysis panel below the canvas.
-- **Show coordinates** — adds `(q=…, r=…, p=…)` to each note in the panel for studying the lattice math.
-- **Show factors** — renders every interval's JI ratio in prime-factored form (`5:4` → `5:2²`, `7:6` → `7:2·3`) instead of plain integers, so you can read its prime content at a glance.
-- **Short intervals** — abbreviates interval names ("perfect fifth" → "P5", "minor third" → "m3", "syntonic comma" → "SC", …). Useful for fitting more onto the screen.
-- **HEJI accidentals** — switches note names and the staff inset to microtonal HEJI accidental notation.
-- **Show staff notation** — a live grand-staff engraving of the held chord, inset at the bottom-right, with noteheads in the lattice colors. **Dark staff notation** flips it to a dark theme. **Composer view** replaces the analysis line with a full-width, read-only mirror of a connected HKL Composer score, so you can compose while watching only the HKL screen (requires a Composer tab open — see Companion apps).
+- **Show analysis**: reveals the chord + interval analysis panel below the canvas.
+- **Show coordinates**: adds `(q=…, r=…, p=…)` to each note in the panel for studying the lattice math.
+- **Show factors**: renders every interval's JI ratio in prime-factored form (`5:4` → `5:2²`, `7:6` → `7:2·3`) instead of plain integers, so you can read its prime content at a glance.
+- **Show staff notation**: a live grand-staff engraving of the held chord, inset at the bottom-right, with noteheads in the lattice colors.
+- **Dark staff notation**: flips that inset to a dark theme.
+- **Composer view**: replaces the analysis line with a full-width, read-only mirror of a connected HKL Composer score, so you can compose while watching only the HKL screen (requires a Composer tab open; see [Companion apps](#companion-apps)).
+- **Short intervals**: abbreviates interval names ("perfect fifth" → "P5", "minor third" → "m3", "syntonic comma" → "SC", …). Useful for fitting more onto the screen.
+- **HEJI accidentals**: switches note names and the staff inset to microtonal HEJI accidental notation.
 
 ---
 
 ## Transposition (5 axes)
 
-Once you have keys selected, the **Transpose** control on the second row lets you slide the whole selection along five musical axes:
+Once you have keys selected, the **Transpose** control (Playback tab) lets you slide the whole selection along five musical axes:
 
 | Axis | Interval |
 |---|---|
@@ -154,9 +168,9 @@ Once you have keys selected, the **Transpose** control on the second row lets yo
 | **P8** | octave (+3, 0) |
 | **SC** | syntonic comma (−7, +4) |
 
-Each axis has ▲/▼ buttons with click-and-hold repeat. Audio glides over 100ms; MIDI re-keys cleanly. The transpose is bounds-checked — if any note in the selection would slide off the visible canvas, the transpose is blocked.
+Each axis has ▲/▼ buttons with click-and-hold repeat. Audio glides over 100ms; MIDI re-keys cleanly. The transpose is bounds-checked: if any note in the selection would slide off the visible canvas, the transpose is blocked.
 
-The **SC** (syntonic comma) axis is the surprising one. In 12-TET this is a no-op (the layout shifts back onto itself), but in 5-limit and 7-limit it sounds the same chord on a different "comma row" of the lattice — useful for exploring how comma drift affects voice leading.
+The **SC** (syntonic comma) axis is the surprising one. In 12-TET this is a no-op (the layout shifts back onto itself), but in 5-limit and 7-limit it sounds the same chord on a different "comma row" of the lattice: useful for exploring how comma drift affects voice leading.
 
 ---
 
@@ -180,7 +194,7 @@ Templates include:
 - Augmented sixth chords: Italian, French, German
 - Incomplete sevenths
 
-In 5-limit/7-limit, chords whose root-position ratio contains a factor of 7 (and stays simple) are tagged **septimal** — `septimal dominant seventh 4:5:6:7`, for example. In 12-TET, ratios are hidden and the "septimal" tag is dropped.
+In 5-limit/7-limit, chords whose root-position ratio contains a factor of 7 (and stays simple) are tagged **septimal**: `septimal dominant seventh 4:5:6:7`, for example. In 12-TET, ratios are hidden and the "septimal" tag is dropped.
 
 ### Pairwise intervals
 
@@ -188,16 +202,16 @@ Below the chord analysis, every pair of selected notes is listed by interval siz
 
 - both note names colored by their lattice hue
 - cents
-- the interval's name — *every* distinct interval gets a unique name with full comma decomposition (no lossy generic labels)
+- the interval's name: *every* distinct interval gets a unique name with full comma decomposition (no lossy generic labels)
 - the just ratio (in 5-limit / 7-limit)
 
-Interval color codes the **Tenney Height** — a complexity measure of the ratio:
+Interval color codes the **Tenney Height**, a complexity measure of the ratio:
 
-- **green** — simple ratios (TH < 8): unisons, octaves, fifths, simple thirds
-- **yellow** — moderately complex (TH 8 to 12.5): commas, less-common just intervals
-- **red** — high-complexity (TH ≥ 12.5): exotic intervals, multi-comma stacks
+- **green**: simple ratios, TH < 8 (unisons, octaves, fifths, simple thirds)
+- **yellow**: moderately complex, TH 8 to 12.5 (commas, less-common just intervals)
+- **red**: high-complexity, TH ≥ 12.5 (exotic intervals, multi-comma stacks)
 
-In 12-TET the colors collapse: enharmonic identities (A1, d2, etc. — anything where `semitones % 12 = 0`) are green, everything else red, and ratios are hidden.
+In 12-TET the colors collapse: enharmonic identities (A1, d2, and anything where `semitones % 12 = 0`) are green, everything else red, and ratios are hidden.
 
 ### Interval naming
 
@@ -208,7 +222,7 @@ Examples:
 - 5:4 → "major third"
 - 81:64 → "Pythagorean major third" (also written "M3 + SC")
 - 7:6 → "septimal minor third" (or "lesser minor third + 7C")
-- 128:125 → "diminished second − schisma + Pythagorean comma" (or similar — depending on the simplest decomposition)
+- 128:125 → "diminished second − schisma + Pythagorean comma" (or similar, depending on the simplest decomposition)
 
 Toggle **Short intervals** to abbreviate ("major 3rd" → "M3", "syntonic comma" → "SC", etc.).
 
@@ -216,36 +230,36 @@ Toggle **Short intervals** to abbreviate ("major 3rd" → "M3", "syntonic comma"
 
 ## Recording and playback
 
-HKL records every performance — Lumatone, QWERTY, or click — and can play it back, save it, and round-trip it through any DAW that understands MPE.
+HKL records every performance (Lumatone, QWERTY, or click) and can play it back, save it, and round-trip it through any DAW that understands MPE.
 
-The recording controls sit in a group on the toolbar, between the Lumatone block and Reset prefs:
+The recording controls live on the **Recording** tab:
 
-- **● Rec** — start / stop recording. While recording, the button pulses red and the status pill ticks elapsed time. Whatever you play (notes, sustain pedal, expression pedal, polyphonic aftertouch) is captured. You can start recording mid-chord — held voices get added to the recording as `t=0` events automatically, so playback reproduces them.
-- **▶ Play** — plays the current recording back. The keys flash on the canvas as they play, matching what live input looks like. You can press your own keys at the same time — playback uses a separate voice ledger so Stop only releases what playback created, leaving your own keys alone.
-- **Save .hkr** — downloads the current recording as a `.hkr` file (HexKeyLab's native JSON format). `.hkr` is the source of truth — it carries the tuning system, layout, instrument, and the coordinate event stream, so a re-load plays back identically.
-- **Load .hkr** — opens a `.hkr` file. On Play, HKL applies the recording's layout snapshot (so loading a 7-limit recording switches you into 7-limit before playback starts).
-- **Export .mid** — downloads the recording as a standard `.mid` file using **MPE** (one channel per voice, ±48-semitone pitch bend). Any modern MPE-aware DAW (Logic, Bitwig, Ableton 11+) reads this and reproduces the JI pitches faithfully. Useful for quantizing rhythm, editing notes, or rendering the score through other software.
-- **Import .mid** — re-imports a `.mid` (typically one you've edited in a DAW). HKL needs the matching `.hkr` loaded first — the recording's layout snapshot is what makes coordinate identity recoverable from the (note, channel-bend) tuples. Out-of-tolerance notes (>25 cents from the nearest reachable coordinate under the snapshot) are skipped and logged as warnings.
+- **● Rec**: start / stop recording. While recording, the button pulses red and the status pill ticks elapsed time. Whatever you play (notes, sustain pedal, expression pedal, polyphonic aftertouch) is captured. You can start recording mid-chord: held voices get added to the recording as `t=0` events automatically, so playback reproduces them.
+- **▶ Play**: plays the current recording back. The keys flash on the canvas as they play, matching what live input looks like. You can press your own keys at the same time: playback uses a separate voice ledger so Stop only releases what playback created, leaving your own keys alone.
+- **Save .hkr**: downloads the current recording as a `.hkr` file (HexKeyLab's native JSON format). `.hkr` is the source of truth: it carries the tuning system, layout, instrument, and the coordinate event stream, so a re-load plays back identically.
+- **Load .hkr**: opens a `.hkr` file. On Play, HKL applies the recording's layout snapshot (so loading a 7-limit recording switches you into 7-limit before playback starts).
+- **Export .mid**: downloads the recording as a standard `.mid` file using **MPE** (one channel per voice, ±48-semitone pitch bend). Any modern MPE-aware DAW (Logic, Bitwig, Ableton 11+) reads this and reproduces the JI pitches faithfully. Useful for quantizing rhythm, editing notes, or rendering the score through other software.
+- **Import .mid**: re-imports a `.mid` (typically one you've edited in a DAW). HKL needs the matching `.hkr` loaded first: the recording's layout snapshot is what makes coordinate identity recoverable from the (note, channel-bend) tuples. Out-of-tolerance notes (>25 cents from the nearest reachable coordinate under the snapshot) are skipped and logged as warnings.
 
 The status pill on the right shows current state: *Idle*, *Recording 0:04*, *Playing 0:02 / 0:18*, or *Loaded 0:18*.
 
-Tick **Capture audio** to also record a real audio file: HKL brackets the actual engine output of every record/playback span and downloads a 44.1 kHz / 16-bit stereo `.wav` (independent of the `.hkr` coordinate capture). This is the faithful rendered sound — useful when you want the audio itself, not a re-playable recording.
+Tick **Capture audio** to also record a real audio file: HKL brackets the actual engine output of every record/playback span and downloads a 44.1 kHz / 16-bit stereo `.wav` (independent of the `.hkr` coordinate capture). This is the faithful rendered sound: useful when you want the audio itself, not a re-playable recording.
 
 ### Why two formats
 
-`.hkr` is the canonical recording. `.mid` is a derived view for DAW interchange. Re-import always anchors against an `.hkr` snapshot so coordinate identity survives even if a DAW quantizes pitch-wheel data — the snapshot tells HKL exactly which lattice positions to map (note, bend) tuples onto.
+`.hkr` is the canonical recording. `.mid` is a derived view for DAW interchange. Re-import always anchors against an `.hkr` snapshot so coordinate identity survives even if a DAW quantizes pitch-wheel data: the snapshot tells HKL exactly which lattice positions to map (note, bend) tuples onto.
 
 ### Export to sheet music (Composer)
 
-**Export to Composer** turns the current recording into notation. HKL estimates the tempo, tracks the beats, picks a downbeat, and quantizes durations bar by bar, then emits an `.hkc` score (HKL Composer's native format) with **colored noteheads matching the key colors** and lattice-correct accidental spelling (sharps on +r, flats on −r). The dialog offers two ways out: **Download `.hkc`** saves the file (open it later in Composer), and **Send to Composer** drops it straight into a connected Composer tab — no file needed. Either way the result opens in **HKL Composer** for interactive editing, playback, and further export (MusicXML, PDF).
+**Export to Composer** turns the current recording into notation. HKL estimates the tempo, tracks the beats, picks a downbeat, and quantizes durations bar by bar, then emits an `.hkc` score (HKL Composer's native format) with **colored noteheads matching the key colors** and lattice-correct accidental spelling (sharps on +r, flats on −r). The dialog offers two ways out: **Download `.hkc`** saves the file (open it later in Composer), and **Send to Composer** drops it straight into a connected Composer tab: no file needed. Either way the result opens in **HKL Composer** for interactive editing, playback, and further export (MusicXML, PDF).
 
 ---
 
 ## Persistence
 
-Most toolbar settings — selected layout, tuning, audio toggle, instrument, checkbox states, outline mode — are remembered across page reloads via local storage.
+Most toolbar settings (tuning, hex size, rotation, outline, audio toggle, instrument, and the analysis/visual checkboxes) are remembered across page reloads via local storage.
 
-The **Reset prefs** button (far right of the toolbar) clears all stored toolbar settings and reloads the page with defaults. Useful if your browser remembers an old state you don't want.
+The **Reset** button (in the tab row, top-right) clears all stored toolbar settings and reloads the page with defaults. Useful if your browser remembers an old state you don't want.
 
 ---
 
@@ -255,12 +269,14 @@ This section is for the small audience that owns a Lumatone. None of it is neede
 
 When a Lumatone is plugged in over USB, HKL becomes a full controller for it:
 
-- **Auto-sync colors** — tick **Auto-sync** and the Lumatone's LEDs match the on-screen colors. Reference-note shifts, tuning changes, and selection highlights all push to the device. The sync is diff-based and message-throttled, so only the bytes that actually need to change ride the wire.
-- **Status badge** — green "Lumatone Connected" / red "Not Connected", plus a sync activity indicator.
-- **MIDI input** — physical key presses route through HKL's audio engine using the same tuning math as on-screen play. Polyphonic aftertouch (per-key pressure, modulating per-voice volume) is supported.
-- **Pedal modes** — a dropdown selects between two interpretations of the sustain jack:
-  - *Sustain* — both pedal jacks contribute to a continuous damper depth (max of CC 4 and CC 64). This is the default. Half-pedaling on a continuous expression pedal attenuates ringing in real time, not just the decay rate.
-  - *Sostenuto + Sustain* — the sustain jack becomes a sostenuto pedal (locks held notes to ring through subsequent damper changes); the expression jack is the only damper source.
+- **Auto-sync colors**: tick **Auto-sync** and the Lumatone's LEDs match the on-screen colors. Reference-note shifts, tuning changes, and selection highlights all push to the device. The sync is diff-based and message-throttled, so only the bytes that actually need to change ride the wire.
+- **Status badge**: green "Lumatone Connected" / red "Not Connected", plus a sync activity indicator.
+- **MIDI input**: physical key presses route through HKL's audio engine using the same tuning math as on-screen play. Polyphonic aftertouch (per-key pressure, modulating per-voice volume) is supported.
+- **Pedal modes**: a dropdown selects between two interpretations of the sustain jack:
+  - *Sustain*: both pedal jacks contribute to a continuous damper depth (max of CC 4 and CC 64). This is the default. Half-pedaling on a continuous expression pedal attenuates ringing in real time, not just the decay rate.
+  - *Sostenuto + Sustain*: the sustain jack becomes a sostenuto pedal (locks held notes to ring through subsequent damper changes); the expression jack is the only damper source.
+- **Calibrate Pedal**: runs the Lumatone's expression-pedal calibration, learning the pedal's travel range while the panel shows the live min/max as you sweep it. Only needed once after plugging in a continuous expression pedal.
+- **Calibrate Keys**: opens a per-board overlay for calibrating the velocity response of individual keys (also toggled with `Shift+\`). An advanced aid for units with uneven key response; leave it off for normal play.
 
 HKL pushes a single fixed (channel, note) MIDI mapping to the Lumatone on first connect, then never re-maps the device. All tuning interpretation happens in software.
 
@@ -272,10 +288,10 @@ HKL pushes a single fixed (channel, note) MIDI mapping to the Lumatone on first 
 
 The **Piano** tab lets any MIDI keyboard drive HKL, and can also send HKL's playback back out to an external synth in true just intonation.
 
-- **Device** — pick your connected MIDI input device.
-- **Piano input** — route that device's notes through HKL's audio engine using the same tuning math as on-screen play. Velocity passes through as played (weighted keyboards already send musical dynamics); a sustain pedal on the device acts as a continuous sustain.
-- **Piano output** — mirror HKL's playback *out* to an external synth at true JI, **even on synths with no pitch bend and no MPE** (e.g. the Korg SP-250). It does this with per-channel fine-tuning (RPN 0001) and one voice per MIDI channel, giving up to 14 simultaneous just-tuned notes. Turn Audio off and Piano output on to make the external synth the only sound source.
-- **Valid ref bounds** — the dotted overlay described under [Reference note](#reference-note-and-layout-positioning), showing where a Ctrl+click reference is allowed to land.
+- **Device**: pick your connected MIDI input device.
+- **Piano input**: route that device's notes through HKL's audio engine using the same tuning math as on-screen play. Velocity passes through as played (weighted keyboards already send musical dynamics); a sustain pedal on the device acts as a continuous sustain.
+- **Piano output**: mirror HKL's playback *out* to an external synth at true JI, **even on synths with no pitch bend and no MPE** (e.g. the Korg SP-250). It does this with per-channel fine-tuning (RPN 0001) and one voice per MIDI channel, giving up to 14 simultaneous just-tuned notes. Turn Audio off and Piano output on to make the external synth the only sound source.
+- **Valid ref bounds**: the dotted overlay described under [Reference note](#reference-note-and-layout-positioning), showing where a Ctrl+click reference is allowed to land.
 
 ---
 
@@ -283,10 +299,10 @@ The **Piano** tab lets any MIDI keyboard drive HKL, and can also send HKL's play
 
 HKL ships alongside sibling apps, served from the same address (so they can talk to HKL live). Each has its own guide:
 
-- **HKL Composer** (at `/composer/`) — a keyboard-driven music-notation editor. It uses HKL as its input device: hold a chord on the HKL keyboard and it enters into the score with the correct just-intonation spelling and key colors. It plays scores back through HKL's audio engine. Composer can also open and edit its own `.hkc` files on its own; live chord entry needs an HKL tab open. → [Composer guide](composer.md)
-- **HKL Analyzer** (at `/analyzer/`) — a tool for building your own sample-based instruments from audio (local files or a CDN soundfont URL). It detects clean loop points and normalizes loudness, then produces a `.hki` instrument bundle you can load straight into HKL. → [Analyzer guide](analyzer.md)
-- **HKL Orchestrator** (at `/orchestrator/`) — captures a *physical* MIDI instrument (sampling it note-by-note, velocity layer by velocity layer) into a `.hki` bundle. → [Orchestrator guide](orchestrator.md)
-- **OBS overlay** — mirrors the live lattice (and optionally the Composer score) into OBS as a transparent layer for streaming and video. → [Overlay guide](overlay.md)
+- **HKL Composer** (at `/composer/`): a keyboard-driven music-notation editor. It uses HKL as its input device: hold a chord on the HKL keyboard and it enters into the score with the correct just-intonation spelling and key colors. It plays scores back through HKL's audio engine. Composer can also open and edit its own `.hkc` files on its own; live chord entry needs an HKL tab open. → [Composer guide](composer.md)
+- **HKL Analyzer** (at `/analyzer/`): a tool for building your own sample-based instruments from audio (local files or a CDN soundfont URL). It detects clean loop points and normalizes loudness, then produces a `.hki` instrument bundle you can load straight into HKL. → [Analyzer guide](analyzer.md)
+- **HKL Orchestrator** (at `/orchestrator/`): captures a *physical* MIDI instrument (sampling it note-by-note, velocity layer by velocity layer) into a `.hki` bundle. → [Orchestrator guide](orchestrator.md)
+- **OBS overlay**: mirrors the live lattice (and optionally the Composer score) into OBS as a transparent layer for streaming and video. → [Overlay guide](overlay.md)
 
 ---
 
@@ -294,12 +310,8 @@ HKL ships alongside sibling apps, served from the same address (so they can talk
 
 A few things that aren't obvious on first contact:
 
-1. **Try the QWERTY keyboard first.** H is A3. Hold H, then add J (M3 up), then U (m3 up) — that's a major triad. Move the whole shape one row down (`H J U` → `N M J`) and you've transposed down a minor third.
+1. **Try the QWERTY keyboard first.** H is A3. Hold H, then add J (M3 up), then U (m3 up): that's a major triad. Move the whole shape one row down (`H J U` → `N M J`) and you've transposed down a minor third.
 2. **Switch tunings while playing a chord.** Hold a major triad, then flip Tuning between Equal and 5-limit. The pure 5-limit version sounds visibly more locked-in.
-3. **Click a chord, then look at the info panel.** Every interval is named with full precision. There are no "just dim 7" approximations — every distinct ratio gets its own name.
+3. **Click a chord, then look at the info panel.** Every interval is named with full precision. There are no "just dim 7" approximations; every distinct ratio gets its own name.
 4. **Use 7-limit and Ctrl+click a chord root as the ref.** With 7-limit active, every qm=0 key has its pure 7/4 harmonic 7th two rows up in the qm=2 column. A dominant 7 played on the lattice sounds noticeably sweeter than its 12-TET counterpart.
-5. **Re-key the keyboard with Ctrl+click.** Pick any cell as the new ref and the entire layout slides under the static outline. Held notes follow — useful for modulating mid-chord without lifting your fingers.
-
----
-
-That's the whole tool. There is nothing hidden behind menus — what you see in the toolbar is what HKL does.
+5. **Re-key the keyboard with Ctrl+click.** Pick any cell as the new ref and the entire layout slides under the static outline. Held notes follow: useful for modulating mid-chord without lifting your fingers.

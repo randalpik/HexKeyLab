@@ -29,7 +29,10 @@ const IMPORT_RE = /(?:import|export)\s[^'"]*?from\s*['"]([^'"]+)['"]|import\s*\(
 
 /** Allowed relative escapes, keyed by project dir (relative to repoRoot). */
 const RELATIVE_ESCAPE_ALLOW = {
-  
+  // The Guide app's whole job is to render the user-facing guides; it imports
+  // docs/guide/*.md as `?raw` text (not code). docs/ is not a package, so a
+  // bare @hkl/* specifier doesn't apply — this asset reach is intentional.
+  'apps/guide': [path.join(repoRoot, 'docs', 'guide')],
 };
 
 function listProjects() {
