@@ -214,6 +214,19 @@ body.composer-view #composerFrame{display:flex}
 .tbtn:hover{border-color:#888}
 .tbtn.active{border-color:#B266FF;color:#B266FF}
 .tbtn.active:hover{border-color:#C99CFF;color:#C99CFF}
+/* Companions: links to the sibling apps, right of the toolbar tabs. The group
+   is one nowrap flex unit so it jumps to a new line as a whole on small screens
+   (the parent .ctrls is flex-wrap:wrap). Blue hover marks them as navigation,
+   distinct from the purple toolbar-tab toggles. */
+.companions{display:inline-flex;flex-wrap:nowrap;align-items:center;gap:6px;border-left:1px solid #333;padding-left:10px}
+.comp-link{padding:0 10px;border:1.5px solid #555;background:#1a1a1a;color:#888;font-size:12px;font-weight:500;line-height:22px;border-radius:4px;text-decoration:none;display:inline-block;outline:none}
+.comp-link:hover{border-color:#4C96FF;color:#4C96FF}
+/* The separator is a border-left on the group itself, not a standalone divider:
+   on one line it's the bar between Reset and the Companions header, and when the
+   group wraps it travels with it (leading the line) instead of dangling — robust
+   at any width / button count, no breakpoint. row-gap gives the wrapped rows a
+   few px of vertical breathing room (only visible when something wraps). */
+.toolbar-selector{row-gap:6px}
 .toolbar-row{margin-top:2px}
 /* Fixed integer height (not min-height) so every toolbar group is identical —
    the tallest content is the Recording group's stacked button-pairs (~57.2px),
@@ -258,6 +271,13 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <button class="tbtn" id="tbPiano">Piano</button>
 <span class="cdiv"></span>
 <button class="push-btn" id="btnResetPrefs">Reset</button>
+<span class="companions">
+<span class="ts-label">Companions:</span>
+<a class="comp-link" href="/composer/" target="_blank" rel="noopener" title="Engrave just-intonation scores from your HKL playing">Composer</a>
+<a class="comp-link" href="/analyzer/" target="_blank" rel="noopener" title="Build instrument samples from audio files or a soundfont URL">Analyzer</a>
+<a class="comp-link" href="/orchestrator/" target="_blank" rel="noopener" title="Sample a physical MIDI instrument into an HKL instrument">Orchestrator</a>
+<a class="comp-link" href="/guide/" target="_blank" rel="noopener" title="How-to guides for HKL and its companion apps">Guide</a>
+</span>
 </div>
 <div class="ctrls toolbar-row">
 <div class="toolbar-group" id="tb-group-layout">
