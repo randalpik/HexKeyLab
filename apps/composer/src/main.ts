@@ -96,6 +96,9 @@ function maybeScrollMeasureIntoView(measureIdx: number): void {
   if (measureIdx >= measures.length) return;
   const id = measures[measureIdx]?.getAttribute('xml:id');
   if (!id) return;
+  /* Scroll mode: the target measure may be off-screen and thus unmounted —
+     mount its chunk so rectForId can resolve it (no-op in page mode). */
+  renderer.ensureMeasureMounted(measureIdx);
   const rect = renderer.rectForId(id);
   const score = $('score');
   if (!rect || !score) return;
@@ -833,8 +836,12 @@ function reRender(): void {
        (centered, bottom of page). Subtitle is handled by Verovio itself once
        <title type="subtitle"> is present. Only affects page view (the
        .score-page wrapper); scroll view skips the page header/footer. */
+    const isScroll = renderer.getViewMode() === 'scroll';
     const scoreElForInject = $('score');
-    if (scoreElForInject) {
+    /* Page-only post-render injections (header/footer/section headers/volta/
+       crisp snap) operate on the .score-page page structure; scroll view has
+       a virtualized chunk canvas instead, so skip them there. */
+    if (scoreElForInject && !isScroll) {
       injectHeaderFooter(scoreElForInject, model.getComposer(), model.getFooter());
       injectSectionHeaders(scoreElForInject, model);
       styleVoltaNumbers(scoreElForInject);
@@ -857,22 +864,34 @@ function reRender(): void {
        view with a page break there are multiple .score-page svgs stacked
        vertically, and a cursor on a later page would otherwise fall outside
        the overlay's bounds and not draw. */
-    const verovioSvgs = Array.from(
-      scoreEl.querySelectorAll('svg:not(#cursorOverlay)'),
-    ) as SVGSVGElement[];
     const overlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     overlay.id = 'cursorOverlay';
-    if (verovioSvgs.length) {
-      const scoreRect = scoreEl.getBoundingClientRect();
-      let overlayW = 0;
-      let overlayH = 0;
-      for (const svg of verovioSvgs) {
-        const r = svg.getBoundingClientRect();
-        overlayW = Math.max(overlayW, r.right - scoreRect.left + scoreEl.scrollLeft);
-        overlayH = Math.max(overlayH, r.bottom - scoreRect.top + scoreEl.scrollTop);
+    if (isScroll) {
+      /* Scroll mode: the cursor's chunk must be mounted before rectForId can
+         resolve it; size the overlay to the full ribbon canvas. */
+      renderer.ensureMeasureMounted(visualCursorMeasure());
+      overlay.setAttribute('width', String(Math.max(0, renderer.ribbonWidth() ?? 0)));
+      overlay.setAttribute('height', String(renderer.scrollBandHeight()));
+    } else {
+      /* Size the overlay to cover EVERY page SVG, not just the first — in page
+         view with a page break there are multiple .score-page svgs stacked
+         vertically, and a cursor on a later page would otherwise fall outside
+         the overlay's bounds and not draw. */
+      const verovioSvgs = Array.from(
+        scoreEl.querySelectorAll('svg:not(#cursorOverlay)'),
+      ) as SVGSVGElement[];
+      if (verovioSvgs.length) {
+        const scoreRect = scoreEl.getBoundingClientRect();
+        let overlayW = 0;
+        let overlayH = 0;
+        for (const svg of verovioSvgs) {
+          const r = svg.getBoundingClientRect();
+          overlayW = Math.max(overlayW, r.right - scoreRect.left + scoreEl.scrollLeft);
+          overlayH = Math.max(overlayH, r.bottom - scoreRect.top + scoreEl.scrollTop);
+        }
+        overlay.setAttribute('width', String(Math.max(0, overlayW)));
+        overlay.setAttribute('height', String(Math.max(0, overlayH)));
       }
-      overlay.setAttribute('width', String(Math.max(0, overlayW)));
-      overlay.setAttribute('height', String(Math.max(0, overlayH)));
     }
     scoreEl.appendChild(overlay);
     cursor.attach(overlay);
@@ -1002,6 +1021,9 @@ function composerOnCursorMove(): void {
 function composerOnStateChange(): void {
   refreshIndicators();
   refreshViewSelector();
+  /* Scroll mode: a cursor move may target an off-screen (unmounted) chunk;
+     mount it so the overlay can resolve the cursor's rect (no-op in page mode). */
+  renderer.ensureMeasureMounted(visualCursorMeasure());
   cursor.update(model, cursorOpts());
   selectionOverlay.update(model, getInputState().selection);
   /* Cursor or voice may have moved — recompute reference. The diff filter

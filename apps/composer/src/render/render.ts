@@ -9,6 +9,16 @@ import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
 import { injectHejiGlyphs } from '@hkl/notation/heji-render.js';
 import { applyNotationTheme } from '@hkl/notation/verovio.js';
 import { CRISP_PRESETS, crispMarginTop, lineWidthOptions, pinExactScale, snapStaffLinesToGrid, snapBarlines, snapSystemRightEdge } from '@hkl/notation/render-presets.js';
+import { VirtualRibbon } from './virtualize.js';
+
+/* Scroll-mode chunk layout: pinned vertical spacing so every chunk lays out
+ *  staves at the SAME Y (content-independent) — required so chunks align
+ *  vertically across seams (see docs/decisions.md). `spacingStaff` is generous
+ *  for safety; tuning it down (2e) is purely cosmetic and must stay ≥ the
+ *  score's max inter-staff content extent to preserve alignment. */
+const SCROLL_STAFF_SPACING = 24;
+const SCROLL_TARGET_STAFF_Y = 160;
+const SCROLL_BAND_HEIGHT = 1000;
 
 export type ViewMode = 'page' | 'scroll';
 /** Score theme. 'transparent' renders like 'dark' (light-source noteheads,
@@ -60,6 +70,13 @@ class Renderer {
   private zoom: ZoomLevel = 100;
   private theme: ScoreTheme = 'light';
   private readyPromise: Promise<void>;
+  /** Scroll-mode virtualized ribbon. Null until first scroll-mode render. */
+  private vr: VirtualRibbon | null = null;
+  private vrContainer: HTMLElement | null = null;
+  /** Dedicated Verovio toolkit for chunk renders — isolated from `tk` so chunk
+   *  options (spacingStaff etc.) can't leak into page renders (Verovio's
+   *  setOptions persists unspecified options). */
+  private chunkTk: VerovioToolkit | null = null;
 
   constructor() {
     this.readyPromise = this.loadVerovio();
@@ -196,6 +213,13 @@ class Renderer {
   }
 
   setViewMode(mode: ViewMode): void {
+    /* Leaving scroll mode: tear down the virtualized ribbon (detach its scroll
+       listener) so its chunk-mounting can't corrupt the page-mode DOM. */
+    if (mode !== this.viewMode && this.vr) {
+      this.vr.destroy();
+      this.vr = null;
+      this.vrContainer = null;
+    }
     this.viewMode = mode;
   }
 
@@ -223,15 +247,16 @@ class Renderer {
   render(mei: string): void {
     if (!this.tk) throw new Error('render() before ready()');
     if (!this.container) throw new Error('render() before attach()');
+    /* Scroll view → virtualized horizontal ribbon (render only the viewport's
+       chunks; scroll never calls Verovio). Page view keeps the full render. */
+    if (this.viewMode === 'scroll') { this.renderScroll(mei); return; }
     /* Choose a breaks strategy. Section/system breaks alone → single-pass
        'smart' (honors them + auto-wraps). Page breaks → bake the natural
        system breaks first, then 'encoded' (honors pages + the baked wraps).
        No manual breaks → plain 'auto'. Scroll view → 'none'. */
     let data = mei;
-    let strategy: 'none' | 'auto' | 'smartSb0' | 'encoded';
-    if (this.viewMode !== 'page') {
-      strategy = 'none';
-    } else if (mei.includes('<pb')) {
+    let strategy: 'auto' | 'smartSb0' | 'encoded';
+    if (mei.includes('<pb')) {
       data = this.layoutBreaks(mei);
       strategy = 'encoded';
     } else if (mei.includes('<sb')) {
@@ -244,14 +269,10 @@ class Renderer {
       this.container.innerHTML = '<div style="color:#c00;padding:20px">Verovio loadData failed (invalid MEI).</div>';
       return;
     }
-    if (this.viewMode === 'scroll') {
-      /* breaks: 'none' produces a single page; render only the first page so
-         multi-page concatenation can't expand the canvas vertically. */
-      this.container.innerHTML = this.tk.renderToSVG(1, {});
-    } else {
-      /* Each page SVG wrapped in a .score-page div so CSS can give it
-         a white background, border, and surrounding margin against the
-         dark #score surround. */
+    /* Each page SVG wrapped in a .score-page div so CSS can give it
+       a white background, border, and surrounding margin against the
+       dark #score surround. */
+    {
       const pages = this.tk.getPageCount();
       let combined = '';
       for (let i = 1; i <= Math.max(1, pages); i++) {
@@ -290,6 +311,83 @@ class Renderer {
     applyNotationTheme(this.container, this.theme === 'light' ? 'light' : 'dark');
     this.container.classList.toggle('theme-transparent', this.theme === 'transparent');
   }
+
+  /* ── scroll-mode virtualized ribbon ──────────────────────────────────────── */
+
+  /** Verovio options for a chunk render: natural unjustified spacing
+   *  (breaks:'none') + pinned content-independent vertical layout + the active
+   *  crisp preset, so chunks are width-identical to the full ribbon and align
+   *  vertically across seams. */
+  private chunkOptions(): object {
+    const preset = CRISP_PRESETS[this.zoom];
+    return {
+      ...BASE_OPTIONS,
+      breaks: 'none',
+      pageWidth: 100000,
+      pageHeight: 4000,
+      adjustPageHeight: true,
+      header: 'none',
+      spacingStaff: SCROLL_STAFF_SPACING,
+      spacingSystem: 0,
+      scale: preset.scale,
+      unit: preset.unit,
+      ...lineWidthOptions(preset),
+    };
+  }
+
+  /** Per-chunk post-processing — the same treatment the page path applies to the
+   *  whole container, run on each freshly-rendered chunk wrapper: notehead
+   *  z-order, HEJI/stacked-accidental glyphs, theme, crisp pinning. */
+  private postProcessChunk = (node: HTMLElement): void => {
+    for (const note of Array.from(node.querySelectorAll('g.note'))) {
+      const nh = note.querySelector(':scope > g.notehead');
+      if (nh) note.appendChild(nh);
+    }
+    injectHejiGlyphs(node);
+    applyNotationTheme(node, this.theme === 'light' ? 'light' : 'dark');
+    node.classList.toggle('theme-transparent', this.theme === 'transparent');
+    pinExactScale(node, this.currentScale());
+    snapBarlines(node, this.currentScale(), CRISP_PRESETS[this.zoom].evenWidth);
+  };
+
+  private renderScroll(mei: string): void {
+    const doc = new DOMParser().parseFromString(mei, 'application/xml');
+    if (doc.querySelector('parsererror')) {
+      this.container!.innerHTML = '<div style="color:#c00;padding:20px">Render failed (invalid MEI).</div>';
+      return;
+    }
+    /* Dedicated toolkit for chunk renders (isolated from the page toolkit). */
+    if (!this.chunkTk && window.verovio) this.chunkTk = new window.verovio.toolkit();
+    /* (Re)create the ribbon if absent or bound to a stale container. */
+    if (!this.vr || this.vrContainer !== this.container) {
+      this.vr?.destroy();
+      this.vr = new VirtualRibbon({
+        container: this.container!, tk: this.chunkTk ?? this.tk!, options: this.chunkOptions(),
+        chunkSize: 8, overlap: 2, estimate: 400,
+        bandHeight: SCROLL_BAND_HEIGHT, targetStaffY: SCROLL_TARGET_STAFF_Y, bufferPx: 1200,
+        postProcess: this.postProcessChunk,
+      });
+      this.vrContainer = this.container;
+    } else {
+      /* Zoom/theme may have changed → refresh chunk options (clears cache). */
+      this.vr.setOptions(this.chunkOptions());
+    }
+    this.vr.rebuild(doc);
+  }
+
+  /** Ensure the chunk holding measure index `mi` is rendered + mounted (so the
+   *  cursor overlay can resolve its rect). Scroll mode only; no-op otherwise. */
+  ensureMeasureMounted(mi: number): void { this.vr?.ensureMeasureMounted(mi); }
+
+  /** Ribbon-x + width of a measure by xml:id, from the virtualization index
+   *  (works without the measure being mounted). Null when not in scroll mode. */
+  measureBox(id: string): { x: number; w: number } | null { return this.vr?.measureBox(id) ?? null; }
+
+  /** Total ribbon width (scroll canvas), or null when not in scroll mode. */
+  ribbonWidth(): number | null { return this.vr?.totalWidth() ?? null; }
+
+  /** Vertical band height of the scroll ribbon (px). */
+  scrollBandHeight(): number { return SCROLL_BAND_HEIGHT; }
 
   /** Resolve a clicked SVG element to its xml:id, walking up to the nearest
    *  <g class="note"> or <g class="chord">. Returns null on miss. */

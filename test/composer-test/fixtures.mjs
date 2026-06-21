@@ -4422,6 +4422,19 @@ const CLICK = {
         { clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, button: 0, bubbles: true }));
     `,
   },
+
+  /* Phase 0 perf invariant: plain arrow-key navigation moves the cursor but
+     must NOT re-engrave the score (a full Verovio reRender on every keystroke
+     froze large scores for seconds). Assert the Verovio SVG root node is the
+     same element before/after the keypress (a reRender replaces #score's
+     innerHTML, so the node would differ). Asserted via FIXTURE_ASSERTIONS. */
+  navDoesNotReRender: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 6; i++) m.insertChordAtCursor({ notes: [${A4}], duration: '4', dots: 0 });
+      m.setCursor(0, 1); r();
+    `,
+  },
 };
 
 export const FIXTURES = {
@@ -6408,6 +6421,21 @@ export const FIXTURE_ASSERTIONS = {
         return keys.length === 1 && keys[0].pname === 'a'
           ? { ok: true }
           : { ok: false, detail: 'getHeldKeys()=' + JSON.stringify(keys) };
+      })()` },
+  ],
+  navDoesNotReRender: [
+    { name: 'plain ArrowRight moves the cursor without re-engraving (SVG root node unchanged)',
+      expr: `(() => {
+        const score = document.getElementById('score');
+        const svgBefore = score.querySelector('svg:not(#cursorOverlay)');
+        if (!svgBefore) return { ok: false, detail: 'no rendered SVG' };
+        const c0 = window.__hkl_composer.model.getCursor(1);
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+        const svgAfter = score.querySelector('svg:not(#cursorOverlay)');
+        const c1 = window.__hkl_composer.model.getCursor(1);
+        if (svgAfter !== svgBefore) return { ok: false, detail: 'score was re-engraved on a cursor move (SVG root replaced)' };
+        if (c1 === c0) return { ok: false, detail: 'cursor did not advance (c0=' + c0 + ')' };
+        return { ok: true };
       })()` },
   ],
   clickClearsSelAndBroadcasts: [

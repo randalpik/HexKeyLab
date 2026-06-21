@@ -142,11 +142,13 @@ export function attachScoreClickHandler(
     if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) { console.log('[click] ignored: modifier held'); return; }
     if (e.button !== 0) { console.log('[click] ignored: non-primary button'); return; }
 
-    const svg = scoreEl.querySelector('svg');
-    if (!svg) { console.log('[click] ignored: no rendered SVG'); return; }
+    if (!scoreEl.querySelector('svg')) { console.log('[click] ignored: no rendered SVG'); return; }
 
     const x = e.clientX, y = e.clientY;
-    const cands = gatherCandidates(svg, x, y);
+    /* Query across the whole container: scroll mode mounts one <svg> per chunk
+       (and page mode one per page), so a single-svg scan would miss most. The
+       cursor overlay holds no g.note/chord/staff, so it can't yield candidates. */
+    const cands = gatherCandidates(scoreEl, x, y);
     if (cands.length === 0) { console.log('[click] (' + Math.round(x) + ',' + Math.round(y) + ') no targets in score'); return; }
 
     let best = cands[0];
