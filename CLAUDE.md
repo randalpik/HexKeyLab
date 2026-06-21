@@ -74,7 +74,7 @@ If you catch yourself in a long thinking block, **stop the thinking, write a sen
 These are non-negotiable constraints. Always respect them.
 
 - **Lumatone is 5 boards × 56 keys = 280 keys.**
-- **Boards 3 and 4 are physically swapped on Max's unit.** Every LTN file and every SysEx send must account for this. The mapping is `sysexBoardMap = [1,2,3,5,4]` — board groups (0-indexed) 0,1,2,3,4 send to SysEx board IDs 1,2,3,5,4.
+- **Boards 3 and 4 are physically swapped on Max's unit.** This is now a **runtime toggle**, not hardcoded: *Calibrate Keys → "Swap boards 3 ↔ 4"*, **off by default** (standard units need no swap), persisted as the `swapBoards34` pref. **Max's unit needs it ON** — toggle it once. All SysEx board-byte routing goes through `sysexBoardFor(group)` (`apps/hkl/src/lumatone/protocol.ts`), which returns the identity map `[1,2,3,4,5]` when off and `[1,2,3,5,4]` when on. Never hardcode either map at a call site. (Only the board byte flips; the MIDI channel map is independent — see next line.)
 - **Fixed MIDI channel map is 0-indexed in SysEx**: `fixedMidiChannelMap = [0,1,2,3,4]`. The Lumatone firmware uses the SysEx channel byte directly.
 - **A3 = 220 Hz** is the central reference of the tuning system.
 - **The expression pedal jack is Roland-wired** (wiper on ring). Korg-style pedals (DS-1H, DS-2H, switch pedals) leave the ring floating and produce noise; don't confuse this with a software bug. Roland DP-10, EV-5, and Yamaha (with polarity invert) work.

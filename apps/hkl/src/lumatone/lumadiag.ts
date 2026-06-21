@@ -27,7 +27,9 @@
 import { midi } from '../state/midi.js';
 import { sysex } from './sysex.js';
 import {
-  sysexBoardMap,
+  sysexBoardFor,
+  getBoards34Swapped,
+  setBoards34Swapped,
   SYSEX_ACK,
   SYSEX_CMD_RESET_VELOCITY_CONFIG,
   SYSEX_CMD_RESET_AFTERTOUCH_CONFIG,
@@ -48,6 +50,9 @@ import {
 } from './protocol.js';
 import { velocityCal, DEFAULT_INPUT_CURVE, DEFAULT_INTERVAL_CURVE, STATS_MIN_N, STATS_HIGH_CV } from '../audio/velocityCal.js';
 import { baseKeys } from '../layout/baseKeys.js';
+import { lumatone } from '../state/lumatone.js';
+import { savePrefs } from '../state/persistence.js';
+import { syncLumatoneColors } from './sync.js';
 
 /* Build (q,r-string) → board_group lookup once. Used by the per-key stats
    scatter to color dots by board. */
@@ -95,15 +100,16 @@ let hotkeyCallback: (() => void) | null = null;
 const boardStates: BoardState[] = [];
 const valueLabels: Record<string, HTMLSpanElement> = {};
 const sliders: Record<string, HTMLInputElement> = {};
+/* Per-board title <strong> refs so the swap toggle can rewrite the SysEx-board
+   numbers in place when the routing flips. */
+const boardTitles: HTMLElement[] = [];
+
+function boardTitleText(logical: number): string {
+  return 'Board ' + (logical + 1) + ' (SysEx ' + sysexBoardFor(logical) + ')';
+}
 
 function hex(v: number): string {
   return '0x' + v.toString(16).toUpperCase().padStart(2, '0');
-}
-
-/* Logical board (0..4) → SysEx board byte (1, 2, 3, 5, 4 — boards 3 & 4 are
-   physically swapped on Max's unit). */
-function sysexBoardFor(logical: number): number {
-  return sysexBoardMap[logical];
 }
 
 function makeBlankState(): BoardState {
@@ -276,6 +282,50 @@ function refreshSliders(logical: number): void {
   }
 }
 
+/* Board 3↔4 routing swap. For units with boards 3 & 4 physically transposed,
+   group 4/5's SysEx board byte must be flipped. Off by default (standard units
+   need no swap); persisted. Flipping it re-pushes the fixed MIDI layout + all
+   key colors so the now-relocated boards re-light correctly. */
+function makeSwapSection(): HTMLDivElement {
+  const sec = document.createElement('div');
+  Object.assign(sec.style, {
+    borderTop: '1px solid rgba(255,255,255,0.12)',
+    padding: '6px 8px',
+  });
+  const label = document.createElement('label');
+  Object.assign(label.style, {
+    display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer',
+    fontSize: '12px',
+  });
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = getBoards34Swapped();
+  cb.addEventListener('change', () => {
+    setBoards34Swapped(cb.checked);
+    savePrefs({ swapBoards34: cb.checked });
+    /* Refresh the per-board SysEx labels to match the new routing. */
+    for (let i = 0; i < boardTitles.length; i++) {
+      if (boardTitles[i]) boardTitles[i].textContent = boardTitleText(i);
+    }
+    /* Re-light: the swap relocates groups 4/5, so the already-sent fixed layout
+       and colors now sit on the wrong physical boards. Force a full re-push
+       (same reset the device uses on reconnect). */
+    lumatone.fixedLayoutSent = false;
+    lumatone.deviceColors = null;
+    syncLumatoneColors();
+  });
+  label.appendChild(cb);
+  label.appendChild(document.createTextNode('Swap boards 3 ↔ 4 (this unit)'));
+  sec.appendChild(label);
+  const hint = document.createElement('div');
+  hint.textContent = 'Off for standard units. Enable only if your boards 3 & 4 are physically transposed.';
+  Object.assign(hint.style, {
+    fontSize: '10px', color: 'rgba(255,255,255,0.55)', marginTop: '3px',
+  });
+  sec.appendChild(hint);
+  return sec;
+}
+
 function makeBoardSection(logical: number): HTMLDivElement {
   const sec = document.createElement('div');
   Object.assign(sec.style, {
@@ -288,7 +338,8 @@ function makeBoardSection(logical: number): HTMLDivElement {
     marginBottom: '4px',
   });
   const title = document.createElement('strong');
-  title.textContent = 'Board ' + (logical + 1) + ' (SysEx ' + sysexBoardFor(logical) + ')';
+  title.textContent = boardTitleText(logical);
+  boardTitles[logical] = title;
   Object.assign(title.style, { fontSize: '12px', color: '#9cf' });
   const btns = document.createElement('div');
   const resetBtn = document.createElement('button');
@@ -1514,6 +1565,7 @@ export function ensureLumaDiag(): void {
     fontSize: '12px',
   });
   panel.appendChild(header);
+  panel.appendChild(makeSwapSection());
   for (let i = 0; i < 5; i++) panel.appendChild(makeBoardSection(i));
   panel.appendChild(makeVelocityCalSection());
   panel.appendChild(makePerKeyStatsSection());

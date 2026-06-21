@@ -9,7 +9,7 @@ Architecture source of truth for the HKL viewer app (`apps/hkl/`). **For how to 
 ### Lumatone
 
 - **Layout**: 5 boards × 56 keys = 280 keys, hexagonal isomorphic.
-- **Physical board swap** (Max's unit): boards 3 and 4 are swapped, encoded as `sysexBoardMap = [1,2,3,5,4]` (group index 0-indexed → SysEx board ID 1-indexed). Every LTN file, MIDI map, and SysEx send must respect this.
+- **Physical board swap** (some units, incl. Max's): boards 3 and 4 are physically transposed. Handled by a persisted, off-by-default toggle (*Calibrate Keys → "Swap boards 3 ↔ 4"*, pref `swapBoards34`). All SysEx board-byte routing goes through `sysexBoardFor(group)` (`lumatone/protocol.ts`): identity `[1,2,3,4,5]` when off, `[1,2,3,5,4]` when on. Only the board byte flips — `fixedMidiChannelMap` is group-keyed and unaffected. Flipping the toggle re-pushes the fixed layout + colors so the relocated boards re-light.
 - **Connectivity**: USB-MIDI (primary), 5-pin DIN in/thru/out, 1/4" Sustain jack, 1/4" Expression jack.
 - **SysEx envelope**: `F0 00 21 50 <board> <cmd> <data1-4> F7`. Manufacturer ID `[0x00, 0x21, 0x50]`. Per-key data: (keyIndex, noteNum, channel-byte 0-indexed, typeByte) where `typeByte = (faderUpIsNull << 4) | keyType`, keyType ∈ {0=disabled, 1=noteOnNoteOff, 2=CC, 3=lumaTouch}.
 
@@ -32,7 +32,7 @@ Needed only for per-key hardware calibration (units with broken macro buttons) o
 - **Per-key calibration state** lives in two layers:
   - **Disk** (persistent): `/home/debian/TerpstraController/files/KeyData_1..5`, plain text, 4 sections × 56 values (MAX/MIN/validity/AT-MAX thresholds). Loaded at TC boot, pushed to PICs.
   - **RAM** (volatile): `kbd_preset_params` struct in `.bss`, 638-byte stride/board; offsets `+0x118` MAX, `+0x150` MIN, `+0x1c0` validity, `+0x1fe` AT-MAX. Lost at restart/power cycle.
-- **Indexing**: both layers use **PIC number** (`sysex_board`), not spatial board position. Slot `i` ↔ `KeyData_(i+1)` ↔ PIC `i+1`. The `sysexBoardMap` physical-swap only enters when translating spatial board_group → PIC number, never when indexing firmware structures.
+- **Indexing**: both layers use **PIC number** (`sysex_board`), not spatial board position. Slot `i` ↔ `KeyData_(i+1)` ↔ PIC `i+1`. The `sysexBoardFor` physical-swap only enters when translating spatial board_group → PIC number, never when indexing firmware structures.
 - Tooling: `tools/lumatone-cal/` Python scripts read/write both layers (`/proc/<tc-pid>/mem` volatile, file edit persistent).
 
 ### Self-contained audio
@@ -438,7 +438,7 @@ tiltAngle          # counterclockwise rotation, mode-dependent (Lumatone/Piano/d
 outR = hexR + 1    # outline offset from hex centers
 septimalW = 3      # 7-limit band width along r-axis
 animDuration = 500 # layout animation ms
-sysexBoardMap = [1,2,3,5,4]
+sysexBoardFor(group)       # [1,2,3,4,5] normally; [1,2,3,5,4] when swapBoards34 on
 fixedMidiChannelMap = [0,1,2,3,4]
 AFTERTOUCH_RAMP_S
 AFTERTOUCH_CEIL_HEADROOM_DB  # poly-AT full-press swell ceiling, dB above v127 (default 12)

@@ -4,10 +4,11 @@ import type { SysexMessage } from '../types.js';
 //
 // Envelope: F0 00 21 50 <board> <cmd> <data...> F7
 //
-// Hardware quirk: boards 3 & 4 are physically swapped on Max's unit, so the
-// baseKeys group index → SysEx board index mapping is [1,2,3,5,4]. Don't
-// "fix" this with the naïve [1,2,3,4,5] — it'll light the wrong physical
-// boards. (See CLAUDE.md.)
+// Board routing: the baseKeys group index (0-4) → SysEx board byte mapping is
+// normally the identity [1,2,3,4,5]. Some units (e.g. Max's) have boards 3 & 4
+// physically swapped, which needs [1,2,3,5,4]. That swap is a runtime toggle
+// (Calibrate Keys → "Swap boards 3 ↔ 4", off by default, persisted) routed
+// through sysexBoardFor() below — do NOT hardcode either map at call sites.
 
 export const SYSEX_MANU = [0x00, 0x21, 0x50] as const;
 
@@ -52,8 +53,22 @@ export const SYSEX_NACK = 0x00;
 export const SYSEX_ACK = 0x01;
 export const SYSEX_BUSY = 0x02;
 
-/* baseKeys group index (0-4) → SysEx board index (1-based). Groups 3,4 swapped. */
-export const sysexBoardMap = [1, 2, 3, 5, 4] as const;
+/* baseKeys group index (0-4) → SysEx board byte (1-based). Standard = identity;
+   swapped variant for units with boards 3 & 4 physically transposed. */
+const BOARD_MAP_STANDARD = [1, 2, 3, 4, 5] as const;
+const BOARD_MAP_SWAPPED = [1, 2, 3, 5, 4] as const;
+
+/* Runtime swap state, seeded from the persisted `swapBoards34` pref at startup
+   (init.ts) and flipped live by the Calibrate Keys toggle. Off by default so
+   HKL routes correctly on a standard unit out of the box. */
+let boards34Swapped = false;
+export function setBoards34Swapped(v: boolean): void { boards34Swapped = v; }
+export function getBoards34Swapped(): boolean { return boards34Swapped; }
+
+/* Logical board group (0-4) → SysEx board byte, honoring the live swap state. */
+export function sysexBoardFor(group: number): number {
+  return (boards34Swapped ? BOARD_MAP_SWAPPED : BOARD_MAP_STANDARD)[group];
+}
 
 /* fixed MIDI layout: channels 0-4 (0-indexed in SysEx, firmware uses byte directly) */
 export const fixedMidiChannelMap = [0, 1, 2, 3, 4] as const;

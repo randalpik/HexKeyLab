@@ -54,6 +54,7 @@ import {
   togglePedalCalibration, resetPedalBounds,
 } from '../lumatone/calibration.js';
 import { toggleAutoSync } from '../lumatone/sync.js';
+import { setBoards34Swapped } from '../lumatone/protocol.js';
 import {
   ensureLumaDiag, setLumaDiagVisible, setLumaDiagHotkeyCallback,
 } from '../lumatone/lumadiag.js';
@@ -136,6 +137,10 @@ applyTooltips();
 /* State fields with no DOM mirror — set directly before any handlers run. */
 pedal.mode = prefs.pedalMode;
 tuning.hejiEnabled = prefs.hejiEnabled;
+/* Seed the board-routing swap before the first Lumatone sync. The toggle lives
+   in the Calibrate Keys overlay, but the routing must be correct even if it's
+   never opened. */
+setBoards34Swapped(prefs.swapBoards34);
 
 initAudio();
 /* Load the persisted instrument. Fires regardless of audioEnabled so the

@@ -3555,3 +3555,28 @@ a held tone out above the others (voicing). The ≥10 dB ceiling above max strik
 target; 12 dB is the default and the one knob to tune by ear (a lumadiag slider for it is deferred).
 Files: `apps/hkl/src/audio/aftertouch.ts` (whole change); `handleAftertouch` in `audio/engine.ts`
 is unchanged (already passes `strikeVel` and ramps `pressureGain` over `AFTERTOUCH_RAMP_S`).
+
+---
+
+## Board 3↔4 swap: runtime toggle, not a hardcoded map (supersedes "Lumatone board map `[1,2,3,5,4]` is per-unit")
+
+**Picked**: Replace the hardcoded `sysexBoardMap = [1,2,3,5,4]` const with `sysexBoardFor(group)`
+in `lumatone/protocol.ts`, backed by runtime state (`setBoards34Swapped`/`getBoards34Swapped`)
+seeded from a persisted, **off-by-default** pref `swapBoards34`. The swap is exposed as a checkbox
+in the Calibrate Keys overlay ("Swap boards 3 ↔ 4 (this unit)").
+
+**Why**: the swap is specific to units with boards 3 & 4 physically transposed (Max's). Hardcoding
+it broke routing on every standard unit and was a recurring "don't 'fix' this" gotcha in the docs.
+A default-off toggle makes HKL correct out of the box for standard units; Max enables it once and it
+persists. Putting it in Calibrate Keys (where the rest of the per-board hardware quirks live) keeps
+it out of the everyday toolbar.
+
+**Key invariant**: only the **SysEx board-routing byte** flips. `fixedMidiChannelMap` is group-keyed
+and stays `[0,1,2,3,4]` — physical routing is the board byte's job; the per-group channel is
+independent. Flipping the toggle resets `lumatone.fixedLayoutSent`/`deviceColors` and re-runs
+`syncLumatoneColors()` so the relocated boards re-light.
+
+**Where**: `lumatone/protocol.ts` (state + `sysexBoardFor`), `lumatone/sync.ts` (two call sites),
+`lumatone/lumadiag.ts` (toggle UI + resync + title refresh), `state/persistence.ts` (`swapBoards34`),
+`ui/init.ts` (startup backfill). The `tools/lumatone-cal/` Python scripts are independent and still
+assume the swapped mapping for Max's unit.

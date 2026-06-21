@@ -9,6 +9,7 @@ apps/overlay-host/embedded/
 .vscode/
 apps/analyzer/.cache/
 apps/analyzer/out/
+.codegraph/
 .iowa-cache/
 tools/finale-bridge/
 docs/backlog.md

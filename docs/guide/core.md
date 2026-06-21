@@ -276,11 +276,11 @@ When a Lumatone is plugged in over USB, HKL becomes a full controller for it:
   - *Sustain*: both pedal jacks contribute to a continuous damper depth (max of CC 4 and CC 64). This is the default. Half-pedaling on a continuous expression pedal attenuates ringing in real time, not just the decay rate.
   - *Sostenuto + Sustain*: the sustain jack becomes a sostenuto pedal (locks held notes to ring through subsequent damper changes); the expression jack is the only damper source.
 - **Calibrate Pedal**: runs the Lumatone's expression-pedal calibration, learning the pedal's travel range while the panel shows the live min/max as you sweep it. Only needed once after plugging in a continuous expression pedal.
-- **Calibrate Keys**: opens a per-board overlay for calibrating the velocity response of individual keys (also toggled with `Shift+\`). An advanced aid for units with uneven key response; leave it off for normal play.
+- **Calibrate Keys**: opens a per-board overlay for calibrating the velocity response of individual keys (also toggled with `Shift+\`). An advanced aid for units with uneven key response; leave it off for normal play. The overlay also holds the **"Swap boards 3 ↔ 4"** toggle (see note below).
 
 HKL pushes a single fixed (channel, note) MIDI mapping to the Lumatone on first connect, then never re-maps the device. All tuning interpretation happens in software.
 
-> **Note**: the SysEx board map is hard-coded for the developer's specific Lumatone unit, on which physical boards 3 and 4 are swapped. Other units may need this constant adjusted in `apps/hkl/src/lumatone/protocol.ts` before color sync looks correct.
+> **Note — boards 3 & 4 swap**: a few Lumatone units (including the developer's) have physical boards 3 and 4 transposed, which makes color sync and remapping land on the wrong boards. If yours is affected, open **Calibrate Keys** and tick **"Swap boards 3 ↔ 4"**. It's **off by default** (standard units need nothing) and your choice is remembered across sessions.
 
 ---
 

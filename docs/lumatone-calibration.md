@@ -39,11 +39,11 @@ The userspace firmware on the BBB is a single ARM ELF binary, `/home/debian/Terp
 
 ### Indexing quirk: spatial vs PIC
 
-The in-memory struct is laid out by **PIC/SysEx board number** (1..5), not by spatial position. On Max's unit, boards 3 and 4 are *physically* swapped — what looks like spatial board 4 actually wires to PIC 5, and spatial board 5 wires to PIC 4. HKL handles this via `sysexBoardMap = [1, 2, 3, 5, 4]` (mapping HKL's spatial group index 0..4 to SysEx board ID 1..5).
+The in-memory struct is laid out by **PIC/SysEx board number** (1..5), not by spatial position. On Max's unit, boards 3 and 4 are *physically* swapped — what looks like spatial board 4 actually wires to PIC 5, and spatial board 5 wires to PIC 4. In HKL this swap is the `swapBoards34` toggle, which selects the `[1, 2, 3, 5, 4]` board mapping (vs. the standard identity `[1, 2, 3, 4, 5]`) — mapping HKL's spatial group index 0..4 to SysEx board ID 1..5. These Python calibration scripts are independent of the app and assume the swapped mapping for Max's unit.
 
 When editing for a key at HKL coords (q, r):
 - Find spatial `board_group = baseKeys_index // 56`
-- `sysex_board = sysexBoardMap[board_group]`
+- `sysex_board = [1,2,3,5,4][board_group]` (swapped mapping for Max's unit)
 - **Memory slot in TC = `sysex_board - 1`** (NOT `board_group`)
 - File name = `KeyData_{sysex_board}`
 

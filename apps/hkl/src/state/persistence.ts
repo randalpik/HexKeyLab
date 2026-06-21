@@ -100,6 +100,9 @@ export interface PrefsV1 {
   toolbars: ToolbarVisibility;
   showDiagnostics: boolean;
   calibrateKeys: boolean;
+  /** Route SysEx to boards 3 & 4 swapped (for units with those boards
+   *  physically transposed). Off by default — standard units need no swap. */
+  swapBoards34: boolean;
   captureAudio: boolean;
   velocityCal?: VelocityCalPrefs;
   /** Piano-toolbar input. Selected device is a Web MIDI input id (stable per
@@ -175,6 +178,7 @@ export const DEFAULT_PREFS: PrefsV1 = {
   },
   showDiagnostics: false,
   calibrateKeys: false,
+  swapBoards34: false,
   captureAudio: false,
   pianoInputDeviceId: null,
   pianoEnabled: false,
@@ -291,6 +295,10 @@ export function loadPrefs(): PrefsV1 {
       typeof o.calibrateKeys === "boolean"
         ? o.calibrateKeys
         : DEFAULT_PREFS.calibrateKeys,
+    swapBoards34:
+      typeof o.swapBoards34 === "boolean"
+        ? o.swapBoards34
+        : DEFAULT_PREFS.swapBoards34,
     captureAudio:
       typeof o.captureAudio === "boolean"
         ? o.captureAudio

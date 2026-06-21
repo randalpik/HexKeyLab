@@ -17,7 +17,7 @@ import { baseKeys } from '../layout/baseKeys.js';
 import { view } from '../state/view.js';
 import { keyColorHex } from '../render/colors.js';
 import {
-  sysexBoardMap, fixedMidiChannelMap,
+  sysexBoardFor, fixedMidiChannelMap,
   SYSEX_CMD_SET_AFTERTOUCH_FLAG, SYSEX_CMD_SET_LIGHT_ON_KEYSTROKES,
   buildNoteSysEx, buildColorSysEx, buildToggleSysEx,
 } from './protocol.js';
@@ -59,7 +59,7 @@ export function syncLumatoneColors(): void {
     const typeByte = (1 << 4) | 1; /* faderUpIsNull=1, keyType=noteOnNoteOff=1 → 0x11 */
     for (let i = 0; i < 280; i++) {
       const group = Math.floor(i / 56), keyIdx = i % 56;
-      const board = sysexBoardMap[group];
+      const board = sysexBoardFor(group);
       const channel = fixedMidiChannelMap[group];
       newQ.push(buildNoteSysEx(board, keyIdx, keyIdx, channel, typeByte));
     }
@@ -83,7 +83,7 @@ export function syncLumatoneColors(): void {
   for (let j = 0; j < changedIdx.length; j++) {
     const i = changedIdx[j];
     const group = Math.floor(i / 56), keyIdx = i % 56;
-    const board = sysexBoardMap[group];
+    const board = sysexBoardFor(group);
     newQ.push(buildColorSysEx(board, keyIdx, target[i], i));
   }
 

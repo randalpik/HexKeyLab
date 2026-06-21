@@ -16,7 +16,7 @@ Two pedals with completely different electrical signatures producing identical b
 
 ### Boards 3 and 4 are physically swapped on Max's unit
 
-Every LTN file, SysEx push, and MIDI map must respect this via `sysexBoardMap = [1,2,3,5,4]`. This is a per-unit hardware quirk, not a firmware feature. If a build is generated with naive `[1,2,3,4,5]` mapping, key colors and remappings appear on the wrong physical boards.
+This is a per-unit hardware quirk, not a firmware feature, so it's a **persisted toggle** (*Calibrate Keys → "Swap boards 3 ↔ 4"*, pref `swapBoards34`, **off by default**). The HKL SysEx path routes through `sysexBoardFor(group)` (`lumatone/protocol.ts`): identity `[1,2,3,4,5]` when off, `[1,2,3,5,4]` when on — never hardcode either at a call site. With the swap off on a transposed unit (or on with a standard one), key colors and remappings land on the wrong physical boards. (The `tools/lumatone-cal/` Python scripts, which poke device memory directly, encode the swap separately — see lumatone-calibration.md.)
 
 ### CC numbers for the pedal jacks are firmware-hardcoded
 
@@ -83,10 +83,10 @@ Path forward when macro buttons are broken: skip 0x24 entirely. Edit per-key cal
 ### In-memory `kbd_preset_params` is indexed by PIC number, NOT spatial board
 
 Two related quirks compound:
-1. Boards 3 and 4 are physically swapped on Max's unit, so spatial position ≠ PIC number. `sysexBoardMap = [1, 2, 3, 5, 4]` translates spatial→PIC.
+1. Boards 3 and 4 are physically swapped on Max's unit, so spatial position ≠ PIC number. The swapped mapping `[1, 2, 3, 5, 4]` translates spatial→PIC (in HKL, gated by the `swapBoards34` toggle; these Python scripts assume it for Max's unit).
 2. TC's in-memory per-board state and on-disk `KeyData_N` files are indexed by **PIC number** (the BBB doesn't know about the physical swap; it only sees electrical wiring). Memory slot `i` (0..4) corresponds to `KeyData_(i+1)` and to PIC `i+1`.
 
-When poking memory for a key at HKL coords (q, r): compute `sysex_board = sysexBoardMap[board_group]`, then memory slot = `sysex_board - 1`. Using `board_group` as the slot index reads the WRONG board (the one physically swapped with the intended one).
+When poking memory for a key at HKL coords (q, r): compute `sysex_board = [1,2,3,5,4][board_group]`, then memory slot = `sysex_board - 1`. Using `board_group` as the slot index reads the WRONG board (the one physically swapped with the intended one).
 
 ### `writeToPic` doesn't clear bits — clearing happens in AckBitClear, and only for SET commands
 
