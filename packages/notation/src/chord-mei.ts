@@ -76,6 +76,7 @@ export function buildChordMei(notes: StaffChordNote[], mode: TuningMode, hejiEna
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <mei xmlns="${MEI_NS}" meiversion="5.0">
+  <meiHead><fileDesc><titleStmt><title/></titleStmt><pubStmt/></fileDesc></meiHead>
   <music><body><mdiv><score>
     <scoreDef key.sig="0">
       <staffGrp symbol="brace" bar.thru="true">

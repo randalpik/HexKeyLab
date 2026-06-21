@@ -1,16 +1,16 @@
 {
-  "mode": "full",
-  "fixtures": 303,
-  "passed": 303,
+  "mode": "fast",
+  "fixtures": 52,
+  "passed": 52,
   "failed": 0,
-  "elapsedMs": 100976,
+  "elapsedMs": 14145,
   "results": [
     {
       "name": "emptyDoc",
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 5
       }
     },
     {
@@ -18,7 +18,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 5
       }
     },
     {
@@ -26,7 +26,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 5
       }
     },
     {
@@ -34,7 +34,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 5
       }
     },
     {
@@ -42,7 +42,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 5
       }
     },
     {
@@ -50,7 +50,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 5
       }
     },
     {
@@ -58,7 +58,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 5
       }
     },
     {
@@ -66,7 +66,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 5
       }
     },
     {
@@ -74,7 +74,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 8
+        "invariants": 7
       }
     },
     {
@@ -82,7 +82,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 6
       }
     },
     {
@@ -90,7 +90,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 6
       }
     },
     {
@@ -98,7 +98,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 5
       }
     },
     {
@@ -106,7 +106,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 5
       }
     },
     {
@@ -114,7 +114,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 8
+        "invariants": 7
       }
     },
     {
@@ -122,7 +122,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 6
       }
     },
     {
@@ -130,7 +130,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 5
       }
     },
     {
@@ -138,7 +138,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 5
       }
     },
     {
@@ -146,7 +146,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 8
+        "invariants": 7
       }
     },
     {
@@ -154,7 +154,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 6
       }
     },
     {
@@ -162,7 +162,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 6
       }
     },
     {
@@ -170,7 +170,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 6
       }
     },
     {
@@ -178,7 +178,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 6
       }
     },
     {
@@ -186,7 +186,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 6
       }
     },
     {
@@ -194,7 +194,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 6
       }
     },
     {
@@ -202,7 +202,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 6
       }
     },
     {
@@ -210,7 +210,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 5
       }
     },
     {
@@ -218,7 +218,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 5
       }
     },
     {
@@ -226,7 +226,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 8
+        "invariants": 7
       }
     },
     {
@@ -234,7 +234,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 8
+        "invariants": 7
       }
     },
     {
@@ -242,7 +242,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 6
       }
     },
     {
@@ -250,7 +250,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 6
       }
     },
     {
@@ -258,7 +258,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 6
       }
     },
     {
@@ -266,7 +266,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 6
       }
     },
     {
@@ -274,7 +274,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 6
       }
     },
     {
@@ -282,7 +282,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 8
+        "invariants": 7
       }
     },
     {
@@ -290,7 +290,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 8
+        "invariants": 7
       }
     },
     {
@@ -298,7 +298,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 9
+        "invariants": 8
       }
     },
     {
@@ -306,7 +306,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 5
       }
     },
     {
@@ -314,7 +314,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 5
       }
     },
     {
@@ -322,7 +322,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 6
       }
     },
     {
@@ -330,7 +330,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 8
+        "invariants": 7
       }
     },
     {
@@ -338,7 +338,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 8
+        "invariants": 7
       }
     },
     {
@@ -346,7 +346,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 8
+        "invariants": 7
       }
     },
     {
@@ -354,7 +354,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 6
+        "invariants": 5
       }
     },
     {
@@ -362,7 +362,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 6
       }
     },
     {
@@ -370,7 +370,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 8
+        "invariants": 7
       }
     },
     {
@@ -378,7 +378,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 6
       }
     },
     {
@@ -386,7 +386,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 6
       }
     },
     {
@@ -394,7 +394,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 8
+        "invariants": 7
       }
     },
     {
@@ -402,7 +402,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 6
       }
     },
     {
@@ -410,7 +410,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
+        "invariants": 6
       }
     },
     {
@@ -418,2015 +418,7 @@
       "ok": true,
       "failures": [],
       "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "m1WholeNote",
-      "ok": true,
-      "failures": [],
-      "counts": {
         "invariants": 6
-      }
-    },
-    {
-      "name": "multiVoiceMixed",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 6
-      }
-    },
-    {
-      "name": "kbd_durationDigits",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "kbd_dotCycle",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "kbd_ctrlNavBarJump",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "kbd_ctrlRight_landsAtBarline_notPastFirstNote",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "kbd_ctrlLeft_staircase_currentThenPrev",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "kbd_ctrlRight_emptyNextMeasure",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "kbd_voiceCycle",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "kbd_voiceCycle_skipsExprWhenMeasureEmpty",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "kbd_voiceCycle_entersExprWhenMeasureHasDynamic",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "kbd_modeToggle",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "kbd_escClearsPending",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "kbd_pendingHairpin_cancelOnDigit",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "kbd_pendingHairpin_preservedOnArrowRight",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "kbd_pendingHairpin_cancelOnVoiceCycle",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "kbd_statusError_onTieNoNote",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "kbd_statusError_clearsOnNextKey",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "kbd_statusInfo_pendingHairpinCancel",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "kbd_statusAction_insertMeasure",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "kbd_statusAction_clearsOnNextKey",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "kbd_statusVoiceSwitch_noMessage",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "kbd_p1_enterExpr_snapsToNearestMark",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "kbd_p1_ctrlRight_jumpsToNextMark",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "kbd_p1_ctrlRight_stopsAtLastMark",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "kbd_p1_ctrlRight_skipsHairpinEnd",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "kbd_p1_modalEnterOnCancelDoesNotCommit",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "kbd_p1_modalEnterOnSelectSubmits",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "bridgeHeldKeysReceived",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "bridgeComposerToHklCapture",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "composerViewBroadcasts",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "space_starts_playback",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "space_stops_playback",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "space_stops_performance",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "shift_space_noop_during_playback",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "shift_space_noop_during_performance",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "shift_space_starts_performance_idle",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "play_button_switches_from_performance",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "perform_button_switches_from_playback",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "score_ref_broadcast_carries_setup_coords",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "perfTwoVoiceFrontier",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "perfChordWaitsForAll",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "viewModeDropdownSwitch",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "scrollIntoView_idempotent",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "scrollIntoView_typingDeep",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "visualTupletBracket",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "visualMultiVoice",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "visualDarkTheme",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "pageViewMultiSystemCrisp",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "heji_sharp_arrow",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "heji_septimal_hook",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "heji_acc_plus_hook",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "accidental_centered_on_line",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "heji_off_native",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "heji_carry_diff_comma",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "heji_keysig_bravura",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "sel_beat_enter_shiftLeft",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "sel_beat_enter_shiftRight",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "sel_beat_onBoundary_shiftRight",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "sel_beat_onBoundary_shiftLeft",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "sel_beat_grow_right",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "sel_beat_shrink_to_origin",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "sel_beat_ctrlShift_measureBoundary",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "sel_promote_beat_to_measure",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "sel_measure_enter_shiftDown",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "sel_measure_expand_staves",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "sel_escape_exits",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "sel_nonsel_key_exits",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "sel_beat_cut_replaces_with_rests",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "sel_beat_backspace_deletes_and_exits",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "sel_beat_delete_deletes_and_exits",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "sel_measure_backspace_deletes_and_exits",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "visualSelBeatTwoBeats",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 11
-      }
-    },
-    {
-      "name": "visualSelMeasureBothStaves",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 10
-      }
-    },
-    {
-      "name": "chord_internal_sel_bottom_via_up",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "chord_internal_sel_top_via_down",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "chord_internal_sel_increment",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "chord_internal_sel_decrement",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "chord_internal_sc_transpose",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "chord_internal_tie_single_note",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "arrow_clears_chord_internal_sel",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "rewind_clears_chord_internal_sel",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "alt_select_bare_note_left",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "alt_select_bare_note_up_backspace",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "chord_extend_insert",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 11
-      }
-    },
-    {
-      "name": "chord_extend_bare_to_chord",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 12
-      }
-    },
-    {
-      "name": "chord_extend_duplicate_blocked",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "backspace_collapse_chord",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 11
-      }
-    },
-    {
-      "name": "playback_chord_fully_tied",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "playback_chord_partial_tie",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "playback_advances_over_rest",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "playback_bar_hidden_on_hidden_rest",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "playback_end_resyncs_hkl_cursor",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "playback_clears_orphaned_voice",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "song_key_csharp_from_empty_voice",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 10
-      }
-    },
-    {
-      "name": "ref_note_broadcast_on_note_insert",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "export_pdf_smoke",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "undo_basic_insert",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "undo_redo_roundtrip",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "undo_redo_invalidates",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "undo_tuplet",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "undo_dot_cycle",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "undo_delete",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "undo_cursor_match",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "undo_cursor_moved_away",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "undo_stack_stress",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "undo_redo_shiftZ_alias",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "undo_multi_voice",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "undo_cut_restores_source_sel",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "undo_backspace_selection_restores",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "help_button_opens_modal",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "help_modal_esc_closes",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "slur_create",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 10
-      }
-    },
-    {
-      "name": "visualDarkSlur",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "slur_delete_interior",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "slur_sameNote_noop",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "slur_voiceSwitch_preservesPending",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "slur_layerStop_preservesPending",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "slur_cross_staff",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "slur_cross_staff_through_expr",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "slur_esc_cancels",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "slur_prune_onEndpointDelete",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "slur_playback_flags",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase3_repeat_end_toggle",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "phase3_repeat_start_toggle",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "phase3_repeat_replays_span",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase3_volta_1st_2nd",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "phase3_ending_first_via_ctrlE",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase3_8va_shifts_pitch",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 11
-      }
-    },
-    {
-      "name": "phase3_section_header",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "phase3_pagebreak",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase3_cursor_across_pagebreak",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase3_section_overflow_wraps",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase3_pagebreak_overflow_wraps",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase3_ctrlM_keeps_section_bar",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase3_trill_voice",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "phase3_tremolo_select",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 10
-      }
-    },
-    {
-      "name": "phase3_trill_select_step",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 10
-      }
-    },
-    {
-      "name": "phase1_dblbar_toggle_on_m1_of_2",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "phase1_dblbar_toggle_off",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_dblbar_lastMeasure_noop",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_hideRest_toggle_on",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "phase1_hideRest_toggle_off",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_hideRest_onNote_noop",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_parenCaut_bareNote_on",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "phase1_parenCaut_preserves_heji",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "phase1_parenCaut_toggle_off",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_parenCaut_chord_all",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_parenCaut_chord_singleViaAltSel",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_parenCaut_onRest_noop",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_playback_plainArrow_stopsAtHead",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "phase1_playback_ctrlArrow_seeks",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 10
-      }
-    },
-    {
-      "name": "phase1_playback_ctrlLeft_atBoundary_jumpsPrev",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_playback_ctrlLeft_midMeasure_jumpsCurrent",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_playback_ctrlArrow_seeks_repeatable",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 10
-      }
-    },
-    {
-      "name": "phase1_playback_staleFinishAck_ignored",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase1_click_movesCursorToNote",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase1_insertMeasure_atStart",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "phase1_insertMeasure_midMeasure",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "phase1_insertMeasure_atFirstNote_insertsAfter",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_insertMeasure_breaksSlur",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_insertMeasure_breaksTie",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_stemFlip_bareNote_freezes",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_stemFlip_secondPress_unfreezes",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_stemFlip_beamGroup_allFlip",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_stemFlip_respectsBeamBreak",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_slurFlip_setsAttr",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_beamSplit_marksThird",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "phase1_beamSplit_toggleOff",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_beamSplit_overridesBeatBoundary",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "phase1_beamSplit_onRest_noop",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_artic_staccato_on_note",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "phase1_artic_accent_on_note",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_artic_tenuto_on_note",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_artic_fermata_on_note",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_artic_breath_on_note",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "phase1_artic_fermata_on_rest",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_artic_staccato_on_rest_noop",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_artic_staccato_toggle_off",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_artic_multiple_stack",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_artic_accent_playback_velocity",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_artic_staccato_playback_duration",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase2_pedal_down_and_up",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 12
-      }
-    },
-    {
-      "name": "phase2_pedal_toggle_off",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase2_pedal_survives_note_delete",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase2_pedal_layer_enter",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 10
-      }
-    },
-    {
-      "name": "phase2_pedal_layer_delete",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "phase2_exprtext_create",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "phase2_exprtext_italicOff",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase2_exprtext_edit",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase2_exprtext_delete",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase2_exprtext_layer_delete",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "hairpin_startAlignsToNote",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "hairpin_firstNoteOfMeasure_anchorsToMeasure",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase2_tempo_instant_retimes",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase2_tempo_gradual_rit",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "phase2_tempo_layer_delete",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "phase2_tempo_modal_kindShapesForm",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase2_tempo_mm_shown",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase2_tempo_mm_hidden",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase2_tempo_dotted_beat",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase2_expr_place_toggle",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase2_expr_place_voicemode",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_fillIncomplete_basic",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase1_titleBlock_all_fields",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 11
-      }
-    },
-    {
-      "name": "phase1_titleBlock_emptyFooter",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase1_click_chordInternal_switchesVoice",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase1_click_switchesVoice",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase4_mixed_meter_prereq",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase4_sig_modal",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase4_keysig_midpiece",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase4_sig_unchanged_no_override",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase4_setup_sig_button",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase4_tempo_after_meter",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase4_beaming_compound",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase4_export_midpiece",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase4_clef_cursor_start",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase4_clef_setBackToInherited_removes",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase4_clef_inheritsAcrossMeasures",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase4_clef_midmeasure",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase5_add_instrument",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 9
-      }
-    },
-    {
-      "name": "phase5_add_remove_roundtrip",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase5_reorder_instruments",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase5_instruments_staged_save",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase5_same_note_conflict",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase5_two_grand_staves",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 6
-      }
-    },
-    {
-      "name": "phase5_ignore_color",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase5_single_part_view",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase5_musicxml_split",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase5_pizz_arco",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase5_string_harmonic",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase5_string_harmonic_artificial",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase5_pdf_split_view",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase5_string_harmonic_chord",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase5_multi_instr_selection",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase4_cut_time",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase4_additive_beaming",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase4_sel_sig_span",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase4_sel_clef_span",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase4_pickup_add",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase4_pickup_remove",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "phase4_pickup_tempo",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "phase4_pickup_midpiece_tempo_align",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "clickClearsSelAndBroadcasts",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "click_emptyStaff_snapsAfterLastNote",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "click_emptyStaff_snapsBeforeFirstNote",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "click_emptyMeasure_snapsToMeasureStart",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "click_betweenNotes_snapsToLeftNote",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "click_whitespace_resolvesToNearest",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      }
-    },
-    {
-      "name": "click_dynam_selectsExpr_thenDeletes",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      }
-    },
-    {
-      "name": "click_tempo_selectsTempoLayer",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
       }
     }
   ]

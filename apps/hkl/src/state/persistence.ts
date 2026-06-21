@@ -163,7 +163,10 @@ export const DEFAULT_PREFS: PrefsV1 = {
   /* audio defaults to ON to match the long-standing "load piano + play on
      first reload" behavior of pre-persistence HKL */
   audioEnabled: true,
-  waveform: "splendid_piano",
+  /* Must be a real #waveform <option> value, else applyPrefsToDom's
+     `sel.value = p.waveform` silently falls back to '' and the first note plays
+     as an empty-type oscillator. "maestro_piano" is the menu's "Piano" option. */
+  waveform: "maestro_piano",
   pedalMode: "sustain",
   autoSync: false,
   /* Layout + Playback cover the core single-keyboard workflow; Analysis,

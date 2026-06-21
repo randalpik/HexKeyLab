@@ -67,6 +67,13 @@ function fetchShippedBundle(instr: any): Promise<Record<string, Uint8Array>> {
 }
 
 const RELEASE_SCALE = 0.5;
+/* Short attack ramp applied to segGain on every note-on. Even with a gain-aware
+   trim gate the first played sample is a small but nonzero step (the trim lands
+   where the NORMALIZED signal crosses the gate, ≈ −50 dBFS), and simultaneous
+   soft layers (a Composer chord) stack those steps into an audible click. A few
+   ms of fade-in removes the discontinuity; ≤5 ms is below the threshold where it
+   audibly softens a struck/percussive attack. */
+const ATTACK_FADE_S = 0.004;
 
 /* Equal-power crossfade base curves. cos/sin pair keeps Σ(g²)≈1 across the
    fade so summed voices stay at constant perceived loudness (linear ramps

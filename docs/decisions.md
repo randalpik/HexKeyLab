@@ -3580,3 +3580,70 @@ independent. Flipping the toggle resets `lumatone.fixedLayoutSent`/`deviceColors
 `lumatone/lumadiag.ts` (toggle UI + resync + title refresh), `state/persistence.ts` (`swapBoards34`),
 `ui/init.ts` (startup backfill). The `tools/lumatone-cal/` Python scripts are independent and still
 assume the swapped mapping for Max's unit.
+
+---
+
+## HKL-side console scanners: `test/hkl-inspect/` (Chromium CDP + Firefox BiDi), inspection-only
+
+**Picked**: Two headless console scanners for the HKL core app, reusing Composer's app-agnostic
+CDP layer. `console-scan.mjs` drives Chromium via CDP (imports
+`test/composer-test/lib/{cdp,chromium,console-capture}.mjs` unchanged); `console-scan-firefox.mjs`
+drives Firefox via its built-in WebDriver BiDi remote agent (no geckodriver). Both enable the staff
+inset + HEJI and hold an A/S/D chord (Verovio renders lazily, only on held notes), then print a
+deduped console + (Chromium) network-failure report. `report.mjs` holds the shared dedup/print.
+Scripts: `pnpm scan:hkl`, `pnpm scan:hkl:firefox`.
+
+**Rejected**: (a) a pass/fail CONSOLE gate like Composer's — these are *inspection* tools (always
+exit 0); their job is to let an agent read warnings, not block CI. (b) geckodriver for Firefox —
+the remote agent's BiDi endpoint (announced on stderr as `WebDriver BiDi listening on ws://…`,
+connect to `<that>/session`, `session.new`) is enough. (c) an HKL-side debug global like Composer's
+`window.__hkl_composer` — unnecessary, since QWERTY play is ungated `window` keydown and CDP/BiDi
+can dispatch synthetic key events to trigger a render.
+
+**Why**: HKL had no console-inspection harness; Composer's CDP layer was directly reusable. Firefox
+is Max's primary browser, so a BiDi variant matters for Firefox-specific console output.
+
+**Hard limitation (see lessons.md "Headless console capture … can't see DevTools-console-internal
+warnings")**: neither protocol exposes browser-internal subsystem warnings (font OTS, WASM `'try'`,
+source-map). Those need pasted text from an interactive session. The scanners catch console-API
+output + JS exceptions only.
+
+**Where**: `test/hkl-inspect/` (+ `README.md`), `package.json` scripts.
+
+---
+
+## Verovio CDN WASM warnings (`'try'` deprecation, empty source-map) accepted as upstream
+
+**Picked**: Leave the Firefox console warnings that originate in Verovio's CDN-loaded WASM
+(`verovio.org/javascript/latest/verovio-toolkit-wasm.js`) — the deprecated WASM `'try'` exception
+instruction, and the DevTools source-map worker error from an empty `sourceMappingURL` custom
+section. No code change.
+
+**Rejected**: self-hosting a `wasm-strip`-ed / recompiled Verovio binary to remove them — commits a
+multi-MB binary, version-couples it to their JS wrapper, and abandons the deliberate CDN-load of
+Verovio (see CLAUDE.md). Not worth it for two benign, DevTools-only cosmetic notices.
+
+**Why**: both are baked into upstream's Emscripten build, not our source. Both are warnings, not
+errors — Verovio renders correctly. Loading `latest` means the `'try'` notice self-heals whenever
+the Verovio project rebuilds with `try_table`; pinning a version would freeze us on it.
+
+**Where**: `packages/notation/src/verovio.ts` (`VEROVIO_CDN`).
+
+---
+
+## Default instrument pref: `maestro_piano` (a real menu option), not `splendid_piano`
+
+**Picked**: `DEFAULT_PREFS.waveform = "maestro_piano"` (the `#waveform` menu's "Piano" option).
+
+**Rejected**: keeping `"splendid_piano"` — a valid `INSTRUMENTS` key but **not** a `<select>` option,
+so `applyPrefsToDom`'s `sel.value = p.waveform` silently fell back to `''` on every fresh profile,
+leaving `activeWaveform = ''` until the user manually picked an instrument (and emitting an empty-type
+oscillator on the first note). The alternative fix — adding a `splendid_piano` option to the menu —
+was not chosen since `maestro_piano` is already the menu's "Piano".
+
+**Why**: a pref mirrored into a `<select>` must be a value the select can hold (see lessons.md
+"`DEFAULT_PREFS.waveform` must be a real `#waveform` `<option>` value"). Backed by a second guard:
+`isOscType(wf)` in `audio/engine.ts` now gates the oscillator note path so an invalid waveform never
+reaches `osc.type`.
+
+**Where**: `state/persistence.ts` (`DEFAULT_PREFS.waveform`), `audio/engine.ts` (`isOscType` guard).

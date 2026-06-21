@@ -284,6 +284,12 @@ Tested:
 
 `Access-Control-Allow-Origin` is not returned for cross-origin requests. Disqualifies it as a direct browser-fetch source. To use Iowa samples in HKL, they must be mirrored to a CORS-friendly location (GitHub raw, our own static host) or transcoded into the repo as binary assets.
 
+### `DEFAULT_PREFS.waveform` must be a real `#waveform` `<option>` value
+
+`applyPrefsToDom` (`ui/init.ts`) does `$<HTMLSelectElement>('waveform').value = p.waveform`. If that value isn't one of the select's `<option>`s, the assignment **silently fails** — the select's `.value` becomes `''` — and the bootstrap `changeWaveform()` then reads `''`, sets `audio.activeWaveform = ''`, and persists it. The first note plays through the oscillator branch with `osc.type = ''`, which Web Audio rejects with a console warning ("`''` is not a valid enum value of type OscillatorType") and produces no sound. This bit us: the default was `"splendid_piano"` (a valid `INSTRUMENTS` key, but **not** a menu option — the menu's "Piano" is `maestro_piano`), so every fresh profile booted with an empty waveform until the user manually picked an instrument.
+
+Two guards now exist: (1) the default is a real option (`maestro_piano`); (2) the osc note path is gated by `isOscType(wf)` (`audio/engine.ts`) so a stale/invalid waveform never reaches `osc.type` — it just produces silence until a real instrument resolves. Rule: any pref mirrored into a `<select>` via `applyPrefsToDom` must be a value the select can actually hold, or it falls back to `''` silently. (Same class of bug the imported-`.hki` optgroup comment at `ui/init.ts:112` already warns about.)
+
 ---
 
 ## Rendering
@@ -303,6 +309,18 @@ The offscreen canvases are built at a fixed reference (`gridRef`) with padding c
 The ref-driven shift (§ refSpine) can move the view to ANY (q, r) — well beyond the static pad's coverage. For those shifts, `buildHexLayerForTween(startQ, startR, endQ, endR)` is called BEFORE the tween fires; `sizeGridCanvases` then sets `gridRef` at the midpoint of the tween range and adds half the tween distance to the pad. The hex layer covers both endpoints, no cut-off borders mid-tween. Applies to all outline modes (piano has always done this; Lumatone / QWERTY now do too because refSpine can move them anywhere).
 
 If you find yourself debugging "cut-off lattice borders during a tween", check that `buildHexLayerForTween` was called before `tweenTo` for that outline mode. The piano path has had it forever; the Lumatone/QWERTY path was added when ref-driven shifts replaced the 3-layout buttons.
+
+### Fixing a malformed font cmap = round-trip through fontTools (don't hand-edit, don't re-fetch blindly)
+
+`public/BravuraText.woff2` (loaded via the `@font-face` in `apps/hkl/index.html`) shipped with **two `0xFFFF` terminators** in each of its two format-4 `cmap` subtables, which Firefox's OTS sanitizer flags ("`downloadable font: cmap: multiple 0xffff terminators found`"). The font still loads — it's a warning, not a rejection — but the fix is to ship a clean binary. fontTools normalizes the cmap on *read*, so a decompile-then-save round-trip recompiles a canonical single-terminator cmap while leaving every other table byte-identical:
+
+```
+woff2_decompress BravuraText.woff2        # -> .ttf (brotli not needed for this CLI)
+# /usr/bin/python + fontTools: TTFont(ttf); touch f['cmap'].tables; f.save(out.ttf)
+woff2_compress out.ttf                     # -> clean .woff2
+```
+
+Verify by parsing the raw cmap (endCode arrays) for the `0xFFFF` count before/after, and assert the unicode coverage set is identical (19,179 codepoints here) so no glyphs were dropped. **You cannot verify this via the HKL console scanners** — OTS font warnings are DevTools-console-internal (see Process/workflow), so confirmation requires a human reload in Firefox. Only `public/BravuraText.woff2` is tracked; the `overlay-host/embedded` + `dist-overlay` copies are gitignored artifacts that regenerate from it.
 
 ---
 
@@ -357,6 +375,15 @@ For anything touching the audio engine, sample loop logic, SysEx state machines,
 ### Refactor, don't rewrite
 
 The audio engine especially has subtle, well-tested behavior (segment switching, ramp races, sustain semantics) that's expensive to reproduce. Move things between modules, add types, but don't redesign internals. Mixing mechanical refactor with internal redesign is the standard rewrite-doom failure mode.
+
+### Headless console capture (CDP or BiDi) can't see DevTools-console-internal warnings
+
+The HKL console scanners (`test/hkl-inspect/`) drive headless **Chromium via CDP** and headless **Firefox via WebDriver BiDi**. Both protocols surface only **console-API calls** (`console.warn/error/...`) **and JS exceptions** (CDP additionally surfaces browser-level `Log.entryAdded` entries — e.g. Verovio's own logging; BiDi does not even do that). Neither exposes warnings emitted by the browser's *internal subsystems* straight to the DevTools console UI:
+
+- **source-map errors** — the source map is only fetched when DevTools is open, so headless (no DevTools) never triggers the warning at all. Verified: a `source-map-loader` worker error like "URL constructor: is not a valid URL" for `wasm:…verovio-toolkit-wasm.js` only appears with the console open.
+- **downloadable-font (OTS) warnings** and the **WASM `'try'` deprecation note** — emitted by Firefox's font / JS-engine subsystems via the internal console service, bypassing the console API.
+
+Empirically, those three categories produce **nothing** in either scanner even after a full Verovio render — while the scanners *did* catch the MEI "No header" warning and the empty-`OscillatorType` error (both real console-API output). Practical consequence: a console-clean scanner run does **not** mean a clean Firefox DevTools console. To debug an internal-subsystem warning, get the exact text pasted from a human's interactive Firefox session; you can't capture it programmatically. (And note: warnings baked into **Verovio's CDN WASM** — the `try` deprecation, the empty `sourceMappingURL` — aren't fixable from HKL source anyway without self-hosting + patching the binary, which the CDN-load architecture deliberately avoids.)
 
 ---
 

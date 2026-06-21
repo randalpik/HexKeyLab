@@ -52,6 +52,14 @@ export function triggerRearticulateFlash(key: KeyId): void {
 }
 
 export function instrIsSample(wf?: string): boolean { return !!SampleEngine.INSTRUMENTS[wf ?? audio.activeWaveform]; }
+/* The four built-in oscillator waveforms. Guards the osc note path so a stale /
+   invalid activeWaveform (e.g. '' before an instrument has resolved) never
+   reaches `osc.type` — Web Audio logs "not a valid enum value of type
+   OscillatorType" for anything else. Mirrors setActiveWaveform's isOsc check. */
+const OSC_TYPES: readonly OscillatorType[] = ['sine', 'square', 'sawtooth', 'triangle'];
+function isOscType(wf?: string): wf is OscillatorType {
+  return OSC_TYPES.includes((wf ?? '') as OscillatorType);
+}
 export function instrDecays(): boolean {
   const i = SampleEngine.INSTRUMENTS[audio.activeWaveform];
   return i ? !!i.decays : false;
@@ -156,8 +164,8 @@ export function noteOn(key: KeyId, velocity?: number, startAt?: number, instrume
        ramps to the aftertouch-dictated gain. */
     SampleEngine.noteOn(key, freq, adjVel, startAt);
     audio.activeOscs[key] = { type: 'sample', freq };
-  } else if (!instrIsSample(wf)) {
-    const type = wf as OscillatorType;
+  } else if (isOscType(wf)) {
+    const type = wf;
     const osc = audio.audioCtx.createOscillator();
     const gain = audio.audioCtx.createGain();
     osc.type = type; osc.frequency.value = freq;
