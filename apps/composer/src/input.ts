@@ -141,6 +141,12 @@ export interface InputHooks {
   getHeldKeys: () => ReadonlyArray<ResolvedNote>;
   onChange: () => void;
   onStateChange: () => void;
+  /** Pure cursor/voice navigation (no content change): refresh overlays and
+   *  scroll the cursor into view WITHOUT re-engraving the score. The score's
+   *  glyphs are unchanged by a cursor move, so a full reRender is wasted work
+   *  (catastrophically so on large scores). Distinct from onStateChange, which
+   *  also fires on non-navigation state changes and does not scroll. */
+  onCursorMove: () => void;
   setStatus?: (msg: string, kind?: 'info' | 'error' | 'state' | 'action') => void;
   /** Reset the statusline if its current message is transient (error or
    *  post-action confirmation). Called at the top of every keystroke so
@@ -2817,28 +2823,28 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
          to reach the other staff) PRESERVES a pending slur, so the user can
          close a cross-staff slur after traversing layers. The pending slur is
          only dropped on Escape, select-mode entry, or undo. */
-      if (e.key === 'ArrowUp')   { e.preventDefault(); state.chordInternalSel = null; cycleVoice(model, 'up', hooks);   hooks.onStateChange(); hooks.onChange(); return; }
-      if (e.key === 'ArrowDown') { e.preventDefault(); state.chordInternalSel = null; cycleVoice(model, 'down', hooks); hooks.onStateChange(); hooks.onChange(); return; }
+      if (e.key === 'ArrowUp')   { e.preventDefault(); state.chordInternalSel = null; cycleVoice(model, 'up', hooks);   hooks.onCursorMove(); return; }
+      if (e.key === 'ArrowDown') { e.preventDefault(); state.chordInternalSel = null; cycleVoice(model, 'down', hooks); hooks.onCursorMove(); return; }
       if (state.cursorMode === 'expr') {
-        if (e.key === 'ArrowLeft')  { e.preventDefault(); state.exprCursor = step(state.exprCursor, -1); hooks.onStateChange(); hooks.onChange(); return; }
-        if (e.key === 'ArrowRight') { e.preventDefault(); state.exprCursor = step(state.exprCursor, +1); hooks.onStateChange(); hooks.onChange(); return; }
-        if (e.key === 'Home')       { e.preventDefault(); state.exprCursor = moveToStart(state.exprCursor); hooks.onStateChange(); hooks.onChange(); return; }
-        if (e.key === 'End')        { e.preventDefault(); state.exprCursor = moveToEnd(state.exprCursor); hooks.onStateChange(); hooks.onChange(); return; }
+        if (e.key === 'ArrowLeft')  { e.preventDefault(); state.exprCursor = step(state.exprCursor, -1); hooks.onCursorMove(); return; }
+        if (e.key === 'ArrowRight') { e.preventDefault(); state.exprCursor = step(state.exprCursor, +1); hooks.onCursorMove(); return; }
+        if (e.key === 'Home')       { e.preventDefault(); state.exprCursor = moveToStart(state.exprCursor); hooks.onCursorMove(); return; }
+        if (e.key === 'End')        { e.preventDefault(); state.exprCursor = moveToEnd(state.exprCursor); hooks.onCursorMove(); return; }
       } else if (state.cursorMode === 'pedal') {
-        if (e.key === 'ArrowLeft')  { e.preventDefault(); state.pedalCursor = step(state.pedalCursor, -1); hooks.onStateChange(); hooks.onChange(); return; }
-        if (e.key === 'ArrowRight') { e.preventDefault(); state.pedalCursor = step(state.pedalCursor, +1); hooks.onStateChange(); hooks.onChange(); return; }
-        if (e.key === 'Home')       { e.preventDefault(); state.pedalCursor = moveToStart(state.pedalCursor); hooks.onStateChange(); hooks.onChange(); return; }
-        if (e.key === 'End')        { e.preventDefault(); state.pedalCursor = moveToEnd(state.pedalCursor); hooks.onStateChange(); hooks.onChange(); return; }
+        if (e.key === 'ArrowLeft')  { e.preventDefault(); state.pedalCursor = step(state.pedalCursor, -1); hooks.onCursorMove(); return; }
+        if (e.key === 'ArrowRight') { e.preventDefault(); state.pedalCursor = step(state.pedalCursor, +1); hooks.onCursorMove(); return; }
+        if (e.key === 'Home')       { e.preventDefault(); state.pedalCursor = moveToStart(state.pedalCursor); hooks.onCursorMove(); return; }
+        if (e.key === 'End')        { e.preventDefault(); state.pedalCursor = moveToEnd(state.pedalCursor); hooks.onCursorMove(); return; }
       } else if (state.cursorMode === 'tempo') {
-        if (e.key === 'ArrowLeft')  { e.preventDefault(); state.tempoCursor = step(state.tempoCursor, -1); hooks.onStateChange(); hooks.onChange(); return; }
-        if (e.key === 'ArrowRight') { e.preventDefault(); state.tempoCursor = step(state.tempoCursor, +1); hooks.onStateChange(); hooks.onChange(); return; }
-        if (e.key === 'Home')       { e.preventDefault(); state.tempoCursor = moveToStart(state.tempoCursor); hooks.onStateChange(); hooks.onChange(); return; }
-        if (e.key === 'End')        { e.preventDefault(); state.tempoCursor = moveToEnd(state.tempoCursor); hooks.onStateChange(); hooks.onChange(); return; }
+        if (e.key === 'ArrowLeft')  { e.preventDefault(); state.tempoCursor = step(state.tempoCursor, -1); hooks.onCursorMove(); return; }
+        if (e.key === 'ArrowRight') { e.preventDefault(); state.tempoCursor = step(state.tempoCursor, +1); hooks.onCursorMove(); return; }
+        if (e.key === 'Home')       { e.preventDefault(); state.tempoCursor = moveToStart(state.tempoCursor); hooks.onCursorMove(); return; }
+        if (e.key === 'End')        { e.preventDefault(); state.tempoCursor = moveToEnd(state.tempoCursor); hooks.onCursorMove(); return; }
       } else {
-        if (e.key === 'ArrowLeft')  { e.preventDefault(); state.chordInternalSel = null; model.moveCursor('left');  hooks.onStateChange(); hooks.onChange(); return; }
-        if (e.key === 'ArrowRight') { e.preventDefault(); state.chordInternalSel = null; model.moveCursor('right'); hooks.onStateChange(); hooks.onChange(); return; }
-        if (e.key === 'Home')       { e.preventDefault(); state.chordInternalSel = null; model.setCursor(0); hooks.onStateChange(); hooks.onChange(); return; }
-        if (e.key === 'End')        { e.preventDefault(); state.chordInternalSel = null; model.cursorToEnd(); hooks.onStateChange(); hooks.onChange(); return; }
+        if (e.key === 'ArrowLeft')  { e.preventDefault(); state.chordInternalSel = null; model.moveCursor('left');  hooks.onCursorMove(); return; }
+        if (e.key === 'ArrowRight') { e.preventDefault(); state.chordInternalSel = null; model.moveCursor('right'); hooks.onCursorMove(); return; }
+        if (e.key === 'Home')       { e.preventDefault(); state.chordInternalSel = null; model.setCursor(0); hooks.onCursorMove(); return; }
+        if (e.key === 'End')        { e.preventDefault(); state.chordInternalSel = null; model.cursorToEnd(); hooks.onCursorMove(); return; }
       }
     }
 

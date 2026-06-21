@@ -912,10 +912,9 @@ async function bootRenderer(): Promise<void> {
          linger. (The layer-element path passes false — onSelectLayerElement
          has already set the right expression mode.) */
       if (placedVoiceCursor) resetToVoiceMode();
-      /* Same update path as the keyboard handler — including the composer-cursor
-         broadcast, so the HKL frame's cursor follows click-to-select too. */
-      composerOnStateChange();
-      composerOnContentChange();
+      /* Click-to-position changes no content — same path as arrow-key nav:
+         overlays + bridge cursor + scroll into view, no reRender. */
+      composerOnCursorMove();
     },
     setStatus: (msg, kind) => setStatus(msg, kind),
     isPlaybackActive: () => isPlaying || performanceActive,
@@ -995,6 +994,11 @@ function composerOnContentChange(): void {
 /** Cursor/voice/mode changed (no necessarily content): refresh indicators +
  *  overlays and push cursor/instrument bridge state. Shared by keyboard + click
  *  so click-to-select updates the HKL cursor exactly like the arrow keys. */
+function composerOnCursorMove(): void {
+  composerOnStateChange();
+  if (!isPlaying) maybeScrollMeasureIntoView(visualCursorMeasure());
+}
+
 function composerOnStateChange(): void {
   refreshIndicators();
   refreshViewSelector();
@@ -1018,6 +1022,7 @@ initInput(model, {
   getHeldKeys: () => lastHeldKeys,
   onChange: composerOnContentChange,
   onStateChange: composerOnStateChange,
+  onCursorMove: composerOnCursorMove,
   setStatus: (msg, kind) => setStatus(msg, kind),
   clearStatusIfTransient: () => clearStatusIfTransient(),
   isPlaybackActive: () => isPlaying || performanceActive,
