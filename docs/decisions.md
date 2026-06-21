@@ -3647,3 +3647,19 @@ was not chosen since `maestro_piano` is already the menu's "Piano".
 reaches `osc.type`.
 
 **Where**: `state/persistence.ts` (`DEFAULT_PREFS.waveform`), `audio/engine.ts` (`isOscType` guard).
+
+## MusicXML import: spelling-preserving picker (not the piano-layout picker)
+
+**Decision**: MusicXML import (`apps/composer/src/importMusicXml.ts`) resolves each pitch to (q, r) via a new `coordForSpelling` (`@hkl/notation/coord-spelling.ts`) that **preserves the source's exact enharmonic spelling**, NOT via the 88-cell piano picker `compute88PianoCoords`.
+
+**Why**: the piano picker holds exactly one cell per MIDI key, so it canonicalizes enharmonics (`Gb`→`F#`) — unacceptable when round-tripping a notated score. A named pitch+octave pins a 12-TET MIDI, so `4q+7r` is fixed and the same-named comma-variants lie on the `(7,−4)` (syntonic-comma) line; the lattice therefore holds a cell for *any* spelling at *any* accidental count. Among the same-named variants we pick **min Tenney height** relative to the **major-key root of the active key signature** (per Max — `keySigToTonic(sig,'major')` → `findTonicCoord`, tracked through key changes), so comma-variants sit simplest-relative-to-the-tonic. Import forces Equal/HEJI-off/ignore-color-on, so (q, r) affects only the lattice coordinate (for later JI retuning), never the rendered pitch.
+
+**Where**: `coordForSpelling`; `reduceExps`/`tenneyHeightFromExps` relocated from `apps/hkl/src/tuning/ratios.ts` to `@hkl/shared/freq.ts` (pure exp-vector math, re-exported from ratios.ts) so `@hkl/notation` can rank without a cross-package reach.
+
+## Tie engine: `normalizeTies` realizes ties across tuplet boundaries
+
+**Decision**: `normalizeTies` walks a per-voice `tieEventSequence` that descends into `<tuplet>`s (emitting their inner note/chord/rest events as real adjacency slots) instead of `flatChildren` (which treats a `<tuplet>` as one atomic slot and emits `<measure>` wrappers).
+
+**Why**: ties that cross a tuplet boundary (a note tied into the first note of a triplet, or out of the last — 18 such in the reference Sonata) were never realized: `extractNoteElements(<tuplet>)` returns `[]`, so the tuplet's edge notes were invisible to tie pairing and became laissez-vibrer stubs. Descending tuplets makes pairing pure musical-time adjacency, which also makes cross-barline ties cleaner. A measure where the voice has no content pushes a barrier slot, preserving "an empty measure breaks the tie chain" (regression-guarded by `phase1_insertMeasure_breaksTie`).
+
+**Where**: `apps/composer/src/model/ties.ts` (`tieEventSequence`). Cursor/editing flat model (`flatChildren`) is untouched — only tie realization changed.

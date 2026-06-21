@@ -23,6 +23,39 @@ import { MEI_NS, type ComposerModel, type Voice } from './index.js';
 import { pruneDanglingSlurs } from '../slurs.js';
 import { pruneDanglingArticControls } from '../articulations.js';
 
+/** Per-voice, time-ordered sequence of atomic tie-able events (note / chord /
+ *  rest), descending INTO tuplets so a tuplet's first/last notes are real
+ *  adjacency endpoints. Unlike `flatChildren`, this emits no <measure>
+ *  wrappers and never treats a <tuplet> as atomic — tie pairing is then pure
+ *  musical-time adjacency, which is what ties (incl. cross-barline and
+ *  tuplet-edge ties) require. Rests appear as empty slots, correctly breaking
+ *  tie chains. */
+function tieEventSequence(model: ComposerModel, voice: Voice): Element[] {
+  const isEvent = (e: Element): boolean =>
+    e.localName === 'note' || e.localName === 'chord' || e.localName === 'rest';
+  const out: Element[] = [];
+  for (const measure of model.allMeasures()) {
+    const layer = model.layerInMeasure(measure, voice);
+    if (!layer) continue;
+    let pushed = 0;
+    for (const c of Array.from(layer.children)) {
+      if (c.localName === 'tuplet') {
+        for (const tc of Array.from(c.children)) if (isEvent(tc)) { out.push(tc); pushed++; }
+      } else if (isEvent(c)) {
+        out.push(c);
+        pushed++;
+      }
+    }
+    /* A measure where this voice has NO content is a gap that must break a tie
+       chain (e.g. inserting an empty measure between two tied notes). Push the
+       layer as a barrier slot (extractNoteElements → [] resets prevOffers).
+       Measures WITH content never add a barrier, so legitimate cross-barline
+       ties — where the partner is the next measure's first note — survive. */
+    if (pushed === 0) out.push(layer);
+  }
+  return out;
+}
+
 export function normalizeTies(model: ComposerModel): void {
   const doc = model.getDoc();
   /* Strip every <lv> — we'll re-create them for surviving stubs. The
@@ -49,7 +82,7 @@ export function normalizeTies(model: ComposerModel): void {
     n.getAttribute('pname') + '/' + n.getAttribute('oct') + '/' + getNoteAlter(n);
 
   for (let vi = 1; vi <= model.totalVoices(); vi++) {
-    const flat = model.flatChildren(vi);
+    const flat = tieEventSequence(model, vi);
     /* For each cursor between two flat slots, prevOffers[pitchKey] is the
      * note in the previous slot that wantsForward at that pitch — i.e.,
      * the "incoming-tie source" for any matching note in the current

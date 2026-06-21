@@ -27,6 +27,28 @@ function findOnsetSec(mono: Float32Array, sr: number): number {
   return 0;
 }
 
+const TAIL_FADE_MS = 30;
+/** Raised-cosine fade-out over the last TAIL_FADE_MS of each channel, returned
+ *  as NEW arrays (originals untouched, so the gain/trim analysis that runs on the
+ *  full signal upstream is unaffected). The recorder stops capture when the decay
+ *  reaches the noise floor; for low-SNR (very soft) layers that stop point is only
+ *  a few dB below peak, and per-layer normalization then boosts the abrupt
+ *  buffer-end to an audible level — a click/cutoff on playback. Fading the tail to
+ *  true zero makes every sample end smoothly regardless of where the stop fired. */
+function fadeOutTail(channels: Float32Array[], sr: number): Float32Array[] {
+  const n = channels[0]?.length ?? 0;
+  const fadeN = Math.min(Math.round((TAIL_FADE_MS * sr) / 1000), Math.floor(n / 4));
+  return channels.map(ch => {
+    const out = ch.slice();
+    for (let i = 0; i < fadeN; i++) {
+      // i=0 → g≈1 (first faded sample), i=fadeN-1 → g=0 (last sample is true zero)
+      const g = 0.5 * (1 + Math.cos((Math.PI * (i + 1)) / fadeN));
+      out[n - fadeN + i] *= g;
+    }
+    return out;
+  });
+}
+
 /** Lossless 32-bit float WAV (IEEE float, format 3) — bit-exact from the Float32
  *  capture, decodable by AudioContext.decodeAudioData, deflated inside the .hki. */
 export function encodeWavFloat32(channels: Float32Array[], sampleRate: number): Uint8Array {
@@ -120,7 +142,7 @@ export function buildBundle(outcomes: JobOutcome[], config: CaptureConfig, devic
       if (layers.length > 1) entry.vel = layer.job.velocity;
       if (a.trimStart > 0) entry.trimStart = a.trimStart;
       samples.push(entry);
-      audio[file] = encodeWavFloat32(clean.channels, clean.sampleRate);
+      audio[file] = encodeWavFloat32(fadeOutTail(clean.channels, clean.sampleRate), clean.sampleRate);
       layerCount++;
     }
   }

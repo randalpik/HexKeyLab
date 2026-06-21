@@ -21,6 +21,7 @@ import { HistoryManager } from './history.js';
 import type { CursorUpdateOpts } from './cursor/cursor.js';
 import { selectionOverlay } from './selection/selectionOverlay.js';
 import { saveHkc, loadHkcFromFile, downloadMusicXml, downloadPdf, exportMusicXml } from './save.js';
+import { importMusicXml } from './importMusicXml.js';
 import { buildPlayback, buildPedalEvents, playbackStartMs, highlightElement, clearHighlights, readTempo, tickMsFromTempo, PIZZ_VARIANTS } from './render/playback.js';
 import { PerformanceMatcher } from './render/performance.js';
 import { addDir } from './expressions.js';
@@ -1401,6 +1402,30 @@ function hideExportMenu(): void {
   (document.getElementById('exportMenu') as HTMLElement & { hidePopover?: () => void } | null)
     ?.hidePopover?.();
 }
+
+$('btnImportXml')?.addEventListener('click', () => {
+  $<HTMLInputElement>('fileInputMusicXml')?.click();
+});
+
+$<HTMLInputElement>('fileInputMusicXml')?.addEventListener('change', async (e) => {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    applyLoadedDocument(importMusicXml(text), 'Imported ' + file.name);
+  } catch (err) {
+    setStatus('Import failed: ' + (err as Error).message, 'error');
+  } finally {
+    input.value = '';
+  }
+});
+
+/* Test hook: drive import without a file picker (headless verification). */
+(window as unknown as { __composerImportMusicXml?: (xml: string) => void })
+  .__composerImportMusicXml = (xml: string) => {
+    applyLoadedDocument(importMusicXml(xml), 'Imported MusicXML (test)');
+  };
 
 $('btnExportXml')?.addEventListener('click', () => {
   try {

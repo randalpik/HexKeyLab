@@ -4013,6 +4013,34 @@ const PHASE1 = {
     `,
   },
 
+  /* MusicXML import: a small score-partwise snippet with a tie that crosses a
+     tuplet boundary (quarter C5 tied into the first note of a triplet). Forces
+     Equal / HEJI-off / ignore-color-on. Exercises importMusicXml + the
+     tuplet-edge tie realization in normalizeTies. */
+  phase5_musicxml_import: {
+    setup: `
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>Test</part-name></score-part></part-list>'
+        + '<part id="P1"><measure number="1">'
+        + '<attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>2</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        + '<note><pitch><step>C</step><octave>5</octave></pitch><duration>24</duration><voice>1</voice><type>quarter</type>'
+        + '<tie type="start"/><notations><tied type="start"/></notations></note>'
+        + '<note><pitch><step>C</step><octave>5</octave></pitch><duration>8</duration><voice>1</voice><type>eighth</type>'
+        + '<tie type="stop"/><time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>'
+        + '<notations><tied type="stop"/><tuplet number="1" type="start"/></notations></note>'
+        + '<note><pitch><step>D</step><octave>5</octave></pitch><duration>8</duration><voice>1</voice><type>eighth</type>'
+        + '<time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification></note>'
+        + '<note><pitch><step>E</step><octave>5</octave></pitch><duration>8</duration><voice>1</voice><type>eighth</type>'
+        + '<time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>'
+        + '<notations><tuplet number="1" type="stop"/></notations></note>'
+        + '</measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+  },
+
   /* Pizz/arco (§14.3): piano + violin; a "pizz." <dir> on the violin staff
      switches its notes to a pizzicato timbre until an "arco" cue reverts them.
      The violin has NO own pizz variant, so it falls back to the library's
@@ -5025,6 +5053,47 @@ export const FIXTURE_ASSERTIONS = {
         /* Violin note staff is part-local 1 (not the global 3). */
         const vStaff = parts[1].querySelector('note staff')?.textContent;
         if (vStaff !== '1') return { ok: false, detail: 'violin note staff=' + vStaff };
+        return { ok: true };
+      })()` },
+  ],
+
+  phase5_musicxml_import: [
+    { name: 'forces Equal / HEJI off / ignore-color on',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const all = [...doc.getElementsByTagName('*')];
+        const cfg = all.find(e => e.localName === 'config');
+        const lr = all.find(e => e.localName === 'layoutReq');
+        if (lr?.getAttribute('tuningMode') !== 'E') return { ok: false, detail: 'tuningMode=' + lr?.getAttribute('tuningMode') };
+        if (cfg?.getAttribute('heji') !== 'false') return { ok: false, detail: 'heji=' + cfg?.getAttribute('heji') };
+        if (cfg?.getAttribute('ignore-color') !== 'true') return { ok: false, detail: 'ignore-color=' + cfg?.getAttribute('ignore-color') };
+        return { ok: true };
+      })()` },
+    { name: 'tie crossing the tuplet boundary is realized (no lv stub)',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const notes = [...doc.querySelectorAll('note')];
+        const pre = notes.find(n => n.getAttribute('pname') === 'c' && n.getAttribute('oct') === '5' && !n.closest('tuplet'));
+        const inTup = notes.find(n => n.getAttribute('pname') === 'c' && n.getAttribute('oct') === '5' && n.closest('tuplet'));
+        if (!pre || !inTup) return { ok: false, detail: 'missing C5 endpoints pre=' + !!pre + ' inTup=' + !!inTup };
+        if (pre.getAttribute('tie') !== 'i') return { ok: false, detail: 'pre tie=' + pre.getAttribute('tie') };
+        if (inTup.getAttribute('tie') !== 't') return { ok: false, detail: 'inTup tie=' + inTup.getAttribute('tie') };
+        if (pre.getAttribute('data-tie-partner') !== inTup.getAttribute('xml:id'))
+          return { ok: false, detail: 'partner mismatch' };
+        if (doc.querySelector('lv')) return { ok: false, detail: 'unexpected <lv> stub' };
+        if (doc.querySelector('note[data-pending-tie]')) return { ok: false, detail: 'pending tie left over' };
+        return { ok: true };
+      })()` },
+    { name: 'triplet imported as <tuplet num=3 numbase=2> with 3 notes',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const tups = [...doc.querySelectorAll('tuplet')];
+        if (tups.length !== 1) return { ok: false, detail: 'tuplets=' + tups.length };
+        const t = tups[0];
+        if (t.getAttribute('num') !== '3' || t.getAttribute('numbase') !== '2')
+          return { ok: false, detail: 'ratio=' + t.getAttribute('num') + '/' + t.getAttribute('numbase') };
+        const tn = [...t.querySelectorAll('note')].length;
+        if (tn !== 3) return { ok: false, detail: 'tuplet notes=' + tn };
         return { ok: true };
       })()` },
   ],

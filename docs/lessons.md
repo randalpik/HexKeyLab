@@ -1462,3 +1462,14 @@ Consequences that bit us on the OBS overlay (see decisions.md "drop the off-by-d
 - `navigator.permissions.query({name:'local-network-access'})` reads grant state **without** prompting
   (returns `prompt`/`granted`/`denied`; always `denied` on HTTP) — available if you ever want to gate
   on an existing grant, but unnecessary given closed-port silence.
+
+## Verovio control events (fermata/dynam/hairpin) must follow `<staff>`s in the measure
+
+When building MEI for Verovio, a measure's control events (`<fermata>`, `<dynam>`, `<hairpin>`, `<slur>`, `<lv>`) must be appended **after** the `<staff>` children, not before. Appending a `<fermata>` as an early child of `<measure>` (e.g. while still building the layers) makes Verovio emit *"N time pointing element(s) could not be matched in measure …"* and silently drop the symbol — even though `@startid` resolves to a valid note. Collect control events during the walk and append them in a post-pass once the staves exist (Composer's own `addSibling`/`addSlur`/`addDynam` all append after staves). Surfaced during MusicXML import (`importMusicXml.ts`): fermatas were appended inside the layer loop and warned until moved to the post-pass.
+
+## MusicXML import gotchas (reference: `~/Documents/sonataBr1.musicxml`, Finale v25)
+
+- **`<divisions>` is per-part and can differ** (viola=24, piano=240 in the Sonata). Drive MEI note values from `<type>`+`<dot>` (divisions-independent), not `<duration>`; only use `<duration>`/divisions for tstamp positions and pickup-tick budgets.
+- **Measure `number` attributes are not positional** — Finale emits non-numeric ids like `number="X4"` (split measures / number resets). Index measures by document position, never by the `number` string.
+- **Dangling ties exist in real exports** — the Sonata has 260 `<tie type="start">` vs 259 `<tie type="stop">` (one unterminated tie). That correctly renders as a single `<lv>` laissez-vibrer stub; it's faithful to the source, not an import bug. Don't chase the lone `lv` warning it produces.
+- **Ties cross tuplet boundaries** (a note tied into/out of a triplet). The model's tie realization had to be extended to descend tuplets — see decisions.md "Tie engine: normalizeTies realizes ties across tuplet boundaries".

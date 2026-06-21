@@ -167,25 +167,38 @@ export async function importBundle(bytes: Uint8Array): Promise<HkiManifest> {
 /** Remove an imported bundle entirely. */
 export async function removeBundle(key: string): Promise<void> {
   if (!manifestCache.has(key)) return;
-  const tx = db!.transaction([STORE_MANIFESTS, STORE_AUDIO], 'readwrite');
-  tx.objectStore(STORE_MANIFESTS).delete(key);
-  const idx = tx.objectStore(STORE_AUDIO).index('byInstrument');
-  await new Promise<void>((resolve, reject) => {
-    const c = idx.openCursor(IDBKeyRange.only(key));
-    c.onsuccess = () => {
-      const cursor = c.result;
-      if (cursor) { cursor.delete(); cursor.continue(); }
-      else resolve();
-    };
-    c.onerror = () => reject(c.error);
-  });
-  await new Promise<void>((resolve, reject) => {
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
-  });
+
+  /* Reflect the removal in memory + UI first. The manage list and dropdown
+     re-render on notify(); they must NOT wait for the bulky audio-row deletion
+     (a 70 MB bundle is tens of MB across ~hundreds of rows — seconds in IDB).
+     Previously notify() ran only after that whole deletion committed, so the
+     dialog appeared frozen for several seconds after Remove. */
   manifestCache.delete(key);
   notify();
+
+  /* Persist the manifest-row deletion (one tiny row) before resolving, so a
+     reload can't resurrect the bundle if the page is closed mid-cleanup. */
+  const mtx = db!.transaction(STORE_MANIFESTS, 'readwrite');
+  mtx.objectStore(STORE_MANIFESTS).delete(key);
+  await new Promise<void>((resolve, reject) => {
+    mtx.oncomplete = () => resolve();
+    mtx.onerror = () => reject(mtx.error);
+    mtx.onabort = () => reject(mtx.error);
+  });
+
+  /* Drop the bulky audio rows in the background — not awaited. getAudio() gates
+     on the manifest cache (now cleared), so any row that outlives a failed
+     delete is inert, and importBundle's stage-1 drop overwrites leftovers on
+     re-import. Errors are logged, never surfaced. */
+  const atx = db!.transaction(STORE_AUDIO, 'readwrite');
+  const idx = atx.objectStore(STORE_AUDIO).index('byInstrument');
+  const c = idx.openCursor(IDBKeyRange.only(key));
+  c.onsuccess = () => {
+    const cursor = c.result;
+    if (cursor) { cursor.delete(); cursor.continue(); }
+  };
+  atx.onerror = () => console.error('instrumentRegistry: audio cleanup failed for', key, atx.error);
+  atx.onabort = () => console.error('instrumentRegistry: audio cleanup aborted for', key, atx.error);
 }
 
 /**

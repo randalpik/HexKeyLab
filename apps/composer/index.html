@@ -352,6 +352,7 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
   <div class="spacer"></div>
   <button class="btn" id="btnSave">Save .hkc</button>
   <button class="btn" id="btnLoad">Load .hkc</button>
+  <button class="btn" id="btnImportXml">Import .musicxml</button>
   <button class="btn" id="btnExportMenu" popovertarget="exportMenu" aria-haspopup="menu">Export ▾</button>
   <div id="exportMenu" popover="auto" role="menu">
     <button class="btn" id="btnExportPdf" role="menuitem">.pdf</button>
@@ -367,6 +368,7 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
 <div id="composerStatus">Loading Verovio…</div>
 
 <input type="file" id="fileInputHkc" accept=".hkc,.xml,.mei" style="display:none">
+<input type="file" id="fileInputMusicXml" accept=".musicxml,.xml" style="display:none">
 
 <dialog id="setupDialog" class="hkl-dialog">
   <form id="setupForm" method="dialog">

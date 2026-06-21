@@ -212,6 +212,7 @@ The **Setup…** button opens a dialog for the whole-document settings:
 |---|---|---|
 | Save / Load | **`.hkc`** | Composer's native format: MEI XML carrying the lattice coordinates and colors. The canonical, lossless round-trip. |
 | Export | **MusicXML** | One part per instrument; opens in MuseScore / Finale / Sibelius. Pitches, rhythms, colors, clefs and signatures carry over; dynamics, hairpins, and repeats do not yet. |
+| Import | **MusicXML** | Loads a `.musicxml` score authored in Finale / MuseScore / Sibelius (notes, chords, multiple voices and instruments, tuplets, ties, slurs, articulations, dynamics, hairpins, tempo, key/meter/clef changes). The document is set to **Equal tuning, HEJI off, colors ignored** — the imported score is a starting point you then retune toward just intonation. Each note keeps its original spelling (a G♭ stays a G♭). |
 | Export | **PDF** | Vector, exactly what you see on screen (including HEJI accidentals and colors), honoring the current single-part view. |
 
 `.hkc` files also arrive straight from HKL's **Export to Composer** (HKL transcribes a recording into notation and sends it over; see the [Core guide](core.md#export-to-sheet-music-composer)).

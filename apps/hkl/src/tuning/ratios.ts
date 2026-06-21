@@ -1,6 +1,6 @@
 // JI ratio computation and harmonic-tier classification.
 
-import { coordExps } from '@hkl/shared/freq.js';
+import { coordExps, reduceExps, tenneyHeightFromExps } from '@hkl/shared/freq.js';
 import type { TuningStateLike } from './regions.js';
 import { tuning } from '../state/tuning.js';
 import type { JiRatio, IntervalTier } from '../types.js';
@@ -50,25 +50,10 @@ export function jiRatio(q1: number, r1: number, q2: number, r2: number): JiRatio
   return jiRatioWithState(q1, r1, q2, r2, tuning);
 }
 
-/** Octave-reduce + complement-reduce a prime-exponent vector. Returns the
- *  exponent vector for the equivalent ratio in [1, √2]:
- *  - Octave-reduce: subtract floor(log₂ratio) from e₂ so ratio ∈ [1, 2).
- *  - Complement-reduce: if ratio > √2, flip to 2/ratio so ratio ∈ [1, √2].
- *  This collapses octave- and complement-equivalent intervals to a single
- *  exp vector, which is what Tenney-Height-based ranking should be invariant
- *  under (otherwise canonical spellings flip across octaves — see Octave
- *  consistency check in /tmp/hkl-octave-bug.mjs and lessons.md). */
-function reduceExps(e: ReadonlyArray<number>): readonly [number, number, number, number] {
-  const e7 = e[3] ?? 0;
-  const log2r = e[0] + e[1] * Math.log2(3) + e[2] * Math.log2(5) + e7 * Math.log2(7);
-  const oct = Math.floor(log2r);
-  let r0 = e[0] - oct, r1 = e[1], r2 = e[2], r3 = e7;
-  if (log2r - oct > 0.5) {
-    /* complement: new ratio = 2/ratio → new exps = (1 − e₂, −e₃, −e₅, −e₇) */
-    r0 = 1 - r0; r1 = -r1; r2 = -r2; r3 = -r3;
-  }
-  return [r0, r1, r2, r3];
-}
+/* reduceExps + tenneyHeightFromExps now live in @hkl/shared/freq.ts (pure
+   exp-vector math, shared with @hkl/notation's spelling picker). Re-exported
+   here so existing callers (draw.ts etc.) keep their import site. */
+export { reduceExps, tenneyHeightFromExps };
 
 /** Tenney Height of the octave-and-complement-reduced ratio. Octave and
  *  complement equivalents (e.g. 5/4 ↔ 5/2 ↔ 8/5) all produce the same TH.
@@ -88,17 +73,6 @@ export function tenneyHeight(num: number, den: number): number {
   const g1 = gcd(n, d);
   n /= g1; d /= g1;
   return Math.log2(n * d);
-}
-
-/** Exact Tenney Height from a prime-exponent vector [e₂, e₃, e₅, e₇], with
- *  octave + complement reduction. Preferred when the ratio's num/den may
- *  exceed 2^53 (jiRatio's docstring warns about this for large exponents). */
-export function tenneyHeightFromExps(e: ReadonlyArray<number>): number {
-  const r = reduceExps(e);
-  return Math.abs(r[0])
-    + Math.abs(r[1]) * Math.log2(3)
-    + Math.abs(r[2]) * Math.log2(5)
-    + Math.abs(r[3]) * Math.log2(7);
 }
 
 function tierOf(th: number): IntervalTier {

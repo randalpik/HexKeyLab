@@ -121,8 +121,7 @@ function renderHkiManageList(): void {
     btn.textContent = 'Remove';
     btn.onclick = async () => {
       if (!window.confirm(`Remove imported instrument "${rec.manifest.name}"?`)) return;
-      await onRemoveHki(rec);
-      renderHkiManageList();
+      await onRemoveHki(rec); /* fires onChange → renderHkiManageList */
     };
     row.appendChild(label);
     row.appendChild(btn);
@@ -156,8 +155,7 @@ function renderCdnConfigManageList(): void {
     btn.textContent = 'Remove';
     btn.onclick = async () => {
       if (!window.confirm(`Remove imported instrument "${rec.config.name}"?`)) return;
-      await onRemoveCdnConfig(rec);
-      renderCdnConfigManageList();
+      await onRemoveCdnConfig(rec); /* fires onChange → renderCdnConfigManageList */
     };
     row.appendChild(label);
     row.appendChild(btn);
@@ -254,8 +252,16 @@ function onManageClose(): void {
  */
 export function initInstrumentBundlesUi(): void {
   refreshDropdown();
+  /* Both the dropdown <optgroup>s AND the open manage-dialog lists must react to
+     registry changes. Previously only the dropdown was subscribed, so importing
+     a bundle (the `+ .hki` button lives inside the open dialog) updated the
+     dropdown but left the dialog list stale until it was closed and reopened —
+     and stale rows made removal look broken too. Subscribing the lists makes
+     every add/remove reflect immediately regardless of which surface triggered it. */
   InstrumentRegistry.onChange(refreshDropdown);
+  InstrumentRegistry.onChange(renderHkiManageList);
   CdnConfigRegistry.onChange(refreshDropdown);
+  CdnConfigRegistry.onChange(renderCdnConfigManageList);
 
   $<HTMLButtonElement>('btnHkiImport')?.addEventListener('click', () => {
     const inp = $<HTMLInputElement>('fileInputHki');

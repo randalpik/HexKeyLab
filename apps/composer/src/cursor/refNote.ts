@@ -38,7 +38,7 @@ const tonicCache: Map<string, RefCoord> = new Map();
  *  tonic identity. Walk q by ±3 (one octave per step) into the window
  *  [53, 64]. Floors the broadcast ref so Composer never drags HKL's piano
  *  outline below F3 (e.g. C3 = MIDI 48 used to sneak through). */
-function findTonicCoord(tonic: string): RefCoord {
+export function findTonicCoord(tonic: string): RefCoord {
   const cached = tonicCache.get(tonic);
   if (cached) return cached;
   const r = TONIC_R.get(tonic) ?? -3; /* fall back to C-spine coord if somehow off-table */
