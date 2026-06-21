@@ -74,6 +74,15 @@ const RELEASE_SCALE = 0.5;
    ms of fade-in removes the discontinuity; ≤5 ms is below the threshold where it
    audibly softens a struck/percussive attack. */
 const ATTACK_FADE_S = 0.004;
+/* Leading-silence trim threshold, measured on the GAIN-NORMALIZED signal (see
+   the trim gate below). Higher = tighter onset (cuts more pre-attack), lower =
+   safer against clipping a slow attack. With the attack fade-in owning click
+   prevention, this can sit high enough to land right at the audible onset:
+   gating on raw PCM × per-sample gain, 0.02 ≈ −34 dBFS normalized. (The original
+   gain-blind gate used a raw 0.003, which for a soft layer boosted ~10× was an
+   effective ~0.03 normalized — tight onsets, but it clicked; we keep the tight
+   onset and drop the click.) */
+const TRIM_GATE_NORM = 0.02;
 
 /* Equal-power crossfade base curves. cos/sin pair keeps Σ(g²)≈1 across the
    fade so summed voices stay at constant perceived loudness (linear ramps
@@ -329,8 +338,16 @@ const loadedInstruments: Record<string, any> = {};
           } else {
             lp={trimStart:0};
           }
-          /* trim silence for decaying instruments too */
-          if(!instr.loop){var _d=buf.getChannelData(0);for(var _s=0;_s<buf.length;_s++){if(Math.abs(_d[_s])>0.003){lp.trimStart=_s/buf.sampleRate;break;}}}
+          /* Trim leading silence for decaying instruments. Gate on the
+             GAIN-APPLIED amplitude, not raw PCM: the per-sample normalization
+             gain (s.gain, applied at playback) runs AFTER this gate, so a raw
+             0.003 threshold lets a soft, heavily-boosted layer (gain ≈ 8–13×)
+             keep its trim point where the NORMALIZED signal is already ~−28 dBFS
+             — playback then starts on that loud step and clicks. Multiplying by
+             g finds where the normalized signal crosses TRIM_GATE_NORM, giving
+             every layer a consistent onset boundary regardless of capture
+             loudness; the attack fade-in (not a low threshold) handles clicks. */
+          if(!instr.loop){var _g=(typeof s.gain==='number')?s.gain:1.0;var _d=buf.getChannelData(0);for(var _s=0;_s<buf.length;_s++){if(Math.abs(_d[_s])*_g>TRIM_GATE_NORM){lp.trimStart=_s/buf.sampleRate;break;}}}
           result[i]={buffer:buf,freq:s.freq,gain:(typeof s.gain==='number')?s.gain:1.0,vel:(typeof s.vel==='number')?s.vel:null,lp:lp,name:s.name};loaded++;
           if(onProgress)onProgress(loaded,total,s.name);
           if(loaded===total&&!aborted){
@@ -483,7 +500,14 @@ const loadedInstruments: Record<string, any> = {};
        sound, just at the floor — better than silent clamping). */
     var target=startAt!=null?startAt:ctx.currentTime+0.050;
     var startT=Math.ceil(Math.max(target,ctx.currentTime+0.005)*ctx.sampleRate)/ctx.sampleRate;
-    segGain.gain.setValueAtTime(vol,startT);
+    /* Attack fade-in: ramp segGain 0→vol over ATTACK_FADE_S so playback never
+       starts on a nonzero sample step (click), independent of where the trim
+       landed. Loop instruments get it too — harmless: the first segment switch
+       creates its own segGain and crossfades, so this only shapes the first few
+       ms of the very first source. The slide path (sNoteOnFaded) already uses an
+       equal-power fade-in curve, so it needs no change. */
+    segGain.gain.setValueAtTime(0,startT);
+    segGain.gain.linearRampToValueAtTime(vol,startT+ATTACK_FADE_S);
     var source=ctx.createBufferSource();source.buffer=nearest.buffer;
     source.playbackRate.value=rate;
     /* The runtime now supports TWO loop-state formats per sample:
