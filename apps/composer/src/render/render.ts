@@ -9,24 +9,6 @@ import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
 import { injectHejiGlyphs } from '@hkl/notation/heji-render.js';
 import { applyNotationTheme } from '@hkl/notation/verovio.js';
 import { CRISP_PRESETS, crispMarginTop, lineWidthOptions, pinExactScale, snapStaffLinesToGrid, snapBarlines, snapSystemRightEdge } from '@hkl/notation/render-presets.js';
-import { VirtualRibbon } from './virtualize.js';
-import { CURSOR_HPAD, CURSOR_WIDTH } from '@hkl/shared/cursor-geom.js';
-
-/* Scroll-mode chunk layout: pinned vertical spacing so every chunk lays out
- *  staves at the SAME Y (content-independent) — required so chunks align
- *  vertically across seams (see docs/decisions.md). `spacingStaff` is generous
- *  for safety; tuning it down (2e) is purely cosmetic and must stay ≥ the
- *  score's max inter-staff content extent to preserve alignment. */
-const SCROLL_STAFF_SPACING = 24;
-const SCROLL_TARGET_STAFF_Y = 160;
-const SCROLL_BAND_HEIGHT = 1000;
-/* Left breathing room before the first measure (the scroll ribbon has no
-   page-card margin to supply it). Applied to the ribbon canvas in virtualize.ts. */
-const SCROLL_LEFT_MARGIN = 24;
-/* Extra width past the last measure so the synthetic past-end cursor
-   (rect(lastMeasure).right + 2·CURSOR_HPAD, then CURSOR_WIDTH wide) stays inside
-   the overlay's drawable area and the scrollable extent. */
-const SCROLL_PAST_END_PAD = 2 * CURSOR_HPAD + CURSOR_WIDTH + 4;
 
 export type ViewMode = 'page' | 'scroll';
 /** Score theme. 'transparent' renders like 'dark' (light-source noteheads,
@@ -52,9 +34,17 @@ const PAGE_GEOM = {
   pageMarginRight: 140,
 };
 
+/* Scroll mode renders the whole score as ONE continuous system (breaks:'none').
+ * pageWidth/pageHeight are pinned to Verovio's MAXIMA (100000 / 60000 MEI units —
+ * exceeding them logs a bounds error and is version-fragile). pageWidth is a
+ * layout budget in MEI units, NOT output px (the emitted SVG is clipped to the
+ * content extent, e.g. ~190k px for the 446-bar sonata), so 100000 units holds a
+ * very wide single system — roughly ~500 bars at 100% zoom (more at lower zoom)
+ * before content would exceed the budget and wrap. Larger scores wrapping in
+ * scroll view is a known limit to revisit if a real score hits it. */
 const SCROLL_GEOM = {
-  pageWidth: 100000,
-  pageHeight: 400,
+  pageWidth: 100_000,
+  pageHeight: 60_000,
   pageMarginTop: 30,
   pageMarginBottom: 30,
   pageMarginLeft: 30,
@@ -78,13 +68,6 @@ class Renderer {
   private zoom: ZoomLevel = 100;
   private theme: ScoreTheme = 'light';
   private readyPromise: Promise<void>;
-  /** Scroll-mode virtualized ribbon. Null until first scroll-mode render. */
-  private vr: VirtualRibbon | null = null;
-  private vrContainer: HTMLElement | null = null;
-  /** Dedicated Verovio toolkit for chunk renders — isolated from `tk` so chunk
-   *  options (spacingStaff etc.) can't leak into page renders (Verovio's
-   *  setOptions persists unspecified options). */
-  private chunkTk: VerovioToolkit | null = null;
 
   constructor() {
     this.readyPromise = this.loadVerovio();
@@ -143,6 +126,11 @@ class Renderer {
       pageMarginTop: crispMarginTop(geom.pageMarginTop, preset.scale, preset.evenWidth),
       ...breaksOpt,
       header: this.viewMode === 'page' ? 'auto' : 'none',
+      /* Scroll trims the page to its single system; page uses fixed-height pages.
+         Set EXPLICITLY every render — page and scroll share one toolkit and
+         Verovio's setOptions persists unspecified options, so an unset
+         adjustPageHeight would leak true from a prior scroll render into page. */
+      adjustPageHeight: this.viewMode === 'scroll',
       scale: preset.scale,
       unit: preset.unit,
       ...lineWidthOptions(preset),
@@ -221,13 +209,6 @@ class Renderer {
   }
 
   setViewMode(mode: ViewMode): void {
-    /* Leaving scroll mode: tear down the virtualized ribbon (detach its scroll
-       listener) so its chunk-mounting can't corrupt the page-mode DOM. */
-    if (mode !== this.viewMode && this.vr) {
-      this.vr.destroy();
-      this.vr = null;
-      this.vrContainer = null;
-    }
     this.viewMode = mode;
   }
 
@@ -255,13 +236,13 @@ class Renderer {
   render(mei: string): void {
     if (!this.tk) throw new Error('render() before ready()');
     if (!this.container) throw new Error('render() before attach()');
-    /* Scroll view → virtualized horizontal ribbon (render only the viewport's
-       chunks; scroll never calls Verovio). Page view keeps the full render. */
-    if (this.viewMode === 'scroll') { this.renderScroll(mei); return; }
+    /* Scroll view → one continuous single-system SVG (spot-spliced on edit —
+       Phase B). Page view → full multi-page render. */
+    if (this.viewMode === 'scroll') { this.renderSingleSystem(mei); return; }
     /* Choose a breaks strategy. Section/system breaks alone → single-pass
        'smart' (honors them + auto-wraps). Page breaks → bake the natural
        system breaks first, then 'encoded' (honors pages + the baked wraps).
-       No manual breaks → plain 'auto'. Scroll view → 'none'. */
+       No manual breaks → plain 'auto'. */
     let data = mei;
     let strategy: 'auto' | 'smartSb0' | 'encoded';
     if (mei.includes('<pb')) {
@@ -288,124 +269,58 @@ class Renderer {
       }
       this.container.innerHTML = combined;
     }
-    /* Pin every page's device scale exact so thin staff lines stay grid-aligned
-       (crisp) — counters Verovio's whole-px ceil of the root <svg> box. */
-    pinExactScale(this.container, this.currentScale());
+    this.postProcessRendered(this.container);
+  }
+
+  /* ── scroll-mode single-system render ────────────────────────────────────── */
+
+  /** Render the whole score as one continuous system into the container (no
+   *  .score-page wrapper — the bare SVG sits directly in #score, styled by the
+   *  `#score.view-scroll svg` CSS). This is the persistent SVG that edits will
+   *  spot-splice into (Phase B); for now every render re-engraves it whole. */
+  private renderSingleSystem(mei: string): void {
+    this.tk!.setOptions(this.buildOptions('none'));
+    if (!this.tk!.loadData(mei)) {
+      this.container!.innerHTML = '<div style="color:#c00;padding:20px">Verovio loadData failed (invalid MEI).</div>';
+      return;
+    }
+    this.container!.innerHTML = this.tk!.renderToSVG(1, {});
+    this.postProcessRendered(this.container!);
+  }
+
+  /** Post-render DOM treatment shared by page + scroll: crisp pinning, notehead
+   *  z-order, HEJI/stacked-accidental glyph injection, and theming. */
+  private postProcessRendered(container: HTMLElement): void {
+    /* Pin device scale exact so thin staff lines stay grid-aligned (crisp) —
+       counters Verovio's whole-px ceil of the root <svg> box. */
+    pinExactScale(container, this.currentScale());
     /* Crisp the verticals: snap intermediate barlines onto their pixel phase,
-       then land each system's right edge (final barline + staff-line ends) on the
-       grid (no sliver past the final bar). */
-    snapBarlines(this.container, this.currentScale(), CRISP_PRESETS[this.zoom].evenWidth);
-    snapSystemRightEdge(this.container, this.currentScale());
-    /* Bring noteheads to the front. Verovio renders each <g class="note">
-       as [notehead, dots, stem]; SVG z-order is document order, so the
-       stem draws over the notehead. With our colored noteheads + black
-       stems, the stem intrudes visibly. Move each notehead group to be
-       the LAST child of its note so it draws on top. Dots are off to the
-       side and unaffected. */
-    for (const note of Array.from(this.container.querySelectorAll('g.note'))) {
+       then land each system's right edge (final barline + staff-line ends) on
+       the grid (no sliver past the final bar). */
+    snapBarlines(container, this.currentScale(), CRISP_PRESETS[this.zoom].evenWidth);
+    snapSystemRightEdge(container, this.currentScale());
+    /* Bring noteheads to the front. Verovio renders each <g class="note"> as
+       [notehead, dots, stem]; SVG z-order is document order, so the stem draws
+       over the notehead. With colored noteheads + black stems the stem intrudes;
+       move each notehead group last so it draws on top. */
+    for (const note of Array.from(container.querySelectorAll('g.note'))) {
       const notehead = note.querySelector(':scope > g.notehead');
       if (notehead) note.appendChild(notehead);
     }
     /* Replace tagged placeholder accidentals with BravuraText HEJI / stacked
-       glyphs. Also swaps any paren <use> glyphs Verovio emitted (from
-       @enclose="paren" on a child accid) to BravuraText. No-op when the
-       MEI carried no tagged placeholders or parens. */
-    injectHejiGlyphs(this.container);
-    /* Theme the score: tag the container for the shared notation-theme CSS
-       (staff/stems/accidentals/HEJI follow --notation-ink) and repaint
+       glyphs (+ paren <use> swaps). No-op when none are tagged. */
+    injectHejiGlyphs(container);
+    /* Theme: tag the container for the shared notation-theme CSS and repaint
        noteheads with their light-source variant in dark/transparent themes.
-       'transparent' shares dark's ink/notehead treatment; the .theme-
-       transparent class (toggled here) drops all background fills in CSS. */
-    applyNotationTheme(this.container, this.theme === 'light' ? 'light' : 'dark');
-    this.container.classList.toggle('theme-transparent', this.theme === 'transparent');
+       'transparent' shares dark's ink; the .theme-transparent class drops fills. */
+    applyNotationTheme(container, this.theme === 'light' ? 'light' : 'dark');
+    container.classList.toggle('theme-transparent', this.theme === 'transparent');
   }
 
-  /* ── scroll-mode virtualized ribbon ──────────────────────────────────────── */
-
-  /** Verovio options for a chunk render: natural unjustified spacing
-   *  (breaks:'none') + pinned content-independent vertical layout + the active
-   *  crisp preset, so chunks are width-identical to the full ribbon and align
-   *  vertically across seams. */
-  private chunkOptions(): object {
-    const preset = CRISP_PRESETS[this.zoom];
-    return {
-      ...BASE_OPTIONS,
-      breaks: 'none',
-      pageWidth: 100000,
-      pageHeight: 4000,
-      adjustPageHeight: true,
-      header: 'none',
-      spacingStaff: SCROLL_STAFF_SPACING,
-      spacingSystem: 0,
-      scale: preset.scale,
-      unit: preset.unit,
-      ...lineWidthOptions(preset),
-    };
-  }
-
-  /** Per-chunk post-processing — the same treatment the page path applies to the
-   *  whole container, run on each freshly-rendered chunk wrapper: notehead
-   *  z-order, HEJI/stacked-accidental glyphs, theme, crisp pinning. */
-  private postProcessChunk = (node: HTMLElement): void => {
-    for (const note of Array.from(node.querySelectorAll('g.note'))) {
-      const nh = note.querySelector(':scope > g.notehead');
-      if (nh) note.appendChild(nh);
-    }
-    injectHejiGlyphs(node);
-    applyNotationTheme(node, this.theme === 'light' ? 'light' : 'dark');
-    node.classList.toggle('theme-transparent', this.theme === 'transparent');
-    pinExactScale(node, this.currentScale());
-    snapBarlines(node, this.currentScale(), CRISP_PRESETS[this.zoom].evenWidth);
-  };
-
-  private renderScroll(mei: string): void {
-    const doc = new DOMParser().parseFromString(mei, 'application/xml');
-    if (doc.querySelector('parsererror')) {
-      this.container!.innerHTML = '<div style="color:#c00;padding:20px">Render failed (invalid MEI).</div>';
-      return;
-    }
-    /* Dedicated toolkit for chunk renders (isolated from the page toolkit). */
-    if (!this.chunkTk && window.verovio) this.chunkTk = new window.verovio.toolkit();
-    /* (Re)create the ribbon if absent or bound to a stale container. */
-    if (!this.vr || this.vrContainer !== this.container) {
-      this.vr?.destroy();
-      this.vr = new VirtualRibbon({
-        container: this.container!, tk: this.chunkTk ?? this.tk!, options: this.chunkOptions(),
-        chunkSize: 8, overlap: 2, estimate: 400,
-        bandHeight: SCROLL_BAND_HEIGHT, targetStaffY: SCROLL_TARGET_STAFF_Y, bufferPx: 1200,
-        leftMargin: SCROLL_LEFT_MARGIN, postProcess: this.postProcessChunk,
-      });
-      this.vrContainer = this.container;
-    } else {
-      /* Zoom/theme may have changed → refresh chunk options (clears cache). */
-      this.vr.setOptions(this.chunkOptions());
-    }
-    this.vr.rebuild(doc);
-  }
-
-  /** Ensure the chunk holding measure index `mi` is rendered + mounted (so the
-   *  cursor overlay can resolve its rect). Scroll mode only; no-op otherwise. */
-  ensureMeasureMounted(mi: number): void { this.vr?.ensureMeasureMounted(mi); }
-
-  /** Ribbon-x + width of a measure by xml:id, from the virtualization index
-   *  (works without the measure being mounted). Null when not in scroll mode. */
-  measureBox(id: string): { x: number; w: number } | null { return this.vr?.measureBox(id) ?? null; }
-
-  /** Total ribbon width (scroll canvas), or null when not in scroll mode. */
-  ribbonWidth(): number | null { return this.vr?.totalWidth() ?? null; }
-
-  /** Width the cursor overlay (and thus the scrollable extent) must span in
-   *  #score's content frame: left breathing room + ribbon + past-end-cursor pad.
-   *  rectForId reports positions in this frame, so the overlay — anchored at
-   *  (0,0) — must be wide enough to draw the piece-end barline area and the
-   *  synthetic past-end cursor without SVG-viewport clipping. */
-  scrollOverlayWidth(): number | null {
-    if (!this.vr) return null;
-    return this.vr.leftMargin + this.vr.totalWidth() + SCROLL_PAST_END_PAD;
-  }
-
-  /** Vertical band height of the scroll ribbon (px). */
-  scrollBandHeight(): number { return SCROLL_BAND_HEIGHT; }
+  /** No-op in the single-SVG renderer (the whole score is always rendered).
+   *  Retained so cursor/scroll call sites stay mode-agnostic; the chunk
+   *  renderer needed it to mount off-screen measures on demand. */
+  ensureMeasureMounted(_mi: number): void { /* everything is always rendered */ }
 
   /** Resolve a clicked SVG element to its xml:id, walking up to the nearest
    *  <g class="note"> or <g class="chord">. Returns null on miss. */

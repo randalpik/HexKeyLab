@@ -866,17 +866,11 @@ function reRender(): void {
        the overlay's bounds and not draw. */
     const overlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     overlay.id = 'cursorOverlay';
-    if (isScroll) {
-      /* Scroll mode: the cursor's chunk must be mounted before rectForId can
-         resolve it; size the overlay to the full ribbon canvas. */
-      renderer.ensureMeasureMounted(visualCursorMeasure());
-      overlay.setAttribute('width', String(Math.max(0, renderer.scrollOverlayWidth() ?? 0)));
-      overlay.setAttribute('height', String(renderer.scrollBandHeight()));
-    } else {
-      /* Size the overlay to cover EVERY page SVG, not just the first — in page
-         view with a page break there are multiple .score-page svgs stacked
-         vertically, and a cursor on a later page would otherwise fall outside
-         the overlay's bounds and not draw. */
+    /* Size the overlay to cover every rendered SVG (scroll = one wide single-
+       system SVG; page = stacked .score-page svgs) in #score's content frame, so
+       cursor markers drawn at rectForId's container-local coords land correctly.
+       Adding scrollLeft/scrollTop converts the on-screen rect to content coords. */
+    {
       const verovioSvgs = Array.from(
         scoreEl.querySelectorAll('svg:not(#cursorOverlay)'),
       ) as SVGSVGElement[];

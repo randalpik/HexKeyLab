@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 305,
-  "passed": 305,
+  "fixtures": 310,
+  "passed": 310,
   "failed": 0,
-  "elapsedMs": 102190,
+  "elapsedMs": 105045,
   "results": [
     {
       "name": "emptyDoc",
@@ -779,6 +779,14 @@
       "failures": [],
       "counts": {
         "invariants": 8
+      }
+    },
+    {
+      "name": "scrollPieceEndReachable",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 9
       }
     },
     {
@@ -2439,6 +2447,38 @@
     },
     {
       "name": "navDoesNotReRender",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "ctrlNavDoesNotReRender",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "selectionNavDoesNotReRender",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "voiceIndexConsistencyUnderEdits",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "voiceIndexBoundariesAreCheap",
       "ok": true,
       "failures": [],
       "counts": {
