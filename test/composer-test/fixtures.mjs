@@ -875,6 +875,30 @@ const SCROLL = {
       score.scrollLeft = score.scrollWidth;
     `,
   },
+
+  /* Phase B2: a scroll-mode edit must SPLICE (re-engrave only the edited run +
+   * splice it into the persistent SVG), NOT full-re-engrave. Build a multi-bar
+   * doc, switch to scroll (one full render + gap calibration → the persistent
+   * SVG), then edit a mid-score measure. The persistent SVG root node must be
+   * the SAME element afterwards (a full re-engrave replaces it via innerHTML),
+   * and the edit must have applied. Asserted via
+   * FIXTURE_ASSERTIONS.scrollEditSplicesNotFullRender. */
+  scrollEditSplicesNotFullRender: {
+    setup: `
+      const note = { q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 };
+      m.setCursor(0, 1);
+      for (let i = 0; i < 8; i++) {
+        m.setCursor(m.getVoiceLength(1), 1);
+        for (let j = 0; j < 4; j++) m.insertChordAtCursor({ notes: [note], duration: '4', dots: 0 });
+      }
+      const sel = document.getElementById('viewModeSelect');
+      sel.value = 'scroll';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      m.setCursor(2, 1);
+      r();
+    `,
+    visualBaseline: 'scrollEditSplicesNotFullRender',
+  },
 };
 
 /* ── New: bridge mock (HKL side simulation) ──────────────────────────── */
@@ -6547,6 +6571,26 @@ export const FIXTURE_ASSERTIONS = {
         const s = window.__hkl_composer.inputState();
         if (svgAfter !== svgBefore) return { ok: false, detail: 'score re-engraved on Shift+Arrow selection (SVG root replaced)' };
         if (!s.selection) return { ok: false, detail: 'selection not entered' };
+        return { ok: true };
+      })()` },
+  ],
+  scrollEditSplicesNotFullRender: [
+    { name: 'a scroll-mode edit splices into the persistent SVG (root node unchanged) and applies the edit',
+      expr: `(() => {
+        const score = document.getElementById('score');
+        const svgBefore = score.querySelector('svg:not(#cursorOverlay)');
+        if (!svgBefore) return { ok: false, detail: 'no rendered SVG' };
+        const m = window.__hkl_composer.model;
+        const lenBefore = m.getVoiceLength(1);
+        /* append a note at past-end (a real edit), then re-render through the
+           normal path → must SPLICE (persistent SVG root reused), not full
+           re-engrave. */
+        m.setCursor(m.getVoiceLength(1), 1);
+        const id = m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+        window.__hkl_composer.reRender();
+        const svgAfter = score.querySelector('svg:not(#cursorOverlay)');
+        if (id === null || m.getVoiceLength(1) <= lenBefore) return { ok: false, detail: 'edit did not change the model (len ' + lenBefore + '→' + m.getVoiceLength(1) + ')' };
+        if (svgAfter !== svgBefore) return { ok: false, detail: 'scroll edit re-engraved the whole score (SVG root replaced) — splice did not fire' };
         return { ok: true };
       })()` },
   ],

@@ -9,6 +9,7 @@ import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
 import { injectHejiGlyphs } from '@hkl/notation/heji-render.js';
 import { applyNotationTheme } from '@hkl/notation/verovio.js';
 import { CRISP_PRESETS, crispMarginTop, lineWidthOptions, pinExactScale, snapStaffLinesToGrid, snapBarlines, snapSystemRightEdge } from '@hkl/notation/render-presets.js';
+import { ScrollSplicer, type SpliceCtx } from './splice.js';
 
 export type ViewMode = 'page' | 'scroll';
 /** Score theme. 'transparent' renders like 'dark' (light-source noteheads,
@@ -63,11 +64,22 @@ const BASE_OPTIONS = {
 
 class Renderer {
   private tk: VerovioToolkit | null = null;
+  /** Dedicated toolkit for the splicer's offscreen renders (calibration +
+   *  sub-renders). Verovio's setOptions + loadData mutate per-instance state,
+   *  so reusing `tk` would pollute the live score's toolkit — see the chunk-era
+   *  lesson (dedicated chunkTk). Kept entirely separate. */
+  private spliceTk: VerovioToolkit | null = null;
   private container: HTMLElement | null = null;
   private viewMode: ViewMode = 'page';
   private zoom: ZoomLevel = 100;
   private theme: ScoreTheme = 'light';
   private readyPromise: Promise<void>;
+  /** Scroll-view spot-splice engine (Phase B2). Holds the persistent SVG's
+   *  measure index + gap calibration; surgically splices each edit. */
+  private splicer = new ScrollSplicer();
+  /** Next scroll render must be a full re-engrave (file open, reflow, or a
+   *  view/zoom/theme change that splice can't retrofit). */
+  private forceFull = true;
 
   constructor() {
     this.readyPromise = this.loadVerovio();
@@ -96,6 +108,7 @@ class Renderer {
     }
     v.module.onRuntimeInitialized = () => {
       this.tk = new v.toolkit();
+      this.spliceTk = new v.toolkit();   // isolated toolkit for splicer offscreen renders
       resolve();
     };
   }
@@ -210,6 +223,15 @@ class Renderer {
 
   setViewMode(mode: ViewMode): void {
     this.viewMode = mode;
+    this.forceFullRerender();   // (re)entering scroll needs a fresh persistent SVG
+  }
+
+  /** Force the next scroll render to be a full re-engrave + re-capture (not a
+   *  splice). Call on file open, explicit reflow, or any change splice can't
+   *  retrofit (zoom/theme, instrument-view filter, HEJI toggle). */
+  forceFullRerender(): void {
+    this.forceFull = true;
+    this.splicer.invalidate();
   }
 
   getViewMode(): ViewMode {
@@ -217,6 +239,7 @@ class Renderer {
   }
 
   setTheme(t: ScoreTheme): void {
+    if (t !== this.theme) this.forceFullRerender();   // repaints all noteheads
     this.theme = t;
   }
 
@@ -225,6 +248,7 @@ class Renderer {
   }
 
   setZoom(z: ZoomLevel): void {
+    if (z !== this.zoom) this.forceFullRerender();    // changes scale → whole layout
     this.zoom = z;
   }
 
@@ -236,9 +260,10 @@ class Renderer {
   render(mei: string): void {
     if (!this.tk) throw new Error('render() before ready()');
     if (!this.container) throw new Error('render() before attach()');
-    /* Scroll view → one continuous single-system SVG (spot-spliced on edit —
-       Phase B). Page view → full multi-page render. */
-    if (this.viewMode === 'scroll') { this.renderSingleSystem(mei); return; }
+    /* Scroll view → one continuous single-system SVG, spot-spliced on edit
+       (Phase B2). Full re-engrave only on file open / reflow / view-zoom-theme
+       change (forceFull); every edit splices. Page view → full multi-page. */
+    if (this.viewMode === 'scroll') { this.renderScroll(mei); return; }
     /* Choose a breaks strategy. Section/system breaks alone → single-pass
        'smart' (honors them + auto-wraps). Page breaks → bake the natural
        system breaks first, then 'encoded' (honors pages + the baked wraps).
@@ -286,6 +311,36 @@ class Renderer {
     }
     this.container!.innerHTML = this.tk!.renderToSVG(1, {});
     this.postProcessRendered(this.container!);
+  }
+
+  /** Build the Verovio context the splicer needs (toolkit + the exact
+   *  buildOptions('none') the full render used + the post-process pass). */
+  private spliceCtx(): SpliceCtx {
+    return {
+      container: this.container!,
+      toolkit: this.spliceTk!,
+      optionsNone: this.buildOptions('none'),
+      postProcess: (el: HTMLElement) => this.postProcessRendered(el),
+      scale: this.currentScale(),
+    };
+  }
+
+  /** Scroll render: full re-engrave + capture when forced (file open / reflow /
+   *  zoom-theme-view change), otherwise a surgical splice. A splice that can't
+   *  be performed logs loudly and falls back to a full re-engrave — a visible
+   *  bring-up safety net, never a silent hang (the cases it catches are shapes
+   *  the splicer doesn't handle yet, e.g. layout-header changes). */
+  private renderScroll(mei: string): void {
+    if (this.forceFull || !this.splicer.canSplice()) {
+      this.renderSingleSystem(mei);
+      this.splicer.capture(mei, this.spliceCtx());
+      this.forceFull = false;
+      return;
+    }
+    if (this.splicer.splice(mei, this.spliceCtx())) return;
+    console.warn('[scroll-splice] edit could not be spliced — full re-engrave (investigate)');
+    this.renderSingleSystem(mei);
+    this.splicer.capture(mei, this.spliceCtx());
   }
 
   /** Post-render DOM treatment shared by page + scroll: crisp pinning, notehead

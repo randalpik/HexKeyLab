@@ -860,6 +860,12 @@ function reRender(): void {
        offset from #score's origin by a .score-page wrapper's margin. */
     const scoreEl = $('score');
     if (!scoreEl) return;
+    /* Remove any prior overlay(s) before re-attaching. A full render replaces
+       #score's innerHTML (wiping the old overlay), but a scroll SPLICE edits
+       measures in place and leaves it — so without this, every spliced reRender
+       would stack a new #cursorOverlay on top of stale ones (the "double cursor
+       overlay" bug). Always start from a clean single overlay. */
+    for (const old of Array.from(scoreEl.querySelectorAll('#cursorOverlay'))) old.remove();
     /* Size the overlay to cover EVERY page SVG, not just the first — in page
        view with a page break there are multiple .score-page svgs stacked
        vertically, and a cursor on a later page would otherwise fall outside
@@ -1394,6 +1400,7 @@ function applyLoadedDocument(meiXml: string, statusMsg: string): void {
      view and rebuild the selector before rendering. */
   setViewInstr(model, null);
   refreshViewSelector();
+  renderer.forceFullRerender();   // new document → full re-engrave, not a splice
   reRender();
   refreshIndicators();
   maybeScrollMeasureIntoView(visualCursorMeasure());
@@ -1516,6 +1523,7 @@ $('viewInstrSelect')?.addEventListener('change', (e) => {
   const val = (e.target as HTMLSelectElement).value;
   const idx = val === 'all' ? null : parseInt(val, 10);
   setViewInstr(model, idx);
+  renderer.forceFullRerender();   // changes the visible staff set → full re-engrave
   reRender();
   refreshIndicators();
   cursor.update(model, cursorOpts());
