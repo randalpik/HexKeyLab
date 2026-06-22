@@ -157,9 +157,16 @@ export function renderChunk(o: RenderChunkOpts): ChunkResult {
   const gLo = host.querySelector('#' + CSS.escape(o.measureIds[o.dispLo]));
   const gHi = host.querySelector('#' + CSS.escape(o.measureIds[o.dispHi]));
   if (!gLo || !gHi) { host.remove(); throw new Error('chunk: display measures not found in render'); }
-  const sline = gLo.closest('g.system')!.querySelector('g.staff path')!;
-  const dispLeft = gLo.getBoundingClientRect().left - hl;
-  const dispRight = gHi.getBoundingClientRect().right - hl;
+  const sys = gLo.closest('g.system')!;
+  const sysRect = sys.getBoundingClientRect();
+  const sline = sys.querySelector('g.staff path')!;
+  /* Piece boundaries need their edge content INCLUDED rather than clipped:
+     the first measure's leading clef/key/meter (left), and the last measure's
+     final/end barline (right) — both render at the system's content edges. */
+  const pieceStart = o.dispLo === 0;
+  const pieceEnd = o.dispHi === o.measures.length - 1;
+  const dispLeft = (pieceStart ? sysRect.left : gLo.getBoundingClientRect().left) - hl;
+  const dispRight = (pieceEnd ? sysRect.right : gHi.getBoundingClientRect().right) - hl;
   const staffTop = sline.getBoundingClientRect().top - ht;
 
   const measuredWidths: Array<{ id: string; width: number }> = [];

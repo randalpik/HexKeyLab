@@ -87,9 +87,10 @@ export class VirtualRibbon {
     this.cache.clear();
     this.mounted.clear();
     this.canvas.replaceChildren();
-    if (this.canvas.parentElement !== this.container) {
-      this.container.replaceChildren(this.canvas);
-    }
+    /* Make the canvas the container's SOLE child every rebuild — this also
+       drops any stale cursor overlay from a prior render (the caller re-adds a
+       fresh one), preventing overlay/cursor accumulation. */
+    this.container.replaceChildren(this.canvas);
     this.canvas.style.width = Math.ceil(this.index.totalWidth) + 'px';
     this.update();
   }
