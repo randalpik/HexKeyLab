@@ -1481,3 +1481,15 @@ When building MEI for Verovio, a measure's control events (`<fermata>`, `<dynam>
 - **Measure `number` attributes are not positional** — Finale emits non-numeric ids like `number="X4"` (split measures / number resets). Index measures by document position, never by the `number` string.
 - **Dangling ties exist in real exports** — the Sonata has 260 `<tie type="start">` vs 259 `<tie type="stop">` (one unterminated tie). That correctly renders as a single `<lv>` laissez-vibrer stub; it's faithful to the source, not an import bug. Don't chase the lone `lv` warning it produces.
 - **Ties cross tuplet boundaries** (a note tied into/out of a triplet). The model's tie realization had to be extended to descend tuplets — see decisions.md "Tie engine: normalizeTies realizes ties across tuplet boundaries".
+
+## Scroll splice: a full render wipes #score's innerHTML (and the old cursor overlay); a splice does not
+
+`main.ts` re-attaches `#cursorOverlay` after every `reRender` but never removed the prior one — it relied on the full-render path resetting `#score.innerHTML` (which deletes the old overlay). The Phase-B2 scroll **splice** edits `g.measure`s in place and does NOT reset innerHTML, so each spliced reRender stacked a NEW overlay on stale ones (the "double cursor overlay" — and the cursor-trace then read a stale, non-moving overlay → `Δ=0,0` violations). Fix: explicitly remove existing `#cursorOverlay`s before appending. Any in-place renderer (no innerHTML reset) must own this cleanup. (`apps/composer/src/main.ts`, reRender overlay block.)
+
+## Verovio defines glyphs as `<g id="E0A4-…">` in `<defs>`, NOT `<symbol>` — and the id salt is per-render
+
+Noteheads/rests/clefs are `<use xlink:href="#E0A4-<salt>">` referencing a `<g id>` glyph def (the id prefix is the SMuFL codepoint; the `-<salt>` suffix is regenerated EACH render). When splicing measures from a sub-render into the persistent SVG, the sub's `<use>` hrefs carry the sub's salt and won't resolve against the persistent defs → the glyphs render **blank** (stems/beams/ledgers, drawn as inline `<path>`, still appear — a telltale "noteheads and rests missing, everything else present"). Merge by **codepoint** (`id.split('-')[0]`): remap each spliced `<use>` to the persistent glyph when the codepoint exists, else copy the sub's `<g>` def over. Querying `<symbol>` finds nothing. (`apps/composer/src/render/splice.ts` `mergeDefs`.)
+
+## Splice spike: measuring invisible `<use>` elements gives garbage geometry
+
+While debugging the blank-notehead bug, the headless metric reported noteheads "off by 440–730 px" — because it `getBoundingClientRect`'d `<use>` glyphs whose href didn't resolve (zero-size/garbage rects). The staff lines + stems were actually fine. Lesson: when a position metric reports wild outliers, check the elements are actually RENDERED (resolve to visible geometry) before theorizing about layout math. The screenshot (opened for Max) showed the truth in seconds where the numbers misled.

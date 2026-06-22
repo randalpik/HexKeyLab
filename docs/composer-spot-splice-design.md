@@ -1,11 +1,29 @@
 # Composer rendering & model — spot-splice redesign
 
 **Status:** Phase A (model index) **done**; Phase B1 (single-SVG scroll render,
-chunk system deleted) **done**; Phase B2 (spot-splice on edit) **planned, not
-started** — this doc is the handoff for B2. Supersedes the chunk-virtualization
-approach in [composer-virtualization-handoff.md](composer-virtualization-handoff.md)
+chunk system deleted) **done**; Phase B2 (spot-splice on edit) **DONE** —
+shipped in `apps/composer/src/render/splice.ts` (`ScrollSplicer`). Supersedes the
+chunk-virtualization approach in [composer-virtualization-handoff.md](composer-virtualization-handoff.md)
 (archived record of what we learned, not the plan). The chunk modules
 (`virtualize.ts`, `chunk-render.ts`, `measure-index.ts`) are deleted.
+
+> **B2 as built differs from the plan below in one major way: propper-finding was
+> abandoned for a SYNTHETIC SPACER measure.** The plan's "find the real measures
+> that prop each gap" (clearance-argmin from the full DOM) was disproved by the
+> spike — bbox clearance ignores horizontal collision, and even an x-aware sweep
+> mispredicts Verovio (barlines/braces/cross-staff stems span the gap). Instead a
+> single synthetic measure forces each inter-staff gap to the full render's px via
+> `stem.len` (linear, fractional, calibrated once per full render: `gap =
+> slope·stem.len + intercept`), with a LOCAL treble clef per staff so the control
+> note sits on a fixed line regardless of the real clef. Result: zero render-time
+> search, gaps reproduced to 0 px, edited measures pixel-identical to a full
+> render, splice in ~15–40 ms. See decisions.md "Composer scroll spot-splice
+> (Phase B2): synthetic spacer measure, not propper-finding" for the shipped
+> design; the "Finding the propping measures" / "spacer measures" sections below
+> are the superseded plan, kept for context. Other shipped specifics: a dedicated
+> `spliceTk` toolkit (decisions.md), glyph-defs merge by SMuFL codepoint, and the
+> cursor-overlay cleanup (both in lessons.md). Guard fixture:
+> `scrollEditSplicesNotFullRender`.
 
 ### Current state (what a fresh thread inherits)
 

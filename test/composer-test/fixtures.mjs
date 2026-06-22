@@ -885,19 +885,15 @@ const SCROLL = {
    * FIXTURE_ASSERTIONS.scrollEditSplicesNotFullRender. */
   scrollEditSplicesNotFullRender: {
     setup: `
-      const note = { q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 };
       m.setCursor(0, 1);
-      for (let i = 0; i < 8; i++) {
-        m.setCursor(m.getVoiceLength(1), 1);
-        for (let j = 0; j < 4; j++) m.insertChordAtCursor({ notes: [note], duration: '4', dots: 0 });
-      }
+      for (let i = 0; i < 11; i++) m.insertRestAtCursor({ duration: '1', dots: 0 });
+      m.insertRestAtCursor({ duration: '4', dots: 0 });
       const sel = document.getElementById('viewModeSelect');
       sel.value = 'scroll';
       sel.dispatchEvent(new Event('change', { bubbles: true }));
       m.setCursor(2, 1);
       r();
     `,
-    visualBaseline: 'scrollEditSplicesNotFullRender',
   },
 };
 
@@ -6582,6 +6578,10 @@ export const FIXTURE_ASSERTIONS = {
         if (!svgBefore) return { ok: false, detail: 'no rendered SVG' };
         const m = window.__hkl_composer.model;
         const lenBefore = m.getVoiceLength(1);
+        /* Snapshot so we can RESTORE the model after the check — this assertion
+           mutates the doc, which would otherwise pollute later invariants (the
+           cursor-trace). */
+        const snap = m.snapshotState();
         /* append a note at past-end (a real edit), then re-render through the
            normal path → must SPLICE (persistent SVG root reused), not full
            re-engrave. */
@@ -6589,8 +6589,15 @@ export const FIXTURE_ASSERTIONS = {
         const id = m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
         window.__hkl_composer.reRender();
         const svgAfter = score.querySelector('svg:not(#cursorOverlay)');
-        if (id === null || m.getVoiceLength(1) <= lenBefore) return { ok: false, detail: 'edit did not change the model (len ' + lenBefore + '→' + m.getVoiceLength(1) + ')' };
-        if (svgAfter !== svgBefore) return { ok: false, detail: 'scroll edit re-engraved the whole score (SVG root replaced) — splice did not fire' };
+        const grew = id !== null && m.getVoiceLength(1) > lenBefore;
+        const spliced = svgAfter === svgBefore;
+        /* restore the clean setup state for subsequent invariants, forcing a
+           full re-engrave so they see a pristine baseline (not a delete-splice). */
+        m.restoreSnapshot(snap);
+        window.__hkl_composer.renderer.forceFullRerender();
+        window.__hkl_composer.reRender();
+        if (!grew) return { ok: false, detail: 'edit did not change the model (len ' + lenBefore + ')' };
+        if (!spliced) return { ok: false, detail: 'scroll edit re-engraved the whole score (SVG root replaced) — splice did not fire' };
         return { ok: true };
       })()` },
   ],

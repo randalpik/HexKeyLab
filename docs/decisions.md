@@ -3663,3 +3663,37 @@ reaches `osc.type`.
 **Why**: ties that cross a tuplet boundary (a note tied into the first note of a triplet, or out of the last — 18 such in the reference Sonata) were never realized: `extractNoteElements(<tuplet>)` returns `[]`, so the tuplet's edge notes were invisible to tie pairing and became laissez-vibrer stubs. Descending tuplets makes pairing pure musical-time adjacency, which also makes cross-barline ties cleaner. A measure where the voice has no content pushes a barrier slot, preserving "an empty measure breaks the tie chain" (regression-guarded by `phase1_insertMeasure_breaksTie`).
 
 **Where**: `apps/composer/src/model/ties.ts` (`tieEventSequence`). Cursor/editing flat model (`flatChildren`) is untouched — only tie realization changed.
+
+## Composer scroll spot-splice (Phase B2): synthetic spacer measure, not propper-finding
+
+**Decision**: A scroll-view edit re-engraves only the affected measure run and **splices** it into the persistent single-system SVG (`apps/composer/src/render/splice.ts`, `ScrollSplicer`). Verovio sizes each inter-staff gap to that system's max inter-staff content, so a sub-range produces different gaps than the full render. To conform, the sub-render appends ONE **synthetic spacer measure** whose per-gap content forces each gap to exactly the full render's px value, then discards it.
+
+**Why this mechanism**: The original plan was to *find the real measures that prop each gap* (clearance-argmin from the full DOM). The B2 spike proved that wrong — a 1-D bbox clearance ignores horizontal position, and even an x-aware sweep mispredicts Verovio (barlines/braces span the gap, cross-staff stems cross the midpoint). Render-based propper-finding is correct but ~5–18 s. The spacer approach computes the gap-forcing content **by formula** (zero render-time search): `stem.len` on a stemmed note is linear (~unit·scale/100 px per unit), honors fractional values, and floors at the min gap, so `gap = slope·stem.len + intercept` inverts to any px. Calibrated once per full render (2 offscreen renders → per-gap law). The spacer forces a **local treble clef** on every staff (confined to the discarded measure) so the control note sits on one fixed line (f5, top) regardless of the real clef, its down-stem protruding only below its staff. Validated: gaps reproduced to 0 px, edited measures pixel-identical to a full render, splice in ~15–40 ms (build+render).
+
+**Splice mechanics**: diff the new MEI's measures vs the cached signatures (common prefix/suffix by id+signature) → changed run; expand outward past any crossing spanner; sub-render `[run ± context]` + spacer; anchor dx/dy on an UNCHANGED context measure that is NOT the sub's system-first measure (which gets a spurious leading clef); replace the changed `g.measure`s, single `translate(dx,dy)`; x-cascade trailing measures by Δ; merge glyph defs by SMuFL codepoint.
+
+**No auto full-render fallback** (Max's hard rule): full re-engrave only on file open, explicit reflow, or a view/zoom/theme/instrument-view change (`renderer.forceFullRerender()`). A splice that can't be performed logs loudly + full-renders — a visible bring-up safety net, never a silent hang.
+
+**Where**: `apps/composer/src/render/splice.ts` (new); `render.ts` (`renderScroll`, dedicated `spliceTk`, `forceFull` on `setViewMode`/`setZoom`/`setTheme`); `main.ts` (overlay cleanup, `forceFullRerender` on file open + instrument-view). Guard: `scrollEditSplicesNotFullRender` fixture.
+
+## Composer splicer uses a dedicated Verovio toolkit (`spliceTk`)
+
+**Decision**: The `ScrollSplicer`'s offscreen renders (calibration + sub-renders) run on a **second** Verovio toolkit instance (`spliceTk`), never the live score's `tk`.
+
+**Why**: Verovio's `loadData`/`setOptions` mutate per-instance state. Sharing `tk` for the splicer's offscreen renders left it loaded with the tiny calibration doc and broke subsequent cursor geometry (re-discovered the chunk-era `chunkTk` lesson — see composer-virtualization-handoff.md). Kept entirely separate.
+
+**Where**: `apps/composer/src/render/render.ts` (`spliceTk` created in `bindToolkit`, passed via `spliceCtx`).
+
+## `@hkl/engine` published as a standalone package `@hexkeylab/engine` (2026-06-22)
+
+**Context**: HKLE is being lifted out of the monorepo for reuse in unrelated apps (first a browser-React app, later Intonalogy via React Native — see `docs/hkle-extraction.md`). This is the build/publish step on top of the earlier DI + manifest-injection work.
+
+**Picked**:
+- **Dual identity, one source.** The workspace package stays `@hkl/engine` (private, `"exports": {"./*.js": "./src/*.ts"}`) so in-repo Vite consumers keep importing raw `.ts` with zero disruption. A **tsup** build (`pnpm --filter @hkl/engine build`) emits a separate self-contained `dist/` — ESM + CJS + `.d.ts` — with its own generated `dist/package.json` naming the public package `@hexkeylab/engine` and a single `.` export.
+- **Bundle `@hkl/shared`, externalize `fflate`.** `noExternal: [/^@hkl\//]` inlines the shared subset so the published package carries no `@hkl/*` deps; `fflate` stays the one real dependency. Bundling fflate inlines its **Node** ESM (`import { createRequire } from "module"`) and breaks browser/Metro builds — caught by the react-consumer gate. Leaving it external lets each consumer's bundler resolve fflate's own `browser`/`node`/`react-native` condition.
+- **Publish from `dist/`, NOT `publishConfig.directory`.** Setting `publishConfig.directory: "dist"` on the workspace package made pnpm redirect the **in-repo** workspace link to `packages/engine/dist` (whose exports only has `.`), breaking every in-repo `@hkl/engine/samples-engine.js` import. So the workspace package has no `publishConfig.directory`; publish with `npm publish packages/engine/dist` (the dir is a complete manifest, `publishConfig.access: public` baked in).
+- **Final couplings removed.** Deleted the engine's Vite-only `import.meta.env.DEV` Iowa-rewrite (legacy dev-server patch that never worked live, predated `.hki`); added an injectable `audioFetch` hook (default global `fetch`); typed the public `loadInstrument` arg as exported `InstrumentDef`/`SampleDef`. HKL's 4 dead Iowa CDN instruments (`piano`/`vibraphone`/`bassoon`/`french_horn`) removed from `samples-data.ts` + the stale UI options; `activeWaveform` placeholder default repointed to `maestro_piano`. The shared `/iowa-mis` dev proxy stays — the **analyzer** still uses it to make `.hki` bundles.
+
+**Verified**: `pnpm typecheck` + `pnpm -r build` (all apps incl. HKL) + `pnpm check:boundaries` + `test/engine-smoke` (Node) + `test/react-consumer` (headless-Chromium browser gate: import → `init()` on a real `AudioContext` → decode → JI triad → `sRampFreq` retune, all green) + `npm publish packages/engine/dist --dry-run` (9 files, no `@hkl/*` deps). **Audio-path behavior is Max's by-ear gate** (loop crossfades / aftertouch / transpose-glide / `.hki` playback) per the standing posture. `test:composer` not run — no Composer/bridge/notation code changed.
+
+**Where**: `packages/engine/{tsup.config.ts,package.json,README.md,LICENSE,src/index.ts}`, `samples-engine.ts` (audioFetch + types, Iowa-rewrite removed). `apps/hkl/src/audio/samples-data.ts` (Iowa entries), `state/audio.ts` (placeholder), `index.html` (options). NEW `test/react-consumer/`. `docs/hkle-extraction.md` (initiative tracker).

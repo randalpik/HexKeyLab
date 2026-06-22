@@ -23,10 +23,64 @@ export interface SampleEngineConfig {
   velocityToGain?: (v: number) => number;
   /** Optional sink for loop-seam crossfade diagnostics. */
   onSeamEvent?: (ev: SeamEvent) => void;
+  /** Fetch raw audio bytes for a URL — CDN samples and shipped `.hki` bundle
+      URLs both route through here. Defaults to global `fetch`. Inject to load
+      bytes however the host needs (e.g. a React Native consumer resolving
+      expo-asset URIs, or a test harness serving fixtures). */
+  audioFetch?: (url: string) => Promise<ArrayBuffer>;
 }
 let instrumentProvider: ((key: string) => Promise<Record<string, Uint8Array> | null>) | null = null;
 let velocityToGain: (v: number) => number = (v) => v / 127;
 let onSeamEvent: ((ev: SeamEvent) => void) | null = null;
+let audioFetch: (url: string) => Promise<ArrayBuffer> =
+  (url) => fetch(url).then((r) => {
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' fetching ' + url);
+    return r.arrayBuffer();
+  });
+
+/** Per-note sample within an instrument. Loosely typed — analyzer output varies
+    by instrument and unknown fields pass through. */
+export interface SampleDef {
+  /** Note name (e.g. 'A4'); used for filePattern substitution + logging. */
+  name: string;
+  /** Reference frequency (Hz) the sample was recorded at. */
+  freq: number;
+  /** Exact filename for CDN fetch / archive lookup (wins over filePattern). */
+  file?: string;
+  /** Per-sample linear gain (normalization). */
+  gain?: number;
+  /** Loop-point times (sec) — legacy single-loop shape. */
+  loopPts?: number[];
+  /** Seam-switching loop segments [{a, b}, …] (sec). */
+  segments?: { a: number; b: number }[];
+  /** Discrete velocity layers (.hki v2); `vel` is the layer reference velocity. */
+  layers?: Array<Record<string, unknown> & { vel?: number }>;
+  /** Analyzer trend-normalization envelope (sustained loops). */
+  trend?: number[];
+  trendHopMs?: number;
+  trendStartSec?: number;
+  [k: string]: unknown;
+}
+
+/** An instrument definition consumed by `loadInstrument`. Either a CDN-fetched
+    set (`baseUrl` + `filePattern` or per-sample `file`) or an `.hki` bundle
+    (`source: 'hki' | 'hki-shipped'`; bytes via `instrumentProvider` / `bundleUrl`). */
+export interface InstrumentDef {
+  name: string;
+  samples: SampleDef[];
+  /** Sustained-loop (true) vs one-shot decay (false/absent). */
+  loop?: boolean;
+  /** Release fade time (sec). */
+  releaseTime?: number;
+  /** Bundle kind; absent = CDN. */
+  source?: 'hki' | 'hki-shipped';
+  baseUrl?: string;
+  ext?: string;
+  filePattern?: string;
+  /** Shipped-bundle URL (source: 'hki-shipped'). */
+  bundleUrl?: string;
+  [k: string]: unknown;
+}
 
 /* Analytic in-flight value of an exponentialRampToValueAtTime, computed from
    JS-tracked ramp state — polyfill for cancelAndHoldAtTime (absent in Firefox).
@@ -51,10 +105,7 @@ function fetchShippedBundle(instr: any): Promise<Record<string, Uint8Array>> {
   /* TS sees the indexed-access type as non-undefined, but a Record index that
      was never assigned IS undefined at runtime — guard explicitly with `in`. */
   if (url in shippedBundleCache) return shippedBundleCache[url];
-  shippedBundleCache[url] = fetch(url).then(r => {
-    if (!r.ok) throw new Error('HTTP ' + r.status + ' fetching ' + url);
-    return r.arrayBuffer();
-  }).then(ab => {
+  shippedBundleCache[url] = audioFetch(url).then(ab => {
     const bundle = readHki(new Uint8Array(ab));
     return bundle.audio;
   }).catch(err => {
@@ -97,25 +148,6 @@ for (let i = 0; i < EQUAL_POWER_LEN; i++) {
   _epFadeIn[i] = Math.sin(t * Math.PI / 2);
 }
 
-/* Dev-only: route Iowa MIS fetches through the Vite middleware (see
-   vite.config.ts → iowaMisTranscodeMiddleware). Two reasons to bridge:
-     (1) theremin.music.uiowa.edu sends no Access-Control-Allow-* headers,
-         so direct browser fetch() fails cross-origin.
-     (2) Iowa ships AIFF only; Firefox's decodeAudioData won't decode AIFF.
-   The middleware proxies the upstream AIFF, transcodes to WAV via ffmpeg,
-   caches it, and returns Content-Type: audio/wav (the URL path keeps its
-   .aif/.aiff suffix — decodeAudioData reads the MIME, not the extension).
-   Mirrors the analyzer's /iowa-mis usage. Production builds are unaffected:
-   import.meta.env.DEV is false in `vite build` output. */
-function rewriteIowaUrl(url: string): string {
-  if (!import.meta.env.DEV) return url;
-  const PITCHES_2014 = 'https://theremin.music.uiowa.edu/sound%20files/MIS%20Pitches%20-%202014/';
-  const LEGACY_MIS   = 'https://theremin.music.uiowa.edu/sound%20files/MIS/';
-  if (url.startsWith(PITCHES_2014)) return '/iowa-mis/' + url.slice(PITCHES_2014.length);
-  if (url.startsWith(LEGACY_MIS))   return '/iowa-mis-legacy/' + url.slice(LEGACY_MIS.length);
-  return url;
-}
-
 let ctx: any = null;
 let master: any = null;
 let sampleMaster: any = null;
@@ -134,6 +166,7 @@ const loadedInstruments: Record<string, any> = {};
       if(config.instrumentProvider)instrumentProvider=config.instrumentProvider;
       if(config.velocityToGain)velocityToGain=config.velocityToGain;
       if(config.onSeamEvent)onSeamEvent=config.onSeamEvent;
+      if(config.audioFetch)audioFetch=config.audioFetch;
     }
   }
   /* Bakes the analyzer-generated trend envelope into the decoded PCM in place.
@@ -163,9 +196,9 @@ const loadedInstruments: Record<string, any> = {};
       }
     }
   }
-  export function loadInstrument(key: string, instrDef: any, onProgress?: (loaded: number, total: number, name: string) => void): Promise<void> {
+  export function loadInstrument(key: string, instrDef: InstrumentDef, onProgress?: (loaded: number, total: number, name: string) => void): Promise<void> {
     return new Promise<void>(function(resolve,reject){
-      var instr=instrDef;loadedInstruments[key]=instrDef;
+      var instr: any=instrDef;loadedInstruments[key]=instrDef;
       if(!instr)return reject(new Error('Unknown instrument: '+key));
       if(buffers[key]){currentInstrument=key;return resolve();}
       var loaded=0,total=instr.samples.length,result: any[] = [];
@@ -273,9 +306,7 @@ const loadedInstruments: Record<string, any> = {};
             var pat=instr.filePattern||('{NOTE}'+instr.ext);
             url=instr.baseUrl+pat.replace('{NOTE}',s.name).replace(/#/g,'%23');
           }
-          arrayBufferPromise=fetch(rewriteIowaUrl(url)).then(function(r){
-            if(!r.ok)throw new Error('HTTP '+r.status);return r.arrayBuffer();
-          });
+          arrayBufferPromise=audioFetch(url);
         }
         arrayBufferPromise.then(function(ab){return ctx.decodeAudioData(ab);}).then(function(buf){
           clearTimeout(timer);if(aborted)return;

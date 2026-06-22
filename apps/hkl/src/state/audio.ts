@@ -57,7 +57,7 @@ export const audio: {
   highShelf: null,
   limiter: null,
   audioEnabled: false,
-  activeWaveform: 'piano',
+  activeWaveform: 'maestro_piano',
   wfLoadingKey: null,
   activeOscs: {},
   keyVelocity: {},
