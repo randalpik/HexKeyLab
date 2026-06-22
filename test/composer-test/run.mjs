@@ -221,6 +221,13 @@ async function main() {
     const cdp = await openPage(wsUrl, URL_DEFAULT, { waitMs: WAIT_MS });
     const console_cap = attachConsoleCapture(cdp);
 
+    /* Opt-in (HKL_INDEX_CHECK=1): verify every freshly-built VoiceIndex against
+     * the original per-query computations across the whole suite. Catches a
+     * missed cache invalidation in the model's navigation index (Phase A). */
+    if (process.env.HKL_INDEX_CHECK) {
+      await cdp.evalJSON(`(window.__HKL_INDEX_CHECK = true)`);
+    }
+
     /* Inject assertion library + cursor-trace fn once. */
     const injected = await cdp.evalJSON(INJECT_LIB);
     if (injected?.__error) throw new Error('injection failed: ' + injected.__error);

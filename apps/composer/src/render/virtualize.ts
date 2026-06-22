@@ -22,6 +22,7 @@ export interface VirtualRibbonOpts {
   bandHeight?: number;      // vertical band (px)
   targetStaffY?: number;    // common staff-line Y (px)
   bufferPx?: number;        // off-screen render margin (px) each side
+  leftMargin?: number;      // left breathing room before measure 0 (px)
   /** Per-chunk post-processing (HEJI/theme/crisp) applied to each freshly
    *  rendered chunk wrapper before it is mounted. */
   postProcess?: (node: HTMLElement) => void;
@@ -37,6 +38,7 @@ export class VirtualRibbon {
   private readonly targetStaffY: number;
   private readonly bufferPx: number;
   private readonly estimate: number;
+  readonly leftMargin: number;
   private readonly postProcess?: (node: HTMLElement) => void;
 
   private canvas: HTMLElement;
@@ -57,11 +59,15 @@ export class VirtualRibbon {
     this.targetStaffY = o.targetStaffY ?? 160;
     this.bufferPx = o.bufferPx ?? 1200;
     this.estimate = o.estimate ?? 400;
+    this.leftMargin = o.leftMargin ?? 0;
     this.postProcess = o.postProcess;
 
     this.canvas = this.container.ownerDocument.createElement('div');
     this.canvas.className = 'hkl-ribbon-canvas';
-    this.canvas.style.cssText = `position:relative;height:${this.bandHeight}px`;
+    /* Left breathing room before measure 0. Set in JS (not CSS) so the renderer
+       can account for it when sizing the cursor overlay — rectForId reports
+       positions in #score's content frame, which this margin shifts right. */
+    this.canvas.style.cssText = `position:relative;height:${this.bandHeight}px;margin-left:${this.leftMargin}px`;
     this.container.addEventListener('scroll', this.onScroll, { passive: true });
   }
 

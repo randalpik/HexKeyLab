@@ -10,6 +10,7 @@ import { injectHejiGlyphs } from '@hkl/notation/heji-render.js';
 import { applyNotationTheme } from '@hkl/notation/verovio.js';
 import { CRISP_PRESETS, crispMarginTop, lineWidthOptions, pinExactScale, snapStaffLinesToGrid, snapBarlines, snapSystemRightEdge } from '@hkl/notation/render-presets.js';
 import { VirtualRibbon } from './virtualize.js';
+import { CURSOR_HPAD, CURSOR_WIDTH } from '@hkl/shared/cursor-geom.js';
 
 /* Scroll-mode chunk layout: pinned vertical spacing so every chunk lays out
  *  staves at the SAME Y (content-independent) — required so chunks align
@@ -19,6 +20,13 @@ import { VirtualRibbon } from './virtualize.js';
 const SCROLL_STAFF_SPACING = 24;
 const SCROLL_TARGET_STAFF_Y = 160;
 const SCROLL_BAND_HEIGHT = 1000;
+/* Left breathing room before the first measure (the scroll ribbon has no
+   page-card margin to supply it). Applied to the ribbon canvas in virtualize.ts. */
+const SCROLL_LEFT_MARGIN = 24;
+/* Extra width past the last measure so the synthetic past-end cursor
+   (rect(lastMeasure).right + 2·CURSOR_HPAD, then CURSOR_WIDTH wide) stays inside
+   the overlay's drawable area and the scrollable extent. */
+const SCROLL_PAST_END_PAD = 2 * CURSOR_HPAD + CURSOR_WIDTH + 4;
 
 export type ViewMode = 'page' | 'scroll';
 /** Score theme. 'transparent' renders like 'dark' (light-source noteheads,
@@ -365,7 +373,7 @@ class Renderer {
         container: this.container!, tk: this.chunkTk ?? this.tk!, options: this.chunkOptions(),
         chunkSize: 8, overlap: 2, estimate: 400,
         bandHeight: SCROLL_BAND_HEIGHT, targetStaffY: SCROLL_TARGET_STAFF_Y, bufferPx: 1200,
-        postProcess: this.postProcessChunk,
+        leftMargin: SCROLL_LEFT_MARGIN, postProcess: this.postProcessChunk,
       });
       this.vrContainer = this.container;
     } else {
@@ -385,6 +393,16 @@ class Renderer {
 
   /** Total ribbon width (scroll canvas), or null when not in scroll mode. */
   ribbonWidth(): number | null { return this.vr?.totalWidth() ?? null; }
+
+  /** Width the cursor overlay (and thus the scrollable extent) must span in
+   *  #score's content frame: left breathing room + ribbon + past-end-cursor pad.
+   *  rectForId reports positions in this frame, so the overlay — anchored at
+   *  (0,0) — must be wide enough to draw the piece-end barline area and the
+   *  synthetic past-end cursor without SVG-viewport clipping. */
+  scrollOverlayWidth(): number | null {
+    if (!this.vr) return null;
+    return this.vr.leftMargin + this.vr.totalWidth() + SCROLL_PAST_END_PAD;
+  }
 
   /** Vertical band height of the scroll ribbon (px). */
   scrollBandHeight(): number { return SCROLL_BAND_HEIGHT; }

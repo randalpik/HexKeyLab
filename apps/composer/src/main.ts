@@ -870,7 +870,7 @@ function reRender(): void {
       /* Scroll mode: the cursor's chunk must be mounted before rectForId can
          resolve it; size the overlay to the full ribbon canvas. */
       renderer.ensureMeasureMounted(visualCursorMeasure());
-      overlay.setAttribute('width', String(Math.max(0, renderer.ribbonWidth() ?? 0)));
+      overlay.setAttribute('width', String(Math.max(0, renderer.scrollOverlayWidth() ?? 0)));
       overlay.setAttribute('height', String(renderer.scrollBandHeight()));
     } else {
       /* Size the overlay to cover EVERY page SVG, not just the first — in page

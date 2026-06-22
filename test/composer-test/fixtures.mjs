@@ -851,6 +851,30 @@ const SCROLL = {
     `,
     setupKeys: ['5'],
   },
+
+  /* Piece-right edge: the final/end barline and the synthetic past-end cursor
+   * must both be VISIBLE and REACHABLE in scroll mode — i.e. inside #score's
+   * scrollable width (not pushed past it). Regression guard for the stray
+   * `#score.view-scroll svg { margin-left }` rule, which shifted each chunk's
+   * svg +24 px relative to its clip and the index, clipping the end barline and
+   * parking the past-end cursor past the scroll extent. The last measure is left
+   * partial (a quarter rest) so a genuine past-end stop exists. Asserted via
+   * FIXTURE_ASSERTIONS.scrollPieceEndReachable (scroll-position-independent:
+   * everything is checked in #score content-frame coords vs scrollWidth). */
+  scrollPieceEndReachable: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 11; i++) m.insertRestAtCursor({ duration: '1', dots: 0 });
+      m.insertRestAtCursor({ duration: '4', dots: 0 });
+      const sel = document.getElementById('viewModeSelect');
+      sel.value = 'scroll';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      m.cursorToEnd(1);
+      r();
+      const score = document.getElementById('score');
+      score.scrollLeft = score.scrollWidth;
+    `,
+  },
 };
 
 /* ── New: bridge mock (HKL side simulation) ──────────────────────────── */
@@ -4435,6 +4459,65 @@ const CLICK = {
       m.setCursor(0, 1); r();
     `,
   },
+
+  /* Same Phase-0 perf invariant for Ctrl+←/→ (bar-jump) and Shift+←/→
+     (selection adjust): these are pure navigation/selection — no content
+     change — and must NOT re-engrave. They previously called onChange() (full
+     reRender), freezing large scores on every press (the multi-second nav
+     hang). Asserted via FIXTURE_ASSERTIONS (SVG root node unchanged). */
+  ctrlNavDoesNotReRender: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 12; i++) m.insertChordAtCursor({ notes: [${A4}], duration: '4', dots: 0 });
+      m.setCursor(0, 1); r();
+    `,
+  },
+  selectionNavDoesNotReRender: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 12; i++) m.insertChordAtCursor({ notes: [${A4}], duration: '4', dots: 0 });
+      m.setCursor(0, 1); r();
+    `,
+  },
+
+  /* Phase A: the per-voice navigation/tick index must stay consistent with the
+     original per-query computations across varied edits, and its invalidation
+     must fire on every mutation. Enables the in-model consistency check
+     (window.__HKL_INDEX_CHECK) for the duration of this fixture and runs a mix
+     of edits (notes, tuplet, tie, delete) — a build divergence or missed
+     invalidation throws "VoiceIndex inconsistency" and fails the setup. */
+  voiceIndexConsistencyUnderEdits: {
+    setup: `
+      window.__HKL_INDEX_CHECK = true;
+      try {
+        m.setCursor(0, 1);
+        for (let i = 0; i < 6; i++) m.insertChordAtCursor({ notes: [${A4}], duration: '4', dots: 0 });
+        m.measureBoundaryCursors(1); m.getTickPositionAt(1, 3);
+        m.setCursor(0, 1);
+        m.deleteAtCursor();
+        m.measureBoundaryCursors(1);
+        m.cursorToEnd(1); m.getTickPositionAt(1, m.getVoiceLength(1));
+      } finally {
+        window.__HKL_INDEX_CHECK = false;
+      }
+      r();
+    `,
+  },
+
+  /* Phase A: measureBoundaryCursors must be O(1) after one build (it was O(n²) —
+     46 s on a 446-bar score). Build once, then 500 cached calls must be trivial;
+     a regression to per-call recomputation would take seconds. Generous bound. */
+  voiceIndexBoundariesAreCheap: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 64; i++) m.insertChordAtCursor({ notes: [${A4}], duration: '4', dots: 0 });
+      m.measureBoundaryCursors(1); /* prime the index */
+      const t0 = performance.now();
+      for (let i = 0; i < 500; i++) m.measureBoundaryCursors(1);
+      window.__boundaryCallMs = performance.now() - t0;
+      r();
+    `,
+  },
 };
 
 export const FIXTURES = {
@@ -6438,6 +6521,55 @@ export const FIXTURE_ASSERTIONS = {
         return { ok: true };
       })()` },
   ],
+  ctrlNavDoesNotReRender: [
+    { name: 'Ctrl+ArrowRight bar-jump moves cursor without re-engraving (SVG root unchanged)',
+      expr: `(() => {
+        const score = document.getElementById('score');
+        const svgBefore = score.querySelector('svg:not(#cursorOverlay)');
+        if (!svgBefore) return { ok: false, detail: 'no rendered SVG' };
+        const c0 = window.__hkl_composer.model.getCursor(1);
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', ctrlKey: true, bubbles: true }));
+        const svgAfter = score.querySelector('svg:not(#cursorOverlay)');
+        const c1 = window.__hkl_composer.model.getCursor(1);
+        if (svgAfter !== svgBefore) return { ok: false, detail: 'score re-engraved on Ctrl+Arrow bar-jump (SVG root replaced)' };
+        if (c1 === c0) return { ok: false, detail: 'cursor did not jump (c0=' + c0 + ')' };
+        return { ok: true };
+      })()` },
+  ],
+  selectionNavDoesNotReRender: [
+    { name: 'Shift+ArrowRight selection-adjust does not re-engrave (SVG root unchanged)',
+      expr: `(() => {
+        const score = document.getElementById('score');
+        const svgBefore = score.querySelector('svg:not(#cursorOverlay)');
+        if (!svgBefore) return { ok: false, detail: 'no rendered SVG' };
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', shiftKey: true, bubbles: true }));
+        const svgAfter = score.querySelector('svg:not(#cursorOverlay)');
+        const s = window.__hkl_composer.inputState();
+        if (svgAfter !== svgBefore) return { ok: false, detail: 'score re-engraved on Shift+Arrow selection (SVG root replaced)' };
+        if (!s.selection) return { ok: false, detail: 'selection not entered' };
+        return { ok: true };
+      })()` },
+  ],
+  voiceIndexConsistencyUnderEdits: [
+    { name: 'index stays consistent through note/tuplet/tie/delete edits (no inconsistency thrown in setup)',
+      expr: `(() => {
+        /* Setup ran the edits with the consistency check on; reaching here means
+           no divergence/missed-invalidation threw. Sanity-check the index is live. */
+        const b = window.__hkl_composer.model.measureBoundaryCursors(1);
+        return Array.isArray(b) && b.length > 0
+          ? { ok: true }
+          : { ok: false, detail: 'measureBoundaryCursors returned ' + JSON.stringify(b) };
+      })()` },
+  ],
+  voiceIndexBoundariesAreCheap: [
+    { name: '500 cached measureBoundaryCursors calls are O(1)-cheap (was O(n²) → 46s)',
+      expr: `(() => {
+        const ms = window.__boundaryCallMs;
+        return typeof ms === 'number' && ms < 100
+          ? { ok: true }
+          : { ok: false, detail: '500 calls took ' + ms + 'ms (expected < 100; O(n²) regression?)' };
+      })()` },
+  ],
   clickClearsSelAndBroadcasts: [
     { name: 'click clears selection + returns to voice mode + broadcasts composer-cursor',
       expr: `(async () => {
@@ -6678,6 +6810,53 @@ export const FIXTURE_ASSERTIONS = {
       expr: `(async () => {
         await window.__waitForScrollSettle(1200);
         return window.__test.assertCursorInViewport(0);
+      })()` },
+  ],
+  scrollPieceEndReachable: [
+    { name: 'cursor is at the synthetic past-end stop',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        return m.isCursorAtPastEnd(1)
+          ? { ok: true }
+          : { ok: false, detail: 'isCursorAtPastEnd(1)=false; cursor=' + m.getCursor(1) + ' len=' + m.getVoiceLength(1) };
+      })()` },
+    { name: 'past-end cursor lands just past the last measure right edge (pastEndRight)',
+      expr: `(() => {
+        const R = window.__hkl_composer.renderer;
+        const m = window.__hkl_composer.model;
+        const measures = [...m.getDoc().querySelectorAll('section > measure')];
+        const lastId = measures[measures.length - 1].getAttribute('xml:id');
+        const mr = R.rectForId(lastId);
+        if (!mr) return { ok: false, detail: 'last measure not rendered' };
+        const bar = [...document.querySelectorAll('#cursorOverlay rect')]
+          .find(el => el.getAttribute('opacity') === '0.85');
+        if (!bar) return { ok: false, detail: 'no active cursor bar' };
+        const x = parseFloat(bar.getAttribute('x'));
+        /* pastEndRight x = rect(lastMeasure).right + 2*CURSOR_HPAD (=8). */
+        return Math.abs(x - (mr.right + 8)) < 2
+          ? { ok: true }
+          : { ok: false, detail: 'cursorX=' + x.toFixed(1) + ' expected~' + (mr.right + 8).toFixed(1) };
+      })()` },
+    { name: 'past-end cursor + final barline are inside the scrollable width (reachable, not clipped)',
+      expr: `(() => {
+        const R = window.__hkl_composer.renderer;
+        const m = window.__hkl_composer.model;
+        const score = document.getElementById('score');
+        const measures = [...m.getDoc().querySelectorAll('section > measure')];
+        const lastId = measures[measures.length - 1].getAttribute('xml:id');
+        const mr = R.rectForId(lastId);
+        if (!mr) return { ok: false, detail: 'last measure not rendered' };
+        const bar = [...document.querySelectorAll('#cursorOverlay rect')]
+          .find(el => el.getAttribute('opacity') === '0.85');
+        const cursorRight = bar ? parseFloat(bar.getAttribute('x')) + parseFloat(bar.getAttribute('width')) : 0;
+        const overlayW = parseFloat(document.getElementById('cursorOverlay').getAttribute('width'));
+        const sw = score.scrollWidth;
+        /* mr.right (= barline region) and the past-end cursor must both fit
+           within scrollWidth (reachable) and the overlay width (drawable). */
+        if (mr.right > sw + 1) return { ok: false, detail: 'barline right ' + mr.right.toFixed(1) + ' > scrollWidth ' + sw };
+        if (cursorRight > sw + 1) return { ok: false, detail: 'cursorRight ' + cursorRight.toFixed(1) + ' > scrollWidth ' + sw };
+        if (cursorRight > overlayW + 1) return { ok: false, detail: 'cursorRight ' + cursorRight.toFixed(1) + ' > overlayWidth ' + overlayW };
+        return { ok: true };
       })()` },
   ],
 

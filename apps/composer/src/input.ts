@@ -1260,8 +1260,12 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
 
   function setStateAfterSelectionChange(): void {
     if (state.selection) hooks.setStatus?.(formatSelectionStatus(state.selection), 'state');
-    hooks.onStateChange();
-    hooks.onChange();
+    /* Selection adjustment changes no content — the highlight is drawn by
+       selectionOverlay.update inside onStateChange. Use the cheap cursor-move
+       path (onStateChange + scroll-into-view, no reRender); the old onChange()
+       here forced a full re-engrave on every Shift+←/→ (multi-second on large
+       scores). */
+    hooks.onCursorMove();
   }
 
   /** Inclusive 0-based measure span the selection touches — used to apply a
@@ -1503,8 +1507,8 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       e.preventDefault();
       exitSelectionToMovable();
       hooks.setStatus?.('Selection cancelled.', 'info');
-      hooks.onStateChange();
-      hooks.onChange();
+      /* Exiting selection changes no content — cheap path, no reRender. */
+      hooks.onCursorMove();
       return true;
     }
     // Shift+Arrow / Ctrl+Shift+Arrow — adjust selection. Selection no
@@ -2298,8 +2302,9 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         if (mode === 'expr') state.exprCursor = moved;
         else if (mode === 'pedal') state.pedalCursor = moved;
         else state.tempoCursor = moved;
-        hooks.onChange();
-        hooks.onStateChange();
+        /* Pure navigation — no content change. Use the cheap cursor-move path
+           (no reRender); a full reRender here froze large scores. */
+        hooks.onCursorMove();
         return;
       }
       if (state.cursorMode !== 'voice') return;
@@ -2325,8 +2330,10 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         }
         if (prev !== undefined) model.setCursor(prev);
       }
-      hooks.onChange();
-      hooks.onStateChange();
+      /* Bar-jump is pure navigation — no content change. Use the cheap
+         cursor-move path (no reRender); a full reRender here froze large
+         scores on every Ctrl+←/→ (the multi-second nav hang). */
+      hooks.onCursorMove();
       return;
     }
 

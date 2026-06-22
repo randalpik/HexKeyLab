@@ -67,6 +67,7 @@ import {
   locateFlatElement,
   type CursorLocation,
 } from './cursor-location.js';
+import { buildVoiceIndex, type VoiceIndex } from './voice-index.js';
 import { normalizeTies, setTieFlag, clearTieFlag } from './ties.js';
 import {
   isCursorInTuplet as isCursorInTupletImpl,
@@ -336,6 +337,16 @@ function emptyMeiDoc(setup: SetupDefaults = {}): Document {
 
 /* ── model class ─────────────────────────────────────────────────────────── */
 
+/* When set (e.g. by the test runner), every freshly-built VoiceIndex is
+   verified against the original per-query computations — a missed cache
+   invalidation or a build divergence fails a test, not Max's session. Off in
+   production (zero overhead). Read at call time so a running page can toggle
+   `globalThis.__HKL_INDEX_CHECK = true` and have it take effect immediately. */
+function indexCheckEnabled(): boolean {
+  return typeof globalThis !== 'undefined' &&
+    (globalThis as { __HKL_INDEX_CHECK?: boolean }).__HKL_INDEX_CHECK === true;
+}
+
 export class ComposerModel {
   private doc: Document;
   private currentVoice: Voice = 1;
@@ -373,6 +384,57 @@ export class ComposerModel {
         totalStaves: number;
       }
     | null = null;
+  /** Cached per-voice navigation/tick index (see voice-index.ts). Built lazily
+   *  by voiceIndex(); shares meterCache's lifecycle — cleared by
+   *  invalidateMeterCache() (which every structural/content/meter mutation
+   *  reaches via normalizePlaceholdersAll). Makes getTickPositionAt /
+   *  measureBoundaryCursors / cursor-measure lookups O(1) after one O(n) build,
+   *  instead of the prior O(n²). */
+  private voiceIndexCache: Map<Voice, VoiceIndex> = new Map();
+
+  /** Get (build + cache) the navigation index for a voice. */
+  private voiceIndex(voice: Voice): VoiceIndex {
+    let idx = this.voiceIndexCache.get(voice);
+    if (!idx) {
+      idx = buildVoiceIndex(this, voice);
+      this.voiceIndexCache.set(voice, idx);
+      if (indexCheckEnabled()) this.assertVoiceIndexConsistent(voice, idx);
+    }
+    return idx;
+  }
+
+  /** Test-only: verify a freshly-built VoiceIndex matches the original
+   *  per-query computations (catches a missed invalidation or a build
+   *  divergence). Enabled by INDEX_CONSISTENCY_CHECK. Throws on mismatch. */
+  private assertVoiceIndexConsistent(voice: Voice, idx: VoiceIndex): void {
+    const EPS = 1e-6;
+    const fail = (msg: string): never => {
+      throw new Error(`VoiceIndex inconsistency (voice ${voice}): ${msg}`);
+    };
+    const slow = this.flatChildren(voice);
+    if (slow.length !== idx.stops.length) fail(`stop count ${idx.stops.length} vs ${slow.length}`);
+    for (let c = 0; c < slow.length; c++) {
+      if (idx.stops[c] !== slow[c]) fail(`stop[${c}] element mismatch`);
+      if (Math.abs(idx.tickPos[c] - this.getTickPositionAtUncached(voice, c)) > EPS)
+        fail(`tickPos[${c}] ${idx.tickPos[c]} vs ${this.getTickPositionAtUncached(voice, c)}`);
+      const info = this.getFlatStopInfoUncached(voice, c);
+      if (!info) fail(`getFlatStopInfoUncached null at ${c}`);
+      else {
+        if (idx.measureIdx[c] !== info.measureIdx) fail(`measureIdx[${c}] ${idx.measureIdx[c]} vs ${info.measureIdx}`);
+        if ((idx.inTuplet[c] === 1) !== info.inTuplet) fail(`inTuplet[${c}] mismatch`);
+      }
+    }
+    if (Math.abs(idx.tickPos[slow.length] - this.getTickPositionAtUncached(voice, slow.length)) > EPS)
+      fail(`total tick ${idx.tickPos[slow.length]} vs ${this.getTickPositionAtUncached(voice, slow.length)}`);
+    const slowB = this.measureBoundaryCursorsUncached(voice);
+    if (slowB.length !== idx.boundaries.length || slowB.some((v, i) => v !== idx.boundaries[i]))
+      fail(`boundaries [${idx.boundaries}] vs [${slowB}]`);
+    const measureCount = idx.measureStopPrefix.length - 1;
+    for (let mi = 0; mi <= measureCount; mi++) {
+      if (idx.measureStopPrefix[mi] !== this.getMeasureStartCursorUncached(voice, mi))
+        fail(`measureStopPrefix[${mi}] ${idx.measureStopPrefix[mi]} vs ${this.getMeasureStartCursorUncached(voice, mi)}`);
+    }
+  }
 
   constructor(initialMei?: string) {
     if (initialMei) {
@@ -648,6 +710,13 @@ export class ComposerModel {
   /** Flat-children cursor index of the first navigable stop in `measureIdx`
    *  for `voice` (the wrapper if emitted, else the first layer stop). */
   getMeasureStartCursor(voice: Voice, measureIdx: number): number {
+    const idx = this.voiceIndex(voice);
+    const measureCount = idx.measureStopPrefix.length - 1;
+    return idx.measureStopPrefix[Math.max(0, Math.min(measureIdx, measureCount))];
+  }
+
+  /** Original cumulative computation — kept for the consistency check. */
+  getMeasureStartCursorUncached(voice: Voice, measureIdx: number): number {
     const measures = this.allMeasures();
     if (measureIdx <= 0) return 0;
     const cap = Math.min(measureIdx, measures.length);
@@ -676,13 +745,11 @@ export class ComposerModel {
    *  to the cursor's left). Visual measure = anchor's containing measure.
    *  Past-end (c === flat.length): last existing measure. */
   private cursorVisualMeasureAtIndex(voice: Voice, c: number, _mode: 'insert' | 'overwrite'): number {
-    const measures = this.allMeasures();
-    if (measures.length === 0) return -1;
-    const flat = this.flatChildren(voice);
-    if (c >= flat.length) return measures.length - 1; /* past-end */
-    const anchor = flat[c];
-    const m = anchor.closest('measure');
-    return m ? measures.indexOf(m) : 0;
+    const idx = this.voiceIndex(voice);
+    const measureCount = idx.measureStopPrefix.length - 1;
+    if (measureCount === 0) return -1;
+    if (c >= idx.stops.length) return measureCount - 1; /* past-end */
+    return idx.measureIdx[Math.max(0, c)];
   }
 
   /** Measure index of the cursor's VISUAL anchor — i.e., where the cursor
@@ -705,16 +772,16 @@ export class ComposerModel {
   getFirstVisualCursorInMeasure(
     voice: Voice,
     measureIdx: number,
-    mode: 'insert' | 'overwrite' = 'insert',
+    _mode: 'insert' | 'overwrite' = 'insert',
   ): number {
-    const measures = this.allMeasures();
-    if (measureIdx < 0 || measureIdx >= measures.length) return -1;
-    const flat = this.flatChildren(voice);
-    for (let c = 0; c <= flat.length; c++) {
-      if (this.cursorVisualMeasureAtIndex(voice, c, mode) === measureIdx) {
-        return c;
-      }
-    }
+    const idx = this.voiceIndex(voice);
+    const measureCount = idx.measureStopPrefix.length - 1;
+    if (measureIdx < 0 || measureIdx >= measureCount) return -1;
+    const f = idx.firstVisual[measureIdx];
+    if (f >= 0) return f;
+    /* No stop visually in this measure: the past-end position maps to the LAST
+       measure (matches cursorVisualMeasureAtIndex), so it answers there. */
+    if (measureIdx === measureCount - 1) return idx.stops.length;
     return -1;
   }
 
@@ -726,6 +793,12 @@ export class ComposerModel {
    *  Ctrl+Shift+Arrow (selection-mode bar extension) and Ctrl+Arrow
    *  (voice-mode bar jump) so the two land identically. */
   measureBoundaryCursors(voice: Voice): number[] {
+    /* Fresh array (callers may mutate); the cached source stays immutable. */
+    return this.voiceIndex(voice).boundaries.slice();
+  }
+
+  /** Original O(n²) boundary computation — kept for the consistency check. */
+  measureBoundaryCursorsUncached(voice: Voice): number[] {
     const flat = this.flatChildren(voice);
     const candidates: Array<{ c: number; t: number }> = [];
     for (let c = 0; c <= flat.length; c++) {
@@ -733,15 +806,11 @@ export class ComposerModel {
       if (c === flat.length) {
         t = this.measureStartTick(this.allMeasures().length);
       } else {
-        const info = this.getFlatStopInfo(voice, c);
+        const info = this.getFlatStopInfoUncached(voice, c);
         if (!info) continue;
         if (info.inTuplet) continue;
-        t = this.getTickPositionAt(voice, c);
+        t = this.getTickPositionAtUncached(voice, c);
       }
-      /* A position is a barline iff its absolute tick coincides with some
-         measure start. measureIdxAtTick(t) is the measure whose start is the
-         greatest ≤ t, so inMeas≈0 captures both "start of M_k" and "end of a
-         full M_{k-1}" (whose tick equals M_k's start). */
       const mi = this.measureIdxAtTick(t);
       const inMeas = t - this.measureStartTick(mi);
       const budget = this.measureTicksAt(mi);
@@ -773,6 +842,12 @@ export class ComposerModel {
    *  cursor. Past-end (`c >= flat.length`) returns the score's total tick
    *  length. */
   getTickPositionAt(voice: Voice, c: number): number {
+    const idx = this.voiceIndex(voice);
+    return idx.tickPos[Math.max(0, Math.min(c, idx.stops.length))];
+  }
+
+  /** Original per-query tick computation — kept for the index consistency check. */
+  getTickPositionAtUncached(voice: Voice, c: number): number {
     const flat = this.flatChildren(voice);
     if (c >= flat.length) {
       return this.measureStartTick(this.allMeasures().length);
@@ -798,6 +873,18 @@ export class ComposerModel {
    *  layer-level position. Past-end yields `measureIdx === allMeasures.length`
    *  (synthetic next-measure slot). */
   getFlatStopInfo(voice: Voice, c: number): { measureIdx: number; inTuplet: boolean } | null {
+    const idx = this.voiceIndex(voice);
+    if (c < 0) return null;
+    if (c >= idx.stops.length) {
+      /* Past-end: matches locateCursor's synthetic next-measure slot. */
+      if (this.allMeasures().length === 0) return null;
+      return { measureIdx: this.allMeasures().length, inTuplet: false };
+    }
+    return { measureIdx: idx.measureIdx[c], inTuplet: idx.inTuplet[c] === 1 };
+  }
+
+  /** Original per-query stop info — kept for the index consistency check. */
+  getFlatStopInfoUncached(voice: Voice, c: number): { measureIdx: number; inTuplet: boolean } | null {
     const loc = locateCursor(this, voice, c);
     if (!loc) return null;
     return { measureIdx: loc.measureIdx, inTuplet: loc.inTuplet !== null };
@@ -1135,6 +1222,10 @@ export class ComposerModel {
    *  every structural mutation ends in normalizePlaceholdersAll(). */
   invalidateMeterCache(): void {
     this.meterCache = null;
+    /* The voice index depends on the measure set + meter + content; all of
+       those changes reach here (directly or via normalizePlaceholdersAll), so
+       this is the single invalidation point for the navigation index too. */
+    this.voiceIndexCache.clear();
   }
 
   /** Lazily build the per-measure tick table. Walks the single `<section>`'s
@@ -2104,7 +2195,10 @@ export class ComposerModel {
   }
 
   /** Flat navigable children across all measures for voice. See
-   *  cursor-location.ts for the stop-emission rules. */
+   *  cursor-location.ts for the stop-emission rules. Always recomputed fresh:
+   *  mutation code (insert/tie/split) reads this MID-operation, before the
+   *  end-of-mutation invalidation, so it must never be cached. The expensive
+   *  per-element tick math is what the cached voice index removes, not this. */
   flatChildren(voice: Voice): Element[] {
     return flatChildrenImpl(this, voice);
   }

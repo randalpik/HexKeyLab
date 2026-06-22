@@ -119,13 +119,14 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
    either #score (scroll mode) or a .score-page wrapper (page mode), so
    it contributes to #score's scrollable area. */
 #score svg:not(#cursorOverlay) { display: block; margin: 0 }
-/* Scroll mode: the SVG sits directly in #score (no .score-page wrapper
-   supplying breathing room), so give it a small left margin. The cursor
-   overlay's width calculation (svgRect.right − scoreRect.left) naturally
-   includes this offset, and rectForId returns container-relative coords
-   that already account for it — cursor and selection markers land
-   correctly without further adjustment. */
-#score.view-scroll svg:not(#cursorOverlay) { margin-left: 24px }
+/* Scroll mode: each chunk's SVG is absolutely positioned inside its own
+   .hkl-chunk wrapper (clipped to the chunk's measure x-range) at a `left`
+   computed from the MeasureIndex. A margin on the SVG would shift its content
+   relative to the wrapper's clip and the index's x — pushing the piece-end
+   barline (and the past-end cursor) past the clip edge and the canvas width.
+   So the chunk SVGs carry NO margin. Left breathing room is supplied once by
+   the ribbon canvas's margin-left, set in JS (virtualize.ts) so the renderer
+   can size the cursor overlay to match (see render.ts scrollOverlayWidth). */
 /* Cursor overlay is sized to match Verovio's SVG dimensions in JS so it
    covers the same scrollable area. Both children of #score scroll together.
    Positioned absolute at (0, 0); the overlay's width/height are extended

@@ -336,6 +336,14 @@ Verify by parsing the raw cmap (endCode arrays) for the `0xFFFF` count before/af
 
 `.ctrls label:has(input){cursor:pointer}` is in the existing CSS. Browser support is universal as of 2024. Don't waste time avoiding it.
 
+### Offscreen-measured DOM does NOT inherit container-scoped CSS — mounting can shift geometry
+
+The virtualized scroll renderer measures each chunk's `<svg>` in an offscreen `host` div appended to `document.body` (`chunk-render.ts`), then moves the live svg into a clip wrapper inside `#score`. Geometry read offscreen (`getBoundingClientRect`, wrapper width, the index's per-measure x) is taken in a context where **`#score`-scoped CSS does not apply** — so any rule like `#score.view-scroll svg { margin-left: 24px }` silently shifts the content the moment it's mounted, *after* the measurements that positioned the clip and the index were taken.
+
+This caused the whole "piece-end barline clipped + past-end cursor unreachable" class of bug (issues 1–3 of the virtualization handoff): a stray legacy margin shifted every chunk +24px past its `overflow:hidden` clip and past the canvas/scroll extent. Symptom was maddening because the barline element *was* present in the DOM at the "right" coordinates — the coordinates just didn't match where CSS finally painted it.
+
+**Rules**: (1) Anything measured offscreen and then mounted into a scoped container must not be subject to layout-affecting container CSS (margins/padding/transform on the measured element). Keep such offsets on a *wrapper the renderer owns and accounts for*, not on the measured element. (2) When DOM coordinates "look right" but the visual is wrong, suspect a CSS offset applied at mount that the measurement frame didn't see — compare a render-time `getBoundingClientRect` against the same element's live rect (they should be identical; a constant delta is the smoking gun). (3) `#score.view-scroll` breathing room now lives on the ribbon canvas via JS (`VirtualRibbon.leftMargin`), and the cursor overlay is sized to match (`render.ts scrollOverlayWidth`) — keep those two in lockstep.
+
 ---
 
 ## SysEx / MIDI plumbing
