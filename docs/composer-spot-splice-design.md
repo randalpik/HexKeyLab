@@ -19,12 +19,19 @@ an archive of what we learned). The chunk modules (`virtualize.ts`,
 |---|---|---|
 | **A** | Model navigation index (O(1) nav/tick) | ✅ **done** |
 | **B1** | Single persistent-SVG scroll render | ✅ **done** |
-| **B2** | Spot-splice on edit (surgical re-render) | ✅ **done — shipped** |
-| **B3** | Incremental edit pipeline (per-edit latency) | ⏳ **next** — planned, see below |
+| **B2** | Spot-splice on edit (surgical re-render) | ✅ **done — shipped** (+ anchor/cascade correctness fix, see B2 below) |
+| **B3** | Incremental edit pipeline (per-edit latency) | 🟡 **substantially done** — see below; remaining levers listed |
 | **C** | Page view (cascade systems off the hot path) | later |
 
-A fresh thread picking up performance work wants **Phase B3**. Everything above
-it is shipped and green (`pnpm test:composer` 311/311 + `HKL_INDEX_CHECK`).
+Everything is green: `pnpm test:composer` **312/312** + `HKL_INDEX_CHECK` (the
+B3 work added two consistency gates — scoped-ties and dirty-range — plus the
+`scrollWidthChangeCascadesRight` geometry fixture). A fresh thread continuing
+performance work should read **Phase B3 → Remaining levers** at the bottom.
+
+**Bottom line on latency:** a mid-score delete on the 446-bar sonata went from
+multi-second → ~250 ms → **~150 ms** (Max's Firefox). It's at the usability
+threshold; further wins are now diminishing (5–11 % items) and partly
+browser-layout-bound (see "What we learned about the layout floor").
 
 ## The four invariants (design contract — still hold)
 
@@ -109,9 +116,14 @@ through `render.ts` (`renderComposer`/`renderScroll`) and `main.ts` (`reRender`)
 4. **Render** the sub-MEI on a **dedicated `spliceTk` toolkit** (never the live
    one — sharing it pollutes the score's toolkit state), `postProcess` it.
 5. **Splice the DOM:** replace the changed `g.measure`s by `xml:id`; one
-   `translate(dx, dy)` anchored on an UNCHANGED context measure (never the sub's
-   system-first measure, which gets a spurious leading clef); merge glyph `<defs>`
-   by SMuFL codepoint.
+   `translate(dx, dy)` anchored on an UNCHANGED context measure; merge glyph
+   `<defs>` by SMuFL codepoint. The anchor is the **LEFT** context measure
+   (`lo-1`), so the edited run stays joined to its unchanged left neighbour and
+   the width change cascades RIGHTWARD. Use **2 left-context** measures so the
+   anchor isn't the sub's system-first measure (which carries a spurious leading
+   clef → wrong width/x). `dy` must add the anchor's `ty` just as `dx` adds its
+   `tx` — `getBBox()` excludes the element's own transform. (See the B2
+   correctness fix below — this corrects an earlier right-anchor bug.)
 6. **X-cascade:** shift every following persistent measure by `Δ`. Old + new runs
    must expand symmetrically (`oldHi = hiNew + countDelta`) or measures duplicate.
 
@@ -137,6 +149,24 @@ with a single `dy`; cross-staff spanners are correct by construction.
 > collision, and even an x-aware sweep mispredicts Verovio (barlines/braces/
 > cross-staff stems span the gap). See the Appendix and decisions.md.
 
+### B2 correctness fix — anchor LEFT, cascade RIGHT (2026-06)
+
+The original splice anchored on the **right** context when a measure followed the
+run. That made the right-context measure *both* the anchor *and* the cascade's
+shift reference, so `delta` computed to exactly **0** — the cascade never fired.
+The run's right edge got pinned to the unmoved right neighbour and its **left**
+edge floated, so any width-changing edit (delete/insert) opened a gap or overlap
+with the **left** neighbour and nothing after the edit moved. Plus `dy` omitted
+the anchor's `ty` (while `dx` added `tx`), giving vertical misalignment when
+editing next to a previously-spliced measure (nonzero `ty`, which arises when the
+sub-render baseline differs from the full render — varied vertical content).
+
+Fix: anchor on the **left** context (`anchorIdx = lo>0 ? lo-1 : 0`, `leftCtx =
+min(2, lo)`) and add `ty` to `dy`. The correct splice therefore performs an
+**O(trailing-measures)** cascade (one `transform` write per following measure) on
+every width-changing edit — cheap (writes, not layout), but see the C-phase note
+on group-translating the trailing measures if it ever bites.
+
 ### Where the details live
 
 - **decisions.md:** synthetic-spacer (`stem.len`) approach; dedicated `spliceTk`;
@@ -144,85 +174,123 @@ with a single `dy`; cross-staff spanners are correct by construction.
 - **lessons.md:** glyph defs are `<g id>` not `<symbol>` (merge by codepoint);
   cursor-overlay cleanup (a splice doesn't reset `#score.innerHTML`);
   `normalizePlaceholders` must be idempotent (id churn defeats the diff);
-  `normalizeTies` O(n²) prunes (the big edit-latency culprit); splice run-symmetry
-  (expand old + new runs together or measures duplicate).
-- **Guard fixture:** `scrollEditSplicesNotFullRender` (asserts a scroll edit
-  splices — persistent SVG root node reused — not full-re-engraves).
-- **Throwaway measurement harness:** `test/composer-inspect/spike-b2.mjs` (phases
-  `realdelete` / `breakdown` time the mutation vs render vs sub-passes).
+  `normalizeTies` O(n²) prunes; splice run-symmetry (expand old + new runs
+  together or measures duplicate); **anchor LEFT + `dy` adds `ty`** (the
+  correctness fix above); **`display:none` on the persistent SVG backfires**
+  (full relayout on restore — see B3).
+- **Guard fixtures:** `scrollEditSplicesNotFullRender` (a scroll edit splices —
+  persistent SVG root reused — not full-re-engraves); **`scrollWidthChangeCascadesRight`**
+  (a width-changing mid-score edit splices to the SAME measure x/y as a full
+  re-engrave — caught the right-anchor bug at 1260 px).
+- **Throwaway measurement harness:** `test/composer-inspect/spike-b2.mjs`.
 
 ### B2 acceptance (met)
 
 Single-note / insert / delete edit on the sonata splices (no full re-engrave),
 pixel-identical to a full render for the edited measures (incl. cross-staff
-spanners); file open / reflow / view-setting change are the only full renders.
+spanners AND measure x/y after width changes); file open / reflow / view-setting
+change are the only full renders.
 
 ---
 
-## Phase B3 — incremental edit pipeline ⏳ NEXT (planned, not started)
+## Phase B3 — incremental edit pipeline 🟡 substantially done
 
-B2 splice is shipped and correct; this is the **per-edit latency** follow-up.
-Tackle on a fresh thread — measurements + strategy below are the handoff.
+The **per-edit latency** follow-up to B2. Editing the 446-bar sonata went
+multi-second → ~2.7 s → ~400 ms (B2 fixes) → **~150 ms** (B3, Max's Firefox).
 
-### Where we are (the latency journey)
+### How to profile this (don't use a synthetic score)
 
-Editing the 446-bar sonata was multi-second per keystroke. Fixed so far:
-- **`normalizeTies` O(n²) prunes** — `pruneDanglingSlurs`/`pruneDanglingArticControls`
-  scanned all notes *per spanner/control*. Now build the id-set once (O(n)). THE
-  big one (~2.2 s of a 2.7 s hang).
-- **`normalizePlaceholders` id churn** — regenerated every placeholder id every
-  edit → made every measure look dirty to the splicer. Now idempotent.
-- **Splice serializes only the edited range** — `model.serializeRangeForRender`
-  (+ `cloneRangeStructure` clones only head + range, not the whole doc).
+A synthetic doc (`appendMeasure` + sparse inserts, ~1300 notes, empty bars)
+splices in ~30 ms and **does not reproduce** the cost. The real sonata is
+**9099 notes / 446 bars / 918 slurs**. Load it headless and drive edits:
+- `~/Documents/sonataBr1.musicxml` → `window.__composerImportMusicXml(xmlText)`
+  (test hook in `main.ts`) → set scroll view → `reRender()`.
+- `model.setCursor(flatIndex, voice)` takes a FLAT index; edit position matters
+  (mid-score flat ~120+ is the slow path; measure 0 / degenerate bars mislead).
+- Drive `deleteAtCursor` / `insertChordAtCursor`, time `reRender`. **Drive
+  through the input layer (keystrokes) to include `withHistory`** — calling the
+  model directly skips snapshotState.
+- **Chromium under-reports the layout costs** (`getScreenCTM`/`getBBox` flushes)
+  that dominate in Firefox — it lays the 190k-px SVG out cheaply. Profile JS
+  passes in Chromium; confirm layout-bound items (`snapBarlines`, `renderToSVG`)
+  in Firefox. (Working throwaway harnesses lived in the session scratchpad.)
 
-Result: **~2.7 s → ~400 ms** per edit on the sonata (Max's browser). Usable, not great.
+### What landed (each gated; testing after each)
 
-### Remaining bottlenecks (DevTools @ ~400 ms)
+The model now tracks a **dirty-measure range** (`ComposerModel.renderDirty`,
+`'all' | {lo,hi}`). Safe-by-default: `invalidateMeterCache()` (reached by every
+structural mutation) resets it to `'all'`; a converted mutation NARROWS it via
+`markDirtyMeasures` / `markEditAround(mi)` AFTER its final
+`normalizePlaceholdersAll()`. An unconverted path stays `'all'` → full behaviour.
+A missing/too-tight mark can only over-render, never corrupt.
 
-No single culprit — **~6 O(total) passes per edit, each a slice**. An edit touches
-1–2 measures but each pass walks all 446:
+1. **Diff** — the splice reuses last render's cached per-measure sigs outside the
+   dirty window instead of re-serializing all measures. *Win: ~1 ms — the diff was
+   never the bottleneck.* Test-gate (`HKL_INDEX_CHECK`) rebuilds the full sig map
+   and throws if the range was too tight.
+2. **`normalizeTies` scoped** (the doc's "riskiest piece") — re-realize ties only
+   in dirty±1 measures per voice (`realizeScoped` + a **ranged** `tieEventSequence`
+   so it doesn't even walk all measures), seeding `prevOffers` from the existing
+   realized `@tie` on the event before the window. Bulletproof gate: in test mode
+   it runs the full rebuild after and asserts byte-equality, leaving the doc in the
+   full-correct state regardless. The two prunes now share ONE id-set; inserts skip
+   prunes (can't orphan). **~45–85 ms → ~10 ms.**
+3. **`clampCursors` single-voice** — it called `getVoiceLength` (uncached
+   `flatChildren`, O(total)) for ALL voices every edit; a single-voice content edit
+   only changes one voice's length. **~32 ms → ~7 ms.** (This emerged as the
+   biggest mutation cost once ties were scoped — bigger than ties.)
+4. **`snapshotState` BEFORE-MEI reuse** — `withHistory` serialized the whole doc
+   TWICE per edit (before+after). `HistoryManager.committedMei()` returns the last
+   push's AFTER-MEI (= the live doc between edits); `snapshotStateReusing` reuses it
+   for the BEFORE, serializing once. Test-gate asserts the reused MEI matches the
+   live doc (catches any mutation bypassing `history.push`). **~13 ms/edit saved.**
+5. **`snapBarlines` / `snapStaffLinesToGrid` thrash** — split read-all-then-write-all
+   (was `getScreenCTM`→`setAttribute` per element, N forced layouts → 1). Behaviour-
+   identical (312 visual baselines unchanged).
 
-- **Mutation (~55%):** `normalizeTies` (strips/rebuilds ALL tie state, every
-  measure × voice — now linear but O(total)); `normalizePlaceholdersAll` (walks
-  every layer — idempotent but O(total)).
-- **Splice (~45%):** the dirty diff re-serializes ALL live measures;
-  `expandForSpanners` rebuilds a note→measure map over ALL measures;
-  `renderToSVG` + `postProcess` are O(range) with fixed overhead (partly
-  inherent); plus the browser re-laying-out / repainting the single giant SVG on
-  mutation (likely the larger cost on slow renderers — NOT fixed by the strategy
-  below).
+Converted mutations: `insertChordAtCursor`, `insertRestAtCursor`, `deleteAtCursor`
+(its count-preserving branches; measure-deletion stays full/unscoped).
+`replaceChordAtCursor` and most others are NOT converted — they stay `'all'`
+(correct, full diff), available as the next conversion if needed.
 
-> NB: `getElementById` does **not** resolve `xml:id` in the live MEI doc
-> (verified), so spanner endpoints can't be resolved O(1) without a *maintained*
-> note→measure index.
+### What we learned about the layout floor
 
-### Strategy: one dirty-measure range, consumed everywhere
+- **`normalizePlaceholdersAll` is already cheap (~3.6 ms)** — the B2 idempotency
+  fix did it; scoping it (the doc's original step 3) is NOT worth it.
+- **`expandForSpanners` is ~10–15 ms**, not the predicted bottleneck; the
+  maintained note→measure index (original step 4) is deferred.
+- **`getScreenCTM` (snapBarlines) ~16–19 % in Firefox is the layout floor.** It
+  forces a flush that re-lays-out the giant persistent SVG. **Dead end recorded:**
+  `display:none`-ing the persistent SVG during `postProcess` to skip the flush
+  *ballooned* the delete to ~600 ms — toggling `display` forces a from-scratch
+  relayout on restore. `contain: layout` / `layout paint` on `#score` showed no
+  Firefox improvement. See lessons.md.
 
-Make the model track **which measures changed since the last render** — a small
-`{lo, hi}` (or `Set<measureIndex>`) dirty range, set at the mutation choke point
-(every structural edit funnels through `normalizePlaceholdersAll` /
-`invalidateMeterCache`, and the edit knows its cursor measure). Then convert each
-pass to O(edited-region), **one at a time, testing after each**:
+### Remaining levers (Firefox breakdown of the ~150 ms delete)
 
-1. **diff** → use the dirty range directly; stop re-serializing all live measures.
-2. **`normalizeTies`** → re-realize only dirty measures ± 1 per voice (tie pairings
-   only change within a measure and at its boundaries). Gate with an
-   `HKL_INDEX_CHECK`-style consistency check (scoped result == full rebuild in test
-   mode) — the riskiest piece.
-3. **`normalizePlaceholders`** → only the dirty measures' layers.
-4. **`expandForSpanners`** → maintain a note→measure index (forward
-   `noteId→measureId` + reverse `measureId→noteIds`, updated O(range) per edit) so
-   endpoints resolve without the O(notes) rebuild.
+All small and roughly co-equal now — diminishing returns; the engine is at the
+usability threshold. In rough priority:
 
-Target: ~tens of ms for model + splice JS. If the Verovio sub-render + giant-SVG
-repaint then dominate, the next lever is reducing forced layout/paint of the
-persistent SVG (CSS containment; or caching per-measure intrinsic geometry at
-capture so the splice reads zero `getBBox` from `#score`).
+- **`renderToSVG` ~11 %** — Verovio sub-render; largely inherent (could shave by
+  rendering fewer context measures, but risk/benefit is poor).
+- **`snapshotState` (the AFTER) ~6 %** — one full-doc serialize/edit; the floor for
+  full-snapshot undo. Incremental/diff-based undo would remove it (big change).
+- **`normalizePlaceholdersAll` ~5 %** — scopable to the dirty range (reuses the B3
+  range + a consistency gate), but it's only ~5 %.
+- **`normalizeTies` residual ~5 %** — the O(total) prune id-set on deletes; scope it
+  with a maintained `anchorId → spanner` reverse index (also enables step-4 above).
+- **`renderVoiceCursor` ~4.5 %** (`composerOnStateChange`) — repeated
+  `querySelectorAll('measure')` per cursor update; cache the measure list.
+- **`getScreenCTM` ~16–19 %** — the layout floor; needs Firefox-side
+  experimentation, not blind changes (see dead end above). The structural fix is
+  Phase C territory (don't keep one 190k-px SVG in the layout tree).
+- **B2 cascade is O(trailing-measures)** (one `transform` write per following
+  measure on width-changing edits — cheap now). If it bites: wrap trailing
+  measures in a single `<g>` and translate the group once (O(1)).
 
-**Risk:** dirty-range scoping touches core model invariants (tie/placeholder
-correctness across measure boundaries). Gate with `test:composer` + the
-consistency check, and add the spanner-crossing-the-run fixtures B2 acceptance
-lists.
+**Risk note for any further scoping:** the dirty-range pattern touches core model
+invariants. Always gate a scoped pass with an `HKL_INDEX_CHECK`-style "scoped ==
+full rebuild" assertion (as `normalizeTies` does) + `test:composer`.
 
 ---
 
@@ -241,7 +309,8 @@ document. Out of scope for current work.
 1. **Vertical conform = synthetic spacer measure** (`stem.len`-driven) — NOT
    propper-finding, NOT post-render per-staff translate, NOT fixed global spacing.
 2. **Dirty detection = live-doc per-measure signature diff** (common prefix/suffix
-   by id + serialized content). B3 replaces this with model-tracked dirty ranges.
+   by id + serialized content), now FED by a model-tracked dirty range (B3) that
+   lets the diff reuse cached sigs outside the edited window.
 3. **No auto full-render fallback**, ever. Full render = file open / explicit
    reflow / zoom-theme-view change only.
 4. **Splice runs on a dedicated `spliceTk` toolkit**; splicing is gated to
@@ -249,6 +318,18 @@ document. Out of scope for current work.
    full staff set).
 5. `pageWidth`/`pageHeight` pinned to Verovio maxima (100000 / 60000); ~500-bar
    single-system ceiling accepted for now.
+6. **Splice anchors on the LEFT context; `dy` adds the anchor's `ty`** (B2
+   correctness fix). Anchoring right pinned the wrong edge and zeroed the cascade.
+7. **B3 scoping is safe-by-default + gated:** `invalidateMeterCache` resets the
+   dirty range to `'all'`; converted mutations narrow it; every scoped pass has an
+   `HKL_INDEX_CHECK` "scoped == full rebuild" assertion. Unconverted paths stay
+   full and correct.
+8. **`snapshotState` reuses the prior commit's MEI** for `withHistory`'s BEFORE
+   (one serialize/edit, not two); funnels through `history.push` for cache
+   maintenance; gated against staleness.
+9. **`display:none` to skip layout flushes is forbidden** — it forces a full
+   relayout on restore (made a delete 4× worse). Layout isolation, if revisited,
+   must be a non-toggled `contain` and verified in Firefox.
 
 ## Appendix — superseded B2 plan (propper-finding)
 

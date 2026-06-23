@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 311,
-  "passed": 311,
+  "fixtures": 312,
+  "passed": 312,
   "failed": 0,
-  "elapsedMs": 115928,
+  "elapsedMs": 116798,
   "results": [
     {
       "name": "emptyDoc",
@@ -791,6 +791,14 @@
     },
     {
       "name": "scrollEditSplicesNotFullRender",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "scrollWidthChangeCascadesRight",
       "ok": true,
       "failures": [],
       "counts": {

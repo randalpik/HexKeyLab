@@ -895,6 +895,26 @@ const SCROLL = {
       r();
     `,
   },
+
+  /* Phase B3: a width-CHANGING scroll edit on a mid-score measure must keep the
+   * edited measure joined to its LEFT neighbour and cascade the width delta
+   * RIGHTWARD — i.e. the spliced layout must match a full re-engrave of the same
+   * model. Regression guard for the anchor bug where the splice pinned the
+   * edited run's RIGHT edge (to the right-context measure) and let its LEFT edge
+   * float, opening a gap / overlap with the left neighbour on delete / insert.
+   * Six quarter-filled bars → scroll; the assertion edits a mid bar and compares
+   * splice vs full-render measure x. Asserted via
+   * FIXTURE_ASSERTIONS.scrollWidthChangeCascadesRight. */
+  scrollWidthChangeCascadesRight: {
+    setup: `
+      for (let i = 0; i < 5; i++) m.appendMeasure();   // 6 empty (placeholder) bars
+      const sel = document.getElementById('viewModeSelect');
+      sel.value = 'scroll';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      m.setCursor(0, 1);
+      r();
+    `,
+  },
 };
 
 /* ── New: bridge mock (HKL side simulation) ──────────────────────────── */
@@ -6599,6 +6619,63 @@ export const FIXTURE_ASSERTIONS = {
         if (!grew) return { ok: false, detail: 'edit did not change the model (len ' + lenBefore + ')' };
         if (!spliced) return { ok: false, detail: 'scroll edit re-engraved the whole score (SVG root replaced) — splice did not fire' };
         return { ok: true };
+      })()` },
+  ],
+  scrollWidthChangeCascadesRight: [
+    { name: 'a width-changing mid-score scroll edit splices to the SAME measure x as a full re-engrave (left edge joined, width cascades right)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const score = document.getElementById('score');
+        /* Map id → {x, y} absolute (local bbox + own transform) for every bar. */
+        const posOf = () => {
+          const map = {};
+          for (const g of score.querySelectorAll('svg:not(#cursorOverlay) g.measure')) {
+            const b = g.getBBox();
+            const ctm = g.transform.baseVal.consolidate();
+            map[g.id] = { x: b.x + (ctm ? ctm.matrix.e : 0), y: b.y + (ctm ? ctm.matrix.f : 0) };
+          }
+          return map;
+        };
+        const fill4 = (mi) => {
+          m.setCursor(m.getMeasureStartCursor(1, mi), 1);
+          let ok = false;
+          for (let i = 0; i < 4; i++) {
+            ok = m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 }) !== null || ok;
+          }
+          window.__hkl_composer.reRender();               // SPLICE path
+          return ok;
+        };
+        const snap = m.snapshotState();
+        /* Two LARGE width changes on adjacent mid-score bars: fill empty bar 2,
+           then empty bar 3. The second edit's left-context ANCHOR is bar 2,
+           which the first edit already spliced — so this also covers re-splicing
+           against a previously-spliced anchor. (The dy-includes-ty fix only
+           changes output when dy≠0, i.e. with varied vertical content; on this
+           uniform content dy≈0, so x-cascade is what's primarily guarded here.) */
+        const ok = fill4(2) && fill4(3);
+        const splicePos = posOf();
+        /* Full re-engrave of the SAME edited model — the ground truth. */
+        window.__hkl_composer.renderer.forceFullRerender();
+        window.__hkl_composer.reRender();
+        const fullPos = posOf();
+        /* Restore the clean setup state for later invariants. */
+        m.restoreSnapshot(snap);
+        window.__hkl_composer.renderer.forceFullRerender();
+        window.__hkl_composer.reRender();
+        if (!ok) return { ok: false, detail: 'inserts did not mutate the model' };
+        let maxDx = 0, maxDy = 0, worst = null;
+        for (const id in fullPos) {
+          if (id in splicePos) {
+            const dx = Math.abs(fullPos[id].x - splicePos[id].x);
+            const dy = Math.abs(fullPos[id].y - splicePos[id].y);
+            if (dx > maxDx) maxDx = dx;
+            if (dy > maxDy) { maxDy = dy; }
+            if (dx >= 3 || dy >= 3) worst = id;
+          }
+        }
+        return (maxDx < 3 && maxDy < 3)
+          ? { ok: true }
+          : { ok: false, detail: 'spliced bar pos diverged from full re-engrave: dx=' + maxDx.toFixed(1) + ' dy=' + maxDy.toFixed(1) + 'px at ' + worst + ' (anchor/cascade or dy-ty bug)' };
       })()` },
   ],
   voiceIndexConsistencyUnderEdits: [

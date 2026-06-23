@@ -265,19 +265,24 @@ export class ScrollSplicer {
     const RUN_CAP = 60;
     if (hiNew - lo + 1 > RUN_CAP) return false;   // too big → full render
 
-    // Context overlap. The sub-render's FIRST measure gets a spurious system-
-    // initial clef/key/meter (it's system-first), so its x/width don't match the
-    // persistent mid-system measure — we must never let the changed run nor the
-    // x/y anchor be the sub's first measure. So: ≥1 left context de-taints the
-    // run; the ANCHOR is the right-context measure (unchanged, never sub-first)
-    // when one exists, else we add a 2nd left context so the left anchor isn't
-    // sub-first either. (A run starting at measure 0 is genuinely system-first in
-    // BOTH renders, so anchoring there is consistent.)
+    // Anchor on the LEFT context measure, so the edited run's left edge stays
+    // joined to its (unchanged) left neighbour and the width change propagates
+    // RIGHTWARD via the cascade. (Anchoring on the RIGHT context — the old
+    // behaviour — pinned the right edge and let the left edge float: a deleted
+    // note widened/narrowed the measure away from its left neighbour, opening a
+    // gap or overlap. That's the disconnect bug.)
+    //
+    // The sub-render's FIRST measure (cLo) carries a spurious system-initial
+    // clef/key/meter, so its x/width don't match a mid-system measure — it must
+    // never be the anchor nor in the run. Two left-context measures put the
+    // anchor (lo-1) in the SECOND slot, untainted. A run at measure 0 is
+    // genuinely system-first in BOTH renders, so anchoring there is consistent.
+    // The right context (cHi) is included only as the cascade's shift reference.
     const rightAvail = hiNew < nN - 1;
-    const leftCtx = rightAvail ? 1 : 2;
-    const cLo = Math.max(0, lo - leftCtx);
+    const leftCtx = Math.min(2, lo);
+    const cLo = lo - leftCtx;
     const cHi = rightAvail ? hiNew + 1 : hiNew;
-    const anchorIdx = rightAvail ? cHi : (lo > 0 ? lo - 1 : 0);
+    const anchorIdx = lo > 0 ? lo - 1 : 0;
     // Sub-MEI: the model render-serializes ONLY [cLo..cHi] (O(range)), then we
     // append the synthetic spacer that reproduces the persistent gaps.
     const subMei = this.insertSpacer(
@@ -340,7 +345,12 @@ export class ScrollSplicer {
     const perAnchor = persist(anchorId);
     if (!subAnchor || !perAnchor) return false;
     const dx = (bbx(perAnchor).x + (this.tx.get(anchorId) ?? 0)) - bbx(subAnchor).x;
-    const dy = bbx(perAnchor).y - bbx(subAnchor).y;
+    // Symmetric to dx: add the anchor's persistent y-translate. getBBox() is in
+    // the element's LOCAL frame (excludes its own transform), so omitting ty
+    // mis-aligned the run vertically by the anchor's accumulated ty whenever the
+    // anchor had itself been spliced before (cascades only ever set tx, so a
+    // never-spliced measure has ty 0 and this is a no-op there).
+    const dy = (bbx(perAnchor).y + (this.ty.get(anchorId) ?? 0)) - bbx(subAnchor).y;
     const xf = `translate(${dx},${dy})`;
 
     // Right-context shift Δ: where the first unchanged trailing measure must move.
