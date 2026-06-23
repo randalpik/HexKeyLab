@@ -831,7 +831,10 @@ function reRender(): void {
        set on every render (diff-filtered, so cheap) — robust regardless of
        which code path mutated the instruments. */
     refreshViewSelector();
-    renderer.render(model.serialize({ hejiEnabled: model.getHejiEnabled() }, viewStavesFilter()));
+    /* renderComposer pulls MEI from the model itself: scroll edits splice straight
+       from the live doc (O(edited-range)), avoiding the O(total) whole-doc
+       serialize on every edit; full renders + page view serialize internally. */
+    renderer.renderComposer(model, viewStavesFilter());
     /* After Verovio's output lands, inject composer (right-aligned) + footer
        (centered, bottom of page). Subtitle is handled by Verovio itself once
        <title type="subtitle"> is present. Only affects page view (the

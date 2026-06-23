@@ -32,12 +32,7 @@ export function normalizePlaceholders(
 ): void {
   const layers = doc.querySelectorAll('layer');
   for (const layer of Array.from(layers)) {
-    /* Strip existing layer-level placeholders. */
-    for (const c of Array.from(layer.children)) {
-      if (isPlaceholder(c)) layer.removeChild(c);
-    }
-    /* Sum real-content ticks; append trailing placeholders to fill the
-       remainder. */
+    /* Compute the desired trailing placeholder decomposition for this layer. */
     let used = 0;
     for (const c of Array.from(layer.children)) {
       if (
@@ -52,8 +47,29 @@ export function normalizePlaceholders(
       }
     }
     const remaining = ticksForLayer(layer) - used;
-    if (remaining <= 0) continue;
-    for (const p of decomposeTicks(remaining)) {
+    const desired = remaining > 0 ? decomposeTicks(remaining) : [];
+
+    /* IDEMPOTENT: if the layer's placeholders already match `desired` exactly
+       (right count, dur/dots, trailing, none interspersed), leave them in place.
+       This is on the hot path — every edit calls normalizePlaceholdersAll over
+       EVERY layer in the doc; blindly stripping + re-appending with fresh
+       newId('sp') churned every measure's serialization, so the scroll splicer
+       saw the whole score as dirty and full-re-engraved (O(total), seconds).
+       Skipping unchanged layers keeps placeholder ids stable. */
+    const kids = Array.from(layer.children);
+    const existingPh = kids.filter(isPlaceholder);
+    const trailing = kids.slice(kids.length - desired.length);
+    const dotsOf = (c: Element) => parseInt(c.getAttribute('dots') ?? '0', 10) || 0;
+    const matches =
+      existingPh.length === desired.length &&
+      trailing.length === desired.length &&
+      trailing.every((c, i) =>
+        isPlaceholder(c) && c.getAttribute('dur') === desired[i].dur && dotsOf(c) === desired[i].dots);
+    if (matches) continue;                       // already correct — don't churn ids
+
+    /* Otherwise rebuild: strip existing placeholders, append fresh trailing. */
+    for (const c of existingPh) layer.removeChild(c);
+    for (const p of desired) {
       const space = el(doc, 'space', {
         'xml:id': newId('sp'),
         dur: p.dur,

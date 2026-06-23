@@ -347,6 +347,59 @@ function indexCheckEnabled(): boolean {
     (globalThis as { __HKL_INDEX_CHECK?: boolean }).__HKL_INDEX_CHECK === true;
 }
 
+/** Running clef-per-staff + key/meter context as of some measure, folded into a
+ *  sub-render's head scoreDef (see serializeRangeForRender). */
+interface RunningScoreDefCtx {
+  keySig: string | null; mode: string | null;
+  meterCount: string | null; meterUnit: string | null; meterSym: string | null;
+  clefByStaff: Map<string, { shape: string; line: string; dis: string | null; disPlace: string | null }>;
+}
+
+/** Stamp a (cloned) head scoreDef with running context: top-level key/meter and
+ *  per-staff clef. Mirrors what serialize() would have at that point in the doc. */
+function stampRunningCtx(sd: Element, ctx: RunningScoreDefCtx): void {
+  if (ctx.keySig !== null) sd.setAttribute('key.sig', ctx.keySig);
+  if (ctx.mode !== null) sd.setAttribute('mode', ctx.mode);
+  if (ctx.meterCount !== null) sd.setAttribute('meter.count', ctx.meterCount);
+  if (ctx.meterUnit !== null) sd.setAttribute('meter.unit', ctx.meterUnit);
+  if (ctx.meterSym) sd.setAttribute('meter.sym', ctx.meterSym); else sd.removeAttribute('meter.sym');
+  for (const staffDef of Array.from(sd.querySelectorAll('staffDef'))) {
+    const sn = staffDef.getAttribute('n') ?? '1';
+    const c = ctx.clefByStaff.get(sn);
+    if (c) {
+      staffDef.setAttribute('clef.shape', c.shape);
+      staffDef.setAttribute('clef.line', c.line);
+      if (c.dis) { staffDef.setAttribute('clef.dis', c.dis); if (c.disPlace) staffDef.setAttribute('clef.dis.place', c.disPlace); }
+      else { staffDef.removeAttribute('clef.dis'); staffDef.removeAttribute('clef.dis.place'); }
+    }
+  }
+}
+
+/** Deep-clone a doc's structure into `outDoc` but include ONLY the section's
+ *  measures in [loIdx..hiIdx] (plus interior scoreDefs/sb/pb within the range);
+ *  out-of-range measures are skipped entirely (never cloned). Everything outside
+ *  <section> is small and cloned whole. Preserves namespace + attributes via
+ *  importNode. Used by serializeRangeForRender to avoid an O(total) whole-doc
+ *  clone on every edit. */
+function cloneRangeStructure(src: Node, outDoc: Document, loIdx: number, hiIdx: number): Node {
+  if (src.nodeType === 1 && (src as Element).localName === 'section') {
+    const sec = outDoc.importNode(src, false);
+    let seen = 0;
+    for (const child of Array.from((src as Element).children)) {
+      if (child.localName === 'measure') {
+        if (seen >= loIdx && seen <= hiIdx) sec.appendChild(outDoc.importNode(child, true));
+        seen++;
+      } else if (seen > loIdx && seen <= hiIdx) {
+        sec.appendChild(outDoc.importNode(child, true));   // interior scoreDef/sb/pb
+      }
+    }
+    return sec;
+  }
+  const c = outDoc.importNode(src, false);   // shallow (preserves ns + attrs)
+  for (const child of Array.from(src.childNodes)) c.appendChild(cloneRangeStructure(child, outDoc, loIdx, hiIdx));
+  return c;
+}
+
 export class ComposerModel {
   private doc: Document;
   private currentVoice: Voice = 1;
@@ -391,6 +444,57 @@ export class ComposerModel {
    *  measureBoundaryCursors / cursor-measure lookups O(1) after one O(n) build,
    *  instead of the prior O(n²). */
   private voiceIndexCache: Map<Voice, VoiceIndex> = new Map();
+
+  /** Render dirty-measure tracking (Phase B3). The scroll splicer re-renders
+   *  only the measures changed since the last render; this is that range, in
+   *  measure indices.
+   *
+   *  SAFE BY DEFAULT. `invalidateMeterCache()` — reached by every structural /
+   *  meter mutation, directly or via `normalizePlaceholdersAll()` — resets this
+   *  to `'all'`. A mutation that knows its full extent NARROWS it by calling
+   *  `markDirtyMeasures(lo, hi)` AFTER its final `normalizePlaceholdersAll()`.
+   *  An unconverted mutation never narrows, so it stays `'all'` and the splicer
+   *  falls back to the full per-measure signature diff (the pre-B3 behavior).
+   *  A missing/under-tight `markDirtyMeasures` can therefore only ever
+   *  OVER-render — never silently corrupt the SVG. The test-mode consistency
+   *  gate (HKL_INDEX_CHECK) cross-checks the trusted range against the full diff
+   *  in the splicer. */
+  private renderDirty: 'all' | { lo: number; hi: number } = 'all';
+
+  /** Narrow the render dirty-range to measures [lo..hi] (clamped to the current
+   *  measure set). Call AFTER the final normalizePlaceholdersAll() of a mutation
+   *  that knows the full extent of what it touched — it overrides the
+   *  conservative 'all' that invalidateMeterCache set, and unions with any prior
+   *  narrow in the same edit. See `renderDirty`. */
+  markDirtyMeasures(lo: number, hi: number): void {
+    /* Clamp only the low end to 0; an over-large `hi` is harmless — the splicer
+       bounds its sig-reuse window by the measure-array length. Deliberately
+       avoids an allMeasures() (querySelectorAll) call on the hot edit path. */
+    const a = Math.max(0, Math.min(lo, hi));
+    const b = Math.max(0, Math.max(lo, hi));
+    this.renderDirty = this.renderDirty === 'all'
+      ? { lo: a, hi: b }
+      : { lo: Math.min(this.renderDirty.lo, a), hi: Math.max(this.renderDirty.hi, b) };
+  }
+
+  /** Content edits (note/rest/chord insert, replace, delete, in-place toggles)
+   *  touch the cursor's measure and — via bounded overflow and cross-boundary
+   *  tie realization — at most its immediate neighbors. Marks [mi-1, mi+1]. */
+  markEditAround(mi: number): void {
+    this.markDirtyMeasures(mi - 1, mi + 1);
+  }
+
+  /** The render dirty-range as of now (the splicer reads this, then calls
+   *  resetRenderDirty after a successful render/capture). */
+  renderDirtyRange(): 'all' | { lo: number; hi: number } {
+    return this.renderDirty;
+  }
+
+  /** Reset to the conservative default after a full render/capture, so the next
+   *  edit starts from 'all' and an unconverted mutation full-renders. */
+  resetRenderDirty(): void {
+    this.renderDirty = 'all';
+  }
 
   /** Get (build + cache) the navigation index for a voice. */
   private voiceIndex(voice: Voice): VoiceIndex {
@@ -556,6 +660,86 @@ export class ComposerModel {
     if (viewStaves) filterToStaves(clone, new Set(viewStaves));
     regroupBeams(clone, readTimeSig(clone));
     return new XMLSerializer().serializeToString(clone);
+  }
+
+  /** Render-serialize ONLY measures [loIdx..hiIdx] — used by the scroll
+   *  spot-splicer so a single-measure edit doesn't pay the O(total) cost of
+   *  transforming the whole document (the dominant per-edit latency on large
+   *  scores). Produces byte-identical output to serialize() for the kept
+   *  measures: a whole-doc clone is trimmed to the range (interior scoreDefs
+   *  preserved, pre-`lo` ones folded into the head as running context), then the
+   *  SAME accidental/HEJI/beam passes run — they reset accidental carry-state at
+   *  each barline and seed the per-measure key from the head, so a range starting
+   *  at `lo` reproduces the full render for those measures. */
+  serializeRangeForRender(
+    loIdx: number, hiIdx: number,
+    forRender: { hejiEnabled: boolean },
+    viewStaves?: number[] | null,
+  ): string {
+    if (!this.doc.querySelector('section')) return this.serialize(forRender, viewStaves);
+    const ctx = this.runningScoreDefContext(loIdx);
+    /* Build the sub-doc by cloning ONLY the head structure + the [loIdx..hiIdx]
+       section children — out-of-range measures are never cloned (cloning the
+       whole 446-bar doc then trimming was itself O(total) per edit). Everything
+       outside <section> (meiHead, scoreDef, wrappers) is small and deep-cloned
+       as-is; interior scoreDefs within the range are kept, pre-`lo` ones folded
+       into the head below. */
+    const clone = this.doc.cloneNode(false) as Document;
+    clone.appendChild(cloneRangeStructure(this.doc.documentElement!, clone, loIdx, hiIdx));
+    const headSd = clone.querySelector('scoreDef');
+    if (headSd) stampRunningCtx(headSd, ctx);
+    /* identical passes to serialize(), now over only the kept measures */
+    const mode = this.getLayoutReq().tuningMode;
+    computeAccidentalDisplay(clone, ctx.keySig ?? this.getKeySig(), { mode, enabled: forRender.hejiEnabled });
+    transformDocForHeji(clone, mode, forRender.hejiEnabled);
+    if (getIgnoreColor(clone)) {
+      for (const n of Array.from(clone.querySelectorAll('note'))) n.removeAttribute('color');
+    }
+    if (viewStaves) filterToStaves(clone, new Set(viewStaves));
+    regroupBeams(clone, readTimeSig(clone));
+    return new XMLSerializer().serializeToString(clone);
+  }
+
+  /** Running clef-per-staff + key/meter as of the `target`-th measure, by
+   *  walking the section's in-order scoreDef/measure nodes (the same context the
+   *  scroll splicer folds into a sub-render's head scoreDef). */
+  private runningScoreDefContext(target: number): RunningScoreDefCtx {
+    const ctx: RunningScoreDefCtx = {
+      keySig: null, mode: null, meterCount: null, meterUnit: null, meterSym: null,
+      clefByStaff: new Map(),
+    };
+    const section = this.doc.querySelector('section');
+    if (!section) return ctx;
+    const targetEl = this.allMeasures()[target];
+    for (const node of Array.from(section.children)) {
+      if (node === targetEl) break;
+      if (node.localName === 'scoreDef') {
+        const ks = node.getAttribute('key.sig'); if (ks !== null) ctx.keySig = ks;
+        const md = node.getAttribute('mode'); if (md !== null) ctx.mode = md;
+        const mc = node.getAttribute('meter.count'); if (mc !== null) ctx.meterCount = mc;
+        const mu = node.getAttribute('meter.unit'); if (mu !== null) ctx.meterUnit = mu;
+        const ms = node.getAttribute('meter.sym'); if (mc !== null || mu !== null) ctx.meterSym = ms;
+        for (const sd of Array.from(node.querySelectorAll('staffDef'))) {
+          const sn = sd.getAttribute('n') ?? '1';
+          const shape = sd.getAttribute('clef.shape');
+          if (shape) ctx.clefByStaff.set(sn, {
+            shape, line: sd.getAttribute('clef.line') ?? '2',
+            dis: sd.getAttribute('clef.dis'), disPlace: sd.getAttribute('clef.dis.place'),
+          });
+        }
+      } else if (node.localName === 'measure') {
+        for (const staff of Array.from(node.querySelectorAll('staff'))) {
+          const sn = staff.getAttribute('n') ?? '1';
+          const clefs = staff.querySelectorAll('layer > clef');
+          const c = clefs[clefs.length - 1] as Element | undefined;
+          if (c) ctx.clefByStaff.set(sn, {
+            shape: c.getAttribute('shape') ?? 'G', line: c.getAttribute('line') ?? '2',
+            dis: c.getAttribute('dis'), disPlace: c.getAttribute('dis.place'),
+          });
+        }
+      }
+    }
+    return ctx;
   }
 
   /* ── undo/redo snapshots ────────────────────────────────────────────────── */
@@ -1226,6 +1410,11 @@ export class ComposerModel {
        those changes reach here (directly or via normalizePlaceholdersAll), so
        this is the single invalidation point for the navigation index too. */
     this.voiceIndexCache.clear();
+    /* Safe default for the render dirty-range (Phase B3): every structural /
+       meter mutation reaches here, so resetting to 'all' guarantees an
+       unconverted edit full-renders. Converted mutations narrow this AFTER
+       their final normalizePlaceholdersAll(). See `renderDirty`. */
+    this.renderDirty = 'all';
   }
 
   /** Lazily build the per-measure tick table. Walks the single `<section>`'s
@@ -3178,11 +3367,13 @@ export class ComposerModel {
   insertChordAtCursor(input: ChordInput): string | null {
     const v = this.currentVoice;
     const originalCursor = this.cursors[v];
+    const mi = Math.max(0, this.cursorMeasureIdx(v));
     const id = insertWithSplit(this, input, false);
     if (id === null) return null;
-    this.resolvePendingTies(originalCursor);
+    normalizeTies(this, { lo: mi, hi: mi + 1, insert: true });   // bounded overflow may touch M+1
     this.normalizePlaceholdersAll();
     this.cursors[v] = Math.min(this.cursors[v], this.getVoiceLength(v));
+    this.markEditAround(mi);   // bounded overflow → M..M+1; tie realization → M±1
     return id;
   }
 
@@ -3191,14 +3382,16 @@ export class ComposerModel {
    *  does NOT resolve a pending tie (a rest has no matching pitch). */
   insertRestAtCursor(input: RestInput): string | null {
     const v = this.currentVoice;
-    const id = insertWithSplit(this, 
+    const mi = Math.max(0, this.cursorMeasureIdx(v));
+    const id = insertWithSplit(this,
       { ...input, notes: [] as ReadonlyArray<ResolvedNote> },
       true,
     );
     if (id === null) return null;
-    normalizeTies(this);
+    normalizeTies(this, { lo: mi, hi: mi + 1, insert: true });
     this.normalizePlaceholdersAll();
     this.cursors[v] = Math.min(this.cursors[v], this.getVoiceLength(v));
+    this.markEditAround(mi);
     return id;
   }
 
@@ -3581,6 +3774,11 @@ export class ComposerModel {
   deleteAtCursor(): boolean {
     const v = this.currentVoice;
     const c = this.cursors[v];
+    /* Tie scope (Phase B3): a deletion stays within the cursor's measure (fixed
+       measures, gap filled by placeholders); tie realization can only change in
+       this measure ±1. Captured before the mutation. */
+    const mi = Math.max(0, this.cursorMeasureIdx(v));
+    const tieScope = { lo: mi, hi: mi };
     const flat = this.flatChildren(v);
 
     /* Past-end is a synthetic stop with no associated element. Backspace
@@ -3595,7 +3793,17 @@ export class ComposerModel {
        left under the new convention (cursor c = past flat[c]). */
     const target = flat[c];
     if (!target) return false;
-    const clampCursors = (): void => {
+    /* Clamp cursors to their voice lengths after the edit. `getVoiceLength`
+       walks the (uncached) flat children — O(total) per voice — so clamping
+       ALL voices costs ~nVoices full walks on every keystroke (the dominant
+       remaining delete cost on the 446-bar sonata). A single-voice content
+       edit only changes THAT voice's length, so pass `only` to clamp just it;
+       structural edits that shift every voice (measure add/remove) clamp all. */
+    const clampCursors = (only?: Voice): void => {
+      if (only !== undefined) {
+        this.cursors[only] = Math.min(this.cursors[only], this.getVoiceLength(only));
+        return;
+      }
       for (let vi = 1 as Voice; vi <= this.totalVoices(); vi++) {
         this.cursors[vi] = Math.min(
           this.cursors[vi],
@@ -3628,10 +3836,11 @@ export class ComposerModel {
           const tupletIdx = flat.indexOf(tuplet);
           tuplet.parentNode?.removeChild(tuplet);
           this.setBarlines();
-          normalizeTies(this);
+          normalizeTies(this, tieScope);
           this.normalizePlaceholdersAll();
           this.cursors[v] = cursorPastPrevOf(tupletIdx);
-          clampCursors();
+          clampCursors(v);
+          this.markEditAround(mi);
           return true;
         }
       }
@@ -3681,7 +3890,7 @@ export class ComposerModel {
         this.setBarlines();
         this.normalizePlaceholdersAll();
         this.cursors[v] = cursorPastPrevOf(tupletIdx);
-        clampCursors();
+        clampCursors(v);
         return true;
       }
       this.cursors[v] = Math.max(0, c - 1);
@@ -3717,9 +3926,10 @@ export class ComposerModel {
       }
       this.cursors[v] = Math.max(0, c - 1);
       this.setBarlines();
-      normalizeTies(this);
+      normalizeTies(this, tieScope);
       this.normalizePlaceholdersAll();
-      clampCursors();
+      clampCursors(v);
+      this.markEditAround(mi);
       return true;
     }
 
@@ -3733,9 +3943,10 @@ export class ComposerModel {
     parentLayer.removeChild(target);
     this.cursors[v] = Math.max(0, c - 1);
     this.setBarlines();
-    normalizeTies(this);
+    normalizeTies(this, tieScope);
     this.normalizePlaceholdersAll();
-    clampCursors();
+    clampCursors(v);
+    this.markEditAround(mi);
     return true;
   }
 

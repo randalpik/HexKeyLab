@@ -105,6 +105,10 @@ export function snapStaffLinesToGrid(container: HTMLElement, scale: number, even
      staff's 5 lines share one phase (uniform spacing), so aligning the first
      aligns that staff. (Barlines span both staves and are NOT inside g.staff, so
      they don't follow this shift — handled/observed separately.) */
+  /* Two-phase (see snapBarlines): batch all getScreenCTM/getBBox reads, then all
+     writes — interleaving forces a synchronous layout per staff, reflowing the
+     large persistent scroll SVG each time on big scores. */
+  const writes: { svgStaff: SVGGraphicsElement; dOverDs: number }[] = [];
   for (const staff of Array.from(container.querySelectorAll('g.staff'))) {
     let line: SVGGraphicsElement | null = null;
     for (const p of Array.from((staff as Element).querySelectorAll(':scope > path'))) {
@@ -121,11 +125,13 @@ export function snapStaffLinesToGrid(container: HTMLElement, scale: number, even
     d = ((d % 1) + 1) % 1;
     if (d > 0.5) d -= 1;
     if (Math.abs(d) < 1e-4) continue;            /* already on-grid */
-    const svgStaff = staff as SVGGraphicsElement;
+    writes.push({ svgStaff: staff as SVGGraphicsElement, dOverDs: d / ds });
+  }
+  for (const { svgStaff, dOverDs } of writes) {
     const base = svgStaff.transform.baseVal.consolidate();
     const tx = base ? base.matrix.e : 0;
     const ty = base ? base.matrix.f : 0;
-    svgStaff.setAttribute('transform', `translate(${tx}, ${ty + d / ds})`);
+    svgStaff.setAttribute('transform', `translate(${tx}, ${ty + dOverDs})`);
   }
 }
 
@@ -137,8 +143,14 @@ export function snapStaffLinesToGrid(container: HTMLElement, scale: number, even
  *  lines have different x's, so one shift can't crisp both) are skipped — the
  *  terminal one is handled by snapSystemRightEdge. Call after pinExactScale. */
 export function snapBarlines(container: HTMLElement, scale: number, evenWidth: boolean): void {
-  const ds = scale / 1000;
   const target = evenWidth ? 0 : 0.5;
+  /* Two-phase to avoid layout thrashing: ALL getScreenCTM reads first, THEN all
+     transform writes. Interleaving a write after each read forces a fresh
+     synchronous layout per barline (and when this container is in the DOM beside
+     the large persistent scroll SVG, each layout reflows that too — a measured
+     hotspot on large scores in Firefox). Reads are independent (barlines are
+     siblings, not nested), so batching yields identical snaps with one flush. */
+  const writes: { svgG: SVGGraphicsElement; dOverA: number }[] = [];
   for (const g of Array.from(container.querySelectorAll('g.barLine'))) {
     const xs = new Set<number>();
     let ref: SVGGraphicsElement | null = null;
@@ -156,9 +168,11 @@ export function snapBarlines(container: HTMLElement, scale: number, evenWidth: b
     d = ((d % 1) + 1) % 1;
     if (d > 0.5) d -= 1;
     if (Math.abs(d) < 1e-3) continue;             /* already on-grid */
-    const svgG = g as SVGGraphicsElement;
+    writes.push({ svgG: g as SVGGraphicsElement, dOverA: d / ctm.a });
+  }
+  for (const { svgG, dOverA } of writes) {
     const base = svgG.transform.baseVal.consolidate();
-    svgG.setAttribute('transform', `translate(${(base ? base.matrix.e : 0) + d / ctm.a}, ${base ? base.matrix.f : 0})`);
+    svgG.setAttribute('transform', `translate(${(base ? base.matrix.e : 0) + dOverA}, ${base ? base.matrix.f : 0})`);
   }
 }
 

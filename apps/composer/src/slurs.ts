@@ -77,12 +77,24 @@ export function collectSlurs(doc: Document): SlurRecord[] {
 /** Remove any <slur> whose startid or endid no longer resolves to a slot
  *  element (e.g. an endpoint note was deleted). Returns the count removed.
  *  Call from note-removal paths alongside tie-orphan cleanup. */
-export function pruneDanglingSlurs(doc: Document): number {
+export function pruneDanglingSlurs(doc: Document, sharedIds?: Set<string>): number {
+  /* Slot-id set, built ONCE (O(n)) — per-slur slotById() scans were O(slurs × notes),
+     quadratic on large scores. `sharedIds` (a note/chord/rest superset) lets
+     normalizeTies build it once and share with pruneDanglingArticControls; the
+     extra rest ids are harmless (slur endpoints are note/chord ids, which never
+     collide with rest ids). */
+  const ids = sharedIds ?? (() => {
+    const s = new Set<string>();
+    for (const n of Array.from(doc.querySelectorAll('note, chord'))) {
+      const id = n.getAttribute('xml:id'); if (id) s.add(id);
+    }
+    return s;
+  })();
   let removed = 0;
   for (const el of Array.from(doc.querySelectorAll('slur'))) {
     const s = stripHash(el.getAttribute('startid'));
     const e = stripHash(el.getAttribute('endid'));
-    if (!s || !e || !slotById(doc, s) || !slotById(doc, e)) {
+    if (!s || !e || !ids.has(s) || !ids.has(e)) {
       el.parentNode?.removeChild(el);
       removed++;
     }

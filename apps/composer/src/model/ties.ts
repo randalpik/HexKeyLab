@@ -30,20 +30,24 @@ import { pruneDanglingArticControls } from '../articulations.js';
  *  musical-time adjacency, which is what ties (incl. cross-barline and
  *  tuplet-edge ties) require. Rests appear as empty slots, correctly breaking
  *  tie chains. */
-function tieEventSequence(model: ComposerModel, voice: Voice): Element[] {
+function tieEventSequence(
+  model: ComposerModel, voice: Voice, mLo = 0, mHi = Infinity,
+): { events: Element[]; measureOf: number[] } {
   const isEvent = (e: Element): boolean =>
     e.localName === 'note' || e.localName === 'chord' || e.localName === 'rest';
-  const out: Element[] = [];
-  for (const measure of model.allMeasures()) {
-    const layer = model.layerInMeasure(measure, voice);
+  const events: Element[] = [];
+  const measureOf: number[] = [];
+  const measures = model.allMeasures();
+  const lo = Math.max(0, mLo), hi = Math.min(measures.length - 1, mHi);
+  for (let mi = lo; mi <= hi; mi++) {
+    const layer = model.layerInMeasure(measures[mi], voice);
     if (!layer) continue;
     let pushed = 0;
     for (const c of Array.from(layer.children)) {
       if (c.localName === 'tuplet') {
-        for (const tc of Array.from(c.children)) if (isEvent(tc)) { out.push(tc); pushed++; }
+        for (const tc of Array.from(c.children)) if (isEvent(tc)) { events.push(tc); measureOf.push(mi); pushed++; }
       } else if (isEvent(c)) {
-        out.push(c);
-        pushed++;
+        events.push(c); measureOf.push(mi); pushed++;
       }
     }
     /* A measure where this voice has NO content is a gap that must break a tie
@@ -51,88 +55,184 @@ function tieEventSequence(model: ComposerModel, voice: Voice): Element[] {
        layer as a barrier slot (extractNoteElements → [] resets prevOffers).
        Measures WITH content never add a barrier, so legitimate cross-barline
        ties — where the partner is the next measure's first note — survive. */
-    if (pushed === 0) out.push(layer);
+    if (pushed === 0) { events.push(layer); measureOf.push(mi); }
   }
-  return out;
+  return { events, measureOf };
 }
 
-export function normalizeTies(model: ComposerModel): void {
-  const doc = model.getDoc();
-  /* Strip every <lv> — we'll re-create them for surviving stubs. The
-   * only <lv> producer in the codebase is our stub machinery. */
-  for (const lv of Array.from(doc.querySelectorAll('lv'))) {
-    lv.parentNode?.removeChild(lv);
-  }
+const pitchKey = (n: Element): string =>
+  n.getAttribute('pname') + '/' + n.getAttribute('oct') + '/' + getNoteAlter(n);
 
-  /* Pass 1: snapshot per-note `wantsForward` intent and strip realized
-   * tie attributes from every note. Doing this globally (across all
-   * voices) keeps the per-voice forward walk simple. */
+/** Realize ties for one event slot in the forward walk: read each note's
+ *  `wantsForward` intent + the incoming offers, set @tie / @data-tie-partner /
+ *  stub, and return this slot's outgoing offers. Mutates `notes`. */
+function realizeSlot(
+  notes: Element[], nextNotes: Element[], prevOffers: Map<string, Element>,
+  wantsForward: WeakMap<Element, boolean>,
+): Map<string, Element> {
+  const currOffers = new Map<string, Element>();
+  for (const note of notes) {
+    const pk = pitchKey(note);
+    const wasFromPrev = prevOffers.has(pk);
+    const wants = wantsForward.get(note) ?? false;
+    const partner = wants ? nextNotes.find((n) => pitchKey(n) === pk) : null;
+    if (partner) {
+      setTieFlag(note, wasFromPrev ? 'm' : 'i');
+      const pid = partner.getAttribute('xml:id');
+      if (pid) note.setAttribute('data-tie-partner', pid);
+      currOffers.set(pk, note);
+    } else {
+      if (wasFromPrev) setTieFlag(note, 't');
+      if (wants) setStubTie(note);
+    }
+  }
+  return currOffers;
+}
+
+/** Capture a note's persisted forward-tie intent (the @tie ∈ {i,m} / pending
+ *  encoding) BEFORE stripping its realization. */
+function captureWants(note: Element): boolean {
+  const tie = note.getAttribute('tie');
+  return tie === 'i' || tie === 'm' || note.hasAttribute('data-pending-tie');
+}
+
+/** Strip realized tie attributes (NOT the intent — intent is re-captured into
+ *  `wantsForward` first) and any <lv> stub from one note. */
+function stripNote(note: Element, wantsForward: WeakMap<Element, boolean>): void {
+  wantsForward.set(note, captureWants(note));
+  note.removeAttribute('tie');
+  note.removeAttribute('data-pending-tie');
+  note.removeAttribute('data-tie-partner');
+  removeLvForNote(note);
+}
+
+/** Re-realize ties for the WHOLE document, all voices (the original behaviour). */
+function realizeFull(model: ComposerModel, doc: Document): void {
+  for (const lv of Array.from(doc.querySelectorAll('lv'))) lv.parentNode?.removeChild(lv);
   const wantsForward = new WeakMap<Element, boolean>();
   for (const note of Array.from(doc.querySelectorAll('note'))) {
-    const tie = note.getAttribute('tie');
-    const pending = note.hasAttribute('data-pending-tie');
-    wantsForward.set(note, tie === 'i' || tie === 'm' || pending);
+    wantsForward.set(note, captureWants(note));
     note.removeAttribute('tie');
     note.removeAttribute('data-pending-tie');
     note.removeAttribute('data-tie-partner');
   }
-
-  /* Pass 2: per voice, walk flat order and rebuild realization. */
-  const pitchKey = (n: Element): string =>
-    n.getAttribute('pname') + '/' + n.getAttribute('oct') + '/' + getNoteAlter(n);
-
   for (let vi = 1; vi <= model.totalVoices(); vi++) {
-    const flat = tieEventSequence(model, vi);
-    /* For each cursor between two flat slots, prevOffers[pitchKey] is the
-     * note in the previous slot that wantsForward at that pitch — i.e.,
-     * the "incoming-tie source" for any matching note in the current
-     * slot. Reset on every slot transition. */
+    const { events } = tieEventSequence(model, vi);
     let prevOffers = new Map<string, Element>();
-    for (let k = 0; k < flat.length; k++) {
-      const notes = extractNoteElements(flat[k]);
-      const nextNotes =
-        k + 1 < flat.length ? extractNoteElements(flat[k + 1]) : [];
-      const currOffers = new Map<string, Element>();
-
-      for (const note of notes) {
-        const pk = pitchKey(note);
-        const wasFromPrev = prevOffers.has(pk);
-        const wants = wantsForward.get(note) ?? false;
-        const partner = wants ? nextNotes.find((n) => pitchKey(n) === pk) : null;
-        const canForward = !!partner;
-
-        if (canForward && partner) {
-          /* Realized: this note ties forward (and possibly backward). */
-          setTieFlag(note, wasFromPrev ? 'm' : 'i');
-          const pid = partner.getAttribute('xml:id');
-          if (pid) note.setAttribute('data-tie-partner', pid);
-          currOffers.set(pk, note);
-        } else {
-          /* No realizable forward tie. Two independent axes:
-           *   - If we had incoming (wasFromPrev): set @tie="t" so the
-           *     incoming arc still renders (terminal of the prev chain).
-           *   - If the user expressed forward intent (wants) that we
-           *     couldn't realize: preserve it as a pending stub. The
-           *     two can coexist on the SAME note: @tie="t" renders the
-           *     incoming arc, and <lv> + data-pending-tie render the
-           *     outgoing hanging stub. */
-          if (wasFromPrev) setTieFlag(note, 't');
-          if (wants) setStubTie(note);
-        }
-      }
-
-      prevOffers = currOffers;
+    for (let k = 0; k < events.length; k++) {
+      const notes = extractNoteElements(events[k]);
+      const nextNotes = k + 1 < events.length ? extractNoteElements(events[k + 1]) : [];
+      prevOffers = realizeSlot(notes, nextNotes, prevOffers, wantsForward);
     }
   }
+}
 
-  /* This is the shared post-mutation hook (run after every structural edit),
-   * so it's also the natural place to drop slurs whose endpoint slots were
-   * deleted — same rationale as the tie-orphan cleanup above. */
-  pruneDanglingSlurs(doc);
-  /* Also prune <fermata> / <breath> control events whose @startid anchor
-     was deleted. These bind to specific notes/chords/rests by xml:id and
-     are appended as measure children alongside slurs. */
-  pruneDanglingArticControls(doc);
+/** Re-realize ties ONLY within measures [lo-1 .. hi+1] per voice (Phase B3).
+ *  Tie realization for a note depends only on its immediate neighbour events,
+ *  so an edit confined to [lo..hi] can only change realization in that ±1
+ *  window. The offer entering the window (from the measure before it) and
+ *  exiting it (to the measure after) lie between UNCHANGED measures, so they're
+ *  stable: we seed prevOffers from the existing realized @tie on the last event
+ *  before the window and re-realize only the window's slots, leaving every
+ *  other note untouched. O(window) instead of O(total notes). */
+function realizeScoped(model: ComposerModel, lo: number, hi: number): void {
+  const wLo = lo - 1, wHi = hi + 1;
+  const wantsForward = new WeakMap<Element, boolean>();
+  for (let vi = 1; vi <= model.totalVoices(); vi++) {
+    /* Build the event sequence for [wLo-1 .. wHi+1] only: the window [wLo..wHi]
+       plus one measure each side for the prevOffers seed (the event before the
+       window) and the forward lookahead (the event after it). O(window), not
+       O(total). */
+    const { events, measureOf } = tieEventSequence(model, vi, wLo - 1, wHi + 1);
+    // Window = the contiguous run of events whose measure ∈ [wLo..wHi].
+    let wStart = events.length, wEnd = -1;
+    for (let k = 0; k < events.length; k++) {
+      if (measureOf[k] >= wLo && measureOf[k] <= wHi) { if (k < wStart) wStart = k; wEnd = k; }
+    }
+    if (wEnd < wStart) continue;   // this voice has no events in the window
+    // Seed prevOffers from the realized state of the event BEFORE the window —
+    // unchanged, so its @tie ∈ {i,m} correctly marks an outstanding forward tie.
+    let prevOffers = new Map<string, Element>();
+    if (wStart > 0) {
+      for (const note of extractNoteElements(events[wStart - 1])) {
+        const tie = note.getAttribute('tie');
+        if (tie === 'i' || tie === 'm') prevOffers.set(pitchKey(note), note);
+      }
+    }
+    // Capture intent + strip realization for the window's notes only.
+    for (let k = wStart; k <= wEnd; k++) for (const note of extractNoteElements(events[k])) stripNote(note, wantsForward);
+    // Forward-walk the window, realizing each slot.
+    for (let k = wStart; k <= wEnd; k++) {
+      const notes = extractNoteElements(events[k]);
+      const nextNotes = k + 1 < events.length ? extractNoteElements(events[k + 1]) : [];
+      prevOffers = realizeSlot(notes, nextNotes, prevOffers, wantsForward);
+    }
+  }
+}
+
+/** Capture every note's tie-state (+ the <lv> startid set) for the test-mode
+ *  consistency gate. */
+function captureTieState(doc: Document): string {
+  const parts: string[] = [];
+  for (const n of Array.from(doc.querySelectorAll('note'))) {
+    parts.push((n.getAttribute('xml:id') ?? '?') + ':' +
+      (n.getAttribute('tie') ?? '') + ':' +
+      (n.getAttribute('data-tie-partner') ?? '') + ':' +
+      (n.hasAttribute('data-pending-tie') ? 'p' : ''));
+  }
+  const lvs = Array.from(doc.querySelectorAll('lv')).map((l) => l.getAttribute('startid') ?? '').sort();
+  return parts.join('|') + '#lv#' + lvs.join(',');
+}
+
+/** Re-realize tie state after a structural mutation.
+ *
+ *  `scope` (Phase B3): when the caller knows the edit was confined to measures
+ *  [scope.lo .. scope.hi], only that ±1 window is re-realized (O(window)).
+ *  Omit it (or pass null) for a full O(total) rebuild — the safe default for
+ *  load / snapshot-restore / unconverted callers. In HKL_INDEX_CHECK mode a
+ *  scoped pass is followed by a full pass + equality assertion, so the doc
+ *  always ends in the full-correct state and any scope bug fails loudly. */
+export function normalizeTies(
+  model: ComposerModel, scope?: { lo: number; hi: number; insert?: boolean } | null,
+): void {
+  const doc = model.getDoc();
+
+  if (scope) {
+    realizeScoped(model, scope.lo, scope.hi);
+    if (indexCheckEnabled()) {
+      const scoped = captureTieState(doc);
+      realizeFull(model, doc);
+      const full = captureTieState(doc);
+      if (scoped !== full) {
+        throw new Error(
+          `[normalizeTies] scoped result ≠ full rebuild for scope {${scope.lo},${scope.hi}} — ` +
+          `a converted mutation reported the wrong tie scope.`);
+      }
+    }
+  } else {
+    realizeFull(model, doc);
+  }
+
+  /* Shared post-mutation hook: drop slurs / fermata / breath / trill controls
+     whose @startid anchor was deleted. A spanner is defined in its START
+     measure but can reach an endpoint anywhere, so this can't be scoped to the
+     edit window without a maintained reverse index — instead build the
+     note/chord/rest id-set ONCE (O(total)) and share it across both prunes
+     (halving the scan), and SKIP it entirely when the edit only added content
+     (`scope?.insert`): an insert can never orphan an existing anchor. */
+  if (!(scope && scope.insert)) {
+    const ids = new Set<string>();
+    for (const n of Array.from(doc.querySelectorAll('note, chord, rest'))) {
+      const id = n.getAttribute('xml:id'); if (id) ids.add(id);
+    }
+    pruneDanglingSlurs(doc, ids);
+    pruneDanglingArticControls(doc, ids);
+  }
+}
+
+function indexCheckEnabled(): boolean {
+  return typeof globalThis !== 'undefined' &&
+    (globalThis as { __HKL_INDEX_CHECK?: boolean }).__HKL_INDEX_CHECK === true;
 }
 
 /* ── per-note tie helpers ──────────────────────────────────────────────── */

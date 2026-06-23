@@ -24,8 +24,17 @@
 // See docs/composer-spot-splice-design.md.
 
 import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
+import type { ComposerModel } from '../model/index.js';
 
 const MEI_NS = 'http://www.music-encoding.org/ns/mei';
+const idOf = (m: Element): string => m.getAttribute('xml:id') || m.getAttribute('id') || '';
+
+/** Test-mode consistency gate, mirrors model/index.ts indexCheckEnabled —
+ *  enabled by HKL_INDEX_CHECK=1 in the test runner. */
+function indexCheckEnabled(): boolean {
+  return typeof globalThis !== 'undefined' &&
+    (globalThis as { __HKL_INDEX_CHECK?: boolean }).__HKL_INDEX_CHECK === true;
+}
 
 /** Everything the splicer needs from the Renderer to drive Verovio + match its
  *  post-render treatment. `optionsNone` MUST be the same buildOptions('none')
@@ -59,12 +68,6 @@ function gapsOfMeasure(measureEl: Element, nStaves: number): number[] {
   return gaps;
 }
 
-interface RunningCtx {
-  keySig: string | null; mode: string | null;
-  meterCount: string | null; meterUnit: string | null; meterSym: string | null;
-  clefByStaff: Map<string, { shape: string; line: string; dis: string | null; disPlace: string | null }>;
-}
-
 export class ScrollSplicer {
   private ready = false;
   private sysEl: SVGGElement | null = null;
@@ -85,8 +88,10 @@ export class ScrollSplicer {
   /* ── capture (after a full render) ───────────────────────────────────────── */
 
   /** Record the persistent SVG's measure index, inter-staff gaps, and calibrate
-   *  the stem.len→gap law. Call right after renderSingleSystem writes the SVG. */
-  capture(mei: string, ctx: SpliceCtx): void {
+   *  the stem.len→gap law. Call right after renderSingleSystem writes the SVG.
+   *  Works from the model's LIVE doc (untransformed) — measure signatures are
+   *  taken there so the per-edit diff never needs the O(total) render-serialize. */
+  capture(model: ComposerModel, ctx: SpliceCtx): void {
     this.ready = false;
     const root = ctx.container.querySelector('svg');
     const sys = ctx.container.querySelector('g.system') as SVGGElement | null;
@@ -95,17 +100,17 @@ export class ScrollSplicer {
     this.sysEl = sys;
     this.defsEl = defs;
 
-    const doc = new DOMParser().parseFromString(mei, 'application/xml');
-    const section = doc.querySelector('section');
+    const live = model.getDoc();
+    const section = live.querySelector('section');
     if (!section) return;
     const meiMeasures = Array.from(section.children).filter((c) => c.localName === 'measure');
-    this.order = meiMeasures.map((m) => m.getAttribute('xml:id') || m.getAttribute('id') || '');
+    this.order = meiMeasures.map(idOf);
     this.sig = new Map();
     this.tx = new Map();
     this.ty = new Map();
     const ser = new XMLSerializer();
     for (const m of meiMeasures) {
-      const id = m.getAttribute('xml:id') || m.getAttribute('id') || '';
+      const id = idOf(m);
       this.sig.set(id, ser.serializeToString(m));
       this.tx.set(id, 0);
       this.ty.set(id, 0);
@@ -116,8 +121,11 @@ export class ScrollSplicer {
     this.nStaves = measureEls.length ? measureEls[0].querySelectorAll(':scope g.staff').length : 0;
     this.gapPx = measureEls.length ? gapsOfMeasure(measureEls[0], this.nStaves) : [];
 
-    this.calibrate(doc, ctx);
+    this.calibrate(live, ctx);
     this.ready = this.law.length === this.nStaves - 1 && this.gapPx.every((g) => isFinite(g));
+    // The SVG now matches the doc; reset the model's dirty-range so the next
+    // edit starts from the conservative 'all' default (Phase B3).
+    model.resetRenderDirty();
   }
 
   /** Serialized head context (the scoreDef(s) before the first measure) — if
@@ -181,98 +189,51 @@ export class ScrollSplicer {
     return this.gapPx.map((g, k) => (g - this.law[k].intercept) / this.law[k].slope);
   }
 
-  /* ── running context (for the edited run's head scoreDef) ────────────────── */
-
-  private computeRunningCtx(section: Element, meiMeasures: Element[], target: number): RunningCtx {
-    const ctx: RunningCtx = {
-      keySig: null, mode: null, meterCount: null, meterUnit: null, meterSym: null,
-      clefByStaff: new Map(),
-    };
-    const targetEl = meiMeasures[target];
-    for (const node of Array.from(section.children)) {
-      if (node === targetEl) break;
-      if (node.localName === 'scoreDef') {
-        const ks = node.getAttribute('key.sig'); if (ks !== null) ctx.keySig = ks;
-        const md = node.getAttribute('mode'); if (md !== null) ctx.mode = md;
-        const mc = node.getAttribute('meter.count'); if (mc !== null) ctx.meterCount = mc;
-        const mu = node.getAttribute('meter.unit'); if (mu !== null) ctx.meterUnit = mu;
-        const ms = node.getAttribute('meter.sym'); if (mc !== null || mu !== null) ctx.meterSym = ms;
-        for (const sd of Array.from(node.querySelectorAll('staffDef'))) {
-          const sn = sd.getAttribute('n') ?? '1';
-          const shape = sd.getAttribute('clef.shape');
-          if (shape) ctx.clefByStaff.set(sn, {
-            shape, line: sd.getAttribute('clef.line') ?? '2',
-            dis: sd.getAttribute('clef.dis'), disPlace: sd.getAttribute('clef.dis.place'),
-          });
-        }
-      } else if (node.localName === 'measure') {
-        for (const staff of Array.from(node.querySelectorAll('staff'))) {
-          const sn = staff.getAttribute('n') ?? '1';
-          const clefs = staff.querySelectorAll('layer > clef');
-          const c = clefs[clefs.length - 1] as Element | undefined;
-          if (c) ctx.clefByStaff.set(sn, {
-            shape: c.getAttribute('shape') ?? 'G', line: c.getAttribute('line') ?? '2',
-            dis: c.getAttribute('dis'), disPlace: c.getAttribute('dis.place'),
-          });
-        }
-      }
-    }
-    return ctx;
-  }
-
-  private stampScoreDef(sd: Element, rc: RunningCtx): void {
-    if (rc.keySig !== null) sd.setAttribute('key.sig', rc.keySig);
-    if (rc.mode !== null) sd.setAttribute('mode', rc.mode);
-    if (rc.meterCount !== null) sd.setAttribute('meter.count', rc.meterCount);
-    if (rc.meterUnit !== null) sd.setAttribute('meter.unit', rc.meterUnit);
-    if (rc.meterSym) sd.setAttribute('meter.sym', rc.meterSym); else sd.removeAttribute('meter.sym');
-    for (const staffDef of Array.from(sd.querySelectorAll('staffDef'))) {
-      const sn = staffDef.getAttribute('n') ?? '1';
-      const c = rc.clefByStaff.get(sn);
-      if (c) {
-        staffDef.setAttribute('clef.shape', c.shape);
-        staffDef.setAttribute('clef.line', c.line);
-        if (c.dis) { staffDef.setAttribute('clef.dis', c.dis); if (c.disPlace) staffDef.setAttribute('clef.dis.place', c.disPlace); }
-        else { staffDef.removeAttribute('clef.dis'); staffDef.removeAttribute('clef.dis.place'); }
-      }
-    }
-  }
-
-  /** Build the sub-MEI for measures [lo..hi] (interior scoreDefs preserved, head
-   *  stamped with running ctx as of lo) + a synthetic spacer that reproduces the
-   *  persistent gaps. */
-  private buildSubMei(doc: Document, meiMeasures: Element[], lo: number, hi: number): string {
-    const sub = doc.cloneNode(true) as Document;
-    const subSection = sub.querySelector('section')!;
-    let seen = 0;
-    for (const node of Array.from(subSection.children)) {
-      if (node.localName === 'measure') { if (seen < lo || seen > hi) node.remove(); seen++; }
-      else if (!(seen > lo && seen <= hi)) node.remove();   // keep interior scoreDefs only
-    }
-    const headSd = sub.querySelector('scoreDef');
-    const section = doc.querySelector('section')!;
-    if (headSd) this.stampScoreDef(headSd, this.computeRunningCtx(section, meiMeasures, lo));
-    const spacer = new DOMParser().parseFromString(
-      `<x xmlns="${MEI_NS}">${this.synthMeasure(this.solveStemLens())}</x>`, 'application/xml');
-    subSection.appendChild(sub.importNode(spacer.documentElement.firstChild!, true));
-    return new XMLSerializer().serializeToString(sub);
+  /** Insert the synthetic spacer measure into a range sub-MEI (from
+   *  model.serializeRangeForRender) just before the closing </section>. The
+   *  spacer reproduces the persistent inter-staff gaps so the edited measures
+   *  splice in with a single x/y translate. */
+  private insertSpacer(rangeMei: string): string {
+    const spacer = this.synthMeasure(this.solveStemLens());
+    const i = rangeMei.lastIndexOf('</section>');
+    return i < 0 ? rangeMei : rangeMei.slice(0, i) + spacer + rangeMei.slice(i);
   }
 
   /* ── splice ──────────────────────────────────────────────────────────────── */
 
-  /** Surgically splice the edit described by `mei` into the persistent SVG.
-   *  Returns true on success; false if the change can't be spliced (caller must
-   *  full-render) — NEVER silently full-renders. */
-  splice(mei: string, ctx: SpliceCtx): boolean {
+  /** Surgically splice the current model edit into the persistent SVG. Works
+   *  from the LIVE doc + model.serializeRangeForRender (O(edited-range), no
+   *  whole-doc serialize/parse). Returns true on success; false if the change
+   *  can't be spliced (caller must full-render) — NEVER silently full-renders. */
+  splice(model: ComposerModel, viewStaves: number[] | null, ctx: SpliceCtx): boolean {
     if (!this.ready || !this.sysEl) return false;
-    const doc = new DOMParser().parseFromString(mei, 'application/xml');
-    const section = doc.querySelector('section');
+    const live = model.getDoc();
+    const section = live.querySelector('section');
     if (!section) return false;
     const meiMeasures = Array.from(section.children).filter((c) => c.localName === 'measure');
-    const newOrder = meiMeasures.map((m) => m.getAttribute('xml:id') || m.getAttribute('id') || '');
+    const newOrder = meiMeasures.map(idOf);
     const ser = new XMLSerializer();
+    // Per-measure signatures for the diff. The expensive part on a large score
+    // is serializing every measure; when the model reports a narrow dirty-range
+    // (Phase B3) and the measure count is unchanged (a content edit), we
+    // re-serialize ONLY the dirty window and REUSE last render's cached sigs for
+    // every other id (guaranteed unchanged — see ComposerModel.renderDirty).
+    // The prefix/suffix diff below is untouched: it still discovers the true run
+    // structurally, so a too-tight range can't silently corrupt — it would make
+    // a changed measure look unchanged and the test-mode gate would catch it.
+    const dirty = model.renderDirtyRange();
     const newSig = new Map<string, string>();
-    for (const m of meiMeasures) newSig.set(m.getAttribute('xml:id') || m.getAttribute('id') || '', ser.serializeToString(m));
+    if (dirty !== 'all' && newOrder.length === this.order.length) {
+      for (let i = 0; i < newOrder.length; i++) {
+        const id = newOrder[i];
+        if (i >= dirty.lo && i <= dirty.hi) { newSig.set(id, ser.serializeToString(meiMeasures[i])); continue; }
+        const cached = this.sig.get(id);
+        newSig.set(id, cached !== undefined ? cached : ser.serializeToString(meiMeasures[i]));
+      }
+      if (indexCheckEnabled()) this.assertDirtyRangeCoversChanges(meiMeasures, newOrder, newSig, ser);
+    } else {
+      for (const m of meiMeasures) newSig.set(idOf(m), ser.serializeToString(m));
+    }
 
     // Layout header changed (clef/key/meter/staff structure) → can't splice.
     if (this.computeHeadSig(meiMeasures[0], ser) !== this.headSig) return false;
@@ -292,10 +253,15 @@ export class ScrollSplicer {
     if (hiNew < lo && oldHi < oldLo) return true; // nothing changed
 
     // Expand the NEW run outward until no spanner crosses its endpoints.
-    [lo, hiNew] = this.expandForSpanners(doc, meiMeasures, newOrder, lo, hiNew);
-    // Mirror prefix-extension back onto the OLD run (suffix is unaffected: ids
-    // past the run match 1:1). lo can only have decreased.
+    [lo, hiNew] = this.expandForSpanners(live, meiMeasures, newOrder, lo, hiNew);
+    // Mirror the expansion onto the OLD run. Measures BEFORE the run align 1:1
+    // (common prefix), and measures AFTER it align 1:1 (common suffix, shifted by
+    // the measure-count delta), so: oldLo = lo, and oldHi tracks hiNew by the
+    // count delta (oN−nN). Forgetting to move oldHi when the run expands inserts
+    // more measures than it removes → DUPLICATE measures in the SVG.
+    const countDelta = oN - nN;
     oldLo = lo;
+    oldHi = hiNew + countDelta;
     const RUN_CAP = 60;
     if (hiNew - lo + 1 > RUN_CAP) return false;   // too big → full render
 
@@ -312,7 +278,10 @@ export class ScrollSplicer {
     const cLo = Math.max(0, lo - leftCtx);
     const cHi = rightAvail ? hiNew + 1 : hiNew;
     const anchorIdx = rightAvail ? cHi : (lo > 0 ? lo - 1 : 0);
-    const subMei = this.buildSubMei(doc, meiMeasures, cLo, cHi);
+    // Sub-MEI: the model render-serializes ONLY [cLo..cHi] (O(range)), then we
+    // append the synthetic spacer that reproduces the persistent gaps.
+    const subMei = this.insertSpacer(
+      model.serializeRangeForRender(cLo, cHi, { hejiEnabled: model.getHejiEnabled() }, viewStaves));
 
     ctx.toolkit.setOptions(ctx.optionsNone);
     if (!ctx.toolkit.loadData(subMei)) return false;
@@ -325,6 +294,27 @@ export class ScrollSplicer {
       return this.spliceDom(host, newOrder, newSig, { lo, hiNew, oldLo, oldHi, cHi, anchorIdx });
     } finally {
       host.remove();
+    }
+  }
+
+  /** Test-mode gate (HKL_INDEX_CHECK): the cheap dirty-window sig map reused
+   *  last render's cached sigs for every measure outside the model's reported
+   *  dirty-range. That is only sound if those measures genuinely didn't change.
+   *  Re-serialize every measure fresh and assert it equals the cheap map — a
+   *  mismatch means the model's dirty-range was too tight (a converted mutation
+   *  under-reported its extent), which would silently leave a stale measure in
+   *  the SVG. Throw loudly so the offending fixture fails. */
+  private assertDirtyRangeCoversChanges(
+    meiMeasures: Element[], newOrder: string[], cheapSig: Map<string, string>, ser: XMLSerializer,
+  ): void {
+    for (let i = 0; i < newOrder.length; i++) {
+      const fresh = ser.serializeToString(meiMeasures[i]);
+      if (fresh !== cheapSig.get(newOrder[i])) {
+        throw new Error(
+          `[scroll-splice] dirty-range too tight: measure index ${i} (id ${newOrder[i]}) ` +
+          `changed but was outside the model's reported dirty-range — a converted mutation ` +
+          `under-reported markDirtyMeasures.`);
+      }
     }
   }
 

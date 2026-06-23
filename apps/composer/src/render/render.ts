@@ -10,6 +10,7 @@ import { injectHejiGlyphs } from '@hkl/notation/heji-render.js';
 import { applyNotationTheme } from '@hkl/notation/verovio.js';
 import { CRISP_PRESETS, crispMarginTop, lineWidthOptions, pinExactScale, snapStaffLinesToGrid, snapBarlines, snapSystemRightEdge } from '@hkl/notation/render-presets.js';
 import { ScrollSplicer, type SpliceCtx } from './splice.js';
+import type { ComposerModel } from '../model/index.js';
 
 export type ViewMode = 'page' | 'scroll';
 /** Score theme. 'transparent' renders like 'dark' (light-source noteheads,
@@ -260,10 +261,10 @@ class Renderer {
   render(mei: string): void {
     if (!this.tk) throw new Error('render() before ready()');
     if (!this.container) throw new Error('render() before attach()');
-    /* Scroll view → one continuous single-system SVG, spot-spliced on edit
-       (Phase B2). Full re-engrave only on file open / reflow / view-zoom-theme
-       change (forceFull); every edit splices. Page view → full multi-page. */
-    if (this.viewMode === 'scroll') { this.renderScroll(mei); return; }
+    /* String entry (PDF, tests, page-internal). In scroll mode this is always a
+       FULL re-engrave — splicing needs the model, so it goes through
+       renderComposer(model). Page view → full multi-page. */
+    if (this.viewMode === 'scroll') { this.renderSingleSystem(mei); return; }
     /* Choose a breaks strategy. Section/system breaks alone → single-pass
        'smart' (honors them + auto-wraps). Page breaks → bake the natural
        system breaks first, then 'encoded' (honors pages + the baked wraps).
@@ -325,22 +326,37 @@ class Renderer {
     };
   }
 
+  /** Composer render entry (called by main.ts with the live model). Page view →
+   *  full serialize + multi-page. Scroll view → surgical splice when possible,
+   *  else a full re-engrave + re-capture. */
+  renderComposer(model: ComposerModel, viewStaves: number[] | null): void {
+    if (!this.tk) throw new Error('renderComposer() before ready()');
+    if (!this.container) throw new Error('renderComposer() before attach()');
+    if (this.viewMode === 'scroll') { this.renderScroll(model, viewStaves); return; }
+    this.render(model.serialize({ hejiEnabled: model.getHejiEnabled() }, viewStaves));
+  }
+
   /** Scroll render: full re-engrave + capture when forced (file open / reflow /
-   *  zoom-theme-view change), otherwise a surgical splice. A splice that can't
-   *  be performed logs loudly and falls back to a full re-engrave — a visible
-   *  bring-up safety net, never a silent hang (the cases it catches are shapes
-   *  the splicer doesn't handle yet, e.g. layout-header changes). */
-  private renderScroll(mei: string): void {
-    if (this.forceFull || !this.splicer.canSplice()) {
-      this.renderSingleSystem(mei);
-      this.splicer.capture(mei, this.spliceCtx());
+   *  zoom-theme-view change) or in single-part view, otherwise a surgical splice
+   *  straight from the model (O(edited-range), no whole-doc serialize/parse). A
+   *  splice that can't be performed logs loudly and falls back to a full
+   *  re-engrave — a visible bring-up safety net, never a silent hang. Splicing is
+   *  gated to all-parts view (viewStaves == null): the gap calibration assumes
+   *  the full staff set, so single-part view always full-renders. */
+  private renderScroll(model: ComposerModel, viewStaves: number[] | null): void {
+    const heji = { hejiEnabled: model.getHejiEnabled() };
+    const canSpliceNow = !this.forceFull && this.splicer.canSplice() && viewStaves == null;
+    if (!canSpliceNow) {
+      this.renderSingleSystem(model.serialize(heji, viewStaves));
+      if (viewStaves == null) this.splicer.capture(model, this.spliceCtx());
+      else this.splicer.invalidate();
       this.forceFull = false;
       return;
     }
-    if (this.splicer.splice(mei, this.spliceCtx())) return;
+    if (this.splicer.splice(model, viewStaves, this.spliceCtx())) return;
     console.warn('[scroll-splice] edit could not be spliced — full re-engrave (investigate)');
-    this.renderSingleSystem(mei);
-    this.splicer.capture(mei, this.spliceCtx());
+    this.renderSingleSystem(model.serialize(heji, viewStaves));
+    this.splicer.capture(model, this.spliceCtx());
   }
 
   /** Post-render DOM treatment shared by page + scroll: crisp pinning, notehead

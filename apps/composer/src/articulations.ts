@@ -241,17 +241,22 @@ export function toggleTrill(parent: Element): boolean {
 
 /** Remove every `<fermata>` / `<breath>` / `<trill>` whose @startid no longer
  *  resolves to a slot element. Mirrors `pruneDanglingSlurs`. Returns count. */
-export function pruneDanglingArticControls(doc: Document): number {
+export function pruneDanglingArticControls(doc: Document, sharedIds?: Set<string>): number {
+  /* Anchor-id set, built ONCE (O(n)) — the previous per-control full-doc scan was
+     O(controls × notes), quadratic on large scores. `sharedIds` lets normalizeTies
+     build the note/chord/rest set once and share it with pruneDanglingSlurs. */
+  const ids = sharedIds ?? (() => {
+    const s = new Set<string>();
+    for (const n of Array.from(doc.querySelectorAll('note, chord, rest'))) {
+      const id = n.getAttribute('xml:id'); if (id) s.add(id);
+    }
+    return s;
+  })();
   let removed = 0;
   for (const el of Array.from(doc.querySelectorAll('fermata, breath, trill'))) {
     const anchorId = stripHash(el.getAttribute('startid'))
                   ?? el.getAttribute('data-hkl-anchor');
-    if (!anchorId) { el.parentNode?.removeChild(el); removed++; continue; }
-    let found = false;
-    for (const n of Array.from(doc.querySelectorAll('note, chord, rest'))) {
-      if (n.getAttribute('xml:id') === anchorId) { found = true; break; }
-    }
-    if (!found) { el.parentNode?.removeChild(el); removed++; }
+    if (!anchorId || !ids.has(anchorId)) { el.parentNode?.removeChild(el); removed++; }
   }
   return removed;
 }

@@ -30,9 +30,12 @@ bundled in, `fflate` the sole external dep). Publish with `npm publish packages/
 Acceptance met: `test/react-consumer/` (a React app linking the **built** package) imports it,
 runs `init()` against a real `AudioContext`, decodes a sample, plays a JI triad, and retunes
 via `sRampFreq` — green in a headless-Chromium gate (`pnpm --filter @hkl/react-consumer smoke`).
+HKL-side audio behavior (loop crossfades / aftertouch / transpose-glide / `.hki` playback)
+confirmed unchanged by-ear after the Iowa removal + `audioFetch` refactor (2026-06-22).
 
-Remaining publish-time choices: confirm the npm scope (`@hexkeylab` must be claimed, or rename)
-and the license (currently MIT). **Audio feel is still Max's by-ear gate.**
+**Effort parked here for now.** The only remaining Phase-1 action is the operational publish
+itself: claim the `@hexkeylab` org on npm (the name is final), then `npm publish
+packages/engine/dist`. Nothing in code is blocking.
 
 ## Phase 2 — React Native (Intonalogy) — FUTURE, gated on Android spike
 
@@ -60,9 +63,14 @@ the entire gate for Phase 2.
 **Sample story:** feed `.hki` bytes via `instrumentProvider` (expo-asset / file-system);
 real-time JI retuning via `sRampFreq` / `sNoteOnFaded`.
 
-## Open decisions
+## Resolved decisions (2026-06-22)
 
-- Published scope/name: `@hexkeylab/engine` vs `@intonalogy/engine`.
-- License (default MIT).
-- Whether to also publish `@hkl/shared`, or keep bundling its 3 used modules into the
-  engine build (current plan: bundle).
+- **Published name: `@hexkeylab/engine`** — final. (`@hexkeylab` org still to be claimed on npm.)
+- **License: MIT** — final (`packages/engine/LICENSE`, baked into `dist/package.json`).
+- **`@hkl/shared` is bundled into the engine build**, not published separately. `fflate` stays
+  the single external dependency (so each consumer's bundler picks the right fflate build).
+
+## Open items
+
+- Operational: claim `@hexkeylab` on npm + run the first publish (`npm publish packages/engine/dist`).
+- Phase 2 (React Native / Intonalogy) — see above; gated entirely on the Android device spike.

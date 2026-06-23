@@ -1,305 +1,264 @@
 # Composer rendering & model — spot-splice redesign
 
-**Status:** Phase A (model index) **done**; Phase B1 (single-SVG scroll render,
-chunk system deleted) **done**; Phase B2 (spot-splice on edit) **DONE** —
-shipped in `apps/composer/src/render/splice.ts` (`ScrollSplicer`). Supersedes the
-chunk-virtualization approach in [composer-virtualization-handoff.md](composer-virtualization-handoff.md)
-(archived record of what we learned, not the plan). The chunk modules
-(`virtualize.ts`, `chunk-render.ts`, `measure-index.ts`) are deleted.
+**The idea in one line:** Verovio is an excellent one-shot engraver and a terrible
+live editor — it re-lays-out the whole document on every `loadData` and has no
+incremental API. So we render the whole score **once** into a single persistent
+SVG and thereafter use Verovio only as a **spot-change tool**: re-engrave a small
+run of measures and splice the result into the live SVG, leaving every other
+measure untouched. The model likewise maintains incrementally-invalidated derived
+state so navigation/tick lookups are O(1)/O(log n) by construction.
 
-> **B2 as built differs from the plan below in one major way: propper-finding was
-> abandoned for a SYNTHETIC SPACER measure.** The plan's "find the real measures
-> that prop each gap" (clearance-argmin from the full DOM) was disproved by the
-> spike — bbox clearance ignores horizontal collision, and even an x-aware sweep
-> mispredicts Verovio (barlines/braces/cross-staff stems span the gap). Instead a
-> single synthetic measure forces each inter-staff gap to the full render's px via
-> `stem.len` (linear, fractional, calibrated once per full render: `gap =
-> slope·stem.len + intercept`), with a LOCAL treble clef per staff so the control
-> note sits on a fixed line regardless of the real clef. Result: zero render-time
-> search, gaps reproduced to 0 px, edited measures pixel-identical to a full
-> render, splice in ~15–40 ms. See decisions.md "Composer scroll spot-splice
-> (Phase B2): synthetic spacer measure, not propper-finding" for the shipped
-> design; the "Finding the propping measures" / "spacer measures" sections below
-> are the superseded plan, kept for context. Other shipped specifics: a dedicated
-> `spliceTk` toolkit (decisions.md), glyph-defs merge by SMuFL codepoint, and the
-> cursor-overlay cleanup (both in lessons.md). Guard fixture:
-> `scrollEditSplicesNotFullRender`.
+This supersedes the chunk-virtualization approach in
+[composer-virtualization-handoff.md](composer-virtualization-handoff.md) (kept as
+an archive of what we learned). The chunk modules (`virtualize.ts`,
+`chunk-render.ts`, `measure-index.ts`) are deleted.
 
-### Current state (what a fresh thread inherits)
+## Status at a glance
 
-- **Phase A — model navigation index (done, committed-quality, 310/310 tests).**
-  `apps/composer/src/model/voice-index.ts` builds a per-voice index (stops,
-  tick positions, measure indices, boundaries, measure-stop prefixes) in one
-  O(n) pass, cached and invalidated via `invalidateMeterCache()` (the choke
-  point every mutation reaches through `normalizePlaceholdersAll`). The hot
-  nav/tick functions (`getTickPositionAt`, `measureBoundaryCursors`,
-  `getFlatStopInfo`, `cursorMeasureIdx`, `getMeasureStartCursor`,
-  `getFirstVisualCursorInMeasure`) read the index. `measureBoundaryCursors`
-  went 46 s → ~0 ms; Ctrl-arrow 46 s → ~31 ms; Shift-arrow → ~80 ms. A
-  test-mode consistency check (`globalThis.__HKL_INDEX_CHECK`, env
-  `HKL_INDEX_CHECK=1` in the test runner) rebuilds and compares every index
-  against the original per-query computations — keep using it after any model
-  change. `flatChildren` is deliberately **not** cached (mutation code reads it
-  mid-operation, before invalidation — caching it corrupts ties/beams/inserts).
-- **Phase B1 — single-SVG scroll render (done).** `Renderer.render()` →
-  `renderSingleSystem()` engraves the whole score as one `breaks:'none'` system
-  into `#score` (no `.score-page` wrapper; the bare SVG is styled by
-  `#score.view-scroll svg`). `postProcessRendered()` is shared by page + scroll.
-  **`pageWidth`/`pageHeight` are pinned to Verovio's maxima (100000 / 60000 MEI
-  units)** — these are MEI units, not output px (the sonata's one system is
-  ~190k px wide and renders fine at `pageWidth 100000`, zero console errors).
-  Known limit: ~500 bars at 100% zoom before content exceeds the budget and
-  wraps; revisit if a real score hits it. Page + scroll share ONE toolkit, so
-  every per-mode option must be set EXPLICITLY each render (Verovio's
-  `setOptions` persists unspecified options — `adjustPageHeight` is set per-mode
-  in `buildOptions` for exactly this reason). **B1 makes every scroll edit a
-  full re-engrave (~4 s on the sonata) — that is what B2 fixes.**
-- The nav `onChange → onCursorMove` fixes in `input.ts` (Ctrl-arrow bar-jump,
-  expr/pedal/tempo mark-jump, Shift-arrow selection, Escape-from-selection) are
-  in and correct — they removed a redundant reRender on pure navigation.
+| Phase | What | State |
+|---|---|---|
+| **A** | Model navigation index (O(1) nav/tick) | ✅ **done** |
+| **B1** | Single persistent-SVG scroll render | ✅ **done** |
+| **B2** | Spot-splice on edit (surgical re-render) | ✅ **done — shipped** |
+| **B3** | Incremental edit pipeline (per-edit latency) | ⏳ **next** — planned, see below |
+| **C** | Page view (cascade systems off the hot path) | later |
 
-## Why we're rewriting
+A fresh thread picking up performance work wants **Phase B3**. Everything above
+it is shipped and green (`pnpm test:composer` 311/311 + `HKL_INDEX_CHECK`).
 
-Chunk virtualization treated the score as many independent Verovio renders that
-must be *made to agree*. Every bug we hit came from that premise:
-- a stray CSS margin shifted each chunk vs. its clip (handoff issues 1–3);
-- chunks compute their own content-driven inter-staff gaps, so multi-staff
-  systems disagree across seams (issue 4); `spacingStaff` is non-monotonic and
-  can't force agreement;
-- navigation/tick math is O(n²) (`measureBoundaryCursors` = 46 s on the 446-bar
-  sonata) because the model recomputes `flatChildren` + `locateCursor` per element.
-
-The realization: **Verovio is an excellent one-shot engraver and a terrible live
-editor.** It re-lays-out the whole document on every `loadData` and has no
-incremental API. So we stop asking it to be live. We render the whole score
-**once** into a single SVG, and thereafter use Verovio only as a **spot-change
-tool**: re-engrave a small contiguous run of measures and splice the result into
-the persistent SVG, leaving every other measure's internals untouched.
-
-And the model stops recomputing derived data per query: it maintains a small,
-incrementally-invalidated index so navigation and tick lookups are O(1)/O(log n)
-**by construction**, not by workaround.
-
-## Core principles
+## The four invariants (design contract — still hold)
 
 1. **One persistent SVG.** The whole score (scroll view = one horizontal system)
    is rendered once and lives in the DOM. Scrolling is native — no JS, no
-   mounting. Initial render cost is the pre-virtualization cost (~3.8 s for the
-   sonata, instant for normal scores) and is paid **once**, not per interaction.
+   mounting. The initial full-render cost (~3.8 s for the 446-bar sonata, instant
+   for normal scores) is paid **once**, not per interaction.
 2. **Vertical layout is immutable.** The full render fixes the staff Y positions
-   (Verovio's one consistent set of inter-staff gaps). Edits never change Y. This
-   is what dissolves issue 4: there is exactly one vertical layout, forever.
-3. **Edits mutate X and swap content only.** An edit changes a measure's content
-   and width. We re-engrave the affected measure run, place its glyphs at the
-   fixed staff Ys, and shift following measures in X. Followers' internals never
-   move.
-4. **The model is the index.** Cursor stops, tick positions, measure boundaries,
-   and per-measure metadata are maintained derived state, invalidated atomically
-   on edit — never recomputed per query or per render.
-
-## Scope (decided)
-
-- **Scroll view only** for this work. Page view keeps the existing full-render
-  path for now; its eventual innovation is to **cascade one system at a time off
-  the hot path** on insert (Phase C, later). Scroll is where editing happens.
-- **Spanners: splice whole measures.** We never hand-edit ties/slurs/hairpins or
-  other cross-measure fixtures. When an edit's dirty set touches a spanner, we
-  expand the re-rendered run to whole measures that fully contain it. Re-rendering
-  up to ~30 measures is effectively instant (that was the working score size
-  pre-virtualization), so we have headroom; we prefer fewer measures but never at
-  the cost of splitting a spanner.
+   (Verovio's one consistent set of inter-staff gaps). Edits never change Y.
+3. **Edits mutate X and swap content only.** An edit re-engraves the affected
+   measure run, places its glyphs at the fixed staff Ys, and shifts following
+   measures in X. Followers' internals never move.
+4. **No auto full-render fallback, ever.** A full re-engrave (file open / explicit
+   reflow / a zoom-theme-view change) is the ONLY full render. A full re-engrave
+   hangs the app for seconds — never acceptable as a silent fallback. (An
+   unspliceable edit logs loudly and full-renders — a visible bring-up net.)
 
 ---
 
-## Phase A — model index (DONE)
+## Phase A — model navigation index ✅ done
 
-See "Current state" above. Implemented in `voice-index.ts`; nav/tick functions
-read the cached index; 310/310 with the `HKL_INDEX_CHECK` consistency gate green.
-Dirty-measure tracking for B2 will use **signature-diff** (cache each measure's
-serialized source, diff on render; ~9 ms for 446 bars, pure string work, robust,
-central) — not yet wired (B1 re-renders whole, so nothing consumes it yet).
+`apps/composer/src/model/voice-index.ts` builds a per-voice index (stops, tick
+positions, measure indices, boundaries, measure-stop prefixes) in one O(n) pass,
+cached and invalidated via `invalidateMeterCache()` — the choke point every
+mutation reaches through `normalizePlaceholdersAll`. Hot nav/tick functions
+(`getTickPositionAt`, `measureBoundaryCursors`, `getFlatStopInfo`,
+`cursorMeasureIdx`, `getMeasureStartCursor`, `getFirstVisualCursorInMeasure`) read
+it. `measureBoundaryCursors` went 46 s → ~0 ms; Ctrl-arrow 46 s → ~31 ms.
+
+- Test-mode consistency gate: `globalThis.__HKL_INDEX_CHECK` (env
+  `HKL_INDEX_CHECK=1` in the runner) rebuilds and compares every index against the
+  original per-query computation — **keep using this pattern after any model
+  change** (B3 will lean on it heavily).
+- `flatChildren` is deliberately **not** cached — mutation code reads it
+  mid-operation, before invalidation; caching corrupts ties/beams/inserts.
 
 ---
 
-## Phase B1 — single-SVG scroll render (DONE)
+## Phase B1 — single persistent-SVG scroll render ✅ done
 
-See "Current state" above. The persistent SVG is the whole score as one
-`breaks:'none'` system in `#score`. Every scroll edit currently full-re-engraves
-(~4 s on the sonata) — B2 makes it surgical.
+`Renderer.renderSingleSystem()` engraves the whole score as one `breaks:'none'`
+system into `#score` (bare SVG, styled by `#score.view-scroll svg`).
+`postProcessRendered()` (crisp pinning, notehead z-order, HEJI glyph injection,
+theming) is shared by page + scroll.
+
+- `pageWidth`/`pageHeight` pinned to Verovio's maxima (100000 / 60000 MEI units —
+  these are MEI units, not output px; the sonata's one system is ~190k px wide and
+  renders fine). Known limit: ~500 bars at 100% zoom before content exceeds the
+  budget and wraps.
+- Page + scroll share ONE toolkit, so every per-mode option must be set EXPLICITLY
+  each render (`setOptions` persists unspecified options).
+- The nav `onChange → onCursorMove` fixes in `input.ts` (Ctrl-arrow bar-jump,
+  expr/pedal/tempo mark-jump, Shift-arrow selection) removed a redundant reRender
+  on pure navigation.
 
 ---
 
-## Phase B2 — spot-splice on edit (THE PLAN — not started)
+## Phase B2 — spot-splice on edit ✅ done (shipped)
 
-**Hard rule from Max:** *nothing* may auto-trigger a full re-engrave. Verovio
-does a full render ONLY on file open or an explicit user "reflow" command.
-Every edit is surgical. (A full re-engrave hangs the app for seconds — never
-acceptable as a silent fallback.)
+Shipped in **`apps/composer/src/render/splice.ts`** (`ScrollSplicer`), wired
+through `render.ts` (`renderComposer`/`renderScroll`) and `main.ts` (`reRender`).
 
-### The vertical problem and the spacer-measure solution
+### What happens on a render
 
-A re-engraved sub-range and the full render produce **identical x and
-within-staff content** (spike: 0.01 px) but **different inter-staff gaps**:
-Verovio sizes each staff-pair gap to that *system's* max inter-staff content, and
-a sub-range lacks whatever measure(s) drive the full system's gaps. Measured
-(sonata, `pageWidth 100000`): full gaps 251/272 px; sub-ranges 180/180, 184/220,
-etc. — never matching.
+`main.ts reRender()` → `renderer.renderComposer(model, viewStaves)`:
+- **Page view** → full `serialize` + multi-page render (unchanged legacy path).
+- **Scroll, full re-engrave** (file open / reflow / zoom-theme-view change, via
+  `forceFullRerender()`; also single-part view) → `renderSingleSystem` +
+  `splicer.capture()`, which records the per-measure index, measures the
+  inter-staff gaps, and calibrates the `stem.len → gap` law.
+- **Scroll, edit** → `splicer.splice(model, …)`: surgical, O(edited-range).
 
-Verovio offers **no per-staff spacing control** (`spacingStaff`/
-`spacingBraceGroup`/`spacingBracketGroup` are global, max 48 MEI units) and the
-content-driven gaps exceed those, so we cannot *tell* Verovio the target gaps.
-Two rejected approaches: (1) post-render per-staff translate of the sub-render's
-staves — disrupts Verovio's natural staff flow and requires re-syncing every
-cross-staff spanner (massive headache); (2) a fixed wide spacing on all renders —
-disturbs natural spacing globally.
+### The splice (per edit)
 
-**Chosen approach (Max's): spacer measures.** Find the measure(s) that *prop up*
-each inter-staff gap in the full render. When building a sub-render, include those
-propping measures as **spacers** alongside the real edited range. Verovio then
-naturally produces the **same gaps** as the full render (dy = 0), so the real
-edited measures splice in with a trivial single x-translate, and cross-staff
-elements (slurs, beams, barlines) are correct *by construction* — Verovio drew
-them at the right gap. The spacer measures are **rendered but never spliced** into
-the real score; they exist only to reproduce the spacing, then are discarded.
+1. **Diff** the model's LIVE doc per-measure signatures (common prefix + suffix by
+   id + serialized content) → the changed run `[lo..hi]`.
+2. **Expand** the run outward until no spanner (tie/slur/hairpin/…) crosses an
+   endpoint, so whole spanners re-render together (`expandForSpanners`).
+3. **Sub-MEI** = `model.serializeRangeForRender(cLo, cHi, …)` (head scoreDef with
+   running clef/key/meter folded in as of `lo`, interior scoreDefs preserved,
+   transforms run over only the range) **+ one synthetic spacer measure**.
+4. **Render** the sub-MEI on a **dedicated `spliceTk` toolkit** (never the live
+   one — sharing it pollutes the score's toolkit state), `postProcess` it.
+5. **Splice the DOM:** replace the changed `g.measure`s by `xml:id`; one
+   `translate(dx, dy)` anchored on an UNCHANGED context measure (never the sub's
+   system-first measure, which gets a spurious leading clef); merge glyph `<defs>`
+   by SMuFL codepoint.
+6. **X-cascade:** shift every following persistent measure by `Δ`. Old + new runs
+   must expand symmetrically (`oldHi = hiNew + countDelta`) or measures duplicate.
 
-### Finding the propping measures (the hard part)
+### The vertical problem and the synthetic-spacer solution
 
-A gap between staff *k* and *k+1* is sized to the measure with the least
-inter-staff clearance — i.e. `argmin_m ( minY(content of staff k+1 in m) −
-maxY(content of staff k in m) )`. Determine this **from the full render's DOM**
-(done once at full render, so it accounts for ALL content — notes, ledgers,
-dynamics, fingerings, everything — not just pitches):
+A re-engraved sub-range has identical x + within-staff content but **different
+inter-staff gaps** — Verovio sizes each gap to that *system's* max inter-staff
+content, and a sub-range lacks the measures driving the full system's gaps. There
+is no per-staff spacing control (`spacingStaff` etc. are global + range-limited).
 
-1. After the full render, for each measure `m` and each adjacent staff pair
-   `(k, k+1)`, measure `maxY` of staff-k content and `minY` of staff-(k+1)
-   content within `m` (bounding boxes of the measure's per-staff `g.staff`
-   content, excluding the staff lines themselves if needed).
-2. `propper[k] = argmin_m clearance(m, k)` per pair. Store the propper measure
-   index per gap (often 1–2 distinct measures for a 3-staff score).
-3. Recompute the proppers only on a full render (file open / reflow) — they're
-   stable across surgical edits (an edit that *would* change them is the
-   accepted spacing-drift case, fixed by a manual reflow).
+**Solution (shipped):** append ONE **synthetic spacer measure** to the sub-render
+that forces each inter-staff gap to the full render's exact px value, then discard
+it (never spliced). The mechanism is **`stem.len` on a stemmed note** — linear,
+fractional, floored at the min gap, so `gap = slope·stem.len + intercept` inverts
+to any px target; calibrated once per full render (2 offscreen renders). Each
+staff gets a LOCAL forced treble clef (confined to the discarded measure) so the
+control note sits on one fixed line regardless of the real clef, and its down-stem
+protrudes only below its staff. With gaps reproduced, the edited measures align
+with a single `dy`; cross-staff spanners are correct by construction.
 
-### Sub-render + splice
+> **This replaced the original plan's "propper-finding"** (find the real measures
+> that drive each gap). The spike disproved it — bbox clearance ignores horizontal
+> collision, and even an x-aware sweep mispredicts Verovio (barlines/braces/
+> cross-staff stems span the gap). See the Appendix and decisions.md.
 
-Per edit (dirty measure set from the model's signature-diff):
-1. **Expand** the dirty set to a contiguous run `[lo..hi]`, then outward until no
-   spanner (tie/slur/hairpin/tuplet/beam) crosses an endpoint — so the run holds
-   whole spanners. Cap ~30 measures (instant); `log()` if hit.
-2. **Build the sub-MEI:** running clef/key/meter context folded into the head
-   scoreDef as of `lo`; the edited run `[lo..hi]` **with interior `scoreDef`
-   changes preserved** (drop only scoreDefs *before* the run — the spike proved
-   dropping interior ones causes a ~45 px/measure drift); PLUS the propping
-   measures (those not already in `[lo..hi]`) appended as spacers, each carrying
-   its own running clef context so it renders at the correct vertical extent.
-   `breaks:'none'` → one system containing edited run + spacers.
-3. **Render** the sub-MEI with the **same options as the full render** (so gaps
-   match). Verify (test-mode) that the sub's staff Ys == the persistent staff Ys
-   (dy ≈ 0); a mismatch means propper-finding missed a driver — fix the finder,
-   NOT a runtime fallback.
-4. **Splice** the edited run's `g.measure` elements (by `xml:id`) into the
-   persistent SVG: replace each persistent `g.measure[i]` (i∈[lo..hi]) with the
-   sub's, single translate `dx = persistentX[lo] − subX[lo]` (dy = 0). Discard
-   the spacer measures.
-5. **X-cascade:** `Δ = newRunWidth − oldRunWidth`; translate every persistent
-   measure after `hi` by `Δ`; update the per-measure x/width index. Each measure
-   is self-contained (staff lines, barline, slurs are all children of
-   `g.measure`), so no system-level staff-line surgery is needed.
-6. **Insert/delete measure** = the same splice with a count change; followers
-   translate, internals untouched.
-7. **`<defs>` merge:** add any glyph `<symbol>`s the sub-render uses that the
-   persistent `<defs>` lacks — compare by **SMuFL codepoint**, not the full
-   element id (Verovio suffixes ids per render, e.g. `E05C-d1vbkxxq`).
+### Where the details live
 
-### The spike (do FIRST, throwaway)
+- **decisions.md:** synthetic-spacer (`stem.len`) approach; dedicated `spliceTk`;
+  serialize-only-the-edited-range.
+- **lessons.md:** glyph defs are `<g id>` not `<symbol>` (merge by codepoint);
+  cursor-overlay cleanup (a splice doesn't reset `#score.innerHTML`);
+  `normalizePlaceholders` must be idempotent (id churn defeats the diff);
+  `normalizeTies` O(n²) prunes (the big edit-latency culprit); splice run-symmetry
+  (expand old + new runs together or measures duplicate).
+- **Guard fixture:** `scrollEditSplicesNotFullRender` (asserts a scroll edit
+  splices — persistent SVG root node reused — not full-re-engraves).
+- **Throwaway measurement harness:** `test/composer-inspect/spike-b2.mjs` (phases
+  `realdelete` / `breakdown` time the mutation vs render vs sub-passes).
 
-Validate before implementing:
-1. **Spacer reproduces spacing:** build a sub-MEI of an edited range + the
-   computed propping measures; assert its staff Ys == the full render's (dy ≈ 0).
-   Try several edit ranges (near and far from the proppers).
-2. **Propper-finding is correct:** the clearance-argmin from the full DOM picks
-   measures that actually reproduce every gap; if any gap stays short, the finder
-   needs more (e.g. include max-down-of-k and max-up-of-(k+1) measures separately).
-3. **Trivial splice matches full:** with dy = 0, splicing the edited measures
-   (single x-translate) reproduces the full render's pixels for those measures
-   (position-compare by `xml:id`, incl. a measure with a cross-staff slur if the
-   sonata has one).
-4. **Edit latency:** single-note edit re-engraves edited-run + spacers (≤ ~30
-   measures) and splices in tens of ms, not seconds.
+### B2 acceptance (met)
 
-Spike harness pattern (build fresh; prior session's `spike.mjs` is gone): a Node
-script that launches headless Chromium with remote debugging, navigates to the
-running dev server's `/composer/`, imports the reference sonata via
-`window.__composerImportMusicXml(xml)` (`~/Documents/sonataBr1.musicxml`,
-446 bars), gets MEI via `model.serialize(...)`, then in-page builds sub-MEIs with
-a fresh Verovio toolkit and measures staff-top Ys (`g.system g.staff path`
-bbox top) and note positions (`#<xml:id> .notehead` bbox) to compare full vs.
-sub. The sub-MEI builder must: fold running clef/key/meter into the head
-scoreDef as of `lo`, keep measures `[lo..hi]` **with interior scoreDefs** (drop
-only section children outside the kept measure span — dropping interior
-scoreDefs caused the spike's ~45 px/measure drift), and append propping measures
-as spacers. Render options must match the renderer's `buildOptions('none')`
-(breaks:none, pageWidth 100000, pageHeight 60000, adjustPageHeight, scale/unit
-from the active crisp preset). Use `code <png>` to show Max any visual; he views
-in VSCode (don't pre-analyze images meant for him).
+Single-note / insert / delete edit on the sonata splices (no full re-engrave),
+pixel-identical to a full render for the edited measures (incl. cross-staff
+spanners); file open / reflow / view-setting change are the only full renders.
 
-### Phase B2 acceptance
+---
 
-- Single-note / insert / delete edit on the sonata: only the edited run +
-  spacers re-engrave; splice in tens of ms; **no full re-engrave**.
-- Spliced result is pixel-identical to a full re-render for the edited measures
-  (incl. cross-staff spanners).
-- An explicit "reflow" command (and file open) are the ONLY full renders.
-- Tests: large-score fixture; splice-identity (spliced edit == full render,
-  position-compare); insert/delete-measure invariants; edit-latency assertion;
-  spanner-crossing-the-run-boundary fixtures.
+## Phase B3 — incremental edit pipeline ⏳ NEXT (planned, not started)
+
+B2 splice is shipped and correct; this is the **per-edit latency** follow-up.
+Tackle on a fresh thread — measurements + strategy below are the handoff.
+
+### Where we are (the latency journey)
+
+Editing the 446-bar sonata was multi-second per keystroke. Fixed so far:
+- **`normalizeTies` O(n²) prunes** — `pruneDanglingSlurs`/`pruneDanglingArticControls`
+  scanned all notes *per spanner/control*. Now build the id-set once (O(n)). THE
+  big one (~2.2 s of a 2.7 s hang).
+- **`normalizePlaceholders` id churn** — regenerated every placeholder id every
+  edit → made every measure look dirty to the splicer. Now idempotent.
+- **Splice serializes only the edited range** — `model.serializeRangeForRender`
+  (+ `cloneRangeStructure` clones only head + range, not the whole doc).
+
+Result: **~2.7 s → ~400 ms** per edit on the sonata (Max's browser). Usable, not great.
+
+### Remaining bottlenecks (DevTools @ ~400 ms)
+
+No single culprit — **~6 O(total) passes per edit, each a slice**. An edit touches
+1–2 measures but each pass walks all 446:
+
+- **Mutation (~55%):** `normalizeTies` (strips/rebuilds ALL tie state, every
+  measure × voice — now linear but O(total)); `normalizePlaceholdersAll` (walks
+  every layer — idempotent but O(total)).
+- **Splice (~45%):** the dirty diff re-serializes ALL live measures;
+  `expandForSpanners` rebuilds a note→measure map over ALL measures;
+  `renderToSVG` + `postProcess` are O(range) with fixed overhead (partly
+  inherent); plus the browser re-laying-out / repainting the single giant SVG on
+  mutation (likely the larger cost on slow renderers — NOT fixed by the strategy
+  below).
+
+> NB: `getElementById` does **not** resolve `xml:id` in the live MEI doc
+> (verified), so spanner endpoints can't be resolved O(1) without a *maintained*
+> note→measure index.
+
+### Strategy: one dirty-measure range, consumed everywhere
+
+Make the model track **which measures changed since the last render** — a small
+`{lo, hi}` (or `Set<measureIndex>`) dirty range, set at the mutation choke point
+(every structural edit funnels through `normalizePlaceholdersAll` /
+`invalidateMeterCache`, and the edit knows its cursor measure). Then convert each
+pass to O(edited-region), **one at a time, testing after each**:
+
+1. **diff** → use the dirty range directly; stop re-serializing all live measures.
+2. **`normalizeTies`** → re-realize only dirty measures ± 1 per voice (tie pairings
+   only change within a measure and at its boundaries). Gate with an
+   `HKL_INDEX_CHECK`-style consistency check (scoped result == full rebuild in test
+   mode) — the riskiest piece.
+3. **`normalizePlaceholders`** → only the dirty measures' layers.
+4. **`expandForSpanners`** → maintain a note→measure index (forward
+   `noteId→measureId` + reverse `measureId→noteIds`, updated O(range) per edit) so
+   endpoints resolve without the O(notes) rebuild.
+
+Target: ~tens of ms for model + splice JS. If the Verovio sub-render + giant-SVG
+repaint then dominate, the next lever is reducing forced layout/paint of the
+persistent SVG (CSS containment; or caching per-measure intrinsic geometry at
+capture so the splice reads zero `getBBox` from `#score`).
+
+**Risk:** dirty-range scoping touches core model invariants (tie/placeholder
+correctness across measure boundaries). Gate with `test:composer` + the
+consistency check, and add the spanner-crossing-the-run fixtures B2 acceptance
+lists.
 
 ---
 
 ## Phase C — page view (later)
 
 Page view keeps the current full-render path until this phase. The innovation:
-own the line-breaking over the measure-width index, and on insert **cascade one
-system at a time off the hot path** (reflow the affected system synchronously,
-push overflow to the next system, continue asynchronously) rather than
-re-engraving the document. Out of scope for the current work.
+own line-breaking over the measure-width index, and on insert **cascade one system
+at a time off the hot path** (reflow the affected system synchronously, push
+overflow to the next system, continue asynchronously) rather than re-engraving the
+document. Out of scope for current work.
 
-## Migration / what changes
-
-- **Done:** chunk modules deleted (`virtualize.ts`, `chunk-render.ts`,
-  `measure-index.ts`); `scrollOverlayWidth`/`leftMargin`/chunk-toolkit machinery
-  gone; issue 1–3 CSS reverted to the single-svg `#score.view-scroll svg`
-  margin; nav `onChange → onCursorMove` fixes in `input.ts`; the model index
-  (Phase A).
-- **B2 adds:** a splice module (new file under `apps/composer/src/render/`, e.g.
-  `splice.ts`) owning the persistent SVG's per-measure x/width index, the
-  propping-measure finder, the sub-MEI builder (running context + interior
-  scoreDefs + spacers), and the splice surgery. `render(mei)` (scroll) decides
-  full-render vs. splice via the model's signature-diff dirty set; a "reflow"
-  command (and file open) force the full path.
-- **Keep the `buildChunkMei` running-context logic** (it was in the deleted
-  `chunk-render.ts` — re-derive it in the splice module, CORRECTED to preserve
-  interior scoreDefs; the original dropped them).
-
-## Testing
-
-- Phase A (done): suite + `HKL_INDEX_CHECK` consistency gate;
-  `voiceIndexBoundariesAreCheap` perf fixture; `voiceIndexConsistencyUnderEdits`.
-- B2: large-score fixture; splice-identity (spliced edit == full render,
-  position-compare at several measures, incl. cross-staff); insert/delete-measure
-  invariants; edit-latency assertion (`performance.now()` ≤ budget, only the run
-  + spacers re-engraved); spanner-crossing-the-run-boundary fixtures; a fixture
-  asserting NO full re-render fires on a plain edit (mirror of
-  `navDoesNotReRender` — e.g. the persistent SVG root node is NOT replaced on an
-  edit). Every Composer fix still lands with a fixture.
+---
 
 ## Settled decisions
 
-1. Dirty-measure mechanism: **signature-diff** (cache per-measure serialized
-   source, diff on render).
-2. Vertical conform: **spacer measures** (Max's approach) — NOT post-render
-   per-staff translate, NOT fixed global spacing.
-3. **No auto full-render fallback**, ever. Full render = file open or explicit
-   reflow command only.
-4. `pageWidth`/`pageHeight` pinned to Verovio maxima (100000 / 60000); ~500-bar
+1. **Vertical conform = synthetic spacer measure** (`stem.len`-driven) — NOT
+   propper-finding, NOT post-render per-staff translate, NOT fixed global spacing.
+2. **Dirty detection = live-doc per-measure signature diff** (common prefix/suffix
+   by id + serialized content). B3 replaces this with model-tracked dirty ranges.
+3. **No auto full-render fallback**, ever. Full render = file open / explicit
+   reflow / zoom-theme-view change only.
+4. **Splice runs on a dedicated `spliceTk` toolkit**; splicing is gated to
+   all-parts view (single-part view full-renders — the gap calibration assumes the
+   full staff set).
+5. `pageWidth`/`pageHeight` pinned to Verovio maxima (100000 / 60000); ~500-bar
    single-system ceiling accepted for now.
+
+## Appendix — superseded B2 plan (propper-finding)
+
+The original B2 plan reproduced the inter-staff gaps by **finding the real
+measures that prop each gap** (`argmin_m clearance(m)` from the full render's DOM)
+and including them as spacers in each sub-render. The spike disproved it:
+whole-measure bbox clearance ignores horizontal position (two notes can overlap in
+Y but sit at different beats), and even an x-aware collision sweep mispredicts
+Verovio because barlines/braces span the gap and cross-staff stems cross the
+midpoint. A render-based finder (solo-render each measure, argmax gap) was correct
+but ~5–18 s. The synthetic-spacer approach (above) computes the gap-forcing
+content by formula instead — zero render-time search. Kept here only so the
+reasoning isn't re-discovered.

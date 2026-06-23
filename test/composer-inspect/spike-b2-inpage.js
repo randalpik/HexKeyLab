@@ -920,6 +920,158 @@ ${mExtra || ''}
         allDefs,
       };
     },
+    /* REAL-PATH latency probe on the sonata: is serialize byte-stable for
+       unchanged content, and does a real model edit splice or full-render? */
+    reallatency() {
+      const C = S.C;
+      const m = C.model;
+      const ser = () => m.serialize({ hejiEnabled: m.getHejiEnabled() }, null);
+      /* 1. determinism: serialize twice, no edit. */
+      const a = ser(), b = ser();
+      const detEqual = a === b;
+      /* per-measure dirty count between two no-edit serializes */
+      const measuresOf = (mei) => {
+        const d = new DOMParser().parseFromString(mei, 'application/xml');
+        const sx = new XMLSerializer();
+        return Array.from(d.querySelector('section').children)
+          .filter((c) => c.localName === 'measure')
+          .map((mm) => ({ id: mm.getAttribute('xml:id') || mm.getAttribute('id'), sig: sx.serializeToString(mm) }));
+      };
+      const ma = measuresOf(a), mb = measuresOf(b);
+      let dirtyNoEdit = 0;
+      for (let i = 0; i < Math.min(ma.length, mb.length); i++) if (ma[i].sig !== mb[i].sig) dirtyNoEdit++;
+
+      /* 2. real edit (append at past-end) + real reRender path. */
+      const svgRef = document.querySelector('#score svg');
+      const meiBefore = ser();
+      m.setCursor(m.getVoiceLength(1), 1);
+      const id = m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      const meiAfter = ser();
+      /* dirty-run size between before/after (prefix+suffix by sig) */
+      const A = measuresOf(meiBefore), Bm = measuresOf(meiAfter);
+      let P = 0; while (P < Math.min(A.length, Bm.length) && A[P].id === Bm[P].id && A[P].sig === Bm[P].sig) P++;
+      let Sx = 0; while (Sx < Math.min(A.length, Bm.length) - P && A[A.length - 1 - Sx].id === Bm[Bm.length - 1 - Sx].id && A[A.length - 1 - Sx].sig === Bm[Bm.length - 1 - Sx].sig) Sx++;
+      const dirtyRun = (Bm.length - Sx) - P;
+      /* what changed in the FIRST (untouched) measure? */
+      let firstDiff = null;
+      if (A[0].sig !== Bm[0].sig) {
+        let k = 0; while (k < A[0].sig.length && A[0].sig[k] === Bm[0].sig[k]) k++;
+        firstDiff = {
+          idBefore: A[0].id, idAfter: Bm[0].id,
+          divergeAt: k,
+          before: A[0].sig.slice(Math.max(0, k - 20), k + 60),
+          after: Bm[0].sig.slice(Math.max(0, k - 20), k + 60),
+        };
+      }
+      const t0 = performance.now();
+      C.reRender();
+      const reRenderMs = r2(performance.now() - t0);
+      const svgSame = document.querySelector('#score svg') === svgRef;
+
+      return {
+        phase: 'reallatency',
+        serializeDeterministic: detEqual,
+        dirtyMeasuresWithNoEdit: dirtyNoEdit,
+        totalMeasures: ma.length,
+        editApplied: id !== null,
+        voiceLen: m.getVoiceLength(1),
+        dirtyRunMeasures: dirtyRun,
+        measuresBefore: A.length, measuresAfter: Bm.length,
+        reRenderMs,
+        svgNotReplaced: svgSame,   // false ⇒ full re-engrave happened (the bug)
+        firstMeasureDiff: firstDiff,
+      };
+    },
+    /* Reproduce Max's case: delete a note mid-score, measure latency, inspect SVG. */
+    realdelete() {
+      const C = S.C, m = C.model;
+      const ser = () => m.serialize({ hejiEnabled: m.getHejiEnabled() }, null);
+      const measuresOf = (mei) => {
+        const d = new DOMParser().parseFromString(mei, 'application/xml');
+        const sx = new XMLSerializer();
+        return Array.from(d.querySelector('section').children).filter((c) => c.localName === 'measure')
+          .map((mm) => ({ id: mm.getAttribute('xml:id') || mm.getAttribute('id'), sig: sx.serializeToString(mm) }));
+      };
+      const svgRef = document.querySelector('#score svg');
+      const meiBefore = ser();
+      m.setCursor(100, 1);
+      const tDel = performance.now();
+      const deleted = m.deleteAtCursor();
+      const deleteMs = r2(performance.now() - tDel);   // where normalizeTies runs
+      const meiAfter = ser();
+      const A = measuresOf(meiBefore), B = measuresOf(meiAfter);
+      let P = 0; while (P < Math.min(A.length, B.length) && A[P].id === B[P].id && A[P].sig === B[P].sig) P++;
+      let Sx = 0; while (Sx < Math.min(A.length, B.length) - P && A[A.length - 1 - Sx].id === B[B.length - 1 - Sx].id && A[A.length - 1 - Sx].sig === B[B.length - 1 - Sx].sig) Sx++;
+      const dirtyRun = (B.length - Sx) - P;
+
+      const t0 = performance.now();
+      C.renderer.renderComposer(m, null);
+      const renderComposerMs = r2(performance.now() - t0);
+      const t1b = performance.now();
+      C.reRender();
+      const fullReRenderMs = r2(performance.now() - t1b);
+      const reRenderMs = renderComposerMs;
+
+      const mEls = Array.from(document.querySelectorAll('#score g.measure'));
+      const ids = mEls.map((x) => x.id);
+      const dup = ids.filter((id, i) => ids.indexOf(id) !== i);
+      const lefts = mEls.map((x) => r2(x.getBoundingClientRect().left));
+      let nonMono = 0, firstNonMono = -1;
+      for (let i = 1; i < lefts.length; i++) if (lefts[i] < lefts[i - 1] - 1) { nonMono++; if (firstNonMono < 0) firstNonMono = i; }
+
+      /* scroll to the edited measure for the screenshot */
+      const editId = B[Math.max(0, P)] && B[Math.max(0, P)].id;
+      const el = editId ? document.getElementById(editId) : null;
+      const score = document.getElementById('score');
+      if (el) score.scrollLeft = (score.scrollLeft + el.getBoundingClientRect().left) - 400;
+
+      return {
+        phase: 'realdelete', deleted, deleteMs, dirtyRun, dirtyRunStartP: P,
+        renderComposerMs, fullReRenderMs, postRenderOverheadMs: r2(fullReRenderMs),
+        reRenderMs, svgNotReplaced: svgRef === document.querySelector('#score svg'),
+        measureCount: mEls.length, expectedMeasureCount: B.length,
+        duplicateIdCount: dup.length, dupSample: dup.slice(0, 6),
+        nonMonotonicX: nonMono, firstNonMonoIdx: firstNonMono,
+        leftsAroundEdit: lefts.slice(Math.max(0, P - 2), P + 6),
+      };
+    },
+    /* Time the O(total) pieces of one edit on the sonata. */
+    breakdown() {
+      const C = S.C, m = C.model;
+      const mei = m.serialize({ hejiEnabled: m.getHejiEnabled() }, null);
+      const time = (fn) => { const t = performance.now(); const v = fn(); return [r2(performance.now() - t), v]; };
+
+      const [tSerialize] = time(() => m.serialize({ hejiEnabled: m.getHejiEnabled() }, null));
+      const [tParse, doc] = time(() => new DOMParser().parseFromString(mei, 'application/xml'));
+      const section = doc.querySelector('section');
+      const meiMeasures = Array.from(section.children).filter((c) => c.localName === 'measure');
+      const ser = new XMLSerializer();
+      const [tPerMeasureSig] = time(() => { for (const mm of meiMeasures) ser.serializeToString(mm); });
+      const [tClone] = time(() => doc.cloneNode(true));
+      const [tStringSplit] = time(() => mei.split('</measure>'));
+      const [tFullSerializeReparse] = time(() => new XMLSerializer().serializeToString(doc));
+      return {
+        phase: 'breakdown', meiBytes: mei.length, nMeasures: meiMeasures.length,
+        tSerialize, tParse, tPerMeasureSig, tCloneWholeDoc: tClone, tStringSplit, tFullSerialize: tFullSerializeReparse,
+      };
+    },
+    /* Does getElementById resolve xml:id in the live MEI doc? (determines whether
+       expandForSpanners can resolve spanner endpoints in O(1) without an O(notes) map) */
+    idtest() {
+      const live = S.C.model.getDoc();
+      const note = live.querySelector('note[xml\\:id]') || live.querySelector('note');
+      const id = note ? (note.getAttribute('xml:id') || note.getAttribute('id')) : null;
+      const viaGetById = id ? live.getElementById(id) : null;
+      const slur = live.querySelector('slur');
+      const startid = slur ? slur.getAttribute('startid') : null;
+      return {
+        sampleNoteId: id,
+        getElementByIdWorks: !!viaGetById && viaGetById === note,
+        viaGetByIdTag: viaGetById ? viaGetById.tagName : null,
+        sampleSlurStartid: startid,
+        startidResolves: startid ? !!live.getElementById(startid.replace('#', '')) : null,
+      };
+    },
     splice() { return { todo: 'splice' }; },
     latency() { return { todo: 'latency' }; },
     all() { return { todo: 'all' }; },
