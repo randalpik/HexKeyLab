@@ -83,6 +83,12 @@ export class HistoryManager {
   private undoStack: UndoEntry[] = [];
   private redoStack: UndoEntry[] = [];
   private cap: number;
+  /** The most recently committed state's MEI — the AFTER of the last push, or
+   *  the side restored by the last undo/redo. Equals the live doc between
+   *  committed edits, so `withHistory` reuses it as the next edit's BEFORE-MEI
+   *  to serialize once per edit instead of twice (Phase B3). null = unknown
+   *  (after clear / before the first push) → caller serializes fresh. */
+  private lastMei: string | null = null;
 
   constructor(cap = DEFAULT_CAP) {
     this.cap = cap;
@@ -91,9 +97,13 @@ export class HistoryManager {
   canUndo(): boolean { return this.undoStack.length > 0; }
   canRedo(): boolean { return this.redoStack.length > 0; }
 
+  /** The last committed state's MEI (see `lastMei`), or null if unknown. */
+  committedMei(): string | null { return this.lastMei; }
+
   clear(): void {
     this.undoStack = [];
     this.redoStack = [];
+    this.lastMei = null;
   }
 
   /** Push a new entry, OR merge into the top entry if it is `mergeable` and
@@ -102,6 +112,9 @@ export class HistoryManager {
    *  (caller's mutation produced no observable change). */
   push(before: Snapshot, after: Snapshot, label: string, opts: PushOpts = {}): void {
     if (snapshotsEqual(before, after)) return;
+    /* The doc now reflects `after` — record it so the next edit's BEFORE-MEI is
+       free (see lastMei). Set unconditionally (covers both push + merge). */
+    this.lastMei = after.mei;
 
     if (opts.mergeIfTopMergeable && this.undoStack.length > 0) {
       const top = this.undoStack[this.undoStack.length - 1];
@@ -149,6 +162,7 @@ export class HistoryManager {
     } else {
       model.restoreSnapshotMeiOnly(entry.before, curVoice, curCursors);
     }
+    this.lastMei = entry.before.mei;   // doc now reflects the BEFORE state
 
     /* Selection: re-enter source selection if recorded, else clear. */
     if (entry.sourceSelection) {
@@ -177,6 +191,7 @@ export class HistoryManager {
     } else {
       model.restoreSnapshotMeiOnly(entry.after, curVoice, curCursors);
     }
+    this.lastMei = entry.after.mei;   // doc now reflects the AFTER state
 
     /* Redo always lands in voice mode — committed cut/paste exits selection. */
     effects.setSelection(null);

@@ -1073,7 +1073,13 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     fn: () => boolean | void,
     opts: { sourceSelection?: SelectionState; mergeable?: boolean; mergeIfTopMergeable?: boolean } = {},
   ): boolean {
-    const before = model.snapshotState();
+    /* BEFORE-MEI reuse (Phase B3): the doc is unchanged since the last committed
+       edit, so its serialization equals HistoryManager's cached AFTER-MEI — reuse
+       it instead of re-serializing the whole doc (the BEFORE half of the two
+       full-doc serializes withHistory did per edit). snapshotStateReusing reads
+       cursors/voice fresh and, in test mode, asserts the reused MEI still matches
+       the live doc. */
+    const before = model.snapshotStateReusing(hooks.history.committedMei());
     const result = fn();
     if (result === false) return false;
     const after = model.snapshotState();

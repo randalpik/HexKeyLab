@@ -748,11 +748,35 @@ export class ComposerModel {
    *  stack. Serializes the live doc directly — no render passes — so the
    *  output is round-trip-stable through restoreSnapshot. */
   snapshotState(): { mei: string; voice: Voice; cursors: Record<Voice, number> } {
-    return {
-      mei: new XMLSerializer().serializeToString(this.doc),
-      voice: this.currentVoice,
-      cursors: { ...this.cursors },
-    };
+    return this.snapshotStateReusing(null);
+  }
+
+  /** snapshotState, but if `reuseMei` is supplied use it instead of
+   *  re-serializing the doc (Phase B3). The full-doc XMLSerializer is ~13ms on
+   *  the 446-bar sonata and `withHistory` captures BEFORE + AFTER on every edit;
+   *  the BEFORE state equals the previous push's AFTER (the doc is unchanged
+   *  between committed edits), so the HistoryManager hands that MEI back here to
+   *  serialize once per edit instead of twice. Voice/cursors are always read
+   *  fresh (cheap, and they may have moved via navigation since the last push).
+   *
+   *  SAFETY: reuse is sound only while the live doc still matches `reuseMei`. In
+   *  HKL_INDEX_CHECK mode this asserts that — catching any doc mutation that
+   *  reached the DOM without funnelling through history.push (which would leave
+   *  HistoryManager's cached MEI stale). */
+  snapshotStateReusing(reuseMei: string | null): { mei: string; voice: Voice; cursors: Record<Voice, number> } {
+    let mei: string;
+    if (reuseMei !== null) {
+      if (indexCheckEnabled()) {
+        const fresh = new XMLSerializer().serializeToString(this.doc);
+        if (fresh !== reuseMei) {
+          throw new Error('[snapshotState] reused MEI is stale — a doc mutation bypassed history.push');
+        }
+      }
+      mei = reuseMei;
+    } else {
+      mei = new XMLSerializer().serializeToString(this.doc);
+    }
+    return { mei, voice: this.currentVoice, cursors: { ...this.cursors } };
   }
 
   /** Restore a snapshot in full (MEI + voice + cursors). Fast path — snapshots
