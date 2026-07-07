@@ -4105,6 +4105,103 @@ const PHASE1 = {
     `,
   },
 
+  /* MusicXML import — full-measure rest: Finale writes an empty bar as
+     <rest measure="yes"/> with NO <type>. Import must fill the measure (a 4/4
+     bar → a single whole rest), not the old lone-quarter degradation. */
+  phase5_musicxml_measure_rest: {
+    setup: `
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>T</part-name></score-part></part-list>'
+        + '<part id="P1"><measure number="1">'
+        + '<attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        + '<note><rest measure="yes"/><duration>96</duration><voice>1</voice></note>'
+        + '</measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+
+  /* MusicXML import — ornaments: a trilled half note (<trill-mark>) followed by
+     a fingered two-note tremolo (<tremolo type=start/stop>3) → a note-anchored
+     <trill> and an <fTrem beams=3> wrapping the pair. */
+  phase5_musicxml_ornaments: {
+    setup: `
+      const N = (s, o, dur, type, orn) => '<note><pitch><step>' + s + '</step><octave>' + o + '</octave></pitch>'
+        + '<duration>' + dur + '</duration><voice>1</voice><type>' + type + '</type>'
+        + (orn ? '<notations><ornaments>' + orn + '</ornaments></notations>' : '') + '</note>';
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>T</part-name></score-part></part-list>'
+        + '<part id="P1"><measure number="1">'
+        + '<attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        + N('E', 5, 48, 'half', '<trill-mark/>')
+        + N('C', 5, 48, 'half', '<tremolo type="start">3</tremolo>')
+        + N('G', 5, 48, 'half', '<tremolo type="stop">3</tremolo>')
+        + '</measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+
+  /* MusicXML import — mid-measure clef: a second <attributes><clef> after two
+     quarter notes must place the inline <clef> mid-layer (not at the bar head),
+     so notes before the change keep the original clef. */
+  phase5_musicxml_midmeasure_clef: {
+    setup: `
+      const N = (s, o) => '<note><pitch><step>' + s + '</step><octave>' + o + '</octave></pitch>'
+        + '<duration>24</duration><voice>1</voice><type>quarter</type></note>';
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>T</part-name></score-part></part-list>'
+        + '<part id="P1"><measure number="1">'
+        + '<attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        + N('C', 5) + N('D', 5)
+        + '<attributes><clef><sign>F</sign><line>4</line></clef></attributes>'
+        + N('E', 3) + N('F', 3)
+        + '</measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+
+  /* MusicXML import — expressive text: a non-tempo <words> direction becomes a
+     note-independent <dir> (italic preserved); tempo captions are excluded. */
+  phase5_musicxml_words_dir: {
+    setup: `
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>T</part-name></score-part></part-list>'
+        + '<part id="P1"><measure number="1">'
+        + '<attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        + '<direction placement="below"><direction-type><words font-style="italic">espressivo</words></direction-type></direction>'
+        + '<note><pitch><step>C</step><octave>5</octave></pitch><duration>96</duration><voice>1</voice><type>whole</type></note>'
+        + '</measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+
+  /* MusicXML import — beam diff: eight eighths the source beams 2+2+2+2 (begin/
+     end per pair). Our 4/4 auto-beamer would make two 4-beams, so the importer
+     sets @hkl-beam-break to flip the two disagreeing boundaries (notes 3 & 7),
+     reproducing the source grouping while staying editable. */
+  phase5_musicxml_beam_diff: {
+    setup: `
+      const E = (b) => '<note><pitch><step>A</step><octave>4</octave></pitch><duration>12</duration>'
+        + '<voice>1</voice><type>eighth</type><beam number="1">' + b + '</beam></note>';
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>T</part-name></score-part></part-list>'
+        + '<part id="P1"><measure number="1">'
+        + '<attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        + E('begin') + E('end') + E('begin') + E('end') + E('begin') + E('end') + E('begin') + E('end')
+        + '</measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+
   /* Pizz/arco (§14.3): piano + violin; a "pizz." <dir> on the violin staff
      switches its notes to a pizzicato timbre until an "arco" cue reverts them.
      The violin has NO own pizz variant, so it falls back to the library's
@@ -5230,6 +5327,92 @@ export const FIXTURE_ASSERTIONS = {
           return { ok: false, detail: 'ratio=' + t.getAttribute('num') + '/' + t.getAttribute('numbase') };
         const tn = [...t.querySelectorAll('note')].length;
         if (tn !== 3) return { ok: false, detail: 'tuplet notes=' + tn };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Empty bar (<rest measure="yes"/>) → one whole rest filling the 4/4 measure. */
+  phase5_musicxml_measure_rest: [
+    { name: 'empty 4/4 bar → single whole rest, not lone quarter',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const layer = doc.querySelector('measure staff[n="1"] layer[n="1"]');
+        const kids = [...layer.children].filter(k => ['note','chord','rest','tuplet'].includes(k.localName));
+        if (kids.length !== 1) return { ok: false, detail: 'children=' + kids.map(k=>k.localName+':'+k.getAttribute('dur')).join(',') };
+        if (kids[0].localName !== 'rest') return { ok: false, detail: 'not a rest: ' + kids[0].localName };
+        if (kids[0].getAttribute('dur') !== '1') return { ok: false, detail: 'dur=' + kids[0].getAttribute('dur') + ' (expected whole)' };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Ornaments: trill-mark → <trill>; fingered tremolo pair → <fTrem beams=3>. */
+  phase5_musicxml_ornaments: [
+    { name: 'trill on E5 anchored via @startid',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const trills = [...doc.querySelectorAll('trill')];
+        if (trills.length !== 1) return { ok: false, detail: 'trills=' + trills.length };
+        const id = (trills[0].getAttribute('startid') || '').replace('#','');
+        const anchor = [...doc.querySelectorAll('note,chord')].find(n => n.getAttribute('xml:id') === id);
+        if (!anchor || anchor.getAttribute('pname') !== 'e') return { ok: false, detail: 'anchor pname=' + (anchor && anchor.getAttribute('pname')) };
+        return { ok: true };
+      })()` },
+    { name: 'fingered tremolo pair wrapped in <fTrem beams=3> (2 notes)',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const ft = [...doc.querySelectorAll('fTrem')];
+        if (ft.length !== 1) return { ok: false, detail: 'fTrem=' + ft.length };
+        if (ft[0].getAttribute('beams') !== '3') return { ok: false, detail: 'beams=' + ft[0].getAttribute('beams') };
+        const notes = [...ft[0].querySelectorAll('note')];
+        if (notes.length !== 2) return { ok: false, detail: 'fTrem notes=' + notes.length };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Mid-measure clef: inline <clef> after the 2nd note, not at the layer head. */
+  phase5_musicxml_midmeasure_clef: [
+    { name: 'bass <clef> sits mid-layer (2 notes precede it)',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const layer = doc.querySelector('measure staff[n="1"] layer[n="1"]');
+        const clefs = [...layer.children].filter(c => c.localName === 'clef');
+        if (clefs.length !== 1) return { ok: false, detail: 'inline clefs=' + clefs.length };
+        const cl = clefs[0];
+        if (cl.getAttribute('shape') !== 'F' || cl.getAttribute('line') !== '4')
+          return { ok: false, detail: 'clef=' + cl.getAttribute('shape') + cl.getAttribute('line') };
+        let prevNotes = 0, p = cl;
+        while ((p = p.previousElementSibling)) if (p.localName === 'note' || p.localName === 'chord') prevNotes++;
+        if (prevNotes !== 2) return { ok: false, detail: 'notes before clef=' + prevNotes + ' (expected 2)' };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Expressive text: a non-tempo <words> → <dir> with italic text preserved. */
+  phase5_musicxml_words_dir: [
+    { name: '<dir> "espressivo" (italic) present',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const dirs = [...doc.querySelectorAll('dir')];
+        const d = dirs.find(x => (x.textContent || '').trim() === 'espressivo');
+        if (!d) return { ok: false, detail: 'dir texts=' + dirs.map(x => (x.textContent||'').trim()).join('|') };
+        const rend = d.querySelector('rend');
+        if (!rend || rend.getAttribute('fontstyle') !== 'italic') return { ok: false, detail: 'fontstyle=' + (rend && rend.getAttribute('fontstyle')) };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Beam diff: source 2+2+2+2 over our 4/4 4+4 → exactly two @hkl-beam-break
+     markers, on the 3rd and 7th eighths (0-based flat indices 2 and 6). */
+  phase5_musicxml_beam_diff: [
+    { name: 'two beam-break markers on eighths 3 and 7',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const layer = doc.querySelector('measure staff[n="1"] layer[n="1"]');
+        const notes = [...layer.children].filter(c => c.localName === 'note');
+        if (notes.length !== 8) return { ok: false, detail: 'notes=' + notes.length };
+        const marked = notes.map((n, i) => n.getAttribute('hkl-beam-break') === 'true' ? i : -1).filter(i => i >= 0);
+        if (marked.length !== 2 || marked[0] !== 2 || marked[1] !== 6)
+          return { ok: false, detail: 'marked indices=' + marked.join(',') + ' (expected 2,6)' };
         return { ok: true };
       })()` },
   ],

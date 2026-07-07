@@ -171,6 +171,29 @@ function effectiveGroupsForLayerExported(stream: StreamEntry[], ts: TimeSigInfo,
   return effectiveGroupsForLayer(stream, ts, measureTicks);
 }
 
+/** The set of layer-child elements that begin a NATURAL beat group under the
+ *  auto-beamer — i.e. the elements for which `regroupOneLayer` would compute
+ *  `natural = true` (the `groupStarts` indices, excluding index 0, mapped back
+ *  to elements). The MusicXML importer uses this to diff source beaming against
+ *  ours: `@hkl-beam-break` is XOR-ed against this boundary, so setting the
+ *  marker iff `natural !== sourceStartsNewBeam` reproduces the source grouping
+ *  (both mid-beat breaks AND cross-beat joins). Uses the meter in effect at the
+ *  layer's measure (mid-piece changes respected). */
+export function naturalBeatGroupStarts(doc: Document, layer: Element): Set<Element> {
+  const head = readTimeSig(doc);
+  const measureEl = layer.closest('measure');
+  const ts = (measureEl ? perMeasureTimeSig(doc, head).get(measureEl) : null) ?? head;
+  const measureTicks = ts.count * (64 / ts.unit);
+  const stream = annotateLayer(layer);
+  const groups = effectiveGroupsForLayer(stream, ts, measureTicks);
+  const out = new Set<Element>();
+  for (const grp of groups) {
+    const firstIdx = stream.findIndex((s) => s.startTick >= grp.lo && s.startTick < grp.hi);
+    if (firstIdx > 0) out.add(stream[firstIdx].el);   // i>0 mirrors the `i>0 &&` guard
+  }
+  return out;
+}
+
 /** Strip every <beam> in the doc, lifting its children to the beam's parent
  *  position. Safe no-op when there are no beams. */
 export function unwrapBeams(doc: Document): void {
