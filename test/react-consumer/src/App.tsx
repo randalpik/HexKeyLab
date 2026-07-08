@@ -37,13 +37,13 @@ async function setup(): Promise<void> {
     instrumentProvider: async () => ({ [SAMPLE_FILE]: wav }),
   });
   await engine.loadInstrument('tone', instrumentDef());
-  engine.setInstrument('tone');
 }
 
 function triad(): void {
-  engine.sNoteOn('root', ROOT, 90);
-  engine.sNoteOn('third', THIRD, 90);
-  engine.sNoteOn('fifth', FIFTH, 90);
+  // Instrument is passed per-voice — no global "current instrument" to set.
+  engine.sNoteOn('root', ROOT, 90, 'tone');
+  engine.sNoteOn('third', THIRD, 90, 'tone');
+  engine.sNoteOn('fifth', FIFTH, 90, 'tone');
 }
 
 export default function App() {

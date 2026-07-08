@@ -70,7 +70,27 @@ real-time JI retuning via `sRampFreq` / `sNoteOnFaded`.
 - **`@hkl/shared` is bundled into the engine build**, not published separately. `fflate` stays
   the single external dependency (so each consumer's bundler picks the right fflate build).
 
+## Engine 2.0.0 — instrument is per-voice (2026-07-07)
+
+Removed the global "current instrument" anti-pattern: `sNoteOn`/`sNoteOnFaded` take an explicit
+`instrumentKey`, each voice remembers its instrument, and `setInstrument`/`isLoaded` are gone.
+Multiple instruments now sound simultaneously with no set-before-trigger. Fixed at the source in
+both the engine and HKL (317/317 composer, incl. multi-instrument). See decisions.md "instrument
+per-voice". Breaking → **2.0.0**.
+
+## Phase 1.5 — MusiQuest POC handoff (browser) — READY
+
+First real consumer: MusiQuest (`~/musiquest-mono`, browser React 19 / Vite / Nx, Howler-based
+`SoundPlayer`). Handoff doc + staged instruments delivered:
+- **`docs/musiquest-handoff.md`** — full HKL-engine briefing (API, share `Howler.ctx`, adapter,
+  gotchas, acceptance).
+- **`handoff/musiquest/`** — Violin, Trombone, Baritone Voice as self-contained `.hki` + def JSONs
+  (bundles git-ignored/regenerable; defs committed). Consumed via `source:'hki-shipped'` — engine
+  fetches + unzips internally, MusiQuest writes no unzip code.
+
+Implementation is delegated to a MusiQuest-context agent.
+
 ## Open items
 
-- Operational: claim `@hexkeylab` on npm + run the first publish (`npm publish packages/engine/dist`).
-- Phase 2 (React Native / Intonalogy) — see above; gated entirely on the Android device spike.
+- Operational: claim `@hexkeylab` on npm + publish **2.0.0** (`npm publish packages/engine/dist`).
+- Phase 2 (React Native / Intonalogy) — gated entirely on the Android device spike.

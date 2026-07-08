@@ -75,7 +75,7 @@ export function migrateHeldLumatoneVoices(dq: number, dr: number): void {
     } else {
       const now = audio.audioCtx.currentTime;
       const rampDur = animation.duration / 1000;
-      const sampleMoves: { oldKey: KeyId; newKey: KeyId; newFreq: number; vol?: number }[] = [];
+      const sampleMoves: { oldKey: KeyId; newKey: KeyId; newFreq: number; instr: string; vol?: number }[] = [];
       pairs.forEach((p) => {
         const e = audio.activeOscs[p.oldKey];
         if (!e) return;
@@ -86,7 +86,7 @@ export function migrateHeldLumatoneVoices(dq: number, dr: number): void {
           audio.activeOscs[p.newKey] = e;
           delete audio.activeOscs[p.oldKey];
         } else if (e.type === 'sample') {
-          sampleMoves.push({ oldKey: p.oldKey, newKey: p.newKey, newFreq: keyFreq(nq, nr) });
+          sampleMoves.push({ oldKey: p.oldKey, newKey: p.newKey, newFreq: keyFreq(nq, nr), instr: e.instr });
         }
         if (audio.keyVelocity[p.oldKey] !== undefined) {
           audio.keyVelocity[p.newKey] = audio.keyVelocity[p.oldKey];
@@ -95,8 +95,8 @@ export function migrateHeldLumatoneVoices(dq: number, dr: number): void {
       });
       sampleMoves.forEach((m) => { m.vol = SampleEngine.slideAndFadeOut(m.oldKey, m.newFreq, rampDur); });
       sampleMoves.forEach((m) => {
-        SampleEngine.noteOnFaded(m.newKey, m.newFreq, m.vol!, rampDur);
-        audio.activeOscs[m.newKey] = { type: 'sample', freq: m.newFreq } as Voice;
+        SampleEngine.noteOnFaded(m.newKey, m.newFreq, m.vol!, rampDur, m.instr);
+        audio.activeOscs[m.newKey] = { type: 'sample', freq: m.newFreq, instr: m.instr } as Voice;
         delete audio.activeOscs[m.oldKey];
       });
     }

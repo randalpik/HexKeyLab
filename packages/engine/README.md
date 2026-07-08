@@ -40,9 +40,10 @@ init(ctx, ctx.destination, {
 // 2. Load an instrument definition (see InstrumentDef).
 await loadInstrument('viola', violaInstrumentDef);
 
-// 3. Play and retune in real time.
-sNoteOn('voice-1', 220, 100);   // key, frequency (Hz), velocity
-sRampFreq('voice-1', 247.5, 0.2); // glide to a JI-tuned pitch over 200 ms
+// 3. Play and retune in real time. Instrument is per-voice — several
+//    instruments can sound at once, no global mode to set.
+sNoteOn('voice-1', 220, 100, 'viola'); // voiceKey, freq (Hz), velocity, instrument
+sRampFreq('voice-1', 247.5, 0.2);      // glide to a JI-tuned pitch over 200 ms
 sNoteOff('voice-1');
 ```
 
@@ -52,11 +53,12 @@ sNoteOff('voice-1');
   `instrumentProvider` / `velocityToGain` / `onSeamEvent` / `audioFetch`.
 - **`loadInstrument(key, instrDef, onProgress?)`** — decode + cache an
   `InstrumentDef`'s samples (CDN URLs or `.hki` bytes).
-- **Voice lifecycle** — `sNoteOn`, `sNoteOff`, `sRampFreq`, `sNoteOnFaded`,
-  `sSlideAndFadeOut`, `sHardStop`, `sHardStopAll`, `sStopAll`.
+- **Voice lifecycle** — `sNoteOn(voiceKey, freq, velocity, instrumentKey, startAt?)`,
+  `sNoteOff`, `sRampFreq`, `sNoteOnFaded`, `sSlideAndFadeOut`, `sHardStop`,
+  `sHardStopAll`, `sStopAll`. Instrument is specified per note; each voice
+  remembers it, so simultaneous different instruments just work.
 - **Expression** — `sSetAftertouch`, `sSetVoiceDamperDepth`.
-- **State** — `getActiveVoices`, `isLoaded`, `setInstrument`,
-  `isInstrumentLoaded`, `unloadInstrument`, `tapMaster`.
+- **State** — `getActiveVoices`, `isInstrumentLoaded`, `unloadInstrument`, `tapMaster`.
 - **`startSegmentLooper(opts)`** — standalone single-voice segment looper
   (audition / preview), independent of the voice manager.
 - **Types** — `InstrumentDef`, `SampleDef`, `SampleEngineConfig`, `SeamEvent`,

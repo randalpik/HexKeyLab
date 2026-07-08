@@ -151,7 +151,6 @@ for (let i = 0; i < EQUAL_POWER_LEN; i++) {
 let ctx: any = null;
 let master: any = null;
 let sampleMaster: any = null;
-let currentInstrument: any = null;
 const buffers: Record<string, any> = {};
 const activeVoices: Record<string, any> = {};
 const loadedInstruments: Record<string, any> = {};
@@ -200,7 +199,7 @@ const loadedInstruments: Record<string, any> = {};
     return new Promise<void>(function(resolve,reject){
       var instr: any=instrDef;loadedInstruments[key]=instrDef;
       if(!instr)return reject(new Error('Unknown instrument: '+key));
-      if(buffers[key]){currentInstrument=key;return resolve();}
+      if(buffers[key]){return resolve();}
       var loaded=0,total=instr.samples.length,result: any[] = [];
       var aborted=false;
       /* For HKI-backed instruments, pull all audio bytes up-front so the
@@ -393,7 +392,7 @@ const loadedInstruments: Record<string, any> = {};
               if(instr.loop&&(!x.lp||(!x.lp.loopPts&&!x.lp.segments)))return false;
               return true;
             });
-            currentInstrument=key;resolve();
+            resolve();
           }
         }).catch(function(err){
           clearTimeout(timer);if(aborted)return;
@@ -406,7 +405,7 @@ const loadedInstruments: Record<string, any> = {};
               return true;
             });
             if(buffers[key].length===0){delete buffers[key];reject(new Error('All samples failed'));}
-            else{currentInstrument=key;resolve();}}
+            else{resolve();}}
         });
       });
       } /* end runLoad */
@@ -438,8 +437,8 @@ const loadedInstruments: Record<string, any> = {};
      float-equality fragility. Distinct notes are ≥100 cents apart, so one bucket
      ⟺ one note. */
   function freqKey(f: number): number { return Math.round(Math.log2(f)*1200/5); }
-  function findNearest(freq: number, velocity?: number): any {
-    var samps=buffers[currentInstrument];
+  function findNearest(freq: number, velocity: number | undefined, instrumentKey: string): any {
+    var samps=buffers[instrumentKey];
     if(!samps||samps.length===0)return null;
     /* Stage 1: nearest sample by pitch (unchanged metric). */
     var best=0,bestDist=Infinity;
@@ -458,8 +457,8 @@ const loadedInstruments: Record<string, any> = {};
      for a given frequency — 1.0 within range, reducing toward 0.5 as freq exceeds
      the highest sample. Used identically by sNoteOn and sNoteOnFaded so that
      transposing up and back down fully restores the original gain. */
-  function rangeAttenuation(freq: number): number {
-    var samps=buffers[currentInstrument];
+  function rangeAttenuation(freq: number, instrumentKey: string): number {
+    var samps=buffers[instrumentKey];
     if(!samps||samps.length===0)return 1.0;
     var highestFreq=samps[samps.length-1].freq;
     if(freq<=highestFreq)return 1.0;
@@ -467,16 +466,16 @@ const loadedInstruments: Record<string, any> = {};
     /* gentle taper: 1.0 → 1.0, 1.5 → 0.82, 2.0 → 0.64, ≥2.4 → 0.5 (clamped) */
     return Math.max(0.5,1.0-(overshoot-1.0)*0.36);
   }
-  export function sNoteOn(voiceKey: string, freq: number, velocity: number, startAt?: number): void {
-    if(!ctx||!currentInstrument)return;
+  export function sNoteOn(voiceKey: string, freq: number, velocity: number, instrumentKey: string, startAt?: number): void {
+    if(!ctx||!instrumentKey||!buffers[instrumentKey])return;
     if(activeVoices[voiceKey])sNoteOff(voiceKey);
     /* Resolve velocity once: it both selects the velocity layer (findNearest)
        and drives the gain curve (baseVol). Layer choice changes timbre; loudness
        is owned by the curve, since all layers are normalized to the same target. */
     var resolvedVel=(velocity!==undefined?velocity:DEFAULT_DYNAMIC_MAP.f);
-    var nearest=findNearest(freq,resolvedVel);
+    var nearest=findNearest(freq,resolvedVel,instrumentKey);
     if(!nearest)return;
-    var instr=loadedInstruments[currentInstrument];
+    var instr=loadedInstruments[instrumentKey];
     var rate=freq*(instr.transpose||1)/nearest.freq;
     var instrVol=instr.volume||1.0;
     var baseVol=velocityToGain(resolvedVel)*instrVol;
@@ -490,7 +489,7 @@ const loadedInstruments: Record<string, any> = {};
     /* Per-sample RMS-normalization gain, baked in by the analyzer to bring
        the steady (loop) or attack-peak (decay) RMS to a uniform target across
        all instruments. Defaults to 1.0 if absent — see analyzer/backfill-gains.js. */
-    var vol=baseVol*rangeAttenuation(freq)*(nearest.gain!=null?nearest.gain:1.0);
+    var vol=baseVol*rangeAttenuation(freq,instrumentKey)*(nearest.gain!=null?nearest.gain:1.0);
     /* pressureGain: modulated by polyphonic aftertouch. Initialized to 1.0 so
        the note plays at its velocity-driven volume until the first aftertouch
        message arrives (which may be never, or well after onset). Placed outside
@@ -618,7 +617,7 @@ const loadedInstruments: Record<string, any> = {};
       initialBIdx=(pts&&pts.length>=2)?pts.length-1:0;
     }
     var voice={source:source,segGain:segGain,voiceGain:voiceGain,damperGain:damperGain,pressureGain:pressureGain,freq:freq,sampleFreq:nearest.freq,transpose:(instr.transpose||1),sampleName:nearest.name,
-      vol:vol,baseVol:baseVol,keyVelocity:resolvedVel,alive:true,loopPts:pts,validStartsByEnd:vsbe,segments:segs,loopTimer:null,buffer:nearest.buffer,instr:instr,
+      vol:vol,baseVol:baseVol,keyVelocity:resolvedVel,alive:true,loopPts:pts,validStartsByEnd:vsbe,segments:segs,loopTimer:null,buffer:nearest.buffer,instr:instr,instrKey:instrumentKey,
       slopeCV:(nearest.lp&&typeof nearest.lp.slopeCV==='number')?nearest.lp.slopeCV:0.5,
       sourceStartTime:startT,sourceOffset:startOffset,
       sourceLoopA:initialA,
@@ -892,7 +891,7 @@ const loadedInstruments: Record<string, any> = {};
        segment so far, so the source has plenty of buffer ahead to play
        linearly through the brief release window without needing another wrap. */
     if(v.pendingSwitch)cancelPendingSwitch(v);
-    var instr=loadedInstruments[currentInstrument];
+    var instr=v.instr;
     var release=(((instr&&instr.releaseTime)||0.3)*RELEASE_SCALE);
     /* `releaseAt` (when provided) anchors the release on the audio clock —
        the playback lookahead scheduler uses this so the off time is sample-
@@ -1013,7 +1012,7 @@ const loadedInstruments: Record<string, any> = {};
   }
   export function sRampFreq(voiceKey: string, newFreq: number, durSec: number): boolean {
     var v=activeVoices[voiceKey];if(!v)return false;
-    if(!v.alive){var pv=v.vol;delete activeVoices[voiceKey];sNoteOn(voiceKey,newFreq,Math.round(((pv-0.3)/0.7)*127));return true;}
+    if(!v.alive){var pv=v.vol;var ik=v.instrKey;delete activeVoices[voiceKey];sNoteOn(voiceKey,newFreq,Math.round(((pv-0.3)/0.7)*127),ik);return true;}
     var now=ctx.currentTime;
     /* ── COMMIT ANY IN-FLIGHT RAMP ──
        If a prior ramp's re-anchor setTimeout is still pending, cancel it
@@ -1143,21 +1142,21 @@ const loadedInstruments: Record<string, any> = {};
     }
     delete activeVoices[voiceKey];return savedVol;
   }
-  export function sNoteOnFaded(voiceKey: string, freq: number, vol: number, dur: number, atTime?: number, fromFreq?: number): void {
-    if(!ctx||!currentInstrument)return;
+  export function sNoteOnFaded(voiceKey: string, freq: number, vol: number, dur: number, instrumentKey: string, atTime?: number, fromFreq?: number): void {
+    if(!ctx||!instrumentKey||!buffers[instrumentKey])return;
     if(activeVoices[voiceKey])sHardStop(voiceKey);
     /* Slide/glide path: only single-layer (sustained/loop) instruments slide —
        layered decay instruments retrigger — so the neutral 64 short-circuits to
        the single-layer pick, byte-identical to pre-velocity-layer behavior. */
-    var nearest=findNearest(freq,64);if(!nearest)return;
-    var instr=loadedInstruments[currentInstrument];
+    var nearest=findNearest(freq,64,instrumentKey);if(!nearest)return;
+    var instr=loadedInstruments[instrumentKey];
     var rate=freq*(instr.transpose||1)/nearest.freq;
     /* vol param is treated as baseVol (without range attenuation or per-sample
        gain); apply attenuation + the new sample's gain fresh based on current
        freq and nearest sample. The slide may have moved to a different sample,
        which can carry a different normalization gain. */
     var baseVol=vol;
-    vol=baseVol*rangeAttenuation(freq)*(nearest.gain!=null?nearest.gain:1.0);
+    vol=baseVol*rangeAttenuation(freq,instrumentKey)*(nearest.gain!=null?nearest.gain:1.0);
     /* See sNoteOn for the segments-vs-legacy dispatch — mirrored here. */
     var segsFaded=nearest.lp&&nearest.lp.segments;
     var pts=nearest.lp&&nearest.lp.loopPts;
@@ -1250,7 +1249,7 @@ const loadedInstruments: Record<string, any> = {};
       initBIdxF=(pts&&pts.length>=2)?pts.length-1:0;
     }
     var voice={source:source,segGain:segGain,voiceGain:voiceGain,damperGain:damperGain,pressureGain:pressureGain,freq:freq,sampleFreq:nearest.freq,transpose:(instr.transpose||1),sampleName:nearest.name,vol:vol,baseVol:baseVol,alive:true,
-      loopPts:pts,validStartsByEnd:vsbeFaded||null,segments:segsFaded,loopTimer:null,buffer:nearest.buffer,instr:instr,
+      loopPts:pts,validStartsByEnd:vsbeFaded||null,segments:segsFaded,loopTimer:null,buffer:nearest.buffer,instr:instr,instrKey:instrumentKey,
       slopeCV:(nearest.lp&&typeof nearest.lp.slopeCV==='number')?nearest.lp.slopeCV:0.5,
       sourceStartTime:startT,sourceOffset:startOffset,
       sourceLoopA:initAF,sourceLoopB:initBF,
@@ -1303,8 +1302,6 @@ const loadedInstruments: Record<string, any> = {};
   }
 
 export function getActiveVoices(): Record<string, any> { return activeVoices; }
-export function isLoaded(): boolean { return !!(currentInstrument && buffers[currentInstrument]); }
-export function setInstrument(k: string): void { if (buffers[k]) currentInstrument = k; }
 export function isInstrumentLoaded(k: string): boolean { return !!buffers[k]; }
 export function unloadInstrument(k: string): void { delete buffers[k]; }
 /* Diagnostics: lets loopOverlay attach an AnalyserNode to the samples-only

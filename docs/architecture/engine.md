@@ -26,7 +26,9 @@ Depends **only** on `@hkl/shared`. The HKL app wires it up through the barrel `a
 
 `audioFetch` is the last I/O seam: the engine never references a bundler-specific global (the old Vite `import.meta.env.DEV` Iowa-rewrite is gone — see decisions.md "Iowa runtime fetch removed"). A non-browser/RN host can inject byte loading (e.g. resolving expo-asset URIs) without the engine assuming `fetch`. `loadInstrument` also accepts typed `InstrumentDef` / `SampleDef` (exported) instead of `any`.
 
-`loadInstrument(key, instrDef, onProgress?)` takes the instrument **definition** — the host injects it. The barrel passes `INSTRUMENTS[key]` (the HKL-side Proxy merging shipped + imported bundles); the engine never reaches into the registry itself.
+`loadInstrument(key, instrDef, onProgress?)` takes the instrument **definition** — the host injects it. The barrel passes `INSTRUMENTS[key]` (the HKL-side Proxy merging shipped + imported bundles); the engine never reaches into the registry itself. Loaded instruments coexist in a keyed `buffers` map — there is no "current instrument".
+
+**Instrument is per-voice, not global.** `sNoteOn(voiceKey, freq, velocity, instrumentKey, startAt?)` (and `sNoteOnFaded(..., instrumentKey, ...)`) take the instrument explicitly; each voice records it (`v.instr`), so `sNoteOff`/aftertouch/ramp resolve the *voice's* instrument. Multiple instruments therefore sound simultaneously with no mode-setting — the HKL host tracks its own `audio.activeWaveform` (what live input plays) and per-voice `activeOscs[key].instr`, and passes the key in at each trigger. (There is no `setInstrument`/`isLoaded`; a former global-`currentInstrument` design required set-before-every-note — see decisions.md "instrument per-voice".)
 
 → see decisions.md "engine dependency injection"
 

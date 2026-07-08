@@ -13,3 +13,5 @@ apps/analyzer/out/
 .iowa-cache/
 tools/finale-bridge/
 docs/backlog.md
+# MusiQuest handoff: large regenerable .hki bundles (def JSONs + doc are committed)
+handoff/

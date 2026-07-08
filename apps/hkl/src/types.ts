@@ -134,6 +134,10 @@ export interface OscVoice {
 export interface SampleVoice {
   type: 'sample';
   freq: number;
+  /** Instrument (sample-set key) this voice was attacked with. Lets per-voice
+   *  ops (aftertouch gating, etc.) resolve the right instrument when multiple
+   *  instruments sound at once — no reliance on a global "current instrument". */
+  instr: string;
   aftertouchSeen?: boolean;
 }
 

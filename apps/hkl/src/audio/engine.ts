@@ -60,8 +60,8 @@ const OSC_TYPES: readonly OscillatorType[] = ['sine', 'square', 'sawtooth', 'tri
 function isOscType(wf?: string): wf is OscillatorType {
   return OSC_TYPES.includes((wf ?? '') as OscillatorType);
 }
-export function instrDecays(): boolean {
-  const i = SampleEngine.INSTRUMENTS[audio.activeWaveform];
+export function instrDecays(wf?: string): boolean {
+  const i = SampleEngine.INSTRUMENTS[wf ?? audio.activeWaveform];
   return i ? !!i.decays : false;
 }
 /* Combined predicate for transpose-style coordinate shifts: either the
@@ -158,12 +158,13 @@ export function noteOn(key: KeyId, velocity?: number, startAt?: number, instrume
      The house curve (velocityBaseVol / SampleEngine) maps it to gain. */
   const adjVel = velocity ?? DEFAULT_DYNAMIC_MAP.mf;
   if (instrIsSample(wf) && SampleEngine.isInstrumentLoaded(wf)) {
-    SampleEngine.setInstrument(wf);
     /* Velocity drives initial volume (via baseVol in segGain); pressureGain stays
        at 1.0 until the first aftertouch message for a sustained instrument, then
-       ramps to the aftertouch-dictated gain. */
-    SampleEngine.noteOn(key, freq, adjVel, startAt);
-    audio.activeOscs[key] = { type: 'sample', freq };
+       ramps to the aftertouch-dictated gain. Instrument is passed per-voice — the
+       engine tags the voice with it, so noteOff/aftertouch/damper resolve correctly
+       even with other instruments sounding simultaneously. */
+    SampleEngine.noteOn(key, freq, adjVel, wf, startAt);
+    audio.activeOscs[key] = { type: 'sample', freq, instr: wf };
   } else if (isOscType(wf)) {
     const type = wf;
     const osc = audio.audioCtx.createOscillator();
@@ -277,16 +278,12 @@ export function stopAllNotes(): void { for (const k in audio.activeOscs) noteOff
  *
  *  Only the audio voice is migrated here; callers own any higher-level
  *  per-key bookkeeping (selection highlight, playback voice tags). */
-export function glideVoices(pairs: ReadonlyArray<{ oldKey: KeyId; newKey: KeyId }>, rampMs: number, atTime?: number, instrumentKey?: string): void {
+export function glideVoices(pairs: ReadonlyArray<{ oldKey: KeyId; newKey: KeyId }>, rampMs: number, atTime?: number): void {
   if (!audio.audioEnabled || !audio.audioCtx) return;
   /* Multi-instrument playback: a slur is within one voice = one instrument, so
-     the glide's new voice (noteOnFaded below) must be created from THAT
-     instrument's buffers — not whatever the global SampleEngine instrument was
-     left at by another voice's note. Set it once up front, mirroring noteOn.
-     (Live-input callers omit instrumentKey and keep the global instrument.) */
-  if (instrumentKey && SampleEngine.isInstrumentLoaded(instrumentKey)) {
-    SampleEngine.setInstrument(instrumentKey);
-  }
+     the glide's new voice (noteOnFaded below) is created from THAT instrument —
+     carried per-voice on the old voice's `instr` and passed explicitly to the
+     engine, so a concurrently-sounding other instrument can't steal it. */
   /* `atTime` (AudioContext seconds, optional): anchor the glide on the audio
    *  clock at a planned future moment instead of currentTime. Used by the
    *  playback lookahead scheduler so slur boundaries are sample-accurate
@@ -301,7 +298,7 @@ export function glideVoices(pairs: ReadonlyArray<{ oldKey: KeyId; newKey: KeyId 
      the new pitch in lockstep with sSlideAndFadeOut's ramp on the old
      voice. Two pitch-matched sources, equal-power crossfade — no chord
      artifact at fast trill tempos. */
-  const sampleMoves: { oldKey: KeyId; newKey: KeyId; newFreq: number; fromFreq: number; vol?: number }[] = [];
+  const sampleMoves: { oldKey: KeyId; newKey: KeyId; newFreq: number; fromFreq: number; instr: string; vol?: number }[] = [];
   for (const p of pairs) {
     if (p.oldKey === p.newKey) continue;
     const e = audio.activeOscs[p.oldKey];
@@ -321,7 +318,7 @@ export function glideVoices(pairs: ReadonlyArray<{ oldKey: KeyId; newKey: KeyId 
          have just been faded-in by an earlier glide step in this same
          tick, e.freq is already the post-ramp pitch — the right "from"
          value for the next glide. */
-      sampleMoves.push({ oldKey: p.oldKey, newKey: p.newKey, newFreq, fromFreq: e.freq });
+      sampleMoves.push({ oldKey: p.oldKey, newKey: p.newKey, newFreq, fromFreq: e.freq, instr: e.instr });
     }
     if (audio.keyVelocity[p.oldKey] !== undefined) {
       audio.keyVelocity[p.newKey] = audio.keyVelocity[p.oldKey];
@@ -338,15 +335,19 @@ export function glideVoices(pairs: ReadonlyArray<{ oldKey: KeyId; newKey: KeyId 
      path, so the live-input behavior is unchanged. */
   for (const mv of sampleMoves) mv.vol = SampleEngine.slideAndFadeOut(mv.oldKey, mv.newFreq, rampDur, atTime);
   for (const mv of sampleMoves) {
-    SampleEngine.noteOnFaded(mv.newKey, mv.newFreq, mv.vol!, rampDur, atTime, mv.fromFreq);
-    audio.activeOscs[mv.newKey] = { type: 'sample', freq: mv.newFreq };
+    SampleEngine.noteOnFaded(mv.newKey, mv.newFreq, mv.vol!, rampDur, mv.instr, atTime, mv.fromFreq);
+    audio.activeOscs[mv.newKey] = { type: 'sample', freq: mv.newFreq, instr: mv.instr };
     delete audio.activeOscs[mv.oldKey];
   }
 }
 
 export function handleAftertouch(key: KeyId, pressure: number): void {
-  if (!audio.audioEnabled || !audio.audioCtx || instrDecays()) return;
+  if (!audio.audioEnabled || !audio.audioCtx) return;
   const e = audio.activeOscs[key]; if (!e) return;
+  /* Decay sample instruments (piano/harp/pizz) don't take aftertouch. Gate on
+     THIS voice's instrument, not a global active one, so a decay voice sounding
+     alongside a sustained one doesn't suppress the sustained voice's aftertouch. */
+  if (e.type === 'sample' && instrDecays(e.instr)) return;
   /* Strike anchor = the musical velocity used at noteOn (per-key gain already
      applied at input, not here). */
   const strikeVel = audio.keyVelocity[key] !== undefined ? audio.keyVelocity[key] : DEFAULT_DYNAMIC_MAP.f;

@@ -6,7 +6,9 @@ import { writeFile, copyFile } from 'node:fs/promises';
    this build emits a self-contained artifact under the public name below.
    Change PUBLISH_NAME if claiming a different npm scope. */
 const PUBLISH_NAME = '@hexkeylab/engine';
-const VERSION = '1.0.0';
+// 2.0.0: breaking — sNoteOn/sNoteOnFaded take an instrumentKey; the global
+// setInstrument/isLoaded are gone (instrument is per-voice now).
+const VERSION = '2.0.0';
 
 export default defineConfig({
   entry: ['src/index.ts'],

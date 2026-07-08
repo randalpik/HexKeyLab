@@ -479,7 +479,7 @@ function scheduleAudioForEvent(
     /* Audio handoff on the audio clock. glideVoices rekeys audio.activeOscs
        and audio.keyVelocity synchronously here, so a same-tick successor's
        canGlide check sees the post-glide state. */
-    glideVoices([{ oldKey, newKey }], step.rampMs ?? SLUR_GLIDE_MS, audioOnSec, ev.instrumentKey);
+    glideVoices([{ oldKey, newKey }], step.rampMs ?? SLUR_GLIDE_MS, audioOnSec);
     /* Mirror the audio rekey in pb-state. voiceSeq is the claim ledger
        checked at off-fire; heldKeys is the abort-target set. Both shift
        oldKey→newKey to match audio.activeOscs. Later canGlide events in

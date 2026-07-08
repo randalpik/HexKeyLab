@@ -28,8 +28,6 @@ export const SampleEngine = {
   setAftertouch: engine.sSetAftertouch,
   setVoiceDamperDepth: engine.sSetVoiceDamperDepth,
   getActiveVoices: engine.getActiveVoices,
-  isLoaded: engine.isLoaded,
-  setInstrument: engine.setInstrument,
   isInstrumentLoaded: engine.isInstrumentLoaded,
   unloadInstrument: engine.unloadInstrument,
   tapMaster: engine.tapMaster,

@@ -36,7 +36,7 @@ const __dirname  = path.dirname(__filename);
 const REPO = path.resolve(__dirname, '../..');
 /* findSteadyRegion etc. live in the modular ESM at analyzer-analysis.js
    (extracted from the old monolithic tools/HexKeyLab-analyzer.html). */
-const ANALYZER_ANALYSIS_JS = path.join(__dirname, '..', 'analysis', 'analyzer-analysis.js');
+const ANALYZER_ANALYSIS_JS = path.join(__dirname, '..', '..', '..', 'packages', 'analysis', 'src', 'analyzer-analysis.js');
 /* The INSTRUMENTS map was split out of samples.ts into samples-data.ts when
    the audio engine was modularized. */
 const SAMPLES_TS = path.join(REPO, 'apps', 'hkl', 'src', 'audio', 'samples-data.ts');

@@ -32,7 +32,8 @@ const REPO = path.resolve(__dirname, '../..');
    refineFundamentalPeriod, etc). The analyzer was split out of the single-
    file tools/HexKeyLab-analyzer.html into analyzer/*.js; we read only the
    analysis module since the visualization + harness need DOM/Canvas. */
-const ANALYZER_ANALYSIS_JS = path.join(__dirname, '..', 'analysis', 'analyzer-analysis.js');
+/* The analysis DSP was extracted to the @hkl/analysis package; load it from there. */
+const ANALYZER_ANALYSIS_JS = path.join(__dirname, '..', '..', '..', 'packages', 'analysis', 'src', 'analyzer-analysis.js');
 const CACHE_DIR = path.join(__dirname, '..', '.cache');
 const OUT_DIR = path.join(__dirname, '..', 'out');
 
