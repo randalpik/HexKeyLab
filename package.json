@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "node vite/dev-proxy.mjs",
-    "build": "pnpm -r build",
+    "build": "pnpm -r --filter='!./test/**' build",
     "assemble": "node vite/assemble-dist.mjs",
     "assemble:overlay-host": "node vite/assemble-overlay-host.mjs",
     "overlay:dist": "pnpm --filter @hkl/hkl build:overlay && pnpm assemble:overlay-host",
