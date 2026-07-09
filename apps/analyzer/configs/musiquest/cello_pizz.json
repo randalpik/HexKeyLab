@@ -1,0 +1,24 @@
+{
+  "instrumentKey": "cello_pizz",
+  "displayName": "Cello Pizzicato",
+  "source": "local",
+  "sourceDir": "/home/max/musiquest-assets/audio/samples",
+  "ext": ".mp3",
+  "filePattern": "cello_pizz_{NOTE_LOWER}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 2,
+  "highOct": 6,
+  "lowNote": "C2",
+  "highNote": "E6",
+  "transpose": 1,
+  "pickSpacing": 3,
+  "volume": 1.0,
+  "bundleUrl": "/hkl/cello_pizz.hki",
+  "decays": true,
+  "vibrato": false,
+  "releaseTime": 0.15,
+  "comment": [
+    "MusiQuest cello pizzicato (decay path). pickSpacing:3 enables",
+    "minor-third thinning on decay; trimmed to C2-E6."
+  ]
+}

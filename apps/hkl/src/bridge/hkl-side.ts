@@ -1414,6 +1414,10 @@ function handleHkiImport(
   void (async () => {
     try {
       const manifest = await InstrumentRegistry.importBundle(bytes);
+      /* Evict any already-loaded profile for this key so the auto-select's
+         change event reloads from the fresh import instead of hitting the
+         engine's isInstrumentLoaded guard (same as the file-picker path). */
+      SampleEngine.unloadInstrument(manifest.instrumentKey);
       autoSelectImported(manifest.instrumentKey);
       ack(manifest.instrumentKey, true);
     } catch (err) {
@@ -1439,6 +1443,7 @@ analyzerBridge.on((msg: AnalyzerEvent) => {
       void (async () => {
         try {
           await CdnConfigRegistry.importConfig(msg.config);
+          SampleEngine.unloadInstrument(msg.instrumentKey);
           autoSelectImported(msg.instrumentKey);
           analyzerBridge.send({ type: 'import-ack', instrumentKey: msg.instrumentKey, ok: true });
         } catch (err) {

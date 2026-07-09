@@ -1,0 +1,24 @@
+{
+  "instrumentKey": "english_horn",
+  "displayName": "English Horn",
+  "source": "local",
+  "sourceDir": "/home/max/musiquest-assets/audio/samples",
+  "ext": ".mp3",
+  "filePattern": "english_horn_{NOTE_LOWER}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 3,
+  "highOct": 6,
+  "lowNote": "E3",
+  "highNote": "C6",
+  "transpose": 1,
+  "pickSpacing": 3,
+  "volume": 1.0,
+  "bundleUrl": "/hkl/english_horn.hki",
+  "decays": false,
+  "vibrato": false,
+  "releaseTime": 0.3,
+  "comment": [
+    "MusiQuest english horn (sustained loop). Minor-third thinning;",
+    "trimmed to natural range E3-C6."
+  ]
+}

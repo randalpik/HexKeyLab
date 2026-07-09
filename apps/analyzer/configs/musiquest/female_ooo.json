@@ -1,0 +1,29 @@
+{
+  "instrumentKey": "female_ooo",
+  "displayName": "Female Voice (ooo)",
+  "source": "local",
+  "sourceDir": "/home/max/musiquest-assets/audio/samples",
+  "ext": ".mp3",
+  "filePattern": "female_ooo_{NOTE_LOWER}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 4,
+  "highOct": 6,
+  "lowNote": "C4",
+  "highNote": "E6",
+  "transpose": 1,
+  "pickSpacing": 3,
+  "volume": 1.0,
+  "bundleUrl": "/hkl/female_ooo.hki",
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "keepAllRange": [
+    "C4",
+    "E6"
+  ],
+  "comment": [
+    "MusiQuest female voice (ooo). keepAllRange (tier-inclusive) keeps every",
+    "usable sample across C4-E6 for half-step granularity -",
+    "vowel timbre seams are audible at wider spacing."
+  ]
+}

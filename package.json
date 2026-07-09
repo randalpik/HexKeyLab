@@ -17,6 +17,7 @@
     "typecheck": "tsc --noEmit",
     "check:boundaries": "node test/check-boundaries.mjs",
     "analyze": "node --max-old-space-size=8192 --expose-gc apps/analyzer/cli/generate-samples.js",
+    "analyze:musiquest": "node apps/analyzer/cli/batch-musiquest.js",
     "test:composer": "node test/composer-test/run.mjs full",
     "test:composer:fast": "node test/composer-test/run.mjs fast",
     "test:transcription": "node test/transcription-roundtrip/run.mjs",

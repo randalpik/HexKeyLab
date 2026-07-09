@@ -1,0 +1,24 @@
+{
+  "instrumentKey": "piano",
+  "displayName": "Piano",
+  "source": "local",
+  "sourceDir": "/home/max/musiquest-assets/audio/samples",
+  "ext": ".mp3",
+  "filePattern": "piano_{NOTE_LOWER}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 1,
+  "highOct": 6,
+  "lowNote": "G1",
+  "highNote": "E6",
+  "transpose": 1,
+  "pickSpacing": 3,
+  "volume": 1.0,
+  "bundleUrl": "/hkl/piano.hki",
+  "decays": true,
+  "vibrato": false,
+  "releaseTime": 0.15,
+  "comment": [
+    "MusiQuest piano (decay path). pickSpacing:3 enables",
+    "minor-third thinning on decay; trimmed to G1-E6."
+  ]
+}

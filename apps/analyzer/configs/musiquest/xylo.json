@@ -1,0 +1,24 @@
+{
+  "instrumentKey": "xylo",
+  "displayName": "Xylophone",
+  "source": "local",
+  "sourceDir": "/home/max/musiquest-assets/audio/samples",
+  "ext": ".mp3",
+  "filePattern": "xylo_{NOTE_LOWER}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 4,
+  "highOct": 7,
+  "lowNote": "C4",
+  "highNote": "C7",
+  "transpose": 1,
+  "pickSpacing": 3,
+  "volume": 1.0,
+  "bundleUrl": "/hkl/xylo.hki",
+  "decays": true,
+  "vibrato": false,
+  "releaseTime": 0.4,
+  "comment": [
+    "MusiQuest xylophone (decay path). pickSpacing:3 enables",
+    "minor-third thinning on decay; trimmed to C4-C7."
+  ]
+}

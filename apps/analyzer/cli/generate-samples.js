@@ -14,7 +14,7 @@
  *      refineFundamentalPeriod
  *   4. Run the appropriate path on each sample (loop vs decay, see plan)
  *   5. Tier-classify (loop) or peak-validate (decay)
- *   6. Pick samples at ~4-semitone spacing, prefer higher tier
+ *   6. Pick samples at ~4-semitone spacing (configurable via pickSpacing), prefer higher tier
  *   7. Emit two outputs in analyzer/out/:
  *        <key>-block.txt    — ready-to-paste JS source
  *        <key>-report.md    — diagnostics
@@ -95,6 +95,12 @@ function loadConfig() {
   cfg.vibrato = cfg.vibrato === true;
   cfg.decays = cfg.decays === true;
   cfg.replayOnTranspose = cfg.replayOnTranspose === true;
+  /* pickSpacing: target semitone spacing for the sample picker (default 4 =
+     the historical hard-coded spacing; 3 = minor thirds). Presence is tracked
+     separately because the decay path thins only when a config opts in —
+     legacy decay configs keep every usable sample. */
+  cfg.pickSpacingSet = cfg.pickSpacing != null;
+  cfg.pickSpacing = cfg.pickSpacingSet ? cfg.pickSpacing : 4;
   /* Source dispatch. 'cdn' (default) → fetchOne uses curl against cfg.baseUrl.
      'local' → fetchOne copies from cfg.sourceDir into the cache so every
      downstream step (decodeOne writes `.raw` next to the source file) sees a
@@ -141,7 +147,7 @@ function loadConfig() {
     cfg.trustLabeledPitch = (cfg.source === 'local');
   }
   /* keepAllGreenRange: optional ["lowNote", "highNote"] pair (inclusive) that
-     overrides the ~4-semitone picker inside this midi range — every green-tier
+     overrides the spacing picker inside this midi range — every green-tier
      sample within bounds is kept. Used for voices, where the ear detects
      timbre seams across adjacent semitones more readily than for instrumental
      samples. The picker outside the range, and the blue/yellow fill pass
@@ -158,6 +164,33 @@ function loadConfig() {
       console.error(`keepAllGreenRange: low note (${lo}) must be at or below high note (${hi})`);
       process.exit(1);
     }
+  }
+  /* keepAllRange: tier-inclusive sibling of keepAllGreenRange — every usable
+     (green/blue/yellow) sample in the range is kept, not just greens. For
+     voice sets whose short samples tier below green: a yellow (3-segment)
+     vocal sample still loops fine, and dropping it back to the spacing
+     picker would reintroduce the timbral seams this mechanism prevents. */
+  if (cfg.keepAllRange) {
+    if (!Array.isArray(cfg.keepAllRange) || cfg.keepAllRange.length !== 2) {
+      console.error('keepAllRange must be a 2-element array of note names, e.g. ["E2", "G4"]');
+      process.exit(1);
+    }
+    const [lo, hi] = cfg.keepAllRange;
+    cfg.keepAllRangeLowMidi = noteNameToMidi(lo);
+    cfg.keepAllRangeHighMidi = noteNameToMidi(hi);
+    if (cfg.keepAllRangeLowMidi > cfg.keepAllRangeHighMidi) {
+      console.error(`keepAllRange: low note (${lo}) must be at or below high note (${hi})`);
+      process.exit(1);
+    }
+  }
+  /* lowNote/highNote: note-level range trim within the lowOct..highOct sweep
+     (inclusive). Filters enumeration before fetch/decode/analyze, so
+     out-of-range source files are never touched. */
+  cfg.lowNoteMidi = cfg.lowNote ? noteNameToMidi(cfg.lowNote) : null;
+  cfg.highNoteMidi = cfg.highNote ? noteNameToMidi(cfg.highNote) : null;
+  if (cfg.lowNoteMidi != null && cfg.highNoteMidi != null && cfg.lowNoteMidi > cfg.highNoteMidi) {
+    console.error(`lowNote (${cfg.lowNote}) must be at or below highNote (${cfg.highNote})`);
+    process.exit(1);
   }
   return cfg;
 }
@@ -185,6 +218,8 @@ function enumerateNotes(cfg) {
       if (!name) continue;
       const note = name + oct;
       const midi = 12*(oct+1) + semi;
+      if (cfg.lowNoteMidi != null && midi < cfg.lowNoteMidi) continue;
+      if (cfg.highNoteMidi != null && midi > cfg.highNoteMidi) continue;
       out.push({ note, midi, labeledFreq: midiToFreq(midi) });
     }
   }
@@ -508,7 +543,7 @@ function classifyDecay(res) {
   return 'green';
 }
 
-// ─── 6. select at 4-semitone spacing ─────────────────────────────────────────
+// ─── 6. select at spaced intervals ───────────────────────────────────────────
 
 const TIER_RANK = { green: 4, blue: 3, yellow: 2, red: 1, fail: 0 };
 
@@ -521,17 +556,18 @@ function pickSamples(results, cfg) {
   if (usable.length === 0) return [];
   usable.sort((a,b) => a.midi - b.midi);
 
-  // Decay instruments have no loop-quality tiering; samples are typically
-  // pre-curated by the soundfont author. Keep every valid sample.
-  if (cfg.decays) return usable.slice();
+  /* Picker spacing. S=4 is the historical default (every substituted constant
+     below equals the original literal); S=3 = minor-third thinning. */
+  const S = cfg.pickSpacing;
+  const HALF = Math.floor(S / 2);
 
   /* Two-pass selection for loop instruments:
-       Pass 1 — spine: walk green samples at ~4-semitone spacing, pick the
-                best within each ±2-semitone window.
-       Pass 2 — fill: identify gaps > 4 semitones in the spine (between
+       Pass 1 — spine: walk green samples at ~S-semitone spacing, pick the
+                best within each ±HALF-semitone window.
+       Pass 2 — fill: identify gaps > S semitones in the spine (between
                 adjacent picks and at the head/tail of the usable range)
-                and insert blue+yellow samples at ~4-semitone spacing inside
-                each gap, anchored so no fill lands within 4 semitones of a
+                and insert blue+yellow samples at ~S-semitone spacing inside
+                each gap, anchored so no fill lands within S semitones of a
                 spine pick.
      Within a window the picker prefers higher tier (blue > yellow), then
      more segments (richer randomization), then more steady-region seconds. */
@@ -544,9 +580,9 @@ function pickSamples(results, cfg) {
     const sb = (b.res.stats && b.res.stats.steadyDurSec) || 0;
     return sb - sa;
   };
-  /* spacedPick: walk from startMidi to endMidi by 4-semitone targets; in each
-     ±2-semitone window pick the best candidate by tiebreak; advance to
-     best.midi + 4 after each pick. Optionally exclude any candidate within
+  /* spacedPick: walk from startMidi to endMidi by S-semitone targets; in each
+     ±HALF-semitone window pick the best candidate by tiebreak; advance to
+     best.midi + S after each pick. Optionally exclude any candidate within
      minSep semitones of an existing-pick set (used by the fill pass to keep
      yellows from clustering against the spine). */
   function spacedPick(candidates, startMidi, endMidi, excludeFrom, minSep) {
@@ -555,64 +591,87 @@ function pickSamples(results, cfg) {
     const picked = [];
     const seen = new Set();
     let target = startMidi;
-    while (target <= endMidi + 2) {
+    while (target <= endMidi + HALF) {
       const win = sorted.filter(r =>
-        Math.abs(r.midi - target) <= 2
+        Math.abs(r.midi - target) <= HALF
         && !seen.has(r.note)
         && (!excludeFrom || !excludeFrom.some(p => Math.abs(r.midi - p.midi) < minSep))
         && !picked.some(p => Math.abs(r.midi - p.midi) < (minSep || 0))
       );
-      if (win.length === 0) { target += 4; continue; }
-      const best = win.slice().sort(tiebreak)[0];
+      if (win.length === 0) { target += S; continue; }
+      /* Ties (same tier, same segment count, same steady) break toward the
+         candidate nearest the target. Matters on the decay path where every
+         quality metric ties: the old stable sort favored the lowest midi in
+         the window, walking the whole pick chain S-1 semitones per step
+         instead of S. */
+      const best = win.slice().sort((a, b) =>
+        tiebreak(a, b)
+        || (Math.abs(a.midi - target) - Math.abs(b.midi - target))
+        || (a.midi - b.midi)
+      )[0];
       picked.push(best);
       seen.add(best.note);
-      target = best.midi + 4;
+      target = best.midi + S;
     }
     return picked;
+  }
+
+  /* Decay instruments have no loop-quality tiering; samples are typically
+     pre-curated by the soundfont author. Keep every valid sample — unless
+     the config opts into spacing by setting pickSpacing explicitly (dense
+     chromatic sources like the MusiQuest library want thinning too). */
+  if (cfg.decays) {
+    return cfg.pickSpacingSet
+      ? spacedPick(usable, usable[0].midi, usable[usable.length - 1].midi)
+      : usable.slice();
   }
 
   // Pass 1: green spine. No min-sep — allow close greens (e.g. Ab3+Bb3 on
   // Iowa viola) since both are loop-quality samples and redundancy at the
   // green tier is fine.
   //
-  // keepAllGreenRange (when set) carves the green tier into two slices:
-  //   - in-range greens: every one is kept unconditionally (no spacing).
-  //   - out-of-range greens: run the spine picker at ~4-st spacing as usual.
+  // keepAllGreenRange / keepAllRange (when set) carve the usable samples
+  // into two slices:
+  //   - in-range keeps: every sample in the range whose tier is in the keep
+  //     set (green only for keepAllGreenRange; green+blue+yellow for
+  //     keepAllRange) is kept unconditionally (no spacing).
+  //   - everything else: greens run the spine picker at ~S-st spacing as
+  //     usual; blues/yellows go to the fill pass.
   // The spine is the union of (in-range kept-all) ∪ (out-of-range spaced),
   // sorted by midi. The blue/yellow fill pass downstream uses the union as
   // its excludeFrom set so fills don't crowd the dense in-range section.
-  const greens = usable.filter(r => r.tier === 'green');
+  const keepLo = cfg.keepAllRangeLowMidi != null ? cfg.keepAllRangeLowMidi : cfg.keepAllGreenLowMidi;
+  const keepHi = cfg.keepAllRangeHighMidi != null ? cfg.keepAllRangeHighMidi : cfg.keepAllGreenHighMidi;
+  const keepTiers = cfg.keepAllRange ? new Set(['green', 'blue', 'yellow']) : new Set(['green']);
+  const kept = (keepLo != null && keepHi != null)
+    ? usable.filter(r => r.midi >= keepLo && r.midi <= keepHi && keepTiers.has(r.tier))
+    : [];
+  const keptNotes = new Set(kept.map(r => r.note));
+  const greens = usable.filter(r => r.tier === 'green' && !keptNotes.has(r.note));
   let spine = [];
-  if (greens.length > 0) {
-    const loM = cfg.keepAllGreenLowMidi, hiM = cfg.keepAllGreenHighMidi;
-    const inRange = (loM != null && hiM != null)
-      ? greens.filter(g => g.midi >= loM && g.midi <= hiM)
-      : [];
-    const outOfRange = (loM != null && hiM != null)
-      ? greens.filter(g => g.midi < loM || g.midi > hiM)
-      : greens;
-    /* Out-of-range portion still gets the ~4-st spacing treatment, with one
+  if (greens.length > 0 || kept.length > 0) {
+    /* Out-of-range portion still gets the ~S-st spacing treatment, with one
        caveat: a single-side gap adjacent to the kept-all block shouldn't
-       drop a pick that's <4 semitones from the block edge. spacedPick walks
-       startMidi → endMidi targeting at +4 each iteration; setting startMidi
+       drop a pick that's <S semitones from the block edge. spacedPick walks
+       startMidi → endMidi targeting at +S each iteration; setting startMidi
        to the first available midi (and endMidi to the last) keeps that
        behavior, and the subsequent .concat + sort + fill pass exclusion
        naturally guards against duplicates. */
-    const spaced = outOfRange.length > 0
-      ? spacedPick(outOfRange, outOfRange[0].midi, outOfRange[outOfRange.length - 1].midi)
+    const spaced = greens.length > 0
+      ? spacedPick(greens, greens[0].midi, greens[greens.length - 1].midi)
       : [];
-    spine = inRange.concat(spaced);
+    spine = kept.concat(spaced);
   }
   spine.sort((a,b) => a.midi - b.midi);
 
-  // Pass 2: blue + yellow fill in gaps > 4 semitones. Head/tail edges count
+  // Pass 2: blue + yellow fill in gaps > S semitones. Head/tail edges count
   // as gaps too (we want coverage out to the lowest and highest usable
   // note). Each fill must sit ≥2 semitones from every spine pick AND every
   // other fill — strict enough to block stacking (a yellow at midi N+1
   // landing right next to a green at N+0, no coverage gain) but loose
   // enough that a 5-semitone gap can still be filled at the only spacing
   // available (one fill at distance 2 from one boundary, 3 from the other).
-  const fillTier = usable.filter(r => r.tier === 'blue' || r.tier === 'yellow');
+  const fillTier = usable.filter(r => (r.tier === 'blue' || r.tier === 'yellow') && !keptNotes.has(r.note));
   const minMidi = usable[0].midi;
   const maxMidi = usable[usable.length - 1].midi;
   const FILL_MIN_SEP = 2;
@@ -621,14 +680,14 @@ function pickSamples(results, cfg) {
     // No green spine — fill the entire usable range with blue+yellow.
     gaps.push({ lowExcl: minMidi - 1, highExcl: maxMidi + 1, isHead: false, isTail: false });
   } else {
-    if (spine[0].midi - minMidi > 4) gaps.push({ lowExcl: minMidi - 1, highExcl: spine[0].midi, isHead: true, isTail: false });
+    if (spine[0].midi - minMidi > S) gaps.push({ lowExcl: minMidi - 1, highExcl: spine[0].midi, isHead: true, isTail: false });
     for (let i = 1; i < spine.length; i++) {
-      if (spine[i].midi - spine[i - 1].midi > 4) {
+      if (spine[i].midi - spine[i - 1].midi > S) {
         gaps.push({ lowExcl: spine[i - 1].midi, highExcl: spine[i].midi, isHead: false, isTail: false });
       }
     }
     const last = spine[spine.length - 1];
-    if (maxMidi - last.midi > 4) gaps.push({ lowExcl: last.midi, highExcl: maxMidi + 1, isHead: false, isTail: true });
+    if (maxMidi - last.midi > S) gaps.push({ lowExcl: last.midi, highExcl: maxMidi + 1, isHead: false, isTail: true });
   }
 
   const fills = [];
@@ -640,11 +699,11 @@ function pickSamples(results, cfg) {
          lowest in-gap candidate so we extend coverage down to the
          instrument's bottom.
        - tail (highest available is above the spine): walk inward from
-         lowExcl+4 up to the highest in-gap candidate.
-       - middle: walk from lowExcl+4 up to highExcl-1, centered between
+         lowExcl+S up to the highest in-gap candidate.
+       - middle: walk from lowExcl+S up to highExcl-1, centered between
          the two spine boundaries.
        Empty-spine case is a single "head+tail" gap covering everything. */
-    const startTarget = gap.isHead ? inGap[0].midi : gap.lowExcl + 4;
+    const startTarget = gap.isHead ? inGap[0].midi : gap.lowExcl + S;
     const endTarget = gap.isTail ? inGap[inGap.length - 1].midi : gap.highExcl - 1;
     const excludeFrom = spine.length > 0 ? spine.concat(fills) : null;
     const filled = spacedPick(inGap, startTarget, endTarget, excludeFrom, FILL_MIN_SEP);
@@ -832,7 +891,7 @@ function buildReport(results, picks, cfg, fallbackNotes) {
   lines.push(`| --- | ---: |`);
   for (const t of ['green','blue','yellow','red','fail']) lines.push(`| ${t} | ${tally[t]} |`);
   lines.push('');
-  lines.push(`## Picks (${picks.length}, ~4-semitone spacing)`);
+  lines.push(`## Picks (${picks.length}, ~${cfg.pickSpacing}-semitone spacing)`);
   lines.push('');
   const gainColLoop = (p) => {
     /* Loop path now uses K-weighted measurement (see measureRmsLoop). Surface
@@ -913,6 +972,33 @@ function buildReport(results, picks, cfg, fallbackNotes) {
   return lines.join('\n') + '\n';
 }
 
+/* Machine-readable per-run summary (out/<key>-summary.json). Batch runners
+   aggregate these instead of parsing report.md. */
+function buildSummary(results, picks, cfg, hkiPath) {
+  const tiers = { green: 0, blue: 0, yellow: 0, red: 0, fail: 0 };
+  for (const r of results) tiers[r.tier] = (tiers[r.tier] || 0) + 1;
+  return {
+    instrumentKey: cfg.instrumentKey,
+    displayName: cfg.displayName,
+    path: cfg.decays ? 'decay' : 'loop',
+    vibrato: !!cfg.vibrato,
+    pickSpacing: cfg.pickSpacingSet ? cfg.pickSpacing : null,
+    analyzed: results.length,
+    picked: picks.length,
+    pickedNotes: picks.map(p => p.note),
+    tiers,
+    fails: results
+      .filter(r => r.tier === 'fail' || r.tier === 'red')
+      .map(r => ({
+        note: r.note,
+        tier: r.tier,
+        reason: (r.res && (r.res.failReason || (r.res.stats && r.res.stats.failReason))) || null,
+      })),
+    bundleBytes: (hkiPath && fs.existsSync(hkiPath)) ? fs.statSync(hkiPath).size : null,
+    createdAt: new Date().toISOString(),
+  };
+}
+
 // ─── main ────────────────────────────────────────────────────────────────────
 
 (async function main() {
@@ -987,10 +1073,16 @@ function buildReport(results, picks, cfg, fallbackNotes) {
      passed; either way we additionally write out/<key>.hki alongside the
      block + report. CDN configs default to off (their primary emission target
      is samples-data.ts via insert-instrument.js). */
+  let hkiPath = null;
   if (cfg.bundle && picks.length > 0) {
     const { buildBundle } = await import('./bundle.js');
     const cacheDir = path.join(CACHE_DIR, cfg.configName);
-    const hkiPath = buildBundle(cfg, picks, OUT_DIR, cacheDir);
-    console.error(`wrote: ${hkiPath}`);
+    const built = buildBundle(cfg, picks, OUT_DIR, cacheDir);
+    hkiPath = built.hkiPath;
+    console.error(`wrote: ${built.hkiPath}`);
+    console.error(`wrote: ${built.defPath}`);
   }
+  const summaryPath = path.join(OUT_DIR, `${cfg.instrumentKey}-summary.json`);
+  fs.writeFileSync(summaryPath, JSON.stringify(buildSummary(results, picks, cfg, hkiPath), null, 2) + '\n');
+  console.error(`wrote: ${summaryPath}`);
 })();

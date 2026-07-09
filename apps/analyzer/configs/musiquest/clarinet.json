@@ -1,0 +1,24 @@
+{
+  "instrumentKey": "clarinet",
+  "displayName": "Clarinet",
+  "source": "local",
+  "sourceDir": "/home/max/musiquest-assets/audio/samples",
+  "ext": ".mp3",
+  "filePattern": "clarinet_{NOTE_LOWER}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 3,
+  "highOct": 6,
+  "lowNote": "D3",
+  "highNote": "E6",
+  "transpose": 1,
+  "pickSpacing": 3,
+  "volume": 1.0,
+  "bundleUrl": "/hkl/clarinet.hki",
+  "decays": false,
+  "vibrato": false,
+  "releaseTime": 0.3,
+  "comment": [
+    "MusiQuest clarinet (sustained loop). Minor-third thinning;",
+    "trimmed to natural range D3-E6."
+  ]
+}

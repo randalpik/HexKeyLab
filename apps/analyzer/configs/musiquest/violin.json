@@ -1,0 +1,24 @@
+{
+  "instrumentKey": "violin",
+  "displayName": "Violin",
+  "source": "local",
+  "sourceDir": "/home/max/musiquest-assets/audio/samples",
+  "ext": ".mp3",
+  "filePattern": "violin_{NOTE_LOWER}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 3,
+  "highOct": 6,
+  "lowNote": "G3",
+  "highNote": "E6",
+  "transpose": 1,
+  "pickSpacing": 3,
+  "volume": 1.0,
+  "bundleUrl": "/hkl/violin.hki",
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "comment": [
+    "MusiQuest violin (sustained loop). Minor-third thinning;",
+    "trimmed to natural range G3-E6."
+  ]
+}

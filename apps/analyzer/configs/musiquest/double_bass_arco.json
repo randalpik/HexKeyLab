@@ -1,0 +1,32 @@
+{
+  "instrumentKey": "double_bass_arco",
+  "displayName": "Double Bass (arco)",
+  "source": "local",
+  "sourceDir": "/home/max/musiquest-assets/audio/samples",
+  "ext": ".mp3",
+  "filePattern": "double_bass_arco_{NOTE_LOWER}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 1,
+  "highOct": 4,
+  "lowNote": "A1",
+  "highNote": "G4",
+  "transpose": 2,
+  "pickSpacing": 3,
+  "volume": 1.0,
+  "bundleUrl": "/hkl/double_bass_arco.hki",
+  "decays": false,
+  "vibrato": false,
+  "releaseTime": 0.3,
+  "comment": [
+    "MusiQuest double bass arco (sustained loop). Minor-third thinning;",
+    "trimmed to natural range A1-G4.",
+    "transpose:2 - filenames are labeled one octave ABOVE the audio content",
+    "(verified by autocorrelation: a2 file contains 55 Hz, label/actual = 2.00",
+    "for every probed note; same convention as fatboy-drawbar). Emitted freqs",
+    "are the actual sounding fundamentals - requesting A2=110 Hz plays the",
+    "a3-labeled file at native rate. NOTE for MQ integration: legacy MQ",
+    "playback of grid note A2 sounded 55 Hz; with honest freqs it sounds",
+    "110 Hz. MQ can restore the legacy octave by requesting midi-12 for this",
+    "instrument."
+  ]
+}

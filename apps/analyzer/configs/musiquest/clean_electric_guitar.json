@@ -1,0 +1,24 @@
+{
+  "instrumentKey": "clean_electric_guitar",
+  "displayName": "Clean Electric Guitar",
+  "source": "local",
+  "sourceDir": "/home/max/musiquest-assets/audio/samples",
+  "ext": ".mp3",
+  "filePattern": "clean_electric_guitar_{NOTE_LOWER}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 2,
+  "highOct": 6,
+  "lowNote": "E2",
+  "highNote": "E6",
+  "transpose": 1,
+  "pickSpacing": 3,
+  "volume": 1.0,
+  "bundleUrl": "/hkl/clean_electric_guitar.hki",
+  "decays": true,
+  "vibrato": false,
+  "releaseTime": 0.15,
+  "comment": [
+    "MusiQuest clean electric guitar (decay path). pickSpacing:3 enables",
+    "minor-third thinning on decay; trimmed to E2-E6."
+  ]
+}

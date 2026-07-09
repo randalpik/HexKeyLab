@@ -1,0 +1,27 @@
+{
+  "instrumentKey": "cello",
+  "displayName": "Cello",
+  "source": "local",
+  "sourceDir": "/home/max/musiquest-assets/audio/samples",
+  "ext": ".mp3",
+  "filePattern": "cello_{NOTE_LOWER}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 2,
+  "highOct": 6,
+  "lowNote": "C2",
+  "highNote": "E6",
+  "transpose": 1,
+  "pickSpacing": 3,
+  "volume": 1.0,
+  "bundleUrl": "/hkl/cello.hki",
+  "decays": true,
+  "vibrato": false,
+  "releaseTime": 0.15,
+  "comment": [
+    "MusiQuest cello. Ships on the decay path (finite ~2.9s bowed note =",
+    "exactly the legacy MQ Howler behavior): every loop-path variant failed",
+    "(53/53 red - no SCC; deep modulation in the source defeats segment",
+    "phase-matching, same wall as violin/flute/oboe). Candidate for manual",
+    "loop investigation - flip decays:false and tune gateOpts to retry."
+  ]
+}

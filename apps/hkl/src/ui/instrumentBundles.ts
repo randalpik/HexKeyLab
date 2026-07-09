@@ -25,6 +25,7 @@ import * as CdnConfigRegistry from '../state/cdnConfigRegistry.js';
 import type { ManifestRecord } from '../state/instrumentRegistry.js';
 import type { ConfigRecord } from '../state/cdnConfigRegistry.js';
 import { parseCdnConfig } from '@hkl/shared/cdnConfig.js';
+import { SampleEngine } from '../audio/samples.js';
 
 const HKI_OPTGROUP_ID = 'hkiOptgroup';
 const CDN_OPTGROUP_ID = 'cdnConfigOptgroup';
@@ -82,6 +83,33 @@ function refreshDropdown(): void {
     'Imported (CDN config)',
     CdnConfigRegistry.listImported().map(r => ({ key: r.instrumentKey, name: r.config.name })),
   );
+  /* A .hki import overrides a static entry with the same key (INSTRUMENTS
+     proxy resolution: HKI → static → CDN config), so hide the shadowed
+     static <option> — otherwise the dropdown shows two rows with the same
+     value and the static label wins the display while the import wins
+     playback. Un-hides when the import is removed. */
+  const sel = $<HTMLSelectElement>('waveform');
+  if (sel) {
+    const hkiKeys = new Set(InstrumentRegistry.listImported().map(r => r.instrumentKey));
+    for (const opt of [...sel.options]) {
+      const group = opt.parentElement?.id;
+      if (group === HKI_OPTGROUP_ID || group === CDN_OPTGROUP_ID) continue;
+      const shadowed = hkiKeys.has(opt.value);
+      opt.hidden = shadowed;
+      opt.disabled = shadowed;
+    }
+  }
+}
+
+/* Drop an instrument's decoded buffers so the next selection re-resolves
+   INSTRUMENTS[key] and reloads. Without this the engine's `isInstrumentLoaded`
+   guard keeps serving whatever profile loaded first for the key — importing
+   bassoon.hki over an already-loaded CDN-config bassoon would silently keep
+   playing (and fetching) the old CDN profile for the rest of the session.
+   Live voices keep their own AudioBuffer references, so evicting mid-note is
+   safe; only new note-ons wait for the reload. */
+function evictFromEngine(key: string): void {
+  SampleEngine.unloadInstrument(key);
 }
 
 function escapeHtml(s: string): string {
@@ -173,7 +201,8 @@ function renderManageLists(): void {
 function fallbackToFirstStatic(sel: HTMLSelectElement): void {
   const firstStatic = [...sel.options].find(o =>
     o.parentElement?.id !== HKI_OPTGROUP_ID
-    && o.parentElement?.id !== CDN_OPTGROUP_ID,
+    && o.parentElement?.id !== CDN_OPTGROUP_ID
+    && !o.hidden,
   );
   if (firstStatic) {
     sel.value = firstStatic.value;
@@ -181,18 +210,32 @@ function fallbackToFirstStatic(sel: HTMLSelectElement): void {
   }
 }
 
+/** After removing an import that was active: if the key still resolves (a
+ *  static entry the import was shadowing, or the other registry), stay on it
+ *  and reload the fallback profile; otherwise jump to the first static. */
+function reselectAfterRemove(sel: HTMLSelectElement, key: string): void {
+  if (key in SampleEngine.INSTRUMENTS) {
+    sel.value = key;
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  } else {
+    fallbackToFirstStatic(sel);
+  }
+}
+
 async function onRemoveHki(rec: ManifestRecord): Promise<void> {
   const sel = $<HTMLSelectElement>('waveform');
   const wasActive = !!sel && sel.value === rec.instrumentKey;
   await InstrumentRegistry.removeBundle(rec.instrumentKey);
-  if (wasActive && sel) fallbackToFirstStatic(sel);
+  evictFromEngine(rec.instrumentKey);
+  if (wasActive && sel) reselectAfterRemove(sel, rec.instrumentKey);
 }
 
 async function onRemoveCdnConfig(rec: ConfigRecord): Promise<void> {
   const sel = $<HTMLSelectElement>('waveform');
   const wasActive = !!sel && sel.value === rec.instrumentKey;
   await CdnConfigRegistry.removeConfig(rec.instrumentKey);
-  if (wasActive && sel) fallbackToFirstStatic(sel);
+  evictFromEngine(rec.instrumentKey);
+  if (wasActive && sel) reselectAfterRemove(sel, rec.instrumentKey);
 }
 
 async function onHkiFileChosen(e: Event): Promise<void> {
@@ -202,6 +245,7 @@ async function onHkiFileChosen(e: Event): Promise<void> {
   try {
     const buf = await file.arrayBuffer();
     const manifest = await InstrumentRegistry.importBundle(new Uint8Array(buf));
+    evictFromEngine(manifest.instrumentKey);
     const sel = $<HTMLSelectElement>('waveform');
     if (sel) {
       sel.value = manifest.instrumentKey;
@@ -223,6 +267,7 @@ async function onCdnConfigFileChosen(e: Event): Promise<void> {
     const text = await file.text();
     const cfg = parseCdnConfig(text);
     await CdnConfigRegistry.importConfig(cfg);
+    evictFromEngine(cfg.instrumentKey);
     const sel = $<HTMLSelectElement>('waveform');
     if (sel) {
       sel.value = cfg.instrumentKey;

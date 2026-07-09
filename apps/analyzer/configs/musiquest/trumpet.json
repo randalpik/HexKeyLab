@@ -1,0 +1,24 @@
+{
+  "instrumentKey": "trumpet",
+  "displayName": "Trumpet",
+  "source": "local",
+  "sourceDir": "/home/max/musiquest-assets/audio/samples",
+  "ext": ".mp3",
+  "filePattern": "trumpet_{NOTE_LOWER}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 3,
+  "highOct": 6,
+  "lowNote": "Gb3",
+  "highNote": "D6",
+  "transpose": 1,
+  "pickSpacing": 3,
+  "volume": 1.0,
+  "bundleUrl": "/hkl/trumpet.hki",
+  "decays": false,
+  "vibrato": false,
+  "releaseTime": 0.3,
+  "comment": [
+    "MusiQuest trumpet (sustained loop). Minor-third thinning;",
+    "trimmed to natural range Gb3-D6."
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "instrumentKey": "dubstep_bass",
+  "displayName": "Dubstep Bass",
+  "source": "local",
+  "sourceDir": "/home/max/musiquest-assets/audio/samples",
+  "ext": ".mp3",
+  "filePattern": "dubstep_bass_{NOTE_LOWER}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 1,
+  "highOct": 6,
+  "lowNote": "G1",
+  "highNote": "E6",
+  "transpose": 1,
+  "pickSpacing": 3,
+  "volume": 1.0,
+  "bundleUrl": "/hkl/dubstep_bass.hki",
+  "decays": true,
+  "vibrato": false,
+  "releaseTime": 0.15,
+  "comment": [
+    "MusiQuest dubstep bass. The wobble LFO defeats segment phase-matching",
+    "(58/58 red on the loop path), so it ships as a one-shot decay instrument",
+    "like backwards_bass: ~2s of wobble per hit, minor-third thinned."
+  ]
+}

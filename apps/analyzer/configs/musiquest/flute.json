@@ -1,0 +1,24 @@
+{
+  "instrumentKey": "flute",
+  "displayName": "Flute",
+  "source": "local",
+  "sourceDir": "/home/max/musiquest-assets/audio/samples",
+  "ext": ".mp3",
+  "filePattern": "flute_{NOTE_LOWER}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 4,
+  "highOct": 6,
+  "lowNote": "C4",
+  "highNote": "E6",
+  "transpose": 1,
+  "pickSpacing": 3,
+  "volume": 1.0,
+  "bundleUrl": "/hkl/flute.hki",
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "comment": [
+    "MusiQuest flute (sustained loop). Minor-third thinning;",
+    "trimmed to natural range C4-E6."
+  ]
+}

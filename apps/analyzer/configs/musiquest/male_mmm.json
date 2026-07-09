@@ -1,0 +1,29 @@
+{
+  "instrumentKey": "male_mmm",
+  "displayName": "Male Voice (mmm)",
+  "source": "local",
+  "sourceDir": "/home/max/musiquest-assets/audio/samples",
+  "ext": ".mp3",
+  "filePattern": "male_mmm_{NOTE_LOWER}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 2,
+  "highOct": 4,
+  "lowNote": "E2",
+  "highNote": "G4",
+  "transpose": 1,
+  "pickSpacing": 3,
+  "volume": 1.0,
+  "bundleUrl": "/hkl/male_mmm.hki",
+  "decays": false,
+  "vibrato": false,
+  "releaseTime": 0.3,
+  "keepAllRange": [
+    "E2",
+    "G4"
+  ],
+  "comment": [
+    "MusiQuest male voice (mmm). keepAllRange (tier-inclusive) keeps every",
+    "usable sample across E2-G4 for half-step granularity -",
+    "vowel timbre seams are audible at wider spacing."
+  ]
+}

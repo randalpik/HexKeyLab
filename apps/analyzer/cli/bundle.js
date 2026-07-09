@@ -67,7 +67,8 @@ function readVerbatim(srcPath) {
  * @param {string} outDir - directory to write the bundle into.
  * @param {string} cacheDir - directory holding the cached source audio
  *                            (analyzer/.cache/<configName>).
- * @returns {string} - the absolute path to the written .hki.
+ * @returns {{hkiPath: string, defPath: string}} - absolute paths to the
+ *          written .hki and the consumer-facing InstrumentDef JSON.
  */
 export function buildBundle(cfg, picks, outDir, cacheDir) {
   fs.mkdirSync(outDir, { recursive: true });
@@ -144,7 +145,13 @@ export function buildBundle(cfg, picks, outDir, cacheDir) {
     volume: cfg.volume,
     samples: sampleEntries,
   };
-  if (cfg.transpose && cfg.transpose !== 1) manifest.transpose = cfg.transpose;
+  /* cfg.transpose is the ANALYSIS label convention (filenameLabel ÷
+     audioFundamental, e.g. 2 for MQ double bass / FatBoy drawbar) — it is
+     consumed at freq-emission time (freq = labeled/transpose = the actual
+     audio fundamental). Manifest/def `transpose` is a RUNTIME rate
+     multiplier (engine: rate = freq*transpose/nearest.freq); copying the
+     label convention into it would play every note an octave off, since
+     pitch identity is already fully baked into the emitted freqs. */
   if (cfg.replayOnTranspose) manifest.replayOnTranspose = true;
   if (cfg.vibrato) manifest.vibrato = true;
 
@@ -160,7 +167,30 @@ export function buildBundle(cfg, picks, outDir, cacheDir) {
   const bytes = writeHki({ manifest, audio, provenance });
   const outPath = path.join(outDir, `${cfg.instrumentKey}.hki`);
   fs.writeFileSync(outPath, bytes);
-  return outPath;
+
+  /* Consumer-facing InstrumentDef JSON (the shape loadInstrument takes with
+     source:'hki-shipped' — see handoff/musiquest/musiquest-handoff.md §3).
+     Built from the same sampleEntries written into the bundle, so it can
+     never drift from the manifest. Unlike the manifest, `transpose` is
+     emitted unconditionally — external loaders shouldn't need our
+     omit-when-1 convention. */
+  const def = {
+    name: cfg.displayName,
+    source: 'hki-shipped',
+    bundleUrl: cfg.bundleUrl || `/hkl/${cfg.instrumentKey}.hki`,
+    loop: !cfg.decays,
+    decays: !!cfg.decays,
+    releaseTime: cfg.releaseTime,
+    volume: cfg.volume,
+    transpose: 1, /* runtime multiplier — see the manifest note above */
+  };
+  if (cfg.replayOnTranspose) def.replayOnTranspose = true;
+  if (cfg.vibrato) def.vibrato = true;
+  def.samples = sampleEntries;
+  const defPath = path.join(outDir, `${cfg.instrumentKey}-def.json`);
+  fs.writeFileSync(defPath, JSON.stringify(def, null, 2) + '\n');
+
+  return { hkiPath: outPath, defPath };
 }
 
 function round(x, n) {

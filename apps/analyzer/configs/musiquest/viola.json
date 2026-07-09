@@ -1,0 +1,24 @@
+{
+  "instrumentKey": "viola",
+  "displayName": "Viola",
+  "source": "local",
+  "sourceDir": "/home/max/musiquest-assets/audio/samples",
+  "ext": ".mp3",
+  "filePattern": "viola_{NOTE_LOWER}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 3,
+  "highOct": 6,
+  "lowNote": "C3",
+  "highNote": "E6",
+  "transpose": 1,
+  "pickSpacing": 3,
+  "volume": 1.0,
+  "bundleUrl": "/hkl/viola.hki",
+  "decays": false,
+  "vibrato": false,
+  "releaseTime": 0.3,
+  "comment": [
+    "MusiQuest viola (sustained loop). Minor-third thinning;",
+    "trimmed to natural range C3-E6."
+  ]
+}

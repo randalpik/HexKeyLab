@@ -1,0 +1,24 @@
+{
+  "instrumentKey": "oboe",
+  "displayName": "Oboe",
+  "source": "local",
+  "sourceDir": "/home/max/musiquest-assets/audio/samples",
+  "ext": ".mp3",
+  "filePattern": "oboe_{NOTE_LOWER}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 3,
+  "highOct": 6,
+  "lowNote": "Bb3",
+  "highNote": "E6",
+  "transpose": 1,
+  "pickSpacing": 3,
+  "volume": 1.0,
+  "bundleUrl": "/hkl/oboe.hki",
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "comment": [
+    "MusiQuest oboe (sustained loop). Minor-third thinning;",
+    "trimmed to natural range Bb3-E6."
+  ]
+}

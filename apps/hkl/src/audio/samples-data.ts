@@ -980,14 +980,20 @@ function getCdnConfigEntry(key: string): any | undefined {
 }
 
 /* Read-transparent proxy: every consumer that did `INSTRUMENTS[key]` keeps
-   working with zero change. Fallback chain: static → HKI imports → CDN
-   config imports. */
+   working with zero change. Resolution chain: HKI imports → static → CDN
+   config imports. A .hki import OVERRIDES a static entry with the same key —
+   importing is explicit user intent (e.g. auditioning a MusiQuest bundle
+   whose key collides with a shipped instrument), and removing the import
+   restores the static fallback. CDN config imports stay BELOW static on
+   purpose: they arrive via Analyzer "Send to HKL" and can linger in
+   IndexedDB long after the session that sent them — a stale send must not
+   silently shadow a shipped instrument. */
 export const INSTRUMENTS: Record<string, any> = new Proxy(STATIC_INSTRUMENTS, {
   get(target, prop, _receiver) {
     if (typeof prop !== 'string') return Reflect.get(target, prop);
-    if (prop in target) return target[prop];
     const hki = getImportedEntry(prop);
     if (hki) return hki;
+    if (prop in target) return target[prop];
     return getCdnConfigEntry(prop);
   },
   has(target, prop) {

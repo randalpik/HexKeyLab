@@ -1,0 +1,24 @@
+{
+  "instrumentKey": "vibraphone",
+  "displayName": "Vibraphone",
+  "source": "local",
+  "sourceDir": "/home/max/musiquest-assets/audio/samples",
+  "ext": ".mp3",
+  "filePattern": "vibraphone_{NOTE_LOWER}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 3,
+  "highOct": 6,
+  "lowNote": "F3",
+  "highNote": "E6",
+  "transpose": 1,
+  "pickSpacing": 3,
+  "volume": 1.0,
+  "bundleUrl": "/hkl/vibraphone.hki",
+  "decays": true,
+  "vibrato": false,
+  "releaseTime": 0.4,
+  "comment": [
+    "MusiQuest vibraphone (decay path). pickSpacing:3 enables",
+    "minor-third thinning on decay; trimmed to F3-E6."
+  ]
+}

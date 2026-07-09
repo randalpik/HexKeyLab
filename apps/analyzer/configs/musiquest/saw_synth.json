@@ -1,0 +1,24 @@
+{
+  "instrumentKey": "saw_synth",
+  "displayName": "Saw Synth",
+  "source": "local",
+  "sourceDir": "/home/max/musiquest-assets/audio/samples",
+  "ext": ".mp3",
+  "filePattern": "saw_synth_{NOTE_LOWER}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 1,
+  "highOct": 6,
+  "lowNote": "G1",
+  "highNote": "E6",
+  "transpose": 1,
+  "pickSpacing": 3,
+  "volume": 1.0,
+  "bundleUrl": "/hkl/saw_synth.hki",
+  "decays": false,
+  "vibrato": false,
+  "releaseTime": 0.3,
+  "comment": [
+    "MusiQuest saw synth (sustained loop). Minor-third thinning;",
+    "trimmed to natural range G1-E6."
+  ]
+}

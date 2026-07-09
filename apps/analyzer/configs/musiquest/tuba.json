@@ -1,0 +1,24 @@
+{
+  "instrumentKey": "tuba",
+  "displayName": "Tuba",
+  "source": "local",
+  "sourceDir": "/home/max/musiquest-assets/audio/samples",
+  "ext": ".mp3",
+  "filePattern": "tuba_{NOTE_LOWER}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 1,
+  "highOct": 4,
+  "lowNote": "A1",
+  "highNote": "F4",
+  "transpose": 1,
+  "pickSpacing": 3,
+  "volume": 1.0,
+  "bundleUrl": "/hkl/tuba.hki",
+  "decays": false,
+  "vibrato": false,
+  "releaseTime": 0.3,
+  "comment": [
+    "MusiQuest tuba (sustained loop). Minor-third thinning;",
+    "trimmed to natural range A1-F4."
+  ]
+}

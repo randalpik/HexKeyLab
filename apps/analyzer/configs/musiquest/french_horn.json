@@ -1,0 +1,24 @@
+{
+  "instrumentKey": "french_horn",
+  "displayName": "French Horn",
+  "source": "local",
+  "sourceDir": "/home/max/musiquest-assets/audio/samples",
+  "ext": ".mp3",
+  "filePattern": "french_horn_{NOTE_LOWER}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 1,
+  "highOct": 5,
+  "lowNote": "B1",
+  "highNote": "F5",
+  "transpose": 1,
+  "pickSpacing": 3,
+  "volume": 1.0,
+  "bundleUrl": "/hkl/french_horn.hki",
+  "decays": false,
+  "vibrato": false,
+  "releaseTime": 0.3,
+  "comment": [
+    "MusiQuest french horn (sustained loop). Minor-third thinning;",
+    "trimmed to natural range B1-F5."
+  ]
+}

@@ -130,7 +130,7 @@ provenance.json                // optional — source URL/path, originalFiles, g
 
 **Consumption** (HKL-side, `apps/hkl/src/state/instrumentRegistry.ts`): an IndexedDB `hkl-instrument-registry` DB (separate manifest/audio stores) exposes `init`/`listImported`/`importBundle`/`removeBundle`/`getAudio`/`reload`; init is awaited top-level before `applyPrefsToDom`. The barrel passes `getAudio` to the engine as `instrumentProvider`. `loadInstrument` branches on `instr.source === 'hki'`: awaits the audio map once, then reads per-sample from memory instead of `fetch()`. Decode + metadata-overlay paths are unchanged — CDN and HKI instruments produce identical voice records once loaded.
 
-CDN-config import is a sibling path (JSON only, no bytes): the `INSTRUMENTS` Proxy falls through static map → HKI → CDN config, synthesizing a runtime-shaped entry that reuses the engine's standard CDN fetch — zero engine changes.
+CDN-config import is a sibling path (JSON only, no bytes): the `INSTRUMENTS` Proxy resolves HKI imports → static map → CDN config, synthesizing a runtime-shaped entry that reuses the engine's standard CDN fetch — zero engine changes. A `.hki` import deliberately *overrides* a static entry with the same key (importing is explicit user intent; removing the import restores the static), while CDN-config imports stay below static so a stale Analyzer "Send to HKL" lingering in IndexedDB can't shadow a shipped instrument. Every import/remove path evicts the key from the engine (`unloadInstrument`) so the change takes effect in-session — the engine's `isInstrumentLoaded` guard would otherwise keep serving whichever profile loaded first — and the dropdown hides static options shadowed by an HKI import.
 
 ## Standalone verification
 

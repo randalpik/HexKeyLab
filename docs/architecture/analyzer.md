@@ -20,9 +20,14 @@ apps/analyzer/
   cli/                    Node batch CLI (imports @hkl/analysis for k-weighting etc.)
     generate-samples.js       run via `pnpm analyze`; emits a samples-data block
     insert-instrument.js      splices that block into apps/hkl/src/audio/samples-data.ts
+    batch-musiquest.js        run via `pnpm analyze:musiquest`; runs configs/musiquest/*,
+                              stages .hki + defs into handoff/musiquest/ + aggregate report
     bundle.js, backfill-gains.js, backfill-patterns.js
   configs/*.json          per-instrument configs — source of truth for shipped instruments
-  out/                    CLI artifacts: <key>-block.txt, <key>-report.md, <key>.hki
+  configs/musiquest/*.json  the MusiQuest conversion set (local-source, pickSpacing 3)
+  out/                    CLI artifacts: <key>-block.txt, <key>-report.md, <key>.hki,
+                          <key>-def.json (InstrumentDef for external consumers),
+                          <key>-summary.json (machine-readable run summary)
 packages/analysis/src/    @hkl/analysis — the DOM-free DSP listed above
 ```
 
@@ -49,7 +54,14 @@ Both CLI and runtime engine build sample URLs from the same config metadata, so 
 
 - **`noteSemis`** — per-octave semitones to enumerate. Default `[0..11]`; wholetone `[0,2,4,6,8,10]`; minor-third `[1,4,7,10]`.
 - **`transpose`** — rational `audioFundamental ÷ filenameLabel`. Default `1`; `2` for Hammond convention, `0.5` for chamber organ.
+- **`lowNote` / `highNote`** — note-level range trim (inclusive, e.g. `"G3"`), refining the octave-granular `lowOct`/`highOct` sweep. Filters enumeration *before* fetch/decode/analyze, so out-of-range files are never touched. Used to cut a chromatic library down to an instrument's natural range (the engine interpolates outside kept samples).
 - `#` is URL-encoded as `%23` automatically by both `buildUrl` (CLI) and the runtime engine.
+
+### Sample picking & thinning (CLI `pickSamples`)
+
+- **`pickSpacing`** — target semitone spacing for the picker (default `4`, the historical spacing; `3` = minor thirds). Window is `±floor(S/2)`, gap threshold `> S`. **Presence matters**: the decay path keeps *every* usable sample when `pickSpacing` is absent (legacy behavior — soundfont decay sets are pre-curated) and thins at the configured spacing when present (dense chromatic sources like the MusiQuest library).
+- **`keepAllGreenRange: [lo, hi]`** — keeps every *green*-tier sample in the range (defeats the spacing picker inside it).
+- **`keepAllRange: [lo, hi]`** — tier-inclusive sibling: keeps every usable (green/blue/yellow) sample in range. For voice sets whose short samples tier below green — a yellow vocal sample still loops fine, and dropping it to the picker would reintroduce audible vowel seams. `keepAllGreenRange` retains its green-only meaning for backward compatibility.
 
 ### Per-instrument gate overrides (`gateOpts`)
 
