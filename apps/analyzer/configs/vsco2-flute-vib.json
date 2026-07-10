@@ -1,0 +1,26 @@
+{
+  "instrumentKey": "flute_vib",
+  "displayName": "Flute (VSCO Vib)",
+  "baseUrl": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/",
+  "ext": ".wav",
+  "noteStyle": "sharp",
+  "noteSemis": [
+    0,
+    4,
+    9
+  ],
+  "lowOct": 3,
+  "highOct": 6,
+  "transpose": 0.5,
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "volume": 1.0,
+  "comment": [
+    "VSCO-2-CE Flute susvib probe. Labels one octave below sounding",
+    "(measured A4 file = 882Hz). C/E/A per octave, C3-C6 labeled.",
+    "Loop window: AUTO (default) - per-note smallest window preserving",
+    "segment count; bundle tail-cut drops everything past the last b."
+  ],
+  "filePattern": "LDFlute_susvib_{NOTE}_v1_1.wav"
+}

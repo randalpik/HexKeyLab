@@ -1,24 +1,27 @@
 {
   "instrumentKey": "flute",
   "displayName": "Flute",
-  "source": "local",
-  "sourceDir": "/home/max/musiquest-assets/audio/samples",
-  "ext": ".mp3",
-  "filePattern": "flute_{NOTE_LOWER}.mp3",
-  "noteStyle": "flat",
-  "lowOct": 4,
+  "baseUrl": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/",
+  "ext": ".wav",
+  "filePattern": "LDFlute_susvib_{NOTE}_v1_1.wav",
+  "noteStyle": "sharp",
+  "noteSemis": [
+    0,
+    4,
+    9
+  ],
+  "lowOct": 3,
   "highOct": 6,
-  "lowNote": "C4",
-  "highNote": "E6",
-  "transpose": 1,
-  "pickSpacing": 3,
-  "volume": 1.0,
-  "bundleUrl": "/hkl/flute.hki",
+  "transpose": 0.5,
   "decays": false,
   "vibrato": true,
   "releaseTime": 0.3,
+  "volume": 1.0,
+  "bundleUrl": "/hkl/flute.hki",
   "comment": [
-    "MusiQuest flute (sustained loop). Minor-third thinning;",
-    "trimmed to natural range C4-E6."
-  ]
+    "MusiQuest flute - REPLACED with VSCO-2-CE Flute susvib (CC0): the",
+    "MQ flute only mustered 5 sparse picks; this loops 10/10 green. Labels",
+    "one octave below sounding (transpose 0.5). Sounding range C4-C7."
+  ],
+  "bundle": true
 }

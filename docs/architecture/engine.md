@@ -122,7 +122,7 @@ samples/<sample-name>.<ext>    // one audio file per kept sample
 provenance.json                // optional — source URL/path, originalFiles, generator, createdAt
 ```
 
-`HkiManifest` mirrors one `INSTRUMENTS` entry minus `baseUrl`; each sample carries its archive-relative `file`. Loop instruments keep `segments`/`trend`/`trimStart`; decay instruments keep `freq`/`gain`. Reader/writer use `fflate` (`zipSync`/`unzipSync`), identical in Node and browser.
+`HkiManifest` mirrors one `INSTRUMENTS` entry minus `baseUrl`; each sample carries its archive-relative `file`. Loop instruments keep `segments`/`trend`/`trimStart` and optionally **`crossfadeSec`** — the analyzer-chosen seam crossfade duration (residual-gated window search; absent ⇒ the engine's 30 ms default; shorter for material whose seams diverge over the full window, e.g. vibrato voices). Decay instruments keep `freq`/`gain`. Reader/writer use `fflate` (`zipSync`/`unzipSync`), identical in Node and browser.
 
 **Audio encoding** (`apps/analyzer/cli/bundle.js`): lossy sources (`.mp3/.ogg/.opus/.aac/.m4a`) kept verbatim; `.wav/.aiff/.flac` → OGG/Opus 128 kbps via `ffmpeg -c:a libopus`; anything else verbatim.
 

@@ -1,32 +1,34 @@
 {
   "instrumentKey": "double_bass_arco",
   "displayName": "Double Bass (arco)",
-  "source": "local",
-  "sourceDir": "/home/max/musiquest-assets/audio/samples",
-  "ext": ".mp3",
-  "filePattern": "double_bass_arco_{NOTE_LOWER}.mp3",
-  "noteStyle": "flat",
+  "baseUrl": "https://cdn.jsdelivr.net/gh/peastman/sso@master/Sonatina%20Symphonic%20Orchestra/Samples/Bass/",
+  "ext": ".flac",
+  "filePattern": "bass-sus-{NOTE_LOWER}.flac",
+  "noteStyle": "sharp_lower",
+  "noteSemis": [
+    0,
+    3,
+    6,
+    9
+  ],
   "lowOct": 1,
   "highOct": 4,
-  "lowNote": "A1",
-  "highNote": "G4",
-  "transpose": 2,
-  "pickSpacing": 3,
-  "volume": 1.0,
-  "bundleUrl": "/hkl/double_bass_arco.hki",
+  "transpose": 1,
   "decays": false,
-  "vibrato": false,
+  "vibrato": true,
   "releaseTime": 0.3,
+  "volume": 1.0,
+  "gateOpts": {
+    "corrThreshold": 0.9,
+    "corrWindowPeriods": 2
+  },
+  "bundleUrl": "/hkl/double_bass_arco.hki",
   "comment": [
-    "MusiQuest double bass arco (sustained loop). Minor-third thinning;",
-    "trimmed to natural range A1-G4.",
-    "transpose:2 - filenames are labeled one octave ABOVE the audio content",
-    "(verified by autocorrelation: a2 file contains 55 Hz, label/actual = 2.00",
-    "for every probed note; same convention as fatboy-drawbar). Emitted freqs",
-    "are the actual sounding fundamentals - requesting A2=110 Hz plays the",
-    "a3-labeled file at native rate. NOTE for MQ integration: legacy MQ",
-    "playback of grid note A2 sounded 55 Hz; with honest freqs it sounds",
-    "110 Hz. MQ can restore the legacy octave by requesting midi-12 for this",
-    "instrument."
-  ]
+    "MusiQuest double bass - REPLACED with SSO solo bass (the once-",
+    "hidden HKL config, 15/15 green under the modern pipeline): the MQ set",
+    "is octave-mislabeled with sparse loops, and VSCO's SusVib has audible",
+    "bowings. Emitted freqs are TRUE sounding pitch (C1-A4) - MQ requests",
+    "midi-12 to keep its notated-octave grid convention."
+  ],
+  "bundle": true
 }

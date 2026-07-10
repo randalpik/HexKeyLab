@@ -128,6 +128,13 @@ function loadConfig() {
      source:"local"). CDN configs only bundle when --bundle is passed on the
      command line, since their default emission target is samples-data.ts. */
   cfg.bundle = !!cfg.bundle || cfg.source === 'local' || process.argv.includes('--bundle');
+  /* emitShipped: emit the samples-data block in hki-shipped form (runtime
+     fetches /samples/<key>.hki once) even for a CDN-sourced config. Use when
+     HKL should ship the tail-cut bundle instead of fetching the raw CDN
+     files per load (e.g. VSCO wav sources: ~12 MB of wavs vs a ~0.7 MB
+     bundle). Implies bundling — the block is useless without the .hki. */
+  cfg.emitShipped = cfg.emitShipped === true || cfg.source === 'local';
+  if (cfg.emitShipped) cfg.bundle = true;
   /* trustLabeledPitch: when on, the bundled per-sample `freq` field uses the
      labeled ET frequency (from the filename) instead of the analyzer's
      auto-detected fundamental. Default ON for source:"local" (the user owns
@@ -761,7 +768,7 @@ function emitSampleEntry(r, cfg) {
      archiveExt() picks .mp3/.opus/etc. per bundle.js's lossy-passthrough
      vs lossless-to-Opus policy. */
   let fileStr = '';
-  if (cfg.source === 'local') {
+  if (cfg.emitShipped) {
     const srcExt = r.matchedFile ? path.extname(r.matchedFile) : cfg.ext;
     fileStr = `,file:'samples/${r.note}${archiveExt(srcExt)}'`;
   } else {
@@ -792,7 +799,12 @@ function emitSampleEntry(r, cfg) {
   const trendStr = (trend && trend.applied && trend.values && trend.values.length)
     ? `,trend:[${trend.values.map(v => fmt(v, 4)).join(',')}],trendHopMs:${trend.hopMs},trendStartSec:${fmt(trend.startSec, 4)}`
     : '';
-  return `        {name:'${r.note}',freq:${freqStr}${gainStr}${fileStr},segments:${segsStr},trimStart:${fmt(r.res.trimStart, 7)}${trendStr}}`;
+  /* crossfadeSec: analyzer-chosen seam crossfade for this sample (the
+     residual-gated window search — see selectSegments). Omitted when it
+     matches the engine default (0.030) so legacy entries stay byte-stable. */
+  const xf = r.res.stats && r.res.stats.crossfadeSec;
+  const xfStr = (xf != null && xf !== 0.030) ? `,crossfadeSec:${fmt(xf, 3)}` : '';
+  return `        {name:'${r.note}',freq:${freqStr}${gainStr}${fileStr},segments:${segsStr},trimStart:${fmt(r.res.trimStart, 7)}${trendStr}${xfStr}}`;
 }
 
 // Path-specific default comments. Override per-instrument via cfg.comment
@@ -823,7 +835,7 @@ function emitBlock(picks, cfg) {
        source==='local': hki-shipped — runtime fetches `bundleUrl` once, reads
          per-sample bytes from the parsed bundle's audio map. No baseUrl/ext.
        source==='cdn' (legacy): emits the CDN baseUrl + ext as before. */
-  if (cfg.source === 'local') {
+  if (cfg.emitShipped) {
     lines.push(`      name:'${cfg.displayName}',source:'hki-shipped',bundleUrl:'/samples/${cfg.instrumentKey}.hki',`);
   } else {
     lines.push(`      name:'${cfg.displayName}',baseUrl:'${cfg.baseUrl}',`);
@@ -833,7 +845,7 @@ function emitBlock(picks, cfg) {
   /* ext: only meaningful for CDN entries (used for default {NOTE}{ext}
      filePattern substitution). HKI-shipped entries carry per-sample file
      fields exclusively, so ext is omitted for them. */
-  let header = (cfg.source === 'local')
+  let header = (cfg.emitShipped)
     ? `      releaseTime:${cfg.releaseTime},volume:${cfg.volume},${loopFlag},${decayFlag}`
     : `      ext:'${cfg.ext}',releaseTime:${cfg.releaseTime},volume:${cfg.volume},${loopFlag},${decayFlag}`;
   /* Opt-in: sustained instruments that should retrigger (not crossfade)
@@ -922,8 +934,8 @@ function buildReport(results, picks, cfg, fallbackNotes) {
        the labeled value into the bundle. A large drift on a pitch-validated
        source flags a real measurement bias (vowel formants, glottal
        asymmetry, etc.) rather than a real tuning issue. */
-    lines.push(`| Note | Labeled (Hz) | Measured (Hz) | Drift (¢) | segments | SCC | bridges | steady (s) | LUFS | gain | tier |`);
-    lines.push(`| --- | ---: | ---: | ---: | ---: | :---: | ---: | ---: | ---: | ---: | --- |`);
+    lines.push(`| Note | Labeled (Hz) | Measured (Hz) | Drift (¢) | segments | SCC | bridges | xf (ms) | worstRes (dB) | steady (s) | LUFS | gain | tier |`);
+    lines.push(`| --- | ---: | ---: | ---: | ---: | :---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |`);
     picks.forEach(p => {
       const s = p.res.stats || {};
       const labeled = p.labeledFreq / (cfg.transpose || 1);
@@ -936,8 +948,10 @@ function buildReport(results, picks, cfg, fallbackNotes) {
       const nSeg = (p.res.segments && p.res.segments.length) || 0;
       const scc = s.sccOk ? 'ok' : 'BRK';
       const br = (s.bridgeCount != null) ? s.bridgeCount : '—';
+      const xf = (s.crossfadeSec != null) ? (s.crossfadeSec * 1000).toFixed(0) : '—';
+      const wres = (s.worstResDb != null) ? s.worstResDb.toFixed(1) : '—';
       const steady = (s.steadyDurSec != null) ? s.steadyDurSec.toFixed(2) : '—';
-      lines.push(`| ${p.note} | ${labStr} | ${detStr} | ${drift} | ${nSeg} | ${scc} | ${br} | ${steady} | ${gainColLoop(p)} | ${p.tier} |`);
+      lines.push(`| ${p.note} | ${labStr} | ${detStr} | ${drift} | ${nSeg} | ${scc} | ${br} | ${xf} | ${wres} | ${steady} | ${gainColLoop(p)} | ${p.tier} |`);
     });
   }
   // failures
@@ -986,6 +1000,17 @@ function buildSummary(results, picks, cfg, hkiPath) {
     analyzed: results.length,
     picked: picks.length,
     pickedNotes: picks.map(p => p.note),
+    /* Loop path: loudest kept-seam residual across all picks (dB rel. signal)
+       and the distribution of analyzer-chosen crossfade windows. */
+    worstResDb: cfg.decays ? null : picks.reduce((m, p) => {
+      const w = p.res.stats && p.res.stats.worstResDb;
+      return (w != null && (m == null || w > m)) ? w : m;
+    }, null),
+    crossfades: cfg.decays ? null : picks.reduce((acc, p) => {
+      const xf = p.res.stats && p.res.stats.crossfadeSec;
+      if (xf != null) { const k = (xf * 1000).toFixed(0) + 'ms'; acc[k] = (acc[k] || 0) + 1; }
+      return acc;
+    }, {}),
     tiers,
     fails: results
       .filter(r => r.tier === 'fail' || r.tier === 'red')
@@ -1036,7 +1061,7 @@ function buildSummary(results, picks, cfg, hkiPath) {
       const peak = meas ? meas.peak : null;
       const lufs = (meas && typeof meas.lufs === 'number') ? meas.lufs : null;
       const gain = computeGain(meas);
-      const rec = { note: n.note, midi: n.midi, labeledFreq: n.labeledFreq, matchedFile: fetched.matchedFile, res, tier, rms, peak, lufs, gain };
+      const rec = { note: n.note, midi: n.midi, labeledFreq: n.labeledFreq, matchedFile: fetched.matchedFile, res, tier, rms, peak, lufs, gain, durationSec: buf.length / SR };
       attempts.push({ patternIdx, matchedFile: fetched.matchedFile, tier, failReason: (res && (res.failReason || (res.stats && res.stats.failReason))) || null });
       if (!best || TIER_RANK[tier] > TIER_RANK[best.tier]) {
         best = rec;
@@ -1062,6 +1087,23 @@ function buildSummary(results, picks, cfg, hkiPath) {
   }
   console.error(`fetch: ${nFetched} new, ${nCached} cached, ${nMissAll} 404/missing` + (multiPattern ? `, ${fallbackNotes.length} note${fallbackNotes.length===1?'':'s'} used fallback` : ''));
   const picks = pickSamples(results, cfg);
+  /* Bundle tail-cut (loop path): audio past the last segment's b never plays
+     by design — the engine's furthest read is maxB + crossfade during the
+     wrap plus the release tail after noteOff. Mark the cut point on every
+     pick whose source runs longer; bundle.js executes the trim (stream-copy
+     for lossy sources, trimmed Opus encode for lossless), so the archive
+     keeps only audio that can actually sound. Decay instruments play their
+     full length and are never cut. */
+  if (!cfg.decays) {
+    const XF_MAX = 0.030, TAIL_MARGIN = 0.1;
+    for (const p of picks) {
+      const segs = (p.res && p.res.segments) || [];
+      if (!segs.length || !p.durationSec) continue;
+      const maxB = segs.reduce((m, s) => Math.max(m, s.b), 0);
+      const cutSec = maxB + XF_MAX + cfg.releaseTime + TAIL_MARGIN;
+      if (cutSec < p.durationSec) p.bundleCutSec = +cutSec.toFixed(3);
+    }
+  }
   fs.mkdirSync(OUT_DIR, { recursive: true });
   const blockPath  = path.join(OUT_DIR, `${cfg.instrumentKey}-block.txt`);
   const reportPath = path.join(OUT_DIR, `${cfg.instrumentKey}-report.md`);

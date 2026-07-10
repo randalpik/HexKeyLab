@@ -40,15 +40,31 @@ function targetExt(srcExt) {
 
 /** Encode a lossless source to OGG/Opus. ffmpeg writes a .ogg container with
  *  Opus inside — this is the conventional encoding for "OGG/Opus" and is
- *  what every modern browser's decodeAudioData accepts. */
-function encodeOpus(srcPath, dstPath) {
+ *  what every modern browser's decodeAudioData accepts. `cutSec` (optional)
+ *  truncates the output — see the tail-cut note in buildBundle. */
+function encodeOpus(srcPath, dstPath, cutSec) {
   execFileSync('ffmpeg', [
     '-loglevel', 'error', '-y',
     '-i', srcPath,
+    ...(cutSec ? ['-t', String(cutSec)] : []),
     '-c:a', 'libopus',
     '-b:a', '128k',
     '-ar', '48000',         /* Opus's preferred sample rate */
     '-vbr', 'on',
+    dstPath,
+  ], { stdio: 'inherit' });
+}
+
+/** Tail-cut a lossy source WITHOUT re-encoding: stream-copy up to `cutSec`.
+ *  Cut lands on the next codec-frame boundary (~26 ms for mp3) — fine for a
+ *  tail trim that already carries a 100 ms margin past the last playable
+ *  moment. Zero generation loss, same container/extension. */
+function copyCut(srcPath, dstPath, cutSec) {
+  execFileSync('ffmpeg', [
+    '-loglevel', 'error', '-y',
+    '-i', srcPath,
+    '-t', String(cutSec),
+    '-c', 'copy',
     dstPath,
   ], { stdio: 'inherit' });
 }
@@ -92,17 +108,28 @@ export function buildBundle(cfg, picks, outDir, cacheDir) {
     const outExt = targetExt(srcExt);
     const archiveFile = `samples/${p.note}${outExt}`;
 
+    /* Tail-cut: generate-samples marks p.bundleCutSec on loop picks whose
+       source runs past the last playable moment (maxSegB + crossfade +
+       release + margin). Audio beyond that point never plays by design, so
+       it never enters the archive. Lossy sources are cut by stream-copy
+       (no re-encode, same extension); lossless sources fold the cut into
+       their Opus encode. */
+    const cutSec = (typeof p.bundleCutSec === 'number' && p.bundleCutSec > 0) ? p.bundleCutSec : null;
     let bytes;
-    if (outExt === srcExt) {
+    if (outExt === srcExt && !cutSec) {
       /* Lossy passthrough. Read once; no transcoding. */
       bytes = readVerbatim(srcPath);
     } else {
-      /* Lossless → Opus. Cache the encoded result by source mtime — if the
-         source hasn't changed since the last encode, reuse. */
-      const stagedPath = path.join(stage, `${p.note}${outExt}`);
+      /* Staged (cut and/or transcoded). Cache by source mtime + cut point —
+         if neither changed since the last run, reuse. */
+      const cutTag = cutSec ? `.cut${cutSec}` : '';
+      const stagedPath = path.join(stage, `${p.note}${cutTag}${outExt}`);
       const srcMtime = fs.statSync(srcPath).mtimeMs;
       const stagedFresh = fs.existsSync(stagedPath) && fs.statSync(stagedPath).mtimeMs >= srcMtime;
-      if (!stagedFresh) encodeOpus(srcPath, stagedPath);
+      if (!stagedFresh) {
+        if (outExt === srcExt) copyCut(srcPath, stagedPath, cutSec);
+        else encodeOpus(srcPath, stagedPath, cutSec);
+      }
       bytes = fs.readFileSync(stagedPath);
     }
     audio[archiveFile] = bytes;
@@ -130,6 +157,10 @@ export function buildBundle(cfg, picks, outDir, cacheDir) {
         entry.trendHopMs = trend.hopMs;
         entry.trendStartSec = round(trend.startSec, 4);
       }
+      /* Analyzer-chosen seam crossfade (residual-gated window search).
+         Omitted at the engine default (0.030) to keep manifests lean. */
+      const xf = p.res.stats && p.res.stats.crossfadeSec;
+      if (xf != null && xf !== 0.030) entry.crossfadeSec = round(xf, 3);
     }
     sampleEntries.push(entry);
     originalFiles[p.note] = p.matchedFile;

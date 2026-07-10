@@ -91,9 +91,10 @@ Audio is **off by default** to spare you from a surprise tone. Tick the **Audio*
 The **instrument dropdown** groups the available voices:
 
 - **Decaying** (struck/plucked): piano *(default)*, electric piano, harpsichord, harp, acoustic guitar, pizzicato viola.
-- **Winds**: flute, oboe, clarinet, trombone.
-- **Bowed strings**: violin, viola, cello.
-- **Organs**: pipe, renaissance, drawbar.
+- **Woodwinds**: flute, oboe, clarinet, alto sax, bassoon.
+- **Brass**: french horn, trumpet, trombone, tuba.
+- **Bowed strings**: violin, viola, cello, double bass.
+- **Free reed & organs**: accordion, pipe, renaissance, drawbar.
 - **Voices**: baritone, soprano.
 - **Oscillators**: triangle, sine, square.
 

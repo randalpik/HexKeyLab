@@ -65,7 +65,20 @@ Both CLI and runtime engine build sample URLs from the same config metadata, so 
 
 ### Per-instrument gate overrides (`gateOpts`)
 
-Configurable per instrument: `rmsGate`, `specGate`, `cliqueThreshold`, `minSpacingSec`, `minBackwardSec`, `minForwardSec`, `xfadeSec`, `rmsStepThreshold`, `fwdStabilityThreshold`, `fwdStabilitySec`.
+Configurable per instrument: `rmsGate`, `specGate`, `cliqueThreshold`, `minSpacingSec`, `minBackwardSec`, `minForwardSec`, `xfadeSec`, `rmsStepThreshold`, `fwdStabilityThreshold`, `fwdStabilitySec`, `xfadeResidualDbMax`, `xfadeCandidatesSec`.
+
+### Crossfade-residual gate + per-sample crossfade window (`selectSegments`)
+
+Every candidate pair that survives the cheap gates + correlation is additionally validated by **rendering what the engine actually plays at the seam**: the RMS of `x(a+t) − x(b+t)` over the crossfade window, in dB relative to local signal RMS. Pairs above **`xfadeResidualDbMax`** (default **−10 dB**; `null` disables) are rejected. Rationale: the Pearson gate ran over ~3 fundamental periods (~11 ms at C4) while the engine crossfades 30 ms, so slowly-diverging pairs shipped as "green" with audible seam wobble (bassoon F4 had a −6.6 dB seam).
+
+Because divergent material (vibrato FM) seams better over shorter windows (measured: female-voice pairs at +2.0 dB @30 ms drop to −9.7 dB @8 ms) while phase-stable material barely moves, selection runs once per candidate window (**`xfadeCandidatesSec`**, default `[0.030, 0.015, 0.008]`, floored at 1.5 fundamental periods) and the winner — most surviving segments, then lowest worst residual, then longer window — decides both the kept pairs and the sample's emitted **`crossfadeSec`** (omitted when it equals the 30 ms engine default). The engine (`samples-engine.ts`, `segmentLooper.ts`) plays seams at the per-sample duration. Reports show `xf (ms)` and `worstRes (dB)` per pick; summaries carry `worstResDb` + a crossfade histogram.
+
+### Loop window + bundle tail-cut (source-length control)
+
+Long sources (VSCO sustains run 4–14 s of internally cut-and-pasted material) would otherwise bloat bundles: the distance-descending picker spreads pairs across the whole file, and the bundler used to keep every byte. Two mechanisms fix this:
+
+- **`gateOpts.loopWindowSec`** — clamps loop candidates to the first N seconds of the steady region. A number fixes the clamp; `null`/`0` forces the full region (legacy); **unset = AUTO** (the default): selection runs the full window first as the quality reference, then takes the smallest window from an ascending ladder (2.5/4/6/9 s) that preserves the segment count (capped at 5). Per-note optimal — a note whose loopable material sits late keeps its full window instead of losing coverage; the ladder floor keeps seam density at or below ~1 wrap/s. The chosen window lands in `stats.loopWindowSec`.
+- **Bundle tail-cut (always on, loop path)** — audio past `maxSegB + crossfade + releaseTime + margin` never plays by design and never enters the archive: generate-samples marks `bundleCutSec` per pick; `bundle.js` cuts lossy sources by stream-copy (no re-encode, same extension, ~26 ms frame granularity) and folds the cut into the Opus encode for lossless sources. Decay instruments play full-length and are never cut.
 
 Defaults are counterintuitive (lower = tighter):
 - `cliqueThreshold` = `0.25`, `rmsStepThreshold` = `0.25`

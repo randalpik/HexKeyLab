@@ -48,6 +48,9 @@ Concrete rules — these are not aspirational, they are mandatory:
 4. **For a directive like "do X," reply with one short acknowledgement and start the tool call in the same turn** — do not deliberate first.
 5. **Do not ruminate on which of two near-identical implementations is nicer** — pick one and do it.
 6. **If you have a clarifying question, ask it in one line and stop**; do not produce a four-option AskUserQuestion or weigh options silently.
+7. **Every message that contains a tool call must BEGIN with at least one sentence of visible text — no exceptions for "mechanical" calls** (TodoWrite, collecting a background result, re-running a check). A bare tool-call message reads as silence. Feeling like the sentence is redundant is what this failure feels like from the inside; write it anyway. (Added 2026-07-10 after two bare tool-call messages produced multi-minute silent stretches.)
+8. **Never wait synchronously on a background task** (no blocking TaskOutput). End the turn; the completion notification resumes work. If a synchronous wait is ever unavoidable, announce it with an expected duration BEFORE waiting — long operations generally (CDN downloads, full batch regens) get their cause and rough duration stated up front.
+9. **When Max asks a direct question, reply with text only and end the turn** — answer from what is already known; gather better data afterward, not before. And when the question is about what you did: verify against the actual transcript, never reconstruct from memory of intent — private reasoning and emitted output are indistinguishable in hindsight and WILL be confabulated.
 
 If you catch yourself in a long thinking block, **stop the thinking, write a sentence, and continue**. The cost of breaking up thought is far smaller than the cost of silent walls.
 

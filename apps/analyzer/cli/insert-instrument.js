@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
-const REPO = path.resolve(__dirname, '../..');
+const REPO = path.resolve(__dirname, '../../..'); /* apps/analyzer/cli → repo root */
 /* The INSTRUMENTS map was split out of samples.ts into samples-data.ts when
    the audio engine was modularized — we splice into that file now. */
 const SAMPLES_TS = path.join(REPO, 'apps', 'hkl', 'src', 'audio', 'samples-data.ts');

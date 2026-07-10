@@ -107,7 +107,12 @@ export function startSegmentLooper(opts: SegmentLooperOpts): SegmentLooper {
     newSrc.loop = false;
     newSrc.playbackRate.value = rate;
     const newGain = ctx.createGain();
-    /* Fade in from silence to full gain over crossfadeSec. */
+    /* Fade in from silence to full gain over crossfadeSec. Born silent (not
+       the default 1): Firefox's fractional-rate sources emit a few samples
+       of resampler pre-ring BEFORE the scheduled start, which would pass at
+       the default gain until the first event lands — an audible per-seam
+       click. See samples-engine.ts:scheduleSegmentSwitch. */
+    newGain.gain.value = 0;
     newGain.gain.setValueAtTime(0, switchTime);
     newGain.gain.linearRampToValueAtTime(gain, switchTime + crossfadeSec);
     newSrc.connect(newGain).connect(destination);

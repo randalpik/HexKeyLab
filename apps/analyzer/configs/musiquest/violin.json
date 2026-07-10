@@ -1,24 +1,33 @@
 {
   "instrumentKey": "violin",
   "displayName": "Violin",
-  "source": "local",
-  "sourceDir": "/home/max/musiquest-assets/audio/samples",
-  "ext": ".mp3",
-  "filePattern": "violin_{NOTE_LOWER}.mp3",
-  "noteStyle": "flat",
+  "baseUrl": "https://raw.githubusercontent.com/peastman/sso/master/Sonatina%20Symphonic%20Orchestra/Samples/Violin/",
+  "ext": ".wav",
+  "filePattern": "violin-{NOTE_LOWER}.wav",
+  "noteStyle": "sharp",
+  "noteSemis": [
+    1,
+    4,
+    7,
+    10
+  ],
   "lowOct": 3,
-  "highOct": 6,
-  "lowNote": "G3",
-  "highNote": "E6",
+  "highOct": 7,
   "transpose": 1,
-  "pickSpacing": 3,
-  "volume": 1.0,
-  "bundleUrl": "/hkl/violin.hki",
   "decays": false,
   "vibrato": true,
   "releaseTime": 0.3,
+  "volume": 1.0,
+  "gateOpts": {
+    "tiltStepThreshold": 0.02
+  },
+  "bundleUrl": "/hkl/violin.hki",
   "comment": [
-    "MusiQuest violin (sustained loop). Minor-third thinning;",
-    "trimmed to natural range G3-E6."
-  ]
+    "MusiQuest violin - REPLACED with SSO solo violin (the proven HKL",
+    "source): the MQ-native samples never yielded a usable loop spine, and",
+    "the VSCO Arco Vib recordings failed Max's quality bar. Minor-third",
+    "sampled at the source; regenerated 2026-07-09 under the residual gate +",
+    "auto loop window + tail-cut (7G/3Y, seams <= -10.2 dB, ~670 KB)."
+  ],
+  "bundle": true
 }

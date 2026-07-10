@@ -1,0 +1,27 @@
+{
+  "instrumentKey": "cello_phil",
+  "displayName": "Cello (Philharmonia)",
+  "source": "local",
+  "sourceDir": "/home/max/Downloads/philharmonia/cello",
+  "ext": ".mp3",
+  "filePatterns": [
+    "cello_{NOTE}_15_forte_arco-normal.mp3",
+    "cello_{NOTE}_15_fortissimo_arco-normal.mp3",
+    "cello_{NOTE}_1_forte_arco-normal.mp3"
+  ],
+  "noteStyle": "sharp_s",
+  "lowOct": 2,
+  "highOct": 6,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "volume": 1.0,
+  "comment": [
+    "Philharmonia Orchestra solo cello, arco-normal, longest (1.5s nominal,",
+    "~2.1s file) bucket, forte with fortissimo/1s fallbacks. Chromatic C2-C6.",
+    "Probe for the MQ cello replacement: solo player with natural vibrato -",
+    "the VSCO cello is a SECTION recording and fails seam matching",
+    "(decorrelated ensemble phase), same class as the MQ cello."
+  ]
+}

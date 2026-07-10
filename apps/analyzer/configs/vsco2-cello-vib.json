@@ -1,0 +1,34 @@
+{
+  "instrumentKey": "cello_vib",
+  "displayName": "Cello (VSCO Vib)",
+  "baseUrl": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Cello%20Section/susvib/",
+  "ext": ".wav",
+  "noteStyle": "sharp",
+  "noteSemis": [
+    0,
+    2,
+    4,
+    5,
+    7,
+    9,
+    11
+  ],
+  "lowOct": 1,
+  "highOct": 4,
+  "transpose": 0.5,
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "volume": 1.0,
+  "comment": [
+    "VSCO-2-CE Cello Section susvib - PROBED AND FAILED (12/13 red, 0 picks,",
+    "2026-07-09): section recording, decorrelated multi-player phase defeats",
+    "seam matching regardless of vibrato. Same unloopable class as the MQ",
+    "cello. Solo cello sources work instead - see phil-cello.json.",
+    "Labels one octave below sounding (measured A2 file = 220Hz)."
+  ],
+  "filePatterns": [
+    "susvib_{NOTE}_v3_1.wav",
+    "susvib_{NOTE}_v1_1.wav"
+  ]
+}

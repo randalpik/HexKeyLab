@@ -59,6 +59,8 @@ export interface SampleDef {
   trend?: number[];
   trendHopMs?: number;
   trendStartSec?: number;
+  /** Analyzer-chosen seam crossfade duration (sec). Absent ⇒ 0.030. */
+  crossfadeSec?: number;
   [k: string]: unknown;
 }
 
@@ -378,7 +380,7 @@ const loadedInstruments: Record<string, any> = {};
              every layer a consistent onset boundary regardless of capture
              loudness; the attack fade-in (not a low threshold) handles clicks. */
           if(!instr.loop){var _g=(typeof s.gain==='number')?s.gain:1.0;var _d=buf.getChannelData(0);for(var _s=0;_s<buf.length;_s++){if(Math.abs(_d[_s])*_g>TRIM_GATE_NORM){lp.trimStart=_s/buf.sampleRate;break;}}}
-          result[i]={buffer:buf,freq:s.freq,gain:(typeof s.gain==='number')?s.gain:1.0,vel:(typeof s.vel==='number')?s.vel:null,lp:lp,name:s.name};loaded++;
+          result[i]={buffer:buf,freq:s.freq,gain:(typeof s.gain==='number')?s.gain:1.0,vel:(typeof s.vel==='number')?s.vel:null,lp:lp,name:s.name,crossfadeSec:(typeof s.crossfadeSec==='number'&&s.crossfadeSec>0)?s.crossfadeSec:null};loaded++;
           if(onProgress)onProgress(loaded,total,s.name);
           if(loaded===total&&!aborted){
             buffers[key]=result.filter(function(x){
@@ -536,6 +538,7 @@ const loadedInstruments: Record<string, any> = {};
        creates its own segGain and crossfades, so this only shapes the first few
        ms of the very first source. The slide path (sNoteOnFaded) already uses an
        equal-power fade-in curve, so it needs no change. */
+    segGain.gain.value=0; /* born silent — Firefox pre-ring guard, see scheduleSegmentSwitch */
     segGain.gain.setValueAtTime(0,startT);
     segGain.gain.linearRampToValueAtTime(vol,startT+ATTACK_FADE_S);
     var source=ctx.createBufferSource();source.buffer=nearest.buffer;
@@ -616,7 +619,7 @@ const loadedInstruments: Record<string, any> = {};
       initialB=(pts&&pts.length>=2)?pts[pts.length-1]:0;
       initialBIdx=(pts&&pts.length>=2)?pts.length-1:0;
     }
-    var voice={source:source,segGain:segGain,voiceGain:voiceGain,damperGain:damperGain,pressureGain:pressureGain,freq:freq,sampleFreq:nearest.freq,transpose:(instr.transpose||1),sampleName:nearest.name,
+    var voice={source:source,segGain:segGain,voiceGain:voiceGain,damperGain:damperGain,pressureGain:pressureGain,freq:freq,sampleFreq:nearest.freq,transpose:(instr.transpose||1),sampleName:nearest.name,sampleXfadeSec:(nearest.crossfadeSec||null),
       vol:vol,baseVol:baseVol,keyVelocity:resolvedVel,alive:true,loopPts:pts,validStartsByEnd:vsbe,segments:segs,loopTimer:null,buffer:nearest.buffer,instr:instr,instrKey:instrumentKey,
       slopeCV:(nearest.lp&&typeof nearest.lp.slopeCV==='number')?nearest.lp.slopeCV:0.5,
       sourceStartTime:startT,sourceOffset:startOffset,
@@ -783,13 +786,26 @@ const loadedInstruments: Record<string, any> = {};
        which set is present. */
     var aTime=picked.a,bTime=picked.b;
 
-    /* 30ms linear crossfade — gives |cos(Δφₖ/2)| at midpoint per harmonic,
-       no +3dB boost at phase-aligned fundamental (equal-power would). */
-    var xfDur=0.030;
+    /* Linear crossfade — gives |cos(Δφₖ/2)| at midpoint per harmonic,
+       no +3dB boost at phase-aligned fundamental (equal-power would).
+       Duration is per-sample when the analyzer chose one (residual-gated
+       window search — shorter for material that diverges over the default
+       30ms, e.g. vibrato voices); 30ms otherwise. */
+    var xfDur=v.sampleXfadeSec||0.030;
     var newSrc=ctx.createBufferSource();newSrc.buffer=v.buffer;
     newSrc.loopStart=aTime;newSrc.loopEnd=bTime;
     newSrc.playbackRate.value=v.source.playbackRate.value;
     var newSG=ctx.createGain();
+    /* Born silent — NOT default 1. Firefox's AudioBufferSourceNode at
+       fractional playbackRate emits ~3-4 samples of resampler pre-ring
+       BEFORE its scheduled start time; with the default gain (1) those
+       samples pass at full level until the setValueAtTime(0, switchTime)
+       event lands, then get truncated — a per-seam click whose loudness
+       tracks the waveform amplitude at the seam entry (the "crackling on
+       chords" bug, 2026-07). Chromium starts sample-accurately and rate=1
+       is unaffected, which is why it only surfaced with JI/thinned-rate
+       playback in Firefox. Same guard on every future-scheduled gain. */
+    newSG.gain.value=0;
     newSG.gain.setValueAtTime(0,switchTime);
     newSG.gain.linearRampToValueAtTime(v.vol,switchTime+xfDur);
     newSrc.connect(newSG);newSG.connect(v.voiceGain);
@@ -934,11 +950,12 @@ const loadedInstruments: Record<string, any> = {};
     var picked=pickNextSeam(v,pts);
     var aTime=picked.a,bTime=picked.b;
     /* Create new source, crossfade, update voice state. */
-    var xfDur=0.030;
+    var xfDur=v.sampleXfadeSec||0.030;
     var newSrc=ctx.createBufferSource();newSrc.buffer=v.buffer;
     newSrc.loopStart=aTime;newSrc.loopEnd=bTime;
     newSrc.playbackRate.value=v.source.playbackRate.value;
     var newSG=ctx.createGain();
+    newSG.gain.value=0; /* born silent — Firefox pre-ring guard, see scheduleSegmentSwitch */
     newSG.gain.setValueAtTime(0,st);
     newSG.gain.linearRampToValueAtTime(v.vol,st+xfDur);
     newSrc.connect(newSG);newSG.connect(v.voiceGain);
@@ -1216,6 +1233,7 @@ const loadedInstruments: Record<string, any> = {};
        with the pitch-matched ramp above, summed pitch is also constant. */
     var fin=new Float32Array(EQUAL_POWER_LEN);
     for(var fi=0;fi<EQUAL_POWER_LEN;fi++)fin[fi]=_epFadeIn[fi]*vol;
+    segGain.gain.value=0; /* born silent — Firefox pre-ring guard, see scheduleSegmentSwitch */
     segGain.gain.setValueCurveAtTime(fin,startT,dur);
     source.connect(segGain);segGain.connect(voiceGain);
     source.start(startT,startOffset);
@@ -1248,7 +1266,7 @@ const loadedInstruments: Record<string, any> = {};
       initBF=(pts&&pts.length>=2)?pts[pts.length-1]:0;
       initBIdxF=(pts&&pts.length>=2)?pts.length-1:0;
     }
-    var voice={source:source,segGain:segGain,voiceGain:voiceGain,damperGain:damperGain,pressureGain:pressureGain,freq:freq,sampleFreq:nearest.freq,transpose:(instr.transpose||1),sampleName:nearest.name,vol:vol,baseVol:baseVol,alive:true,
+    var voice={source:source,segGain:segGain,voiceGain:voiceGain,damperGain:damperGain,pressureGain:pressureGain,freq:freq,sampleFreq:nearest.freq,transpose:(instr.transpose||1),sampleName:nearest.name,sampleXfadeSec:(nearest.crossfadeSec||null),vol:vol,baseVol:baseVol,alive:true,
       loopPts:pts,validStartsByEnd:vsbeFaded||null,segments:segsFaded,loopTimer:null,buffer:nearest.buffer,instr:instr,instrKey:instrumentKey,
       slopeCV:(nearest.lp&&typeof nearest.lp.slopeCV==='number')?nearest.lp.slopeCV:0.5,
       sourceStartTime:startT,sourceOffset:startOffset,

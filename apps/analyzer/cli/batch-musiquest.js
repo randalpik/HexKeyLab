@@ -65,11 +65,21 @@ for (const cfgPath of cfgPaths) {
   runs.push(run);
 }
 
-/* Stage artifacts. Copy (not move) so out/ stays a regenerable cache. */
+/* Stage artifacts. Copy (not move) so out/ stays a regenerable cache.
+   bundleBytes is set by generate-samples only when THIS run wrote a bundle —
+   a null means no fresh .hki exists, and any same-keyed file sitting in out/
+   is a stale leftover from an earlier config generation. Staging it would
+   silently ship the wrong instrument (bit us when the MQ configs switched to
+   CDN sources without "bundle": true). */
 fs.mkdirSync(HANDOFF_DEFS, { recursive: true });
 let staged = 0;
 for (const run of runs) {
   if (run.crashed || !run.summary || run.summary.picked === 0) continue;
+  if (run.summary.bundleBytes == null) {
+    console.error(`WARN ${run.key}: no bundle produced this run (CDN config without "bundle": true?) — not staged`);
+    run.crashed = true;
+    continue;
+  }
   const hkiSrc = path.join(OUT_DIR, `${run.key}.hki`);
   const defSrc = path.join(OUT_DIR, `${run.key}-def.json`);
   if (!fs.existsSync(hkiSrc) || !fs.existsSync(defSrc)) { run.crashed = true; continue; }

@@ -49,6 +49,11 @@ export interface HkiSampleEntry {
   trendStartSec?: number;
   /** Silence-trim offset in seconds at the start of the buffer. */
   trimStart?: number;
+  /** Loop pipeline only — analyzer-chosen seam crossfade duration in seconds
+   *  (residual-gated window search; see @hkl/analysis selectSegments). Absent
+   *  ⇒ the engine default (0.030). Shorter values are emitted for material
+   *  whose seams diverge over the full default window (vibrato voices etc.). */
+  crossfadeSec?: number;
 }
 
 export interface HkiManifest {

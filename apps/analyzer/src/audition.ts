@@ -85,6 +85,8 @@ export interface AuditionOpts {
   segments?: ReadonlyArray<{ a: number; b: number }>;
   releaseTime?: number;
   trimStart?: number;
+  /** Analyzer-chosen seam crossfade (sec); absent ⇒ engine default 30 ms. */
+  crossfadeSec?: number;
 }
 
 /** Play `buffer` through the AudioContext. `id` is an opaque caller-supplied
@@ -110,6 +112,7 @@ export function audition(id: string, buffer: AudioBuffer, opts: AuditionOpts = {
       segments,
       gain,
       trimStart: trim,
+      crossfadeSec: opts.crossfadeSec,
     });
   } else {
     /* Decay path — single-shot playback with a release envelope. */

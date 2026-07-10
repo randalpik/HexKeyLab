@@ -1,24 +1,31 @@
 {
   "instrumentKey": "oboe",
   "displayName": "Oboe",
-  "source": "local",
-  "sourceDir": "/home/max/musiquest-assets/audio/samples",
-  "ext": ".mp3",
-  "filePattern": "oboe_{NOTE_LOWER}.mp3",
-  "noteStyle": "flat",
-  "lowOct": 3,
-  "highOct": 6,
-  "lowNote": "Bb3",
-  "highNote": "E6",
-  "transpose": 1,
-  "pickSpacing": 3,
-  "volume": 1.0,
-  "bundleUrl": "/hkl/oboe.hki",
+  "baseUrl": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Oboe/Vib/",
+  "ext": ".wav",
+  "filePattern": "Oboe_Vib_{NOTE}_v3_Main.wav",
+  "noteStyle": "sharp",
+  "noteSemis": [
+    2,
+    5,
+    10
+  ],
+  "lowOct": 2,
+  "highOct": 5,
+  "transpose": 0.5,
   "decays": false,
   "vibrato": true,
-  "releaseTime": 0.3,
+  "releaseTime": 0.2,
+  "volume": 1.0,
+  "bundleUrl": "/hkl/oboe.hki",
   "comment": [
-    "MusiQuest oboe (sustained loop). Minor-third thinning;",
-    "trimmed to natural range Bb3-E6."
-  ]
+    "MusiQuest oboe - REPLACED with VSCO-2-CE Oboe VIB (CC0): the MQ",
+    "straight-tone oboe is unloopable (double-reed wall, see lessons.md);",
+    "the same session's vibrato articulation loops green (8G/1Y). Labels one",
+    "octave below sounding (transpose 0.5). Sounding range A#3-F6.",
+    "emitShipped:true - HKL ships the tail-cut bundle from public/samples/",
+    "instead of fetching ~12 MB of VSCO wavs per load."
+  ],
+  "bundle": true,
+  "emitShipped": true
 }

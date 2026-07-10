@@ -1,0 +1,30 @@
+{
+  "instrumentKey": "oboe_vib",
+  "displayName": "Oboe (VSCO Vib)",
+  "baseUrl": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Oboe/Vib/",
+  "ext": ".wav",
+  "filePattern": "Oboe_Vib_{NOTE}_v3_Main.wav",
+  "noteStyle": "sharp",
+  "noteSemis": [
+    2,
+    5,
+    10
+  ],
+  "lowOct": 2,
+  "highOct": 5,
+  "transpose": 0.5,
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.2,
+  "volume": 1.0,
+  "comment": [
+    "VSCO-2-CE Oboe VIB articulation - the untried sibling of the Sus set",
+    "that failed the loop gates (straight-tone double reed). Probe: the MQ",
+    "english horn loops cleanly BECAUSE of its vibrato, so a vibrato oboe",
+    "from the same clean anechoic VSCO session is the most likely candidate.",
+    "Same sparse D/F/A# 3-per-octave pattern across A#2-F5, v3 velocity.",
+    "transpose:0.5 - VSCO filenames are labeled an octave below sounding.",
+    "Loop window: AUTO (default) - per-note smallest window preserving",
+    "segment count; bundle tail-cut drops everything past the last b."
+  ]
+}

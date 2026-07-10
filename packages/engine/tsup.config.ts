@@ -8,7 +8,7 @@ import { writeFile, copyFile } from 'node:fs/promises';
 const PUBLISH_NAME = '@hexkeylab/engine';
 // 2.0.0: breaking — sNoteOn/sNoteOnFaded take an instrumentKey; the global
 // setInstrument/isLoaded are gone (instrument is per-voice now).
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 
 export default defineConfig({
   entry: ['src/index.ts'],

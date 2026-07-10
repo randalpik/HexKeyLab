@@ -34,9 +34,32 @@ export const HKLAnalysis = (function () {
    Returns:
      { segments: [{a, b}, ...], diag: {...} }
    where segments are sorted by a. */
-function selectSegments(buf, candidates, opts){
+function selectSegmentsCore(buf, candidates, opts){
   opts=opts||{};
   var sr=buf.sampleRate,d=buf.getChannelData(0),len=buf.length;
+  /* Crossfade-residual gate (the wobble gate). When the wrapper passes a
+     window (_xfadeWinSec), every pair is additionally validated by RENDERING
+     what the engine will actually play at the seam: the RMS of
+     x(a+t) − x(b+t) over the crossfade window, in dB relative to the local
+     signal RMS. This is strictly more predictive than the Pearson gate —
+     it IS the artifact energy a linear crossfade injects — and it covers
+     the full crossfade span, where the correlation window (3 fundamental
+     periods, ~11 ms at C4) let slowly-diverging pairs through as "green"
+     with audible seam wobble (bassoon F4 shipped a −6.6 dB seam). */
+  var xfadeWinSamples=opts._xfadeWinSec?Math.round(opts._xfadeWinSec*sr):0;
+  var xfadeResidualDbMax=opts.xfadeResidualDbMax!==undefined&&opts.xfadeResidualDbMax!==null?opts.xfadeResidualDbMax:-10;
+  function xfadeResidualDb(pa,pb,w){
+    var wEff=Math.min(w,len-pa,len-pb);
+    if(wEff<32)return -Infinity; /* seam fades into buffer end — nothing to compare */
+    var res=0,sa=0,sb=0;
+    for(var i=0;i<wEff;i++){
+      var va=d[pa+i],vb=d[pb+i],e=va-vb;
+      res+=e*e;sa+=va*va;sb+=vb*vb;
+    }
+    var rRms=Math.sqrt(res/wEff);
+    var sRms=(Math.sqrt(sa/wEff)+Math.sqrt(sb/wEff))/2;
+    return 20*Math.log10((rRms+1e-12)/(sRms+1e-12));
+  }
   var rmsStepThreshold=opts.rmsStepThreshold!==undefined?opts.rmsStepThreshold:0.01;
   var slopeStepThreshold=opts.slopeStepThreshold!==undefined?opts.slopeStepThreshold:0.01;
   var slopeStrideSec=opts.slopeStrideSec!==undefined?opts.slopeStrideSec:0.030;
@@ -116,7 +139,7 @@ function selectSegments(buf, candidates, opts){
   /* ── 3. Enumerate valid (a, b) pairs ────────────────────────────────── */
   var corrWinSamples=Math.max(32,Math.round(corrWindowPeriods*(tActualSec||0.005)*sr));
   var validPairs=[];
-  var rejectByRms=0,rejectBySlope=0,rejectByCorr=0;
+  var rejectByRms=0,rejectBySlope=0,rejectByCorr=0,rejectByResidual=0;
   var rejectByPitch=0,rejectByTilt=0,rejectByTiltSlope=0;
   function pitchStepDev(i,j){
     if(!pitchAtCandidates)return 0;
@@ -167,7 +190,12 @@ function selectSegments(buf, candidates, opts){
       var pi=Math.round(candidates[i]*sr),pj=Math.round(candidates[j]*sr);
       var pc=correlateWaveforms(d,pi,pj,corrWinSamples);
       if(pc<corrThreshold){rejectByCorr++;continue;}
-      validPairs.push({a:candidates[j],b:candidates[i],aIdx:j,bIdx:i,dist:candidates[i]-candidates[j],pc:pc,pitchStep:psd,tiltStep:tsd,tiltSlopeStep:tssd});
+      var resDb=null;
+      if(xfadeWinSamples>0){
+        resDb=xfadeResidualDb(pj,pi,xfadeWinSamples);
+        if(resDb>xfadeResidualDbMax){rejectByResidual++;continue;}
+      }
+      validPairs.push({a:candidates[j],b:candidates[i],aIdx:j,bIdx:i,dist:candidates[i]-candidates[j],pc:pc,resDb:resDb,pitchStep:psd,tiltStep:tsd,tiltSlopeStep:tssd});
     }
   }
   if(validPairs.length===0){
@@ -175,7 +203,7 @@ function selectSegments(buf, candidates, opts){
       failReason:'no valid pairs',
       nCandidates:n,
       rejectByRms:rejectByRms,rejectBySlope:rejectBySlope,
-      rejectByCorr:rejectByCorr,
+      rejectByCorr:rejectByCorr,rejectByResidual:rejectByResidual,
       rejectByPitch:rejectByPitch,rejectByTilt:rejectByTilt,
       rejectByTiltSlope:rejectByTiltSlope
     }};
@@ -389,18 +417,29 @@ function selectSegments(buf, candidates, opts){
      (a, b) of the kept segments. Useful for spotting which specific seams
      are likely audible. */
   var selectedSeamStats=null;
-  if(pitchAtCandidates||tiltAtCandidates||tiltSlopeAtCandidates){
+  if(pitchAtCandidates||tiltAtCandidates||tiltSlopeAtCandidates||xfadeWinSamples>0){
     selectedSeamStats=segments.map(function(sg){
       /* Find pair in `work` by matching a/b. */
       var pair=null;
       for(var k=0;k<work.length;k++){if(work[k].a===sg.a&&work[k].b===sg.b){pair=work[k];break;}}
       return{
         a:sg.a,b:sg.b,
-        pitchStep:pair?+pair.pitchStep.toFixed(2):null,
-        tiltStep:pair?+pair.tiltStep.toFixed(4):null,
-        tiltSlopeStep:pair?+pair.tiltSlopeStep.toFixed(5):null
+        pitchStep:pair&&pair.pitchStep!=null?+pair.pitchStep.toFixed(2):null,
+        tiltStep:pair&&pair.tiltStep!=null?+pair.tiltStep.toFixed(4):null,
+        tiltSlopeStep:pair&&pair.tiltSlopeStep!=null?+pair.tiltSlopeStep.toFixed(5):null,
+        resDb:pair&&pair.resDb!=null&&isFinite(pair.resDb)?+pair.resDb.toFixed(1):null
       };
     });
+  }
+  /* Worst (largest) crossfade residual among the KEPT pairs — the loudest
+     seam artifact the runtime can produce for this sample. */
+  var worstResDb=null;
+  if(xfadeWinSamples>0){
+    for(var wi=0;wi<work.length;wi++){
+      var wr=work[wi].resDb;
+      if(wr!=null&&isFinite(wr)&&(worstResDb==null||wr>worstResDb))worstResDb=wr;
+    }
+    if(worstResDb!=null)worstResDb=+worstResDb.toFixed(1);
   }
   /* "Ghost" endpoints — pairs that the greedy loop SELECTED (so their endpoints
      went into the `endpoints[]` array that drove the separation gate) but
@@ -427,7 +466,8 @@ function selectSegments(buf, candidates, opts){
       nCandidates:n,
       nValidPairs:validPairs.length,
       rejectByRms:rejectByRms,rejectBySlope:rejectBySlope,
-      rejectByCorr:rejectByCorr,
+      rejectByCorr:rejectByCorr,rejectByResidual:rejectByResidual,
+      worstResDb:worstResDb,
       rejectByPitch:rejectByPitch,rejectByTilt:rejectByTilt,
       rejectByTiltSlope:rejectByTiltSlope,
       nRejectedByMinLength:nRejectedByMinLength,
@@ -451,6 +491,55 @@ function selectSegments(buf, candidates, opts){
       minEndpointSepSec:minEndpointSepSec
     }
   };
+}
+
+/* ═══ selectSegments — crossfade-window search over selectSegmentsCore ═══
+   The engine crossfades seams over a per-sample duration (default 30 ms).
+   Phase-stable material seams cleanest with the long window; material with
+   inherent divergence (vibrato FM, breath noise) accumulates mismatch over
+   30 ms but can seam acceptably over a shorter window (measured: female-
+   voice pairs at +2.0 dB residual @30 ms drop to −9.7 dB @8 ms, while
+   phase-stable pairs barely move). So selection runs once per candidate
+   window with the residual gate active, and the winner decides BOTH the
+   kept pairs and the sample's emitted `crossfadeSec`:
+     1. more selected segments wins (all survivors already meet the gate);
+     2. tie → lower worst residual;
+     3. tie → longer window (gentler splice, the historical default).
+   Windows shorter than 1.5 fundamental periods are skipped (a sub-period
+   crossfade splices mid-cycle on bass content); the longest candidate
+   always runs. `xfadeResidualDbMax: null` disables the gate and the search
+   entirely — legacy single-pass behavior, no crossfadeSec emitted. */
+function selectSegments(buf, candidates, opts){
+  opts=opts||{};
+  var resMax=opts.xfadeResidualDbMax;
+  if(resMax===null||resMax===Infinity){
+    return selectSegmentsCore(buf,candidates,opts);
+  }
+  var cands=opts.xfadeCandidatesSec||[0.030,0.015,0.008];
+  cands=cands.slice().sort(function(a,b){return b-a;});
+  var floorSec=(opts.tActualSec&&opts.tActualSec>0)?1.5*opts.tActualSec:0;
+  var trials=[];
+  var best=null,bestWin=null;
+  for(var i=0;i<cands.length;i++){
+    var w=cands[i];
+    if(i>0&&w<floorSec)continue; /* longest candidate always runs */
+    var sub={};
+    for(var k in opts)sub[k]=opts[k];
+    sub._xfadeWinSec=w;
+    var res=selectSegmentsCore(buf,candidates,sub);
+    var nSeg=res.segments.length;
+    var worst=(res.diag&&res.diag.worstResDb!=null)?res.diag.worstResDb:Infinity;
+    trials.push({winMs:+(w*1000).toFixed(1),nSegments:nSeg,worstResDb:isFinite(worst)?worst:null});
+    var better=false;
+    if(!best)better=true;
+    else if(nSeg>best.nSeg)better=true;
+    else if(nSeg===best.nSeg&&worst<best.worst)better=true;
+    /* equal count AND equal worst → keep earlier (longer) window */
+    if(better)best={res:res,nSeg:nSeg,worst:worst},bestWin=w;
+  }
+  best.res.diag.crossfadeSec=(best.nSeg>0)?bestWin:null;
+  best.res.diag.xfadeWindowTrials=trials;
+  return best.res;
 }
 
 /* ═══ applyConfigDefaults ═══
@@ -1464,11 +1553,31 @@ function prepareLoop(buf, freq, opts){
       bufGate=bufNorm; dGate=dNorm; curvesGate=curvesNorm;
     }
   }
-  /* ── 6. Restrict +ZCs to inside the steady region. */
-  var inSteadyCands=[];
-  for(var ci=0;ci<dedup.length;ci++){
-    if(dedup[ci]>=steady.secStart&&dedup[ci]<=steady.secEnd)inSteadyCands.push(dedup[ci]);
+  /* ── 6. Restrict +ZCs to inside the steady region — clamped by the loop
+     window. Long sources (VSCO sustains run 4–14 s, internally cut-and-
+     pasted) gain nothing from late segments, and the distance-descending
+     picker would otherwise spread pairs across the whole file, forcing the
+     bundler to keep audio that adds bundle size but no material. Clamping
+     candidates early lets the bundle tail-cut drop everything past the last
+     segment's b.
+
+     opts.loopWindowSec semantics:
+       number > 0  — fixed clamp at steadyStart + loopWindowSec.
+       null / 0    — full steady region (legacy behavior).
+       undefined   — AUTO: run the full window first to learn what this
+                     sample can do, then take the SMALLEST window from an
+                     ascending ladder that preserves the segment count
+                     (capped at 5 — enough wrap variety). Per-note optimal:
+                     a note whose loopable material sits late in the file
+                     keeps its full window instead of losing coverage. */
+  function candsUpTo(candHiSec){
+    var cands=[];
+    for(var ci=0;ci<dedup.length;ci++){
+      if(dedup[ci]>=steady.secStart&&dedup[ci]<=candHiSec)cands.push(dedup[ci]);
+    }
+    return cands;
   }
+  var inSteadyCands=candsUpTo(steady.secEnd);
   if(inSteadyCands.length<2){
     var dFew=addSteadyToDiag(baseDiag(),steady);
     dFew.candidates=buildCandidates(null,steady);
@@ -1494,29 +1603,68 @@ function prepareLoop(buf, freq, opts){
         tDriftCents:+((1200*Math.log2(T_actual_sec/(period/sr))).toFixed(1))},
       diag:dFew};
   }
-  /* ── 7. selectSegments. */
-  var pitchAtInSteady=inSteadyCands.map(function(t){return sampleCurve(pitchCurve,t);});
-  /* Gate samples from the TREND curve. See buildCandidates above for why. */
-  var tiltAtInSteady=inSteadyCands.map(function(t){return sampleCurve(tiltTrendCurve,t);});
-  var tiltSlopeAtInSteady=inSteadyCands.map(function(t){return sampleCurve(tiltSlopeCurve,t);});
-  var segRes=selectSegments(bufGate,inSteadyCands,{
-    tActualSec:T_actual_sec,
-    rmsStepThreshold:opts.rmsStepThreshold,
-    slopeStepThreshold:opts.slopeStepThreshold,
-    slopeStrideSec:slopeStrideSec,
-    corrThreshold:opts.corrThreshold,
-    corrWindowPeriods:opts.corrWindowPeriods,
-    minPairLengthSec:opts.minPairLengthSec,
-    minEndpointSepSec:opts.minEndpointSepSec,
-    maxSegments:maxLoopPts,
-    pitchAtCandidates:pitchAtInSteady,
-    tiltAtCandidates:tiltAtInSteady,
-    tiltSlopeAtCandidates:tiltSlopeAtInSteady,
-    pitchStepThresholdCents:opts.pitchStepThresholdCents,
-    tiltStepThreshold:opts.tiltStepThreshold,
-    tiltSlopeStepThreshold:opts.tiltSlopeStepThreshold,
-    _debug:opts._debug
-  });
+  /* ── 7. selectSegments — per loop window (see §6 semantics). */
+  function selectForCands(cands){
+    var pitchAt=cands.map(function(t){return sampleCurve(pitchCurve,t);});
+    /* Gate samples from the TREND curve. See buildCandidates above for why. */
+    var tiltAt=cands.map(function(t){return sampleCurve(tiltTrendCurve,t);});
+    var tiltSlopeAt=cands.map(function(t){return sampleCurve(tiltSlopeCurve,t);});
+    return selectSegments(bufGate,cands,{
+      tActualSec:T_actual_sec,
+      rmsStepThreshold:opts.rmsStepThreshold,
+      slopeStepThreshold:opts.slopeStepThreshold,
+      slopeStrideSec:slopeStrideSec,
+      corrThreshold:opts.corrThreshold,
+      corrWindowPeriods:opts.corrWindowPeriods,
+      minPairLengthSec:opts.minPairLengthSec,
+      minEndpointSepSec:opts.minEndpointSepSec,
+      maxSegments:maxLoopPts,
+      pitchAtCandidates:pitchAt,
+      tiltAtCandidates:tiltAt,
+      tiltSlopeAtCandidates:tiltSlopeAt,
+      pitchStepThresholdCents:opts.pitchStepThresholdCents,
+      tiltStepThreshold:opts.tiltStepThreshold,
+      tiltSlopeStepThreshold:opts.tiltSlopeStepThreshold,
+      xfadeResidualDbMax:opts.xfadeResidualDbMax,
+      xfadeCandidatesSec:opts.xfadeCandidatesSec,
+      _debug:opts._debug
+    });
+  }
+  var AUTO_WINDOW_LADDER=[2.5,4,6,9];
+  var AUTO_TARGET_SEGS=5;
+  var segRes,loopWindowChosen=null;
+  if(opts.loopWindowSec>0){
+    /* Fixed clamp. */
+    var fixHi=Math.min(steady.secEnd,steady.secStart+opts.loopWindowSec);
+    inSteadyCands=candsUpTo(fixHi);
+    segRes=selectForCands(inSteadyCands);
+    loopWindowChosen=opts.loopWindowSec;
+  } else if(opts.loopWindowSec===null||opts.loopWindowSec===0){
+    /* Legacy: full steady region, no search. */
+    segRes=selectForCands(inSteadyCands);
+  } else {
+    /* AUTO: full window first (quality reference), then shrink while the
+       segment count holds. The ladder starts at 2.5 s so auto never drives
+       seam density above roughly one wrap per second — the density already
+       shipping in the 2 s MusiQuest bundles. */
+    var fullRes=selectForCands(inSteadyCands);
+    segRes=fullRes;
+    var nFull=fullRes.segments.length;
+    var target=Math.min(nFull,AUTO_TARGET_SEGS);
+    if(target>=2){
+      for(var wl=0;wl<AUTO_WINDOW_LADDER.length;wl++){
+        var w=AUTO_WINDOW_LADDER[wl];
+        if(steady.secStart+w>=steady.secEnd)break; /* window ⊇ steady — full already covers it */
+        var candsW=candsUpTo(steady.secStart+w);
+        if(candsW.length<2)continue;
+        var resW=selectForCands(candsW);
+        if(resW.segments.length>=target){
+          segRes=resW;inSteadyCands=candsW;loopWindowChosen=w;
+          break;
+        }
+      }
+    }
+  }
   /* ── 8. Build endpoint list, then unify all post-selection state into
          one return whether or not segments survived. Both success and
          "fewer than 2 segments" carry the same full diag so the analyzer's
@@ -1638,7 +1786,13 @@ function prepareLoop(buf, freq, opts){
     nSegments:segRes.segments.length,
     bridgeCount:segRes.diag.bridgeCount||0,
     sccOk:!!segRes.diag.sccOk,
-    kept:endptList.length
+    kept:endptList.length,
+    /* Crossfade chosen by the residual-gated window search (null when the
+       gate is disabled or nothing survived); worst kept-seam residual dB;
+       loop window that selection ran under (null = full steady region). */
+    crossfadeSec:segRes.diag.crossfadeSec!=null?segRes.diag.crossfadeSec:null,
+    worstResDb:segRes.diag.worstResDb!=null?segRes.diag.worstResDb:null,
+    loopWindowSec:loopWindowChosen
   };
   if(segRes.segments.length<2){
     stats.failReason='segments: '+(segRes.diag.failReason||'fewer than 2 segments survived');

@@ -1,0 +1,27 @@
+{
+  "instrumentKey": "violin_vib",
+  "displayName": "Violin (VSCO Vib)",
+  "baseUrl": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Solo%20Violin/Arco%20Vib/",
+  "ext": ".wav",
+  "noteStyle": "sharp",
+  "noteSemis": [
+    0,
+    4,
+    7,
+    9
+  ],
+  "lowOct": 3,
+  "highOct": 7,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "volume": 1.0,
+  "comment": [
+    "VSCO-2-CE Solo Violin Arco Vib probe. Labels at sounding pitch",
+    "(measured A4=441Hz). A/C/E/G per octave, G3-C7, forte layer.",
+    "Loop window: AUTO (default) - per-note smallest window preserving",
+    "segment count; bundle tail-cut drops everything past the last b."
+  ],
+  "filePattern": "LLVln_ArcoVib_{NOTE}_f.wav"
+}

@@ -3747,3 +3747,74 @@ reaches `osc.type`.
 **Verified**: headless CDP run through the real UI at :5170 (scenario: `baritone_voice`, which has both a static hki-shipped entry and an import) — 9/9 assertions: option hidden/restored, auto-select, post-import load pulls from IDB with NO fetch of the static bundleUrl, post-remove reload DOES fetch it (proves both the proxy flip and the eviction). Plus `pnpm typecheck` + `pnpm check:boundaries` + `pnpm --filter @hkl/hkl build` + `pnpm test:composer` (317/317). The leftover Iowa-bassoon CDN-config itself lives in Max's browser IndexedDB (not in the repo — the 4 dead Iowa entries were already removed during the engine extraction); it's removable via Manage instruments → Imported (CDN config) → Remove, and with the new order it can no longer shadow anything that matters.
 
 **Where**: `apps/hkl/src/audio/samples-data.ts` (proxy), `apps/hkl/src/ui/instrumentBundles.ts` (eviction, shadow-hiding, reselect), `apps/hkl/src/bridge/hkl-side.ts` (bridge-import eviction), `docs/architecture/engine.md` (consumption section).
+
+## Seam clicks were a Firefox runtime bug, not an analyzer failure — engine 2.0.1 (2026-07-09)
+
+**Context**: All segment-looped instruments — including analyzer-green ones like MQ bassoon — played clicks of varying loudness at loop seams ("crackling on chords"). Suspected discriminator failure; investigated by measurement instead of gate-tuning.
+
+**Investigation** (each step narrowing the suspect list):
+1. Rendered every emitted bassoon seam pair through the engine's exact 30 ms linear crossfade on the analyzer's own PCM (Node): zero impulsive clicks; residual mismatch −6.6…−20 dB — and the click-free-verified baritone PoC showed the same distribution (worst −5.4 dB). Data exonerated.
+2. Reproduced the full browser path (real `decodeAudioData` of the .hki mp3 bytes, real Web Audio scheduling) in Chromium's OfflineAudioContext at 44.1k/48k, rate 1.0/1.059/0.944: all seams ≤0.4 dB over baseline. Chromium exonerated.
+3. Same experiment in Firefox: rate 1 clean, **rate 1.05946 clicked up to +13.4 dB**, per-seam severity varying — HKL/MQ play fractional rates on essentially every note (JI + minor-third thinning), matching the symptom exactly.
+4. Isolated with a solo-source render: at fractional `playbackRate`, Firefox emits ~3–4 samples of resampler pre-ring BEFORE the scheduled `start()`; the incoming crossfade GainNode still sits at its DEFAULT value 1 (its `setValueAtTime(0, switchTime)` hasn't landed), so the ring passes at full level and is truncated at the seam → click ∝ waveform amplitude at the seam entry.
+
+**Picked**: initialize every future-scheduled gain to silence at creation (`gain.value = 0` before scheduling events) — five sites: `sNoteOn` segGain, `scheduleSegmentSwitch` newSG, `doImmediateSwitch` newSG, `sNoteOnFaded` segGain (samples-engine.ts) and `segmentLooper.ts` newGain. **Engine 2.0.1** (package + tsup VERSION + dist rebuilt) — needs republish to npm for MusiQuest; HKL consumes source directly.
+
+**Deferred (Max's call)**: the investigation also quantified a real-but-secondary discriminator gap — pair correlation is validated over 3 fundamental periods (~11 ms at C4) while the runtime crossfade is 30 ms, letting greens ship pairs whose full-window residual reaches −6.6 dB (audible as a soft seam wobble, not a click). A strictly better gate exists: render the actual 30 ms crossfade at validation time and threshold the residual directly. Not implemented — revisit if seams are still audible after 2.0.1.
+
+**Verified**: fix harness re-run in Firefox — worst seam +13.4 dB → 0.0 dB; `pnpm typecheck`, engine tsup build, `test/engine-smoke`, `pnpm check:boundaries`, HKL build all green. **By-ear confirmation in Firefox is Max's gate.**
+
+**Where**: `packages/engine/src/{samples-engine.ts,segmentLooper.ts}`, `packages/engine/{package.json,tsup.config.ts}` (2.0.1), `docs/lessons.md` (Firefox pre-ring entry), `handoff/musiquest/musiquest-handoff.md` (version note).
+
+## Crossfade-residual gate + analyzer-chosen per-sample crossfade — engine 2.1.0 (2026-07-09)
+
+**Context**: After the Firefox click fix (2.0.1), the quantified secondary issue remained: the pair discriminator validated Pearson correlation over ~3 fundamental periods (~11 ms at C4) while the engine crossfades 30 ms, so slowly-diverging pairs shipped as green with audible seam wobble. Measured worst kept-seam residuals before: female_aaa **+5.1 dB** (residual louder than signal), trumpet +0.6, alto_sax −1.2, english_horn −3.7, viola −4.1, bassoon −6.6.
+
+**Picked**:
+- **Crossfade-residual gate** (`selectSegments`, `@hkl/analysis`): every surviving pair is validated by rendering what the engine actually plays — RMS of `x(a+t)−x(b+t)` over the crossfade window, dB rel. local signal RMS. Reject above `xfadeResidualDbMax` (default **−10 dB**; `gateOpts`-overridable; `null` disables and restores single-pass legacy behavior). This is strictly more predictive than correlation: it IS the injected artifact energy.
+- **Per-sample crossfade window search**: divergent material (vibrato FM) seams better over shorter windows (female-voice pairs at +2.0 dB @30 ms measured −9.7 dB @8 ms; phase-stable pairs barely move), so selection runs per candidate window (`xfadeCandidatesSec` default `[0.030, 0.015, 0.008]`, floored at 1.5 fundamental periods) and the winner (most segments → lowest worst residual → longer window) sets the emitted **`crossfadeSec`** (omitted at the 30 ms default). Emitted through block/manifest/def (`hki.ts` additive field, manifest version unchanged); consumed by `samples-engine` (per-voice, both switch paths) and `segmentLooper`/analyzer audition.
+- **Structure**: `selectSegmentsCore` = the previous pipeline + the residual gate; `selectSegments` = the window-search wrapper. Diag carries `worstResDb`, `rejectByResidual`, per-window trials, per-seam residuals; reports add `xf (ms)` / `worstRes (dB)` columns; summaries add `worstResDb` + crossfade histogram.
+
+**Results (full MQ regen)**: every staged loop instrument now bounds worst seam residual at ≤ −10 dB (independently verified by the seam harness at each sample's emitted crossfade) with pick counts unchanged (only trumpet 12→11, violin 6→5) and the six voices keeping full half-step coverage. All three windows are in active use (~40% 30 ms, ~30% 15 ms, ~30% 8 ms). **oboe** lost its last 4 marginal pairs at any window and now ships on the decay path (legacy MQ one-shot; joins cello with the documented double-reed wall). Note: regeneration of ANY existing config now produces different (better) output by default — the gate is intentionally not backward-output-compatible; disable with `xfadeResidualDbMax: null` to reproduce legacy selections.
+
+**Verified**: typecheck, boundaries, engine tsup build (2.1.0), engine-smoke, HKL + analyzer builds, full batch regen (38/38 staged, 25.9 MB), harness cross-check of four instruments matches summary claims. **By-ear seam audition is Max's gate** — HKL shipped instruments in samples-data.ts keep their old segments until regenerated.
+
+**Where**: `packages/analysis/src/analyzer-analysis.js` (core+wrapper), `packages/shared/src/hki.ts`, `packages/engine/src/{samples-engine.ts,segmentLooper.ts}` + 2.1.0 version, `apps/analyzer/cli/{generate-samples,bundle,batch-musiquest}.js`, `apps/analyzer/src/{audition,sampleTable}.ts`, `apps/analyzer/configs/musiquest/oboe.json` (decay), docs (analyzer.md, engine.md, handoff).
+
+## Loop window (auto) + unconditional bundle tail-cut (2026-07-09)
+
+**Context**: The VSCO vib probes exposed a size problem: sources run 4–14 s of internally cut-and-pasted sustain, the distance-descending picker spreads segments across the whole file, and the bundler kept every byte — violin_vib.hki was 3.0 MB for 11 samples. Audio past the last segment's `b` never plays by design (engine's furthest read = maxB + crossfade + release), so retaining it is pure waste (Max: tail must ALWAYS be cut).
+
+**Picked**:
+- **`gateOpts.loopWindowSec`** (`@hkl/analysis` prepareLoop): number = fixed clamp of loop candidates to the first N s of the steady region; `null`/`0` = full region (legacy); **unset = AUTO (default)** — run the full window as the quality reference, then take the smallest ladder window (2.5/4/6/9 s) that preserves the segment count (capped at 5). Fixed windows proved wrong per-instrument (violin's mid-register pairs live late in its files: 3.5 s cost 6 of 11 picks; even 8 s left a 14-semitone hole); AUTO is per-note optimal — notes with late loopable material keep their full window. Ladder floor 2.5 s keeps seam density ≤ ~1 wrap/s (the density already shipping in the 2 s MQ bundles). Chosen window surfaced as `stats.loopWindowSec`.
+- **Unconditional bundle tail-cut** (loop path): generate-samples marks `bundleCutSec = maxSegB + 0.03 + releaseTime + 0.1` on every pick whose source runs longer; `bundle.js` executes it — lossy sources via ffmpeg stream-copy (`-c copy -t`, no generation loss, same extension, mp3-frame granularity is fine under the 100 ms margin), lossless folded into the existing Opus encode (`-t`). Tail-cut only, never head-cut: `segments`/`trimStart`/`trend` need no time-shifting and the engine needs zero changes. Decay instruments are never cut (one-shots play full length).
+
+**Results**: five replacement probes went 9.2 MB → 5.0 MB with coverage preserved or improved (violin_vib 3.0 MB → 2.2 MB at 12/12 green — auto BEAT the unconstrained run's 11 picks; oboe_vib 1.4 → 0.76; flute_vib 1.5 → 0.80; contrabass_vib 2.0 → 0.92; cello_phil 0.42 → 0.40). AUTO is the new default for all future loop generations — regenerations change (smaller, same quality target); pin `loopWindowSec: null` to reproduce legacy selections.
+
+**Where**: `packages/analysis/src/analyzer-analysis.js` (candsUpTo/selectForCands/auto ladder), `apps/analyzer/cli/generate-samples.js` (durationSec, bundleCutSec), `apps/analyzer/cli/bundle.js` (copyCut, cut-aware staging), `apps/analyzer/configs/vsco2-*-vib.json` (auto), `docs/architecture/analyzer.md`.
+
+## MQ replacements staged + honest pitch for the mallet transposers (2026-07-10)
+
+**Context**: Five MQ instruments were unloopable from MQ-native samples (one-shot = fail per Max — loop or don't ship through HKLE). Replacements verified under the residual gate and staged via rewritten `configs/musiquest/` entries: `violin` + `double_bass_arco` ← SSO solo (the bass was the once-hidden `sso-double-bass` config — hiding reason was never documented, only its `HIDDEN_SUSTAINED_KEYS` bucketing in the pre-split analyzer; it analyzes 15/15 green under the modern pipeline), `oboe` + `flute` ← VSCO-2-CE vib articulations (CC0), `cello` ← Philharmonia solo arco-normal (license: commercial-ok but no "as is" sample redistribution — accepted for MQ; config regen reads `~/Downloads/philharmonia/cello`). VSCO Solo Contrabass rejected by ear (audible bowings); VSCO violin rejected on quality.
+
+**Also picked**:
+- **`xylo`/`glockenspiel` `transpose: 0.5`** — both sound exactly one octave above their labels (strongest low partial 2.0× label; the decay pitch-check was subharmonic-aliased, so they shipped at label pitch). Emitted freqs are now true sounding pitch per the honest-freq convention; MQ preserves its written-pitch grids with request-side `midi + 12` (and `midi − 12` for double bass) — documented in the handoff doc. Request-side, never def `transpose`: nearest-sample selection runs on requested freq, so a runtime multiplier mis-selects by an octave.
+- **Batch runner stale-staging guard**: a CDN config without `"bundle": true` writes no fresh `.hki`, and the runner used to stage a stale same-keyed file from `out/` (shipped three wrong instruments for one run). It now refuses to stage when `summary.bundleBytes` is null and flags the config.
+
+**Verified**: fresh provenance + complete loop data in all five staged bundles; xylo C4 emits 523.25 Hz, glockenspiel F3 emits 349.23 Hz (= 2.0× label); handoff total 22.7 MB. **By-ear pass on all five replacements is done (Max)**; mallet octave audition pending.
+
+**Where**: `apps/analyzer/configs/musiquest/{violin,oboe,flute,cello,double_bass_arco,xylo,glockenspiel}.json`, `apps/analyzer/cli/batch-musiquest.js` (guard), `handoff/musiquest/{*.hki,defs/*.json,generation-report.md,musiquest-handoff.md}`.
+
+## HKL sustained-set refresh: full regen + eight MQ/replacement additions (2026-07-10)
+
+**Context**: With the seam pipeline mature (residual gate, per-sample crossfade, auto loop window, tail-cut), Max directed a full regeneration of HKL's shipped sustained instruments plus additions from the MusiQuest handoff set (rights confirmed — the source samples already ship in the commercial MQ product).
+
+**Picked**:
+- **All 11 CDN-sourced sustained instruments regenerated in place** (flute, clarinet, saxophone, baroque_recorder, trombone, violin, cello, double_bass, pipe/renaissance/drawbar organs): zero collapses, every worst seam ≤ −10 dB (trombone −17.2). The two timbre-hidden ones (saxophone, baroque_recorder) now analyze clean but STAY hidden pending re-audition.
+- **Eight added/changed instruments ship as `.hki` from `public/samples/`** (hki-shipped): accordion, alto_sax, bassoon, french_horn, trumpet, tuba (new, MQ-sourced), viola (REPLACES FluidR3 viola, MQ-sourced), oboe (re-sourced to VSCO-2-CE Vib — the shipped VSCO Sus was unloopable). `double_bass` un-hidden (SSO, CDN like violin).
+- **`emitShipped: true` config flag**: emits the samples-data block in hki-shipped form for a CDN-sourced config (runtime fetches the ~0.7 MB tail-cut bundle from `/samples/<key>.hki` instead of ~12 MB of raw CDN wavs per load). Auto-true for local sources; used by `configs/musiquest/oboe.json`.
+- **index.html dropdown in score order**: woodwinds (fl, ob, cl, sax, bsn) → brass (hn, tpt, tbn, tba) → strings (vn, va, vc, db) → free reed/organs (accordion, organs). `insert-instrument.js` monorepo path fixed (`../..` → `../../..`; first use since the apps/ split).
+
+**Verified**: typecheck + boundaries + HKL build green; dropdown↔entries↔bundles consistency script (28 options, 11 hki-shipped, all bundles present); **headless end-to-end load test: 15/15 new/changed instruments load in the real app** (engine "loaded" console signal per instrument). `public/samples/` grows 6.7 → 11 MB (committed binaries, per baritone/soprano precedent). **By-ear pass is Max's gate.**
+
+**Where**: `apps/hkl/src/audio/samples-data.ts` (18 blocks spliced), `apps/hkl/index.html`, `public/samples/*.hki` (+8), `apps/analyzer/cli/{generate-samples,insert-instrument}.js`, `apps/analyzer/configs/musiquest/oboe.json`, `docs/guide/core.md`.

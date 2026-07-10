@@ -10,7 +10,7 @@
   "highOct": 7,
   "lowNote": "F3",
   "highNote": "C7",
-  "transpose": 1,
+  "transpose": 0.5,
   "pickSpacing": 3,
   "volume": 1.0,
   "bundleUrl": "/hkl/glockenspiel.hki",
@@ -19,6 +19,11 @@
   "releaseTime": 0.4,
   "comment": [
     "MusiQuest glockenspiel (decay path). pickSpacing:3 enables",
-    "minor-third thinning on decay; trimmed to F3-C7."
+    "minor-third thinning on decay; trimmed to F3-C7.",
+    "transpose:0.5 - samples sound one octave ABOVE their filename labels",
+    "(measured: strongest low partial = 2.0x label on C4/C5, 2026-07-10).",
+    "The decay pitch-check was subharmonic-aliased so this shipped at label",
+    "pitch until now. Emitted freqs = true sounding pitch; MQ requests",
+    "midi+12 to keep its written-pitch grid convention."
   ]
 }

@@ -59,6 +59,7 @@ async function startAuditionForSlot(slot: SampleSlot): Promise<void> {
     segments: slot.result?.segments,
     releaseTime: getState().config.releaseTime,
     trimStart: slot.result?.trimStart,
+    crossfadeSec: (slot.result?.stats as { crossfadeSec?: number } | undefined)?.crossfadeSec ?? undefined,
   });
   syncPlayButtonsToAudition();
 }
