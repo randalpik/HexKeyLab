@@ -1,0 +1,28 @@
+{
+  "instrumentKey": "violin_sso2",
+  "displayName": "Violin (SSO 2 / ldk1609)",
+  "baseUrl": "https://raw.githubusercontent.com/peastman/sso/master/Sonatina%20Symphonic%20Orchestra/Samples/Violin%202/",
+  "ext": ".wav",
+  "filePattern": "violin_arco_vib_{NOTE_LOWER}.wav",
+  "noteStyle": "sharp",
+  "lowOct": 2,
+  "highOct": 6,
+  "transpose": 0.5,
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "volume": 1.0,
+  "gateOpts": {
+    "tiltStepThreshold": 0.02
+  },
+  "comment": [
+    "SSO 'Violin 2' = the raw ldk1609 Freesound set (E.H. Roth 1925) that",
+    "SSO's solo Violin folder is edited from (envelope corr 0.93 at same",
+    "sounding pitch). Chromatic labels g2-g5+, one octave BELOW sounding",
+    "pitch, hence transpose 0.5 (chamber-organ precedent). Files run",
+    "5.3-8.5 s vs the trimmed Violin folder edits. Probe: if the incumbent's",
+    "A#3/C#4/G4 residual-gate failures come from the trimmed edits, these",
+    "pass and chromatic spacing closes the B3/C4 hole; if they fail too,",
+    "the recording itself is degenerate in that register."
+  ]
+}

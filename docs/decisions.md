@@ -3818,3 +3818,41 @@ reaches `osc.type`.
 **Verified**: typecheck + boundaries + HKL build green; dropdown↔entries↔bundles consistency script (28 options, 11 hki-shipped, all bundles present); **headless end-to-end load test: 15/15 new/changed instruments load in the real app** (engine "loaded" console signal per instrument). `public/samples/` grows 6.7 → 11 MB (committed binaries, per baritone/soprano precedent). **By-ear pass is Max's gate.**
 
 **Where**: `apps/hkl/src/audio/samples-data.ts` (18 blocks spliced), `apps/hkl/index.html`, `public/samples/*.hki` (+8), `apps/analyzer/cli/{generate-samples,insert-instrument}.js`, `apps/analyzer/configs/musiquest/oboe.json`, `docs/guide/core.md`.
+
+## Fill pass admits spine-skipped greens (picker bug fix, 2026-07-10)
+
+**Context**: The violin_sso2 probe (raw ldk1609 takes, 33 greens chromatic) picked only 11 samples and left a 6-semitone gap (label C4→F#4) with greens sitting inside it. Cause: the spine walk's quality-first tiebreak (tier → segments → steady) may pick the far edge of its ±⌊S/2⌋ window (gap up to S+⌊S/2⌋), and the fill pass pool was scoped to blue+yellow only — greens that lost a window vote were invisible to it, so all-green neighborhoods got *worse* coverage guarantees than mixed ones.
+
+**Picked**: `fillTier = usable minus spine` (`pickSamples`, generate-samples.js) — the fill pass considers every usable sample the spine didn't take; the existing tiebreak already ranks green > blue > yellow, so skipped greens win their gaps. Max: "Obviously we would rather have a green over a blue or yellow."
+
+**Effect**: any regen of an instrument with skipped greens inside a >S gap can gain picks (not backward-output-compatible, same spirit as the residual gate). violin_sso2: 11 → 15 picks (E3/E4/A4/G#5 labels joined), all green, max gap 4 st (= max stretch ±2). violin_phil re-run: identical output (its greens were all spine picks — the fix's blast radius is exactly the skipped-green case).
+
+**Where**: `apps/analyzer/cli/generate-samples.js` (`pickSamples` pass 2 + comments).
+
+## Violin re-sourced to SSO "Violin 2" (raw ldk1609 takes) for HKL + MQ (2026-07-10)
+
+**Context**: The 2026-07-09 regen left the violin with a 9-semitone G3→E4 hole (B3/C4 nearest-sample seam + B3 wobble). Diagnosis proved the published SSO Violin folder unloopable on vibrato notes — reverb mastering, not the performance and not the gates (lessons.md "Wet (reverberant) vibrato is unloopable"). Source research found the free-violin field otherwise empty: Philharmonia solo violin probed 36/49 red (1.5 s bucket), VCSL/Karoryfer have no violin, most "alternatives" (bigcat, VPO, NBO) are the same ldk1609 recording.
+
+**Picked**: `configs/musiquest/violin.json` re-pointed at the SSO **"Violin 2"** folder — the raw dry ldk1609 takes (CC0 at source) the published folder was edited from. Chromatic labels one octave below sounding (`transpose: 0.5`, chamber-organ precedent), `bundle` + `emitShipped` (oboe precedent: HKL ships the 1.08 MB tail-cut bundle from `public/samples/violin.hki` instead of ~15 MB of 5–8 s raw wavs per load). Result: 33G/3Y/5R analyzed, **15 all-green picks, max gap 4 st** (max stretch ±2; B3/C4 covered by sounding A3+C#4). Includes the fill-pass fix (previous entry) — 4 of the 15 picks are gap-fills. Old `configs/sso-violin.json` marked DEPRECATED (same key, wet source — regen footgun).
+
+**Rejected**: Philharmonia solo violin (36/49 red, mixed forte/fortissimo picks, 8 dB LUFS spread); reverting to pre-gate data or admitting 2-segment samples (Max: no).
+
+**Verified**: typecheck + boundaries + HKL build green; headless load test against the live dev proxy — dropdown holds `violin`, `/samples/violin.hki` 200, engine decodes and a held note plays with no console errors beyond environmental headless noise. **By-ear audition passed (Max, 2026-07-10) on the probe bundle with identical pick data.** Batch note: `analyze:musiquest violin` staged violin cleanly; the run flags cello/clarinet/flute/trombone as stale-summary (their `out/` summaries were overwritten by the bundle-less HKL-side refresh) — pre-existing, their Jul 9 handoff bundles remain valid; a re-run would also pick up the fill fix and change their pick sets, so it awaits an explicit decision.
+
+**Where**: `apps/analyzer/configs/musiquest/violin.json`, `apps/analyzer/configs/sso-violin.json` (deprecation note), `apps/hkl/src/audio/samples-data.ts` (violin block, hki-shipped), `public/samples/violin.hki`, `handoff/musiquest/{violin.hki,defs/violin.json,generation-report.md,musiquest-handoff.md}`.
+
+## Full loop-instrument sweep under the fill-pass fix (2026-07-10)
+
+**Context**: After the fill-pass fix (skipped greens now fillable — see "Fill pass admits spine-skipped greens"), Max directed regenerating every HKL and MQ instrument that would actually change, to put the whole set on the latest methodology before his full MQ testing pass.
+
+**Scope discipline**: only loop-path configs can change (decay instruments never enter the fill pass — 15 MQ + all pianos/guitars/mallets skipped by construction). Sequencing: HKL-side configs regenerated + spliced BEFORE the MQ batch, because flute/clarinet/trombone/cello share `out/` keys across the two config sets. Live HKL configs identified by exact `baseUrl` match against `samples-data.ts` blocks (top-level `configs/` is mostly dead probes).
+
+**Results** (change = pick-set/segment diff vs pre-sweep snapshot):
+- **HKL CDN blocks, all additive** (regenerated Jul 9 under current gates, so delta = pure fill fix): flute 10→16, clarinet 15→18, saxophone 10→16, baroque_recorder 9→15, trombone 12→16, cello 13→18, double_bass 10→15, pipe_organ 14→19, renaissance_organ 13→21, drawbar_organ 21→25.
+- **MQ defs: 28/38 unchanged; 10 changed, all additive**: bassoon 13→20, french_horn 14→19, double_bass_arco 10→15, saw_synth 21→26, square_synth 20→24, english_horn 11→14, clarinet 15→17, trumpet 11→13, accordion 21→22, viola 14→15. The five that HKL also ships as `.hki` (accordion, bassoon, french_horn, trumpet, viola) were re-spliced + restaged to `public/samples/`.
+- **Voices are a bigger delta than the fill fix**: baritone_voice 33→34, soprano_voice 35→**33** — last generated May 25 under the pre-residual-gate pipeline, so their regen applies the entire new methodology and the gate DEMOTED previously-shipped soprano samples. Flagged for by-ear attention specifically.
+- Handoff staging total 21.51 → 24.12 MB; the four stale-summary batch warnings (cello/clarinet/flute/trombone) cleared by this run.
+
+**Verified**: typecheck + boundaries + HKL build green; headless load spot-check on bassoon (hki 200, plays, no errors) and renaissance_organ (CDN path, plays, no failed requests). **By-ear pass on all changed instruments is Max's gate — that is the point of this sweep** (he tests each instrument in MQ next).
+
+**Where**: `apps/hkl/src/audio/samples-data.ts` (17 blocks), `public/samples/{accordion,bassoon,french_horn,trumpet,viola,baritone_voice,soprano_voice}.hki`, `handoff/musiquest/*`, no code changes beyond the already-logged picker fix.

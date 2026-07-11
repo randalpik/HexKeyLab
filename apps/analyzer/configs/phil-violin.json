@@ -1,0 +1,27 @@
+{
+  "instrumentKey": "violin_phil",
+  "displayName": "Violin (Philharmonia)",
+  "source": "local",
+  "sourceDir": "/home/max/Downloads/philharmonia/violin",
+  "ext": ".mp3",
+  "filePatterns": [
+    "violin_{NOTE}_15_forte_arco-normal.mp3",
+    "violin_{NOTE}_15_fortissimo_arco-normal.mp3",
+    "violin_{NOTE}_1_forte_arco-normal.mp3"
+  ],
+  "noteStyle": "sharp_s",
+  "lowOct": 3,
+  "highOct": 7,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "volume": 1.0,
+  "comment": [
+    "Philharmonia Orchestra solo violin, arco-normal, longest (1.5s nominal)",
+    "bucket, forte with fortissimo/1s fallbacks. Chromatic G3-C7 verified on",
+    "disk. Probe for the violin replacement after the SSO regen left a",
+    "9-semitone hole (A#3/C#4/G4 red under the residual gate): same player",
+    "series and license posture as the passing phil-cello probe."
+  ]
+}

@@ -573,9 +573,9 @@ function pickSamples(results, cfg) {
                 best within each ±HALF-semitone window.
        Pass 2 — fill: identify gaps > S semitones in the spine (between
                 adjacent picks and at the head/tail of the usable range)
-                and insert blue+yellow samples at ~S-semitone spacing inside
-                each gap, anchored so no fill lands within S semitones of a
-                spine pick.
+                and insert the best remaining usable samples (green >
+                blue > yellow, including greens the spine's window vote
+                skipped) at ~S-semitone spacing inside each gap.
      Within a window the picker prefers higher tier (blue > yellow), then
      more segments (richer randomization), then more steady-region seconds. */
   const tiebreak = (a, b) => {
@@ -671,14 +671,18 @@ function pickSamples(results, cfg) {
   }
   spine.sort((a,b) => a.midi - b.midi);
 
-  // Pass 2: blue + yellow fill in gaps > S semitones. Head/tail edges count
-  // as gaps too (we want coverage out to the lowest and highest usable
-  // note). Each fill must sit ≥2 semitones from every spine pick AND every
-  // other fill — strict enough to block stacking (a yellow at midi N+1
-  // landing right next to a green at N+0, no coverage gain) but loose
-  // enough that a 5-semitone gap can still be filled at the only spacing
-  // available (one fill at distance 2 from one boundary, 3 from the other).
-  const fillTier = usable.filter(r => (r.tier === 'blue' || r.tier === 'yellow') && !keptNotes.has(r.note));
+  // Pass 2: fill gaps > S semitones from every usable sample the spine
+  // didn't take — including greens the window vote skipped (the tiebreak
+  // already ranks green > blue > yellow, so a skipped green outranks any
+  // blue/yellow in the same gap). Head/tail edges count as gaps too (we
+  // want coverage out to the lowest and highest usable note). Each fill
+  // must sit ≥2 semitones from every spine pick AND every other fill —
+  // strict enough to block stacking (a yellow at midi N+1 landing right
+  // next to a green at N+0, no coverage gain) but loose enough that a
+  // 5-semitone gap can still be filled at the only spacing available (one
+  // fill at distance 2 from one boundary, 3 from the other).
+  const spineNotes = new Set(spine.map(r => r.note));
+  const fillTier = usable.filter(r => !spineNotes.has(r.note));
   const minMidi = usable[0].midi;
   const maxMidi = usable[usable.length - 1].midi;
   const FILL_MIN_SEP = 2;

@@ -1,19 +1,13 @@
 {
   "instrumentKey": "violin",
   "displayName": "Violin",
-  "baseUrl": "https://raw.githubusercontent.com/peastman/sso/master/Sonatina%20Symphonic%20Orchestra/Samples/Violin/",
+  "baseUrl": "https://raw.githubusercontent.com/peastman/sso/master/Sonatina%20Symphonic%20Orchestra/Samples/Violin%202/",
   "ext": ".wav",
-  "filePattern": "violin-{NOTE_LOWER}.wav",
+  "filePattern": "violin_arco_vib_{NOTE_LOWER}.wav",
   "noteStyle": "sharp",
-  "noteSemis": [
-    1,
-    4,
-    7,
-    10
-  ],
-  "lowOct": 3,
-  "highOct": 7,
-  "transpose": 1,
+  "lowOct": 2,
+  "highOct": 6,
+  "transpose": 0.5,
   "decays": false,
   "vibrato": true,
   "releaseTime": 0.3,
@@ -23,11 +17,17 @@
   },
   "bundleUrl": "/hkl/violin.hki",
   "comment": [
-    "MusiQuest violin - REPLACED with SSO solo violin (the proven HKL",
-    "source): the MQ-native samples never yielded a usable loop spine, and",
-    "the VSCO Arco Vib recordings failed Max's quality bar. Minor-third",
-    "sampled at the source; regenerated 2026-07-09 under the residual gate +",
-    "auto loop window + tail-cut (7G/3Y, seams <= -10.2 dB, ~670 KB)."
+    "SSO 'Violin 2' = the raw ldk1609 Freesound takes (E.H. Roth 1925,",
+    "CC0 at source) that SSO's published Violin folder is edited from. The",
+    "published folder's wide decorrelated stereo reverb makes its vibrato",
+    "notes unloopable (see lessons.md 'Wet (reverberant) vibrato is",
+    "unloopable', 2026-07-10); the dry takes loop 33G/3Y/5R chromatic.",
+    "Labels one octave BELOW sounding (transpose 0.5). 15 all-green picks,",
+    "max gap 4 st. Replaced the reverberant SSO Violin 2026-07-10 after the",
+    "residual gate exposed its G3-E4 hole (B3/C4 seam). emitShipped: HKL",
+    "ships the tail-cut bundle from public/samples/ instead of fetching",
+    "~15 MB of 5-8 s raw wavs per load."
   ],
-  "bundle": true
+  "bundle": true,
+  "emitShipped": true
 }

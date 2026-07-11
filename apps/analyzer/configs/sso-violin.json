@@ -15,6 +15,12 @@
   "volume": 1.0,
   "gateOpts": { "tiltStepThreshold": 0.02 },
   "comment": [
+    "DEPRECATED 2026-07-10 — do NOT regen the shipped violin from this",
+    "config. This is SSO's PUBLISHED Violin folder, whose decorrelated",
+    "stereo reverb makes its vibrato notes unloopable (lessons.md 'Wet",
+    "(reverberant) vibrato is unloopable'). The live violin source is the",
+    "raw dry takes in configs/musiquest/violin.json (SSO 'Violin 2').",
+    "Kept for historical reference only.",
     "Sonatina Symphonic Orchestra solo Violin — purpose-built sample-library",
     "legato sustains, sampled at minor thirds (G3, A#3, C#4, E4, G4, ...,",
     "C#7 — noteSemis [1,4,7,10] picks exactly those four per octave).",
