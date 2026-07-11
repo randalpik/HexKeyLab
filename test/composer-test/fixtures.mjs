@@ -4202,6 +4202,113 @@ const PHASE1 = {
     `,
   },
 
+  /* MusicXML import — measure-boundary clef: a clef declared at the head of
+     measure 2 renders BEFORE the barline (engraving convention), encoded as an
+     inline <clef> appended to measure 1's content layer, not at measure 2's head. */
+  phase5_musicxml_boundary_clef: {
+    setup: `
+      const V = (s, o, dur, type) => '<note><pitch><step>' + s + '</step><octave>' + o + '</octave></pitch>'
+        + '<duration>' + dur + '</duration><voice>1</voice><type>' + type + '</type></note>';
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>T</part-name></score-part></part-list><part id="P1">'
+        + '<measure number="1"><attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        + V('G', 4, 96, 'whole') + '</measure>'
+        + '<measure number="2"><attributes><clef><sign>F</sign><line>4</line></clef></attributes>'
+        + V('A', 2, 48, 'half') + V('B', 2, 48, 'half') + '</measure>'
+        + '</part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+
+  /* MusicXML import — cross-staff slur: a slur that starts on a staff-1 note and
+     stops on a staff-2 note (different voices) must pair globally, not per-voice. */
+  phase5_musicxml_crossstaff_slur: {
+    setup: `
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>Pno</part-name></score-part></part-list><part id="P1">'
+        + '<measure number="1"><attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>4</beats><beat-type>4</beat-type></time><staves>2</staves>'
+        + '<clef number="1"><sign>G</sign><line>2</line></clef><clef number="2"><sign>F</sign><line>4</line></clef></attributes>'
+        + '<note><pitch><step>G</step><octave>4</octave></pitch><duration>48</duration><voice>1</voice><type>half</type><staff>1</staff>'
+        + '<notations><slur number="1" type="start"/></notations></note>'
+        + '<note><pitch><step>A</step><octave>4</octave></pitch><duration>48</duration><voice>1</voice><type>half</type><staff>1</staff></note>'
+        + '<backup><duration>96</duration></backup>'
+        + '<note><rest/><duration>48</duration><voice>2</voice><staff>2</staff></note>'
+        + '<note><pitch><step>C</step><octave>3</octave></pitch><duration>48</duration><voice>2</voice><type>half</type><staff>2</staff>'
+        + '<notations><slur number="1" type="stop"/></notations></note>'
+        + '</measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+
+  /* MusicXML import — trill extender + accidental: <trill-mark>+<wavy-line> and
+     an <accidental-mark> → <trill @extender @endid @accidupper>. */
+  phase5_musicxml_trill_extender: {
+    setup: `
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>T</part-name></score-part></part-list><part id="P1">'
+        + '<measure number="1"><attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        + '<note><pitch><step>E</step><octave>5</octave></pitch><duration>48</duration><voice>1</voice><type>half</type>'
+        + '<notations><ornaments><trill-mark/><wavy-line number="1" type="start"/></ornaments><accidental-mark>flat</accidental-mark></notations></note>'
+        + '<note><pitch><step>C</step><octave>5</octave></pitch><duration>48</duration><voice>1</voice><type>half</type>'
+        + '<notations><ornaments><wavy-line number="1" type="stop"/></ornaments></notations></note>'
+        + '</measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+
+  /* MusicXML import — pickup exception: an empty voice in a PICKUP (anacrusis)
+     measure gets a reduced-duration rest, NOT a whole-measure <mRest> (which
+     would draw a whole rest spanning the short bar). */
+  phase5_musicxml_pickup_rest: {
+    setup: `
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>Pno</part-name></score-part></part-list><part id="P1">'
+        + '<measure number="1" implicit="yes"><attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>4</beats><beat-type>4</beat-type></time><staves>2</staves>'
+        + '<clef number="1"><sign>G</sign><line>2</line></clef><clef number="2"><sign>F</sign><line>4</line></clef></attributes>'
+        + '<note><pitch><step>C</step><octave>5</octave></pitch><duration>12</duration><voice>1</voice><type>eighth</type><staff>1</staff></note>'
+        + '<backup><duration>12</duration></backup>'
+        + '<note><rest measure="yes"/><duration>12</duration><voice>2</voice><staff>2</staff></note>'
+        + '</measure>'
+        + '<measure number="2">'
+        + '<note><pitch><step>C</step><octave>5</octave></pitch><duration>96</duration><voice>1</voice><type>whole</type><staff>1</staff></note>'
+        + '<backup><duration>96</duration></backup>'
+        + '<note><pitch><step>C</step><octave>3</octave></pitch><duration>96</duration><voice>2</voice><type>whole</type><staff>2</staff></note>'
+        + '</measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+
+  /* MusicXML import — mid-measure clef over a tripleted voice: the layer's only
+     content is <tuplet>s, so a mid-measure clef change must still be inserted
+     into it (regression: a tuplet-only layer was wrongly treated as empty). */
+  phase5_musicxml_midmeasure_clef_tuplet: {
+    setup: `
+      const trip = (s, pos) => '<note><pitch><step>' + s + '</step><octave>5</octave></pitch>'
+        + '<duration>8</duration><voice>1</voice><type>eighth</type>'
+        + '<time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>'
+        + (pos ? '<notations><tuplet number="1" type="' + pos + '"/></notations>' : '') + '</note>';
+      const triplet = (s) => trip(s, 'start') + trip(s, '') + trip(s, 'stop');
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>T</part-name></score-part></part-list><part id="P1">'
+        + '<measure number="1"><attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>2</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        + triplet('C')
+        + '<attributes><clef><sign>F</sign><line>4</line></clef></attributes>'
+        + triplet('E')
+        + '</measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+
   /* Pizz/arco (§14.3): piano + violin; a "pizz." <dir> on the violin staff
      switches its notes to a pizzicato timbre until an "arco" cue reverts them.
      The violin has NO own pizz variant, so it falls back to the library's
@@ -5331,16 +5438,21 @@ export const FIXTURE_ASSERTIONS = {
       })()` },
   ],
 
-  /* Empty bar (<rest measure="yes"/>) → one whole rest filling the 4/4 measure. */
+  /* Empty bar (<rest measure="yes"/>) → a single <mRest> (centered whole rest,
+     meter-agnostic), not a lone quarter or a beat-aligned decomposition. */
   phase5_musicxml_measure_rest: [
-    { name: 'empty 4/4 bar → single whole rest, not lone quarter',
+    { name: 'empty bar → one <mRest>, no plain <rest>',
       expr: `(() => {
         const doc = window.__hkl_composer.model.getDoc();
         const layer = doc.querySelector('measure staff[n="1"] layer[n="1"]');
-        const kids = [...layer.children].filter(k => ['note','chord','rest','tuplet'].includes(k.localName));
-        if (kids.length !== 1) return { ok: false, detail: 'children=' + kids.map(k=>k.localName+':'+k.getAttribute('dur')).join(',') };
-        if (kids[0].localName !== 'rest') return { ok: false, detail: 'not a rest: ' + kids[0].localName };
-        if (kids[0].getAttribute('dur') !== '1') return { ok: false, detail: 'dur=' + kids[0].getAttribute('dur') + ' (expected whole)' };
+        const mrests = [...layer.children].filter(k => k.localName === 'mRest');
+        const rests = [...layer.children].filter(k => k.localName === 'rest');
+        const spaces = [...layer.children].filter(k => k.localName === 'space');
+        if (mrests.length !== 1) return { ok: false, detail: 'mRest count=' + mrests.length };
+        if (rests.length !== 0) return { ok: false, detail: 'unexpected plain rests=' + rests.length };
+        /* No trailing placeholder — a <space> beside the mRest made Verovio size
+           the bar as a double-whole (breve) rest. */
+        if (spaces.length !== 0) return { ok: false, detail: 'unexpected placeholder spaces=' + spaces.length };
         return { ok: true };
       })()` },
   ],
@@ -5416,6 +5528,104 @@ export const FIXTURE_ASSERTIONS = {
         return { ok: true };
       })()` },
   ],
+
+  /* Boundary clef: the live doc keeps it at the measure-2 head, but the RENDER
+     relocates it before the barline (to measure 1's layer end) — the global
+     "no barline immediately followed by a clef" invariant. */
+  phase5_musicxml_boundary_clef: [
+    { name: 'live doc: clef at measure-2 layer head',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const m2 = [...doc.querySelectorAll('measure')][1];
+        const first = m2.querySelector('staff[n="1"] layer[n="1"]').firstElementChild;
+        if (!first || first.localName !== 'clef' || first.getAttribute('shape') !== 'F')
+          return { ok: false, detail: 'm2 layer first child=' + (first && first.localName + (first.getAttribute && first.getAttribute('shape'))) };
+        return { ok: true };
+      })()` },
+    { name: 'render: bass clef before the barline (measure-1 layer end), none measure-initial',
+      expr: `(() => {
+        const rendered = window.__hkl_composer.model.serialize({ hejiEnabled: false });
+        const rdoc = new DOMParser().parseFromString(rendered, 'application/xml');
+        for (const cl of rdoc.querySelectorAll('layer > clef')) {
+          if (cl.previousElementSibling === null)
+            return { ok: false, detail: 'a clef is measure-initial (renders after barline)' };
+        }
+        const m1layer = [...rdoc.querySelectorAll('measure')][0].querySelector('staff[n="1"] layer[n="1"]');
+        const last = m1layer.lastElementChild;
+        if (!last || last.localName !== 'clef' || last.getAttribute('shape') !== 'F')
+          return { ok: false, detail: 'm1 layer last child=' + (last && last.localName) };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Cross-staff slur: pairs across staves (startid staff 1, endid staff 2). */
+  phase5_musicxml_crossstaff_slur: [
+    { name: 'one slur, endpoints on different staves',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const byId = id => [...doc.querySelectorAll('note,chord')].find(n => n.getAttribute('xml:id') === id);
+        const staffOf = el => { const s = el && el.closest('staff'); return s ? s.getAttribute('n') : null; };
+        const slurs = [...doc.querySelectorAll('slur')];
+        if (slurs.length !== 1) return { ok: false, detail: 'slurs=' + slurs.length };
+        const a = byId((slurs[0].getAttribute('startid')||'').replace('#','')), b = byId((slurs[0].getAttribute('endid')||'').replace('#',''));
+        const sa = staffOf(a), sb = staffOf(b);
+        if (!sa || !sb || sa === sb) return { ok: false, detail: 'staves=' + sa + ',' + sb + ' (expected different)' };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Trill with wavy-line extender + accidental-mark → @extender + @endid + @accidupper. */
+  phase5_musicxml_trill_extender: [
+    { name: 'trill has @extender, @endid (=C5), @accidupper=f',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const trills = [...doc.querySelectorAll('trill')];
+        if (trills.length !== 1) return { ok: false, detail: 'trills=' + trills.length };
+        const t = trills[0];
+        if (t.getAttribute('extender') !== 'true') return { ok: false, detail: 'extender=' + t.getAttribute('extender') };
+        if (t.getAttribute('accidupper') !== 'f') return { ok: false, detail: 'accidupper=' + t.getAttribute('accidupper') };
+        const endId = (t.getAttribute('endid')||'').replace('#','');
+        const end = [...doc.querySelectorAll('note,chord')].find(n => n.getAttribute('xml:id') === endId);
+        if (!end || end.getAttribute('pname') !== 'c') return { ok: false, detail: 'endid pname=' + (end && end.getAttribute('pname')) };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Pickup exception: the empty voice in the anacrusis gets a plain rest sized
+     to the pickup budget — never a whole-measure <mRest>. */
+  phase5_musicxml_pickup_rest: [
+    { name: 'pickup bar: no <mRest>; empty voice has a reduced rest',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const m1 = [...doc.querySelectorAll('measure')][0];
+        if (m1.querySelectorAll('mRest').length !== 0)
+          return { ok: false, detail: 'pickup has an mRest (' + m1.querySelectorAll('mRest').length + ')' };
+        const s2layer = m1.querySelector('staff[n="2"] layer[n="1"]');
+        const rests = [...s2layer.children].filter(k => k.localName === 'rest');
+        if (rests.length === 0) return { ok: false, detail: 'empty pickup voice has no rest' };
+        /* Reduced, not whole: dur must be shorter than a whole note. */
+        if (rests.some(rst => rst.getAttribute('dur') === '1'))
+          return { ok: false, detail: 'pickup rest is a whole rest' };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Mid-measure clef in a tuplet-only layer is inserted between the tuplets. */
+  phase5_musicxml_midmeasure_clef_tuplet: [
+    { name: 'bass clef between the two triplets (tuplet before + after)',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const layer = doc.querySelector('measure staff[n="1"] layer[n="1"]');
+        const clefs = [...layer.children].filter(k => k.localName === 'clef');
+        if (clefs.length !== 1) return { ok: false, detail: 'inline clefs=' + clefs.length + ' kids=' + [...layer.children].map(k=>k.localName).join(',') };
+        const cl = clefs[0];
+        if (cl.getAttribute('shape') !== 'F') return { ok: false, detail: 'clef shape=' + cl.getAttribute('shape') };
+        if (cl.previousElementSibling?.localName !== 'tuplet' || cl.nextElementSibling?.localName !== 'tuplet')
+          return { ok: false, detail: 'clef not between tuplets: prev=' + cl.previousElementSibling?.localName + ' next=' + cl.nextElementSibling?.localName };
+        return { ok: true };
+      })()` },
+  ],
+
 
   /* Phase 5: pizz./arco <dir> cues switch the violin voice's instrumentKey to a
      pizz variant for spanned notes, reverting on arco. Violin has no own pizz,

@@ -95,6 +95,11 @@ interface ImpEvent {
   fermata: boolean;
   /** <ornaments><trill-mark> → note-attached <trill> (with/without wavy-line). */
   trill?: boolean;
+  /** Accidental shown above the trill (<accidental-mark>) → @accidupper. */
+  trillAccid?: string;
+  /** <wavy-line> level starting / stopping at this event (extender span). */
+  wavyStart?: number;
+  wavyStop?: number;
   /** <ornaments><tremolo type=...> beams-count. 'single' = bowed (bTrem);
    *  'start'/'stop' = fingered two-note tremolo (fTrem) over the pair. */
   tremolo?: { type: 'single' | 'start' | 'stop'; beams: number };
@@ -157,28 +162,40 @@ function scanMeasureClefs(measureEl: Element, divisions: number): Map<number, { 
   return out;
 }
 
-/** Insert inline `<clef>` elements into a (layer-1) layer at their tick
- *  positions: before the first child whose cumulative start-tick reaches the
- *  clef's tick (tick 0 → layer head). A clef inside a long note lands just
- *  before the following event. The beam pass treats `<clef>` as a break. */
-function insertClefsIntoLayer(doc: Document, layerEl: Element, clefs: { meiTick: number; spec: ClefSpec }[]): void {
-  for (const { meiTick, spec } of [...clefs].sort((a, b) => a.meiTick - b.meiTick)) {
-    const clefEl = el(doc, 'clef', {
-      shape: spec.shape, line: spec.line, dis: spec.dis, 'dis.place': spec.disPlace,
-    });
-    if (meiTick <= 0) { layerEl.insertBefore(clefEl, layerEl.firstChild); continue; }
-    let t = 0;
-    let target: Element | null = null;
-    for (const c of Array.from(layerEl.children)) {
-      if (c.localName === 'clef') continue;
-      if (t >= meiTick) { target = c; break; }
-      t += realTicks(c);
-    }
-    layerEl.insertBefore(clefEl, target);   // target null → appended at end
-  }
+function makeClef(doc: Document, spec: ClefSpec): Element {
+  return el(doc, 'clef', {
+    'xml:id': newId('clf'), shape: spec.shape, line: spec.line,
+    dis: spec.dis, 'dis.place': spec.disPlace,
+  });
 }
 
-/** Minimal TimeSigInfo for rest-fill / meter math (no additive beat-groups). */
+/** True iff a layer holds any real content (note/chord/rest/tuplet/tremolo) —
+ *  not just a layout `<space>` placeholder or an `<mRest>`. A layer whose only
+ *  content is `<tuplet>`s still counts (else a mid-measure clef change over a
+ *  tripleted voice is dropped — the clef must be inserted into that layer). */
+function layerHasContent(layerEl: Element): boolean {
+  return Array.from(layerEl.children).some(
+    (c) => c.localName === 'note' || c.localName === 'chord' || c.localName === 'rest'
+      || c.localName === 'tuplet' || c.localName === 'fTrem' || c.localName === 'bTrem');
+}
+
+/** Insert an inline `<clef>` at MEI tick `meiTick` in a layer: before the first
+ *  child whose cumulative start-tick reaches the clef's tick (a clef inside a
+ *  long note lands just before the following event). The beam pass treats
+ *  `<clef>` as a break. */
+function insertMidClef(doc: Document, layerEl: Element, meiTick: number, spec: ClefSpec): void {
+  const clefEl = makeClef(doc, spec);
+  let t = 0;
+  let target: Element | null = null;
+  for (const c of Array.from(layerEl.children)) {
+    if (c.localName === 'clef') continue;
+    if (t >= meiTick) { target = c; break; }
+    t += realTicks(c);
+  }
+  layerEl.insertBefore(clefEl, target);   // target null → appended at end
+}
+
+/** Minimal TimeSigInfo for meter/rest-fill math (no additive beat-groups). */
 function makeTimeSig(count: number, unit: number): TimeSigInfo {
   return {
     count, unit,
@@ -188,27 +205,11 @@ function makeTimeSig(count: number, unit: number): TimeSigInfo {
   };
 }
 
-/** Measure tick capacities that map to a single rest glyph (≤ whole note). An
- *  empty measure is conventionally one rest; we use a whole rest when the
- *  capacity is exactly a whole note, else the largest single dotted rest that
- *  fits the meter, falling back to a beat-aligned fill for odd meters. */
-const FULL_MEASURE_REST: Record<number, { dur: Duration; dots: Dots }> = {
-  64: { dur: '1', dots: 0 },   /* 4/4, 2/2 → whole rest */
-  48: { dur: '2', dots: 1 },   /* 3/4, 6/8 → dotted half */
-  32: { dur: '2', dots: 0 },   /* 2/4 → half */
-  24: { dur: '4', dots: 1 },   /* 3/8 → dotted quarter */
-  16: { dur: '4', dots: 0 },   /* 1/4 → quarter */
-};
-
-/** A layer that is exactly one full-measure rest (`<rest measure="yes"/>`, which
- *  carries no `<type>`) → a meter-filling rest. Otherwise unchanged. */
-function expandMeasureRests(evs: ImpEvent[], count: number, unit: number): ImpEvent[] {
-  if (evs.length !== 1 || !evs[0].measureRest) return evs;
-  const measureTicks = count * (64 / unit);
-  const single = FULL_MEASURE_REST[measureTicks];
-  const pieces = single ? [single] : decomposeBeatAlignedRests(0, measureTicks, makeTimeSig(count, unit));
-  if (pieces.length === 0) return evs;
-  return pieces.map((p) => ({
+/** Beat-aligned rest ImpEvents filling `ticks` — used for an empty voice in a
+ *  PICKUP measure (which must show a reduced-duration rest, not a whole-measure
+ *  `<mRest>`). */
+function beatAlignedRestEvents(ticks: number, count: number, unit: number): ImpEvent[] {
+  return decomposeBeatAlignedRests(0, ticks, makeTimeSig(count, unit)).map((p) => ({
     kind: 'rest' as const, notes: [], dur: p.dur, dots: p.dots,
     artics: [], fermata: false, slurStart: [], slurStop: [],
   }));
@@ -408,8 +409,14 @@ function mergeNotations(note: Element, ev: ImpEvent): void {
      bowed/bTrem; start+stop pair = fingered/fTrem). */
   const ornaments = child(notations, 'ornaments');
   if (ornaments) {
-    const hasWavyStart = children(ornaments, 'wavy-line').some((w) => w.getAttribute('type') === 'start');
-    if (child(ornaments, 'trill-mark') || hasWavyStart) ev.trill = true;
+    /* Wavy-line = the trill's extender span. Start makes this a trill; the
+       matching stop (paired globally by number) gives the extender @endid. */
+    for (const w of children(ornaments, 'wavy-line')) {
+      const num = parseInt(w.getAttribute('number') ?? '1', 10) || 1;
+      if (w.getAttribute('type') === 'start') ev.wavyStart = num;
+      else if (w.getAttribute('type') === 'stop') ev.wavyStop = num;
+    }
+    if (child(ornaments, 'trill-mark') || ev.wavyStart !== undefined) ev.trill = true;
     const trem = child(ornaments, 'tremolo');
     if (trem) {
       const ty = (trem.getAttribute('type') ?? 'single');
@@ -417,6 +424,13 @@ function mergeNotations(note: Element, ev: ImpEvent): void {
       const beams = parseInt(trem.textContent?.trim() ?? '3', 10) || 3;
       ev.tremolo = { type, beams };
     }
+  }
+  /* Accidental above a trill (<accidental-mark>, sibling of <ornaments>). */
+  const accMark = child(notations, 'accidental-mark');
+  if (accMark && ev.trill) {
+    const t = accMark.textContent?.trim();
+    ev.trillAccid = t === 'sharp' ? 's' : t === 'flat' ? 'f' : t === 'natural' ? 'n'
+      : t === 'double-sharp' || t === 'sharp-sharp' ? 'x' : t === 'flat-flat' ? 'ff' : undefined;
   }
   for (const s of children(notations, 'slur')) {
     const num = parseInt(s.getAttribute('number') ?? '1', 10) || 1;
@@ -512,28 +526,49 @@ function applyHarmonic(slot: Element, noteEl: Element): void {
 }
 
 interface SlurPair { startId: string; endId: string; voice: number }
+interface TrillRec { noteEl: Element; accid?: string }
+
+/** Shared emission state. Slur AND wavy-line pairing are GLOBAL (keyed by
+ *  number across all voices/staves), not per-voice, so cross-staff slurs and
+ *  trill extenders that span voices pair correctly. */
+interface EmitCtx {
+  slurOpen: Map<number, { id: string; voice: number }>;   // number → open slur start
+  slurPairs: SlurPair[];
+  fermataEls: Element[];
+  trillRecs: TrillRec[];
+  wavyOpen: Map<number, string>;    // number → trill-note id of an open wavy-line
+  wavyEnd: Map<string, string>;     // trill-note id → extender end note id
+}
 
 /** Append a layer's events (wrapping tuplet runs in <tuplet>), attaching
- *  fermatas to the measure and collecting slur start/stop pairs per voice.
- *  A complete musical tuplet is self-contained — no trailing placeholder. */
+ *  fermatas/trills to the measure in a post-pass and collecting slur + trill-
+ *  extender pairs. A complete musical tuplet is self-contained — no trailing
+ *  placeholder. */
 function appendLayerChildren(
   doc: Document, layerEl: Element, events: ImpEvent[],
-  measureEl: Element, voice: number,
-  slurOpen: Map<number, string>, slurPairs: SlurPair[],
-  fermataEls: Element[], trillEls: Element[],
+  measureEl: Element, voice: number, partIdx: number, ctx: EmitCtx,
 ): void {
+  /* Slur/wavy numbers are reused across parts, so pairing is scoped PER PART
+     (composite key) — global across a part's staves/voices for cross-staff
+     spans, but never crossing into another instrument's part. */
+  const key = (n: number): number => partIdx * 1000 + n;
   const wire = (ev: ImpEvent): void => {
     const id = ev.el?.getAttribute('xml:id');
     if (!id || !ev.el) return;
     /* Fermata + trill are appended to the measure in a post-pass (after
        <staff>s exist) — Verovio requires control events to follow staff
        content. */
-    if (ev.fermata) fermataEls.push(ev.el);
-    if (ev.trill) trillEls.push(ev.el);
-    for (const n of ev.slurStart) slurOpen.set(n, id);
+    if (ev.fermata) ctx.fermataEls.push(ev.el);
+    if (ev.trill) ctx.trillRecs.push({ noteEl: ev.el, accid: ev.trillAccid });
+    if (ev.wavyStart !== undefined) ctx.wavyOpen.set(key(ev.wavyStart), id);
+    if (ev.wavyStop !== undefined) {
+      const s = ctx.wavyOpen.get(key(ev.wavyStop));
+      if (s) { ctx.wavyEnd.set(s, id); ctx.wavyOpen.delete(key(ev.wavyStop)); }
+    }
+    for (const n of ev.slurStart) ctx.slurOpen.set(key(n), { id, voice });
     for (const n of ev.slurStop) {
-      const startId = slurOpen.get(n);
-      if (startId) { slurPairs.push({ startId, endId: id, voice }); slurOpen.delete(n); }
+      const o = ctx.slurOpen.get(key(n));
+      if (o) { ctx.slurPairs.push({ startId: o.id, endId: id, voice: o.voice }); ctx.slurOpen.delete(key(n)); }
     }
   };
 
@@ -813,10 +848,11 @@ export function importMusicXml(xmlText: string): string {
   /* Global voice for (globalStaff, layer): staves contribute 2 voices each in
      order, so voice = (staff-1)*2 + layer. Slur state persists per voice. */
   const voiceFor = (gStaff: number, layer: number): number => (gStaff - 1) * 2 + layer;
-  const slurOpenByVoice = new Map<number, Map<number, string>>();
-  const slurPairs: SlurPair[] = [];
-  const fermataEls: Element[] = [];
-  const trillEls: Element[] = [];
+  /* Emission state — slur + wavy pairing is GLOBAL (cross-staff/voice). */
+  const ctx: EmitCtx = {
+    slurOpen: new Map(), slurPairs: [], fermataEls: [], trillRecs: [],
+    wavyOpen: new Map(), wavyEnd: new Map(),
+  };
 
   /* Running notation state for mid-piece change detection. */
   let runKeySig = keySig, runMode = keyMode, runCount = meterCount, runUnit = meterUnit;
@@ -878,6 +914,7 @@ export function importMusicXml(xmlText: string): string {
 
     /* Pickup: implicit="yes" on a part's measure → reduced tick budget. */
     const implicit = parts.some((p) => p.measures[mi]?.getAttribute('implicit') === 'yes');
+    let pickupTicks: number | null = null;   // reduced budget of a pickup measure
     if (implicit) {
       // budget = max filled ticks across this measure's layers.
       let maxTicks = 0;
@@ -887,23 +924,26 @@ export function importMusicXml(xmlText: string): string {
         if (!pm) continue;
         for (const layer of [1, 2]) {
           const evs = buildEvents(pm, part, localStaff, layer, center.q, center.r);
-          const t = evs.reduce((s, e) => s + dottedTicks(e.dur, e.dots), 0);
+          /* A measure-rest voice is EMPTY — it's sized TO the pickup budget, so
+             it must not define it (its default quarter would inflate the bar). */
+          const t = evs.filter((e) => !e.measureRest).reduce((s, e) => s + dottedTicks(e.dur, e.dots), 0);
           maxTicks = Math.max(maxTicks, t);
         }
       }
-      if (maxTicks > 0) measureEl.setAttributeNS('https://hexkeylab.com/ns/mei', 'hkl:pickup-ticks', String(maxTicks));
+      if (maxTicks > 0) {
+        pickupTicks = maxTicks;
+        measureEl.setAttributeNS('https://hexkeylab.com/ns/mei', 'hkl:pickup-ticks', String(maxTicks));
+      }
     }
 
     for (const g of allStaves) {
       const { part, localStaff } = partForStaff(g);
+      const partIdx = parts.indexOf(part);
       const pm = part.measures[mi];
       const staffEl = el(doc, 'staff', { n: String(g), 'xml:id': newId('s') });
 
       /* Clef changes in this measure for this staff, in document (tick) order.
-         A measure-head clef equal to the running clef (e.g. the head clef
-         repeated) is dropped; the remaining changes become inline <clef> at
-         their tick position in layer 1 — handling BOTH measure-head changes
-         and true mid-measure changes (a clef in a later <attributes> block). */
+         A change equal to the running clef is dropped. */
       const div = runDivisions.get(part) ?? part.divisions;
       const rawClefs = pm ? (scanMeasureClefs(pm, div).get(localStaff) ?? []) : [];
       const clefChanges: { meiTick: number; spec: ClefSpec }[] = [];
@@ -913,19 +953,40 @@ export function importMusicXml(xmlText: string): string {
         runClef.set(g, c.spec);
       }
 
+      const layerEls: Element[] = [];
       for (const layer of [1, 2]) {
         const layerEl = el(doc, 'layer', { n: String(layer), 'xml:id': newId('l') });
         if (pm) {
           const voice = voiceFor(g, layer);
-          let slurOpen = slurOpenByVoice.get(voice);
-          if (!slurOpen) { slurOpen = new Map(); slurOpenByVoice.set(voice, slurOpen); }
-          let evs = buildEvents(pm, part, localStaff, layer, center.q, center.r);
-          evs = expandMeasureRests(evs, runCount, runUnit);
-          appendLayerChildren(doc, layerEl, evs, measureEl, voice, slurOpen, slurPairs, fermataEls, trillEls);
+          const evs = buildEvents(pm, part, localStaff, layer, center.q, center.r);
+          if (evs.length === 1 && evs[0].measureRest) {
+            if (pickupTicks != null) {
+              /* Pickup exception: an empty voice shows a rest sized to the
+                 reduced pickup budget, NOT a whole-measure <mRest> (which would
+                 draw a whole rest spanning the short bar). */
+              appendLayerChildren(doc, layerEl, beatAlignedRestEvents(pickupTicks, runCount, runUnit), measureEl, voice, partIdx, ctx);
+            } else {
+              /* Empty full bar → a single <mRest> (centered whole rest,
+                 meter-agnostic — the conventional empty-measure glyph). */
+              layerEl.appendChild(el(doc, 'mRest', { 'xml:id': newId('mr') }));
+            }
+          } else {
+            appendLayerChildren(doc, layerEl, evs, measureEl, voice, partIdx, ctx);
+          }
         }
-        /* Inline clefs live in layer 1 (the beam pass treats <clef> as a break). */
-        if (layer === 1 && clefChanges.length) insertClefsIntoLayer(doc, layerEl, clefChanges);
+        layerEls.push(layerEl);
         staffEl.appendChild(layerEl);
+      }
+
+      /* Clef changes → inline <clef> at their tick in EVERY content layer of the
+         staff (so the clef governs all voices — a change on a staff whose notes
+         are in layer 2 must not leave them in the old clef). A boundary change
+         (tick 0) lands at the layer head; the render-time pass
+         `relocateInitialClefs` moves any measure-initial clef before the barline
+         (globally, for native edits too). Mid-measure changes stay at their tick. */
+      const contentLayers = layerEls.filter(layerHasContent);
+      for (const cc of clefChanges) {
+        for (const le of contentLayers) insertMidClef(doc, le, cc.meiTick, cc.spec);
       }
       measureEl.appendChild(staffEl);
     }
@@ -947,20 +1008,28 @@ export function importMusicXml(xmlText: string): string {
     }
   }
 
-  /* Resolve slurs now that all note elements are attached to the document. */
-  for (const p of slurPairs) addSlur(doc, p.startId, p.endId, p.voice);
+  /* Resolve slurs (global pairing → cross-staff slurs pair correctly) now that
+     all note elements are attached to the document. */
+  for (const p of ctx.slurPairs) addSlur(doc, p.startId, p.endId, p.voice);
 
   /* Fermatas + trills: appended after the measure's <staff>s (Verovio
-     control-event ordering requirement), anchored to the note via @startid. */
-  for (const noteEl of fermataEls) {
+     control-event ordering requirement), anchored to the note via @startid.
+     Trills carry the accidental (@accidupper) and the wavy-line extender
+     (@extender + @endid = the note where the wavy-line stops). */
+  for (const noteEl of ctx.fermataEls) {
     const id = noteEl.getAttribute('xml:id');
     const measure = noteEl.closest('measure');
     if (id && measure) measure.appendChild(el(doc, 'fermata', { 'xml:id': newId('f'), startid: '#' + id }));
   }
-  for (const noteEl of trillEls) {
+  for (const { noteEl, accid } of ctx.trillRecs) {
     const id = noteEl.getAttribute('xml:id');
     const measure = noteEl.closest('measure');
-    if (id && measure) measure.appendChild(el(doc, 'trill', { 'xml:id': newId('tr'), startid: '#' + id }));
+    if (!id || !measure) continue;
+    const attrs: Record<string, string | undefined> = { 'xml:id': newId('tr'), startid: '#' + id };
+    if (accid) attrs.accidupper = accid;
+    const endId = ctx.wavyEnd.get(id);
+    if (endId && endId !== id) { attrs.extender = 'true'; attrs.endid = '#' + endId; }
+    measure.appendChild(el(doc, 'trill', attrs));
   }
 
   /* Dynamics + hairpins + expressive text (time-anchored), per part. */

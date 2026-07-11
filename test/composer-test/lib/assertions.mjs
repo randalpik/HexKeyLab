@@ -175,6 +175,9 @@ export const ASSERTION_LIB = `
          ticks-per-measure; measureTicksForLayer resolves the layer's measure). */
       const layers = measures[mi].querySelectorAll('layer');
       for (const layer of layers) {
+        /* An <mRest> is a full-measure rest — it fills the bar by definition
+           (no @dur, no trailing placeholder), so the layer is complete. */
+        if (Array.from(layer.children).some((c) => c.localName === 'mRest')) continue;
         const mTicks = m().measureTicksForLayer(layer);
         const t = layerTicks(layer);
         if (Math.abs(t - mTicks) > 0.001) {

@@ -347,6 +347,41 @@ function indexCheckEnabled(): boolean {
     (globalThis as { __HKL_INDEX_CHECK?: boolean }).__HKL_INDEX_CHECK === true;
 }
 
+/** Render-clone pass enforcing the global invariant that a barline is NEVER
+ *  immediately followed by a clef. A clef change effective at the start of a
+ *  measure (an inline `<clef>` at the head of a layer) must render BEFORE the
+ *  barline — the standard engraving convention — but Verovio draws a
+ *  measure-initial clef AFTER the barline. So on the render clone we move each
+ *  measure-initial `<clef>` to the end of the same staff+layer in the PREVIOUS
+ *  measure (a courtesy clef change). The live doc keeps clefs at measure heads
+ *  (natural for the cursor/editing); this runs only for rendering, so it applies
+ *  uniformly to native clef edits and imports. `dropFirstMeasure`: in a range
+ *  sub-render the first measure's leading clef belongs to the out-of-range
+ *  (already rendered) previous measure — drop it to match the full render. */
+function relocateInitialClefs(doc: Document, dropFirstMeasure = false): void {
+  const measures = Array.from(doc.querySelectorAll('measure'));
+  for (let i = 0; i < measures.length; i++) {
+    for (const staff of Array.from(measures[i].children)) {
+      if (staff.localName !== 'staff') continue;
+      const g = staff.getAttribute('n');
+      for (const layer of Array.from(staff.children)) {
+        if (layer.localName !== 'layer') continue;
+        const first = layer.firstElementChild;
+        if (!first || first.localName !== 'clef') continue;
+        if (i === 0) { if (dropFirstMeasure) layer.removeChild(first); continue; }
+        const prevStaff = Array.from(measures[i - 1].children).find(
+          (s) => s.localName === 'staff' && s.getAttribute('n') === g);
+        const ln = layer.getAttribute('n');
+        const prevLayer = prevStaff && Array.from(prevStaff.children).find(
+          (l) => l.localName === 'layer' && l.getAttribute('n') === ln);
+        if (!prevLayer) continue;   // no matching previous layer → leave (can't relocate)
+        layer.removeChild(first);
+        prevLayer.appendChild(first);
+      }
+    }
+  }
+}
+
 /** Running clef-per-staff + key/meter context as of some measure, folded into a
  *  sub-render's head scoreDef (see serializeRangeForRender). */
 interface RunningScoreDefCtx {
@@ -658,6 +693,7 @@ export class ComposerModel {
        model/snapshot doc is untouched; staff @n are preserved (not renumbered)
        so the cursor's xml:id lookups still resolve. */
     if (viewStaves) filterToStaves(clone, new Set(viewStaves));
+    relocateInitialClefs(clone);
     regroupBeams(clone, readTimeSig(clone));
     return new XMLSerializer().serializeToString(clone);
   }
@@ -696,6 +732,7 @@ export class ComposerModel {
       for (const n of Array.from(clone.querySelectorAll('note'))) n.removeAttribute('color');
     }
     if (viewStaves) filterToStaves(clone, new Set(viewStaves));
+    relocateInitialClefs(clone, true);   // range: first measure's leading clef lives in the out-of-range prev
     regroupBeams(clone, readTimeSig(clone));
     return new XMLSerializer().serializeToString(clone);
   }

@@ -3856,3 +3856,15 @@ reaches `osc.type`.
 **Verified**: typecheck + boundaries + HKL build green; headless load spot-check on bassoon (hki 200, plays, no errors) and renaissance_organ (CDN path, plays, no failed requests). **By-ear pass on all changed instruments is Max's gate — that is the point of this sweep** (he tests each instrument in MQ next).
 
 **Where**: `apps/hkl/src/audio/samples-data.ts` (17 blocks), `public/samples/{accordion,bassoon,french_horn,trumpet,viola,baritone_voice,soprano_voice}.hki`, `handoff/musiquest/*`, no code changes beyond the already-logged picker fix.
+
+## Note-on scheduling lead split 50ms → 15ms (loop) / 5ms (decay) (2026-07-10)
+
+**Context**: Max reported constant, clearly perceptible onset latency on every sample instrument (oscillators instant). Investigation ruled out the trim gate — measured against all 38 VCSL harpsichord samples, `TRIM_GATE_NORM` lands a median 0.2 ms before the 10%-of-peak point (files are tightly pre-cut). The cause was the flat 50 ms first-source pre-schedule in `sNoteOn`/`sNoteOnFaded`, added so `source.start` is never clamped and `sourceStartTime` stays exact for the first seam crossfade. Its comment claimed 50 ms is imperceptible as onset latency; it is not.
+
+**Picked**: split the live-input lead by instrument type. Decay instruments: 5 ms (the existing late-delivery floor) — segment switching is never armed for them, so nothing depends on start-time exactness; `sourceStartTime` is only read by retune-ramp position math where a few-ms clamp error is inaudible. Loop instruments: 15 ms — ~5 render quanta of margin over the normal 1–2-quanta delivery window; worst case under an extreme GC pause is a one-time subtle dip at the first seam of that one note (later sources pre-schedule on the audio clock and stay exact). `sNoteOnFaded` keeps 50 ms — it fires mid-note under an equal-power crossfade, so its lead is not audible onset latency. `startAt` (lookahead scheduler) paths unaffected.
+
+**Rejected**: keeping 50 ms for loop instruments (the latency is just as audible on sustained attacks); trying to detect/compensate clamping after the fact (Web Audio exposes no actual-start observation).
+
+**Verified**: typecheck + boundaries + HKL build green. By-ear latency check is Max's gate.
+
+**Where**: `packages/engine/src/samples-engine.ts` (`sNoteOn` lead computation + comment).

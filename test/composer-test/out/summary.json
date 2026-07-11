@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 317,
-  "passed": 317,
+  "fixtures": 322,
+  "passed": 322,
   "failed": 0,
-  "elapsedMs": 108985,
+  "elapsedMs": 109778,
   "results": [
     {
       "name": "emptyDoc",
@@ -2319,6 +2319,46 @@
     },
     {
       "name": "phase5_musicxml_beam_diff",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase5_musicxml_boundary_clef",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "phase5_musicxml_crossstaff_slur",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase5_musicxml_trill_extender",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase5_musicxml_pickup_rest",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase5_musicxml_midmeasure_clef_tuplet",
       "ok": true,
       "failures": [],
       "counts": {

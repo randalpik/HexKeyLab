@@ -505,8 +505,8 @@ const loadedInstruments: Record<string, any> = {};
     /* voiceGain: persistent node for this voice — noteOff fades this to silence everything */
     var voiceGain=ctx.createGain();voiceGain.gain.value=1.0;voiceGain.connect(damperGain);
     var segGain=ctx.createGain();
-    /* Schedule the source FIRST_SOURCE_LEAD seconds in the future, not at
-       currentTime, and record sourceStartTime as the same future moment.
+    /* Schedule the source slightly in the future, not at currentTime, and
+       record sourceStartTime as the same future moment.
        Reason: source.start(t, ...) with t < ctx.currentTime gets clamped by
        Web Audio to the actual currentTime at processing — which can be one
        render quantum (~2.7ms) or more past `t` if JS stalls between
@@ -515,22 +515,31 @@ const loadedInstruments: Record<string, any> = {};
        the actual start moment, throwing off the switchTime computation in
        scheduleSegmentSwitch. The mismatch produces a phase-shifted crossfade
        on the first switch that the analyzer never validated → audible dip.
-       Pre-scheduling far enough ahead makes start exact (no clamping). The
-       lead must comfortably exceed any plausible JS stall on the note-on
-       path (event handler, click logic, redraw, possible GC pause) — 50ms
-       is well above the worst case while still imperceptible (≪100ms) as
-       note-onset latency. Subsequent sources (created in scheduleSegmentSwitch)
-       already pre-schedule with even more lead; this brings the first source
-       in line. */
+       Pre-scheduling ahead makes start exact (no clamping). The lead is
+       note-onset latency the player hears, so it's split by instrument type:
+         loop:  15ms — ~5 render quanta of margin over the normal 1–2-quanta
+                currentTime-read → render-thread-delivery window. Worst case
+                (an extreme GC pause inside that window) is a one-time subtle
+                dip at the FIRST seam of that note only; subsequent sources
+                are pre-scheduled on the audio clock in scheduleSegmentSwitch
+                and stay exact regardless.
+         decay: 5ms — segment switching is never armed (see the instr.loop
+                guard below), so nothing depends on start-time exactness;
+                sourceStartTime is only read by the retune-ramp position
+                math, where a few-ms clamp error is inaudible. Minimal lead
+                keeps struck/plucked attacks immediate.
+       (History: this was a flat 50ms chosen to survive any plausible JS
+       stall, but it read as constant, clearly perceptible onset latency on
+       every sample instrument next to the osc path's start-at-now.) */
     /* Snap `when` to the integer-sample grid; pairs with the load-time
        trimStart/pts snapping so rate=1 reads avoid interpolation. If
        `startAt` is passed, the caller (e.g. the playback lookahead
        scheduler in hkl-side.ts) is anchoring the note on its own clock —
-       trust it and use it directly. The 50ms default remains for live-input
+       trust it and use it directly. The default lead remains for live-input
        paths that don't pre-schedule. The +0.005 floor against currentTime
        covers very-late deliveries (a tardy scheduler should still produce
        sound, just at the floor — better than silent clamping). */
-    var target=startAt!=null?startAt:ctx.currentTime+0.050;
+    var target=startAt!=null?startAt:ctx.currentTime+(instr.loop?0.015:0.005);
     var startT=Math.ceil(Math.max(target,ctx.currentTime+0.005)*ctx.sampleRate)/ctx.sampleRate;
     /* Attack fade-in: ramp segGain 0→vol over ATTACK_FADE_S so playback never
        starts on a nonzero sample step (click), independent of where the trim

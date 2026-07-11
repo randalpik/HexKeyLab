@@ -46,7 +46,11 @@ export function normalizePlaceholders(
         used += realTicks(c);
       }
     }
-    const remaining = ticksForLayer(layer) - used;
+    /* An <mRest> is a full-measure rest — it fills the measure by definition, so
+       the layer needs NO trailing placeholder. (Adding one made Verovio size the
+       measure as a breve rest — the "double whole rest" bug.) */
+    const hasMRest = Array.from(layer.children).some((c) => c.localName === 'mRest');
+    const remaining = hasMRest ? 0 : ticksForLayer(layer) - used;
     const desired = remaining > 0 ? decomposeTicks(remaining) : [];
 
     /* IDEMPOTENT: if the layer's placeholders already match `desired` exactly
