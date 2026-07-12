@@ -638,6 +638,9 @@ export class ComposerModel {
     }
     /* Migrate older .hkc files that used right="dbl" for the final barline. */
     this.setBarlines();
+    /* Restart measure numbering at each section header (idempotent; a doc with
+       no headers is unchanged). Imported movements thus count from 1. */
+    this.renumberMeasures();
     /* Seed <extMeta>/<hkl:config> defaults if the loaded doc lacks them. */
     ensureExpressionDefaults(this.doc);
     normalizeTies(this);

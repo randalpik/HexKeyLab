@@ -106,6 +106,10 @@ interface ImpEvent {
   /** A full-measure rest (<rest measure="yes"/>): expanded to meter-filling
    *  rests at emission (the source carries no <type>). */
   measureRest?: boolean;
+  /** A hidden rest — Finale's encoding for an invisible time advance
+   *  (`<forward>`, e.g. a voice that enters mid-bar) → `<rest visible="false">`.
+   *  Occupies ticks (keeps following notes in place) but draws no glyph. */
+  hidden?: boolean;
   /** Did the source start a new beam at this event? Derived from
    *  <beam number="1"> (begin/absent = true; continue/end = false). Consulted
    *  only for beamable events by the post-build beam-diff pass. */
@@ -159,6 +163,73 @@ function scanMeasureClefs(measureEl: Element, divisions: number): Map<number, { 
       cur += intOf(node, 'duration', 0);
     }
   }
+  return out;
+}
+
+/* ── barlines / repeats / endings ────────────────────────────────────────────── */
+
+interface BarlineInfo {
+  /** Right barline style → MEI @right. */
+  rightStyle: 'end' | 'dbl' | 'rptend' | null;
+  /** Forward repeat → MEI @left="rptstart". */
+  leftRepeatStart: boolean;
+  /** Volta number from <ending type="start">, else null. */
+  endingStart: number | null;
+  /** <ending type="stop"|"discontinue"> closes the current volta. */
+  endingClose: boolean;
+}
+
+const EMPTY_BARLINE: BarlineInfo =
+  { rightStyle: null, leftRepeatStart: false, endingStart: null, endingClose: false };
+
+/** Read a measure's `<barline>` children into the model's barline vocabulary.
+ *  MusicXML puts a forward repeat + ending-start on the LEFT barline and a
+ *  backward repeat + ending-stop on the RIGHT barline; bar-style carries the
+ *  visual style. A backward repeat wins over any bar-style in the same measure
+ *  (→ "rptend"). If several right barlines exist (Finale emits a mid-measure
+ *  `light-light` before a terminal `light-heavy` at movement ends), the
+ *  terminal one wins — MEI/the model has no mid-measure barline. */
+function scanMeasureBarlines(measureEl: Element): BarlineInfo {
+  let rightStyle: BarlineInfo['rightStyle'] = null;
+  let rightIsRepeat = false;
+  let leftRepeatStart = false;
+  let endingStart: number | null = null;
+  let endingClose = false;
+  for (const bl of children(measureEl, 'barline')) {
+    const loc = bl.getAttribute('location') ?? 'right';
+    const repeat = child(bl, 'repeat');
+    const dir = repeat?.getAttribute('direction');
+    const ending = child(bl, 'ending');
+    const endType = ending?.getAttribute('type');
+    if (ending) {
+      if (endType === 'start') {
+        const num = parseInt(ending.getAttribute('number') ?? '', 10);
+        if (Number.isFinite(num)) endingStart = num;
+      } else if (endType === 'stop' || endType === 'discontinue') {
+        endingClose = true;
+      }
+    }
+    if (loc === 'left') {
+      if (dir === 'forward') leftRepeatStart = true;
+      continue;
+    }
+    /* right barline */
+    if (dir === 'backward') { rightStyle = 'rptend'; rightIsRepeat = true; continue; }
+    if (rightIsRepeat) continue;   // repeat wins over a later plain bar-style
+    const style = textOf(bl, 'bar-style');
+    if (style === 'light-heavy') rightStyle = 'end';
+    else if (style === 'light-light') rightStyle = 'dbl';
+  }
+  return { rightStyle, leftRepeatStart, endingStart, endingClose };
+}
+
+/** Small int → Roman numeral (movement headers; values stay well under 20). */
+function intToRoman(n: number): string {
+  const table: [number, string][] = [
+    [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I'],
+  ];
+  let out = '', v = n;
+  for (const [val, sym] of table) while (v >= val) { out += sym; v -= val; }
   return out;
 }
 
@@ -324,6 +395,7 @@ function analyzePart(partEl: Element, name: string, globalStaffBase: number): Pa
 function buildEvents(
   measureEl: Element, part: PartInfo, localStaff: number, layer: number,
   centerQ: number, centerR: number,
+  divisions: number, tsCount: number, tsUnit: number,
 ): ImpEvent[] {
   // Which voice maps to (localStaff, layer)?
   let targetVoice: number | null = null;
@@ -333,7 +405,28 @@ function buildEvents(
   if (targetVoice === null) return [];
 
   const events: ImpEvent[] = [];
-  for (const note of children(measureEl, 'note')) {
+  /* Walk the measure's children in document order so a <forward> (an invisible
+     time advance for a voice — Finale's encoding of a hidden rest, e.g. a voice
+     entering mid-bar) lands as a hidden rest at its true position. Ignoring it
+     collapses the gap and displaces every following note in the voice. */
+  for (const node of Array.from(measureEl.children)) {
+    if (node.localName === 'forward') {
+      /* Only an explicitly voiced forward is unambiguous per-voice; a voiceless
+         one applies to the global position we don't track here, so skip it. */
+      const voiceEl = child(node, 'voice');
+      if (!voiceEl) continue;
+      const fv = parseInt(voiceEl.textContent ?? '', 10) || 0;
+      const fs = intOf(node, 'staff', localStaff);
+      if (fv !== targetVoice || fs !== localStaff) continue;
+      const meiTicks = divisions > 0 ? Math.round(intOf(node, 'duration', 0) * 16 / divisions) : 0;
+      for (const r of beatAlignedRestEvents(meiTicks, tsCount, tsUnit)) {
+        r.hidden = true;
+        events.push(r);
+      }
+      continue;
+    }
+    if (node.localName !== 'note') continue;
+    const note = node;
     const ls = intOf(note, 'staff', 1);
     const v = intOf(note, 'voice', 1);
     if (v !== targetVoice || ls !== localStaff) continue;
@@ -489,6 +582,7 @@ function eventToElement(doc: Document, ev: ImpEvent): Element {
   let element: Element;
   if (ev.kind === 'rest') {
     element = buildRestElement(doc, { duration: ev.dur, dots: ev.dots });
+    if (ev.hidden) element.setAttribute('visible', 'false');
   } else if (ev.kind === 'chord' || ev.notes.length > 1) {
     element = buildChordElement(doc, { notes: ev.notes.map((n) => n.spec), duration: ev.dur, dots: ev.dots });
     /* Apply ties + harmonic per chord-note (match built child by q,r). */
@@ -865,6 +959,14 @@ export function importMusicXml(xmlText: string): string {
   const clefEqual = (a: ClefSpec, b: ClefSpec): boolean =>
     a.shape === b.shape && a.line === b.line && (a.dis ?? 0) === (b.dis ?? 0) && (a.disPlace ?? '') === (b.disPlace ?? '');
 
+  /* Barline / repeat / ending / movement-break state carried across measures.
+     A mid-piece final barline (right="end") ends a movement, so the NEXT
+     measure becomes a section header (Roman-numeral title, starting at II);
+     endings wrap their measures in an <ending> container inside <section>. */
+  let pendingSectionStart = false;
+  let movementNum = 2;                  // first movement has no header
+  let currentEnding: Element | null = null;
+
   for (let mi = 0; mi < measureCount; mi++) {
     /* Read this measure's declared key/meter (from the first part that has
        attributes — parts agree on global key/meter). */
@@ -910,7 +1012,15 @@ export function importMusicXml(xmlText: string): string {
     }
 
     const measureEl = el(doc, 'measure', { n: String(mi + 1), 'xml:id': newId('m') });
-    if (mi === measureCount - 1) measureEl.setAttribute('right', 'end');
+
+    /* Barlines (read from the first part that has this measure — parts agree).
+       @left/@right map to the model's native barline vocabulary; a mid-piece
+       final barline flags the next measure as a movement/section header. */
+    const barSrc = parts.map((p) => p.measures[mi]).find(Boolean) ?? null;
+    const bar = barSrc ? scanMeasureBarlines(barSrc) : EMPTY_BARLINE;
+    if (bar.leftRepeatStart) measureEl.setAttribute('left', 'rptstart');
+    if (bar.rightStyle) measureEl.setAttribute('right', bar.rightStyle);
+    else if (mi === measureCount - 1) measureEl.setAttribute('right', 'end');
 
     /* Pickup: implicit="yes" on a part's measure → reduced tick budget. */
     const implicit = parts.some((p) => p.measures[mi]?.getAttribute('implicit') === 'yes');
@@ -923,7 +1033,8 @@ export function importMusicXml(xmlText: string): string {
         const pm = part.measures[mi];
         if (!pm) continue;
         for (const layer of [1, 2]) {
-          const evs = buildEvents(pm, part, localStaff, layer, center.q, center.r);
+          const evs = buildEvents(pm, part, localStaff, layer, center.q, center.r,
+            runDivisions.get(part) ?? part.divisions, runCount, runUnit);
           /* A measure-rest voice is EMPTY — it's sized TO the pickup budget, so
              it must not define it (its default quarter would inflate the bar). */
           const t = evs.filter((e) => !e.measureRest).reduce((s, e) => s + dottedTicks(e.dur, e.dots), 0);
@@ -958,7 +1069,7 @@ export function importMusicXml(xmlText: string): string {
         const layerEl = el(doc, 'layer', { n: String(layer), 'xml:id': newId('l') });
         if (pm) {
           const voice = voiceFor(g, layer);
-          const evs = buildEvents(pm, part, localStaff, layer, center.q, center.r);
+          const evs = buildEvents(pm, part, localStaff, layer, center.q, center.r, div, runCount, runUnit);
           if (evs.length === 1 && evs[0].measureRest) {
             if (pickupTicks != null) {
               /* Pickup exception: an empty voice shows a rest sized to the
@@ -990,7 +1101,29 @@ export function importMusicXml(xmlText: string): string {
       }
       measureEl.appendChild(staffEl);
     }
-    section.appendChild(measureEl);
+
+    /* Movement/section header: the measure after a mid-piece final barline
+       starts a new movement — tag it with a Roman-numeral title and insert a
+       section system-break before it (matches setSectionHeaderAt's encoding;
+       setBarlines() derives the preceding measure's @right="end" on load). */
+    if (pendingSectionStart) {
+      measureEl.setAttribute('data-hkl-section-title', intToRoman(movementNum));
+      movementNum++;
+      section.appendChild(el(doc, 'sb', { 'xml:id': newId('sb'), 'data-hkl-section': 'true' }));
+      pendingSectionStart = false;
+    }
+
+    /* Ending (volta): open a new <ending> container, wrap this measure, close
+       it when the source stops/discontinues the volta. */
+    if (bar.endingStart != null) {
+      currentEnding = el(doc, 'ending', { n: String(bar.endingStart), 'xml:id': newId('ending') });
+      section.appendChild(currentEnding);
+    }
+    (currentEnding ?? section).appendChild(measureEl);
+    if (bar.endingClose) currentEnding = null;
+
+    /* A mid-piece final barline ends a movement → next measure is a header. */
+    if (bar.rightStyle === 'end' && mi !== measureCount - 1) pendingSectionStart = true;
   }
 
   /* Tempo: from the first <direction> carrying <metronome> or <sound tempo>.

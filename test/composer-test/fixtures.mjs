@@ -4105,6 +4105,60 @@ const PHASE1 = {
     `,
   },
 
+  /* MusicXML import — barlines/repeats/endings/movement break: the <barline>
+     element (previously dropped entirely). m1 opens a forward repeat; m3 is a
+     1st ending closed by a backward repeat + final bar; m4 is a 2nd ending; m5
+     a double bar; m6 a mid-piece final barline → the next measure (m7) becomes
+     a movement/section header ("II"). Exercises scanMeasureBarlines + the
+     ending-container wrapping + section-header emission in importMusicXml.
+     Asserted in FIXTURE_ASSERTIONS.phase5_musicxml_barlines. */
+  phase5_musicxml_barlines: {
+    setup: `
+      const W = (s, o) => '<note><pitch><step>' + s + '</step><octave>' + o + '</octave></pitch>'
+        + '<duration>96</duration><voice>1</voice><type>whole</type></note>';
+      const A = '<attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>';
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>T</part-name></score-part></part-list><part id="P1">'
+        + '<measure number="1">' + A + '<barline location="left"><bar-style>heavy-light</bar-style><repeat direction="forward"/></barline>' + W('C', 5) + '</measure>'
+        + '<measure number="2">' + W('D', 5) + '</measure>'
+        + '<measure number="3"><barline location="left"><ending number="1" type="start"/></barline>' + W('E', 5)
+          + '<barline location="right"><bar-style>light-heavy</bar-style><ending number="1" type="stop"/><repeat direction="backward"/></barline></measure>'
+        + '<measure number="4"><barline location="left"><ending number="2" type="start"/></barline>' + W('F', 5)
+          + '<barline location="right"><ending number="2" type="discontinue"/></barline></measure>'
+        + '<measure number="5">' + W('G', 5) + '<barline location="right"><bar-style>light-light</bar-style></barline></measure>'
+        + '<measure number="6">' + W('A', 5) + '<barline location="right"><bar-style>light-heavy</bar-style></barline></measure>'
+        + '<measure number="7">' + W('B', 4) + '</measure>'
+        + '<measure number="8">' + W('C', 5) + '</measure>'
+        + '</part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+    visualBaseline: 'phase5_musicxml_barlines',
+  },
+
+  /* MusicXML import — hidden rest (<forward>): a second voice that enters on
+     beat 3 is encoded by Finale as a <backup> then a <forward> half (invisible
+     time advance), NOT a visible rest. The importer must translate the forward
+     into a HIDDEN rest (<rest visible="false">) so the voice-2 half note stays
+     on beat 3 instead of collapsing to beat 1 (the displacement bug, sonata
+     m.65). Asserted in FIXTURE_ASSERTIONS.phase5_musicxml_hidden_rest. */
+  phase5_musicxml_hidden_rest: {
+    setup: `
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>T</part-name></score-part></part-list><part id="P1">'
+        + '<measure number="1"><attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        + '<note><pitch><step>C</step><octave>5</octave></pitch><duration>96</duration><voice>1</voice><type>whole</type></note>'
+        + '<backup><duration>96</duration></backup>'
+        + '<forward><duration>48</duration><voice>2</voice></forward>'
+        + '<note><pitch><step>E</step><octave>4</octave></pitch><duration>48</duration><voice>2</voice><type>half</type></note>'
+        + '</measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+
   /* MusicXML import — full-measure rest: Finale writes an empty bar as
      <rest measure="yes"/> with NO <type>. Import must fill the measure (a 4/4
      bar → a single whole rest), not the old lone-quarter degradation. */
@@ -4799,6 +4853,53 @@ export const FIXTURES = {
  *  invariant, no console errors) are applied to EVERY fixture by the
  *  runner — don't repeat them here. */
 export const FIXTURE_ASSERTIONS = {
+  /* MusicXML barline import: every <barline> feature lands as the model's
+   * native MEI vocabulary, and a mid-piece final bar becomes a movement break. */
+  phase5_musicxml_barlines: [
+    { name: 'barlines/repeats/endings/movement-break import correctly',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const ms = [...doc.querySelectorAll('measure')];
+        if (ms.length !== 8) return { ok: false, detail: 'measures=' + ms.length + ' (expected 8)' };
+        const [m1,,m3,m4,m5,m6,m7,m8] = ms;
+        if (m1.getAttribute('left') !== 'rptstart') return { ok: false, detail: 'm1 left=' + m1.getAttribute('left') };
+        if (m3.getAttribute('right') !== 'rptend') return { ok: false, detail: 'm3 right=' + m3.getAttribute('right') };
+        const e1 = m3.closest('ending');
+        if (!e1 || e1.getAttribute('n') !== '1') return { ok: false, detail: 'm3 ending=' + (e1 && e1.getAttribute('n')) };
+        const e2 = m4.closest('ending');
+        if (!e2 || e2.getAttribute('n') !== '2') return { ok: false, detail: 'm4 ending=' + (e2 && e2.getAttribute('n')) };
+        if (m5.getAttribute('right') !== 'dbl') return { ok: false, detail: 'm5 right=' + m5.getAttribute('right') };
+        if (m6.getAttribute('right') !== 'end') return { ok: false, detail: 'm6 right=' + m6.getAttribute('right') };
+        if (m7.getAttribute('data-hkl-section-title') !== 'II') return { ok: false, detail: 'm7 title=' + m7.getAttribute('data-hkl-section-title') };
+        if (m8.getAttribute('right') !== 'end') return { ok: false, detail: 'm8 right=' + m8.getAttribute('right') };
+        const secBreaks = doc.querySelectorAll('sb[data-hkl-section="true"]').length;
+        if (secBreaks !== 1) return { ok: false, detail: 'sectionBreaks=' + secBreaks + ' (expected 1)' };
+        return { ok: true, detail: 'rptstart + rptend/ending1 + ending2 + dbl + movement-break(II) OK' };
+      })()` },
+  ],
+  /* MusicXML hidden-rest import: a <forward> becomes a hidden rest that fills
+   * the leading gap, keeping the voice-2 note at its true beat (not displaced). */
+  phase5_musicxml_hidden_rest: [
+    { name: 'forward→hidden rest precedes the note; layer fills the full measure',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const l2 = doc.querySelector('staff[n="1"] layer[n="2"]');
+        if (!l2) return { ok: false, detail: 'no layer 2' };
+        const kids = [...l2.children].filter(c => ['note','chord','rest'].includes(c.localName));
+        if (kids.length < 2) return { ok: false, detail: 'layer2 kids=' + kids.length };
+        if (kids[0].localName !== 'rest' || kids[0].getAttribute('visible') !== 'false')
+          return { ok: false, detail: 'first is ' + kids[0].localName + ' visible=' + kids[0].getAttribute('visible') };
+        const note = kids.find(c => c.localName === 'note');
+        if (!note) return { ok: false, detail: 'no note in layer2' };
+        if (kids.indexOf(note) === 0) return { ok: false, detail: 'note at index 0 (displaced)' };
+        const tk = (c) => { const d = parseInt(c.getAttribute('dur')||'0',10); const dots = parseInt(c.getAttribute('dots')||'0',10); let t = d ? 64/d : 0; if (dots===1) t*=1.5; else if (dots===2) t*=1.75; return t; };
+        const total = kids.reduce((s,c) => s + tk(c), 0);
+        if (total !== 64) return { ok: false, detail: 'layer2 ticks=' + total + ' (expected 64)' };
+        const hidden = kids.filter(c => c.getAttribute('visible') === 'false').reduce((s,c) => s + tk(c), 0);
+        if (hidden !== 32) return { ok: false, detail: 'hidden ticks=' + hidden + ' (expected 32)' };
+        return { ok: true, detail: 'hidden rest (32t) precedes the half note; layer fills 64t' };
+      })()` },
+  ],
   /* Performance mode: per-voice frontier matching. Drives the real
    * startPerformance + strike handler synchronously via __performance (the
    * bridge transport is async and wouldn't settle in a sync fixture). Verifies
