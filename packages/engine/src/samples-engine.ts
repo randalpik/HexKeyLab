@@ -472,8 +472,10 @@ const loadedInstruments: Record<string, any> = {};
     if(!ctx||!instrumentKey||!buffers[instrumentKey])return;
     if(activeVoices[voiceKey])sNoteOff(voiceKey);
     /* Resolve velocity once: it both selects the velocity layer (findNearest)
-       and drives the gain curve (baseVol). Layer choice changes timbre; loudness
-       is owned by the curve, since all layers are normalized to the same target. */
+       and drives the gain curve (baseVol). The curve supplies the overall
+       dynamics; each layer's baked gain (s.gain) carries a perceptual softening
+       (orchestrator buildHki) so brighter layers sit at the device's own
+       relative loudness rather than a flat target. */
     var resolvedVel=(velocity!==undefined?velocity:DEFAULT_DYNAMIC_MAP.f);
     var nearest=findNearest(freq,resolvedVel,instrumentKey);
     if(!nearest)return;

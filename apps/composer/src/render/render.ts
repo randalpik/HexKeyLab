@@ -73,6 +73,9 @@ class Renderer {
   private container: HTMLElement | null = null;
   private viewMode: ViewMode = 'page';
   private zoom: ZoomLevel = 100;
+  /** Document page-size factor (ratio; 1 = default US Letter). Scales the page
+   *  rectangle in page view only — content stays at the crisp zoom size. */
+  private pageScale = 1;
   private theme: ScoreTheme = 'light';
   private readyPromise: Promise<void>;
   /** Scroll-view spot-splice engine (Phase B2). Holds the persistent SVG's
@@ -124,7 +127,13 @@ class Renderer {
    *                 are honored, so the natural system breaks must already be
    *                 baked into the data (see layoutBreaks). */
   private buildOptions(strategy: 'none' | 'auto' | 'smartSb0' | 'encoded' = 'auto'): object {
-    const geom = this.viewMode === 'page' ? PAGE_GEOM : SCROLL_GEOM;
+    /* Page view: scale the page rectangle (dims + margins) by the document's
+       pageScale so the notation — rendered at the fixed crisp scale/unit —
+       occupies more/less of the page (more/fewer bars per system) while every
+       glyph keeps its on-screen size. Scroll view has no page rectangle, so the
+       factor is ignored (SCROLL_GEOM as-is). The scaled top margin still flows
+       through crispMarginTop below, keeping staff-line phase crisp. */
+    const geom = this.viewMode === 'page' ? this.scalePageGeom(PAGE_GEOM) : SCROLL_GEOM;
     const breaksOpt: Record<string, string | number> =
       strategy === 'smartSb0' ? { breaks: 'smart', breaksSmartSb: 0 }
       : { breaks: strategy };
@@ -154,6 +163,22 @@ class Renderer {
   /** The active preset's Verovio scale (for pinExactScale). */
   private currentScale(): number {
     return CRISP_PRESETS[this.zoom].scale;
+  }
+
+  /** Scale a page-geometry block (pageWidth/pageHeight + the four margins) by the
+   *  current pageScale. Dimensions round to integers (Verovio units); margins
+   *  stay float (the top one is re-crisped by crispMarginTop in buildOptions). */
+  private scalePageGeom(g: typeof PAGE_GEOM): typeof PAGE_GEOM {
+    const f = this.pageScale;
+    if (f === 1) return g;
+    return {
+      pageWidth: Math.round(g.pageWidth * f),
+      pageHeight: Math.round(g.pageHeight * f),
+      pageMarginTop: g.pageMarginTop * f,
+      pageMarginBottom: g.pageMarginBottom * f,
+      pageMarginLeft: g.pageMarginLeft * f,
+      pageMarginRight: g.pageMarginRight * f,
+    };
   }
 
   /** Snap every rendered system's staff lines onto the device-pixel grid for the
@@ -255,6 +280,20 @@ class Renderer {
 
   getZoom(): ZoomLevel {
     return this.zoom;
+  }
+
+  /** Set the document page-size factor (ratio; 1 = default). Only page view
+   *  uses it; a change forces a full re-engrave (page dims drive the whole
+   *  layout). Idempotent — no-op when unchanged, so steady-state edits keep
+   *  splicing. */
+  setPageScale(ratio: number): void {
+    const next = Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
+    if (next !== this.pageScale) this.forceFullRerender();
+    this.pageScale = next;
+  }
+
+  getPageScale(): number {
+    return this.pageScale;
   }
 
   /** Render the given MEI string into the attached container. */

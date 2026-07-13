@@ -9,7 +9,9 @@
 // Decay instruments only (sustained is out of HKLO scope): loop:false, decays:true.
 
 import { computeGain, measureDecay, buildInterleavedStereo, buildMonoDownmix } from './shim.js';
-import { denoiseChannels } from './denoise.js';
+import { cleanCapture, findOnsetSec, postGainNoiseDb, POSTGAIN_NOISE_SKIP_DB } from './clean.js';
+import { velocityCurveGain } from '@hkl/shared/velocity.js';
+import type { VelocityResponse } from '../state.js';
 import { getCapture } from '../capture/store.js';
 import type { CaptureRecord } from '../device/types.js';
 import type { HkiBundle, HkiManifest, HkiSampleEntry } from '@hkl/shared/hki.js';
@@ -19,12 +21,6 @@ import type { JobOutcome } from '../capture/loop.js';
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 export function noteName(midi: number): string {
   return NOTE_NAMES[((midi % 12) + 12) % 12] + (Math.floor(midi / 12) - 1);
-}
-
-const ONSET_THRESH = 0.003;
-function findOnsetSec(mono: Float32Array, sr: number): number {
-  for (let i = 0; i < mono.length; i++) if (Math.abs(mono[i]) > ONSET_THRESH) return i / sr;
-  return 0;
 }
 
 const TAIL_FADE_MS = 30;
@@ -88,10 +84,68 @@ export interface BuildResult {
   bundle: HkiBundle;
   noteCount: number;
   layerCount: number;
+  /** Layers dropped because their post-gain noise floor exceeded
+   *  POSTGAIN_NOISE_SKIP_DB (can't be cleanly boosted). e.g. ["A6_v24"].
+   *  Playback falls back to the note's nearest surviving layer via pickLayer. */
+  skippedLayers: string[];
 }
 
-/** Build a v2 layered .hki bundle from the passing capture outcomes. */
-export function buildBundle(outcomes: JobOutcome[], config: CaptureConfig, deviceLabel: string): BuildResult {
+/** Per-reference-velocity SOFTENING scale for velocity-layered notes, derived by
+ *  comparing the device's MEASURED velocity→loudness (`resp`, the discovery
+ *  sweep) against the house velocity curve HKL plays back with.
+ *
+ *  For each layer velocity v the residual r(v) = L(v)/houseCurve(v) is how much
+ *  louder the KEYBOARD actually is at v than our curve already applies. Anchoring
+ *  at the max residual gives a scale ≤ 1 that ONLY attenuates: the layer where
+ *  the keyboard is loudest-relative-to-our-curve keeps its flat-normalized gain;
+ *  the others are pulled down by exactly the keyboard's own relative deficit.
+ *  Net effect: the house curve keeps owning the bulk of the velocity dynamics
+ *  (we don't touch our "proven" system), and the residual — baked per layer —
+ *  reproduces the keyboard's real inter-layer balance, so a brighter layer no
+ *  longer reads as a perceived-loudness tier. Multiplies the flat normalization
+ *  gain, so it never lifts a layer toward clipping.
+ *
+ *  Returns velocity→scale for `vels`; a missing/degenerate `resp` ⇒ all 1.0. */
+export function layerSofteningScale(resp: VelocityResponse | null | undefined, vels: number[]): Map<number, number> {
+  const scale = new Map<number, number>();
+  for (const v of vels) scale.set(v, 1.0);
+  if (!resp || resp.length < 2 || vels.length < 2) return scale;
+
+  const sorted = [...resp].sort((a, b) => a.velocity - b.velocity);
+  const levelDbAt = (v: number): number => {
+    if (v <= sorted[0].velocity) return sorted[0].levelDb;
+    const last = sorted[sorted.length - 1];
+    if (v >= last.velocity) return last.levelDb;
+    for (let i = 1; i < sorted.length; i++) {
+      if (v <= sorted[i].velocity) {
+        const a = sorted[i - 1], b = sorted[i];
+        const t = (v - a.velocity) / (b.velocity - a.velocity);
+        return a.levelDb + t * (b.levelDb - a.levelDb);   // linear interp in dB
+      }
+    }
+    return last.levelDb;
+  };
+
+  const residual = new Map<number, number>();
+  let maxR = -Infinity;
+  for (const v of vels) {
+    const kbdLin = Math.pow(10, levelDbAt(v) / 20);   // keyboard's measured level
+    const curve = velocityCurveGain(v);               // what our curve already applies
+    const r = curve > 0 ? kbdLin / curve : 0;
+    residual.set(v, r);
+    if (r > maxR) maxR = r;
+  }
+  if (!(maxR > 0)) return scale;
+  for (const v of vels) scale.set(v, (residual.get(v) ?? maxR) / maxR);
+  return scale;
+}
+
+/** Build a v2 layered .hki bundle from the passing capture outcomes.
+ *  `whineToneHz` (the device's calibrated whine profile) is notched out of each
+ *  raw capture before broadband NR — empty ⇒ no de-whine.
+ *  `velocityResponse` (the discovery sweep's measured velocity→loudness) softens
+ *  brighter velocity layers vs the house curve — null ⇒ no per-layer softening. */
+export function buildBundle(outcomes: JobOutcome[], config: CaptureConfig, deviceLabel: string, whineToneHz: number[] = [], velocityResponse: VelocityResponse | null = null): BuildResult {
   const passing = outcomes.filter(o => o.gate.pass);
   if (passing.length === 0) throw new Error('No passing captures to export.');
 
@@ -105,18 +159,30 @@ export function buildBundle(outcomes: JobOutcome[], config: CaptureConfig, devic
 
   const samples: HkiSampleEntry[] = [];
   const audio: Record<string, Uint8Array> = {};
+  const skippedLayers: string[] = [];
   let layerCount = 0;
 
-  // Noise-reduce a capture using the pre-attack silence as its noise profile,
-  // then analyze + encode the CLEAN audio (so gain/freq and the stored WAV all
-  // reflect the denoised signal).
+  // Perceptual softening scale, over the reference velocities of the MULTI-layer
+  // notes only (a single-layer note has no timbre-tier to soften).
+  const layeredVels = new Set<number>();
+  for (const list of byNote.values()) if (list.length > 1) for (const o of list) layeredVels.add(o.job.velocity);
+  const softening = layerSofteningScale(velocityResponse, [...layeredVels]);
+
+  // Clean a capture in two stages, then analyze + encode the CLEAN audio (so
+  // gain/freq and the stored WAV all reflect it):
+  //   1. De-whine — notch the device's fixed tonal comb out of the RAW capture,
+  //      where it's at full strength. Pure tones → notch, not subtraction (no
+  //      musical noise). Runs first so the pre-roll used for the NR profile is
+  //      already tone-free.
+  //   2. Broadband NR — decision-directed Wiener, profiled from the pre-attack
+  //      silence, pulls the hiss down without the musical-noise birdies plain
+  //      spectral subtraction left (which stacked across soft chords).
   const cleanCache = new Map<string, CaptureRecord | null>();
   const cleanOf = (captureId: string): CaptureRecord | null => {
     if (cleanCache.has(captureId)) return cleanCache.get(captureId)!;
     const rec = getCapture(captureId);
     if (!rec) { cleanCache.set(captureId, null); return null; }
-    const onsetSec = findOnsetSec(buildMonoDownmix(rec.channels), rec.sampleRate);
-    const clean: CaptureRecord = { channels: denoiseChannels(rec.channels, rec.sampleRate, onsetSec), sampleRate: rec.sampleRate };
+    const clean = cleanCapture(rec.channels, rec.sampleRate, whineToneHz);
     cleanCache.set(captureId, clean);
     return clean;
   };
@@ -131,18 +197,40 @@ export function buildBundle(outcomes: JobOutcome[], config: CaptureConfig, devic
     // for local sources.)
     const noteFreq = layers[0].job.freq;
 
+    // Assess every layer, then drop any whose post-gain noise floor is too high
+    // to boost cleanly (a soft high note whose required gain amplifies its hiss
+    // into audibility). Skip is per-layer — playback falls back to the note's
+    // nearest surviving layer via pickLayer — but never empties a note: if every
+    // layer is over threshold, keep the single least-noisy one (a quiet-ish note
+    // beats a hole that pitch-shifts a neighbour).
+    interface Cand { layer: JobOutcome; clean: CaptureRecord; gain: number; trimStart: number; pgn: number; }
+    const cands: Cand[] = [];
     for (const layer of layers) {
       const clean = cleanOf(layer.job.captureId);
       if (!clean) continue;
       const a = analyzeCapture(clean.channels, clean.sampleRate);
-      const file = `samples/${name}_v${layer.job.velocity}.wav`;
-      const entry: HkiSampleEntry = { name, file, freq: noteFreq, gain: a.gain };
+      // Soften brighter layers by the keyboard-vs-house-curve residual (multi-
+      // layer notes only). ≤ 1, so it only attenuates the flat normalization.
+      const soften = layers.length > 1 ? (softening.get(layer.job.velocity) ?? 1) : 1;
+      const gain = a.gain * soften;
+      cands.push({ layer, clean, gain, trimStart: a.trimStart, pgn: postGainNoiseDb(clean, gain) });
+    }
+    if (cands.length === 0) continue;
+    const clean = cands.filter(c => c.pgn <= POSTGAIN_NOISE_SKIP_DB);
+    const keep = clean.length > 0 ? clean : [cands.reduce((m, c) => (c.pgn < m.pgn ? c : m))];
+    const keepSet = new Set(keep);
+
+    for (const c of cands) {
+      const vel = c.layer.job.velocity;
+      if (!keepSet.has(c)) { skippedLayers.push(`${name}_v${vel}`); continue; }
+      const file = `samples/${name}_v${vel}.wav`;
+      const entry: HkiSampleEntry = { name, file, freq: noteFreq, gain: c.gain };
       // Only tag `vel` when the note actually has multiple layers — a single-layer
       // note stays a plain (vel-less) v1-style entry.
-      if (layers.length > 1) entry.vel = layer.job.velocity;
-      if (a.trimStart > 0) entry.trimStart = a.trimStart;
+      if (layers.length > 1) entry.vel = vel;
+      if (c.trimStart > 0) entry.trimStart = c.trimStart;
       samples.push(entry);
-      audio[file] = encodeWavFloat32(fadeOutTail(clean.channels, clean.sampleRate), clean.sampleRate);
+      audio[file] = encodeWavFloat32(fadeOutTail(c.clean.channels, c.clean.sampleRate), c.clean.sampleRate);
       layerCount++;
     }
   }
@@ -169,5 +257,5 @@ export function buildBundle(outcomes: JobOutcome[], config: CaptureConfig, devic
     },
   };
 
-  return { bundle, noteCount: byNote.size, layerCount };
+  return { bundle, noteCount: byNote.size, layerCount, skippedLayers };
 }

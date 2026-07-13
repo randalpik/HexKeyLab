@@ -5,7 +5,7 @@
 // live AudioContext/MIDI handle can't serialize — you re-click Connect) and
 // NOT the captured PCM (tens to hundreds of MB; lives in capture/store.ts).
 
-import type { CaptureConfig, VelocityBin } from './state.js';
+import type { CaptureConfig, VelocityBin, WhineProfile, VelocityResponse } from './state.js';
 
 const KEY = 'hkl-orchestrator-session-v1';
 
@@ -14,6 +14,8 @@ export interface PersistedSession {
   bins?: VelocityBin[];
   midiOutId?: string;
   audioInId?: string;
+  whineProfile?: WhineProfile;
+  velocityResponse?: VelocityResponse;
 }
 
 export function loadPersisted(): PersistedSession {

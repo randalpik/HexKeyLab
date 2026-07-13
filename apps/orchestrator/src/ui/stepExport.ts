@@ -32,10 +32,13 @@ export function renderExport(host: HTMLElement): void {
 
   const buildBtn = el('button', { type: 'button', onclick: () => {
     try {
-      built = buildBundle(passing, getSession().config, getSession().deviceLabel);
+      built = buildBundle(passing, getSession().config, getSession().deviceLabel, getSession().whineProfile?.toneHz ?? [], getSession().velocityResponse);
       bytes = writeHki(built.bundle);
       const mb = (bundleAudioSize(built.bundle) / 1e6).toFixed(1);
-      summary.textContent = `Built v${built.bundle.manifest.version} bundle: ${built.noteCount} notes × layers = ${built.layerCount} samples, ${mb} MB audio (${(bytes.length / 1e6).toFixed(1)} MB packed).`;
+      const skipped = built.skippedLayers.length
+        ? ` Skipped ${built.skippedLayers.length} too-noisy layer(s): ${built.skippedLayers.join(', ')} (playback falls back to the nearest layer).`
+        : '';
+      summary.textContent = `Built v${built.bundle.manifest.version} bundle: ${built.noteCount} notes × layers = ${built.layerCount} samples, ${mb} MB audio (${(bytes.length / 1e6).toFixed(1)} MB packed).${skipped}`;
       downloadBtn.removeAttribute('disabled');
       if (isHklConnected()) sendBtn.removeAttribute('disabled');
       status.textContent = 'Bundle built. Download or send to HKL.';

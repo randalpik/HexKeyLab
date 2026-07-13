@@ -38,6 +38,7 @@
 // Snapshot stats persist to localStorage; raw samples are session-only.
 
 import { savePrefs, loadPrefs, type VelocityCalPrefs, type KeyStatsSnapshot } from '../state/persistence.js';
+import { HOUSE_VELOCITY_CURVE } from '@hkl/shared/velocity.js';
 import type { KeyId } from '../types.js';
 
 export interface VelocityCalState {
@@ -87,11 +88,10 @@ export interface IntervalCurveState {
 
 /* House (musical velocity → gain) curve. Gentle: floor 0.05, ceiling 1.0,
    gamma 1.5 — the former piano-feel curve, now the single device-independent
-   audio curve. */
+   audio curve. The floor/ceiling/gamma come from @hkl/shared so the orchestrator
+   bakes per-layer gains against the exact same curve HKL plays back with. */
 export const DEFAULT_CAL: VelocityCalState = {
-  floor: 0.05,
-  ceiling: 1.0,
-  gamma: 1.5,
+  ...HOUSE_VELOCITY_CURVE,
   perKey: {},
 };
 

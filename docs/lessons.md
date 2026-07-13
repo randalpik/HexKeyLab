@@ -1196,6 +1196,32 @@ capture endpoint that survives suspend/resume and doesn't depend on jack-detect.
 *can* work (Max shipped a Korg `.hki` from it) but is high-maintenance; everything downstream of a
 stable capture device "just works."
 
+### Diagnosing a sampled instrument's whine — post-gain noise, not gain; notch, not subtract (2026-07-12)
+
+Hard-won from cleaning up the SP-250's high register:
+
+**A device's own tonal whine (DAC/switching-clock artifact) scales with its master volume and is
+identical in every note.** So you can't out-record it (louder = proportionally louder whine, no SNR
+gain — and it costs inter-layer data), and coherent copies **stack** across a chord (+6 dB per
+doubling of notes). Because it's a *pure fixed tone*, spectral subtraction can't touch it cleanly;
+**notch** it, calibrated from an idle recording (it's absent from a silence-only NR profile only if
+you never recorded idle — record idle and it's right there). See `analysis/dewhine.ts`.
+
+**The predictor of an audible whine on a boosted layer is the POST-GAIN noise floor
+(`gain × cleaned pre-roll floor`), NOT the gain.** A clean high note that needs 167× is fine
+(−100 dBFS floor → −56 dBFS boosted); a noisy one at 224× is not (−77 → −30). Ranking by gain alone
+mis-orders them. The reliable skip metric is post-gain noise > −45 dBFS.
+
+**When a note "whines," localize it before assuming broadband noise.** Measure the *pre-roll* floor
+AND the *tail* separately, boosted by the gain. Broadband-floor whine (elevated pre-roll → boosted
+hiss, e.g. A6) is a skip candidate; a tail full of the note's own closely-spaced partials beating
+(e.g. A4's 439/445/434 Hz at 105× — piano multi-string detuning) is a *natural artifact of the boost*,
+not a bad capture — retry it (it's a local gain outlier), don't skip it.
+
+**A quiet note going silent is often `computeGain` returning null**, not a capture miss: a fast decay
+has too few momentary windows above the K-weighting −70 LUFS gate → null → caller defaults gain to
+1.0 → inaudible. The fix is a loudest-window RMS fallback in `measureDecay`, not touching the capture.
+
 ## Composer: mid-measure clef vs the leading-signature region (cursor anchor)
 
 `renderer.findSigEndXForStaff` (render/render.ts) finds the right edge of a measure's **leading**

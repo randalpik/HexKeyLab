@@ -14,13 +14,20 @@ picks the MIDI output that triggers it (or selects the synthetic loopback for a 
 dry run):
 
 1. **Connect** — pick MIDI output (Web MIDI) + audio input (getUserMedia, all browser DSP off),
-   build a `CaptureDevice`, test with a probe note + live level meter.
+   build a `CaptureDevice`, test with a probe note + live level meter. Optional **Calibrate whine**:
+   record ~3 s of idle output and auto-detect the device's fixed tonal artifact comb (the whine
+   profile — see [Noise reduction](#noise-reduction)), notched from every capture.
 2. **Discover** — sweep a probe note across the velocity band, fingerprint each, and detect the
    device's internal velocity-layer boundaries (or fall back to N even bins). User edits the bins.
+   The sweep's per-velocity levels are also kept as the device's velocity→loudness response, used
+   for per-layer softening at export (see [`.hki` v2](#hki-v2--velocity-layers)).
 3. **Configure** — instrument key/name, note range, semitone stride, hold time.
 4. **Capture** — record each (note × layer): hold the key, record the natural decay (12 s max or
-   until −60 dBFS), run quality gates, flag failures for re-capture.
-5. **Export** — normalize each layer, assemble a v2 `.hki`, download or Send-to-HKL.
+   until −60 dBFS), run quality gates + a normalization assessment, **auto-retry once** on a
+   yellow take (failed gate / too-noisy-after-boost / local gain outlier), flag the rest.
+5. **Export** — per capture: de-whine (notch) → broadband NR (Wiener); per layer: normalize +
+   perceptual-soften, then **drop layers whose boosted noise floor is too high** (fall back to the
+   nearest surviving layer); assemble a v2 `.hki`, download or Send-to-HKL.
 
 Decay instruments only (sustained is out of scope). Output provenance is tagged
 `source: 'orchestrator'`.
@@ -29,8 +36,8 @@ Decay instruments only (sustained is out of scope). Output provenance is tagged
 
 ```
 main.ts          wizard bootstrap + step router; window.__hklo test hook
-state.ts         session: active CaptureDevice, discovered bins, CaptureConfig (pub/sub)
-persist.ts       localStorage: config + bins + last device IDs (survives reload/HMR)
+state.ts         session: CaptureDevice, bins, CaptureConfig, whineProfile, velocityResponse (pub/sub)
+persist.ts       localStorage: config + bins + device IDs + whineProfile + velocityResponse (reload/HMR)
 bridge.ts        HKLO↔HKL bridge (hkl-orchestrator-bridge): sendHkiToHkl + conn badge
 
 device/
@@ -39,8 +46,8 @@ device/
   capture-worklet.ts AudioWorkletProcessor: copies Float32 quanta + per-quantum RMS to main thread
   captureGraph.ts    shared worklet wiring + capture concat + trailing-RMS (real + loopback)
   device.ts          RealDevice (MidiOut + AudioInput) implements CaptureDevice; midiToFreq
-  loopback.ts        synthetic CaptureDevice (additive synth, discrete velocity layers) — no hardware
-  recorder.ts        one capture: arm → noteOn → hold → stop on decay/12s → noteOff → take
+  loopback.ts        synthetic CaptureDevice (additive synth, discrete velocity layers; enableWhine) — no hardware
+  recorder.ts        one capture: arm → noteOn → hold → stop on decay/12s → noteOff → take; recordIdle (whine cal)
   types.ts           CaptureRecord, CaptureDevice
 
 discovery/
@@ -51,14 +58,17 @@ discovery/
 
 capture/
   plan.ts            enumerate (note × layer) jobs
-  loop.ts            sequential capture loop + single-job captureOne (re-capture)
+  loop.ts            sequential capture loop (assess + auto-retry-once) + single-job captureOne
   gates.ts           quality gates (quiet/clip/short/pitch) — reuses @hkl/analysis DSP
   store.ts           in-memory lossless PCM store + gate outcomes (not persisted — too big)
+  whineCal.ts        record idle → detectCombTones → whine profile (device tonal artifacts)
 
 analysis/
   shim.ts            single import point for @hkl/analysis DSP (computeGain, measureDecay, …)
-  denoise.ts         spectral-subtraction NR (pre-roll noise profile, WOLA)
-  buildHki.ts        denoise → normalize gain → float-WAV encode → v2 HkiBundle (claimed pitch)
+  dewhine.ts         detectCombTones (idle → tone freqs) + dewhineChannels (zero-phase notch cascade)
+  wiener.ts          decision-directed (Ephraim-Malah) Wiener broadband NR (pre-roll profile, WOLA)
+  clean.ts           cleanCapture (de-whine→Wiener) + post-gain-noise assessment (assessRaw, skip threshold)
+  buildHki.ts        clean → normalize + soften → per-layer skip (too noisy) → float-WAV → v2 HkiBundle
 
 ui/
   dom.ts, download.ts
@@ -117,15 +127,58 @@ Pitch/tuning below); the cents deviation is still measured (via `refineFundament
 in the capture table for the user to eyeball, but it never rejects a sample or sets its stored pitch.
 UI tiers: green pass, yellow recoverable (quiet/short), red hard-fail (clip).
 
+## Capture reliability — auto-retry + skip (high, soft notes)
+
+A genuinely-quiet note (high register at low velocity) needs a large normalization gain (166–328×
+was observed on the SP-250's top octave), which amplifies its noise floor. Two problems the gates
+above don't catch, both driven by the **post-gain noise floor** = `gain × cleaned pre-roll floor`
+(what the boosted broadband hiss actually measures — the reliable whine predictor; a *clean* high
+note with a big gain is fine, a noisy one is not):
+
+- **Auto-retry-once** (`loop.ts`): after each capture, the take is cleaned + assessed; it's re-recorded
+  a single time if it comes out **yellow** — a failed gate, a post-gain noise floor over the skip
+  threshold, or a **local gain outlier** (gain > 1.6× the median of the last few *same-velocity*
+  gains — same-velocity gains trend smoothly with pitch, so an abnormally-quiet take like a
+  soft/mis-struck strike stands out without flagging the whole legitimately-quiet top register). The
+  cleaner take (non-clipped, lower post-gain noise) is kept.
+- **Per-layer skip** (`buildHki`): a layer whose post-gain noise floor exceeds **−45 dBFS**
+  (`POSTGAIN_NOISE_SKIP_DB`) can't be boosted cleanly, so it's dropped and reported; playback falls
+  back to the note's nearest surviving layer via `pickLayer`. Never empties a note — if every layer
+  is over threshold, the least-noisy one is kept.
+
+**Short-decay gain fallback** (`@hkl/analysis` `measureDecay`): a note too short for the K-weighting
+window (its momentary windows tail below the −70 LUFS gate) would leave `computeGain` null → the
+caller defaults gain to 1.0 → the note is inaudible ("missing"). `measureDecay` now falls back to a
+loudest-window RMS so those notes still normalize — distinguishing a *clean-but-short* note (kept
+with a real gain) from a *noisy* one (which the skip then drops). We deliberately do **not** cap or
+otherwise adjust note volume beyond the velocity + layer-softening system — a note is either kept at
+its real gain or skipped.
+
 ## Noise reduction
 
-Each captured layer is denoised before encoding (`analysis/denoise.ts`) by **spectral subtraction**:
-the pre-roll silence is a clean per-capture noise profile, so we STFT the signal (Hann, 75 % overlap,
-zero-padded edges for clean WOLA reconstruction), subtract `α·noiseMag` per bin with a spectral
-floor `β·|X|`, and invert. Defaults α = 1.5, β = 0.04 (≈ conservative; the floor prevents musical
-noise). It's dramatic on tonal noise (mains hum, device whine — ~20–28 dB) and modest on broadband
-hiss (~5 dB), and leaves the note body essentially untouched (signal ≫ noise there), so it mainly
-cleans the decay tail + inter-note silence — the chord-hiss source.
+Two stages on the raw capture, in order (`analysis/dewhine.ts` then `analysis/wiener.ts`, wired
+together in `analysis/clean.ts` `cleanCapture`, used by both export and the capture-loop assessment):
+
+**1. De-whine (tonal comb notch).** Many digital instruments emit a fixed narrowband whine — a
+DAC/switching-clock artifact at stable frequencies (e.g. the Korg SP-250's ~1502 Hz-spaced comb
+peaking at 12 kHz, plus a 15625 Hz timer tone). It's *ever-present* and *scales with the instrument's
+master volume*, so it can't be dialed out at the input; it's *identical in every note*, so it stacks
+coherently across a soft chord; and it's a *pure tone*, so spectral subtraction can neither lock onto
+it nor remove it without musical noise. The right tool is a **notch**. `detectCombTones` finds the
+tones from an idle recording (Welch spectrum → prominence + global-floor peak-pick, sub-bin
+interpolated — the **whine calibration** in Connect), and `dewhineChannels` applies a **zero-phase
+(filtfilt) RBJ notch** at each. Notching a few-Hz-wide tone costs essentially nothing on the piano
+(whose energy there is broadband, not on those exact bins) and leaves no musical noise. Runs *first*,
+so the pre-roll used by the next stage's profile is already tone-free. No profile ⇒ no-op.
+
+**2. Broadband NR (decision-directed Wiener).** Replaces the former plain spectral subtraction, whose
+per-bin magnitude subtraction flickered near-floor bins frame-to-frame and left musical-noise birdies
+that stacked across soft chords. The pre-roll silence gives a per-bin noise-power profile; each frame
+uses the Ephraim-Malah **decision-directed a-priori SNR** (recursive blend of the previous clean
+estimate and the instantaneous SNR, α = 0.98) → Wiener gain `ξ/(1+ξ)`, floored at `gainMin` (0.06 ≈
+−24 dB) so a natural bed remains instead of gated silence. The temporal smoothing is what kills the
+birdies. STFT Hann, 75 % overlap, zero-padded edges for clean WOLA. Note body sits far above the
+floor and passes through untouched; the work is in the decay tail + inter-note silence.
 
 ## Pitch / tuning — trust the claimed pitch
 
@@ -143,12 +196,21 @@ a weak-fundamental high note from an octave-up, and only ever produced false fai
 
 The bundle is the same `.hki` format bumped to version 2 (`packages/shared/src/hki.ts`):
 `HkiSampleEntry` gains an optional `vel?` (reference velocity). A layered note is multiple flat
-`samples[]` rows sharing `name`+`freq` at different `vel`. **Each layer is normalized to the same
-−18 dBFS target** with the analyzer's gain finder, so at play time the engine picks the nearest
-layer by velocity (`pickLayer` in `@hkl/engine`) and the existing house velocity curve owns
-loudness — the layer choice changes timbre, not level. Single-layer notes omit `vel` and behave
-identically to v1. `readHki` losslessly upcasts v1 bundles. Audio is the denoised capture encoded to
-32-bit float WAV.
+`samples[]` rows sharing `name`+`freq` at different `vel`. At play time the engine picks the nearest
+layer by velocity (`pickLayer` in `@hkl/engine`) and the house velocity curve supplies the overall
+dynamics; single-layer notes omit `vel` and behave identically to v1. `readHki` losslessly upcasts
+v1 bundles. Audio is the cleaned capture encoded to 32-bit float WAV.
+
+**Per-layer gain = flat normalization × perceptual softening.** Each layer is first normalized to the
+−18 dBFS target (analyzer gain finder), then multiplied by a **softening scale** (`layerSofteningScale`
+in `buildHki`). The scale is derived by comparing the device's *measured* velocity→loudness (the
+Discover sweep's `velocityResponse`) against the house velocity curve `velocityCurveGain`
+(`@hkl/shared/velocity.ts`, the single source of truth the HKL playback curve also wraps): for each
+layer velocity `v`, residual `r(v) = L(v)/houseCurve(v)`, normalized to the max residual → a scale
+`≤ 1` that **only attenuates**. This bakes in the keyboard's own inter-layer loudness balance so a
+brighter layer no longer reads as a perceived-loudness *tier* — while the house curve keeps owning the
+bulk of the dynamics (we don't touch the "proven" playback system). It only ever softens, so it can't
+push a layer toward clipping; multi-layer notes only; no sweep data ⇒ scale 1.0 (flat, as before).
 
 ## Bridge to HKL
 
@@ -162,14 +224,22 @@ Own `BroadcastChannel('hkl-orchestrator-bridge')` mirroring the Analyzer: `orche
 HKLO's audio path can't be fully verified model-only. The split (see lessons.md "Orchestrator
 capture/discovery gotchas"):
 - **Pure logic, deterministic** — `test/orchestrator-smoke/bins-test.mjs` (node) asserts
-  `detectBins` boundary positions on synthetic fingerprints. `pickLayer` is in
-  `test/engine-smoke`.
+  `detectBins` boundary positions on synthetic fingerprints. `dewhine-test.mjs` (node) asserts
+  `detectCombTones` finds the comb (no spurious peaks), `dewhineChannels` notches it ≥20 dB while
+  preserving the note, and `wienerDenoiseChannels` pulls the broadband floor down without eating the
+  body. Both run via `node --import ./test/orchestrator-smoke/register-ts.mjs …` (a resolve hook that
+  rewrites the modules' `.js` specifiers to their `.ts` siblings for Node's type-stripping).
+  `pickLayer` is in `test/engine-smoke`.
 - **Plumbing + browser-only logic** — `test/orchestrator-smoke/smoke.mjs` drives a headless
   Chromium and calls `window.__hklo.*` hooks: loopback capture returns audio, a sweep runs
   end-to-end, the gates fire on synthesized PCM (with a pre-roll noise floor so the SNR-relative
-  logic is exercised), noise reduction drops the floor while preserving the note body, a capture
-  loop runs, and an end-to-end export builds a v2 `.hki` that round-trips, decodes, normalizes
-  layers to within ~1 dB, and stores the **claimed** pitch. Point it at the running umbrella with
+  logic is exercised), Wiener NR drops the floor while preserving the note body, `calibrateWhineTest`
+  detects a synthetic comb the loopback emits (`enableWhine`), `softeningTest` checks the per-layer
+  scale (strictly decreasing + anchored at 1.0 for a flat response, all-1.0 for none),
+  `normalizationTest` checks the short-decay RMS fallback (a real gain, not 1.0) + the post-gain-noise
+  skip metric (clean note kept, noisy note skipped), a capture loop runs, and an end-to-end export
+  builds a v2 `.hki` that round-trips, decodes, normalizes layers to within ~1 dB, and stores the
+  **claimed** pitch. Point it at the running umbrella with
   `HKLO_URL=http://localhost:5170/orchestrator/` — do **not** spawn a competing server on 5176 or
   kill by port (it hits the umbrella's child; the proxy doesn't respawn). `persist-test.mjs` checks
   the localStorage reload round-trip.

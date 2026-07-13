@@ -82,6 +82,7 @@ function readForm(): {
   title: string; subtitle: string; composer: string; footer: string;
   gradual: GradualPercents;
   layoutReq: LayoutReq; hejiEnabled: boolean; ignoreColor: boolean;
+  pageScale: number;
 } | null {
   const title = $<HTMLInputElement>('setupTitle')?.value ?? 'Untitled';
   const subtitle = ($<HTMLInputElement>('setupSubtitle')?.value ?? '').trim();
@@ -109,7 +110,9 @@ function readForm(): {
   const layoutReq: LayoutReq = { tuningMode, refQ, refR };
   const hejiEnabled = $<HTMLInputElement>('setupHeji')?.checked ?? false;
   const ignoreColor = $<HTMLInputElement>('setupIgnoreColor')?.checked ?? false;
-  return { title, subtitle, composer, footer, gradual, layoutReq, hejiEnabled, ignoreColor };
+  const pageScaleRaw = parseInt($<HTMLInputElement>('setupPageScale')?.value ?? '', 10);
+  const pageScale = Number.isFinite(pageScaleRaw) ? Math.max(60, Math.min(160, pageScaleRaw)) : 100;
+  return { title, subtitle, composer, footer, gradual, layoutReq, hejiEnabled, ignoreColor, pageScale };
 }
 
 function isTuningMode(s: string): s is TuningMode {
@@ -142,6 +145,7 @@ export function openSetupDialog(
   const subEl = $<HTMLInputElement>('setupSubtitle'); if (subEl) subEl.value = model.getSubtitle();
   const cEl = $<HTMLInputElement>('setupComposer'); if (cEl) cEl.value = model.getComposer();
   const ftEl = $<HTMLInputElement>('setupFooter');   if (ftEl) ftEl.value = model.getFooter();
+  const psEl = $<HTMLInputElement>('setupPageScale'); if (psEl) psEl.value = String(model.getPageScale());
   populateDynamicInputs(model);
   populateGradualInputs(model);
 
@@ -258,6 +262,7 @@ export function openSetupDialog(
     }
     model.setHejiEnabled(values.hejiEnabled);
     model.setIgnoreColor(values.ignoreColor);
+    model.setPageScale(values.pageScale);
 
     /* Push the entire setup apply-block as ONE history entry. */
     if (history && beforeSnapshot) {

@@ -937,6 +937,31 @@ export function setIgnoreColor(doc: Document, on: boolean): void {
   cfg.setAttribute('ignore-color', on ? 'true' : 'false');
 }
 
+/** Document-level "page size" percentage, stored on <hkl:config>. Scales the
+ *  page rectangle (pageWidth/pageHeight/margins) in Composer's page view while
+ *  the notation stays at the crisp zoom-preset size — so the score's apparent
+ *  size RELATIVE TO THE PAGE changes (more/fewer bars per system) without
+ *  touching content crispness. Defaults 100; clamped 60–160. Absent ⇒ 100, so
+ *  legacy files need no migration. */
+const PAGE_SCALE_MIN = 60;
+const PAGE_SCALE_MAX = 160;
+const PAGE_SCALE_DEFAULT = 100;
+
+export function getPageScale(doc: Document): number {
+  const cfg = findHklConfig(doc);
+  const raw = cfg?.getAttribute('page-scale');
+  const n = raw == null ? NaN : parseInt(raw, 10);
+  if (!Number.isFinite(n)) return PAGE_SCALE_DEFAULT;
+  return Math.min(PAGE_SCALE_MAX, Math.max(PAGE_SCALE_MIN, n));
+}
+
+export function setPageScale(doc: Document, pct: number): void {
+  const cfg = ensureExtMetaConfig(doc);
+  const clamped = Math.min(PAGE_SCALE_MAX, Math.max(PAGE_SCALE_MIN,
+    Number.isFinite(pct) ? Math.round(pct) : PAGE_SCALE_DEFAULT));
+  cfg.setAttribute('page-scale', String(clamped));
+}
+
 function childInHklNs(parent: Element, localName: string): Element | null {
   for (const c of Array.from(parent.children)) {
     if (c.namespaceURI === HKL_NS && c.localName === localName) return c;

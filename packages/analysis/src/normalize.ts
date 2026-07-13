@@ -96,14 +96,48 @@ export function measureRmsLoop(
   return { ...m, region: 'loudest1s' };
 }
 
+const FALLBACK_WIN_SEC = 0.2;
+
+function stereoPeakOver(stereo: Float32Array, start: number, end: number): number {
+  let p = 0;
+  for (let i = start; i < end; i++) {
+    const l = Math.abs(stereo[2 * i]), r = Math.abs(stereo[2 * i + 1]);
+    if (l > p) p = l;
+    if (r > p) p = r;
+  }
+  return p;
+}
+
+/** Plain loudest-window RMS, used when K-weighting can't produce a value — a
+ *  short / fast-decaying note (common in the high register at low velocity) has
+ *  too few momentary windows above the −70 LUFS gate, so `measureDecayLufs`
+ *  returns null. Without a fallback `computeGain` then returns null → the caller
+ *  defaults gain to 1.0 → the note is inaudible ("missing"). This measures the
+ *  loudest FALLBACK_WIN_SEC stereo-RMS window so those notes still normalize. */
+function rmsFallback(stereo: Float32Array, mono: Float32Array, sr: number): MeasureResult {
+  const n = mono.length;
+  let onset = 0;
+  for (let i = 0; i < n; i++) { if (Math.abs(mono[i]) > 0.003) { onset = i; break; } }
+  const win = Math.min(n - onset, Math.round(FALLBACK_WIN_SEC * sr));
+  if (win <= 0) return { rms: null, peak: null, failReason: 'no audible region for RMS fallback' };
+  const hop = Math.max(1, Math.round(0.02 * sr));
+  let best = 0, bestStart = onset;
+  for (let s = onset; s + win <= n; s += hop) {
+    const r = stereoRmsOver(stereo, s, s + win);
+    if (r > best) { best = r; bestStart = s; }
+  }
+  if (best <= 0) best = stereoRmsOver(stereo, onset, onset + win);
+  if (best <= 0) return { rms: null, peak: null, failReason: 'silent — no RMS fallback' };
+  return { rms: best, peak: stereoPeakOver(stereo, onset, n) || null };
+}
+
 /** Decay-path loudness measurement: K-weighted integrated loudness over the
- *  full post-trim audio. Mirrors generate-samples.js:measureDecay. */
+ *  full post-trim audio, with a plain-RMS fallback for notes too short for the
+ *  K-weighting window (see rmsFallback). Mirrors generate-samples.js:measureDecay. */
 export function measureDecay(stereo: Float32Array, mono: Float32Array, sr: number): MeasureResult {
   const m = measureDecayLufs(stereo, mono, sr) as MeasureResult;
-  if (!m || m.rms == null) {
-    return m || { rms: null, peak: null, failReason: 'k-weighting returned no result' };
-  }
-  return { ...m, region: m.region || 'lufs-decay' };
+  if (m && m.rms != null) return { ...m, region: m.region || 'lufs-decay' };
+  return { ...rmsFallback(stereo, mono, sr), region: 'rms-fallback' };
 }
 
 /** Unified gain calculation for both loop and decay paths:

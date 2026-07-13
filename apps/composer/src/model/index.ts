@@ -38,7 +38,7 @@ import {
   type Duration,
   type Dots,
 } from '@hkl/notation/mei-build.js';
-import { ensureExpressionDefaults, getLayoutReq, setLayoutReq, getHejiEnabled, setHejiEnabled, getIgnoreColor, setIgnoreColor, HKL_NS, type LayoutReq, type Moment } from '../expressions.js';
+import { ensureExpressionDefaults, getLayoutReq, setLayoutReq, getHejiEnabled, setHejiEnabled, getIgnoreColor, setIgnoreColor, getPageScale, setPageScale, HKL_NS, type LayoutReq, type Moment } from '../expressions.js';
 import { toggleArticulation, toggleTrill, type ArticKind } from '../articulations.js';
 import { transformDocForHeji } from '@hkl/notation/heji-render.js';
 import type { TuningMode } from '@hkl/shared/freq.js';
@@ -1332,6 +1332,17 @@ export class ComposerModel {
 
   setIgnoreColor(on: boolean): void {
     setIgnoreColor(this.doc, on);
+  }
+
+  /** Document-level "page size" percentage (60–160, default 100). Scales the
+   *  page rectangle in Composer's page view; notation stays at the crisp zoom
+   *  size, so the score's size relative to the page changes. */
+  getPageScale(): number {
+    return getPageScale(this.doc);
+  }
+
+  setPageScale(pct: number): void {
+    setPageScale(this.doc, pct);
   }
 
   /** True iff the score contains at least one <note> element. Used by the

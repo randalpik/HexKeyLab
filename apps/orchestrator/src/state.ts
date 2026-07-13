@@ -9,6 +9,18 @@ import type { CaptureDevice } from './device/types.js';
  *  representative sample velocity (the bin center the engine matches against). */
 export interface VelocityBin { lo: number; hi: number; sampleVel: number; }
 
+/** The device's tonal-whine profile: fixed narrowband artifact frequencies (Hz)
+ *  detected from an idle recording, notched out of every capture before NR.
+ *  Empty toneHz ⇒ no de-whine applied. */
+export interface WhineProfile { toneHz: number[]; }
+
+/** The device's measured velocity→loudness response from the discovery sweep
+ *  (one dBFS level per swept velocity, at the probe note). Compared against the
+ *  house velocity curve at export to soften brighter velocity layers so their
+ *  timbre no longer reads as a perceived-loudness tier. Null ⇒ no sweep data
+ *  (e.g. even-bin fallback) ⇒ no per-layer softening. */
+export type VelocityResponse = Array<{ velocity: number; levelDb: number }>;
+
 export interface CaptureConfig {
   instrumentKey: string;
   displayName: string;
@@ -30,6 +42,10 @@ export interface OrchestratorSession {
   deviceLabel: string;
   bins: VelocityBin[];
   config: CaptureConfig;
+  /** Null until the user runs whine calibration (or a persisted one loads). */
+  whineProfile: WhineProfile | null;
+  /** Null until a discovery sweep runs (captured from its fingerprints). */
+  velocityResponse: VelocityResponse | null;
 }
 
 function initialConfig(): CaptureConfig {
@@ -49,6 +65,8 @@ const session: OrchestratorSession = {
   deviceLabel: '',
   bins: [],
   config: initialConfig(),
+  whineProfile: null,
+  velocityResponse: null,
 };
 
 type Listener = () => void;
@@ -76,6 +94,16 @@ export function setDevice(device: CaptureDevice | null, label: string): void {
 
 export function setBins(bins: VelocityBin[]): void {
   session.bins = bins;
+  emit();
+}
+
+export function setWhineProfile(profile: WhineProfile | null): void {
+  session.whineProfile = profile;
+  emit();
+}
+
+export function setVelocityResponse(resp: VelocityResponse | null): void {
+  session.velocityResponse = resp;
   emit();
 }
 

@@ -831,6 +831,11 @@ function reRender(): void {
        set on every render (diff-filtered, so cheap) — robust regardless of
        which code path mutated the instruments. */
     refreshViewSelector();
+    /* Sync the renderer's page-size factor from the document. Idempotent (only
+       forces a full re-engrave when the value actually changes), so this one
+       call point covers boot/doc-load/import/Setup-apply without disturbing
+       steady-state splicing. */
+    renderer.setPageScale(model.getPageScale() / 100);
     /* renderComposer pulls MEI from the model itself: scroll edits splice straight
        from the live doc (O(edited-range)), avoiding the O(total) whole-doc
        serialize on every edit; full renders + page view serialize internally. */

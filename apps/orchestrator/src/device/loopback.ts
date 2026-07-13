@@ -28,10 +28,32 @@ export class LoopbackDevice implements CaptureDevice {
   get brightnessJump(): boolean { return this.velocityVaries; }
   set brightnessJump(v: boolean) { this.velocityVaries = v; }
 
+  private whineOscs: OscillatorNode[] = [];
+
   private constructor(ctx: AudioContext) {
     this.ctx = ctx;
     this.mix = ctx.createGain();
     this.mix.gain.value = 1;
+  }
+
+  /** Mix always-on constant sine tones into the output — a synthetic version of a
+   *  device's ever-present DAC/switching whine, present in idle AND note captures.
+   *  Lets the whine-calibration + de-whine path be exercised with no hardware.
+   *  Call before capturing; re-calling replaces the previous set. */
+  enableWhine(freqsHz: number[], amp = 0.02): void {
+    for (const o of this.whineOscs) { try { o.stop(); } catch { /* ignore */ } }
+    this.whineOscs = [];
+    const now = this.ctx.currentTime;
+    for (const f of freqsHz) {
+      const osc = this.ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = f;
+      const g = this.ctx.createGain();
+      g.gain.value = amp;
+      osc.connect(g); g.connect(this.mix);
+      osc.start(now);
+      this.whineOscs.push(osc);
+    }
   }
 
   static async create(): Promise<LoopbackDevice> {
@@ -116,6 +138,8 @@ export class LoopbackDevice implements CaptureDevice {
 
   teardown(): void {
     this.allNotesOff();
+    for (const o of this.whineOscs) { try { o.stop(); } catch { /* ignore */ } }
+    this.whineOscs = [];
     try { this.graph.teardown(); } catch { /* ignore */ }
     try { this.mix.disconnect(); } catch { /* ignore */ }
     try { void this.ctx.close(); } catch { /* ignore */ }

@@ -3,7 +3,8 @@
 // resulting bins (or force N even bins). Applied bins feed the Configure step.
 
 import { el, clear } from './dom.js';
-import { getSession, setBins, type VelocityBin } from '../state.js';
+import { getSession, setBins, setVelocityResponse, type VelocityBin } from '../state.js';
+import { patchPersisted } from '../persist.js';
 import { runSweep, sweepVelocities } from '../discovery/sweep.js';
 import { detectBins, evenBins, type DiscoveryResult } from '../discovery/bins.js';
 import type { Fingerprint } from '../discovery/fingerprint.js';
@@ -94,6 +95,11 @@ export function renderDiscover(host: HTMLElement, onApplied: () => void): void {
         stride: 4,
         onProgress: (done, tot, v) => { status.textContent = `Sweeping ${done}/${tot} (vel ${v})…`; },
       });
+      // Keep the sweep's velocity→loudness response for per-layer perceptual-gain
+      // softening at export (see analysis/buildHki).
+      const vr = fps.map(f => ({ velocity: f.velocity, levelDb: f.levelDb }));
+      setVelocityResponse(vr);
+      patchPersisted({ velocityResponse: vr });
       applyResult(detectBins(fps));
     } catch (e) {
       status.textContent = 'Sweep failed: ' + (e as Error).message;

@@ -85,3 +85,19 @@ export async function record(device: CaptureDevice, opts: RecordOptions): Promis
   await sleep(40);
   return device.take();
 }
+
+/** Record `sec` seconds of IDLE output — device on, no note played — for whine
+ *  calibration. No note-on/off; just arm, wait, take. The result's steady tonal
+ *  content is the device's ever-present artifact comb (see analysis/dewhine). */
+export async function recordIdle(device: CaptureDevice, sec: number, signal?: AbortSignal): Promise<CaptureRecord> {
+  if (signal?.aborted) throw new Error('record aborted');
+  device.allNotesOff();
+  device.arm();
+  const tStart = performance.now();
+  while (performance.now() - tStart < sec * 1000) {
+    if (signal?.aborted) throw new Error('record aborted');
+    await sleep(50);
+  }
+  await sleep(40);   // flush trailing quanta
+  return device.take();
+}

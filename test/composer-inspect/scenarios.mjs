@@ -97,4 +97,16 @@ export const SCENARIOS = {
       m.deleteAtCursor();
     }
   `,
+
+  /* Page-size factor at 140%: a multi-measure page rendered with an enlarged
+     page rectangle. Confirms cursor geometry still aligns (no collisions) when
+     pageScale reflows systems, since the cursor overlay is sized to Verovio's
+     scaled page dimensions. */
+  pageScale140: `
+    m.setCursor(0, 1);
+    for (let i = 0; i < 12; i++) m.insertRestAtCursor({ duration: "4", dots: 0 });
+    m.setPageScale(140);
+    window.__hkl_composer.reRender();
+    m.setCursor(0, 1);
+  `,
 };

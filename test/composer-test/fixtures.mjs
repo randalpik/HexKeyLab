@@ -703,6 +703,24 @@ const VISUAL = {
     `,
     visualBaseline: 'pageview_multisystem_crisp',
   },
+
+  /* Per-document "Page size" (pageScale): scaling the page rectangle enlarges
+   * the paper on screen and reflows bars per system while EVERY note keeps its
+   * on-screen size (content size is owned by zoom, not pageScale). Builds a
+   * multi-measure page, sets pageScale 140%, and reRenders. Asserted in
+   * FIXTURE_ASSERTIONS.pageScaleGrowsPageNotContent (page SVG ~1.4× wider, note
+   * glyph unchanged, persisted as page-scale="140"). Visual baseline pins the
+   * 140% look + crispness. */
+  pageScaleGrowsPageNotContent: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (o) => ({ q: 0, r: 0, pname: 'b', accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 24; i++) m.insertChordAtCursor({ notes: [mk(4)], duration: '4', dots: 0 });
+      m.setPageScale(140);
+      r();
+    `,
+    visualBaseline: 'pagescale_140',
+  },
 };
 
 /* ── HEJI accidentals + arbitrary stacks (render-time injection) ───────── */
@@ -4853,6 +4871,29 @@ export const FIXTURES = {
  *  invariant, no console errors) are applied to EVERY fixture by the
  *  runner — don't repeat them here. */
 export const FIXTURE_ASSERTIONS = {
+  /* Page-size factor scales the page rectangle, not the content: at a fixed
+   * zoom, the page SVG grows ~linearly with pageScale while a notehead's device
+   * size is unchanged. Compares a 100% render to the 140% render, then restores
+   * 140% so the VISUAL screenshot (captured after this) matches the baseline. */
+  pageScaleGrowsPageNotContent: [
+    { name: 'page grows ~1.4×, note glyph unchanged, value persists in MEI',
+      expr: `(() => {
+        const M = window.__hkl_composer, m = M.model;
+        const pageW = () => { const s = document.querySelector('#score .score-page > svg'); return s ? s.getBoundingClientRect().width : 0; };
+        const noteW = () => { const n = document.querySelector('#score g.notehead'); return n ? n.getBoundingClientRect().width : 0; };
+        m.setPageScale(100); M.reRender();
+        const p100 = pageW(), n100 = noteW();
+        m.setPageScale(140); M.reRender();
+        const p140 = pageW(), n140 = noteW();
+        if (!p100 || !n100 || !p140 || !n140) return { ok: false, detail: 'missing metrics p100=' + p100 + ' n100=' + n100 + ' p140=' + p140 + ' n140=' + n140 };
+        const pageRatio = p140 / p100;
+        if (Math.abs(pageRatio - 1.4) > 0.06) return { ok: false, detail: 'page ratio=' + pageRatio.toFixed(3) + ' (expected ~1.4)' };
+        if (Math.abs(n140 - n100) > 0.75) return { ok: false, detail: 'notehead size changed ' + n100.toFixed(2) + '→' + n140.toFixed(2) };
+        if (m.getPageScale() !== 140) return { ok: false, detail: 'getPageScale=' + m.getPageScale() };
+        if (!m.serialize().includes('page-scale="140"')) return { ok: false, detail: 'page-scale not serialized' };
+        return { ok: true, detail: 'page ' + pageRatio.toFixed(3) + '×, note ' + n100.toFixed(1) + 'px unchanged, persisted' };
+      })()` },
+  ],
   /* MusicXML barline import: every <barline> feature lands as the model's
    * native MEI vocabulary, and a mid-piece final bar becomes a movement break. */
   phase5_musicxml_barlines: [

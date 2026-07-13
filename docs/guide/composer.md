@@ -199,6 +199,7 @@ The **Setup…** button opens a dialog for the whole-document settings:
 - **Instruments**: a **Manage…** button to add / remove / reorder (see [Multiple instruments](#multiple-instruments)).
 - **Tuning**: the tuning system the score is pinned to; it drives the spelling and the layout HKL adopts when the score is sent over.
 - **Reference note**: the lattice cell `(q, r)` the score is centered on.
+- **Page size** (%): how big the page is relative to the notation. A *larger* page fits more bars per line and makes the score look smaller on the page; a *smaller* page does the reverse. This changes the paper, not the note size — use **zoom** (`Shift`+`=` / `Shift`+`-`) to change how big the notation itself appears. Saved with the document (and reflected in PDF export). Page view only.
 - **HEJI accidentals**: show comma arrows & septimal hooks.
 - **Ignore color**: render noteheads plain black instead of in lattice colors.
 - **Dynamics → velocity**: the loudness each dynamic (fff…ppp) plays at, plus the gradual-dynamic step sizes (poco / plain / molto) that hairpins use.

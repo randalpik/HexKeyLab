@@ -7,8 +7,9 @@ import { MidiOut } from '../device/midiOut.js';
 import { AudioInput, listAudioInputs } from '../device/audioIn.js';
 import { RealDevice, midiToFreq } from '../device/device.js';
 import { LoopbackDevice } from '../device/loopback.js';
-import { setDevice, getSession } from '../state.js';
+import { setDevice, getSession, setWhineProfile, setVelocityResponse } from '../state.js';
 import { loadPersisted, patchPersisted } from '../persist.js';
+import { calibrateWhine } from '../capture/whineCal.js';
 import type { CaptureDevice } from '../device/types.js';
 
 const SYNTHETIC = '__synthetic__';
@@ -65,6 +66,9 @@ export async function renderConnect(host: HTMLElement, onConnected: () => void):
   const persisted = loadPersisted();
   if (persisted.midiOutId) (midiSel as HTMLSelectElement).value = persisted.midiOutId;
   if (persisted.audioInId != null) (audioSel as HTMLSelectElement).value = persisted.audioInId;
+  // Restore a previously-calibrated whine profile + sweep response (reload/HMR).
+  if (persisted.whineProfile) setWhineProfile(persisted.whineProfile);
+  if (persisted.velocityResponse) setVelocityResponse(persisted.velocityResponse);
 
   const grantBtn = el('button', { type: 'button', onclick: async () => {
     try {
@@ -104,6 +108,7 @@ export async function renderConnect(host: HTMLElement, onConnected: () => void):
       unlevel = device.onLevel(rms => { meterFill.style.width = (dbBar(rms) * 100).toFixed(1) + '%'; });
       status.textContent = 'Connected: ' + getSession().deviceLabel + '. Play a test note.';
       testBtn.removeAttribute('disabled');
+      whineBtn.removeAttribute('disabled');
       onConnected();
     } catch (e) {
       status.textContent = 'Connect failed: ' + (e as Error).message;
@@ -121,13 +126,36 @@ export async function renderConnect(host: HTMLElement, onConnected: () => void):
     setTimeout(() => { dev.noteOff(60); status.textContent = 'Connected: ' + getSession().deviceLabel + '. Test note played (~' + midiToFreq(60).toFixed(1) + ' Hz).'; }, 1000);
   }, text: 'Test note' });
 
+  // Whine calibration — record a few seconds of idle output, detect the device's
+  // fixed tonal artifact comb, and store it as the whine profile. Those tones are
+  // then notched out of every capture before NR (analysis/dewhine). Optional but
+  // recommended for any device with an audible DAC/switching whine.
+  const whineBtn = el('button', { type: 'button', disabled: true, onclick: async () => {
+    const dev = getSession().device;
+    if (!dev) return;
+    whineBtn.setAttribute('disabled', '');
+    status.textContent = 'Calibrating whine — recording 3 s of idle output (do NOT play)…';
+    try {
+      const res = await calibrateWhine(dev, { seconds: 3 });
+      setWhineProfile({ toneHz: res.toneHz });
+      patchPersisted({ whineProfile: { toneHz: res.toneHz } });
+      status.textContent = res.toneHz.length
+        ? `Whine profile: ${res.toneHz.length} tone(s) — ${res.toneHz.map(t => Math.round(t)).join(', ')} Hz. Notched from every capture.`
+        : 'Whine profile: no fixed tones detected (clean device).';
+    } catch (e) {
+      status.textContent = 'Whine calibration failed: ' + (e as Error).message;
+    } finally {
+      whineBtn.removeAttribute('disabled');
+    }
+  }, text: 'Calibrate whine' });
+
   const row = (label: string, ...controls: Node[]) =>
     el('div', { class: 'field-row' }, [el('label', { text: label }), ...controls]);
 
   panel.append(
     row('MIDI output', midiSel),
     row('Audio input', audioSel, grantBtn),
-    el('div', { class: 'field-row' }, [connectBtn, testBtn]),
+    el('div', { class: 'field-row' }, [connectBtn, testBtn, whineBtn]),
     row('Level', meter),
     el('div', { class: 'field-row' }, [status]),
   );

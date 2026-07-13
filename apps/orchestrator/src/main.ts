@@ -25,8 +25,10 @@ import { enumerateJobs } from './capture/plan.js';
 import { runCaptureLoop } from './capture/loop.js';
 import { runGates } from './capture/gates.js';
 import { putOutcome } from './capture/store.js';
-import { buildBundle } from './analysis/buildHki.js';
-import { denoiseChannels } from './analysis/denoise.js';
+import { buildBundle, layerSofteningScale } from './analysis/buildHki.js';
+import { wienerDenoiseChannels } from './analysis/wiener.js';
+import { assessRaw, POSTGAIN_NOISE_SKIP_DB } from './analysis/clean.js';
+import { calibrateWhine } from './capture/whineCal.js';
 import { writeHki, readHki } from '@hkl/shared/hki.js';
 
 export type StepId = 'connect' | 'discover' | 'configure' | 'capture' | 'export';
@@ -117,6 +119,52 @@ function installTestHook(): void {
     showStep,
     updateConfig,
     setBins,
+    /** Whine calibration on the loopback with a synthetic comb: enable always-on
+     *  tones, record idle, and detect them — verifies the capture→detect path. */
+    async calibrateWhineTest(tones: number[] = [12000, 6000]): Promise<{ detected: number[] }> {
+      const dev = await LoopbackDevice.create();
+      dev.enableWhine(tones, 0.02);
+      const res = await calibrateWhine(dev, { seconds: 3 });
+      dev.teardown();
+      return { detected: res.toneHz.map(t => Number(t.toFixed(1))) };
+    },
+    /** Per-layer perceptual softening. A FLAT keyboard response (equal dBFS at
+     *  every velocity) means the loudness spread is entirely our curve's, so the
+     *  scale should decrease strictly with velocity (soften the bright layers),
+     *  anchored at 1.0 for the softest. A null response ⇒ all 1.0. */
+    /** Short/fast-decay note (K-weighting can't measure) still gets a real gain
+     *  via the RMS fallback — not gain=1.0 (silent). And the post-gain-noise skip
+     *  metric: same quiet note keeps over a clean floor, skips over a noisy one. */
+    normalizationTest(): { clean: { gain: number; postGainNoiseDb: number; willSkip: boolean }; noisy: { gain: number; postGainNoiseDb: number; willSkip: boolean } } {
+      const sr = 48000;
+      let seed = 12345 >>> 0;
+      const rnd = () => { seed = (1103515245 * seed + 12345) >>> 0; return (seed / 0xffffffff) * 2 - 1; };
+      const mk = (noiseAmp: number): Float32Array => {
+        const n = Math.round(0.6 * sr), onset = Math.round(0.12 * sr);
+        const ch = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+          let s = rnd() * noiseAmp;
+          if (i >= onset) { const td = (i - onset) / sr; s += 0.02 * Math.exp(-td / 0.05) * Math.sin(2 * Math.PI * 1500 * i / sr); }
+          ch[i] = s;
+        }
+        return ch;
+      };
+      const tag = (a: { gain: number; postGainNoiseDb: number }) => ({
+        gain: Number(a.gain.toFixed(1)), postGainNoiseDb: Number(a.postGainNoiseDb.toFixed(1)),
+        willSkip: a.postGainNoiseDb > POSTGAIN_NOISE_SKIP_DB,
+      });
+      return { clean: tag(assessRaw([mk(1e-5)], sr, [])), noisy: tag(assessRaw([mk(4e-3)], sr, [])) };
+    },
+    softeningTest(): { flat: number[]; empty: number[] } {
+      const vels = [24, 48, 72, 96, 120];
+      const flatResp = vels.map(v => ({ velocity: v, levelDb: -20 }));
+      const s = layerSofteningScale(flatResp, vels);
+      const e = layerSofteningScale(null, vels);
+      return {
+        flat: vels.map(v => Number((s.get(v) ?? -1).toFixed(4))),
+        empty: vels.map(v => Number((e.get(v) ?? -1).toFixed(4))),
+      };
+    },
     /** Spin up a loopback device, capture one note, return summary stats. */
     async loopbackCaptureTest(note = 60, velocity = 100): Promise<{ frames: number; sampleRate: number; peak: number; rms: number }> {
       const dev = await LoopbackDevice.create();
@@ -214,7 +262,7 @@ function installTestHook(): void {
         if (i >= pre) { const t = (i - pre) / SR; s += amp * Math.exp(-t / 0.6) * Math.sin(2 * Math.PI * F * i / SR); }
         ch[i] = s;
       }
-      const clean = denoiseChannels([ch], SR, preMs / 1000)[0];
+      const clean = wienerDenoiseChannels([ch], SR, preMs / 1000)[0];
       const rms = (s: Float32Array, a: number, b: number) => { let sq = 0; for (let i = a; i < b; i++) sq += s[i] * s[i]; return Math.sqrt(sq / (b - a)); };
       const dB = (x: number) => (x > 0 ? 20 * Math.log10(x) : -120);
       // Measure the pre-roll INTERIOR (away from the WOLA start boundary and the
@@ -238,7 +286,7 @@ function installTestHook(): void {
       dev.teardown();
       for (const o of outcomes) putOutcome(o);
       const passing = outcomes.filter(o => o.gate.pass);
-      const built = buildBundle(passing, config, 'loopback');
+      const built = buildBundle(passing, config, 'loopback', []);
       const bytes = writeHki(built.bundle);
       const rt = readHki(bytes);   // round-trip through the shared reader
 

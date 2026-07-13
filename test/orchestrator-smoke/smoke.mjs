@@ -146,6 +146,34 @@ try {
   if (dn.noiseDropDb >= 12 && Math.abs(dn.bodyDeltaDb) <= 1.5) console.log(`OK — NR drops the floor ${dn.noiseDropDb}dB, note body within ${dn.bodyDeltaDb}dB (preserved).`);
   else { console.error(`FAIL — NR: floor drop ${dn.noiseDropDb}dB (want ≥12), body delta ${dn.bodyDeltaDb}dB (want ≤1.5).`); cleanup(1); }
 
+  // Whine calibration — loopback emits an always-on comb; record idle + detect it.
+  const wh = await evalJson('window.__hklo.calibrateWhineTest([12000, 6000])');
+  if (wh.__error) { console.error('FAIL whineCal: ' + wh.__error); cleanup(1); }
+  console.log('whineCal:', JSON.stringify(wh));
+  const near = (f) => Array.isArray(wh.detected) && wh.detected.some(t => Math.abs(t - f) < 10);
+  if (near(12000) && near(6000)) console.log('OK — whine calibration detected the 12 kHz + 6 kHz comb from idle.');
+  else { console.error('FAIL — whine calibration missed the synthetic comb.'); cleanup(1); }
+
+  // Per-layer perceptual softening — flat keyboard response ⇒ strictly-decreasing
+  // scale anchored at 1.0; null response ⇒ all 1.0 (feature off).
+  const sf = await evalJson('window.__hklo.softeningTest()');
+  if (sf.__error) { console.error('FAIL softening: ' + sf.__error); cleanup(1); }
+  console.log('softening:', JSON.stringify(sf));
+  const strictlyDec = sf.flat.every((s, i) => i === 0 ? Math.abs(s - 1) < 1e-3 : s < sf.flat[i - 1]);
+  const allLeq1 = sf.flat.every(s => s <= 1.0001);
+  const off = sf.empty.every(s => Math.abs(s - 1) < 1e-6);
+  if (strictlyDec && allLeq1 && off) console.log('OK — softening: bright layers attenuated (anchored 1.0, strictly decreasing), null response is a no-op.');
+  else { console.error('FAIL — softening scale wrong (flat should decrease from 1.0, empty should be all 1.0).'); cleanup(1); }
+
+  // Normalization fallback + skip metric — a short quiet note gets a real gain
+  // (not 1.0); it's kept over a clean floor, skipped over a noisy one.
+  const nz = await evalJson('window.__hklo.normalizationTest()');
+  if (nz.__error) { console.error('FAIL normalization: ' + nz.__error); cleanup(1); }
+  console.log('normalization:', JSON.stringify(nz));
+  if (nz.clean.gain > 3 && !nz.clean.willSkip && nz.noisy.willSkip)
+    console.log(`OK — fallback gives a real gain (${nz.clean.gain}×, not 1.0); clean note kept, noisy note skipped.`);
+  else { console.error('FAIL — normalization: clean should keep with a real gain, noisy should skip.'); cleanup(1); }
+
   // Capture loop plumbing — a tiny 2-job loop through the real capture path.
   const cap = await evalJson('window.__hklo.captureLoopTest()');
   if (cap.__error) { console.error('FAIL captureLoop: ' + cap.__error); cleanup(1); }

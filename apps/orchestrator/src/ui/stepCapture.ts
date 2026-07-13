@@ -43,7 +43,7 @@ export function renderCapture(host: HTMLElement, onDone: () => void): void {
     const recapBtn = el('button', { type: 'button', style: 'padding:2px 8px;font-size:11px', onclick: async () => {
       const dev = getSession().device; if (!dev) return;
       recapBtn.setAttribute('disabled', '');
-      const o = await captureOne(dev, job, getSession().config.holdMs);
+      const o = await captureOne(dev, job, getSession().config.holdMs, getSession().whineProfile?.toneHz ?? []);
       outcomes.set(job.captureId, o);
       putOutcome(o);
       renderRow(job, o.gate);
@@ -74,6 +74,7 @@ export function renderCapture(host: HTMLElement, onDone: () => void): void {
     try {
       await runCaptureLoop(dev, jobs, {
         holdMs: getSession().config.holdMs,
+        whineToneHz: getSession().whineProfile?.toneHz ?? [],
         signal: aborter.signal,
         onProgress: (done, total, outcome) => {
           outcomes.set(outcome.job.captureId, outcome);

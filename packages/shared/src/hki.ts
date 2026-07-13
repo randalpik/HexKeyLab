@@ -31,15 +31,19 @@ export interface HkiSampleEntry {
   file: string;
   /** Analyzer-measured fundamental (Hz). */
   freq: number;
-  /** Per-sample gain factor, normalizing to TARGET_DBFS. Defaults to 1.0. */
+  /** Per-sample linear gain, applied at playback. For a layered note this is the
+   *  flat −18 dBFS normalization × a perceptual-softening scale (≤1) that pulls
+   *  brighter layers down to the device's own loudness balance (see the orchestrator
+   *  buildHki). Defaults to 1.0. */
   gain?: number;
   /** Reference velocity (1..127) this layer represents (bin center). Absent ⇒
    *  single-layer note: matches any input velocity, behaving exactly as a v1
    *  sample. Multiple entries may share `name` (and `freq`) at different `vel`
    *  to form a velocity-layered note; the engine picks the nearest layer by
-   *  input velocity, then applies the normal velocity→gain curve (all layers
-   *  are normalized to the same loudness target, so the layer choice changes
-   *  timbre, not level). Produced by the orchestrator (HKLO). */
+   *  input velocity, then applies the normal velocity→gain curve. Layer gains
+   *  carry a perceptual softening (see `gain`) so a brighter layer's baked level
+   *  reproduces the device's own inter-layer balance rather than a flat target.
+   *  Produced by the orchestrator (HKLO). */
   vel?: number;
   /** Loop pipeline only — segment (a, b) time pairs in seconds. */
   segments?: Array<{ a: number; b: number }>;
