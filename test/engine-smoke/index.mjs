@@ -10,6 +10,8 @@
 // Run: pnpm --filter @hkl/engine-smoke start
 
 import * as engine from '@hkl/engine/samples-engine.js';
+import { readHkiInstrument, instrumentDefFromManifest } from '@hkl/engine/hki-instrument.js';
+import { readFileSync } from 'node:fs';
 
 const REQUIRED = [
   'init', 'loadInstrument', 'sNoteOn', 'sNoteOff', 'sRampFreq',
@@ -64,6 +66,37 @@ function assertEq(actual, expected, msg) {
   // Multiple entries but none tagged with vel → first entry (defensive).
   const noVel = [{ name: 'a' }, { name: 'b' }];
   assertEq(engine.pickLayer(noVel, 100).name, 'a', 'untagged group → first');
+}
+
+// ── readHkiInstrument: atomic .hki → { key, def, audio } adapter ──
+// Proves a single .hki is self-sufficient for an engine consumer: no separately
+// authored defs JSON. Pure — no AudioContext needed (decode/playback is the
+// browser check). Uses a real shipped-style bundle from handoff/musiquest/.
+{
+  const bytes = readFileSync(new URL('../../handoff/musiquest/piano.hki', import.meta.url));
+  const { key, def, audio } = readHkiInstrument(new Uint8Array(bytes));
+  assertEq(key, 'piano', 'readHkiInstrument key = manifest.instrumentKey');
+  assertEq(def.source, 'hki', 'def.source routes to instrumentProvider');
+  if (!def.name) throw new Error('readHkiInstrument: def.name is empty');
+  if (!Array.isArray(def.samples) || def.samples.length === 0) {
+    throw new Error('readHkiInstrument: def.samples empty');
+  }
+  // The self-wiring invariant: every sample the def names must have bytes in the
+  // returned audio map, so `instrumentProvider: () => audio` fully feeds loadInstrument.
+  for (const s of def.samples) {
+    if (!(s.file in audio)) throw new Error(`readHkiInstrument: audio missing for ${s.file}`);
+  }
+  // instrumentKey is NOT leaked into the def (it's loadInstrument's first arg).
+  if ('instrumentKey' in def) throw new Error('readHkiInstrument: instrumentKey leaked into def');
+  // instrumentDefFromManifest is the exported building block; a bare-minimum
+  // manifest maps to a playable single-layer def.
+  const minDef = instrumentDefFromManifest({
+    version: 2, instrumentKey: 'x', name: 'X', loop: false, decays: true,
+    releaseTime: 0.2, volume: 1, samples: [{ name: 'A3', file: 'a.wav', freq: 220 }],
+  });
+  assertEq(minDef.source, 'hki', 'instrumentDefFromManifest source');
+  assertEq(minDef.samples.length, 1, 'instrumentDefFromManifest passes samples through');
+  console.log(`   readHkiInstrument: '${key}' → ${def.samples.length} samples, all audio present.`);
 }
 
 console.log('OK — @hkl/engine imported + init() ran standalone (zero HKL app/state imports).');

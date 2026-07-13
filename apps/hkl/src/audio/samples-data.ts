@@ -10,6 +10,7 @@
 import { getImportedManifest, hasImported } from '../state/instrumentRegistry.js';
 import { getConfig as getImportedCdnConfig, hasConfig as hasImportedCdnConfig } from '../state/cdnConfigRegistry.js';
 import type { HkiManifest } from '@hkl/shared/hki.js';
+import { instrumentDefFromManifest } from '@hkl/engine/hki-instrument.js';
 import type { CdnInstrumentConfig } from '@hkl/shared/cdnConfig.js';
 
 /* Static CDN-backed instruments, shipped with the app. The exported
@@ -1097,23 +1098,13 @@ const STATIC_INSTRUMENTS: Record<string, any> = {
        `file` field, matching how multi-pattern CDN entries already work)
    The same per-sample fields (segments, trend, trimStart, gain, file) flow
    through unchanged, so the engine's overlay logic doesn't need to know
-   whether an instrument is imported or static. */
+   whether an instrument is imported or static.
+
+   The mapping itself now lives in @hkl/engine (instrumentDefFromManifest) so
+   external engine consumers can treat a `.hki` atomically; this delegates to it
+   to keep a single source of truth. */
 function manifestToInstrument(m: HkiManifest): any {
-  const entry: any = {
-    name: m.name,
-    source: 'hki',
-    baseUrl: '',
-    ext: '',
-    releaseTime: m.releaseTime,
-    volume: m.volume,
-    loop: m.loop,
-    decays: m.decays,
-    samples: m.samples,
-  };
-  if (m.transpose) entry.transpose = m.transpose;
-  if (m.replayOnTranspose) entry.replayOnTranspose = true;
-  if (m.vibrato) entry.vibrato = true;
-  return entry;
+  return instrumentDefFromManifest(m);
 }
 
 /* Lazy synthesis cache. We don't want to rebuild the entry object on every

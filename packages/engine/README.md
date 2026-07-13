@@ -61,6 +61,11 @@ sNoteOff('voice-1');
 - **State** — `getActiveVoices`, `isInstrumentLoaded`, `unloadInstrument`, `tapMaster`.
 - **`startSegmentLooper(opts)`** — standalone single-voice segment looper
   (audition / preview), independent of the voice manager.
+- **`.hki` bundles** — `readHkiInstrument(bytes)` → `{ key, def, audio }` turns a
+  single `.hki` byte buffer into everything `loadInstrument` needs;
+  `instrumentDefFromManifest(manifest)` is the lower-level manifest → `InstrumentDef`
+  mapping. `readHki` / `writeHki` (+ `HkiManifest` / `HkiBundle` / `HkiSampleEntry`)
+  are re-exported for direct bundle access.
 - **Types** — `InstrumentDef`, `SampleDef`, `SampleEngineConfig`, `SeamEvent`,
   `PaRampState`, `SegmentLooperOpts`, `SegmentLooper`.
 
@@ -68,8 +73,27 @@ sNoteOff('voice-1');
 
 Click-free looping depends on good loop segments. The HexKeyLab analyzer produces
 `.hki` bundles (sustained samples + zero-crossing-matched `{a, b}` segment pairs).
-Feed their bytes through `instrumentProvider`; the engine handles decode, trim,
-trend-normalization, and seam scheduling.
+
+A `.hki` is self-contained — it carries both the instrument definition and its
+audio. `readHkiInstrument` decomposes one buffer into the pieces the engine wants,
+so no separately authored defs JSON is needed:
+
+```ts
+import { init, loadInstrument, sNoteOn, readHkiInstrument } from '@hexkeylab/engine';
+
+const { key, def, audio } = readHkiInstrument(hkiBytes);
+
+init(ctx, ctx.destination, {
+  // Hand back the bundle's audio for its own key; return null for anything else.
+  instrumentProvider: async (k) => (k === key ? audio : null),
+});
+await loadInstrument(key, def);
+sNoteOn('voice-1', 220, 100, key);
+```
+
+The engine handles decode, trim, trend-normalization, and seam scheduling from
+there. (You can still author an `InstrumentDef` by hand and feed bytes through
+`instrumentProvider` yourself — that path is unchanged.)
 
 ## License
 

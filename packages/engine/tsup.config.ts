@@ -12,7 +12,12 @@ const PUBLISH_NAME = '@hexkeylab/engine';
 // constant note-onset latency on sample instruments) is split by instrument
 // type: 15ms for looped, 5ms for decay. Also documents per-layer baked-gain
 // (perceptual softening) semantics.
-const VERSION = '2.2.0';
+// 2.3.0: additive — atomic `.hki` adapter. New `readHkiInstrument(bytes)` →
+// `{ key, def, audio }` and `instrumentDefFromManifest(manifest)` let a consumer
+// treat a single `.hki` as a self-sufficient instrument (no separately authored
+// defs JSON). Also re-exports the shared bundle API (`readHki`/`writeHki` +
+// `HkiManifest`/`HkiBundle`/`HkiSampleEntry`). No breaking changes.
+const VERSION = '2.3.0';
 
 export default defineConfig({
   entry: ['src/index.ts'],
