@@ -89,10 +89,14 @@ to the main thread (transferred, no re-encode) — never `MediaRecorder` (opus/l
 (releasing early would damp/truncate it), so the recorder holds note-on for the whole capture and
 sends note-off only at the stop. The ~120 ms pre-roll (armed silence before note-on) is both
 captured (the analyzer/denoise trim it later) and measured for the **noise floor**. Stop = elapsed
-≥ 12 s, OR (after a minimum hold past the attack) trailing RMS within **1 dB of the measured noise
-floor** for 250 ms — *noise-floor relative*, not an absolute −60 dBFS, so the tail rings all the way
-down into the floor regardless of how padded the capture level is (a fixed level would either chop
-a loud tail early or never trigger on a quiet one). Note-on alignment need not be sample-accurate.
+≥ 12 s, OR (after a minimum hold past the attack) trailing RMS below the **stop floor** for 250 ms,
+where the stop floor is `max(noiseFloor + 1 dB, notePeak − 70 dB, −90 dBFS backstop)`: it rings the
+tail all the way down to the capture's *actual* floor (noise-relative), bounded by a wide
+peak-relative decay range (so a very-low-floor source like the loopback still stops), with a low
+absolute backstop for a silent floor. The earlier fixed **−60 dBFS backstop was a bug** — it sits
+above a real clean capture's floor, so it overrode the noise-relative stop and truncated quiet
+notes at −60 dBFS raw, which for a soft high note boosted ~40 dB at playback is still clearly
+audible (a −60 raw cut plays at ~−20 dBFS). Note-on alignment need not be sample-accurate.
 
 **Loopback.** `LoopbackDevice` implements the same `CaptureDevice` over an internal additive synth
 through the same `CaptureGraph`, with **discrete velocity layers** (flat within a layer, jumps

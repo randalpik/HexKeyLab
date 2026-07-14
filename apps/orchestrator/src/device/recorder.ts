@@ -6,8 +6,12 @@
 //
 // Stop conditions (whichever first):
 //   • elapsed since note-on ≥ maxSec (default 12 s), OR
-//   • after a minimum hold (skips the attack transient), trailing RMS <
-//     silenceDbfs (default −60 dBFS) held continuously for silenceHoldMs.
+//   • after a minimum hold (skips the attack transient), the trailing RMS stays
+//     below the stop floor for silenceHoldMs. The stop floor is the MAX of the
+//     measured noise floor (+1 dB), a peak-relative decay floor (note peak −70 dB),
+//     and a low absolute backstop — so the tail rings all the way down to the
+//     capture's real floor regardless of level, instead of a fixed −60 dBFS that
+//     truncated quiet notes (see the stop-threshold comment below).
 // fixedDuration mode (discovery probes) holds exactly maxSec, then note-off.
 
 import type { CaptureDevice, CaptureRecord } from './types.js';
@@ -37,24 +41,35 @@ export async function record(device: CaptureDevice, opts: RecordOptions): Promis
   // estimate (the gates self-measure the floor from this region too).
   const prerollMs = opts.prerollMs ?? 120;
   const POLL_MS = 25;
-  // Stop once the decay has faded essentially into the noise floor (1 dB above
-  // it) — we want the tail to ring all the way down so it sounds like it's
-  // fading to silence, not cut off while still audible. Noise-floor relative
-  // (not absolute −60 dBFS) so this holds regardless of the capture level. The
-  // residual floor in the captured tail is removed by the noise-reduction step.
-  const STOP_MARGIN = Math.pow(10, 1 / 20);
-  const STOP_BACKSTOP = Math.pow(10, (opts.silenceDbfs ?? -60) / 20);  // when noise ≈ 0 (loopback)
+  // Stop threshold is the MAX of three floors, so the decay rings all the way
+  // down but we never record pure noise or over-record a clean tail:
+  //   • noise-floor relative — 1 dB above the measured pre-roll floor, so we stop
+  //     right where the note sinks into the capture's actual floor;
+  //   • peak relative — DECAY_RANGE_DB below the note's own peak, a bounded,
+  //     level-independent natural decay (governs when the floor is very low, e.g.
+  //     the loopback, so we don't chase noise forever);
+  //   • a low absolute backstop for a truly silent floor.
+  // The previous −60 dBFS backstop was the bug: it sits ABOVE a real clean
+  // capture's floor, so it overrode the noise-floor-relative stop and truncated
+  // quiet notes at −60 dBFS raw — which, once boosted ~40 dB at playback for a
+  // soft high note, is still clearly audible (a −60 raw cut plays at ~−20 dBFS).
+  // Residual floor in the captured tail is removed by the noise-reduction step.
+  const STOP_MARGIN = Math.pow(10, 1 / 20);            // +1 dB over the noise floor
+  const DECAY_RANGE_DB = 70;                            // note peak → this far down = "faded"
+  const DECAY_FLOOR = Math.pow(10, -DECAY_RANGE_DB / 20);
+  const STOP_BACKSTOP = Math.pow(10, (opts.silenceDbfs ?? -90) / 20);  // near-zero floor (loopback)
 
   if (opts.signal?.aborted) throw new Error('record aborted');
 
   device.arm();
   await sleep(prerollMs);
   const noiseFloor = device.trailingRms(0.1);   // measured over the armed pre-roll
-  const stopThresh = Math.max(noiseFloor * STOP_MARGIN, STOP_BACKSTOP);
+  const noiseStop = noiseFloor * STOP_MARGIN;
 
   device.noteOn(opts.note, opts.velocity, channel);
   const tOn = performance.now();
   let belowSince = -1;
+  let notePeak = 0;   // running peak of the trailing RMS (the note's attack level)
 
   try {
     for (;;) {
@@ -65,10 +80,15 @@ export async function record(device: CaptureDevice, opts: RecordOptions): Promis
       if (elapsedMs >= maxSec * 1000) break;
       if (opts.fixedDuration) continue;   // hold the full duration (discovery probe)
 
-      // Hold the key; once past the attack, stop when the natural decay falls
-      // to within ~8 dB of the noise floor.
+      // Track the note's peak (attack) every poll so the peak-relative floor is
+      // established before the decay stop can fire.
+      const rms = device.trailingRms(0.05);
+      if (rms > notePeak) notePeak = rms;
+
+      // Hold the key; once past the attack, stop when the decay reaches the
+      // highest of the three floors (noise-relative / peak-relative / backstop).
       if (elapsedMs >= minHoldMs) {
-        const rms = device.trailingRms(0.05);
+        const stopThresh = Math.max(noiseStop, notePeak * DECAY_FLOOR, STOP_BACKSTOP);
         if (rms < stopThresh) {
           if (belowSince < 0) belowSince = performance.now();
           else if (performance.now() - belowSince >= silenceHoldMs) break;
