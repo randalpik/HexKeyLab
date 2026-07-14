@@ -687,6 +687,32 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
         i++;
         continue;
       }
+      if (local === 'mRest' || local === 'mSpace') {
+        /* Full-measure rest/space (an empty bar). `realTicks` has no @dur to
+           read here, so advance by the MEASURE BUDGET — otherwise the voice
+           under-counts the empty bar and every later note in it plays a measure
+           early, desyncing the staves. An <mRest> is a visible rest → emit a
+           silent cursor event (like <rest>) so the per-voice cursor steps onto
+           the empty bar; <mSpace> is invisible (no cursor stop). */
+        const budget = model.measureTicksAt(streamMi[i]);
+        if (local === 'mRest') {
+          const meiId = child.getAttribute('xml:id') ?? undefined;
+          if (meiId) {
+            events.push({
+              atMs: tempo.atMsAt(tTicks),
+              durationMs: tempo.atMsAt(tTicks + budget) - tempo.atMsAt(tTicks),
+              notes: [],
+              meiId,
+              voice,
+              _mi: streamMi[i],
+              _tick: tTicks,
+            });
+          }
+        }
+        tTicks += budget;
+        i++;
+        continue;
+      }
 
       /* Tremolo: alternate between the two (or one) wrapped slots' EXACT
          lattice cells across the wrapper's span. */
@@ -968,9 +994,12 @@ export function buildPedalEvents(model: ComposerModel, startMs = 0): PedalEvent[
 function pushContentChildren(layer: Element, out: Element[]): void {
   for (const c of Array.from(layer.children)) {
     const ln = c.localName;
-    if (ln === 'chord' || ln === 'note' || ln === 'rest' || ln === 'space' || ln === 'fTrem' || ln === 'bTrem') {
+    if (ln === 'chord' || ln === 'note' || ln === 'rest' || ln === 'space'
+        || ln === 'mRest' || ln === 'mSpace' || ln === 'fTrem' || ln === 'bTrem') {
       /* fTrem/bTrem (tremolos) are pushed as a single slot; buildPlayback
-         expands them into an alternating note sequence. */
+         expands them into an alternating note sequence. mRest/mSpace are full-
+         measure rest/space (empty bar — imported scores emit <mRest>); the walk
+         advances them by the whole measure budget so the voice stays in sync. */
       out.push(c);
     } else if (ln === 'beam') {
       /* Descend into beam wrappers. */

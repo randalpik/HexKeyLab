@@ -4149,6 +4149,30 @@ const PHASE1 = {
     `,
   },
 
+  /* MusicXML import — empty middle measure (full-measure rest). m1 whole note,
+     m2 an empty bar (<rest measure="yes"/> → <mRest>), m3 whole note. Regression
+     guard: an <mRest> must advance the voice by a FULL measure so m3's note
+     stays measure-aligned. Before the fix, mRest was dropped from the playback
+     walk → m3's note played a measure early (staves desync). Asserted in
+     FIXTURE_ASSERTIONS.mRest_emptyMeasureStaysInSync via buildPlayback. */
+  mRest_emptyMeasureStaysInSync: {
+    setup: `
+      const A = '<attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>';
+      const W = (s, o) => '<note><pitch><step>' + s + '</step><octave>' + o + '</octave></pitch>'
+        + '<duration>96</duration><voice>1</voice><type>whole</type></note>';
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>Test</part-name></score-part></part-list><part id="P1">'
+        + '<measure number="1">' + A + W('C', 5) + '</measure>'
+        + '<measure number="2"><note><rest measure="yes"/><duration>96</duration><voice>1</voice></note></measure>'
+        + '<measure number="3">' + W('E', 5) + '</measure>'
+        + '</part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+  },
+
   /* MusicXML import — barlines/repeats/endings/movement break: the <barline>
      element (previously dropped entirely). m1 opens a forward repeat; m3 is a
      1st ending closed by a backward repeat + final bar; m4 is a 2nd ending; m5
@@ -5565,6 +5589,26 @@ export const FIXTURE_ASSERTIONS = {
       })()` },
   ],
 
+  mRest_emptyMeasureStaysInSync: [
+    { name: 'empty measure (mRest) advances the voice a full bar; m3 note stays aligned',
+      expr: `(() => {
+        const h = window.__hkl_composer;
+        const evs = h.buildPlayback(h.model);
+        const notes = evs.filter(e => e.notes.length > 0).sort((a, b) => a.atMs - b.atMs);
+        if (notes.length !== 2) return { ok: false, detail: 'noteEvents=' + notes.length };
+        const first = notes[0], last = notes[1];
+        /* first = m1 whole note (durationMs === one full measure). last = m3
+           note, which must start TWO measures in. Bug: mRest dropped → m3 at
+           one measure (== first.durationMs). */
+        const expected = 2 * first.durationMs;
+        if (Math.abs(last.atMs - expected) > 1)
+          return { ok: false, detail: 'm3 atMs=' + last.atMs + ' expected~' + expected + ' (m2 mRest skipped?)' };
+        /* mRest also emits a silent cursor event at the empty bar's onset. */
+        const restEv = evs.find(e => e.notes.length === 0 && Math.abs(e.atMs - first.durationMs) < 1);
+        if (!restEv) return { ok: false, detail: 'no mRest cursor event at m2 onset' };
+        return { ok: true };
+      })()` },
+  ],
   phase5_musicxml_import: [
     { name: 'forces Equal / HEJI off / ignore-color on',
       expr: `(() => {
