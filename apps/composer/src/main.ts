@@ -22,7 +22,7 @@ import type { CursorUpdateOpts } from './cursor/cursor.js';
 import { selectionOverlay } from './selection/selectionOverlay.js';
 import { saveHkc, loadHkcFromFile, downloadMusicXml, downloadPdf, exportMusicXml } from './save.js';
 import { importMusicXml } from './importMusicXml.js';
-import { buildPlayback, buildPedalEvents, playbackStartMs, highlightElement, clearHighlights, readTempo, tickMsFromTempo, PIZZ_VARIANTS } from './render/playback.js';
+import { buildPlayback, buildPedalEvents, playbackStartMs, highlightElement, clearHighlights, readTempo, tickMsFromTempo } from './render/playback.js';
 import { PerformanceMatcher } from './render/performance.js';
 import { addDir } from './expressions.js';
 import { openSetupDialog } from './setupDialog.js';
@@ -245,14 +245,14 @@ bridge.on((msg: HklEvent) => {
       }
       invalidateRefNoteCache();
       invalidateScoreRefCache();
-      lastBroadcastInstrKey = null;
+      lastBroadcastInstrName = null;
       lastBroadcastInstrSet = null;
       maybeBroadcastReference();
       maybeBroadcastScoreRef();
       maybeBroadcastInstruments();
       maybeBroadcastActiveInstrument();
       broadcastLayoutReq();
-      lastScoreInstrKey = null;
+      lastScoreInstrName = null;
       broadcastComposerView();
       break;
     }
@@ -462,20 +462,16 @@ let lastBroadcastInstrSet: string | null = null;
  *  always ready in the right timbre. Multi-instrument only; a single-instrument
  *  score sends [] (HKL keeps the user's chosen instrument). Diff-filtered. */
 function maybeBroadcastInstruments(): void {
-  const baseKeys = model.instruments().length > 1
-    ? [...new Set(model.instruments().map((i) => i.instrKey))]
+  /* Distinct instrument NAMES (multi-instrument only). HKL resolves each to a
+     sample-set key and preloads it (plus its pizzicato variant) so cursor-follow
+     during note entry is ready in the right timbre. */
+  const names = model.instruments().length > 1
+    ? [...new Set(model.instruments().map((i) => i.name))]
     : [];
-  /* Include every pizzicato variant in the library so HKL preloads them before
-     playback (noteOn never falls back to a different timbre — an unloaded
-     variant goes silent). Any instrument can switch to ANY library pizz via the
-     pizz-fallback, so we preload the whole pizz set, not just per-instrument. */
-  const keys = baseKeys.length > 0
-    ? [...new Set([...baseKeys, ...PIZZ_VARIANTS])]
-    : [];
-  const sig = keys.join(',');
+  const sig = JSON.stringify(names);
   if (sig !== lastBroadcastInstrSet) {
     lastBroadcastInstrSet = sig;
-    bridge.send({ type: 'composer-instruments', instrumentKeys: keys });
+    bridge.send({ type: 'composer-instruments', instrumentNames: names });
   }
 }
 
@@ -523,18 +519,18 @@ function refreshViewSelector(): void {
   sel.value = cur == null ? 'all' : String(cur);
 }
 
-/** Last instrument key broadcast to HKL (diff filter for the cursor-follow). */
-let lastBroadcastInstrKey: string | null = null;
+/** Last instrument name broadcast to HKL (diff filter for the cursor-follow). */
+let lastBroadcastInstrName: string | null = null;
 /** Tell HKL which instrument the editing cursor sits in, so Sync-to-Composer
  *  can preview note entry in the right timbre. Only for multi-instrument scores
  *  (a single-instrument score has no per-instrument concept — HKL keeps its own
  *  active instrument). Diff-filtered so it fires only on instrument changes. */
 function maybeBroadcastActiveInstrument(): void {
-  if (model.instruments().length <= 1) { lastBroadcastInstrKey = null; return; }
-  const key = model.instrumentOf(model.getCurrentVoice()).instrKey;
-  if (key !== lastBroadcastInstrKey) {
-    lastBroadcastInstrKey = key;
-    bridge.send({ type: 'composer-active-instrument', instrumentKey: key });
+  if (model.instruments().length <= 1) { lastBroadcastInstrName = null; return; }
+  const name = model.instrumentOf(model.getCurrentVoice()).name;
+  if (name !== lastBroadcastInstrName) {
+    lastBroadcastInstrName = name;
+    bridge.send({ type: 'composer-active-instrument', instrumentName: name });
   }
 }
 
@@ -603,16 +599,16 @@ function maybeBroadcastComposerPlayback(): void {
   }
 }
 
-/** Cursor-instrument key tracked so onStateChange re-broadcasts the score only
+/** Cursor-instrument name tracked so onStateChange re-broadcasts the score only
  *  when the part being viewed actually changes (cheap guard before serialize). */
-let lastScoreInstrKey: string | null = null;
+let lastScoreInstrName: string | null = null;
 function maybeBroadcastComposerScoreOnInstrChange(): void {
   if (!hklConnected) return;
-  const key = model.instruments().length > 1
-    ? model.instrumentOf(model.getCurrentVoice()).instrKey
+  const name = model.instruments().length > 1
+    ? model.instrumentOf(model.getCurrentVoice()).name
     : '<single>';
-  if (key !== lastScoreInstrKey) {
-    lastScoreInstrKey = key;
+  if (name !== lastScoreInstrName) {
+    lastScoreInstrName = name;
     maybeBroadcastComposerScore();
   }
 }

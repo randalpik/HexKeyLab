@@ -107,10 +107,10 @@ export type { Duration, Dots };
 export interface InstrumentEntry {
   /** 0-based position in the score. */
   index: number;
-  /** Display name from `<label>`, else a default ("Piano" for index 0). */
+  /** The instrument's name from `<label>`, else a default ("Piano" for index 0).
+   *  This is the sole instrument identity: HKL resolves it against its live
+   *  instrument dropdown (case-sensitive, "Piano" fallback) to pick the timbre. */
   name: string;
-  /** `hkl:instr` sample-set key, else 'piano'. */
-  instrKey: string;
   /** The owning `<staffGrp>` (the root staffGrp for the implicit single instrument). */
   staffGrp: Element;
   /** Global `<staff>` @n of this instrument's staves, in order (length 1 or 2). */
@@ -1683,7 +1683,7 @@ export class ComposerModel {
    *     `<staffDef>`s → ONE instrument ("Piano"), the root staffGrp itself.
    *     This shape is never rewritten on load (byte-identity for legacy .hkc).
    *   • EXPLICIT: the root staffGrp's children are nested `<staffGrp>`s, one per
-   *     instrument; each carries `hkl:instr` + an optional `<label>`.
+   *     instrument; each carries a `<label>` naming the instrument (its identity).
    *  Staff @n is global-sequential across instruments in document order; each
    *  staff contributes 2 voices (layer 1 then 2). */
   private instrumentTable(): {
@@ -1717,14 +1717,9 @@ export class ComposerModel {
         const name =
           labelEl?.textContent?.trim() ||
           (idx === 0 ? 'Piano' : `Instrument ${idx + 1}`);
-        const instrKey =
-          grp.getAttributeNS(HKL_NS, 'instr') ||
-          grp.getAttribute('hkl:instr') ||
-          'piano';
         instruments.push({
           index: idx,
           name,
-          instrKey,
           staffGrp: grp,
           staffNs,
           voiceBase: 0,
@@ -1831,17 +1826,16 @@ export class ComposerModel {
   /** Add a new instrument (1- or 2-staff) after the existing ones. Promotes the
    *  implicit single-piano shape to nested form on the first add. Default
    *  clefs: G/2 (+ F/4 for the bottom staff of a grand staff). */
-  addInstrument(opts: { name: string; instrKey: string; staffCount: 1 | 2 }): void {
+  addInstrument(opts: { name: string; staffCount: 1 | 2 }): void {
     const head = this.doc.querySelector("scoreDef");
     let root = head?.querySelector("staffGrp") ?? null;
     if (!head || !root) return;
     /* Promote the implicit shape → nested, making the existing piano the first
-       instrument. (Direct <staffDef> children ⇒ implicit shape.) */
+       instrument. (Direct <staffDef> children ⇒ implicit shape.) The implicit
+       instrument's identity is its `<label>` (default "Piano"). */
     if (Array.from(root.children).some((c) => c.localName === "staffDef")) {
       const newRoot = this.doc.createElementNS(MEI_NS, "staffGrp");
       head.replaceChild(newRoot, root);
-      if (!root.getAttributeNS(HKL_NS, "instr") && !root.getAttribute("hkl:instr"))
-        root.setAttributeNS(HKL_NS, "hkl:instr", "piano");
       if (!Array.from(root.children).some((c) => c.localName === "label")) {
         const lbl = el(this.doc, "label");
         lbl.textContent = "Piano";
@@ -1854,7 +1848,6 @@ export class ComposerModel {
       .map((d) => parseInt(d.getAttribute("n") ?? "0", 10));
     let nextN = (existingNs.length ? Math.max(...existingNs) : 0) + 1;
     const grp = this.doc.createElementNS(MEI_NS, "staffGrp");
-    grp.setAttributeNS(HKL_NS, "hkl:instr", opts.instrKey);
     if (opts.staffCount === 2) {
       grp.setAttribute("symbol", "brace");
       grp.setAttribute("bar.thru", "true");
@@ -1966,10 +1959,11 @@ export class ComposerModel {
     }
   }
 
-  /** If exactly one instrument remains and it's a default 2-staff piano in
-   *  nested form, unwrap it back to the implicit root-staffGrp shape (strips
-   *  the hkl:instr + <label> added by promote) so add-then-remove round-trips
-   *  to the byte-identical original MEI. */
+  /** If exactly one instrument remains and it's the default 2-staff "Piano" in
+   *  nested form, unwrap it back to the implicit root-staffGrp shape (strips the
+   *  <label> added by promote) so add-then-remove round-trips to the byte-
+   *  identical original MEI. Keyed on the label being the default "Piano"; a
+   *  renamed single instrument stays in nested form (its name is meaningful). */
   private maybeDemoteToImplicit(): void {
     const head = this.doc.querySelector("scoreDef");
     const root = head?.querySelector("staffGrp");
@@ -1979,12 +1973,10 @@ export class ComposerModel {
     const only = nested[0];
     const staffDefs = Array.from(only.children).filter((c) => c.localName === "staffDef");
     if (staffDefs.length !== 2) return;
-    const instrKey = only.getAttributeNS(HKL_NS, "instr") || only.getAttribute("hkl:instr") || "piano";
-    if (instrKey !== "piano") return;
-    only.removeAttributeNS(HKL_NS, "instr");
-    only.removeAttribute("hkl:instr");
-    for (const lbl of Array.from(only.children).filter((c) => c.localName === "label"))
-      only.removeChild(lbl);
+    const labelEls = Array.from(only.children).filter((c) => c.localName === "label");
+    const name = labelEls[0]?.textContent?.trim() || "Piano";
+    if (name !== "Piano") return;
+    for (const lbl of labelEls) only.removeChild(lbl);
     head.replaceChild(only, root);
   }
 

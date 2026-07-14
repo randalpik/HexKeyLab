@@ -77,23 +77,9 @@ const HAIRPIN_OPEN_END_DELTA = 45;
 
 /* Pizz/arco (phase 5): a "pizz."/"arco" <dir> cue switches a voice's sounding
  * timbre to a pizzicato sample-set variant for the notes it governs, until the
- * next contradicting cue. ARTIC_VARIANTS maps a base instrument key → its OWN
- * shipped pizzicato variant. We only ship viola_pizz so far, so an instrument
- * without its own variant falls back to ANY library pizz (Max: "I'd rather
- * hear viola pizz than no pizz for any other string"). Extend this map (and
- * ship the matching `<key>_pizz.hki`) to give an instrument its true pizz.
- * main.ts's preload broadcast loads all these variants before playback. */
-export const ARTIC_VARIANTS: Readonly<Record<string, string>> = { viola: 'viola_pizz' };
-
-/** All pizzicato variant keys shipped in the library (for the preload set). */
-export const PIZZ_VARIANTS: ReadonlyArray<string> = [...new Set(Object.values(ARTIC_VARIANTS))];
-
-/** The pizzicato sample-set to sound for `baseKey` under a pizz cue: its own
- *  variant if it has one, else any library pizz (fallback). null only if the
- *  library ships no pizz at all. */
-export function pizzVariantFor(baseKey: string): string | null {
-  return ARTIC_VARIANTS[baseKey] ?? PIZZ_VARIANTS[0] ?? null;
-}
+ * next contradicting cue. buildPlayback flags each governed event with `pizz`;
+ * HKL owns the base-key → pizzicato-variant mapping (it owns the sample
+ * registry) and applies it when resolving the event's instrument. */
 
 /** Classify a <dir>'s text as a sounding-articulation cue, or null if it's not
  *  one. Tolerant of a trailing period and case ("Pizz." → 'pizz'). */
@@ -619,13 +605,14 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
   for (let voice: Voice = 1; voice <= model.totalVoices(); voice = (voice + 1) as Voice) {
     const staffN = model.staffForVoice(voice);
     const layerN = model.layerForVoice(voice);
-    /* The instrument this voice belongs to — tags every event it emits so HKL
-       can route per-instrument timbre. (Structural: the model's instrument
-       table matches the serialized `mei`.) Only tagged for MULTI-instrument
-       scores; a single-instrument score leaves instrumentKey absent so HKL
-       plays through its current active instrument (the historic behavior —
-       the user picks the sound in HKL, not from the model's "piano" default). */
-    const voiceInstrKey = isMultiInstrument ? model.instrumentOf(voice).instrKey : undefined;
+    /* The instrument NAME this voice belongs to — tags every event it emits so
+       HKL can route per-instrument timbre (HKL resolves the name against its
+       instrument dropdown). (Structural: the model's instrument table matches
+       the serialized `mei`.) Only tagged for MULTI-instrument scores; a single-
+       instrument score leaves instrumentName absent so HKL plays through its
+       current active instrument (the historic behavior — the user picks the
+       sound in HKL, not from the model's default). */
+    const voiceInstrName = isMultiInstrument ? model.instrumentOf(voice).name : undefined;
     const voiceEventStart = events.length;
     /* Walk all measures' layers for this voice. `streamMi[k]` records the
        document measure index of stream element k, so events can be tagged
@@ -814,19 +801,17 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
       i++;
     }
     /* Tag every event this voice emitted (incl. emitAlternation pushes) with
-       its instrument's sample-set key for per-instrument playback routing. A
-       pizz./arco <dir> cue on this voice's staff overrides the key to the
-       pizzicato variant for the notes it governs (until the next contradicting
-       cue); the cue is keyed on the event's ORIGINAL written tick, so it's
-       repeat-invariant like velocity. */
-    if (voiceInstrKey) {
-      const pizzKey = pizzVariantFor(voiceInstrKey);
+       its instrument's NAME for per-instrument playback routing. A pizz./arco
+       <dir> cue on this voice's staff sets the notation-level `pizz` flag for
+       the notes it governs (until the next contradicting cue) — HKL maps that
+       to the pizzicato sample-set variant. The cue is keyed on the event's
+       ORIGINAL written tick, so it's repeat-invariant like velocity. */
+    if (voiceInstrName) {
       for (let k = voiceEventStart; k < events.length; k++) {
-        let key = voiceInstrKey;
-        if (pizzKey && events[k]._tick !== undefined && articCueAt(staffN, events[k]._tick!) === 'pizz') {
-          key = pizzKey;
+        events[k].instrumentName = voiceInstrName;
+        if (events[k]._tick !== undefined && articCueAt(staffN, events[k]._tick!) === 'pizz') {
+          events[k].pizz = true;
         }
-        events[k].instrumentKey = key;
       }
     }
     if (voice >= model.totalVoices()) break;
@@ -948,32 +933,33 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
 export function buildPedalEvents(model: ComposerModel, startMs = 0): PedalEvent[] {
   const mei = new DOMParser().parseFromString(model.serialize(), 'application/xml');
   const tempo = buildTempoTimeline(mei);
-  /* staff @n → owning instrument's sample-set key, so each pedal mark routes to
-     its grand-staff instrument's damper. Single-instrument scores leave
-     instrumentKey absent (global damper = historic behavior). */
+  /* staff @n → owning instrument's NAME, so each pedal mark routes to its grand-
+     staff instrument's damper (HKL resolves the name to the same key its notes
+     resolve to). Single-instrument scores leave instrumentName absent (global
+     damper = historic behavior). */
   const multi = model.instruments().length > 1;
-  const staffToInstrKey = new Map<number, string>();
+  const staffToInstrName = new Map<number, string>();
   for (const inst of model.instruments())
-    for (const sn of inst.staffNs) staffToInstrKey.set(sn, inst.instrKey);
+    for (const sn of inst.staffNs) staffToInstrName.set(sn, inst.name);
   const evs: PedalEvent[] = collectPedals(mei).map((p) => ({
     atMs: tempo.atMsAt(p.tick), dir: p.dir,
-    instrumentKey: multi ? staffToInstrKey.get(p.staff) : undefined,
+    instrumentName: multi ? staffToInstrName.get(p.staff) : undefined,
   }));
   evs.sort((a, b) => a.atMs - b.atMs);
   if (startMs > 0) {
     /* Inherited pedal state PER INSTRUMENT: the most-recent transition strictly
-       before startMs (for each instrumentKey) decides whether that instrument
+       before startMs (for each instrumentName) decides whether that instrument
        enters the window pedal-down. */
     const inheritedDown = new Map<string | undefined, boolean>();
     for (const e of evs) {
-      if (e.atMs < startMs - 1e-6) inheritedDown.set(e.instrumentKey, e.dir === 'down');
+      if (e.atMs < startMs - 1e-6) inheritedDown.set(e.instrumentName, e.dir === 'down');
       else break;
     }
     const shifted = evs
       .filter((e) => e.atMs >= startMs - 1e-6)
       .map((e) => ({ ...e, atMs: e.atMs - startMs }));
-    for (const [key, down] of inheritedDown)
-      if (down) shifted.unshift({ atMs: 0, dir: 'down', instrumentKey: key });
+    for (const [name, down] of inheritedDown)
+      if (down) shifted.unshift({ atMs: 0, dir: 'down', instrumentName: name });
     return shifted;
   }
   return evs;

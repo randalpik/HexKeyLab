@@ -229,7 +229,58 @@ export function broadcastAllToComposer(): void {
   broadcastFootprint();
 }
 
+/* ── instrument resolution (Composer sends a NAME; HKL owns the timbre) ──────
+ * Composer identifies each instrument only by its user-facing name (its score
+ * `<label>`). HKL maps that name to a sample-set key by matching it CASE-
+ * SENSITIVELY against the live #waveform dropdown option TEXT — so user-imported
+ * instruments participate automatically — falling back to the key of the option
+ * labeled "Piano" (guaranteed present as the default base instrument) when
+ * nothing matches. Same live-DOM idiom as currentOutlineForBridge(). */
+function resolveInstrumentLabel(name: string): string {
+  const sel = document.getElementById('waveform') as HTMLSelectElement | null;
+  let pianoValue: string | undefined;
+  if (sel) {
+    for (const opt of Array.from(sel.options)) {
+      const text = (opt.textContent ?? '').trim();
+      if (text === name) return opt.value;
+      if (text === 'Piano') pianoValue = opt.value;
+    }
+  }
+  /* splendid_piano is the value behind the static "Piano" option; the fallback
+     here only bites if the dropdown is somehow missing (never in practice). */
+  return pianoValue ?? 'splendid_piano';
+}
+
+/* Pizzicato sample-set variants, keyed by resolved HKL sample-set key. A pizz
+ * cue sounds the instrument's own shipped variant, else ANY library pizz (Max:
+ * "I'd rather hear viola pizz than no pizz for any other string"). Moved here
+ * from Composer — HKL owns the sample registry, so the base→pizz mapping does
+ * too. Extend this map (and ship the matching `<key>_pizz`) for a true pizz. */
+const ARTIC_VARIANTS: Readonly<Record<string, string>> = { viola: 'viola_pizz' };
+const PIZZ_VARIANTS: ReadonlyArray<string> = [...new Set(Object.values(ARTIC_VARIANTS))];
+function pizzVariantFor(baseKey: string): string | null {
+  return ARTIC_VARIANTS[baseKey] ?? PIZZ_VARIANTS[0] ?? null;
+}
+
+/** Resolve a wire PlaybackEvent's instrument to a sample-set key: name → key
+ *  (dropdown match, Piano fallback), then the pizzicato variant when the event
+ *  carries a pizz cue. Absent name ⇒ undefined (play through HKL's active
+ *  instrument — the historic single-instrument behavior). */
+function resolveEventInstrument(ev: PlaybackEvent): string | undefined {
+  if (ev.instrumentName == null) return undefined;
+  let key = resolveInstrumentLabel(ev.instrumentName);
+  if (ev.pizz) { const pz = pizzVariantFor(key); if (pz) key = pz; }
+  return key;
+}
+
 /* ── playback dispatch ───────────────────────────────────────────────────── */
+
+/* Internal scheduler shapes: the wire events/pedals carry an instrument NAME;
+   the scheduler works with the resolved sample-set `instrumentKey` (computed
+   once at playScore ingestion), so every downstream helper keeps reading
+   `.instrumentKey` exactly as before. */
+type SchedEvent = PlaybackEvent & { instrumentKey?: string };
+type SchedPedal = PedalEvent & { instrumentKey?: string };
 
 interface ActivePlayback {
   cancelled: boolean;
@@ -458,7 +509,7 @@ const DRIVER_INTERVAL_MS = 25;
  *  audio thread render each glide boundary precisely regardless of when
  *  the JS callbacks fire. */
 function scheduleAudioForEvent(
-  ev: PlaybackEvent,
+  ev: SchedEvent,
   step: LegatoStep,
   audioOnSec: number,
   pb: ActivePlayback,
@@ -523,7 +574,7 @@ function scheduleAudioForEvent(
  *  instrument path), syncPianoOut, draw, playback-position ack. Runs at
  *  score-on time via setTimeout. */
 function scheduleOnVisualAt(
-  ev: PlaybackEvent,
+  ev: SchedEvent,
   step: LegatoStep,
   delayMs: number,
   pb: ActivePlayback,
@@ -587,7 +638,7 @@ function scheduleOnVisualAt(
  *  time guards against a later event re-articulating the same key (that
  *  event's own off handler will tear it down). */
 function scheduleOffVisualAt(
-  ev: PlaybackEvent,
+  ev: SchedEvent,
   delayMs: number,
   pb: ActivePlayback,
   canGlide: boolean,
@@ -669,7 +720,7 @@ interface LegatoStep {
 
 /** Is the sustain pedal down at moment `t` (ms)? Decided by the most-recent
  *  transition at-or-before t in a pre-sorted pedal timeline. */
-function pedalDownAt(sortedPedals: ReadonlyArray<PedalEvent>, t: number, instrumentKey: string | undefined): boolean {
+function pedalDownAt(sortedPedals: ReadonlyArray<SchedPedal>, t: number, instrumentKey: string | undefined): boolean {
   let down = false;
   for (const pe of sortedPedals) {
     if (pe.instrumentKey !== instrumentKey) continue;
@@ -688,7 +739,7 @@ function pedalDownAt(sortedPedals: ReadonlyArray<PedalEvent>, t: number, instrum
  *  at `t`. Deciding from the timeline (not the live audio.sustainPedalDown
  *  flag at off-fire) also removes the wall-clock race between a note-off and a
  *  coincident pedal transition. */
-function pedalCapturesNoteEndingAt(sortedPedals: ReadonlyArray<PedalEvent>, t: number, instrumentKey: string | undefined): boolean {
+function pedalCapturesNoteEndingAt(sortedPedals: ReadonlyArray<SchedPedal>, t: number, instrumentKey: string | undefined): boolean {
   let down = false;
   let upAtT = false;
   /* Only this note's OWN instrument's pedal can capture it (per-instrument
@@ -717,8 +768,8 @@ function pedalCapturesNoteEndingAt(sortedPedals: ReadonlyArray<PedalEvent>, t: n
  *  voice-tracking conflict is structurally impossible (deferred keys exist
  *  only while the pedal is down). */
 function computeLegatoPlan(
-  events: ReadonlyArray<PlaybackEvent>,
-  sortedPedals: ReadonlyArray<PedalEvent> = [],
+  events: ReadonlyArray<SchedEvent>,
+  sortedPedals: ReadonlyArray<SchedPedal> = [],
 ): LegatoStep[] {
   const plan: LegatoStep[] = events.map(() => ({}));
   const overlap = (i: number): void => {
@@ -795,9 +846,9 @@ function logPlaybackError(label: string, detail: Record<string, unknown>, err: u
   }
 }
 
-async function playScore(events: ReadonlyArray<PlaybackEvent>, pedalEvents: ReadonlyArray<PedalEvent> = []): Promise<void> {
+async function playScore(wireEvents: ReadonlyArray<PlaybackEvent>, wirePedals: ReadonlyArray<PedalEvent> = []): Promise<void> {
   abortActive();
-  if (events.length === 0) {
+  if (wireEvents.length === 0) {
     bridge.send({ type: 'playback-finished' });
     return;
   }
@@ -814,9 +865,24 @@ async function playScore(events: ReadonlyArray<PlaybackEvent>, pedalEvents: Read
   active = pb;
   playbackActive = true;
 
+  /* Resolve each wire event/pedal's instrument NAME to a sample-set key ONCE
+     here (against the live #waveform dropdown, + pizzicato variant for pizz
+     events), so the whole scheduler below works with valid HKL keys and every
+     downstream helper reads `.instrumentKey` unchanged. */
+  const events: SchedEvent[] = wireEvents.map((ev) => ({
+    ...ev, instrumentKey: resolveEventInstrument(ev),
+  }));
+
   /* Sorted pedal timeline — used both to shape the legato plan (glide degrades
-     to overlap under the pedal) and to drive the pedal transitions below. */
-  const pedals = pedalEvents.slice().sort((a, b) => a.atMs - b.atMs);
+     to overlap under the pedal) and to drive the pedal transitions below. Pedals
+     resolve on the base name (no pizz), matching a note's non-pizz key so per-
+     instrument damper routing lines up. */
+  const pedals: SchedPedal[] = wirePedals
+    .map((pe) => ({
+      ...pe,
+      instrumentKey: pe.instrumentName != null ? resolveInstrumentLabel(pe.instrumentName) : undefined,
+    }))
+    .sort((a, b) => a.atMs - b.atMs);
 
   /* Load every per-event instrument (multi-instrument scores) and WAIT before
      the driver starts. noteOn never falls back to a different timbre — an
@@ -1287,16 +1353,19 @@ bridge.on((msg: ComposerEvent) => {
          score). The instrument set is preloaded (composer-instruments), so the
          switch is instant + correct — never previews with the wrong instrument.
          Never persists it as the user's default. */
-      composerCursorInstr = msg.instrumentKey || null;
-      if (loadPrefs().syncToComposer && msg.instrumentKey) {
-        setActiveWaveform(msg.instrumentKey);
+      composerCursorInstr = msg.instrumentName ? resolveInstrumentLabel(msg.instrumentName) : null;
+      if (loadPrefs().syncToComposer && composerCursorInstr) {
+        setActiveWaveform(composerCursorInstr);
       }
       break;
     case 'composer-instruments':
-      /* The full instrument set of the connected score. Cache it and — when
-         Sync is on — eagerly load every one so cursor-follow is always ready
-         ("never play wrong" during composition). */
-      composerInstrumentKeys = msg.instrumentKeys.slice();
+      /* The full instrument set of the connected score (by name). Resolve each
+         to a sample-set key, add pizzicato variants (a score may switch to pizz
+         mid-playback), and — when Sync is on — eagerly load every one so cursor-
+         follow is always ready ("never play wrong" during composition). */
+      composerInstrumentKeys = msg.instrumentNames.length > 0
+        ? [...new Set([...msg.instrumentNames.map(resolveInstrumentLabel), ...PIZZ_VARIANTS])]
+        : [];
       if (loadPrefs().syncToComposer) preloadComposerInstruments();
       break;
     case 'composer-score':

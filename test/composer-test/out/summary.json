@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 325,
-  "passed": 325,
+  "fixtures": 326,
+  "passed": 326,
   "failed": 0,
-  "elapsedMs": 114169,
+  "elapsedMs": 111065,
   "results": [
     {
       "name": "emptyDoc",
@@ -671,6 +671,14 @@
     },
     {
       "name": "space_starts_playback",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "multiInstrument_playScoreUsesNames",
       "ok": true,
       "failures": [],
       "counts": {

@@ -13,7 +13,6 @@ import { openTextEntryModal } from './ui/textEntryModal.js';
  *  null means newly added (no content yet). */
 export interface InstrEdit {
   name: string;
-  instrKey: string;
   staffCount: 1 | 2;
   origIndex: number | null;
 }
@@ -22,7 +21,6 @@ export interface InstrEdit {
 export function instrEditsFromModel(model: ComposerModel): InstrEdit[] {
   return model.instruments().map((inst, i) => ({
     name: inst.name,
-    instrKey: inst.instrKey,
     staffCount: inst.staffNs.length === 2 ? 2 : 1,
     origIndex: i,
   }));
@@ -59,7 +57,7 @@ export function reconcileInstruments(model: ComposerModel, edits: ReadonlyArray<
   const newToCur = new Map<InstrEdit, number>();
   for (const e of edits) {
     if (e.origIndex == null) {
-      model.addInstrument({ name: e.name, instrKey: e.instrKey, staffCount: e.staffCount });
+      model.addInstrument({ name: e.name, staffCount: e.staffCount });
       newToCur.set(e, cur++);
     }
   }
@@ -72,31 +70,6 @@ export function reconcileInstruments(model: ComposerModel, edits: ReadonlyArray<
   }
   return true;
 }
-
-/** Curated subset of HKL sample-set keys (apps/hkl/src/audio/samples-data.ts).
- *  The stored `hkl:instr` key routes playback timbre; an unloaded key falls
- *  back to HKL's active instrument. */
-export const TIMBRE_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
-  { value: 'piano', label: 'Piano' },
-  { value: 'electric_piano', label: 'Electric piano' },
-  { value: 'harpsichord', label: 'Harpsichord' },
-  { value: 'vibraphone', label: 'Vibraphone' },
-  { value: 'harp', label: 'Harp' },
-  { value: 'acoustic_guitar', label: 'Acoustic guitar' },
-  { value: 'flute', label: 'Flute' },
-  { value: 'oboe', label: 'Oboe' },
-  { value: 'clarinet', label: 'Clarinet' },
-  { value: 'bassoon', label: 'Bassoon' },
-  { value: 'saxophone', label: 'Saxophone' },
-  { value: 'french_horn', label: 'French horn' },
-  { value: 'trombone', label: 'Trombone' },
-  { value: 'violin', label: 'Violin' },
-  { value: 'viola', label: 'Viola' },
-  { value: 'cello', label: 'Cello' },
-  { value: 'double_bass', label: 'Double bass' },
-  { value: 'pipe_organ', label: 'Pipe organ' },
-  { value: 'drawbar_organ', label: 'Drawbar organ' },
-];
 
 function esc(s: string): string {
   return s.replace(/[&<>"]/g, (c) =>
@@ -137,17 +110,17 @@ export function openInstrumentsModal(edits: InstrEdit[], onChange: () => void): 
         title: 'Add instrument',
         fields: [
           { name: 'name', type: 'text', label: 'Name', value: '', placeholder: 'e.g. Violin' },
-          { name: 'timbre', type: 'select', label: 'Sound', value: 'violin', options: TIMBRE_OPTIONS },
           { name: 'staves', type: 'select', label: 'Staves', value: '1',
             options: [{ value: '1', label: '1 (single staff)' }, { value: '2', label: '2 (grand staff)' }] },
         ],
         okLabel: 'Add',
         onOk: (values) => {
-          const instrKey = String(values.timbre ?? 'piano');
           const staffCount = String(values.staves) === '2' ? 2 : 1;
-          const label = TIMBRE_OPTIONS.find((o) => o.value === instrKey)?.label ?? instrKey;
-          const name = String(values.name ?? '').trim() || label;
-          edits.push({ name, instrKey, staffCount, origIndex: null });
+          /* The name is the instrument's identity: HKL matches it against its
+             instrument dropdown (case-sensitive) to pick the timbre, defaulting
+             to Piano when there's no match. Empty → "Piano" (guaranteed match). */
+          const name = String(values.name ?? '').trim() || 'Piano';
+          edits.push({ name, staffCount, origIndex: null });
           onChange();
           render();
         },

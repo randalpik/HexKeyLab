@@ -993,6 +993,32 @@ const BRIDGE = {
     setupKeys: [' '],
   },
 
+  /* Multi-instrument playback tags each event with the instrument's NAME (its
+     <label>), not an opaque sample-set key. Regression guard for the Viola+Piano
+     "no audio" bug: the importer/model used to emit instrumentKey="piano" (a key
+     HKL can't resolve → silent). A 2-instrument score (implicit "Piano" + an
+     added "Viola") must send play-score events whose instrumentName set is
+     exactly {Piano, Viola} — HKL resolves those against its dropdown. */
+  multiInstrument_playScoreUsesNames: {
+    setup: `
+      window.__bridgeMock.sendHklHello();
+      m.addInstrument({ name: 'Viola', staffCount: 1 });
+      m.setVoice(1); m.setCursor(0);
+      m.insertChordAtCursor({
+        notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }],
+        duration: '4', dots: 0,
+      });
+      m.setVoice(5); m.setCursor(0);
+      m.insertChordAtCursor({
+        notes: [{ q: 0, r: 1, pname: 'e', accid: '', oct: 4, midi: 64, colorHex: '#888', velocity: 80 }],
+        duration: '4', dots: 0,
+      });
+      m.setVoice(1); m.setCursor(0);
+      window.__bridgeMock.reset();
+    `,
+    setupKeys: [' '],
+  },
+
   /* Space twice → first start, second stop. Both bridge events captured. */
   space_stops_playback: {
     setup: `
@@ -3965,9 +3991,9 @@ const PHASE1 = {
   phase5_add_instrument: {
     setup: `
       /* Distinct pitches per instrument (q,r differ) so this exercises
-         instrumentKey TAGGING, not the same-pitch conflict resolution. */
+         instrument-NAME tagging, not the same-pitch conflict resolution. */
       const N = (q, r, oct, midi) => ({ q, r, pname: 'a', accid: '', oct, midi, colorHex: '#888', velocity: 80 });
-      m.addInstrument({ name: 'Violin', instrKey: 'violin', staffCount: 1 });
+      m.addInstrument({ name: 'Violin', staffCount: 1 });
       m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [N(0, 0, 4, 69)], duration: '4', dots: 0 });
       m.setVoice(5); m.setCursor(0, 5); m.insertChordAtCursor({ notes: [N(0, 1, 5, 81)], duration: '4', dots: 0 });
       m.setVoice(1); m.setCursor(0, 1);
@@ -3981,7 +4007,7 @@ const PHASE1 = {
      normalized) confirms the doc returns to a clean single-piano shape. */
   phase5_add_remove_roundtrip: {
     setup: `
-      m.addInstrument({ name: 'Organ', instrKey: 'pipe_organ', staffCount: 2 });
+      m.addInstrument({ name: 'Organ', staffCount: 2 });
       m.removeInstrument(1);
       r();
     `,
@@ -3991,7 +4017,7 @@ const PHASE1 = {
      violin's note must travel to staff 1 (content travels with the staff). */
   phase5_reorder_instruments: {
     setup: `
-      m.addInstrument({ name: 'Violin', instrKey: 'violin', staffCount: 1 });
+      m.addInstrument({ name: 'Violin', staffCount: 1 });
       m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'c', accid: '', oct: 3, midi: 48, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
       m.setVoice(5); m.setCursor(0, 5); m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'c', accid: '', oct: 6, midi: 84, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
       m.reorderInstruments([1, 0]);
@@ -4010,7 +4036,7 @@ const PHASE1 = {
       document.getElementById('setupInstrumentsBtn').click();
       document.getElementById('instrAddBtn').click();
       const te = document.getElementById('textEntryDialog');
-      setVal(te, 'name', 'Violin'); setVal(te, 'timbre', 'violin'); setVal(te, 'staves', '1');
+      setVal(te, 'name', 'Violin'); setVal(te, 'staves', '1');
       te.querySelector('form').requestSubmit(te.querySelector('.te-ok'));
       /* Staged: model still has only the piano at this point. */
       window.__staged_count = m.instruments().length;
@@ -4027,7 +4053,7 @@ const PHASE1 = {
   phase5_same_note_conflict: {
     setup: `
       const N = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
-      m.addInstrument({ name: 'Violin', instrKey: 'violin', staffCount: 1 });
+      m.addInstrument({ name: 'Violin', staffCount: 1 });
       m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [N], duration: '4', dots: 0 });
       m.setVoice(5); m.setCursor(0, 5); m.insertChordAtCursor({ notes: [N], duration: '4', dots: 0 });
       m.setVoice(1); m.setCursor(0, 1);
@@ -4041,7 +4067,7 @@ const PHASE1 = {
   phase5_two_grand_staves: {
     setup: `
       const N = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
-      m.addInstrument({ name: 'Organ', instrKey: 'pipe_organ', staffCount: 2 });
+      m.addInstrument({ name: 'Organ', staffCount: 2 });
       m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [N], duration: '4', dots: 0 });
       m.setVoice(7); m.setCursor(0, 7); m.insertChordAtCursor({ notes: [N], duration: '4', dots: 0 });
       m.setVoice(1); m.setCursor(0, 1);
@@ -4068,7 +4094,7 @@ const PHASE1 = {
   phase5_single_part_view: {
     setup: `
       const N = (q, r, oct, midi) => ({ q, r, pname: 'a', accid: '', oct, midi, colorHex: '#888', velocity: 80 });
-      m.addInstrument({ name: 'Violin', instrKey: 'violin', staffCount: 1 });
+      m.addInstrument({ name: 'Violin', staffCount: 1 });
       m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [N(0, 0, 4, 69)], duration: '4', dots: 0 });
       m.setVoice(5); m.setCursor(0, 5); m.insertChordAtCursor({ notes: [N(0, 1, 5, 81)], duration: '4', dots: 0 });
       m.setVoice(1); m.setCursor(0, 1);
@@ -4087,7 +4113,7 @@ const PHASE1 = {
   phase5_musicxml_split: {
     setup: `
       const N = (q, r, oct, midi) => ({ q, r, pname: 'a', accid: '', oct, midi, colorHex: '#888', velocity: 80 });
-      m.addInstrument({ name: 'Violin', instrKey: 'violin', staffCount: 1 });
+      m.addInstrument({ name: 'Violin', staffCount: 1 });
       m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [N(0, 0, 4, 69)], duration: '4', dots: 0 });
       m.setVoice(5); m.setCursor(0, 5); m.insertChordAtCursor({ notes: [N(0, 1, 5, 81)], duration: '4', dots: 0 });
       m.setVoice(1); m.setCursor(0, 1);
@@ -4389,7 +4415,7 @@ const PHASE1 = {
   phase5_pizz_arco: {
     setup: `
       const N = (q, r, oct, midi) => ({ q, r, pname: 'a', accid: '', oct, midi, colorHex: '#888', velocity: 80 });
-      m.addInstrument({ name: 'Violin', instrKey: 'violin', staffCount: 1 });
+      m.addInstrument({ name: 'Violin', staffCount: 1 });
       /* Piano at a low, distinct cell so it never collides with the violin. */
       m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [N(0, -1, 3, 53)], duration: '4', dots: 0 });
       m.setVoice(5); m.setCursor(0, 5);
@@ -4436,7 +4462,7 @@ const PHASE1 = {
   phase5_pdf_split_view: {
     setup: `
       const N = (q, r, oct, midi) => ({ q, r, pname: 'a', accid: '', oct, midi, colorHex: '#888', velocity: 80 });
-      m.addInstrument({ name: 'Violin', instrKey: 'violin', staffCount: 1 });
+      m.addInstrument({ name: 'Violin', staffCount: 1 });
       m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [N(0, 0, 4, 69)], duration: '4', dots: 0 });
       m.setVoice(5); m.setCursor(0, 5); m.insertChordAtCursor({ notes: [N(1, 0, 5, 85)], duration: '4', dots: 0 });
       m.setHejiEnabled(true);
@@ -4469,7 +4495,7 @@ const PHASE1 = {
   phase5_multi_instr_selection: {
     setup: `
       const N = (q, r, oct, midi) => ({ q, r, pname: 'a', accid: '', oct, midi, colorHex: '#888', velocity: 80 });
-      m.addInstrument({ name: 'Violin', instrKey: 'violin', staffCount: 1 });
+      m.addInstrument({ name: 'Violin', staffCount: 1 });
       m.setVoice(5); m.setCursor(0, 5); m.insertChordAtCursor({ notes: [N(0, 1, 5, 81)], duration: '4', dots: 0 });
       m.setVoice(5); m.setCursor(0, 5);
       r();
@@ -5386,19 +5412,19 @@ export const FIXTURE_ASSERTIONS = {
         if (m.totalStaves() !== 3) return { ok: false, detail: 'totalStaves=' + m.totalStaves() };
         const insts = m.instruments();
         if (insts.length !== 2) return { ok: false, detail: 'instruments=' + insts.length };
-        if (insts[1].instrKey !== 'violin') return { ok: false, detail: 'instr1 key=' + insts[1].instrKey };
+        if (insts[1].name !== 'Violin') return { ok: false, detail: 'instr1 name=' + insts[1].name };
         if (m.staffForVoice(5) !== 3) return { ok: false, detail: 'staffForVoice(5)=' + m.staffForVoice(5) };
         if (m.instrumentOf(5).index !== 1) return { ok: false, detail: 'instrumentOf(5)=' + m.instrumentOf(5).index };
         return { ok: true };
       })()` },
-    { name: 'playback: piano note tagged instrumentKey=piano, violin note=violin',
+    { name: 'playback: piano note tagged instrumentName=Piano, violin note=Violin',
       expr: `(() => {
         const h = window.__hkl_composer;
         const evs = h.buildPlayback(h.model).filter(e => e.notes.length > 0);
         const piano = evs.find(e => e.voice === 1);
         const violin = evs.find(e => e.voice === 5);
-        if (!piano || piano.instrumentKey !== 'piano') return { ok: false, detail: 'piano key=' + (piano && piano.instrumentKey) };
-        if (!violin || violin.instrumentKey !== 'violin') return { ok: false, detail: 'violin key=' + (violin && violin.instrumentKey) };
+        if (!piano || piano.instrumentName !== 'Piano') return { ok: false, detail: 'piano name=' + (piano && piano.instrumentName) };
+        if (!violin || violin.instrumentName !== 'Violin') return { ok: false, detail: 'violin name=' + (violin && violin.instrumentName) };
         return { ok: true };
       })()` },
   ],
@@ -5773,20 +5799,22 @@ export const FIXTURE_ASSERTIONS = {
      pizz variant for spanned notes, reverting on arco. Violin has no own pizz,
      so the pizz span falls back to the library's viola_pizz. */
   phase5_pizz_arco: [
-    { name: 'violin beats 1-2 → viola_pizz (fallback), beats 3-4 → violin; piano unaffected',
+    { name: 'violin beats 1-2 flagged pizz, beats 3-4 arco; all name=Violin; piano unaffected',
       expr: `(() => {
         const h = window.__hkl_composer;
         const evs = h.buildPlayback(h.model).filter(e => e.notes.length > 0);
         const violin = evs.filter(e => e.voice === 5).sort((a, b) => a.atMs - b.atMs);
         if (violin.length !== 4) return { ok: false, detail: 'violin events=' + violin.length };
-        const keys = violin.map(e => e.instrumentKey);
-        if (keys[0] !== 'viola_pizz' || keys[1] !== 'viola_pizz')
-          return { ok: false, detail: 'pizz span keys=' + keys.join(',') + ' (expected viola_pizz fallback)' };
-        if (keys[2] !== 'violin' || keys[3] !== 'violin')
-          return { ok: false, detail: 'arco span keys=' + keys.join(',') };
+        if (violin.some(e => e.instrumentName !== 'Violin'))
+          return { ok: false, detail: 'violin names=' + violin.map(e => e.instrumentName).join(',') };
+        /* Composer emits only the notation-level pizz flag; HKL maps pizz →
+           viola_pizz fallback at resolution time (not visible here). */
+        const pizz = violin.map(e => !!e.pizz);
+        if (!(pizz[0] && pizz[1] && !pizz[2] && !pizz[3]))
+          return { ok: false, detail: 'pizz flags=' + pizz.join(',') + ' (expected true,true,false,false)' };
         const piano = evs.find(e => e.voice === 1);
-        if (!piano || piano.instrumentKey !== 'piano')
-          return { ok: false, detail: 'piano key=' + (piano && piano.instrumentKey) };
+        if (!piano || piano.instrumentName !== 'Piano' || piano.pizz)
+          return { ok: false, detail: 'piano name=' + (piano && piano.instrumentName) + ' pizz=' + (piano && piano.pizz) };
         return { ok: true };
       })()` },
   ],
@@ -7286,6 +7314,23 @@ export const FIXTURE_ASSERTIONS = {
         return captured.some((m) => m.type === 'play-score')
           ? { ok: true }
           : { ok: false, detail: 'captured=' + JSON.stringify(captured.map((c) => c.type)) };
+      })()` },
+  ],
+  multiInstrument_playScoreUsesNames: [
+    { name: 'play-score events carry instrument NAMES {Piano, Viola}, not keys',
+      expr: `(async () => {
+        await new Promise((r) => requestAnimationFrame(() => r(true)));
+        await Promise.resolve();
+        const captured = window.__bridgeMock.captured();
+        const ps = captured.find((m) => m.type === 'play-score');
+        if (!ps) return { ok: false, detail: 'no play-score; captured=' + JSON.stringify(captured.map((c) => c.type)) };
+        const evs = ps.events || [];
+        const names = [...new Set(evs.map((e) => e.instrumentName))].sort();
+        const badKey = evs.some((e) => e.instrumentName === 'piano' || e.instrumentName == null);
+        const ok = !badKey && names.length === 2 && names[0] === 'Piano' && names[1] === 'Viola';
+        return ok
+          ? { ok: true }
+          : { ok: false, detail: 'names=' + JSON.stringify(names) + ' badKey=' + badKey };
       })()` },
   ],
   space_stops_playback: [

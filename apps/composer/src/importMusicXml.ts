@@ -900,7 +900,7 @@ export function importMusicXml(xmlText: string): string {
     staffGrpInner = parts.map((p) => {
       const defs = Array.from({ length: p.staffCount }, (_, i) =>
         staffDefXml(p.globalStaff[i + 1], p.headClef.get(i + 1)!)).join('');
-      return `<staffGrp hkl:instr="piano"><label>${escapeXml(p.name)}</label>${defs}</staffGrp>`;
+      return `<staffGrp><label>${escapeXml(p.name)}</label>${defs}</staffGrp>`;
     }).join('');
   }
 
