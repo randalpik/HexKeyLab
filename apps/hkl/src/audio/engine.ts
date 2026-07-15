@@ -30,6 +30,7 @@ import {
   recordOn, recordOff, recordPa, recordPedalDepthsChange, recordSostenuto,
 } from '../recording/capture.js';
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
+import { voiceId, coordOf } from '../types.js';
 import type { KeyId } from '../types.js';
 
 /* Damper smoothing time-constant for setTargetAtTime. CC4 arrives as 0–127
@@ -137,7 +138,10 @@ export function initAudio(): void {
  *  omit it and get the existing immediate-attack behavior. */
 export function noteOn(key: KeyId, velocity?: number, startAt?: number, instrumentKey?: string): void {
   if (!audio.audioEnabled || !audio.audioCtx) return;
-  if (audio.activeOscs[key]) return;
+  /* VoiceId — bare KeyId for live/single-instrument, `instr\0q,r` when an
+     instrument is specified — so two instruments can hold the same (q, r). */
+  const vid = voiceId(key, instrumentKey);
+  if (audio.activeOscs[vid]) return;
   const parts = key.split(','), q = +parts[0], r = +parts[1];
   const freq = keyFreq(q, r);
   /* Per-event instrument (multi-instrument playback): play ONLY with the
@@ -163,8 +167,8 @@ export function noteOn(key: KeyId, velocity?: number, startAt?: number, instrume
        ramps to the aftertouch-dictated gain. Instrument is passed per-voice — the
        engine tags the voice with it, so noteOff/aftertouch/damper resolve correctly
        even with other instruments sounding simultaneously. */
-    SampleEngine.noteOn(key, freq, adjVel, wf, startAt);
-    audio.activeOscs[key] = { type: 'sample', freq, instr: wf };
+    SampleEngine.noteOn(vid, freq, adjVel, wf, startAt);
+    audio.activeOscs[vid] = { type: 'sample', freq, instr: wf, q, r };
   } else if (isOscType(wf)) {
     const type = wf;
     const osc = audio.audioCtx.createOscillator();
@@ -210,7 +214,7 @@ export function noteOn(key: KeyId, velocity?: number, startAt?: number, instrume
     const pressureGain = audio.audioCtx.createGain(); pressureGain.gain.value = 1.0;
     osc.connect(gain); gain.connect(damperGain); damperGain.connect(pressureGain); pressureGain.connect(dest);
     osc.start(now);
-    audio.activeOscs[key] = { type: 'osc', osc, gain, damperGain, pressureGain, vol, startTime: now };
+    audio.activeOscs[vid] = { type: 'osc', q, r, osc, gain, damperGain, pressureGain, vol, startTime: now };
   }
   /* Seed PA from the held filter state when a voice is recreated under a
      still-pressed key — e.g. instrument switch via changeWaveform, or any
@@ -223,7 +227,7 @@ export function noteOn(key: KeyId, velocity?: number, startAt?: number, instrume
      the next incoming PA uses the short AFTERTOUCH_RAMP_S smoothing rather
      than the longer first-arrival handover ramp. Decaying instruments are
      skipped via handleAftertouch's instrDecays() early return. */
-  const v = audio.activeOscs[key];
+  const v = audio.activeOscs[vid];
   const filt = audio.paFilter[key];
   if (v && filt && filt.open && filt.v > 0) {
     v.aftertouchSeen = true;
@@ -238,10 +242,14 @@ export function noteOn(key: KeyId, velocity?: number, startAt?: number, instrume
 /** `releaseAt` (AudioContext seconds, optional): anchor the release on the
  *  audio clock instead of "now". Used by the playback lookahead scheduler
  *  for sample-accurate off timing; live-input paths omit it. */
-export function noteOff(key: KeyId, releaseAt?: number): void {
-  const e = audio.activeOscs[key]; if (!e) return;
+export function noteOff(key: KeyId, releaseAt?: number, instrumentKey?: string): void {
+  /* Resolve the VoiceId. Callers pass either (coord, instrumentKey) — the
+     playback scheduler — or a bare VoiceId as `key` with no instrumentKey
+     (teardown loops iterating activeOscs); both yield the same vid. */
+  const vid = voiceId(key, instrumentKey);
+  const e = audio.activeOscs[vid]; if (!e) return;
   if (e.type === 'sample') {
-    SampleEngine.noteOff(key, releaseAt);
+    SampleEngine.noteOff(vid, releaseAt);
   } else {
     /* Schedule the release on the audio clock at `releaseAt`; floor against
        currentTime so a stale target doesn't try to schedule in the past.
@@ -256,13 +264,13 @@ export function noteOff(key: KeyId, releaseAt?: number): void {
     e.gain.gain.linearRampToValueAtTime(0, now + 0.06);
     e.osc.stop(now + 0.08);
   }
-  delete audio.activeOscs[key];
+  delete audio.activeOscs[vid];
   /* aftertouchSnapshot is NOT deleted here — its lifecycle parallels
      keyVelocity's: it persists until the user fully releases the key
      (handler.ts unsustained note-off, releaseSustainedKey). Deleting on
      every voice teardown would wipe held-pressure state across instrument
      switches and leave the new voice playing at PA=0 forever. */
-  recordOff(key);
+  recordOff(coordOf(vid));
 }
 
 export function stopAllNotes(): void { for (const k in audio.activeOscs) noteOff(k); }
@@ -298,17 +306,20 @@ export function glideVoices(pairs: ReadonlyArray<{ oldKey: KeyId; newKey: KeyId 
      the new pitch in lockstep with sSlideAndFadeOut's ramp on the old
      voice. Two pitch-matched sources, equal-power crossfade — no chord
      artifact at fast trill tempos. */
-  const sampleMoves: { oldKey: KeyId; newKey: KeyId; newFreq: number; fromFreq: number; instr: string; vol?: number }[] = [];
+  const sampleMoves: { oldKey: KeyId; newKey: KeyId; nq: number; nr: number; newFreq: number; fromFreq: number; instr: string; vol?: number }[] = [];
   for (const p of pairs) {
     if (p.oldKey === p.newKey) continue;
     const e = audio.activeOscs[p.oldKey];
     if (!e) continue;
-    const np = p.newKey.split(','), nq = +np[0], nr = +np[1];
+    /* oldKey/newKey are VoiceIds (playback slur — one instrument); the lattice
+       coord is the VoiceId's key portion. */
+    const np = coordOf(p.newKey).split(','), nq = +np[0], nr = +np[1];
     const newFreq = keyFreq(nq, nr);
     if (e.type === 'osc') {
       e.osc.frequency.cancelScheduledValues(anchor);
       e.osc.frequency.setValueAtTime(e.osc.frequency.value, anchor);
       e.osc.frequency.exponentialRampToValueAtTime(newFreq, anchor + rampDur);
+      e.q = nq; e.r = nr;
       audio.activeOscs[p.newKey] = e;
       delete audio.activeOscs[p.oldKey];
     } else {
@@ -318,11 +329,13 @@ export function glideVoices(pairs: ReadonlyArray<{ oldKey: KeyId; newKey: KeyId 
          have just been faded-in by an earlier glide step in this same
          tick, e.freq is already the post-ramp pitch — the right "from"
          value for the next glide. */
-      sampleMoves.push({ oldKey: p.oldKey, newKey: p.newKey, newFreq, fromFreq: e.freq, instr: e.instr });
+      sampleMoves.push({ oldKey: p.oldKey, newKey: p.newKey, nq, nr, newFreq, fromFreq: e.freq, instr: e.instr });
     }
-    if (audio.keyVelocity[p.oldKey] !== undefined) {
-      audio.keyVelocity[p.newKey] = audio.keyVelocity[p.oldKey];
-      delete audio.keyVelocity[p.oldKey];
+    /* keyVelocity is keyed by lattice coord (not VoiceId) — migrate by coord. */
+    const oldCoord = coordOf(p.oldKey), newCoord = coordOf(p.newKey);
+    if (audio.keyVelocity[oldCoord] !== undefined) {
+      audio.keyVelocity[newCoord] = audio.keyVelocity[oldCoord];
+      delete audio.keyVelocity[oldCoord];
     }
   }
   /* `atTime` propagates to both halves so the predecessor's fade-out and the
@@ -336,7 +349,7 @@ export function glideVoices(pairs: ReadonlyArray<{ oldKey: KeyId; newKey: KeyId 
   for (const mv of sampleMoves) mv.vol = SampleEngine.slideAndFadeOut(mv.oldKey, mv.newFreq, rampDur, atTime);
   for (const mv of sampleMoves) {
     SampleEngine.noteOnFaded(mv.newKey, mv.newFreq, mv.vol!, rampDur, mv.instr, atTime, mv.fromFreq);
-    audio.activeOscs[mv.newKey] = { type: 'sample', freq: mv.newFreq, instr: mv.instr };
+    audio.activeOscs[mv.newKey] = { type: 'sample', freq: mv.newFreq, instr: mv.instr, q: mv.nq, r: mv.nr };
     delete audio.activeOscs[mv.oldKey];
   }
 }
@@ -377,7 +390,10 @@ export function handleAftertouch(key: KeyId, pressure: number): void {
 }
 
 export function replayActiveNotes(): void {
-  const keys = Object.keys(audio.activeOscs);
+  /* Live-input reconciliation: only touch live voices (VoiceId === coord).
+     Playback voices are owned by the scheduler and re-noteOn'ing a composite
+     VoiceId would mis-parse it as a coord. */
+  const keys = Object.keys(audio.activeOscs).filter((k) => coordOf(k) === k);
   keys.forEach(function (k) { noteOff(k); });
   keys.forEach(function (k) { noteOn(k, audio.keyVelocity[k]); });
 }
@@ -385,6 +401,9 @@ export function replayActiveNotes(): void {
 export function syncAudio(): void {
   if (!audio.audioEnabled) { stopAllNotes(); return; }
   for (const k in audio.activeOscs) {
+    /* Skip playback voices (composite VoiceIds) — the scheduler owns them; live
+       selection reconciliation must not tear them down. */
+    if (coordOf(k) !== k) continue;
     if (!selection.selectedKeys.has(k) && !audio.sustainedKeys.has(k)) noteOff(k);
   }
   selection.selectedKeys.forEach(function (k) {
@@ -441,7 +460,8 @@ export function changeWaveform(): void {
       console.log(instr.name + ' loaded');
       wfFinishLoading(sel, true);
       audio.activeWaveform = wf;
-      const playing = Object.keys(audio.activeOscs);
+      /* Live voices only — playback voices keep their own instrument. */
+      const playing = Object.keys(audio.activeOscs).filter((k) => coordOf(k) === k);
       playing.forEach(function (k) { noteOff(k); });
       playing.forEach(function (k) { noteOn(k, audio.keyVelocity[k]); });
     }).catch(function (err: unknown) {
@@ -595,13 +615,17 @@ export function rampActiveFreqs(dur: number): void {
   if (!audio.audioEnabled || !audio.audioCtx) return;
   if (instrDecays()) { replayActiveNotes(); return; }
   const now = audio.audioCtx.currentTime;
+  /* Retunes ALL sounding voices (live + playback). Read the coord from the
+     voice, not the map key — the key is now a VoiceId (may carry an instrument
+     prefix) so `k.split(',')` would mis-parse a playback voice. */
   for (const k in audio.activeOscs) {
-    const p = k.split(','), e = audio.activeOscs[k];
+    const e = audio.activeOscs[k];
+    const f = keyFreq(e.q, e.r);
     if (e.type === 'osc') {
       e.osc.frequency.setValueAtTime(e.osc.frequency.value, now);
-      e.osc.frequency.exponentialRampToValueAtTime(keyFreq(+p[0], +p[1]), now + dur);
+      e.osc.frequency.exponentialRampToValueAtTime(f, now + dur);
     } else if (e.type === 'sample') {
-      SampleEngine.rampFreq(k, keyFreq(+p[0], +p[1]), dur);
+      SampleEngine.rampFreq(k, f, dur);
     }
   }
 }

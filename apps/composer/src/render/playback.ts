@@ -843,16 +843,17 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
     if (voice >= model.totalVoices()) break;
   }
 
-  /* Cross-instrument same-pitch / same-onset conflict resolution. HKL keys
-     audio voices by (q, r), so two instruments sounding the SAME pitch at the
-     SAME time would collide on one KeyId (cancel/retrigger). We don't run
-     separate per-instrument audio streams; instead the TOPMOST instrument
-     (lowest voice index) wins each pitch and the other instruments' duplicates
-     are dropped from the played stream. Scoped to DIFFERENT instruments — a
-     pitch already claimed by the same instrument is left alone, so single-
-     instrument playback (and within-instrument unisons) is byte-identical. An
-     event whose notes all drop becomes a silent pulse (still echoes its meiId,
-     so that voice's playback cursor still advances). */
+  /* Same-instrument unison collapse. HKL now keys audio voices by a VoiceId =
+     (instrument, q, r), so DIFFERENT instruments sounding the same pitch at the
+     same moment each get their OWN voice — they overlap, as intended. But two
+     voices of the SAME instrument hitting the same (q, r) at the same onset
+     would collide on one VoiceId, so collapse those to a single note here (the
+     engine would dedup them anyway; doing it up front avoids a redundant
+     release+retrigger at the shared onset). Dedup is per (instrument, pitch);
+     cross-instrument duplicates are kept. An event whose notes all drop becomes
+     a silent pulse (still echoes its meiId, so that voice's playback cursor
+     still advances). Two parts sharing a name resolve to one instrument (their
+     unisons collapse too — the accepted same-label behavior). */
   if (isMultiInstrument) {
     const ONSET_EPS = 1e-6;
     const order = events.map((_, i) => i).sort(
@@ -862,16 +863,16 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
     while (g < order.length) {
       let hi = g + 1;
       while (hi < order.length && Math.abs(events[order[hi]].atMs - events[order[g]].atMs) < ONSET_EPS) hi++;
-      const claimed = new Map<string, number>(); /* "q,r" → claiming instrument index */
+      const claimed = new Set<string>(); /* "instrumentName\0q,r" sounding this onset */
       for (let k = g; k < hi; k++) {
         const ev = events[order[k]];
         if (ev.notes.length === 0) continue;
-        const instr = model.instrumentOf(ev.voice ?? 1).index;
+        const instr = ev.instrumentName ?? '';
         const kept = ev.notes.filter((n) => {
-          const key = n.q + ',' + n.r;
-          const owner = claimed.get(key);
-          if (owner === undefined) { claimed.set(key, instr); return true; }
-          return owner === instr; /* same instrument → keep; other → drop */
+          const key = instr + '\0' + n.q + ',' + n.r;
+          if (claimed.has(key)) return false; /* same instrument already has this pitch */
+          claimed.add(key);
+          return true;
         });
         if (kept.length !== ev.notes.length) ev.notes = kept;
       }

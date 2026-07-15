@@ -14,6 +14,7 @@ import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import type {
   HkrEvent, HkrSession, LayoutSnapshot,
 } from './types.js';
+import { coordOf } from '../types.js';
 import type { KeyId } from '../types.js';
 
 let active = false;
@@ -74,6 +75,7 @@ export function startRecording(): void {
   /* Auto-balance: synthetic note-ons for voices already held when recording
      started, so playback reproduces a recording that begins mid-chord. */
   for (const key in audio.activeOscs) {
+    if (coordOf(key) !== key) continue; /* live voices only; skip playback voices */
     const parts = key.split(',');
     const q = +parts[0], r = +parts[1];
     const v = audio.keyVelocity[key] ?? DEFAULT_DYNAMIC_MAP.f;
@@ -86,6 +88,7 @@ export function stopRecording(): HkrSession | null {
   const tEnd = tNow();
   /* Auto-balance: synthetic note-offs for voices still held. */
   for (const key in audio.activeOscs) {
+    if (coordOf(key) !== key) continue; /* live voices only; skip playback voices */
     const parts = key.split(',');
     const q = +parts[0], r = +parts[1];
     pushEvent({ t: tEnd, k: 'off', q, r });

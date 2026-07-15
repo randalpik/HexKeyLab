@@ -27,6 +27,7 @@ import { syncViewToOutline, applyRotation, applyHexSize, applyOutlineRender } fr
 import { onTuningChanged } from '../effects/onTuningChanged.js';
 import { onRefChanged } from '../effects/onRefChanged.js';
 import { broadcastFootprint } from '../bridge/hkl-side.js';
+import { coordOf } from '../types.js';
 import type { KeyId, Voice } from '../types.js';
 
 /* Render-only primitives now live in render/controls-core.ts (engine-free, so
@@ -145,33 +146,37 @@ export function transposeSelection(dq: number, dr: number): void {
   if (blocked) return;
   /* re-key audio */
   if (audio.audioEnabled && audio.audioCtx) {
+    /* Transpose the user's LIVE voices only (VoiceId === coord); playback
+       voices (composite VoiceIds) are owned by the scheduler and left in place. */
+    const liveKeys = Object.keys(audio.activeOscs).filter((k) => coordOf(k) === k);
     if (instrReplaysOnTranspose()) {
       /* decaying instrument or opt-in replayOnTranspose (organs):
          stop old, let syncAudio retrigger after selection shift */
-      for (const k in audio.activeOscs) noteOff(k);
-      audio.activeOscs = {};
+      for (const k of liveKeys) { noteOff(k); delete audio.activeOscs[k]; }
     } else {
       /* sustained instrument: smooth ramp */
       const newOscs: Record<KeyId, Voice> = {};
-      const sampleMoves: { oldKey: KeyId; newKey: KeyId; newFreq: number; instr: string; vol?: number }[] = [];
+      const sampleMoves: { oldKey: KeyId; newKey: KeyId; nq: number; nr: number; newFreq: number; instr: string; vol?: number }[] = [];
       const now = audio.audioCtx.currentTime;
-      for (const k in audio.activeOscs) {
+      for (const k of liveKeys) {
         const p = k.split(','), nq = +p[0] + dq, nr = +p[1] + dr;
         const e = audio.activeOscs[k];
         if (e.type === 'osc') {
           e.osc.frequency.setValueAtTime(e.osc.frequency.value, now);
           e.osc.frequency.exponentialRampToValueAtTime(keyFreq(nq, nr), now + 0.1);
+          e.q = nq; e.r = nr;
           newOscs[nq + ',' + nr] = e;
         } else if (e.type === 'sample') {
-          sampleMoves.push({ oldKey: k, newKey: nq + ',' + nr, newFreq: keyFreq(nq, nr), instr: e.instr });
+          sampleMoves.push({ oldKey: k, newKey: nq + ',' + nr, nq, nr, newFreq: keyFreq(nq, nr), instr: e.instr });
         }
+        delete audio.activeOscs[k];
       }
       sampleMoves.forEach(function (m) { m.vol = SampleEngine.slideAndFadeOut(m.oldKey, m.newFreq, 0.1); });
       sampleMoves.forEach(function (m) {
         SampleEngine.noteOnFaded(m.newKey, m.newFreq, m.vol!, 0.1, m.instr);
-        newOscs[m.newKey] = { type: 'sample', freq: m.newFreq, instr: m.instr };
+        newOscs[m.newKey] = { type: 'sample', freq: m.newFreq, instr: m.instr, q: m.nq, r: m.nr };
       });
-      audio.activeOscs = newOscs;
+      Object.assign(audio.activeOscs, newOscs);
     }
   }
   /* shift selection */
@@ -206,10 +211,15 @@ export function transposeSelection(dq: number, dr: number): void {
 
 export function clearSelection(): void {
   selection.selectedKeys.clear();
-  audio.sustainedKeys.clear();
+  /* Only the user's live sustained/sounding voices are cleared; playback voices
+     (composite VoiceIds) are owned by the scheduler and left untouched. */
+  for (const k of Array.from(audio.sustainedKeys)) {
+    if (coordOf(k) === k) audio.sustainedKeys.delete(k);
+  }
   if (audio.audioCtx) {
     const now = audio.audioCtx.currentTime;
     for (const k in audio.activeOscs) {
+      if (coordOf(k) !== k) continue; /* skip playback voices */
       const e = audio.activeOscs[k];
       if (e.type === 'sample') {
         const v = (SampleEngine.getActiveVoices() as Record<string, any>)[k];
@@ -229,9 +239,9 @@ export function clearSelection(): void {
         e.gain.gain.linearRampToValueAtTime(0, now + 0.05);
         e.osc.stop(now + 0.07);
       }
+      delete audio.activeOscs[k];
     }
   }
-  audio.activeOscs = {};
   stopAllMidi();
   draw();
 }

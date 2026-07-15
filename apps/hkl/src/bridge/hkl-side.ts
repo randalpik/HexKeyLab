@@ -52,7 +52,8 @@ import { onRefChanged } from '../effects/onRefChanged.js';
 import { setTuning } from '../ui/controls.js';
 import { loadPrefs, type TuningMode } from '../state/persistence.js';
 import type { FootprintCell } from '@hkl/bridge/protocol.js';
-import type { KeyId } from '../types.js';
+import { voiceId, coordOf } from '../types.js';
+import type { KeyId, VoiceId } from '../types.js';
 
 const bridge = createHklBridge();
 const analyzerBridge = createAnalyzerHklBridge();
@@ -108,10 +109,41 @@ let lastTuningMode = '';
    back as "held keys" (input-feedback loop), broadcasts are suppressed
    while playbackActive is true. */
 let playbackActive = false;
-/* Keys that the playback added to selectedKeys (vs. keys the user was
-   already holding). On noteOff or abort, only these get removed — user's
-   real held keys survive. */
+/* Keys (lattice coords) that the playback added to selectedKeys (vs. keys the
+   user was already holding). On noteOff or abort, only these get removed —
+   user's real held keys survive. */
 const playbackOwnedKeys: Set<KeyId> = new Set();
+
+/* How many playback VOICES currently light each lattice coord. Multiple
+   instruments can sound the same (q, r) at once (multi-instrument playback);
+   the highlight must persist until ALL their voices release. Keyed by coord
+   (visual identity), not VoiceId — the highlight is per lattice cell. */
+const playbackVoiceCount = new Map<KeyId, number>();
+
+/** Light a coord for one playback voice (increment its refcount). Adds the
+ *  highlight on the 0→1 transition, and only when the user isn't already
+ *  holding it (so the user's own selection isn't "owned" by playback). */
+function lightPlaybackKey(coord: KeyId): void {
+  const c = (playbackVoiceCount.get(coord) ?? 0) + 1;
+  playbackVoiceCount.set(coord, c);
+  if (c === 1 && !selection.selectedKeys.has(coord)) {
+    selection.selectedKeys.add(coord);
+    playbackOwnedKeys.add(coord);
+  }
+}
+
+/** Release one playback voice's hold on a coord (decrement its refcount). Drops
+ *  the highlight only on the final 1→0 transition, and only if playback owned
+ *  it (a coord the user was independently holding stays lit). */
+function unlightPlaybackKey(coord: KeyId): void {
+  const c = (playbackVoiceCount.get(coord) ?? 0) - 1;
+  if (c > 0) { playbackVoiceCount.set(coord, c); return; }
+  playbackVoiceCount.delete(coord);
+  if (playbackOwnedKeys.has(coord)) {
+    selection.selectedKeys.delete(coord);
+    playbackOwnedKeys.delete(coord);
+  }
+}
 
 /* Performance mode (Composer-driven): when active, every live note-on is
    forwarded to Composer as a `player-note-struck` event so Composer's
@@ -285,12 +317,14 @@ type SchedPedal = PedalEvent & { instrumentKey?: string };
 interface ActivePlayback {
   cancelled: boolean;
   pending: Set<number>; /* visual setTimeout handles, so stop-playback can clear them */
-  heldKeys: Set<KeyId>; /* keys we noteOn'd, for force-off on stop */
-  /* Monotonic per-key voice tag. Each audio-scheduled noteOn bumps the key's
+  /* VoiceIds we noteOn'd, for force-off on stop. Keyed by VoiceId (not coord)
+     so two instruments sounding the same (q, r) are tracked independently. */
+  heldKeys: Set<VoiceId>;
+  /* Monotonic per-VOICE tag. Each audio-scheduled noteOn bumps the voice's
      seq; each off-visual snapshot captures the seq it owns and only tears
      down if it still matches. This is how back-to-back same-pitch events
      avoid the previous event's off handler killing the fresh voice. */
-  voiceSeq: Map<KeyId, number>;
+  voiceSeq: Map<VoiceId, number>;
   nextSeq: number;
   /* Recursive setTimeout for the lookahead driver. Separate from `pending`
      so the driver lifecycle is clear in cancellation. */
@@ -300,7 +334,7 @@ interface ActivePlayback {
      ringing and stay in audio.sustainedKeys until a pedal-up event releases
      them (or playback ends / aborts). Their voiceSeq/heldKeys entries are left
      intact so abort still tears them down. */
-  pedalSustained: Map<KeyId, string | undefined>;
+  pedalSustained: Map<VoiceId, string | undefined>;
   /* True once any pedal-down event has fired in this run — gates the teardown
      reset (release global damper flags + external CC 64) on stop/finish. */
   pedalEngaged: boolean;
@@ -309,13 +343,6 @@ interface ActivePlayback {
      A per-instrument pedal-up releases only its own deferred voices; the global
      damper flags + CC 64 reset only when this set empties. */
   pedalEngagedInstr: Set<string | undefined>;
-  /* The instrument (sample-set key) each currently-sounding KeyId was attacked
-     with. A slur glide may only rekey a voice belonging to the SAME instrument
-     — otherwise (two instruments unison a pitch; the lower one's note was
-     dropped by the topmost-wins dedup but its slur still continues) the glide
-     would steal the topmost instrument's live voice. Mismatch → no glide;
-     the slur target re-attacks fresh in its own instrument. */
-  voiceInstr: Map<KeyId, string | undefined>;
 }
 
 let active: ActivePlayback | null = null;
@@ -324,7 +351,6 @@ function newPlayback(): ActivePlayback {
   return {
     cancelled: false, pending: new Set(), heldKeys: new Set(), voiceSeq: new Map(),
     nextSeq: 0, pedalSustained: new Map(), pedalEngaged: false, pedalEngagedInstr: new Set(),
-    voiceInstr: new Map(),
   };
 }
 
@@ -333,16 +359,13 @@ function newPlayback(): ActivePlayback {
  *  playback teardown idiom (direct noteOff) rather than the live damper-
  *  release machinery, so it stays consistent with the rest of the scheduler
  *  and avoids re-entering onSelectionChanged mid-playback. */
-/** Note-off one pedal-deferred key + drop its bookkeeping. */
-function releaseDeferredKey(pb: ActivePlayback, k: KeyId): void {
-  audio.sustainedKeys.delete(k);
-  pb.voiceSeq.delete(k);
-  noteOff(k);
-  pb.heldKeys.delete(k);
-  if (playbackOwnedKeys.has(k)) {
-    selection.selectedKeys.delete(k);
-    playbackOwnedKeys.delete(k);
-  }
+/** Note-off one pedal-deferred voice (by VoiceId) + drop its bookkeeping. */
+function releaseDeferredKey(pb: ActivePlayback, vid: VoiceId): void {
+  audio.sustainedKeys.delete(vid);
+  pb.voiceSeq.delete(vid);
+  noteOff(vid); /* vid-as-key, no instrument arg → engine resolves to this vid */
+  pb.heldKeys.delete(vid);
+  unlightPlaybackKey(coordOf(vid));
 }
 
 /** Reset the GLOBAL damper flags + external CC 64 (only meaningful once no
@@ -419,12 +442,9 @@ function abortActive(): void {
      the engine's source.stop schedules a stop time before the start, which
      the Web Audio spec specifies as producing no output. Either way the
      voice is silenced. */
-  for (const k of active.heldKeys) {
-    noteOff(k);
-    if (playbackOwnedKeys.has(k)) {
-      selection.selectedKeys.delete(k);
-      playbackOwnedKeys.delete(k);
-    }
+  for (const vid of active.heldKeys) {
+    noteOff(vid); /* vid-as-key → engine resolves to this exact voice */
+    unlightPlaybackKey(coordOf(vid));
   }
   /* Drop any pedal-deferred voices from the global sustained set and reset the
      damper flags + external CC 64 this run engaged. */
@@ -516,57 +536,56 @@ function scheduleAudioForEvent(
   canGlide: boolean,
 ): void {
   if (canGlide) {
-    const oldKey = step.glideFromKey!;
-    const newKey = coordToKeyId(ev.notes[0]);
+    /* step.glideFromKey is a COORD; the voice it names belongs to THIS event's
+       instrument, so its VoiceId carries ev.instrumentKey. */
+    const oldVid = voiceId(step.glideFromKey!, ev.instrumentKey);
+    const newCoord = coordToKeyId(ev.notes[0]);
+    const newVid = voiceId(newCoord, ev.instrumentKey);
     /* Reconcile the pedal sets for the glide TARGET, mirroring the normal
        attack path below. If this pitch was pedal-deferred earlier in the span
        (recurring note), it's now being re-voiced by the glide: stop that stale
        deferred voice (so glideVoices doesn't orphan it) and drop its deferral
        tracking, else a later pedal-up's releasePlaybackPedal would note-off the
        live glided voice — cutting the note after a pedal-off in a slur. */
-    if (audio.activeOscs[newKey] && newKey !== oldKey) noteOff(newKey, audioOnSec);
-    audio.sustainedKeys.delete(newKey);
-    pb.pedalSustained.delete(newKey);
+    if (audio.activeOscs[newVid] && newVid !== oldVid) noteOff(newVid, audioOnSec);
+    audio.sustainedKeys.delete(newVid);
+    pb.pedalSustained.delete(newVid);
     /* Audio handoff on the audio clock. glideVoices rekeys audio.activeOscs
        and audio.keyVelocity synchronously here, so a same-tick successor's
        canGlide check sees the post-glide state. */
-    glideVoices([{ oldKey, newKey }], step.rampMs ?? SLUR_GLIDE_MS, audioOnSec);
+    glideVoices([{ oldKey: oldVid, newKey: newVid }], step.rampMs ?? SLUR_GLIDE_MS, audioOnSec);
     /* Mirror the audio rekey in pb-state. voiceSeq is the claim ledger
        checked at off-fire; heldKeys is the abort-target set. Both shift
-       oldKey→newKey to match audio.activeOscs. Later canGlide events in
-       the same tick that overwrite voiceSeq[newKey] are expected — see
+       oldVid→newVid to match audio.activeOscs. Later canGlide events in
+       the same tick that overwrite voiceSeq[newVid] are expected — see
        the off-snapshot note in scheduleOffVisualAt. */
     const seq = ++pb.nextSeq;
-    pb.voiceSeq.set(newKey, seq);
-    pb.heldKeys.delete(oldKey);
-    pb.heldKeys.add(newKey);
-    pb.voiceInstr.set(newKey, ev.instrumentKey);
-    pb.voiceInstr.delete(oldKey);
+    pb.voiceSeq.set(newVid, seq);
+    pb.heldKeys.delete(oldVid);
+    pb.heldKeys.add(newVid);
     return;
   }
-  const keys: KeyId[] = ev.notes.map(coordToKeyId);
-  for (const k of keys) {
-    if (audio.activeOscs[k]) {
-      /* Back-to-back same-pitch: release the existing voice at the new
-         attack time. The audio engine schedules its release ramp on the
-         audio clock at audioOnSec, effectively cross-fading the old voice
-         out as the new one comes in. */
-      noteOff(k, audioOnSec);
+  for (const k of ev.notes.map(coordToKeyId)) {
+    const vid = voiceId(k, ev.instrumentKey);
+    if (audio.activeOscs[vid]) {
+      /* Back-to-back same-pitch (same instrument): release the existing voice
+         at the new attack time. The engine schedules its release ramp on the
+         audio clock at audioOnSec, cross-fading the old voice out as the new
+         one comes in. Different-instrument voices on this coord have distinct
+         VoiceIds and are untouched. */
+      noteOff(k, audioOnSec, ev.instrumentKey);
     }
-    audio.sustainedKeys.delete(k);
+    audio.sustainedKeys.delete(vid);
     /* Re-attacked while pedal-sustained → no longer a deferred voice. */
-    pb.pedalSustained.delete(k);
-    /* Seed audio.keyVelocity so this attack shows up in loopdiag's vel trace
-       like Lumatone / QWERTY / recording-playback do (all of which write
-       keyVelocity before noteOn). Without the seed, Composer-dispatched
-       notes are invisible to the diagnostic overlay. */
+    pb.pedalSustained.delete(vid);
+    /* Seed audio.keyVelocity (keyed by coord) so this attack shows up in
+       loopdiag's vel trace like the live input paths do. */
     const v = ev.velocity ?? audio.keyVelocity[k] ?? DEFAULT_DYNAMIC_MAP.mf;
     audio.keyVelocity[k] = v;
     noteOn(k, v, audioOnSec, ev.instrumentKey);
     const seq = ++pb.nextSeq;
-    pb.voiceSeq.set(k, seq);
-    pb.heldKeys.add(k);
-    pb.voiceInstr.set(k, ev.instrumentKey);
+    pb.voiceSeq.set(vid, seq);
+    pb.heldKeys.add(vid);
   }
 }
 
@@ -592,24 +611,16 @@ function scheduleOnVisualAt(
          scheduleAudioForEvent with atTime=audioOnSec. Here we just sync the
          user-visible selection highlight to the new pitch at score-on time
          so it tracks what the listener hears. */
-      const oldKey = step.glideFromKey!;
-      const newKey = keys[0];
-      if (playbackOwnedKeys.has(oldKey)) {
-        playbackOwnedKeys.delete(oldKey);
-        selection.selectedKeys.delete(oldKey);
-      }
-      audio.sustainedKeys.delete(newKey);
-      if (!selection.selectedKeys.has(newKey)) {
-        selection.selectedKeys.add(newKey);
-        playbackOwnedKeys.add(newKey);
-      }
+      const oldCoord = step.glideFromKey!;
+      const newCoord = keys[0];
+      /* Glide moves the voice old→new: hand the highlight over via the refcount
+         (unlight old, light new). Same-instrument, so the sustained-set cleanup
+         uses the new VoiceId. */
+      unlightPlaybackKey(oldCoord);
+      audio.sustainedKeys.delete(voiceId(newCoord, ev.instrumentKey));
+      lightPlaybackKey(newCoord);
     } else {
-      for (const k of keys) {
-        if (!selection.selectedKeys.has(k)) {
-          selection.selectedKeys.add(k);
-          playbackOwnedKeys.add(k);
-        }
-      }
+      for (const k of keys) lightPlaybackKey(k);
       /* External-synth restrike + visual flash for keys that were already
          sounding at scheduling time (back-to-back same-pitch). These fire
          at score-on time so the external MIDI message lands roughly with
@@ -644,50 +655,47 @@ function scheduleOffVisualAt(
   canGlide: boolean,
   deferUnderPedal: boolean,
 ): void {
-  /* canGlide: only the new key has an off pending; the old key was
-     handed off to the new one and its bookkeeping already moved. */
-  const offKeys: KeyId[] = canGlide
+  /* VoiceIds to release. canGlide: only the new voice has an off pending; the
+     old one was handed off to the new one and its bookkeeping already moved. */
+  const offVids: VoiceId[] = (canGlide
     ? [coordToKeyId(ev.notes[0])]
-    : ev.notes.map(coordToKeyId);
+    : ev.notes.map(coordToKeyId)).map((k) => voiceId(k, ev.instrumentKey));
   /* Snapshot seq AT SCHEDULING TIME (right after scheduleAudioForEvent /
      scheduleOnVisualAt populated it for this event). A later event
-     re-articulating the same key will increment pb.voiceSeq[k] past our
+     re-articulating the same voice will increment pb.voiceSeq[vid] past our
      snapshot — we then skip the teardown so the live voice survives. */
-  const ownedSeq = new Map<KeyId, number>();
-  for (const k of offKeys) {
-    const s = pb.voiceSeq.get(k);
-    if (s !== undefined) ownedSeq.set(k, s);
+  const ownedSeq = new Map<VoiceId, number>();
+  for (const vid of offVids) {
+    const s = pb.voiceSeq.get(vid);
+    if (s !== undefined) ownedSeq.set(vid, s);
   }
   const h = window.setTimeout(() => {
     pb.pending.delete(h);
     if (pb.cancelled) return;
     try {
     let mutated = false;
-    for (const k of offKeys) {
-      if (pb.voiceSeq.get(k) !== ownedSeq.get(k)) continue;
+    for (const vid of offVids) {
+      if (pb.voiceSeq.get(vid) !== ownedSeq.get(vid)) continue;
       /* Pedal captures this note's release (decided deterministically from the
          pedal timeline at schedule time — see pedalCapturesNoteEndingAt):
          defer the off, keep the voice ringing and mark it sustained, like the
          live release path (handler.ts). voiceSeq/heldKeys stay populated so
          abort tears it down; selection stays lit. A pedal-up event, re-attack,
          or playback end releases it. */
-      if (deferUnderPedal && !audio.sostenutoLockedKeys.has(k)) {
-        audio.sustainedKeys.add(k);
-        pb.pedalSustained.set(k, ev.instrumentKey);
+      if (deferUnderPedal && !audio.sostenutoLockedKeys.has(coordOf(vid))) {
+        audio.sustainedKeys.add(vid);
+        pb.pedalSustained.set(vid, ev.instrumentKey);
         continue;
       }
-      pb.voiceSeq.delete(k);
-      noteOff(k);
-      pb.heldKeys.delete(k);
-      if (playbackOwnedKeys.has(k)) {
-        selection.selectedKeys.delete(k);
-        playbackOwnedKeys.delete(k);
-      }
+      pb.voiceSeq.delete(vid);
+      noteOff(vid); /* vid-as-key → engine resolves to this exact voice */
+      pb.heldKeys.delete(vid);
+      unlightPlaybackKey(coordOf(vid));
       mutated = true;
     }
     if (mutated) { syncPianoOut(); requestDraw(); }
     } catch (err) {
-      logPlaybackError('visual-off', { offKeys, deferUnderPedal, ...playbackStateSnapshot(pb) }, err);
+      logPlaybackError('visual-off', { offVids, deferUnderPedal, ...playbackStateSnapshot(pb) }, err);
     }
   }, Math.max(0, delayMs));
   pb.pending.add(h);
@@ -989,20 +997,21 @@ async function playScore(wireEvents: ReadonlyArray<PlaybackEvent>, wirePedals: R
          and cross-tick slur chains. */
       const canGlide = step.glideFromKey != null
         && ev.notes.length === 1
-        && !!audio.activeOscs[step.glideFromKey]
-        /* The live voice at glideFromKey must belong to THIS event's instrument
-           — else a unison-dropped slur would steal another instrument's voice. */
-        && pb.voiceInstr.get(step.glideFromKey) === ev.instrumentKey;
-      /* Capture which keys are about to be re-articulated (already in
-         activeOscs at scheduling time and not being glided). The visual-on
-         track uses this to fire restrikePianoOut + the rearticulate flash
-         at score-on time. Must be computed before scheduleAudioForEvent
-         since that call mutates activeOscs. */
+        /* The predecessor voice at glideFromKey must exist FOR THIS EVENT'S
+           INSTRUMENT. The VoiceId lookup enforces same-instrument inherently:
+           a different instrument's voice at that coord has a different VoiceId,
+           so it can't be stolen by this slur. */
+        && !!audio.activeOscs[voiceId(step.glideFromKey, ev.instrumentKey)];
+      /* Capture which coords are about to be re-articulated (this instrument
+         already has a voice there and it isn't being glided). The visual-on
+         track uses this to fire restrikePianoOut + the rearticulate flash at
+         score-on time. Must be computed before scheduleAudioForEvent, since
+         that call mutates activeOscs. */
       const rearticulatedKeys: KeyId[] = [];
       if (!canGlide && ev.notes.length > 0) {
         for (const c of ev.notes) {
           const k = coordToKeyId(c);
-          if (audio.activeOscs[k]) rearticulatedKeys.push(k);
+          if (audio.activeOscs[voiceId(k, ev.instrumentKey)]) rearticulatedKeys.push(k);
         }
       }
       if (ev.notes.length > 0) {

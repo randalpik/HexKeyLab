@@ -4046,17 +4046,33 @@ const PHASE1 = {
     `,
   },
 
-  /* Cross-instrument same-pitch / same-onset conflict: piano + violin both
-     play (0,0) at beat 1. Playback must let the TOPMOST instrument (piano)
-     sound it and drop the violin's duplicate (else they collide on one HKL
-     KeyId). Asserted in FIXTURE_ASSERTIONS via buildPlayback. */
-  phase5_same_note_conflict: {
+  /* Cross-instrument same-pitch / same-onset OVERLAP: piano + violin both play
+     (0,0) at beat 1. HKL keys audio voices by (instrument, q, r), so BOTH notes
+     must survive buildPlayback — each instrument gets its own voice. (Formerly
+     the topmost instrument won and the other was dropped.) Asserted in
+     FIXTURE_ASSERTIONS via buildPlayback. */
+  phase5_crossInstrument_samePitchOverlap: {
     setup: `
       const N = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
       m.addInstrument({ name: 'Violin', staffCount: 1 });
       m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [N], duration: '4', dots: 0 });
       m.setVoice(5); m.setCursor(0, 5); m.insertChordAtCursor({ notes: [N], duration: '4', dots: 0 });
       m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* SAME-instrument unison at the same onset still collapses to one note: two
+     Violin voices (5 + 6) both play (0,0) at beat 1. They'd share one VoiceId in
+     HKL, so buildPlayback drops the duplicate — exactly one of the two voice
+     events keeps the note. (Complements the cross-instrument overlap above.) */
+  phase5_sameInstrument_unisonCollapses: {
+    setup: `
+      const N = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
+      m.addInstrument({ name: 'Violin', staffCount: 1 });
+      m.setVoice(5); m.setCursor(0); m.insertChordAtCursor({ notes: [N], duration: '4', dots: 0 });
+      m.setVoice(6); m.setCursor(0); m.insertChordAtCursor({ notes: [N], duration: '4', dots: 0 });
+      m.setVoice(1); m.setCursor(0);
       r();
     `,
   },
@@ -5466,18 +5482,34 @@ export const FIXTURE_ASSERTIONS = {
       })()` },
   ],
 
-  /* Phase 5: cross-instrument same-pitch/onset → topmost wins, other dropped. */
-  phase5_same_note_conflict: [
-    { name: 'piano (voice 1) sounds (0,0); violin (voice 5) dropped to empty',
+  /* Phase 5: cross-instrument same-pitch/onset → BOTH kept (per-instrument
+     VoiceId in HKL); the notes overlap rather than one being dropped. */
+  phase5_crossInstrument_samePitchOverlap: [
+    { name: 'both piano (voice 1) and violin (voice 5) keep (0,0) — overlap, no drop',
       expr: `(() => {
         const h = window.__hkl_composer;
         const evs = h.buildPlayback(h.model);
         const v1 = evs.find(e => e.voice === 1);
         const v5 = evs.find(e => e.voice === 5);
-        if (!v1 || v1.notes.length !== 1 || v1.notes[0].q !== 0 || v1.notes[0].r !== 0)
-          return { ok: false, detail: 'piano notes=' + JSON.stringify(v1 && v1.notes) };
-        if (!v5 || v5.notes.length !== 0)
-          return { ok: false, detail: 'violin notes=' + JSON.stringify(v5 && v5.notes) + ' (expected empty)' };
+        const has00 = (e) => e && e.notes.length === 1 && e.notes[0].q === 0 && e.notes[0].r === 0;
+        if (!has00(v1)) return { ok: false, detail: 'piano notes=' + JSON.stringify(v1 && v1.notes) };
+        if (!has00(v5)) return { ok: false, detail: 'violin notes=' + JSON.stringify(v5 && v5.notes) + ' (expected kept, not dropped)' };
+        if (v1.instrumentName === v5.instrumentName)
+          return { ok: false, detail: 'both name=' + v1.instrumentName + ' (should differ → distinct VoiceIds)' };
+        return { ok: true };
+      })()` },
+  ],
+  phase5_sameInstrument_unisonCollapses: [
+    { name: 'two same-instrument voices at one pitch/onset collapse to one note',
+      expr: `(() => {
+        const h = window.__hkl_composer;
+        const evs = h.buildPlayback(h.model);
+        const v5 = evs.find(e => e.voice === 5), v6 = evs.find(e => e.voice === 6);
+        const n5 = v5 ? v5.notes.length : -1, n6 = v6 ? v6.notes.length : -1;
+        const kept = (n5 === 1 ? 1 : 0) + (n6 === 1 ? 1 : 0);
+        const empty = (n5 === 0 ? 1 : 0) + (n6 === 0 ? 1 : 0);
+        if (kept !== 1 || empty !== 1)
+          return { ok: false, detail: 'n5=' + n5 + ' n6=' + n6 + ' (expected exactly one kept, one collapsed)' };
         return { ok: true };
       })()` },
   ],

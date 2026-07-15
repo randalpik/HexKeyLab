@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 327,
-  "passed": 327,
+  "fixtures": 328,
+  "passed": 328,
   "failed": 0,
-  "elapsedMs": 112355,
+  "elapsedMs": 112367,
   "results": [
     {
       "name": "emptyDoc",
@@ -2254,7 +2254,15 @@
       }
     },
     {
-      "name": "phase5_same_note_conflict",
+      "name": "phase5_crossInstrument_samePitchOverlap",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "phase5_sameInstrument_unisonCollapses",
       "ok": true,
       "failures": [],
       "counts": {

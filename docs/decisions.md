@@ -3934,3 +3934,18 @@ reaches `osc.type`.
 **Rejected**: keeping the opaque-key contract and just remapping `"piano"` (leaves the vocabulary-drift antipattern); fetching HKL's dropdown labels over the bridge to populate a Composer picker (Max: not worth the complexity); case-insensitive / fuzzy matching (case-sensitive is predictable, Piano fallback covers misses).
 
 **Where**: `packages/bridge/src/protocol.ts` (`instrumentName`/`pizz` wire fields), `apps/composer/src/{model/index.ts,instrumentsDialog.ts,importMusicXml.ts,main.ts,render/playback.ts}`, `apps/hkl/src/bridge/hkl-side.ts` (`resolveInstrumentLabel`, `ARTIC_VARIANTS`, `resolveEventInstrument`, resolve at ingestion).
+
+## VoiceId decouples audio-voice identity from lattice KeyId (multi-instrument same-note overlap) (2026-07-14)
+
+**Context**: Two different instruments could not sound the same (q, r) at the same time. The `KeyId` `"q,r"` served as BOTH the lattice/visual identity and the audio-voice identity: `audio.activeOscs`, `sustainedKeys`, and the SampleEngine's voice map were all keyed by it, and `noteOn` early-returns when a key is occupied. Composer worked around it with a topmost-wins dedup that dropped the lower instrument's duplicate note. There's no UX reason for the limitation — the same lattice cell can legitimately be voiced by multiple overlapping instruments.
+
+**Picked**: introduce a `VoiceId` (`apps/hkl/src/types.ts`) as the AUDIO identity, distinct from `KeyId` (the visual identity). `voiceId(key, instrumentKey?)` returns the bare `KeyId` when no instrument is given (live input, single-instrument playback — byte-identical to before) and a composite `instr\0q,r` when one is. The SampleEngine was already voice-key-agnostic (opaque string), so the change is entirely in HKL's app layer:
+- **Engine** (`audio/engine.ts`): `activeOscs`/`sustainedKeys` key by `VoiceId`; `noteOn`/`noteOff`/`glideVoices` operate on it. Voices now carry their `q,r` (on the `Voice` object) so `activeOscs`-iterating ops (`rampActiveFreqs`) read the coord from the voice, not by parsing the key. Live reconcilers that RE-attack (`syncAudio`, `replayActiveNotes`, `changeWaveform`) skip composite voices (`coordOf(k) !== k`) — they own only live voices; playback owns its own.
+- **Scheduler** (`bridge/hkl-side.ts`): per-voice bookkeeping (`heldKeys`, `voiceSeq`, `pedalSustained`) keys by `VoiceId`; the visual highlight is refcounted per coord (`playbackVoiceCount`) so a lattice cell stays lit until ALL instruments' voices on it release. The old `voiceInstr` same-instrument-glide guard is gone — a VoiceId lookup enforces it inherently.
+- **Composer** (`render/playback.ts`): the cross-instrument drop is replaced by same-instrument-only unison collapse (dedup by `(instrumentName, pitch)` within an onset) — different instruments overlap; two voices of one instrument at one pitch/onset still collapse to one (they'd share a VoiceId). Two parts sharing a name resolve to one instrument and collapse too (accepted same-label behavior).
+
+**Scope**: multi-instrument PLAYBACK only (Max). Live multi-instrument input isn't a concern; live-selection ops (transpose, clear, record snapshot) skip composite voices so they never touch playback voices.
+
+**Rejected**: a secondary `overlapOscs` map for just the "loser" voices (splits voice state across two maps; branches pedal/slur/aftertouch everywhere). The VoiceId split is the conceptually correct model and keeps every non-playback path byte-identical.
+
+**Verified**: typecheck / build / check:boundaries / `pnpm test:composer` (328, incl. `phase5_crossInstrument_samePitchOverlap` = both kept, `phase5_sameInstrument_unisonCollapses` = one kept). Runtime overlap is Max's by-ear gate on the Sonata.
