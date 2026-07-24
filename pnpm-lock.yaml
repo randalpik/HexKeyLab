@@ -141,6 +141,16 @@ importers:
         specifier: workspace:*
         version: link:../../packages/engine
 
+  test/ramp-stress:
+    dependencies:
+      '@hkl/engine':
+        specifier: workspace:*
+        version: link:../../packages/engine
+    devDependencies:
+      vite:
+        specifier: ^6.0.0
+        version: 6.4.2(@types/node@25.6.2)
+
   test/react-consumer:
     dependencies:
       '@hexkeylab/engine':

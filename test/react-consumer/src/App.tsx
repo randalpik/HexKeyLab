@@ -68,6 +68,14 @@ export default function App() {
         push('play JI major triad', n === 3, `${n} active voices`);
         const retuned = engine.sRampFreq('third', THIRD * 1.01, 0.3);
         push('sRampFreq() real-time retune', retuned !== false);
+        // Pan is lazy: the StereoPannerNode must appear only once a pan is set.
+        const rootVoice = engine.getActiveVoices()['root'];
+        const preLazy = !rootVoice?.panNode;
+        engine.sSetVoicePan('root', -0.5);
+        // (Don't report pan.value here — the getter lags a setValueAtTime(now)
+        // until the render quantum advances, reading 0 even when scheduled.)
+        push('sSetVoicePan() lazy per-voice pan', preLazy && !!rootVoice?.panNode,
+          rootVoice?.panNode ? 'panner spliced on first set(−0.5)' : 'no panNode');
 
         const ok = acc.every((s) => s.ok);
         setPass(ok);

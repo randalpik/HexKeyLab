@@ -15,7 +15,7 @@ import { readFileSync } from 'node:fs';
 
 const REQUIRED = [
   'init', 'loadInstrument', 'sNoteOn', 'sNoteOff', 'sRampFreq',
-  'sSetAftertouch', 'sSetVoiceDamperDepth', 'isInstrumentLoaded',
+  'sSetAftertouch', 'sSetVoiceDamperDepth', 'sSetVoicePan', 'isInstrumentLoaded',
   'inflightExpRampValue', 'pickLayer',
 ];
 const missing = REQUIRED.filter((k) => typeof engine[k] !== 'function');
@@ -32,11 +32,21 @@ const ctx = {
   currentTime: 0, sampleRate: 44100,
   createGain: node,
   createBufferSource: () => ({ ...node(), buffer: null, playbackRate: param(), loopStart: 0, loopEnd: 0, start() {}, stop() {} }),
+  createStereoPanner: () => ({ ...node(), pan: param() }),
   decodeAudioData: async () => ({ getChannelData: () => new Float32Array(0), numberOfChannels: 1, length: 0, sampleRate: 44100 }),
 };
 
+// One stub-decoded 'hki' instrument so the per-voice setters can be exercised
+// against a live voice (decays:true keeps the loop scheduler out of play, so
+// the process exits cleanly with no timers).
+const PAN_DEF = {
+  name: 'PanTest', source: 'hki', baseUrl: '', ext: '', releaseTime: 0.1,
+  volume: 1, loop: false, decays: true,
+  samples: [{ name: 'A3', file: 'a3.wav', freq: 220 }],
+};
+
 engine.init(ctx, node(), {
-  instrumentProvider: async () => null,
+  instrumentProvider: async (k) => (k === 'pantest' ? { 'a3.wav': new Uint8Array(8) } : null),
   velocityToGain: (v) => v / 127,
   onSeamEvent: () => {},
 });
@@ -97,6 +107,42 @@ function assertEq(actual, expected, msg) {
   assertEq(minDef.source, 'hki', 'instrumentDefFromManifest source');
   assertEq(minDef.samples.length, 1, 'instrumentDefFromManifest passes samples through');
   console.log(`   readHkiInstrument: '${key}' → ${def.samples.length} samples, all audio present.`);
+}
+
+// ── sSetVoicePan: per-voice stereo pan (lazy StereoPannerNode) ──
+// The panner must NOT exist until a pan is specified (unpanned voices keep the
+// pre-pan graph byte-identical — mono transparency), must splice once and be
+// reused, and must degrade to a silent no-op on hosts without createStereoPanner.
+{
+  await engine.loadInstrument('pantest', PAN_DEF);
+  engine.sNoteOn('pv', 220, 90, 'pantest');
+  const v = engine.getActiveVoices()['pv'];
+  if (!v) throw new Error('pan: voice not created');
+  if (v.panNode) throw new Error('pan: panner exists before any pan was set');
+  engine.sSetVoicePan('pv', -0.5);
+  if (!v.panNode) throw new Error('pan: sSetVoicePan did not splice a panner');
+  const firstPanNode = v.panNode;
+  engine.sSetVoicePan('pv', 1, 0.2); // ramped set must reuse the spliced node
+  if (v.panNode !== firstPanNode) throw new Error('pan: panner recreated on second set');
+  engine.sSetVoicePan('absent-voice', 0.3); // absent voice → silent no-op
+  engine.sHardStop('pv');
+
+  // note-on pan arg wires the panner at voice construction
+  engine.sNoteOn('pv2', 220, 90, 'pantest', undefined, 0.7);
+  if (!engine.getActiveVoices()['pv2'].panNode) throw new Error('pan: note-on pan arg did not create panner');
+  engine.sHardStop('pv2');
+
+  // feature-detect path: no createStereoPanner → no node, both entry points no-op
+  const csp = ctx.createStereoPanner;
+  delete ctx.createStereoPanner;
+  engine.sNoteOn('pv3', 220, 90, 'pantest', undefined, 0.5);
+  const v3 = engine.getActiveVoices()['pv3'];
+  if (v3.panNode) throw new Error('pan: note-on created panner despite missing createStereoPanner');
+  engine.sSetVoicePan('pv3', 0.5);
+  if (v3.panNode) throw new Error('pan: setter created panner despite missing createStereoPanner');
+  engine.sHardStop('pv3');
+  ctx.createStereoPanner = csp;
+  console.log('   sSetVoicePan: lazy splice, node reuse, note-on pan arg, no-op guards — all OK.');
 }
 
 console.log('OK — @hkl/engine imported + init() ran standalone (zero HKL app/state imports).');

@@ -53,11 +53,17 @@ sNoteOff('voice-1');
   `instrumentProvider` / `velocityToGain` / `onSeamEvent` / `audioFetch`.
 - **`loadInstrument(key, instrDef, onProgress?)`** — decode + cache an
   `InstrumentDef`'s samples (CDN URLs or `.hki` bytes).
-- **Voice lifecycle** — `sNoteOn(voiceKey, freq, velocity, instrumentKey, startAt?)`,
-  `sNoteOff`, `sRampFreq`, `sNoteOnFaded`, `sSlideAndFadeOut`, `sHardStop`,
+- **Voice lifecycle** — `sNoteOn(voiceKey, freq, velocity, instrumentKey, startAt?, pan?)`,
+  `sNoteOff`, `sRampFreq`, `sNoteOnFaded(..., pan?)`, `sSlideAndFadeOut`, `sHardStop`,
   `sHardStopAll`, `sStopAll`. Instrument is specified per note; each voice
   remembers it, so simultaneous different instruments just work.
-- **Expression** — `sSetAftertouch`, `sSetVoiceDamperDepth`.
+- **Expression** — `sSetAftertouch`, `sSetVoiceDamperDepth`,
+  `sSetVoicePan(voiceKey, pan, rampSec?)` — stereo pan in Web Audio −1..1,
+  optionally glided. The per-voice `StereoPannerNode` is created lazily, only
+  when a pan is first specified (note-on `pan` arg or the setter): a panner at
+  center is not transparent for mono sources (equal-power law ≈ −3 dB per
+  channel vs the plain mono→stereo up-mix), so unpanned voices keep a
+  byte-identical graph. Hosts without `createStereoPanner` no-op silently.
 - **State** — `getActiveVoices`, `isInstrumentLoaded`, `unloadInstrument`, `tapMaster`.
 - **`startSegmentLooper(opts)`** — standalone single-voice segment looper
   (audition / preview), independent of the voice manager.

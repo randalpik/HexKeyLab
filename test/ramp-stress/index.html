@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>HKLE ramp stress — Intonalogy repro</title>
+  <style>
+    body { font: 14px/1.5 system-ui, sans-serif; margin: 2rem auto; max-width: 40rem; color: #1a1a1a; }
+    h1 { font-size: 1.1rem; }
+    fieldset { border: 1px solid #ccc; border-radius: 6px; margin-bottom: 1rem; }
+    button { font-size: 1rem; padding: 0.4rem 1rem; }
+    #btn-up, #btn-down { font-size: 1.6rem; width: 5rem; height: 3.2rem; touch-action: none; user-select: none; }
+    label { margin-right: 1rem; }
+    input[type="number"] { width: 4.5rem; }
+    table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+    td, th { padding: 0.15rem 0.8rem; text-align: right; border-bottom: 1px solid #eee; }
+    th { text-align: left; font-weight: 600; }
+    #drift.bad { color: #cf222e; font-weight: 700; }
+    #status { color: #666; }
+  </style>
+</head>
+<body>
+  <h1>HKLE live-ramp stress harness (Intonalogy repro)</h1>
+  <p id="status">Loading…</p>
+
+  <fieldset>
+    <legend>Voice</legend>
+    <label>Instrument
+      <select id="instrument">
+        <option value="strings">strings.hki</option>
+        <option value="winds">winds.hki</option>
+        <option value="brass">brass.hki</option>
+      </select>
+    </label>
+    <button id="btn-note" disabled>Note on (A3 220 Hz)</button>
+  </fieldset>
+
+  <fieldset>
+    <legend>Ramp — hold a button (or ArrowUp/ArrowDown) to step continuously</legend>
+    <button id="btn-down" disabled>−¢</button>
+    <button id="btn-up" disabled>+¢</button>
+    <label style="margin-left:1rem">step <input id="step-cents" type="number" value="1" step="0.5" /> ¢</label>
+    <label>every <input id="step-ms" type="number" value="50" step="5" /> ms</label>
+    <label>ramp dur <input id="ramp-ms" type="number" value="60" step="5" /> ms</label>
+  </fieldset>
+
+  <table>
+    <tr><th>Accumulated steps</th><td id="steps">0</td><td></td></tr>
+    <tr><th>Expected pitch</th><td id="expected">—</td><td>Hz</td></tr>
+    <tr><th>Engine target (voice.freq)</th><td id="target">—</td><td>Hz</td></tr>
+    <tr><th>Sounding (playbackRate-derived)</th><td id="sounding">—</td><td>Hz</td></tr>
+    <tr><th>Drift (sounding vs expected)</th><td id="drift">—</td><td>¢</td></tr>
+    <tr><th>sRampFreq calls / rejected</th><td id="calls">0 / 0</td><td></td></tr>
+    <tr><th>Seam events</th><td id="seams">0</td><td></td></tr>
+  </table>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

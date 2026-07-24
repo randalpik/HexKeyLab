@@ -468,7 +468,7 @@ const loadedInstruments: Record<string, any> = {};
     /* gentle taper: 1.0 → 1.0, 1.5 → 0.82, 2.0 → 0.64, ≥2.4 → 0.5 (clamped) */
     return Math.max(0.5,1.0-(overshoot-1.0)*0.36);
   }
-  export function sNoteOn(voiceKey: string, freq: number, velocity: number, instrumentKey: string, startAt?: number): void {
+  export function sNoteOn(voiceKey: string, freq: number, velocity: number, instrumentKey: string, startAt?: number, pan?: number): void {
     if(!ctx||!instrumentKey||!buffers[instrumentKey])return;
     if(activeVoices[voiceKey])sNoteOff(voiceKey);
     /* Resolve velocity once: it both selects the velocity layer (findNearest)
@@ -639,9 +639,12 @@ const loadedInstruments: Record<string, any> = {};
       sourceLoopAIdx:initialAIdx,
       sourceLoopBIdx:initialBIdx,
       currentSegIdx:initialSegIdx>=0?initialSegIdx:undefined,
-      sourceRate:rate};
+      sourceRate:rate,panNode:null};
     source.onended=function(){voice.alive=false;};
     activeVoices[voiceKey]=voice;
+    /* Applied before startT (the ≥5ms scheduling lead), so the panner is wired
+       and set before any audio renders — no rewire is ever audible here. */
+    if(pan!=null)sSetVoicePan(voiceKey,pan);
     if(instr.loop&&pts&&pts.length>=2){
       /* Play through to the last loop point before the first switch —
          gives ~1-3s of pristine sustain before any crossfade artifacts
@@ -1170,7 +1173,7 @@ const loadedInstruments: Record<string, any> = {};
     }
     delete activeVoices[voiceKey];return savedVol;
   }
-  export function sNoteOnFaded(voiceKey: string, freq: number, vol: number, dur: number, instrumentKey: string, atTime?: number, fromFreq?: number): void {
+  export function sNoteOnFaded(voiceKey: string, freq: number, vol: number, dur: number, instrumentKey: string, atTime?: number, fromFreq?: number, pan?: number): void {
     if(!ctx||!instrumentKey||!buffers[instrumentKey])return;
     if(activeVoices[voiceKey])sHardStop(voiceKey);
     /* Slide/glide path: only single-layer (sustained/loop) instruments slide —
@@ -1284,9 +1287,11 @@ const loadedInstruments: Record<string, any> = {};
       sourceLoopA:initAF,sourceLoopB:initBF,
       sourceLoopAIdx:initAIdxF,sourceLoopBIdx:initBIdxF,
       currentSegIdx:initSegIdxF>=0?initSegIdxF:undefined,
-      sourceRate:rate};
+      sourceRate:rate,panNode:null};
     source.onended=function(){voice.alive=false;};
     activeVoices[voiceKey]=voice;
+    /* Pre-start pan, same as sNoteOn — startT is ≥5ms out. */
+    if(pan!=null)sSetVoicePan(voiceKey,pan);
     if(instr.loop&&pts&&pts.length>=2){
       scheduleSegmentSwitch(voiceKey);
     }
@@ -1328,6 +1333,46 @@ const loadedInstruments: Record<string, any> = {};
     v.damperGain.gain.cancelScheduledValues(now);
     if(tau<=0){v.damperGain.gain.setValueAtTime(depth,now);}
     else{v.damperGain.gain.setTargetAtTime(depth,now,tau);}
+  }
+  /* Per-voice StereoPannerNode, created LAZILY — only once a pan is actually
+     specified (note-on `pan` arg or sSetVoicePan). A panner at pan=0 is NOT
+     transparent for mono sources: the equal-power center law maps mono to
+     cos(π/4)≈0.707 per channel, ~3 dB below the plain mono→stereo up-mix copy
+     an unpanned voice gets. Lazy creation keeps the graph of consumers that
+     never pan byte-identical to the pre-pan engine. Once created it is the
+     voice's outermost node (pressureGain → panNode → master), so it persists
+     across seam-crossfade source rotation and needs no teardown beyond the
+     voice's own (same lifecycle as pressureGain/damperGain). */
+  function ensureVoicePanNode(v: any): any {
+    if(v.panNode)return v.panNode;
+    if(!ctx||typeof ctx.createStereoPanner!=='function')return null; /* host without StereoPannerNode — pan unsupported */
+    var panNode=ctx.createStereoPanner();
+    /* Splice between pressureGain and master. Connect/disconnect apply
+       atomically at a render-quantum boundary, and in the note-on path this
+       runs before the source's scheduled start anyway. */
+    v.pressureGain.disconnect(master);
+    v.pressureGain.connect(panNode);
+    panNode.connect(master);
+    v.panNode=panNode;
+    return panNode;
+  }
+  /* Stereo pan for one voice, Web Audio -1 (left) .. 1 (right). rampSec>0
+     glides linearly; pan is a native AudioParam so the anchor is just the
+     param's current value (none of sSetAftertouch's Firefox ramp-tracking
+     polyfill applies). Silently no-ops when the context lacks
+     createStereoPanner, matching the other per-voice setters' guard style. */
+  export function sSetVoicePan(voiceKey: string, pan: number, rampSec?: number): void {
+    var v=activeVoices[voiceKey];if(!v||!v.alive)return;
+    var panNode=ensureVoicePanNode(v);if(!panNode)return;
+    var target=Math.max(-1,Math.min(1,pan));
+    var now=ctx.currentTime;
+    panNode.pan.cancelScheduledValues(now);
+    if(rampSec!=null&&rampSec>0){
+      panNode.pan.setValueAtTime(panNode.pan.value,now);
+      panNode.pan.linearRampToValueAtTime(target,now+rampSec);
+    }else{
+      panNode.pan.setValueAtTime(target,now);
+    }
   }
 
 export function getActiveVoices(): Record<string, any> { return activeVoices; }

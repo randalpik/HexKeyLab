@@ -37,14 +37,15 @@ Depends **only** on `@hkl/shared`. The HKL app wires it up through the barrel `a
 ## Signal path
 
 ```
-sample → segGain (crossfade) → voiceGain (envelope) → damperGain → pressureGain → master
+sample → segGain (crossfade) → voiceGain (envelope) → damperGain → pressureGain → [panNode] → master
 osc    →                       gain      (envelope) → damperGain → pressureGain → dest
 ```
 
 - `damperGain` — continuous-damper node (default 1.0; ramped via `setTargetAtTime` while the key is in `sustainedKeys`; pinned to 1.0 for sostenuto-locked keys).
 - `pressureGain` — polyphonic aftertouch node (default 1.0).
+- `panNode` — per-voice `StereoPannerNode` (Web Audio pan −1..1; `sSetVoicePan(voiceKey, pan, rampSec?)` or the optional trailing `pan` arg on `sNoteOn`/`sNoteOnFaded`). Created **lazily, only once a pan is specified**: a panner at center is not transparent for mono sources (equal-power law → cos(π/4) ≈ −3 dB per channel vs the plain mono→stereo up-mix), so unpanned voices keep a graph byte-identical to the pre-pan engine. Outermost position → survives seam-crossfade source rotation; hosts without `createStereoPanner` no-op. HKL itself never pans; the surface exists for external consumers (Intonalogy). → see decisions.md "lazy per-voice pan"
 
-Both sit downstream of the release envelope so neither modulation fights `voiceGain`/`gain` cancel-schedule patterns.
+Both damper and pressure sit downstream of the release envelope so neither modulation fights `voiceGain`/`gain` cancel-schedule patterns.
 
 Gain constants: `sampleMaster = 1.0`, `oscGain = squareGain = 1.0` (pass-through; per-waveform amplitude lives in per-note `vol`). Damper smoothing `DAMPER_SMOOTH_TAU = 0.025` (≈25ms τ); below `DAMPER_RELEASE_FLOOR = 0.005` depth, sustained voices not protected by sostenuto are released.
 

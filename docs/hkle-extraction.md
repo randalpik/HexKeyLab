@@ -78,6 +78,17 @@ Multiple instruments now sound simultaneously with no set-before-trigger. Fixed 
 both the engine and HKL (317/317 composer, incl. multi-instrument). See decisions.md "instrument
 per-voice". Breaking → **2.0.0**.
 
+## Engine 2.4.0 — per-voice stereo pan (2026-07-23)
+
+Consumer-side (Intonalogy) analysis flagged the missing pan control. Added Web Audio
+−1..1 pan per voice: `sSetVoicePan(voiceKey, pan, rampSec?)` plus an optional trailing
+`pan` arg on `sNoteOn`/`sNoteOnFaded`. The per-voice `StereoPannerNode` is created
+**lazily** (only once a pan is specified) because a center panner is ~3 dB non-transparent
+for mono sources — unpanned consumers keep a byte-identical graph, so this is fully
+non-breaking (existing HKL/MQ playback untouched). RNAA 0.10.1 has `StereoPannerNode`,
+so the same path serves React Native. (Versions 2.1–2.3 along the way: crossfade/cut
+tweak, note-on lead split, atomic-instrument `readHkiInstrument`.)
+
 ## Phase 1.5 — MusiQuest POC handoff (browser) — READY
 
 First real consumer: MusiQuest (`~/musiquest-mono`, browser React 19 / Vite / Nx, Howler-based
@@ -92,5 +103,5 @@ Implementation is delegated to a MusiQuest-context agent.
 
 ## Open items
 
-- Operational: claim `@hexkeylab` on npm + publish **2.0.0** (`npm publish packages/engine/dist`).
+- Operational: claim `@hexkeylab` on npm + publish the current version (**2.4.0** as of 2026-07-23; `npm publish packages/engine/dist`).
 - Phase 2 (React Native / Intonalogy) — gated entirely on the Android device spike.

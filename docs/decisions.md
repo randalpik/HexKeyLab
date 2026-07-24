@@ -3949,3 +3949,19 @@ reaches `osc.type`.
 **Rejected**: a secondary `overlapOscs` map for just the "loser" voices (splits voice state across two maps; branches pedal/slur/aftertouch everywhere). The VoiceId split is the conceptually correct model and keeps every non-playback path byte-identical.
 
 **Verified**: typecheck / build / check:boundaries / `pnpm test:composer` (328, incl. `phase5_crossInstrument_samePitchOverlap` = both kept, `phase5_sameInstrument_unisonCollapses` = one kept). Runtime overlap is Max's by-ear gate on the Sonata.
+
+## Lazy per-voice pan: StereoPannerNode only when a pan is specified (2026-07-23)
+
+**Context**: Consumer-side analysis of `@hkl/engine` for Intonalogy (React Native, RNAA — Phase 2 of docs/hkle-extraction.md) found the engine has no pan control. Requirement: Web Audio −1..1 pan, added without disturbing existing consumers (HKL, MusiQuest, react-consumer, engine-smoke).
+
+**Picked**: per-voice `StereoPannerNode` spliced as the voice's outermost node (`pressureGain → panNode → master`), created **lazily — only once a pan is actually specified** via `sSetVoicePan(voiceKey, pan, rampSec?)` or the new optional trailing `pan` arg on `sNoteOn`/`sNoteOnFaded`. Outermost placement survives seam-crossfade source rotation (seams reconnect into `voiceGain` only). Feature-detected: hosts without `createStereoPanner` no-op silently. Engine **2.4.0** (additive).
+
+**The trap that forced laziness**: a StereoPannerNode at pan=0 is NOT transparent for mono sources — the equal-power center law emits cos(π/4) ≈ 0.707 per channel, ~3 dB below the plain mono→stereo up-mix copy an unpanned voice gets. Unconditionally inserting a panner in every voice would have audibly quieted every mono-sampled instrument in HKL. Lazy creation keeps never-panning consumers' graphs byte-identical to the pre-pan engine. Accepted wart (documented in README/engine.md): a voice explicitly panned to 0 sits ~3 dB below a never-panned mono voice — inherent to equal-power panning, consistent within any consumer that pans everything.
+
+**Mid-note splice**: `pressureGain.disconnect(master) → connect(panNode) → panNode.connect(master)` applies atomically at a render-quantum boundary; in the note-on path it runs inside the pre-start scheduling lead anyway (≥5 ms), so the common case wires before any audio renders. `pan` is a native AudioParam — none of the aftertouch Firefox anchor polyfill applies.
+
+**Rejected**: unconditional per-voice panner (the −3 dB mono trap above); mono→stereo pre-upmix at decode to make center transparent (doubles mono PCM memory for a feature HKL doesn't use); pan on `segmentLooper` (Max: skip — its caller owns the destination node and can pan outside).
+
+**Verified**: `pnpm typecheck` + `pnpm check:boundaries` + `pnpm --filter @hkl/engine build` green; engine-smoke exercises lazy splice / node reuse / note-on pan arg / absent-voice no-op / missing-`createStereoPanner` no-op against the stub ctx; react-consumer smoke asserts the lazy panner appears on a real `AudioContext` through the built package.
+
+**Where**: `packages/engine/src/samples-engine.ts` (`ensureVoicePanNode`, `sSetVoicePan`, `pan?` args, voice `panNode` field), `packages/engine/{package.json,README.md}`, `test/engine-smoke/index.mjs`, `test/react-consumer/src/App.tsx`, `docs/architecture/engine.md`, `docs/hkle-extraction.md`.
