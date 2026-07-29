@@ -15,6 +15,10 @@ export interface PaRampState { startVal: number; startTime: number; targetVal: n
 export interface SeamEvent {
   ctxTime: number; voiceKey: string; sampleName: string; rate: number;
   fromBIdx: number; toAIdx: number; fromTime: number; toTime: number; xfadeDur: number;
+  /** 'wrap' = pre-scheduled crossfade at the validated b→a pair (clean);
+      'immediate' = synchronous splice from the current playhead (backstop —
+      phase-unvalidated, audible under sustained tones; should be rare). */
+  kind?: 'wrap' | 'immediate';
 }
 export interface SampleEngineConfig {
   /** Audio bytes for an imported ('hki') instrument, keyed by sample file. */
@@ -744,6 +748,90 @@ const loadedInstruments: Record<string, any> = {};
     return {a:pts[a],b:pts[b],aIdx:a,bIdx:b};
   }
 
+  /* ── ANALYTIC RATE / POSITION TRAJECTORY ──
+     The voice's playback trajectory is fully described by its anchor
+     (sourceStartTime t0, sourceOffset p0, sourceRate) plus the pending ramp
+     (pendingRamp{Start,End,R0,R1}: linear r0→r1 over [rs, re], constant
+     sourceRate on [t0, rs], constant r1 after re). These helpers evaluate it
+     WITHOUT ever reading the playbackRate.value getter — mid-ramp, that
+     getter's semantics are host-dependent (computed value on Chromium,
+     last-set on some hosts, notably suspect on RNAA/Android), and a poisoned
+     read at a seam sticks as the voice's rate. All seam scheduling and
+     anchor math goes through these. */
+  function rateAtTime(v: any, t: number): number {
+    if(v.pendingRampStart===undefined)return v.sourceRate||1;
+    var rs=v.pendingRampStart,re=v.pendingRampEnd,r0=v.pendingRampR0,r1=v.pendingRampR1;
+    if(t<=rs)return r0;
+    if(t>=re)return r1;
+    return r0+(r1-r0)*((t-rs)/(re-rs));
+  }
+  function positionAtTime(v: any, t: number): number {
+    var t0=v.sourceStartTime,p0=v.sourceOffset;
+    if(v.pendingRampStart===undefined)return p0+(v.sourceRate||1)*(t-t0);
+    var rs=v.pendingRampStart,re=v.pendingRampEnd,r0=v.pendingRampR0,r1=v.pendingRampR1;
+    if(t<=rs)return p0+(v.sourceRate||r0||1)*(t-t0);
+    var pos=p0+(v.sourceRate||r0||1)*(rs-t0);
+    var tEnd=(t<re)?t:re;
+    pos+=(r0+rateAtTime(v,tEnd))*0.5*(tEnd-rs);
+    if(t>re)pos+=r1*(t-re);
+    return pos;
+  }
+  /* Invert positionAtTime: the time the playhead reaches buffer position
+     `target` (≥ current position). Piecewise: linear before/after the ramp,
+     quadratic during it — 0.5·k·x² + r0·x = d with k=(r1−r0)/(re−rs); the
+     (−r0+√(r0²+2kd))/k root is the forward crossing for both ramp signs. */
+  function timeAtPosition(v: any, target: number): number {
+    var t0=v.sourceStartTime,p0=v.sourceOffset;
+    if(v.pendingRampStart===undefined)return t0+(target-p0)/(v.sourceRate||1);
+    var rs=v.pendingRampStart,re=v.pendingRampEnd,r0=v.pendingRampR0,r1=v.pendingRampR1;
+    var posRs=p0+(v.sourceRate||r0||1)*(rs-t0);
+    if(target<=posRs)return t0+(target-p0)/(v.sourceRate||r0||1);
+    var posRe=posRs+(r0+r1)*0.5*(re-rs);
+    if(target>=posRe)return re+(target-posRe)/(r1||1);
+    var k=(r1-r0)/(re-rs);
+    if(Math.abs(k)<1e-9)return rs+(target-posRs)/(r0||1);
+    var disc=r0*r0+2*k*(target-posRs);
+    if(disc<0)disc=0;
+    return rs+(-r0+Math.sqrt(disc))/k;
+  }
+  /* Carry the in-flight ramp onto a source scheduled to (re)start at `at`:
+     without this, a seam mid-ramp freezes the new source at a constant
+     snapshot — the audible pitch stops ramping at every wrap and, if no
+     further ramp arrives, lands wrong. Schedules value-at + the remaining
+     linear leg so old and new sources follow the SAME trajectory through
+     the crossfade (phase-locked). */
+  function carryRampOnto(v: any, param: any, at: number): number {
+    var rAt=rateAtTime(v,at);
+    param.value=rAt;
+    if(v.pendingRampStart!==undefined&&at<v.pendingRampEnd){
+      param.setValueAtTime(rAt,at);
+      param.linearRampToValueAtTime(v.pendingRampR1,v.pendingRampEnd);
+    }
+    return rAt;
+  }
+  /* Normalize anchor + pending-ramp bookkeeping after a seam that anchored
+     the voice at `anchorTime` (commitPendingSwitch / doImmediateSwitch set
+     sourceStartTime=anchorTime, sourceOffset=aTime before calling this).
+     Keeps the trajectory invariant (constant sourceRate on [t0, rs]) true. */
+  function normalizeRampAtAnchor(v: any, anchorTime: number): void {
+    if(v.pendingRampStart===undefined){return;}
+    if(v.pendingRampEnd<=anchorTime){
+      v.sourceRate=v.pendingRampR1;
+      v.pendingRampStart=undefined;v.pendingRampEnd=undefined;
+      v.pendingRampR0=undefined;v.pendingRampR1=undefined;
+    }else if(v.pendingRampStart<=anchorTime){
+      var rAt=rateAtTime(v,anchorTime);
+      v.pendingRampStart=anchorTime;v.pendingRampR0=rAt;
+      v.sourceRate=rAt;
+    }else{
+      /* Ramp was issued after the seam's switchTime (mid-crossfade step):
+         rs > t0. The [t0, rs] stretch actually followed the pre-ramp
+         trajectory; approximating it as constant r0 costs micro-seconds of
+         buffer position at cent-scale steps — far below seam tolerance. */
+      v.sourceRate=v.pendingRampR0;
+    }
+  }
+
   /* ── WRAP-ALIGNED SEGMENT SWITCHING (every wrap is a switch) ──
      ALL looping is handled here — no browser-native loop is engaged. Each
      source plays a single pass through its [loopStart, loopEnd] segment,
@@ -785,10 +873,13 @@ const loadedInstruments: Record<string, any> = {};
        creating a new one to avoid double-stacking sources. */
     if(v.pendingSwitch)cancelPendingSwitch(v);
     var pts=v.loopPts;
-    var rate=v.sourceRate||v.source.playbackRate.value||1;
     var now=ctx.currentTime;
-    /* The current source wraps at this time. ALWAYS switch at every wrap. */
-    var switchTime=v.sourceStartTime+(v.sourceLoopB-v.sourceOffset)/rate;
+    /* The current source wraps at this time. ALWAYS switch at every wrap.
+       timeAtPosition is ramp-aware: with a pending rate ramp in flight the
+       wrap moment shifts (integral of the ramped rate), and getting it wrong
+       either splices early (mid-segment, phase-unvalidated) or lets the old
+       source play past pts[b] into unvalidated content. */
+    var switchTime=timeAtPosition(v,v.sourceLoopB);
     /* If we're already past the wrap (extreme JS stall during a prior call),
        push a few ms forward so setValueAtTime / source.start are valid. */
     if(switchTime<now+0.005)switchTime=now+0.005;
@@ -808,7 +899,7 @@ const loadedInstruments: Record<string, any> = {};
     var xfDur=v.sampleXfadeSec||0.030;
     var newSrc=ctx.createBufferSource();newSrc.buffer=v.buffer;
     newSrc.loopStart=aTime;newSrc.loopEnd=bTime;
-    newSrc.playbackRate.value=v.source.playbackRate.value;
+    carryRampOnto(v,newSrc.playbackRate,switchTime);
     var newSG=ctx.createGain();
     /* Born silent — NOT default 1. Firefox's AudioBufferSourceNode at
        fractional playbackRate emits ~3-4 samples of resampler pre-ring
@@ -883,9 +974,13 @@ const loadedInstruments: Record<string, any> = {};
       /* Legacy path: keep the loopPts-indexed bookkeeping. */
       v.sourceLoopAIdx=p.aIdx;v.sourceLoopBIdx=p.bIdx;
     }
-    v.sourceRate=p.newSrc.playbackRate.value;
+    /* Anchor rate analytically (never the .value getter — see rateAtTime).
+       No pending ramp ⇒ sourceRate is already the settled truth; with one,
+       normalize so the constant-rate-since-anchor invariant holds at the new
+       (switchTime, aTime) anchor. */
+    normalizeRampAtAnchor(v,p.switchTime);
     if(onSeamEvent)onSeamEvent({ctxTime:p.switchTime,voiceKey:voiceKey,sampleName:v.sampleName||'?',
-      rate:v.sourceRate||1,
+      rate:v.sourceRate||1,kind:'wrap',
       fromBIdx:p.bIdx!=null?v.sourceLoopBIdx:-1,toAIdx:p.aIdx!=null?p.aIdx:-1,
       fromTime:p.fromTime,toTime:p.toTime,xfadeDur:p.xfDur});
     p.newSrc.onended=function(){v.alive=false;};
@@ -913,7 +1008,6 @@ const loadedInstruments: Record<string, any> = {};
   export function sNoteOff(voiceKey: string, releaseAt?: number): void {
     var v=activeVoices[voiceKey];if(!v)return;
     if(v.loopTimer){clearTimeout(v.loopTimer);v.loopTimer=null;}
-    if(v.reAnchorTimer){clearTimeout(v.reAnchorTimer);v.reAnchorTimer=null;}
     /* If a switch was pre-scheduled but not yet committed, tear it down so the
        new source doesn't continue playing (silently, behind the released
        voiceGain) and leak the BufferSource node. With a future `releaseAt`,
@@ -967,7 +1061,7 @@ const loadedInstruments: Record<string, any> = {};
     var xfDur=v.sampleXfadeSec||0.030;
     var newSrc=ctx.createBufferSource();newSrc.buffer=v.buffer;
     newSrc.loopStart=aTime;newSrc.loopEnd=bTime;
-    newSrc.playbackRate.value=v.source.playbackRate.value;
+    carryRampOnto(v,newSrc.playbackRate,st);
     var newSG=ctx.createGain();
     newSG.gain.value=0; /* born silent — Firefox pre-ring guard, see scheduleSegmentSwitch */
     newSG.gain.setValueAtTime(0,st);
@@ -993,9 +1087,9 @@ const loadedInstruments: Record<string, any> = {};
     } else {
       v.sourceLoopAIdx=picked.aIdx;v.sourceLoopBIdx=picked.bIdx;
     }
-    v.sourceRate=newSrc.playbackRate.value;
+    normalizeRampAtAnchor(v,st);
     if(onSeamEvent)onSeamEvent({ctxTime:st,voiceKey:voiceKey,sampleName:v.sampleName||'?',
-      rate:v.sourceRate||1,
+      rate:v.sourceRate||1,kind:'immediate',
       fromBIdx:picked.bIdx!=null?v.sourceLoopBIdx:-1,toAIdx:picked.aIdx!=null?picked.aIdx:-1,
       fromTime:fromTime,toTime:aTime,xfadeDur:xfDur});
     newSrc.onended=function(){v.alive=false;};
@@ -1003,10 +1097,9 @@ const loadedInstruments: Record<string, any> = {};
   }
   /* ══ commitRampSync ══
      Synchronously advance the voice's anchor to time `now`, correctly
-     handling an in-flight rate ramp. Necessary when a new sRampFreq fires
-     while a prior ramp's re-anchor setTimeout is still pending — without
-     this, the prior re-anchor runs with stale ramp parameters (its ramp
-     was cancelled by the new one) and corrupts anchor state, which
+     handling an in-flight rate ramp. sRampFreq calls this before recording
+     each new ramp so r0 is the true in-flight rate and the rs===t0
+     trajectory invariant holds; without it, anchor state corrupts and
      compounds across rapid transposes ("multiple octaves and back").
 
      Math: the pending ramp goes r0→r1 linearly over [rs, re]. Position
@@ -1046,94 +1139,71 @@ const loadedInstruments: Record<string, any> = {};
     if(!v.alive){var pv=v.vol;var ik=v.instrKey;delete activeVoices[voiceKey];sNoteOn(voiceKey,newFreq,Math.round(((pv-0.3)/0.7)*127),ik);return true;}
     var now=ctx.currentTime;
     /* ── COMMIT ANY IN-FLIGHT RAMP ──
-       If a prior ramp's re-anchor setTimeout is still pending, cancel it
-       and commit the prior ramp's state up to `now` synchronously. This
-       prevents the stale-snapshot race where the prior re-anchor would
-       fire later with ramp parameters that no longer reflect reality
-       (its ramp is about to be cancelled by our cancelScheduledValues). */
-    if(v.reAnchorTimer){
-      clearTimeout(v.reAnchorTimer);
-      v.reAnchorTimer=null;
-      commitRampSync(v,now);
-    }
-    /* Cancel any pre-scheduled segment switch — its audio events were anchored
-       on the old rate and pre-ramp state, which is about to change. The
-       reAnchorTimer below will schedule a fresh one after the ramp settles. */
-    if(v.pendingSwitch)cancelPendingSwitch(v);
+       Anchor the voice exactly at `now` (analytic — commitRampSync never
+       reads the playbackRate.value getter) so the new ramp's r0 is the true
+       in-flight rate and the rs===t0 trajectory invariant holds. No-op when
+       no ramp is pending. */
+    commitRampSync(v,now);
     var newRate=newFreq*(v.transpose||1)/v.sampleFreq;
-    var oldRate=v.sourceRate||v.source.playbackRate.value||1;
-    /* ── WRAP-DURING-RAMP PROTECTION (position-based) ──
-       If the ramp will carry the playhead past loopB, the source plays
-       into post-loop buffer content (no native loop). Project position:
-         pos_at_ramp_end = sourceOffset + (oldRate+newRate)/2 * durSec
-         pos_at_settle   = + newRate * 0.06  (covers 20ms re-anchor delay + margin)
-       After commitRampSync above, sourceStartTime === now, so sourceOffset
-       is the actual current position. Compare against loopB; if exceeded,
-       fire a synchronous immediate switch to re-anchor at pts[a_new]
-       with a fresh full-loop ahead.
-
-       Position-based catches fast upward ramps (e.g., 1→8×) that blow
-       past loopB inside durSec — the old timeToWrap-at-oldRate check
-       missed these because rampAdvance far exceeds oldRate*durSec. */
-    if(v.loopPts&&v.loopPts.length>=2&&v.sourceLoopB!==undefined){
-      /* Current playhead position: if commitRampSync just ran above,
-         v.sourceStartTime === now and the correction is 0. If no prior
-         ramp existed, the anchor may be from a past scheduleSegmentSwitch;
-         correct for elapsed time at the steady-state rate. */
-      var currentPos=v.sourceOffset+oldRate*(now-v.sourceStartTime);
-      var rampAdvance=(oldRate+newRate)*0.5*durSec;
-      var settlementAdvance=newRate*0.06;
-      var projectedPos=currentPos+rampAdvance+settlementAdvance;
-      if(projectedPos>=v.sourceLoopB){
+    var oldRate=v.sourceRate||1;
+    /* ── RAMP-AWARE SEAM HANDLING (every-step reschedule) ──
+       A pre-scheduled switch's audio events were anchored on the OLD rate
+       trajectory, which is about to change. Two cases:
+         crossfade not yet started → tear it down; we re-schedule below under
+           the new trajectory (timeAtPosition/carryRampOnto make the seam land
+           on the validated b→a pair mid-ramp).
+         crossfade in flight → never yank it (that clicks). Instead the ramp
+           events below are applied to BOTH sounding sources so they stay
+           phase-locked through the fade; the commit timer then reschedules
+           the next wrap, ramp-aware via pendingRamp*. */
+    var xfInFlight=false;
+    if(v.pendingSwitch){
+      if(now>=v.pendingSwitch.switchTime){
+        xfInFlight=true;
+      }else{
         if(v.loopTimer){clearTimeout(v.loopTimer);v.loopTimer=null;}
-        doImmediateSwitch(voiceKey);
-        v=activeVoices[voiceKey];
-        if(!v||!v.alive)return false;
-        /* After switch: v.source is NEW, v.sourceStartTime ≈ now+8ms,
-           sourceOffset=pts[a_new]. oldRate unchanged (ramp hasn't started). */
-        oldRate=v.sourceRate||v.source.playbackRate.value||oldRate;
+        cancelPendingSwitch(v);
       }
     }
-    /* Start the rate ramp on the current (possibly freshly-switched) source. */
-    v.source.playbackRate.cancelScheduledValues(now);
-    v.source.playbackRate.setValueAtTime(oldRate,now);
-    v.source.playbackRate.linearRampToValueAtTime(newRate,now+durSec);
+    /* Backstop: playhead already at/past the validated seam point — can only
+       happen after an extreme JS stall (the every-step reschedule otherwise
+       keeps a pending switch ahead of the playhead). Splice immediately,
+       then ramp the fresh source. */
+    if(!xfInFlight&&v.loopPts&&v.loopPts.length>=2&&v.sourceLoopB!==undefined
+       &&positionAtTime(v,now)>=v.sourceLoopB){
+      if(v.loopTimer){clearTimeout(v.loopTimer);v.loopTimer=null;}
+      doImmediateSwitch(voiceKey);
+      v=activeVoices[voiceKey];
+      if(!v||!v.alive)return false;
+      oldRate=v.sourceRate||oldRate;
+    }
+    /* Start the rate ramp — identical events on every sounding source of
+       this voice (see xfInFlight above). */
+    var rampParams=[v.source.playbackRate];
+    if(xfInFlight)rampParams.push(v.pendingSwitch.newSrc.playbackRate);
+    for(var pi=0;pi<rampParams.length;pi++){
+      rampParams[pi].cancelScheduledValues(now);
+      rampParams[pi].setValueAtTime(oldRate,now);
+      rampParams[pi].linearRampToValueAtTime(newRate,now+durSec);
+    }
     v.freq=newFreq;
-    /* Record pending ramp for commitRampSync. */
+    /* Record the pending ramp — the analytic trajectory helpers (rateAtTime /
+       positionAtTime / timeAtPosition / carryRampOnto) and commitRampSync all
+       read it; seam commits normalize it (normalizeRampAtAnchor). */
     v.pendingRampStart=now;
     v.pendingRampEnd=now+durSec;
     v.pendingRampR0=oldRate;
     v.pendingRampR1=newRate;
-    /* ── RE-ANCHOR AFTER RAMP ──
-       Cancel any stale scheduleSegmentSwitch timer (its switchTime was
-       computed with oldRate). At ramp-end, call commitRampSync (handles
-       post-ramp case: now ≥ re, so anchor = post-ramp position at newRate),
-       fold into loop range for clean wrap scheduling, then reschedule. */
-    if(v.loopTimer){clearTimeout(v.loopTimer);v.loopTimer=null;}
-    var rampStartTime=now;
-    var rampEndTime=now+durSec;
-    v.reAnchorTimer=setTimeout(function(){
-      var v2=activeVoices[voiceKey];
-      if(!v2)return;
-      v2.reAnchorTimer=null;
-      if(!v2.alive)return;
-      if(!v2.loopPts||v2.loopPts.length<2)return;
-      /* Stale check: if pendingRamp was cleared/replaced (e.g., commitRampSync
-         ran already via another sRampFreq), we shouldn't re-commit. */
-      if(v2.pendingRampStart!==rampStartTime||v2.pendingRampEnd!==rampEndTime)return;
-      var tNow=ctx.currentTime;
-      commitRampSync(v2,tNow>rampEndTime?tNow:rampEndTime);
-      /* Post-ramp: if source has played past loopB (wrap-during-ramp check
-         didn't fire — position was within margin but ramp drift pushed it
-         over), the anchor's sourceOffset is past loopB. Fold into loop:
-         scheduleSegmentSwitch's switchTime math expects sourceOffset<loopB. */
-      var loopA=v2.sourceLoopA,loopB=v2.sourceLoopB;
-      if(loopA!==undefined&&loopB!==undefined&&v2.sourceOffset>loopB){
-        var loopSpan=loopB-loopA;
-        while(v2.sourceOffset>loopB)v2.sourceOffset-=loopSpan;
-      }
+    /* Re-schedule the wrap under the NEW trajectory. There is no deferred
+       "re-anchor after settle" step anymore — deferral is what starved the
+       wrap-aligned path under continuous ramping (every seam degraded to the
+       phase-unvalidated immediate splice: the Intonalogy hiccup). With the
+       trajectory fully analytic, scheduling straight through the ramp is
+       exact. In the xfInFlight case the commit timer owns rescheduling. */
+    if(!xfInFlight&&v.loopPts&&v.loopPts.length>=2){
+      if(v.loopTimer){clearTimeout(v.loopTimer);v.loopTimer=null;}
       scheduleSegmentSwitch(voiceKey);
-    },durSec*1000+20);
+    }
     return true;
   }
   export function sSlideAndFadeOut(voiceKey: string, targetFreq: number, dur: number, atTime?: number): number {
@@ -1299,7 +1369,6 @@ const loadedInstruments: Record<string, any> = {};
   export function sHardStop(voiceKey: string): void {
     var v=activeVoices[voiceKey];if(!v)return;
     if(v.loopTimer){clearTimeout(v.loopTimer);v.loopTimer=null;}
-    if(v.reAnchorTimer){clearTimeout(v.reAnchorTimer);v.reAnchorTimer=null;}
     if(v.pendingSwitch)cancelPendingSwitch(v);
     if(v.alive){v.voiceGain.gain.cancelScheduledValues(ctx.currentTime);v.voiceGain.gain.setValueAtTime(0,ctx.currentTime);try{v.source.stop(ctx.currentTime);}catch(e){}}
     delete activeVoices[voiceKey];

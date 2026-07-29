@@ -14,7 +14,7 @@
     table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
     td, th { padding: 0.15rem 0.8rem; text-align: right; border-bottom: 1px solid #eee; }
     th { text-align: left; font-weight: 600; }
-    #drift.bad { color: #cf222e; font-weight: 700; }
+    #drift.bad, #seams.bad { color: #cf222e; font-weight: 700; }
     #status { color: #666; }
   </style>
 </head>
@@ -50,7 +50,7 @@
     <tr><th>Sounding (playbackRate-derived)</th><td id="sounding">—</td><td>Hz</td></tr>
     <tr><th>Drift (sounding vs expected)</th><td id="drift">—</td><td>¢</td></tr>
     <tr><th>sRampFreq calls / rejected</th><td id="calls">0 / 0</td><td></td></tr>
-    <tr><th>Seam events</th><td id="seams">0</td><td></td></tr>
+    <tr><th>Seam events (wrap = clean, immediate = panic splice)</th><td id="seams">0 wrap / 0 immediate</td><td></td></tr>
   </table>
 
   <script type="module" src="/src/main.js"></script>

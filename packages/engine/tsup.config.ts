@@ -17,7 +17,14 @@ const PUBLISH_NAME = '@hexkeylab/engine';
 // treat a single `.hki` as a self-sufficient instrument (no separately authored
 // defs JSON). Also re-exports the shared bundle API (`readHki`/`writeHki` +
 // `HkiManifest`/`HkiBundle`/`HkiSampleEntry`). No breaking changes.
-const VERSION = '2.3.0';
+// 2.4.0: additive — (a) per-voice stereo pan: `sSetVoicePan(voiceKey, pan,
+// rampSec?)` + optional trailing `pan` on sNoteOn/sNoteOnFaded (lazy
+// StereoPannerNode — unpanned voices keep a byte-identical graph); (b)
+// ramp-aware seams: wrap-aligned switching stays on the validated b→a pair
+// during sRampFreq ramps (analytic trajectory, no playbackRate.value getter
+// reads, ramp carried across seams; `SeamEvent.kind` tags wrap vs immediate).
+// Fixes audible hiccups + wrong-pitch landings under live cent-step retuning.
+const VERSION = '2.4.0';
 
 export default defineConfig({
   entry: ['src/index.ts'],

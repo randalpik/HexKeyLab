@@ -20,7 +20,7 @@ const BASE = 220;
 let ctx = null;
 let noteIsOn = false;
 let cents = 0;          // accumulated requested offset from BASE
-let calls = 0, rejected = 0, seams = 0;
+let calls = 0, rejected = 0, seamsWrap = 0, seamsImmediate = 0;
 // The select carries FILE basenames (handoff/intonalogy naming); the engine
 // instrument key comes from each bundle's own manifest, so renames of the
 // staged files never break the harness.
@@ -47,7 +47,7 @@ async function ensureEngine() {
   init(ctx, ctx.destination, {
     instrumentProvider: async (k) => audioByKey.get(k) ?? null,
     velocityToGain: (v) => v / 127,
-    onSeamEvent: () => { seams++; },
+    onSeamEvent: (ev) => { if (ev.kind === 'immediate') seamsImmediate++; else seamsWrap++; },
   });
 }
 
@@ -60,7 +60,7 @@ async function noteOn() {
   const { key, def } = await fetchBundle(file);
   await loadInstrument(key, def);
   $('status').textContent = `${file}.hki → ${def.name} (key '${key}', ${def.samples.length} samples)`;
-  cents = 0; calls = 0; rejected = 0; seams = 0;
+  cents = 0; calls = 0; rejected = 0; seamsWrap = 0; seamsImmediate = 0;
   sNoteOn(VOICE, BASE, 100, key);
   noteIsOn = true;
   $('btn-note').textContent = 'Note off';
@@ -124,7 +124,7 @@ function read() {
     ? v.source.playbackRate.value * v.sampleFreq / (v.transpose || 1)
     : null;
   const drift = sounding ? 1200 * Math.log2(sounding / expected) : null;
-  return { steps: cents, expected, target, sounding, drift, calls, rejected, seams };
+  return { steps: cents, expected, target, sounding, drift, calls, rejected, seamsWrap, seamsImmediate };
 }
 function paint() {
   const r = read();
@@ -135,7 +135,8 @@ function paint() {
   $('drift').textContent = r.drift != null ? r.drift.toFixed(2) : '—';
   $('drift').className = r.drift != null && Math.abs(r.drift) > 5 ? 'bad' : '';
   $('calls').textContent = `${r.calls} / ${r.rejected}`;
-  $('seams').textContent = String(r.seams);
+  $('seams').textContent = `${r.seamsWrap} wrap / ${r.seamsImmediate} immediate`;
+  $('seams').className = r.seamsImmediate > 0 ? 'bad' : '';
   requestAnimationFrame(paint);
 }
 requestAnimationFrame(paint);

@@ -78,6 +78,17 @@ Multiple instruments now sound simultaneously with no set-before-trigger. Fixed 
 both the engine and HKL (317/317 composer, incl. multi-instrument). See decisions.md "instrument
 per-voice". Breaking → **2.0.0**.
 
+## Engine 2.4.0 — ramp-aware seams (2026-07-24)
+
+Intonalogy's live retune stress (±1¢ steps while held) hiccuped at every loop seam and
+occasionally landed off-pitch (Android). Fixed in the engine: seam scheduling is now
+fully analytic and ramp-aware — every `sRampFreq` re-schedules the wrap under the new
+trajectory, new sources carry the in-flight ramp (phase-locked crossfades), the
+`playbackRate.value` getter is never read (host-dependent mid-ramp; RNAA suspect for
+the wrong pitches), and the phase-unvalidated immediate splice is a tagged backstop
+(`SeamEvent.kind`). Repro + diagnostics: `test/ramp-stress/` (headless: 0 immediate
+seams, 0.00¢ landings across all stress configs). See decisions.md "ramp-aware seams".
+
 ## Engine 2.4.0 — per-voice stereo pan (2026-07-23)
 
 Consumer-side (Intonalogy) analysis flagged the missing pan control. Added Web Audio
@@ -103,5 +114,5 @@ Implementation is delegated to a MusiQuest-context agent.
 
 ## Open items
 
-- Operational: claim `@hexkeylab` on npm + publish the current version (**2.4.0** as of 2026-07-23; `npm publish packages/engine/dist`).
+- Operational: claim `@hexkeylab` on npm + publish the current version (**2.4.0** as of 2026-07-24). Publish with **pnpm**, not npm: `cd packages/engine/dist && pnpm publish --no-git-checks` — Arch's npm package is missing `libnpmpublish`'s bundled `sigstore` (every `npm publish` crashes; see lessons.md). Bump reminder: the published version is `const VERSION` in `packages/engine/tsup.config.ts`, not the workspace package.json.
 - Phase 2 (React Native / Intonalogy) — gated entirely on the Android device spike.

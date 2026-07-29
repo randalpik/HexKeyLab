@@ -17,14 +17,17 @@ Run: `pnpm --filter @hkl/ramp-stress dev` → http://localhost:5197/
   `generate-samples.js <config> --bundle`).
 - Readout: expected pitch (accumulated cents) vs engine target (`voice.freq`)
   vs sounding pitch (derived from `source.playbackRate.value`), drift in
-  cents (red > 5¢), sRampFreq call/reject counts, seam-event count.
+  cents (red > 5¢), sRampFreq call/reject counts, and seam events split by
+  `SeamEvent.kind` — `wrap` (clean, pre-scheduled at the validated b→a pair)
+  vs `immediate` (panic splice; red if any occur — should be 0).
 - Headless driving: `window.__ramp.{noteOn, noteOff, stepHold(dir, n, ms?),
   read}` — `stepHold` paces n steps on a real interval and resolves with the
   readout.
 
-Observed so far (headless Chromium, 2026-07-23): 60×1¢ @50ms/60ms and even
-200×1¢ @15ms with overlapping 100ms ramps settle to 0.00¢ drift — the
-wrong-pitch landing did not reproduce headless; crackle assessment needs ears
-on a live run. Suspect space for the real failures: Firefox
-(`cancelAndHoldAtTime` polyfill paths), scheduling contention/GC on device,
-seam-crossfade interaction mid-ramp.
+History: the 2026-07-23 sessions localized the failure to seams during active
+ramps — `sRampFreq` deferred wrap-aligned scheduling until "settled" (never,
+under held stepping), so every wrap degraded to the phase-unvalidated
+immediate splice. Fixed 2026-07-24 with ramp-aware seams (see decisions.md
+"ramp-aware seams"). Post-fix headless results: 400×1¢ @50ms/60ms (16 seams),
+600×1¢ @15ms with overlapping 100ms ramps, −400×1¢ down, winds/brass — all
+**0 immediate seams, 0.00¢ settled drift**; 8s no-ramp hold unregressed.

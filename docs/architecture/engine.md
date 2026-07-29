@@ -63,7 +63,15 @@ Per-voice: `sourceStartTime`, `sourceStartOffset`, `sourceLoopA`, `sourceLoopB`,
 
 - All wraps go through `scheduleSegmentSwitch`; `source.loop = true` is **never** used.
 - Switch picks `b` (next wrap), then uniformly picks `a` from `validStartsByEnd[b]`.
-- Linear **30ms equal-power crossfade**. `doImmediateSwitch` handles wrap-during-ramp.
+- Linear **30ms equal-power crossfade**. `doImmediateSwitch` is the last-resort splice
+  (playhead already at/past `loopB` after an extreme JS stall) — phase-unvalidated and
+  audible, tagged `kind: 'immediate'` on `SeamEvent` (clean wraps are `kind: 'wrap'`).
+- **Seam scheduling is ramp-aware** (2026-07): the trajectory helpers
+  (`rateAtTime`/`positionAtTime`/`timeAtPosition`) evaluate the anchor + pending ramp
+  analytically — never the `playbackRate.value` getter (host-dependent mid-ramp,
+  RNAA suspect) — so the switch lands on the validated `b→a` pair even mid-ramp, and
+  `carryRampOnto` gives the new source the same rate trajectory (old/new stay
+  phase-locked through the crossfade and the ramp survives the seam).
 
 ## Frequency ramping
 
@@ -73,7 +81,7 @@ Per-voice: `sourceStartTime`, `sourceStartOffset`, `sourceLoopA`, `sourceLoopB`,
 | Tuning/seam changes (`rampActiveFreqs()`) | 150ms |
 | Transpositions | 100ms |
 
-`commitRampSync` integrates any in-flight ramp before starting a new one; a `pendingRamp` identity check cancels stale re-anchors, and a position-based wrap check fixes the stale-anchor race in rapid `sRampFreq` calls.
+`commitRampSync` integrates any in-flight ramp before starting a new one, and each `sRampFreq` immediately re-schedules the pending wrap under the new trajectory (every-step reschedule; a crossfade already in flight is never yanked — both sounding sources get identical ramp events instead). There is no deferred "re-anchor after settle" timer anymore: deferral starved the wrap-aligned path under continuous ramping, degrading every seam to the audible immediate splice (the Intonalogy live-retune hiccup, fixed 2026-07; repro rig in `test/ramp-stress/`). → see decisions.md "ramp-aware seams"
 
 ## Polyphonic aftertouch
 
