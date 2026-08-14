@@ -24,7 +24,16 @@ const PUBLISH_NAME = '@hexkeylab/engine';
 // during sRampFreq ramps (analytic trajectory, no playbackRate.value getter
 // reads, ramp carried across seams; `SeamEvent.kind` tags wrap vs immediate).
 // Fixes audible hiccups + wrong-pitch landings under live cent-step retuning.
-const VERSION = '2.4.0';
+// 2.4.1: fix — every AudioParam write whose value differs from the param's
+// constructor default (born-silent gains, playbackRate, segmentLooper g0)
+// now ALSO seeds the value into the timeline via setValueAtTime(x, 0).
+// Deferred-setter hosts (react-native-audio-api 0.13.2) never consult the
+// intrinsic .value once events are scheduled and resolve the pre-first-event
+// region from the constructor default, leaking one unity-gain raw-buffer
+// sample per source start — a click at the seam rate on instruments whose
+// segment entries sit away from zero crossings. Verified on-device: ~50
+// defects/10s → 0 (handoff/hkle-born-silent-gain-fix.md).
+const VERSION = '2.4.1';
 
 export default defineConfig({
   entry: ['src/index.ts'],

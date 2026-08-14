@@ -80,8 +80,14 @@ export function startSegmentLooper(opts: SegmentLooperOpts): SegmentLooper {
   src0.buffer = buffer;
   src0.loop = false;
   src0.playbackRate.value = rate;
+  src0.playbackRate.setValueAtTime(rate, 0); /* t=0 timeline seed — deferred-setter guard, see schedulePending */
   const g0 = ctx.createGain();
   g0.gain.value = gain;
+  /* t=0 timeline seed. Without it, deferred-setter hosts resolve g0's whole
+     pre-switchTime region from the constructor default (1.0) the moment
+     schedulePending puts future events on this param — the first segment
+     would render at unity instead of `gain`. See schedulePending. */
+  g0.gain.setValueAtTime(gain, 0);
   src0.connect(g0).connect(destination);
   const startedAt = ctx.currentTime;
   src0.start(startedAt, trimStart);
@@ -106,13 +112,18 @@ export function startSegmentLooper(opts: SegmentLooperOpts): SegmentLooper {
     newSrc.buffer = buffer;
     newSrc.loop = false;
     newSrc.playbackRate.value = rate;
+    newSrc.playbackRate.setValueAtTime(rate, 0); /* t=0 timeline seed */
     const newGain = ctx.createGain();
     /* Fade in from silence to full gain over crossfadeSec. Born silent (not
        the default 1): Firefox's fractional-rate sources emit a few samples
        of resampler pre-ring BEFORE the scheduled start, which would pass at
        the default gain until the first event lands — an audible per-seam
-       click. See samples-engine.ts:scheduleSegmentSwitch. */
+       click. And deferred-setter hosts (react-native-audio-api) resolve the
+       pre-first-event region from the constructor default, ignoring .value=
+       entirely, so the zero is ALSO seeded into the timeline at t=0. Full
+       rationale: samples-engine.ts:scheduleSegmentSwitch. */
     newGain.gain.value = 0;
+    newGain.gain.setValueAtTime(0, 0);
     newGain.gain.setValueAtTime(0, switchTime);
     newGain.gain.linearRampToValueAtTime(gain, switchTime + crossfadeSec);
     newSrc.connect(newGain).connect(destination);

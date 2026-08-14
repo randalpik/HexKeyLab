@@ -554,10 +554,12 @@ const loadedInstruments: Record<string, any> = {};
        ms of the very first source. The slide path (sNoteOnFaded) already uses an
        equal-power fade-in curve, so it needs no change. */
     segGain.gain.value=0; /* born silent — Firefox pre-ring guard, see scheduleSegmentSwitch */
+    segGain.gain.setValueAtTime(0,0); /* t=0 timeline seed — deferred-setter guard, see scheduleSegmentSwitch */
     segGain.gain.setValueAtTime(0,startT);
     segGain.gain.linearRampToValueAtTime(vol,startT+ATTACK_FADE_S);
     var source=ctx.createBufferSource();source.buffer=nearest.buffer;
     source.playbackRate.value=rate;
+    source.playbackRate.setValueAtTime(rate,0); /* t=0 timeline seed */
     /* The runtime now supports TWO loop-state formats per sample:
          segments: [{a, b}, ...]
            Each entry is a self-contained loop pair with a validated b→a
@@ -803,6 +805,7 @@ const loadedInstruments: Record<string, any> = {};
   function carryRampOnto(v: any, param: any, at: number): number {
     var rAt=rateAtTime(v,at);
     param.value=rAt;
+    param.setValueAtTime(rAt,0); /* t=0 timeline seed — deferred-setter guard, see scheduleSegmentSwitch */
     if(v.pendingRampStart!==undefined&&at<v.pendingRampEnd){
       param.setValueAtTime(rAt,at);
       param.linearRampToValueAtTime(v.pendingRampR1,v.pendingRampEnd);
@@ -901,16 +904,31 @@ const loadedInstruments: Record<string, any> = {};
     newSrc.loopStart=aTime;newSrc.loopEnd=bTime;
     carryRampOnto(v,newSrc.playbackRate,switchTime);
     var newSG=ctx.createGain();
-    /* Born silent — NOT default 1. Firefox's AudioBufferSourceNode at
-       fractional playbackRate emits ~3-4 samples of resampler pre-ring
-       BEFORE its scheduled start time; with the default gain (1) those
-       samples pass at full level until the setValueAtTime(0, switchTime)
-       event lands, then get truncated — a per-seam click whose loudness
-       tracks the waveform amplitude at the seam entry (the "crackling on
-       chords" bug, 2026-07). Chromium starts sample-accurately and rate=1
-       is unaffected, which is why it only surfaced with JI/thinned-rate
-       playback in Firefox. Same guard on every future-scheduled gain. */
+    /* Born silent — NOT default 1. Two independent host behaviors make the
+       double write (intrinsic .value=0 AND a setValueAtTime(0, 0) timeline
+       seed) necessary:
+       (1) Firefox: AudioBufferSourceNode at fractional playbackRate emits
+       ~3-4 samples of resampler pre-ring BEFORE its scheduled start time;
+       with the default gain (1) those samples pass at full level until the
+       setValueAtTime(0, switchTime) event lands, then get truncated — a
+       per-seam click whose loudness tracks the waveform amplitude at the
+       seam entry (the "crackling on chords" bug, 2026-07). Chromium starts
+       sample-accurately and rate=1 is unaffected, which is why it only
+       surfaced with JI/thinned-rate playback in Firefox.
+       (2) Deferred-setter hosts (react-native-audio-api 0.13.2): .value=
+       is queued rather than applied, and evaluation at times before the
+       first timeline event resolves from the param's CONSTRUCTOR DEFAULT
+       (1.0), never the intrinsic value — so the source's first sample
+       injected the raw buffer value at unity gain, one click per source
+       start (2026-08, handoff/hkle-born-silent-gain-fix.md). The t=0 seed
+       is unconditionally the earliest event, making the timeline
+       authoritative from birth on every host.
+       Same double-write guard applies to EVERY .value= write whose value
+       can differ from the param default (playbackRate included); writes
+       intended at the default (voiceGain etc. = 1.0) are exempt — there
+       the wrong lookup still returns the right value. */
     newSG.gain.value=0;
+    newSG.gain.setValueAtTime(0,0);
     newSG.gain.setValueAtTime(0,switchTime);
     newSG.gain.linearRampToValueAtTime(v.vol,switchTime+xfDur);
     newSrc.connect(newSG);newSG.connect(v.voiceGain);
@@ -1064,6 +1082,7 @@ const loadedInstruments: Record<string, any> = {};
     carryRampOnto(v,newSrc.playbackRate,st);
     var newSG=ctx.createGain();
     newSG.gain.value=0; /* born silent — Firefox pre-ring guard, see scheduleSegmentSwitch */
+    newSG.gain.setValueAtTime(0,0); /* t=0 timeline seed — deferred-setter guard, see scheduleSegmentSwitch */
     newSG.gain.setValueAtTime(0,st);
     newSG.gain.linearRampToValueAtTime(v.vol,st+xfDur);
     newSrc.connect(newSG);newSG.connect(v.voiceGain);
@@ -1281,6 +1300,7 @@ const loadedInstruments: Record<string, any> = {};
        summed amplitude, no chord effect from pitch-mismatched mixing). */
     var startRate=(fromFreq!=null)?(fromFreq*(instr.transpose||1)/nearest.freq):rate;
     source.playbackRate.value=startRate;
+    source.playbackRate.setValueAtTime(startRate,0); /* t=0 timeline seed */
     /* start from loop region (no attack re-trigger) */
     var startOffset;
     if(instr.loop&&pts&&pts.length>=2){
@@ -1318,6 +1338,7 @@ const loadedInstruments: Record<string, any> = {};
     var fin=new Float32Array(EQUAL_POWER_LEN);
     for(var fi=0;fi<EQUAL_POWER_LEN;fi++)fin[fi]=_epFadeIn[fi]*vol;
     segGain.gain.value=0; /* born silent — Firefox pre-ring guard, see scheduleSegmentSwitch */
+    segGain.gain.setValueAtTime(0,0); /* t=0 timeline seed — deferred-setter guard, see scheduleSegmentSwitch */
     segGain.gain.setValueCurveAtTime(fin,startT,dur);
     source.connect(segGain);segGain.connect(voiceGain);
     source.start(startT,startOffset);
