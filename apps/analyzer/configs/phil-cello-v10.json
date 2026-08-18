@@ -1,0 +1,36 @@
+{
+  "instrumentKey": "cello_phil_v10",
+  "displayName": "Cello (Philharmonia, v10)",
+  "source": "local",
+  "sourceDir": "/home/max/Downloads/philharmonia/cello",
+  "ext": ".mp3",
+  "filePatterns": [
+    "cello_{NOTE}_15_forte_arco-normal.mp3"
+  ],
+  "noteStyle": "sharp_s",
+  "lowOct": 2,
+  "highOct": 6,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "volume": 1.0,
+  "gateOpts": {
+    "seamLagRefine": true,
+    "seamPerception": true,
+    "xfadeResidualDbMax": -10
+  },
+  "comment": [
+    "v10 = v9 + (2026-08-18, eighth round): quality-first PICKER (perception",
+    "mode) - legacy spine/fill let tier outrank seam severity (green D3 with",
+    "four red seams beat clean-but-blue Cs3) and its fixed windows skipped",
+    "pristine A2 (sev 0.11) entirely; now severity-bucket greedy at >=2st",
+    "separation, sub-red only, so gaps appear exactly where no sub-red material",
+    "exists (preferred over bridging with an outlier). Soft segment floor:",
+    "a 4th seam beyond 2x targets is a defect, not variety. Brightness outlier",
+    "map sharpened (dev-1)/6: As3 (3.9dB brighter than neighbors) now detected",
+    "at 0.48, not manually vetoed. excludeNotes veto hatch added. CLI tiebreak",
+    "depth-channel bug fixed."
+  ],
+  "pickSpacing": 3
+}

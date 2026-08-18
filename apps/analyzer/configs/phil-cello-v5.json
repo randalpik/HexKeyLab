@@ -1,0 +1,35 @@
+{
+  "instrumentKey": "cello_phil_v5",
+  "displayName": "Cello (Philharmonia, v5)",
+  "source": "local",
+  "sourceDir": "/home/max/Downloads/philharmonia/cello",
+  "ext": ".mp3",
+  "filePatterns": [
+    "cello_{NOTE}_15_forte_arco-normal.mp3"
+  ],
+  "noteStyle": "sharp_s",
+  "lowOct": 2,
+  "highOct": 6,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "volume": 1.0,
+  "gateOpts": {
+    "seamLagRefine": true,
+    "seamPerception": true,
+    "xfadeResidualDbMax": -10
+  },
+  "comment": [
+    "v5 = v4 + the gate audit (2026-08-18, third round): perception mode",
+    "retires the legacy gates whose thresholds were never tied to audibility.",
+    "The 1% amp-step default (0.09 dB!) was rejecting 20k-1.7M pairs per note",
+    "- the real cause of the 3-segment ceiling - while ear-calibrated channels",
+    "tolerate 2.5 dB per partial; kept only as a loose 3 dB perf bar. corr is",
+    "subsumed by residual; tilt/slope by the perceptual channels. The 5-cent",
+    "pitchStep gate (rejecting on smoothed-curve vibrato wiggle, 226k pairs on",
+    "Fs4) is replaced by the PITCH-STATE channel: vibrato-integrated common",
+    "pitch track mismatch at the splice points (target 3 cents, bar 12) -",
+    "the tuning-honest version, also live on non-vibrato notes."
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "instrumentKey": "cello_phil_v6",
+  "displayName": "Cello (Philharmonia, v6)",
+  "source": "local",
+  "sourceDir": "/home/max/Downloads/philharmonia/cello",
+  "ext": ".mp3",
+  "filePatterns": [
+    "cello_{NOTE}_15_forte_arco-normal.mp3"
+  ],
+  "noteStyle": "sharp_s",
+  "lowOct": 2,
+  "highOct": 6,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "volume": 1.0,
+  "gateOpts": {
+    "seamLagRefine": true,
+    "seamPerception": true,
+    "xfadeResidualDbMax": -10
+  },
+  "comment": [
+    "v6 = v5 + density (2026-08-18, fourth round): pickSpacing 3 (the",
+    "minor-third spacing goal from the project brief - the default-4 thinning",
+    "predates severity-ranked material and was discarding 32 of 46 usable",
+    "notes with 5-6 st window-vote gaps), minEndpointSepSec 0.05 in perception",
+    "mode (0.1 predates perceptual scoring; 50 ms apart = distinct vibrato",
+    "states, doubling the geometric segment budget), minKeepSegments 4",
+    "(variety floor: 3 segments audibly cycle on held drones)."
+  ],
+  "pickSpacing": 3
+}

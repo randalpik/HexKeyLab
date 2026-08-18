@@ -523,7 +523,34 @@ function computeGain(meas) {
 
 // ─── 5. classify ─────────────────────────────────────────────────────────────
 
-function classifyLoop(res) {
+/* Onset-blip sample gate: a quick excursion in the middle of the onset
+   trajectory (two-sided extrapolation detector in seam-perception.js) —
+   fires only when BOTH the absolute magnitude and the ratio to the onset's
+   own local roughness are high, so overshoots, swells, and knees (normal
+   attack shape — brass!) never gate. Calibration on phil-cello: defects
+   Gs5 3.4 dB@2.3x, G3 6.4@2.4x, D4 3.8@2.7x, G4 3.5@2.1x; E5's 6.7 dB at
+   1.3x is rough-context, not a blip, and stays legal. */
+const ONSET_BLIP_RED_DB = 2.5, ONSET_BLIP_RED_RATIO = 2.0;
+function classifyLoop(res, cfg) {
+  const g = (cfg && cfg.gateOpts) || {};
+  const barDb = g.onsetBlipDbMax != null ? g.onsetBlipDbMax : ONSET_BLIP_RED_DB;
+  const barRatio = g.onsetBlipRatioMin != null ? g.onsetBlipRatioMin : ONSET_BLIP_RED_RATIO;
+  const st = res && res.stats;
+  /* Unsteady-vibrato sample gate: substantial band FM energy without a
+     stable rate (phil-cello Ds3) — wraps chop irregular vibrato cycles and
+     no per-seam gate can lock onto what has no rate. */
+  const uvStd = g.unsteadyVibratoCentsMin != null ? g.unsteadyVibratoCentsMin : 4;
+  const uvRatio = g.unsteadyVibratoRatioMin != null ? g.unsteadyVibratoRatioMin : 2.5;
+  if (st && st.fmUnsteadyCents != null && st.fmUnsteadyCents >= uvStd
+      && st.fmUnsteadyCents >= uvRatio * Math.max(st.fmRateAmpCents || 0, 0.5)) {
+    st.failReason = `unsteady vibrato: off-line 3-9Hz FM ±${st.fmUnsteadyCents}¢ vs rate line ±${st.fmRateAmpCents}¢ (bars ${uvStd}¢/${uvRatio}x)`;
+    return 'red';
+  }
+  if (st && st.onsetBlipDb != null && st.onsetBlipRatio != null
+      && st.onsetBlipDb >= barDb && st.onsetBlipRatio >= barRatio) {
+    st.failReason = `onset blip ${st.onsetBlipDb} dB @${st.onsetBlipAtSec}s (${st.onsetBlipRatio}x local, bars ${barDb} dB/${barRatio}x)`;
+    return 'red';
+  }
   /* Segments-pipeline tier:
        fail   no segments returned, or stats missing
        red    ≤2 segments (or SCC broken — no perpetual cycle possible);
@@ -555,10 +582,84 @@ function classifyDecay(res) {
 const TIER_RANK = { green: 4, blue: 3, yellow: 2, red: 1, fail: 0 };
 
 function pickSamples(results, cfg) {
+  /* Manual veto hatch — cfg.excludeNotes: ["As3", ...]. */
+  if (Array.isArray(cfg.excludeNotes) && cfg.excludeNotes.length) {
+    const veto = new Set(cfg.excludeNotes);
+    for (const r of results) {
+      if (veto.has(r.note) && r.tier !== 'fail') {
+        r.tier = 'red';
+        if (r.res && r.res.stats) r.res.stats.failReason = 'excluded by config (excludeNotes)';
+      }
+    }
+  }
   // Hard exclusion: red and fail tier samples NEVER get picked, regardless
   // of coverage gaps. Reds either fail SCC (no perpetual loop possible) or
   // produce ≤2 segments (too few to randomize away from). Either way we'd
   // rather have a wider coverage gap than emit an unloopable sample.
+  /* SET-RELATIVE OUTLIER GATE (the "coherence of the set as a whole" gate
+     from the project brief — a sample can be individually flawless yet not
+     belong: phil-cello B3 speaks in 5 ms where every neighbor swells for
+     30–85 ms and runs 2–8 dB brighter — the different-dynamic-band percept.
+     Features are per-sample (attackTonalLagMs, steadyBrightnessDb, source
+     level via gain), judged against the median of usable neighbors within
+     ±6 semitones (self excluded, ≥3 neighbors required). Severity ≥ 0.3
+     demotes to red with a report reason; sub-bar deviation competes in the
+     pick tiebreak like every other severity. */
+  {
+    const pool = results.filter(r => r.tier !== 'fail' && r.res && r.res.stats);
+    for (const r of pool) {
+      if (r.tier === 'red') continue;
+      const nbrs = pool.filter(o => o !== r && Math.abs(o.midi - r.midi) <= 6 && o.tier !== 'red');
+      if (nbrs.length < 3) continue;
+      const med = (arr) => { const v = arr.filter(x => x != null).sort((a, b) => a - b); return v.length ? v[v.length >> 1] : null; };
+      const st = r.res.stats;
+      /* Demotion may ONLY come from post-normalization-AUDIBLE dimensions
+         (attack speed, brightness). Source level is inaudible after gain
+         normalization — a first cut demoted half the set on level alone,
+         the exact false-positive class this gate must avoid — so it stays
+         a weak tiebreak signal only. */
+      let sevAudible = 0, sevTiebreak = 0; const why = [];
+      const mLag = med(nbrs.map(o => o.res.stats.attackTonalLagMs));
+      if (st.attackTonalLagMs != null && mLag != null) {
+        const oct = Math.abs(Math.log2((st.attackTonalLagMs + 20) / (mLag + 20)));
+        sevAudible = Math.max(sevAudible, oct / 3);
+        if (oct >= 0.9) why.push(`attack ${st.attackTonalLagMs}ms vs nbr ${mLag}ms`);
+      }
+      const mVib = med(nbrs.map(o => o.res.stats.fmRateAmpCents));
+      if (st.fmRateAmpCents != null && mVib != null) {
+        /* Vibrato-depth outlier (log-domain): a faint/rateless note among
+           strongly singing neighbors reads as sloppy or dead (phil-cello
+           Ds3: rate-line ±1.9¢ vs neighborhood ~±7¢) — single-sample
+           unsteadiness measures missed it because its absolute modulation
+           numbers are the SMALLEST in the set; only the neighbor contrast
+           is audible. Symmetric: an over-wide wobbler also flags. */
+        const oct = Math.abs(Math.log2((st.fmRateAmpCents + 2) / (mVib + 2)));
+        sevAudible = Math.max(sevAudible, oct / 3);
+        if (oct >= 0.9) why.push(`vibrato ±${st.fmRateAmpCents}¢ vs nbr ±${mVib}¢`);
+      }
+      const mBr = med(nbrs.map(o => o.res.stats.steadyBrightnessDb));
+      if (st.steadyBrightnessDb != null && mBr != null) {
+        const dev = Math.abs(st.steadyBrightnessDb - mBr);
+        sevAudible = Math.max(sevAudible, Math.max(0, dev - 1) / 6);
+        if (dev >= 3) why.push(`brightness ${st.steadyBrightnessDb}dB vs nbr ${mBr}dB`);
+      }
+      sevTiebreak = sevAudible;
+      const mLvl = med(nbrs.map(o => o.gain ? -20 * Math.log10(o.gain) : null));
+      if (r.gain && mLvl != null) {
+        const dev = Math.abs(-20 * Math.log10(r.gain) - mLvl);
+        sevTiebreak = Math.max(sevTiebreak, Math.max(0, dev - 2) / 16);
+      }
+      r._setOutlierSev = sevTiebreak;
+      /* Demotion bar 0.4: the confirmed outliers (B3 0.62, D2 0.51, G2
+         0.45) sit well above the borderline cluster (0.31-0.34: small
+         absolute attack-lag differences like 15 vs 50 ms) — those merely
+         lose pick votes rather than being deleted. */
+      if (sevAudible >= 0.4) {
+        r.tier = 'red';
+        st.failReason = `set outlier (sev ${sevAudible.toFixed(2)}): ${why.join('; ') || 'multi-feature deviation'}`;
+      }
+    }
+  }
   const usable = results.filter(r => r.tier === 'green' || r.tier === 'blue' || r.tier === 'yellow');
   if (usable.length === 0) return [];
   usable.sort((a,b) => a.midi - b.midi);
@@ -578,8 +679,42 @@ function pickSamples(results, cfg) {
                 skipped) at ~S-semitone spacing inside each gap.
      Within a window the picker prefers higher tier (blue > yellow), then
      more segments (richer randomization), then more steady-region seconds. */
+  /* Worst kept-seam perceptual severity (0 when the perception gates are
+     off or stats are absent). Same scale as the selector: Δφ in cycles vs
+     partial step/dip dB / 16. Bucketed to 0.1 in the tiebreak so it decides
+     between notes with meaningfully different seam quality without letting
+     hairline diffs override segment count. (Added 2026-08-18: the old
+     tiebreak preferred more-segments/longer-steady and was blind to seam
+     quality — As3 with audible p3 seams beat the near-silent Gs3 in a
+     window vote.) */
+  const worstSeamSeverity = (r) => {
+    let worst = 0;
+    const seams = r.res && r.res.diag && r.res.diag.segDiag && r.res.diag.segDiag.selectedSeamStats;
+    if (Array.isArray(seams)) {
+      for (const s of seams) {
+        const mod = s.modPhase != null ? s.modPhase : 0;
+        const part = Math.max(s.pStepDb != null ? s.pStepDb : 0, s.pDipDb != null ? -s.pDipDb : 0,
+                              s.pSlowDb != null ? s.pSlowDb : 0) / 16;
+        const pitch = s.pStateC != null ? s.pStateC / 20 : 0;
+        const depth = Math.max(s.dDepthDb != null ? s.dDepthDb / 4 : 0,
+                               s.dDepthC != null ? s.dDepthC / 20 : 0);
+        worst = Math.max(worst, mod, Math.min(0.5, part), Math.min(0.5, pitch), Math.min(0.5, depth));
+      }
+    }
+    /* Sub-bar onset blips compete in the same severity currency — a
+       per-trigger flaw a cleaner neighbor avoids. Overshoot never counts. */
+    const st = r.res && r.res.stats;
+    if (st && st.onsetBlipDb != null && st.onsetBlipRatio != null
+        && st.onsetBlipDb >= 1.5 && st.onsetBlipRatio >= 1.5) {
+      worst = Math.max(worst, Math.min(0.5, st.onsetBlipDb / 16));
+    }
+    if (r._setOutlierSev) worst = Math.max(worst, Math.min(0.5, r._setOutlierSev));
+    return worst;
+  };
   const tiebreak = (a, b) => {
     if (TIER_RANK[a.tier] !== TIER_RANK[b.tier]) return TIER_RANK[b.tier] - TIER_RANK[a.tier];
+    const va = Math.round(worstSeamSeverity(a) / 0.1), vb = Math.round(worstSeamSeverity(b) / 0.1);
+    if (va !== vb) return va - vb;
     const na = (a.res.segments && a.res.segments.length) || 0;
     const nb = (b.res.segments && b.res.segments.length) || 0;
     if (na !== nb) return nb - na;
@@ -587,6 +722,63 @@ function pickSamples(results, cfg) {
     const sb = (b.res.stats && b.res.stats.steadyDurSec) || 0;
     return sb - sa;
   };
+
+  /* QUALITY-FIRST picker (perception mode) — mirrors the segment selector's
+     redesign. The legacy spine/fill walker had two blind spots the 2026-08
+     band audit exposed: TIER outranked seam severity (green-but-red-seamed
+     D3 beat clean-but-blue Cs3), and fixed spacing windows skipped notes
+     entirely (pristine A2, sev 0.11, fell between windows while As2 at 0.34
+     was picked). Here: sort by severity bucket (0.1) then the legacy
+     tiebreak, greedily accept at ≥2 st separation, sub-red (sev < 0.3)
+     only. Coverage gaps then appear exactly where no sub-red material
+     exists — preferred over bridging with an audible outlier (Max). */
+  if (cfg.gateOpts && cfg.gateOpts.seamPerception && !cfg.decays) {
+    const RED = (cfg.gateOpts.pickWorstSevMax != null) ? cfg.gateOpts.pickWorstSevMax : 0.3;
+    /* The sub-red BAR applies to seam severity only — a seam defect replays
+       every few wraps; a mild set-deviation (e.g. G5's shallower-but-fine
+       vibrato at 0.31) is a ranking concern, not a disqualifier. Set
+       deviation ≥ 0.4 already demotes upstream. */
+    const scored = usable.map(r => ({
+      r,
+      seamSev: worstSeamSeverity(r),
+      sev: Math.max(worstSeamSeverity(r), r._setOutlierSev || 0),
+    }));
+    scored.sort((a, b) =>
+      (Math.round(a.sev / 0.1) - Math.round(b.sev / 0.1)) || tiebreak(a.r, b.r));
+    if (process.env.HKL_PICK_DEBUG) {
+      for (const { r, seamSev, sev } of scored) console.error(`pickdbg ${r.note} seamSev ${seamSev.toFixed(2)} combined ${sev.toFixed(2)} tier ${r.tier}`);
+    }
+    const picked = [];
+    for (const { r, seamSev } of scored) {
+      if (seamSev >= RED) continue;
+      if (picked.some(p => Math.abs(p.midi - r.midi) < 2)) continue;
+      picked.push(r);
+    }
+    picked.sort((a, b) => a.midi - b.midi);
+    /* Coverage pass: a gap > S may pull the best remaining sub-red
+       candidate at RELAXED separation (≥1 st) — pristine A2 was left out
+       solely by the 2 st rule against Gs2 while its band gapped 5 st.
+       Red never bridges: a gap is preferred over an audible outlier. */
+    const S = cfg.pickSpacing;
+    for (;;) {
+      let filled = false;
+      const bounds = [usable[0].midi - 1, ...picked.map(p => p.midi), usable[usable.length - 1].midi + 1];
+      for (let i = 1; i < bounds.length; i++) {
+        if (bounds[i] - bounds[i - 1] <= S) continue;
+        const cands = scored.filter(({ r, seamSev }) =>
+          seamSev < RED && r.midi > bounds[i - 1] && r.midi < bounds[i]
+          && !picked.includes(r) && !picked.some(p => Math.abs(p.midi - r.midi) < 1));
+        if (!cands.length) continue;
+        picked.push(cands[0].r);
+        picked.sort((a, b) => a.midi - b.midi);
+        filled = true;
+        break;
+      }
+      if (!filled) break;
+    }
+    return picked;
+  }
+
   /* spacedPick: walk from startMidi to endMidi by S-semitone targets; in each
      ±HALF-semitone window pick the best candidate by tiebreak; advance to
      best.midi + S after each pick. Optionally exclude any candidate within
@@ -689,7 +881,11 @@ function pickSamples(results, cfg) {
   const gaps = [];
   if (spine.length === 0) {
     // No green spine — fill the entire usable range with blue+yellow.
-    gaps.push({ lowExcl: minMidi - 1, highExcl: maxMidi + 1, isHead: false, isTail: false });
+    // head+tail flags matter: without isHead the fill walk starts at
+    // lowExcl+S and the LOWEST usable note falls outside the first ±HALF
+    // window, silently dropping the bottom of the range (phil-cello v3:
+    // a zero-green run lost C2 — the one note Intonalogy cannot lose).
+    gaps.push({ lowExcl: minMidi - 1, highExcl: maxMidi + 1, isHead: true, isTail: true });
   } else {
     if (spine[0].midi - minMidi > S) gaps.push({ lowExcl: minMidi - 1, highExcl: spine[0].midi, isHead: true, isTail: false });
     for (let i = 1; i < spine.length; i++) {
@@ -1057,7 +1253,7 @@ function buildSummary(results, picks, cfg, hkiPath) {
       const analysisFreq = n.labeledFreq / cfg.transpose;
       const res = cfg.decays ? analyzeDecay(buf, analysisFreq, fns)
                               : analyzeLoop(buf, analysisFreq, cfg, fns);
-      const tier = cfg.decays ? classifyDecay(res) : classifyLoop(res);
+      const tier = cfg.decays ? classifyDecay(res) : classifyLoop(res, cfg);
       const d = buf.getChannelData();
       const stereo = loadStereoRaw(fetched.rawStereo);
       const meas = cfg.decays ? measureDecay(stereo, d) : measureRmsLoop(stereo, d, res);

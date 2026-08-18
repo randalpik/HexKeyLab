@@ -1,0 +1,37 @@
+{
+  "instrumentKey": "cello_phil_v11",
+  "displayName": "Cello (Philharmonia, v11)",
+  "source": "local",
+  "sourceDir": "/home/max/Downloads/philharmonia/cello",
+  "ext": ".mp3",
+  "filePatterns": [
+    "cello_{NOTE}_15_forte_arco-normal.mp3"
+  ],
+  "noteStyle": "sharp_s",
+  "lowOct": 2,
+  "highOct": 6,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "volume": 1.0,
+  "gateOpts": {
+    "seamLagRefine": true,
+    "seamPerception": true,
+    "xfadeResidualDbMax": -10
+  },
+  "comment": [
+    "v11 = v10 + (2026-08-18, ninth round): unsteady-vibrato sample gate -",
+    "sloppy vibrato spreads FM energy across the band, the rate-locked depth",
+    "collapses below channel floors, and every modulation gate silently",
+    "switches off (Ds3: 1.9c rate-locked vs substantial band energy; its",
+    "seams shipped unpoliced). Band-std >= 4c AND >= 2.5x rate-locked demotes",
+    "red. A2 excluded by config veto: selector-side seams clean and as-played",
+    "residuals fine, but Max hears the first seam fail in the (uncompensated)",
+    "harness path and prefers the Gs2-Cs3 gap - zero-risk call for this set."
+  ],
+  "pickSpacing": 3,
+  "excludeNotes": [
+    "A2"
+  ]
+}

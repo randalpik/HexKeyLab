@@ -33,7 +33,17 @@ const PUBLISH_NAME = '@hexkeylab/engine';
 // sample per source start — a click at the seam rate on instruments whose
 // segment entries sit away from zero crossings. Verified on-device: ~50
 // defects/10s → 0 (handoff/hkle-born-silent-gain-fix.md).
-const VERSION = '2.4.1';
+// 2.4.2: fix — cancelPendingSwitch anchors its undo at the pending
+// crossfade's switchTime instead of ctx.currentTime. The now-anchored
+// cancel+restore destroyed the attack of any voice cancelled before its
+// fade-in completed (fade deleted → full-gain onset click; or
+// setValueAtTime inside the live fade curve → NotSupportedError on strict
+// hosts). Reachable from every teardown/retune path (sNoteOff, sHardStop,
+// sRampFreq, sSlideAndFadeOut, scheduleSegmentSwitch), so any retune sweep
+// or early release inside the attack window hit it. In-flight-crossfade
+// cancellation (the case the restore was designed for) is unchanged
+// (handoff/hkle-cancel-pending-switch-attack.md).
+const VERSION = '2.4.2';
 
 export default defineConfig({
   entry: ['src/index.ts'],

@@ -1,0 +1,35 @@
+{
+  "instrumentKey": "cello_phil_v3",
+  "displayName": "Cello (Philharmonia, v3)",
+  "source": "local",
+  "sourceDir": "/home/max/Downloads/philharmonia/cello",
+  "ext": ".mp3",
+  "filePatterns": [
+    "cello_{NOTE}_15_forte_arco-normal.mp3"
+  ],
+  "noteStyle": "sharp_s",
+  "lowOct": 2,
+  "highOct": 6,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "volume": 1.0,
+  "gateOpts": {
+    "seamLagRefine": true,
+    "seamPerception": true,
+    "xfadeResidualDbMax": -10
+  },
+  "comment": [
+    "v3: perceptual seam gates (2026-08-18, ear-calibrated on the compare",
+    "harness). seamPerception adds two gates the residual (click) gate cannot",
+    "see: modulation-phase chop (vibrato spliced mid-cycle; vibrato detected",
+    "by cross-harmonic rate agreement so open-string bow jitter and beats",
+    "don't count) and per-partial splice discontinuity (independent partial",
+    "beats teleporting the spectral snapshot - the open-C2 bump), both with",
+    "wrap-rate weighting (short segments gate stricter), plus quality-first",
+    "greedy ordering. Residual relaxed -14 -> -10: the perceptual gates carry",
+    "the quality load, and -14 was what starved the As3-F4 mid-band and",
+    "created the 10-semitone hole in v2."
+  ]
+}

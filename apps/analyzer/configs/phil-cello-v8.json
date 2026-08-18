@@ -1,0 +1,34 @@
+{
+  "instrumentKey": "cello_phil_v8",
+  "displayName": "Cello (Philharmonia, v8)",
+  "source": "local",
+  "sourceDir": "/home/max/Downloads/philharmonia/cello",
+  "ext": ".mp3",
+  "filePatterns": [
+    "cello_{NOTE}_15_forte_arco-normal.mp3"
+  ],
+  "noteStyle": "sharp_s",
+  "lowOct": 2,
+  "highOct": 6,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "volume": 1.0,
+  "gateOpts": {
+    "seamLagRefine": true,
+    "seamPerception": true,
+    "xfadeResidualDbMax": -10
+  },
+  "comment": [
+    "v8 = v7 with the onset gate CORRECTED (2026-08-18, sixth round): the v7",
+    "overshoot gate was wrong methodology - overshoot of any size/length is",
+    "normal attack shape (brass!) and must never gate (it wrongly demoted E5).",
+    "The real Gs5 defect is a QUICK blip mid-onset: two-sided flank-extrapolation",
+    "detector (knees and swells score 0), normalized to the onset region own",
+    "p90 (steady-region vibrato is not a fair reference). Bars: 2.5dB AND 2x",
+    "local (gateOpts.onsetBlipDbMax/onsetBlipRatioMin). Fires: Gs5 3.4dB@0.93s",
+    "2.3x, G3, D4, G4; E5 restored."
+  ],
+  "pickSpacing": 3
+}

@@ -3,6 +3,8 @@
    fundamental; returns loop-point segments and the diagnostics that the
    visualization module renders. */
 
+import { buildSeamProfile } from './seam-perception.js';
+
 export const HKLAnalysis = (function () {
 /* ═══ selectSegments — segment-based loop selector ═══
    The only loop-point selector. The runtime's state machine is
@@ -69,6 +71,44 @@ function selectSegmentsCore(buf, candidates, opts){
   var minPairLengthSec=opts.minPairLengthSec!==undefined?opts.minPairLengthSec:0.10;
   var minEndpointSepSec=opts.minEndpointSepSec!==undefined?opts.minEndpointSepSec:0.10;
   var maxSegments=opts.maxSegments||8;
+  /* Seam-lag refinement (opt-in: seamLagRefine). On FM-divergent material
+     (string vibrato) the +ZC candidate grid aligns two seam points only up
+     to the average period — the instantaneous phase at b can sit a fraction
+     of a cycle off from a, so a fixed-phase residual check rejects (or
+     barely admits) pairs that a few samples of b-side shift would make
+     clean (measured: phil-cello Fs4 seam −3.3 dB → −11.0 dB at +6 samples,
+     and forte G2 goes from 3 valid pairs to 24). When enabled, every pair
+     that survives the O(1) gates gets its b snapped to the residual-
+     minimizing lag within ±seamLagSearchPeriods fundamental periods BEFORE
+     the corr + residual gates, and the refined b is what the pair emits.
+     Coarse-to-fine (stride T/16, then ±stride at step 1) keeps the cost to
+     ~O(T/8 + 32) residual evals per surviving pair. Lags are clamped so the
+     full window stays in-buffer — a truncated window under-measures the
+     seam and must never win the search. */
+  var seamLagRefine=!!opts.seamLagRefine;
+  var seamLagSearchPeriods=opts.seamLagSearchPeriods!==undefined?opts.seamLagSearchPeriods:0.6;
+  var lagHalf=(seamLagRefine&&tActualSec>0)?Math.round(seamLagSearchPeriods*tActualSec*sr):0;
+  function refineSeamLag(pa,pb,w){
+    if(lagHalf<2)return 0;
+    var lo=-lagHalf,hi=lagHalf;
+    if(pb+lo<0)lo=-pb;
+    if(pb+hi>len-w)hi=len-w-pb;
+    if(lo>=hi)return 0;
+    var stride=Math.max(1,Math.round(tActualSec*sr/16));
+    var bestLag=0,bestDb=xfadeResidualDb(pa,pb,w);
+    for(var L=lo;L<=hi;L+=stride){
+      if(L===0)continue;
+      var r=xfadeResidualDb(pa,pb+L,w);
+      if(r<bestDb){bestDb=r;bestLag=L;}
+    }
+    var flo=Math.max(lo,bestLag-stride+1),fhi=Math.min(hi,bestLag+stride-1);
+    for(var L2=flo;L2<=fhi;L2++){
+      if(L2===bestLag||L2===0)continue;
+      var r2=xfadeResidualDb(pa,pb+L2,w);
+      if(r2<bestDb){bestDb=r2;bestLag=L2;}
+    }
+    return bestLag;
+  }
   /* Pitch/tilt pair gates. Default Infinity = no gating (curves are still
      measured + visualized; only this layer chooses to admit / reject pairs).
      pitchStepThresholdCents: max |Δpitch| in cents between (a, b) candidate
@@ -141,6 +181,75 @@ function selectSegmentsCore(buf, candidates, opts){
   var validPairs=[];
   var rejectByRms=0,rejectBySlope=0,rejectByCorr=0,rejectByResidual=0;
   var rejectByPitch=0,rejectByTilt=0,rejectByTiltSlope=0;
+  var rejectByModPhase=0,rejectByPartial=0,rejectBySlowStep=0,rejectByPitchState=0,rejectByDepth=0;
+  /* Perceptual seam machinery (opt-in: seamPerception + a profile built by
+     prepareLoop). Two ear-validated bump mechanisms the residual gate can't
+     see — modulation-phase chop and per-partial splice discontinuity (see
+     seam-perception.js). MINIMIZE, don't just filter — hard-gating at the
+     audibility thresholds deletes whole notes on sources whose seams are
+     inherently bumpy (phil-cello low octave: beats make ≤2.5 dB partial
+     steps physically unavailable, and the note is still worth shipping at
+     its best achievable quality). Three layers:
+       1. ADMISSION at catastrophe level only (modPhaseMax / partialStepDbMax
+          / partialDipDbMax defaults 0.45 cyc / 12 dB — admission must not kill notes; that call belongs to the prune, and 8 dB bars silently deleted E3 once the fixed A-weighted admission exposed more audible partials) — keeps the pair
+          pool honest without starving coverage.
+       2. ORDERING: greedy selection runs quality-bucket-first (below), so
+          the kept set is the cleanest that still covers.
+       3. QUALITY PRUNE (after SCC + maxSegments): iteratively drop the
+          worst-excess non-bridge segment while more than minKeepSegments
+          remain and it exceeds the ear targets (modPhaseTarget /
+          partialStepDbTarget / partialDipDbTarget, calibrated 2026-08:
+          audible partial steps started ~2.6 dB, clean control ≤1.2 dB;
+          Δφ yellow ≈ 0.12–0.25 cycles). WRAP-RATE WEIGHTING lives here: a
+          short segment wraps often (0.1 s ⇒ ~9 bumps/s), so targets scale
+          down linearly below wrapRefSec of pair length. */
+  var seamPerception=opts.seamPerception&&opts._seamProfile?opts._seamProfile:null;
+  var spOpts=(typeof opts.seamPerception==='object'&&opts.seamPerception)||{};
+  var seamModPhaseMax=spOpts.modPhaseMax!==undefined?spOpts.modPhaseMax:0.45;
+  var seamPartialStepDbMax=spOpts.partialStepDbMax!==undefined?spOpts.partialStepDbMax:12;
+  var seamPartialDipDbMax=spOpts.partialDipDbMax!==undefined?spOpts.partialDipDbMax:12;
+  var seamPartialSlowDbMax=spOpts.partialSlowDbMax!==undefined?spOpts.partialSlowDbMax:12;
+  var seamPitchStateMax=spOpts.pitchStateCentsMax!==undefined?spOpts.pitchStateCentsMax:12;
+  var seamDepthDbMax=spOpts.modDepthDbMax!==undefined?spOpts.modDepthDbMax:3;
+  var seamDepthCentsMax=spOpts.modDepthCentsMax!==undefined?spOpts.modDepthCentsMax:15;
+  var seamDepthRatioMax=spOpts.modDepthRatioMax!==undefined?spOpts.modDepthRatioMax:3;
+  var seamModPhaseTarget=spOpts.modPhaseTarget!==undefined?spOpts.modPhaseTarget:0.15;
+  var seamPartialStepDbTarget=spOpts.partialStepDbTarget!==undefined?spOpts.partialStepDbTarget:2.5;
+  var seamPartialDipDbTarget=spOpts.partialDipDbTarget!==undefined?spOpts.partialDipDbTarget:3.0;
+  var seamPartialSlowDbTarget=spOpts.partialSlowDbTarget!==undefined?spOpts.partialSlowDbTarget:2.5;
+  var seamPitchStateTarget=spOpts.pitchStateCentsTarget!==undefined?spOpts.pitchStateCentsTarget:3;
+  var seamDepthDbTarget=spOpts.modDepthDbTarget!==undefined?spOpts.modDepthDbTarget:0.6;
+  var seamDepthCentsTarget=spOpts.modDepthCentsTarget!==undefined?spOpts.modDepthCentsTarget:4;
+  var seamWrapRefSec=spOpts.wrapRefSec!==undefined?spOpts.wrapRefSec:0.5;
+  var seamMinKeepSegments=spOpts.minKeepSegments!==undefined?spOpts.minKeepSegments:4; /* variety floor: 3 audibly cycles on held drones (Max, 2026-08-18) */
+  /* Perception mode retires the legacy quality gates whose thresholds were
+     never tied to audibility (2026-08-18 audit: the 1% amp-step default —
+     0.09 dB! — rejected 20k–1.7M pairs per note while the ear-calibrated
+     channels tolerate 2.5 dB per partial; disabling it grew the admitted
+     pool 30–50× with equal-or-better perceptual severities and extra
+     segments). Explicit config values always win. Kept: pitchStep 5¢ (slow
+     pitch-state mismatch is uncovered by the perceptual channels and
+     tuning-critical) and a loose 0.30 amp bar (≈3 dB total-level step —
+     clearly audible territory — doubling as the cheap perf pre-gate the 1%
+     bar used to be). corr is subsumed by the residual gate. */
+  if(seamPerception){
+    if(opts.rmsStepThreshold===undefined)rmsStepThreshold=0.30;
+    /* 0.1 s endpoint separation predates perceptual scoring and was the
+       last support of the 3-segment ceiling: at vibrato rates ~5.5 Hz,
+       endpoints 50 ms apart are distinct modulation states (0.27 cycle),
+       not redundant seams, and the quality prune polices what the wider
+       admission lets through. */
+    if(opts.minEndpointSepSec===undefined)minEndpointSepSec=0.05;
+    /* Legacy pitchStep (5¢ on the 200ms-smoothed curve) is replaced by the
+       profile's PITCH-STATE channel: the smoothed curve's residual vibrato
+       wiggle rejected pairs by the hundreds of thousands (Fs4: 226k,
+       costing a segment) without measuring sustained pitch mismatch. */
+    if(opts.pitchStepThresholdCents===undefined)pitchStepThresholdCents=Infinity;
+    if(opts.slopeStepThreshold===undefined)slopeStepThreshold=Infinity;
+    if(opts.tiltStepThreshold===undefined)tiltStepThreshold=Infinity;
+    if(opts.tiltSlopeStepThreshold===undefined)tiltSlopeStepThreshold=Infinity;
+    if(opts.corrThreshold===undefined||opts._corrDefaulted)corrThreshold=-1;
+  }
   function pitchStepDev(i,j){
     if(!pitchAtCandidates)return 0;
     var pa=pitchAtCandidates[j],pb=pitchAtCandidates[i];
@@ -187,15 +296,63 @@ function selectSegmentsCore(buf, candidates, opts){
       if(tsd>tiltStepThreshold){rejectByTilt++;continue;}
       var tssd=tiltSlopeStepDev(i,j);
       if(tssd>tiltSlopeStepThreshold){rejectByTiltSlope++;continue;}
+      var modPhase=null,pSlowDb=null,pStateC=null,dDepthDb=null,dDepthC=null;
+      if(seamPerception){
+        /* Modulation-phase + interior-drift catastrophe bars — cached / O(1)
+           lookups, run before the O(window) gates. Fine-grained quality is
+           enforced by ordering + the quality prune, not here. */
+        modPhase=seamPerception.modPhaseDist(candidates[j],candidates[i]);
+        if(modPhase!=null&&modPhase>seamModPhaseMax){rejectByModPhase++;continue;}
+        pSlowDb=seamPerception.partialSlowStepDb(candidates[j],candidates[i]);
+        if(pSlowDb!=null&&pSlowDb>seamPartialSlowDbMax){rejectBySlowStep++;continue;}
+        pStateC=seamPerception.pitchStateStepCents(candidates[j],candidates[i]);
+        if(pStateC!=null&&pStateC>seamPitchStateMax){rejectByPitchState++;continue;}
+        /* Modulation-DEPTH step: a wrap from developed vibrato back into a
+           pre-vibrato region collapses the vibrato every pass (phil-cello
+           G5: 8× AM-depth mismatch). Δφ cannot see it — a flat trajectory
+           has no phase. */
+        var dst=seamPerception.modDepthStep(candidates[j],candidates[i]);
+        if(dst){
+          dDepthDb=dst.db;dDepthC=dst.cents;
+          if(dDepthDb>seamDepthDbMax||dDepthC>seamDepthCentsMax||dst.ratio>seamDepthRatioMax){rejectByDepth++;continue;}
+        }
+      }
+      var pStepPre=null;
+      if(seamPerception){
+        /* Partial-step catastrophe bar BEFORE the O(window·lags) lag search:
+           partial amplitudes are lag-invariant (lag only rotates phase), so
+           this prunes the exploded post-legacy pool cheaply via the phasor
+           cache. The dip bar (phase-dependent) waits until after the lag. */
+        var splicePre=seamPerception.partialSplice(candidates[j],candidates[i],0);
+        if(splicePre){
+          pStepPre=splicePre.stepDb;
+          if(pStepPre>seamPartialStepDbMax){rejectByPartial++;continue;}
+        }
+      }
       var pi=Math.round(candidates[i]*sr),pj=Math.round(candidates[j]*sr);
-      var pc=correlateWaveforms(d,pi,pj,corrWinSamples);
+      /* b-side lag refinement runs BEFORE the corr gate: a pair can fail
+         correlation at the grid phase yet be clean at the refined lag —
+         that rescue class is the point of the feature. */
+      var bLag=(xfadeWinSamples>0)?refineSeamLag(pj,pi,xfadeWinSamples):0;
+      var pb=pi+bLag;
+      var pc=correlateWaveforms(d,pb,pj,corrWinSamples);
       if(pc<corrThreshold){rejectByCorr++;continue;}
       var resDb=null;
       if(xfadeWinSamples>0){
-        resDb=xfadeResidualDb(pj,pi,xfadeWinSamples);
+        resDb=xfadeResidualDb(pj,pb,xfadeWinSamples);
         if(resDb>xfadeResidualDbMax){rejectByResidual++;continue;}
       }
-      validPairs.push({a:candidates[j],b:candidates[i],aIdx:j,bIdx:i,dist:candidates[i]-candidates[j],pc:pc,resDb:resDb,pitchStep:psd,tiltStep:tsd,tiltSlopeStep:tssd});
+      var pStepDb=null,pDipDb=null;
+      if(seamPerception){
+        /* Per-partial splice catastrophe bar — after lag refinement (the lag
+           enters as an analytic phasor rotation; phasor cache stays valid). */
+        var splice=seamPerception.partialSplice(candidates[j],candidates[i],bLag);
+        if(splice){
+          pStepDb=splice.stepDb;pDipDb=splice.dipDb;
+          if(pStepDb>seamPartialStepDbMax||-pDipDb>seamPartialDipDbMax){rejectByPartial++;continue;}
+        }
+      }
+      validPairs.push({a:candidates[j],b:pb/sr,aIdx:j,bIdx:i,bLag:bLag,dist:pb/sr-candidates[j],pc:pc,resDb:resDb,pitchStep:psd,tiltStep:tsd,tiltSlopeStep:tssd,modPhase:modPhase,pStepDb:pStepDb,pDipDb:pDipDb,pSlowDb:pSlowDb,pStateC:pStateC,dDepthDb:dDepthDb,dDepthC:dDepthC});
     }
   }
   if(validPairs.length===0){
@@ -205,11 +362,44 @@ function selectSegmentsCore(buf, candidates, opts){
       rejectByRms:rejectByRms,rejectBySlope:rejectBySlope,
       rejectByCorr:rejectByCorr,rejectByResidual:rejectByResidual,
       rejectByPitch:rejectByPitch,rejectByTilt:rejectByTilt,
-      rejectByTiltSlope:rejectByTiltSlope
+      rejectByTiltSlope:rejectByTiltSlope,
+      rejectByModPhase:rejectByModPhase,rejectByPartial:rejectByPartial,rejectBySlowStep:rejectBySlowStep,rejectByPitchState:rejectByPitchState,rejectByDepth:rejectByDepth
     }};
   }
-  /* ── 4. Distance-descending greedy selection ─────────────────────────── */
-  validPairs.sort(function(p,q){return q.dist-p.dist;});
+  /* ── 4. Greedy selection ordering ─────────────────────────────────────
+     Historical: distance descending (longest pairs first). With the
+     perceptual gates on, that ordering is exactly what let long-but-
+     marginal pairs displace short clean ones (the residual-gate
+     non-monotonicity, decisions.md 2026-08-17). Perception mode orders by
+     QUALITY BUCKET first (worst per-pair severity across channels,
+     quantized to 0.05 so near-ties still prefer length), then distance. */
+  if(seamPerception&&!opts._seamOrderFallback){
+    var sevOf=function(p){
+      var s=p.modPhase!=null?p.modPhase:0;
+      var pe=Math.max(p.pStepDb!=null?p.pStepDb:0,p.pDipDb!=null?-p.pDipDb:0,p.pSlowDb!=null?p.pSlowDb:0)/16;
+      if(p.pStateC!=null)pe=Math.max(pe,p.pStateC/20);
+      if(p.dDepthDb!=null)pe=Math.max(pe,p.dDepthDb/4);
+      if(p.dDepthC!=null)pe=Math.max(pe,p.dDepthC/20);
+      /* Uncapped (unlike the display scale): on rough material everything
+         saturates a 0.5 cap into one bucket and length breaks the tie
+         toward LONGER=worse (E3 regression when the pool grew). */
+      return Math.max(s,Math.min(1.0,pe));
+    };
+    validPairs.sort(function(p,q){
+      var bp=Math.round(sevOf(p)/0.05),bq=Math.round(sevOf(q)/0.05);
+      if(bp!==bq)return bp-bq;
+      return q.dist-p.dist;
+    });
+  }else{
+    /* Historical distance-descending ordering. Also the coverage fallback
+       for perception mode (_seamOrderFallback): quality-first ordering can
+       select clean but mutually NON-overlapping pairs — no SCC chain, note
+       lost (phil-cello G2). The wrapper retries a window with this ordering
+       when quality-first yields too few segments; the quality prune still
+       runs afterward, so the fallback trades back only as much quality as
+       coverage requires. */
+    validPairs.sort(function(p,q){return q.dist-p.dist;});
+  }
   var selected=[];
   var endpoints=[];  /* every a or b of every selected pair */
   var nRejectedByMinLength=0;
@@ -394,6 +584,57 @@ function selectSegmentsCore(buf, candidates, opts){
     if(_debug)_debug.nonBridgePrunings.push({a:+work[worst].a.toFixed(4),b:+work[worst].b.toFixed(4),dist:+work[worst].dist.toFixed(4)});
     work.splice(worst,1);
   }
+  /* ── 6b. Perceptual quality prune ──────────────────────────────────────
+     Drop the worst-excess non-bridge segment while more than
+     seamMinKeepSegments remain and it exceeds the ear targets. Excess is
+     the max over channels of value/target, with targets scaled down
+     linearly for pairs shorter than seamWrapRefSec (wrap-rate salience).
+     Bridges are never dropped — coverage keeps priority; a bumpy bridge
+     ships (and shows in the report) rather than breaking the SCC. */
+  var nQualityPruned=0;
+  if(seamPerception){
+    var seamExcess=function(p){
+      var scale=Math.min(1,p.dist/seamWrapRefSec);
+      var ex=0;
+      if(p.modPhase!=null)ex=Math.max(ex,p.modPhase/(seamModPhaseTarget*scale));
+      if(p.pStepDb!=null)ex=Math.max(ex,p.pStepDb/(seamPartialStepDbTarget*scale));
+      if(p.pDipDb!=null)ex=Math.max(ex,(-p.pDipDb)/(seamPartialDipDbTarget*scale));
+      if(p.pSlowDb!=null)ex=Math.max(ex,p.pSlowDb/(seamPartialSlowDbTarget*scale));
+      if(p.pStateC!=null)ex=Math.max(ex,p.pStateC/(seamPitchStateTarget*scale));
+      if(p.dDepthDb!=null)ex=Math.max(ex,p.dDepthDb/(seamDepthDbTarget*scale));
+      if(p.dDepthC!=null)ex=Math.max(ex,p.dDepthC/(seamDepthCentsTarget*scale));
+      return ex;
+    };
+    for(;;){
+      if(work.length<=seamMinKeepSegments)break;
+      var qWorst=-1,qWorstEx=1;
+      for(var qi=0;qi<work.length;qi++){
+        if(isBridge(work,qi))continue;
+        var ex=seamExcess(work[qi]);
+        if(ex>qWorstEx){qWorstEx=ex;qWorst=qi;}
+      }
+      if(qWorst<0)break;
+      if(_debug)_debug.nonBridgePrunings.push({a:+work[qWorst].a.toFixed(4),b:+work[qWorst].b.toFixed(4),dist:+work[qWorst].dist.toFixed(4),qualityExcess:+qWorstEx.toFixed(2)});
+      work.splice(qWorst,1);
+      nQualityPruned++;
+    }
+    /* SOFT variety floor: below minKeepSegments but above 3, a seam that is
+       clearly beyond targets (excess > 2) is a defect, not variety — a
+       forced 4th red seam replays audibly every few wraps (phil-cello D3).
+       Hard floor stays 3 (SCC minimum + engine variety floor). */
+    for(;;){
+      if(work.length<=3)break;
+      var q2Worst=-1,q2Ex=2;
+      for(var q2i=0;q2i<work.length;q2i++){
+        if(isBridge(work,q2i))continue;
+        var ex2=seamExcess(work[q2i]);
+        if(ex2>q2Ex){q2Ex=ex2;q2Worst=q2i;}
+      }
+      if(q2Worst<0)break;
+      work.splice(q2Worst,1);
+      nQualityPruned++;
+    }
+  }
   /* Final output. */
   var segments=work.map(function(p){return{a:p.a,b:p.b};});
   /* Bridge count for diag (after pruning). */
@@ -427,7 +668,15 @@ function selectSegmentsCore(buf, candidates, opts){
         pitchStep:pair&&pair.pitchStep!=null?+pair.pitchStep.toFixed(2):null,
         tiltStep:pair&&pair.tiltStep!=null?+pair.tiltStep.toFixed(4):null,
         tiltSlopeStep:pair&&pair.tiltSlopeStep!=null?+pair.tiltSlopeStep.toFixed(5):null,
-        resDb:pair&&pair.resDb!=null&&isFinite(pair.resDb)?+pair.resDb.toFixed(1):null
+        resDb:pair&&pair.resDb!=null&&isFinite(pair.resDb)?+pair.resDb.toFixed(1):null,
+        bLag:pair&&pair.bLag?pair.bLag:0,
+        modPhase:pair&&pair.modPhase!=null?+pair.modPhase.toFixed(3):null,
+        pStepDb:pair&&pair.pStepDb!=null?+pair.pStepDb.toFixed(1):null,
+        pDipDb:pair&&pair.pDipDb!=null?+pair.pDipDb.toFixed(1):null,
+        pSlowDb:pair&&pair.pSlowDb!=null?+pair.pSlowDb.toFixed(1):null,
+        pStateC:pair&&pair.pStateC!=null?+pair.pStateC.toFixed(1):null,
+        dDepthDb:pair&&pair.dDepthDb!=null?+pair.dDepthDb.toFixed(2):null,
+        dDepthC:pair&&pair.dDepthC!=null?+pair.dDepthC.toFixed(1):null
       };
     });
   }
@@ -470,6 +719,8 @@ function selectSegmentsCore(buf, candidates, opts){
       worstResDb:worstResDb,
       rejectByPitch:rejectByPitch,rejectByTilt:rejectByTilt,
       rejectByTiltSlope:rejectByTiltSlope,
+      rejectByModPhase:rejectByModPhase,rejectByPartial:rejectByPartial,rejectBySlowStep:rejectBySlowStep,rejectByPitchState:rejectByPitchState,rejectByDepth:rejectByDepth,
+      nQualityPruned:nQualityPruned,
       nRejectedByMinLength:nRejectedByMinLength,
       nRejectedBySeparation:nRejectedBySeparation,
       separationRejectedTimes:separationRejectedTimes,
@@ -527,6 +778,19 @@ function selectSegments(buf, candidates, opts){
     for(var k in opts)sub[k]=opts[k];
     sub._xfadeWinSec=w;
     var res=selectSegmentsCore(buf,candidates,sub);
+    /* Perception coverage fallback: quality-first ordering can strand the
+       SCC (clean pairs that don't overlap). Retry this window with the
+       distance ordering and keep whichever kept more segments. */
+    if(opts.seamPerception&&res.segments.length<3){
+      var subFb={};
+      for(var kf in sub)subFb[kf]=sub[kf];
+      subFb._seamOrderFallback=true;
+      var resFb=selectSegmentsCore(buf,candidates,subFb);
+      if(resFb.segments.length>res.segments.length){
+        resFb.diag.seamOrderFallback=true;
+        res=resFb;
+      }
+    }
     var nSeg=res.segments.length;
     var worst=(res.diag&&res.diag.worstResDb!=null)?res.diag.worstResDb:Infinity;
     trials.push({winMs:+(w*1000).toFixed(1),nSegments:nSeg,worstResDb:isFinite(worst)?worst:null});
@@ -560,7 +824,7 @@ function applyConfigDefaults(cfg, baseOpts){
   var opts={};
   if(baseOpts) for(var k in baseOpts) opts[k]=baseOpts[k];
   if(cfg && cfg.vibrato){
-    if(opts.corrThreshold===undefined)opts.corrThreshold=0.90;
+    if(opts.corrThreshold===undefined){opts.corrThreshold=0.90;opts._corrDefaulted=true;}
     if(opts.corrWindowPeriods===undefined)opts.corrWindowPeriods=2;
   }
   if(opts.trendNormalize===undefined)opts.trendNormalize=true;
@@ -1604,7 +1868,30 @@ function prepareLoop(buf, freq, opts){
       diag:dFew};
   }
   /* ── 7. selectSegments — per loop window (see §6 semantics). */
+  /* Seam-perception profile: built ONCE per sample on the trend-flattened
+     gate signal (what actually plays after the engine bakes trend), then
+     shared by every window-search / loop-window-ladder rerun of
+     selectSegmentsCore via memoized lookups. See seam-perception.js. */
+  var seamProfile=null;
+  if(opts.seamPerception){
+    seamProfile=buildSeamProfile(dGate,sr,1/T_actual_sec,steady.secStart,steady.secEnd,trimStart/sr);
+  }
   function selectForCands(cands){
+    /* Perception-mode candidate thinning (~10 ms grid). The legacy 1% amp
+       gate was accidentally the perf throttle: retiring it exposed pools of
+       10^5–10^6 pairs on high notes whose +ZC candidates sit sub-millisecond
+       apart. Candidates that close are redundant — minEndpointSepSec keeps
+       kept endpoints ≥100 ms apart and lag refinement recovers sub-period
+       alignment — so a 10 ms grid loses nothing audible and caps the O(n²)
+       pair loop. Thinned BEFORE the parallel per-candidate arrays so the
+       indices stay in sync. */
+    if(opts.seamPerception&&cands.length>1){
+      var thinned=[cands[0]];
+      for(var ci=1;ci<cands.length;ci++){
+        if(cands[ci]-thinned[thinned.length-1]>=0.010)thinned.push(cands[ci]);
+      }
+      cands=thinned;
+    }
     var pitchAt=cands.map(function(t){return sampleCurve(pitchCurve,t);});
     /* Gate samples from the TREND curve. See buildCandidates above for why. */
     var tiltAt=cands.map(function(t){return sampleCurve(tiltTrendCurve,t);});
@@ -1627,6 +1914,11 @@ function prepareLoop(buf, freq, opts){
       tiltSlopeStepThreshold:opts.tiltSlopeStepThreshold,
       xfadeResidualDbMax:opts.xfadeResidualDbMax,
       xfadeCandidatesSec:opts.xfadeCandidatesSec,
+      seamLagRefine:opts.seamLagRefine,
+      seamLagSearchPeriods:opts.seamLagSearchPeriods,
+      seamPerception:opts.seamPerception,
+      _seamProfile:seamProfile,
+      _corrDefaulted:opts._corrDefaulted,
       _debug:opts._debug
     });
   }
@@ -1792,7 +2084,14 @@ function prepareLoop(buf, freq, opts){
        loop window that selection ran under (null = full steady region). */
     crossfadeSec:segRes.diag.crossfadeSec!=null?segRes.diag.crossfadeSec:null,
     worstResDb:segRes.diag.worstResDb!=null?segRes.diag.worstResDb:null,
-    loopWindowSec:loopWindowChosen
+    loopWindowSec:loopWindowChosen,
+    fmRateAmpCents:seamProfile?+seamProfile.fmDepthCents.toFixed(1):null,
+    fmUnsteadyCents:seamProfile?+seamProfile.fmUnsteadyCents.toFixed(1):null,
+    attackTonalLagMs:seamProfile&&seamProfile.attackTonalLagMs!=null?+seamProfile.attackTonalLagMs.toFixed(0):null,
+    steadyBrightnessDb:seamProfile&&seamProfile.steadyBrightnessDb!=null?+seamProfile.steadyBrightnessDb.toFixed(1):null,
+    onsetBlipDb:seamProfile?+seamProfile.onsetBlipDb.toFixed(1):null,
+    onsetBlipAtSec:seamProfile?+seamProfile.onsetBlipAtSec.toFixed(2):null,
+    onsetBlipRatio:seamProfile&&seamProfile.onsetBlipRatio!=null?+seamProfile.onsetBlipRatio.toFixed(1):null
   };
   if(segRes.segments.length<2){
     stats.failReason='segments: '+(segRes.diag.failReason||'fewer than 2 segments survived');

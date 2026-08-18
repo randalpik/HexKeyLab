@@ -1,0 +1,34 @@
+{
+  "instrumentKey": "cello_phil_v4",
+  "displayName": "Cello (Philharmonia, v4)",
+  "source": "local",
+  "sourceDir": "/home/max/Downloads/philharmonia/cello",
+  "ext": ".mp3",
+  "filePatterns": [
+    "cello_{NOTE}_15_forte_arco-normal.mp3"
+  ],
+  "noteStyle": "sharp_s",
+  "lowOct": 2,
+  "highOct": 6,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "volume": 1.0,
+  "gateOpts": {
+    "seamLagRefine": true,
+    "seamPerception": true,
+    "xfadeResidualDbMax": -10
+  },
+  "comment": [
+    "v4 = v3 + the C2-case-study fixes (2026-08-18, second listening round):",
+    "partial admission by MAX A-weighted level over nine windows spanning the",
+    "loop (single-window admission sampled beating partials at their dip and",
+    "hid C2's audibly-stepping ~740Hz h11 => green seam that bumped), and the",
+    "per-partial INTERIOR DRIFT channel (range of each partial's 300ms-smoothed",
+    "envelope within [a,b]) which catches slow spectral settling - C2 takes",
+    ">1s to settle and a v3 segment reached back into the onset tail, level-",
+    "flat and endpoint-matched, invisible to RMS steadiness, trend flattening,",
+    "and the pointwise splice step alike."
+  ]
+}

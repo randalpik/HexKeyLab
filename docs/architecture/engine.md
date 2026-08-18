@@ -74,6 +74,15 @@ Per-voice: `sourceStartTime`, `sourceStartOffset`, `sourceLoopA`, `sourceLoopB`,
   RNAA suspect) — so the switch lands on the validated `b→a` pair even mid-ramp, and
   `carryRampOnto` gives the new source the same rate trajectory (old/new stay
   phase-locked through the crossfade and the ramp survives the seam).
+- **Cancellation is switchTime-anchored** (2.4.2): `cancelPendingSwitch` undoes a
+  not-yet-started crossfade with `cancelScheduledValues(p.switchTime)` — removing
+  exactly the events `scheduleSegmentSwitch` pre-scheduled and nothing earlier.
+  `segGain` also carries the voice's own attack (4ms ramp / 100ms equal-power curve),
+  which sits earlier on the same timeline; the previous now-anchored cancel+restore
+  destroyed any attack still pending or in flight (full-gain onset click, or a throw
+  on hosts whose `cancelScheduledValues` keeps in-flight curves). A crossfade already
+  in flight still restores to `v.vol` via the 5ms ramp. → see decisions.md
+  "Cancel pending switches at switchTime".
 
 ## Frequency ramping
 

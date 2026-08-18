@@ -1,0 +1,34 @@
+{
+  "instrumentKey": "cello_phil_v2",
+  "displayName": "Cello (Philharmonia, v2)",
+  "source": "local",
+  "sourceDir": "/home/max/Downloads/philharmonia/cello",
+  "ext": ".mp3",
+  "filePatterns": [
+    "cello_{NOTE}_15_forte_arco-normal.mp3"
+  ],
+  "noteStyle": "sharp_s",
+  "lowOct": 2,
+  "highOct": 6,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "volume": 1.0,
+  "gateOpts": {
+    "seamLagRefine": true,
+    "xfadeResidualDbMax": -14
+  },
+  "comment": [
+    "v2 of phil-cello for the Intonalogy handoff rebuild (2026-08): forte ONLY",
+    "(the v1 fortissimo/1s fallback patterns produced a mixed-dynamic set with",
+    "qualitatively divergent samples: G2/B2/F3 shipped fortissimo because the",
+    "forte takes went red under fixed-phase seam validation), seamLagRefine on",
+    "(rescues vibrato-FM pairs by snapping b to the residual-minimizing lag;",
+    "forte G2 goes 3 -> 24 valid pairs), and xfadeResidualDbMax tightened",
+    "-10 -> -14 because Intonalogy holds tuning drones for many seconds and",
+    "wrap artifacts that pass at -10 are audible on long holds. 15_forte",
+    "covers C2-C6 chromatically with zero gaps, so pickSamples can shift the",
+    "spine to a neighboring note instead of ever mixing dynamics."
+  ]
+}

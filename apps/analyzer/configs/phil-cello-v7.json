@@ -1,0 +1,33 @@
+{
+  "instrumentKey": "cello_phil_v7",
+  "displayName": "Cello (Philharmonia, v7)",
+  "source": "local",
+  "sourceDir": "/home/max/Downloads/philharmonia/cello",
+  "ext": ".mp3",
+  "filePatterns": [
+    "cello_{NOTE}_15_forte_arco-normal.mp3"
+  ],
+  "noteStyle": "sharp_s",
+  "lowOct": 2,
+  "highOct": 6,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "volume": 1.0,
+  "gateOpts": {
+    "seamLagRefine": true,
+    "seamPerception": true,
+    "xfadeResidualDbMax": -10
+  },
+  "comment": [
+    "v7 = v6 + onset-overshoot sample gate (2026-08-18, fifth round): slow-",
+    "envelope bulge above sustain in the settling zone (Gs5: +5.5dB @0.61s,",
+    "ear-reported, plays every note-on, unfixable by seam selection).",
+    "Measured in seam-perception, red bar at 4dB (gateOpts.onsetOvershootDbMax),",
+    "severity term overshoot/16 in pick votes. ROI starts trim+150ms so attack",
+    "transients stay exempt; threshold self-evident from the set distribution",
+    "(defects 4.1-5.5dB, clean members <1.5dB)."
+  ],
+  "pickSpacing": 3
+}

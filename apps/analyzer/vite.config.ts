@@ -18,5 +18,15 @@ export default defineConfig({
     strictPort: true,
     hmr: { clientPort: 5170, path: '/analyzer/' },
   },
-  build: { target: 'es2022' },
+  build: {
+    target: 'es2022',
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        // Offline A/B harness for .hki builds (out/compare/) — dev-facing,
+        // ships with the analyzer like the rest of the tool.
+        compare: path.resolve(__dirname, 'compare.html'),
+      },
+    },
+  },
 });

@@ -58,7 +58,16 @@ function encodeOpus(srcPath, dstPath, cutSec) {
 /** Tail-cut a lossy source WITHOUT re-encoding: stream-copy up to `cutSec`.
  *  Cut lands on the next codec-frame boundary (~26 ms for mp3) — fine for a
  *  tail trim that already carries a 100 ms margin past the last playable
- *  moment. Zero generation loss, same container/extension. */
+ *  moment. Zero generation loss, same container/extension.
+ *  KNOWN QUIRK (measured 2026-08-17, deliberately left as-is): the remux
+ *  drops the source's Xing/LAME gapless header, so decoders stop trimming
+ *  the mp3 codec delay and cut files decode +529 samples (12 ms @44.1k)
+ *  late relative to the analyzed source — manifest time fields are that
+ *  much stale on cut samples. Downstream consumers (Intonalogy) have
+ *  compensated for this offset on their side and validated against it, so
+ *  changing the behavior here would now BREAK them. The offset is also
+ *  inaudible as a click at the residual levels involved. Coordinate any
+ *  change with consumers first. */
 function copyCut(srcPath, dstPath, cutSec) {
   execFileSync('ffmpeg', [
     '-loglevel', 'error', '-y',

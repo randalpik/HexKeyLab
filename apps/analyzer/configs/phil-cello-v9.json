@@ -1,0 +1,35 @@
+{
+  "instrumentKey": "cello_phil_v9",
+  "displayName": "Cello (Philharmonia, v9)",
+  "source": "local",
+  "sourceDir": "/home/max/Downloads/philharmonia/cello",
+  "ext": ".mp3",
+  "filePatterns": [
+    "cello_{NOTE}_15_forte_arco-normal.mp3"
+  ],
+  "noteStyle": "sharp_s",
+  "lowOct": 2,
+  "highOct": 6,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "volume": 1.0,
+  "gateOpts": {
+    "seamLagRefine": true,
+    "seamPerception": true,
+    "xfadeResidualDbMax": -10
+  },
+  "comment": [
+    "v9 = v8 + (2026-08-18, seventh round): (a) modulation-DEPTH-step seam",
+    "channel - a wrap from developed vibrato back into a pre-vibrato region",
+    "collapses the vibrato every pass (G5 seg0: 8x AM-depth mismatch); dphi is",
+    "blind there since a flat trajectory has no phase. Bars 3dB/15c, targets",
+    "0.6dB/4c. (b) SET-RELATIVE outlier gate in pickSamples (the project-brief",
+    "set-coherence gate, first implementation): attackTonalLagMs +",
+    "steadyBrightnessDb + source level vs the median of usable neighbors",
+    "within +-6st; sev>=0.3 demotes red (B3: speaks in 5ms vs neighbors",
+    "30-85ms, 2-8dB brighter - different-dynamic-band percept)."
+  ],
+  "pickSpacing": 3
+}

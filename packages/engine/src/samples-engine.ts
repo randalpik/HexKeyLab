@@ -1005,10 +1005,28 @@ const loadedInstruments: Record<string, any> = {};
     v.pendingSwitch=null;
   }
 
-  /* Cancel a pre-scheduled switch (called from sRampFreq/sNoteOff/sHardStop
-     before they mutate v.source). Stops the new source, disconnects its
-     graph, and restores the old segGain to v.vol via a brief 5ms ramp so
-     mid-crossfade cancellation doesn't click. */
+  /* Cancel a pre-scheduled switch (called from sRampFreq/sNoteOff/sHardStop/
+     sSlideAndFadeOut before they mutate v.source). Stops the new source,
+     disconnects its graph, and undoes the events scheduleSegmentSwitch put on
+     the old segGain.
+
+     Anchor the undo at p.switchTime, NOT at `now`: segGain also carries the
+     voice's own attack (sNoteOn's 4ms ramp / sNoteOnFaded's 100ms equal-power
+     curve), which sits EARLIER on the timeline than the switch events. A
+     now-anchored cancelScheduledValues(now) on a voice still attacking either
+     deleted a not-yet-started attack outright (note began at full gain —
+     click) or, with the attack curve in flight, made the follow-up
+     setValueAtTime(now) land inside a live setValueCurveAtTime window (throws
+     on strict hosts: Firefox, react-native-audio-api; Chromium silently snaps
+     the attack instead). See handoff/hkle-cancel-pending-switch-attack.md.
+
+     Crossfade not yet begun (now < switchTime): everything scheduleSegment-
+     Switch put on oldSegGain sits at or after switchTime, so cancelling there
+     removes exactly those events; there is nothing to restore, and the
+     voice's own envelope is left alone.
+     Crossfade in flight: restore to v.vol via a brief 5ms ramp so the
+     mid-crossfade cancellation doesn't click (the case the restore was
+     designed for — unchanged). */
   function cancelPendingSwitch(v: any): void {
     if(!v.pendingSwitch)return;
     var p=v.pendingSwitch;
@@ -1018,9 +1036,13 @@ const loadedInstruments: Record<string, any> = {};
     try{p.newSrc.disconnect();}catch(e){}
     try{p.newSG.disconnect();}catch(e){}
     var now=ctx.currentTime;
-    p.oldSegGain.gain.cancelScheduledValues(now);
-    p.oldSegGain.gain.setValueAtTime(p.oldSegGain.gain.value,now);
-    p.oldSegGain.gain.linearRampToValueAtTime(v.vol,now+0.005);
+    if(now<p.switchTime){
+      p.oldSegGain.gain.cancelScheduledValues(p.switchTime);
+    } else {
+      p.oldSegGain.gain.cancelScheduledValues(now);
+      p.oldSegGain.gain.setValueAtTime(p.oldSegGain.gain.value,now);
+      p.oldSegGain.gain.linearRampToValueAtTime(v.vol,now+0.005);
+    }
     v.pendingSwitch=null;
   }
   export function sNoteOff(voiceKey: string, releaseAt?: number): void {
