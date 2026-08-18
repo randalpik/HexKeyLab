@@ -1,0 +1,34 @@
+{
+  "instrumentKey": "cello_phil",
+  "displayName": "Cello",
+  "source": "local",
+  "sourceDir": "/home/max/Downloads/philharmonia/cello",
+  "ext": ".mp3",
+  "filePatterns": [
+    "cello_{NOTE}_15_forte_arco-normal.mp3"
+  ],
+  "noteStyle": "sharp_s",
+  "lowOct": 2,
+  "highOct": 6,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "volume": 1.0,
+  "gateOpts": {
+    "seamLagRefine": true,
+    "seamPerception": true,
+    "xfadeResidualDbMax": -10
+  },
+  "comment": [
+    "SHIP config for the Intonalogy strings handoff - identical to",
+    "phil-cello-v11 (the ear-approved build, 2026-08-18) but under the",
+    "production instrumentKey. See docs/analyzer-perception-handoff.md for the",
+    "full methodology and the per-gate rationale. Rebuild with:",
+    "node apps/analyzer/cli/generate-samples.js apps/analyzer/configs/phil-cello-ship.json"
+  ],
+  "pickSpacing": 3,
+  "excludeNotes": [
+    "A2"
+  ]
+}

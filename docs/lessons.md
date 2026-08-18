@@ -1627,3 +1627,16 @@ A voice's `segGain` timeline holds two unrelated event families: the birth attac
 ## Hosts diverge on `cancelScheduledValues` vs an in-flight `setValueCurveAtTime` — strict hosts throw, Chromium silently snaps
 
 Firefox (152) and react-native-audio-api keep a curve event whose start time is before the cancel time, and then *any* event scheduled inside its `[T0, T0+dur)` span throws `NotSupportedError` ("Can't add events during a curve event" / "conflicts with an existing curve event"). Chromium removes the in-flight curve entirely, so the same code doesn't throw — the value just snaps to the pre-curve level. Consequence for testing: one engine bug can present as a hard throw on Firefox/native and as a silent audible defect on Chromium (this is exactly how hkle-cancel-pending-switch-attack showed two symptoms). A Chromium-only harness proves the audio damage but can NEVER catch the throw class — verify anything that schedules events near a live curve on Firefox too. Also Gecko still lacks `OfflineAudioContext.suspend()`, so Firefox-side checks need a real-time `AudioContext` (the scratch repro's `-rt` scenarios) rather than offline suspend-point driving.
+
+
+## Perceptual audio gates: measure what the ear hears, at the ear's scale (2026-08-18)
+
+Condensed from the Intonalogy cello rebuild (full story: docs/analyzer-perception-handoff.md §3–§6; decisions.md 2026-08-17/18). The recurring failure shape was optimizing a proxy the ear doesn't use:
+
+- A click metric (crossfade residual) cannot see bumps/wahs — energy redistributed BETWEEN partials is invisible to a waveform difference.
+- Phase metrics are blind to PRESENCE: a flat trajectory has no phase (pre-vibrato seams passed every Δφ gate). Depth/ratio is its own dimension.
+- Correlation cannot distinguish vibrato from bow jitter (both common-mode across harmonics); RATE AGREEMENT across independent harmonics can. Depth = sinusoid-amplitude-at-rate, never track std (tracker noise inflates std).
+- Envelope windows must respect the carrier (≥4 periods or you sample per-cycle ripple), partial windows must resolve the partial SPACING (≥3 cycles of f0 or "per-partial" is band mush), and fundamental-locked pitch tracking dies on weak-h1 strings (lock to the strongest harmonic; cents are harmonic-invariant).
+- Normalize against the LOCAL context the ear compares against (an onset's own p90, a neighbor median) — steady-region references are apples-to-oranges for onset defects, and single-window admission samples beating partials at their dip (measure max over the span, A-weighted).
+- Some defects exist only set-relatively (a 5 ms attack among 70 ms swells; ±2¢ vibrato among ±7¢ neighbors): no single-sample scalar finds them.
+- Gate architecture: admission bars only catastrophes, ordering + pruning minimize, and thresholds that never touched an ear are suspect — the legacy 1% amp gate (0.09 dB!) silently caused a years... months-long 3-segment ceiling.
