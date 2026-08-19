@@ -1,0 +1,38 @@
+{
+  "instrumentKey": "trombone_v2",
+  "displayName": "Trombone (perceptual v2)",
+  "baseUrl": "https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/trombone-mp3/",
+  "ext": ".mp3",
+  "filePattern": "{NOTE}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 2,
+  "highOct": 5,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": false,
+  "releaseTime": 0.25,
+  "volume": 1.0,
+  "pickSpacing": 3,
+  "loudnessEvenness": 0.6,
+  "gateOpts": {
+    "seamLagRefine": true,
+    "seamPerception": true,
+    "xfadeResidualDbMax": -10
+  },
+  "comment": [
+    "Brass rerun through the perceptual pipeline (2026-08-18, handoff plan",
+    "step 2). Baseline for comparison: fluidR3-trombone.json -> out/trombone.hki",
+    "(Jul 23, legacy gates). Deliberately DROPS the legacy corrThreshold:0.99 /",
+    "rmsStepThreshold:0.08 overrides - explicit config values win over the",
+    "perception-mode gate audit (corr disabled, amp-step loosened to 0.30), so",
+    "carrying them would re-tighten gates the audit retired. pickSpacing:3",
+    "matches the new-pipeline density chosen for strings. First check per",
+    "handoff SS6: set-relative gate vs FluidR3 zone-stitch cliffs (2-8 dB",
+    "brightness/attack steps Max accepts as realism).",
+    "loudnessEvenness 0.6 (2026-08-18): C2-G2 sustains measure 1.33-1.51x the",
+    "set median in Bark-band sones at matched K-weighted RMS (17-18 occupied",
+    "bands vs 5-11) - Max hears them as significantly louder; ear-validated.",
+    "Attenuation-only above median, so the natural high-note falloff (which",
+    "cancels brightness) is untouched. 0.6 = first-guess blend, trim by ear."
+  ]
+}

@@ -466,6 +466,15 @@ export function buildSeamProfile(d, sr, f0, la, lb, trimStart) {
      (harmonic-band energy fraction > 0.6 for 50 ms). phil-cello B3 speaks
      in 5 ms where its neighbors swell for 30–85 ms — the "articulated
      attack from a different dynamic band" percept.
+     The harmonic band is capped by FREQUENCY (all k·f0 up to ~3 kHz, never
+     fewer than 6 harmonics), not by a fixed harmonic count: a fixed k ≤ 6
+     spans only 78–467 Hz at trombone Eb2, where a bright forte note keeps
+     ~70% of its energy above the band — the fraction never crossed 0.6 and
+     the metric degenerated for the entire low zone (2026-08-18). And when
+     dominance is never reached the metric emits NULL — a prior fallback
+     reported the steady-region start (~600 ms) instead, which masqueraded
+     as a huge attack lag and manufactured a bogus 585-vs-135 ms zone cliff
+     in the set-relative gate.
      steadyBrightnessDb — HF(>1.5 kHz)/total energy over the steady region.
      B3: −6.0 dB vs −8..−14 for every neighbor. */
   var attackTonalLagMs = null, steadyBrightnessDb = null;
@@ -473,7 +482,8 @@ export function buildSeamProfile(d, sr, f0, la, lb, trimStart) {
     var totP = hopEnvelope(d, sr, 0.030);
     for (var tp = 0; tp < totP.length; tp++) totP[tp] = totP[tp] * totP[tp];
     var harmP = null;
-    for (var hk = 1; hk <= 6; hk++) {
+    var hkMax = Math.max(6, Math.floor(3000 / Math.max(f0, 1)));
+    for (var hk = 1; hk <= hkMax; hk++) {
       var hf2 = hk * f0;
       if (hf2 > sr / 2 - 500) break;
       var he = hopEnvelope(biquadBP2(d, sr, hf2), sr, 0.030);
@@ -491,7 +501,9 @@ export function buildSeamProfile(d, sr, f0, la, lb, trimStart) {
         }
         if (ok) { attackTonalLagMs = (ti * ENV_HOP - (trimStart || 0)) * 1000; break; }
       }
-      if (attackTonalLagMs == null) attackTonalLagMs = (la - (trimStart || 0)) * 1000;
+      /* Never-crossed stays null: the note has no measurable tonal-lag and
+         must not participate in the set-relative attack dimension (the
+         downstream gate and median both skip nulls). */
     }
     var hpEnv = hopEnvelope(onePoleHP(d, sr, 1500), sr, 0.030);
     var bLo = Math.round(la / ENV_HOP), bHi = Math.min(hpEnv.length, totP.length, Math.round(lb / ENV_HOP));

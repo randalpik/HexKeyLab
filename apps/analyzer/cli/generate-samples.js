@@ -24,6 +24,7 @@ import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { measureDecayLufs, measureLufs } from '@hkl/analysis/k-weighting.js';
+import { sustainSones } from '@hkl/analysis/loudness.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -101,6 +102,15 @@ function loadConfig() {
      legacy decay configs keep every usable sample. */
   cfg.pickSpacingSet = cfg.pickSpacing != null;
   cfg.pickSpacing = cfg.pickSpacingSet ? cfg.pickSpacing : 4;
+  /* loudnessEvenness (0..1, default 0 = off): per-note gain correction toward
+     equal perceived loudness of the SUSTAIN across the pick set, computed
+     from the Bark-band sones model (@hkl/analysis/loudness.js). Attenuation
+     ONLY — notes louder than the set median are pulled down by
+     evenness × 10·log2(rel) dB; notes at/below median are never boosted
+     (Max 2026-08-18: the natural high-note falloff usefully cancels
+     brightness — leave it). Loop path only. */
+  cfg.loudnessEvenness = (typeof cfg.loudnessEvenness === 'number' && cfg.loudnessEvenness > 0)
+    ? Math.min(1, cfg.loudnessEvenness) : 0;
   /* Source dispatch. 'cdn' (default) → fetchOne uses curl against cfg.baseUrl.
      'local' → fetchOne copies from cfg.sourceDir into the cache so every
      downstream step (decodeOne writes `.raw` next to the source file) sees a
@@ -708,7 +718,13 @@ function pickSamples(results, cfg) {
         && st.onsetBlipDb >= 1.5 && st.onsetBlipRatio >= 1.5) {
       worst = Math.max(worst, Math.min(0.5, st.onsetBlipDb / 16));
     }
-    if (r._setOutlierSev) worst = Math.max(worst, Math.min(0.5, r._setOutlierSev));
+    /* Set-relative deviation is deliberately NOT folded in here: this value
+       gates the sub-red pick bar and the coverage pass, which are seam+blip
+       audibility only (perception-handoff §7). Set-deviation competes in
+       pick ORDERING via `sev` at the call site — it ranks, it never bars;
+       its own ≥0.4 demotion upstream is the only gate it owns. (A previous
+       fold of _setOutlierSev here let sub-0.4 set-deviation — including the
+       inaudible source-LEVEL term — hard-bar picks: trombone G3/C2/Bb2.) */
     return worst;
   };
   const tiebreak = (a, b) => {
@@ -746,7 +762,14 @@ function pickSamples(results, cfg) {
     scored.sort((a, b) =>
       (Math.round(a.sev / 0.1) - Math.round(b.sev / 0.1)) || tiebreak(a.r, b.r));
     if (process.env.HKL_PICK_DEBUG) {
-      for (const { r, seamSev, sev } of scored) console.error(`pickdbg ${r.note} seamSev ${seamSev.toFixed(2)} combined ${sev.toFixed(2)} tier ${r.tier}`);
+      for (const { r, seamSev, sev } of scored) {
+        const st = r.res && r.res.stats;
+        const blip = (st && st.onsetBlipDb != null && st.onsetBlipRatio != null
+                      && st.onsetBlipDb >= 1.5 && st.onsetBlipRatio >= 1.5) ? Math.min(0.5, st.onsetBlipDb / 16) : 0;
+        const setdev = r._setOutlierSev || 0;
+        const fmt = (v, d) => v == null ? '-' : (+v).toFixed(d);
+        console.error(`pickdbg ${r.note} seamSev ${seamSev.toFixed(2)} combined ${sev.toFixed(2)} blip ${blip.toFixed(2)} setdev ${setdev.toFixed(2)} atk ${fmt(st && st.attackTonalLagMs, 0)}ms bright ${fmt(st && st.steadyBrightnessDb, 1)}dB vib ${fmt(st && st.fmRateAmpCents, 1)}c tier ${r.tier}`);
+      }
     }
     const picked = [];
     for (const { r, seamSev } of scored) {
@@ -1261,7 +1284,7 @@ function buildSummary(results, picks, cfg, hkiPath) {
       const peak = meas ? meas.peak : null;
       const lufs = (meas && typeof meas.lufs === 'number') ? meas.lufs : null;
       const gain = computeGain(meas);
-      const rec = { note: n.note, midi: n.midi, labeledFreq: n.labeledFreq, matchedFile: fetched.matchedFile, res, tier, rms, peak, lufs, gain, durationSec: buf.length / SR };
+      const rec = { note: n.note, midi: n.midi, labeledFreq: n.labeledFreq, matchedFile: fetched.matchedFile, rawPath: fetched.raw, res, tier, rms, peak, lufs, gain, durationSec: buf.length / SR };
       attempts.push({ patternIdx, matchedFile: fetched.matchedFile, tier, failReason: (res && (res.failReason || (res.stats && res.stats.failReason))) || null });
       if (!best || TIER_RANK[tier] > TIER_RANK[best.tier]) {
         best = rec;
@@ -1287,6 +1310,39 @@ function buildSummary(results, picks, cfg, hkiPath) {
   }
   console.error(`fetch: ${nFetched} new, ${nCached} cached, ${nMissAll} 404/missing` + (multiPattern ? `, ${fallbackNotes.length} note${fallbackNotes.length===1?'':'s'} used fallback` : ''));
   const picks = pickSamples(results, cfg);
+  /* Loudness-evenness correction (cfg.loudnessEvenness > 0, loop path only).
+     Sones are computed per pick over its segment span AT ITS NORMALIZED GAIN
+     (the level users hear), compared against the pick-set median, and notes
+     above median are attenuated by evenness × 10·log2(rel) dB — the phon-dB
+     heuristic (×2 sones ≈ 10 phon ≈ 10 dB at moderate levels). One-shot, not
+     iterated: the model is uncalibrated in absolute level, so the blend
+     factor is the ear-trim knob, not the exponent. Runs BEFORE bundle cut /
+     block / report emission so every consumer sees the corrected gain. */
+  if (!cfg.decays && cfg.loudnessEvenness > 0 && picks.length >= 3) {
+    const measured = picks.map((r) => {
+      const segs = r.res && r.res.segments;
+      if (!segs || !segs.length || typeof r.gain !== 'number' || !r.rawPath) return null;
+      const mono = loadRaw(r.rawPath).getChannelData();
+      const a = Math.min(...segs.map((g) => g.a)), b = Math.max(...segs.map((g) => g.b));
+      const m = sustainSones(mono, SR, Math.round(a * SR), Math.round(b * SR), r.gain);
+      return m ? m.sones : null;
+    });
+    const vals = measured.filter((v) => v != null).sort((x, y) => x - y);
+    if (vals.length >= 3) {
+      const median = vals[vals.length >> 1];
+      for (let i = 0; i < picks.length; i++) {
+        if (measured[i] == null) continue;
+        const rel = measured[i] / median;
+        if (rel <= 1) continue;
+        const corrDb = -cfg.loudnessEvenness * 10 * Math.log2(rel);
+        picks[i].gain = Math.max(GAIN_MIN, picks[i].gain * Math.pow(10, corrDb / 20));
+        picks[i]._evennessDb = corrDb;
+        console.error(`evenness ${picks[i].note}: rel ${rel.toFixed(2)}x -> ${corrDb.toFixed(2)} dB (gain ${picks[i].gain.toFixed(4)})`);
+      }
+    } else {
+      console.error('evenness: skipped (fewer than 3 measurable picks)');
+    }
+  }
   /* Bundle tail-cut (loop path): audio past the last segment's b never plays
      by design — the engine's furthest read is maxB + crossfade during the
      wrap plus the release tail after noteOff. Mark the cut point on every

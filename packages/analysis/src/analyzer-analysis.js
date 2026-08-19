@@ -50,6 +50,16 @@ function selectSegmentsCore(buf, candidates, opts){
      with audible seam wobble (bassoon F4 shipped a −6.6 dB seam). */
   var xfadeWinSamples=opts._xfadeWinSec?Math.round(opts._xfadeWinSec*sr):0;
   var xfadeResidualDbMax=opts.xfadeResidualDbMax!==undefined&&opts.xfadeResidualDbMax!==null?opts.xfadeResidualDbMax:-10;
+  /* End-of-file margin bar: the engine needs real audio past b for the
+     crossfade tail, and decode lengths disagree across decoders by up to an
+     mp3 frame (~26 ms) plus the stream-copy cut shift. Tail-less sources
+     (FluidR3 renders run hot to EOF) put the steady region at the very end,
+     and quality-first ordering reaches deepest into the tail — trombone v2
+     briefly picked five notes with 33–47 ms of margin; Db2's wrap landed
+     past the browser's decoded end and the loop died. The residual gate
+     cannot catch these (wEff<32 near EOF returns -Infinity = free pass), so
+     bar any pair whose refined b leaves less than crossfade + 100 ms. */
+  var tailMarginSamples=Math.round(((opts._xfadeWinSec||0.030)+0.10)*sr);
   function xfadeResidualDb(pa,pb,w){
     var wEff=Math.min(w,len-pa,len-pb);
     if(wEff<32)return -Infinity; /* seam fades into buffer end — nothing to compare */
@@ -179,7 +189,7 @@ function selectSegmentsCore(buf, candidates, opts){
   /* ── 3. Enumerate valid (a, b) pairs ────────────────────────────────── */
   var corrWinSamples=Math.max(32,Math.round(corrWindowPeriods*(tActualSec||0.005)*sr));
   var validPairs=[];
-  var rejectByRms=0,rejectBySlope=0,rejectByCorr=0,rejectByResidual=0;
+  var rejectByRms=0,rejectBySlope=0,rejectByCorr=0,rejectByResidual=0,rejectByTailMargin=0;
   var rejectByPitch=0,rejectByTilt=0,rejectByTiltSlope=0;
   var rejectByModPhase=0,rejectByPartial=0,rejectBySlowStep=0,rejectByPitchState=0,rejectByDepth=0;
   /* Perceptual seam machinery (opt-in: seamPerception + a profile built by
@@ -335,6 +345,7 @@ function selectSegmentsCore(buf, candidates, opts){
          that rescue class is the point of the feature. */
       var bLag=(xfadeWinSamples>0)?refineSeamLag(pj,pi,xfadeWinSamples):0;
       var pb=pi+bLag;
+      if(pb>len-tailMarginSamples){rejectByTailMargin++;continue;}
       var pc=correlateWaveforms(d,pb,pj,corrWinSamples);
       if(pc<corrThreshold){rejectByCorr++;continue;}
       var resDb=null;
@@ -360,7 +371,7 @@ function selectSegmentsCore(buf, candidates, opts){
       failReason:'no valid pairs',
       nCandidates:n,
       rejectByRms:rejectByRms,rejectBySlope:rejectBySlope,
-      rejectByCorr:rejectByCorr,rejectByResidual:rejectByResidual,
+      rejectByCorr:rejectByCorr,rejectByResidual:rejectByResidual,rejectByTailMargin:rejectByTailMargin,
       rejectByPitch:rejectByPitch,rejectByTilt:rejectByTilt,
       rejectByTiltSlope:rejectByTiltSlope,
       rejectByModPhase:rejectByModPhase,rejectByPartial:rejectByPartial,rejectBySlowStep:rejectBySlowStep,rejectByPitchState:rejectByPitchState,rejectByDepth:rejectByDepth
@@ -715,7 +726,7 @@ function selectSegmentsCore(buf, candidates, opts){
       nCandidates:n,
       nValidPairs:validPairs.length,
       rejectByRms:rejectByRms,rejectBySlope:rejectBySlope,
-      rejectByCorr:rejectByCorr,rejectByResidual:rejectByResidual,
+      rejectByCorr:rejectByCorr,rejectByResidual:rejectByResidual,rejectByTailMargin:rejectByTailMargin,
       worstResDb:worstResDb,
       rejectByPitch:rejectByPitch,rejectByTilt:rejectByTilt,
       rejectByTiltSlope:rejectByTiltSlope,
