@@ -1,20 +1,31 @@
-# Analyzer Perceptual Pipeline — Handoff (2026-08-17/18)
+# Analyzer Perceptual Pipeline — Handoff (2026-08-17/18, completed through the brass/winds rounds)
 
-Two-day session rebuilding the analyzer's loop-quality machinery around what
-the ear actually hears, driven by Max's iterative listening on the Intonalogy
-cello set. Result: `phil-cello-v11` — every sample passes Max's preliminary
-ear test — staged for in-context Intonalogy testing. This document is the
-canonical record of every methodology change, the reasoning (including the
-rejected formulations — several were instructive failures), and the staged
-next plan. Per-round detail lives in [decisions.md](decisions.md) (entries
-dated 2026-08-17/18); the developer reference is
-[architecture/analyzer.md](architecture/analyzer.md).
+Canonical record of the analyzer's perceptual loop-quality machinery — every
+methodology change, the reasoning (including the rejected formulations —
+several were instructive failures), and the forward plan. Built across two
+efforts: the original two-day cello rebuild (§§1–8, decisions.md rounds
+1–9), and the same-day brass/winds/evenness extension (§§9–11, rounds
+10–13: three pipeline bugs found and fixed on FluidR3 trombone, the
+Bark-sones loudness-evenness model, density thinning, and the winds control
+validation). **Outcome: all three Intonalogy handoff bundles shipped
+2026-08-18** — strings (`phil-cello-v11`, ear-approved and parked; a v12
+rebuild through the newer pipeline was REJECTED, see §10), brass (trombone
+v2E with loudness evenness), winds (clarinet, thinned control build).
+Current state is §9; the next-phase plan (v12 regression root-cause, Korg
+piano layer gains) is §10. Per-round detail lives in
+[decisions.md](decisions.md) (entries dated 2026-08-17/18); the developer
+reference is [architecture/analyzer.md](architecture/analyzer.md).
 
-**Calibration caveat (Max, closing the session)**: every threshold below was
-ear-calibrated on ONE sample set (Philharmonia solo cello, 1.5 s forte
-bucket). They crossed "good enough" for this set; further precision-tuning
-without data from other instruments risks specializing to this set. Collect
-brass/winds/piano experience before tightening anything globally.
+**Calibration caveat (Max; updated after the brass/winds rounds)**: the seam
+and gate thresholds in §§3–7 were ear-calibrated on ONE sample set
+(Philharmonia solo cello, 1.5 s forte bucket). Brass and winds have since
+run through them without threshold changes — the clarinet control validated
+that the defaults don't damage healthy material, and the trombone rounds
+fixed measurement bugs rather than retuning thresholds — but that is
+transfer evidence, not calibration: the v12 strings regression (§10) shows
+the newer pick/coverage semantics can still mis-serve the very set the
+thresholds were tuned on. Piano remains unmeasured. Precision-tuning any
+threshold still wants more instrument families first.
 
 ---
 
@@ -197,43 +208,91 @@ lowest usable note whenever a set had zero greens.
   session); their logic is captured here and in decisions.md.
 - Thresholds are phil-cello-calibrated (see caveat at top).
 
-## 9. Current state
+## 9. Current state (updated 2026-08-18 evening — all three handoffs shipped)
 
-- **`phil-cello-v11`** (= configs/phil-cello-v11.json): 17 picks C#2–C6,
-  every sample passes Max's preliminary ear test; deliberate gaps at
-  Gs2–Cs3, Cs3–Fs3, Gs3–Cs4, Fs4–As4 (all in-gap candidates measure red or
-  outlier). Excluded with reasons: B3/As3/E2/G2/D2/F3 (set outliers),
-  G3/D4/G4/Gs5 (onset blips), D3/A3 (unsteady vibrato), A2 (veto), Ds3
-  (vibrato-depth outlier), E3/G5 (−5/−6 dB mid-fade partial dips; Fs5 —
-  clean but **not yet ear-vetted** — covers the G5 slot).
-- **Ship candidate built**: `configs/phil-cello-ship.json` = v11 under the
-  production `instrumentKey: cello_phil` → `out/cello_phil.hki` (verified
-  identical pick set), staged in the harness as "strings SHIP CANDIDATE".
-- Compare harness index carries v1/v6/v8–v11/ship for A/B archaeology.
+- **Strings SHIPPED and PARKED at v11**: `handoff/intonalogy/strings.hki` =
+  `out/cello_phil.hki` (v11 under production key). A v12 candidate through
+  the post-brass pipeline was built, analyzed, and **rejected by Max**: its
+  five pick substitutions (E3/Gs4/F2 in; Ds2/Fs2/As4/Fs5 out or swapped)
+  were each individually worse than the v11 choices they replaced, per the
+  per-note ear documentation from the v11 rounds. Do not rebuild strings
+  through the current pipeline until the regression below is understood.
+- **Brass SHIPPED**: `handoff/intonalogy/brass.hki` = FluidR3 trombone
+  under production key `trombone` (configs/fluidR3-trombone-ship.json):
+  perceptual gates, EOF tail-margin bar, `loudnessEvenness: 0.6`
+  (attenuation-only Bark-sones correction — §11), 20 picks C2–Bb5. The §6
+  zone-cliff warning mostly did NOT materialize: sustained character is
+  coherent across the stitch; the one firing (Ab2, vibrato ±6.1¢ vs ±0.3¢)
+  excised the only sustained discontinuity. Attacks keep their perceptual
+  difference by explicit realism choice (breath support); attack shaping
+  NOT built.
+- **Winds SHIPPED**: `handoff/intonalogy/winds.hki` = FatBoy clarinet
+  (configs/fatboy-clarinet-ship.json): the control rerun validated the
+  perception defaults (60/60 green both builds, zero gate firings, seam
+  extremes improved) — Max: "measurably better than the control." 19 picks
+  after density thinning; per-sample verified. No evenness (the Ab3–E4
+  sones hump reads as the clarinet's natural registers).
+- **Machinery added since the original handoff** (decisions.md rounds
+  10–12): pick bar made seam-only (set-dev ranks, never bars); EOF
+  tail-margin bar in `selectSegmentsCore`; `attackTonalLagMs` harmonic band
+  frequency-capped + null (never fabricated) fallback; Bark-sones loudness
+  model (`@hkl/analysis/loudness.js`) + `loudnessEvenness` config knob
+  (attenuation-only above pick-set median); density thinning (never keep a
+  pick between two fully-green picks ≤ pickSpacing apart); `HKL_PICK_DEBUG`
+  prints per-note blip/setdev/attack/brightness/vibrato — the cheap
+  coherence screen for candidate soundfonts.
+- Compare harness carries cello v1/v6/v8–v12/ship, trombone v1/v2/v2E,
+  clarinet v1/v2 for A/B archaeology.
 
-## 10. Next plan (staged)
+## 10. Next plan (Max, 2026-08-18) — the wider sweep
 
-1. **Ship strings** (Max-gated):
-   - Max: final harness pass on the ship candidate (esp. Fs5).
-   - Copy `apps/analyzer/out/cello_phil.hki` → `handoff/intonalogy/strings.hki`
-     (Max approves/executes; provenance travels inside the bundle).
-   - In-context Intonalogy test — note their decode compensation makes
-     their playback the source-aligned one (better than the harness).
-2. **Brass (FluidR3 trombone)** — the deferred session-one items:
-   - Rerun through the perceptual pipeline (`seamPerception: true`,
-     `seamLagRefine: true`); **first check**: set-relative gate vs the zone
-     cliffs (§6 warning) — widen/disable per-config as needed.
-   - **Attack-consistency shaping** (session-one plan, still unbuilt): the
-     Bb1–G2 zone has 5–6 dB attack splats vs ~0.5 dB for the rest of the
-     set; the fix is trend-head authoring at build time (the engine already
-     bakes trend into PCM) — trim-only, never inflate. The onset-blip
-     detector's overshoot-immunity gets its first real test here.
-   - No in-place replacements exist within FluidR3 (zone-locked); source
-     search remains out of scope until Max deems it necessary.
-3. **Winds (FatBoy clarinet) control rerun**: the healthiest set (attack
-   spread 0.5 dB) — expect near-zero change; it validates that perception
-   defaults don't damage good material. Ship only after A/B confirms no
-   regression.
-4. **Longer term**: gate-threshold refinement wants MORE instrument
-   families first (Max: avoid specializing to one set). The harness +
-   `HKL_PICK_DEBUG` + per-report reasons are the calibration instruments.
+Intonalogy's goal is achieved; HKL and its other consumers now want a
+wider exploration/improvement sweep with the perceptual gates. Max's two
+most important next steps:
+
+1. **Figure out why v12 strings regressed vs v11** — so the pipeline can be
+   trusted on other string samples. Starting hypotheses (unverified, from
+   the v12 decomposition):
+   - **The coverage pass lost its outlier guard**: the pick-bar fix removed
+     set-deviation from the bar globally, but the COVERAGE pass fills gaps
+     with any sub-red-SEAM note regardless of set-deviation — E3 (setdev
+     0.32) and Gs4 (0.33) entered v11's deliberate gaps exactly this way,
+     violating "a gap is preferred over bridging with an audible outlier"
+     (§7). Dense regions self-correct via combined-sev ordering; gaps
+     don't. Candidate refinement: coverage pass respects a set-dev ceiling
+     even while the main bar stays seam-only.
+   - **The real-valued attack dimension may be over-eager on strings**:
+     Ds2's new exclusion (attack 30 ms vs nbr 110 ms, real values post
+     band-fix) demoted a note Max's ear had approved; bow-attack variety
+     may not be the "different dynamic band" percept the gate encodes.
+   - Unexplained and needing forensics: As4's tier drop to yellow.
+2. **Korg piano (orchestrator pipeline): per-layer gain recalculation with
+   the loudness-evenness innovations** — investigate recomputing each
+   velocity layer's gains via the Bark-sones model. Open design questions:
+   the model is built for sustained spans (`sustainSones`) — decay material
+   needs an integration-window choice; and per-layer correction must
+   preserve the BETWEEN-layer dynamics ordering (evenness within a layer,
+   never across layers). HKLO's per-key gain machinery is the insertion
+   point.
+
+Longer term (unchanged): gate-threshold refinement wants MORE instrument
+families first; the harness + `HKL_PICK_DEBUG` + per-report reasons are
+the calibration instruments.
+
+## 11. Loudness evenness (2026-08-18)
+
+Perceived loudness of sustained tonal material tracks CRITICAL-BAND
+OCCUPANCY, which RMS and K-weighted normalization are both structurally
+blind to: matched −18 dB K-weighted sustains measured 1.33–1.51× the set
+median in Bark-sones on trombone C2–G2 (17–18 occupied bands vs 5–11) —
+ear-validated (Max heard it before the model found it, three reports
+running). Model: Welch PSD → Terhardt weighting → Bark E^0.23 summation
+(`@hkl/analysis/loudness.js`; UNCALIBRATED in absolute level — relative
+use only). Correction: `loudnessEvenness` (0..1) attenuates notes above
+the pick-set median by evenness × 10·log₂(rel) dB; attenuation-only, so
+natural high-note falloff (which cancels brightness) is never boosted
+away. Per-instrument policy so far: brass ON (0.6), winds OFF (the Ab3–E4
+hump = natural registers), strings OFF (mild projecting-register hump;
+also its v12 quiet-side outliers are exactly what attenuation-only cannot
+fix). Instrument-agnostic finding: occupied-band humps sit in Intonalogy's
+octave-3–5 scale range on all three instruments measured.

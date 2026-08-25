@@ -1,0 +1,28 @@
+{
+  "instrumentKey": "clarinet_v2",
+  "displayName": "Clarinet (perceptual v2)",
+  "baseUrl": "https://gleitz.github.io/midi-js-soundfonts/FatBoy/clarinet-mp3/",
+  "ext": ".mp3",
+  "filePattern": "{NOTE}.mp3",
+  "noteStyle": "flat",
+  "lowOct": 2,
+  "highOct": 6,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": false,
+  "releaseTime": 0.25,
+  "volume": 1.0,
+  "gateOpts": {
+    "seamLagRefine": true,
+    "seamPerception": true
+  },
+  "comment": [
+    "Winds CONTROL rerun (2026-08-18, handoff plan step 3): the healthiest",
+    "set (attack spread 0.5 dB) through the perceptual pipeline. MINIMAL",
+    "delta from fatboy-clarinet.json by design - gates only, no pickSpacing",
+    "change (stays default 4), no loudnessEvenness - so any difference vs the",
+    "shipped clarinet.hki is attributable to the perception machinery alone.",
+    "Expectation: near-zero change; validates that perception defaults do not",
+    "damage good material."
+  ]
+}

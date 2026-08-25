@@ -7,58 +7,32 @@
 // window.__ramp exposes the harness for headless driving (CDP):
 //   __ramp.noteOn(), __ramp.noteOff(), __ramp.stepHold(dir, n) — n synchronous
 //   interval-paced steps, __ramp.read() — current readout row values.
+//
+// window.__repro (see repro.js) is the automated capture+detect mode driven
+// by run.mjs — scripted scenarios from handoff/hkle-inflight-crossfade-cut.md
+// recorded to PCM for the click detector.
 
-import {
-  init, loadInstrument, sNoteOn, sNoteOff, sRampFreq,
-  getActiveVoices, readHkiInstrument,
-} from '@hkl/engine/index.js';
+import { sNoteOn, sNoteOff, sRampFreq, getActiveVoices } from '@hkl/engine/index.js';
+import { ensureEngine, getCtx, loadBundle, onSeam } from './engine-setup.js';
+import './repro.js';
 
 const $ = (id) => document.getElementById(id);
 const VOICE = 'v';
 const BASE = 220;
 
-let ctx = null;
 let noteIsOn = false;
 let cents = 0;          // accumulated requested offset from BASE
 let calls = 0, rejected = 0, seamsWrap = 0, seamsImmediate = 0;
-// The select carries FILE basenames (handoff/intonalogy naming); the engine
-// instrument key comes from each bundle's own manifest, so renames of the
-// staged files never break the harness.
-const bundles = new Map();      // file basename → { key, def, audio }
-const audioByKey = new Map();   // manifest instrumentKey → audio map (provider lookup)
 
-async function fetchBundle(file) {
-  if (bundles.has(file)) return bundles.get(file);
-  const res = await fetch(`/${file}.hki`);
-  // Vite's SPA fallback answers missing files with 200 + index.html — catch
-  // that explicitly rather than letting readHki die on "invalid zip data".
-  if (!res.ok || (res.headers.get('content-type') || '').includes('text/html')) {
-    throw new Error(`/${file}.hki missing from handoff/intonalogy (got ${res.status} ${res.headers.get('content-type')})`);
-  }
-  const parsed = readHkiInstrument(new Uint8Array(await res.arrayBuffer()));
-  bundles.set(file, parsed);
-  audioByKey.set(parsed.key, parsed.audio);
-  return parsed;
-}
-
-async function ensureEngine() {
-  if (ctx) return;
-  ctx = new AudioContext();
-  init(ctx, ctx.destination, {
-    instrumentProvider: async (k) => audioByKey.get(k) ?? null,
-    velocityToGain: (v) => v / 127,
-    onSeamEvent: (ev) => { if (ev.kind === 'immediate') seamsImmediate++; else seamsWrap++; },
-  });
-}
+onSeam((ev) => { if (ev.kind === 'immediate') seamsImmediate++; else seamsWrap++; });
 
 function expectedFreq() { return BASE * Math.pow(2, cents / 1200); }
 
 async function noteOn() {
   await ensureEngine();
-  await ctx.resume();
+  await getCtx().resume();
   const file = $('instrument').value;
-  const { key, def } = await fetchBundle(file);
-  await loadInstrument(key, def);
+  const { key, def } = await loadBundle(file);
   $('status').textContent = `${file}.hki → ${def.name} (key '${key}', ${def.samples.length} samples)`;
   cents = 0; calls = 0; rejected = 0; seamsWrap = 0; seamsImmediate = 0;
   sNoteOn(VOICE, BASE, 100, key);

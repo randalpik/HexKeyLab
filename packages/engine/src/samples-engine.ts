@@ -19,6 +19,14 @@ export interface SeamEvent {
       'immediate' = synchronous splice from the current playhead (backstop —
       phase-unvalidated, audible under sustained tones; should be rare). */
   kind?: 'wrap' | 'immediate';
+  /** Set (ms) when scheduleSegmentSwitch's now+5ms floor deferred this fade
+      past the natural wrap — the old source played that far beyond its
+      validated b before the crossfade began (phase-unvalidated content; the
+      seam-dip class from handoff/hkle-inflight-crossfade-cut.md). Post-2.4.3
+      this should only ever fire on a real JS stall: retune calls arriving
+      inside XFADE_GUARD_S of the wrap ride the in-flight path instead of
+      cancel+reschedule. Non-zero values under normal load are a bug. */
+  deferredMs?: number;
 }
 export interface SampleEngineConfig {
   /** Audio bytes for an imported ('hki') instrument, keyed by sample file. */
@@ -124,6 +132,23 @@ function fetchShippedBundle(instr: any): Promise<Record<string, Uint8Array>> {
 }
 
 const RELEASE_SCALE = 0.5;
+/* "The crossfade is imminent or in flight" horizon. A pending switch closer
+   than this must never be cancelled+rescheduled: scheduleSegmentSwitch's
+   now+5ms floor would defer the fade past the validated wrap point — the old
+   source plays phase-unvalidated content beyond b before fading into an `a`
+   validated for b (measured −3..−6 dB seam dips under 20–40ms retune cadence;
+   the ten deepest all at exactly the 5ms floor — see lessons.md 2026-08-25).
+   Instead such calls take the in-flight path: ramp/stop events are applied to
+   BOTH sounding sources and the fade completes at its already-scheduled,
+   sample-aligned time. 12ms = the 5ms reschedule floor + TWO render quanta
+   (~2.9ms each @ 44.1k/128 — the gate's clock read and scheduleSegmentSwitch's
+   fresh read can straddle a boundary each) + JS execution budget between the
+   two reads. An 8ms guard left 0.1ms of that budget and measurably still
+   deferred under load (3 deferred seams, 0.497 dip, in the sub-ms hammer
+   scenario). Trajectory cost of retuning this close to a scheduled fade is
+   sub-sample (≤12ms × rate delta), vs up to 220 samples of misalignment from
+   the deferral. */
+const XFADE_GUARD_S = 0.012;
 /* Short attack ramp applied to segGain on every note-on. Even with a gain-aware
    trim gate the first played sample is a small but nonzero step (the trim lands
    where the NORMALIZED signal crosses the gate, ≈ −50 dBFS), and simultaneous
@@ -884,8 +909,13 @@ const loadedInstruments: Record<string, any> = {};
        source play past pts[b] into unvalidated content. */
     var switchTime=timeAtPosition(v,v.sourceLoopB);
     /* If we're already past the wrap (extreme JS stall during a prior call),
-       push a few ms forward so setValueAtTime / source.start are valid. */
-    if(switchTime<now+0.005)switchTime=now+0.005;
+       push a few ms forward so setValueAtTime / source.start are valid. This
+       DEFERS the fade past the validated b — record it so the seam event
+       carries the evidence (SeamEvent.deferredMs). Post-2.4.3 the retune path
+       can no longer land here (XFADE_GUARD_S diverts near-wrap calls to the
+       in-flight path), so any non-zero deferral means a real JS stall. */
+    var deferredMs=0;
+    if(switchTime<now+0.005){deferredMs=(now+0.005-switchTime)*1000;switchTime=now+0.005;}
 
     var picked=pickNextSeam(v,pts);
     /* picked.a, picked.b are TIMES (in seconds within the buffer). For the
@@ -952,7 +982,8 @@ const loadedInstruments: Record<string, any> = {};
       a:aTime,b:bTime,
       aIdx:picked.aIdx,bIdx:picked.bIdx,        /* legacy state update */
       nextSegIdx:picked.nextSegIdx,             /* segments state update */
-      fromTime:v.sourceLoopB,toTime:aTime
+      fromTime:v.sourceLoopB,toTime:aTime,
+      deferredMs:deferredMs
     };
 
     /* JS-only timer: fires after the crossfade completes, with a small
@@ -1000,7 +1031,7 @@ const loadedInstruments: Record<string, any> = {};
     if(onSeamEvent)onSeamEvent({ctxTime:p.switchTime,voiceKey:voiceKey,sampleName:v.sampleName||'?',
       rate:v.sourceRate||1,kind:'wrap',
       fromBIdx:p.bIdx!=null?v.sourceLoopBIdx:-1,toAIdx:p.aIdx!=null?p.aIdx:-1,
-      fromTime:p.fromTime,toTime:p.toTime,xfadeDur:p.xfDur});
+      fromTime:p.fromTime,toTime:p.toTime,xfadeDur:p.xfDur,deferredMs:p.deferredMs||0});
     p.newSrc.onended=function(){v.alive=false;};
     v.pendingSwitch=null;
   }
@@ -1009,6 +1040,15 @@ const loadedInstruments: Record<string, any> = {};
      sSlideAndFadeOut before they mutate v.source). Stops the new source,
      disconnects its graph, and undoes the events scheduleSegmentSwitch put on
      the old segGain.
+
+     2.4.3 caller contract: sRampFreq/sNoteOff/sSlideAndFadeOut only call this
+     when the crossfade is comfortably in the future (≥ XFADE_GUARD_S away) —
+     in-flight or imminent fades are left running instead (stop(0) on an
+     audibly-ramped incoming source is a step discontinuity, and rescheduling
+     an imminent fade defers it past the validated wrap; see the guard const).
+     The in-flight branch below survives for sHardStop (hard-cut semantics —
+     voiceGain snaps to 0 in the same call, masking the source cut) and the
+     defensive teardown paths.
 
      Anchor the undo at p.switchTime, NOT at `now`: segGain also carries the
      voice's own attack (sNoteOn's 4ms ramp / sNoteOnFaded's 100ms equal-power
@@ -1048,13 +1088,6 @@ const loadedInstruments: Record<string, any> = {};
   export function sNoteOff(voiceKey: string, releaseAt?: number): void {
     var v=activeVoices[voiceKey];if(!v)return;
     if(v.loopTimer){clearTimeout(v.loopTimer);v.loopTimer=null;}
-    /* If a switch was pre-scheduled but not yet committed, tear it down so the
-       new source doesn't continue playing (silently, behind the released
-       voiceGain) and leak the BufferSource node. With a future `releaseAt`,
-       this is still the right move: the loop's been ticking out a single
-       segment so far, so the source has plenty of buffer ahead to play
-       linearly through the brief release window without needing another wrap. */
-    if(v.pendingSwitch)cancelPendingSwitch(v);
     var instr=v.instr;
     var release=(((instr&&instr.releaseTime)||0.3)*RELEASE_SCALE);
     /* `releaseAt` (when provided) anchors the release on the audio clock —
@@ -1065,6 +1098,31 @@ const loadedInstruments: Record<string, any> = {};
        modulates it), so setValueAtTime(1.0, releaseT) is correct regardless
        of how far in the future releaseT is. */
     var releaseT=Math.max(releaseAt!=null?releaseAt:ctx.currentTime,ctx.currentTime+0.001);
+    /* Pre-scheduled switch handling. In flight or imminent (within
+       XFADE_GUARD_S of switchTime): LEAVE THE CROSSFADE RUNNING — a stop(0)
+       here cuts the incoming source at up to full voice volume mid-fade, a
+       step discontinuity scaling with fade progress (inflight-crossfade-cut
+       Cause 1: 12/12 reproduced). Both sources sit under voiceGain, whose
+       release ramp below takes everything down, so no gain surgery is needed
+       (and none is safe: reading gain.value mid-ramp is the documented
+       footgun). The commit timer is already cleared above; just stop the
+       incoming source alongside the old one after the release ends and hand
+       it its disconnect cleanup. Comfortably pre-fade: tear down as before —
+       the cancel removes only events ≥ switchTime and the source has plenty
+       of buffer ahead to play linearly through the brief release window. */
+    if(v.pendingSwitch){
+      var p=v.pendingSwitch;
+      if(ctx.currentTime>=p.switchTime-XFADE_GUARD_S){
+        try{p.newSrc.stop(releaseT+release+0.05);}catch(e){}
+        p.newSrc.onended=function(){
+          try{p.newSrc.disconnect();}catch(e){}
+          try{p.newSG.disconnect();}catch(e){}
+        };
+        v.pendingSwitch=null;
+      }else{
+        cancelPendingSwitch(v);
+      }
+    }
     if(v.alive){
       /* fade voiceGain — silences ALL sources routed through it */
       v.voiceGain.gain.cancelScheduledValues(releaseT);
@@ -1190,16 +1248,22 @@ const loadedInstruments: Record<string, any> = {};
     /* ── RAMP-AWARE SEAM HANDLING (every-step reschedule) ──
        A pre-scheduled switch's audio events were anchored on the OLD rate
        trajectory, which is about to change. Two cases:
-         crossfade not yet started → tear it down; we re-schedule below under
-           the new trajectory (timeAtPosition/carryRampOnto make the seam land
-           on the validated b→a pair mid-ramp).
-         crossfade in flight → never yank it (that clicks). Instead the ramp
-           events below are applied to BOTH sounding sources so they stay
-           phase-locked through the fade; the commit timer then reschedules
-           the next wrap, ramp-aware via pendingRamp*. */
+         crossfade comfortably in the future (≥ XFADE_GUARD_S away) → tear it
+           down; we re-schedule below under the new trajectory (timeAtPosition/
+           carryRampOnto make the seam land on the validated b→a pair mid-ramp).
+         crossfade in flight OR imminent (within XFADE_GUARD_S) → never yank
+           it. In flight, a teardown cuts the audibly-ramped incoming source
+           (inflight-crossfade-cut Cause 1); imminent, the reschedule's now+5ms
+           floor would DEFER the fade past the validated wrap — the measured
+           seam-dip bug (see XFADE_GUARD_S). Either way the ramp events below
+           are applied to BOTH sources so they stay phase-locked through the
+           fade, which completes at its already-scheduled sample-aligned time;
+           the commit timer then reschedules the next wrap, ramp-aware via
+           pendingRamp*. Trajectory shift of the wrap inside the guard window
+           is sub-sample. */
     var xfInFlight=false;
     if(v.pendingSwitch){
-      if(now>=v.pendingSwitch.switchTime){
+      if(now>=v.pendingSwitch.switchTime-XFADE_GUARD_S){
         xfInFlight=true;
       }else{
         if(v.loopTimer){clearTimeout(v.loopTimer);v.loopTimer=null;}
@@ -1253,10 +1317,22 @@ const loadedInstruments: Record<string, any> = {};
        which will reapply attenuation based on the NEW frequency. Falls back to v.vol
        for voices created before baseVol was tracked. */
     var savedVol=(v.baseVol!==undefined)?v.baseVol:v.vol;
-    /* Tear down any pre-scheduled switch first; the rate ramp below would
-       leave its switchTime/playbackRate stale, and the voice is being
-       deleted anyway. */
-    if(v.pendingSwitch)cancelPendingSwitch(v);
+    /* Pre-scheduled switch: same policy as sNoteOff. In flight or imminent —
+       keep the crossfade (a teardown cuts the ramped incoming source; a
+       reschedule would defer past the validated wrap); the glide ramp below
+       is applied to BOTH sources so they stay phase-locked, and both stop
+       when the fade-out ends. Comfortably pre-fade — tear down as before;
+       the rate ramp below would leave its switchTime/playbackRate stale, and
+       the voice is being deleted anyway. */
+    var keptSwitch: any=null;
+    if(v.pendingSwitch){
+      if(ctx.currentTime>=v.pendingSwitch.switchTime-XFADE_GUARD_S){
+        keptSwitch=v.pendingSwitch;
+        v.pendingSwitch=null;
+      }else{
+        cancelPendingSwitch(v);
+      }
+    }
     if(v.loopTimer){clearTimeout(v.loopTimer);v.loopTimer=null;}
     /* `atTime` (when provided) anchors the slide on the audio clock instead
        of "now" — used by the playback lookahead scheduler so the glide
@@ -1265,14 +1341,21 @@ const loadedInstruments: Record<string, any> = {};
     var anchor=Math.max(atTime!=null?atTime:ctx.currentTime,ctx.currentTime+0.001);
     if(v.alive){
       var targetRate=targetFreq*(v.transpose||1)/v.sampleFreq;
-      v.source.playbackRate.cancelScheduledValues(anchor);
-      v.source.playbackRate.setValueAtTime(v.source.playbackRate.value,anchor);
       /* exponential pitch glide: pitch perception is logarithmic so the
          rate ramp must be too. Endpoints are always > 0 (positive freqs).
          Pair with sNoteOnFaded's matching ramp (started at fromFreq) so
          the crossfade happens between pitch-locked voices — equal-power
-         gain curves preserve constant amplitude. */
-      v.source.playbackRate.exponentialRampToValueAtTime(targetRate,anchor+dur);
+         gain curves preserve constant amplitude. Identical events on every
+         sounding source (kept in-flight seam crossfades included) so they
+         stay phase-locked. */
+      var anchorRate=v.source.playbackRate.value;
+      var glideParams=[v.source.playbackRate];
+      if(keptSwitch)glideParams.push(keptSwitch.newSrc.playbackRate);
+      for(var gp=0;gp<glideParams.length;gp++){
+        glideParams[gp].cancelScheduledValues(anchor);
+        glideParams[gp].setValueAtTime(anchorRate,anchor);
+        glideParams[gp].exponentialRampToValueAtTime(targetRate,anchor+dur);
+      }
       /* equal-power fade-out: scaled cos curve from current gain → 0,
          spanning the full glide window. */
       var startVal=v.voiceGain.gain.value;
@@ -1281,6 +1364,13 @@ const loadedInstruments: Record<string, any> = {};
       v.voiceGain.gain.cancelScheduledValues(anchor);
       v.voiceGain.gain.setValueCurveAtTime(out,anchor,dur);
       try{v.source.stop(anchor+dur+0.05);}catch(e){}
+    }
+    if(keptSwitch){
+      try{keptSwitch.newSrc.stop(anchor+dur+0.05);}catch(e){}
+      keptSwitch.newSrc.onended=function(){
+        try{keptSwitch.newSrc.disconnect();}catch(e){}
+        try{keptSwitch.newSG.disconnect();}catch(e){}
+      };
     }
     delete activeVoices[voiceKey];return savedVol;
   }

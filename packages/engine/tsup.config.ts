@@ -43,7 +43,20 @@ const PUBLISH_NAME = '@hexkeylab/engine';
 // or early release inside the attack window hit it. In-flight-crossfade
 // cancellation (the case the restore was designed for) is unchanged
 // (handoff/hkle-cancel-pending-switch-attack.md).
-const VERSION = '2.4.2';
+// 2.4.3: fix — teardown/retune never disturbs an in-flight or imminent seam
+// crossfade (handoff/hkle-inflight-crossfade-cut.md). (a) sNoteOff and
+// sSlideAndFadeOut leave a fade within XFADE_GUARD_S (12ms) of its switchTime
+// running — both sources sit under the closing voiceGain; the incoming source
+// is stopped after the release/glide instead of stop(0)'d mid-ramp (the
+// reproduced Cause-1 step, 12/12 → 0). sSlideAndFadeOut applies its glide to
+// both sources. (b) sRampFreq's in-flight gate widens by the same guard: a
+// retune inside it rides the existing both-sources ramp path instead of
+// cancel+reschedule, whose now+5ms floor DEFERRED the fade past the validated
+// wrap — the old source played phase-unvalidated content beyond b before
+// fading (measured −3..−6dB seam dips at 20–40ms retune cadence; floor
+// restored to clean). (c) SeamEvent.deferredMs reports any surviving deferral
+// (now stall-only; non-zero under normal load is a bug).
+const VERSION = '2.4.3';
 
 export default defineConfig({
   entry: ['src/index.ts'],

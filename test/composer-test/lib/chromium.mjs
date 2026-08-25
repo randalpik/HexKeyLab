@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-export async function launchChromium({ windowSize = '1600,1200' } = {}) {
+export async function launchChromium({ windowSize = '1600,1200', extraArgs = [] } = {}) {
   const port = 9222 + Math.floor(Math.random() * 1000);
   const profileDir = mkdtempSync(join(tmpdir(), 'hkl-composer-test-'));
 
@@ -18,6 +18,7 @@ export async function launchChromium({ windowSize = '1600,1200' } = {}) {
     `--remote-debugging-port=${port}`,
     `--user-data-dir=${profileDir}`,
     `--window-size=${windowSize}`,
+    ...extraArgs,
     'about:blank',
   ], { stdio: 'pipe' });
 

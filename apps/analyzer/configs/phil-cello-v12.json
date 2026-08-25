@@ -1,0 +1,38 @@
+{
+  "instrumentKey": "cello_phil_v12",
+  "displayName": "Cello (Philharmonia, v12 candidate)",
+  "source": "local",
+  "sourceDir": "/home/max/Downloads/philharmonia/cello",
+  "ext": ".mp3",
+  "filePatterns": [
+    "cello_{NOTE}_15_forte_arco-normal.mp3"
+  ],
+  "noteStyle": "sharp_s",
+  "lowOct": 2,
+  "highOct": 6,
+  "transpose": 1,
+  "decays": false,
+  "vibrato": true,
+  "releaseTime": 0.3,
+  "volume": 1.0,
+  "gateOpts": {
+    "seamLagRefine": true,
+    "seamPerception": true,
+    "xfadeResidualDbMax": -10
+  },
+  "comment": [
+    "v12 CANDIDATE (2026-08-18): the ear-approved v11/ship config re-run",
+    "through the post-brass pipeline - four code changes since the shipped",
+    "strings.hki: (1) pick bar is seam-only (set-deviation no longer bars:",
+    "v11-era borderline notes become pickable, gaps may fill); (2)",
+    "attackTonalLagMs harmonic band capped by frequency + null fallback (the",
+    "sub-100 Hz D2/G2/E2 outlier verdicts predate this); (3) EOF tail-margin",
+    "bar (no-op here, cello margins were >=150ms); (4) density thinning at",
+    "pickSpacing 3. NO loudnessEvenness - pipeline-only diff vs shipped v11;",
+    "sones analysis reported separately. A2 veto retained (Max's ear call)."
+  ],
+  "pickSpacing": 3,
+  "excludeNotes": [
+    "A2"
+  ]
+}

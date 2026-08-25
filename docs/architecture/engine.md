@@ -83,6 +83,19 @@ Per-voice: `sourceStartTime`, `sourceStartOffset`, `sourceLoopA`, `sourceLoopB`,
   on hosts whose `cancelScheduledValues` keeps in-flight curves). A crossfade already
   in flight still restores to `v.vol` via the 5ms ramp. → see decisions.md
   "Cancel pending switches at switchTime".
+- **In-flight/imminent crossfades are never torn down** (2.4.3): a pending switch
+  within `XFADE_GUARD_S` (12ms) of its switchTime is left running by every teardown
+  and retune path. `sNoteOff`/`sSlideAndFadeOut` let the fade complete under the
+  closing `voiceGain` (the incoming source stops after the release/glide — a
+  `stop(0)` mid-fade was a step discontinuity, Cause 1 of
+  handoff/hkle-inflight-crossfade-cut.md); `sRampFreq` rides the both-sources
+  in-flight ramp path instead of cancel+reschedule, whose `now+5ms` floor DEFERRED
+  the fade past the validated wrap (old source into phase-unvalidated content —
+  measured −3..−6dB seam dips under 20–40ms retune cadence, floor restored to clean
+  post-fix). The floor survives as stall insurance only, and any firing is reported
+  as `SeamEvent.deferredMs` — non-zero under normal load is a bug. Fine-grained
+  retune command streams (Intonalogy's 40ms slider throttle) are first-class: no
+  cadence-dependent seam degradation remains. → see decisions.md 2026-08-25.
 
 ## Frequency ramping
 

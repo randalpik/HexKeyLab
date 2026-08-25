@@ -94,6 +94,10 @@ try {
   chromium = spawn('chromium', [
     '--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run',
     '--autoplay-policy=no-user-gesture-required',
+    /* mute the OUTPUT device only — the context still renders in real time
+       (this smoke asserts engine state, not captured audio), and autonomous
+       runs stay silent at the machine. */
+    '--mute-audio',
     `--remote-debugging-port=${DEBUG}`, `--user-data-dir=${profileDir}`, 'about:blank',
   ], { stdio: 'pipe' });
   await waitHttp(`http://localhost:${DEBUG}/json/version`, 10000);

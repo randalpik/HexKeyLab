@@ -799,6 +799,35 @@ function pickSamples(results, cfg) {
       }
       if (!filled) break;
     }
+    /* Density thinning (Max, 2026-08-18): never keep a pick between two
+       fully-green picks that are ≤ pickSpacing apart. On healthy sets the
+       ≥2 st greedy densifies far past pickSpacing (FatBoy clarinet: 27 picks
+       ≈ 2.2 st, +50% bundle) and the middle pick adds weight without
+       coverage. Iterative worst-first to a fixpoint: among interior picks
+       whose immediate neighbors are both green and ≤ S apart, drop the worst
+       (combined severity, then inverse legacy tiebreak) and re-evaluate —
+       one-shot scans would drop runs of good picks that stop violating once
+       a single neighbor is gone. Runs AFTER the coverage pass; thinning
+       leaves gaps ≤ S by construction, so it can never re-open a coverage
+       gap. */
+    const sevOf = new Map(scored.map(({ r, sev }) => [r, sev]));
+    for (;;) {
+      let worst = -1;
+      for (let i = 1; i + 1 < picked.length; i++) {
+        const a = picked[i - 1], b = picked[i + 1];
+        if (b.midi - a.midi > S) continue;
+        if (a.tier !== 'green' || b.tier !== 'green') continue;
+        if (worst === -1
+            || (sevOf.get(picked[i]) || 0) > (sevOf.get(picked[worst]) || 0)
+            || ((sevOf.get(picked[i]) || 0) === (sevOf.get(picked[worst]) || 0)
+                && tiebreak(picked[i], picked[worst]) > 0)) {
+          worst = i;
+        }
+      }
+      if (worst === -1) break;
+      console.error(`thin ${picked[worst].note}: between green ${picked[worst - 1].note}/${picked[worst + 1].note} (${picked[worst + 1].midi - picked[worst - 1].midi} st ≤ ${S})`);
+      picked.splice(worst, 1);
+    }
     return picked;
   }
 
