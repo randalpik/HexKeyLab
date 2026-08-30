@@ -21,6 +21,8 @@ export interface VerovioToolkit {
   redoLayout(options?: object): void;
   select(options: object): boolean;
   getPageCount(): number;
+  /** 1-based page holding the element with this xml:id; 0 when not found. */
+  getPageWithElement(xmlId: string): number;
 }
 
 export interface VerovioGlobal {

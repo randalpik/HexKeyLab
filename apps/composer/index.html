@@ -316,6 +316,17 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
 #composerStatus.status-error  { color: #FF4C79; }
 #composerStatus.status-state  { color: #4CB4FF; }
 #composerStatus.status-action { color: #C77AFF; }
+/* Busy badge for heavy engraves (T2.2): floats over the top of the score
+   area. Static styling only — no animation can run while the engrave blocks
+   the main thread. */
+#composerMain { position: relative; }
+#renderBusy {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+  z-index: 30; padding: 5px 14px; border-radius: 14px;
+  background: rgba(20, 20, 20, 0.85); color: #ddd;
+  border: 1px solid #444; font-size: 12px; pointer-events: none;
+}
+#renderBusy[hidden] { display: none; }
 </style>
 </head>
 <body>
@@ -362,6 +373,10 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
 
 <div id="composerMain">
   <div id="score"></div>
+  <!-- Busy badge for heavy engraves (T2.2). Sibling of #score so render
+       innerHTML rewrites can't wipe it; deliberately unanimated — the main
+       thread is frozen during the engrave, so only a static badge paints. -->
+  <div id="renderBusy" hidden>Engraving…</div>
 </div>
 
 <div id="composerStatus">Loading Verovio…</div>

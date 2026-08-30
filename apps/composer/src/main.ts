@@ -317,6 +317,12 @@ bridge.on((msg: HklEvent) => {
         cursor.setPlaybackPosition(msg.voice, null);
         break;
       }
+      /* Virtualized page view: the sounding element's page may still be a
+         placeholder — mount it BEFORE the highlight + bar draw measure it. */
+      if (msg.meiId) {
+        const mIdxPre = model.getMeasureIdxForId(msg.meiId);
+        if (mIdxPre >= 0) renderer.ensureMeasureMounted(mIdxPre);
+      }
       highlightElement(msg.meiId, $('score'));
       /* Route per-voice: each voice gets its own cursor bar at the chord
          it's currently sounding. The editing cursor stays parked at the
@@ -683,7 +689,11 @@ const FOOTER_Y = PAGE_INNER_H - 200;    /* hug page bottom */
 const HKL_SVG_NS = 'http://www.w3.org/2000/svg';
 
 function injectHeaderFooter(scoreEl: HTMLElement, composer: string, footer: string): void {
-  const margins = scoreEl.querySelectorAll('.score-page svg.definition-scale > g.page-margin');
+  /* `scoreEl` is either #score (legacy whole-container pass) or one .score-page
+     div (per-mount hook) — the selector must not require the .score-page
+     ancestor, since querySelectorAll only matches descendants. Page-mode-only
+     either way (scroll view never calls this). */
+  const margins = scoreEl.querySelectorAll('svg.definition-scale > g.page-margin');
   for (const pageMargin of Array.from(margins)) {
     if (composer) {
       let existing = pageMargin.querySelector(':scope > text.hkl-injected-composer');
@@ -694,7 +704,7 @@ function injectHeaderFooter(scoreEl: HTMLElement, composer: string, footer: stri
          rendered (empty doc). */
       let y = COMPOSER_FALLBACK_Y;
       const system = pageMargin.querySelector(':scope ~ g.system, :scope g.system')
-        ?? scoreEl.querySelector('.score-page g.system');
+        ?? scoreEl.querySelector('g.system');
       if (system) {
         try {
           const bb = (system as SVGGraphicsElement).getBBox();
@@ -821,7 +831,75 @@ function styleVoltaNumbers(scoreEl: HTMLElement): void {
   }
 }
 
+/* T2.2 (docs/composer-render-perf.md): heavy renders — multi-second engraves
+   on large documents — are deferred one frame so the busy badge paints first,
+   and re-render requests arriving while one is queued or the thread is frozen
+   coalesce into a single render of the LATEST model state (burst keystrokes
+   during a freeze no longer stack N engraves). Small documents and scroll
+   splices stay fully synchronous (predictNextRenderHeavy is duration-based,
+   threshold 250 ms), so fixtures and normal-size scores behave exactly as
+   before. Post-render actions that measure the new DOM (scroll-into-view,
+   overlay refreshes) must go through afterRender(). */
+let renderQueued = false;
+let renderInFlight = false;
+const afterRenderQueue: Array<() => void> = [];
+
+/** Run `fn` after the current/pending render completes (immediately when no
+ *  render is queued or in flight). For anything that reads post-render DOM. */
+function afterRender(fn: () => void): void {
+  if (renderQueued || renderInFlight) afterRenderQueue.push(fn);
+  else fn();
+}
+
+function flushAfterRender(): void {
+  while (afterRenderQueue.length) {
+    const fn = afterRenderQueue.shift()!;
+    try { fn(); } catch (e) { console.error('[afterRender]', e); }
+  }
+}
+
+/* Busy badge (#renderBusy, a sibling of #score so innerHTML rewrites can't
+   wipe it). Depth-counted: file loads wrap their parse + render in one
+   show/hide pair while the render path manages its own. */
+let busyDepth = 0;
+function showBusy(text: string): void {
+  busyDepth++;
+  const el = $('renderBusy');
+  if (el) { el.textContent = text; el.hidden = false; }
+}
+function hideBusy(): void {
+  busyDepth = Math.max(0, busyDepth - 1);
+  if (busyDepth === 0) {
+    const el = $('renderBusy');
+    if (el) el.hidden = true;
+  }
+}
+
 function reRender(): void {
+  if (renderQueued) return;   // a queued render will pick up the latest model state
+  if (renderer.predictNextRenderHeavy(viewStavesFilter())) {
+    renderQueued = true;
+    renderInFlight = true;
+    showBusy('Engraving…');
+    /* Double-rAF + timeout: frame 1 paints the badge; the timeout keeps the
+       heavy sync block out of frame 2's rAF slot so that frame also commits. */
+    requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => {
+      renderQueued = false;
+      try {
+        doReRender();
+      } finally {
+        renderInFlight = false;
+        hideBusy();
+        flushAfterRender();
+      }
+    }, 0)));
+    return;
+  }
+  doReRender();
+  flushAfterRender();
+}
+
+function doReRender(): void {
   try {
     /* Keep the instrument-view selector in sync with the current instrument
        set on every render (diff-filtered, so cheap) — robust regardless of
@@ -835,27 +913,12 @@ function reRender(): void {
     /* renderComposer pulls MEI from the model itself: scroll edits splice straight
        from the live doc (O(edited-range)), avoiding the O(total) whole-doc
        serialize on every edit; full renders + page view serialize internally.
-       Returns false on a view-switch cache restore — the stashed DOM already
-       carries the page-only injections + crisp snap below, so skip them. */
-    const freshRender = renderer.renderComposer(model, viewStavesFilter());
-    /* After Verovio's output lands, inject composer (right-aligned) + footer
-       (centered, bottom of page). Subtitle is handled by Verovio itself once
-       <title type="subtitle"> is present. Only affects page view (the
-       .score-page wrapper); scroll view skips the page header/footer. */
-    const isScroll = renderer.getViewMode() === 'scroll';
-    const scoreElForInject = $('score');
-    /* Page-only post-render injections (header/footer/section headers/volta/
-       crisp snap) operate on the .score-page page structure; scroll view has
-       a virtualized chunk canvas instead, so skip them there. */
-    if (scoreElForInject && !isScroll && freshRender) {
-      injectHeaderFooter(scoreElForInject, model.getComposer(), model.getFooter());
-      injectSectionHeaders(scoreElForInject, model);
-      styleVoltaNumbers(scoreElForInject);
-      /* Land every system's staff lines on the device-pixel grid (crisp). Must
-         run AFTER the injections above that move systems (section-header reserve
-         shift) and before the cursor overlay geometry is measured below. */
-      renderer.snapSystems(scoreElForInject);
-    }
+       Page view is virtualized (T2.1): only pages near the viewport get real
+       SVG, and the page-scoped injections (header/footer, section headers,
+       volta styling, crisp snap) run per mounted page via the onPageMounted
+       hook registered in bootRenderer — NOT here, so a lazily-mounted page
+       gets them exactly once. */
+    renderer.renderComposer(model, viewStavesFilter());
     /* Verovio just rewrote #score's innerHTML — re-attach the cursor overlay
        as a sibling of the rendered SVG (in scroll mode) or as a sibling of
        the .score-page wrappers (in page mode), positioned absolute at #score's
@@ -878,20 +941,21 @@ function reRender(): void {
        the overlay's bounds and not draw. */
     const overlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     overlay.id = 'cursorOverlay';
-    /* Size the overlay to cover every rendered SVG (scroll = one wide single-
-       system SVG; page = stacked .score-page svgs) in #score's content frame, so
-       cursor markers drawn at rectForId's container-local coords land correctly.
-       Adding scrollLeft/scrollTop converts the on-screen rect to content coords. */
+    /* Size the overlay to cover the whole score extent: page view = every
+       .score-page wrapper (INCLUDING pending placeholders, which carry explicit
+       dims — a cursor may later land on a lazily-mounted page); scroll = the
+       one wide single-system SVG. Adding scrollLeft/scrollTop converts the
+       on-screen rect to content coords. */
     {
-      const verovioSvgs = Array.from(
-        scoreEl.querySelectorAll('svg:not(#cursorOverlay)'),
-      ) as SVGSVGElement[];
-      if (verovioSvgs.length) {
+      const extents = Array.from(scoreEl.children).filter(
+        (el) => el.matches('.score-page, svg:not(#cursorOverlay)'),
+      );
+      if (extents.length) {
         const scoreRect = scoreEl.getBoundingClientRect();
         let overlayW = 0;
         let overlayH = 0;
-        for (const svg of verovioSvgs) {
-          const r = svg.getBoundingClientRect();
+        for (const el of extents) {
+          const r = el.getBoundingClientRect();
           overlayW = Math.max(overlayW, r.right - scoreRect.left + scoreEl.scrollLeft);
           overlayH = Math.max(overlayH, r.bottom - scoreRect.top + scoreEl.scrollTop);
         }
@@ -902,6 +966,9 @@ function reRender(): void {
     scoreEl.appendChild(overlay);
     cursor.attach(overlay);
     selectionOverlay.attach(overlay);
+    /* The cursor's page may be a placeholder (virtualized page view) — mount it
+       so cursor.update can measure real geometry. No-op in scroll mode. */
+    renderer.ensureMeasureMounted(visualCursorMeasure());
     cursor.update(model, cursorOpts());
     selectionOverlay.update(model, getInputState().selection);
   } catch (e) {
@@ -923,6 +990,16 @@ async function bootRenderer(): Promise<void> {
     return;
   }
   renderer.attach(scoreEl);
+  /* Page-scoped post-render work runs per MOUNTED page (T2.1): eager pages at
+     render time and lazy pages as they scroll into view, each exactly once —
+     injectSectionHeaders translates systems, so a second pass would double the
+     shift. Order matters: snap runs AFTER the injections that move systems. */
+  renderer.setOnPageMounted((pageEl) => {
+    injectHeaderFooter(pageEl, model.getComposer(), model.getFooter());
+    injectSectionHeaders(pageEl, model);
+    styleVoltaNumbers(pageEl);
+    renderer.snapSystems(pageEl);
+  });
   /* Warm BravuraText before the first render so HEJI / stacked-accidental
      injection draws real glyphs instead of tofu (see injectHejiGlyphs). */
   try { await document.fonts.load('100px BravuraText'); } catch { /* fall through */ }
@@ -966,7 +1043,7 @@ function stepZoom(dir: 'in' | 'out'): void {
   }
   renderer.setZoom(next);
   reRender();
-  maybeScrollMeasureIntoView(visualCursorMeasure());
+  afterRender(() => maybeScrollMeasureIntoView(visualCursorMeasure()));
   setStatus('Zoom ' + next + '%.', 'info');
 }
 
@@ -1008,8 +1085,9 @@ function composerOnContentChange(): void {
      crucial for reflow (a new measure created by insertion at past-end, or an
      addition that pushes the current measure to a new system). Several call
      sites fire onStateChange before onChange, so running scroll here ensures it
-     always sees the post-reRender geometry regardless of caller order. */
-  if (!isPlaying) maybeScrollMeasureIntoView(visualCursorMeasure());
+     always sees the post-reRender geometry regardless of caller order.
+     afterRender: a heavy render is deferred+coalesced — run once it lands. */
+  afterRender(() => { if (!isPlaying) maybeScrollMeasureIntoView(visualCursorMeasure()); });
   /* Content change: most recent prior-to-cursor element may have changed
      (insert/delete) → recompute the reference note and broadcast. The score
      changed, so push the updated part to HKL's Composer-view frame too. */
@@ -1342,7 +1420,7 @@ $('btnRewind')?.addEventListener('click', () => {
   model.setCursor(0);
   reRender();
   refreshIndicators();
-  maybeScrollMeasureIntoView(visualCursorMeasure());
+  afterRender(() => maybeScrollMeasureIntoView(visualCursorMeasure()));
   setStatus('Cursor at start.', 'info');
 });
 
@@ -1409,7 +1487,7 @@ function applyLoadedDocument(meiXml: string, statusMsg: string): void {
   renderer.forceFullRerender();   // new document → full re-engrave, not a splice
   reRender();
   refreshIndicators();
-  maybeScrollMeasureIntoView(visualCursorMeasure());
+  afterRender(() => maybeScrollMeasureIntoView(visualCursorMeasure()));
   autoAdoptedHklLayout = true;
   broadcastLayoutReq();
   if (hklConnected) maybeBroadcastScoreRef();
@@ -1422,12 +1500,17 @@ $<HTMLInputElement>('fileInputHkc')?.addEventListener('change', async (e) => {
   const input = e.target as HTMLInputElement;
   const file = input.files?.[0];
   if (!file) return;
+  /* Busy badge across parse + render: the await gives the browser one paint
+     before the heavy synchronous work; hide once the (possibly deferred)
+     render has landed. */
+  showBusy('Loading…');
   try {
     const loaded = await loadHkcFromFile(file);
     applyLoadedDocument(loaded.serialize(), 'Loaded ' + file.name);
   } catch (err) {
     setStatus('Load failed: ' + (err as Error).message, 'error');
   } finally {
+    afterRender(() => hideBusy());
     input.value = '';
   }
 });
@@ -1445,12 +1528,16 @@ $<HTMLInputElement>('fileInputMusicXml')?.addEventListener('change', async (e) =
   const input = e.target as HTMLInputElement;
   const file = input.files?.[0];
   if (!file) return;
+  /* Busy badge across parse + render (a large MusicXML costs seconds in
+     importMusicXml alone): the await paints it before the sync block. */
+  showBusy('Importing…');
   try {
     const text = await file.text();
     applyLoadedDocument(importMusicXml(text), 'Imported ' + file.name);
   } catch (err) {
     setStatus('Import failed: ' + (err as Error).message, 'error');
   } finally {
+    afterRender(() => hideBusy());
     input.value = '';
   }
 });
@@ -1512,7 +1599,7 @@ function applyViewMode(mode: ViewMode): void {
   renderer.setViewMode(mode);
   applyViewModeClass(mode);
   reRender();
-  maybeScrollMeasureIntoView(visualCursorMeasure());
+  afterRender(() => maybeScrollMeasureIntoView(visualCursorMeasure()));
 }
 $('viewModeSelect')?.addEventListener('change', (e) => {
   const mode = (e.target as HTMLSelectElement).value as ViewMode;
@@ -1535,10 +1622,12 @@ $('viewInstrSelect')?.addEventListener('change', (e) => {
   renderer.forceFullRerender();   // changes the visible staff set → full re-engrave
   reRender();
   refreshIndicators();
-  cursor.update(model, cursorOpts());
-  selectionOverlay.update(model, getInputState().selection);
+  afterRender(() => {
+    cursor.update(model, cursorOpts());
+    selectionOverlay.update(model, getInputState().selection);
+    maybeScrollMeasureIntoView(visualCursorMeasure());
+  });
   refreshViewSelector();
-  maybeScrollMeasureIntoView(visualCursorMeasure());
   if (hklConnected) maybeBroadcastActiveInstrument();
   const name = idx == null ? 'All parts' : model.instruments()[idx]?.name;
   setStatus(idx == null ? 'Showing all parts.' : 'Viewing ' + name + ' only.', 'info');

@@ -102,6 +102,32 @@ class Renderer {
   /** Mode the container's current content was rendered in (null before the
    *  first render). Drives the stash/restore branch in renderComposer. */
   private lastRenderedMode: ViewMode | null = null;
+  /** Page-view virtualization state (T2.1, docs/composer-render-perf.md):
+   *  which pages hold real SVG vs a fixed-size placeholder, the page box
+   *  size, and whether the live toolkit still holds this layout (renderToSVG
+   *  of a lazy page needs it). Describes the one page DOM wherever it lives —
+   *  on screen or stashed by the mode cache — so it survives view switches. */
+  private pageVirt: {
+    mei: string;                 // exact data loaded (post-layoutBreaks)
+    options: object;             // buildOptions the layout used
+    pageCount: number;
+    pageW: number;               // placeholder content box, px (from page 1's SVG)
+    pageH: number;
+    mounted: Set<number>;
+    io: IntersectionObserver | null;
+    tkCurrent: boolean;          // tk still holds this layout → loadData-free mounts
+  } | null = null;
+  /** Measure xml:ids in document order (captured per renderComposer) —
+   *  ensureMeasureMounted's index → id map. */
+  private measureIds: string[] = [];
+  /** Hook run once per mounted page (eager + lazy): main.ts wires its
+   *  page-scoped injections (header/footer, section headers, volta styling,
+   *  crisp snap). Injections are NOT idempotent (section headers translate
+   *  systems), so only the mount path may run them — never a second pass. */
+  private onPageMountedCb: ((pageEl: HTMLElement) => void) | null = null;
+  /** Duration of the last full engrave per mode (ms) — predictNextRenderHeavy's
+   *  evidence. Splices and cache restores don't update it. */
+  private lastFullMs: Partial<Record<ViewMode, number>> = {};
 
   constructor() {
     this.readyPromise = this.loadVerovio();
@@ -251,9 +277,12 @@ class Renderer {
     return this.readyPromise;
   }
 
-  /** Returns the live toolkit. Throws if called before ready resolves. */
+  /** Returns the live toolkit. Throws if called before ready resolves.
+   *  Handing out the raw toolkit means the caller may load anything into it
+   *  (PDF export does, per page) — page-mode lazy mounts must reload theirs. */
   toolkit(): VerovioToolkit {
     if (!this.tk) throw new Error('Verovio toolkit not ready');
+    if (this.pageVirt) this.pageVirt.tkCurrent = false;
     return this.tk;
   }
 
@@ -263,6 +292,30 @@ class Renderer {
 
   attach(container: HTMLElement): void {
     this.container = container;
+  }
+
+  /** Register the per-page-mount hook (see onPageMountedCb). Call before the
+   *  first render. */
+  setOnPageMounted(cb: (pageEl: HTMLElement) => void): void {
+    this.onPageMountedCb = cb;
+  }
+
+  /** Will the next renderComposer be a multi-second job (full engrave or mode
+   *  switch on a large document)? main.ts uses this to defer the render one
+   *  frame behind a busy badge and coalesce burst re-render requests (T2.2).
+   *  Mirrors renderScroll's own splice test so prediction can't drift from
+   *  behavior; durations come from lastFullMs, so small documents — everything
+   *  under 250 ms — always render synchronously (test fixtures included). */
+  predictNextRenderHeavy(viewStaves: number[] | null): boolean {
+    const HEAVY_MS = 250;
+    const proxy = Math.max(this.lastFullMs.page ?? 0, this.lastFullMs.scroll ?? 0);
+    if (this.lastRenderedMode !== null && this.lastRenderedMode !== this.viewMode) {
+      return proxy > HEAVY_MS;   // switch: restore (~1 s on large docs) or fresh engrave
+    }
+    if (this.viewMode === 'page') return (this.lastFullMs.page ?? proxy) > HEAVY_MS;
+    const willSplice = !this.forceFull && this.splicer.canSplice() && viewStaves == null;
+    if (willSplice) return false;
+    return (this.lastFullMs.scroll ?? proxy) > HEAVY_MS;
   }
 
   setViewMode(mode: ViewMode): void {
@@ -347,13 +400,20 @@ class Renderer {
     this.splicer.invalidate();
     this.forceFull = true;
     this.lastRenderedMode = this.viewMode;
+    this.disposePageVirt();
     if (this.viewMode === 'scroll') { this.renderSingleSystem(mei); return; }
-    this.renderPage(mei);
+    this.renderPage(mei, false);
   }
 
   /** Page-view full render: strategy choice + layout + per-page SVG. Internal
-   *  (renderComposer / render) — does not touch splicer or mode-cache state. */
-  private renderPage(mei: string): void {
+   *  (renderComposer / render) — does not touch splicer or mode-cache state.
+   *  `virtualize` (the renderComposer path): only pages near the viewport +
+   *  page 1 get real SVG; the rest are fixed-size placeholders mounted on
+   *  demand (T2.1, docs/composer-render-perf.md). The string-entry path
+   *  renders every page (legacy tooling asserts on the full DOM). */
+  private renderPage(mei: string, virtualize: boolean): void {
+    /* The DOM this call replaces is the only one pageVirt could describe. */
+    this.disposePageVirt();
     /* Choose a breaks strategy. Section/system breaks alone → single-pass
        'smart' (honors them + auto-wraps). Page breaks → bake the natural
        system breaks first, then 'encoded' (honors pages + the baked wraps).
@@ -368,7 +428,8 @@ class Renderer {
     } else {
       strategy = 'auto';
     }
-    this.tk!.setOptions(this.buildOptions(strategy));
+    const options = this.buildOptions(strategy);
+    this.tk!.setOptions(options);
     if (!this.tk!.loadData(data)) {
       this.container!.innerHTML = '<div style="color:#c00;padding:20px">Verovio loadData failed (invalid MEI).</div>';
       return;
@@ -376,15 +437,131 @@ class Renderer {
     /* Each page SVG wrapped in a .score-page div so CSS can give it
        a white background, border, and surrounding margin against the
        dark #score surround. */
-    {
-      const pages = this.tk!.getPageCount();
+    const pages = Math.max(1, this.tk!.getPageCount());
+    if (!virtualize) {
       let combined = '';
-      for (let i = 1; i <= Math.max(1, pages); i++) {
+      for (let i = 1; i <= pages; i++) {
         combined += '<div class="score-page" data-page="' + i + '">' + this.tk!.renderToSVG(i, {}) + '</div>';
       }
       this.container!.innerHTML = combined;
+      this.postProcessRendered(this.container!);
+      return;
     }
-    this.postProcessRendered(this.container!);
+    /* Virtualized: page 1 real (its SVG box sizes every placeholder — CSS
+       gives .score-page `width: max-content`, so an empty placeholder needs
+       explicit dims to hold the grid). Sizes are set after insertion from the
+       measured SVG rect (robust against attr-format drift), BEFORE any
+       observer exists, so a zero-height placeholder can never look "visible". */
+    let html = '<div class="score-page" data-page="1">' + this.tk!.renderToSVG(1, {}) + '</div>';
+    for (let i = 2; i <= pages; i++) {
+      html += '<div class="score-page score-page-pending" data-page="' + i + '"></div>';
+    }
+    this.container!.innerHTML = html;
+    const p1 = this.container!.querySelector('.score-page[data-page="1"]') as HTMLElement;
+    const svg1 = p1.querySelector('svg');
+    const box = svg1 ? svg1.getBoundingClientRect() : { width: 800, height: 1000 };
+    for (const div of Array.from(this.container!.querySelectorAll('.score-page-pending'))) {
+      (div as HTMLElement).style.width = box.width + 'px';
+      (div as HTMLElement).style.height = box.height + 'px';
+    }
+    this.pageVirt = {
+      mei: data, options, pageCount: pages,
+      pageW: box.width, pageH: box.height,
+      mounted: new Set([1]), io: null, tkCurrent: true,
+    };
+    this.finishPageMount(p1);
+    this.setContainerThemeTags();
+    this.mountVisiblePages();
+    this.armPageIo();
+  }
+
+  /* ── page-view virtualization (T2.1) ─────────────────────────────────────── */
+
+  /** Drop virtualization state (the page DOM it describes is going away). */
+  private disposePageVirt(): void {
+    this.pageVirt?.io?.disconnect();
+    this.pageVirt = null;
+  }
+
+  /** Reload the page layout into the live toolkit if something else (a scroll
+   *  engrave, PDF export via toolkit()) replaced it — lazy mounts render from
+   *  tk. One loadData (~1 s on the sonata), then mounts are cheap again. */
+  private ensureTkHoldsPageLayout(): boolean {
+    const st = this.pageVirt;
+    if (!st) return false;
+    if (st.tkCurrent) return true;
+    this.tk!.setOptions(st.options);
+    if (!this.tk!.loadData(st.mei)) return false;
+    st.tkCurrent = true;
+    return true;
+  }
+
+  /** Render one pending page's real SVG into its placeholder + run the full
+   *  per-page post pass. Idempotent per page. */
+  private mountPage(p: number): void {
+    const st = this.pageVirt;
+    if (!st || st.mounted.has(p) || !this.container) return;
+    const div = this.container.querySelector('.score-page[data-page="' + p + '"]') as HTMLElement | null;
+    if (!div) return;
+    if (!this.ensureTkHoldsPageLayout()) return;
+    st.mounted.add(p);
+    div.innerHTML = this.tk!.renderToSVG(p, {});
+    div.classList.remove('score-page-pending');
+    /* The SVG defines the box now; a page later grown by a section-header
+       injection (viewBox growth) must not be clipped by the placeholder dims. */
+    div.style.removeProperty('width');
+    div.style.removeProperty('height');
+    st.io?.unobserve(div);
+    this.finishPageMount(div);
+  }
+
+  /** Shared per-page post pass: crisp pinning/notehead/HEJI/theme, then the
+   *  main.ts page injections (exactly once per mount — they aren't idempotent). */
+  private finishPageMount(div: HTMLElement): void {
+    this.postProcessRendered(div);
+    this.onPageMountedCb?.(div);
+  }
+
+  /** Mount every pending page whose box lies within one page-height of the
+   *  viewport. Synchronous — used at render/restore time so what the user is
+   *  looking at is never a blank placeholder. */
+  private mountVisiblePages(): void {
+    const st = this.pageVirt;
+    if (!st || !this.container) return;
+    const view = this.container.getBoundingClientRect();
+    const pad = st.pageH;
+    for (const div of Array.from(this.container.querySelectorAll('.score-page-pending'))) {
+      const r = (div as HTMLElement).getBoundingClientRect();
+      if (r.bottom >= view.top - pad && r.top <= view.bottom + pad) {
+        this.mountPage(Number((div as HTMLElement).dataset.page));
+      }
+    }
+  }
+
+  /** (Re)arm the lazy-mount observer over the current pending placeholders. */
+  private armPageIo(): void {
+    const st = this.pageVirt;
+    if (!st || !this.container) return;
+    st.io?.disconnect();
+    st.io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        this.mountPage(Number((e.target as HTMLElement).dataset.page));
+      }
+    }, { root: this.container, rootMargin: '100% 0px 100% 0px' });
+    for (const div of Array.from(this.container.querySelectorAll('.score-page-pending'))) {
+      st.io.observe(div);
+    }
+  }
+
+  /** Container-level theme tags (#score attr + transparent class) — the theme
+   *  CSS keys on #score, not on the per-page wrappers that postProcessRendered
+   *  tags in the virtualized path. */
+  private setContainerThemeTags(): void {
+    if (!this.container) return;
+    if (this.theme === 'light') delete this.container.dataset.notationTheme;
+    else this.container.dataset.notationTheme = 'dark';
+    this.container.classList.toggle('theme-transparent', this.theme === 'transparent');
   }
 
   /* ── scroll-mode single-system render ────────────────────────────────────── */
@@ -394,6 +571,9 @@ class Renderer {
    *  `#score.view-scroll svg` CSS). This is the persistent SVG that edits will
    *  spot-splice into (Phase B); for now every render re-engraves it whole. */
   private renderSingleSystem(mei: string): void {
+    /* The live toolkit now holds the scroll layout — a stashed page DOM's lazy
+       mounts must reload theirs first (ensureTkHoldsPageLayout). */
+    if (this.pageVirt) this.pageVirt.tkCurrent = false;
     this.tk!.setOptions(this.buildOptions('none'));
     if (!this.tk!.loadData(mei)) {
       this.container!.innerHTML = '<div style="color:#c00;padding:20px">Verovio loadData failed (invalid MEI).</div>';
@@ -425,14 +605,23 @@ class Renderer {
   renderComposer(model: ComposerModel, viewStaves: number[] | null): boolean {
     if (!this.tk) throw new Error('renderComposer() before ready()');
     if (!this.container) throw new Error('renderComposer() before attach()');
+    /* Measure-index → xml:id map for ensureMeasureMounted (page mode). Cheap
+       (one childNodes walk), refreshed every render so it can't go stale. */
+    this.measureIds = model.allMeasures().map((m) => m.getAttribute('xml:id') ?? '');
     const heji = { hejiEnabled: model.getHejiEnabled() };
     let preMei: string | null = null;
     if (this.lastRenderedMode !== null && this.lastRenderedMode !== this.viewMode) {
       preMei = model.serialize(heji, viewStaves);
       if (this.stashAndRestore(preMei)) return false;
     }
-    if (this.viewMode === 'scroll') this.renderScroll(model, viewStaves, preMei);
-    else this.renderPage(preMei ?? model.serialize(heji, viewStaves));
+    const t0 = performance.now();
+    if (this.viewMode === 'scroll') {
+      const tookFull = this.renderScroll(model, viewStaves, preMei);
+      if (tookFull) this.lastFullMs.scroll = performance.now() - t0;
+    } else {
+      this.renderPage(preMei ?? model.serialize(heji, viewStaves), true);
+      this.lastFullMs.page = performance.now() - t0;
+    }
     this.lastRenderedMode = this.viewMode;
     return true;
   }
@@ -447,6 +636,12 @@ class Renderer {
   private stashAndRestore(mei: string): boolean {
     const outgoing = this.lastRenderedMode!;
     if (this.container!.querySelector('svg')) {
+      /* A stashed page DOM keeps its pageVirt (it describes those nodes); the
+         observer must not keep firing on detached placeholders. */
+      if (outgoing === 'page' && this.pageVirt) {
+        this.pageVirt.io?.disconnect();
+        this.pageVirt.io = null;
+      }
       this.modeCache[outgoing] = {
         nodes: Array.from(this.container!.childNodes),
         mei, zoom: this.zoom, pageScale: this.pageScale, theme: this.theme,
@@ -462,6 +657,12 @@ class Renderer {
          stash and restore touched it — anything that would have also cleared
          the cache, so we couldn't be here). */
       if (this.viewMode === 'scroll' && !this.splicer.canSplice()) this.forceFull = true;
+      /* Restored page DOM: mount anything now visible + re-arm lazy mounts. */
+      if (this.viewMode === 'page' && this.pageVirt) {
+        this.setContainerThemeTags();
+        this.mountVisiblePages();
+        this.armPageIo();
+      }
       this.lastRenderedMode = this.viewMode;
       return true;
     }
@@ -478,7 +679,7 @@ class Renderer {
    *  hang. Splicing is gated to all-parts view (viewStaves == null): the gap
    *  calibration assumes the full staff set, so single-part view always
    *  full-renders. `preMei` reuses renderComposer's mode-switch serialize. */
-  private renderScroll(model: ComposerModel, viewStaves: number[] | null, preMei: string | null = null): void {
+  private renderScroll(model: ComposerModel, viewStaves: number[] | null, preMei: string | null = null): boolean {
     const heji = { hejiEnabled: model.getHejiEnabled() };
     const canSpliceNow = !this.forceFull && this.splicer.canSplice() && viewStaves == null;
     if (!canSpliceNow) {
@@ -486,12 +687,13 @@ class Renderer {
       if (viewStaves == null) this.splicer.capture(model, this.spliceCtx());
       else this.splicer.invalidate();
       this.forceFull = false;
-      return;
+      return true;
     }
-    if (this.splicer.splice(model, viewStaves, this.spliceCtx())) return;
+    if (this.splicer.splice(model, viewStaves, this.spliceCtx())) return false;
     console.warn('[scroll-splice] edit could not be spliced — full re-engrave (investigate)');
     this.renderSingleSystem(model.serialize(heji, viewStaves));
     this.splicer.capture(model, this.spliceCtx());
+    return true;
   }
 
   /** Post-render DOM treatment shared by page + scroll: crisp pinning, notehead
@@ -523,10 +725,26 @@ class Renderer {
     container.classList.toggle('theme-transparent', this.theme === 'transparent');
   }
 
-  /** No-op in the single-SVG renderer (the whole score is always rendered).
-   *  Retained so cursor/scroll call sites stay mode-agnostic; the chunk
-   *  renderer needed it to mount off-screen measures on demand. */
-  ensureMeasureMounted(_mi: number): void { /* everything is always rendered */ }
+  /** Page mode: mount the page holding this measure so rectForId / the cursor
+   *  overlay can resolve it (a cursor move, scroll-into-view, or playback bar
+   *  may target a page still held as a placeholder). Scroll mode renders the
+   *  whole score in one SVG, so it's a no-op there. Call sites stay
+   *  mode-agnostic. */
+  ensureMeasureMounted(mi: number): void {
+    const st = this.pageVirt;
+    if (this.viewMode !== 'page' || !st) return;
+    if (st.mounted.size >= st.pageCount) return;   // everything already real
+    const id = this.measureIds[mi];
+    if (!id) return;
+    /* Already rendered → done. Checked BEFORE ensureTkHoldsPageLayout: locating
+       an element needs the layout in tk, and reloading it costs ~1 s on a large
+       doc — pure waste when the measure is visible anyway (e.g. the cursor
+       measure right after a view-switch restore). */
+    if (this.container?.querySelector('#' + CSS.escape(id))) return;
+    if (!this.ensureTkHoldsPageLayout()) return;
+    const p = this.tk!.getPageWithElement(id);
+    if (p >= 1) this.mountPage(p);
+  }
 
   /** Resolve a clicked SVG element to its xml:id, walking up to the nearest
    *  <g class="note"> or <g class="chord">. Returns null on miss. */

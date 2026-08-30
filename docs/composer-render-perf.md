@@ -74,22 +74,53 @@ Structural facts driving the plan:
 
 ## Tier 2 — page virtualization + feedback (perceived-lag fix)
 
-- [ ] **T2.1 Draw only visible pages.** After loadData: `getPageCount`, emit
-  fixed-size placeholder `.score-page` divs (page dims are known),
-  renderToSVG + postProcess only viewport±1 pages, IntersectionObserver for
-  the rest. ~4.5 s → ~1.5 s steady-state; DOM remainder shrinks
-  proportionally (postProcess/injections touch only drawn pages).
-- [ ] **T2.2 Chunked async render + progress + input coalescing.** Yield
-  between per-page renderToSVG calls so a determinate progress bar
-  ("Engraving page 12/37") paints; coalesce reRender requests during an
-  engrave (keep last pending; busy statusline blocks stacked keystrokes).
-  This IS the backlog "loading indications" item — it cannot be pure UI.
-  Scroll's single renderToSVG(1) can't be chunked: indeterminate busy state
-  painted via a rAF handshake before the sync call (or T2.3).
-- [ ] **T2.3 Worker-offloaded full engraves** (optional, after T2.1/2.2).
-  Second toolkit in a Web Worker for FULL engraves only (splice stays sync on
-  main). Main thread interactive during file open / reflow; progress trivial.
-  Biggest refactor of the tier: reRender goes async at full-render call sites.
+- [x] **T2.1 Draw only visible pages** (shipped 2026-08-29). `renderPage`
+  (renderComposer path only — string-entry `render()` keeps the legacy
+  all-pages DOM for old tooling) renders page 1, sizes fixed-dim placeholder
+  `.score-page-pending` divs from its measured SVG box, synchronously mounts
+  viewport±1-page placeholders + the cursor's page, and lazy-mounts the rest
+  via IntersectionObserver (root #score, rootMargin 100 %). Page-scoped
+  injections (header/footer, section headers, volta, crisp snap) moved from
+  reRender into a renderer-owned `onPageMounted` hook — exactly once per
+  mount (section-header translation is not idempotent). `ensureMeasureMounted`
+  is a real page-mode implementation (measure id → `getPageWithElement` →
+  mount), with a DOM-presence fast path so it never reloads the toolkit for
+  an already-visible measure; call sites (scroll-into-view, cursor update,
+  playback bars) already existed. `pageVirt.tkCurrent` tracks whether the live
+  toolkit still holds the page layout (scroll engraves + PDF export steal it);
+  a lazy mount reloads on demand (~1 s once, then cheap again). Virtualization
+  state survives view-switch stash/restore (IO disconnected on stash, re-armed
+  on restore). Measured (Chromium, sonata): page full render 4.5 s → **1.25 s**
+  (loadData 1.0–1.2 s is now ~90 % of it), zoom 4.0 s → **1.35 s**, page
+  restore 0.75 s → **0.43 s**, lazy mount ~40–70 ms/page, theme ~50 ms.
+- [x] **T2.2 Busy badge + render coalescing** (shipped 2026-08-29, reshaped by
+  T2.1): with lazy pages, the per-page loop shrank to ~2 pages, so the
+  determinate "page 12/37" progress idea died — the dominant block is ONE
+  unbreakable loadData. What shipped instead: `renderer.predictNextRenderHeavy`
+  (mirrors renderScroll's splice test + recorded last-full-engrave durations,
+  250 ms threshold — small docs and splices stay fully synchronous, fixtures
+  unaffected); heavy renders defer via double-rAF + timeout so the static
+  `#renderBusy` badge paints first; re-render requests arriving while one is
+  queued/frozen coalesce into a single render of the latest model state
+  (probe: 3 burst reRenders → 1 loadData) — the input-stacking fix; DOM-reading
+  post-render actions route through `afterRender()`; file load/import handlers
+  show the badge across their parse (the `await file.text()` yields the paint).
+  The badge is deliberately unanimated: nothing animates while the engrave
+  blocks the main thread — a spinner would freeze. That, plus unfreezing the
+  UI entirely, is T2.3's territory.
+- [ ] **T2.3 Worker-offloaded full engraves** (optional; the remaining ~1.2 s
+  page-edit floor is loadData, unbreakable on the main thread). Second toolkit
+  in a Web Worker for FULL engraves only (splice stays sync on main). Main
+  thread interactive during file open / reflow; animated progress becomes
+  possible. Biggest refactor of the tier: reRender goes async at full-render
+  call sites (the afterRender queue from T2.2 is the ready seam).
+
+**Known v1 virtualization limits** (revisit if they bite): a selection or
+measure-mode overlay spanning unmounted pages draws only on mounted ones; a
+click on a not-yet-mounted (visible for <1 frame) page resolves against the
+nearest mounted glyph; a lazily-mounted page containing a section header grows
+on mount (viewBox growth), shifting pages below it; scroll-mode full engrave
+(~7 s) is untouched — its fix is T2.3/Phase C.
 
 ## Tier 3 — Phase C: system-splice cascade in page view (structural fix)
 
@@ -121,4 +152,10 @@ Structural facts driving the plan:
   restores ~0.7–0.8 s, both Chromium); T1.3 (redoLayout zoom) implemented,
   disproven by probe (wrong page geometry), reverted and marked dead end.
   Gates: typecheck / build / boundaries / `HKL_INDEX_CHECK=1 test:composer`
-  328/328. Awaiting Max's Firefox pass before starting Tier 2.
+  328/328. Firefox pass confirmed theme + switches (~1 s).
+- 2026-08-29 — T2.1 + T2.2 shipped (page virtualization + busy badge +
+  render coalescing). Chromium sonata: page edit/full render 4.5 s → 1.25 s
+  (loadData is ~90 % of the residual), zoom 1.35 s, page restore 0.43 s,
+  theme 50 ms, 3-burst reRender → 1 engrave. Same gates, 328/328. Remaining
+  floors: loadData ~1.2 s per page edit (T2.3 worker or Phase C), scroll full
+  engrave ~7 s (Phase C). Awaiting Max's Firefox pass.
