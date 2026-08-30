@@ -159,3 +159,13 @@ on mount (viewBox growth), shifting pages below it; scroll-mode full engrave
   theme 50 ms, 3-burst reRender → 1 engrave. Same gates, 328/328. Remaining
   floors: loadData ~1.2 s per page edit (T2.3 worker or Phase C), scroll full
   engrave ~7 s (Phase C). Awaiting Max's Firefox pass.
+- 2026-08-29 — Firefox pass: virtualization works, page edits ~2–3 s (loadData
+  dominated — Firefox's WASM/parse is slower than Chromium's; T3 is the fix,
+  not micro-tuning). **Atomicity bug fixed**: T2.2's deferral exposed
+  applyViewMode's eager CSS-class flip — the container restyled to the new
+  mode's shape around the OLD mode's DOM for the whole engrave. The view-mode
+  class now flips inside doReRender, in the same synchronous block as the
+  content swap, so a deferred switch paints class + content atomically
+  (probe-verified both directions). Rule for all future deferral work:
+  **no user-visible state may change before the deferred render lands — every
+  visible flip travels with the content swap.**

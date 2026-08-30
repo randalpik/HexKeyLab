@@ -910,6 +910,11 @@ function doReRender(): void {
        call point covers boot/doc-load/import/Setup-apply without disturbing
        steady-state splicing. */
     renderer.setPageScale(model.getPageScale() / 100);
+    /* Container view-mode class travels WITH the content swap: set here, in
+       the same synchronous block as renderComposer's DOM write, so a deferred
+       view switch paints class + content atomically (never scroll CSS around
+       page DOM). Idempotent on non-switch renders. */
+    applyViewModeClass(renderer.getViewMode());
     /* renderComposer pulls MEI from the model itself: scroll edits splice straight
        from the live doc (O(edited-range)), avoiding the O(total) whole-doc
        serialize on every edit; full renders + page view serialize internally.
@@ -1597,7 +1602,11 @@ const VIEWMODE_KEY = 'hkl.composer.viewMode';
 
 function applyViewMode(mode: ViewMode): void {
   renderer.setViewMode(mode);
-  applyViewModeClass(mode);
+  /* NO eager applyViewModeClass here: a heavy render is deferred (T2.2), and
+     flipping the container CSS before the content swap showed the OLD mode's
+     DOM restyled into the new mode's shape for the whole engrave (page cards
+     splayed into the scroll layout). doReRender flips the class in the same
+     synchronous block that swaps the content — the switch paints atomically. */
   reRender();
   afterRender(() => maybeScrollMeasureIntoView(visualCursorMeasure()));
 }

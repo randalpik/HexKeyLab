@@ -4231,3 +4231,11 @@ reaches `osc.type`.
 **Verified**: typecheck, composer build, boundaries, `HKL_INDEX_CHECK=1 test:composer` 328/328, probe assertions on page counts/pending counts/lazy mounts/restore/theme/zoom. Awaiting Max's Firefox pass.
 
 **Where**: `apps/composer/src/render/render.ts` (pageVirt, renderPage(virtualize), mountPage/mountVisiblePages/armPageIo, ensureTkHoldsPageLayout, ensureMeasureMounted, setOnPageMounted, predictNextRenderHeavy, lastFullMs), `apps/composer/src/main.ts` (reRender wrapper + afterRender + busy, onPageMounted registration, overlay sizing over placeholders, injectHeaderFooter selector relax, playback-position mount, import/load busy), `apps/composer/index.html` (#renderBusy), `packages/notation/src/verovio-types.ts` (getPageWithElement), docs.
+
+## 2026-08-29 — View-switch atomicity under deferred renders: the mode class flips inside doReRender
+
+**Context**: Max's Firefox pass of Tier 2 caught a torn view switch — selecting Scroll restyled `#score` to the scroll shape immediately while the page DOM stayed put for the whole deferred engrave. Cause: `applyViewMode` flipped the CSS class eagerly; T2.2's deferral separated that from the content swap by seconds.
+
+**Picked**: `applyViewMode` no longer touches the class; `doReRender` calls `applyViewModeClass(renderer.getViewMode())` in the same synchronous block as `renderComposer`'s DOM write — class + content commit in one paint. During the deferred window the old view stays fully intact under the busy badge. Idempotent on every non-switch render. Boot's pre-render class set stays (correct background before Verovio loads). Probe-verified both directions (page DOM + `view-page` intact mid-deferral; atomic swap after; restore path 260 ms). Generalized as a rule in lessons.md: under deferral, every visible flip travels with the content swap.
+
+**Where**: `apps/composer/src/main.ts` (applyViewMode, doReRender), docs/composer-render-perf.md status log, lessons.md.
