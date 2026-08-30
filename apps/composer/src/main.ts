@@ -834,8 +834,10 @@ function reRender(): void {
     renderer.setPageScale(model.getPageScale() / 100);
     /* renderComposer pulls MEI from the model itself: scroll edits splice straight
        from the live doc (O(edited-range)), avoiding the O(total) whole-doc
-       serialize on every edit; full renders + page view serialize internally. */
-    renderer.renderComposer(model, viewStavesFilter());
+       serialize on every edit; full renders + page view serialize internally.
+       Returns false on a view-switch cache restore — the stashed DOM already
+       carries the page-only injections + crisp snap below, so skip them. */
+    const freshRender = renderer.renderComposer(model, viewStavesFilter());
     /* After Verovio's output lands, inject composer (right-aligned) + footer
        (centered, bottom of page). Subtitle is handled by Verovio itself once
        <title type="subtitle"> is present. Only affects page view (the
@@ -845,7 +847,7 @@ function reRender(): void {
     /* Page-only post-render injections (header/footer/section headers/volta/
        crisp snap) operate on the .score-page page structure; scroll view has
        a virtualized chunk canvas instead, so skip them there. */
-    if (scoreElForInject && !isScroll) {
+    if (scoreElForInject && !isScroll && freshRender) {
       injectHeaderFooter(scoreElForInject, model.getComposer(), model.getFooter());
       injectSectionHeaders(scoreElForInject, model);
       styleVoltaNumbers(scoreElForInject);
@@ -1520,7 +1522,10 @@ $('viewModeSelect')?.addEventListener('change', (e) => {
 $('themeSelect')?.addEventListener('change', (e) => {
   const theme = (e.target as HTMLSelectElement).value as ScoreTheme;
   renderer.setTheme(theme);
-  reRender();
+  /* Theme is a DOM-only repaint (reversible applyNotationTheme) — no reRender,
+     no re-engrave, splicer + view-mode caches stay valid. See
+     docs/composer-render-perf.md T1.1. */
+  renderer.applyThemeToRendered();
   try { localStorage.setItem(THEME_KEY, theme); } catch { /* ignore */ }
 });
 $('viewInstrSelect')?.addEventListener('change', (e) => {

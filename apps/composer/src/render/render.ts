@@ -13,6 +13,18 @@ import { ScrollSplicer, type SpliceCtx } from './splice.js';
 import type { ComposerModel } from '../model/index.js';
 
 export type ViewMode = 'page' | 'scroll';
+
+/** Stashed DOM + validity key for the view mode NOT currently on screen
+ *  (T1.2, docs/composer-render-perf.md). `nodes` are the real detached
+ *  container children — not serialized HTML — so the scroll splicer's element
+ *  refs stay valid across a stash/restore round-trip. */
+interface ModeCacheEntry {
+  nodes: Node[];
+  mei: string;
+  zoom: ZoomLevel;
+  pageScale: number;
+  theme: ScoreTheme;
+}
 /** Score theme. 'transparent' renders like 'dark' (light-source noteheads,
  *  light ink) but with no background fill, so the score can be exported / read
  *  into HKL or an OBS overlay. */
@@ -82,8 +94,14 @@ class Renderer {
    *  measure index + gap calibration; surgically splices each edit. */
   private splicer = new ScrollSplicer();
   /** Next scroll render must be a full re-engrave (file open, reflow, or a
-   *  view/zoom/theme change that splice can't retrofit). */
+   *  zoom/page-scale/view-filter change that splice can't retrofit). */
   private forceFull = true;
+  /** Per-mode stashed DOM from the last time each mode was on screen (T1.2).
+   *  Cleared by forceFullRerender() and by the string-entry render(). */
+  private modeCache: Partial<Record<ViewMode, ModeCacheEntry>> = {};
+  /** Mode the container's current content was rendered in (null before the
+   *  first render). Drives the stash/restore branch in renderComposer. */
+  private lastRenderedMode: ViewMode | null = null;
 
   constructor() {
     this.readyPromise = this.loadVerovio();
@@ -249,15 +267,19 @@ class Renderer {
 
   setViewMode(mode: ViewMode): void {
     this.viewMode = mode;
-    this.forceFullRerender();   // (re)entering scroll needs a fresh persistent SVG
+    /* No forceFullRerender here: renderComposer's mode-change branch decides
+       between restoring the stashed DOM for this mode (doc unchanged) and a
+       forced full engrave — see stashAndRestore (T1.2). */
   }
 
-  /** Force the next scroll render to be a full re-engrave + re-capture (not a
-   *  splice). Call on file open, explicit reflow, or any change splice can't
-   *  retrofit (zoom/theme, instrument-view filter, HEJI toggle). */
+  /** Force the next render to be a full re-engrave + re-capture (not a splice
+   *  or a mode-cache restore). Call on file open, explicit reflow, or any
+   *  change neither can retrofit (zoom, page scale, instrument-view filter,
+   *  HEJI toggle). Theme is NOT such a change — see applyThemeToRendered. */
   forceFullRerender(): void {
     this.forceFull = true;
     this.splicer.invalidate();
+    this.modeCache = {};
   }
 
   getViewMode(): ViewMode {
@@ -265,8 +287,19 @@ class Renderer {
   }
 
   setTheme(t: ScoreTheme): void {
-    if (t !== this.theme) this.forceFullRerender();   // repaints all noteheads
+    /* Theme never moves geometry — the notehead repaint + ink recolor are
+       DOM-only, so no re-engrave and no splicer/cache invalidation (T1.1).
+       Callers pair this with applyThemeToRendered(). */
     this.theme = t;
+  }
+
+  /** Re-apply the current theme to the already-rendered container without
+   *  re-engraving: applyNotationTheme is fully reversible (dark tags +
+   *  inline-paints noteheads; light removes both). No-op before attach(). */
+  applyThemeToRendered(): void {
+    if (!this.container) return;
+    applyNotationTheme(this.container, this.theme === 'light' ? 'light' : 'dark');
+    this.container.classList.toggle('theme-transparent', this.theme === 'transparent');
   }
 
   getTheme(): ScoreTheme {
@@ -296,14 +329,31 @@ class Renderer {
     return this.pageScale;
   }
 
-  /** Render the given MEI string into the attached container. */
+  /* DEAD END (2026-08-29, do not retry): a `redoLayout()` shortcut for
+     byte-identical data with changed options. On the CDN build, setOptions +
+     redoLayout does NOT re-apply page geometry — a scroll→page relayout kept
+     the 100000-unit scroll page and produced 2 pages instead of 37, and a
+     zoom relayout returned in 0 ms (silent no-op; unit changes likely not
+     re-applied). loadData is the only reliable relayout. See lessons.md. */
+
+  /** Render the given MEI string into the attached container. String entry
+   *  (PDF, tests) — it bypasses the model-aware splice/cache paths, so it
+   *  resets them: after this, neither the splicer nor a stashed mode DOM can
+   *  describe what's on screen. Composer renders go through renderComposer. */
   render(mei: string): void {
     if (!this.tk) throw new Error('render() before ready()');
     if (!this.container) throw new Error('render() before attach()');
-    /* String entry (PDF, tests, page-internal). In scroll mode this is always a
-       FULL re-engrave — splicing needs the model, so it goes through
-       renderComposer(model). Page view → full multi-page. */
+    this.modeCache = {};
+    this.splicer.invalidate();
+    this.forceFull = true;
+    this.lastRenderedMode = this.viewMode;
     if (this.viewMode === 'scroll') { this.renderSingleSystem(mei); return; }
+    this.renderPage(mei);
+  }
+
+  /** Page-view full render: strategy choice + layout + per-page SVG. Internal
+   *  (renderComposer / render) — does not touch splicer or mode-cache state. */
+  private renderPage(mei: string): void {
     /* Choose a breaks strategy. Section/system breaks alone → single-pass
        'smart' (honors them + auto-wraps). Page breaks → bake the natural
        system breaks first, then 'encoded' (honors pages + the baked wraps).
@@ -318,23 +368,23 @@ class Renderer {
     } else {
       strategy = 'auto';
     }
-    this.tk.setOptions(this.buildOptions(strategy));
-    if (!this.tk.loadData(data)) {
-      this.container.innerHTML = '<div style="color:#c00;padding:20px">Verovio loadData failed (invalid MEI).</div>';
+    this.tk!.setOptions(this.buildOptions(strategy));
+    if (!this.tk!.loadData(data)) {
+      this.container!.innerHTML = '<div style="color:#c00;padding:20px">Verovio loadData failed (invalid MEI).</div>';
       return;
     }
     /* Each page SVG wrapped in a .score-page div so CSS can give it
        a white background, border, and surrounding margin against the
        dark #score surround. */
     {
-      const pages = this.tk.getPageCount();
+      const pages = this.tk!.getPageCount();
       let combined = '';
       for (let i = 1; i <= Math.max(1, pages); i++) {
-        combined += '<div class="score-page" data-page="' + i + '">' + this.tk.renderToSVG(i, {}) + '</div>';
+        combined += '<div class="score-page" data-page="' + i + '">' + this.tk!.renderToSVG(i, {}) + '</div>';
       }
-      this.container.innerHTML = combined;
+      this.container!.innerHTML = combined;
     }
-    this.postProcessRendered(this.container);
+    this.postProcessRendered(this.container!);
   }
 
   /* ── scroll-mode single-system render ────────────────────────────────────── */
@@ -367,26 +417,72 @@ class Renderer {
 
   /** Composer render entry (called by main.ts with the live model). Page view →
    *  full serialize + multi-page. Scroll view → surgical splice when possible,
-   *  else a full re-engrave + re-capture. */
-  renderComposer(model: ComposerModel, viewStaves: number[] | null): void {
+   *  else a full re-engrave + re-capture. On a view-mode switch, first tries to
+   *  restore the incoming mode's stashed DOM (T1.2). Returns true when the
+   *  container content was freshly engraved — false on a cache restore, so the
+   *  caller can skip its page-only post-render injections (already baked into
+   *  the stashed DOM). */
+  renderComposer(model: ComposerModel, viewStaves: number[] | null): boolean {
     if (!this.tk) throw new Error('renderComposer() before ready()');
     if (!this.container) throw new Error('renderComposer() before attach()');
-    if (this.viewMode === 'scroll') { this.renderScroll(model, viewStaves); return; }
-    this.render(model.serialize({ hejiEnabled: model.getHejiEnabled() }, viewStaves));
+    const heji = { hejiEnabled: model.getHejiEnabled() };
+    let preMei: string | null = null;
+    if (this.lastRenderedMode !== null && this.lastRenderedMode !== this.viewMode) {
+      preMei = model.serialize(heji, viewStaves);
+      if (this.stashAndRestore(preMei)) return false;
+    }
+    if (this.viewMode === 'scroll') this.renderScroll(model, viewStaves, preMei);
+    else this.renderPage(preMei ?? model.serialize(heji, viewStaves));
+    this.lastRenderedMode = this.viewMode;
+    return true;
+  }
+
+  /** View-mode switch: stash the outgoing mode's rendered DOM, and re-attach
+   *  the incoming mode's stashed DOM when it still matches the document (same
+   *  serialize output) + zoom + page scale — skipping the re-engrave entirely.
+   *  On a miss, force the incoming render to be a full engrave: splicing across
+   *  a mode switch would target DOM the other mode owns. Returns true when
+   *  restored. `mei` is the current render-serialize — the outgoing DOM
+   *  reflects it, since every mutation re-renders before a switch can happen. */
+  private stashAndRestore(mei: string): boolean {
+    const outgoing = this.lastRenderedMode!;
+    if (this.container!.querySelector('svg')) {
+      this.modeCache[outgoing] = {
+        nodes: Array.from(this.container!.childNodes),
+        mei, zoom: this.zoom, pageScale: this.pageScale, theme: this.theme,
+      };
+    }
+    const entry = this.modeCache[this.viewMode];
+    if (entry && entry.mei === mei && entry.zoom === this.zoom && entry.pageScale === this.pageScale) {
+      delete this.modeCache[this.viewMode];
+      this.container!.replaceChildren(...entry.nodes);
+      if (entry.theme !== this.theme) this.applyThemeToRendered();
+      /* The restored scroll DOM is correct to look at either way; future edits
+         may splice only while the splicer still describes it (nothing between
+         stash and restore touched it — anything that would have also cleared
+         the cache, so we couldn't be here). */
+      if (this.viewMode === 'scroll' && !this.splicer.canSplice()) this.forceFull = true;
+      this.lastRenderedMode = this.viewMode;
+      return true;
+    }
+    this.forceFull = true;
+    if (this.viewMode === 'scroll') this.splicer.invalidate();
+    return false;
   }
 
   /** Scroll render: full re-engrave + capture when forced (file open / reflow /
-   *  zoom-theme-view change) or in single-part view, otherwise a surgical splice
-   *  straight from the model (O(edited-range), no whole-doc serialize/parse). A
-   *  splice that can't be performed logs loudly and falls back to a full
-   *  re-engrave — a visible bring-up safety net, never a silent hang. Splicing is
-   *  gated to all-parts view (viewStaves == null): the gap calibration assumes
-   *  the full staff set, so single-part view always full-renders. */
-  private renderScroll(model: ComposerModel, viewStaves: number[] | null): void {
+   *  zoom / view-filter change) or in single-part view, otherwise a surgical
+   *  splice straight from the model (O(edited-range), no whole-doc
+   *  serialize/parse). A splice that can't be performed logs loudly and falls
+   *  back to a full re-engrave — a visible bring-up safety net, never a silent
+   *  hang. Splicing is gated to all-parts view (viewStaves == null): the gap
+   *  calibration assumes the full staff set, so single-part view always
+   *  full-renders. `preMei` reuses renderComposer's mode-switch serialize. */
+  private renderScroll(model: ComposerModel, viewStaves: number[] | null, preMei: string | null = null): void {
     const heji = { hejiEnabled: model.getHejiEnabled() };
     const canSpliceNow = !this.forceFull && this.splicer.canSplice() && viewStaves == null;
     if (!canSpliceNow) {
-      this.renderSingleSystem(model.serialize(heji, viewStaves));
+      this.renderSingleSystem(preMei ?? model.serialize(heji, viewStaves));
       if (viewStaves == null) this.splicer.capture(model, this.spliceCtx());
       else this.splicer.invalidate();
       this.forceFull = false;
