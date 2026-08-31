@@ -124,6 +124,11 @@ export interface RefillResult {
   oldStartIds: string[];
   /** Partition just committed (what the DOM must render after this edit). */
   newStartIds: string[];
+  /** Pagination the mounted DOM renders (pre-edit) and the one just committed
+   *  — page-start line ids, page 1 first. Equal (and stable) unless a line
+   *  that began a page was merged away. Empty when pagination isn't owned. */
+  oldPageStartIds: string[];
+  newPageStartIds: string[];
 }
 
 /* ── pure helpers ─────────────────────────────────────────────────────────── */
@@ -295,6 +300,8 @@ interface AdoptionTask {
   nextPage: number;
   pageCount: number;
   startIds: string[];
+  /** First line start of each page — the pagination being adopted. */
+  pageStartIds: string[];
   cancelled: boolean;
 }
 
@@ -302,6 +309,12 @@ export class PageLineBreaks {
   /** Adopted partition: line-start measure ids, document order. Null until a
    *  derive render's layout has been read (or a refill committed its own). */
   private startIds: string[] | null = null;
+  /** Adopted PAGINATION: the subset of `startIds` that begins a page, document
+   *  order, page 1's start included (it needs no pin — the document starts
+   *  there — but keeping it makes the list a faithful page index). Pages are
+   *  owned exactly like lines: adopted from a derive render, pinned as `<pb>`,
+   *  carried across edits, and only changed when a page stops being legal. */
+  private pageStartIds: string[] = [];
   private userBreakSig = '';
   private headSig = '';
   private interiorSig = '';
@@ -338,6 +351,7 @@ export class PageLineBreaks {
   /** Drop all partition state. Next page render must derive + re-adopt. */
   invalidate(): void {
     this.startIds = null;
+    this.pageStartIds = [];
     this.naturals.clear();
     this.sigW = SIG_FALLBACK;
     this.sig.clear();
@@ -363,7 +377,24 @@ export class PageLineBreaks {
    *  Null when nothing is adopted or an id is missing. */
   pinRenderMei(mei: string): string | null {
     if (this.startIds === null || this.startIds.length <= 1) return null;
-    return injectPins(mei, this.startIds, null);
+    return injectPins(mei, this.startIds, this.pageSet());
+  }
+
+  /** Page-start ids as a lookup set for injectPins (`<pb>` instead of `<sb>`).
+   *  Empty until pagination is adopted, in which case pins are sb-only and
+   *  Verovio paginates by height — the pre-ownership behaviour. */
+  private pageSet(): Set<string> | null {
+    return this.pageStartIds.length > 1 ? new Set(this.pageStartIds) : null;
+  }
+
+  /** Adopted page starts (diagnostics / tests / the renderer's page index). */
+  pageStarts(): string[] {
+    return this.pageStartIds.slice();
+  }
+
+  /** True when pagination is owned (pinned `<pb>`), not left to Verovio. */
+  paginationOwned(): boolean {
+    return this.pageStartIds.length > 1;
   }
 
   /** True when a refill attempt is worth making (adopted, or adoption armed
@@ -394,7 +425,7 @@ export class PageLineBreaks {
        partition and the sig baseline describe the same document. */
     const meiMeasures = model.allMeasures();
     this.captureSigs(meiMeasures, measureIds(meiMeasures));
-    const task: AdoptionTask = { nextPage: 1, pageCount, startIds: [], cancelled: false };
+    const task: AdoptionTask = { nextPage: 1, pageCount, startIds: [], pageStartIds: [], cancelled: false };
     this.adoption = task;
     const step = (): void => {
       if (task.cancelled) return;
@@ -402,7 +433,9 @@ export class PageLineBreaks {
       if (!tk) { task.cancelled = true; this.adoption = null; return; }
       const budget = performance.now() + 40;
       while (task.nextPage <= task.pageCount && performance.now() < budget) {
-        task.startIds.push(...systemStartsFromPageSvg(tk.renderToSVG(task.nextPage, {})));
+        const starts = systemStartsFromPageSvg(tk.renderToSVG(task.nextPage, {}));
+        if (starts.length) task.pageStartIds.push(starts[0]);
+        task.startIds.push(...starts);
         task.nextPage++;
       }
       if (task.nextPage > task.pageCount) {
@@ -421,7 +454,9 @@ export class PageLineBreaks {
     const tk = ctx.layoutToolkit();
     if (!tk) { task.cancelled = true; this.adoption = null; return false; }
     while (task.nextPage <= task.pageCount) {
-      task.startIds.push(...systemStartsFromPageSvg(tk.renderToSVG(task.nextPage, {})));
+      const starts = systemStartsFromPageSvg(tk.renderToSVG(task.nextPage, {}));
+      if (starts.length) task.pageStartIds.push(starts[0]);
+      task.startIds.push(...starts);
       task.nextPage++;
     }
     return this.commitAdoption(task);
@@ -431,6 +466,7 @@ export class PageLineBreaks {
     this.adoption = null;
     if (task.cancelled || task.startIds.length === 0) return false;
     this.startIds = task.startIds;
+    this.pageStartIds = task.pageStartIds;
     return true;
   }
 
@@ -523,20 +559,62 @@ export class PageLineBreaks {
        synchronously well under the deferral threshold — let them. */
     if (newStartIds.length <= 1) return bail('single-line result');
 
-    const strategy: RefillStrategy = model.getDoc().querySelector('section pb') ? 'encoded' : 'line';
+    /* Carry PAGINATION across the edit the same way as the lines: a page keeps
+       its start id while that id still begins a line; one whose line was
+       merged away moves to the next surviving line start (never backwards, so
+       pages can't swap order). Page 1 is always the document start. */
+    const newLineStarts = new Set(newStartIds);
+    const oldPageStartIds = this.pageStartIds.slice();
+    /* A single-page document has exactly one page start — the document start —
+       which simply follows line 0 across the edit. (Returning an empty list
+       here would read as "pagination changed" and block every splice.) */
+    let newPageStartIds: string[] = oldPageStartIds.length ? [newStartIds[0]] : [];
+    if (oldPageStartIds.length > 1) {
+      newPageStartIds = [];
+      let cursor = 0;
+      for (const id of oldPageStartIds) {
+        let at = newStartIds.indexOf(id, cursor);
+        if (at < 0) {
+          /* The line that began this page is gone — find where it used to sit
+             and take the next surviving line start from there. */
+          const oldPos = this.startIds!.indexOf(id);
+          at = -1;
+          if (oldPos >= 0) {
+            for (let k = oldPos; k < this.startIds!.length; k++) {
+              const cand = newStartIds.indexOf(this.startIds![k], cursor);
+              if (cand >= 0) { at = cand; break; }
+            }
+          }
+        }
+        if (at < 0 || at < cursor) continue;         // page collapsed away
+        newPageStartIds.push(newStartIds[at]);
+        cursor = at + 1;
+      }
+      if (!newPageStartIds.length || newPageStartIds[0] !== newStartIds[0]) {
+        newPageStartIds = [newStartIds[0], ...newPageStartIds.filter((id) => id !== newStartIds[0])];
+      }
+      if (!newPageStartIds.every((id) => newLineStarts.has(id))) return bail('page start is not a line start');
+    }
+
+    const strategy: RefillStrategy = newPageStartIds.length > 1 ? 'encoded' : 'line';
     this.startIds = newStartIds;
+    this.pageStartIds = newPageStartIds;
     this.captureSigs(meiMeasures, ids, cur);
     this.lastDeriveReason = '';
+    const pageSet = newPageStartIds.length > 1 ? new Set(newPageStartIds) : null;
     const mei = (): string | null => {
       const tSer = performance.now();
       const full = model.serialize({ hejiEnabled: model.getHejiEnabled() }, null);
       this.lastRefillStats.serializeMs = Math.round(performance.now() - tSer);
       const tInj = performance.now();
-      const pinned = injectPins(full, newStartIds, null);
+      const pinned = injectPins(full, newStartIds, pageSet);
       this.lastRefillStats.injectMs = Math.round(performance.now() - tInj);
       return pinned;
     };
-    return { strategy, mei, changedRun, oldStartIds, newStartIds };
+    return {
+      strategy, mei, changedRun, oldStartIds, newStartIds,
+      oldPageStartIds, newPageStartIds,
+    };
   }
 
   /** Carry the committed partition across the edit and repair ONLY what the
@@ -755,6 +833,10 @@ export class PageLineBreaks {
   verifyRenderedPartition(container: HTMLElement, model: ComposerModel, pageCount: number, ctx: PageBreaksCtx): boolean {
     if (this.startIds === null) return true;
     const pos = new Map(this.startIds.map((id, i) => [id, i]));
+    /* When pagination is owned too, a page must begin exactly where its pin
+       says — otherwise the page grid the splicer edits in place is describing
+       a layout Verovio didn't draw. */
+    const pageOf = new Map(this.pageStartIds.map((id, i) => [id, i + 1]));
     let ok = true;
     let prevEnd = -1;
     for (const page of Array.from(container.querySelectorAll('.score-page:not(.score-page-pending)'))) {
@@ -766,6 +848,11 @@ export class PageLineBreaks {
       if (!starts.length) continue;
       let at = pos.get(starts[0]);
       if (at == null || at <= prevEnd) { ok = false; break; }
+      if (this.pageStartIds.length > 1) {
+        const pinnedPage = pageOf.get(starts[0]);
+        const domPage = Number((page as HTMLElement).dataset.page);
+        if (pinnedPage == null || (domPage >= 1 && pinnedPage !== domPage)) { ok = false; break; }
+      }
       for (let i = 1; i < starts.length && ok; i++) {
         if (pos.get(starts[i]) !== at + i) ok = false;
       }

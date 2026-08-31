@@ -150,7 +150,27 @@ on mount (viewBox growth), shifting pages below it; scroll-mode full engrave
   entirely. (The 3/8 hit rate measured before conservative reflow was a
   side effect of re-derivation changing the line count — see the 2026-08-30
   reflow entry below.)
-- [ ] **T3.2 Cascades + pagination ownership (Phase C-B2)** — dy-translate of
+- [x] **T3.2a Pagination ownership** — SHIPPED 2026-08-30. Page starts are
+  adopted from the derive render, pinned as `<pb>`, and displayed with
+  `breaks:'encoded'` (the only mode honoring them). Reproduces Verovio's own
+  pagination exactly (37/37 pages, identical splits), self-consistent with a
+  full render of the same pinned MEI (max delta 4 units over 446 measures),
+  and **loads 2× faster (577 ms vs 1191 ms)** — a win for every derive render.
+  Max accepted the one-time intra-line respacing (~52 px) after comparing both
+  renders as images. Overflow is now our problem, so a pinned page that spills
+  hands pagination back to Verovio (warn + derive). Does NOT fix the
+  user-`<pb>` giant-page quirk — that needs the derive path to paginate by
+  height itself.
+- [x] **T3.2b Splice-latency profile + two self-inflicted fixes** — SHIPPED
+  2026-08-30. A steady-state spliced edit is **313 ms**, of which Verovio is
+  only 58 ms; the rest is whole-document bookkeeping (cursor.update 57 ms over
+  TWO calls, model mutation 45 ms, 32 k querySelectorAll calls, 495 measure
+  serializations). Fixed en route: the splice invalidated the live toolkit it
+  never touches (forcing a ~590 ms reload on the next lazy mount — staleness is
+  now per-page), and every page edit was deferred behind the busy badge
+  (predictNextRenderHeavy now predicts light after a splice). Remaining levers
+  with measurements in composer-page-splice-design.md.
+- [ ] **T3.2c Cascades + cross-page moves (Phase C-B2b)** — dy-translate of
   following systems (the window MEASURES the new spacing, so dy is known),
   line-count-changing splices (replace N systems with M), page-boundary
   moves, `<pb>` pins + our height-fit rule so a full render agrees by

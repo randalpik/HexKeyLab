@@ -140,10 +140,12 @@ class Renderer {
     mounted: Set<number>;
     io: IntersectionObserver | null;
     tkCurrent: boolean;          // tk still holds this layout → loadData-free mounts
-    /** A system splice edited the MOUNTED pages in place, so `mei` no longer
-     *  describes the document — a lazy mount would render pre-edit content.
-     *  The next mount re-serializes + re-pins from the live model first. */
-    stale: boolean;
+    /** Pages a system splice edited in place, so `mei`/the toolkit layout
+     *  describe THEM. Every other page is byte-identical to the loaded layout
+     *  (a splice only replaces the systems it touched), so those still mount
+     *  for free — only mounting one of THESE needs the document re-serialized
+     *  and re-pinned first. */
+    stalePages: Set<number>;
   } | null = null;
   /** The model of the last renderComposer — needed to rebuild page data for a
    *  lazy mount after a splice (see pageVirt.stale). Renders always pass it;
@@ -160,6 +162,12 @@ class Renderer {
   /** Duration of the last full engrave per mode (ms) — predictNextRenderHeavy's
    *  evidence. Splices and cache restores don't update it. */
   private lastFullMs: Partial<Record<ViewMode, number>> = {};
+  /** Did the last page-view composer render land as a system splice? Drives
+   *  predictNextRenderHeavy (a splice is ~300 ms — deferring it behind the
+   *  busy badge costs two frames and flashes for nothing). Mirrors the scroll
+   *  path's `willSplice` heuristic: evidence-based, and a wrong guess only
+   *  means one un-badged slow render. */
+  private lastPageSpliced = false;
   /** Page-view line-break ownership (Phase C, docs/composer-page-splice-design.md):
    *  the partition is adopted from each derive render and re-derived locally on
    *  edits (greedy refill + rebalance), pinned into the render MEI. The owner
@@ -365,7 +373,13 @@ class Renderer {
     if (this.lastRenderedMode !== null && this.lastRenderedMode !== this.viewMode) {
       return proxy > HEAVY_MS;   // switch: restore (~1 s on large docs) or fresh engrave
     }
-    if (this.viewMode === 'page') return (this.lastFullMs.page ?? proxy) > HEAVY_MS;
+    if (this.viewMode === 'page') {
+      /* An owned-partition edit that spliced last time will almost certainly
+         splice again (the gates are stable across consecutive edits in a
+         region) — render it synchronously, no badge. */
+      if (this.lastPageSpliced && viewStaves == null && this.pageBreaks.ownershipActive()) return false;
+      return (this.lastFullMs.page ?? proxy) > HEAVY_MS;
+    }
     const willSplice = !this.forceFull && this.splicer.canSplice() && viewStaves == null;
     if (willSplice) return false;
     return (this.lastFullMs.scroll ?? proxy) > HEAVY_MS;
@@ -537,7 +551,7 @@ class Renderer {
     this.pageVirt = {
       mei: data, options, pageCount: pages,
       pageW: box.width, pageH: box.height,
-      mounted: new Set([1]), io: null, tkCurrent: true, stale: false,
+      mounted: new Set([1]), io: null, tkCurrent: true, stalePages: new Set(),
     };
     this.finishPageMount(p1);
     this.container!.scrollTop = keepTop;
@@ -558,18 +572,23 @@ class Renderer {
   /** Reload the page layout into the live toolkit if something else (a scroll
    *  engrave, PDF export via toolkit()) replaced it — lazy mounts render from
    *  tk. One loadData (~1 s on the sonata), then mounts are cheap again. */
-  private ensureTkHoldsPageLayout(): boolean {
+  private ensureTkHoldsPageLayout(forPage?: number): boolean {
     const st = this.pageVirt;
     if (!st) return false;
-    if (st.stale) {
-      /* A splice edited the mounted pages without re-loading the document —
-         rebuild the page data from the live model + the owner's current pins
-         so this mount draws the CURRENT score (v1 splices are gated to leave
-         pagination untouched, so the placeholder grid still holds). */
+    /* Only a page a splice actually edited needs fresh data; every other page
+       is untouched, so mounting it from the loaded layout is both correct and
+       free. Rebuilding costs a whole-document serialize + pin + loadData
+       (~600 ms on the sonata) — never pay it speculatively. */
+    const needsFresh = forPage === undefined ? st.stalePages.size > 0 : st.stalePages.has(forPage);
+    if (needsFresh) {
       const mei = this.pinnedMeiForCurrentModel();
       if (mei === null) return false;
+      /* Data and options travel together — loading pinned MEI under the
+         previous strategy's options (or vice versa) would repaginate the
+         whole document. */
       st.mei = mei;
-      st.stale = false;
+      st.options = this.buildOptions(this.pageBreaks.paginationOwned() ? 'encoded' : 'line');
+      st.stalePages.clear();
       st.tkCurrent = false;
     }
     if (st.tkCurrent) return true;
@@ -586,7 +605,7 @@ class Renderer {
     if (!st || st.mounted.has(p) || !this.container) return;
     const div = this.container.querySelector('.score-page[data-page="' + p + '"]') as HTMLElement | null;
     if (!div) return;
-    if (!this.ensureTkHoldsPageLayout()) return;
+    if (!this.ensureTkHoldsPageLayout(p)) return;
     st.mounted.add(p);
     div.innerHTML = this.tk!.renderToSVG(p, {});
     div.classList.remove('score-page-pending');
@@ -731,11 +750,15 @@ class Renderer {
            where measure ids resolve into the wrong frame). */
         const pageDomLive = preMei === null && this.pageVirt !== null
           && this.container!.querySelector('.score-page svg') !== null;
-        if (pageDomLive && refill.strategy === 'line') {
+        /* A splice replaces systems inside the EXISTING page grid, so it is
+           only valid while the pagination it renders under is unchanged. */
+        const paginationHeld = refill.oldPageStartIds.join() === refill.newPageStartIds.join();
+        if (pageDomLive && paginationHeld) {
           if (refill.changedRun === null) {
             /* Signature-identical doc (head/user-break/interior guards all
                passed) — the mounted DOM already renders exactly this. */
             this.pageSplicer.noteNoop();
+            this.lastPageSpliced = true;   // DOM untouched — the fastest path there is
             return false;
           }
           if (this.pageSplicer.trySplice(model, refill, this.pageSpliceCtx())) {
@@ -744,11 +767,16 @@ class Renderer {
                mount must rebuild before drawing (pageVirt.stale). Its options
                become the pinned 'line' ones the rebuilt data expects, whatever
                strategy the last full render used. */
+            /* Mark ONLY the edited pages. The live toolkit is untouched by a
+               splice (it renders through spliceTk), so it still holds a valid
+               layout for every other page — clearing tkCurrent here would
+               force a needless ~600 ms reload on the next lazy mount. `mei`
+               and `options` stay paired with that layout and are replaced
+               together when a stale page actually needs mounting. */
             if (this.pageVirt) {
-              this.pageVirt.stale = true;
-              this.pageVirt.tkCurrent = false;
-              this.pageVirt.options = this.buildOptions('line');
+              for (const p of this.pageSplicer.lastPages) this.pageVirt.stalePages.add(p);
             }
+            this.lastPageSpliced = true;
             this.pageBreaks.verifyRenderedPartition(
               this.container!, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
             return false;
@@ -764,6 +792,18 @@ class Renderer {
              warn + re-adopt; throws under HKL_INDEX_CHECK). */
           this.pageBreaks.verifyRenderedPartition(
             this.container!, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
+          /* Owned pagination has no safety net inside Verovio — check it here
+             and hand the pages back if ours don't fit. */
+          this.lastPageSpliced = false;
+          const spill = this.overflowingPage();
+          if (spill !== 0) {
+            console.warn('[page-breaks] pinned page ' + spill + ' overflows its box — returning pagination to Verovio (derive)');
+            this.pageBreaks.invalidate();
+            this.renderPage(model.serialize(heji, viewStaves), true);
+            if (this.pageVirt) {
+              this.pageBreaks.armAdoption(model, this.pageVirt.pageCount, this.pageBreaksCtx());
+            }
+          }
           return true;
         }
         console.warn('[page-breaks] pin injection failed (missing id) — derive render');
@@ -773,12 +813,37 @@ class Renderer {
       }
     }
     this.renderPage(preMei ?? model.serialize(heji, viewStaves), true);
+    this.lastPageSpliced = false;
     if (viewStaves == null && this.pageVirt) {
       this.pageBreaks.armAdoption(model, this.pageVirt.pageCount, this.pageBreaksCtx());
     } else {
       this.pageBreaks.invalidate();   // filtered view: partition would describe a subset
     }
     return true;
+  }
+
+  /** Page-fit check for OWNED pagination. Verovio re-paginates by height only
+   *  while it owns the pages; once `<pb>` pins decide them it will happily draw
+   *  a page past its own rectangle. So after any pinned full render, every
+   *  mounted page's content must still sit inside its box — a violation means
+   *  our page assignment is wrong, and the honest response is to hand
+   *  pagination back to Verovio (derive + re-adopt) rather than show a clipped
+   *  page. Returns the first offending page number, or 0 when all fit. */
+  private overflowingPage(): number {
+    if (!this.container) return 0;
+    for (const pageEl of Array.from(this.container.querySelectorAll('.score-page:not(.score-page-pending)'))) {
+      const svg = pageEl.querySelector('svg');
+      if (!svg) continue;
+      const systems = Array.from(pageEl.querySelectorAll('g.system'));
+      if (!systems.length) continue;
+      const box = svg.getBoundingClientRect();
+      const last = systems[systems.length - 1].getBoundingClientRect();
+      /* Tolerance: a system's bbox includes hanging content that legitimately
+         reaches into the bottom margin. Only a real spill (past the paper)
+         counts. */
+      if (last.bottom > box.bottom + 2) return Number((pageEl as HTMLElement).dataset.page) || -1;
+    }
+    return 0;
   }
 
   /** Serialize the live model and inject the line-break owner's CURRENT pins —
@@ -793,20 +858,24 @@ class Renderer {
 
   /** Context the page system splicer drives Verovio + the post passes through. */
   private pageSpliceCtx(): PageSpliceCtx {
+    /* The window MUST use the same display strategy as the live render, or
+       spliced systems carry the other mode's justification (encoded vs line
+       redistribute intra-line spacing by up to ~52 px — probed 2026-08-30).
+       With pagination owned the live mode is 'encoded'; a window carries sb
+       pins only, and 'encoded' paginates ONLY at encoded <pb>, so it lands on
+       one page by construction (no tall-page trick needed). */
+    const owned = this.pageBreaks.paginationOwned();
+    const strategy = owned ? 'encoded' : 'line';
     return {
       container: this.container!,
       toolkit: this.spliceTk!,
-      /* Live page options (same justification width/margins/preset) with a
-         huge page budget so the window lands on ONE page, trimmed to content,
-         and no title header (the synthetic leader absorbs score-start
-         treatment; header:'auto' would draw a title block above it). */
       windowOptions: {
-        ...this.buildOptions('line', 'page'),
+        ...this.buildOptions(strategy, 'page'),
         pageHeight: 60_000,
         adjustPageHeight: true,
         header: 'none',
       },
-      liveOptions: () => this.buildOptions('line', 'page'),
+      liveOptions: () => this.buildOptions(strategy, 'page'),
       postProcess: (el: HTMLElement) => this.postProcessRendered(el),
       decorateHost: (el: HTMLElement) => styleVoltaNumbers(el),
       snapPage: (el: HTMLElement) => this.snapSystems(el),

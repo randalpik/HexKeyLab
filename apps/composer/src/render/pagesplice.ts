@@ -156,6 +156,10 @@ export class PageSystemSplicer {
   /** Diagnostics for tests/probes. */
   lastOutcome: 'spliced' | 'skipped' | 'noop' | '' = '';
   lastSkipReason = '';
+  /** Page numbers the last splice edited in place. The renderer marks exactly
+   *  these as stale: every other page still matches the loaded layout, so it
+   *  can be mounted without re-loading the document. */
+  lastPages: number[] = [];
   lastStats = { lines: 0, windowLines: 0, windowMeasures: 0, loadMs: 0, totalMs: 0 };
 
   /** The caller resolved a signature-identical doc — the mounted DOM already
@@ -171,6 +175,7 @@ export class PageSystemSplicer {
   trySplice(model: ComposerModel, refill: RefillResult, ctx: PageSpliceCtx): boolean {
     const t0 = performance.now();
     this.lastStats = { lines: 0, windowLines: 0, windowMeasures: 0, loadMs: 0, totalMs: 0 };
+    this.lastPages = [];
     const skip = (why: string): false => {
       this.lastOutcome = 'skipped';
       this.lastSkipReason = why;
@@ -421,6 +426,7 @@ export class PageSystemSplicer {
       pages.add(lk.pageEl);
     }
     for (const pageEl of pages) ctx.snapPage(pageEl);
+    this.lastPages = Array.from(pages, (el) => Number(el.dataset.page)).filter((n) => n >= 1);
     return true;
   }
 

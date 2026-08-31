@@ -4,13 +4,21 @@
 // as an async IIFE in the page and print its JSON result.
 //
 // Usage: node probe-runner.mjs <probe-file.js> [--no-sonata]
+//                              [--arg <value>]  → window.__probeArg in the page
+//                              [--screenshot <path>] → PNG of the page AFTER
+//                                the probe returns (probes that rearrange
+//                                #score can hand Max a real picture)
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const probeFile = process.argv[2];
 const noSonata = process.argv.includes('--no-sonata');
+const argIdx = process.argv.indexOf('--arg');
+const probeArg = argIdx >= 0 ? process.argv[argIdx + 1] : null;
+const shotIdx = process.argv.indexOf('--screenshot');
+const shotPath = shotIdx >= 0 ? process.argv[shotIdx + 1] : null;
 const probeSrc = readFileSync(probeFile, 'utf8');
 const url = process.env.COMPOSER_URL ?? 'http://localhost:5170/composer/';
 const SONATA = process.env.SONATA ?? '/home/max/Documents/sonataBr1.musicxml';
@@ -115,9 +123,28 @@ try {
       await new Promise((r) => setTimeout(r, 250));
     }
   }
+  if (probeArg !== null) {
+    await evalIn(cdp, `(window.__probeArg = ${JSON.stringify(probeArg)}, true)`);
+  }
   const out = await evalIn(cdp, `(async () => { ${probeSrc}\n })()`);
   try { console.log(JSON.stringify(JSON.parse(out), null, 2)); }
   catch { console.log(out); }
+  if (shotPath) {
+    /* Fit the viewport to the content so an inner scroller's overflow actually
+       rasterizes (see lessons.md on CDP captures inside #score). */
+    const dims = JSON.parse(await evalIn(cdp, `(() => {
+      const el = document.querySelector('#score');
+      const r = el ? el.scrollWidth : 1600, h = el ? el.scrollHeight : 1200;
+      return { w: Math.min(3000, Math.ceil(r) + 40), h: Math.min(4000, Math.ceil(h) + 40) };
+    })()`));
+    await cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: dims.w, height: dims.h, deviceScaleFactor: 1, mobile: false,
+    });
+    await new Promise((res) => setTimeout(res, 600));
+    const shot = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
+    writeFileSync(shotPath, Buffer.from(shot.data, 'base64'));
+    console.error('screenshot → ' + shotPath);
+  }
   cdp.close();
   cleanup(0);
 } catch (e) {

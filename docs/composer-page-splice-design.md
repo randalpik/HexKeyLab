@@ -527,7 +527,97 @@ that respaces the whole document as if freshly engraved, and explicit commands
 to **move measures between systems** by hand. Both become natural once the
 legality boundaries are the only automatic mover.
 
-## Remaining for Phase C-B2 (cascades + pagination ownership)
+## Implementation (Phase C-B2a, 2026-08-30) — pagination ownership, shipped
+
+Composer now owns PAGES as well as lines. `PageLineBreaks` adopts each page's
+first line from the same derive-render walk that adopts the partition, pins
+them as `<pb>` (`injectPins`' existing `pageStartIds` path), and every owned
+render uses **`breaks:'encoded'`** — the only mode that honors `<pb>`.
+
+- **Gating probe (`cb-pagination.js`)**: encoded over a fully pinned document
+  reproduces the pagination EXACTLY (37 pages, identical systems-per-page on
+  every page) and loads **2× faster (577 ms vs 1191 ms)**. It is NOT
+  pixel-identical to `'line'` though: intra-line justification redistributes up
+  to 516 units (~52 px) and system tops move up to 491 units (~49 px). Max
+  reviewed both renders of sonata page 3 side by side (`cb-pagerender.js` +
+  the runner's new `--screenshot`), saw no difference, and accepted on the
+  condition that **the new system is self-consistent**.
+- **Self-consistency verified (`cb-pageown.js`)**: with pagination owned, the
+  live DOM equals a fresh full render of the same pinned MEI — 446 measures
+  compared, 0 system-sequence mismatches, max geometry delta 4 units (0.4 px
+  snap noise); every mounted page begins at its pinned line; no page overflows.
+- **Pages are carried, not recomputed** (same rule as lines): a page keeps its
+  start id while that id still begins a line; one whose line was merged away
+  moves to the next surviving line start, never backwards. A splice requires
+  pagination to be UNCHANGED (`paginationHeld`) — moving systems between pages
+  is C-B2b.
+- **Safety net**: Verovio no longer re-paginates for us, so a pinned page that
+  overflows its paper would simply draw past it. `Renderer.overflowingPage()`
+  checks every mounted page after a pinned full render; a spill warns and
+  hands pagination back (derive + re-adopt). `verifyRenderedPartition` also
+  asserts each mounted page begins at its pinned line.
+- **Known consequence**: the first edit after a derive render always
+  full-renders — the live DOM carries the derive strategy's justification
+  (smartSb0) while windows now render encoded, so the context-line check
+  correctly refuses. From that pinned render on, edits splice.
+- **NOT fixed by this chunk**: the user-`<pb>` giant-page quirk. A Ctrl+B page
+  break still routes through the derive path (`layoutBreaks` + encoded), which
+  paginates ONLY at encoded breaks → 2 giant pages on the sonata (probe
+  confirms 37 → 2 → 37 on undo). Fixing it needs the derive path to paginate
+  by height itself (bake sb via smartSb0, render `'line'` to get height-derived
+  pages, then union the user's `<pb>` positions into our page starts) — the
+  same page-fit machinery that vertical justification would build on.
+
+## Splice latency — where the time actually goes (2026-08-30 profile)
+
+`cb-profile.js` wraps the hot primitives and phase boundaries around one
+steady-state spliced edit on the sonata (Chromium). **313 ms total:**
+
+| bucket | ms | note |
+|---|---|---|
+| `renderer.renderComposer` | 164 | contains the two below |
+| ├ `PageSystemSplicer.trySplice` | 108 | window render + DOM surgery |
+| └ `PageLineBreaks.tryRefill` | 55 | naturals window 35 + sig diff 21 |
+| `cursor.update` | 57 | **2 calls per edit**, whole-doc measure scans |
+| `model.deleteAtCursor` | 45 | normalizePlaceholdersAll 18 + ties + clamp |
+| everything else | ~47 | dispatch, overlay rebuild, selection, bridge |
+
+**Verovio is only 58 ms of it** (`loadData` 17 ms for 33 KB of windows +
+`renderToSVG` 41 ms). Max's intuition — "it should feel like editing a
+few-system score" — is right about the engraving and wrong about the rest: the
+other ~255 ms is whole-DOCUMENT bookkeeping that a small score simply doesn't
+have. 31,968 `querySelectorAll` calls (30 ms) and 495 measure serializations
+(21 ms) happen per edit regardless of how little changed.
+
+Two self-inflicted costs found and FIXED here (they were the difference
+between ~1.2 s and ~300 ms):
+1. **The splice was invalidating the live toolkit** (`tkCurrent = false`)
+   although it renders through `spliceTk` and never touches `tk`. The next
+   lazy mount therefore reloaded the whole document (~590 ms) for nothing.
+   Staleness is now per-page (`pageVirt.stalePages`): a splice only invalidates
+   the pages it edited, and every other page still mounts from the loaded
+   layout — correct, because a splice replaces only the systems it touched.
+2. **Every page edit was deferred behind the busy badge** (two rAFs + a
+   timeout) because `predictNextRenderHeavy` keyed off the last FULL render's
+   duration. It now predicts light when the previous page render spliced, so
+   splices run synchronously with no badge flash — mirroring the scroll path's
+   `willSplice` heuristic.
+
+Remaining levers, measured, in size order (none implemented yet):
+- **`cursor.update` 57 ms / 2 calls** — the same cursor state is rebuilt twice
+  per edit (render path + state-change path), and each rebuild scans the whole
+  document's measures. Deduping touches the input pipeline, so it is Max's
+  call.
+- **`querySelectorAll` 30 ms / ~32 k calls** — dominated by `expandForSpanners`
+  rescanning all 446 measures on every iteration, twice per edit (naturals
+  window + splice window). A shared note→measure index would cut most of it.
+- **Sig diff 21 ms / 495 serializations** — could take the model's
+  `renderDirty` as a COST hint the way the scroll splicer does (with the
+  `HKL_INDEX_CHECK` "scoped == full" gate that pattern requires).
+- **`model.deleteAtCursor` 45 ms** — B3 territory (normalizePlaceholdersAll is
+  18 ms of it), unchanged by this work.
+
+## Remaining for Phase C-B2b (cascades + cross-page moves)
 
 1. ~~k=87 class~~ — RESOLVED by spike 5: it was smartSb0's contextual fit
    threshold; verbatim display + our fit rules make it unreachable.

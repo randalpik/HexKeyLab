@@ -84,3 +84,25 @@ Conservative-repartition probes (2026-08-30, the reflow-reversibility ruling):
   placeholder and re-mount it: the freshly mounted page must draw the CURRENT
   document (pageVirt.stale → re-serialize + re-pin). Expect `staleFlag: true`,
   `ok: true`, remount ~1.5 s (one loadData, off the hot path).
+
+Pagination-ownership + latency probes (2026-08-30):
+
+- **cb-pagination.js** — the gating probe for owning pages: renders the same
+  pinned document with `breaks:'line'` (sb pins) and `breaks:'encoded'` (sb +
+  pb pins) and compares page count, per-page system split, per-measure
+  geometry and load time. Expect identical pagination, 2× faster encoded
+  load, and a non-zero justification delta (~52 px) — that delta is the
+  accepted one-time respacing.
+- **cb-pagerender.js** — renders ONE page in a chosen mode into `#score` for
+  screenshotting: `--arg line:3` / `--arg encoded:3` with `--screenshot <path>`
+  (both flags are new in runner.mjs, along with `--arg` → `window.__probeArg`).
+  This is how the encoded-vs-line question was put in front of Max as images.
+- **cb-pageown.js** — pagination-ownership acceptance: pins honored per page,
+  no page overflows, live DOM self-consistent with a fresh full render of the
+  same pinned MEI, and the user-`<pb>` quirk status (still 37 → 2 pages).
+- **cb-profile.js** — attributes ONE steady-state spliced edit by wrapping the
+  hot primitives (Verovio loadData/renderToSVG, XMLSerializer, model.serialize)
+  and the phase boundaries (mutation, renderComposer, cursor.update). Mounts
+  the pages around the edit first, and runs a throwaway edit before measuring
+  (the first edit after a derive always full-renders). This is the probe that
+  answers "why isn't a splice as fast as editing a short score".
