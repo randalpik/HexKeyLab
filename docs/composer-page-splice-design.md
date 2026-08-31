@@ -12,7 +12,10 @@ plus per-measure geometry must match a reference full render.
 
 Companion to [composer-spot-splice-design.md](composer-spot-splice-design.md)
 (scroll splice, Phases A–B3) and [composer-render-perf.md](composer-render-perf.md)
-(Tier 1–2, shipped). Status: **line-break ownership (Phase C-A) IMPLEMENTED
+(Tier 1–2, shipped). **Every page render — derive included — now goes through
+ONE break algorithm (`encoded` over our pins); the castoff pass that chooses
+the partition is an internal bootstrap that is never painted.** Status:
+**line-break ownership (Phase C-A) IMPLEMENTED
 2026-08-30** (`apps/composer/src/render/linebreaks.ts`, see "Implementation
 (Phase C-A)"); **the contained system splice (Phase C-B v1) IMPLEMENTED
 2026-08-30** (`apps/composer/src/render/pagesplice.ts`, see "Implementation
@@ -564,10 +567,13 @@ render uses **`breaks:'encoded'`** — the only mode that honors `<pb>`.
   checks every mounted page after a pinned full render; a spill warns and
   hands pagination back (derive + re-adopt). `verifyRenderedPartition` also
   asserts each mounted page begins at its pinned line.
-- **Known consequence**: the first edit after a derive render always
-  full-renders — the live DOM carries the derive strategy's justification
-  (smartSb0) while windows now render encoded, so the context-line check
-  correctly refuses. From that pinned render on, edits splice.
+- **~~Known consequence~~ — RESOLVED same day by the never-painted castoff
+  bootstrap (below).** Originally the first edit after a derive always
+  full-rendered, because the live DOM carried the derive strategy's
+  justification while windows rendered encoded. Max ruled that unacceptable
+  ("first-interaction friction equal to the difference between full render
+  latency and splice latency") and asked the obvious question: why not force
+  Verovio to use one break algorithm everywhere?
 - **NOT fixed by this chunk**: the user-`<pb>` giant-page quirk. A Ctrl+B page
   break still routes through the derive path (`layoutBreaks` + encoded), which
   paginates ONLY at encoded breaks → 2 giant pages on the sonata (probe
@@ -575,6 +581,73 @@ render uses **`breaks:'encoded'`** — the only mode that honors `<pb>`.
   by height itself (bake sb via smartSb0, render `'line'` to get height-derived
   pages, then union the user's `<pb>` positions into our page starts) — the
   same page-fit machinery that vertical justification would build on.
+
+## One break algorithm everywhere (2026-08-30) — the never-painted castoff bootstrap
+
+**Why it was needed.** Max challenged the claim that the strategies justify
+differently. Measured directly: on BYTE-IDENTICAL data (same `<sb>` pins, only
+the `breaks` option changed) `line` vs `encoded` moves 409 of 446 measures —
+median 26 units (~2.6 px), p90 121, max 515 (~52 px) — with identical
+pagination and identical measures per system. Adding the `<pb>` elements
+changes **0** measures, so the elements are inert and the ALGORITHM is the
+whole cause. Nor is it a section-break artifact: 85 of 118 lines have no
+encoded break or scoreDef anywhere near them and still average 77 units of
+drift. (`line` ≡ `smartSb0` exactly — which is why this hid behind C-A's
+parity claim. Also corrected: `breaks:'line'` DOES honor `<pb>`; the C-A note
+saying otherwise is wrong, so ownership never actually required the mode
+switch — it is just that `line` costs 1157 ms per full render vs `encoded`'s
+538 ms, and Max declined that regression.)
+
+**The fix.** Verovio can't castoff in `encoded` mode (it honors only encoded
+breaks), so SOMETHING must cast off once. The mistake was painting that pass.
+Now the derive render:
+
+1. loads the document with the castoff strategy — **loadData only, never
+   rendered to SVG, never painted**;
+2. adopts the partition via `getMEI({scoreBased:false})`, which returns
+   PAGE-BASED MEI (`<page>`/`<system>`) encoding exactly what castoff decided —
+   ~100 ms including parse, versus ~1830 ms for the old page-by-page SVG walk,
+   and byte-identical output (118 lines / 37 pages);
+3. paints the pinned `encoded` render of that partition.
+
+So every pixel the user ever sees comes from one algorithm, the first edit
+splices like any other, and the idle adoption walk disappears. Anything
+unreadable (getMEI failure, ids absent, overflow) falls back to painting the
+castoff layout and arming the old idle walk — i.e. exactly the previous
+behaviour.
+
+**Verovio's two spacings, seen in the extreme** (the `phase3_section_header`
+fixture: m1 = one whole note, m2 = empty with a forced section break, so both
+systems are stretched far beyond their natural width — Max flagged the visual
+diff and asked why). Same document, `line` byte-identical to `smartSb0`:
+
+| | smartSb0 / line | encoded |
+|---|---|---|
+| system 1 measure width | 18790 | 18790 (same) |
+| whole note from measure left | 1368 | **2935** |
+| whole note past the clef/meter block | 298 | **1865** |
+| system 2 (document-final) measure width | 18790 | **2553** |
+
+Two distinct Verovio behaviours, both mode-driven, neither ours:
+1. `encoded` leaves the DOCUMENT-FINAL system at its natural width instead of
+   stretching it across the page — conventional engraving, and invisible on
+   real scores (the sonata's systems are naturally near-full, max delta 516
+   units over 446 measures).
+2. Within a justified system the two modes distribute slack differently:
+   `smart` puts nearly all of it AFTER the first event, `encoded` puts some
+   BEFORE it. This is the same distribution difference measured document-wide
+   (median 26 units ≈ 2.6 px); it reaches ~157 px here only because a single
+   event is absorbing an entire page of slack. Baseline reseeded with Max's
+   approval; the exact internal rule was characterised, not isolated.
+
+**Measured (sonata):** first edit after a derive **1.2 s → 333 ms (splices)**;
+derive itself 1.2 s → ~2.0 s (one extra loadData); the ~1830 ms idle walk is
+gone. Load-plus-first-edit total work drops from ~4.2 s to ~2.3 s. Ownership
+and pagination are live the instant the derive finishes, rather than ~2 s
+later. Two gotchas worth remembering: `getMEI({pageNo:N, scoreBased:false})`
+returns an EMPTY string (ask for the whole document), and Verovio echoes our
+`hkl:` metadata without its `xmlns:hkl` declaration, so the output must have
+the prefix re-declared before parsing.
 
 ## Splice latency — where the time actually goes (2026-08-30 profile)
 

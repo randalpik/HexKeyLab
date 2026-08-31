@@ -7738,7 +7738,7 @@ export const FIXTURE_ASSERTIONS = {
         if (!m.deleteAtCursor()) return { ok: false, detail: 'delete rejected' };
         H.reRender();   /* refill path — adoption completes synchronously here */
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not active after the edit render (lastDeriveReason=' + pb.lastDeriveReason + ')' };
-        if (pb['adoption'] !== null) return { ok: false, detail: 'derive path taken (adoption re-armed) — expected a refill (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        if (pb.lastDeriveReason !== '') return { ok: false, detail: 'derive path taken — expected a refill (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         /* NOTE: lastRefillLines === 0 is the DESIRED outcome for an edit that
            breaks no line's legality — the partition is repaired, never
            re-derived (Max's ruling 2026-08-30). What matters here is that the
@@ -7784,11 +7784,11 @@ export const FIXTURE_ASSERTIONS = {
           m.setCursor(m.getMeasureStartCursor(1, 5), 1);
           if (!m.deleteAtCursor()) return null;
           H.reRender();
-          if (pb['adoption'] !== null) return null;   // derive taken — expected refill
+          if (pb.lastDeriveReason !== '') return null;   // derive taken — expected refill
           m.setCursor(m.getMeasureStartCursor(1, 5), 1);
           m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'b', accid: '', oct: 4, midi: 59, colorHex: '#888', lightColorHex: '#fff', velocity: 80 }], duration: '4', dots: 0 });
           H.reRender();
-          if (pb['adoption'] !== null) return null;
+          if (pb.lastDeriveReason !== '') return null;
           return pb['startIds'].join();
         };
         const A = roundTrip();
@@ -7894,9 +7894,17 @@ export const FIXTURE_ASSERTIONS = {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
+        /* Engage ownership first: the runner's universal invariants (roundtrip,
+           cursor trace) re-render between setup and assertion, so the state
+           here is not necessarily what setup left. Without this the guard test
+           can run against a partition that is already stale for other reasons. */
+        for (let i = 0; i < 3 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         if (m.togglePageBreakAt(6) !== true) return { ok: false, detail: 'togglePageBreakAt(6) did not insert a <pb>' };
         H.reRender();
-        if (pb['adoption'] === null) return { ok: false, detail: 'derive path not taken (adoption not re-armed) — the refill accepted a user-break change' };
+        if (pb.lastDeriveReason !== 'user breaks changed') {
+          return { ok: false, detail: 'expected the refill to refuse a user-break change; lastDeriveReason=' + JSON.stringify(pb.lastDeriveReason) };
+        }
         const pages = document.querySelectorAll('#score .score-page').length;
         return pages === 2 ? { ok: true } : { ok: false, detail: 'expected 2 pages after the <pb>, got ' + pages };
       })()` },

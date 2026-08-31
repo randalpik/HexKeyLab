@@ -48,7 +48,16 @@ for (let p = 1; p <= tkA.getPageCount(); p++) {
 }
 
 let svg;
-if (mode === 'encoded') {
+if (mode === 'smartSb0' || mode === 'auto') {
+  /* Un-pinned, exactly as a derive render draws it. */
+  const tkD = new V.toolkit();
+  tkD.setOptions(mode === 'smartSb0'
+    ? { ...r['buildOptions']('auto'), breaks: 'smart', breaksSmartSb: 0 }
+    : r['buildOptions']('auto'));
+  if (!tkD.loadData(mei)) return { error: mode + ' loadData failed' };
+  out.pages = tkD.getPageCount();
+  svg = tkD.renderToSVG(PAGE, {});
+} else if (mode === 'encoded') {
   const pinnedPb = lb.injectPins(mei, startIds, new Set(pageStarts));
   const tkB = new V.toolkit();
   tkB.setOptions({ ...r['buildOptions']('auto'), breaks: 'encoded' });

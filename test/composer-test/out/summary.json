@@ -3,7 +3,7 @@
   "fixtures": 339,
   "passed": 339,
   "failed": 0,
-  "elapsedMs": 265768,
+  "elapsedMs": 276486,
   "results": [
     {
       "name": "emptyDoc",
@@ -1846,7 +1846,7 @@
         "pages": 1,
         "zoom": 100,
         "pageScale": 1,
-        "scrollLeft": 146,
+        "scrollLeft": 0,
         "scrollTop": 0,
         "cardW": 2161,
         "cardH": 2796,

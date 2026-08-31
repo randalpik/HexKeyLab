@@ -333,6 +333,18 @@ class Renderer {
     return new XMLSerializer().serializeToString(mdoc);
   }
 
+  /** Which breaks strategy lets Verovio CAST OFF this document, and the data
+   *  to feed it. Section/system breaks alone → 'smart' + breaksSmartSb:0
+   *  (honors them and auto-wraps). Page breaks → bake the natural system
+   *  breaks first, then 'encoded' (honors pages + the baked wraps). No manual
+   *  breaks → plain 'auto'. This is the pass that DECIDES a partition; with
+   *  line/page ownership it is a bootstrap whose output is read, not painted. */
+  private castoffPlan(mei: string): { data: string; strategy: 'auto' | 'smartSb0' | 'encoded' } {
+    if (mei.includes('<pb')) return { data: this.layoutBreaks(mei), strategy: 'encoded' };
+    if (mei.includes('<sb')) return { data: mei, strategy: 'smartSb0' };
+    return { data: mei, strategy: 'auto' };
+  }
+
   /** Resolves once Verovio WASM is ready. */
   ready(): Promise<void> {
     return this.readyPromise;
@@ -480,27 +492,15 @@ class Renderer {
    *  page 1 get real SVG; the rest are fixed-size placeholders mounted on
    *  demand (T2.1, docs/composer-render-perf.md). The string-entry path
    *  renders every page (legacy tooling asserts on the full DOM). */
-  private renderPage(mei: string, virtualize: boolean, forcedStrategy?: 'line' | 'encoded'): void {
+  private renderPage(mei: string, virtualize: boolean, forcedStrategy?: 'auto' | 'smartSb0' | 'line' | 'encoded'): void {
     /* The DOM this call replaces is the only one pageVirt could describe. */
     this.disposePageVirt();
-    /* Choose a breaks strategy. Section/system breaks alone → single-pass
-       'smart' (honors them + auto-wraps). Page breaks → bake the natural
-       system breaks first, then 'encoded' (honors pages + the baked wraps).
-       No manual breaks → plain 'auto'. A refill render (page line-break
-       ownership) forces its strategy — its pins are already in the data, so
-       the sniffing (and the layoutBreaks second layout pass) must not run. */
-    let data = mei;
-    let strategy: 'auto' | 'smartSb0' | 'line' | 'encoded';
-    if (forcedStrategy) {
-      strategy = forcedStrategy;
-    } else if (mei.includes('<pb')) {
-      data = this.layoutBreaks(mei);
-      strategy = 'encoded';
-    } else if (mei.includes('<sb')) {
-      strategy = 'smartSb0';
-    } else {
-      strategy = 'auto';
-    }
+    /* A refill or pinned render forces its strategy — its pins are already in
+       the data, so the sniffing (and layoutBreaks' second layout pass) must
+       not run. Otherwise let castoffPlan choose. */
+    const plan = forcedStrategy ? { data: mei, strategy: forcedStrategy } : this.castoffPlan(mei);
+    const data = plan.data;
+    const strategy = plan.strategy;
     const options = this.buildOptions(strategy);
     this.tk!.setOptions(options);
     if (!this.tk!.loadData(data)) {
@@ -812,13 +812,8 @@ class Renderer {
         console.info('[page-breaks] refill unavailable for this edit — derive render');
       }
     }
-    this.renderPage(preMei ?? model.serialize(heji, viewStaves), true);
+    this.derivePageRender(model, viewStaves, preMei, heji);
     this.lastPageSpliced = false;
-    if (viewStaves == null && this.pageVirt) {
-      this.pageBreaks.armAdoption(model, this.pageVirt.pageCount, this.pageBreaksCtx());
-    } else {
-      this.pageBreaks.invalidate();   // filtered view: partition would describe a subset
-    }
     return true;
   }
 
@@ -854,6 +849,55 @@ class Renderer {
     if (!model) return null;
     const mei = model.serialize({ hejiEnabled: model.getHejiEnabled() }, null);
     return this.pageBreaks.pinRenderMei(mei);
+  }
+
+  /** Derive render: let Verovio cast off, ADOPT that partition, and paint the
+   *  PINNED render of it — so the castoff pass is an internal bootstrap and
+   *  every pixel the user ever sees comes from the same break algorithm as the
+   *  splice windows ('encoded'). Without this the derive painted castoff
+   *  spacing while windows rendered encoded, and the first edit after every
+   *  load/zoom/fallback had to full-render just to reconcile the two (Max,
+   *  2026-08-30: that is first-interaction friction, not a harmless detail).
+   *
+   *  Cost on the sonata: first paint 1055 ms → ~1630 ms (one extra loadData),
+   *  against removing a ~1830 ms idle SVG walk entirely — 44 % less total work
+   *  — and removing ~650 ms from the first edit. Adoption reads the layout via
+   *  page-based getMEI (~100 ms), which is what makes this affordable.
+   *  Anything unreadable falls back to painting the castoff layout and arming
+   *  the old idle walk, i.e. exactly today's behaviour. */
+  private derivePageRender(
+    model: ComposerModel, viewStaves: number[] | null, preMei: string | null,
+    heji: { hejiEnabled: boolean },
+  ): void {
+    const data = preMei ?? model.serialize(heji, viewStaves);
+    if (viewStaves != null) {
+      /* Filtered view: a partition would describe a subset of the staves. */
+      this.renderPage(data, true);
+      this.pageBreaks.invalidate();
+      return;
+    }
+    const plan = this.castoffPlan(data);
+    /* Bootstrap pass: load only — never rendered to SVG, never painted. */
+    this.tk!.setOptions(this.buildOptions(plan.strategy));
+    if (this.tk!.loadData(plan.data) && this.pageBreaks.adoptFromCastoff(model, this.tk!)) {
+      const pinned = this.pageBreaks.pinRenderMei(data);
+      if (pinned !== null) {
+        this.renderPage(pinned, true, 'encoded');
+        this.pageBreaks.verifyRenderedPartition(
+          this.container!, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
+        const spill = this.overflowingPage();
+        if (spill === 0) return;
+        console.warn('[page-breaks] adopted pagination overflows page ' + spill + ' — painting Verovio\'s own layout instead');
+        this.pageBreaks.invalidate();
+      }
+    }
+    /* Fallback: paint the castoff layout itself and adopt from it lazily. */
+    this.renderPage(plan.data, true, plan.strategy);
+    if (this.pageVirt) {
+      this.pageBreaks.armAdoption(model, this.pageVirt.pageCount, this.pageBreaksCtx());
+    } else {
+      this.pageBreaks.invalidate();
+    }
   }
 
   /** Context the page system splicer drives Verovio + the post passes through. */

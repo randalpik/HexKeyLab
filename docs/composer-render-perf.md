@@ -171,6 +171,16 @@ on mount (viewBox growth), shifting pages below it; scroll-mode full engrave
   now per-page), and every page edit was deferred behind the busy badge
   (predictNextRenderHeavy now predicts light after a splice). Remaining levers
   with measurements in composer-page-splice-design.md.
+- [x] **T3.2d One break algorithm everywhere** — SHIPPED 2026-08-30. The
+  castoff pass that chooses the partition is now an internal bootstrap
+  (`loadData` only, never painted); the partition is read via page-based
+  `getMEI({scoreBased:false})` in **98 ms instead of a 1830 ms SVG walk**
+  (byte-identical), and the pinned `encoded` render is what gets painted. The
+  first edit after a derive therefore **splices at 333 ms instead of
+  full-rendering at ~1.2 s**, and the idle adoption walk is gone entirely.
+  Cost: first paint 1.2 s → ~2.0 s (one extra loadData) — accepted by Max as
+  the one place additional time is acceptable, verified to happen once per
+  derive with no idle tail. Total work per load-and-first-edit ~4.2 s → ~2.3 s.
 - [ ] **T3.2c Cascades + cross-page moves (Phase C-B2b)** — dy-translate of
   following systems (the window MEASURES the new spacing, so dy is known),
   line-count-changing splices (replace N systems with M), page-boundary
@@ -275,3 +285,10 @@ on mount (viewBox growth), shifting pages below it; scroll-mode full engrave
   Suite 339/339 under HKL_INDEX_CHECK. Verovio is only 58 ms of a 313 ms
   splice — the rest is whole-document bookkeeping (see the design doc's
   latency table for the remaining levers).
+- 2026-08-30 — **T3.2d shipped**: one break algorithm everywhere. Measured
+  proof that Verovio spaces identical data differently per breaks mode (409 of
+  446 measures, median 2.6 px, max 52 px; the `<pb>` elements themselves are
+  inert), so the derive render's castoff output is no longer painted — it is
+  loaded, read via page-based getMEI, and replaced by the pinned encoded
+  render. First edit after a derive: ~1.2 s full render → 333 ms splice. Four
+  page-mode baselines reseeded with Max's approval.

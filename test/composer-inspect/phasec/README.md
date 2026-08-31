@@ -106,3 +106,30 @@ Pagination-ownership + latency probes (2026-08-30):
   the pages around the edit first, and runs a throwaway edit before measuring
   (the first edit after a derive always full-renders). This is the probe that
   answers "why isn't a splice as fast as editing a short score".
+
+Break-mode forensics + the castoff bootstrap (2026-08-30):
+
+- **cb-modes.js** — renders the same document as `auto` / `smartSb0` / `line` /
+  `encoded` and compares per-measure x and width, with a percentile
+  distribution. The evidence that the modes space identically-broken music
+  differently (median 26 units, max 516) and that `line` ≡ `smartSb0`.
+- **cb-whymode.js** — isolates MODE from CONTENT: same pinned data under
+  `line` vs `encoded` (409/446 measures differ) versus `encoded` with and
+  without `<pb>` (0 differ). Proves the break algorithm is the cause and the
+  page-break elements are inert.
+- **cb-sbcorrelate.js** — classifies every line by its relation to document
+  `<sb>`/`<pb>` and mid-piece `<scoreDef>` landmarks, to test whether the
+  spacing difference is a section-break artifact. It is not: 85 of 118 lines
+  are "plain" and still drift.
+- **cb-linepb.js** — does `breaks:'line'` honor `<pb>`? It does (pagination
+  follows the pins exactly, spacing unchanged) — correcting the C-A note.
+- **cb-getmei.js / cb-tkapi.js / cb-pagebased.js** — the getMEI investigation:
+  call shapes, what this build exposes, and the decisive check that page-based
+  `getMEI({scoreBased:false})` yields a partition byte-identical to the SVG
+  walk in ~98 ms instead of ~1830 ms.
+- **cb-wholenote.js** — rebuilds the `phase3_section_header` fixture and
+  measures the whole-note placement and system widths in each mode (the
+  extreme case Max flagged). Run with `--no-sonata`.
+- **cb-loadcost.js** — forces three derive renders and reports wall time,
+  ownership state, whether an idle walk was armed, and whether the first edit
+  afterwards splices. The check that the extra first-paint cost happens once.
