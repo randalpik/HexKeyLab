@@ -21,12 +21,25 @@ the partition is an internal bootstrap that is never painted.** Status:
 2026-08-30** (`apps/composer/src/render/pagesplice.ts`, see "Implementation
 (Phase C-B v1)"); reflow made CONSERVATIVE and **pagination ownership (Phase
 C-B2a) IMPLEMENTED 2026-08-30** (`<pb>` pins + `breaks:'encoded'`). On the
-sonata: 6 of 8 battery edits splice at **407–544 ms** (all reference-clean at
-4 units), the remaining full renders fell to ~1.1 s, and a spliced edit is
-313 ms of which Verovio is 58 ms. Still open (C-B2b): dy-cascades, moving
-systems between pages, and the user-`<pb>` giant-page quirk.
+sonata: 7 of 8 battery edits splice (the 8th is the by-design section-header
+skip), all reference-clean at 4 units, and the first edit after a derive
+splices instead of full-rendering. **Phase D — making the edit path O(edit)
+rather than O(document) — is largely IMPLEMENTED 2026-08-30**: a steady-state
+spliced edit is **206 ms**, down from 308, of which 59 ms is Verovio; per-edit
+`querySelectorAll` fell 31 969 → ~3 400 calls and `XMLSerializer` 495 → 54, so
+the bookkeeping now scales with the edit rather than the score. See "Phase D"
+and the TODO section for what remains.
 
 ## Core idea: greedy refill, Verovio decides
+
+> **SUPERSEDED (2026-08-30) — kept for the reasoning trail.** Verovio no
+> longer decides anything about breaks: Composer owns the line partition AND
+> the pagination, and an edit REPAIRS the existing partition rather than
+> re-deriving it (a greedy re-derivation made edits irreversible — see
+> "Reflow semantics (current)"). The window mechanism below is still how a
+> system gets re-engraved; the decision-making described here is not.
+> Current behaviour: "Reflow semantics (current)", "Implementation (Phase C-A
+> / C-B v1 / C-B2a)", and "One break algorithm everywhere".
 
 The unit is the **system**. An edit does not "patch" the edited system's old
 measure set — it **re-lays the system from its start measure and lets Verovio
@@ -60,6 +73,12 @@ does any global balancing, the local recompute diverges and the gate fails —
 this is the make-or-break question, tested before any implementation.
 
 ## Mechanics
+
+> **PARTLY SUPERSEDED (2026-08-30)** — read against the Implementation
+> sections. Notably: gaps needed no synthetic-spacer transfer (pin-anchored
+> windows reproduce them exactly); the cascade is not "off the hot path"
+> because a splice is now ~300 ms synchronous; and the fallback list has
+> grown (see the TODO section).
 
 - **Per-system index** (captured at full render, updated by splices): for each
   system — page, measure ids, per-measure x/width, system bbox y/height, and
@@ -684,66 +703,343 @@ between ~1.2 s and ~300 ms):
    splices run synchronously with no badge flash — mirroring the scroll path's
    `willSplice` heuristic.
 
-Remaining levers, measured, in size order (none implemented yet):
-- **`cursor.update` 57 ms / 2 calls** — the same cursor state is rebuilt twice
-  per edit (render path + state-change path), and each rebuild scans the whole
-  document's measures. Deduping touches the input pipeline, so it is Max's
-  call.
-- **`querySelectorAll` 30 ms / ~32 k calls** — dominated by `expandForSpanners`
-  rescanning all 446 measures on every iteration, twice per edit (naturals
-  window + splice window). A shared note→measure index would cut most of it.
-- **Sig diff 21 ms / 495 serializations** — could take the model's
-  `renderDirty` as a COST hint the way the scroll splicer does (with the
-  `HKL_INDEX_CHECK` "scoped == full" gate that pattern requires).
-- **`model.deleteAtCursor` 45 ms** — B3 territory (normalizePlaceholdersAll is
-  18 ms of it), unchanged by this work.
+## Phase D — make the EDIT PATH O(edit), not O(document)
 
-## Remaining for Phase C-B2b (cascades + cross-page moves)
+**The diagnosis (Max, 2026-08-30, rejecting a list of 15 ms shavings as a
+strategy): rendering is incremental now; everything wrapped around it is still
+whole-document.** Per keystroke on the sonata, regardless of what changed:
 
-1. ~~k=87 class~~ — RESOLVED by spike 5: it was smartSb0's contextual fit
-   threshold; verbatim display + our fit rules make it unreachable.
-1b. ~~Encoded respacing acceptance~~ — MOOT: C-A displays via breaks:'line',
-   pixel-exact vs smartSb0 (max delta 0.0 on the sonata battery).
-1c. **FIT_MAX/MIN_FILL tuning to taste** (still open, Max's call): 1.2/0.7
-   shipped; sigW is now measured per refill window (not the constant 900).
-   Larger FIT_MAX = denser lines and fewer first-edit re-breaks vs the
-   adopted Verovio partition; smaller = airier. NOW ALSO the C-B splice
-   hit-rate lever: the first edit in a region re-breaks it ('line count
-   changed' → full render); a "prefer the current boundary when it still
-   satisfies the fill rules" bias would make most first edits splice too.
-2. ~~Pin lifecycle design~~ — RESOLVED: pins are render-time injections into
-   the serialized MEI only; nothing to strip anywhere; recomputed per render;
-   user breaks honored as hard line starts and never touched.
-3. ~~Gap fidelity under pinning~~ — CONFIRMED by `cb-window.js`: inter-staff
-   gaps, hanging extents and consecutive-system spacing all delta 0.0 in
-   pin-anchored windows.
-4. **dy-cascade + page-boundary moves + pagination ownership** (the C-B2
-   core): v1 splices only when nothing else moves. A height-changing edit
-   needs the dy-translate of following systems (Verovio's stacker is
-   content-driven — the window MEASURES the new spacing, so the dy is known),
-   page overflow/underflow needs the page-granularity cascade, and both need
-   pagination to be owned (`<pb>` pins + our height-fit rule) so a full
-   render agrees by construction — which would also fix the pre-existing
-   giant-page quirk of user-`<pb>` docs. Line-count-changing refills splice
-   under the same machinery (replace N systems with M).
-5. **Boundary courtesy behavior** — a boundary moving next to a clef/key
-   change re-spaces the PREVIOUS line's end-of-line courtesy signatures
-   (~33 units observed on the sonata). v1 is safe (the context-line sanity
-   check catches the divergence and full-renders); C-B2 should re-splice k−1
-   instead of falling back.
-6. **Section-boundary zones + line 0** — windowed renders diverge there
-   (probe k=59 / k=0); v1 excludes line 0 and lets the context check refuse
-   the rest. Root-causing the k59 divergence (likely the k87 family: castoff
-   state at a mid-piece scoreDef) would extend splicing into section zones.
-7. **First-page credits** — composer/footer changes now derive via headSig;
-   fine (rare op), noted for completeness.
-8. **Ensure-mount before the mounted gate** (v1.1 nicety): an edit whose
-   spliced/context lines sit on unmounted placeholder pages skips to a full
-   render ('changed line not mounted' — seen when a probe edits far from the
-   viewport). Interactively the IO keeps ±1 page mounted around the cursor,
-   so this rarely bites; when `pageVirt.tkCurrent`, the splicer could mount
-   the missing pages from the pre-edit layout (~50 ms each) instead of
-   skipping.
+- **495 `XMLSerializer` calls** — the refill re-serializes all 446 measures to
+  diff signatures (21 ms)
+- **26 `allMeasures()` calls** — each a fresh `querySelectorAll("measure")`
+  over the entire document
+- **~32 000 `querySelectorAll` calls** (30 ms) — mostly `expandForSpanners`
+  rescanning all 446 measures INSIDE its growth loop, twice per edit, plus
+  `computeUserBreakSig` / `computeHeadSig` / `computeInteriorSig` /
+  `hardStartIds` each walking the whole section
+- **`cursor.update` twice** (57 ms), each rebuilding from a full-document scan
+
+That is ~130 ms of the 300 ms, and none of it depends on the edit. It is the
+entire reason a one-page score feels instant and a 446-bar score does not —
+and why per-item shavings are the wrong instrument. **Verovio is 58 ms and is
+already incremental**; it is not the bottleneck. (Max's framing: a renderer
+does not re-serialize its scene graph to text every frame. We do, per
+keystroke.)
+
+**The work, in size order:**
+
+| step | saves | status |
+|---|---|---|
+| cheaper whole-document primitives (`layerInMeasure`, `flatChildren`, `expandForSpanners`/`ForEndings`, `normalizePlaceholders`) | ~65 ms | **DONE** — see "Phase D pass 1" |
+| cached cursor-stop enumeration (`flatChildren`), mutation-invalidated | ~20 ms | **DONE** — see "Phase D pass 2" |
+| incremental sig baseline — re-serialize only changed measures | ~20 ms | **DONE** — same mutation-tracking mechanism, in `PageLineBreaks` |
+| version-stamped structural signatures instead of whole-section walks | ~10 ms | **not worth it** — measured: the three section walks (`headSig`/`interiorSig`/`userBreakSig`/`hardStartIds`) are a few hundred cheap iterations each, not the 10 ms the plan assumed |
+| scope `normalizePlaceholdersAll` to the dirty range | ~15 ms | OPEN (item A7) — halved already by hoisting its per-layer children snapshot; scoping needs the layer-level dirty set |
+| bounded-delta legality guard — skip the naturals render entirely when the line's fill margin exceeds the maximum width the edit could add | ~30 ms | OPEN (item A8) — needs a sound upper bound on the width an edit can add; naturals are already cached per measure and only dirty ids are re-measured |
+| smaller splice window + fewer `getBBox` flushes in the splice | ~30 ms | OPEN (item A6) — measured at 17 ms, not 30 |
+
+**Landing zone: ~130 ms, and flat in document size** — a 2000-bar score would
+cost what a 50-bar one does. That is the property that matters; the absolute
+number is secondary.
+
+### The mechanism that made caching possible: exact mutation invalidation
+
+Both caches below tried the obvious thing first — invalidate at
+`invalidateMeterCache`, the model's existing single invalidation point — and
+the `HKL_INDEX_CHECK` gate immediately proved it unsound: `insertWithSplit`
+reads `flatChildren` in the MIDDLE of a mutation, between its own DOM writes
+and its closing normalize. The design doc's own warning ("mutation code reads
+it mid-operation") was exactly right, and no amount of discipline auditing
+would have made a call-site-based scheme safe.
+
+The fix is to stop relying on discipline: a **`MutationObserver` on the live
+document**, whose `takeRecords()` drains SYNCHRONOUSLY and therefore sees every
+DOM write, including ones made between two reads inside one operation. The
+observer callback can drain the queue first on its microtask, so a `fired` flag
+covers that path too; neither can be missed. Document-object swaps (load, undo,
+redo) are detected by identity and re-arm. Consequences:
+
+- `ComposerModel.flatChildren` caches per voice and clears whenever the document
+  changed since the last call. Correct by construction rather than by audit —
+  and strictly safer than the discipline it replaces.
+- `PageLineBreaks` keeps `sigEl` (element identity per captured id) alongside
+  `sig`, folds records into a dirty-MEASURE set, and reuses the captured string
+  for any measure that is still the same element and was never mutated.
+  Mutations above measure level (a `<section>` childList insert/remove, a
+  mid-piece scoreDef, the head) set "assume all dirty", so the measure SET
+  changing can never be mistaken for a clean document.
+
+Both keep their `HKL_INDEX_CHECK` verifications permanently — the model
+re-enumerates and compares on every cache hit, the owner re-serializes the whole
+document and compares every string — so the 339-fixture suite is a standing gate
+on the mechanism, not a one-time check.
+
+### Phase D pass 1 (2026-08-30) — cheaper primitives, 308 → 243 ms
+
+No caching, no semantic change; every one of these was a whole-document
+primitive doing more DOM work per element than it needed:
+
+- **`ComposerModel.layerInMeasure`** — was `measure.querySelectorAll('staff')`
+  + `staff.querySelectorAll('layer')`, i.e. a full SUBTREE walk (every note in
+  the measure) to find an element two levels down. MEI nests
+  `measure > staff > layer`, so it now scans direct children, with the subtree
+  query kept as a fallback for unexpected nesting. This one call is inside
+  `flatChildren`, `tieEventSequence`, `allLayers` and `getVoiceLength` — it ran
+  thousands of times per keystroke.
+- **`flatChildren`** — `shouldEmitWrapper` re-derived the previous measure's
+  layer, its content children, and its fullness on every measure, so the walk
+  cost three `layerInMeasure` lookups and up to three `contentChildren` scans
+  per measure. It now carries that state forward, keeping the previous layer's
+  fullness lazily memoised exactly as `layerIsFull` was.
+- **`expandForSpanners`** — rebuilt its whole-document note-id map and
+  re-queried every measure's spanners INSIDE its growth loop, so one call was
+  O(measures × iterations) `querySelectorAll`s. The DOM is now read once (a
+  single union query per measure) into resolved `[min,max]` extents plus
+  per-measure tie edges, and the growth loop is pure array arithmetic.
+- **`expandForEndings`** — same shape: a wrapper→index-span map built in one
+  pass instead of rescanning all measures per candidate per iteration.
+- **`normalizePlaceholders`** — materialised `layer.children` three times per
+  layer (content sum, mRest test, idempotency check) across ~1800 layers.
+
+Measured on the sonata (steady-state spliced edit, `cb-scale.js`):
+`querySelectorAll` **31 969 → 3 428 calls / 33.3 → 9.5 ms**, `cursor.update`
+**62.6 → 22.4 ms**, `deleteAtCursor` 51 → 32.7, `normalizePlaceholdersAll`
+17.1 → 11.7. Wall **308 → 243 ms**. Suite 339/339 under `HKL_INDEX_CHECK`.
+
+### Phase D pass 2 (2026-08-30) — the caches, 243 → 206 ms
+
+- **Cursor-stop cache.** One edit asks for `flatChildren` ~15 times:
+  `cursor.update` resolves its anchor through five separate model queries
+  (`isCursorAtPastEnd`, `getCurrentElement`, `getNextElement`,
+  `getVoiceLength`, `getStaffIdAtCursor`) and runs twice per edit, and
+  `clampCursors` asks once per voice. None of those mutate the document, so
+  they now share one enumeration. `buildVoiceIndex` reads through the same
+  accessor; `assertVoiceIndexConsistent` deliberately enumerates FRESH so that
+  gate still cross-checks the index against the document rather than against
+  the cache. **`cursor.update` 22.4 → 2.3 ms.**
+- **Incremental sig baseline.** The refill's prefix/suffix diff re-serialized
+  all 446 measures every keystroke to find the changed run. It now recomputes
+  only measures the document actually mutated. This is the item that makes the
+  diff O(edit) rather than O(document) — the constant saving is secondary to
+  the flatness.
+
+Wall **243 → 206 ms**; Verovio is 59 ms of that (`renderToSVG` 42 +
+`loadData` 17), so our own overhead is down to ~150 ms from ~250.
+
+`allMeasures()` is cached on the same signal (~17–26 whole-document
+`querySelectorAll`s per edit), which completes the plan's "maintained model
+indices" item as far as it is worth taking: an id→index map was NOT added,
+because with the list cached the remaining lookups are a handful of `indexOf`s,
+not a measured cost.
+
+### Behaviour gate — the sonata battery run on BOTH code states
+
+Stash the source, re-run `cb-splice-battery.js`, unstash. Splice/skip outcome is
+identical edit-for-edit (7 of 8 splice; the section-header line is the by-design
+skip), reference parity holds across all 37 pages / 446 measures in both (max
+4 units, max spacing 9), and every edit got faster:
+
+| edit | before | after |
+|---|---|---|
+| delete-mid-line | 402 ms | 358 ms |
+| reinsert-mid-line | 428 | 322 |
+| delete-line-start | 492 | 460 |
+| insert-rest-ripple | 607 | 547 |
+| edit-near-volta | 538 | 464 |
+| edit-section-header-zone (skips) | 1353 | 1068 |
+| edit-doc-end | 419 | 370 |
+| edit-page-first | 467 | 384 |
+
+(These walls exceed `cb-scale`'s 206 ms because the battery mounts every page
+and runs a whole-document reference compare per edit.)
+
+**Unrelated finding, worth its own look:** two battery entries report
+`editOk: false` — `reinsert-mid-line` and `insert-rest-ripple`, whose insert
+returns false after their delete. It is **pre-existing** (identical on the
+stashed baseline) and the probe does not assert on it, so it is not a Phase D
+regression — but an insert silently returning false at measure 100/150 is
+either a real model bug or a probe that mis-sets its cursor, and nothing
+currently gates it.
+
+**Scope boundary (Max, 2026-08-30, permanent): Verovio renders our scores;
+we do not replicate musical spacing.** "Musical spacing is incredibly complex
+in ways I don't even fully comprehend, and trying to replicate it ourselves
+for tens of ms is always a losing battle." So owning intra-measure spacing is
+NOT a future phase and should not be proposed again. The division of labour is
+settled: **we own break decisions (lines, pages) and DOM surgery; Verovio owns
+everything inside a system.**
+
+That fixes the latency floor at the cost of one small window engrave per edit
+— measured flat at ~17 ms `loadData` regardless of document length, plus
+whatever the window's own musical density costs to draw. Every remaining
+millisecond therefore has to come from OUR overhead: the O(document) tax
+(Phase D), the mounted-DOM layout-flush cost, and the number of measurements
+the splice takes. ~120–150 ms flat in document size is the realistic target,
+and flatness is the property that matters — a 2000-bar score behaving like a
+200-bar one is what makes engraving full pieces viable.
+
+### Scaling baseline (2026-08-30, `cb-scale.js`) — measured, not hypothesised
+
+Same edit (Backspace on a note mid-document, through the real input path,
+steady-state second edit), three document sizes, identical instrumentation:
+
+| | empty | 1 page | sonata |
+|---|---|---|---|
+| measures / systems | 1 / 1 | 16 / 3 | 446 / 118 |
+| pages in DOM (mounted) | 1 (1) | 1 (1) | 37 (2) |
+| SVG elements in `#score` | 119 | 930 | 3731 |
+| outcome | derive | spliced | spliced |
+| **WALL** | **30 ms** | **66 ms** | **303 ms** |
+| `renderer.renderComposer` | 29 | 59 | 155 |
+| ├ `trySplice` | 0 | 45 | 102 |
+| └ `tryRefill` | 0 | 14 | 52 |
+| `cursor.update` | 1 | 4 | **54** |
+| `model.deleteAtCursor` | 0 | 1 | **52** |
+| `verovio.renderToSVG` | 2 | 17 | 42 |
+| `verovio.loadData` | 22 | 22 | **17** |
+| `querySelectorAll` (ms / calls) | 0 / 85 | 1 / 1 475 | **31 / 31 969** |
+| `XMLSerializer` (ms / calls) | 0 / 5 | 1 / 21 | **22 / 495** |
+| `getBBox` (ms / calls) | 0 / 4 | 5 / 160 | **18 / 199** |
+| `normalizePlaceholdersAll` | 0 | 0 | 17 |
+
+**A one-page splice is already 66 ms — instant by our standard.** The whole
+problem is the 237 ms the sonata adds, and it decomposes cleanly:
+
+1. **~150 ms is pure O(document) tax** — `cursor.update` +50, model mutation
+   +51, `querySelectorAll` +30 (21× the calls), sig diff +21 (24× the
+   serializations). All of it eliminable by Phase D; none of it depends on the
+   edit.
+2. **~25–40 ms is layout-flush cost proportional to MOUNTED DOM** — the
+   decisive tell: `getBBox` call count barely grows (160 → 199, +24 %) while
+   its time more than triples (5 → 18 ms), because each flush now lays out 4×
+   the elements (930 → 3731). This is the one cost that survives an O(edit)
+   conversion; it scales with mounted pages (2 here), not document length, so
+   mounting less and measuring less are the levers.
+3. **~25 ms is musical density, not size** — `renderToSVG` grows 17 → 42
+   because the sonata's window holds real chords, slurs and beams while the
+   synthetic page holds plain quarters. A dense one-page score would pay this
+   too. **`loadData` is FLAT (22 → 17 ms)**: the window is the same size
+   regardless of document length.
+
+**So Verovio genuinely does not scale with document size — our bookkeeping
+does.** Projected after Phase D: sonata ≈ 150 ms, and ≈ 120 ms with the
+bounded-delta guard removing the naturals render. Beyond that the remaining
+costs are the mounted-DOM layout flushes (2) and the window's own drawing
+cost (3); the engraver stays Verovio's job by ruling, so the lever is always
+reducing our overhead, never replacing the spacing.
+
+(Note the `empty` column measures a DERIVE, not a splice — a single-line
+partition is never owned by design — so 30 ms is the floor cost of a full
+render on a trivial document, not a splice baseline.)
+
+## TODO — current state (updated 2026-08-30, end of session)
+
+**Resolved this session, no longer open:** the k=87 castoff-threshold class;
+pin lifecycle (render-time injection only); gap fidelity under pinning
+(delta 0.0); pagination ownership (`<pb>` pins + `encoded`); the
+encoded-respacing question (measured, reviewed by Max, four baselines
+reseeded — it is ACCEPTED, not moot); reflow reversibility (conservative
+repartition); and the first-edit-after-derive full render (never-painted
+castoff bootstrap).
+
+### A. Latency — the main thrust
+
+- [~] **A1. Phase D: make the edit path O(edit)** — LARGELY DONE 2026-08-30
+      (passes 1–3 above). Sonata steady-state splice **308 → 206 ms**, and the
+      per-edit work is now edit-scaled rather than document-scaled:
+      `querySelectorAll` 31 969 → ~3 400 calls, `XMLSerializer` 495 → 54 calls,
+      `cursor.update` 62.6 → 1.8 ms. Of the 206 ms left, **59 ms is Verovio**
+      (the documented floor). Remaining O(document) work is small and itemised
+      as A7/A9 below; the rest of the gap to the ~130 ms landing zone is A6
+      (splice DOM measurement) and A8 (the second Verovio round-trip).
+- [ ] **A7. Scope `normalizePlaceholdersAll` to the changed layers** (~8 ms) —
+      it still walks every layer in the document (~1800 on the sonata). Halved
+      already by hoisting its per-layer children snapshot; scoping needs a
+      layer-level dirty set, which the model's mutation tracker
+      (`documentVersion`) can now provide soundly. Gate: under
+      `HKL_INDEX_CHECK`, run the scoped pass then a full pass and assert the
+      full pass rebuilds nothing.
+- [ ] **A8. Bounded-delta legality guard** (~30 ms) — skip the naturals render
+      when the edited line's fill margin provably exceeds the width the edit
+      could have added, removing one of the two Verovio round-trips. Needs a
+      sound upper bound on that width; naturals are already cached per measure
+      and only dirty ids are re-measured, so this is the last structural win in
+      the refill.
+- [ ] **A9. Cache the spanner/ending extents** (~5 ms) — `expandForSpanners`
+      no longer rescans inside its growth loop (pass 1), but still reads every
+      measure once per call and runs ~3 times per edit. The same
+      mutation-tracked caching would make it O(edit); modest payoff, so it is
+      below A6/A8.
+- [x] **A2. `layoutBreaks` → page-based `getMEI`** — DONE 2026-08-30. The
+      page-based read is now the shared helper `partitionFromLayout(tk)`
+      (linebreaks.ts), used by BOTH `adoptFromCastoff` and `layoutBreaks`; the
+      page-by-page `renderToSVG` walk survives in `layoutBreaks` only as the
+      fallback for unreadable `getMEI` output. A user-`<pb>` document's derive
+      no longer pays the ~1.8 s SVG walk. Prerequisite for C1, now met.
+- [ ] **A3. `cursor.update` dedupe + measure-list cache** (~40 ms/edit) —
+      **blocked on Max**: collapsing the two calls per edit touches the
+      `onStateChange`-before-`onChange` ordering the bridge broadcast relies
+      on.
+- [ ] **A4. Partition cache keyed by (doc signature, zoom, pageScale)** —
+      a zoom round-trip or mode-cache miss currently re-runs the castoff pass
+      (~1055 ms) to rediscover a partition we already had.
+- [ ] **A5. Worker-offloaded castoff (T2.3)** — the castoff `loadData` is the
+      largest single remaining block and is pure Verovio on the main thread.
+      Only a worker removes it. Big refactor; `afterRender` is the seam.
+- [ ] **A6. Trim the splice's own DOM cost** — the last non-O(n) lever. The
+      splice takes ~199 `getBBox` measurements, each flushing layout over
+      every mounted page (the measured 3× per-call cost growth from 930 to
+      3731 elements). Fewer mounted pages and fewer measurement points are
+      the levers. NOTE: owning intra-measure spacing is explicitly OUT OF
+      SCOPE, permanently — see the scope boundary in Phase D.
+
+### B. Splice coverage — converting remaining fallbacks into splices
+
+- [ ] **B1. dy-cascade + cross-page moves (the C-B2b core)** — v1 splices only
+      when nothing else moves. A height-changing edit needs the dy-translate
+      of following systems (the window MEASURES the new spacing, so dy is
+      known); page overflow/underflow needs the page-granularity cascade.
+      Pagination is now owned, so a full render agrees by construction.
+- [ ] **B2. Line-count-changing refills** — replace N systems with M under the
+      same machinery (today: full render).
+- [ ] **B3. Boundary courtesy** — a boundary moving next to a clef/key change
+      re-spaces the PREVIOUS line's end-of-line courtesy signatures (~33 units
+      on the sonata). v1 is safe (context check refuses); C-B2b should
+      re-splice k−1 instead of falling back.
+- [ ] **B4. Section-boundary zones + line 0** — windowed renders diverge there
+      (probes k=59 / k=0); v1 excludes line 0 and lets the context check refuse
+      the rest. Root-causing would extend splicing into section zones.
+- [ ] **B5. Ensure-mount before the mounted gate** — an edit whose spliced or
+      context lines sit on unmounted pages falls back today. When
+      `pageVirt.tkCurrent`, mount them from the pre-edit layout (~50 ms each)
+      instead of skipping.
+
+### C. Known defects
+
+- [ ] **C1. User-`<pb>` giant-page quirk** — a Ctrl+B page break on a large
+      document still paginates ONLY at encoded breaks (sonata: 37 → 2 giant
+      pages, confirmed). Pagination ownership did NOT fix it: the derive path
+      routes such documents through `layoutBreaks` + `encoded`, which never
+      paginates by height. The fix is for the derive path to paginate by
+      height itself and union the user's `<pb>` positions into our page
+      starts — the same page-fit machinery D1 below needs.
+- [ ] **C2. First-page credits** — composer/footer changes derive via
+      `headSig`. Fine (rare), noted for completeness.
+
+### D. Tuning and future features (Max's call)
+
+- [ ] **D1. Vertical justification within a page** — absorb the 650–810 px of
+      bottom slack Verovio leaves. Max wants this eventually; orthogonal to
+      the splice, shares the page-fit model with C1.
+- [ ] **D2. FIT_MAX / MIN_FILL to taste** — currently 1.45 / 0.65, set to
+      contain Verovio's own castoff envelope (0.706–1.426) so an adopted
+      partition is legal by construction. These are LEGALITY bounds, not
+      packing targets: narrower = more eager reflow. (The old note about them
+      driving the splice hit-rate is obsolete — first edits splice now.)
+- [ ] **D3. Explicit "reflow document" command** — respace the whole document
+      as if freshly engraved, since reflow is deliberately path-dependent now.
+- [ ] **D4. Explicit move-measure-between-systems commands** — manual override
+      of the automatic legality-driven mover.
 
 ## Status log
 
@@ -809,3 +1105,84 @@ Remaining levers, measured, in size order (none implemented yet):
   full-rendering at 2.4 s. Suite 337/339 — the two failures are visual
   baselines that legitimately changed (the layout no longer re-breaks), left
   for Max to accept.
+- 2026-08-30 — **Pagination ownership (Phase C-B2a) implemented.** Page starts
+  adopted from the same walk as the line partition, pinned as `<pb>`, rendered
+  `breaks:'encoded'`. Gating probe: encoded reproduces the pagination and the
+  per-page system split EXACTLY and loads 2× faster (577 ms vs 1191 ms), but
+  is not pixel-identical to `line`. Max compared both renders of sonata page 3
+  as images, saw no difference, and approved on the condition that the new
+  system be self-consistent — verified: live DOM vs a fresh full render of the
+  same pinned MEI, 446 measures, 0 sequence mismatches, max delta 4 units.
+  Owning pages means owning overflow, so `overflowingPage()` hands pagination
+  back to Verovio on a spill. Battery: 6/8 edits splice at 407–544 ms, all
+  reference-clean; remaining full renders fell to ~1.1 s. Suite 339/339.
+- 2026-08-30 — **Splice-latency profile + two self-inflicted fixes.** A
+  steady-state splice is 313 ms of which **Verovio is 58 ms**; the rest is
+  whole-document bookkeeping. Fixed: the splice invalidated the LIVE toolkit
+  although it renders through `spliceTk` (forcing a ~590 ms reload on the next
+  lazy mount — staleness is now per-page), and every page edit was deferred
+  behind the busy badge because the heaviness predictor keyed off the last
+  FULL render (it now predicts light after a splice).
+- 2026-08-30 — **One break algorithm everywhere.** Max rejected the first edit
+  after a derive full-rendering ("first-interaction friction equal to the
+  difference between full render latency and splice latency"), challenged the
+  premise that the modes differ at all, and asked why we don't force one
+  algorithm. Measured: on byte-identical data `line` vs `encoded` moves 409 of
+  446 measures (median 2.6 px, max 52 px) while the `<pb>` elements themselves
+  change nothing — the ALGORITHM is the whole cause, and it is not a
+  section-break artifact (85 of 118 "plain" lines drift too). Also corrected:
+  `breaks:'line'` DOES honor `<pb>`; the C-A note was wrong. Fix: the castoff
+  pass is now an internal bootstrap (loadData only, never painted), the
+  partition is read via page-based `getMEI({scoreBased:false})` in **98 ms vs
+  a 1830 ms SVG walk** (byte-identical), and the pinned `encoded` render is
+  what gets painted. First edit after a derive: ~1.2 s → **333 ms splice**;
+  idle adoption walk gone; first paint 1.2 s → ~2.0 s (accepted by Max as the
+  one place extra time is acceptable, verified once-per-derive). Four
+  page-mode baselines reseeded with his approval after reviewing the
+  `phase3_section_header` case (whole note 1368 → 2935 from the measure left;
+  document-final system 18790 → 2553 — encoded declines to stretch a final
+  system, which is conventional engraving). Suite 339/339.
+- 2026-08-30 — **Phase D scoped** (Max, rejecting a list of 15 ms shavings:
+  "every steady-state step recommended gives 15 ms each… that does not explain
+  why actions that are essentially instant on a one-page score are still
+  unusably laggy on an arbitrarily large score"). Diagnosis: rendering is
+  incremental; the pipeline around it is still whole-document — 495 measure
+  serializations, 26 full-document measure scans, ~32 000 querySelectorAll
+  calls and two whole-document cursor rebuilds per keystroke, ~130 ms of the
+  300 that has nothing to do with the edit. Plan and costings in "Phase D";
+  landing zone ~130 ms and FLAT in document size. Next: three-way baseline
+  (empty / one-page / sonata) to confirm which buckets scale and what, if
+  anything, still separates 1 page from 37 once the edit path is O(edit).
+- 2026-08-30 — **Phase D implemented (passes 1–3) + A2 landed.** A2 first:
+  `layoutBreaks` now reads the partition from page-based `getMEI` through the
+  shared `partitionFromLayout(tk)` helper (the SVG walk stays as its fallback),
+  so a user-`<pb>` derive no longer pays ~1.8 s. Then the edit path: pass 1
+  made the whole-document primitives cheaper with no semantic change
+  (`layerInMeasure` scans direct children instead of walking each measure's
+  whole subtree; `flatChildren` carries the previous measure's layer state
+  instead of re-deriving it three ways; `expandForSpanners` /
+  `expandForEndings` build their index ONCE instead of inside their growth
+  loops; `normalizePlaceholders` snapshots `layer.children` once) —
+  **308 → 243 ms**, `querySelectorAll` 31 969 → 3 428 calls. Passes 2–3 added
+  the two caches the plan called for, but the discipline-based invalidation the
+  plan assumed was proven UNSOUND by the `HKL_INDEX_CHECK` gate on the first
+  try (`insertWithSplit` reads `flatChildren` mid-mutation, exactly as the doc
+  warned); the working mechanism is a **`MutationObserver` whose synchronous
+  `takeRecords()` makes invalidation exact**, used for the model's
+  `flatChildren` + `allMeasures` caches and for `PageLineBreaks`' incremental
+  signature baseline. **243 → 206 ms**, `cursor.update` 62.6 → 1.8 ms,
+  `XMLSerializer` 495 → 54 calls (the diff is now O(edit)). Verovio is 59 ms of
+  what remains. Suite 339/339 under `HKL_INDEX_CHECK` (the verifications are
+  permanent, so the suite is a standing gate on the mechanism); typecheck /
+  build / boundaries clean.
+- 2026-08-30 — **Scaling baseline measured** (`cb-scale.js`, answering Max's
+  "if we can truly get O(edit), what's the remaining difference between a
+  single page and 37?"): one-page splice **66 ms**, sonata splice **303 ms**.
+  The 237 ms gap is ~150 ms pure O(document) tax (cursor rebuilds, model
+  mutation, 21× the querySelectorAll calls, 24× the serializations), ~25–40 ms
+  layout-flush cost proportional to MOUNTED DOM (getBBox call count +24 % but
+  its time +260 %, because each flush lays out 4× the elements), and ~25 ms of
+  musical density in the window (not size). **Verovio's `loadData` is flat
+  (22 → 17 ms)** — the engraver does not scale with document length; our
+  bookkeeping does. Projects to ~150 ms after Phase D, ~120 ms with the
+  bounded-delta guard.

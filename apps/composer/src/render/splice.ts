@@ -553,55 +553,90 @@ export function mergeGlyphDefs(defsEl: Element, host: HTMLElement, fresh: Elemen
  *  Shared by the scroll splicer's run expansion and the page-view line-break
  *  owner's naturals windows (a window missing an in-bound spanner renders the
  *  member measures at silently different widths — page spike 1, finding 5). */
-export function expandForSpanners(meiMeasures: Element[], lo: number, hi: number): [number, number] {
-    // note id → measure index
-    const noteMeasure = new Map<string, number>();
-    meiMeasures.forEach((m, i) => {
-      for (const n of Array.from(m.querySelectorAll('note, chord, rest'))) {
-        const id = n.getAttribute('xml:id') || n.getAttribute('id');
-        if (id) noteMeasure.set(id, i);
+/** Resolved spanner extents + per-measure tie edges for one measure array —
+ *  everything `expandForSpanners`' growth loop needs, as plain numbers.
+ *
+ *  HOT PATH (Phase D). The growth loop used to re-query every measure's
+ *  subtree on each iteration, so a single call ran O(measures × iterations)
+ *  `querySelectorAll`s — on the sonata that was the bulk of ~32 000 DOM queries
+ *  per keystroke. The DOM is now read ONCE (one union query per measure), and
+ *  the loop is pure array arithmetic. */
+interface SpannerExtents {
+  /** [minMeasure, maxMeasure] of every spanner that resolves to a range. */
+  spans: Array<[number, number]>;
+  /** Measure has a note whose @tie marks it a tie TERMINUS ('t'). */
+  tieT: boolean[];
+  /** Measure has a note whose @tie marks it a tie INITIAL ('i'). */
+  tieI: boolean[];
+}
+
+const SPANNER_SCAN =
+  'note, chord, rest, slur, tie, hairpin, phrase, gliss, bracketSpan, octave, lv, dynam, dir, trill, pedal';
+const SPANNER_NAMES = new Set([
+  'slur', 'tie', 'hairpin', 'phrase', 'gliss', 'bracketSpan', 'octave', 'lv', 'dynam', 'dir', 'trill', 'pedal',
+]);
+
+function spannerExtents(meiMeasures: Element[]): SpannerExtents {
+  const n = meiMeasures.length;
+  const noteMeasure = new Map<string, number>();
+  const pending: Array<[Element, number]> = [];
+  const tieT = new Array<boolean>(n).fill(false);
+  const tieI = new Array<boolean>(n).fill(false);
+  for (let i = 0; i < n; i++) {
+    for (const el of Array.from(meiMeasures[i].querySelectorAll(SPANNER_SCAN))) {
+      const ln = el.localName;
+      if (SPANNER_NAMES.has(ln)) { pending.push([el, i]); continue; }
+      /* note / chord / rest — id source, plus @tie edges on notes */
+      const id = el.getAttribute('xml:id') || el.getAttribute('id');
+      if (id) noteMeasure.set(id, i);
+      if (ln === 'note') {
+        const t = el.getAttribute('tie');
+        if (t) {
+          if (t.includes('t')) tieT[i] = true;
+          if (t.includes('i')) tieI[i] = true;
+        }
       }
-    });
-    const refMeasure = (ref: string | null): number | null => {
-      if (!ref) return null;
-      const id = ref.startsWith('#') ? ref.slice(1) : ref;
-      return noteMeasure.has(id) ? noteMeasure.get(id)! : null;
-    };
-    const SPANNERS = 'slur, tie, hairpin, phrase, gliss, bracketSpan, octave, lv, dynam, dir, trill, pedal';
+    }
+  }
+  const refMeasure = (ref: string | null): number | null => {
+    if (!ref) return null;
+    const id = ref.startsWith('#') ? ref.slice(1) : ref;
+    return noteMeasure.has(id) ? noteMeasure.get(id)! : null;
+  };
+  const spans: Array<[number, number]> = [];
+  for (const [sp, mIdx] of pending) {
+    const a = refMeasure(sp.getAttribute('startid'));
+    const b = refMeasure(sp.getAttribute('endid'));
+    const ends = [a, b].filter((x): x is number => x != null);
+    /* tstamp-anchored spans (expression-layer hairpins, pedal lines):
+       no startid/endid to resolve — the host measure + the tstamp2
+       "Nm+beat" measure offset ARE the endpoints. Without this, an edit
+       at a wedge's host measure re-rendered a sub-range its tstamp2
+       couldn't reach: Verovio only WARNED and dropped the wedge, and the
+       splice transplanted the loss (lessons.md 2026-08-30). */
+    const t2 = sp.getAttribute('tstamp2');
+    const t2m = t2 ? /^([0-9]+)m\+/.exec(t2) : null;
+    if (t2m && Number(t2m[1]) > 0) ends.push(mIdx, mIdx + Number(t2m[1]));
+    if (!ends.length) continue;
+    spans.push([Math.max(0, Math.min(...ends)), Math.min(n - 1, Math.max(...ends))]);
+  }
+  return { spans, tieT, tieI };
+}
+
+export function expandForSpanners(meiMeasures: Element[], lo: number, hi: number): [number, number] {
+    const { spans, tieT, tieI } = spannerExtents(meiMeasures);
     for (let guard = 0; guard < meiMeasures.length; guard++) {
       let grew = false;
-      for (let mIdx = 0; mIdx < meiMeasures.length; mIdx++) {
-        const m = meiMeasures[mIdx];
-        for (const sp of Array.from(m.querySelectorAll(SPANNERS))) {
-          const a = refMeasure(sp.getAttribute('startid'));
-          const b = refMeasure(sp.getAttribute('endid'));
-          const ends = [a, b].filter((x): x is number => x != null);
-          /* tstamp-anchored spans (expression-layer hairpins, pedal lines):
-             no startid/endid to resolve — the host measure + the tstamp2
-             "Nm+beat" measure offset ARE the endpoints. Without this, an edit
-             at a wedge's host measure re-rendered a sub-range its tstamp2
-             couldn't reach: Verovio only WARNED and dropped the wedge, and the
-             splice transplanted the loss (lessons.md 2026-08-30). */
-          const t2 = sp.getAttribute('tstamp2');
-          const t2m = t2 ? /^([0-9]+)m\+/.exec(t2) : null;
-          if (t2m && Number(t2m[1]) > 0) ends.push(mIdx, mIdx + Number(t2m[1]));
-          if (!ends.length) continue;
-          const minE = Math.max(0, Math.min(...ends));
-          const maxE = Math.min(meiMeasures.length - 1, Math.max(...ends));
-          // overlaps the run → must contain it whole
-          if (maxE >= lo && minE <= hi) {
-            if (minE < lo) { lo = minE; grew = true; }
-            if (maxE > hi) { hi = maxE; grew = true; }
-          }
+      for (const [minE, maxE] of spans) {
+        // overlaps the run → must contain it whole
+        if (maxE >= lo && minE <= hi) {
+          if (minE < lo) { lo = minE; grew = true; }
+          if (maxE > hi) { hi = maxE; grew = true; }
         }
       }
       // cross-measure tie via @tie on notes at the run's edges
-      const edgeTie = (idx: number, want: string): boolean => {
-        const m = meiMeasures[idx];
-        return m ? Array.from(m.querySelectorAll('note')).some((n) => (n.getAttribute('tie') || '').includes(want)) : false;
-      };
-      if (lo > 0 && edgeTie(lo, 't')) { lo--; grew = true; }            // tie terminus → start is left
-      if (hi < meiMeasures.length - 1 && edgeTie(hi, 'i')) { hi++; grew = true; } // tie initial → end is right
+      if (lo > 0 && tieT[lo]) { lo--; grew = true; }                       // tie terminus → start is left
+      if (hi < meiMeasures.length - 1 && tieI[hi]) { hi++; grew = true; }  // tie initial → end is right
       if (!grew) break;
     }
     return [lo, hi];
@@ -615,21 +650,29 @@ export function expandForSpanners(meiMeasures: Element[], lo: number, hi: number
  *  Adjacent 1st/2nd endings chain naturally: swallowing one puts the other into
  *  a context slot next pass. */
 export function expandForEndings(meiMeasures: Element[], lo: number, hi: number): [number, number] {
-    const wrapperOf = (i: number): Element | null => {
-      const p = meiMeasures[i]?.parentElement;
-      return p && p.localName !== 'section' ? p : null;
-    };
+    /* Wrapper → its measure-index span, built in ONE pass (Phase D): the naive
+       form rescanned all measures per candidate index per iteration. */
+    const wrapperSpan = new Map<Element, [number, number]>();
+    const wrapperAt: Array<Element | null> = new Array(meiMeasures.length);
+    for (let k = 0; k < meiMeasures.length; k++) {
+      const p = meiMeasures[k].parentElement;
+      const w = p && p.localName !== 'section' ? p : null;
+      wrapperAt[k] = w;
+      if (!w) continue;
+      const cur = wrapperSpan.get(w);
+      if (cur) { if (k < cur[0]) cur[0] = k; if (k > cur[1]) cur[1] = k; }
+      else wrapperSpan.set(w, [k, k]);
+    }
     for (let guard = 0; guard < meiMeasures.length; guard++) {
       let grew = false;
       for (const i of [lo, hi, lo - 1, lo - 2, hi + 1]) {
         if (i < 0 || i >= meiMeasures.length) continue;
-        const w = wrapperOf(i);
+        const w = wrapperAt[i];
         if (!w) continue;
-        for (let k = 0; k < meiMeasures.length; k++) {
-          if (meiMeasures[k].parentElement !== w) continue;
-          if (k < lo) { lo = k; grew = true; }
-          if (k > hi) { hi = k; grew = true; }
-        }
+        const span = wrapperSpan.get(w);
+        if (!span) continue;
+        if (span[0] < lo) { lo = span[0]; grew = true; }
+        if (span[1] > hi) { hi = span[1]; grew = true; }
       }
       if (!grew) break;
     }

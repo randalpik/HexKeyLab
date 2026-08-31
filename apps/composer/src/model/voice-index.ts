@@ -14,7 +14,7 @@
  */
 
 import { realTicks } from './ticks.js';
-import { flatChildren, tupletNavStops } from './cursor-location.js';
+import { tupletNavStops } from './cursor-location.js';
 import type { ComposerModel, Voice } from './index.js';
 
 export interface VoiceIndex {
@@ -40,7 +40,10 @@ const TICK_EPS = 1e-6;
 
 /** Build the full index for `voice` in one O(n) pass. */
 export function buildVoiceIndex(model: ComposerModel, voice: Voice): VoiceIndex {
-  const stops = flatChildren(model, voice);
+  /* Through the model so a warm flatChildren cache is reused (Phase D); the
+     two share an invalidation point, so this can never see a staler list than
+     a fresh enumeration would produce. */
+  const stops = model.flatChildren(voice);
   const n = stops.length;
   const measures = model.allMeasures();
   const measureCount = measures.length;

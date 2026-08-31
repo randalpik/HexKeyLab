@@ -37,12 +37,45 @@ import {
 export function flatChildren(model: ComposerModel, voice: Voice): Element[] {
   const out: Element[] = [];
   const measures = model.allMeasures();
+  /* HOT PATH (Phase D). Semantically identical to calling shouldEmitWrapper per
+     measure, but carries the previous measure's layer state forward instead of
+     re-deriving it: the naive form cost THREE layerInMeasure lookups and up to
+     three contentChildren scans per measure (this measure's, then the previous
+     measure's twice — once for the empty test, once inside layerIsFull). On the
+     sonata flatChildren runs several times per keystroke over 446 measures, so
+     that redundancy was thousands of DOM scans per edit. Fullness of the
+     previous layer stays LAZY (memoised) exactly as layerIsFull was, since the
+     rules short-circuit before it in the common cases. */
+  let prevLayer: Element | null = null;
+  let prevCc: Element[] = [];
+  let prevFull: boolean | null = null;
+  const prevIsFull = (): boolean => {
+    if (prevFull === null) {
+      let total = 0;
+      for (const c of prevCc) total += realTicks(c);
+      prevFull = total >= model.measureTicksForLayer(prevLayer!);
+    }
+    return prevFull;
+  };
   for (let mi = 0; mi < measures.length; mi++) {
     const measure = measures[mi];
     const layer = model.layerInMeasure(measure, voice);
-    if (!layer) continue;
-    if (shouldEmitWrapper(model, measures, voice, mi)) out.push(measure);
-    out.push(...layerStops(model, layer));
+    const cc = layer ? model.contentChildren(layer) : [];
+    if (layer) {
+      /* shouldEmitWrapper, inlined against the carried previous-measure state. */
+      const emit = cc.length === 0        /* rule 2: empty measure always emits */
+        || mi === 0                       /* rule 3: no previous measure */
+        || prevLayer === null             /* defensive (matches !prevLayer) */
+        || prevCc.length === 0            /* prev empty → incomplete → emit */
+        || !prevIsFull();                 /* prev partial → emit; prev full → not */
+      if (emit) out.push(measure);
+      for (const s of layerStops(model, layer)) out.push(s);
+    }
+    /* Advance the carried state to THIS measure — including when it had no
+       layer, since the rule looks at measures[mi-1] regardless. */
+    prevLayer = layer;
+    prevCc = cc;
+    prevFull = null;
   }
   return out;
 }

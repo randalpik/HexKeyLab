@@ -10,7 +10,9 @@ import { injectHejiGlyphs } from '@hkl/notation/heji-render.js';
 import { applyNotationTheme } from '@hkl/notation/verovio.js';
 import { CRISP_PRESETS, crispMarginTop, lineWidthOptions, pinExactScale, snapStaffLinesToGrid, snapBarlines, snapSystemRightEdge } from '@hkl/notation/render-presets.js';
 import { ScrollSplicer, type SpliceCtx } from './splice.js';
-import { PageLineBreaks, type PageBreaksCtx } from './linebreaks.js';
+import {
+  PageLineBreaks, partitionFromLayout, systemStartsFromPageSvg, type PageBreaksCtx,
+} from './linebreaks.js';
 import { PageSystemSplicer, type PageSpliceCtx } from './pagesplice.js';
 import type { ComposerModel } from '../model/index.js';
 
@@ -307,12 +309,13 @@ class Renderer {
     if (!this.tk) return mei;
     this.tk.setOptions(this.buildOptions('smartSb0'));
     if (!this.tk.loadData(mei)) return mei;
-    const starts = new Set<string>();
-    for (let p = 1; p <= this.tk.getPageCount(); p++) {
-      const doc = new DOMParser().parseFromString(this.tk.renderToSVG(p, {}), 'image/svg+xml');
-      for (const sys of Array.from(doc.querySelectorAll('g.system'))) {
-        const first = sys.querySelector('g.measure');
-        if (first?.id) starts.add(first.id);
+    /* Read the partition from page-based MEI (~0.1 s on the sonata) rather than
+       rendering every page to SVG (~1.8 s) — same read the partition adoption
+       uses. The SVG walk stays as the fallback for unreadable output. */
+    let starts = new Set<string>(partitionFromLayout(this.tk)?.lines ?? []);
+    if (!starts.size) {
+      for (let p = 1; p <= this.tk.getPageCount(); p++) {
+        for (const id of systemStartsFromPageSvg(this.tk.renderToSVG(p, {}))) starts.add(id);
       }
     }
     if (!starts.size) return mei;

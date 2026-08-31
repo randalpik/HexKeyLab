@@ -133,3 +133,29 @@ Break-mode forensics + the castoff bootstrap (2026-08-30):
 - **cb-loadcost.js** — forces three derive renders and reports wall time,
   ownership state, whether an idle walk was armed, and whether the first edit
   afterwards splices. The check that the extra first-paint cost happens once.
+- **cb-scale.js** — the scaling baseline: the SAME instrumented edit on an
+  empty doc, a one-page doc, and the sonata (`--arg empty|page|sonata[:measure]`;
+  use `--no-sonata` for the first two). Shows bucket-by-bucket which costs are
+  O(document) and which are flat. Pick a measure index known to splice for the
+  sonata (`--arg sonata:100`) — mid-document defaults can land in a zone that
+  legitimately refuses.
+
+Phase D (edit-path O(edit)) workflow, 2026-08-30:
+
+- **`cb-scale.js --arg sonata:100` is the Phase D dial.** Its `steady` block
+  (not `warmup` — the first edit after a derive differs) is the per-edit
+  attribution: wall plus `querySelectorAll` / `XMLSerializer` / `getBBox`
+  counts. Counts matter as much as milliseconds — a count that scales with the
+  document is the bug, whatever it costs today.
+- **`cb-splice-battery.js` is the behaviour gate for any edit-path change**,
+  and the way to use it is on BOTH code states: `git stash push -- apps/composer/src`,
+  run it, `git stash pop`, run it again, diff the table. What must be identical
+  is the splice/skip OUTCOME per edit and `reference.ok` on every one; wall
+  times are the win. This is what showed that two entries' `editOk: false`
+  (`reinsert-mid-line`, `insert-rest-ripple`) is pre-existing rather than a
+  regression — the probe records that flag but does not assert on it.
+- **Don't edit app source while `pnpm test:composer` is running.** Vite HMR
+  reloads the page mid-run and the injected `window.__test` hooks vanish, which
+  surfaces as a few hundred fixtures failing with
+  `Cannot read properties of undefined (reading 'assertPlaceholderInvariant')`.
+  That signature means "the page reloaded", not "the change broke everything".

@@ -510,6 +510,23 @@ export class ComposerModel {
    *  instead of the prior O(n²). */
   private voiceIndexCache: Map<Voice, VoiceIndex> = new Map();
 
+  /** Cached per-voice cursor-stop enumeration (`flatChildren`), invalidated
+   *  EXACTLY by DOM mutation rather than by call discipline. See flatChildren
+   *  and `docMutatedSinceLastCheck`. */
+  private flatCache: Map<Voice, Element[]> = new Map();
+  /** Cached whole-document measure list, keyed on the same document version. */
+  private measuresCache: Element[] | null = null;
+  private measuresCacheVer = -1;
+  /** Version the flat cache was built at. */
+  private flatCacheVer = -1;
+  /** Live-document mutation tracker backing both caches. */
+  private flatMo: MutationObserver | null = null;
+  private flatMoDoc: Document | null = null;
+  /** Set by the observer callback when it drains records before we do. */
+  private flatMoFired = false;
+  /** Bumped once per drain that saw any DOM mutation. */
+  private docVer = 0;
+
   /** Render dirty-measure tracking (Phase B3). The scroll splicer re-renders
    *  only the measures changed since the last render; this is that range, in
    *  measure indices.
@@ -580,7 +597,9 @@ export class ComposerModel {
     const fail = (msg: string): never => {
       throw new Error(`VoiceIndex inconsistency (voice ${voice}): ${msg}`);
     };
-    const slow = this.flatChildren(voice);
+    /* Enumerate FRESH (not through the cached accessor) so this stays a real
+       cross-check of the index against the document, not against the cache. */
+    const slow = flatChildrenImpl(this, voice);
     if (slow.length !== idx.stops.length) fail(`stop count ${idx.stops.length} vs ${slow.length}`);
     for (let c = 0; c < slow.length; c++) {
       if (idx.stops[c] !== slow[c]) fail(`stop[${c}] element mismatch`);
@@ -1484,8 +1503,34 @@ export class ComposerModel {
 
   /* ── measure-aware structural helpers ─────────────────────────────────── */
 
+  /** Every `<measure>` in document order, `<ending>`-wrapped ones included —
+   *  the model's measure coordinate system.
+   *
+   *  CACHED on the same exact mutation signal as `flatChildren` (Phase D). One
+   *  edit asks for this ~17–26 times, each a `querySelectorAll` over the whole
+   *  document. Callers treat the result as read-only. */
   allMeasures(): Element[] {
-    return Array.from(this.doc.querySelectorAll("measure"));
+    const ver = this.documentVersion();
+    if (this.measuresCache && this.measuresCacheVer === ver) {
+      if (indexCheckEnabled()) {
+        const fresh = this.doc.querySelectorAll("measure");
+        if (fresh.length !== this.measuresCache.length) {
+          throw new Error(
+            `allMeasures cache stale: ${this.measuresCache.length} cached vs ${fresh.length} fresh`,
+          );
+        }
+        for (let i = 0; i < fresh.length; i++) {
+          if (fresh[i] !== this.measuresCache[i]) {
+            throw new Error(`allMeasures cache stale at index ${i}`);
+          }
+        }
+      }
+      return this.measuresCache;
+    }
+    const built = Array.from(this.doc.querySelectorAll("measure"));
+    this.measuresCache = built;
+    this.measuresCacheVer = ver;
+    return built;
   }
 
   /** Returns the xml:id of the <staff> the given voice maps to, in the
@@ -1541,6 +1586,11 @@ export class ComposerModel {
        those changes reach here (directly or via normalizePlaceholdersAll), so
        this is the single invalidation point for the navigation index too. */
     this.voiceIndexCache.clear();
+    /* The cursor-stop enumeration the index is built from shares that
+       dependency set exactly — invalidate the two together. (Both are ALSO
+       invalidated exactly, by DOM mutation; this is belt and braces.) */
+    this.flatCache.clear();
+    this.measuresCache = null;
     /* Safe default for the render dirty-range (Phase B3): every structural /
        meter mutation reaches here, so resetting to 'all' guarantees an
        unconverted edit full-renders. Converted mutations narrow this AFTER
@@ -2483,17 +2533,44 @@ export class ComposerModel {
   }
 
   /** Return the <layer> for (voice, measure). */
+  /** The `<layer>` for `voice` inside `measure`, or null.
+   *
+   *  HOT PATH (Phase D): scans DIRECT CHILDREN rather than `querySelectorAll`.
+   *  MEI nests `measure > staff > layer`, so a subtree query walks every note
+   *  in the measure to find an element two levels down — and flatChildren calls
+   *  this once per measure per voice, so on the sonata it was thousands of
+   *  full-subtree scans per keystroke. Falls back to the subtree query if the
+   *  direct scan finds no staff at all (defensive: an unexpected nesting must
+   *  degrade in speed, never in correctness). */
   layerInMeasure(measure: Element, voice: Voice): Element | null {
-    const staffN = this.staffForVoice(voice);
-    const layerN = this.layerForVoice(voice);
-    const staff = Array.from(measure.querySelectorAll("staff")).find(
-      (s) => s.getAttribute("n") === String(staffN),
-    );
-    if (!staff) return null;
-    const layer = Array.from(staff.querySelectorAll("layer")).find(
-      (l) => l.getAttribute("n") === String(layerN),
-    );
-    return layer ?? null;
+    const staffN = String(this.staffForVoice(voice));
+    const layerN = String(this.layerForVoice(voice));
+    let staff: Element | null = null;
+    let sawStaffChild = false;
+    for (let c = measure.firstElementChild; c; c = c.nextElementSibling) {
+      if (c.localName !== "staff") continue;
+      sawStaffChild = true;
+      if (c.getAttribute("n") === staffN) { staff = c; break; }
+    }
+    if (!staff) {
+      /* Only worth a subtree scan when the measure has no direct staff children
+         at all — otherwise the staff genuinely isn't in this measure. */
+      if (sawStaffChild) return null;
+      staff = Array.from(measure.querySelectorAll("staff")).find(
+        (s) => s.getAttribute("n") === staffN,
+      ) ?? null;
+      if (!staff) return null;
+    }
+    let sawLayerChild = false;
+    for (let c = staff.firstElementChild; c; c = c.nextElementSibling) {
+      if (c.localName !== "layer") continue;
+      sawLayerChild = true;
+      if (c.getAttribute("n") === layerN) return c;
+    }
+    if (sawLayerChild) return null;
+    return Array.from(staff.querySelectorAll("layer")).find(
+      (l) => l.getAttribute("n") === layerN,
+    ) ?? null;
   }
 
   /** Layers for one voice, one per measure, in measure order. */
@@ -2511,8 +2588,85 @@ export class ComposerModel {
    *  mutation code (insert/tie/split) reads this MID-operation, before the
    *  end-of-mutation invalidation, so it must never be cached. The expensive
    *  per-element tick math is what the cached voice index removes, not this. */
+  /** Cursor stops for `voice`, in document order (see cursor-location.ts).
+   *
+   *  CACHED (Phase D), sharing `voiceIndexCache`'s exact lifecycle — cleared by
+   *  `invalidateMeterCache()`, which every structural/content/meter mutation
+   *  reaches directly or via `normalizePlaceholdersAll()`. This is O(document)
+   *  and one edit asks for it ~15 times (cursor.update resolves its anchor
+   *  through five separate model queries, twice per edit; clampCursors asks
+   *  once per voice), so recomputing it per call was among the largest
+   *  whole-document taxes on the edit path.
+   *
+   *  The hazard the old always-recompute form avoided is a mutation reading
+   *  stops it has already invalidated in the DOM but not yet through
+   *  `invalidateMeterCache`. Under HKL_INDEX_CHECK every cache HIT is verified
+   *  against a fresh enumeration and throws on divergence, so the fixture suite
+   *  is the gate on that discipline (as it already is for VoiceIndex).
+   *
+   *  Callers treat the result as read-only; nothing mutates the array. */
   flatChildren(voice: Voice): Element[] {
-    return flatChildrenImpl(this, voice);
+    const ver = this.documentVersion();
+    if (ver !== this.flatCacheVer) { this.flatCache.clear(); this.flatCacheVer = ver; }
+    const hit = this.flatCache.get(voice);
+    if (hit) {
+      if (indexCheckEnabled()) this.assertFlatCacheConsistent(voice, hit);
+      return hit;
+    }
+    const built = flatChildrenImpl(this, voice);
+    this.flatCache.set(voice, built);
+    return built;
+  }
+
+  /** A counter that changes whenever the live document changed — the
+   *  invalidation signal behind `flatChildren` and `allMeasures`.
+   *
+   *  A MutationObserver's `takeRecords()` drains SYNCHRONOUSLY, so this sees
+   *  every DOM write — including ones a mutation makes between two of its own
+   *  reads, which is precisely where a discipline-based cache (invalidate at
+   *  the end of the operation) would serve a stale list. `insertWithSplit`
+   *  really does read `flatChildren` mid-mutation, so that discipline is not
+   *  available to us. The observer callback can drain the queue first, on its
+   *  microtask; `flatMoFired` records that case, so neither path can be missed.
+   *
+   *  Also bumps (and re-arms) when the document object itself was swapped —
+   *  load, undo, redo. Without a MutationObserver (non-DOM host) it bumps every
+   *  call, so nothing is ever cached. */
+  private documentVersion(): number {
+    if (typeof MutationObserver === 'undefined') return ++this.docVer;
+    if (this.flatMoDoc !== this.doc || !this.flatMo) {
+      this.flatMo?.disconnect();
+      this.flatMo = new MutationObserver(() => { this.flatMoFired = true; });
+      this.flatMo.observe(this.doc, {
+        subtree: true, childList: true, attributes: true, characterData: true,
+      });
+      this.flatMoDoc = this.doc;
+      this.flatMoFired = false;
+      return ++this.docVer;
+    }
+    /* Always drain, so a queued batch can't fire the callback later and force a
+       spurious invalidation on the next call. */
+    const queued = this.flatMo.takeRecords().length > 0;
+    const fired = this.flatMoFired;
+    this.flatMoFired = false;
+    if (queued || fired) this.docVer++;
+    return this.docVer;
+  }
+
+  /** Test-only: a cached stop list must equal a fresh enumeration. Catches a
+   *  mutation that changed the DOM without reaching invalidateMeterCache. */
+  private assertFlatCacheConsistent(voice: Voice, cached: Element[]): void {
+    const fresh = flatChildrenImpl(this, voice);
+    if (fresh.length !== cached.length) {
+      throw new Error(
+        `flatChildren cache stale (voice ${voice}): ${cached.length} cached vs ${fresh.length} fresh`,
+      );
+    }
+    for (let i = 0; i < fresh.length; i++) {
+      if (fresh[i] !== cached[i]) {
+        throw new Error(`flatChildren cache stale (voice ${voice}) at stop ${i}`);
+      }
+    }
   }
 
   /** Cumulative ticks for `voice` BEFORE its `withinIdx`-th content child

@@ -32,24 +32,32 @@ export function normalizePlaceholders(
 ): void {
   const layers = doc.querySelectorAll('layer');
   for (const layer of Array.from(layers)) {
+    /* ONE children snapshot per layer (Phase D): this runs over every layer in
+       the document on every edit — ~1800 on the sonata — and used to materialise
+       `layer.children` three separate times (content sum, mRest test, and the
+       idempotency check). Nothing mutates the layer between them. */
+    const kids = Array.from(layer.children);
     /* Compute the desired trailing placeholder decomposition for this layer. */
     let used = 0;
-    for (const c of Array.from(layer.children)) {
-      if (
-        c.localName === 'chord' ||
-        c.localName === 'note' ||
-        c.localName === 'rest' ||
-        c.localName === 'tuplet' ||
-        c.localName === 'fTrem' ||
-        c.localName === 'bTrem'
-      ) {
-        used += realTicks(c);
-      }
-    }
     /* An <mRest> is a full-measure rest — it fills the measure by definition, so
        the layer needs NO trailing placeholder. (Adding one made Verovio size the
        measure as a breve rest — the "double whole rest" bug.) */
-    const hasMRest = Array.from(layer.children).some((c) => c.localName === 'mRest');
+    let hasMRest = false;
+    for (const c of kids) {
+      const ln = c.localName;
+      if (
+        ln === 'chord' ||
+        ln === 'note' ||
+        ln === 'rest' ||
+        ln === 'tuplet' ||
+        ln === 'fTrem' ||
+        ln === 'bTrem'
+      ) {
+        used += realTicks(c);
+      } else if (ln === 'mRest') {
+        hasMRest = true;
+      }
+    }
     const remaining = hasMRest ? 0 : ticksForLayer(layer) - used;
     const desired = remaining > 0 ? decomposeTicks(remaining) : [];
 
@@ -60,7 +68,6 @@ export function normalizePlaceholders(
        newId('sp') churned every measure's serialization, so the scroll splicer
        saw the whole score as dirty and full-re-engraved (O(total), seconds).
        Skipping unchanged layers keeps placeholder ids stable. */
-    const kids = Array.from(layer.children);
     const existingPh = kids.filter(isPlaceholder);
     const trailing = kids.slice(kids.length - desired.length);
     const dotsOf = (c: Element) => parseInt(c.getAttribute('dots') ?? '0', 10) || 0;

@@ -144,6 +144,46 @@ export function systemStartsFromPageSvg(svgText: string): string[] {
   return starts;
 }
 
+/** Line- and page-start measure ids of a laid-out toolkit, read from PAGE-BASED
+ *  MEI (`getMEI({scoreBased:false})` → `<page>`/`<system>` wrappers) instead of
+ *  rendering every page to SVG. Measured on the sonata: ~100 ms vs ~1830 ms for
+ *  the SVG walk, byte-identical output (118 lines / 37 pages). Returns null
+ *  when the output can't be read, and the caller falls back to the SVG walk.
+ *
+ *  `tk` must hold the layout to read (loadData done, nothing else needed). */
+export function partitionFromLayout(
+  tk: VerovioToolkit,
+): { lines: string[]; pages: string[] } | null {
+  let xml: string;
+  try {
+    xml = tk.getMEI({ scoreBased: false });
+  } catch {
+    return null;
+  }
+  if (!xml) return null;
+  /* Verovio echoes our `hkl:` metadata elements but drops the xmlns:hkl
+     declaration, so its output is not well-formed as-is (2026-08-30). */
+  const src = /xmlns:hkl=/.test(xml)
+    ? xml
+    : xml.replace(/<mei\s/, '<mei xmlns:hkl="http://www.hexkeylab.org/ns" ');
+  const doc = new DOMParser().parseFromString(src, 'application/xml');
+  if (doc.querySelector('parsererror')) return null;
+  const lines: string[] = [];
+  const pages: string[] = [];
+  for (const page of Array.from(doc.getElementsByTagNameNS('*', 'page'))) {
+    let firstOfPage: string | null = null;
+    for (const sys of Array.from(page.getElementsByTagNameNS('*', 'system'))) {
+      const m = sys.getElementsByTagNameNS('*', 'measure')[0];
+      const id = m ? m.getAttribute('xml:id') : null;
+      if (!id) continue;
+      lines.push(id);
+      if (!firstOfPage) firstOfPage = id;
+    }
+    if (firstOfPage) pages.push(firstOfPage);
+  }
+  return lines.length ? { lines, pages } : null;
+}
+
 /** Inject partition pins into a serialized render MEI: an `<sb>` (or `<pb>`
  *  for ids in `pageStartIds`) before every line-start measure except the
  *  first. Returns null when a start id is missing from the document (the
@@ -336,6 +376,20 @@ export class PageLineBreaks {
    *  map). ~13 ms on a 446-bar score, amortized into a >1 s render. */
   private sig = new Map<string, string>();
   private sigOrder: string[] = [];
+  /** Element identity behind each captured signature. A measure that is still
+   *  the SAME object AND was never mutated since capture cannot have a
+   *  different serialization — so the diff can reuse the captured string
+   *  instead of recomputing it (Phase D). */
+  private sigEl = new Map<string, Element>();
+  /** Mutation tracker for the incremental baseline: which measures the live
+   *  document actually changed since `captureSigs`. `sigAll` means "assume
+   *  everything changed" — set whenever a mutation lands above measure level
+   *  (the measure SET or the shared context moved), when the document object is
+   *  swapped, or before any capture has armed the observer. */
+  private sigMo: MutationObserver | null = null;
+  private sigMoDoc: Document | null = null;
+  private sigDirty = new Set<Element>();
+  private sigAll = true;
   private adoption: AdoptionTask | null = null;
   /** Line starts the last refill actually MOVED (0 = the edit changed content
    *  only and no boundary shifted — the common, desired case). Diagnostics
@@ -356,19 +410,70 @@ export class PageLineBreaks {
     this.sigW = SIG_FALLBACK;
     this.sig.clear();
     this.sigOrder = [];
+    this.sigEl.clear();
+    this.sigDirty.clear();
+    this.sigAll = true;
     this.budgetW = 0;
     if (this.adoption) this.adoption.cancelled = true;
     this.adoption = null;
   }
 
-  /** Capture per-measure signatures of the current live doc (see `sig`). */
-  private captureSigs(meiMeasures: Element[], ids: string[], pre?: string[]): void {
+  /** Capture per-measure signatures of the current live doc (see `sig`), and
+   *  re-arm the mutation tracker so the NEXT diff only re-serializes what
+   *  actually changed after this moment. */
+  private captureSigs(doc: Document, meiMeasures: Element[], ids: string[], pre?: string[]): void {
     const ser = new XMLSerializer();
     this.sig.clear();
+    this.sigEl.clear();
     this.sigOrder = ids;
     for (let i = 0; i < meiMeasures.length; i++) {
       this.sig.set(ids[i], pre?.[i] ?? ser.serializeToString(meiMeasures[i]));
+      this.sigEl.set(ids[i], meiMeasures[i]);
     }
+    this.armSigObserver(doc);
+    /* This capture IS the new baseline: discard everything recorded before it. */
+    this.sigMo?.takeRecords();
+    this.sigDirty.clear();
+    this.sigAll = false;
+  }
+
+  /** Observe `doc` for the incremental baseline, re-arming (and invalidating)
+   *  when the document object itself was swapped — load, undo, redo. */
+  private armSigObserver(doc: Document): void {
+    if (typeof MutationObserver === 'undefined') { this.sigAll = true; return; }
+    if (this.sigMoDoc === doc && this.sigMo) return;
+    this.sigMo?.disconnect();
+    this.sigMo = new MutationObserver((recs) => this.noteSigMutations(recs));
+    this.sigMo.observe(doc, {
+      subtree: true, childList: true, attributes: true, characterData: true,
+    });
+    this.sigMoDoc = doc;
+    this.sigDirty.clear();
+    this.sigAll = true;
+  }
+
+  /** Fold mutation records into the dirty set. A record whose target sits
+   *  inside a `<measure>` dirties that measure; anything above measure level
+   *  (a `<section>` childList insert/remove, a mid-piece scoreDef, the head)
+   *  changes the measure SET or the shared context, so nothing may be assumed
+   *  clean. */
+  private noteSigMutations(recs: MutationRecord[]): void {
+    for (const r of recs) {
+      let node: Node | null = r.target;
+      while (node && node.nodeType !== 1) node = node.parentNode;
+      let e = node as Element | null;
+      while (e && e.localName !== 'measure') e = e.parentElement;
+      if (e) this.sigDirty.add(e);
+      else this.sigAll = true;
+    }
+  }
+
+  /** Drain the tracker and answer: which measure elements changed since the
+   *  last capture, or null when that can't be narrowed. */
+  private drainSigDirty(doc: Document): Set<Element> | null {
+    if (this.sigMoDoc !== doc || !this.sigMo) { this.armSigObserver(doc); return null; }
+    this.noteSigMutations(this.sigMo.takeRecords());
+    return this.sigAll ? null : this.sigDirty;
   }
 
   /** Inject the CURRENT partition's pins into a freshly serialized render MEI.
@@ -425,40 +530,16 @@ export class PageLineBreaks {
    *  Returns false when the output can't be read, and the caller falls back to
    *  painting the castoff layout + arming the idle SVG walk. */
   adoptFromCastoff(model: ComposerModel, tk: VerovioToolkit): boolean {
-    let xml: string;
-    try {
-      xml = tk.getMEI({ scoreBased: false });
-    } catch {
-      return false;
-    }
-    if (!xml) return false;
-    /* Verovio echoes our `hkl:` metadata elements but drops the xmlns:hkl
-       declaration, so its output is not well-formed as-is (2026-08-30). */
-    const src = /xmlns:hkl=/.test(xml)
-      ? xml
-      : xml.replace(/<mei\s/, '<mei xmlns:hkl="http://www.hexkeylab.org/ns" ');
-    const doc = new DOMParser().parseFromString(src, 'application/xml');
-    if (doc.querySelector('parsererror')) return false;
-    const lines: string[] = [];
-    const pages: string[] = [];
-    for (const page of Array.from(doc.getElementsByTagNameNS('*', 'page'))) {
-      let firstOfPage: string | null = null;
-      for (const sys of Array.from(page.getElementsByTagNameNS('*', 'system'))) {
-        const m = sys.getElementsByTagNameNS('*', 'measure')[0];
-        const id = m ? m.getAttribute('xml:id') : null;
-        if (!id) continue;
-        lines.push(id);
-        if (!firstOfPage) firstOfPage = id;
-      }
-      if (firstOfPage) pages.push(firstOfPage);
-    }
+    const read = partitionFromLayout(tk);
+    if (!read) return false;
+    const { lines, pages } = read;
     if (lines.length <= 1) return false;   // single-line docs are never owned
     this.invalidate();
     this.userBreakSig = computeUserBreakSig(model);
     this.headSig = computeHeadSig(model);
     this.interiorSig = computeInteriorSig(model);
     const meiMeasures = model.allMeasures();
-    this.captureSigs(meiMeasures, measureIds(meiMeasures));
+    this.captureSigs(model.getDoc(), meiMeasures, measureIds(meiMeasures));
     /* Every adopted id must exist in the live doc, or the pins we build from
        it would be unplaceable. */
     const present = new Set(measureIds(meiMeasures));
@@ -480,7 +561,7 @@ export class PageLineBreaks {
        same synchronous block as the derive render, so the idle-completed
        partition and the sig baseline describe the same document. */
     const meiMeasures = model.allMeasures();
-    this.captureSigs(meiMeasures, measureIds(meiMeasures));
+    this.captureSigs(model.getDoc(), meiMeasures, measureIds(meiMeasures));
     const task: AdoptionTask = { nextPage: 1, pageCount, startIds: [], pageStartIds: [], cancelled: false };
     this.adoption = task;
     const step = (): void => {
@@ -571,7 +652,31 @@ export class PageLineBreaks {
     /* Changed run via prefix/suffix diff of (id, serialized measure) against
        the committed baseline — structural truth in the CURRENT index space. */
     const ser = new XMLSerializer();
-    const cur = meiMeasures.map((m) => ser.serializeToString(m));
+    /* INCREMENTAL (Phase D): a measure that is still the same element AND was
+       never mutated since the capture serializes to the captured string by
+       construction, so only what the document actually changed is recomputed.
+       Whole-document serialization was ~22 ms per keystroke on the sonata and
+       scaled with the score, not the edit. Falls back to serializing everything
+       whenever the tracker can't narrow it (see drainSigDirty). */
+    const dirty = this.drainSigDirty(model.getDoc());
+    const cur: string[] = new Array(meiMeasures.length);
+    for (let j = 0; j < meiMeasures.length; j++) {
+      const el = meiMeasures[j];
+      const kept = dirty && !dirty.has(el) && this.sigEl.get(ids[j]) === el
+        ? this.sig.get(ids[j])
+        : undefined;
+      cur[j] = kept ?? ser.serializeToString(el);
+    }
+    if (indexCheckEnabled() && dirty) {
+      for (let j = 0; j < meiMeasures.length; j++) {
+        const truth = ser.serializeToString(meiMeasures[j]);
+        if (truth !== cur[j]) {
+          throw new Error(
+            `[PageLineBreaks] incremental sig baseline stale at measure ${j} (${ids[j]})`,
+          );
+        }
+      }
+    }
     const oldOrder = this.sigOrder;
     const oN = oldOrder.length, nN = ids.length;
     const eq = (i: number, j: number): boolean =>
@@ -655,7 +760,7 @@ export class PageLineBreaks {
     const strategy: RefillStrategy = newPageStartIds.length > 1 ? 'encoded' : 'line';
     this.startIds = newStartIds;
     this.pageStartIds = newPageStartIds;
-    this.captureSigs(meiMeasures, ids, cur);
+    this.captureSigs(model.getDoc(), meiMeasures, ids, cur);
     this.lastDeriveReason = '';
     const pageSet = newPageStartIds.length > 1 ? new Set(newPageStartIds) : null;
     const mei = (): string | null => {
