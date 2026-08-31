@@ -13,8 +13,12 @@ plus per-measure geometry must match a reference full render.
 Companion to [composer-spot-splice-design.md](composer-spot-splice-design.md)
 (scroll splice, Phases A–B3) and [composer-render-perf.md](composer-render-perf.md)
 (Tier 1–2, shipped). Status: **line-break ownership (Phase C-A) IMPLEMENTED
-2026-08-30** — `apps/composer/src/render/linebreaks.ts`, see "Implementation
-(Phase C-A)" below; the system-splice itself (Phase C-B) is designed, not built.
+2026-08-30** (`apps/composer/src/render/linebreaks.ts`, see "Implementation
+(Phase C-A)"); **the contained system splice (Phase C-B v1) IMPLEMENTED
+2026-08-30** (`apps/composer/src/render/pagesplice.ts`, see "Implementation
+(Phase C-B v1)") — local edits land as system splices at ~400–630 ms wall on
+the sonata (vs 1.6–3.1 s full renders); dy-cascades, page-boundary moves and
+pagination ownership remain (C-B2).
 
 ## Core idea: greedy refill, Verovio decides
 
@@ -358,11 +362,11 @@ plan (every amendment probe-driven, same day, sonata):
   Cold-start edit (adoption finished synchronously) ~4 s once. `line` load
   ~1.25 s ≈ smartSb0; pure 'encoded' loads are ~0.6 s (2× faster — a C-B
   bonus once pagination is owned).
-- **Reflow semantics now live** (documented in the user guide): the first
-  edit in a region re-breaks that region from the edited line by OUR fill
-  rules (bounded by hard breaks / re-join with the old partition), then stays
-  deterministic — identical content always refills to the identical
-  partition; a no-change render moves nothing (fixture-enforced).
+- **Reflow semantics — SUPERSEDED 2026-08-30 by conservative repartition**
+  (Max's ruling; see "Reflow semantics (current)" below). C-A originally
+  re-derived the affected region greedily from the edited line, which made the
+  first edit in a region re-break it. That is gone: the partition is now
+  carried across edits and only repaired where a line became illegal.
 - **Observed for C-B**: a boundary move next to a mid-piece scoreDef changes
   the PREVIOUS line's end-of-line courtesy signatures (~33 units of internal
   respacing on the sonata probe) — correct under A's full re-render, and
@@ -372,7 +376,158 @@ plan (every amendment probe-driven, same day, sonata):
   with one Ctrl+B break renders as 2 giant clipped pages today and under
   refill alike. Real fix belongs to C-B pagination ownership.
 
-## Remaining for Phase C-B (the splice itself)
+## Implementation (Phase C-B v1, 2026-08-30) — the contained system splice, shipped
+
+`apps/composer/src/render/pagesplice.ts` (`PageSystemSplicer`), wired into
+`Renderer.renderPageComposer` behind the refill. When `PageLineBreaks.tryRefill`
+succeeds, the edit lands as a DOM splice of only the affected systems —
+**no full-doc loadData** — whenever the v1 gates hold; anything else falls back
+to the full refill render (loud `console.info`), exactly as before.
+
+**Probes first** (persisted in `test/composer-inspect/phasec/`, results 2026-08-30):
+
+- `cb-structure.js`: page-mode volta brackets (`g.ending`) are CHILDREN of
+  `g.system` — whole-system splices carry them for free (no scroll-style
+  reconcile). Verovio stacks page systems by CONTENT clearance (staff-frame
+  gaps 145–267 units, bbox clearance ~31–37) with NO vertical justification
+  (bottom slack 650–811); a page's first system anchors its content top at the
+  margin. So system positions are content-dependent — the splice must not
+  assume any spacing model.
+- `cb-window.js`: a pin-anchored window (synthetic mRest LEADER + `<sb>` pins,
+  page geometry, pageHeight 60000, breaks:'line') reproduces mid-score systems
+  **pixel-exactly** — per-measure x/width, inter-staff gaps, hanging extents,
+  and consecutive-system top-to-top spacing all delta 0.0 vs the full pinned
+  render (10/12 sampled lines; 92–520 ms per window). The two exceptions:
+  line 0 (score-start treatment differs without the title header, ~1 px) and
+  the section-boundary zone (probe k=59, large divergence — same page as the
+  section header + mid-piece scoreDef; the same "castoff cumulative state at
+  a scoreDef" family as spike-5's k87).
+
+**The v1 gates** (each failure = full render, reason in `lastSkipReason`):
+
+1. Refill succeeded, strategy `'line'`, page DOM live (never across a
+   view-mode switch), line COUNT unchanged (the common case now that the
+   partition is repaired rather than re-derived). The replaced set L = the
+   sig-diff run closed over spanners/`<ending>`s (a spanner draws a segment in
+   every line it touches — all replaced together) plus both lines adjacent to
+   any moved boundary; cap 5 lines (a one-note edit can legitimately touch
+   several when a spanner chain closes over them — sonata measure 250 was
+   full-rendering at 2.4 s for exactly that); line 0 excluded; section-header
+   measures excluded (their title/reserve injections are mount-only).
+2. All lines of L mounted, first-of-system, and DOM-consecutive; the window =
+   L ± 1 context line, iteratively closed over spanners/endings to line
+   boundaries (caps: 7 lines / 60 measures).
+3. **Synthetic leader AND trailer**: the leader (mRest line, discarded)
+   absorbs score-start artifacts; the TRAILER (mRest line after the window,
+   discarded) absorbs the end-of-score FINAL barline — without it the
+   window's last measure renders ~5 px wider than the live line's normal
+   barline (found by the sonata battery's context check; windows ending at
+   the true doc end need no trailer and match the live final barline).
+4. **Context sanity**: the unchanged neighbour lines (a−1, b+1) must
+   reproduce their live per-measure x/width within EPS (25 units ≈ 2.5 px;
+   measured deltas are 0.0 + snap noise). This is the structural detector for
+   the k59-class divergent zones — no zone blacklist needed.
+5. **Vertical gate — measure, don't emulate** (the spike-5 lesson applied to
+   the stacker): the window's own consecutive-system spacing chain must keep
+   every replaced system exactly at its live position (spacing-above per
+   line; content-top hang for page-first lines; spacing-below after the last
+   replaced line; bottom-extent stability for page-last lines, which also
+   pins pagination). Anything that would move ANY other system → full render.
+   dy-cascades and page-boundary moves are C-B2 (pagination ownership).
+
+**Surgery**: offscreen render on `spliceTk` → `postProcessRendered` +
+`styleVoltaNumbers` (moved to render.ts, shared with main.ts) on the host →
+import each system `<g>`, transform anchored on the live system's staff-top +
+first-measure x (composes with section-header reserves and snap transforms) →
+per-page glyph-defs merge (`mergeGlyphDefs`, extracted from the scroll
+splicer) → `snapSystems` per affected page → `verifyRenderedPartition`.
+The splicer is **stateless** — everything it needs lives in the mounted DOM,
+the refill result and the model; there is no index to invalidate.
+
+**Supporting changes**: `tryRefill` now returns splice metadata (changed run,
+old/new partition) and a LAZY `mei()` (the splice path never pays the full
+serialize+pin ~130 ms); new refill guards — `computeInteriorSig` (mid-piece
+section-level scoreDefs are invisible to the per-measure sig diff; a change
+now derives) and composer/footer credits folded into `headSig` (their
+injections are mount-only). **Stale-mount hole closed**: a splice edits the
+mounted pages without re-loading the toolkit, so a page mounted afterwards
+would have drawn PRE-EDIT content (found by the reflow probes). `pageVirt`
+carries a `stale` flag set at splice time; the next mount re-serializes and
+re-pins from the live model (`PageLineBreaks.pinRenderMei`) before rendering,
+with `pageVirt.options` switched to the pinned `'line'` options that data
+expects. Verified: after a splice, forcing the page back to a placeholder and
+re-mounting draws the CURRENT document (~1.5 s, one loadData, off the hot
+path) where it previously drew the stale one. A signature-identical render request is now a
+**no-op skip** (DOM untouched — guards make it sound). `lastFullMs.page` only
+updates on actual full engraves (a splice must not poison the heaviness
+predictor). Under `HKL_INDEX_CHECK` every splice is verified inline against
+an offscreen full render of the same pinned MEI (throws on divergence;
+section-header pages exempt the spacing check — main.ts's reserve translate
+isn't Verovio's).
+
+**Measured (Chromium, sonata battery `cb-splice-battery.js`, after
+conservative repartition)**: **7 of 8 battery edits splice, at 380–673 ms
+wall** (splice's own work 160–190 ms; the rest is T2.2 deferral +
+overlay/cursor update) vs ~1.95 s for the one full render; window loadData
+~50–65 ms. Every spliced edit reported `refillLines: 0` — no boundary moved at
+all. Reference parity held on EVERY battery edit across all 37 pages / 446
+measures: max x/width delta ≤ 4 units (~0.4 px snap noise), max spacing delta
+≤ 9 units. The single fallback is the section-header line, which is excluded
+by design. (Before conservative repartition the hit rate was 3/8: the first
+edit in a region re-derived its lines and usually changed the line count.
+Fixing reflow reversibility fixed the hit rate with it.)
+
+**Gates**: fixtures `pageSystemSpliceEdit` (splice + pins verbatim + inline
+reference gate + visual baseline — and since conservative repartition it needs
+no priming edit: the FIRST edit in a region splices), `pageSystemSpliceVerticalBail`
+(bottom-extent refusal + full-render fallback), `pageSystemSpliceNoopSkip`
+(no-op leaves DOM identity untouched), plus `pageLineBreaksUndoRestoresLayout`
+(the reversibility gate); typecheck/build/boundaries clean.
+
+## Reflow semantics (current) — conservative repartition, 2026-08-30
+
+**Max's ruling, and now the top-priority invariant: an edit must not reflow
+unless it makes a system ILLEGAL.** The observed failure it replaces: delete
+one note → the system pulled in a measure → undo → the gained measure stayed.
+That is threshold hysteresis, inherent to re-deriving a partition greedily —
+the refill accepted any line up to FIT_MAX, so a measure that slid in on a
+deletion was still "legal" once the deletion was undone. Layout drifted one
+measure per edit and never drifted back.
+
+What `PageLineBreaks.repartition` does instead:
+
+1. **Carry the partition across the edit by MEMBERSHIP** — each old line keeps
+   its first surviving member as its start. Deleting a line's first measure
+   just moves that line's start to the next survivor; an inserted measure
+   joins the line whose index range contains it; a line whose every member
+   was deleted disappears. No widths are consulted.
+2. **Repair only what became illegal.** Legality = fill ∈ [MIN_FILL, FIT_MAX].
+   Only lines whose content changed are examined, plus whatever a repair
+   cascades into. Each repair step moves ONE measure across ONE boundary
+   (push the last measure forward when overfull; pull the next line's first
+   measure back when underfull), so the reflow is as small as the illegality
+   demands. Hard (user) breaks are never moved — an overfull line before one
+   gets a new line instead. Guards: a line that pushed never pulls back
+   (oscillation), an overfull line that can only trade one illegality for
+   another is left alone (content over churn), and a step cap derives.
+3. **Bounds are the tuning surface, set to contain Verovio's own output**:
+   FIT_MAX 1.45 / MIN_FILL 0.65 vs the sonata's measured castoff envelope
+   0.706–1.426. That matters twice over — an adopted partition is legal by
+   construction (so the first edit in a region moves nothing), and the
+   knobs now express taste directly: narrower = more eager reflow.
+
+Consequences: reflow is path-dependent BY DESIGN (a partition reflects the
+edits that reached it, not a fresh engraving of the current content) — that is
+the point, and it is why the future explicit commands below matter. Undo
+restores the layout exactly. The C-B splice hit-rate rises sharply as a side
+effect, since most edits no longer change the line count.
+
+**Deliberately out of scope for now** (Max): an explicit **reflow command**
+that respaces the whole document as if freshly engraved, and explicit commands
+to **move measures between systems** by hand. Both become natural once the
+legality boundaries are the only automatic mover.
+
+## Remaining for Phase C-B2 (cascades + pagination ownership)
 
 1. ~~k=87 class~~ — RESOLVED by spike 5: it was smartSb0's contextual fit
    threshold; verbatim display + our fit rules make it unreachable.
@@ -381,27 +536,43 @@ plan (every amendment probe-driven, same day, sonata):
 1c. **FIT_MAX/MIN_FILL tuning to taste** (still open, Max's call): 1.2/0.7
    shipped; sigW is now measured per refill window (not the constant 900).
    Larger FIT_MAX = denser lines and fewer first-edit re-breaks vs the
-   adopted Verovio partition; smaller = airier.
-1d. **Pagination ownership** — deferred cleanly: breaks:'line' keeps Verovio's
-   height-true pager for C-A. C-B's spliced pages need the dy/page-cascade
-   machinery (and it would also fix the pre-existing giant-page quirk of
-   user-`<pb>` docs).
+   adopted Verovio partition; smaller = airier. NOW ALSO the C-B splice
+   hit-rate lever: the first edit in a region re-breaks it ('line count
+   changed' → full render); a "prefer the current boundary when it still
+   satisfies the fill rules" bias would make most first edits splice too.
 2. ~~Pin lifecycle design~~ — RESOLVED: pins are render-time injections into
    the serialized MEI only; nothing to strip anywhere; recomputed per render;
    user breaks honored as hard line starts and never touched.
-3. **Boundary courtesy behavior** — a boundary moving next to a clef/key
+3. ~~Gap fidelity under pinning~~ — CONFIRMED by `cb-window.js`: inter-staff
+   gaps, hanging extents and consecutive-system spacing all delta 0.0 in
+   pin-anchored windows.
+4. **dy-cascade + page-boundary moves + pagination ownership** (the C-B2
+   core): v1 splices only when nothing else moves. A height-changing edit
+   needs the dy-translate of following systems (Verovio's stacker is
+   content-driven — the window MEASURES the new spacing, so the dy is known),
+   page overflow/underflow needs the page-granularity cascade, and both need
+   pagination to be owned (`<pb>` pins + our height-fit rule) so a full
+   render agrees by construction — which would also fix the pre-existing
+   giant-page quirk of user-`<pb>` docs. Line-count-changing refills splice
+   under the same machinery (replace N systems with M).
+5. **Boundary courtesy behavior** — a boundary moving next to a clef/key
    change re-spaces the PREVIOUS line's end-of-line courtesy signatures
-   (~33 units observed on the sonata). Correct under C-A's full re-render;
-   C-B must re-splice k−1 whenever a moved boundary measure carries a leading
-   signature change.
-4. **Gap fidelity under pinning** — spike 2 showed hard-anchored windows match
-   gaps exactly; confirm on the pinned battery during C-B implementation.
-5. **The splice**: per-system index (document-order coordinates + `g.ending`
-   reconcile, per the scroll splicer's lessons), windowed 'encoded' system
-   renders anchored at pins (~0.6 s loadData already measured — and windows
-   are far smaller), dy-translate below, page-boundary moves, defs merge,
-   per-page post-pass interplay (section headers translate systems — mounts
-   are not idempotent).
+   (~33 units observed on the sonata). v1 is safe (the context-line sanity
+   check catches the divergence and full-renders); C-B2 should re-splice k−1
+   instead of falling back.
+6. **Section-boundary zones + line 0** — windowed renders diverge there
+   (probe k=59 / k=0); v1 excludes line 0 and lets the context check refuse
+   the rest. Root-causing the k59 divergence (likely the k87 family: castoff
+   state at a mid-piece scoreDef) would extend splicing into section zones.
+7. **First-page credits** — composer/footer changes now derive via headSig;
+   fine (rare op), noted for completeness.
+8. **Ensure-mount before the mounted gate** (v1.1 nicety): an edit whose
+   spliced/context lines sit on unmounted placeholder pages skips to a full
+   render ('changed line not mounted' — seen when a probe edits far from the
+   viewport). Interactively the IO keeps ±1 page mounted around the cursor,
+   so this rarely bites; when `pageVirt.tkCurrent`, the splicer could mount
+   the missing pages from the pre-edit layout (~50 ms each) instead of
+   skipping.
 
 ## Status log
 
@@ -438,3 +609,32 @@ plan (every amendment probe-driven, same day, sonata):
   untouched-line geometry bit-stable, round-trip + no-op deterministic;
   `HKL_INDEX_CHECK=1 test:composer` 334/334 (3 new fixtures + visual
   baseline); typecheck/build/boundaries clean.
+- 2026-08-30 — **Phase C-B v1 implemented** (`render/pagesplice.ts` + Renderer
+  wiring; see "Implementation (Phase C-B v1)" above). Probes `cb-structure` /
+  `cb-window` settled the mechanism (endings ride inside `g.system`;
+  content-driven stacking, no vertical justification; pin-anchored windows
+  pixel-exact with a synthetic leader); the sonata battery found the two
+  fidelity killers — the window's END-OF-SCORE final barline (fixed by the
+  synthetic TRAILER line) and the section-boundary window divergence (gated
+  by the context-line sanity check). "Measure, don't emulate" became the
+  vertical gate: the window's own spacing chain is compared against the live
+  DOM and the splice lands only when nothing else would move. Battery:
+  reference parity ≤ 5 units across all pages on every edit; splices
+  398–628 ms wall vs 1.6–3.1 s full. New guards shipped along the way:
+  interiorSig (mid-piece scoreDef edits are invisible to measure sigs) and
+  credits-in-headSig; no-op renders now skip DOM work entirely.
+- 2026-08-30 — **Reflow made conservative** (Max: "preventing no-op edits from
+  ever being able to reflow from the original render should be top priority…
+  delete one note, the system gains a measure, undo and the gained measure is
+  still there"). `refillLines`/`rebalance` replaced by `repartition`: carry the
+  partition by membership, repair only illegal lines, one measure per step;
+  FIT_MAX 1.2→1.45 and MIN_FILL 0.7→0.65 so an adopted partition is legal by
+  construction. Reflow is now path-dependent by design and the bounds are the
+  tuning surface (see "Reflow semantics (current)"). Sonata via real
+  keystrokes: 4/4 edits and undos held the partition, 0 moved lines, undo
+  geometry bit-exact 3/4 (3 units in the 4th). Also fixed: lazily-mounted
+  pages drew pre-edit content after a splice (`pageVirt.stale`). Caps raised
+  (MAX_SPLICE_LINES 3→5) after a spanner-closed one-note edit was
+  full-rendering at 2.4 s. Suite 337/339 — the two failures are visual
+  baselines that legitimately changed (the layout no longer re-breaks), left
+  for Max to accept.

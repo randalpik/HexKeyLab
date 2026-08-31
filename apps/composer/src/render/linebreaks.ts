@@ -7,9 +7,20 @@
 // snapshots and history diffs stay pin-free by construction). Verovio remains
 // the measure-level engraver + within-line justifier; with every boundary
 // pinned, castoff has no free choices left, so an edit can only move the
-// boundaries WE recompute — reflow is "greedy from the edited system's line
-// start", bounded, and deterministic (a no-op edit reproduces the partition
-// bit-for-bit; Max's ruling ii is satisfied structurally).
+// boundaries WE move.
+//
+// THE PARTITION IS NEVER RE-DERIVED (Max's ruling, 2026-08-30). An edit carries
+// the existing partition across by line MEMBERSHIP and then repairs ONLY the
+// lines the edit made ILLEGAL — outside the [MIN_FILL, FIT_MAX] envelope — by
+// moving as few measures as possible. Everything else stays exactly where it
+// was. This is what makes edits reversible: a greedy re-derivation accepts any
+// line up to FIT_MAX, so a measure pulled into a line by a deletion stayed
+// there when the deletion was undone (threshold hysteresis — the layout drifted
+// one measure per edit and never drifted back). With conservative repair a
+// no-op edit provably moves nothing, undo restores the original layout, and the
+// legality bounds above are the only tuning surface. (An explicit "reflow the
+// whole document as if freshly engraved" command, and explicit move-measure-
+// between-systems commands, are deliberately future work — not this path.)
 //
 // Lifecycle:
 //   derive render (doc load / zoom / page scale / staff filter / any fallback)
@@ -20,9 +31,9 @@
 //   edit in page view (narrow accumulated dirty range)
 //     → naturals for the dirty window are (re)measured from an offscreen
 //       breaks:'none' sub-render (spanner/ending-complete, context-padded),
-//       the affected lines are refilled by the greedy partitioner
-//       (FIT_MAX/MIN_FILL + backward min-fill rebalance, hard breaks
-//       respected), pins are re-encoded, and the doc re-renders with
+//       the partition is carried across by membership and any line the edit
+//       made illegal is repaired minimally (push/pull one measure at a time,
+//       hard breaks respected), pins are re-encoded, and the doc re-renders with
 //       breaks:'line' — every <sb> honored VERBATIM, pages still broken
 //       automatically by height (probed 2026-08-30: 'line', unlike 'smart',
 //       never wraps a pinned line it deems overfull, so the partition really
@@ -46,23 +57,29 @@ import { expandForSpanners, expandForEndings } from './splice.js';
 
 const MEI_NS = 'http://www.music-encoding.org/ns/mei';
 
-/** Fill rules (spike-5 prototype values; tunable — design doc item 1c).
- *  Fills are Σ(natural widths)/budget: >1 = the justified line compresses,
- *  <1 = it stretches. Verovio's own lines span ~[0.71, 1.43]. */
-const FIT_MAX = 1.2;
-const MIN_FILL = 0.7;
+/** LEGALITY bounds — the load-bearing tuning surface (Max, 2026-08-30).
+ *  Fills are (sigW + Σ natural widths)/budget: >1 = the justified line
+ *  compresses, <1 = it stretches. These are NOT a packing target: the
+ *  partition is never re-derived, so a line is only ever re-laid when an edit
+ *  pushes it OUTSIDE this envelope (see `repartition`). Set wide enough to
+ *  contain Verovio's own castoff output — the sonata's 118 lines measure
+ *  0.706–1.426 by this same naturals model (spike 5) — so an adopted
+ *  partition is legal by construction and the first edit in a region moves
+ *  nothing. Narrowing them makes reflow more eager; widening makes lines
+ *  denser/sparser before they break. */
+const FIT_MAX = 1.45;
+const MIN_FILL = 0.65;
+/** Measure moves one repartition may perform before giving up (derive). */
+const MAX_REPAIR_STEPS = 64;
 /** Leading clef+key block estimate (Verovio units) when a window has no
  *  measurable sig glyphs (e.g. C major, percussion clef edge cases). */
 const SIG_FALLBACK = 450;
-/** Naturals ensure-ladder: first window reaches this far past the dirty range;
- *  each escalation adds the next step; at most MAX_ENSURES windows per refill. */
-const ENSURE_AHEAD = [16, 64, 250];
-const MAX_ENSURES = 3;
+/** Naturals windows one repartition may render before giving up (derive).
+ *  Repairs examine a handful of lines, so this is generous. */
+const MAX_ENSURES = 4;
 /** A single naturals window (post spanner/ending expansion) larger than this
  *  falls back to a derive render instead. */
 const WINDOW_CAP = 260;
-/** Total measures a refill may re-partition before giving up (derive). */
-const REFILL_CAP = 250;
 
 function indexCheckEnabled(): boolean {
   return typeof globalThis !== 'undefined' &&
@@ -91,6 +108,23 @@ export interface PageBreaksCtx {
  *  instead — 'line' ignores <pb>, and verbatim page semantics are what those
  *  docs already have today. */
 export type RefillStrategy = 'line' | 'encoded';
+
+/** A successful refill: the committed partition plus everything the Phase C-B
+ *  system splicer needs to decide whether the edit can land as a DOM splice
+ *  instead of a full loadData render (see render/pagesplice.ts). */
+export interface RefillResult {
+  strategy: RefillStrategy;
+  /** Lazily serialize + pin the full doc — only the full-render path pays for
+   *  it. Null when pin injection fails (caller must derive). */
+  mei: () => string | null;
+  /** Sig-diff changed run in CURRENT (new) measure indices; null = the doc is
+   *  signature-identical to the committed baseline (a no-op render). */
+  changedRun: { lo: number; hi: number } | null;
+  /** Partition the mounted DOM currently renders (pre-edit). */
+  oldStartIds: string[];
+  /** Partition just committed (what the DOM must render after this edit). */
+  newStartIds: string[];
+}
 
 /* ── pure helpers ─────────────────────────────────────────────────────────── */
 
@@ -210,8 +244,9 @@ function hardStartIds(model: ComposerModel): Set<string> {
 }
 
 /** Head-context signature: the head scoreDef plus any section-level elements
- *  before the first measure. A change (key/meter/staff structure) means the
- *  running context every line renders under moved — derive, don't refill. */
+ *  before the first measure, plus the composer/footer credits (injected per
+ *  page mount — a splice or no-op skip would keep stale text without this).
+ *  A change means the context every line renders under moved — derive. */
 function computeHeadSig(model: ComposerModel): string {
   const doc = model.getDoc();
   const ser = new XMLSerializer();
@@ -226,7 +261,32 @@ function computeHeadSig(model: ComposerModel): string {
     while (node) { pre = ser.serializeToString(node) + pre; node = node.previousElementSibling; }
     s += '|' + pre;
   }
-  return s;
+  return s + '|' + model.getComposer() + '|' + model.getFooter();
+}
+
+/** Interior-structure signature: every section-level element that is NOT a
+ *  measure, sb/pb, or measure-bearing wrapper (i.e. mid-piece scoreDefs),
+ *  serialized with its measure-count position. A mid-piece key/meter change
+ *  lives OUTSIDE any measure, so the per-measure sig diff cannot see it — a
+ *  refill would render it correctly (full loadData), but the Phase C-B system
+ *  splice and the no-op skip would keep stale glyphs. Guarded here so both
+ *  paths derive instead. */
+function computeInteriorSig(model: ComposerModel): string {
+  const section = model.getDoc().querySelector('section');
+  if (!section) return '';
+  const ser = new XMLSerializer();
+  let count = 0;
+  const parts: string[] = [];
+  const walk = (el: Element): void => {
+    for (const c of Array.from(el.children)) {
+      if (c.localName === 'measure') count++;
+      else if (c.localName === 'sb' || c.localName === 'pb') continue;   // userBreakSig's job
+      else if (c.querySelector('measure')) walk(c);
+      else parts.push(count + ':' + ser.serializeToString(c));
+    }
+  };
+  walk(section);
+  return parts.join('|');
 }
 
 /* ── the owner ────────────────────────────────────────────────────────────── */
@@ -244,11 +304,16 @@ export class PageLineBreaks {
   private startIds: string[] | null = null;
   private userBreakSig = '';
   private headSig = '';
+  private interiorSig = '';
   private budgetW = 0;
   /** Natural (unjustified) measure widths in SVG user units, from breaks:'none'
    *  window renders. Only missing/dirty ids are ever (re)written, so a cached
    *  value never drifts — determinism of the refill depends on it. */
   private naturals = new Map<string, number>();
+  /** Leading clef+key block width (Verovio units), measured from the last
+   *  naturals window. Persisted across refills so a line whose naturals are
+   *  all cached judges legality by the same yardstick as one that measured. */
+  private sigW = SIG_FALLBACK;
   /** Per-measure live-doc serializations (+ their id order) captured whenever
    *  a partition is committed against the current document. The refill diffs
    *  the live doc against these to find the TRUE changed run — it never
@@ -259,8 +324,9 @@ export class PageLineBreaks {
   private sig = new Map<string, string>();
   private sigOrder: string[] = [];
   private adoption: AdoptionTask | null = null;
-  /** One-shot flag for the last refill: how many lines it recomputed
-   *  (diagnostics / tests). */
+  /** Line starts the last refill actually MOVED (0 = the edit changed content
+   *  only and no boundary shifted — the common, desired case). Diagnostics
+   *  and tests read it; fixtures assert 0 for no-op-equivalent edits. */
   lastRefillLines = 0;
   /** Timing/diagnostic breakdown of the last tryRefill (ms). */
   lastRefillStats: { naturalsMs: number; windows: number; windowMeasures: number; injectMs: number; serializeMs: number } =
@@ -273,6 +339,7 @@ export class PageLineBreaks {
   invalidate(): void {
     this.startIds = null;
     this.naturals.clear();
+    this.sigW = SIG_FALLBACK;
     this.sig.clear();
     this.sigOrder = [];
     this.budgetW = 0;
@@ -288,6 +355,15 @@ export class PageLineBreaks {
     for (let i = 0; i < meiMeasures.length; i++) {
       this.sig.set(ids[i], pre?.[i] ?? ser.serializeToString(meiMeasures[i]));
     }
+  }
+
+  /** Inject the CURRENT partition's pins into a freshly serialized render MEI.
+   *  Used by the renderer to rebuild page data for a lazy mount after a system
+   *  splice (the mounted DOM is current; the toolkit's layout is not).
+   *  Null when nothing is adopted or an id is missing. */
+  pinRenderMei(mei: string): string | null {
+    if (this.startIds === null || this.startIds.length <= 1) return null;
+    return injectPins(mei, this.startIds, null);
   }
 
   /** True when a refill attempt is worth making (adopted, or adoption armed
@@ -312,6 +388,7 @@ export class PageLineBreaks {
     this.invalidate();
     this.userBreakSig = computeUserBreakSig(model);
     this.headSig = computeHeadSig(model);
+    this.interiorSig = computeInteriorSig(model);
     /* Signatures of the doc state this layout renders — captured NOW, in the
        same synchronous block as the derive render, so the idle-completed
        partition and the sig baseline describe the same document. */
@@ -360,22 +437,27 @@ export class PageLineBreaks {
   /* ── refill ───────────────────────────────────────────────────────────── */
 
   /** Recompute the affected lines for whatever actually changed since the
-   *  last committed partition and return the pinned render MEI + strategy, or
-   *  null when a derive is required. The changed run is found by a per-measure
-   *  signature diff against the owner's own baseline (see `sig`) — the model's
-   *  renderDirty hint is never trusted. On success the new partition and a
-   *  fresh sig baseline are committed. */
+   *  last committed partition and return the refill (strategy + lazy pinned
+   *  render MEI + splice metadata), or null when a derive is required. The
+   *  changed run is found by a per-measure signature diff against the owner's
+   *  own baseline (see `sig`) — the model's renderDirty hint is never trusted.
+   *  On success the new partition and a fresh sig baseline are committed.
+   *  `mei()` is lazy: the system splicer (Phase C-B) never needs the full
+   *  serialize + pin pass, so the full-render path pays for it, not the hot
+   *  path. `changedRun` is the sig-diff run in CURRENT (new) measure indices;
+   *  null means the document is signature-identical to the committed baseline. */
   tryRefill(
     model: ComposerModel,
     viewStaves: number[] | null,
     ctx: PageBreaksCtx,
-  ): { mei: string; strategy: RefillStrategy } | null {
+  ): RefillResult | null {
     const bail = (why: string): null => { this.lastDeriveReason = why; return null; };
     if (viewStaves != null) return bail('filtered view');
     if (this.startIds === null && !this.finishAdoptionNow(ctx)) return bail('no adoptable partition');
     if (this.startIds!.length <= 1) return bail('single-line partition');
     if (computeUserBreakSig(model) !== this.userBreakSig) return bail('user breaks changed');
     if (computeHeadSig(model) !== this.headSig) return bail('head context changed');
+    if (computeInteriorSig(model) !== this.interiorSig) return bail('interior structure changed');
     if (this.budgetW <= 0) {
       const w = ctx.budgetW();
       if (w == null || !(w > 0)) return bail('no budgetW measurable');
@@ -411,12 +493,17 @@ export class PageLineBreaks {
        was replaced, re-anchor line 0 at the current first measure. */
     const oldStarts = surviving.slice();
     if (oldStarts.length === 0 || idIdx.get(oldStarts[0])! !== 0) oldStarts.unshift(ids[0]);
-    const oldStartIdx = new Set(oldStarts.map((id) => idIdx.get(id)!));
     const hard = hardStartIds(model);
+    /* The partition the current DOM renders (verifyRenderedPartition keeps
+       these in lockstep) — the splicer locates the systems to replace by
+       THESE ids, even ones whose measure the edit deleted. */
+    const oldStartIds = this.startIds!.slice();
 
     let newStartIds: string[];
+    let changedRun: { lo: number; hi: number } | null;
     if (P >= nN && oN === nN) {
       newStartIds = oldStarts;               // nothing changed — re-pin as-is
+      changedRun = null;
       this.lastRefillLines = 0;
     } else {
       /* A pure deletion can leave an empty new-side run (hi < lo); the line
@@ -424,9 +511,10 @@ export class PageLineBreaks {
          structural change point. */
       const dLo = Math.min(P, nN - 1);
       const dHi = Math.max(dLo, nN - 1 - S);
-      const refilled = this.refillLines(model, meiMeasures, ids, idIdx, oldStarts, oldStartIdx, hard, { lo: dLo, hi: dHi }, ctx);
-      if (!refilled) return bail('refill window/cap exhausted');
-      newStartIds = refilled;
+      changedRun = { lo: dLo, hi: dHi };
+      const repaired = this.repartition(model, meiMeasures, ids, idIdx, hard, { lo: dLo, hi: dHi }, ctx);
+      if (!repaired) return bail('repartition window/cap exhausted');
+      newStartIds = repaired;
     }
     /* A single-line partition isn't worth owning: breaks:'line' with no <sb>
        in the data WARNS and falls back to auto castoff internally (probed
@@ -435,30 +523,33 @@ export class PageLineBreaks {
        synchronously well under the deferral threshold — let them. */
     if (newStartIds.length <= 1) return bail('single-line result');
 
-    const tSer = performance.now();
-    const mei = model.serialize({ hejiEnabled: model.getHejiEnabled() }, null);
-    this.lastRefillStats.serializeMs = Math.round(performance.now() - tSer);
     const strategy: RefillStrategy = model.getDoc().querySelector('section pb') ? 'encoded' : 'line';
-    const tInj = performance.now();
-    const pinned = injectPins(mei, newStartIds, null);
-    this.lastRefillStats.injectMs = Math.round(performance.now() - tInj);
-    if (pinned === null) return bail('pin injection failed (missing id)');
     this.startIds = newStartIds;
     this.captureSigs(meiMeasures, ids, cur);
     this.lastDeriveReason = '';
-    return { mei: pinned, strategy };
+    const mei = (): string | null => {
+      const tSer = performance.now();
+      const full = model.serialize({ hejiEnabled: model.getHejiEnabled() }, null);
+      this.lastRefillStats.serializeMs = Math.round(performance.now() - tSer);
+      const tInj = performance.now();
+      const pinned = injectPins(full, newStartIds, null);
+      this.lastRefillStats.injectMs = Math.round(performance.now() - tInj);
+      return pinned;
+    };
+    return { strategy, mei, changedRun, oldStartIds, newStartIds };
   }
 
-  /** The greedy core: re-lay lines from the one before the dirty range until
-   *  the computed partition re-joins the old one beyond it. Returns the full
-   *  new start-id list, or null (caller derives). */
-  private refillLines(
+  /** Carry the committed partition across the edit and repair ONLY what the
+   *  edit made illegal. Never re-derives: an edit that leaves every line
+   *  inside [MIN_FILL, FIT_MAX] moves no boundary at all, so a no-op edit is
+   *  a visual no-op and undo restores the original layout exactly (Max's
+   *  ruling, 2026-08-30 — see the module header). Returns the new start-id
+   *  list, or null (caller derives). */
+  private repartition(
     model: ComposerModel,
     meiMeasures: Element[],
     ids: string[],
     idIdx: Map<string, number>,
-    oldStarts: string[],
-    oldStartIdx: Set<number>,
     hard: Set<string>,
     dirty: { lo: number; hi: number },
     ctx: PageBreaksCtx,
@@ -466,121 +557,129 @@ export class PageLineBreaks {
     const n = ids.length;
     const dLo = Math.max(0, Math.min(dirty.lo, n - 1));
     const dHi = Math.max(dLo, Math.min(dirty.hi, n - 1));
-    /* Refill starts at the line containing the measure LEFT of the dirty range:
-       if the dirty range begins exactly at a line start, the previous line's
-       greedy decision depended on that measure's width — recompute it too. */
-    const anchor = Math.max(0, dLo - 1);
-    let s0 = 0;
-    for (const id of oldStarts) {
-      const i = idIdx.get(id)!;
-      if (i <= anchor) s0 = i; else break;
+
+    /* ── carry the partition across the edit, by MEMBERSHIP ──
+       Each old line keeps its first surviving member as its start, so:
+       deleting a line's first measure just moves that line's start to the
+       next survivor (no reflow); an inserted measure joins the line whose
+       index range contains it; a line whose every member was deleted
+       disappears. Nothing here consults widths — only structure. */
+    const oldPos = new Map(this.sigOrder.map((id, i) => [id, i]));
+    const oldStartPos: number[] = [];
+    for (const id of this.startIds!) {
+      const p = oldPos.get(id);
+      if (p == null) return null;   // partition/baseline disagree → derive
+      oldStartPos.push(p);
     }
+    const starts: number[] = [];
+    for (let k = 0; k < oldStartPos.length; k++) {
+      const from = oldStartPos[k];
+      const to = k + 1 < oldStartPos.length ? oldStartPos[k + 1] : this.sigOrder.length;
+      for (let i = from; i < to; i++) {
+        const ni = idIdx.get(this.sigOrder[i]);
+        if (ni == null) continue;
+        if (!starts.length || ni > starts[starts.length - 1]) starts.push(ni);
+        break;
+      }
+    }
+    if (!starts.length) return null;
+    starts[0] = 0;   // line 0 always begins the document
+
     /* Dirty measures must be re-measured; drop their cached naturals. */
     for (let i = dLo; i <= dHi; i++) this.naturals.delete(ids[i]);
 
-    /* Naturals ensure ladder: one window now, escalate only if the greedy walk
-       outruns it. */
+    /* ── naturals on demand (only for the lines we actually examine) ── */
     let ensures = 0;
-    let sigW = SIG_FALLBACK;
-    const ensureThrough = (hiNeed: number): boolean => {
-      if (ensures >= MAX_ENSURES) return false;
-      const ahead = ENSURE_AHEAD[Math.min(ensures, ENSURE_AHEAD.length - 1)];
-      ensures++;
-      const hi = Math.min(n - 1, Math.max(hiNeed, dHi) + ahead);
-      /* find the contiguous span actually missing */
-      let lo = s0;
-      while (lo <= hi && this.naturals.has(ids[lo])) lo++;
-      let realHi = hi;
-      while (realHi >= lo && this.naturals.has(ids[realHi])) realHi--;
-      if (lo > realHi) return true;   // nothing missing
-      const w = this.measureWindow(model, meiMeasures, ids, lo, realHi, ctx);
-      if (w == null) return false;
-      if (w.sigW > 0) sigW = w.sigW;
+    const ensureRange = (lo: number, hi: number): boolean => {
+      lo = Math.max(0, lo); hi = Math.min(n - 1, hi);
+      let i = lo;
+      while (i <= hi) {
+        if (this.naturals.has(ids[i])) { i++; continue; }
+        let j = i;
+        while (j + 1 <= hi && !this.naturals.has(ids[j + 1])) j++;
+        if (ensures >= MAX_ENSURES) return false;
+        ensures++;
+        const w = this.measureWindow(model, meiMeasures, ids, i, j, ctx);
+        if (w == null) return false;
+        if (w.sigW > 0) this.sigW = w.sigW;
+        i = j + 1;
+      }
       return true;
     };
-    if (!ensureThrough(dHi)) return null;
 
-    /* Greedy walk. */
     const budget = this.budgetW;
-    const starts: number[] = [];
-    let cur = s0;
-    let terminal: number | null = null;   // index whose old-partition tail we keep
-    for (let guard = 0; guard < n + 2; guard++) {
-      starts.push(cur);
-      let acc = sigW;
-      let j = cur;
-      while (j < n) {
-        if (j > cur && hard.has(ids[j])) break;
-        let nat = this.naturals.get(ids[j]);
-        if (nat == null) {
-          if (!ensureThrough(j)) return null;
-          nat = this.naturals.get(ids[j]);
-          if (nat == null) return null;
-        }
-        if (j > cur && acc + nat > FIT_MAX * budget) break;
-        acc += nat;
-        j++;
-      }
-      if (j >= n) break;                                   // partitioned to doc end
-      if (j > dHi && oldStartIdx.has(j)) { terminal = j; break; }
-      if (j - s0 > REFILL_CAP) return null;
-      cur = j;
-    }
-
-    /* Backward min-fill rebalance over the refilled lines (Max's ruling iii).
-       Lines that cannot legally absorb more (hard-start lines — their break
-       element pins the start) or that end the document are exempt. */
-    this.rebalance(starts, terminal ?? n, ids, hard, sigW, budget, n);
-
-    this.lastRefillLines = starts.length;
-    const out: string[] = [];
-    for (const id of oldStarts) {
-      const i = idIdx.get(id)!;
-      if (i < s0) out.push(id); else break;
-    }
-    for (const i of starts) out.push(ids[i]);
-    if (terminal != null) {
-      let inTail = false;
-      for (const id of oldStarts) {
-        if (idIdx.get(id)! === terminal) inTail = true;
-        if (inTail) out.push(id);
-      }
-    }
-    return out;
-  }
-
-  /** Pull measures backward (from the previous line's tail) into any refilled
-   *  line under MIN_FILL until every line clears it or is structurally stuck.
-   *  `starts` is mutated in place; `end` bounds the last refilled line. */
-  private rebalance(
-    starts: number[], end: number, ids: string[], hard: Set<string>,
-    sigW: number, budget: number, n: number,
-  ): void {
-    const fill = (li: number): number => {
-      const from = starts[li];
-      const to = li + 1 < starts.length ? starts[li + 1] : end;
-      let acc = sigW;
+    const lineEnd = (k: number): number => (k + 1 < starts.length ? starts[k + 1] : n);
+    const fillOf = (k: number): number | null => {
+      const from = starts[k], to = lineEnd(k);
+      if (!ensureRange(from, to - 1)) return null;
+      let acc = this.sigW;
       for (let i = from; i < to; i++) acc += this.naturals.get(ids[i]) ?? 0;
       return acc / budget;
     };
-    for (let pass = 0; pass < 8; pass++) {
-      let moved = false;
-      for (let li = starts.length - 1; li >= 1; li--) {
-        const lineEnd = li + 1 < starts.length ? starts[li + 1] : end;
-        if (lineEnd >= n) continue;               // document-final line: ragged is fine
-        if (hard.has(ids[starts[li]])) continue;  // start pinned by a user break
-        let guard = 0;
-        while (fill(li) < MIN_FILL && guard++ < 16) {
-          if (starts[li] - starts[li - 1] <= 1) break;      // previous line can't give
-          const candidate = starts[li] - 1;
-          const natC = this.naturals.get(ids[candidate]) ?? 0;
-          if ((fill(li) * budget + natC) / budget > FIT_MAX) break;
-          starts[li] = candidate;
-          moved = true;
+
+    /* ── repair ──
+       Examine only the lines the edit touched, then whatever a repair
+       cascades into. Each step moves ONE measure across ONE boundary, so the
+       reflow is as small as the illegality demands. */
+    let first = 0, last = 0;
+    for (let k = 0; k < starts.length; k++) {
+      if (starts[k] <= dLo) first = k;
+      if (starts[k] <= dHi) last = k;
+    }
+    /* A line that pushed must never pull the same measure back (oscillation);
+       an overfull line that cannot shed without going underfull stays as it
+       is — content over churn. */
+    let pushed = new Set<number>();
+    let steps = 0;
+    let k = first;
+    let through = last;
+    while (k < starts.length && k <= through) {
+      if (++steps > MAX_REPAIR_STEPS) return null;
+      const f = fillOf(k);
+      if (f == null) return null;
+      const from = starts[k], to = lineEnd(k);
+      if (f > FIT_MAX && to - from > 1) {
+        const moving = to - 1;                       // last measure of this line
+        const nat = this.naturals.get(ids[moving]) ?? 0;
+        if ((f * budget - nat) / budget < MIN_FILL && to - from === 2) {
+          k++; continue;                             // shedding would only trade one illegality for another
+        }
+        if (k + 1 >= starts.length) {
+          starts.push(moving);                       // new final line
+          pushed = new Set<number>();
+        } else if (hard.has(ids[starts[k + 1]])) {
+          starts.splice(k + 1, 0, moving);           // can't move a user break — new line before it
+          pushed = new Set<number>();
+          through++;
+        } else {
+          starts[k + 1] = moving;
+        }
+        pushed.add(k);
+        through = Math.max(through, k + 1);
+        continue;                                    // re-check this line
+      }
+      if (f < MIN_FILL && k + 1 < starts.length && !pushed.has(k)) {
+        const cand = starts[k + 1];
+        if (!hard.has(ids[cand]) && lineEnd(k + 1) - cand > 1) {
+          if (!ensureRange(cand, cand)) return null;
+          const nat = this.naturals.get(ids[cand]) ?? 0;
+          if ((f * budget + nat) / budget <= FIT_MAX) {
+            starts[k + 1] = cand + 1;
+            through = Math.max(through, k + 1);
+            continue;                                // re-check this line
+          }
         }
       }
-      if (!moved) break;
+      k++;
     }
+
+    const out = starts.map((i) => ids[i]);
+    let movedLines = 0;
+    for (let i = 0; i < Math.max(out.length, this.startIds!.length); i++) {
+      if (out[i] !== this.startIds![i]) movedLines++;
+    }
+    this.lastRefillLines = movedLines;
+    return out;
   }
 
   /* ── naturals measurement ─────────────────────────────────────────────── */

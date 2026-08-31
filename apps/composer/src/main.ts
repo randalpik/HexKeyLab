@@ -13,7 +13,7 @@
 import { createComposerBridge, PROTOCOL_VERSION } from '@hkl/bridge/channel.js';
 import type { HklEvent, ResolvedNote, FootprintCell } from '@hkl/bridge/protocol.js';
 import { ComposerModel, type Voice } from './model/index.js';
-import { renderer, ZOOM_PRESETS, type ZoomLevel, type ViewMode, type ScoreTheme } from './render/render.js';
+import { renderer, styleVoltaNumbers, ZOOM_PRESETS, type ZoomLevel, type ViewMode, type ScoreTheme } from './render/render.js';
 import { cursor, resolveVoiceCursorAnchor } from './cursor/cursor.js';
 import { initInput, getInputState, setViewInstr, installSCTransposeImpl, clearChordInternalSel, resetToVoiceMode, selectLayerElementById } from './input.js';
 import { scTransposeChordNote, type FootprintColorMap } from './notation/scTranspose.js';
@@ -811,25 +811,8 @@ function injectSectionHeaders(scoreEl: HTMLElement, model: ComposerModel): void 
   }
 }
 
-/* Verovio draws volta (1st/2nd ending) numbers in a large, heavy default.
- * Restyle the innermost numeric tspan to a lighter serif and append the
- * conventional trailing period ("1." / "2."). */
-const VOLTA_NUMBER_FONT = 300;
-
-function styleVoltaNumbers(scoreEl: HTMLElement): void {
-  for (const vb of Array.from(scoreEl.querySelectorAll('g.voltaBracket'))) {
-    for (const ts of Array.from(vb.querySelectorAll('text tspan'))) {
-      /* The innermost tspan holds the bare number (no element children). */
-      if (ts.children.length > 0) continue;
-      const txt = (ts.textContent ?? '').trim();
-      if (!/^\d+\.?$/.test(txt)) continue;
-      ts.setAttribute('font-size', String(VOLTA_NUMBER_FONT));
-      ts.setAttribute('font-weight', 'normal');
-      ts.setAttribute('font-family', 'Times, serif');
-      if (!txt.endsWith('.')) ts.textContent = txt + '.';
-    }
-  }
-}
+/* Volta (1st/2nd ending) number styling lives in render/render.ts now — the
+ * page system splicer (Phase C-B) must apply it to its offscreen host too. */
 
 /* T2.2 (docs/composer-render-perf.md): heavy renders — multi-second engraves
    on large documents — are deferred one frame so the busy badge paints first,

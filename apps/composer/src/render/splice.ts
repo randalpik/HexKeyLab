@@ -477,49 +477,10 @@ export class ScrollSplicer {
 
   /* ── glyph defs merge ────────────────────────────────────────────────────── */
 
-  /** Ensure the persistent <defs> has every glyph the freshly-spliced measures
-   *  reference. Verovio defines glyphs as <g id="<SMuFL-codepoint>-<render-salt>">
-   *  children of a single <defs> (NOT <symbol>), and the salt is PER RENDER — so
-   *  a sub-render's <use href="#E0A4-<subsalt>"> never matches the persistent
-   *  "#E0A4-<mainsalt>". Match by codepoint (id up to the first '-'): remap each
-   *  <use> to the persistent glyph when its codepoint already exists (the common
-   *  case — the edited measures use glyphs the full render already emitted), else
-   *  copy the sub's glyph def over. */
+  /** See mergeGlyphDefs (shared with the page system splicer). */
   private mergeDefs(host: HTMLElement, fresh: SVGGElement[]): void {
     if (!this.defsEl) return;
-    const cpOf = (id: string) => id.split('-')[0];
-    const persistByCp = new Map<string, string>();
-    for (const g of Array.from(this.defsEl.children)) {
-      const id = g.getAttribute('id'); if (id) persistByCp.set(cpOf(id), id);
-    }
-    const subDefs = host.querySelector('defs');
-    const subById = new Map<string, Element>();
-    if (subDefs) for (const g of Array.from(subDefs.children)) {
-      const id = g.getAttribute('id'); if (id) subById.set(id, g);
-    }
-    for (const m of fresh) {
-      for (const use of Array.from(m.querySelectorAll('use'))) {
-        const href = use.getAttribute('xlink:href') || use.getAttribute('href');
-        if (!href || !href.startsWith('#')) continue;
-        const id = href.slice(1);
-        const cp = cpOf(id);
-        const existing = persistByCp.get(cp);
-        if (existing) {
-          if (existing !== id) this.setHref(use, '#' + existing);
-        } else {
-          const g = subById.get(id);
-          if (g) {
-            this.defsEl.appendChild(this.defsEl.ownerDocument.importNode(g, true));
-            persistByCp.set(cp, id);
-          }
-        }
-      }
-    }
-  }
-
-  private setHref(use: Element, val: string): void {
-    if (use.hasAttribute('xlink:href')) use.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', val);
-    else use.setAttribute('href', val);
+    mergeGlyphDefs(this.defsEl, host, fresh);
   }
 
   /* ── offscreen render helpers ────────────────────────────────────────────── */
@@ -537,6 +498,51 @@ export class ScrollSplicer {
     host.innerHTML = ctx.toolkit.renderToSVG(1, {});
     document.body.appendChild(host);
     return host;
+  }
+}
+
+/* ── shared splice helpers (scroll splicer + page system splicer) ─────────── */
+
+/** Ensure a persistent <defs> has every glyph the freshly-spliced elements
+ *  reference. Verovio defines glyphs as <g id="<SMuFL-codepoint>-<render-salt>">
+ *  children of a single <defs> (NOT <symbol>), and the salt is PER RENDER — so
+ *  a sub-render's <use href="#E0A4-<subsalt>"> never matches the persistent
+ *  "#E0A4-<mainsalt>". Match by codepoint (id up to the first '-'): remap each
+ *  <use> to the persistent glyph when its codepoint already exists (the common
+ *  case — the spliced content uses glyphs the full render already emitted),
+ *  else copy the sub-render's glyph def over. */
+export function mergeGlyphDefs(defsEl: Element, host: HTMLElement, fresh: Element[]): void {
+  const cpOf = (id: string) => id.split('-')[0];
+  const setHref = (use: Element, val: string): void => {
+    if (use.hasAttribute('xlink:href')) use.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', val);
+    else use.setAttribute('href', val);
+  };
+  const persistByCp = new Map<string, string>();
+  for (const g of Array.from(defsEl.children)) {
+    const id = g.getAttribute('id'); if (id) persistByCp.set(cpOf(id), id);
+  }
+  const subDefs = host.querySelector('defs');
+  const subById = new Map<string, Element>();
+  if (subDefs) for (const g of Array.from(subDefs.children)) {
+    const id = g.getAttribute('id'); if (id) subById.set(id, g);
+  }
+  for (const m of fresh) {
+    for (const use of Array.from(m.querySelectorAll('use'))) {
+      const href = use.getAttribute('xlink:href') || use.getAttribute('href');
+      if (!href || !href.startsWith('#')) continue;
+      const id = href.slice(1);
+      const cp = cpOf(id);
+      const existing = persistByCp.get(cp);
+      if (existing) {
+        if (existing !== id) setHref(use, '#' + existing);
+      } else {
+        const g = subById.get(id);
+        if (g) {
+          defsEl.appendChild(defsEl.ownerDocument.importNode(g, true));
+          persistByCp.set(cp, id);
+        }
+      }
+    }
   }
 }
 

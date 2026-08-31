@@ -30,7 +30,57 @@ node test/composer-inspect/phasec/runner.mjs test/composer-inspect/phasec/batter
   the edited line counts as "untouched" when the partition doesn't move
   (its internal justification legitimately shifts), and a boundary moving
   next to a scoreDef re-spaces the previous line's end-of-line courtesy
-  signatures (~33 units) — the C-B re-splice-k−1 case.
+  signatures (~33 units) — the C-B re-splice-k−1 case. (Known wart: it
+  waits on a renderer field `pendingDirty` that no longer exists, so each
+  edit rides its 40 s waitFor timeout — functional but slow; the C-B
+  battery below waits on the busy badge instead.)
 
-Both probes read renderer internals via bracket access
-(`renderer['pageBreaks']` etc.) — update them if those fields move.
+Phase C-B probes (2026-08-30, findings baked into
+`docs/composer-page-splice-design.md` → "Implementation (Phase C-B v1)"):
+
+- **cb-structure.js** — page-mode structural survey: `g.ending` parentage
+  (inside `g.system` → whole-system splices carry volta brackets), the
+  vertical stacking model (content-driven clearance, no vertical
+  justification, margin-anchored first systems), page bottom slack, existing
+  system transforms (section-header reserve).
+- **cb-window.js** — window fidelity: pin-anchored windowed sub-renders
+  (synthetic mRest leader + sb pins, page geometry, tall page, breaks:'line')
+  vs an offscreen pinned full render — per-measure x/width, staff-line ys,
+  hanging extents, and consecutive-system spacing (the pairwise-locality
+  check that lets the splice MEASURE follower dy). Expect delta 0.0 except
+  line 0 and section-boundary zones.
+- **cb-splice-battery.js** — the C-B acceptance-gate battery: eight edits
+  through the live app, each asserting the splice/skip outcome AND a
+  document-wide reference compare (every mounted page vs a fresh offscreen
+  render of the same pinned MEI: system sequence, per-measure x/width,
+  spacing; section-header pages exempt the spacing check — their reserve
+  translate is a main.ts injection). Expect allReferenceOk true; spliced
+  edits ~400–630 ms wall vs 1.6–3.1 s full renders.
+- **cb-focus.js** — three consecutive edits at one spot (sonata measure 100):
+  the first may full-render (first-edit-in-region re-break), the rest must
+  splice. The probe that found the end-of-score final-barline artifact
+  (fixed by the synthetic trailer).
+
+All probes read renderer internals via bracket access
+(`renderer['pageBreaks']`, `renderer['pageSplicer']` etc.) — update them if
+those fields move.
+
+Conservative-repartition probes (2026-08-30, the reflow-reversibility ruling):
+
+- **cb-noreflow.js** — the reversibility gate at sonata scale: for four edit
+  sites, delete a note and undo THROUGH REAL KEYSTROKES (Backspace / Ctrl+Z,
+  note-count-checked — a direct `model.deleteAtCursor()` skips `withHistory`,
+  so undo silently no-ops and the probe eats a chord per cycle; see
+  lessons.md), asserting the partition holds on both steps, `movedLines` is 0,
+  and the post-undo geometry matches. Expect 4/4 held, 3/4 bit-exact and the
+  4th within a few units of snap noise.
+- **cb-noreflow2.js** — two identical delete+undo cycles at one site plus a
+  live-vs-fresh-full-render comparison, to tell a one-time transition from a
+  per-cycle drift. (Written before the keystroke fix; its numbers are the
+  artifact — kept because the live-vs-reference comparator is the useful part.)
+- **cb-undodiff.js** — model-level diff of a delete+undo round trip (serialized
+  measures + whole-doc). The probe that identified the artifact above.
+- **cb-stalemount.js** — after a real splice, force the edited page back to a
+  placeholder and re-mount it: the freshly mounted page must draw the CURRENT
+  document (pageVirt.stale → re-serialize + re-pin). Expect `staleFlag: true`,
+  `ok: true`, remount ~1.5 s (one loadData, off the hot path).

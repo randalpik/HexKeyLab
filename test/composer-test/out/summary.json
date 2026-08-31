@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 335,
-  "passed": 335,
-  "failed": 0,
-  "elapsedMs": 235131,
+  "fixtures": 339,
+  "passed": 337,
+  "failed": 2,
+  "elapsedMs": 266675,
   "results": [
     {
       "name": "emptyDoc",
@@ -839,8 +839,13 @@
     },
     {
       "name": "pageLineBreaksRefill",
-      "ok": true,
-      "failures": [],
+      "ok": false,
+      "failures": [
+        {
+          "kind": "visual",
+          "detail": "screenshot differs from baseline (75732B vs 86000B, sha1 25131fa1/50089921); capture meta {\"mode\":\"page\",\"pages\":1,\"zoom\":100,\"pageScale\":1,\"scrollLeft\":0,\"scrollTop\":0,\"cardW\":2161,\"cardH\":2796,\"fullPage\":true}; saved out/page_linebreaks_refill.png — review and re-run with --update-baselines to accept"
+        }
+      ],
       "counts": {
         "invariants": 8
       },
@@ -873,7 +878,55 @@
       }
     },
     {
+      "name": "pageLineBreaksUndoRestoresLayout",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
       "name": "pageLineBreaksDeriveFallback",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "pageSystemSpliceEdit",
+      "ok": false,
+      "failures": [
+        {
+          "kind": "visual",
+          "detail": "screenshot differs from baseline (112881B vs 118811B, sha1 a33ebf0a/48ef9097); capture meta {\"mode\":\"page\",\"pages\":1,\"zoom\":100,\"pageScale\":1,\"scrollLeft\":0,\"scrollTop\":0,\"cardW\":2161,\"cardH\":2796,\"fullPage\":true}; saved out/page_system_splice_edit.png — review and re-run with --update-baselines to accept"
+        }
+      ],
+      "counts": {
+        "invariants": 8
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": true
+      }
+    },
+    {
+      "name": "pageSystemSpliceVerticalBail",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "pageSystemSpliceNoopSkip",
       "ok": true,
       "failures": [],
       "counts": {
@@ -1803,7 +1856,7 @@
         "pages": 1,
         "zoom": 100,
         "pageScale": 1,
-        "scrollLeft": 0,
+        "scrollLeft": 146,
         "scrollTop": 0,
         "cardW": 2161,
         "cardH": 2796,

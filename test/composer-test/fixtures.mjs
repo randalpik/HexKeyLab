@@ -1094,10 +1094,86 @@ const PAGE_LINEBREAKS = {
     skipCursorTrace: true,
   },
 
+  /* THE reversibility gate (Max, 2026-08-30): the partition is never
+   * re-derived, only repaired when an edit makes a line illegal — so a note
+   * delete must move NO boundary, and Ctrl+Z must restore the layout
+   * bit-for-bit. (The predecessor greedy refill re-derived and accepted any
+   * line up to FIT_MAX, so a deletion pulled a measure into the line and undo
+   * left it there — layout drifted one measure per edit and never drifted
+   * back.) Asserted via FIXTURE_ASSERTIONS.pageLineBreaksUndoRestoresLayout. */
+  pageLineBreaksUndoRestoresLayout: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 96; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
   /* A user break toggle changes the doc's break structure — the refill must
    * refuse (userBreakSig guard) and the derive path re-adopt. Asserted via
    * FIXTURE_ASSERTIONS.pageLineBreaksDeriveFallback. */
   pageLineBreaksDeriveFallback: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 48; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+};
+
+/* ── Page-view system splice (Phase C-B, render/pagesplice.ts) ─────────── */
+
+const PAGE_SPLICE = {
+  /* The modal edit — a mid-line content change on a line-break-owned page —
+   * must land as a SYSTEM SPLICE (no full loadData): outcome 'spliced', the
+   * DOM still renders the pinned partition verbatim, and (HKL_INDEX_CHECK)
+   * the inline reference gate re-renders the same pinned MEI offscreen and
+   * throws on any geometry divergence. Asserted via
+   * FIXTURE_ASSERTIONS.pageSystemSpliceEdit. */
+  pageSystemSpliceEdit: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 96; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();   /* derive render — arms partition adoption */
+    `,
+    visualBaseline: 'page_system_splice_edit',
+    visualFullPage: true,
+  },
+
+  /* An edit that changes a system's vertical extent must REFUSE the splice
+   * (anything else on the page would move — Phase C-B2 territory) and land
+   * the full refill render instead. Deterministic trigger: grow the DOC-LAST
+   * line's bottom extent (deep ledger-line chord) — the page-last
+   * bottom-extent rule measures the system itself, no spacing model involved.
+   * Asserted via FIXTURE_ASSERTIONS.pageSystemSpliceVerticalBail. */
+  pageSystemSpliceVerticalBail: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 96; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
+  /* A render request with a signature-identical doc must not touch the page
+   * DOM at all (the no-op skip): outcome 'noop' and element identity
+   * preserved. Asserted via FIXTURE_ASSERTIONS.pageSystemSpliceNoopSkip. */
+  pageSystemSpliceNoopSkip: {
     setup: `
       m.setCursor(0, 1);
       const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
@@ -5093,6 +5169,7 @@ export const FIXTURES = {
   ...mapKbdTier(PERFORMANCE, 'full'),
   ...mapKbdTier(SCROLL, 'full'),
   ...mapKbdTier(PAGE_LINEBREAKS, 'full'),
+  ...mapKbdTier(PAGE_SPLICE, 'full'),
   ...mapKbdTier(VISUAL, 'full'),
   ...mapKbdTier(HEJI, 'full'),
   ...mapKbdTier(SELECTION, 'full'),
@@ -7662,7 +7739,10 @@ export const FIXTURE_ASSERTIONS = {
         H.reRender();   /* refill path — adoption completes synchronously here */
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not active after the edit render (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         if (pb['adoption'] !== null) return { ok: false, detail: 'derive path taken (adoption re-armed) — expected a refill (lastDeriveReason=' + pb.lastDeriveReason + ')' };
-        if (pb.lastRefillLines < 1) return { ok: false, detail: 'refill recomputed no lines' };
+        /* NOTE: lastRefillLines === 0 is the DESIRED outcome for an edit that
+           breaks no line's legality — the partition is repaired, never
+           re-derived (Max's ruling 2026-08-30). What matters here is that the
+           REFILL path ran and the render honored its pins. */
         const startIds = pb['startIds'];
         if (startIds.length < 2) return { ok: false, detail: 'expected a multi-line partition, got ' + startIds.length };
         const pos = new Map(startIds.map((id, i) => [id, i]));
@@ -7694,12 +7774,10 @@ export const FIXTURE_ASSERTIONS = {
         const pb = H.renderer['pageBreaks'];
         /* Engage ownership with a no-change refill first (adoption completes
            synchronously; sig diff finds nothing → pins re-encoded as adopted).
-           NOTE: the ADOPTED partition is Verovio's choice; the first real edit
-           re-breaks its region to OUR fill rules (the documented "greedy from
-           the edited line's start" semantics) — so the invariant is NOT
-           "round-trip restores the adopted partition" but "identical content
-           always yields the identical partition": two round-trips must agree,
-           and a no-change render must move nothing. */
+           Since the partition is never re-derived — only repaired when an edit
+           makes a line illegal (Max's ruling 2026-08-30) — a round-trip must
+           restore the partition exactly, two round-trips must agree, and a
+           no-change render must move nothing. */
         for (let i = 0; i < 3 && !pb.ownershipActive(); i++) H.reRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged after pre-renders (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         const roundTrip = () => {
@@ -7720,6 +7798,60 @@ export const FIXTURE_ASSERTIONS = {
         if (A !== B) return { ok: false, detail: 'identical content produced different partitions across round-trips' };
         H.reRender();   // no-op render request
         if (pb['startIds'].join() !== A) return { ok: false, detail: 'a no-change render moved a boundary' };
+        return { ok: true };
+      })()` },
+  ],
+  pageLineBreaksUndoRestoresLayout: [
+    { name: 'a note delete moves no line boundary, and undo restores the layout bit-for-bit (no reflow hysteresis)',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        for (let i = 0; i < 3 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        const geom = () => {
+          const g = new Map();
+          for (const el of document.querySelectorAll('#score .score-page:not(.score-page-pending) g.measure')) {
+            const b = el.getBBox();
+            g.set(el.id, [+b.x.toFixed(2), +b.width.toFixed(2)]);
+          }
+          return g;
+        };
+        const before = pb['startIds'].join();
+        const geomBefore = geom();
+        if (geomBefore.size < 8) return { ok: false, detail: 'only ' + geomBefore.size + ' rendered measures — fixture too small' };
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        /* Delete a note mid-document (well inside a line, not at a boundary)
+           THROUGH THE REAL INPUT PATH — a direct model.deleteAtCursor() skips
+           withHistory, so nothing lands on the undo stack and the Ctrl+Z below
+           would silently no-op (probe artifact, 2026-08-30). */
+        const mi = Math.floor(ids.length / 2);
+        const cur = m.getFirstVisualCursorInMeasure(1, mi, 'overwrite');
+        if (cur < 0) return { ok: false, detail: 'no visual cursor in measure ' + mi };
+        m.setCursor(cur, 1);
+        const notesBefore = m.getDoc().querySelectorAll('note').length;
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }));
+        if (m.getDoc().querySelectorAll('note').length >= notesBefore) {
+          return { ok: false, detail: 'Backspace deleted nothing (notes ' + notesBefore + ')' };
+        }
+        if (pb['startIds'].join() !== before) {
+          return { ok: false, detail: 'a note delete moved a boundary (movedLines=' + pb.lastRefillLines + ') — the partition was re-derived, not repaired' };
+        }
+        if (pb.lastRefillLines !== 0) return { ok: false, detail: 'lastRefillLines=' + pb.lastRefillLines + ' for a legality-preserving edit' };
+        /* Undo through the real input path (history + effects + reRender). */
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
+        if (m.getDoc().querySelectorAll('note').length !== notesBefore) {
+          return { ok: false, detail: 'undo did not restore the deleted note (notes ' + m.getDoc().querySelectorAll('note').length + ' vs ' + notesBefore + ')' };
+        }
+        if (pb['startIds'].join() !== before) return { ok: false, detail: 'undo moved a boundary' };
+        const geomAfter = geom();
+        for (const [id, v] of geomBefore) {
+          const w = geomAfter.get(id);
+          if (!w) return { ok: false, detail: 'measure ' + id + ' missing after undo' };
+          if (Math.abs(v[0] - w[0]) > 0.01 || Math.abs(v[1] - w[1]) > 0.01) {
+            return { ok: false, detail: 'measure ' + id + ' geometry changed across delete+undo: ' + JSON.stringify(v) + ' → ' + JSON.stringify(w) };
+          }
+        }
         return { ok: true };
       })()` },
   ],
@@ -7767,6 +7899,100 @@ export const FIXTURE_ASSERTIONS = {
         if (pb['adoption'] === null) return { ok: false, detail: 'derive path not taken (adoption not re-armed) — the refill accepted a user-break change' };
         const pages = document.querySelectorAll('#score .score-page').length;
         return pages === 2 ? { ok: true } : { ok: false, detail: 'expected 2 pages after the <pb>, got ' + pages };
+      })()` },
+  ],
+  pageSystemSpliceEdit: [
+    { name: 'a mid-line edit lands as a system splice (no full loadData) and the DOM keeps the pinned partition',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        /* No priming: since the partition is repaired rather than re-derived
+           (Max's ruling 2026-08-30), the FIRST edit in a region leaves the
+           line count alone and must splice straight away. */
+        const startIds = pb['startIds'];
+        if (startIds.length < 3) return { ok: false, detail: 'need >= 3 lines, got ' + startIds.length };
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        /* Second measure of line 1: mid-line, past the excluded score-start line. */
+        const mi = ids.indexOf(startIds[1]) + 1;
+        m.setCursor(m.getMeasureStartCursor(1, mi), 1);
+        if (!m.deleteAtCursor()) return { ok: false, detail: 'delete rejected' };
+        H.reRender();   /* the inline reference gate (HKL_INDEX_CHECK) throws on any splice/full-render divergence */
+        if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a system splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
+        const pos = new Map(pb['startIds'].map((id, i) => [id, i]));
+        let prevEnd = -1;
+        for (const page of document.querySelectorAll('#score .score-page:not(.score-page-pending)')) {
+          const starts = [];
+          for (const sys of page.querySelectorAll('g.system')) {
+            const first = sys.querySelector('g.measure');
+            if (first && first.id) starts.push(first.id);
+          }
+          if (!starts.length) continue;
+          const at = pos.get(starts[0]);
+          if (at == null || at <= prevEnd) return { ok: false, detail: 'system start ' + starts[0] + ' is not a pin (or out of order)' };
+          for (let i = 1; i < starts.length; i++) {
+            if (pos.get(starts[i]) !== at + i) return { ok: false, detail: 'spliced partition broke pin order at ' + starts[i] };
+          }
+          prevEnd = at + starts.length - 1;
+        }
+        return { ok: true };
+      })()` },
+  ],
+  pageSystemSpliceVerticalBail: [
+    { name: 'an edit that grows the doc-last line bottom extent refuses the splice (vertical gate) and full-renders',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        if (pb['startIds'].length < 3) return { ok: false, detail: 'need >= 3 lines, got ' + pb['startIds'].length };
+        /* Replace in the LAST measure — always in the page-last line, so the
+           bottom-extent rule (measured on the system itself) triggers
+           deterministically; a replace preserves durations, so the partition
+           and line count stay put. */
+        const lastMeasure = m.allMeasures()[ids.length - 1];
+        const flat = m['flatChildren'](1);
+        let cur = -1;
+        for (let i = flat.length - 1; i >= 0; i--) {
+          const el = flat[i];
+          if ((el.localName === 'note' || el.localName === 'chord') && el.closest('measure') === lastMeasure) { cur = i; break; }
+        }
+        if (cur < 0) return { ok: false, detail: 'no note in the last measure to replace' };
+        m.setCursor(cur, 1);
+        const deep = { q: 0, r: 0, pname: 'c', accid: '', oct: 1, midi: 24, colorHex: '#888', lightColorHex: '#fff', velocity: 80 };
+        if (m.replaceChordAtCursor({ notes: [deep], duration: '4', dots: 0 }) === null) return { ok: false, detail: 'replace rejected' };
+        const marker = document.querySelector('#score .score-page g.system');
+        marker.setAttribute('data-hkl-test-marker', '1');
+        H.reRender();
+        if (ps.lastOutcome !== 'skipped') return { ok: false, detail: 'expected a vertical-gate skip, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
+        if (!/^vertical/.test(ps.lastSkipReason)) return { ok: false, detail: 'expected a vertical skip reason, got: ' + ps.lastSkipReason };
+        if (document.querySelector('[data-hkl-test-marker]')) return { ok: false, detail: 'full refill render did not rebuild the page DOM' };
+        return { ok: true };
+      })()` },
+  ],
+  pageSystemSpliceNoopSkip: [
+    { name: 'a signature-identical render request leaves the page DOM untouched (no-op skip)',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        const sys = document.querySelector('#score .score-page g.system');
+        if (!sys) return { ok: false, detail: 'no rendered system' };
+        sys.setAttribute('data-hkl-test-marker', 'noop');
+        H.reRender();   /* no model change */
+        if (ps.lastOutcome !== 'noop') return { ok: false, detail: 'expected a no-op skip, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
+        const still = document.querySelector('[data-hkl-test-marker="noop"]');
+        if (!still) return { ok: false, detail: 'no-op render rebuilt the page DOM' };
+        still.removeAttribute('data-hkl-test-marker');
+        return { ok: true };
       })()` },
   ],
   voiceIndexConsistencyUnderEdits: [

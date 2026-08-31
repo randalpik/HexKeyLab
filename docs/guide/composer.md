@@ -227,10 +227,18 @@ Two selectors in the top bar (remembered across reloads):
 - **View mode**: **Page** (paginated, for reading/printing) or **Scroll** (one continuous system).
 - **Theme**: **Light**, **Dark**, or **Transparent** (no background, for video/overlay use).
 
-**How page view reflows when you edit**: on larger scores, line breaks are kept
-stable while you work — an edit re-flows only the line you touched (and its
-neighbors when a bar spills over or pulls back); everything else stays where it
-was. The first edit in a passage may settle its lines slightly differently than
-the initial layout chose, after which they stay put — the layout never jumps on
-an edit that doesn't change any widths. Loading a document, zooming, or changing
-page size re-derives the whole layout fresh.
+**How page view reflows when you edit**: line breaks stay exactly where they
+are unless an edit makes a system genuinely unworkable — too crammed to fit, or
+too empty to stand. Only then does the layout move, and only by as much as it
+must: one bar shifts to the next line (or back from it), and the neighbouring
+lines follow if that leaves *them* unworkable. Everything else keeps its
+position, so editing a passage doesn't rearrange the page around it, and undo
+puts the layout back exactly as it was. A few actions re-derive the whole layout
+from scratch, so the page may re-flow: loading a document, zoom or page-size
+changes, switching to a single-instrument view, adding or removing a page break
+or section header, and changes to the key, time signature or staff set.
+
+This means the layout reflects the editing you've done, not a fresh engraving of
+the current music — that's deliberate, so the page stops moving under you while
+you work. (An explicit "re-flow the whole document" command, and commands to
+move a bar between systems by hand, are planned.)

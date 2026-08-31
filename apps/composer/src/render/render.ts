@@ -11,7 +11,30 @@ import { applyNotationTheme } from '@hkl/notation/verovio.js';
 import { CRISP_PRESETS, crispMarginTop, lineWidthOptions, pinExactScale, snapStaffLinesToGrid, snapBarlines, snapSystemRightEdge } from '@hkl/notation/render-presets.js';
 import { ScrollSplicer, type SpliceCtx } from './splice.js';
 import { PageLineBreaks, type PageBreaksCtx } from './linebreaks.js';
+import { PageSystemSplicer, type PageSpliceCtx } from './pagesplice.js';
 import type { ComposerModel } from '../model/index.js';
+
+/* Verovio draws volta (1st/2nd ending) numbers in a large, heavy default.
+ * Restyle the innermost numeric tspan to a lighter serif and append the
+ * conventional trailing period ("1." / "2."). Idempotent, content-level —
+ * main.ts runs it per mounted page; the page system splicer runs it on its
+ * offscreen host before importing systems. */
+const VOLTA_NUMBER_FONT = 300;
+
+export function styleVoltaNumbers(scoreEl: HTMLElement): void {
+  for (const vb of Array.from(scoreEl.querySelectorAll('g.voltaBracket'))) {
+    for (const ts of Array.from(vb.querySelectorAll('text tspan'))) {
+      /* The innermost tspan holds the bare number (no element children). */
+      if (ts.children.length > 0) continue;
+      const txt = (ts.textContent ?? '').trim();
+      if (!/^\d+\.?$/.test(txt)) continue;
+      ts.setAttribute('font-size', String(VOLTA_NUMBER_FONT));
+      ts.setAttribute('font-weight', 'normal');
+      ts.setAttribute('font-family', 'Times, serif');
+      if (!txt.endsWith('.')) ts.textContent = txt + '.';
+    }
+  }
+}
 
 export type ViewMode = 'page' | 'scroll';
 
@@ -117,7 +140,15 @@ class Renderer {
     mounted: Set<number>;
     io: IntersectionObserver | null;
     tkCurrent: boolean;          // tk still holds this layout → loadData-free mounts
+    /** A system splice edited the MOUNTED pages in place, so `mei` no longer
+     *  describes the document — a lazy mount would render pre-edit content.
+     *  The next mount re-serializes + re-pins from the live model first. */
+    stale: boolean;
   } | null = null;
+  /** The model of the last renderComposer — needed to rebuild page data for a
+   *  lazy mount after a splice (see pageVirt.stale). Renders always pass it;
+   *  this only makes it reachable from the mount path. */
+  private lastModel: ComposerModel | null = null;
   /** Measure xml:ids in document order (captured per renderComposer) —
    *  ensureMeasureMounted's index → id map. */
   private measureIds: string[] = [];
@@ -137,6 +168,12 @@ class Renderer {
    *  lifecycle can swallow an earlier mutation's 'all' under batch-mutate-
    *  then-render flows, e.g. the test runner's doc reset). */
   private pageBreaks = new PageLineBreaks();
+  /** Page-view system splice (Phase C-B, docs/composer-page-splice-design.md):
+   *  when a refill's edit is provably local, replace only the affected
+   *  systems in the mounted page SVGs from a windowed offscreen render —
+   *  skipping the full-doc loadData entirely. Stateless: everything it needs
+   *  lives in the DOM + the refill result, so there is nothing to invalidate. */
+  private pageSplicer = new PageSystemSplicer();
 
   constructor() {
     this.readyPromise = this.loadVerovio();
@@ -500,7 +537,7 @@ class Renderer {
     this.pageVirt = {
       mei: data, options, pageCount: pages,
       pageW: box.width, pageH: box.height,
-      mounted: new Set([1]), io: null, tkCurrent: true,
+      mounted: new Set([1]), io: null, tkCurrent: true, stale: false,
     };
     this.finishPageMount(p1);
     this.container!.scrollTop = keepTop;
@@ -524,6 +561,17 @@ class Renderer {
   private ensureTkHoldsPageLayout(): boolean {
     const st = this.pageVirt;
     if (!st) return false;
+    if (st.stale) {
+      /* A splice edited the mounted pages without re-loading the document —
+         rebuild the page data from the live model + the owner's current pins
+         so this mount draws the CURRENT score (v1 splices are gated to leave
+         pagination untouched, so the placeholder grid still holds). */
+      const mei = this.pinnedMeiForCurrentModel();
+      if (mei === null) return false;
+      st.mei = mei;
+      st.stale = false;
+      st.tkCurrent = false;
+    }
     if (st.tkCurrent) return true;
     this.tk!.setOptions(st.options);
     if (!this.tk!.loadData(st.mei)) return false;
@@ -643,6 +691,7 @@ class Renderer {
     /* Measure-index → xml:id map for ensureMeasureMounted (page mode). Cheap
        (one childNodes walk), refreshed every render so it can't go stale. */
     this.measureIds = model.allMeasures().map((m) => m.getAttribute('xml:id') ?? '');
+    this.lastModel = model;
     const heji = { hejiEnabled: model.getHejiEnabled() };
     let preMei: string | null = null;
     if (this.lastRenderedMode !== null && this.lastRenderedMode !== this.viewMode) {
@@ -654,8 +703,8 @@ class Renderer {
       const tookFull = this.renderScroll(model, viewStaves, preMei);
       if (tookFull) this.lastFullMs.scroll = performance.now() - t0;
     } else {
-      this.renderPageComposer(model, viewStaves, preMei, heji);
-      this.lastFullMs.page = performance.now() - t0;
+      const tookFull = this.renderPageComposer(model, viewStaves, preMei, heji);
+      if (tookFull) this.lastFullMs.page = performance.now() - t0;
     }
     this.lastRenderedMode = this.viewMode;
     return true;
@@ -663,25 +712,63 @@ class Renderer {
 
   /** Page-view composer render: line-break-owned refill when the edit is
    *  provably local (adopted partition + narrow dirty union + unchanged user
-   *  breaks/head context), else a derive render (today's strategies) that
-   *  re-arms lazy partition adoption. See render/linebreaks.ts. */
+   *  breaks/head/interior context), else a derive render (today's strategies)
+   *  that re-arms lazy partition adoption. See render/linebreaks.ts. A refill
+   *  lands as a SYSTEM SPLICE (Phase C-B, render/pagesplice.ts) when its
+   *  gates hold — no full-doc loadData at all; otherwise the full refill
+   *  render. Returns true when a full engrave happened (lastFullMs evidence —
+   *  splices and no-op skips must not poison the heaviness predictor). */
   private renderPageComposer(
     model: ComposerModel, viewStaves: number[] | null, preMei: string | null,
     heji: { hejiEnabled: boolean },
-  ): void {
+  ): boolean {
     if (viewStaves == null && this.pageBreaks.canAttemptRefill()) {
       const refill = this.pageBreaks.tryRefill(model, viewStaves, this.pageBreaksCtx());
       if (refill) {
-        this.renderPage(refill.mei, true, refill.strategy);
-        /* The refill layout is now in the toolkit — the committed partition
-           describes it directly, no idle adoption needed. Verify the pins were
-           honored on the mounted pages (a safety net for castoff overrides —
-           warn + re-adopt; throws under HKL_INDEX_CHECK). */
-        this.pageBreaks.verifyRenderedPartition(
-          this.container!, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
-        return;
-      }
-      if (this.pageBreaks.ownershipActive()) {
+        /* Splice/no-op only when the mounted DOM is the page render the
+           committed partition describes: never across a view-mode switch
+           (preMei non-null — the container may hold the OTHER mode's DOM,
+           where measure ids resolve into the wrong frame). */
+        const pageDomLive = preMei === null && this.pageVirt !== null
+          && this.container!.querySelector('.score-page svg') !== null;
+        if (pageDomLive && refill.strategy === 'line') {
+          if (refill.changedRun === null) {
+            /* Signature-identical doc (head/user-break/interior guards all
+               passed) — the mounted DOM already renders exactly this. */
+            this.pageSplicer.noteNoop();
+            return false;
+          }
+          if (this.pageSplicer.trySplice(model, refill, this.pageSpliceCtx())) {
+            /* The mounted pages now show the edit but the toolkit's layout —
+               and pageVirt.mei — still describe the pre-edit document; a lazy
+               mount must rebuild before drawing (pageVirt.stale). Its options
+               become the pinned 'line' ones the rebuilt data expects, whatever
+               strategy the last full render used. */
+            if (this.pageVirt) {
+              this.pageVirt.stale = true;
+              this.pageVirt.tkCurrent = false;
+              this.pageVirt.options = this.buildOptions('line');
+            }
+            this.pageBreaks.verifyRenderedPartition(
+              this.container!, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
+            return false;
+          }
+          console.info('[page-splice] not spliceable (' + this.pageSplicer.lastSkipReason + ') — full refill render');
+        }
+        const pinned = refill.mei();
+        if (pinned !== null) {
+          this.renderPage(pinned, true, refill.strategy);
+          /* The refill layout is now in the toolkit — the committed partition
+             describes it directly, no idle adoption needed. Verify the pins were
+             honored on the mounted pages (a safety net for castoff overrides —
+             warn + re-adopt; throws under HKL_INDEX_CHECK). */
+          this.pageBreaks.verifyRenderedPartition(
+            this.container!, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
+          return true;
+        }
+        console.warn('[page-breaks] pin injection failed (missing id) — derive render');
+        this.pageBreaks.invalidate();
+      } else if (this.pageBreaks.ownershipActive()) {
         console.info('[page-breaks] refill unavailable for this edit — derive render');
       }
     }
@@ -691,6 +778,39 @@ class Renderer {
     } else {
       this.pageBreaks.invalidate();   // filtered view: partition would describe a subset
     }
+    return true;
+  }
+
+  /** Serialize the live model and inject the line-break owner's CURRENT pins —
+   *  the data a lazy mount must load after a splice. Null when no model has
+   *  rendered yet or the partition can't be pinned. */
+  private pinnedMeiForCurrentModel(): string | null {
+    const model = this.lastModel;
+    if (!model) return null;
+    const mei = model.serialize({ hejiEnabled: model.getHejiEnabled() }, null);
+    return this.pageBreaks.pinRenderMei(mei);
+  }
+
+  /** Context the page system splicer drives Verovio + the post passes through. */
+  private pageSpliceCtx(): PageSpliceCtx {
+    return {
+      container: this.container!,
+      toolkit: this.spliceTk!,
+      /* Live page options (same justification width/margins/preset) with a
+         huge page budget so the window lands on ONE page, trimmed to content,
+         and no title header (the synthetic leader absorbs score-start
+         treatment; header:'auto' would draw a title block above it). */
+      windowOptions: {
+        ...this.buildOptions('line', 'page'),
+        pageHeight: 60_000,
+        adjustPageHeight: true,
+        header: 'none',
+      },
+      liveOptions: () => this.buildOptions('line', 'page'),
+      postProcess: (el: HTMLElement) => this.postProcessRendered(el),
+      decorateHost: (el: HTMLElement) => styleVoltaNumbers(el),
+      snapPage: (el: HTMLElement) => this.snapSystems(el),
+    };
   }
 
   /** Context the page line-break owner drives Verovio through. */

@@ -135,18 +135,29 @@ on mount (viewBox growth), shifting pages below it; scroll-mode full engrave
   ~150–400 ms). It is the structural prerequisite: every boundary is now a
   hard anchor, so C-B's windows are pixel-exact by construction and the
   cascade extent is known before any DOM work.
-- [ ] **T3.1 Per-system greedy-refill splice** — design in
-  [composer-page-splice-design.md](composer-page-splice-design.md). Each
-  affected system re-lays greedily from its start measure via a windowed
-  sub-render (Verovio itself decides the fill), so forward spill AND **reverse
-  cascade** (a deletion pulls the next measure back in) are the same
-  operation; cascade terminates when a system's (start, measure set) matches
-  the old partition; dy-translate below; page-overflow cascades page→page;
-  cascade tail runs off the hot path behind the badge. **Gate (Max): no
-  visual change to cross-system actions vs a full re-engrave** — partition +
-  geometry parity harness under HKL_INDEX_CHECK + fixtures. Spike 1
-  (partition/justification reproducibility of a windowed sub-render) is the
-  make-or-break; fail ⇒ fall back to T2.3.
+- [x] **T3.1 Contained system splice (Phase C-B v1)** — SHIPPED 2026-08-30
+  (`apps/composer/src/render/pagesplice.ts`; full account in
+  composer-page-splice-design.md "Implementation (Phase C-B v1)"). A refilled
+  edit lands as a DOM splice of only the affected systems from a pin-anchored
+  window render (synthetic leader + trailer, breaks:'line') — **no full-doc
+  loadData**. Gated hard: splices only when the window's measured spacing
+  chain proves nothing else on any page moves; context-line sanity + inline
+  HKL_INDEX_CHECK reference parity enforce Max's no-visual-change gate.
+  **Sonata: 7 of 8 battery edits splice at 380–673 ms wall (splice work
+  ~160–190 ms) vs ~1.95 s for the one full render**; reference parity ≤ 4
+  units document-wide on every edit; the single fallback is the
+  section-header line (excluded by design). No-op renders skip DOM work
+  entirely. (The 3/8 hit rate measured before conservative reflow was a
+  side effect of re-derivation changing the line count — see the 2026-08-30
+  reflow entry below.)
+- [ ] **T3.2 Cascades + pagination ownership (Phase C-B2)** — dy-translate of
+  following systems (the window MEASURES the new spacing, so dy is known),
+  line-count-changing splices (replace N systems with M), page-boundary
+  moves, `<pb>` pins + our height-fit rule so a full render agrees by
+  construction (also fixes the user-`<pb>` giant-page quirk); re-splice k−1
+  on courtesy-signature boundaries; section-zone windows (the k59/k87
+  scoreDef family); first-edit hit rate via a keep-current-boundary fill
+  bias (design item 1c, Max's call).
 
 ## Rejected / dead ends (don't retry)
 
@@ -212,3 +223,27 @@ on mount (viewBox growth), shifting pages below it; scroll-mode full engrave
   (probe-verified both directions). Rule for all future deferral work:
   **no user-visible state may change before the deferred render lands — every
   visible flip travels with the content swap.**
+- 2026-08-30 — **T3.1 contained system splice shipped** (Phase C-B v1; full
+  account in composer-page-splice-design.md). Page-view edits that pass the
+  gates splice at ~400–630 ms wall on the sonata (Chromium) vs 1.6–3.1 s full
+  renders — the first structural latency win from Phase C. Probes settled the
+  mechanism (endings ride inside g.system; content-driven stacking, no
+  vertical justification; pin-anchored windows pixel-exact); the battery
+  found the end-of-score final-barline artifact (synthetic trailer) and the
+  section-zone divergence (context-check refusal). Suite green under
+  HKL_INDEX_CHECK with 3 new fixtures; awaiting Max's Firefox pass (the
+  splice avoids loadData, where Firefox pays 2–3×, so the relative win
+  should be larger there).
+- 2026-08-30 — **Reflow made conservative** (Max's ruling; decisions.md same
+  date). The page-view partition is no longer re-derived on an edit — it is
+  carried across and only REPAIRED where a line left the legality envelope
+  ([MIN_FILL 0.65, FIT_MAX 1.45], set to contain Verovio's own castoff range
+  0.706–1.426). Fixes the reported drift (delete a note → the system gained a
+  measure → undo left it there: threshold hysteresis inherent to greedy
+  re-derivation) and, because most edits now leave the line count untouched,
+  raises the C-B splice hit rate — the first edit in a region splices too.
+  Sonata (real keystrokes): 4/4 edits and undos held the partition with zero
+  moved lines, undo geometry bit-exact 3/4 (4th within 3 units of snap noise),
+  spliced edits ~460–650 ms. Also closed a hole the probe exposed: a page
+  mounted lazily AFTER a splice used to draw pre-edit content (pageVirt.stale
+  → re-serialize + re-pin on the next mount, ~1.5 s once, off the hot path).
