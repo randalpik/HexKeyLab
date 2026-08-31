@@ -1778,3 +1778,62 @@ Two facts, both measured on the sonata, that together settle how zoom interacts 
 Two process lessons on top of the technical one. **Unit 9 was never chosen** — it is Verovio's default, inherited; the 50/75/100 ladder predated the presets; unit 10 arrived in a grab-bag commit solely to rescue 75 %. And decisions.md asserted the opposite of the defect ("zoom is pure magnification and does not change music-per-page"), so nobody weighed the cost. **When a co-tuned constant looks wrong, search for the derivation first (it may refute you) — but check whether its stated constraint is general or specific to the value it was derived at.** Mine was specific, and reading it as general cost a dead end.
 
 Rules: to make a layout invariant across a UI control, make the layout INPUTS identical and let only `scale` vary — never try to cancel one layout input with another. Key a layout cache on the layout inputs (`unit`), never on the UI label (`zoom`) — two labels sharing a unit can share the entry, and one label can silently change the layout. And before "fixing" a co-tuned constant, find the derivation: this one cost two dead ends, the second of which was already written down.
+
+## A page can only begin where a LINE begins — so a user `<pb>` must be merged into the line partition, and no single Verovio mode paginates by height while honoring it (2026-08-31)
+
+The user-page-break defects (a break before a page's last line leaving a page with just that line; a mid-system break not reflowing measures) were one root cause with two faces, and the fix needed two facts about Verovio's break modes:
+
+**No mode does both jobs.** `breaks:'line'` paginates by height but treats `<pb>` as a SYSTEM break — measured on the sonata, a document with one Ctrl+B returns the *same* page count as with no break at all and the break measure is not a page start. `breaks:'encoded'` honors `<pb>` as a page break but never paginates by height (that is the old 37 → 2 giant pages). So taking `'line'`'s page starts and painting `'encoded'` layered the break ON TOP of pins computed as if it did not exist: an extra boundary with nothing after it re-packed. The fix is to segment the castoff at user breaks and paginate each segment independently — Verovio stays the page-fit engine, we only choose where to cut, and no height model is needed.
+
+**And the break measure must be merged into the LINE partition first.** A page begins with a new system, so the break measure has to start one — but the whole-document castoff runs under smartSb0, which IGNORES `<pb>`, so that measure is generally mid-line and absent from the partition. Omitting the merge is self-inconsistent in a way that is easy to miss: the segment document *begins* at that measure, so Verovio necessarily starts a line there, and a partition-equality check between "what I pinned" and "what came back" refuses. Keeping that check is what turned a silent wrong-pagination into a clean bail (it fell through to the old path rather than painting a layout the page list did not describe). The same merge is what makes a mid-system break reflow its measures: the measures before it finish the now-shorter previous line.
+
+Two smaller traps in the same change: `injectPins` deliberately emits no pin for the FIRST line, so a single-line segment hands `'line'` data with no encoded break — Verovio warns ("Requesting layout with line breaks but nothing provided in the data") and silently falls back to castoff; short-circuit such a segment instead (one line cannot overflow a page). And the composer suite treats any console warning as a failure, which is exactly how that surfaced — two unrelated-looking fixtures failing on an identical warning string is the tell that a shared render path started warning.
+
+## Verovio's system placement does not match the rendered bbox — so read a position from a page you reproduced, never model it (2026-08-31)
+
+The Phase C-B v1 vertical gate refused to splice whenever a system would move,
+and B1's job was to compute the movement instead. For systems stacked WITHIN a
+page the window already predicts it exactly (probe `cb-window.js`: delta 0.0).
+The one that resisted was a page's FIRST system, modelled as *"a page's first
+system anchors its content top at the margin, so its staff lands at
+margin + hanging extent"*. Measured against real full renders, that model was
+exact on some pages and **~85 units (≈8 px) wrong on others**.
+
+**Two independent causes, both invisible from the model side.**
+
+1. **`getBBox` is not the overflow Verovio counted.** Reading the topmost
+   descendant of every page-first system on the sonata: pages whose bbox top
+   sat at the common anchor (~419) were all predicted correctly, and the
+   outliers (335, 340, 347, 577) were all `<text>` — `g.dir`, `g.tempo`, and
+   HKL's own HEJI `g.accid`. Verovio places systems from its INTERNAL metrics;
+   for text those disagree with what the browser actually paints, so a bbox
+   hang over-counts by however far the text overflows. There is no "counted"
+   element set worth enumerating, and enumerating one would be a model that
+   silently mis-positions systems when it drifts.
+2. **`header: 'auto'` reserves a band on every page.** The live page options
+   use it; the splice window overrode it to `'none'` (inherited from the
+   tall-page trick that `breaks:'line'` needed). That band is precisely what
+   anchors a page's first system — suppressing it put every window-page-first
+   system **~419 units too high, uniformly**. A constant offset is the easiest
+   error to miss: it satisfies every *relative* check.
+
+**The fix is structural, not arithmetical.** The window carries `<pb>` pins at
+the live page starts, so it paginates exactly where the mounted document does
+and a page-first system is page-first in the window too; its position is then
+READ (both coordinate systems are page-margin relative), not derived. With the
+window also using the live page options verbatim — `'encoded'` paginates only
+at encoded breaks, so the tall page was never needed once pagination was owned
+— the worst prediction error over 19 samples fell from **425 units to 8**.
+
+**Guard against the constant.** A dy-cascade that shifts a whole page by a
+constant passes every consecutive-spacing assertion. Both the inline
+`HKL_INDEX_CHECK` reference gate and `cb-splice-battery.js` now compare
+**absolute** staff tops against the reference render, not just spacings
+(sonata: ≤6 units over 30 pages, pure snap noise).
+
+**And apply a measured plan all-or-nothing.** The plan is accurate to ~±8
+units, so "applying" a 3-unit movement adds error rather than removing it, and
+re-snaps every system on the page for a sub-pixel edit — it showed up
+immediately as a visual-baseline diff on an edit that used to move nothing.
+A splice now either pins systems to their live positions exactly (v1 behaviour,
+when nothing moves by more than EPS) or applies the whole plan.

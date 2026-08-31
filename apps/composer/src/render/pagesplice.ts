@@ -119,6 +119,36 @@ interface LiveSys extends SysProfile {
   pageLast: boolean;
 }
 
+/** Where a full re-engrave would put the replaced systems, and what that does
+ *  to everything below them. Every number is MEASURED from the window's own
+ *  spacing chain (probe cb-window.js: delta 0.0 against a full pinned render)
+ *  — the splicer never models Verovio's stacker.
+ *
+ *  Only ONE page can have followers: a replaced system that is not its page's
+ *  last is followed by another replaced system on the same page, so the only
+ *  system that can be followed by UNREPLACED ones is the last replaced one. */
+export interface VerticalPlan {
+  /** Start-measure id of each replaced line (index k − a). */
+  startIds: string[];
+  /** Live staff-top of each replaced system (SVG user units, page-absolute). */
+  liveTop: number[];
+  /** Staff-top a full re-engrave would give it. */
+  newTop: number[];
+  /** dy every system BELOW the last replaced one on its page would take
+   *  (0 when the last replaced system ends its page — the next page's first
+   *  system is margin-anchored and does not move). */
+  dyFollow: number;
+  /** Start id of the first unreplaced follower, '' when there is none. */
+  followId: string;
+  /** Bottom extent of the last replaced system after the plan (page-absolute,
+   *  same units as newTop) — the page-fit input. */
+  newBottom: number;
+  /** Its live bottom extent, for comparison. */
+  liveBottom: number;
+  /** True when nothing moves at all (the Phase C-B v1 case). */
+  static: boolean;
+}
+
 function consolidate(el: SVGGElement): { tx: number; ty: number } {
   const base = el.transform?.baseVal?.consolidate?.();
   return base ? { tx: base.matrix.e, ty: base.matrix.f } : { tx: 0, ty: 0 };
@@ -176,6 +206,9 @@ export class PageSystemSplicer {
    *  can be mounted without re-loading the document. */
   lastPages: number[] = [];
   lastStats = { lines: 0, windowLines: 0, windowMeasures: 0, loadMs: 0, totalMs: 0 };
+  /** The vertical plan the last gate computed (null when it never got that
+   *  far). Diagnostics for the probes; the splice itself consumes it inline. */
+  lastVertical: VerticalPlan | null = null;
 
   /** The caller resolved a signature-identical doc — the mounted DOM already
    *  renders it; nothing to do. Recorded for diagnostics only. */
@@ -191,6 +224,7 @@ export class PageSystemSplicer {
     const t0 = performance.now();
     this.lastStats = { lines: 0, windowLines: 0, windowMeasures: 0, loadMs: 0, totalMs: 0 };
     this.lastPages = [];
+    this.lastVertical = null;
     const skip = (why: string): false => {
       this.lastOutcome = 'skipped';
       this.lastSkipReason = why;
@@ -283,28 +317,51 @@ export class PageSystemSplicer {
     this.lastStats.windowMeasures = mHi - mLo + 1;
 
     const winStarts = newStartIds.slice(wLo, wHi + 1);
+    /* Page pins: every window line that begins a LIVE page becomes a <pb>, so
+       the window paginates exactly like the mounted document. Without this a
+       page-first system is mid-page in the window and its absolute placement
+       (Verovio's page-top anchoring) is unreadable — the v1 gate had to model
+       it as "content top at the margin + hanging extent", which is wrong
+       whenever the system's topmost content is a <text> element (g.dir,
+       g.tempo, HEJI g.accid): Verovio's own metrics for those disagree with
+       the rendered bbox by up to ~85 units. See the B1 note in the design doc.
+       The window's FIRST system (leader, else line wLo) already starts page 1,
+       so it never takes a pin. */
+    const leader = wLo > 0;
+    const livePageStarts = new Set(refill.newPageStartIds);
+    const pbIds = new Set<string>();
+    for (let li = leader ? wLo : wLo + 1; li <= wHi; li++) {
+      if (livePageStarts.has(newStartIds[li])) pbIds.add(newStartIds[li]);
+    }
     /* A window ending mid-document needs a synthetic TRAILER line: the
        sub-document's last measure would otherwise draw the end-of-score FINAL
        barline (~5 px wider than the live line's normal barline — found by the
        sonata battery's context check). The pinned mRest trailer absorbs it
        and is discarded, exactly like the leader absorbs score-start artifacts. */
     const trailer = mHi < ids.length - 1;
-    const winMei = buildWindowMei(model, mLo, mHi, winStarts, wLo > 0, trailer);
+    const winMei = buildWindowMei(model, mLo, mHi, winStarts, leader, trailer, pbIds);
     if (!winMei) return skip('window build failed');
 
     const tLoad = performance.now();
     ctx.toolkit.setOptions(ctx.windowOptions);
     if (!ctx.toolkit.loadData(winMei)) return skip('window loadData failed');
-    if (ctx.toolkit.getPageCount() !== 1) return skip('window paginated');
-    const host = document.createElement('div');
-    host.style.cssText = 'position:absolute;left:-99999px;top:0';
-    host.innerHTML = ctx.toolkit.renderToSVG(1, {});
-    document.body.appendChild(host);
+    const wantPages = 1 + pbIds.size;
+    if (ctx.toolkit.getPageCount() !== wantPages) return skip('window paginated');
+    /* One host per window page — the same shape a mounted page has, so
+       postProcess/decorate and mergeGlyphDefs (which reads ONE <defs>) behave
+       exactly as they do on the live path. */
+    const hosts: HTMLElement[] = [];
+    for (let pno = 1; pno <= wantPages; pno++) {
+      const h = document.createElement('div');
+      h.style.cssText = 'position:absolute;left:-99999px;top:0';
+      h.innerHTML = ctx.toolkit.renderToSVG(pno, {});
+      document.body.appendChild(h);
+      hosts.push(h);
+    }
     this.lastStats.loadMs = Math.round(performance.now() - tLoad);
     try {
-      ctx.postProcess(host);
-      ctx.decorateHost(host);
-      const ok = this.spliceDom(host, { a, b, wLo, wHi, winStarts, leader: wLo > 0, trailer }, live, newStartIds, ctx, skip);
+      for (const h of hosts) { ctx.postProcess(h); ctx.decorateHost(h); }
+      const ok = this.spliceDom(hosts, { a, b, wLo, wHi, winStarts, leader, trailer }, live, newStartIds, ctx, skip);
       if (ok) {
         this.lastOutcome = 'spliced';
         this.lastSkipReason = '';
@@ -314,7 +371,7 @@ export class PageSystemSplicer {
       }
       return ok;
     } finally {
-      host.remove();
+      for (const h of hosts) h.remove();
     }
   }
 
@@ -341,24 +398,37 @@ export class PageSystemSplicer {
 
   /** Gates that need the rendered window, then the surgery. */
   private spliceDom(
-    host: HTMLElement,
+    hosts: HTMLElement[],
     r: { a: number; b: number; wLo: number; wHi: number; winStarts: string[]; leader: boolean; trailer: boolean },
     live: LiveSys[],
     newStartIds: string[],
     ctx: PageSpliceCtx,
     skip: (why: string) => false,
   ): boolean {
-    const systems = Array.from(host.querySelectorAll('g.system')) as SVGGElement[];
+    /* Window systems in document order across the window's pages, each tagged
+       with the host page it came from (mergeGlyphDefs reads that page's defs)
+       and whether it STARTS that page (the anchor the vertical plan reads). */
+    const systems: SVGGElement[] = [];
+    const hostOf = new Map<SVGGElement, HTMLElement>();
+    const winPageFirst = new Set<SVGGElement>();
+    for (const h of hosts) {
+      const onPage = Array.from(h.querySelectorAll('g.system')) as SVGGElement[];
+      onPage.forEach((sys, i) => { hostOf.set(sys, h); if (i === 0) winPageFirst.add(sys); });
+      systems.push(...onPage);
+    }
     const expected = (r.leader ? [LEAD_ID] : []).concat(r.winStarts, r.trailer ? [TRAIL_ID] : []);
     if (systems.length !== expected.length) return skip('window system count mismatch');
     for (let i = 0; i < systems.length; i++) {
       if (systems[i].querySelector('g.measure')?.id !== expected[i]) return skip('window partition mismatch');
     }
     const winProf = new Map<number, SysProfile>();
+    const winIsPageFirst = new Set<number>();
     for (let li = r.wLo; li <= r.wHi; li++) {
-      const p = systemProfile(systems[(r.leader ? 1 : 0) + (li - r.wLo)]);
+      const sys = systems[(r.leader ? 1 : 0) + (li - r.wLo)];
+      const p = systemProfile(sys);
       if (!p) return skip('window profile unreadable');
       winProf.set(li, p);
+      if (winPageFirst.has(sys)) winIsPageFirst.add(li);
     }
 
     /* Context-line sanity: the unchanged neighbour lines must reproduce their
@@ -379,48 +449,43 @@ export class PageSystemSplicer {
       if (dBelow) return skip('context line below diverged (' + dBelow + ')');
     }
 
-    /* Vertical gate: nothing outside the replaced systems may move. Verovio
-       stacks systems by content clearance (probe 1), so the window's own
-       consecutive-system spacing IS the spacing a full render would produce
-       (probe 2: delta 0.0). Splice only when that measured spacing keeps
-       every replaced system exactly at its live position — and the last one
-       keeps its live spacing to the line below (or, at a page bottom, its
-       bottom extent, so pagination provably cannot change). */
+    /* Vertical PLAN: where a full re-engrave would put each replaced system,
+       and by how much the systems below it on its page would move. Verovio
+       stacks systems by content clearance (probe 1) and the window reproduces
+       that chain exactly (probe 2: delta 0.0), so the plan is MEASURED, never
+       emulated. v1 splices only when the plan is static (nothing moves); B1
+       applies a non-static plan instead of refusing. */
+    /* A live page-first system is placed from its window counterpart's
+       ABSOLUTE position, which is only comparable when the window paginates
+       there too — and only when the live page carries no section-header
+       reserve (main.ts translates that page's systems by an amount Verovio
+       knows nothing about). */
     for (let k = r.a; k <= r.b; k++) {
       const lk = live[k - r.a];
-      const wk = winProf.get(k)!;
-      if (lk.pageFirst) {
-        /* A page's first system anchors its CONTENT top at the margin — the
-           staff lands at margin + hang. Hang must be unchanged. */
-        const liveHang = lk.staffTop - lk.bboxTop;
-        const winHang = wk.staffTop - wk.bboxTop;
-        if (Math.abs(winHang - liveHang) > EPS) return skip('vertical: page-first hang would move');
-      } else {
-        const prevLive = k === r.a ? ctxPrev : live[k - r.a - 1];
-        const prevWin = winProf.get(k - 1)!;
-        const dWin = wk.staffTop - prevWin.staffTop;
-        const dLive = lk.staffTop - prevLive.staffTop;
-        if (Math.abs(dWin - dLive) > EPS) return skip('vertical: spacing above would move');
-      }
+      if (!lk.pageFirst) continue;
+      if (!winIsPageFirst.has(k)) return skip('window page boundary missing');
+      if (lk.pageEl.querySelector('text.hkl-section-header')) return skip('section-header page anchor');
     }
+    const plan = verticalPlan(r, live, winProf, ctxPrev, ctxNext);
+    this.lastVertical = plan;
     const lb = live[r.b - r.a];
-    const wb = winProf.get(r.b)!;
-    if (lb.pageLast) {
-      const liveBotRel = lb.bboxBot - lb.staffTop;
-      const winBotRel = wb.bboxBot - wb.staffTop;
-      if (Math.abs(winBotRel - liveBotRel) > EPS) return skip('vertical: page-last bottom extent would move');
-    } else {
-      const wNext = winProf.get(r.b + 1)!;
-      const dWin = wNext.staffTop - wb.staffTop;
-      const dLive = ctxNext!.staffTop - lb.staffTop;
-      if (Math.abs(dWin - dLive) > EPS) return skip('vertical: spacing below would move');
-    }
     /* When the line above/below sits on the same page, it must be the actual
        DOM neighbour (drift detector, mirrors the intra-L consecutive check). */
     if (!live[0].pageFirst && nextSystemSibling(ctxPrev.el) !== live[0].el) return skip('DOM partition drift above');
     if (ctxNext && !lb.pageLast && nextSystemSibling(lb.el) !== ctxNext.el) return skip('DOM partition drift below');
 
     /* ── surgery ── */
+    /* dy-cascade (B1): every system BELOW the last replaced one on its page
+       shifts by the same measured amount — their spacing to each other is
+       content-driven and unchanged, so one dy describes all of them. The next
+       PAGE is unaffected: its first system is anchored at that page's top and
+       pagination is pinned (paginationHeld), so a full render agrees.
+       Collected BEFORE the surgery: it removes lb.el from the DOM, and a
+       detached node has no siblings to walk. */
+    const followers: Element[] = [];
+    if (!plan.static && Math.abs(plan.dyFollow) > EPS) {
+      for (let n = nextSystemSibling(lb.el); n; n = nextSystemSibling(n)) followers.push(n);
+    }
     const pages = new Set<HTMLElement>();
     for (let k = r.a; k <= r.b; k++) {
       const lk = live[k - r.a];
@@ -432,15 +497,25 @@ export class PageSystemSplicer {
          the old x. Live values already include the old transform, so this
          composes with section-header reserves and snap adjustments. */
       const dx = lk.x0 - wk.x0;
-      const dy = lk.staffTop - wk.staffTop;
+      /* All-or-nothing: a STATIC plan pins each system to its live staff top
+         exactly as Phase C-B v1 did. The plan is measured to ~±8 units, so
+         "applying" a 3-unit movement would ADD error rather than remove it,
+         and would re-snap every system on the page for a sub-pixel edit.
+         Only a plan that moves something by more than EPS is applied. */
+      const dy = (plan.static ? lk.staffTop : plan.newTop[k - r.a]) - wk.staffTop;
       imported.setAttribute('transform', `translate(${dx},${dy})`);
       const defs = lk.pageEl.querySelector('svg defs');
       if (!defs) return skip('page defs missing');
-      mergeGlyphDefs(defs, host, [imported]);
+      mergeGlyphDefs(defs, hostOf.get(wk.el as SVGGElement) ?? hosts[0], [imported]);
       lk.el.parentElement!.insertBefore(imported, lk.el);
       lk.el.remove();
       pages.add(lk.pageEl);
     }
+    for (const n of followers) {
+      const t = consolidate(n as SVGGElement);
+      n.setAttribute('transform', `translate(${t.tx},${t.ty + plan.dyFollow})`);
+    }
+    if (followers.length) pages.add(lb.pageEl);
     for (const pageEl of pages) ctx.snapPage(pageEl);
     this.lastPages = Array.from(pages, (el) => Number(el.dataset.page)).filter((n) => n >= 1);
     return true;
@@ -492,13 +567,13 @@ export class PageSystemSplicer {
               throw new Error(`[page-splice] page ${pno} system ${i} measure ${rpm[j].id}: x/width diverged from reference`);
             }
           }
-          if (i > 0 && !headerPage) {
-            const rPrev = systemProfile(refSys[i - 1])!;
-            const lPrev = systemProfile(liveSys[i - 1])!;
-            const dRef = rp.staffTop - rPrev.staffTop;
-            const dLive = lp.staffTop - lPrev.staffTop;
-            if (Math.abs(dRef - dLive) > TOL) {
-              throw new Error(`[page-splice] page ${pno} system ${i}: vertical spacing diverged from reference (${dRef.toFixed(1)} vs ${dLive.toFixed(1)})`);
+          if (!headerPage) {
+            /* ABSOLUTE tops, not just consecutive spacing: a dy-cascade that
+               shifted a whole page by a constant would satisfy every spacing
+               check and still be wrong (B1). Both sides are page-margin
+               relative, so they are directly comparable. */
+            if (Math.abs(rp.staffTop - lp.staffTop) > TOL) {
+              throw new Error(`[page-splice] page ${pno} system ${i}: staff top diverged from reference (${rp.staffTop.toFixed(1)} vs ${lp.staffTop.toFixed(1)})`);
             }
           }
         }
@@ -507,6 +582,58 @@ export class PageSystemSplicer {
       }
     }
   }
+}
+
+/** Compute the vertical plan (see VerticalPlan). Pure measurement:
+ *  - a page-FIRST system takes its window counterpart's absolute staff-top.
+ *    The window paginates at the same boundary (a <pb> pin), so Verovio has
+ *    already applied its own page-top anchoring there, and both coordinate
+ *    systems are page-margin-relative with identical margins. This replaces
+ *    the v1 model ("content top at the margin + hang"), which mis-predicts by
+ *    up to ~85 units whenever the topmost content is a <text> element —
+ *    Verovio's internal metrics for text disagree with the rendered bbox;
+ *  - any other system sits at the previous system's staff-top plus the
+ *    window's own consecutive-system spacing;
+ *  - the chain therefore RESETS at every page boundary inside the replaced
+ *    run, which is what keeps a dy from leaking onto the next page. */
+function verticalPlan(
+  r: { a: number; b: number },
+  live: LiveSys[],
+  winProf: Map<number, SysProfile>,
+  ctxPrev: SysProfile,
+  ctxNext: LiveSys | null,
+): VerticalPlan {
+  const newTop: number[] = [];
+  const liveTop: number[] = [];
+  const startIds: string[] = [];
+  for (let k = r.a; k <= r.b; k++) {
+    const lk = live[k - r.a];
+    const wk = winProf.get(k)!;
+    liveTop.push(lk.staffTop);
+    startIds.push(lk.el.querySelector('g.measure')?.id ?? '');
+    if (lk.pageFirst) {
+      newTop.push(wk.staffTop);
+    } else {
+      const prevTop = k === r.a ? ctxPrev.staffTop : newTop[k - r.a - 1];
+      const prevWin = winProf.get(k - 1)!;
+      newTop.push(prevTop + (wk.staffTop - prevWin.staffTop));
+    }
+  }
+  const lb = live[r.b - r.a], wb = winProf.get(r.b)!;
+  const lastNew = newTop[newTop.length - 1];
+  let dyFollow = 0, followId = '';
+  if (!lb.pageLast && ctxNext) {
+    const wNext = winProf.get(r.b + 1)!;
+    dyFollow = (lastNew + (wNext.staffTop - wb.staffTop)) - ctxNext.staffTop;
+    followId = ctxNext.el.querySelector('g.measure')?.id ?? '';
+  }
+  const isStatic = newTop.every((t, i) => Math.abs(t - liveTop[i]) <= EPS) && Math.abs(dyFollow) <= EPS;
+  return {
+    startIds, liveTop, newTop, dyFollow, followId,
+    newBottom: lastNew + (wb.bboxBot - wb.staffTop),
+    liveBottom: lb.bboxBot,
+    static: isStatic,
+  };
 }
 
 function nextSystemSibling(el: Element): Element | null {
@@ -539,14 +666,20 @@ function profilesMatch(win: SysProfile, liveSys: SysProfile): string {
  *  score-start artifact, a synthetic mRest TRAILER (when the window ends
  *  mid-score) that absorbs the end-of-score final barline, and <sb> pins
  *  before every window line start plus the trailer (the leader counts as
- *  line 0, so injectPins pins ALL real starts). */
+ *  line 0, so injectPins pins ALL real starts).
+ *
+ *  `pbIds` are the window lines that begin a LIVE page: they are pinned as
+ *  <pb> instead of <sb>, so the window paginates exactly where the mounted
+ *  document does. That is what makes a page-first system page-first in the
+ *  window too — the only way to read its position rather than model it (see
+ *  verticalPlan). */
 function buildWindowMei(
   model: ComposerModel, mLo: number, mHi: number, winStarts: string[],
-  leader: boolean, trailer: boolean,
+  leader: boolean, trailer: boolean, pbIds: Set<string>,
 ): string | null {
   const heji = { hejiEnabled: model.getHejiEnabled() };
   const range = model.serializeRangeForRender(mLo, mHi, heji, null);
-  if (!leader && !trailer) return injectPins(range, winStarts, null);
+  if (!leader && !trailer) return injectPins(range, winStarts, pbIds);
   const doc = new DOMParser().parseFromString(range, 'application/xml');
   if (doc.querySelector('parsererror')) return null;
   const section = doc.querySelector('section');
@@ -570,5 +703,5 @@ function buildWindowMei(
   if (leader) section.insertBefore(synthMeasure(LEAD_ID), section.firstElementChild);
   if (trailer) section.appendChild(synthMeasure(TRAIL_ID));
   const pinIds = (leader ? [LEAD_ID] : []).concat(winStarts, trailer ? [TRAIL_ID] : []);
-  return injectPins(new XMLSerializer().serializeToString(doc), pinIds, null);
+  return injectPins(new XMLSerializer().serializeToString(doc), pinIds, pbIds);
 }

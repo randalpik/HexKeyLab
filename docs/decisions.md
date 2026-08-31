@@ -4402,3 +4402,83 @@ The same records give the owner a per-measure dirty set: fold each record's targ
 **Benefit beyond correctness**: with a constant unit the partition cache holds ONE entry for all zooms, so every zoom change is a cache hit — measured 740/733/705 ms across 50 → 75 → 100, versus up to 2134 ms when 75 % needed its own castoff pass.
 
 **Where**: `packages/notation/src/render-presets.ts` (presets + a "WHY unit 8" block warning against reintroducing a per-zoom unit), `apps/composer/src/render/render.ts` (`partitionKey` keyed on `unit`, not the zoom label; DEAD END comment on `scalePageGeom`), `test/composer-inspect/phasec/cb-zoomunit.js` (regression gate — `zoom75_differs` must stay false), `test/composer-test/fixtures.mjs` (`pageEditPreservesScroll` buys its third page with `setPageScale(70)` instead of 2× the inserts — 235 s → 31 s), 36 reseeded baselines, docs/lessons.md.
+
+## 2026-08-31 — User page breaks: pagination computed per inter-break SEGMENT, and the break merged into the line partition
+
+**Context**: with pagination owned, a Ctrl+B page break was broken in two visible ways (Max): *"it doesn't do a cascade reflow at all. So if I put a page break before the last line of a page, it creates a new page with just that line. Putting a page break in the middle of a system also does not try to reflow measures."* Measured on the sonata: our page list one short of the DOM, a 1-system page, `verifyRenderedPartition` false with a "diverged from pins" warning on every render.
+
+**Root cause — no Verovio break mode does both jobs.** `breaks:'line'` paginates by height but treats `<pb>` as a SYSTEM break (a document with one Ctrl+B returns the *same* page count as with none, and the break measure is not a page start); `breaks:'encoded'` honors `<pb>` as a page break but never paginates by height (that was the older 37 → 2 giant-pages defect). We took `'line'`'s page starts — computed as if the break did not exist — and painted `'encoded'`, which honored the `<pb>` **on top of** those unchanged pins: an extra boundary inserted with nothing after it re-packed.
+
+**Picked**: `castoffSegmentedByUserBreaks` — split the document at user breaks and cast off each segment independently with `'line'` (the global line partition pinned as `<sb>`, so Verovio decides only how many lines fit per page), then concatenate the segments' page starts. Verovio stays the page-fit engine; we only choose where to cut, so **no height model was needed** (which keeps this inside the Phase D scope boundary). A one-line segment short-circuits without a layout pass — it cannot overflow a page, and handing `'line'` data with no encoded break makes Verovio warn and silently fall back to castoff.
+
+**The load-bearing step, initially omitted**: a page begins with a new system, so the break measure MUST start a line — but the whole-document castoff runs under smartSb0, which ignores `<pb>`, leaving those measures mid-line and absent from the partition. They are now merged into the line partition before segmenting. Omitting it was self-inconsistent (the segment *begins* at that measure, so Verovio necessarily starts a line there) and was caught by the partition-equality check between "what I pinned" and "what came back", which bailed to the old path instead of painting a layout the page list did not describe. **That same merge is what makes a MID-SYSTEM break reflow its measures** — the measures before it finish the now-shorter previous line.
+
+**Verified** (`cb-pbcases.js`, sonata), both reported cases: break splits its line, starts a page, page list == DOM (31/31 and 30/30, was 30/31), **no single-system page** (was 1 in both), `verifyRenderedPartition` true, no warnings, and removing the break restores exactly. Case B even keeps the page count at 30 — the displaced line is absorbed downstream. Suite **340/340** under `HKL_INDEX_CHECK` with the new `pageUserBreakReflows` fixture; battery unchanged at 6/8 spliced, all reference-clean; boundaries + build clean.
+
+**Where**: `apps/composer/src/render/render.ts` (`userPageBreakIndices`, `castoffSegmentedByUserBreaks`, `layoutBreaksWithLines`, derive hook), `test/composer-test/fixtures.mjs` (`pageUserBreakReflows`), `test/composer-inspect/phasec/` (cb-userpb, cb-pbadopt, cb-pbconverge, cb-pbunion, cb-segdiag, cb-pbcases), docs/lessons.md.
+
+## 2026-08-31 — Page splice B1: the window mirrors live pagination, so a moving system's position is measured rather than modelled
+
+**Context**: Phase C-B v1 spliced only when NOTHING moved — four vertical
+refusals (`page-first hang`, `spacing above`, `page-last bottom extent`,
+`spacing below`) sent the edit to a full render. On the sonata battery that was
+the difference between 6/8 and 8/8, with `edit-page-first` costing 1152 ms.
+B1's premise (design doc) was that the splice already measures the new spacing
+in its window, so the dy is known.
+
+**True for systems inside a page, false for a page's first system.** A spike
+(`cb-dycascade.js`) compared the plan against what the ensuing full render
+actually did: intra-page spacing predictions were exact (±3), while page-first
+predictions were off by up to 85 units. Root causes in lessons.md — Verovio
+counts a different overflow than `getBBox` reports (`<text>`: `g.dir`,
+`g.tempo`, HEJI `g.accid`), and the window's `header: 'none'` removed the
+running-header band that anchors every page's first system (~419 units).
+
+**Picked**: the window carries `<pb>` pins at the live page starts and renders
+with the **live page options verbatim**. `'encoded'` paginates only at encoded
+breaks, so the tall-page/`adjustPageHeight`/`header:'none'` trick — needed back
+when windows rendered `breaks:'line'` — is unnecessary once pagination is
+owned, and dropping it removes the one geometry difference between window and
+page. A page-first system is then page-first in the window, and the plan READS
+its staff top instead of deriving it. Worst prediction error over 19 samples:
+**425 → 8 units**. (Unowned pagination keeps the tall-page window; a live
+page-first system simply refuses there, as in v1.)
+
+**Rejected**: (a) measuring the hang over a restricted "counted" element set —
+an unverifiable model of Verovio's internals whose failure mode is silently
+mis-positioned systems; (b) calibrating the anchor constant from another page —
+it is not constant (a floor applies once the counted overflow is small).
+
+**All-or-nothing application.** The plan is accurate to ~±8 units, so applying
+a 3-unit movement adds error and re-snaps a whole page for a sub-pixel edit —
+it surfaced immediately as a visual-baseline diff on `pageSystemSpliceEdit`.
+A splice therefore either pins systems to their live positions exactly (v1
+behaviour, `plan.static`: nothing moves by more than EPS 25) or applies the
+whole plan plus the follower cascade.
+
+**Cross-page moves: repaginate, do not splice across.** Under owned pagination
+a full render never moves a system between pages either (page starts are
+pinned), so a splice matching the reference must not do so. What CAN happen is
+that a cascade pushes its page past the paper — Verovio will happily draw past
+a pinned page. The splice now runs the same `overflowingPage()` check the
+pinned full-render path uses (scoped to the edited pages) and hands pagination
+back to Verovio (derive + re-adopt) on a spill. Verified end-to-end
+(`cb-cascade-overflow.js`): two successive extent-growing edits consume page 1's
+410 px of slack; the second warns, re-derives, and page 1 goes 6 systems → 5
+with nothing drawn past the paper.
+
+**Measured**: sonata battery **6/8 → 7/8 spliced**, all 8 reference-clean
+(max x/width 4 units, max spacing 8, max ABSOLUTE staff top 6, over 30 pages /
+446 measures); `edit-page-first` **1152 ms → ~440 ms**. The remaining fallback
+is the by-design section-header line. Suite 342/342 under `HKL_INDEX_CHECK`.
+
+**Where**: `apps/composer/src/render/pagesplice.ts` (`VerticalPlan`,
+`verticalPlan`, page-pinned window, multi-page hosts, follower cascade,
+absolute-top reference gate), `apps/composer/src/render/render.ts`
+(`pageSpliceCtx` window options, scoped `overflowingPage`, post-splice spill
+handling), `test/composer-test/fixtures.mjs` (`pageSystemSpliceBottomExtent`
+replaces `pageSystemSpliceVerticalBail` — that edit legitimately splices now —
+plus `pageSystemSpliceDyCascade` and `pageSystemSpliceCascadeOverflow`),
+`test/composer-inspect/phasec/` (cb-dycascade, cb-anchor, cb-topmost,
+cb-cascade-overflow; cb-splice-battery gained the absolute-top check),
+docs/lessons.md.

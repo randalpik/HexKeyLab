@@ -11,7 +11,8 @@ import { applyNotationTheme } from '@hkl/notation/verovio.js';
 import { CRISP_PRESETS, crispMarginTop, lineWidthOptions, pinExactScale, snapStaffLinesToGrid, snapBarlines, snapSystemRightEdge } from '@hkl/notation/render-presets.js';
 import { ScrollSplicer, type SpliceCtx } from './splice.js';
 import {
-  PageLineBreaks, partitionFromLayout, systemStartsFromPageSvg, type PageBreaksCtx,
+  PageLineBreaks, partitionFromLayout, systemStartsFromPageSvg, injectPins,
+  type PageBreaksCtx,
 } from './linebreaks.js';
 import { PageSystemSplicer, type PageSpliceCtx } from './pagesplice.js';
 import type { ComposerModel } from '../model/index.js';
@@ -336,23 +337,31 @@ class Renderer {
    *  measures. The caller then renders the result with 'encoded' so the
    *  forced <pb> page breaks AND the baked system breaks are all honored. */
   private layoutBreaks(mei: string): string {
-    if (!this.tk) return mei;
+    return this.layoutBreaksWithLines(mei).data;
+  }
+
+  /** `layoutBreaks`, also returning the line partition it baked — the segmented
+   *  castoff (`castoffSegmentedByUserBreaks`) needs the list, not just the
+   *  data. `lines` is empty when the castoff could not be read. */
+  private layoutBreaksWithLines(mei: string): { data: string; lines: string[] } {
+    if (!this.tk) return { data: mei, lines: [] };
     this.tk.setOptions(this.buildOptions('smartSb0'));
-    if (!this.tk.loadData(mei)) return mei;
+    if (!this.tk.loadData(mei)) return { data: mei, lines: [] };
     /* Read the partition from page-based MEI (~0.1 s on the sonata) rather than
        rendering every page to SVG (~1.8 s) — same read the partition adoption
        uses. The SVG walk stays as the fallback for unreadable output. */
-    let starts = new Set<string>(partitionFromLayout(this.tk)?.lines ?? []);
-    if (!starts.size) {
+    let ordered: string[] = partitionFromLayout(this.tk)?.lines ?? [];
+    if (!ordered.length) {
       for (let p = 1; p <= this.tk.getPageCount(); p++) {
-        for (const id of systemStartsFromPageSvg(this.tk.renderToSVG(p, {}))) starts.add(id);
+        ordered = ordered.concat(systemStartsFromPageSvg(this.tk.renderToSVG(p, {})));
       }
     }
-    if (!starts.size) return mei;
+    const starts = new Set<string>(ordered);
+    if (!starts.size) return { data: mei, lines: [] };
     const MEI_NS = 'http://www.music-encoding.org/ns/mei';
     const mdoc = new DOMParser().parseFromString(mei, 'application/xml');
     const section = mdoc.querySelector('section');
-    if (!section) return mei;
+    if (!section) return { data: mei, lines: [] };
     for (const meas of Array.from(mdoc.querySelectorAll('measure'))) {
       const id = meas.getAttribute('xml:id');
       if (!id || !starts.has(id)) continue;
@@ -363,7 +372,139 @@ class Renderer {
       if (prev.localName === 'sb') continue;  /* already broken here */
       section.insertBefore(mdoc.createElementNS(MEI_NS, 'sb'), node);
     }
-    return new XMLSerializer().serializeToString(mdoc);
+    return { data: new XMLSerializer().serializeToString(mdoc), lines: ordered };
+  }
+
+  /** Document-order measure indices that a USER page break forces onto a new
+   *  page: the measure immediately after a section-level `<pb>`. Index 0 is
+   *  excluded — the document already starts a page there. */
+  private userPageBreakIndices(model: ComposerModel): number[] {
+    const measures = model.allMeasures();
+    const pos = new Map<Element, number>();
+    measures.forEach((m, i) => pos.set(m, i));
+    const section = model.getDoc().querySelector('section');
+    if (!section) return [];
+    const out: number[] = [];
+    let pending = false;
+    const walk = (el: Element): void => {
+      for (const c of Array.from(el.children)) {
+        if (c.localName === 'measure') {
+          if (pending) { const i = pos.get(c); if (i !== undefined && i > 0) out.push(i); }
+          pending = false;
+        } else if (c.localName === 'pb') {
+          pending = true;
+        } else if (c.localName === 'sb') {
+          pending = false;          // a system break is not a page break
+        } else if (c.localName !== 'scoreDef' && c.querySelector('measure')) {
+          walk(c);
+        }
+      }
+    };
+    walk(section);
+    return out.sort((a, b) => a - b);
+  }
+
+  /** Pagination for a document containing USER page breaks, computed by casting
+   *  off each inter-break SEGMENT independently.
+   *
+   *  Why this is needed: no Verovio mode does both jobs. `'line'` paginates by
+   *  height but treats `<pb>` as a SYSTEM break (measured: on the sonata with one
+   *  Ctrl+B it returns the same 30 pages as with no break at all, and the break
+   *  measure is not a page start); `'encoded'` honors `<pb>` as a page break but
+   *  never paginates by height. Previously we took `'line'`'s page starts —
+   *  computed as if the break did not exist — and then painted `'encoded'`, which
+   *  honored the `<pb>` ON TOP of those unchanged pins. That inserted an extra
+   *  boundary without re-packing anything after it: a short page (one system if
+   *  the break fell before a page's last line), our page list one short of the
+   *  DOM, and no cascade — exactly the reported defect.
+   *
+   *  The fix keeps Verovio as the page-fit engine and only chooses where to cut.
+   *  The LINE partition comes from the whole-document castoff and is pinned, so
+   *  it is identical to what it would be without any break; each segment is then
+   *  laid out alone with `'line'`, which honors those pins verbatim and decides
+   *  only how many lines fit per page. Concatenating the segments' page starts
+   *  gives "a user break starts a fresh page, and everything after it re-packs
+   *  by height". Reading page ASSIGNMENT is insensitive to the segment-edge
+   *  justification differences (a segment's last line is document-final for
+   *  Verovio), so those cannot corrupt the result.
+   *
+   *  Returns null when anything is unreadable, and the caller falls back to the
+   *  ordinary single-pass castoff. */
+  private castoffSegmentedByUserBreaks(
+    model: ComposerModel, mei: string, heji: { hejiEnabled: boolean },
+  ): { lines: string[]; pages: string[] } | null {
+    if (!this.tk) return null;
+    const breaks = this.userPageBreakIndices(model);
+    if (!breaks.length) return null;
+    const baked = this.layoutBreaksWithLines(mei);
+    if (baked.lines.length <= 1) return null;
+    const ids = model.allMeasures().map((m) => m.getAttribute('xml:id') ?? '');
+    const idxOf = new Map<string, number>();
+    ids.forEach((id, i) => { if (id) idxOf.set(id, i); });
+    /* A page break MUST split its line — a page begins with a new system, so the
+       break measure has to start one. The whole-document castoff ran under
+       smartSb0, which IGNORES `<pb>`, so the break measure is generally mid-line
+       there and absent from `baked.lines`. Merge the break measures in (document
+       order) before segmenting: without this the segment document begins at a
+       measure the partition says is mid-line, Verovio necessarily starts a line
+       there, and the partition check below refuses the inconsistency — which is
+       exactly what it is for. This merge is also what makes a MID-SYSTEM page
+       break reflow its measures: the measures before it finish the previous
+       (now shorter) line, and the break measure opens the new page's first. */
+    const lineIdx = new Set<number>();
+    for (const id of baked.lines) {
+      const i = idxOf.get(id);
+      if (i !== undefined) lineIdx.add(i);
+    }
+    for (const b of breaks) lineIdx.add(b);
+    const mergedLines = Array.from(lineIdx).sort((a, b) => a - b).map((i) => ids[i]);
+    if (mergedLines.some((id) => !id)) return null;
+    /* Segment bounds: [0..b1-1], [b1..b2-1], … [bk..last]. */
+    const bounds: Array<[number, number]> = [];
+    let from = 0;
+    for (const b of breaks) {
+      if (b <= from || b >= ids.length) continue;
+      bounds.push([from, b - 1]);
+      from = b;
+    }
+    bounds.push([from, ids.length - 1]);
+    if (bounds.length < 2) return null;
+    const pages: string[] = [];
+    for (const [lo, hi] of bounds) {
+      const segLines = mergedLines.filter((id) => {
+        const i = idxOf.get(id);
+        return i !== undefined && i >= lo && i <= hi;
+      });
+      if (!segLines.length) return null;
+      /* A single-line segment occupies exactly one page and cannot overflow, so
+         it needs no layout pass at all. Skipping it also avoids Verovio's
+         "Requesting layout with line breaks but nothing provided in the data"
+         warning: `injectPins` emits no pin for the first line (the document
+         already starts there), so a one-line segment would hand `'line'` data
+         with no encoded break — which warns and falls back to castoff
+         internally. The composer suite treats any console warning as a failure,
+         which is how this surfaced. */
+      if (segLines.length === 1) { pages.push(segLines[0]); continue; }
+      const segMei = model.serializeRangeForRender(lo, hi, heji, null);
+      /* Pin the GLOBAL line partition inside this segment (sb only — pagination
+         is what we are asking Verovio for, so it must not be pre-decided). */
+      const pinned = injectPins(segMei, segLines, null);
+      if (pinned === null) return null;
+      /* Defensive: multi-line segment whose starts all already sit behind an
+         existing sb/pb would likewise give 'line' nothing encoded to honor. */
+      if (!/<(sb|pb)\b/.test(pinned)) return null;
+      this.tk.setOptions(this.buildOptions('line', 'page'));
+      if (!this.tk.loadData(pinned)) return null;
+      const read = partitionFromLayout(this.tk);
+      if (!read) return null;
+      /* Load-bearing check: pinning must have preserved the global partition
+         inside the segment. If a segment re-broke its lines, its page starts
+         describe a different layout than the one we will paint. */
+      if (read.lines.join('|') !== segLines.join('|')) return null;
+      for (const p of read.pages) pages.push(p);
+    }
+    if (pages.length <= 1) return null;
+    return { lines: mergedLines, pages };
   }
 
   /** Which breaks strategy lets Verovio CAST OFF this document, and the data
@@ -809,6 +950,26 @@ class Renderer {
             return false;
           }
           if (this.pageSplicer.trySplice(model, refill, this.pageSpliceCtx())) {
+            /* A splice that MOVED systems (B1's dy-cascade) can push its page
+               past the paper. Verovio won't re-paginate for us under pinned
+               <pb>, so the same rule the pinned full-render path uses applies
+               here: a spill means our page assignment is wrong, and the honest
+               response is to hand pagination back rather than draw a clipped
+               page. Scoped to the edited pages — nothing else moved. */
+            const vp = this.pageSplicer.lastVertical;
+            if (vp && !vp.static) {
+              const spill = this.overflowingPage(this.pageSplicer.lastPages);
+              if (spill !== 0) {
+                console.warn('[page-splice] cascade overflows page ' + spill + ' — returning pagination to Verovio (derive)');
+                this.pageBreaks.invalidate();
+                this.renderPage(model.serialize(heji, viewStaves), true);
+                if (this.pageVirt) {
+                  this.pageBreaks.armAdoption(model, this.pageVirt.pageCount, this.pageBreaksCtx());
+                }
+                this.lastPageSpliced = false;
+                return true;
+              }
+            }
             /* The mounted pages now show the edit but the toolkit's layout —
                and pageVirt.mei — still describe the pre-edit document; a lazy
                mount must rebuild before drawing (pageVirt.stale). Its options
@@ -871,9 +1032,10 @@ class Renderer {
    *  our page assignment is wrong, and the honest response is to hand
    *  pagination back to Verovio (derive + re-adopt) rather than show a clipped
    *  page. Returns the first offending page number, or 0 when all fit. */
-  private overflowingPage(): number {
+  private overflowingPage(only?: readonly number[]): number {
     if (!this.container) return 0;
     for (const pageEl of Array.from(this.container.querySelectorAll('.score-page:not(.score-page-pending)'))) {
+      if (only && !only.includes(Number((pageEl as HTMLElement).dataset.page))) continue;
       const svg = pageEl.querySelector('svg');
       if (!svg) continue;
       const systems = Array.from(pageEl.querySelectorAll('g.system'));
@@ -992,6 +1154,23 @@ class Renderer {
       this.partitionCache.delete(this.partitionKey(model));
       this.pageBreaks.invalidate();
     }
+    /* Documents with USER page breaks need pagination computed per inter-break
+       segment — see castoffSegmentedByUserBreaks for why a single pass cannot
+       do it. Falls through to the ordinary castoff when unavailable. */
+    const segmented = this.castoffSegmentedByUserBreaks(model, data, heji);
+    if (segmented && this.pageBreaks.restorePartition(model, segmented.lines, segmented.pages)) {
+      const pinnedSeg = this.pageBreaks.pinRenderMei(data);
+      if (pinnedSeg !== null) {
+        this.renderPage(pinnedSeg, true, 'encoded');
+        this.pageBreaks.verifyRenderedPartition(
+          this.container!, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
+        const segSpill = this.overflowingPage();
+        if (segSpill === 0) return;
+        console.warn('[page-breaks] segmented pagination overflows page ' + segSpill
+          + ' — falling back to the single-pass castoff');
+      }
+      this.pageBreaks.invalidate();
+    }
     const plan = this.castoffPlan(data);
     /* Bootstrap pass: load only — never rendered to SVG, never painted. */
     this.tk!.setOptions(this.buildOptions(plan.strategy));
@@ -1026,16 +1205,23 @@ class Renderer {
        one page by construction (no tall-page trick needed). */
     const owned = this.pageBreaks.paginationOwned();
     const strategy = owned ? 'encoded' : 'line';
+    const base = this.buildOptions(strategy, 'page');
     return {
       container: this.container!,
       toolkit: this.spliceTk!,
-      windowOptions: {
-        ...this.buildOptions(strategy, 'page'),
-        pageHeight: 60_000,
-        adjustPageHeight: true,
-        header: 'none',
-      },
-      liveOptions: () => this.buildOptions(strategy, 'page'),
+      /* With pagination owned the window uses the LIVE page options verbatim:
+         'encoded' paginates only at the <pb> pins the window carries, so the
+         tall-page trick is unnecessary — and the page geometry must match
+         exactly, running header included. That band is what anchors a page's
+         FIRST system (~419 units on the sonata); suppressing it made every
+         window-page-first system read ~419 units too high, which is what the
+         B1 vertical plan reads directly (see pagesplice.ts verticalPlan).
+         Unowned pagination still needs the tall page: 'line' paginates by
+         height and the window must land on one page. */
+      windowOptions: owned
+        ? base
+        : { ...base, pageHeight: 60_000, adjustPageHeight: true, header: 'none' },
+      liveOptions: () => base,
       postProcess: (el: HTMLElement) => this.postProcessRendered(el),
       decorateHost: (el: HTMLElement) => styleVoltaNumbers(el),
       snapPage: (el: HTMLElement) => this.snapSystems(el),

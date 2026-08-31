@@ -1105,6 +1105,27 @@ const PAGE_LINEBREAKS = {
     skipCursorTrace: true,
   },
 
+  /* USER PAGE BREAK reflow (Max, 2026-08-31). A Ctrl+B page break must (a) split
+   * its line when it lands mid-system, and (b) cause everything after it to
+   * RE-PACK by height — the old behaviour layered the <pb> on top of an
+   * unchanged page pinning, so a break before a page's last line left a page
+   * holding that single line and our page list one short of the DOM. Enough
+   * content (with a shrunken page) for several pages, so a break has somewhere
+   * to cascade. Asserted via FIXTURE_ASSERTIONS.pageUserBreakReflows. */
+  pageUserBreakReflows: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      m.setPageScale(70);
+      for (let i = 0; i < 240; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+    skipCursorTrace: true,
+  },
+
   /* THE reversibility gate (Max, 2026-08-30): the partition is never
    * re-derived, only repaired when an edit makes a line illegal — so a note
    * delete must move NO boundary, and Ctrl+Z must restore the layout
@@ -1163,17 +1184,49 @@ const PAGE_SPLICE = {
     visualFullPage: true,
   },
 
-  /* An edit that changes a system's vertical extent must REFUSE the splice
-   * (anything else on the page would move — Phase C-B2 territory) and land
-   * the full refill render instead. Deterministic trigger: grow the DOC-LAST
-   * line's bottom extent (deep ledger-line chord) — the page-last
-   * bottom-extent rule measures the system itself, no spacing model involved.
-   * Asserted via FIXTURE_ASSERTIONS.pageSystemSpliceVerticalBail. */
-  pageSystemSpliceVerticalBail: {
+  /* B1: growing the DOC-LAST line's bottom extent (deep ledger-line chord)
+   * used to refuse the splice — nothing below it moves, so v1's page-last
+   * bottom-extent rule was pure caution once pagination became pinned. It must
+   * now SPLICE, with the inline reference gate (HKL_INDEX_CHECK) proving the
+   * result equals a full re-engrave. Asserted via
+   * FIXTURE_ASSERTIONS.pageSystemSpliceBottomExtent. */
+  pageSystemSpliceBottomExtent: {
     setup: `
       m.setCursor(0, 1);
       const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
       for (let i = 0; i < 96; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
+  /* B1 core: an edit that grows an EARLY system's vertical extent moves every
+   * system below it on the page. v1 refused ("vertical: spacing below would
+   * move"); the dy-cascade measures the shift in the window and applies it.
+   * Asserted via FIXTURE_ASSERTIONS.pageSystemSpliceDyCascade. */
+  pageSystemSpliceDyCascade: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 96; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
+  /* B1 safety net: a dy-cascade that would push its page past the paper must
+   * hand PAGINATION back (derive + re-adopt) rather than draw a clipped page —
+   * Verovio does not re-paginate under pinned <pb>. Asserted via
+   * FIXTURE_ASSERTIONS.pageSystemSpliceCascadeOverflow. */
+  pageSystemSpliceCascadeOverflow: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 400; i++) {
         const high = (Math.floor(i / 4) % 2) === 0;
         m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
       }
@@ -7812,6 +7865,56 @@ export const FIXTURE_ASSERTIONS = {
         return { ok: true };
       })()` },
   ],
+  pageUserBreakReflows: [
+    { name: 'a user page break splits its line, starts a page, and the rest re-packs (no one-line page, page list matches the DOM)',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model, r = H.renderer;
+        const pb = r['pageBreaks'];
+        for (let i = 0; i < 3 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        const mountAll = () => {
+          for (const p of document.querySelectorAll('#score .score-page.score-page-pending')) r['mountPage'](+p.dataset.page);
+        };
+        const snap = () => {
+          mountAll();
+          const pages = [...document.querySelectorAll('#score .score-page')];
+          const per = pages.map((p) => p.querySelectorAll('g.system').length);
+          return { domPages: pages.length, owned: pb.pageStarts().length, lines: pb.lineStarts().length,
+                   per, singles: per.filter((n) => n === 1).length };
+        };
+        const base = snap();
+        if (base.domPages < 3) return { ok: false, detail: 'need >= 3 pages to cascade into; got ' + base.domPages };
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const lineSet = new Set(pb.lineStarts());
+        /* Prefer a MID-SYSTEM measure — that exercises the line split too. */
+        let mi = -1;
+        for (let i = 4; i < Math.min(ids.length, 60); i++) { if (!lineSet.has(ids[i])) { mi = i; break; } }
+        if (mi < 0) return { ok: false, detail: 'no mid-system measure found' };
+        const wasLineStart = lineSet.has(ids[mi]);
+        m.togglePageBreakAt(mi);
+        H.reRender();
+        const withBreak = snap();
+        const startsLine = pb.lineStarts().includes(ids[mi]);
+        const startsPage = pb.pageStarts().includes(ids[mi]);
+        const verified = pb.verifyRenderedPartition(r['container'], m, r['pageVirt'] ? r['pageVirt'].pageCount : 1, r['pageBreaksCtx']());
+        m.togglePageBreakAt(mi);
+        H.reRender();
+        const after = snap();
+        const fails = [];
+        if (wasLineStart) fails.push('picked measure was already a line start (not a mid-system break)');
+        if (!startsLine) fails.push('break measure does not start a line (line was not split)');
+        if (!startsPage) fails.push('break measure does not start a page');
+        if (withBreak.owned !== withBreak.domPages) fails.push('page list ' + withBreak.owned + ' != DOM ' + withBreak.domPages);
+        if (withBreak.singles > 0) fails.push(withBreak.singles + ' single-system page(s): ' + JSON.stringify(withBreak.per));
+        if (!verified) fails.push('verifyRenderedPartition false');
+        if (after.domPages !== base.domPages || after.lines !== base.lines) {
+          fails.push('removing the break did not restore (' + after.domPages + '/' + after.lines + ' vs ' + base.domPages + '/' + base.lines + ')');
+        }
+        return { ok: fails.length === 0, detail: fails.join('; ') || ('mi=' + mi + ' pages ' + base.domPages + '->' + withBreak.domPages) };
+      })()` },
+  ],
+
   pageLineBreaksUndoRestoresLayout: [
     { name: 'a note delete moves no line boundary, and undo restores the layout bit-for-bit (no reflow hysteresis)',
       expr: `(() => {
@@ -7960,8 +8063,8 @@ export const FIXTURE_ASSERTIONS = {
         return { ok: true };
       })()` },
   ],
-  pageSystemSpliceVerticalBail: [
-    { name: 'an edit that grows the doc-last line bottom extent refuses the splice (vertical gate) and full-renders',
+  pageSystemSpliceBottomExtent: [
+    { name: 'growing the doc-last line bottom extent now SPLICES (nothing below it moves) and matches a full re-engrave',
       expr: `(() => {
         const H = window.__hkl_composer;
         const m = H.model;
@@ -7972,9 +8075,7 @@ export const FIXTURE_ASSERTIONS = {
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         if (pb['startIds'].length < 3) return { ok: false, detail: 'need >= 3 lines, got ' + pb['startIds'].length };
         /* Replace in the LAST measure — always in the page-last line, so the
-           bottom-extent rule (measured on the system itself) triggers
-           deterministically; a replace preserves durations, so the partition
-           and line count stay put. */
+           bottom extent of the system itself changes with nothing below it. */
         const lastMeasure = m.allMeasures()[ids.length - 1];
         const flat = m['flatChildren'](1);
         let cur = -1;
@@ -7986,12 +8087,133 @@ export const FIXTURE_ASSERTIONS = {
         m.setCursor(cur, 1);
         const deep = { q: 0, r: 0, pname: 'c', accid: '', oct: 1, midi: 24, colorHex: '#888', lightColorHex: '#fff', velocity: 80 };
         if (m.replaceChordAtCursor({ notes: [deep], duration: '4', dots: 0 }) === null) return { ok: false, detail: 'replace rejected' };
+        /* Mark line 0's system: it is never replaced, so it survives a splice
+           and disappears if a full refill render rebuilt the page DOM. */
         const marker = document.querySelector('#score .score-page g.system');
         marker.setAttribute('data-hkl-test-marker', '1');
-        H.reRender();
-        if (ps.lastOutcome !== 'skipped') return { ok: false, detail: 'expected a vertical-gate skip, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
-        if (!/^vertical/.test(ps.lastSkipReason)) return { ok: false, detail: 'expected a vertical skip reason, got: ' + ps.lastSkipReason };
-        if (document.querySelector('[data-hkl-test-marker]')) return { ok: false, detail: 'full refill render did not rebuild the page DOM' };
+        H.reRender();   /* HKL_INDEX_CHECK reference gate throws on divergence */
+        if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
+        const still = document.querySelector('[data-hkl-test-marker]');
+        if (!still) return { ok: false, detail: 'page DOM was rebuilt — this was a full render, not a splice' };
+        still.removeAttribute('data-hkl-test-marker');
+        return { ok: true };
+      })()` },
+  ],
+  pageSystemSpliceDyCascade: [
+    { name: 'an edit that grows an early system pushes the systems below it down by the measured dy (B1 cascade)',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        const startIds = pb['startIds'];
+        if (startIds.length < 4) return { ok: false, detail: 'need >= 4 lines, got ' + startIds.length };
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        /* Target line 1 (line 0 is the excluded score-start line) so there are
+           systems BELOW the replaced one to cascade. */
+        const target = m.allMeasures()[ids.indexOf(startIds[1])];
+        const flat = m['flatChildren'](1);
+        let cur = -1;
+        for (let i = 0; i < flat.length; i++) {
+          const el = flat[i];
+          if ((el.localName === 'note' || el.localName === 'chord') && el.closest('measure') === target) { cur = i; break; }
+        }
+        if (cur < 0) return { ok: false, detail: 'no note in the target measure to replace' };
+        /* Where the last line sits now — it must end up lower. */
+        const lastId = startIds[startIds.length - 1];
+        const topOf = (id) => {
+          const el = document.getElementById(id);
+          return el ? el.getBoundingClientRect().top : null;
+        };
+        const before = topOf(lastId);
+        if (before === null) return { ok: false, detail: 'last line not mounted' };
+        const marker = document.querySelector('#score .score-page g.system');
+        marker.setAttribute('data-hkl-test-marker', '1');
+        m.setCursor(cur, 1);
+        const deep = { q: 0, r: 0, pname: 'c', accid: '', oct: 2, midi: 36, colorHex: '#888', lightColorHex: '#fff', velocity: 80 };
+        if (m.replaceChordAtCursor({ notes: [deep], duration: '4', dots: 0 }) === null) return { ok: false, detail: 'replace rejected' };
+        H.reRender();   /* HKL_INDEX_CHECK reference gate throws on divergence */
+        if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
+        if (!document.querySelector('[data-hkl-test-marker]')) return { ok: false, detail: 'page DOM was rebuilt — this was a full render, not a splice' };
+        document.querySelector('[data-hkl-test-marker]').removeAttribute('data-hkl-test-marker');
+        const vp = ps.lastVertical;
+        if (!vp) return { ok: false, detail: 'no vertical plan recorded' };
+        if (vp.static) return { ok: false, detail: 'plan was static — the edit did not change the system extent' };
+        if (!(Math.abs(vp.dyFollow) > 25)) return { ok: false, detail: 'dyFollow too small to be a cascade: ' + vp.dyFollow };
+        const after = topOf(lastId);
+        if (after === null) return { ok: false, detail: 'last line vanished' };
+        const movedPx = after - before;
+        if (Math.sign(movedPx) !== Math.sign(vp.dyFollow) || Math.abs(movedPx) < 1) {
+          return { ok: false, detail: 'followers did not cascade: moved ' + movedPx.toFixed(2) + 'px, plan dyFollow ' + vp.dyFollow.toFixed(1) };
+        }
+        return { ok: true };
+      })()` },
+  ],
+  pageSystemSpliceCascadeOverflow: [
+    { name: 'a cascade that would overflow its page hands pagination back instead of drawing past the paper',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+        const overflowing = () => {
+          const bad = [];
+          for (const pageEl of document.querySelectorAll('#score .score-page:not(.score-page-pending)')) {
+            const svg = pageEl.querySelector('svg');
+            const systems = [...pageEl.querySelectorAll('g.system')];
+            if (!svg || !systems.length) continue;
+            if (systems[systems.length - 1].getBoundingClientRect().bottom > svg.getBoundingClientRect().bottom + 2) {
+              bad.push(pageEl.dataset.page);
+            }
+          }
+          return bad;
+        };
+        if (overflowing().length) return { ok: false, detail: 'page already overflowing before the edit' };
+        /* Grow successive early systems by a c0..g7 span (deep ledger lines both
+           ways). Each consumes a chunk of page 1's bottom slack; the loop runs
+           until the slack is exhausted, so it does not depend on knowing how
+           much slack Verovio happened to leave. The warn is captured HERE — the
+           suite fails the CONSOLE invariant on any console.warn. */
+        const warns = [];
+        const ow = console.warn;
+        console.warn = (...a) => { warns.push(a.join(' ')); };
+        let handedBack = false, steps = 0, lastDy = 0;
+        try {
+          for (let line = 1; line <= 5 && !handedBack; line++) {
+            const startId = pb['startIds'][line];
+            if (!startId) break;
+            const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+            const target = m.allMeasures()[ids.indexOf(startId)];
+            if (!target) break;
+            const flat = m['flatChildren'](1);
+            let cur = -1;
+            for (let i = 0; i < flat.length; i++) {
+              const el = flat[i];
+              if ((el.localName === 'note' || el.localName === 'chord') && el.closest('measure') === target) { cur = i; break; }
+            }
+            if (cur < 0) break;
+            m.setCursor(cur, 1);
+            const before = warns.length;
+            if (m.replaceChordAtCursor({ notes: [mk('c', 0), mk('g', 7)], duration: '4', dots: 0 }) === null) break;
+            H.reRender();
+            steps++;
+            lastDy = ps.lastVertical ? ps.lastVertical.dyFollow : 0;
+            const over = overflowing();
+            if (over.length) return { ok: false, detail: 'page ' + over.join(',') + ' drawn past the paper after step ' + steps };
+            handedBack = warns.slice(before).some((w) => w.indexOf('cascade overflows page') >= 0);
+          }
+        } finally { console.warn = ow; }
+        if (!steps) return { ok: false, detail: 'no growth step ran' };
+        if (!handedBack) {
+          return { ok: false, detail: 'never exhausted the page slack in ' + steps + ' steps (last dyFollow ' + lastDy.toFixed(1) + ') — the safety net was not exercised' };
+        }
+        /* Pagination came back from Verovio, so the document must still be sane. */
+        if (overflowing().length) return { ok: false, detail: 'still overflowing after handing pagination back' };
         return { ok: true };
       })()` },
   ],

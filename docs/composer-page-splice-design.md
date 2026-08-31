@@ -21,14 +21,28 @@ the partition is an internal bootstrap that is never painted.** Status:
 2026-08-30** (`apps/composer/src/render/pagesplice.ts`, see "Implementation
 (Phase C-B v1)"); reflow made CONSERVATIVE and **pagination ownership (Phase
 C-B2a) IMPLEMENTED 2026-08-30** (`<pb>` pins + `breaks:'encoded'`). On the
-sonata: 7 of 8 battery edits splice (the 8th is the by-design section-header
-skip), all reference-clean at 4 units, and the first edit after a derive
-splices instead of full-rendering. **Phase D — making the edit path O(edit)
-rather than O(document) — is largely IMPLEMENTED 2026-08-30**: a steady-state
-spliced edit is **206 ms**, down from 308, of which 59 ms is Verovio; per-edit
-`querySelectorAll` fell 31 969 → ~3 400 calls and `XMLSerializer` 495 → 54, so
-the bookkeeping now scales with the edit rather than the score. See "Phase D"
-and the TODO section for what remains.
+sonata, the **dy-cascade (Phase C-B2b / B1) is IMPLEMENTED 2026-08-31** — the
+vertical gate no longer refuses movement, it measures and applies it (see
+"Implementation (Phase C-B2b / B1)") — and **7 of 8 battery edits splice**, all
+8 apply and all are reference-clean (4 units x/width, 8 spacing, 6 absolute
+staff top), with the first edit after a derive splicing instead of
+full-rendering. The single remaining fallback is the by-design section-header
+line.
+
+**Phase D — making the edit path O(edit) rather than O(document) — IMPLEMENTED
+2026-08-30/31** for every O(document) item identified: a steady-state spliced
+edit is **~170 ms**, down from 308, of which ~56 ms is Verovio; per-edit
+`querySelectorAll` fell 31 969 → 2 537 calls, `XMLSerializer` 495 → 54,
+`cursor.update` 62.6 → ~4 ms, `normalizePlaceholdersAll` 17.1 → 0.9 ms. The
+enabling mechanism is exact mutation-based cache invalidation (a
+`MutationObserver` whose `takeRecords()` is synchronous), not call discipline —
+see "The mechanism that made caching possible".
+
+**Also 2026-08-31:** zoom is now layout-neutral (crisp presets moved to a
+constant `unit: 8`, so every zoom produces the same partition AND every zoom
+change is a partition-cache hit), and **user page breaks split their line and
+cascade** (segmented castoff — C1 closed). See the TODO section, which opens
+with a "START HERE NEXT THREAD" list.
 
 ## Core idea: greedy refill, Verovio decides
 
@@ -458,7 +472,10 @@ to the full refill render (loud `console.info`), exactly as before.
    line; content-top hang for page-first lines; spacing-below after the last
    replaced line; bottom-extent stability for page-last lines, which also
    pins pagination). Anything that would move ANY other system → full render.
-   dy-cascades and page-boundary moves are C-B2 (pagination ownership).
+   **SUPERSEDED 2026-08-31 by B1**: movement is now measured and applied (see
+   "Implementation (Phase C-B2b / B1)"); this gate survives only as the
+   `plan.static` fast path, which still pins systems to their live positions
+   verbatim when nothing moves by more than EPS.
 
 **Surgery**: offscreen render on `spliceTk` → `postProcessRendered` +
 `styleVoltaNumbers` (moved to render.ts, shared with main.ts) on the host →
@@ -1060,15 +1077,147 @@ reducing our overhead, never replacing the spacing.
 partition is never owned by design — so 30 ms is the floor cost of a full
 render on a trivial document, not a splice baseline.)
 
-## TODO — current state (updated 2026-08-30, end of session)
+## Implementation (Phase C-B2b / B1, 2026-08-31) — the dy-cascade, shipped
 
-**Resolved this session, no longer open:** the k=87 castoff-threshold class;
-pin lifecycle (render-time injection only); gap fidelity under pinning
-(delta 0.0); pagination ownership (`<pb>` pins + `encoded`); the
-encoded-respacing question (measured, reviewed by Max, four baselines
-reseeded — it is ACCEPTED, not moot); reflow reversibility (conservative
-repartition); and the first-edit-after-derive full render (never-painted
-castoff bootstrap).
+The v1 vertical gate refused whenever anything would move. It is replaced by a
+**vertical plan** (`VerticalPlan` / `verticalPlan` in `pagesplice.ts`): where a
+full re-engrave would put each replaced system, and the single dy every system
+below it on its page would take. All four `vertical: …` skip reasons are gone.
+
+**The window now mirrors live pagination.** Every window line that begins a
+LIVE page is pinned as `<pb>` instead of `<sb>`, and the window renders with
+the **live page options verbatim** (`'encoded'` paginates only at encoded
+breaks, so the tall-page + `adjustPageHeight` + `header:'none'` trick that
+`breaks:'line'` needed is unnecessary once pagination is owned). The window
+therefore paginates exactly where the document does, one host `<div>` per
+window page — the same shape a mounted page has, so `postProcess`,
+`decorateHost` and `mergeGlyphDefs` (which reads ONE `<defs>`) all behave as on
+the live path.
+
+**Why that was necessary, not tidy.** v1 modelled a page's first system as
+*"content top at the margin + hanging extent"*. Measured against real full
+renders (`cb-dycascade.js`), that is off by up to **85 units** — Verovio places
+systems from internal metrics that disagree with the rendered `getBBox`
+whenever the topmost content is `<text>` (`g.dir`, `g.tempo`, HEJI `g.accid`) —
+and the window's `header: 'none'` removed the running-header band that anchors
+every page's first system, a uniform **~419 unit** offset that no relative
+check can see. With the window paginated and its options matched, a page-first
+system is page-first in the window and its staff top is READ, not derived
+(both sides are page-margin relative). Worst prediction error over 19 samples:
+**425 → 8 units**. Details in lessons.md.
+
+**The plan.**
+
+- page-FIRST replaced system → `newTop = window counterpart's staffTop`;
+- any other → `newTop = previous newTop + the window's own spacing` (the chain
+  is anchored at the unchanged context line above, and RESETS at every page
+  boundary inside the run — which is what stops a dy leaking onto the next
+  page);
+- `dyFollow` = where the first unreplaced follower lands minus where it is.
+  Only ONE page can have followers: a replaced system that is not its page's
+  last is followed by another replaced system, so the only one that can be
+  followed by unreplaced systems is the last replaced one.
+
+**Applied all-or-nothing.** The plan is accurate to ~±8 units, so applying a
+3-unit movement adds error rather than removing it and re-snaps a whole page
+for a sub-pixel edit (it showed up at once as a visual-baseline diff on
+`pageSystemSpliceEdit`). `plan.static` — nothing moves by more than EPS — pins
+every system to its live staff top exactly as v1 did; otherwise the whole plan
+lands and the followers (collected BEFORE the surgery, which detaches the last
+replaced system from the DOM) take `dyFollow`. `snapPage` then re-lands staff
+lines on the device grid, exactly as a full render does.
+
+**Cross-page moves: repaginate, never splice across.** Under owned pagination a
+full render does not move systems between pages either — page starts are
+pinned — so a splice that did would diverge from the reference by construction.
+What can happen is that a cascade pushes its page past the paper, and Verovio
+draws past a pinned page rather than re-paginating. The splice therefore runs
+the same `overflowingPage()` check the pinned full-render path uses (scoped to
+the edited pages) and hands pagination back on a spill.
+
+**Two refusals remain in this area**, both narrow: a live page-first system
+whose window page boundary is missing (only possible when pagination is not
+owned — the tall-page window has no `<pb>`), and a page-first system on a page
+carrying a section-header reserve (main.ts translates that page's systems by an
+amount Verovio knows nothing about, so absolute tops are not comparable there).
+
+**Measured (sonata battery)**: **7 of 8 edits splice** (was 6), all 8
+reference-clean — max per-measure x/width delta 4 units, max spacing 8, max
+**absolute** staff top 6, over 30 pages / 446 measures. `edit-page-first`
+**1152 ms → ~440 ms**. The single remaining fallback is the by-design
+section-header line.
+
+**Gates**: the reference comparisons — both the inline `HKL_INDEX_CHECK` gate
+and `cb-splice-battery.js` — now assert **absolute** staff tops, not just
+consecutive spacing; a cascade that shifted a whole page by a constant would
+otherwise pass every check. Fixtures: `pageSystemSpliceDyCascade` (splice +
+non-static plan + the followers actually move), `pageSystemSpliceCascadeOverflow`
+(grows successive systems until page 1's slack is exhausted, then asserts
+pagination was handed back and nothing is drawn past the paper — it captures
+the `console.warn` itself, since the suite fails on any warning), and
+`pageSystemSpliceBottomExtent`, which REPLACES `pageSystemSpliceVerticalBail`:
+growing the doc-last line's bottom extent moves nothing below it and now
+legitimately splices. Suite 342/342 under `HKL_INDEX_CHECK`;
+typecheck/build/boundaries clean.
+
+## TODO — current state (updated 2026-08-31, end of session)
+
+**Resolved 2026-08-30:** the k=87 castoff-threshold class; pin lifecycle
+(render-time injection only); gap fidelity under pinning (delta 0.0);
+pagination ownership (`<pb>` pins + `encoded`); the encoded-respacing question
+(measured, reviewed by Max, four baselines reseeded — ACCEPTED, not moot);
+reflow reversibility (conservative repartition); and the first-edit-after-derive
+full render (never-painted castoff bootstrap).
+
+**Resolved 2026-08-31:** Phase D (the edit path is O(edit); sonata splice
+308 → ~170 ms) covering A2/A4/A7/A9 and the measure-list half of A3; **C3**
+(zoom made layout-neutral by a constant `unit: 8`, and every zoom change is now
+a cache hit); **C1** (user page breaks split their line and cascade — segmented
+castoff); **B1** (the dy-cascade: the vertical gate measures and applies
+movement instead of refusing it, battery 6/8 → 7/8); and a long-silent TEST bug
+(two battery edits had not been applying for months because the probe recorded
+`editOk` without asserting it).
+
+### ► START HERE NEXT THREAD
+
+Read this section first; the per-area lists below have the detail.
+
+1. **B4 — section-boundary zones + line 0**, now that B1 is done. The battery's
+   ONE remaining fallback is the section-header line, and B1 added a second
+   narrow refusal next to it (`section-header page anchor`: main.ts's reserve
+   translate makes absolute tops incomparable on those pages). Both are the same
+   root problem — page-mount injections Verovio knows nothing about. Making the
+   reserve a property of the RENDER rather than a post-mount translate would
+   retire both refusals and the reference gate's header-page exemption at once.
+2. **A6 — the splice's DOM cost, but NOT by cutting getBBox calls.** Measured
+   and refuted: 199 → 169 calls changed the time by nothing (15.5/16.1/17.8 ms
+   vs ~16.0). It is layout-FLUSH bound. The real levers are fewer MOUNTED pages
+   and fewer read/write ALTERNATIONS (batch every read before any DOM surgery).
+   ~16 ms available.
+3. **Vertical justification (D1) + system-height tracking.** The backlog asks
+   for "actually track system heights so we can decide whether to reflow systems
+   in the first place (keep existing positioning whenever possible)" and
+   "automatic vertical spacing of full pages". C1's segmented castoff
+   deliberately avoided needing a height model — but D1 needs one, and once it
+   exists the segmented castoff could become a straight page-fit loop.
+4. **A5 — worker-offloaded castoff.** The largest single remaining block is pure
+   Verovio on the main thread (~1.4 s on the sonata derive). Big refactor;
+   `afterRender` is the seam. Only worth starting with a clear runway.
+
+**Measurement discipline (learned the hard way this session).** `cb-scale.js`
+single readings vary 166–206 ms on identical code: run it 3× SEQUENTIALLY and
+compare medians, and trust the CALL COUNTS (`querySelectorAll`, `XMLSerializer`,
+`getBBox` `n`) over milliseconds — counts are deterministic. For any edit-path
+change, run `cb-splice-battery.js` on BOTH code states (`git stash push --
+apps/composer/src`, run, pop, run) and diff: what must match is the splice/skip
+OUTCOME per edit and `reference.ok`, not the wall times.
+
+**Two standing traps.** Do not edit app source while `pnpm test:composer` is
+running — Vite HMR reloads the page and the injected `window.__test` hooks
+vanish, surfacing as hundreds of fixtures failing on
+`Cannot read properties of undefined`. And the suite treats ANY console warning
+as a failure, so two unrelated-looking fixtures failing on an identical warning
+string means a shared render path started warning.
 
 ### A. Latency — the main thrust
 
@@ -1087,16 +1236,15 @@ castoff bootstrap).
       escalated on essentially every edit, because MEI control events live at
       MEASURE level and tie/slur pruning plus `setBarlines` touch them
       constantly. See "Phase D pass 4" for the exemption rule and its gate.
-- [?] **A8. Bounded-delta legality guard** (~30 ms) — **probably not viable as
-      specified, needs Max's call.** The idea is to skip the naturals render
-      when the edited line's fill margin provably exceeds the width the edit
-      could have added. But naturals are ALREADY cached per measure with only
-      dirty ids re-measured, so the render that remains is exactly the one
-      covering the edited measures — and bounding *their* new width without
-      measuring means estimating glyph widths ourselves, i.e. a width model,
-      which the Phase D scope boundary rules permanently out of scope. Unless
-      there is a sound bound I have not seen, the honest options are to accept
-      the one window render per edit (~35 ms) or to drop this item.
+- [~] **A8. Bounded-delta legality guard — DROPPED** (Max, 2026-08-31: "Drop
+      A8, I don't see a path forward there"). The idea was to skip the naturals
+      render when the edited line's fill margin provably exceeded the width the
+      edit could add. Not viable as specified: naturals are ALREADY cached per
+      measure with only dirty ids re-measured, so the remaining render is exactly
+      the one covering the edited measures, and bounding *their* new width
+      without measuring means building a width model — which the Phase D scope
+      boundary rules out permanently. The one window render per edit (~35 ms)
+      stands as the accepted floor.
 - [x] **A9. Cache the spanner/ending extents** — DONE 2026-08-31. The extents
       are built once per document version and reused across the ~3
       `expandForSpanners` calls an edit makes: `querySelectorAll` 3 428 → 2 537
@@ -1114,8 +1262,11 @@ castoff bootstrap).
       Max** (it touches the `onStateChange`-before-`onChange` ordering the
       bridge broadcast relies on) but is now worth ~2 ms, not 40 — effectively
       moot unless the ordering is being revisited anyway.
-- [x] **A4. Partition cache keyed by (zoom, pageScale, heji) + document
-      version** — DONE 2026-08-31. A zoom RETURN on an unchanged document skips
+- [x] **A4. Partition cache keyed by (unit, pageScale, heji) + document
+      version** — DONE 2026-08-31. Keyed on the LAYOUT INPUTS, not the zoom
+      label; since C3 made `unit` constant across zooms it now holds ONE entry
+      for every zoom, so a zoom change is always a cache hit (~750 ms, was up to
+      2134 ms). A zoom RETURN on an unchanged document skips
       the castoff pass: sonata zoom-50 first visit **2233 ms (castoff)** →
       return **848 ms (cache hit, no castoff)**, partition identical; a stale
       entry is refused and re-derives. Instrumented at the decision points
@@ -1146,17 +1297,26 @@ castoff bootstrap).
 
 ### B. Splice coverage — converting remaining fallbacks into splices
 
-- [ ] **B1. dy-cascade + cross-page moves (the C-B2b core)** — v1 splices only
-      when nothing else moves. A height-changing edit needs the dy-translate
-      of following systems (the window MEASURES the new spacing, so dy is
-      known); page overflow/underflow needs the page-granularity cascade.
-      Pagination is now owned, so a full render agrees by construction.
+- [x] **B1. dy-cascade + cross-page moves (the C-B2b core)** — DONE
+      2026-08-31; battery **6/8 → 7/8**, `edit-page-first` 1152 → ~440 ms. The
+      premise ("the dy is known, just apply it") held for systems stacked
+      inside a page and FAILED for a page's first system: v1's margin+hang
+      model mis-predicts by up to 85 units because Verovio's placement metrics
+      disagree with the rendered bbox for `<text>`, and the window's
+      `header:'none'` hid a uniform ~419-unit anchor band. Fixed structurally —
+      the window carries `<pb>` pins at the live page starts and uses the live
+      page options verbatim, so the position is READ rather than modelled
+      (prediction error 425 → 8 units). Cross-page moves cannot occur under
+      pinned pagination; a cascade that would overflow its page hands
+      pagination back instead. See "Implementation (Phase C-B2b / B1)".
 - [ ] **B2. Line-count-changing refills** — replace N systems with M under the
       same machinery (today: full render).
 - [ ] **B3. Boundary courtesy** — a boundary moving next to a clef/key change
       re-spaces the PREVIOUS line's end-of-line courtesy signatures (~33 units
-      on the sonata). v1 is safe (context check refuses); C-B2b should
-      re-splice k−1 instead of falling back.
+      on the sonata). Safe today (the context check refuses); the fix is to
+      re-splice k−1 instead of falling back. Unaffected by B1 — this is a
+      HORIZONTAL divergence, caught by the context check, not the vertical
+      gate.
 - [ ] **B4. Section-boundary zones + line 0** — windowed renders diverge there
       (probes k=59 / k=0); v1 excludes line 0 and lets the context check refuse
       the rest. Root-causing would extend splicing into section zones.
@@ -1176,32 +1336,40 @@ castoff bootstrap).
       side-by-side by Max; 36 visual baselines reseeded. Gate:
       `cb-zoomunit.js` (`zoom75_differs` must stay false). See "Zoom is
       layout-neutral".
-- [~] **C1. User-`<pb>` giant-page quirk — CATASTROPHIC HALF FIXED 2026-08-31,
-      ownership half still open.** The `<pb>` branch of `castoffPlan` now casts
-      off with **`'line'`** instead of `'encoded'` over the same sb-baked data,
-      so pagination is discovered by HEIGHT rather than only at encoded breaks.
-      Measured on the sonata with one Ctrl+B at bar 60 (`cb-userpb.js`):
+- [x] **C1. User page breaks — FIXED 2026-08-31** (both the giant-page quirk
+      and the missing reflow Max reported). Two changes:
+      **(1)** the `<pb>` branch of `castoffPlan` casts off with `'line'`
+      (height-derived) instead of `'encoded'` (breaks-only), which alone took the
+      sonata with one Ctrl+B from **2 clipped pages to correct pagination**;
+      **(2)** `castoffSegmentedByUserBreaks` computes pagination per inter-break
+      SEGMENT, because no Verovio mode does both jobs — `'line'` paginates by
+      height but treats `<pb>` as a SYSTEM break, `'encoded'` honors `<pb>` as a
+      page break but never paginates by height. Previously we took `'line'`'s
+      page starts (computed as if the break did not exist) and painted
+      `'encoded'`, which honored the `<pb>` ON TOP of those unchanged pins —
+      inserting a boundary without re-packing anything after it.
+      The load-bearing detail: **a page break must SPLIT its line**, so the break
+      measures are merged into the line partition before segmenting (smartSb0
+      ignores `<pb>`, so they are mid-line in the base castoff). Without that
+      merge the segment document begins at a measure the partition calls
+      mid-line, Verovio necessarily starts a line there, and the partition check
+      refuses — which is how the omission was caught. This merge is also what
+      makes a mid-system break reflow its measures.
+      Measured (sonata, `cb-pbcases.js`), both reported cases:
 
-      | | before | after |
+      | | mid-system break | break before a page's last line |
       |---|---|---|
-      | pages | **2** | **38** (37 + the break's split) |
-      | clipped pages | 2 (overhang 6 800 px / 59 534 px) | **0** |
-      | recovery on removing the break | 37 | 37 |
+      | break splits its line | ✓ | ✓ (already a line start) |
+      | break starts a page | ✓ (was ✗) | ✓ (was ✗) |
+      | page list == DOM | ✓ 31/31 (was 30/31) | ✓ 30/30 |
+      | single-system page | none (was 1) | **none (was 1)** |
+      | `verifyRenderedPartition` | ✓ (was ✗) | ✓ |
+      | removing the break restores | ✓ | ✓ |
 
-      Suite 339/339. **What is still wrong:** `'line'` over sb-baked data does
-      NOT put a page boundary at the user's `<pb>` (measured: the break lands
-      mid-page-4, `breakIsAPageStart: false`), while the painted `'encoded'`
-      render honors it directly — so the adopted page list is **one page short
-      of the DOM** (37 vs 38), permanently. Consequences, all measured over five
-      successive renders (`cb-pbconverge.js`): stable, **no warning loop**, no-op
-      renders still skip, and an edit near the break falls back safely
-      (`skip: "window paginated"`) instead of splicing. So such documents render
-      CORRECTLY but their pagination is Verovio-honored rather than owned.
-      The missing third is the one the original plan named: **union the user's
-      `<pb>` positions into our page starts**, which needs a real page-fit loop
-      (walk lines accumulating height; start a page at a user break or at
-      overflow) — the machinery D1 shares. Until then this is a net improvement
-      from "unusable" to "correct but unowned".
+      Verovio stays the page-fit engine — we only choose where to cut — so no
+      height model was needed. A one-line segment short-circuits without a
+      layout pass (it cannot overflow a page, and handing `'line'` data with no
+      encoded break makes Verovio warn). Fixture: `pageUserBreakReflows`.
 - [ ] **C2. First-page credits** — composer/footer changes derive via
       `headSig`. Fine (rare), noted for completeness.
 
@@ -1222,6 +1390,17 @@ castoff bootstrap).
 
 ## Status log
 
+- 2026-08-31 — **Phase C-B2b / B1 implemented** (the dy-cascade; see
+  "Implementation (Phase C-B2b / B1)"). The spike (`cb-dycascade.js`) compared
+  the plan against what the ensuing full render actually did and refuted the
+  v1 page-first anchor model — 85 units on the sonata, root-caused by `<text>`
+  overflow Verovio does not count (`cb-topmost.js` / `cb-anchor.js`) and by the
+  window suppressing the running-header band. Fixed by pinning the window's
+  pages to the live page starts and matching the live options (error
+  425 → 8 units), then applying the plan all-or-nothing. Battery 7/8 spliced,
+  all reference-clean including a NEW absolute-staff-top check; suite 342/342
+  with three new/changed fixtures; overflow safety net verified end-to-end
+  (`cb-cascade-overflow.js`).
 - 2026-08-29 — design drafted (greedy-refill formulation unifies forward +
   reverse cascade; parity gate defined per Max: no visual change to
   cross-system actions).
@@ -1354,18 +1533,59 @@ castoff bootstrap).
   what remains. Suite 339/339 under `HKL_INDEX_CHECK` (the verifications are
   permanent, so the suite is a standing gate on the mechanism); typecheck /
   build / boundaries clean.
-- 2026-08-31 — **C1 half-fixed: user page breaks no longer produce clipped
-  giant pages.** The `<pb>` branch of `castoffPlan` casts off with `'line'`
-  (height-derived) instead of `'encoded'` (breaks-only), over the same sb-baked
-  data: sonata with one Ctrl+B goes **2 clipped pages → 38 correct ones**, zero
-  overhang, and removing the break returns to 37. Suite 339/339. The remaining
-  third of the documented fix is NOT done and is now measured rather than
-  assumed: `'line'` does not treat a lone user `<pb>` as a page boundary over
-  sb-baked data (the break lands mid-page), so the adopted page list stays one
-  short of the DOM and pagination for such documents is Verovio-honored rather
-  than owned — stable, no warning loop, edits near the break safely full-render.
-  Also corrected a previously recorded finding: "breaks:'line' honors `<pb>`"
-  holds for a fully PINNED document, not for sparse user breaks (lessons.md).
+- 2026-08-31 — **C1 FIXED in full: user page breaks split their line and
+  cascade.** Landed in two steps. First the `<pb>` branch of `castoffPlan` moved
+  from `'encoded'` (breaks-only) to `'line'` (height-derived), which took the
+  sonata with one Ctrl+B from **2 clipped giant pages** to correct pagination.
+  That half left the defect Max then described precisely — "it doesn't do a
+  cascade reflow at all… a page break before the last line of a page creates a
+  new page with just that line; a page break in the middle of a system also does
+  not try to reflow measures" — and the measurements agreed (page list one short
+  of the DOM, a 1-system page, `verifyRenderedPartition` false).
+  Root cause: **no Verovio mode paginates by height AND honors `<pb>`** —
+  `'line'` treats `<pb>` as a SYSTEM break (a document with one break returns the
+  same page count as with none), `'encoded'` honors it as a page break but never
+  paginates by height. We were taking `'line'`'s page starts, computed as if the
+  break did not exist, and painting `'encoded'`, which layered the break on top
+  of those unchanged pins: a boundary inserted with nothing after it re-packed.
+  Fix: `castoffSegmentedByUserBreaks` paginates each inter-break SEGMENT
+  independently (Verovio stays the page-fit engine; we only choose where to cut,
+  so no height model was needed) — plus the step that makes it coherent, merging
+  the break measures into the LINE partition first, since a page begins with a
+  new system but smartSb0 ignores `<pb>` and leaves them mid-line. Omitting that
+  merge was caught by the partition-equality check rather than shipped: the
+  segment begins at a measure the partition calls mid-line, so Verovio starts a
+  line there and the check refused. That same merge is what makes a MID-SYSTEM
+  break reflow its measures. Both reported cases now measure clean
+  (`cb-pbcases.js`): break splits its line, starts a page, page list == DOM,
+  **no single-system page**, verify true, exact restore on removal. Suite
+  **340/340** with the new `pageUserBreakReflows` fixture; boundaries + build
+  clean. Also corrected en route: "breaks:'line' honors `<pb>`" holds for a
+  fully PINNED document, not for sparse user breaks (lessons.md).
+- 2026-08-31 — **Zoom made layout-neutral: crisp presets moved to a CONSTANT
+  unit 8.** Keying the partition cache exposed that zoom re-broke the score —
+  the presets used `unit: 9` at 50/100 but `unit: 10` at 75, and `scalePageGeom`
+  scales the page by `pageScale` only, so zoom 75 rendered ~11 % larger music
+  against the same paper: sonata 118 lines / 37 pages → **134 / 45**, eight extra
+  pages from a zoom. Max: "that is a catastrophic result… zoom should be a no-op
+  in terms of line count and distribution." Two dead ends before the answer:
+  compensating the paper by `unit / 9` (matched `contentWidth / unit` to five
+  digits and still gave 113 lines where 118 was wanted — Verovio's spacing has
+  terms that do not scale with `unit`), and `unit: 9` at a fractional
+  `scale: 77.78` (refuted by the presets' own derivation, which Max sent me to
+  find rather than re-derive: it breaks the whole-device-px stroke rule and
+  re-opens the root-`<svg>` ceil drift). The general rule is `gcd(unit, 50)` —
+  scales must be multiples of `50/gcd`; unit 9 (gcd 1) allows only 50/100/150,
+  **unit 8 (gcd 2) allows multiples of 25**, so 50/75/100 are all crisp at one
+  unit (staff-space 8/12/16 px, strokes 1.0/0.975/2.0 px). Every zoom now
+  produces an identical partition (116 lines / 30 pages) and **every zoom change
+  is a partition-cache hit** (~750 ms, was up to 2134 ms). Accepted cost after a
+  six-image side-by-side: ~11 % smaller notation at every level (100 %
+  staff-space 18 → 16 px); 36 baselines reseeded. Also found: `unit: 9` was
+  never chosen — it is Verovio's default, inherited, and `unit: 10` was a patch
+  in a grab-bag commit to rescue an already-existing 75 % step, while
+  decisions.md asserted the defect away ("zoom is pure magnification and does
+  not change music-per-page" — true again as of this entry).
 - 2026-08-31 — **Phase D pass 4 + A4 (partition cache), and a test bug fixed.**
   Max: "why did you stop? There's still a long way to go and I see more
   outstanding items than we started with" — fair; the previous session serialized

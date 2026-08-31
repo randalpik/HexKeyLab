@@ -73,7 +73,7 @@ function referenceCompare() {
   };
   const livePages = [...document.querySelectorAll('#score .score-page:not(.score-page-pending)')];
   let checkedPages = 0, checkedMeasures = 0;
-  let maxD = 0, maxSpacingD = 0;
+  let maxD = 0, maxSpacingD = 0, maxTopD = 0;
   for (const pageEl of livePages) {
     const pno = +pageEl.dataset.page;
     if (pno > tkRef.getPageCount()) return { ok: false, why: 'live page ' + pno + ' beyond reference page count ' + tkRef.getPageCount() };
@@ -103,12 +103,25 @@ function referenceCompare() {
           const d = Math.abs((rp.staffTop - prevRef.staffTop) - (lp.staffTop - prevLive.staffTop));
           if (d > maxSpacingD) maxSpacingD = d;
         }
+        /* ABSOLUTE staff top, not just consecutive spacing. B1 places spliced
+           systems at measured absolute positions and shifts the systems below
+           by a common dy — a page shifted wholesale by a constant satisfies
+           every spacing check and is still wrong. Both sides are page-margin
+           relative, so they compare directly. */
+        if (!headerPage) {
+          const d = Math.abs(rp.staffTop - lp.staffTop);
+          if (d > maxTopD) maxTopD = d;
+        }
         prevRef = rp; prevLive = lp;
       }
       checkedPages++;
     } finally { host.remove(); }
   }
-  return { ok: maxD <= TOL && maxSpacingD <= TOL, checkedPages, checkedMeasures, maxD: +maxD.toFixed(1), maxSpacingD: +maxSpacingD.toFixed(1) };
+  return {
+    ok: maxD <= TOL && maxSpacingD <= TOL && maxTopD <= TOL,
+    checkedPages, checkedMeasures,
+    maxD: +maxD.toFixed(1), maxSpacingD: +maxSpacingD.toFixed(1), maxTopD: +maxTopD.toFixed(1),
+  };
 }
 
 const battery = [];

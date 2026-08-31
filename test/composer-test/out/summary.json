@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 339,
-  "passed": 339,
+  "fixtures": 342,
+  "passed": 342,
   "failed": 0,
-  "elapsedMs": 187893,
+  "elapsedMs": 164755,
   "results": [
     {
       "name": "emptyDoc",
@@ -873,6 +873,14 @@
       }
     },
     {
+      "name": "pageUserBreakReflows",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 6
+      }
+    },
+    {
       "name": "pageLineBreaksUndoRestoresLayout",
       "ok": true,
       "failures": [],
@@ -908,7 +916,23 @@
       }
     },
     {
-      "name": "pageSystemSpliceVerticalBail",
+      "name": "pageSystemSpliceBottomExtent",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "pageSystemSpliceDyCascade",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "pageSystemSpliceCascadeOverflow",
       "ok": true,
       "failures": [],
       "counts": {

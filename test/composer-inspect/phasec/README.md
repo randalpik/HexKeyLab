@@ -53,9 +53,35 @@ Phase C-B probes (2026-08-30, findings baked into
   through the live app, each asserting the splice/skip outcome AND a
   document-wide reference compare (every mounted page vs a fresh offscreen
   render of the same pinned MEI: system sequence, per-measure x/width,
-  spacing; section-header pages exempt the spacing check — their reserve
-  translate is a main.ts injection). Expect allReferenceOk true; spliced
-  edits ~400–630 ms wall vs 1.6–3.1 s full renders.
+  spacing, and — since B1 — **absolute** staff tops, because a cascade that
+  shifted a whole page by a constant passes every spacing check; section-header
+  pages exempt the vertical checks, their reserve translate is a main.ts
+  injection). Expect allReferenceOk true and 7/8 spliced (the section-header
+  line is the by-design fallback); spliced edits ~260–570 ms wall.
+
+Phase C-B2b / B1 probes (2026-08-31, findings baked into the design doc →
+"Implementation (Phase C-B2b / B1)" and lessons.md):
+
+- **cb-dycascade.js** — the B1 spike, and the reason B1 was not a two-line
+  change: runs page-first deletes on pages 3–7, captures the splicer's
+  `lastVertical` plan, then measures what the ENSUING render actually did and
+  reports predicted-vs-actual per system plus `maxPredictionError`. That number
+  is the gate for any change to `verticalPlan` — it went 425 → 8 units when the
+  window was made to paginate like the live document. Note the static cases
+  read as "error" because the splice keeps live positions by design; only
+  non-static rows are real evidence.
+- **cb-anchor.js** — every mounted page's first system (margin ty, staff top,
+  bbox top, hang). Shows the page-first anchor is NOT a constant bbox top:
+  staff tops sit on a 10-unit snap grid with a floor, and bbox tops range
+  297–612.
+- **cb-topmost.js** — what actually reaches above a page-first system: the
+  outliers are all `<text>` (`g.dir`, `g.tempo`, HEJI `g.accid`), which is why
+  a bbox hang cannot stand in for Verovio's counted overflow.
+- **cb-cascade-overflow.js** (run with `--no-sonata`) — builds a packed page,
+  then grows successive systems until the cascade exhausts page 1's slack;
+  asserts the splice hands PAGINATION back (warn + derive) and that nothing is
+  ever drawn past the paper. Reports per-step slack, so it also documents how
+  much room a cascade actually has.
 - **cb-focus.js** — three consecutive edits at one spot (sonata measure 100):
   the first may full-render (first-edit-in-region re-break), the rest must
   splice. The probe that found the end-of-score final-barline artifact
