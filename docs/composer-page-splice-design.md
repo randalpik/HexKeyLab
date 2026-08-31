@@ -16,9 +16,12 @@ Companion to [composer-spot-splice-design.md](composer-spot-splice-design.md)
 2026-08-30** (`apps/composer/src/render/linebreaks.ts`, see "Implementation
 (Phase C-A)"); **the contained system splice (Phase C-B v1) IMPLEMENTED
 2026-08-30** (`apps/composer/src/render/pagesplice.ts`, see "Implementation
-(Phase C-B v1)") — local edits land as system splices at ~400–630 ms wall on
-the sonata (vs 1.6–3.1 s full renders); dy-cascades, page-boundary moves and
-pagination ownership remain (C-B2).
+(Phase C-B v1)"); reflow made CONSERVATIVE and **pagination ownership (Phase
+C-B2a) IMPLEMENTED 2026-08-30** (`<pb>` pins + `breaks:'encoded'`). On the
+sonata: 6 of 8 battery edits splice at **407–544 ms** (all reference-clean at
+4 units), the remaining full renders fell to ~1.1 s, and a spliced edit is
+313 ms of which Verovio is 58 ms. Still open (C-B2b): dy-cascades, moving
+systems between pages, and the user-`<pb>` giant-page quirk.
 
 ## Core idea: greedy refill, Verovio decides
 
@@ -542,6 +545,11 @@ render uses **`breaks:'encoded'`** — the only mode that honors `<pb>`.
   reviewed both renders of sonata page 3 side by side (`cb-pagerender.js` +
   the runner's new `--screenshot`), saw no difference, and accepted on the
   condition that **the new system is self-consistent**.
+- **Battery after enablement (`cb-splice-battery.js`, strategy-matched
+  reference)**: 6/8 edits splice at **407–544 ms**, all 8 reference-clean
+  (max 4 units over 37 pages / 446 measures). The two full renders are the
+  documented first-edit-after-derive and the section-header line — and even
+  those dropped from ~1.95 s to **~1.1 s**, because encoded loads 2× faster.
 - **Self-consistency verified (`cb-pageown.js`)**: with pagination owned, the
   live DOM equals a fresh full render of the same pinned MEI — 446 measures
   compared, 0 system-sequence mismatches, max geometry delta 4 units (0.4 px

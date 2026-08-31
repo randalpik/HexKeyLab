@@ -160,7 +160,8 @@ on mount (viewBox growth), shifting pages below it; scroll-mode full engrave
   renders as images. Overflow is now our problem, so a pinned page that spills
   hands pagination back to Verovio (warn + derive). Does NOT fix the
   user-`<pb>` giant-page quirk — that needs the derive path to paginate by
-  height itself.
+  height itself. Full renders also got cheaper across the board (sonata page
+  edit fallback ~1.95 s → ~1.1 s).
 - [x] **T3.2b Splice-latency profile + two self-inflicted fixes** — SHIPPED
   2026-08-30. A steady-state spliced edit is **313 ms**, of which Verovio is
   only 58 ms; the rest is whole-document bookkeeping (cursor.update 57 ms over
@@ -267,3 +268,10 @@ on mount (viewBox growth), shifting pages below it; scroll-mode full engrave
   spliced edits ~460–650 ms. Also closed a hole the probe exposed: a page
   mounted lazily AFTER a splice used to draw pre-edit content (pageVirt.stale
   → re-serialize + re-pin on the next mount, ~1.5 s once, off the hot path).
+- 2026-08-30 — **T3.2a/b shipped**: pagination ownership (`<pb>` pins +
+  breaks:'encoded', self-consistent, 2x faster loads) and the splice-latency
+  profile. Sonata battery after enablement: 6/8 edits splice at 407-544 ms,
+  all reference-clean at 4 units; the remaining full renders fell to ~1.1 s.
+  Suite 339/339 under HKL_INDEX_CHECK. Verovio is only 58 ms of a 313 ms
+  splice — the rest is whole-document bookkeeping (see the design doc's
+  latency table for the remaining levers).

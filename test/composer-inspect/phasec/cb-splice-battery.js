@@ -40,9 +40,14 @@ const mountAll = async () => {
 const tkRef = new V.toolkit();
 function referenceCompare() {
   const mei = model.serialize({ hejiEnabled: model.getHejiEnabled() }, null);
-  const pinned = lb.injectPins(mei, pb['startIds'], null);
+  /* Reference must use the SAME display strategy as the live render: with
+     pagination owned that is 'encoded' + <pb> pins. Comparing an encoded live
+     DOM against a 'line' reference just re-measures the (accepted) ~516-unit
+     justification difference between the two modes. */
+  const owned = pb.paginationOwned();
+  const pinned = lb.injectPins(mei, pb['startIds'], owned ? new Set(pb.pageStarts()) : null);
   if (!pinned) return { ok: false, why: 'pin injection failed' };
-  tkRef.setOptions({ ...r['buildOptions']('auto'), breaks: 'line' });
+  tkRef.setOptions({ ...r['buildOptions']('auto'), breaks: owned ? 'encoded' : 'line' });
   if (!tkRef.loadData(pinned)) return { ok: false, why: 'reference loadData failed' };
   const profile = (sys) => {
     const measures = [...sys.querySelectorAll('g.measure')];
