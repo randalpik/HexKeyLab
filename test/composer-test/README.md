@@ -104,12 +104,25 @@ tools/composer-test/
 
 4. For visual regression coverage, add `visualBaseline: '<name>'`. On
    first run the runner seeds `baselines/<name>.png`; subsequent runs
-   compare.
+   compare. Framing is a COMPACT content crop by default (systems +
+   selection + visible cursor visuals); fixtures whose subject is
+   page-level layout (page scale, system partition) add
+   `visualFullPage: true` to capture the full page card instead, paper
+   margins included (later pages of a multi-page doc must be mounted in
+   the setup). The capture resizes the viewport to rasterize the whole
+   card, waits for geometry to be stable across consecutive frames, and
+   records meta (card dims, zoom, pageScale, scroll) into summary.json —
+   check the meta before debugging a framing diff from pixels. Scenario
+   runs also perform the visual check, so one fixture can be verified or
+   re-seeded (`--update-baselines`) in ~1 s without a full run.
 
 5. For fixtures where two cursor positions intentionally render at the
    same x (e.g. distinct nav stops with no glyph between them), add
    `expectedZeroDeltaPairs: [[from, to], ...]` to exempt the
-   cursor-trace invariant.
+   cursor-trace invariant. Fixtures whose concern is orthogonal to
+   cursor geometry may add `skipCursorTrace: true` — the walk scrolls
+   every stop into view, which costs minutes on a deliberately
+   multi-page document.
 
 6. Add the fixture to `FIXTURES` at the bottom of `fixtures.mjs` with
    the appropriate tier (`fast` or `full`).

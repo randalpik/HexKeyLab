@@ -226,3 +226,11 @@ Two selectors in the top bar (remembered across reloads):
 
 - **View mode**: **Page** (paginated, for reading/printing) or **Scroll** (one continuous system).
 - **Theme**: **Light**, **Dark**, or **Transparent** (no background, for video/overlay use).
+
+**How page view reflows when you edit**: on larger scores, line breaks are kept
+stable while you work — an edit re-flows only the line you touched (and its
+neighbors when a bar spills over or pulls back); everything else stays where it
+was. The first edit in a passage may settle its lines slightly differently than
+the initial layout chose, after which they stay put — the layout never jumps on
+an edit that doesn't change any widths. Loading a document, zooming, or changing
+page size re-derives the whole layout fresh.

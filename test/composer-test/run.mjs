@@ -149,30 +149,37 @@ async function runOne(cdp, name, fixture, console_cap, currentTier, opts = {}) {
    * declare `expectedZeroDeltaPairs: [[from, to], ...]` to exempt pairs
    * of cursor positions that intentionally render at the same x (e.g.,
    * the tuplet wrapper-entered position vs. the inside-first-child
-   * position — see plan §Unexpected Behaviors §1). */
-  result.counts.invariants++;
-  const trace = await cdp.evalJSON(cursorTraceExpr(1, fixture.expectedZeroDeltaPairs ?? []));
-  if (trace?.__error) {
-    result.ok = false;
-    result.failures.push({ kind: 'cursor-trace', detail: trace.__error });
-  } else if (trace.violations?.length) {
-    result.ok = false;
-    result.failures.push({
-      kind: 'cursor-trace',
-      detail: trace.violations.length + ' violation(s): ' +
-        trace.violations.slice(0, 2).map((v) =>
-          v.from + '→' + v.to + ' Δ=' + (v.delta?.dx ?? 0) + ',' + (v.delta?.dy ?? 0)
-        ).join('; '),
-    });
+   * position — see plan §Unexpected Behaviors §1). Fixtures whose concern is
+   * orthogonal to cursor geometry may declare `skipCursorTrace: true` — the
+   * walk scrolls every stop into view, which on a deliberately multi-page
+   * document costs minutes (240 stops ≈ 130 s) for coverage every other
+   * fixture already provides. */
+  if (!fixture.skipCursorTrace) {
+    result.counts.invariants++;
+    const trace = await cdp.evalJSON(cursorTraceExpr(1, fixture.expectedZeroDeltaPairs ?? []));
+    if (trace?.__error) {
+      result.ok = false;
+      result.failures.push({ kind: 'cursor-trace', detail: trace.__error });
+    } else if (trace.violations?.length) {
+      result.ok = false;
+      result.failures.push({
+        kind: 'cursor-trace',
+        detail: trace.violations.length + ' violation(s): ' +
+          trace.violations.slice(0, 2).map((v) =>
+            v.from + '→' + v.to + ' Δ=' + (v.delta?.dx ?? 0) + ',' + (v.delta?.dy ?? 0)
+          ).join('; '),
+      });
+    }
   }
 
   /* VISUAL invariant: only on `visual` tier or when fixture declares
    * visualBaseline. Captures a screenshot via CDP and compares to the
    * stored baseline PNG. */
-  if (fixture.visualBaseline && (currentTier === 'visual' || currentTier === 'full')) {
+  if (fixture.visualBaseline && (currentTier === 'visual' || currentTier === 'full' || currentTier === 'scenario')) {
     result.counts.invariants++;
     try {
-      const v = await visualCheck(cdp, fixture.visualBaseline, { updateBaselines: opts.updateBaselines });
+      const v = await visualCheck(cdp, fixture.visualBaseline, { updateBaselines: opts.updateBaselines, fullPage: fixture.visualFullPage === true });
+      if (v.meta) result.visualMeta = v.meta;   // capture geometry + renderer state → summary.json
       if (!v.ok) {
         result.ok = false;
         result.failures.push({ kind: 'visual', detail: v.detail });

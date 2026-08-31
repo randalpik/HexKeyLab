@@ -29,6 +29,15 @@ import type { ComposerModel } from '../model/index.js';
 const MEI_NS = 'http://www.music-encoding.org/ns/mei';
 const idOf = (m: Element): string => m.getAttribute('xml:id') || m.getAttribute('id') || '';
 
+/** The section's measures in DOCUMENT ORDER — the model's coordinate system
+ *  (allMeasures / cursor / dirty ranges), `<ending>`-wrapped measures INCLUDED.
+ *  The splicer must share this frame: reading the model's dirty range against a
+ *  direct-children-only list skewed every index past the first volta and made
+ *  post-ending edits splice silently stale (lessons.md "Two measure coordinate
+ *  systems", 2026-08-30). */
+const sectionMeasures = (section: Element): Element[] =>
+  Array.from(section.querySelectorAll('measure'));
+
 /** Test-mode consistency gate, mirrors model/index.ts indexCheckEnabled —
  *  enabled by HKL_INDEX_CHECK=1 in the test runner. */
 function indexCheckEnabled(): boolean {
@@ -103,7 +112,7 @@ export class ScrollSplicer {
     const live = model.getDoc();
     const section = live.querySelector('section');
     if (!section) return;
-    const meiMeasures = Array.from(section.children).filter((c) => c.localName === 'measure');
+    const meiMeasures = sectionMeasures(section);
     this.order = meiMeasures.map(idOf);
     this.sig = new Map();
     this.tx = new Map();
@@ -130,11 +139,14 @@ export class ScrollSplicer {
 
   /** Serialized head context (the scoreDef(s) before the first measure) — if
    *  this changes between renders the layout header changed and we must full-
-   *  render. */
+   *  render. Walks TOP-LEVEL section siblings: the first measure could itself
+   *  be `<ending>`-wrapped, and its in-wrapper siblings aren't head context. */
   private computeHeadSig(firstMeasure: Element | undefined, ser: XMLSerializer): string {
     if (!firstMeasure) return '';
+    let top: Element = firstMeasure;
+    while (top.parentElement && top.parentElement.localName !== 'section') top = top.parentElement;
     let s = '';
-    let n = firstMeasure.previousElementSibling;
+    let n = top.previousElementSibling;
     while (n) { s = ser.serializeToString(n) + s; n = n.previousElementSibling; }
     return s;
   }
@@ -210,7 +222,7 @@ export class ScrollSplicer {
     const live = model.getDoc();
     const section = live.querySelector('section');
     if (!section) return false;
-    const meiMeasures = Array.from(section.children).filter((c) => c.localName === 'measure');
+    const meiMeasures = sectionMeasures(section);
     const newOrder = meiMeasures.map(idOf);
     const ser = new XMLSerializer();
     // Per-measure signatures for the diff. The expensive part on a large score
@@ -252,8 +264,10 @@ export class ScrollSplicer {
     let oldLo = P, oldHi = oN - 1 - Sx;          // changed run, OLD index
     if (hiNew < lo && oldHi < oldLo) return true; // nothing changed
 
-    // Expand the NEW run outward until no spanner crosses its endpoints.
-    [lo, hiNew] = this.expandForSpanners(live, meiMeasures, newOrder, lo, hiNew);
+    // Expand the NEW run outward until no spanner crosses its endpoints, then
+    // until every touched <ending> is contained whole (run AND context slots).
+    [lo, hiNew] = expandForSpanners(meiMeasures, lo, hiNew);
+    [lo, hiNew] = expandForEndings(meiMeasures, lo, hiNew);
     // Mirror the expansion onto the OLD run. Measures BEFORE the run align 1:1
     // (common prefix), and measures AFTER it align 1:1 (common suffix, shifted by
     // the measure-count delta), so: oldLo = lo, and oldHi tracks hiNew by the
@@ -295,8 +309,18 @@ export class ScrollSplicer {
     document.body.appendChild(host);
     ctx.postProcess(host);
 
+    /* Volta brackets render as SYSTEM-level glyphs (id = the <ending>'s
+       xml:id), NOT inside the measure groups — measure imports and the
+       x-cascade never move them, so a re-rendered or shifted ending would keep
+       a stale bracket. spliceDom reconciles them: replace from the sub-render
+       for endings inside the run, drop orphans, cascade downstream ones. */
+    const endings = Array.from(section.querySelectorAll('ending')).map((e) => ({
+      id: e.getAttribute('xml:id') ?? '',
+      firstMeasureId: idOf(e.querySelector('measure') ?? e),
+    })).filter((e) => e.id !== '');
+
     try {
-      return this.spliceDom(host, newOrder, newSig, { lo, hiNew, oldLo, oldHi, cHi, anchorIdx });
+      return this.spliceDom(host, newOrder, newSig, { lo, hiNew, oldLo, oldHi, cHi, anchorIdx }, endings);
     } finally {
       host.remove();
     }
@@ -329,6 +353,7 @@ export class ScrollSplicer {
   private spliceDom(
     host: HTMLElement, newOrder: string[], newSig: Map<string, string>,
     r: { lo: number; hiNew: number; oldLo: number; oldHi: number; cHi: number; anchorIdx: number },
+    endings: Array<{ id: string; firstMeasureId: string }> = [],
   ): boolean {
     const bbx = (el: Element) => (el as SVGGraphicsElement).getBBox();
     const sub = (id: string) => host.querySelector('#' + CSS.escape(id)) as SVGGElement | null;
@@ -383,7 +408,39 @@ export class ScrollSplicer {
     for (const id of oldRunIds) { const el = persist(id); if (el) el.remove(); }
     for (const node of fresh) this.sysEl!.insertBefore(node, insertBefore);
 
-    // Cascade: shift every measure after the run by Δ in x (preserve its y).
+    /* Volta brackets: Verovio draws each <ending> as a SYSTEM-level
+       `g.ending` group (id = the ending's xml:id) CONTAINING the anonymous
+       g.voltaBracket — the member measures stay flat system children. Measure
+       imports never carry the bracket group, so reconcile it explicitly:
+       (1) drop orphans whose ending left the document; (2) for an ending
+       re-rendered inside the run (expandForEndings guarantees whole endings
+       land in the run, never in context), replace the persistent group with
+       the sub-render's, on the run's (dx, dy) frame like its measures. */
+    const newIdxOf = new Map(newOrder.map((id, i) => [id, i]));
+    const liveEndingIds = new Set(endings.map((e) => e.id));
+    const endingGlyphOf = (id: string): SVGGElement | null => {
+      const el = this.sysEl!.querySelector('#' + CSS.escape(id));
+      return el && el.classList.contains('ending') ? el as SVGGElement : null;
+    };
+    for (const eg of Array.from(this.sysEl!.querySelectorAll('g.ending'))) {
+      const id = eg.getAttribute('id');
+      if (id && !liveEndingIds.has(id)) { eg.remove(); this.tx.delete(id); this.ty.delete(id); }
+    }
+    for (const sg of Array.from(host.querySelectorAll('g.ending'))) {
+      const id = sg.getAttribute('id');
+      if (!id || !liveEndingIds.has(id)) continue;
+      const e = endings.find((x) => x.id === id)!;
+      const fIdx = newIdxOf.get(e.firstMeasureId);
+      if (fIdx == null || fIdx < r.lo || fIdx > r.hiNew) continue;
+      const imported = this.sysEl!.ownerDocument.importNode(sg, true) as SVGGElement;
+      imported.setAttribute('transform', xf);
+      endingGlyphOf(id)?.remove();
+      this.sysEl!.appendChild(imported);
+      this.tx.set(id, dx); this.ty.set(id, dy);
+    }
+
+    // Cascade: shift every measure after the run by Δ in x (preserve its y) —
+    // and every downstream volta bracket along with its measures.
     if (delta !== 0) {
       for (let i = r.hiNew + 1; i < newOrder.length; i++) {
         const id = newOrder[i];
@@ -394,65 +451,28 @@ export class ScrollSplicer {
         this.tx.set(id, t);
         el.setAttribute('transform', `translate(${t},${u})`);
       }
+      for (const e of endings) {
+        const fIdx = newIdxOf.get(e.firstMeasureId);
+        if (fIdx == null || fIdx <= r.hiNew) continue;
+        const eg = endingGlyphOf(e.id);
+        if (!eg) continue;
+        const t = (this.tx.get(e.id) ?? 0) + delta;
+        const u = this.ty.get(e.id) ?? 0;
+        this.tx.set(e.id, t);
+        eg.setAttribute('transform', `translate(${t},${u})`);
+      }
     }
 
     // Update the index: spliced measures carry (dx, dy).
     for (let i = r.lo; i <= r.hiNew; i++) { this.tx.set(newOrder[i], dx); this.ty.set(newOrder[i], dy); }
     this.order = newOrder;
     this.sig = newSig;
-    // Drop entries for ids no longer present; default new ids to 0.
-    const present = new Set(newOrder);
+    // Drop entries for ids no longer present (volta-bracket ids count as
+    // present — their translate bookkeeping lives in the same maps).
+    const present = new Set([...newOrder, ...endings.map((e) => e.id)]);
     for (const id of Array.from(this.tx.keys())) if (!present.has(id)) { this.tx.delete(id); this.ty.delete(id); }
     for (const id of newOrder) { if (!this.tx.has(id)) this.tx.set(id, 0); if (!this.ty.has(id)) this.ty.set(id, 0); }
     return true;
-  }
-
-  /* ── spanner expansion ───────────────────────────────────────────────────── */
-
-  /** Expand [lo..hi] outward until no tie/slur/hairpin/etc. crosses an endpoint,
-   *  so whole spanners are re-rendered together (never hand-edited). */
-  private expandForSpanners(doc: Document, meiMeasures: Element[], order: string[], lo: number, hi: number): [number, number] {
-    // note id → measure index
-    const noteMeasure = new Map<string, number>();
-    meiMeasures.forEach((m, i) => {
-      for (const n of Array.from(m.querySelectorAll('note, chord, rest'))) {
-        const id = n.getAttribute('xml:id') || n.getAttribute('id');
-        if (id) noteMeasure.set(id, i);
-      }
-    });
-    const refMeasure = (ref: string | null): number | null => {
-      if (!ref) return null;
-      const id = ref.startsWith('#') ? ref.slice(1) : ref;
-      return noteMeasure.has(id) ? noteMeasure.get(id)! : null;
-    };
-    const SPANNERS = 'slur, tie, hairpin, phrase, gliss, bracketSpan, octave, lv, dynam, dir, trill';
-    for (let guard = 0; guard < meiMeasures.length; guard++) {
-      let grew = false;
-      for (const m of meiMeasures) {
-        for (const sp of Array.from(m.querySelectorAll(SPANNERS))) {
-          const a = refMeasure(sp.getAttribute('startid'));
-          const b = refMeasure(sp.getAttribute('endid'));
-          const ends = [a, b].filter((x): x is number => x != null);
-          if (!ends.length) continue;
-          const minE = Math.min(...ends), maxE = Math.max(...ends);
-          // overlaps the run → must contain it whole
-          if (maxE >= lo && minE <= hi) {
-            if (minE < lo) { lo = minE; grew = true; }
-            if (maxE > hi) { hi = maxE; grew = true; }
-          }
-        }
-      }
-      // cross-measure tie via @tie on notes at the run's edges
-      const edgeTie = (idx: number, want: string): boolean => {
-        const m = meiMeasures[idx];
-        return m ? Array.from(m.querySelectorAll('note')).some((n) => (n.getAttribute('tie') || '').includes(want)) : false;
-      };
-      if (lo > 0 && edgeTie(lo, 't')) { lo--; grew = true; }            // tie terminus → start is left
-      if (hi < meiMeasures.length - 1 && edgeTie(hi, 'i')) { hi++; grew = true; } // tie initial → end is right
-      if (!grew) break;
-    }
-    void order;
-    return [lo, hi];
   }
 
   /* ── glyph defs merge ────────────────────────────────────────────────────── */
@@ -518,4 +538,94 @@ export class ScrollSplicer {
     document.body.appendChild(host);
     return host;
   }
+}
+
+/* ── shared run-expansion helpers (scroll splicer + page line-break owner) ── */
+
+/** Expand [lo..hi] outward until no tie/slur/hairpin/etc. crosses an endpoint,
+ *  so whole spanners land in one re-render / measurement window together.
+ *  Shared by the scroll splicer's run expansion and the page-view line-break
+ *  owner's naturals windows (a window missing an in-bound spanner renders the
+ *  member measures at silently different widths — page spike 1, finding 5). */
+export function expandForSpanners(meiMeasures: Element[], lo: number, hi: number): [number, number] {
+    // note id → measure index
+    const noteMeasure = new Map<string, number>();
+    meiMeasures.forEach((m, i) => {
+      for (const n of Array.from(m.querySelectorAll('note, chord, rest'))) {
+        const id = n.getAttribute('xml:id') || n.getAttribute('id');
+        if (id) noteMeasure.set(id, i);
+      }
+    });
+    const refMeasure = (ref: string | null): number | null => {
+      if (!ref) return null;
+      const id = ref.startsWith('#') ? ref.slice(1) : ref;
+      return noteMeasure.has(id) ? noteMeasure.get(id)! : null;
+    };
+    const SPANNERS = 'slur, tie, hairpin, phrase, gliss, bracketSpan, octave, lv, dynam, dir, trill, pedal';
+    for (let guard = 0; guard < meiMeasures.length; guard++) {
+      let grew = false;
+      for (let mIdx = 0; mIdx < meiMeasures.length; mIdx++) {
+        const m = meiMeasures[mIdx];
+        for (const sp of Array.from(m.querySelectorAll(SPANNERS))) {
+          const a = refMeasure(sp.getAttribute('startid'));
+          const b = refMeasure(sp.getAttribute('endid'));
+          const ends = [a, b].filter((x): x is number => x != null);
+          /* tstamp-anchored spans (expression-layer hairpins, pedal lines):
+             no startid/endid to resolve — the host measure + the tstamp2
+             "Nm+beat" measure offset ARE the endpoints. Without this, an edit
+             at a wedge's host measure re-rendered a sub-range its tstamp2
+             couldn't reach: Verovio only WARNED and dropped the wedge, and the
+             splice transplanted the loss (lessons.md 2026-08-30). */
+          const t2 = sp.getAttribute('tstamp2');
+          const t2m = t2 ? /^([0-9]+)m\+/.exec(t2) : null;
+          if (t2m && Number(t2m[1]) > 0) ends.push(mIdx, mIdx + Number(t2m[1]));
+          if (!ends.length) continue;
+          const minE = Math.max(0, Math.min(...ends));
+          const maxE = Math.min(meiMeasures.length - 1, Math.max(...ends));
+          // overlaps the run → must contain it whole
+          if (maxE >= lo && minE <= hi) {
+            if (minE < lo) { lo = minE; grew = true; }
+            if (maxE > hi) { hi = maxE; grew = true; }
+          }
+        }
+      }
+      // cross-measure tie via @tie on notes at the run's edges
+      const edgeTie = (idx: number, want: string): boolean => {
+        const m = meiMeasures[idx];
+        return m ? Array.from(m.querySelectorAll('note')).some((n) => (n.getAttribute('tie') || '').includes(want)) : false;
+      };
+      if (lo > 0 && edgeTie(lo, 't')) { lo--; grew = true; }            // tie terminus → start is left
+      if (hi < meiMeasures.length - 1 && edgeTie(hi, 'i')) { hi++; grew = true; } // tie initial → end is right
+      if (!grew) break;
+    }
+    return [lo, hi];
+  }
+
+/** Expand [lo..hi] so any touched `<ending>` wrapper is contained WHOLE —
+ *  including by the window's CONTEXT slots (two left, one right). A partially
+ *  re-rendered volta would re-engrave its bracket over a different member set,
+ *  and a volta-wrapped context measure would render against a truncated wrapper
+ *  and taint anchor/width measurements — so the run swallows the whole ending.
+ *  Adjacent 1st/2nd endings chain naturally: swallowing one puts the other into
+ *  a context slot next pass. */
+export function expandForEndings(meiMeasures: Element[], lo: number, hi: number): [number, number] {
+    const wrapperOf = (i: number): Element | null => {
+      const p = meiMeasures[i]?.parentElement;
+      return p && p.localName !== 'section' ? p : null;
+    };
+    for (let guard = 0; guard < meiMeasures.length; guard++) {
+      let grew = false;
+      for (const i of [lo, hi, lo - 1, lo - 2, hi + 1]) {
+        if (i < 0 || i >= meiMeasures.length) continue;
+        const w = wrapperOf(i);
+        if (!w) continue;
+        for (let k = 0; k < meiMeasures.length; k++) {
+          if (meiMeasures[k].parentElement !== w) continue;
+          if (k < lo) { lo = k; grew = true; }
+          if (k > hi) { hi = k; grew = true; }
+        }
+      }
+      if (!grew) break;
+    }
+    return [lo, hi];
 }

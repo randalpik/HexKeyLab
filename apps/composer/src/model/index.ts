@@ -415,16 +415,46 @@ function stampRunningCtx(sd: Element, ctx: RunningScoreDefCtx): void {
  *  out-of-range measures are skipped entirely (never cloned). Everything outside
  *  <section> is small and cloned whole. Preserves namespace + attributes via
  *  importNode. Used by serializeRangeForRender to avoid an O(total) whole-doc
- *  clone on every edit. */
+ *  clone on every edit.
+ *
+ *  Measure indices are DOCUMENT ORDER — the model's coordinate system
+ *  (allMeasures/cursor/dirty ranges), INCLUDING measures inside `<ending>`
+ *  wrappers. A wrapper is cloned when any member is in range, carrying only
+ *  its in-range members (the scroll splicer expands its runs to whole endings,
+ *  so it never actually requests a partial wrapper — see lessons.md
+ *  "Two measure coordinate systems", 2026-08-30). */
 function cloneRangeStructure(src: Node, outDoc: Document, loIdx: number, hiIdx: number): Node {
   if (src.nodeType === 1 && (src as Element).localName === 'section') {
     const sec = outDoc.importNode(src, false);
     let seen = 0;
+    /* Interior scoreDef/sb/pb inclusion is `seen >= loIdx` — an element sitting
+       DIRECTLY BEFORE measure loIdx (a boundary key/meter change, a section
+       break) is cloned INLINE rather than folded away: the full render draws
+       its signature-change glyphs at that exact spot, and a sub-render missing
+       them re-fills the line with a signature's worth of extra width (page
+       spike 2, d59). runningScoreDefContext commits scoreDefs to the head ctx
+       only once a measure FOLLOWS them, so boundary defs are never
+       double-applied (head stamp + inline would make Verovio draw no change
+       glyph at all — same bug, other direction). */
     for (const child of Array.from((src as Element).children)) {
       if (child.localName === 'measure') {
         if (seen >= loIdx && seen <= hiIdx) sec.appendChild(outDoc.importNode(child, true));
         seen++;
-      } else if (seen > loIdx && seen <= hiIdx) {
+      } else if (child.querySelector('measure')) {
+        /* Measure-bearing wrapper (<ending>): count members in document order;
+           clone the wrapper with only the in-range ones. */
+        const wrap = outDoc.importNode(child, false);
+        let kept = 0;
+        for (const wc of Array.from(child.children)) {
+          if (wc.localName === 'measure') {
+            if (seen >= loIdx && seen <= hiIdx) { wrap.appendChild(outDoc.importNode(wc, true)); kept++; }
+            seen++;
+          } else if (seen >= loIdx && seen <= hiIdx) {
+            wrap.appendChild(outDoc.importNode(wc, true));   // interior element inside the wrapper
+          }
+        }
+        if (kept > 0) sec.appendChild(wrap);
+      } else if (seen >= loIdx && seen <= hiIdx) {
         sec.appendChild(outDoc.importNode(child, true));   // interior scoreDef/sb/pb
       }
     }
@@ -709,7 +739,9 @@ export class ComposerModel {
    *  preserved, pre-`lo` ones folded into the head as running context), then the
    *  SAME accidental/HEJI/beam passes run — they reset accidental carry-state at
    *  each barline and seed the per-measure key from the head, so a range starting
-   *  at `lo` reproduces the full render for those measures. */
+   *  at `lo` reproduces the full render for those measures.
+   *  `loIdx`/`hiIdx` are DOCUMENT-ORDER measure indices (= allMeasures() /
+   *  cursor / dirty-range coordinates), `<ending>`-wrapped measures included. */
   serializeRangeForRender(
     loIdx: number, hiIdx: number,
     forRender: { hejiEnabled: boolean },
@@ -751,23 +783,47 @@ export class ComposerModel {
     const section = this.doc.querySelector('section');
     if (!section) return ctx;
     const targetEl = this.allMeasures()[target];
+    /* Walk in DOCUMENT ORDER, descending into measure-bearing wrappers
+       (<ending>) — a clef change inside a volta measure is prevailing state
+       for everything after it, and the target itself may be volta-wrapped
+       (the old direct-children walk never matched a wrapped target and
+       silently consumed the whole section). */
+    const stream: Element[] = [];
     for (const node of Array.from(section.children)) {
+      if (node.localName !== 'measure' && node.localName !== 'scoreDef' && node.querySelector('measure')) {
+        stream.push(...Array.from(node.children));
+      } else {
+        stream.push(node);
+      }
+    }
+    /* scoreDefs COMMIT to the head ctx only once a measure FOLLOWS them: a
+       scoreDef sitting directly before the target (a boundary key/meter change
+       at the range start) is cloned INLINE by cloneRangeStructure instead —
+       folding it into the head erased the signature-change glyphs the full
+       render draws at that spot (page spike 2, d59), and stamping the head AND
+       keeping it inline would make Verovio draw no change glyph at all. */
+    const pendingSd: Element[] = [];
+    const applySd = (node: Element): void => {
+      const ks = node.getAttribute('key.sig'); if (ks !== null) ctx.keySig = ks;
+      const md = node.getAttribute('mode'); if (md !== null) ctx.mode = md;
+      const mc = node.getAttribute('meter.count'); if (mc !== null) ctx.meterCount = mc;
+      const mu = node.getAttribute('meter.unit'); if (mu !== null) ctx.meterUnit = mu;
+      const ms = node.getAttribute('meter.sym'); if (mc !== null || mu !== null) ctx.meterSym = ms;
+      for (const sd of Array.from(node.querySelectorAll('staffDef'))) {
+        const sn = sd.getAttribute('n') ?? '1';
+        const shape = sd.getAttribute('clef.shape');
+        if (shape) ctx.clefByStaff.set(sn, {
+          shape, line: sd.getAttribute('clef.line') ?? '2',
+          dis: sd.getAttribute('clef.dis'), disPlace: sd.getAttribute('clef.dis.place'),
+        });
+      }
+    };
+    for (const node of stream) {
       if (node === targetEl) break;
       if (node.localName === 'scoreDef') {
-        const ks = node.getAttribute('key.sig'); if (ks !== null) ctx.keySig = ks;
-        const md = node.getAttribute('mode'); if (md !== null) ctx.mode = md;
-        const mc = node.getAttribute('meter.count'); if (mc !== null) ctx.meterCount = mc;
-        const mu = node.getAttribute('meter.unit'); if (mu !== null) ctx.meterUnit = mu;
-        const ms = node.getAttribute('meter.sym'); if (mc !== null || mu !== null) ctx.meterSym = ms;
-        for (const sd of Array.from(node.querySelectorAll('staffDef'))) {
-          const sn = sd.getAttribute('n') ?? '1';
-          const shape = sd.getAttribute('clef.shape');
-          if (shape) ctx.clefByStaff.set(sn, {
-            shape, line: sd.getAttribute('clef.line') ?? '2',
-            dis: sd.getAttribute('clef.dis'), disPlace: sd.getAttribute('clef.dis.place'),
-          });
-        }
+        pendingSd.push(node);
       } else if (node.localName === 'measure') {
+        for (const sd of pendingSd.splice(0)) applySd(sd);
         for (const staff of Array.from(node.querySelectorAll('staff'))) {
           const sn = staff.getAttribute('n') ?? '1';
           const clefs = staff.querySelectorAll('layer > clef');

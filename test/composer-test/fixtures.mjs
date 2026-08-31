@@ -702,6 +702,7 @@ const VISUAL = {
       r();
     `,
     visualBaseline: 'pageview_multisystem_crisp',
+    visualFullPage: true,
   },
 
   /* Per-document "Page size" (pageScale): scaling the page rectangle enlarges
@@ -720,6 +721,7 @@ const VISUAL = {
       r();
     `,
     visualBaseline: 'pagescale_140',
+    visualFullPage: true,
   },
 };
 
@@ -930,6 +932,179 @@ const SCROLL = {
       sel.value = 'scroll';
       sel.dispatchEvent(new Event('change', { bubbles: true }));
       m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* Measure-coordinate unification (lessons.md "Two measure coordinate
+   * systems", 2026-08-30): the model counts measures in DOCUMENT ORDER
+   * (voltas included); the splicer must too. TWO ending-wrapped measures
+   * before the edit defeat markEditAround's ±1 dirty buffer — with the old
+   * direct-children coordinates this edit spliced silently STALE (zero
+   * toolkit work, SVG unchanged). Asserted via
+   * FIXTURE_ASSERTIONS.scrollSpliceAfterEnding. */
+  scrollSpliceAfterEnding: {
+    setup: `
+      for (let i = 0; i < 7; i++) m.appendMeasure();   // 8 bars
+      const A = { q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 };
+      const fill = (mi, n) => {
+        m.setCursor(m.getMeasureStartCursor(1, mi), 1);
+        for (let i = 0; i < n; i++) m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 });
+      };
+      fill(0, 4); fill(1, 4); fill(2, 4); fill(3, 4); fill(5, 2);
+      /* toggleEndingAt needs a repeat context (no-op otherwise): bar 1 gets
+         rptend, then bars 1+2 become 1st/2nd endings → TWO volta-wrapped
+         measures → a doc-order skew of 2 after them (defeats markEditAround's
+         ±1 dirty buffer, the probe-confirmed stale mode). */
+      m.toggleRepeatEndAt(1);
+      m.toggleEndingAt(1);
+      m.toggleEndingAt(2);
+      const sel = document.getElementById('viewModeSelect');
+      sel.value = 'scroll';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* Edit INSIDE a volta measure: the old splicer's sig maps excluded
+   * ending-wrapped measures entirely, so this spliced stale no matter the
+   * dirty range. The delete also changes the volta's width, exercising the
+   * whole-ending run expansion + the cascade ACROSS ending-wrapped bars.
+   * Asserted via FIXTURE_ASSERTIONS.scrollSpliceInsideEnding. */
+  scrollSpliceInsideEnding: {
+    setup: `
+      for (let i = 0; i < 5; i++) m.appendMeasure();   // 6 bars
+      const A = { q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 };
+      const fill = (mi, n) => {
+        m.setCursor(m.getMeasureStartCursor(1, mi), 1);
+        for (let i = 0; i < n; i++) m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 });
+      };
+      fill(0, 4); fill(1, 2); fill(2, 4); fill(3, 4);
+      m.toggleRepeatEndAt(1);   // repeat context — toggleEndingAt no-ops without it
+      m.toggleEndingAt(1);      // bar 1 → 1st ending
+      const sel = document.getElementById('viewModeSelect');
+      sel.value = 'scroll';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* tstamp2-spanning hairpin (expression-layer anchoring): an edit at the
+   * wedge's HOST measure must expand the run to the whole span — the old
+   * startid/endid-only expansion re-rendered a sub-range the tstamp2 couldn't
+   * reach, Verovio only WARNED, and the splice deleted the wedge from the SVG
+   * (and collapsed the host's wedge-reserved width). Asserted via
+   * FIXTURE_ASSERTIONS.scrollSpliceHairpinHostEdit. */
+  scrollSpliceHairpinHostEdit: {
+    setup: `
+      for (let i = 0; i < 4; i++) m.appendMeasure();   // 5 bars
+      const A = { q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 };
+      const fill = (mi, n) => {
+        m.setCursor(m.getMeasureStartCursor(1, mi), 1);
+        for (let i = 0; i < n; i++) m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 });
+      };
+      fill(0, 4); fill(1, 4); fill(2, 4); fill(3, 4);
+      const MEI = 'http://www.music-encoding.org/ns/mei';
+      const XMLNS = 'http://www.w3.org/XML/1998/namespace';
+      const doc = m.getDoc();
+      const host = doc.querySelectorAll('measure')[0];
+      const hp = doc.createElementNS(MEI, 'hairpin');
+      hp.setAttribute('staff', '1');
+      hp.setAttribute('form', 'cres');
+      hp.setAttribute('tstamp', '1');
+      hp.setAttribute('tstamp2', '2m+1');   // spans bars 0 → 2
+      hp.setAttributeNS(XMLNS, 'xml:id', 'hp-span-fixture');
+      host.appendChild(hp);
+      const sel = document.getElementById('viewModeSelect');
+      sel.value = 'scroll';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      m.setCursor(0, 1);
+      window.__hkl_composer.renderer.forceFullRerender();   // baseline includes the wedge
+      r();
+    `,
+  },
+};
+
+/* ── Page-view line-break ownership (Phase C, render/linebreaks.ts) ────── */
+
+const PAGE_LINEBREAKS = {
+  /* Multi-system page doc; an edit near a boundary must take the REFILL path
+   * (not derive) and render breaks:'line' with the owner's pins honored
+   * VERBATIM — every rendered system starts exactly at a pinned measure, in
+   * order. The visual baseline pins the refilled look. Asserted via
+   * FIXTURE_ASSERTIONS.pageLineBreaksRefill. */
+  pageLineBreaksRefill: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 48; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();   /* derive render — arms partition adoption (finished synchronously
+                by the first refill attempt) */
+    `,
+    visualBaseline: 'page_linebreaks_refill',
+    visualFullPage: true,
+  },
+
+  /* Ruling ii (composer-page-splice-design.md): a local edit that leaves the
+   * document's widths unchanged must never move a line boundary. Inserts a
+   * quarter into a half-full final measure (no overflow), renders, deletes it
+   * again, renders — the partition must be identical at every step, and both
+   * renders must take the refill path. Asserted via
+   * FIXTURE_ASSERTIONS.pageLineBreaksNoopDeterminism. */
+  pageLineBreaksNoopDeterminism: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 46; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();   /* 11.5 bars — the last measure has room for the round-trip insert */
+    `,
+  },
+
+  /* The virtualized page rebuild momentarily collapses every non-first page
+   * to a zero-height div; the forced layout that measures page 1 then CLAMPS
+   * the container's scrollTop to the one-page extent (probe-confirmed on the
+   * sonata: 25392 → 2744 across a content-identical edit). renderPage now
+   * captures and restores the scroll position inside the same synchronous
+   * block. This fixture builds a multi-PAGE doc (big enough that the edit's
+   * possible one-line merge cannot shrink the extent below the scroll
+   * offset — a genuinely shorter doc re-clamps by design), scrolls to
+   * page 2, edits there, and asserts the scroll held. Asserted via
+   * FIXTURE_ASSERTIONS.pageEditPreservesScroll. */
+  pageEditPreservesScroll: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 240; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+    /* The 240-stop cursor walk scrolls every position into view across 3
+       pages (~130 s) and tests nothing about scroll preservation — covered
+       by every other fixture. */
+    skipCursorTrace: true,
+  },
+
+  /* A user break toggle changes the doc's break structure — the refill must
+   * refuse (userBreakSig guard) and the derive path re-adopt. Asserted via
+   * FIXTURE_ASSERTIONS.pageLineBreaksDeriveFallback. */
+  pageLineBreaksDeriveFallback: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 48; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
       r();
     `,
   },
@@ -4917,6 +5092,7 @@ export const FIXTURES = {
   ...mapKbdTier(BRIDGE, 'full'),
   ...mapKbdTier(PERFORMANCE, 'full'),
   ...mapKbdTier(SCROLL, 'full'),
+  ...mapKbdTier(PAGE_LINEBREAKS, 'full'),
   ...mapKbdTier(VISUAL, 'full'),
   ...mapKbdTier(HEJI, 'full'),
   ...mapKbdTier(SELECTION, 'full'),
@@ -7315,6 +7491,282 @@ export const FIXTURE_ASSERTIONS = {
         return (maxDx < 3 && maxDy < 3)
           ? { ok: true }
           : { ok: false, detail: 'spliced bar pos diverged from full re-engrave: dx=' + maxDx.toFixed(1) + ' dy=' + maxDy.toFixed(1) + 'px at ' + worst + ' (anchor/cascade or dy-ty bug)' };
+      })()` },
+  ],
+  scrollSpliceAfterEnding: [
+    { name: 'a converted edit past two volta bars splices fresh content (no stale SVG) and matches a full re-engrave',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const score = document.getElementById('score');
+        const posOf = () => {
+          const map = {};
+          for (const g of score.querySelectorAll('svg:not(#cursorOverlay) g.measure')) {
+            const b = g.getBBox();
+            const ctm = g.transform.baseVal.consolidate();
+            map[g.id] = { x: b.x + (ctm ? ctm.matrix.e : 0), y: b.y + (ctm ? ctm.matrix.f : 0) };
+          }
+          return map;
+        };
+        const snap = m.snapshotState();
+        /* Converted DELETE in bar 5 (doc idx 5 = direct idx 3 pre-fix: beyond
+           markEditAround's ±1 → the old coordinates consumed the dirty range in
+           the wrong frame and spliced this STALE — the probe-confirmed mode). */
+        const m5 = m.allMeasures()[5];
+        const ids5 = Array.from(m5.querySelectorAll('note')).map((n) => n.getAttribute('xml:id'));
+        m.setCursor(m.getMeasureStartCursor(1, 5) + 1, 1);
+        const ok = m.deleteAtCursor();
+        window.__hkl_composer.reRender();   // SPLICE path
+        const idsAfter = new Set(Array.from(m5.querySelectorAll('note')).map((n) => n.getAttribute('xml:id')));
+        const goneIds = ids5.filter((id) => id && !idsAfter.has(id));
+        const missing = goneIds.filter((id) => score.querySelector('svg #' + CSS.escape(id)) != null);
+        const splicePos = posOf();
+        window.__hkl_composer.renderer.forceFullRerender();
+        window.__hkl_composer.reRender();
+        const fullPos = posOf();
+        m.restoreSnapshot(snap);
+        window.__hkl_composer.renderer.forceFullRerender();
+        window.__hkl_composer.reRender();
+        if (!ok) return { ok: false, detail: 'delete was rejected' };
+        if (!goneIds.length) return { ok: false, detail: 'delete removed no notes from the model' };
+        if (missing.length) return { ok: false, detail: 'STALE SPLICE — deleted notes still drawn in SVG: ' + missing.join(',') };
+        let maxDx = 0, maxDy = 0, worst = null;
+        for (const id in fullPos) {
+          if (!(id in splicePos)) continue;
+          const dx = Math.abs(fullPos[id].x - splicePos[id].x);
+          const dy = Math.abs(fullPos[id].y - splicePos[id].y);
+          if (dx > maxDx) maxDx = dx;
+          if (dy > maxDy) maxDy = dy;
+          if (dx >= 3 || dy >= 3) worst = id;
+        }
+        return (maxDx < 3 && maxDy < 3)
+          ? { ok: true }
+          : { ok: false, detail: 'post-ending splice diverged from full re-engrave: dx=' + maxDx.toFixed(1) + ' dy=' + maxDy.toFixed(1) + 'px at ' + worst };
+      })()` },
+  ],
+  scrollSpliceInsideEnding: [
+    { name: 'an insert INSIDE a volta measure splices fresh (widened) content, cascades, and matches a full re-engrave (volta bracket included)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const score = document.getElementById('score');
+        const posOf = () => {
+          const map = {};
+          for (const g of score.querySelectorAll('svg:not(#cursorOverlay) g.measure')) {
+            const b = g.getBBox();
+            const ctm = g.transform.baseVal.consolidate();
+            map[g.id] = { x: b.x + (ctm ? ctm.matrix.e : 0), y: b.y + (ctm ? ctm.matrix.f : 0) };
+          }
+          return map;
+        };
+        const bracketBox = () => {
+          const b = score.querySelector('svg:not(#cursorOverlay) g.voltaBracket');
+          if (!b) return null;
+          const r = b.getBBox();
+          const t = b.transform.baseVal.consolidate();
+          return { x: Math.round(r.x + (t ? t.matrix.e : 0)), w: Math.round(r.width) };
+        };
+        const snap = m.snapshotState();
+        /* Converted DELETE inside the 1st-ending bar: the old splicer's sig maps
+           excluded ending-wrapped measures entirely, so this spliced STALE no
+           matter the dirty range. The width change also exercises the
+           whole-ending run expansion + the cascade across ending-wrapped bars. */
+        const m1 = m.allMeasures()[1];
+        const ids1 = Array.from(m1.querySelectorAll('note')).map((n) => n.getAttribute('xml:id'));
+        m.setCursor(m.getMeasureStartCursor(1, 1) + 1, 1);
+        const ok = m.deleteAtCursor();
+        window.__hkl_composer.reRender();   // SPLICE path
+        const idsAfter = new Set(Array.from(m1.querySelectorAll('note')).map((n) => n.getAttribute('xml:id')));
+        const goneIds = ids1.filter((id) => id && !idsAfter.has(id));
+        const missing = goneIds.filter((id) => score.querySelector('svg #' + CSS.escape(id)) != null);
+        const splicePos = posOf();
+        const spliceBracket = bracketBox();
+        window.__hkl_composer.renderer.forceFullRerender();
+        window.__hkl_composer.reRender();
+        const fullPos = posOf();
+        const fullBracket = bracketBox();
+        m.restoreSnapshot(snap);
+        window.__hkl_composer.renderer.forceFullRerender();
+        window.__hkl_composer.reRender();
+        if (!ok) return { ok: false, detail: 'delete was rejected' };
+        if (!goneIds.length) return { ok: false, detail: 'delete removed no notes from the model' };
+        if (missing.length) return { ok: false, detail: 'STALE SPLICE — deleted volta notes still drawn in SVG: ' + missing.join(',') };
+        let maxDx = 0, maxDy = 0, worst = null;
+        for (const id in fullPos) {
+          if (!(id in splicePos)) continue;
+          const dx = Math.abs(fullPos[id].x - splicePos[id].x);
+          const dy = Math.abs(fullPos[id].y - splicePos[id].y);
+          if (dx > maxDx) maxDx = dx;
+          if (dy > maxDy) maxDy = dy;
+          if (dx >= 3 || dy >= 3) worst = id;
+        }
+        if (!(maxDx < 3 && maxDy < 3)) {
+          return { ok: false, detail: 'volta splice diverged from full re-engrave: dx=' + maxDx.toFixed(1) + ' dy=' + maxDy.toFixed(1) + 'px at ' + worst };
+        }
+        if (fullBracket && (!spliceBracket
+            || Math.abs(spliceBracket.x - fullBracket.x) >= 3
+            || Math.abs(spliceBracket.w - fullBracket.w) >= 3)) {
+          return { ok: false, detail: 'volta bracket diverged: splice=' + JSON.stringify(spliceBracket) + ' full=' + JSON.stringify(fullBracket) };
+        }
+        return { ok: true };
+      })()` },
+  ],
+  scrollSpliceHairpinHostEdit: [
+    { name: 'an edit at a multi-measure hairpin host measure keeps the wedge (run expands over the tstamp2 span) and matches a full re-engrave',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const score = document.getElementById('score');
+        const wedge = () => {
+          const g = score.querySelector('svg:not(#cursorOverlay) #hp-span-fixture');
+          if (!g) return null;
+          const b = g.getBBox();
+          const t = g.transform.baseVal.consolidate();
+          return { x: Math.round(b.x + (t ? t.matrix.e : 0)), w: Math.round(b.width) };
+        };
+        const w0 = wedge();
+        if (!w0) return { ok: false, detail: 'baseline wedge missing from SVG' };
+        const snap = m.snapshotState();
+        m.setCursor(m.getMeasureStartCursor(1, 0) + 1, 1);
+        const del = m.deleteAtCursor();   // converted edit at the HOST measure
+        window.__hkl_composer.reRender(); // SPLICE path
+        const wS = wedge();
+        window.__hkl_composer.renderer.forceFullRerender();
+        window.__hkl_composer.reRender();
+        const wF = wedge();
+        m.restoreSnapshot(snap);
+        window.__hkl_composer.renderer.forceFullRerender();
+        window.__hkl_composer.reRender();
+        if (!del) return { ok: false, detail: 'delete at host was rejected' };
+        if (!wS) return { ok: false, detail: 'WEDGE DELETED by splice (tstamp2 span not expanded)' };
+        if (!wF) return { ok: false, detail: 'wedge missing from full re-engrave (fixture setup issue)' };
+        return (Math.abs(wS.x - wF.x) < 3 && Math.abs(wS.w - wF.w) < 3)
+          ? { ok: true }
+          : { ok: false, detail: 'wedge geometry diverged: splice=' + JSON.stringify(wS) + ' full=' + JSON.stringify(wF) };
+      })()` },
+  ],
+  pageLineBreaksRefill: [
+    { name: 'an edit takes the refill path and every rendered system starts at a pin, in order',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        if (!pb.canAttemptRefill()) return { ok: false, detail: 'no partition adoptable after the derive render' };
+        /* Engage ownership deterministically before the edit: lazy adoption
+           means the setup's renders may have adopted a stale (e.g. blank-doc,
+           single-line) partition and legally fallen back to derive — which
+           state we start from depends on idle-callback timing. One or two
+           no-change renders settle it: bail → derive re-arms → next render
+           adopts THIS doc and pins it. */
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged after pre-renders (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        m.setCursor(m.getMeasureStartCursor(1, 4), 1);
+        if (!m.deleteAtCursor()) return { ok: false, detail: 'delete rejected' };
+        H.reRender();   /* refill path — adoption completes synchronously here */
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not active after the edit render (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        if (pb['adoption'] !== null) return { ok: false, detail: 'derive path taken (adoption re-armed) — expected a refill (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        if (pb.lastRefillLines < 1) return { ok: false, detail: 'refill recomputed no lines' };
+        const startIds = pb['startIds'];
+        if (startIds.length < 2) return { ok: false, detail: 'expected a multi-line partition, got ' + startIds.length };
+        const pos = new Map(startIds.map((id, i) => [id, i]));
+        let prevEnd = -1;
+        let systems = 0;
+        for (const page of document.querySelectorAll('#score .score-page:not(.score-page-pending)')) {
+          const starts = [];
+          for (const sys of page.querySelectorAll('g.system')) {
+            const first = sys.querySelector('g.measure');
+            if (first && first.id) starts.push(first.id);
+          }
+          if (!starts.length) continue;
+          systems += starts.length;
+          const at = pos.get(starts[0]);
+          if (at == null || at <= prevEnd) return { ok: false, detail: 'system start ' + starts[0] + ' is not a pin (or out of order)' };
+          for (let i = 1; i < starts.length; i++) {
+            if (pos.get(starts[i]) !== at + i) return { ok: false, detail: 'rendered partition broke pin order at ' + starts[i] };
+          }
+          prevEnd = at + starts.length - 1;
+        }
+        return systems >= 2 ? { ok: true } : { ok: false, detail: 'only ' + systems + ' rendered system(s)' };
+      })()` },
+  ],
+  pageLineBreaksNoopDeterminism: [
+    { name: 'identical content always refills to the identical partition (ruling ii): round-trips agree, no-op renders are stable',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        /* Engage ownership with a no-change refill first (adoption completes
+           synchronously; sig diff finds nothing → pins re-encoded as adopted).
+           NOTE: the ADOPTED partition is Verovio's choice; the first real edit
+           re-breaks its region to OUR fill rules (the documented "greedy from
+           the edited line's start" semantics) — so the invariant is NOT
+           "round-trip restores the adopted partition" but "identical content
+           always yields the identical partition": two round-trips must agree,
+           and a no-change render must move nothing. */
+        for (let i = 0; i < 3 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged after pre-renders (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        const roundTrip = () => {
+          m.setCursor(m.getMeasureStartCursor(1, 5), 1);
+          if (!m.deleteAtCursor()) return null;
+          H.reRender();
+          if (pb['adoption'] !== null) return null;   // derive taken — expected refill
+          m.setCursor(m.getMeasureStartCursor(1, 5), 1);
+          m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'b', accid: '', oct: 4, midi: 59, colorHex: '#888', lightColorHex: '#fff', velocity: 80 }], duration: '4', dots: 0 });
+          H.reRender();
+          if (pb['adoption'] !== null) return null;
+          return pb['startIds'].join();
+        };
+        const A = roundTrip();
+        if (A === null) return { ok: false, detail: 'first round-trip fell off the refill path' };
+        const B = roundTrip();
+        if (B === null) return { ok: false, detail: 'second round-trip fell off the refill path' };
+        if (A !== B) return { ok: false, detail: 'identical content produced different partitions across round-trips' };
+        H.reRender();   // no-op render request
+        if (pb['startIds'].join() !== A) return { ok: false, detail: 'a no-change render moved a boundary' };
+        return { ok: true };
+      })()` },
+  ],
+  pageEditPreservesScroll: [
+    { name: 'a page-view edit rendered while scrolled to a later page keeps the scroll position (no placeholder-collapse clamp)',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const score = document.getElementById('score');
+        try {
+          const pages = score.querySelectorAll('.score-page').length;
+          if (pages < 3) return { ok: false, detail: 'need >= 3 pages so a one-line merge cannot shrink the extent below the offset; got ' + pages };
+          score.querySelector('.score-page[data-page="2"]').scrollIntoView();
+          const top0 = score.scrollTop;
+          if (top0 <= 0) return { ok: false, detail: 'scrollIntoView left scrollTop at 0 — fixture cannot exercise the clamp' };
+          /* Edit a measure on page 2 through the model (no key handlers, so no
+             scroll-into-view correction can mask a clamp). The edit may merge
+             one line (content legitimately shifts BELOW it) — the invariant is
+             that the numeric scroll offset survives the rebuild. Small doc →
+             the render is synchronous, scrollTop is readable right after. */
+          m.setCursor(m.getMeasureStartCursor(1, 20), 1);
+          if (!m.deleteAtCursor()) return { ok: false, detail: 'delete rejected' };
+          H.reRender();
+          const top1 = score.scrollTop;
+          return Math.abs(top1 - top0) <= 4
+            ? { ok: true }
+            : { ok: false, detail: 'scrollTop moved across a page edit: ' + top0 + ' → ' + top1 };
+        } finally {
+          /* Leave no scroll state for later fixtures (the runner reset also
+             zeroes it; belt and braces since this fixture's whole point is
+             that renders no longer reset scroll for us). */
+          score.scrollTop = 0;
+          score.scrollLeft = 0;
+        }
+      })()` },
+  ],
+  pageLineBreaksDeriveFallback: [
+    { name: 'a page-break toggle refuses the refill (userBreakSig guard) and the derive re-arms adoption',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        if (m.togglePageBreakAt(6) !== true) return { ok: false, detail: 'togglePageBreakAt(6) did not insert a <pb>' };
+        H.reRender();
+        if (pb['adoption'] === null) return { ok: false, detail: 'derive path not taken (adoption not re-armed) — the refill accepted a user-break change' };
+        const pages = document.querySelectorAll('#score .score-page').length;
+        return pages === 2 ? { ok: true } : { ok: false, detail: 'expected 2 pages after the <pb>, got ' + pages };
       })()` },
   ],
   voiceIndexConsistencyUnderEdits: [

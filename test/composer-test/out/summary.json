@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 328,
-  "passed": 328,
+  "fixtures": 335,
+  "passed": 335,
   "failed": 0,
-  "elapsedMs": 125247,
+  "elapsedMs": 235131,
   "results": [
     {
       "name": "emptyDoc",
@@ -814,11 +814,89 @@
       }
     },
     {
+      "name": "scrollSpliceAfterEnding",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "scrollSpliceInsideEnding",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "scrollSpliceHairpinHostEdit",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "pageLineBreaksRefill",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": true
+      }
+    },
+    {
+      "name": "pageLineBreaksNoopDeterminism",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "pageEditPreservesScroll",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 6
+      }
+    },
+    {
+      "name": "pageLineBreaksDeriveFallback",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
       "name": "visualTupletBracket",
       "ok": true,
       "failures": [],
       "counts": {
         "invariants": 7
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -827,6 +905,17 @@
       "failures": [],
       "counts": {
         "invariants": 7
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -835,6 +924,17 @@
       "failures": [],
       "counts": {
         "invariants": 7
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -843,6 +943,17 @@
       "failures": [],
       "counts": {
         "invariants": 8
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": true
       }
     },
     {
@@ -851,6 +962,17 @@
       "failures": [],
       "counts": {
         "invariants": 8
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1.4,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 3025,
+        "cardH": 3914,
+        "fullPage": true
       }
     },
     {
@@ -859,6 +981,17 @@
       "failures": [],
       "counts": {
         "invariants": 8
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -867,6 +1000,17 @@
       "failures": [],
       "counts": {
         "invariants": 8
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -875,6 +1019,17 @@
       "failures": [],
       "counts": {
         "invariants": 8
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -883,6 +1038,17 @@
       "failures": [],
       "counts": {
         "invariants": 7
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -907,6 +1073,17 @@
       "failures": [],
       "counts": {
         "invariants": 8
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -931,6 +1108,17 @@
       "failures": [],
       "counts": {
         "invariants": 9
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -939,6 +1127,17 @@
       "failures": [],
       "counts": {
         "invariants": 9
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -1043,6 +1242,17 @@
       "failures": [],
       "counts": {
         "invariants": 11
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -1051,6 +1261,17 @@
       "failures": [],
       "counts": {
         "invariants": 10
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -1363,6 +1584,17 @@
       "failures": [],
       "counts": {
         "invariants": 10
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -1371,6 +1603,17 @@
       "failures": [],
       "counts": {
         "invariants": 8
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -1451,6 +1694,17 @@
       "failures": [],
       "counts": {
         "invariants": 9
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -1459,6 +1713,17 @@
       "failures": [],
       "counts": {
         "invariants": 9
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -1467,6 +1732,17 @@
       "failures": [],
       "counts": {
         "invariants": 8
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -1475,6 +1751,17 @@
       "failures": [],
       "counts": {
         "invariants": 9
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -1491,6 +1778,17 @@
       "failures": [],
       "counts": {
         "invariants": 11
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -1499,6 +1797,17 @@
       "failures": [],
       "counts": {
         "invariants": 9
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -1547,6 +1856,17 @@
       "failures": [],
       "counts": {
         "invariants": 9
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -1555,6 +1875,17 @@
       "failures": [],
       "counts": {
         "invariants": 10
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -1563,6 +1894,17 @@
       "failures": [],
       "counts": {
         "invariants": 10
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -1923,6 +2265,17 @@
       "failures": [],
       "counts": {
         "invariants": 12
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -2227,6 +2580,17 @@
       "failures": [],
       "counts": {
         "invariants": 9
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -2283,6 +2647,17 @@
       "failures": [],
       "counts": {
         "invariants": 8
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -2291,6 +2666,17 @@
       "failures": [],
       "counts": {
         "invariants": 8
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -2323,6 +2709,17 @@
       "failures": [],
       "counts": {
         "invariants": 8
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -2427,6 +2824,17 @@
       "failures": [],
       "counts": {
         "invariants": 8
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -2467,6 +2875,17 @@
       "failures": [],
       "counts": {
         "invariants": 8
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -2475,6 +2894,17 @@
       "failures": [],
       "counts": {
         "invariants": 8
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {
@@ -2499,6 +2929,17 @@
       "failures": [],
       "counts": {
         "invariants": 8
+      },
+      "visualMeta": {
+        "mode": "page",
+        "pages": 1,
+        "zoom": 100,
+        "pageScale": 1,
+        "scrollLeft": 0,
+        "scrollTop": 0,
+        "cardW": 2161,
+        "cardH": 2796,
+        "fullPage": false
       }
     },
     {

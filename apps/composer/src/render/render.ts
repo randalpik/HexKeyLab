@@ -10,6 +10,7 @@ import { injectHejiGlyphs } from '@hkl/notation/heji-render.js';
 import { applyNotationTheme } from '@hkl/notation/verovio.js';
 import { CRISP_PRESETS, crispMarginTop, lineWidthOptions, pinExactScale, snapStaffLinesToGrid, snapBarlines, snapSystemRightEdge } from '@hkl/notation/render-presets.js';
 import { ScrollSplicer, type SpliceCtx } from './splice.js';
+import { PageLineBreaks, type PageBreaksCtx } from './linebreaks.js';
 import type { ComposerModel } from '../model/index.js';
 
 export type ViewMode = 'page' | 'scroll';
@@ -128,6 +129,14 @@ class Renderer {
   /** Duration of the last full engrave per mode (ms) — predictNextRenderHeavy's
    *  evidence. Splices and cache restores don't update it. */
   private lastFullMs: Partial<Record<ViewMode, number>> = {};
+  /** Page-view line-break ownership (Phase C, docs/composer-page-splice-design.md):
+   *  the partition is adopted from each derive render and re-derived locally on
+   *  edits (greedy refill + rebalance), pinned into the render MEI. The owner
+   *  finds what changed via its own per-measure signature baseline — the
+   *  model's renderDirty hint is never trusted here (its reset-then-narrow
+   *  lifecycle can swallow an earlier mutation's 'all' under batch-mutate-
+   *  then-render flows, e.g. the test runner's doc reset). */
+  private pageBreaks = new PageLineBreaks();
 
   constructor() {
     this.readyPromise = this.loadVerovio();
@@ -167,17 +176,24 @@ class Renderer {
    *   - 'smartSb0': page view with section/system breaks but no page breaks —
    *                 'smart' + breaksSmartSb:0 honors EVERY encoded <sb> (even
    *                 a 1-measure system) AND still auto-wraps overflow.
+   *   - 'line'    : page view, fully pinned partition (line-break ownership):
+   *                 every <sb> honored VERBATIM — castoff never wraps even a
+   *                 line it deems overfull (unlike 'smart', probed 2026-08-30)
+   *                 — while pages are still broken automatically by height.
    *   - 'encoded' : page view with page breaks present — only encoded breaks
    *                 are honored, so the natural system breaks must already be
-   *                 baked into the data (see layoutBreaks). */
-  private buildOptions(strategy: 'none' | 'auto' | 'smartSb0' | 'encoded' = 'auto'): object {
+   *                 baked into the data (see layoutBreaks / the refill's pins). */
+  private buildOptions(strategy: 'none' | 'auto' | 'smartSb0' | 'line' | 'encoded' = 'auto', geomMode: ViewMode = this.viewMode): object {
     /* Page view: scale the page rectangle (dims + margins) by the document's
        pageScale so the notation — rendered at the fixed crisp scale/unit —
        occupies more/less of the page (more/fewer bars per system) while every
        glyph keeps its on-screen size. Scroll view has no page rectangle, so the
        factor is ignored (SCROLL_GEOM as-is). The scaled top margin still flows
-       through crispMarginTop below, keeping staff-line phase crisp. */
-    const geom = this.viewMode === 'page' ? this.scalePageGeom(PAGE_GEOM) : SCROLL_GEOM;
+       through crispMarginTop below, keeping staff-line phase crisp.
+       `geomMode` overrides the geometry/header/page-height treatment without
+       touching the live view mode — the page line-break owner's naturals
+       windows render breaks:'none' at scroll geometry from page view. */
+    const geom = geomMode === 'page' ? this.scalePageGeom(PAGE_GEOM) : SCROLL_GEOM;
     const breaksOpt: Record<string, string | number> =
       strategy === 'smartSb0' ? { breaks: 'smart', breaksSmartSb: 0 }
       : { breaks: strategy };
@@ -192,12 +208,12 @@ class Renderer {
       ...geom,
       pageMarginTop: crispMarginTop(geom.pageMarginTop, preset.scale, preset.evenWidth),
       ...breaksOpt,
-      header: this.viewMode === 'page' ? 'auto' : 'none',
+      header: geomMode === 'page' ? 'auto' : 'none',
       /* Scroll trims the page to its single system; page uses fixed-height pages.
          Set EXPLICITLY every render — page and scroll share one toolkit and
          Verovio's setOptions persists unspecified options, so an unset
          adjustPageHeight would leak true from a prior scroll render into page. */
-      adjustPageHeight: this.viewMode === 'scroll',
+      adjustPageHeight: geomMode === 'scroll',
       scale: preset.scale,
       unit: preset.unit,
       ...lineWidthOptions(preset),
@@ -333,6 +349,7 @@ class Renderer {
     this.forceFull = true;
     this.splicer.invalidate();
     this.modeCache = {};
+    this.pageBreaks.invalidate();
   }
 
   getViewMode(): ViewMode {
@@ -398,6 +415,7 @@ class Renderer {
     if (!this.container) throw new Error('render() before attach()');
     this.modeCache = {};
     this.splicer.invalidate();
+    this.pageBreaks.invalidate();
     this.forceFull = true;
     this.lastRenderedMode = this.viewMode;
     this.disposePageVirt();
@@ -411,16 +429,20 @@ class Renderer {
    *  page 1 get real SVG; the rest are fixed-size placeholders mounted on
    *  demand (T2.1, docs/composer-render-perf.md). The string-entry path
    *  renders every page (legacy tooling asserts on the full DOM). */
-  private renderPage(mei: string, virtualize: boolean): void {
+  private renderPage(mei: string, virtualize: boolean, forcedStrategy?: 'line' | 'encoded'): void {
     /* The DOM this call replaces is the only one pageVirt could describe. */
     this.disposePageVirt();
     /* Choose a breaks strategy. Section/system breaks alone → single-pass
        'smart' (honors them + auto-wraps). Page breaks → bake the natural
        system breaks first, then 'encoded' (honors pages + the baked wraps).
-       No manual breaks → plain 'auto'. */
+       No manual breaks → plain 'auto'. A refill render (page line-break
+       ownership) forces its strategy — its pins are already in the data, so
+       the sniffing (and the layoutBreaks second layout pass) must not run. */
     let data = mei;
-    let strategy: 'auto' | 'smartSb0' | 'encoded';
-    if (mei.includes('<pb')) {
+    let strategy: 'auto' | 'smartSb0' | 'line' | 'encoded';
+    if (forcedStrategy) {
+      strategy = forcedStrategy;
+    } else if (mei.includes('<pb')) {
       data = this.layoutBreaks(mei);
       strategy = 'encoded';
     } else if (mei.includes('<sb')) {
@@ -452,6 +474,17 @@ class Renderer {
        explicit dims to hold the grid). Sizes are set after insertion from the
        measured SVG rect (robust against attr-format drift), BEFORE any
        observer exists, so a zero-height placeholder can never look "visible". */
+    /* The swap below momentarily leaves every non-first page as an EMPTY
+       zero-height div, and the getBoundingClientRect that measures page 1
+       forces layout in that collapsed state — the browser clamps the
+       container's scrollTop to the one-page extent, and the clamp survives
+       the placeholder re-sizing (probe-confirmed on the sonata: 25392 → 2744
+       across a content-identical edit). Capture the scroll position first and
+       restore it once the grid is back — in this same synchronous block, and
+       BEFORE mountVisiblePages, so the pages at the restored position are the
+       ones that mount. A legitimately shorter document just re-clamps. */
+    const keepTop = this.container!.scrollTop;
+    const keepLeft = this.container!.scrollLeft;
     let html = '<div class="score-page" data-page="1">' + this.tk!.renderToSVG(1, {}) + '</div>';
     for (let i = 2; i <= pages; i++) {
       html += '<div class="score-page score-page-pending" data-page="' + i + '"></div>';
@@ -470,6 +503,8 @@ class Renderer {
       mounted: new Set([1]), io: null, tkCurrent: true,
     };
     this.finishPageMount(p1);
+    this.container!.scrollTop = keepTop;
+    this.container!.scrollLeft = keepLeft;
     this.setContainerThemeTags();
     this.mountVisiblePages();
     this.armPageIo();
@@ -619,12 +654,66 @@ class Renderer {
       const tookFull = this.renderScroll(model, viewStaves, preMei);
       if (tookFull) this.lastFullMs.scroll = performance.now() - t0;
     } else {
-      this.renderPage(preMei ?? model.serialize(heji, viewStaves), true);
+      this.renderPageComposer(model, viewStaves, preMei, heji);
       this.lastFullMs.page = performance.now() - t0;
     }
     this.lastRenderedMode = this.viewMode;
     return true;
   }
+
+  /** Page-view composer render: line-break-owned refill when the edit is
+   *  provably local (adopted partition + narrow dirty union + unchanged user
+   *  breaks/head context), else a derive render (today's strategies) that
+   *  re-arms lazy partition adoption. See render/linebreaks.ts. */
+  private renderPageComposer(
+    model: ComposerModel, viewStaves: number[] | null, preMei: string | null,
+    heji: { hejiEnabled: boolean },
+  ): void {
+    if (viewStaves == null && this.pageBreaks.canAttemptRefill()) {
+      const refill = this.pageBreaks.tryRefill(model, viewStaves, this.pageBreaksCtx());
+      if (refill) {
+        this.renderPage(refill.mei, true, refill.strategy);
+        /* The refill layout is now in the toolkit — the committed partition
+           describes it directly, no idle adoption needed. Verify the pins were
+           honored on the mounted pages (a safety net for castoff overrides —
+           warn + re-adopt; throws under HKL_INDEX_CHECK). */
+        this.pageBreaks.verifyRenderedPartition(
+          this.container!, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
+        return;
+      }
+      if (this.pageBreaks.ownershipActive()) {
+        console.info('[page-breaks] refill unavailable for this edit — derive render');
+      }
+    }
+    this.renderPage(preMei ?? model.serialize(heji, viewStaves), true);
+    if (viewStaves == null && this.pageVirt) {
+      this.pageBreaks.armAdoption(model, this.pageVirt.pageCount, this.pageBreaksCtx());
+    } else {
+      this.pageBreaks.invalidate();   // filtered view: partition would describe a subset
+    }
+  }
+
+  /** Context the page line-break owner drives Verovio through. */
+  private pageBreaksCtx(): PageBreaksCtx {
+    return {
+      layoutToolkit: () => (this.pageVirt?.tkCurrent ? this.tk : null),
+      naturalsToolkit: () => this.spliceTk!,
+      naturalsOptions: () => this.buildOptions('none', 'scroll'),
+      budgetW: () => this.measureBudgetW(),
+    };
+  }
+
+  /** Max justified system width (SVG user units) from the mounted page DOM. */
+  private measureBudgetW(): number | null {
+    if (!this.container) return null;
+    let max = 0;
+    for (const sys of Array.from(this.container.querySelectorAll('.score-page g.system'))) {
+      const w = (sys as SVGGraphicsElement).getBBox().width;
+      if (w > max) max = w;
+    }
+    return max > 0 ? max : null;
+  }
+
 
   /** View-mode switch: stash the outgoing mode's rendered DOM, and re-attach
    *  the incoming mode's stashed DOM when it still matches the document (same

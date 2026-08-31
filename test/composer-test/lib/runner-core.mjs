@@ -66,6 +66,15 @@ export const RESET_SNIPPET = `
   const score = document.getElementById('score');
   if (score) { score.scrollLeft = 0; score.scrollTop = 0; }
 
+  /* Reset the renderer's full-engrave duration memory: predictNextRenderHeavy
+   * gates render DEFERRAL (badge + double-rAF) on the PREVIOUS render's
+   * duration, so one heavy fixture would flip every subsequent fixture's
+   * renders from synchronous to deferred — changing their timing against
+   * recorded visual baselines and breaking read-right-after-reRender
+   * assertions. Each fixture starts with a clean (synchronous) slate; its own
+   * renders may still earn deferral within the fixture. */
+  window.__hkl_composer.renderer['lastFullMs'] = {};
+
   /* Reset renderer view mode + theme AND the #score view/theme CSS classes so
    * a fixture that switches to scroll or dark/transparent doesn't leak its
    * rendering into later fixtures (their visual baselines + cursor-trace pixel

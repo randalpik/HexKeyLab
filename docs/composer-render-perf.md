@@ -124,15 +124,29 @@ on mount (viewBox growth), shifting pages below it; scroll-mode full engrave
 
 ## Tier 3 — Phase C: system-splice cascade in page view (structural fix)
 
-- [ ] **T3.1 Per-system sub-render + splice** (design doc first). Re-engrave
-  only the system containing the edit, justified to the fixed system width;
-  cascade to the next system only when the measure set spills; dy-translate
-  following systems on height change; page-overflow cascades page→page.
-  Reuses spacer/defs-merge/anchor machinery. Probe says a per-system
-  sub-render lands in the scroll splice's ~150–250 ms envelope. Open
-  questions: justification reproducibility of an isolated system at fixed
-  width; interaction with header/footer/section-header injections; variable
-  system heights.
+- [x] **T3.0 Line-break ownership (Phase C-A)** — SHIPPED 2026-08-30
+  (`apps/composer/src/render/linebreaks.ts`): Composer owns the page-view
+  system partition (naturals model + greedy/rebalance + render-time `<sb>`
+  pins, displayed via breaks:'line' — verbatim systems, Verovio keeps
+  pagination). Enablement pixel-exact; edits refill only the affected lines
+  (bounded, deterministic reflow); everything unprovable derives loudly.
+  NOT yet a latency win — the refill still pays a full loadData (~1.5 s
+  Chromium / Firefox TBD, ± today's cost; refill overhead itself is
+  ~150–400 ms). It is the structural prerequisite: every boundary is now a
+  hard anchor, so C-B's windows are pixel-exact by construction and the
+  cascade extent is known before any DOM work.
+- [ ] **T3.1 Per-system greedy-refill splice** — design in
+  [composer-page-splice-design.md](composer-page-splice-design.md). Each
+  affected system re-lays greedily from its start measure via a windowed
+  sub-render (Verovio itself decides the fill), so forward spill AND **reverse
+  cascade** (a deletion pulls the next measure back in) are the same
+  operation; cascade terminates when a system's (start, measure set) matches
+  the old partition; dy-translate below; page-overflow cascades page→page;
+  cascade tail runs off the hot path behind the badge. **Gate (Max): no
+  visual change to cross-system actions vs a full re-engrave** — partition +
+  geometry parity harness under HKL_INDEX_CHECK + fixtures. Spike 1
+  (partition/justification reproducibility of a windowed sub-render) is the
+  make-or-break; fail ⇒ fall back to T2.3.
 
 ## Rejected / dead ends (don't retry)
 
@@ -159,6 +173,35 @@ on mount (viewBox growth), shifting pages below it; scroll-mode full engrave
   theme 50 ms, 3-burst reRender → 1 engrave. Same gates, 328/328. Remaining
   floors: loadData ~1.2 s per page edit (T2.3 worker or Phase C), scroll full
   engrave ~7 s (Phase C). Awaiting Max's Firefox pass.
+- 2026-08-29 — Phase C design drafted (composer-page-splice-design.md) with
+  Max's amendments: reverse cascade via greedy refill (pull-back and spill are
+  the same operation), gate = no visual change to cross-system actions vs a
+  full re-engrave. Spike 1 run on the sonata: viable — range-serialize content
+  byte-perfect, boundary-crossing spanners identified as the sole fidelity
+  killer, previous-system-context window + left escalation is the fix to
+  validate; ~125 ms per window engrave.
+- 2026-08-30 — Phase C spike 2 complete (see composer-page-splice-design.md):
+  87 % of boundaries splice at ~180 ms via window escalation; hard-break-
+  anchored windows are pixel-exact; design pivots to encoded-<sb> partition
+  pinning (spike 3). Shipped en route: boundary scoreDefs render inline in
+  serializeRangeForRender (fidelity fix, also scroll-splice relevant).
+- 2026-08-30 — **Page-view edits no longer shift scroll**: the T2.1 virtualized
+  rebuild's zero-height placeholders + mid-swap layout clamped #score.scrollTop
+  to ~page 1 on EVERY page edit (probe: 25392 → 2744, content-identical), with
+  the afterRender scroll-into-view yanking it back — visible as jump-then-
+  correct once C-A made edits surgical. renderPage now captures/restores the
+  scroll in the same synchronous block (fixture pageEditPreservesScroll).
+  En route: composer-test visual capture reworked (viewport-fit raster,
+  stable-frame settle, compact vs visualFullPage framing, capture meta in
+  summary.json), all baselines re-seeded — see decisions.md same date.
+- 2026-08-30 — **T3.0 line-break ownership shipped** (spikes 3+5 validated →
+  implemented same day; full account in composer-page-splice-design.md
+  "Implementation"). Key discovery en route: Verovio breaks:'line' honors
+  every <sb> VERBATIM while auto-paginating — the display mode that makes
+  partition ownership possible WITHOUT owning pagination (smartSb0 display
+  refuted by probe: castoff re-wraps refilled lines). 334/334 with
+  HKL_INDEX_CHECK, 3 new fixtures; enablement pixel-exact; awaiting Max's
+  Firefox feel-check of the edit-reflow semantics.
 - 2026-08-29 — Firefox pass: virtualization works, page edits ~2–3 s (loadData
   dominated — Firefox's WASM/parse is slower than Chromium's; T3 is the fix,
   not micro-tuning). **Atomicity bug fixed**: T2.2's deferral exposed
