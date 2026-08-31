@@ -342,6 +342,48 @@ function emptyMeiDoc(setup: SetupDefaults = {}): Document {
    invalidation or a build divergence fails a test, not Max's session. Off in
    production (zero overhead). Read at call time so a running page can toggle
    `globalThis.__HKL_INDEX_CHECK = true` and have it take effect immediately. */
+/** MEI control events: they live at MEASURE level (a slur is
+ *  `<measure><slur/></measure>`, not a layer child) and contribute NO ticks, so
+ *  adding, removing or editing one cannot change any layer's tick budget or
+ *  content sum. This matters because `normalizeTies` prunes dangling slurs and
+ *  articulation controls on EVERY edit, and `setBarlines` rewrites measure
+ *  barline attributes — all outside any `<layer>`. Without this list the
+ *  scoped placeholder normalization escalated to "every layer in the document"
+ *  on essentially every edit, which is most of what it exists to avoid. */
+const CONTROL_EVENT_NAMES = new Set([
+  'slur', 'tie', 'hairpin', 'dynam', 'dir', 'tempo', 'fermata', 'trill',
+  'octave', 'lv', 'phrase', 'gliss', 'bracketSpan', 'pedal', 'artic', 'breath',
+  'harm', 'mordent', 'turn', 'arpeg', 'beamSpan', 'reh', 'caesura',
+]);
+/** `<measure>` attributes that cannot affect a layer's tick budget. Kept
+ *  DELIBERATELY narrow — anything not listed escalates to the full pass. */
+const BUDGET_SAFE_MEASURE_ATTRS = new Set(['right', 'left']);
+
+/** Can this mutation, which landed OUTSIDE any `<layer>`, be ignored by the
+ *  scoped placeholder normalization? Only for the provably tick-neutral cases;
+ *  everything else (a measure added or removed, a `<scoreDef>` meter change, a
+ *  new `<staff>`/`<layer>`, an unrecognised measure attribute) must force the
+ *  full pass, because it can move some layer's budget. Verified empirically by
+ *  the HKL_INDEX_CHECK gate in `normalizePlaceholdersAll`: after the scoped
+ *  pass, a full pass must find nothing left to rebuild. */
+function cannotChangeLayerBudget(r: MutationRecord, target: Element | null): boolean {
+  if (!target) return false;
+  /* Attributes or text on a control event itself. */
+  if (CONTROL_EVENT_NAMES.has(target.localName)) return true;
+  if (r.type === 'attributes') {
+    return target.localName === 'measure'
+      && BUDGET_SAFE_MEASURE_ATTRS.has(r.attributeName ?? '');
+  }
+  if (r.type === 'childList') {
+    /* Control events being added to / removed from a measure. */
+    if (target.localName !== 'measure') return false;
+    const touched = [...Array.from(r.addedNodes), ...Array.from(r.removedNodes)];
+    return touched.length > 0 && touched.every(
+      (n) => n.nodeType === 1 && CONTROL_EVENT_NAMES.has((n as Element).localName));
+  }
+  return false;
+}
+
 function indexCheckEnabled(): boolean {
   return typeof globalThis !== 'undefined' &&
     (globalThis as { __HKL_INDEX_CHECK?: boolean }).__HKL_INDEX_CHECK === true;
@@ -526,6 +568,11 @@ export class ComposerModel {
   private flatMoFired = false;
   /** Bumped once per drain that saw any DOM mutation. */
   private docVer = 0;
+  /** Layers mutated since the last placeholder normalization (see
+   *  `normalizePlaceholdersAll`). `dirtyLayersAll` means the attribution failed
+   *  or a budget-changing mutation landed — do every layer. */
+  private dirtyLayers = new Set<Element>();
+  private dirtyLayersAll = true;
 
   /** Render dirty-measure tracking (Phase B3). The scroll splicer re-renders
    *  only the measures changed since the last render; this is that range, in
@@ -2527,9 +2574,38 @@ export class ComposerModel {
    *  ran. Replaces the old `normalizePlaceholders(this.doc, this.measureTicks())`
    *  pattern at every call site. */
   normalizePlaceholdersAll(): void {
+    /* SCOPED (Phase D): normalize only the layers the document actually
+       mutated since the last pass. The full pass walks every layer in the
+       document — ~1800 on the sonata — on every edit. Attribution comes from
+       the same exact mutation tracker the caches use; anything it cannot
+       attribute to a layer (a new measure, a new layer, a meter change that
+       moves every layer's tick budget) sets `dirtyLayersAll` and we do all of
+       them. `documentVersion()` performs the drain.
+
+       Note the ORDER: drain BEFORE invalidateMeterCache, because that clears
+       the meter table this pass then rebuilds — and the drain must see every
+       mutation the caller made, not just those after the invalidate. */
+    this.documentVersion();
+    const scoped = this.dirtyLayersAll ? null : Array.from(this.dirtyLayers);
+    this.dirtyLayers.clear();
+    this.dirtyLayersAll = false;
     this.invalidateMeterCache();
     this.invalidateInstrumentCache();
-    normalizePlaceholders(this.doc, (layer) => this.measureTicksForLayer(layer));
+    normalizePlaceholders(this.doc, (layer) => this.measureTicksForLayer(layer), scoped);
+    if (indexCheckEnabled() && scoped !== null) {
+      /* The scoped pass must be indistinguishable from the full one: a full
+         pass immediately after must find nothing left to rebuild. */
+      const left = normalizePlaceholders(this.doc, (layer) => this.measureTicksForLayer(layer));
+      if (left > 0) {
+        throw new Error(
+          `scoped normalizePlaceholders missed ${left} layer(s) (scoped ${scoped.length})`,
+        );
+      }
+      /* The verification pass itself mutated nothing, but the drain above
+         consumed the dirty set — re-seed conservatively so a mutation made
+         between the two passes cannot be lost. */
+      this.documentVersion();
+    }
   }
 
   /** Return the <layer> for (voice, measure). */
@@ -2632,25 +2708,62 @@ export class ComposerModel {
    *  Also bumps (and re-arms) when the document object itself was swapped —
    *  load, undo, redo. Without a MutationObserver (non-DOM host) it bumps every
    *  call, so nothing is ever cached. */
+  /** A counter that changes whenever the live document changed. Consumers
+   *  outside the model use it as an exact "is my derived state still valid?"
+   *  token — the page-view partition cache keys on it, so a zoom round-trip
+   *  that didn't touch the document can restore its partition instead of
+   *  re-running Verovio's castoff. Cheap: one synchronous `takeRecords()`. */
+  docVersion(): number {
+    return this.documentVersion();
+  }
+
   private documentVersion(): number {
-    if (typeof MutationObserver === 'undefined') return ++this.docVer;
+    if (typeof MutationObserver === 'undefined') { this.dirtyLayersAll = true; return ++this.docVer; }
     if (this.flatMoDoc !== this.doc || !this.flatMo) {
       this.flatMo?.disconnect();
-      this.flatMo = new MutationObserver(() => { this.flatMoFired = true; });
+      /* The callback FOLDS the records rather than just flagging: a discarded
+         record is a layer we would never know had changed, which would make
+         the scoped placeholder normalization unsound. */
+      this.flatMo = new MutationObserver((recs) => {
+        this.foldLayerMutations(recs);
+        this.flatMoFired = true;
+      });
       this.flatMo.observe(this.doc, {
         subtree: true, childList: true, attributes: true, characterData: true,
       });
       this.flatMoDoc = this.doc;
       this.flatMoFired = false;
+      this.dirtyLayers.clear();
+      this.dirtyLayersAll = true;      // fresh document: nothing may be assumed
       return ++this.docVer;
     }
     /* Always drain, so a queued batch can't fire the callback later and force a
        spurious invalidation on the next call. */
-    const queued = this.flatMo.takeRecords().length > 0;
+    const recs = this.flatMo.takeRecords();
+    if (recs.length) this.foldLayerMutations(recs);
     const fired = this.flatMoFired;
     this.flatMoFired = false;
-    if (queued || fired) this.docVer++;
+    if (recs.length || fired) this.docVer++;
     return this.docVer;
+  }
+
+  /** Attribute each mutation to the `<layer>` containing it, for scoped
+   *  placeholder normalization. A record whose target is NOT inside a layer —
+   *  a `<staff>` gaining a layer, a `<section>` gaining a measure, a meter
+   *  change on a `<scoreDef>` (which moves every layer's tick BUDGET) — cannot
+   *  be attributed, so it forces the full pass. */
+  private foldLayerMutations(recs: MutationRecord[]): void {
+    for (const r of recs) {
+      let node: Node | null = r.target;
+      while (node && node.nodeType !== 1) node = node.parentNode;
+      const target = node as Element | null;
+      let e = target;
+      while (e && e.localName !== 'layer') e = e.parentElement;
+      if (e) { this.dirtyLayers.add(e); continue; }
+      if (cannotChangeLayerBudget(r, target)) continue;
+      this.dirtyLayersAll = true;
+      return;
+    }
   }
 
   /** Test-only: a cached stop list must equal a fresh enumeration. Catches a

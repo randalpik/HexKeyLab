@@ -12,11 +12,38 @@
 //
 // THE FIX (all first-paint, no layout read-back):
 //   • Pick scale + unit so the staff-space (= unit × scale / 50 device px) is an
-//     INTEGER — every staff line then shares one sub-pixel phase. Only scales
-//     that are multiples of 50 work at unit 9, so intermediate sizes co-tune
-//     `unit` (e.g. 75% = scale 70 + unit 10 → 14px staff-space).
+//     INTEGER — every staff line then shares one sub-pixel phase.
+//
+//     THE UNIT IS CONSTANT ACROSS ALL ZOOMS, and that is load-bearing (see
+//     "WHY unit 8" below). Which scales are available depends on
+//     gcd(unit, 50): a scale must be a multiple of 50/gcd(unit,50). At unit 9
+//     (gcd 1) that is multiples of 50 — only 50/100/150, with NOTHING between
+//     50 % and 100 %. At unit 8 (gcd 2) it is multiples of 25, so 50/75/100 all
+//     land on integer staff-spaces (8/12/16 px) at one unit.
 //   • Set stroke widths to whole device px (1px for the 50/75 presets, 2px for
-//     100) so a centered line fills whole rows.
+//     100) so a centered line fills whole rows. Width is per-preset, since
+//     stroke px = int(width × unit × 10) × scale/1000 and the achievable values
+//     differ per scale.
+//
+// WHY unit 8 — and why a VARYING unit was a bug (2026-08-31).
+//   `scale` is a pure output zoom with NO layout effect; `unit` and the page
+//   rectangle are the only layout inputs. So a preset ladder that changes
+//   `unit` re-breaks the score when the user merely zooms. That is exactly what
+//   happened: this file previously used unit 9 at 50/100 and unit 10 at 75 (the
+//   only way to make 75 % crisp at unit 9 was... not to use unit 9), so zooming
+//   the 446-bar sonata to 75 % moved it from 118 lines / 37 pages to
+//   134 lines / 45 pages — eight extra pages from a zoom. decisions.md had
+//   asserted the opposite ("zoom is pure magnification and does not change
+//   music-per-page"), which is why the cost was never weighed: unit 9 was
+//   inherited as Verovio's default rather than chosen, and unit 10 was a later
+//   patch to rescue an already-existing 75 % step.
+//   Unit 8 dissolves it: gcd(8,50)=2 admits scale multiples of 25, so all three
+//   levels are crisp at ONE unit and zoom is layout-neutral by construction
+//   (the page-view partition cache then holds a single entry for every zoom).
+//   The cost, accepted by Max after a side-by-side review: every level is ~11 %
+//   smaller than the old unit-9/10 ladder (100 % staff-space 18px → 16px).
+//   Do NOT reintroduce a per-zoom `unit`. See docs/lessons.md ("Verovio's
+//   `scale` is layout-neutral; `unit` is not").
 //   • Choose pageMarginTop parity so the lines' shared phase lands where a line
 //     of that width is crisp: HALF-pixel (.5) for an odd (1px) width, integer
 //     (.0) for an even (2px) width. See `crispMarginTop`.
@@ -45,15 +72,18 @@ export interface CrispPreset {
 }
 
 /* deviceScale = scale/1000; staff-space px = unit×scale/50; stroke px =
-   int(width×unit×10) × deviceScale. Verified in Firefox:
-     50%  → 9px space,  1.0px lines (single crisp row)
-     75%  → 14px space, 0.98px lines (single crisp row)
-     100% → 18px space, 2.0px lines (two crisp rows)
-   50% & 100% share unit 9 + width 0.225 (internal stroke 20 → 1px at ds .05, 2px at .1). */
+   int(width×unit×10) × deviceScale. ONE unit (8) across all three levels, so
+   zoom cannot change the layout; scales are multiples of 25 (clean — no
+   root-<svg> ceil drift), and every staff-space is an integer:
+     50%  → scale 50,  8px space,  internal 20 → 1.0px   lines (single crisp row)
+     75%  → scale 75,  12px space, internal 13 → 0.975px lines (single crisp row)
+     100% → scale 100, 16px space, internal 20 → 2.0px   lines (two crisp rows)
+   50% & 100% share width 0.25 (internal 20 → 1px at ds .05, 2px at .1); 75%
+   needs 0.1625 (internal 13) because 20 × .075 = 1.5px would straddle rows. */
 export const CRISP_PRESETS: Record<ZoomLevel, CrispPreset> = {
-  50: { scale: 50, unit: 9, staffLineWidth: 0.225, stemWidth: 0.225, barLineWidth: 0.225, ledgerLineThickness: 0.225, evenWidth: false },
-  75: { scale: 70, unit: 10, staffLineWidth: 0.145, stemWidth: 0.145, barLineWidth: 0.145, ledgerLineThickness: 0.145, evenWidth: false },
-  100: { scale: 100, unit: 9, staffLineWidth: 0.225, stemWidth: 0.225, barLineWidth: 0.225, ledgerLineThickness: 0.225, evenWidth: true },
+  50: { scale: 50, unit: 8, staffLineWidth: 0.25, stemWidth: 0.25, barLineWidth: 0.25, ledgerLineThickness: 0.25, evenWidth: false },
+  75: { scale: 75, unit: 8, staffLineWidth: 0.1625, stemWidth: 0.1625, barLineWidth: 0.1625, ledgerLineThickness: 0.1625, evenWidth: false },
+  100: { scale: 100, unit: 8, staffLineWidth: 0.25, stemWidth: 0.25, barLineWidth: 0.25, ledgerLineThickness: 0.25, evenWidth: true },
 };
 
 /** The Verovio line-width options for a preset (spread into setOptions). */

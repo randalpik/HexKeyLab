@@ -734,9 +734,10 @@ keystroke.)
 | cached cursor-stop enumeration (`flatChildren`), mutation-invalidated | ~20 ms | **DONE** — see "Phase D pass 2" |
 | incremental sig baseline — re-serialize only changed measures | ~20 ms | **DONE** — same mutation-tracking mechanism, in `PageLineBreaks` |
 | version-stamped structural signatures instead of whole-section walks | ~10 ms | **not worth it** — measured: the three section walks (`headSig`/`interiorSig`/`userBreakSig`/`hardStartIds`) are a few hundred cheap iterations each, not the 10 ms the plan assumed |
-| scope `normalizePlaceholdersAll` to the dirty range | ~15 ms | OPEN (item A7) — halved already by hoisting its per-layer children snapshot; scoping needs the layer-level dirty set |
+| scope `normalizePlaceholdersAll` to the dirty range | ~15 ms | **DONE** — 17.1 → **0.9 ms**. See "Phase D pass 4" |
+| cached measure list + partition cache across zoom | — | **DONE** — `allMeasures` 5.5 → 0.5 ms; a zoom return skips the castoff (2233 → 848 ms). See passes 3–4 |
 | bounded-delta legality guard — skip the naturals render entirely when the line's fill margin exceeds the maximum width the edit could add | ~30 ms | OPEN (item A8) — needs a sound upper bound on the width an edit can add; naturals are already cached per measure and only dirty ids are re-measured |
-| smaller splice window + fewer `getBBox` flushes in the splice | ~30 ms | OPEN (item A6) — measured at 17 ms, not 30 |
+| smaller splice window + fewer `getBBox` flushes in the splice | ~30 ms | OPEN (item A6) — measured at 16 ms, not 30 |
 
 **Landing zone: ~130 ms, and flat in document size** — a 2000-bar score would
 cost what a 50-bar one does. That is the property that matters; the absolute
@@ -832,6 +833,119 @@ indices" item as far as it is worth taking: an id→index map was NOT added,
 because with the list cached the remaining lookups are a handful of `indexOf`s,
 not a measured cost.
 
+### Phase D pass 4 (2026-08-31) — scoped placeholders, cached measure list, partition cache: 206 → 168 ms
+
+- **`normalizePlaceholdersAll` is scoped to the layers that changed** (17.1 ms at
+  baseline → **0.9 ms**). The first attempt scoped it but bought only 1.6 ms,
+  and the reason is worth recording: the attribution rule was "a mutation not
+  inside a `<layer>` means every layer must be re-checked", and MEI puts control
+  events at MEASURE level — so `normalizeTies`' `pruneDanglingSlurs` /
+  `pruneDanglingArticControls` and `setBarlines`' measure attributes escalated
+  essentially every edit to the full pass. None of those can change a layer's
+  tick budget, so `cannotChangeLayerBudget` now exempts control events
+  (`<slur>`, `<dynam>`, `<dir>`, `<artic>`, …) and the barline attributes,
+  while anything else outside a layer — a measure added or removed, a
+  `<scoreDef>` meter change, a new `<staff>`/`<layer>`, an unrecognised measure
+  attribute — still forces the full pass. The whitelist is narrow on purpose and
+  is verified empirically: under `HKL_INDEX_CHECK` the scoped pass is followed
+  by a full pass that must find NOTHING left to rebuild, on all 339 fixtures.
+- **`allMeasures()` cached** on the same mutation signal (5.5 → 0.5 ms).
+- **Spanner/ending extents cached** (A9): `expandForSpanners` reads the document
+  once per edit instead of once per call (~3 calls per edit) —
+  `querySelectorAll` 3428 → 2537 calls.
+- **A4, the partition cache**, keyed on (zoom, pageScale, heji) and guarded by
+  the model's document version: a zoom RETURN on an unchanged document reuses
+  the partition instead of re-running the castoff pass. Measured on the sonata
+  with the decision points instrumented (`cb-zoomcache.js`): first visit to
+  zoom 50 **2233 ms with a castoff**, return visit **848 ms with a cache hit and
+  no castoff**, partition hash identical. A stale entry is correctly refused
+  (castoff runs). Nothing is trusted blindly — a restored partition still goes
+  through `verifyRenderedPartition` and the page-overflow check, so a bad entry
+  degrades to a derive, never to a wrong layout.
+
+**A near-miss worth recording (`cb-zoominvariant.js`).** The round-trip probe
+showed zoom 50 and zoom 100 producing an IDENTICAL partition via two
+independent castoffs, which suggested zoom is pure magnification (page
+rectangle and content scale together) and could leave the cache key — making
+even the FIRST zoom change skip the castoff. Forcing a real castoff at every
+preset refuted it: **zoom 75 gives 134 lines where 50 and 100 both give 118.**
+The crisp presets do not scale page and content by the same factor at every
+level, so 50/100 agreeing is a coincidence. Zoom stays in the key. (pageScale
+1.4 sampled identical to 1.0 at zoom 100; it stays in the key too, on the same
+"one sample is not a proof" reasoning.)
+
+### Zoom is layout-neutral — RESOLVED by a constant unit 8 (2026-08-31)
+
+**Max's ruling: "zoom should be a no-op in terms of line count and
+distribution, not add 8 pages."** It wasn't, and now it is.
+
+Measures-per-line is governed by the music:paper ratio. `scalePageGeom` scales
+the page rectangle by `pageScale` ONLY — never by zoom — while `buildOptions`
+sets `unit` from the crisp preset, and the presets were not uniform in `unit`.
+Verovio's `scale` has NO layout effect (proven: zoom 50 vs 100 differed only in
+`scale`, identical `unit: 9`, byte-identical partitions), so `unit` was the
+whole cause:
+
+| | scale | unit | staff-space | sonata lines | pages |
+|---|---|---|---|---|---|
+| 50 before | 50 | 9 | 9 px | 118 | 37 |
+| 75 before | 70 | **10** | 14 px | **134** | **45** |
+| 100 before | 100 | 9 | 18 px | 118 | 37 |
+| **50 / 75 / 100 after** | 50 / 75 / 100 | **8** | 8 / 12 / 16 px | **116** | **30** |
+
+**Why unit 8 works, and why nobody had tried it.** Which scales are available at
+a given unit depends on `gcd(unit, 50)`: a scale must be a multiple of
+`50/gcd(unit,50)` for the staff-space (`unit × scale / 50` device px) to be an
+integer. At unit 9 (gcd 1) that means multiples of 50 — only 50/100/150, with
+NOTHING between 50 % and 100 %, which is why 75 % had to co-tune to unit 10. At
+**unit 8** (gcd 2) it means multiples of 25, so **50/75/100 are all crisp at one
+unit**. Stroke widths stay whole-device-px per preset
+(`int(width × unit × 10) × scale/1000`): 0.25 → internal 20 → 1.0 px at scale 50
+and 2.0 px at 100; 75 % uses 0.1625 → internal 13 → 0.975 px, the same ~1 px
+approximation the old preset already shipped (0.98 px). Scales are now clean
+multiples of 25, so Verovio's root-`<svg>` ceil drift (the old 70 → 0.0701 case)
+is gone too.
+
+The history, for the record: **unit 9 was never chosen** — lessons.md calls it
+"Verovio's default", the 50/75/100 ladder predated the presets, and unit 10
+arrived in a grab-bag commit ("dark mode and related tweaks") purely to rescue
+75 %. decisions.md meanwhile asserted the opposite of the defect ("zoom is pure
+magnification and does not change music-per-page"), so the cost was never
+weighed. Searching for that justification before touching it was Max's
+instruction and the right call.
+
+**DEAD END on the way (do not retry): compensating the paper by `unit / 9`.**
+Scaling pageWidth/pageHeight/margins by the unit ratio matched
+`contentWidth / unit` to five digits (208.79 at zoom 75 vs 208.78 at zoom 100)
+and STILL did not reproduce the partition — 134 → 113 lines where 118 was
+wanted. Verovio's horizontal spacing contains terms that do not scale with
+`unit`, so no paper size reproduces another unit's layout, and fitting the
+factor empirically would be reverse-engineering the spacing model.
+
+**Accepted cost** (Max, after a six-image side-by-side of sonata page 1 at all
+three zooms): every level is ~11 % smaller — 100 % staff-space 18 px → 16 px —
+so the sonata is more compact (30 pages instead of 37, 18 measures on page 1
+instead of 14) and every score re-breaks once. 36 visual baselines reseeded.
+
+**Battery after unit 8** (`cb-splice-battery.js`): all 8 edits apply, all
+reference-clean, **6 of 8 splice** at 316–512 ms. That is one fewer splice than
+before, and the cause is benign: the denser layout moved the `edit-page-first`
+probe onto a measure with content above the staff, so the vertical gate refuses
+with `vertical: page-first hang would move` — the window renders (5 lines,
+20 measures, 96 ms) and the gate correctly declines because the page-first
+system's hanging extent would change, which would move every system below it.
+Safe fallback, parity intact; **B1 (dy-cascade)** is the item that converts this
+class. Not a splice regression — the same gate, a different musical location.
+
+**Consequence for the partition cache:** all zooms now share a single key
+(`u8|s1|plain`), so **every zoom change is a cache hit** — measured 740 / 733 /
+705 ms across 50 → 75 → 100 switches, versus up to 2134 ms when zoom 75 needed
+its own castoff. `unit` stays in the key rather than being dropped, so that a
+future ladder which reintroduced a per-zoom unit would stay correct instead of
+silently serving another unit's partition. `cb-zoomunit.js` is the regression
+gate: if `zoom75_differs` ever goes true, a preset has brought back a per-zoom
+`unit`.
+
 ### Behaviour gate — the sonata battery run on BOTH code states
 
 Stash the source, re-run `cb-splice-battery.js`, unstash. Splice/skip outcome is
@@ -853,13 +967,27 @@ skip), reference parity holds across all 37 pages / 446 measures in both (max
 (These walls exceed `cb-scale`'s 206 ms because the battery mounts every page
 and runs a whole-document reference compare per edit.)
 
-**Unrelated finding, worth its own look:** two battery entries report
-`editOk: false` — `reinsert-mid-line` and `insert-rest-ripple`, whose insert
-returns false after their delete. It is **pre-existing** (identical on the
-stashed baseline) and the probe does not assert on it, so it is not a Phase D
-regression — but an insert silently returning false at measure 100/150 is
-either a real model bug or a probe that mis-sets its cursor, and nothing
-currently gates it.
+**Two battery edits were silently not applying — a TEST bug, now fixed
+(2026-08-31).** `reinsert-mid-line` and `insert-rest-ripple` reported
+`editOk: false` (pre-existing — identical on the stashed baseline), and the
+probe recorded that flag without asserting on it, so it read as passing.
+
+The insertion rule is settled and documented
+([architecture/composer.md](architecture/composer.md), planner invariants):
+*"Measures never exceed length. Content landing past the cursor's measure
+requires that target layer EMPTY, else reject."* Measured at both sites
+(`cb-editok.js`): bar 100 is dense 16ths with **bar 101 completely full**, and
+bar 150 is full 8ths/16ths with **bar 151 completely full** — so both refusals
+are exactly what the rule specifies. The probes were asking for the impossible:
+edit 2 deleted a 16th (freeing 4 ticks) then inserted a QUARTER (16 ticks,
+needing 12 ticks of overflow into a full measure); edit 4 deleted one 8th
+(freeing 8 ticks) then inserted an 8th rest — which alone refilled the measure —
+followed by an 8th chord with nowhere to go.
+
+Fixed by matching the inserted durations to the space the delete frees (a 16th
+for edit 2; a 16th rest + 16th chord for edit 4), and `allEditsApplied` /
+`editsNotApplied` are now asserted in the battery result so this cannot go
+silent again. **No model change: the planner was right throughout.**
 
 **Scope boundary (Max, 2026-08-30, permanent): Verovio renders our scores;
 we do not replicate musical spacing.** "Musical spacing is incredibly complex
@@ -944,54 +1072,77 @@ castoff bootstrap).
 
 ### A. Latency — the main thrust
 
-- [~] **A1. Phase D: make the edit path O(edit)** — LARGELY DONE 2026-08-30
-      (passes 1–3 above). Sonata steady-state splice **308 → 206 ms**, and the
-      per-edit work is now edit-scaled rather than document-scaled:
-      `querySelectorAll` 31 969 → ~3 400 calls, `XMLSerializer` 495 → 54 calls,
-      `cursor.update` 62.6 → 1.8 ms. Of the 206 ms left, **59 ms is Verovio**
-      (the documented floor). Remaining O(document) work is small and itemised
-      as A7/A9 below; the rest of the gap to the ~130 ms landing zone is A6
-      (splice DOM measurement) and A8 (the second Verovio round-trip).
-- [ ] **A7. Scope `normalizePlaceholdersAll` to the changed layers** (~8 ms) —
-      it still walks every layer in the document (~1800 on the sonata). Halved
-      already by hoisting its per-layer children snapshot; scoping needs a
-      layer-level dirty set, which the model's mutation tracker
-      (`documentVersion`) can now provide soundly. Gate: under
-      `HKL_INDEX_CHECK`, run the scoped pass then a full pass and assert the
-      full pass rebuilds nothing.
-- [ ] **A8. Bounded-delta legality guard** (~30 ms) — skip the naturals render
+- [~] **A1. Phase D: make the edit path O(edit)** — DONE for every O(document)
+      item identified, 2026-08-30/31 (passes 1–4 above). Sonata steady-state
+      splice **308 → 168 ms**, and the per-edit work is now edit-scaled:
+      `querySelectorAll` 31 969 → 2 537 calls, `XMLSerializer` 495 → 54 calls,
+      `cursor.update` 62.6 → 4.2 ms, `normalizePlaceholdersAll` 17.1 → 0.9 ms,
+      `allMeasures` 5.5 → 0.5 ms. Of the 168 ms left, **56 ms is Verovio** (the
+      documented floor) and the rest is no longer document-scaled. The gap to
+      the ~130 ms landing zone is now A6 (16 ms of splice `getBBox`) and A8 (the
+      second Verovio round-trip); everything else is small change.
+- [x] **A7. Scope `normalizePlaceholdersAll` to the changed layers** — DONE
+      2026-08-31: **17.1 → 0.9 ms**. Needed a second pass to be worth anything —
+      the naive "any mutation outside a `<layer>` re-checks every layer" rule
+      escalated on essentially every edit, because MEI control events live at
+      MEASURE level and tie/slur pruning plus `setBarlines` touch them
+      constantly. See "Phase D pass 4" for the exemption rule and its gate.
+- [?] **A8. Bounded-delta legality guard** (~30 ms) — **probably not viable as
+      specified, needs Max's call.** The idea is to skip the naturals render
       when the edited line's fill margin provably exceeds the width the edit
-      could have added, removing one of the two Verovio round-trips. Needs a
-      sound upper bound on that width; naturals are already cached per measure
-      and only dirty ids are re-measured, so this is the last structural win in
-      the refill.
-- [ ] **A9. Cache the spanner/ending extents** (~5 ms) — `expandForSpanners`
-      no longer rescans inside its growth loop (pass 1), but still reads every
-      measure once per call and runs ~3 times per edit. The same
-      mutation-tracked caching would make it O(edit); modest payoff, so it is
-      below A6/A8.
+      could have added. But naturals are ALREADY cached per measure with only
+      dirty ids re-measured, so the render that remains is exactly the one
+      covering the edited measures — and bounding *their* new width without
+      measuring means estimating glyph widths ourselves, i.e. a width model,
+      which the Phase D scope boundary rules permanently out of scope. Unless
+      there is a sound bound I have not seen, the honest options are to accept
+      the one window render per edit (~35 ms) or to drop this item.
+- [x] **A9. Cache the spanner/ending extents** — DONE 2026-08-31. The extents
+      are built once per document version and reused across the ~3
+      `expandForSpanners` calls an edit makes: `querySelectorAll` 3 428 → 2 537
+      calls per edit.
 - [x] **A2. `layoutBreaks` → page-based `getMEI`** — DONE 2026-08-30. The
       page-based read is now the shared helper `partitionFromLayout(tk)`
       (linebreaks.ts), used by BOTH `adoptFromCastoff` and `layoutBreaks`; the
       page-by-page `renderToSVG` walk survives in `layoutBreaks` only as the
       fallback for unreadable `getMEI` output. A user-`<pb>` document's derive
       no longer pays the ~1.8 s SVG walk. Prerequisite for C1, now met.
-- [ ] **A3. `cursor.update` dedupe + measure-list cache** (~40 ms/edit) —
-      **blocked on Max**: collapsing the two calls per edit touches the
-      `onStateChange`-before-`onChange` ordering the bridge broadcast relies
-      on.
-- [ ] **A4. Partition cache keyed by (doc signature, zoom, pageScale)** —
-      a zoom round-trip or mode-cache miss currently re-runs the castoff pass
-      (~1055 ms) to rediscover a partition we already had.
+- [~] **A3. `cursor.update` dedupe** — the measure-list-cache half is DONE
+      (pass 3/4: `cursor.update` 62.6 → 4.2 ms for BOTH calls, `allMeasures`
+      0.5 ms), which removes almost all of the original ~40 ms without touching
+      call ordering. Collapsing the two calls per edit is still **blocked on
+      Max** (it touches the `onStateChange`-before-`onChange` ordering the
+      bridge broadcast relies on) but is now worth ~2 ms, not 40 — effectively
+      moot unless the ordering is being revisited anyway.
+- [x] **A4. Partition cache keyed by (zoom, pageScale, heji) + document
+      version** — DONE 2026-08-31. A zoom RETURN on an unchanged document skips
+      the castoff pass: sonata zoom-50 first visit **2233 ms (castoff)** →
+      return **848 ms (cache hit, no castoff)**, partition identical; a stale
+      entry is refused and re-derives. Instrumented at the decision points
+      (`cb-zoomcache.js`), and a restored partition still passes through
+      `verifyRenderedPartition` + the overflow check. Zoom must STAY in the key
+      — see the near-miss in "Phase D pass 4" (zoom 75 breaks differently from
+      50 and 100).
 - [ ] **A5. Worker-offloaded castoff (T2.3)** — the castoff `loadData` is the
       largest single remaining block and is pure Verovio on the main thread.
       Only a worker removes it. Big refactor; `afterRender` is the seam.
-- [ ] **A6. Trim the splice's own DOM cost** — the last non-O(n) lever. The
-      splice takes ~199 `getBBox` measurements, each flushing layout over
-      every mounted page (the measured 3× per-call cost growth from 930 to
-      3731 elements). Fewer mounted pages and fewer measurement points are
-      the levers. NOTE: owning intra-measure spacing is explicitly OUT OF
-      SCOPE, permanently — see the scope boundary in Phase D.
+- [~] **A6. Trim the splice's own DOM cost** — ATTEMPTED 2026-08-31, and the
+      obvious form DOES NOT WORK. Cutting the splice's `getBBox` calls from 199
+      to 169 (lazy per-measure boxes + reading only the first staff-line path)
+      changed the measured time by **nothing**: 3 sequential runs at 169 calls
+      gave 15.5 / 16.1 / 17.8 ms against ~16.0 ms at 199 calls, with wall inside
+      run-to-run noise (166–176 either way). **This cost is bound by layout
+      FLUSHES, not by call count** — which the scaling baseline already implied
+      (call count +24 % from one page to 37, time +260 %). The assumption-free
+      half (lazy per-measure boxes — nobody reads them for the replaced lines)
+      is KEPT; the staff-line-order assumption was REVERTED, because an
+      unverifiable claim about Verovio's emission order whose failure mode is
+      silently mis-positioned systems is not worth zero milliseconds.
+      **The real levers are therefore: fewer MOUNTED pages (each flush lays out
+      all of them), and fewer read/write ALTERNATIONS in the splice** (batch all
+      reads before any DOM surgery, so the phase costs one flush instead of
+      several) — not fewer measurements. NOTE: owning intra-measure spacing
+      remains permanently OUT OF SCOPE — see the Phase D scope boundary.
 
 ### B. Splice coverage — converting remaining fallbacks into splices
 
@@ -1016,13 +1167,41 @@ castoff bootstrap).
 
 ### C. Known defects
 
-- [ ] **C1. User-`<pb>` giant-page quirk** — a Ctrl+B page break on a large
-      document still paginates ONLY at encoded breaks (sonata: 37 → 2 giant
-      pages, confirmed). Pagination ownership did NOT fix it: the derive path
-      routes such documents through `layoutBreaks` + `encoded`, which never
-      paginates by height. The fix is for the derive path to paginate by
-      height itself and union the user's `<pb>` positions into our page
-      starts — the same page-fit machinery D1 below needs.
+- [x] **C3. Zoom is not layout-neutral — FIXED 2026-08-31.** The crisp presets
+      now use a CONSTANT `unit: 8` at scales 50/75/100 (staff-space 8/12/16 px),
+      so all three zooms produce an identical partition (sonata 116 lines /
+      30 pages at every level, was 118/37 and 134/45) and every zoom change is a
+      partition-cache hit (~750 ms, was up to 2134 ms). Accepted cost: ~11 %
+      smaller notation at every level (100 % staff-space 18 → 16 px), reviewed
+      side-by-side by Max; 36 visual baselines reseeded. Gate:
+      `cb-zoomunit.js` (`zoom75_differs` must stay false). See "Zoom is
+      layout-neutral".
+- [~] **C1. User-`<pb>` giant-page quirk — CATASTROPHIC HALF FIXED 2026-08-31,
+      ownership half still open.** The `<pb>` branch of `castoffPlan` now casts
+      off with **`'line'`** instead of `'encoded'` over the same sb-baked data,
+      so pagination is discovered by HEIGHT rather than only at encoded breaks.
+      Measured on the sonata with one Ctrl+B at bar 60 (`cb-userpb.js`):
+
+      | | before | after |
+      |---|---|---|
+      | pages | **2** | **38** (37 + the break's split) |
+      | clipped pages | 2 (overhang 6 800 px / 59 534 px) | **0** |
+      | recovery on removing the break | 37 | 37 |
+
+      Suite 339/339. **What is still wrong:** `'line'` over sb-baked data does
+      NOT put a page boundary at the user's `<pb>` (measured: the break lands
+      mid-page-4, `breakIsAPageStart: false`), while the painted `'encoded'`
+      render honors it directly — so the adopted page list is **one page short
+      of the DOM** (37 vs 38), permanently. Consequences, all measured over five
+      successive renders (`cb-pbconverge.js`): stable, **no warning loop**, no-op
+      renders still skip, and an edit near the break falls back safely
+      (`skip: "window paginated"`) instead of splicing. So such documents render
+      CORRECTLY but their pagination is Verovio-honored rather than owned.
+      The missing third is the one the original plan named: **union the user's
+      `<pb>` positions into our page starts**, which needs a real page-fit loop
+      (walk lines accumulating height; start a page at a user break or at
+      overflow) — the machinery D1 shares. Until then this is a net improvement
+      from "unusable" to "correct but unowned".
 - [ ] **C2. First-page credits** — composer/footer changes derive via
       `headSig`. Fine (rare), noted for completeness.
 
@@ -1175,6 +1354,42 @@ castoff bootstrap).
   what remains. Suite 339/339 under `HKL_INDEX_CHECK` (the verifications are
   permanent, so the suite is a standing gate on the mechanism); typecheck /
   build / boundaries clean.
+- 2026-08-31 — **C1 half-fixed: user page breaks no longer produce clipped
+  giant pages.** The `<pb>` branch of `castoffPlan` casts off with `'line'`
+  (height-derived) instead of `'encoded'` (breaks-only), over the same sb-baked
+  data: sonata with one Ctrl+B goes **2 clipped pages → 38 correct ones**, zero
+  overhang, and removing the break returns to 37. Suite 339/339. The remaining
+  third of the documented fix is NOT done and is now measured rather than
+  assumed: `'line'` does not treat a lone user `<pb>` as a page boundary over
+  sb-baked data (the break lands mid-page), so the adopted page list stays one
+  short of the DOM and pagination for such documents is Verovio-honored rather
+  than owned — stable, no warning loop, edits near the break safely full-render.
+  Also corrected a previously recorded finding: "breaks:'line' honors `<pb>`"
+  holds for a fully PINNED document, not for sparse user breaks (lessons.md).
+- 2026-08-31 — **Phase D pass 4 + A4 (partition cache), and a test bug fixed.**
+  Max: "why did you stop? There's still a long way to go and I see more
+  outstanding items than we started with" — fair; the previous session serialized
+  on waiting for long test runs and split coarse plan items into finer ones
+  without then doing them. This pass closed A4, A7 and A9 and the measure-list
+  half of A3: sonata steady-state splice **206 → 168 ms**, with
+  `normalizePlaceholdersAll` 17.1 → **0.9 ms**, `allMeasures` 5.5 → **0.5 ms**,
+  `querySelectorAll` 3 428 → 2 537 calls, and a zoom RETURN skipping the castoff
+  (2233 → 848 ms). A7 needed a second attempt: the naive escalation rule ("any
+  mutation outside a `<layer>` re-checks every layer") fired on essentially every
+  edit because MEI control events live at measure level and tie/slur pruning +
+  `setBarlines` touch them constantly — the exemption list plus the
+  scoped-equals-full gate is what made it worth 16 ms instead of 1.6.
+  Also **two battery edits had not been applying for months**: the probe
+  recorded `editOk` without asserting it, and both sequences asked for overflow
+  into a completely full next measure, which the documented planner rule
+  correctly rejects (Max: "it's been settled for months and very well
+  documented… the insertion tests should work properly with it" — my "design
+  question" framing was wrong). Durations corrected to fit the freed space and
+  `allEditsApplied` is now asserted; no model change. And a near-miss avoided:
+  zoom 50 and 100 produce identical partitions, but **zoom 75 gives 134 lines
+  vs 118**, so zoom stays in the cache key. Suite 339/339 under
+  `HKL_INDEX_CHECK`; battery 8/8 applied, 7/8 spliced, all reference-clean at
+  4 units; typecheck/build/boundaries clean.
 - 2026-08-30 — **Scaling baseline measured** (`cb-scale.js`, answering Max's
   "if we can truly get O(edit), what's the remaining difference between a
   single page and 37?"): one-page splice **66 ms**, sonata splice **303 ms**.

@@ -29,9 +29,16 @@ export function isPlaceholder(elem: Element): boolean {
 export function normalizePlaceholders(
   doc: Document,
   ticksForLayer: (layer: Element) => number,
-): void {
-  const layers = doc.querySelectorAll('layer');
-  for (const layer of Array.from(layers)) {
+  only?: Iterable<Element> | null,
+): number {
+  /* `only` restricts the pass to layers known to have changed (Phase D — the
+   *  full pass walks every layer in the document, ~1800 on the sonata, on every
+   *  edit). Detached layers are skipped: a dirty set can outlive a deletion. */
+  const layers = only
+    ? Array.from(only).filter((l) => l.isConnected !== false && l.ownerDocument === doc)
+    : Array.from(doc.querySelectorAll('layer'));
+  let rebuilt = 0;
+  for (const layer of layers) {
     /* ONE children snapshot per layer (Phase D): this runs over every layer in
        the document on every edit — ~1800 on the sonata — and used to materialise
        `layer.children` three separate times (content sum, mRest test, and the
@@ -79,6 +86,7 @@ export function normalizePlaceholders(
     if (matches) continue;                       // already correct — don't churn ids
 
     /* Otherwise rebuild: strip existing placeholders, append fresh trailing. */
+    rebuilt++;
     for (const c of existingPh) layer.removeChild(c);
     for (const p of desired) {
       const space = el(doc, 'space', {
@@ -90,4 +98,5 @@ export function normalizePlaceholders(
       layer.appendChild(space);
     }
   }
+  return rebuilt;
 }

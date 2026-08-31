@@ -105,7 +105,12 @@ interface SysProfile {
    *  getBBox already). */
   bboxTop: number;
   bboxBot: number;
-  measures: Array<{ id: string; relX: number; w: number }>;
+  /** Per-measure x/width, LAZY + memoised (A6). Only the context-line sanity
+   *  check and the HKL_INDEX_CHECK reference gate need these; the vertical gate
+   *  and the surgery itself need only x0/staffTop/bbox, and they cover most of
+   *  the ~14 systems a splice profiles. Each call is one getBBox per measure,
+   *  and every getBBox flushes layout over every mounted page. */
+  measures: () => Array<{ id: string; relX: number; w: number }>;
 }
 
 interface LiveSys extends SysProfile {
@@ -129,6 +134,13 @@ function systemProfile(sysEl: SVGGElement): SysProfile | null {
   const firstStaff = measures[0].querySelector(':scope > g.staff') as SVGGElement | null;
   if (!firstStaff) return null;
   const staffT = consolidate(firstStaff);
+  /* Top staff line = min over the staff's five direct-child <path>s.
+     DELIBERATELY not shortened to "the first path is the topmost" (A6, tried
+     and reverted 2026-08-31): that assumption removed 30 of 199 getBBox calls
+     per splice and changed the measured time by NOTHING — this cost is bound by
+     layout FLUSHES, not by call count (see the A6 note in the design doc). An
+     unverifiable assumption about Verovio's emission order, whose failure mode
+     is silently mis-positioned spliced systems, is not worth zero milliseconds. */
   let topLine = Infinity;
   for (const p of Array.from(firstStaff.querySelectorAll(':scope > path'))) {
     try {
@@ -145,10 +157,13 @@ function systemProfile(sysEl: SVGGElement): SysProfile | null {
     staffTop: topLine + staffT.ty + t.ty,
     bboxTop: sysBox.y + t.ty,
     bboxBot: sysBox.y + sysBox.height + t.ty,
-    measures: measures.map((m) => {
-      const b = m.getBBox();
-      return { id: m.id, relX: b.x - m0box.x, w: b.width };
-    }),
+    measures: (() => {
+      let memo: Array<{ id: string; relX: number; w: number }> | null = null;
+      return () => (memo ??= measures.map((m) => {
+        const b = m.getBBox();
+        return { id: m.id, relX: b.x - m0box.x, w: b.width };
+      }));
+    })(),
   };
 }
 
@@ -207,7 +222,8 @@ export class PageSystemSplicer {
        touches — all of them must be replaced together, exactly like the
        scroll splicer's run expansion), plus both lines adjacent to any moved
        boundary. */
-    let [rLo, rHi] = expandForSpanners(meiMeasures, changedRun.lo, Math.min(changedRun.hi, ids.length - 1));
+    const docVer = model.docVersion();
+    let [rLo, rHi] = expandForSpanners(meiMeasures, changedRun.lo, Math.min(changedRun.hi, ids.length - 1), docVer);
     [rLo, rHi] = expandForEndings(meiMeasures, rLo, rHi);
     let a = lineOf(rLo), b = lineOf(rHi);
     for (let i = 0; i < nLines; i++) {
@@ -254,7 +270,7 @@ export class PageSystemSplicer {
     let wHi = Math.min(nLines - 1, b + 1);
     for (let guard = 0; guard < 8; guard++) {
       let lo2: number, hi2: number;
-      [lo2, hi2] = expandForSpanners(meiMeasures, spans[wLo][0], spans[wHi][1] - 1);
+      [lo2, hi2] = expandForSpanners(meiMeasures, spans[wLo][0], spans[wHi][1] - 1, docVer);
       [lo2, hi2] = expandForEndings(meiMeasures, lo2, hi2);
       const nLo = lineOf(lo2), nHi = lineOf(hi2);
       if (nLo === wLo && nHi === wHi) break;
@@ -465,14 +481,15 @@ export class PageSystemSplicer {
           const rp = systemProfile(refSys[i]);
           const lp = systemProfile(liveSys[i]);
           if (!rp || !lp) throw new Error(`[page-splice] page ${pno} system ${i}: unreadable profile`);
-          if (rp.measures.length !== lp.measures.length ||
-              rp.measures.some((m, j) => m.id !== lp.measures[j].id)) {
+          const rpm = rp.measures(), lpm = lp.measures();
+          if (rpm.length !== lpm.length ||
+              rpm.some((m, j) => m.id !== lpm[j].id)) {
             throw new Error(`[page-splice] page ${pno} system ${i}: measure sequence diverged from reference`);
           }
-          for (let j = 0; j < rp.measures.length; j++) {
-            if (Math.abs(rp.measures[j].relX - lp.measures[j].relX) > TOL ||
-                Math.abs(rp.measures[j].w - lp.measures[j].w) > TOL) {
-              throw new Error(`[page-splice] page ${pno} system ${i} measure ${rp.measures[j].id}: x/width diverged from reference`);
+          for (let j = 0; j < rpm.length; j++) {
+            if (Math.abs(rpm[j].relX - lpm[j].relX) > TOL ||
+                Math.abs(rpm[j].w - lpm[j].w) > TOL) {
+              throw new Error(`[page-splice] page ${pno} system ${i} measure ${rpm[j].id}: x/width diverged from reference`);
             }
           }
           if (i > 0 && !headerPage) {
@@ -502,11 +519,12 @@ function nextSystemSibling(el: Element): Element | null {
  *  counterpart (unchanged content — must reproduce exactly, ± snap noise).
  *  Returns '' on match, else a human-readable divergence detail. */
 function profilesMatch(win: SysProfile, liveSys: SysProfile): string {
-  if (win.measures.length !== liveSys.measures.length) {
-    return `measure count ${win.measures.length} vs live ${liveSys.measures.length}`;
+  const wm = win.measures(), lm = liveSys.measures();
+  if (wm.length !== lm.length) {
+    return `measure count ${wm.length} vs live ${lm.length}`;
   }
-  for (let i = 0; i < win.measures.length; i++) {
-    const w = win.measures[i], l = liveSys.measures[i];
+  for (let i = 0; i < wm.length; i++) {
+    const w = wm[i], l = lm[i];
     if (w.id !== l.id) return `measure order ${w.id} vs live ${l.id}`;
     const dx = Math.abs(w.relX - l.relX), dw = Math.abs(w.w - l.w);
     if (dx > EPS || dw > EPS) {

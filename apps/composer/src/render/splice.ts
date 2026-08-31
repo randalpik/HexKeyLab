@@ -576,7 +576,32 @@ const SPANNER_NAMES = new Set([
   'slur', 'tie', 'hairpin', 'phrase', 'gliss', 'bracketSpan', 'octave', 'lv', 'dynam', 'dir', 'trill', 'pedal',
 ]);
 
-function spannerExtents(meiMeasures: Element[]): SpannerExtents {
+/** Last built extents, reusable while the document has not changed and the
+ *  same measure array is being described. One edit calls expandForSpanners
+ *  ~3 times (refill window + splice run + splice window), each otherwise
+ *  re-reading every measure in the document. */
+let extentsCache: {
+  ver: number; len: number; first: Element; last: Element; value: SpannerExtents;
+} | null = null;
+
+function spannerExtents(meiMeasures: Element[], docVer: number | null): SpannerExtents {
+  const n = meiMeasures.length;
+  if (docVer !== null && n > 0 && extentsCache
+      && extentsCache.ver === docVer && extentsCache.len === n
+      && extentsCache.first === meiMeasures[0]
+      && extentsCache.last === meiMeasures[n - 1]) {
+    return extentsCache.value;
+  }
+  const built = buildSpannerExtents(meiMeasures);
+  if (docVer !== null && n > 0) {
+    extentsCache = {
+      ver: docVer, len: n, first: meiMeasures[0], last: meiMeasures[n - 1], value: built,
+    };
+  }
+  return built;
+}
+
+function buildSpannerExtents(meiMeasures: Element[]): SpannerExtents {
   const n = meiMeasures.length;
   const noteMeasure = new Map<string, number>();
   const pending: Array<[Element, number]> = [];
@@ -623,8 +648,10 @@ function spannerExtents(meiMeasures: Element[]): SpannerExtents {
   return { spans, tieT, tieI };
 }
 
-export function expandForSpanners(meiMeasures: Element[], lo: number, hi: number): [number, number] {
-    const { spans, tieT, tieI } = spannerExtents(meiMeasures);
+export function expandForSpanners(
+  meiMeasures: Element[], lo: number, hi: number, docVer: number | null = null,
+): [number, number] {
+    const { spans, tieT, tieI } = spannerExtents(meiMeasures, docVer);
     for (let guard = 0; guard < meiMeasures.length; guard++) {
       let grew = false;
       for (const [minE, maxE] of spans) {

@@ -1082,15 +1082,26 @@ const PAGE_LINEBREAKS = {
     setup: `
       m.setCursor(0, 1);
       const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      /* The assertion needs >= 3 pages to exist, so a one-line merge cannot
+         shrink the scroll extent below the offset. 240 quarter-note inserts gave
+         that at the old unit-9/10 presets and only 2 pages once the crisp
+         presets moved to a constant unit 8 (~11 % smaller notation ⇒ ~19 % fewer
+         pages). Buying the third page with MORE CONTENT is the wrong lever —
+         the insert loop is superlinear, and 480 inserts cost 235 s on its own,
+         more than the entire rest of the suite. Shrink the PAPER instead:
+         pageScale scales only the page rectangle, so the same 240 inserts span
+         more pages at a fraction of the setup cost, and it keeps the fixture
+         off a page boundary regardless of future preset density changes. */
+      m.setPageScale(70);
       for (let i = 0; i < 240; i++) {
         const high = (Math.floor(i / 4) % 2) === 0;
         m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
       }
       r();
     `,
-    /* The 240-stop cursor walk scrolls every position into view across 3
-       pages (~130 s) and tests nothing about scroll preservation — covered
-       by every other fixture. */
+    /* The cursor walk would scroll every one of those stops into view across
+       several pages (minutes) and tests nothing about scroll preservation —
+       covered by every other fixture. */
     skipCursorTrace: true,
   },
 

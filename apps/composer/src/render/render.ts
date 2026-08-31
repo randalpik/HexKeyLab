@@ -125,6 +125,13 @@ class Renderer {
   /** Per-mode stashed DOM from the last time each mode was on screen (T1.2).
    *  Cleared by forceFullRerender() and by the string-entry render(). */
   private modeCache: Partial<Record<ViewMode, ModeCacheEntry>> = {};
+  /** Line partitions already computed, per layout budget (see partitionKey).
+   *  Guarded by the model's document version, so an entry is only reused on a
+   *  document that hasn't changed since — which makes a zoom round-trip skip
+   *  Verovio's castoff pass entirely. Deliberately survives
+   *  forceFullRerender/invalidate; staleness is handled by the version guard,
+   *  not by clearing. */
+  private partitionCache = new Map<string, { docVer: number; lines: string[]; pages: string[] }>();
   /** Mode the container's current content was rendered in (null before the
    *  first render). Drives the stash/restore branch in renderComposer. */
   private lastRenderedMode: ViewMode | null = null;
@@ -247,8 +254,9 @@ class Renderer {
     /* Crisp preset for this zoom: scale/unit chosen so the staff-space is whole
        pixels, whole-px line widths, and a pageMarginTop whose parity puts staff
        lines on the phase their width needs (½-pixel for 1px, integer for 2px).
-       The zoom LABEL (50/75/100) maps to the preset's actual Verovio scale
-       (50/70/100). pinExactScale() in render() then pins the device scale. */
+       The zoom label IS the Verovio scale now (50/75/100), and `unit` is
+       CONSTANT at 8 across all three so zooming cannot re-break the score.
+       pinExactScale() in render() then pins the device scale. */
     const preset = CRISP_PRESETS[this.zoom];
     return {
       ...BASE_OPTIONS,
@@ -272,9 +280,31 @@ class Renderer {
     return CRISP_PRESETS[this.zoom].scale;
   }
 
+  /** DEAD END (2026-08-31, do not retry without new evidence): compensating the
+   *  PAGE SIZE by `unit / 9` to make line breaking zoom-invariant.
+   *
+   *  The reasoning was sound and the arithmetic checked out — measures-per-line
+   *  looked governed by the music:paper ratio, and scaling the paper by the
+   *  unit ratio matched `contentWidth / unit` to five digits (208.79 at zoom 75
+   *  vs 208.78 at zoom 100). It still did not produce the same partition: the
+   *  sonata went from 134 lines (11 % too many) to 113 (4 % too few) where 118
+   *  was wanted. So Verovio's horizontal spacing contains terms that do NOT
+   *  scale with `unit`, and no paper size reproduces another unit's layout.
+   *  Fitting the factor to hit 118 would be reverse-engineering the spacing
+   *  model, which is permanently out of scope.
+   *
+   *  The route that IS guaranteed: make every LAYOUT input identical across
+   *  zooms (same `unit`, same page rectangle) and let only `scale` vary. Zoom 50
+   *  and zoom 100 already prove that works — identical unit 9 and pageWidth
+   *  2159, scale 50 vs 100, and byte-identical partitions — i.e. `scale` has no
+   *  layout effect at all. That requires re-deriving the zoom-75 crisp preset
+   *  to keep unit 9 (staff spacing 9 × scale/100 = 7 px needs scale 77.78,
+   *  fractional), which is a change to the crispness scheme and its fixtures.
+   *  See docs/composer-page-splice-design.md. */
   /** Scale a page-geometry block (pageWidth/pageHeight + the four margins) by the
-   *  current pageScale. Dimensions round to integers (Verovio units); margins
-   *  stay float (the top one is re-crisped by crispMarginTop in buildOptions). */
+   *  current pageScale AND the zoom's unit compensation. Dimensions round to
+   *  integers (Verovio units); margins stay float (the top one is re-crisped by
+   *  crispMarginTop in buildOptions). */
   private scalePageGeom(g: typeof PAGE_GEOM): typeof PAGE_GEOM {
     const f = this.pageScale;
     if (f === 1) return g;
@@ -339,11 +369,21 @@ class Renderer {
   /** Which breaks strategy lets Verovio CAST OFF this document, and the data
    *  to feed it. Section/system breaks alone → 'smart' + breaksSmartSb:0
    *  (honors them and auto-wraps). Page breaks → bake the natural system
-   *  breaks first, then 'encoded' (honors pages + the baked wraps). No manual
-   *  breaks → plain 'auto'. This is the pass that DECIDES a partition; with
-   *  line/page ownership it is a bootstrap whose output is read, not painted. */
-  private castoffPlan(mei: string): { data: string; strategy: 'auto' | 'smartSb0' | 'encoded' } {
-    if (mei.includes('<pb')) return { data: this.layoutBreaks(mei), strategy: 'encoded' };
+   *  breaks first, then **'line'**, which honors the user's `<pb>` AND still
+   *  paginates the rest by height. No manual breaks → plain 'auto'. This is the
+   *  pass that DECIDES a partition; with line/page ownership it is a bootstrap
+   *  whose output is read, not painted.
+   *
+   *  The `<pb>` case used to cast off with 'encoded', which paginates ONLY at
+   *  encoded breaks — so one Ctrl+B on the sonata produced TWO pages of 15 and
+   *  104 systems, overhanging the paper by 6 800 and 59 534 px (C1, measured by
+   *  `cb-userpb.js`). 'encoded' remains the strategy for PAINTING a pinned
+   *  document, where every page start is pinned by construction; it was never
+   *  right for discovering pagination. `layoutBreaks` still bakes the `<sb>`
+   *  first, because 'line' honors breaks verbatim and would otherwise render
+   *  each section-break-delimited chunk as one enormous system. */
+  private castoffPlan(mei: string): { data: string; strategy: 'auto' | 'smartSb0' | 'line' } {
+    if (mei.includes('<pb')) return { data: this.layoutBreaks(mei), strategy: 'line' };
     if (mei.includes('<sb')) return { data: mei, strategy: 'smartSb0' };
     return { data: mei, strategy: 'auto' };
   }
@@ -727,6 +767,10 @@ class Renderer {
     } else {
       const tookFull = this.renderPageComposer(model, viewStaves, preMei, heji);
       if (tookFull) this.lastFullMs.page = performance.now() - t0;
+      /* Whatever path ran, the partition now on screen is the right one for
+         this layout budget — cache it so returning to this zoom/page scale on
+         an unchanged document skips the castoff pass (A4). */
+      if (viewStaves == null) this.rememberPartition(model);
     }
     this.lastRenderedMode = this.viewMode;
     return true;
@@ -868,6 +912,55 @@ class Renderer {
    *  page-based getMEI (~100 ms), which is what makes this affordable.
    *  Anything unreadable falls back to painting the castoff layout and arming
    *  the old idle walk, i.e. exactly today's behaviour. */
+  /** Cache key for a line partition: the actual LAYOUT INPUTS, not the zoom
+   *  label.
+   *
+   *  Measures-per-line is governed by `pageWidth / unit` — `pageWidth` comes
+   *  from `scalePageGeom`, which scales by `pageScale` ONLY (never by zoom), and
+   *  `unit` is the staff half-space the crisp preset picks. Verovio's `scale`
+   *  is device magnification with no layout effect. So on the sonata zoom 50 and
+   *  zoom 100 produce the IDENTICAL 118-line partition (both `unit: 9`) while
+   *  zoom 75 produces 134 (`unit: 10` — music ~11 % larger against the same
+   *  page). Keying on (unit, pageWidth) rather than zoom therefore lets a
+   *  50 ↔ 100 switch REUSE the partition and skip the castoff, while 75
+   *  correctly misses. HEJI is in the key because its accidental glyphs change
+   *  widths, hence fills. The document is NOT — that is the `docVer` guard. */
+  private partitionKey(model: ComposerModel): string {
+    /* Keyed on the LAYOUT INPUTS, never the zoom label. `unit` is constant at 8
+       across every zoom preset (see render-presets.ts "WHY unit 8"), so in
+       practice this collapses to ONE entry for all zooms and every zoom change
+       is a cache hit — the castoff pass runs once per document, not once per
+       zoom. It stays in the key rather than being assumed: if a future preset
+       ladder ever varies `unit` again, the cache stays correct instead of
+       silently serving another unit's partition.
+       `pageScale` stays EXPLICIT rather than being folded into a derived
+       pageWidth: two scales can round to the same pageWidth but a different
+       pageHeight, which changes PAGINATION (and we cache page starts too), so
+       the coarser-but-safer term is the right one. */
+    const unit = CRISP_PRESETS[this.zoom].unit;
+    return `u${unit}|s${this.pageScale}|${model.getHejiEnabled() ? 'heji' : 'plain'}`;
+  }
+
+  /** Snapshot the committed partition for the current key, so returning to this
+   *  zoom/page scale on an unchanged document can skip the castoff pass. Called
+   *  after every page render that leaves ownership active — cheap (two id array
+   *  copies), and `forceFullRerender`'s invalidate deliberately does NOT clear
+   *  this, which is the whole point: the entry must outlive leaving the zoom. */
+  private rememberPartition(model: ComposerModel): void {
+    if (!this.pageBreaks.ownershipActive()) return;
+    const lines = this.pageBreaks.lineStarts();
+    if (lines.length <= 1) return;
+    this.partitionCache.set(this.partitionKey(model), {
+      docVer: model.docVersion(), lines, pages: this.pageBreaks.pageStarts(),
+    });
+    /* Bounded: one entry per (zoom, pageScale, heji) combination actually
+       visited. Trim anyway so a scripted sweep can't grow it without limit. */
+    if (this.partitionCache.size > 24) {
+      const oldest = this.partitionCache.keys().next().value;
+      if (oldest !== undefined) this.partitionCache.delete(oldest);
+    }
+  }
+
   private derivePageRender(
     model: ComposerModel, viewStaves: number[] | null, preMei: string | null,
     heji: { hejiEnabled: boolean },
@@ -878,6 +971,26 @@ class Renderer {
       this.renderPage(data, true);
       this.pageBreaks.invalidate();
       return;
+    }
+    /* A partition we already computed for this exact layout budget, on a
+       document that has not changed since, is still the right partition — so
+       skip the castoff `loadData` (~1 s on the sonata) and paint the pinned
+       render directly. A zoom round-trip is the common case. Anything that
+       doesn't hold falls through to the castoff below, and the render is
+       verified either way (verifyRenderedPartition + overflowingPage). */
+    const cached = this.partitionCache.get(this.partitionKey(model));
+    if (cached && cached.docVer === model.docVersion()
+        && this.pageBreaks.restorePartition(model, cached.lines, cached.pages)) {
+      const pinnedFromCache = this.pageBreaks.pinRenderMei(data);
+      if (pinnedFromCache !== null) {
+        this.renderPage(pinnedFromCache, true, 'encoded');
+        this.pageBreaks.verifyRenderedPartition(
+          this.container!, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
+        if (this.overflowingPage() === 0) return;
+        console.warn('[page-breaks] cached partition overflows its page — re-deriving');
+      }
+      this.partitionCache.delete(this.partitionKey(model));
+      this.pageBreaks.invalidate();
     }
     const plan = this.castoffPlan(data);
     /* Bootstrap pass: load only — never rendered to SVG, never painted. */

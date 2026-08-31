@@ -142,21 +142,30 @@ const mkNote = { q: 0, r: 0, pname: 'b', accid: '', oct: 4, midi: 59, colorHex: 
 // 1: mid-line content delete (the modal edit)
 await runEdit('delete-mid-line', () => { curAt(100); return model.deleteAtCursor(); }, 'spliced');
 // 2: second edit in the same region (round-trip-ish: delete leaves room, insert fills it)
+// Bar 100 is dense 16ths and bar 101 is FULL, so the inserted duration must fit
+// the space the delete freed: "content landing past the cursor's measure
+// requires that target layer empty, else reject" (architecture/composer.md).
+// A quarter here asked for 12 ticks of overflow into a full measure and was
+// correctly refused, leaving editOk false for months.
 await runEdit('reinsert-mid-line', () => {
   curAt(100);
-  if (!model.deleteAtCursor()) return false;
+  if (!model.deleteAtCursor()) return false;   // frees one 16th = 4 ticks
   curAt(100);
-  return model.insertChordAtCursor({ notes: [mkNote], duration: '4', dots: 0 });
+  return model.insertChordAtCursor({ notes: [mkNote], duration: '16', dots: 0 });
 }, 'spliced');
 // 3: edit at a line-start measure (boundary may move within the block)
 await runEdit('delete-line-start', () => { curAt(lineStartMi(30)); return model.deleteAtCursor(); }, 'spliced');
-// 4: widening edit (delete a quarter, insert two eighths → width ripple)
+// 4: widening edit (delete one eighth, refill it as rest + note → width ripple)
+// Bar 151 is FULL, so the two inserted pieces must together fit the 8 ticks the
+// delete freed — an 8th rest ALONE already refilled the measure, so the 8th
+// chord that followed asked for 8 ticks of overflow into a full measure and was
+// correctly refused (see the note on edit 2).
 await runEdit('insert-rest-ripple', () => {
   curAt(150);
-  if (!model.deleteAtCursor()) return false;
+  if (!model.deleteAtCursor()) return false;   // frees one 8th = 8 ticks
   curAt(150);
-  if (!model.insertRestAtCursor({ duration: '8', dots: 0 })) return false;
-  return model.insertChordAtCursor({ notes: [mkNote], duration: '8', dots: 0 });
+  if (!model.insertRestAtCursor({ duration: '16', dots: 0 })) return false;
+  return model.insertChordAtCursor({ notes: [mkNote], duration: '16', dots: 0 });
 }, 'any');
 // 5: edit inside the volta zone (ending closure)
 await runEdit('edit-near-volta', () => {
@@ -192,6 +201,11 @@ out.summary = {
   edits: battery.length,
   spliced: battery.filter((e) => e.outcome === 'spliced').length,
   allReferenceOk: battery.every((e) => e.reference && e.reference.ok),
+  /* Every edit must actually APPLY. This was recorded but unasserted, so two
+     entries whose insert the planner correctly refused (over-long duration
+     against a full next measure) read as passing for months. */
+  allEditsApplied: battery.every((e) => e.editOk),
+  editsNotApplied: battery.filter((e) => !e.editOk).map((e) => e.name),
   spliceWallMs: battery.filter((e) => e.outcome === 'spliced').map((e) => e.wallMs),
   fullWallMs: battery.filter((e) => e.outcome !== 'spliced').map((e) => e.wallMs),
 };

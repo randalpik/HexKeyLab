@@ -159,3 +159,58 @@ Phase D (edit-path O(edit)) workflow, 2026-08-30:
   surfaces as a few hundred fixtures failing with
   `Cannot read properties of undefined (reading 'assertPlaceholderInvariant')`.
   That signature means "the page reloaded", not "the change broke everything".
+
+Phase D pass 4 probes (2026-08-31):
+
+- **cb-editok.js** — why an edit doesn't apply. Reproduces one battery edit
+  sequence per run (`--arg reinsert:before|reinsert:after|ripple:before|ripple:after`,
+  pairs with `--screenshot`) and reports the tick arithmetic at the refused
+  call: the target measure's free ticks, the NEXT measure's free ticks, and
+  whether the documented rule ("content landing past the cursor's measure
+  requires that target layer empty") permits the insert. This is the probe that
+  showed the two `editOk: false` battery entries were asking for overflow into
+  full measures — a test bug, not a model bug.
+- **cb-zoomcache.js** — the A4 gate. Walks 50 → 100 → 50 → 100 (every step a
+  REAL zoom change; `setZoom` to the current zoom renders nothing, which
+  invalidated the first version of this probe) and instruments the decision
+  points — `PageLineBreaks.restorePartition` for a cache hit,
+  `adoptFromCastoff` for a real castoff — rather than inferring from `loadData`
+  counts. Expect: first visit castoff, return visit cache hit with an identical
+  partition hash, and a stale entry (after an edit) re-deriving. NOTE the
+  subtlety that bit the first run: an edit's own re-render refreshes the CURRENT
+  zoom's cache entry, so only the OTHER zoom's entry is stale afterwards.
+- **cb-zoominvariant.js** — forces a real castoff at every zoom preset and at
+  two page scales, and hashes each partition. The probe that refuted "zoom is
+  pure magnification, so it can leave the cache key": zoom 75 yields 134 lines
+  where 50 and 100 both yield 118.
+
+**Measurement discipline for `cb-scale.js` (learned the hard way, 2026-08-31):**
+single steady-state readings vary 166–206 ms on the same code. A 15 ms
+difference between two single runs is NOISE. Run it **3× sequentially** (not in
+parallel — concurrent Chromium instances contend for CPU and inflate every
+bucket) and compare medians, and prefer the CALL COUNTS (`querySelectorAll`,
+`XMLSerializer`, `getBBox` `n`) over the millisecond figures when judging
+whether a change did what it intended: counts are deterministic, times are not.
+This is how the A6 attempt was correctly identified as a no-op — 199 → 169
+getBBox calls with the time unchanged, which is what "flush-bound, not
+call-bound" looks like in the data.
+
+C1 (user page break) probes, 2026-08-31:
+
+- **cb-userpb.js** — the C1 repro and gate. Inserts a user `<pb>` at bar 60 via
+  `togglePageBreakAt` (what Ctrl+B calls), then reports page count, systems per
+  page, and any page whose last system hangs past the paper, before / with /
+  after the break — plus an ownership block (does our page list match the DOM, is
+  the break measure one of our page starts, does `verifyRenderedPartition` pass).
+  Pre-fix: 37 → 2 pages with 6 800 px and 59 534 px overhang. Post-fix: 37 → 38,
+  zero overhang, but `ownedPages` one short — the open half of C1.
+- **cb-pbadopt.js** — why adoption misses the break's page. Dumps the page-based
+  MEI structure (pages, systems per page, pages whose first system has no
+  measure, where the break lands) for the SAME data under `line` vs `encoded`
+  vs raw-without-sb-baking. This is what showed `'line'` putting the user break
+  mid-page while `'encoded'` breaks there correctly.
+- **cb-pbconverge.js** — does the resulting mismatch settle or loop? Five
+  successive no-change renders plus an edit near the break, counting
+  `[page-breaks]` warnings each round. Expect: converged (0 warnings after the
+  first), pagination stable, and the edit safely skipping with
+  `window paginated` rather than splicing.

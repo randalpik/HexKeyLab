@@ -532,7 +532,15 @@ export class PageLineBreaks {
   adoptFromCastoff(model: ComposerModel, tk: VerovioToolkit): boolean {
     const read = partitionFromLayout(tk);
     if (!read) return false;
-    const { lines, pages } = read;
+    return this.adoptPartition(model, read.lines, read.pages);
+  }
+
+  /** Commit `lines`/`pages` as the owned partition against the CURRENT document:
+   *  reset state, capture the structural + per-measure signature baseline (so a
+   *  later refill diffs against the document this partition describes), and
+   *  verify every id still exists. Shared by castoff adoption and by the
+   *  renderer's partition cache (`restorePartition`). */
+  private adoptPartition(model: ComposerModel, lines: string[], pages: string[]): boolean {
     if (lines.length <= 1) return false;   // single-line docs are never owned
     this.invalidate();
     this.userBreakSig = computeUserBreakSig(model);
@@ -544,9 +552,29 @@ export class PageLineBreaks {
        it would be unplaceable. */
     const present = new Set(measureIds(meiMeasures));
     if (!lines.every((id) => present.has(id))) return false;
+    if (!pages.every((id) => present.has(id))) return false;
     this.startIds = lines;
     this.pageStartIds = pages;
     return true;
+  }
+
+  /** The committed line partition (line-start measure ids). Empty when nothing
+   *  is owned. The renderer snapshots this into its per-(zoom, pageScale)
+   *  partition cache so a zoom round-trip need not re-run the castoff pass. */
+  lineStarts(): string[] {
+    return this.startIds ? this.startIds.slice() : [];
+  }
+
+  /** Re-adopt a partition the renderer cached for this zoom/pageScale, instead
+   *  of re-deriving it with a full castoff `loadData` (~1 s on the sonata). The
+   *  caller is responsible for only offering a partition whose document is
+   *  unchanged (it keys on `model.docVersion()`); this still re-verifies every
+   *  id and rebuilds the signature baseline, and the render that follows is
+   *  checked by `verifyRenderedPartition` + the page-overflow test exactly like
+   *  a freshly adopted one — so a stale offer degrades to a derive, never to a
+   *  wrong layout. */
+  restorePartition(model: ComposerModel, lines: string[], pages: string[]): boolean {
+    return this.adoptPartition(model, lines, pages);
   }
 
   /** Arm lazy partition adoption right after a derive render: the live toolkit
@@ -936,7 +964,7 @@ export class PageLineBreaks {
   ): { sigW: number } | null {
     let lo = Math.max(0, needLo - 2);
     let hi = Math.min(ids.length - 1, needHi + 1);
-    [lo, hi] = expandForSpanners(meiMeasures, lo, hi);
+    [lo, hi] = expandForSpanners(meiMeasures, lo, hi, model.docVersion());
     [lo, hi] = expandForEndings(meiMeasures, lo, hi);
     if (hi - lo + 1 > WINDOW_CAP) return null;
     const tWin = performance.now();
