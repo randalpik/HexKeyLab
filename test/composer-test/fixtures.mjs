@@ -1238,6 +1238,25 @@ const PAGE_SPLICE = {
     `,
   },
 
+  /* B3: Verovio draws an end-of-line COURTESY signature when the NEXT line
+   * begins with a clef/key/meter change. A splice window that stops at that
+   * boundary renders its last line without the courtesy the live page has — a
+   * width-only divergence (43-347 units on the sonata) that the context check
+   * refuses on, and 9 of the 11 such refusals measured by cb-sweep.js. The
+   * window must pull in the line that GENERATES the courtesy. Asserted via
+   * FIXTURE_ASSERTIONS.pageSystemSpliceCourtesySig. */
+  pageSystemSpliceCourtesySig: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 200; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
   /* B5: page view mounts pages lazily, so a line the splice needs is often a
    * placeholder. That used to refuse outright — the biggest refusal class in
    * real use (19 of 39 on the coverage sweep, invisible to the battery because
@@ -8263,6 +8282,56 @@ export const FIXTURE_ASSERTIONS = {
         const shrunk = step([mk('b', 4)], 'shrink');
         if (!shrunk.ok) return shrunk;
         if (!(shrunk.g.sysTop < grown.g.sysTop - 1)) return { ok: false, detail: 'header system did not move back up on shrink' };
+        return { ok: true };
+      })()` },
+  ],
+  pageSystemSpliceCourtesySig: [
+    { name: 'an edit beside a line that begins a key change still splices (the window pulls in the courtesy-generating line)',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        let startIds = pb['startIds'];
+        if (startIds.length < 5) return { ok: false, detail: 'need >= 5 lines, got ' + startIds.length };
+        /* Put a key change at the START of a line, so the PREVIOUS line gets an
+           end-of-line courtesy signature — the thing the window must reproduce. */
+        const sigLine = 3;
+        const ids0 = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const sigMi = ids0.indexOf(startIds[sigLine]);
+        if (sigMi < 0) return { ok: false, detail: 'line start not in model' };
+        m.setKeySigAt(sigMi, '3s', 'major');
+        H.reRender();
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        /* The key change may re-break the score; re-read the partition and find
+           the line that now begins it. */
+        startIds = pb['startIds'];
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const sigId = ids[sigMi];
+        const lineOfSig = startIds.indexOf(sigId);
+        if (lineOfSig < 3) return { ok: false, detail: 'key change is not a line start (line ' + lineOfSig + ') — fixture cannot pose the case' };
+        /* Edit TWO lines before the key change. The line between them is then
+           the compared context line, its last measure carries the courtesy, and
+           the line that GENERATES that courtesy sits just beyond the window —
+           which is exactly the case that used to diverge. Editing the line
+           directly before the change does NOT pose it: the generating line is
+           already the context line, hence already in the window. */
+        const target = lineOfSig - 2;
+        const mi = ids.indexOf(startIds[target]);
+        if (mi < 0) return { ok: false, detail: 'target line start not in model' };
+        m.setCursor(m.getMeasureStartCursor(1, mi + 1), 1);
+        const ver = m.docVersion();
+        if (!m.deleteAtCursor()) return { ok: false, detail: 'delete rejected' };
+        if (m.docVersion() === ver) return { ok: false, detail: 'delete did not change the document' };
+        H.reRender();   /* HKL_INDEX_CHECK verifies against a full re-engrave */
+        if (/diverged/.test(ps.lastSkipReason || '')) {
+          return { ok: false, detail: 'context line diverged — the courtesy line was not pulled into the window: ' + ps.lastSkipReason };
+        }
+        if (ps.lastOutcome !== 'spliced') {
+          return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
+        }
         return { ok: true };
       })()` },
   ],

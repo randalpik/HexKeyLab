@@ -4755,3 +4755,62 @@ that measures realistic mounting.
 `apps/composer/src/main.ts` (schedule on both cursor-update paths),
 `test/composer-inspect/phasec/cb-splice-battery.js`,
 `test/composer-test/fixtures.mjs` (`pageSystemSpliceEnsureMount` pins it off).
+
+## 2026-08-31 — B3: the splice window pulls in the line that GENERATES an end-of-line courtesy signature
+
+**Context**: `context line ... diverged` was the last large refusal class — 11
+of the 20 remaining on the coverage sweep, every one reporting `dRelX=0.0` with
+`dW` between 43 and 347 units.
+
+**The design doc's framing was wrong.** It described B3 as *"a boundary moving
+next to a clef/key change re-spaces the PREVIOUS line's end-of-line courtesy
+signatures"*, with the fix being to re-splice line k−1. But all 11 refusals have
+**`refillLines: 0`** — no boundary moved at all. The real mechanism is a
+sub-document artifact: Verovio draws an end-of-line courtesy signature because
+of the line that FOLLOWS, and the splice window does not contain that line, so
+its last line renders without a courtesy the live page has. Width-only, which is
+exactly the `dRelX=0.0, dW≠0` signature.
+
+**Correlated before fixing** (`cb-courtesy.js`): 9 of the 11 have a
+clef/key/meter change beginning the line immediately beyond the window's bottom
+edge. Of the other two, one is a clef at the window's top edge and one is the
+document's final line.
+
+**Picked**: after the window is computed, extend it while the line just beyond
+begins a signature change — bounded at two, because the sonata has runs of
+consecutive meter changes that would otherwise chain the window forward
+indefinitely. `beginsSignatureChange` recognises a section-level `<scoreDef>`
+before the measure, or a `clef`/`keySig`/`meterSig` ahead of any event in its
+first staff (a signature AFTER the first note is mid-measure and generates no
+courtesy). Extending costs at most one or two lines on ~22 % of windows, and
+adds no comparisons — the context check still only compares the two lines
+adjacent to the replaced set, which are interior.
+
+**Rejected**: re-splicing k−1 (the doc's plan — solves a case that does not
+occur); teaching the synthetic trailer to carry the next line's signature change
+(cheaper in window size, but reproducing an arbitrary clef/key/meter change on a
+synthetic measure is far more fragile than including the real line).
+
+**Measured** (sweep, 116 lines): diverged refusals **11 → 4**, hit rate
+**82.6 % → 88.7 %** (95 → 102 splices; 102 of the 107 edits that actually change
+the document). Splice median unchanged at 237 ms. The battery recovers
+`insert-rest-ripple` — the one edit the one-pass window rule had cost — and is
+back to **7/8 spliced**, all reference-clean over 30 pages; the only remaining
+fallback there is the by-design section-header line.
+
+**Fixture**: `pageSystemSpliceCourtesySig` puts a key change at a line start and
+edits **two** lines before it, so the courtesy-carrying line is the compared
+context line and the line generating that courtesy sits just beyond the window.
+Verified to FAIL pre-fix with `context line below diverged (dW=101.0)`. Worth
+noting: the first version edited the line *directly* before the change and
+passed on both code states — the generating line was already the context line,
+hence already inside the window. A fixture for a boundary condition has to be
+checked against the unfixed build, or it silently tests nothing.
+
+**Remaining** (4 of 115): two more `context line below diverged` (dW 49 and
+347), one top-edge `dRelX=36.0`, and the document's last line. Different or
+compound causes; not chased.
+
+**Where**: `apps/composer/src/render/pagesplice.ts` (`beginsSignatureChange`,
+window extension), `test/composer-test/fixtures.mjs`,
+`test/composer-inspect/phasec/cb-courtesy.js`.

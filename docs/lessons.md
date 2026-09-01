@@ -2005,3 +2005,42 @@ is ~138 ms — `mountPage` is a `renderToSVG` *plus* the entire per-page post pa
 injection, theme tagging, header/footer, section headers, volta styling,
 `snapSystems`). An estimate written next to an unimplemented item is a guess;
 re-measure it the moment it becomes load-bearing.
+
+## A sub-document cannot know about the context that generated its edges (2026-08-31)
+
+The splice's last remaining large refusal class was a context line whose measure
+widths differed from live by 43–347 units, always with `dRelX=0.0` — same
+positions, different width. The cause: Verovio draws an **end-of-line courtesy
+signature** because of the line that FOLLOWS, and a windowed sub-document does
+not contain that line, so it renders the boundary without a courtesy the live
+page has. The window must include the line that *generates* the artifact, not
+merely the line the artifact appears on.
+
+This is the same shape as two artifacts the window already handled — the
+score-start treatment (absorbed by a synthetic leader) and the end-of-score
+final barline (absorbed by a synthetic trailer). The general rule: **a windowed
+re-render must contain every element whose PRESENCE changes how the window's own
+edges draw, which is not the same set as the elements that appear inside it.**
+
+Two process notes. The design doc had recorded this item as "a boundary MOVING
+next to a clef/key change, fixed by re-splicing k−1" — but every measured
+refusal had `refillLines: 0`, i.e. no boundary moved at all. A plausible
+mechanism written down before it was measured sat unchallenged for a day and
+pointed at the wrong fix. And correlating before implementing (`cb-courtesy.js`:
+does a signature change begin the line just beyond the window?) explained 9 of
+11 refusals up front, which is what made the fix a three-line change instead of
+a search.
+
+## A boundary-condition fixture must be run against the UNFIXED build (2026-08-31)
+
+The first version of the B3 fixture put a key change at a line start and edited
+the line directly before it. It passed — on both code states. The reason is
+exactly the subtlety the fix is about: editing the line *directly* before the
+change makes the generating line the context line, which is already inside the
+window, so the divergence never arises. Moving the edit one line further back
+posed the real case, and the fixture then failed pre-fix with the expected
+`dW=101.0`.
+
+A fixture written from a description of a bug tests the description. Stash the
+fix and run it: if it still passes, it is not a regression guard, whatever its
+name says.
