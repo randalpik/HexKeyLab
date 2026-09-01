@@ -1238,6 +1238,24 @@ const PAGE_SPLICE = {
     `,
   },
 
+  /* B5: page view mounts pages lazily, so a line the splice needs is often a
+   * placeholder. That used to refuse outright — the biggest refusal class in
+   * real use (19 of 39 on the coverage sweep, invisible to the battery because
+   * it pre-mounts everything). The splice must now mount such a page from the
+   * already-loaded pre-edit layout and proceed. Asserted via
+   * FIXTURE_ASSERTIONS.pageSystemSpliceEnsureMount. */
+  pageSystemSpliceEnsureMount: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 400; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
   /* B1 safety net: a dy-cascade that would push its page past the paper must
    * hand PAGINATION back (derive + re-adopt) rather than draw a clipped page —
    * Verovio does not re-paginate under pinned <pb>. Asserted via
@@ -8245,6 +8263,59 @@ export const FIXTURE_ASSERTIONS = {
         const shrunk = step([mk('b', 4)], 'shrink');
         if (!shrunk.ok) return shrunk;
         if (!(shrunk.g.sysTop < grown.g.sysTop - 1)) return { ok: false, detail: 'header system did not move back up on shrink' };
+        return { ok: true };
+      })()` },
+  ],
+  pageSystemSpliceEnsureMount: [
+    { name: 'an edit whose context line sits on an UNMOUNTED page mounts it and splices (B5)',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        /* Read pageVirt AFTER those renders: a full render REPLACES the object,
+           and un-mounting a stale copy leaves the renderer's mounted set
+           disagreeing with the DOM — an inconsistency the splicer cannot see. */
+        const st = H.renderer['pageVirt'];
+        if (!st || st.pageCount < 2) return { ok: false, detail: 'need >= 2 pages, got ' + (st ? st.pageCount : 0) };
+        const startIds = pb['startIds'];
+        const at = new Map(startIds.map((id, i) => [id, i]));
+        const pageStartLines = pb.pageStarts().map((id) => at.get(id)).filter((x) => x != null).sort((x, y) => x - y);
+        if (pageStartLines.length < 2) return { ok: false, detail: 'no second page start' };
+        /* Edit the LAST line of page 1: its context-below is page 2's first
+           line, so the splice cannot proceed without page 2 mounted. */
+        const target = pageStartLines[1] - 1;
+        if (target < 1) return { ok: false, detail: 'page 1 has too few lines' };
+        /* Force page 2 back to a placeholder, exactly as renderPage builds one. */
+        const p2 = document.querySelector('#score .score-page[data-page="2"]');
+        if (!p2) return { ok: false, detail: 'no page 2 element' };
+        p2.innerHTML = '';
+        p2.classList.add('score-page-pending');
+        p2.style.width = st.pageW + 'px';
+        p2.style.height = st.pageH + 'px';
+        st.mounted.delete(2);
+        if (!p2.classList.contains('score-page-pending')) return { ok: false, detail: 'could not un-mount page 2' };
+        if (st.stalePages.has(2)) return { ok: false, detail: 'page 2 is stale — the fixture cannot test the cheap-mount path' };
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const mi = ids.indexOf(startIds[target]) + 1;
+        m.setCursor(m.getMeasureStartCursor(1, mi), 1);
+        if (!m.deleteAtCursor()) return { ok: false, detail: 'delete rejected' };
+        H.reRender();   /* HKL_INDEX_CHECK verifies the result against a full re-engrave */
+        if (/not mounted/.test(ps.lastSkipReason || '')) {
+          return { ok: false, detail: 'refused on a mount miss instead of mounting: ' + ps.lastSkipReason };
+        }
+        if (ps.lastOutcome !== 'spliced') {
+          return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
+        }
+        if (!H.renderer['pageVirt'].mounted.has(2)) {
+          return { ok: false, detail: 'page 2 was never mounted, yet the splice claimed to land' };
+        }
+        const still = document.querySelector('#score .score-page[data-page="2"]');
+        if (still.classList.contains('score-page-pending') || !still.querySelector('g.system')) {
+          return { ok: false, detail: 'page 2 is still a placeholder in the DOM' };
+        }
         return { ok: true };
       })()` },
   ],

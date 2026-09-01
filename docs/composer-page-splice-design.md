@@ -1246,13 +1246,12 @@ movement instead of refusing it, battery 6/8 → 7/8); and a long-silent TEST bu
 
 Read this section first; the per-area lists below have the detail.
 
-1. **B5 — ensure-mount before the mounted gate.** Now the DOMINANT refusal by
-   a wide margin: 19 of 39 on the realistic-mounting sweep, where it was
-   invisible before because the battery pre-mounted everything. An edit whose
-   spliced or context lines sit on unmounted pages falls back today; mounting
-   them from the pre-edit layout (~50 ms each) when `pageVirt.tkCurrent` would
-   take the sweep hit rate from 66 % to roughly 89 % of edits that actually
-   change the document. Gate: `cb-sweep.js`.
+1. **B3 — boundary courtesy signatures.** Now the largest real refusal class:
+   10 of the 20 remaining on the sweep, all `context line diverged` with
+   `dRelX=0.0` and `dW` 43–347 units — the neighbour line's LAST measure is a
+   different width because a clef/key change re-spaces its end-of-line courtesy
+   signatures. The fix is to re-splice line k−1 instead of falling back. It
+   also costs the battery one edit today (`insert-rest-ripple`).
 2. **B4 remainder — the `section-header line` refusal and line 0.** The reserve
    half of B4 is DONE (see "Section headers"): the plan now reasons in Verovio
    coordinates, titles travel with their systems, and header pages are no longer
@@ -1399,13 +1398,16 @@ string means a shared render path started warning.
       Remaining: the `section-header line` refusal (replaced run contains a
       header measure) and the line-0 exclusion (probe k=0, ~1 px score-start
       divergence). The k=59 zone is handled structurally by the context check.
-- [ ] **B5. Ensure-mount before the mounted gate** — ⭐ **now the top coverage
-      item.** An edit whose spliced or context lines sit on unmounted pages
-      falls back today. When `pageVirt.tkCurrent`, mount them from the pre-edit
-      layout (~50 ms each) instead of skipping. Was invisible until
-      `cb-sweep.js` stopped pre-mounting: **19 of 39 refusals**, and the only
-      large class left. Removing it should take the sweep hit rate from 66 % to
-      roughly 89 % of edits that change the document.
+- [x] **B5. Ensure-mount before the mounted gate** — DONE 2026-08-31. The
+      splice now mounts a needed page from the already-loaded PRE-edit layout
+      (`Renderer.mountPageIfCheap`, ~50 ms) instead of refusing, guarded on
+      `tkCurrent` (else the mount would reload the whole document) and on the
+      page not being stale (else it would render POST-edit content into a DOM
+      the splice is about to patch). The page of a line comes from the pinned
+      partition, not the DOM — an unmounted line has no element to look up.
+      Sweep hit rate **66.1 % → 82.6 %**, mount refusals **19 → 0**; 95 of 107
+      edits that actually change the document now splice. Fixture
+      `pageSystemSpliceEnsureMount`.
 
 ### C. Known defects
 
@@ -1472,6 +1474,15 @@ string means a shared render path started warning.
 
 ## Status log
 
+- 2026-08-31 — **B5 implemented** (ensure-mount before the mounted gate). With
+  realistic lazy mounting only 2–6 of 30 pages are live, so a context line —
+  usually the one below, at a page boundary — was frequently a placeholder and
+  refused outright. The splice now mounts it from the loaded pre-edit layout,
+  guarded on `tkCurrent` and non-staleness. Sweep hit rate **66.1 % → 82.6 %**,
+  mount refusals 19 → 0, 95/107 real edits splice; splice median 245 → 266 ms
+  (the mount, paid on edits that previously cost ~1.2 s). Suite 344/344,
+  battery unchanged 6/8 all reference-clean. B3 (courtesy signatures) is now
+  the largest remaining class at 10 of 20.
 - 2026-08-31 — **Coverage measured by SWEEP, and two defects it exposed.** Max
   reported that many systems refuse any splice and that every deletion nudged
   the view down a few px; neither was observable — the battery pre-mounts all

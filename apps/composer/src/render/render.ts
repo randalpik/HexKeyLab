@@ -1238,7 +1238,31 @@ class Renderer {
       postProcess: (el: HTMLElement) => this.postProcessRendered(el),
       decorateHost: (el: HTMLElement) => styleVoltaNumbers(el),
       snapPage: (el: HTMLElement) => this.snapSystems(el),
+      ensurePageMounted: (p: number) => this.mountPageIfCheap(p),
     };
+  }
+
+  /** Mount page `p` for the splicer (B5), but ONLY when doing so is cheap and
+   *  yields the PRE-EDIT layout. Two conditions, both load-bearing:
+   *
+   *  - `tkCurrent` — the toolkit already holds this page layout, so the mount
+   *    is one `renderToSVG` (~50 ms). Without it `ensureTkHoldsPageLayout`
+   *    would reload the whole document (~600 ms), which is most of what the
+   *    fallback full render costs anyway.
+   *  - not `stalePages.has(p)` — a page an earlier splice edited would be
+   *    re-serialized from the CURRENT model, i.e. rendered POST-edit, and
+   *    dropped into a DOM the splice is about to patch with post-edit systems.
+   *    The splicer needs every live system it measures to be pre-edit.
+   *
+   *  Returns whether the page is mounted afterwards; false simply means the
+   *  splice refuses as it did before. */
+  private mountPageIfCheap(p: number): boolean {
+    const st = this.pageVirt;
+    if (!st || !(p >= 1) || p > st.pageCount) return false;
+    if (st.mounted.has(p)) return true;
+    if (!st.tkCurrent || st.stalePages.has(p)) return false;
+    this.mountPage(p);
+    return st.mounted.has(p);
   }
 
   /** Context the page line-break owner drives Verovio through. */

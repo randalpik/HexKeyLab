@@ -99,6 +99,10 @@ export interface PageSpliceCtx {
   /** Renderer.snapSystems — re-land staff lines on the device-pixel grid for
    *  an affected page after the surgery (idempotent). */
   snapPage: (pageEl: HTMLElement) => void;
+  /** Mount a lazily-virtualized page so its systems can be measured and
+   *  spliced (B5). Returns false when mounting would be expensive or would
+   *  draw POST-edit content — the splice then refuses, as it always did. */
+  ensurePageMounted: (page: number) => boolean;
 }
 
 interface SysProfile {
@@ -334,6 +338,40 @@ export class PageSystemSplicer {
        page-mount injections (NOT idempotent) — never splice them. */
     for (let i = spans[a][0]; i < spans[b][1] && i < ids.length; i++) {
       if (meiMeasures[i].hasAttribute('data-hkl-section-title')) return skip('section-header line');
+    }
+
+    /* B5 — ensure-mount before the mounted gate. Page view mounts pages
+       lazily, so in real use only a handful are live (2-6 on the sonata) and a
+       line the splice needs is often still a placeholder. That used to refuse
+       outright, which made mount misses the single biggest refusal class once
+       the coverage sweep stopped pre-mounting everything (19 of 39). Mounting
+       from the already-loaded pre-edit layout costs ~50 ms against the ~1.2 s
+       full render it avoids.
+
+       The page a line sits on comes from the PARTITION, not the DOM — the
+       measure of an unmounted line has no element to look up. Pagination is
+       pinned and unchanged here (`paginationHeld` is checked by the caller),
+       so page starts describe the mounted DOM too. */
+    const pageStartLines: number[] = [];
+    {
+      const at = new Map(newStartIds.map((id, i) => [id, i]));
+      for (const id of refill.newPageStartIds) {
+        const li = at.get(id);
+        if (li !== undefined) pageStartLines.push(li);
+      }
+      pageStartLines.sort((x, y) => x - y);
+    }
+    const pageOfLine = (li: number): number => {
+      let p = 1;
+      for (let i = 0; i < pageStartLines.length; i++) if (pageStartLines[i] <= li) p = i + 1;
+      return p;
+    };
+    if (pageStartLines.length) {
+      /* Everything the splice will MEASURE live: the replaced lines plus the
+         two context lines. The window itself renders offscreen. */
+      const want = new Set<number>();
+      for (let k = Math.max(0, a - 1); k <= Math.min(nLines - 1, b + 1); k++) want.add(pageOfLine(k));
+      for (const p of want) ctx.ensurePageMounted(p);
     }
 
     /* Live systems to replace, located by the PRE-edit partition (that is

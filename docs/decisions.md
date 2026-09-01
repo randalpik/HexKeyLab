@@ -4633,3 +4633,54 @@ courtesy-signature family.
 `apps/composer/src/render/pagesplice.ts` (one-pass replaced set + window,
 `lastRun` diagnostic, cap comments), `test/composer-inspect/phasec/`
 (cb-sweep, cb-pagebox, cb-window-walk, cb-spanchain), docs/lessons.md.
+
+## 2026-08-31 — B5: the page splice mounts a lazily-virtualized page instead of refusing
+
+**Context**: once `cb-sweep.js` stopped pre-mounting, mount misses became the
+largest refusal class — 19 of 39 after the one-pass window rule landed. In real
+use only 2–6 of the sonata's 30 pages are mounted, so a splice's context line
+(usually the one BELOW, at a page boundary) is frequently still a placeholder.
+
+**Picked**: `PageSpliceCtx.ensurePageMounted(page)` → `Renderer.mountPageIfCheap`,
+called for every page the splice will MEASURE (the replaced lines plus the two
+context lines) before the live-system lookups. Two guards, both load-bearing:
+
+- **`tkCurrent`** — the toolkit already holds this page layout, so the mount is
+  one `renderToSVG` (~50 ms). Without it `ensureTkHoldsPageLayout` reloads the
+  whole document (~600 ms), which is most of what the fallback costs anyway.
+- **not `stalePages.has(p)`** — a page an earlier splice edited would be
+  re-serialized from the CURRENT model, i.e. rendered POST-edit, into a DOM the
+  splice is about to patch with post-edit systems. Every live system the
+  splicer measures must be pre-edit.
+
+Either guard failing simply refuses, exactly as before.
+
+**The page of a line comes from the PARTITION, not the DOM** — an unmounted
+line has no element to look up. Pagination is pinned and `paginationHeld` is
+checked by the caller, so `newPageStartIds` describes the mounted DOM too.
+
+**Measured** (sweep, 116 lines): hit rate **66.1 % → 82.6 %**, `changed line
+not mounted` and `context line below not mounted` **19 → 0**. Excluding the 8
+rows where the edit never changed the document, that is **95 of 107 real edits
+(88.8 %)**. Splice median 245 → 266 ms and max 389 → 534 ms — the mount cost,
+paid on the edits that previously cost ~1.2 s. Battery unchanged at 6/8, all
+reference-clean (it pre-mounts, so B5 cannot affect it). Suite 344/344.
+
+**Fixture**: `pageSystemSpliceEnsureMount` forces page 2 back to a placeholder,
+edits the last line of page 1 (whose context-below is page 2's first line), and
+asserts the splice mounts rather than refusing. Verified to FAIL on the pre-B5
+build with `refused on a mount miss instead of mounting`. Writing it also
+surfaced a trap worth remembering: a full render REPLACES `pageVirt`, so a test
+that captures it before re-rendering un-mounts a stale copy and leaves the
+renderer's `mounted` set disagreeing with the DOM — an inconsistency production
+code cannot produce and the splicer cannot detect.
+
+**Remaining refusals** (sweep, 20 of 115): 8 edits that never changed the
+document, 10 `context line diverged` (the B3 courtesy-signature family, `dW`
+43–347 units), 1 `section-header line`, 1 `dRelX=36` outlier. B3 is now the
+largest real class.
+
+**Where**: `apps/composer/src/render/render.ts` (`mountPageIfCheap`,
+`pageSpliceCtx`), `apps/composer/src/render/pagesplice.ts` (`ensurePageMounted`,
+partition-derived `pageOfLine`, pre-lookup mounting),
+`test/composer-test/fixtures.mjs` (`pageSystemSpliceEnsureMount`).
