@@ -45,7 +45,7 @@
 
 import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
 import type { ComposerModel } from '../model/index.js';
-import { expandForSpanners, expandForEndings, mergeGlyphDefs } from './splice.js';
+import { expandForSpannersOnce, expandForEndings, mergeGlyphDefs } from './splice.js';
 import { injectPins, type RefillResult } from './linebreaks.js';
 
 const MEI_NS = 'http://www.music-encoding.org/ns/mei';
@@ -64,6 +64,12 @@ const EPS = 25;
  *  the context + vertical gates — so the cap is set by window COST, not by
  *  caution. Windows carry L ± 1 context line. */
 const MAX_SPLICE_LINES = 5;
+/** Backstops, not working limits. Since the spanner expansion became a single
+ *  containment pass (2026-08-31) the measured maxima over the whole sonata are
+ *  2 replaced / 6 window lines for a real one-note edit, and 3 / 7 for the
+ *  worst-case seed — so neither cap binds on this document any more. They stay
+ *  as a guard against pathological input (a genuinely document-long spanner),
+ *  which is the case truncation would eventually be for. */
 const MAX_WINDOW_LINES = 9;
 const MAX_WINDOW_MEASURES = 80;
 
@@ -308,7 +314,7 @@ export class PageSystemSplicer {
        scroll splicer's run expansion), plus both lines adjacent to any moved
        boundary. */
     const docVer = model.docVersion();
-    let [rLo, rHi] = expandForSpanners(meiMeasures, changedRun.lo, Math.min(changedRun.hi, ids.length - 1), docVer);
+    let [rLo, rHi] = expandForSpannersOnce(meiMeasures, changedRun.lo, Math.min(changedRun.hi, ids.length - 1), docVer);
     [rLo, rHi] = expandForEndings(meiMeasures, rLo, rHi);
     let a = lineOf(rLo), b = lineOf(rHi);
     for (let i = 0; i < nLines; i++) {
@@ -347,21 +353,38 @@ export class PageSystemSplicer {
       if (!consecutive) return skip('DOM partition drift (spliced lines not consecutive)');
     }
 
-    /* Window: L ± one context line, closed over spanners/endings to LINE
-       boundaries (iterated — closure can pull in another line whose own
-       spanners reach further). Context lines make the window's systems render
-       with every entering/exiting spanner present (page spike 1, finding 5)
-       and give the vertical gate its measured spacing chain. */
-    let wLo = Math.max(0, a - 1);
-    let wHi = Math.min(nLines - 1, b + 1);
-    for (let guard = 0; guard < 8; guard++) {
-      let lo2: number, hi2: number;
-      [lo2, hi2] = expandForSpanners(meiMeasures, spans[wLo][0], spans[wHi][1] - 1, docVer);
-      [lo2, hi2] = expandForEndings(meiMeasures, lo2, hi2);
-      const nLo = lineOf(lo2), nHi = lineOf(hi2);
-      if (nLo === wLo && nHi === wHi) break;
-      wLo = nLo; wHi = nHi;
-    }
+    /* Window: cover every spanner with an end inside the REPLACED lines, then
+       add one context line each side. ONE pass, no fixed point.
+       
+       The rule (Max, 2026-08-31): a spanner with one end inside the replaced
+       set needs the window to cover its other end — otherwise Verovio cannot
+       resolve the endpoint, drops the spanner, and a REPLACED line renders
+       without a segment the live page has. A spanner lying entirely outside
+       the replaced set cannot change how those lines draw, so it is none of
+       the window's business; one dangling out of a CONTEXT line is harmless,
+       since context lines are only measured for per-measure x/width.
+       
+       Iterating to a fixed point instead (what this did until 2026-08-31)
+       makes the window a transitive closure over the interval graph of
+       spanners, and on real music that graph is a chain: the sonata's ordinary
+       legato phrasing — 2-measure slurs each ending where the next begins —
+       walked one seed 17 slurs deep, over 24 measures and 6 lines, purely
+       through lines nobody was re-rendering. Measured over all 446 measures,
+       the fixed point put 52 seeds past MAX_WINDOW_LINES; this rule puts none
+       there (window max 14 → 6 lines, mean 6.33 → 4.14). See
+       `cb-spanchain.js` / `cb-window-walk.js` and the design doc.
+       
+       Context lines still do their two jobs: they let the window's systems
+       render with every entering/exiting spanner present (page spike 1,
+       finding 5) and give the vertical gate its measured spacing chain. */
+    let [wm0, wm1] = expandForSpannersOnce(meiMeasures, spans[a][0], spans[b][1] - 1, docVer);
+    [wm0, wm1] = expandForEndings(meiMeasures, wm0, wm1);
+    let wLo = Math.max(0, lineOf(wm0) - 1);
+    let wHi = Math.min(nLines - 1, lineOf(wm1) + 1);
+    /* A context line can bring in a partially-covered <ending>; a volta bracket
+       re-engraved over a truncated member set is wrong, so contain it — once. */
+    const [em0, em1] = expandForEndings(meiMeasures, spans[wLo][0], spans[wHi][1] - 1);
+    wLo = lineOf(em0); wHi = lineOf(em1);
     if (wHi - wLo + 1 > MAX_WINDOW_LINES) return skip('window too many lines');
     const mLo = spans[wLo][0], mHi = spans[wHi][1] - 1;
     if (mHi - mLo + 1 > MAX_WINDOW_MEASURES) return skip('window too many measures');

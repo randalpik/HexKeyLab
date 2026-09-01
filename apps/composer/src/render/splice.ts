@@ -648,6 +648,42 @@ function buildSpannerExtents(meiMeasures: Element[]): SpannerExtents {
   return { spans, tieT, tieI };
 }
 
+/** ONE containment pass: every spanner with an end inside [lo..hi] is covered
+ *  whole, and a tie crossing either edge pulls in the neighbouring measure.
+ *  Deliberately NOT a fixed point.
+ *
+ *  `expandForSpanners` iterates until nothing grows, which makes it a
+ *  transitive closure over the interval graph of spanners — and on real music
+ *  that graph is a chain. Measured on the sonata (`cb-spanchain.js`): 922 of
+ *  its 926 spanners are slurs, none longer than 3 measures, and NONE crosses
+ *  more than one line boundary — yet ordinary legato phrasing (each slur
+ *  ending on the downbeat where the next begins) let one seed walk 17 slurs
+ *  deep, 24 measures, 6 lines. A slur at the far end of a line nobody is
+ *  re-rendering is irrelevant; only a spanner with an end inside the range can
+ *  draw a segment that changes, or be dropped for want of its other endpoint.
+ *
+ *  Replaced-set max 5 → 2 lines, window max 14 → 6 (per-measure seeds over the
+ *  sonata's 446 measures); 52 of those seeds previously blew MAX_WINDOW_LINES
+ *  and none do now. The page splicer uses this; the scroll splicer's own run
+ *  expansion is a separate geometry and still uses the closure. */
+export function expandForSpannersOnce(
+  meiMeasures: Element[], lo: number, hi: number, docVer: number | null = null,
+): [number, number] {
+  const { spans, tieT, tieI } = spannerExtents(meiMeasures, docVer);
+  let a = lo, b = hi;
+  for (const [minE, maxE] of spans) {
+    /* Overlap is tested against the ORIGINAL range — that is what makes this
+       one pass. Growing `a`/`b` mid-scan would re-admit the chain. */
+    if (maxE >= lo && minE <= hi) {
+      if (minE < a) a = minE;
+      if (maxE > b) b = maxE;
+    }
+  }
+  if (lo > 0 && tieT[lo]) a = Math.min(a, lo - 1);
+  if (hi < meiMeasures.length - 1 && tieI[hi]) b = Math.max(b, hi + 1);
+  return [a, b];
+}
+
 export function expandForSpanners(
   meiMeasures: Element[], lo: number, hi: number, docVer: number | null = null,
 ): [number, number] {

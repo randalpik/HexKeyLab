@@ -77,6 +77,28 @@ Phase C-B2b / B1 probes (2026-08-31, findings baked into the design doc →
 - **cb-topmost.js** — what actually reaches above a page-first system: the
   outliers are all `<text>` (`g.dir`, `g.tempo`, HEJI `g.accid`), which is why
   a bbox hang cannot stand in for Verovio's counted overflow.
+- **cb-sweep.js** — the COVERAGE + viewport gate, and the one to run when asking
+  "how often does a splice actually land?". Walks every line, scrolls each into
+  view through the real IntersectionObserver (it never calls `mountPage`, unlike
+  the battery), edits, and restores via `restoreSnapshot` so each line is
+  measured against the same baseline document. Emits a hit rate, a skip-reason
+  HISTOGRAM, latency split by outcome, pages mounted at edit time, and
+  viewport stability (`scrollTop`, container `scrollHeight`, per-page
+  `offsetHeight`/`viewBox`, and document-space drift of anchors above/at/below
+  the edit). Args: `--arg "stride=4,limit=20,undo=0"`. Use the NEXT-PAGE anchor
+  to judge drift — the page-top anchor can itself sit inside the replaced run,
+  in which case it moves legitimately.
+- **cb-pagebox.js** — placeholder height vs real mounted height, per page. The
+  drift bug was every page growing exactly 2 px on mount; `totalHeightError`
+  must stay 0.
+- **cb-window-walk.js** — replays the window algorithm for every line and
+  reports the size distribution, the per-pass trace, and how many lines exceed
+  `MAX_WINDOW_LINES`. Read-only.
+- **cb-spanchain.js** — WHY a window grows: rebuilds the splicer's own spanner
+  extents but keeps element identity, then attributes every growth step to the
+  slur that caused it. This is what showed the sonata has no spanner longer than
+  one line boundary and that the growth was a 17-slur chain. Also tallies the
+  replaced-set/window distributions for the current vs one-pass rules.
 - **cb-header-overlap.js** (run with `--no-sonata`) — the B4 repro: builds a doc
   with a section header, edits the line directly ABOVE it on the same page, and
   reports how far the header's system moved versus its title. `BUG: true` means

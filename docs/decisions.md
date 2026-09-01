@@ -4544,3 +4544,92 @@ reference gate + title-band assertion), `test/composer-test/fixtures.mjs`
 (`pageSectionHeaderCascade`), `test/composer-inspect/phasec/cb-header-overlap.js`,
 `test/composer-inspect/phasec/cb-splice-battery.js` (reserve-adjusted compare),
 docs/lessons.md.
+
+## 2026-08-31 — Splice coverage measured by sweep, not sample: placeholder sizing fixed, spanner expansion made one-pass
+
+**Context**: Max, after B4: *"many entire systems refuse any steady-state splice
+(regardless of proximity to a header), and any deletion causes the entire scroll
+position of the screen to move down by a few px, every time. Why hasn't your
+battery found it?"* Neither symptom was observable by the existing gates —
+`cb-splice-battery.js` calls `mountAll()` before each of its 8 edits and its
+reference compare is entirely page-INTERNAL.
+
+**New instrumentation** (`cb-sweep.js`): walks every line, scrolls each into
+view through the real `IntersectionObserver` (never calls `mountPage`), edits,
+restores via `restoreSnapshot`, and records outcome, skip reason, wall time,
+pages mounted, and the viewport/page-box state around each edit. It asserts the
+edit landed by `docVersion()`, not by the return value — the exact hole that let
+two battery edits silently no-op for months. Baseline: **hit rate 56.5%**, and
+the skip-reason histogram turned "many systems refuse" into a ranked list.
+
+### 1. Placeholders were sized from the wrong box (the drift)
+
+Virtualization measured page 1's **inner SVG** (2794 px) *before*
+`finishPageMount`, and gave every placeholder those dims; a mounted page is the
+**`.score-page` div** (2796 px) *after* post-processing. Every page therefore
+grew exactly 2 px on mount — 56 px across the sonata. Splices never touch the
+page grid; a full render rebuilds it, so the drift tracked fallbacks (34 of 42
+full renders vs 3 of 65 splices) and read as "every deletion" only because 44 %
+of edits were falling back. **Picked**: measure `p1.getBoundingClientRect()`
+after `finishPageMount`. Per-page error 2 px → **0**; over a sweep,
+`scrollHeightChanged` 24 → **0** and the next-page anchor (which can never sit
+inside an edit) moved on 7 of 39 edits — every one exactly −2.0 px — before, and
+**0 of 20** after.
+
+### 2. Spanner expansion iterated to a fixed point (the refusals)
+
+`expandForSpanners` is a transitive closure, and the page splicer wrapped it in
+a second loop that rounded to line boundaries and re-expanded. On the sonata's
+926 spanners — 922 slurs, none longer than 3 measures, **none crossing more than
+one line boundary** — ordinary legato phrasing (each slur ending where the next
+begins) let one seed walk **17 slurs deep, 24 measures, 6 lines**.
+
+**Picked** (Max's rule): *a spanner with one end inside the replaced set needs
+the window to cover its other end.* Two single containment passes, no fixed
+point — `L = onePass(changed measures)`, then `window = onePass(L) ± 1 context
+line`. A spanner wholly outside the replaced set cannot change how those lines
+draw; one dangling out of a context line is harmless, since context lines are
+only measured for x/width. Implemented as a NEW `expandForSpannersOnce` used
+only by the page splicer — the scroll splicer's run expansion and the naturals
+window are a different geometry and were not measured, so they keep the closure.
+
+**Rejected**: raising `MAX_WINDOW_LINES` (treats the symptom); truncating
+spanners at the window edge and anchoring them to the synthetic leader/trailer
+(the right answer for a genuinely document-long spanner — the sonata has none,
+so it stays unbuilt rather than speculatively built).
+
+**Measured** (per-measure seeds, all 446 measures): replaced set max 5 → **2**,
+window max 14 → **6**, mean window 6.33 → **4.14**, seeds over
+`MAX_WINDOW_LINES` **52 → 0**. Neither cap binds any more; both are now
+backstops for pathological input.
+
+**Sweep comparison, before → after** (116 lines, realistic mounting):
+
+| | before | after |
+|---|---|---|
+| hit rate | 56.5 % | **66.1 %** |
+| `window too many lines` | 12 | **0** |
+| `changed line not mounted` / `score-start line` | 3 / 1 | **0 / 0** |
+| `section-header line` | 5 | **1** |
+| `context line below not mounted` | 11 | 19 |
+| splice median / max | 261 / 526 ms | **245 / 389 ms** |
+
+The `score-start` and four of five `section-header` refusals disappeared as a
+side effect: a smaller replaced set no longer drags line 0 or a header measure
+into the run. `context line below not mounted` ROSE because those edits
+previously died earlier on the window cap — **B5 is now the dominant refusal
+(19 of 39)** and is the next coverage item.
+
+**Accepted cost**: the 8-edit battery went 7/8 → 6/8 — `insert-rest-ripple` now
+refuses with `context line below diverged (dW=69)`, because a smaller window
+puts a different line in the context slot. All 8 remain reference-clean, so this
+is coverage, not correctness, and document-wide the trade is +11 splices for −1.
+The context-diverged count held at 10 across the whole sweep, so the rule did
+not create new divergences; those `dW` values are the same B3
+courtesy-signature family.
+
+**Where**: `apps/composer/src/render/render.ts` (placeholder sizing),
+`apps/composer/src/render/splice.ts` (`expandForSpannersOnce`),
+`apps/composer/src/render/pagesplice.ts` (one-pass replaced set + window,
+`lastRun` diagnostic, cap comments), `test/composer-inspect/phasec/`
+(cb-sweep, cb-pagebox, cb-window-walk, cb-spanchain), docs/lessons.md.

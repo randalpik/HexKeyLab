@@ -1189,6 +1189,41 @@ growing the doc-last line's bottom extent moves nothing below it and now
 legitimately splices. Suite 342/342 under `HKL_INDEX_CHECK`;
 typecheck/build/boundaries clean.
 
+## Window expansion — one containment pass, not a fixed point (2026-08-31)
+
+**The rule (Max):** *a spanner with one end inside the replaced set needs the
+window to cover its other end.* Nothing more. A spanner lying wholly outside the
+replaced set cannot change how those lines draw, and one dangling out of a
+CONTEXT line is harmless — context lines are only measured for per-measure
+x/width, which slurs do not drive.
+
+**What it replaced.** `expandForSpanners` grows a range until every spanner
+overlapping it is contained, re-scanning after each growth — a transitive
+closure over the interval graph of spanners. `trySplice` then wrapped that in an
+8-iteration loop that rounded out to LINE boundaries and re-expanded, so
+measures added purely by rounding fed their own spanners back in. The document
+contains nothing pathological to justify it: **926 spanners, 922 of them slurs,
+none longer than 3 measures, and none crossing more than one line boundary**
+(`cb-spanchain.js`). Ordinary legato phrasing — each slur ending on the downbeat
+where the next begins — was enough for one seed to walk **17 slurs deep, 24
+measures, 6 lines**, entirely through lines nobody was re-rendering.
+
+**Implementation**: `expandForSpannersOnce` (render/splice.ts) tests overlap
+against the ORIGINAL range and does not iterate; ties still pull in one
+neighbouring measure per edge. The page splicer uses it twice — once for the
+replaced set L from the changed run, once for the window from L — then adds one
+context line per side and contains any `<ending>` a context line half-covers
+(voltas are structural; a bracket over a truncated member set is wrong). The
+scroll splicer's run expansion and the naturals window keep the closure: a
+different geometry, unmeasured, so unchanged.
+
+**Measured** (per-measure seeds over all 446 measures): replaced set max 5 → 2
+lines, window max 14 → 6, mean window 6.33 → 4.14, seeds over
+`MAX_WINDOW_LINES` **52 → 0**. Worst-case (per-line) seeds: replaced 6 → 3,
+window 16 → 7. Both caps stop binding and become backstops. Truncating a spanner
+at the window edge (anchored to the synthetic leader/trailer) remains the answer
+for a genuinely document-long spanner; the sonata has none, so it is not built.
+
 ## TODO — current state (updated 2026-08-31, end of session)
 
 **Resolved 2026-08-30:** the k=87 castoff-threshold class; pin lifecycle
@@ -1211,7 +1246,14 @@ movement instead of refusing it, battery 6/8 → 7/8); and a long-silent TEST bu
 
 Read this section first; the per-area lists below have the detail.
 
-1. **B4 remainder — the `section-header line` refusal and line 0.** The reserve
+1. **B5 — ensure-mount before the mounted gate.** Now the DOMINANT refusal by
+   a wide margin: 19 of 39 on the realistic-mounting sweep, where it was
+   invisible before because the battery pre-mounted everything. An edit whose
+   spliced or context lines sit on unmounted pages falls back today; mounting
+   them from the pre-edit layout (~50 ms each) when `pageVirt.tkCurrent` would
+   take the sweep hit rate from 66 % to roughly 89 % of edits that actually
+   change the document. Gate: `cb-sweep.js`.
+2. **B4 remainder — the `section-header line` refusal and line 0.** The reserve
    half of B4 is DONE (see "Section headers"): the plan now reasons in Verovio
    coordinates, titles travel with their systems, and header pages are no longer
    exempt from either reference gate. What is left is the refusal when the
@@ -1220,18 +1262,18 @@ Read this section first; the per-area lists below have the detail.
    exclusion (score-start treatment differs in a window, probe k=0 ~1 px).
    Folding the reserve into the RENDER instead of a post-mount translate would
    retire the last refusal; it is also what D1 (vertical justification) needs.
-2. **A6 — the splice's DOM cost, but NOT by cutting getBBox calls.** Measured
+3. **A6 — the splice's DOM cost, but NOT by cutting getBBox calls.** Measured
    and refuted: 199 → 169 calls changed the time by nothing (15.5/16.1/17.8 ms
    vs ~16.0). It is layout-FLUSH bound. The real levers are fewer MOUNTED pages
    and fewer read/write ALTERNATIONS (batch every read before any DOM surgery).
    ~16 ms available.
-3. **Vertical justification (D1) + system-height tracking.** The backlog asks
+4. **Vertical justification (D1) + system-height tracking.** The backlog asks
    for "actually track system heights so we can decide whether to reflow systems
    in the first place (keep existing positioning whenever possible)" and
    "automatic vertical spacing of full pages". C1's segmented castoff
    deliberately avoided needing a height model — but D1 needs one, and once it
    exists the segmented castoff could become a straight page-fit loop.
-4. **A5 — worker-offloaded castoff.** The largest single remaining block is pure
+5. **A5 — worker-offloaded castoff.** The largest single remaining block is pure
    Verovio on the main thread (~1.4 s on the sonata derive). Big refactor;
    `afterRender` is the seam. Only worth starting with a clear runway.
 
@@ -1357,10 +1399,13 @@ string means a shared render path started warning.
       Remaining: the `section-header line` refusal (replaced run contains a
       header measure) and the line-0 exclusion (probe k=0, ~1 px score-start
       divergence). The k=59 zone is handled structurally by the context check.
-- [ ] **B5. Ensure-mount before the mounted gate** — an edit whose spliced or
-      context lines sit on unmounted pages falls back today. When
-      `pageVirt.tkCurrent`, mount them from the pre-edit layout (~50 ms each)
-      instead of skipping.
+- [ ] **B5. Ensure-mount before the mounted gate** — ⭐ **now the top coverage
+      item.** An edit whose spliced or context lines sit on unmounted pages
+      falls back today. When `pageVirt.tkCurrent`, mount them from the pre-edit
+      layout (~50 ms each) instead of skipping. Was invisible until
+      `cb-sweep.js` stopped pre-mounting: **19 of 39 refusals**, and the only
+      large class left. Removing it should take the sweep hit rate from 66 % to
+      roughly 89 % of edits that change the document.
 
 ### C. Known defects
 
@@ -1427,6 +1472,25 @@ string means a shared render path started warning.
 
 ## Status log
 
+- 2026-08-31 — **Coverage measured by SWEEP, and two defects it exposed.** Max
+  reported that many systems refuse any splice and that every deletion nudged
+  the view down a few px; neither was observable — the battery pre-mounts all
+  pages (hiding B5 and reporting worst-case latency) and its reference compare
+  is page-INTERNAL (a page box changing leaves every delta 0.0). `cb-sweep.js`
+  walks all 116 lines through the real IntersectionObserver and records
+  viewport/page-box state: baseline hit rate **56.5 %**.
+  **(1) Placeholders were sized from the inner SVG (2794) before
+  `finishPageMount`, while a mounted page is the div (2796) after** — every page
+  grew 2 px on mount, so every full render shifted the document. Fixed;
+  per-page error 0, `scrollHeightChanged` 24 → 0, next-page anchor drift 7/39
+  (all exactly −2.0 px) → 0/20.
+  **(2) Spanner expansion iterated to a fixed point**, making the window a
+  transitive closure over a chain of ordinary 2-measure slurs (one seed walked
+  17 slurs / 24 measures / 6 lines, `cb-spanchain.js`). Replaced by Max's rule —
+  a spanner with one end inside the replaced set needs the window to cover its
+  other end — as two single passes (`expandForSpannersOnce`). Window max
+  14 → 6 lines, `window too many lines` 12 → 0, hit rate **56.5 % → 66.1 %**,
+  splice max 526 → 389 ms. B5 is now the dominant refusal (19 of 39).
 - 2026-08-31 — **B4 (section-header reserve) implemented**, fixing a defect B1
   introduced and the gates hid: `injectSectionHeaders` displaces systems at page
   MOUNT and places the title at an ABSOLUTE y, so the cascade stranded titles

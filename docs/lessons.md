@@ -1882,3 +1882,90 @@ additionally asserts each title still sits inside its own reserve band.
 Rule: when a post-render pass moves rendered geometry, either fold it into the
 render or make it *measurable* from the DOM — and never let a verification gate
 skip the pages where it applies.
+
+## A placeholder must be sized to the box the page will BECOME, not the box it has now (2026-08-31)
+
+Every deletion appeared to nudge the score down a few pixels. It was not the
+splice: page-view virtualization renders page 1, measures it, and gives every
+other page a placeholder of those dimensions; `mountPage` then drops the
+explicit dims and lets the page size to its own content. Two mismatches made
+that swap change the document height:
+
+1. it measured the **inner SVG** (2794 px) while a mounted page is the
+   **`.score-page` div** (2796 px), and
+2. it measured **before `finishPageMount`**, so page 1's crisp pinning and the
+   main.ts injections had not run yet.
+
+So every page grew exactly 2 px the moment it mounted — 56 px across the
+sonata. A splice never touches the page grid, but a FULL render rebuilds it,
+which is why the drift tracked fallbacks: 34 of 42 full renders moved the
+document, versus 3 of 65 splices. Measuring page 1's div after
+`finishPageMount` takes the per-page error to 0.
+
+Two general rules. **A predicted size must be measured on the same element, in
+the same state, as the thing it predicts** — an inner box is not the outer box,
+and "before post-processing" is not "after". And **when a symptom says "a few
+pixels", suspect a whole-number layout discrepancy repeated per element**, not
+an accumulation of rounding: the tell here was that the drift came in exact
+multiples of 2.
+
+## A gate that verifies the CONTENTS of a box never notices the box (2026-08-31)
+
+The splice's reference comparisons — the inline `HKL_INDEX_CHECK` gate and
+`cb-splice-battery.js` — check per-measure x/width, consecutive-system spacing
+and absolute staff tops, all **page-margin relative**. A page whose own box
+changes leaves every one of those deltas at 0.0. The 2 px drift was therefore
+invisible to every gate the project had, on every run, for as long as it
+existed. Same shape as the section-header exemption a day earlier: verifying
+inside a frame says nothing about the frame. `cb-sweep.js` now records
+`scrollTop`, container `scrollHeight`, and each page's `offsetHeight` /
+`viewBox` around every edit.
+
+## A test that pre-mounts everything cannot see a lazy-mount bug — and reports worst-case latency (2026-08-31)
+
+`cb-splice-battery.js` calls `mountAll()` before each of its 8 edits. That is
+one line, and it made two whole classes of behaviour unobservable: every
+`changed line not mounted` / `context line below not mounted` refusal (B5), and
+any measurement of what an edit costs with a realistic 2–6 pages mounted rather
+than all 30. Driving the real `IntersectionObserver` instead (scroll the
+container, wait for the placeholder to resolve — never call `mountPage`) moved
+the measured hit rate from "7 of 8" to **56.5% of 116 lines**, and splice
+latency from ~400 ms to a 245 ms median.
+
+Corollary worth generalising: **a hand-picked sample reports a pass/fail, never
+a rate.** "7/8 spliced" and "56.5% of lines splice" describe the same build.
+When coverage is the property under test, sweep the document and emit a
+histogram of the failure REASONS — that histogram is what turns "many systems
+refuse" into a ranked work list.
+
+## A fixed point over spanners is a chain walk; one containment pass is the rule (2026-08-31)
+
+`expandForSpanners` grows a measure range until every spanner overlapping it is
+contained, re-scanning after each growth — a transitive closure over the
+interval graph of spanners. The page splicer then wrapped that in a second loop
+that rounded out to line boundaries and re-expanded, feeding newly-added
+CONTEXT lines' spanners back in. Result on the sonata: `window too many lines`
+was the single biggest splice refusal, firing even on edits that replaced ONE
+line.
+
+Nothing pathological was in the document. It holds **926 spanners, 922 of them
+slurs, none longer than 3 measures, and not one crossing more than a single
+line boundary** — but ordinary legato phrasing puts each slur's end on the
+downbeat where the next begins, so the closure hands off from slur to slur.
+One seed walked **17 slurs deep, 24 measures, 6 lines**, entirely through lines
+nobody was re-rendering.
+
+The correct rule (Max): **a spanner with one end inside the replaced set needs
+the window to cover its other end.** That is one containment pass, not a fixed
+point — a spanner lying wholly outside the replaced set cannot change how those
+lines draw, and one dangling out of a *context* line is harmless because
+context lines are only measured for per-measure x/width. Measured over all 446
+measures: replaced set max 5 → 2 lines, window max 14 → 6, and the 52 seeds
+that blew `MAX_WINDOW_LINES` became 0. Both caps stopped binding.
+
+The general trap: **a transitive closure is the right tool for "must be whole",
+and the wrong tool for "must be visible".** Ask what the range is FOR at each
+step; here the replaced set and the window wanted different closures, and
+sharing one iteration conflated them. Truncating a spanner at the window edge
+(anchoring it to the synthetic leader/trailer) remains the answer for a
+genuinely document-long spanner — the sonata has none, so it stays unbuilt.
