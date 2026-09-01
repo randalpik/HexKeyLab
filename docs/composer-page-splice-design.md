@@ -26,8 +26,8 @@ vertical gate no longer refuses movement, it measures and applies it (see
 "Implementation (Phase C-B2b / B1)") — and **7 of 8 battery edits splice**, all
 8 apply and all are reference-clean (4 units x/width, 8 spacing, 6 absolute
 staff top), with the first edit after a derive splicing instead of
-full-rendering. The single remaining fallback is the by-design section-header
-line.
+full-rendering. The single remaining fallback there is the section-header line —
+which is an unresolved guard, NOT a design choice (see START HERE).
 
 **Phase D — making the edit path O(edit) rather than O(document) — IMPLEMENTED
 2026-08-30/31** for every O(document) item identified: a steady-state spliced
@@ -1173,8 +1173,8 @@ symptom.
 **Measured (sonata battery)**: **7 of 8 edits splice** (was 6), all 8
 reference-clean — max per-measure x/width delta 4 units, max spacing 8, max
 **absolute** staff top 6, over 30 pages / 446 measures. `edit-page-first`
-**1152 ms → ~440 ms**. The single remaining fallback is the by-design
-section-header line.
+**1152 ms → ~440 ms**. The single remaining fallback is the section-header
+line — an unresolved guard, not a design choice (see START HERE).
 
 **Gates**: the reference comparisons — both the inline `HKL_INDEX_CHECK` gate
 and `cb-splice-battery.js` — now assert **absolute** staff tops, not just
@@ -1246,14 +1246,60 @@ movement instead of refusing it, battery 6/8 → 7/8); and a long-silent TEST bu
 
 Read this section first; the per-area lists below have the detail.
 
-1. **The last 5 refusals, and whether they are worth it.** The sweep is at
-   88.7 % (102/115; 102 of the 107 edits that actually change the document).
-   What is left: 1 `section-header line` (B4 remainder), 2 `context line below
-   diverged` (dW 49 and 347 — courtesy-like but not fixed by the B3 extension,
-   so a different or compound cause), 1 top-edge `dRelX=36.0`, and the
-   document's final line. Each looks individually small; measure before
-   assuming any of them is a class.
-2. **B4 remainder — the `section-header line` refusal and line 0.** The reserve
+1. **The five divergent context lines — the whole remaining inventory.** Splice
+   coverage is **94.8 % (109/115)** on the routine mid-line sweep and **91.9 %
+   (386/420)** on the exhaustive every-measure pass; the latter is lower only
+   because divergent context lines are hit by several measures each, not because
+   more causes exist. The exhaustive pass (2026-09-01) gives the complete
+   picture: **34 refusals, 7 causes.** The two biggest are **`section-header
+   line` (9) and `score-start line` (6) — 44 % of all refusals, and NOT "by
+   design"** however often this doc has said so (Max, 2026-09-01). Their code
+   comments say *"page-mount injections (NOT idempotent)"* and *"window fidelity
+   is unproven there"* — unresolved problems, not permanent choices. See the
+   B4/line-0 item below. The other **19 are five distinct divergent context
+   lines**:
+
+   | n | context line | signature |
+   |---|---|---|
+   | 6 | `m-5o3` | `dRelX=0.0 dW=347` |
+   | 5 | `m-5iq` | `dRelX=0.0 dW=49` |
+   | 5 | `m-5x4` | `dRelX=36.0 dW=12` (the only one where positions shift) |
+   | 2 | `m-8ej` | `dRelX=0.0 dW=604.2` |
+   | 1 | `m-cy6` | `dRelX=0.0 dW=89` (document's last line) |
+
+   None is the courtesy-signature class B3 fixed: four are width-only like B3's
+   but survived its window extension, so a different or compound cause, and
+   `m-5x4` shifts positions so likely something else again. **That is five
+   root-causings, not nineteen** — start by dumping what is actually at those
+   five lines. Reproduce with `allmeasures.sh` + `allmeasures-report.mjs`.
+   (Measure ids regenerate on each import; locate them by the dW signature.)
+
+   NOTE when comparing older figures: hit rates recorded before 2026-09-01 used a
+   measure-start cursor, where 8 of the 115 lines performed a cursor MOVE rather
+   than a deletion. Those are comparable to neither number above.
+2. **B4 remainder — `section-header line` (9 refusals) and line 0 (6).** Take
+   these BEFORE the five divergent lines: 44 % of refusals for two root-causings
+   instead of five, and both are more tractable than their comments suggest.
+
+   *Section-header*: the guard says the title text and reserve translate are
+   "page-mount injections (NOT idempotent)". Half of that is already solved —
+   the injector records what it applied as `data-reserve` on the title, and the
+   vertical plan works in reserve-aware coordinates, so replacing a system BELOW
+   a header is routine today. What remains is only the case where the replaced
+   system is the header's OWN: the title sits at an absolute y derived from that
+   system's pre-shift content top plus a baseline offset, so it must be
+   recomputed. Record the baseline the same way the reserve was recorded; the
+   `hdrTitles` assertion in the reference gate already fails loudly if the title
+   leaves its band.
+
+   *Line 0*: the guard says "window fidelity is unproven there (probe k=0 drifts
+   ~1px)". **Re-measure before writing anything** — ~1 px is ~10 units, inside
+   the `EPS` of 25 the context check tolerates everywhere else, so the guard may
+   simply be stale. What IS genuinely special about line 0 is that it has no
+   synthetic leader (nothing precedes it to absorb score-start artifacts), so it
+   is the one window whose opening edge is the real score start.
+
+   Older framing of this item, kept for context: The reserve
    half of B4 is DONE (see "Section headers"): the plan now reasons in Verovio
    coordinates, titles travel with their systems, and header pages are no longer
    exempt from either reference gate. What is left is the refusal when the
@@ -1480,6 +1526,21 @@ string means a shared render path started warning.
 
 ## Status log
 
+- 2026-09-01 — **Exhaustive every-measure sweep settles the sampling question.**
+  Editing all 446 measures (420 real edits) shows: refusal is a **function of the
+  replaced set** (170 distinct sets, 0 conflicts — the same set never both
+  splices and refuses, whatever measure or voice triggered it); a multi-line set
+  **never** fails while all its constituent lines splice (0 of 62; all 5 failures
+  inherited from a failing constituent, 0 undetermined); and position within the
+  line does **not** affect the outcome rate (first 92.7 %, middle 91.5 %, last
+  92.6 %), retracting two earlier claims that it did. So `cb-sweep.js` mid-line
+  stays the ROUTINE gate — 127 of 170 replaced sets, 6 of 7 causes, one blind
+  spot at the document's last line — and `allmeasures.sh` is the periodic deep
+  pass, the only thing that can reach a failure class specific to multi-line
+  replaced sets. Inventory: 34 refusals, 7 causes — and the two largest,
+  `section-header line` (9) and `score-start line` (6), are NOT "by design" as
+  this doc long claimed but unresolved guards (Max); at 44 % of refusals they
+  lead the next thread, ahead of the 19 spread across five divergent lines.
 - 2026-08-31 — **B3 implemented, and the design doc's framing of it corrected.**
   The doc described a boundary MOVING beside a clef/key change; every measured
   refusal had `refillLines: 0`, so that case does not occur. The real mechanism

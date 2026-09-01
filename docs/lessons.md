@@ -2044,3 +2044,61 @@ posed the real case, and the fixture then failed pre-fix with the expected
 A fixture written from a description of a bug tests the description. Stash the
 fix and run it: if it still passes, it is not a regression guard, whatever its
 name says.
+
+## An intervention that reproduces the previous total to the unit has not done what it claims (2026-09-01)
+
+Retargeting the coverage sweep was meant to convert 8 of 115 lines from
+"performed a cursor move" into real deletions. It reported **exactly** the same
+102/115 splices as before. Max's reaction — *"it's literally the same number,
+which shows literally none of the newly real edits are being accepted. This is
+suspicious"* — was the right instinct, and my first explanation of it ("the 8 all
+refused") was wrong too.
+
+The cause: the selector stopped at each voice's first in-line note. That note is
+the earliest in DOCUMENT order, which was the WORST rank in the mid-line-first
+ordering it was supposed to honour, and it falls in the line's first measure in
+the common case. So the mid-line preference was dead code and **all 115** lines
+were silently retargeted onto their first measure, not the 8 that needed it. Two
+opposing effects — 8 lines gaining real edits, ~107 lines moving to a harder
+target — cancelled in the total. Fixing it gave 109/115.
+
+Three transferable points:
+
+- **A suspiciously stable aggregate is evidence, not reassurance.** Changing a
+  sample and reproducing the statistic exactly means either nothing happened or
+  two effects cancelled; both need explaining before the number is quoted.
+- **Report what changed per item, not just the summary.** A per-line diff of
+  target measure between the two runs would have shown the retarget touching
+  every row in one glance. The summary could not.
+- **`break` on "the first match" is only correct when document order IS the
+  preference order.** Here the preference was explicitly the reverse, so the
+  early exit inverted it while looking like an optimisation — and the comment
+  next to it asserted the opposite of what it did.
+
+A fourth point, learned by getting it wrong twice in a row. I explained the
+88.7 % vs 94.8 % gap as "first-measure edits move boundaries" — checked
+afterwards, `refillLines > 0` in **zero** of 115 rows in either run, so no
+boundary moved anywhere and the mechanism I named does not exist. What the data
+does support, measured directly per position (`cb-seedreach.js`): a line's FIRST
+measure is an endpoint of a boundary-crossing slur or tie **47.4 %** of the time
+against **0.9 %** for a middle measure (last measures: 49.1 % forward), so it
+replaces 1.47 systems on average against 1.01. The splice replaces whole
+systems, but HOW MANY comes from a MEASURE-level closure rounded to lines — the
+replaced set is position-sensitive even though the window, seeded from the
+replaced LINES, is not. And the hit-rate
+gap itself is weak evidence — only 9 lines flip, one in the opposite direction,
+and they cluster onto four or five shared causes (three of them the same
+divergent context line). **A mechanism that explains the direction of an effect
+is not thereby the cause of it, and a percentage-point gap computed from a
+handful of clustered flips should be quoted as counts, not rates.**
+
+**Epilogue (2026-09-01): the effect itself was not real.** Editing all 446
+measures gives first 92.7 %, middle 91.5 %, last 92.6 % — position does not
+change the outcome rate at all. The closure-reach difference IS real (47.4 % vs
+0.9 %), so edge edits genuinely replace more systems (1.47 vs 1.01); that extra
+system is simply almost always fine. So I proposed two mechanisms for a
+difference that 115 clustered samples had manufactured, and the user's first
+instinct — "more likely random variance based on the targets themselves" — was
+correct before either mechanism was examined. **When someone challenges an
+effect rather than its explanation, test the effect first; explaining a
+difference presumes it exists.**

@@ -133,10 +133,49 @@ for (let li = 1; li < nLines && measured < LIMIT; li += STRIDE) {
   const ids = ids0();
   const mi0 = ids.indexOf(sids[li]);
   if (mi0 < 0) { row.why = 'line start not in model'; out.rows.push(row); measured++; continue; }
-  /* Mid-line target, mirroring the battery's `delete-mid-line`. */
   const lineEnd = li + 1 < sids.length ? ids.indexOf(sids[li + 1]) : ids.length;
-  const mi = (mi0 + 1 < lineEnd) ? mi0 + 1 : mi0;
+  /* Target the first real NOTE/CHORD on the line, in whichever voice has one.
+     Cursoring to a measure start (the old rule) can land on a measure or tuplet
+     placeholder, where a delete is a cursor move BY DESIGN (Max, 2026-09-01):
+     it performs the requested action and changes nothing, so that line measured
+     nothing and still counted against the hit rate. On the sonata this hit 8 of
+     115 lines — 5 because voice 1 there holds only a placeholder mRest, the
+     music being in other staves, and the rest because the cursor landed on a
+     rest or a tuplet boundary.
+     Measures after the line's first are preferred, mirroring the battery's
+     `delete-mid-line`; the first measure is the fallback for short lines. */
+  const findTarget = () => {
+    const measures = model.allMeasures();
+    const order = [];
+    for (let k = mi0 + 1; k < lineEnd; k++) order.push(k);
+    order.push(mi0);
+    const rank = new Map(order.map((k, i) => [measures[k], i]));
+    let best = null;
+    for (const voice of [1, 2, 3, 4]) {
+      let flat;
+      try { flat = model['flatChildren'](voice); } catch { continue; }
+      for (let i = 0; i < flat.length; i++) {
+        const el = flat[i];
+        if (el.localName !== 'note' && el.localName !== 'chord') continue;
+        const meas = el.closest('measure');
+        const r0 = rank.get(meas);
+        if (r0 === undefined) continue;
+        if (!best || r0 < best.rank) best = { rank: r0, voice, cursor: i, measureIdx: measures.indexOf(meas) };
+        /* Do NOT stop at the first in-line hit. It is the earliest in DOCUMENT
+           order, which is the WORST rank when it lands in the line's first
+           measure — and that is the common case, so breaking here silently
+           retargeted every line onto its first measure and made the mid-line
+           preference dead code. Keep scanning; rank 0 is as good as it gets. */
+        if (best.rank === 0) break;
+      }
+    }
+    return best;
+  };
+  const target = findTarget();
+  if (!target) { row.why = 'no note or chord anywhere on this line'; out.rows.push(row); measured++; continue; }
+  const mi = target.measureIdx;
   row.measureIdx = mi;
+  row.voice = target.voice;
 
   /* Anchors: the page's first line (above the edit), the edited line itself,
      and the first line of the next mounted page. */
@@ -152,7 +191,7 @@ for (let li = 1; li < nLines && measured < LIMIT; li += STRIDE) {
      update (main.ts); the probe drives the model directly, so it must ask.
      Everything the next edit needs should already be mounted by the time the
      stopwatch starts. */
-  model.setCursor(model.getMeasureStartCursor(1, mi), 1);
+  model.setCursor(target.cursor, target.voice);
   r.scheduleMountWindow(mi);
   await waitFor(() => r['mountWindowHandle'] === null, 3000, 20);
   await raf();
@@ -242,6 +281,9 @@ out.summary = {
   hitRate: rows.length ? +(rows.filter((x) => x.outcome === 'spliced').length / rows.length).toFixed(3) : null,
   skipReasons: Object.fromEntries(Object.entries(hist).sort((a, b) => b[1] - a[1])),
   editsNotApplied: rows.filter((x) => !x.editOk).length,
+  editsNotAppliedLines: rows.filter((x) => !x.editOk).map((x) => x.line),
+  noTarget: out.rows.filter((x) => x.why).length,
+  voicesUsed: [...new Set(rows.map((x) => x.voice))].sort(),
   /* Refusals whose needed lines all sat on MOUNTED pages — i.e. not B5. */
   refusalsWithPagesMounted: rows.filter((x) => x.outcome === 'skipped' && x.runPagesMounted === true).length,
   refusalsMissingPages: rows.filter((x) => x.outcome === 'skipped' && x.runPagesMounted === false).length,

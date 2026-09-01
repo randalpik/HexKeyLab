@@ -85,9 +85,51 @@ Phase C-B2b / B1 probes (2026-08-31, findings baked into the design doc →
   HISTOGRAM, latency split by outcome, pages mounted at edit time, and
   viewport stability (`scrollTop`, container `scrollHeight`, per-page
   `offsetHeight`/`viewBox`, and document-space drift of anchors above/at/below
-  the edit). Args: `--arg "stride=4,limit=20,undo=0"`. Use the NEXT-PAGE anchor
+  the edit). This is the ROUTINE gate: it reaches 127 of the 170 replaced sets
+  and 6 of the 7 known refusal causes; its one blind spot is `m-cy6 dW=89`, seen
+  only at a line edge (the document's last line) — use `allmeasures.sh` for that.
+  Targets the first note/chord on each line in whichever voice has
+  one — a measure-start cursor lands on a measure or tuplet placeholder, where a
+  delete is a cursor move by design and the line measures nothing (8 of 115 on
+  the sonata). Args: `--arg "stride=4,limit=20,undo=0"`. Use the NEXT-PAGE anchor
   to judge drift — the page-top anchor can itself sit inside the replaced run,
   in which case it moves legitimately.
+- **cb-allmeasures.js** + **allmeasures.sh** + **allmeasures-report.mjs** — the
+  EXHAUSTIVE pass: edits every measure that has deletable content, records the
+  replaced set and outcome, restores between edits. Run it via the shell script
+  (chunked at 70 measures — the runner's `Runtime.evaluate` deadline is 300 s and
+  the full walk needs ~4× that; chunks are saved as they complete, so re-running
+  resumes), then report:
+
+  ```
+  test/composer-inspect/phasec/allmeasures.sh /tmp/hkl-allmeasures
+  node test/composer-inspect/phasec/allmeasures-report.mjs /tmp/hkl-allmeasures
+  ```
+
+  The report answers the four questions the pass exists for: is the outcome a
+  function of the replaced set (2026-09-01: yes — 170 sets, 0 conflicts); does a
+  multi-line set ever fail while all its constituents splice (no — 0 of 62, all
+  5 failures inherited); the full refusal inventory; and whether position within
+  the line matters (it does not — 92.7/91.5/92.6 %). Use this when a change could
+  plausibly introduce a failure mode specific to MULTI-LINE replaced sets, which
+  `cb-sweep.js` cannot reach.
+- **cb-courtesy.js** — correlates the `context line ... diverged` refusals
+  against the document structure: does a clef/key/meter change begin the line
+  just BEYOND the splice window? That is what identified the end-of-line
+  courtesy signature as the cause of 9 of 11 such refusals and made B3 a
+  three-line fix. Read-only.
+- **cb-seedreach.js** — seeds the replaced-set closure at every measure in the
+  document and reports how often it crosses a line boundary, split by the
+  measure's position within its line. Answers "does it matter which measure in a
+  system you edit?" — it does: first/last measures reach the neighbouring system
+  ~48 % of the time (they are endpoints of boundary-crossing slurs and ties),
+  middle measures 0.9 %. Read-only, no renders.
+- **cb-noopedits.js** — replays the sweep's target selection per line against
+  the MODEL only (no renders, so it is fast) and dumps the contents of every
+  measure whose delete changed nothing. This is what showed those lines are not
+  empty measures: the edited VOICE is empty, holding only a placeholder mRest
+  while the music sits in other staves. Every edit is undone via
+  `restoreSnapshot`.
 - **cb-pagebox.js** — placeholder height vs real mounted height, per page. The
   drift bug was every page growing exactly 2 px on mount; `totalHeightError`
   must stay 0.
@@ -268,3 +310,10 @@ C1 (user page break) probes, 2026-08-31:
   `[page-breaks]` warnings each round. Expect: converged (0 warnings after the
   first), pagination stable, and the edit safely skipping with
   `window paginated` rather than splicing.
+
+**Not described above** (written in earlier sessions; see the matching
+docs/decisions.md entries for what they established): `cb-getmei2.js`,
+`cb-pbcases.js`, `cb-pbunion.js`, `cb-segdiag.js` (user page breaks / segmented
+castoff, 2026-08-31), `cb-zoomshot.js`, `cb-zoomunit.js` (the constant-`unit`
+zoom work — `cb-zoomunit.js` is a live regression gate: `zoom75_differs` must
+stay false).

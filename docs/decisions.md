@@ -4470,7 +4470,9 @@ with nothing drawn past the paper.
 **Measured**: sonata battery **6/8 → 7/8 spliced**, all 8 reference-clean
 (max x/width 4 units, max spacing 8, max ABSOLUTE staff top 6, over 30 pages /
 446 measures); `edit-page-first` **1152 ms → ~440 ms**. The remaining fallback
-is the by-design section-header line. Suite 342/342 under `HKL_INDEX_CHECK`.
+is the section-header line. Suite 342/342 under `HKL_INDEX_CHECK`.
+(2026-09-01: "by-design" here was wrong — that guard is unresolved, not a
+choice; see the exhaustive-sweep entry.)
 
 **Where**: `apps/composer/src/render/pagesplice.ts` (`VerticalPlan`,
 `verticalPlan`, page-pinned window, multi-page hosts, follower cascade,
@@ -4792,11 +4794,14 @@ occur); teaching the synthetic trailer to carry the next line's signature change
 synthetic measure is far more fragile than including the real line).
 
 **Measured** (sweep, 116 lines): diverged refusals **11 → 4**, hit rate
-**82.6 % → 88.7 %** (95 → 102 splices; 102 of the 107 edits that actually change
-the document). Splice median unchanged at 237 ms. The battery recovers
+**82.6 % → 88.7 %** (95 → 102 splices). Splice median unchanged at 237 ms.
+(At the time, 8 of the 115 rows were not edits at all — see the sweep-retarget
+entry below; retargeting made all 115 real and left the rate at 88.7 %.) The battery recovers
 `insert-rest-ripple` — the one edit the one-pass window rule had cost — and is
 back to **7/8 spliced**, all reference-clean over 30 pages; the only remaining
-fallback there is the by-design section-header line.
+fallback there is the section-header line.
+(2026-09-01: not "by design" — an unresolved guard; see the exhaustive-sweep
+entry.)
 
 **Fixture**: `pageSystemSpliceCourtesySig` puts a key change at a line start and
 edits **two** lines before it, so the courtesy-carrying line is the compared
@@ -4814,3 +4819,165 @@ compound causes; not chased.
 **Where**: `apps/composer/src/render/pagesplice.ts` (`beginsSignatureChange`,
 window extension), `test/composer-test/fixtures.mjs`,
 `test/composer-inspect/phasec/cb-courtesy.js`.
+
+## 2026-09-01 — The coverage sweep targets real content, so every line is a real edit
+
+**Context**: 8 of the sweep's 115 per-line edits left the document unchanged,
+sitting in the hit-rate denominator without testing anything. `cb-noopedits.js`
+inspected them: **not empty measures** — all eight hold 7–24 notes. The cursor
+was landing on a placeholder.
+
+- **5 of 8: the edited VOICE is empty.** Staff 1 / layer 1 holds only an `mRest`
+  (the music is in staves 2–3), and `flatChildren` skips that placeholder, so
+  voice 1 has no events in the measure at all.
+- **2 of 8**: the first event in voice 1 is a rest.
+- **1 of 8**: the cursor lands on a `tuplet` boundary.
+
+**Not an API defect** (Max, 2026-09-01): a delete with the cursor on a measure
+or tuplet placeholder moves the cursor one position left — intentional, and
+`true` reports that the requested action was performed, not that a delete
+occurred. Undo restoring the cursor position is intentional too. So nothing
+changes in the model; the earlier note calling this "an API wart… the same shape
+as the bug that left two battery edits dead" was wrong on both counts — that bug
+was a probe asserting nothing, and the API was accurate here as well. The
+transferable rule is test-side only: assert `docVersion()` when you mean "the
+document changed".
+
+**Picked**: the sweep now targets the first `note`/`chord` on the line in
+whichever voice has one, preferring measures after the line's first (mirroring
+the battery's `delete-mid-line`) and falling back to the line's first measure.
+It asserts a target was found rather than editing nothing.
+
+**Measured**: 115 measured, **0 not applied, 0 without a target**. Hit rate
+**94.8 % (109/115)**, splice median 231 ms — the best figures yet, and the first
+where every sampled line is a real edit.
+
+**A bug in the first version of this, worth recording** because the symptom was
+the giveaway: it stopped at each voice's first in-line note, which is the
+earliest in DOCUMENT order and therefore the WORST rank whenever it falls in the
+line's first measure — the common case. So it silently retargeted all 115 lines
+onto their first measure instead of the 8 that needed it, and reported
+**exactly** 102/115 again. Max caught it on that alone: an intervention that
+changes 8 samples and reproduces the previous total to the unit has not done what
+it claims. (My reading of it — "none of the newly real edits splice" — was also
+wrong; the targets had changed everywhere.)
+
+**What the buggy run does show, measured per position** (`cb-seedreach.js`,
+seeding the closure at every measure in the document):
+
+| measure's position in its line | n | closure reaches prev line | reaches next line | mean systems replaced |
+|---|---|---|---|---|
+| first | 114 | **54 (47.4 %)** | 0 | **1.47** |
+| middle | 216 | **2 (0.9 %)** | 0 | **1.01** |
+| last | 114 | 0 | **56 (49.1 %)** | **1.49** |
+
+The splice replaces whole systems, but HOW MANY comes from a MEASURE-level
+closure of the changed measures rounded to lines — so where in the line the edit
+lands decides whether that closure crosses a boundary. A first or last measure
+is ~half the time an endpoint of a slur or tie whose other end is on the
+neighbouring system, which must then be replaced too (its segment of that
+spanner genuinely changes). A middle measure almost never is. Cross-checks
+against the spanner census: 50 of 926 slurs cross a line boundary over 115
+boundaries, plus tie edges.
+
+The cause is NOT boundary movement — `refillLines > 0` in **zero** rows of
+either sweep. Downstream, the extra system reaches line 0 and header lines:
+lines 1 and 2 refuse `score-start line` with run `{0,1}` where the mid-line
+target gives `{1,1}`/`{2,2}`, and lines 37 and 58 refuse `section-header line`
+with runs extending one line back.
+
+**RETRACTED 2026-09-01 by the exhaustive sweep.** The paragraph here used to
+conclude that mid-line is "the easiest target" and that run B's 88.7 % was the
+sweep sampling a harder case. Editing all 446 measures refutes it: splice rate by
+position is **first 92.7 % (n=109), middle 91.5 % (n=201), last 92.6 % (n=108)** —
+statistically identical. Position changes the closure's REACH (47.4 % vs 0.9 %)
+and hence the number of systems replaced (1.47 vs 1.01), but not the outcome,
+because the extra system is almost always fine. The B-vs-C gap was sampling
+variance across 115 clustered samples, exactly as Max suspected when he first
+pushed back. Two mechanisms proposed and both wrong before anyone measured the
+thing the claim was actually about.
+
+**The effect on the hit rate is small and clustered, though** — an earlier
+version of this entry claimed "first-measure edits are measurably harder,
+88.7 % vs 94.8 %", which overstates it. Only **9 of 115 lines flip**, one of them
+in the OPPOSITE direction, and they are not independent: lines 77/78/79 all
+refuse on the same divergent context line (dW=604.2), lines 1/2 share one cause
+and 37/58 another. Four or five underlying causes, not seven independent
+samples. The backward-extension count is the solid finding; the hit-rate gap is
+not.
+
+**Comparing figures across dates**: hit rates recorded before 2026-09-01 used a
+measure-start cursor, where 8 lines performed a cursor move rather than a
+deletion. They are internally consistent (B3's 82.6 % → 88.7 % is a valid
+before/after — both sides used measure-start targeting) but are NOT comparable
+to the 94.8 % above.
+
+**Where**: `test/composer-inspect/phasec/cb-sweep.js`,
+`test/composer-inspect/phasec/cb-noopedits.js`.
+
+## 2026-09-01 — Exhaustive every-measure sweep: refusal is a function of the replaced set, so mid-line sampling is the right routine gate
+
+**Question** (Max): does splice refusal depend on more than the specific line(s)
+in the replaced set? If not, a mid-line sweep is a complete inventory and
+first/last-measure edits merely re-derive adjacent lines. Sharpened to the
+decisive form: *is there any case where lines L−1 and L each splice on their own,
+while the replaced set {L−1, L} fails?*
+
+**Method**: `cb-allmeasures.js` edits EVERY measure that has deletable content
+(first note/chord in whichever voice has one), records the replaced set and
+outcome, and restores via `restoreSnapshot`. Chunked by `allmeasures.sh` — the
+runner's `Runtime.evaluate` deadline is 300 s and the full walk needs ~4× that;
+each chunk is saved as it completes so a kill costs one chunk and a re-run
+resumes. `allmeasures-report.mjs` merges and analyses.
+
+**Answer: no such case exists.** 446 measures, 420 real edits, 0 undetermined:
+
+- **0 of 62 multi-line replaced sets fail while every constituent splices.** All
+  5 failing multi-line sets are inherited from a failing constituent
+  (`{0,1}←{0}`, `{36,37}←{36}`, `{53,54}←{54}`, `{57,58}←{57}`, `{59,60}←{59}`),
+  and every constituent was sampled, so the test is conclusive rather than
+  partial.
+- **Refusal is a function of the replaced set**: 170 distinct sets, **0
+  conflicts** — no set ever produced both a splice and a refusal, regardless of
+  which measure or which voice triggered it.
+- **Position within the line does not affect the outcome**: first 92.7 %,
+  middle 91.5 %, last 92.6 %. See the retraction above.
+
+**Full refusal inventory on the sonata — 7 causes, 34 of 420 edits (91.9 %
+splice rate)**:
+
+| n | cause |
+|---|---|
+| 9 | `section-header line` — NOT by design; see below |
+| 6 | `score-start line` — NOT by design; see below |
+| 6 | context below diverged `m-5o3` dW=347 |
+| 5 | context below diverged `m-5iq` dW=49 |
+| 5 | context above diverged `m-5x4` dRelX=36 dW=12 |
+| 2 | context below diverged `m-8ej` dW=604.2 |
+| 1 | context above diverged `m-cy6` dW=89 |
+
+Five distinct divergent context lines, none of them the courtesy-signature class
+B3 fixed.
+
+**Correction (Max, 2026-09-01): the first two are not "by design"** — this doc
+had repeatedly called them that, and it is wrong. The code comments say the
+section-header title and reserve are *"page-mount injections (NOT idempotent)"*
+and that line-0 window fidelity is *"unproven ... drifts ~1px"*. Both are
+unresolved problems. They are also **44 % of all refusals** (15 of 34) against
+19 spread over five separate divergent lines — two root-causings for nearly as
+much coverage as five. And both are now more tractable than when the guards were
+written: the reserve is already readable from `data-reserve` (B4), leaving only
+the title's own y to recompute when the header's system is replaced; and the
+line-0 drift of ~1 px is ~10 units, INSIDE the `EPS` of 25 the context check
+tolerates everywhere else, so that guard may simply be stale. Re-measure k=0
+before writing code. These lead the next thread.
+
+**Decision**: `cb-sweep.js` (one mid-line measure per line) stays the routine
+gate — it reaches 127 of the 170 replaced sets and finds 6 of the 7 causes. The
+exhaustive pass stays as periodic tooling, because it is what produced this
+inventory and it is the only thing that would catch a failure class appearing
+ONLY in multi-line sets. **One known blind spot** in the routine gate:
+`m-cy6 dW=89` (n=1) was seen only at a line edge — the document's final line.
+
+**Where**: `test/composer-inspect/phasec/cb-allmeasures.js`, `allmeasures.sh`,
+`allmeasures-report.mjs`, `cb-seedreach.js`, `cb-noopedits.js`.
