@@ -1218,6 +1218,26 @@ const PAGE_SPLICE = {
     `,
   },
 
+  /* B4: a section title is injected at page MOUNT at an ABSOLUTE y beside the
+   * systems, and its reserve displaces every system at/below it — neither fact
+   * is known to Verovio. An edit on a line ABOVE the header on the same page
+   * cascades those systems, so the title must travel with them (it used to stay
+   * put, stranding the title or letting the music slide over it) AND the
+   * cascade distance must account for the reserve. Asserted via
+   * FIXTURE_ASSERTIONS.pageSectionHeaderCascade. */
+  pageSectionHeaderCascade: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 200; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      m.setSectionHeaderAt(Math.floor(m.allMeasures().length / 2), 'II');
+      r();
+    `,
+  },
+
   /* B1 safety net: a dy-cascade that would push its page past the paper must
    * hand PAGINATION back (derive + re-adopt) rather than draw a clipped page —
    * Verovio does not re-paginate under pinned <pb>. Asserted via
@@ -8148,6 +8168,83 @@ export const FIXTURE_ASSERTIONS = {
         if (Math.sign(movedPx) !== Math.sign(vp.dyFollow) || Math.abs(movedPx) < 1) {
           return { ok: false, detail: 'followers did not cascade: moved ' + movedPx.toFixed(2) + 'px, plan dyFollow ' + vp.dyFollow.toFixed(1) };
         }
+        return { ok: true };
+      })()` },
+  ],
+  pageSectionHeaderCascade: [
+    { name: 'an edit above a section header cascades the title with its system (no stranding, no overlap)',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 3 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+        const title = document.querySelector('#score text.hkl-section-header');
+        if (!title) return { ok: false, detail: 'no section title rendered' };
+        if (!isFinite(Number(title.getAttribute('data-reserve')))) {
+          return { ok: false, detail: 'title carries no data-reserve — the splicer cannot subtract what it cannot read' };
+        }
+        const headerSys = () => {
+          const t = document.querySelector('#score text.hkl-section-header');
+          const meas = t && document.getElementById(t.getAttribute('data-for'));
+          return { t, sys: meas ? meas.closest('g.system') : null };
+        };
+        /* Clearance between the title and the music it labels — the quantity a
+           reader actually sees. Must survive the cascade unchanged. */
+        const gap = () => {
+          const { t, sys } = headerSys();
+          if (!t || !sys) return null;
+          return { g: sys.getBoundingClientRect().top - t.getBoundingClientRect().bottom,
+                   sysTop: sys.getBoundingClientRect().top,
+                   titleBottom: t.getBoundingClientRect().bottom };
+        };
+        const g0 = gap();
+        if (!g0) return { ok: false, detail: 'header system not resolvable' };
+        if (!(g0.g > 0)) return { ok: false, detail: 'title already overlapping before the edit (gap ' + g0.g.toFixed(1) + ')' };
+        /* The line the header starts, and the line directly above it. */
+        const hs = headerSys().sys;
+        const onPage = [...hs.parentElement.querySelectorAll(':scope > g.system')];
+        if (onPage.indexOf(hs) < 1) return { ok: false, detail: 'header system starts its page — no line above it on the same page' };
+        const headerLine = pb['startIds'].indexOf(hs.querySelector('g.measure').id);
+        if (headerLine < 2) return { ok: false, detail: 'header line too close to the score start (' + headerLine + ')' };
+        const noteIn = (measureEl) => {
+          const flat = m['flatChildren'](1);
+          for (let i = 0; i < flat.length; i++) {
+            const el = flat[i];
+            if ((el.localName === 'note' || el.localName === 'chord') && el.closest('measure') === measureEl) return i;
+          }
+          return -1;
+        };
+        const lineStartMeasure = (li) => {
+          const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+          return m.allMeasures()[ids.indexOf(pb['startIds'][li])];
+        };
+        const step = (notes, what) => {
+          const cur = noteIn(lineStartMeasure(headerLine - 1));
+          if (cur < 0) return { ok: false, detail: 'no note to replace on the line above the header' };
+          m.setCursor(cur, 1);
+          if (m.replaceChordAtCursor({ notes, duration: '4', dots: 0 }) === null) return { ok: false, detail: 'replace rejected (' + what + ')' };
+          H.reRender();   /* HKL_INDEX_CHECK verifies the page against a full re-engrave */
+          const g = gap();
+          if (!g) return { ok: false, detail: 'header system lost after ' + what };
+          if (Math.abs(g.g - g0.g) > 3) {
+            return { ok: false, detail: what + ': title/system clearance changed ' + g0.g.toFixed(1) + ' -> ' + g.g.toFixed(1) + 'px (title did not travel with its system)' };
+          }
+          return { ok: true, g, outcome: ps.lastOutcome, plan: ps.lastVertical };
+        };
+        /* Grow the line above: everything below, header included, moves DOWN. */
+        const grown = step([mk('c', 0), mk('g', 7)], 'grow');
+        if (!grown.ok) return grown;
+        if (grown.outcome !== 'spliced') return { ok: false, detail: 'expected a splice on grow, got "' + grown.outcome + '" (' + ps.lastSkipReason + ')' };
+        if (!grown.plan || grown.plan.static) return { ok: false, detail: 'grow did not cascade (static plan) — the fixture is not exercising B4' };
+        if (!(grown.g.sysTop - g0.sysTop > 1)) return { ok: false, detail: 'header system did not move down on grow' };
+        /* Shrink it back: everything moves UP again — the direction that used
+           to slide the music over the title. */
+        const shrunk = step([mk('b', 4)], 'shrink');
+        if (!shrunk.ok) return shrunk;
+        if (!(shrunk.g.sysTop < grown.g.sysTop - 1)) return { ok: false, detail: 'header system did not move back up on shrink' };
         return { ok: true };
       })()` },
   ],

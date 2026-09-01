@@ -77,6 +77,12 @@ Phase C-B2b / B1 probes (2026-08-31, findings baked into the design doc →
 - **cb-topmost.js** — what actually reaches above a page-first system: the
   outliers are all `<text>` (`g.dir`, `g.tempo`, HEJI `g.accid`), which is why
   a bbox hang cannot stand in for Verovio's counted overflow.
+- **cb-header-overlap.js** (run with `--no-sonata`) — the B4 repro: builds a doc
+  with a section header, edits the line directly ABOVE it on the same page, and
+  reports how far the header's system moved versus its title. `BUG: true` means
+  the title was left behind (pre-fix: system 149 px, title 0). Also the quickest
+  way to see the second half of that defect — pre-fix `dyFollow` is short by the
+  full 900-unit reserve.
 - **cb-cascade-overflow.js** (run with `--no-sonata`) — builds a packed page,
   then grows successive systems until the cascade exhausts page 1's slack;
   asserts the splice hands PAGINATION back (warn + derive) and that nothing is

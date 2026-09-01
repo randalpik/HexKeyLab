@@ -1135,11 +1135,40 @@ draws past a pinned page rather than re-paginating. The splice therefore runs
 the same `overflowingPage()` check the pinned full-render path uses (scoped to
 the edited pages) and hands pagination back on a spill.
 
-**Two refusals remain in this area**, both narrow: a live page-first system
-whose window page boundary is missing (only possible when pagination is not
-owned — the tall-page window has no `<pb>`), and a page-first system on a page
-carrying a section-header reserve (main.ts translates that page's systems by an
-amount Verovio knows nothing about, so absolute tops are not comparable there).
+**One refusal remains in this area**: a live page-first system whose window page
+boundary is missing (only possible when pagination is not owned — the tall-page
+window has no `<pb>`). The section-header-page refusal this section originally
+listed was removed the same day; see "Section headers" below.
+
+### Section headers — reserve subtracted, titles cascaded (B4 half, 2026-08-31)
+
+`injectSectionHeaders` (main.ts) runs at page MOUNT: it displaces the header's
+system and every later system on that page by `SECTION_HEADER_RESERVE`, then
+appends the title `<text>` to the PAGE-MARGIN at an absolute y. Verovio knows
+neither fact, so once B1 began moving systems this produced two defects — the
+title had nothing moving it (Max: *"the page reflows while the header stays in
+place, overlapping it"*), and the plan's chain, which runs on LIVE staff tops,
+was wrong by the whole reserve wherever a chained pair straddled the header
+boundary (`dyFollow` 1536.9 where 2436.9 was right — a mis-placed system, not
+just a mis-placed word).
+
+The plan now runs in **Verovio coordinates**: each `LiveSys` carries its
+accumulated reserve, the chain subtracts it before chaining and adds it back
+after, and the cascade moves every title whose system it moves. The reserve is
+READ BACK from the DOM — the injector records `data-reserve` on the title — so
+there is one source of truth rather than a constant duplicated into the render
+layer. An unreadable reserve refuses the splice; guessing is what caused the
+overlap.
+
+**The gate exemption was the bug-enabler.** Both reference gates skipped the
+vertical checks on section-header pages, which is exactly why a 900-unit
+misplacement passed. They now subtract the reserve and verify those pages like
+any other (the sonata's three header pages are checked for the first time, max
+absolute staff-top delta 6 units), and the inline gate asserts each title still
+sits inside its own reserve band. Fixture `pageSectionHeaderCascade` grows then
+shrinks the line directly above a header and asserts the title/system clearance
+is unchanged in both directions; it fails on the pre-fix build with the reported
+symptom.
 
 **Measured (sonata battery)**: **7 of 8 edits splice** (was 6), all 8
 reference-clean — max per-measure x/width delta 4 units, max spacing 8, max
@@ -1182,13 +1211,15 @@ movement instead of refusing it, battery 6/8 → 7/8); and a long-silent TEST bu
 
 Read this section first; the per-area lists below have the detail.
 
-1. **B4 — section-boundary zones + line 0**, now that B1 is done. The battery's
-   ONE remaining fallback is the section-header line, and B1 added a second
-   narrow refusal next to it (`section-header page anchor`: main.ts's reserve
-   translate makes absolute tops incomparable on those pages). Both are the same
-   root problem — page-mount injections Verovio knows nothing about. Making the
-   reserve a property of the RENDER rather than a post-mount translate would
-   retire both refusals and the reference gate's header-page exemption at once.
+1. **B4 remainder — the `section-header line` refusal and line 0.** The reserve
+   half of B4 is DONE (see "Section headers"): the plan now reasons in Verovio
+   coordinates, titles travel with their systems, and header pages are no longer
+   exempt from either reference gate. What is left is the refusal when the
+   REPLACED run itself contains a header measure — re-placing the title needs
+   the injector's baseline rule, not just its reserve — and the line-0
+   exclusion (score-start treatment differs in a window, probe k=0 ~1 px).
+   Folding the reserve into the RENDER instead of a post-mount translate would
+   retire the last refusal; it is also what D1 (vertical justification) needs.
 2. **A6 — the splice's DOM cost, but NOT by cutting getBBox calls.** Measured
    and refuted: 199 → 169 calls changed the time by nothing (15.5/16.1/17.8 ms
    vs ~16.0). It is layout-FLUSH bound. The real levers are fewer MOUNTED pages
@@ -1317,9 +1348,15 @@ string means a shared render path started warning.
       re-splice k−1 instead of falling back. Unaffected by B1 — this is a
       HORIZONTAL divergence, caught by the context check, not the vertical
       gate.
-- [ ] **B4. Section-boundary zones + line 0** — windowed renders diverge there
-      (probes k=59 / k=0); v1 excludes line 0 and lets the context check refuse
-      the rest. Root-causing would extend splicing into section zones.
+- [~] **B4. Section-boundary zones + line 0** — the SECTION-HEADER RESERVE half
+      is DONE 2026-08-31 (see "Section headers"), and it was a live defect, not
+      just missing coverage: an edit above a header cascaded the page while the
+      title stayed put (Max), and the same missing knowledge made the cascade
+      distance wrong by the whole 900-unit reserve. Both gates had EXEMPTED
+      header pages from their vertical checks, which is why it went unseen.
+      Remaining: the `section-header line` refusal (replaced run contains a
+      header measure) and the line-0 exclusion (probe k=0, ~1 px score-start
+      divergence). The k=59 zone is handled structurally by the context check.
 - [ ] **B5. Ensure-mount before the mounted gate** — an edit whose spliced or
       context lines sit on unmounted pages falls back today. When
       `pageVirt.tkCurrent`, mount them from the pre-edit layout (~50 ms each)
@@ -1390,6 +1427,16 @@ string means a shared render path started warning.
 
 ## Status log
 
+- 2026-08-31 — **B4 (section-header reserve) implemented**, fixing a defect B1
+  introduced and the gates hid: `injectSectionHeaders` displaces systems at page
+  MOUNT and places the title at an ABSOLUTE y, so the cascade stranded titles
+  AND mis-computed `dyFollow` by the whole reserve (1536.9 vs 2436.9).
+  Reproduced by `cb-header-overlap.js`, fixed by reasoning in Verovio
+  coordinates (the injector now records `data-reserve`, the splicer reads it
+  back) and moving titles with their systems. Both reference gates stopped
+  exempting header pages — the sonata's three are verified for the first time.
+  Fixture `pageSectionHeaderCascade` (fails pre-fix with the reported symptom);
+  suite 343/343; battery 7/8 spliced, all reference-clean.
 - 2026-08-31 — **Phase C-B2b / B1 implemented** (the dy-cascade; see
   "Implementation (Phase C-B2b / B1)"). The spike (`cb-dycascade.js`) compared
   the plan against what the ensuing full render actually did and refuted the

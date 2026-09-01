@@ -1837,3 +1837,48 @@ re-snaps every system on the page for a sub-pixel edit — it showed up
 immediately as a visual-baseline diff on an edit that used to move nothing.
 A splice now either pins systems to their live positions exactly (v1 behaviour,
 when nothing moves by more than EPS) or applies the whole plan.
+
+## A mount-time DOM injection is invisible to every layout model that runs later — and exempting it from a gate is how it goes wrong silently (2026-08-31)
+
+Section titles are injected by `injectSectionHeaders` (main.ts) when a page
+MOUNTS: it translates the header's system and every later system on that page
+down by `SECTION_HEADER_RESERVE`, then appends the title `<text>` to the
+page-margin at an **absolute** y derived from that system's bbox. Verovio knows
+nothing about any of it. Once the B1 dy-cascade started MOVING systems after
+the mount, that produced two defects at once — and only one of them was
+visible:
+
+1. **The title stayed behind.** It is a page-margin child, not a child of the
+   system it labels, so nothing moved it. Measured: the header's system moved
+   149 px down and the title moved 0, clearance 40.7 → 189.7 px. In the other
+   direction (an edit that SHRINKS a line above the header) the music slides up
+   over the words — the symptom Max reported.
+2. **The cascade distance was wrong by the whole reserve.** The plan chains
+   live staff tops, and the live spacing across a header boundary contains the
+   900-unit displacement that the splice window does not. So `dyFollow` came out
+   900 units short (1536.9 where 2436.9 was right) — a mis-placed system, not
+   just a mis-placed word.
+
+**Both are the same root cause and have one fix**: reason in the coordinate
+space the layout engine actually produced. The plan now subtracts each system's
+accumulated reserve before chaining and adds it back afterwards, and the
+cascade moves a title whenever it moves the system that title labels.
+
+**Read the injected value; do not duplicate the constant.** The injector records
+what it applied on the title element (`data-reserve`), and the splicer reads it
+back. A title with no readable reserve refuses the splice rather than guessing —
+guessing is what produced the overlap.
+
+**The gate exemption is the real lesson.** Both the inline `HKL_INDEX_CHECK`
+reference gate and the sonata battery *skipped the vertical checks on
+section-header pages*, on the reasonable-sounding grounds that the reserve is a
+main.ts injection the raw reference render lacks. That exemption is exactly why
+a 900-unit misplacement and a stranded title passed every gate. Subtracting a
+known offset is a comparison; skipping the comparison is a blind spot. Both
+gates now verify header pages like any other (sonata: max absolute staff-top
+delta 6 units over all 30 pages, 3 of them header pages), and the reference gate
+additionally asserts each title still sits inside its own reserve band.
+
+Rule: when a post-render pass moves rendered geometry, either fold it into the
+render or make it *measurable* from the DOM — and never let a verification gate
+skip the pages where it applies.

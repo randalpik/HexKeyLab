@@ -86,10 +86,24 @@ function referenceCompare() {
       const liveSys = [...pageEl.querySelectorAll('g.system')];
       if (refSys.length !== liveSys.length) return { ok: false, why: 'page ' + pno + ': system count ' + liveSys.length + ' vs ref ' + refSys.length };
       // Section-header pages carry a main.ts-injected system translate (the
-      // reserve) that the raw reference lacks — spacing is not comparable
-      // there; sequence + x/width still are.
-      const headerPage = pageEl.querySelector('text.hkl-section-header') !== null;
-      let prevRef = null, prevLive = null;
+      // reserve) that the raw reference lacks. This used to EXEMPT them from
+      // the vertical checks, which is how a cascade that stranded a section
+      // title (and mis-placed its system by the whole reserve) got through.
+      // The reserve is recorded on the title element by the injector, so it is
+      // subtracted instead; only an unreadable reserve is exempt.
+      const hdrSystems = [...(pageEl.querySelector('svg g.page-margin')?.children ?? [])]
+        .filter((c) => c.classList.contains('system'));
+      const reserve = new Array(hdrSystems.length).fill(0);
+      let headerPage = false;
+      for (const t of pageEl.querySelectorAll('text.hkl-section-header')) {
+        const forId = t.getAttribute('data-for');
+        const sys = forId ? pageEl.querySelector('#' + CSS.escape(forId))?.closest('g.system') : null;
+        const idx = sys ? hdrSystems.indexOf(sys) : -1;
+        const rv = Number(t.getAttribute('data-reserve'));
+        if (idx < 0 || !isFinite(rv)) { headerPage = true; continue; }
+        for (let k = idx; k < reserve.length; k++) reserve[k] += rv;
+      }
+      let prevRef = null, prevLiveV = 0;
       for (let i = 0; i < refSys.length; i++) {
         const rp = profile(refSys[i]), lp = profile(liveSys[i]);
         if (!rp || !lp) return { ok: false, why: 'page ' + pno + ' sys ' + i + ': unreadable' };
@@ -99,8 +113,10 @@ function referenceCompare() {
           if (d > maxD) maxD = d;
           checkedMeasures++;
         }
+        /* Live tops carry the header reserve; Verovio's reference does not. */
+        const lpV = lp.staffTop - (reserve[i] ?? 0);
         if (prevRef && !headerPage) {
-          const d = Math.abs((rp.staffTop - prevRef.staffTop) - (lp.staffTop - prevLive.staffTop));
+          const d = Math.abs((rp.staffTop - prevRef.staffTop) - (lpV - prevLiveV));
           if (d > maxSpacingD) maxSpacingD = d;
         }
         /* ABSOLUTE staff top, not just consecutive spacing. B1 places spliced
@@ -109,10 +125,10 @@ function referenceCompare() {
            every spacing check and is still wrong. Both sides are page-margin
            relative, so they compare directly. */
         if (!headerPage) {
-          const d = Math.abs(rp.staffTop - lp.staffTop);
+          const d = Math.abs(rp.staffTop - lpV);
           if (d > maxTopD) maxTopD = d;
         }
-        prevRef = rp; prevLive = lp;
+        prevRef = rp; prevLiveV = lpV;
       }
       checkedPages++;
     } finally { host.remove(); }

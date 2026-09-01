@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 342,
-  "passed": 342,
+  "fixtures": 343,
+  "passed": 343,
   "failed": 0,
-  "elapsedMs": 164755,
+  "elapsedMs": 173068,
   "results": [
     {
       "name": "emptyDoc",
@@ -925,6 +925,14 @@
     },
     {
       "name": "pageSystemSpliceDyCascade",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "pageSectionHeaderCascade",
       "ok": true,
       "failures": [],
       "counts": {

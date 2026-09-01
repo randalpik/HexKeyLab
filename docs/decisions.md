@@ -4482,3 +4482,65 @@ plus `pageSystemSpliceDyCascade` and `pageSystemSpliceCascadeOverflow`),
 `test/composer-inspect/phasec/` (cb-dycascade, cb-anchor, cb-topmost,
 cb-cascade-overflow; cb-splice-battery gained the absolute-top check),
 docs/lessons.md.
+
+## 2026-08-31 — Section-header reserve is subtracted, not exempted: the splice reasons in Verovio coordinates and titles travel with their systems
+
+**Context**: Max, after B1 shipped: *"in certain cases, an edit on a line above a
+section header causes the page to reflow while the header stays in place,
+overlapping it. We have to make sure our knowledge of the headers matches the
+derive path."* Reproduced immediately (`cb-header-overlap.js`): the header's
+system moved 149 px down, the title moved 0, clearance 40.7 → 189.7 px.
+
+**Two defects, one root cause.** `injectSectionHeaders` (main.ts) runs at page
+MOUNT: it displaces the header's system and every later system on that page by
+`SECTION_HEADER_RESERVE`, and appends the title `<text>` to the page-margin at
+an ABSOLUTE y. Verovio knows neither fact. So once B1 started moving systems,
+(1) the title had nothing moving it, and (2) the vertical plan's chain — which
+runs on LIVE staff tops — was wrong by the whole reserve wherever a chained
+pair straddled the header boundary: `dyFollow` came out **1536.9 where 2436.9
+was correct**, mis-placing the music by 900 units on top of stranding the word.
+
+**Picked**: the plan works in **Verovio coordinates**. Each `LiveSys` carries
+its accumulated header reserve; the chain subtracts it before chaining and adds
+it back afterwards, and the cascade moves every title whose system it moves.
+The reserve is **read back from the DOM** — the injector records what it applied
+as `data-reserve` on the title element — so there is one source of truth rather
+than a constant duplicated into the render layer (which cannot import from
+main.ts anyway). A title with no readable reserve REFUSES the splice
+(`section-header reserve unreadable`) rather than guessing.
+
+**Rejected**: (a) refusing to splice on any page carrying a section header —
+safe, but it gives up precisely the pages B4 was meant to reclaim, and it leaves
+the wrong-by-900 arithmetic latent for any future caller; (b) re-running
+`injectSectionHeaders` after a splice — it is deliberately not idempotent (it
+translates systems cumulatively), and making it so would rebuild geometry the
+splice just placed.
+
+**The gate exemption was the actual bug-enabler.** Both reference gates skipped
+the vertical checks on section-header pages, so a 900-unit misplacement and a
+stranded title passed everything. They now subtract the reserve and verify those
+pages like any other, and the inline gate additionally asserts every title still
+sits inside its own reserve band. The sonata battery consequently verifies its
+three header pages for the first time — still clean (max absolute staff-top
+delta 6 units over 30 pages).
+
+**Also removed**: the `section-header page anchor` refusal B1 added — a
+page-first system on a header page is now placed correctly by the reserve
+arithmetic. The `section-header line` refusal (the replaced run itself contains
+a header measure) STAYS: re-placing that title needs the injector's baseline
+rule, not just its reserve, and a full render there is correct and rare.
+
+**Verified**: new fixture `pageSectionHeaderCascade` grows then shrinks the line
+directly above a header and asserts the title/system clearance is unchanged in
+both directions — it FAILS on the pre-fix build with exactly the reported
+symptom (40.7 → 189.7 px). Suite 343/343 under `HKL_INDEX_CHECK`; sonata battery
+7/8 spliced, all reference-clean with header pages no longer exempt;
+typecheck/build/boundaries clean.
+
+**Where**: `apps/composer/src/main.ts` (`data-reserve` on the title),
+`apps/composer/src/render/pagesplice.ts` (`PageHeaders`/`pageHeaders`,
+`LiveSys.reserve`, Verovio-coordinate chain, title cascade, un-exempted
+reference gate + title-band assertion), `test/composer-test/fixtures.mjs`
+(`pageSectionHeaderCascade`), `test/composer-inspect/phasec/cb-header-overlap.js`,
+`test/composer-inspect/phasec/cb-splice-battery.js` (reserve-adjusted compare),
+docs/lessons.md.

@@ -117,6 +117,49 @@ interface LiveSys extends SysProfile {
   pageEl: HTMLElement;
   pageFirst: boolean;
   pageLast: boolean;
+  /** Index of this system among its page's systems. */
+  sysIdx: number;
+  /** Accumulated section-header displacement this system carries (main.ts's
+   *  mount-time injector, which Verovio knows nothing about). Live staff tops
+   *  are Verovio's + this. */
+  reserve: number;
+}
+
+/** Section-header state of one mounted page, read back from what the mount-time
+ *  injector actually did (main.ts `injectSectionHeaders`): each title <text>
+ *  displaced its own system and every later one on the page by `data-reserve`
+ *  units, and sits at an ABSOLUTE y in page-margin coordinates. Both facts
+ *  matter here — the displacement must come out of the vertical arithmetic,
+ *  and the title must travel with its system when the cascade moves it. */
+interface PageHeaders {
+  systems: Element[];
+  /** Accumulated displacement per system index. */
+  reserve: number[];
+  titles: Array<{ el: Element; sysIdx: number }>;
+  /** False when a title carries no readable `data-reserve` — the page's
+   *  geometry is then unexplained and must not be reasoned about. */
+  known: boolean;
+}
+
+function pageHeaders(pageEl: HTMLElement): PageHeaders {
+  const margin = pageEl.querySelector('svg g.page-margin');
+  const systems = margin
+    ? Array.from(margin.children).filter((c) => c.classList.contains('system'))
+    : [];
+  const reserve = new Array<number>(systems.length).fill(0);
+  const titles: Array<{ el: Element; sysIdx: number }> = [];
+  let known = true;
+  for (const t of Array.from(pageEl.querySelectorAll('text.hkl-section-header'))) {
+    const id = t.getAttribute('data-for');
+    const meas = id ? pageEl.querySelector('#' + CSS.escape(id)) : null;
+    const sys = meas?.closest('g.system') ?? null;
+    const idx = sys ? systems.indexOf(sys) : -1;
+    const r = Number(t.getAttribute('data-reserve'));
+    if (idx < 0 || !isFinite(r)) { known = false; continue; }
+    titles.push({ el: t, sysIdx: idx });
+    for (let i = idx; i < reserve.length; i++) reserve[i] += r;
+  }
+  return { systems, reserve, titles, known };
 }
 
 /** Where a full re-engrave would put the replaced systems, and what that does
@@ -209,6 +252,8 @@ export class PageSystemSplicer {
   /** The vertical plan the last gate computed (null when it never got that
    *  far). Diagnostics for the probes; the splice itself consumes it inline. */
   lastVertical: VerticalPlan | null = null;
+  /** Per-splice memo of each mounted page's section-header state. */
+  private headerCache = new Map<HTMLElement, PageHeaders>();
 
   /** The caller resolved a signature-identical doc — the mounted DOM already
    *  renders it; nothing to do. Recorded for diagnostics only. */
@@ -225,6 +270,7 @@ export class PageSystemSplicer {
     this.lastStats = { lines: 0, windowLines: 0, windowMeasures: 0, loadMs: 0, totalMs: 0 };
     this.lastPages = [];
     this.lastVertical = null;
+    this.headerCache.clear();
     const skip = (why: string): false => {
       this.lastOutcome = 'skipped';
       this.lastSkipReason = why;
@@ -388,12 +434,23 @@ export class PageSystemSplicer {
     const margin = sys.parentElement;
     if (!margin) return null;
     const siblings = Array.from(margin.children).filter((c) => c.classList.contains('system'));
+    const hdr = this.headersFor(pageEl);
+    const sysIdx = siblings.indexOf(sys);
     return {
       ...prof,
       pageEl,
       pageFirst: siblings[0] === sys,
       pageLast: siblings[siblings.length - 1] === sys,
+      sysIdx,
+      reserve: (sysIdx >= 0 ? hdr.reserve[sysIdx] : undefined) ?? 0,
     };
+  }
+
+  /** `pageHeaders`, memoised for the duration of one splice attempt. */
+  private headersFor(pageEl: HTMLElement): PageHeaders {
+    let h = this.headerCache.get(pageEl);
+    if (!h) { h = pageHeaders(pageEl); this.headerCache.set(pageEl, h); }
+    return h;
   }
 
   /** Gates that need the rendered window, then the surgery. */
@@ -457,14 +514,17 @@ export class PageSystemSplicer {
        applies a non-static plan instead of refusing. */
     /* A live page-first system is placed from its window counterpart's
        ABSOLUTE position, which is only comparable when the window paginates
-       there too — and only when the live page carries no section-header
-       reserve (main.ts translates that page's systems by an amount Verovio
-       knows nothing about). */
+       there too. Section-header reserves no longer disqualify a page — they are
+       subtracted explicitly (see verticalPlan) — but an UNREADABLE reserve
+       leaves the page's geometry unexplained, and guessing is what caused the
+       overlap this replaced. */
+    for (const l of [ctxPrev, ...live, ...(ctxNext ? [ctxNext] : [])]) {
+      if (!this.headersFor(l.pageEl).known) return skip('section-header reserve unreadable');
+    }
     for (let k = r.a; k <= r.b; k++) {
       const lk = live[k - r.a];
       if (!lk.pageFirst) continue;
       if (!winIsPageFirst.has(k)) return skip('window page boundary missing');
-      if (lk.pageEl.querySelector('text.hkl-section-header')) return skip('section-header page anchor');
     }
     const plan = verticalPlan(r, live, winProf, ctxPrev, ctxNext);
     this.lastVertical = plan;
@@ -483,8 +543,16 @@ export class PageSystemSplicer {
        Collected BEFORE the surgery: it removes lb.el from the DOM, and a
        detached node has no siblings to walk. */
     const followers: Element[] = [];
+    /* Section titles sit at an ABSOLUTE y beside the systems (main.ts appends
+       them to the page-margin, not to a system), so a cascade that moves a
+       header's system must move its title by the same dy or the music slides
+       over the words. */
+    const movedTitles: Element[] = [];
     if (!plan.static && Math.abs(plan.dyFollow) > EPS) {
       for (let n = nextSystemSibling(lb.el); n; n = nextSystemSibling(n)) followers.push(n);
+      for (const t of this.headersFor(lb.pageEl).titles) {
+        if (t.sysIdx > lb.sysIdx) movedTitles.push(t.el);
+      }
     }
     const pages = new Set<HTMLElement>();
     for (let k = r.a; k <= r.b; k++) {
@@ -514,6 +582,9 @@ export class PageSystemSplicer {
     for (const n of followers) {
       const t = consolidate(n as SVGGElement);
       n.setAttribute('transform', `translate(${t.tx},${t.ty + plan.dyFollow})`);
+    }
+    for (const t of movedTitles) {
+      t.setAttribute('y', String(Number(t.getAttribute('y') ?? 0) + plan.dyFollow));
     }
     if (followers.length) pages.add(lb.pageEl);
     for (const pageEl of pages) ctx.snapPage(pageEl);
@@ -549,9 +620,13 @@ export class PageSystemSplicer {
           throw new Error(`[page-splice] page ${pno}: spliced ${liveSys.length} systems, reference ${refSys.length}`);
         }
         /* Section-header injections translate the live page's systems by the
-           reserve (main.ts, not Verovio) — vertical spacing is not comparable
-           against the raw reference there; x/width and sequence still are. */
-        const headerPage = pageEl.querySelector('text.hkl-section-header') !== null;
+           reserve (main.ts, not Verovio). That used to EXEMPT such pages from
+           the vertical check — which is exactly how a cascade that stranded a
+           section title got past this gate. The reserve is now subtracted, so
+           header pages are verified like any other; only an unreadable reserve
+           is exempt. */
+        const hdr = pageHeaders(pageEl);
+        const headerPage = !hdr.known;
         for (let i = 0; i < refSys.length; i++) {
           const rp = systemProfile(refSys[i]);
           const lp = systemProfile(liveSys[i]);
@@ -571,18 +646,51 @@ export class PageSystemSplicer {
             /* ABSOLUTE tops, not just consecutive spacing: a dy-cascade that
                shifted a whole page by a constant would satisfy every spacing
                check and still be wrong (B1). Both sides are page-margin
-               relative, so they are directly comparable. */
-            if (Math.abs(rp.staffTop - lp.staffTop) > TOL) {
-              throw new Error(`[page-splice] page ${pno} system ${i}: staff top diverged from reference (${rp.staffTop.toFixed(1)} vs ${lp.staffTop.toFixed(1)})`);
+               relative once the live side's header reserve is removed. */
+            const liveV = lp.staffTop - (hdr.reserve[i] ?? 0);
+            if (Math.abs(rp.staffTop - liveV) > TOL) {
+              throw new Error(`[page-splice] page ${pno} system ${i}: staff top diverged from reference (${rp.staffTop.toFixed(1)} vs ${liveV.toFixed(1)}, reserve ${(hdr.reserve[i] ?? 0).toFixed(1)})`);
             }
           }
         }
       } finally {
         refHost.remove();
       }
+      /* And every section title must still sit in the band its own system's
+         reserve carved out — the invariant the cascade broke. */
+      for (const t of hdrTitles(pageEl)) {
+        if (!t.ok) {
+          throw new Error(`[page-splice] page ${pno}: section title "${t.text}" no longer sits above its system (gap ${t.gap.toFixed(1)})`);
+        }
+      }
     }
   }
 }
+
+/** Each section title with a verdict on whether it still labels its system:
+ *  the title's baseline must sit inside the reserve band immediately above the
+ *  system's content top. A cascade that moved the system without the title
+ *  (or vice versa) shows up here immediately. */
+function hdrTitles(pageEl: HTMLElement): Array<{ text: string; gap: number; ok: boolean }> {
+  const hdr = pageHeaders(pageEl);
+  const out: Array<{ text: string; gap: number; ok: boolean }> = [];
+  for (const t of hdr.titles) {
+    const sys = hdr.systems[t.sysIdx] as SVGGraphicsElement | undefined;
+    if (!sys) continue;
+    let box: DOMRect;
+    try { box = sys.getBBox(); } catch { continue; }
+    const ty = consolidate(sys as SVGGElement).ty;
+    const y = Number(t.el.getAttribute('y') ?? 0);
+    /* Distance from the title baseline down to the system's content top. */
+    const gap = (box.y + ty) - y;
+    out.push({ text: t.el.textContent ?? '', gap, ok: gap > 0 && gap < 2 * SECTION_TITLE_BAND });
+  }
+  return out;
+}
+/** Generous bound on the reserve band (main.ts reserves 900 and puts the
+ *  baseline 360 into it). Only used to catch a title that has drifted away
+ *  from its system entirely, so the exact value is not load-bearing. */
+const SECTION_TITLE_BAND = 900;
 
 /** Compute the vertical plan (see VerticalPlan). Pure measurement:
  *  - a page-FIRST system takes its window counterpart's absolute staff-top.
@@ -600,37 +708,48 @@ function verticalPlan(
   r: { a: number; b: number },
   live: LiveSys[],
   winProf: Map<number, SysProfile>,
-  ctxPrev: SysProfile,
+  ctxPrev: LiveSys,
   ctxNext: LiveSys | null,
 ): VerticalPlan {
   const newTop: number[] = [];
   const liveTop: number[] = [];
   const startIds: string[] = [];
+  /* The chain runs in VEROVIO coordinates. Live staff tops carry main.ts's
+     section-header reserve (added at mount, invisible to Verovio and to the
+     window), so it comes out before chaining and goes back on afterwards.
+     Without this the pair that straddles a header boundary is wrong by the
+     whole reserve — which is how an edit above a header used to cascade the
+     page while the title stayed put. */
+  const newV: number[] = [];
   for (let k = r.a; k <= r.b; k++) {
     const lk = live[k - r.a];
     const wk = winProf.get(k)!;
     liveTop.push(lk.staffTop);
     startIds.push(lk.el.querySelector('g.measure')?.id ?? '');
+    let v: number;
     if (lk.pageFirst) {
-      newTop.push(wk.staffTop);
+      v = wk.staffTop;
     } else {
-      const prevTop = k === r.a ? ctxPrev.staffTop : newTop[k - r.a - 1];
+      const prevV = k === r.a ? ctxPrev.staffTop - ctxPrev.reserve : newV[k - r.a - 1];
       const prevWin = winProf.get(k - 1)!;
-      newTop.push(prevTop + (wk.staffTop - prevWin.staffTop));
+      v = prevV + (wk.staffTop - prevWin.staffTop);
     }
+    newV.push(v);
+    newTop.push(v + lk.reserve);
   }
   const lb = live[r.b - r.a], wb = winProf.get(r.b)!;
-  const lastNew = newTop[newTop.length - 1];
+  const lastV = newV[newV.length - 1];
   let dyFollow = 0, followId = '';
   if (!lb.pageLast && ctxNext) {
     const wNext = winProf.get(r.b + 1)!;
-    dyFollow = (lastNew + (wNext.staffTop - wb.staffTop)) - ctxNext.staffTop;
+    const nextV = lastV + (wNext.staffTop - wb.staffTop);
+    dyFollow = (nextV + ctxNext.reserve) - ctxNext.staffTop;
     followId = ctxNext.el.querySelector('g.measure')?.id ?? '';
   }
   const isStatic = newTop.every((t, i) => Math.abs(t - liveTop[i]) <= EPS) && Math.abs(dyFollow) <= EPS;
   return {
     startIds, liveTop, newTop, dyFollow, followId,
-    newBottom: lastNew + (wb.bboxBot - wb.staffTop),
+    newBottom: newTop[newTop.length - 1] + (wb.bboxBot - wb.staffTop),
     liveBottom: lb.bboxBot,
     static: isStatic,
   };

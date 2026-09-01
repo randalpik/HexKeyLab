@@ -784,6 +784,12 @@ function injectSectionHeaders(scoreEl: HTMLElement, model: ComposerModel): void 
     const t = pageMargin.ownerDocument!.createElementNS(HKL_SVG_NS, 'text');
     t.setAttribute('class', 'hkl-section-header');
     t.setAttribute('data-for', id);
+    /* Record the displacement this header applied. Verovio knows nothing about
+       it, so anything that reasons about system positions AFTER the mount — the
+       page system splicer's vertical plan and its reference gate — must be able
+       to subtract it, and must read the value that was actually applied rather
+       than duplicate the constant. */
+    t.setAttribute('data-reserve', String(SECTION_HEADER_RESERVE));
     /* Centered on the page (not the system — a short final section would
        otherwise pull the title to the left margin). */
     t.setAttribute('x', String(PAGE_INNER_W / 2));
