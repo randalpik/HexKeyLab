@@ -1969,3 +1969,39 @@ step; here the replaced set and the window wanted different closures, and
 sharing one iteration conflated them. Truncating a spanner at the window edge
 (anchoring it to the synthetic leader/trailer) remains the answer for a
 genuinely document-long spanner — the sonata has none, so it stays unbuilt.
+
+## Mount-on-demand without eviction is an accumulator, and it leaks into edit latency (2026-08-31)
+
+Page-view virtualization mounted pages lazily and never un-mounted them:
+`mountPage` only added to `pageVirt.mounted`, and the only thing that removed
+pages was a full render rebuilding the grid. So the mounted set was monotonic
+between full renders and converged on "every page you have visited" — 2 → 9
+across a sweep, 30 under the battery's `mountAll`. Because every `getBBox` in a
+splice flushes layout across all mounted pages (the A6 finding: ~400 ms per
+splice at 30 pages vs ~245 ms at 2–6, +260 % from 1 page to 37), the accumulator
+was a slow leak in edit latency that got worse the longer you worked.
+
+The perverse part: **improving the splice hit rate made it worse**, because full
+renders were the only thing collecting the garbage. A cache with no eviction
+policy plus a change that reduces cache flushes equals unbounded growth.
+
+Three things worth carrying forward:
+
+- **Give a lazily-populated set an eviction rule at the same time you give it a
+  population rule.** The mount band and the evict band must differ (here: one
+  viewport vs two) or the boundary churns, and a re-mount costs as much as the
+  original mount (~138 ms).
+- **Match the eviction band to whatever else mounts.** The IntersectionObserver
+  arms at `rootMargin: 100%`; evicting inside that band would have the observer
+  and the policy fighting each other every scroll.
+- **Un-mounting is only safe if a placeholder is exactly the size of the page it
+  replaces.** Ours was 2 px short until the same day, so eviction would have
+  shifted the document under the reader — the identical defect that pass had
+  just fixed. A reversible representation has to be *dimensionally* reversible.
+
+And the estimate lesson: the B5 note said a mount costs "~50 ms"; measured, it
+is ~138 ms — `mountPage` is a `renderToSVG` *plus* the entire per-page post pass
+(crisp pinning, barline and right-edge snapping, notehead reordering, HEJI
+injection, theme tagging, header/footer, section headers, volta styling,
+`snapSystems`). An estimate written next to an unimplemented item is a guess;
+re-measure it the moment it becomes load-bearing.

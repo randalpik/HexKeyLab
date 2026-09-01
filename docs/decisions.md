@@ -4684,3 +4684,74 @@ largest real class.
 `pageSpliceCtx`), `apps/composer/src/render/pagesplice.ts` (`ensurePageMounted`,
 partition-derived `pageOfLine`, pre-lookup mounting),
 `test/composer-test/fixtures.mjs` (`pageSystemSpliceEnsureMount`).
+
+## 2026-08-31 — Page virtualization gets an eviction policy: the mounted set is a window around the cursor, not an accumulator
+
+**Context**: after B5 the slowest splices were all mount cases (534 ms max, all
+eight slowest had `mountedDelta 1`), and the mount measured **~138 ms**, not the
+~50 ms the B5 note estimated. Max: *"we're waiting until after an edit is
+requested to mount the adjacent pages. That's never worth it… why do we ever
+need more than 3 total pages mounted at a time?"*
+
+**The answer was that nothing ever un-mounted.** `mountPage` only added to
+`pageVirt.mounted`; the only thing that removed pages was a full render
+rebuilding the grid. So the mounted set was monotonic between full renders and
+converged on "every page you have visited" — the sweep drifted 2 → 9 and the
+battery's `mountAll` reaches 30. Perversely, B5 raised the ceiling *because*
+improving the hit rate removed the full renders that were collecting the
+garbage. Every `getBBox` in a splice flushes layout over all mounted pages
+(A6), so the accumulator was a slow leak in edit latency: ~400 ms per splice at
+30 pages versus ~245 ms at 2–6, and the scaling baseline is +260 % from 1 page
+to 37.
+
+**Picked**: `updateMountWindow(cursorMeasure)`, scheduled on idle from every
+cursor update. Mount everything within ONE viewport of the view (the same band
+the IntersectionObserver arms, so the two never fight) plus the cursor's page
+and its two neighbours; evict anything mounted, unpinned, and beyond TWO
+viewports. The gap between the bands is the hysteresis — without it, scrolling
+along a page boundary churns, and a re-mount costs the same ~138 ms. The
+cursor's neighbours are mounted eagerly because that is where the next edit
+needs context, which moves B5's mount off the edit path entirely.
+
+**Eviction only became safe earlier the same day.** Un-mounting restores the
+explicit placeholder dims; while a placeholder was 2 px shorter than the mounted
+page, evicting would have shifted the document under the reader — the very drift
+that pass removed. Mount and un-mount are now geometry-neutral, and the sweep
+confirms it: `scrollHeightChanged` 0, `pageBoxChanged` 0, and the next-page
+anchor moved on **0 of 111** edits (the sample grew from 20 to 111 precisely
+because the window keeps the next page mounted).
+
+**Stale pages are evictable like any other.** Re-mounting one reloads the
+document once (~600 ms) and leaves the toolkit current for everything after —
+better than pinning every edited page in memory forever, which would rebuild the
+accumulator out of exactly the pages an editing session touches.
+
+**Measured** (sweep, 116 lines, cursor parked before each timed edit):
+
+| | B5 only | + mount window |
+|---|---|---|
+| pages mounted at edit (min/median/max) | 2 / 5 / **9** | 2 / **3** / **3** |
+| splices that mounted mid-edit | 19 | **0** |
+| splice median / p95 / max | 266 / 494 / 534 ms | **236 / 340 / 381 ms** |
+| hit rate | 82.6 % | 82.6 % |
+
+Coverage is unchanged — eviction costs no splices, because B5's on-demand mount
+remains as the fallback for anything the window did not anticipate.
+
+**Verification harnesses opt out.** `setMountWindowEnabled(false)` exists for
+gates that compare the WHOLE document or locate a measure through the page DOM.
+The battery needs it both ways: eviction narrowed its reference compare from 30
+pages to 5 *non-deterministically* (it lands on an idle callback), and it broke
+`edit-page-first` outright — that edit finds its target via
+`.score-page[data-page="3"] g.measure`, which returns null once page 3 is a
+placeholder, so the edit silently did not apply. Caught only because the probe
+asserts `docVersion()` changed rather than trusting the return value. Latency in
+the battery is therefore worst-case by construction; `cb-sweep.js` is the probe
+that measures realistic mounting.
+
+**Where**: `apps/composer/src/render/render.ts` (`unmountPage`,
+`pageOfMeasure`, `updateMountWindow`, `scheduleMountWindow`,
+`setMountWindowEnabled`, IO callback re-evaluates the window),
+`apps/composer/src/main.ts` (schedule on both cursor-update paths),
+`test/composer-inspect/phasec/cb-splice-battery.js`,
+`test/composer-test/fixtures.mjs` (`pageSystemSpliceEnsureMount` pins it off).

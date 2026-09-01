@@ -8278,6 +8278,10 @@ export const FIXTURE_ASSERTIONS = {
         /* Read pageVirt AFTER those renders: a full render REPLACES the object,
            and un-mounting a stale copy leaves the renderer's mounted set
            disagreeing with the DOM — an inconsistency the splicer cannot see. */
+        /* The runtime mount window would re-mount page 2 on an idle callback
+           and make this test race; B5's on-demand mount is the fallback being
+           tested here, so pin the window off. */
+        H.renderer.setMountWindowEnabled(false);
         const st = H.renderer['pageVirt'];
         if (!st || st.pageCount < 2) return { ok: false, detail: 'need >= 2 pages, got ' + (st ? st.pageCount : 0) };
         const startIds = pb['startIds'];

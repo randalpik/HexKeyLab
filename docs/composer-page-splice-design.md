@@ -1474,6 +1474,18 @@ string means a shared render path started warning.
 
 ## Status log
 
+- 2026-08-31 — **Page virtualization gets an EVICTION policy.** B5's mounts were
+  measured at ~138 ms (not the ~50 ms estimated) and were the whole difference
+  between a 377 ms and a 239 ms splice. Root cause of the drift-upward: nothing
+  ever un-mounted, so `mounted` was monotonic between full renders and converged
+  on every page visited (2 → 9 on the sweep, 30 in the battery) — and every
+  `getBBox` flushes layout over all of them (A6). The mounted set is now a
+  WINDOW: mount within one viewport plus the cursor's page ±1, evict beyond two
+  viewports (the gap is hysteresis), scheduled on idle from every cursor update.
+  Pages mounted at edit **9 → 3 max**, splices mounting mid-edit **19 → 0**,
+  splice median/p95/max **266/494/534 → 236/340/381 ms**, hit rate unchanged at
+  82.6 %. Safe only because the placeholder now matches the mounted box exactly;
+  verification harnesses opt out via `setMountWindowEnabled(false)`.
 - 2026-08-31 — **B5 implemented** (ensure-mount before the mounted gate). With
   realistic lazy mounting only 2–6 of 30 pages are live, so a context line —
   usually the one below, at a page boundary — was frequently a placeholder and

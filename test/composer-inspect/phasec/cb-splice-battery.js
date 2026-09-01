@@ -28,6 +28,14 @@ if (!out.adopted) return out;
 const lb = await import('/composer/src/render/linebreaks.ts');
 const TOL = 30;
 
+/* This battery verifies the WHOLE document against a reference render and
+   locates targets through the page DOM, so every page must stay mounted. The
+   runtime mount window (cursor page ±1, evicting the rest) would undo mountAll
+   on an idle callback — narrowing checkedPages from 30 to 5, and doing it
+   non-deterministically. Latency here is therefore worst-case by construction;
+   cb-sweep.js is the probe that measures realistic mounting. */
+r.setMountWindowEnabled(false);
+
 const mountAll = async () => {
   for (const page of Array.from(document.querySelectorAll('#score .score-page.score-page-pending'))) {
     r['mountPage'](+page.dataset.page);

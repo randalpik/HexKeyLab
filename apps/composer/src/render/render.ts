@@ -169,6 +169,10 @@ class Renderer {
    *  crisp snap). Injections are NOT idempotent (section headers translate
    *  systems), so only the mount path may run them — never a second pass. */
   private onPageMountedCb: ((pageEl: HTMLElement) => void) | null = null;
+  /** Pending idle handle + latest cursor measure for updateMountWindow. */
+  private mountWindowHandle: number | null = null;
+  private mountWindowMi = -1;
+  private mountWindowEnabled = true;
   /** Duration of the last full engrave per mode (ms) — predictNextRenderHeavy's
    *  evidence. Splices and cache restores don't update it. */
   private lastFullMs: Partial<Record<ViewMode, number>> = {};
@@ -814,6 +818,121 @@ class Renderer {
     this.finishPageMount(div);
   }
 
+  /** Return a mounted page to a placeholder. The inverse of mountPage, and the
+   *  half virtualization never had: nothing un-mounted, so `mounted` was
+   *  monotonic between full renders and converged on "every page you visited"
+   *  (sweep: 2 → 9 and climbing; the battery's mountAll reaches 30). Every
+   *  `getBBox` in a splice flushes layout over all of them — ~400 ms per splice
+   *  at 30 pages against ~245 ms at 2-6, and the scaling baseline is +260 %
+   *  from 1 page to 37 — so the accumulator was a slow leak in edit latency.
+   *
+   *  Safe only because a placeholder is now sized from the MOUNTED page's box:
+   *  while it was 2 px shorter, un-mounting would have shifted the document
+   *  under the reader, which is the drift this pass just removed. */
+  private unmountPage(p: number): void {
+    const st = this.pageVirt;
+    if (!st || !this.container || !st.mounted.has(p)) return;
+    const div = this.container.querySelector('.score-page[data-page="' + p + '"]') as HTMLElement | null;
+    if (!div) return;
+    div.innerHTML = '';
+    div.classList.add('score-page-pending');
+    div.style.width = st.pageW + 'px';
+    div.style.height = st.pageH + 'px';
+    st.mounted.delete(p);
+    /* Re-observe so scrolling back re-mounts it. */
+    st.io?.observe(div);
+  }
+
+  /** Turn the mount window off (verification harnesses only). A gate that
+   *  compares the WHOLE document — the sonata battery's reference render, or
+   *  anything that locates a measure through the page DOM — needs every page to
+   *  stay mounted; eviction otherwise silently narrows what it checks, and
+   *  non-deterministically, since it lands on an idle callback. Production
+   *  never calls this. */
+  setMountWindowEnabled(on: boolean): void {
+    this.mountWindowEnabled = on;
+    if (!on && this.mountWindowHandle !== null) {
+      const cic = (globalThis as { cancelIdleCallback?: (h: number) => void }).cancelIdleCallback;
+      if (cic) cic(this.mountWindowHandle); else clearTimeout(this.mountWindowHandle);
+      this.mountWindowHandle = null;
+    }
+  }
+
+  /** Page holding a measure, read from the DOM (0 when it isn't mounted).
+   *  Deliberately does NOT consult the toolkit: `getPageWithElement` needs the
+   *  layout loaded, which can cost ~1 s. */
+  private pageOfMeasure(mi: number): number {
+    const id = this.measureIds[mi];
+    if (!id || !this.container) return 0;
+    const el = this.container.querySelector('#' + CSS.escape(id));
+    const pageEl = el?.closest('.score-page') as HTMLElement | null;
+    return pageEl ? Number(pageEl.dataset.page) || 0 : 0;
+  }
+
+  /** Hold the mounted set to a small window: mount what is within one viewport
+   *  of the view (the same band the IntersectionObserver arms, so the two never
+   *  fight) plus the cursor's page and its neighbours, and evict anything
+   *  beyond TWO viewports. The gap between the two bands is the hysteresis —
+   *  without it, scrolling along a page boundary would churn, and a re-mount
+   *  costs the same ~138 ms as the original.
+   *
+   *  The cursor's neighbours are mounted eagerly because that is where the next
+   *  edit will need context: a splice whose context line sits one page over
+   *  used to mount it mid-edit (B5), which is the whole difference between a
+   *  377 ms and a 239 ms splice. Doing it here moves that cost off the edit
+   *  path entirely. */
+  private updateMountWindow(cursorMeasure: number): void {
+    const st = this.pageVirt;
+    if (this.viewMode !== 'page' || !st || !this.container) return;
+    const view = this.container.getBoundingClientRect();
+    const vh = view.height || 1;
+    const pages = Array.from(this.container.querySelectorAll('.score-page')) as HTMLElement[];
+    const rect = new Map<number, DOMRect>();
+    for (const div of pages) rect.set(Number(div.dataset.page), div.getBoundingClientRect());
+
+    const cursorPage = this.pageOfMeasure(cursorMeasure);
+    const pinned = new Set<number>();
+    if (cursorPage >= 1) {
+      for (const q of [cursorPage - 1, cursorPage, cursorPage + 1]) {
+        if (q >= 1 && q <= st.pageCount) pinned.add(q);
+      }
+    }
+    /* Mount: within one viewport of the view, plus the cursor's neighbourhood. */
+    for (const [p, r] of rect) {
+      if (pinned.has(p) || (r.bottom >= view.top - vh && r.top <= view.bottom + vh)) {
+        this.mountPageIfCheap(p);
+      }
+    }
+    /* Evict: mounted, not pinned, and more than two viewports away. A stale
+       page is evictable like any other — re-mounting one reloads the document
+       once (~600 ms) and leaves the toolkit current for everything after, which
+       is better than pinning edited pages in memory forever. */
+    for (const p of Array.from(st.mounted)) {
+      if (pinned.has(p)) continue;
+      const r = rect.get(p);
+      if (!r) continue;
+      if (r.bottom < view.top - 2 * vh || r.top > view.bottom + 2 * vh) this.unmountPage(p);
+    }
+  }
+
+  /** Queue an updateMountWindow for idle time. Never runs on the edit path:
+   *  mounting is ~138 ms and evicting forces layout, neither of which belongs
+   *  in a keystroke. Coalesces — only the latest cursor position matters. */
+  scheduleMountWindow(cursorMeasure: number): void {
+    this.mountWindowMi = cursorMeasure;
+    if (!this.mountWindowEnabled) return;
+    if (this.viewMode !== 'page' || !this.pageVirt || this.mountWindowHandle !== null) return;
+    const run = (): void => {
+      this.mountWindowHandle = null;
+      try { this.updateMountWindow(this.mountWindowMi); } catch { /* never break a render */ }
+    };
+    const ric = (globalThis as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number })
+      .requestIdleCallback;
+    this.mountWindowHandle = ric
+      ? ric(run, { timeout: 300 })
+      : (setTimeout(run, 0) as unknown as number);
+  }
+
   /** Shared per-page post pass: crisp pinning/notehead/HEJI/theme, then the
    *  main.ts page injections (exactly once per mount — they aren't idempotent). */
   private finishPageMount(div: HTMLElement): void {
@@ -843,10 +962,15 @@ class Renderer {
     if (!st || !this.container) return;
     st.io?.disconnect();
     st.io = new IntersectionObserver((entries) => {
+      let mounted = false;
       for (const e of entries) {
         if (!e.isIntersecting) continue;
         this.mountPage(Number((e.target as HTMLElement).dataset.page));
+        mounted = true;
       }
+      /* The observer only ever MOUNTS. Re-evaluate the window so scrolling
+         also evicts what it left behind. */
+      if (mounted) this.scheduleMountWindow(this.mountWindowMi);
     }, { root: this.container, rootMargin: '100% 0px 100% 0px' });
     for (const div of Array.from(this.container.querySelectorAll('.score-page-pending'))) {
       st.io.observe(div);

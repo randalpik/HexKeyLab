@@ -963,6 +963,9 @@ function doReRender(): void {
     /* The cursor's page may be a placeholder (virtualized page view) — mount it
        so cursor.update can measure real geometry. No-op in scroll mode. */
     renderer.ensureMeasureMounted(visualCursorMeasure());
+  /* Keep the mounted set to a window around the cursor (idle, off the edit
+     path): the next edit's context page is then already there. */
+  renderer.scheduleMountWindow(visualCursorMeasure());
     cursor.update(model, cursorOpts());
     selectionOverlay.update(model, getInputState().selection);
   } catch (e) {
@@ -1102,6 +1105,9 @@ function composerOnStateChange(): void {
   /* Scroll mode: a cursor move may target an off-screen (unmounted) chunk;
      mount it so the overlay can resolve the cursor's rect (no-op in page mode). */
   renderer.ensureMeasureMounted(visualCursorMeasure());
+  /* Keep the mounted set to a window around the cursor (idle, off the edit
+     path): the next edit's context page is then already there. */
+  renderer.scheduleMountWindow(visualCursorMeasure());
   cursor.update(model, cursorOpts());
   selectionOverlay.update(model, getInputState().selection);
   /* Cursor or voice may have moved — recompute reference. The diff filter

@@ -147,6 +147,16 @@ for (let li = 1; li < nLines && measured < LIMIT; li += STRIDE) {
     target: sids[li],
     nextPage: nextPageLine != null ? sids[nextPageLine] : null,
   };
+  /* Park the cursor and let the mount window settle BEFORE timing — a user
+     positions the cursor, then types. The app schedules this on every cursor
+     update (main.ts); the probe drives the model directly, so it must ask.
+     Everything the next edit needs should already be mounted by the time the
+     stopwatch starts. */
+  model.setCursor(model.getMeasureStartCursor(1, mi), 1);
+  r.scheduleMountWindow(mi);
+  await waitFor(() => r['mountWindowHandle'] === null, 3000, 20);
+  await raf();
+
   const before = viewportState(anchorIds);
   row.mountedAtEdit = before.mounted;
   row.mountedPages = [...container.querySelectorAll('.score-page:not(.score-page-pending)')].map((e) => +e.dataset.page);
@@ -155,7 +165,6 @@ for (let li = 1; li < nLines && measured < LIMIT; li += STRIDE) {
   /* Same restore path undo uses (history.ts drives restoreSnapshot); the
      probe edits the model directly, which bypasses the history stack. */
   const snap = UNDO ? model.snapshotState() : null;
-  model.setCursor(model.getMeasureStartCursor(1, mi), 1);
   const t0 = performance.now();
   const edited = model.deleteAtCursor();
   reRender();
