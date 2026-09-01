@@ -252,6 +252,10 @@ export class PageSystemSplicer {
   /** The vertical plan the last gate computed (null when it never got that
    *  far). Diagnostics for the probes; the splice itself consumes it inline. */
   lastVertical: VerticalPlan | null = null;
+  /** Line range the last attempt needed to REPLACE (diagnostics: a refusal
+   *  names a reason, but not which lines it wanted — `cb-sweep.js` needs that
+   *  to tell a not-mounted line from a not-mounted spanner-expanded run). */
+  lastRun: { a: number; b: number } | null = null;
   /** Per-splice memo of each mounted page's section-header state. */
   private headerCache = new Map<HTMLElement, PageHeaders>();
 
@@ -270,6 +274,7 @@ export class PageSystemSplicer {
     this.lastStats = { lines: 0, windowLines: 0, windowMeasures: 0, loadMs: 0, totalMs: 0 };
     this.lastPages = [];
     this.lastVertical = null;
+    this.lastRun = null;
     this.headerCache.clear();
     const skip = (why: string): false => {
       this.lastOutcome = 'skipped';
@@ -312,6 +317,7 @@ export class PageSystemSplicer {
         b = Math.max(b, i);
       }
     }
+    this.lastRun = { a, b };
     if (b - a + 1 > MAX_SPLICE_LINES) return skip('too many changed lines');
     /* Line 0 is the score start — window fidelity is unproven there (probe
        k=0 drifts ~1px: header/title treatment differs under a windowed

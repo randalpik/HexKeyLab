@@ -704,11 +704,22 @@ class Renderer {
       this.postProcessRendered(this.container!);
       return;
     }
-    /* Virtualized: page 1 real (its SVG box sizes every placeholder — CSS
-       gives .score-page `width: max-content`, so an empty placeholder needs
-       explicit dims to hold the grid). Sizes are set after insertion from the
-       measured SVG rect (robust against attr-format drift), BEFORE any
-       observer exists, so a zero-height placeholder can never look "visible". */
+    /* Virtualized: page 1 real (its box sizes every placeholder — CSS gives
+       .score-page `width: max-content`, so an empty placeholder needs explicit
+       dims to hold the grid). Sizes are set after insertion, BEFORE any
+       observer exists, so a zero-height placeholder can never look "visible".
+
+       MEASURE THE PAGE DIV, AFTER finishPageMount — not the inner SVG, before.
+       A placeholder must predict the box the page will have once MOUNTED,
+       because mountPage drops the explicit dims and lets the page size to its
+       own content. Two things made the old measurement fall short of that:
+       the .score-page div is taller than the SVG it wraps (2794 → 2796 px on
+       the sonata, every page), and finishPageMount's crisp pinning runs after.
+       Every page therefore GREW 2 px the moment it mounted — 56 px across the
+       sonata — so each full render, which rebuilds the whole placeholder grid,
+       shifted the document under the reader by a few px as pages re-mounted.
+       Splices never touch the grid, which is why only fallbacks drifted
+       (cb-sweep.js: 34 of 42 full renders, 3 of 65 splices). */
     /* The swap below momentarily leaves every non-first page as an EMPTY
        zero-height div, and the getBoundingClientRect that measures page 1
        forces layout in that collapsed state — the browser clamps the
@@ -726,18 +737,20 @@ class Renderer {
     }
     this.container!.innerHTML = html;
     const p1 = this.container!.querySelector('.score-page[data-page="1"]') as HTMLElement;
-    const svg1 = p1.querySelector('svg');
-    const box = svg1 ? svg1.getBoundingClientRect() : { width: 800, height: 1000 };
-    for (const div of Array.from(this.container!.querySelectorAll('.score-page-pending'))) {
-      (div as HTMLElement).style.width = box.width + 'px';
-      (div as HTMLElement).style.height = box.height + 'px';
-    }
     this.pageVirt = {
       mei: data, options, pageCount: pages,
-      pageW: box.width, pageH: box.height,
+      pageW: 0, pageH: 0,
       mounted: new Set([1]), io: null, tkCurrent: true, stalePages: new Set(),
     };
     this.finishPageMount(p1);
+    const box = p1.getBoundingClientRect();
+    const pageW = box.width || 800, pageH = box.height || 1000;
+    for (const div of Array.from(this.container!.querySelectorAll('.score-page-pending'))) {
+      (div as HTMLElement).style.width = pageW + 'px';
+      (div as HTMLElement).style.height = pageH + 'px';
+    }
+    this.pageVirt.pageW = pageW;
+    this.pageVirt.pageH = pageH;
     this.container!.scrollTop = keepTop;
     this.container!.scrollLeft = keepLeft;
     this.setContainerThemeTags();
