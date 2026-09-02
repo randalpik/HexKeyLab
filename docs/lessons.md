@@ -2541,3 +2541,32 @@ replaced system's applied translate in user units and device px, recorded by
 the fixture) to a mismatch's detail, so the next occurrence explains itself.
 Pixel-diff a mismatch before reasoning about it: byte size and sha1 tell you
 nothing; a highlighted diff and its row histogram told the whole story.
+
+## Replace a layout-dependent read with a text read by proving BOTH sides equivalent on every real case, not by reasoning about one (2026-09-02)
+
+A11 swapped `getBBox` geometry for staff-line path geometry in the page
+splicer. The reasoning ("a measure's bbox starts at its staff line") was
+wrong in two systematic ways — spanners overhanging into neighbours, and the
+brace on system-first measures — and it did not matter, because the context
+gate compares window against live and both carried the same pollution. That
+is exactly the kind of fact you only learn by measuring: the proof probe
+computed BOTH readings on BOTH sides for 117 real splices across every sonata
+line and reported the gate verdicts, the staff tops and the placement dx/dy
+under each basis side by side. Identical everywhere (Δ 0; the only nonzero
+delta, ≤ 3 units, was the live right-edge snap, seen by both readings because
+the snap rewrites the path). The method generalises: when changing what a
+verification gate measures, run the old and new measurements together over
+the whole corpus and diff the VERDICTS, not just the values — and keep the
+probe, because the next change to what the snaps rewrite needs it again.
+
+## The cost of an offscreen SVG host is its first layout; the way out is to read only text (2026-09-02)
+
+Three steps taught this in order: A7 (naturals window: read staff-line spans
+from a never-attached parse), A8 (scoping the passes on an attached host saved
+6 of 30 ms because the first `getScreenCTM` still laid the whole host out),
+A11 (the splice window itself never attached; the imported systems are
+post-processed in the live page, sharing the one layout the post-surgery snap
+needs). Rule: an offscreen host that anything measures costs one full layout
+regardless of how much of it you touch; a `DOMParser` document that nothing
+measures costs a parse. Design the reads first, then decide whether the host
+needs to exist at all.

@@ -14,9 +14,10 @@ Companions: [composer-spot-splice-design.md](composer-spot-splice-design.md)
 **State.** On the 446-bar sonata every edit splices: routine sweep 115/115,
 exhaustive every-measure pass 420/420 (empty refusal inventory), battery 8/8
 reference-clean. Steady-state edit ≈ 170 ms in Chromium before the A thread;
-A7–A10 (2026-09-01) took the instrumented wall 258 → 214 ms (≈ −17%). Size caps
-are gone (2026-09-01): a 25-line governed range splices in ~1.3 s where a full
-render is ~1.7 s. Suite green under `HKL_INDEX_CHECK` (~4 min).
+A7–A11 (2026-09-01/02) took the instrumented wall 258 → 144 ms (≈ −44%), the
+battery's walls roughly halved (e.g. 695 → 369, 679 → 259 ms), sweep 115/115.
+Size caps are gone (2026-09-01): a 25-line governed range splices in ~1.3 s
+where a full render is ~1.7 s. Suite green under `HKL_INDEX_CHECK` (~4 min).
 
 **Governing principle (Max, 2026-09-01):** *"The goal is to hit O(edit) in ALL
 cases. Any time the user is exposed to O(document) on a live path when they
@@ -32,15 +33,15 @@ document); the repair-loop caps (`MAX_ENSURES`, `MAX_REPAIR_STEPS`); a replaced
 line on an unmounted page that a PREVIOUS splice marked stale (`changed line not
 mounted` — B5's cheap mount refuses stale pages).
 
-**A thread status (2026-09-01).** Shipped: A7 layout-free naturals, A8 scoped
-host post-processing, A9 raw SVG, A10 lazy history snapshot — all gate-neutral,
-battery identical to base at every step. Verovio's window `loadData` +
-`renderToSVG` (84 ms) is the floor for the current window shape. What remains
-on the DOM side is ONE cost: the window host's first geometry read forces its
-initial layout (~20 ms) — A11 (a never-laid-out host, path-based profiles on
-both sides) is a redesign of the gate's measurement basis and needs Max's
-decision; A6 (snap from known geometry, ~4.5 ms, fragile) is subsumed by it.
-Start from "Where the time goes" and the A list.
+**A thread status (2026-09-02).** Shipped: A7 layout-free naturals, A8 scoped
+post-processing, A9 raw SVG, A10 lazy history snapshot, A11 path-based
+profiles with a never-laid-out window — all gate-neutral, battery identical to
+base at every step. The splice's DOM side is now the one layout flush the
+post-surgery snap needs (post-processing of the imported systems shares it:
+5.5 ms; snap 1.8; no live flush before surgery). Verovio's window `loadData`
++ `renderToSVG` (~84 ms) is the floor for the current window shape and now
+well over half of the edit; the next lever would be the window's shape, which
+is a gate question. Start from "Where the time goes" and the A list.
 
 **Two standing traps.** (1) Never edit `apps/composer/src` while the suite or
 ANY phasec probe/sweep runs against the dev server — Vite reloads the page and
@@ -306,17 +307,36 @@ what any gate compares.
   Still open for Max: barline x-snapping happens in the HOST frame before the
   `translate(dx,dy)`; a non-integer device `dx` would un-snap imported
   barlines. `dx` is ~0 when margins match; a screenshot with `dx ≠ 0` settles it.
-- **A11 — a window host that is never laid out** (the follow-on A8 exposed;
-  ~20 ms; a redesign of the gate's measurement basis, propose before building).
-  Everything the splice reads from the host — measure x/width (staff-line path
-  spans, exact; proven by A7), staff top (path y + transforms), page-first
-  anchors — is available from the SVG text EXCEPT the system bbox extents the
-  vertical plan's page-fit uses, and the barline snaps' device phase. Path-based
-  profiles on BOTH sides (the live page's `d` attributes are the same text)
-  would make the context gate an exact comparison instead of EPS 25, and
-  barline snapping could move to the imported systems in the live page, where
-  the post-surgery snap flush already happens. Blocker to solve first: the
-  extents (or show the page-fit check can use staff-line geometry).
+- **A11 — the window is never laid out — SHIPPED 2026-09-02** (Max: pursue
+  in place of the fragile A6, "but we have to thoroughly prove the path-based
+  profile is actually reliable"). `systemProfile` now reads geometry from the
+  SVG text on BOTH sides: a measure's x/width is its staff-line path span
+  (`M x1 y L x2 y`), the staff top is that line's y, plus the staff and system
+  transforms. The window is a `DOMParser` document that is never attached; the
+  imported systems are post-processed (snaps, notehead order, HEJI, theme)
+  scoped, in the live page, in its own device frame — which also removes the
+  host-frame barline snap that a fractional `dx` used to un-snap. The system
+  extents (`bboxTop/Bot`, `newBottom/liveBottom`) are gone: nothing consumed
+  them beyond diagnostics, and page-fit reads the live page after surgery.
+  `sigGlyphs` reads a HEJI-injected `text` as the codepoint it carries, so a
+  raw window compares against a HEJI-processed live page.
+  **Proof** (`cb-pathprofile.js`): 126 real edits — a deletion on every sonata
+  line (114) and 12 governed-range key changes with replaced sets of 3–16
+  lines — 117 splices, 118 context lines; against the bbox reading the path
+  reading gave the identical staff top, `dx` and `dy` on every system (Δ 0)
+  and the identical gate verdicts (max width delta ≤ 3 units under both: the
+  live right-edge snap moving a staff-line end by ½ device px, which both
+  readings see because the snap rewrites the path). The bbox reading was the
+  polluted one: a measure's bbox includes spanners overhanging into neighbours
+  and, on system-first measures, the brace (144 units). Fixture
+  `pageSpliceNoHostAttach` (a MutationObserver on `<body>` sees nothing
+  attached during a splice; fails on pre-A11 code). **Gates**: suite 360/360
+  under the flag, battery identical to base (walls 272/109/369/370/231/259/
+  309/181 vs 389/300/695/627/547/679/442/368 ms), sweep 115/115 spliced,
+  `cb-splicecost.js` steady edit 214 → 144 ms instrumented (splice 147 → 90,
+  post 24 → 5.5, first live read 2.2 → 0.4, snap 4.7 → 1.8).
+- **A6** — subsumed by A11 (the snap flush is now the one layout the splice
+  needs, shared with the retitle and the imported systems' post-processing).
 - **A9 — `svgFormatRaw: true` — SHIPPED 2026-09-01** (in `BASE_OPTIONS`, so
   every render, window and naturals toolkit inherits it). Whitespace-only:
   identical element counts, no indentation or inter-element newlines. Measured
@@ -391,6 +411,10 @@ remaining O(document) paths an ordinary edit can hit.
 Chronological detail is in decisions.md (dated entries from 2026-08-29). Most
 recent, one line each:
 
+- 2026-09-02 — A11 shipped: path-based profiles on both sides, window parsed
+  and never laid out, post-processing on the imported systems in the live page.
+  Proof over 126 edits / 117 splices: identical staff tops, dx/dy and gate
+  verdicts to the bbox reading. Extent fields dropped. A6 subsumed.
 - 2026-09-01 — Owner bug fixed: `commitAdoption` now writes only for the
   CURRENT task, once. `finishAdoptionNow` (an edit arriving mid-walk) left the
   task's scheduled idle `step` armed; it later re-installed the task's stale

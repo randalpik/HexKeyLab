@@ -1219,6 +1219,22 @@ const PAGE_SPLICE = {
     visualFullPage: true,
   },
 
+  /* A11 (2026-09-02): the page splice never attaches its window to the
+   * document — the window is a parsed SVG document read as text, and the
+   * imported systems are post-processed in the live page. Asserted via
+   * FIXTURE_ASSERTIONS.pageSpliceNoHostAttach (a MutationObserver on <body>). */
+  pageSpliceNoHostAttach: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 96; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
   /* B1: growing the DOC-LAST line's bottom extent (deep ledger-line chord)
    * used to refuse the splice — nothing below it moves, so v1's page-last
    * bottom-extent rule was pure caution once pagination became pinned. It must
@@ -8462,6 +8478,49 @@ export const FIXTURE_ASSERTIONS = {
         return { ok: true };
       })()` },
   ],
+  pageSpliceNoHostAttach: [
+    { name: 'a system splice attaches nothing to <body> (the window is never laid out)',
+      expr: `(async () => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        const settle = async () => {
+          for (let i = 0; i < 500; i++) { const b = document.getElementById('renderBusy'); if (!b || b.hidden) break; await new Promise((r) => setTimeout(r, 20)); }
+          await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        };
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        if (pb['startIds'].length < 3) return { ok: false, detail: 'need >= 3 lines, got ' + pb['startIds'].length };
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const edit = () => { const mi = ids.indexOf(pb['startIds'][1]) + 1; m.setCursor(m.getMeasureStartCursor(1, mi), 1); return m.deleteAtCursor(); };
+        /* Warm-up: the FIRST naturals window after a load measures the leading
+           clef+key width on an attached host, legitimately (A7). Do one edit,
+           undo it, then measure the second. */
+        const snap = m.snapshotState();
+        if (!edit()) return { ok: false, detail: 'warm-up delete rejected' };
+        H.reRender(); await settle();
+        m.restoreSnapshot(snap); H.reRender(); await settle();
+        /* The reference gate (HKL_INDEX_CHECK) attaches a host by design — it is
+           a test-mode verification, not the splice. Measure without it. */
+        const prev = globalThis.__HKL_INDEX_CHECK; globalThis.__HKL_INDEX_CHECK = false;
+        /* Records are DELIVERED to the callback on a microtask, which empties the
+           queue — a no-op callback would make takeRecords() see nothing. Collect
+           in both places. */
+        const recs = []; const mo = new MutationObserver((batch) => recs.push(...batch)); mo.observe(document.body, { childList: true });
+        let added = [];
+        try {
+          if (!edit()) return { ok: false, detail: 'delete rejected' };
+          H.reRender(); await settle();
+          recs.push(...mo.takeRecords());
+          added = recs.flatMap((rec) => Array.from(rec.addedNodes)).filter((n) => n.nodeType === 1)
+            .map((n) => n.tagName + (n.className ? '.' + n.className : '') + (n.style && n.style.left ? '@' + n.style.left : ''));
+        } finally { mo.disconnect(); globalThis.__HKL_INDEX_CHECK = prev; }
+        if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a system splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
+        return { ok: added.length === 0, detail: 'elements attached to <body> during the splice: ' + JSON.stringify(added) };
+      })()` },
+  ],
+
   pageSystemSpliceBottomExtent: [
     { name: 'growing the doc-last line bottom extent now SPLICES (nothing below it moves) and matches a full re-engrave',
       expr: `(() => {

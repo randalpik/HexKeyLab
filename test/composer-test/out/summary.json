@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 359,
-  "passed": 359,
+  "fixtures": 360,
+  "passed": 360,
   "failed": 0,
-  "elapsedMs": 233785,
+  "elapsedMs": 235725,
   "results": [
     {
       "name": "emptyDoc",
@@ -929,6 +929,14 @@
         "cardW": 2161,
         "cardH": 2796,
         "fullPage": true
+      }
+    },
+    {
+      "name": "pageSpliceNoHostAttach",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
       }
     },
     {

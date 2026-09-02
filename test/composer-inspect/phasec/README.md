@@ -215,6 +215,18 @@ Phase C-B2b / B1 probes (2026-08-31, findings baked into the design doc →
   measures identical; the two deltas are window-first measures over-counted by
   the 144-unit system-start brace. Text path 233 ms vs bbox path 672 ms.
   `--arg "win=<n>"` sets the window size.
+- **cb-pathprofile.js** — the A11 proof (2026-09-02): drives real edits on the
+  sonata (`--arg "stride=1,from=1,limit=58,edit=delete|key"`; a deletion per
+  line, or a governed-range key change at a line start), and for every splice
+  re-renders the captured window MEI and computes, for each window system and
+  its PRE-edit live counterpart, the bbox-based profile (what `systemProfile`
+  read until A11) and the path-based one (staff-line spans + transforms).
+  Reports per edit the context-gate deltas under each basis, each side's
+  internal bbox-vs-path disagreement, the placement dx/dy under each basis,
+  and aggregates with outliers. Result over 126 edits / 117 splices: staff
+  top, dx, dy and gate verdicts identical (Δ 0; max gate width delta 3 under
+  both — the live right-edge snap). Re-run after any change to
+  `systemProfile` or to what the snaps rewrite.
 - **cb-govdiag.js** (run with `--no-sonata`) — mirror of the composer-test
   fixture `pageKeyChangeSplicesGovernedRange`: builds its 40-measure document,
   applies the reset key change (line 5) and the edit (line 2), and prints every

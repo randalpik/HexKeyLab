@@ -87,9 +87,9 @@ export interface PageSpliceCtx {
   /** The exact options the live pinned render uses (reference verification). */
   liveOptions: () => object;
   /** Renderer.postProcessRendered (crisp pinning, notehead z-order, HEJI,
-   *  theme) — run on the offscreen host BEFORE importing, like the scroll
-   *  splicer does. With `scope`, the per-system passes run only on those
-   *  systems (the ones to be imported); pinning and HEJI stay host-wide (A8). */
+   *  theme). The page splicer calls it on the LIVE page with `scope` = the
+   *  systems it just imported (A11): the window itself is never laid out, so
+   *  every geometry-dependent pass runs where the systems actually sit. */
   postProcess: (el: HTMLElement, scope?: Element[]) => void;
   /** Non-geometry page decorations that live in main.ts for mounted pages
    *  (volta number styling) — idempotent, content-level. */
@@ -111,8 +111,6 @@ interface SysProfile {
   staffTop: number;
   /** System bbox extents + system ty (children transforms are included by
    *  getBBox already). */
-  bboxTop: number;
-  bboxBot: number;
   /** Per-measure x/width, LAZY + memoised (A6). Only the context-line sanity
    *  check and the HKL_INDEX_CHECK reference gate need these; the vertical gate
    *  and the surgery itself need only x0/staffTop/bbox, and they cover most of
@@ -194,11 +192,6 @@ export interface VerticalPlan {
   dyFollow: number;
   /** Start id of the first unreplaced follower, '' when there is none. */
   followId: string;
-  /** Bottom extent of the last replaced system after the plan (page-absolute,
-   *  same units as newTop) — the page-fit input. */
-  newBottom: number;
-  /** Its live bottom extent, for comparison. */
-  liveBottom: number;
   /** True when nothing moves at all (the Phase C-B v1 case). */
   static: boolean;
 }
@@ -208,47 +201,77 @@ function consolidate(el: SVGGElement): { tx: number; ty: number } {
   return base ? { tx: base.matrix.e, ty: base.matrix.f } : { tx: 0, ty: 0 };
 }
 
-/** Geometry profile of one rendered system (live page or offscreen host). */
+/** Geometry profile of one rendered system (live page or the window's parsed
+ *  SVG document), read from the SVG TEXT — no layout (A11, 2026-09-02).
+ *
+ *  A measure's horizontal extent is its staff line: the first horizontal
+ *  `<path d="M x1 y L x2 y">` under its first `g.staff`. Consecutive measures'
+ *  lines abut, so `relX`/`w` are the measure's layout position and width; the
+ *  staff top is that line's y. Everything else is a transform attribute. This
+ *  replaced `getBBox` reads that needed the window host laid out (~20 ms per
+ *  splice, the whole remaining DOM-side cost) and were POLLUTED by content: a
+ *  measure's bbox includes spanners overhanging into its neighbours and, on a
+ *  system's first measure, the brace (144 units left of the staff).
+ *
+ *  Proven equivalent where it matters (`cb-pathprofile.js`, every sonata line
+ *  + governed-range key changes): against the bbox reading, the staff top, the
+ *  placement dx/dy and the context-gate verdicts were identical on every splice
+ *  (gate deltas ≤ 3 units under both — the live right-edge snap moving a
+ *  staff-line end by ½ device px, which both readings see because the snap
+ *  rewrites the path). No system-extent fields: the vertical plan never
+ *  consumed them beyond diagnostics, and the page-fit check reads the live
+ *  page after surgery. Null when the shape is not what we expect — the caller
+ *  refuses, never guesses. */
 function systemProfile(sysEl: SVGGElement): SysProfile | null {
   const t = consolidate(sysEl);
   const measures = Array.from(sysEl.querySelectorAll('g.measure')) as SVGGraphicsElement[];
   if (!measures.length) return null;
-  let m0box: DOMRect;
-  try { m0box = measures[0].getBBox(); } catch { return null; }
-  const firstStaff = measures[0].querySelector(':scope > g.staff') as SVGGElement | null;
-  if (!firstStaff) return null;
-  const staffT = consolidate(firstStaff);
-  /* Top staff line = min over the staff's five direct-child <path>s.
-     DELIBERATELY not shortened to "the first path is the topmost" (A6, tried
-     and reverted 2026-08-31): that assumption removed 30 of 199 getBBox calls
-     per splice and changed the measured time by NOTHING — this cost is bound by
-     layout FLUSHES, not by call count (see the A6 note in the design doc). An
-     unverifiable assumption about Verovio's emission order, whose failure mode
-     is silently mis-positioned spliced systems, is not worth zero milliseconds. */
+  const l0 = staffLineOf(measures[0]);
+  if (!l0) return null;
+  const staffT = consolidate(l0.staff as SVGGElement);
+  /* Top staff line = min y over the staff's horizontal direct-child paths. */
   let topLine = Infinity;
-  for (const p of Array.from(firstStaff.querySelectorAll(':scope > path'))) {
-    try {
-      const b = (p as SVGGraphicsElement).getBBox();
-      if (b.y < topLine) topLine = b.y;
-    } catch { /* skip */ }
+  for (const p of Array.from(l0.staff.children)) {
+    if (p.localName !== 'path') continue;
+    const d = parseLinePath(p.getAttribute('d'));
+    if (d && d.y1 < topLine) topLine = d.y1;
   }
   if (!isFinite(topLine)) return null;
-  let sysBox: DOMRect;
-  try { sysBox = sysEl.getBBox(); } catch { return null; }
   return {
     el: sysEl,
-    x0: m0box.x + t.tx,
+    x0: l0.x1 + t.tx,
     staffTop: topLine + staffT.ty + t.ty,
-    bboxTop: sysBox.y + t.ty,
-    bboxBot: sysBox.y + sysBox.height + t.ty,
     measures: (() => {
       let memo: Array<{ id: string; relX: number; w: number }> | null = null;
       return () => (memo ??= measures.map((m) => {
-        const b = m.getBBox();
-        return { id: m.id, relX: b.x - m0box.x, w: b.width };
+        const l = staffLineOf(m);
+        /* A measure without a readable staff line cannot be compared; report
+           it as an impossible width so any gate on it refuses. */
+        return l ? { id: m.id, relX: l.x1 - l0.x1, w: l.x2 - l.x1 } : { id: m.id, relX: NaN, w: NaN };
       }));
     })(),
   };
+}
+
+/** `M x1 y1 L x2 y2` of a horizontal staff-line path, or null. */
+function parseLinePath(d: string | null): { x1: number; y1: number; x2: number; y2: number } | null {
+  const m = /M\s*(-?[\d.]+)[\s,]+(-?[\d.]+)\s*L\s*(-?[\d.]+)[\s,]+(-?[\d.]+)/.exec(d ?? '');
+  if (!m) return null;
+  const y1 = Number(m[2]), y2 = Number(m[4]);
+  if (Math.abs(y1 - y2) > 1e-6) return null;
+  return { x1: Number(m[1]), y1, x2: Number(m[3]), y2 };
+}
+
+/** The first horizontal staff-line path of a measure's first `g.staff`. */
+function staffLineOf(measureEl: Element): { staff: Element; x1: number; x2: number; y: number } | null {
+  const staff = measureEl.querySelector(':scope > g.staff');
+  if (!staff) return null;
+  for (const p of Array.from(staff.children)) {
+    if (p.localName !== 'path') continue;
+    const d = parseLinePath(p.getAttribute('d'));
+    if (d) return { staff, x1: d.x1, x2: d.x2, y: d.y1 };
+  }
+  return null;
 }
 
 export class PageSystemSplicer {
@@ -513,33 +536,28 @@ export class PageSystemSplicer {
     if (!ctx.toolkit.loadData(winMei)) return skip('window loadData failed');
     const wantPages = 1 + pbIds.size;
     if (ctx.toolkit.getPageCount() !== wantPages) return skip('window paginated');
-    /* One host per window page — the same shape a mounted page has, so
-       postProcess/decorate and mergeGlyphDefs (which reads ONE <defs>) behave
-       exactly as they do on the live path. */
-    const hosts: HTMLElement[] = [];
+    /* One parsed SVG document per window page (A11): NEVER attached, never
+       laid out. Everything the splice reads from the window is text — staff-line
+       paths, transforms, glyph hrefs — and the systems it imports are
+       post-processed once they sit in the live page, where the post-surgery
+       snap already forces the one layout that is needed. Attaching a host used
+       to cost its initial layout (~20 ms) on the first geometry read. */
+    const hosts: ParentNode[] = [];
     for (let pno = 1; pno <= wantPages; pno++) {
-      const h = document.createElement('div');
-      h.style.cssText = 'position:absolute;left:-99999px;top:0';
-      h.innerHTML = ctx.toolkit.renderToSVG(pno, {});
-      document.body.appendChild(h);
-      hosts.push(h);
+      const doc = new DOMParser().parseFromString(ctx.toolkit.renderToSVG(pno, {}), 'image/svg+xml');
+      if (doc.querySelector('parsererror')) return skip('window svg unparsable');
+      hosts.push(doc);
     }
     this.lastStats.loadMs = Math.round(performance.now() - tLoad);
-    try {
-      /* Post-processing moved INTO spliceDom (A8): it needs the located window
-         systems to scope the per-system passes to the replaced ones. */
-      const ok = this.spliceDom(hosts, { a, b, wLo, wHi, winStarts, leader, trailer }, live, newStartIds, ctx, skip);
-      if (ok) {
-        this.lastOutcome = 'spliced';
-        this.lastSkipReason = '';
-        this.lastStats.lines = b - a + 1;
-        this.lastStats.totalMs = Math.round(performance.now() - t0);
-        if (indexCheckEnabled()) this.verifyAgainstReference(refill, live, ctx);
-      }
-      return ok;
-    } finally {
-      for (const h of hosts) h.remove();
+    const ok = this.spliceDom(hosts, { a, b, wLo, wHi, winStarts, leader, trailer }, live, newStartIds, ctx, skip);
+    if (ok) {
+      this.lastOutcome = 'spliced';
+      this.lastSkipReason = '';
+      this.lastStats.lines = b - a + 1;
+      this.lastStats.totalMs = Math.round(performance.now() - t0);
+      if (indexCheckEnabled()) this.verifyAgainstReference(refill, live, ctx);
     }
+    return ok;
   }
 
   /** Locate the mounted live system whose FIRST measure is `startId`. */
@@ -576,7 +594,7 @@ export class PageSystemSplicer {
 
   /** Gates that need the rendered window, then the surgery. */
   private spliceDom(
-    hosts: HTMLElement[],
+    hosts: ParentNode[],
     r: { a: number; b: number; wLo: number; wHi: number; winStarts: string[]; leader: boolean; trailer: boolean },
     live: LiveSys[],
     newStartIds: string[],
@@ -587,7 +605,7 @@ export class PageSystemSplicer {
        with the host page it came from (mergeGlyphDefs reads that page's defs)
        and whether it STARTS that page (the anchor the vertical plan reads). */
     const systems: SVGGElement[] = [];
-    const hostOf = new Map<SVGGElement, HTMLElement>();
+    const hostOf = new Map<SVGGElement, ParentNode>();
     const winPageFirst = new Set<SVGGElement>();
     for (const h of hosts) {
       const onPage = Array.from(h.querySelectorAll('g.system')) as SVGGElement[];
@@ -599,21 +617,14 @@ export class PageSystemSplicer {
     for (let i = 0; i < systems.length; i++) {
       if (systems[i].querySelector('g.measure')?.id !== expected[i]) return skip('window partition mismatch');
     }
-    /* Post-process each host BEFORE any geometry is read, scoped to the systems
-       that will be imported (A8): the context lines, leader and trailer are
-       measured and discarded, so snapping/reordering/theming them was ~30 ms of
-       waste per splice. Root-svg pinning and HEJI injection stay host-wide (see
-       Renderer.postProcessRendered). The context-line comparison below is now
-       raw-window vs snapped-live: the snaps move a barline by at most ½ device
-       px (≤ 10 user units at the 50% preset), inside EPS 25 — and the two
-       sides' snaps were already computed in different device frames. */
-    const replaced = new Set<SVGGElement>();
-    for (let k = r.a; k <= r.b; k++) replaced.add(systems[(r.leader ? 1 : 0) + (k - r.wLo)]);
-    for (const h of hosts) {
-      const mine = systems.filter((s) => replaced.has(s) && hostOf.get(s) === h);
-      ctx.postProcess(h, mine);
-      ctx.decorateHost(h);
-    }
+    /* No post-processing on the window (A11): it is a parsed document that is
+       never laid out, and every pass that needs geometry (barline / right-edge
+       snaps via getScreenCTM, HEJI's text metrics) runs on the imported systems
+       once they are in the live page — see the surgery below. The context-line
+       comparison is raw-window vs snapped-live on both x/width (the snaps move
+       ≤ ½ device px; the right-edge snap rewrites the staff-line path, which
+       both readings see) and glyph identity (`sigGlyphs` reads a HEJI-injected
+       `text` as the codepoint it carries). */
     const winProf = new Map<number, SysProfile>();
     const winIsPageFirst = new Set<number>();
     for (let li = r.wLo; li <= r.wHi; li++) {
@@ -733,6 +744,7 @@ export class PageSystemSplicer {
        a system that got taller or shorter carries its title correctly. */
     const retitle: Array<{ el: Element; sys: SVGGElement; dy: number; reserve: number; baseline: number }> = [];
     const pages = new Set<HTMLElement>();
+    const importedByPage = new Map<HTMLElement, SVGGElement[]>();
     for (let k = r.a; k <= r.b; k++) {
       const lk = live[k - r.a];
       const wk = winProf.get(k)!;
@@ -756,11 +768,23 @@ export class PageSystemSplicer {
       lk.el.parentElement!.insertBefore(imported, lk.el);
       lk.el.remove();
       pages.add(lk.pageEl);
+      (importedByPage.get(lk.pageEl) ?? importedByPage.set(lk.pageEl, []).get(lk.pageEl)!).push(imported);
       const hdr = this.headersFor(lk.pageEl);
       for (const t of hdr.titles) {
         if (t.sysIdx !== lk.sysIdx) continue;
         retitle.push({ el: t.el, sys: imported, dy, reserve: hdr.reserve[lk.sysIdx] ?? 0, baseline: t.baseline });
       }
+    }
+    /* Post-process the IMPORTED systems in place (A11): the same per-system
+       passes a mounted page gets (crisp barline / right-edge snaps, notehead
+       z-order, HEJI, theme), scoped to them, in the live page's own device
+       frame — so the snaps are correct for where the systems actually sit
+       (the host-frame snaps used to be un-snapped by a fractional device dx).
+       The geometry reads inside share the one layout flush the retitle and
+       snapPage below need anyway. */
+    for (const [pageEl, imported] of importedByPage) {
+      ctx.postProcess(pageEl, imported);
+      ctx.decorateHost(pageEl);
     }
     /* Before snapPage, mirroring the injector's own order (main.ts mounts, then
        snaps): the title is placed against the unsnapped content top exactly as
@@ -962,12 +986,7 @@ function verticalPlan(
     followId = ctxNext.el.querySelector('g.measure')?.id ?? '';
   }
   const isStatic = newTop.every((t, i) => Math.abs(t - liveTop[i]) <= EPS) && Math.abs(dyFollow) <= EPS;
-  return {
-    startIds, liveTop, newTop, dyFollow, followId,
-    newBottom: newTop[newTop.length - 1] + (wb.bboxBot - wb.staffTop),
-    liveBottom: lb.bboxBot,
-    static: isStatic,
-  };
+  return { startIds, liveTop, newTop, dyFollow, followId, static: isStatic };
 }
 
 /** Does this measure BEGIN a clef / key / meter change? Verovio draws an
@@ -1064,8 +1083,14 @@ export interface ContextDiff {
  *  rendered measure, in document order — the form of each signature, which
  *  geometry checks cannot see (cut time vs "2/2" differ by a few units). */
 function sigGlyphs(measureEl: Element): string {
-  return Array.from(measureEl.querySelectorAll('g.clef use, g.keySig use, g.meterSig use'))
-    .map((u) => (u.getAttribute('xlink:href') ?? u.getAttribute('href') ?? '').replace(/^#/, '').split('-')[0])
+  return Array.from(measureEl.querySelectorAll('g.clef use, g.keySig use, g.meterSig use, g.clef text, g.keySig text, g.meterSig text'))
+    .map((n) => {
+      if (n.localName === 'use') return (n.getAttribute('xlink:href') ?? n.getAttribute('href') ?? '').replace(/^#/, '').split('-')[0];
+      /* A HEJI-injected glyph: the `use` was replaced by a <text> whose content
+         IS the codepoint (heji-render.ts). Same identity as the href's `E262`. */
+      const cp = (n.textContent ?? '').codePointAt(0);
+      return cp === undefined ? '' : cp.toString(16).toUpperCase().padStart(4, '0');
+    })
     .join(' ');
 }
 

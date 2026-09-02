@@ -5547,3 +5547,52 @@ and the task is not cancelled, and marks the task cancelled once it commits.
 `invalidate()` already cancelled in-flight tasks; the hole was a task that
 had FINISHED but whose continuation was still armed. Gates: two full suite
 runs green under the flag, battery identical to base.
+
+## 2026-09-02 — A11: the splice reads geometry from the SVG text on both sides; the window is never laid out
+
+Max: pursue A11 in place of the fragile A6, "but we have to thoroughly prove
+the path-based profile is actually reliable." A8's pass timings had shown the
+DOM-side floor was one thing — the window host's initial layout (~20 ms),
+forced by the first geometry read — so the only way past it was to read
+nothing that needs layout.
+
+- **The profile.** A measure's horizontal extent is its staff-line path
+  (`M x1 y L x2 y`): `relX`/`w` from x1/x2, the staff top from y, plus the
+  staff and system `transform`s. Same function on the window (a `DOMParser`
+  document, never attached) and on the live page (whose `d` attributes are
+  the same text). The bbox reading it replaces was polluted by content — a
+  measure's bbox includes spanners reaching into neighbours and, on a
+  system's first measure, the brace 144 units to the left — which never
+  mattered for the gate only because both sides carried the same pollution.
+- **The proof** (`cb-pathprofile.js`): 126 real edits (a deletion on every
+  sonata line, 12 governed-range key changes with replaced sets of 3–16
+  lines), 117 splices, 118 context lines. Against the bbox reading: staff
+  top, dx and dy identical on every system (Δ 0), gate verdicts identical
+  (max width delta ≤ 3 units under BOTH — the live right-edge snap moving a
+  staff-line end by ½ device px, which rewrites the path and so is seen by
+  both readings). Zero outliers.
+- **What moved.** Post-processing of the replaced systems (barline /
+  right-edge snaps via `getScreenCTM`, notehead order, HEJI, theme) runs on
+  the IMPORTED systems in the live page, in the page's own device frame,
+  sharing the layout flush the retitle and `snapPage` need anyway. This also
+  retires the host-frame snap that a fractional device `dx` un-snapped (the
+  "dx ≠ 0" question). `mergeGlyphDefs` accepts the parsed document as the
+  glyph source. The extent fields (`bboxTop/Bot`, `newBottom/liveBottom`)
+  are gone — nothing consumed them beyond diagnostics; page-fit reads the
+  live page after surgery. `sigGlyphs` reads a HEJI-injected `text` as the
+  codepoint it carries (heji-render.ts writes the glyph as the text content),
+  so glyph identity compares across a raw window and a HEJI-processed page.
+- **A6 is subsumed**: the snap flush is now the single layout a splice
+  causes, and it is the one it always needed.
+- Fixture `pageSpliceNoHostAttach`: a `MutationObserver` on `<body>` during a
+  splice (after a warm-up edit so sigW is already measured, and with the
+  test-mode reference gate — which attaches a host by design — turned off for
+  that edit) sees nothing attached. Fails on pre-A11 code.
+
+Gates for A11 (2026-09-02): suite 360/360 under `HKL_INDEX_CHECK`; battery
+identical to base with walls roughly halved (272/109/369/370/231/259/309/181
+vs 389/300/695/627/547/679/442/368 ms); `cb-sweep.js` 115/115 lines spliced,
+no errors (Verovio's own unmatched-tie/slur warnings on window renders as
+before); `cb-splicecost.js` steady edit 214 → 144 ms instrumented, i.e. 258 →
+144 across the A thread (≈ −44%): splice 147 → 90 ms, imported-system
+post-processing 5.5 ms, snap 1.8, no live flush before surgery.

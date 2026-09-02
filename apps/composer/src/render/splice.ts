@@ -544,7 +544,7 @@ export class ScrollSplicer {
  *  <use> to the persistent glyph when its codepoint already exists (the common
  *  case — the spliced content uses glyphs the full render already emitted),
  *  else copy the sub-render's glyph def over. */
-export function mergeGlyphDefs(defsEl: Element, host: HTMLElement, fresh: Element[]): void {
+export function mergeGlyphDefs(defsEl: Element, host: ParentNode, fresh: Element[]): void {
   const cpOf = (id: string) => id.split('-')[0];
   const setHref = (use: Element, val: string): void => {
     if (use.hasAttribute('xlink:href')) use.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', val);
