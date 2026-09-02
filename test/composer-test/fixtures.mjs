@@ -8864,6 +8864,7 @@ export const FIXTURE_ASSERTIONS = {
            render, which would read as a stale "spliced". */
         const editMi = ids.indexOf(startIds[2]);
         ps.lastOutcome = ''; ps.lastRun = null; ps.lastSkipReason = '';
+        const snapBefore = m.snapshotState();
         const ver = m.docVersion();
         /* meter: 4/4 → 2/2 keeps every measure's content and width (a
            truncating change like 2/4 halves the line fills, merges lines, and
@@ -8890,6 +8891,15 @@ export const FIXTURE_ASSERTIONS = {
         const maxB = KIND === 'clef' ? resetLineNow : resetLineNow - 1;
         if (run.b < resetLineNow - 1) return { ok: false, detail: 'run stops before the governed range ends: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow };
         if (run.b > maxB) return { ok: false, detail: 'run overshoots the reset: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow };
+        /* The UNDO is the same range in reverse and must splice too. restoreSnapshot
+           swaps the document object: interior scoreDefs are matched by their
+           successor measure's id, never by element identity — identity read every
+           scoreDef as removed+re-added and turned each undo into a whole-document
+           derive (cb-bigrange.js, 2026-09-01). */
+        ps.lastOutcome = ''; ps.lastRun = null; ps.lastSkipReason = ''; pb.lastDeriveReason = '';
+        m.restoreSnapshot(snapBefore);
+        H.reRender(); await settle();
+        if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'UNDO did not splice: outcome "' + ps.lastOutcome + '" (skip: ' + ps.lastSkipReason + '; derive reason: ' + pb.lastDeriveReason + ')' };
         return { ok: true };
       })()` },
   ],
@@ -8932,6 +8942,7 @@ export const FIXTURE_ASSERTIONS = {
            render, which would read as a stale "spliced". */
         const editMi = ids.indexOf(startIds[2]);
         ps.lastOutcome = ''; ps.lastRun = null; ps.lastSkipReason = '';
+        const snapBefore = m.snapshotState();
         const ver = m.docVersion();
         /* meter: 4/4 → 2/2 keeps every measure's content and width (a
            truncating change like 2/4 halves the line fills, merges lines, and
@@ -8958,6 +8969,15 @@ export const FIXTURE_ASSERTIONS = {
         const maxB = KIND === 'clef' ? resetLineNow : resetLineNow - 1;
         if (run.b < resetLineNow - 1) return { ok: false, detail: 'run stops before the governed range ends: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow };
         if (run.b > maxB) return { ok: false, detail: 'run overshoots the reset: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow };
+        /* The UNDO is the same range in reverse and must splice too. restoreSnapshot
+           swaps the document object: interior scoreDefs are matched by their
+           successor measure's id, never by element identity — identity read every
+           scoreDef as removed+re-added and turned each undo into a whole-document
+           derive (cb-bigrange.js, 2026-09-01). */
+        ps.lastOutcome = ''; ps.lastRun = null; ps.lastSkipReason = ''; pb.lastDeriveReason = '';
+        m.restoreSnapshot(snapBefore);
+        H.reRender(); await settle();
+        if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'UNDO did not splice: outcome "' + ps.lastOutcome + '" (skip: ' + ps.lastSkipReason + '; derive reason: ' + pb.lastDeriveReason + ')' };
         return { ok: true };
       })()` },
   ],
@@ -9000,6 +9020,7 @@ export const FIXTURE_ASSERTIONS = {
            render, which would read as a stale "spliced". */
         const editMi = ids.indexOf(startIds[2]);
         ps.lastOutcome = ''; ps.lastRun = null; ps.lastSkipReason = '';
+        const snapBefore = m.snapshotState();
         const ver = m.docVersion();
         /* meter: 4/4 → 2/2 keeps every measure's content and width (a
            truncating change like 2/4 halves the line fills, merges lines, and
@@ -9026,6 +9047,15 @@ export const FIXTURE_ASSERTIONS = {
         const maxB = KIND === 'clef' ? resetLineNow : resetLineNow - 1;
         if (run.b < resetLineNow - 1) return { ok: false, detail: 'run stops before the governed range ends: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow };
         if (run.b > maxB) return { ok: false, detail: 'run overshoots the reset: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow };
+        /* The UNDO is the same range in reverse and must splice too. restoreSnapshot
+           swaps the document object: interior scoreDefs are matched by their
+           successor measure's id, never by element identity — identity read every
+           scoreDef as removed+re-added and turned each undo into a whole-document
+           derive (cb-bigrange.js, 2026-09-01). */
+        ps.lastOutcome = ''; ps.lastRun = null; ps.lastSkipReason = ''; pb.lastDeriveReason = '';
+        m.restoreSnapshot(snapBefore);
+        H.reRender(); await settle();
+        if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'UNDO did not splice: outcome "' + ps.lastOutcome + '" (skip: ' + ps.lastSkipReason + '; derive reason: ' + pb.lastDeriveReason + ')' };
         return { ok: true };
       })()` },
   ],

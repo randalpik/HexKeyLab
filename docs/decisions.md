@@ -5292,3 +5292,51 @@ above. Fixtures: `pageKeyChangeSplicesGovernedRange`,
 - **Namespace declarations are not structure.** `setMeterAt` writes
   `hkl:beat-groups` with setAttributeNS, which adds `xmlns:hkl` to the scoreDef;
   left in `rest`, every meter change read as "interior structure changed".
+
+## 2026-09-01 — Splice size caps dropped (both splicers); a subset render is never the worse deal (Max)
+
+Max: "Isn't it always better to rerender any subset of the document instead of
+the full document?" It is. `MAX_SPLICE_LINES` (5), `MAX_WINDOW_LINES` (9) and
+`MAX_WINDOW_MEASURES` (80) were backstops from the fixed-point spanner
+expansion, which could balloon a window; after the one-pass rule the sonata's
+worst case was 3 replaced lines and a 7-line window, and they survived only as
+a safety net. A window costs linearly in its measures right up to the whole
+document, where it equals a full render — and the splice reuses every mounted
+page where a full render rebuilds them — so no size is a reason to refuse. The
+scroll splicer's `RUN_CAP` (60 measures) went for the same reason.
+
+**What limits a large splice is structural**: the line count must not change
+(N → M replacement is unbuilt, B2), pagination must hold (a reflow across a page
+boundary hands pagination back), and the fidelity gates. Those refuse; size
+never does.
+
+**Measured (sonata, `HKL_INDEX_CHECK` reference-clean)**: a key change at line
+20 governing to the next key change replaces 17 lines through a 78-measure
+window in 1.18 s (naturals window 0.48 s, window `loadData` 0.39 s); a
+width-neutral meter change replaces 25 lines / 106 measures in 1.32 s; a
+staff-1 clef change 7 lines in 0.44 s. A full render is ~1.7 s. All three
+refused on `too many changed lines` before. The two linear costs — the naturals
+window at ~5.5 ms per measure and the window load at ~5 ms per measure — are the
+first A-thread targets for large edits.
+
+**Also measured, test-mode only**: under `HKL_INDEX_CHECK` the same key change
+takes ~44 s, because `flatChildren` (4 751 calls, 12.5 s) and `allMeasures`
+(25 121 calls, 2.5 s) re-verify their caches on every hit and a large-range edit
+multiplies the call sites. Not a production cost; noted under A.
+
+**Addendum (same evening) — interior scoreDefs are matched by their successor
+measure's id, never by element identity.** The first cut aligned old and new
+interior entries by element object. `restoreSnapshot`, undo and redo swap the
+whole document, so every scoreDef element was new, every entry read as removed
+and re-added, the union became the whole document, and every undo of an edit on
+a document with interior scoreDefs derived (`cb-bigrange.js`: three undos, zero
+naturals windows; the sonata sweep's 115 restores then blew its 300 s deadline
+even alone). Measure ids survive a swap; the entry key is now `nextId`, two
+scoreDefs before one measure merge, and the structural flag is computed at
+capture time. Undo of the 17-line key change: derive → splice in 1.24 s. The
+page-range fixtures now assert the undo splices too.
+
+**Also seen**: a large replaced set can still fall back with `changed line not
+mounted` when a line sits on a page a PREVIOUS splice marked stale — B5's cheap
+mount refuses stale pages (it would render post-edit content into a DOM about
+to be patched). Listed with the remaining O(document) paths.

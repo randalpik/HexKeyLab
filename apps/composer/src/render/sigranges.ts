@@ -29,9 +29,14 @@ export interface ScoreDefParts {
 
 export interface InteriorEntry extends ScoreDefParts {
   el: Element;
-  /** xml:id of the first measure following the scoreDef (its position anchor
-   *  across edits — measure indices shift, ids do not). */
+  /** xml:id of the first measure following the scoreDef — its identity AND its
+   *  position anchor across edits. Measure indices shift and element objects
+   *  are replaced wholesale by undo/redo/restoreSnapshot (the document is
+   *  swapped); ids survive both. */
   nextId: string;
+  /** True when the scoreDef carries anything beyond key/meter — a change no
+   *  range can express. Computed at capture time (needs the element). */
+  structural: boolean;
 }
 
 export interface SigState {
@@ -69,7 +74,10 @@ export function interiorScoreDefs(section: Element): InteriorEntry[] {
     for (const c of Array.from(el.children)) {
       if (c.localName === 'measure') {
         const id = c.getAttribute('xml:id') ?? '';
-        for (const sd of pending.splice(0)) out.push({ ...partsOf(sd), el: sd, nextId: id });
+        for (const sd of pending.splice(0)) {
+          const parts = partsOf(sd);
+          out.push({ ...parts, el: sd, nextId: id, structural: parts.rest !== bareRest(sd) });
+        }
       } else if (c.localName === 'scoreDef') {
         pending.push(c);
       } else if (c.querySelector('measure')) {
@@ -186,17 +194,33 @@ export function signatureRanges(req: RangeRequest): RangeResult {
   if (oldState.head.key !== newState.head.key) push(0, nextReset(-1, 'key') - 1);
   if (oldState.head.meter !== newState.head.meter) push(0, nextReset(-1, 'meter') - 1);
 
-  /* interior: align by element identity; removed ones anchor at their old
-     successor's new position (or the run start when that measure is gone) */
-  const oldByEl = new Map(oldState.interior.map((e) => [e.el, e]));
-  const newByEl = new Map(newState.interior.map((e) => [e.el, e]));
+  /* interior: align by the id of the FOLLOWING measure, never by element
+     identity — undo/redo/restoreSnapshot swap the whole document object, so
+     every scoreDef element is new and identity would read each one as removed
+     and re-added, turning every undo into a whole-document range and a derive
+     (found by cb-bigrange.js's undo step: three derives, zero naturals
+     windows, and a sweep that no longer finished). Two scoreDefs before one
+     measure merge into one entry. A removed entry anchors at its successor's
+     new position (or the run start when that measure is gone). */
+  const byNext = (list: InteriorEntry[]): Map<string, InteriorEntry> => {
+    const m = new Map<string, InteriorEntry>();
+    for (const e of list) {
+      const prev = m.get(e.nextId);
+      m.set(e.nextId, prev ? {
+        ...e, key: e.key || prev.key, meter: e.meter || prev.meter,
+        rest: prev.rest + e.rest, structural: prev.structural || e.structural,
+      } : e);
+    }
+    return m;
+  };
+  const oldBy = byNext(oldState.interior), newBy = byNext(newState.interior);
   const fallbackPos = req.changedNew.length ? Math.min(...req.changedNew) : 0;
   const consider = (kind: 'key' | 'meter', pos: number): void => push(pos, nextReset(pos, kind) - 1);
-  for (const e of newState.interior) {
-    const o = oldByEl.get(e.el);
-    const pos = posOf(e);
+  for (const [nid, e] of newBy) {
+    const o = oldBy.get(nid);
+    const pos = idIdx.get(nid) ?? n;
     if (!o) {
-      if (e.rest !== emptyRest(e)) return { ranges, bail: 'interior structure changed' };
+      if (e.structural) return { ranges, bail: 'interior structure changed' };
       if (e.key !== '') consider('key', pos);
       if (e.meter !== '') consider('meter', pos);
       continue;
@@ -205,10 +229,10 @@ export function signatureRanges(req: RangeRequest): RangeResult {
     if (o.key !== e.key) consider('key', pos);
     if (o.meter !== e.meter) consider('meter', pos);
   }
-  for (const o of oldState.interior) {
-    if (newByEl.has(o.el)) continue;
-    if (o.rest !== emptyRest(o)) return { ranges, bail: 'interior structure changed' };
-    const pos = idIdx.get(o.nextId) ?? fallbackPos;
+  for (const [nid, o] of oldBy) {
+    if (newBy.has(nid)) continue;
+    if (o.structural) return { ranges, bail: 'interior structure changed' };
+    const pos = idIdx.get(nid) ?? fallbackPos;
     if (o.key !== '') consider('key', pos);
     if (o.meter !== '') consider('meter', pos);
   }
@@ -229,11 +253,10 @@ export function signatureRanges(req: RangeRequest): RangeResult {
   return { ranges, bail: null };
 }
 
-/** What a scoreDef's `rest` looks like when it carries nothing but key/meter:
- *  the bare element (namespace declarations included), so a purely
- *  signature-bearing scoreDef never reads as a structural change. */
-function emptyRest(e: InteriorEntry): string {
-  const clone = e.el.cloneNode(false) as Element;
+/** A scoreDef's `rest` when it carries nothing but key/meter: the bare element,
+ *  so a purely signature-bearing scoreDef never reads as a structural change. */
+function bareRest(sd: Element): string {
+  const clone = sd.cloneNode(false) as Element;
   for (const a of Array.from(clone.attributes)) clone.removeAttribute(a.name);
   return new XMLSerializer().serializeToString(clone);
 }

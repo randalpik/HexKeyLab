@@ -308,8 +308,9 @@ export class ScrollSplicer {
     const countDelta = oN - nN;
     oldLo = lo;
     oldHi = hiNew + countDelta;
-    const RUN_CAP = 60;
-    if (hiNew - lo + 1 > RUN_CAP) return false;   // too big → full render
+    /* No run cap (Max, 2026-09-01): a sub-render of the run costs linearly in
+       its measures and the full scroll engrave is ~7 s, so even a run that is
+       most of the document is the better deal. */
 
     // Anchor on the LEFT context measure, so the edited run's left edge stays
     // joined to its (unchanged) left neighbour and the width change propagates

@@ -2371,3 +2371,19 @@ the exemption was patching the error rather than the code.
   `pb.lastRefillLines` + the line count when a verdict is missing. (A 4/4 → 2/4
   change halves every fill and merges lines — that is B2's class, so the meter
   fixture uses the width-neutral 4/4 → 2/2.)
+
+## A verification that runs on every cache hit costs O(calls), and calls are O(edit range) (2026-09-01)
+
+Under `HKL_INDEX_CHECK` the model re-enumerates `flatChildren` and re-checks
+`allMeasures` on every cache hit — the right gate for the caching mechanism,
+which was the risk when they were introduced. A one-note edit hits them a few
+dozen times. A key change governing 17 lines hit them 4 751 and 25 121 times,
+and the edit took 44 s in test mode against 1.2 s without the flag. Nothing was
+wrong; the gate's cost model was written for small edits and never re-examined
+when edits got large.
+
+- **Verify a cache once per document version, not once per hit.** The
+  guarantee is the same; the cost stops scaling with how often callers ask.
+- **When a test-mode run is 30× slower than production, attribute it before
+  reading it as a production problem** — the probe that wrapped the candidates
+  found the answer in one run.

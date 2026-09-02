@@ -62,20 +62,13 @@ const TRAIL_ID = 'hkl-splice-trail';
  *  different screen phases on live vs host). Real layout movement is ≥ a
  *  staff-space (~90 units). */
 const EPS = 25;
-/** Most lines an edit may replace before falling back. A single-note edit can
- *  legitimately touch several lines when a slur/hairpin chain closes the run
- *  over them (sonata measure 250), and every replaced line is still proven by
- *  the context + vertical gates — so the cap is set by window COST, not by
- *  caution. Windows carry L ± 1 context line. */
-const MAX_SPLICE_LINES = 5;
-/** Backstops, not working limits. Since the spanner expansion became a single
- *  containment pass (2026-08-31) the measured maxima over the whole sonata are
- *  2 replaced / 6 window lines for a real one-note edit, and 3 / 7 for the
- *  worst-case seed — so neither cap binds on this document any more. They stay
- *  as a guard against pathological input (a genuinely document-long spanner),
- *  which is the case truncation would eventually be for. */
-const MAX_WINDOW_LINES = 9;
-const MAX_WINDOW_MEASURES = 80;
+/* No size caps (Max, 2026-09-01). The former line and measure caps were
+ * backstops from the fixed-point spanner expansion, which could balloon a
+ * window; the one-pass rule ended that, and a window costs linearly in its
+ * measures right up to the whole document, where it equals a full render — so a
+ * subset render is never the worse deal. The only refusals are structural: the
+ * line count must not change (B2) and pagination must hold, plus the fidelity
+ * gates below. `lastStats.windowLines/Measures` still report the sizes. */
 
 function indexCheckEnabled(): boolean {
   return typeof globalThis !== 'undefined' &&
@@ -364,7 +357,6 @@ export class PageSystemSplicer {
       }
     }
     this.lastRun = { a, b };
-    if (b - a + 1 > MAX_SPLICE_LINES) return skip('too many changed lines');
     /* Line 0 (the score start) needs no exclusion. It used to be refused on
        "window fidelity is unproven there", from a probe that measured the
        PRE-ownership window recipe (tall page + header:'none' + a closure
@@ -456,7 +448,7 @@ export class PageSystemSplicer {
        legato phrasing — 2-measure slurs each ending where the next begins —
        walked one seed 17 slurs deep, over 24 measures and 6 lines, purely
        through lines nobody was re-rendering. Measured over all 446 measures,
-       the fixed point put 52 seeds past MAX_WINDOW_LINES; this rule puts none
+       the fixed point put 52 seeds past the window line cap (since removed); this rule puts none
        there (window max 14 → 6 lines, mean 6.33 → 4.14). See
        `cb-spanchain.js` / `cb-window-walk.js` and the design doc.
        
@@ -483,9 +475,7 @@ export class PageSystemSplicer {
       if (!beginsSignatureChange(meiMeasures[spans[wHi + 1][0]])) break;
       wHi++; courtesyExt++;
     }
-    if (wHi - wLo + 1 > MAX_WINDOW_LINES) return skip('window too many lines');
     const mLo = spans[wLo][0], mHi = spans[wHi][1] - 1;
-    if (mHi - mLo + 1 > MAX_WINDOW_MEASURES) return skip('window too many measures');
     this.lastStats.windowLines = wHi - wLo + 1;
     this.lastStats.windowMeasures = mHi - mLo + 1;
 

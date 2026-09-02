@@ -163,6 +163,14 @@ Phase C-B2b / B1 probes (2026-08-31, findings baked into the design doc →
   draws. Found (2026-09-01) that a mid-piece key change in scroll view rendered
   NOTHING — the scroll splicer's per-measure diff cannot see a section-level
   scoreDef — which the governed-range rule (`render/sigranges.ts`) fixes.
+- **cb-bigrange.js** — large governed ranges after the size caps were dropped
+  (2026-09-01): a key change, a staff-1 clef change and a width-neutral meter
+  change far from their next reset, each followed by its undo. Reports outcome,
+  run, window size, wall, the edit/refill split and the naturals-window cost;
+  `--arg "check=1"` verifies under the reference gate (slow in test mode — see
+  lessons.md on cache re-verification). The large-edit cost baseline for the A
+  thread: 17 / 25 lines splice in 1.18 / 1.32 s, naturals ~5.5 ms/measure,
+  window `loadData` ~5 ms/measure.
 - **cb-courtesy.js** — correlates the `context line ... diverged` refusals
   against the document structure: does a clef/key/meter change begin the line
   just BEYOND the splice window? That is what identified the end-of-line
