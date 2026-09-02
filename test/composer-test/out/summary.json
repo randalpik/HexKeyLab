@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 358,
-  "passed": 358,
+  "fixtures": 359,
+  "passed": 359,
   "failed": 0,
-  "elapsedMs": 237142,
+  "elapsedMs": 233785,
   "results": [
     {
       "name": "emptyDoc",
@@ -1663,6 +1663,14 @@
     },
     {
       "name": "undo_redo_roundtrip",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      }
+    },
+    {
+      "name": "undo_lazy_snapshot",
       "ok": true,
       "failures": [],
       "counts": {

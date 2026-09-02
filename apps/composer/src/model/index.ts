@@ -389,6 +389,15 @@ function indexCheckEnabled(): boolean {
     (globalThis as { __HKL_INDEX_CHECK?: boolean }).__HKL_INDEX_CHECK === true;
 }
 
+/** requestIdleCallback with a setTimeout fallback (for the lazy snapshot; the
+ *  timeout bounds how long a snapshot can stay unserialised even when the tab
+ *  never goes idle). */
+function scheduleIdleSnapshot(fn: () => void): void {
+  const ric = (globalThis as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => void }).requestIdleCallback;
+  if (ric) ric(fn, { timeout: 300 });
+  else setTimeout(fn, 50);
+}
+
 /** Render-clone pass enforcing the global invariant that a barline is NEVER
  *  immediately followed by a clef. A clef change effective at the start of a
  *  measure (an inline `<clef>` at the head of a layer) must render BEFORE the
@@ -703,6 +712,7 @@ export class ComposerModel {
   /** Replace the entire document in-place (used by Load .hkc to preserve
    *  bindings held by other modules). */
   replaceDocument(meiXml: string): void {
+    this.materializePendingSnapshot();   // A10: a history entry may still need the old document
     const newDoc = new DOMParser().parseFromString(meiXml, "application/xml");
     if (newDoc.querySelector("parsererror"))
       throw new Error("Invalid MEI in load");
@@ -952,6 +962,53 @@ export class ComposerModel {
     return this.snapshotStateReusing(null);
   }
 
+  /** AFTER-snapshot for `withHistory` (A10): the MEI is serialised LAZILY — on
+   *  idle, or synchronously before the next thing that could change the
+   *  document. Sound because every mutation path in Composer takes a BEFORE
+   *  snapshot first (`snapshotState` / `snapshotStateReusing`), and those, like
+   *  `restoreSnapshot*` and `replaceDocument`, materialise any pending lazy
+   *  snapshot before proceeding. Under HKL_INDEX_CHECK, materialising after the
+   *  document version moved throws instead of recording the wrong document.
+   *  Takes the ~12 ms full-document XMLSerializer off the keystroke path; a
+   *  second edit before idle pays it at its own start instead (no double work). */
+  snapshotStateLazy(): { mei: string; voice: Voice; cursors: Record<Voice, number>; docVer: number } {
+    this.materializePendingSnapshot();
+    const ver = this.documentVersion();
+    const voice = this.currentVoice;
+    const cursors = { ...this.cursors };
+    let mei: string | null = null;
+    const pend = {
+      materialize: (): string => {
+        if (mei === null) {
+          if (this.pendingSnapshot === pend) this.pendingSnapshot = null;
+          if (this.documentVersion() !== ver) {
+            const msg = '[snapshotStateLazy] materialised after the document changed — a mutation path took no BEFORE snapshot';
+            if (indexCheckEnabled()) throw new Error(msg);
+            console.warn(msg);
+          }
+          mei = new XMLSerializer().serializeToString(this.doc);
+        }
+        return mei;
+      },
+    };
+    this.pendingSnapshot = pend;
+    scheduleIdleSnapshot(() => { if (this.pendingSnapshot === pend) pend.materialize(); });
+    return { get mei() { return pend.materialize(); }, voice, cursors, docVer: ver };
+  }
+
+  /** The lazy snapshot not yet serialised, if any (see snapshotStateLazy). */
+  private pendingSnapshot: { materialize: () => string } | null = null;
+
+  /** Serialise a pending lazy snapshot NOW — called by every entry point after
+   *  which the document may change. No-op when nothing is pending. */
+  private materializePendingSnapshot(): void {
+    const p = this.pendingSnapshot;
+    if (p) { this.pendingSnapshot = null; p.materialize(); }
+  }
+
+  /** Diagnostics (fixtures): is a lazy snapshot still unserialised? */
+  hasPendingSnapshot(): boolean { return this.pendingSnapshot !== null; }
+
   /** snapshotState, but if `reuseMei` is supplied use it instead of
    *  re-serializing the doc (Phase B3). The full-doc XMLSerializer is ~13ms on
    *  the 446-bar sonata and `withHistory` captures BEFORE + AFTER on every edit;
@@ -964,7 +1021,10 @@ export class ComposerModel {
    *  HKL_INDEX_CHECK mode this asserts that — catching any doc mutation that
    *  reached the DOM without funnelling through history.push (which would leave
    *  HistoryManager's cached MEI stale). */
-  snapshotStateReusing(reuseMei: string | null): { mei: string; voice: Voice; cursors: Record<Voice, number> } {
+  snapshotStateReusing(reuseMei: string | null): { mei: string; voice: Voice; cursors: Record<Voice, number>; docVer: number } {
+    /* A BEFORE snapshot precedes a mutation: any lazy AFTER still pending must
+       be serialised while the document is still that state (A10). */
+    this.materializePendingSnapshot();
     let mei: string;
     if (reuseMei !== null) {
       if (indexCheckEnabled()) {
@@ -977,7 +1037,7 @@ export class ComposerModel {
     } else {
       mei = new XMLSerializer().serializeToString(this.doc);
     }
-    return { mei, voice: this.currentVoice, cursors: { ...this.cursors } };
+    return { mei, voice: this.currentVoice, cursors: { ...this.cursors }, docVer: this.documentVersion() };
   }
 
   /** Restore a snapshot in full (MEI + voice + cursors). Fast path — snapshots
@@ -985,6 +1045,7 @@ export class ComposerModel {
    *  the replaceDocument migrations are skipped; we still re-normalize ties
    *  and placeholders defensively. */
   restoreSnapshot(snap: { mei: string; voice: Voice; cursors: Record<Voice, number> }): void {
+    this.materializePendingSnapshot();   // A10: before the document swaps
     const newDoc = new DOMParser().parseFromString(snap.mei, 'application/xml');
     if (newDoc.querySelector('parsererror')) throw new Error('Invalid MEI snapshot');
     this.doc = newDoc;
@@ -1004,6 +1065,7 @@ export class ComposerModel {
     voice: Voice,
     cursors: Record<Voice, number>,
   ): void {
+    this.materializePendingSnapshot();   // A10: before the document swaps
     const newDoc = new DOMParser().parseFromString(snap.mei, 'application/xml');
     if (newDoc.querySelector('parsererror')) throw new Error('Invalid MEI snapshot');
     this.doc = newDoc;

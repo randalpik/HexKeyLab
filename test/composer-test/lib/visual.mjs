@@ -224,6 +224,8 @@ export async function visualCheck(cdp, name, { updateBaselines = false, fullPage
 
   const baseline = readFileSync(baselinePath);
   if (baseline.equals(png)) {
+    /* Consume any fixture diagnostic so it cannot attach to a later failure. */
+    try { await cdp.evalJSON(`(window.__visualDiag = undefined, true)`); } catch { /* ignore */ }
     return { ok: true, path: baselinePath, meta };
   }
 
@@ -231,10 +233,15 @@ export async function visualCheck(cdp, name, { updateBaselines = false, fullPage
    * data to give a stable identity. */
   const hashB = createHash('sha1').update(baseline).digest('hex').slice(0, 8);
   const hashN = createHash('sha1').update(png).digest('hex').slice(0, 8);
+  /* A fixture may leave geometry diagnostics in window.__visualDiag (e.g. the
+     splice's applied translate in device px) — attach them so a one-off
+     sub-pixel difference explains itself. */
+  let diag = '';
+  try { const d = await cdp.evalJSON(`(() => { const d = window.__visualDiag; window.__visualDiag = undefined; return d === undefined ? null : d; })()`); if (d) diag = `; fixture diag ${JSON.stringify(d)}`; } catch { /* ignore */ }
   return {
     ok: false,
     detail: `screenshot differs from baseline (${baseline.length}B vs ${png.length}B, sha1 ${hashB}/${hashN}); ` +
-      `capture meta ${JSON.stringify(meta)}; saved out/${name}.png — review and re-run with --update-baselines to accept`,
+      `capture meta ${JSON.stringify(meta)}; saved out/${name}.png — review and re-run with --update-baselines to accept` + diag,
     outPath,
     baselinePath,
     meta,

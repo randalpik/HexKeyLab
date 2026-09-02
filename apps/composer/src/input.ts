@@ -1082,7 +1082,8 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     const before = model.snapshotStateReusing(hooks.history.committedMei());
     const result = fn();
     if (result === false) return false;
-    const after = model.snapshotState();
+    /* AFTER is lazy (A10): serialised on idle or when history next needs it. */
+    const after = model.snapshotStateLazy();
     hooks.history.push(before, after, label, opts);
     return true;
   }

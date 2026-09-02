@@ -88,8 +88,9 @@ export interface PageSpliceCtx {
   liveOptions: () => object;
   /** Renderer.postProcessRendered (crisp pinning, notehead z-order, HEJI,
    *  theme) — run on the offscreen host BEFORE importing, like the scroll
-   *  splicer does. */
-  postProcess: (el: HTMLElement) => void;
+   *  splicer does. With `scope`, the per-system passes run only on those
+   *  systems (the ones to be imported); pinning and HEJI stay host-wide (A8). */
+  postProcess: (el: HTMLElement, scope?: Element[]) => void;
   /** Non-geometry page decorations that live in main.ts for mounted pages
    *  (volta number styling) — idempotent, content-level. */
   decorateHost: (el: HTMLElement) => void;
@@ -525,7 +526,8 @@ export class PageSystemSplicer {
     }
     this.lastStats.loadMs = Math.round(performance.now() - tLoad);
     try {
-      for (const h of hosts) { ctx.postProcess(h); ctx.decorateHost(h); }
+      /* Post-processing moved INTO spliceDom (A8): it needs the located window
+         systems to scope the per-system passes to the replaced ones. */
       const ok = this.spliceDom(hosts, { a, b, wLo, wHi, winStarts, leader, trailer }, live, newStartIds, ctx, skip);
       if (ok) {
         this.lastOutcome = 'spliced';
@@ -596,6 +598,21 @@ export class PageSystemSplicer {
     if (systems.length !== expected.length) return skip('window system count mismatch');
     for (let i = 0; i < systems.length; i++) {
       if (systems[i].querySelector('g.measure')?.id !== expected[i]) return skip('window partition mismatch');
+    }
+    /* Post-process each host BEFORE any geometry is read, scoped to the systems
+       that will be imported (A8): the context lines, leader and trailer are
+       measured and discarded, so snapping/reordering/theming them was ~30 ms of
+       waste per splice. Root-svg pinning and HEJI injection stay host-wide (see
+       Renderer.postProcessRendered). The context-line comparison below is now
+       raw-window vs snapped-live: the snaps move a barline by at most ½ device
+       px (≤ 10 user units at the 50% preset), inside EPS 25 — and the two
+       sides' snaps were already computed in different device frames. */
+    const replaced = new Set<SVGGElement>();
+    for (let k = r.a; k <= r.b; k++) replaced.add(systems[(r.leader ? 1 : 0) + (k - r.wLo)]);
+    for (const h of hosts) {
+      const mine = systems.filter((s) => replaced.has(s) && hostOf.get(s) === h);
+      ctx.postProcess(h, mine);
+      ctx.decorateHost(h);
     }
     const winProf = new Map<number, SysProfile>();
     const winIsPageFirst = new Set<number>();

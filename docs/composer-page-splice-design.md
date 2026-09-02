@@ -13,9 +13,10 @@ Companions: [composer-spot-splice-design.md](composer-spot-splice-design.md)
 
 **State.** On the 446-bar sonata every edit splices: routine sweep 115/115,
 exhaustive every-measure pass 420/420 (empty refusal inventory), battery 8/8
-reference-clean. Steady-state edit ≈ 170 ms in Chromium. Size caps are gone
-(2026-09-01): a 25-line governed range splices in ~1.3 s where a full render is
-~1.7 s. Suite green under `HKL_INDEX_CHECK`.
+reference-clean. Steady-state edit ≈ 170 ms in Chromium before the A thread;
+A7–A10 (2026-09-01) took the instrumented wall 258 → 214 ms (≈ −17%). Size caps
+are gone (2026-09-01): a 25-line governed range splices in ~1.3 s where a full
+render is ~1.7 s. Suite green under `HKL_INDEX_CHECK` (~4 min).
 
 **Governing principle (Max, 2026-09-01):** *"The goal is to hit O(edit) in ALL
 cases. Any time the user is exposed to O(document) on a live path when they
@@ -31,9 +32,15 @@ document); the repair-loop caps (`MAX_ENSURES`, `MAX_REPAIR_STEPS`); a replaced
 line on an unmounted page that a PREVIOUS splice marked stale (`changed line not
 mounted` — B5's cheap mount refuses stale pages).
 
-**Next thread: A — splice cost.** A typical splice is ~170 ms, so the items
-below that target tens of milliseconds are worth pursuing, and the large-range
-numbers show where the linear costs sit. Start from "Where the time goes".
+**A thread status (2026-09-01).** Shipped: A7 layout-free naturals, A8 scoped
+host post-processing, A9 raw SVG, A10 lazy history snapshot — all gate-neutral,
+battery identical to base at every step. Verovio's window `loadData` +
+`renderToSVG` (84 ms) is the floor for the current window shape. What remains
+on the DOM side is ONE cost: the window host's first geometry read forces its
+initial layout (~20 ms) — A11 (a never-laid-out host, path-based profiles on
+both sides) is a redesign of the gate's measurement basis and needs Max's
+decision; A6 (snap from known geometry, ~4.5 ms, fragile) is subsumed by it.
+Start from "Where the time goes" and the A list.
 
 **Two standing traps.** (1) Never edit `apps/composer/src` while the suite or
 ANY phasec probe/sweep runs against the dev server — Vite reloads the page and
@@ -92,7 +99,12 @@ If test mode gets slow again, `cb-checkcost.js` attributes it in one run.
    measures, spanners and endings whole), cached per measure; the whole dirty
    range is measured in one window before the repair loop. Repair-loop ensures
    are capped (`MAX_ENSURES` windows, `MAX_REPAIR_STEPS` 64) — a derive when
-   exceeded.
+   exceeded. **Layout-free (A7, 2026-09-01):** a natural is the measure's
+   staff-line path extent read from the SVG text via `DOMParser`; the window is
+   never attached or laid out. Only `sigW` (leading clef+key) needs glyph
+   metrics; it is measured with `getBBox` on an attached host only when the
+   window's folded head (the sub-MEI before `<section>`, which alone determines
+   the leading signature) differs from the head that last measured it.
 5. **Pages are carried like lines**: a page keeps its start id while that id
    still begins a line, else moves to the next surviving start. A spill past the
    paper hands pagination back (`overflowingPage`).
@@ -186,7 +198,12 @@ errors are logged and re-thrown under the flag — a caught throw is not a gate.
   `querySelectorAll` / `XMLSerializer` / `getBBox` counts — counts are
   deterministic, walls vary 166–206 ms; run 3× sequentially),
   `cb-checkcost.js` (test-mode overhead attribution: the bigrange key case with
-  the flag off and on, every flag-gated verifier wrapped with a timer).
+  the flag off and on, every flag-gated verifier wrapped with a timer),
+  `cb-splicecost.js` (A-thread attribution: phase-tagged buckets, forced-flush
+  detection with call sites, window-variant re-timing), `cb-naturalsalt.js`
+  (naturals shape: giant system vs pinned lines), `cb-windowalt.js` (leader /
+  trailer removal: geometry deltas per system), `cb-svgopts.js` (Verovio SVG
+  output options vs `renderToSVG` / parse cost).
 - **Behaviour gate for any edit-path change**: battery on both code states
   (stash / pop) — the splice/skip outcome per edit and `reference.ok` must be
   identical; wall is the win.
@@ -194,33 +211,157 @@ errors are logged and re-thrown under the flag — a caught throw is not a gate.
 
 ## Where the time goes (2026-09-01, Chromium, sonata)
 
-Steady-state one-note edit ≈ 170 ms (`cb-scale.js`): Verovio window `loadData`
-+ `renderToSVG` ≈ 56 ms; splice DOM work ≈ 16 ms and FLUSH-bound (199 → 169
-`getBBox` calls changed nothing — the levers are fewer mounted pages and fewer
-read/write alternations); refill (sig diff + naturals) tens of ms;
-`cursor.update` ×2 ≈ 4 ms; the rest dispatch/overlay/bridge. Per-edit work no
-longer scales with the document (`querySelectorAll` 31 969 → 2 537,
-`XMLSerializer` 495 → 54).
+Steady-state one-note edit, Backspace mid-document, `cb-splicecost.js`
+(phase-tagged wrappers; instrumented wall 258 ms against ~170 ms bare — the
+wrapper overhead is spread over ~4 000 wrapped calls, so the SHARES are what to
+read). Window: 1 replaced line, 4 window lines (above + replaced + below + one
+courtesy extension) + leader + trailer = 20 measures on 2 window pages.
+
+- **Splice 158 ms.** Verovio `loadData` 25.5 + `renderToSVG` 59 (2 pages) =
+  **84 ms**; `innerHTML` parse of the two hosts 10; **post-processing of the
+  two window hosts 30** (pinExactScale / snapBarlines / snapSystemRightEdge /
+  notehead reorder / HEJI / theme over 20 measures, of which only 6 are
+  imported); window MEI build 9 (serializeRangeForRender 4.7, DOMParser 2.9,
+  XMLSerializer 1.2); `liveSystem` ×3 7 ms (one 5.3 ms flush); `spliceDom` 14
+  (one 3.5 ms flush reading the window profiles, snapPage 5.2 with one 4.5 ms
+  flush). 44 + 114 `getBBox` in spliceDom/snap; ~2 200 `querySelectorAll`.
+- **Refill 49 ms**, all naturals: a 5-measure `breaks:'none'` window costs
+  `renderToSVG` 15.2, `getBBox` 8 (one flush; 118 reads), `loadData` 6.3,
+  serializeRangeForRender 2.9, 1 405 `querySelectorAll` 2.5, `innerHTML` 2, and
+  ~11 ms of walk. Fixed cost dominates small windows (~10 ms/measure here vs
+  5.2 ms/measure at 100 measures).
+- **Outside the render 50 ms**: model mutation 14, history snapshot
+  `XMLSerializer` 12 (the reused-MEI half), the overlay-height layout read
+  after the splice 5.5 (paint layout brought forward — not extra work),
+  `cursor.update` ×2 1.6, dispatch / bridge / poll granularity ~16.
+- **Forced layout flushes ≈ 27 ms**: naturals host 8, first live `getBBox` 5.3
+  (the live layout is dirty because the naturals host was attached and removed
+  from `<body>`), window-host profiles 3.5, snap after surgery 4.5, overlay
+  read 5.5. Every one lays out a page-sized SVG; the number of `getBBox` calls
+  is irrelevant (A6's 199 → 169 experiment).
+
+**Verovio is drawing, not laying out.** On the 100-measure naturals shape
+`loadData` is 64 ms and `renderToSVG` 335–453 ms (0.6 vs 3.4–4.5 ms/measure);
+on the 18-measure window shape 26 vs 43 ms. The first `renderToSVG` after a
+`loadData` is 30–40% slower than a repeat (460 vs 330; 56 vs 43 ms) — the
+layout is lazy and lands in the first draw — and production always pays the
+first. `svgFormatRaw` leaves `renderToSVG` unchanged (335 → 327) but cuts the
+SVG string 40% (1.68 MB → 1.0 MB per 100 measures) and the `innerHTML` parse
+36% (41.8 → 26.8 ms; 8.5 → 6.3 on the window); `svgRemoveXlink` changes nothing
+(`cb-svgopts.js`).
+
+**Window shape experiments** (`cb-windowalt.js`, `cb-splicecost.js` variants):
+without the leader the REPLACED line and the line below are identical to the
+full window (every measure x/width, staff top, height: delta 0); only the
+context-above line changes (page-top anchoring, widths −219..−363, x up to 803)
+— the leader is gate-only. Leader + trailer together cost ~3 ms of Verovio
+(27 + 58.4 → 24.6 + 57.3). Replaced-lines-only (6 measures, 1 page) costs
+`loadData` 8.9 + `renderToSVG` 15 = 24 ms against 84 — a ~60 ms Verovio saving
+plus ~15 ms of DOM, at the price of the context gate (the only live fidelity
+test), the courtesy the following line generates for the replaced line, and
+every spanner endpoint outside the replaced set.
+
+**Naturals shape experiment** (`cb-naturalsalt.js`, 100 measures, 25 lines):
+one giant `breaks:'none'` system 63.6 + 453 ms; pinned at the live line starts
+with `noJustification` 117 + 423; pinned justified 117 + 413 — 5.2 / 5.4 / 5.3
+ms per measure. The giant system is NOT superlinear; pinned lines are no
+cheaper and their system-first widths need a per-system clef/key correction
+(interior widths agree exactly, max delta 0). Dead end.
 
 Large governed ranges (caps dropped): 17 lines / 78-measure window 1.18 s;
 25 lines / 106 measures 1.32 s. The naturals window is ~5.5 ms per measure
-(440–590 ms for 71–107 measures — four times a full render's per-measure
-`loadData`, `breaks:'none'` on one giant system) and the window `loadData`
-~0.4 s. Both scale with the range and are the first A targets for large edits.
+(440–590 ms for 71–107 measures; ~85% of it Verovio's `renderToSVG`, ~1.5 ms of
+it DOM parse + layout + `getBBox`) and the window `loadData` ~0.4 s. Both scale
+with the range; only the DOM share is removable (below).
 
 ## Open work
 
 ### A. Splice cost (next thread)
 
-- **A6** — the splice's DOM cost is flush-bound: batch every read before any DOM
-  surgery; keep fewer pages mounted. ~16 ms available.
-- **Naturals window cost** — ~5.5 ms/measure on one giant system; measure
-  whether layout or per-measure `getBBox` dominates, and whether naturals can
-  be read from the window render the splice already does.
-- **Window `loadData`** — ~5 ms per window measure; measure what a minimal
-  window (no context/leader/trailer) would cost and what fidelity it loses.
-- **A3** — collapse the two `cursor.update` calls (~2 ms; blocked on the
+Measured 2026-09-01 (see "Where the time goes"). Estimated savings are against
+the ~170 ms steady-state edit; none of the items marked *gate-neutral* changes
+what any gate compares.
+
+- **A7 — layout-free naturals — SHIPPED 2026-09-01.** Proof
+  (`cb-naturalspath.js`, every sonata measure): staff-line span = the old
+  `getBBox` natural on 441/443 interior measures and every window-last measure
+  (delta 0); the two exceptions are a window's FIRST measure, whose bbox began
+  144 units left of its staff line (system-start brace/barline) — the old
+  reading over-counted measure 0 by the brace. Result on the steady edit:
+  naturals 48 → 37 ms, first live `getBBox` 7.3 → 2.2 ms (flush gone),
+  instrumented wall 258 → 234. Battery identical to base, suite 358/358.
+- **A8 — post-process only the replaced systems — SHIPPED 2026-09-01, small
+  win, big finding.** `postProcessRendered(container, scope?)` runs the
+  per-system passes (barline / right-edge snaps, notehead reorder, theme) only
+  on the systems the splice will import; root-svg pinning and HEJI injection
+  stay host-wide (the context gate compares HEJI-processed key-signature
+  glyphs). Post 30 → 24 ms, splice 147 → 143. The pass timings
+  (`Renderer.lastPostStats`) show why so little: on ONE scoped system
+  `snapBarlines` is still ~22 ms, and it is the first `getScreenCTM` — the
+  FIRST geometry query on a freshly parsed page-sized host forces its layout
+  (~20 ms), and that flush was hiding inside "post". The per-barline work is
+  sub-millisecond. So the window host's initial layout is the DOM-side floor
+  while any read on it needs layout. Battery identical, suite green (one
+  marginal fixture flaked once, 6/6 on re-run both states).
+  Still open for Max: barline x-snapping happens in the HOST frame before the
+  `translate(dx,dy)`; a non-integer device `dx` would un-snap imported
+  barlines. `dx` is ~0 when margins match; a screenshot with `dx ≠ 0` settles it.
+- **A11 — a window host that is never laid out** (the follow-on A8 exposed;
+  ~20 ms; a redesign of the gate's measurement basis, propose before building).
+  Everything the splice reads from the host — measure x/width (staff-line path
+  spans, exact; proven by A7), staff top (path y + transforms), page-first
+  anchors — is available from the SVG text EXCEPT the system bbox extents the
+  vertical plan's page-fit uses, and the barline snaps' device phase. Path-based
+  profiles on BOTH sides (the live page's `d` attributes are the same text)
+  would make the context gate an exact comparison instead of EPS 25, and
+  barline snapping could move to the imported systems in the live page, where
+  the post-surgery snap flush already happens. Blocker to solve first: the
+  extents (or show the page-fit check can use staff-line geometry).
+- **A9 — `svgFormatRaw: true` — SHIPPED 2026-09-01** (in `BASE_OPTIONS`, so
+  every render, window and naturals toolkit inherits it). Whitespace-only:
+  identical element counts, no indentation or inter-element newlines. Measured
+  on the steady edit: the two window hosts' `innerHTML` 10 → 5.7 ms, naturals
+  `DOMParser` 2.3 → 1.9; SVG bytes −40%. Battery identical to base; every visual
+  baseline in the suite unchanged. The PDF export sets its own options on a
+  shared toolkit — Verovio persists unspecified options, so exported SVG is raw
+  too, which is only whitespace.
+- **A10 — lazy history AFTER snapshot — SHIPPED 2026-09-01.** `withHistory`
+  takes its AFTER via `model.snapshotStateLazy()`: the MEI is a getter that
+  serialises on idle (`requestIdleCallback`, 300 ms timeout) or synchronously
+  before anything that could change the document — the model materialises a
+  pending lazy snapshot in `snapshotState`, `snapshotStateReusing` (every
+  mutation path takes a BEFORE first), `restoreSnapshot*` and
+  `replaceDocument`; the HistoryManager resolves it before push / undo / redo.
+  Under HKL_INDEX_CHECK, materialising after the document version moved throws
+  (a mutation path that took no BEFORE snapshot). No-op detection: equal
+  document versions = identical document, nothing pushed; different versions
+  push optimistically and the string comparison is settled at resolution,
+  retracting the entry (and restoring the redo stack) if the MEI turned out
+  identical — an attribute rewritten to its own value bumps the version. The
+  cut→paste merge path settles eagerly. Fixture `undo_lazy_snapshot`. Measured:
+  the `XMLSerializer` bucket (~12 ms) is gone from the keystroke; instrumented
+  steady-state wall 258 → 214 ms across A7–A10 (bare ≈ 170 → ~140).
+- **A6 — one layout per host** (~4.5 ms, fragile — do LAST). After A7 the
+  remaining forced flushes are the window-host profile read (needed: system
+  bbox extents need glyph metrics) and the post-surgery snap (`snapStaffLines
+  ToGrid` reads `getScreenCTM` + `getBBox` per staff). The snap could be
+  computed from the host's already-laid-out staff-line y plus the applied
+  `dy` (and `dyFollow` for the cascade followers) — a restructuring of
+  `snapPage` to accept known geometry. Fewer mounted pages: negligible (the
+  flushes lay out one page-sized SVG each regardless).
+- **Window shrinkage — not available without a gate change.** Leader and
+  trailer are ~3 ms; dropping the courtesy-extension line (~15 ms when it is
+  pulled in) or the context lines (~75 ms) each requires exempting a
+  context-line width or the whole live comparison. lessons.md ("The gate
+  exemption is the real lesson") says no; Verovio's 84 ms is the floor for the
+  current window shape. Revisit only with a replacement fidelity test.
+- **A3** — collapse the two `cursor.update` calls (~1.6 ms; blocked on the
   `onStateChange`-before-`onChange` bridge ordering).
+- **Dead ends (2026-09-01, do not retry without new evidence)**: pinned-lines
+  naturals (no cheaper, needs system-first corrections); `svgRemoveXlink`
+  (no effect); reading naturals from the splice window's justified render (the
+  naturals must be position-independent; the splice window is justified and
+  line-shaped); `getBBox` call-count reduction (flush-bound).
 - **A5** — worker-offloaded castoff `loadData` (~1.4 s on the derive); big
   refactor; `afterRender` is the seam.
 - **Test-mode residual** — `assertVoiceIndexConsistent` calls
@@ -250,6 +391,30 @@ remaining O(document) paths an ordinary edit can hit.
 Chronological detail is in decisions.md (dated entries from 2026-08-29). Most
 recent, one line each:
 
+- 2026-09-01 — Owner bug fixed: `commitAdoption` now writes only for the
+  CURRENT task, once. `finishAdoptionNow` (an edit arriving mid-walk) left the
+  task's scheduled idle `step` armed; it later re-installed the task's stale
+  start list over the refill's partition — the suite's intermittent
+  `pageKeyChangeSplicesGovernedRange` failure (one-line partition after a
+  successful splice), traced by a setter trap on `startIds`.
+- 2026-09-01 — A10 shipped: the history AFTER snapshot is lazy (idle or before
+  the next document change); the ~12 ms whole-document serialize leaves the
+  keystroke path. Fixture `undo_lazy_snapshot`.
+- 2026-09-01 — A8 shipped (scoped post-processing, post 30 → 24 ms) and
+  exposed the real DOM-side floor: the window host's first geometry query is a
+  ~20 ms layout flush; recorded as A11. A9 shipped (`svgFormatRaw`: host parse
+  10 → 5.7 ms, visual baselines unchanged).
+- 2026-09-01 — A7 shipped: naturals read from staff-line paths on a
+  never-attached parse; `sigW` re-measured only when the window's folded head
+  changes. Steady edit −24 ms instrumented (naturals 48 → 37, live flush gone);
+  battery identical, suite 358/358.
+- 2026-09-01 — A thread measured (`cb-splicecost.js` + 3 shape probes):
+  Verovio window 84 ms is half the edit and the floor for this window shape;
+  DOM side ~50 ms (host post-processing 30, flushes ~21), history snapshot 12.
+  Leader is gate-only and cheap; pinned-lines naturals and `svgRemoveXlink` are
+  dead ends; `svgFormatRaw` saves parse only. Plan: A7 layout-free naturals,
+  A8 post-process replaced systems only, A9 svgFormatRaw, A10 lazy history
+  snapshot ≈ 40–45 ms (25%) without touching a gate.
 - 2026-09-01 — Test-mode O(n²) fixed: `flatChildren` / `allMeasures` verify
   once per document version (not per hit), and `locateCursor` reads the cached
   stops — the VoiceIndex cross-check was re-enumerating the document once per

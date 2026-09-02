@@ -2406,3 +2406,138 @@ itself is verified on its first hit per version), and the cross-check is
 original computation" inherits the original's cost model; when the original
 was O(document) per query, calling it once per stop is O(document²). Check the
 helpers a verifier calls, not only the verifier.
+
+## Verovio's per-measure cost is the DRAW, and the first draw after a load carries the layout (2026-09-01)
+
+Measuring the naturals window (`cb-naturalsalt.js`, 100 measures): `loadData`
+64 ms, `renderToSVG` 335–453 ms. The design doc had framed the cost as
+"`loadData` on one giant system" and hypothesised superlinear layout; pinned
+lines cost the same. Two things follow for any Verovio timing here: (1) the
+first `renderToSVG` after a `loadData` is 30–40% slower than a repeat on the
+same data (460 vs 330 ms; 56 vs 43) — layout is lazy and lands in the first
+draw, so a probe that times repeats under-reports production, which always
+pays the first; (2) SVG string formatting is not where the draw time goes:
+`svgFormatRaw` halves the bytes and cuts the DOM parse 36% but leaves
+`renderToSVG` within noise. The lever on Verovio time is the number of measures
+drawn, nothing else.
+
+## A synthetic context element can be gate-only — check before pricing its removal (2026-09-01)
+
+The splice window's leader (an mRest system absorbing score-start treatment)
+looked like a cost worth cutting. `cb-windowalt.js` showed the replaced line
+and the line below are geometrically identical without it (every measure
+x/width, staff top, spacing, height: delta 0); only the context-ABOVE line
+changes, i.e. the leader exists purely so the above-line gate can compare.
+And leader + trailer together cost ~3 ms. Two lessons: a synthetic element's
+job is either geometry or verification — establish which with a delta table
+before assuming it is expensive — and measure its cost in isolation; the
+earlier variant run had attributed 14 ms to them, which a second run showed to
+be noise.
+
+## Count forced layout flushes by timing the reads, not by counting calls (2026-09-01)
+
+A6 had reduced `getBBox` calls 199 → 169 and measured no change, concluding
+"flush-bound". `cb-splicecost.js` makes that operational: wrap every geometry
+read with a timer and treat a call over 0.5 ms as a flush, recording its stack
+frame. One steady-state edit has five flushes (naturals host 8 ms, first live
+read 5.3, window-host profiles 3.5, post-surgery snap 4.5, overlay-height read
+5.5 — the last is paint layout brought forward, not extra work) and ~230
+sub-millisecond reads that cost nothing. The 5.3 ms live flush exists only
+because the naturals host was attached to and removed from `<body>`, which
+dirties the live page's layout — a host that is never attached (A7) removes
+two flushes for one change. When a cost is "flush-bound", the design question
+is which WRITES precede each expensive read, not how many reads there are.
+
+## A bbox-based width includes whatever overhangs; the layout width is the staff-line span (2026-09-01)
+
+Replacing the naturals window's `getBBox` reading with the staff-line path
+extent was expected to be identical, and it was — except for a window's first
+measure, whose bbox began 144 units left of its staff line because the
+system-start brace/barline is drawn there. The old natural for measure 0
+therefore included the brace, which Verovio does not count as measure width.
+When a geometry read is defined by a bounding box, list what else can fall
+inside that box before treating it as "the" width; and when replacing it,
+prove equality over the whole document (`cb-naturalspath.js`), because the
+exceptions will be structural (first/last of something), not random.
+
+## A "could it differ?" trigger must key on the input that determines the value, not on things nearby (2026-09-01)
+
+A7's first cut re-measured `sigW` whenever a naturals window contained a
+scoreDef or an inline clef anywhere in its section — reasonable-sounding, and
+on the sonata true for essentially every window (left-hand clef changes are
+everywhere), so the cost the change was meant to remove stayed. The leading
+clef+key is determined entirely by the folded head the range serializer writes
+before `<section>`; keying the re-measure on that string is exact and fires
+only when the leading context actually changes. When gating an expensive
+recompute, find the exact input the value is a function of and compare THAT.
+
+## Scoping work on an offscreen SVG host saves nothing while any read still forces its first layout (2026-09-01)
+
+A8 cut the window host's post-processing from 20 measures to the 6 imported
+ones and saved 6 ms of 30. The pass timings showed `snapBarlines` on ONE system
+at ~22 ms: the first `getScreenCTM` on a freshly parsed page-sized host is that
+host's initial layout, and every subsequent read is free. The cost of an
+offscreen host is therefore roughly "one layout" regardless of how much of it
+you touch — the only way to remove it is to read nothing that needs layout
+(path data, `use` x/y, transforms; A7 did exactly this for the naturals
+window). When timing DOM work on a host, look for the single expensive first
+read before optimising what follows it. Corollary for probes: wrap
+`getScreenCTM` as well as `getBBox` — it forces layout just the same and the
+first attribution pass missed it.
+
+## A lazy snapshot is sound only while nothing can change what it snapshots — enumerate the change points, and assert (2026-09-01)
+
+Making the history AFTER serialisation lazy looked like a thunk. The hazard is
+that the thunk serialises whatever the document IS when forced, so it must be
+forced before ANY later document change: the next edit's BEFORE snapshot, an
+undo/redo swap, a load. In Composer those are exactly `snapshotState` /
+`snapshotStateReusing`, `restoreSnapshot*`, `replaceDocument` — every mutation
+path goes through one of them first — plus an idle prefetch. Two design points
+worth reusing: (1) put the materialisation hooks in the OWNER of the state (the
+model), not in the consumers, so a new mutation path inherits them; (2) assert
+the invariant with the exact version the model already has (throw under the
+test flag when the version moved), so the suite catches a path that bypasses
+it. And the comparison that would have forced the thunk (no-op detection by
+string equality) can be deferred to the moment the thunk is forced anyway,
+with a retraction — the version test handles the common no-op cheaply and
+exactly.
+
+## An idle-sliced task that is finished synchronously must also be disarmed — its queued continuation will run (2026-09-01)
+
+`finishAdoptionNow` completed a pending adoption walk on demand and cleared the
+owner's task reference, but the task's `scheduleIdle(step)` callback was
+already queued. It fired later, saw nothing left to walk, and re-committed the
+task's stale result over a newer partition. Any "finish now" path for a sliced
+background task has to do what cancellation does — mark the task so the
+queued continuation returns — or the commit must verify the task is still the
+current one (both are now in place). The symptom class is a state write from a
+stack that has no business writing at that moment; the diagnostic that found it
+in one reproduction was a setter trap on the field (`Object.defineProperty`
+with a recording setter, installed by the fixture and removed after) — far
+cheaper than reasoning about every writer, of which there were four and the
+right one was the least likely.
+
+## Fixture assertions are template literals — backslashes in injected JS are template escapes (2026-09-01)
+
+Instrumenting a fixture assertion with a regex (`/\(?https?:\/\/…/`) produced
+three "no detail" failures and no other signal: the assertion `expr` is a
+backtick template literal, so `\(` and `\s` were consumed as template escapes
+and the evaluated code was a syntax error. When injecting code into
+`fixtures.mjs` assertions, avoid backslashes entirely (`String.fromCharCode(10)`
+for a newline, plain string methods instead of regexes), and treat a sudden
+"no detail" across every instrumented fixture as your own syntax error, not
+a product failure.
+
+## A visual-baseline mismatch of a few thousand pixels traced along glyph edges is a fractional device-pixel shift (2026-09-01)
+
+`pageSystemSpliceEdit` differed from its baseline once in full-suite order:
+5 450 pixels (0.09%), all inside one system's band, following notehead and
+brace outlines; identical on re-run. Max read it as a sub-pixel shift of the
+spliced system; the candidates are a non-static vertical plan applying a
+fractional `dy` (staff lines are re-snapped, the brace is not inside a staff
+group) or a fractional `dx` un-snapping host-frame barline snaps. The visual
+check now appends `window.__visualDiag` (the plan's static flag and each
+replaced system's applied translate in user units and device px, recorded by
+the fixture) to a mismatch's detail, so the next occurrence explains itself.
+Pixel-diff a mismatch before reasoning about it: byte size and sha1 tell you
+nothing; a highlighted diff and its row histogram told the whole story.

@@ -183,6 +183,53 @@ Phase C-B2b / B1 probes (2026-08-31, findings baked into the design doc →
   runs the meter case instead. Note the second (flag-on) pass can refuse with
   `changed line not mounted` because the first pass's restore leaves stale
   pages; the attribution is unaffected.
+- **cb-splicecost.js** — the A-thread attribution probe (2026-09-01): a
+  steady-state Backspace mid-document (warm-up + two steady runs) with every
+  cost tagged by the phase it ran in (mutate / refill / naturals / splice /
+  liveSys / spliceDom / post / snap / cursor); every `getBBox` and
+  `getBoundingClientRect` is timed and a call over 0.5 ms is reported as a
+  forced layout flush WITH its call site; then the captured window MEI is
+  re-timed as full / no leader+trailer / replaced-lines-only. Wrapper overhead
+  inflates the wall (~258 vs ~170 ms bare) — read the shares. Found: Verovio
+  window 84 ms, host post-processing 30 ms, five flushes ~27 ms, history
+  snapshot 12 ms. `--arg "mi=<n>"` picks the measure.
+- **cb-naturalsalt.js** — naturals shape: the same 100-measure range as one
+  giant `breaks:'none'` system (today), pinned at the live line starts with
+  `noJustification`, and pinned justified; load/render wall and per-measure
+  width agreement (interior / system-first minus sigW / system-last). Found
+  the giant system is NOT superlinear (5.2 vs 5.4 vs 5.3 ms/measure) and
+  `renderToSVG` is ~85% of it. Dead end recorded in the design doc.
+  `--arg "lo=<mi>,n=<count>"`.
+- **cb-windowalt.js** — is the synthetic leader load-bearing? Performs the
+  splicecost edit, re-renders the window without the leader and without
+  leader+trailer, and reports per-system geometry deltas (measure x/width,
+  staff top, spacing from the system above, height) for the context and
+  replaced lines. Found: replaced and below lines identical (delta 0); only the
+  context-above line changes; leader + trailer ≈ 3 ms of Verovio.
+- **cb-naturalspath.js** — the A7 proof: renders every sonata measure through
+  the naturals recipe in ~150-measure windows and compares, per measure, the
+  staff-line span read from the SVG text (`M x1 y L x2 y`, no layout) with the
+  `getBBox` natural the refill used to read (`next.x − this.x`; last measure
+  `bbox.width`), plus the left overhang that explains any difference and the
+  cost of each reading path. 2026-09-01: 441/443 interior + all window-last
+  measures identical; the two deltas are window-first measures over-counted by
+  the 144-unit system-start brace. Text path 233 ms vs bbox path 672 ms.
+  `--arg "win=<n>"` sets the window size.
+- **cb-govdiag.js** (run with `--no-sonata`) — mirror of the composer-test
+  fixture `pageKeyChangeSplicesGovernedRange`: builds its 40-measure document,
+  applies the reset key change (line 5) and the edit (line 2), and prints every
+  refill input the legality decisions depend on — sigW, budgetW, per-line
+  natural sums and fills — plus the partition before/after and the splicer's
+  run. Written while hunting that fixture's intermittent full-suite failure
+  (2026-09-01); showed fills of 0.96–1.02, nowhere near the bounds, which ruled
+  out a marginal repair and pointed at a foreign write of `startIds` (the
+  stale-adoption re-commit, since fixed).
+- **cb-svgopts.js** — Verovio SVG output options (`svgFormatRaw`,
+  `svgRemoveXlink`) vs `renderToSVG` wall, string size, node count and
+  `innerHTML` parse time, on the naturals shape (100 measures) and a window
+  shape (18 measures). Found: render unchanged, bytes −40% and parse −36% under
+  `svgFormatRaw`; `svgRemoveXlink` nothing; the first `renderToSVG` after a
+  `loadData` is 30–40% slower than a repeat (lazy layout).
 - **cb-courtesy.js** — correlates the `context line ... diverged` refusals
   against the document structure: does a clef/key/meter change begin the line
   just BEYOND the splice window? That is what identified the end-of-line

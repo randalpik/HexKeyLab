@@ -31,9 +31,17 @@ import type { ComposerModel, Voice } from './model/index.js';
 import type { SelectionState } from './selection/selection.js';
 
 export interface Snapshot {
+  /** Full MEI. For a keystroke edit's AFTER this is a LAZY getter (A10): the
+   *  model serialises on idle, or synchronously before anything that could
+   *  change the document. Reading it always yields the right string. */
   mei: string;
   voice: Voice;
   cursors: Record<Voice, number>;
+  /** Exact document version at capture (`model.docVersion()`, driven by the
+   *  MutationObserver drain). Equal versions = identical document, which lets
+   *  `push` detect a no-op edit without touching `mei`. Absent on snapshots
+   *  taken by the dialog paths, which stay eager. */
+  docVer?: number;
 }
 
 export interface UndoEntry {
@@ -68,15 +76,19 @@ function focusEquals(curVoice: Voice, curCursors: Record<Voice, number>, snap: S
   return curVoice === snap.voice && curCursors[curVoice] === snap.cursors[curVoice];
 }
 
+function cursorsEqual(a: Record<Voice, number>, b: Record<Voice, number>): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const k of keys) {
+    const v = Number(k) as Voice;
+    if (a[v] !== b[v]) return false;
+  }
+  return true;
+}
+
 function snapshotsEqual(a: Snapshot, b: Snapshot): boolean {
   if (a.mei !== b.mei) return false;
   if (a.voice !== b.voice) return false;
-  const keys = new Set([...Object.keys(a.cursors), ...Object.keys(b.cursors)]);
-  for (const k of keys) {
-    const v = Number(k) as Voice;
-    if (a.cursors[v] !== b.cursors[v]) return false;
-  }
-  return true;
+  return cursorsEqual(a.cursors, b.cursors);
 }
 
 export class HistoryManager {
@@ -88,22 +100,49 @@ export class HistoryManager {
    *  committed edits, so `withHistory` reuses it as the next edit's BEFORE-MEI
    *  to serialize once per edit instead of twice (Phase B3). null = unknown
    *  (after clear / before the first push) → caller serializes fresh. */
-  private lastMei: string | null = null;
+  private lastCommitted: Snapshot | null = null;
+  /** A lazily-pushed entry whose no-op check is still owed (A10). `push` cannot
+   *  compare MEI strings without forcing the lazy AFTER, so when the document
+   *  versions differ it pushes optimistically and settles the comparison here,
+   *  the first time anything looks at the stacks. Always the top of the undo
+   *  stack: every push / undo / redo resolves before touching them. */
+  private pending: { entry: UndoEntry; check: Snapshot; savedRedo: UndoEntry[] } | null = null;
 
   constructor(cap = DEFAULT_CAP) {
     this.cap = cap;
   }
 
-  canUndo(): boolean { return this.undoStack.length > 0; }
-  canRedo(): boolean { return this.redoStack.length > 0; }
+  canUndo(): boolean { this.resolvePending(); return this.undoStack.length > 0; }
+  canRedo(): boolean { this.resolvePending(); return this.redoStack.length > 0; }
 
-  /** The last committed state's MEI (see `lastMei`), or null if unknown. */
-  committedMei(): string | null { return this.lastMei; }
+  /** The last committed state's MEI (see `lastCommitted`), or null if unknown.
+   *  Reading it materialises a lazy AFTER — which is exactly when the next edit
+   *  needs it: as its BEFORE, before it mutates anything. */
+  committedMei(): string | null { return this.lastCommitted ? this.lastCommitted.mei : null; }
 
   clear(): void {
     this.undoStack = [];
     this.redoStack = [];
-    this.lastMei = null;
+    this.lastCommitted = null;
+    this.pending = null;
+  }
+
+  /** Settle a lazily-pushed entry (A10): reading `after.mei` materialises the
+   *  snapshot (the model asserts, under HKL_INDEX_CHECK, that the document has
+   *  not moved since); if it equals the BEFORE the edit changed nothing
+   *  observable — an attribute rewritten to its own value bumps the version
+   *  without changing the document — and the entry is retracted exactly as the
+   *  eager check used to skip it, restoring the redo stack it cleared. */
+  private resolvePending(): void {
+    const p = this.pending;
+    if (!p) return;
+    this.pending = null;
+    if (p.entry.after.mei !== p.check.mei) return;
+    if (this.undoStack[this.undoStack.length - 1] === p.entry) {
+      this.undoStack.pop();
+      this.redoStack = p.savedRedo;
+    }
+    /* lastCommitted: BEFORE and AFTER are the same document; leave it. */
   }
 
   /** Push a new entry, OR merge into the top entry if it is `mergeable` and
@@ -111,14 +150,29 @@ export class HistoryManager {
    *  merge) clears the redo stack. No-op if before/after are identical
    *  (caller's mutation produced no observable change). */
   push(before: Snapshot, after: Snapshot, label: string, opts: PushOpts = {}): void {
-    if (snapshotsEqual(before, after)) return;
+    this.resolvePending();
+    /* No-op detection. Versioned snapshots (A10): equal versions mean the
+       MutationObserver saw nothing — identical document, nothing pushed and
+       nothing serialised. Different versions do not PROVE a change, so the
+       string comparison is deferred to resolvePending, after the AFTER has
+       materialised on idle (or at the next history operation), and a no-op
+       entry is retracted then. Unversioned snapshots keep the eager compare. */
+    const versioned = before.docVer !== undefined && after.docVer !== undefined;
+    if (versioned) {
+      if (before.docVer === after.docVer && before.voice === after.voice
+          && cursorsEqual(before.cursors, after.cursors)) return;
+    } else if (snapshotsEqual(before, after)) return;
     /* The doc now reflects `after` — record it so the next edit's BEFORE-MEI is
-       free (see lastMei). Set unconditionally (covers both push + merge). */
-    this.lastMei = after.mei;
+       free (see lastCommitted). Set unconditionally (covers both push + merge). */
+    this.lastCommitted = after;
 
     if (opts.mergeIfTopMergeable && this.undoStack.length > 0) {
       const top = this.undoStack[this.undoStack.length - 1];
       if (top.mergeable) {
+        /* A merge is a paste after a cut — not a keystroke path. Settle the
+           no-op question eagerly (this forces a lazy AFTER) so the merged entry
+           needs no deferred retraction. */
+        if (versioned && snapshotsEqual(before, after)) return;
         /* Fold this push into the previous entry. The merged entry keeps
          * the cut's before-state and the cut's sourceSelection (so undoing
          * still restores the source selection at the original cut site). */
@@ -138,9 +192,11 @@ export class HistoryManager {
     if (opts.sourceSelection !== undefined) entry.sourceSelection = opts.sourceSelection;
     if (opts.mergeable) entry.mergeable = true;
 
+    const savedRedo = this.redoStack;
     this.undoStack.push(entry);
     if (this.undoStack.length > this.cap) this.undoStack.shift();
     this.redoStack = [];
+    if (versioned) this.pending = { entry, check: before, savedRedo };
   }
 
   /** Restore the BEFORE side of the top entry. The model's cursor/voice
@@ -148,6 +204,7 @@ export class HistoryManager {
    *  entry's AFTER focus. Returns the entry consumed (for status messages /
    *  testing). */
   undo(model: ComposerModel, effects: UndoEffects): UndoEntry | null {
+    this.resolvePending();   // materialises the top entry's AFTER while the doc still IS that state
     const entry = this.undoStack.pop();
     if (!entry) return null;
     this.redoStack.push(entry);
@@ -162,7 +219,7 @@ export class HistoryManager {
     } else {
       model.restoreSnapshotMeiOnly(entry.before, curVoice, curCursors);
     }
-    this.lastMei = entry.before.mei;   // doc now reflects the BEFORE state
+    this.lastCommitted = entry.before;   // doc now reflects the BEFORE state
 
     /* Selection: re-enter source selection if recorded, else clear. */
     if (entry.sourceSelection) {
@@ -178,6 +235,7 @@ export class HistoryManager {
 
   /** Restore the AFTER side of the top entry of the redo stack. */
   redo(model: ComposerModel, effects: UndoEffects): UndoEntry | null {
+    this.resolvePending();
     const entry = this.redoStack.pop();
     if (!entry) return null;
     this.undoStack.push(entry);
@@ -191,7 +249,7 @@ export class HistoryManager {
     } else {
       model.restoreSnapshotMeiOnly(entry.after, curVoice, curCursors);
     }
-    this.lastMei = entry.after.mei;   // doc now reflects the AFTER state
+    this.lastCommitted = entry.after;   // doc now reflects the AFTER state
 
     /* Redo always lands in voice mode — committed cut/paste exits selection. */
     effects.setSelection(null);

@@ -107,7 +107,7 @@ export interface RenderOpts { geometry?: 'inset' | 'scroll'; theme?: NotationThe
  *  without a light variant fall back to a brightness filter so they stay
  *  legible. Exported so the stateful Composer renderer reuses the exact same
  *  pass. Safe to call repeatedly. */
-export function applyNotationTheme(container: HTMLElement, theme: NotationTheme): void {
+export function applyNotationTheme(container: HTMLElement | SVGElement, theme: NotationTheme): void {
   /* Light theme is a strict no-op: we leave `data-notation-theme` UNSET so the
      shared stylesheet's `[data-notation-theme] …` rules don't match, and the
      SVG renders exactly as Verovio emitted it (byte-identical to the unthemed

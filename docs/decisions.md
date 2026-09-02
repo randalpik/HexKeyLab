@@ -5375,3 +5375,175 @@ test-mode residual. Attribution probe: `cb-checkcost.js`. Bigrange under the
 flag: key case 45.1 → 3.8 s, meter 38.8 → 2.5 s (the remainder over production
 is the reference gate's own full render); outcomes and reference gate identical
 across all three cases before and after.
+
+## 2026-09-01 — A thread measured before it is built: where the splice time goes, and three dead ends
+
+Max: "get these ideas fleshed out and get a better idea of the real savings
+available" (the three A items: A6 flush-bound DOM, naturals window cost, window
+`loadData`). Four probes (`cb-splicecost.js`, `cb-naturalsalt.js`,
+`cb-windowalt.js`, `cb-svgopts.js`) answered them; the numbers are in the
+design doc's "Where the time goes". What was decided:
+
+- **Verovio's `renderToSVG` is the cost, not `loadData`, and it is intrinsic.**
+  0.6 vs 3.4–4.5 ms/measure on the naturals shape; the first draw after a load
+  carries the lazy layout (+30–40%) and production always pays it. SVG string
+  formatting is not the cost (`svgFormatRaw` leaves the draw unchanged), so no
+  output option makes Verovio faster — only a smaller window does.
+- **The window is not shrinkable without a gate change** — leader and trailer
+  are ~3 ms and the leader is gate-only (the replaced line's geometry is
+  identical without it), so the ~60 ms available from a replaced-lines-only
+  window all comes from dropping the context lines, i.e. the only live
+  fidelity test, plus the courtesy for the replaced line and out-of-set spanner
+  endpoints. Recorded as unavailable; the 84 ms is the floor for this shape.
+- **Naturals stay on one giant `breaks:'none'` system.** Pinned lines are no
+  cheaper (5.4 vs 5.2 ms/measure) and would need per-system clef/key
+  corrections on system-first measures. The removable part of the naturals
+  cost is the DOM side (parse + layout flush + `getBBox` ≈ 1.5 ms/measure) —
+  A7 reads widths from the staff-line paths of a never-attached parse.
+- **The DOM side was mis-sized.** The doc said ~16 ms; the splice's DOM work is
+  ~50 ms once the post-processing of the window hosts (30 ms, 14 of whose 20
+  measures are discarded) and the forced flushes (~21 ms on the splice path,
+  27 in all) are counted. A6's call-count framing was right that flushes rule
+  and wrong about the budget.
+- **Ordered plan** (all gate-neutral): A7 layout-free naturals (~16 ms), A8
+  post-process only the replaced systems with HEJI still on the whole host
+  (10–15 ms, measure the passes first), A9 `svgFormatRaw` (~3 ms), A10 lazy
+  history snapshot (~12 ms), then A6 one-layout-per-host (~4.5 ms, fragile).
+  ≈ 40–45 ms of ~170 (25%). Behaviour gate for each: `cb-splice-battery.js`
+  on both code states, outcomes and `reference.ok` identical; then
+  `cb-splicecost.js` for the wall.
+
+## 2026-09-01 — A7: naturals are read from the SVG text; `sigW` is keyed on the window's folded head
+
+The naturals window (the refill's offscreen `breaks:'none'` render that
+supplies unjustified measure widths) used to be attached to `<body>` and read
+with `getBBox` — a forced layout of a page-sized SVG per window, plus a second
+forced layout when the splice first read the live page (dirty only because the
+host had been attached and removed). Now the width is the measure's staff-line
+path extent parsed out of the SVG string with `DOMParser`; nothing is attached.
+
+- **Why the span is the right number**: proven equal to the old bbox natural on
+  441/443 interior sonata measures and every window-last measure. The two
+  differences are window-FIRST measures, where the bbox started 144 units left
+  of the staff line (the system-start brace/barline) — i.e. the old reading
+  over-counted measure 0 by the brace. The span is the width Verovio lays the
+  measure out with; the cache stays deterministic because every measure now
+  gets the same value whichever window measures it.
+- **`sigW` stays a `getBBox` measurement** (glyph ink metrics), but is
+  re-measured only when the window's folded head — the sub-MEI before
+  `<section>`, into which `serializeRangeForRender` folds the running
+  clef/key/meter at `lo` — differs from the head of the window that last
+  measured it. Interior scoreDefs and inline clefs inside a window do not
+  change the LEADING signature and never changed the old measurement either
+  (it read the first system's leading glyphs), so they don't trigger. A first
+  cut that triggered on any scoreDef/clef inside the section re-measured on
+  every sonata window (the LH clef changes are everywhere) and saved nothing.
+- **Gates**: battery identical to the pre-A7 run (8/8 spliced, reference
+  clean), suite 358/358 under the flag, `cb-splicecost.js` naturals 48 → 37 ms
+  and the first live read 7.3 → 2.2 ms.
+
+## 2026-09-01 — A8: post-process only the systems the splice imports; the host's first geometry read is the real cost
+
+`postProcessRendered` gained a `scope` (the `g.system` elements that will be
+imported). Per-system passes — `snapBarlines`, `snapSystemRightEdge`, notehead
+reorder, `applyNotationTheme` — run only on those; `pinExactScale` (root-svg
+box, which every snap reads through `getScreenCTM`) and `injectHejiGlyphs`
+(the context gate compares key-signature glyph identity against HEJI-processed
+live pages) stay host-wide. An EMPTY scope means "nothing on this host is
+imported" and does not fall back to the whole host. The notation helpers now
+take `Element`; `snapSystemRightEdge` accepts a system itself as its container.
+The page splicer calls it from `spliceDom` once the window systems are located.
+
+Result: post 30 → 24 ms, splice 147 → 143. The per-pass timings
+(`Renderer.lastPostStats`) explain the small win: on one scoped system,
+`snapBarlines` alone is ~22 ms, all of it the first `getScreenCTM` — the first
+geometry query on a freshly parsed page-sized SVG host forces its initial
+layout. That ~20 ms flush had been hiding inside "post" and is the DOM-side
+floor while ANY read on the host needs layout. Recorded as A11 (a never-laid-out
+host: path-based profiles on both sides; snap the imported systems in the live
+page instead), which is a redesign of the gate's measurement basis and goes to
+Max as a proposal first.
+
+Gate note: the context-line comparison is now raw-window vs snapped-live; the
+snaps move a barline ≤ ½ device px (≤ 10 user units at the 50% preset), inside
+EPS 25, and the two sides' snaps were computed in different device frames
+before too. Battery identical to base (8/8 spliced, reference clean). The full
+suite failed `pageKeyChangeSplicesGovernedRange` once with `editLine=-1` (its
+pre-edit line-2 start no longer started a line); re-run 3× on A8 and 3× with
+A8 stashed: 6/6 pass — a marginal partition in that fixture, not A8.
+
+## 2026-09-01 — A9: Verovio emits raw (unindented) SVG everywhere
+
+`svgFormatRaw: true` in the renderer's `BASE_OPTIONS`. Verovio pretty-prints
+its SVG by default — indentation proportional to nesting depth on ~18 000
+elements per 100 measures — which is 40% of the string and a third of the
+browser's parse time (`cb-svgopts.js`: 1.68 → 1.0 MB, `innerHTML` 41.8 → 26.8
+ms per 100 measures; `renderToSVG` itself unchanged). Pretty-printing never adds
+whitespace adjacent to text content, so `<text>` is byte-identical; element
+counts are identical; nothing in the composer walks whitespace-sensitive
+siblings (the mode cache's `childNodes` is element-agnostic). Measured on the
+steady edit: window hosts' parse 10 → 5.7 ms, naturals parse 2.3 → 1.9. Gates:
+battery identical to base, every visual baseline unchanged under the full
+suite. Side effect: the PDF export's toolkit inherits the persisted option, so
+exported SVG is raw as well — whitespace only.
+
+## 2026-09-01 — A10: the history AFTER snapshot is serialised lazily, never after the document changes
+
+`withHistory` serialised the whole document twice per edit until Phase B3
+halved it by reusing the previous AFTER as the next BEFORE; the remaining AFTER
+`XMLSerializer` (~12 ms on the sonata) was the largest non-Verovio cost left on
+the keystroke. It is now lazy: `model.snapshotStateLazy()` returns a snapshot
+whose `mei` is a getter, plus the exact document version.
+
+- **The invariant** is that a lazy snapshot is materialised before the document
+  can change. Every mutation path in Composer takes a BEFORE snapshot first, so
+  `snapshotState` / `snapshotStateReusing` materialise any pending lazy one;
+  so do `restoreSnapshot*` (undo/redo swap the document) and `replaceDocument`
+  (load). An idle callback (300 ms timeout) serialises it when the user pauses;
+  a second edit before idle pays it at its own start — the same 12 ms as
+  before, never twice. Under HKL_INDEX_CHECK, materialising after the version
+  moved throws; in production it warns. This is the same failure class the
+  existing "reused MEI is stale" assert catches one edit later.
+- **No-op detection moved.** `push` compared MEI strings, which would force the
+  lazy AFTER. Equal document versions prove an identical document (the
+  MutationObserver drain is exact) and push nothing. Different versions do not
+  prove a change — `setAttribute` to the same value bumps the version — so the
+  entry is pushed optimistically and the comparison is settled when the AFTER
+  materialises (`resolvePending`, run before any push / undo / redo / canUndo):
+  an identical MEI retracts the entry and restores the redo stack it cleared,
+  exactly what the eager check used to do. The cut→paste merge path settles
+  eagerly (not a keystroke path). Dialogs keep eager snapshots (no version) and
+  the eager compare.
+- `HistoryManager.lastMei` became `lastCommitted: Snapshot`; `committedMei()`
+  reads it — which materialises a lazy AFTER precisely when the next edit needs
+  it as its BEFORE. `canUndo`/`canRedo` have no callers outside the manager, so
+  deferred retraction has no UI consequence.
+
+## 2026-09-01 — A finished adoption may commit once, and only while it is the current task
+
+The suite's `pageKeyChangeSplicesGovernedRange` failed in about half of the
+full runs after A8 landed (never in isolation, never before): after a
+successful splice the owner's `startIds` held ONE entry. A setter trap on
+`startIds` recording each write's stack showed three writes — the refill's
+7-line commits for the reset edit and the edit, then, 150 ms later,
+`commitAdoption` from an idle `step` writing one entry.
+
+Mechanism: the between-fixture reset renders a one-measure blank document,
+whose derive arms an idle-sliced adoption (`armAdoption`, `pageCount` 1). The
+next fixture's setup render arrives while that walk is pending, so
+`tryRefill` runs `finishAdoptionNow`, which walks the remaining page
+synchronously (the live toolkit still holds the blank layout: one system,
+one start), commits, and clears `this.adoption` — but does not cancel the
+task, and its `scheduleIdle(step)` continuation is still queued. When the
+main thread finally idles, `step` finds `nextPage > pageCount`, skips the
+walk, and calls `commitAdoption` again, re-installing `[blankMeasureId]`
+over whatever the refill had committed since. Order- and timing-dependent
+(the setup's render is deferred behind the busy badge on this fixture, which
+is why the idle step could run so late), and the timing shift that exposed it
+was A8's.
+
+Fix: `commitAdoption` returns without writing unless `this.adoption === task`
+and the task is not cancelled, and marks the task cancelled once it commits.
+`invalidate()` already cancelled in-flight tasks; the hole was a task that
+had FINISHED but whose continuation was still armed. Gates: two full suite
+runs green under the flag, battery identical to base.

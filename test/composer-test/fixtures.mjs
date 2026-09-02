@@ -2788,6 +2788,19 @@ const UNDO_REDO = {
     ],
   },
 
+  /* A10 — lazy AFTER snapshot: a keystroke edit's AFTER MEI is serialised on
+   * idle or when history next needs it. Two inserts, two undos, one redo: the
+   * second undo must materialise the first entry's AFTER (redo needs it) while
+   * the document still IS that state; the redo must reproduce it exactly. */
+  undo_lazy_snapshot: {
+    setupKeys: [
+      '5', '5',
+      { key: 'z', ctrl: true },
+      { key: 'z', ctrl: true },
+      { key: 'y', ctrl: true },
+    ],
+  },
+
   /* Insert, undo, then a NEW insert. The redo stack must be cleared by the
    * new mutation — pressing Ctrl+Y should be a no-op. */
   undo_redo_invalidates: {
@@ -8414,6 +8427,22 @@ export const FIXTURE_ASSERTIONS = {
         if (!m.deleteAtCursor()) return { ok: false, detail: 'delete rejected' };
         H.reRender();   /* the inline reference gate (HKL_INDEX_CHECK) throws on any splice/full-render divergence */
         if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a system splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
+        /* Visual-diff diagnostic (2026-09-01): a one-off sub-pixel difference on
+           the spliced system was seen in full-suite order. Record the vertical
+           plan and each replaced system's applied translate in user units AND
+           device pixels; the visual check appends window.__visualDiag on failure. */
+        try {
+          const vp = ps.lastVertical; const run = ps.lastRun; const sids = pb['startIds'];
+          const systems = [];
+          if (run) for (let k = run.a; k <= run.b; k++) {
+            const meas = document.getElementById(sids[k]); const sys = meas && meas.closest('g.system');
+            if (!sys) { systems.push({ line: k, missing: true }); continue; }
+            const bv = sys.transform && sys.transform.baseVal.consolidate(); const tx = bv ? bv.matrix.e : 0, ty = bv ? bv.matrix.f : 0;
+            const ctm = sys.getScreenCTM(); const devX = ctm ? tx * ctm.a : null, devY = ctm ? ty * ctm.d : null;
+            systems.push({ line: k, tx: +tx.toFixed(2), ty: +ty.toFixed(2), devDx: devX == null ? null : +devX.toFixed(3), devDy: devY == null ? null : +devY.toFixed(3), fracDx: devX == null ? null : +((devX % 1 + 1) % 1).toFixed(3), fracDy: devY == null ? null : +((devY % 1 + 1) % 1).toFixed(3) });
+          }
+          window.__visualDiag = { static: vp ? vp.static : null, dyFollow: vp ? +vp.dyFollow.toFixed(2) : null, liveTop: vp ? vp.liveTop.map((v) => +v.toFixed(1)) : null, newTop: vp ? vp.newTop.map((v) => +v.toFixed(1)) : null, systems, mounted: document.querySelectorAll('#score .score-page:not(.score-page-pending)').length, scrollTop: document.getElementById('score').scrollTop };
+        } catch (e) { window.__visualDiag = { error: String(e).slice(0, 120) }; }
         const pos = new Map(pb['startIds'].map((id, i) => [id, i]));
         let prevEnd = -1;
         for (const page of document.querySelectorAll('#score .score-page:not(.score-page-pending)')) {
@@ -8875,7 +8904,8 @@ export const FIXTURE_ASSERTIONS = {
         if (m.docVersion() === ver) return { ok: false, detail: 'edit did not change the document' };
         const prevCheck = globalThis.__HKL_INDEX_CHECK;
         globalThis.__HKL_INDEX_CHECK = true;
-        try { H.reRender(); await settle(); } finally { globalThis.__HKL_INDEX_CHECK = prevCheck; }
+        const __warns = []; const __ow = console.warn; console.warn = (...a) => { __warns.push(a.join(' ').slice(0, 160)); __ow(...a); };
+        try { H.reRender(); await settle(); } finally { globalThis.__HKL_INDEX_CHECK = prevCheck; console.warn = __ow; }
         if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice of the governed range, got "' + ps.lastOutcome + '" (skip: ' + ps.lastSkipReason + '; derive reason: ' + pb.lastDeriveReason + '; refill moved lines: ' + pb.lastRefillLines + '; lines now ' + pb['startIds'].length + ')' };
         ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         startIds = pb['startIds'];
@@ -8884,7 +8914,7 @@ export const FIXTURE_ASSERTIONS = {
         const run = ps.lastRun;
         /* the run may begin one line early: the measure before the change takes
            the end-of-line courtesy, so its line is replaced too */
-        if (!run || run.a > editLine || run.a < editLine - 1) return { ok: false, detail: 'run does not start at (or one line above) the edit line: run=' + JSON.stringify(run) + ' editLine=' + editLine };
+        if (!run || run.a > editLine || run.a < editLine - 1) return { ok: false, detail: 'run does not start at (or one line above) the edit line: run=' + JSON.stringify(run) + ' editLine=' + editLine + ' | diag: sigW=' + pb['sigW'] + ' budgetW=' + pb['budgetW'] + ' refillLines=' + pb.lastRefillLines + ' lines=' + startIds.length + ' editStart=' + ids[editMi] + ' startsNow=' + JSON.stringify(startIds.slice(0, 6)) + ' zoom=' + (window.__hkl_composer.renderer['zoom']) + ' mounted=' + document.querySelectorAll('#score .score-page:not(.score-page-pending)').length + '/' + document.querySelectorAll('#score .score-page').length + ' derive=' + pb.lastDeriveReason + ' adoptionInFlight=' + !!pb['adoption'] + ' tkCurrent=' + (window.__hkl_composer.renderer['pageVirt'] && window.__hkl_composer.renderer['pageVirt'].tkCurrent) + ' stale=' + (window.__hkl_composer.renderer['pageVirt'] ? [...window.__hkl_composer.renderer['pageVirt'].stalePages].join('/') : '-') + ' outcome=' + ps.lastOutcome + ' warns=' + JSON.stringify(__warns) };
         /* key/meter resets sit BEFORE their measure, so the run ends on the line
            before the reset; a mid-measure reset CLEF leaves the start of its own
            measure in the changed clef, so that line joins the range too */
@@ -8953,7 +8983,8 @@ export const FIXTURE_ASSERTIONS = {
         if (m.docVersion() === ver) return { ok: false, detail: 'edit did not change the document' };
         const prevCheck = globalThis.__HKL_INDEX_CHECK;
         globalThis.__HKL_INDEX_CHECK = true;
-        try { H.reRender(); await settle(); } finally { globalThis.__HKL_INDEX_CHECK = prevCheck; }
+        const __warns = []; const __ow = console.warn; console.warn = (...a) => { __warns.push(a.join(' ').slice(0, 160)); __ow(...a); };
+        try { H.reRender(); await settle(); } finally { globalThis.__HKL_INDEX_CHECK = prevCheck; console.warn = __ow; }
         if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice of the governed range, got "' + ps.lastOutcome + '" (skip: ' + ps.lastSkipReason + '; derive reason: ' + pb.lastDeriveReason + '; refill moved lines: ' + pb.lastRefillLines + '; lines now ' + pb['startIds'].length + ')' };
         ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         startIds = pb['startIds'];
@@ -8962,7 +8993,7 @@ export const FIXTURE_ASSERTIONS = {
         const run = ps.lastRun;
         /* the run may begin one line early: the measure before the change takes
            the end-of-line courtesy, so its line is replaced too */
-        if (!run || run.a > editLine || run.a < editLine - 1) return { ok: false, detail: 'run does not start at (or one line above) the edit line: run=' + JSON.stringify(run) + ' editLine=' + editLine };
+        if (!run || run.a > editLine || run.a < editLine - 1) return { ok: false, detail: 'run does not start at (or one line above) the edit line: run=' + JSON.stringify(run) + ' editLine=' + editLine + ' | diag: sigW=' + pb['sigW'] + ' budgetW=' + pb['budgetW'] + ' refillLines=' + pb.lastRefillLines + ' lines=' + startIds.length + ' editStart=' + ids[editMi] + ' startsNow=' + JSON.stringify(startIds.slice(0, 6)) + ' zoom=' + (window.__hkl_composer.renderer['zoom']) + ' mounted=' + document.querySelectorAll('#score .score-page:not(.score-page-pending)').length + '/' + document.querySelectorAll('#score .score-page').length + ' derive=' + pb.lastDeriveReason + ' adoptionInFlight=' + !!pb['adoption'] + ' tkCurrent=' + (window.__hkl_composer.renderer['pageVirt'] && window.__hkl_composer.renderer['pageVirt'].tkCurrent) + ' stale=' + (window.__hkl_composer.renderer['pageVirt'] ? [...window.__hkl_composer.renderer['pageVirt'].stalePages].join('/') : '-') + ' outcome=' + ps.lastOutcome + ' warns=' + JSON.stringify(__warns) };
         /* key/meter resets sit BEFORE their measure, so the run ends on the line
            before the reset; a mid-measure reset CLEF leaves the start of its own
            measure in the changed clef, so that line joins the range too */
@@ -9031,7 +9062,8 @@ export const FIXTURE_ASSERTIONS = {
         if (m.docVersion() === ver) return { ok: false, detail: 'edit did not change the document' };
         const prevCheck = globalThis.__HKL_INDEX_CHECK;
         globalThis.__HKL_INDEX_CHECK = true;
-        try { H.reRender(); await settle(); } finally { globalThis.__HKL_INDEX_CHECK = prevCheck; }
+        const __warns = []; const __ow = console.warn; console.warn = (...a) => { __warns.push(a.join(' ').slice(0, 160)); __ow(...a); };
+        try { H.reRender(); await settle(); } finally { globalThis.__HKL_INDEX_CHECK = prevCheck; console.warn = __ow; }
         if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice of the governed range, got "' + ps.lastOutcome + '" (skip: ' + ps.lastSkipReason + '; derive reason: ' + pb.lastDeriveReason + '; refill moved lines: ' + pb.lastRefillLines + '; lines now ' + pb['startIds'].length + ')' };
         ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         startIds = pb['startIds'];
@@ -9040,7 +9072,7 @@ export const FIXTURE_ASSERTIONS = {
         const run = ps.lastRun;
         /* the run may begin one line early: the measure before the change takes
            the end-of-line courtesy, so its line is replaced too */
-        if (!run || run.a > editLine || run.a < editLine - 1) return { ok: false, detail: 'run does not start at (or one line above) the edit line: run=' + JSON.stringify(run) + ' editLine=' + editLine };
+        if (!run || run.a > editLine || run.a < editLine - 1) return { ok: false, detail: 'run does not start at (or one line above) the edit line: run=' + JSON.stringify(run) + ' editLine=' + editLine + ' | diag: sigW=' + pb['sigW'] + ' budgetW=' + pb['budgetW'] + ' refillLines=' + pb.lastRefillLines + ' lines=' + startIds.length + ' editStart=' + ids[editMi] + ' startsNow=' + JSON.stringify(startIds.slice(0, 6)) + ' zoom=' + (window.__hkl_composer.renderer['zoom']) + ' mounted=' + document.querySelectorAll('#score .score-page:not(.score-page-pending)').length + '/' + document.querySelectorAll('#score .score-page').length + ' derive=' + pb.lastDeriveReason + ' adoptionInFlight=' + !!pb['adoption'] + ' tkCurrent=' + (window.__hkl_composer.renderer['pageVirt'] && window.__hkl_composer.renderer['pageVirt'].tkCurrent) + ' stale=' + (window.__hkl_composer.renderer['pageVirt'] ? [...window.__hkl_composer.renderer['pageVirt'].stalePages].join('/') : '-') + ' outcome=' + ps.lastOutcome + ' warns=' + JSON.stringify(__warns) };
         /* key/meter resets sit BEFORE their measure, so the run ends on the line
            before the reset; a mid-measure reset CLEF leaves the start of its own
            measure in the changed clef, so that line joins the range too */
@@ -10725,6 +10757,23 @@ export const FIXTURE_ASSERTIONS = {
         const m = window.__hkl_composer.model;
         const real = m.getDoc().querySelectorAll('rest:not([data-placeholder=true]):not([data-tuplet-placeholder=true])').length;
         return { ok: real === 1, detail: 'realRests=' + real };
+      })()` },
+  ],
+
+  undo_lazy_snapshot: [
+    { name: 'undo×2 then redo leaves exactly one rest, with undo and redo both available',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const h = window.__hkl_composer.history;
+        const real = m.getDoc().querySelectorAll('rest:not([data-placeholder=true]):not([data-tuplet-placeholder=true])').length;
+        return { ok: real === 1 && h.canUndo() && h.canRedo(),
+                 detail: 'realRests=' + real + ' canUndo=' + h.canUndo() + ' canRedo=' + h.canRedo() };
+      })()` },
+    { name: 'no lazy snapshot left unserialised after the history operations',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const pending = typeof m.hasPendingSnapshot === 'function' ? m.hasPendingSnapshot() : 'n/a';
+        return { ok: pending === false, detail: 'pending=' + pending };
       })()` },
   ],
 

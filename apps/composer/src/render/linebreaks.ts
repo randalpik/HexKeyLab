@@ -345,6 +345,12 @@ export class PageLineBreaks {
    *  naturals window. Persisted across refills so a line whose naturals are
    *  all cached judges legality by the same yardstick as one that measured. */
   private sigW = SIG_FALLBACK;
+  /** The folded head (everything before `<section>`) of the naturals window
+   *  that last measured `sigW`. The leading clef+key a window draws is fully
+   *  determined by that head — `serializeRangeForRender` folds the running
+   *  scoreDef context at `lo` into it — so `sigW` is re-measured only when a
+   *  window's head differs from this (A7). '' = never measured. */
+  private sigHeadKey = '';
   /** Per-measure live-doc serializations (+ their id order) captured whenever
    *  a partition is committed against the current document. The refill diffs
    *  the live doc against these to find the TRUE changed run — it never
@@ -386,6 +392,7 @@ export class PageLineBreaks {
     this.pageStartIds = [];
     this.naturals.clear();
     this.sigW = SIG_FALLBACK;
+    this.sigHeadKey = '';
     this.sig.clear();
     this.sigOrder = [];
     this.sigEl.clear();
@@ -604,8 +611,19 @@ export class PageLineBreaks {
   }
 
   private commitAdoption(task: AdoptionTask): boolean {
+    /* Only the CURRENT task may commit — once. `finishAdoptionNow` completes a
+       walk synchronously when an edit arrives, but the task's already-scheduled
+       idle `step` still fires later; with `nextPage` past `pageCount` it skipped
+       straight here and RE-INSTALLED the task's stale start list over the
+       partition the refill had just committed (2026-09-01: the between-fixture
+       blank-document adoption, finished with ONE start during the next fixture's
+       setup, re-committed that one-line partition 150 ms after the fixture's
+       second splice — intermittent, order-dependent, traced by a setter trap on
+       `startIds`). A superseded or already-committed task must never write. */
+    if (this.adoption !== task || task.cancelled) return false;
     this.adoption = null;
-    if (task.cancelled || task.startIds.length === 0) return false;
+    task.cancelled = true;
+    if (task.startIds.length === 0) return false;
     this.startIds = task.startIds;
     this.pageStartIds = task.pageStartIds;
     return true;
@@ -968,7 +986,29 @@ export class PageLineBreaks {
    *  whole, so member widths reproduce their full-context values (page
    *  spike 1, finding 5). Only [needLo..needHi] values are written — cached
    *  neighbours are never disturbed (determinism). Returns the window's
-   *  measured leading clef+key width, or null on failure. */
+   *  measured leading clef+key width (or the retained one), or null on failure.
+   *
+   *  LAYOUT-FREE (A7, 2026-09-01). A measure's natural width is the horizontal
+   *  extent of its staff line — the first horizontal `<path d="M x1 y L x2 y">`
+   *  under its first `g.staff` — read from the SVG TEXT via DOMParser. Nothing
+   *  is attached to the document, so there is no layout flush here and the live
+   *  page's layout stays clean for the splice's first live read (that read used
+   *  to be a 5 ms flush purely because this host touched `<body>`). Proven
+   *  against the previous `getBBox` reading over every sonata measure
+   *  (`cb-naturalspath.js`): 441/443 interior measures and every last measure
+   *  identical (delta 0); the only differences are a window's FIRST measure,
+   *  whose bbox began 144 units left of its staff line (the system-start brace/
+   *  barline), i.e. the old reading over-counted measure 0 by the brace. The
+   *  span is the width Verovio lays the measure out with.
+   *
+   *  `sigW` (leading clef+key extent) needs glyph ink metrics, which the text
+   *  cannot give, so it keeps the attached-host `getBBox` path — but only when
+   *  the window's folded head (the part of the sub-MEI before `<section>`,
+   *  which alone determines the leading clef+key the first system draws)
+   *  differs from the head of the window that last measured it. Interior
+   *  scoreDefs and inline clefs inside the window do not change the LEADING
+   *  signature and never did change today's measurement, so they don't
+   *  trigger. `fillOf` already applies `sigW` as a document-level constant. */
   private measureWindow(
     model: ComposerModel, meiMeasures: Element[], ids: string[],
     needLo: number, needHi: number, ctx: PageBreaksCtx,
@@ -981,44 +1021,28 @@ export class PageLineBreaks {
     const tWin = performance.now();
     this.lastRefillStats.windows++;
     this.lastRefillStats.windowMeasures += hi - lo + 1;
-    const sub = model.serializeRangeForRender(lo, hi, { hejiEnabled: model.getHejiEnabled() }, null);
-    const tk = ctx.naturalsToolkit();
-    tk.setOptions(ctx.naturalsOptions());
-    if (!tk.loadData(sub)) return null;
-    const host = document.createElement('div');
-    host.style.cssText = 'position:absolute;left:-99999px;top:0';
-    host.innerHTML = tk.renderToSVG(1, {});
-    document.body.appendChild(host);
     try {
-      const els: SVGGraphicsElement[] = [];
-      for (let i = lo; i <= hi; i++) {
-        const el = host.querySelector('#' + CSS.escape(ids[i]));
-        if (!el) return null;
-        els.push(el as SVGGraphicsElement);
-      }
-      const boxes = els.map((el) => el.getBBox());
+      const sub = model.serializeRangeForRender(lo, hi, { hejiEnabled: model.getHejiEnabled() }, null);
+      const tk = ctx.naturalsToolkit();
+      tk.setOptions(ctx.naturalsOptions());
+      if (!tk.loadData(sub)) return null;
+      const svg = tk.renderToSVG(1, {});
+      const doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
       for (let i = needLo; i <= needHi; i++) {
-        const k = i - lo;
-        const w = k + 1 < boxes.length ? boxes[k + 1].x - boxes[k].x : boxes[k].width;
-        if (!(w > 0)) return null;
-        this.naturals.set(ids[i], w);
+        const el = doc.getElementById(ids[i]);
+        const span = el ? staffLineSpan(el) : null;
+        if (span === null || !(span > 0)) return null;
+        this.naturals.set(ids[i], span);
       }
-      /* Leading clef+key extent (meter excluded — mid-score systems don't
-         redraw it): sig glyphs left of the first note/rest/chord. */
-      let firstContent = Infinity;
-      for (const el of Array.from(host.querySelectorAll('g.note, g.rest, g.chord, g.mRest'))) {
-        const b = (el as SVGGraphicsElement).getBBox();
-        if (b.x < firstContent) firstContent = b.x;
+      const sectionAt = sub.indexOf('<section');
+      const headKey = sectionAt >= 0 ? sub.slice(0, sectionAt) : '';
+      if (this.sigW !== SIG_FALLBACK && headKey !== '' && headKey === this.sigHeadKey) {
+        return { sigW: this.sigW };
       }
-      let sigRight = -Infinity;
-      for (const el of Array.from(host.querySelectorAll('g.clef, g.keySig'))) {
-        const b = (el as SVGGraphicsElement).getBBox();
-        if (b.x < firstContent && b.x + b.width > sigRight) sigRight = b.x + b.width;
-      }
-      const sigW = isFinite(sigRight) ? sigRight - boxes[0].x : 0;
+      const sigW = measureLeadingSigW(svg, ids[lo]);
+      if (sigW > 0) this.sigHeadKey = headKey;
       return { sigW };
     } finally {
-      host.remove();
       this.lastRefillStats.naturalsMs += Math.round(performance.now() - tWin);
     }
   }
@@ -1067,6 +1091,59 @@ export class PageLineBreaks {
       this.armAdoption(model, pageCount, ctx);
     }
     return ok;
+  }
+}
+
+/** Horizontal extent of a rendered measure's staff line, from the SVG text
+ *  (no layout): the first horizontal `M x1 y L x2 y` path directly under the
+ *  measure's first `g.staff`. Verovio emits the five staff lines as such paths
+ *  with absolute page coordinates; consecutive measures' lines abut, so the
+ *  span is exactly what the previous `getBBox` reading measured as
+ *  `next.x − this.x` (and as `bbox.width` for a window's last measure). Null
+ *  when the shape is not what we expect — the caller then refuses the window
+ *  (a derive), never guesses. */
+function staffLineSpan(measureEl: Element): number | null {
+  const staff = measureEl.querySelector('g.staff');
+  if (!staff) return null;
+  for (const p of Array.from(staff.children)) {
+    if (p.localName !== 'path') continue;
+    const m = /M\s*(-?[\d.]+)[\s,]+(-?[\d.]+)\s*L\s*(-?[\d.]+)[\s,]+(-?[\d.]+)/.exec(p.getAttribute('d') ?? '');
+    if (!m) continue;
+    const y1 = Number(m[2]), y2 = Number(m[4]);
+    if (Math.abs(y1 - y2) > 1e-6) continue;
+    return Number(m[3]) - Number(m[1]);
+  }
+  return null;
+}
+
+/** Leading clef+key extent (meter excluded — mid-score systems don't redraw
+ *  it) of a naturals window: sig glyphs left of the first note/rest/chord,
+ *  measured from the first measure's bbox left edge. Needs glyph ink metrics,
+ *  so this is the one place the window is attached and laid out; called only
+ *  when the value could differ from the retained one (see measureWindow). The
+ *  formula is unchanged from the pre-A7 reading so the value is identical. */
+function measureLeadingSigW(svg: string, firstId: string): number {
+  const host = document.createElement('div');
+  host.style.cssText = 'position:absolute;left:-99999px;top:0';
+  host.innerHTML = svg;
+  document.body.appendChild(host);
+  try {
+    const first = host.querySelector('#' + CSS.escape(firstId)) as SVGGraphicsElement | null;
+    if (!first) return 0;
+    const x0 = first.getBBox().x;
+    let firstContent = Infinity;
+    for (const el of Array.from(host.querySelectorAll('g.note, g.rest, g.chord, g.mRest'))) {
+      const b = (el as SVGGraphicsElement).getBBox();
+      if (b.x < firstContent) firstContent = b.x;
+    }
+    let sigRight = -Infinity;
+    for (const el of Array.from(host.querySelectorAll('g.clef, g.keySig'))) {
+      const b = (el as SVGGraphicsElement).getBBox();
+      if (b.x < firstContent && b.x + b.width > sigRight) sigRight = b.x + b.width;
+    }
+    return isFinite(sigRight) ? sigRight - x0 : 0;
+  } finally {
+    host.remove();
   }
 }
 

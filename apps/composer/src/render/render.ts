@@ -95,6 +95,13 @@ const SCROLL_GEOM = {
 const BASE_OPTIONS = {
   svgAdditionalAttribute: ['note@data-q', 'note@data-r', 'note@color', 'note@data-light-color', 'note@hkl-paren-caut', 'rest@data-tuplet-placeholder', 'rest@visible', 'accid@type'],
   footer: 'none',
+  /* No indentation / inter-element newlines in the SVG string (A9, 2026-09-01).
+     Whitespace-only: element count and rendering are identical (`cb-svgopts.js`:
+     18 055 nodes either way), but the string is ~40% smaller and the browser's
+     `innerHTML` / DOMParser parse ~36% faster — every window, naturals and page
+     render pays that parse — and the live DOM carries no whitespace text nodes.
+     Nothing in the composer walks whitespace-sensitive siblings. */
+  svgFormatRaw: true,
   /* Keep Verovio's default Leipzig font for the score (rests, clefs,
      noteheads). Accidentals are re-rendered in BravuraText by injectHejiGlyphs
      so they're uniform with the injected HEJI glyphs — but ONLY accidentals;
@@ -1366,7 +1373,7 @@ class Renderer {
         ? base
         : { ...base, pageHeight: 60_000, adjustPageHeight: true },
       liveOptions: () => base,
-      postProcess: (el: HTMLElement) => this.postProcessRendered(el),
+      postProcess: (el: HTMLElement, scope?: Element[]) => this.postProcessRendered(el, scope),
       decorateHost: (el: HTMLElement) => styleVoltaNumbers(el),
       snapPage: (el: HTMLElement) => this.snapSystems(el),
       ensurePageMounted: (p: number) => this.mountPageIfCheap(p),
@@ -1490,32 +1497,69 @@ class Renderer {
 
   /** Post-render DOM treatment shared by page + scroll: crisp pinning, notehead
    *  z-order, HEJI/stacked-accidental glyph injection, and theming. */
-  private postProcessRendered(container: HTMLElement): void {
+  private postProcessRendered(container: HTMLElement, scope?: Element[]): void {
+    /* `scope` (A8, page splicer): run the per-system passes ONLY on these
+       systems — the ones that will be imported into the live page. A splice
+       window is 3–4 lines plus leader/trailer of which one line is typically
+       replaced; snapping barlines, reordering noteheads and theming the context
+       lines was ~30 ms of work on systems that are measured and discarded. Two
+       passes stay host-wide regardless: pinExactScale (the root <svg> box sets
+       the device scale every snap reads through getScreenCTM) and the HEJI
+       injection (the context gate compares key-signature glyph identity, and the
+       live pages' key signatures are HEJI-processed — a raw context line would
+       refuse on glyph identity, and the pass is a no-op walk when nothing is
+       tagged). An EMPTY scope means "no systems on this host are imported" and
+       must not fall back to the whole host. */
+    const t0 = performance.now();
+    const st = { pin: 0, snapBar: 0, snapEdge: 0, noteheads: 0, heji: 0, theme: 0, total: 0, scoped: scope !== undefined, targets: scope ? scope.length : 1 };
+    const targets: Element[] = scope !== undefined ? scope : [container];
     /* Pin device scale exact so thin staff lines stay grid-aligned (crisp) —
        counters Verovio's whole-px ceil of the root <svg> box. */
+    let t = performance.now();
     pinExactScale(container, this.currentScale());
+    st.pin = performance.now() - t;
     /* Crisp the verticals: snap intermediate barlines onto their pixel phase,
        then land each system's right edge (final barline + staff-line ends) on
        the grid (no sliver past the final bar). */
-    snapBarlines(container, this.currentScale(), CRISP_PRESETS[this.zoom].evenWidth);
-    snapSystemRightEdge(container, this.currentScale());
+    t = performance.now();
+    for (const el of targets) snapBarlines(el, this.currentScale(), CRISP_PRESETS[this.zoom].evenWidth);
+    st.snapBar = performance.now() - t;
+    t = performance.now();
+    for (const el of targets) snapSystemRightEdge(el, this.currentScale());
+    st.snapEdge = performance.now() - t;
     /* Bring noteheads to the front. Verovio renders each <g class="note"> as
        [notehead, dots, stem]; SVG z-order is document order, so the stem draws
        over the notehead. With colored noteheads + black stems the stem intrudes;
        move each notehead group last so it draws on top. */
-    for (const note of Array.from(container.querySelectorAll('g.note'))) {
-      const notehead = note.querySelector(':scope > g.notehead');
-      if (notehead) note.appendChild(notehead);
+    t = performance.now();
+    for (const el of targets) {
+      for (const note of Array.from(el.querySelectorAll('g.note'))) {
+        const notehead = note.querySelector(':scope > g.notehead');
+        if (notehead) note.appendChild(notehead);
+      }
     }
+    st.noteheads = performance.now() - t;
     /* Replace tagged placeholder accidentals with BravuraText HEJI / stacked
-       glyphs (+ paren <use> swaps). No-op when none are tagged. */
+       glyphs (+ paren <use> swaps). No-op when none are tagged. Host-wide. */
+    t = performance.now();
     injectHejiGlyphs(container);
+    st.heji = performance.now() - t;
     /* Theme: tag the container for the shared notation-theme CSS and repaint
        noteheads with their light-source variant in dark/transparent themes.
-       'transparent' shares dark's ink; the .theme-transparent class drops fills. */
-    applyNotationTheme(container, this.theme === 'light' ? 'light' : 'dark');
+       'transparent' shares dark's ink; the .theme-transparent class drops fills.
+       Scoped: each imported system carries its own tag (the CSS matches
+       descendants of any tagged element; the live page is tagged anyway). */
+    t = performance.now();
+    for (const el of targets) applyNotationTheme(el as HTMLElement | SVGElement, this.theme === 'light' ? 'light' : 'dark');
     container.classList.toggle('theme-transparent', this.theme === 'transparent');
+    st.theme = performance.now() - t;
+    st.total = performance.now() - t0;
+    this.lastPostStats = st;
   }
+
+  /** Per-pass wall of the last `postProcessRendered` call (diagnostics for
+   *  `cb-splicecost.js`; A8). */
+  lastPostStats: { pin: number; snapBar: number; snapEdge: number; noteheads: number; heji: number; theme: number; total: number; scoped: boolean; targets: number } | null = null;
 
   /** Page mode: mount the page holding this measure so rectForId / the cursor
    *  overlay can resolve it (a cursor move, scroll-into-view, or playback bar

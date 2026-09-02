@@ -172,7 +172,7 @@ export function snapStaffLinesToGrid(container: HTMLElement, scale: number, even
  *  crisps them with no side effects. Double/final barlines (whose thin+thick
  *  lines have different x's, so one shift can't crisp both) are skipped — the
  *  terminal one is handled by snapSystemRightEdge. Call after pinExactScale. */
-export function snapBarlines(container: HTMLElement, scale: number, evenWidth: boolean): void {
+export function snapBarlines(container: Element, scale: number, evenWidth: boolean): void {
   const target = evenWidth ? 0 : 0.5;
   /* Two-phase to avoid layout thrashing: ALL getScreenCTM reads first, THEN all
      transform writes. Interleaving a write after each read forces a fresh
@@ -216,9 +216,12 @@ export function snapBarlines(container: HTMLElement, scale: number, evenWidth: b
  *  Only acts when a terminal barline sits at the staff ends (open system-break
  *  ends, with no terminal bar, are left alone). Horizontal analog of
  *  snapSystemsToGrid; call after pinExactScale so the device scale is exact. */
-export function snapSystemRightEdge(container: HTMLElement, scale: number): void {
+export function snapSystemRightEdge(container: Element, scale: number): void {
   const ds = scale / 1000;
-  for (const sys of Array.from(container.querySelectorAll('g.system'))) {
+  /* `container` may itself be a system (the page splicer scopes post-processing
+     to the systems it will import — A8); querySelectorAll finds descendants only. */
+  const systems = container.matches('g.system') ? [container] : Array.from(container.querySelectorAll('g.system'));
+  for (const sys of systems) {
     /* Horizontal staff lines + their right-end x. */
     const lines: { p: Element; x1: string; y: string; x2: number }[] = [];
     for (const p of Array.from(sys.querySelectorAll('.staff path'))) {
