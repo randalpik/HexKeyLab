@@ -2328,3 +2328,46 @@ stamp to a visible meter was Max's.
 - **Every test document is 4/4 without a symbol.** A fixture corpus with one
   shape of everything cannot catch a bug in the other shapes; when a feature has
   an attribute the corpus never sets, set it once somewhere.
+- **"Nothing may change X on this path" needs its exceptions enumerated before
+  it becomes a refusal.** Promoting the glyph check to the replaced lines
+  ("a splice never changes a line's signatures — clef/key/meter edits derive")
+  refused a legitimate splice within minutes: a relocated clef changes no clef
+  yet redraws two lines' clef glyphs. The exemption (clef glyphs on clef-bearing
+  lines) was cheap once named; the rule as first stated was one exemption short.
+  Run the fixture set immediately after promoting any diagnostic to a gate.
+
+## A fallback is not an invariant, and the replaced set is never a baseline (2026-09-01)
+
+Two framing errors in one afternoon, caught by Max. First: mid-piece key and
+meter changes had always derived, so when inline clefs turned out to leave
+later lines stale I made them derive too, and then wrote "clef/key/meter edits
+derive" as if it were a law of the system. It was a fallback with a date on it,
+and each such fallback is an O(document) render the user did not ask for. The
+correct model is that a signature change GOVERNS a range — to the next change
+of the same kind on the same staff — and the edit path must be O(that range).
+Second: on top of that "invariant" I compared the REPLACED lines' glyphs against
+the pre-edit page, then exempted the case where the invariant failed. The
+replaced set is by definition what Verovio was told to redraw; its post-edit
+look is unknowable live, so any live comparison of it is a category error, and
+the exemption was patching the error rather than the code.
+
+- **When you find yourself writing "X always falls back to a full render",
+  stop and ask what X actually governs.** The answer is a range; compute it.
+- **Live gates compare only what the edit must leave unchanged.** Context lines,
+  yes. Replaced lines, never — they belong to the reference gate, which compares
+  them against a fresh full render under `HKL_INDEX_CHECK`.
+- **An exemption bolted onto a new gate on its first run is a sign the gate's
+  premise is wrong**, not that the world has an edge case.
+- **The scroll splicer could not see a section-level scoreDef at all**, so a
+  mid-piece key change in scroll view rendered nothing. A per-measure diff is
+  blind to everything that lives between measures; enumerate those elements
+  explicitly.
+- **A refill that changes pagination full-renders WITHOUT consulting the page
+  splicer and leaves no diagnostic** (`paginationHeld` false in
+  `renderPageComposer`): `lastOutcome`/`lastSkipReason`/`lastDeriveReason` all
+  keep their previous values. A fixture that read them after such a render saw
+  the PREVIOUS render's "spliced" and passed the wrong assertion. Clear the
+  splicer's diagnostics before an edit under test, and read
+  `pb.lastRefillLines` + the line count when a verdict is missing. (A 4/4 → 2/4
+  change halves every fill and merges lines — that is B2's class, so the meter
+  fixture uses the width-neutral 4/4 → 2/2.)

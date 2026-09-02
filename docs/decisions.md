@@ -5184,3 +5184,111 @@ the sonata's line 0 was exactly that false divergence.
 changes splice behaviour (more refusals are possible) and is Max's call; it is
 listed in the design doc's START HERE. The census that would feed it is already
 recorded on the refusal path (`lastContextDiff`).
+
+## 2026-09-01 — Signature glyph identity is a LIVE splice refusal, not only a test-time gate (Max)
+
+Earlier today the glyph comparison went into `verifyAgainstReference` only, with
+the live half left as Max's call because it can add refusals. Max's ruling:
+promote it — "that's exactly the kind of silent failure that we need to catch.
+Promoting it to a refusal is the only way for us to find and fix it, and would
+have stopped the time signature bug from persisting unnoticed as long as it did."
+
+**What refuses now** (`spliceDom`, `sigGlyphDiff`): per measure, the SMuFL
+codepoints of every `g.clef` / `g.keySig` / `g.meterSig` glyph must match
+between (a) each context line's window system and its live system, and (b) each
+REPLACED line whose two boundaries did not move and the live system it is about
+to replace. (b) is sound because on the splice path nothing may change a line's
+signatures — a clef, key or meter edit derives via the head/interior signature,
+and a moved boundary is excluded — so any difference is a window that
+mis-rendered. (b) is also the check that would have refused cut time drawn as
+"2/2" on the sonata's line 0 at the FIRST splice. Both sides carry the same
+post-processing (window hosts and mounted pages), so the comparison is
+symmetric; it reads attributes only. A refusal records `lastContextDiff` for the
+context-line case so the census names what differed.
+
+**One exemption, found by the first run** (`pageSystemSpliceRelocatedClef`
+refused with `window "E07C" vs live ""`): clef glyphs on a replaced line that
+holds a layer clef, or whose successor begins with one. There the clef SET is
+unchanged but its drawn form legitimately moves — `relocateInitialClefs` turns
+a clef that has just become measure-initial into a system-start clef on its own
+line and a cautionary on the line above. Key and meter glyphs have no such
+mechanism and are compared on every standing line; clef-bearing lines keep
+their clef check in the reference gate. Context lines are compared in full.
+
+**Cost**: `querySelectorAll` over the ~14 systems a splice profiles — no layout
+flush, no measurable time. **Risk accepted**: a legitimate glyph difference we
+have not thought of would surface as a new refusal reason in the sweep
+histogram ("signature glyphs diverged"), which is the point.
+
+Fixture `pageSystemSpliceRefusesGlyphMismatch` (forges a meter glyph href on the
+live context line, expects the refusal and the repairing full render).
+
+## 2026-09-01 — Signature changes are RANGES, not derives; the replaced lines are never compared live (Max)
+
+Two corrections from Max to the day's work, both to the same misconception.
+
+**The principle** (Max, verbatim): "The goal is to hit O(edit) in ALL cases. Any
+time the user is exposed to O(document) on a live path when they didn't ask for
+a change to the full document is a failure, full stop." A clef, key or meter
+change governs the measures from that point to the next change of the same kind
+on the same staff — that range, and only that range, must re-engrave. A change
+with a later reset is O(range); one without genuinely governs the rest of the
+staff, and re-engraving that much is what the user asked for. Whether that still
+splices is the run caps' business (B2), not a reason to route every such edit
+down the slow path.
+
+**What was wrong.** Mid-piece key/meter changes had derived since the interior
+signature was introduced (2026-08-30); earlier today inline clefs were added to
+that signature so clef edits derived too, and the scroll splicer got a matching
+full-render guard. I then described "clef/key/meter edits derive" as an
+invariant and built a live glyph comparison on the REPLACED lines on top of it,
+with a clef exemption to patch the case where the "invariant" failed. A fallback
+is not an invariant, and the replaced set is by definition what the edit told
+Verovio to redraw — its post-edit appearance is unknowable live, so comparing it
+against the pre-edit page tests nothing legitimate.
+
+**Decision.** `render/sigranges.ts` holds the signature STATE both splicers
+capture with their per-measure baseline: the head scoreDef's key and meter
+parts (everything else in the head, plus the pre-first-measure elements and the
+credits, is `rest`), every interior scoreDef anchored by element identity and by
+the id of the measure that follows it, and per-staff clef tags of any measure
+the diff marked changed. `signatureRanges` turns the differences into governed
+ranges — `[pos, next reset of the same kind)` for key and meter (head or
+interior), `[measure, next clef on that staff)` for clefs — which are unioned
+into the changed run BEFORE the partition repair, so the range's natural widths
+are re-measured and the normal replaced-set logic decides splice vs fallback.
+Only a `rest` change (a staffDef, a structural element) still derives /
+full-renders. The replaced-line glyph comparison and its exemption are removed;
+the context-line glyph comparison and the reference-gate glyph comparison
+stay — context lines must look the same, and the reference gate is where every
+test run verifies the replaced lines against a fresh full render.
+
+**Found on the way.** In scroll view a mid-piece key change rendered NOTHING —
+the scroll splicer's per-measure diff cannot see a section-level scoreDef and
+nothing else forced a render (`cb-...` probe, 2026-09-01). The range rule fixes
+it: the change's governed range splices into the persistent SVG.
+
+**Superseded**: the entries "Inline clefs are interior structure" (derive) and
+the replaced-line half of "Signature glyph identity is a LIVE splice refusal"
+above. Fixtures: `pageKeyChangeSplicesGovernedRange`,
+`pageMeterChangeSplicesGovernedRange`, `pageClefChangeSplicesGovernedRange`,
+`scrollKeyChangeSplicesGovernedRange`, `scrollClefChangeSplicesGovernedRange`.
+
+**Refinements from the first fixture runs of the range rule (same day):**
+- **Every range starts one measure early.** A signature change at measure p
+  also re-engraves p−1: the end-of-line courtesy (key/meter) and a
+  measure-initial clef's relocated change glyph land there. Without it the line
+  above rendered as an unchanged context line that had changed, and the context
+  check refused (dW 101 on `pageKeyChangeSplicesGovernedRange`).
+- **A clef range includes the measure holding the next clef when that clef is
+  mid-measure** (its notes before the clef, and its system clef if it begins a
+  line, are still in the changed prevailing clef) and excludes it when the clef
+  is measure-initial. Key/meter resets sit before their measure, so those ranges
+  end one measure before the reset.
+- **The dirty range is measured in one window before the repair loop.** The
+  repair loop ensured naturals per examined line under `MAX_ENSURES` (4), so a
+  bounded range over four lines derived anyway. One window over the range costs
+  exactly the range.
+- **Namespace declarations are not structure.** `setMeterAt` writes
+  `hkl:beat-groups` with setAttributeNS, which adds `xmlns:hkl` to the scoreDef;
+  left in `rest`, every meter change read as "interior structure changed".

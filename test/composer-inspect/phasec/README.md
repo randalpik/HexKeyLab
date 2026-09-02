@@ -157,6 +157,12 @@ Phase C-B2b / B1 probes (2026-08-31, findings baked into the design doc →
   showed the lines after the clef in the old clef (`E050` vs reference `E062`,
   −960 units of height): a clef edit had spliced one line and left the rest of
   the staff stale. Inline clefs are interior structure now (clef edits derive).
+- **cb-scrollsig.js** (run with `--no-sonata`) — scroll-view signature edits: a
+  mid-piece key change and a mid-measure clef change through the model, reporting
+  whether the persistent SVG root survived and which glyphs the changed measure
+  draws. Found (2026-09-01) that a mid-piece key change in scroll view rendered
+  NOTHING — the scroll splicer's per-measure diff cannot see a section-level
+  scoreDef — which the governed-range rule (`render/sigranges.ts`) fixes.
 - **cb-courtesy.js** — correlates the `context line ... diverged` refusals
   against the document structure: does a clef/key/meter change begin the line
   just BEYOND the splice window? That is what identified the end-of-line

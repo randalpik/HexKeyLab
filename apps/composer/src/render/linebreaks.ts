@@ -54,6 +54,7 @@
 import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
 import type { ComposerModel } from '../model/index.js';
 import { expandForSpanners, expandForEndings } from './splice.js';
+import { captureSigState, signatureRanges, unionRun, type SigState } from './sigranges.js';
 
 const MEI_NS = 'http://www.music-encoding.org/ns/mei';
 
@@ -288,69 +289,26 @@ function hardStartIds(model: ComposerModel): Set<string> {
   return out;
 }
 
-/** Head-context signature: the head scoreDef plus any section-level elements
- *  before the first measure, plus the composer/footer credits (injected per
- *  page mount — a splice or no-op skip would keep stale text without this).
- *  A change means the context every line renders under moved — derive. */
-function computeHeadSig(model: ComposerModel): string {
+/** Head-level context that is NOT the head scoreDef's key/meter: the
+ *  section-level elements before the first measure (scoreDefs excluded — they
+ *  are interior entries) plus the composer/footer credits, which are injected
+ *  per page mount and would go stale under a splice or no-op skip. Folded into
+ *  the head's `rest` (sigranges.ts): a change here still derives. */
+function headExtra(model: ComposerModel): string {
   const doc = model.getDoc();
   const ser = new XMLSerializer();
-  const scoreDef = doc.querySelector('scoreDef');
-  let s = scoreDef ? ser.serializeToString(scoreDef) : '';
   const first = doc.querySelector('section measure');
+  let pre = '';
   if (first) {
     let top: Element = first;
     while (top.parentElement && top.parentElement.localName !== 'section') top = top.parentElement;
     let node = top.previousElementSibling;
-    let pre = '';
-    while (node) { pre = ser.serializeToString(node) + pre; node = node.previousElementSibling; }
-    s += '|' + pre;
-  }
-  return s + '|' + model.getComposer() + '|' + model.getFooter();
-}
-
-/** Interior-structure signature: every section-level element that is NOT a
- *  measure, sb/pb, or measure-bearing wrapper (i.e. mid-piece scoreDefs),
- *  serialized with its measure-count position — plus every inline layer clef
- *  (see below). A mid-piece key/meter change
- *  lives OUTSIDE any measure, so the per-measure sig diff cannot see it — a
- *  refill would render it correctly (full loadData), but the Phase C-B system
- *  splice and the no-op skip would keep stale glyphs. Guarded here so both
- *  paths derive instead. */
-function computeInteriorSig(model: ComposerModel): string {
-  const section = model.getDoc().querySelector('section');
-  if (!section) return '';
-  const ser = new XMLSerializer();
-  let count = 0;
-  const parts: string[] = [];
-  const walk = (el: Element): void => {
-    for (const c of Array.from(el.children)) {
-      if (c.localName === 'measure') count++;
-      else if (c.localName === 'sb' || c.localName === 'pb') continue;   // userBreakSig's job
-      else if (c.querySelector('measure')) walk(c);
-      else parts.push(count + ':' + ser.serializeToString(c));
+    while (node) {
+      if (node.localName !== 'scoreDef') pre = ser.serializeToString(node) + pre;
+      node = node.previousElementSibling;
     }
-  };
-  walk(section);
-  /* Inline layer clefs are prevailing state too (2026-09-01): a `<clef>` inside
-     a layer governs every following measure of its staff until the next one, so
-     inserting, removing or changing one re-engraves lines the per-measure sig
-     diff never marks dirty — after a clef edit the splice re-drew the clef's own
-     line and left every line after it in the OLD clef (found by fixture
-     `pageSystemSpliceRelocatedClef` under the reference gate). Keyed by measure
-     position + staff + attributes, never xml:id, so an unchanged clef stays
-     silent and a moved one (a note deleted ahead of it) too — that case is the
-     splicer's relocation rule, not a state change. */
-  const measures = Array.from(section.querySelectorAll('measure'));
-  const at = new Map(measures.map((m, i) => [m, i]));
-  for (const c of Array.from(section.querySelectorAll('layer > clef'))) {
-    const staff = c.parentElement?.parentElement;
-    const meas = c.closest('measure');
-    parts.push('clef@' + (meas ? at.get(meas) : '?') + ':' + (staff?.getAttribute('n') ?? '?') + ':'
-      + (c.getAttribute('shape') ?? '') + (c.getAttribute('line') ?? '') + ':'
-      + (c.getAttribute('dis') ?? '') + (c.getAttribute('dis.place') ?? ''));
   }
-  return parts.join('|');
+  return pre + '|' + model.getComposer() + '|' + model.getFooter();
 }
 
 /* ── the owner ────────────────────────────────────────────────────────────── */
@@ -375,8 +333,9 @@ export class PageLineBreaks {
    *  carried across edits, and only changed when a page stops being legal. */
   private pageStartIds: string[] = [];
   private userBreakSig = '';
-  private headSig = '';
-  private interiorSig = '';
+  /** Head + interior signature state (sigranges.ts): key/meter changes become
+   *  RANGES of governed measures; only structural changes still derive. */
+  private sigState: SigState | null = null;
   private budgetW = 0;
   /** Natural (unjustified) measure widths in SVG user units, from breaks:'none'
    *  window renders. Only missing/dirty ids are ever (re)written, so a cached
@@ -563,8 +522,7 @@ export class PageLineBreaks {
     if (lines.length <= 1) return false;   // single-line docs are never owned
     this.invalidate();
     this.userBreakSig = computeUserBreakSig(model);
-    this.headSig = computeHeadSig(model);
-    this.interiorSig = computeInteriorSig(model);
+    this.sigState = captureSigState(model.getDoc(), headExtra(model));
     const meiMeasures = model.allMeasures();
     this.captureSigs(model.getDoc(), meiMeasures, measureIds(meiMeasures));
     /* Every adopted id must exist in the live doc, or the pins we build from
@@ -602,8 +560,7 @@ export class PageLineBreaks {
   armAdoption(model: ComposerModel, pageCount: number, ctx: PageBreaksCtx): void {
     this.invalidate();
     this.userBreakSig = computeUserBreakSig(model);
-    this.headSig = computeHeadSig(model);
-    this.interiorSig = computeInteriorSig(model);
+    this.sigState = captureSigState(model.getDoc(), headExtra(model));
     /* Signatures of the doc state this layout renders — captured NOW, in the
        same synchronous block as the derive render, so the idle-completed
        partition and the sig baseline describe the same document. */
@@ -676,8 +633,9 @@ export class PageLineBreaks {
     if (this.startIds === null && !this.finishAdoptionNow(ctx)) return bail('no adoptable partition');
     if (this.startIds!.length <= 1) return bail('single-line partition');
     if (computeUserBreakSig(model) !== this.userBreakSig) return bail('user breaks changed');
-    if (computeHeadSig(model) !== this.headSig) return bail('head context changed');
-    if (computeInteriorSig(model) !== this.interiorSig) return bail('interior structure changed');
+    /* Head / interior signature changes are handled AFTER the measure diff, as
+       governed RANGES folded into the changed run (sigranges.ts); only a
+       structural change there still derives. */
     if (this.budgetW <= 0) {
       const w = ctx.budgetW();
       if (w == null || !(w > 0)) return bail('no budgetW measurable');
@@ -743,20 +701,45 @@ export class PageLineBreaks {
        THESE ids, even ones whose measure the edit deleted. */
     const oldStartIds = this.startIds!.slice();
 
-    let newStartIds: string[];
-    let changedRun: { lo: number; hi: number } | null;
-    if (P >= nN && oN === nN) {
-      newStartIds = oldStarts;               // nothing changed — re-pin as-is
-      changedRun = null;
-      this.lastRefillLines = 0;
-    } else {
+    /* Signature changes govern RANGES, not the document (Max, 2026-09-01). A
+       clef / key / meter change re-engraves the measures from that point to the
+       next change of the same kind — the head and mid-piece scoreDefs are
+       invisible to the per-measure diff, inline clefs are visible but govern
+       far beyond their measure — so those ranges join the changed run here,
+       before the partition repair re-measures them. Anything structural (a
+       staffDef, an element before the first measure, the credits) still
+       derives: no range expresses it. */
+    const newState = captureSigState(model.getDoc(), headExtra(model));
+    const changedNew: number[] = [];
+    if (!(P >= nN && oN === nN)) {
+      for (let j = Math.min(P, nN - 1); j <= Math.max(Math.min(P, nN - 1), nN - 1 - S); j++) changedNew.push(j);
+    }
+    const sr = signatureRanges({
+      oldSig: this.sig,
+      newSig: (id) => { const j = idIdx.get(id); return j == null ? undefined : cur[j]; },
+      changedNew, measures: meiMeasures, ids, idIdx,
+      oldState: this.sigState ?? newState, newState,
+    });
+    if (sr.bail) return bail(sr.bail);
+    let run = { lo: 1, hi: 0 };   // empty until a change lands
+    if (!(P >= nN && oN === nN)) {
       /* A pure deletion can leave an empty new-side run (hi < lo); the line
          that LOST content still needs re-laying — anchor the range at the
          structural change point. */
       const dLo = Math.min(P, nN - 1);
-      const dHi = Math.max(dLo, nN - 1 - S);
-      changedRun = { lo: dLo, hi: dHi };
-      const repaired = this.repartition(model, meiMeasures, ids, idIdx, hard, { lo: dLo, hi: dHi }, ctx);
+      run = { lo: dLo, hi: Math.max(dLo, nN - 1 - S) };
+    }
+    run = unionRun(run.lo, run.hi, sr.ranges);
+
+    let newStartIds: string[];
+    let changedRun: { lo: number; hi: number } | null;
+    if (run.lo > run.hi) {
+      newStartIds = oldStarts;               // nothing changed — re-pin as-is
+      changedRun = null;
+      this.lastRefillLines = 0;
+    } else {
+      changedRun = { lo: run.lo, hi: run.hi };
+      const repaired = this.repartition(model, meiMeasures, ids, idIdx, hard, { lo: run.lo, hi: run.hi }, ctx);
       if (!repaired) return bail('repartition window/cap exhausted');
       newStartIds = repaired;
     }
@@ -808,6 +791,7 @@ export class PageLineBreaks {
     this.startIds = newStartIds;
     this.pageStartIds = newPageStartIds;
     this.captureSigs(model.getDoc(), meiMeasures, ids, cur);
+    this.sigState = newState;
     this.lastDeriveReason = '';
     const pageSet = newPageStartIds.length > 1 ? new Set(newPageStartIds) : null;
     const mei = (): string | null => {
@@ -892,6 +876,14 @@ export class PageLineBreaks {
       }
       return true;
     };
+
+    /* Measure the whole dirty range in ONE window before the repair loop. A
+       note edit dirties a measure or two, but a signature change governs a
+       RANGE (sigranges.ts) that can span many lines, and the per-line ensures
+       below would spend MAX_ENSURES on it and derive — the O(document) fallback
+       for what is an O(range) change. One window over the range costs exactly
+       the range; the repair loop then finds every natural present. */
+    if (dHi >= dLo && !ensureRange(dLo, dHi)) return null;
 
     const budget = this.budgetW;
     const lineEnd = (k: number): number => (k + 1 < starts.length ? starts[k + 1] : n);

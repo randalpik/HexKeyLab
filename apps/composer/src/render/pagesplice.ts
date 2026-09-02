@@ -618,7 +618,8 @@ export class PageSystemSplicer {
     }
 
     /* Context-line sanity: the unchanged neighbour lines must reproduce their
-       live geometry (per-measure x/width). This is the structural detector
+       live geometry (per-measure x/width) AND their signature glyphs (clef /
+       key / meter codepoints — see sigGlyphDiff). This is the structural detector
        for zones where windowed renders diverge (probe k=59: the mid-piece
        scoreDef / section-boundary zone) — any drift there means the window
        cannot be trusted for the changed lines either. The previous line
@@ -637,6 +638,11 @@ export class PageSystemSplicer {
         this.lastContextDiff = contextDiff('above', r.a - 1, winProf.get(r.a - 1)!, ctxPrev);
         return skip('context line above diverged (' + dAbove + ')');
       }
+      const gAbove = sigGlyphDiff(winProf.get(r.a - 1)!.el, ctxPrev.el);
+      if (gAbove) {
+        this.lastContextDiff = contextDiff('above', r.a - 1, winProf.get(r.a - 1)!, ctxPrev);
+        return skip('context line above signature glyphs diverged (' + gAbove + ')');
+      }
     } else if (!live[0].pageFirst) {
       return skip('score-start line not page-first');
     }
@@ -649,7 +655,20 @@ export class PageSystemSplicer {
         this.lastContextDiff = contextDiff('below', r.b + 1, winProf.get(r.b + 1)!, ctxNext);
         return skip('context line below diverged (' + dBelow + ')');
       }
+      const gBelow = sigGlyphDiff(winProf.get(r.b + 1)!.el, ctxNext.el);
+      if (gBelow) {
+        this.lastContextDiff = contextDiff('below', r.b + 1, winProf.get(r.b + 1)!, ctxNext);
+        return skip('context line below signature glyphs diverged (' + gBelow + ')');
+      }
     }
+
+    /* The REPLACED lines get no such comparison: they are, by definition, what
+       the edit told Verovio to redraw, and their post-edit appearance is
+       unknowable live (Max, 2026-09-01: "there's no reason to block a splice
+       because something changed in the lines we told Verovio to change"). Their
+       glyph identity is verified against a fresh full render by the reference
+       gate under HKL_INDEX_CHECK, which is where every test run catches a
+       same-width glyph swap on them. */
 
     /* Vertical PLAN: where a full re-engrave would put each replaced system,
        and by how much the systems below it on its page would move. Verovio
@@ -1041,6 +1060,24 @@ function sigGlyphs(measureEl: Element): string {
   return Array.from(measureEl.querySelectorAll('g.clef use, g.keySig use, g.meterSig use'))
     .map((u) => (u.getAttribute('xlink:href') ?? u.getAttribute('href') ?? '').replace(/^#/, '').split('-')[0])
     .join(' ');
+}
+
+/** First measure (by id, present on both sides) whose signature glyphs differ
+ *  between a window system and a live system — '' when they all match. Both
+ *  sides carry the same post-processing, so the comparison is symmetric; it
+ *  reads attributes only (no layout flush). Geometry gates cannot see a clef,
+ *  key or meter drawn in the wrong FORM at the right width: the wrong-clef
+ *  window (2026-09-01) was refused by 11 units of incidental ledger-line
+ *  drift, and cut time rendered as "2/2" was not refused at all. */
+function sigGlyphDiff(winSys: Element, liveSys: Element): string {
+  const liveById = new Map(Array.from(liveSys.querySelectorAll('g.measure')).map((m) => [m.id, m]));
+  for (const w of Array.from(winSys.querySelectorAll('g.measure'))) {
+    const l = liveById.get(w.id);
+    if (!l) continue;
+    const a = sigGlyphs(w), b = sigGlyphs(l);
+    if (a !== b) return `${w.id}: window "${a}" vs live "${b}"`;
+  }
+  return '';
 }
 
 function glyphCensus(measureEl: Element): Map<string, number> {

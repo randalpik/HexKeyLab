@@ -1436,16 +1436,34 @@ Read this section first; the per-area lists below have the detail.
    **95.7 % → 100 %**, exhaustive every-measure pass **94.5 % → 100 %**
    (420/420), battery 8/8. **Nothing in the sonata refuses any more.**
 
-   **Proposed next (Max's call): a second context signal.** The wrong-clef
-   window was refused on x-drift alone, and the margin was thin — and the
-   line-0 cut-time bug Max found the same afternoon (a same-width glyph swap,
-   `E08B` → `E082 E082`) passed EVERY geometry gate. Comparing clef / keySig /
-   meterSig glyph codepoints costs no layout flush and is exact. Two places:
-   the reference gate (`verifyAgainstReference`, index-check only — **DONE**,
-   `sigGlyphs`, a pure test-time hardening) and the context check
-   (`spliceDom`, a behaviour change: more refusals possible — **open, Max's
-   call**). The census that would feed the latter is already computed on the
-   refusal path (`lastContextDiff`).
+   **Signature glyph identity (Max, 2026-09-01):** the wrong-clef window was
+   refused on x-drift alone, and the line-0 cut-time bug (`E08B` → `E082 E082`)
+   passed every geometry gate. Now `spliceDom` compares clef / keySig / meterSig
+   glyph codepoints (`sigGlyphDiff`) for the CONTEXT lines, window vs live —
+   they must look the same or refuse — and `verifyAgainstReference` compares
+   them for every mounted system against a fresh full render (index-check only;
+   this is where test runs catch a same-width swap on the replaced lines). The
+   REPLACED lines are never compared live: they are what the edit told Verovio
+   to redraw, and their post-edit look is unknowable live — a first version
+   compared them against the pre-edit page and needed an exemption on its first
+   run; Max: "there's no reason to block a splice because something changed in
+   the lines we told Verovio to change." Fixture
+   `pageSystemSpliceRefusesGlyphMismatch` forges a context-line mismatch.
+
+   **Signature changes govern RANGES, not the document (Max, 2026-09-01):**
+   "the goal is to hit O(edit) in ALL cases. Any time the user is exposed to
+   O(document) on a live path when they didn't ask for a change to the full
+   document is a failure, full stop." Mid-piece key/meter changes had derived
+   since 2026-08-30 and inline clef edits joined them for an afternoon; the
+   scroll splicer could not see a mid-piece key change at all (it rendered
+   NOTHING). `render/sigranges.ts` now turns head/interior key and meter
+   changes and inline clef changes into governed ranges — to the next reset of
+   the same kind on the same staff — unioned into the changed run of BOTH
+   splicers before partition repair; only structural changes (`rest`: staffDefs,
+   pre-first-measure elements, credits) still derive. A range that exceeds the
+   caps falls back — that is B2's open work, not a policy. Fixtures
+   `page{Key,Meter,Clef}ChangeSplicesGovernedRange`,
+   `scroll{Key,Clef}ChangeSplicesGovernedRange`.
 
    The scroll splicer's run derivation (`splice.ts`) had the same relocation
    dependency and got the same one-line widening (unmeasured beyond the suite —
@@ -1453,10 +1471,10 @@ Read this section first; the per-area lists below have the detail.
 
    **Also fixed, found by the new fixtures under the reference gate:** a clef
    EDIT used to splice only its own line and leave every later line in the old
-   clef (both views). Inline clefs are now interior structure — a clef edit
-   derives in page view and full-renders in scroll view. Noted for the backlog,
-   NOT fixed: a clef set on an EMPTY layer does not roundtrip
-   (`<clef/><space/>` loads back as `<space/><clef/>`).
+   clef (both views). Fixed for an afternoon by making clef edits derive, then
+   correctly by the governed-range rule above. Noted for the backlog, NOT
+   fixed: a clef set on an EMPTY layer does not roundtrip (`<clef/><space/>`
+   loads back as `<space/><clef/>`).
 
    NOTE when comparing older figures: hit rates recorded before 2026-09-01 used a
    measure-start cursor, where 8 of the 115 lines performed a cursor MOVE rather
@@ -1704,6 +1722,35 @@ string means a shared render path started warning.
 
 ## Status log
 
+- 2026-09-01 (evening) — **Signature changes govern RANGES, not the document;
+  the replaced lines are never compared live (Max).** `render/sigranges.ts`:
+  head/interior key and meter changes and inline clef changes become governed
+  ranges (to the next reset of the same kind on the same staff, one measure
+  early for the courtesy/relocated glyph, inclusive of a mid-measure reset clef's
+  measure) unioned into the changed run of BOTH splicers before partition
+  repair, which now measures the whole dirty range in one window; only
+  structural changes derive. Removed: the replaced-line glyph comparison and its
+  clef exemption (the replaced set is what the edit told Verovio to redraw).
+  Kept: context-line glyph identity live, reference-gate glyph identity under
+  the index check. Found and fixed on the way: a mid-piece key change in scroll
+  view rendered NOTHING. Sonata: sweep **115/115**, exhaustive **420/420**,
+  battery **8/8** reference-clean, six seeds splice; steady-state edit
+  172–174 ms (baseline 168). Suite **358/358** under `HKL_INDEX_CHECK`. Five
+  fixtures (`page{Key,Meter,Clef}ChangeSplicesGovernedRange`,
+  `scroll{Key,Clef}ChangeSplicesGovernedRange`), each verified to fail on the
+  unfixed source. Open (B2): a signature change whose governed range exceeds the
+  line cap, or whose reflow changes pagination, still full-renders.
+- 2026-09-01 (later) — **Signature glyph identity is a live refusal (Max's
+  call).** `spliceDom` compares clef/keySig/meterSig codepoints for the context
+  lines (window vs live) and for replaced lines whose boundaries stand (window vs
+  the system being replaced; clef glyphs exempted on clef-bearing lines, where
+  a relocated clef legitimately redraws them). Re-measured on the sonata with
+  the check live: routine sweep **115/115** (median 238 ms), exhaustive
+  **420/420**, battery **8/8** reference-clean, six seeds splice — the check
+  never fires on real music. Suite **353/353** under `HKL_INDEX_CHECK`. Fixture
+  `pageSystemSpliceRefusesGlyphMismatch` (forged mismatch → refusal; verified
+  to fail without the promotion). See decisions.md "Signature glyph identity is
+  a LIVE splice refusal".
 - 2026-09-01 — **The sonata's remaining refusals are gone: routine sweep
   95.7 % → 100 % (115/115), battery 8/8 reference-clean.** The six divergent
   context-line signatures were five lines and three mechanisms, found in one

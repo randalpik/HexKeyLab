@@ -916,6 +916,41 @@ const SCROLL = {
     `,
   },
 
+  /* Scroll view, same range rule. A mid-piece KEY change lives in a
+   * section-level scoreDef the per-measure diff cannot see — before 2026-09-01
+   * a key change in scroll view rendered NOTHING (the splicer saw no change).
+   * Now the governed range [change, next key change) is spliced into the
+   * persistent SVG (root unchanged) and the key signature appears. Asserted via
+   * FIXTURE_ASSERTIONS.scrollKeyChangeSplicesGovernedRange. */
+  scrollKeyChangeSplicesGovernedRange: {
+    skipCursorTrace: true,
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 48; i++) m.insertChordAtCursor({ notes: [mk('g', 5)], duration: '4', dots: 0 });
+      const sel = document.getElementById('viewModeSelect');
+      sel.value = 'scroll';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      r();
+    `,
+  },
+
+  /* Scroll view: an inline CLEF change with a later clef splices its governed
+   * range (it used to full-render, and before that left later measures in the
+   * old clef). Asserted via FIXTURE_ASSERTIONS.scrollClefChangeSplicesGovernedRange. */
+  scrollClefChangeSplicesGovernedRange: {
+    skipCursorTrace: true,
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 48; i++) m.insertChordAtCursor({ notes: [mk('g', 5)], duration: '4', dots: 0 });
+      const sel = document.getElementById('viewModeSelect');
+      sel.value = 'scroll';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      r();
+    `,
+  },
+
   /* Phase B3: a width-CHANGING scroll edit on a mid-score measure must keep the
    * edited measure joined to its LEFT neighbour and cascade the width delta
    * RIGHTWARD — i.e. the spliced layout must match a full re-engrave of the same
@@ -1292,6 +1327,83 @@ const PAGE_SPLICE = {
       m.setCursor(0, 1);
       const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
       for (let i = 0; i < 96; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
+  /* The glyph-identity refusal (Max, 2026-09-01): a window that draws a clef,
+   * key or meter in the wrong FORM at the right width passes every geometry
+   * check, so the context check now also compares signature glyph codepoints
+   * (context lines: window vs live; replaced lines with standing boundaries:
+   * window vs the system being replaced). This fixture FORGES a mismatch in the
+   * live DOM — the meter glyph of line 0's first measure is re-pointed at a
+   * different codepoint — then edits line 1, whose context line above is line
+   * 0. The splice must refuse with the glyph reason and full-render (which
+   * also repairs the forgery). Asserted via
+   * FIXTURE_ASSERTIONS.pageSystemSpliceRefusesGlyphMismatch. */
+  pageSystemSpliceRefusesGlyphMismatch: {
+    skipCursorTrace: true,
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 96; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
+  /* Signature changes govern RANGES, not the document (Max, 2026-09-01: "any
+   * time the user is exposed to O(document) on a live path when they didn't ask
+   * for a change to the full document is a failure, full stop"). A key change at
+   * a line start with a later key change re-engraves exactly the lines between
+   * them — a splice whose replaced set ends before the reset — and the result
+   * matches a full render (reference gate). Previously any interior scoreDef
+   * change derived the whole document. Asserted via
+   * FIXTURE_ASSERTIONS.pageKeyChangeSplicesGovernedRange. */
+  pageKeyChangeSplicesGovernedRange: {
+    skipCursorTrace: true,
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 160; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
+  /* Same rule for a meter change with a later meter change. Asserted via
+   * FIXTURE_ASSERTIONS.pageMeterChangeSplicesGovernedRange. */
+  pageMeterChangeSplicesGovernedRange: {
+    skipCursorTrace: true,
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 160; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
+  /* Same rule for an inline clef change with a later clef on the same staff:
+   * the run extends to the measure before the next clef and splices. (For one
+   * afternoon inline clefs joined the interior signature and every clef edit
+   * derived — the same failure with a newer date.) Asserted via
+   * FIXTURE_ASSERTIONS.pageClefChangeSplicesGovernedRange. */
+  pageClefChangeSplicesGovernedRange: {
+    skipCursorTrace: true,
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 160; i++) {
         const high = (Math.floor(i / 4) % 2) === 0;
         m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
       }
@@ -7783,6 +7895,58 @@ export const FIXTURE_ASSERTIONS = {
         return { ok: true };
       })()` },
   ],
+  scrollKeyChangeSplicesGovernedRange: [
+    { name: 'a mid-piece key change in scroll view splices (root unchanged) and draws the key signature; a later key change bounds the run',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const score = document.getElementById('score');
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        if (ids.length < 12) return { ok: false, detail: 'need >= 12 measures' };
+        /* later reset first */
+        m.setKeySigAt(9, '2f', 'major');
+        H.reRender();
+        const svg0 = score.querySelector('svg:not(#cursorOverlay)');
+        if (!svg0) return { ok: false, detail: 'no rendered SVG' };
+        const keyGlyphs = (mi) => { const g = document.getElementById(ids[mi]); return g ? g.querySelectorAll('g.keySig use, g.keySig text').length : -1; };
+        if (keyGlyphs(9) < 1) return { ok: false, detail: 'reset key signature not drawn at measure 9 (' + keyGlyphs(9) + ')' };
+        const before5 = keyGlyphs(5);
+        m.setKeySigAt(5, '3s', 'major');
+        H.reRender();
+        const svg1 = score.querySelector('svg:not(#cursorOverlay)');
+        if (svg1 !== svg0) return { ok: false, detail: 'key change re-engraved the whole score (SVG root replaced) — governed range did not splice' };
+        if (keyGlyphs(5) <= before5) return { ok: false, detail: 'key signature not drawn at the changed measure (before ' + before5 + ', after ' + keyGlyphs(5) + ')' };
+        if (keyGlyphs(9) < 1) return { ok: false, detail: 'the later key change lost its signature' };
+        return { ok: true };
+      })()` },
+  ],
+  scrollClefChangeSplicesGovernedRange: [
+    { name: 'an inline clef change in scroll view with a later clef splices (root unchanged) and both change glyphs are drawn',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const score = document.getElementById('score');
+        const ms = m.allMeasures();
+        const ids = ms.map((x) => x.getAttribute('xml:id'));
+        if (ids.length < 12) return { ok: false, detail: 'need >= 12 measures' };
+        const chordAt = (mi) => { const flat = m['flatChildren'](1); return flat.findIndex((el) => (el.localName === 'note' || el.localName === 'chord') && el.closest('measure') === m.allMeasures()[mi]); };
+        if (!m.setClefAtCursor(1, chordAt(9), 'F', '4', null, null)) return { ok: false, detail: 'reset clef refused' };
+        H.reRender();
+        const svg0 = score.querySelector('svg:not(#cursorOverlay)');
+        if (!svg0) return { ok: false, detail: 'no rendered SVG' };
+        const clefs = (mi) => { const g = document.getElementById(ids[mi]); return g ? Array.from(g.querySelectorAll('g.clef use')).map((u) => (u.getAttribute('xlink:href') || u.getAttribute('href') || '').replace(/^#/, '').split('-')[0]).join(' ') : 'absent'; };
+        if (!/E07C/.test(clefs(9))) return { ok: false, detail: 'reset clef change not drawn at measure 9: "' + clefs(9) + '"' };
+        if (!m.setClefAtCursor(1, chordAt(5), 'F', '4', null, null)) return { ok: false, detail: 'edit clef refused' };
+        H.reRender();
+        const svg1 = score.querySelector('svg:not(#cursorOverlay)');
+        if (svg1 !== svg0) return { ok: false, detail: 'clef change re-engraved the whole score (SVG root replaced) — governed range did not splice' };
+        if (!/E07C/.test(clefs(5))) return { ok: false, detail: 'clef change not drawn at measure 5: "' + clefs(5) + '"' };
+        /* measure 9's clef is now redundant (F→F) but its element still exists; it
+           must still be drawn as the range boundary and nothing past it changed */
+        if (clefs(9) === 'absent') return { ok: false, detail: 'measure 9 missing after the splice' };
+        return { ok: true };
+      })()` },
+  ],
   scrollWidthChangeCascadesRight: [
     { name: 'a width-changing mid-score scroll edit splices to the SAME measure x as a full re-engrave (left edge joined, width cascades right)',
       expr: `(() => {
@@ -8619,6 +8783,249 @@ export const FIXTURE_ASSERTIONS = {
         if (ps.lastOutcome !== 'spliced') {
           return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
         }
+        return { ok: true };
+      })()` },
+  ],
+  pageSystemSpliceRefusesGlyphMismatch: [
+    { name: 'a forged signature-glyph mismatch on the context line above refuses the splice (full render repairs it)',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        const startIds = pb['startIds'];
+        if (startIds.length < 4) return { ok: false, detail: 'need >= 4 lines, got ' + startIds.length };
+        /* Forge: re-point line 0's first meter glyph at a different codepoint. */
+        const page1 = document.querySelector('#score .score-page[data-page="1"]');
+        const m0 = page1 && page1.querySelector('g.measure');
+        const use = m0 && m0.querySelector('g.meterSig use');
+        if (!use) return { ok: false, detail: 'fixture cannot pose the case: no meter glyph on line 0' };
+        const href = use.getAttribute('xlink:href') || use.getAttribute('href') || '';
+        const forged = href.replace(/#E0[0-9A-F]{2}/, '#E0FF');
+        if (forged === href) return { ok: false, detail: 'fixture cannot pose the case: unexpected href ' + href };
+        if (use.hasAttribute('xlink:href')) use.setAttribute('xlink:href', forged); else use.setAttribute('href', forged);
+        /* Edit line 1: line 0 is its context line above. */
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const mi = ids.indexOf(startIds[1]);
+        if (mi < 0) return { ok: false, detail: 'line 1 start not in model' };
+        m.setCursor(m.getMeasureStartCursor(1, mi + 1), 1);
+        const ver = m.docVersion();
+        if (!m.deleteAtCursor()) return { ok: false, detail: 'delete rejected' };
+        if (m.docVersion() === ver) return { ok: false, detail: 'delete did not change the document' };
+        H.reRender();
+        if (ps.lastOutcome === 'spliced') return { ok: false, detail: 'spliced over a forged signature-glyph mismatch on the context line' };
+        if (!/signature glyphs diverged/.test(ps.lastSkipReason || '')) return { ok: false, detail: 'refused for another reason: "' + ps.lastSkipReason + '"' };
+        /* The fallback full render must have repaired the forgery. */
+        const m0b = document.querySelector('#score .score-page[data-page="1"] g.measure');
+        const useB = m0b && m0b.querySelector('g.meterSig use');
+        const hrefB = useB ? (useB.getAttribute('xlink:href') || useB.getAttribute('href') || '') : '';
+        if (/E0FF/.test(hrefB)) return { ok: false, detail: 'full render did not replace the forged glyph' };
+        return { ok: true };
+      })()` },
+  ],
+  pageKeyChangeSplicesGovernedRange: [
+    { name: 'a key change with a later key change splices exactly the lines up to the reset (reference-clean)',
+      expr: `(async () => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        /* a render the heaviness predictor defers (a meter change truncates a
+           dozen measures) lands behind the busy badge — wait it out */
+        const settle = async () => {
+          for (let i = 0; i < 500; i++) { const b = document.getElementById('renderBusy'); if (!b || b.hidden) break; await new Promise((r) => setTimeout(r, 20)); }
+          await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        };
+        const KIND = 'key';
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        let startIds = pb['startIds'];
+        if (startIds.length < 7) return { ok: false, detail: 'need >= 7 lines, got ' + startIds.length };
+        const ids0 = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        /* the later RESET first (line 5), rendered by whatever path */
+        const resetMi = ids0.indexOf(startIds[5]);
+        const chordAt = (mi) => { const flat = m['flatChildren'](1); return flat.findIndex((el) => (el.localName === 'note' || el.localName === 'chord') && el.closest('measure') === m.allMeasures()[mi]); };
+        /* Resets must DIFFER from the document's defaults (4/4, staff 1 in G2):
+           setMeterAt / setClefAtCursor are diff-aware and write nothing for a
+           redundant value — which would leave the edit's range unbounded. */
+        if (KIND === 'key') m.setKeySigAt(resetMi, '2f', 'major');
+        else if (KIND === 'meter') m.setMeterAt(resetMi, 2, 2);
+        else { if (!m.setClefAtCursor(1, chordAt(resetMi), 'C', '3', null, null)) return { ok: false, detail: 'reset clef refused' }; }
+        H.reRender(); await settle();
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) { H.reRender(); await settle(); }
+        startIds = pb['startIds'];
+        let ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const resetLine = startIds.indexOf(ids[resetMi]);
+        if (resetLine < 4) return { ok: false, detail: 'reset is not a line start >= 4 (line ' + resetLine + ') — fixture cannot pose the case' };
+        /* the edit under test: the same kind of change at line 2. Clear the
+           splicer's diagnostics first — a derive leaves them from the previous
+           render, which would read as a stale "spliced". */
+        const editMi = ids.indexOf(startIds[2]);
+        ps.lastOutcome = ''; ps.lastRun = null; ps.lastSkipReason = '';
+        const ver = m.docVersion();
+        /* meter: 4/4 → 2/2 keeps every measure's content and width (a
+           truncating change like 2/4 halves the line fills, merges lines, and
+           lands in B2 — line-count-changing refills — which is not under test) */
+        if (KIND === 'key') m.setKeySigAt(editMi, '3s', 'major');
+        else if (KIND === 'meter') m.setMeterAt(editMi, 2, 2);
+        else { if (!m.setClefAtCursor(1, chordAt(editMi), 'F', '4', null, null)) return { ok: false, detail: 'edit clef refused' }; }
+        if (m.docVersion() === ver) return { ok: false, detail: 'edit did not change the document' };
+        const prevCheck = globalThis.__HKL_INDEX_CHECK;
+        globalThis.__HKL_INDEX_CHECK = true;
+        try { H.reRender(); await settle(); } finally { globalThis.__HKL_INDEX_CHECK = prevCheck; }
+        if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice of the governed range, got "' + ps.lastOutcome + '" (skip: ' + ps.lastSkipReason + '; derive reason: ' + pb.lastDeriveReason + '; refill moved lines: ' + pb.lastRefillLines + '; lines now ' + pb['startIds'].length + ')' };
+        ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        startIds = pb['startIds'];
+        const editLine = startIds.indexOf(ids[editMi]);
+        const resetLineNow = startIds.indexOf(ids[resetMi]);
+        const run = ps.lastRun;
+        /* the run may begin one line early: the measure before the change takes
+           the end-of-line courtesy, so its line is replaced too */
+        if (!run || run.a > editLine || run.a < editLine - 1) return { ok: false, detail: 'run does not start at (or one line above) the edit line: run=' + JSON.stringify(run) + ' editLine=' + editLine };
+        /* key/meter resets sit BEFORE their measure, so the run ends on the line
+           before the reset; a mid-measure reset CLEF leaves the start of its own
+           measure in the changed clef, so that line joins the range too */
+        const maxB = KIND === 'clef' ? resetLineNow : resetLineNow - 1;
+        if (run.b < resetLineNow - 1) return { ok: false, detail: 'run stops before the governed range ends: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow };
+        if (run.b > maxB) return { ok: false, detail: 'run overshoots the reset: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow };
+        return { ok: true };
+      })()` },
+  ],
+  pageMeterChangeSplicesGovernedRange: [
+    { name: 'a meter change with a later meter change splices exactly the lines up to the reset (reference-clean)',
+      expr: `(async () => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        /* a render the heaviness predictor defers (a meter change truncates a
+           dozen measures) lands behind the busy badge — wait it out */
+        const settle = async () => {
+          for (let i = 0; i < 500; i++) { const b = document.getElementById('renderBusy'); if (!b || b.hidden) break; await new Promise((r) => setTimeout(r, 20)); }
+          await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        };
+        const KIND = 'meter';
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        let startIds = pb['startIds'];
+        if (startIds.length < 7) return { ok: false, detail: 'need >= 7 lines, got ' + startIds.length };
+        const ids0 = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        /* the later RESET first (line 5), rendered by whatever path */
+        const resetMi = ids0.indexOf(startIds[5]);
+        const chordAt = (mi) => { const flat = m['flatChildren'](1); return flat.findIndex((el) => (el.localName === 'note' || el.localName === 'chord') && el.closest('measure') === m.allMeasures()[mi]); };
+        /* Resets must DIFFER from the document's defaults (4/4, staff 1 in G2):
+           setMeterAt / setClefAtCursor are diff-aware and write nothing for a
+           redundant value — which would leave the edit's range unbounded. */
+        if (KIND === 'key') m.setKeySigAt(resetMi, '2f', 'major');
+        else if (KIND === 'meter') m.setMeterAt(resetMi, 2, 2);
+        else { if (!m.setClefAtCursor(1, chordAt(resetMi), 'C', '3', null, null)) return { ok: false, detail: 'reset clef refused' }; }
+        H.reRender(); await settle();
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) { H.reRender(); await settle(); }
+        startIds = pb['startIds'];
+        let ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const resetLine = startIds.indexOf(ids[resetMi]);
+        if (resetLine < 4) return { ok: false, detail: 'reset is not a line start >= 4 (line ' + resetLine + ') — fixture cannot pose the case' };
+        /* the edit under test: the same kind of change at line 2. Clear the
+           splicer's diagnostics first — a derive leaves them from the previous
+           render, which would read as a stale "spliced". */
+        const editMi = ids.indexOf(startIds[2]);
+        ps.lastOutcome = ''; ps.lastRun = null; ps.lastSkipReason = '';
+        const ver = m.docVersion();
+        /* meter: 4/4 → 2/2 keeps every measure's content and width (a
+           truncating change like 2/4 halves the line fills, merges lines, and
+           lands in B2 — line-count-changing refills — which is not under test) */
+        if (KIND === 'key') m.setKeySigAt(editMi, '3s', 'major');
+        else if (KIND === 'meter') m.setMeterAt(editMi, 2, 2);
+        else { if (!m.setClefAtCursor(1, chordAt(editMi), 'F', '4', null, null)) return { ok: false, detail: 'edit clef refused' }; }
+        if (m.docVersion() === ver) return { ok: false, detail: 'edit did not change the document' };
+        const prevCheck = globalThis.__HKL_INDEX_CHECK;
+        globalThis.__HKL_INDEX_CHECK = true;
+        try { H.reRender(); await settle(); } finally { globalThis.__HKL_INDEX_CHECK = prevCheck; }
+        if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice of the governed range, got "' + ps.lastOutcome + '" (skip: ' + ps.lastSkipReason + '; derive reason: ' + pb.lastDeriveReason + '; refill moved lines: ' + pb.lastRefillLines + '; lines now ' + pb['startIds'].length + ')' };
+        ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        startIds = pb['startIds'];
+        const editLine = startIds.indexOf(ids[editMi]);
+        const resetLineNow = startIds.indexOf(ids[resetMi]);
+        const run = ps.lastRun;
+        /* the run may begin one line early: the measure before the change takes
+           the end-of-line courtesy, so its line is replaced too */
+        if (!run || run.a > editLine || run.a < editLine - 1) return { ok: false, detail: 'run does not start at (or one line above) the edit line: run=' + JSON.stringify(run) + ' editLine=' + editLine };
+        /* key/meter resets sit BEFORE their measure, so the run ends on the line
+           before the reset; a mid-measure reset CLEF leaves the start of its own
+           measure in the changed clef, so that line joins the range too */
+        const maxB = KIND === 'clef' ? resetLineNow : resetLineNow - 1;
+        if (run.b < resetLineNow - 1) return { ok: false, detail: 'run stops before the governed range ends: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow };
+        if (run.b > maxB) return { ok: false, detail: 'run overshoots the reset: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow };
+        return { ok: true };
+      })()` },
+  ],
+  pageClefChangeSplicesGovernedRange: [
+    { name: 'a clef change with a later clef on the same staff splices exactly the lines up to the reset (reference-clean)',
+      expr: `(async () => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        /* a render the heaviness predictor defers (a meter change truncates a
+           dozen measures) lands behind the busy badge — wait it out */
+        const settle = async () => {
+          for (let i = 0; i < 500; i++) { const b = document.getElementById('renderBusy'); if (!b || b.hidden) break; await new Promise((r) => setTimeout(r, 20)); }
+          await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        };
+        const KIND = 'clef';
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        let startIds = pb['startIds'];
+        if (startIds.length < 7) return { ok: false, detail: 'need >= 7 lines, got ' + startIds.length };
+        const ids0 = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        /* the later RESET first (line 5), rendered by whatever path */
+        const resetMi = ids0.indexOf(startIds[5]);
+        const chordAt = (mi) => { const flat = m['flatChildren'](1); return flat.findIndex((el) => (el.localName === 'note' || el.localName === 'chord') && el.closest('measure') === m.allMeasures()[mi]); };
+        /* Resets must DIFFER from the document's defaults (4/4, staff 1 in G2):
+           setMeterAt / setClefAtCursor are diff-aware and write nothing for a
+           redundant value — which would leave the edit's range unbounded. */
+        if (KIND === 'key') m.setKeySigAt(resetMi, '2f', 'major');
+        else if (KIND === 'meter') m.setMeterAt(resetMi, 2, 2);
+        else { if (!m.setClefAtCursor(1, chordAt(resetMi), 'C', '3', null, null)) return { ok: false, detail: 'reset clef refused' }; }
+        H.reRender(); await settle();
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) { H.reRender(); await settle(); }
+        startIds = pb['startIds'];
+        let ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const resetLine = startIds.indexOf(ids[resetMi]);
+        if (resetLine < 4) return { ok: false, detail: 'reset is not a line start >= 4 (line ' + resetLine + ') — fixture cannot pose the case' };
+        /* the edit under test: the same kind of change at line 2. Clear the
+           splicer's diagnostics first — a derive leaves them from the previous
+           render, which would read as a stale "spliced". */
+        const editMi = ids.indexOf(startIds[2]);
+        ps.lastOutcome = ''; ps.lastRun = null; ps.lastSkipReason = '';
+        const ver = m.docVersion();
+        /* meter: 4/4 → 2/2 keeps every measure's content and width (a
+           truncating change like 2/4 halves the line fills, merges lines, and
+           lands in B2 — line-count-changing refills — which is not under test) */
+        if (KIND === 'key') m.setKeySigAt(editMi, '3s', 'major');
+        else if (KIND === 'meter') m.setMeterAt(editMi, 2, 2);
+        else { if (!m.setClefAtCursor(1, chordAt(editMi), 'F', '4', null, null)) return { ok: false, detail: 'edit clef refused' }; }
+        if (m.docVersion() === ver) return { ok: false, detail: 'edit did not change the document' };
+        const prevCheck = globalThis.__HKL_INDEX_CHECK;
+        globalThis.__HKL_INDEX_CHECK = true;
+        try { H.reRender(); await settle(); } finally { globalThis.__HKL_INDEX_CHECK = prevCheck; }
+        if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice of the governed range, got "' + ps.lastOutcome + '" (skip: ' + ps.lastSkipReason + '; derive reason: ' + pb.lastDeriveReason + '; refill moved lines: ' + pb.lastRefillLines + '; lines now ' + pb['startIds'].length + ')' };
+        ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        startIds = pb['startIds'];
+        const editLine = startIds.indexOf(ids[editMi]);
+        const resetLineNow = startIds.indexOf(ids[resetMi]);
+        const run = ps.lastRun;
+        /* the run may begin one line early: the measure before the change takes
+           the end-of-line courtesy, so its line is replaced too */
+        if (!run || run.a > editLine || run.a < editLine - 1) return { ok: false, detail: 'run does not start at (or one line above) the edit line: run=' + JSON.stringify(run) + ' editLine=' + editLine };
+        /* key/meter resets sit BEFORE their measure, so the run ends on the line
+           before the reset; a mid-measure reset CLEF leaves the start of its own
+           measure in the changed clef, so that line joins the range too */
+        const maxB = KIND === 'clef' ? resetLineNow : resetLineNow - 1;
+        if (run.b < resetLineNow - 1) return { ok: false, detail: 'run stops before the governed range ends: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow };
+        if (run.b > maxB) return { ok: false, detail: 'run overshoots the reset: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow };
         return { ok: true };
       })()` },
   ],

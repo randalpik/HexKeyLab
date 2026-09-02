@@ -25,6 +25,7 @@
 
 import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
 import type { ComposerModel } from '../model/index.js';
+import { captureSigState, signatureRanges, unionRun, type SigState } from './sigranges.js';
 
 const MEI_NS = 'http://www.music-encoding.org/ns/mei';
 const idOf = (m: Element): string => m.getAttribute('xml:id') || m.getAttribute('id') || '';
@@ -85,7 +86,7 @@ export class ScrollSplicer {
   private sig = new Map<string, string>();     // id → serialized measure source
   private tx = new Map<string, number>();      // id → applied translate.x (user units)
   private ty = new Map<string, number>();      // id → applied translate.y (user units)
-  private headSig = '';                        // everything before the first measure
+  private sigState: SigState | null = null;    // head/interior signature state (sigranges.ts)
   private nStaves = 0;
   private gapPx: number[] = [];                // captured inter-staff gaps (screen px)
   private law: Array<{ slope: number; intercept: number }> = [];
@@ -124,7 +125,7 @@ export class ScrollSplicer {
       this.tx.set(id, 0);
       this.ty.set(id, 0);
     }
-    this.headSig = this.computeHeadSig(meiMeasures[0], ser);
+    this.sigState = captureSigState(live, this.headExtra(meiMeasures[0], ser));
 
     const measureEls = Array.from(sys.querySelectorAll('g.measure'));
     this.nStaves = measureEls.length ? measureEls[0].querySelectorAll(':scope g.staff').length : 0;
@@ -137,17 +138,18 @@ export class ScrollSplicer {
     model.resetRenderDirty();
   }
 
-  /** Serialized head context (the scoreDef(s) before the first measure) — if
-   *  this changes between renders the layout header changed and we must full-
-   *  render. Walks TOP-LEVEL section siblings: the first measure could itself
-   *  be `<ending>`-wrapped, and its in-wrapper siblings aren't head context. */
-  private computeHeadSig(firstMeasure: Element | undefined, ser: XMLSerializer): string {
+  /** Section-level elements before the first measure, scoreDefs excluded (those
+   *  are interior signature entries, sigranges.ts). Folded into the head's
+   *  `rest`: a change here is structural and full-renders. Walks TOP-LEVEL
+   *  section siblings: the first measure could itself be `<ending>`-wrapped, and
+   *  its in-wrapper siblings aren't head context. */
+  private headExtra(firstMeasure: Element | undefined, ser: XMLSerializer): string {
     if (!firstMeasure) return '';
     let top: Element = firstMeasure;
     while (top.parentElement && top.parentElement.localName !== 'section') top = top.parentElement;
     let s = '';
     let n = top.previousElementSibling;
-    while (n) { s = ser.serializeToString(n) + s; n = n.previousElementSibling; }
+    while (n) { if (n.localName !== 'scoreDef') s = ser.serializeToString(n) + s; n = n.previousElementSibling; }
     return s;
   }
 
@@ -247,8 +249,6 @@ export class ScrollSplicer {
       for (const m of meiMeasures) newSig.set(idOf(m), ser.serializeToString(m));
     }
 
-    // Layout header changed (clef/key/meter/staff structure) → can't splice.
-    if (this.computeHeadSig(meiMeasures[0], ser) !== this.headSig) return false;
     if (meiMeasures.length && meiMeasures[0].querySelectorAll('staff').length !== this.nStaves) return false;
 
     // Diff: common prefix + suffix by (id, signature) → the changed run.
@@ -262,22 +262,33 @@ export class ScrollSplicer {
     while (Sx < Math.min(oN, nN) - P && eq(oN - 1 - Sx, nN - 1 - Sx)) Sx++;
     let lo = P, hiNew = nN - 1 - Sx;            // changed run, NEW index
     let oldLo = P, oldHi = oN - 1 - Sx;          // changed run, OLD index
-    if (hiNew < lo && oldHi < oldLo) return true; // nothing changed
 
-    // Inline clefs are prevailing state for every following measure of their
-    // staff (2026-09-01): if the run's SET of clefs changed — one inserted,
-    // removed, or re-shaped — lines beyond the run re-engrave too, which only a
-    // full render does. Compared as the concatenated clef tags of the whole run
-    // with ids stripped and NO per-measure separators: the old and new runs
-    // legitimately differ in length whenever a measure is added or removed
-    // (a past-end append creates one), and a clef that merely moved within the
-    // run (a note deleted ahead of it) must stay a splice.
-    const clefTags = (xml: string | undefined): string[] =>
-      (xml?.match(/<clef\b[^>]*>/g) ?? []).map((t) => t.replace(/\s(?:xml:)?id="[^"]*"/g, ''));
-    const oldClefs: string[] = [], newClefs: string[] = [];
-    for (let i = oldLo; i <= oldHi; i++) oldClefs.push(...clefTags(this.sig.get(oldOrder[i])));
-    for (let i = lo; i <= hiNew; i++) newClefs.push(...clefTags(newSig.get(newOrder[i])));
-    if (oldClefs.join('|') !== newClefs.join('|')) return false;
+    // Signature changes govern RANGES (sigranges.ts, Max 2026-09-01): a clef,
+    // key or meter change re-engraves the measures up to the next change of the
+    // same kind. Head and mid-piece scoreDefs are invisible to the per-measure
+    // diff — before this, a mid-piece key change in scroll view rendered
+    // NOTHING (the diff saw no change) — and an inline clef change governs far
+    // beyond its measure. Structural changes (staffDefs, elements before the
+    // first measure) still full-render.
+    const newState = captureSigState(live, this.headExtra(meiMeasures[0], ser));
+    const idIdx = new Map(newOrder.map((id, i) => [id, i]));
+    const changedNew: number[] = [];
+    for (let j = lo; j <= hiNew; j++) changedNew.push(j);
+    const sr = signatureRanges({
+      oldSig: this.sig, newSig: (id) => newSig.get(id), changedNew,
+      measures: meiMeasures, ids: newOrder, idIdx,
+      oldState: this.sigState ?? newState, newState,
+    });
+    if (sr.bail) return false;
+    /* Commit the signature state now: a splice that fails below full-renders,
+       and capture() then recaptures it from the document anyway. */
+    this.sigState = newState;
+    if (sr.ranges.length) {
+      const u = unionRun(lo, hiNew, sr.ranges);
+      lo = u.lo; hiNew = u.hi;
+      oldLo = lo; oldHi = hiNew + (oN - nN);
+    }
+    if (hiNew < lo && oldHi < oldLo) return true; // nothing changed
 
     // `relocateInitialClefs` draws measure lo's measure-initial clef at the END
     // of measure lo-1, so an edit that makes a clef measure-initial (or stops it
