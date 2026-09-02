@@ -4981,3 +4981,206 @@ ONLY in multi-line sets. **One known blind spot** in the routine gate:
 
 **Where**: `test/composer-inspect/phasec/cb-allmeasures.js`, `allmeasures.sh`,
 `allmeasures-report.mjs`, `cb-seedreach.js`, `cb-noopedits.js`.
+
+## Render errors are logged and, under HKL_INDEX_CHECK, re-thrown (2026-09-01)
+
+**Context**: `doReRender` ended every render-path throw at
+`setStatus('render error: …', 'error')` — DOM text, no console. The page
+splicer's `verifyAgainstReference` gate therefore detected divergences and lost
+them: it reported a 643-unit staff-top error and the suite passed. See
+lessons.md, "A gate whose throw is caught is not a gate".
+
+**Decision**: that catch now always `console.error`s, and re-throws when
+`globalThis.__HKL_INDEX_CHECK === true`. The composer-test suite fails on any
+console error, so a gate failure now fails the run; under the index check it
+also propagates to the caller, so a fixture's own `H.reRender()` throws where
+the assertion can see it. The three user-action catches (save, MusicXML export,
+PDF export) keep their status messages — telling the user is correct there — but
+they log as well; a failure the user is told about should not also be invisible
+to the developer.
+
+**Rejected**: re-throwing unconditionally. A render error mid-session would then
+take the app down rather than degrade; the status bar is the right UX for a
+human, it was simply the ONLY thing happening.
+
+**Verification discipline this establishes**: a gate is confirmed by making it
+fail on purpose, not by observing that it exists. Note that `pnpm test:composer`
+is `run.mjs full` and does NOT set `HKL_INDEX_CHECK` — use
+`HKL_INDEX_CHECK=1 node test/composer-test/run.mjs full` when the reference gate
+is what you are relying on.
+
+## The two named-zone splice refusals are retired: line 0 and section-header lines (2026-09-01)
+
+**Context**: the exhaustive pass attributed 15 of 34 refusals to two guards
+excluded BY NAME rather than by measurement — `score-start line` (6) and
+`section-header line` (9). Per the correction above, neither was a design
+choice.
+
+**Line 0**: the guard cited a probe (`cb-window.js` k=0, "~1 px") that measured
+the PRE-ownership window recipe — tall page, `header:'none'`, closure-based
+spanner expansion — none of which the splicer still uses. Under the current
+recipe a window whose `wLo` is 0 takes no synthetic leader and simply IS the
+score start: same meiHead, same credits band. Re-measured on the sonata at
+8/12/9 units (x / width / absolute staff top) against the `EPS` of 25 the
+context check tolerates everywhere. What IS structurally special is that line 0
+has no predecessor, so `ctxPrev` is now optional and the splice asserts line 0
+is page-first (it must be) rather than chaining a vertical plan from a line
+above it.
+
+**Section headers**: the guard called the title and reserve "page-mount
+injections (NOT idempotent)". That is true of re-RUNNING `injectSectionHeaders`,
+which a splice never does — it replaces systems inside an already-injected page.
+The reserve half was already solved (B4). The remaining half is the title's own
+y, and the fix is the same shape: the injector now records `data-baseline`
+beside `data-reserve`, so the DOM states the whole placement rule — **a title's
+baseline sits at its system's content top, minus the reserve accumulated at that
+system, plus the baseline offset** — and the splicer re-derives it from the
+replacement's measured content top whenever it re-engraves a title's own system.
+Recorded rather than imported, for the same reason the reserve was: one source
+of truth, and an unreadable value refuses the page instead of being guessed.
+
+**Consequence**: nothing is excluded by name any more. Refusals are structural
+only — the context-line check. Sonata battery **7/8 → 8/8** spliced (all
+reference-clean); routine sweep **94.8 % → 95.7 %**; exhaustive every-measure
+pass **91.9 % → 94.5 %** with refusals **34 → 23** and causes **7 → 6**. The 15
+refusals the two guards held became 11 splices and 4 at `m-5q8` — a sixth
+divergent context line the header guard had been masking, sitting directly above
+the movement-III header, and therefore a candidate to share a cause with the
+backlog's "no preview signature changes over section breaks". The pass also
+confirms no failure class specific to multi-line replaced sets: 3 of 62 fail,
+all inherited from a failing constituent, 0 failing while every constituent
+splices.
+
+**What it cost to find**: removing the line-0 guard exposed a real bug in the
+UNOWNED window recipe (`header: 'none'` removed the page-1 `pgHead` band, so the
+absolute page-first anchor was 650 units off and the page slid under its own
+title). Fixed by not suppressing the header there. The sonata could not have
+caught it — its pagination is owned. See lessons.md, "Two window recipes".
+
+**Fixtures**: `pageScoreStartSplice`, `pageSectionHeaderOwnLine` — both verified
+to fail on the unfixed build. **Probe**: `cb-startzone.js`.
+
+## 2026-09-01 — Every remaining context-line refusal on the sonata traced to three mechanisms; the run widens for a relocated clef at the SPLICER, not in the signature
+
+The six divergent context lines left in the design doc's START HERE list were
+root-caused in one pass with a refusal-path diagnostic (`lastContextDiff`,
+`lastWindow`, `lastWindowMei` on `PageSystemSplicer`; probe `cb-ctxdiverge.js`)
+rather than by hypothesis. Three mechanisms, all fixed:
+
+1. **Courtesy check holes** (`beginsSignatureChange`, pagesplice.ts) — the B3
+   rule pulls in the line that generates an end-of-line courtesy, but it tested
+   only the measure's immediate previous sibling for a `scoreDef` (the importer
+   and `setSectionHeaderAt` emit `scoreDef > sb[section] > measure`) and scanned
+   only the first staff for a leading clef. Now walks back to the nearest
+   measure-bearing sibling and scans every staff. Lines 55, 56, 78 (dW 49 / 347
+   / 604 — the II→III and III→IV movement boundaries).
+2. **Range head clef** (`runningScoreDefContext`, model/index.ts) — a range
+   opening at a measure with a leading clef drops that clef
+   (`relocateInitialClefs(clone, true)`) but the head scoreDef kept the clef
+   from BEFORE the measure, so the whole sub-render drew in the old clef. The
+   target's leading clefs (first child of a layer — exactly what the relocation
+   drops) are now folded into the head. Lines 56, 58 (windows opening at
+   measures 226 and 230, `dRelX 22 / 36`). This path is shared with the scroll
+   splicer.
+3. **Relocation dependency** (`trySplice`, pagesplice.ts) — `relocateInitialClefs`
+   renders measure i's measure-initial clef inside measure i−1, so an edit that
+   makes a clef measure-initial (or stops it being so) re-engraves the measure
+   before the changed run. The run now extends one measure left when its first
+   measure holds any layer clef. Line 114 (the document's last measure, `dW 89`).
+
+**Where the relocation dependency lives.** The alternative was to make the
+per-measure signature of measure i−1 incorporate measure i's leading-clef state,
+so the sig-diff itself would report both measures changed. Rejected: the
+signature is a serialization of the measure's own content and is cached per id
+(`sigEl`), so a cross-measure term would need its own invalidation when the
+NEXT measure mutates — a second dirty-tracking path for one dependency. Widening
+the run at the splicer is one line, needs no pre-edit model (any layer clef in
+the run's first measure triggers it, covering both directions), and costs at
+most one extra measure of window. The same one line went into the scroll
+splicer's run derivation (`splice.ts`), which imports only `lo..hiNew` and
+would otherwise leave i−1's change glyph stale.
+
+**Measured** (sonata): the six seeds that refused now all splice
+(`cb-ctxdiverge.js`), `cb-splice-battery.js` 8/8 reference-clean, routine sweep
+**95.7 % → 100 %** (115/115). Fixtures: `pageSystemSpliceCourtesyBehindSectionBreak`,
+`pageSystemSpliceCourtesyClefOtherStaff`, `pageSystemSpliceRelocatedClef`,
+`rangeSerializeLeadingClefHead`. The exhaustive every-measure pass is recorded
+in the design doc's status log: **94.5 % → 100 %**, 420/420, empty refusal
+inventory.
+
+## 2026-09-01 — Inline clefs are interior structure: a clef edit derives (page view) or full-renders (scroll view)
+
+Found while fixturing the relocation rule above: after `setClefAtCursor` in page
+view, the splice re-engraved only the clef's own line and left every later line
+in the OLD clef (the reference gate showed lines 4–5 960 units short and in the
+wrong clef). The per-measure sig-diff marks one measure dirty; the clef governs
+the rest of the staff.
+
+**Decision**: treat inline layer clefs exactly like mid-piece `<scoreDef>`s.
+`computeInteriorSig` now includes every `layer > clef` as `position:staff:
+shape+line:dis` (never xml:id), so any insert/remove/change of a clef bails the
+refill to a derive — the same conservative path key and meter changes already
+take. The scroll splicer gets the matching guard: if the changed run's SET of
+clef tags (ids stripped) differs between the old and new signatures, it returns
+false and the caller full-renders. A clef that merely MOVES (a note deleted
+ahead of it, making it measure-initial) leaves both signatures unchanged and
+stays on the splice path — that case is the relocation rule's job.
+
+**Rejected**: extending the dirty run to the next clef on that staff. It would
+usually be the rest of the document, hit the run caps, and full-render anyway —
+with a second dirty-tracking mechanism to maintain. Clef edits are rare; a
+derive is the right price for a correct render.
+
+**Cost**: `computeInteriorSig` gains one `querySelectorAll('layer > clef')` per
+edit (tens of elements on the sonata). Fixture `pageSystemSpliceRelocatedClef`
+(its first render after the clef insertion is now the derive; its delete is the
+splice under test).
+
+**Noted, not fixed**: a clef set on an EMPTY layer does not roundtrip
+(`<clef/><space/>` → `<space/><clef/>` on load). See lessons.md.
+
+## 2026-09-01 — A running scoreDef context only overwrites what it carries (`meter.sym`)
+
+Max's smoke test after the sonata refusals were cleared: any edit on the first
+line turned the cut-time signature into "2/2"; remounting restored it. The
+splice window's range head had lost `meter.sym`. `stampRunningCtx` wrote the
+running meter's symbol as `if (sym) set else remove`, unconditionally, and a
+range opening at measure 0 has an EMPTY running context — nothing precedes the
+target — so the document head's own `cut` was removed while its 2/2 stayed.
+Mid-score windows had the same hole and never showed it (the meter is drawn only
+on the discarded leader); line 0 had been refused by name until the day before.
+
+**Decision**: the symbol is written or cleared only when the context carries a
+meter override (`meterCount`/`meterUnit` non-null), mirroring how the context
+itself only records a symbol alongside an override (`applySd`). Key and clef
+already followed this rule; meter.sym was the one attribute with an
+unconditional clear. General rule for any future context field: "no override
+seen" and "override with an empty value" are different states.
+
+**Why no gate saw it**: every gate compares geometry, and the cut-time glyph is
+within `EPS` of the stacked numerals. Fixture `pageScoreStartSpliceKeepsMeterSym`
+reads the meter glyph codepoints across a line-0 splice. Whether to add a
+glyph-identity comparison to the reference gate and the context check is
+proposed in the design doc's START HERE (Max's call — the context-check half
+changes splice behaviour).
+
+## 2026-09-01 — The reference gate compares signature glyph identity, not only geometry
+
+Two same-day findings passed every geometry gate: a window drawn in the wrong
+clef (refused only by 11–36 units of incidental ledger-line drift) and cut time
+rendered as "2/2" on a line-0 splice (not refused at all). `verifyAgainstReference`
+(the `HKL_INDEX_CHECK` deep gate) now also compares, per measure, the SMuFL
+codepoints of every `g.clef` / `g.keySig` / `g.meterSig` glyph between the
+spliced DOM and the fresh reference render (`sigGlyphs`, the `use` href before
+its per-render hash). Exact, no layout flush, index-check only — so no hot-path
+cost and no behaviour change. The reference host is POST-PROCESSED first (the
+same `postProcessRendered` the live pages and window hosts get): the HEJI pass
+replaces key-signature `use` glyphs with injected `<text>`, so a raw reference
+compares its flats against a live page that has none — the check's first run on
+the sonata's line 0 was exactly that false divergence.
+
+**Deliberately NOT done yet**: the same comparison in the live context check
+(`spliceDom`), which would refuse a wrong-signature window by construction. That
+changes splice behaviour (more refusals are possible) and is Max's call; it is
+listed in the design doc's START HERE. The census that would feed it is already
+recorded on the refusal path (`lastContextDiff`).

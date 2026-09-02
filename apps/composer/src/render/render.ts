@@ -1354,10 +1354,17 @@ class Renderer {
          window-page-first system read ~419 units too high, which is what the
          B1 vertical plan reads directly (see pagesplice.ts verticalPlan).
          Unowned pagination still needs the tall page: 'line' paginates by
-         height and the window must land on one page. */
+         height and the window must land on one page — but it must NOT suppress
+         the header. Verovio's page-1 `pgHead` band (600 units on a titled doc)
+         is what its first system is anchored below, and `verticalPlan` reads a
+         page-first system's position ABSOLUTELY from the window. Suppressing it
+         put line 0 — the only line that can be window-page-first here, since a
+         mid-score window's first system is the synthetic leader — 650 units too
+         high, sliding the whole page up under its own title. Same lesson as the
+         owned path's ~419-unit anchor band, one path over. */
       windowOptions: owned
         ? base
-        : { ...base, pageHeight: 60_000, adjustPageHeight: true, header: 'none' },
+        : { ...base, pageHeight: 60_000, adjustPageHeight: true },
       liveOptions: () => base,
       postProcess: (el: HTMLElement) => this.postProcessRendered(el),
       decorateHost: (el: HTMLElement) => styleVoltaNumbers(el),

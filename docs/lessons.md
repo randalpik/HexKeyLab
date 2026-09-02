@@ -2102,3 +2102,229 @@ instinct — "more likely random variance based on the targets themselves" — w
 correct before either mechanism was examined. **When someone challenges an
 effect rather than its explanation, test the effect first; explaining a
 difference presumes it exists.**
+
+## A gate whose throw is caught is not a gate — `doReRender` swallowed every render error into the status bar (2026-09-01)
+
+The page splicer's acceptance gate (`verifyAgainstReference`, under
+`HKL_INDEX_CHECK`) full-renders the same pinned MEI offscreen and **throws** on
+any divergence. It works: fed a real bug — a page-first system placed 650 units
+too high — it produced
+`[page-splice] page 1 system 0: staff top diverged from reference (1373.0 vs 730.0)`.
+
+Nothing ever saw it. `doReRender` (main.ts) wrapped the whole render path in
+`catch (e) { setStatus('render error: ' + e.message, 'error') }`, and
+`setStatus` only writes `textContent` on a `<span>`. No console, so devtools
+showed nothing and the composer-test suite — which fails on console errors —
+could not see it either. The splice was recorded as `spliced`, the fixture's
+seven non-visual invariants passed, and only the pixel comparison objected. Two
+compounding factors: `pnpm test:composer` is `run.mjs full` with no
+`HKL_INDEX_CHECK`, so the gate was usually off entirely; and when it WAS on, it
+was silent. Every "verified against a full reference render" claim in
+composer-page-splice-design.md rested on this.
+
+Fixed by always `console.error`-ing in that catch and RE-THROWING under
+`__HKL_INDEX_CHECK`, verified by reintroducing the bug and watching the suite
+fail with the divergence text. The three user-action catches (save / MusicXML /
+PDF export) keep their status messages — that is the right UX there — but they
+now log too.
+
+- **An error path that terminates in a UI string is a silence.** A status bar is
+  for the user; it is not an error channel, and nothing automated reads it.
+- **A gate is not verified by the fact that it exists.** Make it fail on purpose
+  once. "The gate passed" and "the gate did not run" are indistinguishable from
+  a green result — I asserted the former about a run where the latter was true.
+- **An opt-in gate that the standard command does not set is off.** Check what
+  the script actually runs before citing it.
+
+## Two window recipes, and the large-document battery only exercises one (2026-09-01)
+
+The page splicer builds its offscreen window differently depending on whether
+the line-break owner has taken pagination: `paginationOwned()` uses the live
+page options verbatim, and the unowned path adds a tall page so `'line'` cannot
+paginate. That second branch also carried `header: 'none'` — which removed
+Verovio's page-1 `pgHead` band (600 units on a titled document) from the window.
+`verticalPlan` reads a page-FIRST system's position **absolutely** from the
+window, so line 0 landed 650 units high and slid the whole page up underneath
+its own title.
+
+Two things kept it hidden. Line 0 is the ONLY line that can reach the page-first
+branch in the unowned path — a mid-score window's first system is the synthetic
+leader, so no real line is window-page-first — and line 0 was excluded by a
+separate guard until the day this was found. And the sonata, which every
+large-scale probe uses, has pagination OWNED, so `cb-splice-battery.js` and
+`cb-sweep.js` cannot execute the unowned branch at all: both reported identical
+numbers before and after the fix. The only documents that exercise it are the
+small synthetic ones in composer-test.
+
+This is the same lesson as "Verovio's system placement does not match the
+rendered bbox" (2026-08-31), one path over: the owned branch had already learned
+that suppressing the header hides a ~419-unit anchor band. A fix applied to one
+of two parallel recipes is half a fix.
+
+- **When a code path forks on a mode, ask which mode your battery is in.** A
+  probe suite on one large document may never enter the other branch.
+- **An absolute anchor read from a sub-render is only valid if the sub-render
+  reproduces everything above it.** Any option that removes vertical furniture
+  from a window invalidates every absolute reading taken from it.
+
+## The first mismatch a comparator names is where drift became VISIBLE, not where it started (2026-09-01)
+
+`profilesMatch` compares a window context line to its live counterpart measure
+by measure and returns on the first x/width delta past `EPS`. Six divergent
+lines on the sonata sat in the START HERE list for two sessions described by
+that string alone — `m-5o3: dRelX=0.0 dW=347` — and every hypothesis built on it
+was about the FIRST measure of the line. Wrong measure. A line is justified, so
+whatever changes at its END (a courtesy signature that is or is not drawn)
+redistributes across every measure, and the first measure is simply the first
+place the redistribution exceeds 25 units. With the whole per-measure diff in
+hand (`lastContextDiff`, `cb-ctxdiverge.js`) the last measure read
+`dW=-956, census {keySig:[0,3], keyAccid:[0,9], meterSig:[0,3], clef:[0,1]}` —
+the live page draws a courtesy key+meter+clef the window lacks — and the cause
+took minutes.
+
+The same census answered the positional cases too: `clefs [["E05C","E062",
+"E062"],["E05C","E050","E062"]]` says "the window drew staff 2 in an F clef
+where live has a G clef" without a screenshot.
+
+- **A gate that reports one number is a detector, not a diagnostic.** On the
+  refusal path — which is never hot — record the full comparison and a census of
+  what was drawn. The cost is nothing; the alternative is guessing from a
+  summary that points at the wrong place by construction.
+- **Justified lines smear an edge defect across every measure.** Any width-only
+  divergence with `dRelX=0.0` at the FIRST measure should be read as "something
+  at either END of the line", never as "something about the first measure".
+
+## A render-time pass that moves content across measures is a dependency the sig-diff cannot see (2026-09-01)
+
+`relocateInitialClefs` draws a measure-initial clef at the END of the PREVIOUS
+measure (the change glyph before the barline). So the RENDER of measure i−1
+depends on the CONTENT of measure i — and the page splicer's changed run comes
+from a per-measure content signature. Deleting the chord ahead of a mid-measure
+clef in the sonata's last measure made the clef measure-initial; a full render
+moved it onto the line above and re-justified that line by up to 329 units; the
+sig-diff said only the last measure changed; the context check refused
+("unchanged context that changed"), correctly, at the cost of a full render.
+
+Two separate holes fell out of the same pass. The range serializer DROPS a
+range-initial leading clef (its glyph belongs to the out-of-range predecessor)
+but `runningScoreDefContext` stopped BEFORE the target measure, so the head kept
+the OLD clef and the whole sub-render — context lines and the replaced line
+alike — drew staff 2 in the wrong clef. Eleven units of ledger-line drift on a
+context line is all that stopped one such window from being spliced in.
+
+- **Every render-time pass that reads a neighbour is a hidden edge in the
+  dependency graph.** When a splice is scoped by "which measures changed",
+  enumerate the passes that make measure i's picture depend on measure i±1
+  (relocated clefs; end-of-line courtesies; ties to the next measure) and
+  widen the run for each.
+- **A sub-document that drops an element must reproduce its EFFECT.** Dropping
+  the clef without folding it into the head is the same bug as `header:'none'`
+  hiding the anchor band: the window no longer reproduces the state the full
+  render has at that point.
+- **The context check is load-bearing for correctness, not only for fidelity.**
+  It caught a wrong-clef window by a margin that could easily have been inside
+  EPS. When a refusal looks like "small drift, tighten nothing", look for what
+  the drift is a SYMPTOM of before touching the tolerance.
+
+## Document order at a section boundary is `scoreDef > sb > measure` — a "previous sibling" check walks past it (2026-09-01)
+
+`beginsSignatureChange` asked whether the measure beyond the window begins a
+signature change by testing `previousElementSibling.localName === 'scoreDef'`.
+Both the MusicXML importer and `setSectionHeaderAt` put the section break
+BETWEEN the scoreDef and the measure, so at every movement boundary the check
+saw an `<sb>` and said no — and it also scanned only the first staff, so a
+piano right hand changing clef at a line start was invisible. Two of the six
+remaining refusal signatures (dW 347 and 604) and part of a third (dW 49).
+
+- **Walk siblings until a measure-bearing element, not one step.** Break
+  elements (`sb`, `pb`) are inert for content but real for adjacency.
+- **"The first staff" is never a proxy for "any staff"** in a check about what
+  Verovio draws — it draws per staff.
+
+## Prevailing state is a document-wide dependency; a per-measure signature diff cannot see it (2026-09-01)
+
+An inline `<clef>` governs every following measure of its staff until the next
+one. The page refill finds "what changed" by diffing per-measure serializations,
+so inserting a clef marked ONE measure dirty; the splice re-engraved that line
+and left every line after it in the old clef — a wrong render, not a refusal,
+and invisible to every gate that looks only at the edited line. It surfaced
+because a new fixture set a clef and then made a splice-verified edit under the
+reference gate, which compares EVERY mounted system: lines 4 and 5 were 960
+units shorter than the reference and drew a G clef where it drew an F.
+
+Mid-piece key/meter changes never had this problem because they live in a
+section-level `<scoreDef>`, and `computeInteriorSig` already derives on any
+change to those. Inline clefs are the same kind of state stored in a different
+place. Fixed by folding every layer clef (position + staff + attributes, not
+id) into that signature, and by refusing a scroll splice whose run's clef SET
+changed.
+
+- **Ask of every element the sig-diff treats as local: what does it govern
+  beyond its measure?** Clefs, key/meter changes, octave displacements — any
+  "until further notice" state must route to the whole-document path.
+- **The reference gate is the only gate that checks what the edit did NOT
+  touch.** Keep it wide (every mounted system) and keep running the suite under
+  `HKL_INDEX_CHECK=1` — the standard command does not set it.
+- **A guard that compares the old and new run measure-by-measure breaks the
+  moment the runs differ in length.** The first version of the scroll guard
+  joined one separator per measure; a past-end append creates a measure, so an
+  empty old run compared unequal to a one-measure new run with no clefs in
+  either, and every measure-count-changing scroll edit full-rendered. Compare
+  the SET (concatenated tags), never the per-measure shape.
+
+## The cursor is "past flat[c]", and fixtures that place clefs by arithmetic get it wrong (2026-09-01)
+
+`locateCursor` anchors on `flat[c]` and inserts AFTER it. So `setClefAtCursor(v,
+getMeasureStartCursor(v, k))` puts the clef after the measure's FIRST chord, not
+before it; `+1` lands after the second; and the cursor at the barline (past the
+previous measure's last chord) stores the clef at the END of the previous
+measure — which renders identically to a measure-initial clef (Verovio draws
+both before the barline) but is a different model form, and the range
+serializer's leading-clef path is only reachable through the importer's
+measure-initial form. The only public-API route to that form is: set the clef
+past the first chord, then delete that chord. Three fixtures were written on the
+wrong arithmetic and reported "cannot pose the case" until a probe printed the
+layer after each candidate cursor.
+
+Also found in passing: a clef set on an EMPTY layer (only a placeholder space)
+does not roundtrip — `<clef/><space/>` loads back as `<space/><clef/>`, which
+would render the clef at the end of the measure. Not fixed; noted for the
+backlog.
+
+- **When placing anything by cursor in a test, print the layer afterwards once.**
+  The convention is documented, but "measure start" and "before the first
+  chord" are different cursors under it.
+- **A 50-measure fixture must declare `skipCursorTrace: true`.** The trace
+  scrolls every stop into view; on a multi-page document that is minutes per
+  fixture, and four such fixtures read as a hung suite.
+
+## A geometry gate cannot see a same-width glyph swap — and a running context must not clear what it does not carry (2026-09-01)
+
+Max's smoke test: any edit on the sonata's first line turned its cut-time
+signature into "2/2"; remounting the page restored it. The window's range head
+had lost `meter.sym`. `stampRunningCtx` wrote the running meter's symbol with
+`if (sym) set; else remove` — unconditionally — and a range opening at measure
+0 has an EMPTY running context (nothing precedes the target), so the head's own
+`cut` was removed while its 2/2 stayed. Every mid-score window had the same
+hole, hidden because the meter is only drawn on the discarded leader.
+
+Nothing caught it because every gate we have compares GEOMETRY: per-measure
+x/width and staff tops in the context check, `verifyAgainstReference`, and
+`cb-startzone.js`. The cut-time glyph and the stacked "2/2" numerals differ by
+a few units — inside `EPS` 25 — so a wrong glyph of the right width is invisible
+to all of them, and no test document had a meter symbol to lose. The one thing
+that DOES see it is the glyph census the refusal path now records
+(`lastContextDiff`): `E08B` versus `E082 E082` in `g.meterSig`. Line 0 also
+became spliceable only the day before, so the first render to expose the head
+stamp to a visible meter was Max's.
+
+- **A running context may only overwrite what it carries.** "No override seen"
+  and "override with no symbol" are different states; collapsing them clears
+  document truth. Guard every clear on the corresponding value being present.
+- **Add a glyph-identity signal to the reference gate.** Geometry is necessary,
+  not sufficient: clefs, key signatures and meter signatures can swap form at
+  equal width. Codepoints per `g.clef`/`g.keySig`/`g.meterSig` per measure cost
+  no layout flush and are exact.
+- **Every test document is 4/4 without a symbol.** A fixture corpus with one
+  shape of everything cannot catch a bug in the other shapes; when a feature has
+  an attribute the corpus never sets, set it once somewhere.

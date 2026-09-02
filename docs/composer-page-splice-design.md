@@ -23,11 +23,12 @@ the partition is an internal bootstrap that is never painted.** Status:
 C-B2a) IMPLEMENTED 2026-08-30** (`<pb>` pins + `breaks:'encoded'`). On the
 sonata, the **dy-cascade (Phase C-B2b / B1) is IMPLEMENTED 2026-08-31** — the
 vertical gate no longer refuses movement, it measures and applies it (see
-"Implementation (Phase C-B2b / B1)") — and **7 of 8 battery edits splice**, all
-8 apply and all are reference-clean (4 units x/width, 8 spacing, 6 absolute
-staff top), with the first edit after a derive splicing instead of
-full-rendering. The single remaining fallback there is the section-header line —
-which is an unresolved guard, NOT a design choice (see START HERE).
+"Implementation (Phase C-B2b / B1)"). **The two named-zone refusals — line 0 and
+section-header lines — are RETIRED 2026-09-01** (see "Line 0 and section headers
+retired"): nothing is excluded by name any more, refusals are structural only.
+**All 8 battery edits splice**, all apply and all are reference-clean, and the
+routine sweep is at **95.7 %** with its whole refusal inventory being the five
+known divergent context lines.
 
 **Phase D — making the edit path O(edit) rather than O(document) — IMPLEMENTED
 2026-08-30/31** for every O(document) item identified: a steady-state spliced
@@ -515,7 +516,8 @@ overlay/cursor update) vs ~1.95 s for the one full render; window loadData
 all. Reference parity held on EVERY battery edit across all 37 pages / 446
 measures: max x/width delta ≤ 4 units (~0.4 px snap noise), max spacing delta
 ≤ 9 units. The single fallback is the section-header line, which is excluded
-by design. (Before conservative repartition the hit rate was 3/8: the first
+by design. *(Superseded 2026-09-01: not by design, and retired — the battery is
+now 8/8. Reading of the day kept for the trail.)* (Before conservative repartition the hit rate was 3/8: the first
 edit in a region re-derived its lines and usually changed the line count.
 Fixing reflow reversibility fixed the hit rate with it.)
 
@@ -589,6 +591,8 @@ render uses **`breaks:'encoded'`** — the only mode that honors `<pb>`.
   (max 4 units over 37 pages / 446 measures). The two full renders are the
   documented first-edit-after-derive and the section-header line — and even
   those dropped from ~1.95 s to **~1.1 s**, because encoded loads 2× faster.
+  *(Both have since been retired: the first edit after a derive splices as of
+  2026-08-30, the section-header line as of 2026-09-01.)*
 - **Self-consistency verified (`cb-pageown.js`)**: with pagination owned, the
   live DOM equals a fresh full render of the same pinned MEI — 446 measures
   compared, 0 system-sequence mismatches, max geometry delta 4 units (0.4 px
@@ -966,8 +970,9 @@ gate: if `zoom75_differs` ever goes true, a preset has brought back a per-zoom
 ### Behaviour gate — the sonata battery run on BOTH code states
 
 Stash the source, re-run `cb-splice-battery.js`, unstash. Splice/skip outcome is
-identical edit-for-edit (7 of 8 splice; the section-header line is the by-design
-skip), reference parity holds across all 37 pages / 446 measures in both (max
+identical edit-for-edit (7 of 8 splice at the time; the section-header line was
+then the standing skip — retired 2026-09-01, the battery is now 8/8), reference
+parity holds across all 37 pages / 446 measures in both (max
 4 units, max spacing 9), and every edit got faster:
 
 | edit | before | after |
@@ -1189,6 +1194,181 @@ growing the doc-last line's bottom extent moves nothing below it and now
 legitimately splices. Suite 342/342 under `HKL_INDEX_CHECK`;
 typecheck/build/boundaries clean.
 
+## Line 0 and section headers retired — nothing is excluded by name (2026-09-01)
+
+The two guards that refused BY NAME rather than by measurement, 15 of the
+exhaustive pass's 34 refusals, are gone. Neither was a design choice; both
+comments described unresolved problems, and both turned out smaller than they
+read.
+
+**Line 0.** The guard cited probe `cb-window.js` at k=0, "drifts ~1px". That
+probe measures the PRE-ownership window recipe — tall page, `header:'none'`,
+closure-based spanner expansion — none of which the splicer still uses. Under
+the current recipe a window whose `wLo` is 0 takes no synthetic leader and IS
+the score start, which is the one case where reproducing score-start treatment
+is correct rather than an artifact. Re-measured on the sonata: 8 units
+per-measure x, 12 width, 9 absolute staff top, against the `EPS` of 25 the
+context check tolerates on every other line. What IS structurally special is
+that line 0 has no predecessor: `ctxPrev` is now optional, the context check
+stands on one side, and the splice asserts line 0 is page-first (it must be)
+rather than chaining a vertical plan from a line above it.
+
+**Section headers.** The guard called the title and reserve "page-mount
+injections (NOT idempotent)". That describes re-RUNNING `injectSectionHeaders`,
+which a splice never does — it replaces systems inside an already-injected page.
+B4 had already made the reserve readable (`data-reserve`) and taught
+`verticalPlan` to reason in Verovio coordinates, which is why replacing a system
+BELOW a header was already routine. What remained was the title's own y when the
+header's OWN system is re-engraved, and it takes the same shape as the reserve
+fix: the injector now records `data-baseline` too, so the DOM states the entire
+placement rule —
+
+> a title's baseline sits at its system's content top, minus the reserve
+> ACCUMULATED at that system, plus the baseline offset
+
+— and the splicer re-derives the y from the replacement's measured content top,
+before `snapPage`, mirroring the injector's own mount-then-snap order. The
+accumulated reserve (not the title's own) is the correct term: the injector
+measures each header against an UNSHIFTED `getBBox`, so a second header on the
+same page is placed relative to a content top that already carries the first
+one's displacement. An unreadable reserve or baseline still refuses the page —
+guessing is what caused the overlap B4 fixed.
+
+**What this cost.** Removing the line-0 guard exposed a live bug in the UNOWNED
+window recipe. `windowOptions` there carried `header: 'none'`, which removes
+Verovio's page-1 `pgHead` band (600 units on a titled document). `verticalPlan`
+reads a page-FIRST system's position ABSOLUTELY from the window, so line 0
+landed 650 units high and slid the whole page up under its own title. Line 0 is
+the only line that can reach that branch in the unowned path — a mid-score
+window's first system is the synthetic leader, so no real line is
+window-page-first — which is why the guard had been masking it. Fixed by not
+suppressing the header there; it is the same lesson the owned path learned in B1
+(`header:'none'` hid a ~419-unit anchor band), one path over. **The sonata could
+not have caught this**: its pagination is owned, so `cb-splice-battery.js` and
+`cb-sweep.js` report identical numbers before and after the fix. Only the small
+synthetic composer-test documents exercise the unowned branch.
+
+**And the gate that should have caught it was mute.** `verifyAgainstReference`
+DID detect it — `staff top diverged from reference (1373.0 vs 730.0)` — but
+`doReRender` caught the throw into a status-bar string, so devtools showed
+nothing and the suite (which fails on console errors) saw nothing. Fixed in
+main.ts: always log, and re-throw under `HKL_INDEX_CHECK`. Verified by
+reintroducing the bug and watching the suite fail on the divergence text. Note
+that `pnpm test:composer` does NOT set `HKL_INDEX_CHECK` — run
+`HKL_INDEX_CHECK=1 node test/composer-test/run.mjs full` when the reference gate
+is the thing you are relying on. See lessons.md, "A gate whose throw is caught
+is not a gate".
+
+**Measured.** Battery **7/8 → 8/8** spliced, all reference-clean, all applied.
+Routine sweep **94.8 % → 95.7 %** (110/115). Exhaustive every-measure pass
+**91.9 % → 94.5 %**, refusals **34 → 23**, causes **7 → 6**: `score-start line`
+and `section-header line` are gone from the histogram, and the 15 they held
+became 11 splices plus 4 at `m-5q8` — a SIXTH divergent context line the header
+guard had been masking, directly above the movement-III header. The pass also
+confirms the change introduced no failure class specific to multi-line replaced
+sets: of 62 multi-line sets, 3 fail and all 3 are inherited from a failing
+constituent, 0 fail while every constituent splices. Suite 345/347 under `HKL_INDEX_CHECK`
+with zero gate throws (the two failures were the visual baselines this change
+legitimately moved; both reseeded). Fixtures `pageScoreStartSplice` and
+`pageSectionHeaderOwnLine`, both verified to fail on the unfixed build. Probe
+`cb-startzone.js`.
+
+## Context-line divergences root-caused — three mechanisms, all fixed (2026-09-01)
+
+The six refusal signatures left in the inventory after the named-zone guards
+were retired were not six causes and not six lines. The ids a refusal names are
+the FIRST MISMATCHING measure, not the line start, so the six signatures were
+five context lines — 55, 56 (from both sides), 58, 78, 114 — and once the
+splicer recorded the whole comparison instead of its first row, three
+mechanisms accounted for all of them.
+
+**Method.** `PageSystemSplicer` now records, on the refusal path only,
+`lastWindow` (lines, measures, leader/trailer, page pins, courtesy extension),
+`lastWindowMei` (the sub-document that rendered) and `lastContextDiff` — the full
+per-measure x/width diff of the diverged context line plus a census of the glyph
+classes drawn in each measure by the window and by live, and the clef glyphs'
+SMuFL codepoints. `cb-ctxdiverge.js` edits one seed per line, dumps those, and
+adds two edge checks: the range head against the full render's effective
+clef/key/meter at the window start, and what begins the measure just beyond the
+window. Six seeds, one run, every cause legible:
+
+| context line | signature | what the census said | mechanism |
+|---|---|---|---|
+| 55 (below) | `dRelX=0.0 dW=49` | last measure `clef [0,1]`: live draws a courtesy clef (staff 2 turns G→F at 226) | courtesy check scanned only staff 1 |
+| 56 (below) | `dRelX=0.0 dW=347` | last measure `keySig [0,3] keyAccid [0,9] meterSig [0,3] clef [0,1]` | courtesy check read only the immediate previous sibling; the movement-III scoreDef sits behind the section `<sb>` |
+| 78 (below) | `dRelX=0.0 dW=604` | last measure `keySig [0,3] keyAccid [0,6] meterSig [0,3]` (a 2-measure line) | same — movement IV |
+| 56 (above) | `dRelX=22 dW=31` | first measure clefs `[E05C E062 E062]` vs live `[E05C E050 E062]` | range head kept the OLD staff-2 clef; window drew line 56 in F |
+| 58 (above) | `dRelX=36 dW=12` | same, `ledgerLines [2,1]` | same — window opened at 230, whose staff 2 turns F; the REPLACED line 57 was drawn in the wrong clef too |
+| 114 (above) | `dRelX=0.0 dW=-89` | last measure `clef [1,0]`: the WINDOW draws a C-clef change live does not | not a window defect: the edit made a mid-measure clef measure-initial and `relocateInitialClefs` moved it onto the line above |
+
+**Fixes.**
+
+1. `beginsSignatureChange` walks previous siblings back to the nearest
+   measure-bearing element (the importer and `setSectionHeaderAt` emit
+   `scoreDef > sb[section] > measure`) and scans every staff for a leading
+   clef/keySig/meterSig.
+2. `runningScoreDefContext` (model) folds the target measure's own leading clefs
+   into the range's head scoreDef — precisely the clefs `relocateInitialClefs
+   (clone, true)` drops. The scroll splicer renders through the same path and
+   had the same exposure.
+3. `trySplice` extends the changed run one measure LEFT when its first measure
+   holds any layer clef: the relocation makes measure i's picture depend on
+   measure i−1's content, which the per-measure sig-diff cannot express. One
+   line, direction-agnostic (the clef element exists in both the pre- and
+   post-edit states), no pre-edit model needed. See decisions.md for why this
+   lives at the splicer rather than in the signature.
+
+**What mechanism 2 means.** Two of the six refusals were the context check
+catching a wrong-clef window — and for the line-59 edit the wrong-clef line was
+the one about to be SPLICED IN. It was refused by 36 units of accumulated
+ledger-line drift on the context line, against `EPS` 25; a document whose
+right-hand part happened to sit on the staff would have drifted less and landed.
+The context check is therefore load-bearing for correctness, not fidelity. A
+cheap second signal — comparing the clef glyph codepoints (and keySig/meterSig
+counts) of the context lines, no layout flush involved — would make that class
+undetectable-by-luck impossible; proposed, not built (Max's call, see START
+HERE).
+
+**Found while fixturing, fixed the same day: a clef EDIT left every later line
+in the old clef.** The fixture for mechanism 3 sets a clef and then makes a
+splice-verified edit; the reference gate — which compares EVERY mounted system,
+not only the edited ones — reported lines 4–5 of the page 960 units short and
+drawn in G where the reference had F. The per-measure sig-diff had marked one
+measure dirty for the clef insertion and the splice re-engraved one line; the
+clef governs the rest of the staff. Mid-piece key/meter changes never had this
+problem because they live in a section-level `<scoreDef>` and
+`computeInteriorSig` derives on any change to those — inline clefs are the same
+kind of state in a different place. Fixed the same way: every `layer > clef`
+(position + staff + attributes) is now part of the interior signature, so a clef
+edit derives; the scroll splicer refuses a run whose clef SET changed (tags with
+ids stripped) and full-renders. A clef that merely moves stays a splice. Not a
+regression from today's work — it predates the splicer — but the sonata, whose
+clefs all come from import and are never edited, could not have shown it.
+Probe `cb-clefprop.js`; see decisions.md "Inline clefs are interior structure".
+
+**Found by Max's smoke test the same afternoon: a line-0 splice turned cut time
+into "2/2".** The range head lost `meter.sym`: `stampRunningCtx` cleared the
+symbol whenever the running context had none — including when it had no METER
+at all, which is every range opening at measure 0 (nothing precedes the target).
+Every mid-score window had the same hole, hidden because the meter is drawn only
+on the discarded leader; line 0 had been refused by name until the day before.
+No gate saw it because every gate compares geometry, and the cut-time glyph is
+within EPS of the stacked numerals — the first same-width glyph swap, and the
+concrete case for the "second signal" proposed above. Fixed (the symbol is only
+written or cleared when the context carries a meter); fixture
+`pageScoreStartSpliceKeepsMeterSym` reads the meter glyph codepoints.
+
+**Measured.** All six seeds splice (`cb-ctxdiverge.js`, 183–373 ms wall).
+`cb-splice-battery.js` **8/8**, `allReferenceOk`, all edits applied. Routine
+sweep **95.7 % → 100 %** (115/115, median splice 248 ms; the 4 small page-top
+drift rows are unchanged from before and are the anchor-inside-the-run case the
+README describes). Exhaustive every-measure pass **94.5 % → 100 %**: 420/420
+edited measures splice, refusal inventory empty, 0 conflicts, all 69 multi-line
+replaced sets splice (`allmeasures.sh` + `allmeasures-report.mjs`).
+Fixtures `pageSystemSpliceCourtesyBehindSectionBreak`,
+`pageSystemSpliceCourtesyClefOtherStaff`, `pageSystemSpliceRelocatedClef`,
+`rangeSerializeLeadingClefHead`.
+
 ## Window expansion — one containment pass, not a fixed point (2026-08-31)
 
 **The rule (Max):** *a spanner with one end inside the replaced set needs the
@@ -1246,68 +1426,50 @@ movement instead of refusing it, battery 6/8 → 7/8); and a long-silent TEST bu
 
 Read this section first; the per-area lists below have the detail.
 
-1. **The five divergent context lines — the whole remaining inventory.** Splice
-   coverage is **94.8 % (109/115)** on the routine mid-line sweep and **91.9 %
-   (386/420)** on the exhaustive every-measure pass; the latter is lower only
-   because divergent context lines are hit by several measures each, not because
-   more causes exist. The exhaustive pass (2026-09-01) gives the complete
-   picture: **34 refusals, 7 causes.** The two biggest are **`section-header
-   line` (9) and `score-start line` (6) — 44 % of all refusals, and NOT "by
-   design"** however often this doc has said so (Max, 2026-09-01). Their code
-   comments say *"page-mount injections (NOT idempotent)"* and *"window fidelity
-   is unproven there"* — unresolved problems, not permanent choices. See the
-   B4/line-0 item below. The other **19 are five distinct divergent context
-   lines**:
+1. **DONE 2026-09-01 — the six divergent context lines.** All root-caused
+   and fixed in one pass; see "Context-line divergences root-caused". They were
+   five lines and three mechanisms: the B3 courtesy check missing
+   `scoreDef > sb > measure` and non-first staves; the range serializer keeping
+   the OLD clef in a window that opens at a leading clef (a correctness bug,
+   caught by the context check by 11–36 units); and the `relocateInitialClefs`
+   cross-measure dependency, handled by widening the run. Routine sweep
+   **95.7 % → 100 %**, exhaustive every-measure pass **94.5 % → 100 %**
+   (420/420), battery 8/8. **Nothing in the sonata refuses any more.**
 
-   | n | context line | signature |
-   |---|---|---|
-   | 6 | `m-5o3` | `dRelX=0.0 dW=347` |
-   | 5 | `m-5iq` | `dRelX=0.0 dW=49` |
-   | 5 | `m-5x4` | `dRelX=36.0 dW=12` (the only one where positions shift) |
-   | 2 | `m-8ej` | `dRelX=0.0 dW=604.2` |
-   | 1 | `m-cy6` | `dRelX=0.0 dW=89` (document's last line) |
+   **Proposed next (Max's call): a second context signal.** The wrong-clef
+   window was refused on x-drift alone, and the margin was thin — and the
+   line-0 cut-time bug Max found the same afternoon (a same-width glyph swap,
+   `E08B` → `E082 E082`) passed EVERY geometry gate. Comparing clef / keySig /
+   meterSig glyph codepoints costs no layout flush and is exact. Two places:
+   the reference gate (`verifyAgainstReference`, index-check only — **DONE**,
+   `sigGlyphs`, a pure test-time hardening) and the context check
+   (`spliceDom`, a behaviour change: more refusals possible — **open, Max's
+   call**). The census that would feed the latter is already computed on the
+   refusal path (`lastContextDiff`).
 
-   None is the courtesy-signature class B3 fixed: four are width-only like B3's
-   but survived its window extension, so a different or compound cause, and
-   `m-5x4` shifts positions so likely something else again. **That is five
-   root-causings, not nineteen** — start by dumping what is actually at those
-   five lines. Reproduce with `allmeasures.sh` + `allmeasures-report.mjs`.
-   (Measure ids regenerate on each import; locate them by the dW signature.)
+   The scroll splicer's run derivation (`splice.ts`) had the same relocation
+   dependency and got the same one-line widening (unmeasured beyond the suite —
+   the scroll view has no large-document battery).
+
+   **Also fixed, found by the new fixtures under the reference gate:** a clef
+   EDIT used to splice only its own line and leave every later line in the old
+   clef (both views). Inline clefs are now interior structure — a clef edit
+   derives in page view and full-renders in scroll view. Noted for the backlog,
+   NOT fixed: a clef set on an EMPTY layer does not roundtrip
+   (`<clef/><space/>` loads back as `<space/><clef/>`).
 
    NOTE when comparing older figures: hit rates recorded before 2026-09-01 used a
    measure-start cursor, where 8 of the 115 lines performed a cursor MOVE rather
    than a deletion. Those are comparable to neither number above.
-2. **B4 remainder — `section-header line` (9 refusals) and line 0 (6).** Take
-   these BEFORE the five divergent lines: 44 % of refusals for two root-causings
-   instead of five, and both are more tractable than their comments suggest.
+2. **DONE 2026-09-01 — B4 remainder (section-header lines) and line 0.** Both
+   retired; see "Line 0 and section headers retired" for what each guard
+   actually was, the `data-baseline` placement rule, the unowned-window
+   `header:'none'` bug this uncovered, and the swallowed-throw finding that let
+   that bug through a green suite. Battery 8/8, sweep 95.7 %. What remains from
+   the original framing: folding the section-header reserve into the RENDER
+   instead of a post-mount translate would remove the injector from the layout
+   model entirely, and it is what D1 (vertical justification) needs anyway.
 
-   *Section-header*: the guard says the title text and reserve translate are
-   "page-mount injections (NOT idempotent)". Half of that is already solved —
-   the injector records what it applied as `data-reserve` on the title, and the
-   vertical plan works in reserve-aware coordinates, so replacing a system BELOW
-   a header is routine today. What remains is only the case where the replaced
-   system is the header's OWN: the title sits at an absolute y derived from that
-   system's pre-shift content top plus a baseline offset, so it must be
-   recomputed. Record the baseline the same way the reserve was recorded; the
-   `hdrTitles` assertion in the reference gate already fails loudly if the title
-   leaves its band.
-
-   *Line 0*: the guard says "window fidelity is unproven there (probe k=0 drifts
-   ~1px)". **Re-measure before writing anything** — ~1 px is ~10 units, inside
-   the `EPS` of 25 the context check tolerates everywhere else, so the guard may
-   simply be stale. What IS genuinely special about line 0 is that it has no
-   synthetic leader (nothing precedes it to absorb score-start artifacts), so it
-   is the one window whose opening edge is the real score start.
-
-   Older framing of this item, kept for context: The reserve
-   half of B4 is DONE (see "Section headers"): the plan now reasons in Verovio
-   coordinates, titles travel with their systems, and header pages are no longer
-   exempt from either reference gate. What is left is the refusal when the
-   REPLACED run itself contains a header measure — re-placing the title needs
-   the injector's baseline rule, not just its reserve — and the line-0
-   exclusion (score-start treatment differs in a window, probe k=0 ~1 px).
-   Folding the reserve into the RENDER instead of a post-mount translate would
-   retire the last refusal; it is also what D1 (vertical justification) needs.
 3. **A6 — the splice's DOM cost, but NOT by cutting getBBox calls.** Measured
    and refuted: 199 → 169 calls changed the time by nothing (15.5/16.1/17.8 ms
    vs ~16.0). It is layout-FLUSH bound. The real levers are fewer MOUNTED pages
@@ -1334,7 +1496,14 @@ OUTCOME per edit and `reference.ok`, not the wall times.
 **Two standing traps.** Do not edit app source while `pnpm test:composer` is
 running — Vite HMR reloads the page and the injected `window.__test` hooks
 vanish, surfacing as hundreds of fixtures failing on
-`Cannot read properties of undefined`. And the suite treats ANY console warning
+`Cannot read properties of undefined`. The same applies to every phasec probe
+(`runner.mjs`, `cb-sweep.js`, `allmeasures.sh`): they hold a page on the dev
+server for minutes, and a reload mid-run loses the imported sonata and the
+chunk. Sequence app-source edits between runs; docs, fixtures and probe files
+are safe to edit at any time (Vite does not serve `test/`). And do not run
+`pnpm build` (or another Chromium probe) alongside the suite: a VISUAL fixture
+once shot its capture mid-relayout under a concurrent build (69397 B against a
+68538 B baseline) and passed byte-identically when re-run alone. And the suite treats ANY console warning
 as a failure, so two unrelated-looking fixtures failing on an identical warning
 string means a shared render path started warning.
 
@@ -1440,16 +1609,25 @@ string means a shared render path started warning.
       line just beyond begins a signature change (bounded at two — the sonata
       has consecutive meter changes). Diverged refusals **11 → 4**, hit rate
       **82.6 % → 88.7 %**, and the battery recovers `insert-rest-ripple`
-      (**7/8**). Fixture `pageSystemSpliceCourtesySig`.
-- [~] **B4. Section-boundary zones + line 0** — the SECTION-HEADER RESERVE half
-      is DONE 2026-08-31 (see "Section headers"), and it was a live defect, not
-      just missing coverage: an edit above a header cascaded the page while the
-      title stayed put (Max), and the same missing knowledge made the cascade
-      distance wrong by the whole 900-unit reserve. Both gates had EXEMPTED
-      header pages from their vertical checks, which is why it went unseen.
-      Remaining: the `section-header line` refusal (replaced run contains a
-      header measure) and the line-0 exclusion (probe k=0, ~1 px score-start
-      divergence). The k=59 zone is handled structurally by the context check.
+      (**7/8**). Fixture `pageSystemSpliceCourtesySig`. **Two holes closed
+      2026-09-01**: the check now looks past `<sb>`/`<pb>` to the scoreDef
+      (movement boundaries are `scoreDef > sb > measure`) and scans every staff
+      for a leading clef — see "Context-line divergences root-caused". Fixtures
+      `pageSystemSpliceCourtesyBehindSectionBreak`,
+      `pageSystemSpliceCourtesyClefOtherStaff`.
+- [x] **B4. Section-boundary zones + line 0** — DONE. The reserve half landed
+      2026-08-31 (see "Section headers"), and it was a live defect, not just
+      missing coverage: an edit above a header cascaded the page while the title
+      stayed put (Max), and the same missing knowledge made the cascade distance
+      wrong by the whole 900-unit reserve — both gates had EXEMPTED header pages
+      from their vertical checks, which is why it went unseen. The remaining two
+      refusals (`section-header line`, `score-start line`) were retired
+      2026-09-01: `data-baseline` completes the title placement rule so a
+      header's OWN system can be re-engraved, and the line-0 guard was measured
+      stale. Retiring line 0 uncovered a real unowned-window anchor bug, and the
+      reference gate that caught it turned out to be silent — see "Line 0 and
+      section headers retired". The k=59 zone is handled structurally by the
+      context check.
 - [x] **B5. Ensure-mount before the mounted gate** — DONE 2026-08-31. The
       splice now mounts a needed page from the already-loaded PRE-edit layout
       (`Renderer.mountPageIfCheap`, ~50 ms) instead of refusing, guarded on
@@ -1525,6 +1703,47 @@ string means a shared render path started warning.
       of the automatic legality-driven mover.
 
 ## Status log
+
+- 2026-09-01 — **The sonata's remaining refusals are gone: routine sweep
+  95.7 % → 100 % (115/115), battery 8/8 reference-clean.** The six divergent
+  context-line signatures were five lines and three mechanisms, found in one
+  pass by recording the whole comparison on the refusal path
+  (`lastContextDiff` + `cb-ctxdiverge.js`) instead of its first row: the B3
+  courtesy check missed `scoreDef > sb > measure` and non-first staves; the
+  range serializer kept the OLD clef in a window opening at a leading clef (a
+  correctness bug the context check caught by 11–36 units — the replaced line
+  was drawn in the wrong clef); and `relocateInitialClefs` makes a measure's
+  picture depend on its successor's content, so the run now widens one measure
+  left for a layer clef. Exhaustive every-measure pass **94.5 % → 100 %** (420/420 edited measures, 0 refusals, 0 conflicts, 69 multi-line sets all splicing).
+  Fixturing the relocation rule exposed a pre-existing wrong render — a clef
+  EDIT left every later line in the old clef — fixed by making inline clefs
+  interior structure (derive / full render). Max's smoke test then found a
+  line-0 splice turning cut time into "2/2" (the range head cleared
+  `meter.sym` with an empty running context; fixed). Five fixtures, all
+  verified to fail on the unfixed build. See "Context-line divergences
+  root-caused".
+- 2026-09-01 — **The two named-zone refusals are retired; nothing is excluded by
+  name.** `score-start line` (6 refusals) and `section-header line` (9) were
+  measured, not argued: line 0's guard cited a probe of the pre-ownership window
+  recipe and re-measures at 8/12/9 units against `EPS` 25; the header guard
+  described re-running the injector, which a splice never does. The injector now
+  records `data-baseline` beside `data-reserve`, stating the whole title
+  placement rule in the DOM, and the splicer re-derives a title's y whenever it
+  re-engraves that title's own system. Battery **7/8 → 8/8**, sweep
+  **94.8 % → 95.7 %** with the refusal histogram reduced to divergent context
+  lines only; the exhaustive every-measure pass moved
+  **91.9 % → 94.5 %** with refusals **34 → 23** and causes **7 → 6**, the
+  remaining novelty being `m-5q8` — a sixth divergent context line the header
+  guard had masked, sitting directly above the movement-III header. Two things
+  fell out of it: a real bug in the UNOWNED
+  window recipe (`header:'none'` removed the page-1 `pgHead` band, so a
+  page-first absolute anchor was 650 units off and the page slid under its own
+  title — invisible to every sonata probe, since that document's pagination is
+  owned), and the discovery that `doReRender` swallowed the reference gate's
+  throw into a status-bar string, so the gate had never been able to fail
+  anything. Both fixed; the gate was then confirmed by making it fail on
+  purpose. Fixtures `pageScoreStartSplice`, `pageSectionHeaderOwnLine`; probe
+  `cb-startzone.js`.
 
 - 2026-09-01 — **Exhaustive every-measure sweep settles the sampling question.**
   Editing all 446 measures (420 real edits) shows: refusal is a **function of the

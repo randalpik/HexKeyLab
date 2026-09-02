@@ -439,7 +439,15 @@ function stampRunningCtx(sd: Element, ctx: RunningScoreDefCtx): void {
   if (ctx.mode !== null) sd.setAttribute('mode', ctx.mode);
   if (ctx.meterCount !== null) sd.setAttribute('meter.count', ctx.meterCount);
   if (ctx.meterUnit !== null) sd.setAttribute('meter.unit', ctx.meterUnit);
-  if (ctx.meterSym) sd.setAttribute('meter.sym', ctx.meterSym); else sd.removeAttribute('meter.sym');
+  /* meter.sym travels WITH a running meter: only a context that carries a meter
+     override may set or clear it. With no override (a range opening at the score
+     start, or a document with no mid-piece meter change) the head's own symbol
+     stands. Clearing it unconditionally turned the sonata's cut time into "2/2"
+     on every line-0 splice (Max, 2026-09-01) — same width, so no geometry gate
+     saw it; fixture pageScoreStartSpliceKeepsMeterSym. */
+  if (ctx.meterCount !== null || ctx.meterUnit !== null) {
+    if (ctx.meterSym) sd.setAttribute('meter.sym', ctx.meterSym); else sd.removeAttribute('meter.sym');
+  }
   for (const staffDef of Array.from(sd.querySelectorAll('staffDef'))) {
     const sn = staffDef.getAttribute('n') ?? '1';
     const c = ctx.clefByStaff.get(sn);
@@ -884,6 +892,10 @@ export class ComposerModel {
         });
       }
     };
+    const clefOf = (c: Element) => ({
+      shape: c.getAttribute('shape') ?? 'G', line: c.getAttribute('line') ?? '2',
+      dis: c.getAttribute('dis'), disPlace: c.getAttribute('dis.place'),
+    });
     for (const node of stream) {
       if (node === targetEl) break;
       if (node.localName === 'scoreDef') {
@@ -894,10 +906,31 @@ export class ComposerModel {
           const sn = staff.getAttribute('n') ?? '1';
           const clefs = staff.querySelectorAll('layer > clef');
           const c = clefs[clefs.length - 1] as Element | undefined;
-          if (c) ctx.clefByStaff.set(sn, {
-            shape: c.getAttribute('shape') ?? 'G', line: c.getAttribute('line') ?? '2',
-            dis: c.getAttribute('dis'), disPlace: c.getAttribute('dis.place'),
-          });
+          if (c) ctx.clefByStaff.set(sn, clefOf(c));
+        }
+      }
+    }
+    /* The target's OWN leading clefs are prevailing state too. In the full
+       render `relocateInitialClefs` moves a measure-initial clef into the
+       previous measure's end, so the measure begins IN the new clef (and a line
+       beginning there draws the new clef as its system clef, with the change
+       glyph on the line before). The range clone drops that clef
+       (`relocateInitialClefs(clone, true)` — there is no previous measure to
+       carry it), so unless the head says the new clef, the whole range renders
+       in the OLD one. Found 2026-09-01 by the page splicer's context check: a
+       window opening at a measure whose staff 2 turns G→F drew every line of
+       the window in G, and the replaced line with it — 11 units of ledger-line
+       drift on the context line was all that stopped it landing
+       (`cb-ctxdiverge.js`). Mirror relocateInitialClefs exactly: a clef that is
+       the FIRST child of a layer. */
+    if (targetEl) {
+      for (const staff of Array.from(targetEl.children)) {
+        if (staff.localName !== 'staff') continue;
+        const sn = staff.getAttribute('n') ?? '1';
+        for (const layer of Array.from(staff.children)) {
+          if (layer.localName !== 'layer') continue;
+          const first = layer.firstElementChild;
+          if (first && first.localName === 'clef') ctx.clefByStaff.set(sn, clefOf(first));
         }
       }
     }

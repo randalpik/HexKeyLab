@@ -311,7 +311,8 @@ function computeHeadSig(model: ComposerModel): string {
 
 /** Interior-structure signature: every section-level element that is NOT a
  *  measure, sb/pb, or measure-bearing wrapper (i.e. mid-piece scoreDefs),
- *  serialized with its measure-count position. A mid-piece key/meter change
+ *  serialized with its measure-count position — plus every inline layer clef
+ *  (see below). A mid-piece key/meter change
  *  lives OUTSIDE any measure, so the per-measure sig diff cannot see it — a
  *  refill would render it correctly (full loadData), but the Phase C-B system
  *  splice and the no-op skip would keep stale glyphs. Guarded here so both
@@ -331,6 +332,24 @@ function computeInteriorSig(model: ComposerModel): string {
     }
   };
   walk(section);
+  /* Inline layer clefs are prevailing state too (2026-09-01): a `<clef>` inside
+     a layer governs every following measure of its staff until the next one, so
+     inserting, removing or changing one re-engraves lines the per-measure sig
+     diff never marks dirty — after a clef edit the splice re-drew the clef's own
+     line and left every line after it in the OLD clef (found by fixture
+     `pageSystemSpliceRelocatedClef` under the reference gate). Keyed by measure
+     position + staff + attributes, never xml:id, so an unchanged clef stays
+     silent and a moved one (a note deleted ahead of it) too — that case is the
+     splicer's relocation rule, not a state change. */
+  const measures = Array.from(section.querySelectorAll('measure'));
+  const at = new Map(measures.map((m, i) => [m, i]));
+  for (const c of Array.from(section.querySelectorAll('layer > clef'))) {
+    const staff = c.parentElement?.parentElement;
+    const meas = c.closest('measure');
+    parts.push('clef@' + (meas ? at.get(meas) : '?') + ':' + (staff?.getAttribute('n') ?? '?') + ':'
+      + (c.getAttribute('shape') ?? '') + (c.getAttribute('line') ?? '') + ':'
+      + (c.getAttribute('dis') ?? '') + (c.getAttribute('dis.place') ?? ''));
+  }
   return parts.join('|');
 }
 

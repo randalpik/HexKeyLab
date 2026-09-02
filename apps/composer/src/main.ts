@@ -790,6 +790,13 @@ function injectSectionHeaders(scoreEl: HTMLElement, model: ComposerModel): void 
        to subtract it, and must read the value that was actually applied rather
        than duplicate the constant. */
     t.setAttribute('data-reserve', String(SECTION_HEADER_RESERVE));
+    /* And the baseline offset INTO that band. Together the two attributes state
+       the whole placement rule — title baseline = the system's content top minus
+       the reserve accumulated at it, plus this — which is what lets the page
+       splicer re-place a title when it re-engraves the title's own system
+       instead of refusing to touch header lines at all. Recorded rather than
+       imported for the same reason the reserve is: one source of truth. */
+    t.setAttribute('data-baseline', String(SECTION_HEADER_BASELINE));
     /* Centered on the page (not the system — a short final section would
        otherwise pull the title to the left margin). */
     t.setAttribute('x', String(PAGE_INNER_W / 2));
@@ -969,7 +976,20 @@ function doReRender(): void {
     cursor.update(model, cursorOpts());
     selectionOverlay.update(model, getInputState().selection);
   } catch (e) {
+    /* A throw anywhere on the render path used to end HERE, as a status-bar
+       string and nothing else — setStatus only writes to the DOM, so devtools
+       showed nothing and the composer-test suite (which fails on console
+       errors) could not see it either. That silently disabled the page-splice
+       acceptance gate: under HKL_INDEX_CHECK, `verifyAgainstReference` throws
+       on any divergence from a full re-engrave, this caught it, and the suite
+       passed regardless — a 643-unit staff-top divergence was reported and lost
+       exactly this way (2026-09-01). Real errors are now always logged, and
+       under the index check they are RE-THROWN, so a gate that detects a
+       divergence actually fails the run instead of narrating it to an element
+       nobody reads. */
+    console.error('[composer] render error', e);
     setStatus('render error: ' + (e as Error).message, 'error');
+    if ((globalThis as { __HKL_INDEX_CHECK?: boolean }).__HKL_INDEX_CHECK === true) throw e;
   }
 }
 
@@ -1463,6 +1483,7 @@ $('btnSave')?.addEventListener('click', () => {
     saveHkc(model);
     setStatus('Saved .hkc.', 'info');
   } catch (e) {
+    console.error('[composer] save failed', e);
     setStatus('Save failed: ' + (e as Error).message, 'error');
   }
 });
@@ -1553,6 +1574,7 @@ $('btnExportXml')?.addEventListener('click', () => {
     downloadMusicXml(model);
     setStatus('Exported .musicxml.', 'info');
   } catch (e) {
+    console.error('[composer] musicxml export failed', e);
     setStatus('Export failed: ' + (e as Error).message, 'error');
   } finally {
     hideExportMenu();
@@ -1566,6 +1588,7 @@ $('btnExportPdf')?.addEventListener('click', async () => {
     await downloadPdf(model, renderer.toolkit(), () => reRender(), viewStavesFilter());
     setStatus('Exported .pdf.', 'info');
   } catch (e) {
+    console.error('[composer] pdf export failed', e);
     setStatus('PDF export failed: ' + (e as Error).message, 'error');
   }
 });

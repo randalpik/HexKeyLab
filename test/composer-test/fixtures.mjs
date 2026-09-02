@@ -1238,6 +1238,67 @@ const PAGE_SPLICE = {
     `,
   },
 
+  /* B4 remainder: the case where the replaced system IS the header's own. The
+   * title is not inside the system — main.ts appends it to the page-margin at
+   * an absolute y derived from that system's content top — so re-engraving the
+   * system leaves the title behind. This used to be refused outright
+   * ('section-header line', 9 of the sonata's 34 exhaustive-pass refusals). It
+   * must now splice, with the title re-placed on the injector's own rule.
+   * Asserted via FIXTURE_ASSERTIONS.pageSectionHeaderOwnLine. */
+  pageSectionHeaderOwnLine: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 200; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      m.setSectionHeaderAt(Math.floor(m.allMeasures().length / 2), 'II');
+      r();
+    `,
+  },
+
+  /* Line 0 was excluded by name ('score-start line', 6 of the 34), on a probe
+   * that measured the PRE-ownership window recipe. Under the current recipe a
+   * window starting at line 0 takes no synthetic leader and simply IS the score
+   * start, so it reproduces. What is structurally special is that there is no
+   * line ABOVE it: the context check has one side, and the vertical plan must
+   * read line 0's position from the window's own page-1 anchor rather than
+   * chain from a predecessor. Asserted via
+   * FIXTURE_ASSERTIONS.pageScoreStartSplice. */
+  pageScoreStartSplice: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 96; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
+  /* Score-start splice with a meter SYMBOL (2026-09-01, Max's smoke test): the
+   * range head lost `meter.sym` because `stampRunningCtx` cleared it whenever the
+   * running context had no symbol — including when it had no meter at all, which
+   * is every range opening at measure 0 — so any edit on line 0 turned cut time
+   * into "2/2". Same width as the glyph, so no geometry gate saw it; this
+   * fixture reads the meter glyph codepoints. Asserted via
+   * FIXTURE_ASSERTIONS.pageScoreStartSpliceKeepsMeterSym. */
+  pageScoreStartSpliceKeepsMeterSym: {
+    skipCursorTrace: true,
+    setup: `
+      m.setTimeSig(2, 2, { sym: 'cut', beatGroups: null });
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 96; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
   /* B3: Verovio draws an end-of-line COURTESY signature when the NEXT line
    * begins with a clef/key/meter change. A splice window that stops at that
    * boundary renders its last line without the courtesy the live page has — a
@@ -1252,6 +1313,94 @@ const PAGE_SPLICE = {
       for (let i = 0; i < 200; i++) {
         const high = (Math.floor(i / 4) % 2) === 0;
         m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
+  /* B3, second hole (2026-09-01): the courtesy-generating scoreDef may sit
+   * BEHIND a break element. `setSectionHeaderAt` (and the MusicXML importer)
+   * emit `scoreDef > sb[section] > measure`, so a movement that opens with a
+   * key change has its scoreDef two siblings back — the first version of the
+   * check read only the immediate previous sibling and walked straight past
+   * both sonata movement boundaries (dW 347 and 604). Asserted via
+   * FIXTURE_ASSERTIONS.pageSystemSpliceCourtesyBehindSectionBreak. */
+  pageSystemSpliceCourtesyBehindSectionBreak: {
+    skipCursorTrace: true,
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 200; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
+  /* B3, third hole (2026-09-01): a leading clef on a staff other than the
+   * first is a courtesy clef on that staff. The check scanned only the first
+   * staff, so a piano right hand going G→F at a line start (the sonata's
+   * measure 226) left the line above without its courtesy in the window
+   * (dW 49). Asserted via FIXTURE_ASSERTIONS.pageSystemSpliceCourtesyClefOtherStaff. */
+  pageSystemSpliceCourtesyClefOtherStaff: {
+    skipCursorTrace: true,
+    setup: `
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      m.setCursor(0, 1);
+      for (let i = 0; i < 200; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      m.setVoice(3); m.setCursor(0, 3);
+      for (let i = 0; i < 200; i++) {
+        m.insertChordAtCursor({ notes: [mk('c', 3)], duration: '4', dots: 0 });
+      }
+      m.setVoice(1);
+      r();
+    `,
+  },
+
+  /* A render-time cross-measure dependency the sig-diff cannot see (2026-09-01):
+   * `relocateInitialClefs` draws a measure-initial clef at the END of the
+   * PREVIOUS measure, so an edit that makes a mid-measure clef measure-initial
+   * (deleting the chord ahead of it) re-engraves the measure before the changed
+   * run — on the line above, when the run starts a line. The sonata's last
+   * measure posed exactly this (m-cy6, dW 89..329 on the line above): the
+   * context check refused correctly, but the splice must instead pull the
+   * predecessor into the run. Asserted via
+   * FIXTURE_ASSERTIONS.pageSystemSpliceRelocatedClef. */
+  pageSystemSpliceRelocatedClef: {
+    skipCursorTrace: true,
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 200; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
+  /* Range serializer (2026-09-01): a range whose first measure begins with a
+   * clef change must fold that clef into its head scoreDef. The clef itself is
+   * dropped from the range (`relocateInitialClefs(clone, true)` — its glyph
+   * belongs to the out-of-range previous measure), and `runningScoreDefContext`
+   * stopped BEFORE the target measure, so the head kept the OLD clef and the
+   * whole sub-render drew in it. Found by the page splicer's context check:
+   * windows opening at the sonata's measures 226 and 230 rendered staff 2 in
+   * the wrong clef — including the REPLACED line — and only 11 units of
+   * ledger-line drift on the context line stopped one from landing. Both the
+   * page and scroll splicers render through this path. Asserted via
+   * FIXTURE_ASSERTIONS.rangeSerializeLeadingClefHead. */
+  rangeSerializeLeadingClefHead: {
+    skipCursorTrace: true,
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 64; i++) {
+        m.insertChordAtCursor({ notes: [mk('g', 5)], duration: '4', dots: 0 });
       }
       r();
     `,
@@ -8168,8 +8317,9 @@ export const FIXTURE_ASSERTIONS = {
         const startIds = pb['startIds'];
         if (startIds.length < 4) return { ok: false, detail: 'need >= 4 lines, got ' + startIds.length };
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
-        /* Target line 1 (line 0 is the excluded score-start line) so there are
-           systems BELOW the replaced one to cascade. */
+        /* Target line 1 so there are systems BELOW the replaced one to
+           cascade (line 0 splices too — see pageScoreStartSplice — but on a
+           short doc it can be the only line on its page). */
         const target = m.allMeasures()[ids.indexOf(startIds[1])];
         const flat = m['flatChildren'](1);
         let cur = -1;
@@ -8285,6 +8435,143 @@ export const FIXTURE_ASSERTIONS = {
         return { ok: true };
       })()` },
   ],
+  pageSectionHeaderOwnLine: [
+    { name: "editing the header's OWN line splices, and the title is re-placed on the injector's rule",
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 3 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+        const title0 = document.querySelector('#score text.hkl-section-header');
+        if (!title0) return { ok: false, detail: 'no section title rendered' };
+        /* Both attributes together ARE the placement rule; without them the
+           splicer cannot re-derive where the title goes and refuses the page. */
+        const RESERVE = Number(title0.getAttribute('data-reserve'));
+        const BASELINE = Number(title0.getAttribute('data-baseline'));
+        if (!isFinite(RESERVE)) return { ok: false, detail: 'title carries no data-reserve' };
+        if (!isFinite(BASELINE)) return { ok: false, detail: 'title carries no data-baseline' };
+        const RULE = RESERVE - BASELINE;   /* title baseline sits this far above its system's content top */
+        const ty = (el) => { const b = el.transform && el.transform.baseVal.consolidate(); return b ? b.matrix.f : 0; };
+        const headerSys = () => {
+          const t = document.querySelector('#score text.hkl-section-header');
+          const meas = t && document.getElementById(t.getAttribute('data-for'));
+          return { t, sys: meas ? meas.closest('g.system') : null };
+        };
+        /* Two readings: the RULE (Verovio units — what the injector fixes, and
+           what a stale title violates as its system's content top moves) and
+           the on-screen CLEARANCE in px, which is what a reader sees. */
+        const state = () => {
+          const { t, sys } = headerSys();
+          if (!t || !sys) return null;
+          const top = sys.getBBox().y + ty(sys);
+          return { rule: top - Number(t.getAttribute('y')),
+                   gap: sys.getBoundingClientRect().top - t.getBoundingClientRect().bottom };
+        };
+        const s0 = state();
+        if (!s0) return { ok: false, detail: 'header system not resolvable' };
+        if (!(s0.gap > 0)) return { ok: false, detail: 'title already overlapping before the edit (gap ' + s0.gap.toFixed(1) + 'px)' };
+        const hs = headerSys().sys;
+        const headerLine = pb['startIds'].indexOf(hs.querySelector('g.measure').id);
+        if (headerLine < 1) return { ok: false, detail: 'header system is not a line start (' + headerLine + ')' };
+        /* A note on the header's OWN line — the run the splice must replace. */
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const lo = ids.indexOf(pb['startIds'][headerLine]);
+        const hi = headerLine + 1 < pb['startIds'].length ? ids.indexOf(pb['startIds'][headerLine + 1]) : ids.length;
+        const flat = m['flatChildren'](1);
+        let cur = -1;
+        for (let i = 0; i < flat.length; i++) {
+          const el = flat[i];
+          if (el.localName !== 'note' && el.localName !== 'chord') continue;
+          const mi = m.allMeasures().indexOf(el.closest('measure'));
+          if (mi >= lo && mi < hi) { cur = i; break; }
+        }
+        if (cur < 0) return { ok: false, detail: 'no note on the header line to replace' };
+        /* Snap noise (staff/barline snapping, applied at a different phase on
+           the live page than on the freshly measured replacement) puts ~5 units
+           on the rule reading. A title left at its old y drifts by however far
+           its system's content top moved — 14 units on this document's grow
+           step, so 8 discriminates with margin on both sides. */
+        const TOL = 8;
+        const step = (notes, what) => {
+          m.setCursor(cur, 1);
+          if (m.replaceChordAtCursor({ notes, duration: '4', dots: 0 }) === null) return { ok: false, detail: 'replace rejected (' + what + ')' };
+          H.reRender();   /* HKL_INDEX_CHECK verifies the page against a full re-engrave */
+          if (ps.lastOutcome !== 'spliced') return { ok: false, detail: what + ': expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
+          /* The point of the fixture: the header's OWN line was the run. */
+          if (!ps.lastRun || headerLine < ps.lastRun.a || headerLine > ps.lastRun.b) {
+            return { ok: false, detail: what + ': the header line was not in the replaced run (' + JSON.stringify(ps.lastRun) + ', header line ' + headerLine + ')' };
+          }
+          const st = state();
+          if (!st) return { ok: false, detail: 'header system lost after ' + what };
+          if (Math.abs(st.rule - RULE) > TOL) {
+            return { ok: false, detail: what + ': title is ' + st.rule.toFixed(1) + ' units above its system content top, rule says ' + RULE + ' — it was not re-placed with the system it labels' };
+          }
+          if (Math.abs(st.gap - s0.gap) > 3) {
+            return { ok: false, detail: what + ': title/system clearance changed ' + s0.gap.toFixed(1) + ' -> ' + st.gap.toFixed(1) + 'px' };
+          }
+          return { ok: true, st };
+        };
+        /* Grow the header line at BOTH extremes: a note far below sinks the
+           system's whole frame (its top edge moves down ~14 units), which is
+           what makes a stale title measurably wrong. Growing only upward does
+           not pose the case — Verovio reserves the space by sinking the staff
+           INSIDE the system, leaving its top edge where it was. */
+        const grown = step([mk('c', 0), mk('g', 8)], 'grow');
+        if (!grown.ok) return grown;
+        /* And back. */
+        const shrunk = step([mk('b', 4)], 'shrink');
+        if (!shrunk.ok) return shrunk;
+        return { ok: true };
+      })()` },
+  ],
+  pageScoreStartSplice: [
+    { name: 'an edit on the score-start line (line 0) splices instead of full-rendering',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 3 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        const startIds = pb['startIds'];
+        if (startIds.length < 3) return { ok: false, detail: 'need >= 3 lines, got ' + startIds.length };
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const end = ids.indexOf(startIds[1]);
+        if (end < 1) return { ok: false, detail: 'line 1 start not in model' };
+        /* Prefer a measure after line 0's first, mirroring the coverage sweep's
+           mid-line target; fall back to measure 0 on a one-measure line. */
+        const flat = m['flatChildren'](1);
+        let cur = -1, best = Infinity;
+        for (let i = 0; i < flat.length; i++) {
+          const el = flat[i];
+          if (el.localName !== 'note' && el.localName !== 'chord') continue;
+          const mi = m.allMeasures().indexOf(el.closest('measure'));
+          if (mi < 0 || mi >= end) continue;
+          const rank = mi === 0 ? 1 : 0;
+          if (rank < best) { best = rank; cur = i; if (rank === 0) break; }
+        }
+        if (cur < 0) return { ok: false, detail: 'no note on line 0 to replace' };
+        /* A marker on the LAST mounted system: it is outside the replaced run,
+           so it survives a splice and dies with a full render. */
+        const allSys = [...document.querySelectorAll('#score .score-page g.system')];
+        if (allSys.length < 2) return { ok: false, detail: 'need >= 2 mounted systems, got ' + allSys.length };
+        const marker = allSys[allSys.length - 1];
+        marker.setAttribute('data-hkl-test-marker', '1');
+        m.setCursor(cur, 1);
+        const deep = { q: 0, r: 0, pname: 'c', accid: '', oct: 2, midi: 36, colorHex: '#888', lightColorHex: '#fff', velocity: 80 };
+        if (m.replaceChordAtCursor({ notes: [deep], duration: '4', dots: 0 }) === null) return { ok: false, detail: 'replace rejected' };
+        H.reRender();   /* HKL_INDEX_CHECK verifies page 1 against a full re-engrave */
+        if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
+        if (!ps.lastRun || ps.lastRun.a !== 0) return { ok: false, detail: 'replaced run does not start at line 0: ' + JSON.stringify(ps.lastRun) };
+        const still = document.querySelector('[data-hkl-test-marker]');
+        if (!still) return { ok: false, detail: 'page DOM was rebuilt — this was a full render, not a splice' };
+        still.removeAttribute('data-hkl-test-marker');
+        return { ok: true };
+      })()` },
+  ],
   pageSystemSpliceCourtesySig: [
     { name: 'an edit beside a line that begins a key change still splices (the window pulls in the courtesy-generating line)',
       expr: `(() => {
@@ -8332,6 +8619,261 @@ export const FIXTURE_ASSERTIONS = {
         if (ps.lastOutcome !== 'spliced') {
           return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
         }
+        return { ok: true };
+      })()` },
+  ],
+  pageScoreStartSpliceKeepsMeterSym: [
+    { name: 'a line-0 splice keeps the cut-time symbol (range head keeps meter.sym; meter glyphs match a full render)',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        const headSym = m.getDoc().querySelector('scoreDef').getAttribute('meter.sym');
+        if (headSym !== 'cut') return { ok: false, detail: 'fixture cannot pose the case: head meter.sym=' + headSym };
+        /* model level: the range head must keep the symbol */
+        const rangeHead = new DOMParser().parseFromString(m.serializeRangeForRender(0, 2, { hejiEnabled: false }, null), 'application/xml').querySelector('scoreDef');
+        if (rangeHead.getAttribute('meter.sym') !== 'cut') return { ok: false, detail: 'serializeRangeForRender(0, 2) head lost meter.sym (' + rangeHead.getAttribute('meter.sym') + ')' };
+        const glyphs = () => { const m0 = document.querySelector('#score .score-page[data-page="1"] g.measure');
+          return m0 ? Array.from(m0.querySelectorAll('g.meterSig use')).map((u) => (u.getAttribute('xlink:href') || u.getAttribute('href') || '').replace(/^#/, '').split('-')[0]).join(' ') : 'page 1 not mounted'; };
+        const before = glyphs();
+        if (!/E08B/.test(before)) return { ok: false, detail: 'fixture cannot pose the case: live measure 0 does not draw the cut-time glyph: ' + before };
+        /* edit line 0 */
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+        const ver = m.docVersion();
+        if (!m.deleteAtCursor()) return { ok: false, detail: 'delete rejected' };
+        if (m.docVersion() === ver) return { ok: false, detail: 'delete did not change the document' };
+        const prevCheck = globalThis.__HKL_INDEX_CHECK;
+        globalThis.__HKL_INDEX_CHECK = true;
+        try { H.reRender(); } finally { globalThis.__HKL_INDEX_CHECK = prevCheck; }
+        if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice on line 0, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
+        if (!ps.lastRun || ps.lastRun.a !== 0) return { ok: false, detail: 'edit did not replace line 0: run=' + JSON.stringify(ps.lastRun) };
+        const after = glyphs();
+        if (after !== before) return { ok: false, detail: 'meter glyphs changed across the line-0 splice: before "' + before + '" after "' + after + '"' };
+        return { ok: true };
+      })()` },
+  ],
+  pageSystemSpliceCourtesyBehindSectionBreak: [
+    { name: 'an edit two lines above a movement that opens with a key change (scoreDef behind the section <sb>) splices',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        let startIds = pb['startIds'];
+        if (startIds.length < 6) return { ok: false, detail: 'need >= 6 lines, got ' + startIds.length };
+        const ids0 = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const sigMi = ids0.indexOf(startIds[4]);
+        if (sigMi < 0) return { ok: false, detail: 'line start not in model' };
+        /* Key change FIRST (scoreDef directly before the measure), THEN the
+           section header, whose <sb> lands between them: scoreDef > sb > measure,
+           the importer's order at a movement boundary. */
+        m.setKeySigAt(sigMi, '3s', 'major');
+        if (m.setSectionHeaderAt(sigMi, 'II') !== true) return { ok: false, detail: 'setSectionHeaderAt refused' };
+        const meas = m.allMeasures()[sigMi];
+        const prev1 = meas.previousElementSibling, prev2 = prev1 && prev1.previousElementSibling;
+        if (!prev1 || prev1.localName !== 'sb' || !prev2 || prev2.localName !== 'scoreDef') {
+          return { ok: false, detail: 'fixture cannot pose the case: siblings before the header measure are ' + (prev2 && prev2.localName) + ' > ' + (prev1 && prev1.localName) };
+        }
+        H.reRender();
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        startIds = pb['startIds'];
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const lineOfSig = startIds.indexOf(ids[sigMi]);
+        if (lineOfSig < 3) return { ok: false, detail: 'header measure is not a line start >= 3 (line ' + lineOfSig + ')' };
+        /* Two lines above: the line between is the compared context line, its
+           last measure carries the courtesy key signature, and the line that
+           GENERATES it sits just beyond the window. */
+        const target = lineOfSig - 2;
+        const mi = ids.indexOf(startIds[target]);
+        m.setCursor(m.getMeasureStartCursor(1, mi + 1), 1);
+        const ver = m.docVersion();
+        if (!m.deleteAtCursor()) return { ok: false, detail: 'delete rejected' };
+        if (m.docVersion() === ver) return { ok: false, detail: 'delete did not change the document' };
+        const prevCheck = globalThis.__HKL_INDEX_CHECK;
+        globalThis.__HKL_INDEX_CHECK = true;
+        try { H.reRender(); } finally { globalThis.__HKL_INDEX_CHECK = prevCheck; }
+        if (/diverged/.test(ps.lastSkipReason || '')) {
+          return { ok: false, detail: 'context line diverged — the courtesy line behind the section break was not pulled in: ' + ps.lastSkipReason };
+        }
+        if (ps.lastOutcome !== 'spliced') {
+          return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
+        }
+        if (!ps.lastWindow || ps.lastWindow.courtesyExt < 1) {
+          return { ok: false, detail: 'window was not extended for the courtesy (courtesyExt=' + (ps.lastWindow && ps.lastWindow.courtesyExt) + ')' };
+        }
+        return { ok: true };
+      })()` },
+  ],
+  pageSystemSpliceCourtesyClefOtherStaff: [
+    { name: 'an edit two lines above a line that begins with a STAFF-2 clef change splices (courtesy clef on the second staff)',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        let startIds = pb['startIds'];
+        if (startIds.length < 6) return { ok: false, detail: 'need >= 6 lines, got ' + startIds.length };
+        const ids0 = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const sigMi = ids0.indexOf(startIds[4]);
+        if (sigMi < 0) return { ok: false, detail: 'line start not in model' };
+        /* Voice 3 = staff 2, layer 1. Its default clef is F4, so G2 is a change.
+           Cursor c means "past flat[c]", so a clef set at the first chord's
+           cursor lands AFTER that chord; deleting the chord then makes the clef
+           measure-initial — the importer's form, and the only public-API route
+           to it (a clef set at the barline cursor is stored at the END of the
+           previous measure instead). */
+        const flat3 = m['flatChildren'](3);
+        const first3 = flat3.findIndex((el) => (el.localName === 'note' || el.localName === 'chord') && el.closest('measure') === m.allMeasures()[sigMi]);
+        if (first3 < 0) return { ok: false, detail: 'no chord in voice 3 of the target measure' };
+        if (!m.setClefAtCursor(3, first3, 'G', '2', null, null)) return { ok: false, detail: 'setClefAtCursor refused' };
+        m.setVoice(3); m.setCursor(first3, 3);
+        const delOk = m.deleteAtCursor();
+        m.setVoice(1);
+        if (!delOk) return { ok: false, detail: 'delete in voice 3 rejected' };
+        const meas = m.allMeasures()[sigMi];
+        const lead = meas.querySelector('staff[n="2"] > layer > clef');
+        if (!lead || lead !== lead.parentElement.firstElementChild) return { ok: false, detail: 'fixture cannot pose the case: no leading clef in staff 2 of the target measure: ' + (lead ? Array.from(lead.parentElement.children).map((c) => c.localName).join(',') : 'none') };
+        if (meas.querySelector('staff[n="1"] > layer > clef')) return { ok: false, detail: 'unexpected clef on staff 1' };
+        H.reRender();
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        startIds = pb['startIds'];
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const lineOfSig = startIds.indexOf(ids[sigMi]);
+        if (lineOfSig < 3) return { ok: false, detail: 'clef-change measure is not a line start >= 3 (line ' + lineOfSig + ')' };
+        const target = lineOfSig - 2;
+        const mi = ids.indexOf(startIds[target]);
+        m.setCursor(m.getMeasureStartCursor(1, mi + 1), 1);
+        const ver = m.docVersion();
+        if (!m.deleteAtCursor()) return { ok: false, detail: 'delete rejected' };
+        if (m.docVersion() === ver) return { ok: false, detail: 'delete did not change the document' };
+        const prevCheck = globalThis.__HKL_INDEX_CHECK;
+        globalThis.__HKL_INDEX_CHECK = true;
+        try { H.reRender(); } finally { globalThis.__HKL_INDEX_CHECK = prevCheck; }
+        if (/diverged/.test(ps.lastSkipReason || '')) {
+          return { ok: false, detail: 'context line diverged — the staff-2 courtesy clef line was not pulled in: ' + ps.lastSkipReason };
+        }
+        if (ps.lastOutcome !== 'spliced') {
+          return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
+        }
+        if (!ps.lastWindow || ps.lastWindow.courtesyExt < 1) {
+          return { ok: false, detail: 'window was not extended for the courtesy (courtesyExt=' + (ps.lastWindow && ps.lastWindow.courtesyExt) + ')' };
+        }
+        return { ok: true };
+      })()` },
+  ],
+  pageSystemSpliceRelocatedClef: [
+    { name: 'deleting the chord ahead of a mid-measure clef at a line start pulls the previous line into the run and splices',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        let startIds = pb['startIds'];
+        if (startIds.length < 5) return { ok: false, detail: 'need >= 5 lines, got ' + startIds.length };
+        const ids0 = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const mi = ids0.indexOf(startIds[3]);
+        if (mi < 0) return { ok: false, detail: 'line start not in model' };
+        /* A clef change before the SECOND chord of the line's first measure —
+           mid-measure, so it renders inside that measure and the line above is
+           untouched. Staff 1's default is G2, so F4 is a change. Cursors are
+           located by scanning the voice's flat children (a measure-start cursor
+           may be a wrapper stop, so +1 arithmetic lands one element late). */
+        const chordsIn = (voice, measEl) => { const flat = m['flatChildren'](voice); const at = [];
+          for (let i = 0; i < flat.length; i++) if ((flat[i].localName === 'note' || flat[i].localName === 'chord') && flat[i].closest('measure') === measEl) at.push(i);
+          return at; };
+        const at0 = chordsIn(1, m.allMeasures()[mi]);
+        if (at0.length < 2) return { ok: false, detail: 'need >= 2 chords in the clef measure, got ' + at0.length };
+        /* cursor at0[0] is "past the first chord": the clef lands before the second */
+        if (!m.setClefAtCursor(1, at0[0], 'F', '4', null, null)) return { ok: false, detail: 'setClefAtCursor refused' };
+        const layer = m.allMeasures()[mi].querySelector('staff[n="1"] > layer');
+        const clef = layer && layer.querySelector(':scope > clef');
+        if (!clef || clef !== layer.children[1]) return { ok: false, detail: 'fixture cannot pose the case: clef is not after the first chord: ' + (layer ? Array.from(layer.children).map((c) => c.localName).join(',') : 'no layer') };
+        H.reRender();
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        startIds = pb['startIds'];
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const lineOfMi = startIds.indexOf(ids[mi]);
+        if (lineOfMi < 2) return { ok: false, detail: 'clef measure is not a line start >= 2 (line ' + lineOfMi + ') — cannot pose the cross-line case' };
+        /* Delete the chord AHEAD of the clef: the clef becomes measure-initial
+           and relocateInitialClefs draws it at the end of the previous measure,
+           i.e. on the line above. */
+        const at1 = chordsIn(1, m.allMeasures()[mi]);
+        m.setCursor(at1[0], 1);   /* past the first chord → Backspace removes it */
+        const ver = m.docVersion();
+        if (!m.deleteAtCursor()) return { ok: false, detail: 'delete rejected' };
+        if (m.docVersion() === ver) return { ok: false, detail: 'delete did not change the document' };
+        if (layer.firstElementChild !== clef) return { ok: false, detail: 'clef did not become measure-initial after the delete: layer=' + Array.from(layer.children).map((c) => c.localName).join(',') };
+        const prevCheck = globalThis.__HKL_INDEX_CHECK;
+        globalThis.__HKL_INDEX_CHECK = true;
+        try { H.reRender(); } finally { globalThis.__HKL_INDEX_CHECK = prevCheck; }
+        if (/diverged/.test(ps.lastSkipReason || '')) {
+          return { ok: false, detail: 'context line diverged — the relocated clef re-engraved the line above without it being in the run: ' + ps.lastSkipReason };
+        }
+        if (ps.lastOutcome !== 'spliced') {
+          return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
+        }
+        if (!ps.lastRun || ps.lastRun.a !== lineOfMi - 1) {
+          return { ok: false, detail: 'run did not extend to the line above: run=' + JSON.stringify(ps.lastRun) + ' clef line=' + lineOfMi };
+        }
+        /* And the live page shows the change glyph where a full render puts it:
+           at the end of the previous measure, none at the start of this one. */
+        const prevEl = document.querySelector('#score #' + CSS.escape(ids[mi - 1]));
+        const thisEl = document.querySelector('#score #' + CSS.escape(ids[mi]));
+        if (!prevEl || !thisEl) return { ok: false, detail: 'measures not in the DOM' };
+        const clefsPrev = prevEl.querySelectorAll('g.clef').length;
+        if (clefsPrev < 1) return { ok: false, detail: 'previous measure shows no clef-change glyph after the splice' };
+        return { ok: true };
+      })()` },
+  ],
+  rangeSerializeLeadingClefHead: [
+    { name: 'a range starting at a measure with a leading clef folds that clef into its head scoreDef',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const mi = 8;
+        if (m.allMeasures().length <= mi + 2) return { ok: false, detail: 'need > ' + (mi + 2) + ' measures' };
+        /* Cursor c is "past flat[c]": the clef lands after measure mi's first
+           chord; deleting that chord makes it measure-initial — the importer's
+           form, which the range serializer must drop-and-fold. */
+        const flat = m['flatChildren'](1);
+        const measEl = m.allMeasures()[mi];
+        const first = flat.findIndex((el) => (el.localName === 'note' || el.localName === 'chord') && el.closest('measure') === measEl);
+        if (first < 0) return { ok: false, detail: 'no chord in measure ' + mi };
+        if (!m.setClefAtCursor(1, first, 'F', '4', null, null)) return { ok: false, detail: 'setClefAtCursor refused' };
+        m.setCursor(first, 1);
+        if (!m.deleteAtCursor()) return { ok: false, detail: 'delete rejected' };
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const layer = m.allMeasures()[mi].querySelector('staff[n="1"] > layer');
+        if (!layer || !layer.firstElementChild || layer.firstElementChild.localName !== 'clef') return { ok: false, detail: 'fixture cannot pose the case: no leading clef: ' + (layer ? Array.from(layer.children).map((c) => c.localName).join(',') : 'no layer') };
+        const parse = (lo, hi) => new DOMParser().parseFromString(m.serializeRangeForRender(lo, hi, { hejiEnabled: false }, null), 'application/xml');
+        const headClef = (doc) => { const sd = doc.querySelector('scoreDef staffDef[n="1"]'); return sd ? (sd.getAttribute('clef.shape') || '?') + (sd.getAttribute('clef.line') || '') : null; };
+        /* Range opening AT the clef measure: head must say F4, and the clef
+           element itself is gone (it belongs to the out-of-range predecessor). */
+        const atDoc = parse(mi, mi + 1);
+        const atFirst = atDoc.querySelector('measure');
+        if (!atFirst || atFirst.getAttribute('xml:id') !== ids[mi]) return { ok: false, detail: 'range does not start at the clef measure' };
+        if (headClef(atDoc) !== 'F4') return { ok: false, detail: 'range head clef is ' + headClef(atDoc) + ', expected F4 (the dropped leading clef)' };
+        if (atFirst.querySelector('layer > clef')) return { ok: false, detail: 'leading clef was not dropped from the range first measure' };
+        /* Range opening one measure EARLIER: head keeps G2 and the clef is
+           relocated to the end of the predecessor, exactly like the full render. */
+        const beforeDoc = parse(mi - 1, mi + 1);
+        if (headClef(beforeDoc) !== 'G2') return { ok: false, detail: 'range head clef is ' + headClef(beforeDoc) + ', expected G2 (clef change is inside the range)' };
+        const prevLayer = beforeDoc.querySelector('measure staff[n="1"] > layer');
+        if (!prevLayer || !prevLayer.lastElementChild || prevLayer.lastElementChild.localName !== 'clef') return { ok: false, detail: 'clef was not relocated to the end of the predecessor measure' };
+        const full = new DOMParser().parseFromString(m.serialize({ hejiEnabled: false }, null), 'application/xml');
+        const fullPrev = Array.from(full.querySelectorAll('measure')).find((x) => x.getAttribute('xml:id') === ids[mi - 1]);
+        const fl = fullPrev && fullPrev.querySelector('staff[n="1"] > layer');
+        if (!fl || !fl.lastElementChild || fl.lastElementChild.localName !== 'clef') return { ok: false, detail: 'full serialize did not relocate the clef (baseline assumption broken)' };
         return { ok: true };
       })()` },
   ],

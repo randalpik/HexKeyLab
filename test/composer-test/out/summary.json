@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 345,
-  "passed": 345,
+  "fixtures": 352,
+  "passed": 352,
   "failed": 0,
-  "elapsedMs": 193561,
+  "elapsedMs": 696993,
   "results": [
     {
       "name": "emptyDoc",
@@ -940,11 +940,67 @@
       }
     },
     {
+      "name": "pageSectionHeaderOwnLine",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "pageScoreStartSplice",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "pageScoreStartSpliceKeepsMeterSym",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 6
+      }
+    },
+    {
       "name": "pageSystemSpliceCourtesySig",
       "ok": true,
       "failures": [],
       "counts": {
         "invariants": 7
+      }
+    },
+    {
+      "name": "pageSystemSpliceCourtesyBehindSectionBreak",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 6
+      }
+    },
+    {
+      "name": "pageSystemSpliceCourtesyClefOtherStaff",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 6
+      }
+    },
+    {
+      "name": "pageSystemSpliceRelocatedClef",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 6
+      }
+    },
+    {
+      "name": "rangeSerializeLeadingClefHead",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 6
       }
     },
     {

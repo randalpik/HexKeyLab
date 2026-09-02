@@ -55,9 +55,10 @@ Phase C-B probes (2026-08-30, findings baked into
   render of the same pinned MEI: system sequence, per-measure x/width,
   spacing, and — since B1 — **absolute** staff tops, because a cascade that
   shifted a whole page by a constant passes every spacing check; section-header
-  pages exempt the vertical checks, their reserve translate is a main.ts
-  injection). Expect allReferenceOk true and 7/8 spliced (the section-header
-  line is the by-design fallback); spliced edits ~260–570 ms wall.
+  pages are verified like any other since B4 — only an unreadable reserve is
+  exempt). Expect allReferenceOk true and **8/8 spliced** as of 2026-09-01
+  (`edit-section-header-zone` was the standing fallback until the section-header
+  guard was retired); spliced edits ~300–610 ms wall.
 
 Phase C-B2b / B1 probes (2026-08-31, findings baked into the design doc →
 "Implementation (Phase C-B2b / B1)" and lessons.md):
@@ -113,6 +114,49 @@ Phase C-B2b / B1 probes (2026-08-31, findings baked into the design doc →
   the line matters (it does not — 92.7/91.5/92.6 %). Use this when a change could
   plausibly introduce a failure mode specific to MULTI-LINE replaced sets, which
   `cb-sweep.js` cannot reach.
+- **cb-startzone.js** — the two refusals that were excluded BY NAME rather than
+  by measurement: the score-start line (line 0) and section-header lines. Edits
+  one seed line, reports the splicer's verdict, then compares the resulting live
+  page against a full re-engrave of the same model — the same comparison
+  `verifyAgainstReference` makes, but REPORTING every delta instead of throwing
+  on the first, so a refusal and a divergence are legible in one run. It also
+  reports each section title's `titleGap` (its baseline's distance to its own
+  system's content top), which is the invariant `injectSectionHeaders`
+  establishes and a splice of the header's own system must reproduce —
+  `reserve - baseline`, 540 units on this document.
+  `--arg "case=line0"` / `"case=header,seed=0"` / `"case=line,line=57"`, plus
+  `check=1` to run the inline `HKL_INDEX_CHECK` gate (its throw is caught and
+  reported), `edit=0` to measure a zone without touching it, and
+  `shot=live|ref` to leave either the spliced page or a freshly-mounted
+  reference render alone in `#score`. Run it twice with the two `shot` values
+  and one `--screenshot` each to hand Max two flippable images of the same page.
+- **cb-ctxdiverge.js** — root-causes a `context line ... diverged` refusal in
+  one run. Edits one seed per requested line (`--arg "seeds=54;55;57;59@241;77@326;115"`,
+  `line@measure` pins the target — the replaced set depends on which measure's
+  spanners the edit touches) and dumps everything the splicer records on the
+  refusal path: `lastWindow` (lines, measures, leader/trailer, pins, courtesy
+  extension), `lastContextDiff` (the FULL per-measure x/width diff of the
+  diverged line — `profilesMatch` names only the first mismatch, which is where
+  drift becomes visible, not where it starts — plus a glyph-class census of
+  window vs live per measure and the clef glyphs' SMuFL codepoints), the range
+  head vs the full render's effective clef/key/meter at the window start, the
+  measure just beyond the window (would live draw a courtesy there?), and every
+  range measure whose serialized MEI differs from `serialize()`'s. This is what
+  reduced the six remaining sonata refusal signatures to three mechanisms in
+  one afternoon (2026-09-01): the courtesy check missing `scoreDef > sb >
+  measure` and non-first staves, the range head keeping the OLD clef when the
+  range opens at a leading clef, and the `relocateInitialClefs` cross-measure
+  dependency. Every edit is undone via `restoreSnapshot`.
+- **cb-clefprop.js** (run with `--no-sonata`) — the clef-propagation finding:
+  builds the `pageSystemSpliceRelocatedClef` document, sets a clef after a
+  line-start measure's first chord, renders, deletes that chord (the clef becomes
+  measure-initial and `relocateInitialClefs` moves it onto the line above),
+  renders again, and compares page 1 system by system — pre-edit live, post-edit
+  live, the splicer's vertical plan, and a fresh full-render reference, each with
+  system heights and clef glyph codepoints. Pre-fix the PRE-edit page already
+  showed the lines after the clef in the old clef (`E050` vs reference `E062`,
+  −960 units of height): a clef edit had spliced one line and left the rest of
+  the staff stale. Inline clefs are interior structure now (clef edits derive).
 - **cb-courtesy.js** — correlates the `context line ... diverged` refusals
   against the document structure: does a clef/key/meter change begin the line
   just BEYOND the splice window? That is what identified the end-of-line

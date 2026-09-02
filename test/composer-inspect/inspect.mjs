@@ -171,7 +171,27 @@ try {
      is sync; Verovio re-renders may be async after model mutation). */
   if (screenshotPath) {
     await new Promise((res) => setTimeout(res, postEvalMs));
-    const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    /* Fit the viewport to #score's CONTENT before capturing. The score lives in
+       an inner scroller, so a bare captureScreenshot returns just the visible
+       slice of one page — which reads as "the image is scaled wrong / cut off"
+       rather than as a missing flag, and has already cost one round of
+       misleading comparison shots (2026-09-01). phasec/runner.mjs has always
+       done this; the two capture paths now agree. */
+    const dimsRes = await cdp.send('Runtime.evaluate', {
+      expression: `JSON.stringify((() => {
+        const el = document.querySelector('#score');
+        if (!el) return { w: 1600, h: 1200 };
+        return { w: Math.min(3000, Math.ceil(el.scrollWidth) + 40),
+                 h: Math.min(4000, Math.ceil(el.scrollHeight) + 40) };
+      })())`,
+      returnByValue: true,
+    });
+    const dims = JSON.parse(dimsRes.result.value);
+    await cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: dims.w, height: dims.h, deviceScaleFactor: 1, mobile: false,
+    });
+    await new Promise((res) => setTimeout(res, 400));
+    const shot = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
     writeFileSync(screenshotPath, Buffer.from(shot.data, 'base64'));
   }
 

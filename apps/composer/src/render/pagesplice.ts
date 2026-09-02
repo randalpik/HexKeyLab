@@ -24,12 +24,16 @@
 //     nothing outside the replaced systems would move (v1). dy-cascades and
 //     page-boundary moves fall back to a full render (Phase C-B2, with
 //     pagination ownership).
-//   - The score-start line (line 0) and section-boundary zones render with
-//     small divergences in windows (probe k=0: ~1px; k=59: large — the
-//     mid-piece scoreDef / section-header zone). Line 0 is excluded outright;
-//     divergent zones are caught structurally by the context-line sanity
-//     check (an unchanged neighbour line must reproduce its live geometry
-//     exactly) and fall back to a full render.
+//   - Divergent zones are caught STRUCTURALLY by the context-line sanity check
+//     (an unchanged neighbour line must reproduce its live geometry exactly)
+//     and fall back to a full render — there is no zone excluded by name. The
+//     two that used to be (line 0 "drifts ~1px"; section-header lines "NOT
+//     idempotent") were re-measured 2026-09-01 against the CURRENT window
+//     recipe and both splice reference-clean: line 0 at 8/12/9 units
+//     (x/width/absolute staff top, versus the EPS 25 the context check
+//     tolerates everywhere), header lines at 0/2/4.8 with the title landing on
+//     its rule exactly. The k=0 figure came from the pre-ownership recipe
+//     (tall page + header:'none'), which no longer exists.
 //
 // Correctness contract (Max's acceptance gate): a spliced result must equal
 // what a full re-engrave of the same pinned MEI would produce. The v1 gates
@@ -145,9 +149,11 @@ interface PageHeaders {
   systems: Element[];
   /** Accumulated displacement per system index. */
   reserve: number[];
-  titles: Array<{ el: Element; sysIdx: number }>;
-  /** False when a title carries no readable `data-reserve` — the page's
-   *  geometry is then unexplained and must not be reasoned about. */
+  titles: Array<{ el: Element; sysIdx: number; baseline: number }>;
+  /** False when a title carries no readable `data-reserve`/`data-baseline` —
+   *  the page's geometry is then unexplained and must not be reasoned about.
+   *  Both are needed: the reserve to take the injector's displacement out of
+   *  the vertical arithmetic, the baseline to put a re-engraved title back. */
   known: boolean;
 }
 
@@ -157,7 +163,7 @@ function pageHeaders(pageEl: HTMLElement): PageHeaders {
     ? Array.from(margin.children).filter((c) => c.classList.contains('system'))
     : [];
   const reserve = new Array<number>(systems.length).fill(0);
-  const titles: Array<{ el: Element; sysIdx: number }> = [];
+  const titles: Array<{ el: Element; sysIdx: number; baseline: number }> = [];
   let known = true;
   for (const t of Array.from(pageEl.querySelectorAll('text.hkl-section-header'))) {
     const id = t.getAttribute('data-for');
@@ -165,8 +171,9 @@ function pageHeaders(pageEl: HTMLElement): PageHeaders {
     const sys = meas?.closest('g.system') ?? null;
     const idx = sys ? systems.indexOf(sys) : -1;
     const r = Number(t.getAttribute('data-reserve'));
-    if (idx < 0 || !isFinite(r)) { known = false; continue; }
-    titles.push({ el: t, sysIdx: idx });
+    const base = Number(t.getAttribute('data-baseline'));
+    if (idx < 0 || !isFinite(r) || !isFinite(base)) { known = false; continue; }
+    titles.push({ el: t, sysIdx: idx, baseline: base });
     for (let i = idx; i < reserve.length; i++) reserve[i] += r;
   }
   return { systems, reserve, titles, known };
@@ -266,6 +273,19 @@ export class PageSystemSplicer {
    *  names a reason, but not which lines it wanted — `cb-sweep.js` needs that
    *  to tell a not-mounted line from a not-mounted spanner-expanded run). */
   lastRun: { a: number; b: number } | null = null;
+  /** Shape of the last window built (diagnostics): the lines and measures the
+   *  sub-document covered, its synthetic leader/trailer, its page pins, and how
+   *  many lines the courtesy rule (B3) pulled in. */
+  lastWindow: {
+    wLo: number; wHi: number; mLo: number; mHi: number;
+    leader: boolean; trailer: boolean; pbIds: string[]; courtesyExt: number;
+  } | null = null;
+  /** The sub-MEI the last window rendered from (diagnostics — a reference to a
+   *  string that already exists, so free to keep). */
+  lastWindowMei: string | null = null;
+  /** Everything behind the last `context line ... diverged` refusal (see
+   *  ContextDiff). Built on the refusal path only. */
+  lastContextDiff: ContextDiff | null = null;
   /** Per-splice memo of each mounted page's section-header state. */
   private headerCache = new Map<HTMLElement, PageHeaders>();
 
@@ -285,6 +305,9 @@ export class PageSystemSplicer {
     this.lastPages = [];
     this.lastVertical = null;
     this.lastRun = null;
+    this.lastWindow = null;
+    this.lastWindowMei = null;
+    this.lastContextDiff = null;
     this.headerCache.clear();
     const skip = (why: string): false => {
       this.lastOutcome = 'skipped';
@@ -318,7 +341,20 @@ export class PageSystemSplicer {
        scroll splicer's run expansion), plus both lines adjacent to any moved
        boundary. */
     const docVer = model.docVersion();
-    let [rLo, rHi] = expandForSpannersOnce(meiMeasures, changedRun.lo, Math.min(changedRun.hi, ids.length - 1), docVer);
+    /* A render-time dependency the sig-diff cannot see: `relocateInitialClefs`
+       draws a measure-initial clef at the END of the PREVIOUS measure (as the
+       change/courtesy glyph), so an edit that makes a clef measure-initial — or
+       stops it being so — re-engraves the measure BEFORE the changed run, which
+       may sit on the line above. The sonata's last measure holds a mid-measure
+       C clef; deleting the chord ahead of it moved the clef onto the previous
+       line and re-justified that whole line (dW 89..329), which the context
+       check correctly refused as "unchanged context that changed"
+       (`cb-ctxdiverge.js`, m-cy6). Any layer clef in the run's first measure
+       pulls its predecessor into the run: cheap, and covers both directions
+       without needing the pre-edit measure. */
+    let cLo = changedRun.lo;
+    if (cLo > 0 && meiMeasures[cLo].querySelector(':scope > staff > layer > clef')) cLo--;
+    let [rLo, rHi] = expandForSpannersOnce(meiMeasures, cLo, Math.min(changedRun.hi, ids.length - 1), docVer);
     [rLo, rHi] = expandForEndings(meiMeasures, rLo, rHi);
     let a = lineOf(rLo), b = lineOf(rHi);
     for (let i = 0; i < nLines; i++) {
@@ -329,16 +365,28 @@ export class PageSystemSplicer {
     }
     this.lastRun = { a, b };
     if (b - a + 1 > MAX_SPLICE_LINES) return skip('too many changed lines');
-    /* Line 0 is the score start — window fidelity is unproven there (probe
-       k=0 drifts ~1px: header/title treatment differs under a windowed
-       render). Edits touching it always full-render. */
-    if (a === 0) return skip('score-start line');
+    /* Line 0 (the score start) needs no exclusion. It used to be refused on
+       "window fidelity is unproven there", from a probe that measured the
+       PRE-ownership window recipe (tall page + header:'none' + a closure
+       spanner expansion). Under the current recipe the window is the live page
+       options verbatim, so a window whose wLo is 0 takes no synthetic leader
+       and simply IS the score start — same meiHead, same credits band, same
+       page-1 anchoring — which is the one case where reproducing score-start
+       treatment is correct rather than an artifact. What line 0 does lack is a
+       line ABOVE it, so the context check has only one side to stand on; see
+       spliceDom, where the vertical plan reads its position from the window's
+       own page-1 anchor instead of chaining from a predecessor. */
 
-    /* Section-header measures: their title text + the reserve translate are
-       page-mount injections (NOT idempotent) — never splice them. */
-    for (let i = spans[a][0]; i < spans[b][1] && i < ids.length; i++) {
-      if (meiMeasures[i].hasAttribute('data-hkl-section-title')) return skip('section-header line');
-    }
+    /* Section-header measures used to be refused here, on the grounds that the
+       title text and the reserve translate are page-mount injections and "NOT
+       idempotent". That is true of re-RUNNING the injector, which the splice
+       never does — it replaces systems inside an already-injected page. Both
+       halves of what the injector did are recoverable from what it recorded:
+       the reserve comes out of the vertical arithmetic (verticalPlan) and goes
+       back into the placement, and a title whose OWN system is re-engraved is
+       re-placed from the rule its `data-reserve`/`data-baseline` state (see the
+       surgery in spliceDom). What is NOT recoverable is a page whose reserve or
+       baseline cannot be read — that page still refuses, below. */
 
     /* B5 — ensure-mount before the mounted gate. Page view mounts pages
        lazily, so in real use only a handful are live (2-6 on the sonata) and a
@@ -430,9 +478,10 @@ export class PageSystemSplicer {
        the 11 context-check refusals measured by `cb-sweep.js`. Pull that line
        in. Bounded at two: the sonata has runs of consecutive meter changes
        which would otherwise chain the window forward indefinitely. */
+    let courtesyExt = 0;
     for (let guard = 0; guard < 2 && wHi + 1 < nLines; guard++) {
       if (!beginsSignatureChange(meiMeasures[spans[wHi + 1][0]])) break;
-      wHi++;
+      wHi++; courtesyExt++;
     }
     if (wHi - wLo + 1 > MAX_WINDOW_LINES) return skip('window too many lines');
     const mLo = spans[wLo][0], mHi = spans[wHi][1] - 1;
@@ -463,8 +512,10 @@ export class PageSystemSplicer {
        sonata battery's context check). The pinned mRest trailer absorbs it
        and is discarded, exactly like the leader absorbs score-start artifacts. */
     const trailer = mHi < ids.length - 1;
+    this.lastWindow = { wLo, wHi, mLo, mHi, leader, trailer, pbIds: [...pbIds], courtesyExt };
     const winMei = buildWindowMei(model, mLo, mHi, winStarts, leader, trailer, pbIds);
     if (!winMei) return skip('window build failed');
+    this.lastWindowMei = winMei;
 
     const tLoad = performance.now();
     ctx.toolkit.setOptions(ctx.windowOptions);
@@ -572,16 +623,32 @@ export class PageSystemSplicer {
        scoreDef / section-boundary zone) — any drift there means the window
        cannot be trusted for the changed lines either. The previous line
        always exists (a ≥ 1); the next only when b isn't the last line. */
-    const ctxPrev = this.liveSystem(ctx.container, newStartIds[r.a - 1]);
-    if (!ctxPrev) return skip('context line above not mounted');
-    const dAbove = profilesMatch(winProf.get(r.a - 1)!, ctxPrev);
-    if (dAbove) return skip('context line above diverged (' + dAbove + ')');
+    /* Line 0 has no predecessor: the window's opening edge is the real score
+       start, so there is nothing above to corroborate and nothing to chain
+       from. It is only safe because line 0 is necessarily its page's first
+       system, where the plan reads an absolute anchor rather than a
+       difference — assert that rather than assume it. */
+    let ctxPrev: LiveSys | null = null;
+    if (r.a > 0) {
+      ctxPrev = this.liveSystem(ctx.container, newStartIds[r.a - 1]);
+      if (!ctxPrev) return skip('context line above not mounted');
+      const dAbove = profilesMatch(winProf.get(r.a - 1)!, ctxPrev);
+      if (dAbove) {
+        this.lastContextDiff = contextDiff('above', r.a - 1, winProf.get(r.a - 1)!, ctxPrev);
+        return skip('context line above diverged (' + dAbove + ')');
+      }
+    } else if (!live[0].pageFirst) {
+      return skip('score-start line not page-first');
+    }
     let ctxNext: LiveSys | null = null;
     if (r.b + 1 < newStartIds.length) {
       ctxNext = this.liveSystem(ctx.container, newStartIds[r.b + 1]);
       if (!ctxNext) return skip('context line below not mounted');
       const dBelow = profilesMatch(winProf.get(r.b + 1)!, ctxNext);
-      if (dBelow) return skip('context line below diverged (' + dBelow + ')');
+      if (dBelow) {
+        this.lastContextDiff = contextDiff('below', r.b + 1, winProf.get(r.b + 1)!, ctxNext);
+        return skip('context line below diverged (' + dBelow + ')');
+      }
     }
 
     /* Vertical PLAN: where a full re-engrave would put each replaced system,
@@ -596,7 +663,7 @@ export class PageSystemSplicer {
        subtracted explicitly (see verticalPlan) — but an UNREADABLE reserve
        leaves the page's geometry unexplained, and guessing is what caused the
        overlap this replaced. */
-    for (const l of [ctxPrev, ...live, ...(ctxNext ? [ctxNext] : [])]) {
+    for (const l of [...(ctxPrev ? [ctxPrev] : []), ...live, ...(ctxNext ? [ctxNext] : [])]) {
       if (!this.headersFor(l.pageEl).known) return skip('section-header reserve unreadable');
     }
     for (let k = r.a; k <= r.b; k++) {
@@ -609,7 +676,7 @@ export class PageSystemSplicer {
     const lb = live[r.b - r.a];
     /* When the line above/below sits on the same page, it must be the actual
        DOM neighbour (drift detector, mirrors the intra-L consecutive check). */
-    if (!live[0].pageFirst && nextSystemSibling(ctxPrev.el) !== live[0].el) return skip('DOM partition drift above');
+    if (!live[0].pageFirst && (!ctxPrev || nextSystemSibling(ctxPrev.el) !== live[0].el)) return skip('DOM partition drift above');
     if (ctxNext && !lb.pageLast && nextSystemSibling(lb.el) !== ctxNext.el) return skip('DOM partition drift below');
 
     /* ── surgery ── */
@@ -632,6 +699,13 @@ export class PageSystemSplicer {
         if (t.sysIdx > lb.sysIdx) movedTitles.push(t.el);
       }
     }
+    /* A title whose OWN system is being re-engraved cannot travel with it: it
+       is not inside the system (main.ts appends it to the page-margin) and its
+       y was derived from the OLD system's content top. Re-place it from the
+       injector's own rule instead — baseline below the top of the band its
+       reserve carved out — reading the replacement's measured content top, so
+       a system that got taller or shorter carries its title correctly. */
+    const retitle: Array<{ el: Element; sys: SVGGElement; dy: number; reserve: number; baseline: number }> = [];
     const pages = new Set<HTMLElement>();
     for (let k = r.a; k <= r.b; k++) {
       const lk = live[k - r.a];
@@ -656,6 +730,20 @@ export class PageSystemSplicer {
       lk.el.parentElement!.insertBefore(imported, lk.el);
       lk.el.remove();
       pages.add(lk.pageEl);
+      const hdr = this.headersFor(lk.pageEl);
+      for (const t of hdr.titles) {
+        if (t.sysIdx !== lk.sysIdx) continue;
+        retitle.push({ el: t.el, sys: imported, dy, reserve: hdr.reserve[lk.sysIdx] ?? 0, baseline: t.baseline });
+      }
+    }
+    /* Before snapPage, mirroring the injector's own order (main.ts mounts, then
+       snaps): the title is placed against the unsnapped content top exactly as
+       it was at mount. `getBBox` excludes the element's own transform, so the
+       dy just applied goes back on. */
+    for (const t of retitle) {
+      let box: DOMRect;
+      try { box = t.sys.getBBox(); } catch { continue; }
+      t.el.setAttribute('y', String(box.y + t.dy - t.reserve + t.baseline));
     }
     for (const n of followers) {
       const t = consolidate(n as SVGGElement);
@@ -691,6 +779,12 @@ export class PageSystemSplicer {
       refHost.style.cssText = 'position:absolute;left:-99999px;top:0';
       refHost.innerHTML = tk.renderToSVG(pno, {});
       document.body.appendChild(refHost);
+      /* Same post-processing the live pages and the window hosts get: the HEJI
+         pass replaces key-signature `use` glyphs with injected <text>, so a raw
+         reference would compare its E260 flats against a live page that has
+         none — a false divergence, not a wrong render (seen on the sonata's
+         line 0 the day the glyph check landed). Geometry is unaffected. */
+      ctx.postProcess(refHost);
       try {
         const refSys = Array.from(refHost.querySelectorAll('g.system')) as SVGGElement[];
         const liveSys = Array.from(pageEl.querySelectorAll('g.system')) as SVGGElement[];
@@ -718,6 +812,20 @@ export class PageSystemSplicer {
             if (Math.abs(rpm[j].relX - lpm[j].relX) > TOL ||
                 Math.abs(rpm[j].w - lpm[j].w) > TOL) {
               throw new Error(`[page-splice] page ${pno} system ${i} measure ${rpm[j].id}: x/width diverged from reference`);
+            }
+          }
+          /* Glyph IDENTITY of the signatures, not only their geometry: a clef,
+             key or meter drawn in the wrong FORM at the right width passes
+             every check above — the sonata's cut time rendered as "2/2" on a
+             line-0 splice and no gate noticed (Max, 2026-09-01). Codepoints
+             (the `use` href before the per-render hash) are exact and cost no
+             layout flush. */
+          const refM = Array.from(refSys[i].querySelectorAll('g.measure'));
+          const liveM = Array.from(liveSys[i].querySelectorAll('g.measure'));
+          for (let j = 0; j < refM.length && j < liveM.length; j++) {
+            const a = sigGlyphs(refM[j]), b = sigGlyphs(liveM[j]);
+            if (a !== b) {
+              throw new Error(`[page-splice] page ${pno} system ${i} measure ${refM[j].id}: signature glyphs diverged from reference (live "${b}" vs "${a}")`);
             }
           }
           if (!headerPage) {
@@ -786,7 +894,7 @@ function verticalPlan(
   r: { a: number; b: number },
   live: LiveSys[],
   winProf: Map<number, SysProfile>,
-  ctxPrev: LiveSys,
+  ctxPrev: LiveSys | null,
   ctxNext: LiveSys | null,
 ): VerticalPlan {
   const newTop: number[] = [];
@@ -808,7 +916,10 @@ function verticalPlan(
     if (lk.pageFirst) {
       v = wk.staffTop;
     } else {
-      const prevV = k === r.a ? ctxPrev.staffTop - ctxPrev.reserve : newV[k - r.a - 1];
+      /* k === r.a && !ctxPrev is unreachable: the only line without a
+         predecessor is line 0, and spliceDom refuses it unless it is
+         page-first, which takes the branch above. */
+      const prevV = k === r.a ? (ctxPrev ? ctxPrev.staffTop - ctxPrev.reserve : 0) : newV[k - r.a - 1];
       const prevWin = winProf.get(k - 1)!;
       v = prevV + (wk.staffTop - prevWin.staffTop);
     }
@@ -838,28 +949,41 @@ function verticalPlan(
  *  window that stops here renders its last line without a courtesy the live
  *  page has — a width-only divergence the context check then (correctly)
  *  refuses on. Section-level `<scoreDef>` before the measure, or a signature
- *  element ahead of any event in its first staff. */
+ *  element ahead of any event in ANY of its staves.
+ *
+ *  Two holes closed 2026-09-01, each a sonata movement boundary the first
+ *  version walked straight past (`cb-ctxdiverge.js`):
+ *  - the scoreDef may sit BEHIND a break element — the importer and
+ *    `setSectionHeaderAt` emit `scoreDef > sb[section] > measure`, so the
+ *    measure's immediate previous sibling is the `<sb>`, not the scoreDef
+ *    (dW 347 and 604 at the II→III and III→IV boundaries);
+ *  - a leading clef on staff 2 is a courtesy clef on staff 2 (dW 49 — a
+ *    piano right hand going G→F at a line start). */
 function beginsSignatureChange(meas: Element | undefined): boolean {
   if (!meas) return false;
   let top: Element = meas;
   while (top.parentElement && top.parentElement.localName !== 'section') top = top.parentElement;
-  if (top.previousElementSibling?.localName === 'scoreDef') return true;
-  const staff = meas.querySelector(':scope > staff');
-  if (!staff) return false;
-  /* Walk the staff's leading elements (and its first layer's): a signature
-     element before the first note/rest/chord is a change AT the barline; one
-     after it is mid-measure and generates no courtesy. */
+  for (let p = top.previousElementSibling; p; p = p.previousElementSibling) {
+    if (p.localName === 'scoreDef') return true;
+    if (p.localName === 'measure' || p.querySelector('measure')) break;
+  }
+  /* Walk each staff's leading elements (and its layers'): a signature element
+     before the first note/rest/chord is a change AT the barline; one after it
+     is mid-measure and generates no courtesy. */
   const scan = (parent: Element): boolean => {
     for (const c of Array.from(parent.children)) {
       const ln = c.localName;
       if (ln === 'clef' || ln === 'keySig' || ln === 'meterSig') return true;
-      if (ln === 'note' || ln === 'chord' || ln === 'rest' || ln === 'mRest' || ln === 'beam') return false;
+      if (ln === 'note' || ln === 'chord' || ln === 'rest' || ln === 'mRest' || ln === 'beam' || ln === 'tuplet' || ln === 'space') return false;
       if (ln === 'layer' && scan(c)) return true;
       if (ln === 'layer') return false;
     }
     return false;
   };
-  return scan(staff);
+  for (const staff of Array.from(meas.children)) {
+    if (staff.localName === 'staff' && scan(staff)) return true;
+  }
+  return false;
 }
 
 function nextSystemSibling(el: Element): Element | null {
@@ -885,6 +1009,77 @@ function profilesMatch(win: SysProfile, liveSys: SysProfile): string {
     }
   }
   return '';
+}
+
+/** Everything `profilesMatch` stops short of saying. It names the FIRST
+ *  measure whose x/width drifts past EPS, which is where the drift became
+ *  visible, not where it started: a courtesy signature missing at a line's END
+ *  shows up as the FIRST measure's width, because the line is justified. So a
+ *  refusal also records the whole per-measure diff of the diverged context
+ *  line, plus a census of the rendered glyph classes in each measure of the
+ *  window system and its live counterpart (a dropped slur, an extra accidental,
+ *  a clef glyph that should not be there), and the clef glyphs' SMuFL
+ *  codepoints — a window can render a line in the WRONG clef and still match
+ *  on glyph counts. Diagnostics only; built on the refusal path. */
+export interface ContextDiff {
+  side: 'above' | 'below';
+  line: number;
+  rows: Array<{
+    id: string;
+    winRelX: number; liveRelX: number; winW: number; liveW: number;
+    /** Glyph-class counts that differ: class → [window, live]. */
+    census: Record<string, [number, number]>;
+    /** Clef glyph codepoints in [window, live], document order. */
+    clefs: [string[], string[]];
+  }>;
+}
+
+/** SMuFL codepoints of every clef / key-signature / meter-signature glyph in a
+ *  rendered measure, in document order — the form of each signature, which
+ *  geometry checks cannot see (cut time vs "2/2" differ by a few units). */
+function sigGlyphs(measureEl: Element): string {
+  return Array.from(measureEl.querySelectorAll('g.clef use, g.keySig use, g.meterSig use'))
+    .map((u) => (u.getAttribute('xlink:href') ?? u.getAttribute('href') ?? '').replace(/^#/, '').split('-')[0])
+    .join(' ');
+}
+
+function glyphCensus(measureEl: Element): Map<string, number> {
+  const tally = new Map<string, number>();
+  for (const g of Array.from(measureEl.querySelectorAll('g'))) {
+    const cls = g.getAttribute('class')?.split(/\s+/)[0];
+    if (cls) tally.set(cls, (tally.get(cls) ?? 0) + 1);
+  }
+  return tally;
+}
+
+function clefGlyphs(measureEl: Element): string[] {
+  return Array.from(measureEl.querySelectorAll('g.clef use')).map((u) =>
+    (u.getAttribute('xlink:href') ?? u.getAttribute('href') ?? '').replace(/^#/, '').split('-')[0]);
+}
+
+function contextDiff(side: 'above' | 'below', line: number, win: SysProfile, liveSys: SysProfile): ContextDiff {
+  const wm = win.measures(), lm = liveSys.measures();
+  const wEls = Array.from(win.el.querySelectorAll('g.measure'));
+  const lEls = Array.from(liveSys.el.querySelectorAll('g.measure'));
+  const rows: ContextDiff['rows'] = [];
+  for (let i = 0; i < Math.max(wm.length, lm.length); i++) {
+    const w = wm[i], l = lm[i];
+    const census: Record<string, [number, number]> = {};
+    if (wEls[i] && lEls[i]) {
+      const a = glyphCensus(wEls[i]), b = glyphCensus(lEls[i]);
+      for (const k of new Set([...a.keys(), ...b.keys()])) {
+        const x = a.get(k) ?? 0, y = b.get(k) ?? 0;
+        if (x !== y) census[k] = [x, y];
+      }
+    }
+    rows.push({
+      id: w?.id ?? l?.id ?? '',
+      winRelX: w?.relX ?? NaN, liveRelX: l?.relX ?? NaN, winW: w?.w ?? NaN, liveW: l?.w ?? NaN,
+      census,
+      clefs: [wEls[i] ? clefGlyphs(wEls[i]) : [], lEls[i] ? clefGlyphs(lEls[i]) : []],
+    });
+  }
+  return { side, line, rows };
 }
 
 /** Windowed sub-MEI: serializeRangeForRender over the window's measures, a

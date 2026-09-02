@@ -177,6 +177,19 @@ clearing state that lives OUTSIDE the model:
 subtle, order-dependent test failures that are painful to diagnose
 (see `docs/lessons.md` → "State machines outside the model leak").
 
+## Verifying a fixture against the unfixed build
+
+Every fixture that lands with a bug fix must FAIL without the fix, or it tests
+nothing. `run-unfixed.sh` stashes `apps/composer/src`, runs the named fixtures
+in scenario mode under `HKL_INDEX_CHECK`, and restores:
+
+```
+test/composer-test/run-unfixed.sh pageSystemSpliceRelocatedClef rangeSerializeLeadingClefHead
+```
+
+Expect a ✗ per fixture with the failure the fix addresses. Nothing else may use
+the dev server while it runs (the stash reloads every served page).
+
 ## Debugging a failing scenario
 
 ```bash

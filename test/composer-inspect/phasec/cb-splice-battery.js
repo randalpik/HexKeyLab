@@ -211,8 +211,12 @@ await runEdit('edit-near-volta', () => {
   curAt(Math.max(1, mi - 1));
   return model.deleteAtCursor();
 }, 'any');
-// 6: edit in the section-header zone (probe k=59's divergent window) — the
-// context sanity / section-header gates must refuse; full render must land.
+// 6: edit in the section-header zone (probe k=59's divergent window). This
+// refused until 2026-09-01 — first on the by-name `section-header line` guard,
+// which was retired once the injector recorded `data-baseline` and the splicer
+// could re-place a title whose own system it re-engraves. It now SPLICES; the
+// expectation stays permissive because the zone is also where the context check
+// legitimately refuses on a divergent neighbour.
 await runEdit('edit-section-header-zone', () => {
   const hm = model.getDoc().querySelector('measure[data-hkl-section-title]');
   const mi = hm ? idIdx0.get(hm.getAttribute('xml:id')) : null;

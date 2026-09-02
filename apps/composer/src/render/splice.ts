@@ -264,6 +264,27 @@ export class ScrollSplicer {
     let oldLo = P, oldHi = oN - 1 - Sx;          // changed run, OLD index
     if (hiNew < lo && oldHi < oldLo) return true; // nothing changed
 
+    // Inline clefs are prevailing state for every following measure of their
+    // staff (2026-09-01): if the run's SET of clefs changed — one inserted,
+    // removed, or re-shaped — lines beyond the run re-engrave too, which only a
+    // full render does. Compared as the concatenated clef tags of the whole run
+    // with ids stripped and NO per-measure separators: the old and new runs
+    // legitimately differ in length whenever a measure is added or removed
+    // (a past-end append creates one), and a clef that merely moved within the
+    // run (a note deleted ahead of it) must stay a splice.
+    const clefTags = (xml: string | undefined): string[] =>
+      (xml?.match(/<clef\b[^>]*>/g) ?? []).map((t) => t.replace(/\s(?:xml:)?id="[^"]*"/g, ''));
+    const oldClefs: string[] = [], newClefs: string[] = [];
+    for (let i = oldLo; i <= oldHi; i++) oldClefs.push(...clefTags(this.sig.get(oldOrder[i])));
+    for (let i = lo; i <= hiNew; i++) newClefs.push(...clefTags(newSig.get(newOrder[i])));
+    if (oldClefs.join('|') !== newClefs.join('|')) return false;
+
+    // `relocateInitialClefs` draws measure lo's measure-initial clef at the END
+    // of measure lo-1, so an edit that makes a clef measure-initial (or stops it
+    // being so) re-engraves the predecessor — which this splice would otherwise
+    // keep as its untouched anchor. Any layer clef in the run's first measure
+    // pulls lo-1 into the run (same rule as the page splicer, 2026-09-01).
+    if (lo > 0 && meiMeasures[lo].querySelector(':scope > staff > layer > clef')) lo--;
     // Expand the NEW run outward until no spanner crosses its endpoints, then
     // until every touched <ending> is contained whole (run AND context slots).
     [lo, hiNew] = expandForSpanners(meiMeasures, lo, hiNew);
