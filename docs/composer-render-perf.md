@@ -137,7 +137,8 @@ on mount (viewBox growth), shifting pages below it; scroll-mode full engrave
   cascade extent is known before any DOM work.
 - [x] **T3.1 Contained system splice (Phase C-B v1)** — SHIPPED 2026-08-30
   (`apps/composer/src/render/pagesplice.ts`; full account in
-  composer-page-splice-design.md "Implementation (Phase C-B v1)"). A refilled
+  composer-page-splice-design.md → "The system splice", current state; the
+  v1 account is decisions.md 2026-08-30). A refilled
   edit lands as a DOM splice of only the affected systems from a pin-anchored
   window render (synthetic leader + trailer, breaks:'line') — **no full-doc
   loadData**. Gated hard: splices only when the window's measured spacing

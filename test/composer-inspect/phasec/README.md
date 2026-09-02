@@ -36,7 +36,8 @@ node test/composer-inspect/phasec/runner.mjs test/composer-inspect/phasec/batter
   battery below waits on the busy badge instead.)
 
 Phase C-B probes (2026-08-30, findings baked into
-`docs/composer-page-splice-design.md` → "Implementation (Phase C-B v1)"):
+`docs/composer-page-splice-design.md` → "The system splice"; the v1 account is
+in decisions.md, 2026-08-30):
 
 - **cb-structure.js** — page-mode structural survey: `g.ending` parentage
   (inside `g.system` → whole-system splices carry volta brackets), the

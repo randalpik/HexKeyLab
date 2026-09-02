@@ -5596,3 +5596,32 @@ no errors (Verovio's own unmatched-tie/slur warnings on window renders as
 before); `cb-splicecost.js` steady edit 214 → 144 ms instrumented, i.e. 258 →
 144 across the A thread (≈ −44%): splice 147 → 90 ms, imported-system
 post-processing 5.5 ms, snap 1.8, no live flush before surgery.
+
+## 2026-09-02 — For the record: the steady-state edit before and after the A thread (instrumented, Chromium, sonata)
+
+Moved here from the design doc when it was refocused on current state. Numbers
+are `cb-splicecost.js` instrumented walls (wrapper overhead over ~4 000 wrapped
+calls inflates them; the bare edit was ≈ 170 ms before) — read the shares.
+Window: 1 replaced line, 4 window lines (above + replaced + below + a courtesy
+extension) + leader + trailer = 20 measures on 2 window pages.
+
+Before (2026-09-01, wall 258): splice 158 — Verovio `loadData` 25.5 +
+`renderToSVG` 59 = 84; `innerHTML` parse of two hosts 10; post-processing of
+the two hosts 30 (of 20 measures only 6 were imported); window MEI build 9;
+`liveSystem` ×3 7 (one 5.3 ms flush); `spliceDom` 14 (a 3.5 ms profile flush,
+snapPage 5.2 with a 4.5 ms flush). Refill 49, all naturals: a 5-measure
+`breaks:'none'` window — `renderToSVG` 15, `getBBox` 8 (one flush, 118 reads),
+`loadData` 6, serialize 3, `innerHTML` 2. Outside the render 50: mutation 14,
+history `XMLSerializer` 12, overlay-height read 5.5 (paint layout brought
+forward), `cursor.update` ×2 1.6, dispatch ~16. Forced layout flushes ≈ 27 ms
+in five places; the number of `getBBox` calls was irrelevant.
+
+After A7–A11 (2026-09-02, wall 144): splice 90 — Verovio ≈ 84 unchanged;
+`spliceDom` 10 (imported-system post-processing 5.5 sharing the snap's flush,
+snap 1.8, profiles + imports from text ≈ 3); no pre-surgery live flush (0.4).
+Refill 33 (naturals from a never-attached parse; sigW re-measured only when the
+window's folded head changes). Outside the render ≈ 22 (history snapshot lazy).
+The one remaining layout flush is the post-surgery snap, which the splice always
+needed. Verovio's `renderToSVG` dominates and is intrinsic (draw time, not
+string formatting: `svgFormatRaw` cut bytes 40% and parse 36% but not the draw;
+the first draw after a `loadData` carries the lazy layout, +30–40%).
