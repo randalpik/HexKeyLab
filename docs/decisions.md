@@ -5340,3 +5340,38 @@ page-range fixtures now assert the undo splices too.
 mounted` when a line sits on a page a PREVIOUS splice marked stale — B5's cheap
 mount refuses stale pages (it would render post-edit content into a DOM about
 to be patched). Listed with the remaining O(document) paths.
+
+## 2026-09-01 — Test-mode verifications run once per document version; `locateCursor` reads the cached stops
+
+The design doc's A-thread item "test-mode O(n²)": under `HKL_INDEX_CHECK` the
+model verified `flatChildren` / `allMeasures` against the live DOM on EVERY
+cache hit, and a 17-line key change on the sonata made 25 121 `allMeasures` and
+4 751 `flatChildren` hits — 45 s in test mode against 1.2 s in production.
+Two changes:
+
+1. **Verify once per document version.** `measuresVerifiedVer` and a per-voice
+   `flatVerified` set (cleared with the flat cache) record what has been
+   checked at the current version. This is not a weaker gate: the version is
+   drained synchronously from the MutationObserver at the top of each accessor,
+   so two hits at the same version have zero mutation records between them and
+   would compare the identical DOM — the second check could only repeat the
+   first. Every DOM mutation type that `querySelectorAll('measure')` or the
+   stop enumeration can see (childList, attributes, characterData, subtree) is
+   observed, so nothing escapes the version.
+2. **`locateCursor` / `locateFlatElement` use `model.flatChildren(voice)`**, the
+   cached accessor, instead of the module-level implementation. They are
+   called once per stop by the uncached tick/boundary helpers that
+   `assertVoiceIndexConsistent` runs, so the fresh enumeration made one
+   cross-check O(stops × document): 24 s of the 27 s that remained after (1).
+   Production callers of `locateCursor` (one or two per mutation) save ~2 ms
+   each on the sonata. The cross-check stays independent: the cached stops are
+   themselves compared against the fresh enumeration on their first hit per
+   version, and the check's own first step enumerates fresh.
+
+Not changed: `getMeasureStartCursorUncached` is O(measure index) per call and
+the check calls it once per measure — 0.7 s per index build on the sonata under
+the flag. Once per build, not per edit range; recorded in the design doc as the
+test-mode residual. Attribution probe: `cb-checkcost.js`. Bigrange under the
+flag: key case 45.1 → 3.8 s, meter 38.8 → 2.5 s (the remainder over production
+is the reference gate's own full render); outcomes and reference gate identical
+across all three cases before and after.

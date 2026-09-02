@@ -167,10 +167,22 @@ Phase C-B2b / B1 probes (2026-08-31, findings baked into the design doc →
   (2026-09-01): a key change, a staff-1 clef change and a width-neutral meter
   change far from their next reset, each followed by its undo. Reports outcome,
   run, window size, wall, the edit/refill split and the naturals-window cost;
-  `--arg "check=1"` verifies under the reference gate (slow in test mode — see
-  lessons.md on cache re-verification). The large-edit cost baseline for the A
-  thread: 17 / 25 lines splice in 1.18 / 1.32 s, naturals ~5.5 ms/measure,
-  window `loadData` ~5 ms/measure.
+  `--arg "check=1"` verifies under the reference gate (~2–3 s over production
+  per case since 2026-09-01 — the reference full render + VoiceIndex
+  cross-check; it was ~40 s — see lessons.md on cache re-verification and
+  `cb-checkcost.js`). The large-edit cost baseline for the A thread: 17 / 25
+  lines splice in 1.18 / 1.32 s, naturals ~5.5 ms/measure, window `loadData`
+  ~5 ms/measure.
+- **cb-checkcost.js** — attributes HKL_INDEX_CHECK (test-mode) overhead: runs
+  the bigrange key case with the flag off and then on, wrapping every
+  flag-gated verifier, the cached accessors and the Verovio toolkit with
+  timers, and prints call count + inclusive wall per wrapper. Found
+  (2026-09-01) that after the caches went once-per-version, 24 of the
+  remaining 27 s were `assertVoiceIndexConsistent` — `locateCursor` was
+  re-enumerating the document on every per-stop call. `--arg "case=meter"`
+  runs the meter case instead. Note the second (flag-on) pass can refuse with
+  `changed line not mounted` because the first pass's restore leaves stale
+  pages; the attribution is unaffected.
 - **cb-courtesy.js** — correlates the `context line ... diverged` refusals
   against the document structure: does a clef/key/meter change begin the line
   just BEYOND the splice window? That is what identified the end-of-line

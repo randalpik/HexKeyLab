@@ -1745,7 +1745,7 @@ What works: observe the live document with a `MutationObserver` and invalidate o
 
 The same mechanism gives an incremental *per-measure* baseline: fold each record's target up to its containing `<measure>` and dirty that measure; a record whose target is ABOVE measure level (a `<section>` childList insert/remove, a mid-piece `<scoreDef>`, the head) means the measure SET or the shared context moved, so nothing may be assumed clean. Keeping element identity alongside each cached signature (`sigEl`) closes the last hole — a measure that is still the same object AND was never mutated cannot serialize differently. Result on the sonata: `XMLSerializer` 495 → 54 calls per keystroke, `querySelectorAll` 31 969 → ~3 400, `cursor.update` 62.6 → 1.8 ms.
 
-Keep the verifications permanent, not one-shot: the model re-enumerates and compares on every cache HIT under `HKL_INDEX_CHECK`, and the owner re-serializes the whole document and compares every string. The 339-fixture suite then stands as a gate on the mechanism itself, and it costs nothing in production. (Measured: the suite's wall time was unchanged at ~190 s with the asserts in.)
+Keep the verifications permanent, not one-shot: the model re-enumerates and compares on the first cache hit at each document version under `HKL_INDEX_CHECK` (originally on EVERY hit — see the 2026-09-01 entry on why that went quadratic on large edits and why once-per-version is the same guarantee), and the owner re-serializes the whole document and compares every string. The 339-fixture suite then stands as a gate on the mechanism itself, and it costs nothing in production. (Measured: the suite's wall time was unchanged at ~190 s with the asserts in.)
 
 ## A probe that RECORDS a result without ASSERTING it hides a broken test indefinitely (2026-08-31)
 
@@ -2384,6 +2384,25 @@ when edits got large.
 
 - **Verify a cache once per document version, not once per hit.** The
   guarantee is the same; the cost stops scaling with how often callers ask.
+  (Done 2026-09-01: `measuresVerifiedVer` / `flatVerified` in the model. Sound
+  because `ver` is drained from the MutationObserver at the top of the call —
+  two hits at one version have zero records between them and read the same
+  DOM.)
 - **When a test-mode run is 30× slower than production, attribute it before
   reading it as a production problem** — the probe that wrapped the candidates
   found the answer in one run.
+
+Second finding, same day: once-per-version took the key case from 45 s to 27 s,
+not to ~2 s. `cb-checkcost.js` (wrap every flag-gated verifier with a timer, run
+the edit flag-off then flag-on) attributed 24 of the remaining 25 s to ONE
+`assertVoiceIndexConsistent` call: its per-stop helpers went through
+`locateCursor`, which called the module-level `flatChildren` IMPLEMENTATION —
+a fresh whole-document enumeration, 2.3 ms on the sonata — on every call, so
+one cross-check of ~5 000 stops was 10 000 × O(document). `locateCursor` now
+reads the model's cached stops (exact by the same MutationObserver; the cache
+itself is verified on its first hit per version), and the cross-check is
+0.8 s, of which 0.7 s is `getMeasureStartCursorUncached` (O(measure index) ×
+447 measures — the known residual). Lesson: a cross-check "against the
+original computation" inherits the original's cost model; when the original
+was O(document) per query, calling it once per stop is O(document²). Check the
+helpers a verifier calls, not only the verifier.

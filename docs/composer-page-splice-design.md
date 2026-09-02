@@ -41,9 +41,10 @@ the run dies or lies. Docs, fixtures and probe files are safe at any time.
 (2) Do not run `pnpm build` or a second Chromium job alongside the suite: a
 visual fixture once shot mid-relayout under a concurrent build and passed alone;
 the sweep's 300 s runner deadline times out under a concurrent suite. Under
-`HKL_INDEX_CHECK` a large-range edit costs ~40 s of test-mode verification
-(cache re-checks on every hit, thousands of call sites) — expected, not a
-production cost.
+`HKL_INDEX_CHECK` a large-range edit costs ~2–3 s over production (the
+reference gate's full render ~1.7 s + the VoiceIndex cross-check ~0.8 s); until
+2026-09-01 it was ~40 s.
+If test mode gets slow again, `cb-checkcost.js` attributes it in one run.
 
 ## Architecture
 
@@ -170,7 +171,8 @@ errors are logged and re-thrown under the flag — a caught throw is not a gate.
 
 ## Verification
 
-- **Suite** (~13 min under the flag): the page-splice fixtures cover every
+- **Suite** (~4 min under the flag since the 2026-09-01 test-mode fix; ~13 min
+  before it): the page-splice fixtures cover every
   mechanism above; each landed with its bug and was run against the unfixed
   source (`test/composer-test/run-unfixed.sh <fixtures>` stashes
   `apps/composer/src`, runs, restores).
@@ -182,7 +184,9 @@ errors are logged and re-thrown under the flag — a caught throw is not a gate.
   replaced-set classes), `cb-ctxdiverge.js` (root-cause a context refusal in
   one run), `cb-scale.js --arg sonata:100` (steady-state attribution: wall +
   `querySelectorAll` / `XMLSerializer` / `getBBox` counts — counts are
-  deterministic, walls vary 166–206 ms; run 3× sequentially).
+  deterministic, walls vary 166–206 ms; run 3× sequentially),
+  `cb-checkcost.js` (test-mode overhead attribution: the bigrange key case with
+  the flag off and on, every flag-gated verifier wrapped with a timer).
 - **Behaviour gate for any edit-path change**: battery on both code states
   (stash / pop) — the splice/skip outcome per edit and `reference.ok` must be
   identical; wall is the win.
@@ -219,9 +223,9 @@ Large governed ranges (caps dropped): 17 lines / 78-measure window 1.18 s;
   `onStateChange`-before-`onChange` bridge ordering).
 - **A5** — worker-offloaded castoff `loadData` (~1.4 s on the derive); big
   refactor; `afterRender` is the seam.
-- **Test-mode O(n²)** — under the flag `flatChildren` / `allMeasures` verify
-  their caches on every hit; a large-range edit calls them thousands of times
-  (44 s). Verify once per document version instead.
+- **Test-mode residual** — `assertVoiceIndexConsistent` calls
+  `getMeasureStartCursorUncached` once per measure, each O(measure index):
+  0.7 s per index build on the sonata under the flag. Tolerable; not O(edit).
 
 ### B2. Line-count-changing refills and pagination changes
 
@@ -246,6 +250,12 @@ remaining O(document) paths an ordinary edit can hit.
 Chronological detail is in decisions.md (dated entries from 2026-08-29). Most
 recent, one line each:
 
+- 2026-09-01 — Test-mode O(n²) fixed: `flatChildren` / `allMeasures` verify
+  once per document version (not per hit), and `locateCursor` reads the cached
+  stops — the VoiceIndex cross-check was re-enumerating the document once per
+  stop (24 s of the 27 s that remained). Bigrange under the flag: key case
+  45.1 → 3.8 s, meter 38.8 → 2.5 s, outcomes and reference identical. New
+  probe `cb-checkcost.js`.
 - 2026-09-01 — Size caps dropped (both splicers); 17/25-line governed ranges
   splice at 1.2–1.3 s, their undos at 0.6–2.0 s (interior scoreDefs matched by
   successor id, not element identity — a document swap must not derive).

@@ -5,8 +5,10 @@
 // outcome, replaced run, window size, wall, edit/refill split, refill stats
 // (naturals window ms + measures), and the same for the restore.
 //   --arg "check=1"  runs under HKL_INDEX_CHECK (the reference gate verifies
-//                    the spliced pages; ~40 s per large case in test mode —
-//                    cache re-verification on every hit, see lessons.md)
+//                    the spliced pages; ~2–3 s over production per case since
+//                    2026-09-01 — it was ~40 s while the caches re-verified
+//                    on every hit and locateCursor re-enumerated the document
+//                    per stop; cb-checkcost.js attributes test-mode cost)
 // Pre-caps every case refused on `too many changed lines`; now 17 / 7 / 25
 // lines splice in 1.18 / 0.44 / 1.32 s, reference-clean. The A-thread targets
 // it exposes: the naturals window (~5.5 ms/measure) and the window loadData

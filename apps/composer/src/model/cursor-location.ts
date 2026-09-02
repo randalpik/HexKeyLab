@@ -171,7 +171,13 @@ export function locateCursor(
 ): CursorLocation | null {
   const measures = model.allMeasures();
   if (measures.length === 0) return null;
-  const flat = flatChildren(model, voice);
+  /* The model's CACHED stops, not the enumeration above: this is called per
+     stop by the uncached tick/boundary helpers, so re-enumerating the document
+     here made every such call O(document) — 2.3 ms on the sonata, and the
+     HKL_INDEX_CHECK VoiceIndex cross-check (one call per stop) took 24 s. The
+     cache is exact by the MutationObserver drain, and is itself verified
+     against `flatChildren()` on its first hit at each document version. */
+  const flat = model.flatChildren(voice);
   if (linearCursor >= flat.length) {
     return {
       measureIdx: measures.length,
@@ -286,7 +292,7 @@ export function locateFlatElement(
 ): CursorLocation | null {
   if (flatIdx < 0) return null;
   const measures = model.allMeasures();
-  const flat = flatChildren(model, voice);
+  const flat = model.flatChildren(voice);   // cached; see locateCursor
   if (flatIdx >= flat.length) return null;
   return locationForAnchor(model, flat[flatIdx], voice, measures);
 }

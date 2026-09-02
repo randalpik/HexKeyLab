@@ -569,6 +569,12 @@ export class ComposerModel {
   private measuresCacheVer = -1;
   /** Version the flat cache was built at. */
   private flatCacheVer = -1;
+  /** Test-mode (HKL_INDEX_CHECK) bookkeeping: the document version at which
+   *  `measuresCache` was last verified against the live DOM, and the voices
+   *  whose `flatCache` entry has been verified at `flatCacheVer`. Each cache is
+   *  checked ONCE per document version, not once per hit — see `allMeasures`. */
+  private measuresVerifiedVer = -1;
+  private flatVerified = new Set<Voice>();
   /** Live-document mutation tracker backing both caches. */
   private flatMo: MutationObserver | null = null;
   private flatMoDoc: Document | null = null;
@@ -1592,7 +1598,14 @@ export class ComposerModel {
   allMeasures(): Element[] {
     const ver = this.documentVersion();
     if (this.measuresCache && this.measuresCacheVer === ver) {
-      if (indexCheckEnabled()) {
+      if (indexCheckEnabled() && this.measuresVerifiedVer !== ver) {
+        /* Verified ONCE per document version, not once per hit. `ver` was just
+           drained from the MutationObserver, so two hits at the same version
+           have zero mutation records between them and read the same DOM — a
+           second check can only repeat the first. Per-hit checking cost
+           O(n) × O(calls), and calls scale with the edit range: a 17-line key
+           change on the sonata made 25 121 hits and took 44 s in test mode
+           against 1.2 s in production (2026-09-01). */
         const fresh = this.doc.querySelectorAll("measure");
         if (fresh.length !== this.measuresCache.length) {
           throw new Error(
@@ -1604,6 +1617,7 @@ export class ComposerModel {
             throw new Error(`allMeasures cache stale at index ${i}`);
           }
         }
+        this.measuresVerifiedVer = ver;
       }
       return this.measuresCache;
     }
@@ -2709,17 +2723,27 @@ export class ComposerModel {
    *
    *  The hazard the old always-recompute form avoided is a mutation reading
    *  stops it has already invalidated in the DOM but not yet through
-   *  `invalidateMeterCache`. Under HKL_INDEX_CHECK every cache HIT is verified
-   *  against a fresh enumeration and throws on divergence, so the fixture suite
-   *  is the gate on that discipline (as it already is for VoiceIndex).
+   *  `invalidateMeterCache`. Under HKL_INDEX_CHECK the first cache hit at each
+   *  document version is verified against a fresh enumeration and throws on
+   *  divergence, so the fixture suite is the gate on that discipline (as it
+   *  already is for VoiceIndex).
    *
    *  Callers treat the result as read-only; nothing mutates the array. */
   flatChildren(voice: Voice): Element[] {
     const ver = this.documentVersion();
-    if (ver !== this.flatCacheVer) { this.flatCache.clear(); this.flatCacheVer = ver; }
+    if (ver !== this.flatCacheVer) {
+      this.flatCache.clear();
+      this.flatVerified.clear();
+      this.flatCacheVer = ver;
+    }
     const hit = this.flatCache.get(voice);
     if (hit) {
-      if (indexCheckEnabled()) this.assertFlatCacheConsistent(voice, hit);
+      /* Once per (document version, voice) — same guarantee as per-hit, see
+         allMeasures. A 17-line key change made 4 751 flatChildren hits. */
+      if (indexCheckEnabled() && !this.flatVerified.has(voice)) {
+        this.assertFlatCacheConsistent(voice, hit);
+        this.flatVerified.add(voice);
+      }
       return hit;
     }
     const built = flatChildrenImpl(this, voice);
