@@ -126,8 +126,12 @@ export interface RefillResult {
   /** Partition just committed (what the DOM must render after this edit). */
   newStartIds: string[];
   /** Pagination the mounted DOM renders (pre-edit) and the one just committed
-   *  — page-start line ids, page 1 first. Equal (and stable) unless a line
-   *  that began a page was merged away. Empty when pagination isn't owned. */
+   *  — page-start line ids, page 1 first. Pages are carried by LINE: a
+   *  surviving line keeps its page, so an id here changes only when a page's
+   *  first line got a new start measure (its old one was deleted) — the page
+   *  grid itself is unchanged and the splicer handles it. The COUNT changes
+   *  only when a page's every line vanished (the page collapses). Empty when
+   *  pagination isn't owned. */
   oldPageStartIds: string[];
   newPageStartIds: string[];
 }
@@ -487,6 +491,26 @@ export class PageLineBreaks {
     return this.pageStartIds.length > 1;
   }
 
+  /** Commit a pagination the renderer's overflow repair decided (B2): the
+   *  cascade moves a page boundary forward or appends a page, one measured
+   *  step at a time, and the committed pins must describe the DOM after each
+   *  step. Validated — every id must be a line start, page 1 the document
+   *  start, strictly ascending — so a wrong list is refused, never pinned. The
+   *  signature baseline is untouched (the document did not change). */
+  replacePageStarts(pages: string[]): boolean {
+    if (this.startIds === null) return false;
+    const pos = new Map(this.startIds.map((id, i) => [id, i]));
+    if (!pages.length || pages[0] !== this.startIds[0]) return false;
+    let prev = -1;
+    for (const id of pages) {
+      const p = pos.get(id);
+      if (p == null || p <= prev) return false;
+      prev = p;
+    }
+    this.pageStartIds = pages.slice();
+    return true;
+  }
+
   /** True when a refill attempt is worth making (adopted, or adoption armed
    *  and finishable). */
   canAttemptRefill(): boolean {
@@ -750,16 +774,28 @@ export class PageLineBreaks {
     run = unionRun(run.lo, run.hi, sr.ranges);
 
     let newStartIds: string[];
+    let newPageStartIds: string[];
     let changedRun: { lo: number; hi: number } | null;
+    const oldPageStartIds = this.pageStartIds.slice();
     if (run.lo > run.hi) {
       newStartIds = oldStarts;               // nothing changed — re-pin as-is
+      /* Every measure survived identically, so every line and page did too. A
+         single-page document has exactly one page start — the document start —
+         which simply follows line 0. (An empty list would read as "pagination
+         changed" and block every splice.) */
+      newPageStartIds = oldPageStartIds.length ? [newStartIds[0], ...oldPageStartIds.slice(1)] : [];
       changedRun = null;
       this.lastRefillLines = 0;
     } else {
       changedRun = { lo: run.lo, hi: run.hi };
+      /* Pagination is carried INSIDE the repair, by line (see repartition):
+         a surviving line never changes page, and a page whose lines all
+         vanished collapses. The renderer compares old and new page COUNTS to
+         decide whether the page grid itself changed. */
       const repaired = this.repartition(model, meiMeasures, ids, idIdx, hard, { lo: run.lo, hi: run.hi }, ctx);
       if (!repaired) return bail('repartition window/cap exhausted');
-      newStartIds = repaired;
+      newStartIds = repaired.starts;
+      newPageStartIds = repaired.pages;
     }
     /* A single-line partition isn't worth owning: breaks:'line' with no <sb>
        in the data WARNS and falls back to auto castoff internally (probed
@@ -767,43 +803,9 @@ export class PageLineBreaks {
        and castoff's metric could flip-flop per edit. Docs that small derive
        synchronously well under the deferral threshold — let them. */
     if (newStartIds.length <= 1) return bail('single-line result');
-
-    /* Carry PAGINATION across the edit the same way as the lines: a page keeps
-       its start id while that id still begins a line; one whose line was
-       merged away moves to the next surviving line start (never backwards, so
-       pages can't swap order). Page 1 is always the document start. */
     const newLineStarts = new Set(newStartIds);
-    const oldPageStartIds = this.pageStartIds.slice();
-    /* A single-page document has exactly one page start — the document start —
-       which simply follows line 0 across the edit. (Returning an empty list
-       here would read as "pagination changed" and block every splice.) */
-    let newPageStartIds: string[] = oldPageStartIds.length ? [newStartIds[0]] : [];
-    if (oldPageStartIds.length > 1) {
-      newPageStartIds = [];
-      let cursor = 0;
-      for (const id of oldPageStartIds) {
-        let at = newStartIds.indexOf(id, cursor);
-        if (at < 0) {
-          /* The line that began this page is gone — find where it used to sit
-             and take the next surviving line start from there. */
-          const oldPos = this.startIds!.indexOf(id);
-          at = -1;
-          if (oldPos >= 0) {
-            for (let k = oldPos; k < this.startIds!.length; k++) {
-              const cand = newStartIds.indexOf(this.startIds![k], cursor);
-              if (cand >= 0) { at = cand; break; }
-            }
-          }
-        }
-        if (at < 0 || at < cursor) continue;         // page collapsed away
-        newPageStartIds.push(newStartIds[at]);
-        cursor = at + 1;
-      }
-      if (!newPageStartIds.length || newPageStartIds[0] !== newStartIds[0]) {
-        newPageStartIds = [newStartIds[0], ...newPageStartIds.filter((id) => id !== newStartIds[0])];
-      }
-      if (!newPageStartIds.every((id) => newLineStarts.has(id))) return bail('page start is not a line start');
-    }
+    if (newPageStartIds.length && newPageStartIds[0] !== newStartIds[0]) return bail('page 1 does not start the document');
+    if (!newPageStartIds.every((id) => newLineStarts.has(id))) return bail('page start is not a line start');
 
     const strategy: RefillStrategy = newPageStartIds.length > 1 ? 'encoded' : 'line';
     this.startIds = newStartIds;
@@ -841,7 +843,7 @@ export class PageLineBreaks {
     hard: Set<string>,
     dirty: { lo: number; hi: number },
     ctx: PageBreaksCtx,
-  ): string[] | null {
+  ): { starts: string[]; pages: string[] } | null {
     const n = ids.length;
     const dLo = Math.max(0, Math.min(dirty.lo, n - 1));
     const dHi = Math.max(dLo, Math.min(dirty.hi, n - 1));
@@ -860,18 +862,53 @@ export class PageLineBreaks {
       oldStartPos.push(p);
     }
     const starts: number[] = [];
+    /* New line index each old line carried to (null = every member deleted). */
+    const oldLineToNew: Array<number | null> = [];
     for (let k = 0; k < oldStartPos.length; k++) {
       const from = oldStartPos[k];
       const to = k + 1 < oldStartPos.length ? oldStartPos[k + 1] : this.sigOrder.length;
+      let carried: number | null = null;
       for (let i = from; i < to; i++) {
         const ni = idIdx.get(this.sigOrder[i]);
         if (ni == null) continue;
-        if (!starts.length || ni > starts[starts.length - 1]) starts.push(ni);
+        if (!starts.length || ni > starts[starts.length - 1]) { starts.push(ni); carried = starts.length - 1; }
         break;
       }
+      oldLineToNew.push(carried);
     }
     if (!starts.length) return null;
     starts[0] = 0;   // line 0 always begins the document
+
+    /* ── carry PAGINATION by LINE, not by id (B2, 2026-09-02) ──
+       A page is a run of lines; it keeps the LINE its old start carried to.
+       Carrying by start ID (what this did before) sent a page whose start
+       MEASURE was deleted to the next surviving old START — skipping the
+       remnant of its own first line, which then landed on the previous page:
+       a pagination change no edit asked for. By line, a surviving line never
+       changes page; a page whose every line vanished collapses into its
+       successor (the renderer removes the emptied page element). Tracked as
+       indices into `starts` through the repair loop below, because a repair
+       that INSERTS a line shifts every later page's line index. */
+    const oldLineOf = new Map(this.startIds!.map((id, k) => [id, k]));
+    const pageLines: number[] = [];
+    for (const pid of this.pageStartIds) {
+      const kOld = oldLineOf.get(pid);
+      if (kOld == null) return null;   // page start is not a line start → derive
+      let li: number | null = null;
+      for (let k = kOld; k < oldLineToNew.length && li === null; k++) li = oldLineToNew[k];
+      if (li === null) continue;                                  // page at the end, everything gone
+      if (pageLines.length && li <= pageLines[pageLines.length - 1]) continue;   // collapsed into its predecessor
+      pageLines.push(li);
+    }
+    if (this.pageStartIds.length) {
+      if (!pageLines.length || pageLines[0] !== 0) pageLines.unshift(0);
+      if (pageLines.length > 1 && pageLines[1] === 0) pageLines.splice(1, 1);
+    }
+    /* A repair that inserts a new line at position k+1 shifts the line index
+       of every page starting at or after it. */
+    const lineInserted = (at: number): void => {
+      for (let p = 0; p < pageLines.length; p++) if (pageLines[p] >= at) pageLines[p]++;
+    };
 
     /* Dirty measures must be re-measured; drop their cached naturals. */
     for (let i = dLo; i <= dHi; i++) this.naturals.delete(ids[i]);
@@ -945,6 +982,7 @@ export class PageLineBreaks {
           pushed = new Set<number>();
         } else if (hard.has(ids[starts[k + 1]])) {
           starts.splice(k + 1, 0, moving);           // can't move a user break — new line before it
+          lineInserted(k + 1);
           pushed = new Set<number>();
           through++;
         } else {
@@ -975,7 +1013,7 @@ export class PageLineBreaks {
       if (out[i] !== this.startIds![i]) movedLines++;
     }
     this.lastRefillLines = movedLines;
-    return out;
+    return { starts: out, pages: pageLines.map((li) => out[li]) };
   }
 
   /* ── naturals measurement ─────────────────────────────────────────────── */

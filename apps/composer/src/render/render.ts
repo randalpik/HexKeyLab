@@ -14,8 +14,19 @@ import {
   PageLineBreaks, partitionFromLayout, systemStartsFromPageSvg, injectPins,
   type PageBreaksCtx,
 } from './linebreaks.js';
-import { PageSystemSplicer, type PageSpliceCtx } from './pagesplice.js';
+import { PageSystemSplicer, type PageSpliceCtx, type SpliceRequest } from './pagesplice.js';
 import type { ComposerModel } from '../model/index.js';
+
+function indexCheckEnabled(): boolean {
+  return typeof globalThis !== 'undefined' &&
+    (globalThis as { __HKL_INDEX_CHECK?: boolean }).__HKL_INDEX_CHECK === true;
+}
+
+/** Pagination-repair steps one edit may take before giving up (derive). Each
+ *  step moves one page's spilled tail onto the next page; a chain this long
+ *  means every page below the edit was full, which is a whole-document reflow
+ *  by any name. */
+const MAX_CASCADE_STEPS = 64;
 
 /* Verovio draws volta (1st/2nd ending) numbers in a large, heavy default.
  * Restyle the innermost numeric tspan to a lighter serif and append the
@@ -203,6 +214,12 @@ class Renderer {
    *  skipping the full-doc loadData entirely. Stateless: everything it needs
    *  lives in the DOM + the refill result, so there is nothing to invalidate. */
   private pageSplicer = new PageSystemSplicer();
+  /** > 0 while a splice or pagination cascade is running — mountPage must not
+   *  start a nested repair from the splicer's own ensure-mounts. */
+  private spliceDepth = 0;
+  /** Page elements the current edit's splice + cascade touched (the test-mode
+   *  reference gate verifies exactly these once numbering is final). */
+  private touchedPages: HTMLElement[] = [];
 
   constructor() {
     this.readyPromise = this.loadVerovio();
@@ -766,6 +783,12 @@ class Renderer {
     this.container!.scrollLeft = keepLeft;
     this.setContainerThemeTags();
     this.mountVisiblePages();
+    /* Page 1 is mounted above without going through mountPage, so it gets its
+       page-fit repair here: a section header's reserve is page budget (Max,
+       2026-09-02), and a page whose systems no longer fit below it spills —
+       the tail moves onto page 2 like any other overflow. Pages mounted by
+       mountVisiblePages were repaired as they mounted. */
+    this.repairAtMount([1]);
     this.armPageIo();
   }
 
@@ -823,6 +846,32 @@ class Renderer {
     div.style.removeProperty('height');
     st.io?.unobserve(div);
     this.finishPageMount(div);
+    /* B2: a page drawn from pinned data can spill past its paper — Verovio does
+       not re-paginate under <pb> pins, a section header's reserve is page
+       budget the castoff knows nothing about, and a lazy cascade step may have
+       parked a block here (repairPagination). Repair it now. */
+    this.repairAtMount([p]);
+  }
+
+  /** The page-fit repair for pages that were just MOUNTED (lazy mount, page 1
+   *  of a full render, a created page): never re-entered from inside a splice
+   *  or cascade (their own ensure-mounts come through mountPage), a spill no
+   *  step can move is warned about, never hidden, and under HKL_INDEX_CHECK the
+   *  pages a repair touched are verified against a fresh full render exactly
+   *  like an edit-path splice. */
+  private repairAtMount(pages: number[]): void {
+    if (this.spliceDepth !== 0 || !this.pageBreaks.paginationOwned() || !this.lastModel) return;
+    this.spliceDepth++;
+    this.touchedPages = [];
+    try {
+      if (!this.repairPagination(this.lastModel, pages)) {
+        console.warn('[page-breaks] page ' + pages.join(',') + ' overflows its box and could not be repaired (' + this.pageSplicer.lastSkipReason + ')');
+      } else if (indexCheckEnabled() && this.touchedPages.length) {
+        this.pageSplicer.verifyAgainstReference(this.pinnedMeiForCurrentModel(), this.touchedPages, this.pageSpliceCtx());
+      }
+    } finally {
+      this.spliceDepth--;
+    }
   }
 
   /** Return a mounted page to a placeholder. The inverse of mountPage, and the
@@ -1082,10 +1131,7 @@ class Renderer {
            where measure ids resolve into the wrong frame). */
         const pageDomLive = preMei === null && this.pageVirt !== null
           && this.container!.querySelector('.score-page svg') !== null;
-        /* A splice replaces systems inside the EXISTING page grid, so it is
-           only valid while the pagination it renders under is unchanged. */
-        const paginationHeld = refill.oldPageStartIds.join() === refill.newPageStartIds.join();
-        if (pageDomLive && paginationHeld) {
+        if (pageDomLive) {
           if (refill.changedRun === null) {
             /* Signature-identical doc (head/user-break/interior guards all
                passed) — the mounted DOM already renders exactly this. */
@@ -1093,47 +1139,61 @@ class Renderer {
             this.lastPageSpliced = true;   // DOM untouched — the fastest path there is
             return false;
           }
-          if (this.pageSplicer.trySplice(model, refill, this.pageSpliceCtx())) {
-            /* A splice that MOVED systems (B1's dy-cascade) can push its page
-               past the paper. Verovio won't re-paginate for us under pinned
-               <pb>, so the same rule the pinned full-render path uses applies
-               here: a spill means our page assignment is wrong, and the honest
-               response is to hand pagination back rather than draw a clipped
-               page. Scoped to the edited pages — nothing else moved. */
-            const vp = this.pageSplicer.lastVertical;
-            if (vp && !vp.static) {
-              const spill = this.overflowingPage(this.pageSplicer.lastPages);
-              if (spill !== 0) {
-                console.warn('[page-splice] cascade overflows page ' + spill + ' — returning pagination to Verovio (derive)');
-                this.pageBreaks.invalidate();
-                this.renderPage(model.serialize(heji, viewStaves), true);
-                if (this.pageVirt) {
-                  this.pageBreaks.armAdoption(model, this.pageVirt.pageCount, this.pageBreaksCtx());
-                }
-                this.lastPageSpliced = false;
-                return true;
+          /* B2 (2026-09-02): EVERY refill reaches the splicer. A changed line
+             count or a moved page start is a line HUNK to the splicer, not a
+             refusal (it used to be `line count changed` / a silent
+             `paginationHeld` bypass — both O(document) full renders on an
+             ordinary edit), and a page the splice pushed past its paper is
+             repaired by moving the spilled systems onto the next page
+             (repairPagination), never by handing pagination back. Only a
+             refusal, or a spill no step can move, falls through to the full
+             refill render / derive below — with its reason on the splicer. */
+          this.spliceDepth++;
+          this.touchedPages = [];
+          let spliced = false, landed = false;
+          try {
+            const req: SpliceRequest = {
+              oldStartIds: refill.oldStartIds, newStartIds: refill.newStartIds,
+              oldPageStartIds: refill.oldPageStartIds, newPageStartIds: refill.newPageStartIds,
+              changedRun: refill.changedRun,
+            };
+            if (this.pageSplicer.trySplice(model, req, this.pageSpliceCtx())) {
+              spliced = true;
+              this.registerSpliceEffects();
+              landed = this.repairPagination(model, this.pageSplicer.lastPages.slice());
+              if (!landed) {
+                console.warn('[page-splice] spilled page could not be repaired (' + this.pageSplicer.lastSkipReason + ') — returning pagination to Verovio (derive)');
               }
+            } else {
+              console.info('[page-splice] not spliceable (' + this.pageSplicer.lastSkipReason + ') — full refill render');
             }
-            /* The mounted pages now show the edit but the toolkit's layout —
-               and pageVirt.mei — still describe the pre-edit document; a lazy
-               mount must rebuild before drawing (pageVirt.stale). Its options
-               become the pinned 'line' ones the rebuilt data expects, whatever
-               strategy the last full render used. */
-            /* Mark ONLY the edited pages. The live toolkit is untouched by a
-               splice (it renders through spliceTk), so it still holds a valid
-               layout for every other page — clearing tkCurrent here would
-               force a needless ~600 ms reload on the next lazy mount. `mei`
-               and `options` stay paired with that layout and are replaced
-               together when a stale page actually needs mounting. */
-            if (this.pageVirt) {
-              for (const p of this.pageSplicer.lastPages) this.pageVirt.stalePages.add(p);
-            }
+          } finally {
+            this.spliceDepth--;
+          }
+          if (landed) {
             this.lastPageSpliced = true;
             this.pageBreaks.verifyRenderedPartition(
               this.container!, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
+            /* Reference gate (test mode): after the splice AND its repair have
+               settled, against the owner's CURRENT pins — a cascade moved them
+               past what the refill committed. */
+            if (indexCheckEnabled()) {
+              this.pageSplicer.verifyAgainstReference(this.pinnedMeiForCurrentModel(), this.touchedPages, this.pageSpliceCtx());
+            }
             return false;
           }
-          console.info('[page-splice] not spliceable (' + this.pageSplicer.lastSkipReason + ') — full refill render');
+          if (spliced) {
+            /* The surgery landed but a spill could not be moved on; the DOM is
+               part-way. Derive from the model (pins are already restored to
+               the last consistent pagination by the failed step). */
+            this.pageBreaks.invalidate();
+            this.renderPage(model.serialize(heji, viewStaves), true);
+            if (this.pageVirt) {
+              this.pageBreaks.armAdoption(model, this.pageVirt.pageCount, this.pageBreaksCtx());
+            }
+            this.lastPageSpliced = false;
+            return true;
+          }
         }
         const pinned = refill.mei();
         if (pinned !== null) {
@@ -1377,7 +1437,211 @@ class Renderer {
       decorateHost: (el: HTMLElement) => styleVoltaNumbers(el),
       snapPage: (el: HTMLElement) => this.snapSystems(el),
       ensurePageMounted: (p: number) => this.mountPageIfCheap(p),
+      createPage: (p: number, shell: Element) => this.createPage(p, shell),
+      finishCreatedPage: (el: HTMLElement) => this.finishPageMount(el),
     };
+  }
+
+  /** Page element by (current) page number, mounted or placeholder. */
+  private pageDiv(p: number): HTMLElement | null {
+    return this.container?.querySelector('.score-page[data-page="' + p + '"]') as HTMLElement | null ?? null;
+  }
+
+  /** B2: append page `p` (= pageCount + 1) built from a window page's SVG shell
+   *  (identical page options → identical furniture; the splicer strips the
+   *  systems and inserts the moved block). Registered mounted and STALE: the
+   *  live toolkit's layout has no such page, so any later re-mount rebuilds
+   *  from the current pins. */
+  private createPage(p: number, shell: Element): HTMLElement | null {
+    const st = this.pageVirt;
+    if (!st || !this.container || p !== st.pageCount + 1) return null;
+    const div = document.createElement('div');
+    div.className = 'score-page';
+    div.dataset.page = String(p);
+    div.appendChild(document.importNode(shell, true));
+    const all = this.container.querySelectorAll('.score-page');
+    const last = all.length ? all[all.length - 1] : null;
+    if (last) last.after(div); else this.container.appendChild(div);
+    st.pageCount = p;
+    st.mounted.add(p);
+    st.stalePages.add(p);
+    return div;
+  }
+
+  /** B2: drop a page the splice left without systems (every line on it was
+   *  deleted) and renumber what follows. The toolkit's layout still numbers
+   *  the later pages the old way, so every page from `p` on is stale: the
+   *  first re-mount of any of them rebuilds the layout from the current pins
+   *  (one reload), after which numbering agrees again. */
+  private removePage(div: HTMLElement): void {
+    const st = this.pageVirt;
+    const p = Number(div.dataset.page);
+    st?.io?.unobserve(div);
+    div.remove();
+    if (!st || !(p >= 1) || !this.container) return;
+    const shift = (s: Set<number>): Set<number> => {
+      const out = new Set<number>();
+      for (const q of s) { if (q !== p) out.add(q > p ? q - 1 : q); }
+      return out;
+    };
+    st.mounted = shift(st.mounted);
+    st.stalePages = shift(st.stalePages);
+    for (const el of Array.from(this.container.querySelectorAll('.score-page')) as HTMLElement[]) {
+      const q = Number(el.dataset.page);
+      if (q > p) el.dataset.page = String(q - 1);
+    }
+    st.pageCount = Math.max(1, st.pageCount - 1);
+    for (let q = p; q <= st.pageCount; q++) st.stalePages.add(q);
+  }
+
+  /** Book-keeping after a landed splice (edit or cascade step): remove emptied
+   *  pages, mark every touched page stale (the live toolkit still holds the
+   *  pre-edit layout for them — every OTHER page still mounts for free), and
+   *  refresh the splicer's page-number diagnostics under the final numbering. */
+  private registerSpliceEffects(): void {
+    const ps = this.pageSplicer;
+    for (const div of ps.lastEmptiedPages) this.removePage(div);
+    const st = this.pageVirt;
+    const nums: number[] = [];
+    for (const el of ps.lastPageEls) {
+      if (!el.isConnected) continue;
+      const p = Number(el.dataset.page);
+      if (!(p >= 1)) continue;
+      nums.push(p);
+      st?.stalePages.add(p);
+      if (!this.touchedPages.includes(el)) this.touchedPages.push(el);
+    }
+    ps.lastPages = nums;
+  }
+
+  /** Systems of a mounted page that sit past its paper: the index of the first
+   *  system whose bottom crosses the page box (−1 when the page fits). Same
+   *  tolerance as overflowingPage: a system's bbox includes hanging content
+   *  that legitimately reaches into the bottom margin. */
+  private foldOf(div: HTMLElement): { systems: Element[]; firstPast: number } | null {
+    const svg = div.querySelector('svg');
+    if (!svg) return null;
+    const systems = Array.from(div.querySelectorAll('g.system'));
+    if (!systems.length) return null;
+    const bottom = svg.getBoundingClientRect().bottom + 2;
+    let firstPast = -1;
+    for (let i = 0; i < systems.length; i++) {
+      if (systems[i].getBoundingClientRect().bottom > bottom) { firstPast = i; break; }
+    }
+    return { systems, firstPast };
+  }
+
+  /** B2 pagination repair — the overflow cascade. Pages are OWNED, so a page
+   *  whose content spills past the paper is ours to fix, and the fix is what a
+   *  castoff would do: move the spilled tail onto the next page, then check
+   *  that page. Each step is MEASURED (the fold is read from the live page
+   *  after the splice's own snap flush; the moved block's page-first position
+   *  is read from a window that paginates there) and lands as a splice whose
+   *  hunk has unchanged lines but a different target page. A last page that
+   *  spills gets a new page. Legality is overflow-only: a deletion leaves
+   *  its slack (content over churn — a page-side MIN_FILL, like vertical
+   *  justification, is a D1/D2 question).
+   *
+   *  The chain is bounded by the mounted set: when the receiving page is a
+   *  placeholder that cannot be mounted from the pre-edit layout, the block is
+   *  simply removed from the spilling page and both pages are marked stale —
+   *  the receiving page draws the block when it mounts (mountPage), checks its
+   *  own fold then, and continues the cascade from there. So the synchronous
+   *  cost is a step per mounted page below the edit (cursor page ± 1), and the
+   *  rest settles lazily at mount time. That is the interim answer to "the
+   *  cascade past the cursor's surroundings must not tie up the interactive
+   *  layer"; the seam for a scheduled (idle-time, reload-free) continuation is
+   *  this method's `pending` list.
+   *
+   *  Returns false when a step could not be landed — the caller derives (edit
+   *  path) or warns (mount path). Pins are restored to the last consistent
+   *  pagination before returning. */
+  private repairPagination(model: ComposerModel, pages: number[]): boolean {
+    const st = this.pageVirt;
+    if (!st || !this.container || !this.pageBreaks.paginationOwned()) return true;
+    let pending = Array.from(new Set(pages)).filter((p) => p >= 1).sort((x, y) => x - y);
+    let steps = 0;
+    while (pending.length) {
+      const p = pending.shift()!;
+      const div = this.pageDiv(p);
+      if (!div || div.classList.contains('score-page-pending')) continue;
+      const fold = this.foldOf(div);
+      if (!fold || fold.firstPast < 0) continue;                       // fits
+      if (fold.firstPast === 0) {
+        this.pageSplicer.lastSkipReason = 'page ' + p + ': a single system is taller than the page';
+        return false;
+      }
+      if (++steps > MAX_CASCADE_STEPS) {
+        this.pageSplicer.lastSkipReason = 'pagination cascade exceeded ' + MAX_CASCADE_STEPS + ' steps';
+        return false;
+      }
+      const block = fold.systems.slice(fold.firstPast);
+      const lines = this.pageBreaks.lineStarts();
+      const lineAt = new Map(lines.map((id, i) => [id, i]));
+      const blockLines = block.map((s) => lineAt.get(s.querySelector('g.measure')?.id ?? ''));
+      if (blockLines.some((l) => l === undefined)) {
+        this.pageSplicer.lastSkipReason = 'spilled system is not a partition line';
+        return false;
+      }
+      const a = blockLines[0]!, b = blockLines[blockLines.length - 1]!;
+      const oldPages = this.pageBreaks.pageStarts();
+      /* Page p+1 (index p) now starts at the block; a last page spawns one. The
+         block must be page p's tail, i.e. page p+1 currently starts right after it. */
+      if (p < oldPages.length && lineAt.get(oldPages[p]) !== b + 1) {
+        this.pageSplicer.lastSkipReason = 'spilled block is not the page tail';
+        return false;
+      }
+      const newPages = oldPages.slice();
+      if (p < oldPages.length) newPages[p] = lines[a]; else newPages.push(lines[a]);
+      if (!this.pageBreaks.replacePageStarts(newPages)) {
+        this.pageSplicer.lastSkipReason = 'page start list rejected';
+        return false;
+      }
+      const receiving = p + 1 <= st.pageCount;
+      const nextDiv = receiving ? this.pageDiv(p + 1) : null;
+      const nextMounted = receiving && ((nextDiv && !nextDiv.classList.contains('score-page-pending')) || this.mountPageIfCheap(p + 1));
+      if (receiving && !nextMounted) {
+        /* Lazy step (see above): take the block off this page; the receiving
+           page draws it — and checks its own fold — when it mounts. */
+        if (!this.lazyMoveOut(div, block)) {
+          this.pageBreaks.replacePageStarts(oldPages);
+          this.pageSplicer.lastSkipReason = 'lazy move of a section-header line';
+          return false;
+        }
+        st.stalePages.add(p);
+        st.stalePages.add(p + 1);
+        if (!this.touchedPages.includes(div)) this.touchedPages.push(div);
+        continue;
+      }
+      const req: SpliceRequest = {
+        oldStartIds: lines, newStartIds: lines,
+        oldPageStartIds: oldPages, newPageStartIds: newPages,
+        changedRun: null, moveLines: { a, b },
+      };
+      if (!this.pageSplicer.trySplice(model, req, this.pageSpliceCtx())) {
+        this.pageBreaks.replacePageStarts(oldPages);
+        return false;
+      }
+      this.registerSpliceEffects();
+      /* The receiving page may spill in turn. */
+      pending = [p + 1, ...pending.filter((q) => q !== p + 1)];
+    }
+    return true;
+  }
+
+  /** Remove a spilled block from its page without re-rendering it anywhere
+   *  (the receiving page is unmounted and will draw it on mount). A section
+   *  title riding on the block leaves with it — the receiving page's mount
+   *  pass injects it again from the model. */
+  private lazyMoveOut(div: HTMLElement, block: Element[]): boolean {
+    for (const t of Array.from(div.querySelectorAll('text.hkl-section-header'))) {
+      const id = t.getAttribute('data-for');
+      const m = id ? div.querySelector('#' + CSS.escape(id)) : null;
+      const sys = m?.closest('g.system');
+      if (sys && block.includes(sys)) t.remove();
+    }
+    for (const s of block) s.remove();
+    return true;
   }
 
   /** Mount page `p` for the splicer (B5), but ONLY when doing so is cheap and

@@ -163,6 +163,17 @@ on mount (viewBox growth), shifting pages below it; scroll-mode full engrave
   user-`<pb>` giant-page quirk — that needs the derive path to paginate by
   height itself. Full renders also got cheaper across the board (sonata page
   edit fallback ~1.95 s → ~1.1 s).
+- [x] **T3.2b B2 — line-count and pagination changes splice** — SHIPPED
+  2026-09-02. The replaced set is a line HUNK (N old systems → M new), pages are
+  carried by line, and a page that spills is repaired by a measured cascade
+  (its tail moves onto the next page as a page-first splice; a full last page
+  spawns a created page; an emptied page is removed and the rest renumbered) —
+  the hand-back above no longer happens on the edit path. Composing at the end
+  of the sonata (new line + new page) is ~700 ms worst-case-mounted in the
+  battery instead of a ~1.2 s full render; battery 10/10 spliced,
+  reference-clean. The cascade is synchronous across the mounted set and lazy
+  at the mount boundary; the scheduled continuation is the next item
+  (docs/composer-page-splice-design.md → START HERE).
 - [x] **T3.2b Splice-latency profile + two self-inflicted fixes** — SHIPPED
   2026-08-30. A steady-state spliced edit is **313 ms**, of which Verovio is
   only 58 ms; the rest is whole-document bookkeeping (cursor.update 57 ms over

@@ -270,6 +270,9 @@ export function pinExactScale(container: HTMLElement, scale: number): void {
     if (!(root instanceof SVGSVGElement)) continue;
     const vb = (inner.getAttribute('viewBox') ?? '').split(/\s+/).map(Number);
     if (vb.length === 4 && vb[2] && vb[3]) {
+      /* Idempotent by construction: nothing may grow a page's viewBox after
+         mount (Composer's section-header injector used to, and the first
+         re-pin on such a page then resized it by the reserve — 2026-09-02). */
       root.setAttribute('width', `${vb[2] * ds}px`);
       root.setAttribute('height', `${vb[3] * ds}px`);
     }

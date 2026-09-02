@@ -237,6 +237,71 @@ await runEdit('edit-page-first', () => {
   return model.deleteAtCursor();
 }, 'any');
 
+// 9 (B2, 2026-09-02): compose at the END — four bars of quarters appended past
+// the last measure in one render. The last line overflows and a new final line
+// (or two) is born: a partition with MORE lines than the DOM shows, which used
+// to refuse with `line count changed` (a full render every fourth bar of
+// composition). If the last page is full the tail moves onto a NEW page.
+await runEdit('append-at-end', () => {
+  let ok = true;
+  for (let q = 0; q < 16 && ok; q++) {
+    model.setCursor(model['flatChildren'](1).length, 1);
+    ok = model.insertChordAtCursor({ notes: [mkNote], duration: '4', dots: 0 });
+  }
+  return ok;
+}, 'spliced');
+// 10 (B2): delete EVERY measure of a mid-document line (all voices, then the
+// empty wrappers) — the line vanishes by membership carry, a partition with
+// FEWER lines than the DOM shows.
+await runEdit('delete-whole-line', () => {
+  const lines = pb['startIds'];
+  const k = 40;
+  if (!lines || lines.length <= k + 1) return false;
+  const ids = () => model.allMeasures().map((m) => m.getAttribute('xml:id'));
+  const a0 = ids();
+  const lo = a0.indexOf(lines[k]), hi = a0.indexOf(lines[k + 1]);
+  if (lo < 0 || hi <= lo) return false;
+  const doomed = a0.slice(lo, hi).reverse();
+  const V = model.totalVoices();
+  /* Delete by DRIFT (probed 2026-09-02): deleteAtCursor acts on the CURRENT
+     voice (setVoice — setCursor(c, v) only moves v's cursor), a deleted note
+     is replaced by a `space` placeholder, and a delete whose target is a
+     placeholder is a skip-left by design — so an anchored cursor (measure
+     start or end) stalls on the first placeholder it meets. Per voice: park
+     the cursor past the measure's last stop and backspace WITHOUT re-anchoring
+     until the cursor leaves the measure, then the empty wrapper's delete drops
+     the measure (case 2). */
+  const deleteMeasure = (id) => {
+    for (let round = 0; round < 4; round++) {
+      let mi = ids().indexOf(id);
+      if (mi < 0) return true;
+      for (let v = 1; v <= V; v++) {
+        mi = ids().indexOf(id);
+        if (mi < 0) return true;
+        model.setVoice(v);
+        const end = (mi + 1 < ids().length ? model.getMeasureStartCursor(v, mi + 1) : model.getVoiceLength(v)) - 1;
+        model.setCursor(end, v);
+        for (let steps = 0; steps < 200; steps++) {
+          if (model.getCursorMeasureIdx(v) < mi) break;
+          if (ids().indexOf(id) < 0) return true;
+          if (!model.deleteAtCursor()) break;
+        }
+      }
+      mi = ids().indexOf(id);
+      if (mi < 0) return true;
+      model.setVoice(1);
+      model.setCursor(model.getMeasureStartCursor(1, mi), 1);
+      model.deleteAtCursor();
+      if (ids().indexOf(id) < 0) return true;
+    }
+    return false;
+  };
+  let ok = true;
+  for (const id of doomed) { if (!deleteMeasure(id)) { ok = false; break; } }
+  model.setVoice(1);
+  return ok;
+}, 'spliced');
+
 out.battery = battery;
 out.summary = {
   edits: battery.length,

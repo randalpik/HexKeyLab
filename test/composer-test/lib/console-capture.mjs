@@ -11,6 +11,16 @@ const DEFAULT_ALLOW = [
   /^Download the React DevTools/i,
   /favicon\.ico/i,
   /Verovio.+loaded/i,
+  /* Verovio's justification-compression notice (four console.warn lines). The
+     page line-break owner's legality band (FIT_MAX 1.45, linebreaks.ts) admits
+     lines Verovio draws at a compression ratio down to ~0.69, and Verovio
+     warns below 0.8 — so a legal line composed at the end of a score, or a
+     window render of one, trips it by design. Not an error; a D2 tuning
+     observation (docs/composer-page-splice-design.md). */
+  /^\[Warning\] Justification is highly compressed/,
+  /^\[Warning\]\s+System full width:/,
+  /^\[Warning\]\s+Non-justifiable width:/,
+  /^\[Warning\]\s+Drawing justifiable width:/,
 ];
 
 export function attachConsoleCapture(cdp, { allow = DEFAULT_ALLOW } = {}) {

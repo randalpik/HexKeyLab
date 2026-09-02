@@ -5625,3 +5625,193 @@ The one remaining layout flush is the post-surgery snap, which the splice always
 needed. Verovio's `renderToSVG` dominates and is intrinsic (draw time, not
 string formatting: `svgFormatRaw` cut bytes 40% and parse 36% but not the draw;
 the first draw after a `loadData` carries the lazy layout, +30–40%).
+
+## 2026-09-02 — B2: line-count changes and pagination changes are splices; overflow is repaired by a measured cascade, never handed back
+
+**Context**: after the A thread, three O(document) exits remained on an
+ordinary page-view edit — the splicer's `line count changed` refusal (its
+replaced set was index-based, so an N→M partition diff was unrepresentable), the
+`paginationHeld` id-compare in `renderPageComposer` (a refill that changed a
+page-start id bypassed the splicer with no diagnostic), and the post-splice
+`overflowingPage` → derive. The first is the commonest flow there is: composing
+at the end of a score opens a new final line every few bars, and each one was a
+1.2 s full render. Max also set the direction these paths must serve: complete
+ownership of pagination and system distribution within a page (D1), with the
+cascade past the cursor's surroundings eventually off the interactive layer.
+
+**Picked**:
+
+1. **The replaced set is a line HUNK** `old [a..bOld] → new [a..bNew]` — the
+   prefix/suffix diff of old vs new start ids, unioned with the changed run (and
+   a cascade's moved block). Lines outside the hunk are identical on both sides,
+   so old lines locate the live systems and new lines build the window; the
+   vertical plan chains through the M new systems and the followers below the
+   hunk take one measured dy. A changed boundary pulls the line above into the
+   hunk (its extent moved). `SpliceRequest` carries both partitions, both
+   paginations, the changed run and the optional `moveLines`.
+2. **Pages are carried by LINE inside the repair, not by id in `tryRefill`.**
+   The id carry had a latent defect: deleting only the first measure of a
+   page-start line moved the line's remnant onto the PREVIOUS page. By line
+   index (tracked through the repair loop, since an inserted line shifts later
+   pages), a surviving line never changes page because of an edit; a page whose
+   every line vanished collapses into its successor. `paginationHeld` is gone —
+   every refill reaches the splicer, and a count change is a collapse the splicer
+   reports as an emptied page element for the renderer to remove and renumber.
+3. **Page legality is overflow-only and judged live after surgery.** No
+   pull-up on deletion: a page keeps its slack, as a line keeps its content
+   over churn; a page-side minimum and vertical justification are one D1/D2
+   decision for Max, not a B2 default.
+4. **Overflow repair = `repairPagination`, a cascade of measured move-splices.**
+   Step(P): the tail from the fold on (first system whose bottom crosses the
+   page box) moves to the head of page P+1 — the owner's page start moves to the
+   block's first line (`replacePageStarts`), and the move lands as a splice whose
+   hunk has unchanged lines and a new target page; its window pins the block
+   page-first, so its position is read, never modelled (B1's rule holds). Then
+   P+1 is checked. A last page spills into a page CREATED from the window's own
+   page SVG with the systems stripped (`createPage`, then the full mount pass).
+   When the receiving page is a placeholder that cannot be mounted cheaply, the
+   step is LAZY: the block leaves the spilling page, both pages are marked
+   stale, and the receiving page draws the block — and checks its own fold —
+   when it mounts (`mountPage` now runs the repair for any lazily mounted page).
+   The synchronous cost is therefore one step per mounted page below the edit
+   (cursor page ± 1) and the rest settles at mount time — the interim answer
+   to Max's "the cascade must not tie up the interactive layer once the cursor's
+   surroundings are complete". A step that cannot land restores the last
+   consistent pins; the edit path derives, the mount path warns.
+5. **Structured for the scheduled continuation.** The cascade is a `pending`
+   list of pages driven by a loop; an idle/rAF driver with "finish synchronously
+   before the next edit" (adoption's rule) is a driver swap. The step is also
+   where D1's page-fit model would apply: with tracked system heights a step
+   could predict the fold and distribute systems instead of measuring after
+   surgery.
+6. **The reference gate runs once the cascade has settled**, against the
+   owner's CURRENT pins (`pinnedMeiForCurrentModel`, not the refill closure),
+   over every page the splice and its steps touched; `verifyRenderedPartition`
+   asserts the renumbered `data-page` grid against the pins.
+7. **Dated refusals**, each a named `lastSkipReason`, none silent: a section
+   title whose measure the edit deleted; a header line the hunk or cascade would
+   move to another page (title migration across page-margins is unbuilt); a
+   moved block landing on a page it cannot own; more than one page to create in
+   one step; a single system taller than its page; `MAX_CASCADE_STEPS` 64.
+
+**Rejected**: predicting overflow in the refill from a page-fit model before
+any measurement (the model does not exist yet and a page-first anchor is not
+modelable from bboxes — B1's finding; measuring after surgery costs one extra
+small window only on an overflow event); moving a spilled system's `<g>` by DOM
+transplant without a window (its page-first position must be read from a page
+that starts with it); silencing Verovio's justification warning at the toolkit
+(it would also hide unresolved-spanner diagnostics in window renders — the
+suite allowlists the exact four-line family instead, and the observation goes
+to D2: `FIT_MAX 1.45` admits lines Verovio compresses to ~0.7 and warns about
+below 0.8).
+
+**Two bugs the suite caught in the first run, both in the hunk's
+representation** (lessons.md): an unchanged partition read as "no suffix" and
+extended every replaced set to the document's end (seven fixtures, seven
+different symptoms); an empty NEW side (a deleted line) read as "unchanged" and
+imported the successor line without removing its old system. Fixed by holding
+explicit bounds on both sides and testing "unchanged" as `N === M && pre === N`.
+
+**Measured**: sonata battery **10/10 spliced, all reference-clean, all
+edits applied** (the two new edits: `append-at-end` — four bars appended in
+one render opened a new line AND spilled the last page into a created page 31,
+705 ms wall including the second window and the created page's mount pass;
+`delete-whole-line` — a mid-document line's five measures removed in every
+voice, 3.5 s wall of which the scripted deletion itself — hundreds of model
+operations, each walking the 446 measure ids — is nearly all, the render being
+a splice), the eight prior edits 113–396 ms, max reference deltas x/width 5,
+spacing 9, absolute top 10 units. Battery walls are worst-case by construction
+(every page mounted). Five new
+fixtures (`pageSpliceNewLineAtEnd`, `pageSpliceNewPageAtEnd`,
+`pageSpliceLineMerge`, `pageSplicePageCollapse`, and
+`pageSystemSpliceCascadeOverflow` rewritten to assert the move) pass under
+`HKL_INDEX_CHECK`; the seven fixtures the first run broke pass again.
+
+**Where**: `apps/composer/src/render/pagesplice.ts` (`SpliceRequest`, hunk,
+target pages, created/emptied pages, generalized `verticalPlan`, public
+`verifyAgainstReference`), `apps/composer/src/render/linebreaks.ts`
+(line-index page carry in `repartition`, `replacePageStarts`),
+`apps/composer/src/render/render.ts` (`repairPagination`, `foldOf`,
+`lazyMoveOut`, `createPage`, `removePage`, `registerSpliceEffects`, mount-time
+repair, `MAX_CASCADE_STEPS`), `test/composer-test/fixtures.mjs`,
+`test/composer-test/lib/console-capture.mjs`,
+`test/composer-inspect/phasec/cb-splice-battery.js` (edits 9–10),
+docs/composer-page-splice-design.md, docs/architecture/composer.md, docs/lessons.md.
+
+## 2026-09-02 — Header pages keep Verovio's box: `pinExactScale` honours the injector's recorded base height (addendum to B2)
+
+**Context**: re-running `cb-sweep.js` after B2 to re-verify 115/115 also
+re-read its viewport counters, which had stood at 0/0 since the placeholder fix
+and had not been read since: `pageBoxChanged 3`, `scrollHeightChanged 6`, and
+the next-page anchor moved 90 px on the sonata's three movement-start lines.
+Reproduced (`probe-hdr`): a header page mounts with its inner viewBox grown by
+the 900-unit reserve but its root box at Verovio's 2794 px (the injector's
+height update targets the inner svg, which has no height attribute — dead
+code), so it is drawn ~3 % small; since A8 the splice's in-place
+post-processing re-ran `pinExactScale` on that page, which recomputed the root
+height from the grown viewBox: +90 px and everything below shifted. A pre-B2
+regression (A8, 2026-09-01), caught by B2's verification.
+
+**Picked**: geometry-preserving stabilization. The injector records the
+pre-growth viewBox height (`data-hkl-vb-base`) and `pinExactScale` uses it, so
+the page box is identical on every run — no jump, status quo look. The 3 %
+squeeze is documented as an open decision (design doc → Open work): the
+proper fix makes header pages taller at true scale, which is visible and needs
+header-aware placeholder sizing, and belongs with D1 (a header's reserve is
+page-fit budget, not paper added after pagination).
+
+**Rejected**: growing the root box now (visible change plus placeholder
+mismatch on header pages — the eviction lesson — without Max); skipping
+`pinExactScale` on header pages (the same box, but the imported systems would
+be snapped under a stale pin if the zoom ever changed).
+
+**Where**: `apps/composer/src/main.ts` (`injectSectionHeaders`),
+`packages/notation/src/render-presets.ts` (`pinExactScale`), docs/lessons.md.
+
+## 2026-09-02 — Section headers are page budget: the injector stops growing the viewBox, a spilled header line carries its title (supersedes the stabilizer above)
+
+**Context**: the screenshots of the 90 px jump showed more than a height
+change — the whole drawing changed scale and the margins shrank. Max: *"The
+scaling must always stay the same at the fixed box. We must fully own height,
+with the header being another component with reserved height, distinct from a
+system. Adding a header should cause the bottom system to overflow if there was
+not enough extra space on the page for it."* `injectSectionHeaders` growing the
+viewBox was a hack from before pagination was owned; the stabilizer recorded
+in the previous entry only froze the hack's squeezed state (and, it turned out,
+was never even served — see lessons.md on `packages/` edits and the dev server).
+
+**Picked**:
+1. **The paper is fixed and the scale is pinned at the box.** The injector
+   still shifts a header's system and everything below it by the reserve and
+   records `data-reserve`/`data-baseline`; it no longer touches the viewBox or
+   the box. `pinExactScale` is back to its one-line form and is idempotent by
+   construction because nothing grows a viewBox after mount.
+2. **A header consumes budget.** A page whose systems no longer fit below its
+   headers overflows, and the owned pagination repairs it exactly like any
+   other spill: B2's cascade runs after every mount too — `repairAtMount`
+   covers lazy mounts, page 1 of a full render and created pages — so adding a
+   header to a full page pushes its tail onto the next page, at mount, with no
+   derive loop (the castoff knows nothing about reserves; the repair does).
+3. **A spilled header line carries its title.** The splicer migrates the title
+   element to the receiving page's page-margin and re-places it from the
+   injector's rule; the receiving page's followers take the migrated reserve on
+   top of the measured dy (`followerReserveDelta`); a title landing on a page
+   being created is dropped and re-injected by that page's mount pass; a lazy
+   step removes the title with its block for the same reason. The B2 refusals
+   `section header line changes page` and `lazy move of a section-header line`
+   are gone; `section header measure removed` remains the one header bail.
+4. **Mount-time repairs are reference-gated** under `HKL_INDEX_CHECK` like
+   edit-path splices.
+
+**Consequence accepted**: on a document with headers, each header page that
+does not fit gives up its tail on first mount, so the pagination seen before
+this change shifts once; vertical justification within the budget (D1 proper)
+is a later feature. Fixture `pageSectionHeaderOverflow` (headers on a full
+page's first and last lines: box fixed, nothing overflows, titles above their
+systems on the right page, pins agree with the DOM).
+
+**Where**: `apps/composer/src/main.ts` (`injectSectionHeaders`),
+`packages/notation/src/render-presets.ts` (`pinExactScale`),
+`apps/composer/src/render/render.ts` (`repairAtMount`, `lazyMoveOut`),
+`apps/composer/src/render/pagesplice.ts` (title migration,
+`followerReserveDelta`), `test/composer-test/fixtures.mjs`.

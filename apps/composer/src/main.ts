@@ -807,20 +807,19 @@ function injectSectionHeaders(scoreEl: HTMLElement, model: ComposerModel): void 
     t.textContent = title;
     pageMargin.appendChild(t);
 
-    /* Grow the page so the downshifted content isn't clipped. */
-    const pageSvg = pageMargin.closest('svg.definition-scale') as SVGSVGElement | null;
-    if (pageSvg) {
-      const vb = pageSvg.getAttribute('viewBox');
-      if (vb) {
-        const parts = vb.split(/\s+/).map(Number);
-        if (parts.length === 4) {
-          parts[3] += SECTION_HEADER_RESERVE;
-          pageSvg.setAttribute('viewBox', parts.join(' '));
-          const h = parseFloat(pageSvg.getAttribute('height') ?? '0');
-          if (h) pageSvg.setAttribute('height', String(h + SECTION_HEADER_RESERVE * (h / parts[3])));
-        }
-      }
-    }
+    /* The page's box and viewBox are NOT touched (Max, 2026-09-02). A header is
+       a component with a reserved height in the page's vertical budget, like a
+       system: it consumes paper, it does not add any. Until this date the
+       injector grew the inner viewBox by the reserve so the shifted content
+       "wouldn't clip", while the root box stayed at Verovio's page size — so
+       every header page was drawn ~3 % small into a fixed box (uniform `meet`
+       scaling, wider apparent margins), and the first splice that re-pinned the
+       box snapped it to true scale, 90 px taller, shifting every page below.
+       Now the scale is fixed at the box, and a page whose systems no longer fit
+       below the reserve simply OVERFLOWS — which the owned pagination repairs by
+       moving the spilled tail onto the next page (Renderer.repairPagination,
+       run after every mount and every splice). Vertical justification within
+       the budget is D1, later. */
   }
 }
 

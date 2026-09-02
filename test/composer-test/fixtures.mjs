@@ -1552,11 +1552,100 @@ const PAGE_SPLICE = {
     `,
   },
 
-  /* B1 safety net: a dy-cascade that would push its page past the paper must
-   * hand PAGINATION back (derive + re-adopt) rather than draw a clipped page —
-   * Verovio does not re-paginate under pinned <pb>. Asserted via
-   * FIXTURE_ASSERTIONS.pageSystemSpliceCascadeOverflow. */
+  /* B2 (2026-09-02; was the B1 safety net): a dy-cascade that pushes its page
+   * past the paper is REPAIRED — the spilled system moves onto the next page
+   * as a splice whose window pins it page-first (its position is read, never
+   * modelled) — instead of handing pagination back to Verovio with a warn and
+   * a full render. Asserted via FIXTURE_ASSERTIONS.pageSystemSpliceCascadeOverflow. */
   pageSystemSpliceCascadeOverflow: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 400; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
+  /* B2: the commonest line-count change — composing at the end of the score.
+   * Appending past the last line's fill opens a new final line: a refill whose
+   * partition has N+1 lines, which the splicer must land as a hunk (one old
+   * system → two new) rather than refuse with "line count changed" (a full
+   * render on every fourth bar of composition). Asserted via
+   * FIXTURE_ASSERTIONS.pageSpliceNewLineAtEnd. */
+  pageSpliceNewLineAtEnd: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 96; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
+  /* B2: composing past a FULL last page. The new final line spills page N;
+   * the pagination repair moves it onto a page that does not exist yet, which
+   * the splice creates from its own window page (same page options → same
+   * furniture) — no full render, no warn. Asserted via
+   * FIXTURE_ASSERTIONS.pageSpliceNewPageAtEnd. */
+  pageSpliceNewPageAtEnd: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 400; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
+  /* B2: the other direction — a line whose every measure is deleted vanishes
+   * (membership carry), an N−1 partition. The hunk replaces two old systems
+   * (the vanished line and the line the deletion anchored on) with one.
+   * Asserted via FIXTURE_ASSERTIONS.pageSpliceLineMerge. */
+  pageSpliceLineMerge: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 96; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
+  /* B2: a page whose every line is deleted collapses. Pages are carried by
+   * line, so the emptied page's start moves onto its successor's start, the
+   * page count drops by one, the splicer leaves the emptied page element
+   * without systems and the renderer removes and renumbers it — the pins,
+   * the page count and the DOM numbering must all agree afterwards. Asserted
+   * via FIXTURE_ASSERTIONS.pageSplicePageCollapse. */
+  pageSplicePageCollapse: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 400; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
+  /* A section header is a component with a reserved height in its page's
+   * vertical budget (Max, 2026-09-02): the paper is fixed, the scale is fixed
+   * at the box, and a page whose systems no longer fit below the reserve
+   * overflows — the spilled tail moves onto the next page (title travelling
+   * with its system). The injector used to grow the page's viewBox instead,
+   * drawing header pages ~3 % small until the first splice re-pinned the box
+   * 90 px taller. Asserted via FIXTURE_ASSERTIONS.pageSectionHeaderOverflow. */
+  pageSectionHeaderOverflow: {
     setup: `
       m.setCursor(0, 1);
       const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
@@ -9463,7 +9552,7 @@ export const FIXTURE_ASSERTIONS = {
       })()` },
   ],
   pageSystemSpliceCascadeOverflow: [
-    { name: 'a cascade that would overflow its page hands pagination back instead of drawing past the paper',
+    { name: 'a cascade that overflows its page moves the spilled system onto the next page as a splice (B2), never handing pagination back',
       expr: `(() => {
         const H = window.__hkl_composer;
         const m = H.model;
@@ -9471,6 +9560,8 @@ export const FIXTURE_ASSERTIONS = {
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        if (!pb.paginationOwned()) return { ok: false, detail: 'pagination not owned (pages=' + pb.pageStarts().length + ')' };
+        const st0 = H.renderer['pageVirt'];
         const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
         const overflowing = () => {
           const bad = [];
@@ -9485,17 +9576,25 @@ export const FIXTURE_ASSERTIONS = {
           return bad;
         };
         if (overflowing().length) return { ok: false, detail: 'page already overflowing before the edit' };
+        const sysCount = (p) => document.querySelectorAll('#score .score-page[data-page="' + p + '"] g.system').length;
+        const p1sys = [...document.querySelectorAll('#score .score-page[data-page="1"] g.system')];
+        const n1 = p1sys.length;
+        if (n1 < 3) return { ok: false, detail: 'page 1 has only ' + n1 + ' systems' };
+        const tailId = p1sys[n1 - 1].querySelector('g.measure').id;   // page 1's last line, pre-edit
+        const p2start0 = pb.pageStarts()[1];
         /* Grow successive early systems by a c0..g7 span (deep ledger lines both
            ways). Each consumes a chunk of page 1's bottom slack; the loop runs
            until the slack is exhausted, so it does not depend on knowing how
-           much slack Verovio happened to leave. The warn is captured HERE — the
-           suite fails the CONSOLE invariant on any console.warn. */
+           much slack Verovio happened to leave. Any warn is a failure here — a
+           spill used to be handed back to Verovio with one, and now it is not. */
         const warns = [];
         const ow = console.warn;
-        console.warn = (...a) => { warns.push(a.join(' ')); };
-        let handedBack = false, steps = 0, lastDy = 0;
+        /* Verovio's own "[Warning]" lines (justification compression on a
+           legal, dense line) are not evidence here; ours are. */
+        console.warn = (...a) => { const t = a.join(' '); if (!/^\\[Warning\\]/.test(t)) warns.push(t); };
+        let moved = false, steps = 0;
         try {
-          for (let line = 1; line <= 5 && !handedBack; line++) {
+          for (let line = 1; line <= 6 && !moved; line++) {
             const startId = pb['startIds'][line];
             if (!startId) break;
             const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
@@ -9509,22 +9608,26 @@ export const FIXTURE_ASSERTIONS = {
             }
             if (cur < 0) break;
             m.setCursor(cur, 1);
-            const before = warns.length;
             if (m.replaceChordAtCursor({ notes: [mk('c', 0), mk('g', 7)], duration: '4', dots: 0 }) === null) break;
             H.reRender();
             steps++;
-            lastDy = ps.lastVertical ? ps.lastVertical.dyFollow : 0;
+            if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'step ' + steps + ': expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + '; derive=' + pb.lastDeriveReason + ')' };
+            if (H.renderer['pageVirt'] !== st0) return { ok: false, detail: 'page DOM was rebuilt at step ' + steps + ' — a full render, not a splice' };
             const over = overflowing();
             if (over.length) return { ok: false, detail: 'page ' + over.join(',') + ' drawn past the paper after step ' + steps };
-            handedBack = warns.slice(before).some((w) => w.indexOf('cascade overflows page') >= 0);
+            moved = sysCount(1) < n1;
           }
         } finally { console.warn = ow; }
+        if (warns.length) return { ok: false, detail: 'warnings: ' + warns.join(' | ') };
         if (!steps) return { ok: false, detail: 'no growth step ran' };
-        if (!handedBack) {
-          return { ok: false, detail: 'never exhausted the page slack in ' + steps + ' steps (last dyFollow ' + lastDy.toFixed(1) + ') — the safety net was not exercised' };
-        }
-        /* Pagination came back from Verovio, so the document must still be sane. */
-        if (overflowing().length) return { ok: false, detail: 'still overflowing after handing pagination back' };
+        if (!moved) return { ok: false, detail: 'never exhausted page 1\\'s slack in ' + steps + ' steps' };
+        if (sysCount(1) !== n1 - 1) return { ok: false, detail: 'page 1 lost ' + (n1 - sysCount(1)) + ' systems, expected 1' };
+        const p2first = document.querySelector('#score .score-page[data-page="2"] g.system g.measure');
+        if (!p2first || p2first.id !== tailId) return { ok: false, detail: 'page 2 starts at ' + (p2first && p2first.id) + ', expected the moved line ' + tailId };
+        if (pb.pageStarts()[1] !== tailId) return { ok: false, detail: 'pins say page 2 starts at ' + pb.pageStarts()[1] + ', DOM says ' + tailId };
+        if (p2start0 === tailId) return { ok: false, detail: 'page 2 start did not change' };
+        const verified = pb.verifyRenderedPartition(H.renderer['container'], m, st0.pageCount, H.renderer['pageBreaksCtx']());
+        if (!verified) return { ok: false, detail: 'rendered partition diverged from the pins after the move' };
         return { ok: true };
       })()` },
   ],
@@ -9545,6 +9648,281 @@ export const FIXTURE_ASSERTIONS = {
         if (!still) return { ok: false, detail: 'no-op render rebuilt the page DOM' };
         still.removeAttribute('data-hkl-test-marker');
         return { ok: true };
+      })()` },
+  ],
+  /* B2 (2026-09-02): line-count changes and pagination changes are splices. */
+  pageSpliceNewLineAtEnd: [
+    { name: 'composing past the last line opens a new final line as a splice (N → N+1 systems), never a full render',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        const st0 = H.renderer['pageVirt'];
+        const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+        const overflowing = () => [...document.querySelectorAll('#score .score-page:not(.score-page-pending)')].filter((pg) => {
+          const svg = pg.querySelector('svg'); const s = [...pg.querySelectorAll('g.system')];
+          return svg && s.length && s[s.length - 1].getBoundingClientRect().bottom > svg.getBoundingClientRect().bottom + 2;
+        }).map((pg) => pg.dataset.page);
+        const lines0 = pb.lineStarts().length;
+        let grew = false, steps = 0;
+        for (; steps < 16 && !grew; steps++) {
+          m.setCursor(m['flatChildren'](1).length, 1);
+          if (!m.insertChordAtCursor({ notes: [mk('b', 4)], duration: '4', dots: 0 })) return { ok: false, detail: 'append rejected at step ' + steps };
+          H.reRender();
+          if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'step ' + steps + ': expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + '; derive=' + pb.lastDeriveReason + ')' };
+          if (H.renderer['pageVirt'] !== st0) return { ok: false, detail: 'page DOM was rebuilt at step ' + steps + ' — a full render, not a splice' };
+          grew = pb.lineStarts().length === lines0 + 1;
+        }
+        if (!grew) return { ok: false, detail: steps + ' appended quarters never opened a new line' };
+        if (!ps.lastHunk || ps.lastHunk.bNew - ps.lastHunk.bOld !== 1) return { ok: false, detail: 'hunk did not grow by one line: ' + JSON.stringify(ps.lastHunk) };
+        const lastId = pb.lineStarts()[pb.lineStarts().length - 1];
+        const el = document.querySelector('#score .score-page g.measure#' + CSS.escape(lastId));
+        if (!el || el.closest('g.system').querySelector('g.measure') !== el) return { ok: false, detail: 'the new last line is not a rendered system start' };
+        const over = overflowing();
+        if (over.length) return { ok: false, detail: 'page ' + over.join(',') + ' drawn past the paper' };
+        return { ok: true };
+      })()` },
+  ],
+  pageSpliceNewPageAtEnd: [
+    { name: 'composing past a full last page creates a new page as a splice (cascade onto a created page), never a full render',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        const st0 = H.renderer['pageVirt'];
+        if (!st0 || !pb.paginationOwned()) return { ok: false, detail: 'pagination not owned (pages=' + pb.pageStarts().length + ')' };
+        const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+        const overflowing = () => [...document.querySelectorAll('#score .score-page:not(.score-page-pending)')].filter((pg) => {
+          const svg = pg.querySelector('svg'); const s = [...pg.querySelectorAll('g.system')];
+          return svg && s.length && s[s.length - 1].getBoundingClientRect().bottom > svg.getBoundingClientRect().bottom + 2;
+        }).map((pg) => pg.dataset.page);
+        const warns = [];
+        const ow = console.warn;
+        console.warn = (...a) => { const t = a.join(' '); if (!/^\\[Warning\\]/.test(t)) warns.push(t); };
+        const pages0 = pb.pageStarts().length;
+        let created = false, steps = 0;
+        try {
+          /* One measure (four quarters) per render step: whole notes would sit
+             at the top of the legal fill range and trip Verovio's compression
+             warning, which the suite treats as an error. */
+          for (; steps < 80 && !created; steps++) {
+            for (let q = 0; q < 4; q++) {
+              m.setCursor(m['flatChildren'](1).length, 1);
+              if (!m.insertChordAtCursor({ notes: [mk(q % 2 ? 'g' : 'b', q % 2 ? 6 : 4)], duration: '4', dots: 0 })) return { ok: false, detail: 'append rejected at step ' + steps };
+            }
+            H.reRender();
+            if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'step ' + steps + ': expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + '; derive=' + pb.lastDeriveReason + ')' };
+            if (H.renderer['pageVirt'] !== st0) return { ok: false, detail: 'page DOM was rebuilt at step ' + steps + ' — a full render, not a splice' };
+            const over = overflowing();
+            if (over.length) return { ok: false, detail: 'page ' + over.join(',') + ' drawn past the paper after step ' + steps };
+            created = pb.pageStarts().length === pages0 + 1;
+          }
+        } finally { console.warn = ow; }
+        if (warns.length) return { ok: false, detail: 'warnings during the cascade: ' + warns.join(' | ') };
+        if (!created) return { ok: false, detail: steps + ' appended whole notes never opened a new page' };
+        if (st0.pageCount !== pages0 + 1) return { ok: false, detail: 'pageVirt.pageCount ' + st0.pageCount + ' vs ' + (pages0 + 1) };
+        const divs = [...document.querySelectorAll('#score .score-page')];
+        if (divs.length !== pages0 + 1) return { ok: false, detail: divs.length + ' page elements for ' + (pages0 + 1) + ' pages' };
+        const last = divs[divs.length - 1];
+        if (Number(last.dataset.page) !== pages0 + 1 || last.classList.contains('score-page-pending')) return { ok: false, detail: 'the new page is not mounted as page ' + (pages0 + 1) };
+        const first = last.querySelector('g.system g.measure');
+        if (!first || first.id !== pb.pageStarts()[pages0]) return { ok: false, detail: 'new page starts at ' + (first && first.id) + ', pins say ' + pb.pageStarts()[pages0] };
+        if (!last.querySelector('svg defs')) return { ok: false, detail: 'created page has no <defs>' };
+        const verified = pb.verifyRenderedPartition(H.renderer['container'], m, st0.pageCount, H.renderer['pageBreaksCtx']());
+        if (!verified) return { ok: false, detail: 'rendered partition diverged from the pins after the page was created' };
+        return { ok: true };
+      })()` },
+  ],
+  pageSpliceLineMerge: [
+    { name: 'deleting every measure of a line removes that system as a splice (N → N−1 systems), never a full render',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        const st0 = H.renderer['pageVirt'];
+        const lines0 = pb.lineStarts();
+        if (lines0.length < 4) return { ok: false, detail: 'need >= 4 lines, got ' + lines0.length };
+        const ids = () => m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const k = 1;
+        const startId = lines0[k], endId = lines0[k + 1];
+        const all0 = ids();
+        const doomed = all0.slice(all0.indexOf(startId), all0.indexOf(endId));
+        if (!doomed.length) return { ok: false, detail: 'line ' + k + ' has no measures' };
+        const deleteMeasure = (id) => {
+          for (let guard = 0; guard < 64; guard++) {
+            const cur = ids(); const mi = cur.indexOf(id);
+            if (mi < 0) return true;
+            m.setCursor(m.getMeasureStartCursor(1, mi), 1);
+            if (!m.deleteAtCursor()) return false;
+          }
+          return false;
+        };
+        for (const id of doomed.slice().reverse()) {
+          if (!deleteMeasure(id)) return { ok: false, detail: 'could not delete measure ' + id };
+        }
+        H.reRender();
+        if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + '; derive=' + pb.lastDeriveReason + ')' };
+        if (H.renderer['pageVirt'] !== st0) return { ok: false, detail: 'page DOM was rebuilt — a full render, not a splice' };
+        const lines1 = pb.lineStarts();
+        if (lines1.length !== lines0.length - 1) return { ok: false, detail: 'line count ' + lines0.length + ' → ' + lines1.length + ' (expected −1)' };
+        if (lines1.includes(startId)) return { ok: false, detail: 'the deleted line still starts a line' };
+        if (!lines1.includes(endId)) return { ok: false, detail: 'the line after the deleted one lost its start' };
+        if (!ps.lastHunk || ps.lastHunk.bOld - ps.lastHunk.bNew !== 1) return { ok: false, detail: 'hunk did not shrink by one line: ' + JSON.stringify(ps.lastHunk) };
+        for (const id of doomed) {
+          if (document.querySelector('#score g.measure#' + CSS.escape(id))) return { ok: false, detail: 'deleted measure ' + id + ' is still rendered' };
+        }
+        const verified = pb.verifyRenderedPartition(H.renderer['container'], m, st0.pageCount, H.renderer['pageBreaksCtx']());
+        if (!verified) return { ok: false, detail: 'rendered partition diverged from the pins after the merge' };
+        return { ok: true };
+      })()` },
+  ],
+  pageSplicePageCollapse: [
+    { name: 'deleting every measure of a page removes the page as a splice (renumbered, pins consistent), never a full render',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        H.renderer.setMountWindowEnabled(false);
+        for (const page of document.querySelectorAll('#score .score-page.score-page-pending')) H.renderer['mountPage'](+page.dataset.page);
+        const st0 = H.renderer['pageVirt'];
+        const pages0 = pb.pageStarts();
+        if (pages0.length < 3) return { ok: false, detail: 'need >= 3 pages, got ' + pages0.length };
+        const lines0 = pb.lineStarts();
+        const ids = () => m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const all0 = ids();
+        /* Page 2's measures: from its start to page 3's start. */
+        const doomed = all0.slice(all0.indexOf(pages0[1]), all0.indexOf(pages0[2]));
+        if (doomed.length < 2) return { ok: false, detail: 'page 2 has ' + doomed.length + ' measures' };
+        const p3start = pages0[2];
+        const deleteMeasure = (id) => {
+          for (let guard = 0; guard < 64; guard++) {
+            const cur = ids(); const mi = cur.indexOf(id);
+            if (mi < 0) return true;
+            m.setCursor(m.getMeasureStartCursor(1, mi), 1);
+            if (!m.deleteAtCursor()) return false;
+          }
+          return false;
+        };
+        for (const id of doomed.slice().reverse()) {
+          if (!deleteMeasure(id)) return { ok: false, detail: 'could not delete measure ' + id };
+        }
+        const warns = [];
+        const ow = console.warn;
+        console.warn = (...a) => { const t = a.join(' '); if (!/^\\[Warning\\]/.test(t)) warns.push(t); };
+        try { H.reRender(); } finally { console.warn = ow; }
+        if (warns.length) return { ok: false, detail: 'warnings: ' + warns.join(' | ') };
+        if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + '; derive=' + pb.lastDeriveReason + ')' };
+        if (H.renderer['pageVirt'] !== st0) return { ok: false, detail: 'page DOM was rebuilt — a full render, not a splice' };
+        const pages1 = pb.pageStarts();
+        if (pages1.length !== pages0.length - 1) return { ok: false, detail: 'page count ' + pages0.length + ' → ' + pages1.length + ' (expected −1)' };
+        if (pages1[1] !== p3start) return { ok: false, detail: 'page 2 now starts at ' + pages1[1] + ', expected old page 3 start ' + p3start };
+        if (st0.pageCount !== pages1.length) return { ok: false, detail: 'pageVirt.pageCount ' + st0.pageCount + ' vs ' + pages1.length };
+        const divs = [...document.querySelectorAll('#score .score-page')];
+        if (divs.length !== pages1.length) return { ok: false, detail: divs.length + ' page elements for ' + pages1.length + ' pages' };
+        for (let i = 0; i < divs.length; i++) {
+          if (Number(divs[i].dataset.page) !== i + 1) return { ok: false, detail: 'page numbering not contiguous at index ' + i + ' (data-page=' + divs[i].dataset.page + ')' };
+        }
+        const p2 = divs[1].querySelector('g.system g.measure');
+        if (!p2 || p2.id !== p3start) return { ok: false, detail: 'DOM page 2 starts at ' + (p2 && p2.id) + ', expected ' + p3start };
+        for (const id of doomed) {
+          if (document.querySelector('#score g.measure#' + CSS.escape(id))) return { ok: false, detail: 'deleted measure ' + id + ' is still rendered' };
+        }
+        if (lines0.length - pb.lineStarts().length < 1) return { ok: false, detail: 'no line vanished with the page' };
+        const verified = pb.verifyRenderedPartition(H.renderer['container'], m, st0.pageCount, H.renderer['pageBreaksCtx']());
+        if (!verified) return { ok: false, detail: 'rendered partition diverged from the pins after the collapse' };
+        return { ok: true };
+      })()` },
+  ],
+  pageSectionHeaderOverflow: [
+    { name: 'headers added to a full page keep the page box fixed and push the spilled tail onto the next page (title travels)',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        H.renderer.setMountWindowEnabled(false);
+        const mountAll = () => { for (const page of document.querySelectorAll('#score .score-page.score-page-pending')) H.renderer['mountPage'](+page.dataset.page); };
+        mountAll();
+        const pages0 = pb.pageStarts();
+        if (pages0.length < 3) return { ok: false, detail: 'need >= 3 pages, got ' + pages0.length };
+        const lines = pb.lineStarts();
+        const at = new Map(lines.map((id, i) => [id, i]));
+        const p2first = at.get(pages0[1]), p3first = at.get(pages0[2]);
+        if (p2first == null || p3first == null || p3first - p2first < 2) return { ok: false, detail: 'page 2 needs >= 2 lines' };
+        const p2last = p3first - 1;
+        const ids = () => m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const miFirst = ids().indexOf(lines[p2first]), miLast = ids().indexOf(lines[p2last]);
+        const tailId = lines[p2last];
+        const pageEl = (p) => document.querySelector('#score .score-page[data-page="' + p + '"]');
+        const box = (p) => { const el = pageEl(p); const svg = el.querySelector('svg'); return { h: svg.getAttribute('height'), vb: el.querySelector('svg.definition-scale').getAttribute('viewBox'), divH: Math.round(el.getBoundingClientRect().height) }; };
+        const overflowing = () => [...document.querySelectorAll('#score .score-page:not(.score-page-pending)')].filter((pg) => {
+          const svg = pg.querySelector('svg'); const s = [...pg.querySelectorAll('g.system')];
+          return svg && s.length && s[s.length - 1].getBoundingClientRect().bottom > svg.getBoundingClientRect().bottom + 2;
+        }).map((pg) => pg.dataset.page);
+        if (overflowing().length) return { ok: false, detail: 'overflowing before the edit: ' + overflowing() };
+        const ref = box(1), before2 = box(2);
+        if (before2.h !== ref.h || before2.vb !== ref.vb) return { ok: false, detail: 'pages 1 and 2 differ before the edit: ' + JSON.stringify([ref, before2]) };
+        const pxPerUnit = parseFloat(ref.h) / Number(ref.vb.split(/\\s+/)[3]);
+        const slackPx = (() => { const svg = pageEl(2).querySelector('svg'); const s = [...pageEl(2).querySelectorAll('g.system')]; return svg.getBoundingClientRect().bottom - s[s.length - 1].getBoundingClientRect().bottom; })();
+        /* Headers on page 2's FIRST and LAST lines: the tail is shifted by two reserves. */
+        m.setSectionHeaderAt(miFirst, 'II');
+        m.setSectionHeaderAt(miLast, 'III');
+        const warns = [];
+        const ow = console.warn;
+        console.warn = (...a) => { const t = a.join(' '); if (!/^\\[Warning\\]/.test(t)) warns.push(t); };
+        try { H.reRender(); mountAll(); } finally { console.warn = ow; }
+        if (warns.length) return { ok: false, detail: 'warnings: ' + warns.join(' | ') };
+        const over = overflowing();
+        if (over.length) return { ok: false, detail: 'page ' + over.join(',') + ' drawn past the paper after adding headers' };
+        const titles = [...document.querySelectorAll('#score text.hkl-section-header')];
+        if (titles.length !== 2) return { ok: false, detail: titles.length + ' titles rendered, expected 2' };
+        const reserve = Number(titles[0].getAttribute('data-reserve'));
+        if (!(reserve > 0)) return { ok: false, detail: 'title carries no data-reserve' };
+        /* The paper never changes: every mounted page keeps page 1's box. */
+        for (const pg of document.querySelectorAll('#score .score-page:not(.score-page-pending)')) {
+          const b = box(Number(pg.dataset.page));
+          if (b.h !== ref.h || b.vb !== ref.vb || Math.abs(b.divH - ref.divH) > 1) return { ok: false, detail: 'page ' + pg.dataset.page + ' box changed: ' + JSON.stringify([ref, b]) };
+        }
+        /* Each title sits in the band above its own system, on the same page. */
+        for (const t of titles) {
+          const id = t.getAttribute('data-for');
+          const meas = document.querySelector('#score g.measure#' + CSS.escape(id));
+          if (!meas) return { ok: false, detail: 'title ' + t.textContent + ' has no rendered measure' };
+          if (meas.closest('.score-page') !== t.closest('.score-page')) return { ok: false, detail: 'title ' + t.textContent + ' is not on its system\\'s page' };
+          const sys = meas.closest('g.system');
+          const tb = sys.transform.baseVal.consolidate(); const ty = tb ? tb.matrix.f : 0;
+          const gap = (sys.getBBox().y + ty) - Number(t.getAttribute('y'));
+          if (!(gap > 0 && gap < 2 * reserve)) return { ok: false, detail: 'title ' + t.textContent + ' gap to its system ' + gap.toFixed(1) };
+        }
+        const pages1 = pb.pageStarts();
+        const moved = slackPx < 2 * reserve * pxPerUnit;
+        if (moved) {
+          const newP3 = pages1[2];
+          const li3 = pb.lineStarts().indexOf(newP3);
+          if (li3 < 0 || li3 > p2last || li3 <= p2first) return { ok: false, detail: 'expected page 3 to start inside old page 2 (lines ' + (p2first + 1) + '..' + p2last + '), got line ' + li3 };
+          const p3start = pageEl(3).querySelector('g.system g.measure');
+          if (!p3start || p3start.id !== newP3) return { ok: false, detail: 'DOM page 3 starts at ' + (p3start && p3start.id) + ', pins say ' + newP3 };
+          if (!document.querySelector('#score .score-page[data-page="3"] g.measure#' + CSS.escape(tailId))) return { ok: false, detail: 'old tail line ' + tailId + ' did not move to page 3' };
+        } else if (pages1.join() !== pages0.join()) {
+          return { ok: false, detail: 'page 2 had room (' + slackPx.toFixed(0) + ' px) yet pagination changed' };
+        }
+        const st = H.renderer['pageVirt'];
+        const verified = pb.verifyRenderedPartition(H.renderer['container'], m, st.pageCount, H.renderer['pageBreaksCtx']());
+        if (!verified) return { ok: false, detail: 'rendered partition diverged from the pins' };
+        return { ok: true, detail: moved ? 'tail moved' : 'fit without moving' };
       })()` },
   ],
   voiceIndexConsistencyUnderEdits: [

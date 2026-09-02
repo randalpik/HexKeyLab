@@ -2570,3 +2570,118 @@ needs). Rule: an offscreen host that anything measures costs one full layout
 regardless of how much of it you touch; a `DOMParser` document that nothing
 measures costs a parse. Design the reads first, then decide whether the host
 needs to exist at all.
+
+## A diff hunk with an EMPTY side is not an unchanged partition — two representation traps in one hour (2026-09-02)
+
+B2 turned the page splicer's replaced set into a line hunk: prefix/suffix diff of
+old vs new start ids, `(pre, suf)`, then union with the changed run. Two bugs
+came straight out of the representation, both caught by the suite in one run:
+
+- **Identical partitions read as "no suffix".** With `suf` clamped by
+  `min(N, M) − pre`, an unchanged partition (pre = N = M) gives `suf = 0`, which
+  is the same value as "the whole tail changed". Unioning the changed run then
+  extended the replaced set to the END of the document: seven fixtures failed in
+  seven different-looking ways (`run overshoots the reset`, `courtesyExt=0`,
+  `dyFollow 0`, a "full render" verdict, two visual diffs) that were one bug.
+- **An empty NEW side taken as "unchanged".** A whole deleted line leaves the
+  new side empty (`a > bNew`) while the old side still holds the vanished line.
+  Testing "unchanged" as `a > bNew` skipped the boundary rule and imported the
+  successor line without removing its old system — the reference gate caught it
+  as `rendered partition diverged`.
+
+Rule: hold the hunk as explicit bounds on BOTH sides, test "unchanged" as
+`N === M && pre === N`, and remember the old side is non-empty whenever the
+partition changed at all (the line above a moved boundary joins the hunk). When
+several fixtures fail at once in unrelated-looking ways after one change to a
+shared computation, suspect the computation's degenerate case before any of the
+symptoms.
+
+## Carrying pagination by start ID moved a remnant line onto the previous page (2026-09-02)
+
+The page carry in `tryRefill` kept a page's start ID while it still began a
+line, else jumped to the next surviving old START. Delete only the first
+measure of a page-start line and the id vanishes while the line survives (its
+start moves to the next member): the carry skipped the remnant and the page
+began one line later — the remnant landed on the PREVIOUS page, a pagination
+change no edit asked for, and one that can overflow that page. Pages are runs of
+LINES; carry them by line index through the membership carry and the repair
+loop (`repartition` now returns both), and a surviving line can never change
+page because of an edit. Only a page whose every line vanished collapses.
+
+## Verovio warns about lines the legality band admits (2026-09-02)
+
+`[Warning] Justification is highly compressed (ratio smaller than 0.8: …)` plus
+three follow-up lines (`System full width`, `Non-justifiable width`, `Drawing
+justifiable width`) is Verovio's `console.warn` on any render — window or live —
+of a system it compresses below 0.8. Our legality band (`FIT_MAX 1.45`) admits
+lines Verovio draws at ~0.69–0.73, so composing at the end of a score sits in
+the warning zone one measure at a time, and a whole-note-per-measure fixture
+sits there permanently. It is not an error and not a splice defect: the band
+was set to contain the castoff's own envelope by OUR naturals model, whose
+fill runs above Verovio's ratio on dense measures and below it on sparse ones.
+The suite's console capture allowlists exactly this family
+(`test/composer-test/lib/console-capture.mjs`); a fixture that hooks
+`console.warn` itself must skip `^\[Warning\]` too, or it fails on the same
+notice the runner already lets through. Whether the band should shrink is a D2
+question for Max (design doc → Open work).
+
+## Scripting a whole-measure deletion: switch the voice, and drift — never re-anchor (2026-09-02)
+
+Three model facts bit the sonata battery's `delete-whole-line` edit in a row.
+`setCursor(c, v)` moves voice v's cursor but `deleteAtCursor` acts on the
+CURRENT voice — without `setVoice(v)` first, the voice-2 deletes landed in
+voice 1 at voice-2 indices (the edit "succeeded", the document was wrong, and
+every gate stayed green because the result was still self-consistent). A
+deleted note is replaced by a `space` placeholder, so a "content count" never
+moves. And a delete whose target is a placeholder is a skip-left by design, so
+a cursor re-anchored at the measure's start or end stalls on the first
+placeholder it meets. What works: per voice, park the cursor past the
+measure's last stop and backspace WITHOUT re-anchoring until the cursor's
+measure index drops below the target; once every voice has drifted through,
+one delete at the (now empty) wrapper drops the measure. Verified over two
+sonata lines (446 → 436 measures). The battery asserts `allEditsApplied` for
+exactly this reason — an edit that silently did not apply reads as a passing
+splice.
+
+## A post-mount injection that grows a page's viewBox makes every later `pinExactScale` a 90 px jump — and header pages have been drawn 3 % small (2026-09-02)
+
+Found by re-reading `cb-sweep.js`'s viewport counters after B2 (they had been
+0/0 on 2026-08-31 and nobody had read them since): `pageBoxChanged 3`,
+`scrollHeightChanged 6`, next-page anchor moved 90 px on exactly the sonata's
+three movement-start lines. Mechanism, in order: `finishPageMount` runs
+`pinExactScale` (root svg box = viewBox × device scale), THEN
+`injectSectionHeaders` grows the inner viewBox by the 900-unit reserve. The
+injector's own root-height update targets the inner `svg.definition-scale`,
+which has no height attribute, so it has never run — a header page mounts with
+a 28840-unit viewBox in a 2794 px box, i.e. drawn ~3 % smaller than its
+neighbours (uniform `meet` scaling, slight horizontal inset), invisible to every
+gate because they all compare user units. Since A8 (2026-09-01) moved
+post-processing onto the LIVE page, the first splice on such a page re-ran
+`pinExactScale`, which now saw the grown viewBox and resized the page by the
+reserve: +90 px, every page below shifted, exactly the class of drift Max called
+out on 2026-08-31.
+
+Resolution (same day, Max): the growth itself was the hack. The paper is fixed
+and the scale pinned at the box; a header is a component with a reserved height
+in the page's budget, so the injector no longer touches the viewBox and a page
+that no longer fits below its headers overflows into B2's cascade (decisions.md
+2026-09-02, "Section headers are page budget"). The interim `data-hkl-vb-base`
+stabilizer was reverted — and, it turned out, had never been served (see the
+`packages/` dev-server lesson below). Two rules: read a gate's EVERY counter after a change,
+not just the headline; and a post-mount injection must leave whatever a
+later pass recomputes from either reproducible or recorded.
+
+## The running dev server does not pick up edits under `packages/` (2026-09-02)
+
+An afternoon of gates — scenarios, the full suite, the sweep — ran against a
+`render-presets.ts` transform twelve hours older than the edit under test, and
+the "fix" they were verifying was never in the page. The composer app's Vite
+resolves `@hkl/notation` through the workspace symlink to `/@fs/…/packages/
+notation/src/…` — outside the app root — and did not invalidate that module
+when the file changed; `curl` of the file's other URL showed the new text,
+which made the staleness invisible. Edits under `apps/composer/src` reload
+fine. Rules: after editing anything under `packages/`, the dev server must be
+restarted (ask Max) before any browser-based verification counts; and when a
+change has no effect, read what the page actually loaded —
+`performance.getEntriesByType('resource')` for the module URL, then `fetch` it
+and grep for the change — before theorizing about the code.

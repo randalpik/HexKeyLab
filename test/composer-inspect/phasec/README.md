@@ -57,9 +57,13 @@ in decisions.md, 2026-08-30):
   spacing, and — since B1 — **absolute** staff tops, because a cascade that
   shifted a whole page by a constant passes every spacing check; section-header
   pages are verified like any other since B4 — only an unreadable reserve is
-  exempt). Expect allReferenceOk true and **8/8 spliced** as of 2026-09-01
-  (`edit-section-header-zone` was the standing fallback until the section-header
-  guard was retired); spliced edits ~300–610 ms wall.
+  exempt). Expect allReferenceOk true, allEditsApplied true and **10/10
+  spliced** as of 2026-09-02: B2 added `append-at-end` (four bars appended in
+  one render — a new final line AND, on the sonata, a spill into a CREATED page;
+  ~700 ms wall) and `delete-whole-line` (a mid-document line's measures removed
+  in every voice — the line vanishes; `setVoice` before each voice's deletes, since
+  `deleteAtCursor` acts on the current voice). The eight prior edits splice at
+  ~140–380 ms wall.
 
 Phase C-B2b / B1 probes (2026-08-31, findings baked into the design doc →
 "Implementation (Phase C-B2b / B1)" and lessons.md):
@@ -90,7 +94,11 @@ Phase C-B2b / B1 probes (2026-08-31, findings baked into the design doc →
   the edit). This is the ROUTINE gate: it reaches 127 of the 170 replaced sets
   and 6 of the 7 known refusal causes; its one blind spot is `m-cy6 dW=89`, seen
   only at a line edge (the document's last line) — use `allmeasures.sh` for that.
-  Targets the first note/chord on each line in whichever voice has
+  The viewport counters ARE part of the gate: `summary.pageBoxChanged`,
+  `summary.scrollHeightChanged` and the per-row next-page anchor drift must all
+  be 0 (2026-09-02: they had read 3 / 6 / 90 px since A8 while the hit rate
+  stayed 115/115 — a header page resized on its first splice — and nobody had
+  looked). Targets the first note/chord on each line in whichever voice has
   one — a measure-start cursor lands on a measure or tuplet placeholder, where a
   delete is a cursor move by design and the line measures nothing (8 of 115 on
   the sonata). Args: `--arg "stride=4,limit=20,undo=0"`. Use the NEXT-PAGE anchor
@@ -277,7 +285,10 @@ Phase C-B2b / B1 probes (2026-08-31, findings baked into the design doc →
   the title was left behind (pre-fix: system 149 px, title 0). Also the quickest
   way to see the second half of that defect — pre-fix `dyFollow` is short by the
   full 900-unit reserve.
-- **cb-cascade-overflow.js** (run with `--no-sonata`) — builds a packed page,
+- **cb-cascade-overflow.js** (B2 note, 2026-09-02: the hand-back it looked
+  for no longer happens — a spill is repaired by moving the tail onto the next
+  page, so `handedBackAt` reads −1 and no page overflows; the probe's
+  per-step `overflowing` list is the check that still matters) (run with `--no-sonata`) — builds a packed page,
   then grows successive systems until the cascade exhausts page 1's slack;
   asserts the splice hands PAGINATION back (warn + derive) and that nothing is
   ever drawn past the paper. Reports per-step slack, so it also documents how
