@@ -201,6 +201,33 @@ identical, `reference.ok` under the new gate.
 
 ### Phase 2 — the cascade on the model (absorbs the design doc's former START HERE 1)
 
+**Status 2026-09-02: LANDED — ritual green.** Built as specified with one deliberate
+deviation, recorded in decisions.md ("The cascade runs on the model"): a
+receiving page that can still be mounted CHEAPLY (B5: toolkit holds its
+pre-edit layout, page not stale) is mounted and receives a TRANSPLANT rather
+than an arithmetic step — ~50 ms now against a document reload at that page's
+eventual mount — so arithmetic applies exactly where a step used to PARK (a
+stale or toolkit-less placeholder whose extents are known). Gates on the
+current source: typecheck / build / boundaries clean; battery identical on both
+code states (10/10 spliced, `reference.ok` everywhere; append-at-end lands as
+`created: 1, transplanted: 1`); sweep 115/115, viewport counters 0/0/0,
+`parkedSteps` 0 (no cascade fires in the sweep's one-note deletes:
+`cascadeSteps` 0); full tier 374/374 under `HKL_INDEX_CHECK` (the five B2
+cascade fixtures re-asserted on the transplant, plus `pageCascadePredictedFold`,
+`pageCascadeArithmeticPastMount`, `pageExtentsJobEditDuring`,
+`pageExtentsJobScrollDuring`, each failing on the unfixed source);
+every-measure pass 420/420 at 100 % splice rate, 0 conflicts, 69 multi-line
+sets with 0 failing, empty refusal inventory; default splicecost 145 ms
+steady (unchanged). Append-at-end attribution
+(`cb-splicecost.js --arg edit=append*`): with the last three pages mounted —
+composing at the end — the cascade is 37 ms, the created page's mount pass 31
+(the plan's "mount pass alone"); with all 31 pages mounted (the battery's
+condition) the created page's first layout costs ~180 ms, scaling with the
+mounted set, of which duplicate-id glyph defs were ~100 (fixed: a transplant
+copies glyphs under fresh ids) and the copy itself ~30 — the battery's
+append-at-end wall reads 802–1017 ms across runs against the old code's 728
+there, and is not a user-facing condition.
+
 1. **Predicted fold.** `repairPagination` reads `fold()` from extents instead
    of measuring after surgery.
 2. **A step is a DOM transplant, not a render.** The spilled tail's `g.system`

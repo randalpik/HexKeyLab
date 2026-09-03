@@ -9,11 +9,12 @@ import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
 import { injectHejiGlyphs } from '@hkl/notation/heji-render.js';
 import { applyNotationTheme } from '@hkl/notation/verovio.js';
 import { CRISP_PRESETS, crispMarginTop, lineWidthOptions, pinExactScale, snapStaffLinesToGrid, snapBarlines, snapSystemRightEdge } from '@hkl/notation/render-presets.js';
-import { pageFitConstants, measureExtents, placeSystems, foldIndex, translateOf, ExtentsStore, SECTION_HEADER_RESERVE, SECTION_HEADER_BASELINE, type PlacedSystem, type SysExtents } from './pagefit.js';
+import { pageFitConstants, measureExtents, placeSystems, foldIndex, translateOf, ExtentsStore, SECTION_HEADER_RESERVE, SECTION_HEADER_BASELINE, type PlacedSystem, type SysExtents, type PageFitConstants } from './pagefit.js';
 import { ScrollSplicer, type SpliceCtx } from './splice.js';
 import {
   PageLineBreaks, partitionFromLayout, systemStartsFromPageSvg, injectPins,
   type PageBreaksCtx,
+  scheduleIdle,
 } from './linebreaks.js';
 import { PageSystemSplicer, type PageSpliceCtx, type SpliceRequest } from './pagesplice.js';
 import type { ComposerModel } from '../model/index.js';
@@ -28,6 +29,13 @@ function indexCheckEnabled(): boolean {
  *  means every page below the edit was full, which is a whole-document reflow
  *  by any name. */
 const MAX_CASCADE_STEPS = 64;
+
+/** First `g.system` child of a page's margin group, or null. */
+function firstSystemOf(pageEl: HTMLElement): Element | null {
+  const margin = pageEl.querySelector('svg g.page-margin');
+  if (!margin) return null;
+  return Array.from(margin.children).find((c) => c.classList.contains('system')) ?? null;
+}
 
 /** One page's vertical placement (render/pagefit.ts): its systems in DOM
  *  order, where the rule puts each, and the paper bottom in the page-margin
@@ -193,6 +201,28 @@ class Renderer {
    *  vertical-ownership plan; Phase 2 reads it for pages that are not
    *  mounted). Dropped with the page DOM. */
   private extents = new ExtentsStore();
+  /** How the last pagination repair landed, step by step (Phase 2 of the
+   *  vertical-ownership plan) — fixtures and the sweep read it. A cascade step
+   *  is a DOM TRANSPLANT when the receiving page is mounted, ARITHMETIC when it
+   *  is a placeholder whose lines' extents are known, PARKED when they are not
+   *  (the page draws the block and checks itself at mount), CREATED when a
+   *  last page spilled. */
+  lastCascade = { steps: 0, transplanted: 0, arithmetic: 0, parked: 0, created: 0, ms: 0, msFold: 0, msClone: 0, msMove: 0, msPlace: 0, msSnap: 0, msMount: 0 };
+  /** The extents job (Phase 2): idle measurement of the lines on pages that are
+   *  not mounted, so a cascade through them is arithmetic instead of a park.
+   *  Adoption's discipline: only the current job runs, any document change or
+   *  re-render cancels it, never on the edit path. */
+  private extentsJob: { docVer: number; nextPage: number; measured: number[]; cancelled: boolean; warmMs: number } | null = null;
+  /** Unique suffix for glyph defs a transplant copies into a page (attachBlock). */
+  private transplantSeq = 0;
+  /** Outcome of every page-view composer render, newest last, bounded
+   *  (2026-09-02). The refill is command-agnostic — it diffs the document, not
+   *  the command that changed it — but nothing ASSERTED that a given user
+   *  command splices, and two paths were found deriving silently on one guard
+   *  (`cb-commands.js`: Ctrl+M insert-measure, section headers). The suite's
+   *  splice invariant reads this, so "this edit quietly full-rendered" is a
+   *  test failure instead of a latency mystery. */
+  private ledger: Array<{ full: boolean; outcome: string; skipReason: string; deriveReason: string; ms: number }> = [];
   /** Measure xml:ids in document order (captured per renderComposer) —
    *  ensureMeasureMounted's index → id map. */
   private measureIds: string[] = [];
@@ -920,6 +950,7 @@ class Renderer {
 
   /** Drop virtualization state (the page DOM it describes is going away). */
   private disposePageVirt(): void {
+    this.cancelExtentsJob();
     this.extents.clear();
     this.pageVirt?.io?.disconnect();
     this.pageVirt = null;
@@ -989,7 +1020,7 @@ class Renderer {
     this.spliceDepth++;
     this.touchedPages = [];
     try {
-      if (!this.repairPagination(this.lastModel, pages)) {
+      if (!this.repairPagination(pages)) {
         console.warn('[page-breaks] page ' + pages.join(',') + ' overflows its box and could not be repaired (' + this.pageSplicer.lastSkipReason + ')');
       } else if (indexCheckEnabled() && this.touchedPages.length) {
         this.pageSplicer.verifyAgainstReference(this.pinnedMeiForCurrentModel(), this.touchedPages, this.pageSpliceCtx());
@@ -1229,10 +1260,21 @@ class Renderer {
     } else {
       const tookFull = this.renderPageComposer(model, viewStaves, preMei, heji);
       if (tookFull) this.lastFullMs.page = performance.now() - t0;
+      this.ledger.push({
+        full: tookFull,
+        outcome: this.pageSplicer.lastOutcome,
+        skipReason: tookFull ? this.pageSplicer.lastSkipReason : '',
+        deriveReason: tookFull ? this.pageBreaks.lastDeriveReason : '',
+        ms: Math.round(performance.now() - t0),
+      });
+      if (this.ledger.length > 200) this.ledger.splice(0, this.ledger.length - 200);
       /* Whatever path ran, the partition now on screen is the right one for
          this layout budget — cache it so returning to this zoom/page scale on
          an unchanged document skips the castoff pass (A4). */
       if (viewStaves == null) this.rememberPartition(model);
+      /* Phase 2: measure the unmounted pages' extents in idle time, so the
+         cascade never has to park at the mount boundary once it has run. */
+      if (viewStaves == null) this.armExtentsJob(model);
     }
     this.lastRenderedMode = this.viewMode;
     return true;
@@ -1288,7 +1330,7 @@ class Renderer {
             if (this.pageSplicer.trySplice(model, req, this.pageSpliceCtx())) {
               spliced = true;
               this.registerSpliceEffects();
-              landed = this.repairPagination(model, this.pageSplicer.lastPages.slice());
+              landed = this.repairPagination(this.pageSplicer.lastPages.slice());
               if (!landed) {
                 console.warn('[page-splice] spilled page could not be repaired (' + this.pageSplicer.lastSkipReason + ') — returning pagination to Verovio (derive)');
               }
@@ -1567,9 +1609,24 @@ class Renderer {
       placePage: (el: HTMLElement) => this.placePage(el),
       placeFor: (systems: Element[]) => this.placeFor(systems),
       ensurePageMounted: (p: number) => this.mountPageIfCheap(p),
-      createPage: (p: number, shell: Element) => this.createPage(p, shell),
-      finishCreatedPage: (el: HTMLElement) => this.finishPageMount(el),
+      isPageMounted: (p: number) => {
+        const el = this.pageDiv(p);
+        return !!el && !el.classList.contains('score-page-pending');
+      },
     };
+  }
+
+  /** Every page-view render since `clearRenderLedger`, oldest first: whether it
+   *  was a full engrave and, if so, the refusal / derive reason. */
+  renderLedger(): ReadonlyArray<{ full: boolean; outcome: string; skipReason: string; deriveReason: string; ms: number }> {
+    return this.ledger.slice();
+  }
+
+  /** Drop the ledger — the suite calls this after a fixture's setup so the
+   *  document BUILD (which necessarily derives) is not counted against the
+   *  edits the fixture then makes. */
+  clearRenderLedger(): void {
+    this.ledger = [];
   }
 
   /** Page element by (current) page number, mounted or placeholder. */
@@ -1577,9 +1634,10 @@ class Renderer {
     return this.container?.querySelector('.score-page[data-page="' + p + '"]') as HTMLElement | null ?? null;
   }
 
-  /** B2: append page `p` (= pageCount + 1) built from a window page's SVG shell
-   *  (identical page options → identical furniture; the splicer strips the
-   *  systems and inserts the moved block). Registered mounted and STALE: the
+  /** B2: append page `p` (= pageCount + 1) built from `shell` — since Phase 2
+   *  the spilling page's own SVG with its systems stripped
+   *  (`createPageFromShell`; identical furniture, page number bumped), which
+   *  the cascade then fills by transplant. Registered mounted and STALE: the
    *  live toolkit's layout has no such page, so any later re-mount rebuilds
    *  from the current pins. */
   private createPage(p: number, shell: Element): HTMLElement | null {
@@ -1631,6 +1689,16 @@ class Renderer {
   private registerSpliceEffects(): void {
     const ps = this.pageSplicer;
     for (const div of ps.lastEmptiedPages) this.removePage(div);
+    /* Pages the splice DEFERRED (2026-09-02): their hunk lines were not
+       re-engraved because they lie outside the mounted band. Mark them stale so
+       the next mount redraws them from the committed pins, and return any that
+       are still drawn to placeholders — a drawn page holding pre-edit systems
+       under post-edit pins is exactly what verifyRenderedPartition fails on. */
+    for (const p of ps.lastDeferredPages) {
+      this.pageVirt?.stalePages.add(p);
+      const div = this.pageDiv(p);
+      if (div && !div.classList.contains('score-page-pending')) this.unmountPage(p);
+    }
     const st = this.pageVirt;
     const nums: number[] = [];
     for (const el of ps.lastPageEls) {
@@ -1674,101 +1742,262 @@ class Renderer {
     return { systems: ps.systems, firstPast };
   }
 
-  /** B2 pagination repair — the overflow cascade. Pages are OWNED, so a page
-   *  whose content spills past the paper is ours to fix, and the fix is what a
-   *  castoff would do: move the spilled tail onto the next page, then check
-   *  that page. Each step is MEASURED (the fold is read from the live page
-   *  after the splice's own snap flush; the moved block's page-first position
-   *  is read from a window that paginates there) and lands as a splice whose
-   *  hunk has unchanged lines but a different target page. A last page that
-   *  spills gets a new page. Legality is overflow-only: a deletion leaves
-   *  its slack (content over churn — a page-side MIN_FILL, like vertical
-   *  justification, is a D1/D2 question).
+  /** B2 pagination repair — the overflow cascade, on the MODEL since Phase 2
+   *  of the vertical-ownership plan. Pages are OWNED, so a page whose content
+   *  spills past the paper is ours to fix, and the fix is what a castoff would
+   *  do: move the spilled tail onto the next page, then check that page.
+   *  Legality is overflow-only: a deletion leaves its slack (content over churn
+   *  — a page-side MIN_FILL, like vertical justification, is a D1/D2 question).
    *
-   *  The chain is bounded by the mounted set: when the receiving page is a
-   *  placeholder that cannot be mounted from the pre-edit layout, the block is
-   *  simply removed from the spilling page and both pages are marked stale —
-   *  the receiving page draws the block when it mounts (mountPage), checks its
-   *  own fold then, and continues the cascade from there. So the synchronous
-   *  cost is a step per mounted page below the edit (cursor page ± 1), and the
-   *  rest settles lazily at mount time. That is the interim answer to "the
-   *  cascade past the cursor's surroundings must not tie up the interactive
-   *  layer"; the seam for a scheduled (idle-time, reload-free) continuation is
-   *  this method's `pending` list.
+   *  A step reads its FOLD from the placement rule (predicted: `foldOf` on a
+   *  mounted page, `predictFoldFromStore` on a placeholder) and lands as:
+   *  - a TRANSPLANT when the receiving page is mounted (or cheaply mountable):
+   *    the block's `g.system` elements and titles move to the head of that
+   *    page, glyph defs carried, both pages re-placed by the rule and snapped
+   *    — no window, nothing rendered;
+   *  - a CREATED page when the last page spills: the spilling page's own SVG
+   *    shell (same furniture, page number bumped), the block moved in, the
+   *    mount pass;
+   *  - ARITHMETIC when the receiving page is a placeholder whose lines'
+   *    extents are known (a mount or the extents job measured them): pins
+   *    move, both pages are marked stale, and the receiving page's own fold is
+   *    predicted from the store — O(pages) additions past the mounted set;
+   *  - a PARK when they are not known: the block leaves the spilling page and
+   *    the receiving page draws it — and checks its own fold — when it mounts
+   *    (`mountPage` → `repairAtMount`). The extents job makes this rare.
    *
    *  Returns false when a step could not be landed — the caller derives (edit
    *  path) or warns (mount path). Pins are restored to the last consistent
-   *  pagination before returning. */
-  private repairPagination(model: ComposerModel, pages: number[]): boolean {
+   *  pagination before returning. `lastCascade` records the step kinds. */
+  private repairPagination(pages: number[]): boolean {
     const st = this.pageVirt;
     if (!st || !this.container || !this.pageBreaks.paginationOwned()) return true;
+    this.lastCascade = { steps: 0, transplanted: 0, arithmetic: 0, parked: 0, created: 0, ms: 0, msFold: 0, msClone: 0, msMove: 0, msPlace: 0, msSnap: 0, msMount: 0 };
+    const cas = this.lastCascade;
+    const tRepair = performance.now();
+    const k = pageFitConstants(CRISP_PRESETS[this.zoom].unit);
+    const headers = this.headerMeasureIds();
+    const touch = (el: HTMLElement): void => { if (!this.touchedPages.includes(el)) this.touchedPages.push(el); };
     let pending = Array.from(new Set(pages)).filter((p) => p >= 1).sort((x, y) => x - y);
     let steps = 0;
     while (pending.length) {
       const p = pending.shift()!;
       const div = this.pageDiv(p);
-      if (!div || div.classList.contains('score-page-pending')) continue;
-      const fold = this.foldOf(div);
-      if (!fold || fold.firstPast < 0) continue;                       // fits
-      if (fold.firstPast === 0) {
-        this.pageSplicer.lastSkipReason = 'page ' + p + ': a single system is taller than the page';
+      if (!div) continue;
+      const mounted = !div.classList.contains('score-page-pending');
+      const lines = this.pageBreaks.lineStarts();
+      const lineAt = new Map(lines.map((id, i) => [id, i]));
+      const oldPages = this.pageBreaks.pageStarts();
+      /* Page p's lines under the current pins: [pFirst, pEnd). */
+      const pFirst = p - 1 < oldPages.length ? lineAt.get(oldPages[p - 1]) : undefined;
+      const pEnd = p < oldPages.length ? lineAt.get(oldPages[p]) : lines.length;
+      if (pFirst === undefined || pEnd === undefined) {
+        this.pageSplicer.lastSkipReason = 'page ' + p + ': page start is not a partition line';
         return false;
+      }
+      let a: number;                 // first line of the spilled block
+      let block: Element[] = [];     // its systems (mounted page only)
+      if (mounted) {
+        const tFold = performance.now();
+        const fold = this.foldOf(div);
+        cas.msFold += performance.now() - tFold;
+        if (!fold || fold.firstPast < 0) continue;                       // fits
+        if (fold.firstPast === 0) {
+          this.pageSplicer.lastSkipReason = 'page ' + p + ': a single system is taller than the page';
+          return false;
+        }
+        block = fold.systems.slice(fold.firstPast);
+        const first = lineAt.get(block[0].querySelector('g.measure')?.id ?? '');
+        /* The fold is the model's, so the block is page p's tail by
+           construction; a DOM that disagrees with the pins is a defect. */
+        if (first === undefined || first !== pFirst + fold.firstPast || block.length !== pEnd - first) {
+          const why = 'page ' + p + ': spilled systems do not match the pinned lines';
+          if (indexCheckEnabled()) throw new Error('[page-fit] ' + why);
+          this.pageSplicer.lastSkipReason = why;
+          return false;
+        }
+        a = first;
+      } else {
+        /* Arithmetic (Phase 2): a placeholder the cascade reached. Its fold is
+           predicted from stored extents; unknown extents mean the page draws
+           the block and checks itself when it mounts (it is stale already). */
+        const fold = this.predictFoldFromStore(lines.slice(pFirst, pEnd), headers, k);
+        if (fold === null) { this.lastCascade.parked++; continue; }
+        if (fold < 0) continue;
+        if (fold === 0) {
+          this.pageSplicer.lastSkipReason = 'page ' + p + ': a single system is taller than the page (predicted)';
+          return false;
+        }
+        a = pFirst + fold;
       }
       if (++steps > MAX_CASCADE_STEPS) {
         this.pageSplicer.lastSkipReason = 'pagination cascade exceeded ' + MAX_CASCADE_STEPS + ' steps';
         return false;
       }
-      const block = fold.systems.slice(fold.firstPast);
-      const lines = this.pageBreaks.lineStarts();
-      const lineAt = new Map(lines.map((id, i) => [id, i]));
-      const blockLines = block.map((s) => lineAt.get(s.querySelector('g.measure')?.id ?? ''));
-      if (blockLines.some((l) => l === undefined)) {
-        this.pageSplicer.lastSkipReason = 'spilled system is not a partition line';
-        return false;
-      }
-      const a = blockLines[0]!, b = blockLines[blockLines.length - 1]!;
-      const oldPages = this.pageBreaks.pageStarts();
-      /* Page p+1 (index p) now starts at the block; a last page spawns one. The
-         block must be page p's tail, i.e. page p+1 currently starts right after it. */
-      if (p < oldPages.length && lineAt.get(oldPages[p]) !== b + 1) {
-        this.pageSplicer.lastSkipReason = 'spilled block is not the page tail';
-        return false;
-      }
+      this.lastCascade.steps++;
+      /* Page p+1 now starts at the block; a last page spawns one. */
       const newPages = oldPages.slice();
       if (p < oldPages.length) newPages[p] = lines[a]; else newPages.push(lines[a]);
       if (!this.pageBreaks.replacePageStarts(newPages)) {
         this.pageSplicer.lastSkipReason = 'page start list rejected';
         return false;
       }
-      const receiving = p + 1 <= st.pageCount;
-      const nextDiv = receiving ? this.pageDiv(p + 1) : null;
-      const nextMounted = receiving && ((nextDiv && !nextDiv.classList.contains('score-page-pending')) || this.mountPageIfCheap(p + 1));
-      if (receiving && !nextMounted) {
-        /* Lazy step (see above): take the block off this page; the receiving
-           page draws it — and checks its own fold — when it mounts. */
-        if (!this.lazyMoveOut(div, block)) {
-          this.pageBreaks.replacePageStarts(oldPages);
-          this.pageSplicer.lastSkipReason = 'lazy move of a section-header line';
-          return false;
-        }
+      const isLast = p >= st.pageCount;
+      if (!mounted) {
+        /* Bookkeeping only: both pages redraw from the new pins when they
+           mount; the receiving page is checked next. */
+        this.lastCascade.arithmetic++;
         st.stalePages.add(p);
+        if (isLast) this.appendPlaceholderPage();
         st.stalePages.add(p + 1);
-        if (!this.touchedPages.includes(div)) this.touchedPages.push(div);
+        pending = [p + 1, ...pending.filter((q) => q !== p + 1)];
         continue;
       }
-      const req: SpliceRequest = {
-        oldStartIds: lines, newStartIds: lines,
-        oldPageStartIds: oldPages, newPageStartIds: newPages,
-        changedRun: null, moveLines: { a, b },
-      };
-      if (!this.pageSplicer.trySplice(model, req, this.pageSpliceCtx())) {
+      if (isLast) {
+        /* Detach first and settle the spilling page while only ITS root is
+           dirty; the created page's root gets its first layout in its own
+           mount pass — two smaller flushes instead of one over both roots. */
+        const tMove = performance.now();
+        const parts = this.detachBlock(div, block);
+        cas.msMove += performance.now() - tMove;
+        const tPlace = performance.now();
+        this.placePage(div);
+        cas.msPlace += performance.now() - tPlace;
+        const tSnap = performance.now();
+        this.snapSystems(div);
+        cas.msSnap += performance.now() - tSnap;
+        const tClone = performance.now();
+        const created = this.createPageFromShell(p + 1, div);
+        cas.msClone += performance.now() - tClone;
+        if (!created || !this.attachBlock(div, created, parts, null)) {
+          this.pageBreaks.replacePageStarts(oldPages);
+          this.pageSplicer.lastSkipReason = 'page creation failed';
+          return false;
+        }
+        this.lastCascade.created++;
+        this.lastCascade.transplanted++;
+        const tMount = performance.now();
+        this.finishPageMount(created);
+        cas.msMount += performance.now() - tMount;
+        st.stalePages.add(p);
+        touch(div); touch(created);
+        pending = [p + 1, ...pending.filter((q) => q !== p + 1)];
+        continue;
+      }
+      const nextDiv = this.pageDiv(p + 1);
+      if (!nextDiv) {
         this.pageBreaks.replacePageStarts(oldPages);
+        this.pageSplicer.lastSkipReason = 'page ' + (p + 1) + ' has no element';
         return false;
       }
-      this.registerSpliceEffects();
-      /* The receiving page may spill in turn. */
+      const nextMounted = !nextDiv.classList.contains('score-page-pending') || this.mountPageIfCheap(p + 1);
+      if (!nextMounted) {
+        /* The receiving page is a placeholder: the block leaves this page and
+           redraws there at mount. With its lines' extents known the cascade
+           continues by arithmetic; otherwise it parks here, as before Phase 2. */
+        this.lazyMoveOut(div, block);
+        st.stalePages.add(p);
+        st.stalePages.add(p + 1);
+        touch(div);
+        const nextEnd = p + 1 < newPages.length ? (lineAt.get(newPages[p + 1]) ?? lines.length) : lines.length;
+        if (this.predictFoldFromStore(lines.slice(a, nextEnd), headers, k) === null) {
+          this.lastCascade.parked++;
+        } else {
+          this.lastCascade.arithmetic++;
+          pending = [p + 1, ...pending.filter((q) => q !== p + 1)];
+        }
+        continue;
+      }
+      /* TRANSPLANT (Phase 2): the block's systems and titles move to the head
+         of page p+1; both pages are re-placed by the rule and snapped. */
+      const tMove = performance.now();
+      if (!this.moveBlock(div, nextDiv, block, firstSystemOf(nextDiv))) {
+        this.pageBreaks.replacePageStarts(oldPages);
+        this.pageSplicer.lastSkipReason = 'page ' + (p + 1) + ': transplant target unreadable';
+        return false;
+      }
+      cas.msMove += performance.now() - tMove;
+      this.lastCascade.transplanted++;
+      const tPlace = performance.now();
+      this.placePage(div);
+      this.placePage(nextDiv);
+      cas.msPlace += performance.now() - tPlace;
+      const tSnap = performance.now();
+      this.snapSystems(div);
+      this.snapSystems(nextDiv);
+      cas.msSnap += performance.now() - tSnap;
+      st.stalePages.add(p);
+      st.stalePages.add(p + 1);
+      touch(div); touch(nextDiv);
       pending = [p + 1, ...pending.filter((q) => q !== p + 1)];
+      cas.ms = performance.now() - tRepair;
     }
+    cas.ms = performance.now() - tRepair;
+    return true;
+  }
+
+  /** Move `block` (a page's tail systems, in order) and the titles riding on
+   *  them into `to`'s page margin before `anchor` (null = append), carrying
+   *  the glyph defs they reference. DOM only — placement follows. */
+  private moveBlock(from: HTMLElement, to: HTMLElement, block: Element[], anchor: Element | null): boolean {
+    return this.attachBlock(from, to, this.detachBlock(from, block), anchor);
+  }
+
+  /** Take `block` and the titles riding on it out of `from` (the elements stay
+   *  alive, off the DOM). */
+  private detachBlock(from: HTMLElement, block: Element[]): { systems: Element[]; titles: Element[] } {
+    const titles: Element[] = [];
+    for (const t of Array.from(from.querySelectorAll('text.hkl-section-header'))) {
+      const id = t.getAttribute('data-for');
+      const m = id ? from.querySelector('#' + CSS.escape(id)) : null;
+      const sys = m?.closest('g.system');
+      if (sys && block.includes(sys)) titles.push(t);
+    }
+    for (const t of titles) t.remove();
+    for (const sys of block) sys.remove();
+    return { systems: block.slice(), titles };
+  }
+
+  /** Put a detached block into `to`'s page margin before `anchor` (null =
+   *  append), carrying the glyph defs it references. A glyph `to` already
+   *  defines is reused as is; one it lacks is copied from `from` under a FRESH
+   *  id and the block's `use` hrefs are rewritten to it. Never insert a def
+   *  under an id another mounted page already carries: every page of one
+   *  render shares its glyph ids, and appending duplicates invalidates every
+   *  `use` in the document that references them — 300 ms of layout on a
+   *  created page with 31 pages mounted (cb-splicecost.js edit=append,
+   *  2026-09-02) against ~30 with unique ids. */
+  private attachBlock(from: HTMLElement, to: HTMLElement, parts: { systems: Element[]; titles: Element[] }, anchor: Element | null): boolean {
+    const defs = to.querySelector('svg defs');
+    const margin = to.querySelector('svg g.page-margin');
+    if (!defs || !margin) return false;
+    const fromDefs = from.querySelector('svg defs');
+    const idFor = new Map<string, string>();
+    for (const g of Array.from(defs.children)) { const id = g.getAttribute('id'); if (id) idFor.set(id, id); }
+    const uid = 'c' + String(++this.transplantSeq);
+    for (const sys of parts.systems) {
+      for (const use of Array.from(sys.querySelectorAll('use'))) {
+        const href = use.getAttribute('xlink:href') || use.getAttribute('href');
+        if (!href || !href.startsWith('#')) continue;
+        const id = href.slice(1);
+        let target = idFor.get(id);
+        if (!target) {
+          const src = fromDefs ? Array.from(fromDefs.children).find((g) => g.getAttribute('id') === id) : undefined;
+          if (!src) continue;                       // resolves document-wide, as every page's uses do
+          const copy = src.cloneNode(true) as Element;
+          target = id + '-' + uid;
+          copy.setAttribute('id', target);
+          defs.appendChild(copy);
+          idFor.set(id, target);
+        }
+        if (target !== id) {
+          if (use.hasAttribute('xlink:href')) use.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', '#' + target);
+          else use.setAttribute('href', '#' + target);
+        }
+      }
+      if (anchor) margin.insertBefore(sys, anchor); else margin.appendChild(sys);
+    }
+    for (const t of parts.titles) margin.appendChild(t);
     return true;
   }
 
@@ -1776,7 +2005,7 @@ class Renderer {
    *  (the receiving page is unmounted and will draw it on mount). A section
    *  title riding on the block leaves with it — the receiving page's mount
    *  pass injects it again from the model. */
-  private lazyMoveOut(div: HTMLElement, block: Element[]): boolean {
+  private lazyMoveOut(div: HTMLElement, block: Element[]): void {
     for (const t of Array.from(div.querySelectorAll('text.hkl-section-header'))) {
       const id = t.getAttribute('data-for');
       const m = id ? div.querySelector('#' + CSS.escape(id)) : null;
@@ -1784,7 +2013,229 @@ class Renderer {
       if (sys && block.includes(sys)) t.remove();
     }
     for (const s of block) s.remove();
-    return true;
+  }
+
+  /** A new last page from the spilling page's own SVG (Phase 2): systems,
+   *  titles, injected texts and selection rects stripped, the page-number
+   *  header bumped. Page 1's header is the title, not a number: a page cloned
+   *  from it drops the header and is placed as a header-less page (C0). */
+  private createPageFromShell(p: number, from: HTMLElement): HTMLElement | null {
+    const svg = from.querySelector('svg');
+    if (!svg) return null;
+    const shell = svg.cloneNode(true) as Element;
+    for (const s of Array.from(shell.querySelectorAll('g.system, text.hkl-section-header, text.hkl-injected-composer, text.hkl-injected-footer, [data-selection-rect]'))) s.remove();
+    /* The page's glyph defs stay behind: `moveBlock` merges exactly the glyphs
+       the transplanted systems reference (mergeGlyphDefs), so the new SVG root
+       is as small as its content — its first layout is the cascade's one
+       expensive flush. */
+    for (const d of Array.from(shell.querySelectorAll('defs'))) while (d.firstChild) d.removeChild(d.firstChild);
+    const hd = shell.querySelector('g.pgHead');
+    if (hd) {
+      const fromNo = String(Number(from.dataset.page));
+      let bumped = false;
+      for (const t of Array.from(hd.querySelectorAll('tspan, text'))) {
+        if (t.children.length === 0 && (t.textContent ?? '').trim() === fromNo) { t.textContent = String(p); bumped = true; }
+      }
+      if (!bumped) hd.remove();
+    }
+    return this.createPage(p, shell);
+  }
+
+  /** A new last page as a PLACEHOLDER (an arithmetic cascade step reached
+   *  it): it draws from the pins when it scrolls near, like any pending page. */
+  private appendPlaceholderPage(): void {
+    const st = this.pageVirt;
+    if (!st || !this.container) return;
+    const div = document.createElement('div');
+    div.className = 'score-page score-page-pending';
+    div.dataset.page = String(st.pageCount + 1);
+    div.style.width = st.pageW + 'px';
+    div.style.height = st.pageH + 'px';
+    const all = this.container.querySelectorAll('.score-page');
+    const last = all.length ? all[all.length - 1] : null;
+    if (last) last.after(div); else this.container.appendChild(div);
+    st.pageCount++;
+    st.stalePages.add(st.pageCount);
+    st.io?.observe(div);
+  }
+
+  /** Predicted fold of a page that is NOT mounted, from stored extents: the
+   *  index of the first of `lineIds` whose content bottom passes the paper, −1
+   *  when every line fits, null when any line's extents are unknown. */
+  private predictFoldFromStore(lineIds: string[], headers: Set<string>, k: PageFitConstants): number | null {
+    if (!lineIds.length) return -1;
+    const paper = this.paperBottom();
+    if (paper === null) return null;
+    const items: Array<{ ext: SysExtents; reserve: number }> = [];
+    for (const id of lineIds) {
+      const ext = this.extents.get(id);
+      if (!ext) return null;
+      items.push({ ext, reserve: this.lineReserve(id, headers) });
+    }
+    const placed = placeSystems(items, k, this.laterPageY0(k));
+    return foldIndex(placed, paper, 2 * 1000 / this.currentScale());
+  }
+
+  /** Header reserve carried by the line starting at `startId` (its measures
+   *  under the current pins). */
+  private lineReserve(startId: string, headers: Set<string>): number {
+    if (!headers.size) return 0;
+    const lines = this.pageBreaks.lineStarts();
+    const li = lines.indexOf(startId);
+    const lo = this.measureIds.indexOf(startId);
+    if (li < 0 || lo < 0) return 0;
+    const hiId = li + 1 < lines.length ? this.measureIds.indexOf(lines[li + 1]) : -1;
+    const hi = hiId < 0 ? this.measureIds.length : hiId;
+    let reserve = 0;
+    for (let mi = lo; mi < hi; mi++) if (headers.has(this.measureIds[mi])) reserve += SECTION_HEADER_RESERVE;
+    return reserve;
+  }
+
+  private mountedPageDivs(): HTMLElement[] {
+    return this.container ? Array.from(this.container.querySelectorAll('.score-page:not(.score-page-pending)')) as HTMLElement[] : [];
+  }
+
+  /** Paper bottom in the page-margin frame, from any mounted page (every page
+   *  shares one box). */
+  private paperBottom(): number | null {
+    for (const div of this.mountedPageDivs()) {
+      const ps = this.pageSystems(div);
+      if (ps) return ps.paperBottom;
+    }
+    return null;
+  }
+
+  /** First content top of a page after page 1 (below its page-number header),
+   *  read from any mounted such page; the calibrated default otherwise. */
+  private laterPageY0(k: PageFitConstants): number {
+    for (const div of this.mountedPageDivs()) {
+      if (Number(div.dataset.page) < 2) continue;
+      const ps = this.pageSystems(div);
+      if (ps) return this.firstContentTop(ps.margin, k);
+    }
+    return k.C0;
+  }
+
+  /* ── the extents job (Phase 2) ──────────────────────────────────────────── */
+
+  /** Arm the idle measurement of every unmounted page's lines. Each slice
+   *  renders one or two pages offscreen from the toolkit's current layout,
+   *  post-processes them (HEJI text is content), measures their systems'
+   *  extents into the store and discards the SVG (~100 ms a page). Mounted
+   *  pages measured themselves; stale pages are not in the toolkit's layout
+   *  (they redraw from the pins on mount) and are skipped, as is a page whose
+   *  lines are all known. Cancelled by any document change or re-render. */
+  private armExtentsJob(model: ComposerModel): void {
+    this.cancelExtentsJob();
+    const st = this.pageVirt;
+    if (!st || !this.pageBreaks.ownershipActive() || st.pageCount <= 1) return;
+    const job = { docVer: model.docVersion(), nextPage: 1, measured: [] as number[], cancelled: false, warmMs: 0 };
+    this.extentsJob = job;
+    const step = (): void => {
+      if (job.cancelled || this.extentsJob !== job) return;
+      if (this.spliceDepth !== 0 || this.pageVirt !== st || model.docVersion() !== job.docVer) {
+        job.cancelled = true;
+        this.extentsJob = null;
+        return;
+      }
+      /* WARM what a clip DEFERRED (2026-09-02). A splice that clipped its
+         replaced set to the mounted band left the pages beyond it stale AND
+         undrawn, and such a page's next mount reloads the whole document into
+         the toolkit (~600 ms on the sonata) — on the user's SCROLL. Do it here
+         instead, in one idle slice: the reload re-serializes the current pins,
+         clears the stale set and leaves every later mount cheap. Any document
+         change cancels the job before this runs, so the work is never wasted.
+         Only for an UNMOUNTED stale page. Every ordinary splice marks the pages
+         it edited stale too, but those are drawn and correct — warming on
+         `stalePages.size` alone put a ~600 ms reload in idle time after EVERY
+         edit, which the battery caught as +2 s on a multi-edit sequence. */
+      if (!st.tkCurrent || [...st.stalePages].some((p) => !st.mounted.has(p))) {
+        const tWarm = performance.now();
+        const ok = this.ensureTkHoldsPageLayout();
+        job.warmMs += performance.now() - tWarm;
+        if (!ok) { job.cancelled = true; this.extentsJob = null; return; }
+        scheduleIdle(step);
+        return;
+      }
+      const budget = performance.now() + 40;
+      while (job.nextPage <= st.pageCount && performance.now() < budget) {
+        const p = job.nextPage++;
+        if (st.mounted.has(p) || st.stalePages.has(p) || !this.pageNeedsExtents(p)) continue;
+        this.measurePageExtentsOffscreen(p);
+        job.measured.push(p);
+      }
+      if (job.nextPage > st.pageCount) { this.extentsJob = null; return; }
+      scheduleIdle(step);
+    };
+    scheduleIdle(step);
+  }
+
+  private cancelExtentsJob(): void {
+    if (this.extentsJob) { this.extentsJob.cancelled = true; this.extentsJob = null; }
+  }
+
+  /** Test hook: finish the armed extents job synchronously. Returns the pages
+   *  it measured (this call included). */
+  runExtentsJobNow(): number[] {
+    const job = this.extentsJob;
+    const st = this.pageVirt;
+    if (!job || !st) return [];
+    if (!st.tkCurrent || [...st.stalePages].some((p) => !st.mounted.has(p))) {
+      const tWarm = performance.now();
+      if (!this.ensureTkHoldsPageLayout()) { job.cancelled = true; this.extentsJob = null; return []; }
+      job.warmMs += performance.now() - tWarm;
+    }
+    while (job.nextPage <= st.pageCount && st.tkCurrent) {
+      const p = job.nextPage++;
+      if (st.mounted.has(p) || st.stalePages.has(p) || !this.pageNeedsExtents(p)) continue;
+      this.measurePageExtentsOffscreen(p);
+      job.measured.push(p);
+    }
+    job.cancelled = true;
+    this.extentsJob = null;
+    return job.measured;
+  }
+
+  /** Diagnostics: the armed extents job, or null when none is pending. */
+  extentsJobState(): { nextPage: number; measured: number[]; warmMs: number } | null {
+    const j = this.extentsJob;
+    return j ? { nextPage: j.nextPage, measured: j.measured.slice(), warmMs: Math.round(j.warmMs) } : null;
+  }
+
+  /** Diagnostics: are the extents of the line starting at `startId` known? */
+  extentsKnown(startId: string): boolean {
+    return this.extents.get(startId) !== undefined;
+  }
+
+  /** Does any line of page `p` (current pins) lack extents? */
+  private pageNeedsExtents(p: number): boolean {
+    const lines = this.pageBreaks.lineStarts();
+    const pages = this.pageBreaks.pageStarts();
+    const lo = lines.indexOf(pages[p - 1] ?? '');
+    if (lo < 0) return false;
+    const hiIdx = p < pages.length ? lines.indexOf(pages[p]) : -1;
+    const hi = hiIdx < 0 ? lines.length : hiIdx;
+    for (let li = lo; li < hi; li++) if (!this.extents.get(lines[li])) return true;
+    return false;
+  }
+
+  /** Render page `p` offscreen from the toolkit's current layout, post-process
+   *  it like a mounted page, record its systems' extents, discard it. */
+  private measurePageExtentsOffscreen(p: number): void {
+    const host = document.createElement('div');
+    host.style.cssText = 'position:absolute;left:-99999px;top:0';
+    host.innerHTML = this.tk!.renderToSVG(p, {});
+    document.body.appendChild(host);
+    try {
+      this.postProcessRendered(host);
+      for (const sys of Array.from(host.querySelectorAll('g.page-margin > g.system')) as SVGGraphicsElement[]) {
+        const first = sys.querySelector('g.measure');
+        const ext = measureExtents(sys);
+        if (first?.id && ext) this.extents.set(first.id, ext);
+      }
+    } finally {
+      host.remove();
+    }
   }
 
   /** Mount page `p` for the splicer (B5), but ONLY when doing so is cheap and

@@ -3315,21 +3315,49 @@ export class ComposerModel {
     }
     const idx = Math.max(0, beforeMeasureIdx);
     /* Capture pre-insertion measure indexes for every slur endpoint so we
-       can detect which slurs straddle the new measure. */
+       can detect which slurs straddle the new measure.
+       Read the DOM ONCE (2026-09-02). This used to call `measures.findIndex`
+       with an attribute `querySelector` per measure for each endpoint, i.e.
+       O(slurs × measures) queries: on the sonata, 922 slurs over 446 measures
+       came to 432 000 `querySelector` calls and 406 ms of the 523 ms mutation,
+       which was the whole reason a blank-measure insert cost ~4x a note edit
+       (`cb-splicecost.js --arg edit=ctrlm`). Same fix, and same lesson, as the
+       spanner-growth loop in splice.ts. */
+    const slurs = Array.from(this.doc.querySelectorAll('slur'));
     const slurStraddle: Element[] = [];
-    for (const slur of Array.from(this.doc.querySelectorAll('slur'))) {
-      const sid = (slur.getAttribute('startid') ?? '').replace('#', '');
-      const eid = (slur.getAttribute('endid') ?? '').replace('#', '');
-      if (!sid || !eid) continue;
-      const startMi = measures.findIndex((meas) => meas.querySelector(`[*|id="${sid}"]`));
-      const endMi = measures.findIndex((meas) => meas.querySelector(`[*|id="${eid}"]`));
-      if (startMi < 0 || endMi < 0) continue;
-      const lo = Math.min(startMi, endMi);
-      const hi = Math.max(startMi, endMi);
-      /* A slur straddles iff the insertion point falls strictly between
-         the endpoints' measures. lo < idx <= hi means the new measure
-         (which inserts BEFORE measures[idx]) lands between them. */
-      if (lo < idx && idx <= hi) slurStraddle.push(slur);
+    if (slurs.length) {
+      /* Only the endpoints matter, so collect those ids first and fill the
+         index map in one pass over the measures (one query each). */
+      const want = new Set<string>();
+      for (const slur of slurs) {
+        for (const attr of ['startid', 'endid']) {
+          const v = (slur.getAttribute(attr) ?? '').replace('#', '');
+          if (v) want.add(v);
+        }
+      }
+      const miOfId = new Map<string, number>();
+      if (want.size) {
+        for (let i = 0; i < measures.length; i++) {
+          for (const el of Array.from(measures[i].querySelectorAll('[*|id]'))) {
+            const id = el.getAttribute('xml:id');
+            if (id && want.has(id)) miOfId.set(id, i);
+          }
+        }
+      }
+      for (const slur of slurs) {
+        const sid = (slur.getAttribute('startid') ?? '').replace('#', '');
+        const eid = (slur.getAttribute('endid') ?? '').replace('#', '');
+        if (!sid || !eid) continue;
+        const startMi = miOfId.get(sid);
+        const endMi = miOfId.get(eid);
+        if (startMi === undefined || endMi === undefined) continue;
+        const lo = Math.min(startMi, endMi);
+        const hi = Math.max(startMi, endMi);
+        /* A slur straddles iff the insertion point falls strictly between
+           the endpoints' measures. lo < idx <= hi means the new measure
+           (which inserts BEFORE measures[idx]) lands between them. */
+        if (lo < idx && idx <= hi) slurStraddle.push(slur);
+      }
     }
 
     const section = this.doc.querySelector("section");

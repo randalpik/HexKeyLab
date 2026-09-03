@@ -143,6 +143,8 @@ const runEdit = async (name, editFn, expect) => {
   entry.skipReason = ps.lastSkipReason;
   entry.spliceStats = { ...ps.lastStats };
   entry.refillLines = pb.lastRefillLines;
+  /* Phase 2: how the overflow cascade landed (transplant / arithmetic / park / created). */
+  entry.cascade = r.lastCascade ? { ...r.lastCascade } : null;
   entry.derive = pb['adoption'] !== null;
   if (entry.derive) await waitFor(() => pb['startIds'] !== null, 60000, 200);
   await mountAll();

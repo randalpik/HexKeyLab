@@ -5975,3 +5975,211 @@ fixture list in the plan doc's Phase 1 status.
 `cb-splice-battery.js`, fixtures `pageSystemSpliceDyCascade`,
 `pageSectionHeaderCascade` (restated without the plan), `pagePlacementOwned`,
 `pagePlacementTextTopped`, `pageSpliceNoPbPins` (new).
+
+## 2026-09-02 — The cascade runs on the model: transplant, created page from the spilling page's shell, arithmetic past the mounted set, the extents job (vertical-ownership plan, Phase 2)
+
+**Context**: with Composer placing every system (Phase 1), a cascade step no
+longer needed Verovio for anything: the spilled block's systems already exist
+on the spilling page, placed by the rule; moving them is a DOM operation, and
+a page nobody has mounted can be folded by arithmetic over stored extents. B2's
+step was still a splice (a window render of the block, page-first, imported
+into the receiving page) and past the mounted set it parked — the receiving
+page drew the block and checked itself at mount. Plan
+([composer-vertical-ownership-plan.md](composer-vertical-ownership-plan.md) §3
+Phase 2).
+
+**Picked**:
+1. **A step is a transplant** (`Renderer.repairPagination`, `detachBlock` /
+   `attachBlock`): the block's `g.system` elements and their titles move to
+   the head of the receiving page's margin, both pages are re-placed by the
+   rule and snapped. No window, no `SpliceRequest.moveLines`, no created page
+   from the splicer — that whole path is gone from `pagesplice.ts` (the
+   `section header measure removed` bail with it: a title whose measure the
+   edit deleted is simply removed, the header being a component of the model).
+2. **A last page spills into a page made from the spilling page's own SVG**
+   (`createPageFromShell`): systems, titles, injected texts and selection
+   rects stripped, the page-number header bumped (page 1's title header is
+   dropped instead), the glyph `<defs>` emptied. Detach the block, place and
+   snap the spilling page while only its root is dirty, THEN create and fill
+   the new page and run its mount pass — two small flushes, not one over both
+   roots.
+3. **Glyph defs travel under fresh ids** (`attachBlock`): a glyph the
+   receiving page already defines is reused; one it lacks is copied from the
+   spilling page under `<id>-c<n>` and the moved `use` hrefs are rewritten.
+   Every page of one render shares its glyph ids, and appending duplicates
+   invalidates every referencing `use` in the document — ~100 ms of the
+   created page's first layout with 31 pages mounted.
+4. **Arithmetic where a step used to park** — NOT instead of a cheap mount.
+   When the receiving page is a placeholder the B5 rule can still mount from
+   the toolkit's layout (not stale), it IS mounted and receives a transplant:
+   ~50 ms now, and the page is drawn. Arithmetic (pins move, both pages
+   stale, the receiving page's fold predicted from the `ExtentsStore`,
+   `appendPlaceholderPage` for a spill past the last page) applies when the
+   cheap mount is unavailable and the lines' extents are known; a PARK only
+   when they are not. Reason: an arithmetic step leaves a stale page whose
+   eventual mount costs a document reload (~600 ms on the sonata); the plan's
+   "arithmetic when extents are known" read literally would have traded 50 ms
+   now for that. `pageCascadeArithmeticPastMount` marks its page stale to be
+   the case that parked.
+5. **The extents job** (`armExtentsJob`): armed after every page render that
+   leaves ownership active; idle slices render each unmounted, non-stale page
+   offscreen from the toolkit's current layout, post-process it, measure its
+   systems into the store, discard the SVG. Adoption's discipline — the
+   current job only, cancelled by any document change, re-render, splice in
+   progress or a toolkit that no longer holds the layout; a page that mounts
+   meanwhile measures itself and is skipped. Test hooks `runExtentsJobNow`,
+   `extentsJobState`, `extentsKnown`.
+6. **Diagnostics**: `Renderer.lastCascade` = {steps, transplanted,
+   arithmetic, parked, created, ms, msFold, msClone, msMove, msPlace, msSnap,
+   msMount}; the sweep sums them (`parkedSteps` must be 0), the battery records
+   them per edit, `cb-splicecost.js --arg edit=append|appendnear|appendskipdefs`
+   attributes the cascade onto a created page.
+
+**Measured** (sonata): the mid-document one-note edit is unchanged (145 ms
+steady, no cascade). Append-at-end with the last three pages mounted — the
+user's condition when composing at the end — costs 37 ms of cascade, 31 of it
+the created page's mount pass: the plan's "mount pass alone". With all 31
+pages mounted (the battery's `mountAll`) the created page's FIRST LAYOUT costs
+~180 ms and scales with the mounted set (a new SVG root, not the defs: skipping
+the copy saves ~30 ms; unique ids saved ~100), so the battery's append-at-end
+wall reads ~+75–250 ms against the old code in that condition (921 vs 793 in
+the probe; 802–1017 across six battery runs vs 728, the created page's mount
+pass 196–305 of it). Why the old window-shell root laid out
+cheaper there than a clone of the live page's root is not understood; the
+mounted-set scaling is the known accumulator (page virtualization evicts, so a
+user never has 31 mounted). Left as is, noted for Phase 3's measurements.
+
+**Result**: battery identical on both code states (10/10 spliced,
+`reference.ok` on every edit, append-at-end `created: 1, transplanted: 1`);
+sweep 115/115, viewport counters 0/0/0, `parkedSteps` 0; full tier 374/374
+under `HKL_INDEX_CHECK` — the five B2 cascade fixtures re-asserted on the
+transplant (the very element that was page 1's tail heads page 2), plus
+`pageCascadePredictedFold`, `pageCascadeArithmeticPastMount`,
+`pageExtentsJobEditDuring`, `pageExtentsJobScrollDuring`, each failing on the
+unfixed source; every-measure pass 420/420 at 100 % splice rate, 0
+conflicts, empty refusal inventory.
+
+**Where**: `apps/composer/src/render/render.ts` (`repairPagination`,
+`detachBlock`/`attachBlock`/`moveBlock`, `createPageFromShell`,
+`appendPlaceholderPage`, `predictFoldFromStore`, `lineReserve`,
+`laterPageY0`, `armExtentsJob`/`runExtentsJobNow`/`measurePageExtentsOffscreen`,
+`lastCascade`), `pagesplice.ts` (moved-block path and page creation removed),
+`linebreaks.ts` (`scheduleIdle` exported), `test/composer-inspect/phasec/`
+(`cb-sweep.js` counters, `cb-splice-battery.js` cascade record,
+`cb-splicecost.js` append modes), `test/composer-test/lib/cdp.mjs`
+(`exceptionDetails` surfaced), fixtures above.
+
+## 2026-09-02 — An edit costs what is ON SCREEN: the replaced set is clipped to the mounted band, re-flow is separated from re-draw, and the break signature keys on identity
+
+**Context**: Max, on inserting a blank measure into the sonata: *"This is
+inserting a blank measure in the middle of a line, which does not change any
+other lines at all. This should be a localized replaced set, no more taxing
+than a single deletion. Something is wrong."* And, on the mechanism: *"Aren't
+unmounted pages supposed to be deferred off the main thread? A synchronous wait
+for a 34-line window shouldn't be possible."* Both were right. Ctrl+M cost
+2.9 s at the start of a section and 4.1 s in the last one, position-dependent,
+with no cascade involved. Four separate defects, found in this order
+(`cb-commands.js`, `cb-insertpos.js`, `cb-splicecost.js --arg edit=ctrlm`):
+
+1. **The edit never reached the splicer.** `computeUserBreakSig` encoded each
+   user break as a running MEASURE COUNT (`230sb`), so inserting a measure
+   above any break changed the signature and the refill bailed with `user
+   breaks changed` — a full derive for an edit that changed no break at all.
+   Now keyed on the `xml:id` of the measure each break precedes. Ctrl+B and
+   section headers still report a change, correctly: they DO add a break.
+   2852 → 523 ms. (lessons.md, "A signature that encodes POSITION".)
+2. **The mutation was O(slurs × measures).** `insertMeasureAt` located each
+   slur endpoint with `measures.findIndex((m) => m.querySelector('[*|id=…]'))`
+   — 922 slurs over 446 measures, 432 154 `querySelector` calls, 406 ms of a
+   523 ms mutation. One pass mapping the wanted ids to measure indices: 450
+   queries, 57 ms. 523 → 288 ms. (lessons.md, "O(spanners × measures)".)
+3. **Re-flow and re-draw were one question.** The per-measure signature is the
+   measure's serialized XML, so the section-aware `renumberMeasures` reported
+   every measure to the end of the section as changed, and the changed run
+   drove BOTH the partition repair with its naturals measurement AND the
+   splice. Measure numbers are rendered (111 on the sonata, one per line
+   start), so those lines do need REDRAWING — Max: *"Those measure numbers do
+   need to be updated when a measure is added. We just don't need to wait for
+   the main thread to do it."* — but a number is an overlay label above the
+   staff, so their widths and their lines' fills cannot move. `measureFlowSig`
+   (own `@n` stripped) gives a second diff: the FLOW run drives repartition and
+   naturals, the FULL run is what the splicer redraws. Naturals for an insert
+   at m8 went 585 ms / 137 measures → 77 ms / 19; at m340, 1162 → 73 ms.
+4. **Unmounted pages were not deferred.** The replaced set was computed in line
+   space over the whole document and then B5's `ensurePageMounted` DREW every
+   page it touched (834 ms for 8 pages) so one window could re-engrave all 146
+   measures (650 ms) — synchronously, for an edit on page 1. Nothing had
+   revisited that: B5 mounted eagerly because a missing page used to force a
+   full render, and the tradeoff inverted once the splice could do partial
+   work. The splice now processes only the lines whose old AND new page lie in
+   the maximal contiguous run of mounted pages containing the edit, and DEFERS
+   the rest: `lastDeferredPages` are marked stale and any that were drawn are
+   returned to placeholders (a drawn page holding pre-edit systems under
+   post-edit pins is what `verifyRenderedPartition` rightly fails on), each
+   redrawing from the committed pins on mount. Same deferral the Phase 2
+   cascade uses for its arithmetic steps. Page granularity keeps the processed
+   lines contiguous, which the window needs.
+   - A context line outside the band cannot be compared and is not the edit's
+     business (`aboveComparable` / `belowComparable`): the window still renders
+     it so entering spanners resolve, it just is not checked. Max's standing
+     ruling applies — the live context comparison is a fallback, not an
+     invariant — and the reference gate still covers every replaced line.
+   - B5's eager mount survives for the EDIT's own neighbourhood only (lines
+     a−1..a+1), so an evicted cursor page is still drawn before the splice.
+   - The idle extents job now WARMS what a clip deferred: one
+     `ensureTkHoldsPageLayout` in an idle slice clears the stale set, so a
+     later mount costs ~50 ms instead of a ~600 ms document reload on the
+     user's scroll. Adoption's discipline throughout: any document change
+     cancels the job first.
+
+**Measured** (sonata, insert a blank measure, Chromium):
+
+| at measure | before | after |
+|---|---|---|
+| m2 | 2953 ms | 515 ms |
+| m8 | 2153 ms | 386 ms |
+| m20 | 2445 ms | 327 ms |
+| m60 | 1816 ms | 745 ms |
+| m120 | 665 ms | 592 ms |
+| m223 | 440 ms | 564 ms |
+| m340 | 4139 ms | 437 ms |
+| m440 | 421 ms | 521 ms |
+
+Position dependence is gone: the worst case is 745 ms against 4139, and the
+window went from 145 measures to 13-39. A one-note delete is 161 ms, so an
+insert is now the same order as any other edit rather than 25x it.
+
+**Command inventory** (`cb-commands.js`, new): every document-mutating user
+command on the sonata, through the real key path where there is no dialog and
+through the model method where there is. 24 mutating commands, 19 splice. The
+five that derive all say why: three add a user break (Ctrl+B page-break,
+section header, pickup), a mid-piece meter change exhausts the repair cap
+(`repartition window/cap exhausted`), and `add instrument` is structural
+(`head context changed`). Copy, cut, paste, paste-into-selection and undo/redo all splice
+(195-306 ms). Mid-piece time signature exhausts the repair cap and `add
+instrument` is structural — both documented derives. This inventory exists
+because nothing asserted that a command splices, which is how the Ctrl+M
+derive survived unnoticed; `Renderer.renderLedger` now records every page
+render's outcome so a fixture can assert it.
+
+**Left open, now named**: the refill still has no operation that INTRODUCES a
+line boundary, so the three commands that add a user break (Ctrl+B page break,
+section header, pickup) derive. The splicer downstream already handles a
+changed line count (`pageSpliceNewLineAtEnd`); what is missing is a
+repartition step that splits the line containing a new hard start, merges
+where one was removed, and lets the existing repair fix the fills. That would
+cover all three at once. Two fixtures carry `fullRender` flags naming this gap
+so they fail loudly when it closes.
+
+**Where**: `render/linebreaks.ts` (`computeUserBreakSig`, `measureFlowSig`,
+`sigFlow`, the second prefix/suffix diff, the flow/redraw branch),
+`model/index.ts` (`insertMeasureAt`), `render/pagesplice.ts` (the band clip,
+`lastDeferredPages`/`lastDeferredLines`, `aboveComparable`/`belowComparable`,
+`isPageMounted` on the ctx), `render/render.ts` (`registerSpliceEffects`
+deferral, the extents job's warm step, `renderLedger`),
+`test/composer-inspect/phasec/cb-commands.js` + `cb-insertpos.js` (new),
+`cb-splicecost.js` (`edit=ctrlm|append*` modes, per-phase `querySelector`
+counts), fixtures `pageSpliceClipsToMountedBand`, `pageRenumberIsRedrawOnly`,
+`pageExtentsJobWarmsDeferred`, and `pageSystemSpliceEnsureMount` re-asserted
+(B5's eager context mount is superseded by the clip).
+

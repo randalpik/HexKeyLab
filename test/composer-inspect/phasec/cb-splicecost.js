@@ -17,8 +17,16 @@ const waitFor = async (fn, ms = 90000, step = 10) => { const t0 = performance.no
 const badgeHidden = () => { const b = document.getElementById('renderBusy'); return !b || b.hidden; };
 const spec = String(window.__probeArg || '');
 const miArg = spec.match(/mi=(\d+)/)?.[1];
+/* `--arg "edit=ctrlm"` (2026-09-02): the Ctrl+M insert-measure command through
+   the real input path, with the model's document-wide passes tagged
+   (renumberMeasures / setBarlines / normalizePlaceholdersAll / normalizeTies) —
+   the question being whether a "localized" command edit produces a localized
+   CHANGED RUN. `edit=append`: the battery's append-at-end edit
+   (16 quarters past the last note, every page mounted) instead of the mid-document
+   Backspace — attributes the overflow cascade onto a created page. */
+const editMode = spec.match(/edit=(\w+)/)?.[1] ?? 'backspace';
 await waitFor(() => pb['startIds'] !== null); await waitFor(badgeHidden, 90000, 40);
-const out = { measures: model.allMeasures().length, lines: pb['startIds'].length };
+const out = { measures: model.allMeasures().length, lines: pb['startIds'].length, editMode };
 
 /* ── phase-tagged buckets ── */
 let phase = 'other'; const phaseStack = [];
@@ -44,6 +52,21 @@ const install = () => {
   wrapPhase(r, 'snapSystems', 'snap');
   wrapPhase(r, 'postProcessRendered', 'post');
   wrapPhase(H.cursor, 'update', 'cursor');
+  /* Phase 2 cascade phases (absent on older code: wrapPhase skips). */
+  wrapPhase(r, 'repairPagination', 'cascade');
+  wrapPhase(r, 'finishPageMount', 'mountPass');
+  wrapPhase(r, 'createPageFromShell', 'createShell');
+  wrapPhase(r, 'mountPage', 'mountPage');
+  wrapPhase(r, 'armExtentsJob', 'armJob');
+  wrapPhase(r, 'registerSpliceEffects', 'effects');
+  wrapPhase(pb, 'verifyRenderedPartition', 'verifyPartition');
+  wrapPhase(model, 'insertChordAtCursor', 'mutate');
+  wrapPhase(model, 'insertMeasureAt', 'mutate');
+  wrapTimed(model, 'renumberMeasures', 'model.renumberMeasures');
+  wrapTimed(model, 'setBarlines', 'model.setBarlines');
+  wrapTimed(model, 'normalizePlaceholdersAll', 'model.normalizePlaceholdersAll');
+  wrapTimed(model, 'snapshotState', 'model.snapshotState');
+  wrapTimed(model, 'serialize', 'model.serialize');
   const tkProto = Object.getPrototypeOf(r['tk']);
   const inst = function () { return this === r['spliceTk'] ? 'spliceTk' : 'tk'; };
   wrapTimed(tkProto, 'loadData', function () { return inst.call(this) + '.loadData'; });
@@ -54,6 +77,9 @@ const install = () => {
   wrapTimed(XMLSerializer.prototype, 'serializeToString', 'XMLSerializer');
   wrapTimed(DOMParser.prototype, 'parseFromString', 'DOMParser');
   wrapTimed(Element.prototype, 'querySelectorAll', 'querySelectorAll');
+  wrapTimed(Element.prototype, 'querySelector', 'querySelector');
+  wrapTimed(Document.prototype, 'querySelectorAll', 'doc.querySelectorAll');
+  wrapTimed(Document.prototype, 'querySelector', 'doc.querySelector');
   wrapGeom(SVGGraphicsElement.prototype, 'getBBox');
   wrapGeom(SVGGraphicsElement.prototype, 'getScreenCTM');
   wrapGeom(Element.prototype, 'getBoundingClientRect');
@@ -68,6 +94,20 @@ const measures = model.allMeasures().length;
 const MI = miArg ? Number(miArg) : Math.max(0, Math.floor(measures / 2));
 out.editMeasure = MI;
 const mountAround = async () => {
+  if (editMode === 'append' || editMode === 'appendnear' || editMode === 'appendskipdefs') {
+    r.setMountWindowEnabled(false);
+    if (!r['ensureTkHoldsPageLayout']()) return;
+    if (editMode === 'appendskipdefs') globalThis.__skipDefCopy = true;
+    const n = pb.pageStarts().length;
+    for (const page of document.querySelectorAll('#score .score-page.score-page-pending')) {
+      const p = +page.dataset.page;
+      if (editMode === 'appendnear' && p < n - 2) continue;      // only the last three pages, like a user composing at the end
+      r['mountPage'](p);
+    }
+    if (editMode === 'appendnear') for (const p of [...r['pageVirt'].mounted]) if (p < n - 2) r['unmountPage'](p);
+    await sleep(80);
+    return;
+  }
   if (!r['ensureTkHoldsPageLayout']()) return;
   const ids = model.allMeasures().map((m) => m.getAttribute('xml:id'));
   const page = r['tk'].getPageWithElement(ids[MI]);
@@ -76,12 +116,24 @@ const mountAround = async () => {
 };
 const runEdit = async (label) => {
   B = {}; slowCalls = [];
-  const cur = model.getFirstVisualCursorInMeasure(1, MI, 'overwrite');
-  if (cur < 0) return { label, error: 'no cursor in measure ' + MI };
-  model.setCursor(cur, 1);
-  install();
-  const t0 = performance.now();
-  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }));
+  let t0;
+  if (editMode.startsWith('append')) {
+    const mkNote = { q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 };
+    install();
+    t0 = performance.now();
+    for (let q = 0; q < 16; q++) { model.setCursor(model['flatChildren'](1).length, 1); model.insertChordAtCursor({ notes: [mkNote], duration: '4', dots: 0 }); }
+    H.reRender();
+  } else {
+    const cur = model.getFirstVisualCursorInMeasure(1, MI, 'overwrite');
+    if (cur < 0) return { label, error: 'no cursor in measure ' + MI };
+    model.setCursor(cur, 1);
+    install();
+    t0 = performance.now();
+    const key = editMode === 'ctrlm'
+      ? { key: 'm', ctrlKey: true, bubbles: true }
+      : { key: 'Backspace', bubbles: true };
+    document.dispatchEvent(new KeyboardEvent('keydown', key));
+  }
   await waitFor(badgeHidden, 60000, 2);
   const wall = performance.now() - t0;
   uninstall();
@@ -94,7 +146,10 @@ const runEdit = async (label) => {
   return {
     label, wallMs: +wall.toFixed(1), outcome: ps.lastOutcome, skip: ps.lastSkipReason,
     spliceStats: ps.lastStats, refillStats: pb.lastRefillStats, window: ps.lastWindow, run: ps.lastRun, mounted: document.querySelectorAll('#score .score-page:not(.score-page-pending)').length,
-    postStats: r['lastPostStats'] ?? null,
+    postStats: r['lastPostStats'] ?? null, cascade: r.lastCascade ? { ...r.lastCascade } : null, pages: pb.pageStarts().length,
+    deriveReason: pb.lastDeriveReason, hunk: ps.lastHunk, lines: pb['startIds'] ? pb['startIds'].length : null,
+    slurs: model.getDoc().querySelectorAll('slur').length, ties: model.getDoc().querySelectorAll('[tie]').length,
+    measuresAfter: model.allMeasures().length,
     phases, geomByPhase, slowCalls, buckets,
   };
 };

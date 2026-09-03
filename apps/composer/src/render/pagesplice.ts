@@ -114,14 +114,8 @@ export interface PageSpliceCtx {
    *  spliced (B5). Returns false when mounting would be expensive or would
    *  draw POST-edit content — the splice then refuses, as it always did. */
   ensurePageMounted: (page: number) => boolean;
-  /** Create page `page` (= current page count + 1) from `shell` — the window's
-   *  own page SVG with its systems stripped — append it to the page grid and
-   *  register it (mounted, stale). Returns the new page element, or null. B2:
-   *  a cascade whose moved block lands past the last page. */
-  createPage: (page: number, shell: Element) => HTMLElement | null;
-  /** Run the whole mount pass (post-processing + main.ts injections + snap) on
-   *  a page `createPage` made, once its systems are in. */
-  finishCreatedPage: (pageEl: HTMLElement) => void;
+  /** Is page `page` currently drawn (it exists and is not a placeholder)? */
+  isPageMounted: (page: number) => boolean;
 }
 
 interface SysProfile {
@@ -295,11 +289,12 @@ function staffLineOf(measureEl: Element): { staff: Element; x1: number; x2: numb
   return null;
 }
 
-/** What the splicer is asked to land (B2, 2026-09-02). The edit path builds
- *  one from a `RefillResult`; the renderer's overflow cascade builds one per
- *  moved block (unchanged content, different PAGE). The two are the same
- *  operation: replace the systems of a line hunk with re-engraved ones, placed
- *  where the NEW pagination says they go. */
+/** What the splicer is asked to land (B2, 2026-09-02): the edit path builds
+ *  one from a `RefillResult` — replace the systems of a line hunk with
+ *  re-engraved ones, placed where the NEW pagination says they go. (Until
+ *  Phase 2 of the vertical-ownership plan the overflow cascade also built one
+ *  per moved block; a cascade step is a DOM transplant in
+ *  Renderer.repairPagination now and never comes through here.) */
 export interface SpliceRequest {
   /** Partition the mounted DOM renders (pre-edit) — live systems are located
    *  by THESE ids, even ones whose measure the edit deleted. */
@@ -313,16 +308,12 @@ export interface SpliceRequest {
   /** Measure run the edit changed (NEW measure indices), or null when nothing
    *  in the document changed (a pure move). */
   changedRun: { lo: number; hi: number } | null;
-  /** NEW-line range that must be replaced although its content is unchanged:
-   *  the overflow cascade's moved block (its lines change page). */
-  moveLines?: { a: number; b: number };
 }
 
 /** Where a new line's system goes. */
 interface Target {
-  /** The live page element, or null when the page must be created (a cascade
-   *  onto a page that does not exist yet). */
-  el: HTMLElement | null;
+  /** The live page element. */
+  el: HTMLElement;
   pageNo: number;
   pageFirst: boolean;
 }
@@ -341,8 +332,6 @@ export class PageSystemSplicer {
   /** Source pages the last splice left without any system: a page whose every
    *  line vanished (B2). The renderer removes them and renumbers. */
   lastEmptiedPages: HTMLElement[] = [];
-  /** Pages the last splice created (a cascade onto a new last page). */
-  lastCreatedPages: HTMLElement[] = [];
   lastStats = { lines: 0, windowLines: 0, windowMeasures: 0, loadMs: 0, totalMs: 0 };
   /** The vertical plan the last gate computed (null when it never got that
    *  far). Diagnostics for the probes; the splice itself consumes it inline. */
@@ -351,6 +340,13 @@ export class PageSystemSplicer {
    *  names a reason, but not which lines it wanted — `cb-sweep.js` needs that
    *  to tell a not-mounted line from a not-mounted spanner-expanded run). */
   lastRun: { a: number; b: number } | null = null;
+  /** Pages whose hunk lines the last splice DEFERRED (2026-09-02): outside the
+   *  mounted band, so they were not re-engraved. The renderer marks them stale
+   *  and returns any that were drawn to placeholders, so each redraws from the
+   *  committed pins when it next mounts. */
+  lastDeferredPages: number[] = [];
+  /** NEW-line range the last splice deferred, or null when it deferred none. */
+  lastDeferredLines: { a: number; b: number } | null = null;
   /** The line hunk the last attempt replaced: old lines [a..bOld] gave way to
    *  new lines [a..bNew] (B2 — the counts may differ). */
   lastHunk: { a: number; bOld: number; bNew: number } | null = null;
@@ -383,7 +379,7 @@ export class PageSystemSplicer {
 
   /** Attempt to land the request as a system splice. Returns true when the
    *  DOM was updated (the caller must NOT full-render; it must then remove
-   *  `lastEmptiedPages`, number `lastCreatedPages`, and run its page-fit
+   *  `lastEmptiedPages` and run its page-fit
    *  check on `lastPageEls`); false when any gate refused (lastSkipReason says
    *  why — the caller full-renders). */
   trySplice(model: ComposerModel, req: SpliceRequest, ctx: PageSpliceCtx): boolean {
@@ -392,7 +388,6 @@ export class PageSystemSplicer {
     this.lastPages = [];
     this.lastPageEls = [];
     this.lastEmptiedPages = [];
-    this.lastCreatedPages = [];
     this.lastVertical = null;
     this.lastRun = null;
     this.lastHunk = null;
@@ -406,8 +401,10 @@ export class PageSystemSplicer {
       this.lastStats.totalMs = Math.round(performance.now() - t0);
       return false;
     };
+    this.lastDeferredPages = [];
+    this.lastDeferredLines = null;
     const { changedRun, oldStartIds, newStartIds } = req;
-    if (!changedRun && !req.moveLines) return skip('no changed run');
+    if (!changedRun) return skip('no changed run');
 
     const meiMeasures = model.allMeasures();
     const ids = meiMeasures.map((m) => m.getAttribute('xml:id') ?? '');
@@ -449,8 +446,10 @@ export class PageSystemSplicer {
 
     /* The changed run, closed over spanners/endings (a spanner overlapping the
        run renders segments in every line it touches — all of them must be
-       replaced together), in NEW line coordinates; and the cascade's moved
-       block. Both widen the hunk. */
+       replaced together), in NEW line coordinates; it widens the hunk. (The
+       cascade's moved block no longer comes through here: since Phase 2 of
+       the vertical-ownership plan a cascade step is a DOM transplant in
+       Renderer.repairPagination, never a splice.) */
     let a2 = M, b2 = -1;
     if (changedRun) {
       const docVer = model.docVersion();
@@ -470,10 +469,6 @@ export class PageSystemSplicer {
       let [rLo, rHi] = expandForSpannersOnce(meiMeasures, cLo, Math.min(changedRun.hi, ids.length - 1), docVer);
       [rLo, rHi] = expandForEndings(meiMeasures, rLo, rHi);
       a2 = lineOf(rLo); b2 = lineOf(rHi);
-    }
-    if (req.moveLines) {
-      a2 = Math.min(a2, req.moveLines.a);
-      b2 = Math.max(b2, req.moveLines.b);
     }
     if (a2 <= b2) {
       if (partitionUnchanged) {
@@ -501,19 +496,92 @@ export class PageSystemSplicer {
     const newPageStarts = new Set(req.newPageStartIds);
     const isPageFirst = (li: number): boolean => li === 0 || newPageStarts.has(newStartIds[li]);
 
-    /* B5 — ensure-mount before the mounted gate. Page view mounts pages
-       lazily, so in real use only a handful are live (2-6 on the sonata) and a
-       line the splice needs is often still a placeholder. That used to refuse
-       outright, which made mount misses the single biggest refusal class once
-       the coverage sweep stopped pre-mounting everything (19 of 39). Mounting
-       from the already-loaded pre-edit layout costs ~50 ms against the ~1.2 s
-       full render it avoids. Everything the splice will MEASURE live — the old
-       hunk lines and the two context lines — sits on OLD pages. */
+    /* B5 — ensure-mount the EDIT's own neighbourhood. Page view mounts pages
+       lazily, so in real use only a handful are live (2-6 on the sonata) and
+       the line the splice must touch is sometimes still a placeholder. That
+       used to refuse outright, which made mount misses the single biggest
+       refusal class once the coverage sweep stopped pre-mounting everything
+       (19 of 39). Mounting from the already-loaded pre-edit layout costs
+       ~50 ms against the ~1.2 s full render it avoids.
+       The edit's neighbourhood ONLY, not the whole hunk (2026-09-02) — see the
+       clip below. */
     if (req.oldPageStartIds.length) {
       const want = new Set<number>();
-      for (let k = Math.max(0, a - 1); k <= Math.min(N - 1, bOld + 1); k++) want.add(pageOfOld(k));
+      for (let k = Math.max(0, a - 1); k <= Math.min(N - 1, Math.min(bOld, a + 1)); k++) want.add(pageOfOld(k));
       for (const p of want) ctx.ensurePageMounted(p);
     }
+
+    /* ── clip the replaced set to the MOUNTED BAND (2026-09-02) ──
+       Max: "aren't unmounted pages supposed to be deferred off the main
+       thread? A synchronous wait for a 34-line window shouldn't be possible."
+       They were not. A wide changed run — most often a renumber, which dirties
+       every measure to the end of its section — made the hunk span nine pages;
+       B5 mounted every one of them (834 ms) and one window re-engraved all 145
+       measures (650 ms), synchronously, for an edit made on page 1.
+
+       A line on a page nobody has mounted needs no DOM work: the partition and
+       pagination pins are committed document-wide by the refill, and a page
+       marked stale redraws from THOSE pins when it mounts. Same deferral the
+       overflow cascade uses for its arithmetic steps (Phase 2).
+
+       So: process the lines whose old AND new page lie in the maximal
+       contiguous run of mounted pages containing the edit, and defer the rest.
+       Page granularity keeps the processed lines contiguous, which the window
+       needs. A mounted page OUTSIDE that band carrying hunk lines cannot be
+       left alone — `verifyRenderedPartition` would rightly fail on it — so it
+       is deferred too and the renderer returns it to a placeholder. */
+    const editPageLo = Math.min(pageOfOld(a), pageOfNew(a));
+    const editPageHi = Math.max(pageOfOld(a), pageOfNew(a));
+    let bandLo = editPageLo, bandHi = editPageHi;
+    for (let p = editPageLo; p <= editPageHi; p++) {
+      if (!ctx.isPageMounted(p)) return skip('edit line not mounted');
+    }
+    while (bandLo > 1 && ctx.isPageMounted(bandLo - 1)) bandLo--;
+    while (ctx.isPageMounted(bandHi + 1)) bandHi++;
+    const inBand = (p: number): boolean => p >= bandLo && p <= bandHi;
+    let bClipOld = bOld, bClipNew = bNew;
+    for (let k = a; k <= Math.max(bOld, bNew); k++) {
+      const okOld = k > bOld || inBand(pageOfOld(k));
+      const okNew = k > bNew || inBand(pageOfNew(k));
+      if (okOld && okNew) continue;
+      bClipOld = Math.min(bOld, k - 1);
+      bClipNew = Math.min(bNew, k - 1);
+      break;
+    }
+    if (bClipOld < bOld || bClipNew < bNew) {
+      const deferred = new Set<number>();
+      for (let k = bClipOld + 1; k <= bOld; k++) deferred.add(pageOfOld(k));
+      for (let k = bClipNew + 1; k <= bNew; k++) deferred.add(pageOfNew(k));
+      /* Never defer a page the band still draws lines onto. */
+      for (let k = a; k <= bClipOld; k++) deferred.delete(pageOfOld(k));
+      for (let k = a; k <= bClipNew; k++) deferred.delete(pageOfNew(k));
+      this.lastDeferredPages = [...deferred].sort((x, y) => x - y);
+      this.lastDeferredLines = { a: bClipNew + 1, b: bNew };
+      bOld = bClipOld; bNew = bClipNew;
+      if (bNew < a || bOld < a) {
+        /* Nothing the user can see changed: the pins are committed and every
+           affected page is deferred. A landing, not a refusal. */
+        this.lastOutcome = 'spliced';
+        this.lastSkipReason = '';
+        this.lastStats.lines = 0;
+        this.lastStats.totalMs = Math.round(performance.now() - t0);
+        this.lastRun = { a, b: a - 1 };
+        this.lastHunk = { a, bOld, bNew };
+        return true;
+      }
+      this.lastRun = { a, b: bNew };
+      this.lastHunk = { a, bOld, bNew };
+    }
+
+    /* Can each context line be COMPARED? A line on a page outside the mounted
+       band has no live system to compare against — either the clip stopped
+       there, or it was never mounted — and its page is not this edit's
+       business. The window still renders it (spanners entering the replaced
+       lines must resolve), it simply is not checked; the replaced lines are
+       covered by the reference gate as always. Max, 2026-09-02: the live
+       context comparison is a fallback, not an invariant. */
+    const aboveComparable = a === 0 || inBand(pageOfNew(a - 1));
+    const belowComparable = bNew + 1 >= M || inBand(pageOfNew(bNew + 1));
 
     /* Live systems to replace, located by the PRE-edit partition (that is
        what the mounted DOM renders). All must be mounted, first-of-system,
@@ -624,7 +692,7 @@ export class PageSystemSplicer {
     }
     this.lastStats.loadMs = Math.round(performance.now() - tLoad);
     const ok = this.spliceDom(
-      hosts, { a, bOld, bNew, wLo, wHi, winStarts, leader, trailer, stubId },
+      hosts, { a, bOld, bNew, wLo, wHi, winStarts, leader, trailer, stubId, aboveComparable, belowComparable },
       live, req, newStartIds, spans, idIdx, pageOfNew, isPageFirst, ctx, skip,
     );
     if (ok) {
@@ -671,7 +739,7 @@ export class PageSystemSplicer {
   /** Gates that need the rendered window, then the surgery. */
   private spliceDom(
     hosts: Document[],
-    r: { a: number; bOld: number; bNew: number; wLo: number; wHi: number; winStarts: string[]; leader: boolean; trailer: boolean; stubId: string | null },
+    r: { a: number; bOld: number; bNew: number; wLo: number; wHi: number; winStarts: string[]; leader: boolean; trailer: boolean; stubId: string | null; aboveComparable: boolean; belowComparable: boolean },
     live: LiveSys[],
     req: SpliceRequest,
     newStartIds: string[],
@@ -722,22 +790,34 @@ export class PageSystemSplicer {
     let ctxPrev: LiveSys | null = null;
     if (r.a > 0) {
       ctxPrev = this.liveSystem(ctx.container, newStartIds[r.a - 1]);
-      if (!ctxPrev) return skip('context line above not mounted');
-      const dAbove = profilesMatch(winProf.get(r.a - 1)!, ctxPrev);
-      if (dAbove) {
-        this.lastContextDiff = contextDiff('above', r.a - 1, winProf.get(r.a - 1)!, ctxPrev);
-        return skip('context line above diverged (' + dAbove + ')');
-      }
-      const gAbove = sigGlyphDiff(winProf.get(r.a - 1)!.el, ctxPrev.el);
-      if (gAbove) {
-        this.lastContextDiff = contextDiff('above', r.a - 1, winProf.get(r.a - 1)!, ctxPrev);
-        return skip('context line above signature glyphs diverged (' + gAbove + ')');
+      if (!ctxPrev) {
+        /* Outside the mounted band — see belowComparable. */
+        if (r.aboveComparable) return skip('context line above not mounted');
+      } else {
+        const dAbove = profilesMatch(winProf.get(r.a - 1)!, ctxPrev);
+        if (dAbove) {
+          this.lastContextDiff = contextDiff('above', r.a - 1, winProf.get(r.a - 1)!, ctxPrev);
+          return skip('context line above diverged (' + dAbove + ')');
+        }
+        const gAbove = sigGlyphDiff(winProf.get(r.a - 1)!.el, ctxPrev.el);
+        if (gAbove) {
+          this.lastContextDiff = contextDiff('above', r.a - 1, winProf.get(r.a - 1)!, ctxPrev);
+          return skip('context line above signature glyphs diverged (' + gAbove + ')');
+        }
       }
     }
     let ctxNext: LiveSys | null = null;
     if (r.bNew + 1 < M) {
       ctxNext = this.liveSystem(ctx.container, newStartIds[r.bNew + 1]);
-      if (!ctxNext) return skip('context line below not mounted');
+      /* A CLIPPED edge has no comparable neighbour by construction: the line
+         below is on a deferred page, which is why the hunk stopped here. The
+         window still renders it as a context line (so spanners entering the
+         replaced lines resolve), it just cannot be checked against a live
+         system. The replaced lines are covered by the reference gate as
+         always. */
+      if (!ctxNext) {
+        if (r.belowComparable) return skip('context line below not mounted');
+      } else {
       const dBelow = profilesMatch(winProf.get(r.bNew + 1)!, ctxNext);
       if (dBelow) {
         this.lastContextDiff = contextDiff('below', r.bNew + 1, winProf.get(r.bNew + 1)!, ctxNext);
@@ -747,6 +827,7 @@ export class PageSystemSplicer {
       if (gBelow) {
         this.lastContextDiff = contextDiff('below', r.bNew + 1, winProf.get(r.bNew + 1)!, ctxNext);
         return skip('context line below signature glyphs diverged (' + gBelow + ')');
+      }
       }
     }
 
@@ -759,47 +840,38 @@ export class PageSystemSplicer {
        Where each new line goes, under the NEW pagination. A page that keeps a
        line outside the hunk is found through that line (the context line on
        it, which is mounted and checked). A page made entirely of hunk lines
-       is either the page its first line's measure sits on right now (the same
-       page under a new start id, or a collapsed predecessor's successor) — or,
-       for a cascade's moved block landing past the last page, a page that
-       does not exist yet and is created. */
-    const domPages = Array.from(ctx.container.querySelectorAll('.score-page')) as HTMLElement[];
-    const domPageCount = domPages.length;
-    const targetEl = new Map<number, HTMLElement | null>();   // new page → element (null = create)
+       is the page its first line's measure sits on right now (the same page
+       under a new start id, or a collapsed predecessor's successor). Pages
+       are never created here: a spill past the last page is the cascade's
+       (Renderer.repairPagination, Phase 2). */
+    const targetEl = new Map<number, HTMLElement>();   // new page → element
     const firstLineOfPage = new Map<number, number>();
     for (let li = r.a; li <= r.bNew; li++) {
       const p = pageOfNew(li);
       if (!firstLineOfPage.has(p)) firstLineOfPage.set(p, li);
     }
     for (const [p, f] of firstLineOfPage) {
-      let el: HTMLElement | null | undefined;
+      let el: HTMLElement;
       if (r.a > 0 && pageOfNew(r.a - 1) === p) el = ctxPrev!.pageEl;
-      else if (r.bNew + 1 < M && pageOfNew(r.bNew + 1) === p) el = ctxNext!.pageEl;
+      else if (ctxNext && r.bNew + 1 < M && pageOfNew(r.bNew + 1) === p) el = ctxNext.pageEl;
       else {
-        const inMove = req.moveLines && f >= req.moveLines.a && f <= req.moveLines.b;
-        if (inMove) {
-          if (p === domPageCount + 1) el = null;                      // create
-          else return skip('moved block targets a page it cannot own');
-        } else {
-          const m = ctx.container.querySelector('#' + CSS.escape(newStartIds[f]));
-          const pg = m?.closest('.score-page') as HTMLElement | null;
-          if (!pg || pg.classList.contains('score-page-pending')) return skip('target page not mounted');
-          el = pg;
-        }
+        const m = ctx.container.querySelector('#' + CSS.escape(newStartIds[f]));
+        const pg = m?.closest('.score-page') as HTMLElement | null;
+        if (!pg || pg.classList.contains('score-page-pending')) return skip('target page not mounted');
+        el = pg;
       }
-      targetEl.set(p, el ?? null);
+      targetEl.set(p, el);
     }
-    if (Array.from(targetEl.values()).filter((e) => e === null).length > 1) return skip('more than one page to create');
 
     /* Section titles across the hunk. A title is a page-margin element the
        mount pass drew beside its system; WHERE it sits is the placement pass's
        business (the header band is a component of the page's budget,
        render/pagefit.ts), so nothing here computes a y. What the splice must
        keep right is which page each title is on: one whose line moves to
-       another page (a cascade block carrying a header) MIGRATES with its
-       system, one landing on a page being created is dropped (that page's
-       mount pass injects it from the model), and one whose measure the edit
-       deleted refuses (the injector never removes titles — a dated bail). */
+       another page MIGRATES with its system, and one whose measure the edit
+       deleted is removed (Phase 2: a header is a component of the model —
+       deleting its measure removes the component, there is no title to
+       strand). */
     const hunkLineOfMeasure = (id: string): number | null => {
       const mi = idIdx.get(id);
       if (mi == null) return null;
@@ -808,13 +880,13 @@ export class PageSystemSplicer {
     };
     const involved = new Set<HTMLElement>();
     for (const l of live) involved.add(l.pageEl);
-    for (const e of targetEl.values()) if (e) involved.add(e);
+    for (const e of targetEl.values()) involved.add(e);
     const hunkTitles: Array<{ el: Element; li: number; from: HTMLElement }> = [];
     for (const pageEl of involved) {
       for (const t of this.headersFor(pageEl).titles) {
         const id = t.el.getAttribute('data-for') ?? '';
         const li = hunkLineOfMeasure(id);
-        if (li === null) return skip('section header measure removed');
+        if (li === null) { t.el.remove(); continue; }
         if (li < 0) continue;
         hunkTitles.push({ el: t.el, li, from: pageEl });
       }
@@ -826,8 +898,8 @@ export class PageSystemSplicer {
     for (let li = r.a; li <= r.bNew; li++) {
       const p = pageOfNew(li);
       const pageFirst = isPageFirst(li);
-      if (!pageFirst && li === r.a && (!ctxPrev || ctxPrev.pageEl !== targetEl.get(p))) return skip('DOM partition drift above');
-      targets.push({ el: targetEl.get(p) ?? null, pageNo: p, pageFirst });
+      if (!pageFirst && li === r.a && (!ctxPrev || ctxPrev.pageEl !== targetEl.get(p))) return skip('DOM partition drift above');   // needs the live line above
+      targets.push({ el: targetEl.get(p)!, pageNo: p, pageFirst });
     }
     const lastT = targets[targets.length - 1];
     /* Unreplaced systems below the hunk on its last page exist only when the
@@ -857,38 +929,16 @@ export class PageSystemSplicer {
     const liveOnPage = (pageEl: HTMLElement): LiveSys[] => live.filter((l) => l.pageEl === pageEl);
     const anchorOf = new Map<HTMLElement, Element | null>();
     for (const t of targets) {
-      if (!t.el || anchorOf.has(t.el)) continue;
+      if (anchorOf.has(t.el)) continue;
       const oldOn = liveOnPage(t.el);
       anchorOf.set(t.el, oldOn.length ? oldOn[0].el : firstSystemOf(t.el));
     }
     const pages = new Set<HTMLElement>();
     const importedByPage = new Map<HTMLElement, SVGGElement[]>();
-    const created: HTMLElement[] = [];
     for (let k = r.a; k <= r.bNew; k++) {
       const t = targets[k - r.a];
       const wk = winProf.get(k)!;
-      if (!t.el) {
-        /* A page that does not exist yet: its skeleton is the window's own
-           page, stripped of systems (identical page options → identical
-           furniture). The renderer numbers and registers it. */
-        const host = hostOf.get(wk.el as SVGGElement)!;
-        const shell = host.documentElement.cloneNode(true) as Element;
-        for (const s of Array.from(shell.querySelectorAll('g.system'))) s.remove();
-        /* The window's page carries the document's TITLE header (Verovio draws
-           page 1's `pgHead` on any sub-document's first page); a created page
-           is not page 1. Strip it: the page is placed as a header-less page
-           (render/pagefit.ts C0, within tolerance of the autogenerated
-           page-number header a full render gives it). Drawing that page-number
-           header on a created page is Phase 2's transplant from the spilling
-           page. */
-        for (const h of Array.from(shell.querySelectorAll('g.pgHead'))) h.remove();
-        const el = ctx.createPage(t.pageNo, shell);
-        if (!el) return skip('page creation failed');
-        created.push(el);
-        for (const t2 of targets) if (t2.pageNo === t.pageNo) t2.el = el;
-        anchorOf.set(el, null);
-      }
-      const pageEl = t.el!;
+      const pageEl = t.el;
       const doc = pageEl.ownerDocument;
       const imported = doc.importNode(wk.el, true) as SVGGElement;
       /* Horizontal frame only. The vertical position is the placement pass's
@@ -907,11 +957,6 @@ export class PageSystemSplicer {
       (importedByPage.get(pageEl) ?? importedByPage.set(pageEl, []).get(pageEl)!).push(imported);
       for (const tt of hunkTitles) {
         if (tt.li !== k) continue;
-        if (created.includes(pageEl)) {
-          /* The created page's mount pass injects this title from the model. */
-          tt.el.remove();
-          continue;
-        }
         if (tt.from !== pageEl) {
           /* Migrate: the title travels to its system's new page; that page's
              placement puts it in its band. */
@@ -933,10 +978,8 @@ export class PageSystemSplicer {
     /* Post-process the IMPORTED systems in place (A11): the same per-system
        passes a mounted page gets (crisp barline / right-edge snaps, notehead
        z-order, HEJI, theme), scoped to them, in the live page's own device
-       frame. A CREATED page gets the whole mount pass instead (its shell has
-       never been processed, decorated or placed). */
+       frame. */
     for (const [pageEl, imported] of importedByPage) {
-      if (created.includes(pageEl)) { ctx.finishCreatedPage(pageEl); continue; }
       ctx.postProcess(pageEl, imported);
       ctx.decorateHost(pageEl);
     }
@@ -947,13 +990,12 @@ export class PageSystemSplicer {
        arithmetic says and nothing else. Then the snap. The geometry reads share
        the one layout flush this surgery causes. */
     for (const pageEl of pages) {
-      if (emptied.includes(pageEl) || created.includes(pageEl)) continue;
+      if (emptied.includes(pageEl)) continue;
       ctx.placePage(pageEl);
       ctx.snapPage(pageEl);
     }
     this.lastPageEls = Array.from(pages);
     this.lastEmptiedPages = emptied;
-    this.lastCreatedPages = created;
     this.lastPages = this.lastPageEls.map((el) => Number(el.dataset.page)).filter((n) => n >= 1);
     return true;
   }

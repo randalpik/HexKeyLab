@@ -246,27 +246,62 @@ export function injectPins(
   return new XMLSerializer().serializeToString(doc);
 }
 
+/** A measure's FLOW signature: its serialized XML with its OWN `@n` removed.
+ *
+ *  The full signature answers "must this measure be REDRAWN"; the flow
+ *  signature answers "must its line be RE-FLOWED" (2026-09-02, Max). The two
+ *  differ for exactly one edit shape and it is a common one: `renumberMeasures`
+ *  is section-aware and rewrites `@n` for every measure to the end of the
+ *  enclosing section, so inserting a measure near a section start reports that
+ *  whole section as changed. Those measures DO need redrawing — the measure
+ *  number is rendered, one per line start — but a number is an overlay label
+ *  above the staff, so their widths and their lines' fills cannot have moved,
+ *  and re-measuring 134 naturals for it cost 675 ms of a 2.6 s insert
+ *  (`cb-splicecost.js --arg "edit=ctrlm,mi=8"`). Flow differences are a subset
+ *  of full differences, always.
+ *
+ *  Only the measure element's own attribute is stripped: its opening tag ends
+ *  at the first '>', so nested `staff@n` / `layer@n` are untouched. */
+function measureFlowSig(raw: string): string {
+  const gt = raw.indexOf('>');
+  if (gt < 0) return raw;
+  return raw.slice(0, gt).replace(/\s+n="[^"]*"/, '') + raw.slice(gt);
+}
+
 /** Measure ids (document order) of the live doc. */
 function measureIds(meiMeasures: Element[]): string[] {
   return meiMeasures.map((m) => m.getAttribute('xml:id') ?? '');
 }
 
-/** Signature of the user break structure (section-level sb/pb positions).
- *  Any change — Ctrl+B page break, section header add/remove — invalidates a
- *  narrow dirty range's meaning for the partition, so the refill guards on it. */
+/** Signature of the user break structure (section-level sb/pb). Any real
+ *  change — Ctrl+B page break, section header add/remove/move — invalidates a
+ *  narrow dirty range's meaning for the partition, so the refill guards on it.
+ *
+ *  Keyed on the measure each break PRECEDES, by xml:id, not on a running
+ *  measure count (2026-09-02). The count encoding aliased position onto
+ *  identity: inserting a blank measure anywhere above a break shifted every
+ *  later count, so Ctrl+M insert-measure tripped this guard and derived —
+ *  2.8 s on the sonata for an edit whose break structure had not changed at
+ *  all (`cb-commands.js`). Ids are stable, so the signature now changes when a
+ *  break is added, removed, or moved to another measure, and only then. A
+ *  trailing break with no following measure keys on `$end`. */
 function computeUserBreakSig(model: ComposerModel): string {
   const section = model.getDoc().querySelector('section');
   if (!section) return '';
-  let count = 0;
   const parts: string[] = [];
+  const pending: string[] = [];
+  const flush = (id: string): void => {
+    while (pending.length) parts.push(pending.shift() + ':' + id);
+  };
   const walk = (el: Element): void => {
     for (const c of Array.from(el.children)) {
-      if (c.localName === 'measure') count++;
-      else if (c.localName === 'sb' || c.localName === 'pb') parts.push(count + c.localName);
+      if (c.localName === 'measure') flush(c.getAttribute('xml:id') ?? '?');
+      else if (c.localName === 'sb' || c.localName === 'pb') pending.push(c.localName);
       else if (c.localName !== 'scoreDef' && c.querySelector('measure')) walk(c);
     }
   };
   walk(section);
+  flush('$end');
   return parts.join(',');
 }
 
@@ -363,6 +398,8 @@ export class PageLineBreaks {
    *  then-render flows (same reason the scroll splicer keeps its own sig
    *  map). ~13 ms on a 446-bar score, amortized into a >1 s render. */
   private sig = new Map<string, string>();
+  /** Per-measure FLOW signatures, in lockstep with `sig` (see measureFlowSig). */
+  private sigFlow = new Map<string, string>();
   private sigOrder: string[] = [];
   /** Element identity behind each captured signature. A measure that is still
    *  the SAME object AND was never mutated since capture cannot have a
@@ -392,6 +429,7 @@ export class PageLineBreaks {
 
   /** Drop all partition state. Next page render must derive + re-adopt. */
   invalidate(): void {
+    this.sigFlow.clear();
     this.startIds = null;
     this.pageStartIds = [];
     this.naturals.clear();
@@ -413,10 +451,13 @@ export class PageLineBreaks {
   private captureSigs(doc: Document, meiMeasures: Element[], ids: string[], pre?: string[]): void {
     const ser = new XMLSerializer();
     this.sig.clear();
+    this.sigFlow.clear();
     this.sigEl.clear();
     this.sigOrder = ids;
     for (let i = 0; i < meiMeasures.length; i++) {
-      this.sig.set(ids[i], pre?.[i] ?? ser.serializeToString(meiMeasures[i]));
+      const raw = pre?.[i] ?? ser.serializeToString(meiMeasures[i]);
+      this.sig.set(ids[i], raw);
+      this.sigFlow.set(ids[i], measureFlowSig(raw));
       this.sigEl.set(ids[i], meiMeasures[i]);
     }
     this.armSigObserver(doc);
@@ -707,12 +748,14 @@ export class PageLineBreaks {
        whenever the tracker can't narrow it (see drainSigDirty). */
     const dirty = this.drainSigDirty(model.getDoc());
     const cur: string[] = new Array(meiMeasures.length);
+    const curFlow: string[] = new Array(meiMeasures.length);
     for (let j = 0; j < meiMeasures.length; j++) {
       const el = meiMeasures[j];
       const kept = dirty && !dirty.has(el) && this.sigEl.get(ids[j]) === el
         ? this.sig.get(ids[j])
         : undefined;
       cur[j] = kept ?? ser.serializeToString(el);
+      curFlow[j] = kept !== undefined ? (this.sigFlow.get(ids[j]) ?? measureFlowSig(cur[j])) : measureFlowSig(cur[j]);
     }
     if (indexCheckEnabled() && dirty) {
       for (let j = 0; j < meiMeasures.length; j++) {
@@ -732,6 +775,16 @@ export class PageLineBreaks {
     while (P < Math.min(oN, nN) && eq(P, P)) P++;
     let S = 0;
     while (S < Math.min(oN, nN) - P && eq(oN - 1 - S, nN - 1 - S)) S++;
+    /* The same diff over FLOW signatures (measureFlowSig): which measures need
+       their LINE re-flowed, as opposed to merely redrawn. A pure renumber has
+       an empty flow run, so the partition and the naturals are untouched while
+       the splicer still redraws the numbers. */
+    const eqFlow = (i: number, j: number): boolean =>
+      oldOrder[i] === ids[j] && this.sigFlow.get(oldOrder[i]) === curFlow[j];
+    let Pf = 0;
+    while (Pf < Math.min(oN, nN) && eqFlow(Pf, Pf)) Pf++;
+    let Sf = 0;
+    while (Sf < Math.min(oN, nN) - Pf && eqFlow(oN - 1 - Sf, nN - 1 - Sf)) Sf++;
 
     /* Surviving old line starts, in document order. If the very first measure
        was replaced, re-anchor line 0 at the current first measure. */
@@ -763,31 +816,39 @@ export class PageLineBreaks {
       oldState: this.sigState ?? newState, newState,
     });
     if (sr.bail) return bail(sr.bail);
-    let run = { lo: 1, hi: 0 };   // empty until a change lands
-    if (!(P >= nN && oN === nN)) {
+    /* Two runs (2026-09-02). `redraw` is every measure whose rendering differs
+       and is what the splicer must replace; `run` is the subset whose LINE must
+       be re-flowed (partition repair + naturals) — see measureFlowSig. A
+       governed signature range changes widths, so it joins both. */
+    const runFrom = (p: number, sfx: number): { lo: number; hi: number } => {
+      if (p >= nN && oN === nN) return { lo: 1, hi: 0 };
       /* A pure deletion can leave an empty new-side run (hi < lo); the line
          that LOST content still needs re-laying — anchor the range at the
          structural change point. */
-      const dLo = Math.min(P, nN - 1);
-      run = { lo: dLo, hi: Math.max(dLo, nN - 1 - S) };
-    }
-    run = unionRun(run.lo, run.hi, sr.ranges);
+      const dLo = Math.min(p, nN - 1);
+      return { lo: dLo, hi: Math.max(dLo, nN - 1 - sfx) };
+    };
+    let run = unionRun(runFrom(Pf, Sf).lo, runFrom(Pf, Sf).hi, sr.ranges);
+    const redrawSpan = runFrom(P, S);
+    const redraw = unionRun(redrawSpan.lo, redrawSpan.hi, sr.ranges);
 
     let newStartIds: string[];
     let newPageStartIds: string[];
     let changedRun: { lo: number; hi: number } | null;
     const oldPageStartIds = this.pageStartIds.slice();
     if (run.lo > run.hi) {
-      newStartIds = oldStarts;               // nothing changed — re-pin as-is
-      /* Every measure survived identically, so every line and page did too. A
-         single-page document has exactly one page start — the document start —
-         which simply follows line 0. (An empty list would read as "pagination
-         changed" and block every splice.) */
+      newStartIds = oldStarts;               // no line needs re-flowing — re-pin as-is
+      /* Every measure's FLOW survived identically, so every line and page did
+         too. A single-page document has exactly one page start — the document
+         start — which simply follows line 0. (An empty list would read as
+         "pagination changed" and block every splice.)
+         The document may still need REDRAWING here (a renumber): `changedRun`
+         carries that to the splicer even though nothing re-flowed. */
       newPageStartIds = oldPageStartIds.length ? [newStartIds[0], ...oldPageStartIds.slice(1)] : [];
-      changedRun = null;
+      changedRun = redraw.lo > redraw.hi ? null : { lo: redraw.lo, hi: redraw.hi };
       this.lastRefillLines = 0;
     } else {
-      changedRun = { lo: run.lo, hi: run.hi };
+      changedRun = { lo: Math.min(run.lo, redraw.lo), hi: Math.max(run.hi, redraw.hi) };
       /* Pagination is carried INSIDE the repair, by line (see repartition):
          a surviving line never changes page, and a page whose lines all
          vanished collapses. The renderer compares old and new page COUNTS to
@@ -1186,7 +1247,7 @@ function measureLeadingSigW(svg: string, firstId: string): number {
 }
 
 /** requestIdleCallback with a setTimeout fallback. */
-function scheduleIdle(fn: () => void): void {
+export function scheduleIdle(fn: () => void): void {
   const ric = (globalThis as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => void }).requestIdleCallback;
   if (ric) ric(fn, { timeout: 1000 });
   else setTimeout(fn, 120);

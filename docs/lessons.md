@@ -2761,3 +2761,104 @@ height" does), and any Verovio upgrade must re-run the calibration probe
 generally: when modelling behaviour from a library's source, note the
 commented-out alternatives next to the constants they would change — they are
 the most likely future diff.
+
+## A fixture that returns "no detail" has a SyntaxError, not a missing detail (2026-09-02)
+
+The composer-test runner evaluates an assertion as `JSON.stringify(await
+Promise.resolve(<expr>))` inside an in-page try/catch. A parse error in
+`<expr>` never reaches that catch — the wrapper itself fails to parse — so
+`Runtime.evaluate` returns an error OBJECT, which the runner used to stringify
+and report as `no detail`. Two fixtures showed it after a scripted edit wrote
+`'page 2\'s'` where the template literal needed `'page 2\\'s'`; the raw
+value only came out through `inspect.mjs`, which printed the SyntaxError.
+`lib/cdp.mjs` now returns `exceptionDetails` as `__error`, so the failure names
+itself. Rules: "no detail" from an assertion is a broken expression, look at
+the last edit to it first; and when a script writes fixture code into
+`fixtures.mjs`, use raw strings — every backslash in the `expr` template
+literal must arrive doubled.
+
+## The universal invariants mount every page — a fixture about placeholders must unmount first (2026-09-02)
+
+The cursor trace and the other universal invariants run BEFORE
+`FIXTURE_ASSERTIONS`, and the cursor walk calls `ensureMeasureMounted` on every
+position, so by the time an assertion runs the whole document is mounted and
+the extents job (armed at render time) has usually finished in the RAF waits
+between invariants. `pageExtentsJobScrollDuring` first read "page 3 is not a
+placeholder (pending: [])" and "extents job not armed" for exactly this
+reason. A fixture about unmounted pages or an in-flight idle job must build
+its own state: disconnect the IntersectionObserver, `unmountPage` what it
+needs pending, clear the store it is testing, re-place the mounted pages and
+arm the job itself — then assert.
+
+## Adding a section header is a DERIVE, not a splice — spill a page with content edits (2026-09-02)
+
+`setSectionHeaderAt` changes the user-break signature (`computeUserBreakSig`),
+so `tryRefill` bails with `user breaks changed` and the render derives.
+`pageSectionHeaderOverflow` never asserted a splice, which is why nobody
+noticed; `pageCascadeArithmeticPastMount` did and got `noop`/`derive`. To make
+a page spill inside a splice, grow its systems with content edits (the
+c0..g7 chord of `pageSystemSpliceCascadeOverflow`), not with headers.
+
+## A signature that encodes POSITION cannot answer a question about IDENTITY (2026-09-02)
+
+`computeUserBreakSig` guarded the refill against user-break changes by walking
+the section stream and recording each `sb`/`pb` as a running MEASURE COUNT plus
+its tag, giving strings like `230sb`. The question it exists to answer is "did
+the user's break structure change", which is about WHICH MEASURES start lines.
+Encoding it by count aliased position onto identity: inserting a blank measure
+anywhere above a break shifted every later count, so Ctrl+M insert-measure
+tripped the guard and derived. On the sonata that was 2.8 s for an edit whose
+break structure had not changed at all, and it went unnoticed because no gate
+asserted that a command splices. Now keyed on the `xml:id` of the measure each
+break precedes, which is invariant under insertions elsewhere and still changes
+when a break is added, removed or moved. Rule: when a signature guards a
+STRUCTURAL question, key it on the identities the structure is made of, never
+on ordinals; an ordinal signature reports every edit above it as a change.
+
+## O(spanners × measures) attribute queries: the third instance of one shape (2026-09-02)
+
+`insertMeasureAt` found the measure of each slur endpoint with
+`measures.findIndex((m) => m.querySelector('[*|id="..."]'))`. On the sonata,
+922 slurs over 446 measures came to 432 154 `querySelector` calls, 406 ms of a
+523 ms mutation, and it was most of why inserting a blank measure cost about
+four times a note edit. One pass that maps the wanted ids to measure indices
+took it to 450 queries and 57 ms.
+
+This is the same defect as `expandForSpanners`' growth loop, which re-queried
+every measure's subtree on each iteration and accounted for the bulk of ~32 000
+DOM queries per keystroke, and as the naturals `sigW` measurement before it was
+made conditional. The shape to watch for: a per-element lookup written as a
+`find`/`findIndex` over a container list with a query in the predicate. It
+reads as O(n) and is O(n × m). Whenever the answer is "which measure holds this
+id", build the id map once. `cb-splicecost.js` counts `querySelector` and
+`querySelectorAll` per phase, so this shape is one probe run away from being
+visible; a mutation phase with six-figure query counts is the tell.
+
+## "Localized edit" has two halves: what must RE-FLOW and what must RE-DRAW (2026-09-02)
+
+The page refill computed ONE changed run and used it for both the partition
+repair (with its naturals width measurement) and the splice's replaced set.
+Those answer different questions. Inserting a measure renumbers every measure
+to the end of its section, and measure numbers ARE rendered, so all of those
+lines must be redrawn — but a number is an overlay label above the staff, so
+none of their widths or fills move and the partition cannot change. Conflating
+the two spent 675 ms measuring 134 naturals that could not have differed.
+Whenever an edit's dirty set looks too wide, ask which half each member belongs
+to before trying to shrink it: the answer here was not "dirty fewer measures"
+(they really did change) but "re-flow fewer than you re-draw".
+
+## Work proportional to the DOCUMENT hiding inside work proportional to the EDIT (2026-09-02)
+
+Page view mounts a handful of pages, and every deferral mechanism for the rest
+existed — stale pages, lazy mount, the cascade's arithmetic steps. The splice
+still computed its replaced set in line space over the whole document and then
+called `ensurePageMounted` on every page that set touched, drawing eight
+off-screen pages (834 ms) so one window could re-engrave 146 measures (650 ms),
+on the keystroke. It was written when a missing page meant a refusal and a full
+render, so mounting at ~50 ms was strictly better; when the splice learned to
+do partial work the tradeoff inverted and nothing revisited the call site.
+Rule: an eager fetch justified by "the alternative is the slow path" must be
+re-examined every time the slow path changes. And when a latency number scales
+with the document rather than the edit, look for a call that materializes
+something off-screen before assuming the algorithm is wrong.
+

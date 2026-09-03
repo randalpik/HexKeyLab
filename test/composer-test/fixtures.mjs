@@ -1159,6 +1159,7 @@ const PAGE_LINEBREAKS = {
       r();
     `,
     skipCursorTrace: true,
+    fullRender: 'a user page break IS a break-structure change: the refill cannot introduce a line boundary, so this derives by design and the fixture asserts the reflow',
   },
 
   /* THE reversibility gate (Max, 2026-08-30): the partition is never
@@ -1193,6 +1194,7 @@ const PAGE_LINEBREAKS = {
       }
       r();
     `,
+    fullRender: 'this fixture exists to assert the derive fallback',
   },
 };
 
@@ -1371,6 +1373,7 @@ const PAGE_SPLICE = {
       }
       r();
     `,
+    fullRender: 'this fixture exists to assert a context-glyph refusal',
   },
 
   /* Signature changes govern RANGES, not the document (Max, 2026-09-01: "any
@@ -1464,6 +1467,7 @@ const PAGE_SPLICE = {
       }
       r();
     `,
+    fullRender: 'adding a section header adds a user break (see decisions.md): the refill has no operation that introduces a boundary, so it derives — remove this flag when that gap closes',
   },
 
   /* B3, third hole (2026-09-01): a leading clef on a staff other than the
@@ -1592,6 +1596,10 @@ const PAGE_SPLICE = {
       }
       r();
     `,
+    /* Cursor geometry is orthogonal to this fixture, and the walk scrolls
+       every stop of a deliberately multi-page score into view — ~14 s here,
+       for coverage the small cursor fixtures already give (2026-09-02). */
+    skipCursorTrace: true,
   },
 
   /* B2 (2026-09-02; was the B1 safety net): a dy-cascade that pushes its page
@@ -1609,6 +1617,10 @@ const PAGE_SPLICE = {
       }
       r();
     `,
+    /* Cursor geometry is orthogonal to this fixture, and the walk scrolls
+       every stop of a deliberately multi-page score into view — ~14 s here,
+       for coverage the small cursor fixtures already give (2026-09-02). */
+    skipCursorTrace: true,
   },
 
   /* B2: the commonest line-count change — composing at the end of the score.
@@ -1644,6 +1656,10 @@ const PAGE_SPLICE = {
       }
       r();
     `,
+    /* Cursor geometry is orthogonal to this fixture, and the walk scrolls
+       every stop of a deliberately multi-page score into view — ~14 s here,
+       for coverage the small cursor fixtures already give (2026-09-02). */
+    skipCursorTrace: true,
   },
 
   /* B2: the other direction — a line whose every measure is deleted vanishes
@@ -1678,6 +1694,10 @@ const PAGE_SPLICE = {
       }
       r();
     `,
+    /* Cursor geometry is orthogonal to this fixture, and the walk scrolls
+       every stop of a deliberately multi-page score into view — ~14 s here,
+       for coverage the small cursor fixtures already give (2026-09-02). */
+    skipCursorTrace: true,
   },
 
   /* A section header is a component with a reserved height in its page's
@@ -1697,6 +1717,11 @@ const PAGE_SPLICE = {
       }
       r();
     `,
+    /* Cursor geometry is orthogonal to this fixture, and the walk scrolls
+       every stop of a deliberately multi-page score into view — ~14 s here,
+       for coverage the small cursor fixtures already give (2026-09-02). */
+    skipCursorTrace: true,
+    fullRender: 'adding a section header adds a user break, which derives — remove this flag when the refill learns to introduce a boundary',
   },
 
   /* A render request with a signature-identical doc must not touch the page
@@ -1730,6 +1755,10 @@ const PAGE_SPLICE = {
       }
       r();
     `,
+    /* Cursor geometry is orthogonal to this fixture, and the walk scrolls
+       every stop of a deliberately multi-page score into view — ~14 s here,
+       for coverage the small cursor fixtures already give (2026-09-02). */
+    skipCursorTrace: true,
   },
 
   /* Phase 1: a system whose topmost content is a <text> (a tempo above the
@@ -1748,6 +1777,10 @@ const PAGE_SPLICE = {
       }
       r();
     `,
+    /* Cursor geometry is orthogonal to this fixture, and the walk scrolls
+       every stop of a deliberately multi-page score into view — ~14 s here,
+       for coverage the small cursor fixtures already give (2026-09-02). */
+    skipCursorTrace: true,
   },
 
   /* Phase 1: the splice window carries NO <pb> pins — it is one page, and a
@@ -1764,6 +1797,156 @@ const PAGE_SPLICE = {
       }
       r();
     `,
+    /* Cursor geometry is orthogonal to this fixture, and the walk scrolls
+       every stop of a deliberately multi-page score into view — ~14 s here,
+       for coverage the small cursor fixtures already give (2026-09-02). */
+    skipCursorTrace: true,
+  },
+
+  /* Phase 2 (vertical-ownership plan): the overflow cascade runs on the MODEL.
+   * The fold is predicted from placed extents (the flag cross-checks it against
+   * the laid-out DOM), the spilled block is TRANSPLANTED — the same elements,
+   * nothing rendered — and no page is left drawn past its paper. Asserted via
+   * FIXTURE_ASSERTIONS.pageCascadePredictedFold. */
+  pageCascadePredictedFold: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 400; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+    /* Cursor geometry is orthogonal to this fixture, and the walk scrolls
+       every stop of a deliberately multi-page score into view — ~14 s here,
+       for coverage the small cursor fixtures already give (2026-09-02). */
+    skipCursorTrace: true,
+  },
+
+  /* Phase 2: a spill into a page that is NOT mounted but whose lines' extents
+   * the extents job measured is pure bookkeeping — pins move, the page is
+   * marked stale, nothing is rendered or parked — and the page draws right
+   * when it mounts. Asserted via FIXTURE_ASSERTIONS.pageCascadeArithmeticPastMount. */
+  pageCascadeArithmeticPastMount: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 400; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+    /* Cursor geometry is orthogonal to this fixture, and the walk scrolls
+       every stop of a deliberately multi-page score into view — ~14 s here,
+       for coverage the small cursor fixtures already give (2026-09-02). */
+    skipCursorTrace: true,
+  },
+
+  /* Phase 2: an edit while the extents job is armed cancels it (adoption's
+   * discipline: any document change) and the render re-arms it fresh; the edit
+   * splices as usual and every page stays placed by its own rule. Asserted via
+   * FIXTURE_ASSERTIONS.pageExtentsJobEditDuring. */
+  pageExtentsJobEditDuring: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 400; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+    /* Cursor geometry is orthogonal to this fixture, and the walk scrolls
+       every stop of a deliberately multi-page score into view — ~14 s here,
+       for coverage the small cursor fixtures already give (2026-09-02). */
+    skipCursorTrace: true,
+  },
+
+  /* Phase 2: a page that mounts while the extents job is armed measures itself
+   * (placePage); the job skips it and measures only the pages still pending.
+   * Asserted via FIXTURE_ASSERTIONS.pageExtentsJobScrollDuring. */
+  pageExtentsJobScrollDuring: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 400; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+    /* Cursor geometry is orthogonal to this fixture, and the walk scrolls
+       every stop of a deliberately multi-page score into view — ~14 s here,
+       for coverage the small cursor fixtures already give (2026-09-02). */
+    skipCursorTrace: true,
+  },
+
+  /* The splice clips its replaced set to the MOUNTED BAND (2026-09-02, Max:
+   * "aren't unmounted pages supposed to be deferred off the main thread? A
+   * synchronous wait for a 34-line window shouldn't be possible"). Inserting a
+   * measure renumbers every measure to the end of its section, so the changed
+   * run reaches the end of the document; only the lines on mounted pages may be
+   * re-engraved, and the rest are deferred: marked stale, returned to
+   * placeholders if drawn, redrawn from the committed pins on mount. Asserted
+   * via FIXTURE_ASSERTIONS.pageSpliceClipsToMountedBand. */
+  pageSpliceClipsToMountedBand: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 400; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+    /* Cursor geometry is orthogonal to this fixture, and the walk scrolls
+       every stop of a deliberately multi-page score into view — ~14 s here,
+       for coverage the small cursor fixtures already give (2026-09-02). */
+    skipCursorTrace: true,
+  },
+
+  /* Re-flow and re-draw are different questions (2026-09-02). A renumber
+   * changes what a measure DRAWS (the number is rendered, one per line start)
+   * but not its width, so its line's fill and the partition cannot move: the
+   * naturals measurement and the repair must see only the measures whose FLOW
+   * changed, while the splicer still redraws the rest. Asserted via
+   * FIXTURE_ASSERTIONS.pageRenumberIsRedrawOnly. */
+  pageRenumberIsRedrawOnly: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 400; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+    /* Cursor geometry is orthogonal to this fixture, and the walk scrolls
+       every stop of a deliberately multi-page score into view — ~14 s here,
+       for coverage the small cursor fixtures already give (2026-09-02). */
+    skipCursorTrace: true,
+  },
+
+  /* A clipped splice leaves the deferred pages stale, and a stale page's next
+   * mount reloads the whole document into the toolkit — on the user's scroll.
+   * The idle extents job warms them instead. Asserted via
+   * FIXTURE_ASSERTIONS.pageExtentsJobWarmsDeferred. */
+  pageExtentsJobWarmsDeferred: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 400; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+    /* Cursor geometry is orthogonal to this fixture, and the walk scrolls
+       every stop of a deliberately multi-page score into view — ~14 s here,
+       for coverage the small cursor fixtures already give (2026-09-02). */
+    skipCursorTrace: true,
   },
 };
 
@@ -9699,7 +9882,7 @@ export const FIXTURE_ASSERTIONS = {
       })()` },
   ],
   pageSystemSpliceEnsureMount: [
-    { name: 'an edit whose context line sits on an UNMOUNTED page mounts it and splices (B5)',
+    { name: 'an edit whose context line sits on an UNMOUNTED page splices without drawing it (B5 mount superseded by the band clip)',
       expr: `(() => {
         const H = window.__hkl_composer;
         const m = H.model;
@@ -9711,8 +9894,7 @@ export const FIXTURE_ASSERTIONS = {
            and un-mounting a stale copy leaves the renderer's mounted set
            disagreeing with the DOM — an inconsistency the splicer cannot see. */
         /* The runtime mount window would re-mount page 2 on an idle callback
-           and make this test race; B5's on-demand mount is the fallback being
-           tested here, so pin the window off. */
+           and make this test race, so pin the window off. */
         H.renderer.setMountWindowEnabled(false);
         const st = H.renderer['pageVirt'];
         if (!st || st.pageCount < 2) return { ok: false, detail: 'need >= 2 pages, got ' + (st ? st.pageCount : 0) };
@@ -9721,7 +9903,11 @@ export const FIXTURE_ASSERTIONS = {
         const pageStartLines = pb.pageStarts().map((id) => at.get(id)).filter((x) => x != null).sort((x, y) => x - y);
         if (pageStartLines.length < 2) return { ok: false, detail: 'no second page start' };
         /* Edit the LAST line of page 1: its context-below is page 2's first
-           line, so the splice cannot proceed without page 2 mounted. */
+           line. Until 2026-09-02 the splice mounted page 2 to compare that line
+           (B5). Since the replaced set is clipped to the mounted band, a
+           context line outside the band is simply not compared — page 2 holds
+           no hunk line, so the edit needs nothing from it — and the splice
+           lands without drawing a page the user is not looking at. */
         const target = pageStartLines[1] - 1;
         if (target < 1) return { ok: false, detail: 'page 1 has too few lines' };
         /* Force page 2 back to a placeholder, exactly as renderPage builds one. */
@@ -9745,12 +9931,31 @@ export const FIXTURE_ASSERTIONS = {
         if (ps.lastOutcome !== 'spliced') {
           return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
         }
-        if (!H.renderer['pageVirt'].mounted.has(2)) {
-          return { ok: false, detail: 'page 2 was never mounted, yet the splice claimed to land' };
+        /* Page 2 must NOT have been drawn: that is the win. */
+        if (H.renderer['pageVirt'].mounted.has(2)) {
+          return { ok: false, detail: 'page 2 was mounted — the splice still pays for a page off screen' };
         }
         const still = document.querySelector('#score .score-page[data-page="2"]');
-        if (still.classList.contains('score-page-pending') || !still.querySelector('g.system')) {
-          return { ok: false, detail: 'page 2 is still a placeholder in the DOM' };
+        if (!still.classList.contains('score-page-pending')) {
+          return { ok: false, detail: 'page 2 is drawn in the DOM although the renderer does not list it as mounted' };
+        }
+        /* It carries no hunk line, so nothing about it was deferred either. */
+        if ((ps.lastDeferredPages || []).includes(2)) {
+          return { ok: false, detail: 'page 2 was deferred, but it holds no line of the hunk' };
+        }
+        /* And it still draws correctly when it does mount. */
+        const warns = [];
+        const ow = console.warn;
+        console.warn = (...a) => { const t = a.join(' '); if (!/^\[Warning\]/.test(t)) warns.push(t); };
+        try { H.renderer['mountPage'](2); } finally { console.warn = ow; }
+        if (warns.length) return { ok: false, detail: 'warnings when page 2 mounted: ' + warns.join(' | ') };
+        const now = document.querySelector('#score .score-page[data-page="2"]');
+        if (now.classList.contains('score-page-pending') || !now.querySelector('g.system')) {
+          return { ok: false, detail: 'page 2 did not draw on mount' };
+        }
+        const first = now.querySelector('g.system g.measure');
+        if (!first || first.id !== pb.pageStarts()[1]) {
+          return { ok: false, detail: 'mounted page 2 starts at ' + (first && first.id) + ', pins say ' + pb.pageStarts()[1] };
         }
         return { ok: true };
       })()` },
@@ -9785,6 +9990,7 @@ export const FIXTURE_ASSERTIONS = {
         const n1 = p1sys.length;
         if (n1 < 3) return { ok: false, detail: 'page 1 has only ' + n1 + ' systems' };
         const tailId = p1sys[n1 - 1].querySelector('g.measure').id;   // page 1's last line, pre-edit
+        const tailEl = p1sys[n1 - 1];                                     // its element: a transplant keeps it
         const p2start0 = pb.pageStarts()[1];
         /* Grow successive early systems by a c0..g7 span (deep ledger lines both
            ways). Each consumes a chunk of page 1's bottom slack; the loop runs
@@ -9830,6 +10036,12 @@ export const FIXTURE_ASSERTIONS = {
         if (!p2first || p2first.id !== tailId) return { ok: false, detail: 'page 2 starts at ' + (p2first && p2first.id) + ', expected the moved line ' + tailId };
         if (pb.pageStarts()[1] !== tailId) return { ok: false, detail: 'pins say page 2 starts at ' + pb.pageStarts()[1] + ', DOM says ' + tailId };
         if (p2start0 === tailId) return { ok: false, detail: 'page 2 start did not change' };
+        /* Phase 2: the step is a DOM TRANSPLANT — the very element that was
+           page 1's tail now heads page 2 (nothing re-rendered), and no step parked. */
+        if (p2first.closest('g.system') !== tailEl) return { ok: false, detail: 'page 2\\'s first system is not the transplanted element (a re-render, not a transplant)' };
+        const c = H.renderer.lastCascade;
+        if (!c || c.transplanted < 1) return { ok: false, detail: 'lastCascade shows no transplant: ' + JSON.stringify(c) };
+        if (c.parked) return { ok: false, detail: 'a cascade step parked with every page mounted: ' + JSON.stringify(c) };
         const verified = pb.verifyRenderedPartition(H.renderer['container'], m, st0.pageCount, H.renderer['pageBreaksCtx']());
         if (!verified) return { ok: false, detail: 'rendered partition diverged from the pins after the move' };
         return { ok: true };
@@ -9938,6 +10150,14 @@ export const FIXTURE_ASSERTIONS = {
         const first = last.querySelector('g.system g.measure');
         if (!first || first.id !== pb.pageStarts()[pages0]) return { ok: false, detail: 'new page starts at ' + (first && first.id) + ', pins say ' + pb.pageStarts()[pages0] };
         if (!last.querySelector('svg defs')) return { ok: false, detail: 'created page has no <defs>' };
+        /* Phase 2: the page is the spilling page's own shell with the block
+           transplanted in — its page-number header reads the new number. */
+        const c = H.renderer.lastCascade;
+        if (!c || c.created < 1) return { ok: false, detail: 'lastCascade shows no created page: ' + JSON.stringify(c) };
+        if (c.parked) return { ok: false, detail: 'a cascade step parked: ' + JSON.stringify(c) };
+        const hd = last.querySelector('g.pgHead');
+        if (!hd) return { ok: false, detail: 'created page carries no page header' };
+        if (!(hd.textContent || '').includes(String(pages0 + 1))) return { ok: false, detail: 'created page header reads "' + (hd.textContent || '').trim() + '", expected page number ' + (pages0 + 1) };
         const verified = pb.verifyRenderedPartition(H.renderer['container'], m, st0.pageCount, H.renderer['pageBreaksCtx']());
         if (!verified) return { ok: false, detail: 'rendered partition diverged from the pins after the page was created' };
         return { ok: true };
@@ -10348,6 +10568,467 @@ export const FIXTURE_ASSERTIONS = {
         if (Math.abs(t2.top - t3.top) > tol) return { ok: false, detail: 'page-first tops differ: page 2 ' + t2.top.toFixed(1) + ' vs page 3 ' + t3.top.toFixed(1) + ' (tol ' + tol.toFixed(1) + ')' };
         const e = checkPage(p2);
         if (e) return { ok: false, detail: e };
+        return { ok: true };
+      })()` },
+  ],
+  pageCascadePredictedFold: [
+    { name: 'the cascade folds by prediction and moves the spilled block as a transplant (same elements), leaving no page past its paper',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        if (!H.renderer.lastCascade || typeof H.renderer.runExtentsJobNow !== 'function') return { ok: false, detail: 'renderer has no cascade diagnostics / extents job — Phase 2 not built' };
+        H.renderer.setMountWindowEnabled(false);
+        const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+        const pageEl = (p) => document.querySelector('#score .score-page[data-page="' + p + '"]');
+        const mountAll = () => { for (const page of document.querySelectorAll('#score .score-page.score-page-pending')) H.renderer['mountPage'](+page.dataset.page); };
+        const mountedPages = () => [...document.querySelectorAll('#score .score-page:not(.score-page-pending)')];
+        const systemsOf = (pg) => { const margin = pg.querySelector('svg g.page-margin'); return margin ? [...margin.children].filter((c) => c.classList.contains('system')) : []; };
+        const overflowing = () => mountedPages().filter((pg) => {
+          const svg = pg.querySelector('svg'); const sy = systemsOf(pg);
+          return svg && sy.length && sy[sy.length - 1].getBoundingClientRect().bottom > svg.getBoundingClientRect().bottom + 2;
+        }).map((pg) => pg.dataset.page);
+        const ids = () => m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const linesOfPage = (p) => { const lines = pb.lineStarts(), pages = pb.pageStarts(); const lo = lines.indexOf(pages[p - 1]); const hi = p < pages.length ? lines.indexOf(pages[p]) : lines.length; return lo < 0 ? [] : lines.slice(lo, hi < 0 ? lines.length : hi); };
+        const withWarnsCaptured = (fn) => { const warns = []; const ow = console.warn; console.warn = (...a) => { const t = a.join(' '); if (!/^\\[Warning\\]/.test(t)) warns.push(t); }; try { fn(); } finally { console.warn = ow; } return warns; };
+        mountAll();
+        const pages0 = pb.pageStarts().length;
+        if (pages0 < 2) return { ok: false, detail: 'need >= 2 pages, got ' + pages0 };
+        if (overflowing().length) return { ok: false, detail: 'overflowing before the edit: ' + overflowing() };
+        const st0 = H.renderer['pageVirt'];
+        /* Where every system sits now (element → page). */
+        const homeOf = new Map();
+        for (const pg of mountedPages()) for (const sy of systemsOf(pg)) homeOf.set(sy, Number(pg.dataset.page));
+        /* Compose past the last line until a cascade step lands. */
+        let cascade = null, steps = 0;
+        const warns = withWarnsCaptured(() => {
+          for (; steps < 80 && !cascade; steps++) {
+            for (let q = 0; q < 4; q++) {
+              m.setCursor(m['flatChildren'](1).length, 1);
+              if (!m.insertChordAtCursor({ notes: [mk(q % 2 ? 'g' : 'b', q % 2 ? 6 : 4)], duration: '4', dots: 0 })) { cascade = { error: 'append rejected at step ' + steps }; return; }
+            }
+            H.reRender();
+            if (ps.lastOutcome !== 'spliced') { cascade = { error: 'step ' + steps + ': expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + '; derive=' + pb.lastDeriveReason + ')' }; return; }
+            if (H.renderer['pageVirt'] !== st0) { cascade = { error: 'page DOM was rebuilt at step ' + steps + ' — a full render' }; return; }
+            const over = overflowing();
+            if (over.length) { cascade = { error: 'page ' + over.join(',') + ' drawn past the paper after step ' + steps }; return; }
+            if (H.renderer.lastCascade.steps > 0) cascade = { ...H.renderer.lastCascade };
+          }
+        });
+        if (warns.length) return { ok: false, detail: 'warnings: ' + warns.join(' | ') };
+        if (!cascade) return { ok: false, detail: steps + ' steps never spilled a page' };
+        if (cascade.error) return { ok: false, detail: cascade.error };
+        if (cascade.parked) return { ok: false, detail: 'a step parked with every page mounted: ' + JSON.stringify(cascade) };
+        if (!(cascade.transplanted >= 1)) return { ok: false, detail: 'no transplant recorded: ' + JSON.stringify(cascade) };
+        /* The moved systems are the SAME elements, now heading their new page, in order. */
+        let moved = 0;
+        for (const pg of mountedPages()) {
+          const p = Number(pg.dataset.page);
+          const sy = systemsOf(pg);
+          for (let i = 0; i < sy.length; i++) {
+            const home = homeOf.get(sy[i]);
+            if (home === undefined) { if (!cascade.created) return { ok: false, detail: 'page ' + p + ' system ' + i + ' is a new element — a re-render, not a transplant' }; continue; }
+            if (home !== p) {
+              if (home !== p - 1) return { ok: false, detail: 'system moved from page ' + home + ' to ' + p };
+              if (i !== moved) return { ok: false, detail: 'moved system is not at the head of page ' + p + ' (index ' + i + ')' };
+              moved++;
+            }
+          }
+          if (moved) break;
+        }
+        if (!moved && !cascade.created) return { ok: false, detail: 'no system changed page' };
+        /* Predicted fold agrees with the DOM on every mounted page (the flag also throws inside foldOf on disagreement). */
+        for (const pg of mountedPages()) {
+          const fold = H.renderer['foldOf'](pg);
+          if (fold && fold.firstPast >= 0) return { ok: false, detail: 'page ' + pg.dataset.page + ' still predicted to overflow at system ' + fold.firstPast };
+        }
+        const verified = pb.verifyRenderedPartition(H.renderer['container'], m, st0.pageCount, H.renderer['pageBreaksCtx']());
+        if (!verified) return { ok: false, detail: 'rendered partition diverged from the pins after the cascade' };
+        return { ok: true };
+      })()` },
+  ],
+  pageCascadeArithmeticPastMount: [
+    { name: 'a spill into an unmounted page with known extents is bookkeeping (pins move, page stale, nothing rendered or parked) and the page draws right at mount',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        if (!H.renderer.lastCascade || typeof H.renderer.runExtentsJobNow !== 'function') return { ok: false, detail: 'renderer has no cascade diagnostics / extents job — Phase 2 not built' };
+        H.renderer.setMountWindowEnabled(false);
+        const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+        const pageEl = (p) => document.querySelector('#score .score-page[data-page="' + p + '"]');
+        const mountAll = () => { for (const page of document.querySelectorAll('#score .score-page.score-page-pending')) H.renderer['mountPage'](+page.dataset.page); };
+        const mountedPages = () => [...document.querySelectorAll('#score .score-page:not(.score-page-pending)')];
+        const systemsOf = (pg) => { const margin = pg.querySelector('svg g.page-margin'); return margin ? [...margin.children].filter((c) => c.classList.contains('system')) : []; };
+        const overflowing = () => mountedPages().filter((pg) => {
+          const svg = pg.querySelector('svg'); const sy = systemsOf(pg);
+          return svg && sy.length && sy[sy.length - 1].getBoundingClientRect().bottom > svg.getBoundingClientRect().bottom + 2;
+        }).map((pg) => pg.dataset.page);
+        const ids = () => m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const linesOfPage = (p) => { const lines = pb.lineStarts(), pages = pb.pageStarts(); const lo = lines.indexOf(pages[p - 1]); const hi = p < pages.length ? lines.indexOf(pages[p]) : lines.length; return lo < 0 ? [] : lines.slice(lo, hi < 0 ? lines.length : hi); };
+        const withWarnsCaptured = (fn) => { const warns = []; const ow = console.warn; console.warn = (...a) => { const t = a.join(' '); if (!/^\\[Warning\\]/.test(t)) warns.push(t); }; try { fn(); } finally { console.warn = ow; } return warns; };
+        mountAll();
+        const pages0 = pb.pageStarts();
+        if (pages0.length < 3) return { ok: false, detail: 'need >= 3 pages, got ' + pages0.length };
+        const st0 = H.renderer['pageVirt'];
+        /* Pages 3.. back to placeholders, never re-mounted by the observer. */
+        st0.io?.disconnect();
+        for (let p = 3; p <= st0.pageCount; p++) H.renderer['unmountPage'](p);
+        if (!pageEl(3).classList.contains('score-page-pending')) return { ok: false, detail: 'page 3 did not unmount' };
+        /* The mount-all recorded every line's extents; forget them so the JOB is
+           what makes page 3's known (mounted pages re-record theirs). */
+        H.renderer['extents'].clear();
+        for (const pg of mountedPages()) H.renderer.placePage(pg);
+        H.renderer['armExtentsJob'](m);
+        const measured = H.renderer.runExtentsJobNow();
+        if (!measured.includes(3)) return { ok: false, detail: 'extents job did not measure page 3 (measured ' + JSON.stringify(measured) + ')' };
+        for (const id of linesOfPage(3)) if (!H.renderer.extentsKnown(id)) return { ok: false, detail: 'page 3 line ' + id + ' has no extents after the job' };
+        /* Page 3 was edited by an earlier splice and then evicted: STALE, so the
+           cheap pre-edit mount (B5) is unavailable — the case that used to park.
+           (A page that can still be mounted from the toolkit's layout is
+           mounted and receives a transplant instead: 50 ms now against a
+           document reload at its eventual mount.) */
+        st0.stalePages.add(3);
+        /* Make page 2 spill: grow its systems one by one with a c0..g7 chord
+           (deep ledger lines both ways) until its slack is gone — content edits,
+           which splice (a header change is a user break and derives). */
+        const lines = pb.lineStarts();
+        const p2first = lines.indexOf(pages0[1]), p3first = lines.indexOf(pages0[2]);
+        if (p3first - p2first < 2) return { ok: false, detail: 'page 2 needs >= 2 lines' };
+        const p3start0 = pages0[2];
+        let c = null, steps = 0, err = null;
+        const warns = withWarnsCaptured(() => {
+          for (let li = p2first; li < p3first && !c; li++) {
+            const target = m.allMeasures()[ids().indexOf(lines[li])];
+            if (!target) { err = 'line ' + li + ' start measure missing'; return; }
+            const flat = m['flatChildren'](1);
+            let cur = -1;
+            for (let i = 0; i < flat.length; i++) { const el = flat[i]; if ((el.localName === 'note' || el.localName === 'chord') && el.closest('measure') === target) { cur = i; break; } }
+            if (cur < 0) { err = 'no chord in line ' + li; return; }
+            m.setCursor(cur, 1);
+            if (m.replaceChordAtCursor({ notes: [mk('c', 0), mk('g', 7)], duration: '4', dots: 0 }) === null) { err = 'replace rejected at line ' + li; return; }
+            H.reRender();
+            steps++;
+            if (ps.lastOutcome !== 'spliced') { err = 'step ' + steps + ': expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + '; derive=' + pb.lastDeriveReason + ')'; return; }
+            if (H.renderer['pageVirt'] !== st0) { err = 'page DOM was rebuilt at step ' + steps + ' — a full render'; return; }
+            if (H.renderer.lastCascade.steps > 0) c = { ...H.renderer.lastCascade };
+          }
+        });
+        if (err) return { ok: false, detail: err };
+        if (warns.length) return { ok: false, detail: 'warnings: ' + warns.join(' | ') };
+        if (!c) return { ok: false, detail: steps + ' growth steps never spilled page 2' };
+        if (c.parked) return { ok: false, detail: 'a step parked although page 3\\'s extents were known: ' + JSON.stringify(c) };
+        if (!(c.arithmetic >= 1)) return { ok: false, detail: 'no arithmetic step recorded: ' + JSON.stringify(c) };
+        if (!pageEl(3).classList.contains('score-page-pending')) return { ok: false, detail: 'page 3 was mounted/rendered by the cascade' };
+        if (!st0.stalePages.has(3)) return { ok: false, detail: 'page 3 not marked stale' };
+        const pages1 = pb.pageStarts();
+        if (pages1[2] === p3start0) return { ok: false, detail: 'page 3 start did not move' };
+        if (lines.indexOf(pages1[2]) <= p2first || lines.indexOf(pages1[2]) >= p3first) return { ok: false, detail: 'page 3 now starts at line ' + lines.indexOf(pages1[2]) + ', expected inside old page 2' };
+        if (overflowing().length) return { ok: false, detail: 'page ' + overflowing().join(',') + ' drawn past the paper' };
+        /* Mount page 3: it draws from the new pins, fits, starts at the moved line. */
+        const warns2 = withWarnsCaptured(() => { H.renderer['mountPage'](3); });
+        if (warns2.length) return { ok: false, detail: 'warnings at mount: ' + warns2.join(' | ') };
+        const p3 = pageEl(3);
+        if (p3.classList.contains('score-page-pending')) return { ok: false, detail: 'page 3 did not mount' };
+        const first3 = p3.querySelector('g.system g.measure');
+        if (!first3 || first3.id !== pages1[2]) return { ok: false, detail: 'DOM page 3 starts at ' + (first3 && first3.id) + ', pins say ' + pages1[2] };
+        if (overflowing().length) return { ok: false, detail: 'page ' + overflowing().join(',') + ' drawn past the paper after the mount' };
+        const verified = pb.verifyRenderedPartition(H.renderer['container'], m, st0.pageCount, H.renderer['pageBreaksCtx']());
+        if (!verified) return { ok: false, detail: 'rendered partition diverged from the pins' };
+        return { ok: true };
+      })()` },
+  ],
+  pageExtentsJobEditDuring: [
+    { name: 'an edit while the extents job is armed cancels and re-arms it; the edit splices; every page stays self-consistent and the job then completes',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        if (!H.renderer.lastCascade || typeof H.renderer.runExtentsJobNow !== 'function') return { ok: false, detail: 'renderer has no cascade diagnostics / extents job — Phase 2 not built' };
+        H.renderer.setMountWindowEnabled(false);
+        const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+        const pageEl = (p) => document.querySelector('#score .score-page[data-page="' + p + '"]');
+        const mountAll = () => { for (const page of document.querySelectorAll('#score .score-page.score-page-pending')) H.renderer['mountPage'](+page.dataset.page); };
+        const mountedPages = () => [...document.querySelectorAll('#score .score-page:not(.score-page-pending)')];
+        const systemsOf = (pg) => { const margin = pg.querySelector('svg g.page-margin'); return margin ? [...margin.children].filter((c) => c.classList.contains('system')) : []; };
+        const overflowing = () => mountedPages().filter((pg) => {
+          const svg = pg.querySelector('svg'); const sy = systemsOf(pg);
+          return svg && sy.length && sy[sy.length - 1].getBoundingClientRect().bottom > svg.getBoundingClientRect().bottom + 2;
+        }).map((pg) => pg.dataset.page);
+        const ids = () => m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const linesOfPage = (p) => { const lines = pb.lineStarts(), pages = pb.pageStarts(); const lo = lines.indexOf(pages[p - 1]); const hi = p < pages.length ? lines.indexOf(pages[p]) : lines.length; return lo < 0 ? [] : lines.slice(lo, hi < 0 ? lines.length : hi); };
+        const withWarnsCaptured = (fn) => { const warns = []; const ow = console.warn; console.warn = (...a) => { const t = a.join(' '); if (!/^\\[Warning\\]/.test(t)) warns.push(t); }; try { fn(); } finally { console.warn = ow; } return warns; };
+        const tf = (el) => { const t = el.getAttribute('transform') || ''; const mm = /translate\\(\\s*(-?[\\d.]+)[\\s,]+(-?[\\d.]+)/.exec(t); return mm ? { tx: +mm[1], ty: +mm[2] } : { tx: 0, ty: 0 }; };
+        const staffTopOf = (sys) => { const st = sys.querySelector('g.measure > g.staff'); if (!st) return null; const ys = []; for (const q of st.children) { if (q.localName !== 'path') continue; const mm = /M\\s*(-?[\\d.]+)[\\s,]+(-?[\\d.]+)\\s*L\\s*(-?[\\d.]+)[\\s,]+(-?[\\d.]+)/.exec(q.getAttribute('d') || ''); if (mm && Math.abs(+mm[2] - +mm[4]) < 0.01) ys.push(+mm[2]); } if (ys.length < 2) return null; ys.sort((a, b) => a - b); return { top: ys[0] + tf(st).ty + tf(sys).ty, spacing: ys[1] - ys[0] }; };
+        /* The job may already have finished in idle time during the universal invariants — arm it deterministically. */
+        H.renderer['armExtentsJob'](m);
+        const j0 = H.renderer.extentsJobState();
+        if (!j0) return { ok: false, detail: 'extents job could not be armed' };
+        const st0 = H.renderer['pageVirt'];
+        const mi = ids().indexOf(pb.pageStarts()[1]) + 1;
+        m.setCursor(m.getMeasureStartCursor(1, mi), 1);
+        if (!m.deleteAtCursor()) return { ok: false, detail: 'delete at measure ' + mi + ' rejected' };
+        const warns = withWarnsCaptured(() => { H.reRender(); });
+        if (warns.length) return { ok: false, detail: 'warnings: ' + warns.join(' | ') };
+        if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
+        if (H.renderer['pageVirt'] !== st0) return { ok: false, detail: 'page DOM was rebuilt — a full render' };
+        const j1 = H.renderer.extentsJobState();
+        if (!j1) return { ok: false, detail: 'extents job not re-armed after the edit' };
+        if (j1.nextPage !== 1 || j1.measured.length) return { ok: false, detail: 'job was not re-armed fresh: ' + JSON.stringify(j1) };
+        const measured = H.renderer.runExtentsJobNow();
+        if (H.renderer.extentsJobState()) return { ok: false, detail: 'job still armed after running to completion' };
+        const pages = pb.pageStarts().length;
+        for (let p = 1; p <= pages; p++) for (const id of linesOfPage(p)) if (!H.renderer.extentsKnown(id)) return { ok: false, detail: 'page ' + p + ' line ' + id + ' has no extents (measured ' + JSON.stringify(measured) + ')' };
+        /* No double placement: every mounted page is placed by its own rule. */
+        for (const pg of mountedPages()) {
+          const sy = systemsOf(pg); const exp = H.renderer.placeFor(sy);
+          if (!exp) return { ok: false, detail: 'page ' + pg.dataset.page + ': placement unreadable' };
+          for (let i = 0; i < sy.length; i++) {
+            const live = staffTopOf(sy[i]);
+            if (!live) return { ok: false, detail: 'page ' + pg.dataset.page + ' system ' + i + ': no readable staff lines' };
+            if (Math.abs(exp[i].top - live.top) > live.spacing / 4) return { ok: false, detail: 'page ' + pg.dataset.page + ' system ' + i + ': staff top ' + live.top.toFixed(1) + ' vs rule ' + exp[i].top.toFixed(1) };
+          }
+        }
+        return { ok: true };
+      })()` },
+  ],
+  pageExtentsJobScrollDuring: [
+    { name: 'a page mounted while the extents job is armed measures itself; the job skips it and measures only the still-pending pages',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        if (!H.renderer.lastCascade || typeof H.renderer.runExtentsJobNow !== 'function') return { ok: false, detail: 'renderer has no cascade diagnostics / extents job — Phase 2 not built' };
+        H.renderer.setMountWindowEnabled(false);
+        const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+        const pageEl = (p) => document.querySelector('#score .score-page[data-page="' + p + '"]');
+        const mountAll = () => { for (const page of document.querySelectorAll('#score .score-page.score-page-pending')) H.renderer['mountPage'](+page.dataset.page); };
+        const mountedPages = () => [...document.querySelectorAll('#score .score-page:not(.score-page-pending)')];
+        const systemsOf = (pg) => { const margin = pg.querySelector('svg g.page-margin'); return margin ? [...margin.children].filter((c) => c.classList.contains('system')) : []; };
+        const overflowing = () => mountedPages().filter((pg) => {
+          const svg = pg.querySelector('svg'); const sy = systemsOf(pg);
+          return svg && sy.length && sy[sy.length - 1].getBoundingClientRect().bottom > svg.getBoundingClientRect().bottom + 2;
+        }).map((pg) => pg.dataset.page);
+        const ids = () => m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const linesOfPage = (p) => { const lines = pb.lineStarts(), pages = pb.pageStarts(); const lo = lines.indexOf(pages[p - 1]); const hi = p < pages.length ? lines.indexOf(pages[p]) : lines.length; return lo < 0 ? [] : lines.slice(lo, hi < 0 ? lines.length : hi); };
+        const withWarnsCaptured = (fn) => { const warns = []; const ow = console.warn; console.warn = (...a) => { const t = a.join(' '); if (!/^\\[Warning\\]/.test(t)) warns.push(t); }; try { fn(); } finally { console.warn = ow; } return warns; };
+        const st0 = H.renderer['pageVirt'];
+        if (st0.pageCount < 3) return { ok: false, detail: 'need >= 3 pages, got ' + st0.pageCount };
+        /* The universal invariants (cursor trace) mount every page: return 3.. to
+           placeholders, never re-mounted by the observer. */
+        st0.io?.disconnect();
+        for (let p = 3; p <= st0.pageCount; p++) H.renderer['unmountPage'](p);
+        const pendingBefore = [...document.querySelectorAll('#score .score-page.score-page-pending')].map((e) => +e.dataset.page);
+        if (!pendingBefore.includes(3)) return { ok: false, detail: 'page 3 is not a placeholder after unmounting (pending: ' + JSON.stringify(pendingBefore) + ')' };
+        /* Deterministic start: the job may have run in idle time already. Forget
+           every extent, let the mounted pages re-record theirs, arm the job. */
+        H.renderer['extents'].clear();
+        for (const pg of mountedPages()) H.renderer.placePage(pg);
+        H.renderer['armExtentsJob'](m);
+        if (!H.renderer.extentsJobState()) return { ok: false, detail: 'extents job could not be armed' };
+        H.renderer['mountPage'](3);
+        if (pageEl(3).classList.contains('score-page-pending')) return { ok: false, detail: 'page 3 did not mount' };
+        for (const id of linesOfPage(3)) if (!H.renderer.extentsKnown(id)) return { ok: false, detail: 'mounted page 3 did not record extents for line ' + id };
+        const measured = H.renderer.runExtentsJobNow();
+        if (measured.includes(3)) return { ok: false, detail: 'the job re-measured the mounted page 3 (' + JSON.stringify(measured) + ')' };
+        const expected = pendingBefore.filter((p) => p !== 3);
+        if (measured.length !== expected.length || expected.some((p) => !measured.includes(p))) return { ok: false, detail: 'job measured ' + JSON.stringify(measured) + ', expected the still-pending pages ' + JSON.stringify(expected) };
+        for (let p = 1; p <= st0.pageCount; p++) for (const id of linesOfPage(p)) if (!H.renderer.extentsKnown(id)) return { ok: false, detail: 'page ' + p + ' line ' + id + ' has no extents' };
+        return { ok: true };
+      })()` },
+  ],
+  pageSpliceClipsToMountedBand: [
+    { name: 'a hunk reaching past the mounted band re-engraves only the band and defers the rest (stale, undrawn, correct on mount)',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        if (!Array.isArray(ps.lastDeferredPages)) return { ok: false, detail: 'splicer has no lastDeferredPages — the clip is not built' };
+        H.renderer.setMountWindowEnabled(false);
+        const st0 = H.renderer['pageVirt'];
+        const pageEl = (p) => document.querySelector('#score .score-page[data-page="' + p + '"]');
+        const isMounted = (p) => { const el = pageEl(p); return !!el && !el.classList.contains('score-page-pending'); };
+        const mountAll = () => { for (const page of document.querySelectorAll('#score .score-page.score-page-pending')) H.renderer['mountPage'](+page.dataset.page); };
+        const mountedPages = () => [...document.querySelectorAll('#score .score-page:not(.score-page-pending)')];
+        const systemsOf = (pg) => { const margin = pg.querySelector('svg g.page-margin'); return margin ? [...margin.children].filter((c) => c.classList.contains('system')) : []; };
+        const overflowing = () => mountedPages().filter((pg) => {
+          const svg = pg.querySelector('svg'); const sy = systemsOf(pg);
+          return svg && sy.length && sy[sy.length - 1].getBoundingClientRect().bottom > svg.getBoundingClientRect().bottom + 2;
+        }).map((pg) => pg.dataset.page);
+        const ids = () => m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const nums = () => m.allMeasures().map((x) => x.getAttribute('n') ?? '');
+        const withWarnsCaptured = (fn) => { const warns = []; const ow = console.warn; console.warn = (...a) => { const t = a.join(' '); if (!/^\\[Warning\\]/.test(t)) warns.push(t); }; try { fn(); } finally { console.warn = ow; } return warns; };
+        /* Insert a blank measure after measure mi, the way Ctrl+M does. */
+        const insertAt = (mi) => { m.setCursor(m.getMeasureStartCursor(1, mi), 1); m.insertMeasureAt(mi + 1); };
+        mountAll();
+        if (st0.pageCount < 3) return { ok: false, detail: 'need >= 3 pages, got ' + st0.pageCount };
+        /* Only pages 1-2 drawn; the observer must not re-mount behind us. */
+        st0.io?.disconnect();
+        for (let p = 3; p <= st0.pageCount; p++) H.renderer['unmountPage'](p);
+        if (isMounted(3)) return { ok: false, detail: 'page 3 did not unmount' };
+        const linesBefore = pb.lineStarts().length;
+        const nBefore = nums();
+        /* Insert early: the renumber reaches the end of the document, so the
+           changed run does too. */
+        const warns = withWarnsCaptured(() => { insertAt(1); H.reRender(); });
+        if (warns.length) return { ok: false, detail: 'warnings: ' + warns.join(' | ') };
+        if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + '; derive=' + pb.lastDeriveReason + ')' };
+        if (H.renderer['pageVirt'] !== st0) return { ok: false, detail: 'page DOM was rebuilt — a full render' };
+        /* The renumber really did reach far: otherwise this fixture proves nothing. */
+        const nAfter = nums();
+        let renumbered = 0;
+        for (let i = 0; i + 1 < nAfter.length && i < nBefore.length; i++) if (nBefore[i] !== nAfter[i + 1]) renumbered++;
+        if (renumbered < 20) return { ok: false, detail: 'only ' + renumbered + ' measures renumbered — the run is not wide enough to clip' };
+        /* Pages beyond the band were deferred, not drawn. */
+        const deferred = ps.lastDeferredPages.slice();
+        if (!deferred.length) return { ok: false, detail: 'nothing deferred although the run reached past the mounted band' };
+        for (const p of deferred) {
+          if (isMounted(p)) return { ok: false, detail: 'deferred page ' + p + ' is still drawn' };
+          if (!st0.stalePages.has(p)) return { ok: false, detail: 'deferred page ' + p + ' not marked stale' };
+        }
+        /* The window covered only the band: fewer lines than the whole run. */
+        if (!(ps.lastStats.lines >= 1)) return { ok: false, detail: 'no line was re-engraved' };
+        if (ps.lastDeferredLines && ps.lastDeferredLines.a <= (ps.lastRun ? ps.lastRun.b : -1)) return { ok: false, detail: 'deferred lines overlap the replaced run' };
+        if (overflowing().length) return { ok: false, detail: 'page ' + overflowing().join(',') + ' drawn past the paper' };
+        /* A deferred page draws correctly when it mounts. */
+        const target = deferred[0];
+        const warns2 = withWarnsCaptured(() => { H.renderer['mountPage'](target); });
+        if (warns2.length) return { ok: false, detail: 'warnings at mount: ' + warns2.join(' | ') };
+        if (!isMounted(target)) return { ok: false, detail: 'deferred page ' + target + ' did not mount' };
+        const first = pageEl(target).querySelector('g.system g.measure');
+        const pins = pb.pageStarts();
+        if (!first || first.id !== pins[target - 1]) return { ok: false, detail: 'mounted page ' + target + ' starts at ' + (first && first.id) + ', pins say ' + pins[target - 1] };
+        if (overflowing().length) return { ok: false, detail: 'page ' + overflowing().join(',') + ' past the paper after the mount' };
+        const verified = pb.verifyRenderedPartition(H.renderer['container'], m, st0.pageCount, H.renderer['pageBreaksCtx']());
+        if (!verified) return { ok: false, detail: 'rendered partition diverged from the pins' };
+        if (pb.lineStarts().length < linesBefore) return { ok: false, detail: 'lines went ' + linesBefore + ' -> ' + pb.lineStarts().length };
+        return { ok: true };
+      })()` },
+  ],
+  pageRenumberIsRedrawOnly: [
+    { name: 'a renumber is redraw-only: the naturals measurement stays local while the splicer still redraws the renumbered lines',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        if (!Array.isArray(ps.lastDeferredPages)) return { ok: false, detail: 'splicer has no lastDeferredPages — the clip is not built' };
+        H.renderer.setMountWindowEnabled(false);
+        const st0 = H.renderer['pageVirt'];
+        const pageEl = (p) => document.querySelector('#score .score-page[data-page="' + p + '"]');
+        const isMounted = (p) => { const el = pageEl(p); return !!el && !el.classList.contains('score-page-pending'); };
+        const mountAll = () => { for (const page of document.querySelectorAll('#score .score-page.score-page-pending')) H.renderer['mountPage'](+page.dataset.page); };
+        const mountedPages = () => [...document.querySelectorAll('#score .score-page:not(.score-page-pending)')];
+        const systemsOf = (pg) => { const margin = pg.querySelector('svg g.page-margin'); return margin ? [...margin.children].filter((c) => c.classList.contains('system')) : []; };
+        const overflowing = () => mountedPages().filter((pg) => {
+          const svg = pg.querySelector('svg'); const sy = systemsOf(pg);
+          return svg && sy.length && sy[sy.length - 1].getBoundingClientRect().bottom > svg.getBoundingClientRect().bottom + 2;
+        }).map((pg) => pg.dataset.page);
+        const ids = () => m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const nums = () => m.allMeasures().map((x) => x.getAttribute('n') ?? '');
+        const withWarnsCaptured = (fn) => { const warns = []; const ow = console.warn; console.warn = (...a) => { const t = a.join(' '); if (!/^\\[Warning\\]/.test(t)) warns.push(t); }; try { fn(); } finally { console.warn = ow; } return warns; };
+        /* Insert a blank measure after measure mi, the way Ctrl+M does. */
+        const insertAt = (mi) => { m.setCursor(m.getMeasureStartCursor(1, mi), 1); m.insertMeasureAt(mi + 1); };
+        mountAll();
+        if (st0.pageCount < 2) return { ok: false, detail: 'need >= 2 pages, got ' + st0.pageCount };
+        const nBefore = nums();
+        const linesBefore = pb.lineStarts().slice();
+        const warns = withWarnsCaptured(() => { insertAt(1); H.reRender(); });
+        if (warns.length) return { ok: false, detail: 'warnings: ' + warns.join(' | ') };
+        if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + '; derive=' + pb.lastDeriveReason + ')' };
+        const nAfter = nums();
+        let renumbered = 0;
+        for (let i = 0; i + 1 < nAfter.length && i < nBefore.length; i++) if (nBefore[i] !== nAfter[i + 1]) renumbered++;
+        if (renumbered < 20) return { ok: false, detail: 'only ' + renumbered + ' measures renumbered — nothing to prove' };
+        /* THE POINT: naturals were measured for the measures whose FLOW changed
+           (the new blank measure and its line), not for the renumbered tail. */
+        const nat = pb.lastRefillStats.windowMeasures;
+        if (!(nat < renumbered / 2)) return { ok: false, detail: 'naturals measured ' + nat + ' measures for ' + renumbered + ' renumbered — the flow/redraw split is not in effect' };
+        /* And the partition did not move because of a renumber: every old line
+           start still starts a line (the insert may add one). */
+        const now = new Set(pb.lineStarts());
+        const lost = linesBefore.filter((id) => !now.has(id) && m.allMeasures().some((x) => x.getAttribute('xml:id') === id));
+        if (lost.length) return { ok: false, detail: lost.length + ' surviving line starts stopped starting lines (e.g. ' + lost[0] + ') — the renumber re-flowed the partition' };
+        /* The rendered numbers are right on every drawn page: that is what the
+           redraw run is for. */
+        const byId = new Map(m.allMeasures().map((x) => [x.getAttribute('xml:id'), x.getAttribute('n') ?? '']));
+        for (const pg of mountedPages()) {
+          for (const mn of pg.querySelectorAll('g.mNum')) {
+            const meas = mn.closest('g.measure');
+            if (!meas) continue;
+            const want = byId.get(meas.id);
+            const got = (mn.textContent || '').trim();
+            if (want !== undefined && got && got !== want) return { ok: false, detail: 'page ' + pg.dataset.page + ' measure ' + meas.id + ' shows number "' + got + '", model says "' + want + '"' };
+          }
+        }
+        return { ok: true };
+      })()` },
+  ],
+  pageExtentsJobWarmsDeferred: [
+    { name: 'the idle extents job clears the staleness a clipped splice left, so a later mount needs no document reload',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        if (!Array.isArray(ps.lastDeferredPages)) return { ok: false, detail: 'splicer has no lastDeferredPages — the clip is not built' };
+        H.renderer.setMountWindowEnabled(false);
+        const st0 = H.renderer['pageVirt'];
+        const pageEl = (p) => document.querySelector('#score .score-page[data-page="' + p + '"]');
+        const isMounted = (p) => { const el = pageEl(p); return !!el && !el.classList.contains('score-page-pending'); };
+        const mountAll = () => { for (const page of document.querySelectorAll('#score .score-page.score-page-pending')) H.renderer['mountPage'](+page.dataset.page); };
+        const mountedPages = () => [...document.querySelectorAll('#score .score-page:not(.score-page-pending)')];
+        const systemsOf = (pg) => { const margin = pg.querySelector('svg g.page-margin'); return margin ? [...margin.children].filter((c) => c.classList.contains('system')) : []; };
+        const overflowing = () => mountedPages().filter((pg) => {
+          const svg = pg.querySelector('svg'); const sy = systemsOf(pg);
+          return svg && sy.length && sy[sy.length - 1].getBoundingClientRect().bottom > svg.getBoundingClientRect().bottom + 2;
+        }).map((pg) => pg.dataset.page);
+        const ids = () => m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const nums = () => m.allMeasures().map((x) => x.getAttribute('n') ?? '');
+        const withWarnsCaptured = (fn) => { const warns = []; const ow = console.warn; console.warn = (...a) => { const t = a.join(' '); if (!/^\\[Warning\\]/.test(t)) warns.push(t); }; try { fn(); } finally { console.warn = ow; } return warns; };
+        /* Insert a blank measure after measure mi, the way Ctrl+M does. */
+        const insertAt = (mi) => { m.setCursor(m.getMeasureStartCursor(1, mi), 1); m.insertMeasureAt(mi + 1); };
+        mountAll();
+        if (st0.pageCount < 3) return { ok: false, detail: 'need >= 3 pages, got ' + st0.pageCount };
+        st0.io?.disconnect();
+        for (let p = 3; p <= st0.pageCount; p++) H.renderer['unmountPage'](p);
+        const warns = withWarnsCaptured(() => { insertAt(1); H.reRender(); });
+        if (warns.length) return { ok: false, detail: 'warnings: ' + warns.join(' | ') };
+        if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
+        if (!st0.stalePages.size) return { ok: false, detail: 'the splice left no stale page — nothing to warm' };
+        const staleBefore = [...st0.stalePages].sort((a, b) => a - b);
+        H.renderer['armExtentsJob'](m);
+        H.renderer.runExtentsJobNow();
+        const js = H.renderer.extentsJobState();
+        if (st0.stalePages.size) return { ok: false, detail: 'still stale after the job: ' + [...st0.stalePages].join(',') + ' (was ' + staleBefore.join(',') + ')' };
+        if (!st0.tkCurrent) return { ok: false, detail: 'toolkit does not hold the current layout after the job' };
+        /* A mount now needs no reload: tkCurrent stays true across it. */
+        const target = staleBefore.find((p) => !isMounted(p) && p <= st0.pageCount);
+        if (target === undefined) return { ok: false, detail: 'no unmounted stale page to mount' };
+        const warns2 = withWarnsCaptured(() => { H.renderer['mountPage'](target); });
+        if (warns2.length) return { ok: false, detail: 'warnings at mount: ' + warns2.join(' | ') };
+        if (!isMounted(target)) return { ok: false, detail: 'page ' + target + ' did not mount' };
+        if (!st0.tkCurrent) return { ok: false, detail: 'the mount reloaded the document although the job had warmed it' };
+        if (overflowing().length) return { ok: false, detail: 'page ' + overflowing().join(',') + ' past the paper' };
         return { ok: true };
       })()` },
   ],

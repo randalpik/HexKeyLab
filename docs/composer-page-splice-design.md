@@ -15,11 +15,22 @@ Companions: [composer-spot-splice-design.md](composer-spot-splice-design.md)
 counters 0), exhaustive every-measure pass 420/420 (empty refusal inventory),
 battery 10/10 reference-clean (B2, 2026-09-02: a line-count change, a collapse
 and an overflow onto a created page are splices too; headers are page budget),
-suite 370/370 under `HKL_INDEX_CHECK` (~6 min; the courtesy stub's two and
-Phase 1's three placement fixtures landed 2026-09-02). Composer owns height
-(vertical-ownership plan Phase 1, landed 2026-09-02): every system on every
-page is placed by Composer's rule over measured extents; nothing vertical is
-read from Verovio's stacking or from the splice window. A steady-state one-note
+suite 377/377 under `HKL_INDEX_CHECK` (~5.5 min). Every user COMMAND is
+inventoried (`cb-commands.js`): 24 mutate the document and 19 splice. The five
+that derive all say why: three add a user break (Ctrl+B, section header,
+pickup), a mid-piece meter change exhausts the repair cap, and `add instrument`
+is structural. Composer owns height (vertical-ownership plan Phase 1): every
+system on every page is placed by Composer's rule over measured extents;
+nothing vertical is read from Verovio's stacking or from the splice window.
+The overflow cascade runs on the model (Phase 2): a step is a DOM transplant,
+a last-page spill a page cloned from the spilling page's shell, a step past
+the mounted set arithmetic over stored extents, and an idle extents job keeps
+those extents known. And an edit costs what is ON SCREEN (2026-09-02): the
+replaced set is clipped to the mounted band and everything beyond it deferred,
+re-flow is separated from re-draw, and the user-break signature keys on
+identity rather than measure count — insert-measure went from 2.9-4.1 s,
+position-dependent, to 0.3-0.7 s (decisions.md, "An edit costs what is ON
+SCREEN"). A steady-state one-note
 edit is ≈ 144 ms instrumented (was 258 before the A thread; bare is lower —
 read shares, not walls). The splice's DOM work is a single layout flush, the
 post-surgery snap; everything the splice reads from its window comes from SVG
@@ -53,19 +64,20 @@ and the window's shape) were folded into ONE sequenced plan,
    `dyFollow` the followers from its L+1) — geometry, which is what had kept
    the window's shape from being a gate question (lessons.md, "An inventory of
    a component's jobs"). The two gate jobs remain.
-2. **The cascade on the model (Phase 2) — NEXT.** B2's overflow repair runs
-   one measured step per page synchronously across the mounted set (cursor
-   page ± 1) and parks the rest at the mount boundary (the receiving page draws
-   the moved block and continues the cascade when it mounts — one document
-   reload on that mount). With extents owned, a step becomes a DOM transplant
-   placed by the rule (the fold is already predicted, `foldIndex`), and the
-   continuation past the mounted set becomes an idle EXTENTS job beside
-   adoption — measuring the lines of not-yet-mounted pages into the
-   `ExtentsStore` so pages below the cursor's surroundings settle without a
-   reload and without holding the keystroke. `Renderer.repairPagination`'s
-   `pending` list is the seam; new test types come with it (edit-during-
-   cascade, scroll-during-cascade).
-3. **The window's shape (Phase 3) — a pure gate question now.** The context
+2. **The cascade on the model (Phase 2) — LANDED 2026-09-02.** A step is a
+   DOM TRANSPLANT (the block's systems and titles move to the head of the next
+   mounted page, both pages re-placed by the rule — nothing rendered), a
+   CREATED page when the last page spills (the spilling page's own shell, page
+   number bumped, glyph defs copied under fresh ids), ARITHMETIC over stored
+   extents when the receiving page is a placeholder the cheap B5 mount cannot
+   serve, a PARK only when its extents are unknown; the idle EXTENTS job
+   (`armExtentsJob`, adoption's discipline) measures unmounted pages so parks
+   are the exception. `Renderer.lastCascade` records the step kinds; the
+   sweep's `parkedSteps` must be 0. Composing at the end of a score costs 37
+   ms of cascade (31 the created page's mount pass); details and the one
+   open measurement (a new root's first layout scaling with the mounted set)
+   in decisions.md "The cascade runs on the model".
+3. **The window's shape (Phase 3) — NEXT, a pure gate question.** The context
    lines cost ~60 ms of the ~84 ms window and do gate work only; dropping them
    is gated on the plan's six preconditions, chiefly that the reference gate
    and the replaced-set closure stand in for the live fidelity comparison.
@@ -163,6 +175,16 @@ images, uninterpreted; pixel-diff them first (`lessons.md`, 2026-09-01).
    an owner-held baseline. The baseline is incremental: a `MutationObserver` on
    the live document marks dirty measures and only those re-serialize
    (mutations above measure level mark everything dirty).
+   TWO runs, from two diffs (2026-09-02): the FULL signature is the measure's
+   serialized XML and answers "must this be REDRAWN"; the FLOW signature
+   (`measureFlowSig` — the same XML with the measure's own `@n` stripped)
+   answers "must its line be RE-FLOWED". They differ for one common shape:
+   `renumberMeasures` is section-aware, so inserting a measure reports every
+   measure to the end of its section as changed. Those lines really do need
+   redrawing — measure numbers are rendered, one per line start — but a number
+   is an overlay label above the staff, so no width and no line fill moves.
+   The FLOW run drives the repair and its naturals; the FULL run is what the
+   splicer replaces. An insert at m8 measured 137 naturals before, 19 after.
 2. **Signature ranges** (`render/sigranges.ts`, both splicers): head and
    interior scoreDef key/meter changes and inline clef changes become the range
    they govern — to the next reset of the same kind on the same staff, one
@@ -204,16 +226,17 @@ images, uninterpreted; pixel-diff them first (`lessons.md`, 2026-09-01).
 
 Runs on EVERY refill with a live page DOM (B2: no `line count changed`
 refusal, no `paginationHeld` bypass). Replaces whole systems in place;
-everything else on the page is untouched or dy-translated. The renderer hands
-it a `SpliceRequest` — old/new partition, old/new pagination, the changed run,
-and for a cascade step the moved block (`moveLines`).
+everything else on the page is untouched or re-placed. The renderer hands it
+a `SpliceRequest` — old/new partition, old/new pagination, the changed run.
+(A cascade step is not a splice since Phase 2: it is a DOM transplant in
+`Renderer.repairPagination`, below.)
 
 - **Replaced set = a line HUNK** `old [a..bOld] → new [a..bNew]` (B2): the
   prefix/suffix diff of old vs new start ids (a changed boundary pulls the line
   above in — its extent moved), unioned with the changed run — one measure left
   when its first measure holds a layer clef (relocation), closed once over
-  spanners with an end inside the run and over `<ending>`s, then to lines — and
-  with the cascade's moved block. Lines outside the hunk are identical on both
+  spanners with an end inside the run and over `<ending>`s, then to lines.
+  Lines outside the hunk are identical on both
   sides, so the two coordinate systems agree there. Live systems are located by
   OLD start ids (even a deleted start measure is still in the pre-edit DOM);
   the window is built from NEW lines. Every old line must be mounted; a
@@ -222,11 +245,24 @@ and for a cascade step the moved block (`moveLines`).
   it. A page that keeps a line outside the hunk is found through that line
   (the mounted context line on it); a page made only of hunk lines is the page
   its first line's measure sits on now (a moved start id, or a collapsed
-  predecessor's successor); a cascade block landing past the last page gets a
-  page CREATED from the window's own page SVG with the systems stripped (same
-  page options → same furniture), which then takes the full mount pass. A
-  source page left without systems is reported as emptied; the renderer removes
-  it, renumbers the rest and marks them stale (`removePage`).
+  predecessor's successor). The splice never creates a page — a spill past the
+  last page is the cascade's. A source page left without systems is reported
+  as emptied; the renderer removes it, renumbers the rest and marks them stale
+  (`removePage`).
+- **Clipped to the MOUNTED BAND** (2026-09-02). The replaced set is computed
+  in line space over the whole document, so a wide changed run used to reach
+  pages nobody had mounted: B5 DREW all eight of them (834 ms) so one window
+  could re-engrave 146 measures (650 ms), synchronously, for an edit on page 1.
+  A line on an unmounted page needs no DOM work — the pins are committed
+  document-wide, and a page marked stale redraws from them on mount — so the
+  splice processes only the lines whose old AND new page lie in the maximal
+  contiguous run of mounted pages containing the edit (page granularity keeps
+  those lines contiguous, which the window needs) and DEFERS the rest:
+  `lastDeferredPages` are marked stale and any still drawn are returned to
+  placeholders, because a drawn page holding pre-edit systems under post-edit
+  pins is what `verifyRenderedPartition` rightly fails on. B5's eager mount
+  survives for the edit's own neighbourhood (lines a−1..a+1) so an evicted
+  cursor page is still drawn. The idle extents job warms what was deferred.
 - **Window**: L ± 1 context line, plus — when the line beyond begins a
   signature change (scoreDef possibly behind a section `<sb>`, or a leading
   clef/key/meter on ANY staff; the courtesy is generated by the FOLLOWING
@@ -258,7 +294,13 @@ and for a cascade step the moved block (`moveLines`).
 - **Gates (refusal → full render, reason in `lastSkipReason`)**:
   - *Context lines* must reproduce live: per-measure x/width within EPS 25 and
     identical clef/keySig/meterSig glyph codepoints (`sigGlyphDiff`). This is
-    the only live fidelity test and it has no exemptions. (The observed
+    the only live fidelity test. Its one exemption (2026-09-02): a context line
+    on a page OUTSIDE the mounted band has no live system to compare against —
+    either the clip stopped there or it was never mounted — so it is rendered
+    into the window (entering spanners must resolve) but not checked
+    (`aboveComparable` / `belowComparable`). The replaced lines are covered by
+    the reference gate as always, and per Max the live comparison is a
+    fallback, not an invariant. (The observed
     residual is ≤ 3 units: the live right-edge snap moving a staff-line end by
     ½ device px.) The REPLACED lines are never compared live — they are what
     the edit told Verovio to redraw; the reference gate verifies them.
@@ -271,9 +313,10 @@ and for a cascade step the moved block (`moveLines`).
   - *Section headers across the hunk*: WHERE a title sits is the placement's
     (its band is a component); WHICH PAGE it is on is the splice's: a title
     whose line moves to another page (a cascade block carrying a header)
-    migrates to that page's margin, one landing on a page being created is
-    dropped and re-injected by that page's mount pass, and a title whose
-    measure the edit deleted refuses (dated B2 bail).
+    migrates to that page's margin, and a title whose measure the edit
+    deleted is removed (Phase 2: a header is a component of the model —
+    deleting its measure removes the component; the former `section header
+    measure removed` bail is gone).
   - *No size caps*: a window costs linearly in measures up to the whole
     document, so a subset render is never the worse deal.
 - **Surgery**: per target page, import the new systems (horizontal frame
@@ -282,41 +325,69 @@ and for a cascade step the moved block (`moveLines`).
   `<defs>`), remove the old hunk systems, post-process the IMPORTED systems in
   place — crisp barline and right-edge snaps, notehead z-order, HEJI, theme,
   scoped to the imported systems, in the live page's own device frame — then
-  `placePage` and `snapPage` on every touched page (a created page gets the
-  whole mount pass); the renderer then removes emptied pages, marks every
+  `placePage` and `snapPage` on every touched page; the renderer then removes
+  emptied pages, marks every
   touched page stale for later mounts and runs the pagination repair. The
   snap's flush is the one layout the splice causes; the placement's `getBBox`
   reads share it. Diagnostics on the splicer: `lastOutcome / lastSkipReason /
   lastRun / lastWindow / lastWindowMei` (`lastVertical` is always null now),
   and on a context refusal `lastContextDiff`. `Renderer.lastPostStats` times
   the post-processing passes.
-- **Pagination repair — the overflow cascade** (`Renderer.repairPagination`,
-  B2). After a landed splice (and after any lazy mount) every touched page is
-  checked for its FOLD: the first system whose content bottom passes the paper
-  (`foldOf` — since Phase 1 PREDICTED by `foldIndex` over the read-only
-  placement, against the paper bottom read from Verovio's inner
-  `definition-scale` viewBox, 2 device px of tolerance; under `HKL_INDEX_CHECK`
-  the prediction must equal the measured fold). A page that spills is repaired
-  the way a castoff would: the tail from the fold on moves to the head of the
-  next page — the owner's page start moves to the block's first line
-  (`replacePageStarts`; a last page appends one) and the move lands as a splice
-  whose hunk is the block with unchanged content and a new target page; the
-  receiving page is placed by the rule like any other. Then the receiving page
-  is checked, and so on. When the receiving page is a placeholder that cannot
-  be mounted cheaply (stale, or the toolkit not current), the step is LAZY: the
-  block is removed from the spilling page, both pages are marked stale, and
-  the receiving page draws the block — and checks its own fold — when it
-  mounts. So the synchronous cost is one step per mounted page below the edit
-  and the rest settles at mount time (Phase 2 makes a step a DOM transplant and
-  the continuation an extents job). A step that cannot land (a single system
-  taller than a page, a refused window, `MAX_CASCADE_STEPS`) restores the last
-  consistent pins and the edit derives (edit path) or warns (mount path).
-  Under `HKL_INDEX_CHECK` a mount-time repair is verified against a fresh full
-  render like an edit-path splice (`repairAtMount`).
+- **Pagination repair — the overflow cascade on the model**
+  (`Renderer.repairPagination`, B2; on the model since Phase 2, 2026-09-02).
+  After a landed splice (and after any lazy mount) every touched page is
+  checked for its FOLD, PREDICTED from the placement rule: `foldIndex` over the
+  read-only placement of a mounted page's measured extents (`foldOf`), or over
+  the `ExtentsStore` for a placeholder (`predictFoldFromStore`), against the
+  paper bottom read from Verovio's inner `definition-scale` viewBox, 2 device
+  px of tolerance; under `HKL_INDEX_CHECK` a mounted page's prediction must
+  equal the measured fold. A page that spills is repaired the way a castoff
+  would — the tail from the fold on moves to the head of the next page, the
+  owner's page start moves to the block's first line (`replacePageStarts`; a
+  last page appends one) — and the step lands as one of four things,
+  recorded in `Renderer.lastCascade`:
+  - a **TRANSPLANT** when the receiving page is mounted or cheaply mountable
+    (B5: the toolkit holds its pre-edit layout and it is not stale): the
+    block's `g.system` elements and their titles MOVE into the receiving
+    page's margin ahead of its first system (`moveBlock`; glyph defs carried
+    by `mergeGlyphDefs`), both pages are re-placed by the rule and snapped.
+    Nothing is rendered; the same elements now sit on the next page.
+  - a **CREATED page** when the last page spills: the spilling page's own SVG
+    shell (systems, titles and injected texts stripped, the page-number header
+    bumped — `createPageFromShell`), the block transplanted in, the mount pass.
+  - **ARITHMETIC** when the receiving page is a placeholder that cannot be
+    mounted cheaply but whose lines' extents are known (a mount or the extents
+    job measured them): the block leaves the spilling page, pins move, both
+    pages are marked stale, and the receiving page's own fold is predicted from
+    the store and repaired the same way — O(pages) additions past the mounted
+    set, synchronous, nothing drawn. A cheap mount + transplant is PREFERRED
+    over arithmetic when available: ~50 ms now against a document reload at
+    the stale page's eventual mount.
+  - a **PARK** when they are not known: the block leaves the spilling page and
+    the receiving page draws it — and checks its own fold — when it mounts
+    (`mountPage` → `repairAtMount`). The extents job makes this the exception.
+  A step that cannot land (a single system taller than a page, a DOM that
+  disagrees with the pins — a throw under the flag, `MAX_CASCADE_STEPS`)
+  restores the last consistent pins and the edit derives (edit path) or warns
+  (mount path). Under `HKL_INDEX_CHECK` a mount-time repair is verified against
+  a fresh full render like an edit-path splice (`repairAtMount`).
+- **The extents job** (`Renderer.armExtentsJob`, Phase 2). Armed after every
+  page render that leaves ownership active, with adoption's discipline (only
+  the current job runs; any document change, re-render or a toolkit that no
+  longer holds the page layout cancels it; never on the edit path): idle slices
+  render each unmounted, non-stale page offscreen from the toolkit's current
+  layout, post-process it (HEJI text is content), measure its systems' extents
+  into the `ExtentsStore` and discard the SVG (~100 ms a page). A page that
+  mounts meanwhile measures itself and is skipped; a page whose lines are all
+  known is skipped. Once it has passed a page, a cascade through that page is
+  arithmetic, never a park. Test hooks: `runExtentsJobNow`, `extentsJobState`,
+  `extentsKnown`.
 - **Page virtualization**: the mounted set is a window around the viewport and
   cursor, with eviction; placeholders match mounted boxes exactly. Pages are
   created (cascade past the last page) and removed (collapse) in place:
-  `createPage` appends a mounted, stale page; `removePage` renumbers what
+  `createPage` appends a mounted, stale page (`appendPlaceholderPage` a
+  pending one, when an arithmetic step reaches past the last page);
+  `removePage` renumbers what
   follows and marks it stale, so the first re-mount rebuilds the toolkit's
   layout from the current pins once.
 
@@ -368,7 +439,19 @@ full`.
 
 ## Verification
 
-- **Suite** (~4 min under the flag): the page-splice fixtures cover every
+- **The SPLICE invariant** (2026-09-02): every fixture's own renders are
+  recorded (`Renderer.renderLedger`, cleared after the setup builds its
+  document) and a full engrave among them FAILS the fixture. Two exemptions:
+  `single-line partition`, the refill's documented bail for a one-system
+  document, which most fixtures are; and a fixture declaring
+  `fullRender: '<reason>'` because deriving is what it asserts or because it
+  exercises a known gap. Five carry that flag today — two assert a derive, one
+  asserts a context refusal, and two derive because adding a section header
+  adds a user break. This invariant exists because nothing asserted that a
+  COMMAND splices, which is how Ctrl+M's 2.8 s derive survived unnoticed; the
+  runner also prints the ledger triage and the slowest fixtures, so a slow or
+  silently-deriving suite is diagnosable without a bisect.
+- **Suite** (~5 min under the flag): the page-splice fixtures cover every
   mechanism above — B2's are `pageSpliceNewLineAtEnd` (N→N+1),
   `pageSpliceNewPageAtEnd` (spill onto a created page), `pageSpliceLineMerge`
   (N→N−1), `pageSplicePageCollapse` (page count −1, renumbered) and
@@ -401,7 +484,11 @@ full`.
   bbox extents and header reserve against the placement rule — the Phase 1
   calibration on the pre-ownership build and the self-consistency check on the
   owned one; diff two runs for the per-system before/after table), `cb-checkcost.js` (test-mode overhead attribution), `cb-bigrange.js`
-  (large governed ranges). Measurement probes whose findings are recorded in
+  (large governed ranges), `cb-commands.js` (the COMMAND inventory: every
+  document-mutating user command, outcome + derive reason + wall — run it after
+  anything that touches the refill's bails), `cb-insertpos.js` (insert-measure
+  at a spread of positions: the probe that showed the cost was
+  position-dependent). Measurement probes whose findings are recorded in
   decisions.md and are not routine gates: `cb-scale.js`, `cb-naturalsalt.js`,
   `cb-windowalt.js`, `cb-svgopts.js`, `cb-naturalspath.js`, `cb-govdiag.js`.
 
@@ -436,15 +523,15 @@ naturals, SVG options) are in decisions.md (2026-09-01 "A thread measured",
 
 ## Open work
 
-- **Cascade on the model** (vertical-ownership plan Phase 2; START HERE 2) —
-  DOM-transplant steps placed by the rule, the continuation past the mounted
-  set as an idle extents job beside adoption. The fold is already predicted
-  (Phase 1); the steps' measuring is what goes.
+- **The window's shape** (vertical-ownership plan Phase 3; START HERE 3) —
+  drop the context lines once the six preconditions hold; the cascade no
+  longer needs them (Phase 2), so this is the next latency lever.
 - **Vertical ownership plan** —
   [composer-vertical-ownership-plan.md](composer-vertical-ownership-plan.md);
-  Phases 0 and 1 landed 2026-09-02 (D1 groundwork → D1 placement); Phase 2
-  (cascade on the model) next, then Phase 3 (the window's shape, a pure gate
-  question), then Phase 4 (distribution, D1 proper).
+  Phases 0–2 landed 2026-09-02 (courtesy stub, own height, cascade on the
+  model); Phase 3 (the window's shape) next, then Phase 4 (distribution, D1
+  proper). Open measurement from Phase 2: a created page's first layout scales
+  with the mounted set (~180 ms at 31 mounted, 31 ms at 3).
 - **B2 dated bails** (START HERE 5): header measure removed; single system
   taller than a page.
 - **D1 groundwork and placement landed 2026-09-02**: a section header's
@@ -479,6 +566,17 @@ naturals, SVG options) are in decisions.md (2026-09-01 "A thread measured",
 
 One line per landing; the reasoning is the dated decisions.md entry.
 
+- 2026-09-02 — An edit costs what is on screen: the replaced set is clipped to
+  the mounted band (the rest deferred, stale, warmed by the idle job), re-flow
+  split from re-draw in the sig diff, the user-break signature keyed on measure
+  identity, and `insertMeasureAt`'s O(slurs × measures) endpoint scan made one
+  pass. Insert-measure 2.9-4.1 s → 0.3-0.7 s; 19 of 24 mutating commands splice.
+- 2026-09-02 — Phase 2, the cascade on the model: a step is a DOM transplant
+  (no window), a last-page spill clones the spilling page's shell, steps past
+  the mounted set are arithmetic over the `ExtentsStore`, an idle extents job
+  fills it; `moveLines` and the splicer's page creation are gone. Battery
+  identical both states, sweep 115/115 with `parkedSteps` 0, suite 374/374;
+  composing at the end: 37 ms cascade.
 - 2026-09-02 — Phase 1, Composer owns height: `render/pagefit.ts` + `Renderer.placePage`
   on every mount and splice; the vertical plan, `dyFollow`, the header-reserve
   arithmetic and the window's `<pb>` pins are gone; reference gate and fold

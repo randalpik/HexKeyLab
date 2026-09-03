@@ -59,7 +59,8 @@ function selectFixtures(mode, scenarioName) {
 }
 
 async function runOne(cdp, name, fixture, console_cap, currentTier, opts = {}) {
-  const result = { name, ok: true, failures: [], counts: { invariants: 0 } };
+  const result = { name, ok: true, failures: [], counts: { invariants: 0 }, ms: { setup: 0, invariants: 0, total: 0 } };
+  const tStart = Date.now();
 
   /* Reset to blank doc — fast path, avoids page reload. */
   const reset = await cdp.evalJSON(RESET_SNIPPET);
@@ -74,7 +75,9 @@ async function runOne(cdp, name, fixture, console_cap, currentTier, opts = {}) {
 
   /* Run fixture setup (JS snippet first, then keystrokes if any). */
   if (fixture.setup) {
+    const tSetup = Date.now();
     const setupRes = await cdp.evalJSON(setupExpr(fixture.setup));
+    result.ms.setup = Date.now() - tSetup;
     result.counts.invariants++;
     if (setupRes?.__error || !setupRes?.ok) {
       result.ok = false;
@@ -96,6 +99,15 @@ async function runOne(cdp, name, fixture, console_cap, currentTier, opts = {}) {
 
   /* Wait one RAF after re-render so SVG metrics settle before assertions. */
   await cdp.evalJSON(`new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))`);
+
+  /* The document BUILD necessarily derives (there is no partition yet), so the
+     splice ledger starts here: everything after this point is the fixture's own
+     edits, and a full render among them is a latency defect unless the fixture
+     says otherwise (2026-09-02, Max: "assert splicing for every fixture that
+     isn't explicitly full-document"). */
+  await cdp.evalJSON(`(() => { const r = window.__hkl_composer && window.__hkl_composer.renderer; if (r && r.clearRenderLedger) r.clearRenderLedger(); return true; })()`);
+
+  const tInv = Date.now();
 
   /* Run fixture-specific assertions. */
   const assertions = FIXTURE_ASSERTIONS[name] || [];
@@ -202,6 +214,41 @@ async function runOne(cdp, name, fixture, console_cap, currentTier, opts = {}) {
     });
   }
 
+  /* SPLICE invariant (2026-09-02, Max: "assert splicing for every fixture that
+     isn't explicitly full-document"). A full engrave among the fixture's OWN
+     renders is a latency defect: the refill is command-agnostic, so any user
+     command should splice. Two exemptions, both explicit:
+       - `single-line partition`, the refill's documented bail for a document
+         with one system. Most fixtures are that small, page ownership does not
+         apply to them, and it is not a defect.
+       - a fixture that declares `fullRender: '<reason>'` because deriving is
+         the thing it asserts, or because it exercises a known gap.
+     Anything else fails, which is how a command that quietly starts deriving
+     gets caught — Ctrl+M's 2.8 s derive lived for weeks because nothing here
+     looked. */
+  const BY_DESIGN = new Set(['single-line partition']);
+  const ledger = await cdp.evalJSON(`(() => { const r = window.__hkl_composer && window.__hkl_composer.renderer; return (r && r.renderLedger) ? r.renderLedger() : []; })()`);
+  if (Array.isArray(ledger)) {
+    const fulls = ledger.filter((e) => e && e.full);
+    result.renders = { total: ledger.length, full: fulls.length };
+    if (fulls.length) {
+      result.fullRenderReasons = [...new Set(fulls.map((e) => e.deriveReason || e.skipReason || '(unattributed)'))];
+      const unexplained = result.fullRenderReasons.filter((why) => !BY_DESIGN.has(why));
+      if (unexplained.length && !fixture.fullRender) {
+        result.counts.invariants++;
+        result.ok = false;
+        result.failures.push({
+          kind: 'splice',
+          name: 'edits splice (no full engrave)',
+          detail: fulls.length + ' full render(s) during the fixture\'s own edits: ' +
+            unexplained.join('; ') + ' — if deriving is correct here, declare fullRender: \'<why>\'',
+        });
+      }
+    }
+  }
+
+  result.ms.invariants = Date.now() - tInv;
+  result.ms.total = Date.now() - tStart;
   return result;
 }
 
@@ -255,6 +302,35 @@ async function main() {
     const passed = results.filter((r) => r.ok).length;
     const failed = results.length - passed;
     console.log(`\n${passed}/${results.length} passed  (${elapsedMs} ms)`);
+    /* Where the wall went (2026-09-02). The suite's cost is concentrated in a
+       few fixtures whose SETUP builds a multi-page score one chord at a time;
+       print the worst so a slow suite is diagnosable without a bisect. */
+    /* Which fixtures full-rendered during their own edits, and why — the
+       triage list for the splice invariant. */
+    const derived = results.filter((r) => r.renders && r.renders.full > 0);
+    const clean = results.filter((r) => r.renders && r.renders.full === 0 && r.renders.total > 0);
+    console.log(`  splice ledger: ${clean.length} fixtures rendered with no full engrave, ${derived.length} with one`);
+    if (derived.length) {
+      const byReason = new Map();
+      for (const r of derived) {
+        for (const why of (r.fullRenderReasons ?? ['(unattributed)'])) {
+          if (!byReason.has(why)) byReason.set(why, []);
+          byReason.get(why).push(r.name);
+        }
+      }
+      for (const [why, names] of [...byReason].sort((a, b) => b[1].length - a[1].length)) {
+        console.log(`    ${String(names.length).padStart(3)}x  ${why}`);
+        console.log(`         ${names.slice(0, 6).join(', ')}${names.length > 6 ? ', ...' : ''}`);
+      }
+    }
+    const timed = results.filter((r) => r.ms && r.ms.total > 0).sort((a, b) => b.ms.total - a.ms.total);
+    if (timed.length) {
+      const sum = (f) => timed.reduce((n, r) => n + f(r), 0);
+      console.log(`  setup ${Math.round(sum((r) => r.ms.setup) / 1000)}s of ${Math.round(sum((r) => r.ms.total) / 1000)}s measured; slowest:`);
+      for (const r of timed.slice(0, 8)) {
+        console.log(`    ${String(r.ms.total).padStart(6)}ms  setup ${String(r.ms.setup).padStart(6)}ms  ${r.name}`);
+      }
+    }
     if (failed > 0) {
       exitCode = 1;
       console.log(`${failed} failed`);

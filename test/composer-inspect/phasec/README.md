@@ -128,6 +128,10 @@ Phase C-B2b / B1 probes (2026-08-31, findings baked into the design doc →
   the sonata). Args: `--arg "stride=4,limit=20,undo=0"`. Use the NEXT-PAGE anchor
   to judge drift — the page-top anchor can itself sit inside the replaced run,
   in which case it moves legitimately.
+  Phase 2 (2026-09-02) adds the cascade counters `summary.cascadeSteps` /
+  `cascadeTransplanted` / `cascadeArithmetic` / `cascadeCreated` /
+  `parkedSteps` (per row: `row.cascade` = `Renderer.lastCascade`); `parkedSteps`
+  must be 0 once the extents job has run.
 - **cb-allmeasures.js** + **allmeasures.sh** + **allmeasures-report.mjs** — the
   EXHAUSTIVE pass: edits every measure that has deletable content, records the
   replaced set and outcome, restores between edits. Run it via the shell script
@@ -216,6 +220,24 @@ Phase C-B2b / B1 probes (2026-08-31, findings baked into the design doc →
   runs the meter case instead. Note the second (flag-on) pass can refuse with
   `changed line not mounted` because the first pass's restore leaves stale
   pages; the attribution is unaffected.
+- **cb-commands.js** — the COMMAND inventory (2026-09-02): fires every
+  document-mutating user command on the sonata from one baseline and reports
+  outcome, derive reason and wall. Dialog commands are driven at the model
+  level; selection commands enter selection through the real Shift+arrow keys;
+  clipboard cases harvest the text through a real `copy`/`cut` event and hand
+  it back through a real `paste` event (Ctrl+V does nothing on its own — paste
+  is a ClipboardEvent handler). Exists because nothing ASSERTED that a command
+  splices, which is how Ctrl+M's 2.8 s derive survived unnoticed. Run it after
+  any change to the refill's bails. Current: 24 mutating, 19 spliced; of the
+  five derives, three genuinely add a user break (Ctrl+B, section header,
+  pickup), one exhausts the repair cap (mid-piece meter) and one is structural
+  (add instrument).
+- **cb-insertpos.js** — insert-measure at a spread of positions, plus a measure
+  delete and a note delete as controls, reporting the replaced LINE run, the
+  window size and the refill breakdown per position. This is what showed the
+  cost was position-dependent (2.9 s at a section start, 4.1 s in the last
+  section, 0.4 s mid-section) and that every run ended on a section boundary.
+  `--arg "pos=2,8,60"` picks the positions.
 - **cb-splicecost.js** — the A-thread attribution probe (2026-09-01): a
   steady-state Backspace mid-document (warm-up + two steady runs) with every
   cost tagged by the phase it ran in (mutate / refill / naturals / splice /
@@ -225,7 +247,13 @@ Phase C-B2b / B1 probes (2026-08-31, findings baked into the design doc →
   re-timed as full / no leader+trailer / replaced-lines-only. Wrapper overhead
   inflates the wall (~258 vs ~170 ms bare) — read the shares. Found: Verovio
   window 84 ms, host post-processing 30 ms, five flushes ~27 ms, history
-  snapshot 12 ms. `--arg "mi=<n>"` picks the measure.
+  snapshot 12 ms. `--arg "mi=<n>"` picks the measure. Phase 2 (2026-09-02):
+  `--arg "edit=append"` runs the battery's append-at-end edit with every page
+  mounted (attributes the cascade onto a created page: `cascade`, `mountPass`,
+  `createShell` phases, `cascade` record per run), `edit=appendnear` the same
+  with only the last three pages mounted (the user's condition — 37 ms
+  cascade), `edit=appendskipdefs` without copying glyph defs (the experiment
+  that priced them at ~30 ms).
 - **cb-naturalsalt.js** — naturals shape: the same 100-measure range as one
   giant `breaks:'none'` system (today), pinned at the live line starts with
   `noJustification`, and pinned justified; load/render wall and per-measure

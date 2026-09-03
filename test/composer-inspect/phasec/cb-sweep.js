@@ -214,6 +214,8 @@ for (let li = 1; li < nLines && measured < LIMIT; li += STRIDE) {
   row.editOk = model.docVersion() !== ver0;
   row.editReturn = edited !== false && edited !== null;
   row.outcome = ps.lastOutcome;
+  /* Phase 2: how the overflow cascade landed (transplant / arithmetic / park / created). */
+  row.cascade = r.lastCascade ? { ...r.lastCascade } : null;
   row.skipReason = ps.lastSkipReason;
   row.refillLines = pb.lastRefillLines;
   row.spliceLines = ps.lastStats.lines;
@@ -296,6 +298,12 @@ out.summary = {
   scrollTopChanged: rows.filter((x) => Math.abs(x.scrollTopDelta) > 0.5).length,
   scrollHeightChanged: rows.filter((x) => x.scrollHeightDelta !== 0).length,
   pageBoxChanged: rows.filter((x) => x.pageBox.length).length,
+  /* Phase 2 cascade counters — parked steps must reach 0 once the extents job has run. */
+  cascadeSteps: rows.reduce((n, x) => n + (x.cascade?.steps ?? 0), 0),
+  cascadeTransplanted: rows.reduce((n, x) => n + (x.cascade?.transplanted ?? 0), 0),
+  cascadeArithmetic: rows.reduce((n, x) => n + (x.cascade?.arithmetic ?? 0), 0),
+  cascadeCreated: rows.reduce((n, x) => n + (x.cascade?.created ?? 0), 0),
+  parkedSteps: rows.reduce((n, x) => n + (x.cascade?.parked ?? 0), 0),
 };
 console.warn = ow; console.error = oe;
 return out;

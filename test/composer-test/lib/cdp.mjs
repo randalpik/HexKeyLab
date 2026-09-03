@@ -55,6 +55,13 @@ export class CDP {
       returnByValue: true,
       awaitPromise,
     });
+    /* A SyntaxError in `expr` never reaches the in-page try/catch (the wrapper
+       does not parse): surface it instead of letting the caller see a bare
+       error object (which read as "no detail" — 2026-09-02). */
+    if (result.exceptionDetails) {
+      const ed = result.exceptionDetails;
+      return { __error: (ed.exception?.description ?? ed.text ?? 'evaluation failed') + (ed.lineNumber != null ? ' (line ' + ed.lineNumber + ')' : '') };
+    }
     const raw = result.result.type === 'string'
       ? result.result.value
       : JSON.stringify(result.result);
