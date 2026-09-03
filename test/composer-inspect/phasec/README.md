@@ -50,6 +50,15 @@ in decisions.md, 2026-08-30):
   hanging extents, and consecutive-system spacing (the pairwise-locality
   check that lets the splice MEASURE follower dy). Expect delta 0.0 except
   line 0 and section-boundary zones.
+- **cb-courtesystub.js** — Phase 0 proof of the vertical-ownership plan
+  (2026-09-02): one deletion per sonata line, restored between edits; records
+  the splice outcome, window shape, Verovio cost of re-rendering the window and
+  every window system's per-measure relX/width, staff top and signature glyph
+  codepoints (text-based). Run on BOTH code states (stash / pop, two halves
+  with `--arg "from=0,limit=58"` / `"from=58,limit=60"` to stay under the
+  runner's 300 s eval limit) and diff offline by position — ids do not compare
+  across runs. Expect identical systems for L−1 / hunk / L+1 everywhere and a
+  one-measure stub where the extension line used to be.
 - **cb-splice-battery.js** — the C-B acceptance-gate battery: eight edits
   through the live app, each asserting the splice/skip outcome AND a
   document-wide reference compare (every mounted page vs a fresh offscreen

@@ -1489,6 +1489,48 @@ const PAGE_SPLICE = {
     `,
   },
 
+  /* Phase 0 of the vertical-ownership plan (2026-09-02): the courtesy-
+   * generating line is no longer pulled into the window whole — only its FIRST
+   * measure, as a pinned one-measure stub before the trailer. Two consecutive
+   * lines that each begin a key change used to chain the window forward by
+   * two whole lines (courtesyExt = 2, the bound); with the stub the window
+   * ends one measure past the compared context line and the second signature
+   * line never enters it. Asserted via
+   * FIXTURE_ASSERTIONS.pageSystemSpliceCourtesyStubChain. */
+  pageSystemSpliceCourtesyStubChain: {
+    skipCursorTrace: true,
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 200; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
+  /* Phase 0 (2026-09-02): an <ending> that begins right past the window's
+   * last line is swallowed WHOLE by the window's ending closure (which treats
+   * the measure after the range as touched) before the courtesy rule runs, so
+   * the courtesy stub is never an ending member — it is the first measure of
+   * the line AFTER the swallowed ending line. Posed with a key change at the
+   * ending's first measure (its line joins the window) and a second key change
+   * on the following line (which becomes the stub). Asserted via
+   * FIXTURE_ASSERTIONS.pageSystemSpliceCourtesyStubAfterEnding. */
+  pageSystemSpliceCourtesyStubAfterEnding: {
+    skipCursorTrace: true,
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 200; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
   /* A render-time cross-measure dependency the sig-diff cannot see (2026-09-01):
    * `relocateInitialClefs` draws a measure-initial clef at the END of the
    * PREVIOUS measure, so an edit that makes a mid-measure clef measure-initial
@@ -9321,9 +9363,14 @@ export const FIXTURE_ASSERTIONS = {
         if (ps.lastOutcome !== 'spliced') {
           return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
         }
-        if (!ps.lastWindow || ps.lastWindow.courtesyExt < 1) {
-          return { ok: false, detail: 'window was not extended for the courtesy (courtesyExt=' + (ps.lastWindow && ps.lastWindow.courtesyExt) + ')' };
+        if (!ps.lastWindow || !ps.lastWindow.stubId) {
+          return { ok: false, detail: 'window has no courtesy stub for the generating line (stubId=' + (ps.lastWindow && ps.lastWindow.stubId) + ')' };
         }
+        /* The stub is exactly ONE measure past the last window line (Phase 0,
+           2026-09-02) — the generating line's first measure, not the line. */
+        { const sp = pb['startIds'], idsN = m.allMeasures().map((x) => x.getAttribute('xml:id')), W = ps.lastWindow;
+          const lineEnd = W.wHi + 1 < sp.length ? idsN.indexOf(sp[W.wHi + 1]) : idsN.length;
+          if (W.mHi !== lineEnd || idsN[W.mHi] !== W.stubId) return { ok: false, detail: 'stub is not exactly the first measure past the last window line (mHi=' + W.mHi + ', line end=' + lineEnd + ', stubId=' + W.stubId + ')' }; }
         return { ok: true };
       })()` },
   ],
@@ -9380,9 +9427,116 @@ export const FIXTURE_ASSERTIONS = {
         if (ps.lastOutcome !== 'spliced') {
           return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
         }
-        if (!ps.lastWindow || ps.lastWindow.courtesyExt < 1) {
-          return { ok: false, detail: 'window was not extended for the courtesy (courtesyExt=' + (ps.lastWindow && ps.lastWindow.courtesyExt) + ')' };
+        if (!ps.lastWindow || !ps.lastWindow.stubId) {
+          return { ok: false, detail: 'window has no courtesy stub for the generating line (stubId=' + (ps.lastWindow && ps.lastWindow.stubId) + ')' };
         }
+        /* The stub is exactly ONE measure past the last window line (Phase 0,
+           2026-09-02) — the generating line's first measure, not the line. */
+        { const sp = pb['startIds'], idsN = m.allMeasures().map((x) => x.getAttribute('xml:id')), W = ps.lastWindow;
+          const lineEnd = W.wHi + 1 < sp.length ? idsN.indexOf(sp[W.wHi + 1]) : idsN.length;
+          if (W.mHi !== lineEnd || idsN[W.mHi] !== W.stubId) return { ok: false, detail: 'stub is not exactly the first measure past the last window line (mHi=' + W.mHi + ', line end=' + lineEnd + ', stubId=' + W.stubId + ')' }; }
+        return { ok: true };
+      })()` },
+  ],
+  pageSystemSpliceCourtesyStubChain: [
+    { name: 'two consecutive lines beginning key changes: the window ends one measure past the compared line (a stub), the second signature line stays out',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        let startIds = pb['startIds'];
+        if (startIds.length < 7) return { ok: false, detail: 'need >= 7 lines, got ' + startIds.length };
+        const ids0 = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const sig1 = ids0.indexOf(startIds[4]), sig2 = ids0.indexOf(startIds[5]);
+        if (sig1 < 0 || sig2 < 0) return { ok: false, detail: 'line start not in model' };
+        m.setKeySigAt(sig1, '3s', 'major');
+        m.setKeySigAt(sig2, '2f', 'major');
+        H.reRender();
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        startIds = pb['startIds'];
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const L1 = startIds.indexOf(ids[sig1]), L2 = startIds.indexOf(ids[sig2]);
+        if (L1 < 3 || L2 !== L1 + 1) return { ok: false, detail: 'fixture cannot pose the case: key changes sit on lines ' + L1 + ' and ' + L2 };
+        /* Edit two lines above the first change: the line between is the compared
+           context line, the first signature line generates its courtesy, and the
+           second signature line is what the old whole-line rule chained in. */
+        const target = L1 - 2;
+        const mi = ids.indexOf(startIds[target]);
+        m.setCursor(m.getMeasureStartCursor(1, mi + 1), 1);
+        const ver = m.docVersion();
+        if (!m.deleteAtCursor()) return { ok: false, detail: 'delete rejected' };
+        if (m.docVersion() === ver) return { ok: false, detail: 'delete did not change the document' };
+        const prevCheck = globalThis.__HKL_INDEX_CHECK;
+        globalThis.__HKL_INDEX_CHECK = true;
+        try { H.reRender(); } finally { globalThis.__HKL_INDEX_CHECK = prevCheck; }
+        if (/diverged/.test(ps.lastSkipReason || '')) return { ok: false, detail: 'context line diverged: ' + ps.lastSkipReason };
+        if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
+        const W = ps.lastWindow;
+        if (!W || !W.stubId) return { ok: false, detail: 'no courtesy stub (stubId=' + (W && W.stubId) + ')' };
+        const sp = pb['startIds'], idsN = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const stubLine = sp.indexOf(W.stubId);
+        if (stubLine !== W.wHi + 1) return { ok: false, detail: 'stub is not the line right past the window (stub line ' + stubLine + ', wHi ' + W.wHi + ')' };
+        if (W.mHi !== idsN.indexOf(W.stubId)) return { ok: false, detail: 'stub is not exactly one measure (mHi=' + W.mHi + ', stub measure=' + idsN.indexOf(W.stubId) + ')' };
+        if (W.stubId !== ids[sig1]) return { ok: false, detail: 'fixture did not pose the chain: the stub is ' + W.stubId + ', expected the first signature line ' + ids[sig1] };
+        if (idsN.indexOf(ids[sig2]) <= W.mHi) return { ok: false, detail: 'the second signature line leaked into the window' };
+        return { ok: true };
+      })()` },
+  ],
+  pageSystemSpliceCourtesyStubAfterEnding: [
+    { name: 'an ending starting past the window is swallowed by the ending closure; the courtesy stub is the first measure of the line after it, never an ending member',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        let startIds = pb['startIds'];
+        if (startIds.length < 7) return { ok: false, detail: 'need >= 7 lines, got ' + startIds.length };
+        const ids0 = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const sig1 = ids0.indexOf(startIds[4]), sig2 = ids0.indexOf(startIds[5]);
+        if (sig1 < 0 || sig2 < 0 || sig1 + 1 >= sig2) return { ok: false, detail: 'line starts not usable (' + sig1 + ', ' + sig2 + ')' };
+        m.setKeySigAt(sig1, '3s', 'major');
+        m.setKeySigAt(sig2, '2f', 'major');
+        /* A two-measure 1st ending whose FIRST member is the first key-change
+           measure: create it on the next measure (it needs a backward repeat),
+           then extend backwards. */
+        m.allMeasures()[sig1 + 1].setAttribute('right', 'rptend');
+        const c = m.toggleEndingAt(sig1 + 1);
+        if (!c || c.action !== 'created') return { ok: false, detail: 'toggleEndingAt did not create an ending: ' + JSON.stringify(c) };
+        const e = m.toggleEndingAt(sig1);
+        if (!e || e.action !== 'extended') return { ok: false, detail: 'toggleEndingAt did not extend the ending backwards: ' + JSON.stringify(e) };
+        const meas = m.allMeasures()[sig1];
+        const wrap = meas.closest('ending');
+        const members = wrap ? Array.from(wrap.children).filter((k) => k.localName === 'measure') : [];
+        if (!wrap || members.length !== 2 || members[0] !== meas) return { ok: false, detail: 'fixture cannot pose the case: ending members ' + members.length };
+        H.reRender();
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        startIds = pb['startIds'];
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const L1 = startIds.indexOf(ids[sig1]), L2 = startIds.indexOf(ids[sig2]);
+        if (L1 < 3 || L2 !== L1 + 1) return { ok: false, detail: 'fixture cannot pose the case: key changes sit on lines ' + L1 + ' and ' + L2 };
+        const target = L1 - 2;
+        const mi = ids.indexOf(startIds[target]);
+        m.setCursor(m.getMeasureStartCursor(1, mi + 1), 1);
+        const ver = m.docVersion();
+        if (!m.deleteAtCursor()) return { ok: false, detail: 'delete rejected' };
+        if (m.docVersion() === ver) return { ok: false, detail: 'delete did not change the document' };
+        const prevCheck = globalThis.__HKL_INDEX_CHECK;
+        globalThis.__HKL_INDEX_CHECK = true;
+        try { H.reRender(); } finally { globalThis.__HKL_INDEX_CHECK = prevCheck; }
+        if (/diverged/.test(ps.lastSkipReason || '')) return { ok: false, detail: 'context line diverged: ' + ps.lastSkipReason };
+        if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
+        const W = ps.lastWindow;
+        const sp = pb['startIds'], idsN = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const endingLine = sp.indexOf(ids[sig1]);
+        if (!W || W.wHi !== endingLine) return { ok: false, detail: 'the ending line was not swallowed by the ending closure (wHi=' + (W && W.wHi) + ', ending line=' + endingLine + '; window=' + JSON.stringify(W) + ')' };
+        if (W.stubId !== ids[sig2]) return { ok: false, detail: 'stub is not the first measure of the line after the ending (stubId=' + W.stubId + ')' };
+        if (W.mHi !== idsN.indexOf(ids[sig2])) return { ok: false, detail: 'stub is not exactly one measure (mHi=' + W.mHi + ')' };
+        if (m.allMeasures()[W.mHi].closest('ending')) return { ok: false, detail: 'the stub is an ending member' };
         return { ok: true };
       })()` },
   ],

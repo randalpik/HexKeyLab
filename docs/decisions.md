@@ -5815,3 +5815,65 @@ systems on the right page, pins agree with the DOM).
 `apps/composer/src/render/render.ts` (`repairAtMount`, `lazyMoveOut`),
 `apps/composer/src/render/pagesplice.ts` (title migration,
 `followerReserveDelta`), `test/composer-test/fixtures.mjs`.
+
+## 2026-09-02 — Courtesy stub: the courtesy-generating line enters the splice window as ONE measure (vertical-ownership plan, Phase 0)
+
+**Context**: the design doc's START HERE 2 priced the window's two context lines
+and the courtesy-extension line at ~60 of the 84 ms of Verovio time per edit and
+framed shrinking the window as a gate question. Inventorying what the context
+lines actually do (against `verticalPlan`, not the comment above it) found a
+third job: they are the two ends of the READ spacing chain — the first replaced
+system is placed by `ctxPrev.staffTop + (window L − window L−1)` and the
+followers by `(window L+1 − window L_last)`. That is geometry, not
+verification, so the context lines cannot go while the vertical plan is read
+from Verovio; Verovio 6.3.0-dev (the CDN build, checked in source) stacks
+systems as `B(k) + G + A(k+1)` with the overflow-aware inter-system variant
+commented out, so a model of it would be exact today and one release from
+wrong. Max: D1 ("we always own height") removes the geometry job entirely, and
+the cascade (START HERE 1) and the window question both fall out of it. The
+three items became one sequenced plan,
+[composer-vertical-ownership-plan.md](composer-vertical-ownership-plan.md);
+this entry is its Phase 0, the only in-principle reduction of the window that
+does not depend on owning height.
+
+**Picked**: the courtesy-extension line — pulled in whole (bounded at two lines)
+so the compared context line L+1 renders the end-of-line courtesy its successor
+generates — is replaced by that successor's FIRST MEASURE as a pinned
+one-measure stub system before the trailer (`lastWindow.stubId`). Same
+partial-absorber idea as the leader and trailer: a real document measure, so
+`serializeRangeForRender` already carries it and the scoreDef / section `<sb>`
+before it; pinned `<pb>` when its line begins a page so L+1 ends exactly as it
+does live; never compared, never imported, never chained from. The bound-at-two
+disappears with the chain it bounded (a stub's own courtesy is nobody's
+business). The ending closure runs before the courtesy rule and treats the
+measure past the range as touched, so a stub is never an `<ending>` member: an
+ending that begins right past the window joins it whole and the stub is the
+first measure of the line after — a cleaner invariant than the tolerance the
+plan expected to document.
+
+**Proof** (`cb-courtesystub.js`, both code states, stash / pop): every sonata
+line edited once (116 positions; 107 splice, 9 are MEI-identical no-ops). Per
+window system — leader, L−1, hunk, L+1 — per-measure x/width, staff top and
+clef/key/meter glyph codepoints identical to 0.01 on all 107; window span and
+page count identical on the 87 positions without an extension; on the 20 with
+one, the stub is the extension line's first measure and the window drops from
+22.4 to 18.1 measures (−3…−9; two chained extensions 33 → 24), Verovio
+loadData + renderToSVG 103 → 86 ms mean. Battery on both states: 10/10
+spliced, `reference.ok` identical, `insert-rest-ripple` (a courtesy position)
+24 → 20 window measures. Sweep 115/115, `pageBoxChanged` /
+`scrollHeightChanged` / `scrollTopChanged` 0, splice median 234 ms (82–496).
+Fixtures `pageSystemSpliceCourtesyStubChain` (consecutive signature lines: one
+stub measure, the second line stays out) and
+`pageSystemSpliceCourtesyStubAfterEnding` (ending closure first, then the
+stub); both fail on the unfixed source; the three existing courtesy fixtures
+now assert the stub is exactly one measure past the last window line.
+
+**Two probe lessons on the way** (lessons.md): a multi-page window's SVGs must
+be parsed one `DOMParser` document per page — two `<svg>` roots in one string
+is not XML and silently drops the second page's systems; and measure ids carry
+a per-import random suffix, so nothing keyed on ids (a window-MEI hash included)
+compares across two runs — compare by position and by the id's stable prefix.
+
+**Where**: `apps/composer/src/render/pagesplice.ts` (`trySplice`, `buildWindowMei`,
+`spliceDom`, `lastWindow.stubId`), `test/composer-test/fixtures.mjs`,
+`test/composer-inspect/phasec/cb-courtesystub.js`.

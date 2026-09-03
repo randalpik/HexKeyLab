@@ -2685,3 +2685,38 @@ restarted (ask Max) before any browser-based verification counts; and when a
 change has no effect, read what the page actually loaded —
 `performance.getEntriesByType('resource')` for the module URL, then `fetch` it
 and grep for the change — before theorizing about the code.
+
+## An inventory of a component's jobs must be checked against the code that READS it, not the comment above it (2026-09-02)
+
+The design doc priced the splice window's context lines as "the live fidelity
+test plus the courtesy the following line generates" (~60 ms of Verovio) and
+framed shrinking the window as a gate question. `verticalPlan` reads the
+window's L−1 and L+1 as the two ends of the spacing chain — geometry, not
+verification — and the 2026-08-30 entry had said so; two later summaries
+dropped the third job and the doc's START HERE inherited the loss. The
+correction came from reading the consumer (`verticalPlan`, `dyFollow`) rather
+than the producer's comment. Rule: before pricing the removal of anything a
+splice renders, list every reader of it in the code and name each reader's
+purpose; a comment that enumerates purposes is a claim, not the inventory.
+Corollary from the same afternoon: the leader/trailer delta-table method
+(`cb-windowalt.js`) answers "is this element geometry or verification" for a
+SYNTHETIC element; for a REAL line the same table would have shown the
+replaced system's staff top moving without the context line — run it before
+believing an element is gate-only.
+
+## A multi-page window's SVGs are one DOMParser document PER PAGE; ids do not compare across runs (2026-09-02)
+
+Two probe faults found while proving the courtesy stub, both silent:
+- Concatenating `renderToSVG(1) + renderToSVG(2)` into one string and parsing
+  it with `DOMParser('image/svg+xml')` is not XML (two roots); the parser
+  returns a document that still answers `querySelectorAll('g.system')` — with
+  only the FIRST page's systems. 98 of 107 sonata windows are two or three
+  pages, so the first proof run compared truncated system lists on both builds
+  and looked clean. Parse each page separately (`spliceDom` already does).
+- Measure ids are `m-<seq>-<rand>`: the suffix is regenerated on every import,
+  so a hash of the window MEI, or any id equality, is meaningless across two
+  runs of the same probe. Compare by position, or by the id's stable prefix.
+Both are the kind of fault that makes a "delta 0.0" table lie in the direction
+of agreement; a proof probe's first run should include one case that MUST
+differ (here: the extension line present on one build, absent on the other)
+and fail if it does not.
