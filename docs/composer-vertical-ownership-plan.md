@@ -1,4 +1,4 @@
-# Composer vertical ownership — plan (START HERE 1 + 2, D1)
+# Composer vertical ownership — plan (the design doc's former START HERE 1 + 2, and D1)
 
 Status: **proposal, not approved.** Written 2026-09-02, revised the same day
 after Max's observation that D1 ("we always own height") dissolves the vertical
@@ -199,7 +199,7 @@ existing page-splice fixtures; visual baselines re-seeded after Max eyeballs
 the diffs. Ritual (§4) with the battery on both code states — outcomes
 identical, `reference.ok` under the new gate.
 
-### Phase 2 — the cascade on the model (absorbs START HERE 1)
+### Phase 2 — the cascade on the model (absorbs the design doc's former START HERE 1)
 
 1. **Predicted fold.** `repairPagination` reads `fold()` from extents instead
    of measuring after surgery.
@@ -235,7 +235,7 @@ splice for the moved block — assert the transplant); `pageCascadePredictedFold
 (predicted fold == measured fold under the flag, over the cascade fixtures);
 `pageCascadeArithmeticPastMount` (spill into an unmounted page with known
 extents: pins change, page marked stale, nothing rendered; mount draws it
-right); the two new test types from START HERE 1 — `pageExtentsJobEditDuring`
+right); the two new test types from the former START HERE 1 — `pageExtentsJobEditDuring`
 (edit while the idle job runs: job cancelled/re-armed, edit unaffected, no
 double placement) and `pageExtentsJobScrollDuring` (mount during the job: the
 mount measures, the job skips that page); sweep counters `pageBoxChanged` /
@@ -338,7 +338,7 @@ same model and are out of scope here.
 Standing traps: no `apps/composer/src` edits while anything runs against the
 dev server; no `pnpm build` or second Chromium alongside the suite.
 
-## 5. Doc changes on approval (not before)
+## 5. Doc changes on approval (not before) — standing policy; done for Phases 0–1 on 2026-09-02
 
 - Design doc START HERE: steps 1 and 2 replaced by this sequence; the
   "context lines exist for the live fidelity test and the courtesy" sentence

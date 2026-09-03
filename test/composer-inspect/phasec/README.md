@@ -93,8 +93,11 @@ Phase C-B2b / B1 probes (2026-08-31, findings baked into the design doc →
   change: runs page-first deletes on pages 3–7, captures the splicer's
   `lastVertical` plan, then measures what the ENSUING render actually did and
   reports predicted-vs-actual per system plus `maxPredictionError`. That number
-  is the gate for any change to `verticalPlan` — it went 425 → 8 units when the
-  window was made to paginate like the live document. Note the static cases
+  was the gate for any change to `verticalPlan` — it went 425 → 8 units when the
+  window was made to paginate like the live document. HISTORICAL since the
+  vertical-ownership plan's Phase 1 (2026-09-02): `verticalPlan` is gone and
+  `lastVertical` is always null; placement is gated by `cb-placement.js` and the
+  reference gate's staff-top check instead. Note the static cases
   read as "error" because the splice keeps live positions by design; only
   non-static rows are real evidence.
 - **cb-anchor.js** — every mounted page's first system (margin ty, staff top,
@@ -182,7 +185,7 @@ Phase C-B2b / B1 probes (2026-08-31, findings baked into the design doc →
   line-start measure's first chord, renders, deletes that chord (the clef becomes
   measure-initial and `relocateInitialClefs` moves it onto the line above),
   renders again, and compares page 1 system by system — pre-edit live, post-edit
-  live, the splicer's vertical plan, and a fresh full-render reference, each with
+  live, the splicer's vertical plan (pre-Phase 1; null now), and a fresh full-render reference, each with
   system heights and clef glyph codepoints. Pre-fix the PRE-edit page already
   showed the lines after the clef in the old clef (`E050` vs reference `E062`,
   −960 units of height): a clef edit had spliced one line and left the rest of

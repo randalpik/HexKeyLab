@@ -11,17 +11,23 @@ Companions: [composer-spot-splice-design.md](composer-spot-splice-design.md)
 
 ## ► START HERE
 
-**State.** On the 446-bar sonata every edit splices: sweep 115/115, exhaustive
-every-measure pass 420/420 (empty refusal inventory), battery 10/10
-reference-clean (B2, 2026-09-02: a line-count change, a collapse and an
-overflow onto a created page are splices too; headers are page budget), suite 367/367 under
-`HKL_INDEX_CHECK` (~5 min; the courtesy stub's two fixtures landed 2026-09-02). A steady-state
-one-note edit is ≈ 144 ms instrumented (was 258 before the A thread; bare is
-lower — read shares, not walls). The splice's DOM work is now a single layout
-flush, the post-surgery snap; everything the splice reads from its window comes
-from SVG text and the window is never attached. Verovio's window `loadData` +
-`renderToSVG` (~84 ms) is well over half of the edit and is fixed by the
-window's shape.
+**State.** On the 446-bar sonata every edit splices: sweep 115/115 (viewport
+counters 0), exhaustive every-measure pass 420/420 (empty refusal inventory),
+battery 10/10 reference-clean (B2, 2026-09-02: a line-count change, a collapse
+and an overflow onto a created page are splices too; headers are page budget),
+suite 370/370 under `HKL_INDEX_CHECK` (~6 min; the courtesy stub's two and
+Phase 1's three placement fixtures landed 2026-09-02). Composer owns height
+(vertical-ownership plan Phase 1, landed 2026-09-02): every system on every
+page is placed by Composer's rule over measured extents; nothing vertical is
+read from Verovio's stacking or from the splice window. A steady-state one-note
+edit is ≈ 144 ms instrumented (was 258 before the A thread; bare is lower —
+read shares, not walls). The splice's DOM work is a single layout flush, the
+post-surgery snap; everything the splice reads from its window comes from SVG
+text and the window is never attached. Verovio's window `loadData` +
+`renderToSVG` (~84 ms) is well over half of the edit; since Phase 1 the ~60 ms
+it spends on the context lines buys gate work only (the fidelity comparison,
+courtesy / spanner endpoints), so the window's shape is a pure gate question
+(the plan's Phase 3), no longer a geometry constraint.
 
 **Governing principle (Max, 2026-09-01):** *"The goal is to hit O(edit) in ALL
 cases. Any time the user is exposed to O(document) on a live path when they
@@ -29,36 +35,45 @@ didn't ask for a change to the full document is a failure, full stop."* A
 fallback is never an invariant; anything that currently derives or full-renders
 is a defect with a date on it.
 
-**Next steps.** Steps 1 and 2 below are folded into ONE sequenced plan,
+**Next steps.** The former steps 1 and 2 (the scheduled cascade continuation
+and the window's shape) were folded into ONE sequenced plan,
 [composer-vertical-ownership-plan.md](composer-vertical-ownership-plan.md)
-(2026-09-02, approved): own height first (D1 — extents + placement, which
-removes the context lines' geometry job), rebuild the cascade on the model
-(step 1), then decide the window's shape as a pure gate question (step 2),
-then the distribution rule. Its Phase 0 (the courtesy stub) landed 2026-09-02.
-The two entries are kept here as they stood for the record:
+(2026-09-02, approved), and are superseded by its sequence:
 
-1. **The cascade past the mounted set, scheduled.** B2's overflow repair runs
+1. **Own height first — LANDED (Phases 0 and 1, 2026-09-02).** The courtesy
+   stub (Phase 0: the courtesy-generating line enters the window as a
+   one-measure stub, not a line) and Composer's placement of every system by
+   one rule over measured extents (Phase 1: `render/pagefit.ts`,
+   `Renderer.placePage` on every mount and splice, `ExtentsStore`, the
+   predicted fold, the reference gate reading the rule — Ownership, below).
+   This removed the context lines' THIRD job. As inventoried until 2026-09-02
+   they did two (the live fidelity comparison; courtesy generation / spanner
+   endpoints); they also were the two ends of the READ vertical chain
+   (`verticalPlan` chained the first replaced system from the window's L−1,
+   `dyFollow` the followers from its L+1) — geometry, which is what had kept
+   the window's shape from being a gate question (lessons.md, "An inventory of
+   a component's jobs"). The two gate jobs remain.
+2. **The cascade on the model (Phase 2) — NEXT.** B2's overflow repair runs
    one measured step per page synchronously across the mounted set (cursor
    page ± 1) and parks the rest at the mount boundary (the receiving page draws
    the moved block and continues the cascade when it mounts — one document
-   reload on that mount, the existing stale-mount cost). The next step is a
-   scheduled continuation (idle/rAF, finished synchronously before the next
-   edit like adoption) so pages below the cursor's surroundings settle without
-   a reload and without holding the keystroke. `Renderer.repairPagination`'s
-   `pending` list is the seam; new test types are needed (edit-during-cascade,
-   scroll-during-cascade). This is also where D1 plugs in: a page-fit model
-   with tracked system heights would let a step PREDICT the fold and distribute
-   systems vertically instead of measuring after surgery.
-2. **The window's shape.** CORRECTED 2026-09-02: the context lines do THREE
-   jobs, not two — the live fidelity comparison, courtesy generation / spanner
-   endpoints, and the two ends of the READ vertical chain (`verticalPlan`
-   chains the first replaced system from the window's L−1 and `dyFollow` from
-   the window's L+1). The third is geometry, so the ~60 ms of context-line
-   Verovio time is not available while the plan is read from Verovio; it
-   becomes a pure gate question only once Composer places systems itself
-   (the plan's Phase 1). The courtesy-extension LINE is gone (Phase 0): the
-   generating line's first measure is appended as a one-measure stub.
-3. **Remaining structural bails** (each a derive): head/interior `rest`
+   reload on that mount). With extents owned, a step becomes a DOM transplant
+   placed by the rule (the fold is already predicted, `foldIndex`), and the
+   continuation past the mounted set becomes an idle EXTENTS job beside
+   adoption — measuring the lines of not-yet-mounted pages into the
+   `ExtentsStore` so pages below the cursor's surroundings settle without a
+   reload and without holding the keystroke. `Renderer.repairPagination`'s
+   `pending` list is the seam; new test types come with it (edit-during-
+   cascade, scroll-during-cascade).
+3. **The window's shape (Phase 3) — a pure gate question now.** The context
+   lines cost ~60 ms of the ~84 ms window and do gate work only; dropping them
+   is gated on the plan's six preconditions, chiefly that the reference gate
+   and the replaced-set closure stand in for the live fidelity comparison.
+   Max's ruling: the live context comparison is a fallback masking replaced-
+   set defects, not an invariant.
+4. **Distribution (Phase 4, D1 proper).** Slack within the fixed budget; only
+   `placeSystems` changes.
+5. **Remaining structural bails** (each a derive): head/interior `rest`
    (staffDefs, elements before the first measure, credits — C2), user breaks,
    foreign document; the repair-loop caps (`MAX_ENSURES`, `MAX_REPAIR_STEPS`);
    a replaced line on an unmounted page that a PREVIOUS splice marked stale
@@ -66,9 +81,10 @@ The two entries are kept here as they stood for the record:
    own dated refusals (2026-09-02): a section-header measure deleted by the
    edit (`section header measure removed`), a single system taller than its
    page, and a cascade beyond `MAX_CASCADE_STEPS` 64.
-4. Small items: A3 (collapse the two `cursor.update` calls, ~1.6 ms, blocked on
+6. Small items: A3 (collapse the two `cursor.update` calls, ~1.6 ms, blocked on
    bridge ordering), A5 (worker-offloaded castoff `loadData`, ~1.4 s on the
-   derive — big refactor, `afterRender` is the seam), the test-mode residual
+   derive — big refactor, `afterRender` is the seam; the remaining latency
+   lever once the window's shape is settled), the test-mode residual
    (`assertVoiceIndexConsistent` is O(measures²) once per index build, 0.7 s
    on the sonata under the flag).
 
@@ -106,7 +122,11 @@ images, uninterpreted; pixel-diff them first (`lessons.md`, 2026-09-01).
   a load splices like any other. Unreadable output falls back to painting the
   castoff layout and adopting it lazily in idle slices (`armAdoption`); only
   the CURRENT adoption task may commit, once — a superseded or already-finished
-  task's queued idle step must never write (decisions.md 2026-09-01).
+  task's queued idle step must never write (decisions.md 2026-09-01). Phase 2
+  of the vertical-ownership plan adds a second idle job beside adoption, the
+  EXTENTS job: measuring the lines of not-yet-mounted pages into the
+  `ExtentsStore` (next bullet) so the cascade can place and fold pages it has
+  not mounted; same ownership discipline (only the current task commits).
 - **Composer owns height** (Max, 2026-09-02; vertical-ownership plan Phase 1,
   `render/pagefit.ts`). The paper is fixed — Verovio's page box, one size for
   every page, the scale pinned at that box — and the components that fill it
@@ -355,7 +375,12 @@ full`.
   `pageSystemSpliceCascadeOverflow` (a spill moves the tail onto the next page); the courtesy stub's are `pageSystemSpliceCourtesyStubChain` (two
   consecutive signature lines: one stub measure, the second line stays out)
   and `pageSystemSpliceCourtesyStubAfterEnding` (ending closure first, then
-  the stub); each landed with its bug or feature and was run against the
+  the stub); Phase 1's are `pagePlacementOwned` (every mounted page satisfies
+  live tops == rule over live extents, after the derive and after a splice),
+  `pagePlacementTextTopped` (a tempo-topped first system: below the header,
+  never higher than without the text) and `pageSpliceNoPbPins` (a page-first
+  hunk from a one-page window, placed like the next page's first); each landed
+  with its bug or feature and was run against the
   unfixed source (`test/composer-test/run-unfixed.sh <fixtures>` stashes
   `apps/composer/src`, runs, restores). A visual mismatch appends
   `window.__visualDiag` (fixture-recorded geometry) to its detail.
@@ -385,8 +410,9 @@ full`.
 Steady-state one-note edit ≈ 144 ms (`cb-splicecost.js`; wrapper overhead
 inflates walls, read shares). Splice ≈ 90: Verovio window `loadData` +
 `renderToSVG` ≈ 84 (two window pages, 20 measures — since the courtesy stub
-this default position is 15 measures, window ≈ 78–82 — fixed by the window's
-shape; drawing, not layout: `loadData` is ~0.6 ms/measure, `renderToSVG`
+this default position is 15 measures, window ≈ 78–82 — the window's shape is
+the lever, since Phase 1 a pure gate question (plan Phase 3); drawing, not
+layout: `loadData` is ~0.6 ms/measure, `renderToSVG`
 3–4.5, and the first draw after a load carries the lazy layout); `spliceDom`
 ≈ 10 (imported-system post-processing 5.5 sharing the snap's flush, snap 1.8,
 text profiles + imports ≈ 3). Refill ≈ 33, all the naturals window (its
@@ -410,28 +436,34 @@ naturals, SVG options) are in decisions.md (2026-09-01 "A thread measured",
 
 ## Open work
 
-- **Scheduled cascade continuation** (START HERE 1) — the async driver past the
-  mounted set; the D1 page-fit model would make its steps predictive.
-- **Vertical ownership plan** (START HERE 1 + 2, D1) —
+- **Cascade on the model** (vertical-ownership plan Phase 2; START HERE 2) —
+  DOM-transplant steps placed by the rule, the continuation past the mounted
+  set as an idle extents job beside adoption. The fold is already predicted
+  (Phase 1); the steps' measuring is what goes.
+- **Vertical ownership plan** —
   [composer-vertical-ownership-plan.md](composer-vertical-ownership-plan.md);
-  Phase 0 landed, Phase 1 (extents + placement) next.
-- **B2 dated bails** (START HERE 3): header measure removed; single system
+  Phases 0 and 1 landed 2026-09-02 (D1 groundwork → D1 placement); Phase 2
+  (cascade on the model) next, then Phase 3 (the window's shape, a pure gate
+  question), then Phase 4 (distribution, D1 proper).
+- **B2 dated bails** (START HERE 5): header measure removed; single system
   taller than a page.
-- **D1 groundwork landed 2026-09-02**: a section header's reserve is page
-  budget (Ownership, above) — the injector no longer grows the viewBox, a page
-  that no longer fits below its headers spills into the cascade, a spilled
-  header line carries its title. What remains of D1 is the feature itself:
-  vertical distribution of systems and headers within the fixed budget.
+- **D1 groundwork and placement landed 2026-09-02**: a section header's
+  reserve is page budget and Composer places every system by one rule over
+  measured extents (Ownership, above) — the injector only draws, a page that
+  no longer fits below its headers spills into the cascade, a spilled header
+  line carries its title. What remains of D1 is the distribution rule itself:
+  slack within the fixed budget (Phase 4; only `placeSystems` changes).
 - **C2** — first-page credits: composer/footer changes still derive (rare).
 - **A3** — collapse the two `cursor.update` calls (~1.6 ms; blocked on the
   `onStateChange`-before-`onChange` bridge ordering).
-- **A5** — worker-offloaded castoff `loadData` (~1.4 s on the derive).
+- **A5** — worker-offloaded castoff `loadData` (~1.4 s on the derive); the
+  remaining latency lever once the window's shape (Phase 3) is settled.
 - **Test-mode residual** — `assertVoiceIndexConsistent` ×
   `getMeasureStartCursorUncached`: 0.7 s per index build on the sonata under
   the flag. Tolerable; not O(edit).
-- **D. Tuning and features (Max's call)**: D1 vertical justification within a
-  page (shares a page-fit model with the segmented castoff; needs system-height
-  tracking — the cascade step is where it would apply); D2 FIT_MAX / MIN_FILL
+- **D. Tuning and features (Max's call)**: D1 vertical distribution within a
+  page (the page-fit model and extents exist since Phase 1 — Phase 4 changes
+  `placeSystems` only); D2 FIT_MAX / MIN_FILL
   to taste (legality bounds, not packing targets — note that FIT_MAX 1.45
   admits lines Verovio compresses to ~0.7 and warns about below 0.8, seen while
   composing at the end of a score; and whether a PAGE should have a minimum

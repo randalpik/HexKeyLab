@@ -2747,3 +2747,17 @@ OUTER one; reading its viewBox height as the paper bottom made the predicted
 fold ten times too small and every page "overflowed" at its first system. Use
 `margin.closest('svg')` for any frame arithmetic, and keep the measured fold
 cross-check under the flag — it is what caught this in the first fixture run.
+
+## Verovio's commented-out code is a drift hazard for anything that models its layout (2026-09-02)
+
+Composer's placement rule restates Verovio 6.3's page stacking (`max(below,
+F) + G + max(above, F)`, F = 6 units, G = 4). Reading `AlignSystemsFunctor::
+VisitSystem` for it turned up the overflow-aware inter-system variant PRESENT
+in the source and commented out — one uncomment away from every gap on every
+page changing under a Verovio upgrade. A model of a library's layout must
+record which branch of the source it restates (decisions.md "Composer owns
+height" does), and any Verovio upgrade must re-run the calibration probe
+(`cb-placement.js` on both builds) before the rule is trusted again. More
+generally: when modelling behaviour from a library's source, note the
+commented-out alternatives next to the constants they would change — they are
+the most likely future diff.
