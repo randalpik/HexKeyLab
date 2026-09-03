@@ -1713,6 +1713,58 @@ const PAGE_SPLICE = {
       r();
     `,
   },
+
+  /* Phase 1 of the vertical-ownership plan (2026-09-02): Composer OWNS the
+   * page's vertical placement. Every mounted page — derived or spliced — must
+   * satisfy the self-consistency invariant `live staff tops == placePage(live
+   * extents)`: the one rule (render/pagefit.ts placeSystems) applied to the
+   * extents measured off the page itself reproduces where the systems sit.
+   * Asserted via FIXTURE_ASSERTIONS.pagePlacementOwned. */
+  pagePlacementOwned: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 400; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
+  /* Phase 1: a system whose topmost content is a <text> (a tempo above the
+   * first staff) is placed by the same rule — its above-extent is read from
+   * the post-processed bbox, never modelled. The first system on page 1 sits
+   * below the page header, never higher than before the text arrived, and
+   * stays self-consistent. Asserted via
+   * FIXTURE_ASSERTIONS.pagePlacementTextTopped. */
+  pagePlacementTextTopped: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 400; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
+
+  /* Phase 1: the splice window carries NO <pb> pins — it is one page, and a
+   * page-first hunk is placed on its live page by the rule, from a one-page
+   * window, instead of being read "absolutely" from a paginated window (B1's
+   * reason for pinning). Asserted via FIXTURE_ASSERTIONS.pageSpliceNoPbPins. */
+  pageSpliceNoPbPins: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 400; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+  },
 };
 
 /* ── New: bridge mock (HKL side simulation) ──────────────────────────── */
@@ -8728,16 +8780,13 @@ export const FIXTURE_ASSERTIONS = {
         if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
         if (!document.querySelector('[data-hkl-test-marker]')) return { ok: false, detail: 'page DOM was rebuilt — this was a full render, not a splice' };
         document.querySelector('[data-hkl-test-marker]').removeAttribute('data-hkl-test-marker');
-        const vp = ps.lastVertical;
-        if (!vp) return { ok: false, detail: 'no vertical plan recorded' };
-        if (vp.static) return { ok: false, detail: 'plan was static — the edit did not change the system extent' };
-        if (!(Math.abs(vp.dyFollow) > 25)) return { ok: false, detail: 'dyFollow too small to be a cascade: ' + vp.dyFollow };
+        /* Phase 1 (2026-09-02): no vertical plan any more — the placement pass
+           moves the followers by whatever the deeper chord adds to the edited
+           system's extent below its last staff. Down is positive. */
         const after = topOf(lastId);
         if (after === null) return { ok: false, detail: 'last line vanished' };
         const movedPx = after - before;
-        if (Math.sign(movedPx) !== Math.sign(vp.dyFollow) || Math.abs(movedPx) < 1) {
-          return { ok: false, detail: 'followers did not cascade: moved ' + movedPx.toFixed(2) + 'px, plan dyFollow ' + vp.dyFollow.toFixed(1) };
-        }
+        if (!(movedPx > 1)) return { ok: false, detail: 'followers did not cascade down: moved ' + movedPx.toFixed(2) + 'px' };
         return { ok: true };
       })()` },
   ],
@@ -8808,7 +8857,8 @@ export const FIXTURE_ASSERTIONS = {
         const grown = step([mk('c', 0), mk('g', 7)], 'grow');
         if (!grown.ok) return grown;
         if (grown.outcome !== 'spliced') return { ok: false, detail: 'expected a splice on grow, got "' + grown.outcome + '" (' + ps.lastSkipReason + ')' };
-        if (!grown.plan || grown.plan.static) return { ok: false, detail: 'grow did not cascade (static plan) — the fixture is not exercising B4' };
+        /* Phase 1 (2026-09-02): no vertical plan any more; the pixel checks on
+           sysTop below are what proves the cascade happened. */
         if (!(grown.g.sysTop - g0.sysTop > 1)) return { ok: false, detail: 'header system did not move down on grow' };
         /* Shrink it back: everything moves UP again — the direction that used
            to slide the music over the title. */
@@ -10077,6 +10127,228 @@ export const FIXTURE_ASSERTIONS = {
         const verified = pb.verifyRenderedPartition(H.renderer['container'], m, st.pageCount, H.renderer['pageBreaksCtx']());
         if (!verified) return { ok: false, detail: 'rendered partition diverged from the pins' };
         return { ok: true, detail: moved ? 'tail moved' : 'fit without moving' };
+      })()` },
+  ],
+  pagePlacementOwned: [
+    { name: 'every mounted page satisfies live staff tops == placePage(live extents), after the derive and after a splice',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        if (typeof H.renderer.placeFor !== 'function') return { ok: false, detail: 'renderer has no placeFor — placement is not owned' };
+        H.renderer.setMountWindowEnabled(false);
+        const mountAll = () => { for (const page of document.querySelectorAll('#score .score-page.score-page-pending')) H.renderer['mountPage'](+page.dataset.page); };
+        mountAll();
+        const tf = (el) => { const t = el.getAttribute('transform') || ''; const mm = /translate\\(\\s*(-?[\\d.]+)[\\s,]+(-?[\\d.]+)/.exec(t); return mm ? { tx: +mm[1], ty: +mm[2] } : { tx: 0, ty: 0 }; };
+        /* Live staff top of a system in the page-margin frame + the staff-line spacing (2 Verovio units). */
+        const staffTop = (sys) => {
+          const st = sys.querySelector('g.measure > g.staff'); if (!st) return null;
+          const ys = [];
+          for (const p of st.children) {
+            if (p.localName !== 'path') continue;
+            const mm = /M\\s*(-?[\\d.]+)[\\s,]+(-?[\\d.]+)\\s*L\\s*(-?[\\d.]+)[\\s,]+(-?[\\d.]+)/.exec(p.getAttribute('d') || '');
+            if (mm && Math.abs(+mm[2] - +mm[4]) < 0.01) ys.push(+mm[2]);
+          }
+          if (ys.length < 2) return null;
+          ys.sort((a, b) => a - b);
+          return { top: ys[0] + tf(st).ty + tf(sys).ty, spacing: ys[1] - ys[0] };
+        };
+        const mountedPages = () => [...document.querySelectorAll('#score .score-page:not(.score-page-pending)')];
+        const systemsOf = (pageEl) => { const margin = pageEl.querySelector('svg g.page-margin'); return margin ? [...margin.children].filter((c) => c.classList.contains('system')) : []; };
+        /* Self-consistency of one page: every live top within half a unit of the rule's. */
+        const checkPage = (pageEl) => {
+          const systems = systemsOf(pageEl);
+          if (!systems.length) return 'page ' + pageEl.dataset.page + ' has no systems';
+          const exp = H.renderer.placeFor(systems);
+          if (!exp || exp.length !== systems.length) return 'page ' + pageEl.dataset.page + ': placeFor returned ' + (exp ? exp.length : 'null') + ' for ' + systems.length + ' systems';
+          for (let i = 0; i < systems.length; i++) {
+            const live = staffTop(systems[i]);
+            if (!live) return 'page ' + pageEl.dataset.page + ' system ' + i + ': no readable staff lines';
+            const tol = live.spacing / 4;   // half a Verovio unit
+            const d = Math.abs(exp[i].top - live.top);
+            if (d > tol) return 'page ' + pageEl.dataset.page + ' system ' + i + ': live top ' + live.top.toFixed(1) + ' vs rule ' + exp[i].top.toFixed(1) + ' (d=' + d.toFixed(1) + ', tol=' + tol.toFixed(1) + ')';
+          }
+          return null;
+        };
+        const checkAll = () => { for (const pg of mountedPages()) { const e = checkPage(pg); if (e) return e; } return null; };
+        const ids = () => m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const withWarnsCaptured = (fn) => { const warns = []; const ow = console.warn; console.warn = (...a) => { const t = a.join(' '); if (!/^\\[Warning\\]/.test(t)) warns.push(t); }; try { fn(); } finally { console.warn = ow; } return warns; };
+        const pages0 = pb.pageStarts();
+        if (pages0.length < 3) return { ok: false, detail: 'need >= 3 pages, got ' + pages0.length };
+        if (mountedPages().length !== pages0.length) return { ok: false, detail: mountedPages().length + ' pages mounted of ' + pages0.length };
+        const e0 = checkAll();
+        if (e0) return { ok: false, detail: 'after the derive: ' + e0 };
+        /* An edit mid-document: the touched page is re-placed by the splice path; the invariant must hold again. */
+        const st0 = H.renderer['pageVirt'];
+        const mi = ids().indexOf(pages0[1]) + 1;
+        m.setCursor(m.getMeasureStartCursor(1, mi), 1);
+        if (!m.deleteAtCursor()) return { ok: false, detail: 'delete at measure ' + mi + ' rejected' };
+        const warns = withWarnsCaptured(() => { H.reRender(); mountAll(); });
+        if (warns.length) return { ok: false, detail: 'warnings: ' + warns.join(' | ') };
+        if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + '; derive=' + pb.lastDeriveReason + ')' };
+        if (H.renderer['pageVirt'] !== st0) return { ok: false, detail: 'page DOM was rebuilt — a full render, not a splice' };
+        const e1 = checkAll();
+        if (e1) return { ok: false, detail: 'after the splice: ' + e1 };
+        return { ok: true };
+      })()` },
+  ],
+  pagePlacementTextTopped: [
+    { name: 'a text-topped first system (tempo above the staff) is rule-placed: below the page header, never higher than without the text, self-consistent',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        if (typeof H.renderer.placeFor !== 'function') return { ok: false, detail: 'renderer has no placeFor — placement is not owned' };
+        H.renderer.setMountWindowEnabled(false);
+        const mountAll = () => { for (const page of document.querySelectorAll('#score .score-page.score-page-pending')) H.renderer['mountPage'](+page.dataset.page); };
+        mountAll();
+        const tf = (el) => { const t = el.getAttribute('transform') || ''; const mm = /translate\\(\\s*(-?[\\d.]+)[\\s,]+(-?[\\d.]+)/.exec(t); return mm ? { tx: +mm[1], ty: +mm[2] } : { tx: 0, ty: 0 }; };
+        /* Live staff top of a system in the page-margin frame + the staff-line spacing (2 Verovio units). */
+        const staffTop = (sys) => {
+          const st = sys.querySelector('g.measure > g.staff'); if (!st) return null;
+          const ys = [];
+          for (const p of st.children) {
+            if (p.localName !== 'path') continue;
+            const mm = /M\\s*(-?[\\d.]+)[\\s,]+(-?[\\d.]+)\\s*L\\s*(-?[\\d.]+)[\\s,]+(-?[\\d.]+)/.exec(p.getAttribute('d') || '');
+            if (mm && Math.abs(+mm[2] - +mm[4]) < 0.01) ys.push(+mm[2]);
+          }
+          if (ys.length < 2) return null;
+          ys.sort((a, b) => a - b);
+          return { top: ys[0] + tf(st).ty + tf(sys).ty, spacing: ys[1] - ys[0] };
+        };
+        const mountedPages = () => [...document.querySelectorAll('#score .score-page:not(.score-page-pending)')];
+        const systemsOf = (pageEl) => { const margin = pageEl.querySelector('svg g.page-margin'); return margin ? [...margin.children].filter((c) => c.classList.contains('system')) : []; };
+        /* Self-consistency of one page: every live top within half a unit of the rule's. */
+        const checkPage = (pageEl) => {
+          const systems = systemsOf(pageEl);
+          if (!systems.length) return 'page ' + pageEl.dataset.page + ' has no systems';
+          const exp = H.renderer.placeFor(systems);
+          if (!exp || exp.length !== systems.length) return 'page ' + pageEl.dataset.page + ': placeFor returned ' + (exp ? exp.length : 'null') + ' for ' + systems.length + ' systems';
+          for (let i = 0; i < systems.length; i++) {
+            const live = staffTop(systems[i]);
+            if (!live) return 'page ' + pageEl.dataset.page + ' system ' + i + ': no readable staff lines';
+            const tol = live.spacing / 4;   // half a Verovio unit
+            const d = Math.abs(exp[i].top - live.top);
+            if (d > tol) return 'page ' + pageEl.dataset.page + ' system ' + i + ': live top ' + live.top.toFixed(1) + ' vs rule ' + exp[i].top.toFixed(1) + ' (d=' + d.toFixed(1) + ', tol=' + tol.toFixed(1) + ')';
+          }
+          return null;
+        };
+        const checkAll = () => { for (const pg of mountedPages()) { const e = checkPage(pg); if (e) return e; } return null; };
+        const ids = () => m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const withWarnsCaptured = (fn) => { const warns = []; const ow = console.warn; console.warn = (...a) => { const t = a.join(' '); if (!/^\\[Warning\\]/.test(t)) warns.push(t); }; try { fn(); } finally { console.warn = ow; } return warns; };
+        const page1 = () => document.querySelector('#score .score-page[data-page="1"]');
+        const sys0 = () => systemsOf(page1())[0];
+        if (!sys0()) return { ok: false, detail: 'page 1 has no system' };
+        const before = staffTop(sys0());
+        if (!before) return { ok: false, detail: 'page 1 system 1 has no readable staff lines' };
+        m.setTempo(120, '4', 0, 'Allegro con brio');
+        const warns = withWarnsCaptured(() => { H.reRender(); mountAll(); });
+        if (warns.length) return { ok: false, detail: 'warnings: ' + warns.join(' | ') };
+        const sys = sys0();
+        const tempo = sys && sys.querySelector('g.tempo');
+        if (!tempo) return { ok: false, detail: 'no g.tempo rendered in page 1 system 1' };
+        const after = staffTop(sys);
+        if (!after) return { ok: false, detail: 'page 1 system 1 lost its staff lines' };
+        const unit = after.spacing / 2;
+        /* The text is the system's topmost content: above the first staff line, below the page header. */
+        const sysTy = tf(sys).ty;
+        const tb = tempo.getBBox();
+        const tempoTop = tb.y + sysTy, tempoBottom = tb.y + tb.height + sysTy;
+        if (!(tempoBottom <= after.top + 0.01)) return { ok: false, detail: 'tempo bottom ' + tempoBottom.toFixed(1) + ' is not above the staff top ' + after.top.toFixed(1) };
+        const margin = page1().querySelector('svg g.page-margin');
+        const hd = margin && [...margin.children].find((c) => c.classList.contains('pgHead'));
+        if (hd) {
+          const hb = hd.getBBox(); const hdBottom = hb.y + hb.height + tf(hd).ty;
+          if (!(tempoTop >= hdBottom - 0.01)) return { ok: false, detail: 'tempo top ' + tempoTop.toFixed(1) + ' overlaps the page header (bottom ' + hdBottom.toFixed(1) + ')' };
+        } else if (!(tempoTop >= -0.01)) return { ok: false, detail: 'tempo top ' + tempoTop.toFixed(1) + ' is above the page margin' };
+        if (after.top < before.top - unit / 2) return { ok: false, detail: 'first system moved UP with a text on top: ' + before.top.toFixed(1) + ' → ' + after.top.toFixed(1) };
+        const e = checkAll();
+        if (e) return { ok: false, detail: e };
+        return { ok: true };
+      })()` },
+  ],
+  pageSpliceNoPbPins: [
+    { name: 'a page-first hunk splices from a ONE-page window with no <pb> pins and is placed on its live page by the rule',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pb = H.renderer['pageBreaks'];
+        const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        if (typeof H.renderer.placeFor !== 'function') return { ok: false, detail: 'renderer has no placeFor — placement is not owned' };
+        H.renderer.setMountWindowEnabled(false);
+        const mountAll = () => { for (const page of document.querySelectorAll('#score .score-page.score-page-pending')) H.renderer['mountPage'](+page.dataset.page); };
+        mountAll();
+        const tf = (el) => { const t = el.getAttribute('transform') || ''; const mm = /translate\\(\\s*(-?[\\d.]+)[\\s,]+(-?[\\d.]+)/.exec(t); return mm ? { tx: +mm[1], ty: +mm[2] } : { tx: 0, ty: 0 }; };
+        /* Live staff top of a system in the page-margin frame + the staff-line spacing (2 Verovio units). */
+        const staffTop = (sys) => {
+          const st = sys.querySelector('g.measure > g.staff'); if (!st) return null;
+          const ys = [];
+          for (const p of st.children) {
+            if (p.localName !== 'path') continue;
+            const mm = /M\\s*(-?[\\d.]+)[\\s,]+(-?[\\d.]+)\\s*L\\s*(-?[\\d.]+)[\\s,]+(-?[\\d.]+)/.exec(p.getAttribute('d') || '');
+            if (mm && Math.abs(+mm[2] - +mm[4]) < 0.01) ys.push(+mm[2]);
+          }
+          if (ys.length < 2) return null;
+          ys.sort((a, b) => a - b);
+          return { top: ys[0] + tf(st).ty + tf(sys).ty, spacing: ys[1] - ys[0] };
+        };
+        const mountedPages = () => [...document.querySelectorAll('#score .score-page:not(.score-page-pending)')];
+        const systemsOf = (pageEl) => { const margin = pageEl.querySelector('svg g.page-margin'); return margin ? [...margin.children].filter((c) => c.classList.contains('system')) : []; };
+        /* Self-consistency of one page: every live top within half a unit of the rule's. */
+        const checkPage = (pageEl) => {
+          const systems = systemsOf(pageEl);
+          if (!systems.length) return 'page ' + pageEl.dataset.page + ' has no systems';
+          const exp = H.renderer.placeFor(systems);
+          if (!exp || exp.length !== systems.length) return 'page ' + pageEl.dataset.page + ': placeFor returned ' + (exp ? exp.length : 'null') + ' for ' + systems.length + ' systems';
+          for (let i = 0; i < systems.length; i++) {
+            const live = staffTop(systems[i]);
+            if (!live) return 'page ' + pageEl.dataset.page + ' system ' + i + ': no readable staff lines';
+            const tol = live.spacing / 4;   // half a Verovio unit
+            const d = Math.abs(exp[i].top - live.top);
+            if (d > tol) return 'page ' + pageEl.dataset.page + ' system ' + i + ': live top ' + live.top.toFixed(1) + ' vs rule ' + exp[i].top.toFixed(1) + ' (d=' + d.toFixed(1) + ', tol=' + tol.toFixed(1) + ')';
+          }
+          return null;
+        };
+        const checkAll = () => { for (const pg of mountedPages()) { const e = checkPage(pg); if (e) return e; } return null; };
+        const ids = () => m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const withWarnsCaptured = (fn) => { const warns = []; const ow = console.warn; console.warn = (...a) => { const t = a.join(' '); if (!/^\\[Warning\\]/.test(t)) warns.push(t); }; try { fn(); } finally { console.warn = ow; } return warns; };
+        const pages0 = pb.pageStarts();
+        if (pages0.length < 3) return { ok: false, detail: 'need >= 3 pages, got ' + pages0.length };
+        const st0 = H.renderer['pageVirt'];
+        const pageEl = (p) => document.querySelector('#score .score-page[data-page="' + p + '"]');
+        /* Edit inside page 2's FIRST measure: the hunk's first line is page-first. */
+        const mi = ids().indexOf(pages0[1]);
+        if (mi < 0) return { ok: false, detail: 'page 2 start ' + pages0[1] + ' not in the document' };
+        m.setCursor(m.getMeasureStartCursor(1, mi), 1);
+        if (!m.deleteAtCursor()) return { ok: false, detail: 'delete at page-2 start (measure ' + mi + ') rejected' };
+        const warns = withWarnsCaptured(() => { H.reRender(); mountAll(); });
+        if (warns.length) return { ok: false, detail: 'warnings: ' + warns.join(' | ') };
+        if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + '; derive=' + pb.lastDeriveReason + ')' };
+        if (H.renderer['pageVirt'] !== st0) return { ok: false, detail: 'page DOM was rebuilt — a full render, not a splice' };
+        const w = ps.lastWindow;
+        if (!w) return { ok: false, detail: 'no window recorded for the splice' };
+        if (w.pbIds && w.pbIds.length) return { ok: false, detail: 'window carried <pb> pins: ' + w.pbIds.join(',') };
+        const p2 = pageEl(2), p3 = pageEl(3);
+        if (!p2 || !p3 || p2.classList.contains('score-page-pending') || p3.classList.contains('score-page-pending')) return { ok: false, detail: 'pages 2 and 3 are not both mounted' };
+        const first2 = systemsOf(p2)[0], first3 = systemsOf(p3)[0];
+        if (!first2 || !first3) return { ok: false, detail: 'page 2 or 3 has no system' };
+        if (first2.querySelector('g.measure').id !== pb.pageStarts()[1]) return { ok: false, detail: 'DOM page 2 starts at ' + first2.querySelector('g.measure').id + ', pins say ' + pb.pageStarts()[1] };
+        /* Both are page-first, header-free systems: the rule puts them at the same first-content top. */
+        const t2 = staffTop(first2), t3 = staffTop(first3);
+        if (!t2 || !t3) return { ok: false, detail: 'page-first system without readable staff lines' };
+        const tol = t2.spacing / 4;
+        if (Math.abs(t2.top - t3.top) > tol) return { ok: false, detail: 'page-first tops differ: page 2 ' + t2.top.toFixed(1) + ' vs page 3 ' + t3.top.toFixed(1) + ' (tol ' + tol.toFixed(1) + ')' };
+        const e = checkPage(p2);
+        if (e) return { ok: false, detail: e };
+        return { ok: true };
       })()` },
   ],
   voiceIndexConsistencyUnderEdits: [

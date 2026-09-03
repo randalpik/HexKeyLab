@@ -89,29 +89,21 @@ function referenceCompare() {
     host.style.cssText = 'position:absolute;left:-99999px;top:0';
     host.innerHTML = tkRef.renderToSVG(pno, {});
     document.body.appendChild(host);
+    /* Same post-processing as the live pages (HEJI text, notehead order, snaps):
+       the placement rule measures extents on the post-processed system. */
+    r['postProcessRendered'](host);
     try {
       const refSys = [...host.querySelectorAll('g.system')];
       const liveSys = [...pageEl.querySelectorAll('g.system')];
       if (refSys.length !== liveSys.length) return { ok: false, why: 'page ' + pno + ': system count ' + liveSys.length + ' vs ref ' + refSys.length };
-      // Section-header pages carry a main.ts-injected system translate (the
-      // reserve) that the raw reference lacks. This used to EXEMPT them from
-      // the vertical checks, which is how a cascade that stranded a section
-      // title (and mis-placed its system by the whole reserve) got through.
-      // The reserve is recorded on the title element by the injector, so it is
-      // subtracted instead; only an unreadable reserve is exempt.
-      const hdrSystems = [...(pageEl.querySelector('svg g.page-margin')?.children ?? [])]
-        .filter((c) => c.classList.contains('system'));
-      const reserve = new Array(hdrSystems.length).fill(0);
-      let headerPage = false;
-      for (const t of pageEl.querySelectorAll('text.hkl-section-header')) {
-        const forId = t.getAttribute('data-for');
-        const sys = forId ? pageEl.querySelector('#' + CSS.escape(forId))?.closest('g.system') : null;
-        const idx = sys ? hdrSystems.indexOf(sys) : -1;
-        const rv = Number(t.getAttribute('data-reserve'));
-        if (idx < 0 || !isFinite(rv)) { headerPage = true; continue; }
-        for (let k = idx; k < reserve.length; k++) reserve[k] += rv;
-      }
-      let prevRef = null, prevLiveV = 0;
+      // Vertical truth is Composer's placement rule (render/pagefit.ts, Phase 1
+      // of the vertical-ownership plan, 2026-09-02), not Verovio's stacking: the
+      // reference's systems, measured on the reference render, are placed by the
+      // rule and must land where the live page put its systems (maxTopD); and the
+      // live page must be self-consistent — placed by the same rule over its own
+      // extents (reported as maxSpacingD, keeping the summary's keys).
+      const expect = r.placeFor(refSys), self = r.placeFor(liveSys);
+      if (!expect || !self) return { ok: false, why: 'page ' + pno + ': placement unreadable' };
       for (let i = 0; i < refSys.length; i++) {
         const rp = profile(refSys[i]), lp = profile(liveSys[i]);
         if (!rp || !lp) return { ok: false, why: 'page ' + pno + ' sys ' + i + ': unreadable' };
@@ -121,22 +113,10 @@ function referenceCompare() {
           if (d > maxD) maxD = d;
           checkedMeasures++;
         }
-        /* Live tops carry the header reserve; Verovio's reference does not. */
-        const lpV = lp.staffTop - (reserve[i] ?? 0);
-        if (prevRef && !headerPage) {
-          const d = Math.abs((rp.staffTop - prevRef.staffTop) - (lpV - prevLiveV));
-          if (d > maxSpacingD) maxSpacingD = d;
-        }
-        /* ABSOLUTE staff top, not just consecutive spacing. B1 places spliced
-           systems at measured absolute positions and shifts the systems below
-           by a common dy — a page shifted wholesale by a constant satisfies
-           every spacing check and is still wrong. Both sides are page-margin
-           relative, so they compare directly. */
-        if (!headerPage) {
-          const d = Math.abs(rp.staffTop - lpV);
-          if (d > maxTopD) maxTopD = d;
-        }
-        prevRef = rp; prevLiveV = lpV;
+        const dTop = Math.abs(expect[i].top - lp.staffTop);
+        if (dTop > maxTopD) maxTopD = dTop;
+        const dSelf = Math.abs(self[i].top - lp.staffTop);
+        if (dSelf > maxSpacingD) maxSpacingD = dSelf;
       }
       checkedPages++;
     } finally { host.remove(); }

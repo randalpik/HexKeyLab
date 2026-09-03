@@ -1,9 +1,9 @@
 {
   "mode": "full",
-  "fixtures": 367,
-  "passed": 367,
+  "fixtures": 370,
+  "passed": 370,
   "failed": 0,
-  "elapsedMs": 308361,
+  "elapsedMs": 370480,
   "results": [
     {
       "name": "emptyDoc",
@@ -1133,6 +1133,30 @@
     },
     {
       "name": "pageSystemSpliceNoopSkip",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "pagePlacementOwned",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "pagePlacementTextTopped",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      }
+    },
+    {
+      "name": "pageSpliceNoPbPins",
       "ok": true,
       "failures": [],
       "counts": {

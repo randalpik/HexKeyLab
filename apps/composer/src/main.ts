@@ -14,6 +14,7 @@ import { createComposerBridge, PROTOCOL_VERSION } from '@hkl/bridge/channel.js';
 import type { HklEvent, ResolvedNote, FootprintCell } from '@hkl/bridge/protocol.js';
 import { ComposerModel, type Voice } from './model/index.js';
 import { renderer, styleVoltaNumbers, ZOOM_PRESETS, type ZoomLevel, type ViewMode, type ScoreTheme } from './render/render.js';
+import { SECTION_HEADER_RESERVE, SECTION_HEADER_BASELINE } from './render/pagefit.js';
 import { cursor, resolveVoiceCursorAnchor } from './cursor/cursor.js';
 import { initInput, getInputState, setViewInstr, installSCTransposeImpl, clearChordInternalSel, resetToVoiceMode, selectLayerElementById } from './input.js';
 import { scTransposeChordNote, type FootprintColorMap } from './notation/scTranspose.js';
@@ -745,8 +746,6 @@ function injectHeaderFooter(scoreEl: HTMLElement, composer: string, footer: stri
  * it in the page) DOWN to reserve room, grow the page, and inject the centered
  * title into the freed space. */
 const SECTION_HEADER_FONT = 560;
-const SECTION_HEADER_RESERVE = 900;  /* vertical space carved out (Verovio units) */
-const SECTION_HEADER_BASELINE = 360; /* title baseline below the reserved top */
 
 function injectSectionHeaders(scoreEl: HTMLElement, model: ComposerModel): void {
   const doc = model.getDoc();
@@ -761,25 +760,16 @@ function injectSectionHeaders(scoreEl: HTMLElement, model: ComposerModel): void 
     const system = rendered.closest('g.system') as SVGGraphicsElement | null;
     const pageMargin = rendered.closest('g.page-margin') as SVGGraphicsElement | null;
     if (!system || !pageMargin) continue;
-    let sysbb: DOMRect;
-    try { sysbb = system.getBBox(); } catch { continue; }
-    if (!(sysbb.height > 0)) continue;
-
-    /* Reserve space: shift this system and every later system in the same page
-       down by SECTION_HEADER_RESERVE, then grow the page's height so nothing
-       clips. (The first system never gets a header — measureIdx 0 is rejected
-       — so there is always a system above to break from.) */
-    const systems = Array.from(pageMargin.querySelectorAll(':scope > g.system')) as SVGGraphicsElement[];
-    const fromIdx = systems.indexOf(system);
-    const headerTop = sysbb.y;
-    for (let i = fromIdx; i < systems.length; i++) {
-      const s = systems[i];
-      const base = s.transform.baseVal.consolidate();
-      const ty = base ? base.matrix.f : 0;
-      const tx = base ? base.matrix.e : 0;
-      s.setAttribute('transform', `translate(${tx}, ${ty + SECTION_HEADER_RESERVE})`);
+    /* The header's band is a component of the page's vertical budget, placed
+       by the renderer's placement pass (render/pagefit.ts) together with every
+       system on the page — this injector no longer moves systems. The pass
+       stamps the band's top on the header's system; the title goes into it. */
+    const headerTop = Number(system.getAttribute('data-hkl-band-top'));
+    if (!isFinite(headerTop)) {
+      console.warn('[section-header] system for ' + id + ' carries no band top — page not placed');
+      continue;
     }
-    /* Inject the centered title in the freed band above the (now lower) system. */
+    /* Inject the centered title in the reserved band above the system. */
     pageMargin.querySelector(`:scope > text.hkl-section-header[data-for="${id}"]`)?.remove();
     const t = pageMargin.ownerDocument!.createElementNS(HKL_SVG_NS, 'text');
     t.setAttribute('class', 'hkl-section-header');
@@ -809,17 +799,12 @@ function injectSectionHeaders(scoreEl: HTMLElement, model: ComposerModel): void 
 
     /* The page's box and viewBox are NOT touched (Max, 2026-09-02). A header is
        a component with a reserved height in the page's vertical budget, like a
-       system: it consumes paper, it does not add any. Until this date the
-       injector grew the inner viewBox by the reserve so the shifted content
-       "wouldn't clip", while the root box stayed at Verovio's page size — so
-       every header page was drawn ~3 % small into a fixed box (uniform `meet`
-       scaling, wider apparent margins), and the first splice that re-pinned the
-       box snapped it to true scale, 90 px taller, shifting every page below.
-       Now the scale is fixed at the box, and a page whose systems no longer fit
-       below the reserve simply OVERFLOWS — which the owned pagination repairs by
-       moving the spilled tail onto the next page (Renderer.repairPagination,
-       run after every mount and every splice). Vertical justification within
-       the budget is D1, later. */
+       system: it consumes paper, it does not add any. A page whose systems no
+       longer fit below the reserve OVERFLOWS, and the owned pagination repairs
+       it by moving the spilled tail onto the next page (Renderer.repairPagination,
+       after every mount and every splice). Since the vertical-ownership plan's
+       Phase 1 (2026-09-02) the renderer places systems and bands itself
+       (render/pagefit.ts); this injector only draws the title. */
   }
 }
 
@@ -1007,9 +992,10 @@ async function bootRenderer(): Promise<void> {
   }
   renderer.attach(scoreEl);
   /* Page-scoped post-render work runs per MOUNTED page (T2.1): eager pages at
-     render time and lazy pages as they scroll into view, each exactly once —
-     injectSectionHeaders translates systems, so a second pass would double the
-     shift. Order matters: snap runs AFTER the injections that move systems. */
+     render time and lazy pages as they scroll into view, each exactly once.
+     The renderer's placement pass has already positioned systems and header
+     bands (finishPageMount); the injections draw into them. Order matters:
+     snap runs last. */
   renderer.setOnPageMounted((pageEl) => {
     injectHeaderFooter(pageEl, model.getComposer(), model.getFooter());
     injectSectionHeaders(pageEl, model);

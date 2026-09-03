@@ -54,6 +54,8 @@ import type { ComposerModel } from '../model/index.js';
 import { expandForSpannersOnce, expandForEndings, mergeGlyphDefs } from './splice.js';
 import { injectPins } from './linebreaks.js';
 
+import { measureExtents, type SysExtents } from './pagefit.js';
+
 const MEI_NS = 'http://www.music-encoding.org/ns/mei';
 const LEAD_ID = 'hkl-splice-lead';
 const TRAIL_ID = 'hkl-splice-trail';
@@ -99,6 +101,15 @@ export interface PageSpliceCtx {
   /** Renderer.snapSystems — re-land staff lines on the device-pixel grid for
    *  an affected page after the surgery (idempotent). */
   snapPage: (pageEl: HTMLElement) => void;
+  /** Renderer.placePage — the vertical placement pass (render/pagefit.ts,
+   *  Phase 1): measures every system on the page, computes each staff top and
+   *  header band from Composer's rule, writes the transforms, stamps band tops
+   *  and re-places titles. Runs after post-processing, before the snap. */
+  placePage: (pageEl: HTMLElement) => unknown;
+  /** Where the placement rule would put these systems (staff tops in the
+   *  page-margin frame), measured on the given laid-out elements, writing
+   *  nothing — the reference gate's expectation. Null when unreadable. */
+  placeFor: (systems: Element[]) => Array<{ top: number }> | null;
   /** Mount a lazily-virtualized page so its systems can be measured and
    *  spliced (B5). Returns false when mounting would be expensive or would
    *  draw POST-edit content — the splice then refuses, as it always did. */
@@ -314,11 +325,6 @@ interface Target {
   el: HTMLElement | null;
   pageNo: number;
   pageFirst: boolean;
-  /** Section-header reserve the system will carry at its new position (see
-   *  verticalPlan): the accumulated reserve above it on its target page plus
-   *  the reserve of every title whose measure sits in a hunk line at or before
-   *  it on that page. */
-  reserve: number;
 }
 
 export class PageSystemSplicer {
@@ -578,27 +584,16 @@ export class PageSystemSplicer {
     this.lastStats.windowMeasures = mHi - mLo + 1;
 
     const winStarts = newStartIds.slice(wLo, wHi + 1);
-    /* Page pins: every window line that begins a page under the NEW pagination
-       becomes a <pb>, so the window paginates exactly like the document will.
-       Without this a page-first system is mid-page in the window and its
-       absolute placement (Verovio's page-top anchoring) is unreadable — the v1
-       gate had to model it as "content top at the margin + hanging extent",
-       which is wrong whenever the system's topmost content is a <text> element
-       (g.dir, g.tempo, HEJI g.accid): Verovio's own metrics for those disagree
-       with the rendered bbox by up to ~85 units. See the B1 note in the design
-       doc. A cascade's moved block is pinned here too — that is how its
-       page-first position is READ rather than modelled. The window's FIRST
-       system (leader, else line wLo) already starts page 1, so it never takes
-       a pin. */
+    /* No page pins (Phase 1 of the vertical-ownership plan, 2026-09-02): the
+       window is ONE page. Nothing is read from the window's vertical layout
+       any more — every system's place on its live page comes from Composer's
+       placement rule over extents measured after import (render/pagefit.ts) —
+       so a page-first line needs no `<pb>` to be read "absolutely" (B1's
+       reason for pinning), and a cascade's moved block is placed like any
+       other system. `pbIds` stays for the window builder's signature and the
+       diagnostics. */
     const leader = wLo > 0;
     const pbIds = new Set<string>();
-    for (let li = leader ? wLo : wLo + 1; li <= wHi; li++) {
-      if (newPageStarts.has(newStartIds[li])) pbIds.add(newStartIds[li]);
-    }
-    /* The stub is pinned like the line it stands for (a `<pb>` when that line
-       begins a page), so the compared line above it ends exactly as it does
-       live. */
-    if (stubId && newPageStarts.has(stubId)) pbIds.add(stubId);
     /* A window ending mid-document needs a synthetic TRAILER line: the
        sub-document's last measure would otherwise draw the end-of-score FINAL
        barline (~5 px wider than the live line's normal barline — found by the
@@ -688,15 +683,13 @@ export class PageSystemSplicer {
     skip: (why: string) => false,
   ): boolean {
     const M = newStartIds.length;
-    /* Window systems in document order across the window's pages, each tagged
-       with the host page it came from (mergeGlyphDefs reads that page's defs)
-       and whether it STARTS that page (the anchor the vertical plan reads). */
+    /* Window systems in document order (one window page since Phase 1), each
+       tagged with the host it came from (mergeGlyphDefs reads that page's defs). */
     const systems: SVGGElement[] = [];
     const hostOf = new Map<SVGGElement, Document>();
-    const winPageFirst = new Set<SVGGElement>();
     for (const h of hosts) {
       const onPage = Array.from(h.querySelectorAll('g.system')) as SVGGElement[];
-      onPage.forEach((sys, i) => { hostOf.set(sys, h); if (i === 0) winPageFirst.add(sys); });
+      onPage.forEach((sys) => hostOf.set(sys, h));
       systems.push(...onPage);
     }
     const expected = (r.leader ? [LEAD_ID] : []).concat(r.winStarts, r.stubId ? [r.stubId] : [], r.trailer ? [TRAIL_ID] : []);
@@ -705,36 +698,27 @@ export class PageSystemSplicer {
       if (systems[i].querySelector('g.measure')?.id !== expected[i]) return skip('window partition mismatch');
     }
     /* No post-processing on the window (A11): it is a parsed document that is
-       never laid out, and every pass that needs geometry (barline / right-edge
-       snaps via getScreenCTM, HEJI's text metrics) runs on the imported systems
-       once they are in the live page — see the surgery below. The context-line
-       comparison is raw-window vs snapped-live on both x/width (the snaps move
-       ≤ ½ device px; the right-edge snap rewrites the staff-line path, which
-       both readings see) and glyph identity (`sigGlyphs` reads a HEJI-injected
-       `text` as the codepoint it carries). */
+       never laid out, and every pass that needs geometry runs on the imported
+       systems once they sit in the live page. The context-line comparison is
+       raw-window vs snapped-live on both x/width (the snaps move ≤ ½ device px)
+       and glyph identity (`sigGlyphs` reads a HEJI-injected `text` as the
+       codepoint it carries). */
     const winProf = new Map<number, SysProfile>();
-    const winIsPageFirst = new Set<number>();
     for (let li = r.wLo; li <= r.wHi; li++) {
       const sys = systems[(r.leader ? 1 : 0) + (li - r.wLo)];
       const p = systemProfile(sys);
       if (!p) return skip('window profile unreadable');
       winProf.set(li, p);
-      if (winPageFirst.has(sys)) winIsPageFirst.add(li);
     }
 
     /* Context-line sanity: the unchanged neighbour lines must reproduce their
        live geometry (per-measure x/width) AND their signature glyphs (clef /
        key / meter codepoints — see sigGlyphDiff). This is the structural detector
-       for zones where windowed renders diverge (probe k=59: the mid-piece
-       scoreDef / section-boundary zone) — any drift there means the window
-       cannot be trusted for the changed lines either. The line above is the
-       same line in both coordinate systems (a − 1); the line below is new line
-       bNew + 1 (= old line bOld + 1). */
-    /* Line 0 has no predecessor: the window's opening edge is the real score
-       start, so there is nothing above to corroborate and nothing to chain
-       from. It is only safe because line 0 is necessarily its page's first
-       system, where the plan reads an absolute anchor rather than a
-       difference. */
+       for zones where windowed renders diverge — any drift there means the
+       window cannot be trusted for the changed lines either. The line above is
+       the same line in both coordinate systems (a − 1); the line below is new
+       line bNew + 1 (= old line bOld + 1). Line 0 has no predecessor: the
+       window's opening edge is the real score start. */
     let ctxPrev: LiveSys | null = null;
     if (r.a > 0) {
       ctxPrev = this.liveSystem(ctx.container, newStartIds[r.a - 1]);
@@ -768,18 +752,8 @@ export class PageSystemSplicer {
 
     /* The REPLACED lines get no such comparison: they are, by definition, what
        the edit told Verovio to redraw, and their post-edit appearance is
-       unknowable live (Max, 2026-09-01: "there's no reason to block a splice
-       because something changed in the lines we told Verovio to change"). Their
-       glyph identity is verified against a fresh full render by the reference
-       gate under HKL_INDEX_CHECK, which is where every test run catches a
-       same-width glyph swap on them. */
-
-    /* Every page the splice reasons about must have readable section-header
-       state: an UNREADABLE reserve leaves the page's geometry unexplained, and
-       guessing is what caused the overlap this replaced. */
-    for (const l of [...(ctxPrev ? [ctxPrev] : []), ...live, ...(ctxNext ? [ctxNext] : [])]) {
-      if (!this.headersFor(l.pageEl).known) return skip('section-header reserve unreadable');
-    }
+       unknowable live (Max, 2026-09-01). Their glyph identity is verified
+       against a fresh full render by the reference gate under HKL_INDEX_CHECK. */
 
     /* ── target pages (B2) ──
        Where each new line goes, under the NEW pagination. A page that keeps a
@@ -813,21 +787,19 @@ export class PageSystemSplicer {
           el = pg;
         }
       }
-      if (el && !this.headersFor(el).known) return skip('section-header reserve unreadable');
       targetEl.set(p, el ?? null);
     }
     if (Array.from(targetEl.values()).filter((e) => e === null).length > 1) return skip('more than one page to create');
 
-    /* Section headers across the hunk. A title is a page-margin element the
-       mount-time injector placed beside its system, and a header is a
-       component with a reserved height in its page's vertical budget (Max,
-       2026-09-02). A title whose system stays on its page is re-placed there
-       (retitle, below); one whose line moves to another page — a cascade block
-       carrying a header — MIGRATES with it, and the receiving page's followers
-       take its reserve on top of the measured dy. A title landing on a page
-       that is being created is simply dropped: that page's mount pass injects
-       it from the model. Only a title whose measure the edit deleted refuses
-       (the injector never removes titles — a dated bail). */
+    /* Section titles across the hunk. A title is a page-margin element the
+       mount pass drew beside its system; WHERE it sits is the placement pass's
+       business (the header band is a component of the page's budget,
+       render/pagefit.ts), so nothing here computes a y. What the splice must
+       keep right is which page each title is on: one whose line moves to
+       another page (a cascade block carrying a header) MIGRATES with its
+       system, one landing on a page being created is dropped (that page's
+       mount pass injects it from the model), and one whose measure the edit
+       deleted refuses (the injector never removes titles — a dated bail). */
     const hunkLineOfMeasure = (id: string): number | null => {
       const mi = idIdx.get(id);
       if (mi == null) return null;
@@ -837,71 +809,34 @@ export class PageSystemSplicer {
     const involved = new Set<HTMLElement>();
     for (const l of live) involved.add(l.pageEl);
     for (const e of targetEl.values()) if (e) involved.add(e);
-    /* Every title on an involved page whose measure sits in a hunk line, with
-       where it is and where its line goes. */
-    const hunkTitles: Array<{ el: Element; li: number; from: HTMLElement; to: HTMLElement | null; reserve: number; baseline: number }> = [];
+    const hunkTitles: Array<{ el: Element; li: number; from: HTMLElement }> = [];
     for (const pageEl of involved) {
       for (const t of this.headersFor(pageEl).titles) {
         const id = t.el.getAttribute('data-for') ?? '';
         const li = hunkLineOfMeasure(id);
         if (li === null) return skip('section header measure removed');
         if (li < 0) continue;
-        hunkTitles.push({ el: t.el, li, from: pageEl, to: targetEl.get(pageOfNew(li)) ?? null, reserve: t.reserve, baseline: t.baseline });
+        hunkTitles.push({ el: t.el, li, from: pageEl });
       }
     }
-    /* Reserve of the titles whose measure sits in hunk line `li`, wherever the
-       title currently is. */
-    const headerReserveOfLine = (li: number): number => {
-      let acc = 0;
-      for (const t of hunkTitles) if (t.li === li) acc += t.reserve;
-      return acc;
-    };
 
-    /* Targets: page, page-firstness (must agree with the window — a page-first
-       system's position is READ from a window page that starts with it), and
-       the section-header reserve the system will carry there. */
+    /* Targets: page and page-firstness (the insertion anchor needs it). A
+       non-page-first first line follows the context line above on its page. */
     const targets: Target[] = [];
     for (let li = r.a; li <= r.bNew; li++) {
       const p = pageOfNew(li);
       const pageFirst = isPageFirst(li);
-      if (pageFirst !== winIsPageFirst.has(li)) return skip('window page boundary missing');
-      let base: number;
-      if (pageFirst) base = 0;
-      else if (li === r.a) {
-        /* Chained from the context line above, which must sit on the same
-           target page (a non-page-first line follows its predecessor's page). */
-        if (!ctxPrev || ctxPrev.pageEl !== targetEl.get(p)) return skip('DOM partition drift above');
-        base = ctxPrev.reserve;
-      } else base = targets[li - r.a - 1].reserve;
-      targets.push({ el: targetEl.get(p) ?? null, pageNo: p, pageFirst, reserve: base + headerReserveOfLine(li) });
+      if (!pageFirst && li === r.a && (!ctxPrev || ctxPrev.pageEl !== targetEl.get(p))) return skip('DOM partition drift above');
+      targets.push({ el: targetEl.get(p) ?? null, pageNo: p, pageFirst });
     }
     const lastT = targets[targets.length - 1];
-    /* Followers: unreplaced systems below the hunk on the LAST target page —
-       they exist only when the next line is not a page start (a page-first
-       system is margin-anchored and never moves). */
+    /* Unreplaced systems below the hunk on its last page exist only when the
+       next line is not a page start; that line must then be the live
+       neighbour on that page (drift detector). The placement pass moves them. */
     const hasFollowers = r.bNew + 1 < M && !isPageFirst(r.bNew + 1);
     if (hasFollowers && (!ctxNext || ctxNext.pageEl !== lastT.el)) return skip('DOM partition drift below');
-    /* Header reserve the followers gain (titles migrating onto their page,
-       above them) or lose (titles leaving it): the injector shifted them by
-       the titles above them at mount, and that set is changing. */
-    let followerReserveDelta = 0;
-    if (hasFollowers && lastT.el) {
-      for (const t of hunkTitles) {
-        if (t.to === lastT.el && t.from !== lastT.el) followerReserveDelta += t.reserve;
-        if (t.from === lastT.el && t.to !== lastT.el) followerReserveDelta -= t.reserve;
-      }
-    }
-
-    /* Vertical PLAN: where a full re-engrave would put each replaced system,
-       and by how much the systems below it on its page would move. Verovio
-       stacks systems by content clearance (probe 1) and the window reproduces
-       that chain exactly (probe 2: delta 0.0), so the plan is MEASURED, never
-       emulated. */
-    const plan = verticalPlan(r, live, winProf, targets, ctxPrev, hasFollowers ? ctxNext : null, newStartIds, followerReserveDelta);
-    this.lastVertical = plan;
-    /* When the line above sits on the same page as the first old system, it
-       must be the actual DOM neighbour (drift detector, mirrors the intra-hunk
-       consecutive check). */
+    /* When a context line sits on the same page as the hunk's edge system, it
+       must be the actual DOM neighbour (mirrors the intra-hunk consecutive check). */
     if (ctxPrev && ctxPrev.pageEl === live[0].pageEl && nextSystemSibling(ctxPrev.el) !== live[0].el) return skip('DOM partition drift above');
     const lb = live[live.length - 1];
     if (ctxNext && ctxNext.pageEl === lb.pageEl && nextSystemSibling(lb.el) !== ctxNext.el) return skip('DOM partition drift below');
@@ -913,44 +848,19 @@ export class PageSystemSplicer {
     const dxFrame = ctxPrev ? ctxPrev.x0 - winProf.get(r.a - 1)!.x0
       : ctxNext ? ctxNext.x0 - winProf.get(r.bNew + 1)!.x0
       : 0;
+    this.lastVertical = null;
 
     /* ── surgery ── */
-    /* Followers (B1 dy-cascade): every unreplaced system below the hunk on the
-       last target page shifts by the same measured amount — their spacing to
-       each other is content-driven and unchanged, so one dy describes all of
-       them. Collected BEFORE the surgery: it removes systems from the DOM, and
-       a detached node has no siblings to walk. Section titles sit at an
-       ABSOLUTE y beside the systems (main.ts appends them to the page-margin,
-       not to a system), so a cascade that moves a header's system must move
-       its title by the same dy or the music slides over the words. */
-    const followers: Element[] = [];
-    const movedTitles: Element[] = [];
-    const liveOnPage = (pageEl: HTMLElement): LiveSys[] => live.filter((l) => l.pageEl === pageEl);
-    if (hasFollowers && lastT.el && Math.abs(plan.dyFollow) > EPS) {
-      const oldOn = liveOnPage(lastT.el);
-      const from = oldOn.length ? nextSystemSibling(oldOn[oldOn.length - 1].el) : firstSystemOf(lastT.el);
-      for (let n = from; n; n = nextSystemSibling(n)) followers.push(n);
-      const afterIdx = oldOn.length ? oldOn[oldOn.length - 1].sysIdx : -1;
-      for (const t of this.headersFor(lastT.el).titles) {
-        if (t.sysIdx > afterIdx) movedTitles.push(t.el);
-      }
-    }
     /* Insertion anchor per target page: the first old hunk system on it (the
        new systems take its place), else the page's first system (a moved block
        lands at the head), else none (a created page — append). */
+    const liveOnPage = (pageEl: HTMLElement): LiveSys[] => live.filter((l) => l.pageEl === pageEl);
     const anchorOf = new Map<HTMLElement, Element | null>();
     for (const t of targets) {
       if (!t.el || anchorOf.has(t.el)) continue;
       const oldOn = liveOnPage(t.el);
       anchorOf.set(t.el, oldOn.length ? oldOn[0].el : firstSystemOf(t.el));
     }
-    /* A title whose OWN system is being re-engraved cannot travel with it: it
-       is not inside the system (main.ts appends it to the page-margin) and its
-       y was derived from the OLD system's content top. Re-place it from the
-       injector's own rule instead — baseline below the top of the band its
-       reserve carved out — reading the replacement's measured content top, so
-       a system that got taller or shorter carries its title correctly. */
-    const retitle: Array<{ el: Element; sys: SVGGElement; dy: number; reserve: number; baseline: number }> = [];
     const pages = new Set<HTMLElement>();
     const importedByPage = new Map<HTMLElement, SVGGElement[]>();
     const created: HTMLElement[] = [];
@@ -959,11 +869,19 @@ export class PageSystemSplicer {
       const wk = winProf.get(k)!;
       if (!t.el) {
         /* A page that does not exist yet: its skeleton is the window's own
-           page for this system (identical page options → identical furniture),
-           stripped of systems. The renderer numbers and registers it. */
+           page, stripped of systems (identical page options → identical
+           furniture). The renderer numbers and registers it. */
         const host = hostOf.get(wk.el as SVGGElement)!;
         const shell = host.documentElement.cloneNode(true) as Element;
         for (const s of Array.from(shell.querySelectorAll('g.system'))) s.remove();
+        /* The window's page carries the document's TITLE header (Verovio draws
+           page 1's `pgHead` on any sub-document's first page); a created page
+           is not page 1. Strip it: the page is placed as a header-less page
+           (render/pagefit.ts C0, within tolerance of the autogenerated
+           page-number header a full render gives it). Drawing that page-number
+           header on a created page is Phase 2's transplant from the spilling
+           page. */
+        for (const h of Array.from(shell.querySelectorAll('g.pgHead'))) h.remove();
         const el = ctx.createPage(t.pageNo, shell);
         if (!el) return skip('page creation failed');
         created.push(el);
@@ -973,15 +891,10 @@ export class PageSystemSplicer {
       const pageEl = t.el!;
       const doc = pageEl.ownerDocument;
       const imported = doc.importNode(wk.el, true) as SVGGElement;
-      /* Place the new system's staff top where the plan says (the gate proved a
-         full render would put it there) and its first measure at the frame x.
-         All-or-nothing: a STATIC plan pins each system to its live staff top
-         exactly as Phase C-B v1 did. The plan is measured to ~±8 units, so
-         "applying" a 3-unit movement would ADD error rather than remove it,
-         and would re-snap every system on the page for a sub-pixel edit.
-         Only a plan that moves something by more than EPS is applied. */
-      const dy = (plan.static ? live[k - r.a].staffTop : plan.newTop[k - r.a]) - wk.staffTop;
-      imported.setAttribute('transform', `translate(${dxFrame},${dy})`);
+      /* Horizontal frame only. The vertical position is the placement pass's
+         (below): it measures the imported system where it sits and places every
+         system on the page from Composer's rule. */
+      imported.setAttribute('transform', `translate(${dxFrame},0)`);
       const defs = pageEl.querySelector('svg defs');
       if (!defs) return skip('page defs missing');
       mergeGlyphDefs(defs, hostOf.get(wk.el as SVGGElement) ?? hosts[0], [imported]);
@@ -1000,11 +913,11 @@ export class PageSystemSplicer {
           continue;
         }
         if (tt.from !== pageEl) {
-          /* Migrate: the title travels to its system's new page. */
+          /* Migrate: the title travels to its system's new page; that page's
+             placement puts it in its band. */
           margin.appendChild(tt.el);
           pages.add(tt.from);
         }
-        retitle.push({ el: tt.el, sys: imported, dy, reserve: t.reserve, baseline: tt.baseline });
       }
     }
     /* Remove the old hunk systems; a page left without systems is reported for
@@ -1020,34 +933,22 @@ export class PageSystemSplicer {
     /* Post-process the IMPORTED systems in place (A11): the same per-system
        passes a mounted page gets (crisp barline / right-edge snaps, notehead
        z-order, HEJI, theme), scoped to them, in the live page's own device
-       frame — so the snaps are correct for where the systems actually sit
-       (the host-frame snaps used to be un-snapped by a fractional device dx).
-       The geometry reads inside share the one layout flush the retitle and
-       snapPage below need anyway. A CREATED page gets the whole mount pass
-       instead (its shell has never been processed or decorated). */
+       frame. A CREATED page gets the whole mount pass instead (its shell has
+       never been processed, decorated or placed). */
     for (const [pageEl, imported] of importedByPage) {
       if (created.includes(pageEl)) { ctx.finishCreatedPage(pageEl); continue; }
       ctx.postProcess(pageEl, imported);
       ctx.decorateHost(pageEl);
     }
-    /* Before snapPage, mirroring the injector's own order (main.ts mounts, then
-       snaps): the title is placed against the unsnapped content top exactly as
-       it was at mount. `getBBox` excludes the element's own transform, so the
-       dy just applied goes back on. */
-    for (const t of retitle) {
-      let box: DOMRect;
-      try { box = t.sys.getBBox(); } catch { continue; }
-      t.el.setAttribute('y', String(box.y + t.dy - t.reserve + t.baseline));
-    }
-    for (const n of followers) {
-      const t = consolidate(n as SVGGElement);
-      n.setAttribute('transform', `translate(${t.tx},${t.ty + plan.dyFollow})`);
-    }
-    for (const t of movedTitles) {
-      t.setAttribute('y', String(Number(t.getAttribute('y') ?? 0) + plan.dyFollow));
-    }
+    /* PLACE every touched page (Phase 1): each system's staff top and each
+       header band from Composer's rule over extents measured now — the
+       imported systems in their new frame, the survivors unchanged, so a
+       follower or a page that lost a system moves exactly by what the
+       arithmetic says and nothing else. Then the snap. The geometry reads share
+       the one layout flush this surgery causes. */
     for (const pageEl of pages) {
-      if (emptied.includes(pageEl)) continue;
+      if (emptied.includes(pageEl) || created.includes(pageEl)) continue;
+      ctx.placePage(pageEl);
       ctx.snapPage(pageEl);
     }
     this.lastPageEls = Array.from(pages);
@@ -1090,14 +991,16 @@ export class PageSystemSplicer {
         if (refSys.length !== liveSys.length) {
           throw new Error(`[page-splice] page ${pno}: spliced ${liveSys.length} systems, reference ${refSys.length}`);
         }
-        /* Section-header injections translate the live page's systems by the
-           reserve (main.ts, not Verovio). That used to EXEMPT such pages from
-           the vertical check — which is exactly how a cascade that stranded a
-           section title got past this gate. The reserve is now subtracted, so
-           header pages are verified like any other; only an unreadable reserve
-           is exempt. */
-        const hdr = pageHeaders(pageEl);
-        const headerPage = !hdr.known;
+        /* Vertical truth is Composer's placement rule (render/pagefit.ts), not
+           Verovio's stacking: the reference's systems, measured on the
+           reference render, are placed by the rule and must land where the
+           live page put its systems; and the live page must be self-consistent
+           — placed by the same rule over its own extents. Header bands are part
+           of the rule on both sides, so header pages are verified like any
+           other with nothing to subtract and nothing exempt. */
+        const expect = ctx.placeFor(refSys);
+        const self = ctx.placeFor(liveSys);
+        if (!expect || !self) throw new Error(`[page-splice] page ${pno}: placement unreadable`);
         for (let i = 0; i < refSys.length; i++) {
           const rp = systemProfile(refSys[i]);
           const lp = systemProfile(liveSys[i]);
@@ -1127,15 +1030,18 @@ export class PageSystemSplicer {
               throw new Error(`[page-splice] page ${pno} system ${i} measure ${refM[j].id}: signature glyphs diverged from reference (live "${b}" vs "${a}")`);
             }
           }
-          if (!headerPage) {
-            /* ABSOLUTE tops, not just consecutive spacing: a dy-cascade that
-               shifted a whole page by a constant would satisfy every spacing
-               check and still be wrong (B1). Both sides are page-margin
-               relative once the live side's header reserve is removed. */
-            const liveV = lp.staffTop - (hdr.reserve[i] ?? 0);
-            if (Math.abs(rp.staffTop - liveV) > TOL) {
-              throw new Error(`[page-splice] page ${pno} system ${i}: staff top diverged from reference (${rp.staffTop.toFixed(1)} vs ${liveV.toFixed(1)}, reserve ${(hdr.reserve[i] ?? 0).toFixed(1)})`);
-            }
+          /* ABSOLUTE tops, not just consecutive spacing: a cascade that shifted
+             a whole page by a constant would satisfy every spacing check and
+             still be wrong (B1). */
+          if (Math.abs(expect[i].top - lp.staffTop) > TOL) {
+            /* Name what differs: the two sides' extents and first-content tops,
+               so a divergence says whether the content or the frame moved. */
+            const re = measureExtents(refSys[i]), le = measureExtents(liveSys[i]);
+            const fmt = (e: SysExtents | null): string => e ? `above ${e.above.toFixed(0)} below ${e.below.toFixed(0)} span ${(e.staffBot - e.staffTop).toFixed(0)}` : 'unreadable';
+            throw new Error(`[page-splice] page ${pno} system ${i}: staff top diverged from the placement of the reference (${expect[i].top.toFixed(1)} expected, live ${lp.staffTop.toFixed(1)}; ref ${fmt(re)}; live ${fmt(le)}; first tops ref ${expect[0].top.toFixed(1)} live ${self[0].top.toFixed(1)})`);
+          }
+          if (Math.abs(self[i].top - lp.staffTop) > TOL) {
+            throw new Error(`[page-splice] page ${pno} system ${i}: live page is not placed by its own rule (${self[i].top.toFixed(1)} vs ${lp.staffTop.toFixed(1)})`);
           }
         }
       } finally {
@@ -1201,75 +1107,11 @@ function hdrTitles(pageEl: HTMLElement): Array<{ text: string; gap: number; ok: 
  *  from its system entirely, so the exact value is not load-bearing. */
 const SECTION_TITLE_BAND = 900;
 
-/** Compute the vertical plan (see VerticalPlan). Pure measurement:
- *  - a page-FIRST system takes its window counterpart's absolute staff-top.
- *    The window paginates at the same boundary (a <pb> pin), so Verovio has
- *    already applied its own page-top anchoring there, and both coordinate
- *    systems are page-margin-relative with identical margins. This replaces
- *    the v1 model ("content top at the margin + hang"), which mis-predicts by
- *    up to ~85 units whenever the topmost content is a <text> element —
- *    Verovio's internal metrics for text disagree with the rendered bbox;
- *  - any other system sits at the previous system's staff-top plus the
- *    window's own consecutive-system spacing;
- *  - the chain therefore RESETS at every page boundary inside the replaced
- *    run, which is what keeps a dy from leaking onto the next page.
- *  With unequal hunk sides (B2) there is no live counterpart per new line;
- *  `liveTop` lists the OLD systems' tops (diagnostics) and `static` can only
- *  hold when the sides match one to one. */
-function verticalPlan(
-  r: { a: number; bOld: number; bNew: number },
-  live: LiveSys[],
-  winProf: Map<number, SysProfile>,
-  targets: Target[],
-  ctxPrev: LiveSys | null,
-  ctxNext: LiveSys | null,
-  newStartIds: string[],
-  followerReserveDelta = 0,
-): VerticalPlan {
-  const newTop: number[] = [];
-  const liveTop: number[] = live.map((l) => l.staffTop);
-  const startIds: string[] = [];
-  /* The chain runs in VEROVIO coordinates. Live staff tops carry main.ts's
-     section-header reserve (added at mount, invisible to Verovio and to the
-     window), so it comes out before chaining and goes back on afterwards.
-     Without this the pair that straddles a header boundary is wrong by the
-     whole reserve — which is how an edit above a header used to cascade the
-     page while the title stayed put. */
-  const newV: number[] = [];
-  for (let k = r.a; k <= r.bNew; k++) {
-    const t = targets[k - r.a];
-    const wk = winProf.get(k)!;
-    startIds.push(newStartIds[k]);
-    let v: number;
-    if (t.pageFirst) {
-      v = wk.staffTop;
-    } else {
-      /* k === r.a && !ctxPrev is unreachable: the only line without a
-         predecessor is line 0, which is page-first. */
-      const prevV = k === r.a ? (ctxPrev ? ctxPrev.staffTop - ctxPrev.reserve : 0) : newV[k - r.a - 1];
-      const prevWin = winProf.get(k - 1)!;
-      v = prevV + (wk.staffTop - prevWin.staffTop);
-    }
-    newV.push(v);
-    newTop.push(v + t.reserve);
-  }
-  const wb = winProf.get(r.bNew)!;
-  const lastV = newV[newV.length - 1];
-  let dyFollow = 0, followId = '';
-  if (ctxNext) {
-    const wNext = winProf.get(r.bNew + 1)!;
-    const nextV = lastV + (wNext.staffTop - wb.staffTop);
-    /* The follower's reserve after the surgery: what it carried, plus the
-       titles that migrate onto its page above it (or minus those that leave). */
-    dyFollow = (nextV + ctxNext.reserve + followerReserveDelta) - ctxNext.staffTop;
-    followId = ctxNext.el.querySelector('g.measure')?.id ?? '';
-  }
-  const oneToOne = live.length === targets.length && targets.every((t, i) => t.el === live[i].pageEl);
-  const isStatic = oneToOne
-    && newTop.every((t, i) => Math.abs(t - liveTop[i]) <= EPS)
-    && Math.abs(dyFollow) <= EPS;
-  return { startIds, liveTop, newTop, dyFollow, followId, static: isStatic };
-}
+/* The vertical plan (verticalPlan, B1) is gone: since Phase 1 of the
+   vertical-ownership plan (2026-09-02) every system's place comes from the
+   renderer's placement pass over Composer-measured extents (render/pagefit.ts).
+   `VerticalPlan` stays as a type for the `lastVertical` diagnostic, which is
+   now always null. */
 
 /** Does this measure BEGIN a clef / key / meter change? Verovio draws an
  *  end-of-line courtesy signature on the PREVIOUS line when it does, so a

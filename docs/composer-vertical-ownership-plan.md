@@ -116,6 +116,49 @@ drop the whole-line pull and its bound-at-two.
 
 ### Phase 1 — own height: extents, placement, and the gate (the large phase)
 
+**Status 2026-09-02: LANDED — ritual green on the second build; visual baselines re-seeded after Max's review.**
+Second build after Max's screenshot review: the page header (Verovio's
+`g.pgHead`, title on page 1, page number elsewhere) is a page component — the
+first content top is its bottom + 2u, and the calibrated C0 turned out to be
+exactly that for the one-line page-number header. Page 1's first system now
+sits 1u lower than Verovio's, never higher.
+`render/pagefit.ts` (constants F = 6u, G = 4u, C0 = 5.25u calibrated by
+`cb-placement.js`; extents from the post-processed bbox; `placeSystems`;
+`foldIndex`; `ExtentsStore`), `Renderer.placePage` on every mount and after
+every splice (before the snap), `placeFor` for the reference gate and the
+predicted fold (measured cross-check under the flag), the injector draws only,
+the window has no `<pb>` pins, `verticalPlan`/`dyFollow` are gone.
+
+Ritual (§4) on the second build, all on the current source:
+1. `pnpm typecheck`, `pnpm build`, `pnpm check:boundaries` — clean.
+2. Proof probe `cb-placement.js` (unfixed record vs owned build): 92 of 116
+   systems within 1 unit of Verovio's old placement, 19 within 3, 5 beyond
+   (max 5.13 units: page 23 system 3, whose predecessor's bbox below-extent
+   exceeds Verovio's overflow by ~3 units). Self-consistency on the owned
+   build: 86/86 gaps and 30/30 page-firsts within 1 unit of the rule.
+   Reference placement (`cb-refplace.js`): 30 pages, 0 divergences.
+3. `cb-splice-battery.js` both code states: 10/10 spliced, identical outcome
+   per edit, `reference.ok` on all; `maxD` 4 → 0, `maxTopD` reaches 30 (= TOL)
+   on two edits.
+4. `cb-sweep.js`: 115/115, refusal histogram empty, viewport counters 0/0/0;
+   the 4 drifted rows are the pre-Phase-1 set.
+5. `allmeasures`: 420/420 edited, splice rate 100 %, 0 conflicts, 69
+   multi-line sets with 0 failing.
+6. `HKL_INDEX_CHECK=1` full tier 370/370 (367/367 before the new fixtures were
+   added); new fixtures `pagePlacementOwned`
+   (self-consistency on every mounted page after the derive and after a
+   splice), `pagePlacementTextTopped` (tempo-topped first system: below the
+   header, never higher, self-consistent), `pageSpliceNoPbPins` (page-first
+   hunk from a one-page window, placed like page 3's first) pass on the owned
+   build and fail on the unfixed one (`run-unfixed.sh`).
+7. `cb-splicecost.js`: default mid-document Backspace 147 ms steady (166 on
+   the pre-Phase-1 build); `mi=47` is a no-op on both builds, as before.
+8. Visual: 35 baselines changed — 31 glyph-level fixtures by sub-pixel
+   shifts, the 4 page-view fixtures (`pageview_multisystem_crisp`,
+   `pagescale_140`, `page_linebreaks_refill`, `page_system_splice_edit`) by
+   0.5k–87k px on the second build; Max reviewed all as sub-pixel shifts and
+   approved the re-seed (`--update-baselines`, 367/367).
+
 1. `render/pagefit.ts` per §2; unit tests on recorded system SVGs.
 2. **Mount path**: `finishPageMount` → post-process → measure extents of every
    system on the page → `placePage` → translate each `g.system` to its top →

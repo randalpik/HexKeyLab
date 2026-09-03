@@ -50,6 +50,18 @@ in decisions.md, 2026-08-30):
   hanging extents, and consecutive-system spacing (the pairwise-locality
   check that lets the splice MEASURE follower dy). Expect delta 0.0 except
   line 0 and section-boundary zones.
+- **cb-placement.js** — Phase 1 measurement/proof of the vertical-ownership
+  plan (2026-09-02): mounts every sonata page and, per system, reads the
+  staff-line frame, the post-processed bbox extents (above / below) and the
+  header reserve, then tests Composer's clearance rule
+  (`render/pagefit.ts`: `max(below,F) + G + max(above,F)` between systems,
+  `pageHeaderBottom + 2u + max(above,F)` for a page's first — C0 when the
+  page has no `g.pgHead`) against the actual staff tops.
+  On the pre-ownership build this calibrated F/G/C0 (86 pairs: 73 within 1
+  unit, 85 within 3; 30 page-firsts: residual ≤ 0.1 unit on glyph-topped
+  pages); on the owned build it is the self-consistency check (every gap and
+  every first within 1 unit of the rule). Diff two runs offline for the
+  per-system before/after table.
 - **cb-courtesystub.js** — Phase 0 proof of the vertical-ownership plan
   (2026-09-02): one deletion per sonata line, restored between edits; records
   the splice outcome, window shape, Verovio cost of re-rendering the window and
