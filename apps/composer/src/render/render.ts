@@ -14,7 +14,7 @@ import { ScrollSplicer, type SpliceCtx } from './splice.js';
 import {
   PageLineBreaks, partitionFromLayout, systemStartsFromPageSvg, injectPins,
   type PageBreaksCtx,
-  scheduleIdle,
+  scheduleIdle, MIN_FILL,
 } from './linebreaks.js';
 import { PageSystemSplicer, type PageSpliceCtx, type SpliceRequest } from './pagesplice.js';
 import type { ComposerModel } from '../model/index.js';
@@ -342,10 +342,58 @@ class Renderer {
          Verovio's setOptions persists unspecified options, so an unset
          adjustPageHeight would leak true from a prior scroll render into page. */
       adjustPageHeight: geomMode === 'scroll',
+      /* The LAST system is justified by OUR OWN minimum-fill rule, not
+         Verovio's (Max, 2026-09-03). Verovio's default `minLastJustification`
+         is 0.8: a final line whose natural width fills less than 80 % of the
+         line is left unstretched. That threshold is not ours — `MIN_FILL`
+         (0.65) is the fill below which the line-break owner considers a line
+         ILLEGAL, so driving the option from the same constant makes one rule:
+         a final line is justified exactly when it is a legal line, and left at
+         its natural width when it is too sparse to be one.
+
+         What this deliberately does NOT fix (out of scope; it belongs with the
+         auto-balance work — docs/backlog.md): end-of-document does not yet
+         behave like end-of-section. A section-final line is not "the last
+         system" as far as Verovio is concerned, so it justifies at ANY fill,
+         while a document-final line respects this threshold — measured on a
+         two-section document where both end mid-line (`cb-lastjustify2.js`):
+         section-final 18790, document-final 4290. Closing that gap needs the
+         balancer to decide N and the per-line fill, not another option value.
+
+         Scroll keeps Verovio's default: it renders the whole score as ONE
+         system against a 100 000-unit page, so there is no line to justify to
+         (measured: 43561 either way), and the line-break owner's naturals
+         windows measure NATURAL widths at that geometry — justification there
+         would corrupt the very measurement the partition is built from. Set
+         explicitly in both branches for the reason adjustPageHeight is: page
+         and scroll share one toolkit and Verovio's setOptions persists any
+         option that is not re-specified. */
+      minLastJustification: geomMode === 'page' ? MIN_FILL : 0.8,
       scale: preset.scale,
       unit: preset.unit,
       ...lineWidthOptions(preset),
     };
+  }
+
+  /** The `breaks` strategy the mounted pages were PAINTED with.
+   *
+   *  This has to be the paint's own predicate, not a related one. The pinned
+   *  and refill renders force breaks:'encoded' whenever a LINE partition is
+   *  pinned, but the splice context and the lazy-mount reload used to re-derive
+   *  the strategy from `paginationOwned()` — which is PAGE ownership
+   *  (`pageStartIds.length > 1`). For every single-page multi-line document the
+   *  two disagreed: the DOM was painted 'encoded' while the splice window and
+   *  the HKL_INDEX_CHECK reference were built 'line'. The window then engraved
+   *  a replaced line under different options than the page it was spliced into,
+   *  and the gate compared the result against a reference nobody had painted.
+   *  Found 2026-09-03 by that gate, once Phase 3's context-line comparison
+   *  stopped refusing such splices for unrelated reasons (`cb-p3mei.js`
+   *  reported `optDiff = breaks: stored 'encoded' vs live 'line'`).
+   *
+   *  Page ownership still governs what it should: whether a pagination REPAIR
+   *  has pins to move (`repairPagination`, `repairAtMount`). */
+  private paintedBreaks(): 'line' | 'encoded' {
+    return this.pageBreaks.ownershipActive() ? 'encoded' : 'line';
   }
 
   /** The active preset's Verovio scale (for pinExactScale). */
@@ -974,7 +1022,7 @@ class Renderer {
          previous strategy's options (or vice versa) would repaginate the
          whole document. */
       st.mei = mei;
-      st.options = this.buildOptions(this.pageBreaks.paginationOwned() ? 'encoded' : 'line');
+      st.options = this.buildOptions(this.paintedBreaks());
       st.stalePages.clear();
       st.tkCurrent = false;
     }
@@ -1577,8 +1625,8 @@ class Renderer {
        With pagination owned the live mode is 'encoded'; a window carries sb
        pins only, and 'encoded' paginates ONLY at encoded <pb>, so it lands on
        one page by construction (no tall-page trick needed). */
-    const owned = this.pageBreaks.paginationOwned();
-    const strategy = owned ? 'encoded' : 'line';
+    const strategy = this.paintedBreaks();
+    const owned = strategy === 'encoded';
     const base = this.buildOptions(strategy, 'page');
     return {
       container: this.container!,

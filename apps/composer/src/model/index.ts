@@ -350,7 +350,7 @@ function emptyMeiDoc(setup: SetupDefaults = {}): Document {
  *  barline attributes — all outside any `<layer>`. Without this list the
  *  scoped placeholder normalization escalated to "every layer in the document"
  *  on essentially every edit, which is most of what it exists to avoid. */
-const CONTROL_EVENT_NAMES = new Set([
+export const CONTROL_EVENT_NAMES = new Set([
   'slur', 'tie', 'hairpin', 'dynam', 'dir', 'tempo', 'fermata', 'trill',
   'octave', 'lv', 'phrase', 'gliss', 'bracketSpan', 'pedal', 'artic', 'breath',
   'harm', 'mordent', 'turn', 'arpeg', 'beamSpan', 'reh', 'caesura',

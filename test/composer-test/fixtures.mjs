@@ -1352,17 +1352,13 @@ const PAGE_SPLICE = {
     `,
   },
 
-  /* The glyph-identity refusal (Max, 2026-09-01): a window that draws a clef,
-   * key or meter in the wrong FORM at the right width passes every geometry
-   * check, so the context check now also compares signature glyph codepoints
-   * (context lines: window vs live; replaced lines with standing boundaries:
-   * window vs the system being replaced). This fixture FORGES a mismatch in the
-   * live DOM — the meter glyph of line 0's first measure is re-pointed at a
-   * different codepoint — then edits line 1, whose context line above is line
-   * 0. The splice must refuse with the glyph reason and full-render (which
-   * also repairs the forgery). Asserted via
-   * FIXTURE_ASSERTIONS.pageSystemSpliceRefusesGlyphMismatch. */
-  pageSystemSpliceRefusesGlyphMismatch: {
+  /* The reference gate is the ONLY detector of a wrong replaced line since
+   * Phase 3 dropped the live context-line comparison (2026-09-03), so this
+   * fixture forges defects into a SPLICED page and asserts the gate names each
+   * one. It replaces `pageSystemSpliceRefusesGlyphMismatch`, which forged a
+   * glyph on a context line the window no longer renders. Asserted via
+   * FIXTURE_ASSERTIONS.pageReferenceGateCatchesForgedDefects. */
+  pageReferenceGateCatchesForgedDefects: {
     skipCursorTrace: true,
     setup: `
       m.setCursor(0, 1);
@@ -1373,7 +1369,6 @@ const PAGE_SPLICE = {
       }
       r();
     `,
-    fullRender: 'this fixture exists to assert a context-glyph refusal',
   },
 
   /* Signature changes govern RANGES, not the document (Max, 2026-09-01: "any
@@ -9238,27 +9233,19 @@ export const FIXTURE_ASSERTIONS = {
         return { ok: true };
       })()` },
   ],
-  pageSystemSpliceRefusesGlyphMismatch: [
-    { name: 'a forged signature-glyph mismatch on the context line above refuses the splice (full render repairs it)',
+  pageReferenceGateCatchesForgedDefects: [
+    { name: 'the reference gate accepts a real splice and names a forged signature glyph, a removed glyph group, and a removed cross-system spanner segment on the REPLACED line',
       expr: `(() => {
         const H = window.__hkl_composer;
-        const m = H.model;
-        const pb = H.renderer['pageBreaks'];
-        const ps = H.renderer['pageSplicer'];
+        const m = H.model, R = H.renderer;
+        const pb = R['pageBreaks'];
+        const ps = R['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         const startIds = pb['startIds'];
         if (startIds.length < 4) return { ok: false, detail: 'need >= 4 lines, got ' + startIds.length };
-        /* Forge: re-point line 0's first meter glyph at a different codepoint. */
-        const page1 = document.querySelector('#score .score-page[data-page="1"]');
-        const m0 = page1 && page1.querySelector('g.measure');
-        const use = m0 && m0.querySelector('g.meterSig use');
-        if (!use) return { ok: false, detail: 'fixture cannot pose the case: no meter glyph on line 0' };
-        const href = use.getAttribute('xlink:href') || use.getAttribute('href') || '';
-        const forged = href.replace(/#E0[0-9A-F]{2}/, '#E0FF');
-        if (forged === href) return { ok: false, detail: 'fixture cannot pose the case: unexpected href ' + href };
-        if (use.hasAttribute('xlink:href')) use.setAttribute('xlink:href', forged); else use.setAttribute('href', forged);
-        /* Edit line 1: line 0 is its context line above. */
+        /* A real splice on line 1 — the gate must accept it before it is
+           trusted to reject anything. */
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         const mi = ids.indexOf(startIds[1]);
         if (mi < 0) return { ok: false, detail: 'line 1 start not in model' };
@@ -9267,14 +9254,63 @@ export const FIXTURE_ASSERTIONS = {
         if (!m.deleteAtCursor()) return { ok: false, detail: 'delete rejected' };
         if (m.docVersion() === ver) return { ok: false, detail: 'delete did not change the document' };
         H.reRender();
-        if (ps.lastOutcome === 'spliced') return { ok: false, detail: 'spliced over a forged signature-glyph mismatch on the context line' };
-        if (!/signature glyphs diverged/.test(ps.lastSkipReason || '')) return { ok: false, detail: 'refused for another reason: "' + ps.lastSkipReason + '"' };
-        /* The fallback full render must have repaired the forgery. */
-        const m0b = document.querySelector('#score .score-page[data-page="1"] g.measure');
-        const useB = m0b && m0b.querySelector('g.meterSig use');
-        const hrefB = useB ? (useB.getAttribute('xlink:href') || useB.getAttribute('href') || '') : '';
-        if (/E0FF/.test(hrefB)) return { ok: false, detail: 'full render did not replace the forged glyph' };
-        return { ok: true };
+        if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
+        const lineStart = pb['startIds'][1];
+        const anchor = document.getElementById(lineStart);
+        const sys = anchor && anchor.closest('g.system');
+        const pageEl = anchor && anchor.closest('.score-page');
+        if (!sys || !pageEl) return { ok: false, detail: 'replaced line 1 system not locatable after the splice' };
+        const verify = () => {
+          try { ps.verifyAgainstReference(R['pinnedMeiForCurrentModel'](), [pageEl], R['pageSpliceCtx']()); return null; }
+          catch (e) { return String((e && e.message) || e); }
+        };
+        const clean = verify();
+        if (clean) return { ok: false, detail: 'gate rejected an honest splice: ' + clean };
+        const fails = [];
+        /* (1) a signature glyph in the WRONG FORM at the right width. */
+        const use = sys.querySelector('g.meterSig use, g.clef use');
+        if (!use) { fails.push('no signature glyph on the replaced line to forge'); }
+        else {
+          const attr = use.hasAttribute('xlink:href') ? 'xlink:href' : 'href';
+          const href = use.getAttribute(attr) || '';
+          const forged = href.replace(/#E0[0-9A-F]{2}/, '#E0FF');
+          if (forged === href) { fails.push('unexpected href ' + href); }
+          else {
+            use.setAttribute(attr, forged);
+            const g = verify();
+            use.setAttribute(attr, href);
+            if (!g || !/signature glyphs diverged/.test(g)) fails.push('signature forgery not named: ' + g);
+          }
+        }
+        /* (2) an equal-width CONTENT loss: drop a glyph group outright. The
+           per-measure census is the only check that can see this. */
+        const victim = sys.querySelector('g.measure g.notehead') || sys.querySelector('g.measure g.stem');
+        if (!victim) { fails.push('no glyph group on the replaced line to remove'); }
+        else {
+          const parent = victim.parentNode, next = victim.nextSibling;
+          parent.removeChild(victim);
+          const g = verify();
+          parent.insertBefore(victim, next);
+          if (!g || !/rendered glyph classes diverged/.test(g)) fails.push('removed glyph group not named: ' + g);
+        }
+        /* (3) a segment a system draws OUTSIDE its measures — where Verovio
+           puts the continuation of a spanner crossing the system break. Only
+           the residue census can see one of these go missing. */
+        const outside = Array.from(sys.children).find((c) => {
+          const cls = (c.getAttribute && c.getAttribute('class') || '').split(/\s+/)[0];
+          return cls && cls !== 'measure' && cls !== 'pb' && cls !== 'sb';
+        });
+        if (outside) {
+          const parent = outside.parentNode, next = outside.nextSibling;
+          parent.removeChild(outside);
+          const g = verify();
+          parent.insertBefore(outside, next);
+          if (!g || !/outside the measures diverged/.test(g)) fails.push('removed out-of-measure segment not named: ' + g);
+        }
+        /* Leave the page as the splice left it. */
+        const after = verify();
+        if (after) fails.push('page not restored after the forgeries: ' + after);
+        return fails.length ? { ok: false, detail: fails.join(' | ') } : { ok: true };
       })()` },
   ],
   pageKeyChangeSplicesGovernedRange: [
@@ -9549,7 +9585,7 @@ export const FIXTURE_ASSERTIONS = {
       })()` },
   ],
   pageSystemSpliceCourtesyBehindSectionBreak: [
-    { name: 'an edit two lines above a movement that opens with a key change (scoreDef behind the section <sb>) splices',
+    { name: 'an edit one line above a movement that opens with a key change (scoreDef behind the section <sb>) splices',
       expr: `(() => {
         const H = window.__hkl_composer;
         const m = H.model;
@@ -9581,7 +9617,7 @@ export const FIXTURE_ASSERTIONS = {
         /* Two lines above: the line between is the compared context line, its
            last measure carries the courtesy key signature, and the line that
            GENERATES it sits just beyond the window. */
-        const target = lineOfSig - 2;
+        const target = lineOfSig - 1;
         const mi = ids.indexOf(startIds[target]);
         m.setCursor(m.getMeasureStartCursor(1, mi + 1), 1);
         const ver = m.docVersion();
@@ -9608,7 +9644,7 @@ export const FIXTURE_ASSERTIONS = {
       })()` },
   ],
   pageSystemSpliceCourtesyClefOtherStaff: [
-    { name: 'an edit two lines above a line that begins with a STAFF-2 clef change splices (courtesy clef on the second staff)',
+    { name: 'an edit one line above a line that begins with a STAFF-2 clef change splices (courtesy clef on the second staff)',
       expr: `(() => {
         const H = window.__hkl_composer;
         const m = H.model;
@@ -9645,7 +9681,7 @@ export const FIXTURE_ASSERTIONS = {
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         const lineOfSig = startIds.indexOf(ids[sigMi]);
         if (lineOfSig < 3) return { ok: false, detail: 'clef-change measure is not a line start >= 3 (line ' + lineOfSig + ')' };
-        const target = lineOfSig - 2;
+        const target = lineOfSig - 1;
         const mi = ids.indexOf(startIds[target]);
         m.setCursor(m.getMeasureStartCursor(1, mi + 1), 1);
         const ver = m.docVersion();
@@ -9693,10 +9729,10 @@ export const FIXTURE_ASSERTIONS = {
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         const L1 = startIds.indexOf(ids[sig1]), L2 = startIds.indexOf(ids[sig2]);
         if (L1 < 3 || L2 !== L1 + 1) return { ok: false, detail: 'fixture cannot pose the case: key changes sit on lines ' + L1 + ' and ' + L2 };
-        /* Edit two lines above the first change: the line between is the compared
+        /* Edit one line above the first change: the line between is the compared
            context line, the first signature line generates its courtesy, and the
            second signature line is what the old whole-line rule chained in. */
-        const target = L1 - 2;
+        const target = L1 - 1;
         const mi = ids.indexOf(startIds[target]);
         m.setCursor(m.getMeasureStartCursor(1, mi + 1), 1);
         const ver = m.docVersion();
@@ -9752,7 +9788,7 @@ export const FIXTURE_ASSERTIONS = {
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         const L1 = startIds.indexOf(ids[sig1]), L2 = startIds.indexOf(ids[sig2]);
         if (L1 < 3 || L2 !== L1 + 1) return { ok: false, detail: 'fixture cannot pose the case: key changes sit on lines ' + L1 + ' and ' + L2 };
-        const target = L1 - 2;
+        const target = L1 - 1;
         const mi = ids.indexOf(startIds[target]);
         m.setCursor(m.getMeasureStartCursor(1, mi + 1), 1);
         const ver = m.docVersion();

@@ -2862,3 +2862,149 @@ re-examined every time the slow path changes. And when a latency number scales
 with the document rather than the edit, look for a call that materializes
 something off-screen before assuming the algorithm is wrong.
 
+
+## Two hand-maintained lists that must agree WILL drift — derive one from the other (2026-09-03)
+
+`render/splice.ts` held `SPANNER_NAMES`, the set of MEI control events the
+window-expansion pass understands. `model/index.ts` held
+`CONTROL_EVENT_NAMES`, the set the model understands. The second was a
+superset, and nothing checked. `tempo` was in the model's list and not the
+window's — and a GRADUAL tempo (accel./rit.) carries `@tstamp2`, so it spans
+measures exactly like a hairpin. The window vocabulary is now DERIVED from the
+model's set, which makes the drift unrepresentable rather than merely fixed.
+Point events (fermata, artic, breath, reh, caesura, the ornaments) come along
+and cost nothing: they resolve to one measure and can never grow a window.
+Rule: when a second list exists because the first "has extra entries we don't
+need", derive and let the extras be inert — the review that keeps two lists in
+step does not happen.
+
+## Prove a suspected gap is a real DEFECT before reporting it as one (2026-09-03)
+
+Finding `tempo` missing from the window vocabulary, the obvious inference was
+the 2026-08-30 wedge defect: window fails to reach `@tstamp2`, Verovio warns
+and drops the mark, the splice transplants the loss. It reads as certain and it
+was wrong — `cb-spangaps.js` probe A shows Verovio draws no extension line for
+a gradual tempo, so the host measure renders identically whether or not the
+`@tstamp2` target is in range, and a short window lost nothing. The sibling gap
+found the same way WAS live: `@tie="m"` (the medial note of a 3+-note chain)
+set neither tie edge, and probe B shows the medial measure rendered alone draws
+no tie where the full render draws one. Same investigation, same shape of
+argument, opposite verdicts. Rule: a coverage hole in a list is a hypothesis
+about rendering, not an observation of it. Render both sides and diff before
+writing "this drops the spanner" anywhere.
+
+## A censusing gate must count what a system draws OUTSIDE its measures (2026-09-03)
+
+The reference gate gained a per-measure glyph-class census so an equal-width
+content loss (a dropped slur segment, a missing articulation) could not pass a
+geometry-only comparison. Per-measure alone would have missed the very defect
+it was built for: Verovio draws the CONTINUATION segment of a spanner that
+crosses a system break as a direct child of `g.system`, outside every
+`g.measure` — 4 slurs and 9 ties on the sonata's mounted pages. A too-small
+window drops exactly those. The census is therefore per-measure PLUS a
+per-system residue, and `pb`/`sb` are excluded because `injectPins` upgrades a
+page start's `<sb>` to `<pb>` in the render copy, so the two sides
+legitimately disagree on that one class. That exclusion was measured, not
+assumed: before it, it was the ONLY divergence reported across all 377
+fixtures, which is also what says the census is tight rather than noisy.
+
+## A fallback that refuses for the WRONG reason hides real defects behind a green suite (2026-09-03)
+
+The page splice compared the edited line's neighbours against the mounted page
+and refused when they diverged. Removing it (Phase 3) immediately surfaced two
+pre-existing defects the reference gate had never been able to see, because on
+those documents the splice always refused and fell back to a full render — so
+the gate, which only runs after a splice LANDS, never ran: the splice window
+and the gate's own reference were built with different Verovio options than the
+pages were painted with, and last-system justification was governed by
+Verovio's 0.8 default rather than by our `MIN_FILL`. Neither had a failing
+test. Rule: a fallback whose trigger is broader than its stated purpose is not
+a safety net, it is a mask — and the tests that pass because of it are not
+evidence. Ask what a guard is preventing you from OBSERVING, not just what it
+is preventing.
+
+## Identical output hashes across two option values do not exonerate the option (2026-09-03)
+
+Three visual baselines changed. Their diff hashes were byte-identical between a
+run at `minLastJustification: 0` and one at `0.65`, and the conclusion drawn —
+"justification is ruled out for all three" — was wrong for one of them. Before
+either run the option was unset, i.e. Verovio's default 0.8, and a final line
+whose fill sits in [0.65, 0.8) justifies at both 0 and 0.65 while staying
+unjustified at 0.8. Identical hashes at two values are exactly what that looks
+like. Comparing two candidate values says nothing about the value that was
+actually in effect. Rule: A/B against the state you are replacing, not between
+two states you are choosing among — reverting the suspected change and
+re-running is one command and it settles what inference cannot.
+
+## When a gate fires on your change, measure the quantity's EXISTING distribution first (2026-09-03)
+
+The page-splice reference gate threw on one position out of 115 after the Phase 3
+window change, and an hour went into "what did I break". The first move should
+have been one census run over the UNCHANGED build asking "how exact is the
+splice normally?" — which, when finally run, showed 328 of 338 (edit, page)
+pairs deviating on BOTH code states, a median around 9 units, and the
+pre-change build worse at the extreme (76.3 units against 57.6). The change had
+not introduced anything; it relocated which page carried the outlier. A gate
+firing tells you a threshold was crossed, not who crossed it, and the cheapest
+way to find out is always the baseline, never the mechanism. Establish the
+before-distribution of the exact quantity the gate measures before forming a
+single hypothesis about your own diff.
+
+## A tolerance gate cannot certify exactness — know what your instrument can say (2026-09-03)
+
+`verifyAgainstReference` compares placed staff tops with `TOL = 30` units. That
+gate can report exactly one thing: "nothing exceeded 30." It was read, for a
+long stretch, as "the spliced page equals a full re-engrave" — and separately a
+throw was read as "this edit changed something". Neither is a statement the
+instrument can make: "exact" and "29 units off on every system of every page"
+are identical to it, and they turned out to be the difference between the
+contract holding and the contract never having held. Two structural blind spots
+compounded it: the tolerance itself, and the fact that the gate verifies only
+`touchedPages`, so whether a large deviation is even LOOKED at depends on which
+pages an edit happened to touch — which is why one build looked clean and
+another did not while their deviation distributions were identical. Before
+citing a check as evidence, state what it can distinguish; if the question is
+about magnitude or distribution, a pass/fail threshold is the wrong tool no
+matter how it is squinted at.
+
+## In an A/B, the control must cover the same population as the treatment (2026-09-03)
+
+The treatment was swept over all four chunks of the document (115 edits); the
+control was run over one chunk (28 edits), came back clean, and was reported as
+"this is new with the change". The control build's own outlier lived at lines
+83-87, in a chunk that was never run. Partial controls do not produce weaker
+conclusions, they produce confidently wrong ones — the missing 75 % is exactly
+where the counter-evidence was sitting. Sample the control over the same range,
+the same positions and the same conditions as the treatment, or do not claim an
+attribution at all.
+
+## A measurement harness is unvalidated code — prove it on a known case first (2026-09-03)
+
+Diagnosing the above produced three bespoke screenshot harnesses and every one
+was wrong in a way that published a confident false claim: a synthetic panel
+whose page height was derived arithmetically from two panel offsets (a constant
+misalignment that reported "13.8 % of the page differs, whole page shifted"); a
+capture that set `container.scrollTop = 0` and so photographed page 1 while
+claiming to show page 28; and a capture taken after the sweep's restore had
+already run, so both images were of the restored document rather than the
+diverging state. A fourth error compared measured absolute tops against
+`placeFor` output, which lives in a different coordinate origin, and reported a
+constant 1395-unit "drift". The project already had a working capture-and-diff
+path; the correct comparison needed no cropping or alignment at all — capture
+the spliced state, force a full re-engrave, capture again, same container and
+same code path. Rule: new measurement code earns trust by reproducing something
+already known before it is allowed to report something new, and existing
+verification tooling is preferred over anything invented mid-investigation.
+
+## "Minor, triage it separately" is not available before the cause is known (2026-09-03)
+
+A ~1.6 px placement deviation was twice proposed for deferral — once as
+"negligible, 0.03 staff spaces", once as "log it and close the phase" — before
+anyone understood it. Max: *"This is a minor divergence and the effect is
+minimal, but it is a canary... Reseed is the safety valve in case something
+changed for a good reason. That may be what we end up doing here, but not
+before the reason is established."* Deferral and baseline reseeds are for
+changes whose cause is understood and accepted; reaching for them to turn a red
+gate green is precisely how a systemic defect survives — in this case one where
+the splice had never satisfied its own correctness contract and no test could
+say so. The size of a symptom is not evidence about the size of its cause.

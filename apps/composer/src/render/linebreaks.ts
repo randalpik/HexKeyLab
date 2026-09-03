@@ -69,7 +69,11 @@ const MEI_NS = 'http://www.music-encoding.org/ns/mei';
  *  nothing. Narrowing them makes reflow more eager; widening makes lines
  *  denser/sparser before they break. */
 const FIT_MAX = 1.45;
-const MIN_FILL = 0.65;
+/** Exported because the LAST system's justification threshold is this same
+ *  rule (render.ts `buildOptions` → Verovio `minLastJustification`): a final
+ *  line is justified exactly when it is a legal line, and left at its natural
+ *  width when it is too sparse to be one. */
+export const MIN_FILL = 0.65;
 /** Measure moves one repartition may perform before giving up (derive). */
 const MAX_REPAIR_STEPS = 64;
 /** Leading clef+key block estimate (Verovio units) when a window has no

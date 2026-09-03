@@ -24,6 +24,7 @@
 // See docs/composer-spot-splice-design.md.
 
 import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
+import { CONTROL_EVENT_NAMES } from '../model/index.js';
 import type { ComposerModel } from '../model/index.js';
 import { captureSigState, signatureRanges, unionRun, type SigState } from './sigranges.js';
 
@@ -597,17 +598,41 @@ export function mergeGlyphDefs(defsEl: Element, host: ParentNode, fresh: Element
 interface SpannerExtents {
   /** [minMeasure, maxMeasure] of every spanner that resolves to a range. */
   spans: Array<[number, number]>;
-  /** Measure has a note whose @tie marks it a tie TERMINUS ('t'). */
+  /** Measure has a note whose @tie marks it a tie TERMINUS ('t' or 'm'). */
   tieT: boolean[];
-  /** Measure has a note whose @tie marks it a tie INITIAL ('i'). */
+  /** Measure has a note whose @tie marks it a tie INITIAL ('i' or 'm'). */
   tieI: boolean[];
 }
 
+/* The window-expansion vocabulary is DERIVED from the model's canonical
+   control-event list, never restated (2026-09-03, Phase 3 precondition 1).
+   Two hand-maintained lists that had to agree did not: `tempo` — which a
+   GRADUAL tempo mark (accel./rit.) anchors with @tstamp2, exactly like a
+   hairpin (`addTempo`, expressions.ts) — was a control event the model knew
+   about and the window did not. Measured (`cb-spangaps.js`, probe A), that
+   one was LATENT rather than live: Verovio draws no extension line for a
+   gradual tempo, so its host measure renders identically whether or not the
+   @tstamp2 target is in range, and a short window lost nothing. It is covered
+   here because the coverage argument should hold by CONSTRUCTION and not by
+   that piece of luck — the day Verovio draws the extension, or Composer asks
+   for it, the window is already right. The sibling gap found the same way was
+   live: see the @tie="m" note below.
+
+   Deriving the set makes that class of drift unrepresentable: every control
+   event is considered, and the ones that are point events (fermata, artic,
+   breath, reh, caesura, and the ornaments) resolve to a single measure and can
+   never grow a window, so including them costs one union-selector term and
+   nothing at run time. `pedal` is a point event too — Composer emits the pair
+   as two independent `dir="down"`/`"up"` events with no @tstamp2 — and probe
+   `cb-pedalspan.js` confirms Verovio draws them as independent glyphs, not a
+   connecting line, so the pair carries no cross-measure dependency to cover
+   (contingent on nobody enabling Verovio's `pedalStyle` line/bracket).
+
+   `note`/`chord`/`rest` are scanned alongside as the ID SOURCE that
+   @startid/@endid resolve against, and for the @tie edges. */
+const SPANNER_NAMES: ReadonlySet<string> = CONTROL_EVENT_NAMES;
 const SPANNER_SCAN =
-  'note, chord, rest, slur, tie, hairpin, phrase, gliss, bracketSpan, octave, lv, dynam, dir, trill, pedal';
-const SPANNER_NAMES = new Set([
-  'slur', 'tie', 'hairpin', 'phrase', 'gliss', 'bracketSpan', 'octave', 'lv', 'dynam', 'dir', 'trill', 'pedal',
-]);
+  ['note', 'chord', 'rest', ...CONTROL_EVENT_NAMES].join(', ');
 
 /** Last built extents, reusable while the document has not changed and the
  *  same measure array is being described. One edit calls expandForSpanners
@@ -650,8 +675,17 @@ function buildSpannerExtents(meiMeasures: Element[]): SpannerExtents {
       if (ln === 'note') {
         const t = el.getAttribute('tie');
         if (t) {
-          if (t.includes('t')) tieT[i] = true;
-          if (t.includes('i')) tieI[i] = true;
+          /* @tie="m" is MEDIAL — the note both TERMINATES the tie from its
+             predecessor and INITIATES one to its successor (`realizeSlot`,
+             model/ties.ts, writes a bare 'm' for every interior note of a
+             3+-note chain). Testing only for 't'/'i' left every such measure
+             with neither edge set, so a range seeded mid-chain pulled in
+             neither neighbour. Measured (`cb-spangaps.js`, probe B): the
+             medial measure rendered alone draws NO tie where the full render
+             draws one — a dropped spanner the splice would transplant. Fixed
+             2026-09-03 (Phase 3 precondition 1). */
+          if (t.includes('t') || t.includes('m')) tieT[i] = true;
+          if (t.includes('i') || t.includes('m')) tieI[i] = true;
         }
       }
     }

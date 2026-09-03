@@ -6183,3 +6183,189 @@ counts), fixtures `pageSpliceClipsToMountedBand`, `pageRenumberIsRedrawOnly`,
 `pageExtentsJobWarmsDeferred`, and `pageSystemSpliceEnsureMount` re-asserted
 (B5's eager context mount is superseded by the clip).
 
+
+## 2026-09-03 — The splice window has no context lines: the reference gate is the only fidelity detector (vertical-ownership plan, Phase 3)
+
+**Context**: the window carried the edited line's neighbours, L−1 and L+1, and
+compared each against the mounted page (per-measure x/width + signature glyph
+codepoints); a mismatch refused the splice. Phases 1 and 2 removed two of the
+three jobs those lines did — the vertical spacing chain (every system is now
+placed by Composer's rule over measured extents, `render/pagefit.ts`) and the
+end-of-line courtesy (Phase 0's one-measure stub) — leaving only the live
+fidelity comparison. Max, 2026-09-02, stated exactly what that comparison is:
+a replaced set short by ONE line becomes a full render with a reason nobody
+reads in production; short by two, or wrong at the same width (a dropped slur
+segment, a missing articulation), is a wrong page with or without it. In test
+runs it detects nothing the reference gate does not, and every dependency the
+window rules encode was discovered in such a run. So it is a fallback that
+masks a subset of our own replaced-set defects — the pattern the governing
+principle rejects.
+
+**Decision**: drop them. The window is now leader? + the spanner/ending-closed
+hunk lines + courtesy stub? + trailer?. `profilesMatch`, `sigGlyphDiff`,
+`ContextDiff`/`contextDiff`/`clefGlyphs`, `lastContextDiff`, `EPS` and the
+`aboveComparable`/`belowComparable` clip flags are gone. The live neighbour
+LOOKUPS stay — they are DOM structure, not verification: they resolve a target
+line's page, anchor a non-page-first first line, and are the partition-drift
+detectors. `dxFrame` now reads the hunk's own outgoing live system against its
+incoming window replacement (both x0 are set by the page frame and the margins,
+not by content), because no context line exists to read it from.
+
+The preconditions were tasks, and three of them found real defects rather than
+documentation to write:
+
+1. **`spannerExtents` covered a hand-maintained SUBSET of the control events
+   the model knows about.** `SPANNER_NAMES` in `render/splice.ts` restated part
+   of `CONTROL_EVENT_NAMES` in `model/index.ts`; two lists that had to agree
+   did not. It is now DERIVED from that set, so the drift class is
+   unrepresentable. Enumerating from the emitters (not from the sonata) found:
+   - `tempo` was missing, and a GRADUAL tempo (accel./rit.) carries `@tstamp2`
+     exactly like a hairpin. Measured (`cb-spangaps.js`, probe A) this one was
+     LATENT, not live: Verovio draws no extension line for it, so the host
+     measure renders identically whether or not the `@tstamp2` target is in
+     range. Covered anyway — the argument should hold by construction, not by
+     that luck.
+   - `@tie="m"` — the interior note of a 3+-note chain (`realizeSlot`,
+     `model/ties.ts` writes a bare `'m'`) — set NEITHER tie edge, because the
+     test was `includes('t')` / `includes('i')`. A range seeded at a medial
+     measure pulled in neither neighbour. Live defect, proven: probe B renders
+     that measure with no tie where the full render draws one.
+   - `pedal` is emitted as two independent point events (`dir="down"`/`"up"`,
+     no `@tstamp2`), so no range exists to resolve — but `cb-pedalspan.js`
+     shows the `up` measure renders byte-identically without its `down`
+     partner: Verovio draws independent glyphs, not a connecting line. No
+     dependency to cover, contingent on nobody enabling `pedalStyle`
+     line/bracket.
+2. **Repeat barlines: the merge is real, and strictly INTRA-LINE.** Verovio
+   merges an `rptend` with a following `rptstart` into one barline drawn inside
+   the PREDECESSOR's group — `cb-repeatmerge.js`: adding `@left="rptstart"` to
+   measure i+1 deletes measure i's right barline (dW −10) and the pair renders
+   as four dots on i (dW +320). Across a system break the two sides are
+   independent, and `both` is the exact union of each alone. Since the replaced
+   set is whole LINES, measure i is either in the same line (covered) or across
+   a break (no dependency), so no window rule is needed. `@left`/`@right` are
+   attributes on `<measure>`, hence inside its serialized signature, so the
+   changed-run detector already sees such an edit.
+3. **`beginsSignatureChange` looked at only the FIRST layer of each staff.** It
+   `return`ed false at the first layer that opened with an event, so a clef
+   change entered on a voice mapped to layer 2 (`layerForVoice`) was invisible
+   whenever voice 1's layer began with a note — the common case. Each layer is
+   now judged on its own leading elements. This matters more after the drop:
+   the stub rule is load-bearing for the replaced line's own courtesy, so a
+   missed change is a wrong page, not a slow render.
+4. **The reference gate could not see an equal-width content loss.** It
+   compared x/width, staff tops and signature glyph codepoints, so a dropped
+   slur segment or articulation at the same width passed every check — and the
+   context comparison that used to refuse such a window on incidental drift is
+   now gone. The gate gained a per-measure glyph-CLASS census AND a per-system
+   RESIDUE census. The residue half is load-bearing: Verovio draws the
+   continuation segment of a spanner crossing a system break as a direct child
+   of `g.system`, outside every measure (4 slurs and 9 ties on the sonata's
+   mounted pages), so a per-measure census alone would miss precisely the
+   defect a too-small window produces. `pb`/`sb` are excluded: `injectPins`
+   upgrades a page start's `<sb>` to `<pb>` in the render copy, so the
+   reference legitimately carries `g.pb` where the spliced page carries
+   `g.sb`. That exclusion was measured, not assumed — before it, it was the
+   ONLY divergence the census reported across all 377 fixtures, which is also
+   the evidence that the census is tight rather than noisy.
+5. Fixture `pageSystemSpliceRefusesGlyphMismatch` forged a glyph on a context
+   line and asserted the refusal; the window no longer renders that line, so it
+   became `pageReferenceGateCatchesForgedDefects` — it performs a real splice,
+   asserts the gate ACCEPTS it, then forges each of the three defect shapes
+   into the replaced line (wrong signature form, a removed glyph group, a
+   removed out-of-measure segment) and asserts the gate names each one.
+6. Before removing the fallback, it had to be shown redundant on known
+   documents: `cb-sweep.js` 115/115 spliced with an EMPTY refusal histogram (no
+   `context line diverged` entry at all) and viewport counters 0/0/0, and the
+   every-measure pass 420/420 edited at a 100 % splice rate, 0 conflicts, 69
+   multi-line sets with 0 failing, empty refusal inventory.
+
+**Measured** (`cb-splicecost.js`, default position — measure 223, line 55 — same
+edit and the same replaced set of 1 line / 6 measures on both code states):
+
+| | pre-drop | post-drop |
+| --- | --- | --- |
+| window | 3 lines / 15 measures | 1 line / 7 measures |
+| window Verovio (load + render) | 74.6 ms (17 measures) | 36.1 ms (9 measures) |
+| splice `totalMs` | 103 | 57 |
+| splice `loadMs` | 79 | 39 |
+| steady edit, wall | 173.6 ms | 127.7 ms |
+
+The window is now exactly leader + the hunk's own line + courtesy stub +
+trailer. The plan estimated ~6.5 window measures, Verovio 84 → ~38 ms, and a
+steady edit near 100 ms; the shape and the Verovio figure landed as predicted
+(7 measures, 36.1 ms), and the edit saving is the same ~46 ms off a baseline
+this machine measures at 173.6 rather than the plan's 144.
+
+The splice ledger over the fixture suite improved from 31 fixtures rendering
+with no full engrave to 47, and its refusal histogram now holds only the two
+by-design entries (`single-line partition`, `user breaks changed`) — the
+`context line ... diverged` class is gone from the codebase, not merely
+unobserved.
+
+## 2026-09-03 — Last-system justification follows our own MIN_FILL, and the splice window renders under the options that PAINTED the page
+
+**Context**: found by the HKL_INDEX_CHECK reference gate the moment Phase 3
+removed the live context-line comparison. Fixture
+`phase3_ctrlM_keeps_section_bar` began failing with a 6180-unit width
+divergence on a system the splice had not even replaced. Two independent
+defects sat underneath it, and the context check had been hiding both by
+refusing that splice for an unrelated reason and falling back to a full render.
+
+**1. The window and the gate used different options than the paint.**
+The pinned and refill renders force `breaks:'encoded'` whenever a LINE
+partition is pinned. But `pageSpliceCtx()` and `ensureTkHoldsPageLayout`
+re-derived the strategy from `paginationOwned()`, which is PAGE ownership
+(`pageStartIds.length > 1`). For every single-page multi-line document the two
+disagreed: the DOM was painted `'encoded'` at normal page geometry while the
+splice window was built `'line'` with the tall-page trick (`pageHeight:
+60_000`, `adjustPageHeight: true`) and the gate's reference was built `'line'`
+too. So a replaced line was engraved under different options than the page it
+was imported into, and the gate compared the result against a reference nobody
+had painted (`cb-p3mei.js`: same MEI byte-for-byte, `optDiff = breaks: stored
+'encoded' vs live 'line'`).
+
+Now `Renderer.paintedBreaks()` — `ownershipActive() ? 'encoded' : 'line'` —
+serves both, so the reference is rendered exactly as the pages were and the
+window engraves in the page's own regime. `optDiff` is empty and the DOM,
+the painted-options render and the reference agree. Page ownership still
+governs the only thing it should: whether a pagination REPAIR has pins to move
+(`repairPagination`, `repairAtMount`).
+
+Cost: two visual baselines (`page_linebreaks_refill`,
+`page_system_splice_edit`) shifted SUBPIXEL, confined to the replaced line and
+nothing else — the notes moved onto the positions a full engrave of that page
+produces. Proven by A/B: with `paintedBreaks` reverted both fixtures match
+their old baselines again, while `pagescale_140` does not (that one is defect 2).
+The spliced line now sits 3-4 units from a full re-engrave, which is the
+`snapSystems` crisp-snap noise the gate already tolerates 30 for.
+
+**2. Last-system justification was Verovio's rule, not ours.** Verovio's
+`minLastJustification` defaults to 0.8: a final line whose natural width fills
+less than 80 % of the line is left unstretched. We had never set it, so the
+threshold governing our final lines was a number nobody chose. It is now
+driven by `MIN_FILL` (0.65, exported from `render/linebreaks.ts`) — the fill
+below which the line-break owner already considers a line ILLEGAL. One rule
+instead of two: a final line is justified exactly when it is a legal line, and
+left at its natural width when it is too sparse to be one. Scroll keeps
+Verovio's default deliberately — it renders the whole score as ONE system
+against a 100 000-unit page, so there is no line to justify to (measured:
+43561 either way), and the line-break owner's naturals windows measure NATURAL
+widths at that geometry, where justification would corrupt the measurement the
+partition is built from. Set explicitly in both branches for the reason
+`adjustPageHeight` is: page and scroll share one toolkit and Verovio's
+`setOptions` persists any option that is not re-specified.
+
+**Explicitly NOT fixed here** (Max: it belongs with the auto-balance item on
+the backlog): end-of-document still does not behave like end-of-section. A
+section-final line is not "the last system" as far as Verovio is concerned, so
+it justifies at ANY fill, while a document-final line respects the threshold —
+measured on a two-section document where both end mid-line
+(`cb-lastjustify2.js`): section-final 18790, document-final 4290. Parity is
+only reachable in the always-justify direction through this option, and
+always-justify is wrong for the low-N case the balancer exists to handle, so
+closing the gap needs the balancer to decide N and the per-line fill. The
+one-option experiment is recorded in that probe: `minLastJustification: 0`
+gives parity at 18790 and costs 35 visual baselines, since almost every test
+fixture is a one-line document and therefore the very edge case that should
+not stretch.

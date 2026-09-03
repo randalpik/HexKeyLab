@@ -26,16 +26,19 @@
 //     line HUNK — N old systems by M new ones, each placed on the page the
 //     owned pagination assigns it — so line-count changes, moved page starts
 //     and the overflow cascade's page-to-page moves all land as splices.
-//   - Divergent zones are caught STRUCTURALLY by the context-line sanity check
-//     (an unchanged neighbour line must reproduce its live geometry exactly)
-//     and fall back to a full render — there is no zone excluded by name. The
-//     two that used to be (line 0 "drifts ~1px"; section-header lines "NOT
-//     idempotent") were re-measured 2026-09-01 against the CURRENT window
-//     recipe and both splice reference-clean: line 0 at 8/12/9 units
-//     (x/width/absolute staff top, versus the EPS 25 the context check
-//     tolerates everywhere), header lines at 0/2/4.8 with the title landing on
-//     its rule exactly. The k=0 figure came from the pre-ownership recipe
-//     (tall page + header:'none'), which no longer exists.
+//   - Divergent zones are caught by the HKL_INDEX_CHECK reference gate, which
+//     compares every touched page against a fresh full render — there is no
+//     zone excluded by name. The two that used to be (line 0 "drifts ~1px";
+//     section-header lines "NOT idempotent") were re-measured 2026-09-01
+//     against the CURRENT window recipe and both splice reference-clean: line 0
+//     at 8/12/9 units (x/width/absolute staff top), header lines at 0/2/4.8
+//     with the title landing on its rule exactly. The k=0 figure came from the
+//     pre-ownership recipe (tall page + header:'none'), which no longer exists.
+//     Until 2026-09-03 a LIVE context-line comparison stood in front of that
+//     gate: the window also rendered L-1 and L+1 and refused if either failed
+//     to reproduce its mounted geometry. Phase 3 removed it — it was a
+//     fallback that masked a subset of the splicer's own replaced-set defects,
+//     and it detected nothing the reference gate does not.
 //
 // Correctness contract (Max's acceptance gate): a spliced result must equal
 // what a full re-engrave of the same pinned MEI would produce. The v1 gates
@@ -65,7 +68,6 @@ const TRAIL_ID = 'hkl-splice-trail';
  *  snap noise (staff/barline snapping is ≤½ device px per pass, applied at
  *  different screen phases on live vs host). Real layout movement is ≥ a
  *  staff-space (~90 units). */
-const EPS = 25;
 /* No size caps (Max, 2026-09-01). The former line and measure caps were
  * backstops from the fixed-point spanner expansion, which could balloon a
  * window; the one-pass rule ended that, and a window costs linearly in its
@@ -364,9 +366,6 @@ export class PageSystemSplicer {
   /** The sub-MEI the last window rendered from (diagnostics — a reference to a
    *  string that already exists, so free to keep). */
   lastWindowMei: string | null = null;
-  /** Everything behind the last `context line ... diverged` refusal (see
-   *  ContextDiff). Built on the refusal path only. */
-  lastContextDiff: ContextDiff | null = null;
   /** Per-splice memo of each mounted page's section-header state. */
   private headerCache = new Map<HTMLElement, PageHeaders>();
 
@@ -393,7 +392,6 @@ export class PageSystemSplicer {
     this.lastHunk = null;
     this.lastWindow = null;
     this.lastWindowMei = null;
-    this.lastContextDiff = null;
     this.headerCache.clear();
     const skip = (why: string): false => {
       this.lastOutcome = 'skipped';
@@ -573,16 +571,6 @@ export class PageSystemSplicer {
       this.lastHunk = { a, bOld, bNew };
     }
 
-    /* Can each context line be COMPARED? A line on a page outside the mounted
-       band has no live system to compare against — either the clip stopped
-       there, or it was never mounted — and its page is not this edit's
-       business. The window still renders it (spanners entering the replaced
-       lines must resolve), it simply is not checked; the replaced lines are
-       covered by the reference gate as always. Max, 2026-09-02: the live
-       context comparison is a fallback, not an invariant. */
-    const aboveComparable = a === 0 || inBand(pageOfNew(a - 1));
-    const belowComparable = bNew + 1 >= M || inBand(pageOfNew(bNew + 1));
-
     /* Live systems to replace, located by the PRE-edit partition (that is
        what the mounted DOM renders). All must be mounted, first-of-system,
        and consecutive in the DOM. */
@@ -619,16 +607,32 @@ export class PageSystemSplicer {
        through lines nobody was re-rendering. See `cb-spanchain.js` /
        `cb-window-walk.js` and the design doc.
 
-       Context lines still do their two jobs: they let the window's systems
-       render with every entering/exiting spanner present (page spike 1,
-       finding 5) and give the vertical gate its measured spacing chain. */
+       There are no CONTEXT lines any more (Phase 3, 2026-09-03). They had
+       three jobs and all three are gone: the vertical spacing chain went with
+       Phase 1 (every system is placed by Composer's own rule over measured
+       extents, render/pagefit.ts); the courtesy went with Phase 0's one-measure
+       stub; and the live fidelity comparison — comparing L-1 and L+1 against
+       the mounted page — was a FALLBACK that masked a subset of our own
+       replaced-set defects, which is the pattern the governing principle
+       rejects. It detected nothing the reference gate does not: every touched
+       page is compared against a fresh full render under HKL_INDEX_CHECK, and
+       every dependency this window rule encodes was discovered in such a run.
+       So the stub rules ARE the cross-measure dependency list, made
+       executable, and a not-yet-known dependency is now a visible wrong page
+       instead of a silent slow render. Preconditions and evidence:
+       docs/decisions.md 2026-09-03.
+
+       Window = leader? + the spanner/ending-closed hunk lines + courtesy stub?
+       + trailer? — 14.3 measures to ~6.5 on the sonata. */
     const docVer = model.docVersion();
     let [wm0, wm1] = expandForSpannersOnce(meiMeasures, spans[a][0], spans[bNew][1] - 1, docVer);
     [wm0, wm1] = expandForEndings(meiMeasures, wm0, wm1);
-    let wLo = Math.max(0, lineOf(wm0) - 1);
-    let wHi = Math.min(M - 1, lineOf(wm1) + 1);
-    /* A context line can bring in a partially-covered <ending>; a volta bracket
-       re-engraved over a truncated member set is wrong, so contain it — once. */
+    let wLo = lineOf(wm0);
+    let wHi = lineOf(wm1);
+    /* Rounding out to whole LINES reaches back past wm0 (a line's first measure
+       precedes the seed) and forward past wm1, and that reach can land inside
+       an <ending>; a volta bracket re-engraved over a truncated member set is
+       wrong, so contain it — once. */
     const [em0, em1] = expandForEndings(meiMeasures, spans[wLo][0], spans[wHi][1] - 1);
     wLo = lineOf(em0); wHi = lineOf(em1);
     /* Courtesy signatures (B3; stub form since 2026-09-02). An end-of-line
@@ -692,7 +696,7 @@ export class PageSystemSplicer {
     }
     this.lastStats.loadMs = Math.round(performance.now() - tLoad);
     const ok = this.spliceDom(
-      hosts, { a, bOld, bNew, wLo, wHi, winStarts, leader, trailer, stubId, aboveComparable, belowComparable },
+      hosts, { a, bOld, bNew, wLo, wHi, winStarts, leader, trailer, stubId },
       live, req, newStartIds, spans, idIdx, pageOfNew, isPageFirst, ctx, skip,
     );
     if (ok) {
@@ -739,7 +743,7 @@ export class PageSystemSplicer {
   /** Gates that need the rendered window, then the surgery. */
   private spliceDom(
     hosts: Document[],
-    r: { a: number; bOld: number; bNew: number; wLo: number; wHi: number; winStarts: string[]; leader: boolean; trailer: boolean; stubId: string | null; aboveComparable: boolean; belowComparable: boolean },
+    r: { a: number; bOld: number; bNew: number; wLo: number; wHi: number; winStarts: string[]; leader: boolean; trailer: boolean; stubId: string | null },
     live: LiveSys[],
     req: SpliceRequest,
     newStartIds: string[],
@@ -767,10 +771,8 @@ export class PageSystemSplicer {
     }
     /* No post-processing on the window (A11): it is a parsed document that is
        never laid out, and every pass that needs geometry runs on the imported
-       systems once they sit in the live page. The context-line comparison is
-       raw-window vs snapped-live on both x/width (the snaps move ≤ ½ device px)
-       and glyph identity (`sigGlyphs` reads a HEJI-injected `text` as the
-       codepoint it carries). */
+       systems once they sit in the live page, where the post-surgery snap
+       already forces the one layout that is needed. */
     const winProf = new Map<number, SysProfile>();
     for (let li = r.wLo; li <= r.wHi; li++) {
       const sys = systems[(r.leader ? 1 : 0) + (li - r.wLo)];
@@ -779,62 +781,25 @@ export class PageSystemSplicer {
       winProf.set(li, p);
     }
 
-    /* Context-line sanity: the unchanged neighbour lines must reproduce their
-       live geometry (per-measure x/width) AND their signature glyphs (clef /
-       key / meter codepoints — see sigGlyphDiff). This is the structural detector
-       for zones where windowed renders diverge — any drift there means the
-       window cannot be trusted for the changed lines either. The line above is
-       the same line in both coordinate systems (a − 1); the line below is new
-       line bNew + 1 (= old line bOld + 1). Line 0 has no predecessor: the
-       window's opening edge is the real score start. */
-    let ctxPrev: LiveSys | null = null;
-    if (r.a > 0) {
-      ctxPrev = this.liveSystem(ctx.container, newStartIds[r.a - 1]);
-      if (!ctxPrev) {
-        /* Outside the mounted band — see belowComparable. */
-        if (r.aboveComparable) return skip('context line above not mounted');
-      } else {
-        const dAbove = profilesMatch(winProf.get(r.a - 1)!, ctxPrev);
-        if (dAbove) {
-          this.lastContextDiff = contextDiff('above', r.a - 1, winProf.get(r.a - 1)!, ctxPrev);
-          return skip('context line above diverged (' + dAbove + ')');
-        }
-        const gAbove = sigGlyphDiff(winProf.get(r.a - 1)!.el, ctxPrev.el);
-        if (gAbove) {
-          this.lastContextDiff = contextDiff('above', r.a - 1, winProf.get(r.a - 1)!, ctxPrev);
-          return skip('context line above signature glyphs diverged (' + gAbove + ')');
-        }
-      }
-    }
-    let ctxNext: LiveSys | null = null;
-    if (r.bNew + 1 < M) {
-      ctxNext = this.liveSystem(ctx.container, newStartIds[r.bNew + 1]);
-      /* A CLIPPED edge has no comparable neighbour by construction: the line
-         below is on a deferred page, which is why the hunk stopped here. The
-         window still renders it as a context line (so spanners entering the
-         replaced lines resolve), it just cannot be checked against a live
-         system. The replaced lines are covered by the reference gate as
-         always. */
-      if (!ctxNext) {
-        if (r.belowComparable) return skip('context line below not mounted');
-      } else {
-      const dBelow = profilesMatch(winProf.get(r.bNew + 1)!, ctxNext);
-      if (dBelow) {
-        this.lastContextDiff = contextDiff('below', r.bNew + 1, winProf.get(r.bNew + 1)!, ctxNext);
-        return skip('context line below diverged (' + dBelow + ')');
-      }
-      const gBelow = sigGlyphDiff(winProf.get(r.bNew + 1)!.el, ctxNext.el);
-      if (gBelow) {
-        this.lastContextDiff = contextDiff('below', r.bNew + 1, winProf.get(r.bNew + 1)!, ctxNext);
-        return skip('context line below signature glyphs diverged (' + gBelow + ')');
-      }
-      }
-    }
+    /* The live neighbours of the replaced set. Since Phase 3 they are NOT
+       compared against anything — the window no longer renders their lines —
+       but the surgery still needs them as DOM structure: they say which page a
+       target line belongs to, they anchor a non-page-first first line, and
+       they are the drift detectors below. Either may legitimately be absent
+       (line 0 has no predecessor, the last line no successor, and a clipped
+       edge's neighbour sits on a deferred page); every use below handles null.
 
-    /* The REPLACED lines get no such comparison: they are, by definition, what
-       the edit told Verovio to redraw, and their post-edit appearance is
-       unknowable live (Max, 2026-09-01). Their glyph identity is verified
-       against a fresh full render by the reference gate under HKL_INDEX_CHECK. */
+       Nothing here verifies them. The replaced lines' appearance is
+       unknowable live by definition (Max, 2026-09-01) and is verified against a
+       fresh full render by the reference gate under HKL_INDEX_CHECK — which
+       since Phase 3 also censuses every measure's rendered glyph CLASSES and
+       the segments a system draws outside its measures, so an equal-width
+       content loss (a dropped slur, a missing articulation) is caught there
+       rather than being inferred from a neighbour's incidental drift. */
+    const ctxPrev: LiveSys | null = r.a > 0
+      ? this.liveSystem(ctx.container, newStartIds[r.a - 1]) : null;
+    const ctxNext: LiveSys | null = r.bNew + 1 < M
+      ? this.liveSystem(ctx.container, newStartIds[r.bNew + 1]) : null;
 
     /* ── target pages (B2) ──
        Where each new line goes, under the NEW pagination. A page that keeps a
@@ -852,7 +817,7 @@ export class PageSystemSplicer {
     }
     for (const [p, f] of firstLineOfPage) {
       let el: HTMLElement;
-      if (r.a > 0 && pageOfNew(r.a - 1) === p) el = ctxPrev!.pageEl;
+      if (r.a > 0 && ctxPrev && pageOfNew(r.a - 1) === p) el = ctxPrev.pageEl;
       else if (ctxNext && r.bNew + 1 < M && pageOfNew(r.bNew + 1) === p) el = ctxNext.pageEl;
       else {
         const m = ctx.container.querySelector('#' + CSS.escape(newStartIds[f]));
@@ -913,13 +878,14 @@ export class PageSystemSplicer {
     const lb = live[live.length - 1];
     if (ctxNext && ctxNext.pageEl === lb.pageEl && nextSystemSibling(lb.el) !== ctxNext.el) return skip('DOM partition drift below');
 
-    /* Horizontal frame offset between window and live coordinates, read on a
-       context line (the same line on both sides; its per-measure x matched
-       above). The window and the page share margins, so this is ~0; it is
-       measured rather than assumed. */
-    const dxFrame = ctxPrev ? ctxPrev.x0 - winProf.get(r.a - 1)!.x0
-      : ctxNext ? ctxNext.x0 - winProf.get(r.bNew + 1)!.x0
-      : 0;
+    /* Horizontal frame offset between window and live coordinates. Read on
+       the hunk's OWN first line (Phase 3): the outgoing live system and its
+       incoming window replacement, whose x0 is the left edge of the staff
+       lines — set by the page frame and the margins, not by content, so the
+       two agree up to exactly the offset being measured. This used to read a
+       context line, which the window no longer renders. The window and the
+       page share margins, so it is ~0; it is measured rather than assumed. */
+    const dxFrame = live[0].x0 - winProf.get(r.a)!.x0;
     this.lastVertical = null;
 
     /* ── surgery ── */
@@ -1072,6 +1038,30 @@ export class PageSystemSplicer {
               throw new Error(`[page-splice] page ${pno} system ${i} measure ${refM[j].id}: signature glyphs diverged from reference (live "${b}" vs "${a}")`);
             }
           }
+          /* WHAT each measure drew, not only how wide it is (Phase 3
+             precondition 4, 2026-09-03). Every check above is geometry or
+             signature form, so a dropped slur segment, a missing articulation
+             or an extra accidental at the SAME width passed the whole gate —
+             and once the context lines go, the live comparison that used to
+             refuse such a window on incidental drift is gone too. A
+             glyph-CLASS census is exact, symmetric (both sides carry the same
+             post-processing) and costs no layout flush: attribute reads only. */
+          for (let j = 0; j < refM.length && j < liveM.length; j++) {
+            const d = censusDiff(glyphCensus(refM[j]), glyphCensus(liveM[j]));
+            if (d) {
+              throw new Error(`[page-splice] page ${pno} system ${i} measure ${refM[j].id}: rendered glyph classes diverged from reference (${d})`);
+            }
+          }
+          /* And the residue: Verovio draws the CONTINUATION segment of a
+             spanner that crosses a system break as a direct child of
+             `g.system`, outside every measure (measured on the sonata: 4 slurs
+             and 9 ties on the mounted pages). A per-measure census cannot see
+             one of those go missing — which is precisely the defect a window
+             that fails to reach a spanner's far endpoint produces. */
+          const dRes = censusDiff(systemResidueCensus(refSys[i]), systemResidueCensus(liveSys[i]));
+          if (dRes) {
+            throw new Error(`[page-splice] page ${pno} system ${i}: glyph classes outside the measures diverged from reference (${dRes}) — a spanner segment crossing the system break`);
+          }
           /* ABSOLUTE tops, not just consecutive spacing: a cascade that shifted
              a whole page by a constant would satisfy every spacing check and
              still be wrong (B1). */
@@ -1178,21 +1168,33 @@ function beginsSignatureChange(meas: Element | undefined): boolean {
     if (p.localName === 'scoreDef') return true;
     if (p.localName === 'measure' || p.querySelector('measure')) break;
   }
-  /* Walk each staff's leading elements (and its layers'): a signature element
-     before the first note/rest/chord is a change AT the barline; one after it
-     is mid-measure and generates no courtesy. */
-  const scan = (parent: Element): boolean => {
+  /* Walk each staff's leading elements (and EVERY one of its layers'): a
+     signature element before the first note/rest/chord is a change AT the
+     barline; one after it is mid-measure and generates no courtesy.
+
+     Third hole closed 2026-09-03 (Phase 3 precondition 1): the scan used to
+     `return false` at the first layer that opened with an event, so it never
+     looked at layer 2. Composer puts voices 3-4 in layer 2 of the same staff
+     (`layerForVoice`, model/index.ts), so a clef change entered on voice 3 or
+     4 was invisible whenever voice 1's layer began with a note — the common
+     case. The stub rule becomes load-bearing for the replaced line's own
+     courtesy once the context lines go, so a missed change here is a wrong
+     page rather than a slow render. Each layer is judged on its own leading
+     elements; any layer that leads with a signature element is a change. */
+  const scanLeading = (parent: Element): boolean => {
     for (const c of Array.from(parent.children)) {
       const ln = c.localName;
       if (ln === 'clef' || ln === 'keySig' || ln === 'meterSig') return true;
       if (ln === 'note' || ln === 'chord' || ln === 'rest' || ln === 'mRest' || ln === 'beam' || ln === 'tuplet' || ln === 'space') return false;
-      if (ln === 'layer' && scan(c)) return true;
-      if (ln === 'layer') return false;
     }
     return false;
   };
   for (const staff of Array.from(meas.children)) {
-    if (staff.localName === 'staff' && scan(staff)) return true;
+    if (staff.localName !== 'staff') continue;
+    if (scanLeading(staff)) return true;                 // staff-level signature element
+    for (const layer of Array.from(staff.children)) {
+      if (layer.localName === 'layer' && scanLeading(layer)) return true;
+    }
   }
   return false;
 }
@@ -1201,48 +1203,6 @@ function nextSystemSibling(el: Element): Element | null {
   let n = el.nextElementSibling;
   while (n && !n.classList.contains('system')) n = n.nextElementSibling;
   return n;
-}
-
-/** Per-measure x/width comparison of a window context system against its live
- *  counterpart (unchanged content — must reproduce exactly, ± snap noise).
- *  Returns '' on match, else a human-readable divergence detail. */
-function profilesMatch(win: SysProfile, liveSys: SysProfile): string {
-  const wm = win.measures(), lm = liveSys.measures();
-  if (wm.length !== lm.length) {
-    return `measure count ${wm.length} vs live ${lm.length}`;
-  }
-  for (let i = 0; i < wm.length; i++) {
-    const w = wm[i], l = lm[i];
-    if (w.id !== l.id) return `measure order ${w.id} vs live ${l.id}`;
-    const dx = Math.abs(w.relX - l.relX), dw = Math.abs(w.w - l.w);
-    if (dx > EPS || dw > EPS) {
-      return `${w.id}: dRelX=${dx.toFixed(1)} dW=${dw.toFixed(1)}`;
-    }
-  }
-  return '';
-}
-
-/** Everything `profilesMatch` stops short of saying. It names the FIRST
- *  measure whose x/width drifts past EPS, which is where the drift became
- *  visible, not where it started: a courtesy signature missing at a line's END
- *  shows up as the FIRST measure's width, because the line is justified. So a
- *  refusal also records the whole per-measure diff of the diverged context
- *  line, plus a census of the rendered glyph classes in each measure of the
- *  window system and its live counterpart (a dropped slur, an extra accidental,
- *  a clef glyph that should not be there), and the clef glyphs' SMuFL
- *  codepoints — a window can render a line in the WRONG clef and still match
- *  on glyph counts. Diagnostics only; built on the refusal path. */
-export interface ContextDiff {
-  side: 'above' | 'below';
-  line: number;
-  rows: Array<{
-    id: string;
-    winRelX: number; liveRelX: number; winW: number; liveW: number;
-    /** Glyph-class counts that differ: class → [window, live]. */
-    census: Record<string, [number, number]>;
-    /** Clef glyph codepoints in [window, live], document order. */
-    clefs: [string[], string[]];
-  }>;
 }
 
 /** SMuFL codepoints of every clef / key-signature / meter-signature glyph in a
@@ -1260,61 +1220,46 @@ function sigGlyphs(measureEl: Element): string {
     .join(' ');
 }
 
-/** First measure (by id, present on both sides) whose signature glyphs differ
- *  between a window system and a live system — '' when they all match. Both
- *  sides carry the same post-processing, so the comparison is symmetric; it
- *  reads attributes only (no layout flush). Geometry gates cannot see a clef,
- *  key or meter drawn in the wrong FORM at the right width: the wrong-clef
- *  window (2026-09-01) was refused by 11 units of incidental ledger-line
- *  drift, and cut time rendered as "2/2" was not refused at all. */
-function sigGlyphDiff(winSys: Element, liveSys: Element): string {
-  const liveById = new Map(Array.from(liveSys.querySelectorAll('g.measure')).map((m) => [m.id, m]));
-  for (const w of Array.from(winSys.querySelectorAll('g.measure'))) {
-    const l = liveById.get(w.id);
-    if (!l) continue;
-    const a = sigGlyphs(w), b = sigGlyphs(l);
-    if (a !== b) return `${w.id}: window "${a}" vs live "${b}"`;
+/** Classes that are layout DIRECTIVES rather than drawn content, and whose
+ *  identity legitimately differs between a windowed splice and the pinned
+ *  reference: `injectPins` upgrades the `<sb>` at a page start to a `<pb>` in
+ *  the render copy (linebreaks.ts), so the reference system carries `g.pb`
+ *  exactly where the spliced one carries the window's `g.sb`. Neither draws a
+ *  mark. Excluding them was measured, not assumed — before it, this was the
+ *  ONLY divergence the census reported across all 377 fixtures. */
+const CENSUS_IGNORED_CLASSES = new Set(['pb', 'sb']);
+
+/** Glyph classes a system draws OUTSIDE any of its measures — where Verovio
+ *  puts the continuation segment of a spanner crossing the system break. */
+function systemResidueCensus(sysEl: Element): Map<string, number> {
+  const tally = new Map<string, number>();
+  for (const g of Array.from(sysEl.querySelectorAll('g'))) {
+    if (g.closest('g.measure')) continue;      // the measure itself, and everything in one
+    const cls = g.getAttribute('class')?.split(/\s+/)[0];
+    if (cls && !CENSUS_IGNORED_CLASSES.has(cls)) tally.set(cls, (tally.get(cls) ?? 0) + 1);
   }
-  return '';
+  return tally;
+}
+
+/** Classes whose counts differ between a reference census and a live one —
+ *  '' when every class matches. Names each class with both counts, so the
+ *  message says WHAT was dropped or added rather than that something was. */
+function censusDiff(ref: Map<string, number>, live: Map<string, number>): string {
+  const parts: string[] = [];
+  for (const k of Array.from(new Set([...ref.keys(), ...live.keys()])).sort()) {
+    const a = ref.get(k) ?? 0, b = live.get(k) ?? 0;
+    if (a !== b) parts.push(`${k}: reference ${a}, live ${b}`);
+  }
+  return parts.join('; ');
 }
 
 function glyphCensus(measureEl: Element): Map<string, number> {
   const tally = new Map<string, number>();
   for (const g of Array.from(measureEl.querySelectorAll('g'))) {
     const cls = g.getAttribute('class')?.split(/\s+/)[0];
-    if (cls) tally.set(cls, (tally.get(cls) ?? 0) + 1);
+    if (cls && !CENSUS_IGNORED_CLASSES.has(cls)) tally.set(cls, (tally.get(cls) ?? 0) + 1);
   }
   return tally;
-}
-
-function clefGlyphs(measureEl: Element): string[] {
-  return Array.from(measureEl.querySelectorAll('g.clef use')).map((u) =>
-    (u.getAttribute('xlink:href') ?? u.getAttribute('href') ?? '').replace(/^#/, '').split('-')[0]);
-}
-
-function contextDiff(side: 'above' | 'below', line: number, win: SysProfile, liveSys: SysProfile): ContextDiff {
-  const wm = win.measures(), lm = liveSys.measures();
-  const wEls = Array.from(win.el.querySelectorAll('g.measure'));
-  const lEls = Array.from(liveSys.el.querySelectorAll('g.measure'));
-  const rows: ContextDiff['rows'] = [];
-  for (let i = 0; i < Math.max(wm.length, lm.length); i++) {
-    const w = wm[i], l = lm[i];
-    const census: Record<string, [number, number]> = {};
-    if (wEls[i] && lEls[i]) {
-      const a = glyphCensus(wEls[i]), b = glyphCensus(lEls[i]);
-      for (const k of new Set([...a.keys(), ...b.keys()])) {
-        const x = a.get(k) ?? 0, y = b.get(k) ?? 0;
-        if (x !== y) census[k] = [x, y];
-      }
-    }
-    rows.push({
-      id: w?.id ?? l?.id ?? '',
-      winRelX: w?.relX ?? NaN, liveRelX: l?.relX ?? NaN, winW: w?.w ?? NaN, liveW: l?.w ?? NaN,
-      census,
-      clefs: [wEls[i] ? clefGlyphs(wEls[i]) : [], lEls[i] ? clefGlyphs(lEls[i]) : []],
-    });
-  }
-  return { side, line, rows };
 }
 
 /** Windowed sub-MEI: serializeRangeForRender over the window's measures, a
