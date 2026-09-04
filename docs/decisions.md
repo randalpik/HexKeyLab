@@ -6369,3 +6369,66 @@ one-option experiment is recorded in that probe: `minLastJustification: 0`
 gives parity at 18790 and costs 35 visual baselines, since almost every test
 fixture is a one-line document and therefore the very edge case that should
 not stretch.
+
+## 2026-09-03 — Composer owns the STAFF, not just the system: one pass places, nothing snaps afterwards
+
+**Context**: Phase 3's reference gate threw on one sweep position. Chasing it
+found that the page splice had never satisfied its own correctness contract — *a
+spliced page equals a full re-engrave of the same pinned MEI* — and that
+`TOL = 30` had been concealing it for as long as it existed. Measured over the
+sonata (115 edits × mounted pages = 338 pairs): **328 pairs deviated**, median
+~9 units, on both code states, with the pre-Phase-3 build worse at the extreme
+(76.3 units vs 57.6). The gate could not say so, because a tolerance can only
+report "nothing exceeded 30" — "exact" and "off by 29 everywhere" are the same
+answer to it.
+
+**Two defects, both ours, both from vertical ownership stopping at the system
+boundary.**
+
+1. **Place-then-snap.** `placeSystems` chose a system's top from measured
+   extents; `snapStaffLinesToGrid` then ran AFTER placement and moved each
+   `g.staff` by ≤ ½ device pixel for crispness — mutating the `above`/`span`
+   placement had just consumed. A page was `snap(place(x))` while re-measuring
+   said `place(snap(x))`, and since a system's extents feed the top of every
+   system below it, the error was page-wide. With NO edits at all: 0–10.6 units
+   on every page.
+2. **The staff correction was a function of the SCREEN, not the music.**
+   Correcting each staff row against its device position makes the correction
+   depend on the render's arbitrary origin — and a system engraved in a splice
+   WINDOW sits at a different raw `y` than the same system in a full page
+   render (`lineY` 6255 vs 6812, different residues mod the grid). Each render
+   chose a different correction; it landed in `staffTop`; `measureExtents`
+   folded it into `above`; placement consumed `above` and put the system a
+   whole pixel off. **Every element in those systems was visibly displaced
+   while every staff stayed perfectly crisp** — 2.9 % of page 4's pixels — so a
+   phase audit read clean and three fix attempts looked straight past it.
+
+**Decision**: one pass owns vertical position, for staves as well as systems.
+`alignStaffRows(sys, grid)` spaces a system's staff rows a whole number of
+device pixels apart RELATIVE to the system's first row, which is left
+untouched — pure intra-system geometry, identical in any render of the same
+music. `placeSystems(..., originPhase)` carries the phase, nudging each system
+so its first row lands crisp; the rows below, spaced whole pixels away, land on
+it too. Both run before `measureExtents`, so `above` is measured from an
+uncorrected staff top and is a property of the music rather than of the render.
+The reference gate gives its offscreen host identical treatment
+(`ctx.alignStaves`). `snapPage` no longer has anything to do on the page path.
+
+**Measured**: page 4 vs a full re-engrave 285 990 differing pixels (258 615
+significant) → **97, none significant, max delta 4**. Mount exactness 0–10.6 →
+**0** on every page; placement self-error → **0**; exact (edit, page) pairs
+**10/338 → 317/338**; deviations ≥ 30 **6 → 0**; off-grid staves **0 of 150**;
+systems moved outside the replaced set **0** (unchanged — the splice was never
+the problem). Per-measure relX, per-measure width and placement
+self-consistency are now all EXACTLY 0 across the document; only the staff top
+still deviates, by at most one device pixel, on pages 2/4/25 in some
+mounted-set states.
+
+**`TOL` 30 → 10**, one device pixel, set from that measurement rather than
+guessed. Lower it only with a census showing the residual gone.
+
+**Dead ends, measured, do not retry** (recorded in `placeSystems`): quantizing
+every placement term to the grid made exactness worse (280 exact → 199, six
+pairs back over 30); so did quantizing only the `above` clearance (→ 212).
+Rounding a noisy input amplifies the noise near a boundary rather than
+absorbing it. Round once, as late as possible.

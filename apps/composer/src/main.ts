@@ -996,11 +996,20 @@ async function bootRenderer(): Promise<void> {
      The renderer's placement pass has already positioned systems and header
      bands (finishPageMount); the injections draw into them. Order matters:
      snap runs last. */
+  /* Everything here runs AFTER Renderer.placePage, so nothing in it may change
+     a SYSTEM's geometry — placement has already consumed the extents. Both
+     injectors write `text` as a direct child of `g.page-margin`, outside every
+     `g.system`, so they only draw. `styleVoltaNumbers` does NOT qualify (it
+     restyles a tspan inside `g.voltaBracket`, which is in the system) and is
+     therefore also run before placement in `finishPageMount`; it is idempotent,
+     so this call is harmless belt-and-braces for any other mount route.
+     `renderer.snapSystems` was removed 2026-09-03: it moved `g.staff` inside
+     the system, which is the place-then-mutate defect §3.5 exists to kill —
+     placement now puts every staff on the device grid itself. */
   renderer.setOnPageMounted((pageEl) => {
     injectHeaderFooter(pageEl, model.getComposer(), model.getFooter());
     injectSectionHeaders(pageEl, model);
     styleVoltaNumbers(pageEl);
-    renderer.snapSystems(pageEl);
   });
   /* Warm BravuraText before the first render so HEJI / stacked-accidental
      injection draws real glyphs instead of tofu (see injectHejiGlyphs). */

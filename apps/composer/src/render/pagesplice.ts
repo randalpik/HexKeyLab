@@ -100,9 +100,6 @@ export interface PageSpliceCtx {
   /** Non-geometry page decorations that live in main.ts for mounted pages
    *  (volta number styling) — idempotent, content-level. */
   decorateHost: (el: HTMLElement) => void;
-  /** Renderer.snapSystems — re-land staff lines on the device-pixel grid for
-   *  an affected page after the surgery (idempotent). */
-  snapPage: (pageEl: HTMLElement) => void;
   /** Renderer.placePage — the vertical placement pass (render/pagefit.ts,
    *  Phase 1): measures every system on the page, computes each staff top and
    *  header band from Composer's rule, writes the transforms, stamps band tops
@@ -112,6 +109,14 @@ export interface PageSpliceCtx {
    *  page-margin frame), measured on the given laid-out elements, writing
    *  nothing — the reference gate's expectation. Null when unreadable. */
   placeFor: (systems: Element[]) => Array<{ top: number }> | null;
+  /** Renderer.alignStavesIn — phase-align the staff rows of a rendered host
+   *  exactly as a live page's are, so the reference gate compares like with
+   *  like. Without it `placeFor(reference)` reads UNALIGNED extents while the
+   *  live page's are aligned, and the difference (up to one device pixel per
+   *  system, accumulating down the page) is what `TOL = 30` used to absorb. */
+  alignStaves: (host: HTMLElement, originPhase?: number) => void;
+  /** Fractional device y of a live page's margin group (see alignStaves). */
+  originPhaseOf: (pageEl: HTMLElement) => number | undefined;
   /** Mount a lazily-virtualized page so its systems can be measured and
    *  spliced (B5). Returns false when mounting would be expensive or would
    *  draw POST-edit content — the splice then refuses, as it always did. */
@@ -958,7 +963,6 @@ export class PageSystemSplicer {
     for (const pageEl of pages) {
       if (emptied.includes(pageEl)) continue;
       ctx.placePage(pageEl);
-      ctx.snapPage(pageEl);
     }
     this.lastPageEls = Array.from(pages);
     this.lastEmptiedPages = emptied;
@@ -976,7 +980,33 @@ export class PageSystemSplicer {
     const tk = ctx.toolkit;
     tk.setOptions(ctx.liveOptions());
     if (!tk.loadData(mei)) throw new Error('[page-splice] reference loadData failed');
-    const TOL = 30;   // snap noise: live pages are grid-snapped, reference is raw
+    /* ONE DEVICE PIXEL (10 user units at scale 100). Not a fudge — the exact
+       size of a Verovio behaviour we cannot control, measured 2026-09-03.
+
+       `renderToSVG` is NOT IDEMPOTENT for the running page header: rendering a
+       page a SECOND time from the same loaded document moves its `pgHead` text
+       (`cb-hdrdet.js` — pages 1-5 render at y 371/195/194/194/197 on the first
+       pass and 371/197/197/197/197 on the second; a fresh loadData plus a
+       single render is perfectly deterministic at 194). It is not order
+       dependence and not instance specific. Our pages go through a variable
+       number of renders (initial mount, re-mount, the gate's own reference
+       render), so a live page's header can sit 3 units from a freshly rendered
+       one. `firstContentTop` measures that header, every system on the page is
+       placed relative to it, and the device-grid quantization turns those 3
+       fractional units into a clean 10-unit step — which is why the residual
+       was always EXACTLY one pixel, on a stable set of pages, and never moved
+       no matter what changed in our own placement code.
+
+       Pre-existing and not Composer-specific: a re-render has always shifted
+       the header fractionally; owning placement only made it visible as a whole
+       pixel (Max, 2026-09-03: "accept it, set TOL to 10, and move on").
+
+       Everything we DO control is exact: per-measure relX, per-measure width
+       and the live page's placement self-consistency are all 0 across the
+       sonata (`cb-exact.js`, 338 pairs), and 317 of 338 pairs are exact
+       outright. Do not raise this to hide a regression — the last three
+       proposals to widen it were each concealing a real defect. */
+    const TOL = 10;
     for (const pageEl of pageEls) {
       if (!pageEl.isConnected) continue;   // an emptied page the renderer removed
       const pno = Number(pageEl.dataset.page);
@@ -993,6 +1023,19 @@ export class PageSystemSplicer {
          none — a false divergence, not a wrong render (seen on the sonata's
          line 0 the day the glyph check landed). Geometry is unaffected. */
       ctx.postProcess(refHost);
+      /* The reference must be prepared EXACTLY as a live page is, decoration
+         included. `decorateHost` (styleVoltaNumbers) restyles a tspan inside
+         `g.voltaBracket` — font, weight and a trailing '.' — which changes the
+         bracket's bbox, and a volta is content ABOVE the staff, so it changes
+         the `above` this gate then places from. Omitting it made every
+         reference disagree with the live page by that amount on any system
+         carrying a volta (measured: above 1303 vs 1275), which read as a splice
+         defect and was very nearly "fixed" by widening TOL. It runs BEFORE
+         alignment and measurement, mirroring the live order (postProcess →
+         decorate → place). */
+      ctx.decorateHost(refHost);
+      /* Same phase alignment the live pages get (2026-09-03) — see alignStaves. */
+      ctx.alignStaves(refHost, ctx.originPhaseOf(pageEl));
       try {
         const refSys = Array.from(refHost.querySelectorAll('g.system')) as SVGGElement[];
         const liveSys = Array.from(pageEl.querySelectorAll('g.system')) as SVGGElement[];

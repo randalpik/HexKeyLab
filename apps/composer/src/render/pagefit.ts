@@ -66,11 +66,77 @@ export interface PageFitConstants {
   C0: number;
   /** Space between the page header's bottom and the first system's content. */
   headerGap: number;
+  /** SVG user units per DEVICE pixel (`1 / ds`), or 0 when unknown. Placement
+   *  quantizes every system translate to a whole number of these, which is what
+   *  makes a staff's crisp phase independent of where its system is placed —
+   *  see `alignStaffRows` and docs/composer-vertical-ownership-plan.md §3.5. */
+  grid: number;
+  /** Device-pixel phase a staff line must land on to be crisp: ½ for an odd
+   *  (1px) stroke, 0 for an even (2px) one. */
+  phase: number;
 }
 
-export function pageFitConstants(verovioUnit: number): PageFitConstants {
+/** `scale` and `evenWidth` come from the active CRISP_PRESET; omitted (0 grid)
+ *  the placement is unquantized, which is the pre-2026-09-03 behaviour. */
+export function pageFitConstants(verovioUnit: number, scale = 0, evenWidth = false): PageFitConstants {
   const unit = 10 * verovioUnit;
-  return { unit, F: 6 * unit, G: 4 * unit, C0: 5.25 * unit, headerGap: 2 * unit };
+  return {
+    unit, F: 6 * unit, G: 4 * unit, C0: 5.25 * unit, headerGap: 2 * unit,
+    grid: scale > 0 ? 1000 / scale : 0,
+    phase: evenWidth ? 0 : 0.5,
+  };
+}
+
+const fracOf = (x: number): number => ((x % 1) + 1) % 1;
+
+/** Space a system's staff rows a WHOLE number of device pixels apart, leaving
+ *  the first row untouched.
+ *
+ *  Crispness needs every staff line on the device grid. The system's own
+ *  translate (chosen in `placeSystems`) puts the FIRST row on the right phase;
+ *  everything else only has to keep whole-pixel spacing from it, which is what
+ *  this does. Verovio's inter-staff distance is content-dependent and not a
+ *  pixel multiple, so without this the lower staff of a grand staff lands at a
+ *  different phase and renders blurred.
+ *
+ *  Why relative and not absolute (2026-09-03, after getting it wrong once):
+ *  correcting each row against the SCREEN makes the correction depend on the
+ *  render's arbitrary origin — and a system engraved in a splice WINDOW sits at
+ *  a different raw `y` than the same system in a full page render (measured:
+ *  lineY 6255 vs 6812, different residues). Each render then picks a different
+ *  correction, that correction lands in `staffTop`, `measureExtents` folds it
+ *  into `above`, and placement — which consumes `above` — puts the system a
+ *  whole pixel off. Every element in it is then visibly displaced, while every
+ *  staff is still perfectly crisp, so a phase audit sees nothing wrong (page 4
+ *  of the sonata: systems 2-4 displaced 10/20/10 units, 2.9 % of pixels).
+ *  Relative spacing depends only on the music, so `above` measured from the
+ *  uncorrected first row is render-invariant and placement is deterministic. */
+export function alignStaffRows(sys: Element, grid: number): number {
+  if (!(grid > 0)) return 0;
+  const firstMeas = sys.querySelector('g.measure');
+  if (!firstMeas) return 0;
+  const rowStaves = Array.from(firstMeas.querySelectorAll(':scope > g.staff'));
+  if (!rowStaves.length) return 0;
+  const refYs = staffLineYs(rowStaves[0]);
+  if (!refYs.length) return 0;
+  const refY = refYs[0];
+  let moved = 0;
+  for (const staff of Array.from(sys.querySelectorAll('g.staff'))) {
+    const ys = staffLineYs(staff);
+    if (!ys.length) continue;
+    /* Offset RELATIVE to the system's first staff row, wrapped to the nearest
+       whole device pixel. The first row therefore gets exactly 0 and every
+       other row gets a distance that is pure intra-system geometry — identical
+       in any render of the same music. */
+    let rel = (refY - ys[0]) % grid;
+    rel = ((rel % grid) + grid) % grid;
+    if (rel > grid / 2) rel -= grid;
+    const { tx, ty } = translateOf(staff);
+    if (Math.abs(rel - ty) < 1e-4) continue;
+    staff.setAttribute('transform', `translate(${tx}, ${rel})`);
+    moved++;
+  }
+  return moved;
 }
 
 /** A system's vertical extents in its OWN frame (before its transform). */
@@ -148,18 +214,47 @@ export function measureExtents(sys: SVGGraphicsElement): SysExtents | null {
 /** Place systems top to bottom in the page-margin frame. `y0` is where the
  *  first system's content may start (below the page header); `reserve` is the
  *  section-header budget above each system (0 for most). Pure arithmetic. */
-export function placeSystems(items: Array<{ ext: SysExtents; reserve: number }>, k: PageFitConstants, y0: number): PlacedSystem[] {
+export function placeSystems(items: Array<{ ext: SysExtents; reserve: number }>, k: PageFitConstants, y0: number, originPhase = 0): PlacedSystem[] {
   const out: PlacedSystem[] = [];
+  /* DEAD END, measured 2026-09-03: quantizing every term (lead, reserve, the
+     above/below clearances and the accumulator) to the grid made exactness
+     WORSE — 280 of 338 (edit, page) pairs exact fell to 199, and six pairs
+     came back over the old 30-unit tolerance. It reads like it should remove
+     rounding noise, but `top` carries `staffTop`'s non-grid crisp-phase
+     residue, so rounding the ACCUMULATOR adds a second noisy decision on top
+     of the one in `ty` instead of eliminating it. One rounding per system, on
+     an unrounded accumulator, is strictly better. */
   let y = 0;   // running bottom clearance of what is above
   for (let i = 0; i < items.length; i++) {
     const { ext, reserve } = items[i];
     const lead = i === 0 ? y0 : k.G;
-    const top = y + reserve + lead + Math.max(ext.above, k.F);
+    const rawTop = y + reserve + lead + Math.max(ext.above, k.F);
+    /* Quantize the TRANSLATE, not the top: `alignStaffRows` put every staff on
+       its crisp phase assuming the system moves by a whole number of device
+       pixels, so `ty` is what must land on the grid. `top` is then whatever
+       that translate actually produces — the model states where the system IS,
+       never where it was asked to be. */
+    const ty0 = rawTop - ext.staffTop;
+    /* Nudge the system so its FIRST staff row lands on the crisp phase (that
+       row carries no correction of its own — see alignStaffRows), and the rows
+       below it, spaced a whole number of pixels away, land on it too. This
+       replaces quantizing `ty` to the grid: the phase, not the translate, is
+       what has to be right, and putting it here keeps every staff correction
+       render-invariant. */
+    let ty = ty0;
+    if (k.grid > 0) {
+      const ds = 1 / k.grid;
+      const cur = ((((originPhase + (ty0 + ext.staffTop) * ds) % 1) + 1) % 1);
+      let d = (((k.phase - cur) % 1) + 1) % 1;
+      if (d > 0.5) d -= 1;
+      ty = ty0 + d / ds;
+    }
+    const top = ext.staffTop + ty;
     const contentTop = top - ext.above;
     const span = ext.staffBot - ext.staffTop;
     out.push({
       top,
-      ty: top - ext.staffTop,
+      ty,
       bandTop: reserve > 0 ? contentTop - reserve : null,
       contentBottom: top + span + ext.below,
     });

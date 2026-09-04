@@ -30,6 +30,7 @@ if (out.loaded) {
     h.innerHTML = ctx.toolkit.renderToSVG(pn, {});
     document.body.appendChild(h);
     r['postProcessRendered'](h);
+    r['alignStavesIn'](h);        /* same phase alignment live pages get */
     const refSys = Array.from(h.querySelectorAll('g.system'));
     const liveSys = Array.from(pgEl.querySelectorAll('g.system'));
     const row = { page: pn, liveSystems: liveSys.length, refSystems: refSys.length };

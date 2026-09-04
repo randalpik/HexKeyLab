@@ -271,6 +271,14 @@ parked steps (expect → 0 once the job has run). Ritual (§4).
 
 ### Phase 3 — window shape: the gate question, now purely that
 
+**Status 2026-09-03: LANDED** (commit `12ae408`). All six preconditions
+validated; three of them found real defects rather than documentation to write
+(`tempo`/`@tie="m"` coverage, `beginsSignatureChange` skipping every layer past
+the first, the gate blind to equal-width content loss). Window 3 lines / 15
+measures -> 1 line / 7; Verovio 74.6 -> 36.1 ms; steady edit 173.6 -> 127.7 ms.
+Two pre-existing render defects surfaced the moment the live comparison stopped
+masking them — see decisions.md 2026-09-03 and §3.5 below.
+
 After Phases 1–2 the context lines serve the live comparison and nothing else
 (courtesy: Phase 0's stub; spanner endpoints: the same mechanism, endpoint
 measures as stubs — `expandForSpannersOnce` gives the measures).
@@ -332,6 +340,105 @@ Landing the drop: `trySplice` builds the window without `wLo−1`/`wHi+1`;
 `pageSystemSpliceRefusesGlyphMismatch` fixture (forges a context glyph)
 becomes a reference-gate fixture on the replaced line. Ritual (§4); the sweep
 histogram must be empty.
+
+### Phase 3.5 — staff quantization: the correctness contract made assertable (LANDED 2026-09-03)
+
+Not in the original sequence. Phase 3's reference gate threw on one sweep
+position, and chasing it uncovered that the splice had NEVER satisfied its own
+correctness contract — *a spliced page equals a full re-engrave of the same
+pinned MEI* — and that `TOL = 30` had been concealing it. Absorbed here from
+the (now deleted) `composer-staff-quantization-plan.md`.
+
+**What was wrong.** Two independent defects, both ours, both in vertical
+ownership stopping at the system boundary.
+
+1. **Place-then-snap.** `placeSystems` chose each system's top from measured
+   extents; `snapStaffLinesToGrid` then ran AFTER placement and nudged each
+   `g.staff` by ≤ ½ device pixel for crispness — mutating the `above`/`span`
+   placement had just consumed. A mounted page was `snap(place(x))` while
+   re-measuring said `place(snap(x))`. Since a system's extents feed the top of
+   every system below it, the error was page-wide. Measured with NO edits at
+   all: 0-10.6 units on every page (`cb-mountexact.js`), and 328 of 338
+   (edit, page) pairs deviating across the document, median ~9 units.
+2. **The staff correction depended on the SCREEN, not the music.** Correcting
+   each staff row against its device position makes the correction a function
+   of the render's arbitrary origin — and a system engraved in a splice WINDOW
+   sits at a different raw `y` than the same system in a full page render
+   (measured `lineY` 6255 vs 6812, different residues mod the grid). Each
+   render then chose a different correction; the correction landed in
+   `staffTop`; `measureExtents` folded it into `above`; placement consumed
+   `above` and put the system a whole pixel off. Every element in it was
+   visibly displaced while every staff stayed perfectly crisp — which is why a
+   phase audit read clean and the first three fix attempts looked past it.
+   Page 4 of the sonata: systems 2-4 displaced 10/20/10 units, **2.9 % of the
+   page's pixels** differing from a full re-engrave.
+
+**What was built.** One pass owns vertical position, for staves as well as
+systems (`render/pagefit.ts`):
+
+- `alignStaffRows(sys, grid)` spaces a system's staff rows a whole number of
+  device pixels apart, RELATIVE to the system's first row, which is left
+  untouched. Relative spacing is pure intra-system geometry — identical in any
+  render of the same music — so `above`, measured from an uncorrected staff
+  top, is render-invariant.
+- `placeSystems(..., originPhase)` carries the phase: it nudges each system so
+  its first staff row lands on the crisp device phase. The rows below it,
+  spaced whole pixels away, land on it too.
+- It runs BEFORE `measureExtents`, so placement reads geometry nothing will
+  move again. The reference gate gives its offscreen host identical treatment
+  (`ctx.alignStaves`), so it compares like with like.
+
+**Measured** (sonata, 115 edits x mounted pages = 338 pairs):
+
+| | before | after |
+| --- | --- | --- |
+| page 4 pixels vs full re-engrave | 285 990 (258 615 significant) | **97 (0 significant, max delta 4)** |
+| mount exactness, no edits | 0-10.6 units every page | **0** |
+| placement self-error | up to −10 | **0** |
+| exact (edit, page) pairs | 10 / 338 | **317 / 338** |
+| deviations ≥ 30 | 6 | **0** |
+| off-grid staves | — | **0 of 150** |
+| systems moved outside the replaced set | 0 | **0** |
+
+**Residual: root-caused to Verovio, and accepted.** 21 of 338 (edit, page)
+pairs deviate by exactly one device pixel, on pages 2, 4 and 25. The cause is
+NOT ours: `renderToSVG` is not idempotent for the running page header.
+Rendering a page a second time from the same loaded document moves its
+`pgHead` text — measured (`cb-hdrdet.js`), pages 1-5 give y
+371/195/194/194/197 on the first pass and 371/197/197/197/197 on the second,
+while a fresh `loadData` plus one render is perfectly deterministic at 194. Not
+order dependence (page 3 reads 194 whether rendered first, after 1-2, or after
+5) and not toolkit-instance specific.
+
+Our pages go through a variable number of renders — initial mount, re-mount,
+the gate's reference render — so a live page's header can sit 3 units from a
+freshly rendered one. `firstContentTop` measures that header, so every system
+on the page is placed from it, and the device-grid quantization turns 3
+fractional units into a clean 10-unit step. That is why the residual was always
+EXACTLY one pixel, on a stable set of pages, and never moved however our own
+placement code changed.
+
+This is pre-existing and not Composer-specific: a re-render has always shifted
+the header fractionally; owning placement only made it visible as a whole
+pixel. Accepted (Max, 2026-09-03), and `TOL` is 10 — one pixel — to match.
+Everything we DO control is exact: per-measure relX, per-measure width and
+placement self-consistency are all 0 across the document.
+
+Two false trails worth not repeating: the deviation is not a stale mounted page
+(the edit provably does not change any header y — before and after are
+identical for every page), and it is not a page borrowing another page's header
+(197 also being page 5's value is coincidence). If this is ever revisited, the
+fix is to stop feeding a Verovio-measured header into placement — treat the
+page header as a fixed reserve like `SECTION_HEADER_RESERVE`, which Phase 1's
+calibrated `C0` already encodes for the one-line page-number header; page 1's
+title header is the one case that genuinely varies.
+
+**Dead ends, measured, do not retry** (recorded in `placeSystems`): quantizing
+every placement term to the grid made exactness WORSE (280 exact → 199, six
+pairs back over 30), and so did quantizing only the `above` clearance (→ 212).
+Rounding a noisy input amplifies the noise near boundaries rather than
+absorbing it — two `above` values 4 units apart that straddle a half-step round
+to different multiples. Round ONCE, as late as possible.
 
 ### Phase 4 — the distribution rule (D1 proper)
 

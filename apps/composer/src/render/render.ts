@@ -9,7 +9,7 @@ import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
 import { injectHejiGlyphs } from '@hkl/notation/heji-render.js';
 import { applyNotationTheme } from '@hkl/notation/verovio.js';
 import { CRISP_PRESETS, crispMarginTop, lineWidthOptions, pinExactScale, snapStaffLinesToGrid, snapBarlines, snapSystemRightEdge } from '@hkl/notation/render-presets.js';
-import { pageFitConstants, measureExtents, placeSystems, foldIndex, translateOf, ExtentsStore, SECTION_HEADER_RESERVE, SECTION_HEADER_BASELINE, type PlacedSystem, type SysExtents, type PageFitConstants } from './pagefit.js';
+import { pageFitConstants, measureExtents, placeSystems, foldIndex, translateOf, ExtentsStore, SECTION_HEADER_RESERVE, SECTION_HEADER_BASELINE, type PlacedSystem, type SysExtents, type PageFitConstants, alignStaffRows } from './pagefit.js';
 import { ScrollSplicer, type SpliceCtx } from './splice.js';
 import {
   PageLineBreaks, partitionFromLayout, systemStartsFromPageSvg, injectPins,
@@ -439,12 +439,15 @@ class Renderer {
     };
   }
 
-  /** Snap every rendered system's staff lines onto the device-pixel grid for the
-   *  active zoom preset. Page view stacks content-height-dependent systems that
-   *  each land at their own sub-pixel phase; this lands them all on the crisp
-   *  phase. Call AFTER any post-render injections that move systems (section
-   *  headers) and before measuring cursor/overlay geometry. Single-system renders
-   *  (scroll) are a no-op (margin parity already aligned them). */
+  /** Device-grid staff snap. NO LONGER PART OF THE PAGE RENDER PATH (Phase 3.5,
+   *  2026-09-03): placement now puts every staff on the grid itself
+   *  (`alignStaffRows` + the phase carried by `placeSystems`), so running this
+   *  afterwards moved nothing — measured, 0 of 102 staves — while costing a DOM
+   *  walk and a `getScreenCTM` per staff on every mount and every splice. It
+   *  ran after placement and mutated the extents placement had just consumed,
+   *  which is the defect §3.5 fixes. Kept as a diagnostic (probes assert it is
+   *  a no-op); scroll view, the frame and the inset are crisped by
+   *  `snapStaffLinesToGrid` directly in @hkl/notation, not through here. */
   snapSystems(container: HTMLElement): void {
     const preset = CRISP_PRESETS[this.zoom];
     snapStaffLinesToGrid(container, preset.scale, preset.evenWidth);
@@ -485,7 +488,7 @@ class Renderer {
    *  writing nothing. Null when a system has no readable extents. */
   private measureAndPlace(systems: Element[]): { placed: PlacedSystem[]; exts: SysExtents[] } | null {
     const headers = this.headerMeasureIds();
-    const k = pageFitConstants(CRISP_PRESETS[this.zoom].unit);
+    const k = pageFitConstants(CRISP_PRESETS[this.zoom].unit, CRISP_PRESETS[this.zoom].scale, CRISP_PRESETS[this.zoom].evenWidth);
     const y0 = this.firstContentTop(systems[0]?.parentElement ?? null, k);
     const items: Array<{ ext: SysExtents; reserve: number }> = [];
     for (const sys of systems) {
@@ -495,7 +498,8 @@ class Renderer {
       for (const m of Array.from(sys.querySelectorAll('g.measure'))) if (headers.has(m.id)) reserve += SECTION_HEADER_RESERVE;
       items.push({ ext, reserve });
     }
-    return { placed: placeSystems(items, k, y0), exts: items.map((i) => i.ext) };
+    const margin = systems[0]?.parentElement ?? null;
+    return { placed: placeSystems(items, k, y0, this.marginPhase(margin)), exts: items.map((i) => i.ext) };
   }
 
   /** Read-only placement of the given systems (the reference gate's
@@ -533,6 +537,12 @@ class Renderer {
   placePage(pageEl: HTMLElement): PlacedPage | null {
     const ps = this.pageSystems(pageEl);
     if (!ps || !ps.systems.length) return null;
+    /* Own the staff, not just the system (2026-09-03): put every staff row on
+       its crisp device phase FIRST, so `measureExtents` reads geometry nothing
+       will move again. Doing this after placement — which is what the separate
+       `snapStaffLinesToGrid` pass did — invalidated the very extents placement
+       had consumed. See docs/composer-vertical-ownership-plan.md §3.5. */
+    this.alignPageStaves(ps.margin, ps.systems);
     const mp = this.measureAndPlace(ps.systems);
     if (!mp) {
       console.warn('[page-fit] page ' + pageEl.dataset.page + ': a system has no readable extents — not placed');
@@ -557,6 +567,61 @@ class Renderer {
       if (band !== null) t.setAttribute('y', String(band + SECTION_HEADER_BASELINE));
     }
     return { systems: ps.systems, placed, paperBottom: ps.paperBottom };
+  }
+
+  /** Phase-align the staff rows of an arbitrary rendered host (the reference
+   *  gate's offscreen page), so its extents are measured on the same footing as
+   *  a live page's. */
+  alignStavesIn(host: HTMLElement, originPhase?: number): void {
+    const margin = host.querySelector('svg g.page-margin') ?? host;
+    const systems = Array.from(host.querySelectorAll('g.system'));
+    /* `alignStaffRows` computes each staff's phase assuming its system sits at
+       a whole number of device pixels — which placement GUARANTEES on a live
+       page, and which is false on a raw reference render, whose systems sit
+       wherever Verovio stacked them. Aligning under a false premise moves
+       `g.staff` while content outside the staff stays put, which perturbs the
+       measured `above` by a fraction of a pixel (measured: 478 vs 474) and, at
+       a rounding boundary, shows up as a whole-pixel placement difference.
+       Grid-align the system transforms first so the premise holds; only
+       relative extents are read afterwards, so the absolute shift is free. */
+    const grid = 1000 / CRISP_PRESETS[this.zoom].scale;
+    for (const sys of systems) {
+      const { tx, ty } = translateOf(sys);
+      const q = Math.round(ty / grid) * grid;
+      if (Math.abs(q - ty) > 1e-9) sys.setAttribute('transform', `translate(${tx}, ${q})`);
+    }
+    this.alignPageStaves(margin, systems, originPhase);
+  }
+
+  /** Fractional device y of a page's margin group — the only position-dependent
+   *  input to staff alignment. The reference gate reads it from the LIVE page
+   *  and aligns its offscreen reference with it, so the two are corrected
+   *  identically; aligning the reference by its own (offscreen, unscrolled)
+   *  phase instead leaves a residue of up to a device pixel per system. */
+  originPhaseOf(pageEl: HTMLElement): number | undefined {
+    const margin = pageEl.querySelector('svg g.page-margin') as SVGGraphicsElement | null;
+    const ctm = margin?.getScreenCTM?.();
+    return ctm ? ((ctm.f % 1) + 1) % 1 : undefined;
+  }
+
+  /** Phase-align every staff row on a page. The page-margin group's fractional
+   *  device y is read ONCE here and handed to `alignStaffRows`; it is not a
+   *  global constant (at zoom 75 it differs between pages, since pages stack at
+   *  content-dependent heights), which is why it is read per page rather than
+   *  derived from the preset. Returns how many staves actually moved — 0 on an
+   *  already-aligned page, which is what makes placement idempotent. */
+  private alignPageStaves(_margin: Element, systems: Element[], _forcedPhase?: number): number {
+    const grid = 1000 / CRISP_PRESETS[this.zoom].scale;
+    let moved = 0;
+    for (const sys of systems) moved += alignStaffRows(sys, grid);
+    return moved;
+  }
+
+  /** Fractional device y of a page-margin group — the phase `placeSystems`
+   *  aligns each system's first staff row against. */
+  private marginPhase(margin: Element | null): number {
+    const ctm = (margin as SVGGraphicsElement | null)?.getScreenCTM?.();
+    return ctm ? ((ctm.f % 1) + 1) % 1 : 0;
   }
 
   /** Bake natural system breaks into the MEI so page-break ('encoded') docs
@@ -1197,8 +1262,21 @@ class Renderer {
    *  main.ts page injections (exactly once per mount — they aren't idempotent). */
   private finishPageMount(div: HTMLElement): void {
     this.postProcessRendered(div);
+    /* Volta numbers are RESTYLED before placement, not after (2026-09-03).
+       `styleVoltaNumbers` changes a tspan's font-size/family/weight and appends
+       a '.', so it changes the volta bracket's bbox — and a volta is content
+       ABOVE the staff, so it changes the system's `above`, which placement
+       consumes. Running it afterwards left a mounted page 20 units (2 device
+       pixels) below its own rule from the volta system down, while the SPLICE
+       path — which decorates before placing — was correct: the gate then read
+       the discrepancy as a splice defect and it held `TOL` at 20. Idempotent,
+       so the injection pass below may run it again harmlessly. Same shape as
+       the place-then-snap defect §3.5 fixed: anything that moves geometry must
+       run before the pass that measures it. */
+    styleVoltaNumbers(div);
     /* Composer places the page's systems and header bands (Phase 1); the
-       main.ts injections then draw into the bands, and the snap runs last. */
+       main.ts injections then DRAW into those bands — they must not change
+       geometry, or they invalidate the extents placement just consumed. */
     this.placePage(div);
     this.onPageMountedCb?.(div);
   }
@@ -1653,9 +1731,10 @@ class Renderer {
       liveOptions: () => base,
       postProcess: (el: HTMLElement, scope?: Element[]) => this.postProcessRendered(el, scope),
       decorateHost: (el: HTMLElement) => styleVoltaNumbers(el),
-      snapPage: (el: HTMLElement) => this.snapSystems(el),
       placePage: (el: HTMLElement) => this.placePage(el),
       placeFor: (systems: Element[]) => this.placeFor(systems),
+      alignStaves: (host: HTMLElement, originPhase?: number) => this.alignStavesIn(host, originPhase),
+      originPhaseOf: (pageEl: HTMLElement) => this.originPhaseOf(pageEl),
       ensurePageMounted: (p: number) => this.mountPageIfCheap(p),
       isPageMounted: (p: number) => {
         const el = this.pageDiv(p);
@@ -1823,7 +1902,7 @@ class Renderer {
     this.lastCascade = { steps: 0, transplanted: 0, arithmetic: 0, parked: 0, created: 0, ms: 0, msFold: 0, msClone: 0, msMove: 0, msPlace: 0, msSnap: 0, msMount: 0 };
     const cas = this.lastCascade;
     const tRepair = performance.now();
-    const k = pageFitConstants(CRISP_PRESETS[this.zoom].unit);
+    const k = pageFitConstants(CRISP_PRESETS[this.zoom].unit, CRISP_PRESETS[this.zoom].scale, CRISP_PRESETS[this.zoom].evenWidth);
     const headers = this.headerMeasureIds();
     const touch = (el: HTMLElement): void => { if (!this.touchedPages.includes(el)) this.touchedPages.push(el); };
     let pending = Array.from(new Set(pages)).filter((p) => p >= 1).sort((x, y) => x - y);
@@ -1912,7 +1991,6 @@ class Renderer {
         this.placePage(div);
         cas.msPlace += performance.now() - tPlace;
         const tSnap = performance.now();
-        this.snapSystems(div);
         cas.msSnap += performance.now() - tSnap;
         const tClone = performance.now();
         const created = this.createPageFromShell(p + 1, div);
@@ -1971,8 +2049,6 @@ class Renderer {
       this.placePage(nextDiv);
       cas.msPlace += performance.now() - tPlace;
       const tSnap = performance.now();
-      this.snapSystems(div);
-      this.snapSystems(nextDiv);
       cas.msSnap += performance.now() - tSnap;
       st.stalePages.add(p);
       st.stalePages.add(p + 1);

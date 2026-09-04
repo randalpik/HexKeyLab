@@ -3,7 +3,7 @@
   "fixtures": 377,
   "passed": 377,
   "failed": 0,
-  "elapsedMs": 311981,
+  "elapsedMs": 324014,
   "results": [
     {
       "name": "emptyDoc",
@@ -13,9 +13,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 31,
-        "invariants": 128,
-        "total": 219
+        "setup": 27,
+        "invariants": 124,
+        "total": 199
       },
       "renders": {
         "total": 4,
@@ -33,9 +33,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 37,
-        "invariants": 161,
-        "total": 248
+        "setup": 31,
+        "invariants": 156,
+        "total": 232
       },
       "renders": {
         "total": 5,
@@ -53,9 +53,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 29,
-        "invariants": 227,
-        "total": 316
+        "setup": 27,
+        "invariants": 222,
+        "total": 300
       },
       "renders": {
         "total": 7,
@@ -73,9 +73,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 30,
-        "invariants": 295,
-        "total": 368
+        "setup": 27,
+        "invariants": 290,
+        "total": 367
       },
       "renders": {
         "total": 9,
@@ -93,9 +93,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 30,
-        "invariants": 294,
-        "total": 383
+        "setup": 26,
+        "invariants": 289,
+        "total": 366
       },
       "renders": {
         "total": 9,
@@ -113,9 +113,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 31,
-        "invariants": 362,
-        "total": 450
+        "setup": 25,
+        "invariants": 378,
+        "total": 456
       },
       "renders": {
         "total": 11,
@@ -133,7 +133,7 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 31,
+        "setup": 33,
         "invariants": 362,
         "total": 450
       },
@@ -153,9 +153,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 28,
-        "invariants": 192,
-        "total": 263
+        "setup": 27,
+        "invariants": 193,
+        "total": 265
       },
       "renders": {
         "total": 6,
@@ -173,9 +173,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 29,
-        "invariants": 124,
-        "total": 199
+        "setup": 27,
+        "invariants": 125,
+        "total": 198
       },
       "renders": {
         "total": 4,
@@ -194,8 +194,8 @@
       },
       "ms": {
         "setup": 28,
-        "invariants": 159,
-        "total": 234
+        "invariants": 161,
+        "total": 236
       },
       "renders": {
         "total": 5,
@@ -213,8 +213,8 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 28,
-        "invariants": 123,
+        "setup": 27,
+        "invariants": 124,
         "total": 197
       },
       "renders": {
@@ -233,9 +233,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 25,
-        "invariants": 358,
-        "total": 435
+        "setup": 34,
+        "invariants": 359,
+        "total": 451
       },
       "renders": {
         "total": 11,
@@ -253,9 +253,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 24,
-        "invariants": 120,
-        "total": 195
+        "setup": 26,
+        "invariants": 125,
+        "total": 200
       },
       "renders": {
         "total": 4,
@@ -273,9 +273,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 26,
-        "invariants": 155,
-        "total": 217
+        "setup": 30,
+        "invariants": 164,
+        "total": 238
       },
       "renders": {
         "total": 5,
@@ -293,9 +293,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 26,
-        "invariants": 157,
-        "total": 235
+        "setup": 33,
+        "invariants": 159,
+        "total": 246
       },
       "renders": {
         "total": 5,
@@ -313,8 +313,8 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 28,
-        "invariants": 426,
+        "setup": 31,
+        "invariants": 429,
         "total": 502
       },
       "renders": {
@@ -333,9 +333,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 27,
-        "invariants": 291,
-        "total": 366
+        "setup": 31,
+        "invariants": 293,
+        "total": 380
       },
       "renders": {
         "total": 9,
@@ -353,9 +353,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 25,
-        "invariants": 156,
-        "total": 231
+        "setup": 27,
+        "invariants": 158,
+        "total": 232
       },
       "renders": {
         "total": 5,
@@ -373,8 +373,8 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 30,
-        "invariants": 155,
+        "setup": 27,
+        "invariants": 158,
         "total": 233
       },
       "renders": {
@@ -393,9 +393,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 24,
-        "invariants": 191,
-        "total": 269
+        "setup": 29,
+        "invariants": 194,
+        "total": 270
       },
       "renders": {
         "total": 6,
@@ -413,8 +413,8 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 24,
-        "invariants": 290,
+        "setup": 29,
+        "invariants": 293,
         "total": 365
       },
       "renders": {
@@ -433,9 +433,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 26,
-        "invariants": 256,
-        "total": 332
+        "setup": 28,
+        "invariants": 265,
+        "total": 339
       },
       "renders": {
         "total": 8,
@@ -453,9 +453,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 28,
-        "invariants": 190,
-        "total": 268
+        "setup": 33,
+        "invariants": 212,
+        "total": 297
       },
       "renders": {
         "total": 6,
@@ -473,9 +473,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 27,
-        "invariants": 224,
-        "total": 300
+        "setup": 28,
+        "invariants": 230,
+        "total": 301
       },
       "renders": {
         "total": 7,
@@ -493,9 +493,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 24,
-        "invariants": 155,
-        "total": 231
+        "setup": 29,
+        "invariants": 161,
+        "total": 248
       },
       "renders": {
         "total": 5,
@@ -514,8 +514,8 @@
       },
       "ms": {
         "setup": 29,
-        "invariants": 359,
-        "total": 437
+        "invariants": 362,
+        "total": 435
       },
       "renders": {
         "total": 11,
@@ -533,9 +533,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 32,
-        "invariants": 426,
-        "total": 501
+        "setup": 31,
+        "invariants": 431,
+        "total": 502
       },
       "renders": {
         "total": 13,
@@ -553,9 +553,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 29,
-        "invariants": 193,
-        "total": 267
+        "setup": 30,
+        "invariants": 192,
+        "total": 277
       },
       "renders": {
         "total": 6,
@@ -574,8 +574,8 @@
       },
       "ms": {
         "setup": 28,
-        "invariants": 158,
-        "total": 231
+        "invariants": 160,
+        "total": 235
       },
       "renders": {
         "total": 5,
@@ -593,9 +593,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 27,
-        "invariants": 160,
-        "total": 235
+        "setup": 31,
+        "invariants": 159,
+        "total": 249
       },
       "renders": {
         "total": 5,
@@ -614,8 +614,8 @@
       },
       "ms": {
         "setup": 29,
-        "invariants": 300,
-        "total": 390
+        "invariants": 298,
+        "total": 372
       },
       "renders": {
         "total": 9,
@@ -633,9 +633,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 30,
-        "invariants": 260,
-        "total": 344
+        "setup": 31,
+        "invariants": 263,
+        "total": 349
       },
       "renders": {
         "total": 8,
@@ -653,9 +653,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 29,
-        "invariants": 294,
-        "total": 367
+        "setup": 25,
+        "invariants": 293,
+        "total": 363
       },
       "renders": {
         "total": 9,
@@ -673,9 +673,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 29,
-        "invariants": 262,
-        "total": 335
+        "setup": 26,
+        "invariants": 258,
+        "total": 332
       },
       "renders": {
         "total": 8,
@@ -693,9 +693,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 29,
-        "invariants": 227,
-        "total": 315
+        "setup": 23,
+        "invariants": 222,
+        "total": 297
       },
       "renders": {
         "total": 7,
@@ -713,9 +713,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 28,
-        "invariants": 227,
-        "total": 300
+        "setup": 26,
+        "invariants": 225,
+        "total": 303
       },
       "renders": {
         "total": 7,
@@ -733,9 +733,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 29,
-        "invariants": 195,
-        "total": 284
+        "setup": 23,
+        "invariants": 188,
+        "total": 263
       },
       "renders": {
         "total": 6,
@@ -753,9 +753,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 27,
-        "invariants": 226,
-        "total": 298
+        "setup": 23,
+        "invariants": 221,
+        "total": 283
       },
       "renders": {
         "total": 7,
@@ -773,8 +773,8 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 27,
-        "invariants": 260,
+        "setup": 24,
+        "invariants": 255,
         "total": 334
       },
       "renders": {
@@ -793,9 +793,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 29,
-        "invariants": 259,
-        "total": 332
+        "setup": 23,
+        "invariants": 260,
+        "total": 338
       },
       "renders": {
         "total": 8,
@@ -813,9 +813,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 27,
-        "invariants": 192,
-        "total": 267
+        "setup": 23,
+        "invariants": 190,
+        "total": 264
       },
       "renders": {
         "total": 6,
@@ -833,9 +833,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 28,
-        "invariants": 126,
-        "total": 200
+        "setup": 22,
+        "invariants": 121,
+        "total": 197
       },
       "renders": {
         "total": 4,
@@ -853,9 +853,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 28,
-        "invariants": 192,
-        "total": 267
+        "setup": 23,
+        "invariants": 189,
+        "total": 251
       },
       "renders": {
         "total": 6,
@@ -873,9 +873,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 27,
-        "invariants": 191,
-        "total": 265
+        "setup": 22,
+        "invariants": 188,
+        "total": 249
       },
       "renders": {
         "total": 6,
@@ -893,9 +893,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 28,
+        "setup": 22,
         "invariants": 124,
-        "total": 200
+        "total": 186
       },
       "renders": {
         "total": 4,
@@ -913,9 +913,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 35,
-        "invariants": 139,
-        "total": 215
+        "setup": 32,
+        "invariants": 121,
+        "total": 182
       },
       "renders": {
         "total": 4,
@@ -933,9 +933,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 31,
-        "invariants": 126,
-        "total": 204
+        "setup": 25,
+        "invariants": 122,
+        "total": 183
       },
       "renders": {
         "total": 4,
@@ -953,9 +953,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 30,
-        "invariants": 127,
-        "total": 200
+        "setup": 26,
+        "invariants": 121,
+        "total": 182
       },
       "renders": {
         "total": 4,
@@ -973,9 +973,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 28,
-        "invariants": 127,
-        "total": 200
+        "setup": 23,
+        "invariants": 125,
+        "total": 186
       },
       "renders": {
         "total": 4,
@@ -994,8 +994,8 @@
       },
       "ms": {
         "setup": 33,
-        "invariants": 360,
-        "total": 433
+        "invariants": 362,
+        "total": 438
       },
       "renders": {
         "total": 11,
@@ -1013,9 +1013,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 34,
-        "invariants": 445,
-        "total": 534
+        "setup": 33,
+        "invariants": 448,
+        "total": 536
       },
       "renders": {
         "total": 13,
@@ -1034,8 +1034,8 @@
       },
       "ms": {
         "setup": 32,
-        "invariants": 414,
-        "total": 503
+        "invariants": 394,
+        "total": 479
       },
       "renders": {
         "total": 12,
@@ -1053,9 +1053,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 22,
-        "invariants": 119,
-        "total": 189
+        "setup": 26,
+        "invariants": 124,
+        "total": 197
       },
       "renders": {
         "total": 4,
@@ -1073,9 +1073,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 23,
-        "invariants": 156,
-        "total": 219
+        "setup": 27,
+        "invariants": 158,
+        "total": 234
       },
       "renders": {
         "total": 5,
@@ -1094,8 +1094,8 @@
       },
       "ms": {
         "setup": 0,
-        "invariants": 223,
-        "total": 401
+        "invariants": 227,
+        "total": 419
       },
       "renders": {
         "total": 7,
@@ -1114,8 +1114,8 @@
       },
       "ms": {
         "setup": 0,
-        "invariants": 155,
-        "total": 265
+        "invariants": 157,
+        "total": 280
       },
       "renders": {
         "total": 5,
@@ -1133,8 +1133,8 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 25,
-        "invariants": 356,
+        "setup": 29,
+        "invariants": 358,
         "total": 451
       },
       "renders": {
@@ -1153,9 +1153,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 26,
-        "invariants": 355,
-        "total": 449
+        "setup": 28,
+        "invariants": 359,
+        "total": 467
       },
       "renders": {
         "total": 11,
@@ -1173,9 +1173,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 26,
-        "invariants": 355,
-        "total": 467
+        "setup": 30,
+        "invariants": 376,
+        "total": 501
       },
       "renders": {
         "total": 11,
@@ -1193,9 +1193,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 24,
+        "setup": 28,
         "invariants": 259,
-        "total": 370
+        "total": 366
       },
       "renders": {
         "total": 8,
@@ -1214,8 +1214,8 @@
       },
       "ms": {
         "setup": 0,
-        "invariants": 119,
-        "total": 261
+        "invariants": 125,
+        "total": 266
       },
       "renders": {
         "total": 4,
@@ -1234,8 +1234,8 @@
       },
       "ms": {
         "setup": 0,
-        "invariants": 122,
-        "total": 203
+        "invariants": 124,
+        "total": 216
       },
       "renders": {
         "total": 4,
@@ -1253,9 +1253,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 24,
-        "invariants": 155,
-        "total": 299
+        "setup": 26,
+        "invariants": 158,
+        "total": 300
       },
       "renders": {
         "total": 5,
@@ -1274,8 +1274,8 @@
       },
       "ms": {
         "setup": 0,
-        "invariants": 125,
-        "total": 203
+        "invariants": 124,
+        "total": 215
       },
       "renders": {
         "total": 4,
@@ -1294,8 +1294,8 @@
       },
       "ms": {
         "setup": 0,
-        "invariants": 122,
-        "total": 197
+        "invariants": 124,
+        "total": 217
       },
       "renders": {
         "total": 4,
@@ -1314,8 +1314,8 @@
       },
       "ms": {
         "setup": 0,
-        "invariants": 155,
-        "total": 250
+        "invariants": 157,
+        "total": 266
       },
       "renders": {
         "total": 5,
@@ -1333,9 +1333,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 29,
-        "invariants": 226,
-        "total": 338
+        "setup": 26,
+        "invariants": 224,
+        "total": 334
       },
       "renders": {
         "total": 7,
@@ -1354,8 +1354,8 @@
       },
       "ms": {
         "setup": 0,
-        "invariants": 124,
-        "total": 215
+        "invariants": 123,
+        "total": 216
       },
       "renders": {
         "total": 4,
@@ -1375,7 +1375,7 @@
       "ms": {
         "setup": 0,
         "invariants": 124,
-        "total": 199
+        "total": 200
       },
       "renders": {
         "total": 4,
@@ -1387,26 +1387,6 @@
     },
     {
       "name": "kbd_statusError_clearsOnNextKey",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 7
-      },
-      "ms": {
-        "setup": 0,
-        "invariants": 123,
-        "total": 216
-      },
-      "renders": {
-        "total": 4,
-        "full": 4
-      },
-      "fullRenderReasons": [
-        "single-line partition"
-      ]
-    },
-    {
-      "name": "kbd_statusInfo_pendingHairpinCancel",
       "ok": true,
       "failures": [],
       "counts": {
@@ -1426,6 +1406,26 @@
       ]
     },
     {
+      "name": "kbd_statusInfo_pendingHairpinCancel",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 7
+      },
+      "ms": {
+        "setup": 0,
+        "invariants": 123,
+        "total": 215
+      },
+      "renders": {
+        "total": 4,
+        "full": 4
+      },
+      "fullRenderReasons": [
+        "single-line partition"
+      ]
+    },
+    {
       "name": "kbd_statusAction_insertMeasure",
       "ok": true,
       "failures": [],
@@ -1434,8 +1434,8 @@
       },
       "ms": {
         "setup": 0,
-        "invariants": 158,
-        "total": 233
+        "invariants": 157,
+        "total": 251
       },
       "renders": {
         "total": 5,
@@ -1474,8 +1474,8 @@
       },
       "ms": {
         "setup": 28,
-        "invariants": 226,
-        "total": 319
+        "invariants": 224,
+        "total": 317
       },
       "renders": {
         "total": 7,
@@ -1493,9 +1493,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 29,
-        "invariants": 226,
-        "total": 365
+        "setup": 31,
+        "invariants": 225,
+        "total": 367
       },
       "renders": {
         "total": 7,
@@ -1513,8 +1513,8 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 30,
-        "invariants": 225,
+        "setup": 28,
+        "invariants": 226,
         "total": 483
       },
       "renders": {
@@ -1533,7 +1533,7 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 29,
+        "setup": 28,
         "invariants": 226,
         "total": 500
       },
@@ -1573,9 +1573,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 42,
-        "invariants": 186,
-        "total": 265
+        "setup": 30,
+        "invariants": 159,
+        "total": 233
       },
       "renders": {
         "total": 5,
@@ -1593,9 +1593,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 60,
+        "setup": 57,
         "invariants": 159,
-        "total": 251
+        "total": 250
       },
       "renders": {
         "total": 5,
@@ -1613,9 +1613,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 27,
-        "invariants": 140,
-        "total": 215
+        "setup": 26,
+        "invariants": 141,
+        "total": 216
       },
       "renders": {
         "total": 4,
@@ -1633,8 +1633,8 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 27,
-        "invariants": 141,
+        "setup": 25,
+        "invariants": 142,
         "total": 217
       },
       "renders": {
@@ -1653,9 +1653,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 27,
+        "setup": 26,
         "invariants": 225,
-        "total": 301
+        "total": 300
       },
       "renders": {
         "total": 5,
@@ -1673,7 +1673,7 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 27,
+        "setup": 26,
         "invariants": 174,
         "total": 282
       },
@@ -1694,8 +1694,8 @@
       },
       "ms": {
         "setup": 33,
-        "invariants": 177,
-        "total": 287
+        "invariants": 176,
+        "total": 285
       },
       "renders": {
         "total": 5,
@@ -1713,9 +1713,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 29,
+        "setup": 26,
         "invariants": 177,
-        "total": 300
+        "total": 284
       },
       "renders": {
         "total": 5,
@@ -1733,9 +1733,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 27,
-        "invariants": 173,
-        "total": 296
+        "setup": 26,
+        "invariants": 175,
+        "total": 282
       },
       "renders": {
         "total": 5,
@@ -1753,9 +1753,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 28,
+        "setup": 27,
         "invariants": 174,
-        "total": 284
+        "total": 282
       },
       "renders": {
         "total": 5,
@@ -1773,9 +1773,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 27,
-        "invariants": 174,
-        "total": 283
+        "setup": 26,
+        "invariants": 175,
+        "total": 285
       },
       "renders": {
         "total": 5,
@@ -1793,9 +1793,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 27,
-        "invariants": 176,
-        "total": 269
+        "setup": 26,
+        "invariants": 171,
+        "total": 262
       },
       "renders": {
         "total": 5,
@@ -1813,9 +1813,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 28,
-        "invariants": 158,
-        "total": 232
+        "setup": 22,
+        "invariants": 153,
+        "total": 216
       },
       "renders": {
         "total": 5,
@@ -1833,9 +1833,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 30,
-        "invariants": 159,
-        "total": 234
+        "setup": 22,
+        "invariants": 154,
+        "total": 217
       },
       "renders": {
         "total": 5,
@@ -1853,9 +1853,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 28,
-        "invariants": 125,
-        "total": 200
+        "setup": 21,
+        "invariants": 121,
+        "total": 184
       },
       "renders": {
         "total": 4,
@@ -1873,9 +1873,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 30,
-        "invariants": 192,
-        "total": 267
+        "setup": 24,
+        "invariants": 188,
+        "total": 250
       },
       "renders": {
         "total": 6,
@@ -1893,9 +1893,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 30,
-        "invariants": 159,
-        "total": 233
+        "setup": 22,
+        "invariants": 155,
+        "total": 217
       },
       "renders": {
         "total": 5,
@@ -1913,9 +1913,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 33,
-        "invariants": 135,
-        "total": 209
+        "setup": 27,
+        "invariants": 134,
+        "total": 196
       },
       "renders": {
         "total": 0,
@@ -1930,9 +1930,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 51,
-        "invariants": 188,
-        "total": 287
+        "setup": 40,
+        "invariants": 187,
+        "total": 253
       },
       "renders": {
         "total": 5,
@@ -1950,9 +1950,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 112,
+        "setup": 105,
         "invariants": 2652,
-        "total": 2864
+        "total": 2865
       },
       "renders": {
         "total": 70,
@@ -1967,9 +1967,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 27,
-        "invariants": 503,
-        "total": 567
+        "setup": 35,
+        "invariants": 501,
+        "total": 582
       },
       "renders": {
         "total": 0,
@@ -1984,9 +1984,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 26,
-        "invariants": 536,
-        "total": 600
+        "setup": 34,
+        "invariants": 551,
+        "total": 617
       },
       "renders": {
         "total": 0,
@@ -2001,9 +2001,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 81,
-        "invariants": 49,
-        "total": 163
+        "setup": 77,
+        "invariants": 51,
+        "total": 166
       },
       "renders": {
         "total": 0,
@@ -2018,9 +2018,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 84,
-        "invariants": 48,
-        "total": 166
+        "setup": 76,
+        "invariants": 46,
+        "total": 162
       },
       "renders": {
         "total": 0,
@@ -2035,9 +2035,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 24,
+        "setup": 25,
         "invariants": 335,
-        "total": 386
+        "total": 405
       },
       "renders": {
         "total": 0,
@@ -2052,8 +2052,8 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 51,
-        "invariants": 901,
+        "setup": 54,
+        "invariants": 902,
         "total": 984
       },
       "renders": {
@@ -2070,8 +2070,8 @@
       },
       "ms": {
         "setup": 34,
-        "invariants": 718,
-        "total": 783
+        "invariants": 735,
+        "total": 800
       },
       "renders": {
         "total": 0,
@@ -2086,9 +2086,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 60,
+        "setup": 59,
         "invariants": 718,
-        "total": 817
+        "total": 816
       },
       "renders": {
         "total": 0,
@@ -2103,9 +2103,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 86,
-        "invariants": 1983,
-        "total": 2115
+        "setup": 85,
+        "invariants": 1968,
+        "total": 2082
       },
       "visualMeta": {
         "mode": "page",
@@ -2131,9 +2131,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 83,
-        "invariants": 1885,
-        "total": 2018
+        "setup": 68,
+        "invariants": 1835,
+        "total": 1951
       },
       "renders": {
         "total": 55,
@@ -2148,9 +2148,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 1633,
-        "invariants": 105,
-        "total": 1795
+        "setup": 1812,
+        "invariants": 149,
+        "total": 2028
       },
       "renders": {
         "total": 1,
@@ -2165,9 +2165,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 1438,
-        "invariants": 356,
-        "total": 1860
+        "setup": 1797,
+        "invariants": 382,
+        "total": 2246
       },
       "renders": {
         "total": 2,
@@ -2185,9 +2185,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 199,
-        "invariants": 3420,
-        "total": 3663
+        "setup": 228,
+        "invariants": 3416,
+        "total": 3676
       },
       "renders": {
         "total": 101,
@@ -2202,9 +2202,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 84,
-        "invariants": 1702,
-        "total": 1832
+        "setup": 86,
+        "invariants": 1719,
+        "total": 1850
       },
       "renders": {
         "total": 52,
@@ -2222,9 +2222,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 242,
-        "invariants": 3584,
-        "total": 3865
+        "setup": 245,
+        "invariants": 3601,
+        "total": 3882
       },
       "visualMeta": {
         "mode": "page",
@@ -2250,9 +2250,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 204,
-        "invariants": 3469,
-        "total": 3719
+        "setup": 253,
+        "invariants": 3496,
+        "total": 3801
       },
       "renders": {
         "total": 102,
@@ -2267,9 +2267,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 245,
-        "invariants": 3351,
-        "total": 3633
+        "setup": 247,
+        "invariants": 3353,
+        "total": 3650
       },
       "renders": {
         "total": 100,
@@ -2284,9 +2284,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 243,
+        "setup": 252,
         "invariants": 3353,
-        "total": 3633
+        "total": 3650
       },
       "renders": {
         "total": 100,
@@ -2301,9 +2301,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 1245,
-        "invariants": 6933,
-        "total": 8217
+        "setup": 1179,
+        "invariants": 6946,
+        "total": 8169
       },
       "renders": {
         "total": 200,
@@ -2318,9 +2318,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 1129,
-        "invariants": 6988,
-        "total": 8166
+        "setup": 1048,
+        "invariants": 6921,
+        "total": 8015
       },
       "renders": {
         "total": 200,
@@ -2335,9 +2335,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 257,
-        "invariants": 3353,
-        "total": 3648
+        "setup": 271,
+        "invariants": 3370,
+        "total": 3682
       },
       "renders": {
         "total": 100,
@@ -2352,9 +2352,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 239,
-        "invariants": 105,
-        "total": 385
+        "setup": 249,
+        "invariants": 107,
+        "total": 388
       },
       "renders": {
         "total": 1,
@@ -2369,9 +2369,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 238,
-        "invariants": 309,
-        "total": 592
+        "setup": 249,
+        "invariants": 317,
+        "total": 609
       },
       "renders": {
         "total": 1,
@@ -2386,9 +2386,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 677,
-        "invariants": 493,
-        "total": 1213
+        "setup": 687,
+        "invariants": 440,
+        "total": 1191
       },
       "renders": {
         "total": 3,
@@ -2403,9 +2403,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 672,
-        "invariants": 506,
-        "total": 1215
+        "setup": 582,
+        "invariants": 441,
+        "total": 1067
       },
       "renders": {
         "total": 3,
@@ -2420,9 +2420,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 564,
-        "invariants": 409,
-        "total": 1018
+        "setup": 605,
+        "invariants": 484,
+        "total": 1126
       },
       "renders": {
         "total": 3,
@@ -2437,9 +2437,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 924,
-        "invariants": 7038,
-        "total": 7995
+        "setup": 1021,
+        "invariants": 7105,
+        "total": 8171
       },
       "renders": {
         "total": 200,
@@ -2454,9 +2454,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 1223,
-        "invariants": 294,
-        "total": 1556
+        "setup": 1174,
+        "invariants": 310,
+        "total": 1522
       },
       "renders": {
         "total": 2,
@@ -2474,9 +2474,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 2913,
-        "invariants": 423,
-        "total": 3379
+        "setup": 3028,
+        "invariants": 448,
+        "total": 3526
       },
       "renders": {
         "total": 2,
@@ -2491,9 +2491,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 931,
-        "invariants": 295,
-        "total": 1279
+        "setup": 1025,
+        "invariants": 355,
+        "total": 1417
       },
       "renders": {
         "total": 2,
@@ -2508,9 +2508,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 927,
-        "invariants": 303,
-        "total": 1267
+        "setup": 1180,
+        "invariants": 389,
+        "total": 1617
       },
       "renders": {
         "total": 2,
@@ -2525,9 +2525,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 1020,
-        "invariants": 383,
-        "total": 1447
+        "setup": 1194,
+        "invariants": 416,
+        "total": 1667
       },
       "renders": {
         "total": 2,
@@ -2543,8 +2543,8 @@
       },
       "ms": {
         "setup": 128,
-        "invariants": 9,
-        "total": 192
+        "invariants": 8,
+        "total": 186
       },
       "renders": {
         "total": 0,
@@ -2559,9 +2559,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 6950,
-        "invariants": 263,
-        "total": 7254
+        "setup": 6833,
+        "invariants": 274,
+        "total": 7151
       },
       "renders": {
         "total": 1,
@@ -2576,9 +2576,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 6242,
-        "invariants": 414,
-        "total": 6702
+        "setup": 6440,
+        "invariants": 428,
+        "total": 6928
       },
       "renders": {
         "total": 2,
@@ -2594,8 +2594,8 @@
       },
       "ms": {
         "setup": 236,
-        "invariants": 4010,
-        "total": 4304
+        "invariants": 4003,
+        "total": 4281
       },
       "renders": {
         "total": 114,
@@ -2610,9 +2610,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 5464,
-        "invariants": 2536,
-        "total": 8037
+        "setup": 5937,
+        "invariants": 2626,
+        "total": 8607
       },
       "renders": {
         "total": 8,
@@ -2627,9 +2627,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 255,
+        "setup": 242,
         "invariants": 2669,
-        "total": 2979
+        "total": 2959
       },
       "renders": {
         "total": 76,
@@ -2644,9 +2644,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 5758,
-        "invariants": 4831,
-        "total": 10629
+        "setup": 6543,
+        "invariants": 5695,
+        "total": 12276
       },
       "renders": {
         "total": 1,
@@ -2661,9 +2661,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 6188,
-        "invariants": 265,
-        "total": 6502
+        "setup": 6643,
+        "invariants": 240,
+        "total": 6944
       },
       "renders": {
         "total": 1,
@@ -2681,9 +2681,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 84,
-        "invariants": 1667,
-        "total": 1801
+        "setup": 70,
+        "invariants": 1670,
+        "total": 1780
       },
       "renders": {
         "total": 52,
@@ -2698,9 +2698,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 6040,
-        "invariants": 209,
-        "total": 6290
+        "setup": 6751,
+        "invariants": 212,
+        "total": 7008
       },
       "renders": {
         "total": 1,
@@ -2715,9 +2715,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 6237,
-        "invariants": 160,
-        "total": 6438
+        "setup": 7540,
+        "invariants": 169,
+        "total": 7766
       },
       "renders": {
         "total": 1,
@@ -2732,9 +2732,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 5417,
-        "invariants": 163,
-        "total": 5619
+        "setup": 6759,
+        "invariants": 203,
+        "total": 7008
       },
       "renders": {
         "total": 1,
@@ -2749,9 +2749,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 6181,
-        "invariants": 2709,
-        "total": 8927
+        "setup": 6574,
+        "invariants": 2736,
+        "total": 9352
       },
       "renders": {
         "total": 8,
@@ -2766,9 +2766,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 5365,
-        "invariants": 492,
-        "total": 5901
+        "setup": 6428,
+        "invariants": 517,
+        "total": 6996
       },
       "renders": {
         "total": 2,
@@ -2783,9 +2783,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 6207,
-        "invariants": 207,
-        "total": 6463
+        "setup": 6561,
+        "invariants": 205,
+        "total": 6828
       },
       "renders": {
         "total": 1,
@@ -2800,9 +2800,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 5284,
-        "invariants": 88,
-        "total": 5436
+        "setup": 6616,
+        "invariants": 95,
+        "total": 6771
       },
       "renders": {
         "total": 0,
@@ -2817,9 +2817,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 6904,
-        "invariants": 416,
-        "total": 7371
+        "setup": 7412,
+        "invariants": 443,
+        "total": 7908
       },
       "renders": {
         "total": 1,
@@ -2834,9 +2834,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 5316,
-        "invariants": 426,
-        "total": 5792
+        "setup": 6594,
+        "invariants": 440,
+        "total": 7081
       },
       "renders": {
         "total": 1,
@@ -2851,9 +2851,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 6884,
-        "invariants": 382,
-        "total": 7325
+        "setup": 7137,
+        "invariants": 442,
+        "total": 7636
       },
       "renders": {
         "total": 1,
@@ -2868,9 +2868,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 21,
-        "invariants": 357,
-        "total": 422
+        "setup": 27,
+        "invariants": 351,
+        "total": 424
       },
       "visualMeta": {
         "mode": "page",
@@ -2899,9 +2899,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 23,
-        "invariants": 317,
-        "total": 376
+        "setup": 28,
+        "invariants": 334,
+        "total": 417
       },
       "visualMeta": {
         "mode": "page",
@@ -2930,9 +2930,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 23,
-        "invariants": 317,
-        "total": 383
+        "setup": 29,
+        "invariants": 318,
+        "total": 400
       },
       "visualMeta": {
         "mode": "page",
@@ -2961,9 +2961,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 67,
-        "invariants": 1901,
-        "total": 2017
+        "setup": 81,
+        "invariants": 1917,
+        "total": 2049
       },
       "visualMeta": {
         "mode": "page",
@@ -2989,9 +2989,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 67,
-        "invariants": 1400,
-        "total": 1499
+        "setup": 82,
+        "invariants": 1617,
+        "total": 1734
       },
       "visualMeta": {
         "mode": "page",
@@ -3020,9 +3020,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 29,
-        "invariants": 318,
-        "total": 401
+        "setup": 28,
+        "invariants": 317,
+        "total": 400
       },
       "visualMeta": {
         "mode": "page",
@@ -3052,8 +3052,8 @@
       },
       "ms": {
         "setup": 27,
-        "invariants": 316,
-        "total": 399
+        "invariants": 317,
+        "total": 383
       },
       "visualMeta": {
         "mode": "page",
@@ -3084,7 +3084,7 @@
       "ms": {
         "setup": 28,
         "invariants": 317,
-        "total": 401
+        "total": 400
       },
       "visualMeta": {
         "mode": "page",
@@ -3144,9 +3144,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 26,
-        "invariants": 158,
-        "total": 240
+        "setup": 27,
+        "invariants": 154,
+        "total": 237
       },
       "renders": {
         "total": 5,
@@ -3164,9 +3164,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 27,
-        "invariants": 226,
-        "total": 302
+        "setup": 23,
+        "invariants": 220,
+        "total": 283
       },
       "renders": {
         "total": 7,
@@ -3184,9 +3184,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 28,
+        "setup": 22,
         "invariants": 317,
-        "total": 391
+        "total": 380
       },
       "visualMeta": {
         "mode": "page",
@@ -3215,9 +3215,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 28,
-        "invariants": 226,
-        "total": 325
+        "setup": 22,
+        "invariants": 220,
+        "total": 303
       },
       "renders": {
         "total": 7,
@@ -3235,9 +3235,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 27,
-        "invariants": 224,
-        "total": 315
+        "setup": 22,
+        "invariants": 221,
+        "total": 301
       },
       "renders": {
         "total": 7,
@@ -3255,9 +3255,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 27,
-        "invariants": 384,
-        "total": 475
+        "setup": 21,
+        "invariants": 383,
+        "total": 462
       },
       "visualMeta": {
         "mode": "page",
@@ -3286,9 +3286,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 27,
+        "setup": 22,
         "invariants": 384,
-        "total": 484
+        "total": 466
       },
       "visualMeta": {
         "mode": "page",
@@ -3317,9 +3317,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 26,
-        "invariants": 224,
-        "total": 340
+        "setup": 21,
+        "invariants": 220,
+        "total": 320
       },
       "renders": {
         "total": 7,
@@ -3337,9 +3337,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 26,
-        "invariants": 224,
-        "total": 350
+        "setup": 24,
+        "invariants": 223,
+        "total": 353
       },
       "renders": {
         "total": 7,
@@ -3357,9 +3357,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 29,
-        "invariants": 375,
-        "total": 500
+        "setup": 25,
+        "invariants": 355,
+        "total": 465
       },
       "renders": {
         "total": 11,
@@ -3377,9 +3377,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 27,
-        "invariants": 224,
-        "total": 332
+        "setup": 22,
+        "invariants": 220,
+        "total": 315
       },
       "renders": {
         "total": 7,
@@ -3397,9 +3397,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 26,
-        "invariants": 225,
-        "total": 318
+        "setup": 21,
+        "invariants": 220,
+        "total": 300
       },
       "renders": {
         "total": 7,
@@ -3411,6 +3411,26 @@
     },
     {
       "name": "sel_measure_expand_staves",
+      "ok": true,
+      "failures": [],
+      "counts": {
+        "invariants": 8
+      },
+      "ms": {
+        "setup": 21,
+        "invariants": 225,
+        "total": 322
+      },
+      "renders": {
+        "total": 7,
+        "full": 7
+      },
+      "fullRenderReasons": [
+        "single-line partition"
+      ]
+    },
+    {
+      "name": "sel_escape_exits",
       "ok": true,
       "failures": [],
       "counts": {
@@ -3430,26 +3450,6 @@
       ]
     },
     {
-      "name": "sel_escape_exits",
-      "ok": true,
-      "failures": [],
-      "counts": {
-        "invariants": 8
-      },
-      "ms": {
-        "setup": 26,
-        "invariants": 228,
-        "total": 337
-      },
-      "renders": {
-        "total": 7,
-        "full": 7
-      },
-      "fullRenderReasons": [
-        "single-line partition"
-      ]
-    },
-    {
       "name": "sel_nonsel_key_exits",
       "ok": true,
       "failures": [],
@@ -3457,9 +3457,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 27,
-        "invariants": 292,
-        "total": 430
+        "setup": 26,
+        "invariants": 293,
+        "total": 418
       },
       "renders": {
         "total": 9,
@@ -3477,9 +3477,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 27,
-        "invariants": 223,
-        "total": 365
+        "setup": 26,
+        "invariants": 224,
+        "total": 364
       },
       "renders": {
         "total": 7,
@@ -3497,7 +3497,7 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 27,
+        "setup": 26,
         "invariants": 225,
         "total": 368
       },
@@ -3517,9 +3517,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 22,
-        "invariants": 220,
-        "total": 362
+        "setup": 28,
+        "invariants": 223,
+        "total": 365
       },
       "renders": {
         "total": 7,
@@ -3537,9 +3537,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 22,
-        "invariants": 121,
-        "total": 234
+        "setup": 26,
+        "invariants": 123,
+        "total": 249
       },
       "renders": {
         "total": 4,
@@ -3557,9 +3557,9 @@
         "invariants": 11
       },
       "ms": {
-        "setup": 21,
+        "setup": 26,
         "invariants": 384,
-        "total": 480
+        "total": 494
       },
       "visualMeta": {
         "mode": "page",
@@ -3588,9 +3588,9 @@
         "invariants": 10
       },
       "ms": {
-        "setup": 22,
-        "invariants": 384,
-        "total": 483
+        "setup": 27,
+        "invariants": 383,
+        "total": 500
       },
       "visualMeta": {
         "mode": "page",
@@ -3619,9 +3619,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 23,
-        "invariants": 155,
-        "total": 238
+        "setup": 29,
+        "invariants": 160,
+        "total": 259
       },
       "renders": {
         "total": 5,
@@ -3639,9 +3639,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 23,
-        "invariants": 155,
-        "total": 249
+        "setup": 27,
+        "invariants": 158,
+        "total": 248
       },
       "renders": {
         "total": 5,
@@ -3659,8 +3659,8 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 22,
-        "invariants": 156,
+        "setup": 27,
+        "invariants": 157,
         "total": 267
       },
       "renders": {
@@ -3679,9 +3679,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 23,
-        "invariants": 155,
-        "total": 266
+        "setup": 27,
+        "invariants": 154,
+        "total": 263
       },
       "renders": {
         "total": 5,
@@ -3699,9 +3699,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 22,
+        "setup": 23,
         "invariants": 156,
-        "total": 284
+        "total": 285
       },
       "renders": {
         "total": 5,
@@ -3719,9 +3719,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 24,
-        "invariants": 188,
-        "total": 316
+        "setup": 22,
+        "invariants": 190,
+        "total": 317
       },
       "renders": {
         "total": 6,
@@ -3739,8 +3739,8 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 23,
-        "invariants": 155,
+        "setup": 22,
+        "invariants": 157,
         "total": 267
       },
       "renders": {
@@ -3759,9 +3759,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 23,
-        "invariants": 173,
-        "total": 268
+        "setup": 21,
+        "invariants": 172,
+        "total": 265
       },
       "renders": {
         "total": 6,
@@ -3779,9 +3779,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 22,
-        "invariants": 155,
-        "total": 248
+        "setup": 21,
+        "invariants": 156,
+        "total": 251
       },
       "renders": {
         "total": 5,
@@ -3801,7 +3801,7 @@
       "ms": {
         "setup": 22,
         "invariants": 120,
-        "total": 232
+        "total": 247
       },
       "renders": {
         "total": 4,
@@ -3819,9 +3819,9 @@
         "invariants": 11
       },
       "ms": {
-        "setup": 25,
-        "invariants": 159,
-        "total": 289
+        "setup": 22,
+        "invariants": 155,
+        "total": 269
       },
       "renders": {
         "total": 5,
@@ -3839,9 +3839,9 @@
         "invariants": 12
       },
       "ms": {
-        "setup": 26,
-        "invariants": 158,
-        "total": 282
+        "setup": 22,
+        "invariants": 156,
+        "total": 284
       },
       "renders": {
         "total": 5,
@@ -3859,9 +3859,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 28,
-        "invariants": 159,
-        "total": 284
+        "setup": 22,
+        "invariants": 154,
+        "total": 281
       },
       "renders": {
         "total": 5,
@@ -3879,9 +3879,9 @@
         "invariants": 11
       },
       "ms": {
-        "setup": 26,
-        "invariants": 158,
-        "total": 282
+        "setup": 23,
+        "invariants": 155,
+        "total": 284
       },
       "renders": {
         "total": 5,
@@ -3899,9 +3899,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 29,
-        "invariants": 194,
-        "total": 319
+        "setup": 24,
+        "invariants": 189,
+        "total": 301
       },
       "renders": {
         "total": 6,
@@ -3919,9 +3919,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 28,
-        "invariants": 196,
-        "total": 336
+        "setup": 24,
+        "invariants": 190,
+        "total": 318
       },
       "renders": {
         "total": 6,
@@ -3939,9 +3939,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 28,
-        "invariants": 228,
-        "total": 298
+        "setup": 22,
+        "invariants": 222,
+        "total": 282
       },
       "renders": {
         "total": 7,
@@ -3959,9 +3959,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 52,
-        "invariants": 375,
-        "total": 497
+        "setup": 44,
+        "invariants": 371,
+        "total": 482
       },
       "renders": {
         "total": 7,
@@ -3979,9 +3979,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 27,
-        "invariants": 326,
-        "total": 418
+        "setup": 22,
+        "invariants": 325,
+        "total": 421
       },
       "renders": {
         "total": 6,
@@ -4001,7 +4001,7 @@
       "ms": {
         "setup": 53,
         "invariants": 308,
-        "total": 432
+        "total": 433
       },
       "renders": {
         "total": 5,
@@ -4019,9 +4019,9 @@
         "invariants": 10
       },
       "ms": {
-        "setup": 57,
-        "invariants": 123,
-        "total": 217
+        "setup": 55,
+        "invariants": 127,
+        "total": 219
       },
       "renders": {
         "total": 4,
@@ -4039,9 +4039,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 27,
-        "invariants": 158,
-        "total": 283
+        "setup": 26,
+        "invariants": 157,
+        "total": 280
       },
       "renders": {
         "total": 5,
@@ -4059,9 +4059,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 27,
-        "invariants": 405,
-        "total": 481
+        "setup": 26,
+        "invariants": 407,
+        "total": 483
       },
       "renders": {
         "total": 6,
@@ -4080,8 +4080,8 @@
       },
       "ms": {
         "setup": 0,
-        "invariants": 119,
-        "total": 230
+        "invariants": 124,
+        "total": 250
       },
       "renders": {
         "total": 4,
@@ -4100,7 +4100,7 @@
       },
       "ms": {
         "setup": 0,
-        "invariants": 154,
+        "invariants": 158,
         "total": 301
       },
       "renders": {
@@ -4120,8 +4120,8 @@
       },
       "ms": {
         "setup": 0,
-        "invariants": 154,
-        "total": 367
+        "invariants": 157,
+        "total": 382
       },
       "renders": {
         "total": 5,
@@ -4140,7 +4140,7 @@
       },
       "ms": {
         "setup": 0,
-        "invariants": 154,
+        "invariants": 157,
         "total": 317
       },
       "renders": {
@@ -4160,8 +4160,8 @@
       },
       "ms": {
         "setup": 0,
-        "invariants": 120,
-        "total": 249
+        "invariants": 126,
+        "total": 268
       },
       "renders": {
         "total": 4,
@@ -4180,8 +4180,8 @@
       },
       "ms": {
         "setup": 0,
-        "invariants": 153,
-        "total": 317
+        "invariants": 158,
+        "total": 316
       },
       "renders": {
         "total": 5,
@@ -4200,8 +4200,8 @@
       },
       "ms": {
         "setup": 0,
-        "invariants": 187,
-        "total": 367
+        "invariants": 190,
+        "total": 366
       },
       "renders": {
         "total": 6,
@@ -4220,8 +4220,8 @@
       },
       "ms": {
         "setup": 0,
-        "invariants": 120,
-        "total": 233
+        "invariants": 125,
+        "total": 234
       },
       "renders": {
         "total": 4,
@@ -4240,8 +4240,8 @@
       },
       "ms": {
         "setup": 0,
-        "invariants": 154,
-        "total": 317
+        "invariants": 153,
+        "total": 312
       },
       "renders": {
         "total": 5,
@@ -4260,8 +4260,8 @@
       },
       "ms": {
         "setup": 21,
-        "invariants": 934,
-        "total": 3030
+        "invariants": 758,
+        "total": 2821
       },
       "renders": {
         "total": 23,
@@ -4280,8 +4280,8 @@
       },
       "ms": {
         "setup": 0,
-        "invariants": 159,
-        "total": 308
+        "invariants": 154,
+        "total": 296
       },
       "renders": {
         "total": 5,
@@ -4299,9 +4299,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 26,
-        "invariants": 126,
-        "total": 284
+        "setup": 21,
+        "invariants": 121,
+        "total": 267
       },
       "renders": {
         "total": 4,
@@ -4319,9 +4319,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 28,
-        "invariants": 225,
-        "total": 399
+        "setup": 22,
+        "invariants": 220,
+        "total": 383
       },
       "renders": {
         "total": 7,
@@ -4339,9 +4339,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 26,
-        "invariants": 224,
-        "total": 399
+        "setup": 21,
+        "invariants": 225,
+        "total": 388
       },
       "renders": {
         "total": 7,
@@ -4360,8 +4360,8 @@
       },
       "ms": {
         "setup": 45,
-        "invariants": 124,
-        "total": 200
+        "invariants": 122,
+        "total": 199
       },
       "renders": {
         "total": 4,
@@ -4380,8 +4380,8 @@
       },
       "ms": {
         "setup": 31,
-        "invariants": 124,
-        "total": 233
+        "invariants": 125,
+        "total": 234
       },
       "renders": {
         "total": 4,
@@ -4401,7 +4401,7 @@
       "ms": {
         "setup": 28,
         "invariants": 384,
-        "total": 527
+        "total": 526
       },
       "visualMeta": {
         "mode": "page",
@@ -4461,9 +4461,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 23,
-        "invariants": 221,
-        "total": 421
+        "setup": 28,
+        "invariants": 227,
+        "total": 443
       },
       "renders": {
         "total": 7,
@@ -4481,9 +4481,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 23,
-        "invariants": 222,
-        "total": 334
+        "setup": 27,
+        "invariants": 226,
+        "total": 333
       },
       "renders": {
         "total": 7,
@@ -4501,9 +4501,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 23,
-        "invariants": 221,
-        "total": 332
+        "setup": 27,
+        "invariants": 242,
+        "total": 366
       },
       "renders": {
         "total": 7,
@@ -4521,9 +4521,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 24,
-        "invariants": 225,
-        "total": 337
+        "setup": 27,
+        "invariants": 226,
+        "total": 334
       },
       "renders": {
         "total": 7,
@@ -4541,9 +4541,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 26,
-        "invariants": 155,
-        "total": 347
+        "setup": 27,
+        "invariants": 158,
+        "total": 348
       },
       "renders": {
         "total": 5,
@@ -4561,8 +4561,8 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 23,
-        "invariants": 155,
+        "setup": 27,
+        "invariants": 159,
         "total": 367
       },
       "renders": {
@@ -4581,8 +4581,8 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 23,
-        "invariants": 222,
+        "setup": 28,
+        "invariants": 226,
         "total": 333
       },
       "renders": {
@@ -4601,9 +4601,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 23,
-        "invariants": 187,
-        "total": 365
+        "setup": 27,
+        "invariants": 193,
+        "total": 368
       },
       "renders": {
         "total": 6,
@@ -4621,9 +4621,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 23,
-        "invariants": 221,
-        "total": 368
+        "setup": 27,
+        "invariants": 226,
+        "total": 383
       },
       "renders": {
         "total": 7,
@@ -4641,9 +4641,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 23,
-        "invariants": 451,
-        "total": 546
+        "setup": 27,
+        "invariants": 450,
+        "total": 557
       },
       "visualMeta": {
         "mode": "page",
@@ -4672,9 +4672,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 23,
-        "invariants": 450,
-        "total": 549
+        "setup": 27,
+        "invariants": 451,
+        "total": 567
       },
       "visualMeta": {
         "mode": "page",
@@ -4703,9 +4703,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 30,
-        "invariants": 384,
-        "total": 467
+        "setup": 29,
+        "invariants": 383,
+        "total": 466
       },
       "visualMeta": {
         "mode": "page",
@@ -4735,7 +4735,7 @@
       },
       "ms": {
         "setup": 30,
-        "invariants": 467,
+        "invariants": 466,
         "total": 550
       },
       "visualMeta": {
@@ -4765,9 +4765,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 28,
-        "invariants": 291,
-        "total": 408
+        "setup": 27,
+        "invariants": 296,
+        "total": 411
       },
       "renders": {
         "total": 9,
@@ -4785,9 +4785,9 @@
         "invariants": 11
       },
       "ms": {
-        "setup": 27,
+        "setup": 26,
         "invariants": 350,
-        "total": 492
+        "total": 505
       },
       "visualMeta": {
         "mode": "page",
@@ -4816,9 +4816,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 31,
-        "invariants": 351,
-        "total": 417
+        "setup": 32,
+        "invariants": 350,
+        "total": 416
       },
       "visualMeta": {
         "mode": "page",
@@ -4844,9 +4844,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 29,
+        "setup": 22,
         "invariants": 268,
-        "total": 401
+        "total": 385
       },
       "renders": {
         "total": 9,
@@ -4863,7 +4863,7 @@
       "ms": {
         "setup": 28,
         "invariants": 268,
-        "total": 400
+        "total": 383
       },
       "renders": {
         "total": 9,
@@ -4878,9 +4878,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 176,
-        "invariants": 2236,
-        "total": 2451
+        "setup": 145,
+        "invariants": 2235,
+        "total": 2416
       },
       "renders": {
         "total": 68,
@@ -4895,9 +4895,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 196,
-        "invariants": 2236,
-        "total": 2466
+        "setup": 161,
+        "invariants": 2235,
+        "total": 2433
       },
       "renders": {
         "total": 68,
@@ -4912,9 +4912,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 28,
-        "invariants": 168,
-        "total": 299
+        "setup": 26,
+        "invariants": 169,
+        "total": 283
       },
       "renders": {
         "total": 6,
@@ -4929,9 +4929,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 26,
+        "setup": 27,
         "invariants": 317,
-        "total": 433
+        "total": 432
       },
       "visualMeta": {
         "mode": "page",
@@ -4960,7 +4960,7 @@
         "invariants": 10
       },
       "ms": {
-        "setup": 28,
+        "setup": 27,
         "invariants": 317,
         "total": 466
       },
@@ -4991,7 +4991,7 @@
         "invariants": 10
       },
       "ms": {
-        "setup": 27,
+        "setup": 26,
         "invariants": 317,
         "total": 467
       },
@@ -5043,8 +5043,8 @@
       },
       "ms": {
         "setup": 27,
-        "invariants": 292,
-        "total": 433
+        "invariants": 291,
+        "total": 432
       },
       "renders": {
         "total": 9,
@@ -5064,7 +5064,7 @@
       "ms": {
         "setup": 27,
         "invariants": 225,
-        "total": 316
+        "total": 317
       },
       "renders": {
         "total": 7,
@@ -5082,9 +5082,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 26,
-        "invariants": 159,
-        "total": 268
+        "setup": 21,
+        "invariants": 153,
+        "total": 245
       },
       "renders": {
         "total": 5,
@@ -5102,9 +5102,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 25,
-        "invariants": 160,
-        "total": 300
+        "setup": 22,
+        "invariants": 154,
+        "total": 283
       },
       "renders": {
         "total": 5,
@@ -5122,9 +5122,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 27,
-        "invariants": 158,
-        "total": 265
+        "setup": 22,
+        "invariants": 154,
+        "total": 250
       },
       "renders": {
         "total": 5,
@@ -5142,9 +5142,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 26,
-        "invariants": 158,
-        "total": 267
+        "setup": 21,
+        "invariants": 154,
+        "total": 250
       },
       "renders": {
         "total": 5,
@@ -5162,9 +5162,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 55,
-        "invariants": 158,
-        "total": 300
+        "setup": 42,
+        "invariants": 153,
+        "total": 266
       },
       "renders": {
         "total": 5,
@@ -5182,9 +5182,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 27,
-        "invariants": 157,
-        "total": 298
+        "setup": 22,
+        "invariants": 153,
+        "total": 283
       },
       "renders": {
         "total": 5,
@@ -5202,9 +5202,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 28,
-        "invariants": 159,
-        "total": 268
+        "setup": 23,
+        "invariants": 155,
+        "total": 252
       },
       "renders": {
         "total": 5,
@@ -5222,9 +5222,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 27,
-        "invariants": 159,
-        "total": 283
+        "setup": 22,
+        "invariants": 153,
+        "total": 282
       },
       "renders": {
         "total": 5,
@@ -5242,9 +5242,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 26,
-        "invariants": 157,
-        "total": 265
+        "setup": 22,
+        "invariants": 153,
+        "total": 249
       },
       "renders": {
         "total": 5,
@@ -5262,9 +5262,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 28,
-        "invariants": 224,
-        "total": 317
+        "setup": 23,
+        "invariants": 219,
+        "total": 316
       },
       "renders": {
         "total": 7,
@@ -5282,9 +5282,9 @@
         "invariants": 10
       },
       "ms": {
-        "setup": 30,
-        "invariants": 358,
-        "total": 467
+        "setup": 24,
+        "invariants": 354,
+        "total": 451
       },
       "renders": {
         "total": 11,
@@ -5302,9 +5302,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 33,
-        "invariants": 497,
-        "total": 605
+        "setup": 27,
+        "invariants": 488,
+        "total": 584
       },
       "renders": {
         "total": 15,
@@ -5322,9 +5322,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 30,
-        "invariants": 358,
-        "total": 462
+        "setup": 25,
+        "invariants": 353,
+        "total": 449
       },
       "renders": {
         "total": 11,
@@ -5342,9 +5342,9 @@
         "invariants": 10
       },
       "ms": {
-        "setup": 33,
-        "invariants": 498,
-        "total": 622
+        "setup": 26,
+        "invariants": 493,
+        "total": 606
       },
       "renders": {
         "total": 15,
@@ -5363,8 +5363,8 @@
       },
       "ms": {
         "setup": 32,
-        "invariants": 355,
-        "total": 429
+        "invariants": 358,
+        "total": 432
       },
       "renders": {
         "total": 11,
@@ -5383,8 +5383,8 @@
       },
       "ms": {
         "setup": 55,
-        "invariants": 221,
-        "total": 311
+        "invariants": 225,
+        "total": 317
       },
       "renders": {
         "total": 7,
@@ -5402,9 +5402,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 22,
-        "invariants": 155,
-        "total": 268
+        "setup": 26,
+        "invariants": 159,
+        "total": 267
       },
       "renders": {
         "total": 5,
@@ -5422,8 +5422,8 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 24,
-        "invariants": 289,
+        "setup": 28,
+        "invariants": 292,
         "total": 400
       },
       "renders": {
@@ -5442,9 +5442,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 23,
-        "invariants": 187,
-        "total": 282
+        "setup": 26,
+        "invariants": 193,
+        "total": 301
       },
       "renders": {
         "total": 6,
@@ -5462,9 +5462,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 47,
+        "setup": 58,
         "invariants": 426,
-        "total": 555
+        "total": 566
       },
       "renders": {
         "total": 13,
@@ -5482,9 +5482,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 47,
-        "invariants": 426,
-        "total": 550
+        "setup": 55,
+        "invariants": 431,
+        "total": 571
       },
       "renders": {
         "total": 13,
@@ -5502,9 +5502,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 46,
-        "invariants": 154,
-        "total": 278
+        "setup": 51,
+        "invariants": 158,
+        "total": 293
       },
       "renders": {
         "total": 5,
@@ -5522,9 +5522,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 43,
-        "invariants": 154,
-        "total": 300
+        "setup": 51,
+        "invariants": 158,
+        "total": 317
       },
       "renders": {
         "total": 5,
@@ -5542,9 +5542,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 46,
-        "invariants": 255,
-        "total": 368
+        "setup": 55,
+        "invariants": 259,
+        "total": 401
       },
       "renders": {
         "total": 8,
@@ -5562,9 +5562,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 45,
-        "invariants": 256,
-        "total": 384
+        "setup": 54,
+        "invariants": 260,
+        "total": 401
       },
       "renders": {
         "total": 8,
@@ -5582,9 +5582,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 44,
-        "invariants": 188,
-        "total": 299
+        "setup": 54,
+        "invariants": 192,
+        "total": 332
       },
       "renders": {
         "total": 6,
@@ -5602,9 +5602,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 48,
+        "setup": 58,
         "invariants": 359,
-        "total": 488
+        "total": 501
       },
       "renders": {
         "total": 11,
@@ -5622,9 +5622,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 58,
-        "invariants": 360,
-        "total": 534
+        "setup": 57,
+        "invariants": 362,
+        "total": 536
       },
       "renders": {
         "total": 11,
@@ -5643,8 +5643,8 @@
       },
       "ms": {
         "setup": 58,
-        "invariants": 376,
-        "total": 516
+        "invariants": 359,
+        "total": 497
       },
       "renders": {
         "total": 11,
@@ -5663,8 +5663,8 @@
       },
       "ms": {
         "setup": 53,
-        "invariants": 192,
-        "total": 316
+        "invariants": 191,
+        "total": 315
       },
       "renders": {
         "total": 6,
@@ -5682,9 +5682,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 28,
-        "invariants": 157,
-        "total": 265
+        "setup": 26,
+        "invariants": 158,
+        "total": 267
       },
       "renders": {
         "total": 5,
@@ -5703,8 +5703,8 @@
       },
       "ms": {
         "setup": 26,
-        "invariants": 158,
-        "total": 267
+        "invariants": 157,
+        "total": 266
       },
       "renders": {
         "total": 5,
@@ -5722,8 +5722,8 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 27,
-        "invariants": 158,
+        "setup": 26,
+        "invariants": 157,
         "total": 267
       },
       "renders": {
@@ -5743,8 +5743,8 @@
       },
       "ms": {
         "setup": 26,
-        "invariants": 157,
-        "total": 266
+        "invariants": 158,
+        "total": 267
       },
       "renders": {
         "total": 5,
@@ -5764,7 +5764,7 @@
       "ms": {
         "setup": 26,
         "invariants": 158,
-        "total": 267
+        "total": 266
       },
       "renders": {
         "total": 5,
@@ -5783,8 +5783,8 @@
       },
       "ms": {
         "setup": 26,
-        "invariants": 158,
-        "total": 267
+        "invariants": 152,
+        "total": 261
       },
       "renders": {
         "total": 5,
@@ -5802,9 +5802,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 26,
-        "invariants": 157,
-        "total": 266
+        "setup": 21,
+        "invariants": 153,
+        "total": 251
       },
       "renders": {
         "total": 5,
@@ -5822,9 +5822,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 26,
-        "invariants": 157,
-        "total": 300
+        "setup": 23,
+        "invariants": 153,
+        "total": 284
       },
       "renders": {
         "total": 5,
@@ -5842,9 +5842,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 27,
-        "invariants": 158,
-        "total": 301
+        "setup": 22,
+        "invariants": 154,
+        "total": 284
       },
       "renders": {
         "total": 5,
@@ -5862,9 +5862,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 27,
-        "invariants": 158,
-        "total": 266
+        "setup": 22,
+        "invariants": 153,
+        "total": 249
       },
       "renders": {
         "total": 5,
@@ -5882,9 +5882,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 27,
-        "invariants": 154,
-        "total": 263
+        "setup": 22,
+        "invariants": 156,
+        "total": 253
       },
       "renders": {
         "total": 5,
@@ -5902,9 +5902,9 @@
         "invariants": 12
       },
       "ms": {
-        "setup": 23,
+        "setup": 22,
         "invariants": 350,
-        "total": 496
+        "total": 494
       },
       "visualMeta": {
         "mode": "page",
@@ -5934,8 +5934,8 @@
       },
       "ms": {
         "setup": 22,
-        "invariants": 154,
-        "total": 287
+        "invariants": 155,
+        "total": 288
       },
       "renders": {
         "total": 5,
@@ -5955,7 +5955,7 @@
       "ms": {
         "setup": 22,
         "invariants": 187,
-        "total": 350
+        "total": 349
       },
       "renders": {
         "total": 6,
@@ -5973,9 +5973,9 @@
         "invariants": 10
       },
       "ms": {
-        "setup": 23,
-        "invariants": 186,
-        "total": 416
+        "setup": 22,
+        "invariants": 187,
+        "total": 400
       },
       "renders": {
         "total": 6,
@@ -5995,7 +5995,7 @@
       "ms": {
         "setup": 23,
         "invariants": 189,
-        "total": 436
+        "total": 435
       },
       "renders": {
         "total": 6,
@@ -6015,7 +6015,7 @@
       "ms": {
         "setup": 53,
         "invariants": 154,
-        "total": 248
+        "total": 247
       },
       "renders": {
         "total": 5,
@@ -6034,8 +6034,8 @@
       },
       "ms": {
         "setup": 46,
-        "invariants": 154,
-        "total": 232
+        "invariants": 153,
+        "total": 233
       },
       "renders": {
         "total": 5,
@@ -6053,9 +6053,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 71,
-        "invariants": 151,
-        "total": 250
+        "setup": 70,
+        "invariants": 152,
+        "total": 251
       },
       "renders": {
         "total": 5,
@@ -6074,8 +6074,8 @@
       },
       "ms": {
         "setup": 70,
-        "invariants": 152,
-        "total": 250
+        "invariants": 156,
+        "total": 253
       },
       "renders": {
         "total": 5,
@@ -6093,9 +6093,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 47,
-        "invariants": 153,
-        "total": 316
+        "setup": 55,
+        "invariants": 158,
+        "total": 334
       },
       "renders": {
         "total": 5,
@@ -6113,9 +6113,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 25,
-        "invariants": 392,
-        "total": 456
+        "setup": 30,
+        "invariants": 395,
+        "total": 470
       },
       "renders": {
         "total": 12,
@@ -6133,9 +6133,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 24,
+        "setup": 29,
         "invariants": 326,
-        "total": 467
+        "total": 481
       },
       "renders": {
         "total": 10,
@@ -6154,8 +6154,8 @@
       },
       "ms": {
         "setup": 58,
-        "invariants": 190,
-        "total": 282
+        "invariants": 192,
+        "total": 284
       },
       "renders": {
         "total": 6,
@@ -6174,8 +6174,8 @@
       },
       "ms": {
         "setup": 58,
-        "invariants": 228,
-        "total": 320
+        "invariants": 227,
+        "total": 317
       },
       "renders": {
         "total": 7,
@@ -6193,9 +6193,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 74,
-        "invariants": 193,
-        "total": 398
+        "setup": 76,
+        "invariants": 191,
+        "total": 397
       },
       "renders": {
         "total": 6,
@@ -6213,9 +6213,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 31,
-        "invariants": 158,
-        "total": 232
+        "setup": 30,
+        "invariants": 154,
+        "total": 216
       },
       "renders": {
         "total": 5,
@@ -6233,8 +6233,8 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 62,
-        "invariants": 157,
+        "setup": 61,
+        "invariants": 156,
         "total": 251
       },
       "renders": {
@@ -6253,9 +6253,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 57,
-        "invariants": 156,
-        "total": 249
+        "setup": 61,
+        "invariants": 157,
+        "total": 248
       },
       "renders": {
         "total": 5,
@@ -6273,9 +6273,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 61,
-        "invariants": 157,
-        "total": 251
+        "setup": 60,
+        "invariants": 159,
+        "total": 252
       },
       "renders": {
         "total": 5,
@@ -6294,7 +6294,7 @@
       },
       "ms": {
         "setup": 27,
-        "invariants": 158,
+        "invariants": 159,
         "total": 366
       },
       "renders": {
@@ -6313,9 +6313,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 27,
+        "setup": 26,
         "invariants": 158,
-        "total": 300
+        "total": 299
       },
       "renders": {
         "total": 5,
@@ -6334,8 +6334,8 @@
       },
       "ms": {
         "setup": 29,
-        "invariants": 327,
-        "total": 402
+        "invariants": 325,
+        "total": 401
       },
       "renders": {
         "total": 10,
@@ -6354,8 +6354,8 @@
       },
       "ms": {
         "setup": 53,
-        "invariants": 159,
-        "total": 248
+        "invariants": 158,
+        "total": 249
       },
       "renders": {
         "total": 5,
@@ -6373,7 +6373,7 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 51,
+        "setup": 49,
         "invariants": 124,
         "total": 216
       },
@@ -6393,9 +6393,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 57,
-        "invariants": 160,
-        "total": 252
+        "setup": 55,
+        "invariants": 158,
+        "total": 251
       },
       "renders": {
         "total": 5,
@@ -6414,8 +6414,8 @@
       },
       "ms": {
         "setup": 54,
-        "invariants": 159,
-        "total": 249
+        "invariants": 157,
+        "total": 248
       },
       "renders": {
         "total": 5,
@@ -6434,8 +6434,8 @@
       },
       "ms": {
         "setup": 62,
-        "invariants": 346,
-        "total": 440
+        "invariants": 314,
+        "total": 407
       },
       "renders": {
         "total": 9,
@@ -6454,8 +6454,8 @@
       },
       "ms": {
         "setup": 59,
-        "invariants": 124,
-        "total": 225
+        "invariants": 125,
+        "total": 226
       },
       "renders": {
         "total": 4,
@@ -6474,8 +6474,8 @@
       },
       "ms": {
         "setup": 71,
-        "invariants": 315,
-        "total": 424
+        "invariants": 299,
+        "total": 407
       },
       "renders": {
         "total": 9,
@@ -6493,8 +6493,8 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 61,
-        "invariants": 293,
+        "setup": 60,
+        "invariants": 292,
         "total": 394
       },
       "renders": {
@@ -6514,8 +6514,8 @@
       },
       "ms": {
         "setup": 26,
-        "invariants": 123,
-        "total": 197
+        "invariants": 124,
+        "total": 198
       },
       "renders": {
         "total": 4,
@@ -6533,9 +6533,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 75,
-        "invariants": 370,
-        "total": 479
+        "setup": 78,
+        "invariants": 350,
+        "total": 461
       },
       "renders": {
         "total": 8,
@@ -6554,8 +6554,8 @@
       },
       "ms": {
         "setup": 69,
-        "invariants": 618,
-        "total": 732
+        "invariants": 531,
+        "total": 645
       },
       "renders": {
         "total": 13,
@@ -6573,9 +6573,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 67,
-        "invariants": 432,
-        "total": 532
+        "setup": 66,
+        "invariants": 393,
+        "total": 496
       },
       "renders": {
         "total": 10,
@@ -6593,9 +6593,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 55,
-        "invariants": 226,
-        "total": 325
+        "setup": 47,
+        "invariants": 222,
+        "total": 296
       },
       "renders": {
         "total": 7,
@@ -6613,9 +6613,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 52,
-        "invariants": 125,
-        "total": 215
+        "setup": 41,
+        "invariants": 120,
+        "total": 197
       },
       "renders": {
         "total": 4,
@@ -6633,9 +6633,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 65,
-        "invariants": 392,
-        "total": 500
+        "setup": 52,
+        "invariants": 358,
+        "total": 438
       },
       "renders": {
         "total": 11,
@@ -6653,9 +6653,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 50,
-        "invariants": 218,
-        "total": 296
+        "setup": 48,
+        "invariants": 220,
+        "total": 298
       },
       "renders": {
         "total": 7,
@@ -6674,8 +6674,8 @@
       },
       "ms": {
         "setup": 47,
-        "invariants": 317,
-        "total": 396
+        "invariants": 318,
+        "total": 395
       },
       "visualMeta": {
         "mode": "page",
@@ -6705,8 +6705,8 @@
       },
       "ms": {
         "setup": 42,
-        "invariants": 119,
-        "total": 202
+        "invariants": 121,
+        "total": 187
       },
       "renders": {
         "total": 4,
@@ -6724,9 +6724,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 46,
+        "setup": 47,
         "invariants": 155,
-        "total": 235
+        "total": 234
       },
       "renders": {
         "total": 5,
@@ -6744,9 +6744,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 84,
+        "setup": 89,
         "invariants": 121,
-        "total": 233
+        "total": 249
       },
       "renders": {
         "total": 4,
@@ -6764,9 +6764,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 46,
-        "invariants": 154,
-        "total": 233
+        "setup": 47,
+        "invariants": 181,
+        "total": 267
       },
       "renders": {
         "total": 5,
@@ -6785,8 +6785,8 @@
       },
       "ms": {
         "setup": 46,
-        "invariants": 123,
-        "total": 202
+        "invariants": 121,
+        "total": 200
       },
       "renders": {
         "total": 4,
@@ -6804,9 +6804,9 @@
         "invariants": 6
       },
       "ms": {
-        "setup": 49,
+        "setup": 47,
         "invariants": 155,
-        "total": 233
+        "total": 234
       },
       "renders": {
         "total": 5,
@@ -6824,9 +6824,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 47,
+        "setup": 43,
         "invariants": 317,
-        "total": 411
+        "total": 395
       },
       "visualMeta": {
         "mode": "page",
@@ -6855,9 +6855,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 47,
-        "invariants": 300,
-        "total": 383
+        "setup": 53,
+        "invariants": 301,
+        "total": 384
       },
       "visualMeta": {
         "mode": "page",
@@ -6886,9 +6886,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 47,
-        "invariants": 157,
-        "total": 240
+        "setup": 50,
+        "invariants": 163,
+        "total": 245
       },
       "renders": {
         "total": 5,
@@ -6906,9 +6906,9 @@
         "invariants": 9
       },
       "ms": {
-        "setup": 69,
-        "invariants": 253,
-        "total": 363
+        "setup": 72,
+        "invariants": 258,
+        "total": 362
       },
       "renders": {
         "total": 8,
@@ -6926,9 +6926,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 65,
-        "invariants": 220,
-        "total": 316
+        "setup": 77,
+        "invariants": 222,
+        "total": 332
       },
       "renders": {
         "total": 7,
@@ -6946,9 +6946,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 27,
+        "setup": 30,
         "invariants": 517,
-        "total": 580
+        "total": 593
       },
       "visualMeta": {
         "mode": "page",
@@ -6974,9 +6974,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 77,
-        "invariants": 124,
-        "total": 240
+        "setup": 74,
+        "invariants": 123,
+        "total": 239
       },
       "renders": {
         "total": 4,
@@ -6994,7 +6994,7 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 72,
+        "setup": 70,
         "invariants": 124,
         "total": 234
       },
@@ -7014,8 +7014,8 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 80,
-        "invariants": 157,
+        "setup": 77,
+        "invariants": 158,
         "total": 267
       },
       "renders": {
@@ -7034,9 +7034,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 82,
-        "invariants": 225,
-        "total": 350
+        "setup": 77,
+        "invariants": 223,
+        "total": 334
       },
       "renders": {
         "total": 7,
@@ -7054,9 +7054,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 74,
-        "invariants": 124,
-        "total": 233
+        "setup": 75,
+        "invariants": 123,
+        "total": 232
       },
       "renders": {
         "total": 4,
@@ -7074,9 +7074,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 82,
+        "setup": 80,
         "invariants": 359,
-        "total": 485
+        "total": 469
       },
       "renders": {
         "total": 11,
@@ -7094,7 +7094,7 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 84,
+        "setup": 85,
         "invariants": 194,
         "total": 318
       },
@@ -7114,9 +7114,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 81,
-        "invariants": 159,
-        "total": 282
+        "setup": 80,
+        "invariants": 175,
+        "total": 298
       },
       "renders": {
         "total": 5,
@@ -7134,8 +7134,8 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 77,
-        "invariants": 155,
+        "setup": 75,
+        "invariants": 157,
         "total": 265
       },
       "renders": {
@@ -7154,9 +7154,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 83,
-        "invariants": 160,
-        "total": 285
+        "setup": 80,
+        "invariants": 156,
+        "total": 268
       },
       "renders": {
         "total": 5,
@@ -7174,9 +7174,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 83,
-        "invariants": 375,
-        "total": 500
+        "setup": 82,
+        "invariants": 359,
+        "total": 484
       },
       "renders": {
         "total": 11,
@@ -7195,8 +7195,8 @@
       },
       "ms": {
         "setup": 60,
-        "invariants": 164,
-        "total": 255
+        "invariants": 158,
+        "total": 251
       },
       "renders": {
         "total": 5,
@@ -7214,9 +7214,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 53,
-        "invariants": 315,
-        "total": 403
+        "setup": 52,
+        "invariants": 318,
+        "total": 407
       },
       "visualMeta": {
         "mode": "page",
@@ -7245,9 +7245,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 54,
-        "invariants": 160,
-        "total": 259
+        "setup": 53,
+        "invariants": 155,
+        "total": 240
       },
       "renders": {
         "total": 5,
@@ -7265,9 +7265,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 57,
-        "invariants": 292,
-        "total": 384
+        "setup": 56,
+        "invariants": 293,
+        "total": 385
       },
       "renders": {
         "total": 6,
@@ -7285,8 +7285,8 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 54,
-        "invariants": 160,
+        "setup": 56,
+        "invariants": 159,
         "total": 249
       },
       "renders": {
@@ -7305,8 +7305,8 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 56,
-        "invariants": 125,
+        "setup": 55,
+        "invariants": 126,
         "total": 217
       },
       "renders": {
@@ -7325,7 +7325,7 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 82,
+        "setup": 80,
         "invariants": 284,
         "total": 407
       },
@@ -7356,9 +7356,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 58,
-        "invariants": 500,
-        "total": 600
+        "setup": 57,
+        "invariants": 484,
+        "total": 584
       },
       "visualMeta": {
         "mode": "page",
@@ -7387,9 +7387,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 128,
-        "invariants": 857,
-        "total": 1024
+        "setup": 125,
+        "invariants": 853,
+        "total": 1019
       },
       "renders": {
         "total": 17,
@@ -7407,8 +7407,8 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 86,
-        "invariants": 225,
+        "setup": 87,
+        "invariants": 221,
         "total": 351
       },
       "renders": {
@@ -7427,9 +7427,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 87,
-        "invariants": 417,
-        "total": 542
+        "setup": 74,
+        "invariants": 418,
+        "total": 530
       },
       "visualMeta": {
         "mode": "page",
@@ -7458,9 +7458,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 54,
-        "invariants": 221,
-        "total": 320
+        "setup": 46,
+        "invariants": 222,
+        "total": 304
       },
       "renders": {
         "total": 7,
@@ -7478,9 +7478,9 @@
         "invariants": 8
       },
       "ms": {
-        "setup": 45,
-        "invariants": 289,
-        "total": 368
+        "setup": 47,
+        "invariants": 288,
+        "total": 366
       },
       "renders": {
         "total": 9,
@@ -7498,9 +7498,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 49,
-        "invariants": 392,
-        "total": 487
+        "setup": 50,
+        "invariants": 389,
+        "total": 485
       },
       "renders": {
         "total": 12,
@@ -7518,9 +7518,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 46,
-        "invariants": 269,
-        "total": 345
+        "setup": 45,
+        "invariants": 271,
+        "total": 348
       },
       "renders": {
         "total": 7,
@@ -7538,9 +7538,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 46,
-        "invariants": 189,
-        "total": 268
+        "setup": 44,
+        "invariants": 188,
+        "total": 267
       },
       "renders": {
         "total": 6,
@@ -7558,9 +7558,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 48,
-        "invariants": 185,
-        "total": 265
+        "setup": 44,
+        "invariants": 188,
+        "total": 267
       },
       "renders": {
         "total": 6,
@@ -7578,8 +7578,8 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 42,
-        "invariants": 121,
+        "setup": 43,
+        "invariants": 122,
         "total": 200
       },
       "renders": {
@@ -7598,7 +7598,7 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 47,
+        "setup": 44,
         "invariants": 222,
         "total": 300
       },
@@ -7618,9 +7618,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 47,
-        "invariants": 222,
-        "total": 301
+        "setup": 45,
+        "invariants": 221,
+        "total": 300
       },
       "renders": {
         "total": 7,
@@ -7658,9 +7658,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 75,
-        "invariants": 154,
-        "total": 266
+        "setup": 68,
+        "invariants": 153,
+        "total": 251
       },
       "renders": {
         "total": 5,
@@ -7678,9 +7678,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 49,
-        "invariants": 323,
-        "total": 402
+        "setup": 48,
+        "invariants": 319,
+        "total": 405
       },
       "renders": {
         "total": 10,
@@ -7698,9 +7698,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 55,
-        "invariants": 502,
-        "total": 596
+        "setup": 66,
+        "invariants": 498,
+        "total": 605
       },
       "renders": {
         "total": 15,
@@ -7718,9 +7718,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 64,
-        "invariants": 714,
-        "total": 815
+        "setup": 63,
+        "invariants": 501,
+        "total": 603
       },
       "renders": {
         "total": 15,
@@ -7738,9 +7738,9 @@
         "invariants": 7
       },
       "ms": {
-        "setup": 57,
-        "invariants": 351,
-        "total": 460
+        "setup": 58,
+        "invariants": 326,
+        "total": 425
       },
       "renders": {
         "total": 10,
@@ -7760,7 +7760,7 @@
       "ms": {
         "setup": 64,
         "invariants": 2202,
-        "total": 2308
+        "total": 2309
       },
       "renders": {
         "total": 67,

@@ -3008,3 +3008,121 @@ changes whose cause is understood and accepted; reaching for them to turn a red
 gate green is precisely how a systemic defect survives — in this case one where
 the splice had never satisfied its own correctness contract and no test could
 say so. The size of a symptom is not evidence about the size of its cause.
+
+## A correction computed against the SCREEN is not a property of the music (2026-09-03)
+
+Composer's staff crisping asked "what nudge puts this staff line on the device
+grid?" — a question whose answer depends on where the render happens to sit. A
+system engraved in a splice window sits at a different raw `y` than the same
+system in a full page render (measured: `lineY` 6255 vs 6812, different
+residues mod the pixel grid), so the two computed different corrections for
+identical music. The correction then landed in `staffTop`, `measureExtents`
+folded it into `above`, and placement — which consumes `above` — put the system
+a whole pixel off. The fix was to make the correction relative to the system's
+own first staff row, which is intra-system geometry and therefore identical in
+any render, and to let the system's placement carry the screen-dependent phase.
+Rule: anything a layout DECISION consumes must be a function of the content,
+not of where the content was drawn. If a measured input carries the render's
+origin, every decision downstream of it inherits that origin.
+
+## "Displaced but still crisp" is the signature of a snap that is not canonical (2026-09-03)
+
+Whole systems on page 4 sat one to two device pixels from where a full
+re-engrave put them — every element in them visibly displaced — while an audit
+of all 150 staves found ZERO off the pixel grid. Both facts were true: each
+staff had been snapped, but the two renders had snapped to DIFFERENT grid
+points, because "nudge to the nearest grid line from wherever you are" is not a
+canonical function. It admits many valid answers, and independent renders pick
+different ones. Max, on seeing the diff: *"the problem is that this means one
+of the staves is not being snapped to the grid... am I wrong?"* — the right
+instinct, and the reason the search moved from placement arithmetic to the snap
+itself. Rule: a snap must be a pure function of the thing being snapped, not of
+its current position; and "everything is on the grid" does not imply "everything
+is on the SAME grid point".
+
+## Optimising the diagnostic instead of the deliverable (2026-09-03)
+
+Several hours went into driving one census number — `placeFor(reference)` vs
+`placeFor(live)` — up and down by ±10 with changes whose only justification was
+that the number moved. That census re-derives where systems WOULD go from the
+live page's extents; it is a useful diagnostic but it is not the contract, and a
+page can be perfectly correct while it disagrees. The contract is the
+reference's placement against where the systems ACTUALLY sit, and the ground
+truth beneath both is the rendered pixels. Two changes that "improved" nothing
+(quantizing every term; quantizing `above`) were only exposed as regressions
+once the pixel comparison was run. Rule: identify which number IS the
+deliverable before tuning any number, and keep a ground-truth check — here, a
+screenshot diff — in the loop, so a metric that drifts away from reality is
+caught in one step rather than five.
+
+## Anything running after the pass that MEASURES geometry must not change geometry (2026-09-03)
+
+Composer's page pipeline is `postProcess → placePage → injections`. `placePage`
+measures each system's extents (`above`/`below`/`span`) and consumes them to
+decide where every system goes, so a system's extents feed the position of every
+system below it. Three separate defects turned out to be the same mistake — a
+pass that mutates geometry running after that measurement:
+
+1. `snapStaffLinesToGrid` moved `g.staff` by ≤ ½ device pixel for crispness,
+   after placement. A page ended up at `snap(place(x))` while re-measuring said
+   `place(snap(x))`. Every page was 0-10.6 units off its own rule.
+2. `styleVoltaNumbers` restyles a tspan inside `g.voltaBracket` — font-size,
+   family, weight, and appending a '.' — which changes the bracket's bbox. A
+   volta is content ABOVE the staff, so it changes `above`, and the mount path
+   ran it after `placePage` while the SPLICE path ran it before. The mounted
+   page sat 20 units low from the volta system down; the gate then read that as
+   a splice defect, and it was nearly "fixed" by widening the tolerance.
+3. The reference gate's own offscreen host was aligned under a premise
+   (`sysTy` is a whole number of pixels) that is true for a placed live page and
+   false for a raw render — so the comparison measured the harness.
+
+The invariant, now stated at both call sites: **anything running after
+`placePage` may only write OUTSIDE `g.system`.** The two surviving injections
+qualify — they append `text` as direct children of `g.page-margin` — so this is
+checkable rather than remembered. When adding a pass to a render pipeline, the
+question is not "does this look cosmetic" but "does anything downstream MEASURE
+what I am touching"; a ½-pixel restyle of a volta number moved four systems.
+
+## An edit during a probe run is a corrupted run, not a flaky probe (2026-09-03)
+
+Two census chunks failed mid-sweep with unparseable output. The cause was
+editing `apps/composer/src` while the run was in flight: Vite HMR reloaded the
+module under the running browser. CLAUDE.md's standing trap says exactly this
+("no `apps/composer/src` edits while anything runs against the dev server") and
+it was still easy to violate while iterating quickly, because the failure looks
+like probe flakiness rather than self-inflicted. Partial results from such a run
+are also stale in a subtler way: they were produced by a mix of two code states.
+Re-run from scratch; never reason from the surviving chunks.
+
+## Verovio's `renderToSVG` is not idempotent for the running page header (2026-09-03)
+
+Rendering a page a SECOND time from the same loaded document moves its `pgHead`
+text. Measured (`cb-hdrdet.js`, sonata, one pinned MEI, one options object):
+pages 1-5 render at y 371/195/194/194/197 on the first pass and
+371/197/197/197/197 on the second. A fresh `loadData` followed by a single
+render is perfectly deterministic (194 five times running). It is NOT order
+dependence — page 3 reads 194 whether it is rendered first, after pages 1-2, or
+after page 5 — and not toolkit-instance specific.
+
+This matters because Composer's `firstContentTop` measures that header's bbox
+and places every system on the page relative to it, and pages go through a
+variable number of renders (initial mount, re-mount, the reference gate's own
+render). So a live page's header can sit ~3 units from a freshly rendered one,
+and the device-grid quantization turns that into a clean whole-pixel shift of
+the entire page. It presents as a residual that is always EXACTLY one pixel, on
+a stable set of pages, and that does not respond to ANY change in our own
+placement code — which is the tell: when a deviation is invariant under every
+local change, stop editing local code and check whether the renderer is
+deterministic.
+
+Pre-existing and not Composer-specific — a re-render has always shifted the
+header fractionally; owning vertical placement only made it visible as a whole
+pixel. Accepted rather than worked around (`TOL` = 10, one device pixel). The
+fix, if it is ever worth it, is to stop feeding a renderer-measured header into
+layout: treat the page header as a fixed reserve like `SECTION_HEADER_RESERVE`.
+
+Two false trails on the way, both plausible and both wrong: a stale mounted page
+(the edit provably changes no header y — identical before and after on every
+page), and a page borrowing another page's header (197 also being page 5's value
+is coincidence). The decisive experiment was the cheap one nobody had run:
+render the same page twice and compare.
