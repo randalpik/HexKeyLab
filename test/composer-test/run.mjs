@@ -22,6 +22,7 @@ import { MOCK_BRIDGE_LIB } from './lib/bridge-mock.mjs';
 import { visualCheck } from './lib/visual.mjs';
 import { FIXTURES, FIXTURE_ASSERTIONS } from './fixtures.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 
@@ -199,6 +200,29 @@ async function runOne(cdp, name, fixture, console_cap, currentTier, opts = {}) {
     } catch (e) {
       result.ok = false;
       result.failures.push({ kind: 'visual', detail: String(e?.message ?? e) });
+    }
+  }
+
+  /* A non-visual failure has no baseline pair to look at, and the pair that
+     answers the DEFECT question is not baseline-vs-output anyway: it is the
+     live (spliced) page against a full re-engrave of the same document, in the
+     same container, at the same scroll, through the same capture path. Shoot
+     both here, into a scratch dir — never into out/, which is tracked — so the
+     heatmap can be made without reproducing the ordering by hand. */
+  if (!result.ok && result.failures.some((f) => f.kind !== 'visual')) {
+    try {
+      const dir = process.env.HKL_FAIL_SHOTS || join(tmpdir(), 'hkl-composer-fail');
+      mkdirSync(dir, { recursive: true });
+      const live = join(dir, name + "-live.png");
+      const reeng = join(dir, name + "-reengrave.png");
+      const shotOpts = { fullPage: fixture.visualFullPage === true };
+      await visualCheck(cdp, name, { ...shotOpts, captureOnly: live });
+      await cdp.evalJSON(`(() => { const H = window.__hkl_composer; H.renderer['forceFullRerender'](); H.reRender(); return true; })()`);
+      await cdp.evalJSON(`new Promise((r) => setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(r)), 250))`);
+      await visualCheck(cdp, name, { ...shotOpts, captureOnly: reeng });
+      result.failShots = { live, reengrave: reeng };
+    } catch (e) {
+      result.failShots = { error: String(e?.message ?? e) };
     }
   }
 

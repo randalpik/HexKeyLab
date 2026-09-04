@@ -54,7 +54,7 @@ mkdirSync(OUT_DIR, { recursive: true });
  *  zoom + pageScale, scroll offsets, clip) back to the runner, so a
  *  framing or page-size discrepancy is diagnosable from summary.json
  *  numbers instead of screenshot archaeology. */
-export async function visualCheck(cdp, name, { updateBaselines = false, fullPage = false } = {}) {
+export async function visualCheck(cdp, name, { updateBaselines = false, fullPage = false, captureOnly = null } = {}) {
   const info = await cdp.evalJSON(`(() => {
     const H = window.__hkl_composer;
     const score = document.getElementById('score');
@@ -97,17 +97,24 @@ export async function visualCheck(cdp, name, { updateBaselines = false, fullPage
       if (op > 0 && (el.tagName === 'rect' || el.tagName === 'text')) targets.push(el);
     }
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    /* Name the element that sets the LEFT edge. The clip is derived from this
+       union, so an element with a box but no ink silently reframes the capture
+       and translates the whole image — indistinguishable from a render bug
+       unless the culprit is recorded (2026-09-04). */
+    let leftEl = null;
     for (const el of targets) {
       const r = el.getBoundingClientRect();
       if (r.width === 0 && r.height === 0) continue;
-      if (r.left < minX) minX = r.left;
+      if (r.left < minX) { minX = r.left; leftEl = el; }
       if (r.top < minY) minY = r.top;
       if (r.right > maxX) maxX = r.right;
       if (r.bottom > maxY) maxY = r.bottom;
     }
+    const describe = (el) => el ? (el.tagName + (el.id ? '#' + el.id : '') + (el.getAttribute('class') ? '.' + el.getAttribute('class').split(/\s+/)[0] : '') + '@' + Math.round(el.getBoundingClientRect().left)) : null;
     return {
       cards: isFinite(cMinX) ? { x: cMinX, y: cMinY, w: cMaxX - cMinX, h: cMaxY - cMinY } : null,
       content: isFinite(minX) ? { x: minX, y: minY, w: maxX - minX, h: maxY - minY } : null,
+      leftEl: describe(leftEl),
     };
   })()`;
   /* Wait until two consecutive frames agree on the geometry (relayouts,
@@ -154,12 +161,24 @@ export async function visualCheck(cdp, name, { updateBaselines = false, fullPage
           height: Math.ceil(box.h) + PAD * 2,
           scale: 1,
         };
+        meta.clip = { x: clip.x, y: clip.y, w: clip.width, h: clip.height };
       }
       if (geom.cards) {
         meta.cardW = Math.round(geom.cards.w);
         meta.cardH = Math.round(geom.cards.h);
       }
       meta.fullPage = fullPage;
+      /* Record the FRAMING, not just the page state. A capture is only
+         comparable to a baseline if the window it took is the same window, and
+         a content-derived clip moves when the content's size changes — the
+         viewport is auto-sized from `scrollWidth` and the cards are centred in
+         it, so a purely VERTICAL layout change can shift the clip sideways by
+         half a width delta and translate the whole image with the render
+         untouched. Without these numbers that is indistinguishable from a
+         rendering bug (2026-09-04: cost a long exchange). */
+      meta.leftEl = geom.leftEl ?? null;
+      meta.vpW = Math.min(Math.max(need.width, 800), 8000);
+      meta.vpH = Math.min(Math.max(need.height, 600), 12000);
     }
   } else if (info) {
     /* Scroll mode: tight content union (systems + selection + visible
@@ -213,6 +232,13 @@ export async function visualCheck(cdp, name, { updateBaselines = false, fullPage
     await cdp.evalJSON(`new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)))`);
   }
   const png = Buffer.from(shot.data, 'base64');
+  /* Raw capture for a failure heatmap: same clip, same scroll, same capture
+     path as a baseline shot — which is the whole point, since the pair being
+     diffed has to differ only in what the renderer did. */
+  if (captureOnly) {
+    writeFileSync(captureOnly, png);
+    return { ok: true, captured: captureOnly, meta };
+  }
   const baselinePath = join(BASELINE_DIR, name + '.png');
   const outPath = join(OUT_DIR, name + '.png');
   writeFileSync(outPath, png);

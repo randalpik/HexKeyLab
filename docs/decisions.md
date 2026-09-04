@@ -5832,7 +5832,7 @@ commented out, so a model of it would be exact today and one release from
 wrong. Max: D1 ("we always own height") removes the geometry job entirely, and
 the cascade (START HERE 1) and the window question both fall out of it. The
 three items became one sequenced plan,
-[composer-vertical-ownership-plan.md](composer-vertical-ownership-plan.md);
+the vertical-ownership plan (retired 2026-09-04; results rolled into [composer-page-splice-design.md](composer-page-splice-design.md));
 this entry is its Phase 0, the only in-principle reduction of the window that
 does not depend on owning height.
 
@@ -5888,7 +5888,7 @@ castoff, a spliced page from a window that had to reproduce Verovio's spacing
 around the hunk, a cascade's moved block from a window that had to paginate
 where the block would land. Max, on the 90 px header jump earlier the same
 day: *"We must fully own height."* The plan
-([composer-vertical-ownership-plan.md](composer-vertical-ownership-plan.md))
+(the vertical-ownership plan (retired 2026-09-04; results rolled into [composer-page-splice-design.md](composer-page-splice-design.md)))
 makes that Phase 1, the enabling step for the cascade on a model (Phase 2) and
 for the window question (Phase 3).
 
@@ -5985,7 +5985,7 @@ a page nobody has mounted can be folded by arithmetic over stored extents. B2's
 step was still a splice (a window render of the block, page-first, imported
 into the receiving page) and past the mounted set it parked — the receiving
 page drew the block and checked itself at mount. Plan
-([composer-vertical-ownership-plan.md](composer-vertical-ownership-plan.md) §3
+(the vertical-ownership plan (retired 2026-09-04; results rolled into [composer-page-splice-design.md](composer-page-splice-design.md)) §3
 Phase 2).
 
 **Picked**:
@@ -6432,3 +6432,122 @@ every placement term to the grid made exactness worse (280 exact → 199, six
 pairs back over 30); so did quantizing only the `above` clearance (→ 212).
 Rounding a noisy input amplifies the noise near a boundary rather than
 absorbing it. Round once, as late as possible.
+
+---
+
+## Rule v2: a page distributes its own slack (2026-09-04)
+
+Phase 4 of the (now retired) vertical-ownership plan — the last of it. Phase 1
+gave every page a placement rule at MINIMUM clearance, which left all of a
+page's unused height in one lump above the bottom margin: on the sonata, 4.0 to
+75.5 units, mean 30.6.
+
+**Picked**: one water level per page. The gaps that equalize are the
+inter-system gaps AND the gap between the last system and the bottom of the
+content column; their sum is fixed by the systems' own heights, so an ordinary
+page just shares it out. Three shaping rules, each of which Max set explicitly:
+
+- **A maximum gap, and nothing else.** `maxGap` = 14 units. No fill threshold,
+  no last-page exemption: a page too sparse to fill is left sparse rather than
+  smeared across the paper, and the cap is the only thing that decides where
+  that starts. 14 is not a taste pick — it is the smallest cap at which no
+  ORDINARY sonata page clamps (the binding page needs 11.96), and therefore the
+  smallest cap that keeps the top gap for genuinely sparse pages. Below it,
+  pages 3/7/12/25 clamp and start opening their top gaps, which defeats the
+  gating below.
+- **A gap wider than the level cannot be compressed**, so the level is the L
+  solving `Σ max(gap_k, L) + L = C`, not `C / n`. One sonata page exercises it
+  (page 21: a header system whose `above` is 1.2 units forces an 8.8-unit gap);
+  with `C / n` it lands 5.2-unit gaps over a 1.7-unit bottom gap.
+- **The page-header → first-system gap is a last resort, not a participant.**
+  It opens only when the systems have taken all they may (the level hit
+  `maxGap`) AND the bottom gap still exceeds `maxGap`, up to `topMax` = 10
+  units — and NEVER on page 1, whose first system keeps its distance to the
+  title block under all circumstances. On the sonata it opens on exactly four
+  pages (6, 17, 19, 20), all 3-system.
+
+**Rejected**: distributing into the top gap on equal footing with the others
+(it lowered the knee to 12 units but opened the top on ordinary pages, which is
+what the gating exists to prevent); a fill threshold (D2's MIN_FILL question —
+Max: maximum gap only); exempting the last page (the cap already handles it).
+
+**Two things the measurement forced, neither of them in the plan.**
+
+1. **The running footer moved into the bottom margin** (`FOOTER_Y` in main.ts,
+   was `PAGE_INNER_H − 200`, now `+ 370`). It had been sitting INSIDE the
+   content column with the whole 14 mm bottom margin empty below it, which cost
+   every page 10.1 units of reach and already put the music THROUGH the footer
+   text on sonata pages 21 and 23 — a live defect, not a new one. Repaginating
+   against the footer where it stood cost a page and four near-miss 3-system
+   pages (a 4th system missing by 1.2–6.0 units); moving it costs nothing and
+   leaves pagination byte-identical. Consequence worth having: adding or
+   removing a footer can no longer change pagination. How far down is a
+   PRINTABILITY question and the margin is tight — 14 mm of margin against 3.6
+   mm of footer ink means a footer wholly below the column can never be more
+   than 0.41 in from the paper edge; 0.378 in is what we take.
+2. **The fold limit is the content column, not the paper edge.** Verovio's
+   castoff used the column; `foldIndex` used the paper, one bottom margin
+   lower, so a REPAIRED page could hold a system a fresh castoff would not
+   (sonata pages 6, 17, 19). Now both stop at the column, and the justification
+   target is the same line. Zero pagination change on the sonata.
+
+**Placement is now NON-LOCAL within a page** — the load-bearing consequence.
+Under v1 a system's position depended only on the systems above it; under v2 it
+depends on every system on the page, through the level. So every path that
+changes a page's system set must re-place the whole page. All of them did
+except one (`lazyMoveOut`, the arithmetic-past-mount cascade step), which the
+reference gate caught as a staircase of downward shifts on the spilling page.
+See lessons.md, "Rule v2 made placement non-local".
+
+**Ordering**: pagination is judged on v1 and only then is the resulting page
+distributed. `placeSystems` takes the distribution as an argument; `placePage`
+and the reference gate pass it, `foldOf` and `predictFoldFromStore` do not.
+Feeding a distributed placement to `foldIndex` would be circular.
+
+**Where it lives**: `placeSystems` / `distributionExtras` / `DistributeOpts` in
+`apps/composer/src/render/pagefit.ts`; `contentBottomOf`, `headBottomOf` and
+the `PlaceOpts` plumbing in `render/render.ts`; `FOOTER_Y` and the page-1-only
+credit in `main.ts`.
+
+---
+
+## Snap-as-output in placement; the gated sweep (2026-09-04)
+
+**Problem**: with rule v2 live, the battery reported staff tops 30 units off on
+every edit and a 2-pixel staircase on sonata page 18 after `delete-whole-line`.
+Three of those readings were the battery's own (it placed both sides
+undistributed, and its reference host got neither `alignStavesIn` nor
+`decorateHost`, all of which the gate does — fixed in the probe). The remainder
+was real: `layoutSystems` accumulated positions from each system's SNAPPED top
+and `distributionExtras` solved the level on snapped geometry, so one system's
+≤½-pixel rounding fed every system below it.
+
+**Picked**: snapping is an output transform. `PlacedSystem` carries `rawTop`
+and `rawContentBottom`; the accumulator runs on `rawTop`; the level is solved on
+unsnapped gaps; `ty` is the only place the grid appears. The one-device-pixel
+residual on a single system is unchanged and remains accepted (`TOL` 10, not
+revisited).
+
+**Rejected, measured**: quantizing the level once per page — 7 deviating
+(page, system) pairs at most 20 units became 13 at most 40. Same mechanism as
+the rule-v1 dead end: rounding a noisy shared quantity near a boundary
+multiplies the flip by every system beneath it. Recorded in `placeSystems`.
+Also rejected without trying, on Max's reasoning: whole-pixel inter-system
+advances chained from a snapped first system — the first system's rounding
+would still drive the chain.
+
+**Measured**: battery deviations 7 → 4, max 20 → 10, no page with more than
+one system moved; gated sweep 4/25 → 0/25; then **0 divergences over all 115
+positions** — the first sweep this project has run with the reference gate
+enabled. Suite 375/377 → 377/377 after two baselines were re-seeded (approved).
+
+**Verification changes that made this findable**: `cb-sweep.js --arg check=1`
+enables the gate and catches its throw per position (it used to abort the
+probe); `from=` chunks a gated pass under the runner's 300 s cap (sampling with
+`stride` had shown 0/23 where stride 1 showed 4/25 — sampling and chunking are
+not interchangeable). The battery records every deviation (`devs`), not only
+the worst, and can leave one page in `#score` for a screenshot
+(`shot=<edit>,mode=spliced|reengrave,page=N`) so the self-consistency pair can
+be heatmapped. `run.mjs` shoots that same pair automatically on any non-visual
+fixture failure (`HKL_FAIL_SHOTS`). `visualMeta` records the capture framing
+(`clip`, `vpW`/`vpH`, `leftEl`).

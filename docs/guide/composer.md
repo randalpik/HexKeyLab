@@ -238,6 +238,17 @@ from scratch, so the page may re-flow: loading a document, zoom or page-size
 changes, switching to a single-instrument view, adding or removing a page break
 or section header, and changes to the key, time signature or staff set.
 
+**How systems are spaced on a page**: the systems on each page are spread out
+evenly so the last one reaches the bottom margin — the gaps between systems,
+and the gap below the last one, all come out the same size. There is a ceiling
+on that gap, so a page that is too short to fill (often the last page, or a page
+holding only three tall systems) keeps its systems at the ceiling and leaves the
+rest of the space empty at the bottom rather than smearing them across the
+paper; on such a page a little extra room also opens above the first system
+(never on page 1, whose first system keeps its distance from the title). The
+running footer lives in the bottom margin, so adding or removing one never
+changes how many systems fit on a page.
+
 This means the layout reflects the editing you've done, not a fresh engraving of
 the current music — that's deliberate, so the page stops moving under you while
 you work. (An explicit "re-flow the whole document" command, and commands to

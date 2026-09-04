@@ -81,7 +81,8 @@ function referenceCompare() {
   };
   const livePages = [...document.querySelectorAll('#score .score-page:not(.score-page-pending)')];
   let checkedPages = 0, checkedMeasures = 0;
-  let maxD = 0, maxSpacingD = 0, maxTopD = 0;
+  let maxD = 0, maxSpacingD = 0, maxTopD = 0, worst = null;
+  const devs = [];
   for (const pageEl of livePages) {
     const pno = +pageEl.dataset.page;
     if (pno > tkRef.getPageCount()) return { ok: false, why: 'live page ' + pno + ' beyond reference page count ' + tkRef.getPageCount() };
@@ -92,6 +93,23 @@ function referenceCompare() {
     /* Same post-processing as the live pages (HEJI text, notehead order, snaps):
        the placement rule measures extents on the post-processed system. */
     r['postProcessRendered'](host);
+    /* DECORATE it too — the gate does (`ctx.decorateHost`), and it is
+       `styleVoltaNumbers`: Verovio draws volta numbers large and heavy and the
+       live pages restyle them lighter. Skipping it left the reference's ink
+       TALLER on any system a volta tops, so its measured `above` was 586
+       against the live 558 and the rule put the staff 30 units apart — a probe
+       artifact that looked exactly like a 3-device-pixel splice defect
+       (2026-09-04). The pixels never differed: spliced vs re-engraved page 3
+       is 150 differing pixels, none significant, max channel delta 5. */
+    r['pageSpliceCtx']().decorateHost(host);
+    /* Give the reference host the SAME staff alignment the live pages have
+       (what the gate does via ctx.alignStaves). Without it `placeFor` reads
+       UNALIGNED extents on one side only, which Phase 3.5 documented as
+       surfacing as a whole-pixel placement error — it was reporting
+       maxTopD 30 on every edit alike (2026-09-04), a probe artifact rather
+       than a splice defect: with the alignment the deviation is 0 on all 30
+       sonata pages, before and after an edit. */
+    r.alignStavesIn(host, r.originPhaseOf(pageEl));
     try {
       const refSys = [...host.querySelectorAll('g.system')];
       const liveSys = [...pageEl.querySelectorAll('g.system')];
@@ -102,7 +120,13 @@ function referenceCompare() {
       // rule and must land where the live page put its systems (maxTopD); and the
       // live page must be self-consistent — placed by the same rule over its own
       // extents (reported as maxSpacingD, keeping the summary's keys).
-      const expect = r.placeFor(refSys), self = r.placeFor(liveSys);
+      /* DISTRIBUTED on both sides (rule v2, 2026-09-04): a live page has had
+         its slack shared out, so the rule it must agree with is the one that
+         placed it. Placing only by the minimum-clearance rule reported a
+         constant ~2280-unit top divergence on every edit alike — the whole
+         distribution, mistakable for a splice defect. */
+      const pOpts = { distribute: true, pageNo: pno };
+      const expect = r.placeFor(refSys, pOpts), self = r.placeFor(liveSys, pOpts);
       if (!expect || !self) return { ok: false, why: 'page ' + pno + ': placement unreadable' };
       for (let i = 0; i < refSys.length; i++) {
         const rp = profile(refSys[i]), lp = profile(liveSys[i]);
@@ -114,7 +138,22 @@ function referenceCompare() {
           checkedMeasures++;
         }
         const dTop = Math.abs(expect[i].top - lp.staffTop);
-        if (dTop > maxTopD) maxTopD = dTop;
+        /* EVERY deviation, not just the maximum: reporting only the worst
+           offender turned a page-wide survey into a breadcrumb trail
+           (2026-09-04). `devs` is the inventory. */
+        if (dTop > 0) devs.push({ page: pno, sys: i, of: refSys.length, dTop: +dTop.toFixed(1),
+                                  dSelf: +Math.abs(self[i].top - lp.staffTop).toFixed(1) });
+        if (dTop > maxTopD) {
+          maxTopD = dTop;
+          const hb = (mg) => { const hd = mg && mg.querySelector(':scope > g.pgHead'); if (!hd) return null; const t = hd.transform && hd.transform.baseVal.consolidate(); const b = hd.getBBox(); return +(b.y + b.height + (t ? t.matrix.f : 0)).toFixed(1); };
+          const ext = (sy) => { const e = r['measureExtents'] ? null : null; try { const b = sy.getBBox(); const st = sy.querySelector('g.measure > g.staff'); const t = (el) => { const c = el.transform && el.transform.baseVal.consolidate(); return c ? c.matrix.f : 0; }; const ys = []; for (const n of Array.from(st.children)) { if (n.localName !== 'path') continue; const mm = /M\s*(-?[\d.]+)[\s,]+(-?[\d.]+)\s*L/.exec(n.getAttribute('d') || ''); if (mm) ys.push(+mm[2]); } ys.sort((a, b2) => a - b2); const staffTop = ys[0] + t(st); return { above: +(staffTop - b.y).toFixed(1), bbY: +b.y.toFixed(1), staffTop: +staffTop.toFixed(1), ty: +t(sy).toFixed(1) }; } catch { return null; } };
+          const topper = (sy) => { let best = null, bv = Infinity; for (const g of Array.from(sy.querySelectorAll('g[class],text,rect'))) { const cl = g.getAttribute('class') || g.tagName; if (/^(system|measure|staff|layer|systemMilestone)/.test(cl)) continue; let b; try { b = g.getBBox(); } catch { continue; } if (!(b.width > 0 || b.height > 0)) continue; if (b.y < bv) { bv = b.y; best = cl.split(/\s+/)[0] + '@' + Math.round(b.y); } } return best; };
+          worst = { page: pno, sys: i, of: refSys.length, dTop: +dTop.toFixed(1),
+                    extRef: ext(refSys[i]), extLive: ext(liveSys[i]),
+                    topperRef: topper(refSys[i]), topperLive: topper(liveSys[i]),
+                    headLive: hb(pageEl.querySelector('svg g.page-margin')), headRef: hb(host.querySelector('svg g.page-margin')),
+                    expectTop: +expect[i].top.toFixed(1), liveTop: +lp.staffTop.toFixed(1), selfTop: +self[i].top.toFixed(1) };
+        }
         const dSelf = Math.abs(self[i].top - lp.staffTop);
         if (dSelf > maxSpacingD) maxSpacingD = dSelf;
       }
@@ -124,13 +163,21 @@ function referenceCompare() {
   return {
     ok: maxD <= TOL && maxSpacingD <= TOL && maxTopD <= TOL,
     checkedPages, checkedMeasures,
-    maxD: +maxD.toFixed(1), maxSpacingD: +maxSpacingD.toFixed(1), maxTopD: +maxTopD.toFixed(1),
+    maxD: +maxD.toFixed(1), maxSpacingD: +maxSpacingD.toFixed(1), maxTopD: +maxTopD.toFixed(1), worst, devs,
   };
 }
 
 const battery = [];
+/* Shot hook: `--arg "shot=<editName>,mode=spliced|reengrave,page=N"` runs the
+   battery up to that edit, then leaves ONE page in #score so the runner's
+   --screenshot frames it. Run twice, same edit, the two modes, and heatmap the
+   pair: that is the SELF-CONSISTENCY pair (spliced vs a full re-engrave of the
+   same document), not baseline-vs-output. */
+const SHOT = Object.fromEntries(String(window.__probeArg || '').split(',').filter(Boolean).map((x) => x.split('=')));
+let stopAfterShot = false;
 const curAt = (mi) => { model.setCursor(model.getMeasureStartCursor(1, mi), 1); };
 const runEdit = async (name, editFn, expect) => {
+  if (stopAfterShot) return;
   const entry = { name, expect };
   await mountAll();
   const t0 = performance.now();
@@ -150,6 +197,23 @@ const runEdit = async (name, editFn, expect) => {
   await mountAll();
   entry.reference = referenceCompare();
   battery.push(entry);
+  if (SHOT.shot && SHOT.shot === name) {
+    if (SHOT.mode === 'reengrave') {
+      r['forceFullRerender'](); reRender();
+      await waitFor(badgeHidden, 60000, 40);
+      await mountAll();
+      await sleep(300);
+    }
+    const keep = +(SHOT.page || 3);
+    for (const el of Array.from(document.querySelectorAll('#score .score-page'))) if (+el.dataset.page !== keep) el.remove();
+    for (const el of Array.from(document.querySelectorAll('#cursorOverlay'))) el.remove();
+    const sc = document.getElementById('score'); if (sc) { sc.scrollTop = 0; sc.scrollLeft = 0; }
+    await sleep(300);
+    entry.shot = { mode: SHOT.mode || 'spliced', page: keep,
+                   pageEls: document.querySelectorAll('#score .score-page').length,
+                   systems: document.querySelectorAll('#score g.system').length };
+    stopAfterShot = true;
+  }
 };
 
 const ids0 = model.allMeasures().map((m) => m.getAttribute('xml:id'));

@@ -71,7 +71,7 @@ in decisions.md, 2026-08-30):
   runner's 300 s eval limit) and diff offline by position — ids do not compare
   across runs. Expect identical systems for L−1 / hunk / L+1 everywhere and a
   one-measure stub where the extension line used to be.
-- **cb-splice-battery.js** — the C-B acceptance-gate battery: eight edits
+- **cb-splice-battery.js** — the C-B acceptance-gate battery: ten edits (eight originally)
   through the live app, each asserting the splice/skip outcome AND a
   document-wide reference compare (every mounted page vs a fresh offscreen
   render of the same pinned MEI: system sequence, per-measure x/width,
@@ -503,6 +503,33 @@ C1 (user page break) probes, 2026-08-31:
   `[page-breaks]` warnings each round. Expect: converged (0 warnings after the
   first), pagination stable, and the edit safely skipping with
   `window paginated` rather than splicing.
+
+- **cb-slack.js** — Phase 4 measurement (2026-09-03): every sonata page's
+  inter-system gaps, its trailing gap to the content column, and a simulated
+  distribution for a range of `MAX_GAP` caps. This is where 14u came from.
+- **cb-slackshot.js** — Phase 4 mock-up: `--arg "page=N,cap=U,top=U,minfoot=U"`
+  re-writes one mounted page's system transforms the way rule v2 would and
+  strips the other pages so `--screenshot` frames it. Drops `#cursorOverlay`
+  (its markers are in `#score` coordinates and go stale when pages are removed).
+- **cb-distcheck.js** — Phase 4 acceptance on the live build: per page the top
+  gap, the equalizing gaps and the footer gap, evenness, overflow, credit pages.
+- **cb-topdev.js** — attributes a reference-gate staff-top deviation: per
+  system, live vs rule-over-reference, plus the page-header delta and the
+  distributed/undistributed levels; `--arg edit=1` makes one mid-line edit
+  first. Prepares its reference host exactly as the gate does.
+- **cb-splice-battery.js** (2026-09-04 changes) — the reference compare places
+  both sides DISTRIBUTED and gives the host `decorateHost` + `alignStavesIn`
+  (three ways it had drifted from the gate, each reporting rule v2 as a
+  defect); records every deviation in `reference.devs`, not only the worst;
+  `--arg "shot=<edit>,mode=spliced|reengrave,page=N"` runs up to that edit and
+  leaves one page for `--screenshot`, so the SELF-CONSISTENCY pair can be
+  heatmapped (`test/composer-test/heatmap.py`).
+- **cb-sweep.js** (2026-09-04 changes) — `check=1` enables the reference gate
+  for the whole sweep and records its throw per position (`row.gate`); without
+  it the sweep verifies coverage and viewport stability only. `from=` chunks a
+  gated pass under the runner's 300 s cap: `check=1,from=1,limit=24`, then
+  25, 49, 73, 97. Do not sample with `stride` for this — stride 5 read 0/23
+  where stride 1 read 4/25.
 
 **Not described above** (written in earlier sessions; see the matching
 docs/decisions.md entries for what they established): `cb-getmei2.js`,

@@ -7,7 +7,19 @@
 #
 #   test/composer-test/run-unfixed.sh <fixtureName> [<fixtureName> ...]
 #
-# Requires pnpm dev. Waits a few seconds after the stash for Vite to settle
+# Requires pnpm dev. Do NOT run this (or run.mjs) with TMPDIR overridden to a
+# deep path: Chromium honours TMPDIR for its own sockets and its debug endpoint
+# then never comes up ("Chromium debug endpoint never came up", exit 2 — an
+# INFRA failure, not a fixture result; measured 2026-09-04 under the session
+# scratchpad). Leave TMPDIR alone; the default OUT is already under /tmp.
+#
+# Limitation: this stashes ALL of apps/composer/src, so "unfixed" means HEAD.
+# A fixture for a fix that only matters on top of a feature in the same
+# working tree (e.g. lazyMoveOut's re-place, which is only wrong under rule
+# v2) passes here legitimately; prove such a fixture by reverting the one
+# line instead.
+#
+# Waits a few seconds after the stash for Vite to settle
 # (2026-09-01: the first scenario after a stash once failed to launch at all).
 # Nothing else may use the dev server while this runs — the stash reloads every
 # page it serves.

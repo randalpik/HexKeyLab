@@ -43,8 +43,9 @@
  * a laid-out SVG (`getBBox`), which the mount pass and the post-surgery snap
  * already flush for; the staff lines are read from the path text.
  *
- * Distribution of slack within the budget (D1 proper) is a later rule; only
- * `placeSystems` changes for it.
+ * Rule v2 (Phase 4, 2026-09-03) distributes the page's slack on top of that:
+ * see `placeSystems`. It changes only where the systems sit, never the fold —
+ * pagination is judged on v1, then the resulting page is distributed.
  */
 
 /** Vertical space a section header carves out above its system, and the
@@ -69,11 +70,17 @@ export interface PageFitConstants {
   /** SVG user units per DEVICE pixel (`1 / ds`), or 0 when unknown. Placement
    *  quantizes every system translate to a whole number of these, which is what
    *  makes a staff's crisp phase independent of where its system is placed —
-   *  see `alignStaffRows` and docs/composer-vertical-ownership-plan.md §3.5. */
+   *  see `alignStaffRows` and docs/composer-page-splice-design.md ("Ownership extends to the staff") and lessons.md. */
   grid: number;
   /** Device-pixel phase a staff line must land on to be crisp: ½ for an odd
    *  (1px) stroke, 0 for an even (2px) one. */
   phase: number;
+  /** Rule v2: the widest gap the distribution will open between two systems
+   *  (and between the last system and the bottom of the content column). */
+  maxGap: number;
+  /** Rule v2: the widest page-header → first-system gap. Reached only on a
+   *  page too sparse for the systems alone to absorb its slack. */
+  topMax: number;
 }
 
 /** `scale` and `evenWidth` come from the active CRISP_PRESET; omitted (0 grid)
@@ -84,6 +91,7 @@ export function pageFitConstants(verovioUnit: number, scale = 0, evenWidth = fal
     unit, F: 6 * unit, G: 4 * unit, C0: 5.25 * unit, headerGap: 2 * unit,
     grid: scale > 0 ? 1000 / scale : 0,
     phase: evenWidth ? 0 : 0.5,
+    maxGap: 14 * unit, topMax: 10 * unit,
   };
 }
 
@@ -139,6 +147,22 @@ export function alignStaffRows(sys: Element, grid: number): number {
   return moved;
 }
 
+/** What rule v2 needs about the page it is filling, beyond the systems. */
+export interface DistributeOpts {
+  /** Bottom of the content column in the page-margin frame (the bottom-margin
+   *  line). The gap between the last system and this is one of the gaps that
+   *  equalizes — which is why the running footer must live in the MARGIN, not
+   *  in the column (main.ts `FOOTER_Y`): a footer inside the column would take
+   *  10 units off every page's reach and cost the sonata a page. */
+  contentBottom: number;
+  /** Ink bottom of the page header (page-margin frame), the top gap's origin;
+   *  0 on a page with no header element. */
+  headBottom: number;
+  /** False on page 1 — its first system keeps its distance to the title block
+   *  under all circumstances (Max, 2026-09-03). */
+  allowTopGap: boolean;
+}
+
 /** A system's vertical extents in its OWN frame (before its transform). */
 export interface SysExtents {
   /** y of the first staff's top line (staff transform included). */
@@ -152,8 +176,15 @@ export interface SysExtents {
 }
 
 export interface PlacedSystem {
-  /** Target staff top, page-margin frame. */
+  /** Target staff top, page-margin frame (crisp-snapped — an OUTPUT). */
   top: number;
+  /** The same staff top BEFORE the crisp snap, and the content bottom that
+   *  follows from it. Snapping is a final output transform and must never be
+   *  an input: every position is computed from these, never from `top`, or a
+   *  system's rounding becomes the next system's premise and the error
+   *  accumulates down the page (Max, 2026-09-04). */
+  rawTop: number;
+  rawContentBottom: number;
   /** Translate to apply to the system (`top − staffTop`). */
   ty: number;
   /** Top of the header band above this system, or null when it carries none. */
@@ -213,8 +244,100 @@ export function measureExtents(sys: SVGGraphicsElement): SysExtents | null {
 
 /** Place systems top to bottom in the page-margin frame. `y0` is where the
  *  first system's content may start (below the page header); `reserve` is the
- *  section-header budget above each system (0 for most). Pure arithmetic. */
-export function placeSystems(items: Array<{ ext: SysExtents; reserve: number }>, k: PageFitConstants, y0: number, originPhase = 0): PlacedSystem[] {
+ *  section-header budget above each system (0 for most).
+ *
+ *  Without `dist` this is rule v1 — minimum clearance, slack left at the bottom
+ *  — which is what the FOLD must be judged on: pagination decides how many
+ *  systems a page holds, and only then does the page distribute what is left.
+ *  Feeding a distributed placement to `foldIndex` would be circular.
+ *
+ *  With `dist` it is rule v2 (Phase 4, 2026-09-03). The gaps that equalize are
+ *  the inter-system gaps AND the gap between the last system and the bottom of
+ *  the content column; their sum is fixed by the systems' own heights, so an
+ *  ordinary page simply shares it out. Three things shape the result:
+ *
+ *  • A gap wider than the level by its own clearance cannot be compressed, so
+ *    the level is the L solving `Σ max(gap_k, L) + L = C`, not `C / n`. One
+ *    sonata page (a header system whose `above` is 1.2 units, forcing an 8.8
+ *    unit gap) exercises this; with `C / n` it lands 5.2 unit gaps over a 1.7
+ *    unit footer gap.
+ *  • The level is capped at `maxGap`. This is the whole design: a page too
+ *    sparse to fill is left sparse rather than smeared across the paper.
+ *  • The page-header → first-system gap is NOT an ordinary participant. It
+ *    opens only when the systems have already taken all they may (the level hit
+ *    `maxGap`) and the bottom gap STILL exceeds `maxGap` — and never on page 1,
+ *    whose first system keeps its distance to the title block. */
+export function placeSystems(
+  items: Array<{ ext: SysExtents; reserve: number }>,
+  k: PageFitConstants,
+  y0: number,
+  originPhase = 0,
+  dist?: DistributeOpts | null,
+): PlacedSystem[] {
+  const natural = layoutSystems(items, k, y0, originPhase, null);
+  if (!dist || !natural.length) return natural;
+  const extras = distributionExtras(items, natural, k, dist);
+  return extras ? layoutSystems(items, k, y0, originPhase, extras) : natural;
+}
+
+/** Extra lead to insert above each system (index 0 = above the first system,
+ *  i.e. the top gap), or null when the page has nothing to distribute. */
+function distributionExtras(
+  items: Array<{ ext: SysExtents; reserve: number }>,
+  placed: PlacedSystem[],
+  k: PageFitConstants,
+  dist: DistributeOpts,
+): number[] | null {
+  const n = placed.length;
+  /* Unsnapped throughout: the level is geometry, and a snapped input would
+     make the whole page's distribution depend on one system's rounding. */
+  const compTop = (i: number): number => placed[i].rawTop - items[i].ext.above - items[i].reserve;
+  const gaps: number[] = [];
+  for (let i = 1; i < n; i++) gaps.push(compTop(i) - placed[i - 1].rawContentBottom);
+  const footGap = dist.contentBottom - placed[n - 1].rawContentBottom;
+  /* A full page (or one the fold is about to break) has nothing to give. */
+  if (!(footGap > 0)) return null;
+  const total = gaps.reduce((a, g) => a + g, 0) + footGap;
+  /* Bisect for the level: monotone in L, and `total` is its own upper bound. */
+  let lo = 0, hi = total;
+  for (let it = 0; it < 60; it++) {
+    const mid = (lo + hi) / 2;
+    const at = gaps.reduce((a, g) => a + Math.max(g, mid), 0) + mid;
+    if (at < total) lo = mid; else hi = mid;
+  }
+  const raw = (lo + hi) / 2;
+  /* DEAD END, measured 2026-09-04: quantizing the LEVEL to a whole device
+     pixel to stop sub-pixel extents noise propagating down the page made it
+     WORSE — the sonata's `delete-whole-line` went from 7 deviating (page,
+     system) pairs at most 20 units to 13 at most 40. Same mechanism as the
+     rule-v1 dead end below: the level sits near a rounding boundary, so 2
+     units of noise flips it a whole grid step, and that step is then
+     multiplied by every system beneath it. Rounding a noisy input amplifies
+     the noise near a boundary; it does not absorb it. Any future attempt at
+     the propagation has to make the inter-system ADVANCES whole pixels
+     (relative, the way `alignStaffRows` does within a system) rather than
+     round the shared quantity. */
+  const level = Math.min(raw, k.maxGap);
+  const extras = new Array<number>(n).fill(0);
+  let used = 0;
+  for (let i = 1; i < n; i++) {
+    const e = Math.max(0, level - gaps[i - 1]);
+    extras[i] = e;
+    used += e;
+  }
+  if (dist.allowTopGap && raw >= k.maxGap - 1e-6) {
+    const footAfter = footGap - used;
+    if (footAfter > k.maxGap) {
+      const topNatural = compTop(0) - dist.headBottom;
+      extras[0] = Math.max(0, Math.min(k.topMax - topNatural, footAfter - k.maxGap));
+    }
+  }
+  return extras;
+}
+
+/** One placement pass. `extras[i]` widens the lead above system `i`; null is
+ *  the minimum-clearance placement. */
+function layoutSystems(items: Array<{ ext: SysExtents; reserve: number }>, k: PageFitConstants, y0: number, originPhase: number, extras: number[] | null): PlacedSystem[] {
   const out: PlacedSystem[] = [];
   /* DEAD END, measured 2026-09-03: quantizing every term (lead, reserve, the
      above/below clearances and the accumulator) to the grid made exactness
@@ -227,7 +350,7 @@ export function placeSystems(items: Array<{ ext: SysExtents; reserve: number }>,
   let y = 0;   // running bottom clearance of what is above
   for (let i = 0; i < items.length; i++) {
     const { ext, reserve } = items[i];
-    const lead = i === 0 ? y0 : k.G;
+    const lead = (i === 0 ? y0 : k.G) + (extras ? extras[i] : 0);
     const rawTop = y + reserve + lead + Math.max(ext.above, k.F);
     /* Quantize the TRANSLATE, not the top: `alignStaffRows` put every staff on
        its crisp phase assuming the system moves by a whole number of device
@@ -255,10 +378,16 @@ export function placeSystems(items: Array<{ ext: SysExtents; reserve: number }>,
     out.push({
       top,
       ty,
+      rawTop,
+      rawContentBottom: rawTop + span + ext.below,
       bandTop: reserve > 0 ? contentTop - reserve : null,
       contentBottom: top + span + ext.below,
     });
-    y = top + span + Math.max(ext.below, k.F);
+    /* Accumulate on the UNSNAPPED position. Using `top` here fed each system's
+       ≤½-pixel rounding into the next system's premise, so the page drifted
+       cumulatively and sub-pixel noise in one system's extents split its
+       neighbours across pixel boundaries. */
+    y = rawTop + span + Math.max(ext.below, k.F);
   }
   return out;
 }

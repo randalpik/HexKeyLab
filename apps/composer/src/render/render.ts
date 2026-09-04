@@ -9,7 +9,7 @@ import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
 import { injectHejiGlyphs } from '@hkl/notation/heji-render.js';
 import { applyNotationTheme } from '@hkl/notation/verovio.js';
 import { CRISP_PRESETS, crispMarginTop, lineWidthOptions, pinExactScale, snapStaffLinesToGrid, snapBarlines, snapSystemRightEdge } from '@hkl/notation/render-presets.js';
-import { pageFitConstants, measureExtents, placeSystems, foldIndex, translateOf, ExtentsStore, SECTION_HEADER_RESERVE, SECTION_HEADER_BASELINE, type PlacedSystem, type SysExtents, type PageFitConstants, alignStaffRows } from './pagefit.js';
+import { pageFitConstants, measureExtents, placeSystems, foldIndex, translateOf, ExtentsStore, SECTION_HEADER_RESERVE, SECTION_HEADER_BASELINE, type PlacedSystem, type SysExtents, type PageFitConstants, type DistributeOpts, alignStaffRows } from './pagefit.js';
 import { ScrollSplicer, type SpliceCtx } from './splice.js';
 import {
   PageLineBreaks, partitionFromLayout, systemStartsFromPageSvg, injectPins,
@@ -44,6 +44,15 @@ interface PlacedPage {
   systems: Element[];
   placed: PlacedSystem[];
   paperBottom: number;
+}
+
+/** How a placement pass should treat the page's slack. Omitted (or
+ *  `distribute: false`) gives rule v1 — minimum clearance — which is what the
+ *  fold is judged on. `pageNo` is only consulted to keep page 1's first system
+ *  fixed relative to its title block. */
+interface PlaceOpts {
+  distribute?: boolean;
+  pageNo?: number;
 }
 
 /* Verovio draws volta (1st/2nd ending) numbers in a large, heavy default.
@@ -475,21 +484,43 @@ class Renderer {
    *  default. Read on the page-margin group that holds the systems (a live
    *  page's, or a reference host's). */
   private firstContentTop(margin: Element | null, k: ReturnType<typeof pageFitConstants>): number {
+    const hb = this.headBottomOf(margin);
+    return hb === null ? k.C0 : hb + k.headerGap;
+  }
+
+  /** Ink bottom of the page's header element, or null when it has none. Rule
+   *  v2 measures the top gap from here, so it is read once and shared with
+   *  `firstContentTop` rather than derived twice. */
+  private headBottomOf(margin: Element | null): number | null {
     const hd = margin?.querySelector(':scope > g.pgHead') as SVGGraphicsElement | null;
-    if (!hd) return k.C0;
+    if (!hd) return null;
     try {
       const bb = hd.getBBox();
-      if (!(bb.height > 0)) return k.C0;
-      return bb.y + bb.height + translateOf(hd).ty + k.headerGap;
-    } catch { return k.C0; }
+      if (!(bb.height > 0)) return null;
+      return bb.y + bb.height + translateOf(hd).ty;
+    } catch { return null; }
+  }
+
+  /** Bottom of the content column (the bottom-margin line) in the page-margin
+   *  frame — what rule v2 fills to, and what the fold is judged against. The
+   *  PAPER edge is one bottom margin further down; using it as the fold limit
+   *  let a repaired page hold a system a fresh castoff would not (measured:
+   *  sonata pages 6, 17 and 19), so both now stop at the column. */
+  private contentBottomOf(margin: Element | null): number | null {
+    const frame = margin?.closest('svg') ?? null;
+    if (!margin || !frame) return null;
+    const vb = (frame.getAttribute('viewBox') ?? '').trim().split(/[\s,]+/).map(Number);
+    if (vb.length !== 4 || !isFinite(vb[3])) return null;
+    return vb[3] - translateOf(margin).ty - 10 * PAGE_GEOM.pageMarginBottom * this.pageScale;
   }
 
   /** Measure the given laid-out systems and place them by Composer's rule,
    *  writing nothing. Null when a system has no readable extents. */
-  private measureAndPlace(systems: Element[]): { placed: PlacedSystem[]; exts: SysExtents[] } | null {
+  private measureAndPlace(systems: Element[], opts?: PlaceOpts): { placed: PlacedSystem[]; exts: SysExtents[] } | null {
     const headers = this.headerMeasureIds();
     const k = pageFitConstants(CRISP_PRESETS[this.zoom].unit, CRISP_PRESETS[this.zoom].scale, CRISP_PRESETS[this.zoom].evenWidth);
     const y0 = this.firstContentTop(systems[0]?.parentElement ?? null, k);
+    const headBottom = this.headBottomOf(systems[0]?.parentElement ?? null);
     const items: Array<{ ext: SysExtents; reserve: number }> = [];
     for (const sys of systems) {
       const ext = measureExtents(sys as SVGGraphicsElement);
@@ -499,18 +530,25 @@ class Renderer {
       items.push({ ext, reserve });
     }
     const margin = systems[0]?.parentElement ?? null;
-    return { placed: placeSystems(items, k, y0, this.marginPhase(margin)), exts: items.map((i) => i.ext) };
+    let dist: DistributeOpts | null = null;
+    if (opts?.distribute) {
+      const contentBottom = this.contentBottomOf(margin);
+      if (contentBottom !== null) {
+        dist = { contentBottom, headBottom: headBottom ?? 0, allowTopGap: opts.pageNo !== 1 };
+      }
+    }
+    return { placed: placeSystems(items, k, y0, this.marginPhase(margin), dist), exts: items.map((i) => i.ext) };
   }
 
   /** Read-only placement of the given systems (the reference gate's
    *  expectation, the fold's prediction). */
-  placeFor(systems: Element[]): PlacedSystem[] | null {
-    return this.measureAndPlace(systems)?.placed ?? null;
+  placeFor(systems: Element[], opts?: PlaceOpts): PlacedSystem[] | null {
+    return this.measureAndPlace(systems, opts)?.placed ?? null;
   }
 
   /** Systems of a page in DOM order, with the paper bottom in the page-margin
    *  frame (the box's height minus the margin group's offset). */
-  private pageSystems(pageEl: HTMLElement): { svg: SVGSVGElement; margin: Element; systems: Element[]; paperBottom: number } | null {
+  private pageSystems(pageEl: HTMLElement): { svg: SVGSVGElement; margin: Element; systems: Element[]; paperBottom: number; contentBottom: number | null } | null {
     const svg = pageEl.querySelector('svg');
     const margin = svg?.querySelector(':scope > g.page-margin') ?? svg?.querySelector('g.page-margin') ?? null;
     if (!svg || !margin) return null;
@@ -520,7 +558,7 @@ class Renderer {
     const frame = margin.closest('svg') ?? svg;
     const vb = (frame.getAttribute('viewBox') ?? '').trim().split(/[\s,]+/).map(Number);
     const boxH = vb.length === 4 && isFinite(vb[3]) ? vb[3] : 0;
-    return { svg, margin, systems, paperBottom: boxH - translateOf(margin).ty };
+    return { svg, margin, systems, paperBottom: boxH - translateOf(margin).ty, contentBottom: this.contentBottomOf(margin) };
   }
 
   /** The vertical placement pass: Composer OWNS height. Every system on the
@@ -541,9 +579,9 @@ class Renderer {
        its crisp device phase FIRST, so `measureExtents` reads geometry nothing
        will move again. Doing this after placement — which is what the separate
        `snapStaffLinesToGrid` pass did — invalidated the very extents placement
-       had consumed. See docs/composer-vertical-ownership-plan.md §3.5. */
+       had consumed. See docs/composer-page-splice-design.md ("Ownership extends to the staff") and lessons.md. */
     this.alignPageStaves(ps.margin, ps.systems);
-    const mp = this.measureAndPlace(ps.systems);
+    const mp = this.measureAndPlace(ps.systems, { distribute: true, pageNo: Number(pageEl.dataset.page) });
     if (!mp) {
       console.warn('[page-fit] page ' + pageEl.dataset.page + ': a system has no readable extents — not placed');
       return null;
@@ -1732,7 +1770,7 @@ class Renderer {
       postProcess: (el: HTMLElement, scope?: Element[]) => this.postProcessRendered(el, scope),
       decorateHost: (el: HTMLElement) => styleVoltaNumbers(el),
       placePage: (el: HTMLElement) => this.placePage(el),
-      placeFor: (systems: Element[]) => this.placeFor(systems),
+      placeFor: (systems: Element[], opts?: PlaceOpts) => this.placeFor(systems, opts),
       alignStaves: (host: HTMLElement, originPhase?: number) => this.alignStavesIn(host, originPhase),
       originPhaseOf: (pageEl: HTMLElement) => this.originPhaseOf(pageEl),
       ensurePageMounted: (p: number) => this.mountPageIfCheap(p),
@@ -1851,13 +1889,22 @@ class Renderer {
        writing (the snap has run; a write would undo its staff shifts). The
        limit is the PAPER, as before: 2 device px of tolerance for hanging
        content that legitimately reaches into the bottom margin. */
+    /* Rule v1 (no `distribute`): the fold decides how many systems the page
+       holds, and only then does the page share out what is left. */
     const placed = this.placeFor(ps.systems);
     if (!placed) return null;
     const tol = 2 * 1000 / this.currentScale();
-    const firstPast = foldIndex(placed, ps.paperBottom, tol);
+    const firstPast = foldIndex(placed, ps.contentBottom ?? ps.paperBottom, tol);
     if (indexCheckEnabled()) {
-      /* Test mode: the prediction must agree with the laid-out DOM. */
-      const bottom = ps.svg.getBoundingClientRect().bottom + 2;
+      /* Test mode: the prediction must agree with the laid-out DOM — measured
+         against the same limit the prediction uses, the CONTENT COLUMN. Using
+         the SVG box (the paper, one bottom margin lower) made the two disagree
+         by exactly that margin the moment the fold moved to the column. */
+      const ctm = (ps.margin as SVGGraphicsElement).getScreenCTM?.();
+      const limit = ctm && ps.contentBottom !== null
+        ? ctm.f + ps.contentBottom * ctm.d
+        : ps.svg.getBoundingClientRect().bottom;
+      const bottom = limit + 2;
       let measured = -1;
       for (let i = 0; i < ps.systems.length; i++) {
         if (ps.systems[i].getBoundingClientRect().bottom > bottom) { measured = i; break; }
@@ -2022,6 +2069,16 @@ class Renderer {
            redraws there at mount. With its lines' extents known the cascade
            continues by arithmetic; otherwise it parks here, as before Phase 2. */
         this.lazyMoveOut(div, block);
+        /* RE-PLACE the page we just shrank. Under rule v1 this was provably
+           unnecessary — placement was top-down and local, so removing the tail
+           could not move the systems above it. Rule v2 solves one level over
+           ALL of a page's gaps, so losing a system changes that level and every
+           remaining system moves, each by a cumulative amount. This was the one
+           path that mutated a mounted page's system set without re-placing it
+           (the splice, the transplant, the last-page spill and the mount all
+           already do), and the reference gate caught it as a per-system
+           cascade of downward shifts on the spilling page. */
+        this.placePage(div);
         st.stalePages.add(p);
         st.stalePages.add(p + 1);
         touch(div);
@@ -2188,7 +2245,7 @@ class Renderer {
    *  when every line fits, null when any line's extents are unknown. */
   private predictFoldFromStore(lineIds: string[], headers: Set<string>, k: PageFitConstants): number | null {
     if (!lineIds.length) return -1;
-    const paper = this.paperBottom();
+    const paper = this.columnBottom();
     if (paper === null) return null;
     const items: Array<{ ext: SysExtents; reserve: number }> = [];
     for (const id of lineIds) {
@@ -2221,10 +2278,10 @@ class Renderer {
 
   /** Paper bottom in the page-margin frame, from any mounted page (every page
    *  shares one box). */
-  private paperBottom(): number | null {
+  private columnBottom(): number | null {
     for (const div of this.mountedPageDivs()) {
       const ps = this.pageSystems(div);
-      if (ps) return ps.paperBottom;
+      if (ps && ps.contentBottom !== null) return ps.contentBottom;
     }
     return null;
   }

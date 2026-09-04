@@ -3126,3 +3126,131 @@ Two false trails on the way, both plausible and both wrong: a stale mounted page
 page), and a page borrowing another page's header (197 also being page 5's value
 is coincidence). The decisive experiment was the cheap one nobody had run:
 render the same page twice and compare.
+
+## Record the PROCESS corrections, not just the technical findings (2026-09-03)
+
+One session produced sixteen lessons entries — every one about the code
+(placement, tolerances, Verovio determinism) — and not a single line about how
+Max had asked me to work, despite five separate corrections on exactly that:
+show a diff HEATMAP rather than side-by-sides, surface the image before the
+numbers, diff self-consistency rather than baseline-vs-output, stop cropping and
+shifting, stop narrating instead of showing. Worse, the existing memory on that
+topic still told a future session to "open BOTH files" — the superseded form —
+so the next agent would confidently repeat the thing I had just been corrected
+for three times. A different agent on another thread noticed the gap before I
+did.
+
+The asymmetry has a cause worth naming: a technical finding feels like a
+discovery and gets written up, while a process correction feels like being told
+off and gets *obeyed* instead of recorded. Obedience lasts one session; the
+record is what survives it. CLAUDE.md already routes this class to memory as
+`feedback` — the rule was there, the discipline was not.
+
+Rule: when a correction arrives about HOW to work — what to surface, in what
+form, in what order — write it down in the same turn, and check whether an
+existing memory now contradicts it. A convention repeated twice in one session
+is a convention that was never recorded.
+
+## Rule v2 made placement non-local within a page (2026-09-04)
+
+Vertical distribution changed the SHAPE of the placement dependency, not just
+its arithmetic, and that is the part that bit. Under rule v1 a system's top was
+a running sum down the page: it depended only on the systems ABOVE it. So a
+code path could add, remove or resize a system near the bottom of a page and
+the systems above it were still correct without re-placing anything. Under rule
+v2 the page solves one water level over all of its gaps, so every system's
+position depends on EVERY system on the page — including the ones below it.
+
+Four paths change a mounted page's system set. Three re-placed the page already
+(the splice's "place every touched page", the cascade's transplant, the
+last-page spill). The fourth, `lazyMoveOut` — the arithmetic step that empties
+a block off a mounted page when the receiving page is a placeholder — did not,
+because under v1 it provably did not need to. It became a page-wide defect the
+moment the level existed: the reference gate reported the spilling page's
+systems each shifted down by a bit more than the one above it, which is what a
+disagreeing LEVEL looks like (a per-gap constant), as distinct from a page
+shifted by a constant (a frame error) or one system out of place (an extents
+error). Reading that staircase off the heatmap is what identified it.
+
+Rule: when a placement rule stops being a running sum — when any per-page
+quantity is solved over the whole page — re-audit every mutation path, not just
+the arithmetic. "This path didn't need to re-place" is a claim about the OLD
+rule's locality and it expires with it.
+
+Corollary, learned the expensive way in the same session: that one missing
+re-placement also produced a symptom nowhere near itself. Eight unrelated
+glyph-level visual fixtures started failing with a pure 8-pixel HORIZONTAL
+translation (zero residual after the shift, both 8-pixel bands free of ink),
+which is impossible for a vertical change to cause directly. It was the
+mis-placed page changing the content bounding box that `visualCheck` derives
+its capture clip from, in a later fixture, in the full tier only. Two symptoms,
+one cause. Before theorising about the harness, check whether a known defect
+upstream explains the framing — and note that the fixtures passed in `scenario`
+and `visual` tiers and failed only in `full`, which was the tell that state was
+carrying rather than rendering changing.
+
+The framing record now names its own inputs: `visualMeta` carries `clip`,
+`vpW`/`vpH` and `leftEl` (the element that sets the content box's left edge),
+because a content-derived clip that moves is indistinguishable from a rendering
+bug without them.
+
+## Snapping is an output transform, never an input (2026-09-04)
+
+The accepted one-device-pixel residual in placement is nondeterministic
+sub-pixel geometry (Verovio places content ~2 units differently between a
+windowed render and a full one) snapped ONCE to the crisp grid. That is fine as
+long as the snap is the last thing that happens. It was not: `layoutSystems`
+accumulated the next system's position from the previous system's SNAPPED top
+(`y = top + …`), and `distributionExtras` solved the page's water level from
+snapped tops and content bottoms. A system's ≤½-pixel rounding was therefore
+the next system's premise, and the level — shared by every system on the page —
+was a function of one system's rounding. Two units of noise in one `above`
+became a 20-unit (2-pixel) displacement of two systems on sonata page 18, and
+a staircase of per-system shifts the reference gate could see.
+
+Two attempts to fix it by rounding BETTER both failed, and both were the same
+mistake: quantizing `above` (Phase 3.5, measured 280 exact → 212) and
+quantizing the level (this session: 7 deviating pairs at most 20 units → 13 at
+most 40). Rounding a noisy input near a boundary amplifies it. The defect was
+never the rounding; it was that a rounded value was an INPUT at all. Max's
+statement of the rule: *"A snapped position should NEVER inform other
+positions. Snapping should be done at the very end of the positioning, and
+ONLY be used in the last phase of visual output, NEVER as a cascade input."*
+
+The fix is one line of intent: accumulate on `rawTop`, solve the level on
+unsnapped geometry, emit the snapped `ty` and nothing else. Measured: battery
+deviations 7 → 4 and max 20 → 10 (every survivor a single system at the
+accepted residual), the gated sweep 4/25 → 0/25 and then 0/115 on the first
+fully reference-checked pass.
+
+Phase 3.5 had already found and fixed exactly this shape one level down —
+`alignStaffRows` makes staff-row corrections RELATIVE so a render's arbitrary
+origin cannot leak into `above` — and the same mistake was sitting one level up
+in the system accumulator. When a rounding step exists anywhere in a pipeline,
+audit every consumer of its output: if anything downstream computes a position
+from it, the pipeline is rounding twice.
+
+Related, from the same session: three sonata probes had each reconstructed the
+gate's reference preparation by hand and each had drifted from it (undistributed
+placement; no `alignStavesIn`; no `decorateHost`). Every drift reported rule v2
+as a product defect. A probe that re-implements a gate step will diverge from it
+eventually; prefer calling the gate's own helper.
+
+## Two harness traps from the same afternoon (2026-09-04)
+
+**`TMPDIR` breaks the test runner's Chromium.** Both `run.mjs` and the phasec
+runner launch headless Chromium with `--user-data-dir` under `os.tmpdir()`;
+Chromium ALSO honours `TMPDIR` for its own sockets, and with it pointed at the
+session scratchpad the debug endpoint never comes up. The runner reports exit 2
+for every fixture — an infra failure that reads exactly like "the fixture did
+not run", and cost two rounds of looking for orphaned browsers and stale ports.
+Confirmed by running the fixed source with and without the override. Do not set
+`TMPDIR` for these; their defaults are already under /tmp.
+
+**`run-unfixed.sh` proves less than it says when a fix rides a same-tree
+feature.** It stashes all of `apps/composer/src`, so "unfixed" means HEAD. The
+`lazyMoveOut` re-place is only wrong under rule v2; on HEAD (rule v1) skipping
+it is correct, so its fixture passes on the "unfixed" build legitimately, while
+`pagePlacementOwned`'s snap-as-output assertion fails there as it should. Prove
+such a fixture by reverting the single line on the current tree and running the
+scenario — which is what was done.

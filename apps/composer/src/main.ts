@@ -686,7 +686,22 @@ const PAGE_INNER_H = 27940 - 2 * 1400; /* 25140 — usable height inside page-ma
 const COMPOSER_FONT_SIZE = 324;
 const COMPOSER_SYSTEM_GAP = 120;        /* baseline-to-system-top */
 const COMPOSER_FALLBACK_Y = 900;        /* when no system has rendered yet */
-const FOOTER_Y = PAGE_INNER_H - 200;    /* hug page bottom */
+/* The running footer lives in the BOTTOM MARGIN, not in the content column
+ * (2026-09-03). It used to sit at PAGE_INNER_H − 200 — inside the column, with
+ * the whole 1400-unit bottom margin empty below it — which took 10 units off
+ * every page's reach and made the music collide with it (sonata pages 21 and
+ * 23). Putting it in the margin means the column bottom is the column bottom:
+ * adding or removing a footer cannot change pagination, and rule v2 fills to
+ * the margin line.
+ *
+ * How far down is a PRINTABILITY question, and the margin is tight: it is
+ * 14 mm (0.551 in) tall and the footer's ink is 3.6 mm, so a footer wholly
+ * below the column can never sit more than 0.41 in from the paper edge. This
+ * value puts the ink 0.8 mm below the column and 9.6 mm (0.378 in) above the
+ * edge — clear of the ~0.25 in a printer cannot reach, and as high as the
+ * column allows. Reaching 0.5 in would need a deeper page margin, which
+ * shrinks the content column and repaginates the document. */
+const FOOTER_Y = PAGE_INNER_H + 370;
 const HKL_SVG_NS = 'http://www.w3.org/2000/svg';
 
 function injectHeaderFooter(scoreEl: HTMLElement, composer: string, footer: string): void {
@@ -696,7 +711,14 @@ function injectHeaderFooter(scoreEl: HTMLElement, composer: string, footer: stri
      either way (scroll view never calls this). */
   const margins = scoreEl.querySelectorAll('svg.definition-scale > g.page-margin');
   for (const pageMargin of Array.from(margins)) {
-    if (composer) {
+    /* The credit is a PAGE 1 component (backlog: "Subtitle should only show on
+       the first page"). It was drawn on every page, anchored to that page's
+       first system — which also made it the one thing on a page that rule v2's
+       top gap would have had to carry. A page with no `.score-page` ancestor
+       (an offscreen host) is treated as page 1, matching the derive. */
+    const ownerPage = pageMargin.closest('.score-page') as HTMLElement | null;
+    const pageNo = ownerPage ? Number(ownerPage.dataset.page) : 1;
+    if (composer && pageNo === 1) {
       let existing = pageMargin.querySelector(':scope > text.hkl-injected-composer');
       if (existing) existing.parentNode?.removeChild(existing);
       /* Place the composer baseline `COMPOSER_SYSTEM_GAP` above the first

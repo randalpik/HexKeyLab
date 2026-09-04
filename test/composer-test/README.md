@@ -17,17 +17,23 @@ npm run test:composer:fast  # fast tier (~8 s; inner loop)
 Or call the runner directly:
 
 ```bash
-node tools/composer-test/run.mjs fast
-node tools/composer-test/run.mjs full
-node tools/composer-test/run.mjs scenario <name>   # single fixture, debug
-node tools/composer-test/run.mjs full --keep-open   # leave browser open at end
-node tools/composer-test/run.mjs full --update-baselines  # accept new visuals
+node test/composer-test/run.mjs fast
+node test/composer-test/run.mjs full
+node test/composer-test/run.mjs scenario <name>   # single fixture, debug
+node test/composer-test/run.mjs full --keep-open   # leave browser open at end
+node test/composer-test/run.mjs full --update-baselines  # accept new visuals
 ```
 
 Output:
 - Per-fixture pass/fail with failure details
-- `tools/composer-test/out/summary.json` (machine-readable)
-- `tools/composer-test/out/<name>.png` (screenshot on visual failure)
+- `test/composer-test/out/summary.json` (machine-readable; `visualMeta` per
+  fixture records the capture FRAMING — `clip`, `vpW`/`vpH`, `leftEl`, the
+  element that set the content box's left edge — so a framing shift is
+  distinguishable from a rendering change)
+- `test/composer-test/out/<name>.png` (screenshot on visual failure)
+- on a non-visual failure: `<name>-live.png` + `<name>-reengrave.png` in
+  `$HKL_FAIL_SHOTS` (spliced page vs full re-engrave, same capture path)
+- heatmaps and failure shots never go in `out/` — it is tracked in git
 
 Exit code: 0 if all pass, 1 if any fail, 2 on infra failure.
 
@@ -57,6 +63,27 @@ by feature) keeps coverage wide and redundancy low.
   regenerated on every load by `normalizePlaceholders`).
 - **VISUAL** — pixel-level comparison against a baseline PNG. On first
   run or with `--update-baselines`, seeds the baseline.
+
+  **Reviewing a visual failure: produce a HEATMAP, never a side-by-side.**
+  Standing direction from Max (2026-09-03): opening `baselines/<n>.png` and
+  `out/<n>.png` as two images makes him diff by eye. Generate a per-pixel
+  difference map instead — max channel delta, amplified ~6x over a dimmed copy
+  of one side, labelled with `diff / >32 / max` — and open THAT first, before
+  quoting any pixel counts. Do not crop or vertically align to make a point.
+
+  Two traps, both hit for real:
+  - **Diff the right pair.** Baseline-vs-output only answers "did the rendering
+    change", which is necessarily non-zero after an intended change. The
+    *defect* question is self-consistency — a spliced page against a full
+    re-engrave of the same document, same container, same scroll, same capture
+    path. Say which pair a heatmap shows.
+  - **Verify the framing.** State the page number, scroll position and system
+    count the capture actually contains. A capture at `scrollTop = 0` shows
+    page 1 no matter which page you meant, and a capture taken after a sweep's
+    snapshot-restore shows the restored document, not the state under test.
+
+  Never re-seed to make a red gate green: establish the cause first, then
+  `--update-baselines` is the safety valve for a change whose reason is known.
 - **INPUT** — real keystroke sequence (via CDP `Input.dispatchKeyEvent`)
   produces the same model state as the equivalent direct API call.
 - **CONSOLE** — Verovio emits no error-level messages during the run.
@@ -65,7 +92,7 @@ by feature) keeps coverage wide and redundancy low.
 ## Architecture
 
 ```
-tools/composer-test/
+test/composer-test/
   run.mjs                — entry point, parses argv, orchestrates
   fixtures.mjs           — every fixture + fixture-specific assertions
   baselines/             — VISUAL reference PNGs
@@ -111,8 +138,11 @@ tools/composer-test/
    margins included (later pages of a multi-page doc must be mounted in
    the setup). The capture resizes the viewport to rasterize the whole
    card, waits for geometry to be stable across consecutive frames, and
-   records meta (card dims, zoom, pageScale, scroll) into summary.json —
-   check the meta before debugging a framing diff from pixels. Scenario
+   records meta (card dims, zoom, pageScale, scroll, and since 2026-09-04
+   the clip rect, the override viewport and the element that set the content
+   box's left edge) into summary.json — check the meta before debugging a
+   framing diff from pixels: a pure translation with no ink in the gained
+   band is the clip moving, not the renderer. Scenario
    runs also perform the visual check, so one fixture can be verified or
    re-seeded (`--update-baselines`) in ~1 s without a full run.
 
@@ -190,10 +220,17 @@ test/composer-test/run-unfixed.sh pageSystemSpliceRelocatedClef rangeSerializeLe
 Expect a ✗ per fixture with the failure the fix addresses. Nothing else may use
 the dev server while it runs (the stash reloads every served page).
 
+Two traps (2026-09-04): never override `TMPDIR` when invoking `run.mjs` or
+`run-unfixed.sh` — Chromium's debug endpoint never comes up under a deep
+`TMPDIR` and every fixture reports exit 2, an infra failure that looks like a
+result. And `run-unfixed.sh` stashes ALL of `apps/composer/src`, so "unfixed"
+means HEAD: a fixture pinning a fix that is only wrong on top of a same-tree
+feature passes there legitimately; prove it by reverting the single line.
+
 ## Debugging a failing scenario
 
 ```bash
-node tools/composer-test/run.mjs scenario <name> --keep-open
+node test/composer-test/run.mjs scenario <name> --keep-open
 ```
 
 This leaves Chromium running so you can attach DevTools. The page handle
@@ -209,38 +246,11 @@ This leaves Chromium running so you can attach DevTools. The page handle
 - `window.__waitForScrollSettle(maxMs)` — async wait for `behavior:'smooth'`
   scrolling to stabilize.
 
-For visual diffs: open `out/<name>.png` (current) and
-`baselines/<name>.png` (expected) side-by-side. If the diff is
-intentional, re-run with `--update-baselines` to accept.
-
-## Self-tests
-
-When changing the suite itself, verify with these deliberate regressions:
-
-- **CURSOR**: Revert `cc2f76b` past-end-conditional and re-run — should
-  fail `pastEndConditional_fullLast`.
-- **ROUNDTRIP**: Break `setAttributeNS` for `xml:id` — should surface
-  Verovio "Unable to match @tie" console errors.
-- **INPUT**: Change a keybinding in `input.ts` — should fail
-  `kbd_durationDigits` or `kbd_ctrlNavBarJump`.
-- **TIE**: Restore the asymmetric `data-tie-partner` setting in
-  `insertWithSplit` — should fail `m1TieDeleteMiddleFromSplit` or
-  surface a Verovio "Expected @tie median or terminal" warning.
-- **VISUAL**: Rename a baseline PNG — diff is written to `out/`.
-
-## Debugging a failing scenario
-
-```bash
-node tools/composer-test/run.mjs scenario <name> --keep-open
-```
-
-This leaves Chromium running at `http://localhost:<random>` so you can
-attach DevTools. The page handle `window.__hkl_composer` is exposed
-along with `window.__test.*`, `window.__cursorTrace`, `window.__bridgeMock`.
-
-For visual diffs: open `out/<name>.png` (current) and
-`baselines/<name>.png` (expected) side-by-side. If the diff is
-intentional, re-run with `--update-baselines`.
+For visual diffs: make a HEATMAP, never a side-by-side —
+`python3 test/composer-test/heatmap.py baselines/<name>.png out/<name>.png
+/tmp/<name>.png --label "baseline vs output — <name>"` — and say which pair it
+is (see "Reviewing a visual failure" above). If the change is intentional and
+its reason is known, re-run with `--update-baselines` to accept.
 
 ## Self-tests
 
@@ -252,6 +262,9 @@ When changing the suite itself, verify with these deliberate regressions:
   Verovio "Unable to match @tie" console errors.
 - **INPUT**: Change a keybinding in `input.ts` — should fail
   `kbd_durationDigits` or `kbd_ctrlNavBarJump`.
+- **TIE**: Restore the asymmetric `data-tie-partner` setting in
+  `insertWithSplit` — should fail `m1TieDeleteMiddleFromSplit` or
+  surface a Verovio "Expected @tie median or terminal" warning.
 - **VISUAL**: Rename a baseline PNG — diff is written to `out/`.
 
 ## Known gaps (TODOs)

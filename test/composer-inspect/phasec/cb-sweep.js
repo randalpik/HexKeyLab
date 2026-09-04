@@ -38,6 +38,12 @@ const waitFor = async (fn, ms = 60000, step = 50) => {
 };
 const badgeHidden = () => { const b = document.getElementById('renderBusy'); return !b || b.hidden; };
 const warns = []; const ow = console.warn; console.warn = (...a) => { warns.push(a.join(' ').slice(0, 160)); ow(...a); };
+/* `--arg check=1` turns the reference GATE on for the sweep. Without it the
+   sweep verifies coverage and viewport stability but never compares a spliced
+   page against a full re-engrave — 115 positions going unchecked, which is a
+   coverage gap that hid behind "errs: 0" (2026-09-04). With it, every render
+   is gated and a divergence lands in `errs` as a render error. */
+if (String(window.__probeArg || '').includes('check=1')) globalThis.__HKL_INDEX_CHECK = true;
 const errs = []; const oe = console.error; console.error = (...a) => { errs.push(a.join(' ').slice(0, 160)); oe(...a); };
 
 const args = {};
@@ -47,9 +53,13 @@ for (const kv of String(window.__probeArg ?? '').split(',')) {
 }
 const STRIDE = Math.max(1, Number(args.stride ?? 1));
 const LIMIT = Number(args.limit ?? 0) || Infinity;
+/* `from=` + `limit=` chunk a run under the runner's 300 s eval cap — the same
+   convention cb-courtesystub.js uses. Needed for `check=1`, where the
+   reference gate makes a full 115-position pass far too slow for one eval. */
+const FROM = Math.max(1, Number(args.from ?? 1));
 const UNDO = args.undo !== '0';
 
-const out = { warns, errs, stride: STRIDE, undo: UNDO, rows: [] };
+const out = { warns, errs, stride: STRIDE, from: FROM, undo: UNDO, rows: [] };
 out.adopted = await waitFor(() => pb['startIds'] !== null, 120000, 200);
 if (!out.adopted) { console.warn = ow; console.error = oe; return out; }
 await waitFor(badgeHidden, 60000, 40);
@@ -118,7 +128,7 @@ out.lines = nLines;
 out.pages = pageCount();
 
 let measured = 0;
-for (let li = 1; li < nLines && measured < LIMIT; li += STRIDE) {
+for (let li = FROM; li < nLines && measured < LIMIT; li += STRIDE) {
   const sids = startIds();
   if (li >= sids.length) break;
   const pageStarts = pageStartLineIdxs();
@@ -206,7 +216,10 @@ for (let li = 1; li < nLines && measured < LIMIT; li += STRIDE) {
   const snap = UNDO ? model.snapshotState() : null;
   const t0 = performance.now();
   const edited = model.deleteAtCursor();
-  reRender();
+  /* Under `check=1` the reference gate THROWS on a divergence. Catch it per
+     position and keep going: a survey that stops at the first failure reports
+     one page and hides the distribution (2026-09-04). */
+  try { reRender(); } catch (e) { row.gate = String(e && e.message || e).slice(0, 300); }
   await waitFor(badgeHidden, 60000, 30);
   row.wallMs = Math.round(performance.now() - t0);
   /* "Returned truthy" is not proof an edit landed — that exact hole let two
@@ -259,7 +272,7 @@ for (let li = 1; li < nLines && measured < LIMIT; li += STRIDE) {
 
   if (snap && row.editOk) {
     model.restoreSnapshot(snap);
-    reRender();
+    try { reRender(); } catch (e) { row.gateRestore = String(e && e.message || e).slice(0, 200); }
     await waitFor(badgeHidden, 60000, 30);
   }
   out.rows.push(row);

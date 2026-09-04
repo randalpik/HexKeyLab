@@ -108,7 +108,7 @@ export interface PageSpliceCtx {
   /** Where the placement rule would put these systems (staff tops in the
    *  page-margin frame), measured on the given laid-out elements, writing
    *  nothing — the reference gate's expectation. Null when unreadable. */
-  placeFor: (systems: Element[]) => Array<{ top: number }> | null;
+  placeFor: (systems: Element[], opts?: { distribute?: boolean; pageNo?: number }) => Array<{ top: number }> | null;
   /** Renderer.alignStavesIn — phase-align the staff rows of a rendered host
    *  exactly as a live page's are, so the reference gate compares like with
    *  like. Without it `placeFor(reference)` reads UNALIGNED extents while the
@@ -1049,8 +1049,11 @@ export class PageSystemSplicer {
            — placed by the same rule over its own extents. Header bands are part
            of the rule on both sides, so header pages are verified like any
            other with nothing to subtract and nothing exempt. */
-        const expect = ctx.placeFor(refSys);
-        const self = ctx.placeFor(liveSys);
+        /* DISTRIBUTED on both sides (Phase 4): a live page has had rule v2
+           applied, so a reference placed by v1 alone would differ by the whole
+           distribution on every page with slack. */
+        const expect = ctx.placeFor(refSys, { distribute: true, pageNo: pno });
+        const self = ctx.placeFor(liveSys, { distribute: true, pageNo: pno });
         if (!expect || !self) throw new Error(`[page-splice] page ${pno}: placement unreadable`);
         for (let i = 0; i < refSys.length; i++) {
           const rp = systemProfile(refSys[i]);
@@ -1113,7 +1116,7 @@ export class PageSystemSplicer {
                so a divergence says whether the content or the frame moved. */
             const re = measureExtents(refSys[i]), le = measureExtents(liveSys[i]);
             const fmt = (e: SysExtents | null): string => e ? `above ${e.above.toFixed(0)} below ${e.below.toFixed(0)} span ${(e.staffBot - e.staffTop).toFixed(0)}` : 'unreadable';
-            throw new Error(`[page-splice] page ${pno} system ${i}: staff top diverged from the placement of the reference (${expect[i].top.toFixed(1)} expected, live ${lp.staffTop.toFixed(1)}; ref ${fmt(re)}; live ${fmt(le)}; first tops ref ${expect[0].top.toFixed(1)} live ${self[0].top.toFixed(1)})`);
+            throw new Error(`[page-splice] page ${pno} system ${i}: staff top diverged from the placement of the reference (${expect[i].top.toFixed(1)} expected, live ${lp.staffTop.toFixed(1)}; ref ${fmt(re)}; live ${fmt(le)}; first tops ref ${expect[0].top.toFixed(1)} live ${self[0].top.toFixed(1)}; n=${refSys.length}; ALL ref ${refSys.map((x, q) => `${q}:${fmt(measureExtents(x))}@${expect[q].top.toFixed(0)}`).join(' | ')}; ALL live ${liveSys.map((x, q) => `${q}:${fmt(measureExtents(x))}@${self[q].top.toFixed(0)}`).join(' | ')})`);
           }
           if (Math.abs(self[i].top - lp.staffTop) > TOL) {
             throw new Error(`[page-splice] page ${pno} system ${i}: live page is not placed by its own rule (${self[i].top.toFixed(1)} vs ${lp.staffTop.toFixed(1)})`);

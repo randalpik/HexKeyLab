@@ -9042,7 +9042,30 @@ export const FIXTURE_ASSERTIONS = {
            to slide the music over the title. */
         const shrunk = step([mk('b', 4)], 'shrink');
         if (!shrunk.ok) return shrunk;
-        if (!(shrunk.g.sysTop < grown.g.sysTop - 1)) return { ok: false, detail: 'header system did not move back up on shrink' };
+        /* Under rule v2 (Phase 4) a shrink does NOT necessarily pull the header
+           system back up: the slack it frees is distributed across the page's
+           gaps instead of collapsing them, and the partition legitimately stays
+           put. Verified by hand against a full re-engrave (2026-09-03: spliced
+           and derived both put the header system at page 2 system 0, same
+           pixel) — but NOT asserted by forcing a re-render here, which mutates
+           render state and pollutes later fixtures (lessons.md); HKL_INDEX_CHECK
+           already compares every rendered page against a fresh engrave.
+           What is asserted instead: the page is still self-consistent with the
+           rule that placed it, and the system never drifts DOWNWARD on a
+           shrink. */
+        if (shrunk.g.sysTop > grown.g.sysTop + 1) return { ok: false, detail: 'header system moved DOWN on shrink: ' + grown.g.sysTop.toFixed(1) + ' -> ' + shrunk.g.sysTop.toFixed(1) };
+        const tyOf = (el) => { const c = el.transform && el.transform.baseVal.consolidate(); return c ? c.matrix.f : 0; };
+        const staffTopU = (sys) => { const st = sys.querySelector('g.measure > g.staff'); if (!st) return null; const ys = [...st.children].filter((n) => n.localName === 'path').map((n) => n.getBBox().y); if (!ys.length) return null; ys.sort((a, b) => a - b); return ys[0] + tyOf(st) + tyOf(sys); };
+        const hs3 = headerSys().sys;
+        const pgEl3 = hs3.closest('.score-page');
+        const onPage3 = [...hs3.parentElement.querySelectorAll(':scope > g.system')];
+        const exp3 = H.renderer.placeFor(onPage3, { distribute: true, pageNo: Number(pgEl3.dataset.page) });
+        if (!exp3 || exp3.length !== onPage3.length) return { ok: false, detail: 'placement unreadable after the shrink' };
+        for (let i = 0; i < onPage3.length; i++) {
+          const live = staffTopU(onPage3[i]);
+          if (live === null) return { ok: false, detail: 'system ' + i + ' has no readable staff lines after the shrink' };
+          if (Math.abs(live - exp3[i].top) > 20) return { ok: false, detail: 'after the shrink, page ' + pgEl3.dataset.page + ' system ' + i + ': live top ' + live.toFixed(1) + ' vs rule ' + exp3[i].top.toFixed(1) };
+        }
         return { ok: true };
       })()` },
   ],
@@ -10418,7 +10441,10 @@ export const FIXTURE_ASSERTIONS = {
         const checkPage = (pageEl) => {
           const systems = systemsOf(pageEl);
           if (!systems.length) return 'page ' + pageEl.dataset.page + ' has no systems';
-          const exp = H.renderer.placeFor(systems);
+          /* DISTRIBUTED (rule v2, Phase 4): a mounted page has had its slack
+             shared out, so the rule it must be self-consistent with is the one
+             that placed it. */
+          const exp = H.renderer.placeFor(systems, { distribute: true, pageNo: Number(pageEl.dataset.page) });
           if (!exp || exp.length !== systems.length) return 'page ' + pageEl.dataset.page + ': placeFor returned ' + (exp ? exp.length : 'null') + ' for ' + systems.length + ' systems';
           for (let i = 0; i < systems.length; i++) {
             const live = staffTop(systems[i]);
@@ -10426,6 +10452,16 @@ export const FIXTURE_ASSERTIONS = {
             const tol = live.spacing / 4;   // half a Verovio unit
             const d = Math.abs(exp[i].top - live.top);
             if (d > tol) return 'page ' + pageEl.dataset.page + ' system ' + i + ': live top ' + live.top.toFixed(1) + ' vs rule ' + exp[i].top.toFixed(1) + ' (d=' + d.toFixed(1) + ', tol=' + tol.toFixed(1) + ')';
+            /* Snapping is an OUTPUT transform (2026-09-04). The rule exposes the
+               unsnapped position it accumulated on, and the snapped one must be
+               within half a device pixel of it on EVERY system independently: a
+               snapped position that fed the next system's premise accumulated
+               down the page and split neighbours across pixel boundaries.
+               Absent rawTop, the accumulator is running on snapped values. */
+            if (typeof exp[i].rawTop !== 'number') return 'page ' + pageEl.dataset.page + ' system ' + i + ': placement exposes no rawTop — snapping is not output-only';
+            const grid = 1000 / H.renderer['currentScale']();
+            const snapMove = Math.abs(exp[i].top - exp[i].rawTop);
+            if (snapMove > grid / 2 + 0.01) return 'page ' + pageEl.dataset.page + ' system ' + i + ': the snap moved the system ' + snapMove.toFixed(2) + ' units, more than half a device pixel (' + (grid / 2).toFixed(2) + ') — a snapped position fed a later one';
           }
           return null;
         };
@@ -10484,7 +10520,10 @@ export const FIXTURE_ASSERTIONS = {
         const checkPage = (pageEl) => {
           const systems = systemsOf(pageEl);
           if (!systems.length) return 'page ' + pageEl.dataset.page + ' has no systems';
-          const exp = H.renderer.placeFor(systems);
+          /* DISTRIBUTED (rule v2, Phase 4): a mounted page has had its slack
+             shared out, so the rule it must be self-consistent with is the one
+             that placed it. */
+          const exp = H.renderer.placeFor(systems, { distribute: true, pageNo: Number(pageEl.dataset.page) });
           if (!exp || exp.length !== systems.length) return 'page ' + pageEl.dataset.page + ': placeFor returned ' + (exp ? exp.length : 'null') + ' for ' + systems.length + ' systems';
           for (let i = 0; i < systems.length; i++) {
             const live = staffTop(systems[i]);
@@ -10562,7 +10601,10 @@ export const FIXTURE_ASSERTIONS = {
         const checkPage = (pageEl) => {
           const systems = systemsOf(pageEl);
           if (!systems.length) return 'page ' + pageEl.dataset.page + ' has no systems';
-          const exp = H.renderer.placeFor(systems);
+          /* DISTRIBUTED (rule v2, Phase 4): a mounted page has had its slack
+             shared out, so the rule it must be self-consistent with is the one
+             that placed it. */
+          const exp = H.renderer.placeFor(systems, { distribute: true, pageNo: Number(pageEl.dataset.page) });
           if (!exp || exp.length !== systems.length) return 'page ' + pageEl.dataset.page + ': placeFor returned ' + (exp ? exp.length : 'null') + ' for ' + systems.length + ' systems';
           for (let i = 0; i < systems.length; i++) {
             const live = staffTop(systems[i]);
@@ -10597,11 +10639,19 @@ export const FIXTURE_ASSERTIONS = {
         const first2 = systemsOf(p2)[0], first3 = systemsOf(p3)[0];
         if (!first2 || !first3) return { ok: false, detail: 'page 2 or 3 has no system' };
         if (first2.querySelector('g.measure').id !== pb.pageStarts()[1]) return { ok: false, detail: 'DOM page 2 starts at ' + first2.querySelector('g.measure').id + ', pins say ' + pb.pageStarts()[1] };
-        /* Both are page-first, header-free systems: the rule puts them at the same first-content top. */
+        /* Both are page-first, header-free systems, so the rule gives them the
+           same first-content top — as an UNDISTRIBUTED placement. Rule v2 then
+           moves each page's block by its own slack (a sparse page may open its
+           top gap), so the live tops legitimately differ; the invariant this
+           fixture exists for is that the hunk was placed as a page-first
+           system at all, which is the v1 comparison. */
         const t2 = staffTop(first2), t3 = staffTop(first3);
         if (!t2 || !t3) return { ok: false, detail: 'page-first system without readable staff lines' };
+        const nat2 = H.renderer.placeFor(systemsOf(p2)), nat3 = H.renderer.placeFor(systemsOf(p3));
+        if (!nat2 || !nat3) return { ok: false, detail: 'undistributed placement unreadable' };
         const tol = t2.spacing / 4;
-        if (Math.abs(t2.top - t3.top) > tol) return { ok: false, detail: 'page-first tops differ: page 2 ' + t2.top.toFixed(1) + ' vs page 3 ' + t3.top.toFixed(1) + ' (tol ' + tol.toFixed(1) + ')' };
+        if (Math.abs(nat2[0].top - nat3[0].top) > tol) return { ok: false, detail: 'page-first tops differ (undistributed): page 2 ' + nat2[0].top.toFixed(1) + ' vs page 3 ' + nat3[0].top.toFixed(1) + ' (tol ' + tol.toFixed(1) + ')' };
+        if (t2.top < nat2[0].top - tol) return { ok: false, detail: 'page 2 live top ' + t2.top.toFixed(1) + ' is ABOVE its undistributed placement ' + nat2[0].top.toFixed(1) + ' — distribution only ever moves a system down' };
         const e = checkPage(p2);
         if (e) return { ok: false, detail: e };
         return { ok: true };
@@ -10767,6 +10817,22 @@ export const FIXTURE_ASSERTIONS = {
         if (pages1[2] === p3start0) return { ok: false, detail: 'page 3 start did not move' };
         if (lines.indexOf(pages1[2]) <= p2first || lines.indexOf(pages1[2]) >= p3first) return { ok: false, detail: 'page 3 now starts at line ' + lines.indexOf(pages1[2]) + ', expected inside old page 2' };
         if (overflowing().length) return { ok: false, detail: 'page ' + overflowing().join(',') + ' drawn past the paper' };
+        /* The SPILLING page must be re-placed by the rule that owns it, now,
+           before anything else mounts. lazyMoveOut removed its tail, and under
+           rule v2 that moves every survivor: this was the one path that shrank a
+           mounted page without re-placing it (2026-09-04); the reference gate
+           saw a staircase of downward shifts. Compare the DISTRIBUTED rule over
+           the page's own extents against its live staff tops. */
+        const tyOf = (el) => { const cc = el.transform && el.transform.baseVal.consolidate(); return cc ? cc.matrix.f : 0; };
+        const staffTopU = (sys) => { const st = sys.querySelector('g.measure > g.staff'); if (!st) return null; const ys = [...st.children].filter((n) => n.localName === 'path').map((n) => n.getBBox().y); if (!ys.length) return null; ys.sort((a, b) => a - b); return ys[0] + tyOf(st) + tyOf(sys); };
+        const sys2 = systemsOf(pageEl(2));
+        const exp2 = H.renderer.placeFor(sys2, { distribute: true, pageNo: 2 });
+        if (!exp2 || exp2.length !== sys2.length) return { ok: false, detail: 'page 2 placement unreadable after the cascade' };
+        for (let i = 0; i < sys2.length; i++) {
+          const live = staffTopU(sys2[i]);
+          if (live === null) return { ok: false, detail: 'page 2 system ' + i + ': no readable staff lines' };
+          if (Math.abs(live - exp2[i].top) > 20) return { ok: false, detail: 'page 2 not re-placed after the arithmetic spill: system ' + i + ' live top ' + live.toFixed(1) + ' vs rule ' + exp2[i].top.toFixed(1) };
+        }
         /* Mount page 3: it draws from the new pins, fits, starts at the moved line. */
         const warns2 = withWarnsCaptured(() => { H.renderer['mountPage'](3); });
         if (warns2.length) return { ok: false, detail: 'warnings at mount: ' + warns2.join(' | ') };
@@ -10826,7 +10892,7 @@ export const FIXTURE_ASSERTIONS = {
         for (let p = 1; p <= pages; p++) for (const id of linesOfPage(p)) if (!H.renderer.extentsKnown(id)) return { ok: false, detail: 'page ' + p + ' line ' + id + ' has no extents (measured ' + JSON.stringify(measured) + ')' };
         /* No double placement: every mounted page is placed by its own rule. */
         for (const pg of mountedPages()) {
-          const sy = systemsOf(pg); const exp = H.renderer.placeFor(sy);
+          const sy = systemsOf(pg); const exp = H.renderer.placeFor(sy, { distribute: true, pageNo: Number(pg.dataset.page) });
           if (!exp) return { ok: false, detail: 'page ' + pg.dataset.page + ': placement unreadable' };
           for (let i = 0; i < sy.length; i++) {
             const live = staffTopOf(sy[i]);

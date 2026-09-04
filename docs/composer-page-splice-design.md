@@ -1,6 +1,6 @@
 # Composer page splice — living reference
 
-Updated 2026-09-02. This is the **current-state** reference for page-view
+Updated 2026-09-04. This is the **current-state** reference for page-view
 incremental rendering in Composer: what the machinery is, the rules it enforces,
 how it is verified, what it costs, and what is open. History is not repeated
 here: every design choice with its rationale is a dated entry in
@@ -11,34 +11,25 @@ Companions: [composer-spot-splice-design.md](composer-spot-splice-design.md)
 
 ## ► START HERE
 
-**State.** On the 446-bar sonata every edit splices: sweep 115/115 (viewport
-counters 0), exhaustive every-measure pass 420/420 (empty refusal inventory),
-battery 10/10 reference-clean (B2, 2026-09-02: a line-count change, a collapse
-and an overflow onto a created page are splices too; headers are page budget),
-suite 377/377 under `HKL_INDEX_CHECK` (~5.5 min). Every user COMMAND is
-inventoried (`cb-commands.js`): 24 mutate the document and 19 splice. The five
-that derive all say why: three add a user break (Ctrl+B, section header,
-pickup), a mid-piece meter change exhausts the repair cap, and `add instrument`
-is structural. Composer owns height (vertical-ownership plan Phase 1): every
-system on every page is placed by Composer's rule over measured extents;
-nothing vertical is read from Verovio's stacking or from the splice window.
-The overflow cascade runs on the model (Phase 2): a step is a DOM transplant,
-a last-page spill a page cloned from the spilling page's shell, a step past
-the mounted set arithmetic over stored extents, and an idle extents job keeps
-those extents known. And an edit costs what is ON SCREEN (2026-09-02): the
-replaced set is clipped to the mounted band and everything beyond it deferred,
-re-flow is separated from re-draw, and the user-break signature keys on
-identity rather than measure count — insert-measure went from 2.9-4.1 s,
-position-dependent, to 0.3-0.7 s (decisions.md, "An edit costs what is ON
-SCREEN"). A steady-state one-note
-edit is ≈ 144 ms instrumented (was 258 before the A thread; bare is lower —
-read shares, not walls). The splice's DOM work is a single layout flush, the
-post-surgery snap; everything the splice reads from its window comes from SVG
-text and the window is never attached. Verovio's window `loadData` +
-`renderToSVG` (~84 ms) is well over half of the edit; since Phase 1 the ~60 ms
-it spends on the context lines buys gate work only (the fidelity comparison,
-courtesy / spanner endpoints), so the window's shape is a pure gate question
-(the plan's Phase 3), no longer a geometry constraint.
+Page view re-engraves only what an edit touched and splices it into the mounted
+page SVGs. Composer owns the line partition, the pagination and every vertical
+position; Verovio is asked for the horizontal layout of a small window and
+nothing else.
+
+**Where it stands (2026-09-04, 446-bar sonata):**
+
+- Every edit splices. Sweep 115/115 with the reference gate ON — 0 divergences,
+  the first fully reference-checked pass; battery 10/10 reference-clean; suite
+  377/377 under `HKL_INDEX_CHECK`; every-measure pass in the Status log.
+- Steady one-note edit ≈ 114–137 ms. Window = leader? + hunk + courtesy stub? +
+  trailer? (1 line / 7 measures at the default position; Verovio ≈ 36 ms).
+- 19 of 24 mutating commands splice; each of the five derives says why (three
+  add a user break, a mid-piece meter change exhausts the repair cap,
+  add-instrument is structural) — `cb-commands.js`.
+- Vertical ownership is complete: minimum-clearance placement (rule v1) plus
+  per-page distribution (rule v2: 14u max gap, a 10u top gap only as a last
+  resort, page 1 exempt), the running footer in the bottom margin, the fold at
+  the content column, and the crisp snap applied once, as output.
 
 **Governing principle (Max, 2026-09-01):** *"The goal is to hit O(edit) in ALL
 cases. Any time the user is exposed to O(document) on a live path when they
@@ -46,77 +37,40 @@ didn't ask for a change to the full document is a failure, full stop."* A
 fallback is never an invariant; anything that currently derives or full-renders
 is a defect with a date on it.
 
-**Next steps.** The former steps 1 and 2 (the scheduled cascade continuation
-and the window's shape) were folded into ONE sequenced plan,
-[composer-vertical-ownership-plan.md](composer-vertical-ownership-plan.md)
-(2026-09-02, approved), and are superseded by its sequence:
+**Read next.** Architecture → Ownership (partition, pagination, height), The
+system splice, Reference gate. Verification for the gates and how to read a
+failure. Open work for what is actually open. History is the Status log, with
+the reasoning in [decisions.md](decisions.md) and the traps in
+[lessons.md](lessons.md).
 
-1. **Own height first — LANDED (Phases 0 and 1, 2026-09-02).** The courtesy
-   stub (Phase 0: the courtesy-generating line enters the window as a
-   one-measure stub, not a line) and Composer's placement of every system by
-   one rule over measured extents (Phase 1: `render/pagefit.ts`,
-   `Renderer.placePage` on every mount and splice, `ExtentsStore`, the
-   predicted fold, the reference gate reading the rule — Ownership, below).
-   This removed the context lines' THIRD job. As inventoried until 2026-09-02
-   they did two (the live fidelity comparison; courtesy generation / spanner
-   endpoints); they also were the two ends of the READ vertical chain
-   (`verticalPlan` chained the first replaced system from the window's L−1,
-   `dyFollow` the followers from its L+1) — geometry, which is what had kept
-   the window's shape from being a gate question (lessons.md, "An inventory of
-   a component's jobs"). The two gate jobs remain.
-2. **The cascade on the model (Phase 2) — LANDED 2026-09-02.** A step is a
-   DOM TRANSPLANT (the block's systems and titles move to the head of the next
-   mounted page, both pages re-placed by the rule — nothing rendered), a
-   CREATED page when the last page spills (the spilling page's own shell, page
-   number bumped, glyph defs copied under fresh ids), ARITHMETIC over stored
-   extents when the receiving page is a placeholder the cheap B5 mount cannot
-   serve, a PARK only when its extents are unknown; the idle EXTENTS job
-   (`armExtentsJob`, adoption's discipline) measures unmounted pages so parks
-   are the exception. `Renderer.lastCascade` records the step kinds; the
-   sweep's `parkedSteps` must be 0. Composing at the end of a score costs 37
-   ms of cascade (31 the created page's mount pass); details and the one
-   open measurement (a new root's first layout scaling with the mounted set)
-   in decisions.md "The cascade runs on the model".
-3. **The window's shape (Phase 3) — NEXT, a pure gate question.** The context
-   lines cost ~60 ms of the ~84 ms window and do gate work only; dropping them
-   is gated on the plan's six preconditions, chiefly that the reference gate
-   and the replaced-set closure stand in for the live fidelity comparison.
-   Max's ruling: the live context comparison is a fallback masking replaced-
-   set defects, not an invariant.
-4. **Distribution (Phase 4, D1 proper).** Slack within the fixed budget; only
-   `placeSystems` changes.
-5. **Remaining structural bails** (each a derive): head/interior `rest`
-   (staffDefs, elements before the first measure, credits — C2), user breaks,
-   foreign document; the repair-loop caps (`MAX_ENSURES`, `MAX_REPAIR_STEPS`);
-   a replaced line on an unmounted page that a PREVIOUS splice marked stale
-   (`changed line not mounted` — B5's cheap mount refuses stale pages). B2's
-   own dated refusals (2026-09-02): a section-header measure deleted by the
-   edit (`section header measure removed`), a single system taller than its
-   page, and a cascade beyond `MAX_CASCADE_STEPS` 64.
-6. Small items: A3 (collapse the two `cursor.update` calls, ~1.6 ms, blocked on
-   bridge ordering), A5 (worker-offloaded castoff `loadData`, ~1.4 s on the
-   derive — big refactor, `afterRender` is the seam; the remaining latency
-   lever once the window's shape is settled), the test-mode residual
-   (`assertVoiceIndexConsistent` is O(measures²) once per index build, 0.7 s
-   on the sonata under the flag).
+**Standing traps.**
 
-**Two standing traps.** (1) Never edit `apps/composer/src` while the suite or
-ANY phasec probe/sweep runs against the dev server — Vite reloads the page and
-the run dies or lies. Docs, fixtures and probe files are safe at any time.
-(2) Do not run `pnpm build` or a second Chromium job alongside the suite: a
-visual fixture once shot mid-relayout under a concurrent build and passed alone;
-the sweep's 300 s runner deadline times out under a concurrent suite. Test mode
-adds ~2–3 s to a large-range edit (the reference gate's full render + the
-VoiceIndex cross-check); if it gets slow again, `cb-checkcost.js` attributes it
-in one run.
+1. **Snapping is an output transform, never an input.** A system's crisp
+   nudge is applied once, when its translate is emitted; positions accumulate
+   down the page unsnapped and the distribution level is solved on unsnapped
+   geometry. A snapped value that feeds a later position turns sub-pixel
+   nondeterminism into a cumulative drift (lessons.md, 2026-09-04).
+2. **Placement is non-local within a page** (rule v2): the level is solved over
+   all of a page's gaps, so every path that changes a page's system set must
+   re-place the whole page (lessons.md, "Rule v2 made placement non-local").
+3. **Never edit `apps/composer/src` while the suite or any phasec probe runs
+   against the dev server** — Vite reloads the page and the run dies or lies.
+   Docs, fixtures and probe files are safe at any time.
+4. **No `pnpm build` and no second Chromium job alongside the suite**: a visual
+   fixture once shot mid-relayout under a concurrent build; the phasec runner's
+   300 s deadline times out under a concurrent suite. Long probes are chunked
+   (`from=`/`limit=`), not sampled.
 
-**Before declaring any edit-path change done**: battery on both code states
-(stash / pop) — the splice/skip outcome per edit and `reference.ok` must be
-identical, wall is the win; then the full suite under the flag; then
-`cb-splicecost.js` for the wall. For anything touching what the splice
-measures, `cb-pathprofile.js` (old and new readings side by side over every
-sonata line) is the proof template. Visual discrepancies go to Max as two
-images, uninterpreted; pixel-diff them first (`lessons.md`, 2026-09-01).
+**Before declaring an edit-path change done:** battery on both code states
+(stash / pop — identical splice/skip outcome per edit and `reference.ok`);
+the full suite under the flag; `cb-splicecost.js` for the wall; the gated sweep
+in chunks (`cb-sweep.js --arg "check=1,from=N,limit=24"`). Any visual
+disagreement goes to Max as a diff HEATMAP, never two images
+(`test/composer-test/heatmap.py`, procedure in `test/composer-test/README.md`)
+— surfaced before any numbers, uncropped, and labelled with WHICH pair:
+baseline-vs-output only says the rendering changed; the defect question is
+spliced vs a full re-engrave, which `run.mjs` shoots automatically on a
+non-visual failure.
 
 ## Architecture
 
@@ -161,8 +115,34 @@ images, uninterpreted; pixel-diff them first (`lessons.md`, 2026-09-01).
   metrics and the browser's bbox disagree (sonata: 92 of 116 systems within
   1u of the old placement, max 5.1u). A header consumes budget, it never adds
   paper; a page is legal when its components fit; overflow from any cause is
-  repaired by the cascade (`repairPagination`). Distribution of slack within
-  the budget is Phase 4; only `placeSystems` changes for it.
+  repaired by the cascade (`repairPagination`).
+- **A page distributes its own slack** (rule v2, 2026-09-04). The clearances
+  above are MINIMUMS; on top of them each page shares out what it has left.
+  The gaps that equalize are the inter-system gaps AND the gap between the
+  last system and the bottom of the content column (the bottom-margin line) —
+  their sum is fixed by the systems' own heights, so an ordinary page divides
+  it evenly. The level is the L solving `Σ max(gap_k, L) + L = C`, not `C / n`,
+  because a gap already wider than L by its own clearance cannot be
+  compressed. It is capped at `maxGap` 14u: a page too sparse to fill is left
+  sparse rather than smeared. The page-header → first-system gap is NOT an
+  ordinary participant — it opens only when the level clamped at `maxGap` AND
+  the bottom gap still exceeds `maxGap`, to at most `topMax` 10u, and never on
+  page 1, whose first system keeps its distance to the title block. The
+  running footer lives in the BOTTOM MARGIN (`FOOTER_Y`), so the column bottom
+  is the column bottom and adding or removing a footer cannot change
+  pagination. ORDERING: pagination is judged on the minimum-clearance
+  placement and only then is the page distributed — `placeSystems` takes the
+  distribution as an argument, `placePage` and the reference gate pass it,
+  `foldOf` and `predictFoldFromStore` do not, since feeding a distributed
+  placement to `foldIndex` would be circular. CONSEQUENCE: placement is
+  non-local within a page, so every path that changes a page's system set must
+  re-place the whole page (trap 0 in START HERE).
+- **Ownership extends to the staff** (Phase 3.5, 2026-09-04). `alignStaffRows`
+  spaces a system's staff rows a whole number of device pixels apart RELATIVE
+  to the system's first row, and `placeSystems` carries the crisp phase so that
+  first row lands on the device grid. Both run BEFORE `measureExtents`, so
+  `above` is a property of the music and not of the render's origin. The
+  separate post-placement snap has nothing left to do on the page path.
 - **Zoom is layout-neutral**: the crisp presets share `unit: 8`, so all zooms
   produce one partition and every zoom change is a partition-cache hit (keyed on
   unit, pageScale, heji + document version; `cb-zoomunit.js` guards it).
@@ -263,7 +243,8 @@ a `SpliceRequest` — old/new partition, old/new pagination, the changed run.
   pins is what `verifyRenderedPartition` rightly fails on. B5's eager mount
   survives for the edit's own neighbourhood (lines a−1..a+1) so an evicted
   cursor page is still drawn. The idle extents job warms what was deferred.
-- **Window**: L ± 1 context line, plus — when the line beyond begins a
+- **Window**: the hunk lines ONLY — no context lines since Phase 3
+  (2026-09-03) — plus, when the line beyond begins a
   signature change (scoreDef possibly behind a section `<sb>`, or a leading
   clef/key/meter on ANY staff; the courtesy is generated by the FOLLOWING
   line) — that line's FIRST MEASURE as a pinned one-measure STUB system
@@ -292,18 +273,17 @@ a `SpliceRequest` — old/new partition, old/new pagination, the changed run.
   `use` href or, for a HEJI-injected glyph, the codepoint the replacing `text`
   carries, so a raw window compares against a HEJI-processed page.
 - **Gates (refusal → full render, reason in `lastSkipReason`)**:
-  - *Context lines* must reproduce live: per-measure x/width within EPS 25 and
-    identical clef/keySig/meterSig glyph codepoints (`sigGlyphDiff`). This is
-    the only live fidelity test. Its one exemption (2026-09-02): a context line
-    on a page OUTSIDE the mounted band has no live system to compare against —
-    either the clip stopped there or it was never mounted — so it is rendered
-    into the window (entering spanners must resolve) but not checked
-    (`aboveComparable` / `belowComparable`). The replaced lines are covered by
-    the reference gate as always, and per Max the live comparison is a
-    fallback, not an invariant. (The observed
-    residual is ≤ 3 units: the live right-edge snap moving a staff-line end by
-    ½ device px.) The REPLACED lines are never compared live — they are what
-    the edit told Verovio to redraw; the reference gate verifies them.
+  - *Context lines* — there are none (Phase 3, 2026-09-03), so the live
+    fidelity comparison that rode on them (per-measure x/width within EPS 25,
+    identical signature glyph codepoints, `sigGlyphDiff`) is gone. It compared
+    L−1 and L+1 only, detected nothing the reference gate does not, and masked a
+    subset of the splicer's own replaced-set defects as slow renders — a
+    fallback, not an invariant (Max). The REPLACED lines are what the edit told
+    Verovio to redraw; the reference gate verifies them, and the stub, spanner
+    and ending closure rules ARE the cross-measure dependency list, made
+    executable (decisions.md 2026-09-03). The live neighbours are still read,
+    but only as DOM structure (which page a line is on, the insertion anchor,
+    the partition-drift detectors).
   - *Vertical position*: none is read from the window (Phase 1). After the
     surgery every touched page is handed to `Renderer.placePage`, which
     measures each system where it now sits and places the whole page by the
@@ -325,11 +305,12 @@ a `SpliceRequest` — old/new partition, old/new pagination, the changed run.
   `<defs>`), remove the old hunk systems, post-process the IMPORTED systems in
   place — crisp barline and right-edge snaps, notehead z-order, HEJI, theme,
   scoped to the imported systems, in the live page's own device frame — then
-  `placePage` and `snapPage` on every touched page; the renderer then removes
-  emptied pages, marks every
+  `placePage` on every touched page (staff rows phase-aligned BEFORE extents
+  are measured; the crisp nudge is the emitted translate itself — there is no
+  post-placement snap pass since Phase 3.5, and positions accumulate unsnapped
+  since 2026-09-04); the renderer then removes emptied pages, marks every
   touched page stale for later mounts and runs the pagination repair. The
-  snap's flush is the one layout the splice causes; the placement's `getBBox`
-  reads share it. Diagnostics on the splicer: `lastOutcome / lastSkipReason /
+  surgery costs ONE layout flush; the placement's `getBBox` reads share it. Diagnostics on the splicer: `lastOutcome / lastSkipReason /
   lastRun / lastWindow / lastWindowMei` (`lastVertical` is always null now),
   and on a context refusal `lastContextDiff`. `Renderer.lastPostStats` times
   the post-processing passes.
@@ -339,9 +320,13 @@ a `SpliceRequest` — old/new partition, old/new pagination, the changed run.
   checked for its FOLD, PREDICTED from the placement rule: `foldIndex` over the
   read-only placement of a mounted page's measured extents (`foldOf`), or over
   the `ExtentsStore` for a placeholder (`predictFoldFromStore`), against the
-  paper bottom read from Verovio's inner `definition-scale` viewBox, 2 device
-  px of tolerance; under `HKL_INDEX_CHECK` a mounted page's prediction must
-  equal the measured fold. A page that spills is repaired the way a castoff
+  bottom of the CONTENT COLUMN (the inner `definition-scale` viewBox height
+  minus the margin translate minus the bottom margin — the paper EDGE was the
+  limit until 2026-09-04, one bottom margin more permissive than the castoff
+  that produced the pagination), 2 device px of tolerance; under
+  `HKL_INDEX_CHECK` a mounted page's prediction must equal the fold measured
+  against the same line. The fold is judged on the MINIMUM-clearance placement,
+  never the distributed one. A page that spills is repaired the way a castoff
   would — the tail from the fold on moves to the head of the next page, the
   owner's page start moves to the block's first line (`replacePageStarts`; a
   last page appends one) — and the step lands as one of four things,
@@ -425,12 +410,23 @@ Under `HKL_INDEX_CHECK`, materialising after the version moved throws.
 After every splice — once its pagination repair has settled, against the
 owner's CURRENT pins — a fresh full render of the pinned MEI is compared
 against every page the splice and its cascade touched: system sequence,
-per-measure x/width (TOL 30), clef/keySig/meterSig glyph codepoints (reference
-post-processed like the live page), and — since Phase 1 — ABSOLUTE staff tops
-against Composer's placement rule applied to the reference's systems
-(`placeFor` on the reference host: their extents, the rule), plus a
+per-measure x/width (TOL 10 — one device pixel, since Phase 3.5),
+clef/keySig/meterSig glyph codepoints, a per-measure glyph-CLASS census and a
+per-system RESIDUE census (reference post-processed, decorated and
+phase-aligned exactly like the live page — `postProcess`, `decorateHost`,
+`alignStaves`; a probe that skips any of the three reports a defect that is
+not there), and — since Phase 1 — ABSOLUTE staff tops against Composer's
+placement rule applied to the reference's systems, DISTRIBUTED on both sides
+since rule v2 (`placeFor(systems, { distribute: true, pageNo })`), plus a
 self-consistency check that the live page is placed by the same rule over its
-own extents; section-title bands via `hdrTitles`. Header pages are verified
+own extents; section-title bands via `hdrTitles`. On a staff-top divergence
+the error names both sides' extents and placed tops for EVERY system on the
+page, so a per-gap constant (a level disagreement), a page shifted by a
+constant (a frame error) and one system out of place (an extents error) are
+distinguishable from the message. The accepted residual is one device pixel on
+a single system — Verovio places content ~2 units differently between a
+windowed and a full render, snapped once (decisions.md, `TOL` 10; not to be
+revisited). Header pages are verified
 like any other with nothing subtracted. This gate attaches a host by design —
 it is a test-mode verification, not the splice. Render errors are logged and
 re-thrown under the flag — a caught throw is not a gate. `pnpm test:composer`
@@ -462,16 +458,32 @@ full`.
   live tops == rule over live extents, after the derive and after a splice),
   `pagePlacementTextTopped` (a tempo-topped first system: below the header,
   never higher than without the text) and `pageSpliceNoPbPins` (a page-first
-  hunk from a one-page window, placed like the next page's first); each landed
+  hunk from a one-page window, placed like the next page's first — compared
+  UNDISTRIBUTED, since rule v2 legitimately moves each page's block by its own
+  slack); `pagePlacementOwned` also pins snap-as-output (every system's crisp
+  nudge ≤ half a device pixel from its unsnapped position, and `rawTop` must
+  exist at all); Phase 2's are `pageCascadePredictedFold`,
+  `pageCascadeArithmeticPastMount` (which since 2026-09-04 also asserts the
+  SPILLING page is re-placed by the distributed rule — the `lazyMoveOut` fix),
+  `pageExtentsJobEditDuring`, `pageExtentsJobScrollDuring`; each landed
   with its bug or feature and was run against the
   unfixed source (`test/composer-test/run-unfixed.sh <fixtures>` stashes
   `apps/composer/src`, runs, restores). A visual mismatch appends
   `window.__visualDiag` (fixture-recorded geometry) to its detail.
 - **Sonata gates** (`test/composer-inspect/phasec/`, README there):
-  `cb-splice-battery.js` (8 edits, whole-document reference compare — the
-  behaviour gate, run on both code states), `cb-sweep.js` (every line once
+  `cb-splice-battery.js` (10 edits, whole-document reference compare — the
+  behaviour gate, run on both code states; records EVERY deviating
+  (page, system) in `reference.devs`, not only the worst, and
+  `--arg "shot=<edit>,mode=spliced|reengrave,page=N"` leaves one page for a
+  `--screenshot` so the self-consistency pair can be heatmapped),
+  `cb-sweep.js` (every line once
   through the real IntersectionObserver: hit rate, refusal histogram, latency,
-  viewport drift — READ THE VIEWPORT COUNTERS, not only the
+  viewport drift; with `--arg "check=1,from=N,limit=24"` the reference GATE
+  runs on every position and its throw is recorded per row — without `check=1`
+  the sweep verifies coverage and viewport stability ONLY, and "115/115" says
+  nothing about splice-vs-re-engrave correctness; chunk with `from=`, never
+  sample with `stride`, which read 0/23 where stride 1 read 4/25 — READ THE
+  VIEWPORT COUNTERS, not only the
   hit rate: `pageBoxChanged`, `scrollHeightChanged` and the next-page anchor
   must be 0; they were 0 on 2026-08-31, nobody read them again until
   2026-09-02, and the 90 px header-page jump had been in them since A8), `allmeasures.sh` + `allmeasures-report.mjs` (every measure;
@@ -494,11 +506,17 @@ full`.
 
 ## Where the time goes (2026-09-02, Chromium, sonata, instrumented)
 
+*Update 2026-09-04*: steady one-note edit 114–137 ms (`cb-splicecost.js`,
+default mid-document Backspace); the window is 1 line / 7 measures since Phase
+3 and Verovio's part of it ≈ 36 ms; rule v2 distribution adds nothing
+measurable (arithmetic over extents already measured). The breakdown below is
+the 2026-09-02 measurement, kept for the SHARES, which still hold.
+
 Steady-state one-note edit ≈ 144 ms (`cb-splicecost.js`; wrapper overhead
 inflates walls, read shares). Splice ≈ 90: Verovio window `loadData` +
 `renderToSVG` ≈ 84 (two window pages, 20 measures — since the courtesy stub
 this default position is 15 measures, window ≈ 78–82 — the window's shape is
-the lever, since Phase 1 a pure gate question (plan Phase 3); drawing, not
+the lever — settled by Phase 3 (2026-09-03): 1 line / 7 measures, ≈ 36 ms; drawing, not
 layout: `loadData` is ~0.6 ms/measure, `renderToSVG`
 3–4.5, and the first draw after a load carries the lazy layout); `spliceDom`
 ≈ 10 (imported-system post-processing 5.5 sharing the snap's flush, snap 1.8,
@@ -523,49 +541,74 @@ naturals, SVG options) are in decisions.md (2026-09-01 "A thread measured",
 
 ## Open work
 
-- **The window's shape** (vertical-ownership plan Phase 3; START HERE 3) —
-  drop the context lines once the six preconditions hold; the cascade no
-  longer needs them (Phase 2), so this is the next latency lever.
-- **Vertical ownership plan** —
-  [composer-vertical-ownership-plan.md](composer-vertical-ownership-plan.md);
-  Phases 0–2 landed 2026-09-02 (courtesy stub, own height, cascade on the
-  model); Phase 3 (the window's shape) next, then Phase 4 (distribution, D1
-  proper). Open measurement from Phase 2: a created page's first layout scales
-  with the mounted set (~180 ms at 31 mounted, 31 ms at 3).
-- **B2 dated bails** (START HERE 5): header measure removed; single system
-  taller than a page.
-- **D1 groundwork and placement landed 2026-09-02**: a section header's
-  reserve is page budget and Composer places every system by one rule over
-  measured extents (Ownership, above) — the injector only draws, a page that
-  no longer fits below its headers spills into the cascade, a spilled header
-  line carries its title. What remains of D1 is the distribution rule itself:
-  slack within the fixed budget (Phase 4; only `placeSystems` changes).
-- **C2** — first-page credits: composer/footer changes still derive (rare).
+Only what is open. Landed work is in the Status log; reasoning in decisions.md.
+
+- **Structural bails** (each a derive, each with its reason on the splicer):
+  head/interior `rest` (staffDefs, elements before the first measure; credits —
+  C2, composer/footer text changes derive, rare); user breaks (Ctrl+B, section
+  header, pickup); foreign document; the repair-loop caps (`MAX_ENSURES`,
+  `MAX_REPAIR_STEPS`, `MAX_CASCADE_STEPS` 64); a replaced line on an unmounted
+  page a PREVIOUS splice marked stale (`changed line not mounted`); a
+  section-header measure deleted by the edit; a single system taller than its
+  page.
+- **A5** — worker-offloaded castoff `loadData` (~1.4 s on the derive); with the
+  window settled, the remaining latency lever on the derive path.
 - **A3** — collapse the two `cursor.update` calls (~1.6 ms; blocked on the
   `onStateChange`-before-`onChange` bridge ordering).
-- **A5** — worker-offloaded castoff `loadData` (~1.4 s on the derive); the
-  remaining latency lever once the window's shape (Phase 3) is settled.
+- **A created page's first layout scales with the mounted set** (~180 ms at 31
+  mounted, 31 at 3) — measured in Phase 2, not yet attributed.
 - **Test-mode residual** — `assertVoiceIndexConsistent` ×
   `getMeasureStartCursorUncached`: 0.7 s per index build on the sonata under
-  the flag. Tolerable; not O(edit).
-- **D. Tuning and features (Max's call)**: D1 vertical distribution within a
-  page (the page-fit model and extents exist since Phase 1 — Phase 4 changes
-  `placeSystems` only); D2 FIT_MAX / MIN_FILL
-  to taste (legality bounds, not packing targets — note that FIT_MAX 1.45
-  admits lines Verovio compresses to ~0.7 and warns about below 0.8, seen while
-  composing at the end of a score; and whether a PAGE should have a minimum
-  fill, which B2 deliberately left out: deletions leave their slack); D3 explicit "reflow document" command (reflow is path-dependent);
-  D4 explicit move-measure-between-systems commands. Noted, not fixed: a clef
-  set on an EMPTY layer does not roundtrip (`<clef/><space/>` loads back as
-  `<space/><clef/>`).
-- **Dead ends (do not retry without new evidence)**: pinned-lines naturals;
-  `svgRemoveXlink`; naturals from the splice window's justified render;
-  `getBBox` call-count reduction; leader/trailer removal (~3 ms, gate-only).
+  the flag.
+- **Test hygiene** — `test/composer-test/out/` is tracked in git; runner
+  artifacts should not be (heatmaps and failure shots already go to tmp).
+- **Tuning (Max's call)** — FIT_MAX 1.45 admits lines Verovio compresses to
+  ~0.7 and warns about below 0.8 (seen composing at the end of a score);
+  `maxGap` 14u and `topMax` 10u are the two distribution knobs, calibrated on
+  the sonata.
+- **Features (Max's call)** — D3 explicit "reflow document" (reflow is
+  path-dependent); D4 move-measure-between-systems commands.
+- **Noted, not fixed** — a clef set on an EMPTY layer does not roundtrip
+  (`<clef/><space/>` loads back as `<space/><clef/>`).
+
+Dead ends are recorded where they were hit — lessons.md, and `placeSystems`
+for the placement ones — and are not retried without new evidence: pinned-lines
+naturals, `svgRemoveXlink`, naturals from the window's justified render,
+`getBBox` call-count reduction, leader/trailer removal, quantizing per-system
+placement terms, quantizing the distribution level.
 
 ## Status log
 
 One line per landing; the reasoning is the dated decisions.md entry.
 
+- 2026-09-04 — Snap-as-output: `layoutSystems` accumulates on the unsnapped
+  top and the distribution level is solved on unsnapped geometry; the crisp
+  nudge is the emitted translate only. One system's ≤½-pixel rounding had been
+  every later system's premise (a 2-pixel staircase on sonata page 18). Battery
+  deviations 7 → 4, max 20 → 10; gated sweep 0/115 — the first sweep run with
+  the reference gate on (`check=1`, chunked with `from=`). Three probe/gate
+  drifts in the battery fixed (undistributed reference; no `alignStavesIn`; no
+  `decorateHost`). Two baselines re-seeded (approved). Quantizing the level:
+  measured dead end (7 → 13 deviations).
+- 2026-09-04 — Phase 4, rule v2: each page solves one water level over its
+  inter-system gaps AND the gap above the bottom margin, capped at 14u; the
+  page-header gap opens only when that level clamped and the bottom gap still
+  exceeds the cap, to at most 10u, never on page 1. The running footer moved
+  into the bottom margin (it was inside the content column, costing every page
+  10.1u and already colliding with the music on sonata pages 21 and 23) and the
+  fold limit moved from the paper edge to the content column, which is what
+  Verovio's castoff always used — pagination byte-identical either way. Sonata:
+  26 of 30 pages uniform, top gap on exactly the four 3-system pages, footer
+  0.378 in above the paper edge. Every-measure pass (allmeasures, 2026-09-04):
+  420/420 edited at 100 % splice rate, 0 conflicts, 69 multi-line replaced sets
+  with 0 failing, empty refusal inventory. Placement is now non-local within a page,
+  which surfaced one path (`lazyMoveOut`) that shrank a mounted page without
+  re-placing it. Suite 377/377.
+- 2026-09-03 — Phase 3 + 3.5: the window drops its context lines (leader? +
+  hunk + courtesy stub? + trailer?, nothing compared against the page) and
+  ownership extends to the staff (relative row spacing + the crisp phase
+  carried by placement, both before `measureExtents`); `TOL` 30 → 10. Window 3
+  lines/15 measures → 1/7, Verovio 74.6 → 36.1 ms, steady edit 173.6 → 127.7.
 - 2026-09-02 — An edit costs what is on screen: the replaced set is clipped to
   the mounted band (the rest deferred, stale, warmed by the idle job), re-flow
   split from re-draw in the sig diff, the user-break signature keyed on measure
