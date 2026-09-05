@@ -12,7 +12,7 @@ import type { Voice, Duration, Dots, InstrumentEntry } from './model/index.js';
 import { noteAlter } from '@hkl/notation/accidentals.js';
 import { injectHejiGlyphs } from '@hkl/notation/heji-render.js';
 import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
-import { DYNAM_DIST } from './render/render.js';
+import { DYNAM_DIST, DEFAULT_BOTTOM_MARGIN } from './render/render.js';
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
 
@@ -577,8 +577,10 @@ const PDF_EXPORT_OPTS = {
   header: 'auto',
   footer: 'none',
   scale: 100,
-  /* Same dynamics clearance as the screen (render.ts BASE_OPTIONS). */
+  /* Same dynamics clearance and overflow margin as the screen (render.ts
+     BASE_OPTIONS). */
   dynamDist: DYNAM_DIST,
+  defaultBottomMargin: DEFAULT_BOTTOM_MARGIN,
   /* Mirror render.ts's set so the PDF SVG carries the attributes the export
      passes act on — esp. `rest@visible` (→ data-visible) so user-hidden rests
      can be stripped, matching the on-screen CSS that hides them. */

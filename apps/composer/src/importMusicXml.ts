@@ -96,12 +96,6 @@ interface ImpEvent {
    *  `show-number="none"` — Finale's measured-tremolo tuplets hide both. */
   tupletStart?: { num: number; numbase: number; bracket: boolean; showNum: boolean };
   tupletStop?: boolean;
-  /** Explicit stem direction (`<stem>up|down|none</stem>`) → `@stem.dir` /
-   *  `@stem.visible`. The source engraver's choice: in a two-voice passage
-   *  Verovio's layer default (upper voice stems up) puts beams, tuplet
-   *  brackets AND the slur on the same side (sonata m. 82); the source has
-   *  stems down there, with the slur on the notehead side. */
-  stem?: 'up' | 'down' | 'none';
   /** Note-attached articulations: 'stacc' | 'acc' | 'ten'. */
   artics: string[];
   fermata: boolean;
@@ -468,10 +462,6 @@ function buildEvents(
       dur, dots, artics: [], fermata: false, slurStart: [], slurStop: [],
     };
     if (isMeasureRest) ev.measureRest = true;
-    /* Explicit stem direction. 'double' has no MEI equivalent and is dropped;
-       a chord's later notes are merged above, so the first note's stem wins. */
-    const stemTxt = isRest ? '' : textOf(note, 'stem');
-    if (stemTxt === 'up' || stemTxt === 'down' || stemTxt === 'none') ev.stem = stemTxt;
     /* Source beam-start for the diff-based beam pass: <beam number="1"> value
        of `begin` (or absent) starts a new beam; `continue`/`end` joins prev. */
     const beam1 = children(note, 'beam').find((b) => (b.getAttribute('number') ?? '1') === '1');
@@ -622,11 +612,6 @@ function eventToElement(doc: Document, ev: ImpEvent): Element {
     applyTie(element, ev.notes[0]);
     if (ev.notes[0].harmonic) applyHarmonic(element, element);
     else if (ev.notes[0].voidHead) element.setAttribute('head.fill', 'void');
-  }
-  /* Stem direction from the source (see ImpEvent.stem). */
-  if (ev.kind !== 'rest') {
-    if (ev.stem === 'up' || ev.stem === 'down') element.setAttribute('stem.dir', ev.stem);
-    else if (ev.stem === 'none') element.setAttribute('stem.visible', 'false');
   }
   /* Articulations: <artic artic="…"> children of the note/chord. */
   for (const a of ev.artics) {

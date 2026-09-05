@@ -3431,3 +3431,46 @@ under Max's dev server — baseline a gate BEFORE changing code, or compare on a
 copy; (2) when a fixture passes in isolation right after an edit and fails
 later with the same code, `curl` the served module and grep for the change
 before debugging the code.
+
+## Verovio two-voice engraving rules, probed exactly (2026-09-05)
+
+Bare-toolkit probes on 6.3, chord stems read from `g.chord > g.stem` (a chord's
+stem is NOT under `g.note` — the first probe read "none" for every chord):
+- **Stems**: with two layers, a slot's stem follows its layer (1 up, 2 down)
+  whenever the other layer holds any element WITH A DURATION at that moment —
+  note, chord, rest, hidden rest (`visible="false"`) alike; it follows the
+  pitch rule only when the other layer holds `<space>`/`<mSpace>` there (the
+  source: `Layer::GetDrawingStemDir` → `GetLayerCountForTimeSpanOf(element) <
+  2 ? NONE : m_drawingStemDir`).
+- **Tuplet bracket**: on the side of the majority stem direction of its notes
+  (`Tuplet::CalcDrawingBracketAndNumPos`); `@bracket.place`/`@num.place`
+  override it.
+- **Slur**: single voice → opposite the stems; two voices → by layer (1 above,
+  2 below) regardless of stems; `@curvedir` overrides it.
+So in a two-voice staff the upper voice's default slur sits on its own beams
+and brackets, and the lower voice's on its own — the m. 82 / m. 84 defect.
+Measurement gotcha behind a wrong reading on the way: Verovio nests the beamed
+notes INSIDE `g.beam`, so the group's bbox is the notes' (accidentals
+included), not the beam polygon's — measure `g.beam > polygon`.
+
+## A Verovio section restart always restates the instrument labels (2026-09-05)
+
+`<section restart="true">` sets `m_drawLabels` and draws the FULL labels
+(indenting the system like the first): a restart scoreDef carrying
+`<staffGrp><label/></staffGrp>` children, bare `<staffDef n>`s, or an empty
+`<labelAbbr>` in the head scoreDef all still label. `ReplaceDrawingValues`
+never touches labels. There is no restart without names; the key courtesy it
+would have suppressed stays.
+
+## `defaultBottomMargin`, not `defaultTopMargin`, is the cross-staff overflow clearance (2026-09-05)
+
+Verovio widens a staff distance only as far as the colliding boxes plus their
+margins. Probed viola-dynamic-below vs piano-high-notes-above at the same x:
+`defaultBottomMargin` 0.5/1.0/1.5/2.5 → clearance 39/79/119/199 user units
+(80 per unit), the uncollided piano pair fixed at 960 throughout;
+`defaultTopMargin` 1.5 alone → no change (only the upper element's bottom
+margin counts in that direction). The margin is the one every element without
+a dedicated `bottomMargin*` option gets, so it acts everywhere two boxes
+collide vertically and nowhere else — the direct lever for "elements that
+overflow between instruments", where `staffDef@spacing` (a floor on the LINE
+distance) only separated empty staves.

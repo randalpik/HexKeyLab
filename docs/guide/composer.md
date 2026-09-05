@@ -253,15 +253,17 @@ changes how many systems fit on a page.
 sits in the outer top corner (left on even pages, right on odd) and the title
 runs centred across the top; page 1 keeps its title block and no number. A
 brace and continuous barlines mark a grand staff only — a one-staff instrument
-has no brace, and barlines never run from one instrument to the next.
-Instruments sit further apart than the two staves of a piano. Dynamics,
-hairpins and expressive text between a piano's staves are centred in the gap
-where the notes allow; under any other staff they keep a little more room from
-the staff. Two identical rests at the same moment in a staff's two voices draw
-as one rest, and a hidden rest never nudges a visible one. A movement break
-(section header) with a new key or meter shows no courtesy signature at the end
-of the previous movement; the new movement opens with its own signatures and
-restates the instrument names.
+has no brace, and barlines never run from one instrument to the next. Where
+one instrument's notes or markings reach toward the next staff, they keep about
+a staff space clear of it. Dynamics, hairpins and expressive text between a
+piano's staves are centred in the gap where the notes allow; under any other
+staff they sit a good staff space below it. In a two-voice passage a slur goes
+on the notehead side of its voice, never on the side of the tuplet brackets and
+beams. Two identical rests at the same moment in a staff's two voices draw as
+one rest, and a hidden rest never nudges a visible one. A movement break
+(section header) with a new meter shows no courtesy meter at the end of the
+previous movement (a courtesy key signature still appears there — the engraving
+engine offers no way to drop it without also restating the instrument names).
 
 This means the layout reflects the editing you've done, not a fresh engraving of
 the current music — that's deliberate, so the page stops moving under you while

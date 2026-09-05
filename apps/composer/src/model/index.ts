@@ -26,9 +26,9 @@
 
 import type { ResolvedNote } from '@hkl/bridge/protocol.js';
 import { regroupBeams, readTimeSig } from '../notation/beams.js';
-import { applyInstrumentSpacing } from '../notation/instrumentSpacing.js';
 import { settleRestLocations } from '../notation/restlayout.js';
-import { applySectionRestarts } from '../notation/sectionRestart.js';
+import { blankSectionCourtesyMeters } from '../notation/sectionRestart.js';
+import { settleSlurSides } from '../notation/slurSides.js';
 import { decomposeBeatAlignedRests } from './restfill.js';
 import { computeAccidentalDisplay } from '../notation/accidentals.js';
 import { alterFromCount, alterFromToken, tokenFromAlter, getNoteAlter } from '@hkl/notation/accidentals.js';
@@ -555,14 +555,14 @@ export function normalizeStaffGroupConventions(doc: Document): void {
 }
 
 /** The render-only engraving conventions applied to a serialize clone after
- *  every other render pass (2026-09-04): wider gaps between instruments than
- *  inside a grand staff, rests that coincide or stand alone at their
- *  single-layer place, and section boundaries without courtesy signatures.
- *  Each is documented in its module; none touches the saved document. */
+ *  every other render pass (2026-09-04): rests that coincide or stand alone at
+ *  their single-layer place, section boundaries without a courtesy meter, and
+ *  slurs on the notehead side in two-voice passages. Each is documented in its
+ *  module; none touches the saved document. */
 function applyRenderConventions(clone: Document): void {
-  applyInstrumentSpacing(clone);
   settleRestLocations(clone);
-  applySectionRestarts(clone);
+  blankSectionCourtesyMeters(clone);
+  settleSlurSides(clone);
 }
 
 export class ComposerModel {

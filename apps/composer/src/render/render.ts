@@ -124,13 +124,17 @@ const PAGE_GEOM = {
  * scroll view is a known limit to revisit if a real score hits it. */
 /** Verovio `dynamDist` (units); see BASE_OPTIONS. Exported so the PDF export
  *  and the below-staff text layout share it. */
-export const DYNAM_DIST = 3.5;
+export const DYNAM_DIST = 4.5;
 /** SVG user units of clearance a <dir> keeps below its staff, per Verovio
  *  unit: the probed top of a dynamic glyph at `dynamDist` d is 80·d − 168
- *  user units below the bottom line at unit 8 (d=3 → 72, d=4 → 152), so 3.5
- *  puts it 112 down — 14 per unit. A staff space is 2 units (160 user units
- *  here), so that is ~0.7 of a space. */
-export const DIR_GAP_PER_UNIT = 14;
+ *  user units below the bottom line at unit 8 (d=3 → 72, d=4 → 152), so 4.5
+ *  puts it 192 down — 24 per unit. A staff space is 2 units (160 user units
+ *  here), so that is 1.2 spaces: a "p" then sits with its centre about two
+ *  spaces below the line. 3.5 (0.7 space) read as "a few px" (Max, 2026-09-05). */
+export const DIR_GAP_PER_UNIT = 24;
+/** Verovio `defaultBottomMargin` (units); see BASE_OPTIONS. Shared with the
+ *  PDF export. */
+export const DEFAULT_BOTTOM_MARGIN = 2.0;
 
 const SCROLL_GEOM = {
   pageWidth: 100_000,
@@ -154,9 +158,25 @@ const BASE_OPTIONS = {
      text by default"). Verovio measures `dynamDist` (units) to the glyph's own
      reference, and the glyph's top only starts to move past 2: probed 1→40,
      2→40, 3→72, 4→152 SVG units below the bottom line at unit 8 (a staff
-     space is 160). 3.5 puts the top of a "p" ~0.7 of a space down. <dir>
-     ignores this option; the text-layout pass gives it the same clearance. */
+     space is 160). 4.5 puts the top of a "p" 1.2 spaces down (3.5 → 0.7 was
+     still "a few px", Max 2026-09-05). <dir> ignores this option; the
+     text-layout pass gives it the same clearance. */
   dynamDist: DYNAM_DIST,
+  /* Clearance between elements that COLLIDE across a staff boundary — the
+     viola's dynamics against the piano's high notes, the piano's low right-hand
+     content against its left hand (2026-09-05; backlog: "lack of gap between
+     elements that overflow in the area between instruments"). Verovio widens a
+     staff distance only as far as the colliding boxes plus their margins, and
+     the default margin is half a unit (a quarter of a staff space). This is the
+     bottom margin every element without a dedicated margin option gets: probed
+     at 0.5/1.0/1.5/2.5 the dynamic→note clearance went 39/79/119/199 user
+     units while an UNCOLLIDED staff pair stayed at Verovio's 960 — so it
+     targets exactly the overflow case and nothing else. 2.0 ≈ one staff space.
+     `defaultTopMargin` had no effect on that clearance (only the upper
+     element's bottom margin counts) and is left alone. A `staffDef@spacing`
+     minimum was tried first and reverted: it widened the gap between EMPTY
+     staves and left the collision case unchanged. */
+  defaultBottomMargin: DEFAULT_BOTTOM_MARGIN,
   /* No indentation / inter-element newlines in the SVG string (A9, 2026-09-01).
      Whitespace-only: element count and rendering are identical (`cb-svgopts.js`:
      18 055 nodes either way), but the string is ~40% smaller and the browser's

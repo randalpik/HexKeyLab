@@ -5993,8 +5993,10 @@ const ENGRAVING = {
   },
 
   /* Finale's measured tremolo: two hollow beamed 32nds under a bracket-less,
-     number-less 1:8 tuplet, stems up. The importer keeps all of it (sonata
-     m. 93 drew a bracket and a "1" until 2026-09-04). */
+     number-less 1:8 tuplet. The importer keeps the hollow heads and the hidden
+     bracket/number (sonata m. 93 drew a bracket and a "1" until 2026-09-04) and
+     ignores the source's <stem> (Max, 2026-09-05: element placement, not
+     Finale replication, is the goal). */
   engr_importMeasuredTremoloTuplet: {
     setup: `
       const TM = '<time-modification><actual-notes>1</actual-notes><normal-notes>8</normal-notes><normal-type>16th</normal-type></time-modification>';
@@ -6078,10 +6080,11 @@ const ENGRAVING = {
     `,
   },
 
-  /* A section (movement) break with a key + meter change draws NO courtesy
-     signatures at the end of the previous system; the new section starts
-     with its clef, key and (visible) meter. Render-clone only — the saved
-     document keeps its flat shape. */
+  /* A section (movement) break with a key + meter change draws no courtesy
+     METER at the end of the previous system; the new section starts with its
+     clef, key and (visible) meter. The courtesy KEY still draws — Verovio's
+     only switch for it (section restart) also restates the instrument labels,
+     which Max ruled out (2026-09-05). Render-clone only. */
   engr_sectionBreakNoCourtesySigs: {
     setup: `
       window.__hkl_composer.renderer.setViewMode('page');
@@ -6091,19 +6094,6 @@ const ENGRAVING = {
       m.setKeySigAt(4, '3s', 'major');
       m.setMeterAt(4, 3, 4);
       m.setCursor(0, 1);
-      r();
-    `,
-  },
-
-  /* Between instruments the staff gap is wider than inside the piano's grand
-     staff (staffDef@spacing on each instrument's first staff, render clone). */
-  engr_instrumentGapWiderThanGrandStaff: {
-    setup: `
-      const N = (o, midi) => ({ q: 0, r: 0, pname: 'a', accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
-      m.addInstrument({ name: 'Viola', staffCount: 1 });
-      m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [N(4, 69)], duration: '1', dots: 0 });
-      m.setVoice(5); m.setCursor(0, 5); m.insertChordAtCursor({ notes: [N(4, 69)], duration: '1', dots: 0 });
-      m.setVoice(1); m.setCursor(0, 1);
       r();
     `,
   },
@@ -6138,6 +6128,34 @@ const ENGRAVING = {
       const rend = doc.createElementNS(MEI, 'rend'); rend.setAttribute('fontstyle', 'italic'); rend.textContent = 'dolce'; d.appendChild(rend);
       meas.appendChild(d);
       m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* Two-voice slur side (Max's invariant, 2026-09-05): a slur is never on the
+     tuplet-bracket side and avoids the beam side. Upper voice: a slurred
+     triplet of eighths (stems up → beams + bracket above); lower voice: a
+     whole-note chord. Verovio's layer rule put the slur above; the render pass
+     sets @curvedir to the notehead side (below). */
+  engr_slurNoteheadSideTwoVoice: {
+    setup: `
+      const N = (o, midi) => ({ q: 0, r: 0, pname: 'a', accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.setVoice(1); m.setCursor(0, 1);
+      m.createTupletAtCursor({ num: 3, numbase: 2, atomicDur: '8', spanDur: '4', spanDots: 0 });
+      m.setCursor(1, 1);
+      m.insertChordAtCursor({ notes: [N(5, 81)], duration: '8', dots: 0 });
+      m.insertChordAtCursor({ notes: [N(5, 81)], duration: '8', dots: 0 });
+      m.insertChordAtCursor({ notes: [N(5, 81)], duration: '8', dots: 0 });
+      m.setVoice(2); m.setCursor(0, 2);
+      m.insertChordAtCursor({ notes: [N(4, 60)], duration: '1', dots: 0 });
+      m.setVoice(1);
+      const doc = m.getDoc();
+      const notes = [...doc.querySelectorAll('staff[n="1"] layer[n="1"] tuplet note')];
+      const MEI = 'http://www.music-encoding.org/ns/mei';
+      const sl = doc.createElementNS(MEI, 'slur');
+      sl.setAttribute('xml:id', 's-test-2v'); sl.setAttribute('startid', '#' + notes[0].getAttribute('xml:id')); sl.setAttribute('endid', '#' + notes[2].getAttribute('xml:id')); sl.setAttribute('data-voice', '1');
+      doc.querySelector('measure').appendChild(sl);
+      m.setCursor(0, 1);
       r();
     `,
   },
@@ -14100,7 +14118,7 @@ export const FIXTURE_ASSERTIONS = {
       })()` },
   ],
   engr_importMeasuredTremoloTuplet: [
-    { name: 'tuplet imports bracket/number-less; notes hollow with stems up',
+    { name: 'tuplet imports bracket/number-less with hollow noteheads (stems are Verovio\'s, not Finale\'s)',
       expr: `(() => {
         const doc = window.__hkl_composer.model.getDoc();
         const t = doc.querySelector('tuplet');
@@ -14110,7 +14128,7 @@ export const FIXTURE_ASSERTIONS = {
         if (notes.length !== 2) return { ok: false, detail: 'notes=' + notes.length };
         for (const n of notes) {
           if (n.getAttribute('head.fill') !== 'void') return { ok: false, detail: 'head.fill=' + n.getAttribute('head.fill') };
-          if (n.getAttribute('stem.dir') !== 'up') return { ok: false, detail: 'stem.dir=' + n.getAttribute('stem.dir') };
+          if (n.hasAttribute('stem.dir')) return { ok: false, detail: 'source stems must not be imported (Max, 2026-09-05)' };
         }
         return { ok: true };
       })()` },
@@ -14204,36 +14222,21 @@ export const FIXTURE_ASSERTIONS = {
       })()` },
   ],
   engr_sectionBreakNoCourtesySigs: [
-    { name: 'no courtesy key/meter before the section break; the new section shows both',
+    { name: 'no courtesy meter before the section break; the new section shows key and meter',
       expr: `(() => {
         const systems = [...document.querySelectorAll('#score g.system')];
         if (systems.length < 2) return { ok: false, detail: 'systems=' + systems.length };
         const visibleSigs = (meas) => [...meas.querySelectorAll('g.keySig, g.meterSig')].filter(k => k.getBBox().width > 0).map(k => k.getAttribute('class'));
         const m1 = [...systems[0].querySelectorAll('g.measure')]; const last = m1[m1.length - 1];
         const caut = visibleSigs(last);
-        if (caut.length) return { ok: false, detail: 'courtesy sigs drawn: ' + caut.join(',') };
+        if (caut.includes('meterSig')) return { ok: false, detail: 'courtesy meter drawn: ' + caut.join(',') };
+        if (systems[1].querySelectorAll('g.label').length) return { ok: false, detail: 'instrument labels restated at the section start' };
         const first = systems[1].querySelector('g.measure');
         const sigs = visibleSigs(first);
         if (!sigs.includes('keySig') || !sigs.includes('meterSig')) return { ok: false, detail: 'section start sigs: ' + sigs.join(',') };
         const m = window.__hkl_composer.model;
-        if (m.serialize().includes('restart=')) return { ok: false, detail: 'restart leaked into the saved document' };
+        if (m.serialize().includes('meter.form=')) return { ok: false, detail: 'render-only meter.form leaked into the saved document' };
         return { ok: true };
-      })()` },
-  ],
-  engr_instrumentGapWiderThanGrandStaff: [
-    { name: 'piano → viola gap exceeds the inner piano gap by at least 2.5 staff spaces',
-      expr: `(() => {
-        const meas = document.querySelector('#score g.measure');
-        const rows = {};
-        for (const st of meas.querySelectorAll(':scope > g.staff')) {
-          const ys = [...st.querySelectorAll(':scope > path')].map(p => p.getBoundingClientRect().top);
-          rows[st.getAttribute('data-n')] = { top: Math.min(...ys), bot: Math.max(...ys) };
-        }
-        if (!rows[1] || !rows[2] || !rows[3]) return { ok: false, detail: 'rows=' + JSON.stringify(rows) };
-        const space = (rows[1].bot - rows[1].top) / 4;
-        const inner = rows[2].top - rows[1].bot, between = rows[3].top - rows[2].bot;
-        /* 18 − 12 Verovio units = 3 staff spaces; allow half a space of slack. */
-        return between - inner >= 2.5 * space ? { ok: true, detail: 'inner=' + inner.toFixed(1) + ' between=' + between.toFixed(1) } : { ok: false, detail: 'inner=' + inner + ' between=' + between + ' space=' + space };
       })()` },
   ],
   engr_dynamicCenteredInGrandStaff: [
@@ -14263,8 +14266,26 @@ export const FIXTURE_ASSERTIONS = {
         const ys = [...st.querySelectorAll(':scope > path')].map(p => p.getBoundingClientRect().top);
         const bot = Math.max(...ys), space = (bot - Math.min(...ys)) / 4;
         const gap = d.getBoundingClientRect().top - bot;
-        /* DIR_GAP_PER_UNIT × unit = 112 user units = 0.7 staff space; a pixel of slack. */
-        return gap >= 0.7 * space - 1 ? { ok: true, detail: 'gap=' + gap.toFixed(1) + 'px space=' + space.toFixed(1) } : { ok: false, detail: 'gap=' + gap + ' space=' + space };
+        /* DIR_GAP_PER_UNIT × unit = 192 user units = 1.2 staff spaces; a pixel of slack. */
+        return gap >= 1.1 * space - 1 ? { ok: true, detail: 'gap=' + gap.toFixed(1) + 'px space=' + space.toFixed(1) } : { ok: false, detail: 'gap=' + gap + ' space=' + space };
+      })()` },
+  ],
+  engr_slurNoteheadSideTwoVoice: [
+    { name: 'the upper-voice slur lies below its noteheads, opposite the beams and the tuplet bracket',
+      expr: `(() => {
+        const staff = document.querySelector('#score g.measure g.staff[data-n="1"]');
+        const slur = document.querySelector('#score g.slur');
+        const brk = staff && staff.querySelector('g.tupletBracket');
+        /* Verovio nests the beamed notes INSIDE g.beam, so measure the beam's own polygon. */
+        const beam = staff && staff.querySelector('g.beam > polygon');
+        if (!staff || !slur || !brk || !beam) return { ok: false, detail: 'staff=' + !!staff + ' slur=' + !!slur + ' bracket=' + !!brk + ' beam=' + !!beam };
+        const heads = [...staff.querySelectorAll('g.layer:first-of-type g.notehead, g.tuplet g.notehead')].map(h => h.getBoundingClientRect());
+        const headBot = Math.max(...heads.map(h => h.bottom));
+        const s = slur.getBoundingClientRect(), b = brk.getBoundingClientRect(), be = beam.getBoundingClientRect();
+        const sMid = (s.top + s.bottom) / 2;
+        if (!(sMid > headBot)) return { ok: false, detail: 'slur centre ' + sMid.toFixed(1) + ' is not below the noteheads (bottom ' + headBot.toFixed(1) + ')' };
+        if (!(b.bottom < headBot && be.bottom < headBot)) return { ok: false, detail: 'bracket/beam not above the heads: bracket ' + b.bottom.toFixed(1) + ' beam ' + be.bottom.toFixed(1) };
+        return { ok: true };
       })()` },
   ],
 };
