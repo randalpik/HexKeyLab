@@ -6132,6 +6132,55 @@ const ENGRAVING = {
     `,
   },
 
+  /* A movement (section) break in a two-instrument score (2026-09-05): the
+     render clone wraps the boundary scoreDef in a Verovio restart carrying
+     continuation labels (notation/sectionRestart.ts), so the line before it
+     ends WITHOUT a courtesy key or meter, and the new movement's first system
+     looks like any other continuation system — same labels (none here: the
+     instruments have no <labelAbbr>), same indent — while the score's first
+     system keeps its full instrument names. A third, plain section break
+     (no signature change → no scoreDef → no restart) provides the
+     continuation system to compare against. */
+  engr_sectionRestartMatchesContinuationSystems: {
+    setup: `
+      window.__hkl_composer.renderer.setViewMode('page');
+      const N = (o, midi) => ({ q: 0, r: 0, pname: 'a', accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.addInstrument({ name: 'Viola', staffCount: 1 });
+      m.setVoice(1); m.setCursor(0, 1);
+      for (let i = 0; i < 12; i++) m.insertChordAtCursor({ notes: [N(4, 69)], duration: '1', dots: 0 });
+      m.setSectionHeaderAt(4, 'II');
+      m.setKeySigAt(4, '3s', 'major');
+      m.setMeterAt(4, 3, 4);
+      m.setSectionHeaderAt(8, 'III');
+      m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* Barlines never break, and text marks stay off them (2026-09-05). A
+     dynamic at tstamp 5 in 4/4 sits exactly on the m1|m2 barline; Verovio
+     erases the grand-staff barline under it (draw-time only) and Composer
+     then centres the dynamic in the gap — render/barlines.ts refills the
+     barline and render/textlayout.ts moves the mark inside its own measure
+     first. A wide dynamic under m3's first note exercises the left barline. */
+  engr_barlineUnbrokenUnderDynamic: {
+    setup: `
+      const N = (o, midi) => ({ q: 0, r: 0, pname: 'a', accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.setVoice(1); m.setCursor(0, 1);
+      for (let i = 0; i < 3; i++) m.insertChordAtCursor({ notes: [N(5, 81)], duration: '1', dots: 0 });
+      m.setVoice(3); m.setCursor(0, 3);
+      for (let i = 0; i < 3; i++) m.insertChordAtCursor({ notes: [N(2, 45)], duration: '1', dots: 0 });
+      const doc = m.getDoc(); const MEI = 'http://www.music-encoding.org/ns/mei';
+      const meas = doc.querySelectorAll('measure');
+      const dyn = (mi, tstamp, text, id) => { const d = doc.createElementNS(MEI, 'dynam'); d.setAttribute('xml:id', id); d.setAttribute('tstamp', String(tstamp)); d.setAttribute('place', 'below'); d.setAttribute('staff', '1'); d.textContent = text; meas[mi].appendChild(d); };
+      dyn(0, 5, 'p', 'd-test-barline-end');
+      dyn(2, 1, 'sfz', 'd-test-barline-start');
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+    visualBaseline: 'engr_barline_unbroken',
+  },
+
   /* Two-voice slur side (Max's invariant, 2026-09-05): a slur is never on the
      tuplet-bracket side and avoids the beam side. Upper voice: a slurred
      triplet of eighths (stems up → beams + bracket above); lower voice: a
@@ -14229,7 +14278,7 @@ export const FIXTURE_ASSERTIONS = {
         const visibleSigs = (meas) => [...meas.querySelectorAll('g.keySig, g.meterSig')].filter(k => k.getBBox().width > 0).map(k => k.getAttribute('class'));
         const m1 = [...systems[0].querySelectorAll('g.measure')]; const last = m1[m1.length - 1];
         const caut = visibleSigs(last);
-        if (caut.includes('meterSig')) return { ok: false, detail: 'courtesy meter drawn: ' + caut.join(',') };
+        if (caut.length) return { ok: false, detail: 'courtesy signatures drawn before the section break: ' + caut.join(',') };
         if (systems[1].querySelectorAll('g.label').length) return { ok: false, detail: 'instrument labels restated at the section start' };
         const first = systems[1].querySelector('g.measure');
         const sigs = visibleSigs(first);
@@ -14268,6 +14317,64 @@ export const FIXTURE_ASSERTIONS = {
         const gap = d.getBoundingClientRect().top - bot;
         /* DIR_GAP_PER_UNIT × unit = 192 user units = 1.2 staff spaces; a pixel of slack. */
         return gap >= 1.1 * space - 1 ? { ok: true, detail: 'gap=' + gap.toFixed(1) + 'px space=' + space.toFixed(1) } : { ok: false, detail: 'gap=' + gap + ' space=' + space };
+      })()` },
+  ],
+  engr_sectionRestartMatchesContinuationSystems: [
+    { name: 'no courtesy before the movement break; the restart system matches a continuation system (labels, indent); the first system keeps its names',
+      expr: `(() => {
+        const systems = [...document.querySelectorAll('#score g.system')];
+        if (systems.length < 3) return { ok: false, detail: 'systems=' + systems.length };
+        const vis = (meas) => [...meas.querySelectorAll('g.keySig, g.meterSig')].filter(k => k.getBBox().width > 0).map(k => k.getAttribute('class'));
+        const m1 = [...systems[0].querySelectorAll('g.measure')]; const last = m1[m1.length - 1];
+        const caut = vis(last);
+        if (caut.length) return { ok: false, detail: 'courtesy signatures drawn before the section break: ' + caut.join(',') };
+        const labels = (sy) => [...sy.querySelectorAll('g.label, g.labelAbbr')].map(g => g.getAttribute('class') + ':' + g.textContent.trim());
+        const staffX = (sy) => sy.querySelector('g.measure g.staff path').getBoundingClientRect().left;
+        if (labels(systems[0]).length < 2) return { ok: false, detail: 'first-system labels: ' + JSON.stringify(labels(systems[0])) };
+        if (JSON.stringify(labels(systems[1])) !== JSON.stringify(labels(systems[2]))) return { ok: false, detail: 'restart labels ' + JSON.stringify(labels(systems[1])) + ' vs continuation ' + JSON.stringify(labels(systems[2])) };
+        if (Math.abs(staffX(systems[1]) - staffX(systems[2])) > 1) return { ok: false, detail: 'restart indent ' + staffX(systems[1]) + ' vs continuation ' + staffX(systems[2]) };
+        const sigs = vis(systems[1].querySelector('g.measure'));
+        if (!sigs.includes('keySig') || !sigs.includes('meterSig')) return { ok: false, detail: 'section start sigs: ' + sigs.join(',') };
+        const ser = window.__hkl_composer.model.serialize();
+        if (ser.includes('restart=') || ser.includes('meter.form=') || /<staffGrp[^>]*\\sn="hkl/.test(ser)) return { ok: false, detail: 'render-only restart markup leaked into the saved document' };
+        return { ok: true };
+      })()` },
+  ],
+  engr_barlineUnbrokenUnderDynamic: [
+    { name: 'every grand-staff barline is continuous and no text mark straddles a barline',
+      expr: `(() => {
+        const parse = (p) => { const mm = /M\\s*(-?[\\d.]+)[\\s,]+(-?[\\d.]+)\\s*L\\s*(-?[\\d.]+)[\\s,]+(-?[\\d.]+)/.exec(p.getAttribute('d') || ''); return mm ? mm.slice(1).map(Number) : null; };
+        const measures = [...document.querySelectorAll('#score g.measure')];
+        if (measures.length < 3) return { ok: false, detail: 'measures=' + measures.length };
+        const fills = document.querySelectorAll('#score path[data-hkl-barfill]').length;
+        if (!fills) return { ok: false, detail: 'no barline fill was needed: the fixture no longer provokes Verovio\\'s erasure' };
+        const straddles = [];
+        for (const meas of measures) {
+          const rows = {};
+          for (const st of meas.children) { if (!st.classList.contains('staff')) continue; const ys = [...st.children].filter(c => c.localName === 'path').map(parse).filter(l => l && Math.abs(l[1] - l[3]) <= 1).map(l => l[1]); rows[st.getAttribute('data-n')] = { top: Math.min(...ys), bottom: Math.max(...ys) }; }
+          if (!rows[1] || !rows[2]) return { ok: false, detail: 'staff rows missing in ' + meas.id };
+          const from = rows[1].bottom, to = rows[2].top;
+          const barXs = [];
+          for (const bl of meas.children) {
+            if (!bl.classList.contains('barLine')) continue;
+            const segs = [...bl.children].filter(c => c.localName === 'path').map(parse).filter(l => l && Math.abs(l[0] - l[2]) <= 1).map(l => ({ x: l[0], y1: Math.min(l[1], l[3]), y2: Math.max(l[1], l[3]) })).sort((a, b) => a.y1 - b.y1);
+            if (!segs.length) continue;
+            barXs.push(segs[0].x);
+            let cov = from;
+            for (const sg of segs) { if (sg.y2 < from - 1 || sg.y1 > to + 1) continue; if (sg.y1 > cov + 1) return { ok: false, detail: 'barline ' + bl.id + ' broken between ' + cov + ' and ' + sg.y1 }; cov = Math.max(cov, sg.y2); }
+            if (cov < to - 1) return { ok: false, detail: 'barline ' + bl.id + ' stops at ' + cov + ', short of ' + to };
+          }
+          const prev = meas.previousElementSibling;
+          if (prev && prev.classList.contains('measure')) for (const bl of prev.children) if (bl.classList.contains('barLine')) { const ls = [...bl.children].map(parse).filter(Boolean); if (ls.length) barXs.push(Math.min(...ls.map(v => v[0]))); }
+          for (const mk of meas.querySelectorAll('g.dynam, g.dir')) {
+            const b = mk.getBBox(); const t = /translate\\((-?[\\d.]+)/.exec(mk.getAttribute('transform') || ''); const dx = t ? +t[1] : 0;
+            for (const x of barXs) if (b.x + dx < x && b.x + b.width + dx > x) straddles.push(mk.id + '@' + x);
+          }
+        }
+        if (straddles.length) return { ok: false, detail: 'marks on a barline: ' + straddles.join(' ') };
+        const end = document.getElementById('d-test-barline-end');
+        if (!end || !end.hasAttribute('data-hkl-hshift')) return { ok: false, detail: 'the measure-end dynamic was not moved off the barline' };
+        return { ok: true, detail: 'fills=' + fills };
       })()` },
   ],
   engr_slurNoteheadSideTwoVoice: [

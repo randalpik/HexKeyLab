@@ -3453,14 +3453,43 @@ Measurement gotcha behind a wrong reading on the way: Verovio nests the beamed
 notes INSIDE `g.beam`, so the group's bbox is the notes' (accidentals
 included), not the beam polygon's — measure `g.beam > polygon`.
 
-## A Verovio section restart always restates the instrument labels (2026-09-05)
+## A Verovio section restart restates the instrument labels — unless a matching `@n` staffGrp replaces them (2026-09-05)
 
 `<section restart="true">` sets `m_drawLabels` and draws the FULL labels
-(indenting the system like the first): a restart scoreDef carrying
-`<staffGrp><label/></staffGrp>` children, bare `<staffDef n>`s, or an empty
-`<labelAbbr>` in the head scoreDef all still label. `ReplaceDrawingValues`
-never touches labels. There is no restart without names; the key courtesy it
-would have suppressed stays.
+(indenting the system like the first), and `ReplaceDrawingValues` never
+touches labels — so a restart scoreDef with `<staffGrp><label/></staffGrp>`
+children, bare `<staffDef n>`s, or an empty `<labelAbbr>` in the head all still
+labelled (probed in the morning). What the morning probe missed, found in the
+6.3.0 source: `ScoreDefSetCurrentFunctor::VisitStaffGrp` calls
+`ScoreDef::ReplaceDrawingLabels(staffGrp)` under a restart, which swaps the
+drawing label of the head staffGrp with the SAME `@n` (`GetStaffGrp(n)` —
+Composer's groups had no `@n`, so the empty label landed on the outer group)
+and `View::DrawLabels` returns before `SetDrawingLabelsWidth` for an empty
+label. So: `@n` on the head groups + a matching `<staffGrp n><label>ABBR</label>`
+gives a restart system that draws exactly what a continuation system draws.
+Three traps on the way, each costing a probe:
+- the loader rejects a `<staffGrp>` without a `<staffDef>` ("Each <staffGrp>
+  must contain at least one <staffDef>", `loadData` returns 0, no log);
+- a staffDef with no `@n` or an unused one draws a console warning per render
+  (`No @n on <staffDef>` / `StaffDef with xml:id … could not be found`, from
+  `ReplaceDrawingValues(const StaffDef*)`), and a staffDef naming a REAL staff
+  inside the restart scoreDef puts that staff in `SetCautionaryScoreDefFunctor`'s
+  `m_staffNs` — the key courtesy comes back for exactly those staves
+  (`SetDrawKeySig(false)` only for staves NOT named);
+- `ScoreDef::IsSectionRestart` is "the nearest PRECEDING section milestone has
+  `@restart`" (`GetPrevious(this, SECTION)`), so a second scoreDef anywhere
+  after the restart start — inside the wrapper or right after it — is a
+  restart too, staffNs and all.
+The recipe that satisfies all three: restart wrapper holding ONLY the boundary
+scoreDef (childless → empty staffNs → no key courtesy anywhere), then a second
+plain nested `<section>` holding a second scoreDef with the label staffGrps
+whose staffDefs name the group's real first staff (found → no warning, nothing
+to replace; not a restart → no courtesy). `m_restart` is cleared only at the
+next measure, so the second scoreDef's staffGrps are still visited with it set
+and the labels are replaced. Verified: 6.3.0 probes with console capture, the
+sonata's three movement boundaries (no courtesy, no labels, continuation
+indent, zero Verovio warnings on a full re-render), fixture
+`engr_sectionRestartMatchesContinuationSystems`.
 
 ## `defaultBottomMargin`, not `defaultTopMargin`, is the cross-staff overflow clearance (2026-09-05)
 
@@ -3474,3 +3503,27 @@ a dedicated `bottomMargin*` option gets, so it acts everywhere two boxes
 collide vertically and nowhere else — the direct lever for "elements that
 overflow between instruments", where `staffDef@spacing` (a floor on the LINE
 distance) only separated empty staves.
+
+## Verovio erases `bar.thru` barlines under dynamics/dirs/tempi — at draw time only, with no option (2026-09-05)
+
+Sonata m. 89|90: the barline between the piano staves had a hole just below
+the upper staff and the piano's "p" sat on the barline further down. Cause:
+`View::DrawBarLine` (view_page.cpp) calls
+`SystemAligner::FindAllIntersectionPoints(line, box, {CPMARK, DIR, DYNAM,
+TEMPO}, unit/2)` for the between-staff stretch of a `bar.thru` barline and
+draws the barline as segments around any overlapping mark — skipped for the
+bbox device context, so it never touches layout, and none of the 221 options
+governs it. Then Composer's text-layout pass moved the mark (centring it in the
+grand-staff gap), so the erasure marked where the mark USED to be. Two
+consequences: (1) any post-render pass that moves marks must also repair
+barlines, and it can — the erased segment leaves a (possibly zero-length)
+`M x y L x y` path inside the gap, so the gap is recoverable from the barline's
+own `d` attributes without a layout read (`render/barlines.ts`); (2) a dynamic
+at tstamp beats+1 is centred exactly ON the barline by Verovio (Finale exports
+end-of-measure dynamics like that), which is where the erasure came from in
+the first place — the mark now moves inside its own measure first
+(`render/textlayout.ts`). Probe technique worth keeping: a whole-document
+inventory needs every page mounted — `r.setMountWindowEnabled(false)` then
+`r['mountPage'](n)` for each `.score-page-pending` (cb-splice-battery.js);
+`ensureMeasureMounted` alone leaves the lazy window to evict pages behind the
+cursor, and a per-measure `setCursor` walk ends with only the last page mounted.

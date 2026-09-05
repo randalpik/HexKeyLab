@@ -27,7 +27,7 @@
 import type { ResolvedNote } from '@hkl/bridge/protocol.js';
 import { regroupBeams, readTimeSig } from '../notation/beams.js';
 import { settleRestLocations } from '../notation/restlayout.js';
-import { blankSectionCourtesyMeters } from '../notation/sectionRestart.js';
+import { applySectionRestarts } from '../notation/sectionRestart.js';
 import { settleSlurSides } from '../notation/slurSides.js';
 import { decomposeBeatAlignedRests } from './restfill.js';
 import { computeAccidentalDisplay } from '../notation/accidentals.js';
@@ -561,7 +561,7 @@ export function normalizeStaffGroupConventions(doc: Document): void {
  *  module; none touches the saved document. */
 function applyRenderConventions(clone: Document): void {
   settleRestLocations(clone);
-  blankSectionCourtesyMeters(clone);
+  applySectionRestarts(clone);
   settleSlurSides(clone);
 }
 

@@ -11,6 +11,16 @@
 //     as the dynamics are — Verovio's `dynamDist` governs <dynam> only.
 // Marks whose horizontal ranges overlap (a dynamic with its hairpin, a stacked
 // dynamic + text) move as ONE block so Verovio's own stacking survives.
+//   • A TEXT mark (dynamic, expressive text — not a hairpin) is also kept
+//     INSIDE its own measure: a box that overlaps one of the measure's barlines
+//     is moved off it to the near side, half a unit clear (Max, 2026-09-05:
+//     nothing sits on a measure boundary). Verovio centres a dynamic at
+//     tstamp beats+1 exactly on the barline, and a wide dynamic under a
+//     measure's first note reaches back over the previous one; both read as
+//     "on the boundary", and inside a grand staff the barline runs through
+//     them (Verovio erases the barline there — render/barlines.ts refills it).
+//     The horizontal move comes first, so the vertical rules below cluster and
+//     measure the marks where they will actually be drawn.
 //
 // EVERY measurement is taken in the SVG's own user space — `getBBox()` mapped
 // through `getCTM()` into the page-margin group's frame (see `svgBox`) —
@@ -49,6 +59,9 @@ const MARK_SEL = 'g.dynam, g.dir, g.hairpin';
 const OBSTACLE_SEL = 'g.note, g.rest, g.mRest, g.accid, g.beam, g.stem, g.clef, g.keySig, g.meterSig, g.tupletBracket, g.tupletNum, g.artic, g.dots, g.ledgerLines, g.flag';
 /* Half a Verovio unit at the crisp presets (unit 8 → 80 user units per unit). */
 const PAD = 40;
+/* A device pixel: a mark this close to a barline counts as touching it. */
+const TOUCH = 10;
+const isText = (el: Element): boolean => el.classList.contains('dynam') || el.classList.contains('dir');
 
 const attrNum = (el: Element, name: string): number | null => {
   const v = el.getAttribute(name);
@@ -112,7 +125,10 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
   const marks = Array.from(sys.querySelectorAll(MARK_SEL)) as SVGGraphicsElement[];
   if (!marks.length) return;
   /* Undo a previous run's shifts before measuring (idempotency). */
-  for (const m of marks) if (m.hasAttribute('data-hkl-vshift')) { m.removeAttribute('transform'); m.removeAttribute('data-hkl-vshift'); }
+  for (const m of marks) {
+    if (!m.hasAttribute('data-hkl-vshift') && !m.hasAttribute('data-hkl-hshift')) continue;
+    m.removeAttribute('transform'); m.removeAttribute('data-hkl-vshift'); m.removeAttribute('data-hkl-hshift');
+  }
   /* The reference frame: the system's parent (the page-margin group). */
   const frame = sys.parentElement as (SVGGraphicsElement | null);
   const frameCtm = frame && typeof frame.getCTM === 'function' ? frame.getCTM() : null;
@@ -129,6 +145,55 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
     if (!r) { r = rowsOf(measure, frameInv); rowCache.set(measure, r); }
     return r;
   };
+  /* The barlines bounding a measure: its right barline (the rightmost of its
+     own `g.barLine` groups) and its left one — a left barLine group when
+     Verovio drew one (repeat starts), else the previous measure's right
+     barline; none for a system's first measure (the system start is no
+     boundary a mark could straddle). */
+  interface Bars { left: Box | null; right: Box | null }
+  const barCache = new Map<Element, Bars>();
+  const barsFor = (measure: Element): Bars => {
+    let r = barCache.get(measure);
+    if (r) return r;
+    const boxes: Box[] = [];
+    for (const g of Array.from(measure.children)) {
+      if (!g.classList.contains('barLine')) continue;
+      const b = svgBox(g, frameInv);
+      if (b) boxes.push(b);
+    }
+    boxes.sort((a, b) => a.left - b.left);
+    const right = boxes.length ? boxes[boxes.length - 1] : null;
+    let left: Box | null = boxes.length >= 2 ? boxes[0] : null;
+    if (!left) {
+      const prev = measure.previousElementSibling;
+      if (prev && prev.classList.contains('measure')) left = barsFor(prev).right;
+    }
+    r = { left, right };
+    barCache.set(measure, r);
+    return r;
+  };
+  /* Horizontal: text marks off their measure's barlines. */
+  const hshift = new Map<SVGGraphicsElement, number>();
+  const shifted = new Map<SVGGraphicsElement, Box>();
+  for (const el of marks) {
+    if (!isText(el)) continue;
+    const measure = el.closest('g.measure');
+    if (!measure) continue;
+    const box = svgBox(el, frameInv);
+    if (!box || !(box.right > box.left)) continue;
+    const { left, right } = barsFor(measure);
+    let dx = 0;
+    if (right && box.right > right.left - TOUCH && box.left < right.right + TOUCH) dx = (right.left - PAD) - box.right;
+    else if (left && box.left < left.right + TOUCH && box.right > left.left - TOUCH) dx = (left.right + PAD) - box.left;
+    dx = Math.round(dx);
+    if (Math.abs(dx) < 3) continue;
+    /* A mark wider than its measure stays where Verovio put it. */
+    if (left && box.left + dx < left.right + PAD / 2) continue;
+    if (right && box.right + dx > right.left - PAD / 2) continue;
+    hshift.set(el, dx);
+    shifted.set(el, { ...box, left: box.left + dx, right: box.right + dx });
+  }
+
   const items: Mark[] = [];
   for (const el of marks) {
     const measure = el.closest('g.measure');
@@ -138,7 +203,7 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
     const rows = rowsFor(measure);
     const own = rows.find((r) => r.n === staffN);
     if (!own) continue;
-    const box = svgBox(el, frameInv);
+    const box = shifted.get(el) ?? svgBox(el, frameInv);
     if (!box || !(box.right > box.left) || !(box.bottom > box.top)) continue;
     const place = el.getAttribute('data-place') ?? ((box.top + box.bottom) / 2 > (own.top + own.bottom) / 2 ? 'below' : 'above');
     const idx = rows.indexOf(own);
@@ -151,7 +216,8 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
       if (upper && grandUpperOf.get(staffN) === upper.n) items.push({ el, box, upper, lower: own, mode: 'center' });
     }
   }
-  if (!items.length) return;
+  const shifts = new Map<SVGGraphicsElement, { dx: number; dy: number }>();
+  for (const [el, dx] of hshift) shifts.set(el, { dx, dy: 0 });
 
   /* Cluster x-overlapping marks that share a gap. */
   const clusters: Mark[][] = [];
@@ -190,7 +256,6 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
     return out;
   };
 
-  const writes: Array<{ el: SVGGraphicsElement; dy: number }> = [];
   for (const cl of clusters) {
     let top = Infinity, bottom = -Infinity, left = Infinity, right = -Infinity;
     for (const m of cl) { top = Math.min(top, m.box.top); bottom = Math.max(bottom, m.box.bottom); left = Math.min(left, m.box.left); right = Math.max(right, m.box.right); }
@@ -219,12 +284,16 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
        host, and a float tail here would be a float tail in the extents. */
     dy = Math.round(dy);
     if (Math.abs(dy) < 3) continue;                     // under a third of a device pixel: leave it
-    for (const m of cl) writes.push({ el: m.el, dy });
+    for (const m of cl) {
+      const s = shifts.get(m.el);
+      if (s) s.dy = dy; else shifts.set(m.el, { dx: 0, dy });
+    }
   }
 
   /* ── writes ── */
-  for (const { el, dy } of writes) {
-    el.setAttribute('transform', `translate(0, ${dy})`);
-    el.setAttribute('data-hkl-vshift', String(dy));
+  for (const [el, { dx, dy }] of shifts) {
+    el.setAttribute('transform', `translate(${dx}, ${dy})`);
+    if (dy) el.setAttribute('data-hkl-vshift', String(dy));
+    if (dx) el.setAttribute('data-hkl-hshift', String(dx));
   }
 }

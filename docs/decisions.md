@@ -6609,3 +6609,46 @@ The 09-04 `staffDef@spacing="18"` governed the distance between the staff LINES,
 
 ### Section breaks: courtesy meter only; the restart wrapper is gone
 Restating the instrument names at a movement start is unacceptable (Max) — "I just asked for the courtesy signatures to be removed, nothing more". Probed every way to keep the restart without labels (empty `<label>`s on the restart scoreDef, bare staffDefs, empty `<labelAbbr>` in the head): Verovio's restart always draws the full labels. So `notation/sectionRestart.ts` now only blanks the courtesy METER (`meter.form="invis"` + layer-level meterSig, which never needed the restart); the courtesy KEY stays until Verovio grows a switch (upstream: two lines in `SetCautionaryScoreDefFunctor::VisitStaff`). The alternative — hiding the key courtesy in the DOM — leaves its allocated width as a blank before the barline and was not taken; Max can choose it.
+
+## 2026-09-05 — Movement breaks via restart + label replacement; unbroken barlines; text marks inside their measure
+
+**Section restarts** (`notation/sectionRestart.ts`, `applySectionRestarts`): the
+restart wrapper removed in the morning is back, now with the instrument-name
+problem solved instead of accepted. Options weighed with Max: (a) a full
+restart — rejected, restates names and indents; (b) patching Verovio — a fork
+to carry on every update; (c) deleting the courtesy from the SVG — leaves its
+width in the justified line; (d) a blank stub measure after the double bar on
+the new line, removed post-render — borrows the courtesy-stub machinery but
+leaves its width too; (e) a restart whose labels Verovio is told to drop —
+Max's preference "if we can do it". (e) is possible in 6.3.0 through
+`ScoreDef::ReplaceDrawingLabels` (see lessons.md for the three traps). The
+recipe: head staffGrps get `@n`; the boundary scoreDef is wrapped in a
+childless restart section; a second plain section carries a second scoreDef
+with `<staffGrp n><label>ABBR</label><staffDef n=firstStaff/>` per labelled
+group. The restart system then draws what every continuation system draws
+(today: no labels — Composer's instruments have no `<labelAbbr>`), with the
+same indent, and no courtesy key or meter precedes it. Saved document unchanged.
+
+**Barlines never break** (`render/barlines.ts`): Verovio's draw-time erasure of
+`bar.thru` barlines under marks is refilled from the barline's own segments,
+draw-only, only inside grand-staff gaps the barline actually enters. Chosen
+over hiding the marks from Verovio (impossible: the erasure has no option) and
+over leaving the mark where Verovio put it (the vertical centring is the point).
+
+**Text marks stay inside their own measure** (`render/textlayout.ts`): a
+`<dynam>`/`<dir>` whose box overlaps one of its measure's barlines is moved to
+the near side, half a unit clear, before the vertical rules run — the mark is
+encoded in that measure, so it is drawn in it; a mark at tstamp beats+1 lands
+just before the barline, where Finale's `relative-x` nudge had it. Applied to
+every text mark, not only those inside a grand staff (Max: nothing sits on a
+measure boundary); hairpins exempt; a mark wider than its measure stays put.
+Import-time normalisation (moving a beats+1 dynamic to the next measure's
+tstamp 1) was considered and NOT done — it changes the document and would
+stack the mark on any downbeat text (sonata m. 90 "cresc.").
+
+Verified: typecheck/build/boundaries; `pnpm test:composer` 392/392 (2 new
+fixtures + `engr_sectionBreakNoCourtesySigs` tightened to reject a courtesy
+key); sonata whole-document inventory with every page mounted — 0 erased
+stretches, 0 marks on barlines, 2 fills, 7 horizontal nudges, all three
+movement boundaries courtesy-free with continuation indent, 0 Verovio warnings
+on a full re-render.

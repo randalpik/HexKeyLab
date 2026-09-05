@@ -18,6 +18,7 @@ import {
 } from './linebreaks.js';
 import { PageSystemSplicer, type PageSpliceCtx, type SpliceRequest } from './pagesplice.js';
 import { layoutBelowStaffText } from './textlayout.js';
+import { repairBarLines } from './barlines.js';
 import type { ComposerModel } from '../model/index.js';
 
 function indexCheckEnabled(): boolean {
@@ -2644,6 +2645,9 @@ class Renderer {
       for (const inst of this.lastModel?.instruments() ?? []) {
         if (inst.staffNs.length === 2) pairs.push([inst.staffNs[0], inst.staffNs[1]]);
       }
+      /* Refill the barline stretches Verovio erased under those marks
+         (render/barlines.ts) BEFORE the marks move: a barline never breaks. */
+      for (const el of targets) repairBarLines(el, pairs);
       const dirGapUser = DIR_GAP_PER_UNIT * CRISP_PRESETS[this.zoom].unit;
       for (const el of targets) layoutBelowStaffText(el, { grandPairs: pairs, dirGapUser });
     }

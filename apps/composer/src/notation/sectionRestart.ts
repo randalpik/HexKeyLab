@@ -1,24 +1,47 @@
-// No courtesy METER signature across a section (movement) break (2026-09-04/05).
+// Section (movement) breaks without courtesy signatures or restated names.
 //
-// Verovio draws a cautionary key + meter signature at the end of a system
-// whenever the next system starts with a new <scoreDef> — right for a
-// mid-movement change, wrong at a movement boundary, where the new movement
-// simply begins in its own key and meter (backlog, Opinionation). Verovio has
-// no option for this. What the 6.3 source and the probes allow:
-//   • `@meter.form="invis"` on the scoreDef blanks EVERY meter drawn from it —
-//     the courtesy included — while a layer-level <meterSig> in the section's
-//     first measure draws a visible meter exactly where the scoreDef's would sit
-//     (after clef + key) and does not leak into later systems or later meter
-//     changes (probed). So the METER courtesy is gone.
-//   • The KEY courtesy has no such switch: `keysig.visible` is ignored, a
-//     layer-level <keySig> does not persist to later systems, and the only
-//     mechanism that drops it — `<section restart="true">` — also redraws the
-//     full instrument labels and indents the system like the score's first
-//     (Verovio's restart semantics; a restart scoreDef carrying empty labels,
-//     bare staffDefs, or empty <labelAbbr> in the head all still label — probed
-//     2026-09-05). Max ruled the restated names unacceptable, so the restart
-//     wrapper was removed the same day and the key courtesy stays until Verovio
-//     grows a switch (two lines in `SetCautionaryScoreDefFunctor::VisitStaff`).
+// Verovio draws a cautionary key + meter at the end of a system whenever the
+// next system starts with a new <scoreDef> — right for a mid-movement change,
+// wrong at a movement boundary, where the new movement simply begins in its own
+// key and meter (backlog, Opinionation). There is no option. What Verovio 6.3
+// allows (source + live probes, 2026-09-04/05):
+//   • METER: `@meter.form="invis"` on the scoreDef blanks EVERY meter drawn from
+//     it — the courtesy included — while a layer-level <meterSig> in the
+//     section's first measure draws a visible meter exactly where the
+//     scoreDef's would sit (after clef + key) and does not leak into later
+//     systems or later meter changes.
+//   • KEY: only `<section restart="true">` drops the courtesy — the scoreDef
+//     must be the FIRST child of the restart section, hence the content-less
+//     nested wrapper below (Verovio's milestone conversion makes the section
+//     start the scoreDef's previous sibling and leaves every measure a direct
+//     child of the outer section, which the break/splice pipeline assumes).
+//     `SetCautionaryScoreDefFunctor(…, restart)` disables the key courtesy for
+//     every staff the restart scoreDef does NOT name, and a restart redraws
+//     clef + key + meter at its first measure.
+//   • LABELS: a restart also draws the FULL instrument labels (indenting the
+//     system like the score's first) — but `ScoreDefSetCurrentFunctor::
+//     VisitStaffGrp` replaces the drawing labels from any <staffGrp> child of
+//     the restart scoreDef whose `@n` matches a head staffGrp
+//     (`ScoreDef::ReplaceDrawingLabels`), and `View::DrawLabels` draws nothing
+//     and reserves no width for an empty label. So each labelled head group
+//     gets an `@n` (render clone only) and the restart scoreDef a matching
+//     <staffGrp n><label>ABBR</label> — the abbreviation the continuation
+//     systems show, or nothing — so the restart system is indistinguishable
+//     from any other continuation system. Two constraints shape WHERE that
+//     staffGrp lives: the loader insists on a <staffDef> per staffGrp, and a
+//     staffDef that names no real staff (or has no `@n`) draws a Verovio
+//     console warning — while a staffDef naming a real staff inside the
+//     RESTART scoreDef re-enables that staff's key courtesy (the restart's
+//     suppression skips every staff the restart scoreDef names). And
+//     `ScoreDef::IsSectionRestart` is "the nearest preceding section
+//     milestone has @restart", so ANY scoreDef after the restart start counts
+//     as a restart until another section milestone intervenes. Hence the
+//     labels go in a SECOND scoreDef inside a second, plain nested <section>:
+//     not a restart (no courtesy from its staffDefs, which name the group's
+//     real first staff and carry nothing to replace), yet `m_restart` — set by
+//     the first scoreDef and cleared only at the next measure — is still on
+//     when its staffGrps are visited, so the labels are replaced. All probed
+//     against the live 6.3.0 toolkit with console capture.
 // Runs on the render clone only; the saved document keeps its flat
 // `scoreDef > sb > measure` shape.
 
@@ -26,29 +49,91 @@ const MEI_NS = 'http://www.music-encoding.org/ns/mei';
 
 const BREAKISH = new Set(['sb', 'pb', 'scoreDef']);
 
-/** Blank the courtesy meter at every section boundary whose scoreDef changes
- *  the meter, drawing the visible meter from layer 1 of the first measure
- *  instead. Idempotent. */
-export function blankSectionCourtesyMeters(doc: Document): void {
+interface LabelledGroup { n: string; abbr: string; staffN: string }
+
+const directChild = (el: Element, name: string): Element | undefined =>
+  Array.from(el.children).find((c) => c.localName === name);
+
+/** The head scoreDef's staffGrps that carry a <label>, each guaranteed an `@n`
+ *  (assigned on the clone when absent), with the abbreviation the continuation
+ *  systems draw ('' when there is no <labelAbbr>) and the `@n` of the group's
+ *  first real staff. */
+function labelledGroups(doc: Document): LabelledGroup[] {
+  const head = doc.querySelector('score > scoreDef') ?? doc.querySelector('scoreDef');
+  if (!head) return [];
+  const grps = Array.from(head.querySelectorAll('staffGrp'));
+  const used = new Set(grps.map((g) => g.getAttribute('n')).filter((n): n is string => !!n));
+  const out: LabelledGroup[] = [];
+  let seq = 1;
+  for (const g of grps) {
+    const label = directChild(g, 'label');
+    if (!label || !(label.textContent ?? '').trim()) continue;
+    let n = g.getAttribute('n');
+    if (!n) {
+      while (used.has(`hkl${seq}`)) seq++;
+      n = `hkl${seq++}`;
+      used.add(n);
+      g.setAttribute('n', n);
+    }
+    const staffN = Array.from(g.querySelectorAll('staffDef')).map((d) => d.getAttribute('n')).find((v) => !!v);
+    if (!staffN) continue;
+    out.push({ n, abbr: (directChild(g, 'labelAbbr')?.textContent ?? '').trim(), staffN });
+  }
+  return out;
+}
+
+/** Wrap every section-boundary scoreDef that changes key or meter in a restart
+ *  section carrying continuation labels, and blank + re-draw its meter (see
+ *  module comment). Idempotent. */
+export function applySectionRestarts(doc: Document): void {
+  let groups: LabelledGroup[] | null = null;
   for (const meas of Array.from(doc.querySelectorAll('measure[data-hkl-section-title]'))) {
     /* The section-level node carrying this measure (an <ending> may wrap it). */
     let top: Element = meas;
     while (top.parentElement && top.parentElement.localName !== 'section') top = top.parentElement;
+    const parent = top.parentElement;
+    if (!parent) continue;
     /* The run of breaks/scoreDef directly before it — the model emits either
        `scoreDef > sb > measure` or `sb > scoreDef > measure`. */
     let sd: Element | null = null;
+    let runStart: Element = top;
     let n = top.previousElementSibling;
     while (n && BREAKISH.has(n.localName)) {
       if (n.localName === 'scoreDef') { if (sd) break; sd = n; }
+      runStart = n;
       n = n.previousElementSibling;
     }
     if (!sd) continue;
+    const hasKey = sd.hasAttribute('key.sig');
     const hasMeter = sd.hasAttribute('meter.count') || sd.hasAttribute('meter.unit') || sd.hasAttribute('meter.sym');
+    if (!hasKey && !hasMeter) continue;
+    const wrapper = doc.createElementNS(MEI_NS, 'section');
+    wrapper.setAttribute('restart', 'true');
+    parent.insertBefore(wrapper, runStart);
+    wrapper.appendChild(sd);
+    if (!groups) groups = labelledGroups(doc);
+    if (groups.length) {
+      const labelSection = doc.createElementNS(MEI_NS, 'section');
+      const labelDef = doc.createElementNS(MEI_NS, 'scoreDef');
+      for (const { n: grpN, abbr, staffN } of groups) {
+        const grp = doc.createElementNS(MEI_NS, 'staffGrp');
+        grp.setAttribute('n', grpN);
+        const label = doc.createElementNS(MEI_NS, 'label');
+        if (abbr) label.textContent = abbr;
+        grp.appendChild(label);
+        const def = doc.createElementNS(MEI_NS, 'staffDef');
+        def.setAttribute('n', staffN);
+        grp.appendChild(def);
+        labelDef.appendChild(grp);
+      }
+      labelSection.appendChild(labelDef);
+      wrapper.after(labelSection);
+    }
     if (!hasMeter || sd.getAttribute('meter.form') === 'invis') continue;
     sd.setAttribute('meter.form', 'invis');
     for (const staff of Array.from(meas.children)) {
       if (staff.localName !== 'staff') continue;
-      const layer = Array.from(staff.children).find((c) => c.localName === 'layer');
+      const layer = directChild(staff, 'layer');
       if (!layer) continue;
       const ms = doc.createElementNS(MEI_NS, 'meterSig');
       const count = sd.getAttribute('meter.count'); if (count) ms.setAttribute('count', count);
