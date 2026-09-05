@@ -1671,12 +1671,32 @@ $('btnExportXml')?.addEventListener('click', () => {
 $('btnExportPdf')?.addEventListener('click', async () => {
   setStatus('Rendering PDF…', 'info');
   hideExportMenu();
+  /* The PDF is the page view's DOM, page for page (save.ts downloadPdf,
+     2026-09-05). Scroll view has no pages, so it exports FROM page view:
+     switched to for the export and back afterwards — the view-switch stash
+     makes both directions cheap, and the deferred render is awaited. */
+  const prevMode = renderer.getViewMode();
   try {
-    await downloadPdf(model, renderer.toolkit(), () => reRender(), viewStavesFilter());
+    if (prevMode !== 'page') {
+      renderer.setViewMode('page');
+      reRender();
+      await new Promise<void>((resolve) => afterRender(resolve));
+    }
+    await downloadPdf(renderer.mountAllPages());
     setStatus('Exported .pdf.', 'info');
   } catch (e) {
     console.error('[composer] pdf export failed', e);
     setStatus('PDF export failed: ' + (e as Error).message, 'error');
+  } finally {
+    if (prevMode !== 'page') {
+      renderer.setViewMode(prevMode);
+      reRender();
+      afterRender(() => maybeScrollMeasureIntoView(visualCursorMeasure()));
+    } else {
+      /* Every page is mounted now; let the mount window evict what the view
+         does not need — off the edit path, as always. */
+      renderer.scheduleMountWindow(visualCursorMeasure());
+    }
   }
 });
 

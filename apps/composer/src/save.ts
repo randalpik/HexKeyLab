@@ -10,9 +10,7 @@
 import { ComposerModel } from './model/index.js';
 import type { Voice, Duration, Dots, InstrumentEntry } from './model/index.js';
 import { noteAlter } from '@hkl/notation/accidentals.js';
-import { injectHejiGlyphs } from '@hkl/notation/heji-render.js';
-import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
-import { DYNAM_DIST, DEFAULT_BOTTOM_MARGIN } from './render/render.js';
+import { applyNotationTheme } from '@hkl/notation/verovio.js';
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
 
@@ -562,33 +560,11 @@ export function downloadMusicXml(model: ComposerModel): void {
 
 /* ── .pdf export ─────────────────────────────────────────────────────────── */
 
-/* Verovio US-Letter geometry in 1/100 mm (mirrors render.ts PAGE_GEOM).
- * 8.5 × 11 in = 2159 × 2794; 0.55 in margin = 140. We force these for
- * export regardless of the user's current view mode so the PDF is always
- * paginated. The on-screen view is restored by the `restore` callback. */
-const PDF_EXPORT_OPTS = {
-  pageWidth: 2159,
-  pageHeight: 2794,
-  pageMarginTop: 140,
-  pageMarginBottom: 140,
-  pageMarginLeft: 140,
-  pageMarginRight: 140,
-  breaks: 'auto',
-  header: 'auto',
-  footer: 'none',
-  scale: 100,
-  /* Same dynamics clearance and overflow margin as the screen (render.ts
-     BASE_OPTIONS). */
-  dynamDist: DYNAM_DIST,
-  defaultBottomMargin: DEFAULT_BOTTOM_MARGIN,
-  /* Mirror render.ts's set so the PDF SVG carries the attributes the export
-     passes act on — esp. `rest@visible` (→ data-visible) so user-hidden rests
-     can be stripped, matching the on-screen CSS that hides them. */
-  svgAdditionalAttribute: ['note@data-q', 'note@data-r', 'note@color', 'note@hkl-paren-caut', 'rest@data-tuplet-placeholder', 'rest@visible', 'accid@type',
-    'staff@n', 'dynam@staff', 'dynam@place', 'dir@staff', 'dir@place', 'hairpin@staff', 'hairpin@place'],
-};
-
-/* Letter in PDF points (1 in = 72 pt). */
+/* The paper is always US Letter, in PDF points (1 in = 72 pt). The document's
+ * page size (`pageScale`) scales the page RECTANGLE relative to the notation —
+ * how much score sits on a sheet — never the sheet itself, so a resized page
+ * still prints on Letter; its SVG viewBox keeps Letter's aspect and `meet`
+ * fits it. */
 const LETTER_PT_W = 612;
 const LETTER_PT_H = 792;
 
@@ -679,37 +655,56 @@ function inlineComputedStroke(svg: SVGSVGElement): void {
   }
 }
 
-export async function downloadPdf(
-  model: ComposerModel,
-  tk: VerovioToolkit,
-  restore: () => void,
-  viewStaves?: number[] | null,
-): Promise<void> {
-  /* Lazy-load so the PDF stack only lands in the bundle on first export. We use
-     PDFKit (not jsPDF) because it embeds the Bravura OTF (CFF) via fontkit —
-     jsPDF supports only TrueType-`glyf` and silently drops Bravura, so HEJI
-     accidentals wouldn't render. svg-to-pdfkit draws Verovio's SVG, including
-     the injected HEJI <text>, into the PDFKit doc as vectors + embedded glyphs.
-     See decisions.md "Composer PDF export uses PDFKit, not jsPDF". */
+/** Export the page view's DOM as a vector PDF, page for page (2026-09-05).
+ *
+ *  `pages` are the LIVE page SVGs (Renderer.mountAllPages, in page order).
+ *  Every pass that shapes the on-screen page — the render-clone conventions,
+ *  the crisp post pass, the below-staff text layout, placement, the
+ *  header/footer/section injections, the page-fit repair — has already run on
+ *  them, so the PDF is the screen by construction: nothing here re-engraves,
+ *  and the live toolkit's layout is left alone. (The previous export re-loaded
+ *  the document under its own fixed options and re-ran a copy of the three
+ *  passes that existed in June; everything added since — line-break and
+ *  vertical ownership, dynamics centring, balancing, the injected header /
+ *  footer / section titles, the page-size factor — never reached it.)
+ *
+ *  Each page is CLONED into an attached off-screen host and normalized for
+ *  print there (normalizePageForPrint): svg-to-pdfkit reads presentation
+ *  attributes and inline style only, so what the screen gets from stylesheets
+ *  is inlined from computed style, which needs layout — hence attached.
+ *
+ *  PDFKit (not jsPDF) because it embeds the Bravura OTF (CFF) via fontkit —
+ *  jsPDF supports only TrueType-`glyf` and silently drops Bravura, so HEJI
+ *  accidentals wouldn't render. svg-to-pdfkit draws the SVG, including the
+ *  injected HEJI <text>, as vectors + embedded glyphs. See decisions.md
+ *  "Composer PDF export uses PDFKit, not jsPDF". Lazy-loaded so the PDF stack
+ *  only lands in the bundle on first export. */
+export async function downloadPdf(pages: SVGSVGElement[]): Promise<void> {
+  if (!pages.length) throw new Error('nothing to export — no rendered pages');
+  /* Snapshot every page NOW, before the first await: the mount window may
+     evict far pages (innerHTML = '') on the next idle tick, and the export
+     must be one consistent picture of the screen at the moment it was asked
+     for — not whatever the evictor left by the time the PDF stack had loaded. */
+  const clones = pages.map((p) => p.cloneNode(true) as SVGSVGElement);
   const PDFDocument = (await import('pdfkit/js/pdfkit.standalone.js')).default;
   const SVGtoPDF = (await import('svg-to-pdfkit')).default;
 
-  /* HEJI glyph injection measures BravuraText advances via getComputedTextLength,
-     which only works on a laid-out (in-document) element — so each page SVG is
-     parsed into an off-screen-but-attached host before injection. */
   const host = document.createElement('div');
   host.style.cssText = 'position:absolute; left:-100000px; top:0; visibility:hidden';
   document.body.appendChild(host);
-
-  const savedOpts = tk.getOptions();
   try {
-    const otf = await fetch('/BravuraText.otf').then((r) => r.arrayBuffer());
-
-    tk.setOptions(PDF_EXPORT_OPTS);
-    /* WYSIWYG with the on-screen render: same HEJI prep + the toolbar's
-       instrument-view selector (single-part view prints just that part). */
-    tk.loadData(model.serialize({ hejiEnabled: model.getHejiEnabled() }, viewStaves));
-
+    /* The font must come from the PROXY origin (localhost:5170): on an app's
+       own dev port the root path 404s (its public assets live under its base),
+       fontkit then rejects the HTML body, and svg-to-pdfkit drops every
+       BravuraText run with nothing but a console warning — a PDF with no
+       accidentals at all (2026-09-05, lessons.md). Refuse loudly instead. */
+    const otfRes = await fetch('/BravuraText.otf');
+    const otf = await otfRes.arrayBuffer();
+    const magic = String.fromCharCode(...new Uint8Array(otf.slice(0, 4)));
+    if (!otfRes.ok || magic !== 'OTTO') {
+      throw new Error('BravuraText.otf did not load from this origin (' + otfRes.status + ', "' + magic
+        + '") — accidentals would be missing. Run Composer through the dev proxy (localhost:5170/composer/).');
+    }
     const doc = new PDFDocument({ size: 'letter', margin: 0, autoFirstPage: false });
     /* PDFKit's doc is itself a readable stream — collect its chunks into a Blob
        directly (avoids blob-stream, which references a Node `global`). */
@@ -719,37 +714,78 @@ export async function downloadPdf(
       doc.on('end', () => resolve());
     });
     doc.registerFont('Bravura', otf);
+    /* svg-to-pdfkit reports what it could not draw (a font it failed to open,
+       an unparsable path) through this callback and otherwise continues
+       silently; without it the default is console.warn, easy to miss. */
+    const warnings: string[] = [];
 
-    const pageCount = Math.max(1, tk.getPageCount());
-    for (let i = 1; i <= pageCount; i++) {
-      host.innerHTML = tk.renderToSVG(i, {});
-      const svg = host.firstElementChild as SVGSVGElement | null;
-      if (!svg) throw new Error('Verovio produced no SVG for page ' + i);
-      /* Match the on-screen render pipeline (render.ts): HEJI glyph swap →
-         non-notehead black → noteheads on top. */
-      removeHiddenRests(svg);
-      injectHejiGlyphs(host);
-      forceNonNoteheadBlack(svg);
-      liftNoteheadsAbove(svg);
-      /* Inline the embedded-style stroke so svg-to-pdfkit draws staff lines /
-         barlines / stems (must run AFTER forceNonNoteheadBlack so the resolved
-         stroke reflects its color overrides). */
-      inlineComputedStroke(svg);
+    for (const svg of clones) {
+      host.replaceChildren(svg);
+      normalizePageForPrint(host, svg);
       doc.addPage({ size: 'letter', margin: 0 });
+      /* The root <svg>'s own width/height are the screen's device pixels
+         (pinExactScale); the paper size passed here is the viewport instead,
+         and the nested definition-scale viewBox maps the page onto it. */
       SVGtoPDF(doc, svg, 0, 0, {
         width: LETTER_PT_W,
         height: LETTER_PT_H,
         preserveAspectRatio: 'xMinYMin meet',
         fontCallback: pdfFontFor,
+        warningCallback: (w: string) => warnings.push(w),
       });
     }
+    if (warnings.length) console.error('[composer] pdf export: svg-to-pdfkit reported ' + warnings.length + ' problem(s):', warnings.slice(0, 20));
     doc.end();
     await ended;
     downloadBlob('hkc-' + isoStamp() + '.pdf', new Blob(chunks, { type: 'application/pdf' }));
   } finally {
     document.body.removeChild(host);
-    /* getOptions() returns a JSON string; parse before restoring. */
-    try { tk.setOptions(JSON.parse(savedOpts)); } catch { /* ignore */ }
-    restore();
+  }
+}
+
+/** Print normalization of one page clone sitting in an attached `host`, in
+ *  order. Exported for the test suite. */
+export function normalizePageForPrint(host: HTMLElement, svg: SVGSVGElement): void {
+  /* Light theme regardless of the screen theme. Dark is two things: the
+     `data-notation-theme` tag — on the container, and on every system a splice
+     imported — whose stylesheet recolors every stroke and fill and WOULD apply
+     in the host (the tag travels with the clone; the computed stroke inlined
+     below would come out light ink); and the inline light-source notehead
+     colors, which applyNotationTheme('light') strips. */
+  for (const el of [svg as Element].concat(Array.from(svg.querySelectorAll('[data-notation-theme]')))) {
+    el.removeAttribute('data-notation-theme');
+  }
+  applyNotationTheme(host, 'light');
+  /* Rests the screen hides by CSS; non-notehead glyphs the screen blacks by
+     CSS; then what Verovio's own stylesheet supplies — the stroke (computed
+     AFTER the color overrides so it reflects them) and text weight/slant. */
+  removeHiddenRests(svg);
+  forceNonNoteheadBlack(svg);
+  inlineComputedStroke(svg);
+  inlineComputedTextStyle(svg);
+}
+
+/* Verovio sets text weight and slant through its embedded stylesheet as well —
+ * `#<svgid> g.ending, g.fing, g.reh, g.tempo {font-weight:bold}`, `g.dir,
+ * g.dynam, g.mNum {font-style:italic}`, `g.label {font-weight:normal}` — never
+ * as attributes on the <text>/<tspan>. svg-to-pdfkit does not apply those
+ * rules, so every tempo printed regular (Max, 2026-09-05: bold in the app, not
+ * in the export — the brightest spot on the sonata heatmap and its one
+ * qualitative divergence) and every expressive text upright. Resolve the
+ * COMPUTED weight/style of every text run — which already accounts for
+ * ancestors and for Verovio's own `font-weight`/`font-style` attributes — onto
+ * the element as presentation attributes; svg-to-pdfkit reads them (with
+ * inheritance) when it asks `fontCallback` for the face. Attached host, like
+ * the stroke pass. */
+function inlineComputedTextStyle(svg: SVGSVGElement): void {
+  for (const el of Array.from(svg.querySelectorAll('text, tspan'))) {
+    const cs = getComputedStyle(el);
+    if (!el.getAttribute('font-weight')) {
+      const w = parseInt(cs.fontWeight, 10);
+      el.setAttribute('font-weight', cs.fontWeight === 'bold' || w >= 600 ? 'bold' : 'normal');
+    }
+    if (!el.getAttribute('font-style')) {
+      el.setAttribute('font-style', cs.fontStyle === 'italic' || cs.fontStyle === 'oblique' ? 'italic' : 'normal');
+    }
   }
 }

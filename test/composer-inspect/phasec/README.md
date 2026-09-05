@@ -35,6 +35,18 @@ node test/composer-inspect/phasec/runner.mjs test/composer-inspect/phasec/batter
   edit rides its 40 s waitFor timeout — functional but slow; the C-B
   battery below waits on the busy badge instead.)
 
+- **pdf-wysiwyg.mjs** (2026-09-05) — standalone (its own Chromium; NOT a
+  runner.mjs probe file): imports the sonata, exports the PDF from the live
+  page DOM (`renderer.mountAllPages()` → `downloadPdf`), saves `sonata.pdf`,
+  takes clipped screenshots of the chosen live pages, and prints page-count
+  parity (DOM / exported / PDF page tree) + mount and export timings. Compare
+  a page with `pdftoppm -r 254 -f N -l N -png -singlefile sonata.pdf pdf-pN`
+  and `test/composer-test/heatmap.py live-pN.png pdf-pN.png heat-pN.png`
+  (254 dpi is the screen's 2159 px over 8.5 in at zoom 100). Expect edge
+  antialiasing only; `Times, serif` text differs in width (PDFKit's built-in
+  Times vs the browser's substitute serif — the known residual).
+  `node test/composer-inspect/phasec/pdf-wysiwyg.mjs <outDir> [1,2,5]`.
+
 Phase C-B probes (2026-08-30, findings baked into
 `docs/composer-page-splice-design.md` → "The system splice"; the v1 account is
 in decisions.md, 2026-08-30):

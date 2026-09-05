@@ -20,6 +20,7 @@ declare module 'svg-to-pdfkit' {
     preserveAspectRatio?: string;
     assumePt?: boolean;
     fontCallback?: (family: string, bold: boolean, italic: boolean) => string;
+    warningCallback?: (message: string) => void;
   }
   function SVGtoPDF(doc: unknown, svg: string | Element, x?: number, y?: number, options?: SVGtoPDFOptions): void;
   export default SVGtoPDF;

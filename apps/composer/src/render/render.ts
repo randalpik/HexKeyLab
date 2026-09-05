@@ -1301,6 +1301,30 @@ class Renderer {
     }
   }
 
+  /** Mount EVERY page and return the page SVGs in page order (PDF export,
+   *  2026-09-05). The export is the page view's own DOM, page for page — the
+   *  same mount path as a scroll-in (mountPage: Verovio SVG, the post pass,
+   *  placement, the main.ts injections, the page-fit repair) — so a page held
+   *  as a placeholder must be made real first. Loops because a mount's repair
+   *  can spill a tail onto a page that did not exist before it ran; stops
+   *  when a round mounts nothing (a page whose layout failed to load stays
+   *  pending rather than spinning). Scroll view has no pages: the caller
+   *  switches to page view first. Production leaves every page mounted; the
+   *  mount window evicts them on its next idle pass. */
+  mountAllPages(): SVGSVGElement[] {
+    if (!this.container) return [];
+    if (this.viewMode === 'page' && this.pageVirt) {
+      let prev = Infinity;
+      for (;;) {
+        const pending = Array.from(this.container.querySelectorAll('.score-page.score-page-pending')) as HTMLElement[];
+        if (!pending.length || pending.length >= prev) break;
+        prev = pending.length;
+        for (const div of pending) this.mountPage(Number(div.dataset.page));
+      }
+    }
+    return Array.from(this.container.querySelectorAll('.score-page > svg')) as SVGSVGElement[];
+  }
+
   /** Page holding a measure, read from the DOM (0 when it isn't mounted).
    *  Deliberately does NOT consult the toolkit: `getPageWithElement` needs the
    *  layout loaded, which can cost ~1 s. */

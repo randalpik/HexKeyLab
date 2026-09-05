@@ -2323,9 +2323,10 @@ const PERFORMANCE = {
 
 const EXPORT = {
   /* Smoke-test: downloadPdf() should produce a Blob with the `%PDF-` magic
-   * header. Captures the blob via the URL.createObjectURL hook that
-   * downloadBlob() uses, stubbing the anchor click so no actual file
-   * download fires. The export path lazy-imports jspdf + svg2pdf.js; a
+   * header and one PDF page per rendered page. Captures the blob via the
+   * URL.createObjectURL hook that downloadBlob() uses, stubbing the anchor
+   * click so no actual file download fires. The export path lazy-imports
+   * pdfkit + svg-to-pdfkit and reads the LIVE page DOM (mountAllPages); a
    * regression in that chain (missing dep, API drift, Verovio SVG quirks)
    * surfaces here. */
   export_pdf_smoke: {
@@ -2339,6 +2340,25 @@ const EXPORT = {
         notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69,
                   colorHex: '#FF4C79', velocity: 80 }],
       });
+    `,
+  },
+
+  /* Scroll view has no pages: the toolbar export switches to page view for the
+   * export and back afterwards (main.ts btnExportPdf, 2026-09-05). Set up in
+   * scroll view through the REAL selector; the assertion presses the real
+   * button. The runner's reset returns the view to page afterwards. */
+  export_pdf_from_scroll_view: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({
+        duration: '4', dots: 0,
+        notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69,
+                  colorHex: '#FF4C79', velocity: 80 }],
+      });
+      r();
+      const sel = document.getElementById('viewModeSelect');
+      sel.value = 'scroll';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
     `,
   },
 };
@@ -5641,6 +5661,11 @@ const PHASE1 = {
       m.setHejiEnabled(true);
       m.setVoice(1); m.setCursor(0, 1);
       r();
+      /* The export reads the live page DOM, so the single-part view is the
+         REAL toolbar selector → violin (index 1), exactly as a user does. */
+      const sel = document.getElementById('viewInstrSelect');
+      sel.value = '1';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
     `,
   },
 
@@ -7354,7 +7379,7 @@ export const FIXTURE_ASSERTIONS = {
   /* Phase 5: PDF export honors the view filter (prints one part) and embeds
      the Bravura OTF via PDFKit (FontFile3) so HEJI glyphs render. */
   phase5_pdf_split_view: [
-    { name: 'downloadPdf([violin staff]) yields a %PDF- blob with an embedded font',
+    { name: 'downloadPdf of the violin-only page view yields a %PDF- blob with an embedded font',
       expr: `(async () => {
         const h = window.__hkl_composer;
         const blobs = [];
@@ -7364,8 +7389,11 @@ export const FIXTURE_ASSERTIONS = {
         HTMLAnchorElement.prototype.click = function(){};
         try {
           const mod = await import('/composer/src/save.ts');
-          const violinStaves = h.model.instruments()[1].staffNs;
-          await mod.downloadPdf(h.model, h.renderer.toolkit(), () => h.reRender(), violinStaves);
+          const pages = h.renderer.mountAllPages();
+          /* The view filter is what is on screen: one staff per system. */
+          const staves = pages.flatMap(p => [...p.querySelectorAll('g.system')].map(sy => sy.querySelectorAll('g.staff').length));
+          if (!staves.length || staves.some(n => n !== 1)) return { ok: false, detail: 'staves per system=' + staves.join(',') + ' (expected all 1)' };
+          await mod.downloadPdf(pages);
           const blob = blobs.find(b => b && b.size > 0);
           if (!blob) return { ok: false, detail: 'no blob; n=' + blobs.length };
           const bytes = new Uint8Array(await blob.arrayBuffer());
@@ -12797,6 +12825,48 @@ export const FIXTURE_ASSERTIONS = {
    * file save fires, and verifies the blob's first bytes are the PDF magic
    * header. Exercises the full jspdf + svg2pdf pipeline against a real
    * Verovio-rendered SVG with a colored note. */
+  export_pdf_from_scroll_view: [
+    { name: 'toolbar PDF export from scroll view yields a paginated PDF and returns to scroll view',
+      expr: `(async () => {
+        const h = window.__hkl_composer;
+        const blobs = [];
+        const origCreate = URL.createObjectURL;
+        URL.createObjectURL = function(b) { blobs.push(b); return 'blob:test-suppressed'; };
+        const origClick = HTMLAnchorElement.prototype.click;
+        HTMLAnchorElement.prototype.click = function() { /* no-op */ };
+        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+        try {
+          const score = document.getElementById('score');
+          if (h.renderer.getViewMode() !== 'scroll' || !score.classList.contains('view-scroll'))
+            return { ok: false, detail: 'setup did not land in scroll view: ' + h.renderer.getViewMode() + ' ' + score.className };
+          document.getElementById('btnExportPdf').click();
+          let blob = null;
+          for (let i = 0; i < 300 && !blob; i++) { await sleep(50); blob = blobs.find(b => b && b.size > 0) || null; }
+          if (!blob) return { ok: false, detail: 'no blob within 15 s' };
+          const bytes = new Uint8Array(await blob.arrayBuffer());
+          const head = String.fromCharCode.apply(null, bytes.slice(0, 5));
+          if (head !== '%PDF-') return { ok: false, detail: 'head=' + head };
+          let bin = ''; for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+          /* (No backslashes: this expr is a template literal, which would eat them.) */
+          const m = bin.match(/[/]Type [/]Pages[^]{0,120}?[/]Count ([0-9]+)/);
+          if (!m || Number(m[1]) < 1) return { ok: false, detail: 'pdf page count=' + (m && m[1]) };
+          /* The handler switches back to scroll view after the export. */
+          let back = false;
+          for (let i = 0; i < 200 && !back; i++) {
+            await sleep(50);
+            const b = document.getElementById('renderBusy');
+            back = h.renderer.getViewMode() === 'scroll' && score.classList.contains('view-scroll') && (!b || b.hidden)
+              && !!score.querySelector('svg:not(#cursorOverlay)') && !score.querySelector('.score-page');
+          }
+          if (!back) return { ok: false, detail: 'did not return to scroll view: mode=' + h.renderer.getViewMode() + ' classes=' + score.className + ' pages=' + score.querySelectorAll('.score-page').length };
+          return { ok: true, detail: 'pdfPages=' + m[1] + ' size=' + blob.size };
+        } finally {
+          URL.createObjectURL = origCreate;
+          HTMLAnchorElement.prototype.click = origClick;
+        }
+      })()` },
+  ],
+
   export_pdf_smoke: [
     { name: 'downloadPdf produces a %PDF- blob',
       expr: `(async () => {
@@ -12827,13 +12897,23 @@ export const FIXTURE_ASSERTIONS = {
         try {
           const handle = window.__hkl_composer;
           const mod = await import('/composer/src/save.ts');
-          await mod.downloadPdf(handle.model, handle.renderer.toolkit(), () => handle.reRender());
+          const pages = handle.renderer.mountAllPages();
+          await mod.downloadPdf(pages);
           const blob = blobs.find(b => b && b.size > 0);
           if (!blob) return { ok: false, detail: 'no blob captured; count=' + blobs.length };
-          const head = String.fromCharCode.apply(null, new Uint8Array(await blob.arrayBuffer()).slice(0, 5));
-          return head === '%PDF-'
-            ? { ok: true, detail: 'size=' + blob.size }
-            : { ok: false, detail: 'head=' + head + ' size=' + blob.size };
+          const bytes = new Uint8Array(await blob.arrayBuffer());
+          const head = String.fromCharCode.apply(null, bytes.slice(0, 5));
+          if (head !== '%PDF-') return { ok: false, detail: 'head=' + head + ' size=' + blob.size };
+          /* WYSIWYG, page for page: the PDF's page tree counts exactly the
+           * rendered pages (PDFKit writes its object dictionaries in clear;
+           * only streams are compressed). */
+          let bin = ''; for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+          /* (No backslashes: this expr is a template literal, which would eat them.) */
+          const m = bin.match(/[/]Type [/]Pages[^]{0,120}?[/]Count ([0-9]+)/);
+          const domPages = document.querySelectorAll('#score .score-page').length;
+          if (!m || Number(m[1]) !== pages.length || pages.length !== domPages)
+            return { ok: false, detail: 'pdf pages=' + (m && m[1]) + ' exported=' + pages.length + ' dom=' + domPages };
+          return { ok: true, detail: 'size=' + blob.size + ' pages=' + pages.length };
         } finally {
           URL.createObjectURL = origCreate;
           HTMLAnchorElement.prototype.click = origClick;
@@ -14086,6 +14166,38 @@ export const FIXTURE_ASSERTIONS = {
 
   /* ── Phase 2.3: tempo ──────────────────────────────────────────────────── */
   phase2_tempo_instant_retimes: [
+    /* PDF print normalization (save.ts normalizePageForPrint): Verovio makes a
+     * tempo bold only through its embedded stylesheet, which svg-to-pdfkit
+     * ignores — the export printed every tempo regular until 2026-09-05. The
+     * computed weight must land on the text run as font-weight="bold"; a plain
+     * run (page header) must come out "normal", not inherit bold. */
+    { name: 'print normalization inlines the tempo stylesheet bold as font-weight=bold',
+      expr: `(async () => {
+        const h = window.__hkl_composer;
+        const mod = await import('/composer/src/save.ts');
+        const pages = h.renderer.mountAllPages();
+        const live = pages.find(p => p.querySelector('g.tempo'));
+        if (!live) return { ok: false, detail: 'no g.tempo on any page' };
+        const leaf = (root, sel) => [...root.querySelectorAll(sel)].find(t => t.childElementCount === 0) || null;
+        const liveRun = leaf(live, 'g.tempo tspan');
+        if (!liveRun) return { ok: false, detail: 'no tempo text run' };
+        if (liveRun.getAttribute('font-weight')) return { ok: false, detail: 'live run already carries font-weight (premise changed)' };
+        if (getComputedStyle(liveRun).fontWeight !== '700') return { ok: false, detail: 'live tempo not bold: ' + getComputedStyle(liveRun).fontWeight };
+        const host = document.createElement('div');
+        host.style.cssText = 'position:absolute; left:-100000px; top:0; visibility:hidden';
+        document.body.appendChild(host);
+        try {
+          const clone = live.cloneNode(true);
+          host.appendChild(clone);
+          mod.normalizePageForPrint(host, clone);
+          const run = leaf(clone, 'g.tempo tspan');
+          const w = run && run.getAttribute('font-weight');
+          if (w !== 'bold') return { ok: false, detail: 'tempo run font-weight=' + w };
+          const plain = leaf(clone, 'g.pgHead tspan');
+          if (plain && plain.getAttribute('font-weight') !== 'normal') return { ok: false, detail: 'pgHead run font-weight=' + plain.getAttribute('font-weight') };
+          return { ok: true, detail: 'tempo bold; pgHead ' + (plain ? plain.getAttribute('font-weight') : 'absent') };
+        } finally { host.remove(); }
+      })()` },
     { name: 'M_1 has <tempo mm="240" tstamp≈1>',
       expr: `(() => {
         const m = window.__hkl_composer.model;
