@@ -26,6 +26,9 @@
 
 import type { ResolvedNote } from '@hkl/bridge/protocol.js';
 import { regroupBeams, readTimeSig } from '../notation/beams.js';
+import { applyInstrumentSpacing } from '../notation/instrumentSpacing.js';
+import { settleRestLocations } from '../notation/restlayout.js';
+import { applySectionRestarts } from '../notation/sectionRestart.js';
 import { decomposeBeatAlignedRests } from './restfill.js';
 import { computeAccidentalDisplay } from '../notation/accidentals.js';
 import { alterFromCount, alterFromToken, tokenFromAlter, getNoteAlter } from '@hkl/notation/accidentals.js';
@@ -524,6 +527,44 @@ function cloneRangeStructure(src: Node, outDoc: Document, loIdx: number, hiIdx: 
   return c;
 }
 
+/** Brace + `bar.thru` exactly where a grand staff is: on the root group of an
+ *  implicit two-staff document, or on each nested two-staff instrument group;
+ *  never on the root of a multi-instrument score (barlines must not run
+ *  between instruments), never on a one-staff group (Verovio draws a brace on
+ *  any group that asks, a lone staff included). Idempotent; runs on load. */
+export function normalizeStaffGroupConventions(doc: Document): void {
+  const root = doc.querySelector('scoreDef > staffGrp');
+  if (!root) return;
+  const kids = Array.from(root.children);
+  const directDefs = kids.filter((c) => c.localName === 'staffDef');
+  const nested = kids.filter((c) => c.localName === 'staffGrp');
+  const setGrand = (g: Element, grand: boolean): void => {
+    if (grand) {
+      if (!g.hasAttribute('symbol')) g.setAttribute('symbol', 'brace');
+      if (!g.hasAttribute('bar.thru')) g.setAttribute('bar.thru', 'true');
+    } else {
+      g.removeAttribute('symbol');
+      g.removeAttribute('bar.thru');
+    }
+  };
+  if (nested.length === 0) { setGrand(root, directDefs.length >= 2); return; }
+  setGrand(root, false);
+  for (const g of nested) {
+    setGrand(g, Array.from(g.children).filter((c) => c.localName === 'staffDef').length >= 2);
+  }
+}
+
+/** The render-only engraving conventions applied to a serialize clone after
+ *  every other render pass (2026-09-04): wider gaps between instruments than
+ *  inside a grand staff, rests that coincide or stand alone at their
+ *  single-layer place, and section boundaries without courtesy signatures.
+ *  Each is documented in its module; none touches the saved document. */
+function applyRenderConventions(clone: Document): void {
+  applyInstrumentSpacing(clone);
+  settleRestLocations(clone);
+  applySectionRestarts(clone);
+}
+
 export class ComposerModel {
   private doc: Document;
   private currentVoice: Voice = 1;
@@ -721,9 +762,13 @@ export class ComposerModel {
     this.currentVoice = 1;
     this.cursors = { 1: 0, 2: 0, 3: 0, 4: 0 };
     this.stripBeamsInLiveDoc();
-    /* Migrate older .hkc files that lack bar.thru on the staffGrp. */
-    const sg = this.doc.querySelector("staffGrp");
-    if (sg && !sg.hasAttribute("bar.thru")) sg.setAttribute("bar.thru", "true");
+    /* Staff-group conventions (2026-09-04): a brace + through-barlines belong
+       to a GRAND STAFF only. Older files (and the pre-fix MusicXML importer)
+       put them on the root group — which on a multi-instrument score braced
+       every staff together and ran barlines between instruments, and on a
+       solo one-staff part braced a lone staff. Also the older migration that
+       added bar.thru to the (implicit, two-staff) root. Idempotent. */
+    normalizeStaffGroupConventions(this.doc);
     /* Migrate older .hkc files that lack xml:id on <staff> (cursor.ts looks
        these up to position the empty-voice cursor on the right staff). */
     for (const staff of Array.from(this.doc.querySelectorAll("staff"))) {
@@ -818,6 +863,7 @@ export class ComposerModel {
     if (viewStaves) filterToStaves(clone, new Set(viewStaves));
     relocateInitialClefs(clone);
     regroupBeams(clone, readTimeSig(clone));
+    if (forRender) applyRenderConventions(clone);
     return new XMLSerializer().serializeToString(clone);
   }
 
@@ -859,6 +905,7 @@ export class ComposerModel {
     if (viewStaves) filterToStaves(clone, new Set(viewStaves));
     relocateInitialClefs(clone, true);   // range: first measure's leading clef lives in the out-of-range prev
     regroupBeams(clone, readTimeSig(clone));
+    applyRenderConventions(clone);
     return new XMLSerializer().serializeToString(clone);
   }
 

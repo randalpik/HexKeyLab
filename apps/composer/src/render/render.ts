@@ -17,6 +17,7 @@ import {
   scheduleIdle, MIN_FILL,
 } from './linebreaks.js';
 import { PageSystemSplicer, type PageSpliceCtx, type SpliceRequest } from './pagesplice.js';
+import { layoutBelowStaffText } from './textlayout.js';
 import type { ComposerModel } from '../model/index.js';
 
 function indexCheckEnabled(): boolean {
@@ -121,6 +122,16 @@ const PAGE_GEOM = {
  * very wide single system — roughly ~500 bars at 100% zoom (more at lower zoom)
  * before content would exceed the budget and wrap. Larger scores wrapping in
  * scroll view is a known limit to revisit if a real score hits it. */
+/** Verovio `dynamDist` (units); see BASE_OPTIONS. Exported so the PDF export
+ *  and the below-staff text layout share it. */
+export const DYNAM_DIST = 3.5;
+/** SVG user units of clearance a <dir> keeps below its staff, per Verovio
+ *  unit: the probed top of a dynamic glyph at `dynamDist` d is 80·d − 168
+ *  user units below the bottom line at unit 8 (d=3 → 72, d=4 → 152), so 3.5
+ *  puts it 112 down — 14 per unit. A staff space is 2 units (160 user units
+ *  here), so that is ~0.7 of a space. */
+export const DIR_GAP_PER_UNIT = 14;
+
 const SCROLL_GEOM = {
   pageWidth: 100_000,
   pageHeight: 60_000,
@@ -131,8 +142,21 @@ const SCROLL_GEOM = {
 };
 
 const BASE_OPTIONS = {
-  svgAdditionalAttribute: ['note@data-q', 'note@data-r', 'note@color', 'note@data-light-color', 'note@hkl-paren-caut', 'rest@data-tuplet-placeholder', 'rest@visible', 'accid@type'],
+  /* `staff@n` + the control events' `@staff`/`@place` feed the below-staff text
+     layout (render/textlayout.ts): Verovio otherwise emits g.dynam/g.dir/
+     g.hairpin with no trace of which staff they belong to. Verovio prefixes
+     each with `data-` in the SVG (`data-n`, `data-staff`, `data-place`). */
+  svgAdditionalAttribute: ['note@data-q', 'note@data-r', 'note@color', 'note@data-light-color', 'note@hkl-paren-caut', 'rest@data-tuplet-placeholder', 'rest@visible', 'accid@type',
+    'staff@n', 'dynam@staff', 'dynam@place', 'dir@staff', 'dir@place', 'hairpin@staff', 'hairpin@place'],
   footer: 'none',
+  /* Dynamics sit further below the staff than Verovio's default quarter of a
+     staff space (2026-09-04; backlog: "more space between the staff and the
+     text by default"). Verovio measures `dynamDist` (units) to the glyph's own
+     reference, and the glyph's top only starts to move past 2: probed 1→40,
+     2→40, 3→72, 4→152 SVG units below the bottom line at unit 8 (a staff
+     space is 160). 3.5 puts the top of a "p" ~0.7 of a space down. <dir>
+     ignores this option; the text-layout pass gives it the same clearance. */
+  dynamDist: DYNAM_DIST,
   /* No indentation / inter-element newlines in the SVG string (A9, 2026-09-01).
      Whitespace-only: element count and rendering are identical (`cb-svgopts.js`:
      18 055 nodes either way), but the string is ~40% smaller and the browser's
@@ -494,6 +518,16 @@ class Renderer {
   private headBottomOf(margin: Element | null): number | null {
     const hd = margin?.querySelector(':scope > g.pgHead') as SVGGraphicsElement | null;
     if (!hd) return null;
+    /* The running-header restyle (main.ts `styleRunningHeader`) records the
+       header's ORIGINAL ink bottom before it touches the text: the restyled
+       "2" reads one unit lower than Verovio's "– 2 –" (the dash glyph cells
+       differ), and that unit moved rule v2's distribution enough to flip a
+       pixel on re-placed pages while the reference — a fresh render, never
+       restyled — did not move (gated sonata sweep, 6 divergences of exactly
+       10 units, 2026-09-04). Placement must see the same header on every
+       host, so it prefers the recorded value. */
+    const kept = hd.getAttribute('data-hkl-head-bottom');
+    if (kept !== null && isFinite(Number(kept))) return Number(kept);
     try {
       const bb = hd.getBBox();
       if (!(bb.height > 0)) return null;
@@ -2204,7 +2238,7 @@ class Renderer {
     const svg = from.querySelector('svg');
     if (!svg) return null;
     const shell = svg.cloneNode(true) as Element;
-    for (const s of Array.from(shell.querySelectorAll('g.system, text.hkl-section-header, text.hkl-injected-composer, text.hkl-injected-footer, [data-selection-rect]'))) s.remove();
+    for (const s of Array.from(shell.querySelectorAll('g.system, text.hkl-section-header, text.hkl-injected-composer, text.hkl-injected-footer, text.hkl-running-title, [data-selection-rect]'))) s.remove();
     /* The page's glyph defs stay behind: `moveBlock` merges exactly the glyphs
        the transplanted systems reference (mergeGlyphDefs), so the new SVG root
        is as small as its content — its first layout is the cascade's one
@@ -2578,6 +2612,21 @@ class Renderer {
       }
     }
     st.noteheads = performance.now() - t;
+    /* Below-staff marks: centre dynamics / hairpins / expressive text between
+       the staves of a grand staff and keep <dir> text a dynamic's distance
+       below any other staff (render/textlayout.ts). Before placement measures
+       the system — a nudged <dir> under a system's last staff is the one case
+       that changes its extents — and idempotent, so a re-run on a mounted page
+       is harmless. Needs the instrument table for which staff pairs are grand
+       staves; a render before any model is known centres nothing. */
+    {
+      const pairs: Array<readonly [number, number]> = [];
+      for (const inst of this.lastModel?.instruments() ?? []) {
+        if (inst.staffNs.length === 2) pairs.push([inst.staffNs[0], inst.staffNs[1]]);
+      }
+      const dirGapUser = DIR_GAP_PER_UNIT * CRISP_PRESETS[this.zoom].unit;
+      for (const el of targets) layoutBelowStaffText(el, { grandPairs: pairs, dirGapUser });
+    }
     /* Replace tagged placeholder accidentals with BravuraText HEJI / stacked
        glyphs (+ paren <use> swaps). No-op when none are tagged. Host-wide. */
     t = performance.now();

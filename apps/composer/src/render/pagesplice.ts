@@ -1005,8 +1005,16 @@ export class PageSystemSplicer {
        and the live page's placement self-consistency are all 0 across the
        sonata (`cb-exact.js`, 338 pairs), and 317 of 338 pairs are exact
        outright. Do not raise this to hide a regression — the last three
-       proposals to widen it were each concealing a real defect. */
-    const TOL = 10;
+       proposals to widen it were each concealing a real defect.
+
+       The 1e-6 is float noise, not tolerance: a one-pixel flip arrives as
+       15259.999999999998 vs 15270 (the reference top is a quantized sum), and a
+       strict `> 10` counted that as MORE than one pixel. Measured on the sonata
+       after the 2026-09-04 layout changes (gated sweep: 3 rows, all exactly one
+       pixel, live header 252.00000763 vs reference 254 — the residual above,
+       landing on new rounding boundaries). The accepted residual is one whole
+       device pixel; this makes the comparison say so. */
+    const TOL = 10 + 1e-6;
     for (const pageEl of pageEls) {
       if (!pageEl.isConnected) continue;   // an emptied page the renderer removed
       const pno = Number(pageEl.dataset.page);

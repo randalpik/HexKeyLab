@@ -152,7 +152,7 @@ export interface DistributeOpts {
   /** Bottom of the content column in the page-margin frame (the bottom-margin
    *  line). The gap between the last system and this is one of the gaps that
    *  equalizes — which is why the running footer must live in the MARGIN, not
-   *  in the column (main.ts `FOOTER_Y`): a footer inside the column would take
+   *  in the column (main.ts `FOOTER_MARGIN_DROP`): a footer inside the column would take
    *  10 units off every page's reach and cost the sonata a page. */
   contentBottom: number;
   /** Ink bottom of the page header (page-margin frame), the top gap's origin;

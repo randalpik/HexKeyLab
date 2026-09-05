@@ -5925,6 +5925,224 @@ const CLICK = {
   },
 };
 
+/* ── Engraving conventions (2026-09-04, backlog Correctness + Opinionation) ──
+ * Each fixture pins one convention: what the document says AND what Verovio
+ * drew, so a Verovio upgrade that changes the mechanism shows up here. Every
+ * assertion lives in FIXTURE_ASSERTIONS under the same name. */
+const ENGRAVING = {
+  /* Tie stubs (<lv>) render as g.lv, which the dark theme's fill rule missed —
+     the arc stayed black on the dark surface. */
+  engr_darkTieStubFilled: {
+    setup: `
+      window.__hkl_composer.renderer.setTheme('dark');
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#055ad1', lightColorHex: '#4C96FF', velocity: 80 }], duration: '4', dots: 0 });
+      m.toggleTieOnCurrent('insert');
+      r();
+    `,
+  },
+
+  /* MusicXML import, two parts (1-staff viola + 2-staff piano): the brace and
+     the through-barlines belong to the piano group only; nothing joins the
+     instruments. Until 2026-09-04 the importer braced the ROOT group. */
+  engr_importTwoPartsBraceOnPianoOnly: {
+    setup: `
+      const A = (staves) => '<attributes><divisions>4</divisions><key><fifths>0</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time>'
+        + (staves === 2 ? '<staves>2</staves><clef number="1"><sign>G</sign><line>2</line></clef><clef number="2"><sign>F</sign><line>4</line></clef>' : '<clef><sign>C</sign><line>3</line></clef>')
+        + '</attributes>';
+      const W = (s, o, staff, voice) => '<note><pitch><step>' + s + '</step><octave>' + o + '</octave></pitch><duration>16</duration><voice>' + voice + '</voice><type>whole</type>'
+        + (staff ? '<staff>' + staff + '</staff>' : '') + '</note>';
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>Viola</part-name></score-part><score-part id="P2"><part-name>Piano</part-name></score-part></part-list>'
+        + '<part id="P1"><measure number="1">' + A(1) + W('C', 4, 0, 1) + '</measure></part>'
+        + '<part id="P2"><measure number="1">' + A(2) + W('C', 5, 1, 1) + '<backup><duration>16</duration></backup>' + W('C', 3, 2, 5) + '</measure></part>'
+        + '</score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* A solo one-staff part gets no brace at all (Verovio braces any group that
+     asks, a lone staff included). */
+  engr_importSoloStaffNoBrace: {
+    setup: `
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>Viola</part-name></score-part></part-list>'
+        + '<part id="P1"><measure number="1"><attributes><divisions>4</divisions><key><fifths>0</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>C</sign><line>3</line></clef></attributes>'
+        + '<note><pitch><step>C</step><octave>4</octave></pitch><duration>16</duration><voice>1</voice><type>whole</type></note></measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* A saved file in the OLD shape (root group braced + bar-through, nested
+     piano group bare) is normalized on load: brace + bar.thru move to the
+     grand staff. */
+  engr_legacyRootBraceNormalizedOnLoad: {
+    setup: `
+      m.addInstrument({ name: 'Viola', staffCount: 1 });
+      let legacy = m.serialize();
+      legacy = legacy.replace('<staffGrp><staffGrp symbol="brace" bar.thru="true"><label>Piano</label>', '<staffGrp symbol="brace" bar.thru="true"><staffGrp><label>Piano</label>');
+      if (!legacy.includes('<staffGrp symbol="brace" bar.thru="true"><staffGrp><label>Piano</label>')) throw new Error('legacy shape not constructed');
+      m.replaceDocument(legacy);
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* Finale's measured tremolo: two hollow beamed 32nds under a bracket-less,
+     number-less 1:8 tuplet, stems up. The importer keeps all of it (sonata
+     m. 93 drew a bracket and a "1" until 2026-09-04). */
+  engr_importMeasuredTremoloTuplet: {
+    setup: `
+      const TM = '<time-modification><actual-notes>1</actual-notes><normal-notes>8</normal-notes><normal-type>16th</normal-type></time-modification>';
+      const N = (s, o, beam, tup) => '<note><pitch><step>' + s + '</step><octave>' + o + '</octave></pitch><duration>8</duration><voice>1</voice><type>32nd</type>' + TM
+        + '<stem>up</stem><notehead filled="no">normal</notehead><beam number="1">' + beam + '</beam><beam number="2">' + beam + '</beam><beam number="3">' + beam + '</beam>'
+        + '<notations>' + tup + '</notations></note>';
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>'
+        + '<part id="P1"><measure number="1"><attributes><divisions>16</divisions><key><fifths>0</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>F</sign><line>4</line></clef></attributes>'
+        + N('D', 2, 'begin', '<tuplet bracket="no" number="1" show-number="none" type="start"/>')
+        + N('D', 3, 'end', '<tuplet number="1" type="stop"/>')
+        + '<note><rest/><duration>32</duration><voice>1</voice><type>half</type></note>'
+        + '</measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* Injected page text follows the page's REAL column at a non-default page
+     size: footer centred in the bottom margin, composer credit at the right
+     column edge. */
+  engr_pageScaleRepositionsInjectedText: {
+    setup: `
+      window.__hkl_composer.renderer.setViewMode('page');
+      m.setSubtitle('A Subtitle'); m.setFooter('Footer Text'); m.setComposer('A. Composer');
+      m.setPageScale(140);
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      r();
+    `,
+  },
+
+  /* Pages 2+: page number in the OUTER corner (even left, odd right) and the
+     title as a centred running header; page 1 keeps Verovio's title block.
+     Whole notes on a 60 % page buy three pages cheaply. */
+  engr_runningHeaderCorners: {
+    setup: `
+      window.__hkl_composer.renderer.setViewMode('page');
+      m.setTitle('Sonatina');
+      m.setPageScale(60);
+      m.setCursor(0, 1);
+      for (let i = 0; i < 110; i++) m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '1', dots: 0 });
+      r();
+    `,
+    skipCursorTrace: true,
+  },
+
+  /* Two identical rests at one moment in the two voices of a staff draw as
+     ONE rest, centred — Verovio pushed them above and below the staff. */
+  engr_identicalRestsMerge: {
+    setup: `
+      const N = (o, midi) => ({ q: 0, r: 0, pname: 'a', accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.setVoice(1); m.setCursor(0, 1);
+      m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [N(5, 81)], duration: '4', dots: 0 });
+      m.insertRestAtCursor({ duration: '2', dots: 0 });
+      m.setVoice(2); m.setCursor(0, 2);
+      m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [N(4, 60)], duration: '4', dots: 0 });
+      m.insertRestAtCursor({ duration: '2', dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* A hidden rest in the other voice must not displace a visible rest — the
+     visible one sits where it would alone. */
+  engr_hiddenRestNeutral: {
+    setup: `
+      const N = (o, midi) => ({ q: 0, r: 0, pname: 'a', accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.setVoice(1); m.setCursor(0, 1);
+      m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [N(5, 81)], duration: '4', dots: 0 });
+      m.setVoice(2); m.setCursor(0, 2);
+      m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.toggleHideRestAtCursor('insert');
+      m.insertChordAtCursor({ notes: [N(4, 60)], duration: '4', dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* A section (movement) break with a key + meter change draws NO courtesy
+     signatures at the end of the previous system; the new section starts
+     with its clef, key and (visible) meter. Render-clone only — the saved
+     document keeps its flat shape. */
+  engr_sectionBreakNoCourtesySigs: {
+    setup: `
+      window.__hkl_composer.renderer.setViewMode('page');
+      m.setCursor(0, 1);
+      for (let i = 0; i < 8; i++) m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '1', dots: 0 });
+      m.setSectionHeaderAt(4, 'II');
+      m.setKeySigAt(4, '3s', 'major');
+      m.setMeterAt(4, 3, 4);
+      m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* Between instruments the staff gap is wider than inside the piano's grand
+     staff (staffDef@spacing on each instrument's first staff, render clone). */
+  engr_instrumentGapWiderThanGrandStaff: {
+    setup: `
+      const N = (o, midi) => ({ q: 0, r: 0, pname: 'a', accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.addInstrument({ name: 'Viola', staffCount: 1 });
+      m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [N(4, 69)], duration: '1', dots: 0 });
+      m.setVoice(5); m.setCursor(0, 5); m.insertChordAtCursor({ notes: [N(4, 69)], duration: '1', dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* A dynamic under the upper staff of a grand staff is centred between the
+     two staves (the DOM pass in render/textlayout.ts). */
+  engr_dynamicCenteredInGrandStaff: {
+    setup: `
+      const N = (o, midi) => ({ q: 0, r: 0, pname: 'a', accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [N(5, 81)], duration: '1', dots: 0 });
+      m.setVoice(3); m.setCursor(0, 3); m.insertChordAtCursor({ notes: [N(2, 45)], duration: '1', dots: 0 });
+      const doc = m.getDoc(); const meas = doc.querySelector('measure');
+      const d = doc.createElementNS('http://www.music-encoding.org/ns/mei', 'dynam');
+      d.setAttribute('xml:id', 'd-test-center'); d.setAttribute('tstamp', '1'); d.setAttribute('place', 'below'); d.setAttribute('staff', '1'); d.textContent = 'p';
+      meas.appendChild(d);
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* Expressive text under a single-line instrument keeps at least the
+     dynamics' clearance from the staff. */
+  engr_dirClearanceBelowSingleStaff: {
+    setup: `
+      const N = (o, midi) => ({ q: 0, r: 0, pname: 'a', accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.addInstrument({ name: 'Viola', staffCount: 1 });
+      m.setVoice(5); m.setCursor(0, 5); m.insertChordAtCursor({ notes: [N(5, 81)], duration: '1', dots: 0 });
+      const doc = m.getDoc(); const meas = doc.querySelector('measure');
+      const MEI = 'http://www.music-encoding.org/ns/mei';
+      const d = doc.createElementNS(MEI, 'dir');
+      d.setAttribute('xml:id', 'dir-test-gap'); d.setAttribute('tstamp', '1'); d.setAttribute('place', 'below'); d.setAttribute('staff', '3');
+      const rend = doc.createElementNS(MEI, 'rend'); rend.setAttribute('fontstyle', 'italic'); rend.textContent = 'dolce'; d.appendChild(rend);
+      meas.appendChild(d);
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+  },
+};
+
 export const FIXTURES = {
   ...mapTier(EXISTING, 'fast'),
   ...mapTier(CURSOR_CONVENTION, 'fast'),
@@ -5952,6 +6170,7 @@ export const FIXTURES = {
   ...mapKbdTier(SLURS, 'full'),
   ...mapKbdTier(PHASE1, 'full'),
   ...mapKbdTier(CLICK, 'full'),
+  ...mapKbdTier(ENGRAVING, 'full'),
 };
 
 /** Fixture-specific assertions. Map fixture name → list of {name, expr}.
@@ -13799,6 +14018,253 @@ export const FIXTURE_ASSERTIONS = {
         const chord = flat.find(e => e.localName === 'chord');
         const wantIdx = flat.indexOf(chord);
         return m.getCursor(3) === wantIdx ? { ok: true } : { ok: false, detail: 'cur=' + m.getCursor(3) + ' want=' + wantIdx };
+      })()` },
+  ],
+
+  /* ── Engraving conventions (2026-09-04) ── */
+  engr_darkTieStubFilled: [
+    { name: 'the <lv> stub arc is filled with the dark-theme ink',
+      expr: `(async () => {
+        /* A render after a heavy predecessor is deferred past the runner's RAF
+           wait, so settle first, then apply the theme to whatever is rendered
+           (idempotent) — the assertion is about the CSS rule, not the timing. */
+        for (let i = 0; i < 500; i++) { const b = document.getElementById('renderBusy'); if (!b || b.hidden) break; await new Promise((r) => setTimeout(r, 20)); }
+        const R = window.__hkl_composer.renderer;
+        R.setTheme('dark'); R.applyThemeToRendered();
+        const p = document.querySelector('#score svg g.lv path');
+        const fill = p ? getComputedStyle(p).fill : null;
+        R.setTheme('light'); R.applyThemeToRendered();
+        if (!p) return { ok: false, detail: 'no g.lv rendered' };
+        return fill === 'rgb(242, 242, 242)' ? { ok: true } : { ok: false, detail: 'lv fill=' + fill };
+      })()` },
+  ],
+  engr_importTwoPartsBraceOnPianoOnly: [
+    { name: 'root group bare; piano group braced + bar.thru; viola group bare',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const root = doc.querySelector('scoreDef > staffGrp');
+        const nested = [...root.children].filter(c => c.localName === 'staffGrp');
+        if (root.hasAttribute('symbol') || root.hasAttribute('bar.thru')) return { ok: false, detail: 'root symbol=' + root.getAttribute('symbol') + ' bar.thru=' + root.getAttribute('bar.thru') };
+        if (nested.length !== 2) return { ok: false, detail: 'nested=' + nested.length };
+        const [vla, pno] = nested;
+        if (vla.hasAttribute('symbol') || vla.hasAttribute('bar.thru')) return { ok: false, detail: 'viola group symbol=' + vla.getAttribute('symbol') };
+        if (pno.getAttribute('symbol') !== 'brace' || pno.getAttribute('bar.thru') !== 'true') return { ok: false, detail: 'piano symbol=' + pno.getAttribute('symbol') + ' bar.thru=' + pno.getAttribute('bar.thru') };
+        return { ok: true };
+      })()` },
+    { name: 'one brace drawn; barlines do not run between viola and piano',
+      expr: `(() => {
+        const sys = document.querySelector('#score g.system');
+        if (!sys) return { ok: false, detail: 'no system' };
+        const braces = sys.querySelectorAll('g.grpSym').length;
+        if (braces !== 1) return { ok: false, detail: 'grpSym count=' + braces };
+        const rows = {};
+        for (const st of sys.querySelector('g.measure').querySelectorAll(':scope > g.staff')) {
+          const ys = [...st.querySelectorAll(':scope > path')].map(p => +(p.getAttribute('d').match(/M\\S+ (\\S+)/)[1]));
+          rows[st.getAttribute('data-n')] = { top: Math.min(...ys), bot: Math.max(...ys) };
+        }
+        if (!rows[1] || !rows[2] || !rows[3]) return { ok: false, detail: 'rows=' + JSON.stringify(rows) };
+        let joinsInstruments = false, joinsPiano = false;
+        for (const p of sys.querySelectorAll('g.barLine path, g.barLineAttr path')) {
+          const mt = (p.getAttribute('d') || '').match(/M\\S+ (\\S+) L\\S+ (\\S+)/);
+          if (!mt) continue;
+          const y1 = Math.min(+mt[1], +mt[2]), y2 = Math.max(+mt[1], +mt[2]);
+          if (y1 <= rows[1].bot + 1 && y2 >= rows[2].top - 1) joinsInstruments = true;
+          if (y1 <= rows[2].bot + 1 && y2 >= rows[3].top - 1) joinsPiano = true;
+        }
+        if (joinsInstruments) return { ok: false, detail: 'a barline spans viola → piano' };
+        if (!joinsPiano) return { ok: false, detail: 'no barline spans the piano grand staff' };
+        return { ok: true };
+      })()` },
+  ],
+  engr_importSoloStaffNoBrace: [
+    { name: 'no brace on a solo single-staff part',
+      expr: `(() => {
+        const root = window.__hkl_composer.model.getDoc().querySelector('scoreDef > staffGrp');
+        if (root.hasAttribute('symbol')) return { ok: false, detail: 'root symbol=' + root.getAttribute('symbol') };
+        const n = document.querySelectorAll('#score g.grpSym').length;
+        return n === 0 ? { ok: true } : { ok: false, detail: 'grpSym count=' + n };
+      })()` },
+  ],
+  engr_legacyRootBraceNormalizedOnLoad: [
+    { name: 'brace + bar.thru moved from the root to the piano group on load',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const root = doc.querySelector('scoreDef > staffGrp');
+        const nested = [...root.children].filter(c => c.localName === 'staffGrp');
+        if (root.hasAttribute('symbol') || root.hasAttribute('bar.thru')) return { ok: false, detail: 'root still symbol=' + root.getAttribute('symbol') };
+        const pno = nested.find(g => g.querySelector('label')?.textContent === 'Piano');
+        if (!pno || pno.getAttribute('symbol') !== 'brace' || pno.getAttribute('bar.thru') !== 'true') return { ok: false, detail: 'piano group=' + (pno && pno.outerHTML.slice(0, 80)) };
+        const vla = nested.find(g => g.querySelector('label')?.textContent === 'Viola');
+        if (!vla || vla.hasAttribute('symbol')) return { ok: false, detail: 'viola group braced' };
+        return { ok: true };
+      })()` },
+  ],
+  engr_importMeasuredTremoloTuplet: [
+    { name: 'tuplet imports bracket/number-less; notes hollow with stems up',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const t = doc.querySelector('tuplet');
+        if (!t) return { ok: false, detail: 'no tuplet' };
+        if (t.getAttribute('bracket.visible') !== 'false' || t.getAttribute('num.visible') !== 'false') return { ok: false, detail: 'bracket.visible=' + t.getAttribute('bracket.visible') + ' num.visible=' + t.getAttribute('num.visible') };
+        const notes = [...t.querySelectorAll('note')];
+        if (notes.length !== 2) return { ok: false, detail: 'notes=' + notes.length };
+        for (const n of notes) {
+          if (n.getAttribute('head.fill') !== 'void') return { ok: false, detail: 'head.fill=' + n.getAttribute('head.fill') };
+          if (n.getAttribute('stem.dir') !== 'up') return { ok: false, detail: 'stem.dir=' + n.getAttribute('stem.dir') };
+        }
+        return { ok: true };
+      })()` },
+    { name: 'rendered tuplet has no bracket and no number',
+      expr: `(() => {
+        const t = document.querySelector('#score g.tuplet');
+        if (!t) return { ok: false, detail: 'no g.tuplet rendered' };
+        const b = t.querySelectorAll('g.tupletBracket').length, n = t.querySelectorAll('g.tupletNum').length;
+        return b === 0 && n === 0 ? { ok: true } : { ok: false, detail: 'bracket=' + b + ' num=' + n };
+      })()` },
+  ],
+  engr_pageScaleRepositionsInjectedText: [
+    { name: 'footer centred in the bottom margin and composer at the column edge of the 140 % page',
+      expr: `(() => {
+        const page = document.querySelector('#score .score-page');
+        const svg = page && page.querySelector('svg.definition-scale');
+        const margin = page && page.querySelector('g.page-margin');
+        if (!svg || !margin) return { ok: false, detail: 'no page svg' };
+        const vb = svg.getAttribute('viewBox').split(/\\s+/).map(Number);
+        const tr = margin.getAttribute('transform').match(/translate\\(\\s*(-?[\\d.]+)[\\s,]+(-?[\\d.]+)/);
+        const mx = +tr[1], my = +tr[2];
+        const innerW = vb[2] - 2 * mx, innerH = vb[3] - 2 * my;
+        if (Math.abs(innerW - 18790 * 1.4) > 30) return { ok: false, detail: 'innerW=' + innerW + ' (page not at 140 %?)' };
+        const f = page.querySelector('text.hkl-injected-footer');
+        if (!f) return { ok: false, detail: 'no footer' };
+        const fx = +f.getAttribute('x'), fy = +f.getAttribute('y');
+        if (Math.abs(fx - innerW / 2) > 1) return { ok: false, detail: 'footer x=' + fx + ' innerW/2=' + innerW / 2 };
+        if (!(fy > innerH && fy < innerH + my)) return { ok: false, detail: 'footer y=' + fy + ' column bottom=' + innerH + ' paper bottom=' + (innerH + my) };
+        const c = page.querySelector('text.hkl-injected-composer');
+        if (!c) return { ok: false, detail: 'no composer credit' };
+        if (Math.abs(+c.getAttribute('x') - innerW) > 1) return { ok: false, detail: 'composer x=' + c.getAttribute('x') + ' innerW=' + innerW };
+        return { ok: true, detail: 'innerW=' + innerW + ' footer=(' + fx + ',' + fy + ')' };
+      })()` },
+  ],
+  engr_runningHeaderCorners: [
+    { name: 'page 2 number left, page 3 number right, running title on both, none on page 1',
+      expr: `(() => {
+        const r = window.__hkl_composer.renderer;
+        const pages = [...document.querySelectorAll('#score .score-page')];
+        if (pages.length < 3) return { ok: false, detail: 'pages=' + pages.length + ' (need 3)' };
+        for (const p of pages.slice(0, 3)) if (p.classList.contains('score-page-pending')) r['mountPage'](+p.dataset.page);
+        const info = (p) => {
+          const margin = p.querySelector('g.page-margin');
+          const vb = p.querySelector('svg.definition-scale').getAttribute('viewBox').split(/\\s+/).map(Number);
+          const tr = margin.getAttribute('transform').match(/translate\\(\\s*(-?[\\d.]+)/);
+          const innerW = vb[2] - 2 * (+tr[1]);
+          const rend = margin.querySelector('g.pgHead tspan.rend[data-hkl-pgnum]');
+          const title = margin.querySelector(':scope > text.hkl-running-title');
+          /* The number's visible text only — Verovio nests a <title class="labelAttr">page</title> label in tspan.num. */
+          const numText = rend ? [...rend.querySelectorAll('tspan.text')].map(t => t.textContent).join('').trim() : null;
+          return { innerW, numX: rend ? +rend.getAttribute('x') : null, anchor: rend ? rend.getAttribute('text-anchor') : null, numText, title: title ? title.textContent : null, titleX: title ? +title.getAttribute('x') : null };
+        };
+        const p1 = info(pages[0]), p2 = info(pages[1]), p3 = info(pages[2]);
+        if (p1.numX !== null || p1.title !== null) return { ok: false, detail: 'page 1 has running header: ' + JSON.stringify(p1) };
+        if (p2.numX !== 0 || p2.anchor !== 'start' || p2.numText !== '2') return { ok: false, detail: 'page 2: ' + JSON.stringify(p2) };
+        if (p3.numX === null || Math.abs(p3.numX - p3.innerW) > 1 || p3.anchor !== 'end' || p3.numText !== '3') return { ok: false, detail: 'page 3: ' + JSON.stringify(p3) };
+        if (p2.title !== 'Sonatina' || p3.title !== 'Sonatina') return { ok: false, detail: 'titles: ' + p2.title + ' / ' + p3.title };
+        if (Math.abs(p2.titleX - p2.innerW / 2) > 1) return { ok: false, detail: 'title x=' + p2.titleX + ' innerW/2=' + p2.innerW / 2 };
+        return { ok: true };
+      })()` },
+  ],
+  engr_identicalRestsMerge: [
+    { name: 'the two quarter rests at beat 1 coincide, centred on the staff',
+      expr: `(() => {
+        const staff = document.querySelector('#score g.measure g.staff[data-n="1"]');
+        if (!staff) return { ok: false, detail: 'no staff 1' };
+        const lines = [...staff.querySelectorAll(':scope > path')].map(p => p.getBoundingClientRect().top);
+        const top = Math.min(...lines), bot = Math.max(...lines), space = (bot - top) / 4;
+        const rests = [...staff.querySelectorAll('g.rest')].map(g => { const b = g.getBoundingClientRect(); return { cx: b.left + b.width / 2, cy: b.top + b.height / 2 }; });
+        if (rests.length !== 4) return { ok: false, detail: 'rests=' + rests.length };
+        rests.sort((a, b) => a.cx - b.cx);
+        const [q1, q2, h1, h2] = rests;
+        if (Math.abs(q1.cx - q2.cx) > 1 || Math.abs(q1.cy - q2.cy) > 1) return { ok: false, detail: 'quarter rests apart: ' + JSON.stringify([q1, q2]) };
+        if (Math.abs(h1.cx - h2.cx) > 1 || Math.abs(h1.cy - h2.cy) > 1) return { ok: false, detail: 'half rests apart: ' + JSON.stringify([h1, h2]) };
+        const mid = (top + bot) / 2;
+        if (Math.abs(q1.cy - mid) > 0.5 * space) return { ok: false, detail: 'quarter rest cy=' + q1.cy + ' mid=' + mid + ' space=' + space };
+        return { ok: true };
+      })()` },
+  ],
+  engr_hiddenRestNeutral: [
+    { name: 'the visible quarter rest sits at its single-layer place despite the hidden rest',
+      expr: `(() => {
+        const staff = document.querySelector('#score g.measure g.staff[data-n="1"]');
+        if (!staff) return { ok: false, detail: 'no staff 1' };
+        const lines = [...staff.querySelectorAll(':scope > path')].map(p => p.getBoundingClientRect().top);
+        const top = Math.min(...lines), bot = Math.max(...lines), space = (bot - top) / 4, mid = (top + bot) / 2;
+        const vis = [...staff.querySelectorAll('g.rest')].filter(g => g.getAttribute('data-visible') !== 'false');
+        if (vis.length !== 1) return { ok: false, detail: 'visible rests=' + vis.length };
+        const b = vis[0].getBoundingClientRect(); const cy = b.top + b.height / 2;
+        return Math.abs(cy - mid) <= 0.5 * space ? { ok: true } : { ok: false, detail: 'rest cy=' + cy + ' mid=' + mid + ' space=' + space };
+      })()` },
+  ],
+  engr_sectionBreakNoCourtesySigs: [
+    { name: 'no courtesy key/meter before the section break; the new section shows both',
+      expr: `(() => {
+        const systems = [...document.querySelectorAll('#score g.system')];
+        if (systems.length < 2) return { ok: false, detail: 'systems=' + systems.length };
+        const visibleSigs = (meas) => [...meas.querySelectorAll('g.keySig, g.meterSig')].filter(k => k.getBBox().width > 0).map(k => k.getAttribute('class'));
+        const m1 = [...systems[0].querySelectorAll('g.measure')]; const last = m1[m1.length - 1];
+        const caut = visibleSigs(last);
+        if (caut.length) return { ok: false, detail: 'courtesy sigs drawn: ' + caut.join(',') };
+        const first = systems[1].querySelector('g.measure');
+        const sigs = visibleSigs(first);
+        if (!sigs.includes('keySig') || !sigs.includes('meterSig')) return { ok: false, detail: 'section start sigs: ' + sigs.join(',') };
+        const m = window.__hkl_composer.model;
+        if (m.serialize().includes('restart=')) return { ok: false, detail: 'restart leaked into the saved document' };
+        return { ok: true };
+      })()` },
+  ],
+  engr_instrumentGapWiderThanGrandStaff: [
+    { name: 'piano → viola gap exceeds the inner piano gap by at least 2.5 staff spaces',
+      expr: `(() => {
+        const meas = document.querySelector('#score g.measure');
+        const rows = {};
+        for (const st of meas.querySelectorAll(':scope > g.staff')) {
+          const ys = [...st.querySelectorAll(':scope > path')].map(p => p.getBoundingClientRect().top);
+          rows[st.getAttribute('data-n')] = { top: Math.min(...ys), bot: Math.max(...ys) };
+        }
+        if (!rows[1] || !rows[2] || !rows[3]) return { ok: false, detail: 'rows=' + JSON.stringify(rows) };
+        const space = (rows[1].bot - rows[1].top) / 4;
+        const inner = rows[2].top - rows[1].bot, between = rows[3].top - rows[2].bot;
+        /* 18 − 12 Verovio units = 3 staff spaces; allow half a space of slack. */
+        return between - inner >= 2.5 * space ? { ok: true, detail: 'inner=' + inner.toFixed(1) + ' between=' + between.toFixed(1) } : { ok: false, detail: 'inner=' + inner + ' between=' + between + ' space=' + space };
+      })()` },
+  ],
+  engr_dynamicCenteredInGrandStaff: [
+    { name: 'the dynamic centre sits at the midpoint of the gap between the staves',
+      expr: `(() => {
+        const meas = document.querySelector('#score g.measure');
+        const rows = {};
+        for (const st of meas.querySelectorAll(':scope > g.staff')) {
+          const ys = [...st.querySelectorAll(':scope > path')].map(p => p.getBoundingClientRect().top);
+          rows[st.getAttribute('data-n')] = { top: Math.min(...ys), bot: Math.max(...ys) };
+        }
+        const d = document.querySelector('#score g.dynam');
+        if (!d || !rows[1] || !rows[2]) return { ok: false, detail: 'dynam=' + !!d + ' rows=' + JSON.stringify(rows) };
+        const b = d.getBoundingClientRect(); const cy = b.top + b.height / 2;
+        const mid = (rows[1].bot + rows[2].top) / 2;
+        if (!d.hasAttribute('data-hkl-vshift')) return { ok: false, detail: 'dynam not laid out (no data-hkl-vshift)' };
+        return Math.abs(cy - mid) <= 2 ? { ok: true } : { ok: false, detail: 'cy=' + cy + ' mid=' + mid };
+      })()` },
+  ],
+  engr_dirClearanceBelowSingleStaff: [
+    { name: 'expressive text keeps at least the dynamics clearance below the viola staff',
+      expr: `(() => {
+        const meas = document.querySelector('#score g.measure');
+        const st = meas.querySelector(':scope > g.staff[data-n="3"]');
+        const d = document.querySelector('#score g.dir');
+        if (!st || !d) return { ok: false, detail: 'staff3=' + !!st + ' dir=' + !!d };
+        const ys = [...st.querySelectorAll(':scope > path')].map(p => p.getBoundingClientRect().top);
+        const bot = Math.max(...ys), space = (bot - Math.min(...ys)) / 4;
+        const gap = d.getBoundingClientRect().top - bot;
+        /* DIR_GAP_PER_UNIT × unit = 112 user units = 0.7 staff space; a pixel of slack. */
+        return gap >= 0.7 * space - 1 ? { ok: true, detail: 'gap=' + gap.toFixed(1) + 'px space=' + space.toFixed(1) } : { ok: false, detail: 'gap=' + gap + ' space=' + space };
       })()` },
   ],
 };

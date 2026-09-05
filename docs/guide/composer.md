@@ -249,6 +249,20 @@ paper; on such a page a little extra room also opens above the first system
 running footer lives in the bottom margin, so adding or removing one never
 changes how many systems fit on a page.
 
+**Page furniture and engraving conventions**: from page 2 on, the page number
+sits in the outer top corner (left on even pages, right on odd) and the title
+runs centred across the top; page 1 keeps its title block and no number. A
+brace and continuous barlines mark a grand staff only — a one-staff instrument
+has no brace, and barlines never run from one instrument to the next.
+Instruments sit further apart than the two staves of a piano. Dynamics,
+hairpins and expressive text between a piano's staves are centred in the gap
+where the notes allow; under any other staff they keep a little more room from
+the staff. Two identical rests at the same moment in a staff's two voices draw
+as one rest, and a hidden rest never nudges a visible one. A movement break
+(section header) with a new key or meter shows no courtesy signature at the end
+of the previous movement; the new movement opens with its own signatures and
+restates the instrument names.
+
 This means the layout reflects the editing you've done, not a fresh engraving of
 the current music — that's deliberate, so the page stops moving under you while
 you work. (An explicit "re-flow the whole document" command, and commands to

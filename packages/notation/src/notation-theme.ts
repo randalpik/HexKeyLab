@@ -66,14 +66,17 @@ const CSS = `
 [data-notation-theme="dark"] svg:not(#cursorOverlay) text { fill: var(--notation-ink); }
 
 /* 3. The few FILLED non-glyph shapes (filled <path>/<polygon>/<ellipse>):
-   staff brace + bracket, slurs, ties, beams, augmentation dots. This is the
-   complete set of Verovio's filled non-glyph primitives. Every OTHER bare
-   shape (staff lines, stems, hairpins, tuplet/octave brackets, …) is an open
-   stroked path — left out here so it shows only its now-ink currentColor
-   stroke, never a filled area. */
+   staff brace + bracket, slurs, ties (including the <lv> stub arc Composer
+   draws for a pending tie — Verovio renders it as g.lv, not g.tie, and it
+   filled black on the dark surface until 2026-09-04), beams, augmentation
+   dots. This is the complete set of Verovio's filled non-glyph primitives.
+   Every OTHER bare shape (staff lines, stems, hairpins, tuplet/octave
+   brackets, …) is an open stroked path — left out here so it shows only its
+   now-ink currentColor stroke, never a filled area. */
 [data-notation-theme="dark"] svg:not(#cursorOverlay) .grpSym, [data-notation-theme="dark"] svg:not(#cursorOverlay) .grpSym *,
 [data-notation-theme="dark"] svg:not(#cursorOverlay) .slur, [data-notation-theme="dark"] svg:not(#cursorOverlay) .slur *,
 [data-notation-theme="dark"] svg:not(#cursorOverlay) .tie, [data-notation-theme="dark"] svg:not(#cursorOverlay) .tie *,
+[data-notation-theme="dark"] svg:not(#cursorOverlay) .lv, [data-notation-theme="dark"] svg:not(#cursorOverlay) .lv *,
 [data-notation-theme="dark"] svg:not(#cursorOverlay) .beam, [data-notation-theme="dark"] svg:not(#cursorOverlay) .beam *,
 [data-notation-theme="dark"] svg:not(#cursorOverlay) .dots, [data-notation-theme="dark"] svg:not(#cursorOverlay) .dots * { fill: var(--notation-ink); }
 

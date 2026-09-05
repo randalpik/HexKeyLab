@@ -80,6 +80,10 @@ interface ImpNote {
   tieStop: boolean;
   /** Diamond notehead (<notehead>diamond) → string harmonic. */
   harmonic?: boolean;
+  /** Hollow notehead on a value that is normally filled
+   *  (`<notehead filled="no">`) → `@head.fill="void"`. Finale writes a
+   *  measured tremolo as two beamed hollow 32nds under a 1:8 tuplet. */
+  voidHead?: boolean;
 }
 
 interface ImpEvent {
@@ -87,9 +91,17 @@ interface ImpEvent {
   notes: ImpNote[];   // empty for rest
   dur: Duration;
   dots: Dots;
-  /** Tuplet group boundaries (from <notations><tuplet type=start|stop>). */
-  tupletStart?: { num: number; numbase: number };
+  /** Tuplet group boundaries (from <notations><tuplet type=start|stop>).
+   *  `bracket`/`showNum` carry the source's `bracket="no"` /
+   *  `show-number="none"` — Finale's measured-tremolo tuplets hide both. */
+  tupletStart?: { num: number; numbase: number; bracket: boolean; showNum: boolean };
   tupletStop?: boolean;
+  /** Explicit stem direction (`<stem>up|down|none</stem>`) → `@stem.dir` /
+   *  `@stem.visible`. The source engraver's choice: in a two-voice passage
+   *  Verovio's layer default (upper voice stems up) puts beams, tuplet
+   *  brackets AND the slur on the same side (sonata m. 82); the source has
+   *  stems down there, with the slur on the notehead side. */
+  stem?: 'up' | 'down' | 'none';
   /** Note-attached articulations: 'stacc' | 'acc' | 'ten'. */
   artics: string[];
   fermata: boolean;
@@ -456,6 +468,10 @@ function buildEvents(
       dur, dots, artics: [], fermata: false, slurStart: [], slurStop: [],
     };
     if (isMeasureRest) ev.measureRest = true;
+    /* Explicit stem direction. 'double' has no MEI equivalent and is dropped;
+       a chord's later notes are merged above, so the first note's stem wins. */
+    const stemTxt = isRest ? '' : textOf(note, 'stem');
+    if (stemTxt === 'up' || stemTxt === 'down' || stemTxt === 'none') ev.stem = stemTxt;
     /* Source beam-start for the diff-based beam pass: <beam number="1"> value
        of `begin` (or absent) starts a new beam; `continue`/`end` joins prev. */
     const beam1 = children(note, 'beam').find((b) => (b.getAttribute('number') ?? '1') === '1');
@@ -473,6 +489,8 @@ function buildEvents(
         ev.tupletStart = {
           num: tm ? intOf(tm, 'actual-notes', 3) : 3,
           numbase: tm ? intOf(tm, 'normal-notes', 2) : 2,
+          bracket: tupletTag.getAttribute('bracket') !== 'no',
+          showNum: tupletTag.getAttribute('show-number') !== 'none',
         };
       } else if (ttype === 'stop') {
         ev.tupletStop = true;
@@ -549,8 +567,11 @@ function impNoteFromXml(note: Element, centerQ: number, centerR: number): ImpNot
     else if (t.getAttribute('type') === 'stop') tieStop = true;
   }
   // Diamond notehead → string harmonic (Finale encodes harmonics this way,
-  // not as <technical><harmonic>).
-  const harmonic = child(note, 'notehead')?.textContent?.trim() === 'diamond';
+  // not as <technical><harmonic>). A hollow "normal" notehead is the other
+  // notehead override we honor (measured tremolos).
+  const noteheadEl = child(note, 'notehead');
+  const harmonic = noteheadEl?.textContent?.trim() === 'diamond';
+  const voidHead = !harmonic && noteheadEl?.getAttribute('filled') === 'no';
   return {
     spec: {
       q, r,
@@ -560,7 +581,7 @@ function impNoteFromXml(note: Element, centerQ: number, centerR: number): ImpNot
       midi: coordToMidi(q, r),
       colorHex: '#000000',
     },
-    tieStart, tieStop, harmonic,
+    tieStart, tieStop, harmonic, voidHead,
   };
 }
 
@@ -590,12 +611,22 @@ function eventToElement(doc: Document, ev: ImpEvent): Element {
     for (const im of ev.notes) {
       const match = childNotes.find((c) =>
         c.getAttribute('data-q') === String(im.spec.q) && c.getAttribute('data-r') === String(im.spec.r));
-      if (match) { applyTie(match, im); if (im.harmonic) applyHarmonic(element, match); }
+      if (match) {
+        applyTie(match, im);
+        if (im.harmonic) applyHarmonic(element, match);
+        else if (im.voidHead) match.setAttribute('head.fill', 'void');
+      }
     }
   } else {
     element = buildNoteElement(doc, ev.notes[0].spec, ev.dur, ev.dots);
     applyTie(element, ev.notes[0]);
     if (ev.notes[0].harmonic) applyHarmonic(element, element);
+    else if (ev.notes[0].voidHead) element.setAttribute('head.fill', 'void');
+  }
+  /* Stem direction from the source (see ImpEvent.stem). */
+  if (ev.kind !== 'rest') {
+    if (ev.stem === 'up' || ev.stem === 'down') element.setAttribute('stem.dir', ev.stem);
+    else if (ev.stem === 'none') element.setAttribute('stem.visible', 'false');
   }
   /* Articulations: <artic artic="…"> children of the note/chord. */
   for (const a of ev.artics) {
@@ -670,10 +701,16 @@ function appendLayerChildren(
   while (i < events.length) {
     const ev = events[i];
     if (ev.tupletStart) {
-      const { num, numbase } = ev.tupletStart;
+      const { num, numbase, bracket, showNum } = ev.tupletStart;
+      /* Bracket + number visibility follow the source: Finale's measured
+         tremolo is a `bracket="no" show-number="none"` 1:8 tuplet over two
+         hollow beamed notes, and drew a bracket + "1" here until 2026-09-04
+         (sonata m. 93). */
       const tuplet = el(doc, 'tuplet', {
         'xml:id': newId('t'), num: String(num), numbase: String(numbase),
-        'bracket.visible': 'true', 'num.visible': 'true', 'num.format': 'count',
+        'bracket.visible': bracket ? 'true' : 'false',
+        'num.visible': showNum ? 'true' : 'false',
+        'num.format': 'count',
         'data-tuplet-atomic-dur': ev.dur,
       });
       let j = i;
@@ -681,6 +718,19 @@ function appendLayerChildren(
         tuplet.appendChild(eventToElement(doc, events[j]));
         wire(events[j]);
         if (events[j].tupletStop) break;
+      }
+      /* Composer's tuplet model holds exactly `num` atoms of the atomic value
+         (placeholders, ticks, the placeholder invariant). Finale's measured
+         tremolo breaks that: TWO 32nds under a "1 in the time of 8" tuplet.
+         Rescale to the atom count when every member shares the written value
+         and the ratio stays exact — 1:8 over two 32nds becomes 2:16, the same
+         real duration (× numbase/num) with `num` atoms inside. */
+      const members = Array.from(tuplet.children);
+      const k = members.length;
+      const uniform = members.every((c) => c.getAttribute('dur') === ev.dur && (c.getAttribute('dots') ?? '0') === String(ev.dots ?? 0));
+      if (uniform && k > 0 && k !== num && (k * numbase) % num === 0) {
+        tuplet.setAttribute('num', String(k));
+        tuplet.setAttribute('numbase', String((k * numbase) / num));
       }
       layerEl.appendChild(tuplet);
       i = j + 1;
@@ -891,17 +941,23 @@ export function importMusicXml(xmlText: string): string {
   const staffDefXml = (gStaff: number, c: ClefSpec): string =>
     `<staffDef n="${gStaff}" lines="5"${clefAttrs(c)}/>`;
 
-  let staffGrpInner: string;
+  /* A brace + through-barlines mark a GRAND STAFF and nothing else (convention;
+     Max, 2026-09-04): a lone staff gets no brace (Verovio draws one on any
+     group that asks), and the root group of a multi-instrument score gets
+     neither — barlines must not run between instruments. Until this fix the
+     root always carried both, so the sonata braced viola + piano together and
+     joined their barlines while the piano itself had no brace. */
+  const grandAttrs = (staffCount: number): string =>
+    staffCount === 2 ? ' symbol="brace" bar.thru="true"' : '';
+  const defsOf = (p: PartInfo): string => Array.from({ length: p.staffCount }, (_, i) =>
+    staffDefXml(p.globalStaff[i + 1], p.headClef.get(i + 1)!)).join('');
+  let staffGrpXml: string;
   if (parts.length === 1) {
     const p = parts[0];
-    staffGrpInner = Array.from({ length: p.staffCount }, (_, i) =>
-      staffDefXml(p.globalStaff[i + 1], p.headClef.get(i + 1)!)).join('');
+    staffGrpXml = `<staffGrp${grandAttrs(p.staffCount)}>${defsOf(p)}</staffGrp>`;
   } else {
-    staffGrpInner = parts.map((p) => {
-      const defs = Array.from({ length: p.staffCount }, (_, i) =>
-        staffDefXml(p.globalStaff[i + 1], p.headClef.get(i + 1)!)).join('');
-      return `<staffGrp><label>${escapeXml(p.name)}</label>${defs}</staffGrp>`;
-    }).join('');
+    staffGrpXml = '<staffGrp>' + parts.map((p) =>
+      `<staffGrp${grandAttrs(p.staffCount)}><label>${escapeXml(p.name)}</label>${defsOf(p)}</staffGrp>`).join('') + '</staffGrp>';
   }
 
   const composerBlock = composer
@@ -918,7 +974,7 @@ export function importMusicXml(xmlText: string): string {
   </meiHead>
   <music><body><mdiv><score>
     <scoreDef key.sig="${keySig}" mode="${keyMode}" meter.count="${meterCount}" meter.unit="${meterUnit}"${meterSymAttr}>
-      <staffGrp symbol="brace" bar.thru="true">${staffGrpInner}</staffGrp>
+      ${staffGrpXml}
     </scoreDef>
     <section></section>
   </score></mdiv></body></music>

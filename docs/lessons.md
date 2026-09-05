@@ -3254,3 +3254,180 @@ it is correct, so its fixture passes on the "unfixed" build legitimately, while
 `pagePlacementOwned`'s snap-as-output assertion fails there as it should. Prove
 such a fixture by reverting the single line on the current tree and running the
 scenario — which is what was done.
+
+## Verovio courtesy signatures: what suppresses them and what does not (2026-09-04)
+
+Verovio 6.3 draws a cautionary key + meter at the end of a system whenever the
+next system's first measure carries a new `<scoreDef>` — the condition in
+`ScoreDefSetCurrentFunctor::VisitMeasure` is `m_currentSystem &&
+m_upcomingScoreDef.m_setAsDrawing && m_previousMeasure && !m_restart`. There is
+no option (221 options grepped for caut/court: none). Probed against the live
+toolkit, all on a two-staff doc with a key + meter change over an `<sb>`:
+
+- `keysig.visible="false"` / `meter.visible="false"` on the scoreDef: IGNORED —
+  the signatures and the cautionaries draw exactly as without them.
+- Layer-level `<keySig>`/`<meterSig>` in the first measure INSTEAD of a
+  scoreDef: no cautionary, drawn right after the clef — but they do not
+  persist: the section's later systems show the OLD key. Not a substitute.
+- `<section restart="true">`: the scoreDef must be the FIRST thing after the
+  section start (`ScoreDef::IsSectionRestart` looks at its previous sibling;
+  an `<sb>` in between defeats it). It drops the KEY cautionary only —
+  `SetCautionaryScoreDefFunctor(…, restart=true)` calls `SetDrawKeySig(false)`
+  and nothing for the meter — and it redraws clef + key + meter at the restart
+  measure (`REDRAW_ALL`) and draws the full staff labels (`m_drawLabels`), so
+  the system is indented like the score's first.
+- `meter.form="invis"` on the scoreDef blanks EVERY meter drawn from it — the
+  courtesy and the restart's redraw — as a zero-width `g.meterSig` that still
+  reserves about half a staff space; it does not leak into a later meter
+  change (a following `<scoreDef meter.count…>` draws normally). A layer-level
+  `<meterSig>` in the first measure then draws the visible one in the right
+  spot (clef, key, meter).
+- A content-less nested `<section restart="true"><scoreDef/></section>` inside
+  the one big `<section>` works — Verovio's milestone conversion makes the
+  section start the scoreDef's previous sibling — and leaves every measure a
+  direct child of the outer section, which is what the whole break/splice
+  pipeline assumes.
+
+Composer's recipe is the sum: restart wrapper + invisible meter + layer
+meterSig, on the render clone (`notation/sectionRestart.ts`). The upstream fix
+would be two lines in `SetCautionaryScoreDefFunctor::VisitStaff` (also disable
+the meter under restart).
+
+## Verovio rests: `@visible` is ignored, `@loc` is honored, and twins at one `@loc` do not collide (2026-09-04)
+
+Extends "Verovio doesn't honor `@visible="false"` on rests": a hidden rest not
+only draws, it DISPLACES the other layer's rest exactly like a drawn one
+(visible quarter rest in layer 1 pushed to centre-y 245 above a staff at
+560–1200 by a hidden layer-2 rest). `@loc` on `<rest>` and `<mRest>` is
+honored as a raw staff-line location (0 = bottom line, 4 = middle, 8 = top);
+the single-layer defaults are loc 4 for everything except whole rests and
+`<mRest>` (loc 6 — they hang from the fourth line; pinning a whole rest to 4
+hangs it from the middle line, wrong). Two identical rests pinned to the same
+`@loc` at the same moment render at the same x with no horizontal collision
+shift — one glyph on top of the other. A rest pinned to `@loc` against a NOTE
+in the other layer at the same moment simply collides with it, so pin only
+when the other layer is void or an identical rest (`notation/restlayout.ts`).
+
+## Verovio `spacingStaff` floors EVERY staff pair; `staffDef@spacing` is the per-pair lever (2026-09-04)
+
+Raising `spacingStaff` (12 → 16 → 20) widened the viola→piano gap AND the
+piano's inner gap identically; `spacingBraceGroup` only ever raises the inside
+of a brace. There is no option that separates instruments more than a grand
+staff's staves. MEI's `staffDef@spacing` — "distance to the preceding staff" —
+is honored per staff as that pair's minimum, in Verovio units (`"16"` and
+`"20vu"` work; `"10mm"` is ignored), and leaves the other pairs alone. Hence
+`notation/instrumentSpacing.ts`.
+
+## Verovio `dynamDist` has a dead zone below 2 and never governs `<dir>` or hairpins' stacking (2026-09-04)
+
+Glyph top of a "p" below the bottom line at unit 8, by `dynamDist`: 1 → 40,
+2 → 40, 3 → 72, 4 → 152, 6 → 312 user units — i.e. `80·d − 168` once past the
+floor, 40 below it (a staff space is 160). `<dir>` text does not move with it
+at all (its bbox top even sits ABOVE the staff line, −33, because the text box
+carries the ascent), so a `<dir>` under a staff needs its own nudge
+(`render/textlayout.ts`).
+
+## Verovio slur side: layer rule in a multi-layer staff, stem rule in a single-layer one (2026-09-04)
+
+With two layers, a layer-1 slur goes ABOVE regardless of the notes' `stem.dir`
+(probed both ways on sonata m. 82's material); with one layer it goes opposite
+the stems (stems up → slur below, stems down → above). So in a two-voice
+passage whose upper voice Verovio stems UP by default, beams, tuplet brackets
+and the slur all land above — the "doubly wrong" m. 82. Finale had stems DOWN
+there (the lower voice is a stemless whole-note chord), slur above the
+noteheads, brackets below; importing `<stem>` as `@stem.dir` reproduces that.
+Verovio's layer rule is defensible two-voice engraving (Gould), so no
+render-time override was added; `curvedir` can flip a slur but in m. 82 the
+flipped side is occupied by the layer-2 chord.
+
+## Tie stubs render as `g.lv`, not `g.tie` (2026-09-04)
+
+Composer's pending-tie stub is an `<lv>`; Verovio's SVG class is `lv`. The
+dark-theme fill rule listed `.tie` and `.slur` but not `.lv`, so the stub arc
+stayed black on the dark surface. Any class list that enumerates Verovio's
+filled shapes needs all three.
+
+## Verovio's autogenerated page header on pages 2+ is "– N –" (2026-09-04)
+
+`header: 'auto'` gives pages 2+ a `g.pgHead.autogenerated` holding
+`<text font-size="0px"><tspan class="rend" x=centre y=195 text-anchor="middle">`
+with three children: `tspan.text` ("– "), `tspan.num` (which nests a hidden
+`<title class="labelAttr">page</title>` before its digit — `textContent`
+reads "page2"), and `tspan.text` (" –"). Composer's `styleRunningHeader`
+moves the rend's x/anchor to the outer corner and drops the dash tspans; the
+number's baseline is untouched so the header band the placement measures
+does not move. Read the visible number from `tspan.text` descendants, never
+from `textContent`.
+
+## Anything that touches the page header changes placement — record the original ink bottom first (2026-09-04)
+
+`Renderer.headBottomOf` feeds rule v2 (`firstContentTop`, the top-gap origin)
+from the live `g.pgHead` bbox. The running-header restyle moved the page number
+to a corner and dropped the "–" tspans; the restyled header's bbox bottom read
+255 where Verovio's "– 2 –" read 254 (the dash glyph cells sit one unit
+differently). One unit in the header bottom shifts the distributed slack, and
+the whole-pixel quantization then flipped system 2 on some pages by exactly
+10 units — but only on RE-placed pages (a splice re-places the live page,
+whose header is restyled) while the reference gate's fresh render kept the
+original header and did not move. Presentation: gated sonata sweep, 6 rows,
+all "staff top diverged … expected X, live X+10" with identical extents and
+identical first tops; 0 on the pre-change tree (stash + rerun of the same
+chunks). Fix: `styleRunningHeader` records `data-hkl-head-bottom` (bbox bottom
++ group translate) BEFORE restyling and `headBottomOf` prefers it, so every
+host — initial mount, re-placement, reference — measures the same header. Rule
+for the future: any injector that edits Verovio's header or anything else
+placement reads must leave placement's inputs unchanged, and the gated sweep
+(chunks with `check=1`) is the check that finds it; the fixture suite did not.
+
+## A DOM pass that feeds placement must measure in SVG user space, not screen pixels (2026-09-04)
+
+The below-staff text layout first read every rect with getBoundingClientRect
+and converted through the system CTM. That is host-DEPENDENT: the live page and
+the splice/reference hosts sit at different sub-pixel screen phases, so the
+same music produced shifts differing by a fraction of a unit, a `<dir>` nudged
+under a system's last staff changed that system's `below` extent by that
+fraction, and rule v2's whole-pixel quantization flipped a system by 10 units
+on re-placed pages while the reference gate's fresh render did not (gated
+sonata sweep: page 4 system 2, page 22 systems 0/1 — extents printed equal to
+the unit because the message rounds them). Measured in the SVG's own user
+space (`getBBox()` mapped through `getCTM()` to the inner `definition-scale`
+viewport, shifts rounded to whole units) the pass is identical on every host.
+Same family as the alignStaffRows lesson ("relative, not absolute"): anything
+whose output becomes a placement input must not depend on where the render
+happens to sit on screen.
+
+**Follow-up (same day)**: after the header-bottom stash and the user-space
+text-layout rewrite, three one-pixel divergences remained (page 4 system 2,
+page 22 system 1). Instrumenting `measureAndPlace` on both hosts during the
+sweep's own edit showed identical extents to three decimals and identical
+phase, but the live header bottom at 252.00000763 (its first-pass render,
+stashed) against the reference's fresh 254 — the accepted Verovio header
+non-determinism of the 2026-09-03 entry, shifting every raw top by two units
+so quantization flips one system. Those flips were REJECTED only by float
+noise: the reference top came out as 15259.999999999998, so the difference
+was 10.000000000002 and the strict `> 10` read it as more than a pixel. The
+new layout (dynamics clearance, instrument spacing, restart labels) merely
+moved raw tops onto new rounding boundaries. Fix: `TOL = 10 + 1e-6` in the
+gate — the tolerance is still one device pixel, the comparison now says so.
+Lesson within the lesson: when a gate at an exact-boundary tolerance starts
+failing after a layout change, print both sides at full precision before
+touching anything else; two of the three "causes" fixed on the way were real
+but were not the cause.
+
+## `git stash`/`pop` under a running `pnpm dev` can kill an app's watch on an out-of-root file (2026-09-04)
+
+To baseline the gated sweep on the pre-change tree I stashed the working tree
+(`git stash push -u`), ran the sweep, and popped. Afterwards the COMPOSER
+Vite server kept serving `packages/notation/src/notation-theme.ts` from
+before the pop — the `@fs/…` module had 0 occurrences of the new `.lv` rule
+while the file on disk had 2 and the HKL server (:5173) served the fresh copy.
+`touch` and a real content change did not invalidate it either: the module is
+outside the composer app's root, Vite watches such files individually, and
+git's rename-replace gave the file a new inode the old watch no longer sees.
+Only a dev-server restart clears it (not mine to do — Max's). The dark
+tie-stub fixture therefore fails under the running server although the rule
+is on disk and in the build. Lessons: (1) never stash/checkout the live tree
+under Max's dev server — baseline a gate BEFORE changing code, or compare on a
+copy; (2) when a fixture passes in isolation right after an edit and fails
+later with the same code, `curl` the served module and grep for the change
+before debugging the code.
