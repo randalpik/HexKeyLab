@@ -31,6 +31,14 @@ function indexCheckEnabled(): boolean {
  *  means every page below the edit was full, which is a whole-document reflow
  *  by any name. */
 const MAX_CASCADE_STEPS = 64;
+/** Pages whose sections the balancer fixes SYNCHRONOUSLY before the first
+ *  pinned paint (the reader's initial view; the IntersectionObserver's mount set
+ *  is not known before the paint, so this stands in for it). Everything else is
+ *  balanced by the idle job. Decided with Max, 2026-09-05. */
+const INITIAL_BAND_PAGES = 2;
+/** How far below MIN_FILL Verovio's `minLastJustification` is set — see the
+ *  comment at its use in buildOptions. */
+const LAST_JUSTIFY_SLACK = 0.05;
 
 /** First `g.system` child of a page's margin group, or null. */
 function firstSystemOf(pageEl: HTMLElement): Element | null {
@@ -222,7 +230,12 @@ class Renderer {
    *  Verovio's castoff pass entirely. Deliberately survives
    *  forceFullRerender/invalidate; staleness is handled by the version guard,
    *  not by clearing. */
-  private partitionCache = new Map<string, { docVer: number; lines: string[]; pages: string[] }>();
+  private partitionCache = new Map<string, {
+    docVer: number; lines: string[]; pages: string[];
+    /** Every section was checked by the balancer (job complete): a cache hit
+     *  needs neither the sync band balance nor a new job. */
+    balanced: boolean;
+  }>();
   /** Mode the container's current content was rendered in (null before the
    *  first render). Drives the stash/restore branch in renderComposer. */
   private lastRenderedMode: ViewMode | null = null;
@@ -405,14 +418,26 @@ class Renderer {
          a final line is justified exactly when it is a legal line, and left at
          its natural width when it is too sparse to be one.
 
-         What this deliberately does NOT fix (out of scope; it belongs with the
-         auto-balance work — docs/backlog.md): end-of-document does not yet
-         behave like end-of-section. A section-final line is not "the last
-         system" as far as Verovio is concerned, so it justifies at ANY fill,
-         while a document-final line respects this threshold — measured on a
-         two-section document where both end mid-line (`cb-lastjustify2.js`):
-         section-final 18790, document-final 4290. Closing that gap needs the
-         balancer to decide N and the per-line fill, not another option value.
+         End-of-section parity (2026-09-05): a section-final line is not "the
+         last system" to Verovio, so it justifies at ANY fill (measured on a
+         two-section document, `cb-lastjustify2.js`: section-final 18790,
+         document-final 4290). The section balancer (render/balance.ts, driven
+         from linebreaks.ts) is what closes that gap — a section-final line
+         below MIN_FILL is redistributed into its section, so the lines Verovio
+         justifies are legal ones. What remains is the document-final stub of a
+         document too small to balance (Max's rule 2: kept, and this option
+         leaves it unstretched) and a mid-document section too small to hold
+         two legal lines (Verovio stretches it; no option value helps).
+
+         The threshold sits LAST_JUSTIFY_SLACK below MIN_FILL because the two
+         yardsticks are not the same number: our fill is the naturals sum over
+         the justified budget, Verovio's ratio is its own justifiable width,
+         and they disagree by a few percent at the boundary (lessons.md
+         2026-09-02; a balanced 9-bar document-final section measured 0.657 by
+         ours and drew UNJUSTIFIED at 12710/19010 under the bare MIN_FILL,
+         2026-09-05). With the slack, a line the balancer kept legal is always
+         drawn justified, and a stub it kept — far below 0.65 by both
+         yardsticks — is not.
 
          Scroll keeps Verovio's default: it renders the whole score as ONE
          system against a 100 000-unit page, so there is no line to justify to
@@ -422,7 +447,7 @@ class Renderer {
          explicitly in both branches for the reason adjustPageHeight is: page
          and scroll share one toolkit and Verovio's setOptions persists any
          option that is not re-specified. */
-      minLastJustification: geomMode === 'page' ? MIN_FILL : 0.8,
+      minLastJustification: geomMode === 'page' ? MIN_FILL - LAST_JUSTIFY_SLACK : 0.8,
       scale: preset.scale,
       unit: preset.unit,
       ...lineWidthOptions(preset),
@@ -1707,6 +1732,10 @@ class Renderer {
     if (lines.length <= 1) return;
     this.partitionCache.set(this.partitionKey(model), {
       docVer: model.docVersion(), lines, pages: this.pageBreaks.pageStarts(),
+      /* Balanced once the idle job has checked every section: an edit's own
+         repartition balances the sections it touches, so the flag survives
+         edits; a fresh derive re-arms the job and clears it. */
+      balanced: !this.pageBreaks.balanceJobActive(),
     });
     /* Bounded: one entry per (zoom, pageScale, heji) combination actually
        visited. Trim anyway so a scripted sweep can't grow it without limit. */
@@ -1741,7 +1770,13 @@ class Renderer {
         this.renderPage(pinnedFromCache, true, 'encoded');
         this.pageBreaks.verifyRenderedPartition(
           this.container!, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
-        if (this.overflowingPage() === 0) return;
+        if (this.overflowingPage() === 0) {
+          /* A partition the balancer never finished checking (the job was cut
+             short by this very zoom change, say) resumes lazily; a finished
+             one needs nothing. */
+          if (!cached.balanced) this.pageBreaks.armBalanceJob(model, this.pageBreaksCtx());
+          return;
+        }
         console.warn('[page-breaks] cached partition overflows its page — re-deriving');
       }
       this.partitionCache.delete(this.partitionKey(model));
@@ -1752,13 +1787,14 @@ class Renderer {
        do it. Falls through to the ordinary castoff when unavailable. */
     const segmented = this.castoffSegmentedByUserBreaks(model, data, heji);
     if (segmented && this.pageBreaks.restorePartition(model, segmented.lines, segmented.pages)) {
+      this.balanceInitialBand(model);
       const pinnedSeg = this.pageBreaks.pinRenderMei(data);
       if (pinnedSeg !== null) {
         this.renderPage(pinnedSeg, true, 'encoded');
         this.pageBreaks.verifyRenderedPartition(
           this.container!, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
         const segSpill = this.overflowingPage();
-        if (segSpill === 0) return;
+        if (segSpill === 0) { this.pageBreaks.armBalanceJob(model, this.pageBreaksCtx()); return; }
         console.warn('[page-breaks] segmented pagination overflows page ' + segSpill
           + ' — falling back to the single-pass castoff');
       }
@@ -1768,13 +1804,19 @@ class Renderer {
     /* Bootstrap pass: load only — never rendered to SVG, never painted. */
     this.tk!.setOptions(this.buildOptions(plan.strategy));
     if (this.tk!.loadData(plan.data) && this.pageBreaks.adoptFromCastoff(model, this.tk!)) {
+      /* Section balancing (2026-09-05): the castoff leaves every section's
+         remainder as its final line — a lone bar before a movement break, a
+         one-bar stub at the end. Sections on the reader's first pages are
+         balanced HERE, before the paint, so page 1 never re-flows under them;
+         the rest are balanced by the idle job armed after the paint. */
+      this.balanceInitialBand(model);
       const pinned = this.pageBreaks.pinRenderMei(data);
       if (pinned !== null) {
         this.renderPage(pinned, true, 'encoded');
         this.pageBreaks.verifyRenderedPartition(
           this.container!, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
         const spill = this.overflowingPage();
-        if (spill === 0) return;
+        if (spill === 0) { this.pageBreaks.armBalanceJob(model, this.pageBreaksCtx()); return; }
         console.warn('[page-breaks] adopted pagination overflows page ' + spill + ' — painting Verovio\'s own layout instead');
         this.pageBreaks.invalidate();
       }
@@ -1829,10 +1871,7 @@ class Renderer {
       alignStaves: (host: HTMLElement, originPhase?: number) => this.alignStavesIn(host, originPhase),
       originPhaseOf: (pageEl: HTMLElement) => this.originPhaseOf(pageEl),
       ensurePageMounted: (p: number) => this.mountPageIfCheap(p),
-      isPageMounted: (p: number) => {
-        const el = this.pageDiv(p);
-        return !!el && !el.classList.contains('score-page-pending');
-      },
+      isPageMounted: (p: number) => this.isPageMounted(p),
     };
   }
 
@@ -2504,7 +2543,120 @@ class Renderer {
       naturalsToolkit: () => this.spliceTk!,
       naturalsOptions: () => this.buildOptions('none', 'scroll'),
       budgetW: () => this.measureBudgetW(),
+      isPageMounted: (p: number) => this.isPageMounted(p),
+      commitPartition: (o, n, op, np) => this.applyPartitionChange(o, n, op, np),
+      balanceComplete: () => this.markPartitionBalanced(),
     };
+  }
+
+  /** Is page `p` drawn (exists and is not a placeholder)? */
+  private isPageMounted(p: number): boolean {
+    const el = this.pageDiv(p);
+    return !!el && !el.classList.contains('score-page-pending');
+  }
+
+  /** Sync band balance before the first pinned paint (see
+   *  PageLineBreaks.balanceInitialBand). The justified system width comes from
+   *  the layout the live toolkit holds — nothing is mounted for the DOM read
+   *  yet, and a previous render's DOM may sit at another page scale. */
+  private balanceInitialBand(model: ComposerModel): void {
+    const budget = this.tk ? this.budgetFromToolkit(this.tk) : null;
+    if (budget == null) return;
+    this.pageBreaks.balanceInitialBand(model, this.pageBreaksCtx(), budget, INITIAL_BAND_PAGES);
+  }
+
+  /** Max justified system width of page 1 of the layout `tk` holds, measured
+   *  like measureBudgetW (g.system bbox) on a detached, laid-out host. */
+  private budgetFromToolkit(tk: VerovioToolkit): number | null {
+    let svg: string;
+    try { svg = tk.renderToSVG(1, {}); } catch { return null; }
+    if (!svg) return null;
+    const host = document.createElement('div');
+    host.style.cssText = 'position:absolute;left:-99999px;top:0';
+    host.innerHTML = svg;
+    document.body.appendChild(host);
+    try {
+      let max = 0;
+      for (const sys of Array.from(host.querySelectorAll('g.system'))) {
+        const w = (sys as SVGGraphicsElement).getBBox().width;
+        if (w > max) max = w;
+      }
+      return max > 0 ? max : null;
+    } finally {
+      host.remove();
+    }
+  }
+
+  /** The balance job checked every section: flag the cached partition so a
+   *  zoom round-trip on this document needs no re-check. */
+  private markPartitionBalanced(): void {
+    const model = this.lastModel;
+    if (!model) return;
+    const e = this.partitionCache.get(this.partitionKey(model));
+    if (e && e.docVer === model.docVersion()) e.balanced = true;
+  }
+
+  /** Land a PARTITION-ONLY change from the section balancer's idle job (the
+   *  document is unchanged): the hunk of lines whose starts differ is spliced
+   *  where mounted and deferred (stale) elsewhere, exactly like an edit's
+   *  refill, then the page-fit cascade runs. False when the splicer refused —
+   *  nothing was touched and the owner reverts. A landed surgery whose spill no
+   *  cascade step could move falls back to a full pinned render of the
+   *  committed partition (the DOM is part-way) — still the balanced layout,
+   *  never a wrong page. */
+  private applyPartitionChange(
+    oldStartIds: string[], newStartIds: string[], oldPageStartIds: string[], newPageStartIds: string[],
+  ): boolean {
+    const model = this.lastModel;
+    if (!model || !this.container || !this.pageVirt || this.spliceDepth !== 0) return false;
+    if (this.container.querySelector('.score-page svg') === null) return false;
+    const ids = model.allMeasures().map((m) => m.getAttribute('xml:id') ?? '');
+    const idIdx = new Map(ids.map((id, i) => [id, i]));
+    const N = oldStartIds.length, M = newStartIds.length;
+    let pre = 0;
+    while (pre < Math.min(N, M) && oldStartIds[pre] === newStartIds[pre]) pre++;
+    let suf = 0;
+    while (suf < Math.min(N, M) - pre && oldStartIds[N - 1 - suf] === newStartIds[M - 1 - suf]) suf++;
+    if (N === M && pre === N) return true;                       // nothing moved
+    const a = Math.max(0, pre - 1), bNew = M - 1 - suf;
+    const lo = idIdx.get(newStartIds[a]);
+    const hiEnd = bNew + 1 < M ? idIdx.get(newStartIds[bNew + 1]) : ids.length;
+    if (lo == null || hiEnd == null) return false;
+    const req: SpliceRequest = {
+      oldStartIds, newStartIds, oldPageStartIds, newPageStartIds,
+      changedRun: { lo, hi: Math.max(lo, hiEnd - 1) },
+      partitionOnly: true,
+    };
+    this.spliceDepth++;
+    this.touchedPages = [];
+    let spliced = false, landed = false;
+    try {
+      if (this.pageSplicer.trySplice(model, req, this.pageSpliceCtx())) {
+        spliced = true;
+        this.registerSpliceEffects();
+        landed = this.repairPagination(this.pageSplicer.lastPages.slice());
+      }
+    } finally {
+      this.spliceDepth--;
+    }
+    if (!spliced) {
+      console.info('[page-balance] partition change not spliceable (' + this.pageSplicer.lastSkipReason + ') — left for the next derive');
+      return false;
+    }
+    if (landed) {
+      this.pageBreaks.verifyRenderedPartition(this.container, model, this.pageVirt.pageCount, this.pageBreaksCtx());
+      if (indexCheckEnabled()) {
+        this.pageSplicer.verifyAgainstReference(this.pinnedMeiForCurrentModel(), this.touchedPages, this.pageSpliceCtx());
+      }
+    } else {
+      console.warn('[page-balance] spilled page could not be repaired (' + this.pageSplicer.lastSkipReason + ') — full pinned render');
+      const pinned = this.pinnedMeiForCurrentModel();
+      if (pinned === null) return false;
+      this.renderPage(pinned, true, this.paintedBreaks());
+      this.pageBreaks.verifyRenderedPartition(this.container, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
+    }
+    this.rememberPartition(model);
+    return true;
   }
 
   /** Max justified system width (SVG user units) from the mounted page DOM. */

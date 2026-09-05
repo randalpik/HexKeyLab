@@ -180,6 +180,22 @@ non-visual failure.
    castoff envelope (0.706–1.426) so an adopted partition is legal by
    construction. Hard (user) breaks never move. Reflow is path-dependent by
    design; undo restores the layout exactly; a no-op edit moves nothing.
+   **Section balancing** (`render/balance.ts`, 2026-09-05) is the repair for
+   the one illegality this loop cannot fix — a SECTION-FINAL line below
+   MIN_FILL, which has no next line to pull from: the castoff's remainder (a
+   lone bar before a movement break, a one-bar stub at the end), or what a push
+   or deletion leaves at a section end. The section (lines between two hard
+   starts) is redistributed: merge rule first (a sparse final line folds into
+   its predecessor while the merged fill ≤ `MERGE_MAX` 1.2), then a DP
+   minimising Σ(fill−mean)² at the current line count with every line legal,
+   plus `BALANCE_LAMBDA` 0.02 per moved boundary while the section is on screen
+   (0 when none of its lines is mounted). No legal partition → the repaired
+   partition stands (document-final: the stub, unjustified — rule 2). Runs
+   synchronously in the derive for the first `INITIAL_BAND_PAGES` pages (before
+   the paint), as an idle job for the rest (`armBalanceJob`, `BALANCE_SLICE`
+   40 naturals per slice, landing via `Renderer.applyPartitionChange` — a
+   partition-only splice request that defers whole when unmounted), and here
+   after the repair loop for touched sections whose naturals are all cached.
 4. **Naturals** (unjustified measure widths) come from `breaks:'none'` window
    renders (the dirty range plus two left + one right context measures,
    spanners and endings whole), cached per measure id; the whole dirty range is
@@ -565,7 +581,13 @@ Only what is open. Landed work is in the Status log; reasoning in decisions.md.
 - **Tuning (Max's call)** — FIT_MAX 1.45 admits lines Verovio compresses to
   ~0.7 and warns about below 0.8 (seen composing at the end of a score);
   `maxGap` 14u and `topMax` 10u are the two distribution knobs, calibrated on
-  the sonata.
+  the sonata; `BALANCE_LAMBDA` 0.02 / `MERGE_MAX` 1.2 / `INITIAL_BAND_PAGES` 2
+  / `LAST_JUSTIFY_SLACK` 0.05 are the balancer's (decisions.md 2026-09-05).
+- **Balancer residue** — a mid-document section too small to hold two legal
+  lines is still stretched by Verovio (no option value helps; only an `<mdiv>`
+  split could); undo after a push/merge does not restore the line count (as
+  for every boundary-moving edit). The job's slices are ~250–420 ms of Verovio
+  each — an idle callback's forced 1 s timeout can land one before a keystroke.
 - **Features (Max's call)** — D3 explicit "reflow document" (reflow is
   path-dependent); D4 move-measure-between-systems commands.
 - **Noted, not fixed** — a clef set on an EMPTY layer does not roundtrip
@@ -581,6 +603,16 @@ placement terms, quantizing the distribution level.
 
 One line per landing; the reasoning is the dated decisions.md entry.
 
+- 2026-09-05 — Section balancing (`render/balance.ts`): a section-final line
+  below MIN_FILL is redistributed into its section (merge rule + λ-penalised
+  min-variance DP at the current line count), synchronously for the first two
+  pages before the paint, by an idle job for the rest (partition-only splice
+  requests, deferred whole when unmounted), and on the edit path for touched
+  sections with cached naturals. Sonata: 116 → 113 lines, movement minimum
+  fills 0.16/0.56/0.32/0.25 → 0.81–0.84, page 1 unchanged after the job, sync
+  band ≈ 0.8–1.0 s, job 5.7 s in 10 slices. `minLastJustification` moved to
+  MIN_FILL − 0.05 (yardstick mismatch). Suite 392/392 + 4 balance fixtures;
+  Node unit test `test/balance/run.mjs` on the sonata's measured widths.
 - 2026-09-04 — Snap-as-output: `layoutSystems` accumulates on the unsnapped
   top and the distribution level is solved on unsnapped geometry; the crisp
   nudge is the emitted translate only. One system's ≤½-pixel rounding had been

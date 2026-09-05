@@ -531,6 +531,15 @@ C1 (user page break) probes, 2026-08-31:
   25, 49, 73, 97. Do not sample with `stride` for this — stride 5 read 0/23
   where stride 1 read 4/25.
 
+- **cb-balance.js** (2026-09-05) — the section balancer on the sonata: the SYNC
+  band balance the derive ran before the first paint (`lastInitialBalance`),
+  then waits for the idle job and reports per-movement line counts and fills
+  (min/max/mean/sd, final line), whether page 1's measure set changed after
+  the paint (must be false), job slices with their wall time, and every
+  `[page-balance]`/`[page-breaks]` notice or uncaught error. `--arg nojob=1`
+  skips the wait. Expected: four movements at min fill ≥ 0.8, 113 lines,
+  `page1Changed: false`, `notices: []`.
+
 **Not described above** (written in earlier sessions; see the matching
 docs/decisions.md entries for what they established): `cb-getmei2.js`,
 `cb-pbcases.js`, `cb-pbunion.js`, `cb-segdiag.js` (user page breaks / segmented

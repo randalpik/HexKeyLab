@@ -3527,3 +3527,93 @@ inventory needs every page mounted — `r.setMountWindowEnabled(false)` then
 `r['mountPage'](n)` for each `.score-page-pending` (cb-splice-battery.js);
 `ensureMeasureMounted` alone leaves the lazy window to evict pages behind the
 cursor, and a per-measure `setCursor` walk ends with only the last page mounted.
+
+## A minimum-variance line partition is globally unstable under one-bar edits (2026-09-05)
+
+The section balancer's first formulation — the DP that minimises Σ(fill−mean)²
+over a section at a fixed line count — gives beautifully even fills (sonata
+movement sd 0.13 → 0.05) and rewrites the whole section on the smallest edit:
+deleting one bar at the end of movement I changed 70 of 35 boundaries, because
+the optimum is an interleaving of 3-bar and 4-bar lines and the interleaving
+pattern flips when the total shifts by a fraction of a bar. Discreteness, not a
+bug. Two additions make it local on the same widths: a change penalty per line
+start absent from the current partition (λ = 0.02 — a boundary moves only when
+it buys more than λ of variance; 0.005 still rippled), and a merge rule before
+the DP (a sparse final line folds into its predecessor while the merged fill
+stays ≤ 1.2; at ≤ 1.0 merges never fired and a section under deletion thinned
+toward MIN_FILL instead of dropping a line). With both, delete-at-section-end
+alternates "pull one bar back" (2 boundaries) and "fold the last line" (1). The
+penalty is dropped (λ = 0) only when nothing of the section is mounted — then
+the even optimum costs nothing visible. `test/balance/run.mjs` replays this on
+the sonata's measured widths.
+
+## Our line fill and Verovio's justification ratio are not the same number (2026-09-05)
+
+`minLastJustification` was set to MIN_FILL (0.65) so a final line is justified
+exactly when the owner considers it legal. On a 9-bar document-final section
+the balancer produced two lines at 0.80 and 0.657 by OUR fill (naturals sum
+over the justified budget) — and Verovio drew the second UNJUSTIFIED, 12710 of
+19010, because its ratio (its own justifiable width) came out under 0.65. The
+two yardsticks disagree by a few percent both ways (lessons 2026-09-02: ours
+runs above on dense lines, below on sparse). One rule expressed in two
+measurements needs slack in the direction that keeps the VISIBLE rule true: the
+option now sits `LAST_JUSTIFY_SLACK` (0.05) below MIN_FILL, so a line the
+balancer kept legal is always drawn justified and a stub it kept (far below by
+both yardsticks) is not. Related discreteness fact from the same session: with
+~0.27-wide bars (sonata movement IV) only 5 of 215 adjacent pairs form a legal
+2-bar line at 0.65, so the DP's freedom is quantised at a third of a line and a
+1-bar stub can be genuinely infeasible to absorb — rule 2 (keep the stub) is
+reachable in large documents too, not only small ones.
+
+## An idle job that can throw must catch, and a partition-only splice must not mount pages (2026-09-05)
+
+The balance job's first sonata run stalled after movement II: `balanceJobActive()`
+stayed true for the whole 120 s wait, movements III/IV were never measured, and
+no console notice explained it — an exception inside an idle callback is an
+uncaught error, not a `console.error` call, so the probe's console hook saw
+nothing. Two fixes, both structural: every job slice runs inside try/catch
+(cancel + `console.warn`, rethrow under HKL_INDEX_CHECK) so a throw can never
+leave a zombie job holding the partition-cache flag; and the splicer's B5
+ensure-mount is skipped for partition-only requests — it had mounted the pages
+around movement II's hunk (far from the viewport) and spliced them, which is
+where the throw came from and is exactly the work a balance of unmounted lines
+must not do. A partition-only hunk whose first line is unmounted is deferred
+whole (pins committed, pages stale); only lines the reader can see are spliced.
+
+## A page-first line's target page is its page NUMBER, not where its start measure sits (2026-09-05)
+
+The splicer found the page element for a new page made entirely of hunk lines
+by asking where that page's first measure currently sits. Right for every edit
+it had seen — a page carried by line keeps its start measure on that page unless
+the measure was deleted — and wrong the moment a page-start boundary moves BACK
+onto a measure that sits on the previous page: the balancer does that routinely
+(a bar or two pulled back at a movement end), and an edit does it when a push
+lands on a single-line last page. The line then went to the previous page, the
+real page was emptied and removed, and `repairPagination` refused a page whose
+systems disagreed with the pins ("spilled systems do not match the pinned
+lines") — surfaced by `pageSpliceNewPageAtEnd` only when the idle balance job
+happened to finish after the fixture's cascade had created page 4. When a
+request keeps the page count, nothing collapses inside the splice, so new page p
+IS the element numbered p (`sameGrid` in `spliceDom`); the "measure sits here
+now" rule remains for collapses. Timing-dependent failures in a suite are a
+gift: this one existed on the edit path before the balancer, unexercised.
+
+## A synthetic measure must have the HEAD scoreDef's staves — label-replacement staffDefs are not staves (2026-09-05)
+
+The splice window's mRest leader/trailer took its staff count from every
+`staffDef` in the window MEI. The movement-break restart (sectionRestart.ts,
+same day) adds a second scoreDef whose `<staffGrp n><label/><staffDef n/>`
+entries replace drawing labels — two more `staffDef`s that are not staves. A
+window containing a movement boundary therefore got a 5-staff leader for a
+3-staff score, and Verovio's loadData died with `RuntimeError: null function`
+(a null staffDef dereferenced through a vtable). The battery's
+section-header-zone edit caught it only after the section balancer made its
+hunk start exactly at the boundary; the pre-change window shape (one line
+earlier, boundary inside) crashes identically when rebuilt by hand, so the bug
+was hours old and unexercised. Two lessons: a synthetic element that mirrors
+document structure must read that structure from the HEAD definition, never
+from a count over the whole document; and a WASM "null function" from Verovio
+on load is a malformed-input symptom — bisect the input on a fresh toolkit
+(here: strip leader/trailer/pins/stub together, then singly) before suspecting
+toolkit state. Fixture: `pageSpliceLeaderAtSectionRestart`.
+

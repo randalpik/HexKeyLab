@@ -315,6 +315,11 @@ export interface SpliceRequest {
   /** Measure run the edit changed (NEW measure indices), or null when nothing
    *  in the document changed (a pure move). */
   changedRun: { lo: number; hi: number } | null;
+  /** The document is unchanged and only the partition moved (the section
+   *  balancer's idle job, 2026-09-05). There is no edit line that must be
+   *  mounted: a hunk whose first line is on an unmounted page is deferred
+   *  whole — pins committed, pages marked stale — instead of refused. */
+  partitionOnly?: boolean;
 }
 
 /** Where a new line's system goes. */
@@ -508,7 +513,7 @@ export class PageSystemSplicer {
        ~50 ms against the ~1.2 s full render it avoids.
        The edit's neighbourhood ONLY, not the whole hunk (2026-09-02) — see the
        clip below. */
-    if (req.oldPageStartIds.length) {
+    if (req.oldPageStartIds.length && !req.partitionOnly) {
       const want = new Set<number>();
       for (let k = Math.max(0, a - 1); k <= Math.min(N - 1, Math.min(bOld, a + 1)); k++) want.add(pageOfOld(k));
       for (const p of want) ctx.ensurePageMounted(p);
@@ -537,7 +542,24 @@ export class PageSystemSplicer {
     const editPageHi = Math.max(pageOfOld(a), pageOfNew(a));
     let bandLo = editPageLo, bandHi = editPageHi;
     for (let p = editPageLo; p <= editPageHi; p++) {
-      if (!ctx.isPageMounted(p)) return skip('edit line not mounted');
+      if (ctx.isPageMounted(p)) continue;
+      if (!req.partitionOnly) return skip('edit line not mounted');
+      /* Partition-only change whose first line nobody has drawn: defer the
+         whole hunk. Every page carrying a hunk line (old or new numbering) is
+         marked stale — a drawn one is returned to a placeholder by the
+         renderer — and redraws from the committed pins when it mounts. */
+      const deferred = new Set<number>();
+      for (let k = a; k <= bOld; k++) deferred.add(pageOfOld(k));
+      for (let k = a; k <= bNew; k++) deferred.add(pageOfNew(k));
+      this.lastDeferredPages = [...deferred].sort((x, y) => x - y);
+      this.lastDeferredLines = { a, b: bNew };
+      this.lastOutcome = 'spliced';
+      this.lastSkipReason = '';
+      this.lastStats.lines = 0;
+      this.lastStats.totalMs = Math.round(performance.now() - t0);
+      this.lastRun = { a, b: a - 1 };
+      this.lastHunk = { a, bOld, bNew };
+      return true;
     }
     while (bandLo > 1 && ctx.isPageMounted(bandLo - 1)) bandLo--;
     while (ctx.isPageMounted(bandHi + 1)) bandHi++;
@@ -820,9 +842,24 @@ export class PageSystemSplicer {
       const p = pageOfNew(li);
       if (!firstLineOfPage.has(p)) firstLineOfPage.set(p, li);
     }
+    /* When the request keeps the page COUNT, no page collapses inside this
+       splice (creation is the cascade's, afterwards), so new page p IS the
+       element numbered p. That is the only correct answer when a page-first
+       line's new start measure currently sits on the PREVIOUS page — which an
+       edit does when a push lands on a single-line last page, and which the
+       section balancer does routinely (a boundary moved back a bar or two):
+       the "measure sits here now" rule below would then hand the line to the
+       previous page, empty the real one, and leave the cascade a page whose
+       systems disagree with the pins (2026-09-05, `pageSpliceNewPageAtEnd`
+       under a pending balance job). */
+    const sameGrid = req.newPageStartIds.length > 0 && req.newPageStartIds.length === req.oldPageStartIds.length;
     for (const [p, f] of firstLineOfPage) {
       let el: HTMLElement;
-      if (r.a > 0 && ctxPrev && pageOfNew(r.a - 1) === p) el = ctxPrev.pageEl;
+      if (sameGrid) {
+        const pg = ctx.container.querySelector('.score-page[data-page="' + p + '"]') as HTMLElement | null;
+        if (!pg || pg.classList.contains('score-page-pending')) return skip('target page not mounted');
+        el = pg;
+      } else if (r.a > 0 && ctxPrev && pageOfNew(r.a - 1) === p) el = ctxPrev.pageEl;
       else if (ctxNext && r.bNew + 1 < M && pageOfNew(r.bNew + 1) === p) el = ctxNext.pageEl;
       else {
         const m = ctx.container.querySelector('#' + CSS.escape(newStartIds[f]));
@@ -1343,7 +1380,16 @@ function buildWindowMei(
   if (doc.querySelector('parsererror')) return null;
   const section = doc.querySelector('section');
   if (!section) return null;
-  const nStaves = doc.querySelectorAll('scoreDef staffDef').length || 1;
+  /* Staves of the HEAD scoreDef only. A window that contains a movement
+     boundary also carries the restart's label-replacement scoreDef, whose
+     `<staffGrp n><label/><staffDef n/>` entries are labels, not staves
+     (notation/sectionRestart.ts, 2026-09-05); counting them gave the sonata's
+     3-staff score a 5-staff mRest leader and Verovio a null staffDef to
+     dereference — "RuntimeError: null function" on loadData, surfaced by the
+     splice battery's section-header-zone edit once the balancer let a hunk
+     start exactly at the boundary. */
+  const headDef = doc.querySelector('score > scoreDef') ?? doc.querySelector('scoreDef');
+  const nStaves = (headDef ? headDef.querySelectorAll('staffDef').length : 0) || 1;
   const synthMeasure = (id: string): Element => {
     const meas = doc.createElementNS(MEI_NS, 'measure');
     meas.setAttribute('xml:id', id);

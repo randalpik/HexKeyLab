@@ -1196,6 +1196,116 @@ const PAGE_LINEBREAKS = {
     `,
     fullRender: 'this fixture exists to assert the derive fallback',
   },
+
+  /* ── Section balancing (render/balance.ts, 2026-09-05) ──
+   * Verovio's castoff leaves every section's remainder as its final line — a
+   * lone bar justified across the page before a section break, a one-bar stub
+   * at the end of the document. The balancer redistributes a section whose
+   * final line is below MIN_FILL: synchronously for the first pages before the
+   * first paint, in an idle job for the rest, and on the edit path for the
+   * sections an edit touches. Documents here are 4-quarter bars (~0.15 of a
+   * line each; 5–6 per system), so 13 bars cast off as 6+6+1. */
+
+  /* 13-bar section I (castoff 6+6+1: a lone bar before the section break) +
+   * 9-bar section II (castoff 6+3: a sparse document-final line). Both are
+   * balanced before the first paint: no lone-bar system, every section-final
+   * line legal, every system justified to the same width. Asserted via
+   * FIXTURE_ASSERTIONS.pageBalanceSectionFinal. */
+  pageBalanceSectionFinal: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 4 * 22; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      m.setSectionHeaderAt(13, 'II');
+      r();
+    `,
+    visualBaseline: 'page_balance_section_final',
+    visualFullPage: true,
+    skipCursorTrace: true,
+  },
+
+  /* Max's rule 2: a document-final section too small to balance keeps its stub.
+   * 13-bar section I (balanced) + 8-bar section II (castoff 6+2; no partition
+   * into two lines ≥ MIN_FILL exists, and 6+2 merged would exceed MERGE_MAX):
+   * the balancer reports 'no legal balance: stub kept', the stub renders at its
+   * natural width (unjustified), every other system justified. Asserted via
+   * FIXTURE_ASSERTIONS.pageBalanceDocFinalSmallDocKeepsStub. */
+  pageBalanceDocFinalSmallDocKeepsStub: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 4 * 21; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      m.setSectionHeaderAt(13, 'II');
+      r();
+    `,
+    skipCursorTrace: true,
+  },
+
+  /* Edit path, composing at the end: bars are appended until the last line
+   * overflows and the repair pushes a bar onto a new final line — the balancer
+   * then redistributes the section so that line is legal, moving only a few
+   * boundaries, on the splice path. Asserted via
+   * FIXTURE_ASSERTIONS.pageBalanceComposeAtEnd. */
+  pageBalanceComposeAtEnd: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 4 * 21; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+    skipCursorTrace: true,
+  },
+
+  /* A splice whose window opens exactly at a movement boundary: the hunk is
+   * section II's first line, so the window is a synthetic mRest LEADER followed
+   * by the restart scoreDef and its label-replacement scoreDef. The leader must
+   * have the HEAD scoreDef's staff count — counting the label-only staffDefs
+   * gave a 3-staff score a 5-staff leader and Verovio a null-function crash on
+   * loadData (2026-09-05, found by the sonata battery once the balancer let a
+   * hunk start at the boundary). Asserted via
+   * FIXTURE_ASSERTIONS.pageSpliceLeaderAtSectionRestart. */
+  pageSpliceLeaderAtSectionRestart: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 4 * 26; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      m.setSectionHeaderAt(17, 'II');
+      r();
+    `,
+    skipCursorTrace: true,
+  },
+
+  /* Edit path, deleting at a section end: section I (17 bars, castoff 6+6+5 —
+   * legal, so the sync balance leaves it alone and the idle job only warms its
+   * naturals) has the notes of its last bars deleted until its final line falls
+   * below MIN_FILL; the balancer repairs it locally (a bar pulled back or the
+   * line folded), on the splice path. Asserted via
+   * FIXTURE_ASSERTIONS.pageBalanceDeleteAtSectionEnd. */
+  pageBalanceDeleteAtSectionEnd: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 4 * 26; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      m.setSectionHeaderAt(17, 'II');
+      r();
+    `,
+    skipCursorTrace: true,
+  },
 };
 
 /* ── Page-view system splice (Phase C-B, render/pagesplice.ts) ─────────── */
@@ -9012,6 +9122,139 @@ export const FIXTURE_ASSERTIONS = {
             return { ok: false, detail: 'measure ' + id + ' geometry changed across delete+undo: ' + JSON.stringify(v) + ' → ' + JSON.stringify(w) };
           }
         }
+        return { ok: true };
+      })()` },
+  ],
+  pageBalanceSectionFinal: [
+    { name: 'no lone-bar system: the castoff\'s 6+6+1 / 6+3 remainders are balanced before the first paint and every system is justified',
+      expr: `(() => {
+        const H = window.__hkl_composer; const m = H.model; const pb = H.renderer['pageBreaks'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
+        pb.finishBalanceJobNow();
+        const ib = pb.lastInitialBalance;
+        if (!ib || ib.applied < 1) return { ok: false, detail: 'the sync band balance did not fire: ' + JSON.stringify(ib) };
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const idIdx = new Map(ids.map((id, i) => [id, i]));
+        const starts = pb['startIds'].map((id) => idIdx.get(id));
+        const lens = starts.map((s, k) => (k + 1 < starts.length ? starts[k + 1] : ids.length) - s);
+        if (lens.some((L) => L <= 1)) return { ok: false, detail: 'a lone-bar system survived: lens=' + lens.join(',') };
+        const secEnd = starts.indexOf(13) - 1;
+        if (secEnd < 0) return { ok: false, detail: 'section II does not start a line: starts=' + starts.join(',') };
+        for (const k of [secEnd, starts.length - 1]) {
+          const f = pb['lineFill'](starts, k, ids);
+          if (f === null || f < 0.65) return { ok: false, detail: 'section-final line ' + k + ' fill ' + f + ' (lens ' + lens.join(',') + ')' };
+        }
+        const ws = [...document.querySelectorAll('#score .score-page:not(.score-page-pending) g.system')].map((g) => g.getBBox().width);
+        const max = Math.max(...ws);
+        if (ws.length < 4 || ws.some((w) => w < 0.98 * max)) return { ok: false, detail: 'system widths ' + ws.map((w) => Math.round(w)).join(',') };
+        return { ok: true };
+      })()` },
+  ],
+  pageBalanceDocFinalSmallDocKeepsStub: [
+    { name: 'a document-final section too small to balance keeps its stub, unjustified (rule 2); every other system is justified',
+      expr: `(() => {
+        const H = window.__hkl_composer; const pb = H.renderer['pageBreaks'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
+        pb.finishBalanceJobNow();
+        const ib = pb.lastInitialBalance;
+        if (!ib || !ib.reasons.includes('no legal balance: stub kept')) return { ok: false, detail: 'expected the stub rule to fire: ' + JSON.stringify(ib) };
+        const ws = [...document.querySelectorAll('#score .score-page:not(.score-page-pending) g.system')].map((g) => g.getBBox().width);
+        if (ws.length < 3) return { ok: false, detail: 'only ' + ws.length + ' systems' };
+        const max = Math.max(...ws), last = ws[ws.length - 1];
+        if (!(last < 0.6 * max)) return { ok: false, detail: 'the stub is justified: ' + ws.map((w) => Math.round(w)).join(',') };
+        if (ws.slice(0, -1).some((w) => w < 0.98 * max)) return { ok: false, detail: 'a non-final system is unjustified: ' + ws.map((w) => Math.round(w)).join(',') };
+        return { ok: true };
+      })()` },
+  ],
+  pageBalanceComposeAtEnd: [
+    { name: 'composing past the end: the pushed bar\'s new line is balanced into the section, locally, on the splice path',
+      expr: `(() => {
+        const H = window.__hkl_composer; const m = H.model; const pb = H.renderer['pageBreaks'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
+        pb.finishBalanceJobNow();
+        const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+        const linesBefore = pb['startIds'].length;
+        let bars = 0;
+        while (bars < 12 && pb['startIds'].length === linesBefore) {
+          for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [mk(i % 2 ? 'b' : 'g', i % 2 ? 4 : 6)], duration: '4', dots: 0 });
+          bars++;
+          H.reRender();
+          if (pb.lastDeriveReason !== '') return { ok: false, detail: 'derive after appending bar ' + bars + ': ' + pb.lastDeriveReason };
+        }
+        if (pb['startIds'].length === linesBefore) return { ok: false, detail: 'no new line after ' + bars + ' appended bars' };
+        const lb = pb.lastBalance;
+        if (lb.applied !== 1) return { ok: false, detail: 'balancer did not fire on the push: ' + JSON.stringify(lb) };
+        if (lb.changed > 4) return { ok: false, detail: 'balance was not local: ' + JSON.stringify(lb) };
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const idIdx = new Map(ids.map((id, i) => [id, i]));
+        const starts = pb['startIds'].map((id) => idIdx.get(id));
+        const f = pb['lineFill'](starts, starts.length - 1, ids);
+        if (f === null || f < 0.65) return { ok: false, detail: 'final line fill ' + f + ' after balance' };
+        const led = H.renderer.renderLedger();
+        if (!led.length || led[led.length - 1].full) return { ok: false, detail: 'the push render was a full engrave: ' + JSON.stringify(led[led.length - 1]) };
+        return { ok: true };
+      })()` },
+  ],
+  pageSpliceLeaderAtSectionRestart: [
+    { name: 'an edit in a section\'s first line splices through a leader-at-boundary window (no Verovio crash, no derive)',
+      expr: `(() => {
+        const H = window.__hkl_composer; const m = H.model; const pb = H.renderer['pageBreaks']; const ps = H.renderer['pageSplicer'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
+        pb.finishBalanceJobNow();
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const idIdx = new Map(ids.map((id, i) => [id, i]));
+        const starts = pb['startIds'].map((id) => idIdx.get(id));
+        if (!starts.includes(17)) return { ok: false, detail: 'section II does not start a line: ' + starts.join(',') };
+        /* Delete a note in section II's FIRST bar: the hunk is its first line
+           and the window opens with a leader right before the boundary. */
+        m.setCursor(m.getMeasureStartCursor(1, 17), 1);
+        if (!m.deleteAtCursor()) return { ok: false, detail: 'delete rejected' };
+        let thrown = null;
+        try { H.reRender(); } catch (e) { thrown = String(e); }
+        if (thrown) return { ok: false, detail: 'render threw: ' + thrown };
+        if (pb.lastDeriveReason !== '') return { ok: false, detail: 'derive: ' + pb.lastDeriveReason };
+        if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice, got ' + ps.lastOutcome + ' (' + ps.lastSkipReason + ')' };
+        if (!ps.lastWindow || !ps.lastWindow.leader) return { ok: false, detail: 'window had no leader: ' + JSON.stringify(ps.lastWindow) };
+        if (!(ps.lastStats.loadMs > 0)) return { ok: false, detail: 'window never loaded: ' + JSON.stringify(ps.lastStats) };
+        return { ok: true };
+      })()` },
+  ],
+  pageBalanceDeleteAtSectionEnd: [
+    { name: 'emptying bars at a section end: once the final line falls below MIN_FILL the balancer repairs the section locally, on the splice path',
+      expr: `(() => {
+        const H = window.__hkl_composer; const m = H.model; const pb = H.renderer['pageBreaks'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
+        pb.finishBalanceJobNow();   /* warms section I's naturals (it was legal at load) */
+        const ids0 = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const idIdx0 = new Map(ids0.map((id, i) => [id, i]));
+        const starts0 = pb['startIds'].map((id) => idIdx0.get(id));
+        if (!starts0.includes(17)) return { ok: false, detail: 'section II does not start a line: ' + starts0.join(',') };
+        let fired = null;
+        for (let bar = 16; bar >= 12 && !fired; bar--) {
+          for (let n = 0; n < 4; n++) {
+            m.setCursor(m.getMeasureStartCursor(1, bar), 1);
+            if (!m.deleteAtCursor()) break;
+          }
+          H.reRender();
+          if (pb.lastDeriveReason !== '') return { ok: false, detail: 'derive after emptying bar ' + bar + ': ' + pb.lastDeriveReason };
+          if (pb.lastBalance.applied) fired = { bar, lb: JSON.parse(JSON.stringify(pb.lastBalance)) };
+        }
+        if (!fired) return { ok: false, detail: 'balancer never fired: ' + JSON.stringify(pb.lastBalance) };
+        if (fired.lb.changed > 4) return { ok: false, detail: 'balance was not local: ' + JSON.stringify(fired) };
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const idIdx = new Map(ids.map((id, i) => [id, i]));
+        const starts = pb['startIds'].map((id) => idIdx.get(id));
+        const secEnd = starts.indexOf(17) - 1;
+        if (secEnd < 0) return { ok: false, detail: 'section II lost its line start: ' + starts.join(',') };
+        const f = pb['lineFill'](starts, secEnd, ids);
+        if (f === null || f < 0.65) return { ok: false, detail: 'section-final line fill ' + f + ' after balance (starts ' + starts.join(',') + ')' };
+        const led = H.renderer.renderLedger();
+        if (!led.length || led[led.length - 1].full) return { ok: false, detail: 'the repair render was a full engrave: ' + JSON.stringify(led[led.length - 1]) };
         return { ok: true };
       })()` },
   ],

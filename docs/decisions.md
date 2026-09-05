@@ -6652,3 +6652,122 @@ key); sonata whole-document inventory with every page mounted — 0 erased
 stretches, 0 marks on barlines, 2 fills, 7 horizontal nudges, all three
 movement boundaries courtesy-free with continuation indent, 0 Verovio warnings
 on a full re-render.
+
+## 2026-09-05 — Section balancing: a section-final line below MIN_FILL is redistributed into its section, never left as a lone bar
+
+**Context**: Verovio's castoff packs measures greedily at natural width ≤ 1.0
+and justifies, so every section ends in whatever remainder is left. Measured on
+the sonata: all four movements ended below MIN_FILL (fills 0.16 / 0.56 / 0.32 /
+0.25) — movement I's last system was ONE bar justified across the page before
+the movement break, movement IV's a one-bar stub at the end of the document.
+The edit path had the same hole: `repartition` repairs a line by moving one
+measure across a boundary, pulling only from the NEXT line, so a section-final
+line has nothing to pull from — composing at the end produced a stub, deleting
+at a section end a sparse stretched line. Backlog line 99; the 2026-09-03
+last-justification entry deferred end-of-section parity to "the balancer".
+Max's rules: (1) within a run of systems where measures move freely, similar
+fill per system — similar, not optimal if optimal is expensive; (2) in the
+section that ends the document, if that cannot be done with every system ≥
+MIN_FILL (small documents), keep the last measure a stub as before.
+
+**Decision** (`render/balance.ts`, driven from `render/linebreaks.ts`):
+
+1. **One trigger everywhere**: a section (the lines between two hard starts —
+   `hardStartIds`) is *defective* when its final line's fill is below MIN_FILL.
+   MIN_FILL already meant "too sparse to be a line" and "not justified"; the
+   balancer makes the three uses one rule. Nothing else ever triggers it — a
+   section whose castoff fills range 0.71–1.0 is left exactly as cast off
+   (Max: defective sections only, 2026-09-05).
+2. **The balancer is a repair, not a re-derivation**: merge rule first (the
+   sparse final line folds into its predecessor while the merged fill stays ≤
+   `MERGE_MAX` 1.2), then a DP minimising Σ(fill−mean)² over the section at the
+   CURRENT line count with every line inside [MIN_FILL, FIT_MAX], plus a change
+   penalty `BALANCE_LAMBDA` 0.02 per line start absent from the current
+   partition while any of the section's lines is mounted (0 when none is —
+   nothing visible changes, so the even optimum is free). N−1 is tried only when
+   N has no legal partition and only if its densest line stays ≤ MERGE_MAX. No
+   legal partition → the repaired partition stands: a document-final stub stays
+   and `minLastJustification` leaves it unstretched (rule 2); a mid-document
+   section too small for two legal lines stays stretched by Verovio (no option
+   value changes that; an `<mdiv>` split is the only lever and is not taken).
+   Evidence for λ and MERGE_MAX (offline replay on the sonata's measured widths,
+   `test/balance/run.mjs`): the plain DP rewrote 70 of 35 boundaries when one
+   bar was deleted at the end of movement I; λ = 0.02 + MERGE_MAX 1.2 turned the
+   same sequence into alternating 2- and 1-boundary repairs with the movement
+   holding mean 0.85, sd 0.05; λ ≤ 0.005 still rippled, MERGE_MAX 1.0 never
+   merged. N is otherwise kept because pagination is carried by line.
+3. **Where it runs** (decided with Max 2026-09-05: sync for the initially
+   mounted band, lazy for the rest):
+   - **Derive, before the first pinned paint** (`Renderer.balanceInitialBand`):
+     the sections with a line on the first `INITIAL_BAND_PAGES` (2) pages. The
+     justified width comes from the castoff layout the live toolkit holds,
+     rendered to a detached host (nothing is mounted yet, and a previous render's
+     DOM may sit at another page scale). Only the final line is measured to
+     decide; the whole section only when defective. Sonata movement I: 139
+     measures, 0.8–1.0 s, 63 boundaries changed, one line removed — and page 1
+     is painted balanced, so it never re-flows under the reader.
+   - **Idle job** (`PageLineBreaks.armBalanceJob`) for every other section,
+     mounted sections first: ≤ `BALANCE_SLICE` 40 naturals per idle slice (each
+     ~250–420 ms of Verovio — the adoption walk's 40 ms budget is unreachable
+     for a render, and an idle callback's forced 1 s timeout can land one before
+     a keystroke; accepted). The final line first, then the WHOLE section
+     regardless of the verdict, so every section is warm for a later edit (the
+     edit path never measures a whole section). A balanced section lands through
+     `Renderer.applyPartitionChange`: a `SpliceRequest` with `partitionOnly`,
+     which the splicer defers whole (pins committed, pages stale) when its first
+     line is unmounted and for which B5's ensure-mount is skipped — the first
+     run mounted movement II's far pages, spliced them, threw, and left a zombie
+     job; slices now run under try/catch (cancel + warn; rethrow under
+     HKL_INDEX_CHECK). The partition cache records `balanced` when the job
+     finishes, so a zoom round-trip neither re-balances nor re-arms.
+   - **Edit path** (`repartition`, after the repair loop, `balanceTouched`):
+     the sections the edit touched, with λ, and only when their naturals are all
+     cached — a section the job has not reached keeps today's behaviour and the
+     job balances it on arrival. Never a whole-section window on the hot path.
+4. **`minLastJustification` moves to MIN_FILL − `LAST_JUSTIFY_SLACK` (0.05)**.
+   The 2026-09-03 "one rule" tied it to MIN_FILL, but the two yardsticks are
+   different numbers: a balanced 9-bar document-final section measured 0.657 by
+   our naturals fill and drew UNJUSTIFIED (12710 of 19010) under the bare
+   constant. With the slack, a line the balancer kept legal is always drawn
+   justified; a stub it kept is far below by both yardsticks and is not.
+
+**Results** (sonata, headless Chromium, `cb-balance.js`): movements I/III/IV
+lose one line each (the stub folds into its neighbour), II keeps 21; minimum
+line fill 0.16/0.56/0.32/0.25 → 0.81/0.83/0.84/0.83, per-movement sd ≈ 0.05,
+116 → 113 lines, 31 pages; job 5.7 s in 10 slices; `page1Changed: false`; no
+Verovio or page-breaks notices. Suite 392/392 (no baseline moved — the balancer
+only fires on a defective section) + 4 new fixtures (`pageBalanceSectionFinal`
+with a full-page baseline, `pageBalanceDocFinalSmallDocKeepsStub`,
+`pageBalanceComposeAtEnd`, `pageBalanceDeleteAtSectionEnd`).
+
+**Rejected**: re-deriving the whole section on every edit (the hysteresis Max
+ruled out on 2026-08-30 returns as jitter); synchronous whole-document naturals
+at load (3.4–3.9 s on the sonata); tail-scoped balancing (cheaper naturals, but
+leaves a density step of ~0.2 between the balanced tail and the body — rule 1
+asks for the section); always-justify via `minLastJustification: 0` (wrong for
+the small-document case rule 2 exists for); balancing every section at load
+(rule 1 literally — Max chose defective-only: minimal deviation from castoff,
+same trigger as the edit path).
+
+**Splicer fix found on the way** (`pagesplice.ts` `spliceDom`): a page-first
+hunk line's target page was "the page its start measure sits on now", which
+sends the line to the PREVIOUS page whenever a page-start boundary moves back —
+routine for the balancer, latent for an edit pushing onto a single-line last
+page. With an unchanged page count the target is the element numbered p
+(lessons.md 2026-09-05).
+
+**Window-builder fix found on the way** (`pagesplice.ts` `buildWindowMei`): the
+synthetic leader/trailer counted every `staffDef` in the window, including the
+restart's label-replacement ones (sectionRestart.ts, this morning), so a window
+holding a movement boundary got a 5-staff leader for a 3-staff score and
+Verovio crashed on loadData ("null function"). The count now comes from the
+head scoreDef; fixture `pageSpliceLeaderAtSectionRestart` (lessons.md
+2026-09-05).
+
+**Not done, adjacent**: the refill still derives on a NEW hard start (Ctrl+B,
+section header) — the merge rule's `linesReplaced` bookkeeping is one of the
+building blocks that gap needs; D3 reflow-document and D4 move-measure commands
+remain future work. Undo after a push or merge does not restore the line count
+(unchanged for boundary-moving edits; `pageLineBreaksUndoRestoresLayout` still
+guards the legality-preserving case).
+

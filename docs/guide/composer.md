@@ -233,7 +233,14 @@ too empty to stand. Only then does the layout move, and only by as much as it
 must: one bar shifts to the next line (or back from it), and the neighbouring
 lines follow if that leaves *them* unworkable. Everything else keeps its
 position, so editing a passage doesn't rearrange the page around it, and undo
-puts the layout back exactly as it was. A few actions re-derive the whole layout
+puts the layout back exactly as it was. The last system of a movement, or of
+the piece, is never left as a lone bar stretched across the page: when a
+section's final system falls below the minimum fill, the bars of that section
+are redistributed so its systems are similarly full — folding a sparse last
+system into the one before it where that fits, otherwise moving a bar or two
+back. When a document loads, the first pages are balanced before they appear
+and the rest a moment later, out of view. The one exception is a piece too
+short to balance: its short last system keeps its natural width, as before. A few actions re-derive the whole layout
 from scratch, so the page may re-flow: loading a document, zoom or page-size
 changes, switching to a single-instrument view, adding or removing a page break
 or section header, and changes to the key, time signature or staff set.

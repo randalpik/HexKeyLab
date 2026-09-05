@@ -55,6 +55,7 @@ import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
 import type { ComposerModel } from '../model/index.js';
 import { expandForSpanners, expandForEndings } from './splice.js';
 import { captureSigState, signatureRanges, unionRun, type SigState } from './sigranges.js';
+import { balanceSection, boundariesChanged, startsOf } from './balance.js';
 
 const MEI_NS = 'http://www.music-encoding.org/ns/mei';
 
@@ -85,6 +86,27 @@ const MAX_ENSURES = 4;
 /** A single naturals window (post spanner/ending expansion) larger than this
  *  falls back to a derive render instead. */
 const WINDOW_CAP = 260;
+/** Section balancer knobs (render/balance.ts; Max, 2026-09-05). A section-final
+ *  line below MIN_FILL is the one illegality the repair loop cannot fix — it
+ *  pulls only from the NEXT line, and a section's last line has none — so the
+ *  balancer redistributes that section's measures instead. BALANCE_LAMBDA is
+ *  the change penalty per moved boundary while the section is on screen: on
+ *  the sonata 0.02 turned a delete-at-movement-end into "pull one bar back" or
+ *  "fold the sparse final line into its neighbour", where the unpenalised
+ *  optimum rewrote every boundary (the 3-vs-4-bar interleaving flips); ≤ 0.005
+ *  still rippled. It is 0 when no line of the section is mounted — nothing
+ *  visible changes, so the fully even partition is free. MERGE_MAX is the fill
+ *  up to which a sparse final line is folded into its predecessor (one
+ *  modestly compressed line beats two sparse ones; at 1.0 merges never fired
+ *  and a section thinned toward MIN_FILL under deletion). */
+export const BALANCE_LAMBDA = 0.02;
+export const MERGE_MAX = 1.2;
+/** Measures one idle slice of the balance job renders (~250 ms of Verovio —
+ *  the adoption walk's 40 ms budget is unreachable for a render). */
+const BALANCE_SLICE = 40;
+/** Largest single naturals window the balancer asks for (before context and
+ *  spanner/ending expansion, which WINDOW_CAP still bounds). */
+const BALANCE_WINDOW = 120;
 
 function indexCheckEnabled(): boolean {
   return typeof globalThis !== 'undefined' &&
@@ -104,6 +126,17 @@ export interface PageBreaksCtx {
   /** Max justified system width (SVG user units) from the live page DOM;
    *  null while nothing is mounted. */
   budgetW(): number | null;
+  /** Is page `page` currently drawn (exists and is not a placeholder)? The
+   *  balance job orders sections by it and drops the change penalty for a
+   *  section with no mounted line. */
+  isPageMounted(page: number): boolean;
+  /** Land a PARTITION-ONLY change (the document is unchanged): mounted lines
+   *  are spliced, the rest marked stale, spills cascaded. False = refused; the
+   *  owner reverts to the previous partition. */
+  commitPartition(oldStartIds: string[], newStartIds: string[], oldPageStartIds: string[], newPageStartIds: string[]): boolean;
+  /** The balance job checked every section (the renderer flags its
+   *  partition-cache entry so a zoom round-trip needs no re-check). */
+  balanceComplete(): void;
 }
 
 /** Refill display strategy: 'line' honors every <sb> VERBATIM (castoff never
@@ -332,6 +365,38 @@ function hardStartIds(model: ComposerModel): Set<string> {
   return out;
 }
 
+/** Line-index ranges [kLo, kHi] of the SECTIONS of a partition: a section
+ *  begins at line 0 and at every hard-start line (a measure after a user or
+ *  section-level sb/pb). Measures move freely inside a section, never across. */
+function sectionRanges(starts: number[], ids: string[], hard: Set<string>): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  let kLo = 0;
+  for (let k = 1; k < starts.length; k++) {
+    if (hard.has(ids[starts[k]])) { out.push([kLo, k - 1]); kLo = k; }
+  }
+  out.push([kLo, starts.length - 1]);
+  return out;
+}
+
+/** Page bookkeeping after the lines [kLo, kLo+n0) were replaced by n1 ≤ n0
+ *  lines (pages are carried by LINE index, B2): a page starting past the
+ *  section shifts up by the lines removed; a page whose first line was one of
+ *  the removed tail lines now begins at the line after the section (the tail
+ *  merged into lines that end on the previous page); a page left with no line
+ *  collapses into its predecessor. */
+function linesReplaced(pageLines: number[], kLo: number, n0: number, n1: number, lineCount: number): void {
+  const d = n0 - n1;
+  if (d <= 0) return;
+  for (let p = 0; p < pageLines.length; p++) {
+    const L = pageLines[p];
+    if (L >= kLo + n0) pageLines[p] = L - d;
+    else if (L >= kLo + n1) pageLines[p] = kLo + n1;
+  }
+  for (let p = pageLines.length - 1; p >= 0; p--) {
+    if (pageLines[p] >= lineCount || (p > 0 && pageLines[p] <= pageLines[p - 1])) pageLines.splice(p, 1);
+  }
+}
+
 /** Head-level context that is NOT the head scoreDef's key/meter: the
  *  section-level elements before the first measure (scoreDefs excluded — they
  *  are interior entries) plus the composer/footer credits, which are injected
@@ -363,6 +428,28 @@ interface AdoptionTask {
   /** First line start of each page — the pagination being adopted. */
   pageStartIds: string[];
   cancelled: boolean;
+}
+
+/** The idle balance job (see armBalanceJob). Sections are identified by the
+ *  id of their first line's start measure, so an edit between two slices —
+ *  which may move boundaries or balance a section itself — never confuses it. */
+interface BalanceJob {
+  cancelled: boolean;
+  done: Set<string>;
+  steps: number;
+  /** One slice; scheduled through scheduleIdle, or driven synchronously by
+   *  finishBalanceJobNow (tests/probes). */
+  step: () => void;
+}
+
+/** Diagnostics of one balance pass (edit path, initial band, or one job step). */
+export interface BalanceStats {
+  sections: number;
+  applied: number;
+  changed: number;
+  removed: number;
+  reasons: string[];
+  ms: number;
 }
 
 export class PageLineBreaks {
@@ -430,6 +517,12 @@ export class PageLineBreaks {
   /** Why the last tryRefill returned null (diagnostics/tests); '' after a
    *  successful refill. */
   lastDeriveReason = '';
+  /** Diagnostics of the last balance pass (see BalanceStats). */
+  lastBalance: BalanceStats = { sections: 0, applied: 0, changed: 0, removed: 0, reasons: [], ms: 0 };
+  /** Diagnostics of the last SYNC band balance (balanceInitialBand) — kept
+   *  apart from `lastBalance`, which every job slice overwrites. */
+  lastInitialBalance: BalanceStats | null = null;
+  private balanceJob: BalanceJob | null = null;
 
   /** Drop all partition state. Next page render must derive + re-adopt. */
   invalidate(): void {
@@ -447,6 +540,22 @@ export class PageLineBreaks {
     this.budgetW = 0;
     if (this.adoption) this.adoption.cancelled = true;
     this.adoption = null;
+    if (this.balanceJob) this.balanceJob.cancelled = true;
+    this.balanceJob = null;
+  }
+
+  /** True while the idle balance job still has sections to check. */
+  balanceJobActive(): boolean {
+    return this.balanceJob !== null && !this.balanceJob.cancelled;
+  }
+
+  /** Run the idle balance job to completion synchronously (tests and probes;
+   *  the idle callbacks it already scheduled then find no job and return). */
+  finishBalanceJobNow(): void {
+    const job = this.balanceJob;
+    if (!job) return;
+    let guard = 0;
+    while (this.balanceJob === job && !job.cancelled && guard++ < 10_000) job.step();
   }
 
   /** Capture per-measure signatures of the current live doc (see `sig`), and
@@ -1072,6 +1181,18 @@ export class PageLineBreaks {
       k++;
     }
 
+    /* ── balance (2026-09-05) ──
+       The repair pulls only from the NEXT line, so a section-final line below
+       MIN_FILL — a lone bar before a movement break, a one-bar stub while
+       composing at the end — is the one illegality it cannot fix. For every
+       section the edit touched whose final line is defective, redistribute
+       that section's measures (render/balance.ts), with the change penalty:
+       the section is on screen. Only a section whose naturals are all cached
+       is balanced here (the adoption job warms them); one still missing
+       naturals keeps today's behaviour and the job balances it when it gets
+       there — never a whole-section window on the hot path. */
+    this.balanceTouched(starts, pageLines, ids, hard, first, Math.min(through, starts.length - 1), BALANCE_LAMBDA);
+
     const out = starts.map((i) => ids[i]);
     let movedLines = 0;
     for (let i = 0; i < Math.max(out.length, this.startIds!.length); i++) {
@@ -1079,6 +1200,260 @@ export class PageLineBreaks {
     }
     this.lastRefillLines = movedLines;
     return { starts: out, pages: pageLines.map((li) => out[li]) };
+  }
+
+  /* ── section balancing (2026-09-05) ───────────────────────────────────── */
+
+  /** Fill of line k of `starts` from cached naturals; null when any is missing. */
+  private lineFill(starts: number[], k: number, ids: string[]): number | null {
+    const from = starts[k], to = k + 1 < starts.length ? starts[k + 1] : ids.length;
+    let acc = this.sigW;
+    for (let i = from; i < to; i++) {
+      const w = this.naturals.get(ids[i]);
+      if (w === undefined) return null;
+      acc += w;
+    }
+    return acc / this.budgetW;
+  }
+
+  /** Balance the section occupying lines [kLo..kHi] of `starts` in place when
+   *  its final line is defective (fill < MIN_FILL): `starts` and `pageLines`
+   *  (page-start line indices) are updated; the line count may shrink (merge
+   *  rule / N−1 fallback), never grow. Requires every natural of the section
+   *  to be cached. Reasons: '' (nothing to do), 'naturals incomplete',
+   *  'no legal balance: stub kept' (document-final — Max's rule 2), 'no legal
+   *  balance: section kept', 'single-line result'. */
+  private balanceSectionLines(
+    starts: number[], pageLines: number[], kLo: number, kHi: number, ids: string[], lambda: number,
+  ): { applied: boolean; reason: string; changed: number; removed: number } {
+    const none = (reason: string) => ({ applied: false, reason, changed: 0, removed: 0 });
+    const n = ids.length;
+    const mFrom = starts[kLo], mTo = kHi + 1 < starts.length ? starts[kHi + 1] : n;
+    const last = this.lineFill(starts, kHi, ids);
+    if (last === null) return none('naturals incomplete');
+    if (last >= MIN_FILL) return none('');
+    const budget = this.budgetW;
+    const ws: number[] = [];
+    for (let i = mFrom; i < mTo; i++) {
+      const w = this.naturals.get(ids[i]);
+      if (w === undefined) return none('naturals incomplete');
+      ws.push(w / budget);
+    }
+    const refLens: number[] = [];
+    for (let k = kLo; k <= kHi; k++) refLens.push((k + 1 < starts.length ? starts[k + 1] : n) - starts[k]);
+    const res = balanceSection(ws, this.sigW / budget, refLens, {
+      minFill: MIN_FILL, fitMax: FIT_MAX, lambda, mergeMax: MERGE_MAX,
+    });
+    if (!res) return none(kHi === starts.length - 1 ? 'no legal balance: stub kept' : 'no legal balance: section kept');
+    const n0 = refLens.length, n1 = res.lens.length;
+    /* A partition needs two lines to be owned at all (tryRefill's single-line
+       rule); a document that small keeps its castoff shape. */
+    if (starts.length - (n0 - n1) < 2) return none('single-line result');
+    const changed = boundariesChanged(refLens, res.lens);
+    if (changed === 0) return none('');
+    const secStarts = startsOf(res.lens).map((o) => mFrom + o);
+    starts.splice(kLo, n0, ...secStarts);
+    linesReplaced(pageLines, kLo, n0, n1, starts.length);
+    return { applied: true, reason: '', changed, removed: n0 - n1 };
+  }
+
+  /** Balance every section intersecting lines [kFrom..kTo] (edit path: the
+   *  lines the repair examined). Sections are visited last-to-first so a line
+   *  removal in one never shifts the indices of one still to visit. */
+  private balanceTouched(
+    starts: number[], pageLines: number[], ids: string[], hard: Set<string>,
+    kFrom: number, kTo: number, lambda: number,
+  ): void {
+    const t0 = performance.now();
+    const lb: BalanceStats = { sections: 0, applied: 0, changed: 0, removed: 0, reasons: [], ms: 0 };
+    const secs = sectionRanges(starts, ids, hard).filter(([lo, hi]) => hi >= kFrom && lo <= kTo);
+    for (let s = secs.length - 1; s >= 0; s--) {
+      const [kLo, kHi] = secs[s];
+      lb.sections++;
+      const r = this.balanceSectionLines(starts, pageLines, kLo, kHi, ids, lambda);
+      if (r.reason) lb.reasons.push(r.reason);
+      if (r.applied) { lb.applied++; lb.changed += r.changed; lb.removed += r.removed; }
+    }
+    lb.ms = Math.round(performance.now() - t0);
+    this.lastBalance = lb;
+  }
+
+  /** Measure the naturals still missing in ids[lo..hi], at most `cap` measures
+   *  (one window per contiguous missing run, each ≤ BALANCE_WINDOW before the
+   *  context/spanner expansion). False when a window failed; 'incomplete' when
+   *  the cap was reached first; true when the range is complete. */
+  private measureMissing(
+    model: ComposerModel, meiMeasures: Element[], ids: string[],
+    lo: number, hi: number, ctx: PageBreaksCtx, cap: number,
+  ): boolean | 'incomplete' {
+    let left = cap;
+    let i = lo;
+    while (i <= hi) {
+      if (this.naturals.has(ids[i])) { i++; continue; }
+      if (left <= 0) return 'incomplete';
+      const maxRun = Math.min(left, BALANCE_WINDOW);
+      let j = i;
+      while (j + 1 <= hi && !this.naturals.has(ids[j + 1]) && j + 1 - i < maxRun) j++;
+      const w = this.measureWindow(model, meiMeasures, ids, i, j, ctx);
+      if (w == null) return false;
+      if (w.sigW > 0) this.sigW = w.sigW;
+      left -= j - i + 1;
+      i = j + 1;
+    }
+    return true;
+  }
+
+  /** The committed partition as line indices + page-start line indices, or
+   *  null when an id is missing from the document. */
+  private indexedPartition(ids: string[]): { starts: number[]; pageLines: number[] } | null {
+    if (this.startIds === null) return null;
+    const idIdx = new Map(ids.map((id, i) => [id, i]));
+    const starts: number[] = [];
+    for (const id of this.startIds) { const i = idIdx.get(id); if (i == null) return null; starts.push(i); }
+    const lineAt = new Map(this.startIds.map((id, k) => [id, k]));
+    const pageLines: number[] = [];
+    for (const id of this.pageStartIds) { const k = lineAt.get(id); if (k == null) return null; pageLines.push(k); }
+    return { starts, pageLines };
+  }
+
+  /** Adoption-time balance for the sections with a line on the first `pages`
+   *  pages, run SYNCHRONOUSLY before the pinned paint (decided with Max,
+   *  2026-09-05): the first paint is already balanced, so page 1 never re-flows
+   *  under the reader; every other section is left to the idle job. `budget`
+   *  is the justified system width, measured from the castoff layout since
+   *  nothing is mounted yet. The final line's naturals are measured first —
+   *  they alone decide whether the section is defective — and the rest of the
+   *  section only when it is (movement I of the sonata: 139 measures ≈ 0.9 s).
+   *  λ = 0: nothing is painted, so the fully even partition is free. */
+  balanceInitialBand(model: ComposerModel, ctx: PageBreaksCtx, budget: number, pages: number): void {
+    const t0 = performance.now();
+    const lb: BalanceStats = { sections: 0, applied: 0, changed: 0, removed: 0, reasons: [], ms: 0 };
+    this.lastBalance = lb;
+    this.lastInitialBalance = lb;
+    if (this.startIds === null || this.startIds.length <= 1 || !(budget > 0)) return;
+    if (this.budgetW <= 0) this.budgetW = budget;
+    const meiMeasures = model.allMeasures();
+    const ids = measureIds(meiMeasures);
+    const part = this.indexedPartition(ids);
+    if (!part) return;
+    const { starts, pageLines } = part;
+    const lastLine = pageLines.length > pages ? pageLines[pages] - 1 : starts.length - 1;
+    const hard = hardStartIds(model);
+    const secs = sectionRanges(starts, ids, hard).filter(([lo]) => lo <= lastLine);
+    let touched = false;
+    for (let s = secs.length - 1; s >= 0; s--) {
+      const [kLo, kHi] = secs[s];
+      lb.sections++;
+      const mFrom = starts[kLo], mTo = kHi + 1 < starts.length ? starts[kHi + 1] : ids.length;
+      if (this.measureMissing(model, meiMeasures, ids, starts[kHi], mTo - 1, ctx, Infinity) !== true) { lb.reasons.push('naturals window failed'); continue; }
+      const last = this.lineFill(starts, kHi, ids);
+      if (last === null || last >= MIN_FILL) continue;
+      if (this.measureMissing(model, meiMeasures, ids, mFrom, mTo - 1, ctx, Infinity) !== true) { lb.reasons.push('naturals window failed'); continue; }
+      const r = this.balanceSectionLines(starts, pageLines, kLo, kHi, ids, 0);
+      if (r.reason) lb.reasons.push(r.reason);
+      if (r.applied) { lb.applied++; lb.changed += r.changed; lb.removed += r.removed; touched = true; }
+    }
+    if (touched) {
+      const newStarts = starts.map((i) => ids[i]);
+      this.startIds = newStarts;
+      this.pageStartIds = pageLines.map((li) => newStarts[li]);
+    }
+    lb.ms = Math.round(performance.now() - t0);
+  }
+
+  /** Arm the idle balance job after a derive: check every section not yet
+   *  balanced, mounted ones first, measuring at most BALANCE_SLICE naturals per
+   *  idle slice (the final line first — a non-defective section costs one small
+   *  window), and land each balanced section through `ctx.commitPartition`
+   *  (splice for mounted lines, stale marks for the rest). A section with no
+   *  mounted line balances with λ = 0; one on screen with BALANCE_LAMBDA.
+   *  Cancelled by `invalidate()`; an edit between slices is fine — every slice
+   *  re-reads the committed partition and skips sections already done. */
+  armBalanceJob(model: ComposerModel, ctx: PageBreaksCtx): void {
+    if (this.balanceJob) this.balanceJob.cancelled = true;
+    this.balanceJob = null;
+    if (this.startIds === null || this.startIds.length <= 1) return;
+    const job: BalanceJob = { cancelled: false, done: new Set(), steps: 0, step: () => {} };
+    this.balanceJob = job;
+    const finish = (): void => { if (this.balanceJob === job) this.balanceJob = null; };
+    /* A slice that throws must not leave a zombie job (balanceJobActive() true
+       forever, the partition-cache flag never set): cancel it, loudly. */
+    const step = (): void => {
+      try {
+        stepBody();
+      } catch (e) {
+        job.cancelled = true;
+        finish();
+        if (indexCheckEnabled()) throw e;
+        console.warn('[page-balance] job step failed — balancing stopped for this render: ' + (e instanceof Error ? e.message : String(e)));
+      }
+    };
+    const stepBody = (): void => {
+      if (job.cancelled || this.balanceJob !== job) return;
+      if (this.startIds === null) { finish(); return; }
+      if (this.budgetW <= 0) {
+        const w = ctx.budgetW();
+        if (w == null || !(w > 0)) { finish(); return; }
+        this.budgetW = w;
+      }
+      const meiMeasures = model.allMeasures();
+      const ids = measureIds(meiMeasures);
+      const part = this.indexedPartition(ids);
+      if (!part) { finish(); return; }
+      const { starts, pageLines } = part;
+      const hard = hardStartIds(model);
+      const secs = sectionRanges(starts, ids, hard).filter(([lo]) => !job.done.has(ids[starts[lo]]));
+      if (!secs.length) { finish(); ctx.balanceComplete(); return; }
+      const pageOfLine = (k: number): number => {
+        let p = 1;
+        for (let q = 1; q < pageLines.length; q++) { if (pageLines[q] <= k) p = q + 1; else break; }
+        return p;
+      };
+      const mountedSec = (lo: number, hi: number): boolean => {
+        for (let k = lo; k <= hi; k++) if (ctx.isPageMounted(pageOfLine(k))) return true;
+        return false;
+      };
+      const [kLo, kHi] = secs.find(([lo, hi]) => mountedSec(lo, hi)) ?? secs[0];
+      const secId = ids[starts[kLo]];
+      const mFrom = starts[kLo], mTo = kHi + 1 < starts.length ? starts[kHi + 1] : ids.length;
+      job.steps++;
+      const t0 = performance.now();
+      const lb: BalanceStats = { sections: 1, applied: 0, changed: 0, removed: 0, reasons: [], ms: 0 };
+      const settle = (): void => { lb.ms = Math.round(performance.now() - t0); this.lastBalance = lb; scheduleIdle(step); };
+      /* Final line first (it decides whether the section is defective), then
+         the REST of the section regardless: the edit path balances only a
+         section whose naturals are all cached, so a section that is fine now
+         must still be warm for the edit that later makes its final line
+         sparse — otherwise that defect could never be repaired. */
+      let m = this.measureMissing(model, meiMeasures, ids, starts[kHi], mTo - 1, ctx, BALANCE_SLICE);
+      if (m === false) { job.done.add(secId); lb.reasons.push('naturals window failed'); settle(); return; }
+      if (m === 'incomplete') { settle(); return; }
+      const last = this.lineFill(starts, kHi, ids);
+      m = this.measureMissing(model, meiMeasures, ids, mFrom, mTo - 1, ctx, BALANCE_SLICE);
+      if (m === false) { job.done.add(secId); lb.reasons.push('naturals window failed'); settle(); return; }
+      if (m === 'incomplete') { settle(); return; }
+      job.done.add(secId);
+      if (last === null || last >= MIN_FILL) { settle(); return; }
+      const r = this.balanceSectionLines(starts, pageLines, kLo, kHi, ids, mountedSec(kLo, kHi) ? BALANCE_LAMBDA : 0);
+      if (r.reason) lb.reasons.push(r.reason);
+      if (r.applied) {
+        const oldStarts = this.startIds, oldPages = this.pageStartIds;
+        const newStarts = starts.map((i) => ids[i]);
+        const newPages = pageLines.map((li) => newStarts[li]);
+        this.startIds = newStarts;
+        this.pageStartIds = newPages;
+        if (ctx.commitPartition(oldStarts, newStarts, oldPages, newPages)) {
+          lb.applied++; lb.changed += r.changed; lb.removed += r.removed;
+        } else {
+          this.startIds = oldStarts;
+          this.pageStartIds = oldPages;
+          lb.reasons.push('commit refused');
+        }
+      }
+      settle();
+    };
+    job.step = step;
+    scheduleIdle(step);
   }
 
   /* ── naturals measurement ─────────────────────────────────────────────── */
