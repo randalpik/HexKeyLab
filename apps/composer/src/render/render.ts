@@ -164,7 +164,10 @@ const BASE_OPTIONS = {
     'staff@n', 'dynam@staff', 'dynam@place', 'dir@staff', 'dir@place', 'hairpin@staff', 'hairpin@place',
     /* The flipped-slur re-draw (render/slurlayout.ts) needs each slur's side
        and endpoints: `data-curvedir`, `data-startid`, `data-endid`. */
-    'slur@curvedir', 'slur@startid', 'slur@endid'],
+    'slur@curvedir', 'slur@startid', 'slur@endid',
+    /* …and `layer@n` (`data-n` on g.layer) for the covered notes of a slur
+       segment broken at a system break. */
+    'layer@n'],
   footer: 'none',
   /* Dynamics sit further below the staff than Verovio's default quarter of a
      staff space (2026-09-04; backlog: "more space between the staff and the

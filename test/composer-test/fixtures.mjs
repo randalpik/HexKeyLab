@@ -6489,6 +6489,37 @@ const ENGRAVING = {
     `,
   },
 
+  /* A flipped slur broken at a system break is re-drawn segment by segment
+     (2026-09-05, sonata m. 43→44): bass staff, upper voice quarters under a
+     slur that crosses a page break, lower voice whole-note chords g1+e2 (just
+     under the staff, where Verovio parks the open ends).
+     Verovio parks a below-slur's open ends just under the staff, so the first
+     segment dives away from its notes and the continuation climbs back through
+     the staff and the lower voice; both open ends are now anchored to the
+     covered noteheads. */
+  engr_slurBrokenAtBreakRedrawn: {
+    setup: `
+      window.__hkl_composer.renderer.setViewMode('page');
+      const N = (p, o, midi) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.setVoice(3); m.setCursor(0, 3);
+      const line = [['d', 3, 50], ['b', 2, 47], ['g', 2, 43], ['b', 2, 47]];
+      for (let i = 0; i < 8 * 4; i++) { const [p, o, mi] = line[i % 4]; m.insertChordAtCursor({ notes: [N(p, o, mi)], duration: '4', dots: 0 }); }
+      m.setVoice(4); m.setCursor(0, 4);
+      for (let i = 0; i < 8; i++) m.insertChordAtCursor({ notes: [N('g', 1, 31), N('e', 2, 40)], duration: '1', dots: 0 });
+      const doc = m.getDoc();
+      const notes = [...doc.querySelectorAll('staff[n="2"] layer[n="1"] note')];
+      const MEI = 'http://www.music-encoding.org/ns/mei';
+      const sl = doc.createElementNS(MEI, 'slur');
+      sl.setAttribute('xml:id', 's-test-broken'); sl.setAttribute('startid', '#' + notes[13].getAttribute('xml:id')); sl.setAttribute('endid', '#' + notes[18].getAttribute('xml:id')); sl.setAttribute('data-voice', '3');
+      notes[13].closest('measure').appendChild(sl);
+      m.togglePageBreakAt(4);
+      m.setVoice(3); m.setCursor(0, 3);
+      r();
+    `,
+    skipCursorTrace: true,
+    fullRender: 'a user page break is a break-structure change and derives by design (see pageUserBreakReflows)',
+  },
+
   /* Theme switch in place (backlog 2026-09-05: "switching to light sometimes
      doesn't switch note colors back until another rerender"): a page mounted
      under the dark theme carries its own data-notation-theme tag; the light
@@ -14923,6 +14954,33 @@ export const FIXTURE_ASSERTIONS = {
         for (let x = nb.left; x <= nb.right; x += 0.5) { const yy = yAt(x); if (!yy) continue; const numAbove = (nb.top + nb.bottom) / 2 < (yy[0] + yy[1]) / 2; side = numAbove ? 'above' : 'below'; clear = Math.min(clear, numAbove ? yy[0] - nb.bottom : nb.top - yy[1]); }
         if (clear === Infinity) return { ok: false, detail: 'the numeral does not overlap the beam in x — not the steep-beam case this fixture is for' };
         return clear >= unit / 3 ? { ok: true, detail: 'clearance ' + clear.toFixed(1) + 'px (' + side + '), shift ' + (num.getAttribute('data-hkl-numshift') || '0') } : { ok: false, detail: 'numeral ' + clear.toFixed(1) + 'px from its beam (' + side + '), want >= ' + (unit / 3).toFixed(1) };
+      })()` },
+  ],
+  engr_slurBrokenAtBreakRedrawn: [
+    { name: 'both segments are re-drawn, stay clear of the lower voice, and their open ends stay near the covered notes',
+      expr: `(() => {
+        const H = window.__hkl_composer; H.renderer.mountAllPages();
+        const first = document.getElementById('s-test-broken');
+        const cont = document.querySelector('#score g.slur.spanning.id-s-test-broken');
+        if (!first || !cont) return { ok: false, detail: 'segments: first=' + !!first + ' continuation=' + !!cont + ' (is the slur broken at the page break?)' };
+        const out = [];
+        for (const [label, g, openIsEnd] of [['first', first, true], ['continuation', cont, false]]) {
+          if (g.getAttribute('data-hkl-slur') === 'kept') return { ok: false, detail: label + ' segment could not be re-drawn clear (kept)' };
+          const path = g.querySelector('path'); const sys = g.closest('g.system'); const L = path.getTotalLength();
+          const toS = (p) => new DOMPoint(p.x, p.y).matrixTransform(path.getScreenCTM());
+          const pts = []; for (let i = 0; i <= 48; i++) pts.push(toS(path.getPointAtLength(L / 2 * i / 48)));
+          const staff = sys.querySelector('g.staff[data-n="2"]');
+          const lines = [...staff.querySelectorAll(':scope > path')].map((p) => p.getBoundingClientRect().top); const space = (Math.max(...lines) - Math.min(...lines)) / 4;
+          for (const nh of sys.querySelectorAll('g.staff[data-n="2"] g.layer[data-n="2"] g.notehead')) { const b = nh.getBoundingClientRect(); for (const p of pts) if (p.x >= b.left - 1 && p.x <= b.right + 1 && p.y >= b.top - 1 && p.y <= b.bottom + 1) return { ok: false, detail: label + ' segment runs through a lower-voice notehead' }; }
+          const sb = g.getBoundingClientRect();
+          const covered = [...sys.querySelectorAll('g.staff[data-n="2"] g.layer[data-n="1"] g.notehead')].map((h) => h.getBoundingClientRect()).filter((b) => b.right >= sb.left - 2 && b.left <= sb.right + 2);
+          if (!covered.length) return { ok: false, detail: label + ': no covered noteheads' };
+          const lowest = Math.max(...covered.map((b) => b.bottom));
+          const open = openIsEnd ? pts[48] : pts[0];
+          if (open.y - lowest > 2.5 * space) return { ok: false, detail: label + ' open end ' + ((open.y - lowest) / space).toFixed(1) + ' spaces below the covered noteheads' };
+          out.push(label + ':' + (g.getAttribute('data-hkl-slur') || 'verovio') + ':' + ((open.y - lowest) / space).toFixed(1) + 'sp');
+        }
+        return { ok: true, detail: out.join(' ') };
       })()` },
   ],
   m1Triplet8BeamedNumberOnly: [

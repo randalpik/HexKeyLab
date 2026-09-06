@@ -73,6 +73,39 @@ function slotOf(doc: Document, id: string, index: Map<string, Element>): Slot | 
   return { el, layer, staff, t0: t, t1: t + realTicks(el) };
 }
 
+/** A note's vertical position as a diatonic step count (octave × 7 + letter). */
+function stepOf(n: Element): number | null {
+  const p = n.getAttribute('pname'), o = n.getAttribute('oct');
+  if (!p || !o) return null;
+  const i = 'cdefgab'.indexOf(p[0].toLowerCase()), oct = parseInt(o, 10);
+  return i < 0 || !Number.isFinite(oct) ? null : oct * 7 + i;
+}
+const stepsOf = (el: Element): number[] =>
+  (el.localName === 'note' ? [el] : Array.from(el.querySelectorAll('note'))).map(stepOf).filter((v): v is number => v !== null);
+
+/** The notes (chord members included) of the OTHER layers that START at the
+ *  slot's onset — the noteheads sharing its column. A note that began earlier
+ *  and is still sounding has its head far to the left (m. 83's chord under the
+ *  slur's START never touches its END note). */
+function otherLayerOnsetsAt(slot: Slot): Element[] {
+  const out: Element[] = [];
+  for (const other of Array.from(slot.staff.children)) {
+    if (other.localName !== 'layer' || other === slot.layer) continue;
+    let t = 0;
+    const walk = (parent: Element): void => {
+      for (const c of Array.from(parent.children)) {
+        if (c.localName === 'beam' || c.localName === 'tuplet') { walk(c); continue; }
+        const d = c.localName === 'mRest' || c.localName === 'mSpace' ? Infinity : realTicks(c);
+        if (d > 0 && !isVoid(c) && Math.abs(t - slot.t0) < 1e-6) out.push(...(c.localName === 'note' ? [c] : Array.from(c.querySelectorAll('note'))));
+        if (d !== Infinity) t += d;
+        if (t > slot.t0) break;
+      }
+    };
+    walk(other);
+  }
+  return out;
+}
+
 /** True when the OTHER layer of the slot's staff has a non-space element
  *  overlapping the slot's span — Verovio then stems the slot by layer. */
 function otherLayerHasContentAt(slot: Slot): boolean {
@@ -118,6 +151,23 @@ export function settleSlurSides(doc: Document): void {
     if (a.staff.getAttribute('n') !== b.staff.getAttribute('n') || a.layer.getAttribute('n') !== b.layer.getAttribute('n')) continue;   // cross-staff / cross-layer: Verovio's call
     if (!otherLayerHasContentAt(a) && !otherLayerHasContentAt(b)) continue;   // single-voice: Verovio already goes opposite the stems
     const dir = stemDirOf(a);
+    /* The notehead side is IMPOSSIBLE at an endpoint whose other-voice
+       neighbour touches it on that side — a note STARTING in the same column,
+       a unison, a second or a third away: a notehead is a staff space tall, so
+       heads a third apart already overlap (sonata m. 52→53: the lower voice's
+       downbeat a third under the slur's end note). No slur end fits between touching noteheads, so this is the
+       "unavoidable" of Max's invariant: the slur stays on Verovio's side. A
+       fourth (half a space of daylight) is left to the re-draw's tight retry. */
+    const blocked = (slot: Slot): boolean => {
+      const own = stepsOf(slot.el);
+      if (!own.length) return false;
+      const ext = dir === 'up' ? Math.min(...own) : Math.max(...own);
+      return otherLayerOnsetsAt(slot).some((n) => {
+        const v = stepOf(n);
+        return v !== null && (dir === 'up' ? v <= ext && v >= ext - 2 : v >= ext && v <= ext + 2);
+      });
+    };
+    if (blocked(a) || blocked(b)) continue;
     slur.setAttribute('curvedir', dir === 'up' ? 'below' : 'above');
   }
 }

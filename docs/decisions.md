@@ -6872,11 +6872,57 @@ side pass also now compares staff / layer NUMBERS: a slur across a barline was
 read as cross-staff and never flipped (p. 17 m. 31, m. 39). Sonata after:
 m. 83 start 6 px under its notehead, p. 17 bass slurs all below, m. 82/84 as
 before. Fixture `engr_slurBelowRedrawnAtNotes` (m. 83's geometry) replaces the
-withdrawn gate's fixture. **Open**: single-voice slurs over notes with MIXED
-stem directions (viola, p. 17 mm. 30/32) — Verovio's default there is above,
-over the beam and numeral; a re-draw on the notehead side has no single
-notehead side to attach to, so it is not attempted. Max to say whether that
-case matters.
+withdrawn gate's fixture. **Broken slurs** (same day, Max: "the slur in
+V5 collides with V6 on both sides of the break" between p. 17 and p. 18): 44
+of the sonata's 922 slurs cross a system break; Verovio draws two segments
+(the continuation `class="slur id-<id> spanning"`, no id) and parks each open
+end at a fixed staff-relative spot — just under the bottom line for a
+below-slur — so a flipped bass slur's first segment dives from mid-staff to
+below it and the continuation starts there and climbs through the staff and the
+lower voice (3 of the 44 hit lower-voice noteheads: m. 43→44, 52→53, 88→89;
+none of the 41 unflipped ones did). The re-draw now handles a segment whose
+other note is on another system — resolved within its own system, since the
+far note's page may not be mounted: the open end is anchored past the covered
+notehead of the slur's own layer NEAREST the break (the extreme head anywhere
+in the segment put a stub's start under the lower voice), at Verovio's
+open-end x; a segment whose Verovio curve runs through a glyph is re-drawn
+even when its endpoints look fine (the m. 43→44 continuation started at a
+sensible height and cut through the staff); an open end that cannot clear
+moves back toward the covered notes half a unit at a time; a last attempt
+shrinks the end gap and margin. Ledger lines left the obstacle list — a slur's
+own end hangs at the level of the ledger line under its notehead, so every
+slur ending beyond the staff had been unsolvable. And one case is impossible:
+an other-voice note STARTING in the endpoint's column within a THIRD of the
+slur's end note on the flip side (heads a space tall already overlap at a
+third — m. 52→53; a pitch-only test also caught m. 83, whose chord began nine
+steps below at the slur's START); `slurSides` now skips that flip, the
+invariant's "unavoidable". Sonata after: 44 broken
+slurs, 7 segments re-drawn, 0 lower-voice collisions. Fixture
+`engr_slurBrokenAtBreakRedrawn`.
+
+**Mixed stem directions — investigated, not built** (Max: a slurred group
+should try to make all its stems face one way; its own thread): 112 of the
+922 slurs (12 %) span notes whose stems Verovio points both ways; 110 are
+single-voice (viola 56, piano right hand 49, left hand 3), and Verovio puts
+every one of them above. 48 of them currently sit on the beam or bracket side
+(20 with a drawn bracket) — the visible invariant violations the feature would
+remove; the other 60 are over unbeamed notes, where "above" is acceptable.
+Majority direction: down 61, up 18, tie 29. The cost of unifying is the
+minority notes' distance from the middle line: 75 within one space, 14 at two,
+19 at three or more (max 6) — those last would get 6.5-space stems and want a
+cap. Bare-toolkit probe: `@stem.dir` on each note of a beam flips the whole
+beam and Verovio then places the slur opposite the unified stems (a `stem.dir`
+on the `<beam>` element is ignored). Proposed shape: a render-clone pass before
+`settleSlurSides` that, per single-voice slur (longest first, notes not yet
+assigned), predicts each note's natural direction from pitch (beam groups by
+their mean), picks the majority (ties → the direction of the note farthest
+from the middle, Verovio's own beam rule), skips groups whose minority notes
+sit more than ~2.5 spaces off the middle, respects explicit `@stem.dir`, and
+writes `@stem.dir` on the group's notes and chords; the slur side then follows
+without a `@curvedir`. Roughly a day with sonata before/after counts as the
+gate.
+
+**Open**: nothing else on slurs; the mixed-stem feature awaits Max's go.
 
 ### Tuplet numerals off steep beams (fixed)
 With the bracket gone, Verovio sets a wholly-beamed tuplet's numeral against

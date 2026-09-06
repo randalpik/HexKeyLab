@@ -3715,3 +3715,27 @@ copy the definition's identifiers, never regenerate them.
 probe that "edits bar 10" of the sonata measured a no-op — `docChanged: false`
 is the tell, and every edit probe should report it. Compose past the end
 (a new bar) or delete something instead.
+
+## Verovio parks a broken slur's open end at the staff edge (2026-09-05)
+
+A slur across a system break is drawn as two segments (the continuation has
+`class="slur id-<id> spanning"` and no id — group by the class token, not by
+id, or a DOM inventory reports zero broken slurs). Each open end goes to a
+fixed staff-relative spot: for `curvedir="below"` just under the bottom line,
+whatever the covered notes do. In the sonata's bass the first segment dived
+two spaces to get there and the continuation climbed 5.4 spaces through the
+staff and the lower voice. An open end is still an endpoint: anchor it to the
+covered notes on that system and route the segment like any slur.
+
+## Three ways a DOM slur re-draw silently gives up (2026-09-05)
+
+Debugging the broken-slur pass on the sonata: (1) the far note of a segment
+lives on another page that may not be mounted — resolve within the segment's
+own system and require only the near note; (2) ledger lines listed as
+obstacles put a slur's own endpoint inside a padded box whenever the note
+sits beyond the staff — no bulge can fix an endpoint, so every such slur was
+"kept"; (3) anchoring an open end to the extreme covered head anywhere in the
+segment, rather than the head nearest the break, started a stub under the
+lower voice. Each looked like "the solver found no curve"; a geometry dump of
+the segment (path start/end, every glyph box in its x-range, in staff spaces)
+found each in one read. Dump before tuning constants.
