@@ -165,6 +165,9 @@ const BASE_OPTIONS = {
     /* The flipped-slur re-draw (render/slurlayout.ts) needs each slur's side
        and endpoints: `data-curvedir`, `data-startid`, `data-endid`. */
     'slur@curvedir', 'slur@startid', 'slur@endid',
+    /* The stem-unifying pass (notation/slurStems.ts) tags each slur it
+       handled (`data-hkl-stems`) for the census probe. */
+    'slur@hkl-stems',
     /* …and `layer@n` (`data-n` on g.layer) for the covered notes of a slur
        segment broken at a system break. */
     'layer@n'],

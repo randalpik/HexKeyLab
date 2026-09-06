@@ -264,9 +264,13 @@ has no brace, and barlines never run from one instrument to the next. Where
 one instrument's notes or markings reach toward the next staff, they keep about
 a staff space clear of it. Dynamics, hairpins and expressive text between a
 piano's staves are centred in the gap where the notes allow; under any other
-staff they sit a good staff space below it. In a two-voice passage a slur goes
-on the notehead side of its voice, never on the side of the tuplet brackets and
-beams. Two identical rests at the same moment in a staff's two voices draw as
+staff they sit a good staff space below it. Under a slur, stems that would point
+both ways are made to agree (the majority wins, unless a note sits so far from
+the middle line that its stem would grow too long), so the slur lands on the
+notehead side rather than on the beams; a stem you flipped yourself (`L`), or
+one the other voice forces, decides for its group. In a two-voice passage a slur goes on the notehead side
+of its voice, never on the side of the tuplet brackets and beams. Two identical
+rests at the same moment in a staff's two voices draw as
 one rest, and a hidden rest never nudges a visible one. A movement break
 (section header) with a new meter shows no courtesy meter at the end of the
 previous movement (a courtesy key signature still appears there — the engraving

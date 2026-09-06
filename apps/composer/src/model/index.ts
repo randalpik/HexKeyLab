@@ -29,6 +29,7 @@ import { regroupBeams, readTimeSig } from '../notation/beams.js';
 import { settleRestLocations } from '../notation/restlayout.js';
 import { applySectionRestarts } from '../notation/sectionRestart.js';
 import { settleSlurSides } from '../notation/slurSides.js';
+import { unifySlurStems } from '../notation/slurStems.js';
 import { decomposeBeatAlignedRests } from './restfill.js';
 import { computeAccidentalDisplay } from '../notation/accidentals.js';
 import { alterFromCount, alterFromToken, tokenFromAlter, getNoteAlter } from '@hkl/notation/accidentals.js';
@@ -556,12 +557,14 @@ export function normalizeStaffGroupConventions(doc: Document): void {
 
 /** The render-only engraving conventions applied to a serialize clone after
  *  every other render pass (2026-09-04): rests that coincide or stand alone at
- *  their single-layer place, section boundaries without a courtesy meter, and
- *  slurs on the notehead side in two-voice passages. Each is documented in its
+ *  their single-layer place, section boundaries without a courtesy meter, one
+ *  stem direction under a slur, and slurs on the notehead side in two-voice
+ *  passages. Each is documented in its
  *  module; none touches the saved document. */
 function applyRenderConventions(clone: Document): void {
   settleRestLocations(clone);
   applySectionRestarts(clone);
+  unifySlurStems(clone);   // before the side pass: unified stems put a single-voice slur on the notehead side by themselves
   settleSlurSides(clone);
 }
 

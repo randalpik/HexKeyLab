@@ -6520,6 +6520,66 @@ const ENGRAVING = {
     fullRender: 'a user page break is a break-structure change and derives by design (see pageUserBreakReflows)',
   },
 
+  /* One stem direction under a slur (2026-09-05, Max: a slurred group should
+     make all its stems face one way). m1: a single-voice slur over f4 g4
+     [c5 d5] a4 — Verovio stems the beamed pair down and the rest up, then
+     puts the slur above, on the beam; notation/slurStems.ts writes the
+     majority direction (up) on every note and the slur follows to the
+     notehead side (below). m2: the same shape with a5 as the minority note —
+     six steps over the middle line, past the cap — keeps Verovio's mixed
+     stems. */
+  engr_slurUnifiesMixedStems: {
+    setup: `
+      const N = (p, o, midi) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      const Q = (p, o, midi, dur) => m.insertChordAtCursor({ notes: [N(p, o, midi)], duration: dur, dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+      Q('f', 4, 65, '4'); Q('g', 4, 67, '4'); Q('c', 5, 72, '8'); Q('d', 5, 74, '8'); Q('a', 4, 69, '4');
+      Q('f', 4, 65, '4'); Q('g', 4, 67, '4'); Q('a', 5, 81, '4'); Q('a', 4, 69, '4');
+      const doc = m.getDoc(); const MEI = 'http://www.music-encoding.org/ns/mei';
+      const meas = [...doc.querySelectorAll('measure')];
+      const slurOver = (mi, id) => { const notes = [...meas[mi].querySelectorAll('staff[n="1"] layer[n="1"] note')]; const sl = doc.createElementNS(MEI, 'slur'); sl.setAttribute('xml:id', id); sl.setAttribute('startid', '#' + notes[0].getAttribute('xml:id')); sl.setAttribute('endid', '#' + notes[notes.length - 1].getAttribute('xml:id')); sl.setAttribute('data-voice', '1'); meas[mi].appendChild(sl); };
+      slurOver(0, 's-test-unify'); slurOver(1, 's-test-cap');
+      m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* A stem the other voice forces decides the slurred group (2026-09-05, Max:
+     sonata III m. 3→4, piano LH — "the slur goes through the stems"). Voice 3:
+     a single-voice triplet a3 b3 c4 before the barline (stems naturally down
+     in bass clef) slurred to a d4 after it, where voice 4 holds a whole-note
+     chord — Verovio stems that d4 UP by layer. The side pass then flips the
+     slur below, under the triplet's down stems; with the forced d4 as a
+     fixed vote the triplet's stems go up too and the slur lies clear below.
+     The cap does not apply to a fixed group. Voice 4's chord is written into
+     m2 directly so m1 keeps its <space> (a cursor insert would autofill m1
+     with rests, which count as content). */
+  engr_slurStemsFollowForcedVoice: {
+    setup: `
+      const N = (p, o, midi) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      const Q = (p, o, midi, dur) => m.insertChordAtCursor({ notes: [N(p, o, midi)], duration: dur, dots: 0 });
+      m.setVoice(3); m.setCursor(0, 3);
+      m.insertRestAtCursor({ duration: '2', dots: 0 }); m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.createTupletAtCursor({ num: 3, numbase: 2, atomicDur: '8', spanDur: '4', spanDots: 0 });
+      m.setCursor(3, 3);
+      Q('a', 3, 57, '8'); Q('b', 3, 59, '8'); Q('c', 4, 60, '8');
+      Q('d', 4, 62, '4');
+      const doc = m.getDoc(); const MEI = 'http://www.music-encoding.org/ns/mei'; const XML = 'http://www.w3.org/XML/1998/namespace';
+      const meas = [...doc.querySelectorAll('measure')];
+      const l2 = meas[1].querySelector('staff[n="2"] > layer[n="2"]');
+      while (l2.firstChild) l2.removeChild(l2.firstChild);
+      const ch = doc.createElementNS(MEI, 'chord'); ch.setAttributeNS(XML, 'xml:id', 'c-test-forced'); ch.setAttribute('dur', '1');
+      for (const [p, o, i] of [['g', 1, 'a'], ['d', 2, 'b']]) { const n = doc.createElementNS(MEI, 'note'); n.setAttributeNS(XML, 'xml:id', 'n-test-forced-' + i); n.setAttribute('pname', p); n.setAttribute('oct', String(o)); ch.appendChild(n); }
+      l2.appendChild(ch);
+      const trip = [...meas[0].querySelectorAll('staff[n="2"] layer[n="1"] tuplet note')];
+      const end = meas[1].querySelector('staff[n="2"] layer[n="1"] note');
+      const sl = doc.createElementNS(MEI, 'slur'); sl.setAttributeNS(XML, 'xml:id', 's-test-forced'); sl.setAttribute('startid', '#' + trip[0].getAttribute('xml:id')); sl.setAttribute('endid', '#' + end.getAttribute('xml:id')); sl.setAttribute('data-voice', '3');
+      meas[0].appendChild(sl);
+      m.setCursor(0, 3);
+      r();
+    `,
+  },
+
   /* Theme switch in place (backlog 2026-09-05: "switching to light sometimes
      doesn't switch note colors back until another rerender"): a page mounted
      under the dark theme carries its own data-notation-theme tag; the light
@@ -14981,6 +15041,55 @@ export const FIXTURE_ASSERTIONS = {
           out.push(label + ':' + (g.getAttribute('data-hkl-slur') || 'verovio') + ':' + ((open.y - lowest) / space).toFixed(1) + 'sp');
         }
         return { ok: true, detail: out.join(' ') };
+      })()` },
+  ],
+  engr_slurUnifiesMixedStems: [
+    { name: 'm1: every stem under the slur points up, the beam above and the slur below the noteheads; m2 (past the cap) keeps its mixed stems; the saved document carries no stem.dir',
+      expr: `(() => {
+        const meas = [...document.querySelectorAll('#score g.measure')];
+        if (meas.length < 2) return { ok: false, detail: 'measures=' + meas.length };
+        const stemOf = (n) => { const nh = n.querySelector(':scope > g.notehead'), st = n.querySelector(':scope > g.stem'); if (!nh || !st) return null; const a = nh.getBoundingClientRect(), b = st.getBoundingClientRect(); return (b.top + b.bottom) / 2 < (a.top + a.bottom) / 2 ? 'up' : 'down'; };
+        const dirs = (mi) => [...meas[mi].querySelectorAll('g.note')].map(stemOf).filter(Boolean);
+        const d1 = dirs(0), d2 = dirs(1);
+        if (d1.length !== 5) return { ok: false, detail: 'm1 stems read: ' + d1.length };
+        const s1 = document.getElementById('s-test-unify'), s2 = document.getElementById('s-test-cap');
+        if (!s1 || !s2) return { ok: false, detail: 'slurs rendered: ' + !!s1 + ' ' + !!s2 };
+        if (s1.getAttribute('data-hkl-stems') !== 'unified-up') return { ok: false, detail: 'm1 tag ' + s1.getAttribute('data-hkl-stems') };
+        if (d1.some((d) => d !== 'up')) return { ok: false, detail: 'm1 stems not unified: ' + d1.join(',') };
+        const heads = [...meas[0].querySelectorAll('g.notehead')].map((h) => h.getBoundingClientRect());
+        const headBot = Math.max(...heads.map((h) => h.bottom)), headTop = Math.min(...heads.map((h) => h.top));
+        const sb = s1.getBoundingClientRect(); const beam = meas[0].querySelector('g.beam > polygon');
+        if (!beam) return { ok: false, detail: 'no beam in m1' };
+        if (!((sb.top + sb.bottom) / 2 > headBot)) return { ok: false, detail: 'm1 slur not below its noteheads' };
+        if (!(beam.getBoundingClientRect().bottom < headTop)) return { ok: false, detail: 'm1 beam not above its noteheads' };
+        if (s2.getAttribute('data-hkl-stems') !== 'capped') return { ok: false, detail: 'm2 tag ' + s2.getAttribute('data-hkl-stems') };
+        if (!(d2.includes('up') && d2.includes('down'))) return { ok: false, detail: 'm2 stems should stay mixed: ' + d2.join(',') };
+        if (window.__hkl_composer.model.serialize().includes('stem.dir')) return { ok: false, detail: 'render-only stem.dir leaked into the saved document' };
+        return { ok: true, detail: 'm1 ' + d1.join(',') + ' | m2 ' + d2.join(',') };
+      })()` },
+  ],
+  engr_slurStemsFollowForcedVoice: [
+    { name: 'every voice-3 stem under the slur points up like the forced d4, the slur lies below the noteheads and crosses no stem or beam, the saved document carries no stem.dir',
+      expr: `(() => {
+        const sys = document.querySelector('#score g.system'); const slur = document.getElementById('s-test-forced');
+        if (!sys || !slur) return { ok: false, detail: 'system=' + !!sys + ' slur=' + !!slur };
+        const notes = [...sys.querySelectorAll('g.staff[data-n="2"] g.layer[data-n="1"] g.note')];
+        const stemOf = (n) => { const st = n.querySelector(':scope > g.stem'); const heads = [...n.querySelectorAll('g.notehead')].map((h) => h.getBoundingClientRect()); if (!st || !heads.length) return null; const b = st.getBoundingClientRect(); const top = Math.min(...heads.map((h) => h.top)), bot = Math.max(...heads.map((h) => h.bottom)); return b.top < top - 1 ? 'up' : b.bottom > bot + 1 ? 'down' : null; };
+        const dirs = notes.map(stemOf);
+        if (dirs.length !== 4) return { ok: false, detail: 'voice-3 notes read: ' + dirs.length };
+        if (slur.getAttribute('data-hkl-stems') !== 'unified-up') return { ok: false, detail: 'tag ' + slur.getAttribute('data-hkl-stems') };
+        if (dirs.some((d) => d !== 'up')) return { ok: false, detail: 'stems not all up: ' + dirs.join(',') };
+        const heads = notes.flatMap((n) => [...n.querySelectorAll('g.notehead')]).map((h) => h.getBoundingClientRect());
+        const headBot = Math.max(...heads.map((h) => h.bottom));
+        const sb = slur.getBoundingClientRect();
+        if (!((sb.top + sb.bottom) / 2 > headBot)) return { ok: false, detail: 'slur centre ' + ((sb.top + sb.bottom) / 2).toFixed(1) + ' not below the noteheads (' + headBot.toFixed(1) + ')' };
+        /* The slur path against every voice-3 stem and beam box. */
+        const path = slur.querySelector('path'); const L = path.getTotalLength(); const ctm = path.getScreenCTM();
+        const pts = []; for (let i = 0; i <= 64; i++) { const p = path.getPointAtLength(L * i / 64); pts.push(new DOMPoint(p.x, p.y).matrixTransform(ctm)); }
+        const boxes = [...sys.querySelectorAll('g.staff[data-n="2"] g.layer[data-n="1"] g.stem, g.staff[data-n="2"] g.layer[data-n="1"] g.beam > polygon')].map((e) => e.getBoundingClientRect());
+        for (const b of boxes) for (const p of pts) if (p.x >= b.left - 0.5 && p.x <= b.right + 0.5 && p.y >= b.top - 0.5 && p.y <= b.bottom + 0.5) return { ok: false, detail: 'slur runs through a stem/beam box at (' + p.x.toFixed(0) + ',' + p.y.toFixed(0) + ')' };
+        if (window.__hkl_composer.model.serialize().includes('stem.dir')) return { ok: false, detail: 'render-only stem.dir leaked into the saved document' };
+        return { ok: true, detail: 'stems ' + dirs.join(',') };
       })()` },
   ],
   m1Triplet8BeamedNumberOnly: [

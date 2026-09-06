@@ -552,6 +552,20 @@ C1 (user page break) probes, 2026-08-31:
   skips the wait. Expected: four movements at min fill ≥ 0.8, 113 lines,
   `page1Changed: false`, `notices: []`.
 
+- **cb-slurstems.js** (2026-09-05) — slur stem-direction census on the sonata,
+  the gate for `notation/slurStems.ts`: per slur the rendered stem directions
+  of its covered notes, single- vs two-voice, each segment's side against its
+  noteheads and whether that side carries a beam or a tuplet bracket of the
+  covered notes (Max's invariant), plus the `data-hkl-stems` tag the pass
+  left. Reports counts and the list of slurs still mixed. `--arg all=1` also
+  lists every slur on a beam or bracket side. A chord's stem is read against
+  ALL its heads (its centre against one head is a coin flip for an octave
+  chord — the first count of 112 was that). Before the pass: 918 slurs, 104
+  mixed (102 single-voice), 75 on a beam side, 22 on a bracket; after: 8 mixed
+  (all `capped`), 11 on a beam side (4 of them uniform two-voice slurs the
+  side pass leaves), 1 on a bracket, 6 flagged `throughStem` (all reviewed by
+  Max as fine).
+
 **Not described above** (written in earlier sessions; see the matching
 docs/decisions.md entries for what they established): `cb-getmei2.js`,
 `cb-pbcases.js`, `cb-pbunion.js`, `cb-segdiag.js` (user page breaks / segmented

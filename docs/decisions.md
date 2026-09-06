@@ -6922,7 +6922,8 @@ writes `@stem.dir` on the group's notes and chords; the slur side then follows
 without a `@curvedir`. Roughly a day with sonata before/after counts as the
 gate.
 
-**Open**: nothing else on slurs; the mixed-stem feature awaits Max's go.
+**Open**: nothing else on slurs. (The mixed-stem feature was built the same
+evening — see "Slur stems unified" below.)
 
 ### Tuplet numerals off steep beams (fixed)
 With the bracket gone, Verovio sets a wholly-beamed tuplet's numeral against
@@ -6975,3 +6976,92 @@ balanced, only staff 3 drawn, all systems justified) and
 **Not done**: the scroll splicer in single-part view; a per-part partition
 cache means up to one entry per (zoom, page scale, HEJI, staff subset) — the
 24-entry cap still bounds it.
+
+## 2026-09-05 — Slur stems unified (the mixed-stem feature, built)
+
+Max: build it as outlined. `notation/slurStems.ts` (`unifySlurStems`), a
+render-clone pass in `applyRenderConventions` after beaming and before
+`settleSlurSides`. Per slur, longest first: covered slots (same staff and layer
+NUMBER, start → end across measures), grouped into units (a beam / tremolo, or
+a lone note / chord), each unit's natural direction predicted from pitch
+against the middle line (note: down at or above; chord: its farthest note;
+beam: the mean; ties down), the majority over the covered notes (tie → the
+note farthest from the middle), and `@stem.dir` written on every note and
+chord of every unit — the whole beam when it reaches past the slur. Verovio
+then places the single-voice slur opposite the unified stems; no `@curvedir`.
+
+Refinements on the proposal, made while building: (1) "single-voice" is
+tested at EVERY covered note (not just the ends) — one two-voice moment under
+the slur and Verovio stems by layer there, so the group is left alone;
+(2) an explicit `@stem.dir` (the `L` key) or a direction a longer slur already
+wrote is a FIXED vote: it decides the group's direction, and a group whose
+fixed directions disagree is left; (3) the cap is measured on the minority
+units' extreme note on the stem side (`CAP_STEPS` 5 = 2.5 spaces), not on
+every note; (4) the middle line is tracked through head and interior
+`staffDef` clefs (`clef.dis` too) and per-layer inline `<clef>`s; (5) grace
+notes, cross-staff notes (`@staff`), unpitched staves and slurs with an
+explicit `@curvedir` are skipped; (6) each judged slur is tagged `@hkl-stems`
+(unified-up / unified-down / capped / fixed) — surfaced by
+`svgAdditionalAttribute` as `data-hkl-stems` (Verovio prepends `data-`, so
+the MEI attribute must NOT carry the prefix; `data-hkl-stems` came out as
+`data-data-hkl-stems`).
+
+**Gate** (`test/composer-inspect/phasec/cb-slurstems.js`, the sonata, 918 of
+its 922 slurs resolvable to one staff + layer): the investigation's 112 mixed
+slurs were 104 — the first census read a chord's stem against ONE notehead,
+a coin flip for octave chords; the probe now reads the stem's reach past all
+of them. Before: 104 mixed (102 single-voice; majority down 53, up 18, tie
+31), 75 slurs on a beam side, 22 on a bracket side. After: 92 unified (35 up,
+57 down), 10 capped; 13 mixed remain — the 10 capped (9 on a beam, 1 on a
+bracket: m. 99 LH), the 2 two-voice ones (Verovio's per-moment rule mixes
+them; m. 3→4 LH, m. 84→85 viola), and one unexplained at m. 57 LH (bass
+clef, single-voice by every test here, yet Verovio stems one beam up and the
+next down — likely a cross-staff or per-moment layer effect this model does
+not see; one slur, not chased). Beam-side slurs 75 → 16 (the 12 mixed above
+plus 4 uniform two-voice slurs whose flip `settleSlurSides` already leaves as
+unavoidable), bracket-side 22 → 1. Page 1 before/after was shown to Max.
+Fixture `engr_slurUnifiesMixedStems` (a unified group with a beam, and a
+capped group; the saved document carries no `stem.dir`). Docs:
+architecture/composer.md (`slurStems.ts` bullet), guide/composer.md, phasec
+README.
+
+**Forced stems are fixed votes** (same evening, Max on p. 15: "the slur
+between measure 3 and 4 of the third movement is flipped such that it goes
+through the stems … because the note after the bar line has its stem forced
+up by the second voice, the triplet before the bar line should also have its
+stems up. Slur going through stems is unacceptable under any circumstance").
+The first cut skipped any slur with a two-voice moment under it; there the
+end note's stem was forced up by layer, the side pass flipped the slur below
+(the end's notehead side), and the single-voice triplet before the barline
+kept its down stems under it. Now a covered note in a two-voice moment
+carries Verovio's layer direction as a FIXED vote, like an explicit
+`@stem.dir`, and the cap does not apply to a group a fixed vote decides —
+leaving it mixed is exactly the slur through the stems. Sonata: mixed
+13 → 9 (the 2 two-voice ones unified; 2 formerly capped groups now decided by
+a fixed vote), beam-side 16 → 12, unified 97, capped 8. Fixture
+`engr_slurStemsFollowForcedVoice` (the m. 3→4 shape: a triplet before the
+barline, a forced note after it; asserts no slur sample inside any stem or
+beam box). Page 15 after was shown to Max.
+
+**The beam rule is the chord rule** (later the same evening). The one
+unexplained slur — p. 13, II m. 57, piano LH, a two-note slur joining two
+beamed quintuplets whose stems Verovio points opposite ways — was a
+misprediction: the pass called both beams up by the MEAN of their notes
+(b♭4 e♭5 b4 a♭4 g4 a4 in treble averages −⅙ step), found no mixing and left
+them. Verovio stems that beam down. A probe over every untouched
+single-voice beam of the sonata settled the rule: the notes farthest above
+and below the middle line decide, down when the top is at least as far as
+the bottom (ties down) — the same rule as for a chord — 899 of 899 beams,
+where the mean rule matched 891 and a count-above-vs-below rule 887; the
+note rule (down at or above the middle) 860/860, the chord rule 655/655.
+The pass now uses the extreme-notes rule for beams too; the m. 57 pair is
+unified. Max reviewed the 8 capped slurs (pp. 2, 2, 7, 8, 8, 15, 21, 29) and
+the 3 blocked two-voice slurs the through-stem test flagged (pp. 19, 20):
+all read as fine, no worse than Finale's treatment — the cap stays at 2.5
+spaces. The census (`cb-slurstems.js`) now reports page and movement per
+row (measure numbers restart per movement — a first diagnostic keyed on
+measure + staff alone merged m. 57 of every movement into one story; Max
+caught it) and a `throughStem` column: slur-path samples inside a stem or
+beam box of the slur's own notes.
+
+**Open**: nothing on this feature.
