@@ -3635,3 +3635,49 @@ The 2026-06 entry above ("svg-to-pdfkit ignores Verovio's embedded `<style>`") a
 Every PDF Max exported for months had no accidentals, in Firefox and Chromium alike, while the same code in headless Chromium embedded BravuraText and drew them. The cause was the tab's origin: Composer was open at `localhost:5174/composer/` (its own Vite server) instead of the proxy `localhost:5170/composer/`. Under the proxy, `fetch('/BravuraText.otf')` routes to the HKL server, whose base is `/`, and gets the font; on the composer's own port the app's base is `/composer/`, so its public assets live under `/composer/…` and the root path returns Vite's 404 text. The export never checked the response, PDFKit registered the 404 body as the font, fontkit threw on first use, and svg-to-pdfkit caught that per text run and skipped it — leaving a valid PDF with everything except the BravuraText runs, i.e. every accidental (they are all HEJI-injected `<text>`). The screen looked fine throughout because the `@font-face` for BravuraText falls back to the jsDelivr woff2 when `/BravuraText.woff2` 404s.
 
 Two lessons. (1) The single-origin rule (CLAUDE.md: `pnpm dev` → everything through `localhost:5170`) is not only about BroadcastChannel and IndexedDB: any absolute-path asset an app fetches from another app's public dir depends on it too, and the direct ports keep working well enough to hide the mistake. If a symptom appears in every real browser but not in headless probes against the same server, ask which URL the real tabs are on before anything else. (2) A fetch whose body is handed to a parser must check `ok` (and here the `OTTO` magic); `downloadPdf` now refuses loudly and names the proxy port, and svg-to-pdfkit's warnings go to `console.error` instead of the default `console.warn`.
+
+## Verovio hides a tuplet bracket under one beam only when `@bracket.visible` is unset (2026-09-05)
+
+Probed on 6.3: a tuplet whose children are ONE beam gets its number alone; a
+beam over part of the tuplet, a rest outside the beam, or unbeamed notes all
+draw the bracket. `bracket.visible="true"` — which Composer wrote on every
+tuplet it created, and the importer on every source `bracket="yes"` — forces
+the bracket onto the beam. Writing an attribute "for clarity" can override an
+engraving default you wanted; omit what you do not mean to decide.
+
+## `dynamDist` is for dynamics only; a lone hairpin hugs the staff (2026-09-05)
+
+Bare-toolkit probe at unit 8: a lone hairpin's top sits 5 px (0.3 space)
+below the bottom line at dynamDist 1 AND 4.5; a dynamic's top moves 4 → 19 px.
+Verovio aligns a hairpin to a dynamic only when they share a moment (the
+hairpin's top then 2 px above the dynamic's) — a crescendo ending at the bar
+before an `f` was aligned to something lower, a decrescendo before a `p` not
+at all. Also probed: dynamDist does not stack on low notes (a dynamic under a
+note below the staff sits at the same y at 1 and 4.5); the note-to-dynamic gap
+is `defaultBottomMargin`, the same knob as the inter-instrument clearance.
+
+## Theme tags live on the page wrappers, not only on `#score` (2026-09-05)
+
+`postProcessRendered` runs per mounted page (and per spliced system) and tags
+each with `data-notation-theme`; the theme CSS matches any tagged ancestor. A
+theme switch that retags only the container leaves every page mounted under
+the old theme tagged — and once the inline notehead paint is removed, the
+still-live dark rules paint those noteheads white. Anything a per-page pass
+sets, the container-level reversal must also reverse per page.
+
+## The scroll-follow anchor is the ACTIVE layer's cursor (2026-09-05)
+
+`visualCursorMeasure()` answered with the voice cursor even in the expression
+/ pedal / tempo layers, so every layer action that re-rendered scrolled to the
+parked voice cursor — "the scroll jumps to the first page". A virtual layer
+with its own cursor needs every cursor-derived anchor (scroll-into-view, page
+mounting, the mount window) to ask the layer, not the voice.
+
+## A slur flipped to the notehead side needs room there (2026-09-05)
+
+Verovio does not decline a `@curvedir`; it routes the slur around whatever is
+on that side. In sonata m. 83 the lower voice's chord topped at the upper
+voice's lowest slurred note, and the flipped slur was drawn from the chord's
+lower notehead scooping 75 px under the staff. Counterfactual rendering (same
+pinned MEI and options in a bare toolkit, one attribute removed) is the cheap
+way to attribute such a defect to a pass of ours rather than to Verovio.

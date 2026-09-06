@@ -1027,7 +1027,18 @@ class Renderer {
    *  inline-paints noteheads; light removes both). No-op before attach(). */
   applyThemeToRendered(): void {
     if (!this.container) return;
-    applyNotationTheme(this.container, this.theme === 'light' ? 'light' : 'dark');
+    const theme = this.theme === 'light' ? 'light' : 'dark';
+    applyNotationTheme(this.container, theme);
+    /* Every mounted page wrapper (and every spliced-in system) carries its OWN
+       `data-notation-theme` tag from postProcessRendered — the theme CSS keys
+       on any tagged ancestor. Retag them too: a page left tagged dark after a
+       switch to light kept the dark ink rules live, and with the inline
+       notehead paint just removed those rules clobbered the noteheads white
+       until the next re-render re-tagged the page (backlog, 2026-09-05). */
+    for (const el of Array.from(this.container.querySelectorAll('[data-notation-theme]'))) {
+      if (theme === 'light') delete (el as HTMLElement).dataset.notationTheme;
+      else (el as HTMLElement).dataset.notationTheme = 'dark';
+    }
     this.container.classList.toggle('theme-transparent', this.theme === 'transparent');
   }
 

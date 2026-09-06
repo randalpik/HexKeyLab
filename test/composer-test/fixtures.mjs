@@ -501,6 +501,24 @@ const TUPLETS = {
     for (let i = 0; i < 3; i++) m.insertRestAtCursor({ duration: "8", dots: 0 });
   `,
 
+  /* Triplet of 8ths filled with NOTES: the auto-beamer beams all three, and a
+     tuplet wholly under one beam shows its number only — no bracket (Max,
+     2026-09-05; Verovio's default once Composer stopped forcing
+     bracket.visible="true"). The empty / rest-filled triplets keep theirs. */
+  m1Triplet8BeamedNumberOnly: `
+    m.setCursor(0, 1);
+    m.createTupletAtCursor({ num: 3, numbase: 2, atomicDur: '8', spanDur: '4', spanDots: 0 });
+    for (let i = 0; i < 3; i++) m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }], duration: '8', dots: 0 });
+  `,
+
+  /* Triplet of QUARTERS filled with notes: nothing to beam, so Verovio draws
+     the bracket (Composer forces neither way). */
+  m1TripletQuarterBracket: `
+    m.setCursor(0, 1);
+    m.createTupletAtCursor({ num: 3, numbase: 2, atomicDur: '4', spanDur: '2', spanDots: 0 });
+    for (let i = 0; i < 3; i++) m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+  `,
+
   /* Fill triplet then delete last → atomic regen produces an 8th placeholder. */
   m1Triplet8FilledThenDelete: `
     m.setCursor(0, 1);
@@ -824,6 +842,34 @@ const HEJI = {
 /* ── New: scroll-into-view ────────────────────────────────────────────── */
 
 const SCROLL = {
+  /* The expression layer's scroll-follow tracks the LAYER's moment, not the
+     parked voice cursor (backlog 2026-09-05: selecting an expression while the
+     voice cursor sat on an unmounted page jumped the view to the first page —
+     the voice cursor's page). 80 bars over several pages, a dynamic in the last
+     bar, the voice-2 cursor parked in bar 1; the assertion enters the layer,
+     jumps to its last moment and edits the mark there. */
+  scrollExprLayerFollowsMoment: {
+    setup: `
+      window.__hkl_composer.renderer.setViewMode('page');
+      const N = (o, midi) => ({ q: 0, r: 0, pname: 'a', accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.setVoice(1); m.setCursor(0, 1);
+      for (let i = 0; i < 4 * 80; i++) m.insertChordAtCursor({ notes: [N(4, 69)], duration: '4', dots: 0 });
+      const doc = m.getDoc(); const MEI = 'http://www.music-encoding.org/ns/mei';
+      const meas = doc.querySelectorAll('measure'); const last = meas[meas.length - 1];
+      const dyn = (measure, id) => { const d = doc.createElementNS(MEI, 'dynam'); d.setAttribute('xml:id', id); d.setAttribute('tstamp', '1'); d.setAttribute('place', 'below'); d.setAttribute('staff', '1'); d.textContent = 'p'; measure.appendChild(d); };
+      /* The voice cycle offers the expression layer only when the CURRENT
+         measure holds an expression (cycleVoice: measureHasExpression), so
+         bar 1 gets one too; End then jumps to the far one. */
+      dyn(meas[0], 'd-test-near');
+      dyn(last, 'd-test-far');
+      window.__lastMeasureId = last.getAttribute('xml:id');
+      m.setVoice(2); m.setCursor(0, 2);
+      r();
+    `,
+    skipCursorTrace: true,
+    fullRender: 'an 80-bar document built from the blank doc derives on its first render; the fixture is about the scroll anchor, not the render path',
+  },
+
   /* The page/scroll selector is a <select id="viewModeSelect"> (replacing the
    * old Page/Scroll button pair). Changing it to 'scroll' must drive the
    * renderer's view mode and #score's view-* class. Asserted via
@@ -6340,6 +6386,79 @@ const ENGRAVING = {
       sl.setAttribute('xml:id', 's-test-2v'); sl.setAttribute('startid', '#' + notes[0].getAttribute('xml:id')); sl.setAttribute('endid', '#' + notes[2].getAttribute('xml:id')); sl.setAttribute('data-voice', '1');
       doc.querySelector('measure').appendChild(sl);
       m.setCursor(0, 1);
+      r();
+    `,
+  },
+  /* The notehead-side flip is skipped when the other voice's content intrudes
+     on that side (2026-09-05, sonata m. 83): upper voice a slurred triplet
+     descending a5 → f5 → d5, lower voice a HALF-note chord d5+d4 whose stem
+     (down) reaches 14 steps below the slur's lowest note — m. 83's geometry
+     (b1+b2 under a line ending on b2). Flipped below, Verovio routed the slur
+     around the chord and its stem, far from its notes, while the beam side was
+     free; the pass now leaves it on Verovio's side (above), close to its
+     notes. (An unstemmed whole-note chord a step or two below — m. 82 — still
+     flips: engr_slurNoteheadSideTwoVoice.) */
+  engr_slurStaysAboveWhenLowerVoiceBlocks: {
+    setup: `
+      const N = (p, o, midi) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.setVoice(1); m.setCursor(0, 1);
+      m.createTupletAtCursor({ num: 3, numbase: 2, atomicDur: '8', spanDur: '4', spanDots: 0 });
+      m.setCursor(1, 1);
+      m.insertChordAtCursor({ notes: [N('a', 5, 81)], duration: '8', dots: 0 });
+      m.insertChordAtCursor({ notes: [N('f', 5, 77)], duration: '8', dots: 0 });
+      m.insertChordAtCursor({ notes: [N('d', 5, 74)], duration: '8', dots: 0 });
+      m.setVoice(2); m.setCursor(0, 2);
+      m.insertChordAtCursor({ notes: [N('d', 5, 74), N('d', 4, 62)], duration: '2', dots: 0 });
+      m.insertRestAtCursor({ duration: '2', dots: 0 });
+      m.setVoice(1);
+      const doc = m.getDoc();
+      const notes = [...doc.querySelectorAll('staff[n="1"] layer[n="1"] tuplet note')];
+      const MEI = 'http://www.music-encoding.org/ns/mei';
+      const sl = doc.createElementNS(MEI, 'slur');
+      sl.setAttribute('xml:id', 's-test-2v-block'); sl.setAttribute('startid', '#' + notes[0].getAttribute('xml:id')); sl.setAttribute('endid', '#' + notes[2].getAttribute('xml:id')); sl.setAttribute('data-voice', '1');
+      doc.querySelector('measure').appendChild(sl);
+      m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* Theme switch in place (backlog 2026-09-05: "switching to light sometimes
+     doesn't switch note colors back until another rerender"): a page mounted
+     under the dark theme carries its own data-notation-theme tag; the light
+     switch must clear it, or the dark ink rules keep matching that page and
+     paint its noteheads white once their inline dark paint is removed. */
+  engr_themeLightSwitchClearsPageTags: {
+    setup: `
+      const N = (o, midi) => ({ q: 0, r: 0, pname: 'a', accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.setVoice(1); m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [N(4, 69)], duration: '4', dots: 0 });
+      const R = window.__hkl_composer.renderer;
+      R.setTheme('dark'); R.forceFullRerender(); r();
+      window.__darkTags = document.querySelectorAll('#score [data-notation-theme]').length;
+      R.setTheme('light'); R.applyThemeToRendered();
+    `,
+  },
+
+  /* A hairpin standing alone under a single-line instrument goes to the
+     dynamics' line (2026-09-05, sonata mm. 49–52): Verovio hugs it to the staff
+     (0.3 space) while dynamDist puts a dynamic 1.2 spaces down, so a crescendo
+     into an `f` read as a step. m1: a lone crescendo; m2: a `p` at the downbeat
+     — Verovio's placement, untouched; it defines the line. */
+  engr_hairpinAloneOnDynamicsLine: {
+    setup: `
+      const N = (o, midi) => ({ q: 0, r: 0, pname: 'a', accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.addInstrument({ name: 'Viola', staffCount: 1 });
+      m.setVoice(5); m.setCursor(0, 5);
+      for (let i = 0; i < 2; i++) m.insertChordAtCursor({ notes: [N(5, 81)], duration: '1', dots: 0 });
+      const doc = m.getDoc(); const MEI = 'http://www.music-encoding.org/ns/mei';
+      const meas = doc.querySelectorAll('measure');
+      const h = doc.createElementNS(MEI, 'hairpin');
+      h.setAttribute('xml:id', 'h-test-alone'); h.setAttribute('tstamp', '1'); h.setAttribute('tstamp2', '0m+4'); h.setAttribute('form', 'cres'); h.setAttribute('place', 'below'); h.setAttribute('staff', '3');
+      meas[0].appendChild(h);
+      const d = doc.createElementNS(MEI, 'dynam');
+      d.setAttribute('xml:id', 'd-test-line'); d.setAttribute('tstamp', '1'); d.setAttribute('place', 'below'); d.setAttribute('staff', '3'); d.textContent = 'p';
+      meas[1].appendChild(d);
+      m.setVoice(1); m.setCursor(0, 1);
       r();
     `,
   },
@@ -14643,6 +14762,103 @@ export const FIXTURE_ASSERTIONS = {
         return { ok: true };
       })()` },
   ],
+  engr_slurStaysAboveWhenLowerVoiceBlocks: [
+    { name: 'with the lower voice two steps under the slurred notes, the slur stays above them and close to them (no flip)',
+      expr: `(() => {
+        const staff = document.querySelector('#score g.measure g.staff[data-n="1"]');
+        const slur = document.getElementById('s-test-2v-block');
+        if (!staff || !slur) return { ok: false, detail: 'staff=' + !!staff + ' slur=' + !!slur };
+        const heads = [...staff.querySelectorAll('g.tuplet g.notehead')].map(h => h.getBoundingClientRect());
+        const headTop = Math.min(...heads.map(h => h.top)), headBot = Math.max(...heads.map(h => h.bottom));
+        const lines = [...staff.querySelectorAll(':scope > path')].map(p => p.getBoundingClientRect().top);
+        const space = (Math.max(...lines) - Math.min(...lines)) / 4;
+        const s = slur.getBoundingClientRect(); const sMid = (s.top + s.bottom) / 2;
+        if (!(sMid < headTop)) return { ok: false, detail: 'slur centre ' + sMid.toFixed(1) + ' is not above the slurred noteheads (top ' + headTop.toFixed(1) + ')' };
+        if (s.bottom < headTop - 3 * space) return { ok: false, detail: 'slur displaced: bottom ' + s.bottom.toFixed(1) + ' is more than 3 spaces above the noteheads (' + headTop.toFixed(1) + ')' };
+        if (s.top > headBot) return { ok: false, detail: 'slur below the noteheads: the flip was not skipped' };
+        return { ok: true, detail: 'slur ' + s.top.toFixed(0) + '..' + s.bottom.toFixed(0) + ', heads ' + headTop.toFixed(0) + '..' + headBot.toFixed(0) };
+      })()` },
+  ],
+  m1Triplet8BeamedNumberOnly: [
+    { name: 'a beamed triplet renders its number and no bracket; the model forces neither',
+      expr: `(() => {
+        const t = document.querySelector('#score g.tuplet');
+        if (!t) return { ok: false, detail: 'no g.tuplet rendered' };
+        const b = t.querySelectorAll('g.tupletBracket').length, n = t.querySelectorAll('g.tupletNum').length, beams = t.querySelectorAll('g.beam').length;
+        const mt = window.__hkl_composer.model.getDoc().querySelector('tuplet');
+        if (mt.hasAttribute('bracket.visible')) return { ok: false, detail: 'model tuplet carries bracket.visible=' + mt.getAttribute('bracket.visible') };
+        return b === 0 && n === 1 && beams === 1 ? { ok: true } : { ok: false, detail: 'bracket=' + b + ' num=' + n + ' beams=' + beams };
+      })()` },
+  ],
+  m1TripletQuarterBracket: [
+    { name: 'an unbeamed triplet keeps its bracket and number',
+      expr: `(() => {
+        const t = document.querySelector('#score g.tuplet');
+        if (!t) return { ok: false, detail: 'no g.tuplet rendered' };
+        const b = t.querySelectorAll('g.tupletBracket').length, n = t.querySelectorAll('g.tupletNum').length;
+        return b === 1 && n === 1 ? { ok: true } : { ok: false, detail: 'bracket=' + b + ' num=' + n };
+      })()` },
+  ],
+  engr_themeLightSwitchClearsPageTags: [
+    { name: 'the dark render tagged the page; after the switch to light no tag survives and the noteheads are their ink color again',
+      expr: `(() => {
+        if (!window.__darkTags) return { ok: false, detail: 'the dark render tagged nothing inside #score — the fixture no longer exercises the stale-tag path' };
+        const score = document.getElementById('score');
+        const tagged = [...score.querySelectorAll('[data-notation-theme]')].map(e => e.className).concat(score.dataset.notationTheme ? ['#score'] : []);
+        if (tagged.length) return { ok: false, detail: 'still tagged after the light switch: ' + tagged.join(',') };
+        const use = score.querySelector('g.note g.notehead use');
+        if (!use) return { ok: false, detail: 'no notehead' };
+        const fill = getComputedStyle(use).fill;
+        const want = use.closest('g.note').getAttribute('data-color');
+        const rgb = (h) => { const x = h.length === 4 ? h.slice(1).split('').map(c => c + c).join('') : h.slice(1); const n = parseInt(x, 16); return 'rgb(' + [(n >> 16) & 255, (n >> 8) & 255, n & 255].join(', ') + ')'; };
+        if (want && fill !== rgb(want)) return { ok: false, detail: 'notehead fill ' + fill + ', ink ' + want };
+        if (!want && (fill === 'rgb(255, 255, 255)' || fill === 'rgb(242, 242, 242)')) return { ok: false, detail: 'notehead still light-source ' + fill };
+        return { ok: true };
+      })()` },
+  ],
+  engr_hairpinAloneOnDynamicsLine: [
+    { name: 'the lone hairpin is moved to the dynamics line; the dynamic itself is not moved',
+      expr: `(() => {
+        const meas = document.querySelectorAll('#score g.measure');
+        const st = meas[0] && meas[0].querySelector(':scope > g.staff[data-n="3"]');
+        const h = document.getElementById('h-test-alone'); const d = document.getElementById('d-test-line');
+        if (!st || !h || !d) return { ok: false, detail: 'staff3=' + !!st + ' hairpin=' + !!h + ' dynam=' + !!d };
+        const ys = [...st.querySelectorAll(':scope > path')].map(p => p.getBoundingClientRect().top);
+        const bot = Math.max(...ys), space = (bot - Math.min(...ys)) / 4;
+        if (!h.hasAttribute('data-hkl-vshift')) return { ok: false, detail: 'hairpin not laid out (no data-hkl-vshift)' };
+        if (d.hasAttribute('data-hkl-vshift')) return { ok: false, detail: 'the dynamic was moved (vshift ' + d.getAttribute('data-hkl-vshift') + ')' };
+        const hb = h.getBoundingClientRect(), db = d.getBoundingClientRect();
+        /* (DIR_GAP 192 − HAIRPIN_LIFT 20) user units = 172 = 1.075 staff spaces; two px of slack. */
+        const gap = hb.top - bot;
+        if (Math.abs(gap - 1.075 * space) > 2) return { ok: false, detail: 'hairpin top gap=' + gap.toFixed(1) + 'px, want ' + (1.075 * space).toFixed(1) + ' (space ' + space.toFixed(1) + ')' };
+        const hc = hb.top + hb.height / 2, dc = db.top + db.height / 2;
+        return Math.abs(hc - dc) <= 0.6 * space ? { ok: true, detail: 'hairpin centre ' + hc.toFixed(1) + ' dynamic centre ' + dc.toFixed(1) } : { ok: false, detail: 'hairpin centre ' + hc.toFixed(1) + ' vs dynamic centre ' + dc.toFixed(1) };
+      })()` },
+  ],
+  scrollExprLayerFollowsMoment: [
+    { name: 'End in the expression layer scrolls to the layer\'s last moment, and editing the mark there does not jump back to the voice cursor\'s page',
+      expr: `(async () => {
+        const H = window.__hkl_composer; const score = document.getElementById('score');
+        const busy = () => { const b = document.getElementById('renderBusy'); return !!b && !b.hidden; };
+        for (let i = 0; i < 200 && busy(); i++) await new Promise(r => setTimeout(r, 50));
+        score.scrollTop = 0;
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+        const mode = H.inputState().cursorMode;
+        if (mode !== 'expr') return { ok: false, detail: 'ArrowDown from voice 2 did not enter the expression layer (mode ' + mode + ')' };
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+        await window.__waitForScrollSettle(2000);
+        const inView = () => { const r = H.renderer.rectForId(window.__lastMeasureId); if (!r) return 'unmounted'; return r.top >= score.scrollTop - 1 && r.bottom <= score.scrollTop + score.clientHeight + 1 ? 'yes' : 'no(top ' + r.top.toFixed(0) + ' scroll ' + score.scrollTop + ' h ' + score.clientHeight + ')'; };
+        const afterEnd = inView();
+        if (afterEnd !== 'yes') return { ok: false, detail: 'after End the last measure is not in view: ' + afterEnd };
+        const before = score.scrollTop;
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', ctrlKey: true, bubbles: true }));
+        for (let i = 0; i < 200 && busy(); i++) await new Promise(r => setTimeout(r, 50));
+        await window.__waitForScrollSettle(2000);
+        const afterEdit = inView();
+        if (afterEdit !== 'yes') return { ok: false, detail: 'after editing the mark the view left the last measure: ' + afterEdit + ' (scrollTop ' + before + ' → ' + score.scrollTop + ')' };
+        return { ok: true, detail: 'scrollTop ' + score.scrollTop };
+      })()` },
+  ],
   engr_dynamicCenteredInGrandStaff: [
     { name: 'the dynamic centre sits at the midpoint of the gap between the staves',
       expr: `(() => {
@@ -14733,20 +14949,21 @@ export const FIXTURE_ASSERTIONS = {
       })()` },
   ],
   engr_slurNoteheadSideTwoVoice: [
-    { name: 'the upper-voice slur lies below its noteheads, opposite the beams and the tuplet bracket',
+    { name: 'the upper-voice slur lies below its noteheads, opposite the beams (a beamed triplet draws its number only — no bracket, 2026-09-05)',
       expr: `(() => {
         const staff = document.querySelector('#score g.measure g.staff[data-n="1"]');
         const slur = document.querySelector('#score g.slur');
         const brk = staff && staff.querySelector('g.tupletBracket');
         /* Verovio nests the beamed notes INSIDE g.beam, so measure the beam's own polygon. */
         const beam = staff && staff.querySelector('g.beam > polygon');
-        if (!staff || !slur || !brk || !beam) return { ok: false, detail: 'staff=' + !!staff + ' slur=' + !!slur + ' bracket=' + !!brk + ' beam=' + !!beam };
+        if (!staff || !slur || !beam) return { ok: false, detail: 'staff=' + !!staff + ' slur=' + !!slur + ' beam=' + !!beam };
+        if (brk) return { ok: false, detail: 'a wholly beamed triplet must not draw a tuplet bracket' };
         const heads = [...staff.querySelectorAll('g.layer:first-of-type g.notehead, g.tuplet g.notehead')].map(h => h.getBoundingClientRect());
         const headBot = Math.max(...heads.map(h => h.bottom));
-        const s = slur.getBoundingClientRect(), b = brk.getBoundingClientRect(), be = beam.getBoundingClientRect();
+        const s = slur.getBoundingClientRect(), be = beam.getBoundingClientRect();
         const sMid = (s.top + s.bottom) / 2;
         if (!(sMid > headBot)) return { ok: false, detail: 'slur centre ' + sMid.toFixed(1) + ' is not below the noteheads (bottom ' + headBot.toFixed(1) + ')' };
-        if (!(b.bottom < headBot && be.bottom < headBot)) return { ok: false, detail: 'bracket/beam not above the heads: bracket ' + b.bottom.toFixed(1) + ' beam ' + be.bottom.toFixed(1) };
+        if (!(be.bottom < headBot)) return { ok: false, detail: 'beam not above the heads: beam ' + be.bottom.toFixed(1) };
         return { ok: true };
       })()` },
   ],

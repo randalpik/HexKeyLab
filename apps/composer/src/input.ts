@@ -377,7 +377,9 @@ function momentAtVoiceAnchor(model: ComposerModel): Moment | null {
   return visualMi === m.measureIdx ? m : { measureIdx: visualMi, tstamp: 1 };
 }
 
-function momentAtCurrentCursor(model: ComposerModel): Moment | null {
+/** The moment the ACTIVE layer's cursor stands on — the expression / pedal /
+ *  tempo layer's moment in those modes, else the voice cursor's anchor. */
+export function momentAtCurrentCursor(model: ComposerModel): Moment | null {
   if (state.cursorMode === 'expr') return currentMoment(state.exprCursor);
   if (state.cursorMode === 'pedal') return currentMoment(state.pedalCursor);
   if (state.cursorMode === 'tempo') return currentMoment(state.tempoCursor);

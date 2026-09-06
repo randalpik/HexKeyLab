@@ -784,6 +784,14 @@ export class ComposerModel {
       if (note.getAttribute("accid.ges") === "ss")
         note.setAttribute("accid.ges", "x");
     }
+    /* Tuplet brackets follow Verovio's default — drawn unless the tuplet is
+       wholly under one beam (Max, 2026-09-05: numbers alone on full beams).
+       Files written before then carry an explicit bracket.visible="true" that
+       forced the bracket onto beams; drop it. An explicit "false" (an imported
+       bracket="no") stays. Idempotent. */
+    for (const t of Array.from(this.doc.querySelectorAll("tuplet"))) {
+      if (t.getAttribute("bracket.visible") === "true") t.removeAttribute("bracket.visible");
+    }
     /* Migrate older .hkc files that emitted <accid> child elements for
        quadruple+ accidentals. Verovio's layout doesn't reserve space for
        extra accid children (they overlap), so we no longer use them.

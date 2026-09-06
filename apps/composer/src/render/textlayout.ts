@@ -8,7 +8,15 @@
 //     staff's content in the same horizontal range allows.
 //   • Under any OTHER staff (a single-line instrument, the bottom of a grand
 //     staff), expressive text (<dir>) is kept at least as far from the staff
-//     as the dynamics are — Verovio's `dynamDist` governs <dynam> only.
+//     as the dynamics are — Verovio's `dynamDist` governs <dynam> only — and a
+//     hairpin standing alone is put ON the dynamics' line, up or down (Max,
+//     2026-09-05: sonata mm. 49–52, the crescendo sat 15 px below the `f`
+//     that follows it and the decrescendo 16 px above the `p`, because Verovio
+//     hugs a lone hairpin to the staff — probed: its top 0.3 space below the
+//     bottom line at any dynamDist — and aligns it to a neighbouring dynamic
+//     only sometimes). A cluster that holds a DYNAMIC is left where Verovio put
+//     it: dynamDist is the dynamic's baseline, and Verovio already aligned any
+//     hairpin or text touching it to that dynamic.
 // Marks whose horizontal ranges overlap (a dynamic with its hairpin, a stacked
 // dynamic + text) move as ONE block so Verovio's own stacking survives.
 //   • A TEXT mark (dynamic, expressive text — not a hairpin) is also kept
@@ -61,6 +69,11 @@ const OBSTACLE_SEL = 'g.note, g.rest, g.mRest, g.accid, g.beam, g.stem, g.clef, 
 const PAD = 40;
 /* A device pixel: a mark this close to a barline counts as touching it. */
 const TOUCH = 10;
+/* How far a hairpin's top sits ABOVE the dynamics' clearance line when it is
+   put on the dynamics' line: Verovio's own hairpin-to-dynamic alignment (probed
+   at unit 8 with a dynamic and a hairpin at one moment: hairpin top 2 px above
+   the dynamic's top) — a quarter unit. */
+const HAIRPIN_LIFT = 20;
 const isText = (el: Element): boolean => el.classList.contains('dynam') || el.classList.contains('dir');
 
 const attrNum = (el: Element, name: string): number | null => {
@@ -210,7 +223,7 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
     if (place === 'below') {
       const lower = idx + 1 < rows.length ? rows[idx + 1] : null;
       if (lower && grandLowerOf.get(staffN) === lower.n) items.push({ el, box, upper: own, lower, mode: 'center' });
-      else if (el.classList.contains('dir')) items.push({ el, box, upper: own, lower, mode: 'mingap' });
+      else items.push({ el, box, upper: own, lower, mode: 'mingap' });   // dynam / dir / hairpin — see the cluster rule
     } else if (place === 'above') {
       const upper = idx > 0 ? rows[idx - 1] : null;
       if (upper && grandUpperOf.get(staffN) === upper.n) items.push({ el, box, upper, lower: own, mode: 'center' });
@@ -236,8 +249,10 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
   }
 
   /* Obstacles: glyph groups of a staff row overlapping an x-range, plus marks
-     attached to that staff on the gap side. */
-  const obstacleBoxes = (row: Row, left: number, right: number, side: 'above' | 'below'): Box[] => {
+     attached to that staff on the gap side — never the moving cluster's own
+     marks (a place-below hairpin moving UP toward its staff met itself here
+     and stayed put: sonata m. 49, 2026-09-05). */
+  const obstacleBoxes = (row: Row, left: number, right: number, side: 'above' | 'below', moving: ReadonlySet<Element>): Box[] => {
     const out: Box[] = [];
     const rowEls = Array.from(sys.querySelectorAll('g.staff')).filter((s) => attrNum(s, 'data-n') === row.n);
     for (const s of rowEls) {
@@ -248,6 +263,7 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
       }
     }
     for (const g of Array.from(sys.querySelectorAll(MARK_SEL))) {
+      if (moving.has(g)) continue;
       if (attrNum(g, 'data-staff') !== row.n || (g.getAttribute('data-place') ?? '') !== side) continue;
       const b = svgBox(g, frameInv);
       if (!b || b.right < left - PAD || b.left > right + PAD || !(b.right > b.left)) continue;
@@ -260,23 +276,29 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
     let top = Infinity, bottom = -Infinity, left = Infinity, right = -Infinity;
     for (const m of cl) { top = Math.min(top, m.box.top); bottom = Math.max(bottom, m.box.bottom); left = Math.min(left, m.box.left); right = Math.max(right, m.box.right); }
     const { upper, lower, mode } = cl[0];
+    const moving = new Set<Element>(cl.map((m) => m.el));
     let dy: number;
     if (mode === 'center') {
       if (!lower) continue;
       dy = (upper.bottom + lower.top) / 2 - (top + bottom) / 2;
     } else {
-      dy = Math.max(0, upper.bottom + opts.dirGapUser - top);
+      /* A dynamic anchors its cluster: Verovio's placement stands. */
+      if (cl.some((m) => m.el.classList.contains('dynam'))) continue;
+      const line = upper.bottom + opts.dirGapUser;
+      /* Text is pushed DOWN to the dynamics' clearance, never up (Verovio's
+         floor is right when it is lower); hairpins alone go to the line. */
+      dy = cl.some((m) => m.el.classList.contains('dir')) ? Math.max(0, line - top) : (line - HAIRPIN_LIFT) - top;
     }
     if (dy > 0) {
       /* Moving down: stay above the lower staff's line and its content. */
       let limit = lower ? lower.top - PAD : Infinity;
-      if (lower) for (const b of obstacleBoxes(lower, left, right, 'above')) limit = Math.min(limit, b.top - PAD);
+      if (lower) for (const b of obstacleBoxes(lower, left, right, 'above', moving)) limit = Math.min(limit, b.top - PAD);
       dy = Math.min(dy, limit - bottom);
       if (dy < 0) dy = 0;
     } else if (dy < 0) {
       /* Moving up: stay below the upper staff's line and its content. */
       let limit = upper.bottom + PAD;
-      for (const b of obstacleBoxes(upper, left, right, 'below')) limit = Math.max(limit, b.bottom + PAD);
+      for (const b of obstacleBoxes(upper, left, right, 'below', moving)) limit = Math.max(limit, b.bottom + PAD);
       dy = Math.max(dy, limit - top);
       if (dy > 0) dy = 0;
     }

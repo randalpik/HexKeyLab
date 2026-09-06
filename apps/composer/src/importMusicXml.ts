@@ -687,13 +687,15 @@ function appendLayerChildren(
     const ev = events[i];
     if (ev.tupletStart) {
       const { num, numbase, bracket, showNum } = ev.tupletStart;
-      /* Bracket + number visibility follow the source: Finale's measured
-         tremolo is a `bracket="no" show-number="none"` 1:8 tuplet over two
-         hollow beamed notes, and drew a bracket + "1" here until 2026-09-04
-         (sonata m. 93). */
+      /* Number visibility follows the source, and so does a suppressed bracket:
+         Finale's measured tremolo is a `bracket="no" show-number="none"` 1:8
+         tuplet over two hollow beamed notes, and drew a bracket + "1" here until
+         2026-09-04 (sonata m. 93). A source bracket="yes" is NOT forced: with no
+         `bracket.visible` Verovio draws the bracket only when the tuplet is not
+         wholly under one beam (Max, 2026-09-05: numbers alone on full beams). */
       const tuplet = el(doc, 'tuplet', {
         'xml:id': newId('t'), num: String(num), numbase: String(numbase),
-        'bracket.visible': bracket ? 'true' : 'false',
+        ...(bracket ? {} : { 'bracket.visible': 'false' }),
         'num.visible': showNum ? 'true' : 'false',
         'num.format': 'count',
         'data-tuplet-atomic-dur': ev.dur,

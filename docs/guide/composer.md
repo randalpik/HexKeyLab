@@ -85,7 +85,7 @@ A new document is a grand staff (treble + bass) with two voices per staff, four 
 
 **Ties** (`=`) join a note to the next same-pitch note. They're per-pitch in a chord, survive edits and re-spelling, and form automatically when a note's duration overflows a bar line.
 
-**Tuplets**: press `Ctrl+N` (where N is `2`–`7`) to start a tuplet, then a duration digit to set its base note. For example `Ctrl+3` then `5` is a triplet of eighth notes filling a quarter. A tuplet stays within one bar. (`Ctrl+R` is used for trills because Firefox reserves `Ctrl+T`; see [Misc elements](#misc-elements).)
+**Tuplets**: press `Ctrl+N` (where N is `2`–`7`) to start a tuplet, then a duration digit to set its base note. For example `Ctrl+3` then `5` is a triplet of eighth notes filling a quarter. A tuplet stays within one bar. A tuplet that is beamed as a whole (eighths and shorter) shows just its number; an unbeamed one (a quarter-note triplet, say) gets a bracket as well. (`Ctrl+R` is used for trills because Firefox reserves `Ctrl+T`; see [Misc elements](#misc-elements).)
 
 | Tuplet | Ratio | Example |
 |---|---|---|

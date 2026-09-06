@@ -16,7 +16,7 @@ import { ComposerModel, type Voice } from './model/index.js';
 import { renderer, styleVoltaNumbers, ZOOM_PRESETS, type ZoomLevel, type ViewMode, type ScoreTheme } from './render/render.js';
 import { SECTION_HEADER_RESERVE, SECTION_HEADER_BASELINE, translateOf } from './render/pagefit.js';
 import { cursor, resolveVoiceCursorAnchor } from './cursor/cursor.js';
-import { initInput, getInputState, setViewInstr, installSCTransposeImpl, clearChordInternalSel, resetToVoiceMode, selectLayerElementById } from './input.js';
+import { initInput, getInputState, setViewInstr, installSCTransposeImpl, clearChordInternalSel, resetToVoiceMode, selectLayerElementById, momentAtCurrentCursor } from './input.js';
 import { scTransposeChordNote, type FootprintColorMap } from './notation/scTranspose.js';
 import { HistoryManager } from './history.js';
 import type { CursorUpdateOpts } from './cursor/cursor.js';
@@ -142,6 +142,16 @@ function maybeScrollMeasureIntoView(measureIdx: number): void {
 
 function visualCursorMeasure(): number {
   const s = getInputState();
+  /* In the expression / pedal / tempo layers the cursor the reader sees is the
+     layer's MOMENT, not the parked voice cursor: scroll-follow and page
+     mounting track it. Following the voice cursor here sent the view back to
+     wherever that cursor was parked — the first page, typically — whenever a
+     layer action re-rendered (backlog 2026-09-05: "selecting an expression
+     while the cursor is on an unmounted page jumps to the first page"). */
+  if (s.cursorMode === 'expr' || s.cursorMode === 'pedal' || s.cursorMode === 'tempo') {
+    const m = momentAtCurrentCursor(model);
+    if (m) return m.measureIdx;
+  }
   return model.cursorMeasureIdx(model.getCurrentVoice(), s.mode);
 }
 

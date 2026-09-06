@@ -127,7 +127,11 @@ export function createTupletAtCursor(
     'xml:id': newId('t'),
     num: String(num),
     numbase: String(numbase),
-    'bracket.visible': 'true',
+    /* No `bracket.visible`: Verovio then draws the bracket only when the
+       tuplet is not wholly under one beam — a beamed triplet gets its number
+       alone (Max, 2026-09-05: no brackets on full beams). An explicit "true"
+       forced the bracket onto beams; `replaceDocument` strips it from older
+       files. */
     'num.visible': 'true',
     'num.format': 'count',
   });

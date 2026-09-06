@@ -6779,3 +6779,110 @@ guards the legality-preserving case).
 **Why**: the export dated from June, when the screen was Verovio SVG plus three passes, and it kept a private copy of those three under its own fixed options (Letter, `scale 100`, `breaks 'auto'`). Since then the page layout moved into post-Verovio work on the page DOM — line-break and vertical ownership, balancing, the below-staff text layout, header/footer/section-title injection, `pageScale` — none of which reached the PDF, and its cast-off inputs differed from the screen's before any of that (the "WYSIWYG gap" of 2026-09-04). Two pipelines can only diverge; one cannot. Max: "Couldn't we just have it render the pages in the same way and export them as is?" — yes. Zoom is not a variable: page geometry is scaled by the zoom's unit compensation (`scalePageGeom`), so the layout in staff spaces is zoom-invariant, and vector output makes the device scale irrelevant.
 
 **Consequences**: the export clones every page synchronously before its first `await` — the mount window can evict far pages on the next idle tick (a pending IntersectionObserver callback schedules it); a detached SVG keeps its subtree, but the export must be one consistent picture of the screen. Print normalization (`normalizePageForPrint`) is all that remains of the old path — light theme forced (tags stripped, inline notehead colors removed), non-notehead black, hidden rests removed, stylesheet stroke inlined, and stylesheet text weight/slant inlined (`inlineComputedTextStyle`, added the same day after Max read the tempo's missing bold off the heatmap) — because svg-to-pdfkit reads presentation attributes and inline style only. The paper stays US Letter (`pageScale` is score-relative-to-page, not sheet size). The live toolkit's layout is never replaced, so `pageVirt.tkCurrent` has no export case left to guard. Sonata probe (31 pages): 31 PDF pages for 31 DOM pages; pages 1–2 pixel-aligned against clipped live captures (heatmap: edge antialiasing only); export ≈ 6 s plus ≈ 6.5 s to mount 30 pages. **Residual**: `Times, serif` text uses PDFKit's built-in Times, whose advances differ from the browser's substitute serif (the sonata's tempo text is visibly wider on screen) — fixing it means shipping one serif face for both screen and PDF; not done here. Probe: `test/composer-inspect/phasec/pdf-wysiwyg.mjs`.
+
+## 2026-09-05 — Composer layout backlog pass (the six "Layout:" items)
+
+Max asked for a solution and/or report on each. Four fixed, one rule refined,
+one assessed.
+
+### Theme: the light switch retags every page wrapper (fixed)
+`Renderer.applyThemeToRendered()` re-ran `applyNotationTheme` on `#score`
+only. `postProcessRendered` tags each MOUNTED page wrapper (and each spliced
+system) with its own `data-notation-theme`, and the theme CSS keys on any
+tagged ancestor — so a page mounted under dark kept its dark tag after the
+switch to light; with the inline notehead paint just removed, the dark ink
+rules clobbered that page's noteheads white until the next re-render retagged
+it ("sometimes": only pages mounted while dark). The switch now clears / sets
+the tag on every tagged descendant too. Probed on the sonata (page 3 mounted
+under dark → light: tags `[]`, fills back to ink). Fixture
+`engr_themeLightSwitchClearsPageTags`.
+
+### Layer scroll-follow tracks the layer's moment (fixed)
+`visualCursorMeasure()` — the anchor for scroll-into-view and page mounting —
+always returned the VOICE cursor's measure. In the expression / pedal / tempo
+layers the reader is looking at the layer's moment; every layer action that
+re-rendered (selecting / moving a mark) then scrolled back to wherever the
+voice cursor was parked — the first page, typically, whose unmounted state is
+how Max described it. The anchor is now `momentAtCurrentCursor` in those
+modes (exported from input.ts). Fixture `scrollExprLayerFollowsMoment`.
+
+### Tuplet brackets: Verovio's default, never forced (fixed)
+Probed (6.3): with `@bracket.visible` unset Verovio draws the bracket unless
+the tuplet is wholly under ONE beam (a beam over part of the tuplet, a rest
+outside the beam, or unbeamed quarters all keep it); `bracket.visible="true"`
+forces it onto the beam. Composer's `createTupletAtCursor` wrote "true", and
+the importer wrote "true" for every source `bracket="yes"`. Both now omit the
+attribute (the importer still writes "false" for `bracket="no"`), and
+`replaceDocument` strips a "true" from older files. Max's rule: numbers alone
+on full beams. Fixtures `m1Triplet8BeamedNumberOnly`,
+`m1TripletQuarterBracket`; `engr_slurNoteheadSideTwoVoice` no longer expects a
+bracket on its beamed triplet.
+
+### Hairpins alone go to the dynamics' line (fixed)
+Probed: Verovio's `dynamDist` governs `<dynam>` only — a lone hairpin's top
+sits 0.3 space under the staff at every setting, and a hairpin is aligned to a
+dynamic only when both share a moment (then its top sits 2 px above the
+dynamic's). In the sonata's viola, mm. 49–52, the crescendo's centre was 15 px
+BELOW the following `f` (Verovio aligned it to something lower) and the
+decrescendo's 16 px ABOVE the following `p` (it hugged the staff) — exactly the
+"crescendo too low, decrescendo too high" Max saw. `render/textlayout.ts`
+under a non-grand staff now clusters dynamics, text and hairpins alike: a
+cluster holding a dynamic is left as Verovio placed it (dynamDist is the
+baseline; Verovio aligned what touches it); text is pushed down to the
+clearance as before; a hairpin-only cluster is put AT the line, up or down,
+its top `HAIRPIN_LIFT` (a quarter unit) above `DIR_GAP` to mirror Verovio's
+own alignment offset. Grand-staff centring is unchanged. Fixture
+`engr_hairpinAloneOnDynamicsLine`.
+**Left for Max**: his note that the added separation should apply to staff
+lines, not notes. Probed: `dynamDist` does NOT stack on low notes (a dynamic
+under a note below the staff sits at the same y for dynamDist 1 and 4.5). The
+note-to-dynamic clearance of a full staff space comes from
+`defaultBottomMargin: 2.0` (2026-09-05, the inter-instrument overflow fix) —
+Verovio has no dynam-specific bottom margin, and the same margin is what
+separates the viola's dynamics from the piano's high notes. Lowering it (1.0
+≈ half a space) trades one against the other; not changed.
+
+### Slur side: no flip without room (refined)
+Sonata m. 83, bass staff: layer 1 a slurred pair of beamed triplets (df4 → b2,
+stems up), layer 2 a half-note chord b1+b2 at the slur's start. The 09-05 pass
+flipped the slur to the notehead side (below); Verovio then had to route it
+around the chord and drew it from the chord's lower notehead scooping 75 px
+under the staff — "displaced far away". Counterfactual (bare toolkit on the
+pinned MEI, same options): without the flip the slur sits at its start note,
+above the beams (y 586–662 against the notehead at 648). A pitch-GAP rule was
+tried first (skip when the other layer's notes come within 5 steps of the
+slur's) and un-flipped m. 82 and m. 84 as well — their other voice is an
+unstemmed whole-note chord whose notes INTERLEAVE with the slurred ones (span
+room −5 / −12) yet both render cleanly (Max, 2026-09-05). The discriminator is
+how far the other content REACHES past the slur layer's extreme notehead on
+the flip side, stems included: m. 82 → 3, m. 84 → −5, the two-voice fixture →
+7 (clean flips); m. 81 → 11, m. 83 → 14 (routed far away). New rule in
+`notation/slurSides.ts`: skip the flip when that intrusion exceeds
+`SLUR_INTRUSION_STEPS` = 8 (`STEM_STEPS` = 7, Verovio's 3.5-space default);
+the slur then stays on Verovio's side — the beam side, which Max's invariant
+allows when nothing else is possible, and with the tuplet rule above a beamed
+triplet no longer has a bracket to be on the wrong side of. The threshold is
+a first setting for Max to tune. Fixture
+`engr_slurStaysAboveWhenLowerVoiceBlocks` (m. 83's geometry: a half-note chord
+under a line ending on its top note); `engr_slurNoteheadSideTwoVoice` still
+flips.
+
+### Single-part view has no balancing (assessed, not done)
+The balancer runs inside the page line-break OWNER, and the owner is bypassed
+whenever `viewStaves != null`: `derivePageRender` renders the filtered
+serialization with Verovio's castoff and `pageBreaks.invalidate()`s;
+`tryRefill` bails with 'filtered view'; the partition cache, the extents job
+and the page splicer are all gated `viewStaves == null` (render.ts 988, 991,
+1542, 1545, 1563, 1777, 2753–2761; linebreaks.ts 828, 993 —
+`model.serialize(heji, null)` for naturals). Nothing in the balancer itself
+cares about staves: measure ids, hard starts and fills carry over; what
+differs is the WIDTHS (a viola-only line holds more bars), so a filtered view
+needs its own partition. Design, if wanted: thread `viewStaves` into
+`PageLineBreaks` (naturals serialize, `tryRefill`), key `partitionKey` /
+`partitionCache` and `pinnedMeiForCurrentModel` on the staff subset, and make
+the page-splicer's window MEI honour the filter — then derive → adopt →
+balance → pin works for a part exactly as for the score, and the edit path
+(refill + splice) comes with it. Estimated a day of work with the gated sweep
+(`check=1`) as the correctness gate; not started without Max's go-ahead, since
+today single-part edits are full castoff renders and a partition per staff
+subset also multiplies the partition-cache and balance-job state.
