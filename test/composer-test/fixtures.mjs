@@ -5550,6 +5550,28 @@ const PHASE1 = {
 
   /* MusicXML import — expressive text: a non-tempo <words> direction becomes a
      note-independent <dir> (italic preserved); tempo captions are excluded. */
+  /* MusicXML import — EVERY tempo marking (2026-09-06, backlog Layout P1):
+     words + <sound tempo> → a verbal <tempo>; a <metronome> → the metronome
+     shown; a bare measure-level <sound tempo> → a text-less playback tempo;
+     the same direction on a second part collapses into one. */
+  phase5_musicxml_tempi: {
+    setup: `
+      const W = '<note><pitch><step>C</step><octave>5</octave></pitch><duration>96</duration><voice>1</voice><type>whole</type></note>';
+      const part = (id) => '<part id="' + id + '">'
+        + '<measure number="1"><attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        + '<direction placement="above"><direction-type><words font-weight="bold">Allegro</words></direction-type><sound tempo="132"/></direction>' + W + '</measure>'
+        + '<measure number="2"><direction placement="above"><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>60</per-minute></metronome></direction-type><sound tempo="60"/></direction>' + W + '</measure>'
+        + '<measure number="3"><sound tempo="90"/>' + W + '</measure>'
+        + '</part>';
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>A</part-name></score-part><score-part id="P2"><part-name>B</part-name></score-part></part-list>'
+        + part('P1') + part('P2') + '</score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+
   phase5_musicxml_words_dir: {
     setup: `
       const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
@@ -6618,6 +6640,111 @@ const ENGRAVING = {
       meas[1].appendChild(d);
       m.setVoice(1); m.setCursor(0, 1);
       r();
+    `,
+  },
+
+  /* A clef change at a SECTION start is folded into the boundary scoreDef on
+     the render clone (notation/sectionRestart.ts, 2026-09-06): no courtesy
+     clef before the movement's final barline, the new movement simply begins
+     in its clef, no restated labels; the saved document keeps the
+     layer-initial <clef>. */
+  engr_sectionBreakNoCourtesyClef: {
+    setup: `
+      window.__hkl_composer.renderer.setViewMode('page');
+      const N = (o, midi) => ({ q: 0, r: 0, pname: 'a', accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.setCursor(0, 1);
+      for (let i = 0; i < 8; i++) m.insertChordAtCursor({ notes: [N(4, 69)], duration: '1', dots: 0 });
+      m.setSectionHeaderAt(4, 'II');
+      /* A layer-initial clef at the head of the section's first measure — the
+         shape the importer and setClefAt (cursor on the measure's first note)
+         both produce. */
+      const layer = m.allMeasures()[4].querySelector('staff[n="1"] > layer[n="1"]');
+      const clef = m.getDoc().createElementNS('http://www.music-encoding.org/ns/mei', 'clef');
+      clef.setAttribute('xml:id', 'clf-test-section'); clef.setAttribute('shape', 'F'); clef.setAttribute('line', '4');
+      layer.insertBefore(clef, layer.firstChild);
+      m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* Expressive text above a staff clears the staff's slur (render/textlayout.ts,
+     2026-09-06): Verovio places the <dir> against the notes and lets a slur
+     arching over them run through it (sonata p. 21 m. 94). */
+  engr_dirAboveClearsSlur: {
+    setup: `
+      const N = (p, o, midi) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [N('c', 6, 84)], duration: '2', dots: 0 });
+      m.insertChordAtCursor({ notes: [N('c', 6, 84)], duration: '2', dots: 0 });
+      const doc = m.getDoc(); const meas = doc.querySelector('measure');
+      const notes = [...meas.querySelectorAll('staff[n="1"] layer[n="1"] note')];
+      const MEI = 'http://www.music-encoding.org/ns/mei';
+      const s = doc.createElementNS(MEI, 'slur'); s.setAttribute('xml:id', 's-test-above-dir'); s.setAttribute('startid', '#' + notes[0].getAttribute('xml:id')); s.setAttribute('endid', '#' + notes[1].getAttribute('xml:id')); s.setAttribute('curvedir', 'above'); meas.appendChild(s);
+      const d = doc.createElementNS(MEI, 'dir'); d.setAttribute('xml:id', 'dir-test-above-slur'); d.setAttribute('tstamp', '2'); d.setAttribute('place', 'above'); d.setAttribute('staff', '1'); d.textContent = 'rit.'; meas.appendChild(d);
+      m.setCursor(0, 1); r();
+    `,
+  },
+
+  /* Two voices on one staff: voice 1's rest inside a tuplet stays ON the staff
+     (raised to loc 6) when voice 2's low note leaves room, instead of
+     Verovio's lift into the tuplet bracket (notation/restlayout.ts,
+     2026-09-06; sonata p. 17 m. 35). MusicXML import builds the two voices. */
+  engr_tupletRestOnStaffTwoVoice: {
+    setup: `
+      const TM = '<time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>';
+      const V1 = (body, extra) => '<note>' + body + '<duration>8</duration><voice>1</voice><type>eighth</type>' + TM + (extra || '') + '</note>';
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>T</part-name></score-part></part-list><part id="P1">'
+        + '<measure number="1"><attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>3</beats><beat-type>4</beat-type></time><clef><sign>F</sign><line>4</line></clef></attributes>'
+        + V1('<rest/>', '<notations><tuplet type="start"/></notations>')
+        + V1('<pitch><step>G</step><octave>2</octave></pitch>')
+        + V1('<pitch><step>E</step><octave>3</octave></pitch>', '<notations><tuplet type="stop"/></notations>')
+        + '<note><rest/><duration>24</duration><voice>1</voice><type>quarter</type></note>'
+        + '<note><rest/><duration>24</duration><voice>1</voice><type>quarter</type></note>'
+        + '<backup><duration>72</duration></backup>'
+        + '<note><pitch><step>C</step><octave>2</octave></pitch><duration>24</duration><voice>2</voice><type>quarter</type></note>'
+        + '<note><pitch><step>C</step><octave>2</octave></pitch><duration>48</duration><voice>2</voice><type>half</type></note>'
+        + '</measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+
+  /* Page-1 title block (render/pageheader.ts, 2026-09-06): title at 600 px,
+     subtitle clear below it, first system below both; pages 2+ carry the
+     running title and page number at the footer's 320 px. */
+  engr_titleBlockSizes: {
+    setup: `
+      window.__hkl_composer.renderer.setViewMode('page');
+      const N = (o, midi) => ({ q: 0, r: 0, pname: 'a', accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.setTitle('Sonata for Viola and Piano'); m.setSubtitle('for Viola and Piano');
+      m.setCursor(0, 1);
+      for (let i = 0; i < 100; i++) m.insertChordAtCursor({ notes: [N(4, 69)], duration: '1', dots: 0 });
+      m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* Max's 2026-09-06 regression: voice 1 rests against a voice-2 chord topping
+     at the middle line (b4) and at the third space (c5) touched the top head
+     (the head's ink box is 1.1 locations tall above its centre, not 0.5).
+     Every voice-1 rest must clear the chord's top head by half a space. */
+  engr_twoVoiceRestClearsChordHead: {
+    setup: `
+      const NOTE = (s, o, dur, type, voice, extra) => '<note><pitch><step>' + s + '</step><octave>' + o + '</octave></pitch><duration>' + dur + '</duration><voice>' + voice + '</voice><type>' + type + '</type>' + (extra || '') + '</note>';
+      const REST = (dur, type) => '<note><rest/><duration>' + dur + '</duration><voice>1</voice><type>' + type + '</type></note>';
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>T</part-name></score-part></part-list><part id="P1">'
+        + '<measure number="1"><attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        + REST(12, 'eighth') + NOTE('E', 5, 12, 'eighth', 1) + REST(24, 'quarter') + REST(48, 'half')
+        + '<backup><duration>96</duration></backup>'
+        + NOTE('G', 4, 48, 'half', 2) + NOTE('B', 4, 48, 'half', 2, '').replace('<note>', '<note><chord/>')
+        + NOTE('A', 4, 48, 'half', 2) + NOTE('C', 5, 48, 'half', 2, '').replace('<note>', '<note><chord/>')
+        + '</measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1); r();
     `,
   },
 };
@@ -15277,6 +15404,128 @@ export const FIXTURE_ASSERTIONS = {
         const sMid = (s.top + s.bottom) / 2;
         if (!(sMid > headBot)) return { ok: false, detail: 'slur centre ' + sMid.toFixed(1) + ' is not below the noteheads (bottom ' + headBot.toFixed(1) + ')' };
         if (!(be.bottom < headBot)) return { ok: false, detail: 'beam not above the heads: beam ' + be.bottom.toFixed(1) };
+        return { ok: true };
+      })()` },
+  ],
+  engr_sectionBreakNoCourtesyClef: [
+    { name: 'no courtesy clef before the section break; the new section starts in bass clef, no labels; saved doc keeps the layer-initial clef',
+      expr: `(() => {
+        const systems = [...document.querySelectorAll('#score g.system')];
+        if (systems.length < 2) return { ok: false, detail: 'systems=' + systems.length };
+        const m1 = [...systems[0].querySelectorAll('g.measure')]; const last = m1[m1.length - 1];
+        if (last.querySelectorAll('g.staff[data-n="1"] g.clef').length) return { ok: false, detail: 'courtesy clef drawn before the section break' };
+        const first = systems[1].querySelector('g.measure');
+        const glyphs = [...first.querySelectorAll('g.staff[data-n="1"] g.clef use')].map(u => u.getAttribute('href') || u.getAttribute('xlink:href') || '');
+        if (glyphs.length !== 1 || !glyphs[0].includes('E062')) return { ok: false, detail: 'section-start clef glyphs: ' + glyphs.join(',') };
+        if (systems[1].querySelectorAll('g.label').length) return { ok: false, detail: 'instrument labels restated at the section start' };
+        const m = window.__hkl_composer.model;
+        const meas = [...m.getDoc().querySelectorAll('measure')][4];
+        const lead = meas.querySelector('staff[n="1"] > layer[n="1"] > clef');
+        if (!lead || lead !== lead.parentElement.firstElementChild) return { ok: false, detail: 'saved document lost its layer-initial clef' };
+        const rendered = m.serialize({ hejiEnabled: false });
+        if (!rendered.includes('clef.shape="F" clef.line="4"')) return { ok: false, detail: 'render clone carries no boundary clef scoreDef' };
+        const rdoc = new DOMParser().parseFromString(rendered, 'application/xml');
+        if ([...rdoc.querySelectorAll('measure')][4].querySelector('layer > clef')) return { ok: false, detail: 'render clone left the clef in the layer' };
+        return { ok: true };
+      })()` },
+  ],
+  engr_dirAboveClearsSlur: [
+    { name: 'the above-staff dir is lifted clear of the slur arching under it',
+      expr: `(() => {
+        const g = document.getElementById('dir-test-above-slur'); const s = document.getElementById('s-test-above-dir');
+        if (!g || !s) return { ok: false, detail: 'dir=' + !!g + ' slur=' + !!s };
+        const v = Number(g.getAttribute('data-hkl-vshift'));
+        if (!(v < 0)) return { ok: false, detail: 'dir not lifted (data-hkl-vshift=' + g.getAttribute('data-hkl-vshift') + ')' };
+        const box = g.getBoundingClientRect(); const path = s.querySelector('path');
+        const L = path.getTotalLength(); const ctm = path.getScreenCTM(); let top = Infinity;
+        for (let i = 0; i <= 48; i++) { const p = new DOMPoint(path.getPointAtLength(L * i / 48).x, path.getPointAtLength(L * i / 48).y).matrixTransform(ctm); if (p.x >= box.left && p.x <= box.right) top = Math.min(top, p.y); }
+        if (!(top > box.bottom - 1)) return { ok: false, detail: 'slur top ' + top.toFixed(1) + ' still inside the dir box (bottom ' + box.bottom.toFixed(1) + ')' };
+        return { ok: true };
+      })()` },
+  ],
+  engr_tupletRestOnStaffTwoVoice: [
+    { name: 'voice-1 rests against voice-2 low notes are pinned to loc 6 and drawn inside the staff, under the bracket',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const rdoc = new DOMParser().parseFromString(m.serialize({ hejiEnabled: false }), 'application/xml');
+        const locs = [...rdoc.querySelectorAll('staff[n="1"] layer[n="1"] rest')].map(r => r.getAttribute('loc'));
+        if (locs.length !== 3 || locs.some(l => l !== '6')) return { ok: false, detail: 'render-clone rest @loc: ' + locs.join(',') };
+        const staff = document.querySelector('#score g.measure g.staff[data-n="1"]');
+        const lines = [...staff.querySelectorAll(':scope > path')].map(p => p.getBoundingClientRect().top);
+        const topLine = Math.min(...lines), botLine = Math.max(...lines), space = (botLine - topLine) / 4;
+        const rests = [...staff.querySelectorAll('g.rest')].map(r => r.getBoundingClientRect());
+        if (rests.length !== 3) return { ok: false, detail: 'rests drawn: ' + rests.length };
+        for (const r of rests) {
+          if (r.top < topLine - 0.75 * space || r.bottom > botLine + 0.75 * space) return { ok: false, detail: 'rest ' + r.top.toFixed(1) + '..' + r.bottom.toFixed(1) + ' outside the staff ' + topLine.toFixed(1) + '..' + botLine.toFixed(1) };
+        }
+        const br = staff.querySelector('g.tupletBracket');
+        if (br && !(br.getBoundingClientRect().bottom <= rests[0].top + 1)) return { ok: false, detail: 'tuplet bracket overlaps the rest' };
+        return { ok: true };
+      })()` },
+  ],
+  engr_titleBlockSizes: [
+    { name: 'title 600px with the subtitle clear below it and the first system below both; pages 2+ header at 320px',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const head = document.querySelector('#score .score-page[data-page="1"] g.pgHead');
+        if (!head) return { ok: false, detail: 'no page-1 header' };
+        const leaves = [...head.querySelectorAll('tspan[font-size]')];
+        if (leaves.length < 2) return { ok: false, detail: 'header leaves=' + leaves.length };
+        if (leaves[0].getAttribute('font-size') !== '600px') return { ok: false, detail: 'title font-size ' + leaves[0].getAttribute('font-size') };
+        if (leaves[1].getAttribute('font-size') !== '320px') return { ok: false, detail: 'subtitle font-size ' + leaves[1].getAttribute('font-size') };
+        const t = leaves[0].getBoundingClientRect(), s = leaves[1].getBoundingClientRect();
+        /* A full subtitle line of clear space between the two text boxes. */
+        if (!(s.top - t.bottom >= 0.85 * s.height)) return { ok: false, detail: 'title-subtitle box gap ' + (s.top - t.bottom).toFixed(1) + 'px, want >= ' + (0.85 * s.height).toFixed(1) };
+        const sys = document.querySelector('#score .score-page[data-page="1"] g.system');
+        const sb = sys.getBoundingClientRect();
+        if (!(sb.top > s.bottom)) return { ok: false, detail: 'first system top ' + sb.top.toFixed(1) + ' not below the subtitle bottom ' + s.bottom.toFixed(1) };
+        H.renderer['mountPage'](2);
+        const p2 = document.querySelector('#score .score-page[data-page="2"]');
+        if (!p2) return { ok: false, detail: 'no page 2' };
+        const num = p2.querySelector('g.pgHead tspan.num [font-size]'); const title = p2.querySelector('text.hkl-running-title');
+        if (!num || num.getAttribute('font-size') !== '320px') return { ok: false, detail: 'page-number font-size ' + (num && num.getAttribute('font-size')) };
+        if (!title || title.getAttribute('font-size') !== '320px') return { ok: false, detail: 'running-title font-size ' + (title && title.getAttribute('font-size')) };
+        return { ok: true };
+      })()` },
+  ],
+  phase5_musicxml_tempi: [
+    { name: 'three <tempo> marks (words+sound, metronome shown, bare sound), deduped across parts, no <dir> from the words',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const tempi = [...doc.querySelectorAll('tempo')];
+        if (tempi.length !== 3) return { ok: false, detail: 'tempo count ' + tempi.length };
+        const meas = [...doc.querySelectorAll('measure')];
+        const at = tempi.map(t => meas.indexOf(t.closest('measure')));
+        if (at.join(',') !== '0,1,2') return { ok: false, detail: 'tempo measures ' + at.join(',') };
+        const mm = tempi.map(t => t.getAttribute('mm'));
+        if (mm.join(',') !== '132,60,90') return { ok: false, detail: 'mm ' + mm.join(',') };
+        if (!tempi[0].textContent.startsWith('Allegro')) return { ok: false, detail: 'first text ' + tempi[0].textContent };
+        if (tempi[0].getAttribute('data-hkl-mm-shown')) return { ok: false, detail: 'words-only tempo shows a metronome' };
+        if (tempi[1].getAttribute('data-hkl-mm-shown') !== 'true' || !tempi[1].textContent.includes('= 60')) return { ok: false, detail: 'metronome tempo not shown: ' + tempi[1].textContent };
+        if (tempi[2].textContent.trim() !== '') return { ok: false, detail: 'bare sound tempo has text ' + tempi[2].textContent };
+        if (doc.querySelectorAll('dir').length) return { ok: false, detail: 'tempo words leaked into <dir>' };
+        if (window.__hkl_composer.model.getTempo().bpm !== 132) return { ok: false, detail: 'getTempo bpm ' + window.__hkl_composer.model.getTempo().bpm };
+        if (document.querySelectorAll('#score g.tempo').length < 2) return { ok: false, detail: 'rendered g.tempo ' + document.querySelectorAll('#score g.tempo').length };
+        return { ok: true };
+      })()` },
+  ],
+  engr_twoVoiceRestClearsChordHead: [
+    { name: 'every voice-1 rest clears the voice-2 chord heads under it by at least half a space',
+      expr: `(() => {
+        const staff = document.querySelector('#score g.measure g.staff[data-n="1"]');
+        if (!staff) return { ok: false, detail: 'no staff' };
+        const lines = [...staff.querySelectorAll(':scope > path')].map(p => p.getBoundingClientRect().top);
+        const space = (Math.max(...lines) - Math.min(...lines)) / 4;
+        const rests = [...staff.querySelectorAll('g.layer[data-n="1"] g.rest')].map(r => r.getBoundingClientRect());
+        const heads = [...staff.querySelectorAll('g.layer[data-n="2"] g.notehead')].map(h => h.getBoundingClientRect());
+        if (rests.length !== 3 || heads.length !== 4) return { ok: false, detail: 'rests ' + rests.length + ' heads ' + heads.length };
+        for (const r of rests) {
+          const under = heads.filter(h => h.right > r.left - space && h.left < r.right + space);
+          if (!under.length) continue;
+          const headTop = Math.min(...under.map(h => h.top));
+          const gap = headTop - r.bottom;
+          if (!(gap >= 0.5 * space - 1)) return { ok: false, detail: 'rest bottom ' + r.bottom.toFixed(1) + ' vs head top ' + headTop.toFixed(1) + ': gap ' + gap.toFixed(1) + 'px < half a space (' + (0.5 * space).toFixed(1) + ')' };
+        }
         return { ok: true };
       })()` },
   ],

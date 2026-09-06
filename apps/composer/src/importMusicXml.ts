@@ -20,7 +20,7 @@ import { coordForSpelling } from '@hkl/notation/coord-spelling.js';
 import { coordToMidi } from '@hkl/shared/freq.js';
 import { keySigToTonic } from './notation/accidentals.js';
 import { findTonicCoord } from './cursor/refNote.js';
-import { setLayoutReq, setHejiEnabled, setIgnoreColor, addDynam, addHairpin, addDir } from './expressions.js';
+import { setLayoutReq, setHejiEnabled, setIgnoreColor, addDynam, addHairpin, addDir, addTempo } from './expressions.js';
 import { addSlur } from './slurs.js';
 import { realTicks } from './model/ticks.js';
 import { decomposeBeatAlignedRests } from './model/restfill.js';
@@ -752,6 +752,11 @@ function appendLayerChildren(
 
 interface DynamRec { measureIdx: number; tstamp: number; staff: number; place: 'above' | 'below'; text: string }
 interface DirRec { measureIdx: number; tstamp: number; staff: number; place: 'above' | 'below'; text: string; italic: boolean }
+/** A tempo marking: a <direction> carrying <metronome> and/or <sound tempo>
+ *  (its <words> are the verbal text), or a bare measure-level <sound tempo>
+ *  (no text — a playback-only change). `showMm` when the source drew a
+ *  metronome mark. */
+interface TempoRec { measureIdx: number; tstamp: number; text: string; bpm?: number; unit: number; dots: number; showMm: boolean; italic: boolean }
 interface HairpinRec {
   startMeasureIdx: number; startTstamp: number;
   endMeasureIdx: number; endTstamp: number;
@@ -764,10 +769,26 @@ interface HairpinRec {
 function scanPartDirections(
   part: PartInfo,
   globalStaffOf: (localStaff: number) => number,
-): { dynamics: DynamRec[]; hairpins: HairpinRec[]; dirs: DirRec[] } {
+): { dynamics: DynamRec[]; hairpins: HairpinRec[]; dirs: DirRec[]; tempi: TempoRec[] } {
   const dynamics: DynamRec[] = [];
   const hairpins: HairpinRec[] = [];
   const dirs: DirRec[] = [];
+  const tempi: TempoRec[] = [];
+  /** Metronome / sound-tempo fields of a <direction> (or a bare <sound>). */
+  const tempoFields = (node: Element): { bpm?: number; unit: number; dots: number; showMm: boolean } => {
+    const metro = node.querySelector('metronome');
+    const sound = node.localName === 'sound' ? node : node.querySelector('sound[tempo]');
+    let bpm: number | undefined; let unit = 4; let dots = 0;
+    if (metro) {
+      const bu = metro.querySelector('beat-unit')?.textContent?.trim() ?? '';
+      unit = parseInt(TYPE_TO_DUR[bu] ?? '4', 10) || 4;
+      dots = metro.querySelectorAll('beat-unit-dot').length;
+      const pm = parseInt(metro.querySelector('per-minute')?.textContent?.trim() ?? '', 10);
+      if (Number.isFinite(pm) && pm > 0) bpm = pm;
+    }
+    if (sound) { const v = parseInt(sound.getAttribute('tempo') ?? '', 10); if (Number.isFinite(v) && v > 0) bpm = v; }
+    return { bpm, unit, dots, showMm: metro !== null };
+  };
   /* open wedge per level number → its start moment + staff/place. */
   const openWedge = new Map<number, { mi: number; tstamp: number; staff: number; place: 'above' | 'below'; form: 'cres' | 'dim' }>();
 
@@ -795,12 +816,31 @@ function scanPartDirections(
         cur -= intOf(node, 'duration', 0);
       } else if (ln === 'forward') {
         cur += intOf(node, 'duration', 0);
+      } else if (ln === 'sound') {
+        /* A bare measure-level <sound tempo> (Finale's hidden tempo change):
+           a playback-only <tempo> with no text. */
+        if (node.hasAttribute('tempo')) {
+          const f = tempoFields(node);
+          if (f.bpm) tempi.push({ measureIdx: mi, tstamp: Math.max(1, tstampOf(cur)), text: '', ...f, showMm: false, italic: false });
+        }
       } else if (ln === 'direction') {
         const placement = node.getAttribute('placement');
         const place: 'above' | 'below' = placement === 'above' ? 'above' : 'below';
         const localStaff = intOf(node, 'staff', 1);
         const staff = globalStaffOf(localStaff);
         const tstamp = Math.max(1, tstampOf(cur));
+        /* A tempo direction (metronome and/or sound tempo): ONE <tempo> per
+           direction, its <words> as the verbal text — every tempo marking in
+           the piece, not only the first (backlog, Layout P1: the sonata's
+           "Poco più mosso", "Tempo I", … were dropped). */
+        const isTempoDir = node.querySelector('metronome') !== null
+          || node.querySelector('sound[tempo]') !== null;
+        if (isTempoDir) {
+          const words = children(node, 'direction-type').flatMap((dt) => children(dt, 'words'));
+          const text = words.map((w) => w.textContent?.trim() ?? '').filter(Boolean).join(' ');
+          const italic = words.length > 0 && words.every((w) => w.getAttribute('font-style') === 'italic');
+          tempi.push({ measureIdx: mi, tstamp, text, ...tempoFields(node), italic });
+        }
         for (const dt of children(node, 'direction-type')) {
           const dyn = child(dt, 'dynamics');
           if (dyn) {
@@ -825,10 +865,8 @@ function scanPartDirections(
               }
             }
           }
-          /* Free expressive text (pizz., dim., espressivo, …) → <dir>. Skip the
-             tempo direction's words, which extractTempo already bakes in. */
-          const isTempoDir = node.querySelector('metronome') !== null
-            || node.querySelector('sound[tempo]') !== null;
+          /* Free expressive text (pizz., dim., espressivo, …) → <dir>. A tempo
+             direction's words are the <tempo>'s text, not a <dir>. */
           if (!isTempoDir) {
             for (const w of children(dt, 'words')) {
               const wtext = w.textContent?.trim() ?? '';
@@ -844,28 +882,7 @@ function scanPartDirections(
       }
     }
   });
-  return { dynamics, hairpins, dirs };
-}
-
-/** Tempo from the first <direction> with a <metronome> or <sound tempo>. */
-function extractTempo(root: Element): { bpm: number; unit: Duration; dots: number; text: string } | null {
-  for (const d of Array.from(root.querySelectorAll('direction'))) {
-    const metro = d.querySelector('metronome');
-    const sound = d.querySelector('sound[tempo]');
-    if (!metro && !sound) continue;
-    let bpm = 120; let unit: Duration = '4'; let dots = 0;
-    if (metro) {
-      const bu = metro.querySelector('beat-unit')?.textContent?.trim() ?? '';
-      unit = TYPE_TO_DUR[bu] ?? '4';
-      dots = metro.querySelectorAll('beat-unit-dot').length;
-      const pm = metro.querySelector('per-minute')?.textContent?.trim();
-      if (pm) bpm = parseInt(pm, 10) || bpm;
-    }
-    if (sound) { const v = parseInt(sound.getAttribute('tempo') ?? '', 10); if (Number.isFinite(v)) bpm = v; }
-    const text = d.querySelector('direction-type > words')?.textContent?.trim() ?? '';
-    return { bpm, unit, dots, text };
-  }
-  return null;
+  return { dynamics, hairpins, dirs, tempi };
 }
 
 /* ── main ──────────────────────────────────────────────────────────────────── */
@@ -1169,21 +1186,6 @@ export function importMusicXml(xmlText: string): string {
     if (bar.rightStyle === 'end' && mi !== measureCount - 1) pendingSectionStart = true;
   }
 
-  /* Tempo: from the first <direction> carrying <metronome> or <sound tempo>.
-     Carry the words text (e.g. "Moderato con passione"). */
-  const tempo = extractTempo(root);
-  if (tempo) {
-    const firstMeasure = doc.querySelector('measure');
-    if (firstMeasure) {
-      const tEl = el(doc, 'tempo', {
-        tstamp: 1, staff: 1, mm: tempo.bpm, 'mm.unit': tempo.unit,
-        'mm.dots': tempo.dots > 0 ? tempo.dots : undefined, 'midi.bpm': tempo.bpm,
-      });
-      tEl.textContent = tempo.text ? tempo.text + ' ' : '';
-      firstMeasure.insertBefore(tEl, firstMeasure.firstChild);
-    }
-  }
-
   /* Resolve slurs (global pairing → cross-staff slurs pair correctly) now that
      all note elements are attached to the document. */
   for (const p of ctx.slurPairs) addSlur(doc, p.startId, p.endId, p.voice);
@@ -1208,10 +1210,12 @@ export function importMusicXml(xmlText: string): string {
     measure.appendChild(el(doc, 'trill', attrs));
   }
 
-  /* Dynamics + hairpins + expressive text (time-anchored), per part. */
+  /* Dynamics + hairpins + expressive text + tempo markings (time-anchored),
+     per part. */
+  const seenTempi = new Set<string>();
   for (const part of parts) {
     const globalStaffOf = (ls: number): number => part.globalStaff[Math.min(Math.max(ls, 1), part.staffCount)];
-    const { dynamics, hairpins, dirs } = scanPartDirections(part, globalStaffOf);
+    const { dynamics, hairpins, dirs, tempi } = scanPartDirections(part, globalStaffOf);
     for (const d of dynamics) {
       addDynam(doc, { measureIdx: d.measureIdx, tstamp: d.tstamp }, { text: d.text, place: d.place, staff: d.staff });
     }
@@ -1224,6 +1228,17 @@ export function importMusicXml(xmlText: string): string {
     for (const d of dirs) {
       addDir(doc, { measureIdx: d.measureIdx, tstamp: d.tstamp },
         { text: d.text, place: d.place, staff: d.staff, italic: d.italic });
+    }
+    /* Tempo markings, once per moment: Finale writes the same direction on
+       every part, so identical (moment, text, bpm) records collapse to one
+       <tempo> above the top staff. The bpm is stored either way (playback);
+       the metronome is drawn only when the source drew one. */
+    for (const t of tempi) {
+      const key = `${t.measureIdx}|${t.tstamp}|${t.text}|${t.bpm ?? ''}`;
+      if (seenTempi.has(key)) continue;
+      seenTempi.add(key);
+      addTempo(doc, { measureIdx: t.measureIdx, tstamp: t.tstamp },
+        { text: t.text, bpm: t.bpm, unit: t.unit, dots: t.dots, showMm: t.showMm, italic: t.italic, place: 'above', staff: 1 });
     }
   }
 

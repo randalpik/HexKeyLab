@@ -572,3 +572,11 @@ docs/decisions.md entries for what they established): `cb-getmei2.js`,
 castoff, 2026-08-31), `cb-zoomshot.js`, `cb-zoomunit.js` (the constant-`unit`
 zoom work — `cb-zoomunit.js` is a live regression gate: `zoom75_differs` must
 stay false).
+
+- **pageshots.mjs** (2026-09-06) — standalone (its own Chromium): imports the
+  sonata (or `--no-sonata`), optionally evals a probe file (async IIFE body,
+  `--arg` → `window.__probeArg`) and prints its JSON, then mounts each
+  requested page (`setMountWindowEnabled(false)` + `mountPage`) and saves a
+  clipped PNG per page — one full page per file, so a backlog item that names
+  a page can be looked at directly.
+  `node test/composer-inspect/phasec/pageshots.mjs <outDir> 1,16,17 [probe.js]`.

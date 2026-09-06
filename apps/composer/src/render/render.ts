@@ -17,6 +17,7 @@ import {
   scheduleIdle, MIN_FILL, viewKeyOf } from './linebreaks.js';
 import { PageSystemSplicer, type PageSpliceCtx, type SpliceRequest } from './pagesplice.js';
 import { layoutBelowStaffText } from './textlayout.js';
+import { styleTitleBlock } from './pageheader.js';
 import { layoutFlippedSlurs } from './slurlayout.js';
 import { layoutTupletNums } from './tupletnums.js';
 import { repairBarLines } from './barlines.js';
@@ -162,6 +163,8 @@ const BASE_OPTIONS = {
      each with `data-` in the SVG (`data-n`, `data-staff`, `data-place`). */
   svgAdditionalAttribute: ['note@data-q', 'note@data-r', 'note@color', 'note@data-light-color', 'note@hkl-paren-caut', 'rest@data-tuplet-placeholder', 'rest@visible', 'accid@type',
     'staff@n', 'dynam@staff', 'dynam@place', 'dir@staff', 'dir@place', 'hairpin@staff', 'hairpin@place',
+    /* Tempo marks join the above-staff slur-clearance rule (render/textlayout.ts). */
+    'tempo@staff', 'tempo@place',
     /* The flipped-slur re-draw (render/slurlayout.ts) needs each slur's side
        and endpoints: `data-curvedir`, `data-startid`, `data-endid`. */
     'slur@curvedir', 'slur@startid', 'slur@endid',
@@ -2814,6 +2817,10 @@ class Renderer {
     let t = performance.now();
     pinExactScale(container, this.currentScale());
     st.pin = performance.now() - t;
+    /* Page-1 title block: larger title, subtitle clear of it (render/pageheader.ts).
+       Host-wide and BEFORE placement — the header's bbox is what
+       `firstContentTop` anchors the first system under. */
+    styleTitleBlock(container);
     /* Crisp the verticals: snap intermediate barlines onto their pixel phase,
        then land each system's right edge (final barline + staff-line ends) on
        the grid (no sliver past the final bar). */

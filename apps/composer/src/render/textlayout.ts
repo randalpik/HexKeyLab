@@ -16,7 +16,10 @@
 //     bottom line at any dynamDist — and aligns it to a neighbouring dynamic
 //     only sometimes). A cluster that holds a DYNAMIC is left where Verovio put
 //     it: dynamDist is the dynamic's baseline, and Verovio already aligned any
-//     hairpin or text touching it to that dynamic.
+//     hairpin or text touching it to that dynamic. A push DOWN stops
+//     INSTR_CLEAR (one staff space) short of the next instrument's line and
+//     ink — half a unit, the grand-staff pad, put p. 21's "dim." 0.45 space
+//     above the piano (2026-09-06).
 // Marks whose horizontal ranges overlap (a dynamic with its hairpin, a stacked
 // dynamic + text) move as ONE block so Verovio's own stacking survives.
 //   • A TEXT mark (dynamic, expressive text — not a hairpin) is also kept
@@ -29,6 +32,17 @@
 //     them (Verovio erases the barline there — render/barlines.ts refills it).
 //     The horizontal move comes first, so the vertical rules below cluster and
 //     measure the marks where they will actually be drawn.
+//   • ABOVE a staff, text (expressive text, a dynamic, a tempo) clears the
+//     slurs and ties of its own staff (2026-09-06, backlog Layout: sonata
+//     p. 21 m. 94, the piano's "rit." sat on the right hand's slur). Verovio's
+//     floating positioners avoid the staff's notes but not its curves — a slur
+//     arching over a high run passes through the text. Every curve whose
+//     sampled outline dips below the mark's top (so it is anchored at the
+//     mark's staff or lower — a curve wholly above the mark belongs to the
+//     staff above) and whose top, within the mark's horizontal range, reaches
+//     the mark's box moves the mark up until the box clears it by half a
+//     unit; marks stacked above it move with it. The move stops a pad short of
+//     the staff above and its content (INSTR_CLEAR across instruments).
 //
 // EVERY measurement is taken in the SVG's own user space — `getBBox()` mapped
 // through `getCTM()` into the page-margin group's frame (see `svgBox`) —
@@ -43,9 +57,10 @@
 // flush. Idempotent: a mark's previous shift is undone before it is
 // re-measured (the post-process is re-run on re-mounts).
 //
-// It never changes a system's EXTENTS except in one case: a centred mark stays
-// inside the gap between its two staves, but a nudged <dir> under the last
-// staff grows the system — which is why this runs before placement measures
+// It never changes a system's EXTENTS except in two cases: a centred mark
+// stays inside the gap between its two staves, but a nudged <dir> under the
+// last staff grows the system, and a mark lifted over a slur above the FIRST
+// staff grows it upward — which is why this runs before placement measures
 // the system (postProcessRendered precedes placePage).
 
 /** The staff-relationships the pass needs from the document. */
@@ -63,10 +78,17 @@ interface Row extends Box { n: number; el: Element }
 interface Mark { el: SVGGraphicsElement; box: Box; upper: Row; lower: Row | null; mode: 'center' | 'mingap' }
 
 const MARK_SEL = 'g.dynam, g.dir, g.hairpin';
+/* Text marks placed above a staff: the slur-clearance rule's subjects. A
+   <tempo> without @place is above (MEI's default; model.setTempo writes none). */
+const ABOVE_SEL = 'g.dir[data-place="above"], g.dynam[data-place="above"], g.tempo:not([data-place="below"])';
+const CURVE_SEL = 'g.slur > path, g.tie > path';
 /* Glyph-bearing groups of a staff that a moving mark must not run into. */
 const OBSTACLE_SEL = 'g.note, g.rest, g.mRest, g.accid, g.beam, g.stem, g.clef, g.keySig, g.meterSig, g.tupletBracket, g.tupletNum, g.artic, g.dots, g.ledgerLines, g.flag';
 /* Half a Verovio unit at the crisp presets (unit 8 → 80 user units per unit). */
 const PAD = 40;
+/* One staff space: the clearance kept from ANOTHER instrument's line and ink
+   when a mark is pushed toward it. */
+const INSTR_CLEAR = 160;
 /* A device pixel: a mark this close to a barline counts as touching it. */
 const TOUCH = 10;
 /* How far a hairpin's top sits ABOVE the dynamics' clearance line when it is
@@ -74,6 +96,8 @@ const TOUCH = 10;
    at unit 8 with a dynamic and a hairpin at one moment: hairpin top 2 px above
    the dynamic's top) — a quarter unit. */
 const HAIRPIN_LIFT = 20;
+/* Samples along a slur's outline (both edges — the path is closed). */
+const CURVE_SAMPLES = 48;
 const isText = (el: Element): boolean => el.classList.contains('dynam') || el.classList.contains('dir');
 
 const attrNum = (el: Element, name: string): number | null => {
@@ -105,6 +129,25 @@ export function svgBox(el: Element, frameInv: DOMMatrix): Box | null {
   return { left: Math.min(x1, x2), right: Math.max(x1, x2), top: Math.min(y1, y2), bottom: Math.max(y1, y2) };
 }
 
+/** A curve's outline sampled into the reference frame, or null when the path
+ *  cannot be measured. */
+function curvePoints(path: Element, frameInv: DOMMatrix): Array<{ x: number; y: number }> | null {
+  const p = path as SVGGeometryElement;
+  if (typeof p.getTotalLength !== 'function' || typeof p.getPointAtLength !== 'function' || typeof p.getCTM !== 'function') return null;
+  const own = p.getCTM();
+  if (!own) return null;
+  let L: number;
+  try { L = p.getTotalLength(); } catch { return null; }
+  if (!(L > 0)) return null;
+  const m = frameInv.multiply(own);
+  const out: Array<{ x: number; y: number }> = [];
+  for (let i = 0; i <= CURVE_SAMPLES; i++) {
+    const q = p.getPointAtLength(L * i / CURVE_SAMPLES);
+    out.push({ x: m.a * q.x + m.c * q.y + m.e, y: m.b * q.x + m.d * q.y + m.f });
+  }
+  return out;
+}
+
 /** Staff rows of a measure, from its `g.staff` children's line paths. */
 function rowsOf(measure: Element, frameInv: DOMMatrix): Row[] {
   const rows: Row[] = [];
@@ -127,6 +170,8 @@ function rowsOf(measure: Element, frameInv: DOMMatrix): Row[] {
   return rows;
 }
 
+const shiftBox = (b: Box, dx: number, dy: number): Box => ({ left: b.left + dx, right: b.right + dx, top: b.top + dy, bottom: b.bottom + dy });
+
 /** Lay out the below-staff marks of every system under `root` (or of `root`
  *  itself when it is a system). */
 export function layoutBelowStaffText(root: Element, opts: TextLayoutOpts): void {
@@ -135,7 +180,7 @@ export function layoutBelowStaffText(root: Element, opts: TextLayoutOpts): void 
 }
 
 function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
-  const marks = Array.from(sys.querySelectorAll(MARK_SEL)) as SVGGraphicsElement[];
+  const marks = Array.from(sys.querySelectorAll(MARK_SEL + ', ' + ABOVE_SEL)) as SVGGraphicsElement[];
   if (!marks.length) return;
   /* Undo a previous run's shifts before measuring (idempotency). */
   for (const m of marks) {
@@ -209,6 +254,7 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
 
   const items: Mark[] = [];
   for (const el of marks) {
+    if (!el.matches(MARK_SEL)) continue;
     const measure = el.closest('g.measure');
     if (!measure) continue;
     const staffN = attrNum(el, 'data-staff');
@@ -262,9 +308,9 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
         out.push(b);
       }
     }
-    for (const g of Array.from(sys.querySelectorAll(MARK_SEL))) {
+    for (const g of Array.from(sys.querySelectorAll(MARK_SEL + ', ' + ABOVE_SEL))) {
       if (moving.has(g)) continue;
-      if (attrNum(g, 'data-staff') !== row.n || (g.getAttribute('data-place') ?? '') !== side) continue;
+      if (attrNum(g, 'data-staff') !== row.n || (g.getAttribute('data-place') ?? (g.classList.contains('tempo') ? 'above' : '')) !== side) continue;
       const b = svgBox(g, frameInv);
       if (!b || b.right < left - PAD || b.left > right + PAD || !(b.right > b.left)) continue;
       out.push(b);
@@ -290,9 +336,13 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
       dy = cl.some((m) => m.el.classList.contains('dir')) ? Math.max(0, line - top) : (line - HAIRPIN_LIFT) - top;
     }
     if (dy > 0) {
-      /* Moving down: stay above the lower staff's line and its content. */
-      let limit = lower ? lower.top - PAD : Infinity;
-      if (lower) for (const b of obstacleBoxes(lower, left, right, 'above', moving)) limit = Math.min(limit, b.top - PAD);
+      /* Moving down: stay above the lower staff's line and its content — by
+         the grand-staff pad inside an instrument, by a full space toward
+         another instrument (in 'mingap' the lower row is always another
+         instrument's; grand pairs centre). */
+      const clear = mode === 'mingap' ? INSTR_CLEAR : PAD;
+      let limit = lower ? lower.top - clear : Infinity;
+      if (lower) for (const b of obstacleBoxes(lower, left, right, 'above', moving)) limit = Math.min(limit, b.top - clear);
       dy = Math.min(dy, limit - bottom);
       if (dy < 0) dy = 0;
     } else if (dy < 0) {
@@ -312,8 +362,84 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
     }
   }
 
+  /* ── above-staff text vs the staff's slurs and ties ── */
+  interface Above { el: SVGGraphicsElement; box: Box; staffN: number; rows: Row[]; own: Row }
+  const aboves: Above[] = [];
+  for (const el of marks) {
+    if (!el.matches(ABOVE_SEL)) continue;
+    const measure = el.closest('g.measure');
+    if (!measure) continue;
+    const staffN = attrNum(el, 'data-staff');
+    if (staffN === null) continue;
+    const rows = rowsFor(measure);
+    const own = rows.find((r) => r.n === staffN);
+    if (!own) continue;
+    const raw = shifted.get(el) ?? svgBox(el, frameInv);
+    if (!raw || !(raw.right > raw.left) || !(raw.bottom > raw.top)) continue;
+    const s = shifts.get(el);
+    const box = s ? shiftBox(raw, 0, s.dy) : raw;          // `shifted` already carries dx
+    aboves.push({ el, box, staffN, rows, own });
+  }
+  if (aboves.length) {
+    const curves: Array<Array<{ x: number; y: number }>> = [];
+    for (const p of Array.from(sys.querySelectorAll(CURVE_SEL))) {
+      const pts = curvePoints(p, frameInv);
+      if (pts) curves.push(pts);
+    }
+    const need = new Map<Above, number>();
+    if (curves.length) {
+      for (const a of aboves) {
+        let dy = 0;
+        for (const pts of curves) {
+          let maxY = -Infinity, topInRange = Infinity;
+          for (const q of pts) {
+            maxY = Math.max(maxY, q.y);
+            if (q.x >= a.box.left - PAD && q.x <= a.box.right + PAD) topInRange = Math.min(topInRange, q.y);
+          }
+          if (!(maxY > a.box.top) || topInRange === Infinity) continue;      // wholly above the mark, or out of its range
+          if (topInRange >= a.box.bottom + PAD) continue;                     // clear below it already
+          dy = Math.min(dy, (topInRange - PAD) - a.box.bottom);
+        }
+        if (dy < 0) need.set(a, dy);
+      }
+    }
+    /* Marks stacked above a lifted mark (same staff, x-overlap, box above it)
+       rise with it. Chains settle in a few passes. */
+    for (let pass = 0; pass < 4 && need.size; pass++) {
+      let changed = false;
+      for (const [a, dy] of Array.from(need)) {
+        for (const b of aboves) {
+          if (b === a || b.staffN !== a.staffN) continue;
+          if (b.box.right < a.box.left - PAD || b.box.left > a.box.right + PAD) continue;
+          if (!(b.box.bottom <= a.box.top + PAD && b.box.top < a.box.top)) continue;
+          const cur = need.get(b) ?? 0;
+          if (dy < cur) { need.set(b, dy); changed = true; }
+        }
+      }
+      if (!changed) break;
+    }
+    const moving = new Set<Element>(Array.from(need.keys()).map((a) => a.el));
+    for (const [a, want] of need) {
+      let dy = want;
+      const idx = a.rows.indexOf(a.own);
+      const upper = idx > 0 ? a.rows[idx - 1] : null;
+      if (upper) {
+        const clear = grandUpperOf.get(a.staffN) === upper.n ? PAD : INSTR_CLEAR;
+        let limit = upper.bottom + clear;
+        for (const b of obstacleBoxes(upper, a.box.left, a.box.right, 'below', moving)) limit = Math.max(limit, b.bottom + clear);
+        dy = Math.max(dy, limit - a.box.top);
+        if (dy > 0) dy = 0;
+      }
+      dy = Math.round(dy);
+      if (Math.abs(dy) < 3) continue;
+      const s = shifts.get(a.el);
+      if (s) s.dy += dy; else shifts.set(a.el, { dx: 0, dy });
+    }
+  }
+
   /* ── writes ── */
   for (const [el, { dx, dy }] of shifts) {
+    if (!dx && !dy) continue;
     el.setAttribute('transform', `translate(${dx}, ${dy})`);
     if (dy) el.setAttribute('data-hkl-vshift', String(dy));
     if (dx) el.setAttribute('data-hkl-hshift', String(dx));

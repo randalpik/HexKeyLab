@@ -42,6 +42,22 @@
 //     the first scoreDef and cleared only at the next measure — is still on
 //     when its staffGrps are visited, so the labels are replaced. All probed
 //     against the live 6.3.0 toolkit with console capture.
+//   • CLEF (2026-09-06): a clef change at a section start is encoded as a
+//     layer-initial <clef> in the section's first measure (importer and
+//     native edits alike); `relocateInitialClefs` leaves it there for these
+//     measures, and this pass folds it into a THIRD nested plain section's
+//     scoreDef (`<staffGrp><staffDef n clef.shape clef.line/></staffGrp>`)
+//     after the labels. Why a scoreDef of its own, after the restart: in
+//     `ScoreDefSetCurrentFunctor::VisitScoreDef` the restart scoreDef runs the
+//     cautionary functor on the previous measure at once (key suppressed,
+//     meter blanked by `meter.form`), and the system-break cautionary in
+//     `VisitMeasure` is gated on `!m_restart` — still set until that measure
+//     — so a clef arriving in a LATER scoreDef of the same run sets
+//     `DrawClef` on the upcoming staffDef and is never drawn as a courtesy;
+//     the restart's `REDRAW_ALL` then draws it as the new system's clef. A
+//     clef in the restart scoreDef itself would be caught by the restart's
+//     own cautionary pass (it only clears the key), and a clef left in the
+//     layer draws after the barline behind the old system clef.
 // Runs on the render clone only; the saved document keeps its flat
 // `scoreDef > sb > measure` shape.
 
@@ -82,7 +98,33 @@ function labelledGroups(doc: Document): LabelledGroup[] {
   return out;
 }
 
-/** Wrap every section-boundary scoreDef that changes key or meter in a restart
+interface LeadingClef { staffN: string; shape: string; line: string; dis: string | null; disPlace: string | null }
+
+/** The layer-initial clefs of a section-start measure, one per staff (the
+ *  first layer's wins), REMOVED from their layers — the caller writes them
+ *  into the boundary scoreDef. */
+function leadingClefs(meas: Element): LeadingClef[] {
+  const out: LeadingClef[] = [];
+  const seen = new Set<string>();
+  for (const staff of Array.from(meas.children)) {
+    if (staff.localName !== 'staff') continue;
+    const staffN = staff.getAttribute('n') ?? '1';
+    for (const layer of Array.from(staff.children)) {
+      if (layer.localName !== 'layer') continue;
+      const first = layer.firstElementChild;
+      if (!first || first.localName !== 'clef') continue;
+      const shape = first.getAttribute('shape'), line = first.getAttribute('line');
+      if (shape && line && !seen.has(staffN)) {
+        seen.add(staffN);
+        out.push({ staffN, shape, line, dis: first.getAttribute('dis'), disPlace: first.getAttribute('dis.place') });
+      }
+      layer.removeChild(first);
+    }
+  }
+  return out;
+}
+
+/** Wrap every section-boundary scoreDef that changes key, meter or clef in a restart
  *  section carrying continuation labels, and blank + re-draw its meter (see
  *  module comment). Idempotent. */
 export function applySectionRestarts(doc: Document): void {
@@ -103,14 +145,22 @@ export function applySectionRestarts(doc: Document): void {
       runStart = n;
       n = n.previousElementSibling;
     }
-    if (!sd) continue;
-    const hasKey = sd.hasAttribute('key.sig');
-    const hasMeter = sd.hasAttribute('meter.count') || sd.hasAttribute('meter.unit') || sd.hasAttribute('meter.sym');
-    if (!hasKey && !hasMeter) continue;
+    const clefs = leadingClefs(meas);
+    const hasKey = !!sd && sd.hasAttribute('key.sig');
+    const hasMeter = !!sd && (sd.hasAttribute('meter.count') || sd.hasAttribute('meter.unit') || sd.hasAttribute('meter.sym'));
+    if (!hasKey && !hasMeter && !clefs.length) continue;
+    if (!sd) {
+      /* A clef-only boundary: an attribute-less scoreDef is still a restart
+         (`IsSectionRestart` looks at the section milestone, not its content). */
+      sd = doc.createElementNS(MEI_NS, 'scoreDef');
+      parent.insertBefore(sd, runStart);
+      runStart = sd;
+    }
     const wrapper = doc.createElementNS(MEI_NS, 'section');
     wrapper.setAttribute('restart', 'true');
     parent.insertBefore(wrapper, runStart);
     wrapper.appendChild(sd);
+    let tail: Element = wrapper;
     if (!groups) groups = labelledGroups(doc);
     if (groups.length) {
       const labelSection = doc.createElementNS(MEI_NS, 'section');
@@ -128,6 +178,23 @@ export function applySectionRestarts(doc: Document): void {
       }
       labelSection.appendChild(labelDef);
       wrapper.after(labelSection);
+      tail = labelSection;
+    }
+    if (clefs.length) {
+      const clefSection = doc.createElementNS(MEI_NS, 'section');
+      const clefDef = doc.createElementNS(MEI_NS, 'scoreDef');
+      const grp = doc.createElementNS(MEI_NS, 'staffGrp');
+      for (const c of clefs) {
+        const def = doc.createElementNS(MEI_NS, 'staffDef');
+        def.setAttribute('n', c.staffN);
+        def.setAttribute('clef.shape', c.shape);
+        def.setAttribute('clef.line', c.line);
+        if (c.dis) { def.setAttribute('clef.dis', c.dis); def.setAttribute('clef.dis.place', c.disPlace ?? 'above'); }
+        grp.appendChild(def);
+      }
+      clefDef.appendChild(grp);
+      clefSection.appendChild(clefDef);
+      tail.after(clefSection);
     }
     if (!hasMeter || sd.getAttribute('meter.form') === 'invis') continue;
     sd.setAttribute('meter.form', 'invis');

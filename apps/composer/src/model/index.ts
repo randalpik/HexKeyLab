@@ -416,6 +416,12 @@ function scheduleIdleSnapshot(fn: () => void): void {
 function relocateInitialClefs(doc: Document, dropFirstMeasure = false): void {
   const measures = Array.from(doc.querySelectorAll('measure'));
   for (let i = 0; i < measures.length; i++) {
+    /* A section (movement) start keeps its leading clef: `applySectionRestarts`
+       folds it into the boundary scoreDef, so the new movement simply begins
+       in its clef and no courtesy clef precedes the final barline (2026-09-06,
+       backlog Layout). The range render's first measure still drops it — the
+       head scoreDef carries it there (runningScoreDefContext). */
+    if (i > 0 && measures[i].hasAttribute('data-hkl-section-title')) continue;
     for (const staff of Array.from(measures[i].children)) {
       if (staff.localName !== 'staff') continue;
       const g = staff.getAttribute('n');
@@ -562,9 +568,9 @@ export function normalizeStaffGroupConventions(doc: Document): void {
  *  passages. Each is documented in its
  *  module; none touches the saved document. */
 function applyRenderConventions(clone: Document): void {
+  unifySlurStems(clone);   // first: the rest pass reads the explicit @stem.dir it writes; unified stems put a single-voice slur on the notehead side by themselves
   settleRestLocations(clone);
   applySectionRestarts(clone);
-  unifySlurStems(clone);   // before the side pass: unified stems put a single-voice slur on the notehead side by themselves
   settleSlurSides(clone);
 }
 

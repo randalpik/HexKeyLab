@@ -7065,3 +7065,148 @@ caught it) and a `throughStem` column: slur-path samples inside a stem or
 beam box of the slur's own notes.
 
 **Open**: nothing on this feature.
+
+## 2026-09-06 — Composer layout backlog pass, second batch (the eight "Layout:" items)
+
+Max asked for a solution and/or report on each. Seven built (each with a
+fixture), one — the inter-instrument spacing — measured and designed, not
+built. Gates: typecheck, boundaries, composer build, `pnpm test:composer`
+415/415 (36 page-view baselines re-seeded: every page-mode doc carries the
+default title, whose block grew — heatmaps show a uniform shift plus the
+larger "Untitled", footer unchanged), sonata probes before/after via the new
+`test/composer-inspect/phasec/pageshots.mjs` (import + optional probe +
+clipped PNG per requested page).
+
+### Every tempo marking imports (P1, built)
+`importMusicXml.ts` took only the FIRST `<direction>` with `<metronome>` /
+`<sound tempo>` and then skipped every later tempo direction's words — the
+sonata's 17 other markings ("Poco più mosso", "Tempo I", "Allegro
+scherzando", "Grave", …) were silently dropped. Now `scanPartDirections`
+collects a `TempoRec` per tempo direction (words = verbal text, bpm from
+`<sound tempo>` or `<per-minute>`, metronome SHOWN only when the source drew
+`<metronome>`, italic when every word is), plus a bare measure-level
+`<sound tempo>` (Finale's hidden tempo change) as a text-less playback-only
+`<tempo>`; records identical in (moment, text, bpm) across parts collapse to
+one, emitted through `addTempo` above staff 1. Sonata: 1 → 18 `<tempo>`
+(one text-less at II m. 57, bpm 115). Playback already read `collectTempi`.
+**For Max**: the hidden tempo is a real, invisible element in the tempo
+layer; say if it should be dropped instead. Fixture `phase5_musicxml_tempi`.
+
+### Rests inside tuplet brackets: the two-voice rule (built)
+Sonata III, piano bass: m. 30's voice-1 eighth rest against a low half note
+sat in the staff's upper half; m. 35's against a low quarter was lifted clear
+of the staff into its tuplet bracket — Verovio's two-voice offset is keyed to
+the other note's DURATION (lessons.md). `notation/restlayout.ts` now pins
+`@loc` for a rest whose span meets only notes/chords in the other layer: voice
+1 at the raised spot (6; whole rests 8) or higher until its glyph clears the
+predicted ink top by half a location, voice 2 at 2 (whole 4) or lower against
+the ink bottom; the prediction is heads from pitch + clef (`staffpos.ts`,
+extracted from `slurStems.ts`), stems on the layer's side (explicit
+`@stem.dir` wins; `unifySlurStems` moved ahead of it) 3.5 spaces and at least
+to the middle line, beams at the group's farthest stem, +2 locations for an
+accidental or articulation. A rest that would leave the staff by more than
+one location (`STAFF_SLACK`), a tremolo, an unpitched note or a rest in the
+other layer stays Verovio's. Glyph extents table `REST_EXTENT` from the probed
+eighth (2.0 … 1.46 locations about its loc) and Bravura metrics. Sonata: mm.
+35/37/38 rests at loc 6 inside the staff, brackets clear; m. 30 unchanged
+(loc 6 was Verovio's too); III m. 10's quarter rests 6 (one location above
+the top line, allowed). Fixture `engr_tupletRestOnStaffTwoVoice`.
+
+### Text colliding with slurs (built; one residual is item 4)
+p. 21 m. 94: the piano's "rit." (above staff 2) sat on the right hand's slur —
+Verovio's positioners avoid notes, not curves. `render/textlayout.ts` gains an
+above-staff rule for `<dir>`/`<dynam>`/`<tempo>` (hence `tempo@staff/@place`
+in `svgAdditionalAttribute`): sample every slur/tie outline (48 points via
+`getPointAtLength`, mapped to the frame); a curve whose outline dips below the
+mark's top (anchored at the mark's staff or lower) and whose top within the
+mark's x-range reaches the box lifts the mark, stacked marks with it, to
+half a unit clear — limited by the staff above and its content. Sonata: 95
+above-marks, 14 lifted, 1 still on a curve: m. 94 itself, which rose 273 and
+stopped one space under the viola (rule below) with the slur's top still 189
+inside its box — only more room between the instruments fixes it. Fixture
+`engr_dirAboveClearsSlur`.
+
+### Elements too close to the next instrument (reported, not built)
+Max: "the mf on the viola part [p. 16, top system] reads as part of the piano
+part. Can we devise some metric to detect cases of elements in close
+proximity and increase the spacing?" Diagnosis: III m. 10's viola triplets
+have their numerals BELOW the staff, Verovio stacks the mf under the numeral
+(573 user units = 3.6 spaces below the viola), and its collision margin
+(`defaultBottomMargin` 2.0 = one space) then packs the piano to 161 above the
+mf's box: right relative to the viola, wrong relative to the piano.
+**Metric** (probe over all 115 sonata systems with viola + piano): for each
+viola below-mark, `dOwn` = mark top − viola bottom line, `dOther` = nearest
+piano ink or line below within its x-range − mark bottom. 123 marks: 46 sit
+nearer the piano than their own staff (`dOther < dOwn`), 21 within one space
+of piano ink; worst p. 21 m. 99 "dim." (785 vs 72), p. 13 m. 58 dynamic (757
+vs 163), p. 16 m. 22 "cresc." (669 vs 151). The viola→piano line gap is 960
+(Verovio's `spacingStaff` floor) on the median system, so almost every case is
+Verovio packing to its margin. **Proposed rule**: shift the lower instrument
+down by `max(0, min(dOwn, CAP) − dOther)` over its neighbour's marks (CAP 6
+units so a mark under a very low ledger note does not demand its whole
+distance), plus a general ink floor of one space; on the sonata that moves 39
+systems, p90 shift 319 user units (2 spaces), max 408. **Mechanism**: a DOM
+pass in `postProcessRendered` before placement (like `textlayout.ts`), per
+system per adjacent instrument pair: translate the lower instrument's
+`g.staff` groups and every control event attributed to them (`data-staff` for
+dynam/dir/hairpin/tempo; slurs/ties/fermatas/trills/pedals by their start
+note's staff — `startid` exposed via `svgAdditionalAttribute`; system-level
+continuation slurs by endpoint row), translate barLine paths inside the moved
+rows and LENGTHEN the ones that span the boundary (the system's left line;
+`barlines.ts` already parses `M x y L x y`), move the brace/labels, round the
+shift to whole device pixels, compose with `textlayout`'s transforms (it
+resets and rewrites marks first, so this pass must run after it and undo only
+its own tags), and record `data-hkl-ishift` for idempotency. Interactions to
+gate: `alignStavesIn` (staff phase), rule v2 extents (the pass grows the
+system, which placement then consumes — the same contract as the dir nudge),
+the reference gate (both hosts run the pass), PDF (page DOM), the splice
+window (scoped runs). About a day with the gated sweep as the correctness
+bar. Not built: it touches system geometry and the splice contract — Max's
+call. Built now as a partial: `textlayout.ts` pushes text DOWN toward another
+instrument to `INSTR_CLEAR` (one space) instead of the grand-staff half unit;
+Verovio-placed marks are untouched, so the 46 cases stand.
+
+### Courtesy clef at section breaks (built)
+The importer encodes a movement-start clef change as a layer-initial `<clef>`
+and `relocateInitialClefs` moved it into the previous measure — Composer's
+own courtesy clef before II's double bar (piano right hand to bass clef).
+`relocateInitialClefs` now leaves a section-start measure's leading clef in
+place and `applySectionRestarts` removes it from the layers and writes it as
+a staffDef into a THIRD scoreDef in a third plain nested section after the
+labels — the Verovio loophole in lessons.md ("a later scoreDef in the same run
+escapes the restart cautionary"); a clef-only boundary gets an attribute-less
+restart scoreDef. Sonata: II's last measure has no clef glyph, III starts in
+bass clef, no labels, zero console output. A clef set at the END of the
+previous measure's layer (an unusual native edit) is not folded — noted, not
+handled. Fixture `engr_sectionBreakNoCourtesyClef`.
+
+### Header sizes and the subtitle (built)
+`render/pageheader.ts` `styleTitleBlock`, run from `postProcessRendered`
+(before placement, so the header's bbox — `firstContentTop`'s anchor — grows
+with it): title leaf 540 → `TITLE_FONT_PX` 600 with its ink top kept (baseline
++53), and the subtitle's positioned tspan moved so its box sits
+`SUBTITLE_GAP` 100 below the title's box (Verovio's `<lb/>` stepped it by the
+outer rend's 347-unit line height: boxes overlapping by 33 on the sonata).
+Sonata page 1: header bottom 778 → 971, first system 936 → 1136, still 31
+pages. Pages 2+: running title and page number 288 → `RUNNING_HEADER_FONT_PX`
+320 (the footer's size; main.ts `styleRunningHeader`, band recorded first).
+The composer credit's anchor read the first system's `getBBox().y` without
+its placement translate — invisible until the header moved the system — and
+now adds `translateOf(system).ty`. Fixture `engr_titleBlockSizes`.
+
+### Max's review, same day: rests touched chord heads; header gap
+Voice-1 rest against a voice-2 chord topping at the middle line or third
+space: the rest pinned by the new two-voice rule sat on the top head. Cause: a
+head's ink box reaches 1.1 locations above its centre (measured), the rule
+assumed 0.5, and its margin was another 0.5 — a quarter space of "clearance"
+became contact. Now `HEAD_HALF` 1.1, `MARGIN` one location (half a space),
+accidentals/articulations 2.5 from the centre, half and whole rests snapped to
+a line. Consequence: a rest against a chord at the middle line or higher
+computes a location above the staff's slack and defers to Verovio (whose own
+anchor for that case is location 8); the rule now only ever moves a rest DOWN
+from Verovio's default into the staff when the other voice sits low (sonata
+mm. 30/35/10 unchanged at location 6). Fixture
+`engr_twoVoiceRestClearsChordHead`. Header: subtitle 288 → `SUBTITLE_FONT_PX`
+320 (the title's 600/540 ratio), and `SUBTITLE_GAP` = one subtitle line
+between the two text boxes (100 units "barely moved" — Max wants a full gap
+between the blocks).

@@ -15,6 +15,7 @@ import type { HklEvent, ResolvedNote, FootprintCell } from '@hkl/bridge/protocol
 import { ComposerModel, type Voice } from './model/index.js';
 import { renderer, styleVoltaNumbers, ZOOM_PRESETS, type ZoomLevel, type ViewMode, type ScoreTheme } from './render/render.js';
 import { SECTION_HEADER_RESERVE, SECTION_HEADER_BASELINE, translateOf } from './render/pagefit.js';
+import { RUNNING_HEADER_FONT_PX } from './render/pageheader.js';
 import { cursor, resolveVoiceCursorAnchor } from './cursor/cursor.js';
 import { initInput, getInputState, setViewInstr, installSCTransposeImpl, clearChordInternalSel, resetToVoiceMode, selectLayerElementById, momentAtCurrentCursor } from './input.js';
 import { scTransposeChordNote, type FootprintColorMap } from './notation/scTranspose.js';
@@ -765,6 +766,9 @@ function styleRunningHeader(pageMargin: Element, pageNo: number, title: string, 
   }
   /* Drop the dashes (the rend's children that are not the number). */
   for (const c of Array.from(rend.children)) if (c !== num && !c.contains(num)) c.remove();
+  /* The number at the footer's size (Max, 2026-09-06): Verovio's 288 px reads
+     small next to the 320 px footer. Post-placement, band already recorded. */
+  rend.querySelector('[font-size]')?.setAttribute('font-size', RUNNING_HEADER_FONT_PX + 'px');
   const even = pageNo % 2 === 0;
   rend.setAttribute('x', String(even ? 0 : frame.innerW));
   rend.setAttribute('text-anchor', even ? 'start' : 'end');
@@ -775,7 +779,7 @@ function styleRunningHeader(pageMargin: Element, pageNo: number, title: string, 
   t.setAttribute('x', String(frame.innerW / 2));
   t.setAttribute('y', rend.getAttribute('y') ?? '195');
   t.setAttribute('text-anchor', 'middle');
-  t.setAttribute('font-size', rend.querySelector('[font-size]')?.getAttribute('font-size') ?? '288px');
+  t.setAttribute('font-size', RUNNING_HEADER_FONT_PX + 'px');
   t.setAttribute('font-family', 'Times, serif');
   t.textContent = title;
   pageMargin.appendChild(t);
@@ -809,8 +813,11 @@ function injectHeaderFooter(scoreEl: HTMLElement, composer: string, footer: stri
         ?? scoreEl.querySelector('g.system');
       if (system) {
         try {
+          /* getBBox is in the system's OWN frame; placement moves the system
+             with a translate (page 1's first system now sits below the
+             restyled title block — render/pageheader.ts), so add it. */
           const bb = (system as SVGGraphicsElement).getBBox();
-          if (bb.height > 0) y = bb.y - COMPOSER_SYSTEM_GAP;
+          if (bb.height > 0) y = bb.y + translateOf(system).ty - COMPOSER_SYSTEM_GAP;
         } catch { /* getBBox may throw if element isn't fully laid out yet */ }
       }
       const t = pageMargin.ownerDocument!.createElementNS(HKL_SVG_NS, 'text');
