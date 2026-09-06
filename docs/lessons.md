@@ -3673,11 +3673,45 @@ parked voice cursor — "the scroll jumps to the first page". A virtual layer
 with its own cursor needs every cursor-derived anchor (scroll-into-view, page
 mounting, the mount window) to ask the layer, not the voice.
 
-## A slur flipped to the notehead side needs room there (2026-09-05)
+## Verovio starts a slur below the OTHER layer's noteheads in its start column (2026-09-05)
 
-Verovio does not decline a `@curvedir`; it routes the slur around whatever is
-on that side. In sonata m. 83 the lower voice's chord topped at the upper
-voice's lowest slurred note, and the flipped slur was drawn from the chord's
-lower notehead scooping 75 px under the staff. Counterfactual rendering (same
-pinned MEI and options in a bare toolkit, one attribute removed) is the cheap
-way to attribute such a defect to a pass of ours rather than to Verovio.
+A `curvedir="below"` slur on an upper-voice note whose downbeat column also
+holds the lower voice's chord is drawn from UNDER that chord — 8 units below
+its own notehead in sonata m. 83 — even with a full staff space free between
+the voices. Probed on the extracted staff: it follows the chord's noteheads,
+not its stem; `slurEndpointFlexibility` 0 still shifts; `@bezier` and `@bulge`
+are ignored by 6.3; `@startvo`/`@endvo` are honoured (units, negative = down)
+but must be known before the render. When Verovio's routing cannot be steered
+by input, redraw the output: the rendered DOM has every box the decision needs
+(render/slurlayout.ts). Two probe lessons on the way: a measure number is not
+unique across movements (`n="31"` exists in I and III — select by page or id),
+and a bounding-box overlap test against a sloped beam polygon flags every
+numeral on the page; measure at the polygon's edge under the numeral.
+
+## A pitch-based gate is the wrong tool for a routing problem (2026-09-05)
+
+Verovio's displaced m. 83 slur looked like "no room on the notehead side", so a
+gate skipped the flip when the other voice came within N steps. It read the
+wrong cause (the endpoint rule, not the space) and, tuned to spare m. 82/84,
+still un-flipped every p. 17 bass slur onto its tuplet brackets — the exact
+violation the flip exists to prevent. Max: "there is room for it". A
+counterfactual render (one attribute removed) attributes a defect; it does not
+by itself say WHY the routing failed — probe the variations (remove the chord,
+strip its stem, drop it an octave) before choosing a rule.
+
+
+## A synthetic staff needs the head's staff NUMBERS, not a count (2026-09-05)
+
+Follow-up to the staff-count lesson above: the splice window's mRest leader
+built staves `1..n` from the head scoreDef's staffDef count. Under single-part
+view the filtered clone keeps a part's own `@n` (the viola alone is staff 3),
+so a leader numbered 1 has no staffDef — read the numbers off the staffDefs
+and mirror them. Same family as every "reconstruct from the definition" rule:
+copy the definition's identifiers, never regenerate them.
+
+## A test edit must be an edit the model accepts (2026-09-05)
+
+`insertRestAtCursor` into a FULL bar is refused (no change, no render), so a
+probe that "edits bar 10" of the sonata measured a no-op — `docChanged: false`
+is the tell, and every edit probe should report it. Compose past the end
+(a new bar) or delete something instead.

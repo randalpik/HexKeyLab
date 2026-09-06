@@ -452,6 +452,11 @@ export interface BalanceStats {
   ms: number;
 }
 
+/** Cache / identity key of a staff subset: sorted staff numbers, or 'all'. */
+export function viewKeyOf(viewStaves: number[] | null | undefined): string {
+  return viewStaves ? viewStaves.slice().sort((a, b) => a - b).join(',') : 'all';
+}
+
 export class PageLineBreaks {
   /** Adopted partition: line-start measure ids, document order. Null until a
    *  derive render's layout has been read (or a refill committed its own). */
@@ -523,6 +528,12 @@ export class PageLineBreaks {
    *  apart from `lastBalance`, which every job slice overwrites. */
   lastInitialBalance: BalanceStats | null = null;
   private balanceJob: BalanceJob | null = null;
+  /** The staff subset this partition describes — single-part view's staves, or
+   *  null for the whole score (2026-09-05). A part has its own widths, so its
+   *  own partition, naturals and cache entry; the renderer sets it before every
+   *  page render, and a change drops everything owned here. */
+  private viewStaves: number[] | null = null;
+  private viewKey = 'all';
 
   /** Drop all partition state. Next page render must derive + re-adopt. */
   invalidate(): void {
@@ -542,6 +553,15 @@ export class PageLineBreaks {
     this.adoption = null;
     if (this.balanceJob) this.balanceJob.cancelled = true;
     this.balanceJob = null;
+  }
+
+  /** Own the partition of `viewStaves` (null = every staff). A subset other
+   *  than the current one invalidates: its measures have other widths. */
+  setView(viewStaves: number[] | null): void {
+    const key = viewKeyOf(viewStaves);
+    if (key !== this.viewKey) this.invalidate();
+    this.viewKey = key;
+    this.viewStaves = viewStaves ? viewStaves.slice() : null;
   }
 
   /** True while the idle balance job still has sections to check. */
@@ -825,7 +845,7 @@ export class PageLineBreaks {
     ctx: PageBreaksCtx,
   ): RefillResult | null {
     const bail = (why: string): null => { this.lastDeriveReason = why; return null; };
-    if (viewStaves != null) return bail('filtered view');
+    this.setView(viewStaves);
     if (this.startIds === null && !this.finishAdoptionNow(ctx)) return bail('no adoptable partition');
     if (this.startIds!.length <= 1) return bail('single-line partition');
     if (computeUserBreakSig(model) !== this.userBreakSig) return bail('user breaks changed');
@@ -990,7 +1010,7 @@ export class PageLineBreaks {
     const pageSet = newPageStartIds.length > 1 ? new Set(newPageStartIds) : null;
     const mei = (): string | null => {
       const tSer = performance.now();
-      const full = model.serialize({ hejiEnabled: model.getHejiEnabled() }, null);
+      const full = model.serialize({ hejiEnabled: model.getHejiEnabled() }, this.viewStaves);
       this.lastRefillStats.serializeMs = Math.round(performance.now() - tSer);
       const tInj = performance.now();
       const pinned = injectPins(full, newStartIds, pageSet);
@@ -1500,7 +1520,7 @@ export class PageLineBreaks {
     this.lastRefillStats.windows++;
     this.lastRefillStats.windowMeasures += hi - lo + 1;
     try {
-      const sub = model.serializeRangeForRender(lo, hi, { hejiEnabled: model.getHejiEnabled() }, null);
+      const sub = model.serializeRangeForRender(lo, hi, { hejiEnabled: model.getHejiEnabled() }, this.viewStaves);
       const tk = ctx.naturalsToolkit();
       tk.setOptions(ctx.naturalsOptions());
       if (!tk.loadData(sub)) return null;

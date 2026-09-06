@@ -1257,6 +1257,52 @@ const PAGE_LINEBREAKS = {
    * balanced before the first paint: no lone-bar system, every section-final
    * line legal, every system justified to the same width. Asserted via
    * FIXTURE_ASSERTIONS.pageBalanceSectionFinal. */
+  /* Single-part view is OWNED and balanced like the score (2026-09-05, Max's
+     backlog item): a piano + viola document whose viola part (voice 5) has
+     the same 13 + 9 bar shape as pageBalanceSectionFinal, viewed viola-only
+     through the real selector. The filtered render must engage the line-break
+     owner, balance its sections before the paint and show only staff 3. */
+  pageBalanceSinglePartView: {
+    setup: `
+      window.__hkl_composer.renderer.setViewMode('page');
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      m.addInstrument({ name: 'Viola', staffCount: 1 });
+      m.setVoice(5); m.setCursor(0, 5);
+      for (let i = 0; i < 4 * 22; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 5 : 3)], duration: '4', dots: 0 });
+      }
+      m.setSectionHeaderAt(13, 'II');
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+      const sel = document.getElementById('viewInstrSelect');
+      sel.value = '1'; sel.dispatchEvent(new Event('change', { bubbles: true }));
+    `,
+    skipCursorTrace: true,
+    fullRender: 'a view change re-engraves by design (forceFullRerender); the owner adopts the filtered layout from it',
+  },
+
+  /* …and an edit in that view splices, exactly as in the full score. */
+  pageSinglePartViewEditSplices: {
+    setup: `
+      window.__hkl_composer.renderer.setViewMode('page');
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      m.addInstrument({ name: 'Viola', staffCount: 1 });
+      m.setVoice(5); m.setCursor(0, 5);
+      for (let i = 0; i < 4 * 22; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 5 : 3)], duration: '4', dots: 0 });
+      }
+      m.setSectionHeaderAt(13, 'II');
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+      const sel = document.getElementById('viewInstrSelect');
+      sel.value = '1'; sel.dispatchEvent(new Event('change', { bubbles: true }));
+    `,
+    skipCursorTrace: true,
+    fullRender: 'the view change re-engraves by design; the edit in the assertion must NOT (asserted there)',
+  },
+
   pageBalanceSectionFinal: {
     setup: `
       m.setCursor(0, 1);
@@ -6389,35 +6435,56 @@ const ENGRAVING = {
       r();
     `,
   },
-  /* The notehead-side flip is skipped when the other voice's content intrudes
-     on that side (2026-09-05, sonata m. 83): upper voice a slurred triplet
-     descending a5 → f5 → d5, lower voice a HALF-note chord d5+d4 whose stem
-     (down) reaches 14 steps below the slur's lowest note — m. 83's geometry
-     (b1+b2 under a line ending on b2). Flipped below, Verovio routed the slur
-     around the chord and its stem, far from its notes, while the beam side was
-     free; the pass now leaves it on Verovio's side (above), close to its
-     notes. (An unstemmed whole-note chord a step or two below — m. 82 — still
-     flips: engr_slurNoteheadSideTwoVoice.) */
-  engr_slurStaysAboveWhenLowerVoiceBlocks: {
+  /* A flipped slur Verovio carried away from its notes is re-drawn at them
+     (2026-09-05, sonata m. 83's bass staff, reproduced): upper voice two
+     beamed triplets descending d♭4 → b2 under one slur, lower voice a
+     dotted-half chord b1+b2 sharing the slur's downbeat column. Verovio
+     honours the notehead side (below) but starts the slur under the lower
+     voice's chord — 8 units below its own notehead — although a full staff
+     space lies free between the voices; render/slurlayout.ts re-draws it
+     from the noteheads. (An unstemmed whole-note chord a step or two below —
+     m. 82 — needs no re-draw: engr_slurNoteheadSideTwoVoice.) */
+  engr_slurBelowRedrawnAtNotes: {
     setup: `
-      const N = (p, o, midi) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
-      m.setVoice(1); m.setCursor(0, 1);
+      const N = (p, a, o, midi) => ({ q: 0, r: 0, pname: p, accid: a, oct: o, midi, colorHex: '#888', velocity: 80 });
+      const E = (p, a, o, midi) => m.insertChordAtCursor({ notes: [N(p, a, o, midi)], duration: '8', dots: 0 });
+      m.setVoice(3); m.setCursor(0, 3);
       m.createTupletAtCursor({ num: 3, numbase: 2, atomicDur: '8', spanDur: '4', spanDots: 0 });
-      m.setCursor(1, 1);
-      m.insertChordAtCursor({ notes: [N('a', 5, 81)], duration: '8', dots: 0 });
-      m.insertChordAtCursor({ notes: [N('f', 5, 77)], duration: '8', dots: 0 });
-      m.insertChordAtCursor({ notes: [N('d', 5, 74)], duration: '8', dots: 0 });
-      m.setVoice(2); m.setCursor(0, 2);
-      m.insertChordAtCursor({ notes: [N('d', 5, 74), N('d', 4, 62)], duration: '2', dots: 0 });
-      m.insertRestAtCursor({ duration: '2', dots: 0 });
-      m.setVoice(1);
+      m.setCursor(1, 3);
+      E('d', 'f', 4, 61); E('b', '', 3, 59); E('g', '', 3, 55);
+      m.createTupletAtCursor({ num: 3, numbase: 2, atomicDur: '8', spanDur: '4', spanDots: 0 });
+      E('e', '', 3, 52); E('d', 'f', 3, 49); E('b', '', 2, 47);
+      m.insertChordAtCursor({ notes: [N('g', '', 2, 43), N('e', '', 3, 52)], duration: '4', dots: 0 });
+      m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setVoice(4); m.setCursor(0, 4);
+      m.insertChordAtCursor({ notes: [N('b', '', 1, 35), N('b', '', 2, 47)], duration: '2', dots: 2 });
+      m.insertRestAtCursor({ duration: '8', dots: 0 });
+      m.setVoice(3);
       const doc = m.getDoc();
-      const notes = [...doc.querySelectorAll('staff[n="1"] layer[n="1"] tuplet note')];
+      const notes = [...doc.querySelectorAll('staff[n="2"] layer[n="1"] tuplet note')];
       const MEI = 'http://www.music-encoding.org/ns/mei';
       const sl = doc.createElementNS(MEI, 'slur');
-      sl.setAttribute('xml:id', 's-test-2v-block'); sl.setAttribute('startid', '#' + notes[0].getAttribute('xml:id')); sl.setAttribute('endid', '#' + notes[2].getAttribute('xml:id')); sl.setAttribute('data-voice', '1');
+      sl.setAttribute('xml:id', 's-test-2v-redraw'); sl.setAttribute('startid', '#' + notes[0].getAttribute('xml:id')); sl.setAttribute('endid', '#' + notes[notes.length - 1].getAttribute('xml:id')); sl.setAttribute('data-voice', '3');
       doc.querySelector('measure').appendChild(sl);
-      m.setCursor(0, 1);
+      m.setCursor(0, 3);
+      r();
+    `,
+  },
+
+  /* A bracketless tuplet numeral clears its beam (2026-09-05, sonata p. 17):
+     a steep beamed triplet in the bass, f3 → b♭3 → d♭4, whose "3" Verovio set
+     7.7 px INTO the beam; render/tupletnums.ts moves it clear. Voice 3 is the
+     piano's bass staff. */
+  engr_tupletNumClearsSteepBeam: {
+    setup: `
+      const N = (p, a, o, midi) => ({ q: 0, r: 0, pname: p, accid: a, oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.setVoice(3); m.setCursor(0, 3);
+      m.createTupletAtCursor({ num: 3, numbase: 2, atomicDur: '8', spanDur: '4', spanDots: 0 });
+      m.setCursor(1, 3);
+      m.insertChordAtCursor({ notes: [N('f', '', 3, 53)], duration: '8', dots: 0 });
+      m.insertChordAtCursor({ notes: [N('b', 'f', 3, 58)], duration: '8', dots: 0 });
+      m.insertChordAtCursor({ notes: [N('d', 'f', 4, 61)], duration: '8', dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
       r();
     `,
   },
@@ -9270,6 +9337,57 @@ export const FIXTURE_ASSERTIONS = {
           }
         }
         return { ok: true };
+      })()` },
+  ],
+  pageBalanceSinglePartView: [
+    { name: 'viola-only view: the owner engages on the filtered layout, its sections are balanced, only staff 3 is drawn, every system is justified',
+      expr: `(() => {
+        const H = window.__hkl_composer; const m = H.model; const pb = H.renderer['pageBreaks'];
+        if (H.inputState().viewInstrIdx !== 1) return { ok: false, detail: 'view not on the viola: ' + H.inputState().viewInstrIdx };
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged in single-part view (' + pb.lastDeriveReason + ')' };
+        pb.finishBalanceJobNow();
+        const ns = [...new Set([...document.querySelectorAll('#score .score-page:not(.score-page-pending) g.staff')].map((s) => s.getAttribute('data-n')))];
+        if (ns.length !== 1 || ns[0] !== '3') return { ok: false, detail: 'staves drawn: ' + ns.join(',') };
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const idIdx = new Map(ids.map((id, i) => [id, i]));
+        const starts = pb['startIds'].map((id) => idIdx.get(id));
+        const lens = starts.map((s, k) => (k + 1 < starts.length ? starts[k + 1] : ids.length) - s);
+        if (lens.some((L) => L <= 1)) return { ok: false, detail: 'a lone-bar system survived: lens=' + lens.join(',') };
+        const secEnd = starts.indexOf(13) - 1;
+        if (secEnd < 0) return { ok: false, detail: 'section II does not start a line: starts=' + starts.join(',') };
+        for (const k of [secEnd, starts.length - 1]) {
+          const f = pb['lineFill'](starts, k, ids);
+          if (f === null || f < 0.65) return { ok: false, detail: 'section-final line ' + k + ' fill ' + f + ' (lens ' + lens.join(',') + ')' };
+        }
+        const ws = [...document.querySelectorAll('#score .score-page:not(.score-page-pending) g.system')].map((g) => g.getBBox().width);
+        const max = Math.max(...ws);
+        if (ws.length < 3 || ws.some((w) => w < 0.98 * max)) return { ok: false, detail: 'system widths ' + ws.map((w) => Math.round(w)).join(',') };
+        return { ok: true, detail: 'lens ' + lens.join(',') };
+      })()` },
+  ],
+  pageSinglePartViewEditSplices: [
+    { name: 'composing past the end in single-part view splices (no full engrave) and the view stays viola-only',
+      expr: `(async () => {
+        const H = window.__hkl_composer; const m = H.model; const pb = H.renderer['pageBreaks']; const led = H.renderer['ledger'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
+        pb.finishBalanceJobNow();
+        const before = led.length;
+        /* A real edit: a quarter past the end of the viola part (a new bar). An
+           insert INTO a full bar is refused by the model and renders nothing. */
+        m.setVoice(5); m.setCursor(m.getVoiceLength(5), 5);
+        m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', lightColorHex: '#fff', velocity: 80 }], duration: '4', dots: 0 });
+        H.reRender();
+        /* A render after a heavy derive may be deferred behind the busy badge (T2.2). */
+        for (let i = 0; i < 100 && led.length <= before; i++) await new Promise((res) => setTimeout(res, 30));
+        const since = led.slice(before);
+        if (!since.length) return { ok: false, detail: 'no render recorded for the edit within 3 s' };
+        const full = since.filter((e) => e.full);
+        if (full.length) return { ok: false, detail: 'the edit full-rendered: ' + full.map((e) => e.deriveReason || e.skipReason || '(unattributed)').join(' | ') };
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership lost after the edit' };
+        const ns = [...new Set([...document.querySelectorAll('#score .score-page:not(.score-page-pending) g.staff')].map((s) => s.getAttribute('data-n')))];
+        if (ns.length !== 1 || ns[0] !== '3') return { ok: false, detail: 'staves drawn after the edit: ' + ns.join(',') };
+        return { ok: true, detail: since.map((e) => e.outcome + ':' + e.ms + 'ms').join(' ') };
       })()` },
   ],
   pageBalanceSectionFinal: [
@@ -14762,21 +14880,49 @@ export const FIXTURE_ASSERTIONS = {
         return { ok: true };
       })()` },
   ],
-  engr_slurStaysAboveWhenLowerVoiceBlocks: [
-    { name: 'with the lower voice two steps under the slurred notes, the slur stays above them and close to them (no flip)',
+  engr_slurBelowRedrawnAtNotes: [
+    { name: 'the slur is below its noteheads, re-drawn at them, and clear of the lower voice',
       expr: `(() => {
-        const staff = document.querySelector('#score g.measure g.staff[data-n="1"]');
-        const slur = document.getElementById('s-test-2v-block');
-        if (!staff || !slur) return { ok: false, detail: 'staff=' + !!staff + ' slur=' + !!slur };
-        const heads = [...staff.querySelectorAll('g.tuplet g.notehead')].map(h => h.getBoundingClientRect());
-        const headTop = Math.min(...heads.map(h => h.top)), headBot = Math.max(...heads.map(h => h.bottom));
+        const staff = document.querySelector('#score g.measure g.staff[data-n="2"]');
+        const g = document.getElementById('s-test-2v-redraw');
+        if (!staff || !g) return { ok: false, detail: 'staff=' + !!staff + ' slur=' + !!g };
+        const path = g.querySelector('path');
+        const heads = [...staff.querySelectorAll('g.layer:first-of-type g.notehead, g.tuplet g.notehead')].map(h => h.getBoundingClientRect());
+        const first = heads[0], last = heads[heads.length - 1];
         const lines = [...staff.querySelectorAll(':scope > path')].map(p => p.getBoundingClientRect().top);
         const space = (Math.max(...lines) - Math.min(...lines)) / 4;
-        const s = slur.getBoundingClientRect(); const sMid = (s.top + s.bottom) / 2;
-        if (!(sMid < headTop)) return { ok: false, detail: 'slur centre ' + sMid.toFixed(1) + ' is not above the slurred noteheads (top ' + headTop.toFixed(1) + ')' };
-        if (s.bottom < headTop - 3 * space) return { ok: false, detail: 'slur displaced: bottom ' + s.bottom.toFixed(1) + ' is more than 3 spaces above the noteheads (' + headTop.toFixed(1) + ')' };
-        if (s.top > headBot) return { ok: false, detail: 'slur below the noteheads: the flip was not skipped' };
-        return { ok: true, detail: 'slur ' + s.top.toFixed(0) + '..' + s.bottom.toFixed(0) + ', heads ' + headTop.toFixed(0) + '..' + headBot.toFixed(0) };
+        if (g.getAttribute('data-hkl-slur') !== 'redrawn') return { ok: false, detail: 'slur not re-drawn (data-hkl-slur=' + g.getAttribute('data-hkl-slur') + ')' };
+        /* Start / end points of the drawn path, on screen. */
+        const L = path.getTotalLength(); const toScreen = (p) => new DOMPoint(p.x, p.y).matrixTransform(path.getScreenCTM());
+        const s0 = toScreen(path.getPointAtLength(0)), s1 = toScreen(path.getPointAtLength(L / 2));
+        const gapS = s0.y - first.bottom, gapE = s1.y - last.bottom;
+        if (!(gapS > 0 && gapS < 1.5 * space)) return { ok: false, detail: 'start point ' + gapS.toFixed(1) + 'px below its notehead (want 0..' + (1.5 * space).toFixed(1) + ')' };
+        if (!(gapE > 0 && gapE < 1.5 * space)) return { ok: false, detail: 'end point ' + gapE.toFixed(1) + 'px below its notehead (want 0..' + (1.5 * space).toFixed(1) + ')' };
+        /* Clear of the lower voice's chord noteheads. */
+        const lower = [...staff.querySelectorAll('g.layer:nth-of-type(2) g.notehead')].map(h => h.getBoundingClientRect());
+        const sb = g.getBoundingClientRect();
+        for (const h of lower) { if (sb.left < h.right && sb.right > h.left && sb.top < h.bottom && sb.bottom > h.top) {
+          /* bbox overlap: sample the path against the head box */
+          for (let i = 0; i <= 40; i++) { const p = toScreen(path.getPointAtLength(L / 2 * i / 40)); if (p.x >= h.left && p.x <= h.right && p.y >= h.top && p.y <= h.bottom) return { ok: false, detail: 'slur runs through a lower-voice notehead at (' + p.x.toFixed(0) + ',' + p.y.toFixed(0) + ')' }; }
+        } }
+        return { ok: true, detail: 'start ' + gapS.toFixed(1) + 'px, end ' + gapE.toFixed(1) + 'px below the noteheads' };
+      })()` },
+  ],
+  engr_tupletNumClearsSteepBeam: [
+    { name: 'the numeral clears its beam polygon by at least a third of a unit, measured at the beam edge',
+      expr: `(() => {
+        const tup = document.querySelector('#score g.tuplet');
+        const num = tup && tup.querySelector('g.tupletNum'); const poly = tup && tup.querySelector('g.beam > polygon');
+        if (!tup || !num || !poly) return { ok: false, detail: 'tuplet=' + !!tup + ' num=' + !!num + ' beam=' + !!poly };
+        if (tup.querySelector('g.tupletBracket')) return { ok: false, detail: 'a wholly beamed triplet drew a bracket' };
+        const nb = num.getBoundingClientRect(); const ctm = poly.getScreenCTM();
+        const pts = poly.getAttribute('points').trim().split(/\\s+/).map(p => p.split(',').map(Number)).map(([x, y]) => new DOMPoint(x, y).matrixTransform(ctm));
+        const yAt = (x) => { const ys = []; for (let i = 0; i < pts.length; i++) { const a = pts[i], b = pts[(i + 1) % pts.length]; if ((a.x <= x && x <= b.x) || (b.x <= x && x <= a.x)) ys.push(a.x === b.x ? a.y : a.y + (b.y - a.y) * (x - a.x) / (b.x - a.x)); } return ys.length ? [Math.min(...ys), Math.max(...ys)] : null; };
+        const staff = tup.closest('g.staff'); const lines = [...staff.querySelectorAll(':scope > path')].map(p => p.getBoundingClientRect().top); const unit = (Math.max(...lines) - Math.min(...lines)) / 8;
+        let clear = Infinity, side = null;
+        for (let x = nb.left; x <= nb.right; x += 0.5) { const yy = yAt(x); if (!yy) continue; const numAbove = (nb.top + nb.bottom) / 2 < (yy[0] + yy[1]) / 2; side = numAbove ? 'above' : 'below'; clear = Math.min(clear, numAbove ? yy[0] - nb.bottom : nb.top - yy[1]); }
+        if (clear === Infinity) return { ok: false, detail: 'the numeral does not overlap the beam in x — not the steep-beam case this fixture is for' };
+        return clear >= unit / 3 ? { ok: true, detail: 'clearance ' + clear.toFixed(1) + 'px (' + side + '), shift ' + (num.getAttribute('data-hkl-numshift') || '0') } : { ok: false, detail: 'numeral ' + clear.toFixed(1) + 'px from its beam (' + side + '), want >= ' + (unit / 3).toFixed(1) };
       })()` },
   ],
   m1Triplet8BeamedNumberOnly: [

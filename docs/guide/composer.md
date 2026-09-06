@@ -162,7 +162,7 @@ From any measure forward (or, in select mode, over the selected span):
 
 A document starts as one piano (the grand staff). Add more instruments from [Document Setup](#document-setup) → **Instruments → Manage…** (drag to reorder; changes apply on Save). Each instrument gets its own staves, voices, and dynamics/pedal layers.
 
-- A toolbar **instrument selector** filters the view (and PDF export) to a single instrument's part.
+- A toolbar **instrument selector** filters the view (and PDF export) to a single instrument's part. The part is laid out as a score of its own: line and page breaks, and the balancing of each section's last system, are computed for that part, and edits in the view splice in place like in the full score.
 - **Pizzicato / arco**: an [expressive-text](#pedal-tempo-expressive-text) `pizz.`/`arco` cue switches the spanned notes to a pizzicato sample where one is available.
 - **String harmonics**: `Alt+H` marks an open-diamond harmonic; playback sounds the harmonic pitch.
 - MusicXML export writes one part per instrument.

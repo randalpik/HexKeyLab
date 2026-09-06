@@ -86,6 +86,9 @@ export interface PageSpliceCtx {
   container: HTMLElement;
   /** Isolated toolkit (spliceTk) — never the live one. */
   toolkit: VerovioToolkit;
+  /** Single-part view's staves (null = all): a window must render the same
+   *  staff subset as the live page it is spliced into (2026-09-05). */
+  viewStaves: number[] | null;
   /** Live page options with breaks:'line', a huge pageHeight (the window must
    *  land on ONE page), adjustPageHeight, and header:'none'. Page width and
    *  margins MUST match the live render — they set the justification width. */
@@ -700,7 +703,7 @@ export class PageSystemSplicer {
        and is discarded, exactly like the leader absorbs score-start artifacts. */
     const trailer = mHi < ids.length - 1;
     this.lastWindow = { wLo, wHi, mLo, mHi, leader, trailer, pbIds: [...pbIds], stubId };
-    const winMei = buildWindowMei(model, mLo, mHi, winStarts, leader, trailer, stubId, pbIds);
+    const winMei = buildWindowMei(model, mLo, mHi, winStarts, leader, trailer, stubId, pbIds, ctx.viewStaves);
     if (!winMei) return skip('window build failed');
     this.lastWindowMei = winMei;
 
@@ -1368,9 +1371,10 @@ function glyphCensus(measureEl: Element): Map<string, number> {
 function buildWindowMei(
   model: ComposerModel, mLo: number, mHi: number, winStarts: string[],
   leader: boolean, trailer: boolean, stubId: string | null, pbIds: Set<string>,
+  viewStaves: number[] | null,
 ): string | null {
   const heji = { hejiEnabled: model.getHejiEnabled() };
-  const range = model.serializeRangeForRender(mLo, mHi, heji, null);
+  const range = model.serializeRangeForRender(mLo, mHi, heji, viewStaves);
   /* The courtesy stub is a real document measure (the last of the range), so
      the serialized range already carries it and any scoreDef / section break
      before it; it only needs its own line pin. */
@@ -1389,14 +1393,20 @@ function buildWindowMei(
      splice battery's section-header-zone edit once the balancer let a hunk
      start exactly at the boundary. */
   const headDef = doc.querySelector('score > scoreDef') ?? doc.querySelector('scoreDef');
-  const nStaves = (headDef ? headDef.querySelectorAll('staffDef').length : 0) || 1;
+  /* The staves' NUMBERS, not a count: single-part view keeps a part's own
+     staff @n (the viola alone is staff 3), and a synthetic staff numbered 1
+     would have no staffDef (2026-09-05). */
+  const staffNs = headDef
+    ? Array.from(headDef.querySelectorAll('staffDef')).map((sd) => sd.getAttribute('n') ?? '').filter((n) => n !== '')
+    : [];
+  const synthStaffNs = staffNs.length ? staffNs : ['1'];
   const synthMeasure = (id: string): Element => {
     const meas = doc.createElementNS(MEI_NS, 'measure');
     meas.setAttribute('xml:id', id);
     meas.setAttribute('n', '0');
-    for (let s = 1; s <= nStaves; s++) {
+    for (const n of synthStaffNs) {
       const st = doc.createElementNS(MEI_NS, 'staff');
-      st.setAttribute('n', String(s));
+      st.setAttribute('n', n);
       const ly = doc.createElementNS(MEI_NS, 'layer');
       ly.setAttribute('n', '1');
       ly.appendChild(doc.createElementNS(MEI_NS, 'mRest'));

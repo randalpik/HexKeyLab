@@ -14,10 +14,11 @@ import { ScrollSplicer, type SpliceCtx } from './splice.js';
 import {
   PageLineBreaks, partitionFromLayout, systemStartsFromPageSvg, injectPins,
   type PageBreaksCtx,
-  scheduleIdle, MIN_FILL,
-} from './linebreaks.js';
+  scheduleIdle, MIN_FILL, viewKeyOf } from './linebreaks.js';
 import { PageSystemSplicer, type PageSpliceCtx, type SpliceRequest } from './pagesplice.js';
 import { layoutBelowStaffText } from './textlayout.js';
+import { layoutFlippedSlurs } from './slurlayout.js';
+import { layoutTupletNums } from './tupletnums.js';
 import { repairBarLines } from './barlines.js';
 import type { ComposerModel } from '../model/index.js';
 
@@ -160,7 +161,10 @@ const BASE_OPTIONS = {
      g.hairpin with no trace of which staff they belong to. Verovio prefixes
      each with `data-` in the SVG (`data-n`, `data-staff`, `data-place`). */
   svgAdditionalAttribute: ['note@data-q', 'note@data-r', 'note@color', 'note@data-light-color', 'note@hkl-paren-caut', 'rest@data-tuplet-placeholder', 'rest@visible', 'accid@type',
-    'staff@n', 'dynam@staff', 'dynam@place', 'dir@staff', 'dir@place', 'hairpin@staff', 'hairpin@place'],
+    'staff@n', 'dynam@staff', 'dynam@place', 'dir@staff', 'dir@place', 'hairpin@staff', 'hairpin@place',
+    /* The flipped-slur re-draw (render/slurlayout.ts) needs each slur's side
+       and endpoints: `data-curvedir`, `data-startid`, `data-endid`. */
+    'slur@curvedir', 'slur@startid', 'slur@endid'],
   footer: 'none',
   /* Dynamics sit further below the staff than Verovio's default quarter of a
      staff space (2026-09-04; backlog: "more space between the staff and the
@@ -213,6 +217,11 @@ class Renderer {
   /** Document page-size factor (ratio; 1 = default US Letter). Scales the page
    *  rectangle in page view only — content stays at the crisp zoom size. */
   private pageScale = 1;
+  /** Single-part view's staff subset (null = all), as of the last
+   *  renderComposer: every serialize this renderer does on the model's behalf
+   *  — pins for lazy mounts, splice windows, the reference gate — must render
+   *  the same staves as the page (2026-09-05). */
+  private viewStaves: number[] | null = null;
   private theme: ScoreTheme = 'light';
   private readyPromise: Promise<void>;
   /** Scroll-view spot-splice engine (Phase B2). Holds the persistent SVG's
@@ -897,7 +906,7 @@ class Renderer {
          internally. The composer suite treats any console warning as a failure,
          which is how this surfaced. */
       if (segLines.length === 1) { pages.push(segLines[0]); continue; }
-      const segMei = model.serializeRangeForRender(lo, hi, heji, null);
+      const segMei = model.serializeRangeForRender(lo, hi, heji, this.viewStaves);
       /* Pin the GLOBAL line partition inside this segment (sb only — pagination
          is what we are asking Verovio for, so it must not be pre-decided). */
       const pinned = injectPins(segMei, segLines, null);
@@ -985,7 +994,7 @@ class Renderer {
       /* An owned-partition edit that spliced last time will almost certainly
          splice again (the gates are stable across consecutive edits in a
          region) — render it synchronously, no badge. */
-      if (this.lastPageSpliced && viewStaves == null && this.pageBreaks.ownershipActive()) return false;
+      if (this.lastPageSpliced && this.pageBreaks.ownershipActive()) return false;
       return (this.lastFullMs.page ?? proxy) > HEAVY_MS;
     }
     const willSplice = !this.forceFull && this.splicer.canSplice() && viewStaves == null;
@@ -1526,6 +1535,8 @@ class Renderer {
        (one childNodes walk), refreshed every render so it can't go stale. */
     this.measureIds = model.allMeasures().map((m) => m.getAttribute('xml:id') ?? '');
     this.lastModel = model;
+    this.viewStaves = viewStaves;
+    this.pageBreaks.setView(viewStaves);
     const heji = { hejiEnabled: model.getHejiEnabled() };
     let preMei: string | null = null;
     if (this.lastRenderedMode !== null && this.lastRenderedMode !== this.viewMode) {
@@ -1550,10 +1561,10 @@ class Renderer {
       /* Whatever path ran, the partition now on screen is the right one for
          this layout budget — cache it so returning to this zoom/page scale on
          an unchanged document skips the castoff pass (A4). */
-      if (viewStaves == null) this.rememberPartition(model);
+      this.rememberPartition(model);
       /* Phase 2: measure the unmounted pages' extents in idle time, so the
          cascade never has to park at the mount boundary once it has run. */
-      if (viewStaves == null) this.armExtentsJob(model);
+      this.armExtentsJob(model);
     }
     this.lastRenderedMode = this.viewMode;
     return true;
@@ -1571,7 +1582,7 @@ class Renderer {
     model: ComposerModel, viewStaves: number[] | null, preMei: string | null,
     heji: { hejiEnabled: boolean },
   ): boolean {
-    if (viewStaves == null && this.pageBreaks.canAttemptRefill()) {
+    if (this.pageBreaks.canAttemptRefill()) {
       const refill = this.pageBreaks.tryRefill(model, viewStaves, this.pageBreaksCtx());
       if (refill) {
         /* Splice/no-op only when the mounted DOM is the page render the
@@ -1709,7 +1720,7 @@ class Renderer {
   private pinnedMeiForCurrentModel(): string | null {
     const model = this.lastModel;
     if (!model) return null;
-    const mei = model.serialize({ hejiEnabled: model.getHejiEnabled() }, null);
+    const mei = model.serialize({ hejiEnabled: model.getHejiEnabled() }, this.viewStaves);
     return this.pageBreaks.pinRenderMei(mei);
   }
 
@@ -1753,7 +1764,7 @@ class Renderer {
        pageHeight, which changes PAGINATION (and we cache page starts too), so
        the coarser-but-safer term is the right one. */
     const unit = CRISP_PRESETS[this.zoom].unit;
-    return `u${unit}|s${this.pageScale}|${model.getHejiEnabled() ? 'heji' : 'plain'}`;
+    return `u${unit}|s${this.pageScale}|${model.getHejiEnabled() ? 'heji' : 'plain'}|v${viewKeyOf(this.viewStaves)}`;
   }
 
   /** Snapshot the committed partition for the current key, so returning to this
@@ -1785,12 +1796,9 @@ class Renderer {
     heji: { hejiEnabled: boolean },
   ): void {
     const data = preMei ?? model.serialize(heji, viewStaves);
-    if (viewStaves != null) {
-      /* Filtered view: a partition would describe a subset of the staves. */
-      this.renderPage(data, true);
-      this.pageBreaks.invalidate();
-      return;
-    }
+    /* A single-part view is owned exactly like the score (2026-09-05): the
+       owner keys its partition on the staff subset (setView), so the filtered
+       document gets its own castoff, adoption, balance and cache entry. */
     /* A partition we already computed for this exact layout budget, on a
        document that has not changed since, is still the right partition — so
        skip the castoff `loadData` (~1 s on the sonata) and paint the pinned
@@ -1879,6 +1887,7 @@ class Renderer {
     return {
       container: this.container!,
       toolkit: this.spliceTk!,
+      viewStaves: this.viewStaves,
       /* With pagination owned the window uses the LIVE page options verbatim:
          'encoded' paginates only at the <pb> pins the window carries, so the
          tall-page trick is unnecessary — and the page geometry must match
@@ -2837,6 +2846,15 @@ class Renderer {
       for (const el of targets) repairBarLines(el, pairs);
       const dirGapUser = DIR_GAP_PER_UNIT * CRISP_PRESETS[this.zoom].unit;
       for (const el of targets) layoutBelowStaffText(el, { grandPairs: pairs, dirGapUser });
+      /* Bracketless tuplet numerals off their beams (render/tupletnums.ts),
+         then flipped slurs Verovio carried away from their notes re-drawn at
+         them (render/slurlayout.ts; the numerals are its obstacles, so they
+         settle first) — both before placement: the numeral can grow a system
+         by a few units, and a re-drawn slur hugs its notes, so it only ever
+         shrinks the extents. */
+      const unitUser = CRISP_PRESETS[this.zoom].unit * 10;
+      for (const el of targets) layoutTupletNums(el, { unitUser });
+      for (const el of targets) layoutFlippedSlurs(el, { unitUser });
     }
     /* Replace tagged placeholder accidentals with BravuraText HEJI / stacked
        glyphs (+ paren <use> swaps). No-op when none are tagged. Host-wide. */

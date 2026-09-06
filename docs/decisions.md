@@ -6842,47 +6842,90 @@ Verovio has no dynam-specific bottom margin, and the same margin is what
 separates the viola's dynamics from the piano's high notes. Lowering it (1.0
 ≈ half a space) trades one against the other; not changed.
 
-### Slur side: no flip without room (refined)
-Sonata m. 83, bass staff: layer 1 a slurred pair of beamed triplets (df4 → b2,
-stems up), layer 2 a half-note chord b1+b2 at the slur's start. The 09-05 pass
-flipped the slur to the notehead side (below); Verovio then had to route it
-around the chord and drew it from the chord's lower notehead scooping 75 px
-under the staff — "displaced far away". Counterfactual (bare toolkit on the
-pinned MEI, same options): without the flip the slur sits at its start note,
-above the beams (y 586–662 against the notehead at 648). A pitch-GAP rule was
-tried first (skip when the other layer's notes come within 5 steps of the
-slur's) and un-flipped m. 82 and m. 84 as well — their other voice is an
-unstemmed whole-note chord whose notes INTERLEAVE with the slurred ones (span
-room −5 / −12) yet both render cleanly (Max, 2026-09-05). The discriminator is
-how far the other content REACHES past the slur layer's extreme notehead on
-the flip side, stems included: m. 82 → 3, m. 84 → −5, the two-voice fixture →
-7 (clean flips); m. 81 → 11, m. 83 → 14 (routed far away). New rule in
-`notation/slurSides.ts`: skip the flip when that intrusion exceeds
-`SLUR_INTRUSION_STEPS` = 8 (`STEM_STEPS` = 7, Verovio's 3.5-space default);
-the slur then stays on Verovio's side — the beam side, which Max's invariant
-allows when nothing else is possible, and with the tuplet rule above a beamed
-triplet no longer has a bracket to be on the wrong side of. The threshold is
-a first setting for Max to tune. Fixture
-`engr_slurStaysAboveWhenLowerVoiceBlocks` (m. 83's geometry: a half-note chord
-under a line ending on its top note); `engr_slurNoteheadSideTwoVoice` still
-flips.
+### Slur side: keep the flip, re-draw what Verovio displaces (fixed, second pass)
+Sonata m. 83, bass staff: layer 1 a slurred pair of beamed triplets (d♭4 → b2,
+stems up), layer 2 a dotted-half chord b1+b2 sharing the slur's downbeat. The
+09-05 pass flipped the slur below; Verovio drew it from under the chord —
+start point 65 px (8 units) below its own notehead, then a 100-px scoop.
+Max: there IS room under the notes; moving the slur up is unnecessary, and a
+pitch-based gate on the flip (tried first, withdrawn the same afternoon) put
+p. 17's slurs back above tuplet brackets. Bare-toolkit probes on the extracted
+staff: removing the chord (or dropping it an octave) puts the start 9 px under
+its notehead; stripping the chord's stem changes nothing; without layer 2 the
+stems flip to the pitch rule and the beams block the slur instead;
+`slurEndpointFlexibility` 0 (the default) still shifts the start;
+`@bezier` and `@bulge` change nothing; `@startvo`/`@endvo` do move the
+endpoints (in units, negative = down) but would have to be predicted before
+the render. So Verovio's endpoint rule treats the other layer's noteheads in
+the slur's own start column as part of it and starts below them.
 
-### Single-part view has no balancing (assessed, not done)
-The balancer runs inside the page line-break OWNER, and the owner is bypassed
-whenever `viewStaves != null`: `derivePageRender` renders the filtered
-serialization with Verovio's castoff and `pageBreaks.invalidate()`s;
-`tryRefill` bails with 'filtered view'; the partition cache, the extents job
-and the page splicer are all gated `viewStaves == null` (render.ts 988, 991,
-1542, 1545, 1563, 1777, 2753–2761; linebreaks.ts 828, 993 —
-`model.serialize(heji, null)` for naturals). Nothing in the balancer itself
-cares about staves: measure ids, hard starts and fills carry over; what
-differs is the WIDTHS (a viola-only line holds more bars), so a filtered view
-needs its own partition. Design, if wanted: thread `viewStaves` into
-`PageLineBreaks` (naturals serialize, `tryRefill`), key `partitionKey` /
-`partitionCache` and `pinnedMeiForCurrentModel` on the staff subset, and make
-the page-splicer's window MEI honour the filter — then derive → adopt →
-balance → pin works for a part exactly as for the score, and the edit path
-(refill + splice) comes with it. Estimated a day of work with the gated sweep
-(`check=1`) as the correctness gate; not started without Max's go-ahead, since
-today single-part edits are full castoff renders and a partition per staff
-subset also multiplies the partition-cache and balance-job state.
+**Decision**: `render/slurlayout.ts`, a DOM post-process in
+`postProcessRendered` (before placement): every flipped slur whose rendered
+endpoint sits > 2 units from its notehead is re-drawn from the noteheads —
+endpoints ¾ unit past them on the slur side, a cubic bulging 0.12 × span
+(1.25–3.5 units), grown to 6 units until the sampled curve clears every glyph
+box of the staff in its span by half a unit; no clear curve → Verovio's path
+stays (`data-hkl-slur="kept"`). Same shape as Verovio's (two cubics, 0.1-unit
+stroke, 0.6-unit midpoint); `data-hkl-orig-d` for idempotency. Slurs Verovio
+places at their notes (p. 17's bass slurs, m. 81/85/89) are untouched. The
+side pass also now compares staff / layer NUMBERS: a slur across a barline was
+read as cross-staff and never flipped (p. 17 m. 31, m. 39). Sonata after:
+m. 83 start 6 px under its notehead, p. 17 bass slurs all below, m. 82/84 as
+before. Fixture `engr_slurBelowRedrawnAtNotes` (m. 83's geometry) replaces the
+withdrawn gate's fixture. **Open**: single-voice slurs over notes with MIXED
+stem directions (viola, p. 17 mm. 30/32) — Verovio's default there is above,
+over the beam and numeral; a re-draw on the notehead side has no single
+notehead side to attach to, so it is not attempted. Max to say whether that
+case matters.
+
+### Tuplet numerals off steep beams (fixed)
+With the bracket gone, Verovio sets a wholly-beamed tuplet's numeral against
+its beam; on p. 17 three steep bass triplets (f3 → b♭3 → d♭4) had the "3"
+7.7 px INTO the beam while all 51 other numerals on the page cleared theirs by
+≥ 4 px (measured at the polygon's edge under the numeral — a bounding-box
+test flags every sloped beam and was discarded). `render/tupletnums.ts` moves a
+bracketless numeral clear by half a unit, along its beam side; bracketed
+numerals stay with their bracket. Fixture `engr_tupletNumClearsSteepBeam`.
+
+### Single-part view is owned and balanced like the score (done)
+**Context**: the balancer runs inside the page line-break OWNER, and the owner
+was bypassed whenever `viewStaves != null`: `derivePageRender` painted the
+filtered serialization with Verovio's castoff and `invalidate()`d, `tryRefill`
+bailed with 'filtered view', and the partition cache, extents job, heaviness
+predictor and page splicer were all gated `viewStaves == null`. Nothing in the
+balancer cares about staves — ids, hard starts and fills carry over — but a
+part has its own WIDTHS (a viola line holds more bars), so it needs its own
+partition. Plan approved by Max the same afternoon.
+
+**Decision**: thread the staff subset, never renumber. `PageLineBreaks.setView`
+(called by `renderComposer` before every page render) keys the owner on
+`viewKeyOf(viewStaves)` — a different subset invalidates everything owned
+(partition, naturals, sigW, budget) — and the owner's serializes carry it: the
+refill's pinned MEI and the naturals windows. The renderer keeps the same
+`viewStaves` for `pinnedMeiForCurrentModel` (lazy mounts after a splice, the
+reference gate), the segmented castoff and `partitionKey` (`|v…`, so the
+score's cached partition survives a round-trip through a part). The page
+splicer gets `PageSpliceCtx.viewStaves` for its window, and its synthetic
+leader / trailer now takes the filtered head's staffDef NUMBERS instead of
+`1..n` (the viola alone is staff 3; a synthetic staff 1 would have had no
+staffDef). The derive bail and the four gates are gone; a view CHANGE still
+derives (`forceFullRerender` → `invalidate`). Scroll view's splicer stays
+all-parts only (its gap calibration assumes the full staff set).
+
+**Results** (sonata, viola-only, headless Chromium): ownership engages on the
+filtered layout — 81 lines, 9 pages (score: 113 / 31); the sync band balance
+fires before the paint (movement I: 9 boundaries moved, one line removed); the
+idle job finishes in 10 slices / 2.0 s; per-movement fills min 0.89 / 0.85 /
+0.89 / 0.80, sd ≤ 0.057; view switch 1.2–1.4 s (castoff + adopt + balance +
+pinned paint, where it was one plain render); back to all parts 0.7–0.85 s via
+the cached score partition; no console notices. An edit in the view goes
+through the same refill: composing past the end with the last page mounted
+splices; with it unmounted the splicer refuses ('edit line not mounted') and
+the pinned refill renders, exactly as in the score. Suite: fixtures
+`pageBalanceSinglePartView` (13 + 9-bar viola part viewed alone: owned,
+balanced, only staff 3 drawn, all systems justified) and
+`pageSinglePartViewEditSplices` (composing past the end in the view splices).
+
+**Not done**: the scroll splicer in single-part view; a per-part partition
+cache means up to one entry per (zoom, page scale, HEJI, staff subset) — the
+24-entry cap still bounds it.

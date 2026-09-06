@@ -58,7 +58,7 @@ export interface TextLayoutOpts {
   dirGapUser: number;
 }
 
-interface Box { left: number; right: number; top: number; bottom: number }
+export interface Box { left: number; right: number; top: number; bottom: number }
 interface Row extends Box { n: number; el: Element }
 interface Mark { el: SVGGraphicsElement; box: Box; upper: Row; lower: Row | null; mode: 'center' | 'mingap' }
 
@@ -92,7 +92,7 @@ const attrNum = (el: Element, name: string): number | null => {
  *  mark's `translate` is written in — and independent of where the host sits
  *  on screen. Verovio's transforms are translates and uniform scales, so
  *  mapping the two corners is exact. Null when the element has no box. */
-function svgBox(el: Element, frameInv: DOMMatrix): Box | null {
+export function svgBox(el: Element, frameInv: DOMMatrix): Box | null {
   const g = el as SVGGraphicsElement;
   if (typeof g.getBBox !== 'function' || typeof g.getCTM !== 'function') return null;
   let b: DOMRect;
