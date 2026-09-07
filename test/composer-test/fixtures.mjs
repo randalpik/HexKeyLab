@@ -6718,12 +6718,37 @@ const ENGRAVING = {
     setup: `
       window.__hkl_composer.renderer.setViewMode('page');
       const N = (o, midi) => ({ q: 0, r: 0, pname: 'a', accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
-      m.setTitle('Sonata for Viola and Piano'); m.setSubtitle('for Viola and Piano');
+      m.setTitle('Sonata for Viola and Piano'); m.setSubtitle('for Viola and Piano'); m.setComposer('Max Randal, Op. 12');
       m.setCursor(0, 1);
       for (let i = 0; i < 100; i++) m.insertChordAtCursor({ notes: [N(4, 69)], duration: '1', dots: 0 });
       m.setCursor(0, 1);
       r();
     `,
+  },
+
+  /* The same title block rendered with NO usable getBBox on a <tspan> — what
+     Gecko gives (Max, 2026-09-06: on Firefox "no gap is honored at all",
+     while Chromium looked correct). pageheader.ts used to derive every gap
+     from tspan getBBox, so on Firefox `styleTitle` hit its catch, returned
+     null, and the credit fell to the `blockBottom === null ? 0` branch — onto
+     the title's own line, with the title left at Verovio's 540 px. The block
+     is now pure em-box arithmetic; this fixture holds it that way by making
+     the call Gecko lacks throw, and asserting the SAME geometry as
+     engr_titleBlockSizes. The override is undone by RESET_SNIPPET. */
+  engr_titleBlockWithoutTspanBBox: {
+    setup: `
+      window.__hkl_composer.renderer.setViewMode('page');
+      window.__hklOrigTspanBBox = SVGTSpanElement.prototype.getBBox;
+      SVGTSpanElement.prototype.getBBox = function () { throw new Error('NS_ERROR_FAILURE (simulated Gecko)'); };
+      const N = (o, midi) => ({ q: 0, r: 0, pname: 'a', accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.setTitle('Sonata for Viola and Piano'); m.setSubtitle('for Viola and Piano'); m.setComposer('Max Randal, Op. 12');
+      m.setCursor(0, 1);
+      for (let i = 0; i < 24; i++) m.insertChordAtCursor({ notes: [N(4, 69)], duration: '1', dots: 0 });
+      m.setCursor(0, 1);
+      window.__hkl_composer.renderer.forceFullRerender();
+      r();
+    `,
+    fullRender: 'the poisoned getBBox must be in place for the header restyle itself, so the fixture forces the engrave it is asserting about',
   },
 
   /* Max's 2026-09-06 regression: voice 1 rests against a voice-2 chord topping
@@ -15464,7 +15489,7 @@ export const FIXTURE_ASSERTIONS = {
       })()` },
   ],
   engr_titleBlockSizes: [
-    { name: 'title 600px with the subtitle clear below it and the first system below both; pages 2+ header at 320px',
+    { name: 'title 600px, subtitle 360px on the next line, credit a full line clear below both, first system below all; pages 2+ header at 320px',
       expr: `(() => {
         const H = window.__hkl_composer;
         const head = document.querySelector('#score .score-page[data-page="1"] g.pgHead');
@@ -15472,19 +15497,57 @@ export const FIXTURE_ASSERTIONS = {
         const leaves = [...head.querySelectorAll('tspan[font-size]')];
         if (leaves.length < 2) return { ok: false, detail: 'header leaves=' + leaves.length };
         if (leaves[0].getAttribute('font-size') !== '600px') return { ok: false, detail: 'title font-size ' + leaves[0].getAttribute('font-size') };
-        if (leaves[1].getAttribute('font-size') !== '320px') return { ok: false, detail: 'subtitle font-size ' + leaves[1].getAttribute('font-size') };
+        if (leaves[1].getAttribute('font-size') !== '360px') return { ok: false, detail: 'subtitle font-size ' + leaves[1].getAttribute('font-size') + ' (want 360px, matching the credit)' };
         const t = leaves[0].getBoundingClientRect(), s = leaves[1].getBoundingClientRect();
-        /* A full subtitle line of clear space between the two text boxes. */
-        if (!(s.top - t.bottom >= 0.85 * s.height)) return { ok: false, detail: 'title-subtitle box gap ' + (s.top - t.bottom).toFixed(1) + 'px, want >= ' + (0.85 * s.height).toFixed(1) };
+        /* NO added gap: the subtitle takes the next line, so the two em-boxes
+           meet. Never overlapping (Verovio's own <lb/> step does that), never
+           a blank line's worth apart (Max, 2026-09-06). */
+        if (Math.abs(s.top - t.bottom) > 1.5) return { ok: false, detail: 'title-subtitle box gap ' + (s.top - t.bottom).toFixed(1) + 'px, want the boxes to meet (0 +/- 1.5)' };
         const sys = document.querySelector('#score .score-page[data-page="1"] g.system');
         const sb = sys.getBoundingClientRect();
         if (!(sb.top > s.bottom)) return { ok: false, detail: 'first system top ' + sb.top.toFixed(1) + ' not below the subtitle bottom ' + s.bottom.toFixed(1) };
+        /* The composer credit: inside the header band, 360px, a full line of
+           its own size below the title block, above the first system. */
+        const credit = head.querySelector('text.hkl-injected-composer');
+        if (!credit) return { ok: false, detail: 'no composer credit inside g.pgHead' };
+        if (credit.getAttribute('font-size') !== '360px') return { ok: false, detail: 'credit font-size ' + credit.getAttribute('font-size') };
+        const c = credit.getBoundingClientRect();
+        if (!(c.top - s.bottom >= 0.85 * c.height)) return { ok: false, detail: 'subtitle-credit box gap ' + (c.top - s.bottom).toFixed(1) + 'px, want >= ' + (0.85 * c.height).toFixed(1) };
+        if (!(sb.top > c.bottom)) return { ok: false, detail: 'first system top ' + sb.top.toFixed(1) + ' not below the credit bottom ' + c.bottom.toFixed(1) };
+        /* Stated against the TITLE as well, independently of the subtitle:
+           this is the relation Max reported broken, and a title-only document
+           has no subtitle to carry it. */
+        if (!(c.top >= t.bottom)) return { ok: false, detail: 'credit top ' + c.top.toFixed(1) + ' overlaps the title box bottom ' + t.bottom.toFixed(1) };
         H.renderer['mountPage'](2);
         const p2 = document.querySelector('#score .score-page[data-page="2"]');
         if (!p2) return { ok: false, detail: 'no page 2' };
         const num = p2.querySelector('g.pgHead tspan.num [font-size]'); const title = p2.querySelector('text.hkl-running-title');
         if (!num || num.getAttribute('font-size') !== '320px') return { ok: false, detail: 'page-number font-size ' + (num && num.getAttribute('font-size')) };
         if (!title || title.getAttribute('font-size') !== '320px') return { ok: false, detail: 'running-title font-size ' + (title && title.getAttribute('font-size')) };
+        return { ok: true };
+      })()` },
+  ],
+  engr_titleBlockWithoutTspanBBox: [
+    { name: 'with tspan getBBox throwing (Gecko), the title still grows to 600px and the credit still clears the title and subtitle',
+      expr: `(() => {
+        const head = document.querySelector('#score .score-page[data-page="1"] g.pgHead');
+        if (!head) return { ok: false, detail: 'no page-1 header' };
+        const leaves = [...head.querySelectorAll('tspan[font-size]')];
+        if (leaves.length < 2) return { ok: false, detail: 'header leaves=' + leaves.length };
+        /* 540px here means styleTitle bailed out of the whole restyle. */
+        if (leaves[0].getAttribute('font-size') !== '600px') return { ok: false, detail: 'title font-size ' + leaves[0].getAttribute('font-size') + ' (540px = styleTitle bailed)' };
+        if (leaves[1].getAttribute('font-size') !== '360px') return { ok: false, detail: 'subtitle font-size ' + leaves[1].getAttribute('font-size') + ' (want 360px, matching the credit)' };
+        const t = leaves[0].getBoundingClientRect(), s = leaves[1].getBoundingClientRect();
+        if (Math.abs(s.top - t.bottom) > 1.5) return { ok: false, detail: 'title-subtitle box gap ' + (s.top - t.bottom).toFixed(1) + 'px, want the boxes to meet (0 +/- 1.5)' };
+        const credit = head.querySelector('text.hkl-injected-composer');
+        if (!credit) return { ok: false, detail: 'no composer credit inside g.pgHead' };
+        const c = credit.getBoundingClientRect();
+        /* The exact defect: y solved from the null-block branch puts the
+           credit's box top at the band origin, i.e. on the title's line. */
+        if (!(c.top >= t.bottom)) return { ok: false, detail: 'credit top ' + c.top.toFixed(1) + ' overlaps the title box bottom ' + t.bottom.toFixed(1) };
+        if (!(c.top - s.bottom >= 0.85 * c.height)) return { ok: false, detail: 'subtitle-credit box gap ' + (c.top - s.bottom).toFixed(1) + 'px, want >= ' + (0.85 * c.height).toFixed(1) };
+        const sys = document.querySelector('#score .score-page[data-page="1"] g.system');
+        if (!(sys.getBoundingClientRect().top > c.bottom)) return { ok: false, detail: 'first system overlaps the credit' };
         return { ok: true };
       })()` },
   ],

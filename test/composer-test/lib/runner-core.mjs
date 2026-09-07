@@ -25,6 +25,17 @@ export const RESET_SNIPPET = `
    * listeners cleanly. */
   document.querySelectorAll('dialog[open]').forEach((d) => { try { d.close(); } catch (e) {} });
 
+  /* Un-poison SVGTSpanElement.prototype.getBBox. engr_titleBlockWithoutTspanBBox
+   * makes it throw to reproduce Gecko, where a tspan has no usable getBBox —
+   * the defect that let the composer credit land on the title's own line. The
+   * page is shared between fixtures and the override would outlive a setup
+   * that threw before restoring, so the reset owns it (same reasoning as the
+   * dialog close above). */
+  if (window.__hklOrigTspanBBox) {
+    SVGTSpanElement.prototype.getBBox = window.__hklOrigTspanBBox;
+    delete window.__hklOrigTspanBBox;
+  }
+
   /* Fresh model. */
   const old = window.__hkl_composer.model;
   const cls = old.constructor;

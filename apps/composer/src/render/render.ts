@@ -2820,7 +2820,7 @@ class Renderer {
     /* Page-1 title block: larger title, subtitle clear of it (render/pageheader.ts).
        Host-wide and BEFORE placement — the header's bbox is what
        `firstContentTop` anchors the first system under. */
-    styleTitleBlock(container);
+    styleTitleBlock(container, this.lastModel?.getComposer() ?? '');
     /* Crisp the verticals: snap intermediate barlines onto their pixel phase,
        then land each system's right edge (final barline + staff-line ends) on
        the grid (no sliver past the final bar). */

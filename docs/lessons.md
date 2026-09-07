@@ -3816,3 +3816,43 @@ above the top line), a half rest goes to 8 (on the line), and its gaps to the
 head range 0.8–1.9 locations; it also draws a top-layer whole rest OVER a
 middle-line chord ([5, 6] against a head top of 5.06). Measure glyph extents
 from a render before writing a table from font metrics.
+
+## Firefox gives no usable `getBBox()` on a `<tspan>`; Chromium answers with the font's em-box, rounded to whole CSS pixels (2026-09-06)
+
+Max, on the page-1 title block: "This one actually is a Chromium vs Firefox
+issue. Your screenshots look correct, and I can reproduce that on Chromium as
+well. On Firefox, no gap is honored at all." Two separate traps, both in the
+same call:
+
+**1. Gecko doesn't answer it.** `render/pageheader.ts` derived every gap in
+the title block from `getBBox()` on the title/subtitle `<tspan>`s. On Firefox
+that throws, so `styleTitle` hit its `catch`, returned `null`, and the credit
+fell to its `blockBottom === null ? 0` branch — box top at the header band's
+origin, i.e. on the title's own line — while the title stayed at Verovio's
+540 px. Every gap constant was dead code on Gecko. Three rounds of "it's a
+full line clear now" were all verified in Chromium and all false on the
+browser Max actually uses. `<g>` and `<text>` bboxes are fine in both engines;
+`<tspan>` is the one to avoid. The fix is arithmetic, not measurement — a
+nominal em-box from (baseline, font-size) — which also works in detached hosts
+where `getBBox` throws outright. Guard it with a fixture that poisons
+`SVGTSpanElement.prototype.getBBox` to throw
+(`engr_titleBlockWithoutTspanBBox`); a Chromium-only suite can absolutely
+cover a Gecko-only defect that way.
+
+**2. What Chromium returns isn't ink.** Its tspan bbox heights were 660/600,
+360/320, 400/360 user units — all ≈1.107 × font-size regardless of which
+glyphs are present, i.e. the font's ascent+descent (Times 0.891/0.216), not
+the glyph extents the code's comments claimed. And it resolves those metrics
+at WHOLE-pixel granularity: with Verovio's `definition-scale` making 1 CSS px
+= 10 user units, ascent came back as 480 and 530 at font-size 540 and 600 —
+`round(0.891 × 54)` and `round(0.891 × 60)` × 10, never the unrounded 481.1 /
+534.6. Reimplementing the metric unrounded put the title baseline 3 units low,
+which grew the header band 551 → 554, crossed a device-grid snap in
+`headBottomOf` → `firstContentTop`, and pushed every system and section header
+on the page down a whole 10-unit pixel — surfacing as two unrelated-looking
+visual-baseline failures (`phase3_section_header`, `phase5_musicxml_barlines`)
+whose diffs started at the section headers and had nothing to do with titles.
+Quantizing ascent/descent to whole pixels ourselves reproduces the measured
+geometry EXACTLY on all six of the header's readings, on every engine, with no
+baseline reseed. When replacing a browser measurement with arithmetic, match
+its rounding, not just its ratio.
