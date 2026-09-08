@@ -5587,6 +5587,37 @@ const PHASE1 = {
     `,
   },
 
+  /* MusicXML import — ottava (<octave-shift>). MusicXML encodes bracketed notes
+     at SOUNDING pitch and prints them shifted; the model stores WRITTEN pitch
+     and derives the sounding one from <octave>. So an 8va (Finale writes
+     `type="down"`, meaning "printed an octave below sounding") must import as
+     an <octave dis="8" dis.place="above"> PLUS the spanned notes written an
+     octave down. Dropping the direction outright — the behavior until
+     2026-09-06 — silently left those notes an octave high with no bracket
+     (sonata m. 93-95 and m. 70, the piece's only two ottavas).
+     The span here covers m.1 notes 2-4 and m.2 notes 1-2; the notes before it
+     and after the `stop` must be untouched. */
+  phase5_musicxml_octave_shift: {
+    setup: `
+      const N = (step, oct) => '<note><pitch><step>' + step + '</step><octave>' + oct + '</octave></pitch>'
+        + '<duration>24</duration><voice>1</voice><type>quarter</type></note>';
+      const SHIFT = (type) => '<direction><direction-type><octave-shift size="8" type="' + type + '"/>'
+        + '</direction-type><staff>1</staff></direction>';
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>T</part-name></score-part></part-list>'
+        + '<part id="P1"><measure number="1">'
+        + '<attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        + N('C', 5) + SHIFT('down') + N('D', 6) + N('E', 6) + N('F', 6)
+        + '</measure><measure number="2">'
+        + N('G', 6) + N('A', 6) + SHIFT('stop') + N('B', 4) + N('C', 5)
+        + '</measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+    visualBaseline: 'phase5_musicxml_octave_shift',
+  },
+
   /* MusicXML import — beam diff: eight eighths the source beams 2+2+2+2 (begin/
      end per pair). Our 4/4 auto-beamer would make two 4-beams, so the importer
      sets @hkl-beam-break to flip the two disagreeing boundaries (notes 3 & 7),
@@ -7628,6 +7659,52 @@ export const FIXTURE_ASSERTIONS = {
         if (!d) return { ok: false, detail: 'dir texts=' + dirs.map(x => (x.textContent||'').trim()).join('|') };
         const rend = d.querySelector('rend');
         if (!rend || rend.getAttribute('fontstyle') !== 'italic') return { ok: false, detail: 'fontstyle=' + (rend && rend.getAttribute('fontstyle')) };
+        return { ok: true };
+      })()` },
+  ],
+
+  /* Ottava: one <octave> anchored to the first/last bracketed slot (Verovio
+     draws the bracket from @startid/@endid only), the spanned notes written an
+     octave BELOW their MusicXML (sounding) pitch, and the notes outside the
+     span untouched. */
+  phase5_musicxml_octave_shift: [
+    { name: '<octave> dis=8 above staff 1, anchored to notes 2 and 6',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const octs = [...doc.querySelectorAll('octave')];
+        if (octs.length !== 1) return { ok: false, detail: 'octave count=' + octs.length };
+        const o = octs[0];
+        if (o.getAttribute('dis') !== '8') return { ok: false, detail: 'dis=' + o.getAttribute('dis') };
+        if (o.getAttribute('dis.place') !== 'above') return { ok: false, detail: 'place=' + o.getAttribute('dis.place') };
+        if (o.getAttribute('staff') !== '1') return { ok: false, detail: 'staff=' + o.getAttribute('staff') };
+        const notes = [...doc.querySelectorAll('measure staff[n="1"] layer[n="1"] note')];
+        const idOf = (i) => notes[i] && notes[i].getAttribute('xml:id');
+        const sid = (o.getAttribute('startid') || '').replace('#', '');
+        const eid = (o.getAttribute('endid') || '').replace('#', '');
+        if (sid !== idOf(1)) return { ok: false, detail: 'startid=' + sid + ' expected note 2 (' + idOf(1) + ')' };
+        if (eid !== idOf(5)) return { ok: false, detail: 'endid=' + eid + ' expected note 6 (' + idOf(5) + ')' };
+        return { ok: true };
+      })()` },
+    { name: 'bracketed notes written an octave down; others unshifted',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const notes = [...doc.querySelectorAll('measure staff[n="1"] layer[n="1"] note')];
+        const got = notes.map(n => n.getAttribute('pname') + n.getAttribute('oct'));
+        /* source: C5 | D6 E6 F6 G6 A6 (8va) | B4 C5 → written pitch: */
+        const want = ['c5', 'd5', 'e5', 'f5', 'g5', 'a5', 'b4', 'c5'];
+        if (got.join(',') !== want.join(','))
+          return { ok: false, detail: 'written=' + got.join(',') + ' expected=' + want.join(',') };
+        /* q must move with the octave: −3 per octave down (lattice band width). */
+        const qs = notes.map(n => parseInt(n.getAttribute('data-q'), 10));
+        if (qs.some(q => !Number.isFinite(q))) return { ok: false, detail: 'data-q=' + qs.join(',') };
+        return { ok: true };
+      })()` },
+    { name: 'ottava bracket rendered',
+      expr: `(() => {
+        const gs = [...document.querySelectorAll('g.octave')];
+        if (gs.length !== 1) return { ok: false, detail: 'g.octave count=' + gs.length };
+        const w = gs[0].getBoundingClientRect().width;
+        if (!(w > 10)) return { ok: false, detail: 'bracket width=' + w };
         return { ok: true };
       })()` },
   ],

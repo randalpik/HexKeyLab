@@ -20,7 +20,7 @@ import { coordForSpelling } from '@hkl/notation/coord-spelling.js';
 import { coordToMidi } from '@hkl/shared/freq.js';
 import { keySigToTonic } from './notation/accidentals.js';
 import { findTonicCoord } from './cursor/refNote.js';
-import { setLayoutReq, setHejiEnabled, setIgnoreColor, addDynam, addHairpin, addDir, addTempo } from './expressions.js';
+import { setLayoutReq, setHejiEnabled, setIgnoreColor, addDynam, addHairpin, addDir, addTempo, addOctave } from './expressions.js';
 import { addSlur } from './slurs.js';
 import { realTicks } from './model/ticks.js';
 import { decomposeBeatAlignedRests } from './model/restfill.js';
@@ -123,6 +123,12 @@ interface ImpEvent {
   /** Slur level numbers starting / stopping at this event. */
   slurStart: number[];
   slurStop: number[];
+  /** Index into the global octave-span list when this event's notes were
+   *  written-pitch-shifted by an <octave-shift> (see OctaveRec), plus its
+   *  onset in source divisions within the measure — together these pick the
+   *  span's first/last slot for @startid/@endid after emission. */
+  octSpanIdx?: number;
+  octPosDiv?: number;
   /** Built element (set during emission), for slur/fermata id wiring. */
   el?: Element;
 }
@@ -398,10 +404,16 @@ function analyzePart(partEl: Element, name: string, globalStaffBase: number): Pa
 
 /* ── build a layer's events for one (part, measure, localStaff, layer) ──────── */
 
+/** An octave-shift span clipped to a single measure, expressed in that
+ *  measure's source `divisions`: a note whose onset falls in [fromDiv, toDiv)
+ *  is written `octDelta` octaves from its encoded (sounding) pitch. */
+interface MeasureOctSpan { fromDiv: number; toDiv: number; octDelta: number; spanIdx: number }
+
 function buildEvents(
   measureEl: Element, part: PartInfo, localStaff: number, layer: number,
   centerQ: number, centerR: number,
   divisions: number, tsCount: number, tsUnit: number,
+  octSpans: MeasureOctSpan[] = [],
 ): ImpEvent[] {
   // Which voice maps to (localStaff, layer)?
   let targetVoice: number | null = null;
@@ -411,6 +423,21 @@ function buildEvents(
   if (targetVoice === null) return [];
 
   const events: ImpEvent[] = [];
+  /* Running onset of this voice within the measure, in SOURCE divisions (not
+     MEI ticks): tuplets make written ticks diverge from sounding position, and
+     the octave-shift spans are recorded in the same divisions space. */
+  let curDiv = 0;
+  let lastOnsetDiv = 0;          // onset of the last non-chord note
+  const octAt = (posDiv: number): { delta: number; spanIdx?: number } => {
+    let delta = 0;
+    let spanIdx: number | undefined;
+    for (const sp of octSpans) {
+      if (posDiv < sp.fromDiv - 1e-6 || posDiv >= sp.toDiv - 1e-6) continue;
+      delta += sp.octDelta;
+      if (spanIdx === undefined) spanIdx = sp.spanIdx;
+    }
+    return { delta, spanIdx };
+  };
   /* Walk the measure's children in document order so a <forward> (an invisible
      time advance for a voice — Finale's encoding of a hidden rest, e.g. a voice
      entering mid-bar) lands as a hidden rest at its true position. Ignoring it
@@ -429,6 +456,7 @@ function buildEvents(
         r.hidden = true;
         events.push(r);
       }
+      curDiv += intOf(node, 'duration', 0);
       continue;
     }
     if (node.localName !== 'note') continue;
@@ -445,22 +473,29 @@ function buildEvents(
     const dur = TYPE_TO_DUR[typeName] ?? '4';
     const dots = (children(note, 'dot').length) as Dots;
 
+    /* Onset of this note (chord members share the head's) and the written-
+       octave shift of any <octave-shift> covering it. */
+    const posDiv = isChordNote ? lastOnsetDiv : curDiv;
+    if (!isChordNote) { lastOnsetDiv = curDiv; curDiv += intOf(note, 'duration', 0); }
+    const oct = isRest ? { delta: 0, spanIdx: undefined } : octAt(posDiv);
+
     if (isChordNote && events.length > 0) {
       // Merge onto the previous event (note → chord). Tie/notations attach
       // per chord-note; articulations/slurs/fermata stay event-level.
       const prev = events[events.length - 1];
-      const im = impNoteFromXml(note, centerQ, centerR);
+      const im = impNoteFromXml(note, centerQ, centerR, oct.delta);
       if (im) { prev.notes.push(im); prev.kind = 'chord'; }
       mergeNotations(note, prev);
       continue;
     }
 
-    const im = isRest ? null : impNoteFromXml(note, centerQ, centerR);
+    const im = isRest ? null : impNoteFromXml(note, centerQ, centerR, oct.delta);
     const ev: ImpEvent = {
       kind: isRest ? 'rest' : 'note',
       notes: im ? [im] : [],
       dur, dots, artics: [], fermata: false, slurStart: [], slurStop: [],
     };
+    if (oct.spanIdx !== undefined) { ev.octSpanIdx = oct.spanIdx; ev.octPosDiv = posDiv; }
     if (isMeasureRest) ev.measureRest = true;
     /* Source beam-start for the diff-based beam pass: <beam number="1"> value
        of `begin` (or absent) starts a new beam; `continue`/`end` joins prev. */
@@ -541,12 +576,16 @@ function mergeNotations(note: Element, ev: ImpEvent): void {
   }
 }
 
-function impNoteFromXml(note: Element, centerQ: number, centerR: number): ImpNote | null {
+/** `octDelta` shifts the WRITTEN octave: MusicXML <pitch> under an
+ *  <octave-shift> is the SOUNDING pitch, while the model stores the written
+ *  pitch and derives the sounding one from the <octave> bracket. An 8va
+ *  (`type="down"`) therefore imports as octDelta = −1. */
+function impNoteFromXml(note: Element, centerQ: number, centerR: number, octDelta = 0): ImpNote | null {
   const pitch = child(note, 'pitch');
   if (!pitch) return null;
   const step = textOf(pitch, 'step');
   const alter = intOf(pitch, 'alter', 0);
-  const octave = intOf(pitch, 'octave', 4);
+  const octave = intOf(pitch, 'octave', 4) + octDelta;
   const coord = coordForSpelling(step, alter, octave, centerQ, centerR);
   if (!coord) return null;
   const [q, r] = coord;
@@ -762,6 +801,16 @@ interface HairpinRec {
   endMeasureIdx: number; endTstamp: number;
   staff: number; place: 'above' | 'below'; form: 'cres' | 'dim';
 }
+/** An <octave-shift> span (ottava). `startDiv`/`endDiv` are the span's
+ *  endpoints in their own measure's source divisions — the note-onset space
+ *  buildEvents works in; the tstamps carry the playback tick-span. `endDiv` is
+ *  EXCLUSIVE: Finale writes the `stop` direction at the position just past the
+ *  last bracketed note. */
+interface OctaveRec {
+  startMeasureIdx: number; startTstamp: number; startDiv: number;
+  endMeasureIdx: number; endTstamp: number; endDiv: number;
+  staff: number; dis: 8 | 15; place: 'above' | 'below';
+}
 
 /** Walk a part's measures in document order, tracking the beat position of each
  *  <direction>, and collect dynamics + hairpins. Wedges are paired across
@@ -769,11 +818,12 @@ interface HairpinRec {
 function scanPartDirections(
   part: PartInfo,
   globalStaffOf: (localStaff: number) => number,
-): { dynamics: DynamRec[]; hairpins: HairpinRec[]; dirs: DirRec[]; tempi: TempoRec[] } {
+): { dynamics: DynamRec[]; hairpins: HairpinRec[]; dirs: DirRec[]; tempi: TempoRec[]; octaves: OctaveRec[] } {
   const dynamics: DynamRec[] = [];
   const hairpins: HairpinRec[] = [];
   const dirs: DirRec[] = [];
   const tempi: TempoRec[] = [];
+  const octaves: OctaveRec[] = [];
   /** Metronome / sound-tempo fields of a <direction> (or a bare <sound>). */
   const tempoFields = (node: Element): { bpm?: number; unit: number; dots: number; showMm: boolean } => {
     const metro = node.querySelector('metronome');
@@ -791,6 +841,8 @@ function scanPartDirections(
   };
   /* open wedge per level number → its start moment + staff/place. */
   const openWedge = new Map<number, { mi: number; tstamp: number; staff: number; place: 'above' | 'below'; form: 'cres' | 'dim' }>();
+  /* open octave-shift per level number → its start moment + staff/size. */
+  const openOct = new Map<number, { mi: number; tstamp: number; div: number; staff: number; dis: 8 | 15; place: 'above' | 'below' }>();
 
   let divisions = part.divisions;
   let meterUnit = 4;
@@ -865,6 +917,34 @@ function scanPartDirections(
               }
             }
           }
+          /* Ottava (<octave-shift>). MusicXML `type` names the direction the
+             PRINTED notes move relative to the encoded (sounding) pitch, so
+             `down` = printed an octave lower = 8va, bracket ABOVE; `up` = 8vb,
+             bracket below. `continue` (a system-break continuation) leaves the
+             span open. */
+          const osh = child(dt, 'octave-shift');
+          if (osh) {
+            const otype = osh.getAttribute('type');
+            const num = parseInt(osh.getAttribute('number') ?? '1', 10) || 1;
+            if (otype === 'down' || otype === 'up') {
+              const size = parseInt(osh.getAttribute('size') ?? '8', 10) || 8;
+              openOct.set(num, {
+                mi, tstamp, div: cur, staff,
+                dis: size >= 15 ? 15 : 8,
+                place: otype === 'down' ? 'above' : 'below',
+              });
+            } else if (otype === 'stop') {
+              const o = openOct.get(num);
+              if (o) {
+                octaves.push({
+                  startMeasureIdx: o.mi, startTstamp: o.tstamp, startDiv: o.div,
+                  endMeasureIdx: mi, endTstamp: tstamp, endDiv: cur,
+                  staff: o.staff, dis: o.dis, place: o.place,
+                });
+                openOct.delete(num);
+              }
+            }
+          }
           /* Free expressive text (pizz., dim., espressivo, …) → <dir>. A tempo
              direction's words are the <tempo>'s text, not a <dir>. */
           if (!isTempoDir) {
@@ -882,7 +962,7 @@ function scanPartDirections(
       }
     }
   });
-  return { dynamics, hairpins, dirs, tempi };
+  return { dynamics, hairpins, dirs, tempi, octaves };
 }
 
 /* ── main ──────────────────────────────────────────────────────────────────── */
@@ -1002,6 +1082,58 @@ export function importMusicXml(xmlText: string): string {
   /* Global voice for (globalStaff, layer): staves contribute 2 voices each in
      order, so voice = (staff-1)*2 + layer. Slur state persists per voice. */
   const voiceFor = (gStaff: number, layer: number): number => (gStaff - 1) * 2 + layer;
+  /* Directions are scanned UP FRONT (not with the other control events after
+     the build): an <octave-shift> has to be known while notes are built,
+     because MusicXML encodes bracketed notes at sounding pitch while the model
+     stores written pitch + an <octave> span. */
+  const dirScans = parts.map((part) => scanPartDirections(
+    part, (ls) => part.globalStaff[Math.min(Math.max(ls, 1), part.staffCount)],
+  ));
+  const octSpans: OctaveRec[] = dirScans.flatMap((d) => d.octaves);
+  /* The spans covering (global staff, measure), clipped to that measure. */
+  const octSpansFor = (g: number, mi: number): MeasureOctSpan[] => {
+    const out: MeasureOctSpan[] = [];
+    octSpans.forEach((sp, i) => {
+      if (sp.staff !== g || mi < sp.startMeasureIdx || mi > sp.endMeasureIdx) return;
+      out.push({
+        fromDiv: mi === sp.startMeasureIdx ? sp.startDiv : -Infinity,
+        toDiv: mi === sp.endMeasureIdx ? sp.endDiv : Infinity,
+        octDelta: (sp.place === 'above' ? -1 : 1) * (sp.dis === 15 ? 2 : 1),
+        spanIdx: i,
+      });
+    });
+    return out;
+  };
+  /* span index → its first/last emitted slot (Verovio anchors the bracket to
+     @startid/@endid). Ordered by (measure, onset) so a span crossing measures
+     or covering both layers of a staff still picks its true extremes. */
+  const octAnchors = new Map<number, {
+    firstMi: number; firstPos: number; firstId: string;
+    lastMi: number; lastPos: number; lastId: string;
+  }>();
+  const recordOctaveAnchors = (evs: ImpEvent[], mi: number): void => {
+    for (const ev of evs) {
+      if (ev.octSpanIdx === undefined || !ev.el) continue;
+      if (ev.el.localName !== 'note' && ev.el.localName !== 'chord') continue;
+      const id = ev.el.getAttribute('xml:id');
+      if (!id) continue;
+      const pos = ev.octPosDiv ?? 0;
+      const a = octAnchors.get(ev.octSpanIdx);
+      if (!a) {
+        octAnchors.set(ev.octSpanIdx, {
+          firstMi: mi, firstPos: pos, firstId: id, lastMi: mi, lastPos: pos, lastId: id,
+        });
+        continue;
+      }
+      if (mi < a.firstMi || (mi === a.firstMi && pos < a.firstPos)) {
+        a.firstMi = mi; a.firstPos = pos; a.firstId = id;
+      }
+      if (mi > a.lastMi || (mi === a.lastMi && pos > a.lastPos)) {
+        a.lastMi = mi; a.lastPos = pos; a.lastId = id;
+      }
+    }
+  };
+
   /* Emission state — slur + wavy pairing is GLOBAL (cross-staff/voice). */
   const ctx: EmitCtx = {
     slurOpen: new Map(), slurPairs: [], fermataEls: [], trillRecs: [],
@@ -1094,7 +1226,7 @@ export function importMusicXml(xmlText: string): string {
         if (!pm) continue;
         for (const layer of [1, 2]) {
           const evs = buildEvents(pm, part, localStaff, layer, center.q, center.r,
-            runDivisions.get(part) ?? part.divisions, runCount, runUnit);
+            runDivisions.get(part) ?? part.divisions, runCount, runUnit, octSpansFor(g, mi));
           /* A measure-rest voice is EMPTY — it's sized TO the pickup budget, so
              it must not define it (its default quarter would inflate the bar). */
           const t = evs.filter((e) => !e.measureRest).reduce((s, e) => s + dottedTicks(e.dur, e.dots), 0);
@@ -1129,7 +1261,7 @@ export function importMusicXml(xmlText: string): string {
         const layerEl = el(doc, 'layer', { n: String(layer), 'xml:id': newId('l') });
         if (pm) {
           const voice = voiceFor(g, layer);
-          const evs = buildEvents(pm, part, localStaff, layer, center.q, center.r, div, runCount, runUnit);
+          const evs = buildEvents(pm, part, localStaff, layer, center.q, center.r, div, runCount, runUnit, octSpansFor(g, mi));
           if (evs.length === 1 && evs[0].measureRest) {
             if (pickupTicks != null) {
               /* Pickup exception: an empty voice shows a rest sized to the
@@ -1143,6 +1275,7 @@ export function importMusicXml(xmlText: string): string {
             }
           } else {
             appendLayerChildren(doc, layerEl, evs, measureEl, voice, partIdx, ctx);
+            recordOctaveAnchors(evs, mi);
           }
         }
         layerEls.push(layerEl);
@@ -1210,12 +1343,25 @@ export function importMusicXml(xmlText: string): string {
     measure.appendChild(el(doc, 'trill', attrs));
   }
 
+  /* Ottava brackets: one <octave> per <octave-shift> span, anchored to the
+     first and last slot it covers (Verovio draws the bracket from
+     @startid/@endid only — @tstamp alone yields an empty group). The bracketed
+     notes were already written down/up an octave during the build, so the
+     bracket restores the source's sounding pitch. A span covering no slot
+     (rests only) is dropped — there is nothing to anchor it to. */
+  octSpans.forEach((sp, i) => {
+    const a = octAnchors.get(i);
+    if (!a) return;
+    addOctave(doc,
+      { measureIdx: sp.startMeasureIdx, tstamp: sp.startTstamp },
+      { measureIdx: sp.endMeasureIdx, tstamp: sp.endTstamp },
+      { dis: sp.dis, place: sp.place, staff: sp.staff, startId: a.firstId, endId: a.lastId });
+  });
+
   /* Dynamics + hairpins + expressive text + tempo markings (time-anchored),
-     per part. */
+     per part — from the scans taken before the build. */
   const seenTempi = new Set<string>();
-  for (const part of parts) {
-    const globalStaffOf = (ls: number): number => part.globalStaff[Math.min(Math.max(ls, 1), part.staffCount)];
-    const { dynamics, hairpins, dirs, tempi } = scanPartDirections(part, globalStaffOf);
+  for (const { dynamics, hairpins, dirs, tempi } of dirScans) {
     for (const d of dynamics) {
       addDynam(doc, { measureIdx: d.measureIdx, tstamp: d.tstamp }, { text: d.text, place: d.place, staff: d.staff });
     }
