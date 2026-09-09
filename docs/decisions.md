@@ -7471,3 +7471,34 @@ systems, 31 pages; typecheck / boundaries / build clean. The plumbing
 (`alignStaffRows`'s `data-hkl-ishift`, textlayout's `data-hkl-clamped` and
 ishift composition) is inert without the pass. **Fixtures are still owed** and
 land with the feature.
+
+## A mark's transform stays textlayout's; instrgap only tags it (2026-09-09)
+
+`render/instrgap.ts` shifts an instrument by writing translates, but a
+`g.dynam`/`g.dir`/`g.hairpin`/`g.tempo` is the one thing it does NOT write: it
+records `data-hkl-ishift` and lets `render/textlayout.ts` re-run and compose
+`translate(dx, dy + ish)`. The alternative — instrgap composing the mark's
+transform itself — was rejected: textlayout re-runs on every shifted system
+anyway (it must, to release its own `INSTR_CLEAR` clamp), and two passes both
+writing one attribute is how the idempotency bookkeeping (`data-hkl-vshift`
+against `data-hkl-ishift`) gets ambiguous. Single ownership per attribute is
+worth an extra rule.
+
+The rule that ownership costs, and that was missing until the marks came out a
+whole shift low (lessons.md "A deferred transform must be MEASURED in the frame
+it will be written in"): **a pass that defers a transform must publish the frame
+it deferred, and every consumer must measure in it.** Concretely — textlayout
+measures a tagged mark through `markBox` (bbox + `ish`), not `svgBox`, because
+its staff rows already read post-shift; instrgap's `resetSystem` subtracts its
+own term back out of a mark's transform as well as a staff's, so a re-run
+measures one consistent pre-shift frame; and the tag is read with `parseFloat`
+everywhere (at zoom 75 the device grid is 40/3 user units, so it is fractional).
+
+Also settled here: the sonata is not a fixture, so the class of defect it
+exposes needs a synthetic shape. `engr_instrGapCenteredDynamic` is a
+single-staff instrument ABOVE a grand staff — instrgap only ever shifts
+instruments BELOW a boundary, so an upper grand staff cannot exercise the
+composition at all — and it asserts the PREMISE (a shift actually happened)
+alongside the conclusion, so it can never pass vacuously if the demand
+heuristics change. This discharges part of the "fixtures are still owed" note
+in the preceding entry; the pagination defect remains open and unfixtured.

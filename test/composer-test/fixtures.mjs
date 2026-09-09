@@ -6897,6 +6897,50 @@ const ENGRAVING = {
       m.setVoice(1); m.setCursor(0, 1); r();
     `,
   },
+
+  /* A mark inside a grand staff stays CENTRED when render/instrgap.ts has
+     shifted that instrument (2026-09-09). instrgap tags the shift on a mark
+     and leaves the transform to textlayout, which owns it — so textlayout has
+     to MEASURE the mark in the shifted frame too. It did not: the staff rows
+     read post-shift and the mark's own box pre-shift, so the `dy` it derived
+     already contained the shift and `translate(dx, dy + ish)` applied it
+     twice. Every mark on a shifted instrument landed a whole shift low (sonata
+     p. 9 m. 131's `pp` on the staff below it, p. 17 m. 37's `dim.` inside a
+     tuplet bracket, both with the room they wanted unused above).
+     The shape is the sonata's: a single-staff instrument ABOVE a grand staff,
+     since instrgap only ever shifts instruments BELOW a boundary. The viola's
+     low C3 puts its `f` some four spaces under its own staff and one space
+     over the piano — nearer the piano than its own staff, which is exactly the
+     demand instrgap exists to meet — and the piano's own `p` is the centred
+     mark under test. The piano's outer notes (A5, C2) keep its grand-staff gap
+     clear of ink so the centring is unclamped and the assertion can be exact. */
+  engr_instrGapCenteredDynamic: {
+    setup: `
+      const ATTR = (extra) => '<attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>4</beats><beat-type>4</beat-type></time>' + extra + '</attributes>';
+      const DYN = (which, staff) => '<direction placement="below"><direction-type><dynamics><' + which + '/></dynamics></direction-type><staff>' + staff + '</staff></direction>';
+      const WHOLE = (step, oct, voice, staff) => '<note><pitch><step>' + step + '</step><octave>' + oct + '</octave></pitch>'
+        + '<duration>96</duration><voice>' + voice + '</voice><type>whole</type>' + (staff ? '<staff>' + staff + '</staff>' : '') + '</note>';
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list>'
+        + '<score-part id="P1"><part-name>Viola</part-name></score-part>'
+        + '<score-part id="P2"><part-name>Piano</part-name></score-part>'
+        + '</part-list>'
+        + '<part id="P1"><measure number="1">'
+        + ATTR('<clef><sign>C</sign><line>3</line></clef>')
+        + DYN('f', 1) + WHOLE('C', 3, 1)
+        + '</measure></part>'
+        + '<part id="P2"><measure number="1">'
+        + ATTR('<staves>2</staves><clef number="1"><sign>G</sign><line>2</line></clef><clef number="2"><sign>F</sign><line>4</line></clef>')
+        + DYN('p', 1)
+        + WHOLE('A', 5, 1, 1)
+        + '<backup><duration>96</duration></backup>'
+        + WHOLE('C', 2, 5, 2)
+        + '</measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
 };
 
 export const FIXTURES = {
@@ -15805,6 +15849,48 @@ export const FIXTURE_ASSERTIONS = {
         const L = path.getTotalLength(); const ctm = path.getScreenCTM(); let top = Infinity;
         for (let i = 0; i <= 48; i++) { const p = new DOMPoint(path.getPointAtLength(L * i / 48).x, path.getPointAtLength(L * i / 48).y).matrixTransform(ctm); if (p.x >= box.left && p.x <= box.right) top = Math.min(top, p.y); }
         if (!(top > box.bottom - 1)) return { ok: false, detail: 'slur top ' + top.toFixed(1) + ' still inside the dir box (bottom ' + box.bottom.toFixed(1) + ')' };
+        return { ok: true };
+      })()` },
+  ],
+  engr_instrGapCenteredDynamic: [
+    { name: 'the piano is shifted for the viola\'s low f, and the piano\'s own dynamic stays centred in its grand-staff gap (not a shift lower)',
+      expr: `(() => {
+        const sys = document.querySelector('#score g.system');
+        if (!sys) return { ok: false, detail: 'no system rendered' };
+        const staffEl = (n) => sys.querySelector('g.measure g.staff[data-n="' + n + '"]');
+        const s1 = staffEl(1), s2 = staffEl(2), s3 = staffEl(3);
+        if (!s1 || !s2 || !s3) return { ok: false, detail: 'staves present: 1=' + !!s1 + ' 2=' + !!s2 + ' 3=' + !!s3 + ' (want viola=1, piano=2,3)' };
+        /* The fixture is only meaningful if instrgap actually shifted the
+           piano — otherwise the double count it guards has nothing to double.
+           Assert the premise rather than passing vacuously. */
+        const ish = [s2, s3].map((s) => parseFloat(s.getAttribute('data-hkl-ishift') || '0') || 0);
+        if (!ish.every((v) => v > 0)) return { ok: false, detail: 'no inter-instrument shift on the piano (data-hkl-ishift=' + ish.join(',') + '): the viola f is not crowding it, so this fixture would pass vacuously' };
+        if (ish[0] !== ish[1]) return { ok: false, detail: 'the two piano staves got different shifts: ' + ish.join(',') };
+        /* Staff-line bands, from each staff's own thin direct-child paths. */
+        const band = (st) => {
+          const rs = [...st.children].filter((p) => p.tagName === 'path').map((p) => p.getBoundingClientRect()).filter((b) => b.height <= 2.5);
+          if (!rs.length) return null;
+          return { top: Math.min(...rs.map((b) => b.top)), bottom: Math.max(...rs.map((b) => b.bottom)) };
+        };
+        const b2 = band(s2), b3 = band(s3);
+        if (!b2 || !b3) return { ok: false, detail: 'could not measure the piano staff lines' };
+        const dyn = [...sys.querySelectorAll('g.dynam')].filter((g) => g.getAttribute('data-staff') === '2' && g.getAttribute('data-place') === 'below');
+        if (dyn.length !== 1) return { ok: false, detail: 'piano below-dynamics on staff 2: ' + dyn.length + ' (want 1)' };
+        const box = dyn[0].getBoundingClientRect();
+        const gapMid = (b2.bottom + b3.top) / 2, markMid = (box.top + box.bottom) / 2;
+        /* The defect measured a whole shift — 2 staff spaces on the sonata —
+           so a 3px window is far inside the failure and outside the pass's own
+           whole-user-unit rounding. */
+        const err = markMid - gapMid;
+        if (Math.abs(err) > 3) return { ok: false, detail: 'piano dynamic sits ' + err.toFixed(1) + 'px off the gap centre (positive = too low; the double-counted shift was ' + (ish[0] / 10).toFixed(1) + 'px)' };
+        if (!(box.bottom < b3.top)) return { ok: false, detail: 'piano dynamic bottom ' + box.bottom.toFixed(1) + ' has reached the lower staff (top ' + b3.top.toFixed(1) + ')' };
+        if (!(box.top > b2.bottom)) return { ok: false, detail: 'piano dynamic top ' + box.top.toFixed(1) + ' is inside the upper staff (bottom ' + b2.bottom.toFixed(1) + ')' };
+        /* And the viola's f, whose crowding paid for the shift, keeps the
+           space from the piano that instrgap granted it. */
+        const f = [...sys.querySelectorAll('g.dynam')].filter((g) => g.getAttribute('data-staff') === '1');
+        if (f.length !== 1) return { ok: false, detail: 'viola dynamics: ' + f.length };
+        const fb = f[0].getBoundingClientRect();
+        if (!(b2.top - fb.bottom >= 15)) return { ok: false, detail: 'viola f only ' + (b2.top - fb.bottom).toFixed(1) + 'px clear of the piano (want one staff space, ~16px)' };
         return { ok: true };
       })()` },
   ],

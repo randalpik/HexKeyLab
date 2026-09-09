@@ -3913,3 +3913,50 @@ reading never notices (mounting the last page alone draws it correctly), but
 **PDF export mounts all pages**, so it would export a system short. Found while
 enabling `render/instrgap.ts`, whose taller systems shrink the sonata's settled
 partition from 31 pages to 30.
+
+## A deferred transform must be MEASURED in the frame it will be written in (2026-09-09)
+
+`render/instrgap.ts` shifts an instrument down. For a `g.staff` it writes the
+translate directly; for a `g.dynam`/`g.dir`/`g.hairpin`/`g.tempo` it cannot,
+because `render/textlayout.ts` owns a mark's transform — so it records the
+amount as `data-hkl-ishift` and lets textlayout re-run and compose
+`translate(dx, dy + ish)`. That split is sound. What was not is that textlayout
+kept measuring with plain `svgBox`: a tag is **not** a transform, so its staff
+rows (real transforms) read POST-shift while the mark's own box read PRE-shift.
+Every `dy` it derived across that mismatch already contained the shift, and the
+write then added it a second time.
+
+Result: every mark on a shifted instrument landed a whole shift low — on the
+sonata, **79 of 115** grand-staff marks off centre with a median error of 130
+user units, and **27 collisions**, the worst putting a `pp` on the staff below
+it and a `dim.` inside a tuplet bracket, both with the room they had asked for
+sitting unused above them. The tell was exact: `cErr == ish` on every affected
+mark (331 vs 330, 349 vs 350, 387 vs 390). **When a deviation equals a known
+constant of the system to the unit, it is that constant being applied twice —
+look for the second application, not for a placement rule that is subtly
+wrong.** After the fix: 31 off centre (median 2), 9 collisions, and the shift
+DECISIONS unchanged (identical `ishValues`), which is what proves the fix
+touched the composition and not the measurement policy.
+
+Two corollaries, both cheap and both load-bearing:
+
+- **A reset must restore ONE frame, not most of one.** `resetSystem` dropped
+  the tag and subtracted the shift from staff transforms but left it baked into
+  mark transforms, so a re-run measured shifted marks against unshifted bands:
+  `dOwn` came out a shift too large and `dOther` a shift too small, the demand
+  came out lower than the first run's, and the shift decayed across re-mounts.
+  If a pass owns a term in someone else's transform, it owns removing it too.
+- **Read a deferred tag with the same parser everywhere.** textlayout used
+  `parseInt`, `pagefit`'s `alignStaffRows` `parseFloat`, on the same attribute.
+  At zoom 75 the device grid is 40/3 user units, so the shift is fractional and
+  the two would disagree by up to a unit — a mark drifting off its own staff at
+  one zoom only.
+
+Fixture `engr_instrGapCenteredDynamic` holds it: a single-staff instrument above
+a grand staff (instrgap only shifts instruments BELOW a boundary, so the shape
+matters), asserting both that the shift HAPPENED — otherwise the fixture passes
+vacuously — and that the grand staff's own dynamic stays centred. The
+whole-document inventory that found it is
+`test/composer-inspect/phasec/cb-markplace.js`; `cb-instrgap.js` could not see
+this class of defect at all, because it only measures marks at an instrument
+BOUNDARY and these were mis-placed inside their own grand staff.

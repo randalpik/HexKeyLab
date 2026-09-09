@@ -122,6 +122,23 @@ const attrNum = (el: Element, name: string): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
+/** The inter-instrument shift already GRANTED to this mark's instrument by
+ *  render/instrgap.ts, which tags the amount and leaves the transform to this
+ *  pass (it owns a mark's transform). A tag is not a transform, so `svgBox`
+ *  reads a tagged mark at its PRE-shift position while its staff rows — real
+ *  transforms, written by instrgap and re-applied by pagefit's alignStaffRows
+ *  — read POST-shift. Every box of a tagged mark is therefore taken in the
+ *  post-shift frame (`markBox`), which is the frame the write at the end
+ *  composes in: a `dy` derived from a raw box already contains the shift, and
+ *  `translate(dx, dy + ish)` would then apply it TWICE (Max, 2026-09-09:
+ *  sonata p. 9 m. 131's `pp` and p. 17 m. 37's `dim.` sat a whole shift low —
+ *  on the staff and the tuplet bracket below — with the room they had asked
+ *  for lying unused above them).
+ *  parseFloat, not parseInt: at zoom 75 the device grid is 40/3 user units, so
+ *  the shift is fractional, and alignStaffRows reads the same tag as a float —
+ *  truncating here would desync a mark from its own staff by up to a unit. */
+const ishOf = (el: Element): number => parseFloat(el.getAttribute('data-hkl-ishift') ?? '0') || 0;
+
 /** An element's bbox in a shared reference frame — the coordinate system of
  *  `frame` (the system's parent: the page-margin group, or the splice host's
  *  equivalent). `getCTM()` maps to the nearest viewport, and for everything
@@ -208,6 +225,12 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
   const frameCtm = frame && typeof frame.getCTM === 'function' ? frame.getCTM() : null;
   if (!frameCtm) return;
   const frameInv = frameCtm.inverse();
+  /* A mark's box in the frame its transform is written in — see `ishOf`. */
+  const markBox = (el: Element): Box | null => {
+    const b = svgBox(el, frameInv);
+    const ish = b ? ishOf(el) : 0;
+    return b && ish ? { ...b, top: b.top + ish, bottom: b.bottom + ish } : b;
+  };
   const grandLowerOf = new Map<number, number>();
   const grandUpperOf = new Map<number, number>();
   for (const [u, l] of opts.grandPairs) { grandLowerOf.set(u, l); grandUpperOf.set(l, u); }
@@ -253,7 +276,7 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
     if (!isText(el)) continue;
     const measure = el.closest('g.measure');
     if (!measure) continue;
-    const box = svgBox(el, frameInv);
+    const box = markBox(el);
     if (!box || !(box.right > box.left)) continue;
     const { left, right } = barsFor(measure);
     let dx = 0;
@@ -278,7 +301,7 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
     const rows = rowsFor(measure);
     const own = rows.find((r) => r.n === staffN);
     if (!own) continue;
-    const box = shifted.get(el) ?? svgBox(el, frameInv);
+    const box = shifted.get(el) ?? markBox(el);
     if (!box || !(box.right > box.left) || !(box.bottom > box.top)) continue;
     const place = el.getAttribute('data-place') ?? ((box.top + box.bottom) / 2 > (own.top + own.bottom) / 2 ? 'below' : 'above');
     const idx = rows.indexOf(own);
@@ -383,7 +406,7 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
     for (const g of Array.from(sys.querySelectorAll(MARK_SEL + ', ' + ABOVE_SEL))) {
       if (moving.has(g)) continue;
       if (attrNum(g, 'data-staff') !== row.n || (g.getAttribute('data-place') ?? (g.classList.contains('tempo') ? 'above' : '')) !== side) continue;
-      const b = svgBox(g, frameInv);
+      const b = markBox(g);
       if (!b || b.right < left - PAD || b.left > right + PAD || !(b.right > b.left)) continue;
       out.push(b);
     }
@@ -458,7 +481,7 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
     const rows = rowsFor(measure);
     const own = rows.find((r) => r.n === staffN);
     if (!own) continue;
-    const raw = shifted.get(el) ?? svgBox(el, frameInv);
+    const raw = shifted.get(el) ?? markBox(el);
     if (!raw || !(raw.right > raw.left) || !(raw.bottom > raw.top)) continue;
     const s = shifts.get(el);
     const box = s ? shiftBox(raw, 0, s.dy) : raw;          // `shifted` already carries dx
@@ -537,7 +560,7 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
   for (const [el, { dx, dy }] of shifts) {
     /* render/instrgap.ts moved this mark's whole instrument; it tags the amount
        and leaves the transform to this pass, which owns it. */
-    const ish = attrNum(el, 'data-hkl-ishift') ?? 0;
+    const ish = ishOf(el);
     if (!dx && !dy && !ish) continue;
     el.setAttribute('transform', `translate(${dx}, ${dy + ish})`);
     if (dy) el.setAttribute('data-hkl-vshift', String(dy));

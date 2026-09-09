@@ -259,11 +259,17 @@ function inkOf(sys: Element, staffNs: ReadonlyArray<number>, frameInv: DOMMatrix
   return out;
 }
 
-/** Undo a previous run: the tags, and the transforms this pass owns. A MARK's
- *  transform belongs to textlayout (which reruns right after and composes the
- *  tag), so only the tag is dropped there. A STAFF's transform is rewritten by
- *  alignStaffRows from the path text, but this pass must measure raw geometry
- *  now, so its own contribution is subtracted. */
+/** Undo a previous run: the tags, and this pass's contribution to every
+ *  transform — so the whole system is measured below in ONE frame, the raw
+ *  pre-shift one. A STAFF's transform is rewritten by alignStaffRows from the
+ *  path text, so its shift is subtracted rather than the transform dropped.
+ *  A MARK's transform belongs to textlayout (which reruns right after and
+ *  composes the tag) and reads `translate(dx, dy + prev)`, so the shift is
+ *  subtracted there too, leaving the `dy` that `data-hkl-vshift` records.
+ *  Dropping only the TAG and leaving `prev` baked in was measuring a shifted
+ *  instrument's marks against unshifted bands: `dOwn` came out `prev` too
+ *  large and `dOther` `prev` too small, so a re-run of the same music asked
+ *  for less than the first run and the shift decayed (2026-09-09). */
 function resetSystem(sys: Element): void {
   for (const el of Array.from(sys.querySelectorAll('[data-hkl-ishift]'))) {
     const prev = parseFloat(el.getAttribute('data-hkl-ishift') ?? '0') || 0;
@@ -271,10 +277,12 @@ function resetSystem(sys: Element): void {
     if (el.classList.contains('staff')) {
       const { tx, ty } = translateOf(el);
       el.setAttribute('transform', `translate(${tx}, ${ty - prev})`);
-    } else if (el.matches(STAFF_SEL) || el.matches(STARTID_SEL)) {
-      /* textlayout owns marks; the rest are ours alone. */
-      if (el.matches('g.dynam, g.dir, g.hairpin, g.tempo')) continue;
-      el.removeAttribute('transform');
+    } else if (el.matches('g.dynam, g.dir, g.hairpin, g.tempo')) {
+      /* textlayout owns the whole transform; only our term comes off. */
+      if (prev) {
+        const { tx, ty } = translateOf(el);
+        el.setAttribute('transform', `translate(${tx}, ${ty - prev})`);
+      }
     } else {
       el.removeAttribute('transform');
     }
