@@ -22,6 +22,21 @@
 //     above the piano (2026-09-06).
 // Marks whose horizontal ranges overlap (a dynamic with its hairpin, a stacked
 // dynamic + text) move as ONE block so Verovio's own stacking survives.
+//   • SAME-MOMENT text is laid out side by side instead (2026-09-08, backlog
+//     Layout: "beat-level positioning of text is not being preserved from
+//     Finale import, leading to vertical overlap of elements that should be
+//     horizontally adjacent", sonata p. 21 m. 99). Verovio draws two marks
+//     sharing an anchor at one x and stacks them vertically; the block rule
+//     above would then preserve that stack forever. Finale had separated them
+//     with a `default-x`/`relative-x` nudge the importer deliberately drops
+//     (correct placement relative to each other, not Finale replication), so
+//     the separation is derived: the DYNAMIC keeps its place — it anchors the
+//     cluster — and the <dir>s follow to its right, centred on its line.
+//     `data-tstamp` gates it, so only a genuinely identical anchor qualifies
+//     and two marks a beat apart whose boxes merely touch stay stacked. A run
+//     that would cross the measure's barline or reach the next cluster is
+//     abandoned: with no room, Verovio's stack is the honest answer. The
+//     sonata has exactly three such groups, each a dynamic plus one word.
 //   • A TEXT mark (dynamic, expressive text — not a hairpin) is also kept
 //     INSIDE its own measure: a box that overlaps one of the measure's barlines
 //     is moved off it to the near side, half a unit clear (Max, 2026-09-05:
@@ -184,6 +199,7 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
   if (!marks.length) return;
   /* Undo a previous run's shifts before measuring (idempotency). */
   for (const m of marks) {
+    m.removeAttribute('data-hkl-clamped');
     if (!m.hasAttribute('data-hkl-vshift') && !m.hasAttribute('data-hkl-hshift')) continue;
     m.removeAttribute('transform'); m.removeAttribute('data-hkl-vshift'); m.removeAttribute('data-hkl-hshift');
   }
@@ -294,6 +310,62 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
     if (cur.length) clusters.push(cur);
   }
 
+  /* ── same-moment text: side by side, not stacked ──
+     Two marks sharing an anchor are drawn by Verovio at ONE x and stacked
+     vertically, and the cluster rule above then preserves that stack verbatim
+     (a dynamic-bearing cluster is left exactly where Verovio put it). Finale
+     separated them with a `default-x`/`relative-x` nudge the importer
+     deliberately drops — correct placement relative to each other, not Finale
+     replication — so the separation is DERIVED here: the dynamic keeps its
+     place (it anchors the cluster) and the <dir>s follow to its right, on its
+     line. `data-tstamp` is what makes this safe: only a genuinely identical
+     anchor qualifies, never merely overlapping boxes, so two marks a beat
+     apart that happen to touch stay stacked. A run that would cross the
+     measure's barline or reach the next cluster is abandoned — Verovio's stack
+     is the honest fallback when there is no room (sonata p. 21 m. 99 is 259
+     tenths wide holding one dotted-half chord).
+     Boxes are adjusted IN PLACE so the vertical phases below measure the
+     un-stacked cluster, and the writes compose (Phase C accumulates). */
+  const anchorOf = (el: Element): string | null => el.getAttribute('data-tstamp');
+  for (const cl of clusters) {
+    if (cl.length < 2) continue;
+    const anchorMark = cl.find((m) => m.el.classList.contains('dynam'));
+    if (!anchorMark) continue;
+    const at = anchorOf(anchorMark.el);
+    if (at === null) continue;
+    const movers = cl.filter((m) => m !== anchorMark
+      && m.el.classList.contains('dir') && anchorOf(m.el) === at);
+    if (!movers.length) continue;
+    const anch = anchorMark.box;
+    /* Only when Verovio actually stacked them — a mover clear of the anchor's
+       vertical band. Marks already side by side need nothing. */
+    if (!movers.every((m) => m.box.top >= anch.bottom - PAD || m.box.bottom <= anch.top + PAD)) continue;
+    const measure = anchorMark.el.closest('g.measure');
+    const bars = measure ? barsFor(measure) : null;
+    let limit = bars && bars.right ? bars.right.left - PAD : Infinity;
+    for (const other of clusters) {
+      if (other === cl || key(other[0]) !== key(cl[0])) continue;
+      for (const o of other) if (o.box.left > anch.right) limit = Math.min(limit, o.box.left - PAD);
+    }
+    let run = anch.right;
+    for (const m of cl) if (!movers.includes(m)) run = Math.max(run, m.box.right);
+    const plan: { m: Mark; dx: number; dy: number }[] = [];
+    let room = true;
+    for (const m of movers.slice().sort((a, b) => a.box.left - b.box.left)) {
+      const dx = Math.round((run + PAD) - m.box.left);
+      const dy = Math.round((anch.top + anch.bottom) / 2 - (m.box.top + m.box.bottom) / 2);
+      if (m.box.right + dx > limit) { room = false; break; }
+      plan.push({ m, dx, dy });
+      run = m.box.right + dx;
+    }
+    if (!room) continue;
+    for (const { m, dx, dy } of plan) {
+      m.box = { left: m.box.left + dx, right: m.box.right + dx, top: m.box.top + dy, bottom: m.box.bottom + dy };
+      const sh = shifts.get(m.el);
+      if (sh) { sh.dx += dx; sh.dy += dy; } else shifts.set(m.el, { dx, dy });
+    }
+  }
+
   /* Obstacles: glyph groups of a staff row overlapping an x-range, plus marks
      attached to that staff on the gap side — never the moving cluster's own
      marks (a place-below hairpin moving UP toward its staff met itself here
@@ -343,8 +415,16 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
       const clear = mode === 'mingap' ? INSTR_CLEAR : PAD;
       let limit = lower ? lower.top - clear : Infinity;
       if (lower) for (const b of obstacleBoxes(lower, left, right, 'above', moving)) limit = Math.min(limit, b.top - clear);
+      const wanted = dy;
       dy = Math.min(dy, limit - bottom);
       if (dy < 0) dy = 0;
+      /* What the clearance to the NEXT INSTRUMENT refused. render/instrgap.ts
+         grants it by moving that instrument, and this pass then reruns with the
+         room (only a 'mingap' lower row is another instrument's — grand pairs
+         centre, and their pad is not a shortage worth widening a system for). */
+      if (mode === 'mingap' && wanted - dy >= 1) {
+        for (const m of cl) m.el.setAttribute('data-hkl-clamped', String(Math.round(wanted - dy)));
+      }
     } else if (dy < 0) {
       /* Moving up: stay below the upper staff's line and its content. */
       let limit = upper.bottom + PAD;
@@ -358,7 +438,11 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
     if (Math.abs(dy) < 3) continue;                     // under a third of a device pixel: leave it
     for (const m of cl) {
       const s = shifts.get(m.el);
-      if (s) s.dy = dy; else shifts.set(m.el, { dx: 0, dy });
+      /* ADD, not assign: the same-moment un-stack above may already have put a
+         dy on a mover, and a centred cluster must carry it along. (Before that
+         rule existed every dy here was the first, so this is equivalent for
+         every other cluster.) */
+      if (s) s.dy += dy; else shifts.set(m.el, { dx: 0, dy });
     }
   }
 
@@ -424,11 +508,18 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
       const idx = a.rows.indexOf(a.own);
       const upper = idx > 0 ? a.rows[idx - 1] : null;
       if (upper) {
-        const clear = grandUpperOf.get(a.staffN) === upper.n ? PAD : INSTR_CLEAR;
+        const acrossInstruments = grandUpperOf.get(a.staffN) !== upper.n;
+        const clear = acrossInstruments ? INSTR_CLEAR : PAD;
         let limit = upper.bottom + clear;
         for (const b of obstacleBoxes(upper, a.box.left, a.box.right, 'below', moving)) limit = Math.max(limit, b.bottom + clear);
         dy = Math.max(dy, limit - a.box.top);
         if (dy > 0) dy = 0;
+        /* The slur-clearance lift this instrument boundary refused — sonata
+           p. 21 m. 94's "rit." stopped one space under the viola with the
+           slur still inside its box, and only more room can finish it. */
+        if (acrossInstruments && want - dy <= -1) {
+          a.el.setAttribute('data-hkl-clamped', String(Math.round(dy - want)));
+        }
       }
       dy = Math.round(dy);
       if (Math.abs(dy) < 3) continue;
@@ -438,9 +529,17 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
   }
 
   /* ── writes ── */
+  /* A mark whose instrument moved but which needs no shift of its own is not
+     in the map yet; it still has to receive the instrument's translate. */
+  for (const m of marks) {
+    if (m.hasAttribute('data-hkl-ishift') && !shifts.has(m)) shifts.set(m, { dx: 0, dy: 0 });
+  }
   for (const [el, { dx, dy }] of shifts) {
-    if (!dx && !dy) continue;
-    el.setAttribute('transform', `translate(${dx}, ${dy})`);
+    /* render/instrgap.ts moved this mark's whole instrument; it tags the amount
+       and leaves the transform to this pass, which owns it. */
+    const ish = attrNum(el, 'data-hkl-ishift') ?? 0;
+    if (!dx && !dy && !ish) continue;
+    el.setAttribute('transform', `translate(${dx}, ${dy + ish})`);
     if (dy) el.setAttribute('data-hkl-vshift', String(dy));
     if (dx) el.setAttribute('data-hkl-hshift', String(dx));
   }

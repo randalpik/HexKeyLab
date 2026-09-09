@@ -139,9 +139,19 @@ export function alignStaffRows(sys: Element, grid: number): number {
     let rel = (refY - ys[0]) % grid;
     rel = ((rel % grid) + grid) % grid;
     if (rel > grid / 2) rel -= grid;
+    /* An inter-instrument shift (render/instrgap.ts) is an INTENDED offset for
+       this row, on top of the phase correction. It has to be re-applied here
+       because this function is the sole owner of a `g.staff` transform — it
+       rewrites every row from the staff-line path text (`staffLineYs` ignores
+       the transform) and `placePage` calls it FIRST, so a translate written
+       anywhere else would be destroyed before it was ever measured. The shift
+       is a whole multiple of `grid`, so `rel` above is arithmetically
+       unchanged by it and the crispness invariant holds. */
+    const ish = parseFloat(staff.getAttribute('data-hkl-ishift') ?? '0') || 0;
+    const want = rel + ish;
     const { tx, ty } = translateOf(staff);
-    if (Math.abs(rel - ty) < 1e-4) continue;
-    staff.setAttribute('transform', `translate(${tx}, ${rel})`);
+    if (Math.abs(want - ty) < 1e-4) continue;
+    staff.setAttribute('transform', `translate(${tx}, ${want})`);
     moved++;
   }
   return moved;

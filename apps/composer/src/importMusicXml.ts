@@ -41,6 +41,13 @@ const intOf = (parent: Element | null, tag: string, dflt: number): number => {
   const n = parseInt(t, 10);
   return Number.isFinite(n) ? n : dflt;
 };
+/** A MusicXML `divisions`-typed child, which is a DECIMAL (and may be signed —
+ *  <offset> routinely is), so it cannot go through `intOf`. */
+const numOf = (parent: Element | null, tag: string, dflt: number): number => {
+  const t = textOf(parent, tag);
+  const n = parseFloat(t);
+  return Number.isFinite(n) ? n : dflt;
+};
 
 /* ── duration mapping ──────────────────────────────────────────────────────── */
 
@@ -818,12 +825,20 @@ interface OctaveRec {
 function scanPartDirections(
   part: PartInfo,
   globalStaffOf: (localStaff: number) => number,
-): { dynamics: DynamRec[]; hairpins: HairpinRec[]; dirs: DirRec[]; tempi: TempoRec[]; octaves: OctaveRec[] } {
+): {
+  dynamics: DynamRec[]; hairpins: HairpinRec[]; dirs: DirRec[]; tempi: TempoRec[]; octaves: OctaveRec[];
+  /** How many <direction>s carried a non-zero <offset>, and how many of those
+   *  reached past their bar's start and were clamped to beat 1. Reported once
+   *  per import so a file whose offsets cross barlines is visible, not silent. */
+  offsetsApplied: number; offsetsClamped: number;
+} {
   const dynamics: DynamRec[] = [];
   const hairpins: HairpinRec[] = [];
   const dirs: DirRec[] = [];
   const tempi: TempoRec[] = [];
   const octaves: OctaveRec[] = [];
+  let offsetsApplied = 0;
+  let offsetsClamped = 0;
   /** Metronome / sound-tempo fields of a <direction> (or a bare <sound>). */
   const tempoFields = (node: Element): { bpm?: number; unit: number; dots: number; showMm: boolean } => {
     const metro = node.querySelector('metronome');
@@ -880,7 +895,28 @@ function scanPartDirections(
         const place: 'above' | 'below' = placement === 'above' ? 'above' : 'below';
         const localStaff = intOf(node, 'staff', 1);
         const staff = globalStaffOf(localStaff);
-        const tstamp = Math.max(1, tstampOf(cur));
+        /* <offset> (source divisions, signed, possibly fractional) is where the
+           direction BELONGS. Finale writes a mark at the end of a measure's
+           element stream and offsets it back to its real beat, so dropping it
+           put three of the sonata's p. 21 m. 99 marks at tstamp 4 in a 3/4 bar
+           — ON the barline (backlog, Layout). It moves the single @tstamp, so
+           the playback effect travels with the glyph: every offset the sonata
+           carries is sound="no", but the offset position is the musically
+           correct one (m. 43's diminuendo wedge is written AT the bar end with
+           offset -480, i.e. un-offset it would begin on the barline).
+           A negative offset reaching past the bar start clamps to beat 1 rather
+           than migrating into the previous measure — decisions.md declined
+           import-time anchor migration ("it changes the document and would
+           stack the mark on any downbeat text", m. 90 'cresc.'). There is no
+           upper clamp: a wedge stop legitimately sits at beats+1, which is what
+           textlayout's barline nudge exists for. */
+        const offsetDiv = numOf(node, 'offset', 0);
+        const tstampRaw = Math.max(1, tstampOf(cur));
+        const tstamp = Math.max(1, tstampOf(cur + offsetDiv));
+        if (offsetDiv !== 0) {
+          offsetsApplied++;
+          if (tstampOf(cur + offsetDiv) < 1) offsetsClamped++;
+        }
         /* A tempo direction (metronome and/or sound tempo): ONE <tempo> per
            direction, its <words> as the verbal text — every tempo marking in
            the piece, not only the first (backlog, Layout P1: the sonata's
@@ -928,8 +964,12 @@ function scanPartDirections(
             const num = parseInt(osh.getAttribute('number') ?? '1', 10) || 1;
             if (otype === 'down' || otype === 'up') {
               const size = parseInt(osh.getAttribute('size') ?? '8', 10) || 8;
+              /* An <octave-shift> keeps the UN-offset anchor: its div span decides
+                 which notes get rewritten an octave, so an offset there would
+                 change content rather than placement, and the bracket is drawn
+                 from @startid/@endid anyway. */
               openOct.set(num, {
-                mi, tstamp, div: cur, staff,
+                mi, tstamp: tstampRaw, div: cur, staff,
                 dis: size >= 15 ? 15 : 8,
                 place: otype === 'down' ? 'above' : 'below',
               });
@@ -938,7 +978,7 @@ function scanPartDirections(
               if (o) {
                 octaves.push({
                   startMeasureIdx: o.mi, startTstamp: o.tstamp, startDiv: o.div,
-                  endMeasureIdx: mi, endTstamp: tstamp, endDiv: cur,
+                  endMeasureIdx: mi, endTstamp: tstampRaw, endDiv: cur,
                   staff: o.staff, dis: o.dis, place: o.place,
                 });
                 openOct.delete(num);
@@ -962,7 +1002,7 @@ function scanPartDirections(
       }
     }
   });
-  return { dynamics, hairpins, dirs, tempi, octaves };
+  return { dynamics, hairpins, dirs, tempi, octaves, offsetsApplied, offsetsClamped };
 }
 
 /* ── main ──────────────────────────────────────────────────────────────────── */
@@ -1089,6 +1129,17 @@ export function importMusicXml(xmlText: string): string {
   const dirScans = parts.map((part) => scanPartDirections(
     part, (ls) => part.globalStaff[Math.min(Math.max(ls, 1), part.staffCount)],
   ));
+  /* Say once what the <offset> handling did. The anchor used to be dropped
+     silently (backlog, Layout), and a clamp means a direction's offset reached
+     past its bar's start — worth seeing rather than guessing at later. */
+  {
+    const applied = dirScans.reduce((n, d) => n + d.offsetsApplied, 0);
+    const clamped = dirScans.reduce((n, d) => n + d.offsetsClamped, 0);
+    if (applied) {
+      console.info(`[import] <offset> applied to ${applied} direction(s)`
+        + (clamped ? `; ${clamped} clamped to beat 1 (reached past the bar start)` : ''));
+    }
+  }
   const octSpans: OctaveRec[] = dirScans.flatMap((d) => d.octaves);
   /* The spans covering (global staff, measure), clipped to that measure. */
   const octSpansFor = (g: number, mi: number): MeasureOctSpan[] => {

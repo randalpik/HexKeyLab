@@ -1958,6 +1958,34 @@ const PAGE_SPLICE = {
     skipCursorTrace: true,
   },
 
+  /* THE pagination identity invariants (2026-09-08). A multi-page score, then:
+   *   1. mount every page, unmount every page, mount them all again — the
+   *      pagination must be byte-identical. A mount is a VIEW operation; it
+   *      must DRAW the pagination, never re-decide it.
+   *   2. change the zoom — the pagination must be byte-identical. Zoom has no
+   *      effect on layout.
+   * Both were violated for weeks and neither had a test: the sonata paginated
+   * to 30 pages at first paint and 31 after scrolling down and back up, and a
+   * zoom silently re-paginated 31 -> 30 by restoring a partition cached before
+   * the pagination was settled. Asserted via
+   * FIXTURE_ASSERTIONS.pagePaginationIdentityUnderMountAndZoom. */
+  pagePaginationIdentityUnderMountAndZoom: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 400; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+    `,
+    /* Same reason as pagePlacementOwned: the cursor walk over a deliberately
+       multi-page score costs many seconds for coverage the small cursor
+       fixtures already provide. */
+    skipCursorTrace: true,
+    fullRender: 'a 400-bar document built from the blank doc derives on its first render, and the zoom assertion deliberately re-engraves three times — the point is that those re-engraves must NOT change the pagination',
+  },
+
   /* Phase 1: a system whose topmost content is a <text> (a tempo above the
    * first staff) is placed by the same rule — its above-extent is read from
    * the post-processed bbox, never modelled. The first system on page 1 sits
@@ -5587,6 +5615,72 @@ const PHASE1 = {
     `,
   },
 
+  /* Same-moment dynamic + text lay out SIDE BY SIDE, not stacked (backlog,
+     Layout: sonata p. 21 m. 99's piano `p` and "dim." both landed at tstamp 1
+     because Finale's horizontal nudge is dropped at import, so Verovio drew
+     them at one x and stacked them vertically — and the block-cluster rule
+     preserved that stack). Imported rather than built through the model, since
+     import is how the case arises: two <direction>s at position 0 of a wide
+     4/4 measure, same staff, same placement, hence the same @tstamp. */
+  engr_sameMomentDynamAndDirSideBySide: {
+    setup: `
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>T</part-name></score-part></part-list>'
+        + '<part id="P1"><measure number="1">'
+        + '<attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        + '<direction placement="below"><direction-type><dynamics><p/></dynamics></direction-type></direction>'
+        + '<direction placement="below"><direction-type><words font-style="italic">cresc.</words></direction-type></direction>'
+        + '<note><pitch><step>C</step><octave>5</octave></pitch><duration>24</duration><voice>1</voice><type>quarter</type></note>'
+        + '<note><pitch><step>D</step><octave>5</octave></pitch><duration>24</duration><voice>1</voice><type>quarter</type></note>'
+        + '<note><pitch><step>E</step><octave>5</octave></pitch><duration>24</duration><voice>1</voice><type>quarter</type></note>'
+        + '<note><pitch><step>F</step><octave>5</octave></pitch><duration>24</duration><voice>1</voice><type>quarter</type></note>'
+        + '</measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+
+  /* MusicXML import — <offset> is the direction's real beat (backlog, Layout).
+     Finale writes a mark at the END of a measure's element stream and offsets
+     it back, so ignoring <offset> put the sonata's p. 21 m. 99 "dim."/"rit." at
+     tstamp 4 in a 3/4 bar — on the barline, where textlayout's nudge then had
+     to shove them back inside. Four cases in one document:
+       m.1  a bar-end "dim." and "rit." with offset -48 (= 2 beats at
+            divisions 24) must land on beat 2, alongside a `p` on beat 1;
+       m.2  an <octave-shift> stop carrying an offset must be UNAFFECTED — its
+            div span decides which notes get rewritten an octave, so an offset
+            there would change content, not placement;
+       m.3  an offset reaching past the bar start clamps to beat 1 (anchor
+            migration into the previous measure is deliberately not attempted),
+            and a small positive offset yields a fractional tstamp. */
+  phase5_musicxml_direction_offset: {
+    setup: `
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>T</part-name></score-part></part-list>'
+        + '<part id="P1"><measure number="1">'
+        + '<attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>3</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        + '<direction placement="below"><direction-type><dynamics><p/></dynamics></direction-type></direction>'
+        + '<note><pitch><step>C</step><octave>5</octave></pitch><duration>72</duration><voice>1</voice><type>half</type><dot/></note>'
+        + '<direction placement="below"><direction-type><words font-style="italic">dim.</words></direction-type><offset>-48</offset></direction>'
+        + '<direction placement="above"><direction-type><words font-style="italic">rit.</words></direction-type><offset>-48</offset></direction>'
+        + '</measure><measure number="2">'
+        + '<direction placement="above"><direction-type><octave-shift type="down" number="1" size="8"/></direction-type></direction>'
+        + '<note><pitch><step>C</step><octave>6</octave></pitch><duration>24</duration><voice>1</voice><type>quarter</type></note>'
+        + '<note><pitch><step>D</step><octave>6</octave></pitch><duration>24</duration><voice>1</voice><type>quarter</type></note>'
+        + '<note><pitch><step>E</step><octave>6</octave></pitch><duration>24</duration><voice>1</voice><type>quarter</type></note>'
+        + '<direction placement="above"><direction-type><octave-shift type="stop" number="1" size="8"/></direction-type><offset>-24</offset></direction>'
+        + '</measure><measure number="3">'
+        + '<direction placement="below"><direction-type><words>clampme</words></direction-type><offset>-48</offset></direction>'
+        + '<direction placement="below"><direction-type><words>fracme</words></direction-type><offset>6</offset></direction>'
+        + '<note><pitch><step>C</step><octave>5</octave></pitch><duration>72</duration><voice>1</voice><type>half</type><dot/></note>'
+        + '</measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+
   /* MusicXML import — ottava (<octave-shift>). MusicXML encodes bracketed notes
      at SOUNDING pitch and prints them shifted; the model stores WRITTEN pitch
      and derives the sounding one from <octave>. So an 8va (Finale writes
@@ -7663,6 +7757,81 @@ export const FIXTURE_ASSERTIONS = {
       })()` },
   ],
 
+  /* The dynamic anchors the cluster and must not move horizontally; the <dir>
+     ends up clear to its RIGHT and vertically overlapping it (not stacked). */
+  engr_sameMomentDynamAndDirSideBySide: [
+    { name: 'both marks share one @tstamp and one staff/place',
+      expr: `(() => {
+        const dyn = document.querySelector('#score g.dynam');
+        const dir = document.querySelector('#score g.dir');
+        if (!dyn || !dir) return { ok: false, detail: 'dynam=' + !!dyn + ' dir=' + !!dir };
+        const k = (e) => e.getAttribute('data-tstamp') + '/' + e.getAttribute('data-staff') + '/' + e.getAttribute('data-place');
+        if (k(dyn) !== k(dir)) return { ok: false, detail: k(dyn) + ' vs ' + k(dir) };
+        if (k(dyn).indexOf('null') >= 0) return { ok: false, detail: 'missing data-tstamp/staff/place: ' + k(dyn) };
+        return { ok: true };
+      })()` },
+    { name: 'the <dir> sits clear to the RIGHT of the dynamic, overlapping it vertically',
+      expr: `(() => {
+        const dyn = document.querySelector('#score g.dynam').getBoundingClientRect();
+        const dir = document.querySelector('#score g.dir').getBoundingClientRect();
+        if (!(dir.left >= dyn.right - 1)) return { ok: false, detail: 'dir.left=' + dir.left.toFixed(1) + ' dyn.right=' + dyn.right.toFixed(1) + ' (still stacked)' };
+        const vOverlap = Math.min(dyn.bottom, dir.bottom) - Math.max(dyn.top, dir.top);
+        if (!(vOverlap > 0)) return { ok: false, detail: 'no vertical overlap: ' + vOverlap.toFixed(1) };
+        return { ok: true };
+      })()` },
+    { name: 'the dynamic itself was not shifted horizontally',
+      expr: `(() => {
+        const dyn = document.querySelector('#score g.dynam');
+        const hs = dyn.getAttribute('data-hkl-hshift');
+        return (hs === null || hs === '0') ? { ok: true } : { ok: false, detail: 'dynam data-hkl-hshift=' + hs };
+      })()` },
+  ],
+
+  /* <offset> moves the direction's single @tstamp (so the playback effect
+     travels with the glyph) for dynam/dir/tempo/hairpin, and is IGNORED for
+     <octave-shift>. */
+  phase5_musicxml_direction_offset: [
+    { name: 'bar-end "dim."/"rit." with offset -48 land on beat 2, not the barline',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const find = (tag, text) => [...doc.querySelectorAll(tag)]
+          .find(x => (x.textContent || '').trim() === text);
+        const dim = find('dir', 'dim.'), rit = find('dir', 'rit.');
+        if (!dim || !rit) return { ok: false, detail: 'dirs=' + [...doc.querySelectorAll('dir')].map(x => (x.textContent||'').trim()).join('|') };
+        const got = dim.getAttribute('tstamp') + '/' + dim.getAttribute('place')
+          + ' ' + rit.getAttribute('tstamp') + '/' + rit.getAttribute('place');
+        if (got !== '2/below 2/above') return { ok: false, detail: got };
+        return { ok: true };
+      })()` },
+    { name: 'the un-offset `p` on the same measure stays on beat 1',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const d = [...doc.querySelectorAll('dynam')].find(x => (x.textContent || '').trim() === 'p');
+        if (!d) return { ok: false, detail: 'no p' };
+        return d.getAttribute('tstamp') === '1' ? { ok: true } : { ok: false, detail: 'tstamp=' + d.getAttribute('tstamp') };
+      })()` },
+    { name: 'offset past the bar start clamps to beat 1; a small offset is fractional',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const find = (t) => [...doc.querySelectorAll('dir')].find(x => (x.textContent || '').trim() === t);
+        const c = find('clampme'), f = find('fracme');
+        if (!c || !f) return { ok: false, detail: 'missing' };
+        const got = c.getAttribute('tstamp') + ' ' + f.getAttribute('tstamp');
+        return got === '1 1.25' ? { ok: true } : { ok: false, detail: got };
+      })()` },
+    { name: '<octave-shift> ignores its offset: span still ends at the bar end',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const oct = doc.querySelector('octave');
+        if (!oct) return { ok: false, detail: 'no octave' };
+        /* Un-offset the stop sits at cur=72 (tstamp 4 of a 3/4 bar); honoring
+           the -24 offset would pull it to tstamp 3. data-hkl-t1 is the absolute
+           MEI tick (quarter = 16), so the two differ by one quarter. */
+        const t1 = oct.getAttribute('data-hkl-t1');
+        return t1 === '96' ? { ok: true } : { ok: false, detail: 'data-hkl-t1=' + t1 };
+      })()` },
+  ],
+
   /* Ottava: one <octave> anchored to the first/last bracketed slot (Verovio
      draws the bracket from @startid/@endid only), the spanned notes written an
      octave BELOW their MusicXML (sounding) pitch, and the notes outside the
@@ -9556,13 +9725,28 @@ export const FIXTURE_ASSERTIONS = {
       })()` },
   ],
   pageUserBreakReflows: [
-    { name: 'a user page break splits its line, starts a page, and the rest re-packs (no one-line page, page list matches the DOM)',
-      expr: `(() => {
+    { name: 'a user PAGE break splits its line and starts a page (+1 line, +1 page), each page from the break on re-balances, and removing it restores this layout exactly',
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model, r = H.renderer;
         const pb = r['pageBreaks'];
-        for (let i = 0; i < 3 && !pb.ownershipActive(); i++) H.reRender();
+        const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+        /* SETTLE between steps. reRender is not synchronous, and snapping
+           straight after it reads a mid-render layout — which is why this
+           fixture used to compare an unsettled 'after' against an unsettled
+           'base' and pass by accident (2026-09-09). */
+        const settled = async () => {
+          for (let i = 0; i < 600; i++) {
+            const b = document.getElementById('renderBusy');
+            if (pb.lineStarts().length > 0 && (!b || b.hidden)
+                && !pb.balanceJobActive() && r.extentsJobState() === null) return true;
+            await sleep(25);
+          }
+          return false;
+        };
+        for (let i = 0; i < 3 && !pb.ownershipActive(); i++) { H.reRender(); await settled(); }
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        if (!await settled()) return { ok: false, detail: 'never settled before the break' };
         const mountAll = () => {
           for (const p of document.querySelectorAll('#score .score-page.score-page-pending')) r['mountPage'](+p.dataset.page);
         };
@@ -9571,7 +9755,7 @@ export const FIXTURE_ASSERTIONS = {
           const pages = [...document.querySelectorAll('#score .score-page')];
           const per = pages.map((p) => p.querySelectorAll('g.system').length);
           return { domPages: pages.length, owned: pb.pageStarts().length, lines: pb.lineStarts().length,
-                   per, singles: per.filter((n) => n === 1).length };
+                   per, perStr: per.join(','), singles: per.filter((n) => n === 1).length };
         };
         const base = snap();
         if (base.domPages < 3) return { ok: false, detail: 'need >= 3 pages to cascade into; got ' + base.domPages };
@@ -9584,24 +9768,38 @@ export const FIXTURE_ASSERTIONS = {
         const wasLineStart = lineSet.has(ids[mi]);
         m.togglePageBreakAt(mi);
         H.reRender();
+        if (!await settled()) return { ok: false, detail: 'never settled with the break' };
         const withBreak = snap();
         const startsLine = pb.lineStarts().includes(ids[mi]);
         const startsPage = pb.pageStarts().includes(ids[mi]);
         const verified = pb.verifyRenderedPartition(r['container'], m, r['pageVirt'] ? r['pageVirt'].pageCount : 1, r['pageBreaksCtx']());
         m.togglePageBreakAt(mi);
         H.reRender();
+        if (!await settled()) return { ok: false, detail: 'never settled after removing the break' };
         const after = snap();
         const fails = [];
         if (wasLineStart) fails.push('picked measure was already a line start (not a mid-system break)');
         if (!startsLine) fails.push('break measure does not start a line (line was not split)');
         if (!startsPage) fails.push('break measure does not start a page');
         if (withBreak.owned !== withBreak.domPages) fails.push('page list ' + withBreak.owned + ' != DOM ' + withBreak.domPages);
-        if (withBreak.singles > 0) fails.push(withBreak.singles + ' single-system page(s): ' + JSON.stringify(withBreak.per));
+        if (withBreak.singles > 0) fails.push(withBreak.singles + ' single-system page(s): ' + withBreak.perStr);
         if (!verified) fails.push('verifyRenderedPartition false');
-        if (after.domPages !== base.domPages || after.lines !== base.lines) {
-          fails.push('removing the break did not restore (' + after.domPages + '/' + after.lines + ' vs ' + base.domPages + '/' + base.lines + ')');
+        /* Splitting a mid-system line adds exactly one line and one page here.
+           Not a general round-trip contract — a section break need not behave
+           this way — but for a PAGE break on THIS document it is exact, and
+           each page from the break on re-balances (Max, 2026-09-09). */
+        if (withBreak.lines !== base.lines + 1) {
+          fails.push('expected +1 line with the break, got ' + base.lines + ' -> ' + withBreak.lines);
         }
-        return { ok: fails.length === 0, detail: fails.join('; ') || ('mi=' + mi + ' pages ' + base.domPages + '->' + withBreak.domPages) };
+        if (withBreak.domPages !== base.domPages + 1) {
+          fails.push('expected +1 page with the break, got ' + base.domPages + ' -> ' + withBreak.domPages);
+        }
+        if (after.domPages !== base.domPages || after.lines !== base.lines || after.perStr !== base.perStr) {
+          fails.push('removing the break did not restore this layout:\\n  base  ' + base.domPages + 'p/' + base.lines + 'l [' + base.perStr + ']'
+            + '\\n  after ' + after.domPages + 'p/' + after.lines + 'l [' + after.perStr + ']');
+        }
+        return { ok: fails.length === 0, detail: fails.join('; ')
+          || ('mi=' + mi + ' ' + base.domPages + 'p/' + base.lines + 'l -> ' + withBreak.domPages + 'p/' + withBreak.lines + 'l -> restored') };
       })()` },
   ],
 
@@ -11522,6 +11720,71 @@ export const FIXTURE_ASSERTIONS = {
         return { ok: true, detail: moved ? 'tail moved' : 'fit without moving' };
       })()` },
   ],
+  pagePaginationIdentityUnderMountAndZoom: [
+    { name: 'mount -> unmount -> remount leaves the pagination byte-identical',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const pb = H.renderer['pageBreaks'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        const sig = () => pb.lineStarts().join(',') + '#' + pb.pageStarts().join(',');
+        const pageNums = () => [...document.querySelectorAll('#score .score-page')].map((p) => +p.dataset.page);
+        H.renderer.setMountWindowEnabled(false);
+        const mountAll = () => { for (const p of pageNums()) H.renderer['mountPage'](p); };
+        const unmountAll = () => { for (const p of pageNums()) { try { H.renderer['unmountPage'](p); } catch (e) {} } };
+        mountAll();
+        const a = sig();
+        if (pageNums().length < 2) return { ok: false, detail: 'need a multi-page score, got ' + pageNums().length };
+        unmountAll();
+        const b = sig();
+        mountAll();
+        const c = sig();
+        if (a !== b) return { ok: false, detail: 'unmounting changed the pagination:\\n  mounted   ' + a + '\\n  unmounted ' + b };
+        if (a !== c) return { ok: false, detail: 'remounting changed the pagination:\\n  first  ' + a + '\\n  second ' + c };
+        return { ok: true };
+      })()` },
+    { name: 'a zoom change leaves the pagination byte-identical',
+      expr: `(async () => {
+        const H = window.__hkl_composer;
+        const pb = H.renderer['pageBreaks'];
+        const sleep = (ms) => new Promise((r2) => setTimeout(r2, ms));
+        /* reRender is NOT synchronous: read immediately after it and the
+           partition is still empty (this assertion first failed that way). */
+        const settled = async () => {
+          for (let i = 0; i < 400; i++) {
+            const b = document.getElementById('renderBusy');
+            if (pb.lineStarts().length > 0 && (!b || b.hidden)) return true;
+            await sleep(25);
+          }
+          return false;
+        };
+        const sig = () => pb.lineStarts().join(',') + '#' + pb.pageStarts().join(',');
+        if (!await settled()) return { ok: false, detail: 'never settled before the zoom' };
+        const before = sig();
+        const z0 = H.renderer['zoom'];
+        const seen = [];
+        try {
+          for (const z of [75, 50, 100]) {
+            H.renderer.setZoom(z);
+            H.reRender();
+            if (!await settled()) return { ok: false, detail: 'never settled at zoom ' + z };
+            seen.push([z, sig()]);
+          }
+        } finally {
+          H.renderer.setZoom(z0);
+          H.reRender();
+          await settled();
+        }
+        const bad = seen.filter(([, x]) => x !== before);
+        if (bad.length) {
+          return { ok: false, detail: 'zoom re-paginated at ' + bad.map(([z]) => z + '%').join(', ')
+            + '\\n  before ' + before + '\\n  after  ' + bad[0][1] };
+        }
+        if (sig() !== before) return { ok: false, detail: 'restoring the zoom changed the pagination' };
+        return { ok: true };
+      })()` },
+  ],
+
   pagePlacementOwned: [
     { name: 'every mounted page satisfies live staff tops == placePage(live extents), after the derive and after a splice',
       expr: `(() => {

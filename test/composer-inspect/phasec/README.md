@@ -580,3 +580,24 @@ stay false).
   clipped PNG per page — one full page per file, so a backlog item that names
   a page can be looked at directly.
   `node test/composer-inspect/phasec/pageshots.mjs <outDir> 1,16,17 [probe.js]`.
+
+- **cb-instrgap.js** — the inter-instrument clearance census + residue
+  inventory (2026-09-08), the committed replacement for the ephemeral 09-06
+  proximity probe. Per ADJACENT INSTRUMENT PAIR per system: each boundary
+  mark's `dOwn` (distance to its own staff's near line), `dOther` (to the
+  nearest ink or line of the other instrument in its x-range) and
+  `demand = max(0, min(dOwn, CAP) - dOther)`, both sides of the boundary
+  (an upper staff's below-marks AND a lower staff's above-marks, since after
+  the `<offset>` fix the two can share a moment); a bare ink-floor term; the
+  **residue inventory** — every `g` in a system outside any `g.staff`, by class,
+  tagged `staff` / `startid` / `NEITHER`, which is what decides how a shift
+  pass can attribute non-staff elements; and the system-spanning-path check
+  (there are 113 of them, the systems' left lines, which a shift must lengthen).
+  Splits `systemsMovedByMarksOnly` from `systemsMovedByInkFloorOnly` — the
+  09-06 estimate of 39 systems was the mark term alone.
+  `--arg "rows=0"` for summary + residue only; `--arg "from=N,limit=M"` to
+  chunk the per-mark rows (there are 151). Every measurement is in the
+  page-margin group's user space, and **degenerate boxes are rejected at the
+  ink/mark consumers** — see lessons.md "Verovio emits zero-size `g.accid`
+  groups".
+  `node test/composer-inspect/phasec/runner.mjs test/composer-inspect/phasec/cb-instrgap.js --arg "rows=0"`

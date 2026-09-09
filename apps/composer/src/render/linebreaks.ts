@@ -77,9 +77,6 @@ const FIT_MAX = 1.45;
 export const MIN_FILL = 0.65;
 /** Measure moves one repartition may perform before giving up (derive). */
 const MAX_REPAIR_STEPS = 64;
-/** Leading clef+key block estimate (Verovio units) when a window has no
- *  measurable sig glyphs (e.g. C major, percussion clef edge cases). */
-const SIG_FALLBACK = 450;
 /** Naturals windows one repartition may render before giving up (derive).
  *  Repairs examine a handful of lines, so this is generous. */
 const MAX_ENSURES = 4;
@@ -344,7 +341,7 @@ function computeUserBreakSig(model: ComposerModel): string {
 
 /** Measure ids that MUST start a line: those directly preceded by a user
  *  sb/pb in the doc's section stream. */
-function hardStartIds(model: ComposerModel): Set<string> {
+export function hardStartIds(model: ComposerModel): Set<string> {
   const out = new Set<string>();
   const section = model.getDoc().querySelector('section');
   if (!section) return out;
@@ -476,16 +473,38 @@ export class PageLineBreaks {
    *  window renders. Only missing/dirty ids are ever (re)written, so a cached
    *  value never drifts — determinism of the refill depends on it. */
   private naturals = new Map<string, number>();
-  /** Leading clef+key block width (Verovio units), measured from the last
-   *  naturals window. Persisted across refills so a line whose naturals are
-   *  all cached judges legality by the same yardstick as one that measured. */
-  private sigW = SIG_FALLBACK;
-  /** The folded head (everything before `<section>`) of the naturals window
-   *  that last measured `sigW`. The leading clef+key a window draws is fully
-   *  determined by that head — `serializeRangeForRender` folds the running
-   *  scoreDef context at `lo` into it — so `sigW` is re-measured only when a
-   *  window's head differs from this (A7). '' = never measured. */
-  private sigHeadKey = '';
+  /** Leading clef+key block width (Verovio units) PER SIGNATURE CONTEXT.
+   *
+   *  This used to be one scalar plus the head key of the window that last
+   *  measured it, and `fillOf` applied it as a document-level constant. That
+   *  is wrong for any score whose clef or key changes: the leading signature a
+   *  line draws depends on the context AT THAT LINE, and the retained scalar
+   *  was whichever window happened to measure last. Two sessions rendering the
+   *  same document by different routes therefore judged every line against a
+   *  different yardstick and settled on different partitions — measured on the
+   *  sonata as 1296.70 in one session against 1135.08 in another, a 14 %
+   *  difference in the term, enough to flip lines sitting near a fill
+   *  boundary and to shift a whole system at the tight ones (2026-09-08).
+   *
+   *  Keyed by the running clef+key at a measure (`signatureCtxKeys`), which is
+   *  what determines the block Verovio draws; the value for a context is the
+   *  same whenever it is measured, so the partition no longer depends on
+   *  measurement order. */
+  private sigWByCtx = new Map<string, number>();
+  /** Running clef+key context key per measure, document order (`sigCtxVer` =
+   *  the `docVersion()` it was computed for). */
+  private sigCtxKeys: string[] = [];
+  private sigCtxVer = -1;
+  /** Lookups that found no measured width. Should always be 0 — every context
+   *  is measured up front — so a non-zero value is a defect, reported rather
+   *  than absorbed. */
+  private sigCtxMisses = 0;
+  /** Which contexts missed, and how often — for diagnosis. */
+  private sigCtxMissKeys = new Map<string, number>();
+  /** Contexts whose width could not be measured on the last attempt; non-zero
+   *  makes `ensureSigCtx` retry rather than settle for an incomplete table. */
+  private sigCtxPending = 0;
+  private lastSigCtxMeasured = 0;
   /** Per-measure live-doc serializations (+ their id order) captured whenever
    *  a partition is committed against the current document. The refill diffs
    *  the live doc against these to find the TRUE changed run — it never
@@ -541,8 +560,12 @@ export class PageLineBreaks {
     this.startIds = null;
     this.pageStartIds = [];
     this.naturals.clear();
-    this.sigW = SIG_FALLBACK;
-    this.sigHeadKey = '';
+    this.sigWByCtx.clear();
+    this.sigCtxKeys = [];
+    this.sigCtxVer = -1;
+    this.sigCtxMisses = 0;
+    this.sigCtxMissKeys.clear();
+    this.sigCtxPending = 0;
     this.sig.clear();
     this.sigOrder = [];
     this.sigEl.clear();
@@ -1120,8 +1143,7 @@ export class PageLineBreaks {
         ensures++;
         const w = this.measureWindow(model, meiMeasures, ids, i, j, ctx);
         if (w == null) return false;
-        if (w.sigW > 0) this.sigW = w.sigW;
-        i = j + 1;
+        i = j + 1;                       // measureWindow files sigW by context
       }
       return true;
     };
@@ -1139,7 +1161,9 @@ export class PageLineBreaks {
     const fillOf = (k: number): number | null => {
       const from = starts[k], to = lineEnd(k);
       if (!ensureRange(from, to - 1)) return null;
-      let acc = this.sigW;
+      const sig = this.sigWAt(from);
+      if (sig === null) return null;
+      let acc = sig;
       for (let i = from; i < to; i++) acc += this.naturals.get(ids[i]) ?? 0;
       return acc / budget;
     };
@@ -1227,7 +1251,9 @@ export class PageLineBreaks {
   /** Fill of line k of `starts` from cached naturals; null when any is missing. */
   private lineFill(starts: number[], k: number, ids: string[]): number | null {
     const from = starts[k], to = k + 1 < starts.length ? starts[k + 1] : ids.length;
-    let acc = this.sigW;
+    const sig = this.sigWAt(from);
+    if (sig === null) return null;
+    let acc = sig;
     for (let i = from; i < to; i++) {
       const w = this.naturals.get(ids[i]);
       if (w === undefined) return null;
@@ -1261,7 +1287,14 @@ export class PageLineBreaks {
     }
     const refLens: number[] = [];
     for (let k = kLo; k <= kHi; k++) refLens.push((k + 1 < starts.length ? starts[k + 1] : n) - starts[k]);
-    const res = balanceSection(ws, this.sigW / budget, refLens, {
+    /* balanceSection takes ONE sig/budget for the section it balances; a
+       section can still contain a key change, so this is the section's own
+       leading context rather than a per-line value. Deterministic (which is
+       the defect being fixed); per-line exactness inside the balancer is a
+       separate refinement. */
+    const sigSec = this.sigWAt(mFrom);
+    if (sigSec === null) return none('sig context unmeasured');
+    const res = balanceSection(ws, sigSec / budget, refLens, {
       minFill: MIN_FILL, fitMax: FIT_MAX, lambda, mergeMax: MERGE_MAX,
     });
     if (!res) return none(kHi === starts.length - 1 ? 'no legal balance: stub kept' : 'no legal balance: section kept');
@@ -1316,8 +1349,7 @@ export class PageLineBreaks {
       while (j + 1 <= hi && !this.naturals.has(ids[j + 1]) && j + 1 - i < maxRun) j++;
       const w = this.measureWindow(model, meiMeasures, ids, i, j, ctx);
       if (w == null) return false;
-      if (w.sigW > 0) this.sigW = w.sigW;
-      left -= j - i + 1;
+      left -= j - i + 1;               // measureWindow files sigW by context
       i = j + 1;
     }
     return true;
@@ -1379,6 +1411,25 @@ export class PageLineBreaks {
       this.pageStartIds = pageLines.map((li) => newStarts[li]);
     }
     lb.ms = Math.round(performance.now() - t0);
+  }
+
+  /** Measure and cache the natural width of EVERY measure, synchronously.
+   *
+   *  The balance and every later legality check are only as complete as the
+   *  naturals cache. It used to be filled opportunistically — the idle balance
+   *  job walked the document after the paint — so removing that job in favour
+   *  of a pre-paint balance left an edit's `balanceTouched` reporting
+   *  'naturals incomplete' and declining to repair a section it should have
+   *  (fixture pageBalanceDeleteAtSectionEnd). Filling it here means the
+   *  pre-paint balance judges every section with full information and every
+   *  later edit finds what it needs already cached. Import pays; edits do not.
+   *  False when a window failed — the caller then treats the balance as
+   *  incomplete rather than acting on partial data. */
+  warmAllNaturals(model: ComposerModel, ctx: PageBreaksCtx): boolean {
+    const meiMeasures = model.allMeasures();
+    if (!meiMeasures.length) return true;
+    const ids = measureIds(meiMeasures);
+    return this.measureMissing(model, meiMeasures, ids, 0, ids.length - 1, ctx, Infinity) === true;
   }
 
   /** Arm the idle balance job after a derive: check every section not yet
@@ -1507,6 +1558,138 @@ export class PageLineBreaks {
    *  scoreDefs and inline clefs inside the window do not change the LEADING
    *  signature and never did change today's measurement, so they don't
    *  trigger. `fillOf` already applies `sigW` as a document-level constant. */
+  /** The leading clef+key width for the line starting at measure `idx`, or
+   *  NULL when that context has no measurement. There is deliberately no
+   *  fallback: every context in the document is measured up front
+   *  (`ensureSigCtx`), so a miss is a defect, and a plausible-but-invented
+   *  width is exactly what let the old document-level scalar hide. Callers
+   *  refuse the refill — the same contract as a window that cannot be
+   *  measured ("never guesses"). */
+  private sigWAt(idx: number): number | null {
+    const key = this.sigCtxKeys[idx];
+    const w = key === undefined ? undefined : this.sigWByCtx.get(key);
+    if (w !== undefined && w > 0) return w;
+    this.sigCtxMisses++;
+    if (key !== undefined) this.sigCtxMissKeys.set(key, (this.sigCtxMissKeys.get(key) ?? 0) + 1);
+    console.error('[page-breaks] no leading-signature width for context '
+      + (key ?? '<unkeyed measure ' + idx + '>') + ' — refusing the refill');
+    return null;
+  }
+
+  /** Running clef+key context per measure, in document order, recomputed only
+   *  when the document version changes. The leading signature a system draws
+   *  is the clef and key in force at its first measure — meter is excluded
+   *  because mid-score systems do not redraw it (see measureLeadingSigW) — so
+   *  the context is the head scoreDef's key and per-staff clef, advanced by
+   *  interior scoreDefs and by inline clefs inside the layers. */
+  private ensureSigCtx(
+    model: ComposerModel, meiMeasures: Element[], ids: string[], ctx: PageBreaksCtx,
+  ): void {
+    const ver = model.docVersion();
+    const keysCurrent = this.sigCtxVer === ver && this.sigCtxKeys.length === meiMeasures.length;
+    if (keysCurrent && this.sigCtxPending === 0) return;
+    const doc = model.getDoc();
+    const clef = new Map<string, string>();
+    let key = '';
+    const applyScoreDef = (sd: Element): void => {
+      const k = sd.getAttribute('key.sig');
+      if (k !== null) key = k;
+      for (const sdf of Array.from(sd.querySelectorAll('staffDef'))) {
+        const n = sdf.getAttribute('n');
+        if (n === null) continue;
+        const shape = sdf.getAttribute('clef.shape'), line = sdf.getAttribute('clef.line');
+        const dis = sdf.getAttribute('clef.dis'), place = sdf.getAttribute('clef.dis.place');
+        if (shape !== null || line !== null) clef.set(n, (shape ?? '') + (line ?? '') + (dis ? dis + (place ?? '') : ''));
+        const kk = sdf.getAttribute('key.sig');
+        if (kk !== null) key = kk;                 // per-staff key sigs are uniform here
+      }
+    };
+    const keyOf = (): string => {
+      const parts: string[] = [];
+      for (const n of Array.from(clef.keys()).sort()) parts.push(n + ':' + clef.get(n));
+      return 'k=' + key + '|c=' + parts.join(',');
+    };
+    const out: string[] = [];
+    const seen = new Set<Element>();
+    /* Document order over BOTH kinds, so a measure nested in an <ending>
+       (volta) is reached — walking `section`'s direct children alone missed
+       those and bailed the whole walk. `scoreDef` never nests in `scoreDef`,
+       so this sequence is exactly the running-context stream. */
+    const score = doc.querySelector('score');
+    for (const node of Array.from(score?.querySelectorAll('scoreDef, measure') ?? [])) {
+      if (node.localName === 'scoreDef') { applyScoreDef(node); continue; }
+      out.push(keyOf());
+      seen.add(node);
+      /* Inline clefs change the clef for every LATER line. */
+      for (const c of Array.from(node.querySelectorAll('layer > clef'))) {
+        const st = c.closest('staff')?.getAttribute('n');
+        if (!st) continue;
+        const shape = c.getAttribute('shape'), line = c.getAttribute('line');
+        const dis = c.getAttribute('dis'), place = c.getAttribute('dis.place');
+        clef.set(st, (shape ?? '') + (line ?? '') + (dis ? dis + (place ?? '') : ''));
+      }
+    }
+    /* A document whose measures are not the section's direct children (or a
+       shape this walk does not recognise) gets no keys rather than wrong ones;
+       sigWAt then reports misses instead of inventing a yardstick. */
+    this.sigCtxKeys = out.length === meiMeasures.length && meiMeasures.every((m) => seen.has(m)) ? out : [];
+    this.sigCtxVer = ver;
+    this.measureAllSigCtx(model, ids, ctx);
+  }
+
+  /** Measure the leading clef+key width of EVERY signature context in the
+   *  document, each at its own first measure.
+   *
+   *  Deliberate rather than opportunistic: the width is only ever measurable
+   *  at a window's FIRST measure (a naturals window is one system, so only
+   *  `ids[lo]` draws a leading signature), and the windows a refill happens to
+   *  need cover only a few contexts — on the sonata 6 of 20, leaving one
+   *  context spanning 45 measures unmeasured. Rather than fall back, each
+   *  missing context gets a two-measure window whose head IS a measure in that
+   *  context, which is measurable by construction: a context exists only
+   *  because some measure carries it. Widths depend on the context alone, not
+   *  on document content, so they survive edits and are measured at most once
+   *  per context per document load (cleared only by `invalidate`). */
+  private measureAllSigCtx(model: ComposerModel, ids: string[], ctx: PageBreaksCtx): void {
+    if (!this.sigCtxKeys.length) { this.sigCtxPending = 0; return; }
+    const firstIdx = new Map<string, number>();
+    this.sigCtxKeys.forEach((k, i) => { if (!firstIdx.has(k)) firstIdx.set(k, i); });
+    const failed: string[] = [];
+    let measured = 0;
+    for (const [key, idx] of firstIdx) {
+      if (this.sigWByCtx.has(key)) continue;
+      const hi = Math.min(ids.length - 1, idx + 1);
+      let ok = false;
+      try {
+        const sub = model.serializeRangeForRender(idx, hi, { hejiEnabled: model.getHejiEnabled() }, this.viewStaves);
+        const tk = ctx.naturalsToolkit();
+        tk.setOptions(ctx.naturalsOptions());
+        if (tk.loadData(sub)) {
+          const w = measureLeadingSigW(tk.renderToSVG(1, {}), ids[idx]);
+          if (w > 0) { this.sigWByCtx.set(key, w); measured++; ok = true; }
+        }
+      } catch { /* falls through to `failed` */ }
+      if (!ok) failed.push(key);
+    }
+    this.sigCtxPending = failed.length;
+    if (failed.length) {
+      console.error('[page-breaks] could not measure the leading signature for '
+        + failed.length + ' of ' + firstIdx.size + ' contexts: ' + failed.join(' | '));
+    }
+    this.lastSigCtxMeasured = measured;
+  }
+
+  /** Context coverage, for the probes and the index check: `distinct` in the
+   *  document vs `contexts` measured, `pending` unmeasurable, and any lookup
+   *  `misses` (all three should be 0). */
+  sigCtxStats(): { contexts: number; misses: number; keyed: boolean; distinct: number;
+                   pending: number; measured: string[]; missing: Array<[string, number]> } {
+    return { contexts: this.sigWByCtx.size, misses: this.sigCtxMisses, keyed: this.sigCtxKeys.length > 0,
+             distinct: new Set(this.sigCtxKeys).size, pending: this.sigCtxPending,
+             measured: Array.from(this.sigWByCtx.keys()),
+             missing: Array.from(this.sigCtxMissKeys.entries()) };
+  }
+
   private measureWindow(
     model: ComposerModel, meiMeasures: Element[], ids: string[],
     needLo: number, needHi: number, ctx: PageBreaksCtx,
@@ -1532,13 +1715,17 @@ export class PageLineBreaks {
         if (span === null || !(span > 0)) return null;
         this.naturals.set(ids[i], span);
       }
-      const sectionAt = sub.indexOf('<section');
-      const headKey = sectionAt >= 0 ? sub.slice(0, sectionAt) : '';
-      if (this.sigW !== SIG_FALLBACK && headKey !== '' && headKey === this.sigHeadKey) {
-        return { sigW: this.sigW };
+      /* The leading signature this window draws belongs to the context at
+         `lo` — keyed semantically (clef+key) rather than by the folded head
+         string, so the value can be looked up per LINE without serializing. */
+      this.ensureSigCtx(model, meiMeasures, ids, ctx);
+      const ctxKey = this.sigCtxKeys[lo];
+      if (ctxKey !== undefined) {
+        const known = this.sigWByCtx.get(ctxKey);
+        if (known !== undefined && known > 0) return { sigW: known };
       }
       const sigW = measureLeadingSigW(svg, ids[lo]);
-      if (sigW > 0) this.sigHeadKey = headKey;
+      if (sigW > 0 && ctxKey !== undefined) this.sigWByCtx.set(ctxKey, sigW);
       return { sigW };
     } finally {
       this.lastRefillStats.naturalsMs += Math.round(performance.now() - tWin);

@@ -3856,3 +3856,60 @@ Quantizing ascent/descent to whole pixels ourselves reproduces the measured
 geometry EXACTLY on all six of the header's readings, on every engine, with no
 baseline reseed. When replacing a browser measurement with arithmetic, match
 its rounding, not just its ratio.
+
+## Verovio emits zero-size `g.accid` groups; a degenerate bbox is not geometry (2026-09-08)
+
+`getBBox()` on some `g.accid` groups returns **0×0 at the element's local
+origin**. Mapped into the page-margin frame those land at **(0, 0)**, so any
+pass that treats every glyph box as ink sees "ink" at the top-left of every
+system. The first run of `cb-instrgap.js` reported 90 cross-instrument
+ink-floor violations and 96 of 113 systems needing a shift; **78 of the 90 had a
+gap of exactly 0**, which is the tell — real ink does not touch to the unit
+across three quarters of a document.
+
+The guard belongs at the **consumers** (`!(box.right > box.left) || !(box.bottom
+> box.top)`), which is exactly where `textlayout.ts` already puts it — **not**
+in the box helper itself: a staff **line** is a horizontal path with zero bbox
+height by construction, so rejecting zero-height boxes centrally deletes every
+staff row and silently zeroes the whole measurement (observed: the same census
+went from 96 systems to 0).
+
+Corollary for any new geometry pass: a suspiciously round extremum (a gap of
+exactly 0, a distance of exactly the frame origin) is a measurement artifact
+until proven otherwise. Check the DISTRIBUTION of the outliers before reporting
+a count — the shape of the 78 zeros identified the cause in one look, where the
+headline "90 violations" read as a real finding.
+
+## Wait for the PARTITION to stop changing, not for a busy flag (2026-09-08)
+
+`pb.balanceJobActive()` is false **before the balance job is armed**, so
+`waitFor(() => !pb.balanceJobActive())` satisfies instantly and hands back a
+pre-settle layout. On the sonata the partition is still **31 pages / 115 lines
+at t=0** and only reaches its final **30 / 113 at ~5.7 s**. Every early
+measurement of a whole-document layout is therefore fiction, and it fails in a
+way that looks like a real bug: mounts race a partition that is about to change
+under them, leaving a stale extra page div and an apparently dropped system.
+Four messages of this session went into "measures are vanishing" before Max
+recognised the output as a state he had seen before HIS render settled.
+
+Wait on the thing you care about instead — poll `pageStartIds` + `lineStarts`
+until the signature is unchanged for several seconds AND `renderBusy` is hidden
+AND `balanceJobActive()` is false AND `extentsJobState()` is null. The committed
+probes (`cb-instrgap.js`, `cb-pagegrowth.js`) carry a `settleFully()` helper and
+report a `settled` flag so a rushed number cannot be quoted again.
+
+Corollary: a probe that mounts pages is not a passive observer. Mounting one
+page alone, from a settled state, is the only reading shown not to perturb the
+layout; `mountAllPages` both drives the repair cascade and exposes any
+disagreement between the page-div count and the settled pins.
+
+## The page-div count is frozen at the initial castoff (2026-09-08)
+
+Page divs come from `this.tk.getPageCount()` at `loadData`, before any
+post-process runs and before the partition settles. If the settled partition
+ends up with FEWER pages than that castoff, the extra div stays and
+`mountAllPages` renders one line short — the stale div sits empty. Ordinary
+reading never notices (mounting the last page alone draws it correctly), but
+**PDF export mounts all pages**, so it would export a system short. Found while
+enabling `render/instrgap.ts`, whose taller systems shrink the sonata's settled
+partition from 31 pages to 30.

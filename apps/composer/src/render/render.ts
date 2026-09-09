@@ -14,9 +14,11 @@ import { ScrollSplicer, type SpliceCtx } from './splice.js';
 import {
   PageLineBreaks, partitionFromLayout, systemStartsFromPageSvg, injectPins,
   type PageBreaksCtx,
-  scheduleIdle, MIN_FILL, viewKeyOf } from './linebreaks.js';
+  scheduleIdle, MIN_FILL, viewKeyOf, hardStartIds,
+} from './linebreaks.js';
 import { PageSystemSplicer, type PageSpliceCtx, type SpliceRequest } from './pagesplice.js';
 import { layoutBelowStaffText } from './textlayout.js';
+import { layoutInstrumentGaps } from './instrgap.js';
 import { styleTitleBlock } from './pageheader.js';
 import { layoutFlippedSlurs } from './slurlayout.js';
 import { layoutTupletNums } from './tupletnums.js';
@@ -33,11 +35,6 @@ function indexCheckEnabled(): boolean {
  *  means every page below the edit was full, which is a whole-document reflow
  *  by any name. */
 const MAX_CASCADE_STEPS = 64;
-/** Pages whose sections the balancer fixes SYNCHRONOUSLY before the first
- *  pinned paint (the reader's initial view; the IntersectionObserver's mount set
- *  is not known before the paint, so this stands in for it). Everything else is
- *  balanced by the idle job. Decided with Max, 2026-09-05. */
-const INITIAL_BAND_PAGES = 2;
 /** How far below MIN_FILL Verovio's `minLastJustification` is set — see the
  *  comment at its use in buildOptions. */
 const LAST_JUSTIFY_SLACK = 0.05;
@@ -165,6 +162,21 @@ const BASE_OPTIONS = {
     'staff@n', 'dynam@staff', 'dynam@place', 'dir@staff', 'dir@place', 'hairpin@staff', 'hairpin@place',
     /* Tempo marks join the above-staff slur-clearance rule (render/textlayout.ts). */
     'tempo@staff', 'tempo@place',
+    /* The inter-instrument shift pass (render/instrgap.ts) has to attribute
+       every element of a system to an instrument. Staves carry `staff@n` and
+       the text marks carry `@staff`, but a TIE is ambiguous by geometry — of
+       the sonata's 290, 131 sit in the piano's band, 43 in the viola's, 72 in
+       the inter-instrument gap and 44 above every staff (cb-instrgap.js) — so
+       it needs its start note. fermata/trill/lv are note-anchored in our MEI
+       (`@startid`, no `@staff` — probed) so they resolve the same way; <octave>
+       does carry `@staff`. (grpSym and label are unambiguous by band, and
+       mNum / ending / voltaBracket ride the top staff.) */
+    'tie@startid', 'fermata@startid', 'trill@startid', 'lv@startid', 'octave@staff',
+    /* `@tstamp` (as `data-tstamp`) tells the same-moment un-stack rule in
+       render/textlayout.ts which marks genuinely share an anchor — Verovio
+       stacks those vertically, and only an identical anchor (not merely
+       overlapping boxes) justifies laying them out side by side instead. */
+    'dynam@tstamp', 'dir@tstamp',
     /* The flipped-slur re-draw (render/slurlayout.ts) needs each slur's side
        and endpoints: `data-curvedir`, `data-startid`, `data-endid`. */
     'slur@curvedir', 'slur@startid', 'slur@endid',
@@ -419,7 +431,18 @@ class Renderer {
     return {
       ...BASE_OPTIONS,
       ...geom,
-      pageMarginTop: crispMarginTop(geom.pageMarginTop, preset.scale, preset.evenWidth),
+      /* pageMarginTop is a LAYOUT input and must NOT vary with zoom (2026-09-08).
+         It used to be crispMarginTop(base, scale, evenWidth), which nudges the
+         margin up to +1 unit at scale 50 and +3 at scale 75 to land the staff
+         phase on its stroke parity. That changes the usable page height, so a
+         pagination settled at 100 % OVERFLOWED at 75/50, which invalidated the
+         cached partition and re-derived a different one — zoom silently
+         re-paginating the document (31 pages -> 30 on the first zoom).
+         It is also redundant in page view: `placeSystems` chooses the phase of
+         the first staff row and `alignStaffRows` keeps every other row a whole
+         device pixel from it (pagefit.ts), so crispness does not depend on the
+         margin's parity here. */
+      pageMarginTop: geom.pageMarginTop,
       ...breaksOpt,
       header: geomMode === 'page' ? 'auto' : 'none',
       /* Scroll trims the page to its single system; page uses fixed-height pages.
@@ -1202,7 +1225,8 @@ class Renderer {
        2026-09-02), and a page whose systems no longer fit below it spills —
        the tail moves onto page 2 like any other overflow. Pages mounted by
        mountVisiblePages were repaired as they mounted. */
-    this.repairAtMount([1]);
+    /* NO repairAtMount: pagination is settled once, in the render. A mount
+       draws it. (See the Phase 2 note in the derive path.) */
     this.armPageIo();
   }
 
@@ -1266,7 +1290,8 @@ class Renderer {
        not re-paginate under <pb> pins, a section header's reserve is page
        budget the castoff knows nothing about, and a lazy cascade step may have
        parked a block here (repairPagination). Repair it now. */
-    this.repairAtMount([p]);
+    /* NO repairAtMount: a mount must not re-decide pagination — unmount and
+       remount has to be identity. */
   }
 
   /** The page-fit repair for pages that were just MOUNTED (lazy mount, page 1
@@ -1569,11 +1594,10 @@ class Renderer {
       if (this.ledger.length > 200) this.ledger.splice(0, this.ledger.length - 200);
       /* Whatever path ran, the partition now on screen is the right one for
          this layout budget — cache it so returning to this zoom/page scale on
-         an unchanged document skips the castoff pass (A4). */
+         an unchanged document skips the castoff pass (A4). Written AFTER the
+         settle pass at the adopt sites below, so the entry a later zoom
+         restores is the settled pagination, not a pre-cascade one. */
       this.rememberPartition(model);
-      /* Phase 2: measure the unmounted pages' extents in idle time, so the
-         cascade never has to park at the mount boundary once it has run. */
-      this.armExtentsJob(model);
     }
     this.lastRenderedMode = this.viewMode;
     return true;
@@ -1773,7 +1797,46 @@ class Renderer {
        pageHeight, which changes PAGINATION (and we cache page starts too), so
        the coarser-but-safer term is the right one. */
     const unit = CRISP_PRESETS[this.zoom].unit;
-    return `u${unit}|s${this.pageScale}|${model.getHejiEnabled() ? 'heji' : 'plain'}|v${viewKeyOf(this.viewStaves)}`;
+    /* The USER BREAK STRUCTURE is a layout input too, and leaving it out made
+       the cache serve a stale partition across a break toggle: adding a page
+       break split a line and grew the page count, that partition was cached
+       under the same key, and REMOVING the break then restored it instead of
+       re-deriving (fixture pageUserBreakReflows: 5 pages/16 lines where the
+       document's own layout is 4/15). Pre-existing; it only became visible
+       once the initial render balanced the whole document, which made the
+       un-broken layout differ from the broken one. */
+    const breaks = Array.from(hardStartIds(model)).sort().join('.');
+    return `u${unit}|s${this.pageScale}|${model.getHejiEnabled() ? 'heji' : 'plain'}|v${viewKeyOf(this.viewStaves)}|b${breaks}`;
+  }
+
+  /** Measure EVERY page's extents and settle pagination ONCE, synchronously,
+   *  for a FRESHLY ADOPTED partition (2026-09-08, Max's ruling).
+   *
+   *  Pagination used to be finished lazily: an unmounted page's extents were
+   *  unknown at paint time, so its fold was re-checked when it MOUNTED
+   *  (`repairAtMount`, the PARK branch). That makes unmount -> remount
+   *  non-identity — the sonata paginated to 30 pages at first paint and 31
+   *  after scrolling down and back up, with no user action between. A mount is
+   *  a VIEW operation: it must DRAW the pagination, never re-decide it.
+   *
+   *  So the fold is measured from real extents while we are still in the
+   *  render, and the cascade runs once against complete information. After
+   *  this, only a MODEL CHANGE can move a page boundary — through the
+   *  incremental cascade on the edit path, which is untouched.
+   *
+   *  ONLY on adoption. It must not run on the cached-partition path (a zoom:
+   *  that pagination is already settled, and re-running this on the main
+   *  thread for a zoom stalled the browser) nor in the common render tail (an
+   *  edit: it would re-measure the whole document per keystroke and pre-empt
+   *  the incremental cascade the splice model is built on). Import pays for
+   *  it — the rare action, and Max's explicit trade. */
+  private settlePaginationForAdoptedPartition(model: ComposerModel): void {
+    this.armExtentsJob(model);
+    this.runExtentsJobNow();
+    const st = this.pageVirt;
+    if (st && st.pageCount > 0) {
+      this.repairAtMount(Array.from({ length: st.pageCount }, (_, i) => i + 1));
+    }
   }
 
   /** Snapshot the committed partition for the current key, so returning to this
@@ -1823,9 +1886,9 @@ class Renderer {
         this.pageBreaks.verifyRenderedPartition(
           this.container!, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
         if (this.overflowingPage() === 0) {
-          /* A partition the balancer never finished checking (the job was cut
-             short by this very zoom change, say) resumes lazily; a finished
-             one needs nothing. */
+          /* Balancing now completes before the paint, so a cached partition is
+             already balanced. This remains only for the case where a section's
+             naturals window failed pre-paint and it was left unbalanced. */
           if (!cached.balanced) this.pageBreaks.armBalanceJob(model, this.pageBreaksCtx());
           return;
         }
@@ -1846,7 +1909,7 @@ class Renderer {
         this.pageBreaks.verifyRenderedPartition(
           this.container!, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
         const segSpill = this.overflowingPage();
-        if (segSpill === 0) { this.pageBreaks.armBalanceJob(model, this.pageBreaksCtx()); return; }
+        if (segSpill === 0) { this.settlePaginationForAdoptedPartition(model); return; }
         console.warn('[page-breaks] segmented pagination overflows page ' + segSpill
           + ' — falling back to the single-pass castoff');
       }
@@ -1868,7 +1931,7 @@ class Renderer {
         this.pageBreaks.verifyRenderedPartition(
           this.container!, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
         const spill = this.overflowingPage();
-        if (spill === 0) { this.pageBreaks.armBalanceJob(model, this.pageBreaksCtx()); return; }
+        if (spill === 0) { this.settlePaginationForAdoptedPartition(model); return; }
         console.warn('[page-breaks] adopted pagination overflows page ' + spill + ' — painting Verovio\'s own layout instead');
         this.pageBreaks.invalidate();
       }
@@ -2615,7 +2678,34 @@ class Renderer {
   private balanceInitialBand(model: ComposerModel): void {
     const budget = this.tk ? this.budgetFromToolkit(this.tk) : null;
     if (budget == null) return;
-    this.pageBreaks.balanceInitialBand(model, this.pageBreaksCtx(), budget, INITIAL_BAND_PAGES);
+    /* THE WHOLE DOCUMENT, not a band (2026-09-08, Max's ruling). Balancing
+       used to cover the first INITIAL_BAND_PAGES here and leave the rest to an
+       idle job armed after the paint — and that job is a multi-step sequence
+       that ANY re-render cancels (`balanceJob.cancelled = true`). Measured on
+       the sonata: the sequence walks 115 -> 115 -> 114 -> 113 lines over ~4.5 s,
+       and a zoom landing mid-sequence abandons it there, leaving the partition
+       at an intermediate state that nothing ever resumes (`budgetW` is zeroed
+       by the re-render and only re-measured when a repartition is attempted).
+       Three different, perfectly stable settled layouts came out of the same
+       document that way, depending only on when the zoom happened — including
+       one that left pagination repaired against a partition still in motion,
+       which is where four measures went missing. Balancing to completion
+       before the paint makes the settled partition a function of the document:
+       there is no interruptible window to observe.
+
+       `pages: Infinity` makes `lastLine` the whole partition. This path writes
+       `startIds`/`pageStartIds` directly rather than through `commitPartition`
+       precisely because it runs pre-paint, so covering the whole document adds
+       no splice or re-entrancy risk — only work. Edits keep their own reaction
+       (`balanceTouched` with BALANCE_LAMBDA, from the refill path), which is
+       where a scoped repair belongs. */
+    /* Naturals for the WHOLE document first, so the balance below judges every
+       section with complete information — and so a later edit's own balance
+       finds them cached instead of reporting 'naturals incomplete'. */
+    if (!this.pageBreaks.warmAllNaturals(model, this.pageBreaksCtx())) {
+      console.warn('[page-balance] could not measure every natural — balancing with what is cached');
+    }
+    this.pageBreaks.balanceInitialBand(model, this.pageBreaksCtx(), budget, Number.POSITIVE_INFINITY);
   }
 
   /** Max justified system width of page 1 of the layout `tk` holds, measured
@@ -2859,6 +2949,23 @@ class Renderer {
       for (const el of targets) repairBarLines(el, pairs);
       const dirGapUser = DIR_GAP_PER_UNIT * CRISP_PRESETS[this.zoom].unit;
       for (const el of targets) layoutBelowStaffText(el, { grandPairs: pairs, dirGapUser });
+      /* Then the inter-instrument clearance (render/instrgap.ts): it needs the
+         marks SETTLED (its metric measures what is actually drawn) and it also
+         has to release textlayout's INSTR_CLEAR clamp, which is what left
+         p. 21 m. 94's "rit." on a slur. Those two wants conflict in time, so
+         textlayout runs again on the systems this pass moved — one extra round
+         is enough by construction: widening only ever LOOSENS a clamp, and the
+         shift granted is exactly the demand the first round could not meet, so
+         the second cannot ask for more. Gated on "this system moved", which on
+         the sonata is 48 of 113. */
+      const instrStaffNs = (this.lastModel?.instruments() ?? []).map((i) => i.staffNs);
+      if (instrStaffNs.length > 1) {
+        const unit = CRISP_PRESETS[this.zoom].unit;
+        const gapOpts = { instrStaffNs, grid: 1000 / this.currentScale(), unitUser: unit * 10 };
+        const shifted = new Set<Element>();
+        for (const el of targets) for (const sys of layoutInstrumentGaps(el, gapOpts)) shifted.add(sys);
+        for (const sys of shifted) layoutBelowStaffText(sys, { grandPairs: pairs, dirGapUser });
+      }
       /* Bracketless tuplet numerals off their beams (render/tupletnums.ts),
          then flipped slurs Verovio carried away from their notes re-drawn at
          them (render/slurlayout.ts; the numerals are its obstacles, so they

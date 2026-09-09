@@ -7271,3 +7271,203 @@ credit keeps `CREDIT_GAP`, a full line of its own size, below the block.
 Fixtures `engr_titleBlockSizes` / `engr_titleBlockWithoutTspanBBox` assert
 360 px and that the title/subtitle boxes MEET (|gap| <= 1.5 px) rather than
 clearing by a line.
+
+## 2026-09-08 — Beat-level text anchoring: `<offset>` honored, same-moment marks un-stacked
+
+**Context**: the two remaining `Layout:` items in backlog.md meet in one
+measure. p. 21 m. 99 (`<measure number="323">` of the sonata) holds six marks
+and exhibits both faults: three land at `tstamp=4` in a **3/4** bar because
+`<offset>` was never read, and the piano's `p` + `dim.` land at an identical
+`(measure, tstamp, staff, place)` because Finale's horizontal nudge is dropped,
+so Verovio draws them at one x and stacks them — the deep stack the 09-06
+proximity metric read as its worst case (785 units below its own staff vs 72
+above the piano). Fixing the anchor first means the inter-instrument pass does
+not pay for stacks that should not exist.
+
+**Numbers re-derived from the XML** (not relayed): of 351 `<direction>`s, 16
+carry `<offset>` and all 16 change their anchor; 33 land at `tstamp > beats`, of
+which 8 come back inside the bar and 25 legitimately stay at the bar end (13 are
+`wedge type="stop"`); and exactly **3** groups collide at an identical anchor —
+`@n` 31, 121, 99 — all three carrying the `default-x`/`relative-x` that
+separated them in Finale.
+
+**The two populations are disjoint.** All 3 collisions sit at `tstamp=1` with no
+offset involved, and none of the 16 offset marks collides with anything. So
+honoring `<offset>` fixes none of the stacks, and the placement rule was a
+required deliverable rather than a contingency — the opposite of the phasing
+first assumed.
+
+1. **`<offset>` is applied to the anchor moment** (`importMusicXml.ts`,
+   `scanPartDirections`), for `dynam`/`dir`/`tempo`/`hairpin` (per direction, so
+   a wedge's start and stop each take their own). It moves the single `@tstamp`,
+   so the playback effect travels with the glyph. Every sonata offset is
+   `sound="no"` — MusicXML asks for visuals only — but the offset position is
+   the musically correct one: m. 43's diminuendo wedge is written AT the bar end
+   with offset −480, so un-offset it *begins on the barline*. Max chose to move
+   both.
+2. **`<octave-shift>` is excluded**: its `startDiv`/`endDiv` decide which notes
+   get rewritten an octave, so an offset there would change content rather than
+   placement, and the bracket is drawn from `@startid`/`@endid` anyway.
+3. **A negative offset past the bar start clamps to beat 1**, not migrating into
+   the previous measure — the same call as the 2026-09-05 entry that declined
+   import-time anchor normalisation ("it changes the document and would stack
+   the mark on any downbeat text"). No upper clamp: `beats+1` is what the
+   barline nudge exists for.
+4. **Finale's horizontal nudges stay dropped**, and the separation is DERIVED
+   (`textlayout.ts`): a cluster's dynamic keeps its place and its same-anchor
+   `<dir>`s move to its right, centred on its line. `@ho` was rejected without a
+   probe on the strength of lessons.md's HEJI finding — it nudges a glyph but
+   reserves no layout space, so it could not ask Verovio to make room. Gated on
+   `dynam@tstamp`/`dir@tstamp` (new in `svgAdditionalAttribute`, mirrored in
+   `@hkl/notation`, which had also drifted on `tempo@staff`/`@place`) so only a
+   genuinely identical anchor qualifies — overlapping boxes alone must not
+   un-stack two marks a beat apart. A run with no room (crossing the measure's
+   barline or reaching the next cluster) is abandoned; Verovio's stack is the
+   honest answer, and p. 21 m. 99 is 259 tenths wide holding one dotted-half
+   chord, so that guard was expected to fire there. It did not — all three
+   groups found room.
+5. **The centring phase now ADDS its dy** instead of assigning it, so the
+   un-stack composes with a grand-staff centring. Equivalent for every cluster
+   that has no un-stack (the assignment was always the first write).
+
+**Verified**: typecheck / boundaries / composer build clean; `pnpm test:composer`
+419/419 after the import change, then 420/420 with the two new fixtures
+(`phase5_musicxml_direction_offset`, `engr_sameMomentDynamAndDirSideBySide`), no
+visual baseline drift. Sonata, in the rendered DOM: m. 35's `dim.` moved from
+tstamp 4 to 2; all three same-anchor groups now lay out side by side and
+vertically overlapping, m. 99's `dim.` moving right 253 units and its pair
+aligned in the grand-staff gap.
+
+### The census probe, and a phantom it produced first
+`test/composer-inspect/phasec/cb-instrgap.js` is the committed inter-instrument
+census (the 09-06 one was ephemeral): per adjacent instrument pair per system,
+each mark's `dOwn` / `dOther` / demand, a bare ink-floor term, the residue
+inventory, and the system-spanning-path check. Its first run reported 90
+ink-floor violations and 96 of 113 systems moving. **That was a probe bug**:
+Verovio emits zero-size `g.accid` groups whose `getBBox` is 0×0 at the local
+origin, and mapped into the frame they land at (0,0) and read as ink touching
+across the whole system — 78 of the 90 had a gap of *exactly* 0, which is what
+gave it away. The guard cannot live in the box helper (staff LINES are
+legitimately zero-height, and guarding there zeroed the whole census); it
+belongs at the ink and mark consumers, exactly where `textlayout.ts` already
+puts it (`!(box.right > box.left)`).
+
+Corrected, the census **reproduces the 09-06 numbers**: 45 upper-below marks
+nearer the other instrument against the recorded 46 (the delta is A1 having
+already moved 16 anchors), 18 within one space against 21. Two-sided it is 151
+marks at the boundary, 61 nearer the other instrument, 35 within a space, demand
+p50 228 / p90 383 / max 403 (recorded: p90 319, max 408), **45 systems moved by
+the mark term, 25 by the ink floor, 50 in all** of 113. The 09-06 estimate of 39
+was the mark term alone.
+
+**Residue inventory (what an instrument-shift pass must attribute)**: `slur` 966
+carry `@startid` ✓ and `dynam`/`dir`/`hairpin`/`tempo` carry `@staff` ✓, but
+**`tie` 290 carry neither** and nor do `grpSym` 113 (the braces), `mNum` 109,
+`fermata` 4, `voltaBracket` 4, `trill` 3, `octave` 3, `ending` 2, `label` 2,
+`section` 8, `systemMilestoneEnd` 10. And the inventory **refuted the plan's
+guess** that no line crosses an instrument boundary: there are **113
+system-spanning vertical paths**, one per system at x≈10 — the system's left
+line — which a shift must LENGTHEN. Assuming otherwise (as the 09-06 sketch
+did, reasoning from `bar.thru` being grand-pair-only) would have shipped a
+visibly broken left edge.
+
+## 2026-09-08 — Inter-instrument clearance: built, measured, and gated OFF on a pagination boundary
+
+**Context**: the second half of the Layout pair above — the 09-06 "elements too
+close to the next instrument" item, whose mechanism sketch this supersedes.
+`render/instrgap.ts` shifts a lower instrument down until every boundary mark is
+at least as close to its own staff as to its neighbour.
+
+**The 09-06 sketch was wrong in two ways**, both found by reading before
+writing:
+
+1. **`alignStaffRows` (pagefit.ts) is the sole owner of a `g.staff` transform.**
+   It rewrites every row from the staff-line path text (`staffLineYs` ignores
+   the transform) and `placePage` calls it FIRST — on the reference host too —
+   so the sketch's "translate the lower instrument's `g.staff` groups" would be
+   destroyed before it was ever measured. Instead the shift is recorded as
+   `data-hkl-ishift` and `alignStaffRows` ADDS it to its own phase correction.
+   Because the shift is a whole `grid` multiple, `rel` is arithmetically
+   unchanged and the crispness invariant holds.
+2. **"Lengthen the barlines that span the boundary" was reasoned from
+   `bar.thru` being grand-pair-only, and the inventory refuted it**: there are
+   **113 system-spanning vertical paths**, one per system at x≈10 — the system's
+   left line. It is lengthened (in the element's OWN local space, converted
+   through the frame→element y scale, since the nested `svg.definition-scale`
+   viewBox means local units are not frame units), with `data-hkl-igrow` holding
+   the original `d` for idempotency.
+
+**Ordering** (`postProcessRendered`): `textlayout` → `instrgap` → `textlayout`
+again, on the systems that moved only (48 of 113). The pass needs marks SETTLED
+(its metric measures what is drawn) and must also release textlayout's
+`INSTR_CLEAR` clamp — the thing that left p. 21 m. 94's "rit." on a slur. One
+extra round suffices by construction: widening only LOOSENS a clamp, and the
+grant is exactly the demand the first round could not meet.
+
+**Attribution is by attribute, never by guess.** A `g.staff` carries its own
+notes/stems/beams, so translating it moves the music. Everything else is
+resolved by `data-staff` (dynam/dir/hairpin/tempo/octave), `data-startid` → the
+note's staff (slur/tie/fermata/trill/lv — new in `svgAdditionalAttribute`;
+fermata/trill/lv are note-anchored in our MEI and carry no `@staff`, probed), or
+the instrument band (grpSym, label — unambiguous, probed). `mNum`/`ending`/
+`voltaBracket` ride the top staff. **A tie could not be attributed
+geometrically** — of 290, 131 sit in the piano's band, 43 in the viola's, 72 in
+the inter-instrument gap and 44 above every staff — which is why `tie@startid`
+exists. An element that resolves to nothing leaves its system UNSHIFTED and
+warns; on the sonata that is 1 system of 112 (a continuation slur whose start
+note is in the previous system and whose band is ambiguous).
+
+**Measured, pass on**: marks nearer the other instrument 59 → 28, within one
+space 33 → 12, systems with unmet demand 48 → 11, demand p50 223 → 80. 40
+systems shift, 10–410 user units, every value a whole device pixel. The residual
+28 are CAP-limited BY DESIGN: after a shift of `min(dOwn, CAP) − dOther` a mark
+whose `dOwn` exceeds CAP (480) is still nearer its neighbour, which is the point
+of the cap — a mark under a very low ledger note must not demand its whole
+distance.
+
+**Status: ON, with one known defect** (`ENABLED = true` in instrgap.ts, at
+Max's request so it can be investigated live).
+
+**Two wrong diagnoses were recorded here first; both are retracted.** (a) "The
+overflow cascade never ran" — that reading of `lastCascade` was taken before
+`mountAllPages`, so the cascade simply had not happened yet. (b) "The cascade
+drops a block on failure, losing four measures" — that came from probes that
+measured a **PRE-SETTLE** layout. `balanceJobActive()` is false BEFORE the job
+is armed, so waiting for `!active` returns instantly; on the sonata the
+partition is still 31 pages / 115 lines at t=0 and only reaches its final 30 /
+113 at **~5.7 s**. Max caught it: the output matched a state he had seen before
+his own render settled. → lessons.md "Wait for the partition to stop changing".
+
+**The real defect**: after the partition settles to 30 pages, there are still
+**31 page divs** — the count is frozen from the initial `tk.getPageCount()`
+castoff and does not follow the settled pins — so `mountAllPages` renders 112
+of the 113 lines and the stale 31st div sits empty. Mounting the last page
+ALONE draws the finale correctly (`106-108 | 109-112 | 113-116`, cascade 0
+steps), which is why nothing is wrong in ordinary reading. It bites the
+**bulk-mount path**, and PDF export uses exactly that path (`save.ts` mounts
+all pages and clones the live SVGs), so an export would be short a system.
+
+The pass is what exposes it: taller systems make the settled partition SHRINK
+from the castoff's 31 pages to 30, and only a settled count that is LOWER than
+the div count produces the mismatch. Whether a pass-off render settles at 31
+(and so never mismatches) is the open question — it would also explain why
+Max's session shows a consistently different partition from the headless one
+(his page 30 starts at m. 97 and page 31 at m. 112; the headless settled
+partition has 30 pages with page 30 starting at m. 106).
+
+**The fix belongs in the page-div count, not in this pass**: the number of page
+divs should follow the settled pins. (The earlier "the cascade is one page short at the end" reading is also
+retracted — the cascade only ran at all because bulk mounting drove it, and from
+a settled state with a correct div count there is nothing for it to repair.)
+
+Diagnostic committed: `test/composer-inspect/phasec/cb-pagegrowth.js` prints
+every quantity that disagrees (Verovio's page count vs the frozen virt count vs
+page divs, lineStarts vs rendered systems, doc vs rendered measures, the cascade
+counters, empty pages, per-page system counts) in one run. **Read the cascade
+counters AFTER `mountAllPages`** — that is the mistake above.
+
+Gated off, the tree is unchanged behaviour: sonata renders 446/446 measures, 113
+systems, 31 pages; typecheck / boundaries / build clean. The plumbing
+(`alignStaffRows`'s `data-hkl-ishift`, textlayout's `data-hkl-clamped` and
+ishift composition) is inert without the pass. **Fixtures are still owed** and
+land with the feature.
