@@ -59,44 +59,25 @@
 
 import { svgBox, type Box } from './textlayout.js';
 
-/* ── ON, WITH A KNOWN PAGINATION DEFECT (2026-09-08) ──
-   Deliberately enabled so the defect below can be investigated live. It LOSES
-   CONTENT on a multi-page score — one system, four measures, on the sonata —
-   so this is not shippable as it stands; see the three routes at the end.
+/* ── ALWAYS ON (2026-09-09) ──
+   This pass was gated behind an `ENABLED` flag while a pagination defect was
+   open: a grown system pushed the sonata's tail past the last page div and
+   page 31 came back EMPTY, 442 of its 446 measures rendered, because page divs
+   are Verovio's castoff at `loadData` and predate anything this pass grows
+   (lessons.md "The page-div count is frozen at the initial castoff").
+   Pagination is owned now — `cb-pagegrowth.js` reports paginationOwned with
+   446/446 measures, 113 systems, 31 page divs, no empty pages and a 16-step
+   cascade resolved entirely arithmetically — so the flag is gone and the pass
+   is unconditional.
 
-   The measurement and the shift are correct and gated (sonata: marks nearer
-   the other instrument 59 -> 28, within one space 33 -> 12, systems with unmet
-   demand 48 -> 11, 40 systems shifted, each one's system-start line lengthened,
-   1 system of 112 bailing on an unattributable continuation slur). What is NOT
-   settled is what a GROWN system does to pagination:
+   Gated on the sonata (cb-instrgap.js, 2026-09-09): marks nearer the OTHER
+   instrument than their own staff 59 -> 29, marks within one space of the
+   other instrument's ink 33 -> 12, systems with unmet demand 48 -> 11; 43
+   systems shifted, each one's system-start line lengthened, none bailing on an
+   unattributable element.
 
-     page divs come from `tk.getPageCount()` (render.ts) — Verovio's castoff,
-     decided BEFORE this pass grows anything. With the shifts applied the sonata
-     renders 112 systems and 442 of its 446 measures: the overflow cascade DOES
-     run (16 steps, 15 transplants) and carries the growth down the document
-     until the LAST page, where it fails —
-       [page-breaks] page 15 overflows its box and could not be repaired
-       (page 31: transplant target unreadable)
-     — leaving page 31 EMPTY and line 113 of 113 unplaced. `created` is 0
-     because page 31 exists as an empty placeholder, so the tail is attempted as
-     a transplant INTO it rather than as a created page 32; `arithmetic` and
-     `parked` are 0 too, so neither the known-extents branch nor the park
-     fallback caught it. Stable across re-renders.
-     (Read those counters AFTER mountAllPages — before it they are all zeros,
-     which reads like "the cascade never ran" and misled the first diagnosis.
-     `test/composer-inspect/phasec/cb-pagegrowth.js` reports the whole set.)
-
-   The suite does not catch this (420/420 with the pass on): no fixture is a
-   multi-page two-instrument score, and nothing asserts "every measure in the
-   document renders". That gap is worth closing whichever way the fix goes.
-
-   The chain is one page SHORT, not broken: either the last page's tail has to
-   reach a created page 32, or the failing transplant has to fall back to the
-   ARITHMETIC / PARK branches meant for a placeholder whose extents are not
-   readable (the extents job had evidently not measured page 31). Failing that,
-   cap each page's growth to its existing slack so pagination never changes —
-   safest, but it leaves systems on full pages cramped. */
-const ENABLED = true;
+   Still owed: no FIXTURE asserts that every measure of a multi-page document
+   renders. `cb-pagegrowth.js` is a probe, not a gate. */
 
 /** What the pass needs from the document. */
 export interface InstrGapOpts {
@@ -146,7 +127,6 @@ interface Row { n: number; top: number; bottom: number }
 
 export function layoutInstrumentGaps(root: Element, opts: InstrGapOpts): Set<Element> {
   const moved = new Set<Element>();
-  if (!ENABLED) return moved;
   if (opts.instrStaffNs.length < 2 || !(opts.grid > 0)) return moved;
   const systems = root.matches('g.system') ? [root] : Array.from(root.querySelectorAll('g.system'));
   for (const sys of systems) if (layoutSystem(sys, opts)) moved.add(sys);

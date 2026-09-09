@@ -7543,3 +7543,25 @@ so textlayout's vertical rules reach them independently — the dynamic keeps
 lines differ by the glyph-vs-text box metrics (7.4 px in the fixture, not even
 overlapping). A final step in `layoutSystem` puts each mover's centre back on
 its anchor's, which is what the cluster rule did when it owned the separation.
+
+## The instrgap `ENABLED` flag is gone (2026-09-09)
+
+`render/instrgap.ts` shipped behind `const ENABLED = true` because a grown
+system pushed the sonata's tail past the last page div — page 31 empty, 442 of
+446 measures rendered — page divs being Verovio's castoff at `loadData`, which
+predates anything the pass grows. That is fixed: pagination is owned, and
+`cb-pagegrowth.js` now reports paginationOwned with 446/446 measures, 113
+systems, 31 page divs, no empty pages and a 16-step cascade resolved entirely
+arithmetically. The flag and its early bail are removed; the pass is
+unconditional.
+
+Re-measured at the same time, since the centring fix and the same-moment
+separation both moved marks the census counts: marks nearer the other
+instrument than their own staff 59 → 29 (the entry above said 28), within one
+space of the other instrument's ink 33 → 12, systems with unmet demand 48 → 11,
+43 systems shifted, none bailing on an unattributable element.
+
+Still owed, and now the only thing standing between this pass and "done": no
+FIXTURE asserts that every measure of a multi-page document renders.
+`cb-pagegrowth.js` is a probe, so nothing in `pnpm test:composer` would catch a
+regression of the original defect.

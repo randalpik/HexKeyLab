@@ -144,7 +144,7 @@ These are navigable layers alongside dynamics:
 
 - **Pedal**: `Shift+P` (down) / `Shift+O` (lift). Drives the sustain engine during playback.
 - **Tempo**: `Ctrl+Shift+T` opens a builder for instant markings (♩ = 120) or gradual ones (rit., accel., *a tempo*). All playback follows the tempo timeline.
-- **Expressive text**: `Ctrl+Shift+E` adds a `<dir>` text mark (e.g. *dolce*, *pizz.*), with an italic toggle.
+- **Expressive text**: `Ctrl+Shift+E` adds a `<dir>` text mark (e.g. *dolce*, *pizz.*), with an italic toggle. A word placed on the same beat as a dynamic is engraved *beside* it — `p dim.`, on one line — rather than stacked above or below it, so the pair reads as one marking and takes one line's worth of space between the staves.
 
 ---
 
