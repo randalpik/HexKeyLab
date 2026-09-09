@@ -175,8 +175,14 @@ const BASE_OPTIONS = {
     /* `@tstamp` (as `data-tstamp`) tells the same-moment un-stack rule in
        render/textlayout.ts which marks genuinely share an anchor — Verovio
        stacks those vertically, and only an identical anchor (not merely
-       overlapping boxes) justifies laying them out side by side instead. */
-    'dynam@tstamp', 'dir@tstamp',
+       overlapping boxes) justifies laying them out side by side instead. That
+       rule is now the FALLBACK: notation/unstack.ts separates such a group on
+       the render clone (before the engrave, so Verovio sizes the inter-staff
+       gap for one row instead of the stack), which leaves the pair no longer
+       sharing a tstamp — so each mover names its anchor outright in
+       `hkl-unstack` (`data-hkl-unstack`) for textlayout's clearance
+       fine-tune. */
+    'dynam@tstamp', 'dir@tstamp', 'dir@hkl-unstack',
     /* The flipped-slur re-draw (render/slurlayout.ts) needs each slur's side
        and endpoints: `data-curvedir`, `data-startid`, `data-endid`. */
     'slur@curvedir', 'slur@startid', 'slur@endid',

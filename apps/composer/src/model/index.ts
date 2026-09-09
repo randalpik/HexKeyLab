@@ -30,6 +30,7 @@ import { settleRestLocations } from '../notation/restlayout.js';
 import { applySectionRestarts } from '../notation/sectionRestart.js';
 import { settleSlurSides } from '../notation/slurSides.js';
 import { unifySlurStems } from '../notation/slurStems.js';
+import { separateSameMomentMarks } from '../notation/unstack.js';
 import { decomposeBeatAlignedRests } from './restfill.js';
 import { computeAccidentalDisplay } from '../notation/accidentals.js';
 import { alterFromCount, alterFromToken, tokenFromAlter, getNoteAlter } from '@hkl/notation/accidentals.js';
@@ -572,6 +573,12 @@ function applyRenderConventions(clone: Document): void {
   settleRestLocations(clone);
   applySectionRestarts(clone);
   settleSlurSides(clone);
+  /* Last: it only moves floating control events, so nothing above depends on
+     it, and it must run BEFORE the engrave — Verovio reserves an inter-staff
+     row per stacked mark and no DOM move afterwards can give that space back
+     (render/textlayout.ts used to try; notation/unstack.ts has the probe
+     table). */
+  separateSameMomentMarks(clone);
 }
 
 export class ComposerModel {

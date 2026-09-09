@@ -6941,6 +6941,46 @@ const ENGRAVING = {
       m.setVoice(1); m.setCursor(0, 1); r();
     `,
   },
+
+  /* A same-moment dynamic + word inside a GRAND STAFF must not inflate the
+     inter-staff gap (2026-09-09; Max on the sonata's p. 21 second system:
+     "the system as a whole is leaving far too much vertical space within the
+     grand staff"). Verovio reserves an inter-staff row per stacked mark and
+     sizes the gap to hold the stack, and no DOM move afterwards gives that
+     space back — probed on m. 99: @ho and @vgrp changed nothing, deleting the
+     <dir> took the gap from 13.25 staff spaces to 7.25. notation/unstack.ts
+     nudges the mover's tstamp on the render clone instead, so Verovio engraves
+     ONE row: m. 99 came back at 7.75 spaces. This fixture holds the reclaim —
+     it fails if the pass stops running and the second row comes back. */
+  engr_unstackReclaimsGrandStaffGap: {
+    setup: `
+      const N = (step, oct, dur, type, staff) => '<note><pitch><step>' + step + '</step><octave>' + oct + '</octave></pitch>'
+        + '<duration>' + dur + '</duration><voice>' + (staff === 2 ? 5 : 1) + '</voice><type>' + type + '</type><staff>' + staff + '</staff></note>';
+      const WORDS = (t) => '<direction placement="below"><direction-type><words font-style="italic">' + t + '</words></direction-type><staff>1</staff></direction>';
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>'
+        + '<part id="P1"><measure number="1">'
+        + '<attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>4</beats><beat-type>4</beat-type></time><staves>2</staves>'
+        + '<clef number="1"><sign>G</sign><line>2</line></clef><clef number="2"><sign>F</sign><line>4</line></clef></attributes>'
+        + '<direction placement="below"><direction-type><dynamics><p/></dynamics></direction-type><staff>1</staff></direction>'
+        + WORDS('dim.') + WORDS('poco') + WORDS('rit.')
+        /* Why FOUR marks at one moment and not the sonata's two: the stack has
+           to be the BINDING constraint on the gap, and Verovio's spacingStaff
+           floor already holds two rows. Probed on this document — with a
+           dynamic + one word the gap is 8.69 staff spaces with the pass ON or
+           OFF, and squeezing the staves with ledger lines only moves both to
+           11.81; neither gates anything. A four-row stack exceeds the floor,
+           which is the sonata's situation (its gap was content-driven), and it
+           exercises the chained nudge (1.25 / 1.5 / 1.75) as well. */
+        + N('C', 5, 24, 'quarter', 1) + N('D', 5, 24, 'quarter', 1) + N('E', 5, 24, 'quarter', 1) + N('F', 5, 24, 'quarter', 1)
+        + '<backup><duration>96</duration></backup>'
+        + N('C', 3, 24, 'quarter', 2) + N('D', 3, 24, 'quarter', 2) + N('E', 3, 24, 'quarter', 2) + N('F', 3, 24, 'quarter', 2)
+        + '</measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
 };
 
 export const FIXTURES = {
@@ -7804,23 +7844,49 @@ export const FIXTURE_ASSERTIONS = {
   /* The dynamic anchors the cluster and must not move horizontally; the <dir>
      ends up clear to its RIGHT and vertically overlapping it (not stacked). */
   engr_sameMomentDynamAndDirSideBySide: [
-    { name: 'both marks share one @tstamp and one staff/place',
+    { name: 'the DOCUMENT keeps both marks on one @tstamp; only the render clone separates them',
+      expr: `(() => {
+        /* The whole liberty notation/unstack.ts takes is clone-only: the saved
+           document, playback and editing must never see the nudge. */
+        const doc = window.__hkl_composer.model.getDoc();
+        const dynEl = doc.querySelector('dynam'), dirEl = doc.querySelector('dir');
+        if (!dynEl || !dirEl) return { ok: false, detail: 'doc dynam=' + !!dynEl + ' dir=' + !!dirEl };
+        const k = (e) => e.getAttribute('tstamp') + '/' + e.getAttribute('staff') + '/' + e.getAttribute('place');
+        if (k(dynEl) !== k(dirEl)) return { ok: false, detail: 'document drifted: ' + k(dynEl) + ' vs ' + k(dirEl) };
+        if (dirEl.hasAttribute('hkl-unstack')) return { ok: false, detail: 'the clone-only tag leaked into the document' };
+        return { ok: true };
+      })()` },
+    { name: 'the RENDERED <dir> is nudged off the shared tstamp and names its anchor',
       expr: `(() => {
         const dyn = document.querySelector('#score g.dynam');
         const dir = document.querySelector('#score g.dir');
         if (!dyn || !dir) return { ok: false, detail: 'dynam=' + !!dyn + ' dir=' + !!dir };
-        const k = (e) => e.getAttribute('data-tstamp') + '/' + e.getAttribute('data-staff') + '/' + e.getAttribute('data-place');
-        if (k(dyn) !== k(dir)) return { ok: false, detail: k(dyn) + ' vs ' + k(dir) };
-        if (k(dyn).indexOf('null') >= 0) return { ok: false, detail: 'missing data-tstamp/staff/place: ' + k(dyn) };
+        if (dir.getAttribute('data-hkl-unstack') !== dyn.id) return { ok: false, detail: 'data-hkl-unstack=' + dir.getAttribute('data-hkl-unstack') + ' want ' + dyn.id };
+        const ts = (e) => e.getAttribute('data-tstamp');
+        /* Equal tstamps mean the pre-engrave pass did not run and the DOM
+           fallback separated them — which leaves the inflated gap behind. */
+        if (ts(dyn) === ts(dir)) return { ok: false, detail: 'rendered tstamps still equal (' + ts(dyn) + '): the pre-engrave nudge did not run' };
+        if (dyn.getAttribute('data-staff') !== dir.getAttribute('data-staff')
+          || dyn.getAttribute('data-place') !== dir.getAttribute('data-place')) {
+          return { ok: false, detail: 'staff/place drifted' };
+        }
         return { ok: true };
       })()` },
-    { name: 'the <dir> sits clear to the RIGHT of the dynamic, overlapping it vertically',
+    { name: 'the <dir> sits one staff space clear to the RIGHT of the dynamic, on its line',
       expr: `(() => {
         const dyn = document.querySelector('#score g.dynam').getBoundingClientRect();
         const dir = document.querySelector('#score g.dir').getBoundingClientRect();
         if (!(dir.left >= dyn.right - 1)) return { ok: false, detail: 'dir.left=' + dir.left.toFixed(1) + ' dyn.right=' + dyn.right.toFixed(1) + ' (still stacked)' };
         const vOverlap = Math.min(dyn.bottom, dir.bottom) - Math.max(dyn.top, dir.top);
         if (!(vOverlap > 0)) return { ok: false, detail: 'no vertical overlap: ' + vOverlap.toFixed(1) };
+        /* One staff space, measured from the staff itself so the check does not
+           hard-code a zoom. PAD (a quarter space) is the value Max reported as
+           too tight; the clearance is UNSTACK_GAP = one space. */
+        const staff = document.querySelector('#score g.measure g.staff[data-n="1"]');
+        const ys = [...staff.children].filter((p) => p.tagName === 'path').map((p) => p.getBoundingClientRect()).filter((b) => b.height <= 2.5).map((b) => b.top);
+        const space = (Math.max(...ys) - Math.min(...ys)) / 4;
+        const gap = dir.left - dyn.right;
+        if (!(gap > 0.6 * space && gap < 1.5 * space)) return { ok: false, detail: 'clearance ' + gap.toFixed(1) + 'px = ' + (gap / space).toFixed(2) + ' staff spaces (want ~1)' };
         return { ok: true };
       })()` },
     { name: 'the dynamic itself was not shifted horizontally',
@@ -15849,6 +15915,52 @@ export const FIXTURE_ASSERTIONS = {
         const L = path.getTotalLength(); const ctm = path.getScreenCTM(); let top = Infinity;
         for (let i = 0; i <= 48; i++) { const p = new DOMPoint(path.getPointAtLength(L * i / 48).x, path.getPointAtLength(L * i / 48).y).matrixTransform(ctm); if (p.x >= box.left && p.x <= box.right) top = Math.min(top, p.y); }
         if (!(top > box.bottom - 1)) return { ok: false, detail: 'slur top ' + top.toFixed(1) + ' still inside the dir box (bottom ' + box.bottom.toFixed(1) + ')' };
+        return { ok: true };
+      })()` },
+  ],
+  engr_unstackReclaimsGrandStaffGap: [
+    { name: 'the same-moment pair occupies ONE inter-staff row, so the grand-staff gap is not inflated',
+      expr: `(() => {
+        const sys = document.querySelector('#score g.system');
+        const st = (n) => sys && sys.querySelector('g.measure g.staff[data-n="' + n + '"]');
+        const s1 = st(1), s2 = st(2);
+        if (!s1 || !s2) return { ok: false, detail: 'staves 1=' + !!s1 + ' 2=' + !!s2 };
+        const band = (s) => {
+          const rs = [...s.children].filter((p) => p.tagName === 'path').map((p) => p.getBoundingClientRect()).filter((b) => b.height <= 2.5);
+          return rs.length ? { top: Math.min(...rs.map((b) => b.top)), bottom: Math.max(...rs.map((b) => b.bottom)) } : null;
+        };
+        const b1 = band(s1), b2 = band(s2);
+        if (!b1 || !b2) return { ok: false, detail: 'could not measure staff lines' };
+        const space = (b1.bottom - b1.top) / 4;
+        const gapSpaces = (b2.top - b1.bottom) / space;
+        const dyn = document.querySelector('#score g.dynam'), dir = document.querySelector('#score g.dir');
+        if (!dyn || !dir) return { ok: false, detail: 'dynam=' + !!dyn + ' dir=' + !!dir };
+        const dirs = [...document.querySelectorAll('#score g.dir')];
+        if (dirs.length !== 3) return { ok: false, detail: 'dirs rendered: ' + dirs.length + ' (want 3)' };
+        for (const d of dirs) {
+          if (d.getAttribute('data-hkl-unstack') !== dyn.id) {
+            return { ok: false, detail: '"' + (d.textContent || '').trim() + '" was not separated pre-engrave (data-hkl-unstack='
+              + d.getAttribute('data-hkl-unstack') + '); gapSpaces=' + gapSpaces.toFixed(2) };
+          }
+        }
+        /* Probed on THIS document: 14.56 staff spaces with the pass off (four
+           stacked rows), 8.69 with it on (one row, back at Verovio's
+           spacingStaff floor). 11 sits clear of both, so the gate fails the
+           moment a second row comes back and never on ordinary drift. */
+        if (gapSpaces > 11) return { ok: false, detail: 'grand-staff gap ' + gapSpaces.toFixed(2)
+          + ' staff spaces: the stack is being reserved again (probed 14.56 stacked / 8.69 separated)' };
+        /* One row: every word shares the dynamic's line and follows it left to
+           right, each about a staff space clear of the one before. */
+        const boxes = [dyn, ...dirs].map((e) => ({ t: (e.textContent || '').trim() || 'dyn', r: e.getBoundingClientRect() }))
+          .sort((a, b) => a.r.left - b.r.left);
+        for (let i = 1; i < boxes.length; i++) {
+          const gap = boxes[i].r.left - boxes[i - 1].r.right;
+          if (!(gap > 0.6 * space && gap < 1.6 * space)) {
+            return { ok: false, detail: 'clearance ' + boxes[i - 1].t + '→' + boxes[i].t + ' = ' + (gap / space).toFixed(2) + ' spaces (want ~1)' };
+          }
+          const ov = Math.min(boxes[i].r.bottom, boxes[0].r.bottom) - Math.max(boxes[i].r.top, boxes[0].r.top);
+          if (!(ov > 0)) return { ok: false, detail: boxes[i].t + ' is not on the dynamic\u2019s line (overlap ' + ov.toFixed(1) + ')' };
+        }
         return { ok: true };
       })()` },
   ],

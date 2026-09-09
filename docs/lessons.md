@@ -3960,3 +3960,49 @@ whole-document inventory that found it is
 `test/composer-inspect/phasec/cb-markplace.js`; `cb-instrgap.js` could not see
 this class of defect at all, because it only measures marks at an instrument
 BOUNDARY and these were mis-placed inside their own grand staff.
+
+## Verovio reserves an inter-staff row at ENGRAVE time; no DOM move gives it back (2026-09-09)
+
+Two control events sharing `@tstamp`, `@staff` and `@place` are drawn by
+Verovio at one x, stacked vertically, and **the inter-staff gap is sized to
+hold that stack**. `render/textlayout.ts` had been un-stacking them in the DOM
+since 2026-09-08 — correct horizontally, and completely powerless vertically:
+the reserved row stays, so the sonata's p. 21 m. 99 kept a piano gap of 13.25
+staff spaces where 7.75 does (Max: "far too much vertical space within the
+grand staff").
+
+What was probed on that system, each after a full re-render:
+
+| change | inter-staff gap |
+|---|---|
+| `@ho=4`, `@ho=8` on the `<dir>` | 2120 → 2120 (glyph moves, gap does not) |
+| `@vgrp=1` on both | 2120 → 2120 (nothing moves at all) |
+| merged into one `<dynam>` | 2120 → 1710, bbox **1910 units tall** |
+| the `<dir>` deleted | 2120 → 1160 ← the ceiling |
+| `@tstamp` 1 → 1.25 | 2120 → **1240** |
+
+**`@ho` is a draw-time offset and `@tstamp` is the layout-time anchor.** The row
+reservation is computed from the anchor, so `@ho` moves the glyph out from
+under a row that stays reserved. That distinction is the whole lesson: to
+change what Verovio RESERVES you must change what it LAYS OUT, which means
+touching the render clone before the engrave, not the SVG after it.
+
+Two traps found on the way:
+
+- **`@vgrp` did nothing at all** — not "aligned them imperfectly", nothing
+  moved. Do not reach for it to co-locate control events in this Verovio build.
+- **Merging into one `<dynam>` is a false economy.** `<dynam>p dim.</dynam>`
+  does render as one row with the SMuFL glyph plus italic words (and `<rend>`
+  changes nothing — plain text gives byte-identical output), but the group's
+  bbox comes back **1910 units tall** where a plain dynamic is 275: the box
+  spans the glyph font's em box and the text font's together. Every downstream
+  measurement — centring, ink floors, extents — reads that box.
+
+Corollary for fixtures: a minimal document does NOT reproduce a spacing
+inflation. `engr_unstackReclaimsGrandStaffGap` measured 8.69 staff spaces with
+the pass on AND off with one dynamic + one word, and 11.81 both ways after
+squeezing the staves with ledger lines — Verovio's `spacingStaff` floor already
+holds two rows, so nothing was gated. Only a FOUR-row stack exceeded the floor
+(14.56 stacked vs 8.69 separated). When a fixture for a spacing bug passes
+identically with the fix reverted, the document is too small — check the
+counterfactual before believing the gate.

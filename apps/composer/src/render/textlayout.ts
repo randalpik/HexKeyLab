@@ -37,6 +37,17 @@
 //     that would cross the measure's barline or reach the next cluster is
 //     abandoned: with no room, Verovio's stack is the honest answer. The
 //     sonata has exactly three such groups, each a dynamic plus one word.
+//     SINCE 2026-09-09 THIS RULE IS THE FALLBACK. Separating the pair in the
+//     DOM leaves the inter-staff row Verovio reserved for the STACK, and no
+//     DOM move gives that space back — the sonata's m. 99 kept a piano gap of
+//     13.25 staff spaces where 7.75 does (Max: "far too much vertical space
+//     within the grand staff"). `notation/unstack.ts` now nudges each mover's
+//     tstamp on the RENDER CLONE instead, so Verovio engraves one row and
+//     sizes the gap for one row; that pass owns the separation, this rule
+//     keeps only the groups it had no room to separate. What stays here either
+//     way is the CLEARANCE (`UNSTACK_GAP`, one staff space): x is not knowable
+//     before the engrave, so the mover names its anchor in
+//     `data-hkl-unstack` and the horizontal phase below sets the gap exactly.
 //   • A TEXT mark (dynamic, expressive text — not a hairpin) is also kept
 //     INSIDE its own measure: a box that overlaps one of the measure's barlines
 //     is moved off it to the near side, half a unit clear (Max, 2026-09-05:
@@ -106,6 +117,11 @@ const PAD = 40;
 const INSTR_CLEAR = 160;
 /* A device pixel: a mark this close to a barline counts as touching it. */
 const TOUCH = 10;
+/* The clearance kept between a dynamic and a same-moment word laid out beside
+   it — one staff space. Was PAD (half a unit, a quarter space), which read as
+   touching: Max, 2026-09-09, on the sonata's m. 99 `p dim.`, where the pair
+   sat 40 user units = 4 px apart at scale 100. */
+const UNSTACK_GAP = 160;
 /* How far a hairpin's top sits ABOVE the dynamics' clearance line when it is
    put on the dynamics' line: Verovio's own hairpin-to-dynamic alignment (probed
    at unit 8 with a dynamic and a hairpin at one moment: hairpin top 2 px above
@@ -269,14 +285,58 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
     barCache.set(measure, r);
     return r;
   };
-  /* Horizontal: text marks off their measure's barlines. */
   const hshift = new Map<SVGGraphicsElement, number>();
   const shifted = new Map<SVGGraphicsElement, Box>();
+
+  /* ── the clearance notation/unstack.ts could not set ──
+     That pass nudges a same-moment `<dir>` past its dynamic anchor on the
+     RENDER CLONE, so Verovio engraves the group as one row and sizes the
+     inter-staff gap for one row (a DOM move cannot give that space back — see
+     its header). What it cannot do is know x before the engrave, so Verovio's
+     own spacing of the separated pair stands until here. Each mover names its
+     anchor in `data-hkl-unstack` — the pair no longer shares a tstamp, which
+     is what the fallback rule below keys on. Runs BEFORE the barline nudge so
+     that rule still has the last horizontal word. */
+  const byId = new Map<string, SVGGraphicsElement>();
+  for (const el of marks) if (el.id) byId.set(el.id, el);
+  const followers = new Map<SVGGraphicsElement, SVGGraphicsElement[]>();
+  for (const el of marks) {
+    const anchorId = el.getAttribute('data-hkl-unstack');
+    if (!anchorId) continue;
+    const anchor = byId.get(anchorId);
+    if (!anchor) continue;                     // anchor engraved in another system
+    (followers.get(anchor) ?? followers.set(anchor, []).get(anchor)!).push(el);
+  }
+  for (const [anchor, group] of followers) {
+    const ab = markBox(anchor);
+    if (!ab || !(ab.right > ab.left)) continue;
+    const rows = group
+      .map((el) => ({ el, box: markBox(el) }))
+      .filter((x): x is { el: SVGGraphicsElement; box: Box } => !!x.box && x.box.right > x.box.left)
+      .sort((a, b) => a.box.left - b.box.left);
+    let run = ab.right;
+    for (const { el, box } of rows) {
+      const measure = el.closest('g.measure');
+      const bars = measure ? barsFor(measure) : null;
+      let dx = Math.round((run + UNSTACK_GAP) - box.left);
+      if (Math.abs(dx) < 3) dx = 0;
+      /* Honouring the gap must not put the mark on the measure's barline —
+         the rule the loop below enforces. Verovio's x stands instead. */
+      if (dx && bars?.right && box.right + dx > bars.right.left - PAD) dx = 0;
+      if (dx) {
+        hshift.set(el, (hshift.get(el) ?? 0) + dx);
+        shifted.set(el, { ...box, left: box.left + dx, right: box.right + dx });
+      }
+      run = box.right + dx;
+    }
+  }
+
+  /* Horizontal: text marks off their measure's barlines. */
   for (const el of marks) {
     if (!isText(el)) continue;
     const measure = el.closest('g.measure');
     if (!measure) continue;
-    const box = markBox(el);
+    const box = shifted.get(el) ?? markBox(el);
     if (!box || !(box.right > box.left)) continue;
     const { left, right } = barsFor(measure);
     let dx = 0;
@@ -287,7 +347,7 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
     /* A mark wider than its measure stays where Verovio put it. */
     if (left && box.left + dx < left.right + PAD / 2) continue;
     if (right && box.right + dx > right.left - PAD / 2) continue;
-    hshift.set(el, dx);
+    hshift.set(el, (hshift.get(el) ?? 0) + dx);
     shifted.set(el, { ...box, left: box.left + dx, right: box.right + dx });
   }
 
@@ -375,7 +435,7 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
     const plan: { m: Mark; dx: number; dy: number }[] = [];
     let room = true;
     for (const m of movers.slice().sort((a, b) => a.box.left - b.box.left)) {
-      const dx = Math.round((run + PAD) - m.box.left);
+      const dx = Math.round((run + UNSTACK_GAP) - m.box.left);
       const dy = Math.round((anch.top + anch.bottom) / 2 - (m.box.top + m.box.bottom) / 2);
       if (m.box.right + dx > limit) { room = false; break; }
       plan.push({ m, dx, dy });
@@ -548,6 +608,32 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
       if (Math.abs(dy) < 3) continue;
       const s = shifts.get(a.el);
       if (s) s.dy += dy; else shifts.set(a.el, { dx: 0, dy });
+    }
+  }
+
+  /* ── an un-stacked mover shares its anchor's line ──
+     notation/unstack.ts separates the pair BEFORE the engrave, so they are no
+     longer one cluster and every vertical rule above reached them
+     independently: the dynamic keeps Verovio's `dynamDist` while a now-lone
+     <dir> is pushed to the `dirGapUser` line, and those two lines do not
+     coincide — the glyph and the text have different box metrics (fixture
+     engr_sameMomentDynamAndDirSideBySide: 7.4 px apart, not even overlapping).
+     Aligning the centres is what the cluster rule did when it owned the
+     separation, so it is kept here, last, over whatever the rules settled. */
+  const finalCentre = (el: SVGGraphicsElement): number | null => {
+    const b = markBox(el);
+    return b ? (b.top + b.bottom) / 2 + (shifts.get(el)?.dy ?? 0) : null;
+  };
+  for (const [anchor, group] of followers) {
+    const ac = finalCentre(anchor);
+    if (ac === null) continue;
+    for (const el of group) {
+      const mc = finalCentre(el);
+      if (mc === null) continue;
+      const dy = Math.round(ac - mc);
+      if (Math.abs(dy) < 3) continue;
+      const s = shifts.get(el);
+      if (s) s.dy += dy; else shifts.set(el, { dx: 0, dy });
     }
   }
 

@@ -7502,3 +7502,44 @@ composition at all — and it asserts the PREMISE (a shift actually happened)
 alongside the conclusion, so it can never pass vacuously if the demand
 heuristics change. This discharges part of the "fixtures are still owed" note
 in the preceding entry; the pagination defect remains open and unfixtured.
+
+## Same-moment marks are separated on the render clone, by `@tstamp` (2026-09-09)
+
+`notation/unstack.ts` nudges each same-moment `<dir>` a quarter beat past its
+`<dynam>` anchor **on the serialize clone**, so Verovio engraves the group as
+one row and sizes the inter-staff gap for one row. The DOM rule in
+`render/textlayout.ts` that used to own this (2026-09-08) is kept as the
+fallback for groups with no room left in their measure.
+
+Why the clone and not the document: the nudge decouples the rendered anchor
+from the musical one. Nothing downstream of engraving depends on a `<dir>`'s
+tstamp — playback reads `<dynam>`/`<hairpin>` off the LIVE doc and `<dir>` has
+no playback role — and the saved document is never this clone. It is the same
+liberty the importer takes with `<offset>`. Fixture
+`engr_sameMomentDynamAndDirSideBySide` asserts the document keeps both marks on
+one tstamp and that the clone-only tag never leaks into it.
+
+Rejected, all measured (lessons.md has the table): `@ho`, which Verovio honours
+as a pure draw-time offset and which therefore leaves the reserved row behind;
+`@vgrp`, which did nothing whatsoever; and merging the pair into a single
+`<dynam>`, which does reserve one row but returns a 1910-unit-tall bbox that
+would corrupt every downstream measurement.
+
+`NUDGE_BEATS` is 0.25, not 0.5: both break Verovio's row reservation
+identically (sonata gaps 1240 / 1800 / 1800 either way), but 0.5 overshoots far
+enough that textlayout's clearance fine-tune has to drag the mark back up to
+781 user units, and the measure was engraved wide enough to hold it there. The
+nudge only has to defeat the overlap; the exact clearance is set afterwards.
+
+The clearance itself stays in the DOM (`UNSTACK_GAP`, one staff space) because
+x is not knowable before the engrave. It replaces `PAD` (a quarter space, 4 px
+at scale 100), which Max reported as too tight on m. 99's `p dim.`. Since the
+nudge means the pair no longer shares a tstamp, each mover names its anchor in
+`hkl-unstack` → `data-hkl-unstack`.
+
+One consequence worth remembering: separated marks are no longer ONE cluster,
+so textlayout's vertical rules reach them independently — the dynamic keeps
+`dynamDist` while a now-lone `<dir>` goes to the `dirGapUser` line, and those
+lines differ by the glyph-vs-text box metrics (7.4 px in the fixture, not even
+overlapping). A final step in `layoutSystem` puts each mover's centre back on
+its anchor's, which is what the cluster rule did when it owned the separation.
