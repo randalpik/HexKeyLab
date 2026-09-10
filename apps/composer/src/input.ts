@@ -25,6 +25,7 @@ import { openPickupModal } from './pickupDialog.js';
 import { addSlur, removeSlur, collectSlurs } from './slurs.js';
 import { togglePedal, pedalMoments, removePedalsAt, type PedalDir } from './pedal.js';
 import { beamGroupForElement } from './notation/beams.js';
+import { tempoCopySource } from './notation/parts.js';
 import type { ArticKind } from './articulations.js';
 
 const ARTIC_KEYS: Record<string, { kind: ArticKind; label: string }> = {
@@ -808,9 +809,17 @@ export function selectLayerElementById(
   setStatus?: (msg: string, kind?: 'info' | 'error' | 'state' | 'action') => void,
 ): boolean {
   const doc = model.getDoc();
-  let el: Element | null = null;
-  for (const e of Array.from(doc.querySelectorAll('dynam, dir, hairpin, pedal, tempo'))) {
-    if (e.getAttribute('xml:id') === id) { el = e; break; }
+  const controls = Array.from(doc.querySelectorAll('dynam, dir, hairpin, pedal, tempo'));
+  const byId = (want: string): Element | null =>
+    controls.find((e) => e.getAttribute('xml:id') === want) ?? null;
+  /* A clicked tempo may be one of the per-part copies the render clone makes
+     (`duplicateTempiAcrossParts`) — an id the live doc doesn't hold. Fall back
+     to the original it was suffixed from, but only after the literal id fails:
+     a real `newId` can end in `-p<digits>` too. */
+  let el = byId(id);
+  if (!el) {
+    const src = tempoCopySource(id);
+    if (src) el = byId(src);
   }
   const measureEl = el?.closest('measure') ?? null;
   if (!el || !measureEl) return false;

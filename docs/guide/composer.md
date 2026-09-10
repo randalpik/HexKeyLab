@@ -116,7 +116,7 @@ Dynamics and hairpins affect playback loudness. **Above/below placement**: `Ctrl
 | `S` | staccato |
 | `A` | accent |
 | `T` | tenuto |
-| `F` | fermata |
+| `F` | fermata (on a grand staff it is engraved outside the pair — above the upper staff, inverted below the lower — never in the gap between them) |
 | `B` | breath mark |
 | `P` | parenthesized (cautionary) accidental |
 | `H` | hide a rest |
@@ -143,7 +143,7 @@ Staccato, accent, and tenuto shape playback (shorter, louder, fuller).
 These are navigable layers alongside dynamics:
 
 - **Pedal**: `Shift+P` (down) / `Shift+O` (lift). Drives the sustain engine during playback.
-- **Tempo**: `Ctrl+Shift+T` opens a builder for instant markings (♩ = 120) or gradual ones (rit., accel., *a tempo*). All playback follows the tempo timeline.
+- **Tempo**: `Ctrl+Shift+T` opens a builder for instant markings (♩ = 120) or gradual ones (rit., accel., *a tempo*). All playback follows the tempo timeline. A tempo marking is score-global: you write it once, and it is engraved above **every part** (and stays with a part when you view or print it alone). Editing or deleting it anywhere changes the one marking.
 - **Expressive text**: `Ctrl+Shift+E` adds a `<dir>` text mark (e.g. *dolce*, *pizz.*), with an italic toggle. A word placed on the same beat as a dynamic is engraved *beside* it — `p dim.`, on one line — rather than stacked above or below it, so the pair reads as one marking and takes one line's worth of space between the staves.
 
 ---
@@ -165,7 +165,7 @@ A document starts as one piano (the grand staff). Add more instruments from [Doc
 - A toolbar **instrument selector** filters the view (and PDF export) to a single instrument's part. The part is laid out as a score of its own: line and page breaks, and the balancing of each section's last system, are computed for that part, and edits in the view splice in place like in the full score.
 - **Pizzicato / arco**: an [expressive-text](#pedal-tempo-expressive-text) `pizz.`/`arco` cue switches the spanned notes to a pizzicato sample where one is available.
 - **String harmonics**: `Alt+H` marks an open-diamond harmonic; playback sounds the harmonic pitch.
-- MusicXML export writes one part per instrument.
+- MusicXML export writes one part per instrument, with each part's staves and voices renumbered from 1.
 
 ---
 
@@ -212,7 +212,7 @@ The **Setup…** button opens a dialog for the whole-document settings:
 | Button | Format | Notes |
 |---|---|---|
 | Save / Load | **`.hkc`** | Composer's native format: MEI XML carrying the lattice coordinates and colors. The canonical, lossless round-trip. |
-| Export | **MusicXML** | One part per instrument; opens in MuseScore / Finale / Sibelius. Pitches, rhythms, colors, clefs and signatures carry over; dynamics, hairpins, and repeats do not yet. |
+| Export | **MusicXML** | One part per instrument; opens in MuseScore / Finale / Sibelius. Everything the editor can write carries over: notes, chords, rests, ties, tuplets, beams, stems, slurs, articulations, fermatas, trills, tremolos, dynamics, hairpins, expressive text, pedal, ottavas, tempo markings (in every part, as Finale writes them), key/meter/clef changes including mid-piece (cut and common time keep their ¢ / C symbol), pickups, repeat barlines, double bars and voltas, your manual page and system breaks, instrument abbreviations, and lattice colors. Not carried: a movement's **title** text and HEJI comma accidentals. Movement breaks themselves survive (as a final barline), and a re-import re-numbers the movements I, II, III… — so an auto-numbered title comes back unchanged and only a title you typed yourself is replaced by its numeral. `.hkc` remains the lossless format. |
 | Import | **MusicXML** | Loads a `.musicxml` score authored in Finale / MuseScore / Sibelius (notes, chords, multiple voices and instruments, tuplets, ties, slurs, articulations, dynamics, hairpins, every tempo marking (verbal, metronome, and Finale's hidden playback tempi), key/meter/clef changes). The document is set to **Equal tuning, HEJI off, colors ignored** — the imported score is a starting point you then retune toward just intonation. Each note keeps its original spelling (a G♭ stays a G♭). |
 | Export | **PDF** | Vector, and exactly the page view as shown on screen, page for page — HEJI accidentals, colors, headers, footers, section titles — honoring the current single-part view. From scroll view it exports the page layout (switching to page view for the moment of the export). Always US Letter; **Page size** changes how much score sits on each sheet, not the sheet. |
 

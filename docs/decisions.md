@@ -7565,3 +7565,231 @@ Still owed, and now the only thing standing between this pass and "done": no
 FIXTURE asserts that every measure of a multi-page document renders.
 `cb-pagegrowth.js` is a probe, so nothing in `pnpm test:composer` would catch a
 regression of the original defect.
+
+## Score-global tempo, restated per part on the render clone (2026-09-09)
+
+Backlog Layout: "Tempo markings need to be duplicated between parts". The
+observed asymmetry was in the imported sonata — a "rit." appears above the
+viola AND the piano, "Poco più mosso" only above the viola — and it is an
+artifact of two import paths, not a decision: Finale writes a tempo
+`<direction>` into every part, so a bare `<words>` "rit." becomes a per-part
+`<dir>` while a direction carrying `<metronome>`/`<sound tempo>` collapses to
+ONE `<tempo staff="1">` (importMusicXml's `seenTempi`).
+
+The copies are made on the RENDER CLONE (`notation/parts.ts`
+`duplicateTempiAcrossParts`), not in the model. The model's `<tempo>` is
+score-global by design — one element per moment is what makes the tempo layer a
+single cursor stop, what `tempoAt` edits, what Backspace deletes, and what
+`buildTempoTimeline` reads — and every one of those would need a "which copy is
+canonical" rule if the duplication were real. Nothing downstream of the model
+learns about the copies; the saved `.hkc` and the MusicXML export keep one
+marking (export writes it into the first part only, as before).
+
+Two placement details are load-bearing:
+
+- It runs in `serialize`/`serializeRangeForRender` **before `filterToStaves`**,
+  not in `applyRenderConventions` (which is after). Single-part view drops
+  control events anchored to a hidden staff, so a view of the piano in a
+  viola+piano score used to lose every tempo marking; the copy it now owns is
+  what keeps it. This is the only render-clone convention that runs outside
+  `applyRenderConventions`, and the reason is exactly this ordering.
+- A text-less `<tempo>` is neither copied nor allowed to occupy its moment. The
+  document's head tempo (`ComposerModel.setTempo`) is a playback-only
+  `<tempo tstamp="1" staff="1">` carrying `@mm`/`@midi.bpm` and no content, and
+  `@mm` alone renders nothing in this Verovio build. Copying it drew invisible
+  zero-height groups, and — worse — it shadowed a real marking written on beat
+  1 of measure 1, because the moment was already "covered" by the time the
+  visible mark was considered.
+
+Copy ids are the source id plus `-p<staffN>`: a FOURTH id segment, which
+`newId`'s three-segment `prefix-<b36>-<b36>` form cannot produce, so a copy id
+is always distinguishable from a real one. `selectLayerElementById` still tries
+the literal id FIRST and only then strips the suffix — a genuine `newId` random
+segment can be the string `p3` — so clicking a restated marking selects the one
+model element. Ids are derived, not generated, which keeps a range sub-render
+byte-identical to the full render.
+
+Rejected: restating only at the top of each instrumental family (the orchestral
+convention). HKL Composer's scores are chamber-sized, every part gets a copy,
+and a family model would need instrument taxonomy the score does not carry.
+
+## Fermatas are pinned outside the grand staff (2026-09-09)
+
+Backlog Layout: "Fermata should default to the outside on a grand staff".
+Verovio places a fermata above the note's OWN staff regardless of layer (probed
+on the default piano, all four voices: every fermata above its staff), so on a
+grand staff the lower staff's fermata lands in the inter-staff gap — staff 2's
+at y 451–471 between a staff 1 ending at 433 and a staff 2 starting at 488.
+
+`notation/parts.ts` `settleFermataSides` (in `applyRenderConventions`) writes
+`@place="above"` on an instrument's top staff and `@place="below"` on its
+bottom one, so the pair reads outside the brace. Verovio derives the inverted
+glyph (E4C1) from `place="below"` on its own — no `@form` is written.
+
+Scope limits, all deliberate: single-staff instruments keep Verovio's default
+(there is no gap to fall into); the MIDDLE staff of a three-staff instrument is
+left alone (both sides of it are "between", so neither answer is the
+convention, and a three-manual organ is not a case the score model has been
+exercised on); and an explicit `@place` always wins, so a future above/below
+control — `Ctrl+↑`/`Ctrl+↓` excludes fermatas today — needs no change here. The
+side is decided on the render clone rather than at creation time so it tracks
+instrument edits (a staff added to a part re-decides its fermatas for free) and
+so imports get it without an importer rule.
+
+## MusicXML export writes every tempo, into every part (2026-09-09)
+
+Follow-on to the render-clone restatement above: Max asked for the export to
+match. It did not — and the gap was bigger than "one part vs all". The exporter
+read `model.getTempo()`, which is `doc.querySelector("tempo")`, i.e. the
+document's FIRST `<tempo>`, and emitted it once, in the first part, at measure
+1. Every mid-piece marking was dropped; on the sonata that is 17 of 18. Worse,
+`getTempo()` is positional, so a score whose only tempo is a mid-piece one
+exported that marking as if it sat at bar 1.
+
+`exportMusicXml` now indexes `collectTempi(doc)` by measure and emits each mark
+in EVERY part. Choices worth keeping:
+
+- **Directions at the measure head with an `<offset>`** in divisions, rather
+  than interleaved into the note stream at the right tick. The importer has
+  read `<offset>` since 2026-09-08, so it round-trips, and emitting at the head
+  keeps the exporter's one-pass-per-voice structure intact (Finale writes the
+  mirror image — at the measure END with a negative offset).
+- **`<metronome>` only when the mark shows one**, `<sound tempo>` whenever
+  there is a bpm. The old code always wrote a metronome, so the seed
+  document's tempo — which HKL draws as bare text, its `@mm` invisible —
+  exported a ♩=N that was never on screen, and re-importing turned `showMm`
+  on. Now the export matches the page and a DAW still gets the tempo.
+- **A text-less mark becomes a bare `<sound tempo>`**, not a direction: an
+  empty `<direction-type>` is invalid MusicXML, and a bare measure-level
+  `<sound>` is exactly Finale's hidden-tempo encoding, which the importer
+  already recognises.
+- **Gradual rit./accel. and "a tempo" export as italic `<words>` with no tempo
+  value.** MusicXML has no gradual-tempo element; italic words are what Finale
+  writes. They re-import as per-part `<dir>` expressive text — visually
+  identical, but the gradual playback semantics are lost. Accepted: `.hkc` is
+  the lossless format, and the alternative (a private attribute Finale would
+  ignore) buys round-trip fidelity only against ourselves.
+
+`ComposerModel.setTempo` had no callers before this and `getTempo()` now has
+none either; both are left in place rather than removed in a change about
+export.
+
+## MusicXML export brought to parity (2026-09-09)
+
+Max: "address as many export issues as possible… iterate until we hit parity."
+The audit below listed what was missing; this is what closing it taught.
+
+**Measure, then fix.** Three probes drove every step and each disproved a
+plausible reading of the code:
+`phasec/cb-xmlexport.js` (feature counts, model vs XML),
+`phasec/cb-xmldur.js` (every measure of every part sums to its budget in every
+voice; no dangling spanner endpoints), and `phasec/cb-xmlroundtrip.js` (export
+→ re-import → compare the model against itself). The round-trip probe is the
+one that matters: element counts prove the XML CONTAINS the music, only a
+re-import proves a reader can rebuild it. Four of the five hard bugs below were
+invisible to counting and showed up only as a round-trip delta. Several probe
+"failures" were also probe bugs — a counter that subtracted the wrong subset,
+a model-side query that double-counted — so a surprising row got the counter
+re-read before the code did.
+
+**The five structural fixes**, none of them a missing emitter:
+
+1. *Beamed tuplets dropped whole.* The tuplet branch filtered the tuplet's
+   children for note/chord/rest while `regroupBeams` had put the members inside
+   a `<beam>` child. 500 of 513 tuplets, 1 453 of 9 099 notes, plus 6 in an
+   `<fTrem>` — an exact 1 459-note shortfall that the XML gave no sign of.
+2. *Pickups padded to full bars.* The trailing-rest fill used `meter.count`;
+   the measure's own budget lives in `model.measureTicksAt`.
+3. *Ottava pitches an octave off.* MEI stores WRITTEN pitch under an
+   `<octave>`; MusicXML `<pitch>` is SOUNDING with `<octave-shift>` describing
+   the printing. The two conventions are inverses and nothing in the code said
+   so — a re-import shifted a second time.
+4. *Directions must sit in the note stream, not at the measure head.*
+   `<offset>` is advisory; our own importer ignores it for `<octave-shift>`
+   because that span's STREAM position decides which notes get rewritten. A
+   head-parked ottava contained in one measure therefore spanned nothing and
+   was dropped. Directions now ride in the first voice of their staff with
+   content, carrying a residual offset (negative where the anchor falls between
+   onsets — MusicXML allows it and Finale writes them).
+5. *Slur numbers belong to document order, not musical time.* A measure is
+   written one voice at a time separated by `<backup>`, so a slur ending late
+   in voice 3 is emitted after one starting early in voice 1; a reader pairing
+   numbered spanners in document order saw a number opened twice. An
+   intermediate fix — block a number for the whole measure it ends in — cured
+   those four slurs and then ran the pool past MusicXML's limit of 6, where it
+   wrapped and lost two others. Ordering by (measure, voice-index-in-part,
+   tick) is the honest fix; the wrap is now unreachable in practice.
+
+Late additions once the round-trip was clean, each a plain omission the
+coverage probe did not think to ask about until the model was re-read for
+what else it carries: the cut / common meter SYMBOL (`meter.sym` — the sonata
+is in cut time and exported as a plain 2/2), `<part-abbreviation>` from a
+group's `<labelAbbr>`, and manual `<pb>` / `<sb>` breaks as `<print>`. The
+lesson is that a coverage table only measures the rows someone wrote: the
+model's own element vocabulary is the checklist, not the probe.
+
+Smaller corrections: `<note>` children were out of DTD order (`<dot>` before
+`<type>`, `<staff>` before `<notehead>`); a tuplet beginning or ending on a
+rest got no bracket tag; an empty voice was written as a measure-long rest
+instead of omitted; a part silent for a whole measure now writes one
+`<rest measure="yes">` so its timeline cannot drift.
+
+**Accepted losses.** `<space>` re-imports as `<rest visible="false">` — both
+are invisible time and MusicXML has one encoding (`<forward>`) for them, so 20
+of the sonata's come back in the other form; the round-trip is otherwise
+identical. A section's movement TITLE is left alone — see the entry below.
+Grace notes are absent because the model has none.
+HEJI commas stay unrepresentable (W3C #263). Gradual rit./accel. still export
+as italic words — see the entry above.
+
+## Movement titles stay out of the MusicXML bridge (2026-09-09)
+
+Claimed, wrongly, that no MusicXML element carries a movement title mid-score.
+Finale does write them, as page-level credits — the sonata holds
+`<credit page="10"><credit-words … font-size="20.4" halign="center">II</credit-words>`
+for each of II / III / IV, plus a `<movement-title>`, a composer credit, and a
+page-number and running-title credit for each of its 33 pages.
+
+We neither read nor write them, and that is deliberate. A `<credit>` is
+anchored to a PAGE and to absolute coordinates, with no link to a measure, so
+using one means (a) mapping source pages to measures — possible, the sonata
+has 64 `new-page="yes"` prints — and then (b) telling a movement title from a
+running header or a page number by font size, position and repetition. Max,
+asked: "This is not worth fragile heuristics."
+
+Nothing is actually lost for an imported score. The importer SYNTHESIZES the
+numeral from the structure (a mid-piece `light-heavy` barline starts a section,
+titled with the next Roman numeral), so the sonata's II / III / IV come out
+right — our convention and Finale's numbering agree, which is exactly why the
+gap went unnoticed. Only a title typed by hand via `Ctrl+Shift+H` is replaced
+by its numeral on a round-trip.
+
+Worth remembering as a method point: the round-trip census reported
+`sectionTitles` 3 → 3 with no delta, and that was true — the titles are
+regenerated, not carried. A derived value passing a round-trip proves the
+derivation is stable, not that the data survived.
+
+## MusicXML export coverage is audited, not assumed (2026-09-09)
+
+Asked what else the exporter loses, the answer came from measurement rather
+than reading: `test/composer-inspect/phasec/cb-xmlexport.js` imports the
+sonata, exports it, and counts every model feature against the corresponding
+MusicXML element. Keep using it — the first hypothesis it disproved was mine
+(that beamed tuplets were being dropped because `contentChildren` does not
+flatten `<beam>` into `<tuplet>`; in fact zero tuplets sit inside a beam — it
+is the reverse nesting that breaks).
+
+The real defect: `gatherEventsFromDoc`'s tuplet branch filters the tuplet's
+CHILDREN for note/chord/rest, and `regroupBeams` puts the members of a beamed
+tuplet inside a `<beam>` child — so such a tuplet yields no events at all.
+That is 500 of the sonata's 513 tuplets and 1 453 of its 9 099 notes; a further
+6 notes sit in an `<fTrem>` that `contentChildren` also skips, for an exact
+1 459-note shortfall. Second defect: the per-voice trailing-rest fill pads every
+measure to `meter.count`, so a pickup exports as a full bar with no
+`implicit="yes"`. Both are silent — the XML is well-formed and opens fine.
+
+Everything else missing is plain omission (slurs, articulations, dynamics,
+hairpins, expressive text, fermatas, trills, tremolos, ottavas, diamond
+noteheads, repeat barlines, double bars, voltas, section headers). The counts
+are in docs/architecture/composer.md under Save / load / export; re-run the
+probe rather than trusting them after any exporter change.

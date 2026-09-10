@@ -20,6 +20,7 @@ import {
   type VoiceCursorAnchor, type CursorRectQuery,
 } from '@hkl/shared/cursor-geom.js';
 import { type Moment, dynamAt, hairpinsAt, tempoAt } from '../expressions.js';
+import { tempoCopySource } from '../notation/parts.js';
 import { pedalsAt } from '../pedal.js';
 import { currentMoment, selectionAt, type ExpressionCursor } from './expressionCursor.js';
 import { realTicks } from '../model/ticks.js';
@@ -816,9 +817,19 @@ class CursorOverlay {
     const id = t?.getAttribute('xml:id');
     const container = this.scoreContainer();
     if (!id || !container) return;
-    const node = container.querySelector('#' + CSS.escape(id));
-    if (node) node.classList.add(TEMPO_SELECTED_CLASS);
-    this.lastTempoSelectedIds = [id];
+    /* The render clone restates a tempo above every part
+       (`duplicateTempiAcrossParts`), so the selection lights up the original
+       AND its `-p<staffN>` copies — one highlighted mark out of several
+       identical ones reads as a different mark. */
+    const ids = [id];
+    for (const g of Array.from(container.querySelectorAll('g.tempo'))) {
+      if (g.id && g.id !== id && tempoCopySource(g.id) === id) ids.push(g.id);
+    }
+    for (const gid of ids) {
+      const node = container.querySelector('#' + CSS.escape(gid));
+      if (node) node.classList.add(TEMPO_SELECTED_CLASS);
+    }
+    this.lastTempoSelectedIds = ids;
   }
 
   private clearTempoHighlights(): void {

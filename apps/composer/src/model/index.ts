@@ -27,6 +27,7 @@
 import type { ResolvedNote } from '@hkl/bridge/protocol.js';
 import { regroupBeams, readTimeSig } from '../notation/beams.js';
 import { settleRestLocations } from '../notation/restlayout.js';
+import { duplicateTempiAcrossParts, settleFermataSides } from '../notation/parts.js';
 import { applySectionRestarts } from '../notation/sectionRestart.js';
 import { settleSlurSides } from '../notation/slurSides.js';
 import { unifySlurStems } from '../notation/slurStems.js';
@@ -573,6 +574,10 @@ function applyRenderConventions(clone: Document): void {
   settleRestLocations(clone);
   applySectionRestarts(clone);
   settleSlurSides(clone);
+  /* Independent of the rest: it only writes @place on fermatas, which nothing
+     above reads. Runs AFTER the single-part filter deliberately — a viewed
+     instrument keeps its own staffGrp, so its grand staff is still a pair. */
+  settleFermataSides(clone);
   /* Last: it only moves floating control events, so nothing above depends on
      it, and it must run BEFORE the engrave — Verovio reserves an inter-staff
      row per stacked mark and no DOM move afterwards can give that space back
@@ -879,6 +884,10 @@ export class ComposerModel {
       if (getIgnoreColor(clone)) {
         for (const n of Array.from(clone.querySelectorAll('note'))) n.removeAttribute('color');
       }
+      /* Restate the score-global tempo above every part. BEFORE the filter:
+         the copies are what keeps a tempo marking in a single-part view of
+         anything but the first instrument. */
+      duplicateTempiAcrossParts(clone);
     }
     /* Single-part view (render/PDF only): keep only the viewed instrument's
        staves. Orthogonal to forRender (PDF filters without the HEJI pass). The
@@ -926,6 +935,7 @@ export class ComposerModel {
     if (getIgnoreColor(clone)) {
       for (const n of Array.from(clone.querySelectorAll('note'))) n.removeAttribute('color');
     }
+    duplicateTempiAcrossParts(clone);
     if (viewStaves) filterToStaves(clone, new Set(viewStaves));
     relocateInitialClefs(clone, true);   // range: first measure's leading clef lives in the out-of-range prev
     regroupBeams(clone, readTimeSig(clone));

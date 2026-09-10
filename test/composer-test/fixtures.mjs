@@ -5410,6 +5410,92 @@ const PHASE1 = {
     `,
   },
 
+  /* MusicXML export writes EVERY tempo marking into EVERY part (2026-09-09,
+     Max: "make export match"). It used to write only `model.getTempo()` — the
+     document's FIRST <tempo> — into the first part, so every mid-piece marking
+     was dropped on the way out. A mark off beat 1 carries an <offset> in
+     divisions; a gradual exports as italic words with no tempo value (MusicXML
+     has no gradual-tempo element); the metronome is written only where the
+     score shows one, while the bpm always travels as <sound tempo>. */
+  phase5_musicxml_tempo_every_part: {
+    setup: `
+      const N = (q, r, oct, midi) => ({ q, r, pname: 'a', accid: '', oct, midi, colorHex: '#888', velocity: 80 });
+      m.addInstrument({ name: 'Violin', staffCount: 1 });
+      const fill = (v, oct, midi, n) => { m.setVoice(v); m.setCursor(0, v); for (let i = 0; i < n; i++) m.insertChordAtCursor({ notes: [N(0, 0, oct, midi)], duration: '4', dots: 0 }); };
+      fill(1, 4, 69, 8); fill(5, 5, 81, 8);
+      const doc = m.getDoc();
+      const MEI = 'http://www.music-encoding.org/ns/mei';
+      const XMLNS = 'http://www.w3.org/XML/1998/namespace';
+      const meas = [...doc.querySelectorAll('measure')];
+      const tempo = (measureIdx, id, tstamp, text, attrs) => {
+        const t = doc.createElementNS(MEI, 'tempo');
+        t.setAttributeNS(XMLNS, 'xml:id', id);
+        t.setAttribute('tstamp', String(tstamp));
+        t.setAttribute('place', 'above'); t.setAttribute('staff', '1');
+        for (const k in attrs) t.setAttribute(k, String(attrs[k]));
+        t.textContent = text;
+        meas[measureIdx].appendChild(t);
+      };
+      /* Instant marking with a shown metronome, on beat 3 of measure 1. */
+      tempo(0, 'tempo-x-instant', 3, 'Allegro', { mm: 132, 'mm.unit': 4, 'midi.bpm': 132, 'data-hkl-mm-shown': 'true' });
+      /* Gradual, measure 2 beat 1. */
+      tempo(1, 'tempo-x-rit', 1, 'poco rit.', { 'data-hkl-gradual': 'rit' });
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+
+  /* MusicXML export coverage (2026-09-09): the exporter used to emit only
+     pitches, rhythms, ties, tuplets, colors and signatures. This fixture
+     builds one measure holding a slur, articulations, a fermata, a breath
+     mark, a dynamic, a hairpin, expressive text, a pedal and an explicit stem
+     direction, and asserts each reaches the XML. Two-instrument, so the
+     per-part <staff> mapping is exercised too. */
+  phase5_musicxml_export_coverage: {
+    setup: `
+      const N = (oct, pname, midi) => ({ q: 0, r: 0, pname, accid: '', oct, midi, colorHex: '#888', velocity: 80 });
+      m.addInstrument({ name: 'Violin', staffCount: 1 });
+      const fill = (v, oct, pname, midi, n) => { m.setVoice(v); m.setCursor(0, v); for (let i = 0; i < n; i++) m.insertChordAtCursor({ notes: [N(oct, pname, midi)], duration: '4', dots: 0 }); };
+      fill(1, 5, 'a', 81, 4); fill(3, 3, 'c', 48, 4); fill(5, 5, 'e', 76, 4);
+      /* Articulation + fermata + breath on the piano's top staff. */
+      m.setVoice(1);
+      m.setCursor(1, 1); m.toggleArticulationAtCursor('insert', 'stacc');
+      m.setCursor(2, 1); m.toggleArticulationAtCursor('insert', 'fermata');
+      m.setCursor(3, 1); m.toggleArticulationAtCursor('insert', 'breath');
+      const doc = m.getDoc();
+      const MEI = 'http://www.music-encoding.org/ns/mei';
+      const XMLNS = 'http://www.w3.org/XML/1998/namespace';
+      const meas = doc.querySelector('measure');
+      const mk = (name, id, attrs, text) => {
+        const e = doc.createElementNS(MEI, name);
+        e.setAttributeNS(XMLNS, 'xml:id', id);
+        for (const k in attrs) e.setAttribute(k, String(attrs[k]));
+        if (text != null) e.textContent = text;
+        meas.appendChild(e);
+        return e;
+      };
+      /* Slur over the piano's first two notes. */
+      const notes = [...meas.querySelectorAll('staff[n="1"] layer[n="1"] note')];
+      mk('slur', 'slur-x-cov', { startid: '#' + notes[0].getAttribute('xml:id'), endid: '#' + notes[1].getAttribute('xml:id') });
+      /* Explicit stem direction. */
+      notes[0].setAttribute('stem.dir', 'down');
+      mk('dynam', 'dyn-x-cov', { tstamp: 1, staff: 1, place: 'below' }, 'mf');
+      mk('hairpin', 'hp-x-cov', { tstamp: 2, tstamp2: '0m+4', staff: 1, form: 'cres', place: 'below' });
+      mk('dir', 'dir-x-cov', { tstamp: 3, staff: 1, place: 'above' }, 'dolce');
+      mk('pedal', 'ped-x-cov-d', { tstamp: 1, staff: 2, dir: 'down' });
+      mk('pedal', 'ped-x-cov-u', { tstamp: 4, staff: 2, dir: 'up' });
+      /* Cut-time symbol + an instrument abbreviation, both of which the
+         exporter used to drop (a cut-time score came out a plain 2/2). */
+      m.setTimeSig(4, 4, { sym: 'common' });
+      const vGrp = [...doc.querySelectorAll('scoreDef staffGrp staffGrp')][1];
+      if (vGrp) {
+        const ab = doc.createElementNS(MEI, 'labelAbbr');
+        ab.textContent = 'Vln.';
+        vGrp.appendChild(ab);
+      }
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+
   /* MusicXML import: a small score-partwise snippet with a tie that crosses a
      tuplet boundary (quarter C5 tied into the first note of a triplet). Forces
      Equal / HEJI-off / ignore-color-on. Exercises importMusicXml + the
@@ -6898,6 +6984,48 @@ const ENGRAVING = {
     `,
   },
 
+  /* Tempo markings are restated above EVERY part (notation/parts.ts,
+     2026-09-09, backlog Layout): the model keeps one score-global <tempo>, so
+     before this a two-part score drew "Allegro" above the top staff only —
+     while an imported "rit.", which Finale writes into each part and the
+     importer turns into a per-part <dir>, appeared above both. The copies are
+     made on the render clone BEFORE the single-part filter, so a view of the
+     violin alone keeps the marking too (it used to lose every tempo: the
+     filter drops control events anchored to a hidden staff). */
+  engr_tempoRestatedAbovePart: {
+    setup: `
+      const N = (o, midi) => ({ q: 0, r: 0, pname: 'a', accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.addInstrument({ name: 'Violin', staffCount: 1 });
+      m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [N(4, 69)], duration: '4', dots: 0 });
+      m.setVoice(5); m.setCursor(0, 5); m.insertChordAtCursor({ notes: [N(5, 81)], duration: '4', dots: 0 });
+      const doc = m.getDoc(); const meas = doc.querySelector('measure');
+      const MEI = 'http://www.music-encoding.org/ns/mei';
+      const XMLNS = 'http://www.w3.org/XML/1998/namespace';
+      const t = doc.createElementNS(MEI, 'tempo');
+      t.setAttributeNS(XMLNS, 'xml:id', 'tempo-test-parts');
+      t.setAttribute('tstamp', '1'); t.setAttribute('place', 'above'); t.setAttribute('staff', '1');
+      t.textContent = 'Allegro';
+      meas.appendChild(t);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+
+  /* On a grand staff a fermata belongs OUTSIDE the braced pair
+     (notation/parts.ts, 2026-09-09, backlog Layout). Verovio puts one above
+     the note's own staff, which for the lower staff of the pair lands in the
+     inter-staff gap; the render clone pins the top staff's above and the
+     bottom staff's below, where Verovio draws the inverted glyph itself. */
+  engr_fermataOutsideGrandStaff: {
+    setup: `
+      const N = (o, pname, midi) => ({ q: 0, r: 0, pname, accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [N(5, 'a', 81)], duration: '4', dots: 0 });
+      m.toggleArticulationAtCursor('insert', 'fermata');
+      m.setVoice(3); m.setCursor(0, 3); m.insertChordAtCursor({ notes: [N(3, 'c', 48)], duration: '4', dots: 0 });
+      m.toggleArticulationAtCursor('insert', 'fermata');
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+
   /* A mark inside a grand staff stays CENTRED when render/instrgap.ts has
      shifted that instrument (2026-09-09). instrgap tags the shift on a mark
      and leaves the transform to textlayout, which owns it — so textlayout has
@@ -7682,6 +7810,113 @@ export const FIXTURE_ASSERTIONS = {
 
   /* Phase 5: MusicXML splits into one <part> per instrument with part-local
      staff numbering. */
+  phase5_musicxml_tempo_every_part: [
+    { name: 'every tempo marking reaches every part, with offset, italic gradual, and metronome only where shown',
+      expr: `(() => {
+        const h = window.__hkl_composer;
+        const xml = h.exportMusicXml(h.model);
+        const doc = new DOMParser().parseFromString(xml, 'application/xml');
+        if (doc.querySelector('parsererror')) return { ok: false, detail: 'export is not well-formed XML' };
+        const parts = [...doc.querySelectorAll('part')];
+        if (parts.length !== 2) return { ok: false, detail: 'parts=' + parts.length };
+        const marksOf = (part) => [...part.querySelectorAll('direction')].map((d) => {
+          const w = d.querySelector('words');
+          return {
+            text: w ? w.textContent.trim() : '',
+            italic: !!(w && w.getAttribute('font-style') === 'italic'),
+            mm: !!d.querySelector('metronome per-minute'),
+            bpm: d.querySelector('sound[tempo]') ? d.querySelector('sound[tempo]').getAttribute('tempo') : null,
+            offset: d.querySelector('offset') ? Number(d.querySelector('offset').textContent) : 0,
+            measure: [...part.querySelectorAll('measure')].indexOf(d.closest('measure')),
+          };
+        });
+        const a = marksOf(parts[0]), b = marksOf(parts[1]);
+        if (JSON.stringify(a) !== JSON.stringify(b)) return { ok: false, detail: 'parts disagree: ' + JSON.stringify(a) + ' vs ' + JSON.stringify(b) };
+        const allegro = a.find((x) => x.text === 'Allegro');
+        const rit = a.find((x) => x.text === 'poco rit.');
+        if (!allegro) return { ok: false, detail: 'no Allegro direction: ' + JSON.stringify(a) };
+        if (!rit) return { ok: false, detail: 'no rit. direction: ' + JSON.stringify(a) };
+        if (!allegro.mm || allegro.bpm !== '132') return { ok: false, detail: 'Allegro mm=' + allegro.mm + ' bpm=' + allegro.bpm };
+        if (allegro.measure !== 0) return { ok: false, detail: 'Allegro in measure index ' + allegro.measure };
+        /* Beat 3 of 4/4 at the export's own divisions = 2 beats of offset. */
+        const div = Number((xml.match(/<divisions>(\\d+)<\\/divisions>/) || [])[1]);
+        if (!div) return { ok: false, detail: 'no <divisions> in export' };
+        if (allegro.offset !== 2 * div) return { ok: false, detail: 'Allegro offset ' + allegro.offset + ' (expected ' + (2 * div) + ')' };
+        if (!rit.italic) return { ok: false, detail: 'gradual not italic' };
+        if (rit.mm || rit.bpm !== null) return { ok: false, detail: 'gradual carries a tempo value: mm=' + rit.mm + ' bpm=' + rit.bpm };
+        if (rit.measure !== 1 || rit.offset !== 0) return { ok: false, detail: 'rit. at measure ' + rit.measure + ' offset ' + rit.offset };
+        /* The seed document's text-less playback tempo stays a bare <sound>. */
+        const bare = [...parts[0].querySelectorAll('measure > sound[tempo]')];
+        if (bare.length !== 1) return { ok: false, detail: 'bare <sound tempo> count=' + bare.length };
+        return { ok: true };
+      })()` },
+  ],
+  phase5_musicxml_export_coverage: [
+    { name: 'slur, articulation, fermata, breath, dynamic, wedge, words, pedal and stem all reach the MusicXML, on the right part',
+      expr: `(() => {
+        const h = window.__hkl_composer;
+        const xml = h.exportMusicXml(h.model);
+        const doc = new DOMParser().parseFromString(xml, 'application/xml');
+        if (doc.querySelector('parsererror')) return { ok: false, detail: 'export is not well-formed XML' };
+        const parts = [...doc.querySelectorAll('part')];
+        if (parts.length !== 2) return { ok: false, detail: 'parts=' + parts.length };
+        const piano = parts[0];
+        const want = {
+          slurStart: piano.querySelectorAll('slur[type="start"]').length,
+          slurStop: piano.querySelectorAll('slur[type="stop"]').length,
+          staccato: piano.querySelectorAll('staccato').length,
+          fermata: piano.querySelectorAll('fermata').length,
+          breath: piano.querySelectorAll('breath-mark').length,
+          dynamics: piano.querySelectorAll('dynamics > mf').length,
+          wedgeStart: piano.querySelectorAll('wedge[type="crescendo"]').length,
+          wedgeStop: piano.querySelectorAll('wedge[type="stop"]').length,
+          words: [...piano.querySelectorAll('words')].filter((w) => w.textContent.trim() === 'dolce').length,
+          pedalStart: piano.querySelectorAll('pedal[type="start"]').length,
+          pedalStop: piano.querySelectorAll('pedal[type="stop"]').length,
+          stemDown: [...piano.querySelectorAll('stem')].filter((x) => x.textContent === 'down').length,
+        };
+        for (const k of Object.keys(want)) {
+          if (want[k] < 1) return { ok: false, detail: k + ' missing from the export: ' + JSON.stringify(want) };
+        }
+        /* Directions carry a PART-LOCAL staff: the pedal is on the piano's
+           second staff, and the violin part must carry none of this. */
+        const ped = [...piano.querySelectorAll('direction')].find((d) => d.querySelector('pedal'));
+        const pedStaff = ped && ped.querySelector('staff') ? ped.querySelector('staff').textContent : null;
+        if (pedStaff !== '2') return { ok: false, detail: 'pedal on part-local staff ' + pedStaff };
+        const violin = parts[1];
+        if (violin.querySelectorAll('dynamics, wedge, pedal, slur').length) {
+          return { ok: false, detail: 'piano marks leaked into the violin part' };
+        }
+        /* Meter symbol and instrument abbreviation. */
+        const timeSym = doc.querySelector('time') ? doc.querySelector('time').getAttribute('symbol') : null;
+        if (timeSym !== 'common') return { ok: false, detail: 'time symbol=' + timeSym };
+        const abbrs = [...doc.querySelectorAll('score-part')].map((sp) => sp.querySelector('part-abbreviation') ? sp.querySelector('part-abbreviation').textContent : null);
+        if (abbrs[1] !== 'Vln.') return { ok: false, detail: 'part abbreviations: ' + JSON.stringify(abbrs) };
+        /* Every measure of every part accounts for its full budget. */
+        const div = Number((xml.match(/<divisions>(\\d+)<\\/divisions>/) || [])[1]);
+        for (const part of parts) {
+          const meas = [...part.querySelectorAll('measure')];
+          for (let i = 0; i < meas.length; i++) {
+            const wantTicks = Math.round(h.model.measureTicksAt(i) * div / 16);
+            const perVoice = new Map(); let cur = 0;
+            for (const c of [...meas[i].children]) {
+              const d = c.querySelector(':scope > duration') ? Number(c.querySelector(':scope > duration').textContent) : 0;
+              if (c.localName === 'note' && !c.querySelector(':scope > chord')) {
+                const v = c.querySelector(':scope > voice').textContent;
+                cur += d; perVoice.set(v, Math.max(perVoice.get(v) || 0, cur));
+              } else if (c.localName === 'forward') {
+                const v = c.querySelector(':scope > voice').textContent;
+                cur += d; perVoice.set(v, Math.max(perVoice.get(v) || 0, cur));
+              } else if (c.localName === 'backup') { cur -= d; }
+            }
+            for (const [v, reach] of perVoice) {
+              if (reach !== wantTicks) return { ok: false, detail: 'measure ' + (i + 1) + ' voice ' + v + ' sums to ' + reach + ', want ' + wantTicks };
+            }
+          }
+        }
+        return { ok: true };
+      })()` },
+  ],
   phase5_musicxml_split: [
     { name: 'two <part>s, 2-entry <part-list>, violin staff renumbered to 1',
       expr: `(() => {
@@ -16107,6 +16342,50 @@ export const FIXTURE_ASSERTIONS = {
         if (doc.querySelectorAll('dir').length) return { ok: false, detail: 'tempo words leaked into <dir>' };
         if (window.__hkl_composer.model.getTempo().bpm !== 132) return { ok: false, detail: 'getTempo bpm ' + window.__hkl_composer.model.getTempo().bpm };
         if (document.querySelectorAll('#score g.tempo').length < 2) return { ok: false, detail: 'rendered g.tempo ' + document.querySelectorAll('#score g.tempo').length };
+        return { ok: true };
+      })()` },
+  ],
+  engr_tempoRestatedAbovePart: [
+    { name: 'the tempo marking is copied above the second part, aligned with the original, and survives a single-part render of that part',
+      expr: `(() => {
+        const orig = document.getElementById('tempo-test-parts');
+        const copy = document.getElementById('tempo-test-parts-p3');
+        if (!orig || !copy) return { ok: false, detail: 'orig=' + !!orig + ' copy=' + !!copy };
+        if (copy.getAttribute('data-staff') !== '3') return { ok: false, detail: 'copy on staff ' + copy.getAttribute('data-staff') };
+        if (copy.textContent.trim() !== 'Allegro') return { ok: false, detail: 'copy text "' + copy.textContent.trim() + '"' };
+        const s3 = document.querySelector('#score g.measure g.staff[data-n="3"]');
+        if (!s3) return { ok: false, detail: 'no staff 3' };
+        const cb = copy.getBoundingClientRect(), ob = orig.getBoundingClientRect(), sb = s3.getBoundingClientRect();
+        if (!(cb.bottom <= sb.top + 1)) return { ok: false, detail: 'copy bottom ' + cb.bottom.toFixed(1) + ' not above staff 3 top ' + sb.top.toFixed(1) };
+        if (Math.abs(cb.left - ob.left) > 2) return { ok: false, detail: 'copy x ' + cb.left.toFixed(1) + ' vs original ' + ob.left.toFixed(1) };
+        const m = window.__hkl_composer.model;
+        const solo = new DOMParser().parseFromString(m.serialize({ hejiEnabled: false }, [3]), 'application/xml');
+        const soloTempi = [...solo.querySelectorAll('tempo')];
+        if (soloTempi.length !== 1 || soloTempi[0].getAttribute('staff') !== '3' || soloTempi[0].textContent.trim() !== 'Allegro') {
+          return { ok: false, detail: 'violin-only render tempi: ' + soloTempi.map(t => t.getAttribute('staff') + ':' + t.textContent.trim()).join(',') };
+        }
+        const saved = new DOMParser().parseFromString(m.serialize(), 'application/xml');
+        const savedTempi = [...saved.querySelectorAll('tempo')].filter(t => t.textContent.trim() === 'Allegro');
+        if (savedTempi.length !== 1) return { ok: false, detail: 'saved doc holds ' + savedTempi.length + ' copies of the marking' };
+        return { ok: true };
+      })()` },
+  ],
+  engr_fermataOutsideGrandStaff: [
+    { name: 'both fermatas sit outside the braced pair — above staff 1, inverted below staff 2 — and none in the gap',
+      expr: `(() => {
+        const st = (n) => document.querySelector('#score g.measure g.staff[data-n="' + n + '"]');
+        const s1 = st(1), s2 = st(2);
+        if (!s1 || !s2) return { ok: false, detail: 'staves 1=' + !!s1 + ' 2=' + !!s2 };
+        const ferms = [...document.querySelectorAll('#score g.fermata')];
+        if (ferms.length !== 2) return { ok: false, detail: 'fermatas=' + ferms.length };
+        const glyph = (g) => ([...g.querySelectorAll('use')].map(u => u.getAttribute('href') || u.getAttribute('xlink:href') || '')[0] || '');
+        const b1 = s1.getBoundingClientRect(), b2 = s2.getBoundingClientRect();
+        const boxes = ferms.map(f => ({ g: f, r: f.getBoundingClientRect() })).sort((a, b) => a.r.top - b.r.top);
+        const up = boxes[0], down = boxes[1];
+        if (!(up.r.bottom <= b1.top + 1)) return { ok: false, detail: 'upper fermata bottom ' + up.r.bottom.toFixed(1) + ' not above staff 1 top ' + b1.top.toFixed(1) };
+        if (!(down.r.top >= b2.bottom - 1)) return { ok: false, detail: 'lower fermata top ' + down.r.top.toFixed(1) + ' not below staff 2 bottom ' + b2.bottom.toFixed(1) + ' (it is in the inter-staff gap)' };
+        if (!glyph(down.g).includes('E4C1')) return { ok: false, detail: 'below-staff fermata is not the inverted glyph: ' + glyph(down.g) };
+        if (!glyph(up.g).includes('E4C0')) return { ok: false, detail: 'above-staff fermata is not the upright glyph: ' + glyph(up.g) };
         return { ok: true };
       })()` },
   ],
