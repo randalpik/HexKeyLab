@@ -3704,6 +3704,68 @@ export class ComposerModel {
     return true;
   }
 
+  /** The node a manual break is placed before: the measure itself, or its
+   *  `<ending>` wrapper when the measure is the ending's first (a break before
+   *  a volta's first bar sits at section level — where `injectPins` and
+   *  `hardStartIds` look for it). An interior ending measure keeps the break
+   *  inside the ending, directly before it. */
+  private breakAnchorOf(measure: Element): Element {
+    const parent = measure.parentElement;
+    if (parent && parent.localName === "ending") {
+      const first = Array.from(parent.children).find((c) => c.localName === "measure");
+      if (first === measure) return parent;
+    }
+    return measure;
+  }
+
+  /** The manual break directly before the measure at `measureIdx` (any
+   *  `<scoreDef>` between is skipped, like the MusicXML exporter does):
+   *  'lock' = a plain `<sb>` (a manual line break — Alt+Shift+↑/↓, or any
+   *  foreign `<sb>`), 'section' = a section header's `<sb data-hkl-section>`,
+   *  'page' = `<pb>`; null when nothing breaks before it. */
+  hardBreakBefore(measureIdx: number): 'lock' | 'section' | 'page' | null {
+    const measures = this.allMeasures();
+    if (measureIdx < 0 || measureIdx >= measures.length) return null;
+    const node = this.breakAnchorOf(measures[measureIdx]);
+    for (let sib = node.previousElementSibling; sib; sib = sib.previousElementSibling) {
+      const ln = sib.localName;
+      if (ln === "pb") return 'page';
+      if (ln === "sb") return sib.getAttribute("data-hkl-section") === "true" ? 'section' : 'lock';
+      if (ln === "scoreDef") continue;
+      break;
+    }
+    return null;
+  }
+
+  /** Set or clear a MANUAL LINE BREAK — a plain `<sb>` ("lock", 2026-09-11) —
+   *  before the measure at `measureIdx`. The page line-break owner treats it
+   *  as a hard line start and a reflow-section boundary (render/linebreaks.ts
+   *  `hardStartIds`/`sectionRanges`); it saves in the .hkc as is and exports
+   *  as `<print new-system="yes"/>`. Never touches a section header's `<sb>`
+   *  or a `<pb>`. Returns true when the document changed. */
+  setLineLockAt(measureIdx: number, on: boolean): boolean {
+    const measures = this.allMeasures();
+    if (measureIdx <= 0 || measureIdx >= measures.length) return false;
+    const node = this.breakAnchorOf(measures[measureIdx]);
+    const parent = node.parentElement;
+    if (!parent) return false;
+    let lock: Element | null = null;
+    for (let sib = node.previousElementSibling; sib; sib = sib.previousElementSibling) {
+      const ln = sib.localName;
+      if (ln === "sb" && sib.getAttribute("data-hkl-section") !== "true") { lock = sib; break; }
+      if (ln === "scoreDef" || ln === "sb" || ln === "pb") continue;
+      break;
+    }
+    if (on) {
+      if (lock) return false;
+      parent.insertBefore(el(this.doc, "sb", { "xml:id": newId("sb") }), node);
+      return true;
+    }
+    if (!lock) return false;
+    lock.parentNode?.removeChild(lock);
+    return true;
+  }
+
   /** Section header (movement title) at the measure `measureIdx`. Pass a
    *  non-empty `title` to set/replace, or '' to remove. A section header:
    *    - tags the measure with `data-hkl-section-title` (rendered centered,

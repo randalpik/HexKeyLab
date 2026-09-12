@@ -1208,6 +1208,11 @@ initInput(model, {
   requestApplyLayout: () => requestApplyLayout(),
   isCellRendered: (mi, staffN) => renderer.isCellRendered(mi, staffN),
   afterRender: (cb) => afterRender(cb),
+  /* Manual line breaks (linebreakCommands.ts): the renderer's owned partition. */
+  isPageView: () => renderer.getViewMode() === 'page',
+  systemOfMeasure: (mi) => renderer.systemOfMeasure(model, mi),
+  captureLayout: () => renderer.captureLayout(),
+  restoreLayout: (snap) => renderer.restoreLayout(snap),
   history,
 });
 

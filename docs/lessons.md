@@ -4113,3 +4113,36 @@ sonata catches the next such gap. Found by wrapping the renderer's methods in
 a page and re-importing the sonata — the trace showed `runExtentsJobNow` at
 stale=0 followed by `repairAtMount` at stale=17, which no amount of reading
 the code had made obvious.
+
+## A failing non-visual assertion makes the composer-test runner re-engrave — read the splice invariant after fixing the assertion (2026-09-11)
+
+When a fixture fails any non-visual check, `run.mjs` shoots the live page
+AND a full re-engrave of the same document for the diff heatmap. That
+re-engrave lands in the render ledger BEFORE the splice invariant reads it,
+so the report also says `1 full render(s) during the fixture's own edits:
+(unattributed)`. The full render is an artefact of the failure, not a
+second defect: the manual-line-break visual fixture reported exactly this
+while its only real problem was an assertion reading `renderLedger()` after
+the runner's post-setup `clearRenderLedger()` (setupKeys renders happen
+BEFORE that clear — assert the owner's `lastDeriveReason` instead). Fix the
+first failure, re-run, and only then believe a splice-invariant failure.
+
+## A cached-partition restore must carry the width caches — zoom emptied them and the balancer went silent (2026-09-12)
+
+Symptom: at zoom 50 %, a lock after a system's first measure left the bar
+orphaned on its own stretched line; at 100 %, or when the score was imported
+already at 50 %, it folded into the previous system. `lastBalance.reasons`
+said `naturals incomplete` and `pageBreaks.naturals.size` was 4 of 446.
+Cause: a zoom round-trip hits the renderer's partition cache and restores the
+lines through `adoptPartition`, whose `invalidate()` also emptied `naturals`
+and `sigWByCtx`; the cached entry was already `balanced`, so the idle warm
+job was not re-armed, and the edit-path balancer — which correctly refuses to
+work on partial data — declined every section-final defect until reload. The
+widths are in Verovio's logical units, identical across zoom presets (`unit`
+is constant) and independent of the page rectangle, so the cache entry now
+carries them (`OwnerWidths`) and the restore hands them back. General rule:
+any path that restores owner state without a derive must restore ALL of it —
+a partial restore is a silent downgrade the gates do not see, because every
+gate the suite runs starts from a fresh derive. Fixture:
+`page_zoom_roundtrip_keeps_widths`, `lock_after_zoom_reflows`.
+

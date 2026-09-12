@@ -44,12 +44,30 @@ export interface Snapshot {
   docVer?: number;
 }
 
+/** The page-view line partition at a moment (render/linebreaks.ts): line-
+ *  and page-start measure ids plus the renderer's layout key (zoom unit, page
+ *  scale, view, break structure). Carried on the history entry of a MANUAL
+ *  LINE-BREAK command (2026-09-11) so undo/redo restores the exact layout the
+ *  command moved — the conservative repair that makes content edits
+ *  reversible cannot reverse a deliberate partition move, and a lock whose
+ *  undo left the measures where the command pushed them would be a layout
+ *  drift with no lock left to click. Restored only while the key still
+ *  matches (a zoom change in between makes the ids describe another budget). */
+export interface LayoutSnapshot {
+  key: string;
+  lines: string[];
+  pages: string[];
+}
+
 export interface UndoEntry {
   before: Snapshot;
   after: Snapshot;
   label: string;
   sourceSelection?: SelectionState;
   mergeable?: boolean;
+  /** Partition on screen before / after a line-break command (see LayoutSnapshot). */
+  layoutBefore?: LayoutSnapshot;
+  layoutAfter?: LayoutSnapshot;
 }
 
 export interface PushOpts {
@@ -59,6 +77,8 @@ export interface PushOpts {
   mergeable?: boolean;
   /** If the top of the undo stack is mergeable, merge this push into it. */
   mergeIfTopMergeable?: boolean;
+  /** Layout the command is about to move (line-break commands only). */
+  layoutBefore?: LayoutSnapshot;
 }
 
 /** Side-effects an undo/redo applies to the input layer alongside the model
@@ -191,12 +211,23 @@ export class HistoryManager {
     const entry: UndoEntry = { before, after, label };
     if (opts.sourceSelection !== undefined) entry.sourceSelection = opts.sourceSelection;
     if (opts.mergeable) entry.mergeable = true;
+    if (opts.layoutBefore) entry.layoutBefore = opts.layoutBefore;
 
     const savedRedo = this.redoStack;
     this.undoStack.push(entry);
     if (this.undoStack.length > this.cap) this.undoStack.shift();
     this.redoStack = [];
     if (versioned) this.pending = { entry, check: before, savedRedo };
+  }
+
+  /** Record the layout a line-break command's render settled on, on the top
+   *  undo entry (called from afterRender, once the partition is committed).
+   *  No-op when nothing is on the stack or the entry already has one. */
+  annotateTopLayoutAfter(snap: LayoutSnapshot | null): void {
+    if (!snap) return;
+    const top = this.undoStack[this.undoStack.length - 1];
+    if (!top || !top.layoutBefore || top.layoutAfter) return;
+    top.layoutAfter = snap;
   }
 
   /** Restore the BEFORE side of the top entry. The model's cursor/voice

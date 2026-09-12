@@ -141,5 +141,6 @@ check('dpPartition infeasible (one 0.4 bar alone) → null', dpPartition([0.4], 
 check('dpPartition single legal line', JSON.stringify(dpPartition([0.4, 0.4], D.sig, 1, new Set(), P)) === '[2]');
 check('balanceSection rejects lens that do not sum to M', balanceSection([0.3, 0.3], D.sig, [1], P) === null);
 
+
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);

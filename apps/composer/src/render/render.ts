@@ -11,6 +11,9 @@ import { applyNotationTheme } from '@hkl/notation/verovio.js';
 import { CRISP_PRESETS, crispMarginTop, lineWidthOptions, pinExactScale, snapStaffLinesToGrid, snapBarlines, snapSystemRightEdge } from '@hkl/notation/render-presets.js';
 import { pageFitConstants, measureExtents, placeSystems, foldIndex, translateOf, ExtentsStore, SECTION_HEADER_RESERVE, SECTION_HEADER_BASELINE, type PlacedSystem, type SysExtents, type PageFitConstants, type DistributeOpts, alignStaffRows } from './pagefit.js';
 import { ScrollSplicer, type SpliceCtx } from './splice.js';
+import { refreshLockMarks, LOCK_SELECTOR } from './lockmarks.js';
+import { lockStartIds, type OwnerWidths } from './linebreaks.js';
+import type { LayoutSnapshot } from '../history.js';
 import {
   PageLineBreaks, partitionFromLayout, systemStartsFromPageSvg, injectPins,
   type PageBreaksCtx,
@@ -294,6 +297,12 @@ class Renderer {
     /** Every section was checked by the balancer (job complete): a cache hit
      *  needs neither the sync band balance nor a new job. */
     balanced: boolean;
+    /** The owner's width caches at the time (natural + leading-signature
+     *  widths, zoom- and page-scale-independent). Restored with the lines so a
+     *  zoom round-trip leaves the owner knowing exactly what it knew — without
+     *  them every natural went cold and the edit-path balancer declined every
+     *  section-final defect until reload (2026-09-12). */
+    widths: OwnerWidths;
   }>();
   /** Mode the container's current content was rendered in (null before the
    *  first render). Drives the stash/restore branch in renderComposer. */
@@ -362,6 +371,9 @@ class Renderer {
    *  crisp snap). Injections are NOT idempotent (section headers translate
    *  systems), so only the mount path may run them — never a second pass. */
   private onPageMountedCb: ((pageEl: HTMLElement) => void) | null = null;
+  /** Lock-id signature the mounted pages' padlocks were last drawn from
+   *  (syncLockMarks). */
+  private lastLockSig = '';
   /** Pending idle handle + latest cursor measure for updateMountWindow. */
   private mountWindowHandle: number | null = null;
   private mountWindowMi = -1;
@@ -774,6 +786,8 @@ class Renderer {
       const band = idx >= 0 ? placed[idx].bandTop : null;
       if (band !== null) t.setAttribute('y', String(band + SECTION_HEADER_BASELINE));
     }
+    /* Manual line-break padlocks ride on the placed systems (draw only). */
+    this.drawLockMarks(pageEl);
     return { systems: ps.systems, placed, paperBottom: ps.paperBottom };
   }
 
@@ -1845,6 +1859,7 @@ class Renderer {
          settle pass at the adopt sites below, so the entry a later zoom
          restores is the settled pagination, not a pre-cascade one. */
       this.rememberPartition(model);
+      this.syncLockMarks(model);
     }
     this.lastRenderedMode = this.viewMode;
     return true;
@@ -1896,6 +1911,7 @@ class Renderer {
               oldStartIds: refill.oldStartIds, newStartIds: refill.newStartIds,
               oldPageStartIds: refill.oldPageStartIds, newPageStartIds: refill.newPageStartIds,
               changedRun: refill.changedRun,
+              partitionOnly: refill.partitionOnly,
             };
             if (this.pageSplicer.trySplice(model, req, this.pageSpliceCtx())) {
               spliced = true;
@@ -1912,6 +1928,7 @@ class Renderer {
           }
           if (landed) {
             this.lastPageSpliced = true;
+            for (const el of this.touchedPages) this.drawLockMarks(el);
             this.pageBreaks.verifyRenderedPartition(
               this.container!, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
             /* Reference gate (test mode): after the splice AND its repair have
@@ -2114,6 +2131,7 @@ class Renderer {
     if (lines.length <= 1) return;
     this.partitionCache.set(this.partitionKey(model), {
       docVer: model.docVersion(), lines, pages: this.pageBreaks.pageStarts(),
+      widths: this.pageBreaks.exportWidths(),
       /* Balanced once the idle job has checked every section: an edit's own
          repartition balances the sections it touches, so the flag survives
          edits; a fresh derive re-arms the job and clears it. */
@@ -2143,7 +2161,7 @@ class Renderer {
        verified either way (verifyRenderedPartition + overflowingPage). */
     const cached = this.partitionCache.get(this.partitionKey(model));
     if (cached && cached.docVer === model.docVersion()
-        && this.pageBreaks.restorePartition(model, cached.lines, cached.pages)) {
+        && this.pageBreaks.restorePartition(model, cached.lines, cached.pages, cached.widths)) {
       const pinnedFromCache = this.pageBreaks.pinRenderMei(data);
       if (pinnedFromCache !== null) {
         this.renderPage(pinnedFromCache, true, 'encoded');
@@ -2617,6 +2635,7 @@ class Renderer {
       if (sys && block.includes(sys)) titles.push(t);
     }
     for (const t of titles) t.remove();
+    this.removeLockMarksOf(from, block);
     for (const sys of block) sys.remove();
     return { systems: block.slice(), titles };
   }
@@ -2675,6 +2694,7 @@ class Renderer {
       const sys = m?.closest('g.system');
       if (sys && block.includes(sys)) t.remove();
     }
+    this.removeLockMarksOf(div, block);
     for (const s of block) s.remove();
   }
 
@@ -2686,7 +2706,7 @@ class Renderer {
     const svg = from.querySelector('svg');
     if (!svg) return null;
     const shell = svg.cloneNode(true) as Element;
-    for (const s of Array.from(shell.querySelectorAll('g.system, text.hkl-section-header, text.hkl-injected-composer, text.hkl-injected-footer, text.hkl-running-title, [data-selection-rect]'))) s.remove();
+    for (const s of Array.from(shell.querySelectorAll('g.system, text.hkl-section-header, text.hkl-injected-composer, text.hkl-injected-footer, text.hkl-running-title, [data-selection-rect], ' + LOCK_SELECTOR))) s.remove();
     /* The page's glyph defs stay behind: `moveBlock` merges exactly the glyphs
        the transplanted systems reference (mergeGlyphDefs), so the new SVG root
        is as small as its content — its first layout is the cascade's one
@@ -3066,6 +3086,7 @@ class Renderer {
       return false;
     }
     if (landed) {
+      for (const el of this.touchedPages) this.drawLockMarks(el);
       this.pageBreaks.verifyRenderedPartition(this.container, model, this.pageVirt.pageCount, this.pageBreaksCtx());
       if (indexCheckEnabled()) {
         this.pageSplicer.verifyAgainstReference(this.pinnedMeiForCurrentModel(), this.touchedPages, this.pageSpliceCtx());
@@ -3074,6 +3095,102 @@ class Renderer {
       console.warn('[page-balance] spilled page could not be repaired (' + this.pageSplicer.lastSkipReason + ') — full pinned render');
       const pinned = this.pinnedMeiForCurrentModel();
       if (pinned === null) return false;
+      this.renderPage(pinned, true, this.paintedBreaks());
+      this.pageBreaks.verifyRenderedPartition(this.container, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
+    }
+    this.rememberPartition(model);
+    return true;
+  }
+
+  /* ── manual line breaks (2026-09-11) ─────────────────────────────────── */
+
+  /** Draw the manual line-break padlocks of one mounted page
+   *  (render/lockmarks.ts) from the model's locks; a page-final system's
+   *  successor comes from the owner's partition, else from the next mounted
+   *  page. Idempotent; runs after every placement and after every splice. */
+  private drawLockMarks(pageEl: Element): void {
+    const model = this.lastModel;
+    if (!model || this.viewMode !== 'page') return;
+    const locks = lockStartIds(model);
+    const lines = this.pageBreaks.lineStarts();
+    const next = new Map<string, string>();
+    for (let i = 0; i + 1 < lines.length; i++) next.set(lines[i], lines[i + 1]);
+    const pageNo = Number((pageEl as HTMLElement).dataset?.page);
+    refreshLockMarks(pageEl, locks, (id) => {
+      const owned = next.get(id);
+      if (owned) return owned;
+      const nextPage = pageNo >= 1 ? this.pageDiv(pageNo + 1) : null;
+      return nextPage?.querySelector('g.system g.measure')?.id ?? null;
+    });
+  }
+
+  /** Padlocks whose system is in `block` leave with it (a splice moves the
+   *  block to another page, which redraws them on its own placement). */
+  private removeLockMarksOf(from: HTMLElement, block: Element[]): void {
+    for (const l of Array.from(from.querySelectorAll(LOCK_SELECTOR))) {
+      const sid = l.getAttribute('data-system');
+      const sys = sid ? from.querySelector('#' + CSS.escape(sid))?.closest('g.system') ?? null : null;
+      if (sys && block.includes(sys)) l.remove();
+    }
+  }
+
+  /** After a page render: when the set of locks changed (a lock added or
+   *  removed — an UNLOCK renders as a signature no-op, so no placement runs),
+   *  redraw every mounted page's padlocks. */
+  private syncLockMarks(model: ComposerModel): void {
+    const sig = Array.from(lockStartIds(model)).join(',');
+    if (sig === this.lastLockSig) return;
+    this.lastLockSig = sig;
+    if (!this.container) return;
+    for (const page of Array.from(this.container.querySelectorAll('.score-page:not(.score-page-pending)'))) this.drawLockMarks(page);
+  }
+
+  /** The owned system holding measure `mi` (document index): its line index
+   *  and first/last measure indices. Null unless page view with an owned
+   *  multi-line partition whose ids all resolve in the current document. */
+  systemOfMeasure(model: ComposerModel, mi: number): { lineIdx: number; startIdx: number; endIdx: number } | null {
+    if (this.viewMode !== 'page' || !this.pageBreaks.ownershipActive()) return null;
+    const ids = model.allMeasures().map((m) => m.getAttribute('xml:id') ?? '');
+    const idx = new Map(ids.map((id, i) => [id, i]));
+    const starts: number[] = [];
+    for (const id of this.pageBreaks.lineStarts()) { const i = idx.get(id); if (i == null) return null; starts.push(i); }
+    if (!starts.length || mi < 0 || mi >= ids.length) return null;
+    let k = 0;
+    while (k + 1 < starts.length && starts[k + 1] <= mi) k++;
+    const startIdx = starts[k];
+    const endIdx = (k + 1 < starts.length ? starts[k + 1] : ids.length) - 1;
+    if (mi < startIdx || mi > endIdx) return null;
+    return { lineIdx: k, startIdx, endIdx };
+  }
+
+  /** The partition on screen, keyed by its layout inputs — what a line-break
+   *  command's history entry carries (history.ts LayoutSnapshot). Null when
+   *  nothing is owned. */
+  captureLayout(): LayoutSnapshot | null {
+    const model = this.lastModel;
+    if (!model || this.viewMode !== 'page' || !this.pageBreaks.ownershipActive()) return null;
+    return { key: this.partitionKey(model), lines: this.pageBreaks.lineStarts(), pages: this.pageBreaks.pageStarts() };
+  }
+
+  /** Put a captured partition back (undo/redo of a line-break command). The
+   *  document has already been swapped to the state the snapshot describes,
+   *  so the key must match the current layout inputs and every id must
+   *  resolve; the owner re-baselines against the current document WITHOUT
+   *  dropping its width caches (replacePartition), the DOM lands the move as a
+   *  partition-only splice (or a full pinned render when the splicer
+   *  refuses), and the render that follows is a signature no-op. False when
+   *  not applicable — the caller lets the ordinary refill decide. */
+  restoreLayout(snap: LayoutSnapshot): boolean {
+    const model = this.lastModel;
+    if (!model || this.viewMode !== 'page' || !this.container) return false;
+    if (snap.key !== this.partitionKey(model)) return false;
+    const oldLines = this.pageBreaks.lineStarts(), oldPages = this.pageBreaks.pageStarts();
+    if (oldLines.length <= 1) return false;
+    if (!this.pageBreaks.replacePartition(model, snap.lines, snap.pages)) return false;
+    const same = oldLines.join('|') === snap.lines.join('|') && oldPages.join('|') === snap.pages.join('|');
+    if (!same && !this.applyPartitionChange(oldLines, snap.lines, oldPages, snap.pages)) {
+      const pinned = this.pinnedMeiForCurrentModel();
+      if (pinned === null) { this.pageBreaks.invalidate(); return false; }
       this.renderPage(pinned, true, this.paintedBreaks());
       this.pageBreaks.verifyRenderedPartition(this.container, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
     }

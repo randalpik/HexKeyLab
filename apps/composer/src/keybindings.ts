@@ -91,6 +91,11 @@ export const KEYBINDINGS: KeySection[] = [
         note: "Verovio starts a new system/page at the break. No effect in scroll view.",
       },
       {
+        keys: "Alt+Shift+↓",
+        desc: "Manual line break (page view): the current and following measures start a new system.",
+        note: "The break is locked — a padlock at the end of the system marks it; click the padlock to unlock. Locks save with the score and export to MusicXML as system breaks.",
+      },
+      {
         keys: "H",
         desc: "Hide the current rest (still affects timing).",
       },

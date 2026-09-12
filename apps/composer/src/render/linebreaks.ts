@@ -19,8 +19,11 @@
 // one measure per edit and never drifted back). With conservative repair a
 // no-op edit provably moves nothing, undo restores the original layout, and the
 // legality bounds above are the only tuning surface. (An explicit "reflow the
-// whole document as if freshly engraved" command, and explicit move-measure-
-// between-systems commands, are deliberately future work — not this path.)
+// whole document as if freshly engraved" command is deliberately NOT offered.
+// Manual line breaks (2026-09-11/12, linebreakCommands.ts) are plain <sb>
+// LOCKS in the document: a lock splits its line here and then reflows like
+// any measure-count change — the layout never holds state the document could
+// not reproduce after a reload (Max's ruling, 2026-09-12).)
 //
 // Lifecycle:
 //   derive render (doc load / zoom / page scale / staff filter / any fallback)
@@ -169,7 +172,21 @@ export interface RefillResult {
    *  pagination isn't owned. */
   oldPageStartIds: string[];
   newPageStartIds: string[];
+  /** Nothing inside any measure changed — only the partition (a manual
+   *  line-break command, 2026-09-11): the splicer may treat the hunk like the
+   *  balancer's partition-only changes. */
+  partitionOnly: boolean;
 }
+
+/** A manual line-break edit in CURRENT measure indices: the measures a newly
+ *  added lock precedes (the `lock:` sig diff in tryRefill). A lock is a
+ *  DOCUMENT change and nothing more (Max, 2026-09-12): the layout must never
+ *  hold state the document cannot reproduce after a reload, so there is no
+ *  "dissolve this soft start" or "keep this line over-tight" side channel —
+ *  the line is split at the lock and the ordinary carry/repair/balance does
+ *  the rest, exactly as for a measure insert. A removed lock changes nothing
+ *  here: the boundary merely stops being hard. */
+interface PartitionEdit { addStarts: number[] }
 
 /* ── pure helpers ─────────────────────────────────────────────────────────── */
 
@@ -331,13 +348,74 @@ function computeUserBreakSig(model: ComposerModel): string {
   const walk = (el: Element): void => {
     for (const c of Array.from(el.children)) {
       if (c.localName === 'measure') flush(c.getAttribute('xml:id') ?? '?');
-      else if (c.localName === 'sb' || c.localName === 'pb') pending.push(c.localName);
+      else if (c.localName === 'pb') pending.push('pb');
+      /* A plain <sb> is a MANUAL LINE BREAK (`lock:`, 2026-09-11) — a
+         partition edit the refill handles; a section header's <sb> and a
+         <pb> are structural and still derive. */
+      else if (c.localName === 'sb') pending.push(c.getAttribute('data-hkl-section') === 'true' ? 'sb' : 'lock');
       else if (c.localName !== 'scoreDef' && c.querySelector('measure')) walk(c);
     }
   };
   walk(section);
   flush('$end');
   return parts.join(',');
+}
+
+/** Diff two user-break signatures. 'structural' when a page break or section
+ *  header entry differs (the refill derives, as before); otherwise the measure
+ *  ids whose MANUAL line break (`lock:`) was added / removed. */
+function diffBreakSigs(oldSig: string, newSig: string): 'structural' | { added: string[]; removed: string[] } {
+  const parse = (sig: string): Set<string> => new Set(sig ? sig.split(',') : []);
+  const a = parse(oldSig), b = parse(newSig);
+  const added: string[] = [], removed: string[] = [];
+  for (const e of b) if (!a.has(e)) { if (!e.startsWith('lock:')) return 'structural'; added.push(e.slice(5)); }
+  for (const e of a) if (!b.has(e)) { if (!e.startsWith('lock:')) return 'structural'; removed.push(e.slice(5)); }
+  return { added: added.filter((id) => id !== '$end'), removed: removed.filter((id) => id !== '$end') };
+}
+
+/** Measure range (CURRENT indices) of the lines whose starts differ between
+ *  two partitions — from the line BEFORE the first moved start (its end moved)
+ *  through the last moved line — i.e. what a partition-only splice redraws.
+ *  Null when the partitions are equal or an id is unknown. Mirrors
+ *  Renderer.applyPartitionChange's hunk. */
+export function partitionHunk(
+  oldStartIds: readonly string[], newStartIds: readonly string[], idIdx: Map<string, number>, n: number,
+): { lo: number; hi: number } | null {
+  const N = oldStartIds.length, M = newStartIds.length;
+  let pre = 0;
+  while (pre < Math.min(N, M) && oldStartIds[pre] === newStartIds[pre]) pre++;
+  let suf = 0;
+  while (suf < Math.min(N, M) - pre && oldStartIds[N - 1 - suf] === newStartIds[M - 1 - suf]) suf++;
+  if (N === M && pre === N) return null;
+  const a = Math.max(0, pre - 1), bNew = M - 1 - suf;
+  const lo = idIdx.get(newStartIds[a]);
+  const hiEnd = bNew + 1 < M ? idIdx.get(newStartIds[bNew + 1]) : n;
+  if (lo == null || hiEnd == null) return null;
+  return { lo, hi: Math.max(lo, hiEnd - 1) };
+}
+
+/** Measure ids a MANUAL line break precedes: a plain `<sb>` (no
+ *  `data-hkl-section`) in the doc's section stream — an Alt+Shift+↑/↓ lock or
+ *  any foreign `<sb>`. Subset of `hardStartIds`; the lock glyphs draw from it. */
+export function lockStartIds(model: ComposerModel): Set<string> {
+  const out = new Set<string>();
+  const section = model.getDoc().querySelector('section');
+  if (!section) return out;
+  let pending = false;
+  const walk = (el: Element): void => {
+    for (const c of Array.from(el.children)) {
+      if (c.localName === 'measure') {
+        if (pending) { const id = c.getAttribute('xml:id'); if (id) out.add(id); }
+        pending = false;
+      } else if (c.localName === 'sb') {
+        if (c.getAttribute('data-hkl-section') !== 'true') pending = true;
+      } else if (c.localName !== 'scoreDef' && c.localName !== 'pb' && c.querySelector('measure')) {
+        walk(c);
+      }
+    }
+  };
+  walk(section);
+  return out;
 }
 
 /** Measure ids that MUST start a line: those directly preceded by a user
@@ -449,6 +527,15 @@ export interface BalanceStats {
   reasons: string[];
   ms: number;
 }
+
+/** The owner's width caches, as the renderer's partition cache carries them
+ *  across a zoom / page-scale / view round-trip (2026-09-12). Natural measure
+ *  widths and leading clef+key widths are in Verovio's logical units, which
+ *  `unit` (constant across every zoom preset) fixes — measured identical at
+ *  zoom 50 and 100 on the sonata — and they do not depend on the page
+ *  rectangle either, so they are valid for any budget. Only the budget is
+ *  re-measured. */
+export interface OwnerWidths { naturals: Map<string, number>; sigW: Map<string, number> }
 
 /** Cache / identity key of a staff subset: sorted staff numbers, or 'all'. */
 export function viewKeyOf(viewStaves: number[] | null | undefined): string {
@@ -742,14 +829,30 @@ export class PageLineBreaks {
     return this.adoptPartition(model, read.lines, read.pages);
   }
 
+  /** Copies of the width caches for the renderer's partition cache (see
+   *  OwnerWidths). */
+  exportWidths(): OwnerWidths {
+    return { naturals: new Map(this.naturals), sigW: new Map(this.sigWByCtx) };
+  }
+
   /** Commit `lines`/`pages` as the owned partition against the CURRENT document:
    *  reset state, capture the structural + per-measure signature baseline (so a
    *  later refill diffs against the document this partition describes), and
    *  verify every id still exists. Shared by castoff adoption and by the
-   *  renderer's partition cache (`restorePartition`). */
-  private adoptPartition(model: ComposerModel, lines: string[], pages: string[]): boolean {
+   *  renderer's partition cache (`restorePartition`). `widths` restores the
+   *  width caches the cache entry carried: without them a zoom round-trip
+   *  left every natural cold and the edit-path balancer — which never works
+   *  on partial data — declined every section-final defect until reload
+   *  ('naturals incomplete'; a lock after a system's first measure left the
+   *  bar orphaned at zoom 50 but not at 100, Max 2026-09-12). Zoom must not
+   *  change what the owner knows. */
+  private adoptPartition(model: ComposerModel, lines: string[], pages: string[], widths?: OwnerWidths): boolean {
     if (lines.length <= 1) return false;   // single-line docs are never owned
     this.invalidate();
+    if (widths) {
+      this.naturals = new Map(widths.naturals);
+      this.sigWByCtx = new Map(widths.sigW);
+    }
     this.userBreakSig = computeUserBreakSig(model);
     this.sigState = captureSigState(model.getDoc(), headExtra(model));
     const meiMeasures = model.allMeasures();
@@ -779,8 +882,40 @@ export class PageLineBreaks {
    *  checked by `verifyRenderedPartition` + the page-overflow test exactly like
    *  a freshly adopted one — so a stale offer degrades to a derive, never to a
    *  wrong layout. */
-  restorePartition(model: ComposerModel, lines: string[], pages: string[]): boolean {
-    return this.adoptPartition(model, lines, pages);
+  restorePartition(model: ComposerModel, lines: string[], pages: string[], widths?: OwnerWidths): boolean {
+    return this.adoptPartition(model, lines, pages, widths);
+  }
+
+  /** Commit a partition for the CURRENT document WITHOUT dropping the width
+   *  caches (manual line breaks, 2026-09-11). The renderer restores a layout
+   *  snapshot on undo/redo of a line-break command; the document then differs
+   *  from the one the snapshot was taken against only by a `<sb>`, so every
+   *  natural and leading-signature width is still right — `adoptPartition`'s
+   *  `invalidate` would throw them away and leave the next edit re-measuring
+   *  (and `balanceTouched` declining with 'naturals incomplete'). Validates
+   *  the ids (present, ascending, line 0 = the document start, page 1 = line
+   *  0), cancels any adoption/balance job, and re-baselines the signatures and
+   *  the user-break sig against the current document. */
+  replacePartition(model: ComposerModel, lines: string[], pages: string[]): boolean {
+    if (lines.length <= 1) return false;
+    const meiMeasures = model.allMeasures();
+    const ids = measureIds(meiMeasures);
+    const idIdx = new Map(ids.map((id, i) => [id, i]));
+    if (lines[0] !== ids[0]) return false;
+    let prev = -1;
+    for (const id of lines) { const i = idIdx.get(id); if (i == null || i <= prev) return false; prev = i; }
+    const lineSet = new Set(lines);
+    if (pages.length && pages[0] !== lines[0]) return false;
+    if (!pages.every((id) => lineSet.has(id))) return false;
+    if (this.adoption) { this.adoption.cancelled = true; this.adoption = null; }
+    if (this.balanceJob) { this.balanceJob.cancelled = true; this.balanceJob = null; }
+    this.userBreakSig = computeUserBreakSig(model);
+    this.sigState = captureSigState(model.getDoc(), headExtra(model));
+    this.captureSigs(model.getDoc(), meiMeasures, ids);
+    this.startIds = lines.slice();
+    this.pageStartIds = pages.slice();
+    this.lastDeriveReason = '';
+    return true;
   }
 
   /** Arm lazy partition adoption right after a derive render: the live toolkit
@@ -872,7 +1007,14 @@ export class PageLineBreaks {
     this.setView(viewStaves);
     if (this.startIds === null && !this.finishAdoptionNow(ctx)) return bail('no adoptable partition');
     if (this.startIds!.length <= 1) return bail('single-line partition');
-    if (computeUserBreakSig(model) !== this.userBreakSig) return bail('user breaks changed');
+    /* User breaks. A page break or section header change still derives; a
+       MANUAL LINE BREAK — a plain <sb>, `lock:` in the sig — is a partition
+       edit handled below like a measure insert, never a derive: a derive lets
+       castoff re-decide every line of the document for an edit whose effect
+       is one local split (2026-09-11). */
+    const newBreakSig = computeUserBreakSig(model);
+    const lockDiff = newBreakSig === this.userBreakSig ? null : diffBreakSigs(this.userBreakSig, newBreakSig);
+    if (lockDiff === 'structural') return bail('user breaks changed');
     /* Head / interior signature changes are handled AFTER the measure diff, as
        governed RANGES folded into the changed run (sigranges.ts); only a
        structural change there still derives. */
@@ -997,11 +1139,23 @@ export class PageLineBreaks {
       if (redraw.lo <= redraw.hi) { const [a, b] = units.snap(redraw.lo, redraw.hi); redraw = { lo: a, hi: b }; }
     }
 
+    /* Manual line-break edit (2026-09-11): an added lock splits its line. A
+       REMOVED lock changes nothing here — the boundary merely stops being
+       hard (pin-removed-only, Max). Nothing else: a lock is a document change
+       and the layout holds no state the document cannot reproduce (Max,
+       2026-09-12). */
+    const addStarts: number[] = [];
+    if (lockDiff) {
+      for (const id of lockDiff.added) { const i = idIdx.get(id); if (i != null && i > 0) addStarts.push(i); }
+    }
+    const hasEdit = addStarts.length > 0;
+
     let newStartIds: string[];
     let newPageStartIds: string[];
     let changedRun: { lo: number; hi: number } | null;
+    let partitionOnly = false;
     const oldPageStartIds = this.pageStartIds.slice();
-    if (run.lo > run.hi) {
+    if (run.lo > run.hi && !hasEdit) {
       newStartIds = oldStarts;               // no line needs re-flowing — re-pin as-is
       /* Every measure's FLOW survived identically, so every line and page did
          too. A single-page document has exactly one page start — the document
@@ -1013,15 +1167,27 @@ export class PageLineBreaks {
       changedRun = redraw.lo > redraw.hi ? null : { lo: redraw.lo, hi: redraw.hi };
       this.lastRefillLines = 0;
     } else {
-      changedRun = { lo: Math.min(run.lo, redraw.lo), hi: Math.max(run.hi, redraw.hi) };
       /* Pagination is carried INSIDE the repair, by line (see repartition):
          a surviving line never changes page, and a page whose lines all
          vanished collapses. The renderer compares old and new page COUNTS to
          decide whether the page grid itself changed. */
-      const repaired = this.repartition(model, meiMeasures, ids, idIdx, hard, { lo: run.lo, hi: run.hi }, ctx);
+      const repaired = this.repartition(
+        model, meiMeasures, ids, idIdx, hard, { lo: run.lo, hi: run.hi }, ctx,
+        hasEdit ? { addStarts } : null,
+      );
       if (!repaired) return bail('repartition window/cap exhausted');
       newStartIds = repaired.starts;
       newPageStartIds = repaired.pages;
+      if (run.lo <= run.hi) {
+        changedRun = { lo: Math.min(run.lo, redraw.lo), hi: Math.max(run.hi, redraw.hi) };
+      } else {
+        /* A pure line-break edit: nothing inside a measure changed, so the
+           splicer's hunk is exactly the lines whose starts moved — none means
+           the no-op path (only the lock glyphs refresh). */
+        const hunk = partitionHunk(oldStartIds, newStartIds, idIdx, ids.length);
+        if (redraw.lo > redraw.hi) { changedRun = hunk; partitionOnly = true; }
+        else changedRun = hunk ? { lo: Math.min(hunk.lo, redraw.lo), hi: Math.max(hunk.hi, redraw.hi) } : { lo: redraw.lo, hi: redraw.hi };
+      }
     }
     /* A single-line partition isn't worth owning: breaks:'line' with no <sb>
        in the data WARNS and falls back to auto castoff internally (probed
@@ -1038,6 +1204,7 @@ export class PageLineBreaks {
     this.pageStartIds = newPageStartIds;
     this.captureSigs(model.getDoc(), meiMeasures, ids, cur);
     this.sigState = newState;
+    this.userBreakSig = newBreakSig;
     this.lastDeriveReason = '';
     const pageSet = newPageStartIds.length > 1 ? new Set(newPageStartIds) : null;
     const mei = (): string | null => {
@@ -1051,7 +1218,7 @@ export class PageLineBreaks {
     };
     return {
       strategy, mei, changedRun, oldStartIds, newStartIds,
-      oldPageStartIds, newPageStartIds,
+      oldPageStartIds, newPageStartIds, partitionOnly,
     };
   }
 
@@ -1069,10 +1236,20 @@ export class PageLineBreaks {
     hard: Set<string>,
     dirty: { lo: number; hi: number },
     ctx: PageBreaksCtx,
+    edit: PartitionEdit | null = null,
   ): { starts: string[]; pages: string[] } | null {
     const n = ids.length;
-    const dLo = Math.max(0, Math.min(dirty.lo, n - 1));
-    const dHi = Math.max(dLo, Math.min(dirty.hi, n - 1));
+    /* The per-measure signature-context keys are rebuilt here, not as a side
+       effect of measuring a window: with the width caches restored from the
+       partition cache no window need be measured, and `fillOf` → `sigWAt`
+       would otherwise miss on every line and refuse the refill (2026-09-12,
+       the zoom-then-lock derive). Cheap when current. */
+    this.ensureSigCtx(model, meiMeasures, ids, ctx);
+    /* `dirty` may be EMPTY (hi < lo) for a pure manual line-break edit: no
+       measure changed, so no natural is dropped and nothing is re-measured. */
+    const hasDirty = dirty.lo <= dirty.hi;
+    const dLo = hasDirty ? Math.max(0, Math.min(dirty.lo, n - 1)) : 0;
+    const dHi = hasDirty ? Math.max(dLo, Math.min(dirty.hi, n - 1)) : -1;
 
     /* ── carry the partition across the edit, by MEMBERSHIP ──
        Each old line keeps its first surviving member as its start, so:
@@ -1185,14 +1362,46 @@ export class PageLineBreaks {
       return acc / budget;
     };
 
+    /* ── manual line-break edit (2026-09-11) ──
+       Applied AFTER the membership carry and BEFORE the repair, so the repair
+       sees the split the lock asks for and fixes only what that made illegal
+       — the same treatment a measure insert gets. `examine` collects the
+       measure range whose lines the repair must look at even though no
+       measure content changed. */
+    let examineLo = -1, examineHi = -1;
+    const touch = (lo: number, hi: number): void => {
+      examineLo = examineLo < 0 ? lo : Math.min(examineLo, lo);
+      examineHi = Math.max(examineHi, hi);
+    };
+    const lineEndAt = (k: number): number => (k + 1 < starts.length ? starts[k + 1] : n);
+    if (edit) {
+      /* Added locks: split the line at the lock. A lock at an existing start
+         only examines that line — the boundary is now hard, nothing moves. */
+      for (const raw of edit.addStarts) {
+        const at = unitLo(raw);
+        if (at <= 0) continue;
+        let k = 0;
+        while (k < starts.length && starts[k] < at) k++;
+        if (k < starts.length && starts[k] === at) { touch(starts[k - 1], lineEndAt(k) - 1); continue; }
+        starts.splice(k, 0, at);
+        lineInserted(k);
+        touch(starts[k - 1], lineEndAt(k) - 1);
+      }
+    }
+
     /* ── repair ──
        Examine only the lines the edit touched, then whatever a repair
        cascades into. Each step moves ONE measure across ONE boundary, so the
        reflow is as small as the illegality demands. */
-    let first = 0, last = 0;
-    for (let k = 0; k < starts.length; k++) {
-      if (starts[k] <= dLo) first = k;
-      if (starts[k] <= dHi) last = k;
+    let eLo = hasDirty ? dLo : -1, eHi = hasDirty ? dHi : -1;
+    if (examineLo >= 0) { eLo = eLo < 0 ? examineLo : Math.min(eLo, examineLo); eHi = Math.max(eHi, examineHi); }
+    let first = 0, last = -1;
+    if (eLo >= 0 && eHi >= eLo) {
+      last = 0;
+      for (let k = 0; k < starts.length; k++) {
+        if (starts[k] <= eLo) first = k;
+        if (starts[k] <= eHi) last = k;
+      }
     }
     /* A line that pushed must never pull the same measure back (oscillation);
        an overfull line that cannot shed without going underfull stays as it
@@ -1425,6 +1634,7 @@ export class PageLineBreaks {
     const ids = measureIds(meiMeasures);
     const part = this.indexedPartition(ids);
     if (!part) return;
+    this.ensureSigCtx(model, meiMeasures, ids, ctx);   // keys before any fill (see repartition)
     const { starts, pageLines } = part;
     const lastLine = pageLines.length > pages ? pageLines[pages] - 1 : starts.length - 1;
     const hard = hardStartIds(model);
@@ -1508,6 +1718,7 @@ export class PageLineBreaks {
       const ids = measureIds(meiMeasures);
       const part = this.indexedPartition(ids);
       if (!part) { finish(); return; }
+      this.ensureSigCtx(model, meiMeasures, ids, ctx);   // keys before any fill (see repartition)
       const { starts, pageLines } = part;
       const hard = hardStartIds(model);
       const secs = sectionRanges(starts, ids, hard).filter(([lo]) => !job.done.has(ids[starts[lo]]));

@@ -135,9 +135,16 @@ Staccato, accent, and tenuto shape playback (shorter, louder, fuller).
 - **Octave lines (8va)**: `Ctrl+8` over a selection; the notes sound (and print) an octave higher/lower.
 - **Trills & tremolos** (`Ctrl+R`): a trill on a single note, or a tremolo / diatonic trill on a two-note equal-duration selection. Playback realizes the alternation.
 - **Page break**: `Ctrl+B`. **Section header**: `Ctrl+Shift+H` (restarts measure numbering).
+- **Manual line break**: `Alt+Shift+↓` — see [Manual line breaks](#manual-line-breaks).
 - **Insert measure**: `M` adds an empty measure after the current one (or at the cursor when it already sits on a bar line).
 
 ---
+
+## Manual line breaks
+
+Page view lays systems out for you and only re-breaks a line when an edit makes it too sparse or too dense. When a phrase has to start a system anyway, lock a break: **`Alt+Shift+↓`** locks the line break **before** the current measure, so it and everything after it on its system start the next system. The measures left behind reflow like after any edit: a short remainder folds into the previous system when it fits, a longer stretch re-breaks into even lines. To move measures *up* onto the previous system, lock the break after them instead (`Alt+Shift+↓` on the measure that follows) — a lock can say where a break must be, never where one must not be.
+
+A locked break shows a small **padlock** at the end of its system. Locked breaks never move during reflow — measures flow freely on either side of them but not across — and because a lock is part of the score, a reload lays the score out the same way. **Click the padlock to unlock**: the break becomes an ordinary one again (the layout stays as it is until a later edit reflows it). Locks are saved with the score and export to MusicXML as system breaks; `Ctrl+Z` puts the layout back exactly as it was before the command. Page view only — scroll view is one continuous line.
 
 ## Hiding empty staves & multimeasure rests
 

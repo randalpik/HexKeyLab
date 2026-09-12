@@ -7944,3 +7944,122 @@ scrollbar drag many viewports per frame. `PUMP_VELOCITY_MS` 400 keeps a slow
 flick (~1500 px/s) in the gate until it stops. `PUMP_SETTLE_MS` 120 is the
 latency a drag's landing page pays after the thumb stops — below the ~150 ms
 mount that follows it.
+
+## Manual line breaks are a plain `<sb>` plus a partition edit — never a derive (2026-09-11)
+
+*(Revised the next day — the pull directive, the forced atom and the kept over-tight line described below were removed; see "Locks reflow like any measure-count change" (2026-09-12). The `<sb>`-as-lock, the partition-edit path, pin-removed-only unlock and the layout snapshots stand.)*
+
+**Decision.** A forced line break ("lock", Alt+Shift+↓ / Alt+Shift+↑, backlog
+Composer → Features) is a plain `<sb>` before the measure the break precedes
+— no new attribute, no MEI `<section>` split. The page line-break owner
+already treats any section-level `<sb>`/`<pb>` as a hard start and a
+reflow-section boundary (`hardStartIds`, `sectionRanges`, the repair loop,
+`injectPins`), the `.hkc` is the raw doc, and the MusicXML exporter already
+writes `<print new-system="yes"/>` for it — so the model side is two methods
+(`setLineLockAt`, `hardBreakBefore`; a section header's `<sb data-hkl-section>`
+is distinguished by its attribute). What did NOT exist is the render path: a
+user-break change made `tryRefill` bail to a derive, and a derive lets
+Verovio's castoff re-decide every line of the document. For a command whose
+whole point is one local move that is exactly wrong, so the sig now encodes
+`lock:` entries separately from `sb:`/`pb:` and a `lock:`-only diff is a
+`repartition` edit: split at added locks, then the ordinary conservative
+repair + section balance. An unlock is pin-removed-only (Max): the partition
+stays, the boundary is merely soft again, the render is a signature no-op.
+
+**Why a directive for the pull.** `[a..m]` joining the previous system means
+the SOFT start at `a` disappears, which no document element expresses, so the
+command hands the owner a `BreakDirective { unbreakAt, forceGroup }` consumed
+by the next refill (dropped, logged, if that render derives). `forceGroup` is
+the previous system's last unit plus the pulled measures: Max's rule is that
+the pulled measures never flow back down — when the merged line is over
+FIT_MAX the forced section is reflowed around that fused atom
+(`balance.ts forceSection`: same line count, then one more, λ-penalised), and
+when no legal reflow exists the over-tight line is KEPT. Alternatives
+rejected: pushing the overflow back down before the new lock (the repair
+loop's default — it partially undoes the command), refusing (makes the
+command useless exactly when the previous line is full).
+
+**Why layout snapshots ride on history entries.** Content edits are
+reversible because the repair is conservative; a deliberate partition move
+is not — an undone push would leave the measures where the command put them
+with no lock left to click (a drift with no handle). The command captures the
+owned partition before mutating (`LayoutSnapshot`, keyed on the renderer's
+layout inputs incl. the break structure) and records the settled one after
+the render; undo/redo restore them through `replacePartition` (re-baseline
+WITHOUT `invalidate`, so no natural is re-measured) + a partition-only
+splice. A zoom/page-scale change in between makes the key miss and the
+ordinary refill decides — logged, not silent.
+
+**Semantics fixed with Max.** Push at a system start locks the existing
+boundary (nothing moves). Pull is refused across a section start or a page
+break and on the first system; an existing lock at the pulled system's start
+is dissolved by the pull. A pull that would not change the document (nothing
+after m to lock, no lock at a to drop) is refused rather than performed
+unpersistably. The padlock (`render/lockmarks.ts`) is a draw-only child of
+`g.page-margin` like the section titles, redrawn by every placement and after
+every splice, and by `syncLockMarks` after the no-op render an unlock makes.
+
+## Locks reflow like any measure-count change — no layout state the document cannot reproduce (2026-09-12)
+
+**Decision.** Max reversed the pull semantics fixed the day before: the
+`BreakDirective` (dissolve the soft start the pull crosses; keep the pulled
+measures on one line with the previous system; keep the merged line even
+when over FIT_MAX) is gone, and so is the idea of a manual reflow command. A
+lock is a plain `<sb>` in the document and NOTHING else. Alt+Shift+↓ locks the
+break before the cursor measure, Alt+Shift+↑ the break after it (removing a
+lock at the system's start, since the user wants those measures to join what
+precedes); the owner splits the line at the lock and the ordinary
+carry/repair/section-balance decides everything else, exactly as for a
+measure insert — the merge rule folds a sparse remainder into the previous
+system when the merged line stays ≤ MERGE_MAX, the DP rebalances the section
+otherwise, and a remainder that is already a legal line stays put.
+
+**Why.** The directive produced layouts the document could not express: an
+over-tight line held only by the partition's memory, and a joined system
+that castoff would not reproduce. Both silently revert on the next reload
+(and the tight line on the next edit touching it) — a transient state that
+undoes itself, which Max ruled out outright: "we must keep it fully
+deterministic". A full derive is NOT required to satisfy that: the refill
+path is deterministic given the document and the current partition, and it
+is the same path every content edit already takes.
+
+**Consequences.** The pull is weaker than the backlog wording ("move the
+current and preceding measures to the previous system"): it guarantees the
+lock, and the join only when the balancer agrees. `forceSection`
+(balance.ts) and `balanceSectionForced` (linebreaks.ts) were removed rather
+than left as dead code. The layout snapshots on history entries stay — they
+carry no post-reload state, they only make undo exact.
+
+## Alt+Shift+↑ dropped: a lock says where a break must be, never where one must not be (2026-09-12)
+
+**Decision.** The backlog's second command ("move the current and preceding
+measures to the previous system") is not offered. Under the ruling above it
+had become exactly Alt+Shift+↓ on the following measure plus an unlock click
+— its only distinct content was removing a lock at the system's start. The
+guide tells users to lock the break after the measures they want moved up.
+
+**Why.** "Join the previous system" means "no break at a", and no document
+element can say that; anything ↑ did beyond ↓ was partition-only state. The
+alternative — a persisted "keep with previous" marker that the balancer
+treats as an atom and the derive path must also honour (Verovio has no such
+thing) — is a second break type with its own reflow semantics, not a tweak.
+Not worth it for what is a cursor-placement convenience. Recorded so the
+backlog wording is not re-implemented as written.
+
+## The partition cache carries the owner's width caches (2026-09-12)
+
+**Decision.** A cache-hit restore (`Renderer.derivePageRender` → `restorePartition`)
+now passes the entry's `OwnerWidths` (naturals + leading-signature widths)
+back into the owner instead of leaving them empty after `invalidate()`.
+
+**Why.** Max's contract: zoom is a visual-only change and must not alter
+what the model or the owner knows. A zoom round-trip kept the lines but lost
+the widths, so from then on the edit-path balancer — which refuses to work on
+partial data by design — silently declined every section-final defect
+(seen as an orphaned bar after a manual line break at 50 % zoom). The widths
+are zoom- and page-scale-independent (measured identical), so restoring them
+is exact; only the budget is re-measured. Rejected: re-arming the idle warm
+job after a cache hit (leaves a window in which edits still see partial data
+— non-deterministic), and warming synchronously (makes every zoom change pay
+a full-document measure).
+

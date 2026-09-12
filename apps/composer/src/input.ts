@@ -45,7 +45,8 @@ import {
 import type { Cell, EmptyFlag, FlagToggleResult } from './model/empty-flags.js';
 import { resolveVoiceCursorAnchor } from './cursor/cursor.js';
 import { serializeClipboard, parseClipboard, type ClipboardContents } from './selection/clipboard.js';
-import type { HistoryManager } from './history.js';
+import type { LayoutSnapshot, HistoryManager } from './history.js';
+import { pushToNextSystem, unlockAt, type LineBreakCtx } from './linebreakCommands.js';
 
 const TUNING_LABELS: Record<string, string> = {
   E: 'Equal',
@@ -191,6 +192,13 @@ export interface InputHooks {
   isCellRendered?: (measureIdx: number, staffN: number) => boolean;
   /** Run `cb` once the render the current edit triggers has completed. */
   afterRender?: (cb: () => void) => void;
+  /* Manual line breaks (2026-09-11; linebreakCommands.ts) — the renderer's
+     owned partition and layout snapshots. All optional: without them the
+     commands report "layout not owned". */
+  isPageView?: () => boolean;
+  systemOfMeasure?: (measureIdx: number) => { lineIdx: number; startIdx: number; endIdx: number } | null;
+  captureLayout?: () => LayoutSnapshot | null;
+  restoreLayout?: (snap: LayoutSnapshot) => boolean;
   /** Undo/redo manager. Constructed once in main.ts and shared with any
    *  module that performs user-initiated mutations (input dispatch, setup
    *  dialog, SC-transpose callback). */
@@ -1093,7 +1101,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
   function withHistory(
     label: string,
     fn: () => boolean | void,
-    opts: { sourceSelection?: SelectionState; mergeable?: boolean; mergeIfTopMergeable?: boolean } = {},
+    opts: { sourceSelection?: SelectionState; mergeable?: boolean; mergeIfTopMergeable?: boolean; layoutBefore?: LayoutSnapshot } = {},
   ): boolean {
     /* BEFORE-MEI reuse (Phase B3): the doc is unchanged since the last committed
        edit, so its serialization equals HistoryManager's cached AFTER-MEI — reuse
@@ -1108,6 +1116,40 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     const after = model.snapshotStateLazy();
     hooks.history.push(before, after, label, opts);
     return true;
+  }
+
+  /** Context for the manual line-break commands (linebreakCommands.ts). */
+  function lineBreakCtx(): LineBreakCtx {
+    return {
+      model,
+      cursorMeasureIdx: () => model.cursorMeasureIdx(model.getCurrentVoice(), state.mode),
+      isPageView: () => hooks.isPageView?.() ?? false,
+      systemOf: (mi) => hooks.systemOfMeasure?.(mi) ?? null,
+      withHistory: (label, fn, opts) => withHistory(label, fn, opts ?? {}),
+      captureLayout: () => hooks.captureLayout?.() ?? null,
+      annotateLayoutAfter: (snap) => hooks.history.annotateTopLayoutAfter(snap),
+      afterRender: (cb) => (hooks.afterRender ? hooks.afterRender(cb) : cb()),
+      setStatus: (msg, kind) => hooks.setStatus?.(msg, kind),
+      onStateChange: () => hooks.onStateChange(),
+      onChange: () => hooks.onChange(),
+    };
+  }
+
+  /** Lock-glyph click (render/lockmarks.ts `g.hkl-lock`, page view): unlock
+   *  the manual break it marks. Capture phase, and the event stops here, so
+   *  the score's nearest-glyph click handler (click.ts) never sees it. */
+  function lockClickHandler(e: MouseEvent): void {
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+    const target = e.target as Element | null;
+    const lock = target?.closest?.('g.hkl-lock');
+    if (!lock) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (hooks.isPlaybackActive()) return;
+    const id = lock.getAttribute('data-for');
+    const mi = id ? model.getMeasureIdxForId(id) : -1;
+    if (mi < 0) { hooks.setStatus?.('That lock no longer maps to a measure.', 'error'); return; }
+    unlockAt(lineBreakCtx(), mi);
   }
 
   function commitDuration(dur: Duration): void {
@@ -1877,6 +1919,14 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       hooks.setStatus?.(isUndo ? 'Nothing to undo.' : 'Nothing to redo.', 'info');
       return true;
     }
+    /* A manual line-break command carries the partition it moved: put it
+       back BEFORE the render, so that render is a signature no-op
+       (Renderer.restoreLayout). When the layout key no longer matches (zoom
+       or page scale changed in between) the ordinary refill decides. */
+    const layoutSnap = isUndo ? entry.layoutBefore : entry.layoutAfter;
+    if (layoutSnap && hooks.restoreLayout && !hooks.restoreLayout(layoutSnap)) {
+      console.info('[line-break] layout snapshot not restorable (layout inputs changed since) — the refill decides');
+    }
     refreshExprCursor(model);
     refreshPedalCursor(model);
     refreshTempoCursor(model);
@@ -2446,6 +2496,20 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       if (state.cursorMode === 'voice' && !hooks.isPlaybackActive()) {
         handleChordInternalArrow(model, hooks, e.key);
       }
+      return;
+    }
+
+    /* Alt+Shift+↓: MANUAL LINE BREAK (2026-09-11, linebreakCommands.ts) —
+       lock the line break before the cursor measure; it and what follows it
+       in its system start the next system (a padlock at the system's end;
+       click to unlock). Page view. Alt+Shift+↑ was dropped 2026-09-12 (see
+       the module header there). preventDefault for the same Firefox reason
+       as Alt+Arrow above. */
+    if (e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey && e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (hooks.isPlaybackActive()) return;
+      if (state.cursorMode !== 'voice') { hooks.setStatus?.('Line breaks require voice mode.', 'error'); return; }
+      pushToNextSystem(lineBreakCtx());
       return;
     }
 
@@ -3167,11 +3231,13 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
   }
 
   document.addEventListener('keydown', handler);
+  document.addEventListener('click', lockClickHandler, true);
   document.addEventListener('copy', copyHandler);
   document.addEventListener('cut', cutHandler);
   document.addEventListener('paste', pasteHandler);
   return () => {
     document.removeEventListener('keydown', handler);
+    document.removeEventListener('click', lockClickHandler, true);
     document.removeEventListener('copy', copyHandler);
     document.removeEventListener('cut', cutHandler);
     document.removeEventListener('paste', pasteHandler);

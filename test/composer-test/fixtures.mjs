@@ -7770,6 +7770,119 @@ const XML_FLAGS = {
   },
 };
 
+
+/* ── Manual line breaks (2026-09-11, linebreakCommands.ts / render/lockmarks.ts) ──
+ * Page-view doc of 12 quarter-note bars → two owned lines [0..5] [6..11] (the
+ * same shape as PAGE_LINEBREAKS). Every command must take the REFILL path
+ * (never a derive), land as a splice, and leave a padlock at the end of the
+ * system whose successor line starts at the lock. `window.__lockPre` holds the
+ * pre-command partition for the assertions. */
+const lockSetup = (chords) => `
+  const sel = document.getElementById('viewModeSelect');
+  if (sel.value !== 'page') { sel.value = 'page'; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+  m.setCursor(0, 1);
+  const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+  for (let i = 0; i < ${chords}; i++) { const high = (Math.floor(i / 4) % 2) === 0; m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 }); }
+  r();
+  { const pb = window.__hkl_composer.renderer['pageBreaks']; for (let i = 0; i < 3 && !pb.ownershipActive(); i++) r(); }
+  { const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+    window.__lockPre = window.__hkl_composer.renderer['pageBreaks'].lineStarts().map((id) => ids.indexOf(id)); }
+`;
+const LOCK_SETUP = lockSetup(48);          // 12 bars → [0..5] [6..11]
+const LOCK_SETUP_18 = lockSetup(72);       // 18 bars → [0..5] [6..11] [12..17]
+
+const LINE_LOCKS = {
+  /* Alt+Shift+↓ mid-system (m8 of [7..12]): a lock before m8; m8–12 form the
+   * next system; the one-bar remainder m7 folds up under the merge rule. */
+  lock_down_splits: {
+    setup: LOCK_SETUP + `m.setCursor(m.getMeasureStartCursor(1, 7), 1);`,
+    setupKeys: [{ key: 'ArrowDown', alt: true, shift: true }],
+    visualBaseline: 'lock_down_splits',
+    visualFullPage: true,
+  },
+  /* Alt+Shift+↓ at a system start (m7): the existing boundary is locked and
+   * nothing moves. */
+  lock_down_at_start_locks_only: {
+    setup: LOCK_SETUP + `m.setCursor(m.getMeasureStartCursor(1, 6), 1);`,
+    setupKeys: [{ key: 'ArrowDown', alt: true, shift: true }],
+  },
+  /* Alt+Shift+↓ at m9 of the 12-bar doc: the two-bar remainder m7–8 is too
+   * sparse to stand, too wide to merge (8 bars > MERGE_MAX) and the 8-bar
+   * section has no legal two-line split — the balancer reports 'no legal
+   * balance: section kept' and the remainder stays. Deterministic, and exactly
+   * what any measure edit would get. */
+  lock_down_sparse_remainder_kept: {
+    setup: LOCK_SETUP + `m.setCursor(m.getMeasureStartCursor(1, 8), 1);`,
+    setupKeys: [{ key: 'ArrowDown', alt: true, shift: true }],
+  },
+  /* Alt+Shift+↓ at m15 of the 18-bar doc: the 14-bar section [m1..m14]
+   * rebalances from [6,6,2] into three legal lines ([4,5,5] → starts 0,4,9) —
+   * the ordinary balancer, no side channel. */
+  lock_down_rebalances_section: {
+    setup: LOCK_SETUP_18 + `m.setCursor(m.getMeasureStartCursor(1, 14), 1);`,
+    setupKeys: [{ key: 'ArrowDown', alt: true, shift: true }],
+  },
+  /* Refusals leave the document and the partition alone. */
+  lock_down_first_measure_refused: {
+    setup: LOCK_SETUP + `m.setCursor(m.getMeasureStartCursor(1, 0), 1);`,
+    setupKeys: [{ key: 'ArrowDown', alt: true, shift: true }],
+  },
+  /* Undo restores the exact pre-command partition (a layout snapshot on the
+   * history entry, not a repair); redo restores the post-command one. */
+  lock_undo_restores_partition: {
+    setup: LOCK_SETUP + `m.setCursor(m.getMeasureStartCursor(1, 7), 1);`,
+  },
+  /* The padlock click removes the <sb>; the partition is untouched (pin
+   * removed only) and the render is a signature no-op. */
+  lock_click_unlocks_keeps_layout: {
+    setup: LOCK_SETUP + `m.setCursor(m.getMeasureStartCursor(1, 7), 1);`,
+    setupKeys: [{ key: 'ArrowDown', alt: true, shift: true }],
+  },
+  /* Scroll view: the command is refused, nothing changes. */
+  lock_scroll_view_ignored: {
+    setup: `
+      const sel = document.getElementById('viewModeSelect');
+      if (sel.value !== 'scroll') { sel.value = 'scroll'; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 16; i++) m.insertChordAtCursor({ notes: [mk('g', 4)], duration: '4', dots: 0 });
+      r();
+      m.setCursor(m.getMeasureStartCursor(1, 2), 1);
+    `,
+    setupKeys: [{ key: 'ArrowDown', alt: true, shift: true }],
+  },
+  /* A lock exports as a MusicXML system break on the locked measure. */
+  lock_export_new_system: {
+    setup: LOCK_SETUP + `m.setCursor(m.getMeasureStartCursor(1, 7), 1);`,
+    setupKeys: [{ key: 'ArrowDown', alt: true, shift: true }],
+  },
+  /* Zoom is visual-only (Max, 2026-09-12): a zoom round-trip goes through the
+   * partition cache and must hand the owner back its width caches along with
+   * the lines — before this, every natural went cold and the balancer declined
+   * every section-final defect ('naturals incomplete') until reload. */
+  page_zoom_roundtrip_keeps_widths: {
+    setup: LOCK_SETUP_18 + `
+      window.__lockNat0 = window.__hkl_composer.renderer['pageBreaks']['naturals'].size;
+      window.__hkl_composer.renderer.setZoom(50); r();`,
+    fullRender: 'the assertion zooms back to 100 (a cached-partition paint, not a derive) to leave the shared page as found',
+  },
+  /* The user-visible symptom: import at 100 %, zoom to 50 %, lock after the
+   * first measure of system 3 — the orphaned bar must still fold/rebalance. */
+  lock_after_zoom_reflows: {
+    setup: LOCK_SETUP_18 + `
+      window.__hkl_composer.renderer.setZoom(50); r();
+      m.setCursor(m.getMeasureStartCursor(1, 13), 1);`,
+    setupKeys: [{ key: 'ArrowDown', alt: true, shift: true }],
+    fullRender: 'the assertion zooms back to 100 (a cached-partition paint, not a derive) to leave the shared page as found',
+  },
+  /* After a lock, an ordinary edit in the locked line moves no boundary and
+   * the lock stays a line start. */
+  lock_then_edit_keeps_lock: {
+    setup: LOCK_SETUP + `m.setCursor(m.getMeasureStartCursor(1, 7), 1);`,
+    setupKeys: [{ key: 'ArrowDown', alt: true, shift: true }],
+  },
+};
+
 export const FIXTURES = {
   ...mapTier(EXISTING, 'fast'),
   ...mapTier(CURSOR_CONVENTION, 'fast'),
@@ -7786,6 +7899,7 @@ export const FIXTURES = {
   ...mapKbdTier(PERFORMANCE, 'full'),
   ...mapKbdTier(SCROLL, 'full'),
   ...mapKbdTier(PAGE_LINEBREAKS, 'full'),
+  ...mapKbdTier(LINE_LOCKS, 'full'),
   ...mapKbdTier(PAGE_SPLICE, 'full'),
   ...mapKbdTier(VISUAL, 'full'),
   ...mapKbdTier(HEJI, 'full'),
@@ -10649,6 +10763,331 @@ export const FIXTURE_ASSERTIONS = {
         return (Math.abs(wS.x - wF.x) < 3 && Math.abs(wS.w - wF.w) < 3)
           ? { ok: true }
           : { ok: false, detail: 'wedge geometry diverged: splice=' + JSON.stringify(wS) + ' full=' + JSON.stringify(wF) };
+      })()` },
+  ],
+  lock_down_splits: [
+    { name: 'refill path (no derive), spliced, lock before m8 starts a line, pins in order, padlock drawn',
+      expr: `(() => { const H = window.__hkl_composer, m = H.model, r = H.renderer, pb = r['pageBreaks'];
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const L = () => pb.lineStarts().map((id) => ids.indexOf(id));
+        const pre = window.__lockPre;
+        const status = () => (document.getElementById('composerStatus')?.textContent ?? '').trim();
+        const locks = () => [...document.querySelectorAll('g.hkl-lock')].map((g) => ids.indexOf(g.getAttribute('data-for')));
+        const last = () => r.renderLedger().slice(-1)[0] ?? {};
+        const key = (k, o) => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, ...o }));
+        const pinsInOrder = () => {
+          const starts = pb['startIds'] ?? []; const pos = new Map(starts.map((id, i) => [id, i]));
+          let prevEnd = -1;
+          for (const page of document.querySelectorAll('#score .score-page:not(.score-page-pending)')) {
+            const s = [...page.querySelectorAll('g.system')].map((g) => g.querySelector('g.measure')?.id).filter(Boolean);
+            if (!s.length) continue;
+            let at = pos.get(s[0]); if (at == null || at <= prevEnd) return false;
+            for (let i = 1; i < s.length; i++) if (pos.get(s[i]) !== at + i) return false;
+            prevEnd = at + s.length - 1;
+          }
+          return true;
+        };
+        const J = JSON.stringify;
+        const l = L();
+        /* The keystroke ran before the runner cleared the render ledger, so the
+           splice outcome is read from the owner (derive reason '') and the
+           runner's own splice invariant; last() is only detail here. */
+        const ok = pb.lastDeriveReason === '' && m.hardBreakBefore(7) === 'lock' && l.includes(7) && !l.includes(6) && pinsInOrder() && J(locks()) === '[7]';
+        return { ok, detail: J({ pre, lines: l, derive: pb.lastDeriveReason, ledger: last(), hb7: m.hardBreakBefore(7), locks: locks(), balance: pb.lastBalance, status: status() }) };
+      })()` },
+  ],
+  lock_down_at_start_locks_only: [
+    { name: 'locking an existing boundary moves nothing (partition unchanged, lastRefillLines 0) and draws the padlock',
+      expr: `(() => { const H = window.__hkl_composer, m = H.model, r = H.renderer, pb = r['pageBreaks'];
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const L = () => pb.lineStarts().map((id) => ids.indexOf(id));
+        const pre = window.__lockPre;
+        const status = () => (document.getElementById('composerStatus')?.textContent ?? '').trim();
+        const locks = () => [...document.querySelectorAll('g.hkl-lock')].map((g) => ids.indexOf(g.getAttribute('data-for')));
+        const last = () => r.renderLedger().slice(-1)[0] ?? {};
+        const key = (k, o) => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, ...o }));
+        const pinsInOrder = () => {
+          const starts = pb['startIds'] ?? []; const pos = new Map(starts.map((id, i) => [id, i]));
+          let prevEnd = -1;
+          for (const page of document.querySelectorAll('#score .score-page:not(.score-page-pending)')) {
+            const s = [...page.querySelectorAll('g.system')].map((g) => g.querySelector('g.measure')?.id).filter(Boolean);
+            if (!s.length) continue;
+            let at = pos.get(s[0]); if (at == null || at <= prevEnd) return false;
+            for (let i = 1; i < s.length; i++) if (pos.get(s[i]) !== at + i) return false;
+            prevEnd = at + s.length - 1;
+          }
+          return true;
+        };
+        const J = JSON.stringify;
+        const ok = pb.lastDeriveReason === '' && m.hardBreakBefore(6) === 'lock' && J(L()) === J(pre) && pb.lastRefillLines === 0 && J(locks()) === '[6]';
+        return { ok, detail: J({ pre, lines: L(), moved: pb.lastRefillLines, hb6: m.hardBreakBefore(6), locks: locks(), status: status() }) };
+      })()` },
+  ],
+  lock_down_sparse_remainder_kept: [
+    { name: 'lock before m9; no legal balance for the 8-bar section → the sparse two-bar remainder is kept: [0,6,8], reason recorded, no derive',
+      expr: `(() => { const H = window.__hkl_composer, m = H.model, r = H.renderer, pb = r['pageBreaks'];
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const L = () => pb.lineStarts().map((id) => ids.indexOf(id));
+        const pre = window.__lockPre;
+        const status = () => (document.getElementById('composerStatus')?.textContent ?? '').trim();
+        const locks = () => [...document.querySelectorAll('g.hkl-lock')].map((g) => ids.indexOf(g.getAttribute('data-for')));
+        const last = () => r.renderLedger().slice(-1)[0] ?? {};
+        const key = (k, o) => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, ...o }));
+        const pinsInOrder = () => {
+          const starts = pb['startIds'] ?? []; const pos = new Map(starts.map((id, i) => [id, i]));
+          let prevEnd = -1;
+          for (const page of document.querySelectorAll('#score .score-page:not(.score-page-pending)')) {
+            const s = [...page.querySelectorAll('g.system')].map((g) => g.querySelector('g.measure')?.id).filter(Boolean);
+            if (!s.length) continue;
+            let at = pos.get(s[0]); if (at == null || at <= prevEnd) return false;
+            for (let i = 1; i < s.length; i++) if (pos.get(s[i]) !== at + i) return false;
+            prevEnd = at + s.length - 1;
+          }
+          return true;
+        };
+        const J = JSON.stringify;
+        const l = L();
+        const ok = pb.lastDeriveReason === '' && J(l) === '[0,6,8]' && m.hardBreakBefore(8) === 'lock' && pb.lastBalance.reasons.some((x) => x.startsWith('no legal balance')) && J(locks()) === '[8]' && pinsInOrder();
+        return { ok, detail: J({ pre, lines: l, derive: pb.lastDeriveReason, balance: pb.lastBalance, hb8: m.hardBreakBefore(8), locks: locks(), status: status() }) };
+      })()` },
+  ],
+  lock_down_rebalances_section: [
+    { name: 'lock before m15; the 14-bar section rebalances [6,6,2] → [4,5,5]: [0,4,9,14], balance applied, no derive',
+      expr: `(() => { const H = window.__hkl_composer, m = H.model, r = H.renderer, pb = r['pageBreaks'];
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const L = () => pb.lineStarts().map((id) => ids.indexOf(id));
+        const pre = window.__lockPre;
+        const status = () => (document.getElementById('composerStatus')?.textContent ?? '').trim();
+        const locks = () => [...document.querySelectorAll('g.hkl-lock')].map((g) => ids.indexOf(g.getAttribute('data-for')));
+        const last = () => r.renderLedger().slice(-1)[0] ?? {};
+        const key = (k, o) => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, ...o }));
+        const pinsInOrder = () => {
+          const starts = pb['startIds'] ?? []; const pos = new Map(starts.map((id, i) => [id, i]));
+          let prevEnd = -1;
+          for (const page of document.querySelectorAll('#score .score-page:not(.score-page-pending)')) {
+            const s = [...page.querySelectorAll('g.system')].map((g) => g.querySelector('g.measure')?.id).filter(Boolean);
+            if (!s.length) continue;
+            let at = pos.get(s[0]); if (at == null || at <= prevEnd) return false;
+            for (let i = 1; i < s.length; i++) if (pos.get(s[i]) !== at + i) return false;
+            prevEnd = at + s.length - 1;
+          }
+          return true;
+        };
+        const J = JSON.stringify;
+        const l = L();
+        const ok = pb.lastDeriveReason === '' && J(l) === '[0,4,9,14]' && m.hardBreakBefore(14) === 'lock' && pb.lastBalance.applied >= 1 && pb.lastBalance.reasons.length === 0 && J(locks()) === '[14]' && pinsInOrder();
+        return { ok, detail: J({ pre, lines: l, derive: pb.lastDeriveReason, balance: pb.lastBalance, hb14: m.hardBreakBefore(14), locks: locks(), status: status() }) };
+      })()` },
+  ],
+  lock_down_first_measure_refused: [
+    { name: 'push at the first measure is refused: status error, partition and document unchanged',
+      expr: `(() => { const H = window.__hkl_composer, m = H.model, r = H.renderer, pb = r['pageBreaks'];
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const L = () => pb.lineStarts().map((id) => ids.indexOf(id));
+        const pre = window.__lockPre;
+        const status = () => (document.getElementById('composerStatus')?.textContent ?? '').trim();
+        const locks = () => [...document.querySelectorAll('g.hkl-lock')].map((g) => ids.indexOf(g.getAttribute('data-for')));
+        const last = () => r.renderLedger().slice(-1)[0] ?? {};
+        const key = (k, o) => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, ...o }));
+        const pinsInOrder = () => {
+          const starts = pb['startIds'] ?? []; const pos = new Map(starts.map((id, i) => [id, i]));
+          let prevEnd = -1;
+          for (const page of document.querySelectorAll('#score .score-page:not(.score-page-pending)')) {
+            const s = [...page.querySelectorAll('g.system')].map((g) => g.querySelector('g.measure')?.id).filter(Boolean);
+            if (!s.length) continue;
+            let at = pos.get(s[0]); if (at == null || at <= prevEnd) return false;
+            for (let i = 1; i < s.length; i++) if (pos.get(s[i]) !== at + i) return false;
+            prevEnd = at + s.length - 1;
+          }
+          return true;
+        };
+        const J = JSON.stringify;
+        const sbs = m.getDoc().querySelectorAll('sb:not([data-hkl-section])').length;
+        const ok = /first measure/.test(status()) && J(L()) === J(pre) && sbs === 0 && locks().length === 0;
+        return { ok, detail: J({ status: status(), lines: L(), pre, sbs }) };
+      })()` },
+  ],
+  lock_undo_restores_partition: [
+    { name: 'Alt+Shift+↓ then Ctrl+Z restores the exact pre-command partition as a no-op render; Ctrl+Y restores the post-command one',
+      expr: `(() => { const H = window.__hkl_composer, m = H.model, r = H.renderer, pb = r['pageBreaks'];
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const L = () => pb.lineStarts().map((id) => ids.indexOf(id));
+        const pre = window.__lockPre;
+        const status = () => (document.getElementById('composerStatus')?.textContent ?? '').trim();
+        const locks = () => [...document.querySelectorAll('g.hkl-lock')].map((g) => ids.indexOf(g.getAttribute('data-for')));
+        const last = () => r.renderLedger().slice(-1)[0] ?? {};
+        const key = (k, o) => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, ...o }));
+        const pinsInOrder = () => {
+          const starts = pb['startIds'] ?? []; const pos = new Map(starts.map((id, i) => [id, i]));
+          let prevEnd = -1;
+          for (const page of document.querySelectorAll('#score .score-page:not(.score-page-pending)')) {
+            const s = [...page.querySelectorAll('g.system')].map((g) => g.querySelector('g.measure')?.id).filter(Boolean);
+            if (!s.length) continue;
+            let at = pos.get(s[0]); if (at == null || at <= prevEnd) return false;
+            for (let i = 1; i < s.length; i++) if (pos.get(s[i]) !== at + i) return false;
+            prevEnd = at + s.length - 1;
+          }
+          return true;
+        };
+        const J = JSON.stringify;
+        key('ArrowDown', { altKey: true, shiftKey: true });
+        const post = L(); const postLocks = locks();
+        key('z', { ctrlKey: true });
+        const afterUndo = L(); const undoLedger = last(); const hbUndo = m.hardBreakBefore(7); const undoLocks = locks();
+        key('y', { ctrlKey: true });
+        const afterRedo = L(); const hbRedo = m.hardBreakBefore(7); const redoLocks = locks();
+        const ok = J(post) !== J(pre) && J(afterUndo) === J(pre) && hbUndo === null && undoLocks.length === 0 && undoLedger.outcome === 'noop' && undoLedger.deriveReason === ''
+          && J(afterRedo) === J(post) && hbRedo === 'lock' && J(redoLocks) === J(postLocks) && pb.lastDeriveReason === '';
+        return { ok, detail: J({ pre, post, afterUndo, afterRedo, undoLedger, hbUndo, hbRedo, undoLocks, redoLocks, postLocks }) };
+      })()` },
+  ],
+  lock_click_unlocks_keeps_layout: [
+    { name: 'clicking the padlock removes the <sb>, keeps the partition, renders as a no-op, removes the glyph',
+      expr: `(() => { const H = window.__hkl_composer, m = H.model, r = H.renderer, pb = r['pageBreaks'];
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const L = () => pb.lineStarts().map((id) => ids.indexOf(id));
+        const pre = window.__lockPre;
+        const status = () => (document.getElementById('composerStatus')?.textContent ?? '').trim();
+        const locks = () => [...document.querySelectorAll('g.hkl-lock')].map((g) => ids.indexOf(g.getAttribute('data-for')));
+        const last = () => r.renderLedger().slice(-1)[0] ?? {};
+        const key = (k, o) => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, ...o }));
+        const pinsInOrder = () => {
+          const starts = pb['startIds'] ?? []; const pos = new Map(starts.map((id, i) => [id, i]));
+          let prevEnd = -1;
+          for (const page of document.querySelectorAll('#score .score-page:not(.score-page-pending)')) {
+            const s = [...page.querySelectorAll('g.system')].map((g) => g.querySelector('g.measure')?.id).filter(Boolean);
+            if (!s.length) continue;
+            let at = pos.get(s[0]); if (at == null || at <= prevEnd) return false;
+            for (let i = 1; i < s.length; i++) if (pos.get(s[i]) !== at + i) return false;
+            prevEnd = at + s.length - 1;
+          }
+          return true;
+        };
+        const J = JSON.stringify;
+        const before = L(); const lock = document.querySelector('g.hkl-lock');
+        if (!lock) return { ok: false, detail: 'no padlock to click' };
+        lock.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+        const ok = m.hardBreakBefore(7) === null && J(L()) === J(before) && locks().length === 0 && last().outcome === 'noop' && /unlocked/.test(status());
+        return { ok, detail: J({ before, after: L(), hb7: m.hardBreakBefore(7), locks: locks(), ledger: last(), status: status() }) };
+      })()` },
+  ],
+  lock_scroll_view_ignored: [
+    { name: 'scroll view: the command is refused and the document is unchanged',
+      expr: `(() => { const H = window.__hkl_composer, m = H.model, r = H.renderer, pb = r['pageBreaks'];
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const L = () => pb.lineStarts().map((id) => ids.indexOf(id));
+        const pre = window.__lockPre;
+        const status = () => (document.getElementById('composerStatus')?.textContent ?? '').trim();
+        const locks = () => [...document.querySelectorAll('g.hkl-lock')].map((g) => ids.indexOf(g.getAttribute('data-for')));
+        const last = () => r.renderLedger().slice(-1)[0] ?? {};
+        const key = (k, o) => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, ...o }));
+        const pinsInOrder = () => {
+          const starts = pb['startIds'] ?? []; const pos = new Map(starts.map((id, i) => [id, i]));
+          let prevEnd = -1;
+          for (const page of document.querySelectorAll('#score .score-page:not(.score-page-pending)')) {
+            const s = [...page.querySelectorAll('g.system')].map((g) => g.querySelector('g.measure')?.id).filter(Boolean);
+            if (!s.length) continue;
+            let at = pos.get(s[0]); if (at == null || at <= prevEnd) return false;
+            for (let i = 1; i < s.length; i++) if (pos.get(s[i]) !== at + i) return false;
+            prevEnd = at + s.length - 1;
+          }
+          return true;
+        };
+        const J = JSON.stringify;
+        const sbs = m.getDoc().querySelectorAll('sb:not([data-hkl-section])').length;
+        const ok = r.getViewMode() === 'scroll' && /page-view command/.test(status()) && sbs === 0;
+        return { ok, detail: J({ view: r.getViewMode(), status: status(), sbs }) };
+      })()` },
+  ],
+  lock_export_new_system: [
+    { name: 'MusicXML export carries <print new-system="yes"/> on the locked measure (m8) and nowhere else',
+      expr: `(() => { const H = window.__hkl_composer, m = H.model, r = H.renderer, pb = r['pageBreaks'];
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const L = () => pb.lineStarts().map((id) => ids.indexOf(id));
+        const pre = window.__lockPre;
+        const status = () => (document.getElementById('composerStatus')?.textContent ?? '').trim();
+        const locks = () => [...document.querySelectorAll('g.hkl-lock')].map((g) => ids.indexOf(g.getAttribute('data-for')));
+        const last = () => r.renderLedger().slice(-1)[0] ?? {};
+        const key = (k, o) => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, ...o }));
+        const pinsInOrder = () => {
+          const starts = pb['startIds'] ?? []; const pos = new Map(starts.map((id, i) => [id, i]));
+          let prevEnd = -1;
+          for (const page of document.querySelectorAll('#score .score-page:not(.score-page-pending)')) {
+            const s = [...page.querySelectorAll('g.system')].map((g) => g.querySelector('g.measure')?.id).filter(Boolean);
+            if (!s.length) continue;
+            let at = pos.get(s[0]); if (at == null || at <= prevEnd) return false;
+            for (let i = 1; i < s.length; i++) if (pos.get(s[i]) !== at + i) return false;
+            prevEnd = at + s.length - 1;
+          }
+          return true;
+        };
+        const J = JSON.stringify;
+        const xml = H.exportMusicXml(m);
+        const d = new DOMParser().parseFromString(xml, 'application/xml');
+        const hits = [...d.querySelectorAll('measure')].filter((me) => me.querySelector(':scope > print[new-system="yes"]')).map((me) => me.getAttribute('number'));
+        const ok = J(hits) === '["8"]';
+        return { ok, detail: J({ hits }) };
+      })()` },
+  ],
+  page_zoom_roundtrip_keeps_widths: [
+    { name: 'after setZoom(50) the owner still holds every natural and every signature context; the partition is unchanged',
+      expr: `(() => { const H = window.__hkl_composer, m = H.model, r = H.renderer, pb = r['pageBreaks'];
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const L = () => pb.lineStarts().map((id) => ids.indexOf(id));
+        const pre = window.__lockPre;
+        const status = () => (document.getElementById('composerStatus')?.textContent ?? '').trim();
+        const locks = () => [...document.querySelectorAll('g.hkl-lock')].map((g) => ids.indexOf(g.getAttribute('data-for')));
+        const J = JSON.stringify;
+        const nat = pb['naturals'].size, sig = pb['sigWByCtx'].size;
+        const ok = r.getZoom() === 50 && nat === ids.length && window.__lockNat0 === ids.length && sig > 0 && J(L()) === J(pre) && pb.ownershipActive();
+        r.setZoom(100); H.reRender();   /* leave the shared page as we found it */
+        return { ok, detail: J({ zoom: 50, naturals: nat, before: window.__lockNat0, measures: ids.length, sigCtx: sig, lines: L(), pre }) };
+      })()` },
+  ],
+  lock_after_zoom_reflows: [
+    { name: 'at zoom 50 after a round-trip, the lock before m14 folds the one-bar remainder into the previous system (balance applied, no "naturals incomplete")',
+      expr: `(() => { const H = window.__hkl_composer, m = H.model, r = H.renderer, pb = r['pageBreaks'];
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const L = () => pb.lineStarts().map((id) => ids.indexOf(id));
+        const pre = window.__lockPre;
+        const status = () => (document.getElementById('composerStatus')?.textContent ?? '').trim();
+        const locks = () => [...document.querySelectorAll('g.hkl-lock')].map((g) => ids.indexOf(g.getAttribute('data-for')));
+        const J = JSON.stringify;
+        const l = L(); const b = pb.lastBalance;
+        const ok = pb.lastDeriveReason === '' && m.hardBreakBefore(13) === 'lock' && l.includes(13) && !l.includes(12) && b.applied >= 1 && !b.reasons.some((x) => /naturals incomplete/.test(x)) && J(locks()) === '[13]';
+        r.setZoom(100); H.reRender();   /* leave the shared page as we found it */
+        return { ok, detail: J({ pre, lines: l, derive: pb.lastDeriveReason, balance: b, hb13: m.hardBreakBefore(13), naturals: pb['naturals'].size, status: status() }) };
+      })()` },
+  ],
+  lock_then_edit_keeps_lock: [
+    { name: 'an edit inside the locked line after the lock moves no boundary; m8 stays a hard line start',
+      expr: `(() => { const H = window.__hkl_composer, m = H.model, r = H.renderer, pb = r['pageBreaks'];
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const L = () => pb.lineStarts().map((id) => ids.indexOf(id));
+        const pre = window.__lockPre;
+        const status = () => (document.getElementById('composerStatus')?.textContent ?? '').trim();
+        const locks = () => [...document.querySelectorAll('g.hkl-lock')].map((g) => ids.indexOf(g.getAttribute('data-for')));
+        const last = () => r.renderLedger().slice(-1)[0] ?? {};
+        const key = (k, o) => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, ...o }));
+        const pinsInOrder = () => {
+          const starts = pb['startIds'] ?? []; const pos = new Map(starts.map((id, i) => [id, i]));
+          let prevEnd = -1;
+          for (const page of document.querySelectorAll('#score .score-page:not(.score-page-pending)')) {
+            const s = [...page.querySelectorAll('g.system')].map((g) => g.querySelector('g.measure')?.id).filter(Boolean);
+            if (!s.length) continue;
+            let at = pos.get(s[0]); if (at == null || at <= prevEnd) return false;
+            for (let i = 1; i < s.length; i++) if (pos.get(s[i]) !== at + i) return false;
+            prevEnd = at + s.length - 1;
+          }
+          return true;
+        };
+        const J = JSON.stringify;
+        const before = L();
+        m.setCursor(m.getMeasureStartCursor(1, 7), 1);
+        m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'g', accid: '', oct: 4, midi: 67, colorHex: '#888', lightColorHex: '#fff', velocity: 80 }], duration: '8', dots: 0 });
+        H.reRender();
+        const ok = pb.lastDeriveReason === '' && J(L()) === J(before) && pb.lastRefillLines === 0 && m.hardBreakBefore(7) === 'lock' && J(locks()) === '[7]';
+        return { ok, detail: J({ before, after: L(), moved: pb.lastRefillLines, derive: pb.lastDeriveReason, ledger: last() }) };
       })()` },
   ],
   pageLineBreaksRefill: [
