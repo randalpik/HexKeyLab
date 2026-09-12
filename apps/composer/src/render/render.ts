@@ -38,6 +38,18 @@ function indexCheckEnabled(): boolean {
  *  means every page below the edit was full, which is a whole-document reflow
  *  by any name. */
 const MAX_CASCADE_STEPS = 64;
+/** Mount pump fast-scroll gate: a scrollTop change of more than this many
+ *  viewport heights between two pump frames is a drag in progress — mount
+ *  nothing, re-check next frame (see pumpMounts). */
+const PUMP_FAST_VH = 0.5;
+/** Displacement window for viewportMoving(): the view's travel over the last
+ *  this-many ms is what is compared against PUMP_FAST_VH. */
+const PUMP_VELOCITY_MS = 400;
+/** A scroll event older than this means the view has settled: mount. A single
+ *  jump (PageDown, scroll-into-view) has one recent sample and no travel, so
+ *  it mounts on the very next frame; a drag has travel until it stops, then
+ *  this much latency before its landing page draws. */
+const PUMP_SETTLE_MS = 120;
 /** How far below MIN_FILL Verovio's `minLastJustification` is set — see the
  *  comment at its use in buildOptions. */
 const LAST_JUSTIFY_SLACK = 0.05;
@@ -354,6 +366,21 @@ class Renderer {
   private mountWindowHandle: number | null = null;
   private mountWindowMi = -1;
   private mountWindowEnabled = true;
+  /** The mount pump (2026-09-11). Pages the IntersectionObserver reported as
+   *  entering the ±1-viewport band wait here to be mounted VISIBLE-FIRST, one
+   *  per animation frame, against the CURRENT scroll position — never in the
+   *  observer callback, which delivered them in DOM order and mounted every
+   *  page a scrollbar drag had swept through the band (15 mounts, 2.6 s, before
+   *  the page the user stopped on; see pumpMounts). */
+  private pumpWanted = new Set<number>();
+  private pumpHandle: number | null = null;
+  /** Recent `scroll` samples of the container (top, wall time), read by
+   *  viewportMoving(). Sampled from the event, not from pump frames: the pump
+   *  goes idle after every frame of a drag, and the idle mount window runs
+   *  between frames too, so a per-frame sample saw a "fresh jump" every time
+   *  (probe: 9–15 mounts / 2.3–3.5 s on a drag). */
+  private scrollSamples: Array<{ top: number; t: number }> = [];
+  private scrollSampler: (() => void) | null = null;
   /** Duration of the last full engrave per mode (ms) — predictNextRenderHeavy's
    *  evidence. Splices and cache restores don't update it. */
   private lastFullMs: Partial<Record<ViewMode, number>> = {};
@@ -1023,7 +1050,29 @@ class Renderer {
   }
 
   attach(container: HTMLElement): void {
+    if (this.container && this.scrollSampler) this.container.removeEventListener('scroll', this.scrollSampler);
     this.container = container;
+    this.scrollSamples = [];
+    this.scrollSampler = () => {
+      this.scrollSamples.push({ top: container.scrollTop, t: performance.now() });
+      if (this.scrollSamples.length > 64) this.scrollSamples.splice(0, 32);
+    };
+    container.addEventListener('scroll', this.scrollSampler, { passive: true });
+  }
+
+  /** Is the page view being scrolled fast right now (a scrollbar drag, a
+   *  flick)? True when the newest scroll event is younger than PUMP_SETTLE_MS
+   *  and the view travelled more than PUMP_FAST_VH viewports over the last
+   *  PUMP_VELOCITY_MS. Shared by the mount pump and the idle mount window so
+   *  neither mounts a page the user is scrolling past. */
+  private viewportMoving(vh: number): boolean {
+    const now = performance.now();
+    const s = this.scrollSamples;
+    let i = 0;
+    while (i < s.length && now - s[i].t > PUMP_VELOCITY_MS) i++;
+    if (i) s.splice(0, i);
+    if (!s.length || now - s[s.length - 1].t > PUMP_SETTLE_MS) return false;
+    return Math.abs(s[s.length - 1].top - s[0].top) > vh * PUMP_FAST_VH;
   }
 
   /** Register the per-page-mount hook (see onPageMountedCb). Call before the
@@ -1261,6 +1310,7 @@ class Renderer {
     this.extents.clear();
     this.pageVirt?.io?.disconnect();
     this.pageVirt = null;
+    this.cancelPump();
   }
 
   /** Reload the page layout into the live toolkit if something else (a scroll
@@ -1525,12 +1575,34 @@ class Renderer {
         if (q >= 1 && q <= st.pageCount) pinned.add(q);
       }
     }
-    /* Mount: within one viewport of the view, plus the cursor's neighbourhood. */
+    /* Mount ONE page per idle slice (2026-09-11) — nearest the viewport first,
+       then the cursor's neighbourhood — and come back for the rest. Mounting
+       the whole band in one callback blocked ~150 ms a page (Chromium; more in
+       Firefox) with nothing painted in between, and a page the user scrolled
+       past while it waited was mounted anyway. `mountPageIfCheap` refuses a
+       stale or toolkit-less page; skip those rather than spin on them. */
+    const cands: Array<{ p: number; d: number }> = [];
     for (const [p, r] of rect) {
-      if (pinned.has(p) || (r.bottom >= view.top - vh && r.top <= view.bottom + vh)) {
-        this.mountPageIfCheap(p);
+      if (st.mounted.has(p)) continue;
+      const inBand = r.bottom >= view.top - vh && r.top <= view.bottom + vh;
+      if (!inBand && !pinned.has(p)) continue;
+      const d = r.bottom < view.top ? view.top - r.bottom : r.top > view.bottom ? r.top - view.bottom : 0;
+      cands.push({ p, d: inBand ? d : Infinity });
+    }
+    cands.sort((a, b) => a.d - b.d);
+    /* Not while the view is flying past (viewportMoving) — idle time exists
+       between the frames of a drag, and this pass used to spend it mounting
+       the pages the drag was sweeping through. Retry once it settles. */
+    const moving = cands.length > 0 && this.viewportMoving(vh);
+    let mountedOne = false;
+    if (!moving) {
+      for (const c of cands) {
+        if (!this.mountPageIfCheap(c.p)) continue;
+        mountedOne = true;
+        break;
       }
     }
+    if (moving || (mountedOne && cands.length > 1)) this.scheduleMountWindow(cursorMeasure);
     /* Evict: mounted, not pinned, and more than two viewports away. A stale
        page is evictable like any other — re-mounting one reloads the document
        once (~600 ms) and leaves the toolkit current for everything after, which
@@ -1607,18 +1679,80 @@ class Renderer {
     if (!st || !this.container) return;
     st.io?.disconnect();
     st.io = new IntersectionObserver((entries) => {
-      let mounted = false;
+      /* The observer only WAKES the pump. Its entries describe the moment of
+         observation, in DOM order: mounting them here drew the page above the
+         viewport before the visible one, and every page a drag swept through
+         the band — all synchronously, ahead of the page the user stopped on. */
       for (const e of entries) {
         if (!e.isIntersecting) continue;
-        this.mountPage(Number((e.target as HTMLElement).dataset.page));
-        mounted = true;
+        this.pumpWanted.add(Number((e.target as HTMLElement).dataset.page));
       }
-      /* The observer only ever MOUNTS. Re-evaluate the window so scrolling
-         also evicts what it left behind. */
-      if (mounted) this.scheduleMountWindow(this.mountWindowMi);
+      if (this.pumpWanted.size) this.requestPump();
     }, { root: this.container, rootMargin: '100% 0px 100% 0px' });
     for (const div of Array.from(this.container.querySelectorAll('.score-page-pending'))) {
       st.io.observe(div);
+    }
+  }
+
+  /** Ask for one pump frame (coalesced). */
+  private requestPump(): void {
+    if (this.pumpHandle !== null) return;
+    this.pumpHandle = requestAnimationFrame(() => {
+      this.pumpHandle = null;
+      try { this.pumpMounts(); } catch { /* never break a render */ }
+    });
+  }
+
+  private cancelPump(): void {
+    if (this.pumpHandle !== null) { cancelAnimationFrame(this.pumpHandle); this.pumpHandle = null; }
+    this.pumpWanted.clear();
+  }
+
+  /** One animation frame of lazy mounting (2026-09-11). Classifies every
+   *  wanted page against the viewport AS IT IS NOW: a VISIBLE page (intersects
+   *  the view) is mounted — one per frame, nearest the top of the view first,
+   *  so a paint lands between mounts; a NEAR page (inside the ±1-viewport
+   *  band) is left to the idle mount window; a page that has LEFT the band is
+   *  dropped (it stays observed, so the observer re-wakes us if it returns).
+   *  While the viewport is moving fast (viewportMoving: a scrollbar drag, a
+   *  flick) nothing is mounted: the placeholders show, and the page under the
+   *  thumb mounts PUMP_SETTLE_MS after it stops. Measured (sonata, Chromium): a drag 20→3 went from 15 mounts
+   *  / 2.75 s before the landing page was drawn to one mount of ~150 ms. */
+  private pumpMounts(): void {
+    const st = this.pageVirt;
+    if (this.viewMode !== 'page' || !st || !this.container) { this.pumpWanted.clear(); return; }
+    const view = this.container.getBoundingClientRect();
+    const vh = view.height || 1;
+    const moving = this.viewportMoving(vh);
+    let best: { p: number; d: number } | null = null;
+    let visible = 0;
+    let near = false;
+    for (const p of Array.from(this.pumpWanted)) {
+      if (st.mounted.has(p)) { this.pumpWanted.delete(p); continue; }
+      const div = this.pageDiv(p);
+      if (!div) { this.pumpWanted.delete(p); continue; }
+      const r = div.getBoundingClientRect();
+      if (r.bottom > view.top && r.top < view.bottom) {
+        visible++;
+        const d = Math.abs(r.top - view.top);
+        if (!best || d < best.d) best = { p, d };
+      } else if (r.bottom >= view.top - vh && r.top <= view.bottom + vh) {
+        near = true;
+      } else {
+        this.pumpWanted.delete(p);
+      }
+    }
+    if (best && !moving) {
+      this.mountPage(best.p);
+      this.pumpWanted.delete(best.p);
+      visible--;
+    }
+    if ((best && moving) || visible > 0) {
+      this.requestPump();
+    } else {
+      /* Near pages are idle work; the window also evicts what a scroll left
+         behind. */
+      if (near || st.mounted.size > 0) this.scheduleMountWindow(this.mountWindowMi);
     }
   }
 
@@ -1949,7 +2083,24 @@ class Renderer {
     const st = this.pageVirt;
     if (st && st.pageCount > 0) {
       this.repairAtMount(Array.from({ length: st.pageCount }, (_, i) => i + 1));
+      /* The repair's cascade re-paginates from the first spill on and marks
+         every UNMOUNTED page from there stale (markPagesStaleFrom) — AFTER the
+         synchronous extents pass above, so nothing warmed the toolkit for them
+         and the user's first scroll into that half paid the whole-document
+         reload (sonata: pages 15–31 stale after load, +784 ms on the first
+         mount there — half of the "3 s to mount a page"; 2026-09-11). Re-arm
+         the job: its first idle slice is exactly that warm. */
+      this.rearmWarmIfStaleUnmounted(model);
     }
+  }
+
+  /** Arm the extents job when some unmounted page is stale (or the toolkit no
+   *  longer holds the page layout), so the ~600–800 ms whole-document reload
+   *  happens in idle time instead of on the user's next scroll-in. */
+  private rearmWarmIfStaleUnmounted(model: ComposerModel): void {
+    const st = this.pageVirt;
+    if (!st) return;
+    if (!st.tkCurrent || [...st.stalePages].some((p) => !st.mounted.has(p))) this.armExtentsJob(model);
   }
 
   /** Snapshot the committed partition for the current key, so returning to this
@@ -2858,6 +3009,13 @@ class Renderer {
     if (!model) return;
     const e = this.partitionCache.get(this.partitionKey(model));
     if (e && e.docVer === model.docVersion()) e.balanced = true;
+    /* The job's commits mark every UNMOUNTED page from the first moved line on
+       stale (applyPartitionChange → markPagesStaleFrom), and the paint-time
+       extents pass is long over by the time the idle job finishes — so without
+       this the user's next scroll into those pages paid the whole-document
+       reload. Re-arm the job: its first idle slice is exactly that warm, and
+       the re-partitioned lines get their extents measured while it is there. */
+    this.rearmWarmIfStaleUnmounted(model);
   }
 
   /** Land a PARTITION-ONLY change from the section balancer's idle job (the

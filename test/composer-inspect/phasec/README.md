@@ -601,3 +601,18 @@ stay false).
   ink/mark consumers** — see lessons.md "Verovio emits zero-size `g.accid`
   groups".
   `node test/composer-inspect/phasec/runner.mjs test/composer-inspect/phasec/cb-instrgap.js --arg "rows=0"`
+
+- **mount-drag.js** (2026-09-11) — the lazy-mount scheduling gate for the
+  visible-first mount pump (`render.ts` `pumpMounts` / `updateMountWindow` /
+  `viewportMoving`) and the balance-complete toolkit warm. Drives the REAL
+  IntersectionObserver by setting `#score.scrollTop` — a one-frame jump, a slow
+  drag, a fast drag — and reports, per run, the mount order, each mount's cost
+  with its toolkit-reload share, any `loadData` during the run and when the
+  landing page was drawn; `staleAtStart` / `tkCurrentAtStart` cover the warm.
+  Expect `ok: true`: the visible page mounts first on a jump (~150 ms), a drag
+  mounts its landing page ~120 ms after it stops with at most one page mounted
+  mid-drag, nothing stale after load. Before the pump: a jump drew the
+  off-screen neighbour first, a drag mounted every page it swept through the
+  band (15 mounts / 2.75 s for 20→3), and the first mount past page 14 paid a
+  784 ms reload.
+  `node test/composer-inspect/phasec/runner.mjs test/composer-inspect/phasec/mount-drag.js`

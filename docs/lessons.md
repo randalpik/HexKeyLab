@@ -4069,3 +4069,47 @@ invisible." Two lessons:
   state half and a drawn half needs at least one fixture per entry path that
   counts the drawn elements and checks their geometry against the rendered
   score (`sel_beat_enter_*`, `sel_beat_lastNote_hugsNote`).
+
+## IntersectionObserver entries are DOM-order snapshots — the callback must not do the work (2026-09-11)
+
+The page-view lazy mount used to run `mountPage` for every intersecting entry
+inside the observer callback. Two things about those entries made that the
+whole "3 s to mount a page" complaint: they describe intersection AT
+OBSERVATION TIME, and they arrive in registration (= DOM) order. So a clean
+jump to page 5 mounted page 4 first (its bottom edge 20 px inside the ±100 %
+margin, and earlier in the DOM) and the visible page waited 166 ms behind it;
+a scrollbar drag from page 20 to 3 mounted 15 pages — every one that had swept
+through the band, all still `isIntersecting` in the delivered batch — for
+2.75 s before drawing page 3, and the idle window then evicted 16 of them.
+Rule: an observer callback only WAKES a scheduler. The scheduler re-reads
+geometry against the CURRENT scroll position, does ONE unit of work per
+animation frame (so a paint lands between units), visible-first, and drops
+candidates that have left the band (they stay observed, so the observer
+re-wakes it if they return). `render.ts pumpMounts`; probe
+`test/composer-inspect/phasec/mount-drag.js`.
+
+Corollary — **sample scroll velocity from the `scroll` event, not from the
+consumer's own frames.** The first cut stored scrollTop per pump frame and
+reset it when the pump went idle; the pump goes idle after every frame of a
+drag, and the idle mount window ALSO runs between drag frames (idle time
+exists there), so both consumers saw a "fresh jump" every frame and the drag
+got WORSE (9–15 mounts). One shared source (`viewportMoving`: event samples,
+displacement over 400 ms, settled 120 ms after the last event), consulted by
+every consumer that can mount.
+
+## A synchronous warm followed by a pass that can mark pages stale leaves them unwarmed (2026-09-11)
+
+`settlePaginationForAdoptedPartition` ran the extents job synchronously (its
+first slice is the toolkit warm) and THEN `repairAtMount` over every page; on
+the sonata the repair's cascade re-paginated from page 15 on and marked
+15–31 stale (`markPagesStaleFrom`). Nothing warmed after that, so the user's
+first scroll into the back half paid the whole-document serialize + pin +
+`loadData` (+784 ms) on top of the mount — invisible to every fixture (small
+docs never spill) and to the battery (it `mountAll`s). Rule: after ANY pass
+that can add to `stalePages` (repair, cascade, partition commit), re-check
+"is some UNMOUNTED page stale?" and re-arm the idle warm
+(`rearmWarmIfStaleUnmounted`); `mount-drag.js` reports `staleAtStart` so the
+sonata catches the next such gap. Found by wrapping the renderer's methods in
+a page and re-importing the sonata — the trace showed `runExtentsJobNow` at
+stale=0 followed by `repairAtMount` at stale=17, which no amount of reading
+the code had made obvious.

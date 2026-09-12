@@ -93,6 +93,35 @@ Structural facts driving the plan:
   on restore). Measured (Chromium, sonata): page full render 4.5 s → **1.25 s**
   (loadData 1.0–1.2 s is now ~90 % of it), zoom 4.0 s → **1.35 s**, page
   restore 0.75 s → **0.43 s**, lazy mount ~40–70 ms/page, theme ~50 ms.
+- [x] **T2.1b Visible-first mount pump + post-repair toolkit warm** (shipped
+  2026-09-11; probe `test/composer-inspect/phasec/mount-drag.js`). Max: "up to
+  3 s to mount a page after scrolling to it" in the sonata. Measured cause, not
+  one slow mount but two compounding ones: (1) the IntersectionObserver
+  callback mounted EVERY entry synchronously in DOM order — a clean jump drew
+  the off-screen neighbour before the visible page (294 ms to the visible one),
+  and a scrollbar drag mounted every page it swept through the ±1-viewport
+  band ahead of the landing page (20→3: 15 mounts, 2.58 s of mount work, 2.75 s
+  to the visible page; then the idle window evicted 16 of them); (2) the
+  paint-time pagination repair (`settlePaginationForAdoptedPartition` →
+  `repairAtMount`) ran AFTER the synchronous extents pass and marked pages
+  15–31 stale, so the first mount past page 14 paid the whole-document
+  serialize + pin + `loadData` (+784 ms). Shipped: the observer only WAKES a
+  pump (`pumpMounts`, one rAF): one VISIBLE page per frame, nearest the
+  viewport top first; band-only pages left to `updateMountWindow`, now one
+  page per idle slice; pages that left the band dropped; nothing mounts while
+  `viewportMoving()` — scroll-EVENT samples, >0.5 viewport of travel over
+  400 ms, settled 120 ms after the last event — so a drag shows placeholders
+  and draws its landing page ~120 ms after the thumb stops. The warm is
+  re-armed (`rearmWarmIfStaleUnmounted` → extents job) after the paint-time
+  repair and at balance completion. Sonata, Chromium: jump 294 → **136 ms** to
+  the visible page (neighbour follows from idle); drag 20→3 2.75 s / 15 mounts
+  → **~410 ms / 1 mount** (incl. the 120 ms settle); fast drag 3→28 1.40 s / 8
+  → **385 ms / 2**; nothing stale after load, zero `loadData` on scroll. Suite
+  462/462. Per-mount cost itself is unchanged (~150 ms Chromium: Verovio SVG
+  30–50, first layout of the SVG 30–60 — it lands in whichever pass reads
+  geometry first, `snapBarlines` — post-pass JS 15–60, placement 2–4); the
+  only avoidable share is Verovio's, by keeping the strings the extents job
+  already renders offscreen (deferred — see Rejected/deferred below).
 - [x] **T2.2 Busy badge + render coalescing** (shipped 2026-08-29, reshaped by
   T2.1): with lazy pages, the per-page loop shrank to ~2 pages, so the
   determinate "page 12/37" progress idea died — the dominant block is ONE
@@ -304,3 +333,9 @@ on mount (viewBox growth), shifting pages below it; scroll-mode full engrave
   loaded, read via page-based getMEI, and replaced by the pinned encoded
   render. First edit after a derive: ~1.2 s full render → 333 ms splice. Four
   page-mode baselines reseeded with Max's approval.
+- 2026-09-11 — **T2.1b shipped**: visible-first mount pump with a fast-scroll
+  gate, one near page per idle slice, and the post-repair toolkit warm. The
+  "3 s to mount a page" was 8–18 synchronous mounts queued ahead of the visible
+  page plus a 784 ms stale reload on the first scroll into the sonata's back
+  half. Jump 294 → 136 ms; drag 20→3 2.75 s → ~410 ms; zero loadData on
+  scroll. Gate: `mount-drag.js` (`ok: true`). Suite 462/462.

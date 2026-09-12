@@ -7901,3 +7901,46 @@ scan, hence the asymmetry.
 - **Fixture gate**: every new fixture asserts the rect COUNT and geometry, not
   just `state.selection` — none of the prior `sel_*` fixtures started from an
   empty beat or checked that a rect existed, which is how this shipped.
+
+## Lazy page mounts go through a visible-first pump with a fast-scroll gate (2026-09-11)
+
+**Decision.** In page view the IntersectionObserver (root `#score`, ±100 %
+margin) no longer mounts pages; it wakes `pumpMounts`, which runs once per
+animation frame and mounts ONE page that intersects the viewport (nearest the
+viewport top first). Pages that are only inside the band go to the idle mount
+window (`updateMountWindow`), which now mounts one page per idle slice and
+reschedules itself. Pages that have left the band are dropped. Neither
+consumer mounts while `viewportMoving()`: the container's `scroll` events are
+sampled, and "moving" means the newest sample is younger than
+`PUMP_SETTLE_MS` (120) and the view travelled more than `PUMP_FAST_VH` (0.5)
+viewports over `PUMP_VELOCITY_MS` (400). Render/restore-time
+`mountVisiblePages` and the cursor path's `ensureMeasureMounted` stay
+synchronous. The toolkit warm is re-armed after the paint-time pagination
+repair and at balance completion (`rearmWarmIfStaleUnmounted`).
+
+**Why.** Measured on the sonata (Chromium): the callback-mounts design drew
+the off-screen neighbour before the visible page on a jump (294 ms to the
+visible page) and, on a scrollbar drag, mounted every page swept through the
+band ahead of the landing page (15 mounts, 2.75 s), then evicted them. A
+first mount past page 14 also paid a 784 ms stale reload. With the pump: jump
+136 ms, drag ~410 ms / 1 mount, zero `loadData` on scroll.
+
+**Alternatives rejected.** (a) Mount ALL visible pages synchronously in the
+pump — at zoom 50 a viewport shows 4–6 pages, i.e. a 0.6–0.9 s block with
+nothing painted; one per frame paints progressively and costs a 16 ms frame
+per extra page. (b) A plain scroll debounce before any mount — adds its whole
+delay to every single jump (PageDown, scroll-into-view); the displacement
+rule mounts a lone jump on the very next frame and only holds back while
+there is travel. (c) Velocity from the pump's own frames — see lessons.md
+("sample scroll velocity from the scroll event"). (d) Attacking the ~150 ms
+per-mount cost first — of it, only Verovio's 30–50 ms is avoidable (the SVG
+string the extents job already renders offscreen could be kept); the first
+layout of the SVG (30–60 ms) is inherent to mounting into the live DOM, and
+the scheduler removes 85–95 % of the wait by itself. Deferred.
+
+**Constants.** `PUMP_FAST_VH` 0.5: a wheel notch is ~0.1 viewport, a PageDown
+~0.9 in one frame (registers as travel for one frame, then mounts), a
+scrollbar drag many viewports per frame. `PUMP_VELOCITY_MS` 400 keeps a slow
+flick (~1500 px/s) in the gate until it stops. `PUMP_SETTLE_MS` 120 is the
+latency a drag's landing page pays after the thumb stops — below the ~150 ms
+mount that follows it.
