@@ -90,6 +90,16 @@ import {
   clearBeatRange as clearBeatRangeImpl,
   clearMeasureRange as clearMeasureRangeImpl,
 } from './measure-ops.js';
+import {
+  emptyCellsIn as emptyCellsInImpl,
+  cellIsEmpty as cellIsEmptyImpl,
+  cellHasFlag as cellHasFlagImpl,
+  toggleEmptyFlagOnCells,
+  type Cell,
+  type EmptyFlag,
+  type FlagToggleResult,
+} from './empty-flags.js';
+import { collapsibleRuns, collapseMultiRests, identityUnits, RenderUnitIndex } from './multirest.js';
 
 /* ── public types ────────────────────────────────────────────────────────── */
 
@@ -377,6 +387,9 @@ function cannotChangeLayerBudget(r: MutationRecord, target: Element | null): boo
   /* Attributes or text on a control event itself. */
   if (CONTROL_EVENT_NAMES.has(target.localName)) return true;
   if (r.type === 'attributes') {
+    /* Empty-cell flags live as data-hkl-* attributes on <staff> (empty-flags.ts)
+       and never move a tick budget. */
+    if (target.localName === 'staff') return (r.attributeName ?? '').startsWith('data-hkl-');
     return target.localName === 'measure'
       && BUDGET_SAFE_MEASURE_ATTRS.has(r.attributeName ?? '');
   }
@@ -569,7 +582,7 @@ export function normalizeStaffGroupConventions(doc: Document): void {
  *  stem direction under a slur, and slurs on the notehead side in two-voice
  *  passages. Each is documented in its
  *  module; none touches the saved document. */
-function applyRenderConventions(clone: Document): void {
+function applyRenderConventions(clone: Document, units: RenderUnitIndex | null = null): void {
   unifySlurStems(clone);   // first: the rest pass reads the explicit @stem.dir it writes; unified stems put a single-voice slur on the notehead side by themselves
   settleRestLocations(clone);
   applySectionRestarts(clone);
@@ -584,6 +597,12 @@ function applyRenderConventions(clone: Document): void {
      (render/textlayout.ts used to try; notation/unstack.ts has the probe
      table). */
   separateSameMomentMarks(clone);
+  /* Last (2026-09-11): collapse multimeasure-rest runs — a single-staff view
+     only (model/multirest.ts). Takes the model's unit index rather than
+     recomputing, so the render and everything that maps measures to rendered
+     ids agree by construction. Strict under the index check: a range serialize
+     that cut a run is a bug (serializeRangeForRender snaps to unit edges). */
+  if (units && units.active) collapseMultiRests(clone, units.runs, indexCheckEnabled());
 }
 
 export class ComposerModel {
@@ -896,7 +915,7 @@ export class ComposerModel {
     if (viewStaves) filterToStaves(clone, new Set(viewStaves));
     relocateInitialClefs(clone);
     regroupBeams(clone, readTimeSig(clone));
-    if (forRender) applyRenderConventions(clone);
+    if (forRender) applyRenderConventions(clone, this.renderUnits(viewStaves));
     return new XMLSerializer().serializeToString(clone);
   }
 
@@ -917,6 +936,10 @@ export class ComposerModel {
     viewStaves?: number[] | null,
   ): string {
     if (!this.doc.querySelector('section')) return this.serialize(forRender, viewStaves);
+    /* A multimeasure-rest run is ONE rendered measure: never cut one. Callers
+       look the result up by id, so the superset is harmless (2026-09-11). */
+    const units = this.renderUnits(viewStaves);
+    [loIdx, hiIdx] = units.snap(loIdx, hiIdx);
     const ctx = this.runningScoreDefContext(loIdx);
     /* Build the sub-doc by cloning ONLY the head structure + the [loIdx..hiIdx]
        section children — out-of-range measures are never cloned (cloning the
@@ -939,7 +962,7 @@ export class ComposerModel {
     if (viewStaves) filterToStaves(clone, new Set(viewStaves));
     relocateInitialClefs(clone, true);   // range: first measure's leading clef lives in the out-of-range prev
     regroupBeams(clone, readTimeSig(clone));
-    applyRenderConventions(clone);
+    applyRenderConventions(clone, units);
     return new XMLSerializer().serializeToString(clone);
   }
 
@@ -3526,6 +3549,67 @@ export class ComposerModel {
     return 'rptend';
   }
 
+  /* ── empty-cell flags (hide-empty / multirest) — model/empty-flags.ts ──── */
+
+  /** Empty (measure, staff) cells in the inclusive rectangle. */
+  emptyCellsIn(mLo: number, mHi: number, sLo: number, sHi: number): Cell[] {
+    return emptyCellsInImpl(this, mLo, mHi, sLo, sHi);
+  }
+
+  cellIsEmpty(measureIdx: number, staffN: number): boolean {
+    const m = this.allMeasures()[measureIdx];
+    return !!m && cellIsEmptyImpl(m, staffN);
+  }
+
+  cellHasFlag(measureIdx: number, staffN: number, flag: EmptyFlag): boolean {
+    const m = this.allMeasures()[measureIdx];
+    return !!m && cellHasFlagImpl(m, staffN, flag);
+  }
+
+  /** Render units for a view (model/multirest.ts): which measures engrave as
+   *  ONE multimeasure rest. Active only when the view shows exactly one staff.
+   *  Cached per (view, docVersion) — every consumer (serialize, renderer,
+   *  cursor, selection, input) must read THIS so they agree by construction. */
+  renderUnits(viewStaves?: number[] | null): RenderUnitIndex {
+    const key = viewStaves ? viewStaves.slice().sort((a, b) => a - b).join(',') : 'all';
+    const ver = this.docVersion();
+    const c = this.unitsCache;
+    if (c && c.key === key && c.ver === ver) return c.idx;
+    const measures = this.allMeasures();
+    const staves = viewStaves ?? this.instruments().flatMap((inst) => inst.staffNs);
+    const idx = staves.length === 1
+      ? new RenderUnitIndex(measures.length, collapsibleRuns(measures, staves[0]))
+      : identityUnits(measures.length);
+    this.unitsCache = { key, ver, idx };
+    return idx;
+  }
+  private unitsCache: { key: string; ver: number; idx: RenderUnitIndex } | null = null;
+
+  /** The staff subset the score is currently RENDERED with (null = all).
+   *  Set by the renderer on every render so cursor / selection / input code
+   *  can ask `unitsForView()` without threading viewStaves through. */
+  setRenderView(viewStaves: number[] | null): void {
+    this.renderView = viewStaves ? viewStaves.slice() : null;
+  }
+  renderViewStaves(): number[] | null {
+    return this.renderView ? this.renderView.slice() : null;
+  }
+  /** renderUnits() for the current render view. */
+  unitsForView(): RenderUnitIndex {
+    return this.renderUnits(this.renderView);
+  }
+  private renderView: number[] | null = null;
+
+  /** Set every cell to the flag state the FEWER of them hold (tie → on); see
+   *  empty-flags.ts. Marks the touched measures render-dirty: the flag is an
+   *  attribute on `<staff>`, so the splicer's per-measure signatures change and
+   *  the affected lines re-flow / re-place like any other edit. */
+  toggleEmptyFlag(cells: readonly Cell[], flag: EmptyFlag): FlagToggleResult | null {
+    const r = toggleEmptyFlagOnCells(this, cells, flag);
+    if (r) this.markDirtyMeasures(r.measureLo, r.measureHi);
+    return r;
+  }
+
   /** Toggle a 1st/2nd ending (volta) on the measure at `measureIdx`, one
    *  measure at a time. The MEI encoding wraps `<measure>` elements in an
    *  `<ending n="…">` inside `<section>`; Verovio draws the volta bracket.
@@ -4473,7 +4557,20 @@ export class ComposerModel {
     if (target.localName === "measure") {
       if (this.measureIsEmpty(target) && this.allMeasures().length > 1) {
         const measureIdx = c; /* flat[c] === target === measure wrapper */
-        target.parentNode?.removeChild(target);
+        /* A multimeasure rest is ONE stop (model/multirest.ts): deleting it
+           removes the whole run — but only when every member is empty on
+           EVERY staff (in a part view the other parts may have content there)
+           and something remains afterwards; otherwise skip-left like a
+           non-empty wrapper. */
+        const all = this.allMeasures();
+        const [uLo, uHi] = this.unitsForView().unitOf(all.indexOf(target));
+        const members = uHi > uLo ? all.slice(uLo, uHi + 1) : [target];
+        if (members.length > 1
+            && (all.length <= members.length || !members.every((mm) => this.measureIsEmpty(mm)))) {
+          this.cursors[v] = Math.max(0, c - 1);
+          return true;
+        }
+        for (const mm of members) mm.parentNode?.removeChild(mm);
         this.renumberMeasures();
         this.setBarlines();
         normalizeTies(this);
@@ -5186,7 +5283,16 @@ function filterToStaves(clone: Document, keep: ReadonlySet<number>): void {
     if (!keep.has(n)) sd.parentNode?.removeChild(sd);
   }
   for (const grp of Array.from(clone.querySelectorAll('scoreDef staffGrp'))) {
-    if (!grp.querySelector('staffDef')) grp.parentNode?.removeChild(grp);
+    if (!grp.querySelector('staffDef')) { grp.parentNode?.removeChild(grp); continue; }
+    /* A grand staff reduced to ONE staff (hide-empty-staves, render/
+       hiddenstaves.ts) loses its brace and through-barline: Verovio draws a
+       brace on any group that asks, a lone staff included (same rule as
+       normalizeStaffGroupConventions on load; Finale's default too). */
+    if (Array.from(grp.children).filter((c) => c.localName === 'staffDef').length === 1
+        && !grp.querySelector(':scope > staffGrp')) {
+      grp.removeAttribute('symbol');
+      grp.removeAttribute('bar.thru');
+    }
   }
   /* Drop control events anchored to a hidden staff or a dropped note. */
   for (const ev of Array.from(clone.querySelectorAll('measure > *'))) {

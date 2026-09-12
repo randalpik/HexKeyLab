@@ -164,15 +164,21 @@ function layoutSystem(sys: Element, opts: InstrGapOpts): boolean {
     if (!rs.length) return null;
     return { n: staffNs[0], top: Math.min(...rs.map((r) => r.top)), bottom: Math.max(...rs.map((r) => r.bottom)) };
   };
-  const bands = opts.instrStaffNs.map(bandOf);
+  /* Hidden empty staves (render/hiddenstaves.ts) can remove a whole
+     instrument from a system; the gap rule then applies to the instruments
+     that ARE here. */
+  const present = opts.instrStaffNs.filter((ns) => ns.some((n) => rows.has(n)));
+  if (present.length < 2) return false;
+  const lopts: InstrGapOpts = { ...opts, instrStaffNs: present };
+  const bands = present.map(bandOf);
   if (bands.some((b) => !b)) return false;           // an instrument has no staff here
 
   /* ── demand per boundary ── */
-  const shiftOf = new Array<number>(opts.instrStaffNs.length).fill(0);
+  const shiftOf = new Array<number>(lopts.instrStaffNs.length).fill(0);
   let any = false;
-  for (let k = 0; k + 1 < opts.instrStaffNs.length; k++) {
+  for (let k = 0; k + 1 < lopts.instrStaffNs.length; k++) {
     const upper = bands[k]!, lower = bands[k + 1]!;
-    const upperNs = opts.instrStaffNs[k], lowerNs = opts.instrStaffNs[k + 1];
+    const upperNs = lopts.instrStaffNs[k], lowerNs = lopts.instrStaffNs[k + 1];
     const upInk = inkOf(sys, upperNs, frameInv), loInk = inkOf(sys, lowerNs, frameInv);
     let demand = 0;
 
@@ -215,7 +221,7 @@ function layoutSystem(sys: Element, opts: InstrGapOpts): boolean {
   if (!any) return false;
 
   /* ── apply ── */
-  return applyShifts(sys, opts, rows, bands as Row[], shiftOf, frameInv);
+  return applyShifts(sys, lopts, rows, bands as Row[], shiftOf, frameInv);
 }
 
 const overlapsX = (a: Box, b: Box): boolean => !(a.right < b.left - PAD || a.left > b.right + PAD);

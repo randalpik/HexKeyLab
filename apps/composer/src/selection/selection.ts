@@ -166,14 +166,18 @@ export function enterMeasureSelection(
   fromMeasureIdx: number,
 ): Extract<SelectionState, { kind: 'measure' }> {
   const originStaff = staffForVoice(model, voice);
+  /* A multimeasure-rest run is one selectable unit (model/multirest.ts): the
+     anchor unit is the whole run — anchor at its first measure, movable at its
+     last, side 'unset' (= "exactly the anchor unit"). */
+  const [aLo, aHi] = model.unitsForView().unitOf(fromMeasureIdx);
   return {
     kind: 'measure',
     originVoice: voice,
     originStaff,
     firstStaff: originStaff,
     lastStaff: originStaff,
-    anchorMeasure: fromMeasureIdx,
-    movableMeasure: fromMeasureIdx,
+    anchorMeasure: aLo,
+    movableMeasure: aHi,
     movableSide: 'unset',
   };
 }
@@ -243,46 +247,46 @@ export function moveMeasureMovable(
   sel: Extract<SelectionState, { kind: 'measure' }>,
   dir: Dir,
 ): SelectionState {
+  /* Unit-aware (2026-09-11): a multimeasure-rest run grows into / shrinks out
+     of the selection WHOLE. The selected range is [min(anchor, movable) ..
+     max(anchor, movable)] and is always unit-aligned. Encoding: `movableSide`
+     'unset' = exactly the anchor unit (anchor = its first measure, movable =
+     its last); 'right' = anchor at the anchor unit's FIRST measure, movable at
+     the range's last; 'left' = anchor at the anchor unit's LAST measure,
+     movable at the range's first. With no runs every unit is one measure and
+     this is the historic behaviour exactly. */
+  const units = model.unitsForView();
   const numMeasures = model.allMeasures().length;
   const last = numMeasures - 1;
+  const anchorUnit = units.unitOf(sel.anchorMeasure);
+  const lo = Math.min(sel.anchorMeasure, sel.movableMeasure);
+  const hi = Math.max(sel.anchorMeasure, sel.movableMeasure);
+  const onlyAnchor = (): SelectionState =>
+    ({ ...sel, anchorMeasure: anchorUnit[0], movableMeasure: anchorUnit[1], movableSide: 'unset' });
 
   if (dir === 'left') {
-    if (sel.movableSide === 'unset') {
-      const target = Math.max(0, sel.anchorMeasure - 1);
-      if (target === sel.anchorMeasure) return sel;
-      return { ...sel, movableSide: 'left', movableMeasure: target };
+    if (sel.movableSide === 'unset' || sel.movableSide === 'left') {
+      /* Grow the LEFT edge by one unit. */
+      if (lo <= 0) return sel;
+      const newLo = units.unitOf(lo - 1)[0];
+      return { ...sel, anchorMeasure: anchorUnit[1], movableMeasure: newLo, movableSide: 'left' };
     }
-    if (sel.movableSide === 'left') {
-      const target = Math.max(0, sel.movableMeasure - 1);
-      return { ...sel, movableMeasure: target };
-    }
-    const target = sel.movableMeasure - 1;
-    if (target === sel.anchorMeasure) {
-      return { ...sel, movableMeasure: target, movableSide: 'unset' };
-    }
-    if (target < sel.anchorMeasure) {
-      return { ...sel, movableMeasure: sel.anchorMeasure, movableSide: 'unset' };
-    }
-    return { ...sel, movableMeasure: target };
+    /* side 'right': shrink the right edge by one unit. */
+    const newHi = units.unitOf(hi)[0] - 1;
+    if (newHi <= anchorUnit[1]) return onlyAnchor();
+    return { ...sel, anchorMeasure: anchorUnit[0], movableMeasure: newHi, movableSide: 'right' };
   }
 
-  if (sel.movableSide === 'unset') {
-    const target = Math.min(last, sel.anchorMeasure + 1);
-    if (target === sel.anchorMeasure) return sel;
-    return { ...sel, movableSide: 'right', movableMeasure: target };
+  if (sel.movableSide === 'unset' || sel.movableSide === 'right') {
+    /* Grow the RIGHT edge by one unit. */
+    if (hi >= last) return sel;
+    const newHi = units.unitOf(hi + 1)[1];
+    return { ...sel, anchorMeasure: anchorUnit[0], movableMeasure: newHi, movableSide: 'right' };
   }
-  if (sel.movableSide === 'right') {
-    const target = Math.min(last, sel.movableMeasure + 1);
-    return { ...sel, movableMeasure: target };
-  }
-  const target = sel.movableMeasure + 1;
-  if (target === sel.anchorMeasure) {
-    return { ...sel, movableMeasure: target, movableSide: 'unset' };
-  }
-  if (target > sel.anchorMeasure) {
-    return { ...sel, movableMeasure: sel.anchorMeasure, movableSide: 'unset' };
-  }
-  return { ...sel, movableMeasure: target };
+  /* side 'left': shrink the left edge by one unit. */
+  const newLo = units.unitOf(lo)[1] + 1;
+  if (newLo >= anchorUnit[0]) return onlyAnchor();
+  return { ...sel, anchorMeasure: anchorUnit[1], movableMeasure: newLo, movableSide: 'left' };
 }
 
 /** Shift+Up/Down in measure mode. Unchanged. */
@@ -346,12 +350,17 @@ export function promoteBeatToMeasure(
   }
   const grewRight = sel.lastMoved === 'last';
   const originStaff = staffForVoice(model, sel.voice);
+  /* Unit-aligned (model/multirest.ts): a touched multimeasure-rest run is
+     taken whole, and the encoding follows moveMeasureMovable. */
+  const units = model.unitsForView();
+  leftM = units.unitOf(leftM)[0];
+  rightM = units.unitOf(rightM)[1];
   let anchorMeasure: number;
   let movableMeasure: number;
   let movableSide: MovableSide;
-  if (leftM === rightM) {
+  if (units.unitOf(leftM)[1] === rightM) {
     anchorMeasure = leftM;
-    movableMeasure = leftM;
+    movableMeasure = rightM;
     movableSide = 'unset';
   } else if (grewRight) {
     anchorMeasure = leftM;
@@ -446,14 +455,16 @@ export function cursorAtMovable(
     return { voice: sel.voice, flatIndex };
   }
   const v = sel.originVoice;
+  const units = model.unitsForView();
   if (sel.movableSide === 'unset') {
-    return { voice: v, flatIndex: model.getMeasureStartCursor(v, sel.anchorMeasure) };
+    return { voice: v, flatIndex: model.getMeasureStartCursor(v, units.unitOf(sel.anchorMeasure)[0]) };
   }
   if (sel.movableSide === 'left') {
-    return { voice: v, flatIndex: model.getMeasureStartCursor(v, sel.movableMeasure) };
+    return { voice: v, flatIndex: model.getMeasureStartCursor(v, units.unitOf(sel.movableMeasure)[0]) };
   }
   const numMeasures = model.allMeasures().length;
-  const target = sel.movableMeasure + 1;
+  /* Past the whole run when the right edge sits in one. */
+  const target = units.unitOf(sel.movableMeasure)[1] + 1;
   if (target >= numMeasures) {
     return { voice: v, flatIndex: model.getVoiceLength(v) };
   }

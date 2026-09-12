@@ -8,6 +8,7 @@
 
 import { realTicks } from './ticks.js';
 import { el, newId, decomposeTicks } from './index.js';
+import { clearEmptyFlags, isCellContent } from './empty-flags.js';
 
 export const PLACEHOLDER_ATTR = 'data-placeholder';
 
@@ -50,6 +51,7 @@ export function normalizePlaceholders(
        the layer needs NO trailing placeholder. (Adding one made Verovio size the
        measure as a breve rest — the "double whole rest" bug.) */
     let hasMRest = false;
+    let hasContent = false;
     for (const c of kids) {
       const ln = c.localName;
       if (
@@ -61,9 +63,21 @@ export function normalizePlaceholders(
         ln === 'bTrem'
       ) {
         used += realTicks(c);
+        hasContent = true;
       } else if (ln === 'mRest') {
         hasMRest = true;
+      } else if (isCellContent(ln)) {
+        hasContent = true;             // a layer <clef> also un-empties the cell
       }
+    }
+    /* Content in the cell drops its empty-cell flags (hide-empty / multirest):
+       a flag may only live on an EMPTY staff cell, and this loop is the one
+       pass every edit path already runs over every dirty layer — see
+       model/empty-flags.ts. Runs BEFORE the idempotency shortcut below, since a
+       full layer has no placeholders to rebuild. */
+    if (hasContent) {
+      const staff = layer.parentElement;
+      if (staff && staff.localName === 'staff') clearEmptyFlags(staff);
     }
     const remaining = hasMRest ? 0 : ticksForLayer(layer) - used;
     const desired = remaining > 0 ? decomposeTicks(remaining) : [];

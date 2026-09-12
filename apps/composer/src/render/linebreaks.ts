@@ -53,6 +53,7 @@
 
 import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
 import type { ComposerModel } from '../model/index.js';
+import type { RenderUnitIndex } from '../model/multirest.js';
 import { expandForSpanners, expandForEndings } from './splice.js';
 import { captureSigState, signatureRanges, unionRun, type SigState } from './sigranges.js';
 import { balanceSection, boundariesChanged, startsOf } from './balance.js';
@@ -986,7 +987,15 @@ export class PageLineBreaks {
     };
     let run = unionRun(runFrom(Pf, Sf).lo, runFrom(Pf, Sf).hi, sr.ranges);
     const redrawSpan = runFrom(P, S);
-    const redraw = unionRun(redrawSpan.lo, redrawSpan.hi, sr.ranges);
+    let redraw = unionRun(redrawSpan.lo, redrawSpan.hi, sr.ranges);
+    /* A multimeasure-rest run is ONE rendered measure (model/multirest.ts): an
+       edit touching any member re-flows and redraws the whole unit — its
+       representative's width depends on every member's flag. */
+    const units = model.renderUnits(this.viewStaves);
+    if (units.active) {
+      if (run.lo <= run.hi) { const [a, b] = units.snap(run.lo, run.hi); run = { lo: a, hi: b }; }
+      if (redraw.lo <= redraw.hi) { const [a, b] = units.snap(redraw.lo, redraw.hi); redraw = { lo: a, hi: b }; }
+    }
 
     let newStartIds: string[];
     let newPageStartIds: string[];
@@ -1071,6 +1080,13 @@ export class PageLineBreaks {
        next survivor (no reflow); an inserted measure joins the line whose
        index range contains it; a line whose every member was deleted
        disappears. Nothing here consults widths — only structure. */
+    /* Multimeasure-rest runs (model/multirest.ts) are ONE rendered measure: a
+       line can only start at a unit's first measure and a repair moves whole
+       units. Interior members carry natural 0 (measureWindow), so unit widths
+       already sum correctly. */
+    const units = model.renderUnits(this.viewStaves);
+    const unitLo = (i: number): number => units.repIdxOf(i);
+    const unitHi = (i: number): number => units.unitOf(i)[1];
     const oldPos = new Map(this.sigOrder.map((id, i) => [id, i]));
     const oldStartPos: number[] = [];
     for (const id of this.startIds!) {
@@ -1086,8 +1102,9 @@ export class PageLineBreaks {
       const to = k + 1 < oldStartPos.length ? oldStartPos[k + 1] : this.sigOrder.length;
       let carried: number | null = null;
       for (let i = from; i < to; i++) {
-        const ni = idIdx.get(this.sigOrder[i]);
+        let ni = idIdx.get(this.sigOrder[i]);
         if (ni == null) continue;
+        ni = unitLo(ni);                             // a line starts where its unit starts
         if (!starts.length || ni > starts[starts.length - 1]) { starts.push(ni); carried = starts.length - 1; }
         break;
       }
@@ -1189,10 +1206,12 @@ export class PageLineBreaks {
       const f = fillOf(k);
       if (f == null) return null;
       const from = starts[k], to = lineEnd(k);
-      if (f > FIT_MAX && to - from > 1) {
-        const moving = to - 1;                       // last measure of this line
-        const nat = this.naturals.get(ids[moving]) ?? 0;
-        if ((f * budget - nat) / budget < MIN_FILL && to - from === 2) {
+      const movingUnitLo = unitLo(to - 1);           // the line's last UNIT
+      if (f > FIT_MAX && movingUnitLo > from) {
+        const moving = movingUnitLo;                 // last unit of this line moves whole
+        let nat = 0;
+        for (let i = moving; i < to; i++) nat += this.naturals.get(ids[i]) ?? 0;
+        if ((f * budget - nat) / budget < MIN_FILL && unitLo(moving - 1) === from) {
           k++; continue;                             // shedding would only trade one illegality for another
         }
         if (k + 1 >= starts.length) {
@@ -1212,11 +1231,13 @@ export class PageLineBreaks {
       }
       if (f < MIN_FILL && k + 1 < starts.length && !pushed.has(k)) {
         const cand = starts[k + 1];
-        if (!hard.has(ids[cand]) && lineEnd(k + 1) - cand > 1) {
-          if (!ensureRange(cand, cand)) return null;
-          const nat = this.naturals.get(ids[cand]) ?? 0;
+        const candHi = unitHi(cand);                 // pull the next line's first UNIT whole
+        if (!hard.has(ids[cand]) && lineEnd(k + 1) - candHi > 1) {
+          if (!ensureRange(cand, candHi)) return null;
+          let nat = 0;
+          for (let i = cand; i <= candHi; i++) nat += this.naturals.get(ids[i]) ?? 0;
           if ((f * budget + nat) / budget <= FIT_MAX) {
-            starts[k + 1] = cand + 1;
+            starts[k + 1] = candHi + 1;
             through = Math.max(through, k + 1);
             continue;                                // re-check this line
           }
@@ -1235,7 +1256,7 @@ export class PageLineBreaks {
        is balanced here (the adoption job warms them); one still missing
        naturals keeps today's behaviour and the job balances it when it gets
        there — never a whole-section window on the hot path. */
-    this.balanceTouched(starts, pageLines, ids, hard, first, Math.min(through, starts.length - 1), BALANCE_LAMBDA);
+    this.balanceTouched(starts, pageLines, ids, hard, first, Math.min(through, starts.length - 1), BALANCE_LAMBDA, units);
 
     const out = starts.map((i) => ids[i]);
     let movedLines = 0;
@@ -1271,6 +1292,7 @@ export class PageLineBreaks {
    *  balance: section kept', 'single-line result'. */
   private balanceSectionLines(
     starts: number[], pageLines: number[], kLo: number, kHi: number, ids: string[], lambda: number,
+    units: RenderUnitIndex,
   ): { applied: boolean; reason: string; changed: number; removed: number } {
     const none = (reason: string) => ({ applied: false, reason, changed: 0, removed: 0 });
     const n = ids.length;
@@ -1279,14 +1301,29 @@ export class PageLineBreaks {
     if (last === null) return none('naturals incomplete');
     if (last >= MIN_FILL) return none('');
     const budget = this.budgetW;
+    /* Atoms are render UNITS (model/multirest.ts): a multimeasure-rest run is
+       one atom whose width is its members' naturals summed (interiors are 0),
+       so the balancer can never place a break inside a run. `unitStartsM` maps
+       an atom offset back to its first measure. */
     const ws: number[] = [];
-    for (let i = mFrom; i < mTo; i++) {
-      const w = this.naturals.get(ids[i]);
-      if (w === undefined) return none('naturals incomplete');
+    const unitStartsM: number[] = [];
+    for (let i = mFrom; i < mTo;) {
+      const [uLo, uHi] = units.unitOf(i);
+      let w = 0;
+      for (let k = uLo; k <= Math.min(uHi, mTo - 1); k++) {
+        const x = this.naturals.get(ids[k]);
+        if (x === undefined) return none('naturals incomplete');
+        w += x;
+      }
       ws.push(w / budget);
+      unitStartsM.push(uLo);
+      i = uHi + 1;
     }
     const refLens: number[] = [];
-    for (let k = kLo; k <= kHi; k++) refLens.push((k + 1 < starts.length ? starts[k + 1] : n) - starts[k]);
+    for (let k = kLo; k <= kHi; k++) {
+      const from = starts[k], to = k + 1 < starts.length ? starts[k + 1] : n;
+      refLens.push(unitStartsM.filter((u) => u >= from && u < to).length);
+    }
     /* balanceSection takes ONE sig/budget for the section it balances; a
        section can still contain a key change, so this is the section's own
        leading context rather than a per-line value. Deterministic (which is
@@ -1304,7 +1341,7 @@ export class PageLineBreaks {
     if (starts.length - (n0 - n1) < 2) return none('single-line result');
     const changed = boundariesChanged(refLens, res.lens);
     if (changed === 0) return none('');
-    const secStarts = startsOf(res.lens).map((o) => mFrom + o);
+    const secStarts = startsOf(res.lens).map((o) => unitStartsM[o]);
     starts.splice(kLo, n0, ...secStarts);
     linesReplaced(pageLines, kLo, n0, n1, starts.length);
     return { applied: true, reason: '', changed, removed: n0 - n1 };
@@ -1315,7 +1352,7 @@ export class PageLineBreaks {
    *  removal in one never shifts the indices of one still to visit. */
   private balanceTouched(
     starts: number[], pageLines: number[], ids: string[], hard: Set<string>,
-    kFrom: number, kTo: number, lambda: number,
+    kFrom: number, kTo: number, lambda: number, units: RenderUnitIndex,
   ): void {
     const t0 = performance.now();
     const lb: BalanceStats = { sections: 0, applied: 0, changed: 0, removed: 0, reasons: [], ms: 0 };
@@ -1323,7 +1360,7 @@ export class PageLineBreaks {
     for (let s = secs.length - 1; s >= 0; s--) {
       const [kLo, kHi] = secs[s];
       lb.sections++;
-      const r = this.balanceSectionLines(starts, pageLines, kLo, kHi, ids, lambda);
+      const r = this.balanceSectionLines(starts, pageLines, kLo, kHi, ids, lambda, units);
       if (r.reason) lb.reasons.push(r.reason);
       if (r.applied) { lb.applied++; lb.changed += r.changed; lb.removed += r.removed; }
     }
@@ -1401,7 +1438,7 @@ export class PageLineBreaks {
       const last = this.lineFill(starts, kHi, ids);
       if (last === null || last >= MIN_FILL) continue;
       if (this.measureMissing(model, meiMeasures, ids, mFrom, mTo - 1, ctx, Infinity) !== true) { lb.reasons.push('naturals window failed'); continue; }
-      const r = this.balanceSectionLines(starts, pageLines, kLo, kHi, ids, 0);
+      const r = this.balanceSectionLines(starts, pageLines, kLo, kHi, ids, 0, model.renderUnits(this.viewStaves));
       if (r.reason) lb.reasons.push(r.reason);
       if (r.applied) { lb.applied++; lb.changed += r.changed; lb.removed += r.removed; touched = true; }
     }
@@ -1505,7 +1542,7 @@ export class PageLineBreaks {
       if (m === 'incomplete') { settle(); return; }
       job.done.add(secId);
       if (last === null || last >= MIN_FILL) { settle(); return; }
-      const r = this.balanceSectionLines(starts, pageLines, kLo, kHi, ids, mountedSec(kLo, kHi) ? BALANCE_LAMBDA : 0);
+      const r = this.balanceSectionLines(starts, pageLines, kLo, kHi, ids, mountedSec(kLo, kHi) ? BALANCE_LAMBDA : 0, model.renderUnits(this.viewStaves));
       if (r.reason) lb.reasons.push(r.reason);
       if (r.applied) {
         const oldStarts = this.startIds, oldPages = this.pageStartIds;
@@ -1709,7 +1746,12 @@ export class PageLineBreaks {
       if (!tk.loadData(sub)) return null;
       const svg = tk.renderToSVG(1, {});
       const doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
+      /* Multimeasure-rest runs (model/multirest.ts): an interior member has no
+         rendered measure and contributes no width — natural 0 — so a run's
+         width is carried by its representative alone and line sums stay right. */
+      const units = model.renderUnits(this.viewStaves);
       for (let i = needLo; i <= needHi; i++) {
+        if (units.isInterior(i)) { this.naturals.set(ids[i], 0); continue; }
         const el = doc.getElementById(ids[i]);
         const span = el ? staffLineSpan(el) : null;
         if (span === null || !(span > 0)) return null;
@@ -1724,7 +1766,7 @@ export class PageLineBreaks {
         const known = this.sigWByCtx.get(ctxKey);
         if (known !== undefined && known > 0) return { sigW: known };
       }
-      const sigW = measureLeadingSigW(svg, ids[lo]);
+      const sigW = measureLeadingSigW(svg, ids[units.repIdxOf(lo)]);
       if (sigW > 0 && ctxKey !== undefined) this.sigWByCtx.set(ctxKey, sigW);
       return { sigW };
     } finally {

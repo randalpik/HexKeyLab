@@ -153,8 +153,18 @@ export const KEYBINDINGS: KeySection[] = [
       { keys: "Delete", desc: "Delete element after cursor." },
       { keys: "Insert", desc: "Toggle insert / overwrite mode (INS ↔ OVR)." },
       {
-        keys: "Ctrl+M",
+        keys: "M",
         desc: "Insert a new empty measure after the current one. Cursor lands at its start.",
+      },
+      {
+        keys: "Ctrl+H",
+        desc: "Hide empty staves: toggle the hide-empty flag on the empty measures of the current staff (or of the selected measures × staves).",
+        note: "Every targeted measure takes the state the fewest of them had (tie → on), so pressing again cycles. In page view a staff drops out of a system once every measure on that system is flagged for it; scroll view always shows every staff. Content entering a measure clears its flag.",
+      },
+      {
+        keys: "Ctrl+M",
+        desc: "Multimeasure rest: toggle the multirest flag over the same target as Ctrl+H.",
+        note: "In a single-staff view (a one-staff instrument's part, or a one-staff score) two or more consecutive flagged empty measures engrave as one multimeasure rest. Backspace / Delete on it removes the whole run.",
       },
       {
         keys: "Ctrl+←  /  Ctrl+→",
@@ -315,6 +325,11 @@ export const KEYBINDINGS: KeySection[] = [
       {
         keys: "Ctrl+Shift+←  /  Ctrl+Shift+→",
         desc: "Extend the beat selection by a whole measure at a time.",
+      },
+      {
+        keys: "Ctrl+H  /  Ctrl+M",
+        desc: "Toggle the hide-empty / multimeasure-rest flag on every empty measure the selection touches, on the selected staves.",
+        note: "The selection stays active, so repeated presses cycle (all take the state the fewest had).",
       },
       { keys: "Ctrl+C", desc: "Copy selection to clipboard." },
       { keys: "Ctrl+X", desc: "Cut selection to clipboard." },

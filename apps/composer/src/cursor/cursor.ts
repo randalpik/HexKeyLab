@@ -112,13 +112,26 @@ export function resolveVoiceCursorAnchor(
     xMode: 'measureLeft', vMode: 'staff', elementId: null, staffId: model.getStaffIdAtCursor(voice),
     firstContentId: null, firstPlaceholderId: null, measureId: null,
   });
-  const measureLeftOf = (measure: Element): VoiceCursorAnchor => {
+  /* A multimeasure-rest run renders as its FIRST measure only (model/
+     multirest.ts): an interior member has no g.measure, so anchor on the
+     representative; and the representative's placeholders are gone from the
+     render clone, so its first-content/placeholder ids must not be offered. */
+  const units = model.unitsForView();
+  const representative = (measure: Element): Element => {
+    if (!units.active) return measure;
+    const mi = model.getMeasureIdxForId(idOf(measure) ?? '');
+    if (mi < 0 || !units.isInterior(mi)) return measure;
+    return model.allMeasures()[units.repIdxOf(mi)] ?? measure;
+  };
+  const measureLeftOf = (measureIn: Element): VoiceCursorAnchor => {
+    const measure = representative(measureIn);
+    const collapsed = units.active && units.isRunStart(model.getMeasureIdxForId(idOf(measure) ?? ''));
     const layer = layerIn(measure);
     const kids = layer ? Array.from(layer.children) : [];
     return {
       xMode: 'measureLeft', vMode: 'staff', elementId: null, staffId: staffIdIn(measure),
-      firstContentId: idOf(kids.find(isReal) ?? null),
-      firstPlaceholderId: idOf(kids.find(isPlaceholderEl) ?? null),
+      firstContentId: collapsed ? null : idOf(kids.find(isReal) ?? null),
+      firstPlaceholderId: collapsed ? null : idOf(kids.find(isPlaceholderEl) ?? null),
       measureId: idOf(measure),
     };
   };
@@ -132,7 +145,7 @@ export function resolveVoiceCursorAnchor(
 
   if (model.isCursorAtPastEnd(voice)) {
     const measures = doc.querySelectorAll('measure');
-    const lastMeasure = measures[measures.length - 1] ?? null;
+    const lastMeasure = measures[measures.length - 1] ? representative(measures[measures.length - 1]) : null;
     if (lastMeasure) {
       return { xMode: 'pastEndRight', vMode: 'staff', elementId: null, staffId: staffIdIn(lastMeasure), firstContentId: null, firstPlaceholderId: null, measureId: idOf(lastMeasure) };
     }

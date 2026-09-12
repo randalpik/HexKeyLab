@@ -7793,3 +7793,70 @@ hairpins, expressive text, fermatas, trills, tremolos, ottavas, diamond
 noteheads, repeat barlines, double bars, voltas, section headers). The counts
 are in docs/architecture/composer.md under Save / load / export; re-run the
 probe rather than trusting them after any exporter change.
+
+## Empty-cell flags: hide empty staves + multimeasure rests (2026-09-11)
+
+Two Finale-parity features, one model. Decisions worth remembering:
+
+- **Flags live on `<staff>` inside `<measure>`, as plain `data-hkl-*` attributes.**
+  Considered `staff@visible="false"` (MEI-native): rejected — Verovio consumes
+  it (barline flags for all-invisible measures) and its meaning is "hidden in
+  this measure", which is stronger than "hide if the whole system is flagged".
+  Both flags are per (measure, staff) because the command targets the
+  selection's measure × staff rectangle; a multirest flag on one staff of a
+  piano is inert (only a one-staff view collapses) and harmless.
+- **Only empty cells may hold a flag, and content drops it in
+  `normalizePlaceholders`.** That pass is the one every edit path already runs
+  over every dirty layer, so no call site knows about flags; a layer `<clef>`
+  counts as content.
+- **One command, "fewest wins", tie → on.** `on <= off` sets every target ON.
+  Max's spec: 10001 → 11111 → 00000. The selection is kept alive so the press
+  cycles; Ctrl+H/Ctrl+M join Ctrl+8/Ctrl+R in the selection-mode fall-through.
+- **Multirests collapse at RENDER time over a unit index, never in the model.**
+  The spec makes collapse view-dependent (the same bars stay separate in the
+  full score), so a model-level `<multiRest>` measure was never an option.
+  The unit index (`renderUnits`) is the single source of truth and the
+  serialize pass takes its runs — two computations would drift.
+- **Runs break at every hard boundary** (scoreDef/sb/pb, ending edges, section
+  starts, pickups, interior control events, `@left`/`@right`, `tstamp2`
+  spanners) so line-break ownership stays truthful and a run is one rendered
+  measure that can never straddle a system. A control event counts only when
+  it concerns the staff — by `@staff`, or by the staff of its start/end note;
+  the Sonata's piano slurs under viola rests were splitting every viola run
+  until spanners were attributed through their notes (staff-less events with
+  no notes, like a score-global tempo, still break).
+- **Cursor skipping lives in the input layer**, not the flat index: `moveCursor`,
+  `flatChildren`, `shouldEmitWrapper` are untouched, so bridge payloads and the
+  model/roundtrip fixtures are unaffected; only wrapper stops are ever skipped.
+- **Splicing works on day one** (Max's call, over a "derive first" proposal):
+  range serialize snaps to unit edges, interior naturals are 0, repartition and
+  balancing move whole units. The one remaining derive is the scroll splicer
+  for a one-staff DOCUMENT with an active run (part views never spliced in
+  scroll view anyway).
+- **Hidden staves: Verovio's optimizer rejected, per-system substitution
+  instead.** Read from source: `Score::ScoreDefNeedsOptimization` (none / @optimize
+  / >1 grpSym heuristic) and `ScoreDefOptimizeFunctor::VisitStaff` (a staffDef
+  shows iff some staff on the system has a `<note>`, or a clef change, or —
+  with `condenseTempoPages` — the measure has a tempo/fermata, which FORCES
+  visibility). It cannot honour a per-region flag; invisible-clef/note hacks
+  were rejected as fragile. `condense` is now pinned `'none'` — its `auto`
+  default would have started hiding rest-only staves the day a scoreDef grew a
+  second group symbol. Composer re-renders a hidden-set system alone with the
+  single-part filter minus the hidden staves (the splicer's own window recipe)
+  and swaps it in before placement — including for systems the page splicer
+  imports, which is simpler than splitting the splice window per hidden set
+  (the plan's first idea) and costs one extra small render only when a window
+  touches such a system.
+- **Toggles are ordinary edits.** The flag changes the measure's serialized
+  signature, so the refill/splicer re-flows the touched lines like a note
+  edit; no forced derive, and the SPLICE invariant keeps it honest.
+- **Deleting a multirest** removes the whole run only when every member is
+  empty on every staff (a part view's other parts may have content); a
+  measure-selection Delete keeps its clear-only semantics (Max: run delete
+  only).
+- **MusicXML**: Finale's `staff-details print-object` ranges and
+  `multiple-rest` are read onto empty cells and written back; the Sonata's
+  m95–103 piano hide region arrives pre-flagged.
+- Insert-measure moved from Ctrl+M to plain **M**; Ctrl+H (Firefox history
+  sidebar) is page-cancelable like Ctrl+R — Max verifies in Firefox.
+

@@ -25,6 +25,7 @@ import { addSlur } from './slurs.js';
 import { realTicks } from './model/ticks.js';
 import { decomposeBeatAlignedRests } from './model/restfill.js';
 import { naturalBeatGroupStarts, type TimeSigInfo } from './notation/beams.js';
+import { HIDE_EMPTY_ATTR, MULTIREST_ATTR, staffCellIsEmpty } from './model/empty-flags.js';
 
 /* ── small XML helpers ─────────────────────────────────────────────────────── */
 
@@ -1209,6 +1210,14 @@ export function importMusicXml(xmlText: string): string {
   let pendingSectionStart = false;
   let movementNum = 2;                  // first movement has no header
   let currentEnding: Element | null = null;
+  /* Empty-cell flags from Finale's encoding (model/empty-flags.ts):
+     <staff-details number="k" print-object="no"/> opens a hidden range for a
+     part staff, ="yes" closes it (no @number = every staff of the part);
+     <measure-style><multiple-rest>N</multiple-rest> covers this and the next
+     N−1 bars of a ONE-staff part. Either flag lands only on a cell that is
+     actually empty — Finale's "force hide" of content is not our semantics. */
+  const hiddenRun = new Map<number, boolean>();          // global staff → inside a hidden range
+  const multiRestLeft = new Map<PartInfo, number>();     // part → bars of the current multiple-rest left
 
   for (let mi = 0; mi < measureCount; mi++) {
     /* Read this measure's declared key/meter (from the first part that has
@@ -1307,6 +1316,27 @@ export function importMusicXml(xmlText: string): string {
         runClef.set(g, c.spec);
       }
 
+      /* Empty-cell flags declared in this bar's <attributes> (see above). */
+      if (pm) {
+        const attrs = child(pm, 'attributes');
+        if (attrs) {
+          for (const sd of children(attrs, 'staff-details')) {
+            const po = sd.getAttribute('print-object');
+            if (po !== 'no' && po !== 'yes') continue;
+            const numAttr = sd.getAttribute('number');
+            if (numAttr === null || parseInt(numAttr, 10) === localStaff) hiddenRun.set(g, po === 'no');
+          }
+          if (localStaff === 1 && part.staffCount === 1) {
+            const ms = child(attrs, 'measure-style');
+            const mr = ms ? child(ms, 'multiple-rest') : null;
+            const n = mr ? parseInt(mr.textContent ?? '', 10) : NaN;
+            if (Number.isFinite(n) && n >= 2) multiRestLeft.set(part, n);
+          }
+        }
+      }
+      const inMultiRest = part.staffCount === 1 && (multiRestLeft.get(part) ?? 0) > 0;
+      if (inMultiRest) multiRestLeft.set(part, (multiRestLeft.get(part) ?? 0) - 1);
+
       const layerEls: Element[] = [];
       for (const layer of [1, 2]) {
         const layerEl = el(doc, 'layer', { n: String(layer), 'xml:id': newId('l') });
@@ -1331,6 +1361,10 @@ export function importMusicXml(xmlText: string): string {
         }
         layerEls.push(layerEl);
         staffEl.appendChild(layerEl);
+      }
+      if ((hiddenRun.get(g) || inMultiRest) && staffCellIsEmpty(staffEl)) {
+        if (hiddenRun.get(g)) staffEl.setAttribute(HIDE_EMPTY_ATTR, 'true');
+        if (inMultiRest) staffEl.setAttribute(MULTIREST_ATTR, 'true');
       }
 
       /* Clef changes → inline <clef> at their tick in EVERY content layer of the

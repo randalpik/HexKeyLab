@@ -4,7 +4,7 @@
 // its own per-measure signature baseline, so nothing needs per-path splice
 // support. But nothing ASSERTED that a given command splices either, and two
 // paths were found deriving silently on the same guard (`user breaks changed`):
-// Ctrl+M insert-measure and section headers. This probe fires every
+// M insert-measure (Ctrl+M until 2026-09-11) and section headers. This probe fires every
 // document-mutating command on the sonata from the same baseline and reports
 // outcome + derive reason + wall, so the inventory is data instead of guesswork.
 //
@@ -103,7 +103,7 @@ const stageMeasureCopy = () => {
    re-renders itself); a `model` case mutates then re-renders explicitly. */
 const CASES = [
   { name: 'delete-note (Backspace)',    kind: 'key',   run: () => key('Backspace') },
-  { name: 'insert-measure (Ctrl+M)',    kind: 'key',   run: () => key('m', { ctrlKey: true }) },
+  { name: 'insert-measure (M)',         kind: 'key',   run: () => key('m') },
   { name: 'page-break (Ctrl+B)',        kind: 'key',   run: () => key('b', { ctrlKey: true }) },
   { name: 'tuplet (Ctrl+8)',            kind: 'key',   run: () => key('8', { ctrlKey: true }) },
   { name: 'trill (Ctrl+R)',             kind: 'key',   run: () => key('r', { ctrlKey: true }) },

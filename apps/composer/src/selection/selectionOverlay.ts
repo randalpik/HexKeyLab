@@ -32,10 +32,17 @@ import { CURSOR_VPAD } from '../cursor/cursor.js';
 const SELECTION_FILL = '#3b82f6';
 const SELECTION_OPACITY = '0.18';
 
+/* Multimeasure-rest runs render as their first measure only (model/
+   multirest.ts): every measure-index → rendered-id lookup here goes through
+   the run's representative. */
+function repIdx(model: ComposerModel, measureIdx: number): number {
+  return model.unitsForView().repIdxOf(measureIdx);
+}
+
 function staffIdForMeasure(model: ComposerModel, measureIdx: number, staff: Staff): string | null {
   const measures = model.allMeasures();
   if (measureIdx < 0 || measureIdx >= measures.length) return null;
-  const m = measures[measureIdx];
+  const m = measures[repIdx(model, measureIdx)];
   const staffEl = Array.from(m.querySelectorAll('staff')).find(
     (s) => s.getAttribute('n') === String(staff),
   );
@@ -45,7 +52,7 @@ function staffIdForMeasure(model: ComposerModel, measureIdx: number, staff: Staf
 function measureIdForIdx(model: ComposerModel, measureIdx: number): string | null {
   const measures = model.allMeasures();
   if (measureIdx < 0 || measureIdx >= measures.length) return null;
-  return measures[measureIdx].getAttribute('xml:id');
+  return measures[repIdx(model, measureIdx)].getAttribute('xml:id');
 }
 
 const TICK_EPS = 1e-6;
@@ -60,10 +67,10 @@ function elementLeft(el: Element): number | null {
 
 /** Right edge of the last measure (= end barline) — the visual position
  *  of past-end. */
-function endOfScoreX(measures: Element[]): number | null {
+function endOfScoreX(model: ComposerModel, measures: Element[]): number | null {
   const last = measures[measures.length - 1];
   if (!last) return null;
-  const mid = last.getAttribute('xml:id');
+  const mid = measureIdForIdx(model, measures.length - 1);
   if (!mid) return null;
   const r = renderer.rectForId(mid);
   return r ? r.right : null;
@@ -85,7 +92,7 @@ function measureContentLeft(
     const sigEnd = renderer.findSigEndXForStaff(staffMeiId);
     if (sigEnd !== null) return sigEnd;
   }
-  const mid = measures[measureIdx].getAttribute('xml:id');
+  const mid = measureIdForIdx(model, measureIdx);
   if (!mid) return null;
   const r = renderer.rectForId(mid);
   return r ? r.left : null;
@@ -103,11 +110,11 @@ function measureContentLeft(
 function measureRightEdge(model: ComposerModel, measureIdx: number): number | null {
   const measures = model.allMeasures();
   if (measureIdx < 0 || measureIdx >= measures.length) return null;
-  const cur = measures[measureIdx];
-  const curId = cur.getAttribute('xml:id');
+  const curId = measureIdForIdx(model, measureIdx);
   if (!curId) return null;
-  const next = measures[measureIdx + 1];
-  const nextId = next?.getAttribute('xml:id') ?? null;
+  /* The next RENDERED measure: past the whole run when `measureIdx` is in one. */
+  const nextIdx = model.unitsForView().unitOf(measureIdx)[1] + 1;
+  const nextId = nextIdx < measures.length ? measureIdForIdx(model, nextIdx) : null;
   if (nextId) {
     const curSys = systemAncestor(curId);
     const nextSys = systemAncestor(nextId);
@@ -148,7 +155,7 @@ function xAtCursorPos(
   if (measures.length === 0) return null;
 
   // Past-end: right edge of last measure.
-  if (c >= flat.length) return endOfScoreX(measures);
+  if (c >= flat.length) return endOfScoreX(model, measures);
 
   // Measure-boundary disambiguation: if the cursor's tstamp is exactly a
   // multiple of measureTicks, the cursor sits at a barline.
@@ -157,7 +164,7 @@ function xAtCursorPos(
   if (Math.abs(model.measureStartTick(measureIdx) - t) < TICK_EPS) {
     if (kind === 'start') {
       // Use M_{measureIdx}'s content-left.
-      if (measureIdx >= measures.length) return endOfScoreX(measures);
+      if (measureIdx >= measures.length) return endOfScoreX(model, measures);
       if (measureIdx >= 0) {
         const x = measureContentLeft(model, measureIdx, staff);
         if (x !== null) return x;
@@ -176,7 +183,7 @@ function xAtCursorPos(
   }
 
   // Default: LEFT edge of flat[c+1].
-  if (c + 1 >= flat.length) return endOfScoreX(measures);
+  if (c + 1 >= flat.length) return endOfScoreX(model, measures);
   const next = flat[c + 1];
   if (next.localName === 'measure') {
     const mid = next.getAttribute('xml:id');
@@ -339,16 +346,19 @@ function computeRects(model: ComposerModel, sel: SelectionState): DrawRect[] {
     ? model.staffForVoice(sel.voice)
     : sel.firstStaff;
 
+  const units = model.unitsForView();
   for (let mi = range.mLo; mi <= range.mHi; mi++) {
-    const measureEl = model.allMeasures()[mi];
-    const mid = measureEl?.getAttribute('xml:id') ?? null;
+    /* A run's interior members have no rendered measure — the representative's
+       rect already spans the whole multimeasure rest. */
+    if (units.isInterior(mi) && mi !== range.mLo) continue;
+    const mid = measureIdForIdx(model, mi);
     if (!mid) continue;
     const measureRect = renderer.rectForId(mid);
     if (!measureRect) continue;
     const systemNode = systemAncestor(mid);
 
     const isFirst = mi === range.mLo;
-    const isLast = mi === range.mHi;
+    const isLast = mi === range.mHi || units.unitOf(mi)[1] === range.mHi;
     /* Default x bounds: measure content-left (past sig block) to measure
      * right edge. Cursor-derived bounds override these for the first/last
      * selected measure in beat mode. */

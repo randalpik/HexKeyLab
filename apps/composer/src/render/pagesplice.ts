@@ -479,6 +479,7 @@ export class PageSystemSplicer {
       if (cLo > 0 && meiMeasures[cLo].querySelector(':scope > staff > layer > clef')) cLo--;
       let [rLo, rHi] = expandForSpannersOnce(meiMeasures, cLo, Math.min(changedRun.hi, ids.length - 1), docVer);
       [rLo, rHi] = expandForEndings(meiMeasures, rLo, rHi);
+      [rLo, rHi] = model.renderUnits(ctx.viewStaves).snap(rLo, rHi);   // a multimeasure rest is one rendered measure
       a2 = lineOf(rLo); b2 = lineOf(rHi);
     }
     if (a2 <= b2) {
@@ -657,6 +658,7 @@ export class PageSystemSplicer {
     const docVer = model.docVersion();
     let [wm0, wm1] = expandForSpannersOnce(meiMeasures, spans[a][0], spans[bNew][1] - 1, docVer);
     [wm0, wm1] = expandForEndings(meiMeasures, wm0, wm1);
+    [wm0, wm1] = model.renderUnits(ctx.viewStaves).snap(wm0, wm1);
     let wLo = lineOf(wm0);
     let wHi = lineOf(wm1);
     /* Rounding out to whole LINES reaches back past wm0 (a line's first measure
@@ -1368,7 +1370,7 @@ function glyphCensus(measureEl: Element): Map<string, number> {
  *  document does. That is what makes a page-first system page-first in the
  *  window too — the only way to read its position rather than model it (see
  *  verticalPlan). */
-function buildWindowMei(
+export function buildWindowMei(
   model: ComposerModel, mLo: number, mHi: number, winStarts: string[],
   leader: boolean, trailer: boolean, stubId: string | null, pbIds: Set<string>,
   viewStaves: number[] | null,

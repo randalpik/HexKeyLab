@@ -17,6 +17,9 @@ import {
   scheduleIdle, MIN_FILL, viewKeyOf, hardStartIds,
 } from './linebreaks.js';
 import { PageSystemSplicer, type PageSpliceCtx, type SpliceRequest } from './pagesplice.js';
+import { buildWindowMei } from './pagesplice.js';
+import { mergeGlyphDefs, expandForSpannersOnce, expandForEndings } from './splice.js';
+import { hiddenStavesFor, visibleStavesFor, systemMeasureIdxs, renderedStaffNs } from './hiddenstaves.js';
 import { layoutBelowStaffText } from './textlayout.js';
 import { layoutInstrumentGaps } from './instrgap.js';
 import { styleTitleBlock } from './pageheader.js';
@@ -193,6 +196,14 @@ const BASE_OPTIONS = {
        segment broken at a system break. */
     'layer@n'],
   footer: 'none',
+  /* Multimeasure rests (model/multirest.ts): Finale's thick bar + count. */
+  multiRestStyle: 'block',
+  /* Verovio's own "hide empty staves" optimizer is note-driven and global
+     (a staff hides on a system when no measure on it has a <note>) and its
+     `auto` default switches itself on for any scoreDef with two group symbols.
+     Composer hides staves per region itself (render/hiddenstaves.ts), so pin
+     it OFF — a second bracketed group must not start hiding rest-only staves. */
+  condense: 'none',
   /* Dynamics sit further below the staff than Verovio's default quarter of a
      staff space (2026-09-04; backlog: "more space between the staff and the
      text by default"). Verovio measures `dynamDist` (units) to the glyph's own
@@ -329,6 +340,11 @@ class Renderer {
   /** Measure xml:ids in document order (captured per renderComposer) —
    *  ensureMeasureMounted's index → id map. */
   private measureIds: string[] = [];
+  /** Per-measure id of the measure that STANDS FOR it in the render: itself,
+   *  or the first measure of its multimeasure-rest run (model/multirest.ts).
+   *  Interior run members have no rendered `g.measure`; every DOM lookup by
+   *  measure index must go through this, never `measureIds`. */
+  private renderIds: string[] = [];
   /** Hook run once per mounted page (eager + lazy): main.ts wires its
    *  page-scoped injections (header/footer, section headers, volta styling,
    *  crisp snap). Injections are NOT idempotent (section headers translate
@@ -1171,6 +1187,7 @@ class Renderer {
         combined += '<div class="score-page" data-page="' + i + '">' + this.tk!.renderToSVG(i, {}) + '</div>';
       }
       this.container!.innerHTML = combined;
+      for (const div of Array.from(this.container!.querySelectorAll('.score-page'))) this.substituteHiddenStaffSystems(div as HTMLElement);
       this.postProcessRendered(this.container!);
       for (const div of Array.from(this.container!.querySelectorAll('.score-page'))) this.placePage(div as HTMLElement);
       return;
@@ -1385,11 +1402,95 @@ class Renderer {
     return Array.from(this.container.querySelectorAll('.score-page > svg')) as SVGSVGElement[];
   }
 
+  /** Hide empty staves (render/hiddenstaves.ts). For every system on
+   *  `pageEl` — or only `scope` — whose hidden set is non-empty and still
+   *  drawn, render that system ALONE from a window MEI with those staves
+   *  filtered out (the page splicer's own recipe: leader/trailer stubs, one
+   *  pinned line) and swap it in. Runs before post-processing and placement,
+   *  so every height the page rule measures is the reduced one. Returns the
+   *  system list with replacements applied. Page view only. */
+  private substituteHiddenStaffSystems(pageEl: HTMLElement, scope?: Element[]): Element[] {
+    const systems = scope ?? Array.from(pageEl.querySelectorAll('g.system'));
+    const model = this.lastModel;
+    if (!model || this.viewMode !== 'page' || !this.spliceTk) return systems;
+    if (!model.getDoc().querySelector('staff[data-hkl-hide-empty]')) return systems;   // nothing flagged anywhere
+    const total = model.allMeasures().length;
+    let ctx: PageSpliceCtx | null = null;
+    const out: Element[] = [];
+    for (const sys of systems) {
+      const idxs = systemMeasureIdxs(model, sys);
+      const hidden = hiddenStavesFor(model, idxs, this.viewStaves);
+      if (!hidden.length) { out.push(sys); continue; }
+      const shown = renderedStaffNs(sys);
+      if (!hidden.some((h) => shown.includes(h))) { out.push(sys); continue; }   // already reduced
+      const startId = sys.querySelector('g.measure')?.id ?? '';
+      const mLo = Math.min(...idxs), mHi = Math.max(...idxs);
+      const staves = visibleStavesFor(model, this.viewStaves, hidden);
+      /* Cover every spanner with an end inside the system and any <ending> it
+         touches — the page splicer's rule: a tie or slur into the system from
+         the previous line must find its other end in the window or Verovio
+         drops the segment ("Unable to match @tie"). Extra measures on the left
+         flow into the leader's line; extra measures on the right get their own
+         pinned line, so the system itself keeps exactly its measures. */
+      const meiMeasures = model.allMeasures();
+      let [wLo, wHi] = expandForSpannersOnce(meiMeasures, mLo, mHi, model.docVersion());
+      [wLo, wHi] = expandForEndings(meiMeasures, wLo, wHi);
+      const starts = [startId];
+      if (wHi > mHi) starts.push(meiMeasures[mHi + 1].getAttribute('xml:id') ?? '');
+      const mei = startId ? buildWindowMei(model, wLo, wHi, starts, wLo > 0, wHi < total - 1, null, new Set(), staves) : null;
+      if (!mei) { out.push(sys); continue; }
+      ctx ??= this.pageSpliceCtx();
+      const tk = this.spliceTk;
+      /* A window that IS the whole document (a one-system score) carries no
+         line pin — injectPins never pins the first measure and there is no
+         stub to pin — and 'line'/'encoded' would warn "Requesting layout with
+         line breaks but nothing provided". Such a document was cast off with
+         'auto' by the live render too (castoffPlan), so match it. */
+      const wholeDoc = wLo === 0 && wHi === total - 1 && starts.length === 1;
+      tk.setOptions(wholeDoc ? { ...ctx.windowOptions, breaks: 'auto' } : ctx.windowOptions);
+      if (!tk.loadData(mei)) { console.warn('[hidden-staves] window loadData failed at ' + startId); out.push(sys); continue; }
+      const host = new DOMParser().parseFromString(tk.renderToSVG(1, {}), 'image/svg+xml');
+      const fresh = Array.from(host.querySelectorAll('g.system'))
+        .find((g) => g.querySelector('g.measure')?.id === startId) as SVGGElement | undefined;
+      if (!fresh) { console.warn('[hidden-staves] window has no system starting at ' + startId); out.push(sys); continue; }
+      const imported = pageEl.ownerDocument.importNode(fresh, true) as SVGGElement;
+      /* Same horizontal frame as the system it replaces; the vertical position
+         is placement's (placePage runs after this). */
+      const tr = sys.getAttribute('transform');
+      if (tr) imported.setAttribute('transform', tr); else imported.removeAttribute('transform');
+      const defs = sys.closest('svg')?.querySelector('defs') ?? pageEl.querySelector('svg defs');
+      if (defs) mergeGlyphDefs(defs, host, [imported]);
+      sys.replaceWith(imported);
+      out.push(imported);
+    }
+    return out;
+  }
+
+  /** Page view: does model measure `mi` draw staff `staffN` where it is
+   *  rendered? False only for a staff hidden on that system (hide-empty
+   *  staves); true in scroll view, for unmounted pages, and for unknown ids —
+   *  navigation is never blocked on a guess. */
+  isCellRendered(mi: number, staffN: number): boolean {
+    if (this.viewMode !== 'page' || !this.container) return true;
+    const id = this.renderIdForMeasure(mi);
+    if (!id) return true;
+    const g = this.container.querySelector('#' + CSS.escape(id));
+    if (!g) return true;
+    if (!g.querySelector(':scope > g.staff')) return true;
+    return !!g.querySelector(':scope > g.staff[data-n="' + staffN + '"]');
+  }
+
+  /** xml:id of the rendered measure standing for model measure `mi` (the
+   *  measure itself, or its multimeasure-rest run's first measure). */
+  renderIdForMeasure(mi: number): string | null {
+    return this.renderIds[mi] ?? this.measureIds[mi] ?? null;
+  }
+
   /** Page holding a measure, read from the DOM (0 when it isn't mounted).
    *  Deliberately does NOT consult the toolkit: `getPageWithElement` needs the
    *  layout loaded, which can cost ~1 s. */
   private pageOfMeasure(mi: number): number {
-    const id = this.measureIds[mi];
+    const id = this.renderIds[mi];
     if (!id || !this.container) return 0;
     const el = this.container.querySelector('#' + CSS.escape(id));
     const pageEl = el?.closest('.score-page') as HTMLElement | null;
@@ -1463,6 +1564,7 @@ class Renderer {
   /** Shared per-page post pass: crisp pinning/notehead/HEJI/theme, then the
    *  main.ts page injections (exactly once per mount — they aren't idempotent). */
   private finishPageMount(div: HTMLElement): void {
+    this.substituteHiddenStaffSystems(div);   // hide-empty staves: BEFORE anything measures the page
     this.postProcessRendered(div);
     /* Volta numbers are RESTYLED before placement, not after (2026-09-03).
        `styleVoltaNumbers` changes a tspan's font-size/family/weight and appends
@@ -1574,6 +1676,11 @@ class Renderer {
     /* Measure-index → xml:id map for ensureMeasureMounted (page mode). Cheap
        (one childNodes walk), refreshed every render so it can't go stale. */
     this.measureIds = model.allMeasures().map((m) => m.getAttribute('xml:id') ?? '');
+    model.setRenderView(viewStaves);
+    const units = model.renderUnits(viewStaves);
+    this.renderIds = units.active
+      ? this.measureIds.map((_, mi) => this.measureIds[units.repIdxOf(mi)])
+      : this.measureIds;
     this.lastModel = model;
     this.viewStaves = viewStaves;
     this.pageBreaks.setView(viewStaves);
@@ -1986,7 +2093,15 @@ class Renderer {
         ? base
         : { ...base, pageHeight: 60_000, adjustPageHeight: true },
       liveOptions: () => base,
-      postProcess: (el: HTMLElement, scope?: Element[]) => this.postProcessRendered(el, scope),
+      /* Hide-empty staves first (render/hiddenstaves.ts): an imported system
+         whose hidden set is non-empty is re-rendered with those staves out and
+         swapped before the per-system passes measure it; the reference host
+         of the index-check gate goes through the same wrapper, so live and
+         reference agree. */
+      postProcess: (el: HTMLElement, scope?: Element[]) => {
+        if (scope !== undefined) this.postProcessRendered(el, this.substituteHiddenStaffSystems(el, scope));
+        else { this.substituteHiddenStaffSystems(el); this.postProcessRendered(el); }
+      },
       decorateHost: (el: HTMLElement) => styleVoltaNumbers(el),
       placePage: (el: HTMLElement) => this.placePage(el),
       placeFor: (systems: Element[], opts?: PlaceOpts) => this.placeFor(systems, opts),
@@ -2875,7 +2990,12 @@ class Renderer {
    *  full-renders. `preMei` reuses renderComposer's mode-switch serialize. */
   private renderScroll(model: ComposerModel, viewStaves: number[] | null, preMei: string | null = null): boolean {
     const heji = { hejiEnabled: model.getHejiEnabled() };
-    const canSpliceNow = !this.forceFull && this.splicer.canSplice() && viewStaves == null;
+    /* The scroll splicer's measure index is the live doc's; a one-staff DOCUMENT
+       with a collapsed multimeasure rest (model/multirest.ts) has rendered
+       measures the live index doesn't know, so that case re-engraves. Part
+       views (viewStaves != null) already do. */
+    const canSpliceNow = !this.forceFull && this.splicer.canSplice() && viewStaves == null
+      && !model.renderUnits(viewStaves).active;
     if (!canSpliceNow) {
       this.renderSingleSystem(preMei ?? model.serialize(heji, viewStaves));
       if (viewStaves == null) this.splicer.capture(model, this.spliceCtx());
@@ -3013,7 +3133,7 @@ class Renderer {
     const st = this.pageVirt;
     if (this.viewMode !== 'page' || !st) return;
     if (st.mounted.size >= st.pageCount) return;   // everything already real
-    const id = this.measureIds[mi];
+    const id = this.renderIds[mi];
     if (!id) return;
     /* Already rendered → done. Checked BEFORE ensureTkHoldsPageLayout: locating
        an element needs the layout in tk, and reloading it costs ~1 s on a large

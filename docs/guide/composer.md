@@ -135,6 +135,18 @@ Staccato, accent, and tenuto shape playback (shorter, louder, fuller).
 - **Octave lines (8va)**: `Ctrl+8` over a selection; the notes sound (and print) an octave higher/lower.
 - **Trills & tremolos** (`Ctrl+R`): a trill on a single note, or a tremolo / diatonic trill on a two-note equal-duration selection. Playback realizes the alternation.
 - **Page break**: `Ctrl+B`. **Section header**: `Ctrl+Shift+H` (restarts measure numbering).
+- **Insert measure**: `M` adds an empty measure after the current one (or at the cursor when it already sits on a bar line).
+
+---
+
+## Hiding empty staves & multimeasure rests
+
+Both work on **empty measures** only — bars with nothing entered in any voice of a staff — and both are flags a bar carries per staff. Leave the cursor in a bar, or select a range (`Shift+←/→`, or `Shift+↑/↓` for whole measures across staves), and press:
+
+- **`Ctrl+H` — hide empty staves.** In page view a staff disappears from a system once **every** bar of that staff on that system is flagged (if that would hide every staff, the top one stays). If the cursor's own staff vanishes under it, the cursor moves to the nearest staff that is still drawn; `←`/`→` and `↑`/`↓` never land on a hidden staff. Scroll view always shows every staff, which is how you get a hidden staff back: switch to scroll view, select the bars, and press `Ctrl+H` again. (A page-view selection that spans the hidden bars works too, as does entering a note into one of them.) A score imported from Finale arrives with its hidden-staff regions already flagged, and export writes them back.
+- **`Ctrl+M` — multimeasure rest.** When the view shows a single staff (a one-staff instrument's part, or a one-staff score), two or more consecutive flagged bars are engraved as one multimeasure rest with the bar count above it. It behaves as one bar for the cursor: `←`/`→` step over it, a measure selection takes it whole, and `Backspace`/`Delete` on it removes all of its bars. In the full score the same bars stay separate, so a part's rests never change the score.
+
+The command looks at every empty bar the selection touches, on the selected staves, counts how many already carry the flag, and sets **all** of them to whichever state the fewest had — so pressing again cycles the whole range together (`10001` → `11111` → `00000`). The selection stays active for that. Bars with content are skipped, and a bar drops its flags the moment something is entered into it. A multimeasure rest breaks at a meter or key change, a section header, a repeat or double bar, a page break, and at any bar carrying a dynamic, tempo, or text mark (the first bar of the rest may carry one).
 
 ---
 

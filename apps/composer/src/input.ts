@@ -40,8 +40,10 @@ import {
   enterBeatSelection, enterMeasureSelection,
   moveBeatRange, moveBeatRangeByMeasure, moveMeasureMovable,
   adjustStaffRange, promoteBeatToMeasure, cursorAtMovable,
-  beatBoundariesInVoice, currentBeatAt,
+  beatBoundariesInVoice, currentBeatAt, selectionBounds,
 } from './selection/selection.js';
+import type { Cell, EmptyFlag, FlagToggleResult } from './model/empty-flags.js';
+import { resolveVoiceCursorAnchor } from './cursor/cursor.js';
 import { serializeClipboard, parseClipboard, type ClipboardContents } from './selection/clipboard.js';
 import type { HistoryManager } from './history.js';
 
@@ -183,6 +185,12 @@ export interface InputHooks {
   /** Send an `apply-layout` bridge message asking HKL to switch to the
    *  score's pinned layout. Wired in main.ts. */
   requestApplyLayout?: () => void;
+  /** Page view: does measure `measureIdx` draw staff `staffN`? False for a
+   *  staff hidden on that system (hide-empty staves, render/hiddenstaves.ts);
+   *  absent or true otherwise. Navigation steps over unrendered cells. */
+  isCellRendered?: (measureIdx: number, staffN: number) => boolean;
+  /** Run `cb` once the render the current edit triggers has completed. */
+  afterRender?: (cb: () => void) => void;
   /** Undo/redo manager. Constructed once in main.ts and shared with any
    *  module that performs user-initiated mutations (input dispatch, setup
    *  dialog, SC-transpose callback). */
@@ -867,6 +875,9 @@ function cycleVoice(model: ComposerModel, dir: 'up' | 'down', hooks: InputHooks)
 
   for (let i = curIdx + delta; i >= 0 && i < stops.length; i += delta) {
     const stop = stops[i];
+    /* A staff hidden on this system (hide-empty staves) is not a landing. */
+    if (stop.kind === 'voice' && refMi >= 0
+        && hooks.isCellRendered && !hooks.isCellRendered(refMi, model.staffForVoice(stop.voice))) continue;
     if (stop.kind === 'tempo') {
       enterTempoLayer(model, hooks);
       return;
@@ -1305,6 +1316,104 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     return { lo, hi };
   }
 
+  /* ←/→ over what is not rendered. Two cases, one rule — a WRAPPER stop whose
+     measure has no rendered cell for this voice's staff is stepped over:
+       - a multimeasure rest's interior measures (model/multirest.ts): the model
+         keeps every measure, so the flat index stays a pure model quantity,
+         but only the run's first measure is drawn — the run is ONE stop;
+       - a staff hidden on its system (hide-empty staves, page view): "a hidden
+         system isn't selectable" (Max) — the cursor passes to the next system.
+     An anchor on a note is never inside either, so only wrapper stops are
+     ever skipped. */
+  function moveCursorOverUnrendered(dir: 'left' | 'right'): void {
+    const v = model.getCurrentVoice();
+    const staffN = model.staffForVoice(v);
+    model.moveCursor(dir);
+    const units = model.unitsForView();
+    const rendered = hooks.isCellRendered;
+    if (!units.active && !rendered) return;
+    for (let guard = 0; guard < 4096; guard++) {
+      const anchor = resolveVoiceCursorAnchor(model, v, state.mode);
+      if (anchor.xMode !== 'measureLeft' || !anchor.measureId) return;
+      const ref = model.getCurrentElement(v, state.mode);
+      const stopMeasureId = ref && ref.elem.localName === 'measure' ? ref.elem.getAttribute('xml:id') : null;
+      if (!stopMeasureId) return;
+      const mi = model.getMeasureIdxForId(stopMeasureId);
+      const skip = units.isInterior(mi) || (rendered ? !rendered(mi, staffN) : false);
+      if (!skip) return;
+      const before = model.getCursor(v);
+      model.moveCursor(dir);
+      if (model.getCursor(v) === before) return;          // clamped at an edge
+    }
+  }
+
+  /* After a hide-empty toggle: a cursor left in a cell its own toggle just hid
+     moves to the nearest voice that IS drawn at that measure. */
+  function snapCursorOutOfHiddenCell(): void {
+    const rendered = hooks.isCellRendered;
+    if (!rendered || state.cursorMode !== 'voice') return;
+    const v = model.getCurrentVoice();
+    const mi = model.cursorMeasureIdx(v, state.mode);
+    if (mi < 0 || rendered(mi, model.staffForVoice(v))) return;
+    for (const s of buildVoiceStopList(model)) {
+      if (s.kind !== 'voice' || s.voice === v) continue;
+      if (rendered(mi, model.staffForVoice(s.voice))) {
+        model.setVoice(s.voice);
+        model.setCursor(model.getMeasureStartCursor(s.voice, mi), s.voice);
+        hooks.onCursorMove();
+        return;
+      }
+    }
+  }
+
+  /* Ctrl+H / Ctrl+M — the empty-cell flags (hide-empty / multirest;
+     model/empty-flags.ts). One command, two flags. Target = the selection's
+     measure × staff rectangle (beat or measure kind), else the cursor's
+     measure on the cursor's staff. Only EMPTY cells are touched, and all of
+     them take the state the fewest had (tie → on), so repeated presses cycle;
+     the selection is deliberately kept alive for that. An ordinary edit as far
+     as the renderer is concerned: the flag is a <staff> attribute, so the
+     touched measures' signatures change and the splicer re-flows their lines. */
+  function toggleEmptyFlagCommand(e: KeyboardEvent, flag: EmptyFlag): void {
+    e.preventDefault();
+    if (hooks.isPlaybackActive()) return;
+    const label = flag === 'hide-empty' ? 'Hide empty staves' : 'Multimeasure rest';
+    const sel = state.selection;
+    let cells: Cell[];
+    let where: string;
+    if (sel && state.cursorMode === 'select') {
+      const b = selectionBounds(model, sel);
+      cells = model.emptyCellsIn(b.measureFirst, b.measureLast, b.firstStaff, b.lastStaff);
+      where = b.measureFirst === b.measureLast
+        ? 'm' + (b.measureFirst + 1)
+        : 'm' + (b.measureFirst + 1) + '–m' + (b.measureLast + 1);
+    } else if (state.cursorMode === 'voice') {
+      const v = model.getCurrentVoice();
+      const mIdx = model.cursorMeasureIdx(v, state.mode);
+      if (mIdx < 0) { hooks.setStatus?.('No measure under cursor.', 'error'); return; }
+      const staffN = model.staffForVoice(v);
+      cells = model.emptyCellsIn(mIdx, mIdx, staffN, staffN);
+      where = 'm' + (mIdx + 1);
+    } else {
+      hooks.setStatus?.(label + ' needs voice or selection mode.', 'error');
+      return;
+    }
+    if (!cells.length) {
+      hooks.setStatus?.('No empty measures in ' + where + ' to flag.', 'error');
+      return;
+    }
+    let res: FlagToggleResult | null = null;
+    withHistory(flag, () => { res = model.toggleEmptyFlag(cells, flag); return res !== null; });
+    if (res !== null) {
+      const r = res as FlagToggleResult;
+      hooks.setStatus?.(label + (r.on ? ' ON' : ' OFF') + ' — ' + r.count
+        + (r.count === 1 ? ' empty measure' : ' empty measure-staff cells') + ' in ' + where + '.', 'action');
+    }
+    hooks.onStateChange();
+    hooks.onChange();
+    if (flag === 'hide-empty' && res !== null) hooks.afterRender?.(() => snapCursorOutOfHiddenCell());
+  }
+
   /** Snap cursor to the movable end of the current selection, clear selection,
    *  return to voice mode. Caller decides whether to emit status / trigger
    *  re-render. */
@@ -1627,11 +1736,14 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       hooks.onChange();
       return true;
     }
-    // Ctrl+8 (8va) and Ctrl+T (trill/tremolo) operate ON the live selection —
+    // Ctrl+8 (8va) and Ctrl+R (trill/tremolo) operate ON the live selection —
     // let them fall through WITHOUT exiting, so their handlers see the intact
-    // beat selection (they exit selection themselves after mutating).
+    // beat selection (they exit selection themselves after mutating). Ctrl+H /
+    // Ctrl+M (empty-cell flags) likewise — and they KEEP the selection, so a
+    // repeated press cycles the flag state over the same target.
     if (e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey
-        && (e.key === '8' || e.key === 'r' || e.key === 'R')) {
+        && (e.key === '8' || e.key === 'r' || e.key === 'R'
+            || e.key === 'm' || e.key === 'M' || e.key === 'h' || e.key === 'H')) {
       return false;
     }
     /* Ctrl+Shift+S — time/key signature OVER the selected measure span, with a
@@ -1908,50 +2020,16 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       return;
     }
 
-    /* Ctrl+M: insert an empty measure. Rule from the backlog: "at the next
-       measure boundary after the cursor (or AT the cursor if it's on a
-       measure boundary already)". We use `measureBoundaryCursors` (the
-       tstamp-aligned set Ctrl+arrow also lands on) as the authoritative
-       boundary set — this avoids the bug where `getMeasureStartCursor` for
-       a non-empty M_1 returns cursor=0 (past the leading edge), causing
-       cursor=0 to falsely qualify as a boundary even when it visually sits
-       on the wrapper between sigs and the first note. Boundaries from
-       `measureBoundaryCursors` include cursor=0 (start of score) and all
-       seams between existing measures, but NOT mid-measure cursor stops. */
+    /* Ctrl+M: multimeasure-rest flag; Ctrl+H: hide-empty-staves flag. One
+       command over two flags — see toggleEmptyFlagCommand. (Insert-measure
+       moved from Ctrl+M to plain M, 2026-09-11.) Ctrl+H is Firefox's history
+       sidebar and Ctrl+M its tab-mute; both are page-cancelable, like Ctrl+R. */
     if (e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey && (e.key === 'm' || e.key === 'M')) {
-      e.preventDefault();
-      if (state.cursorMode !== 'voice') {
-        hooks.setStatus?.('Insert-measure requires voice mode.', 'error');
-        return;
-      }
-      if (hooks.isPlaybackActive()) return;
-      const v = model.getCurrentVoice();
-      const curMIdx = model.cursorMeasureIdx(v, state.mode);
-      if (curMIdx < 0) return;
-      const cur = model.getCursor(v);
-      /* Use tick position to detect boundaries: cursor IS on a measure
-         boundary iff its absolute tick is an exact multiple of measureTicks
-         AND that boundary is BEFORE some existing measure (not at past-
-         end of the last measure). cursor=0 in M_1 qualifies (= start of
-         score, can push M_1 forward); past-end of last measure does NOT
-         (no measure exists there to push). Mid-measure cursors never
-         qualify; Ctrl+M inserts AFTER the current measure. */
-      const measureCount = model.allMeasures().length;
-      const tickPos = model.getTickPositionAt(v, cur);
-      const miAtTick = model.measureIdxAtTick(tickPos);
-      const totalTicks = model.measureStartTick(measureCount);
-      const onBoundaryTick = Math.abs(model.measureStartTick(miAtTick) - tickPos) < 1e-6
-        && tickPos < totalTicks;
-      const beforeIdx = onBoundaryTick ? miAtTick : curMIdx + 1;
-      withHistory('insert-measure', () => {
-        model.insertMeasureAt(beforeIdx);
-        const newStart = model.getMeasureStartCursor(v, beforeIdx);
-        model.setCursor(newStart, v);
-        return true;
-      });
-      hooks.setStatus?.('Inserted measure m' + (beforeIdx + 1) + '.', 'action');
-      hooks.onStateChange();
-      hooks.onChange();
+      toggleEmptyFlagCommand(e, 'multirest');
+      return;
+    }
+    if (e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey && (e.key === 'h' || e.key === 'H')) {
+      toggleEmptyFlagCommand(e, 'hide-empty');
       return;
     }
 
@@ -2629,6 +2707,54 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       return;
     }
 
+    /* M: insert an empty measure (plain M since 2026-09-11; Ctrl+M is the
+       multimeasure-rest flag). Rule from the backlog: "at the next
+       measure boundary after the cursor (or AT the cursor if it's on a
+       measure boundary already)". We use `measureBoundaryCursors` (the
+       tstamp-aligned set Ctrl+arrow also lands on) as the authoritative
+       boundary set — this avoids the bug where `getMeasureStartCursor` for
+       a non-empty M_1 returns cursor=0 (past the leading edge), causing
+       cursor=0 to falsely qualify as a boundary even when it visually sits
+       on the wrapper between sigs and the first note. Boundaries from
+       `measureBoundaryCursors` include cursor=0 (start of score) and all
+       seams between existing measures, but NOT mid-measure cursor stops. */
+    if (!e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey && (e.key === 'm' || e.key === 'M')) {
+      e.preventDefault();
+      if (state.cursorMode !== 'voice') {
+        hooks.setStatus?.('Insert-measure requires voice mode.', 'error');
+        return;
+      }
+      if (hooks.isPlaybackActive()) return;
+      const v = model.getCurrentVoice();
+      const curMIdx = model.cursorMeasureIdx(v, state.mode);
+      if (curMIdx < 0) return;
+      const cur = model.getCursor(v);
+      /* Use tick position to detect boundaries: cursor IS on a measure
+         boundary iff its absolute tick is an exact multiple of measureTicks
+         AND that boundary is BEFORE some existing measure (not at past-
+         end of the last measure). cursor=0 in M_1 qualifies (= start of
+         score, can push M_1 forward); past-end of last measure does NOT
+         (no measure exists there to push). Mid-measure cursors never
+         qualify; Ctrl+M inserts AFTER the current measure. */
+      const measureCount = model.allMeasures().length;
+      const tickPos = model.getTickPositionAt(v, cur);
+      const miAtTick = model.measureIdxAtTick(tickPos);
+      const totalTicks = model.measureStartTick(measureCount);
+      const onBoundaryTick = Math.abs(model.measureStartTick(miAtTick) - tickPos) < 1e-6
+        && tickPos < totalTicks;
+      const beforeIdx = onBoundaryTick ? miAtTick : curMIdx + 1;
+      withHistory('insert-measure', () => {
+        model.insertMeasureAt(beforeIdx);
+        const newStart = model.getMeasureStartCursor(v, beforeIdx);
+        model.setCursor(newStart, v);
+        return true;
+      });
+      hooks.setStatus?.('Inserted measure m' + (beforeIdx + 1) + '.', 'action');
+      hooks.onStateChange();
+      hooks.onChange();
+      return;
+    }
+
     /* Voice-mode `H` toggles `@visible="false"` on the current rest. Same
        cursor-anchor rule as dynamics (cursor−1 in INS, cursor in OVR — both
        resolve to flat[c] under the new convention). No-op on non-rest
@@ -2866,8 +2992,8 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         if (e.key === 'Home')       { e.preventDefault(); state.tempoCursor = moveToStart(state.tempoCursor); hooks.onCursorMove(); return; }
         if (e.key === 'End')        { e.preventDefault(); state.tempoCursor = moveToEnd(state.tempoCursor); hooks.onCursorMove(); return; }
       } else {
-        if (e.key === 'ArrowLeft')  { e.preventDefault(); state.chordInternalSel = null; model.moveCursor('left');  hooks.onCursorMove(); return; }
-        if (e.key === 'ArrowRight') { e.preventDefault(); state.chordInternalSel = null; model.moveCursor('right'); hooks.onCursorMove(); return; }
+        if (e.key === 'ArrowLeft')  { e.preventDefault(); state.chordInternalSel = null; moveCursorOverUnrendered('left');  hooks.onCursorMove(); return; }
+        if (e.key === 'ArrowRight') { e.preventDefault(); state.chordInternalSel = null; moveCursorOverUnrendered('right'); hooks.onCursorMove(); return; }
         if (e.key === 'Home')       { e.preventDefault(); state.chordInternalSel = null; model.setCursor(0); hooks.onCursorMove(); return; }
         if (e.key === 'End')        { e.preventDefault(); state.chordInternalSel = null; model.cursorToEnd(); hooks.onCursorMove(); return; }
       }

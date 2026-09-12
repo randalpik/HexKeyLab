@@ -51,7 +51,7 @@ for (const c of CASES) {
   ps.lastOutcome = ''; ps.lastSkipReason = ''; pb.lastDeriveReason = '';
   r.clearRenderLedger?.();
   const t0 = performance.now();
-  if (c.kind === 'insert') key('m', { ctrlKey: true });
+  if (c.kind === 'insert') key('m');
   else if (c.kind === 'delsel') { key('ArrowDown', { shiftKey: true }); key('Backspace'); }
   else key('Backspace');
   await waitFor(badgeHidden, 60000, 5);

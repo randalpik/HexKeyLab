@@ -96,7 +96,9 @@ function maybeScrollMeasureIntoView(measureIdx: number): void {
   if (measureIdx < 0) return;
   const measures = model.allMeasures();
   if (measureIdx >= measures.length) return;
-  const id = measures[measureIdx]?.getAttribute('xml:id');
+  /* The RENDERED measure: a multimeasure-rest run's interior members have no
+     g.measure of their own (render/render.ts renderIdForMeasure). */
+  const id = renderer.renderIdForMeasure(measureIdx);
   if (!id) return;
   /* Scroll mode: the target measure may be off-screen and thus unmounted —
      mount its chunk so rectForId can resolve it (no-op in page mode). */
@@ -592,7 +594,8 @@ function maybeBroadcastComposerCursor(): void {
   const mode = getInputState().mode;
   const anchor = resolveVoiceCursorAnchor(model, curVoice, mode);
   const measureIdx = model.cursorMeasureIdx(curVoice, mode);
-  const meiId = model.allMeasures()[measureIdx]?.getAttribute('xml:id') ?? null;
+  /* HKL's mirror renders the same collapsed MEI, so send the rendered id. */
+  const meiId = renderer.renderIdForMeasure(measureIdx);
   const sig = curVoice + '|' + measureIdx + '|' + JSON.stringify(anchor);
   if (sig !== lastComposerCursorSig) {
     lastComposerCursorSig = sig;
@@ -1203,6 +1206,8 @@ initInput(model, {
   onZoomChange: (dir) => stepZoom(dir),
   getHklTuningMode: () => hklTuningMode,
   requestApplyLayout: () => requestApplyLayout(),
+  isCellRendered: (mi, staffN) => renderer.isCellRendered(mi, staffN),
+  afterRender: (cb) => afterRender(cb),
   history,
 });
 

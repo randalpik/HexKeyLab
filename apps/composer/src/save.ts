@@ -8,6 +8,7 @@
 // Access API yet.
 
 import { ComposerModel } from './model/index.js';
+import { cellHasFlag } from './model/empty-flags.js';
 import type { Voice, Duration, Dots, InstrumentEntry } from './model/index.js';
 import { collectTempi, dirIsItalic, dirText, parseTstamp2, type TempoRecord } from './expressions.js';
 import { noteAlter } from '@hkl/notation/accidentals.js';
@@ -925,6 +926,15 @@ export function exportMusicXml(model: ComposerModel): string {
   const buildPartBody = (inst: InstrumentEntry): string => {
     const partStaffNs = inst.staffNs;
     const partStaffCount = partStaffNs.length;
+    /* Empty-cell flags (model/empty-flags.ts) → MusicXML. Hidden ranges per
+       part staff as Finale writes them: <staff-details print-object="no"/> at
+       the first flagged bar, ="yes" at the first unflagged bar after. A
+       multimeasure rest is part-wide in MusicXML, so <measure-style>
+       <multiple-rest>N</multiple-rest> is written only for a ONE-staff part, at
+       the first bar of each run the part view would collapse. */
+    const hiddenNow: Record<number, boolean> = {};
+    for (const sn of partStaffNs) hiddenNow[sn] = false;
+    const partUnits = partStaffCount === 1 ? model.renderUnits([partStaffNs[0]]) : null;
     const staffMap = (globalN: number): number => partStaffNs.indexOf(globalN) + 1;
     const partVoices = model.voicesForInstrument(inst.index);
     const voiceMap = (globalV: number): number => partVoices.indexOf(globalV) + 1;
@@ -964,8 +974,17 @@ export function exportMusicXml(model: ComposerModel): string {
       const keyChanged = mKeySig !== prevKeySig;
       const meterChanged = mMeter.count !== prevCount || mMeter.unit !== prevUnit;
       const anyClefChange = partStaffNs.some((sn) => clefToEmit[sn]);
+      const staffDetails: string[] = [];
+      for (const sn of partStaffNs) {
+        const hidden = cellHasFlag(measureEls[mi], sn, 'hide-empty');
+        if (hidden !== hiddenNow[sn]) {
+          hiddenNow[sn] = hidden;
+          staffDetails.push(`      <staff-details number="${staffMap(sn)}" print-object="${hidden ? 'no' : 'yes'}"/>\n`);
+        }
+      }
+      const multipleRest = partUnits && partUnits.isRunStart(mi) ? partUnits.unitOf(mi)[1] - mi + 1 : 0;
 
-      if (mi === 0 || keyChanged || meterChanged || anyClefChange) {
+      if (mi === 0 || keyChanged || meterChanged || anyClefChange || staffDetails.length || multipleRest) {
         body += `    <attributes>\n`;
         if (mi === 0) body += `      <divisions>${divisions}</divisions>\n`;
         if (mi === 0 || keyChanged) body += `      <key><fifths>${keySigToFifths(mKeySig)}</fifths><mode>${mKeyMode}</mode></key>\n`;
@@ -980,6 +999,8 @@ export function exportMusicXml(model: ComposerModel): string {
           if (mi === 0) body += clefXml(staffMap(sn), curClef[sn]);
           else if (clefToEmit[sn]) body += clefXml(staffMap(sn), clefToEmit[sn]!);
         }
+        for (const sd of staffDetails) body += sd;
+        if (multipleRest) body += `      <measure-style><multiple-rest>${multipleRest}</multiple-rest></measure-style>\n`;
         body += `    </attributes>\n`;
       }
       prevKeySig = mKeySig;

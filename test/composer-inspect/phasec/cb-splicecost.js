@@ -17,7 +17,7 @@ const waitFor = async (fn, ms = 90000, step = 10) => { const t0 = performance.no
 const badgeHidden = () => { const b = document.getElementById('renderBusy'); return !b || b.hidden; };
 const spec = String(window.__probeArg || '');
 const miArg = spec.match(/mi=(\d+)/)?.[1];
-/* `--arg "edit=ctrlm"` (2026-09-02): the Ctrl+M insert-measure command through
+/* `--arg "edit=ctrlm"` (2026-09-02): the insert-measure command (plain M since 2026-09-11) through
    the real input path, with the model's document-wide passes tagged
    (renumberMeasures / setBarlines / normalizePlaceholdersAll / normalizeTies) —
    the question being whether a "localized" command edit produces a localized
@@ -130,7 +130,7 @@ const runEdit = async (label) => {
     install();
     t0 = performance.now();
     const key = editMode === 'ctrlm'
-      ? { key: 'm', ctrlKey: true, bubbles: true }
+      ? { key: 'm', bubbles: true }              // plain M since 2026-09-11 (arg name kept)
       : { key: 'Backspace', bubbles: true };
     document.dispatchEvent(new KeyboardEvent('keydown', key));
   }

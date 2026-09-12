@@ -4006,3 +4006,39 @@ holds two rows, so nothing was gated. Only a FOUR-row stack exceeded the floor
 (14.56 stacked vs 8.69 separated). When a fixture for a spacing bug passes
 identically with the fix reverted, the document is too small — check the
 counterfactual before believing the gate.
+
+## Verovio's "hide empty staves" is note-driven and global; `condense` defaults to a heuristic (2026-09-11)
+
+Verovio's `condense` option (`none | auto | encoded`, default `auto`) does NOT
+give per-region control of empty-staff hiding. Read from `develop`:
+`Score::ScoreDefNeedsOptimization` optimizes when `scoreDef@optimize="true"`,
+or — `auto` with no `@optimize` — whenever the scoreDef has more than one
+`grpSym`; `ScoreDefOptimizeFunctor::VisitStaff` then hides a staffDef on a
+system unless some measure's staff contains a `<note>` (or a `<clef>`, or —
+only with `condenseTempoPages` — the measure has a tempo/fermata, which forces
+ALL staves visible, the reverse of what the option name suggests). `encoded`
+differs from `auto` only by skipping the grpSym heuristic; `staff@visible=
+"false"` is consumed elsewhere (`ScoreDefSetCurrentFunctor::VisitMeasure`) as
+barline-drawing flags and never frees the vertical slot. Consequences: (1) a
+Composer scoreDef with two group symbols would have silently started hiding
+rest-only staves — `condense` is now pinned `'none'`; (2) per-region hiding has
+to be done by re-rendering a system with the staves filtered out
+(render/hiddenstaves.ts).
+
+## A single-system window cuts spanners: expand it like the splicer does
+
+Rendering one system alone (leader stub + its measures + trailer stub) drops
+any tie/slur whose other end is in a neighbouring system — Verovio warns
+"Unable to match @tie of note …" and omits the segment. The composer-test
+CONSOLE invariant counts that warning as an error, which is how it surfaced.
+Any window render must run `expandForSpannersOnce` + `expandForEndings` over
+its measure range (extra measures on the right pinned as their own line so the
+target system keeps exactly its measures), as `pagesplice.trySplice` does.
+
+## Fixture durations are MEI `@dur` strings, not the entry-key digits
+
+`insertChordAtCursor({ duration: '5' })` is not a quarter — the keyboard digit
+5 means quarter, but the model API takes the MEI value (`'4'`). A `'5'` yields
+odd tied rhythms whose ties then cross window boundaries and trip the CONSOLE
+invariant three fixtures away from the cause.
+
