@@ -182,9 +182,28 @@ function xAtCursorPos(
     }
   }
 
+  // Trailing empty region: the cursor is strictly inside its measure (the
+  // barline case returned above) but nothing follows it there — flat[c+1] is
+  // missing or is the NEXT measure's wrapper. The rest of the measure is
+  // <space> placeholders, which render as an empty g.space with no usable
+  // bbox. Anchor on the RIGHT edge of flat[c] (the element the cursor is
+  // past) — the same edge the voice cursor sits on (`elementRight` in
+  // resolveVoiceCursorAnchor) — so a selection starting or ending here lines
+  // up with where the cursor was. Left edge of flat[c+1] / endOfScoreX would
+  // put both edges of an empty-remainder beat on the measure's right edge
+  // (zero-width → dropped) and stretch a last-note beat over the empty space.
+  const next = c + 1 < flat.length ? flat[c + 1] : null;
+  if (next === null || next.localName === 'measure') {
+    const cur = flat[c];
+    if (cur && cur.localName !== 'measure') {
+      const id = cur.getAttribute('xml:id');
+      const r = id ? renderer.rectForId(id) : null;
+      if (r) return r.right;
+    }
+  }
+
   // Default: LEFT edge of flat[c+1].
-  if (c + 1 >= flat.length) return endOfScoreX(model, measures);
-  const next = flat[c + 1];
+  if (next === null) return endOfScoreX(model, measures);
   if (next.localName === 'measure') {
     const mid = next.getAttribute('xml:id');
     if (!mid) return null;
@@ -201,7 +220,16 @@ interface DrawRect {
 /** Measure range the selection's playing-time content touches (inclusive).
  *  For beat mode: scans flat[a+1..b] (the elements between anchor and
  *  movable cursors), skipping wrappers, and takes min/max measureIdx.
- *  Returns null when the selection contains no content (degenerate). */
+ *
+ *  A beat with NO content between its boundaries is not degenerate — it is
+ *  the common case: an empty measure, an imported <mRest>, a voice with
+ *  nothing in the bar, or the placeholder remainder after the last entered
+ *  note (<space> placeholders and <mRest> are not cursor stops, see
+ *  model/cursor-location.ts layerStops). Fall back to the measures the
+ *  boundary TICKS lie in — [tick(a), tick(b)) — so the box still draws (at
+ *  staff height, via staffYRangeForMeasure's fallback). Returning null here
+ *  dropped every rect while the status line still announced the selection
+ *  (2026-09-11). */
 function selectionMeasureRange(model: ComposerModel, sel: SelectionState): { mLo: number; mHi: number } | null {
   const measures = model.allMeasures();
   if (measures.length === 0) return null;
@@ -225,8 +253,17 @@ function selectionMeasureRange(model: ComposerModel, sel: SelectionState): { mLo
     if (info.measureIdx < mLo) mLo = info.measureIdx;
     if (info.measureIdx > mHi) mHi = info.measureIdx;
   }
-  if (!isFinite(mLo)) return null;
-  return { mLo, mHi };
+  if (isFinite(mLo)) return { mLo, mHi };
+  /* Content-free beat: the measures spanned by the boundary ticks. tHi is
+     exclusive — at a barline it belongs to the NEXT measure, so step back an
+     epsilon before asking. */
+  const tLo = model.getTickPositionAt(sel.voice, a);
+  const tHi = model.getTickPositionAt(sel.voice, b);
+  if (!(tHi > tLo + TICK_EPS)) return null;
+  const last = measures.length - 1;
+  const lo = Math.min(last, Math.max(0, model.measureIdxAtTick(tLo)));
+  const hi = Math.min(last, Math.max(lo, model.measureIdxAtTick(tHi - 2 * TICK_EPS)));
+  return { mLo: lo, mHi: hi };
 }
 
 /** Find the rendered `<g class="system">` ancestor of the given measure's

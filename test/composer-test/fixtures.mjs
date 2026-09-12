@@ -2971,6 +2971,77 @@ const SELECTION = {
     ],
     visualBaseline: 'sel_measure_both_staves',
   },
+
+  /* ── Content-free beats (2026-09-11) ─────────────────────────────────────
+     <space> placeholders and an imported <mRest> are not cursor stops, so a
+     beat over empty space has nothing between its boundary cursors. The
+     overlay's content scan returned null → zero rects, while the `Sel:`
+     status still printed and the voice cursor was (by design) hidden: Max saw
+     "a selection was completed, but no box appears and the cursor is also
+     invisible." Every fixture here asserts the RECT, not just state.selection
+     — the prior sel_* fixtures all started from a filled beat and never
+     checked that a rect existed. */
+
+  /* Default document: one empty measure. Shift+Right must draw one box from
+     the sig block's end to the bar line, at staff height. */
+  sel_beat_enter_emptyMeasure: {
+    setup: `m.setCursor(0, 1);`,
+    setupKeys: [{ key: 'ArrowRight', shift: true }],
+  },
+
+  /* Same bar, voice 2 (its layer exists but holds only a placeholder). */
+  sel_beat_enter_emptyMeasure_voice2: {
+    setup: `m.setVoice(2); m.setCursor(0, 2);`,
+    setupKeys: [{ key: 'ArrowRight', shift: true }],
+  },
+
+  /* Imported whole-measure rest: the layer holds an <mRest> and nothing else
+     (no placeholders — normalizePlaceholders treats mRest as full). */
+  sel_beat_enter_mRest: {
+    setup: `
+      const layer = m.allMeasures()[0].querySelector('staff[n="1"] layer[n="1"]');
+      for (const c of Array.from(layer.children)) layer.removeChild(c);
+      const mr = m.getDoc().createElementNS('http://www.music-encoding.org/ns/mei', 'mRest');
+      mr.setAttribute('xml:id', 'mr_sel_test'); layer.appendChild(mr);
+      m.setCursor(0, 1);
+    `,
+    setupKeys: [{ key: 'ArrowRight', shift: true }],
+  },
+
+  /* The compositional case: M1 entered, cursor moved into the empty M2. */
+  sel_beat_enter_emptyM2_afterFullM1: {
+    setup: `${FILL_M1_4Q_V1}
+      if (m.allMeasures().length < 2) m.appendMeasure();
+      m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+    `,
+    setupKeys: [{ key: 'ArrowRight', shift: true }],
+  },
+
+  /* The most common case: two quarters entered, cursor past the second,
+     Shift+Right selects the empty remainder. The box must start at Q2's
+     RIGHT edge (where the voice cursor sat) and end at the bar line. */
+  sel_beat_enter_trailingPlaceholder: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 2; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setCursor(2, 1);
+    `,
+    setupKeys: [{ key: 'ArrowRight', shift: true }],
+    visualBaseline: 'sel_beat_trailing_placeholder',
+  },
+
+  /* Control + regression guard for the x-anchor change: Shift+Left from the
+     same spot selects Q2's beat; its box must HUG Q2 (left edge → right edge)
+     rather than stretch over the trailing placeholders to the bar line, so
+     the two boxes tile at the cursor's position. */
+  sel_beat_lastNote_hugsNote: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 2; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setCursor(2, 1);
+    `,
+    setupKeys: [{ key: 'ArrowLeft', shift: true }],
+  },
 };
 
 /* ── New: chord-internal selection + SC transpose + tie-target + refNote ─ */
@@ -14051,6 +14122,295 @@ export const FIXTURE_ASSERTIONS = {
         return rects.length === 1
           ? { ok: true }
           : { ok: false, detail: 'rect count=' + rects.length };
+      })()` },
+  ],
+
+  /* Content-free beat selections (2026-09-11): assert the RECT, not just state. */
+  sel_beat_enter_emptyMeasure: [
+    { name: 'beat selection V1 beat 0..0',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        if (!s.selection || s.selection.kind !== 'beat') return { ok: false, detail: 'selection=' + JSON.stringify(s.selection) };
+        const ok = s.selection.voice === 1 && s.selection.first === 0 && s.selection.last === 0;
+        return ok ? { ok: true } : { ok: false, detail: JSON.stringify(s.selection) };
+      })()` },
+    { name: 'exactly one selection rect with positive size',
+      expr: `(() => {
+        const H = window.__hkl_composer; const M = H.model; const R = H.renderer;
+        const rects = Array.from(document.querySelectorAll('rect[data-selection-rect="true"]'))
+          .map(r => ({ x: +r.getAttribute('x'), y: +r.getAttribute('y'), w: +r.getAttribute('width'), h: +r.getAttribute('height') }));
+        const near = (a, b, tol = 2) => Math.abs(a - b) <= tol;
+        const measRect = (i) => R.rectForId(M.allMeasures()[i].getAttribute('xml:id'));
+        const contentLeft = (i) => { const st = M.allMeasures()[i].querySelector('staff[n="1"]'); const se = st ? R.findSigEndXForStaff(st.getAttribute('xml:id')) : null; return se ?? measRect(i).left; };
+        const layerKids = (i, staffN = 1, layerN = 1) => M.contentChildren(M.allMeasures()[i].querySelector('staff[n="' + staffN + '"] layer[n="' + layerN + '"]'));
+        const fmt = () => JSON.stringify(rects.map(r => [Math.round(r.x), Math.round(r.y), Math.round(r.w), Math.round(r.h)]));
+
+        if (rects.length !== 1) return { ok: false, detail: 'rect count=' + rects.length + ' ' + fmt() };
+        return rects[0].w > 0 && rects[0].h > 0 ? { ok: true } : { ok: false, detail: fmt() };
+      })()` },
+    { name: 'rect spans M1 content-left → right edge',
+      expr: `(() => {
+        const H = window.__hkl_composer; const M = H.model; const R = H.renderer;
+        const rects = Array.from(document.querySelectorAll('rect[data-selection-rect="true"]'))
+          .map(r => ({ x: +r.getAttribute('x'), y: +r.getAttribute('y'), w: +r.getAttribute('width'), h: +r.getAttribute('height') }));
+        const near = (a, b, tol = 2) => Math.abs(a - b) <= tol;
+        const measRect = (i) => R.rectForId(M.allMeasures()[i].getAttribute('xml:id'));
+        const contentLeft = (i) => { const st = M.allMeasures()[i].querySelector('staff[n="1"]'); const se = st ? R.findSigEndXForStaff(st.getAttribute('xml:id')) : null; return se ?? measRect(i).left; };
+        const layerKids = (i, staffN = 1, layerN = 1) => M.contentChildren(M.allMeasures()[i].querySelector('staff[n="' + staffN + '"] layer[n="' + layerN + '"]'));
+        const fmt = () => JSON.stringify(rects.map(r => [Math.round(r.x), Math.round(r.y), Math.round(r.w), Math.round(r.h)]));
+
+        if (rects.length !== 1) return { ok: false, detail: 'rect count=' + rects.length };
+        const r = rects[0]; const mr = measRect(0); const cl = contentLeft(0);
+        if (!mr) return { ok: false, detail: 'measure not rendered' };
+        const ok = near(r.x, cl) && near(r.x + r.w, mr.right);
+        return ok ? { ok: true } : { ok: false, detail: 'rect ' + fmt() + ' vs contentLeft=' + Math.round(cl) + ' right=' + Math.round(mr.right) };
+      })()` },
+    { name: 'rect is staff-height (top staff), not zero-height',
+      expr: `(() => {
+        const H = window.__hkl_composer; const M = H.model; const R = H.renderer;
+        const rects = Array.from(document.querySelectorAll('rect[data-selection-rect="true"]'))
+          .map(r => ({ x: +r.getAttribute('x'), y: +r.getAttribute('y'), w: +r.getAttribute('width'), h: +r.getAttribute('height') }));
+        const near = (a, b, tol = 2) => Math.abs(a - b) <= tol;
+        const measRect = (i) => R.rectForId(M.allMeasures()[i].getAttribute('xml:id'));
+        const contentLeft = (i) => { const st = M.allMeasures()[i].querySelector('staff[n="1"]'); const se = st ? R.findSigEndXForStaff(st.getAttribute('xml:id')) : null; return se ?? measRect(i).left; };
+        const layerKids = (i, staffN = 1, layerN = 1) => M.contentChildren(M.allMeasures()[i].querySelector('staff[n="' + staffN + '"] layer[n="' + layerN + '"]'));
+        const fmt = () => JSON.stringify(rects.map(r => [Math.round(r.x), Math.round(r.y), Math.round(r.w), Math.round(r.h)]));
+
+        if (rects.length !== 1) return { ok: false, detail: 'rect count=' + rects.length };
+        const st = M.allMeasures()[0].querySelector('staff[n="1"]'); const sr = R.rectForId(st.getAttribute('xml:id'));
+        if (!sr) return { ok: false, detail: 'staff not rendered' };
+        const r = rects[0];
+        const ok = r.y <= sr.top + 2 && r.y + r.h >= sr.bottom - 2 && r.h < sr.height * 1.5;
+        return ok ? { ok: true } : { ok: false, detail: 'rect ' + fmt() + ' staff top=' + Math.round(sr.top) + ' bottom=' + Math.round(sr.bottom) };
+      })()` },
+    { name: 'voice cursor hidden in select mode',
+      expr: `(() => {
+        const bar = document.querySelector('[data-cursor-role="voice"]');
+        if (!bar) return { ok: false, detail: 'no voice cursor rect' };
+        const op = bar.getAttribute('opacity');
+        return op === '0' ? { ok: true } : { ok: false, detail: 'opacity=' + op };
+      })()` },
+  ],
+  sel_beat_enter_emptyMeasure_voice2: [
+    { name: 'beat selection V2 beat 0..0',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        if (!s.selection || s.selection.kind !== 'beat') return { ok: false, detail: 'selection=' + JSON.stringify(s.selection) };
+        const ok = s.selection.voice === 2 && s.selection.first === 0 && s.selection.last === 0;
+        return ok ? { ok: true } : { ok: false, detail: JSON.stringify(s.selection) };
+      })()` },
+    { name: 'exactly one selection rect with positive size',
+      expr: `(() => {
+        const H = window.__hkl_composer; const M = H.model; const R = H.renderer;
+        const rects = Array.from(document.querySelectorAll('rect[data-selection-rect="true"]'))
+          .map(r => ({ x: +r.getAttribute('x'), y: +r.getAttribute('y'), w: +r.getAttribute('width'), h: +r.getAttribute('height') }));
+        const near = (a, b, tol = 2) => Math.abs(a - b) <= tol;
+        const measRect = (i) => R.rectForId(M.allMeasures()[i].getAttribute('xml:id'));
+        const contentLeft = (i) => { const st = M.allMeasures()[i].querySelector('staff[n="1"]'); const se = st ? R.findSigEndXForStaff(st.getAttribute('xml:id')) : null; return se ?? measRect(i).left; };
+        const layerKids = (i, staffN = 1, layerN = 1) => M.contentChildren(M.allMeasures()[i].querySelector('staff[n="' + staffN + '"] layer[n="' + layerN + '"]'));
+        const fmt = () => JSON.stringify(rects.map(r => [Math.round(r.x), Math.round(r.y), Math.round(r.w), Math.round(r.h)]));
+
+        if (rects.length !== 1) return { ok: false, detail: 'rect count=' + rects.length + ' ' + fmt() };
+        return rects[0].w > 0 && rects[0].h > 0 ? { ok: true } : { ok: false, detail: fmt() };
+      })()` },
+    { name: 'rect spans M1 content-left → right edge',
+      expr: `(() => {
+        const H = window.__hkl_composer; const M = H.model; const R = H.renderer;
+        const rects = Array.from(document.querySelectorAll('rect[data-selection-rect="true"]'))
+          .map(r => ({ x: +r.getAttribute('x'), y: +r.getAttribute('y'), w: +r.getAttribute('width'), h: +r.getAttribute('height') }));
+        const near = (a, b, tol = 2) => Math.abs(a - b) <= tol;
+        const measRect = (i) => R.rectForId(M.allMeasures()[i].getAttribute('xml:id'));
+        const contentLeft = (i) => { const st = M.allMeasures()[i].querySelector('staff[n="1"]'); const se = st ? R.findSigEndXForStaff(st.getAttribute('xml:id')) : null; return se ?? measRect(i).left; };
+        const layerKids = (i, staffN = 1, layerN = 1) => M.contentChildren(M.allMeasures()[i].querySelector('staff[n="' + staffN + '"] layer[n="' + layerN + '"]'));
+        const fmt = () => JSON.stringify(rects.map(r => [Math.round(r.x), Math.round(r.y), Math.round(r.w), Math.round(r.h)]));
+
+        if (rects.length !== 1) return { ok: false, detail: 'rect count=' + rects.length };
+        const r = rects[0]; const mr = measRect(0); const cl = contentLeft(0);
+        if (!mr) return { ok: false, detail: 'measure not rendered' };
+        const ok = near(r.x, cl) && near(r.x + r.w, mr.right);
+        return ok ? { ok: true } : { ok: false, detail: 'rect ' + fmt() + ' vs contentLeft=' + Math.round(cl) + ' right=' + Math.round(mr.right) };
+      })()` },
+    { name: 'voice cursor hidden in select mode',
+      expr: `(() => {
+        const bar = document.querySelector('[data-cursor-role="voice"]');
+        if (!bar) return { ok: false, detail: 'no voice cursor rect' };
+        const op = bar.getAttribute('opacity');
+        return op === '0' ? { ok: true } : { ok: false, detail: 'opacity=' + op };
+      })()` },
+  ],
+  sel_beat_enter_mRest: [
+    { name: 'premise: V1 flat stream is the wrapper only, mRest rendered',
+      expr: `(() => {
+        const M = window.__hkl_composer.model;
+        const flat = M.flatChildren(1).map(e => e.localName);
+        if (flat.length !== 1 || flat[0] !== 'measure') return { ok: false, detail: 'flat=' + JSON.stringify(flat) };
+        return document.getElementById('mr_sel_test') ? { ok: true } : { ok: false, detail: 'mRest not rendered' };
+      })()` },
+    { name: 'beat selection V1 beat 0..0',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        if (!s.selection || s.selection.kind !== 'beat') return { ok: false, detail: 'selection=' + JSON.stringify(s.selection) };
+        const ok = s.selection.voice === 1 && s.selection.first === 0 && s.selection.last === 0;
+        return ok ? { ok: true } : { ok: false, detail: JSON.stringify(s.selection) };
+      })()` },
+    { name: 'exactly one selection rect with positive size',
+      expr: `(() => {
+        const H = window.__hkl_composer; const M = H.model; const R = H.renderer;
+        const rects = Array.from(document.querySelectorAll('rect[data-selection-rect="true"]'))
+          .map(r => ({ x: +r.getAttribute('x'), y: +r.getAttribute('y'), w: +r.getAttribute('width'), h: +r.getAttribute('height') }));
+        const near = (a, b, tol = 2) => Math.abs(a - b) <= tol;
+        const measRect = (i) => R.rectForId(M.allMeasures()[i].getAttribute('xml:id'));
+        const contentLeft = (i) => { const st = M.allMeasures()[i].querySelector('staff[n="1"]'); const se = st ? R.findSigEndXForStaff(st.getAttribute('xml:id')) : null; return se ?? measRect(i).left; };
+        const layerKids = (i, staffN = 1, layerN = 1) => M.contentChildren(M.allMeasures()[i].querySelector('staff[n="' + staffN + '"] layer[n="' + layerN + '"]'));
+        const fmt = () => JSON.stringify(rects.map(r => [Math.round(r.x), Math.round(r.y), Math.round(r.w), Math.round(r.h)]));
+
+        if (rects.length !== 1) return { ok: false, detail: 'rect count=' + rects.length + ' ' + fmt() };
+        return rects[0].w > 0 && rects[0].h > 0 ? { ok: true } : { ok: false, detail: fmt() };
+      })()` },
+    { name: 'rect spans M1 content-left → right edge',
+      expr: `(() => {
+        const H = window.__hkl_composer; const M = H.model; const R = H.renderer;
+        const rects = Array.from(document.querySelectorAll('rect[data-selection-rect="true"]'))
+          .map(r => ({ x: +r.getAttribute('x'), y: +r.getAttribute('y'), w: +r.getAttribute('width'), h: +r.getAttribute('height') }));
+        const near = (a, b, tol = 2) => Math.abs(a - b) <= tol;
+        const measRect = (i) => R.rectForId(M.allMeasures()[i].getAttribute('xml:id'));
+        const contentLeft = (i) => { const st = M.allMeasures()[i].querySelector('staff[n="1"]'); const se = st ? R.findSigEndXForStaff(st.getAttribute('xml:id')) : null; return se ?? measRect(i).left; };
+        const layerKids = (i, staffN = 1, layerN = 1) => M.contentChildren(M.allMeasures()[i].querySelector('staff[n="' + staffN + '"] layer[n="' + layerN + '"]'));
+        const fmt = () => JSON.stringify(rects.map(r => [Math.round(r.x), Math.round(r.y), Math.round(r.w), Math.round(r.h)]));
+
+        if (rects.length !== 1) return { ok: false, detail: 'rect count=' + rects.length };
+        const r = rects[0]; const mr = measRect(0); const cl = contentLeft(0);
+        if (!mr) return { ok: false, detail: 'measure not rendered' };
+        const ok = near(r.x, cl) && near(r.x + r.w, mr.right);
+        return ok ? { ok: true } : { ok: false, detail: 'rect ' + fmt() + ' vs contentLeft=' + Math.round(cl) + ' right=' + Math.round(mr.right) };
+      })()` },
+  ],
+  sel_beat_enter_emptyM2_afterFullM1: [
+    { name: 'beat selection V1 beat 4..4',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        if (!s.selection || s.selection.kind !== 'beat') return { ok: false, detail: 'selection=' + JSON.stringify(s.selection) };
+        const ok = s.selection.voice === 1 && s.selection.first === 4 && s.selection.last === 4;
+        return ok ? { ok: true } : { ok: false, detail: JSON.stringify(s.selection) };
+      })()` },
+    { name: 'exactly one selection rect with positive size',
+      expr: `(() => {
+        const H = window.__hkl_composer; const M = H.model; const R = H.renderer;
+        const rects = Array.from(document.querySelectorAll('rect[data-selection-rect="true"]'))
+          .map(r => ({ x: +r.getAttribute('x'), y: +r.getAttribute('y'), w: +r.getAttribute('width'), h: +r.getAttribute('height') }));
+        const near = (a, b, tol = 2) => Math.abs(a - b) <= tol;
+        const measRect = (i) => R.rectForId(M.allMeasures()[i].getAttribute('xml:id'));
+        const contentLeft = (i) => { const st = M.allMeasures()[i].querySelector('staff[n="1"]'); const se = st ? R.findSigEndXForStaff(st.getAttribute('xml:id')) : null; return se ?? measRect(i).left; };
+        const layerKids = (i, staffN = 1, layerN = 1) => M.contentChildren(M.allMeasures()[i].querySelector('staff[n="' + staffN + '"] layer[n="' + layerN + '"]'));
+        const fmt = () => JSON.stringify(rects.map(r => [Math.round(r.x), Math.round(r.y), Math.round(r.w), Math.round(r.h)]));
+
+        if (rects.length !== 1) return { ok: false, detail: 'rect count=' + rects.length + ' ' + fmt() };
+        return rects[0].w > 0 && rects[0].h > 0 ? { ok: true } : { ok: false, detail: fmt() };
+      })()` },
+    { name: 'rect lies within M2 (content-left → right edge)',
+      expr: `(() => {
+        const H = window.__hkl_composer; const M = H.model; const R = H.renderer;
+        const rects = Array.from(document.querySelectorAll('rect[data-selection-rect="true"]'))
+          .map(r => ({ x: +r.getAttribute('x'), y: +r.getAttribute('y'), w: +r.getAttribute('width'), h: +r.getAttribute('height') }));
+        const near = (a, b, tol = 2) => Math.abs(a - b) <= tol;
+        const measRect = (i) => R.rectForId(M.allMeasures()[i].getAttribute('xml:id'));
+        const contentLeft = (i) => { const st = M.allMeasures()[i].querySelector('staff[n="1"]'); const se = st ? R.findSigEndXForStaff(st.getAttribute('xml:id')) : null; return se ?? measRect(i).left; };
+        const layerKids = (i, staffN = 1, layerN = 1) => M.contentChildren(M.allMeasures()[i].querySelector('staff[n="' + staffN + '"] layer[n="' + layerN + '"]'));
+        const fmt = () => JSON.stringify(rects.map(r => [Math.round(r.x), Math.round(r.y), Math.round(r.w), Math.round(r.h)]));
+
+        if (rects.length !== 1) return { ok: false, detail: 'rect count=' + rects.length + ' ' + fmt() };
+        const r = rects[0]; const mr = measRect(1); const cl = contentLeft(1);
+        if (!mr) return { ok: false, detail: 'M2 not rendered' };
+        const ok = near(r.x, cl) && near(r.x + r.w, mr.right);
+        return ok ? { ok: true } : { ok: false, detail: 'rect ' + fmt() + ' vs M2 contentLeft=' + Math.round(cl) + ' right=' + Math.round(mr.right) };
+      })()` },
+  ],
+  sel_beat_enter_trailingPlaceholder: [
+    { name: 'beat selection V1 beat 2..2',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        if (!s.selection || s.selection.kind !== 'beat') return { ok: false, detail: 'selection=' + JSON.stringify(s.selection) };
+        const ok = s.selection.voice === 1 && s.selection.first === 2 && s.selection.last === 2;
+        return ok ? { ok: true } : { ok: false, detail: JSON.stringify(s.selection) };
+      })()` },
+    { name: 'exactly one selection rect with positive size',
+      expr: `(() => {
+        const H = window.__hkl_composer; const M = H.model; const R = H.renderer;
+        const rects = Array.from(document.querySelectorAll('rect[data-selection-rect="true"]'))
+          .map(r => ({ x: +r.getAttribute('x'), y: +r.getAttribute('y'), w: +r.getAttribute('width'), h: +r.getAttribute('height') }));
+        const near = (a, b, tol = 2) => Math.abs(a - b) <= tol;
+        const measRect = (i) => R.rectForId(M.allMeasures()[i].getAttribute('xml:id'));
+        const contentLeft = (i) => { const st = M.allMeasures()[i].querySelector('staff[n="1"]'); const se = st ? R.findSigEndXForStaff(st.getAttribute('xml:id')) : null; return se ?? measRect(i).left; };
+        const layerKids = (i, staffN = 1, layerN = 1) => M.contentChildren(M.allMeasures()[i].querySelector('staff[n="' + staffN + '"] layer[n="' + layerN + '"]'));
+        const fmt = () => JSON.stringify(rects.map(r => [Math.round(r.x), Math.round(r.y), Math.round(r.w), Math.round(r.h)]));
+
+        if (rects.length !== 1) return { ok: false, detail: 'rect count=' + rects.length + ' ' + fmt() };
+        return rects[0].w > 0 && rects[0].h > 0 ? { ok: true } : { ok: false, detail: fmt() };
+      })()` },
+    { name: 'rect runs from Q2 right edge to the bar line',
+      expr: `(() => {
+        const H = window.__hkl_composer; const M = H.model; const R = H.renderer;
+        const rects = Array.from(document.querySelectorAll('rect[data-selection-rect="true"]'))
+          .map(r => ({ x: +r.getAttribute('x'), y: +r.getAttribute('y'), w: +r.getAttribute('width'), h: +r.getAttribute('height') }));
+        const near = (a, b, tol = 2) => Math.abs(a - b) <= tol;
+        const measRect = (i) => R.rectForId(M.allMeasures()[i].getAttribute('xml:id'));
+        const contentLeft = (i) => { const st = M.allMeasures()[i].querySelector('staff[n="1"]'); const se = st ? R.findSigEndXForStaff(st.getAttribute('xml:id')) : null; return se ?? measRect(i).left; };
+        const layerKids = (i, staffN = 1, layerN = 1) => M.contentChildren(M.allMeasures()[i].querySelector('staff[n="' + staffN + '"] layer[n="' + layerN + '"]'));
+        const fmt = () => JSON.stringify(rects.map(r => [Math.round(r.x), Math.round(r.y), Math.round(r.w), Math.round(r.h)]));
+
+        if (rects.length !== 1) return { ok: false, detail: 'rect count=' + rects.length + ' ' + fmt() };
+        const kids = layerKids(0); const q2 = R.rectForId(kids[1].getAttribute('xml:id')); const mr = measRect(0);
+        const r = rects[0];
+        const ok = near(r.x, q2.right) && near(r.x + r.w, mr.right);
+        return ok ? { ok: true } : { ok: false, detail: 'rect ' + fmt() + ' q2.right=' + Math.round(q2.right) + ' m.right=' + Math.round(mr.right) };
+      })()` },
+    { name: 'voice cursor hidden in select mode',
+      expr: `(() => {
+        const bar = document.querySelector('[data-cursor-role="voice"]');
+        if (!bar) return { ok: false, detail: 'no voice cursor rect' };
+        const op = bar.getAttribute('opacity');
+        return op === '0' ? { ok: true } : { ok: false, detail: 'opacity=' + op };
+      })()` },
+  ],
+  sel_beat_lastNote_hugsNote: [
+    { name: 'beat selection V1 beat 1..1',
+      expr: `(() => {
+        const s = window.__hkl_composer.inputState();
+        if (!s.selection || s.selection.kind !== 'beat') return { ok: false, detail: 'selection=' + JSON.stringify(s.selection) };
+        const ok = s.selection.voice === 1 && s.selection.first === 1 && s.selection.last === 1;
+        return ok ? { ok: true } : { ok: false, detail: JSON.stringify(s.selection) };
+      })()` },
+    { name: 'exactly one selection rect with positive size',
+      expr: `(() => {
+        const H = window.__hkl_composer; const M = H.model; const R = H.renderer;
+        const rects = Array.from(document.querySelectorAll('rect[data-selection-rect="true"]'))
+          .map(r => ({ x: +r.getAttribute('x'), y: +r.getAttribute('y'), w: +r.getAttribute('width'), h: +r.getAttribute('height') }));
+        const near = (a, b, tol = 2) => Math.abs(a - b) <= tol;
+        const measRect = (i) => R.rectForId(M.allMeasures()[i].getAttribute('xml:id'));
+        const contentLeft = (i) => { const st = M.allMeasures()[i].querySelector('staff[n="1"]'); const se = st ? R.findSigEndXForStaff(st.getAttribute('xml:id')) : null; return se ?? measRect(i).left; };
+        const layerKids = (i, staffN = 1, layerN = 1) => M.contentChildren(M.allMeasures()[i].querySelector('staff[n="' + staffN + '"] layer[n="' + layerN + '"]'));
+        const fmt = () => JSON.stringify(rects.map(r => [Math.round(r.x), Math.round(r.y), Math.round(r.w), Math.round(r.h)]));
+
+        if (rects.length !== 1) return { ok: false, detail: 'rect count=' + rects.length + ' ' + fmt() };
+        return rects[0].w > 0 && rects[0].h > 0 ? { ok: true } : { ok: false, detail: fmt() };
+      })()` },
+    { name: 'rect hugs Q2 (left → right edge), not the bar line',
+      expr: `(() => {
+        const H = window.__hkl_composer; const M = H.model; const R = H.renderer;
+        const rects = Array.from(document.querySelectorAll('rect[data-selection-rect="true"]'))
+          .map(r => ({ x: +r.getAttribute('x'), y: +r.getAttribute('y'), w: +r.getAttribute('width'), h: +r.getAttribute('height') }));
+        const near = (a, b, tol = 2) => Math.abs(a - b) <= tol;
+        const measRect = (i) => R.rectForId(M.allMeasures()[i].getAttribute('xml:id'));
+        const contentLeft = (i) => { const st = M.allMeasures()[i].querySelector('staff[n="1"]'); const se = st ? R.findSigEndXForStaff(st.getAttribute('xml:id')) : null; return se ?? measRect(i).left; };
+        const layerKids = (i, staffN = 1, layerN = 1) => M.contentChildren(M.allMeasures()[i].querySelector('staff[n="' + staffN + '"] layer[n="' + layerN + '"]'));
+        const fmt = () => JSON.stringify(rects.map(r => [Math.round(r.x), Math.round(r.y), Math.round(r.w), Math.round(r.h)]));
+
+        if (rects.length !== 1) return { ok: false, detail: 'rect count=' + rects.length + ' ' + fmt() };
+        const kids = layerKids(0); const q2 = R.rectForId(kids[1].getAttribute('xml:id')); const mr = measRect(0);
+        const r = rects[0];
+        if (near(r.x + r.w, mr.right) && !near(q2.right, mr.right)) return { ok: false, detail: 'rect stretches to the bar line: ' + fmt() };
+        const ok = near(r.x, q2.left) && near(r.x + r.w, q2.right);
+        return ok ? { ok: true } : { ok: false, detail: 'rect ' + fmt() + ' q2=[' + Math.round(q2.left) + ',' + Math.round(q2.right) + ']' };
       })()` },
   ],
 

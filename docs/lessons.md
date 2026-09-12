@@ -4042,3 +4042,30 @@ target system keeps exactly its measures), as `pagesplice.trySplice` does.
 odd tied rhythms whose ties then cross window boundaries and trip the CONSOLE
 invariant three fixtures away from the cause.
 
+
+## A status line is not evidence the overlay drew anything (2026-09-11)
+
+Composer's beat selection printed `Sel: V1 M1 (1 beat, …)` while the score
+showed nothing: the status is formatted from `state.selection` in
+`setStateAfterSelectionChange` BEFORE any drawing, and `selectionOverlay.update`
+silently returned `[]` for the same state. The voice cursor is hidden in select
+mode by design, so the user saw a mode with no indicator at all — reported as
+"a selection was completed, but no box appears and the cursor is also
+invisible." Two lessons:
+
+- **`<space>` placeholders and `<mRest>` are not cursor stops**
+  (`model/cursor-location.ts layerStops`). Any code that scans `flat[a..b]` for
+  content — the overlay's `selectionMeasureRange` did — meets an EMPTY span on
+  every empty bar, every empty voice, every imported whole-measure rest, and
+  the remainder of every partially entered bar. That is the common case while
+  composing, not a degenerate one; it needs a tick-based fallback, not `null`.
+  Relatedly, a `g.space` renders with an empty bbox, so a placeholder can never
+  anchor geometry — anchor on the previous element's right edge (what the voice
+  cursor does).
+- **Fixtures for a visual affordance must assert the pixel half.** Every prior
+  `sel_*` fixture asserted `state.selection` and started from a filled beat;
+  the two `visualSel*` fixtures were the only ones counting
+  `rect[data-selection-rect]`, and both used a full measure. A feature with a
+  state half and a drawn half needs at least one fixture per entry path that
+  counts the drawn elements and checks their geometry against the rendered
+  score (`sel_beat_enter_*`, `sel_beat_lastNote_hugsNote`).

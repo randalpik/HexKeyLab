@@ -7860,3 +7860,44 @@ Two Finale-parity features, one model. Decisions worth remembering:
 - Insert-measure moved from Ctrl+M to plain **M**; Ctrl+H (Firefox history
   sidebar) is page-cancelable like Ctrl+R — Max verifies in Firefox.
 
+
+## Beat selection over empty space draws at the cursor's edge (2026-09-11)
+
+**Symptom** (Max, hands-on): Shift+←/→ "reports that a selection was
+completed, but no box appears and the cursor is also invisible." The cursor is
+hidden in select mode by design; the selection overlay was computing zero
+rects, and `setStateAfterSelectionChange` prints the `Sel:` status before any
+drawing is attempted. Reproduced headlessly on the default empty document, an
+imported `<mRest>`, voice 2 of an empty bar, an empty M2 after a full M1, and
+Shift+→ from the end of two entered quarters (the empty remainder of the bar).
+Shift+← from the same spot worked, because it selects the note.
+
+**Cause**: `<space>` placeholders and `<mRest>` are not cursor stops, so a
+content-free beat has no elements between its boundary cursors and the overlay's
+content scan (`selectionMeasureRange`) returned null. Measure mode has no such
+scan, hence the asymmetry.
+
+**Choices**:
+- **Fall back to the boundary ticks' measures**, not the boundary cursors'
+  `getFlatStopInfo` measures: a cursor past the last note of Mₖ carries
+  measureIdx k while its tick is Mₖ₊₁'s start; ticks give the span the user
+  means. The content scan stays primary (it disambiguates wrapper-collapsed
+  starts for free); the fallback only fires when the scan finds nothing.
+- **Empty-region x anchor = flat[c]'s right edge**, mirroring the voice
+  cursor's `elementRight`, so the box edge sits where the cursor was. Verovio
+  renders a placeholder as a `g.space` with an empty bbox, so it cannot anchor
+  anything; linear interpolation by ticks was rejected as false precision
+  (Verovio's spacing is not linear in duration). Side effect, deliberate: a
+  last-note beat no longer stretches over the trailing placeholders — it hugs
+  the note, and the empty-remainder beat begins exactly where it ends.
+- **Staff-height y for empty beats** (the existing `staffYRangeForMeasure`
+  fallback), not a synthetic note-height band: there is no note to hug.
+- **Not changed**: beat boundaries inside an empty region. Placeholders emit no
+  interior boundaries, so the remainder after two quarters is one "beat" (the
+  status says `1 beat` for two beats of time). Cut/delete over it clears the
+  remainder, which is empty — harmless; a finer grid would mean making
+  placeholders stops or synthesising boundaries, a cursor-semantics change left
+  for Max to call.
+- **Fixture gate**: every new fixture asserts the rect COUNT and geometry, not
+  just `state.selection` — none of the prior `sel_*` fixtures started from an
+  empty beat or checked that a rect existed, which is how this shipped.
