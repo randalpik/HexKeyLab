@@ -16,7 +16,7 @@ import { readFileSync } from 'node:fs';
 const REQUIRED = [
   'init', 'loadInstrument', 'sNoteOn', 'sNoteOff', 'sRampFreq',
   'sSetAftertouch', 'sSetVoiceDamperDepth', 'sSetVoicePan', 'isInstrumentLoaded',
-  'inflightExpRampValue', 'pickLayer',
+  'inflightExpRampValue', 'pickLayer', 'findPerceptualOnset', 'bakeOnsetFade',
 ];
 const missing = REQUIRED.filter((k) => typeof engine[k] !== 'function');
 if (missing.length) throw new Error('@hkl/engine missing exports: ' + missing.join(', '));
@@ -76,6 +76,73 @@ function assertEq(actual, expected, msg) {
   // Multiple entries but none tagged with vel → first entry (defensive).
   const noVel = [{ name: 'a' }, { name: 'b' }];
   assertEq(engine.pickLayer(noVel, 100).name, 'a', 'untagged group → first');
+}
+
+// ── findPerceptualOnset: load-time trim for decaying instruments ──
+// Pure function over (Float32Array, sampleRate, gain). The Korg SP-250 audit
+// (2026-09-12) showed real samples carry a low-level pre-strike segment that an
+// amplitude gate trips on; the detector must skip it and start on the strike.
+{
+  const sr = 48000;
+  const ms = (t) => Math.round(t * sr / 1000);
+  // Synthetic note: 100 ms near-silence (−80 dBFS), 40 ms harmonic pre-strike
+  // plateau ramping −30 → −15 dB rel. peak, then a strike (step to −3 dBFS,
+  // exponential decay). Raw level is 1/gain of the normalized target so the
+  // gain-normalization path is exercised.
+  const mk = (gain, strikeAt, plateauMs) => {
+    const n = ms(600), x = new Float32Array(n);
+    let seed = 7; const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff * 2 - 1; };
+    for (let i = 0; i < n; i++) x[i] = 1e-4 * rnd() / gain;
+    const peak = Math.pow(10, -3 / 20) / gain;
+    for (let i = strikeAt - ms(plateauMs); i < strikeAt; i++) {
+      const frac = (i - (strikeAt - ms(plateauMs))) / ms(plateauMs);
+      const lvl = Math.pow(10, (-30 + 15 * frac) / 20) * peak;
+      const t = i / sr; x[i] += lvl * (Math.sin(2 * Math.PI * 660 * t) + 0.5 * Math.sin(2 * Math.PI * 880 * t));
+    }
+    for (let i = strikeAt; i < n; i++) {
+      const t = (i - strikeAt) / sr; let v = 0;
+      for (let k = 1; k <= 8; k++) v += Math.sin(2 * Math.PI * 220 * k * t) / k;
+      x[i] += peak * (v / 2.7) * Math.exp(-t / 0.8);
+    }
+    return x;
+  };
+  const near = (actual, expected, tolMs, msg) => {
+    const d = (actual - expected) / sr * 1000;
+    if (Math.abs(d) > tolMs) throw new Error(`findPerceptualOnset: ${msg} — landed ${d.toFixed(2)} ms from the strike (tol ±${tolMs})`);
+  };
+  // Loud layer (gain ≈ 2) with a 40 ms plateau: must land just before the strike, not on the plateau.
+  { const strike = ms(140); const on = engine.findPerceptualOnset(mk(2.0, strike, 40), sr, 2.0); near(on, strike, 3, 'loud layer, 40 ms plateau'); if (on > strike) throw new Error('findPerceptualOnset: started after the strike'); }
+  // Soft layer (gain 60×) with a 12 ms plateau: same landing.
+  { const strike = ms(112); near(engine.findPerceptualOnset(mk(60, strike, 12), sr, 60), strike, 3, 'soft layer, 12 ms plateau'); }
+  // Tightly pre-cut file (strike at sample 0, no plateau): onset within one envelope window of 0.
+  { const x = mk(2.0, 0, 0); const on = engine.findPerceptualOnset(x, sr, 2.0); if (on > ms(2.5)) throw new Error(`findPerceptualOnset: pre-cut file started ${(on / sr * 1000).toFixed(2)} ms in`); }
+  // Silence → 0; empty → 0.
+  assertEq(engine.findPerceptualOnset(new Float32Array(ms(50)), sr, 1), 0, 'silent buffer → 0');
+  assertEq(engine.findPerceptualOnset(new Float32Array(0), sr, 1), 0, 'empty buffer → 0');
+  console.log('   findPerceptualOnset: plateau skipped, pre-cut parity, silence guards OK.');
+}
+
+// ── bakeOnsetFade: raised-cosine fade baked into the PCM from the onset ──
+// Guards the live-input race where a clamped source.start begins before/after
+// the segGain ramp: the first played sample must be zero regardless of timing.
+{
+  const sr = 48000, n = 2000, onset = 500;
+  const chans = [new Float32Array(n).fill(1), new Float32Array(n).fill(-0.5)];
+  const buf = { numberOfChannels: 2, length: n, sampleRate: sr, getChannelData: (c) => chans[c] };
+  engine.bakeOnsetFade(buf, onset);
+  const fn = Math.round(0.003 * sr);
+  for (const [c, base] of [[0, 1], [1, -0.5]]) {
+    const d = chans[c];
+    if (d[onset - 1] !== base) throw new Error('bakeOnsetFade: touched samples before the onset');
+    if (d[onset] !== 0) throw new Error(`bakeOnsetFade: first played sample is ${d[onset]}, expected 0`);
+    for (let i = 1; i < fn; i++) if (Math.abs(d[onset + i]) <= Math.abs(d[onset + i - 1])) throw new Error('bakeOnsetFade: fade not strictly rising');
+    if (d[onset + fn] !== base) throw new Error('bakeOnsetFade: fade ran past its length');
+    if (Math.abs(d[onset + fn - 1]) < Math.abs(base) * 0.99) throw new Error('bakeOnsetFade: fade does not reach unity');
+  }
+  // Onset near the end / out of range: never throws, never writes out of bounds.
+  engine.bakeOnsetFade({ numberOfChannels: 1, length: 10, sampleRate: sr, getChannelData: () => new Float32Array(10).fill(1) }, 9);
+  engine.bakeOnsetFade(buf, n + 5);
+  console.log('   bakeOnsetFade: zero first sample, strictly rising, untouched pre-onset, bounds OK.');
 }
 
 // ── readHkiInstrument: atomic .hki → { key, def, audio } adapter ──

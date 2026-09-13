@@ -149,22 +149,93 @@ const RELEASE_SCALE = 0.5;
    sub-sample (≤12ms × rate delta), vs up to 220 samples of misalignment from
    the deferral. */
 const XFADE_GUARD_S = 0.012;
-/* Short attack ramp applied to segGain on every note-on. Even with a gain-aware
-   trim gate the first played sample is a small but nonzero step (the trim lands
-   where the NORMALIZED signal crosses the gate, ≈ −50 dBFS), and simultaneous
-   soft layers (a Composer chord) stack those steps into an audible click. A few
-   ms of fade-in removes the discontinuity; ≤5 ms is below the threshold where it
-   audibly softens a struck/percussive attack. */
+/* Short attack ramp applied to segGain on every note-on. The perceptual-onset
+   trim (findPerceptualOnset) deliberately starts playback ON the rising edge of
+   the strike, ~1–3 ms before the envelope reaches −9 dB rel. the attack peak, so
+   the first played sample is a nonzero step of maybe −25…−12 dB rel. peak; and
+   simultaneous soft layers (a Composer chord) would stack those steps into an
+   audible click. A few ms of fade-in removes the discontinuity; ≤5 ms is below
+   the threshold where it audibly softens a struck/percussive attack. */
 const ATTACK_FADE_S = 0.004;
-/* Leading-silence trim threshold, measured on the GAIN-NORMALIZED signal (see
-   the trim gate below). Higher = tighter onset (cuts more pre-attack), lower =
-   safer against clipping a slow attack. With the attack fade-in owning click
-   prevention, this can sit high enough to land right at the audible onset:
-   gating on raw PCM × per-sample gain, 0.02 ≈ −34 dBFS normalized. (The original
-   gain-blind gate used a raw 0.003, which for a soft layer boosted ~10× was an
-   effective ~0.03 normalized — tight onsets, but it clicked; we keep the tight
-   onset and drop the click.) */
-const TRIM_GATE_NORM = 0.02;
+/* Perceptual-onset trim for decaying instruments (load time; see the trim block
+   in loadInstrument). Replaces the former fixed amplitude gate (0.02 on the
+   gain-normalized signal, ≈ −34 dBFS). An amplitude gate is not an onset
+   detector: the 2026-09-12 audit of the Korg SP-250 .hki found every sample
+   carries a low-level pre-strike segment (~−23 dB rel. the attack peak, harmonic
+   to the note, 10–50 ms long, longer at higher velocity) that the gate tripped
+   on, so playback started 10–50 ms BEFORE the perceptual onset, differently per
+   note and per layer — the "inconsistent onset / lag" Max heard live. The
+   detector instead measures a short RMS envelope over the attack, finds the
+   attack peak, and starts where the envelope first reaches ONSET_REL_DB below
+   that peak (the steep part of the strike), backed off ONSET_BACKOFF_S so the
+   attack fade-in covers the rise. Tightly pre-cut sample sets (e.g. VCSL
+   harpsichord, whose files start on the strike) land within a window or two of
+   sample 0, byte-for-byte equivalent to the old gate there. */
+const ONSET_LOW_GATE_NORM = 0.002;   /* −54 dBFS normalized: where the attack search begins */
+const ONSET_SEARCH_S = 0.4;          /* attack peak is searched within this span after the low gate */
+const ONSET_ENV_WIN_S = 0.002;       /* RMS envelope window */
+const ONSET_ENV_HOP_S = 0.0005;      /* RMS envelope hop */
+const ONSET_REL_DB = -9;             /* start where the envelope first reaches peak + this (dB) */
+const ONSET_BACKOFF_S = 0.001;       /* then back off this far (never before the low gate) */
+/* Raised-cosine fade baked INTO the decoded buffer from the onset (decay
+   instruments, load time). Why, when sNoteOn already ramps segGain over
+   ATTACK_FADE_S: that ramp lives on the automation timeline, anchored at the
+   pre-scheduled startT, while the live-input path gives the source only a 5 ms
+   lead — when the render thread has already passed startT, `source.start` is
+   clamped to "now" and begins reading from the trim point, but the ramp has
+   already (partly) run, so the first samples come out at (near) full gain: a
+   step, i.e. a click. With the old −34 dBFS gate that step was inaudible; the
+   perceptual onset sits at −25…−7 dB rel. peak, so the latent race became
+   audible (Max, 2026-09-12: "occasional clicks on onsets"). A fade in the PCM
+   itself starts from zero no matter when the source actually starts. Kept short
+   so the combined attack (baked × ramp) stays below the ~5 ms softening line. */
+const ONSET_BAKED_FADE_S = 0.003;
+
+/* Apply the baked onset fade in place from `onsetIdx` on every channel of an
+   AudioBuffer-like object (anything with numberOfChannels + getChannelData).
+   Samples before onsetIdx are left untouched (never played: playback starts at
+   trimStart). Pure w.r.t. everything but the buffer's PCM; exported for tests. */
+export function bakeOnsetFade(buf: { numberOfChannels: number; length: number; sampleRate: number; getChannelData(c: number): Float32Array }, onsetIdx: number): void {
+  var n=buf.length; if(onsetIdx<0||onsetIdx>=n)return;
+  var fn=Math.min(Math.round(ONSET_BAKED_FADE_S*buf.sampleRate),n-onsetIdx);
+  if(fn<=1)return;
+  for(var c=0;c<buf.numberOfChannels;c++){
+    var d=buf.getChannelData(c);
+    for(var i=0;i<fn;i++){d[onsetIdx+i]*=0.5-0.5*Math.cos(Math.PI*i/fn);}
+  }
+}
+
+/* Find the perceptual onset (sample index) of a decaying note. `gain` is the
+   per-sample normalization gain applied at playback, so thresholds are on the
+   NORMALIZED signal and every layer is judged on the same footing regardless of
+   capture loudness. Returns 0 for silence / degenerate input. Pure; exported for
+   headless verification (test/engine-smoke, and the .hki audit tooling). */
+export function findPerceptualOnset(data: Float32Array, sr: number, gain: number): number {
+  var n=data.length; if(n===0)return 0;
+  var g=(typeof gain==='number'&&gain>0)?gain:1.0;
+  var low=-1;
+  for(var i=0;i<n;i++){if(Math.abs(data[i])*g>ONSET_LOW_GATE_NORM){low=i;break;}}
+  if(low<0)return 0;
+  var win=Math.max(1,Math.round(ONSET_ENV_WIN_S*sr));
+  var hop=Math.max(1,Math.round(ONSET_ENV_HOP_S*sr));
+  var end=Math.min(n,low+Math.round(ONSET_SEARCH_S*sr));
+  if(end-low<win)return low;
+  var count=Math.floor((end-low-win)/hop)+1;
+  var env=new Float32Array(count);
+  var peak=0;
+  for(var k=0;k<count;k++){
+    var st=low+k*hop,e=0;
+    for(var j=0;j<win;j++){var v=data[st+j]*g;e+=v*v;}
+    var r=Math.sqrt(e/win);env[k]=r;if(r>peak)peak=r;
+  }
+  if(peak<=0)return low;
+  var thresh=peak*Math.pow(10,ONSET_REL_DB/20);
+  var onset=low;
+  for(var m=0;m<count;m++){if(env[m]>=thresh){onset=low+m*hop;break;}}
+  onset-=Math.round(ONSET_BACKOFF_S*sr);
+  if(onset<low)onset=low;
+  return onset;
+}
 
 /* Equal-power crossfade base curves. cos/sin pair keeps Σ(g²)≈1 across the
    fade so summed voices stay at constant perceived loudness (linear ramps
@@ -399,16 +470,14 @@ const loadedInstruments: Record<string, any> = {};
           } else {
             lp={trimStart:0};
           }
-          /* Trim leading silence for decaying instruments. Gate on the
-             GAIN-APPLIED amplitude, not raw PCM: the per-sample normalization
-             gain (s.gain, applied at playback) runs AFTER this gate, so a raw
-             0.003 threshold lets a soft, heavily-boosted layer (gain ≈ 8–13×)
-             keep its trim point where the NORMALIZED signal is already ~−28 dBFS
-             — playback then starts on that loud step and clicks. Multiplying by
-             g finds where the normalized signal crosses TRIM_GATE_NORM, giving
-             every layer a consistent onset boundary regardless of capture
-             loudness; the attack fade-in (not a low threshold) handles clicks. */
-          if(!instr.loop){var _g=(typeof s.gain==='number')?s.gain:1.0;var _d=buf.getChannelData(0);for(var _s=0;_s<buf.length;_s++){if(Math.abs(_d[_s])*_g>TRIM_GATE_NORM){lp.trimStart=_s/buf.sampleRate;break;}}}
+          /* Trim to the PERCEPTUAL onset for decaying instruments (the manifest
+             trimStart is an analyzer/HKLO amplitude-gate value and is ignored
+             here). Measured on the GAIN-APPLIED signal so every layer is judged
+             at its playback level; see findPerceptualOnset for the rationale.
+             The result is an integer sample index, so rate=1 reads stay on the
+             integer grid; the attack fade-in (not a low threshold) handles the
+             start step. */
+          if(!instr.loop){var _g=(typeof s.gain==='number')?s.gain:1.0;var _d=buf.getChannelData(0);var _on=findPerceptualOnset(_d,buf.sampleRate,_g);lp.trimStart=_on/buf.sampleRate;bakeOnsetFade(buf,_on);}
           result[i]={buffer:buf,freq:s.freq,gain:(typeof s.gain==='number')?s.gain:1.0,vel:(typeof s.vel==='number')?s.vel:null,lp:lp,name:s.name,crossfadeSec:(typeof s.crossfadeSec==='number'&&s.crossfadeSec>0)?s.crossfadeSec:null};loaded++;
           if(onProgress)onProgress(loaded,total,s.name);
           if(loaded===total&&!aborted){

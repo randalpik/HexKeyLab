@@ -59,6 +59,10 @@ Every sample carries a precomputed linear `gain` bringing its RMS to **−18 dBF
 
 `rangeAttenuation` tapers volume above the highest sampled note in an instrument.
 
+### Perceptual-onset trim (decay instruments)
+
+At load time every decaying sample is trimmed to its **perceptual onset** by `findPerceptualOnset` (exported, pure): scale by the sample's playback `gain`, take a 2 ms RMS envelope over the attack (from the first −54 dBFS crossing, 400 ms ahead), find the attack peak, and start where the envelope first reaches **−9 dB rel. that peak**, backed off 1 ms so the 4 ms attack fade-in covers the rise. Loop instruments are untouched (they use the analyzer's `trimStart` + segments). The manifest's `trimStart` on a decay sample (HKLO's amplitude-gate value) is **ignored** here. Rationale: an amplitude gate is not an onset detector — the Korg SP-250 `.hki` audit (2026-09-12) found every sample carries a low-level pre-strike segment (~−23 dB rel. peak, harmonic to the note, 10–50 ms, longer at higher velocity) that the former fixed gate (0.02 normalized) tripped on, so playback began 10–50 ms before the strike, differently per note and per layer. With the detector the time from playback start to −12 dB rel. peak is 1.0–2.0 ms across all 144 samples (was 0.2–48 ms). Tightly pre-cut sets (VCSL harpsichord etc.) land within an envelope window of sample 0, as before. A 3 ms raised-cosine fade is then **baked into the decoded PCM** from the onset (`bakeOnsetFade`): the `segGain` attack ramp is anchored at the pre-scheduled `startT`, but the live-input path gives the source only a 5 ms lead, and when the render thread has already passed `startT` the clamped `source.start` begins from the trim point while the ramp has already run — a full-gain step on a −25…−7 dB rel. peak signal, i.e. an occasional click (inaudible under the old −34 dBFS gate). A fade in the PCM starts from zero whenever the source actually starts. → see decisions.md "Perceptual-onset trim replaces the amplitude gate"; lessons.md "An amplitude gate is not an onset detector".
+
 ## Voice anchors (wrap-aligned segment switching)
 
 Per-voice: `sourceStartTime`, `sourceStartOffset`, `sourceLoopA`, `sourceLoopB`, `sourceLoopAIdx`, `sourceLoopBIdx`, `sourceRate`.
@@ -157,7 +161,7 @@ samples/<sample-name>.<ext>    // one audio file per kept sample
 provenance.json                // optional — source URL/path, originalFiles, generator, createdAt
 ```
 
-`HkiManifest` mirrors one `INSTRUMENTS` entry minus `baseUrl`; each sample carries its archive-relative `file`. Loop instruments keep `segments`/`trend`/`trimStart` and optionally **`crossfadeSec`** — the analyzer-chosen seam crossfade duration (residual-gated window search; absent ⇒ the engine's 30 ms default; shorter for material whose seams diverge over the full window, e.g. vibrato voices). Decay instruments keep `freq`/`gain`. Reader/writer use `fflate` (`zipSync`/`unzipSync`), identical in Node and browser.
+`HkiManifest` mirrors one `INSTRUMENTS` entry minus `baseUrl`; each sample carries its archive-relative `file`. Loop instruments keep `segments`/`trend`/`trimStart` and optionally **`crossfadeSec`** — the analyzer-chosen seam crossfade duration (residual-gated window search; absent ⇒ the engine's 30 ms default; shorter for material whose seams diverge over the full window, e.g. vibrato voices). Decay instruments keep `freq`/`gain` (+ `vel` for velocity layers); a decay sample's `trimStart` is informational only — the engine re-derives the start point with `findPerceptualOnset` at load. Reader/writer use `fflate` (`zipSync`/`unzipSync`), identical in Node and browser.
 
 **Audio encoding** (`apps/analyzer/cli/bundle.js`): lossy sources (`.mp3/.ogg/.opus/.aac/.m4a`) kept verbatim; `.wav/.aiff/.flac` → OGG/Opus 128 kbps via `ffmpeg -c:a libopus`; anything else verbatim.
 

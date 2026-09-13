@@ -4146,3 +4146,44 @@ a partial restore is a silent downgrade the gates do not see, because every
 gate the suite runs starts from a fresh derive. Fixture:
 `page_zoom_roundtrip_keeps_widths`, `lock_after_zoom_reflows`.
 
+## An amplitude gate is not an onset detector — sampled pianos carry a pre-strike plateau (2026-09-12)
+
+Symptom: playing the Korg SP-250 `.hki` on the Lumatone felt laggy and uneven,
+worse when playing loud. No single factor was conclusive by ear. A
+whole-instrument audit (every sample, one table — never a "worst" sample)
+showed the engine's load-time trim landed 10–50 ms BEFORE the strike, with the
+delay growing with velocity and differing by up to 47 ms between notes of the
+same layer. Every sample has a low-level pre-strike segment (~−23 dB rel. the
+attack peak, harmonic to the note, ramping up into the strike) that a fixed
+amplitude gate cannot distinguish from the attack. Lessons: (1) trim to a level
+RELATIVE to the sample's own attack peak, on a short envelope, never to an
+absolute amplitude — see `findPerceptualOnset`; (2) the manifest `trimStart`
+HKLO writes for decay samples is ignored by the engine, so fixing it in the
+orchestrator alone would have changed nothing audible; (3) before blaming a
+processing stage, reproduce it synthetically — the Wiener denoiser was the
+obvious suspect and a 20-line tone-burst run through the real `wiener.ts`
+cleared it in one pass (pre-echo ≤15 ms at −40 dB, nowhere near the plateau);
+(4) constant latency and variable latency are different problems — the
+variable part (per-note, per-layer) is what destroys evenness, so measure the
+per-sample spread, not the mean. Verification is the audit re-run from the
+new start point: time to −12 dB rel. peak per sample should sit at 1–2 ms with
+a spread under 5 ms across the set.
+
+## A gain ramp on the automation timeline does not protect a source whose start can be clamped (2026-09-12)
+
+Symptom: after the perceptual-onset trim landed, occasional clicks on note
+onsets that were not there before. `sNoteOn` schedules `source.start(startT)`
+and the attack ramp `setValueAtTime(0, startT) → linearRamp(vol, startT+4ms)`
+at the same instant, 5 ms ahead for decay instruments. Web Audio clamps a
+past-dated `start` to "now" and begins reading from the offset — it does not
+skip into the buffer — while the automation timeline is evaluated at true
+time, so under a late delivery the ramp has already run when the first PCM
+sample renders: a full-gain step. The race was always there; the old
+−34 dBFS gate kept the step 24 dB smaller and inaudible, and the tighter trim
+made it audible. Lesson: anything that must be true at the FIRST rendered
+sample of a source (silence, a fade-in) belongs in the PCM, not on the
+automation timeline, unless the start is anchored on the audio clock with a
+lead that can never be missed. `bakeOnsetFade` puts a 3 ms raised-cosine into
+the decoded buffer at the onset; the ramp stays as belt-and-braces. Corollary
+for future onset work: tightening a trim can expose every downstream
+assumption that the first sample is quiet.
