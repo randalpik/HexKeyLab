@@ -4187,3 +4187,20 @@ lead that can never be missed. `bakeOnsetFade` puts a 3 ms raised-cosine into
 the decoded buffer at the onset; the ramp stays as belt-and-braces. Corollary
 for future onset work: tightening a trim can expose every downstream
 assumption that the first sample is quiet.
+
+## A peak-normalization target is a convention, not a ceiling — don't lower the set to defend it (2026-09-12)
+
+The analyzer's −18 dBFS / −3 dBFS-peak gain finder is two rules in one, and
+on a percussive sample set the peak rule wins on nearly every sample
+(127/144 on the SP-250), so the "normalized" loudness is really the crest
+factor. When a perceptual re-gain then needs to BOOST a quiet note, the
+reflex is to keep every sample under the old peak target by shifting the
+whole set down — which trades 143 notes' consistency for one transient that
+may never even reach the limiter at the velocities its layer actually plays.
+Evaluate the PLAYED peak at the top of the layer's velocity zone, report it,
+and let the master limiter own the edge case (Max's ruling). Related: when
+you correct with one loudness exponent (phon rule, 10 dB per doubling) and
+re-measure with a model that has another (the lite Bark model's gain^0.46),
+you will see a residual that is not a bug — state which exponent the
+prediction uses and expose the strength as the ear-trim knob.
+

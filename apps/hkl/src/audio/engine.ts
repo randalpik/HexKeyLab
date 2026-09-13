@@ -14,7 +14,7 @@
 import { audio } from '../state/audio.js';
 import { pedal } from '../state/pedal.js';
 import { selection } from '../state/selection.js';
-import { savePrefs } from '../state/persistence.js';
+import { savePrefs, loadPrefs } from '../state/persistence.js';
 import { keyFreq } from '../tuning/frequency.js';
 import { SampleEngine, inflightExpRampValue } from './samples.js';
 import { initCapture } from './capture.js';
@@ -124,6 +124,9 @@ export function initAudio(): void {
     velocityToGain: velocityBaseVol,
     onSeamEvent: recordSeamEvent,
   }); /* sampleMaster at 0.9 */
+  /* Inter-layer loudness-match blend for re-gained layered .hki instruments
+     (lumadiag slider, persisted). Module-level in the engine; safe to set here. */
+  SampleEngine.setLayerBlend(loadPrefs().layerBlend);
   /* Fire-and-forget worklet load for the audio-capture tap. Best-effort:
      a load failure leaves capture unsupported but doesn't affect the engine.
      Kept off the synchronous init path so existing callers (toggleAudio,

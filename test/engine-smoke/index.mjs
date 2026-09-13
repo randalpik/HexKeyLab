@@ -17,6 +17,7 @@ const REQUIRED = [
   'init', 'loadInstrument', 'sNoteOn', 'sNoteOff', 'sRampFreq',
   'sSetAftertouch', 'sSetVoiceDamperDepth', 'sSetVoicePan', 'isInstrumentLoaded',
   'inflightExpRampValue', 'pickLayer', 'findPerceptualOnset', 'bakeOnsetFade',
+  'setLayerBlend', 'getLayerBlend', 'blendedGain',
 ];
 const missing = REQUIRED.filter((k) => typeof engine[k] !== 'function');
 if (missing.length) throw new Error('@hkl/engine missing exports: ' + missing.join(', '));
@@ -143,6 +144,25 @@ function assertEq(actual, expected, msg) {
   engine.bakeOnsetFade({ numberOfChannels: 1, length: 10, sampleRate: sr, getChannelData: () => new Float32Array(10).fill(1) }, 9);
   engine.bakeOnsetFade(buf, n + 5);
   console.log('   bakeOnsetFade: zero first sample, strictly rising, untouched pre-onset, bounds OK.');
+}
+
+// ── layer blend: log-linear blend between level-matched and sones-matched gains ──
+{
+  const two = { gain: 2, gainLevel: 8 };
+  const close = (a, b, msg) => { if (Math.abs(a - b) > 1e-9) throw new Error(`layerBlend: ${msg} — got ${a}, expected ${b}`); };
+  close(engine.blendedGain(two, 0), 8, 't=0 → gainLevel');
+  close(engine.blendedGain(two, 1), 2, 't=1 → gain');
+  close(engine.blendedGain(two, 0.5), 4, 't=0.5 → geometric mean');
+  close(engine.blendedGain({ gain: 3 }, 0), 3, 'no gainLevel → gain regardless of t');
+  close(engine.blendedGain({ gain: 3, gainLevel: 0 }, 0), 3, 'non-positive gainLevel ignored');
+  close(engine.blendedGain({}, 0.3), 1, 'no gains → 1.0');
+  engine.setLayerBlend(0.25); close(engine.getLayerBlend(), 0.25, 'setter/getter');
+  close(engine.blendedGain(two), Math.pow(8, 0.75) * Math.pow(2, 0.25), 'default t = module setting');
+  engine.setLayerBlend(7); close(engine.getLayerBlend(), 1, 'clamp high');
+  engine.setLayerBlend(-1); close(engine.getLayerBlend(), 0, 'clamp low');
+  engine.setLayerBlend(NaN); close(engine.getLayerBlend(), 1, 'NaN → 1');
+  engine.setLayerBlend(1);
+  console.log('   layer blend: endpoints, geometric midpoint, fallbacks, clamps OK.');
 }
 
 // ── readHkiInstrument: atomic .hki → { key, def, audio } adapter ──

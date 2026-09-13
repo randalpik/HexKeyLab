@@ -51,7 +51,8 @@ import {
 import { velocityCal, DEFAULT_INPUT_CURVE, DEFAULT_INTERVAL_CURVE, STATS_MIN_N, STATS_HIGH_CV } from '../audio/velocityCal.js';
 import { baseKeys } from '../layout/baseKeys.js';
 import { lumatone } from '../state/lumatone.js';
-import { savePrefs } from '../state/persistence.js';
+import { savePrefs, loadPrefs } from '../state/persistence.js';
+import { SampleEngine } from '../audio/samples.js';
 import { syncLumatoneColors } from './sync.js';
 
 /* Build (q,r-string) → board_group lookup once. Used by the per-key stats
@@ -873,6 +874,51 @@ function makeVelocityCalSection(): HTMLDivElement {
   intBtnRow.appendChild(intPushBtn);
   intBtnRow.appendChild(intResetBtn);
   sec.appendChild(intBtnRow);
+
+  /* ── Layer loudness match (re-gained layered .hki) ──
+     A bundle re-gained by analyzer/cli/hki-regain.mjs carries two gains per
+     sample: layers matched in K-weighted level (`gainLevel`) and in Bark-sones
+     (`gain`). Neither metric alone is audibly smooth at the layer boundaries
+     (2026-09-13), so the blend is one live knob — log-linear, applied at the
+     next note-on. Persisted as prefs.layerBlend; once a value is chosen, bake it
+     into the bundle with `hki-regain.mjs --bake-blend <t>`. Instruments without
+     `gainLevel` ignore the setting. */
+  const blendLabel = document.createElement('div');
+  blendLabel.textContent = 'Layer loudness match: level (0) ↔ sones (1)';
+  Object.assign(blendLabel.style, { fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginBottom: '4px' });
+  sec.appendChild(blendLabel);
+  const blendRow = document.createElement('div');
+  Object.assign(blendRow.style, {
+    display: 'grid', gridTemplateColumns: '50px 1fr 44px',
+    alignItems: 'center', gap: '6px', margin: '2px 0 8px',
+  });
+  const blendLbl = document.createElement('span');
+  blendLbl.textContent = 'match';
+  blendLbl.title = 'Inter-layer loudness matching for re-gained layered instruments. 0 = layers matched in K-weighted level, 1 = matched in Bark-sones; log-linear in between. Takes effect on the next note played.';
+  Object.assign(blendLbl.style, { fontSize: '11px', color: 'rgba(255,255,255,0.75)' });
+  const blendSlider = document.createElement('input');
+  blendSlider.type = 'range';
+  blendSlider.min = '0'; blendSlider.max = '1'; blendSlider.step = '0.05';
+  blendSlider.value = String(loadPrefs().layerBlend);
+  Object.assign(blendSlider.style, { width: '100%' });
+  const blendVal = document.createElement('span');
+  blendVal.textContent = parseFloat(blendSlider.value).toFixed(2);
+  Object.assign(blendVal.style, {
+    fontSize: '11px', fontFamily: 'monospace', textAlign: 'right',
+    color: 'rgba(255,255,255,0.9)',
+  });
+  blendSlider.addEventListener('input', () => {
+    const t = parseFloat(blendSlider.value);
+    SampleEngine.setLayerBlend(t);
+    blendVal.textContent = t.toFixed(2);
+  });
+  blendSlider.addEventListener('change', () => {
+    savePrefs({ layerBlend: parseFloat(blendSlider.value) });
+  });
+  blendRow.appendChild(blendLbl);
+  blendRow.appendChild(blendSlider);
+  blendRow.appendChild(blendVal);
+  sec.appendChild(blendRow);
 
   /* ── Lumatone velocity curve ──
      The Lumatone's velocity→loudness shape (gain space). Internally the raw

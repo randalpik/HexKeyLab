@@ -59,8 +59,14 @@ export interface SampleDef {
   freq: number;
   /** Exact filename for CDN fetch / archive lookup (wins over filePattern). */
   file?: string;
-  /** Per-sample linear gain (normalization). */
+  /** Per-sample linear gain (normalization). For a re-gained layered decay bundle
+   *  (analyzer `hki-regain.mjs`) this is the Bark-sones inter-layer matching. */
   gain?: number;
+  /** Optional alternate gain: the same sample with its layers matched in
+   *  K-weighted LEVEL instead of sones. When present, playback blends
+   *  log-linearly between gainLevel (layerBlend 0) and gain (layerBlend 1) —
+   *  see setLayerBlend. Absent ⇒ `gain` is used as-is. */
+  gainLevel?: number;
   /** Loop-point times (sec) — legacy single-loop shape. */
   loopPts?: number[];
   /** Seam-switching loop segments [{a, b}, …] (sec). */
@@ -256,6 +262,32 @@ let sampleMaster: any = null;
 const buffers: Record<string, any> = {};
 const activeVoices: Record<string, any> = {};
 const loadedInstruments: Record<string, any> = {};
+
+/* Inter-layer matching blend for re-gained layered decay bundles. A sample may
+   carry two gains: `gain` (layers matched in Bark-sones) and `gainLevel` (layers
+   matched in K-weighted level). Neither metric alone lands on audible smoothness
+   at the layer boundaries (Max, 2026-09-13: the sones match over-corrects at the
+   two lowest boundaries), so the choice is exposed as one live knob — the HKL
+   lumadiag slider — and the played gain is the log-linear blend
+   gainLevel^(1−t) · gain^t. Samples without gainLevel ignore the setting. Read at
+   note-on, so a slider move affects the next note, not held voices.
+
+   This is a STANDING control, not a calibration step that gets baked away: both
+   endpoints are defensible definitions of "equally loud" across a hard velocity-
+   layer switch, and the useful setting is material- and context-dependent. Like
+   the velocity curve and per-key gain, it is playback-side state and is NOT
+   captured in a recording — an .hkr stores coordinates + velocity and the whole
+   gain model is re-applied at playback under the current settings. */
+let layerBlend = 1.0;
+export function setLayerBlend(t: number): void { layerBlend = t < 0 ? 0 : t > 1 ? 1 : (isFinite(t) ? t : 1); }
+export function getLayerBlend(): number { return layerBlend; }
+/** The gain a sample plays at under the current layer blend (pure; exported for tests). */
+export function blendedGain(sample: { gain?: number | null; gainLevel?: number | null }, t: number = layerBlend): number {
+  var g = (sample.gain != null) ? sample.gain : 1.0;
+  var gl = sample.gainLevel;
+  if (gl == null || !(gl > 0) || !(g > 0)) return g;
+  return Math.pow(gl, 1 - t) * Math.pow(g, t);
+}
 
   export function init(audioCtx: AudioContext, destNode: AudioNode, config?: SampleEngineConfig): void {
     ctx=audioCtx;
@@ -478,7 +510,7 @@ const loadedInstruments: Record<string, any> = {};
              integer grid; the attack fade-in (not a low threshold) handles the
              start step. */
           if(!instr.loop){var _g=(typeof s.gain==='number')?s.gain:1.0;var _d=buf.getChannelData(0);var _on=findPerceptualOnset(_d,buf.sampleRate,_g);lp.trimStart=_on/buf.sampleRate;bakeOnsetFade(buf,_on);}
-          result[i]={buffer:buf,freq:s.freq,gain:(typeof s.gain==='number')?s.gain:1.0,vel:(typeof s.vel==='number')?s.vel:null,lp:lp,name:s.name,crossfadeSec:(typeof s.crossfadeSec==='number'&&s.crossfadeSec>0)?s.crossfadeSec:null};loaded++;
+          result[i]={buffer:buf,freq:s.freq,gain:(typeof s.gain==='number')?s.gain:1.0,gainLevel:(typeof s.gainLevel==='number'&&s.gainLevel>0)?s.gainLevel:null,vel:(typeof s.vel==='number')?s.vel:null,lp:lp,name:s.name,crossfadeSec:(typeof s.crossfadeSec==='number'&&s.crossfadeSec>0)?s.crossfadeSec:null};loaded++;
           if(onProgress)onProgress(loaded,total,s.name);
           if(loaded===total&&!aborted){
             buffers[key]=result.filter(function(x){
@@ -591,7 +623,7 @@ const loadedInstruments: Record<string, any> = {};
     /* Per-sample RMS-normalization gain, baked in by the analyzer to bring
        the steady (loop) or attack-peak (decay) RMS to a uniform target across
        all instruments. Defaults to 1.0 if absent — see analyzer/backfill-gains.js. */
-    var vol=baseVol*rangeAttenuation(freq,instrumentKey)*(nearest.gain!=null?nearest.gain:1.0);
+    var vol=baseVol*rangeAttenuation(freq,instrumentKey)*blendedGain(nearest);
     /* pressureGain: modulated by polyphonic aftertouch. Initialized to 1.0 so
        the note plays at its velocity-driven volume until the first aftertouch
        message arrives (which may be never, or well after onset). Placed outside
@@ -1457,7 +1489,7 @@ const loadedInstruments: Record<string, any> = {};
        freq and nearest sample. The slide may have moved to a different sample,
        which can carry a different normalization gain. */
     var baseVol=vol;
-    vol=baseVol*rangeAttenuation(freq,instrumentKey)*(nearest.gain!=null?nearest.gain:1.0);
+    vol=baseVol*rangeAttenuation(freq,instrumentKey)*blendedGain(nearest);
     /* See sNoteOn for the segments-vs-legacy dispatch — mirrored here. */
     var segsFaded=nearest.lp&&nearest.lp.segments;
     var pts=nearest.lp&&nearest.lp.loopPts;

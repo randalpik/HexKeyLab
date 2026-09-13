@@ -26,7 +26,7 @@ Architecture source of truth for the HKL viewer app (`apps/hkl/`). **For how to 
 
 ### Lumatone internals (reverse-engineered)
 
-Needed only for per-key hardware calibration (units with broken macro buttons) or diagnostics. Normal HKL operation requires none of it. → full workflow in [`../lumatone-calibration.md`](../lumatone-calibration.md).
+Needed only for per-key hardware calibration (units with broken macro buttons) or diagnostics. Normal HKL operation requires none of it. → full workflow in [`../lumatone-calibration.md`](../lumatone-calibration.md). The same **Calibrate Keys** overlay (`lumatone/lumadiag.ts`) hosts the velocity-calibration UI — per-board threshold sliders, the firmware interval-curve sliders + push, the Lumatone velocity-curve preview — and, since 2026-09-13, the **Layer loudness match** slider: `prefs.layerBlend` → `SampleEngine.setLayerBlend`, the log-linear blend between a re-gained `.hki`'s level-matched (`gainLevel`) and sones-matched (`gain`) layer gains (see engine.md "Layer-blend gain").
 
 - **Hardware**: BeagleBone Black running Debian + 5 PIC microcontrollers (one per board). BBB↔PIC over UART `/dev/ttyO1`; host↔BBB over USB-MIDI. BBB is also a USB-ethernet gadget — device IP `192.168.6.2` (Linux host) / `192.168.7.2` (Mac/Windows). SSH `debian`/`temppwd`. Firmware: `/home/debian/TerpstraController/TerpstraController` (ARM 32-bit ELF, debug info), respawned forever by `lmtn_launcher.sh`.
 - **Per-key calibration state** lives in two layers:

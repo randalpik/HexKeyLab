@@ -104,6 +104,10 @@ export interface PrefsV1 {
    *  physically transposed). Off by default — standard units need no swap. */
   swapBoards34: boolean;
   captureAudio: boolean;
+  /** Inter-layer matching blend for re-gained layered decay instruments:
+   *  0 = layers matched in K-weighted level, 1 = matched in Bark-sones (the
+   *  engine blends log-linearly). Lumadiag slider; default 1. */
+  layerBlend: number;
   velocityCal?: VelocityCalPrefs;
   /** Piano-toolbar input. Selected device is a Web MIDI input id (stable per
    *  port across reloads in modern browsers). */
@@ -183,6 +187,7 @@ export const DEFAULT_PREFS: PrefsV1 = {
   calibrateKeys: false,
   swapBoards34: false,
   captureAudio: false,
+  layerBlend: 1,
   pianoInputDeviceId: null,
   pianoEnabled: false,
   pianoOutputEnabled: false,
@@ -306,6 +311,10 @@ export function loadPrefs(): PrefsV1 {
       typeof o.captureAudio === "boolean"
         ? o.captureAudio
         : DEFAULT_PREFS.captureAudio,
+    layerBlend:
+      typeof o.layerBlend === "number" && isFinite(o.layerBlend)
+        ? Math.min(1, Math.max(0, o.layerBlend))
+        : DEFAULT_PREFS.layerBlend,
     velocityCal: loadVelocityCal(o.velocityCal),
     pianoInputDeviceId:
       typeof o.pianoInputDeviceId === 'string'

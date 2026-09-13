@@ -36,6 +36,11 @@ export interface HkiSampleEntry {
    *  brighter layers down to the device's own loudness balance (see the orchestrator
    *  buildHki). Defaults to 1.0. */
   gain?: number;
+  /** Optional alternate per-sample gain: the same layered note with its layers
+   *  matched in K-weighted LEVEL rather than Bark-sones (`gain`). Written by the
+   *  analyzer's `hki-regain.mjs`; the engine blends log-linearly between the two
+   *  by its layer-blend setting (0 = level, 1 = sones). Absent ⇒ `gain` alone. */
+  gainLevel?: number;
   /** Reference velocity (1..127) this layer represents (bin center). Absent ⇒
    *  single-layer note: matches any input velocity, behaving exactly as a v1
    *  sample. Multiple entries may share `name` (and `freq`) at different `vel`

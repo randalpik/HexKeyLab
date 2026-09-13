@@ -55,6 +55,8 @@ Gain constants: `sampleMaster = 1.0`, `oscGain = squareGain = 1.0` (pass-through
 
 Every sample carries a precomputed linear `gain` bringing its RMS to **−18 dBFS** with a single-voice peak ceiling of −3 dBFS. Applied once at `sNoteOn` (`vol *= nearest.gain`). Oscillator amplitudes are baked into per-note `vol` (sine ≈ 0.1779, triangle ≈ 0.2179, square ≈ 0.1259, so steady-tone RMS = TARGET_RMS); low-frequency Fletcher-Munson boost on sine/triangle preserved. Values computed by `apps/analyzer/cli/backfill-gains.js`. → see decisions.md "−18 dBFS RMS normalization"
 
+**Layer-blend gain (re-gained layered decay bundles).** A sample may carry a second gain, `gainLevel` (its layers matched in K-weighted level) beside `gain` (matched in Bark-sones; both written by `apps/analyzer/cli/hki-regain.mjs`). At note-on the engine plays `blendedGain(sample) = gainLevel^(1−t) · gain^t` with `t` = `setLayerBlend(t)` (module-level, default 1, host-driven — HKL's lumadiag slider, persisted as `prefs.layerBlend` and applied in `initAudio`). Samples without `gainLevel` play `gain` unchanged. Read at note-on only, so a slider move affects the next note, not held voices. Rationale: neither metric alone lands on audible smoothness at hard layer switches (decisions.md "Layer-blend slider").
+
 ### Range attenuation
 
 `rangeAttenuation` tapers volume above the highest sampled note in an instrument.
@@ -161,7 +163,7 @@ samples/<sample-name>.<ext>    // one audio file per kept sample
 provenance.json                // optional — source URL/path, originalFiles, generator, createdAt
 ```
 
-`HkiManifest` mirrors one `INSTRUMENTS` entry minus `baseUrl`; each sample carries its archive-relative `file`. Loop instruments keep `segments`/`trend`/`trimStart` and optionally **`crossfadeSec`** — the analyzer-chosen seam crossfade duration (residual-gated window search; absent ⇒ the engine's 30 ms default; shorter for material whose seams diverge over the full window, e.g. vibrato voices). Decay instruments keep `freq`/`gain` (+ `vel` for velocity layers); a decay sample's `trimStart` is informational only — the engine re-derives the start point with `findPerceptualOnset` at load. Reader/writer use `fflate` (`zipSync`/`unzipSync`), identical in Node and browser.
+`HkiManifest` mirrors one `INSTRUMENTS` entry minus `baseUrl`; each sample carries its archive-relative `file`. Loop instruments keep `segments`/`trend`/`trimStart` and optionally **`crossfadeSec`** — the analyzer-chosen seam crossfade duration (residual-gated window search; absent ⇒ the engine's 30 ms default; shorter for material whose seams diverge over the full window, e.g. vibrato voices). Decay instruments keep `freq`/`gain` (+ `vel` for velocity layers); a decay sample's `trimStart` is informational only — the engine re-derives the start point with `findPerceptualOnset` at load. A re-gained decay sample may also carry `gainLevel` (see Layer-blend gain above). Reader/writer use `fflate` (`zipSync`/`unzipSync`), identical in Node and browser.
 
 **Audio encoding** (`apps/analyzer/cli/bundle.js`): lossy sources (`.mp3/.ogg/.opus/.aac/.m4a`) kept verbatim; `.wav/.aiff/.flac` → OGG/Opus 128 kbps via `ffmpeg -c:a libopus`; anything else verbatim.
 

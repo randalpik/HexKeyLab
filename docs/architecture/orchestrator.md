@@ -205,7 +205,7 @@ layer by velocity (`pickLayer` in `@hkl/engine`) and the house velocity curve su
 dynamics; single-layer notes omit `vel` and behave identically to v1. `readHki` losslessly upcasts
 v1 bundles. Audio is the cleaned capture encoded to 32-bit float WAV.
 
-**Per-layer gain = flat normalization × perceptual softening.** Each layer is first normalized to the
+**Per-layer gain = flat normalization × perceptual softening** *(superseded post-export by `apps/analyzer/cli/hki-regain.mjs` — the 2026-09-12 SP-250 audit found the flat normalization peak-limited on 127/144 layers, so baked loudness followed crest factor, and the sweep-derived softening left +27 % sones steps at layer boundaries; the re-gain tool measures Bark-sones per layer and equalizes them, see analyzer.md → "Perceptual re-gain". Porting that model into `buildHki` is pending the by-ear pass.)*. Each layer is first normalized to the
 −18 dBFS target (analyzer gain finder), then multiplied by a **softening scale** (`layerSofteningScale`
 in `buildHki`). The scale is derived by comparing the device's *measured* velocity→loudness (the
 Discover sweep's `velocityResponse`) against the house velocity curve `velocityCurveGain`
