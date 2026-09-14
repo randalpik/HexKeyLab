@@ -73,7 +73,8 @@ export function setComposerCursor(voice: number, anchor: VoiceCursorAnchor): voi
  *  Composer is the single source of truth — it self-publishes this on any
  *  mode/bar change, so the frame stays identical across clock playback,
  *  Performance mode, and any future cursor source. Wholesale replace (a voice
- *  absent from `bars` drops its bar); scroll-follows whichever bar moved. */
+ *  absent from `bars` drops its bar); scroll-follows whichever bar moved,
+ *  anchored at PLAYBACK_ANCHOR of the viewport. */
 export function setComposerPlaybackBars(
   on: boolean,
   bars: ReadonlyArray<{ voice: number; meiId: string }>,
@@ -88,7 +89,7 @@ export function setComposerPlaybackBars(
   playbackBars.clear();
   for (const [v, id] of next) playbackBars.set(v, id);
   drawCursors();
-  if (on && scrollTarget) scrollToId(scrollTarget);
+  if (on && scrollTarget) scrollToId(scrollTarget, true);
   else if (!on) scrollToActive();
 }
 
@@ -246,7 +247,20 @@ function scrollToActive(): void {
   scrollToId(a.elementId ?? a.measureId ?? a.staffId ?? '');
 }
 
-function scrollToId(id: string): void {
+/* Fraction of the viewport width the sounding moment is parked at during
+   playback. The minimal-scroll path below only ever nudges a rightward-moving
+   target just inside the RIGHT edge, which during playback leaves the player
+   reading the note that is sounding with no lead-in visible ahead of it. */
+const PLAYBACK_ANCHOR = 2 / 3;
+
+/** `anchor` = playback follow: park the target at PLAYBACK_ANCHOR of the
+ *  viewport rather than nudging it minimally into view. The clamp to
+ *  [0, maxScroll] is what produces the "except near the beginning / end"
+ *  behaviour: over the first screenful the moment sits left of the anchor and
+ *  over the last it drifts right of it, because there is nothing left to
+ *  scroll. The clamp also keeps the `next !== scrollLeft` check meaningful at
+ *  the extremes, so a settled view stops re-issuing scrollTo per onset. */
+function scrollToId(id: string, anchor = false): void {
   const el = frameEl();
   const svg = verovioSvg();
   if (!el || !svg || !id) return;
@@ -258,10 +272,16 @@ function scrollToId(id: string): void {
   const left = tr.left - er.left + el.scrollLeft;
   const right = left + tr.width;
   let next = el.scrollLeft;
-  if (tr.width + 2 * PAD > el.clientWidth || left < el.scrollLeft + PAD) {
+  if (anchor) {
+    /* The playback bar is drawn at the element's LEFT edge
+       (computePlaybackBarRect: left - 4), so anchoring `left` puts the BAR —
+       what the player actually tracks — on the anchor point. */
+    next = left - el.clientWidth * PLAYBACK_ANCHOR;
+  } else if (tr.width + 2 * PAD > el.clientWidth || left < el.scrollLeft + PAD) {
     next = Math.max(0, left - PAD);
   } else if (right > el.scrollLeft + el.clientWidth - PAD) {
     next = Math.max(0, right - el.clientWidth + PAD);
   }
+  next = Math.max(0, Math.min(next, el.scrollWidth - el.clientWidth));
   if (next !== el.scrollLeft) el.scrollTo({ left: next, behavior: 'smooth' });
 }
