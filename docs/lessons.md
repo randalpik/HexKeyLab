@@ -4204,3 +4204,47 @@ re-measure with a model that has another (the lite Bark model's gain^0.46),
 you will see a residual that is not a bug — state which exponent the
 prediction uses and expose the strength as the ear-trim knob.
 
+
+## A fixture that sets up in the wrong ORDER tests the wrong code path (2026-09-13)
+
+Every scroll-view fixture in `test/composer-test/` built its document in **page view** and switched to scroll afterwards. A view switch full-engraves, so each one asserted against a freshly correct SVG and the **splice path was never live when it looked**. Two defects hid behind that for months — including one (`scrollPieceEndReachable`) whose assertions were *exactly right*: it already checked that the final barline and past-end cursor fit inside `scrollWidth` and the overlay. It just never ran them against a spliced render.
+
+The tell is setup ordering, not assertion content. When a fixture covers an incremental path, **the state it is incremental from has to be established first, and the edits made after**. Reversing those two lines is the difference between watching a splice and watching a full engrave — and the fixture passes either way, so nothing tells you.
+
+Corollary: a fixture that means to exercise a splice must **pin the SVG root element's identity across the edits**. Without it the fixture silently becomes vacuous the moment anything forces a full re-engrave. `scrollTypingGrowsBounds` does this via `window.__scrollRootStable`.
+
+## A scroll-mode visual baseline was only ever its first window (2026-09-14)
+
+`captureBeyondViewport` expands the **document**, never an inner scroller. `#score` is `overflow:auto`, so anything past the browser window is dark capture fill. Page mode has resized the viewport since 2026-08-30 for exactly this reason; **scroll mode was deliberately left alone** on the reasoning that a continuous system can be ~190 000 px wide — and the cost of that exemption is that every scroll baseline was a shot of its first ~1600 px with the remainder fill.
+
+That is worse than no baseline. The shot is the right *size* (the clip is the content union), so it looks like whole-score evidence, and it looks **identical whether or not the geometry past the window is correct** — which is precisely the thing a scroll-bounds fixture exists to check. Caught by Max eyeballing a baseline I had surfaced as proof the fix worked.
+
+Scroll captures now resize like page captures, clamped to `SCROLL_VP_MAX_W/H`, and a capture that hits the clamp sets `meta.truncated` so a partial shot is never silently read as full coverage.
+
+General form: **when a capture path carries a documented exemption, check whether the exemption also disables the evidence.** An unbounded dimension is a reason to clamp and say so, not a reason to skip the resize.
+
+## Assert the RENDERED layer, not just the model or the internal coordinates (2026-09-14)
+
+`assertScrollSystemCoherent` originally checked the SVG `viewBox` against the content — in SVG user units. That is one indirection short of the symptom. The bug users actually hit was in px: the root `<svg>` kept a stale `width`, so `#score` had **no scrollable extent** and the content was *unreachable*, not merely clipped. A regression breaking only the `viewBox` → `pinExactScale` link would have satisfied every user-unit check and still shipped a cut-off score.
+
+The assertion now also checks the root `<svg>`'s rendered right edge, `#score.scrollWidth`, and the cursor-overlay width against the content's right edge in content coordinates. Same family as the fixture-ordering lesson above: a check one layer above the symptom passes for the wrong reason.
+
+Related: assert **every step**, not the end state. `scrollTypingGrowsBounds` probes after each of its 12 inserts and asserts the tightest one; an end-state check passes a splicer that is wrong for eleven edits and right on the twelfth.
+
+## Regex escapes are eaten inside the test libs' template literals (2026-09-13)
+
+`test/composer-test/lib/assertions.mjs` and the `setup:` bodies in `fixtures.mjs` are **untagged template literals** injected into the page as strings. `\s`, `\d`, `\(` are NonEscapeCharacters there: they are not a syntax error, they silently become `s`, `d`, `(`. A regex written the obvious way —
+
+```js
+/translate\(\s*(-?[\d.]+)[\s,]+(-?[\d.]+)\s*\)/
+```
+
+reaches the page as `/translate(s*(-?[d.]+)[s,]+(-?[d.]+)s*)/`, which matches nothing and fails silently. Double every backslash (`\\s`, `\\d`, `\\(`), or avoid the regex entirely (`viewBox.trim().split(' ')` rather than `.split(/\s+/)`).
+
+No helper used an escaped regex before this, so there was no precedent in the file to copy. Verify with:
+
+```
+node -e "import('./test/composer-test/lib/assertions.mjs').then(m => new Function(m.ASSERTION_LIB))"
+```
+
+which catches a parse break, and then eyeball the emitted regex — a *silently wrong* regex still parses.

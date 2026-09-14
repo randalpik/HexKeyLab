@@ -226,9 +226,16 @@ async function runOne(cdp, name, fixture, console_cap, currentTier, opts = {}) {
     }
   }
 
-  /* CONSOLE invariant: drain whatever was captured during this fixture. */
+  /* CONSOLE invariant: drain whatever was captured during this fixture.
+     A fixture may declare `allowConsole: [/re/, ...]` for messages it PROVOKES
+     ON PURPOSE. Kept per-fixture rather than added to console-capture.mjs's
+     global DEFAULT_ALLOW so the message stays fatal everywhere else — e.g. a
+     scroll-splice refusal is a latency defect wherever it is not the explicit
+     subject of the test (Max, 2026-09-13: "a refusal is a failure"). */
   result.counts.invariants++;
-  const consoleErrs = console_cap.drain();
+  const allowHere = fixture.allowConsole ?? [];
+  const consoleErrs = console_cap.drain()
+    .filter((e) => !allowHere.some((re) => new RegExp(re).test(e.text)));
   if (consoleErrs.length) {
     result.ok = false;
     result.failures.push({

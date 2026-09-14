@@ -3279,7 +3279,8 @@ class Renderer {
       return true;
     }
     if (this.splicer.splice(model, viewStaves, this.spliceCtx())) return false;
-    console.warn('[scroll-splice] edit could not be spliced — full re-engrave (investigate)');
+    console.warn('[scroll-splice] edit could not be spliced (' +
+      (this.splicer.lastSkipReason || 'unknown') + ') — full re-engrave');
     this.renderSingleSystem(model.serialize(heji, viewStaves));
     this.splicer.capture(model, this.spliceCtx());
     return true;

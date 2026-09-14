@@ -8115,3 +8115,35 @@ a full-document measure).
 
 **Where**: `apps/analyzer/cli/hki-regain.mjs` (header), `packages/engine/src/samples-engine.ts` (`layerBlend` comment), `docs/architecture/analyzer.md`, `docs/guide/core.md`.
 
+
+---
+
+## The scroll splicer owns the SVG box, and adopts the system's vertical frame (2026-09-13)
+
+**Context**: Live editing in scroll view was producing cut-off, malformed staves. Two independent defects, both original to the scroll splicer (checked every revision of `render/splice.ts` back to its introduction — neither behaviour was ever present and then lost).
+
+**Defect 1 — the box never moved.** Verovio emits the root `<svg>` + nested `<svg class="definition-scale">` viewBox once, at full-engrave time, sized to the content; `pinExactScale` derives the root's px dims from that viewBox. The splicer edits measures *inside* the box and never touched it. Typing 13 bars from a blank doc measured a **345 px box over 29 477 user units of content** — and because the root element's own width stayed small, `#score` had **no scrollable extent at all**, so the content was unreachable, not merely clipped.
+
+**Defect 2 — `dy` came from the ink bbox.** The fresh run was aligned on the anchor measure's `getBBox()`, on the stated assumption that the anchor is "an UNCHANGED measure present in both renders". But the anchor is `lo > 0 ? lo - 1 : 0`, so **editing bar 1 makes the anchor the edited measure**. Measured on a grand staff: a high note in bar 1 produced `dy = +267` where the true frame delta was `-885`, seating that bar 1152 user units (~115 px) below bars 2–4 while the brace (`g.grpSym`) and the system's left line (a bare `<path>`) — system-level children the splicer never imports — stayed with the untouched bars.
+
+**Picked**:
+
+1. **`render/scrollbox.ts` owns the box.** Box↔content offsets are *captured* at each full render (`padRight` measured at exactly 290 user units across every document size and zoom sampled) and the extent is maintained from O(1) measurements: one **last-measure** bbox per splice. Width is exact in both directions, so a delete shrinks the extent instead of ratcheting.
+
+2. **Frame adoption, not frame pinning.** `dy` now comes from **staff-line geometry** (`staffFrameOf`), which is structural and content-independent, so it is correct even when the anchor measure is the edited one. When the sub-render seats its staves lower — the range now demands headroom the system lacks — **the sub-render's frame is the correct one**: the fresh run lands at `dy = 0` and every *other* direct child of `g.system` is migrated by `dyFrame`. Verified byte-identical to a full re-engrave (all bars at staff y 1365/2965, brace at 1385).
+
+3. **Adoption is GROW-ONLY, and the asymmetry is load-bearing.** `dyFrame < 0` says the *range* wants less headroom, which says nothing about the *document* — the sub-render only ever sees `[cLo..cHi]`. The first implementation adopted both ways and was caught in development: a high note in bar 1 adopted correctly, then the very next edit (four notes appended at the end, a range with nothing tall in it) dragged all six bars back up 885 units and re-clipped the note. So a shallower sub frame loses and the fresh run is seated onto the persistent one. The frame only grows between full renders — always ≥ what every range needs, so nothing clips — and a full re-engrave reclaims the slack.
+
+**Rejected**:
+
+- **Re-measuring `g.system`.getBBox() per splice.** Correct and trivial, but it is O(document) geometry — precisely the cost the splicer exists to avoid.
+- **Refusing the splice on a vertical frame change** (the first design proposed). Max's ruling: *a refusal is a failure, and a uniform displacement should not require re-rendering the whole score — it just needs to re-render what's on screen.* The y-cascade is the same cost class as the x-cascade that already runs (hundreds of `setAttribute` calls) against a ~3.8 s full engrave, and it self-heals: afterwards every measure shares the new frame, so the next edit computes `dyFrame = 0`.
+- **Reconciling the brace and left line explicitly** (volta-bracket style). Unnecessary once `dy` is right: staff-line anchoring means the furniture is stale only when the frame moved, and the adoption walk covers it. The walk iterates `g.system`'s *direct children* rather than a list of known classes — that is what catches the left line (a bare `<path>`, no class at all) without naming it.
+
+**Still refused — inter-staff spacing.** A high note in the *lower* staff of a grand staff changes the gap itself (probed: 1600 → 2165, top staff unmoved). No single translate repairs that: the staff-spanning verticals (barlines, brace, left line) must *lengthen*. One translate per staff row plus that lengthening is what `render/instrgap.ts` already does for page view, and reusing it is the follow-up. Until then the per-staff frame deltas are checked for agreement and a disagreement refuses, so the fall-through re-engrave draws it correctly rather than splicing a wrong gap.
+
+**Residual, sub-pixel and understood**: splice vs full render differs by ~3 user units in width (content-level spacing: 18 977 vs 18 980) and ~5 in height (Verovio derives page height from its layout model, not the ink bbox). Both under half a device pixel at zoom 100. The box itself is exact — `rightSlack` is 290 in spliced and fully engraved states alike.
+
+**Deliberate asymmetry with page view**: `pinExactScale` carries the contract *"nothing may grow a page's viewBox after mount"*, from the section-header injector bug (2026-09-02). Scroll view is one continuous system rendered with `adjustPageHeight` and needs the opposite. The growth lives in `scrollbox.ts`, not inside `pinExactScale`, so both rules stay true — do not "unify" them.
+
+**Where**: `apps/composer/src/render/scrollbox.ts` (new), `apps/composer/src/render/splice.ts` (`staffFrameOf`, frame adoption in `spliceDom`), `test/composer-test/lib/assertions.mjs` (`assertScrollSystemCoherent`).

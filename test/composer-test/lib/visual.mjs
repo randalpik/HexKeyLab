@@ -20,6 +20,12 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+/* Viewport clamp for scroll-mode captures. A continuous scroll system has no
+   natural width bound, so the capture viewport does — past this the shot is a
+   window onto the score and `meta.truncated` says so. */
+const SCROLL_VP_MAX_W = 8000;
+const SCROLL_VP_MAX_H = 4000;
+
 const BASELINE_DIR = join(__dirname, '..', 'baselines');
 const OUT_DIR = join(__dirname, '..', 'out');
 
@@ -47,8 +53,11 @@ mkdirSync(OUT_DIR, { recursive: true });
  *  full card union instead, paper margins included. Multi-page full-page
  *  fixtures must mount later pages in their setup.
  *
- *  Scroll mode (no page cards) keeps the content-union clip at the normal
- *  window — the single continuous system can be ~190k px wide.
+ *  Scroll mode (no page cards) resizes the same way, clamped to
+ *  SCROLL_VP_MAX_W/H since a continuous system has no natural width bound.
+ *  It used to keep the default window, which made every scroll baseline a
+ *  shot of its first ~1600 px with the rest dark fill (Max, 2026-09-14).
+ *  A capture that hits the clamp sets `meta.truncated`.
  *
  *  Every capture also reports `meta` (page count, card px dims, renderer
  *  zoom + pageScale, scroll offsets, clip) back to the runner, so a
@@ -181,11 +190,49 @@ export async function visualCheck(cdp, name, { updateBaselines = false, fullPage
       meta.vpH = Math.min(Math.max(need.height, 600), 12000);
     }
   } else if (info) {
-    /* Scroll mode: tight content union (systems + selection + visible
-       cursor visuals), falling back to the bare SVG box. */
+    /* Scroll mode has the SAME inner-scroller problem as page mode. #score is
+       an overflow:auto scroller and captureBeyondViewport does not expand it,
+       so with the viewport left at its default everything past the ~1600 px
+       window is dark capture fill. Page mode has resized since 2026-08-30;
+       scroll mode was left alone on the reasoning that a continuous system can
+       be ~190 000 px wide — but the consequence is a baseline that LOOKS like
+       whole-score evidence and only ever contains its first window. Found by
+       Max, 2026-09-14, on scrollTypingGrowsBounds: 13 bars spanning 2 980 px
+       captured as ~1 575 px of notation and the rest fill, and the shot would
+       have looked identical whether or not the box past the window was right.
+       So resize here too, CLAMPED — and when the content genuinely exceeds the
+       clamp, record it in `meta` rather than quietly seeding a partial
+       baseline as if it were the whole thing. */
+    const need = await cdp.evalJSON(`(() => {
+      const score = document.getElementById('score');
+      if (!score) return null;
+      score.scrollLeft = 0; score.scrollTop = 0;
+      const r = score.getBoundingClientRect();
+      return { width: Math.ceil(r.left + score.scrollWidth + 24),
+               height: Math.ceil(r.top + score.scrollHeight + 24) };
+    })()`);
+    if (need) {
+      const vpW = Math.min(Math.max(need.width, 800), SCROLL_VP_MAX_W);
+      const vpH = Math.min(Math.max(need.height, 600), SCROLL_VP_MAX_H);
+      await cdp.send('Emulation.setDeviceMetricsOverride', {
+        width: vpW, height: vpH, deviceScaleFactor: 1, mobile: false,
+      });
+      overridden = true;
+      meta.vpW = vpW; meta.vpH = vpH;
+      if (need.width > vpW || need.height > vpH) {
+        /* The shot is a WINDOW onto the score, not the score. Surfaced so a
+           reviewer never reads a clamped capture as full coverage. */
+        meta.truncated = { needW: need.width, needH: need.height };
+      }
+      /* Let the resize settle before measuring the clip off it. */
+      await cdp.evalJSON(`new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(res, 40))))`);
+    }
+    /* Tight content union (systems + selection + visible cursor visuals),
+       falling back to the bare SVG box. */
     const bbox = await cdp.evalJSON(`(() => {
       const score = document.getElementById('score');
       if (!score) return null;
+      score.scrollLeft = 0; score.scrollTop = 0;
       const targets = [
         ...score.querySelectorAll('g.system'),
         ...score.querySelectorAll('rect[data-selection-rect="true"]'),

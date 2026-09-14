@@ -1017,6 +1017,219 @@ const SCROLL = {
     `,
   },
 
+  /* ── scroll view: EDITING IN IT (2026-09-13) ──────────────────────────────
+   * Every scroll fixture above builds its document in PAGE view and switches to
+   * scroll afterwards. The switch full-engraves, so they all assert against a
+   * freshly correct SVG and the splice path is never live when they look at it.
+   * That blind spot hid two defects at once for months: the splicer never grew
+   * the SVG box (typing 13 bars from a blank doc left a 345 px box over 29 477
+   * user units of content, with #score carrying no scrollable extent at all, so
+   * the notes were unreachable rather than merely hidden), and it aligned the
+   * fresh run on the anchor measure's INK bbox — which at lo === 0 is the edited
+   * measure itself, so a high note in bar 1 seated that bar 1152 units below
+   * bars 2-4 while the brace and the system's left line stayed behind.
+   *
+   * These fixtures therefore ENTER SCROLL VIEW FIRST and then edit. Each one
+   * that means to exercise a splice also pins the SVG root element's identity
+   * across the edits — without that a fixture passes trivially the moment
+   * something forces a full re-engrave, which is exactly how the blind spot
+   * re-opens. */
+
+  /* Type 12 bars IN scroll view. The box must track the content the whole way
+   * (assertScrollSystemCoherent) and every edit must splice.
+   * FIXTURE_ASSERTIONS.scrollTypingGrowsBounds. */
+  scrollTypingGrowsBounds: {
+    skipCursorTrace: true,
+    visualBaseline: 'scrollTypingGrowsBounds',
+    setup: `
+      const sel = document.getElementById('viewModeSelect');
+      sel.value = 'scroll';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      r();
+      const score = document.getElementById('score');
+      const root0 = score.querySelector('svg:not(#cursorOverlay)');
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      let stable = true;
+      /* Measure the box against the content AFTER EVERY INSERT, not just at the
+         end: "the box tracks the content the whole way" is the claim, and an
+         end-state-only check passes a splicer that is wrong for eleven edits and
+         right on the twelfth. Keep the tightest (worst) step. */
+      const probe = () => {
+        const sr = score.getBoundingClientRect();
+        const toX = (rect) => rect.right - sr.left + score.scrollLeft;
+        const svgEl = score.querySelector('svg:not(#cursorOverlay)');
+        let contentRight = -Infinity;
+        for (const mm of score.querySelectorAll('g.system > g.measure')) {
+          const x = toX(mm.getBoundingClientRect());
+          if (x > contentRight) contentRight = x;
+        }
+        return { contentRight, svgRight: toX(svgEl.getBoundingClientRect()), scrollW: score.scrollWidth };
+      };
+      let worst = null;
+      m.setVoice(1);
+      for (let i = 0; i < 12; i++) {
+        m.setCursor(m.getVoiceLength(1), 1);
+        m.insertChordAtCursor({ notes: [mk('a', 4)], duration: '4', dots: 0 });
+        r();
+        if (score.querySelector('svg:not(#cursorOverlay)') !== root0) stable = false;
+        const q = probe();
+        const slack = Math.min(q.svgRight - q.contentRight, q.scrollW - q.contentRight);
+        if (worst === null || slack < worst.slack) worst = { step: i + 1, slack: Math.round(slack), contentRight: Math.round(q.contentRight), svgRight: Math.round(q.svgRight), scrollW: q.scrollW };
+      }
+      window.__scrollRootStable = stable;
+      window.__scrollWorstStep = worst;
+    `,
+  },
+
+  /* The exact 2026-09-13 repro: a high note added to BAR 1, in scroll view, so
+   * the splice anchor is the edited measure. Every bar must still agree on its
+   * staff rows and the brace/left line must sit on them.
+   * FIXTURE_ASSERTIONS.scrollHighNoteFirstMeasure. */
+  scrollHighNoteFirstMeasure: {
+    skipCursorTrace: true,
+    setup: `
+      const sel = document.getElementById('viewModeSelect');
+      sel.value = 'scroll';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      r();
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      m.setVoice(1);
+      m.setCursor(0, 1);
+      for (let i = 0; i < 3; i++) m.insertChordAtCursor({ notes: [mk('a', 4)], duration: '4', dots: 0 });
+      for (let k = 0; k < 3; k++) {
+        m.setCursor(m.getVoiceLength(1), 1);
+        for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [mk('a', 4)], duration: '4', dots: 0 });
+      }
+      r();
+      /* Bar 1's free 4th beat, high enough to demand headroom the system does
+         not yet have -> the sub-render re-seats the whole system. */
+      m.setCursor(3, 1);
+      m.insertChordAtCursor({ notes: [mk('a', 7)], duration: '4', dots: 0 });
+      r();
+    `,
+  },
+
+  /* Frame adoption must be GROW-ONLY. After the bar-1 high note re-seats the
+   * system, an edit somewhere with nothing tall in it must NOT drag the system
+   * back up: the sub-render only sees its own range, and the note that bought
+   * the headroom is not in it. Caught in development — the first grow-both-ways
+   * implementation adopted correctly and then the very next append reverted all
+   * six bars and re-clipped the note.
+   * FIXTURE_ASSERTIONS.scrollHighNoteSurvivesLaterEdit. */
+  scrollHighNoteSurvivesLaterEdit: {
+    skipCursorTrace: true,
+    setup: `
+      const sel = document.getElementById('viewModeSelect');
+      sel.value = 'scroll';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      r();
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      m.setVoice(1);
+      m.setCursor(0, 1);
+      for (let i = 0; i < 3; i++) m.insertChordAtCursor({ notes: [mk('a', 4)], duration: '4', dots: 0 });
+      for (let k = 0; k < 3; k++) {
+        m.setCursor(m.getVoiceLength(1), 1);
+        for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [mk('a', 4)], duration: '4', dots: 0 });
+      }
+      r();
+      m.setCursor(3, 1);
+      m.insertChordAtCursor({ notes: [mk('a', 7)], duration: '4', dots: 0 });
+      r();
+      const rowAfterAdopt = (() => {
+        const st = document.querySelector('#score g.system g.measure > g.staff');
+        const p = Array.from(st.querySelectorAll(':scope > path')).find((q) => { try { return q.getBBox().height < 1; } catch (e) { return false; } });
+        return p ? p.getBBox().y : null;
+      })();
+      /* Now edit a range with nothing tall in it. */
+      for (let i = 0; i < 4; i++) {
+        m.setCursor(m.getVoiceLength(1), 1);
+        m.insertChordAtCursor({ notes: [mk('a', 4)], duration: '4', dots: 0 });
+        r();
+      }
+      window.__scrollRowAfterAdopt = rowAfterAdopt;
+    `,
+  },
+
+  /* Deleting back down must SHRINK the box, not leave dead scroll extent behind
+   * (the width fit is exact in both directions, unlike the grow-only frame).
+   * FIXTURE_ASSERTIONS.scrollDeleteShrinksBounds. */
+  scrollDeleteShrinksBounds: {
+    skipCursorTrace: true,
+    setup: `
+      const sel = document.getElementById('viewModeSelect');
+      sel.value = 'scroll';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      r();
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      m.setVoice(1);
+      for (let i = 0; i < 12; i++) {
+        m.setCursor(m.getVoiceLength(1), 1);
+        m.insertChordAtCursor({ notes: [mk('a', 4)], duration: '4', dots: 0 });
+      }
+      r();
+      const vbOf = () => Number((document.querySelector('#score svg.definition-scale').getAttribute('viewBox') || '').trim().split(' ')[2]);
+      window.__scrollWideVb = vbOf();
+      for (let i = 0; i < 6; i++) {
+        m.setCursor(m.getVoiceLength(1) - 1, 1);
+        m.deleteAtCursor();
+        r();
+      }
+      window.__scrollNarrowVb = vbOf();
+    `,
+  },
+
+  /* A high note in the LOWER staff of the grand staff changes the INTER-STAFF
+   * GAP (probed: 1600 -> 2165 with the top staff unmoved). One translate cannot
+   * re-seat that, so the splicer refuses and the fall-through full re-engrave
+   * draws it. Either way the rendered system must be coherent — this fixture is
+   * the guard that it is never spliced WRONG, and it is the one to revisit when
+   * per-row displacement lands (render/instrgap.ts).
+   * FIXTURE_ASSERTIONS.scrollLowerStaffGapChange. */
+  scrollLowerStaffGapChange: {
+    skipCursorTrace: true,
+    /* This fixture exists to provoke the one refusal the scroll splicer still
+       has, so its warning is expected HERE and nowhere else. When per-row
+       displacement lands (render/instrgap.ts) the splice will succeed, this
+       allowance becomes dead, and removing it is how you find that out. */
+    allowConsole: [/\[scroll-splice\] edit could not be spliced \(inter-staff spacing changed/],
+    setup: `
+      const sel = document.getElementById('viewModeSelect');
+      sel.value = 'scroll';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      r();
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      m.setVoice(1); m.setCursor(0, 1);
+      for (let i = 0; i < 3; i++) m.insertChordAtCursor({ notes: [mk('a', 4)], duration: '4', dots: 0 });
+      m.setVoice(3); m.setCursor(0, 3);
+      for (let i = 0; i < 3; i++) m.insertChordAtCursor({ notes: [mk('c', 3)], duration: '4', dots: 0 });
+      r();
+      m.setVoice(3); m.setCursor(3, 3);
+      m.insertChordAtCursor({ notes: [mk('c', 6)], duration: '4', dots: 0 });
+      r();
+    `,
+  },
+
+  /* scrollPieceEndReachable's missing sibling: the SAME assertions, but with the
+   * document typed IN scroll view rather than built in page view and switched.
+   * That ordering is the entire difference between a fixture that watches a
+   * splice and one that watches a full engrave. */
+  scrollPieceEndReachableAfterTyping: {
+    skipCursorTrace: true,
+    setup: `
+      const sel = document.getElementById('viewModeSelect');
+      sel.value = 'scroll';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      r();
+      m.setCursor(0, 1);
+      for (let i = 0; i < 11; i++) { m.insertRestAtCursor({ duration: '1', dots: 0 }); r(); }
+      m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.cursorToEnd(1);
+      r();
+      const score = document.getElementById('score');
+      score.scrollLeft = score.scrollWidth;
+    `,
+  },
+
   /* Measure-coordinate unification (lessons.md "Two measure coordinate
    * systems", 2026-08-30): the model counts measures in DOCUMENT ORDER
    * (voltas included); the splicer must too. TWO ending-wrapped measures
@@ -10507,6 +10720,88 @@ export const FIXTURE_ASSERTIONS = {
         return { ok: true };
       })()` },
   ],
+  scrollTypingGrowsBounds: [
+    { name: 'every edit spliced (SVG root reused across all 12 inserts)',
+      expr: `(() => (window.__scrollRootStable === true
+        ? { ok: true }
+        : { ok: false, detail: 'the SVG root was replaced while typing — a full re-engrave ran, so this fixture never exercised the splice path and proves nothing' }))()` },
+    { name: 'scroll system is coherent (staff rows agree, furniture on them, box covers content)',
+      expr: `window.__test.assertScrollSystemCoherent()` },
+    { name: 'the box covered the content at EVERY insert, not just the last',
+      expr: `(() => {
+        const w = window.__scrollWorstStep;
+        if (!w) return { ok: false, detail: 'setup recorded no per-step probe' };
+        return w.slack >= -1
+          ? { ok: true }
+          : { ok: false, detail: 'tightest step was insert #' + w.step + ': content right ' + w.contentRight +
+              ' px vs svg right ' + w.svgRight + ' px / scrollWidth ' + w.scrollW + ' (slack ' + w.slack + ' px)' };
+      })()` },
+    { name: 'the box actually had to grow (content is far wider than the blank doc)',
+      expr: `(() => {
+        const vb = (document.querySelector('#score svg.definition-scale').getAttribute('viewBox') || '').trim().split(' ').map(Number);
+        /* A blank 1-bar doc measures ~3450 user units; 12 typed bars are ~5x
+           that. If this ever passes at blank width the fixture has stopped
+           building a document and the box check above is vacuous. */
+        return vb[2] > 12000 ? { ok: true } : { ok: false, detail: 'viewBox width ' + vb[2] + ' — document did not grow as expected' };
+      })()` },
+  ],
+  scrollHighNoteFirstMeasure: [
+    { name: 'scroll system is coherent (staff rows agree, furniture on them, box covers content)',
+      expr: `window.__test.assertScrollSystemCoherent()` },
+    { name: 'the edited bar is seated with the others (the 2026-09-13 defect, stated directly)',
+      expr: `(() => {
+        const sys = document.querySelector('#score g.system');
+        const tyOf = (el) => { const t = /translate\\(\\s*(-?[\\d.eE+]+)[\\s,]+(-?[\\d.eE+]+)\\s*\\)/.exec(el.getAttribute('transform') || ''); return t ? parseFloat(t[2]) : 0; };
+        const rowOf = (mm) => {
+          const st = mm.querySelector(':scope > g.staff');
+          if (!st) return null;
+          const p = Array.from(st.querySelectorAll(':scope > path')).find((q) => { try { return q.getBBox().height < 1; } catch (e) { return false; } });
+          return p ? p.getBBox().y + tyOf(mm) : null;
+        };
+        const rows = Array.from(sys.querySelectorAll(':scope > g.measure')).map(rowOf).filter((v) => v !== null);
+        if (rows.length < 2) return { ok: false, detail: 'need >= 2 rendered bars, got ' + rows.length };
+        const spread = Math.max.apply(null, rows) - Math.min.apply(null, rows);
+        return spread <= 1
+          ? { ok: true }
+          : { ok: false, detail: 'top staff row spans ' + spread.toFixed(1) + ' user units across bars (rows: ' + rows.map((v) => v.toFixed(0)).join(', ') + ') — the edited bar is not seated with the rest' };
+      })()` },
+  ],
+  scrollHighNoteSurvivesLaterEdit: [
+    { name: 'scroll system is coherent (staff rows agree, furniture on them, box covers content)',
+      expr: `window.__test.assertScrollSystemCoherent()` },
+    { name: 'a later edit elsewhere does not revert the adopted frame (grow-only)',
+      expr: `(() => {
+        const adopted = window.__scrollRowAfterAdopt;
+        if (typeof adopted !== 'number') return { ok: false, detail: 'setup did not record the adopted row' };
+        const sys = document.querySelector('#score g.system');
+        const mm = sys.querySelector(':scope > g.measure');
+        const t = /translate\\(\\s*(-?[\\d.eE+]+)[\\s,]+(-?[\\d.eE+]+)\\s*\\)/.exec(mm.getAttribute('transform') || '');
+        const ty = t ? parseFloat(t[2]) : 0;
+        const st = mm.querySelector(':scope > g.staff');
+        const p = Array.from(st.querySelectorAll(':scope > path')).find((q) => { try { return q.getBBox().height < 1; } catch (e) { return false; } });
+        if (!p) return { ok: false, detail: 'no staff line in bar 1' };
+        const now = p.getBBox().y + ty;
+        return now >= adopted - 1
+          ? { ok: true }
+          : { ok: false, detail: 'top staff row rose from ' + adopted.toFixed(1) + ' to ' + now.toFixed(1) + ' — a later range re-seated the system on its own shallower frame and re-clipped the high note' };
+      })()` },
+  ],
+  scrollDeleteShrinksBounds: [
+    { name: 'scroll system is coherent (staff rows agree, furniture on them, box covers content)',
+      expr: `window.__test.assertScrollSystemCoherent()` },
+    { name: 'deleting content shrinks the box (no dead scroll extent left behind)',
+      expr: `(() => {
+        const wide = window.__scrollWideVb, narrow = window.__scrollNarrowVb;
+        if (!isFinite(wide) || !isFinite(narrow)) return { ok: false, detail: 'setup did not record both widths' };
+        return narrow < wide
+          ? { ok: true }
+          : { ok: false, detail: 'viewBox width stayed at ' + narrow + ' after deleting (was ' + wide + ') — the width fit ratchets instead of shrinking' };
+      })()` },
+  ],
+  scrollLowerStaffGapChange: [
+    { name: 'scroll system is coherent (staff rows agree, furniture on them, box covers content)',
+      expr: `window.__test.assertScrollSystemCoherent()` },
+  ],
   scrollKeyChangeSplicesGovernedRange: [
     { name: 'a mid-piece key change in scroll view splices (root unchanged) and draws the key signature; a later key change bounds the run',
       expr: `(() => {
@@ -17925,3 +18220,14 @@ function mapKbdTier(obj, tier) {
   }
   return out;
 }
+
+/* The typed-in-scroll sibling asserts EXACTLY what scrollPieceEndReachable
+   asserts — spread rather than copied, so the pair cannot drift — plus system
+   coherence. The only difference that matters is the fixture's setup ordering:
+   one watches a full engrave, the other watches a splice. */
+FIXTURE_ASSERTIONS.scrollPieceEndReachableAfterTyping = [
+  ...FIXTURE_ASSERTIONS.scrollPieceEndReachable,
+  { name: 'scroll system is coherent (staff rows agree, furniture on them, box covers content)',
+    expr: `window.__test.assertScrollSystemCoherent()` },
+];
+

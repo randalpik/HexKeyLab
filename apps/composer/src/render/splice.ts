@@ -27,6 +27,9 @@ import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
 import { CONTROL_EVENT_NAMES } from '../model/index.js';
 import type { ComposerModel } from '../model/index.js';
 import { captureSigState, signatureRanges, unionRun, type SigState } from './sigranges.js';
+import {
+  captureScrollBox, fitScrollBoxHeight, fitScrollBoxWidth, measureRight, type ScrollBox,
+} from './scrollbox.js';
 
 const MEI_NS = 'http://www.music-encoding.org/ns/mei';
 const idOf = (m: Element): string => m.getAttribute('xml:id') || m.getAttribute('id') || '';
@@ -69,6 +72,52 @@ function staffLineExtent(staffEl: Element): { top: number; bot: number } {
   return { top, bot };
 }
 
+/** Tolerance (user units) for "the two renders agree on the vertical frame".
+ *  A staff-line y is exact arithmetic in both renders, so this only absorbs
+ *  float noise — it is NOT a fudge factor for genuinely different spacing. */
+const FRAME_EPS = 0.75;
+
+/** STRUCTURAL geometry of a measure: the top staff-line y of each of its
+ *  staves, plus the left x they share. Read from the horizontal staff-line
+ *  paths, so it describes the SYSTEM FRAME and nothing about the measure's
+ *  content.
+ *
+ *  That distinction is the whole point. The splicer used to align the fresh run
+ *  by the anchor measure's INK bbox, on the stated assumption that the anchor is
+ *  "an UNCHANGED measure present in both renders" — but the anchor is
+ *  `lo > 0 ? lo - 1 : 0`, so when the edit is in the FIRST measure the anchor is
+ *  the edited measure itself and its ink bbox has just changed. Measured
+ *  2026-09-13 on a grand staff: adding a high note to bar 1 gave dy = +267 where
+ *  the true frame delta was -885, leaving bar 1's staves 1152 user units
+ *  (~115 px) below bars 2-4 while the brace and the system's left line — which
+ *  the splicer never touches — stayed with the untouched bars. Staff lines are
+ *  immune: they move only when the frame moves. */
+function staffFrameOf(measureEl: Element): { x: number; ys: number[] } | null {
+  const ys: number[] = [];
+  let x = Infinity;
+  for (const st of Array.from(measureEl.querySelectorAll(':scope > g.staff'))) {
+    let top = Infinity;
+    for (const p of Array.from(st.querySelectorAll(':scope > path'))) {
+      let b: DOMRect;
+      try { b = (p as SVGGraphicsElement).getBBox(); } catch { continue; }
+      if (b.height >= 1) continue;              // vertical/decorative, not a staff line
+      if (b.y < top) top = b.y;
+      if (b.x < x) x = b.x;
+    }
+    if (!isFinite(top)) return null;
+    ys.push(top);
+  }
+  return ys.length && isFinite(x) ? { x, ys } : null;
+}
+
+/** An element's current translate, for read-modify-write on system furniture
+ *  (the brace, the system's left line, the section milestones) — elements the
+ *  splicer holds no index for. */
+function translateOf(el: Element): { x: number; y: number } {
+  const m = /translate\(\s*(-?[\d.eE+]+)[\s,]+(-?[\d.eE+]+)\s*\)/.exec(el.getAttribute('transform') ?? '');
+  return m ? { x: parseFloat(m[1]), y: parseFloat(m[2]) } : { x: 0, y: 0 };
+}
+
 /** Inter-staff gaps (screen px) of a measure's adjacent staff pairs. */
 function gapsOfMeasure(measureEl: Element, nStaves: number): number[] {
   const staves = Array.from(measureEl.querySelectorAll(':scope g.staff')).map(staffLineExtent);
@@ -91,9 +140,15 @@ export class ScrollSplicer {
   private nStaves = 0;
   private gapPx: number[] = [];                // captured inter-staff gaps (screen px)
   private law: Array<{ slope: number; intercept: number }> = [];
+  /** The persistent SVG's box <-> content offsets (render/scrollbox.ts). Null
+   *  until the first capture; the splicer is the only writer thereafter. */
+  private box: ScrollBox | null = null;
+  /** Why the last splice() returned false. Surfaced by renderScroll's warning
+   *  so a fall-through to a full re-engrave names its cause. */
+  lastSkipReason = '';
 
   /** Drop persistent state — the next render must be a full one. */
-  invalidate(): void { this.ready = false; }
+  invalidate(): void { this.ready = false; this.box = null; }
   canSplice(): boolean { return this.ready; }
 
   /* ── capture (after a full render) ───────────────────────────────────────── */
@@ -131,6 +186,13 @@ export class ScrollSplicer {
     const measureEls = Array.from(sys.querySelectorAll('g.measure'));
     this.nStaves = measureEls.length ? measureEls[0].querySelectorAll(':scope g.staff').length : 0;
     this.gapPx = measureEls.length ? gapsOfMeasure(measureEls[0], this.nStaves) : [];
+
+    /* Box <-> content offsets of the render we are about to own (scrollbox.ts).
+       Measured against the LAST measure by the same id lookup splice() uses, so
+       capture and maintenance share one frame. */
+    const lastId = this.order.length ? this.order[this.order.length - 1] : '';
+    const lastEl = lastId ? sys.querySelector('#' + CSS.escape(lastId)) : null;
+    this.box = captureScrollBox(ctx.container, lastEl as SVGGraphicsElement | null);
 
     this.calibrate(live, ctx);
     this.ready = this.law.length === this.nStaves - 1 && this.gapPx.every((g) => isFinite(g));
@@ -221,7 +283,8 @@ export class ScrollSplicer {
    *  whole-doc serialize/parse). Returns true on success; false if the change
    *  can't be spliced (caller must full-render) — NEVER silently full-renders. */
   splice(model: ComposerModel, viewStaves: number[] | null, ctx: SpliceCtx): boolean {
-    if (!this.ready || !this.sysEl) return false;
+    this.lastSkipReason = '';
+    if (!this.ready || !this.sysEl) { this.lastSkipReason = 'splicer not ready'; return false; }
     const live = model.getDoc();
     const section = live.querySelector('section');
     if (!section) return false;
@@ -354,7 +417,7 @@ export class ScrollSplicer {
     })).filter((e) => e.id !== '');
 
     try {
-      return this.spliceDom(host, newOrder, newSig, { lo, hiNew, oldLo, oldHi, cHi, anchorIdx }, endings);
+      return this.spliceDom(host, newOrder, newSig, { lo, hiNew, oldLo, oldHi, cHi, anchorIdx }, endings, ctx);
     } finally {
       host.remove();
     }
@@ -387,30 +450,76 @@ export class ScrollSplicer {
   private spliceDom(
     host: HTMLElement, newOrder: string[], newSig: Map<string, string>,
     r: { lo: number; hiNew: number; oldLo: number; oldHi: number; cHi: number; anchorIdx: number },
-    endings: Array<{ id: string; firstMeasureId: string }> = [],
+    endings: Array<{ id: string; firstMeasureId: string }>,
+    ctx: SpliceCtx,
   ): boolean {
     const bbx = (el: Element) => (el as SVGGraphicsElement).getBBox();
     const sub = (id: string) => host.querySelector('#' + CSS.escape(id)) as SVGGElement | null;
     const persist = (id: string) => this.sysEl!.querySelector('#' + CSS.escape(id)) as SVGGElement | null;
 
-    // Anchor on an UNCHANGED measure present in both renders that is not the
-    // sub's system-first measure (see splice()). Its content is identical in
-    // both, so the offset between its sub bbox and its persistent bbox is the
-    // pure render-to-render shift: dx (x) + dy (y). Gaps already match (synthetic
-    // spacer), so this single dy aligns every staff; dx places the run on the
-    // persistent x-frame. The persistent measure may carry an x-translate (tx).
+    // Anchor the run on the STAFF FRAME of the anchor measure — the staff-line
+    // geometry both renders share (staffFrameOf), never the ink bbox. The ink
+    // bbox is only a valid anchor while the anchor measure's own content is
+    // unchanged, and at lo === 0 the anchor IS the edited measure.
+    //
+    // FRAME ADOPTION (Max, 2026-09-13). When an edit changes what the system
+    // needs vertically — a note high enough to want headroom above the top
+    // staff — Verovio re-seats the WHOLE system, and the sub-render already
+    // carries that new frame: probed on a grand staff, the spliced bar and a
+    // full re-engrave agreed exactly (local staff y 1365/2965 in both). So the
+    // sub-render's frame is the correct one and the persistent content is what
+    // is stale. Rather than dragging the fresh run back onto the old frame (and
+    // clipping the note that asked for the room), the fresh run lands at
+    // dy = 0 and every OTHER system child — untouched measures, the brace, the
+    // system's left line, the milestones, downstream volta brackets — is
+    // migrated by dyFrame below. That is some hundreds of setAttribute calls,
+    // the same cost class as the x-cascade that already runs, versus a ~3.8 s
+    // full re-engrave; and it self-heals, since afterwards every measure shares
+    // the new frame and the next edit computes dyFrame = 0.
     const anchorId = newOrder[r.anchorIdx];
     const subAnchor = sub(anchorId);
     const perAnchor = persist(anchorId);
     if (!subAnchor || !perAnchor) return false;
-    const dx = (bbx(perAnchor).x + (this.tx.get(anchorId) ?? 0)) - bbx(subAnchor).x;
-    // Symmetric to dx: add the anchor's persistent y-translate. getBBox() is in
-    // the element's LOCAL frame (excludes its own transform), so omitting ty
-    // mis-aligned the run vertically by the anchor's accumulated ty whenever the
-    // anchor had itself been spliced before (cascades only ever set tx, so a
-    // never-spliced measure has ty 0 and this is a no-op there).
-    const dy = (bbx(perAnchor).y + (this.ty.get(anchorId) ?? 0)) - bbx(subAnchor).y;
-    const xf = `translate(${dx},${dy})`;
+    const subFrame = staffFrameOf(subAnchor);
+    const perFrame = staffFrameOf(perAnchor);
+    if (!subFrame || !perFrame || subFrame.ys.length !== perFrame.ys.length) {
+      this.lastSkipReason = 'anchor staff frame unreadable';
+      return false;
+    }
+    const perTy = this.ty.get(anchorId) ?? 0;
+    const dx = (perFrame.x + (this.tx.get(anchorId) ?? 0)) - subFrame.x;
+    // Per-staff frame deltas. They must AGREE: one translate can only re-seat a
+    // system whose internal spacing is unchanged. They disagree when the edit
+    // changes an inter-staff gap (probed: a high note in the lower staff of a
+    // grand staff took the gap 1600 -> 2165 with the top staff unmoved), which
+    // needs per-row displacement plus lengthening of every staff-spanning
+    // vertical — the barlines, the brace, the system's left line. That is the
+    // machinery render/instrgap.ts already implements for page view and is
+    // deliberately NOT in this change; refuse so the fall-through re-engrave
+    // draws it correctly rather than splicing a system with the wrong gap.
+    const frameDeltas = perFrame.ys.map((y, k) => subFrame.ys[k] - (y + perTy));
+    const dyFrame = frameDeltas[0];
+    if (frameDeltas.some((d) => Math.abs(d - dyFrame) > FRAME_EPS)) {
+      this.lastSkipReason = 'inter-staff spacing changed (not yet spliceable — see instrgap.ts)';
+      return false;
+    }
+    // GROW-ONLY, and the asymmetry is load-bearing. dyFrame > 0 means the
+    // sub-render seated its staves LOWER than the live ones, i.e. this range now
+    // demands more headroom than the system has: adopt, and migrate everything
+    // else down to meet it. dyFrame < 0 means it demands LESS — which says
+    // nothing about the document, because the sub-render only ever sees
+    // [cLo..cHi] and the note that bought that headroom may live anywhere else.
+    // Adopting there re-seats the whole system on one range's opinion: measured
+    // 2026-09-13, a high note in bar 1 adopted correctly and then the very next
+    // edit (four notes appended at the END, a range with nothing tall in it)
+    // dragged all six bars back up 885 units and re-clipped the note. So when
+    // the sub frame is shallower the persistent frame WINS and the fresh run is
+    // seated onto it instead. The frame therefore only ever grows between full
+    // renders — it is always >= what every range needs, so nothing clips — and a
+    // full re-engrave is what reclaims slack once the tall note is deleted.
+    const adopt = dyFrame > FRAME_EPS;
+    const freshTy = adopt ? 0 : -dyFrame;
+    const xf = `translate(${dx},${freshTy})`;
 
     // Right-context shift Δ: where the first unchanged trailing measure must move.
     let delta = 0;
@@ -433,6 +542,9 @@ export class ScrollSplicer {
       imported.setAttribute('transform', xf);
       fresh.push(imported);
     }
+    /* Nodes that came from THIS sub-render, i.e. are already on the new frame.
+       Frame adoption below migrates every other system child onto it. */
+    const adopted = new Set<Element>(fresh);
     this.mergeDefs(host, fresh);
 
     // Locate the insertion point + remove the OLD changed run.
@@ -470,7 +582,8 @@ export class ScrollSplicer {
       imported.setAttribute('transform', xf);
       endingGlyphOf(id)?.remove();
       this.sysEl!.appendChild(imported);
-      this.tx.set(id, dx); this.ty.set(id, dy);
+      this.tx.set(id, dx); this.ty.set(id, freshTy);
+      adopted.add(imported);
     }
 
     // Cascade: shift every measure after the run by Δ in x (preserve its y) —
@@ -497,8 +610,8 @@ export class ScrollSplicer {
       }
     }
 
-    // Update the index: spliced measures carry (dx, dy).
-    for (let i = r.lo; i <= r.hiNew; i++) { this.tx.set(newOrder[i], dx); this.ty.set(newOrder[i], dy); }
+    // Update the index: spliced measures carry (dx, freshTy).
+    for (let i = r.lo; i <= r.hiNew; i++) { this.tx.set(newOrder[i], dx); this.ty.set(newOrder[i], freshTy); }
     this.order = newOrder;
     this.sig = newSig;
     // Drop entries for ids no longer present (volta-bracket ids count as
@@ -506,6 +619,39 @@ export class ScrollSplicer {
     const present = new Set([...newOrder, ...endings.map((e) => e.id)]);
     for (const id of Array.from(this.tx.keys())) if (!present.has(id)) { this.tx.delete(id); this.ty.delete(id); }
     for (const id of newOrder) { if (!this.tx.has(id)) this.tx.set(id, 0); if (!this.ty.has(id)) this.ty.set(id, 0); }
+
+    /* Frame adoption: migrate everything that did NOT come from this sub-render
+       onto the new vertical frame. Deliberately a walk over g.system's direct
+       children rather than a list of known classes — that is what covers the
+       brace (g.grpSym) and the system's left line (a bare <path>, no class at
+       all) without naming them, and it cannot silently miss a system-level
+       element Verovio adds later. */
+    if (adopt) {
+      for (const el of Array.from(this.sysEl!.children)) {
+        if (adopted.has(el)) continue;
+        const id = el.getAttribute('id');
+        if (id !== null && this.ty.has(id)) {
+          const u = (this.ty.get(id) ?? 0) + dyFrame;
+          this.ty.set(id, u);
+          el.setAttribute('transform', `translate(${this.tx.get(id) ?? 0},${u})`);
+        } else {
+          const cur = translateOf(el);            // system furniture: no index entry
+          el.setAttribute('transform', `translate(${cur.x},${cur.y + dyFrame})`);
+        }
+      }
+    }
+
+    /* Re-fit the box to the content (render/scrollbox.ts). Width every time —
+       it is one measure bbox and the reason a spliced score stopped being
+       reachable at all. Height only on a frame change, where it costs one
+       document-wide bbox for exactness. */
+    if (this.box) {
+      const lastId = newOrder[newOrder.length - 1];
+      const lastEl = lastId ? persist(lastId) : null;
+      const lastRight = lastEl ? measureRight(lastEl, this.tx.get(lastId) ?? 0) : null;
+      if (lastRight !== null) fitScrollBoxWidth(ctx.container, this.box, lastRight, ctx.scale);
+      if (adopt) fitScrollBoxHeight(ctx.container, this.box, ctx.scale);
+    }
     return true;
   }
 

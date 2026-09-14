@@ -314,6 +314,149 @@ export const ASSERTION_LIB = `
     return { ok: nBefore === nAfter, before: nBefore, after: nAfter };
   }
 
+  /** SCROLL VIEW COHERENCE. A scroll render is ONE continuous system, so:
+   *    - every measure agrees on where each staff row sits (rendered y =
+   *      staff-line y + the measure's own translate),
+   *    - the system furniture that the splicer does not import — the brace
+   *      (g.grpSym) and the system's left line (a bare <path>) — sits on those
+   *      same rows,
+   *    - the SVG box covers the content on all four sides.
+   *
+   *  Every one of those was violated at once before 2026-09-13 and nothing in
+   *  the suite noticed, because the scroll fixtures all built their document in
+   *  PAGE view and switched to scroll afterwards — the switch full-engraves, so
+   *  they asserted against a freshly correct box and never exercised a splice.
+   *  Typing 13 bars from a blank doc IN scroll view left a 345 px box over
+   *  29 477 user units of content; adding a high note to bar 1 left that bar's
+   *  staves 1152 units below bars 2-4 with the brace stranded between them.
+   *  No-op in page view. */
+  function assertScrollSystemCoherent() {
+    const score = document.getElementById('score');
+    if (!score || !score.classList.contains('view-scroll')) return { ok: true, skipped: 'page view' };
+    const sys = score.querySelector('g.system');
+    const inner = score.querySelector('svg.definition-scale');
+    if (!sys || !inner) return { ok: false, detail: 'no rendered scroll system' };
+    const fails = [];
+    const tyOf = (el) => {
+      const mm = /translate\\(\\s*(-?[\\d.eE+]+)[\\s,]+(-?[\\d.eE+]+)\\s*\\)/.exec(el.getAttribute('transform') || '');
+      return mm ? parseFloat(mm[2]) : 0;
+    };
+    const topLineOf = (el) => {
+      let top = Infinity;
+      for (const p of Array.from(el.querySelectorAll(':scope > path'))) {
+        let b; try { b = p.getBBox(); } catch (e) { continue; }
+        if (b.height >= 1) continue;                    // vertical, not a staff line
+        if (b.y < top) top = b.y;
+      }
+      return isFinite(top) ? top : null;
+    };
+    const rowsOf = (measureEl) => {
+      const off = tyOf(measureEl);
+      return Array.from(measureEl.querySelectorAll(':scope > g.staff')).map((st) => {
+        const t = topLineOf(st);
+        return t === null ? null : t + off;
+      });
+    };
+    const measures = Array.from(sys.querySelectorAll(':scope > g.measure'));
+    if (!measures.length) return { ok: true, skipped: 'no measures rendered' };
+    const ref = rowsOf(measures[0]);
+    for (let i = 1; i < measures.length; i++) {
+      const r = rowsOf(measures[i]);
+      if (r.length !== ref.length) {
+        fails.push('measure ' + i + ' has ' + r.length + ' staves, measure 0 has ' + ref.length);
+        continue;
+      }
+      for (let k = 0; k < ref.length; k++) {
+        if (ref[k] === null || r[k] === null) continue;
+        if (Math.abs(r[k] - ref[k]) > 1) {
+          fails.push('measure ' + i + ' staff ' + k + ' y=' + r[k].toFixed(1) +
+            ' but measure 0 staff ' + k + ' y=' + ref[k].toFixed(1) +
+            ' (delta ' + (r[k] - ref[k]).toFixed(1) + ')');
+        }
+      }
+    }
+    const rowTop = Math.min.apply(null, ref.filter((v) => v !== null));
+    if (isFinite(rowTop)) {
+      const leftLine = Array.from(sys.children).find((e) => e.tagName === 'path');
+      if (leftLine) {
+        let b; try { b = leftLine.getBBox(); } catch (e) { b = null; }
+        if (b && Math.abs((b.y + tyOf(leftLine)) - rowTop) > 2) {
+          fails.push('system left line at y=' + (b.y + tyOf(leftLine)).toFixed(1) +
+            ' but staff rows start at ' + rowTop.toFixed(1) + ' (stale system furniture)');
+        }
+      }
+      const brace = sys.querySelector(':scope > g.grpSym');
+      if (brace) {
+        let b; try { b = brace.getBBox(); } catch (e) { b = null; }
+        /* The brace is inset ~20 units inside the staff row it spans; 60 is
+           loose enough for that and tight enough to catch a stranded one (the
+           2026-09-13 defect stranded it by 885). */
+        if (b && Math.abs((b.y + tyOf(brace)) - rowTop) > 60) {
+          fails.push('brace at y=' + (b.y + tyOf(brace)).toFixed(1) +
+            ' but staff rows start at ' + rowTop.toFixed(1) + ' (stale brace)');
+        }
+      }
+    }
+    const pm = inner.querySelector('g.page-margin');
+    const vb = (inner.getAttribute('viewBox') || '').trim().split(/[\\s,]+/).map(Number);
+    if (pm && vb.length === 4 && vb.every((n) => isFinite(n))) {
+      const t = /translate\\(\\s*(-?[\\d.eE+]+)[\\s,]+(-?[\\d.eE+]+)\\s*\\)/.exec(pm.getAttribute('transform') || '');
+      const ox = t ? parseFloat(t[1]) : 0, oy = t ? parseFloat(t[2]) : 0;
+      let b; try { b = pm.getBBox(); } catch (e) { b = null; }
+      if (b && b.width > 0) {
+        const right = ox + b.x + b.width, bottom = oy + b.y + b.height, top = oy + b.y;
+        if (right > vb[0] + vb[2] + 1) {
+          fails.push('content right ' + right.toFixed(1) + ' exceeds viewBox right ' +
+            (vb[0] + vb[2]).toFixed(1) + ' (clipped — box did not track the splice)');
+        }
+        if (bottom > vb[1] + vb[3] + 1) {
+          fails.push('content bottom ' + bottom.toFixed(1) + ' exceeds viewBox bottom ' +
+            (vb[1] + vb[3]).toFixed(1) + ' (clipped)');
+        }
+        if (top < vb[1] - 1) {
+          fails.push('content top ' + top.toFixed(1) + ' is above viewBox top ' +
+            vb[1].toFixed(1) + ' (clipped)');
+        }
+      }
+    }
+    /* THE RENDERED LAYER. Everything above is in SVG user units; the symptom
+       that actually bit users was in px — the root <svg> kept a stale width, so
+       #score (overflow:auto) had no scrollable extent and the content was
+       UNREACHABLE, not merely clipped. A regression that broke only the
+       viewBox -> pinExactScale link would satisfy every check above and still
+       ship a cut-off score, so assert the px layer outright. */
+    const rootSvg = score.querySelector('svg:not(#cursorOverlay)');
+    if (rootSvg && measures.length) {
+      const sr = score.getBoundingClientRect();
+      const toContentX = (rect) => rect.right - sr.left + score.scrollLeft;
+      let contentRightPx = -Infinity;
+      for (const mm of measures) {
+        const x = toContentX(mm.getBoundingClientRect());
+        if (x > contentRightPx) contentRightPx = x;
+      }
+      const svgRightPx = toContentX(rootSvg.getBoundingClientRect());
+      if (isFinite(contentRightPx)) {
+        if (svgRightPx + 1 < contentRightPx) {
+          fails.push('root <svg> right edge ' + svgRightPx.toFixed(1) +
+            ' px but content reaches ' + contentRightPx.toFixed(1) + ' px (clipped on screen)');
+        }
+        if (score.scrollWidth + 1 < contentRightPx) {
+          fails.push('#score scrollWidth ' + score.scrollWidth + ' does not reach content right ' +
+            contentRightPx.toFixed(1) + ' px — the content is UNREACHABLE, not just clipped');
+        }
+        const ov = document.getElementById('cursorOverlay');
+        if (ov) {
+          const ow = parseFloat(ov.getAttribute('width') || '0');
+          if (ow + 1 < contentRightPx) {
+            fails.push('cursor overlay width ' + ow.toFixed(1) + ' does not cover content right ' +
+              contentRightPx.toFixed(1) + ' px (cursor undrawable past it)');
+          }
+        }
+      }
+    }
+    return fails.length ? { ok: false, detail: fails.join('; ') } : { ok: true };
+  }
+
   window.__test = {
     assertModelState,
     assertCursorConvention,
@@ -324,6 +467,7 @@ export const ASSERTION_LIB = `
     assertTupletPlaceholdersHidden,
     assertColorIsolation,
     assertCursorInViewport,
+    assertScrollSystemCoherent,
     assertCursorVisualMeasure,
     countAccidGlyphs,
     runRoundTrip,
