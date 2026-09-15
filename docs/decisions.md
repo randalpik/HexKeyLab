@@ -8276,3 +8276,39 @@ renders crisply instead of indexing `CRISP_PRESETS` to `undefined`.
 `apps/hkl/src/render/composer-frame.ts` (`setComposerFrameZoom`),
 `apps/hkl/src/bridge/{hkl-side.ts, overlay-publish.ts, overlay-subscribe.ts}`,
 `apps/composer/src/main.ts` (`broadcastComposerZoom`).
+
+**Composer-frame scroll-follow is hand-rolled, not `behavior:'smooth'` (2026-09-15).**
+The mirrored Composer frame scrolls one `scrollTo` per note onset. Chromium restarts a programmatic
+smooth scroll **from rest** on every retarget (duration ≈ √delta: 42 ms at 10 px, 565 ms at 1200 px),
+so the frame hopped and stalled — 31–50 % dead frames, velocity CV ≈ 1.0 — while Firefox, which
+preserves velocity across retargets, glided. No browser exposes smooth-scroll duration or easing, so
+parity required dropping the native animation. `@hkl/notation/scroll-follow.ts` is a
+**critically-damped spring chasing a mutable target**: retargeting moves the target and nothing else,
+so velocity carries across onsets. Under a steady onset stream it settles into constant-velocity ramp
+tracking with a constant lag of `2v/ω` — at 60 px/120 ms and `SPRING_K = 1000`, a steady 500 px/s
+trailing ~32 px. Measured after: **0 % dead frames and CV 0.32–0.39** at note rate.
+
+**Closed form, not Euler**: the obvious semi-implicit Euler step is unstable at dt = 1/30 s with
+`SPRING_K = 1000` (eigenvalue −1.83) — i.e. it would diverge on a 30 fps OBS Browser Source while
+looking perfect at 60 fps. Critical damping has an exact solution for a target held constant across
+the frame, so a 30 fps source traces the *same* trajectory as a 60 fps desktop, merely sampled half
+as often. Do not "simplify" it back to an Euler step. `SPRING_K` is the single tunable: lower = more
+continuous across slow onsets, at the cost of more trailing lag.
+
+**Placement**: `@hkl/notation` rather than `@hkl/shared` — the animator touches the DOM, and
+`@hkl/shared` is pure data. Both HKL and Composer already depend on `@hkl/notation`, and the overlay
+bundle already pulls it in, so this costs the lean overlay build nothing (+765 B).
+
+**Scope: the frame only.** `apps/composer/src/main.ts` keeps its native `scrollTo` — it follows per
+*measure*, not per note, so the hop is far less visible, and Composer is driven in Firefox where the
+native behaviour is already correct. Max's call: "just fix the frame, that's where steady scroll
+matters." If Composer is ever driven in Chromium for performance, this is the one-line swap.
+
+**Also**: `prefers-reduced-motion: reduce` jumps instead of animating, preserving what the native
+smooth scroll did for that user. A re-render resets `scrollLeft` to 0, so `doRender` /
+`clearComposerFrame` call `cancelScrollFollow` — otherwise the loop chases a position that no longer
+exists. The call site compares against the animation *target*, not `el.scrollLeft`, which mid-flight
+is a point on the trajectory rather than the thing that was asked for.
+
+**Where**: `packages/notation/src/scroll-follow.ts` (new),
+`apps/hkl/src/render/composer-frame.ts` (`scrollToId`, `doRender`, `clearComposerFrame`).

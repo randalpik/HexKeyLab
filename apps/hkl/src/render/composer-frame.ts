@@ -20,6 +20,7 @@
 
 import { renderMeiToContainer } from '@hkl/notation/verovio.js';
 import { resolveZoomLevel, type ZoomLevel } from '@hkl/notation/render-presets.js';
+import { scrollFollow, cancelScrollFollow } from '@hkl/notation/scroll-follow.js';
 import type { VoiceCursorAnchor } from '@hkl/bridge/protocol.js';
 import {
   computeVoiceCursorRect, computePlaybackBarRect,
@@ -121,7 +122,7 @@ export function renderComposerFrame(): void {
 
 export function clearComposerFrame(): void {
   const el = frameEl();
-  if (el) el.innerHTML = HINT;
+  if (el) { cancelScrollFollow(el); el.innerHTML = HINT; }
   editingAnchor = null;
   playbackBars.clear();
   playbackMode = false;
@@ -141,6 +142,7 @@ async function doRender(): Promise<void> {
   if (!el || !active()) return;
   if (!latestMei) { el.innerHTML = HINT; return; }
   const seq = ++renderSeq;
+  cancelScrollFollow(el);
   const dark = document.body.classList.contains('staff-dark');
   await renderMeiToContainer(latestMei, el, { geometry: 'scroll', theme: dark ? 'dark' : 'light', zoom: frameZoom });
   if (seq !== renderSeq) return;
@@ -280,8 +282,8 @@ const PLAYBACK_ANCHOR = 2 / 3;
  *  [0, maxScroll] is what produces the "except near the beginning / end"
  *  behaviour: over the first screenful the moment sits left of the anchor and
  *  over the last it drifts right of it, because there is nothing left to
- *  scroll. The clamp also keeps the `next !== scrollLeft` check meaningful at
- *  the extremes, so a settled view stops re-issuing scrollTo per onset. */
+ *  scroll. The clamp also keeps scrollFollow's own already-there check
+ *  meaningful at the extremes, so a settled view stops re-aiming per onset. */
 function scrollToId(id: string, anchor = false): void {
   const el = frameEl();
   const svg = verovioSvg();
@@ -307,5 +309,10 @@ function scrollToId(id: string, anchor = false): void {
     next = Math.max(0, right - el.clientWidth + PAD);
   }
   next = Math.max(0, Math.min(next, el.scrollWidth - el.clientWidth));
-  if (next !== el.scrollLeft) el.scrollTo({ left: next, behavior: 'smooth' });
+  /* NOT el.scrollTo({ behavior: 'smooth' }): Chromium restarts a programmatic
+     smooth scroll from rest on every retarget, so one scrollTo per note onset
+     becomes a hop-stall-hop stutter there while Firefox glides. scrollFollow
+     is the velocity-continuous equivalent, identical in both engines and at
+     any frame rate. See @hkl/notation/scroll-follow.ts. */
+  scrollFollow(el, next);
 }

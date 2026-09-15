@@ -4258,3 +4258,35 @@ What makes this expensive is the shape of the symptom, not the mechanism. The su
 Two things kept the wrong story alive: the file header in `overlay-ws.ts` still described a *local page → same-origin* rule the code had stopped implementing (and since the dev proxy has no relay, that rule would have explained the symptom perfectly), and both the architecture doc and the user guide asserted that "the relay being up is what activates it" — stating the false model outright. Stale comments don't merely fail to help; they supply a plausible cause and stop the search.
 
 General form: **when a client gives up permanently, the start order becomes part of the contract — document it where the user reads, not only where the constant is defined.** And when a hypothesis needs a code path to exist, read the path before believing the story; a comment is not the path.
+
+## `scrollTo({behavior:'smooth'})` is not portable for a follow-the-music scroller (2026-09-15)
+
+The two engines disagree about what a **second** smooth scroll means while a first is still running, and the disagreement is invisible until something retargets at note rate.
+
+- **Firefox** models smooth scrolling as a mass-spring-damper and *preserves the current velocity* when the destination moves. A stream of destinations arriving a note apart reads as one continuous glide.
+- **Chromium** replaces the running animation with a fresh ease-in-out curve starting **from rest**, whose duration scales with the remaining distance. Measured: 42 ms for 10 px, 131 ms for 80 px, 565 ms for 1200 px — roughly √delta.
+
+Retargeting 60 px every 120 ms in headless Chromium, the per-frame deltas are:
+
+```
+3 23 19 7 5 2 1 0 0 | 3 23 19 7 5 2 0 | 3 23 19 8 4 3 0 | ...
+```
+
+An accelerate-from-rest/decelerate-to-rest burst of 5–7 frames, then dead frames. **31–50 % of all frames do not move**, and per-frame velocity has a coefficient of variation near 1.0. That is the whole "extremely jerky OBS scroll" — not a dropped animation, just a fast hop with a stall behind it.
+
+Two things made this hard to attribute. OBS *looks* like the culprit because a Browser Source drives rAF at the source FPS, so at 30 fps the 5-frame burst becomes 2–3 frames and reads as a pure jump — it amplifies without causing. And the natural first guess, "the animation is being cancelled between notes", is wrong in a way that survives casual inspection: the animation completes every time, it is just short and followed by dead air.
+
+**No browser exposes smooth-scroll duration or easing** — no CSS property, no API option. So matching Firefox means not using the native animation at all. The fix is a hand-rolled velocity-continuous animator (`@hkl/notation/scroll-follow.ts`).
+
+One trap inside that fix: the obvious semi-implicit Euler spring step is **unstable at exactly the frame rate that matters**. With spring constant 1000 (ω = 31.6) and dt = 1/30 s the update matrix has an eigenvalue of −1.83, so a 30 fps OBS source would oscillate and diverge rather than glide — a bug that would never appear on a 60 fps desktop. Critical damping has an exact closed-form solution for a target held constant across the frame; use it and the problem disappears at any dt.
+
+General form: **when animation is driven by an external event stream rather than a single gesture, the engine's retarget policy — not its easing curve — is what you are actually depending on.** And verify a timing fix at the frame rate of the slowest consumer, not the fastest.
+
+## Verify a scroll/animation fix by per-frame deltas, not by watching it (2026-09-15)
+
+"Looks smoother" does not separate a fix from a placebo, and the failure mode here is specifically *sub-100 ms* structure that the eye integrates into a general impression of jerkiness. Two numbers settle it, sampled per rAF over a steady retarget stream:
+
+- **zero-frame fraction** — frames where the scroll offset did not change at all. Native Chromium: 31–50 %. Spring animator at note rate: **0 %**.
+- **velocity CV** (stdev/mean of per-frame movement, over moving frames). Native: 0.86–1.02, i.e. per-frame speed varies as much as its own mean. Spring: 0.32–0.39.
+
+Both are cheap to collect headlessly with a throwaway page and CDP (`Runtime.evaluate` + a rAF sampler); no dev server and no OBS needed to reproduce or to prove the fix. Measure the **real module**, not a re-typed copy of the algorithm — transpile the actual source and inline it, or the probe drifts from what ships.
