@@ -26,6 +26,7 @@ import { buildPlayback } from './playback.js';
 import { extractResolvedFromElement } from '../model/note-elements.js';
 import { noteName, keyOctave } from '@hkl/shared/notes.js';
 import { freqAt, type TuningMode } from '@hkl/shared/freq.js';
+import type { PlaybackBarEdge } from '@hkl/shared/cursor-geom.js';
 
 /** Relative frequency tolerance for the duplicate-key (P/D) freq fallback.
  *  Duplicate keys compute to identical Hz, so this only guards float noise. */
@@ -51,11 +52,19 @@ interface VoiceState {
 }
 
 /** A voice advance, surfaced to the caller to reposition that voice's bar.
- *  `meiId` is the voice's new current element, or null when the voice is done
- *  (clears its bar). */
+ *  The bar TRAILS the player rather than leading them (Max, 2026-09-14): it
+ *  parks on the RIGHT edge of the note just completed, exactly where the voice
+ *  cursor sits after entering that note — so the bar tracks what was played
+ *  instead of pointing at what's next, and (the score being played in order)
+ *  never moves backward, which keeps the follow-scroll monotonic.
+ *  `meiId` is the element the bar sits on, `edge` which side: 'right' for a
+ *  completed note, 'left' only for the pre-performance start position (nothing
+ *  played yet → the bar sits before the first note). null only if a voice has
+ *  no steps at all. */
 export interface PerfAdvance {
   voice: Voice;
   meiId: string | null;
+  edge: PlaybackBarEdge;
 }
 
 /** (note name, octave, color) identity key. Both sides compute name/octave from
@@ -117,18 +126,20 @@ export class PerformanceMatcher {
     }
   }
 
-  /** Each voice's first expected element (its starting bar position). */
+  /** Each voice's starting bar position: before (left of) its first expected
+   *  element, since nothing has been played yet. */
   initialPositions(): PerfAdvance[] {
     const out: PerfAdvance[] = [];
     for (const [voice, vs] of this.voices) {
-      out.push({ voice, meiId: vs.steps[0]?.meiId ?? null });
+      out.push({ voice, meiId: vs.steps[0]?.meiId ?? null, edge: 'left' });
     }
     return out;
   }
 
-  /** Feed a live strike. Returns the voices that advanced as a result (each with
-   *  its new current element, or null when the voice finished). A strike that
-   *  matches no current-frontier voice returns []. */
+  /** Feed a live strike. Returns the voices that advanced as a result, each
+   *  with the element it just completed (bar goes to that element's right
+   *  edge). A voice that finishes its last step keeps its bar there rather than
+   *  clearing it. A strike that matches no current-frontier voice returns []. */
   onStrike(note: ResolvedNote): PerfAdvance[] {
     const pid = idKeyFor(note.q, note.r, note.colorHex);
     const phz = freqAt(note.q, note.r, this.mode);
@@ -148,8 +159,7 @@ export class PerformanceMatcher {
       }
       if (matched && step.notes.every((n) => n.satisfied)) {
         vs.stepIdx++;
-        const next = vs.steps[vs.stepIdx];
-        advanced.push({ voice, meiId: next ? next.meiId : null });
+        advanced.push({ voice, meiId: step.meiId, edge: 'right' });
       }
     }
     return advanced;

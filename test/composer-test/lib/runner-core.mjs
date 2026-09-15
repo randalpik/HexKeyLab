@@ -112,6 +112,25 @@ export const RESET_SNIPPET = `
 })()
 `;
 
+/** Await a render that `reRender()` deferred behind the heavy-render badge
+ *  (double-rAF + setTimeout): on that path reRender() RETURNS BEFORE RENDERING,
+ *  so a fixture reading splice/derive state straight afterwards samples the
+ *  PREVIOUS render's outcome. Resolves immediately when nothing is pending, so
+ *  it is free to call on the synchronous path too. Returns true if it settled,
+ *  false on timeout. */
+const WAIT_FOR_RENDER = `async (maxMs = 4000) => {
+  const H = window.__hkl_composer;
+  if (!H || typeof H.renderPending !== 'function') return true;
+  const t0 = Date.now();
+  while (H.renderPending() && Date.now() - t0 < maxMs) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  /* One rAF pair after it lands so the SVG metrics assertions read are settled
+     (mirrors the runner's own post-render wait). */
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))));
+  return !H.renderPending();
+}`;
+
 /** Inject the assertion library and the cursor-trace fn under fixed names.
  *  NB: parenthesize the embedded expressions to defeat ASI — a newline
  *  between `return` and a `(` would be parsed as `return;` followed by an
@@ -120,6 +139,7 @@ export const INJECT_LIB = `
 (() => {
   window.__cursorTrace = (${CURSOR_TRACE_FN});
   window.__waitForScrollSettle = (${SCROLL_SETTLE});
+  window.__waitForRender = (${WAIT_FOR_RENDER});
   return (${ASSERTION_LIB});
 })()
 `;

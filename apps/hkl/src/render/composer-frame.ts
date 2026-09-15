@@ -22,7 +22,7 @@ import { renderMeiToContainer } from '@hkl/notation/verovio.js';
 import type { VoiceCursorAnchor } from '@hkl/bridge/protocol.js';
 import {
   computeVoiceCursorRect, computePlaybackBarRect,
-  type CursorRectQuery, type CursorGeom,
+  type CursorRectQuery, type CursorGeom, type PlaybackBarEdge,
 } from '@hkl/shared/cursor-geom.js';
 
 const HINT = '<span class="composer-frame-hint">Composer view — open HKL Composer in another tab to mirror its score here.</span>';
@@ -38,8 +38,10 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 let latestMei: string | null = null;
 let editingAnchor: VoiceCursorAnchor | null = null;
 let activeVoice = 0;
-/** Playback-mode per-voice positions: voice → sounding element xml:id. */
-const playbackBars = new Map<number, string>();
+/** Playback-mode per-voice positions: voice → the element its bar sits on +
+ *  which edge ('left' = sounding now, 'right' = just played — Performance
+ *  mode's trailing bar). */
+const playbackBars = new Map<number, { meiId: string; edge: PlaybackBarEdge }>();
 let playbackMode = false;
 let rafScheduled = false;
 let renderSeq = 0;
@@ -77,17 +79,19 @@ export function setComposerCursor(voice: number, anchor: VoiceCursorAnchor): voi
  *  anchored at PLAYBACK_ANCHOR of the viewport. */
 export function setComposerPlaybackBars(
   on: boolean,
-  bars: ReadonlyArray<{ voice: number; meiId: string }>,
+  bars: ReadonlyArray<{ voice: number; meiId: string; edge?: PlaybackBarEdge }>,
 ): void {
   playbackMode = on;
   let scrollTarget: string | null = null;
-  const next = new Map<number, string>();
+  const next = new Map<number, { meiId: string; edge: PlaybackBarEdge }>();
   for (const b of bars) {
-    next.set(b.voice, b.meiId);
-    if (playbackBars.get(b.voice) !== b.meiId) scrollTarget = b.meiId;
+    const edge = b.edge ?? 'left';
+    next.set(b.voice, { meiId: b.meiId, edge });
+    const prev = playbackBars.get(b.voice);
+    if (!prev || prev.meiId !== b.meiId || prev.edge !== edge) scrollTarget = b.meiId;
   }
   playbackBars.clear();
-  for (const [v, id] of next) playbackBars.set(v, id);
+  for (const [v, pos] of next) playbackBars.set(v, pos);
   drawCursors();
   if (on && scrollTarget) scrollToId(scrollTarget, true);
   else if (!on) scrollToActive();
@@ -223,13 +227,13 @@ function drawCursors(): void {
   const q = frameQuery(svg);
 
   if (playbackMode) {
-    for (const meiId of playbackBars.values()) {
+    for (const { meiId, edge } of playbackBars.values()) {
       /* Skip user-hidden rests (visible="false" → g.rest[data-visible="false"],
          CSS-hidden but still laid out): don't park a bar on an invisible rest.
          Mirrors Composer's positionPlaybackBar. */
       const el = findById(svg, meiId);
       if (el && el.classList.contains('rest') && el.getAttribute('data-visible') === 'false') continue;
-      const geom = computePlaybackBarRect(meiId, q);
+      const geom = computePlaybackBarRect(meiId, q, edge);
       if (geom) drawGeom(svg, inv, geom);
     }
     return;
@@ -273,9 +277,11 @@ function scrollToId(id: string, anchor = false): void {
   const right = left + tr.width;
   let next = el.scrollLeft;
   if (anchor) {
-    /* The playback bar is drawn at the element's LEFT edge
+    /* The playback bar is drawn at the element's LEFT edge under clock playback
        (computePlaybackBarRect: left - 4), so anchoring `left` puts the BAR —
-       what the player actually tracks — on the anchor point. */
+       what the player actually tracks — on the anchor point. Performance mode's
+       trailing bar sits on the RIGHT edge instead, which leaves it within one
+       notehead of the anchor: not worth a second scroll path. */
     next = left - el.clientWidth * PLAYBACK_ANCHOR;
   } else if (tr.width + 2 * PAD > el.clientWidth || left < el.scrollLeft + PAD) {
     next = Math.max(0, left - PAD);

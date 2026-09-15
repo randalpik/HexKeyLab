@@ -118,10 +118,27 @@ export function computeVoiceCursorRect(a: VoiceCursorAnchor, q: CursorRectQuery)
   return { x, y: vert.y, w: CURSOR_WIDTH, h: vert.h, isBox: false };
 }
 
-/** Playback bar rect for a sounding element (matches cursor.ts:positionPlaybackBar:
- *  left edge − 4, element height ± VPAD, PLAYBACK_WIDTH). */
-export function computePlaybackBarRect(meiId: string, q: CursorRectQuery): CursorGeom | null {
+/** Which side of its element a playback bar sits on.
+ *   'left'  — at the element's onset: the element is SOUNDING NOW (clock
+ *             playback, where the bar marks the moment being heard).
+ *   'right' — past the element: it has been PLAYED (Performance mode, where
+ *             the bar trails the player like the editing caret trails an
+ *             inserted note — same offset as the voice cursor's
+ *             `elementRight`, so the two read identically). */
+export type PlaybackBarEdge = 'left' | 'right';
+
+/** Playback bar rect for a played/sounding element (matches
+ *  cursor.ts:positionPlaybackBar: left edge − 4 / right edge + HPAD, element
+ *  height ± VPAD, PLAYBACK_WIDTH). The 'right' case is deliberately the SAME
+ *  expression as computeVoiceCursorRect's `elementRight` — one anchor rule for
+ *  both cursors. */
+export function computePlaybackBarRect(
+  meiId: string,
+  q: CursorRectQuery,
+  edge: PlaybackBarEdge = 'left',
+): CursorGeom | null {
   const r = q.rectForId(meiId);
   if (!r) return null;
-  return { x: r.left - 4, y: r.top - CURSOR_VPAD, w: PLAYBACK_WIDTH, h: r.height + CURSOR_VPAD * 2, isBox: false };
+  const x = edge === 'right' ? r.right + CURSOR_HPAD : r.left - 4;
+  return { x, y: r.top - CURSOR_VPAD, w: PLAYBACK_WIDTH, h: r.height + CURSOR_VPAD * 2, isBox: false };
 }

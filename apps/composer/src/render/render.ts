@@ -1108,10 +1108,23 @@ class Renderer {
       return proxy > HEAVY_MS;   // switch: restore (~1 s on large docs) or fresh engrave
     }
     if (this.viewMode === 'page') {
-      /* An owned-partition edit that spliced last time will almost certainly
-         splice again (the gates are stable across consecutive edits in a
-         region) — render it synchronously, no badge. */
-      if (this.lastPageSpliced && this.pageBreaks.ownershipActive()) return false;
+      /* Ask whether a local refill is ON THE TABLE — the structural analogue of
+         the scroll branch's `canSplice()` below — instead of extrapolating this
+         render's path from what the LAST one cost.
+         `lastPageSpliced` was a one-sample path predictor, and it is false after
+         ANY derive, so the edit right after a derive was charged the derive's
+         price: a ~40 ms splice deferred two frames behind the badge (2026-09-14,
+         found via pageSystemSpliceCourtesyBehindSectionBreak, which flipped on
+         whether the preceding derive measured under or over HEAVY_MS). Worse,
+         the queued render could then be superseded by a full engrave, turning a
+         splice into one. Document cost stays extrapolable; the PATH does not.
+         Like `canSplice()`, this is readiness, not a guarantee: if the refill
+         refuses and derives, the cost is one un-badged slow render — the failure
+         mode this predictor already accepts. forceFullRerender() calls
+         pageBreaks.invalidate(), which nulls BOTH startIds and adoption, so
+         zoom / file-open / HEJI / page-scale still fall through to the cost
+         threshold and keep their badge. */
+      if (this.pageBreaks.canAttemptRefill()) return false;
       return (this.lastFullMs.page ?? proxy) > HEAVY_MS;
     }
     const willSplice = !this.forceFull && this.splicer.canSplice() && viewStaves == null;

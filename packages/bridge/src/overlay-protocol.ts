@@ -14,6 +14,8 @@
 // Outline / rotation / hex-size are HKL-app string enums; typed as `string`
 // here (the app casts on apply) to avoid reaching into an app package.
 
+import type { PlaybackBarEdge } from '@hkl/shared/cursor-geom.js';
+
 /** Full lattice render state — everything the overlay needs to reproduce the
  *  hex lattice identically. Sent on publisher (re)connect and whenever any
  *  structural field changes. Live note highlights + view pan stream as the
@@ -55,6 +57,8 @@ export interface OverlaySnapshot {
 export interface OverlayPlaybackBar {
   voice: number;
   meiId: string;
+  /** Which edge of `meiId` the bar sits on; absent → 'left'. */
+  edge?: PlaybackBarEdge;
 }
 
 export type OverlayMsg =

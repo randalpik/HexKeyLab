@@ -8147,3 +8147,87 @@ a full-document measure).
 **Deliberate asymmetry with page view**: `pinExactScale` carries the contract *"nothing may grow a page's viewBox after mount"*, from the section-header injector bug (2026-09-02). Scroll view is one continuous system rendered with `adjustPageHeight` and needs the opposite. The growth lives in `scrollbox.ts`, not inside `pinExactScale`, so both rules stay true — do not "unify" them.
 
 **Where**: `apps/composer/src/render/scrollbox.ts` (new), `apps/composer/src/render/splice.ts` (`staffFrameOf`, frame adoption in `spliceDom`), `test/composer-test/lib/assertions.mjs` (`assertScrollSystemCoherent`).
+
+---
+
+**Performance mode's bar trails the player, and the end of the score is not an exit (2026-09-14).**
+Two changes to Performance mode (see "Performance mode is input-driven playback", 2026-06-05), both
+Max's calls, both about the mode being a *performance* transport rather than a follow-along.
+
+1. **The bar sits past the note just played, not before the note expected next.** `PerfAdvance` now
+reports the step it just COMPLETED with `edge: 'right'`, so the bar lands at `rect.right + CURSOR_HPAD`
+— the exact offset the voice cursor takes after a note is entered, so the two read identically.
+Max's reasoning: *"I'd rather smoothly track the notes played than clearly see what's next"*, plus the
+scrolling consequence — a trailing bar is monotonic in x as long as the score is played in order, so
+the follow-scroll never jumps backward, whereas a leading bar moves to the next note the instant one
+is completed and can retreat at a wrap. Only the pre-first-strike position keeps a left edge (nothing
+played yet). The edge is a `PlaybackBarEdge` in `@hkl/shared/cursor-geom.ts` threaded through
+`setPlaybackPosition` → `computePlaybackBarRect` → the `composer-playback` bridge message and the
+overlay mirror (`edge` optional, absent → `'left'`), so HKL's Composer-view frame and the OBS overlay
+stay pixel-identical with no second geometry path. Clock playback keeps `'left'`: there the bar marks
+the moment being HEARD, which is the note's onset, and that is a different question from this one.
+
+2. **Consuming the last step no longer stops the mode.** It only sets the status once. Max: being
+thrown back to wherever the editing cursor was the instant the last note lands is exactly wrong at the
+end of a take. Exit is manual — `#btnPerform`, Space, or switching transports — and `restoreEditingTransport`
+runs then. A finished voice likewise keeps its bar parked past its final note instead of clearing it,
+so a voice that ends early doesn't blink out mid-performance.
+
+**Where**: `packages/shared/src/cursor-geom.ts`, `packages/bridge/src/{protocol,overlay-protocol}.ts`,
+`apps/composer/src/{render/performance.ts,cursor/cursor.ts,main.ts}`, `apps/hkl/src/render/composer-frame.ts`.
+Fixtures: `perfBarTrailsPlayed` (rendered geometry: bar at `A3.right+4`, x strictly increasing, mode
+still active at the end, Perform button exits), plus `perfTwoVoiceFrontier` / `perfChordWaitsForAll`
+updated to the trailing-edge semantics.
+
+---
+
+**The heavy-render predictor stops guessing the PATH; splice fixtures await the deferred render (2026-09-14).**
+`pageSystemSpliceCourtesyBehindSectionBreak` failed 2-in-6 on an unchanged tree. Not a flake, and
+not the splicer: the edit under test splices every time (verified 6/6 once awaited, `out=spliced`
+at 35–42 ms with a proper window).
+
+**Root cause.** `reRender()` defers behind the busy badge (double-rAF + timeout) when
+`predictNextRenderHeavy()` is true, RETURNING BEFORE ANYTHING RENDERS. In page mode that predicate
+was `lastPageSpliced && ownershipActive()` else `lastFullMs.page > 250`. `lastPageSpliced` is false
+after ANY derive, so the edit following a derive was priced at the derive's cost. The fixture's own
+setup derives (adding a section header adds a user break), and that engrave measures **221–298 ms**
+on the same machine — straddling `HEAVY_MS`. Above it the delete's render deferred, the assertion
+read the header render's stale `lastOutcome` ('noop') and reported a splice failure that never
+happened. Same-run pairing, 6/6, no exceptions: `predictHeavy=true` → fail, `false` → pass.
+
+**The second symptom had the same cause.** Failing runs showed 3 renders / 2 full vs 2 / 1 on passes,
+the extra one `(unattributed)` (full, no derive reason, no splicer skip reason) — the queued render
+escaping the assertion boundary and being superseded by a full engrave. Awaiting the render collapses
+every run to 2 / 1. So the deferral window is a hole where a ~40 ms splice can be upgraded into a
+full engrave.
+
+**Decision 1 — predict the path by asking, not by remembering.** Page mode now returns "light" when
+`pageBreaks.canAttemptRefill()`, the structural analogue of the scroll branch's `canSplice()` three
+lines below. Document cost genuinely carries between renders (measures/staves/zoom barely move); the
+PATH does not, and a one-sample path predictor is wrong exactly at the derive→edit boundary — which
+is the most common edit there is. Like `canSplice()` this is readiness, not a guarantee: a refill
+that refuses and derives costs one un-badged slow render, the failure mode this predictor already
+accepts. Safety: `forceFullRerender()` → `pageBreaks.invalidate()` nulls BOTH `startIds` and
+`adoption`, so zoom / file-open / HEJI / page-scale keep their badge.
+
+**Decision 2 — fixtures await the render they measure.** New `window.__waitForRender(maxMs)` test hook
+(backed by `__hkl_composer.renderPending()` = `renderQueued || renderInFlight`), applied after every
+`reRender()` in the 34 assertion blocks that read splicer outcome state. It resolves immediately when
+nothing is pending, so it is free on the synchronous path. Rejected: a `reRenderSync()` that bypasses
+the defer — it would hide the deferral path from the suite entirely, and the deferral is real product
+behavior that tests should be able to exercise. Two cascade fixtures needed their `withWarnsCaptured`
+helper made async-aware (the reRender they measure sits inside that callback).
+
+**Known gap, not fixed here**: `fullRender: '<why>'` switches the runner's unexplained-full-render
+check off WHOLESALE (`if (unexplained.length && !fixture.fullRender)`), so a fixture that declares one
+expected derive is blind to every OTHER full render it performs. That is why the extra engrave above
+never failed the run on its own — it only appeared in the summary listing. Worth making the flag name
+the reason or the count it permits.
+
+**Verification**: target fixture 10/10 (was 4/6); full suite 481/481; `(unattributed)` in the splice
+ledger down from 4 fixtures to 3, the remainder being the zoom/roundtrip ones where `forceFull` is
+correct. `pnpm typecheck` + `pnpm build` + `pnpm check:boundaries` clean.
+
+**Where**: `apps/composer/src/render/render.ts` (predictNextRenderHeavy), `apps/composer/src/main.ts`
+(`renderPending`), `test/composer-test/lib/runner-core.mjs` (`__waitForRender`),
+`test/composer-test/fixtures.mjs` (34 blocks).

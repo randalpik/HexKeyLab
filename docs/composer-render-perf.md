@@ -210,7 +210,10 @@ on mount (viewBox growth), shifting pages below it; scroll-mode full engrave
   serializations). Fixed en route: the splice invalidated the live toolkit it
   never touches (forcing a ~590 ms reload on the next lazy mount — staleness is
   now per-page), and every page edit was deferred behind the busy badge
-  (predictNextRenderHeavy now predicts light after a splice). Remaining levers
+  (predictNextRenderHeavy now predicts light after a splice; superseded
+  2026-09-14 — page mode predicts light whenever a refill can be ATTEMPTED,
+  since `lastPageSpliced` was false after any derive and charged the next edit
+  the derive's price). Remaining levers
   with measurements in composer-page-splice-design.md.
 - [x] **T3.2d One break algorithm everywhere** — SHIPPED 2026-08-30. The
   castoff pass that chooses the partition is now an internal bootstrap

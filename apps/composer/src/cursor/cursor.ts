@@ -17,7 +17,7 @@ import { renderer } from '../render/render.js';
 import type { ComposerModel, Voice } from '../model/index.js';
 import {
   computeVoiceCursorRect, computePlaybackBarRect,
-  type VoiceCursorAnchor, type CursorRectQuery,
+  type VoiceCursorAnchor, type CursorRectQuery, type PlaybackBarEdge,
 } from '@hkl/shared/cursor-geom.js';
 import { type Moment, dynamAt, hairpinsAt, tempoAt } from '../expressions.js';
 import { tempoCopySource } from '../notation/parts.js';
@@ -190,7 +190,9 @@ class CursorOverlay {
      editing cursor itself is hidden while playbackMode is true. */
   private playbackMode = false;
   private playbackBars: Map<Voice, SVGRectElement> = new Map();
-  private playbackPositions: Map<Voice, string> = new Map();
+  /** Per-voice bar target: the element it sits on + which of its edges (see
+   *  PlaybackBarEdge — 'left' = sounding now, 'right' = just played). */
+  private playbackPositions: Map<Voice, { meiId: string; edge: PlaybackBarEdge }> = new Map();
 
   /** Fired whenever the playback overlay (mode or any per-voice bar) changes.
    *  main.ts wires this to broadcast the overlay to HKL's Composer-view frame,
@@ -303,8 +305,8 @@ class CursorOverlay {
       this.clearExpressionHighlights();
       this.hidePedal();
       this.hideTempo();
-      for (const [voice, meiId] of this.playbackPositions) {
-        this.positionPlaybackBar(voice, meiId);
+      for (const [voice, pos] of this.playbackPositions) {
+        this.positionPlaybackBar(voice, pos.meiId, pos.edge);
       }
       return;
     }
@@ -886,10 +888,15 @@ class CursorOverlay {
    *  to play the first content of its measure), in which case Ctrl+←
    *  should jump back one extra measure. */
   getPlaybackPositions(): Map<Voice, string> {
-    return new Map(this.playbackPositions);
+    return new Map([...this.playbackPositions].map(([v, p]) => [v, p.meiId]));
   }
 
-  setPlaybackPosition(voice: Voice, meiId: string | null): void {
+  /** The full overlay, edges included — what main.ts ships to HKL's frame. */
+  getPlaybackBars(): { voice: Voice; meiId: string; edge: PlaybackBarEdge }[] {
+    return [...this.playbackPositions].map(([voice, p]) => ({ voice, meiId: p.meiId, edge: p.edge }));
+  }
+
+  setPlaybackPosition(voice: Voice, meiId: string | null, edge: PlaybackBarEdge = 'left'): void {
     if (!this.svg) return;
     if (meiId === null) {
       this.playbackPositions.delete(voice);
@@ -898,12 +905,12 @@ class CursorOverlay {
       this.onPlaybackChange?.();
       return;
     }
-    this.playbackPositions.set(voice, meiId);
-    this.positionPlaybackBar(voice, meiId);
+    this.playbackPositions.set(voice, { meiId, edge });
+    this.positionPlaybackBar(voice, meiId, edge);
     this.onPlaybackChange?.();
   }
 
-  private positionPlaybackBar(voice: Voice, meiId: string): void {
+  private positionPlaybackBar(voice: Voice, meiId: string, edge: PlaybackBarEdge): void {
     if (!this.svg) return;
     let bar = this.playbackBars.get(voice);
     if (!bar) {
@@ -919,7 +926,7 @@ class CursorOverlay {
        (invisible) rest's coordinates. */
     if (renderedIsHiddenRest(meiId)) { bar.setAttribute('opacity', '0'); return; }
     /* Shared geometry — identical to HKL's Composer-view playback bar. */
-    const geom = computePlaybackBarRect(meiId, COMPOSER_QUERY);
+    const geom = computePlaybackBarRect(meiId, COMPOSER_QUERY, edge);
     if (!geom) {
       bar.setAttribute('opacity', '0');
       return;

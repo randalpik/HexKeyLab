@@ -8,7 +8,7 @@
 // Messages are POJOs (structured-cloneable). No methods, no Dates, no class
 // instances — they cross the BroadcastChannel and must survive structuredClone.
 
-import type { VoiceCursorAnchor } from '@hkl/shared/cursor-geom.js';
+import type { VoiceCursorAnchor, PlaybackBarEdge } from '@hkl/shared/cursor-geom.js';
 export type { VoiceCursorAnchor };
 
 export const CHANNEL_NAME = 'hkl-composer-bridge';
@@ -260,8 +260,10 @@ export type ComposerEvent =
    *  wiring. Composer's `Cursor` is the single owner: it self-publishes this on
    *  every playback-mode / per-voice-bar change. `on` = playback overlay active
    *  (editing cursor hidden, bars shown); `bars` = one entry per sounding voice
-   *  (its current meiId). HKL renders it via the shared `computePlaybackBarRect`
-   *  and never derives bars itself. */
-  | { type: 'composer-playback'; on: boolean; bars: ReadonlyArray<{ voice: number; meiId: string }> };
+   *  (its current meiId), plus the `edge` of that element the bar sits on:
+   *  'left' = sounding now (clock playback), 'right' = just played (Performance
+   *  mode). Absent → 'left'. HKL renders it via the shared
+   *  `computePlaybackBarRect` and never derives bars itself. */
+  | { type: 'composer-playback'; on: boolean; bars: ReadonlyArray<{ voice: number; meiId: string; edge?: PlaybackBarEdge }> };
 
 export type BridgeMessage = HklEvent | ComposerEvent;

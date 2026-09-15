@@ -203,7 +203,7 @@ Then **Ctrl+C** / **Ctrl+X** / **Ctrl+V** copy, cut, and paste through the real 
 ## Playing it back
 
 - **Space** plays from the cursor (or from the top). A bar follows each sounding voice; the editing cursor is untouched.
-- **Performance mode** (**Shift+Space**) is the inverse: *you* play the part live on the Lumatone and the on-screen bars advance as you strike the matching notes, for recording a scrolling-score video to your own performance. Single instrument; mistakes are simply ignored rather than failing.
+- **Performance mode** (**Shift+Space**) is the inverse: *you* play the part live on the Lumatone and the on-screen bars advance as you strike the matching notes, for recording a scrolling-score video to your own performance. Single instrument; mistakes are simply ignored rather than failing. Each bar sits just **past the note you last played** (like the editing cursor after you enter a note), so it follows your playing and never jumps backward. Reaching the end of the score leaves the mode on — press **Perform** (or **Space**) when you want out; the editing cursor comes back then, not before.
 
 The **Play** and **Perform** toolbar buttons switch directly between the two transports.
 

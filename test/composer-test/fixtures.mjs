@@ -2636,6 +2636,19 @@ const PERFORMANCE = {
     `,
   },
 
+  /* One voice, two quarters (A3, E4): pins the RENDERED bar geometry — the bar
+   * starts before the first note and thereafter sits just past the note last
+   * played (never on the next one), so its x only ever increases while the
+   * score is played in order. Asserted by FIXTURE_ASSERTIONS.perfBarTrailsPlayed. */
+  perfBarTrailsPlayed: {
+    setup: `
+      window.__bridgeMock.reset();
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', lightColorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 1, pname: 'e', accid: '', oct: 4, midi: 64, colorHex: '#888', lightColorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+    `,
+  },
+
   /* One voice, one triad chord [A3, C4, E4]: striking a single member must NOT
    * advance (wait for ALL notes); striking all three advances/finishes.
    * Asserted by FIXTURE_ASSERTIONS.perfChordWaitsForAll. */
@@ -8239,28 +8252,83 @@ export const FIXTURE_ASSERTIONS = {
           { q, r, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: colorOf(a3), lightColorHex: '#888', velocity: 80 });
         const strikeAt = (q, r, color) => M.__performance.strike(
           { q, r, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: color, lightColorHex: '#888', velocity: 80 });
+        const at = (v) => { const b = M.__performance.bars()[v]; return b ? b.meiId + '@' + b.edge : 'none'; };
         M.__performance.start();
         if (!M.__performance.isActive()) return { ok: false, detail: 'not active after start' };
-        let p = M.__performance.positions();
-        if (p[1] !== a3 || p[3] !== c4) return { ok: false, detail: 'initial bars ' + JSON.stringify(p) };
+        /* Nothing played yet → each voice's bar sits BEFORE its first note. */
+        if (at(1) !== a3 + '@left' || at(3) !== c4 + '@left')
+          return { ok: false, detail: 'initial bars ' + at(1) + ' / ' + at(3) };
         /* Non-matching strike (B3 = q0,r2): nothing advances. */
         strikeAt(0, 2, colorOf(a3));
-        p = M.__performance.positions();
-        if (p[1] !== a3 || p[3] !== c4) return { ok: false, detail: 'non-match advanced ' + JSON.stringify(p) };
-        /* Strike A3 → V1 advances to E4; V3 (expects C4) unaffected. */
+        if (at(1) !== a3 + '@left' || at(3) !== c4 + '@left')
+          return { ok: false, detail: 'non-match advanced ' + at(1) + ' / ' + at(3) };
+        /* Strike A3 → V1's bar trails PAST the A3 it just played (not onto the
+           E4 that's next); V3 (expects C4) unaffected. */
         strikeAt(0, 0, colorOf(a3));
-        p = M.__performance.positions();
-        if (p[1] !== e4) return { ok: false, detail: 'V1 did not advance to E4: ' + JSON.stringify(p) };
-        if (p[3] !== c4) return { ok: false, detail: 'V3 moved on an A3 strike: ' + JSON.stringify(p) };
-        /* Strike C4 → V3 done (its bar clears); V1 still pending on E4. */
+        if (at(1) !== a3 + '@right') return { ok: false, detail: 'V1 bar after A3 strike: ' + at(1) };
+        if (at(3) !== c4 + '@left') return { ok: false, detail: 'V3 moved on an A3 strike: ' + at(3) };
+        /* Strike C4 → V3 done; its bar STAYS past its last note (not cleared). */
         strikeAt(-4, -2, colorOf(c4));
-        p = M.__performance.positions();
-        if (p[3] != null) return { ok: false, detail: 'V3 bar not cleared on finish: ' + JSON.stringify(p) };
+        if (at(3) !== c4 + '@right') return { ok: false, detail: 'V3 bar on finish: ' + at(3) };
+        if (at(1) !== a3 + '@right') return { ok: false, detail: 'V1 bar moved on a C4 strike: ' + at(1) };
         if (!M.__performance.isActive()) return { ok: false, detail: 'ended before V1 finished' };
-        /* Strike E4 → V1 done → whole performance finishes. */
+        /* Strike E4 → V1 done → every voice consumed, but the MODE stays on. */
         strikeAt(0, 1, colorOf(e4));
-        if (M.__performance.isActive()) return { ok: false, detail: 'still active after all voices done' };
-        return { ok: true, detail: 'advance + no-op + per-voice finish OK' };
+        if (at(1) !== e4 + '@right') return { ok: false, detail: 'V1 bar on finish: ' + at(1) };
+        if (!M.__performance.isFinished()) return { ok: false, detail: 'matcher not finished after all steps' };
+        if (!M.__performance.isActive()) return { ok: false, detail: 'auto-exited on reaching the end' };
+        /* Manual exit is the only exit: the Perform button stops it. */
+        document.getElementById('btnPerform').click();
+        if (M.__performance.isActive()) return { ok: false, detail: 'Perform button did not stop the mode' };
+        return { ok: true, detail: 'trailing per-voice advance + no-op + stays active at end + manual exit' };
+      })()` },
+  ],
+  /* Rendered geometry of the trailing bar: before the first note at the start,
+   * then at each played note's RIGHT edge (+CURSOR_HPAD, the same offset the
+   * voice cursor uses after entering a note), with x strictly increasing. */
+  perfBarTrailsPlayed: [
+    { name: 'the bar renders past the note just played, never moving backward',
+      expr: `(() => {
+        const M = window.__hkl_composer;
+        const m = M.model;
+        const HPAD = 4;
+        const evs = M.buildPlayback(m).filter(e => e.notes.length && e.meiId && e.voice === 1);
+        if (evs.length !== 2) return { ok: false, detail: 'expected 2 events, got ' + evs.length };
+        const a3 = evs[0].meiId, e4 = evs[1].meiId;
+        const colorOf = (meiId) => {
+          const loc = m.findElement(meiId);
+          const el = m.flatChildren(loc.voice)[loc.index];
+          const n = el.localName === 'chord' ? el.querySelector('note') : el;
+          return n.getAttribute('color');
+        };
+        const strike = (q, r, meiId) => M.__performance.strike(
+          { q, r, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: colorOf(meiId), lightColorHex: '#888', velocity: 80 });
+        const barX = () => {
+          const b = document.querySelector('[data-cursor-role="playback"]');
+          if (!b || b.getAttribute('opacity') === '0') return null;
+          return parseFloat(b.getAttribute('x'));
+        };
+        M.__performance.start();
+        const rA = M.renderer.rectForId(a3), rE = M.renderer.rectForId(e4);
+        if (!rA || !rE) return { ok: false, detail: 'notes not rendered' };
+        const x0 = barX();
+        if (x0 == null) return { ok: false, detail: 'no visible bar after start' };
+        if (x0 >= rA.left) return { ok: false, detail: 'initial bar x=' + x0 + ' not before A3 left=' + rA.left };
+        strike(0, 0, a3);
+        const x1 = barX();
+        if (Math.abs(x1 - (rA.right + HPAD)) > 0.5)
+          return { ok: false, detail: 'after A3: bar x=' + x1 + ', expected A3.right+HPAD=' + (rA.right + HPAD) + ' (A3.left-4=' + (rA.left - 4) + ', E4.left-4=' + (rE.left - 4) + ')' };
+        if (!(x1 > x0)) return { ok: false, detail: 'bar moved backward: ' + x0 + ' -> ' + x1 };
+        strike(0, 1, e4);
+        const x2 = barX();
+        if (Math.abs(x2 - (rE.right + HPAD)) > 0.5)
+          return { ok: false, detail: 'after E4: bar x=' + x2 + ', expected E4.right+HPAD=' + (rE.right + HPAD) };
+        if (!(x2 > x1)) return { ok: false, detail: 'bar moved backward: ' + x1 + ' -> ' + x2 };
+        /* End of score: mode stays on and the bar stays where it is. */
+        if (!M.__performance.isActive()) return { ok: false, detail: 'auto-exited at end of score' };
+        if (barX() !== x2) return { ok: false, detail: 'bar moved after the last note' };
+        document.getElementById('btnPerform').click();
+        return { ok: true, detail: 'bar x ' + x0.toFixed(1) + ' -> ' + x1.toFixed(1) + ' -> ' + x2.toFixed(1) + ' (trailing, monotonic)' };
       })()` },
   ],
   perfChordWaitsForAll: [
@@ -8277,20 +8345,23 @@ export const FIXTURE_ASSERTIONS = {
         const color = el.querySelector('note').getAttribute('color');
         const strike = (q, r) => M.__performance.strike(
           { q, r, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: color, lightColorHex: '#888', velocity: 80 });
+        const at = () => { const b = M.__performance.bars()[1]; return b ? b.meiId + '@' + b.edge : 'none'; };
         M.__performance.start();
-        let p = M.__performance.positions();
-        if (p[1] !== chordId) return { ok: false, detail: 'initial bar ' + JSON.stringify(p) };
-        /* One member (A3): chord incomplete → no advance, still active. */
+        if (at() !== chordId + '@left') return { ok: false, detail: 'initial bar ' + at() };
+        /* One member (A3): chord incomplete → bar stays BEFORE the chord. */
         strike(0, 0);
-        if (!M.__performance.isActive()) return { ok: false, detail: 'finished on a single member' };
-        if (M.__performance.positions()[1] !== chordId) return { ok: false, detail: 'advanced on a single member' };
+        if (M.__performance.isFinished()) return { ok: false, detail: 'finished on a single member' };
+        if (at() !== chordId + '@left') return { ok: false, detail: 'advanced on a single member: ' + at() };
         /* Second member (C4): still incomplete. */
         strike(-4, -2);
-        if (!M.__performance.isActive()) return { ok: false, detail: 'finished on two of three members' };
-        /* Third member (E4): chord complete → finish. */
+        if (M.__performance.isFinished()) return { ok: false, detail: 'finished on two of three members' };
+        if (at() !== chordId + '@left') return { ok: false, detail: 'advanced on two members: ' + at() };
+        /* Third member (E4): chord complete → bar trails past it, mode stays on. */
         strike(0, 1);
-        if (M.__performance.isActive()) return { ok: false, detail: 'did not finish after all three members' };
-        return { ok: true, detail: 'chord waits for all members' };
+        if (!M.__performance.isFinished()) return { ok: false, detail: 'did not finish after all three members' };
+        if (at() !== chordId + '@right') return { ok: false, detail: 'bar did not trail the completed chord: ' + at() };
+        if (!M.__performance.isActive()) return { ok: false, detail: 'auto-exited on reaching the end' };
+        return { ok: true, detail: 'chord waits for all members, then the bar trails it' };
       })()` },
   ],
   /* Every system's staff lines must land on the device-pixel grid (crisp) in a
@@ -11726,9 +11797,10 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageSpliceLeaderAtSectionRestart: [
     { name: 'an edit in a section\'s first line splices through a leader-at-boundary window (no Verovio crash, no derive)',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer; const m = H.model; const pb = H.renderer['pageBreaks']; const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
         pb.finishBalanceJobNow();
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
@@ -11840,12 +11912,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageSystemSpliceEdit: [
     { name: 'a mid-line edit lands as a system splice (no full loadData) and the DOM keeps the pinned partition',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         /* No priming: since the partition is repaired rather than re-derived
            (Max's ruling 2026-08-30), the FIRST edit in a region leaves the
@@ -11906,6 +11979,7 @@ export const FIXTURE_ASSERTIONS = {
           await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
         };
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         if (pb['startIds'].length < 3) return { ok: false, detail: 'need >= 3 lines, got ' + pb['startIds'].length };
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
@@ -11939,12 +12013,13 @@ export const FIXTURE_ASSERTIONS = {
 
   pageSystemSpliceBottomExtent: [
     { name: 'growing the doc-last line bottom extent now SPLICES (nothing below it moves) and matches a full re-engrave',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         if (pb['startIds'].length < 3) return { ok: false, detail: 'need >= 3 lines, got ' + pb['startIds'].length };
@@ -11975,12 +12050,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageSystemSpliceDyCascade: [
     { name: 'an edit that grows an early system pushes the systems below it down by the measured dy (B1 cascade)',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         const startIds = pb['startIds'];
         if (startIds.length < 4) return { ok: false, detail: 'need >= 4 lines, got ' + startIds.length };
@@ -12025,12 +12101,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageSectionHeaderCascade: [
     { name: 'an edit above a section header cascades the title with its system (no stranding, no overlap)',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 3 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
         const title = document.querySelector('#score text.hkl-section-header');
@@ -12126,12 +12203,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageSectionHeaderOwnLine: [
     { name: "editing the header's OWN line splices, and the title is re-placed on the injector's rule",
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 3 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
         const title0 = document.querySelector('#score text.hkl-section-header');
@@ -12218,12 +12296,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageScoreStartSplice: [
     { name: 'an edit on the score-start line (line 0) splices instead of full-rendering',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 3 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         const startIds = pb['startIds'];
         if (startIds.length < 3) return { ok: false, detail: 'need >= 3 lines, got ' + startIds.length };
@@ -12263,12 +12342,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageSystemSpliceCourtesySig: [
     { name: 'an edit beside a line that begins a key change still splices (the window pulls in the courtesy-generating line)',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         let startIds = pb['startIds'];
         if (startIds.length < 5) return { ok: false, detail: 'need >= 5 lines, got ' + startIds.length };
@@ -12280,7 +12360,9 @@ export const FIXTURE_ASSERTIONS = {
         if (sigMi < 0) return { ok: false, detail: 'line start not in model' };
         m.setKeySigAt(sigMi, '3s', 'major');
         H.reRender();
+        await window.__waitForRender();
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         /* The key change may re-break the score; re-read the partition and find
            the line that now begins it. */
         startIds = pb['startIds'];
@@ -12313,12 +12395,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageReferenceGateCatchesForgedDefects: [
     { name: 'the reference gate accepts a real splice and names a forged signature glyph, a removed glyph group, and a removed cross-system spanner segment on the REPLACED line',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model, R = H.renderer;
         const pb = R['pageBreaks'];
         const ps = R['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         const startIds = pb['startIds'];
         if (startIds.length < 4) return { ok: false, detail: 'need >= 4 lines, got ' + startIds.length };
@@ -12332,6 +12415,7 @@ export const FIXTURE_ASSERTIONS = {
         if (!m.deleteAtCursor()) return { ok: false, detail: 'delete rejected' };
         if (m.docVersion() === ver) return { ok: false, detail: 'delete did not change the document' };
         H.reRender();
+        await window.__waitForRender();
         if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
         const lineStart = pb['startIds'][1];
         const anchor = document.getElementById(lineStart);
@@ -12406,6 +12490,7 @@ export const FIXTURE_ASSERTIONS = {
         };
         const KIND = 'key';
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         let startIds = pb['startIds'];
         if (startIds.length < 7) return { ok: false, detail: 'need >= 7 lines, got ' + startIds.length };
@@ -12485,6 +12570,7 @@ export const FIXTURE_ASSERTIONS = {
         };
         const KIND = 'meter';
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         let startIds = pb['startIds'];
         if (startIds.length < 7) return { ok: false, detail: 'need >= 7 lines, got ' + startIds.length };
@@ -12564,6 +12650,7 @@ export const FIXTURE_ASSERTIONS = {
         };
         const KIND = 'clef';
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         let startIds = pb['startIds'];
         if (startIds.length < 7) return { ok: false, detail: 'need >= 7 lines, got ' + startIds.length };
@@ -12630,12 +12717,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageScoreStartSpliceKeepsMeterSym: [
     { name: 'a line-0 splice keeps the cut-time symbol (range head keeps meter.sym; meter glyphs match a full render)',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         const headSym = m.getDoc().querySelector('scoreDef').getAttribute('meter.sym');
         if (headSym !== 'cut') return { ok: false, detail: 'fixture cannot pose the case: head meter.sym=' + headSym };
@@ -12655,6 +12743,7 @@ export const FIXTURE_ASSERTIONS = {
         const prevCheck = globalThis.__HKL_INDEX_CHECK;
         globalThis.__HKL_INDEX_CHECK = true;
         try { H.reRender(); } finally { globalThis.__HKL_INDEX_CHECK = prevCheck; }
+        await window.__waitForRender();
         if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice on line 0, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
         if (!ps.lastRun || ps.lastRun.a !== 0) return { ok: false, detail: 'edit did not replace line 0: run=' + JSON.stringify(ps.lastRun) };
         const after = glyphs();
@@ -12664,12 +12753,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageSystemSpliceCourtesyBehindSectionBreak: [
     { name: 'an edit one line above a movement that opens with a key change (scoreDef behind the section <sb>) splices',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         let startIds = pb['startIds'];
         if (startIds.length < 6) return { ok: false, detail: 'need >= 6 lines, got ' + startIds.length };
@@ -12687,7 +12777,9 @@ export const FIXTURE_ASSERTIONS = {
           return { ok: false, detail: 'fixture cannot pose the case: siblings before the header measure are ' + (prev2 && prev2.localName) + ' > ' + (prev1 && prev1.localName) };
         }
         H.reRender();
+        await window.__waitForRender();
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         startIds = pb['startIds'];
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         const lineOfSig = startIds.indexOf(ids[sigMi]);
@@ -12704,6 +12796,7 @@ export const FIXTURE_ASSERTIONS = {
         const prevCheck = globalThis.__HKL_INDEX_CHECK;
         globalThis.__HKL_INDEX_CHECK = true;
         try { H.reRender(); } finally { globalThis.__HKL_INDEX_CHECK = prevCheck; }
+        await window.__waitForRender();
         if (/diverged/.test(ps.lastSkipReason || '')) {
           return { ok: false, detail: 'context line diverged — the courtesy line behind the section break was not pulled in: ' + ps.lastSkipReason };
         }
@@ -12723,12 +12816,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageSystemSpliceCourtesyClefOtherStaff: [
     { name: 'an edit one line above a line that begins with a STAFF-2 clef change splices (courtesy clef on the second staff)',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         let startIds = pb['startIds'];
         if (startIds.length < 6) return { ok: false, detail: 'need >= 6 lines, got ' + startIds.length };
@@ -12754,7 +12848,9 @@ export const FIXTURE_ASSERTIONS = {
         if (!lead || lead !== lead.parentElement.firstElementChild) return { ok: false, detail: 'fixture cannot pose the case: no leading clef in staff 2 of the target measure: ' + (lead ? Array.from(lead.parentElement.children).map((c) => c.localName).join(',') : 'none') };
         if (meas.querySelector('staff[n="1"] > layer > clef')) return { ok: false, detail: 'unexpected clef on staff 1' };
         H.reRender();
+        await window.__waitForRender();
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         startIds = pb['startIds'];
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         const lineOfSig = startIds.indexOf(ids[sigMi]);
@@ -12768,6 +12864,7 @@ export const FIXTURE_ASSERTIONS = {
         const prevCheck = globalThis.__HKL_INDEX_CHECK;
         globalThis.__HKL_INDEX_CHECK = true;
         try { H.reRender(); } finally { globalThis.__HKL_INDEX_CHECK = prevCheck; }
+        await window.__waitForRender();
         if (/diverged/.test(ps.lastSkipReason || '')) {
           return { ok: false, detail: 'context line diverged — the staff-2 courtesy clef line was not pulled in: ' + ps.lastSkipReason };
         }
@@ -12787,12 +12884,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageSystemSpliceCourtesyStubChain: [
     { name: 'two consecutive lines beginning key changes: the window ends one measure past the compared line (a stub), the second signature line stays out',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         let startIds = pb['startIds'];
         if (startIds.length < 7) return { ok: false, detail: 'need >= 7 lines, got ' + startIds.length };
@@ -12802,7 +12900,9 @@ export const FIXTURE_ASSERTIONS = {
         m.setKeySigAt(sig1, '3s', 'major');
         m.setKeySigAt(sig2, '2f', 'major');
         H.reRender();
+        await window.__waitForRender();
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         startIds = pb['startIds'];
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         const L1 = startIds.indexOf(ids[sig1]), L2 = startIds.indexOf(ids[sig2]);
@@ -12819,6 +12919,7 @@ export const FIXTURE_ASSERTIONS = {
         const prevCheck = globalThis.__HKL_INDEX_CHECK;
         globalThis.__HKL_INDEX_CHECK = true;
         try { H.reRender(); } finally { globalThis.__HKL_INDEX_CHECK = prevCheck; }
+        await window.__waitForRender();
         if (/diverged/.test(ps.lastSkipReason || '')) return { ok: false, detail: 'context line diverged: ' + ps.lastSkipReason };
         if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
         const W = ps.lastWindow;
@@ -12834,12 +12935,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageSystemSpliceCourtesyStubAfterEnding: [
     { name: 'an ending starting past the window is swallowed by the ending closure; the courtesy stub is the first measure of the line after it, never an ending member',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         let startIds = pb['startIds'];
         if (startIds.length < 7) return { ok: false, detail: 'need >= 7 lines, got ' + startIds.length };
@@ -12861,7 +12963,9 @@ export const FIXTURE_ASSERTIONS = {
         const members = wrap ? Array.from(wrap.children).filter((k) => k.localName === 'measure') : [];
         if (!wrap || members.length !== 2 || members[0] !== meas) return { ok: false, detail: 'fixture cannot pose the case: ending members ' + members.length };
         H.reRender();
+        await window.__waitForRender();
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         startIds = pb['startIds'];
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         const L1 = startIds.indexOf(ids[sig1]), L2 = startIds.indexOf(ids[sig2]);
@@ -12875,6 +12979,7 @@ export const FIXTURE_ASSERTIONS = {
         const prevCheck = globalThis.__HKL_INDEX_CHECK;
         globalThis.__HKL_INDEX_CHECK = true;
         try { H.reRender(); } finally { globalThis.__HKL_INDEX_CHECK = prevCheck; }
+        await window.__waitForRender();
         if (/diverged/.test(ps.lastSkipReason || '')) return { ok: false, detail: 'context line diverged: ' + ps.lastSkipReason };
         if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
         const W = ps.lastWindow;
@@ -12889,12 +12994,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageSystemSpliceRelocatedClef: [
     { name: 'deleting the chord ahead of a mid-measure clef at a line start pulls the previous line into the run and splices',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         let startIds = pb['startIds'];
         if (startIds.length < 5) return { ok: false, detail: 'need >= 5 lines, got ' + startIds.length };
@@ -12917,7 +13023,9 @@ export const FIXTURE_ASSERTIONS = {
         const clef = layer && layer.querySelector(':scope > clef');
         if (!clef || clef !== layer.children[1]) return { ok: false, detail: 'fixture cannot pose the case: clef is not after the first chord: ' + (layer ? Array.from(layer.children).map((c) => c.localName).join(',') : 'no layer') };
         H.reRender();
+        await window.__waitForRender();
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         startIds = pb['startIds'];
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         const lineOfMi = startIds.indexOf(ids[mi]);
@@ -12934,6 +13042,7 @@ export const FIXTURE_ASSERTIONS = {
         const prevCheck = globalThis.__HKL_INDEX_CHECK;
         globalThis.__HKL_INDEX_CHECK = true;
         try { H.reRender(); } finally { globalThis.__HKL_INDEX_CHECK = prevCheck; }
+        await window.__waitForRender();
         if (/diverged/.test(ps.lastSkipReason || '')) {
           return { ok: false, detail: 'context line diverged — the relocated clef re-engraved the line above without it being in the run: ' + ps.lastSkipReason };
         }
@@ -12997,12 +13106,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageSystemSpliceEnsureMount: [
     { name: 'an edit whose context line sits on an UNMOUNTED page splices without drawing it (B5 mount superseded by the band clip)',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         /* Read pageVirt AFTER those renders: a full render REPLACES the object,
            and un-mounting a stale copy leaves the renderer's mounted set
@@ -13076,12 +13186,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageSystemSpliceCascadeOverflow: [
     { name: 'a cascade that overflows its page moves the spilled system onto the next page as a splice (B2), never handing pagination back',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         if (!pb.paginationOwned()) return { ok: false, detail: 'pagination not owned (pages=' + pb.pageStarts().length + ')' };
         const st0 = H.renderer['pageVirt'];
@@ -13134,6 +13245,7 @@ export const FIXTURE_ASSERTIONS = {
             m.setCursor(cur, 1);
             if (m.replaceChordAtCursor({ notes: [mk('c', 0), mk('g', 7)], duration: '4', dots: 0 }) === null) break;
             H.reRender();
+            await window.__waitForRender();
             steps++;
             if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'step ' + steps + ': expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + '; derive=' + pb.lastDeriveReason + ')' };
             if (H.renderer['pageVirt'] !== st0) return { ok: false, detail: 'page DOM was rebuilt at step ' + steps + ' — a full render, not a splice' };
@@ -13163,11 +13275,12 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageSystemSpliceNoopSkip: [
     { name: 'a signature-identical render request leaves the page DOM untouched (no-op skip)',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         const sys = document.querySelector('#score .score-page g.system');
         if (!sys) return { ok: false, detail: 'no rendered system' };
@@ -13183,12 +13296,13 @@ export const FIXTURE_ASSERTIONS = {
   /* B2 (2026-09-02): line-count changes and pagination changes are splices. */
   pageSpliceNewLineAtEnd: [
     { name: 'composing past the last line opens a new final line as a splice (N → N+1 systems), never a full render',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         const st0 = H.renderer['pageVirt'];
         const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
@@ -13202,6 +13316,7 @@ export const FIXTURE_ASSERTIONS = {
           m.setCursor(m['flatChildren'](1).length, 1);
           if (!m.insertChordAtCursor({ notes: [mk('b', 4)], duration: '4', dots: 0 })) return { ok: false, detail: 'append rejected at step ' + steps };
           H.reRender();
+          await window.__waitForRender();
           if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'step ' + steps + ': expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + '; derive=' + pb.lastDeriveReason + ')' };
           if (H.renderer['pageVirt'] !== st0) return { ok: false, detail: 'page DOM was rebuilt at step ' + steps + ' — a full render, not a splice' };
           grew = pb.lineStarts().length === lines0 + 1;
@@ -13218,12 +13333,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageSpliceNewPageAtEnd: [
     { name: 'composing past a full last page creates a new page as a splice (cascade onto a created page), never a full render',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         const st0 = H.renderer['pageVirt'];
         if (!st0 || !pb.paginationOwned()) return { ok: false, detail: 'pagination not owned (pages=' + pb.pageStarts().length + ')' };
@@ -13247,6 +13363,7 @@ export const FIXTURE_ASSERTIONS = {
               if (!m.insertChordAtCursor({ notes: [mk(q % 2 ? 'g' : 'b', q % 2 ? 6 : 4)], duration: '4', dots: 0 })) return { ok: false, detail: 'append rejected at step ' + steps };
             }
             H.reRender();
+            await window.__waitForRender();
             if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'step ' + steps + ': expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + '; derive=' + pb.lastDeriveReason + ')' };
             if (H.renderer['pageVirt'] !== st0) return { ok: false, detail: 'page DOM was rebuilt at step ' + steps + ' — a full render, not a splice' };
             const over = overflowing();
@@ -13279,12 +13396,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageSpliceLineMerge: [
     { name: 'deleting every measure of a line removes that system as a splice (N → N−1 systems), never a full render',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         const st0 = H.renderer['pageVirt'];
         const lines0 = pb.lineStarts();
@@ -13308,6 +13426,7 @@ export const FIXTURE_ASSERTIONS = {
           if (!deleteMeasure(id)) return { ok: false, detail: 'could not delete measure ' + id };
         }
         H.reRender();
+        await window.__waitForRender();
         if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + '; derive=' + pb.lastDeriveReason + ')' };
         if (H.renderer['pageVirt'] !== st0) return { ok: false, detail: 'page DOM was rebuilt — a full render, not a splice' };
         const lines1 = pb.lineStarts();
@@ -13325,12 +13444,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageSplicePageCollapse: [
     { name: 'deleting every measure of a page removes the page as a splice (renumbered, pins consistent), never a full render',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         H.renderer.setMountWindowEnabled(false);
         for (const page of document.querySelectorAll('#score .score-page.score-page-pending')) H.renderer['mountPage'](+page.dataset.page);
@@ -13530,12 +13650,13 @@ export const FIXTURE_ASSERTIONS = {
 
   pagePlacementOwned: [
     { name: 'every mounted page satisfies live staff tops == placePage(live extents), after the derive and after a splice',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         if (typeof H.renderer.placeFor !== 'function') return { ok: false, detail: 'renderer has no placeFor — placement is not owned' };
         H.renderer.setMountWindowEnabled(false);
@@ -13690,12 +13811,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageSpliceNoPbPins: [
     { name: 'a page-first hunk splices from a ONE-page window with no <pb> pins and is placed on its live page by the rule',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         if (typeof H.renderer.placeFor !== 'function') return { ok: false, detail: 'renderer has no placeFor — placement is not owned' };
         H.renderer.setMountWindowEnabled(false);
@@ -13779,12 +13901,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageCascadePredictedFold: [
     { name: 'the cascade folds by prediction and moves the spilled block as a transplant (same elements), leaving no page past its paper',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         if (!H.renderer.lastCascade || typeof H.renderer.runExtentsJobNow !== 'function') return { ok: false, detail: 'renderer has no cascade diagnostics / extents job — Phase 2 not built' };
         H.renderer.setMountWindowEnabled(false);
@@ -13799,7 +13922,7 @@ export const FIXTURE_ASSERTIONS = {
         }).map((pg) => pg.dataset.page);
         const ids = () => m.allMeasures().map((x) => x.getAttribute('xml:id'));
         const linesOfPage = (p) => { const lines = pb.lineStarts(), pages = pb.pageStarts(); const lo = lines.indexOf(pages[p - 1]); const hi = p < pages.length ? lines.indexOf(pages[p]) : lines.length; return lo < 0 ? [] : lines.slice(lo, hi < 0 ? lines.length : hi); };
-        const withWarnsCaptured = (fn) => { const warns = []; const ow = console.warn; console.warn = (...a) => { const t = a.join(' '); if (!/^\\[Warning\\]/.test(t)) warns.push(t); }; try { fn(); } finally { console.warn = ow; } return warns; };
+        const withWarnsCaptured = async (fn) => { const warns = []; const ow = console.warn; console.warn = (...a) => { const t = a.join(' '); if (!/^\\[Warning\\]/.test(t)) warns.push(t); }; try { await fn(); } finally { console.warn = ow; } return warns; };
         mountAll();
         const pages0 = pb.pageStarts().length;
         if (pages0 < 2) return { ok: false, detail: 'need >= 2 pages, got ' + pages0 };
@@ -13810,13 +13933,14 @@ export const FIXTURE_ASSERTIONS = {
         for (const pg of mountedPages()) for (const sy of systemsOf(pg)) homeOf.set(sy, Number(pg.dataset.page));
         /* Compose past the last line until a cascade step lands. */
         let cascade = null, steps = 0;
-        const warns = withWarnsCaptured(() => {
+        const warns = await withWarnsCaptured(async () => {
           for (; steps < 80 && !cascade; steps++) {
             for (let q = 0; q < 4; q++) {
               m.setCursor(m['flatChildren'](1).length, 1);
               if (!m.insertChordAtCursor({ notes: [mk(q % 2 ? 'g' : 'b', q % 2 ? 6 : 4)], duration: '4', dots: 0 })) { cascade = { error: 'append rejected at step ' + steps }; return; }
             }
             H.reRender();
+            await window.__waitForRender();
             if (ps.lastOutcome !== 'spliced') { cascade = { error: 'step ' + steps + ': expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + '; derive=' + pb.lastDeriveReason + ')' }; return; }
             if (H.renderer['pageVirt'] !== st0) { cascade = { error: 'page DOM was rebuilt at step ' + steps + ' — a full render' }; return; }
             const over = overflowing();
@@ -13858,12 +13982,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageCascadeArithmeticPastMount: [
     { name: 'a spill into an unmounted page with known extents is bookkeeping (pins move, page stale, nothing rendered or parked) and the page draws right at mount',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         if (!H.renderer.lastCascade || typeof H.renderer.runExtentsJobNow !== 'function') return { ok: false, detail: 'renderer has no cascade diagnostics / extents job — Phase 2 not built' };
         H.renderer.setMountWindowEnabled(false);
@@ -13878,7 +14003,7 @@ export const FIXTURE_ASSERTIONS = {
         }).map((pg) => pg.dataset.page);
         const ids = () => m.allMeasures().map((x) => x.getAttribute('xml:id'));
         const linesOfPage = (p) => { const lines = pb.lineStarts(), pages = pb.pageStarts(); const lo = lines.indexOf(pages[p - 1]); const hi = p < pages.length ? lines.indexOf(pages[p]) : lines.length; return lo < 0 ? [] : lines.slice(lo, hi < 0 ? lines.length : hi); };
-        const withWarnsCaptured = (fn) => { const warns = []; const ow = console.warn; console.warn = (...a) => { const t = a.join(' '); if (!/^\\[Warning\\]/.test(t)) warns.push(t); }; try { fn(); } finally { console.warn = ow; } return warns; };
+        const withWarnsCaptured = async (fn) => { const warns = []; const ow = console.warn; console.warn = (...a) => { const t = a.join(' '); if (!/^\\[Warning\\]/.test(t)) warns.push(t); }; try { await fn(); } finally { console.warn = ow; } return warns; };
         mountAll();
         const pages0 = pb.pageStarts();
         if (pages0.length < 3) return { ok: false, detail: 'need >= 3 pages, got ' + pages0.length };
@@ -13909,7 +14034,7 @@ export const FIXTURE_ASSERTIONS = {
         if (p3first - p2first < 2) return { ok: false, detail: 'page 2 needs >= 2 lines' };
         const p3start0 = pages0[2];
         let c = null, steps = 0, err = null;
-        const warns = withWarnsCaptured(() => {
+        const warns = await withWarnsCaptured(async () => {
           for (let li = p2first; li < p3first && !c; li++) {
             const target = m.allMeasures()[ids().indexOf(lines[li])];
             if (!target) { err = 'line ' + li + ' start measure missing'; return; }
@@ -13920,6 +14045,7 @@ export const FIXTURE_ASSERTIONS = {
             m.setCursor(cur, 1);
             if (m.replaceChordAtCursor({ notes: [mk('c', 0), mk('g', 7)], duration: '4', dots: 0 }) === null) { err = 'replace rejected at line ' + li; return; }
             H.reRender();
+            await window.__waitForRender();
             steps++;
             if (ps.lastOutcome !== 'spliced') { err = 'step ' + steps + ': expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + '; derive=' + pb.lastDeriveReason + ')'; return; }
             if (H.renderer['pageVirt'] !== st0) { err = 'page DOM was rebuilt at step ' + steps + ' — a full render'; return; }
@@ -13968,12 +14094,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageExtentsJobEditDuring: [
     { name: 'an edit while the extents job is armed cancels and re-arms it; the edit splices; every page stays self-consistent and the job then completes',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         if (!H.renderer.lastCascade || typeof H.renderer.runExtentsJobNow !== 'function') return { ok: false, detail: 'renderer has no cascade diagnostics / extents job — Phase 2 not built' };
         H.renderer.setMountWindowEnabled(false);
@@ -14073,12 +14200,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageSpliceClipsToMountedBand: [
     { name: 'a hunk reaching past the mounted band re-engraves only the band and defers the rest (stale, undrawn, correct on mount)',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         if (!Array.isArray(ps.lastDeferredPages)) return { ok: false, detail: 'splicer has no lastDeferredPages — the clip is not built' };
         H.renderer.setMountWindowEnabled(false);
@@ -14144,12 +14272,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageRenumberIsRedrawOnly: [
     { name: 'a renumber is redraw-only: the naturals measurement stays local while the splicer still redraws the renumbered lines',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         if (!Array.isArray(ps.lastDeferredPages)) return { ok: false, detail: 'splicer has no lastDeferredPages — the clip is not built' };
         H.renderer.setMountWindowEnabled(false);
@@ -14205,12 +14334,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
   pageExtentsJobWarmsDeferred: [
     { name: 'the idle extents job clears the staleness a clipped splice left, so a later mount needs no document reload',
-      expr: `(() => {
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
         const pb = H.renderer['pageBreaks'];
         const ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         if (!Array.isArray(ps.lastDeferredPages)) return { ok: false, detail: 'splicer has no lastDeferredPages — the clip is not built' };
         H.renderer.setMountWindowEnabled(false);

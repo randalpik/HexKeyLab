@@ -48,6 +48,9 @@ let isPlaying = false;
  * both share the per-voice playback bars + the pre-playback cursor snapshot. */
 let performanceActive = false;
 let perfMatcher: PerformanceMatcher | null = null;
+/* One-shot guard so the "end of score" status is said once, not on every
+ * further strike (the mode stays active past the last note by design). */
+let perfFinishedAnnounced = false;
 /* HKL's current tuning mode, cached from the `tuning-changed` broadcast. Null
  * until first broadcast arrives. Used by the entry-mismatch gate (input.ts)
  * to compare against the score's pinned layoutReq.tuningMode. */
@@ -612,8 +615,8 @@ let lastComposerPlaybackSig: string | null = null;
 function maybeBroadcastComposerPlayback(): void {
   if (!hklConnected) return;
   const on = cursor.isPlaybackMode();
-  const bars = [...cursor.getPlaybackPositions()].map(([voice, meiId]) => ({ voice, meiId }));
-  const sig = on + '|' + bars.map((b) => b.voice + ':' + b.meiId).sort().join(',');
+  const bars = cursor.getPlaybackBars();
+  const sig = on + '|' + bars.map((b) => b.voice + ':' + b.meiId + ':' + b.edge).sort().join(',');
   if (sig !== lastComposerPlaybackSig) {
     lastComposerPlaybackSig = sig;
     bridge.send({ type: 'composer-playback', on, bars });
@@ -1432,8 +1435,9 @@ function startPerformance(): void {
   lastPlaybackHeadId = null;
   perfMatcher = matcher;
   performanceActive = true;
+  perfFinishedAnnounced = false;
   cursor.setPlaybackMode(true);
-  for (const a of matcher.initialPositions()) cursor.setPlaybackPosition(a.voice, a.meiId);
+  for (const a of matcher.initialPositions()) cursor.setPlaybackPosition(a.voice, a.meiId, a.edge);
   cursor.update(model, cursorOpts());
   refreshPerformButton();
   bridge.send({ type: 'start-performance' });
@@ -1449,20 +1453,26 @@ function stopPerformance(statusMsg: string): void {
 }
 
 /** Handle one live strike in Performance mode. Feeds the matcher; each voice it
- *  advances repositions that voice's playback bar (and scrolls into view). A
- *  strike that matches no current-frontier voice is a no-op. Finishing the last
- *  voice ends the mode. */
+ *  advances parks that voice's bar just past the note it completed (and scrolls
+ *  it into view). A strike that matches no current-frontier voice is a no-op.
+ *  Reaching the end of the score does NOT exit the mode (Max, 2026-09-14) — it
+ *  only says so once; the bars stay on the final notes and only the Perform
+ *  button / Space / a transport switch leaves, so finishing a run never yanks
+ *  the view back to the pre-performance cursor. */
 function onPlayerNoteStruck(note: ResolvedNote): void {
   if (!performanceActive || !perfMatcher) return;
   for (const a of perfMatcher.onStrike(note)) {
-    cursor.setPlaybackPosition(a.voice, a.meiId);
+    cursor.setPlaybackPosition(a.voice, a.meiId, a.edge);
     if (a.meiId) {
       if (a.voice === preplaybackVoice) lastPlaybackHeadId = a.meiId;
       const mIdx = model.getMeasureIdxForId(a.meiId);
       if (mIdx >= 0) maybeScrollMeasureIntoView(mIdx);
     }
   }
-  if (perfMatcher.isFinished()) stopPerformance('Performance finished.');
+  if (!perfFinishedAnnounced && perfMatcher.isFinished()) {
+    perfFinishedAnnounced = true;
+    setStatus('End of score — Performance mode still on (press ■ to exit).', 'state');
+  }
 }
 
 /* The transport BUTTONS are switch-to-this-transport controls (distinct from
@@ -1761,6 +1771,12 @@ void bootRenderer();
 (window as unknown as { __hkl_composer: unknown }).__hkl_composer = {
   bridge, model, renderer, cursor, reRender,
   getHeldKeys: () => lastHeldKeys,
+  /* Test-only: true while a render is queued behind the heavy-render defer
+     (reRender's double-rAF + timeout) or running. A fixture that reads splice
+     state straight after reRender() must await this — reRender returns BEFORE
+     rendering on the deferred path, so the read would otherwise sample the
+     PREVIOUS render's outcome. See test/composer-test __waitForRender. */
+  renderPending: (): boolean => renderQueued || renderInFlight,
   isHklConnected: () => hklConnected,
   inputState: getInputState,
   history,
@@ -1824,5 +1840,10 @@ void bootRenderer();
     isActive: (): boolean => performanceActive,
     positions: (): Record<number, string> =>
       Object.fromEntries(cursor.getPlaybackPositions()) as Record<number, string>,
+    /** Per-voice bar WITH its edge — 'right' once the element has been played
+     *  (the trailing bar), 'left' only before the first strike. */
+    bars: (): Record<number, { meiId: string; edge: string }> =>
+      Object.fromEntries(cursor.getPlaybackBars().map((b) => [b.voice, { meiId: b.meiId, edge: b.edge }])),
+    isFinished: (): boolean => perfMatcher?.isFinished() ?? false,
   },
 };
