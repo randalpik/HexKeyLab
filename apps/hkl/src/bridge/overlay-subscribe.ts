@@ -22,7 +22,7 @@ import {
 } from '../render/controls-core.js';
 import { cv, draw, requestDraw, setTransparentBg } from '../render/draw.js';
 import {
-  setComposerScore, setComposerPlaybackBars, renderComposerFrame,
+  setComposerScore, setComposerPlaybackBars, renderComposerFrame, setComposerFrameZoom,
 } from '../render/composer-frame.js';
 
 /* Transparent + chrome-free from the first frame. The class lives on <html> so
@@ -92,6 +92,13 @@ function handle(msg: OverlayMsg): void {
     case 'composer-view':
       document.body.classList.toggle('composer-view', msg.on);
       renderComposerFrame();
+      break;
+    case 'composer-zoom':
+      /* The one place the overlay's frame deliberately differs from HKL's own:
+         it renders the mirrored score at Composer's live zoom (HKL's is pinned
+         at 50 — no room in its info row). Layout-neutral, so this is pure
+         magnification of an otherwise identical render. */
+      setComposerFrameZoom(msg.zoom);
       break;
     case 'composer-score':
       setComposerScore(msg.mei);

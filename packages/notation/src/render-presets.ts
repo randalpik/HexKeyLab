@@ -86,6 +86,17 @@ export const CRISP_PRESETS: Record<ZoomLevel, CrispPreset> = {
   100: { scale: 100, unit: 8, staffLineWidth: 0.25, stemWidth: 0.25, barLineWidth: 0.25, ledgerLineThickness: 0.25, evenWidth: true },
 };
 
+/** Snap an arbitrary number (e.g. a zoom level off the overlay wire, or from a
+ *  build whose ladder differs) to the nearest available preset. Keeps every
+ *  consumer of a transported zoom from having to know the ladder, and keeps a
+ *  stale/foreign value from reaching CRISP_PRESETS as an undefined lookup. */
+export function resolveZoomLevel(n: number): ZoomLevel {
+  const levels = Object.keys(CRISP_PRESETS).map(Number) as ZoomLevel[];
+  let best = levels[0];
+  for (const l of levels) if (Math.abs(l - n) < Math.abs(best - n)) best = l;
+  return best;
+}
+
 /** The Verovio line-width options for a preset (spread into setOptions). */
 export function lineWidthOptions(p: CrispPreset): Record<string, number> {
   return {

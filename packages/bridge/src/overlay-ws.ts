@@ -4,17 +4,32 @@
 // capped backoff so the overlay survives the performer reloading, and the
 // performer survives the relay restarting.
 //
-// URL resolution by origin:
-//  - Local page (localhost / 127.0.0.1 — dev-proxy OR the distributable's own
-//    overlay): same-origin /overlay-ws.
-//  - Remote page (production/Netlify performer): dial the local distributable
-//    directly at ws://127.0.0.1:<OVERLAY_RELAY_PORT> (localStorage override
-//    `hklOverlayPort`). Allowed because loopback is mixed-content-exempt and
-//    Firefox doesn't LNA-gate localhost WebSockets.
+// URL resolution (see resolveOverlayWsUrl for the precedence). There is ONE
+// relay — the standalone overlay-host — and everyone dials it the same way:
+//  - `?obsrelay=PORT` / localStorage.hklOverlayPort → ws://127.0.0.1:PORT.
+//  - The overlay page the HOST ITSELF serves (flagged __HKL_OVERLAY_SAME_ORIGIN
+//    in the lean build's index.html) → same origin, so it tracks a non-default
+//    HKL_OVERLAY_PORT.
+//  - EVERYONE ELSE — including a dev performer on localhost:5170 — dials
+//    ws://127.0.0.1:<OVERLAY_RELAY_PORT>. A local page is NOT special-cased to
+//    same-origin: the dev proxy has no relay of its own, so same-origin there
+//    would reach nothing. Dialing loopback from a remote (Netlify) page is
+//    allowed because loopback is mixed-content-exempt and Firefox doesn't
+//    LNA-gate localhost WebSockets.
 //
-// `giveUpAfter`: a never-opened socket stops retrying after N attempts (used by
-// the publisher, so a public Netlify visitor not running the distributable
-// doesn't poke localhost forever). Once opened, reconnect is unbounded.
+// `giveUpAfter`: a never-opened socket stops retrying after N attempts, so a
+// public Netlify visitor not running the distributable doesn't poke localhost
+// forever. Once opened, reconnect is unbounded (the overlay survives the
+// performer reloading; the performer survives the relay restarting).
+//
+// GIVE-UP IS TERMINAL, AND THAT DICTATES THE START ORDER. The publisher passes
+// giveUpAfter:3, and the backoff is 500ms/1000ms — so an HKL page loaded with no
+// relay listening stops publishing for good about 1.5 s in, and nothing revives
+// it: not focus, not the relay appearing later, only a page RELOAD. Start the
+// overlay host BEFORE loading (or reload) the performing HKL tab. This bites
+// hardest in dev, where an HKL tab sits open across host restarts — the symptom
+// is an overlay that mirrors a freshly-opened production tab but never the dev
+// one, which looks like a routing bug and is not (2026-09-15).
 
 import { OVERLAY_WS_PATH, OVERLAY_RELAY_PORT, type OverlayMsg } from './overlay-protocol.js';
 

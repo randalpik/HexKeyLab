@@ -38,6 +38,9 @@ let lastKeysSig: string | null = null;
 let lastComposerMei: string | null = null;
 let lastComposerView = false;
 let lastComposerPlayback: { on: boolean; bars: ReadonlyArray<OverlayPlaybackBar> } | null = null;
+/** Composer's zoom, cached for the reconnect snapshot. Null until Composer
+ *  reports one; the overlay's own default (50) stands in until then. */
+let lastComposerZoom: number | null = null;
 
 const $ = <T extends HTMLElement>(id: string): T | null =>
   document.getElementById(id) as T | null;
@@ -85,6 +88,7 @@ function sendFullState(): void {
   lastViewSig = `${snap.viewQ},${snap.viewR},${snap.kbOffY}`;
   lastKeysSig = snap.litKeys.join('|');
   channel.send({ t: 'composer-view', on: lastComposerView });
+  if (lastComposerZoom !== null) channel.send({ t: 'composer-zoom', zoom: lastComposerZoom });
   if (lastComposerMei !== null) channel.send({ t: 'composer-score', mei: lastComposerMei });
   if (lastComposerPlayback) {
     channel.send({ t: 'composer-playback', on: lastComposerPlayback.on, bars: lastComposerPlayback.bars });
@@ -146,6 +150,13 @@ export function overlayPublishTick(): void {
 export function publishComposerScore(mei: string): void {
   lastComposerMei = mei;
   if (channel) channel.send({ t: 'composer-score', mei });
+}
+
+/** Composer's zoom level → the overlay's frame size. Forward-only: HKL's own
+ *  frame stays at 50 (see composer-frame.ts `frameZoom`). */
+export function publishComposerZoom(zoom: number): void {
+  lastComposerZoom = zoom;
+  if (channel) channel.send({ t: 'composer-zoom', zoom });
 }
 
 export function publishComposerView(on: boolean): void {

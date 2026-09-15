@@ -42,7 +42,7 @@ import { syncPianoOut, restrikePianoOut, sendSustainPedal } from '../midi/piano-
 import { pedal } from '../state/pedal.js';
 import { draw, requestDraw, activeFootprintSet, invalidatePianoOutline, validateRefNoteCandidate } from '../render/draw.js';
 import { setComposerScore, setComposerCursor, setComposerPlaybackBars, clearComposerFrame } from '../render/composer-frame.js';
-import { publishComposerScore, publishComposerPlayback } from './overlay-publish.js';
+import { publishComposerScore, publishComposerPlayback, publishComposerZoom } from './overlay-publish.js';
 import { syncViewToOutline } from '../ui/controls.js';
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { setSelectionFromComposer, setScoreRef, clearSelection, selectionDiffersFromScoreRef, onComposerBye, referenceNote } from '../state/reference.js';
@@ -1384,6 +1384,14 @@ bridge.on((msg: ComposerEvent) => {
       setComposerScore(msg.mei);
       /* Forward to the OBS overlay (no-op unless the overlay toggle is on). */
       publishComposerScore(msg.mei);
+      break;
+    case 'composer-zoom':
+      /* Forwarded to the OBS overlay ONLY. HKL's own frame is pinned at 50 %:
+         the info row it lives in has no height to give a larger render, and it
+         would clip. The overlay is a separate page whose (often portrait)
+         capture does have the room, so it mirrors the score at the size the
+         composer is reading it at. */
+      publishComposerZoom(msg.zoom);
       break;
     case 'composer-cursor':
       /* Editing-cursor anchor → draw a pixel-identical read-only bar + scroll.

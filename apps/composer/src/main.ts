@@ -639,9 +639,19 @@ function maybeBroadcastComposerScoreOnInstrChange(): void {
 
 /** Fire all Composer-view broadcasts (score + cursor + playback overlay). Used
  *  on (re)connect. */
+/** Broadcast the current zoom. HKL's own frame ignores it (pinned at 50); it
+ *  reaches the OBS overlay, whose frame renders the mirrored score at the size
+ *  the composer is reading it at. Sent on connect and on every zoom step — not
+ *  diff-gated, since a zoom step IS the change and connects are rare. */
+function broadcastComposerZoom(): void {
+  if (!hklConnected) return;
+  bridge.send({ type: 'composer-zoom', zoom: renderer.getZoom() });
+}
+
 function broadcastComposerView(): void {
   lastComposerScoreSig = null; /* force a fresh score push on connect */
   lastComposerPlaybackSig = null; /* force a fresh playback-overlay push too */
+  broadcastComposerZoom();
   maybeBroadcastComposerScore();
   maybeBroadcastComposerCursor();
   maybeBroadcastComposerPlayback();
@@ -1102,6 +1112,7 @@ function stepZoom(dir: 'in' | 'out'): void {
     return;
   }
   renderer.setZoom(next);
+  broadcastComposerZoom();
   reRender();
   afterRender(() => maybeScrollMeasureIntoView(visualCursorMeasure()));
   setStatus('Zoom ' + next + '%.', 'info');

@@ -1,7 +1,7 @@
 // Composer-view frame. When HKL's "Composer view" mode is on, this renders the
 // MEI mirrored from HKL Composer (the cursor instrument's part) as a
 // horizontally-scrolling single system, and draws cursor bars that are
-// PIXEL-IDENTICAL to Composer's 50%-zoom scroll view.
+// PIXEL-IDENTICAL to Composer's scroll view at the frame's zoom level.
 //
 // Identity is structural, not reconstructed: the score is HKL's own Verovio
 // re-render of the same MEI at the same options (already pixel-identical), and
@@ -19,6 +19,7 @@
 // chosen theme.
 
 import { renderMeiToContainer } from '@hkl/notation/verovio.js';
+import { resolveZoomLevel, type ZoomLevel } from '@hkl/notation/render-presets.js';
 import type { VoiceCursorAnchor } from '@hkl/bridge/protocol.js';
 import {
   computeVoiceCursorRect, computePlaybackBarRect,
@@ -36,6 +37,13 @@ const SELECTION_STROKE_OPACITY = 0.7;      /* Composer SELECTION_STROKE_OPACITY 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 let latestMei: string | null = null;
+/** Render zoom (Verovio scale %). 50 in HKL itself — the info row has no height
+ *  for more — and Composer's live zoom in the OBS overlay instance, which is a
+ *  separate page with a portrait capture's worth of room. Zoom is layout-neutral
+ *  (constant `unit` across the preset ladder), so this only magnifies: the
+ *  mirrored score keeps Composer's exact spacing and the cursor bars, which are
+ *  computed in client px and mapped through the SVG's CTM, follow for free. */
+let frameZoom: ZoomLevel = 50;
 let editingAnchor: VoiceCursorAnchor | null = null;
 let activeVoice = 0;
 /** Playback-mode per-voice positions: voice → the element its bar sits on +
@@ -56,6 +64,16 @@ function active(): boolean {
 
 function verovioSvg(): SVGSVGElement | null {
   return (frameEl()?.querySelector('svg') as SVGSVGElement | null) ?? null;
+}
+
+/** Set the frame's render size from a transported zoom level (see `frameZoom`).
+ *  Snapped to the nearest crisp preset, so an out-of-ladder value from an older
+ *  or newer peer still renders crisply. Re-renders only on an actual change. */
+export function setComposerFrameZoom(zoom: number): void {
+  const next = resolveZoomLevel(zoom);
+  if (next === frameZoom) return;
+  frameZoom = next;
+  scheduleRender();
 }
 
 export function setComposerScore(mei: string): void {
@@ -124,7 +142,7 @@ async function doRender(): Promise<void> {
   if (!latestMei) { el.innerHTML = HINT; return; }
   const seq = ++renderSeq;
   const dark = document.body.classList.contains('staff-dark');
-  await renderMeiToContainer(latestMei, el, { geometry: 'scroll', theme: dark ? 'dark' : 'light' });
+  await renderMeiToContainer(latestMei, el, { geometry: 'scroll', theme: dark ? 'dark' : 'light', zoom: frameZoom });
   if (seq !== renderSeq) return;
   drawCursors();
   scrollToActive();

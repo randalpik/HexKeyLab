@@ -4248,3 +4248,13 @@ node -e "import('./test/composer-test/lib/assertions.mjs').then(m => new Functio
 ```
 
 which catches a parse break, and then eyeball the emitted regex — a *silently wrong* regex still parses.
+
+## A terminal give-up turns a start-order mistake into a phantom routing bug (2026-09-15)
+
+The overlay publisher dials the relay with `giveUpAfter: 3` and 500/1000 ms backoff, and give-up sets `closed = true` **permanently** — no focus retry, no revival when the relay finally appears. So an HKL tab loaded with no relay listening stops publishing ~1.5 s in, for the life of that page, and the only cure is a reload.
+
+What makes this expensive is the shape of the symptom, not the mechanism. The subscriber retries forever and reconnects on its own, so the overlay half always looks healthy; only the performing half dies, silently, with a connection-refused that Chromium doesn't even surface. And the tab most likely to predate the host is a **dev** one left open across restarts, while production gets opened fresh at stream time. The result reads as "the overlay only mirrors production, not localhost:5170" — a routing story. `resolveOverlayWsUrl` sends both origins to `ws://127.0.0.1:5190` by exactly the same branch; there was never a dev/prod split to find.
+
+Two things kept the wrong story alive: the file header in `overlay-ws.ts` still described a *local page → same-origin* rule the code had stopped implementing (and since the dev proxy has no relay, that rule would have explained the symptom perfectly), and both the architecture doc and the user guide asserted that "the relay being up is what activates it" — stating the false model outright. Stale comments don't merely fail to help; they supply a plausible cause and stop the search.
+
+General form: **when a client gives up permanently, the start order becomes part of the contract — document it where the user reads, not only where the constant is defined.** And when a hypothesis needs a code path to exist, read the path before believing the story; a comment is not the path.

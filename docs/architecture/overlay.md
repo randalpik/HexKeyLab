@@ -115,7 +115,7 @@ the performer's ghost tiling). Chrome is hidden via the `html.overlay` CSS block
 ## Transport — `@hkl/bridge`
 
 - **`overlay-protocol.ts`** (pure data): the `OverlayMsg` union — lattice `snapshot` / `keys` /
-  `view`, the re-exported `composer-score` / `composer-playback` shapes, plus `OVERLAY_WS_PATH`
+  `view`, the re-exported `composer-score` / `composer-playback` / `composer-zoom` shapes, plus `OVERLAY_WS_PATH`
   (`/overlay-ws`) and `OVERLAY_RELAY_PORT` (`5190`).
 - **`overlay-ws.ts`** — the browser `OverlayChannel` (native `WebSocket`, reconnect w/ capped
   backoff). **URL resolution**, in precedence:
@@ -125,8 +125,14 @@ the performer's ghost tiling). Chrome is hidden via the `html.overlay` CSS block
      `HKL_OVERLAY_PORT`);
   3. otherwise (dev/Netlify performer, non-host overlay) → `ws://127.0.0.1:OVERLAY_RELAY_PORT`.
   - **Bounded give-up**: a never-opened socket stops after N attempts (the publisher passes
-    `giveUpAfter:6`, so a public Netlify visitor with no relay doesn't poke localhost forever); once
+    `giveUpAfter:3`, so a public Netlify visitor with no relay doesn't poke localhost forever); once
     opened, reconnect is unbounded. The subscriber retries indefinitely.
+  - **Give-up is TERMINAL — it dictates the start order.** With 500 ms/1000 ms backoff, an HKL page
+    loaded while no relay is listening stops publishing ~1.5 s in and **nothing revives it but a page
+    reload** (not focus, not the relay appearing later). So: **start the host, then load/reload the
+    performing HKL tab.** The failure mode is asymmetric and misleading — a production tab opened
+    fresh at stream time works, while a dev tab left open across host restarts silently never
+    publishes, which reads as "the overlay only listens to production" (2026-09-15).
 
 The relay lives in `apps/overlay-host` (not `@hkl/bridge`) so the package stays data-only.
 
@@ -151,7 +157,9 @@ was dropped.)
   `setComposerScore`/`setComposerPlaybackBars` (NOT `composer-cursor` — the overlay is **bars-only**,
   no editing caret). HKL already holds this state (mirrored from Composer over BroadcastChannel), so
   nothing is recomputed.
-- On (re)connect, the publisher resends a full snapshot + cached composer state.
+- **Composer zoom**: `composer-zoom` is forwarded the same way, but is the one message HKL forwards
+  WITHOUT applying locally — see "Frame size" below.
+- On (re)connect, the publisher resends a full snapshot + cached composer state (zoom included).
 
 ---
 
@@ -168,21 +176,48 @@ suppressed under `?overlay` so opening the overlay never clobbers the real insta
 - **composer-view / composer-score / composer-playback** → toggle `body.composer-view`, feed
   `setComposerScore` / `setComposerPlaybackBars` (the existing `composer-frame.ts` exports). Scroll
   is model-relative (measure index), so it absorbs DPR differences between Firefox and OBS-CEF.
+- **composer-zoom** → `setComposerFrameZoom` (same module), re-rendering the frame at that size.
+
+### Frame size — the one place the overlay differs from HKL's own frame
+
+HKL's bottom-bar Composer-view frame is **pinned at 50 %**: it lives in the fixed-height `.info-row`
+under the lattice canvas (`#composerFrame` is `overflow-y:hidden`), and a larger render would simply
+clip. The overlay is a separate page whose capture — typically portrait for a stream — has the height
+to spare, and at 50 % the score reads too small there. So the overlay's frame follows **Composer's
+own zoom level** (50 / 75 / 100), which Composer broadcasts on connect and on every zoom step
+(`composer-zoom`); `hkl-side.ts` forwards it to the publisher and never calls `setComposerFrameZoom`
+itself.
+
+This is safe to vary only because of the **unit-8 crisp-preset ladder** (`@hkl/notation/render-presets.ts`):
+`unit` is constant across 50/75/100, so zoom is pure magnification with identical layout. The frame
+renders the same MEI with the same breaks and spacing, just larger; the read-only cursor / playback
+bars are computed in client px and mapped through the SVG's CTM, so they scale with it for free. A
+zoom outside the ladder (an older or newer peer) is snapped by `resolveZoomLevel`.
+
+100 % is the ceiling — a bigger overlay score would need a new crisp preset (scale must be a
+multiple of 25 at unit 8), not a CSS transform, which would blur the staff lines the ladder exists to
+keep sharp.
 
 ---
 
 ## Running it
 
-**Production / OBS.** `pnpm overlay:dist && pnpm overlay:host`. In OBS add a **Browser Source** →
-`http://127.0.0.1:5190/?overlay` (size it to the lattice; background is transparent). Perform on
-production HKL (Netlify) in **Firefox** — publishing auto-starts (no toggle); the relay being up is
-what activates it. On Chromium you'll get a one-time "access other apps and services" prompt when the
-relay is running; grant it.
+**Order matters in both flows: relay first, HKL second.** Publishing auto-starts at page load and
+gives up terminally ~1.5 s later if no relay answers (see "Bounded give-up" above), so an HKL tab
+that was already open when you start the host will never publish until you reload it.
 
-**Dev** (one relay, with HMR). Run `pnpm overlay:host` alongside `pnpm dev`. The performer at
-`localhost:5170/` and an overlay at `localhost:5170/?overlay` both auto-dial the
-host's `:5190` relay — HMR for both, no `?obsrelay` needed for the default port. (There is **no**
-dev-proxy relay — one relay, no dev/prod divergence.)
+**Production / OBS.** `pnpm overlay:dist && pnpm overlay:host`, THEN open/reload production HKL
+(Netlify) in **Firefox**. In OBS add a **Browser Source** → `http://127.0.0.1:5190/?overlay` (size it
+to the lattice; background is transparent). Publishing auto-starts (no toggle) — but it is the page
+LOAD that activates it, not the relay coming up. On Chromium you'll get a one-time "access other apps
+and services" prompt when the relay is running; grant it.
+
+**Dev** (one relay, with HMR). Run `pnpm overlay:host` alongside `pnpm dev`, then **reload**
+`localhost:5170/` — a dev tab open from before the host started is the usual reason dev "doesn't
+reach the overlay". The performer at `localhost:5170/` and an overlay at `localhost:5170/?overlay`
+both auto-dial the host's `:5190` relay — HMR for both, no `?obsrelay` needed for the default port.
+(There is **no** dev-proxy relay — one relay, no dev/prod divergence. A dev performer is NOT
+same-origin-routed; it dials `127.0.0.1:5190` exactly like production does.)
 
 ---
 

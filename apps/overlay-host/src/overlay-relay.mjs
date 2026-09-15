@@ -23,6 +23,7 @@ import { WebSocketServer } from 'ws';
  *  `request-snapshot` is transient (a subscriber nudge) and never retained. */
 const RETAINED = new Set([
   'snapshot', 'keys', 'view', 'composer-view', 'composer-score', 'composer-playback',
+  'composer-zoom',
 ]);
 
 /** Attach the overlay relay to an existing HTTP server. Returns a predicate the

@@ -76,6 +76,11 @@ export type OverlayMsg =
   /** Mirrored Composer playback overlay — same shape as `composer-playback`.
    *  Fed to composer-frame's setComposerPlaybackBars. */
   | { t: 'composer-playback'; on: boolean; bars: ReadonlyArray<OverlayPlaybackBar> }
+  /** Composer's zoom level (Verovio scale percent), forwarded verbatim from the
+   *  bridge's `composer-zoom`. The overlay's frame renders the mirrored score at
+   *  this size; HKL's own frame stays at 50 (no room in its info row), so this
+   *  is the one place the two surfaces deliberately differ. */
+  | { t: 'composer-zoom'; zoom: number }
   /** Subscriber → relay: replay all retained state to me (post-reconnect). */
   | { t: 'request-snapshot' };
 

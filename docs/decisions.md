@@ -8231,3 +8231,48 @@ correct. `pnpm typecheck` + `pnpm build` + `pnpm check:boundaries` clean.
 **Where**: `apps/composer/src/render/render.ts` (predictNextRenderHeavy), `apps/composer/src/main.ts`
 (`renderPending`), `test/composer-test/lib/runner-core.mjs` (`__waitForRender`),
 `test/composer-test/fixtures.mjs` (34 blocks).
+
+---
+
+## The OBS overlay's Composer frame follows Composer's zoom; HKL's own frame stays at 50 % (2026-09-14)
+
+**Problem**: the overlay renders the mirrored Composer score at a hardcoded 50 %, which is too small
+to read in a portrait stream capture.
+
+**Decision**: transport Composer's zoom level and let the **overlay** frame render at it, while HKL's
+own bottom-bar frame stays pinned at 50 %. New `composer-zoom` on both the Composer→HKL bridge and
+the overlay protocol; Composer sends it on connect and on every zoom step; `hkl-side.ts` forwards it
+to `overlay-publish` and — uniquely among the composer-frame messages — does **not** apply it
+locally. The publisher caches it for the reconnect snapshot.
+
+**Why the two surfaces differ** (Max's call): HKL's frame lives in the fixed-height `.info-row` under
+the lattice canvas with `overflow-y:hidden`, so a 2× render just clips; there is no room to mirror
+the zoom there. The overlay is a separate page whose capture is usually portrait and has the height
+to spare. Same module (`composer-frame.ts`), different page instances, so a module-level `frameZoom`
+is all the divergence needs.
+
+**Why this is safe to vary at all**: the unit-8 crisp-preset ladder (2026-08-31) makes `unit`
+constant across 50/75/100, so zoom is pure magnification with identical layout. The frame renders the
+same MEI with the same breaks and spacing; the read-only cursor / playback bars are computed in
+client px and mapped through the SVG's CTM, so they scale for free with no geometry changes. At 75
+and 100 the frame's `crispMarginTop(30, …)` even resolves to 30 — matching Composer's scroll
+`pageMarginTop` exactly, where the 50 % preset has always used 31 for its half-pixel line phase.
+
+**Rejected**: a CSS transform on `#composerFrame` — cheap, but it scales the rasterized SVG and
+blurs the very staff lines the crisp-preset ladder exists to keep sharp. Also rejected: a separate
+overlay-only size control in HKL's UI — another knob to forget mid-performance when the answer is
+already sitting in Composer's zoom.
+
+**Ceiling**: 100 %. A larger overlay score needs a new entry in `CRISP_PRESETS` (scale must be a
+multiple of 25 at unit 8 to keep an integer staff-space), not a transform.
+
+**Wire type**: `composer-zoom.zoom` is a plain `number`, not the `ZoomLevel` union — the ladder lives
+in `@hkl/notation`, which `@hkl/bridge` must not depend on. The receiver snaps it with the new
+`resolveZoomLevel` (nearest preset), so an out-of-ladder value from an older or newer peer still
+renders crisply instead of indexing `CRISP_PRESETS` to `undefined`.
+
+**Where**: `packages/notation/src/{verovio.ts (RenderOpts.zoom, scrollOptions()), render-presets.ts
+(resolveZoomLevel)}`, `packages/bridge/src/{protocol.ts, overlay-protocol.ts}`,
+`apps/hkl/src/render/composer-frame.ts` (`setComposerFrameZoom`),
+`apps/hkl/src/bridge/{hkl-side.ts, overlay-publish.ts, overlay-subscribe.ts}`,
+`apps/composer/src/main.ts` (`broadcastComposerZoom`).

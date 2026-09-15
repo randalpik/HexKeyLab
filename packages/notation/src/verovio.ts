@@ -11,10 +11,12 @@ import type { VerovioToolkit } from './verovio-types.js';
 import { injectHejiGlyphs } from './heji-render.js';
 import { ensureNotationThemeStyle } from './notation-theme.js';
 import { SANCTIONED_LIGHT, sanctionedLightForInk } from '@hkl/shared/colors.js';
-import { CRISP_PRESETS, crispMarginTop, lineWidthOptions, pinExactScale, snapStaffLinesToGrid, snapBarlines, snapSystemRightEdge } from './render-presets.js';
+import { CRISP_PRESETS, crispMarginTop, lineWidthOptions, pinExactScale, snapStaffLinesToGrid, snapBarlines, snapSystemRightEdge, type CrispPreset, type ZoomLevel } from './render-presets.js';
 
-/* The frame + inset both render at the 50% crisp preset (the Composer-view frame
-   mirrors Composer's 50% scroll). Single source of truth for scale/unit/widths. */
+/* The inset always renders at the 50% crisp preset, and 50% is the Composer-view
+   frame's default (HKL's bottom-bar frame has no room to grow — see
+   RenderOpts.zoom, which the OBS overlay raises to Composer's own zoom level).
+   Single source of truth for scale/unit/widths. */
 const FRAME_PRESET = CRISP_PRESETS[50];
 
 const VEROVIO_CDN = 'https://www.verovio.org/javascript/latest/verovio-toolkit-wasm.js';
@@ -66,28 +68,39 @@ const INSET_OPTIONS = {
 };
 
 /* Continuous-scroll geometry for HKL's read-only "Composer view" frame. MUST
-   be byte-for-byte the same Verovio options Composer uses for its scroll view
-   at 50% zoom (apps/composer SCROLL_GEOM + BASE_OPTIONS + scale 50, header
-   none), so the frame's render is pixel-identical: same pageWidth/Height, same
-   30-unit margins, breaks:'none', NO adjustPageHeight, NO spacing overrides,
-   scale 50. (The geometricPrecision line rendering Composer applies via CSS is
-   mirrored on #composerFrame in apps/hkl/index.html.) */
-const SCROLL_OPTIONS = {
-  svgAdditionalAttribute: ADDITIONAL_ATTRS,
-  footer: 'none',
-  header: 'none',
-  breaks: 'none',
-  pageWidth: 100000,
-  pageHeight: 400,
-  /* crispMarginTop(30,…) → 31 at the 50% preset (odd → half-pixel line phase). */
-  pageMarginTop: crispMarginTop(30, FRAME_PRESET.scale, FRAME_PRESET.evenWidth),
-  pageMarginBottom: 30,
-  pageMarginLeft: 30,
-  pageMarginRight: 30,
-  scale: FRAME_PRESET.scale,
-  unit: FRAME_PRESET.unit,
-  ...lineWidthOptions(FRAME_PRESET),
-};
+   be the same Verovio options Composer uses for its scroll view at the SAME
+   zoom (apps/composer SCROLL_GEOM + BASE_OPTIONS + the CRISP_PRESETS entry,
+   header none), so the frame's render is pixel-identical: same 30-unit margins,
+   breaks:'none', NO spacing overrides, the preset's scale/unit/line widths.
+   (The geometricPrecision line rendering Composer applies via CSS is mirrored
+   on #composerFrame in apps/hkl/index.html.)
+
+   `unit` is CONSTANT across the preset ladder, so raising the zoom is pure
+   magnification: the system's layout — and therefore its extent in page units —
+   is unchanged, and only the device size of the emitted SVG grows. That is what
+   lets the overlay render the same mirrored MEI larger without re-breaking it. */
+function scrollOptions(preset: CrispPreset): Record<string, unknown> {
+  return {
+    svgAdditionalAttribute: ADDITIONAL_ATTRS,
+    footer: 'none',
+    header: 'none',
+    breaks: 'none',
+    pageWidth: 100000,
+    pageHeight: 400,
+    /* crispMarginTop(30,…) → 31 at the 50% preset (odd → half-pixel line
+       phase), and 30 (i.e. unchanged) at 75/100. A page-view zoom must NOT
+       nudge this — it is a layout input there — but the frame renders one
+       system against a 400-unit page with nothing below it to overflow, so the
+       parity nudge is free here. */
+    pageMarginTop: crispMarginTop(30, preset.scale, preset.evenWidth),
+    pageMarginBottom: 30,
+    pageMarginLeft: 30,
+    pageMarginRight: 30,
+    scale: preset.scale,
+    unit: preset.unit,
+    ...lineWidthOptions(preset),
+  };
+}
 
 /** Dark-theme notehead color: only ever a SANCTIONED light-source color. Prefer
  *  the baked light variant (`data-light-color`) when it's sanctioned; otherwise
@@ -101,7 +114,15 @@ function sanctionedDarkNotehead(light: string | null, ink: string | null): strin
 }
 
 export type NotationTheme = 'light' | 'dark';
-export interface RenderOpts { geometry?: 'inset' | 'scroll'; theme?: NotationTheme }
+export interface RenderOpts {
+  geometry?: 'inset' | 'scroll';
+  theme?: NotationTheme;
+  /** Scroll geometry only: which crisp preset to render at. Defaults to 50 —
+   *  HKL's own Composer-view frame is pinned there (no room in the info row);
+   *  the OBS overlay passes Composer's live zoom so a portrait capture can show
+   *  the score at the size the composer is reading it at. */
+  zoom?: ZoomLevel;
+}
 
 /** Apply a notation theme to an already-rendered container: tags it with
  *  `data-notation-theme` (so the shared notation-theme.css recolors staff /
@@ -178,6 +199,9 @@ export function loadVerovioToolkit(): Promise<VerovioToolkit> {
  *  resolve to real BravuraText glyphs. */
 export async function renderMeiToContainer(mei: string, container: HTMLElement, opts?: RenderOpts): Promise<void> {
   const theme: NotationTheme = opts?.theme ?? 'light';
+  const scroll = opts?.geometry === 'scroll';
+  /* `zoom` only means anything for the scroll frame; the inset is fixed at 50. */
+  const preset = scroll ? CRISP_PRESETS[opts?.zoom ?? 50] : FRAME_PRESET;
   const tk = await loadVerovioToolkit();
   /* Reset first: this singleton toolkit is shared between the inset and the
      scroll frame, and Verovio's setOptions MERGES — without a reset the inset's
@@ -185,7 +209,7 @@ export async function renderMeiToContainer(mei: string, container: HTMLElement, 
      making its note spacing differ from Composer's (it doesn't set them). A
      clean slate guarantees the frame's options exactly match Composer's. */
   tk.resetOptions();
-  tk.setOptions(opts?.geometry === 'scroll' ? SCROLL_OPTIONS : INSET_OPTIONS);
+  tk.setOptions(scroll ? scrollOptions(preset) : INSET_OPTIONS);
   if (!tk.loadData(mei)) {
     container.innerHTML = '<div style="color:#c00;padding:8px;font-size:11px">Verovio loadData failed (invalid MEI).</div>';
     return;
@@ -193,12 +217,12 @@ export async function renderMeiToContainer(mei: string, container: HTMLElement, 
   container.innerHTML = tk.renderToSVG(1, {});
   /* Pin the device scale exact so thin staff lines stay on the pixel grid
      (counters Verovio's whole-px ceil of the root box). See render-presets.ts. */
-  pinExactScale(container, FRAME_PRESET.scale);
+  pinExactScale(container, preset.scale);
   /* Crisp staff lines per-staff (grand-staff bass can be displaced), barlines,
      and the system's right edge (final barline + staff-line ends). */
-  snapStaffLinesToGrid(container, FRAME_PRESET.scale, FRAME_PRESET.evenWidth);
-  snapBarlines(container, FRAME_PRESET.scale, FRAME_PRESET.evenWidth);
-  snapSystemRightEdge(container, FRAME_PRESET.scale);
+  snapStaffLinesToGrid(container, preset.scale, preset.evenWidth);
+  snapBarlines(container, preset.scale, preset.evenWidth);
+  snapSystemRightEdge(container, preset.scale);
   /* Bring noteheads to the front so black stems don't draw over the colored
      notehead (Verovio emits [notehead, dots, stem] in document order). */
   for (const note of Array.from(container.querySelectorAll('g.note'))) {

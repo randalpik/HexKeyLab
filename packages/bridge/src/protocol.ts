@@ -264,6 +264,16 @@ export type ComposerEvent =
    *  'left' = sounding now (clock playback), 'right' = just played (Performance
    *  mode). Absent → 'left'. HKL renders it via the shared
    *  `computePlaybackBarRect` and never derives bars itself. */
-  | { type: 'composer-playback'; on: boolean; bars: ReadonlyArray<{ voice: number; meiId: string; edge?: PlaybackBarEdge }> };
+  | { type: 'composer-playback'; on: boolean; bars: ReadonlyArray<{ voice: number; meiId: string; edge?: PlaybackBarEdge }> }
+  /** Composer's current zoom level, as the Verovio scale percent it names
+   *  (50 / 75 / 100 — the crisp-preset ladder in @hkl/notation/render-presets).
+   *  Sent on connect and on every zoom step. HKL's OWN Composer-view frame
+   *  ignores it (pinned at 50 — the info row has no room to grow); it exists so
+   *  HKL can forward it to the OBS overlay, whose frame renders the mirrored
+   *  score at the size the composer is actually reading it at (a portrait
+   *  capture has the height for it). A plain number, not the ladder's union:
+   *  the ladder lives in @hkl/notation, which the bridge must not depend on,
+   *  and the receiver snaps it with `resolveZoomLevel`. */
+  | { type: 'composer-zoom'; zoom: number };
 
 export type BridgeMessage = HklEvent | ComposerEvent;

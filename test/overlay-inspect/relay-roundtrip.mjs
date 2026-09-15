@@ -50,6 +50,14 @@ try {
   if (echoed) fail('publisher received its own message (no self-echo expected)');
   console.log('✓ no self-echo to publisher');
 
+  /* Composer-frame state the overlay needs to size its render. An unretained
+     composer-zoom would leave a Browser Source that reconnects (or opens
+     mid-performance) rendering the score at the frame's 50 % default while
+     Composer sits at 100 % — the exact failure the retain list exists to
+     prevent, and one nothing else would catch until it was on stream. */
+  pub.send(JSON.stringify({ t: 'composer-zoom', zoom: 100 }));
+  await wait(40);
+
   /* ── 2. retained replay to a LATE subscriber ── */
   const late = new WebSocket(url);
   await open(late);
@@ -59,7 +67,8 @@ try {
   if (!seen.has('snapshot')) fail('late subscriber did not get retained snapshot');
   if (seen.get('snapshot').data.tuning !== 'V') fail('retained snapshot is stale/wrong');
   if (!seen.has('keys') || seen.get('keys').keys[0] !== '3,4') fail('late subscriber did not get retained keys');
-  console.log('✓ retained replay: late subscriber reconstructed snapshot + keys');
+  if (!seen.has('composer-zoom') || seen.get('composer-zoom').zoom !== 100) fail('late subscriber did not get retained composer-zoom');
+  console.log('✓ retained replay: late subscriber reconstructed snapshot + keys + composer-zoom');
 
   console.log('\nALL RELAY CHECKS PASSED');
 } finally {

@@ -132,7 +132,8 @@ separate Chromium that the same-origin bridge can't reach). **Full system → [o
 HKL-side touch-points only: the **publisher** (auto-started on boot, no checkbox — a refused dial to
 a missing relay is silent on Chromium, so it only prompts when a relay is actually present) lives in
 `bridge/overlay-publish.ts`, tapping the end of `draw()` (the convergence point) plus the
-`hkl-side.ts` `composer-score`/`composer-playback` handlers (bars-only); the **subscriber**
+`hkl-side.ts` `composer-score`/`composer-playback`/`composer-zoom` handlers (bars-only; `composer-zoom`
+sizes the OVERLAY's frame only — HKL's own stays at 50 %, see [overlay.md](overlay.md)); the **subscriber**
 `bridge/overlay-subscribe.ts` (loaded by `main.ts` under `?overlay`) drives the lattice via the
 **engine-free** primitives in `render/controls-core.ts` (split out of `ui/controls.ts` so the overlay
 bundle excludes audio/MIDI); and `draw.ts`'s `transparentBg` flag flips the out-of-outline mask to a
