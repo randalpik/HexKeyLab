@@ -145,6 +145,14 @@ export function overlayPublishTick(): void {
   }
 }
 
+/** Mirror a key blink (render/key-flash.ts). Sent as its own event rather than
+ *  as a `keys` delta — see the `flash` entry in overlay-protocol.ts. Fire and
+ *  forget: no diffing, since a flash IS the event. */
+export function publishKeyFlash(keys: ReadonlyArray<string>): void {
+  if (!channel || keys.length === 0) return;
+  channel.send({ t: 'flash', keys });
+}
+
 /* ── Composer-frame forwarding (called from hkl-side.ts handlers) ─────────── */
 
 export function publishComposerScore(mei: string): void {

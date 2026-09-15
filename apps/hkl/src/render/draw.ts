@@ -1135,9 +1135,9 @@ export function draw(): void {
   /* selection: brightened hex fills */
   const flashNow = performance.now();
   const flashingSet = new Set<KeyId>();
-  for (const fk in audio.rearticulateFlashUntil) {
-    if (audio.rearticulateFlashUntil[fk] > flashNow) flashingSet.add(fk);
-    else delete audio.rearticulateFlashUntil[fk];
+  for (const fk in selection.flashUntil) {
+    if (selection.flashUntil[fk] > flashNow) flashingSet.add(fk);
+    else delete selection.flashUntil[fk];
   }
   selection.selectedKeys.forEach((key) => {
     if (flashingSet.has(key)) return;

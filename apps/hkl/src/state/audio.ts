@@ -14,9 +14,9 @@ import type { KeyId, Voice } from '../types.js';
 // snapshot of selectedKeys at sostenuto-on; locked keys ride through damper
 // changes (their per-voice damperGain stays pinned at 1.0).
 //
-// rearticulateFlashUntil holds "q,r" → performance.now() expiry timestamps for
-// the brief off-on blink when a MIDI strike re-triggers an already-sounding
-// voice. aftertouchSnapshot is "q,r" → latest pressure value, for debug polling.
+// aftertouchSnapshot is "q,r" → latest pressure value, for debug polling.
+// (The re-articulation blink used to live here as rearticulateFlashUntil; it is
+// render state, and now sits in state/selection.ts — see render/key-flash.ts.)
 
 export const audio: {
   audioCtx: AudioContext | null;
@@ -39,7 +39,6 @@ export const audio: {
   damperDepth: number;
   sostenutoActive: boolean;
   sostenutoLockedKeys: Set<KeyId>;
-  rearticulateFlashUntil: Record<KeyId, number>;
   aftertouchSnapshot: Record<KeyId, number>;
   /* Per-key PA pre-processing state used by aftertouch.filterPA():
      hysteresis gate (open/close at separate thresholds — rejects the 0/1
@@ -66,7 +65,6 @@ export const audio: {
   damperDepth: 0,
   sostenutoActive: false,
   sostenutoLockedKeys: new Set(),
-  rearticulateFlashUntil: {},
   aftertouchSnapshot: {},
   paFilter: {},
 };

@@ -24,7 +24,7 @@ import {
 import { sysex } from '../lumatone/sysex.js';
 import { handleCalibrationPacket } from '../lumatone/calibration.js';
 import {
-  noteOff, handleAftertouch, triggerRearticulateFlash,
+  noteOff, handleAftertouch,
   setDamperDepth, sostenutoOn, sostenutoOff,
 } from '../audio/engine.js';
 import { filterPA } from '../audio/aftertouch.js';
@@ -39,6 +39,7 @@ import { SampleEngine } from '../audio/samples.js';
 import { animation } from '../render/animation.js';
 import { instrReplaysOnTranspose, noteOn } from '../audio/engine.js';
 import type { KeyId, Voice } from '../types.js';
+import { flashKey } from '../render/key-flash.js';
 
 /* Set of Lumatone physical inputs currently held. Used by
    migrateHeldLumatoneVoices to find which voices to re-target when the
@@ -204,7 +205,7 @@ export function handleMidiMessage(e: MIDIMessageEvent): void {
          Stop the old voice so syncAudio creates a fresh one with the new velocity,
          and flash the selection briefly to confirm the re-trigger. */
       noteOff(key);
-      triggerRearticulateFlash(key);
+      flashKey(key);
     }
     audio.sustainedKeys.delete(key); /* re-struck while sustained → back to normal */
     selection.selectedKeys.add(key);

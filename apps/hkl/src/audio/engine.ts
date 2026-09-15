@@ -24,7 +24,6 @@ import {
 } from './aftertouch.js';
 import * as InstrumentRegistry from '../state/instrumentRegistry.js';
 import { recordSeamEvent } from './diagnostics/loopOverlay.js';
-import { draw } from '../render/draw.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import {
   recordOn, recordOff, recordPa, recordPedalDepthsChange, recordSostenuto,
@@ -40,17 +39,6 @@ const DAMPER_SMOOTH_TAU = 0.025;
 /* Below this depth, treat as "fully released" — releases sustained voices via
    the normal noteOff path so syncAudio + draw stay consistent. */
 const DAMPER_RELEASE_FLOOR = 0.005;
-
-/* Re-articulation flash: when a MIDI strike arrives on a key that's already
-   sounding (typically sustain-captured), we stop the old voice and start a
-   fresh one. This map holds "q,r" → performance.now() expiry timestamps so
-   draw() can briefly render those keys as unselected, producing a visible
-   off-on blink to confirm the re-trigger. */
-const REARTICULATE_FLASH_MS = 60;
-export function triggerRearticulateFlash(key: KeyId): void {
-  audio.rearticulateFlashUntil[key] = performance.now() + REARTICULATE_FLASH_MS;
-  setTimeout(draw, REARTICULATE_FLASH_MS + 5);
-}
 
 export function instrIsSample(wf?: string): boolean { return !!SampleEngine.INSTRUMENTS[wf ?? audio.activeWaveform]; }
 /* The four built-in oscillator waveforms. Guards the osc note path so a stale /

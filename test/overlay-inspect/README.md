@@ -45,3 +45,23 @@ for eyeballing), and confirm the lattice + Composer frame mirror live with a
 transparent background. (A headless two-tab automation can't run against a
 pre-existing dev-proxy started before the relay wiring landed — restart
 `pnpm dev` first.)
+
+## `flash-mirror.mjs` — key-blink mirror proof (headless Chromium)
+
+```
+pnpm overlay:dist && node test/overlay-inspect/flash-mirror.mjs
+```
+
+Proves the re-strike blink (`render/key-flash.ts`) reaches the overlay, **visually**. Spawns its own
+overlay-host on a throwaway `HKL_OVERLAY_PORT` and its own Chromium, publishes a `snapshot` with two
+lit keys followed by a `flash`, and samples `canvas.toDataURL()` every frame across the blink.
+Asserts the lattice changes, changes back, and that the blink lasts on the order of `KEY_FLASH_MS`.
+
+Never touches `:5190` or `:5170`, so it cannot overwrite the retained state a live OBS source is
+reading. Tests the **built** bundle, not the dev sources — run `pnpm overlay:dist` first.
+
+Why pixels and not model state: a re-struck key never leaves `selection.selectedKeys`, so the blink
+is a modifier on the lit set rather than a change to it. Every natural model-state assertion here
+passes whether or not anything is drawn — which is exactly how the overlay went so long without
+mirroring it. Verified as a real gate: stubbing out the subscriber's `flash` case makes it fail with
+"canvas NEVER changed after the flash message".

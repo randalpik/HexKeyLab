@@ -115,7 +115,7 @@ the performer's ghost tiling). Chrome is hidden via the `html.overlay` CSS block
 ## Transport — `@hkl/bridge`
 
 - **`overlay-protocol.ts`** (pure data): the `OverlayMsg` union — lattice `snapshot` / `keys` /
-  `view`, the re-exported `composer-score` / `composer-playback` / `composer-zoom` shapes, plus `OVERLAY_WS_PATH`
+  `flash` / `view`, the re-exported `composer-score` / `composer-playback` / `composer-zoom` shapes, plus `OVERLAY_WS_PATH`
   (`/overlay-ws`) and `OVERLAY_RELAY_PORT` (`5190`).
 - **`overlay-ws.ts`** — the browser `OverlayChannel` (native `WebSocket`, reconnect w/ capped
   backoff). **URL resolution**, in precedence:
@@ -153,6 +153,13 @@ was dropped.)
   state change funnels through — and diff-gates a full `snapshot` (structural change), a `keys` delta
   (`selection.selectedKeys`), and a `view` delta (pan; streamed per-frame during tweens for an exact
   match).
+- **Key blink**: `flash` is published straight from `render/key-flash.ts`'s `flashKey()` rather than
+  from the tick. It is deliberately NOT a `keys` delta — a re-struck key never leaves
+  `selection.selectedKeys`, so the blink is a *modifier* on the lit set, not a change to it. Keeping
+  it separate means `keys` still means exactly `selectedKeys`, a retained snapshot can never strand a
+  key dark, and the subscriber times the 60 ms off its own clock so relay jitter cannot stretch it.
+  Publishing from inside `flashKey()` covers every trigger site (audio re-articulation, MIDI
+  re-strike, the Composer bridge) by construction.
 - **Composer frame**: forwarded from `hkl-side.ts` where the bridge already calls
   `setComposerScore`/`setComposerPlaybackBars` (NOT `composer-cursor` — the overlay is **bars-only**,
   no editing caret). HKL already holds this state (mirrored from Composer over BroadcastChannel), so
@@ -172,6 +179,9 @@ suppressed under `?overlay` so opening the overlay never clobbers the real insta
 
 - **snapshot** → reconstruct lattice state via the `controls-core` primitives + direct state writes.
 - **keys** → mutate `selection.selectedKeys` + `requestDraw()`.
+- **flash** → `applyKeyFlash()` per key (the local half of `flashKey`, so the mirror does not
+  re-publish what it just received). No audio import: the blink's state lives in
+  `state/selection.ts`, not `state/audio.ts`. Gated by `test/overlay-inspect/flash-mirror.mjs`.
 - **view** → set `view.viewQ/viewR/kbOffY` + `requestDraw()`.
 - **composer-view / composer-score / composer-playback** → toggle `body.composer-view`, feed
   `setComposerScore` / `setComposerPlaybackBars` (the existing `composer-frame.ts` exports). Scroll

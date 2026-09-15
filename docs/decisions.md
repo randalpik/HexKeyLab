@@ -8312,3 +8312,39 @@ is a point on the trajectory rather than the thing that was asked for.
 
 **Where**: `packages/notation/src/scroll-follow.ts` (new),
 `apps/hkl/src/render/composer-frame.ts` (`scrollToId`, `doRender`, `clearComposerFrame`).
+
+**The re-strike blink is render state, not audio state (2026-09-15).**
+A strike on an already-sounding key (sustain-captured, re-struck under the pedal) paints that key as
+*unselected* for 60 ms to confirm the re-trigger. The key never leaves `selection.selectedKeys` —
+`draw()` subtracts it at paint time. That expiry map used to be `audio.rearticulateFlashUntil` in
+`state/audio.ts`, written by `triggerRearticulateFlash()` in `audio/engine.ts`. It was the only
+purely-visual field in a module of `AudioContext` / `GainNode` / `BiquadFilterNode` / `damperDepth`,
+and it was `engine.ts`'s *only* reason to import the renderer at all.
+
+Now: the map is `selection.flashUntil` in `state/selection.ts` (beside `selectedKeys`, which it
+modifies — `draw()` reads both in one pass), and the sole entry point is `flashKey()` in
+`render/key-flash.ts`. Audio and MIDI **call** it; nothing in render imports audio to make it work.
+Renamed for the visual, not the audio event, so a future non-audio trigger (a cue, a count-in) needs
+no second migration.
+
+**What the misplacement cost**: the OBS overlay never mirrored the blink. The overlay renders keys
+but excludes the audio engine by design — that exclusion is what keeps the lean bundle lean — so it
+could reach neither the state nor the setter. The first fix considered was to publish from the audio
+engine and move `REARTICULATE_FLASH_MS` into `state/audio.ts`, i.e. have the overlay's subscriber
+write into audio-engine state to make a key blink. Max rejected it: "key visuals should not be tied
+up with audio." Correct call — that would have entrenched the coupling that caused the bug. Moving
+the state made the overlay side a three-line handler with no audio import, and cost the lean bundle
++80 bytes.
+
+**Its own message, not a `keys` delta**: `{ t: 'flash'; keys }`. Folding it into `litKeys` would need
+no new message type, but the blink is a *modifier* on the lit set, not a change to it — so `keys`
+keeps meaning exactly `selection.selectedKeys`, a retained snapshot can never strand a key dark, and
+a dropped message costs one missed blink instead of a stuck key. The subscriber times the 60 ms off
+its own clock, so relay jitter cannot stretch or compress it. Publishing from inside `flashKey()`
+covers all five trigger sites by construction rather than by remembering each one.
+
+**Where**: `apps/hkl/src/render/key-flash.ts` (new), `apps/hkl/src/state/{selection,audio}.ts`,
+`apps/hkl/src/render/draw.ts`, `apps/hkl/src/audio/engine.ts`,
+`apps/hkl/src/{input/keyboard-notes,midi/piano,midi/handler,bridge/hkl-side}.ts`,
+`apps/hkl/src/bridge/{overlay-publish,overlay-subscribe}.ts`,
+`packages/bridge/src/overlay-protocol.ts`, `test/overlay-inspect/flash-mirror.mjs` (new).

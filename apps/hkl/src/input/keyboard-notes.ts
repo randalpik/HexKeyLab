@@ -25,7 +25,7 @@ import { audio } from '../state/audio.js';
 import { selection } from '../state/selection.js';
 import { view } from '../state/view.js';
 import {
-  noteOn, noteOff, triggerRearticulateFlash, instrReplaysOnTranspose,
+  noteOn, noteOff, instrReplaysOnTranspose,
 } from '../audio/engine.js';
 import { SampleEngine } from '../audio/samples.js';
 import { keyFreq } from '../tuning/frequency.js';
@@ -35,6 +35,7 @@ import { restrikePianoOut } from '../midi/piano-out.js';
 import { qwertyKeyMap } from './qwerty.js';
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import type { KeyId, Voice } from '../types.js';
+import { flashKey } from '../render/key-flash.js';
 
 const KEYBOARD_VELOCITY = DEFAULT_DYNAMIC_MAP.f;
 
@@ -161,7 +162,7 @@ export let migrateHeldQwertyVoices: (dq: number, dr: number) => void = () => {};
       /* voice already sounding (e.g. via sustain pedal) — restart with a fresh
          strike, mirroring midi/handler.ts:99–106 */
       noteOff(key);
-      triggerRearticulateFlash(key);
+      flashKey(key);
     }
     audio.sustainedKeys.delete(key);
     selection.selectedKeys.add(key);

@@ -4,7 +4,7 @@
 // using the current referenceNote as the JI anchor.
 //
 // Behavioral parity with Lumatone (handler.ts) once the cell is resolved:
-//   - sustaining note re-strikes through noteOff + triggerRearticulateFlash
+//   - sustaining note re-strikes through noteOff + flashKey
 //   - selection.selectedKeys / audio.keyVelocity / sustained-keys all mutated
 //     in the same way
 //   - downstream onSelectionChanged() drives audio + MIDI sync + redraw
@@ -21,11 +21,12 @@ import { referenceNote } from '../state/reference.js';
 import { loadPrefs, savePrefs } from '../state/persistence.js';
 import { activeFootprintSet } from '../render/draw.js';
 import { resolve12TetToCoord } from '../tuning/resolve.js';
-import { noteOff, triggerRearticulateFlash, setDamperDepth } from '../audio/engine.js';
+import { noteOff, setDamperDepth } from '../audio/engine.js';
 import { whenMidiAccessReady } from './engine.js';
 import { rebindPianoOut, setOutputProgram, restrikePianoOut } from './piano-out.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import type { KeyId } from '../types.js';
+import { flashKey } from '../render/key-flash.js';
 
 /* ── module state ──────────────────────────────────────────────────────────── */
 
@@ -103,7 +104,7 @@ function handleNoteOn(midiNote: number, vRaw: number): void {
   if (prev) {
     if (audio.activeOscs[prev]) {
       noteOff(prev);
-      triggerRearticulateFlash(prev);
+      flashKey(prev);
     }
     audio.sustainedKeys.delete(prev);
     selection.selectedKeys.add(prev);
@@ -131,7 +132,7 @@ function handleNoteOn(midiNote: number, vRaw: number): void {
     /* The chosen cell is already sounding (e.g., from QWERTY/Lumatone). Match
        Lumatone behavior: noteOff + rearticulate flash. */
     noteOff(key);
-    triggerRearticulateFlash(key);
+    flashKey(key);
   }
   audio.sustainedKeys.delete(key);
   selection.selectedKeys.add(key);

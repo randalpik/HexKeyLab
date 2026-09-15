@@ -21,6 +21,7 @@ import {
   applyRotation, applyHexSize, applyTuningRender, applyOutlineRender,
 } from '../render/controls-core.js';
 import { cv, draw, requestDraw, setTransparentBg } from '../render/draw.js';
+import { applyKeyFlash } from '../render/key-flash.js';
 import {
   setComposerScore, setComposerPlaybackBars, renderComposerFrame, setComposerFrameZoom,
 } from '../render/composer-frame.js';
@@ -82,6 +83,13 @@ function handle(msg: OverlayMsg): void {
     case 'keys':
       selection.selectedKeys = new Set(msg.keys);
       requestDraw();
+      break;
+    case 'flash':
+      /* applyKeyFlash, not flashKey: this IS the mirror, and re-publishing
+         would echo it straight back at the relay. The blink is timed locally
+         off this instance's clock, so it reads identically here even if the
+         message arrived late. */
+      for (const k of msg.keys) applyKeyFlash(k);
       break;
     case 'view':
       view.viewQ = msg.viewQ;

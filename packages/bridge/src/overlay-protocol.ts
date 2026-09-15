@@ -66,6 +66,14 @@ export type OverlayMsg =
   | { t: 'snapshot'; data: OverlaySnapshot }
   /** Lit-key set changed — full set each time (≤ a few dozen entries). */
   | { t: 'keys'; keys: ReadonlyArray<string> }
+  /** Blink these already-lit keys off briefly (a re-strike on a sounding key).
+   *  Deliberately NOT folded into `keys`: the blink is a modifier on the lit
+   *  set, not a change to it, so `keys` keeps meaning exactly
+   *  selection.selectedKeys and a retained snapshot can never strand a key
+   *  dark. The subscriber times the blink off its own clock, so its duration
+   *  cannot be stretched or compressed by relay jitter, and a dropped message
+   *  costs one missed blink rather than a stuck key. */
+  | { t: 'flash'; keys: ReadonlyArray<string> }
   /** View center / vertical offset changed (streams per-frame during tweens). */
   | { t: 'view'; viewQ: number; viewR: number; kbOffY: number }
   /** HKL "Composer view" frame toggled on/off. */

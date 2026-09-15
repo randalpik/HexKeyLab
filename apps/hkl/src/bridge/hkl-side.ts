@@ -36,7 +36,7 @@ import { tuning } from '../state/tuning.js';
 import { darkColorHex } from '../transcription/pitch.js';
 import { lightSourceHex } from '../render/colors.js';
 import { resolveNoteSpec } from '../tuning/spell.js';
-import { noteOn, noteOff, stopAllNotes, triggerRearticulateFlash, instrReplaysOnTranspose, glideVoices, setActiveWaveform } from '../audio/engine.js';
+import { noteOn, noteOff, stopAllNotes, instrReplaysOnTranspose, glideVoices, setActiveWaveform } from '../audio/engine.js';
 import { SampleEngine } from '../audio/samples.js';
 import { syncPianoOut, restrikePianoOut, sendSustainPedal } from '../midi/piano-out.js';
 import { pedal } from '../state/pedal.js';
@@ -54,6 +54,7 @@ import { loadPrefs, type TuningMode } from '../state/persistence.js';
 import type { FootprintCell } from '@hkl/bridge/protocol.js';
 import { voiceId, coordOf } from '../types.js';
 import type { KeyId, VoiceId } from '../types.js';
+import { flashKey } from '../render/key-flash.js';
 
 const bridge = createHklBridge();
 const analyzerBridge = createAnalyzerHklBridge();
@@ -627,7 +628,7 @@ function scheduleOnVisualAt(
          the audio onset. */
       for (const k of rearticulatedKeys) {
         restrikePianoOut(k);
-        triggerRearticulateFlash(k);
+        flashKey(k);
       }
     }
     syncPianoOut(); /* mirror this chord's attacks to the external synth */

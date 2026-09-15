@@ -4290,3 +4290,45 @@ General form: **when animation is driven by an external event stream rather than
 - **velocity CV** (stdev/mean of per-frame movement, over moving frames). Native: 0.86–1.02, i.e. per-frame speed varies as much as its own mean. Spring: 0.32–0.39.
 
 Both are cheap to collect headlessly with a throwaway page and CDP (`Runtime.evaluate` + a rAF sampler); no dev server and no OBS needed to reproduce or to prove the fix. Measure the **real module**, not a re-typed copy of the algorithm — transpile the actual source and inline it, or the probe drifts from what ships.
+
+## State filed by what triggers it, not by what it is, breaks the consumer that has only one of the two (2026-09-15)
+
+The re-strike blink lived in `state/audio.ts` as `rearticulateFlashUntil`, set from `audio/engine.ts`.
+Both choices were locally reasonable — a MIDI strike triggers it, and the helper sat next to its
+caller — and the field is pure render state: "paint this key unselected for 60 ms." It was the only
+member of that module with no audio in it, and the audio engine's only reason to import the renderer.
+
+Nothing was wrong until a second consumer appeared with exactly the opposite shape. The OBS overlay
+renders keys and excludes the audio engine **by design** (that exclusion is what keeps the lean
+bundle lean), so it could reach neither the state nor its setter, and re-strikes silently never
+blinked there. The misfiling *was* the bug; the missing feature was a symptom.
+
+The trap on the way out is that the shortest fix follows the existing shape. Publishing the blink
+from the audio engine and moving the duration constant into `state/audio.ts` works, is a smaller
+diff, and would have left an audio-free renderer writing into audio-engine state to make a key blink.
+Moving the state to `state/selection.ts` (beside the `selectedKeys` it modifies) and putting the one
+entry point in `render/key-flash.ts` made the overlay handler three lines with no audio import, and
+cost the lean bundle +80 bytes.
+
+Two tells that generalize. **A field that is the only one of its kind in a module is misfiled** —
+here, one plain `Record<KeyId, number>` among `AudioContext` / `GainNode` / `BiquadFilterNode`.
+And **a module whose sole import of another layer serves one function is pointing at that function** —
+`engine.ts` imported `draw` for nothing else, and removing the flash removed the import entirely.
+
+## A blink that leaves the model unchanged needs a pixel assertion, not a state assertion (2026-09-15)
+
+A re-struck key never leaves `selection.selectedKeys` — the flash is subtracted at paint time. So
+every natural model-state check ("is the key lit?", "did the lit set change?") passes identically
+whether or not anything is drawn. That is why the overlay went so long without mirroring the blink:
+the state it mirrors was, correctly, never out of sync.
+
+`test/overlay-inspect/flash-mirror.mjs` samples `canvas.toDataURL()` every frame across the blink and
+asserts the lattice changes and then changes back. No coordinate knowledge is needed — an exact pixel
+signature per frame catches "state moved, pixels didn't" regardless of where the key is. It spawns
+its own overlay-host on a throwaway `HKL_OVERLAY_PORT` and its own Chromium, so it can't overwrite
+the retained state a live OBS source is reading on `:5190`.
+
+**Verify a gate by breaking it.** Stubbing the subscriber's `flash` case out and rebuilding made it
+fail with "canvas NEVER changed after the flash message" — which is what separates a gate from a test
+that would have passed all along. Do this once for any invariant asserted over pixels; the cost is
+one rebuild and it is the only proof the assertion is load-bearing.
