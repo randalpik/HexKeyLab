@@ -36,9 +36,24 @@ import type { KeyId } from '../types.js';
    integer steps (~127 distinct values); ~25ms exponential smoothing tracks
    without zipper noise and avoids scheduling fights with cancelScheduledValues. */
 const DAMPER_SMOOTH_TAU = 0.025;
-/* Below this depth, treat as "fully released" — releases sustained voices via
-   the normal noteOff path so syncAudio + draw stay consistent. */
-const DAMPER_RELEASE_FLOOR = 0.005;
+/* Damper-contact threshold. Depth multiplies voice gain LINEARLY, so 0.05 is
+   about -26 dB — and by the time a pedal change happens the note has already
+   decayed well below that in absolute terms. Below this the damper is treated
+   as having landed on the string: sustained voices release via the normal
+   noteOff path, so syncAudio + draw + LED sync + the Composer bridge all stay
+   consistent and the key unlights.
+
+   This is a MUSICAL threshold, not a float epsilon — do not compare against it
+   as though small values were numerical noise. It exists because a partial
+   pedal release (the pedal never returning to true rest) otherwise leaves notes
+   inaudibly ringing but fully lit, which reads as a wash of stuck keys on the
+   lattice during video capture.
+
+   Deliberately NOT applied as an input clamp on pedal.cc4Depth: that value must
+   keep reporting the pedal's real position (see lessons.md — the at-rest ADC
+   quirk was fixed at the input boundary precisely so cc4Depth reads honestly).
+   The threshold is a sustain-semantics decision, so it lives here. */
+export const DAMPER_RELEASE_FLOOR = 0.05;
 
 export function instrIsSample(wf?: string): boolean { return !!SampleEngine.INSTRUMENTS[wf ?? audio.activeWaveform]; }
 /* The four built-in oscillator waveforms. Guards the osc note path so a stale /
@@ -543,11 +558,20 @@ function releaseSustainedKey(key: KeyId): void {
 /* Damper-pedal entry point. Combines pedal.cc4Depth + pedal.cc64Depth via max,
    updates audio.damperDepth + sustainPedalDown, walks sustainedKeys to apply
    the new depth (skipping sostenuto-locked keys), and collapses to per-key
-   release when depth crosses below DAMPER_RELEASE_FLOOR. */
+   release when depth crosses below DAMPER_RELEASE_FLOOR.
+
+   sustainPedalDown is gated on the SAME threshold, not on depth > 0. The two
+   must move together: sustainPedalDown is what the three note-off sites
+   (midi/handler, input/keyboard-notes, midi/piano) consult to decide whether a
+   released key enters sustainedKeys. If it stayed `depth > 0`, every depth in
+   (0, DAMPER_RELEASE_FLOOR] would become a stuck-note zone — the pedal resting
+   partially depressed adds each released key to sustainedKeys, and nothing
+   calls setDamperDepth again while the pedal sits still, so the note hangs lit
+   and inaudible forever. Same bug class as the CC 4 = 1 stuck sustain. */
 export function setDamperDepth(): void {
   const depth = Math.max(pedal.cc4Depth, pedal.cc64Depth);
   audio.damperDepth = depth;
-  audio.sustainPedalDown = depth > 0;
+  audio.sustainPedalDown = depth > DAMPER_RELEASE_FLOOR;
   recordPedalDepthsChange();
   if (depth > DAMPER_RELEASE_FLOOR) {
     audio.sustainedKeys.forEach(function (k) {

@@ -20,7 +20,7 @@
 import { audio } from '../state/audio.js';
 import { pedal } from '../state/pedal.js';
 import {
-  setDamperDepth, sostenutoOff,
+  setDamperDepth, sostenutoOff, DAMPER_RELEASE_FLOOR,
 } from '../audio/engine.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 
@@ -95,7 +95,9 @@ function tick(t: number): void {
     ? pedal.recentEvents[pedal.recentEvents.length - 1]
     : null;
   const sinceLastCC = lastEvt ? performance.now() - lastEvt.t : Infinity;
-  const stale = audio.damperDepth > 0.005 && sinceLastCC > 1500;
+  /* Gate on the damper-contact threshold, not a bare epsilon: a depth resting
+     below it is a legitimately-damped partial press, not a divergence. */
+  const stale = audio.damperDepth > DAMPER_RELEASE_FLOOR && sinceLastCC > 1500;
   panel.style.color = stale ? '#fa6' : 'rgba(255,255,255,0.9)';
   panel.textContent =
     'CC4:   ' + (cc4 === null ? '—' : String(cc4).padStart(3, ' ')) + '  (' + cc4Pct.padStart(5, ' ') + '%)\n' +

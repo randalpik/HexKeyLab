@@ -220,7 +220,7 @@ Consequence: 10:7 reads as "greater augmented 4th + septimal comma", 7:5 as "les
 | Other SysEx | `sysexHandleResponse` (ACK matching) |
 | CC 4 (expression) | `pedal.cc4Depth = d2/127`; `setDamperDepth()`. Verbose during cal; else endpoints (0/127) only. |
 | CC 64 (sustain) | role per `pedal.mode`: `'sustain'` → binary damper (`cc64Depth = d2≥64?1:0` + `setDamperDepth()`); `'sostenuto'` → `sostenutoOn/Off()`, no damper touch. |
-| Note on/off | audio + selection. Note-off branches on `sustainPedalDown ‖ sostenutoLockedKeys.has(key)`: keep or release. |
+| Note on/off | audio + selection. Note-off branches on `sustainPedalDown ‖ sostenutoLockedKeys.has(key)`: keep or release. `sustainPedalDown` is `damperDepth > DAMPER_RELEASE_FLOOR`, the same threshold the release loop uses — so there is no depth band that defers a note-off the release loop would never claim. |
 | Poly aftertouch (0xA0) | per-voice volume modulation. |
 
 Note routing uses the **fixed MIDI layout**: stable (channel, note) per physical key. `fixedMidiToKey(ch, note)` converts at input time — channels 0–4 = the five board groups, notes 0–55 = key index within board.
@@ -445,7 +445,9 @@ AFTERTOUCH_RAMP_S
 AFTERTOUCH_CEIL_HEADROOM_DB  # poly-AT full-press swell ceiling, dB above v127 (default 12)
 REARTICULATE_FLASH_MS
 DAMPER_SMOOTH_TAU      # ~25ms exponential τ for setTargetAtTime damper smoothing
-DAMPER_RELEASE_FLOOR   # below this depth, sustained voices release via normal noteOff
+DAMPER_RELEASE_FLOOR   # damper-contact threshold (0.05 ≈ -26 dB). Below this depth
+                       # sustained voices release via normal noteOff, and
+                       # sustainPedalDown reads false. Musical, not a float epsilon.
 ```
 
 ### Key data structures

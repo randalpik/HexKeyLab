@@ -8348,3 +8348,49 @@ covers all five trigger sites by construction rather than by remembering each on
 `apps/hkl/src/{input/keyboard-notes,midi/piano,midi/handler,bridge/hkl-side}.ts`,
 `apps/hkl/src/bridge/{overlay-publish,overlay-subscribe}.ts`,
 `packages/bridge/src/overlay-protocol.ts`, `test/overlay-inspect/flash-mirror.mjs` (new).
+
+## Sub-audible damper threshold: notes release at damper contact, not at pedal zero (2026-09-15)
+
+`DAMPER_RELEASE_FLOOR` raised 0.005 → 0.05, and `audio.sustainPedalDown` re-gated from `depth > 0`
+onto the same constant.
+
+**Problem**: damper depth multiplies voice gain linearly, so a pedal change that never returns the
+pedal fully to rest leaves notes ringing at a few percent — inaudible, but still in `sustainedKeys`,
+therefore still in `selection.selectedKeys`, therefore still lit on the canvas, on the Lumatone LEDs,
+and in the Composer held-keys bridge. On video this reads as a growing wash of stuck keys that the
+viewer cannot hear. The old floor was a float epsilon guarding the release comparison, never a
+musical threshold.
+
+**Unlight and stop are the same event, deliberately.** A visual-only threshold was considered and
+rejected: "lit == sounding" is currently free, since canvas, LED sync and the bridge all derive from
+`selectedKeys` through `onSelectionChanged`. Decoupling them means threading a second "lit" set
+through all three consumers for the sole purpose of making the light disagree with the audio. Taking
+the existing release branch gets both for one constant, and matches the physical model — below
+contact the damper is on the string. `noteOff` already ramps 60 ms, so the crossing does not click.
+
+**Why the threshold is not an input clamp on `cc4Depth`**: lessons.md records that the CC 4 = 1
+at-rest quirk was deliberately fixed at the input boundary so `pedal.cc4Depth` reads a true 0 at rest
+for the HUD. That reasoning still holds. This is a sustain-semantics decision, not a signal-cleanup
+one, so it belongs in `setDamperDepth`. `cc4Depth` continues to report the pedal's real position.
+
+**The coupled `sustainPedalDown` change is the load-bearing half.** It is the gate deciding whether a
+released key enters `sustainedKeys`. Left at `depth > 0`, the band `(0, 0.05]` becomes a stuck-note
+zone — nothing re-evaluates the damper while the pedal sits still. See the new lessons.md entry.
+
+**No hysteresis.** Release is one-directional: a released key is out of both sets, and re-pressing
+does not resurrect it (correct — the dampers have landed). Chatter at the threshold is impossible.
+
+**Fixed constant, not a pref.** Max's call; he is auditing the value against his own pedal travel.
+0.05 ≈ -26 dB at full voice gain, and lower in absolute terms since a note reached by a pedal change
+has already decayed.
+
+**Known consequence**: `.hkr` playback replays CC 4 through `setDamperDepth`, so recordings made
+before this change release slightly earlier on playback. Accepted.
+
+**Deferred**: a longer (~150–250 ms) damped fade for threshold-triggered releases specifically, which
+would model light damper contact better than the generic 60 ms `noteOff` ramp. `noteOff` takes no
+release-duration parameter, so it is real scope; not folded in.
+
+**Where**: `apps/hkl/src/audio/engine.ts`, `apps/hkl/src/state/audio.ts`,
+`apps/hkl/src/ui/pedalHud.ts` (stale-tint gate moved onto the shared threshold so a resting partial
+press is not flagged as divergence), `apps/hkl/src/midi/handler.ts` (comment only).

@@ -6,11 +6,17 @@ import type { KeyId, Voice } from '../types.js';
 // voices. keyVelocity is the most recent strike velocity per key (used by the
 // aftertouch handover logic to anchor pressureGain on initial volume).
 // sustainedKeys is the subset of keys held by either pedal — released when the
-// damper depth falls to zero AND the key isn't sostenuto-locked.
+// damper depth falls below the damper-contact threshold (DAMPER_RELEASE_FLOOR
+// in audio/engine.ts) AND the key isn't sostenuto-locked. Note that threshold
+// is musical, not zero: a partial pedal release that never returns the pedal to
+// true rest still damps and unlights the notes.
 //
 // damperDepth (0..1) is the current damper position — driven by CC4 (continuous)
-// and CC64-in-sustain-mode (binary). sustainPedalDown mirrors damperDepth > 0
-// for the keep-or-release decision at note-off time. sostenutoLockedKeys is the
+// and CC64-in-sustain-mode (binary). sustainPedalDown mirrors
+// damperDepth > DAMPER_RELEASE_FLOOR for the keep-or-release decision at
+// note-off time; it tracks that same threshold rather than > 0 so there is no
+// depth band where a released key is added to sustainedKeys but the release
+// loop would never claim it. sostenutoLockedKeys is the
 // snapshot of selectedKeys at sostenuto-on; locked keys ride through damper
 // changes (their per-voice damperGain stays pinned at 1.0).
 //

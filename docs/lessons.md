@@ -40,6 +40,16 @@ Manifests as intermittent stuck-sustain: notes hang after release until the next
 
 Fix lives in `src/midi/handler.ts`: clamp `d2 <= 1` to `cc4Depth = 0`. We chose the input-boundary clamp over raising `DAMPER_RELEASE_FLOOR` because (a) the quirk is specifically about the bottom-of-travel reading, not a general "small depths are noise" issue; and (b) it makes the displayed `pedal.cc4Depth` correctly read 0 at rest rather than 0.0078.
 
+**Amended 2026-09-15**: `DAMPER_RELEASE_FLOOR` was subsequently raised 0.005 → 0.05 — but for the reason (a) explicitly carved out above, not by reversing this decision. That was a general "partial pedal release leaves notes inaudible but lit" requirement (video capture), which is a musical threshold rather than an ADC-noise question. Reason (b) still holds and still binds: the threshold lives in the engine, NOT as a second input clamp, so `pedal.cc4Depth` keeps reporting the pedal's true position for the HUD. The `d2 <= 1` clamp is now redundant for stuck-sustain (0.0078 is far under 0.05) but is kept because it remains correct at the input boundary. **If you raise the floor again, `audio.sustainPedalDown` must move with it** — see the next entry.
+
+### The damper release floor and `sustainPedalDown` are one threshold, not two
+
+`audio.sustainPedalDown` is what the three note-off sites (`midi/handler`, `input/keyboard-notes`, `midi/piano`) consult to decide whether a released key is deferred into `sustainedKeys`. `setDamperDepth` sets both it and the release-loop condition. While `sustainPedalDown` was `depth > 0` and the release loop was `depth > 0.005`, the mismatched band was unreachable — the `d2 <= 1` input clamp meant the next representable depth was `2/127 ≈ 0.0157`.
+
+Raising the floor makes that band real and turns it into a stuck-note generator: with the pedal resting anywhere in `(0, floor]`, every note-off defers the key into `sustainedKeys`, and **nothing calls `setDamperDepth` again while the pedal sits still** — there is no polling, only CC-driven evaluation — so the note hangs lit and inaudible indefinitely. Exactly the failure mode the floor was raised to eliminate, reintroduced by the half of the change that is easy to miss.
+
+The general shape: when one threshold decides *enter this deferred set* and another decides *drain it*, any gap between them is a leak, and it is invisible until an unrelated change widens it.
+
 ### Web MIDI in Firefox requires a secure context
 
 `file://` URLs do NOT work in Firefox. localhost or HTTPS only. Chromium permits `file://` for testing. Max develops with both browsers; the deployment target needs to assume Firefox + secure context.
