@@ -294,9 +294,6 @@ class Renderer {
    *  not by clearing. */
   private partitionCache = new Map<string, {
     docVer: number; lines: string[]; pages: string[];
-    /** Every section was checked by the balancer (job complete): a cache hit
-     *  needs neither the sync band balance nor a new job. */
-    balanced: boolean;
     /** The owner's width caches at the time (natural + leading-signature
      *  widths, zoom- and page-scale-independent). Restored with the lines so a
      *  zoom round-trip leaves the owner knowing exactly what it knew — without
@@ -2145,10 +2142,6 @@ class Renderer {
     this.partitionCache.set(this.partitionKey(model), {
       docVer: model.docVersion(), lines, pages: this.pageBreaks.pageStarts(),
       widths: this.pageBreaks.exportWidths(),
-      /* Balanced once the idle job has checked every section: an edit's own
-         repartition balances the sections it touches, so the flag survives
-         edits; a fresh derive re-arms the job and clears it. */
-      balanced: !this.pageBreaks.balanceJobActive(),
     });
     /* Bounded: one entry per (zoom, pageScale, heji) combination actually
        visited. Trim anyway so a scripted sweep can't grow it without limit. */
@@ -2180,13 +2173,11 @@ class Renderer {
         this.renderPage(pinnedFromCache, true, 'encoded');
         this.pageBreaks.verifyRenderedPartition(
           this.container!, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
-        if (this.overflowingPage() === 0) {
-          /* Balancing now completes before the paint, so a cached partition is
-             already balanced. This remains only for the case where a section's
-             naturals window failed pre-paint and it was left unbalanced. */
-          if (!cached.balanced) this.pageBreaks.armBalanceJob(model, this.pageBreaksCtx());
-          return;
-        }
+        /* Nothing to re-balance on a cache hit: `balanceInitialBand` balances
+           the WHOLE document before the paint, and the partition is a pure
+           function of content, so a cached partition for this docVersion is
+           already the balancer's answer. */
+        if (this.overflowingPage() === 0) return;
         console.warn('[page-breaks] cached partition overflows its page — re-deriving');
       }
       this.partitionCache.delete(this.partitionKey(model));
@@ -2214,11 +2205,11 @@ class Renderer {
     /* Bootstrap pass: load only — never rendered to SVG, never painted. */
     this.tk!.setOptions(this.buildOptions(plan.strategy));
     if (this.tk!.loadData(plan.data) && this.pageBreaks.adoptFromCastoff(model, this.tk!)) {
-      /* Section balancing (2026-09-05): the castoff leaves every section's
-         remainder as its final line — a lone bar before a movement break, a
-         one-bar stub at the end. Sections on the reader's first pages are
-         balanced HERE, before the paint, so page 1 never re-flows under them;
-         the rest are balanced by the idle job armed after the paint. */
+      /* Section balancing: the WHOLE document, synchronously, before the
+         paint. The partition the balancer computes is a pure function of the
+         content (render/balance.ts), so what castoff chose here is discarded
+         and never observable — there is no second authority and no settling
+         window after the paint. */
       this.balanceInitialBand(model);
       const pinned = this.pageBreaks.pinRenderMei(data);
       if (pinned !== null) {
@@ -2963,10 +2954,8 @@ class Renderer {
       layoutToolkit: () => (this.pageVirt?.tkCurrent ? this.tk : null),
       naturalsToolkit: () => this.spliceTk!,
       naturalsOptions: () => this.buildOptions('none', 'scroll'),
-      budgetW: () => this.measureBudgetW(),
+      budgetW: () => this.pageBudgetW(),
       isPageMounted: (p: number) => this.isPageMounted(p),
-      commitPartition: (o, n, op, np) => this.applyPartitionChange(o, n, op, np),
-      balanceComplete: () => this.markPartitionBalanced(),
     };
   }
 
@@ -2981,12 +2970,14 @@ class Renderer {
    *  the layout the live toolkit holds — nothing is mounted for the DOM read
    *  yet, and a previous render's DOM may sit at another page scale. */
   private balanceInitialBand(model: ComposerModel): void {
-    const budget = this.tk ? this.budgetFromToolkit(this.tk) : null;
-    if (budget == null) return;
+    /* Page geometry, not a laid-out page (see pageBudgetW). This is what lets
+       the pre-paint balance run without a castoff layout to measure. */
+    const budget = this.pageBudgetW();
+    if (!(budget > 0)) return;
     /* THE WHOLE DOCUMENT, not a band (2026-09-08, Max's ruling). Balancing
        used to cover the first INITIAL_BAND_PAGES here and leave the rest to an
        idle job armed after the paint — and that job is a multi-step sequence
-       that ANY re-render cancels (`balanceJob.cancelled = true`). Measured on
+       that ANY re-render cancelled. Measured on
        the sonata: the sequence walks 115 -> 115 -> 114 -> 113 lines over ~4.5 s,
        and a zoom landing mid-sequence abandons it there, leaving the partition
        at an intermediate state that nothing ever resumes (`budgetW` is zeroed
@@ -2999,7 +2990,7 @@ class Renderer {
        there is no interruptible window to observe.
 
        `pages: Infinity` makes `lastLine` the whole partition. This path writes
-       `startIds`/`pageStartIds` directly rather than through `commitPartition`
+       `startIds`/`pageStartIds` directly rather than through a splice
        precisely because it runs pre-paint, so covering the whole document adds
        no splice or re-entrancy risk — only work. Edits keep their own reaction
        (`balanceTouched` with BALANCE_LAMBDA, from the refill path), which is
@@ -3013,46 +3004,9 @@ class Renderer {
     this.pageBreaks.balanceInitialBand(model, this.pageBreaksCtx(), budget, Number.POSITIVE_INFINITY);
   }
 
-  /** Max justified system width of page 1 of the layout `tk` holds, measured
-   *  like measureBudgetW (g.system bbox) on a detached, laid-out host. */
-  private budgetFromToolkit(tk: VerovioToolkit): number | null {
-    let svg: string;
-    try { svg = tk.renderToSVG(1, {}); } catch { return null; }
-    if (!svg) return null;
-    const host = document.createElement('div');
-    host.style.cssText = 'position:absolute;left:-99999px;top:0';
-    host.innerHTML = svg;
-    document.body.appendChild(host);
-    try {
-      let max = 0;
-      for (const sys of Array.from(host.querySelectorAll('g.system'))) {
-        const w = (sys as SVGGraphicsElement).getBBox().width;
-        if (w > max) max = w;
-      }
-      return max > 0 ? max : null;
-    } finally {
-      host.remove();
-    }
-  }
-
-  /** The balance job checked every section: flag the cached partition so a
-   *  zoom round-trip on this document needs no re-check. */
-  private markPartitionBalanced(): void {
-    const model = this.lastModel;
-    if (!model) return;
-    const e = this.partitionCache.get(this.partitionKey(model));
-    if (e && e.docVer === model.docVersion()) e.balanced = true;
-    /* The job's commits mark every UNMOUNTED page from the first moved line on
-       stale (applyPartitionChange → markPagesStaleFrom), and the paint-time
-       extents pass is long over by the time the idle job finishes — so without
-       this the user's next scroll into those pages paid the whole-document
-       reload. Re-arm the job: its first idle slice is exactly that warm, and
-       the re-partitioned lines get their extents measured while it is there. */
-    this.rearmWarmIfStaleUnmounted(model);
-  }
-
-  /** Land a PARTITION-ONLY change from the section balancer's idle job (the
-   *  document is unchanged): the hunk of lines whose starts differ is spliced
+  /** Land a PARTITION-ONLY change (the document is unchanged) — today only
+   *  line-break undo/redo, through `restoreLayout`; the balancer's idle job,
+   *  the other caller, is gone (the whole document balances before the paint): the hunk of lines whose starts differ is spliced
    *  where mounted and deferred (stale) elsewhere, exactly like an edit's
    *  refill, then the page-fit cascade runs. False when the splicer refused —
    *  nothing was touched and the owner reverts. A landed surgery whose spill no
@@ -3212,14 +3166,35 @@ class Renderer {
   }
 
   /** Max justified system width (SVG user units) from the mounted page DOM. */
-  private measureBudgetW(): number | null {
-    if (!this.container) return null;
-    let max = 0;
-    for (const sys of Array.from(this.container.querySelectorAll('.score-page g.system'))) {
-      const w = (sys as SVGGraphicsElement).getBBox().width;
-      if (w > max) max = w;
-    }
-    return max > 0 ? max : null;
+  /** The justified system width a page-view line is measured against, in SVG
+   *  user units — computed from PAGE GEOMETRY, never from a laid-out page.
+   *
+   *  Verovio justifies a system to the page's margin box, and its SVG user
+   *  units are ten times the 1/100 mm option units (a margin of 140 emits
+   *  `translate(1400, …)` on `g.page-margin`). Verified across six geometries
+   *  on an isolated toolkit (2026-09-18): the rendered system width is exactly
+   *  `(pageWidth − marginLeft − marginRight) × 10` plus a CONSTANT ~222 that
+   *  does not scale with either term.
+   *
+   *  That constant is why this no longer reads the DOM. It is `getBBox()` ink
+   *  overhang — stroke extents on the system's own bbox — and the per-measure
+   *  naturals this budget divides do NOT carry it (their bboxes sum to the
+   *  content width, 220 short of the system bbox). Measuring the system
+   *  therefore inflated the budget by ~1.2 %, which made every fill ~1.2 % too
+   *  SMALL and pushed marginal lines under MIN_FILL: an 8-measure locked
+   *  section computed [4,4] as 0.6707 / 0.6451 against a 0.65 floor — short by
+   *  0.0049 — so every two-line split was illegal and the section collapsed
+   *  onto one compressed line of 8 (fixture lock_down_sparse_remainder_kept).
+   *  On the geometry the same split is 0.6787 / 0.6528 and legal.
+   *
+   *  Computing it also removes the bootstrap: the partition no longer needs a
+   *  laid-out page to exist before it can be chosen, so castoff never has to
+   *  run to seed one. Always the PAGE block — the owner is page-view only;
+   *  scroll's 100 000-unit page is a naturals-measurement geometry, not a
+   *  justification target. */
+  private pageBudgetW(): number {
+    const g = this.scalePageGeom(PAGE_GEOM);
+    return (g.pageWidth - g.pageMarginLeft - g.pageMarginRight) * 10;
   }
 
 

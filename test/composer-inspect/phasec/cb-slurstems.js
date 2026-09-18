@@ -14,7 +14,7 @@ const H = window.__hkl_composer; const r = H.renderer; const pb = r['pageBreaks'
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 const waitFor = async (fn, ms = 90000, step = 40) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { if (fn()) return true; await sleep(step); } return false; };
 const badgeHidden = () => { const b = document.getElementById('renderBusy'); return !b || b.hidden; };
-await waitFor(() => pb['startIds'] !== null); await waitFor(badgeHidden); await waitFor(() => !pb.balanceJobActive(), 120000, 100);
+await waitFor(() => pb['startIds'] !== null); await waitFor(badgeHidden);
 r.setMountWindowEnabled(false); r.mountAllPages(); await sleep(600);
 const listAll = /all=1/.test(String(window.__probeArg || ''));
 const mei = r['pageVirt'].mei; const doc = new DOMParser().parseFromString(mei, 'application/xml');

@@ -24,7 +24,8 @@ const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 const waitFor = async (fn, ms = 120000, step = 40) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { if (fn()) return true; await sleep(step); } return false; };
 const badgeHidden = () => { const b = document.getElementById('renderBusy'); return !b || b.hidden; };
 const arg0 = String(window.__probeArg || '');
-/* SETTLE PROPERLY. `balanceJobActive()` is false BEFORE the job is armed, so
+/* SETTLE PROPERLY. The idle balance job is gone (the whole document balances
+   before the paint). Historically `balanceJobActive()` was false BEFORE the job was armed, so
    waiting for !active returns instantly and hands back a PRE-SETTLE layout —
    on the sonata the partition is still 31 pages / 115 lines at t=0 and only
    reaches its final 30 / 113 at ~5.7 s. Reading early produced a stale extra
@@ -33,7 +34,7 @@ const arg0 = String(window.__probeArg || '');
 const partitionSig = () => (pb['pageStartIds'] || []).join(',') + '|' + pb.lineStarts().length;
 const idle = () => {
   const b = document.getElementById('renderBusy');
-  return (!b || b.hidden) && !pb.balanceJobActive() && r.extentsJobState() === null;
+  return (!b || b.hidden) && r.extentsJobState() === null;
 };
 const settleFully = async (stableMs = 4000, budget = 150000) => {
   const t0 = performance.now();

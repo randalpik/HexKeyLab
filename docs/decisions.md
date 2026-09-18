@@ -8553,3 +8553,73 @@ every platform (macOS composes Alt+V into '√'), and the binding means the phys
 
 Fixtures: `sel_altV_movesToOtherVoice`, `sel_altV_roundTripsBack`, `sel_altV_undoRestores`,
 `sel_altV_refusesOccupiedVoice`, `sel_altV_refusesPartialSelection`, `sel_altV_refusesMeasureMode`.
+
+
+## 2026-09-17/18 — The balancer is the single partition authority (page view)
+
+**Non-alignment is the defect.** Composing at the end drifted a section to `4,5,5,5,5,9` — its first
+line frozen at fill 0.70, its last at 1.42 — because the balancer only ran when a section's FINAL line
+fell below MIN_FILL. A growing last line is legal all the way from 0.65 to 1.45, so nothing rebalanced
+until it overflowed. Max's ruling on the fix went further than the symptom: *"If we can't align castoff,
+derive, AND the rebalancer to reproduce the same measure counts per line for the same document — in all
+cases, by construction — this is a failure. Non-alignment between those things is exactly what leads to
+unexpected rebalancing which prevents serious layout work."*
+
+**Castoff cannot be aligned, so it stops deciding.** Measured: no cap makes a greedy pack over our
+naturals reproduce castoff's line CONTENTS (1 of 24 movement×cap cells matched, coincidentally) — our
+naturals are not Verovio's internal widths. Alignment is therefore only achievable by having one
+producer. The derive path now discards castoff's partition and computes its own; castoff still engraves
+measures, justifies within a pinned line, paginates by height, and supplies the naturals.
+
+**`BALANCE_LAMBDA = 0`.** λ was the change penalty that kept an edit's reflow local. Any history
+dependence is by definition misalignment, so it had to go. The trade it was paying for is real and was
+measured over the sonata and a 30-bar append trace:
+
+| λ | derive ≡ edit | boundaries moved per +1 bar (med/p90/max) | worst fill spread |
+|---|---|---|---|
+| 0 | 23/23 | 30 / 38 / 70 | 0.15 |
+| 0.005 | 17/23 | 2 / 16 / 20 | 0.16 |
+| 0.02 | 15/23 | 0 / 6 / 12 | 0.32 |
+
+λ > 0 is what froze that first line: the even partition was 15× better on variance but cost 5 × 0.02 in
+penalty, so the ragged one won. λ stays in the code as the only tuning surface, 0 in every caller.
+
+**Line count from content, arrangement from the DP.** `greedyLines` at `BALANCE_SOFT_MAX` 1.00 ("never
+compress a line past its natural width; if it would, use another line"), then minimum-variance
+`dpPartition` at N, N+1 or N−1. The merge rule, the N−1 fallback and `MERGE_MAX` are gone — choosing N
+from content subsumes them. At cap 1.00 the count matches castoff's own on all four sonata movements
+(36/21/22/37), so adopting the partition moves no page boundary; the contents differ, necessarily.
+
+**No stubs, and no depth cap** (Max, 2026-09-18): *"The last line must always be justified, not
+alternating between justified and stub depending on its context."* A depth-capped tail repair was
+rejected for that reason. The accepted cost is that an append can re-flow its whole section (24 bars
+`[6,6,6,6]` → 25 bars `[5,5,5,5,5]`). **Rule 2** survives only as the short-section edge case: no
+feasible line count at all → `balanceSection` returns null, the caller keeps what it had, the stub
+renders unjustified. Fixture `pageBalanceRule2StubKept`.
+
+**A user page break makes a section boundary, and both sides rebalance** (approved 2026-09-18). A break
+early in a document can therefore collapse the measures before it onto a single system — five measures
+on one line rather than two sparse ones. `pageUserBreakReflows` lost its `+1 line` and
+`no single-system pages` assertions, which were arithmetic specific to the old behaviour; it keeps the
+round-trip, which a pure-function partition now makes exact.
+
+**The idle balance job is removed.** Balancing the whole document before the paint (2026-09-08) had
+already made it unreachable — `armBalanceJob`'s only call site was guarded by a flag that could never be
+false. It was a latent second authority holding λ, so it is deleted rather than left dormant, along with
+`BalanceJob`, `BALANCE_SLICE`, `balanceJobActive`, `finishBalanceJobNow`, the `balanced` cache flag and
+the `commitPartition` hook. `Renderer.applyPartitionChange` stays — line-break undo still uses it.
+
+**Three width-model defects, each found by disbelieving a number** (2026-09-18):
+- **The budget was measured, and inflated.** `measureBudgetW` read the system's *bbox*, which carries a
+  constant ~222 units of ink overhang that the per-measure naturals do not. Every fill was ~1.2 % too
+  small. It disqualified a legal `[4,4]` by 0.0049 and collapsed an 8-measure locked section onto one
+  compressed line of 8. Now computed: `(pageWidth − marginLeft − marginRight) × 10`
+  (`Renderer.pageBudgetW`), verified across six geometries. This also removes the bootstrap — the
+  partition no longer needs a laid-out page to exist, which is what lets castoff stop running first.
+- **The leading block was double-counted.** Measure 0's natural already contains the clef+key+meter
+  (its bbox starts at 0 with the clef at x≈99 inside it, 3963 against 2930 for a plain measure), and
+  `sigW` was added on top — pushing a six-measure first line to 1.008 against a 1.00 ceiling, so the
+  first line held one measure fewer than every other and fewer than castoff places.
+- **The instrument-name indent was free.** The first system's staff starts at 1342–2009 while every
+  later system's starts at 0 — up to 10.7 % of the budget, charged to nothing. `sigWForLine(0)` now
+  returns it, carried through `OwnerWidths` so a partition-cache restore cannot blank it.

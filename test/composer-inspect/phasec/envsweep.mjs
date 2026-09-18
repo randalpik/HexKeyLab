@@ -51,7 +51,7 @@ const PARTITION = `(async () => {
   const H = window.__hkl_composer, r = H.renderer, pb = r['pageBreaks'];
   const sleep = (ms) => new Promise((s) => setTimeout(s, ms));
   const sig = () => (pb['pageStartIds'] || []).join(',') + '|' + pb.lineStarts().length;
-  const idle = () => { const b = document.getElementById('renderBusy'); return (!b || b.hidden) && !pb.balanceJobActive() && r.extentsJobState() === null; };
+  const idle = () => { const b = document.getElementById('renderBusy'); return (!b || b.hidden) && r.extentsJobState() === null; };
   let last = null, since = 0; const t0 = performance.now();
   while (performance.now() - t0 < 150000) { const s = sig(); if (s !== last) { last = s; since = performance.now(); } else if (idle() && performance.now() - since > 4000) break; await sleep(200); }
   const doc = H.model.getDoc(); const all = [...doc.querySelectorAll('measure')];

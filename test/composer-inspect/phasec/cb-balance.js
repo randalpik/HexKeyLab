@@ -1,11 +1,11 @@
-// Section balancer probe (2026-09-05). After the sonata loads: the SYNC band
-// balance the derive ran before the first paint (lastInitialBalance), then wait
-// for the idle balance job to finish and report per-section line counts and
-// fills (naturals are measured for any section the job left unmeasured, so the
+// Section balancer probe (2026-09-05; idle job removed 2026-09-18). After the
+// sonata loads: the SYNC balance the derive ran before the first paint
+// (lastInitialBalance) — which now covers the WHOLE document, so there is no
+// job to wait for and nothing may move after the paint — then per-section line
+// counts and fills (naturals are measured for anything still uncached, so the
 // table is complete), the final line of every section, whether page 1's measure
-// set changed after the paint (it must not — the band was balanced before the
-// paint), job slices and their wall time, and every [page-balance]/[page-breaks]
-// console notice. Run with the sonata (default). --arg "nojob=1" skips the wait.
+// set changed after the paint (it must not), and every
+// [page-balance]/[page-breaks] console notice. Run with the sonata (default).
 const H = window.__hkl_composer; const r = H.renderer, model = H.model;
 const pb = r['pageBreaks'];
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
@@ -18,12 +18,7 @@ const p1 = () => [...document.querySelectorAll('.score-page[data-page="1"] g.mea
 const p1AfterPaint = p1();
 const initial = pb.lastInitialBalance ? JSON.parse(JSON.stringify(pb.lastInitialBalance)) : null;
 const linesAfterPaint = pb['startIds'].length, pagesAfterPaint = pb['pageStartIds'].length;
-/* Wait for the job, counting slices by lastBalance identity. */
-const tJob = performance.now(); let slices = 0, seen = pb.lastBalance; const sliceMs = [];
-if (!/nojob=1/.test(String(window.__probeArg || ''))) {
-  while (pb.balanceJobActive() && performance.now() - tJob < 120000) { await sleep(25); if (pb.lastBalance !== seen) { seen = pb.lastBalance; slices++; sliceMs.push(seen.ms); } }
-}
-const jobMs = Math.round(performance.now() - tJob);
+/* Nothing runs after the paint any more; re-read page 1 to PROVE it. */
 await waitFor(badgeHidden, 30000, 40);
 const p1AfterJob = p1();
 /* Section table from cached naturals; measure whatever is still missing. */
@@ -43,7 +38,6 @@ for (const s of sections) { const f = s.fills; const mu = f.reduce((a, b) => a +
 return {
   budget: Math.round(budget), sigFill: +(sigW / budget).toFixed(3),
   afterPaint: { lines: linesAfterPaint, pages: pagesAfterPaint, initialBalance: initial },
-  job: { slices, jobMs, sliceMs, lastBalance: pb.lastBalance, stillActive: pb.balanceJobActive(), done: pb['balanceJob'] ? [...pb['balanceJob'].done] : null, steps: pb['balanceJob'] ? pb['balanceJob'].steps : null },
-  afterJob: { lines: pb['startIds'].length, pages: pb['pageStartIds'].length, page1Changed: p1AfterPaint !== p1AfterJob },
+  settled: { lines: pb['startIds'].length, pages: pb['pageStartIds'].length, page1Changed: p1AfterPaint !== p1AfterJob, lastBalance: pb.lastBalance },
   sections, measuredForProbe, notices,
 };

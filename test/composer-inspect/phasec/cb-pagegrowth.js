@@ -23,7 +23,6 @@ const msgs = [];
 for (const lvl of ['warn', 'error']) { const o = console[lvl].bind(console); console[lvl] = (...a) => { msgs.push(lvl + ': ' + a.join(' ')); o(...a); }; }
 const settle = async () => {
   await waitFor(() => { const b = document.getElementById('renderBusy'); return !b || b.hidden; });
-  await waitFor(() => !pb.balanceJobActive(), 120000, 100);
 };
 await waitFor(() => pb['startIds'] !== null); await settle();
 

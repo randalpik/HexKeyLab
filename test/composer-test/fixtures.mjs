@@ -1557,17 +1557,41 @@ const PAGE_LINEBREAKS = {
     skipCursorTrace: true,
   },
 
-  /* Max's rule 2: a document-final section too small to balance keeps its stub.
-   * 13-bar section I (balanced) + 8-bar section II (castoff 6+2; no partition
-   * into two lines ≥ MIN_FILL exists, and 6+2 merged would exceed MERGE_MAX):
-   * the balancer reports 'no legal balance: stub kept', the stub renders at its
-   * natural width (unjustified), every other system justified. Asserted via
+  /* 13-bar section I + 8-bar section II. This USED to be the rule-2 example —
+   * under the old width model section II had no legal partition, so its stub
+   * stayed. The corrected model (geometric budget + first-line leading block,
+   * 2026-09-18) makes [4,4] legal there, so it balances like any other section
+   * and NO stub survives. Rule 2 itself is unchanged and has its own fixture
+   * below (pageBalanceRule2StubKept). Asserted via
    * FIXTURE_ASSERTIONS.pageBalanceDocFinalSmallDocKeepsStub. */
   pageBalanceDocFinalSmallDocKeepsStub: {
     setup: `
       m.setCursor(0, 1);
       const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
       for (let i = 0; i < 4 * 21; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      m.setSectionHeaderAt(13, 'II');
+      r();
+    `,
+    skipCursorTrace: true,
+  },
+
+  /* Max's rule 2 (the SHORT-SECTION edge case Max carved out on 2026-09-18,
+   * when he ruled the last line must otherwise always be justified): a section
+   * whose measures cannot fill even ONE legal line has no partition at any
+   * candidate line count, so `balanceSection` returns null and the caller keeps
+   * what it had — the stub stays, unjustified by `minLastJustification`.
+   * 13 bars of section I + a 2-bar section II, whose whole content is ~0.34 of
+   * a line against MIN_FILL 0.65. This is the only remaining reachable path to
+   * rule 2 and previously had no coverage at all. Asserted via
+   * FIXTURE_ASSERTIONS.pageBalanceRule2StubKept. */
+  pageBalanceRule2StubKept: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 4 * 15; i++) {
         const high = (Math.floor(i / 4) % 2) === 0;
         m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
       }
@@ -11704,7 +11728,7 @@ export const FIXTURE_ASSERTIONS = {
       })()` },
   ],
   lock_down_sparse_remainder_kept: [
-    { name: 'lock before m9; no legal balance for the 8-bar section → the sparse two-bar remainder is kept: [0,6,8], reason recorded, no derive',
+    { name: 'lock before m9: the 8-bar section balances to [4,4] ([0,4,8]) — no sparse remainder survives, no derive',
       expr: `(() => { const H = window.__hkl_composer, m = H.model, r = H.renderer, pb = r['pageBreaks'];
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         const L = () => pb.lineStarts().map((id) => ids.indexOf(id));
@@ -11727,12 +11751,19 @@ export const FIXTURE_ASSERTIONS = {
         };
         const J = JSON.stringify;
         const l = L();
-        const ok = pb.lastDeriveReason === '' && J(l) === '[0,6,8]' && m.hardBreakBefore(8) === 'lock' && pb.lastBalance.reasons.some((x) => x.startsWith('no legal balance')) && J(locks()) === '[8]' && pinsInOrder();
+        /* Was [0,6,8]: the two-bar remainder used to survive because [4,4]
+           missed MIN_FILL by 0.0049 — an artefact of the old budget, which
+           read the system BBOX and so carried ~222 units of ink overhang the
+           per-measure naturals do not have, making every fill ~1.2 % too
+           small. On the geometric budget [4,4] is 0.6787 / 0.6528 and legal,
+           so the section balances and no stub is left (Max, 2026-09-18: the
+           last line is always justified). */
+        const ok = pb.lastDeriveReason === '' && J(l) === '[0,4,8]' && m.hardBreakBefore(8) === 'lock' && J(locks()) === '[8]' && pinsInOrder();
         return { ok, detail: J({ pre, lines: l, derive: pb.lastDeriveReason, balance: pb.lastBalance, hb8: m.hardBreakBefore(8), locks: locks(), status: status() }) };
       })()` },
   ],
   lock_down_rebalances_section: [
-    { name: 'lock before m15; the 14-bar section rebalances [6,6,2] → [4,5,5]: [0,4,9,14], balance applied, no derive',
+    { name: 'lock before m15: [0,4,9,14], every section a balancer fixed point, no derive',
       expr: `(() => { const H = window.__hkl_composer, m = H.model, r = H.renderer, pb = r['pageBreaks'];
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         const L = () => pb.lineStarts().map((id) => ids.indexOf(id));
@@ -11753,10 +11784,38 @@ export const FIXTURE_ASSERTIONS = {
           }
           return true;
         };
+        /* Single-authority check (2026-09-18): re-run the balancer over every
+           section on a COPY of the live partition, forced. A partition that is
+           already the balancer's answer moves nothing — so what an edit left on
+           screen is what a fresh derive of this document would compute. */
+        const isFixedPoint = () => {
+          const starts = pb.lineStarts().map((id) => ids.indexOf(id));
+          const lineOf = new Map(pb.lineStarts().map((id, k) => [id, k]));
+          const pageLines = pb.pageStarts().map((id) => lineOf.get(id));
+          const units = m.renderUnits(pb['viewStaves']);
+          const hard = new Set([...Array(ids.length).keys()].filter((i) => m.hardBreakBefore(i) === 'lock').map((i) => ids[i]));
+          const secs = []; let lo = 0;
+          for (let k = 1; k < starts.length; k++) if (hard.has(ids[starts[k]])) { secs.push([lo, k - 1]); lo = k; }
+          secs.push([lo, starts.length - 1]);
+          const moved = [];
+          for (let si = secs.length - 1; si >= 0; si--) {
+            const [kLo, kHi] = secs[si];
+            const cp = starts.slice(), pl = pageLines.slice();
+            const res = pb['balanceSectionLines'](cp, pl, kLo, kHi, ids, 0, units, true);
+            if (res.changed !== 0) moved.push({ sec: [kLo, kHi], changed: res.changed, reason: res.reason });
+          }
+          return moved;
+        };
         const J = JSON.stringify;
         const l = L();
-        const ok = pb.lastDeriveReason === '' && J(l) === '[0,4,9,14]' && m.hardBreakBefore(14) === 'lock' && pb.lastBalance.applied >= 1 && pb.lastBalance.reasons.length === 0 && J(locks()) === '[14]' && pinsInOrder();
-        return { ok, detail: J({ pre, lines: l, derive: pb.lastDeriveReason, balance: pb.lastBalance, hb14: m.hardBreakBefore(14), locks: locks(), status: status() }) };
+        /* The balancer no longer has anything to APPLY here: the 14-bar section
+           is already [4,5,5] before the lock, because a measure-count change
+           balances its section eagerly (2026-09-18). What the lock must do is
+           split without disturbing that — so the assertion is the partition
+           itself plus the fixed-point property, not applied >= 1. */
+        const moved = isFixedPoint();
+        const ok = pb.lastDeriveReason === '' && J(l) === '[0,4,9,14]' && m.hardBreakBefore(14) === 'lock' && moved.length === 0 && J(locks()) === '[14]' && pinsInOrder();
+        return { ok, detail: J({ pre, lines: l, derive: pb.lastDeriveReason, balance: pb.lastBalance, notFixedPoint: moved, hb14: m.hardBreakBefore(14), locks: locks(), status: status() }) };
       })()` },
   ],
   lock_down_first_measure_refused: [
@@ -12067,7 +12126,7 @@ export const FIXTURE_ASSERTIONS = {
           for (let i = 0; i < 600; i++) {
             const b = document.getElementById('renderBusy');
             if (pb.lineStarts().length > 0 && (!b || b.hidden)
-                && !pb.balanceJobActive() && r.extentsJobState() === null) return true;
+ && r.extentsJobState() === null) return true;
             await sleep(25);
           }
           return false;
@@ -12110,15 +12169,18 @@ export const FIXTURE_ASSERTIONS = {
         if (!startsLine) fails.push('break measure does not start a line (line was not split)');
         if (!startsPage) fails.push('break measure does not start a page');
         if (withBreak.owned !== withBreak.domPages) fails.push('page list ' + withBreak.owned + ' != DOM ' + withBreak.domPages);
-        if (withBreak.singles > 0) fails.push(withBreak.singles + ' single-system page(s): ' + withBreak.perStr);
+        /* A single-system page is now a legitimate outcome: a user page break
+           makes the measures before it their OWN section, and a section is
+           balanced independently — five measures become one line rather than
+           two sparse ones. Dropped with the +1-line count below (2026-09-18). */
         if (!verified) fails.push('verifyRenderedPartition false');
-        /* Splitting a mid-system line adds exactly one line and one page here.
-           Not a general round-trip contract — a section break need not behave
-           this way — but for a PAGE break on THIS document it is exact, and
-           each page from the break on re-balances (Max, 2026-09-09). */
-        if (withBreak.lines !== base.lines + 1) {
-          fails.push('expected +1 line with the break, got ' + base.lines + ' -> ' + withBreak.lines);
-        }
+        /* The +1-LINE arithmetic is gone. It held while a break only split a
+           line; now the break also makes a section boundary, and both sides
+           rebalance, so the split can be offset by a merge elsewhere (this
+           document: 15 -> 15). What must still hold is that the break starts a
+           line and a page, that pagination stays consistent, and — the real
+           gate — that REMOVING it restores the previous layout exactly, which
+           the partition being a pure function of content guarantees. */
         if (withBreak.domPages !== base.domPages + 1) {
           fails.push('expected +1 page with the break, got ' + base.domPages + ' -> ' + withBreak.domPages);
         }
@@ -12191,7 +12253,6 @@ export const FIXTURE_ASSERTIONS = {
         const H = window.__hkl_composer; const m = H.model; const pb = H.renderer['pageBreaks'];
         if (H.inputState().viewInstrIdx !== 1) return { ok: false, detail: 'view not on the viola: ' + H.inputState().viewInstrIdx };
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged in single-part view (' + pb.lastDeriveReason + ')' };
-        pb.finishBalanceJobNow();
         const ns = [...new Set([...document.querySelectorAll('#score .score-page:not(.score-page-pending) g.staff')].map((s) => s.getAttribute('data-n')))];
         if (ns.length !== 1 || ns[0] !== '3') return { ok: false, detail: 'staves drawn: ' + ns.join(',') };
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
@@ -12217,7 +12278,6 @@ export const FIXTURE_ASSERTIONS = {
         const H = window.__hkl_composer; const m = H.model; const pb = H.renderer['pageBreaks']; const led = H.renderer['ledger'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
-        pb.finishBalanceJobNow();
         const before = led.length;
         /* A real edit: a quarter past the end of the viola part (a new bar). An
            insert INTO a full bar is refused by the model and renders nothing. */
@@ -12242,7 +12302,6 @@ export const FIXTURE_ASSERTIONS = {
         const H = window.__hkl_composer; const m = H.model; const pb = H.renderer['pageBreaks'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
-        pb.finishBalanceJobNow();
         const ib = pb.lastInitialBalance;
         if (!ib || ib.applied < 1) return { ok: false, detail: 'the sync band balance did not fire: ' + JSON.stringify(ib) };
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
@@ -12263,20 +12322,56 @@ export const FIXTURE_ASSERTIONS = {
       })()` },
   ],
   pageBalanceDocFinalSmallDocKeepsStub: [
-    { name: 'a document-final section too small to balance keeps its stub, unjustified (rule 2); every other system is justified',
+    { name: 'a document-final section with a legal partition is balanced, not stubbed: every system justified, final line at or above MIN_FILL',
       expr: `(() => {
         const H = window.__hkl_composer; const pb = H.renderer['pageBreaks'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
-        pb.finishBalanceJobNow();
+        /* This document USED to trip rule 2 — its final section had no legal
+           partition, so the stub stayed unjustified. Under the corrected width
+           model (geometric budget + first-line leading block) a legal partition
+           exists, so the section balances instead. Rule 2 itself is unchanged
+           and still fires when no candidate line count is feasible; it simply
+           has no example here any more.
+           NOTE: that leaves rule 2 without fixture coverage — see the summary. */
+        const m2 = H.model;
+        const ids = m2.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const idIdx = new Map(ids.map((id, i) => [id, i]));
+        const starts = pb.lineStarts().map((id) => idIdx.get(id));
+        const lastFill = pb['lineFill'](starts, starts.length - 1, ids);
+        if (lastFill === null) return { ok: false, detail: 'final line fill unmeasurable' };
+        if (lastFill < 0.65) return { ok: false, detail: 'document-final line is a stub: ' + lastFill.toFixed(3) };
+        const ws = [...document.querySelectorAll('#score .score-page:not(.score-page-pending) g.system')].map((g) => g.getBBox().width);
+        if (ws.length < 3) return { ok: false, detail: 'only ' + ws.length + ' systems' };
+        const max = Math.max(...ws);
+        if (ws.some((w) => w < 0.98 * max)) return { ok: false, detail: 'a system is unjustified: ' + ws.map((w) => Math.round(w)).join(',') };
+        return { ok: true };
+      })()` },
+  ],
+  pageBalanceRule2StubKept: [
+    { name: 'a section too small to fill one legal line keeps its stub, unjustified (rule 2); every other system is justified',
+      expr: `(() => {
+        const H = window.__hkl_composer; const m = H.model; const pb = H.renderer['pageBreaks'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
         const ib = pb.lastInitialBalance;
-        if (!ib || !ib.reasons.includes('no legal balance: stub kept')) return { ok: false, detail: 'expected the stub rule to fire: ' + JSON.stringify(ib) };
+        if (!ib || !ib.reasons.some((x) => x.startsWith('no legal balance'))) {
+          return { ok: false, detail: 'rule 2 did not fire: ' + JSON.stringify(ib) };
+        }
+        /* The stub really is one below MIN_FILL, and it really is the last line. */
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const idIdx = new Map(ids.map((id, i) => [id, i]));
+        const starts = pb.lineStarts().map((id) => idIdx.get(id));
+        const lastFill = pb['lineFill'](starts, starts.length - 1, ids);
+        if (lastFill === null) return { ok: false, detail: 'final line fill unmeasurable' };
+        if (lastFill >= 0.65) return { ok: false, detail: 'final line is not a stub: ' + lastFill.toFixed(3) };
+        /* ...and Verovio leaves it at natural width while justifying the rest. */
         const ws = [...document.querySelectorAll('#score .score-page:not(.score-page-pending) g.system')].map((g) => g.getBBox().width);
         if (ws.length < 3) return { ok: false, detail: 'only ' + ws.length + ' systems' };
         const max = Math.max(...ws), last = ws[ws.length - 1];
         if (!(last < 0.6 * max)) return { ok: false, detail: 'the stub is justified: ' + ws.map((w) => Math.round(w)).join(',') };
         if (ws.slice(0, -1).some((w) => w < 0.98 * max)) return { ok: false, detail: 'a non-final system is unjustified: ' + ws.map((w) => Math.round(w)).join(',') };
-        return { ok: true };
+        return { ok: true, detail: 'stub fill ' + lastFill.toFixed(3) };
       })()` },
   ],
   pageBalanceComposeAtEnd: [
@@ -12285,7 +12380,12 @@ export const FIXTURE_ASSERTIONS = {
         const H = window.__hkl_composer; const m = H.model; const pb = H.renderer['pageBreaks'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
-        pb.finishBalanceJobNow();
+        /* Scope the splice gate to the APPENDS. Building 21 bars from the
+           blank doc passes through a single-line partition, which derives by
+           design — but a blanket fullRender: on the fixture would also
+           forgive a real full engrave during the appends, which is the thing
+           being tested. Clearing the ledger here keeps the gate live. */
+        H.renderer.renderLedger().length = 0;
         const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
         const linesBefore = pb['startIds'].length;
         let bars = 0;
@@ -12298,12 +12398,26 @@ export const FIXTURE_ASSERTIONS = {
         if (pb['startIds'].length === linesBefore) return { ok: false, detail: 'no new line after ' + bars + ' appended bars' };
         const lb = pb.lastBalance;
         if (lb.applied !== 1) return { ok: false, detail: 'balancer did not fire on the push: ' + JSON.stringify(lb) };
-        if (lb.changed > 4) return { ok: false, detail: 'balance was not local: ' + JSON.stringify(lb) };
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         const idIdx = new Map(ids.map((id, i) => [id, i]));
         const starts = pb['startIds'].map((id) => idIdx.get(id));
         const f = pb['lineFill'](starts, starts.length - 1, ids);
         if (f === null || f < 0.65) return { ok: false, detail: 'final line fill ' + f + ' after balance' };
+        /* NOT a locality bound (2026-09-18). λ is 0, so the balancer answers
+           with the partition this content has — which is the point: it is the
+           same partition a fresh derive computes. Locality was the old λ=0.02
+           contract and is exactly what froze a section's first line at a
+           barely-legal fill. What must hold instead:
+             (1) the section is a FIXED POINT — re-balancing it moves nothing,
+                 so what is on screen is what a reload would engrave; and
+             (2) it is EVEN — no line more than one measure off any other,
+                 which is the defect this fixture exists for (4,5,5,5,5,9). */
+        const cp = starts.slice(), pl = pb.pageStarts().map((id) => pb.lineStarts().indexOf(id));
+        const again = pb['balanceSectionLines'](cp, pl, 0, starts.length - 1, ids,
+          0, m.renderUnits(pb['viewStaves']), true);
+        if (again.changed !== 0) return { ok: false, detail: 'partition is not a balancer fixed point: ' + JSON.stringify(again) };
+        const lens = starts.map((s0, k) => (k + 1 < starts.length ? starts[k + 1] : ids.length) - s0);
+        if (Math.max(...lens) - Math.min(...lens) > 1) return { ok: false, detail: 'section not even: [' + lens.join(',') + ']' };
         const led = H.renderer.renderLedger();
         if (!led.length || led[led.length - 1].full) return { ok: false, detail: 'the push render was a full engrave: ' + JSON.stringify(led[led.length - 1]) };
         return { ok: true };
@@ -12316,7 +12430,6 @@ export const FIXTURE_ASSERTIONS = {
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
         await window.__waitForRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
-        pb.finishBalanceJobNow();
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         const idIdx = new Map(ids.map((id, i) => [id, i]));
         const starts = pb['startIds'].map((id) => idIdx.get(id));
@@ -12341,7 +12454,8 @@ export const FIXTURE_ASSERTIONS = {
         const H = window.__hkl_composer; const m = H.model; const pb = H.renderer['pageBreaks'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
-        pb.finishBalanceJobNow();   /* warms section I's naturals (it was legal at load) */
+        /* Naturals for every section are warmed before the paint
+           (warmAllNaturals); there is no job left to drain. */
         const ids0 = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         const idIdx0 = new Map(ids0.map((id, i) => [id, i]));
         const starts0 = pb['startIds'].map((id) => idIdx0.get(id));

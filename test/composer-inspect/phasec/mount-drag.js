@@ -25,7 +25,7 @@ const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 const raf = () => new Promise((res) => requestAnimationFrame(() => res()));
 const waitFor = async (fn, ms = 60000, step = 50) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { if (fn()) return true; await sleep(step); } return false; };
 await waitFor(() => pb['startIds'] !== null, 60000, 200);
-await waitFor(() => { const b = document.getElementById('renderBusy'); return (!b || b.hidden) && !pb.balanceJobActive() && r.extentsJobState() === null; }, 60000, 200);
+await waitFor(() => { const b = document.getElementById('renderBusy'); return (!b || b.hidden) && r.extentsJobState() === null; }, 60000, 200);
 await sleep(500);
 const st = r['pageVirt'];
 const out = { pageCount: st.pageCount, pageH: st.pageH, viewH: score.clientHeight, tkCurrentAtStart: st.tkCurrent, staleAtStart: [...st.stalePages].sort((a, b) => a - b), mountedAtStart: [...st.mounted].sort((a, b) => a - b) };

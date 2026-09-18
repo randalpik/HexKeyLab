@@ -26,11 +26,13 @@ const arg = String(window.__probeArg || '');
 const numArg = (k, d) => { const m = arg.match(new RegExp(k + '=(-?\\d+)')); return m ? parseInt(m[1], 10) : d; };
 const FROM = numArg('from', 0), LIMIT = numArg('limit', 10000), WANT_ROWS = numArg('rows', 1), ONLY_PAGE = numArg('page', 0);
 
-/* Settle the partition properly: balanceJobActive() is false BEFORE the job is
+/* Settle the partition properly: the whole document is balanced before the
+   paint, so waiting on the render badge is enough (the idle job is gone).
+   Historical note: balanceJobActive() was false BEFORE the job was
    armed, so waiting on !active hands back a pre-settle layout. Wait for the
    partition signature itself to stop moving. (cb-instrgap.js, lessons.md.) */
 const partitionSig = () => (pb['pageStartIds'] || []).join(',') + '|' + pb.lineStarts().length;
-const idle = () => { const b = document.getElementById('renderBusy'); return (!b || b.hidden) && !pb.balanceJobActive() && r.extentsJobState() === null; };
+const idle = () => { const b = document.getElementById('renderBusy'); return (!b || b.hidden) && r.extentsJobState() === null; };
 const settleFully = async (stableMs = 4000, budget = 150000) => {
   const t0 = performance.now(); let last = null, since = 0;
   while (performance.now() - t0 < budget) {

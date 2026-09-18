@@ -23,7 +23,7 @@ const numArg = (k, d) => { const m = arg.match(new RegExp(k + '=(-?\\d+)')); ret
 const WANT_PAGE = numArg('page', 0);
 
 const partitionSig = () => (pb['pageStartIds'] || []).join(',') + '|' + pb.lineStarts().length;
-const idle = () => { const b = document.getElementById('renderBusy'); return (!b || b.hidden) && !pb.balanceJobActive() && r.extentsJobState() === null; };
+const idle = () => { const b = document.getElementById('renderBusy'); return (!b || b.hidden) && r.extentsJobState() === null; };
 const settleFully = async (stableMs = 4000, budget = 150000) => {
   const t0 = performance.now(); let last = null, since = 0;
   while (performance.now() - t0 < budget) {

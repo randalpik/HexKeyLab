@@ -48,7 +48,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const waitIdle = async (cdp) => {
   for (let i = 0; i < 400; i++) { if (await evalIn(cdp, `(() => { const b = document.getElementById('renderBusy'); return !!document.querySelector('.score-page svg') && (!b || b.hidden); })()`) === 'true') break; await sleep(250); }
   /* …and then wait for the PARTITION to stop changing. `renderBusy` hidden is
-     not settled: balanceJobActive() is false before the job is armed, and the
+     not settled (historically: balanceJobActive() was false before the job was armed, and the
      sonata's partition is still 31 pages / 115 lines at t=0, reaching its final
      30 / 113 only at ~5.7 s. Screenshots taken before that are of a layout that
      is about to change. See lessons.md "Wait for the PARTITION to stop
@@ -57,7 +57,7 @@ const waitIdle = async (cdp) => {
   for (let i = 0; i < 240; i++) {
     const sig = await evalIn(cdp, `(() => { const r = window.__hkl_composer.renderer, pb = r['pageBreaks'];
       const b = document.getElementById('renderBusy');
-      const idle = (!b || b.hidden) && !pb.balanceJobActive() && r.extentsJobState() === null;
+      const idle = (!b || b.hidden) && r.extentsJobState() === null;
       return (pb['pageStartIds'] || []).join(',') + '|' + pb.lineStarts().length + '|' + idle; })()`);
     if (sig === last) { stable++; if (stable >= 16 && /\|true$/.test(String(sig))) return; }
     else { last = sig; stable = 0; }

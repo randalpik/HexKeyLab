@@ -4374,3 +4374,55 @@ the same correctness conditions** — a rule proven for one does not transfer.
 `assertScrollSystemCoherent` had passed throughout, because every check in it was a Y check (staff-row
 agreement, brace and left-line y, box coverage) and the entire defect was in X. When a helper is the
 shared gate for a whole class of fixtures, ask which AXIS it actually constrains before trusting it.
+
+
+## A self-consistency capture must fix the viewport BEFORE building the state under test
+
+Diffing a spliced page against a full re-engrave of the same document produced a heatmap full of
+red — every barline shifted by a fraction of a pixel and the cursor had moved — which reads exactly
+like a layout defect. It was the capture. `setDeviceMetricsOverride` was applied before the first
+screenshot and was still active when the re-engrave ran, so the "before" state had been built at
+1600px and the "after" was engraved at ~2200px. A re-engrave at a different width re-justifies every
+system and re-anchors the cursor to the new geometry.
+
+Fix the viewport once, before the state under test exists, and the same pair came back **diff = 0**.
+
+Two tells that it was the harness and not the code, both available without a screenshot: the scroll
+delta was 0, and the `g.barLine` rects were 0-delta in *viewport* coordinates. If the pixels disagree
+but the measured geometry agrees, suspect the camera. (The earlier "diff the flows before
+hypothesizing" lesson is the same shape — this is its capture-side twin.)
+
+## The system bbox is not the justification budget
+
+`getBBox()` on `g.system` returns ink extent, which includes ~222 SVG units of stroke overhang that
+the per-measure naturals do not carry (measure bboxes sum to the content width, 220 short of the
+system's). Dividing naturals by a budget measured that way makes every fill ~1.2 % too small — enough
+to push a legal line under MIN_FILL and collapse a section. The budget is page geometry:
+`(pageWidth − marginLeft − marginRight) × 10`, constant-verified across six page sizes and margins.
+**Do not mix a bbox-derived denominator with bbox-derived numerators taken at a different level.**
+
+## The first measure already contains the leading clef/key/meter
+
+In an unwrapped render, measure 0's bbox starts at x = 0 and the clef sits at x ≈ 99 *inside* it
+(3963 units against 2930 for a plain measure). Adding a separately-measured `sigW` on top counts that
+block twice and costs the first line a measure. Later lines genuinely do get a block no natural
+contains, so the two cases are not symmetric.
+
+**The instrument-name indent is a different quantity again, and is measured from the staff's left
+edge** — not by differencing first-measure offsets between systems, because later systems carry a
+measure number that hangs left of the staff (system bbox x = −220). Differencing gave 1690 where the
+truth was 2009.
+
+## `run.mjs` with no arguments is the FAST tier, not the gate
+
+`node test/composer-test/run.mjs` runs 54 fixtures; the gate is `run.mjs full` (496), which is what
+`pnpm test:composer` invokes. A clean fast-tier run says nothing about the page-view balancer fixtures,
+which all live in the full tier. Related: piping the suite through `timeout … | tail` hides its exit
+status — the run prints `N/M passed` and `[ELIFECYCLE] … exit code 1`, so read the counts, never the
+shell's status.
+
+## Backticks inside a fixture assertion break `fixtures.mjs`
+
+Assertion bodies are template literals, so a backticked identifier in a *comment* inside one closes the
+string and the whole module fails to parse with something unrelated-looking ("Unexpected identifier").
+Hit twice in one session. Write `applied >= 1`, not the backticked form, inside an assertion.
