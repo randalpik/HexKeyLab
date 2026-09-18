@@ -3324,8 +3324,19 @@ class Renderer {
     st.pin = performance.now() - t;
     /* Page-1 title block: larger title, subtitle clear of it (render/pageheader.ts).
        Host-wide and BEFORE placement — the header's bbox is what
-       `firstContentTop` anchors the first system under. */
-    styleTitleBlock(container, this.lastModel?.getComposer() ?? '');
+       `firstContentTop` anchors the first system under.
+       The COMPOSER CREDIT is page furniture and is suppressed in scroll view
+       (Max, backlog Layout): scroll renders with `header: 'none'`, so there is
+       no title block for it to sit under, and `styleTitleBlock` synthesized a
+       credit-only `g.pgHead` whose right-aligned text landed at the far END of
+       the single continuous system. The footer and the running header are
+       page-only for the same reason (main.ts `injectHeaderFooter`). Passing ''
+       rather than skipping the call keeps the removal path, so a credit baked
+       into a stashed/spliced scroll DOM is cleaned up. Page-view renders at
+       scroll GEOMETRY (the line-break owner's naturals windows,
+       buildOptions('none','scroll')) never reach here — they measure through
+       the toolkit, not the DOM. */
+    styleTitleBlock(container, this.viewMode === 'scroll' ? '' : (this.lastModel?.getComposer() ?? ''));
     /* Crisp the verticals: snap intermediate barlines onto their pixel phase,
        then land each system's right edge (final barline + staff-line ends) on
        the grid (no sliver past the final bar). */

@@ -7330,6 +7330,30 @@ const ENGRAVING = {
     fullRender: 'the poisoned getBBox must be in place for the header restyle itself, so the fixture forces the engrave it is asserting about',
   },
 
+  /* The composer credit is PAGE FURNITURE (Max, backlog Layout: "Scroll view
+     shouldn't show composer text at the end"). Scroll renders with Verovio's
+     `header: 'none'`, so there is no title block for the credit to sit under —
+     `styleTitleBlock` synthesized a credit-only `g.pgHead` and right-aligned
+     the text to the page frame's width, which in scroll view IS the single
+     continuous system: the composer's name appeared at the far END of the
+     piece. Build a titled document in page view (where the credit is drawn,
+     asserted by engr_titleBlockSizes), then switch to scroll and assert the
+     credit and its synthesized header are both gone. Asserted via
+     FIXTURE_ASSERTIONS.engr_scrollNoComposerCredit. */
+  engr_scrollNoComposerCredit: {
+    setup: `
+      const N = (o, midi) => ({ q: 0, r: 0, pname: 'a', accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.setTitle('Sonata for Viola and Piano'); m.setSubtitle('for Viola and Piano'); m.setComposer('Max Randal, Op. 12');
+      m.setCursor(0, 1);
+      for (let i = 0; i < 12; i++) m.insertChordAtCursor({ notes: [N(4, 69)], duration: '1', dots: 0 });
+      m.setCursor(0, 1);
+      r();
+      const sel = document.getElementById('viewModeSelect');
+      sel.value = 'scroll';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    `,
+  },
+
   /* Max's 2026-09-06 regression: voice 1 rests against a voice-2 chord topping
      at the middle line (b4) and at the third space (c5) touched the top head
      (the head's ink box is 1.1 locations tall above its centre, not 0.5).
@@ -18358,6 +18382,27 @@ export const FIXTURE_ASSERTIONS = {
         if (!(c.top - s.bottom >= 0.85 * c.height)) return { ok: false, detail: 'subtitle-credit box gap ' + (c.top - s.bottom).toFixed(1) + 'px, want >= ' + (0.85 * c.height).toFixed(1) };
         const sys = document.querySelector('#score .score-page[data-page="1"] g.system');
         if (!(sys.getBoundingClientRect().top > c.bottom)) return { ok: false, detail: 'first system overlaps the credit' };
+        return { ok: true };
+      })()` },
+  ],
+  engr_scrollNoComposerCredit: [
+    { name: 'scroll view draws no composer credit and no synthesized pgHead, with the composer still set on the model',
+      expr: `(async () => {
+        await window.__waitForRender();
+        const H = window.__hkl_composer;
+        if (H.renderer.getViewMode() !== 'scroll') return { ok: false, detail: 'view mode=' + H.renderer.getViewMode() };
+        /* Suppression, not a lost composer: the credit must come back in page
+           view (engr_titleBlockSizes owns that direction). */
+        if (H.model.getComposer() !== 'Max Randal, Op. 12') return { ok: false, detail: 'model composer=' + JSON.stringify(H.model.getComposer()) };
+        const credits = [...document.querySelectorAll('text.hkl-injected-composer')];
+        if (credits.length) {
+          return { ok: false, detail: credits.length + ' credit text(s) in scroll view; first x=' + credits[0].getAttribute('x') +
+            ' text=' + JSON.stringify(credits[0].textContent) };
+        }
+        /* The synthesized band too: an empty credit-only pgHead would still
+           reserve header height at the top of the scroll SVG. */
+        const heads = [...document.querySelectorAll('g.pgHead')];
+        if (heads.length) return { ok: false, detail: heads.length + ' pgHead group(s) in scroll view: ' + heads.map(h => h.getAttribute('class')).join(' | ') };
         return { ok: true };
       })()` },
   ],

@@ -213,7 +213,7 @@ The **Play** and **Perform** toolbar buttons switch directly between the two tra
 
 The **Setup…** button opens a dialog for the whole-document settings:
 
-- **Title**, **Subtitle**, **Composer**, and **Footer** text (subtitle and footer are optional; a blank footer hides it).
+- **Title**, **Subtitle**, **Composer**, and **Footer** text (subtitle and footer are optional; a blank footer hides it). All four are page furniture: they appear in page view (and in the PDF), not in scroll view.
 - **Time / key…** and **Tempo…** buttons open the measure-1 signature and tempo dialogs (the same ones you can apply mid-piece; see [Mid-piece signatures, clefs & pickups](#mid-piece-signatures-clefs-pickups)).
 - **Instruments**: a **Manage…** button to add / remove / reorder (see [Multiple instruments](#multiple-instruments)).
 - **Tuning**: the tuning system the score is pinned to; it drives the spelling and the layout HKL adopts when the score is sent over.
