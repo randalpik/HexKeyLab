@@ -354,6 +354,31 @@ export class ScrollSplicer {
     }
     if (hiNew < lo && oldHi < oldLo) return true; // nothing changed
 
+    // SCORE START (Max, backlog Layout — 2026-09-17). Verovio draws the
+    // system-initial clef, key and meter INSIDE the first measure's `g.staff`,
+    // and gives that measure the staff lines that reach back to the system
+    // origin; every later measure is drawn without any of it. The furniture
+    // therefore belongs to whichever measure is FIRST, not to a particular
+    // measure — so a run at index 0 that changes WHICH measure that is has to
+    // re-engrave the incoming one.
+    //
+    // Deleting a pickup (backspace at the very start of the piece) is the case
+    // Max reported: the prefix/suffix diff produced old [0..0] / new EMPTY —
+    // remove the pickup, import nothing — so the promoted measure kept the
+    // mid-system rendering it already had, and the score opened on blank paper
+    // with the music starting a measure-width in. The brace and the system's
+    // left line are SYSTEM-level children, untouched by measure surgery, which
+    // is why they survived and it read as "the staff heading disappeared".
+    //
+    // Widening the NEW run to cover index 0 puts the incoming first measure in
+    // the imported set; the countDelta mirror below then carries the OLD run
+    // back over old index 0, so the outgoing one is removed. `nN - oN` covers
+    // the other direction: measures PREPENDED to the score demote the old first
+    // measure, which must lose its furniture, so the run has to reach past them
+    // to it. (Adding a pickup happens to full-render today, but the diff shape
+    // is the mirror image and must not depend on that.)
+    if (lo === 0 && nN > 0) hiNew = Math.max(hiNew, 0, nN - oN);
+
     // `relocateInitialClefs` draws measure lo's measure-initial clef at the END
     // of measure lo-1, so an edit that makes a clef measure-initial (or stops it
     // being so) re-engraves the predecessor — which this splice would otherwise
@@ -393,7 +418,20 @@ export class ScrollSplicer {
     const leftCtx = Math.min(2, lo);
     const cLo = lo - leftCtx;
     const cHi = rightAvail ? hiNew + 1 : hiNew;
-    const anchorIdx = lo > 0 ? lo - 1 : 0;
+    // Anchor ids — the measure whose staff frame maps the sub-render onto the
+    // persistent x/y frame. Normally the unchanged left-context measure (lo−1),
+    // which is the SAME element in both renders. At lo === 0 there is no left
+    // context, and the two sides can be different measures: the sub-render's
+    // anchor is its own first measure (system-first, staff frame at the system
+    // origin) while the persistent anchor must be the measure that is first
+    // TODAY — `this.order[0]` — because that is the element carrying the
+    // origin's frame. They are the same id for an ordinary content edit at
+    // measure 0, and differ exactly when the edit changes which measure starts
+    // the score. Reading both from `newOrder[0]` there would anchor the incoming
+    // first measure on the position it occupies while still SECOND, leaving the
+    // re-engraved score-start furniture a measure-width right of the origin.
+    const subAnchorId = lo > 0 ? newOrder[lo - 1] : newOrder[0];
+    const perAnchorId = lo > 0 ? newOrder[lo - 1] : (this.order[0] ?? newOrder[0]);
     // Sub-MEI: the model render-serializes ONLY [cLo..cHi] (O(range)), then we
     // append the synthetic spacer that reproduces the persistent gaps.
     const subMei = this.insertSpacer(
@@ -417,7 +455,7 @@ export class ScrollSplicer {
     })).filter((e) => e.id !== '');
 
     try {
-      return this.spliceDom(host, newOrder, newSig, { lo, hiNew, oldLo, oldHi, cHi, anchorIdx }, endings, ctx);
+      return this.spliceDom(host, newOrder, newSig, { lo, hiNew, oldLo, oldHi, cHi, subAnchorId, perAnchorId }, endings, ctx);
     } finally {
       host.remove();
     }
@@ -449,7 +487,7 @@ export class ScrollSplicer {
    *  trailing measures, merge glyph defs, and update the index. */
   private spliceDom(
     host: HTMLElement, newOrder: string[], newSig: Map<string, string>,
-    r: { lo: number; hiNew: number; oldLo: number; oldHi: number; cHi: number; anchorIdx: number },
+    r: { lo: number; hiNew: number; oldLo: number; oldHi: number; cHi: number; subAnchorId: string; perAnchorId: string },
     endings: Array<{ id: string; firstMeasureId: string }>,
     ctx: SpliceCtx,
   ): boolean {
@@ -476,9 +514,8 @@ export class ScrollSplicer {
     // the same cost class as the x-cascade that already runs, versus a ~3.8 s
     // full re-engrave; and it self-heals, since afterwards every measure shares
     // the new frame and the next edit computes dyFrame = 0.
-    const anchorId = newOrder[r.anchorIdx];
-    const subAnchor = sub(anchorId);
-    const perAnchor = persist(anchorId);
+    const subAnchor = sub(r.subAnchorId);
+    const perAnchor = persist(r.perAnchorId);
     if (!subAnchor || !perAnchor) return false;
     const subFrame = staffFrameOf(subAnchor);
     const perFrame = staffFrameOf(perAnchor);
@@ -486,8 +523,8 @@ export class ScrollSplicer {
       this.lastSkipReason = 'anchor staff frame unreadable';
       return false;
     }
-    const perTy = this.ty.get(anchorId) ?? 0;
-    const dx = (perFrame.x + (this.tx.get(anchorId) ?? 0)) - subFrame.x;
+    const perTy = this.ty.get(r.perAnchorId) ?? 0;
+    const dx = (perFrame.x + (this.tx.get(r.perAnchorId) ?? 0)) - subFrame.x;
     // Per-staff frame deltas. They must AGREE: one translate can only re-seat a
     // system whose internal spacing is unchanged. They disagree when the edit
     // changes an inter-staff gap (probed: a high note in the lower staff of a

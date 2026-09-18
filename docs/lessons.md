@@ -4342,3 +4342,35 @@ the retained state a live OBS source is reading on `:5190`.
 fail with "canvas NEVER changed after the flash message" — which is what separates a gate from a test
 that would have passed all along. Do this once for any invariant asserted over pixels; the cost is
 one rebuild and it is the only proof the assertion is load-bearing.
+
+## System-initial furniture belongs to the POSITION, not to the measure (2026-09-17)
+
+Verovio draws the system-initial clef, key and meter **inside the first measure's `g.staff`**, and
+gives that measure the staff lines that reach back to the system origin. Every later measure is drawn
+without any of it. So "the score start" is not a property of a particular measure — it is a property
+of *being first*, and it moves whenever a different measure becomes first.
+
+The scroll splicer's diff is a prefix/suffix comparison over `(id, signature)` pairs, which describes
+a measure deletion perfectly and says nothing about position. Deleting a pickup (backspace at the very
+beginning) produced old run `[0..0]` / new run EMPTY — remove one measure, import none — so the
+promoted measure kept the mid-system rendering it already had: no clef, no meter, and staff lines
+starting a measure-width in. The brace and the system's left line are `g.system`-level children that
+measure surgery never touches, so they stayed at the origin, and the symptom read as "the staff
+heading disappeared" rather than "a measure was not re-engraved."
+
+Two rules follow for any splicer whose unit is the MEASURE:
+- a run that starts at index 0 must be widened to **contain** the incoming first measure, in both
+  directions (a prepend demotes the old first measure, which must lose its furniture);
+- the anchor splits in two. The sub-render's anchor is its own first measure, whose frame sits at the
+  origin; the persistent anchor must be whichever measure is first **today**. They are the same id for
+  an ordinary content edit at measure 0 and different ones exactly when the edit changes which measure
+  starts the score — the case that needs it. Using the new id on both sides anchors the incoming first
+  measure on the position it occupies while still *second*, which reproduces the same blank run-up.
+
+Page view was never affected: its splice unit is the SYSTEM, so the first line is re-engraved whole
+and the furniture comes along for free. **A per-measure splicer and a per-system splicer do not have
+the same correctness conditions** — a rule proven for one does not transfer.
+
+`assertScrollSystemCoherent` had passed throughout, because every check in it was a Y check (staff-row
+agreement, brace and left-line y, box coverage) and the entire defect was in X. When a helper is the
+shared gate for a whole class of fixtures, ask which AXIS it actually constrains before trusting it.

@@ -173,7 +173,7 @@ From any measure forward (or, in select mode, over the selected span):
 
 - **Time / key signature**: `Ctrl+Shift+S`. The dialog also offers common/cut-time symbols and additive beat groups (e.g. `2+2+3` for 7/8; affects beaming only).
 - **Clef change**: `Ctrl+Shift+C` inserts a mid-measure clef; it carries forward until the next change.
-- **Pickup / anacrusis**: `Ctrl+Shift+A` sets a short pickup measure at the start of a section. A downbeat tempo marking travels with it.
+- **Pickup / anacrusis**: `Ctrl+Shift+A` sets a short pickup measure at the start of a section. Give its length in **eighth notes** — 2 for a quarter-note pickup in 4/4, 1 for a single eighth, 3 for a dotted quarter — anything shorter than a full bar; `0` removes it. (Counting eighths rather than beats is what makes a half-beat pickup possible, and the only kind of pickup you can have in cut time.) The time signature still shows in full and the next measure is still bar 1. A downbeat tempo marking travels with it.
 
 ---
 

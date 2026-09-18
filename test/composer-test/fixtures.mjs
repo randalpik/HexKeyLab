@@ -942,6 +942,31 @@ const SCROLL = {
     `,
   },
 
+  /* Max's report (backlog Layout, 2026-09-17): in SCROLL view, backspace at the
+   * very beginning of a piece with a pickup deleted the pickup measure and took
+   * the staff heading with it — the brace and the system's left line survived,
+   * the leading clefs, signatures and the staff lines under them became white
+   * space. Page view was correct. Cause: the system-initial furniture lives in
+   * whichever measure is FIRST, and the splicer's diff made the run old [0..0] /
+   * new EMPTY, so the promoted measure kept its mid-system rendering. The setup
+   * builds a pickup score in scroll view; the assertion presses Backspace at
+   * cursor 0 and checks the score start survived AND that it came from a splice
+   * (a full re-engrave would be correct by accident and prove nothing).
+   * Asserted via FIXTURE_ASSERTIONS.scrollPickupDeleteKeepsScoreStart. */
+  scrollPickupDeleteKeepsScoreStart: {
+    setup: `
+      const A = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
+      m.setCursor(0, 1);
+      for (let i = 0; i < 6; i++) m.insertChordAtCursor({ notes: [A], duration: '1', dots: 0 });
+      m.setPickupAt(0, 4);
+      r();
+      const sel = document.getElementById('viewModeSelect');
+      sel.value = 'scroll';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      m.setCursor(0, 1);
+    `,
+  },
+
   /* Phase B2: a scroll-mode edit must SPLICE (re-engrave only the edited run +
    * splice it into the persistent SVG), NOT full-re-engrave. Build a multi-bar
    * doc, switch to scroll (one full render + gap calibration → the persistent
@@ -6467,8 +6492,10 @@ const PHASE1 = {
 
   /* ── Phase 4c: pickup / anacrusis ───────────────────────────────────────── */
 
-  /* Ctrl+Shift+A → 2 beats inserts a pickup measure 0 (reduced 32-tick budget,
-     metcon="false") in 4/4; the following measure stays numbered 1. */
+  /* Ctrl+Shift+A → 4 EIGHTHS inserts a pickup measure 0 (reduced 32-tick
+     budget, metcon="false") in 4/4; the following measure stays numbered 1.
+     The field counts eighth notes since 2026-09-17 (it counted denominator
+     beats before, where the same half-bar pickup was "2"). */
   phase4_pickup_add: {
     setup: `
       const A = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
@@ -6477,11 +6504,30 @@ const PHASE1 = {
       m.setCursor(0, 1);
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'A', ctrlKey: true, shiftKey: true, bubbles: true }));
       const dlg = document.getElementById('textEntryDialog');
-      dlg.querySelector('[data-field="beats"]').value = '2';
+      dlg.querySelector('[data-field="eighths"]').value = '4';
       dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
       r();
     `,
     visualBaseline: 'phase4_pickup_add',
+  },
+
+  /* The granularity eighths bought (Max, 2026-09-17): a ONE-EIGHTH pickup in
+     4/4 — half a beat, so unreachable while the field counted denominator
+     beats, and the commonest real anacrusis there is. Driven through the
+     dialog, so the field name, the bound and the model conversion are all in
+     the path. Asserted via FIXTURE_ASSERTIONS.phase4_pickup_eighthGranularity. */
+  phase4_pickup_eighthGranularity: {
+    setup: `
+      const A = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 });
+      m.setCursor(0, 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'A', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      dlg.querySelector('[data-field="eighths"]').value = '1';
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+      r();
+    `,
   },
 
   /* Setting the pickup back to 0 removes the pickup measure entirely. */
@@ -6490,7 +6536,7 @@ const PHASE1 = {
       const A = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
       m.setCursor(0, 1);
       for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 });
-      m.setPickupAt(0, 2);   /* add a pickup */
+      m.setPickupAt(0, 4);   /* add a pickup (4 eighths = half a 4/4 bar) */
       m.setPickupAt(0, 0);   /* …then remove it */
       r();
     `,
@@ -6505,7 +6551,7 @@ const PHASE1 = {
       m.setTempo(240, '4', 0, '');
       m.setCursor(0, 1);
       for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 });
-      m.setPickupAt(0, 2);
+      m.setPickupAt(0, 4);
       m.setVoice(1); m.setCursor(0, 1);
       m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 }); /* a pickup note */
       r();
@@ -6527,7 +6573,7 @@ const PHASE1 = {
       t.setAttribute('tstamp', '1'); t.setAttribute('staff', '1');
       t.setAttribute('mm', '240'); t.setAttribute('mm.unit', '4'); t.setAttribute('midi.bpm', '240');
       meas2.insertBefore(t, meas2.firstChild);
-      m.setPickupAt(0, 2); /* pickup pushes everything; tempo (mid-piece) stays at its measure */
+      m.setPickupAt(0, 4); /* pickup pushes everything; tempo (mid-piece) stays at its measure */
       r();
     `,
   },
@@ -8876,7 +8922,27 @@ export const FIXTURE_ASSERTIONS = {
           return { ok: false, detail: 'pickup-ticks=' + pk.getAttributeNS('https://hexkeylab.com/ns/mei', 'pickup-ticks') + ' (expected 32)' };
         if (ms[1].getAttribute('n') !== '1') return { ok: false, detail: 'body @n=' + ms[1].getAttribute('n') + ' (expected 1)' };
         if (m.measureTicksAt(0) !== 32) return { ok: false, detail: 'measureTicksAt(0)=' + m.measureTicksAt(0) + ' (expected 32)' };
-        if (m.pickupBeatsForSection(0) !== 2) return { ok: false, detail: 'pickupBeats=' + m.pickupBeatsForSection(0) };
+        if (m.pickupEighthsForSection(0) !== 4) return { ok: false, detail: 'pickupEighths=' + m.pickupEighthsForSection(0) + ' (expected 4)' };
+        if (m.maxPickupEighthsAt(0) !== 7) return { ok: false, detail: 'maxPickupEighths=' + m.maxPickupEighthsAt(0) + ' (expected 7 in 4/4)' };
+        return { ok: true };
+      })()` },
+  ],
+  /* Phase 4c: a half-beat (one-eighth) pickup in 4/4 — the case the beats field
+     could not express at all. */
+  phase4_pickup_eighthGranularity: [
+    { name: 'a 1-eighth pickup in 4/4 is an 8-tick measure 0, and reads back as 1 eighth',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const ms = m.allMeasures();
+        if (ms.length !== 2) return { ok: false, detail: 'measures=' + ms.length + ' (expected 2: pickup + body)' };
+        const pk = ms[0];
+        if (pk.getAttribute('n') !== '0') return { ok: false, detail: 'pickup @n=' + pk.getAttribute('n') };
+        const ticks = pk.getAttributeNS('https://hexkeylab.com/ns/mei', 'pickup-ticks');
+        if (ticks !== '8') return { ok: false, detail: 'pickup-ticks=' + ticks + ' (expected 8 = one eighth)' };
+        if (m.measureTicksAt(0) !== 8) return { ok: false, detail: 'measureTicksAt(0)=' + m.measureTicksAt(0) + ' (expected 8)' };
+        if (m.pickupEighthsForSection(0) !== 1) return { ok: false, detail: 'pickupEighths=' + m.pickupEighthsForSection(0) + ' (expected 1)' };
+        /* The body bar is untouched and still full. */
+        if (m.measureTicksAt(1) !== 64) return { ok: false, detail: 'body measureTicksAt(1)=' + m.measureTicksAt(1) + ' (expected 64)' };
         return { ok: true };
       })()` },
   ],
@@ -8889,7 +8955,7 @@ export const FIXTURE_ASSERTIONS = {
         if (ms.length !== 1) return { ok: false, detail: 'measures=' + ms.length + ' (expected 1)' };
         if (ms[0].getAttributeNS('https://hexkeylab.com/ns/mei', 'pickup-ticks'))
           return { ok: false, detail: 'pickup-ticks still set' };
-        if (m.pickupBeatsForSection(0) !== 0) return { ok: false, detail: 'pickupBeats=' + m.pickupBeatsForSection(0) + ' (expected 0)' };
+        if (m.pickupEighthsForSection(0) !== 0) return { ok: false, detail: 'pickupEighths=' + m.pickupEighthsForSection(0) + ' (expected 0)' };
         if (m.measureTicksAt(0) !== 64) return { ok: false, detail: 'measureTicksAt(0)=' + m.measureTicksAt(0) + ' (expected 64)' };
         return { ok: true };
       })()` },
@@ -11001,6 +11067,63 @@ export const FIXTURE_ASSERTIONS = {
         const s = window.__hkl_composer.inputState();
         if (svgAfter !== svgBefore) return { ok: false, detail: 'score re-engraved on Shift+Arrow selection (SVG root replaced)' };
         if (!s.selection) return { ok: false, detail: 'selection not entered' };
+        return { ok: true };
+      })()` },
+  ],
+  scrollPickupDeleteKeepsScoreStart: [
+    { name: 'backspace deleting the pickup splices, and the promoted measure carries the score-start clef/meter at the system origin',
+      expr: `(async () => {
+        const H = window.__hkl_composer, m = H.model;
+        await window.__waitForRender();
+        const score = document.getElementById('score');
+        if (!score.classList.contains('view-scroll')) return { ok: false, detail: '#score class=' + score.className };
+        const svgBefore = score.querySelector('svg:not(#cursorOverlay)');
+        if (!svgBefore) return { ok: false, detail: 'no rendered SVG' };
+        const before = m.allMeasures().length;
+        const snap = m.snapshotState();
+        /* The reported gesture: backspace at the very beginning. */
+        m.setCursor(0, 1);
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true }));
+        await window.__waitForRender();
+        const after = m.allMeasures().length;
+        const svgAfter = score.querySelector('svg:not(#cursorOverlay)');
+        const spliced = svgAfter === svgBefore;
+        const sys = score.querySelector('g.system');
+        const first = sys && sys.querySelector('g.measure');
+        const clefs = first ? first.querySelectorAll('g.clef').length : 0;
+        const meters = first ? first.querySelectorAll('g.meterSig').length : 0;
+        const staves = first ? first.querySelectorAll(':scope > g.staff').length : 0;
+        /* Run-up from the system's left edge to where the staff lines begin: the
+           brace's inset when the score start is drawn, a whole measure width
+           when it is not. */
+        let runUp = null, firstW = null;
+        if (first) {
+          const lefts = [];
+          for (const st of Array.from(first.querySelectorAll(':scope > g.staff'))) {
+            for (const pth of Array.from(st.querySelectorAll(':scope > path'))) {
+              let bb; try { bb = pth.getBBox(); } catch (e) { continue; }
+              if (bb.height >= 1) continue;
+              const rr = pth.getBoundingClientRect();
+              if (rr.width > 0) lefts.push(rr.left);
+            }
+          }
+          if (lefts.length) runUp = Math.min.apply(null, lefts) - sys.getBoundingClientRect().left;
+          firstW = first.getBoundingClientRect().width;
+        }
+        m.restoreSnapshot(snap);
+        H.renderer.forceFullRerender();
+        H.reRender();
+        if (after !== before - 1) return { ok: false, detail: 'measures ' + before + ' -> ' + after + ' (expected one fewer: the pickup)' };
+        if (!spliced) return { ok: false, detail: 'the delete re-engraved the whole score (SVG root replaced) — this fixture never exercised the splice path' };
+        if (clefs !== staves || meters !== staves) {
+          return { ok: false, detail: 'promoted first measure has ' + clefs + ' clefs and ' + meters +
+            ' meterSigs for ' + staves + ' staves — the score-start furniture was not re-engraved' };
+        }
+        if (runUp === null || firstW === null) return { ok: false, detail: 'could not read the first measure geometry' };
+        if (runUp >= firstW) {
+          return { ok: false, detail: 'staff lines begin ' + runUp.toFixed(1) + 'px right of the system edge, ' +
+            'wider than the first measure (' + firstW.toFixed(1) + 'px) — the score start is blank paper' };
+        }
         return { ok: true };
       })()` },
   ],

@@ -1,8 +1,15 @@
-// Pickup / anacrusis modal — Ctrl+Shift+A. A single numeric field: the number
-// of pickup beats (0..beatsPerMeasure-1) at the start of the cursor's section.
-// 0 removes the pickup measure entirely. The displayed time signature stays
-// full; the pickup is a dedicated measure 0 with a reduced tick budget
-// (model.setPickupAt). Mirrors clefDialog.ts.
+// Pickup / anacrusis modal — Ctrl+Shift+A. A single numeric field: the length
+// of the pickup in EIGHTH NOTES (0..just under a full bar) at the start of the
+// cursor's section. 0 removes the pickup measure entirely. The displayed time
+// signature stays full; the pickup is a dedicated measure 0 with a reduced tick
+// budget (model.setPickupAt). Mirrors clefDialog.ts.
+//
+// The field counted denominator BEATS until 2026-09-17 (Max): that cannot
+// express a half-beat anacrusis in 4/4 — the commonest kind — and in 2/2 could
+// not express a sub-bar pickup at all, the only beat there being a half note.
+// Eighths cover every case beats did and every half-beat one besides, at the
+// cost of typing a larger number for the ordinary ones (a quarter-note pickup
+// in 4/4 is now 2, not 1).
 
 import type { ComposerModel } from './model/index.js';
 import type { HistoryManager } from './history.js';
@@ -13,27 +20,26 @@ export function openPickupModal(
   sectionStartIdx: number,
   opts: { history: HistoryManager; onApply: () => void; onError?: (msg: string) => void },
 ): void {
-  const { count } = model.meterAt(sectionStartIdx);
-  const maxBeats = Math.max(0, count - 1);
-  const cur = model.pickupBeatsForSection(sectionStartIdx);
+  const maxEighths = model.maxPickupEighthsAt(sectionStartIdx);
+  const cur = model.pickupEighthsForSection(sectionStartIdx);
 
   const fields: TextEntryField[] = [
-    { name: 'beats', type: 'number', label: 'Pickup beats', value: String(cur), min: 0, max: maxBeats,
-      placeholder: '0–' + maxBeats + ' (0 removes)' },
+    { name: 'eighths', type: 'number', label: 'Pickup eighths', value: String(cur), min: 0, max: maxEighths,
+      placeholder: '0–' + maxEighths + ' eighth notes (0 removes)' },
   ];
 
   openTextEntryModal({
     title: 'Pickup / anacrusis — section start',
     fields,
-    focusField: 'beats',
+    focusField: 'eighths',
     onOk: (values) => {
-      const beats = parseInt(String(values.beats ?? '0'), 10);
-      if (!isFinite(beats) || beats < 0 || beats > maxBeats) {
-        opts.onError?.('Pickup beats must be between 0 and ' + maxBeats + '.');
+      const eighths = parseInt(String(values.eighths ?? '0'), 10);
+      if (!isFinite(eighths) || eighths < 0 || eighths > maxEighths) {
+        opts.onError?.('Pickup length must be between 0 and ' + maxEighths + ' eighth notes.');
         return;
       }
       const before = model.snapshotState();
-      const changed = model.setPickupAt(sectionStartIdx, beats);
+      const changed = model.setPickupAt(sectionStartIdx, eighths);
       if (!changed) {
         /* No-op (e.g. removing a pickup that isn't there) — don't push history. */
         opts.onApply();

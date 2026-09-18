@@ -196,6 +196,17 @@ export function formatBeatGroups(g: number[] | null | undefined): string | null 
 
 const PICKUP_TICKS_ATTR = 'pickup-ticks';
 
+/** Ticks in an eighth note. The tick grid is 64 = a whole note, so a beat is
+ *  `64 / unit` ticks and an eighth is always 8 of them regardless of meter.
+ *  A pickup's LENGTH IS COUNTED IN EIGHTHS (Max, 2026-09-17): the old field
+ *  counted denominator beats, which cannot express a half-beat anacrusis in
+ *  4/4 (the commonest kind there is) and could not express one at ALL in 2/2,
+ *  where the only sub-bar beat is a half note. Eighths cover every case those
+ *  did plus every half-beat one, at the cost of typing a larger number. The
+ *  STORAGE is unchanged — `hkl:pickup-ticks` was always absolute ticks — so
+ *  documents written before this read back identically. */
+const EIGHTH_TICKS = 8;
+
 /** Read an explicit reduced tick budget (`hkl:pickup-ticks`) off a measure, or
  *  null when the measure uses its meter's full budget. */
 function readPickupTicks(measure: Element): number | null {
@@ -2643,38 +2654,58 @@ export class ComposerModel {
     return 0;
   }
 
-  /** Pickup length in BEATS (denominator units) for the section starting at
+  /** Full tick budget of a bar in the meter governing `measureIdx` — the
+   *  length a pickup there must stay under. */
+  fullBarTicksAt(measureIdx: number): number {
+    const meter = this.meterAt(measureIdx);
+    return meter.count * (64 / meter.unit);
+  }
+
+  /** Largest pickup, in EIGHTHS, that is still shorter than a full bar at
+   *  `sectionStartIdx`. The dialog's upper bound. */
+  maxPickupEighthsAt(sectionStartIdx: number): number {
+    return Math.max(0, Math.ceil(this.fullBarTicksAt(sectionStartIdx) / EIGHTH_TICKS) - 1);
+  }
+
+  /** Pickup length in EIGHTH NOTES for the section starting at
    *  `sectionStartIdx`, or 0 when the section has no pickup. The pickup, once
-   *  added, IS the section's first measure. */
-  pickupBeatsForSection(sectionStartIdx: number): number {
+   *  added, IS the section's first measure.
+   *
+   *  A pickup SHORTER than an eighth is only reachable by import (MusicXML
+   *  writes whatever duration the file had), and rounds to 1 rather than 0
+   *  here: 0 is the "no pickup" value the dialog removes on, so reporting it
+   *  for a bar that HAS a pickup would turn an innocent OK into a deletion.
+   *  Re-applying the reported value quantizes that bar up to an eighth, which
+   *  is visible and explainable; losing the measure is neither. */
+  pickupEighthsForSection(sectionStartIdx: number): number {
     const measures = this.allMeasures();
     if (sectionStartIdx < 0 || sectionStartIdx >= measures.length) return 0;
     const ticks = readPickupTicks(measures[sectionStartIdx]);
     if (ticks === null) return 0;
-    const { unit } = this.meterAt(sectionStartIdx);
-    return Math.round(ticks / (64 / unit));
+    return Math.max(1, Math.round(ticks / EIGHTH_TICKS));
   }
 
   /** Add / resize / remove the pickup at the start of the section beginning at
-   *  `sectionStartIdx`. `beats` in 1..count-1 sets the pickup length (inserting
-   *  a measure 0 if none exists); `beats === 0` removes the pickup measure
-   *  (no content confirmation — it's one short bar). Returns true on change. */
-  setPickupAt(sectionStartIdx: number, beats: number): boolean {
+   *  `sectionStartIdx`. `eighths` ≥ 1 sets the pickup length in EIGHTH NOTES
+   *  (inserting a measure 0 if none exists), and must stay under a full bar;
+   *  `eighths === 0` removes the pickup measure (no content confirmation —
+   *  it's one short bar). Returns true on change. */
+  setPickupAt(sectionStartIdx: number, eighths: number): boolean {
     const measures = this.allMeasures();
     if (sectionStartIdx < 0 || sectionStartIdx >= measures.length) return false;
-    const meter = this.meterAt(sectionStartIdx);
-    const unitTicks = 64 / meter.unit;
     const startEl = measures[sectionStartIdx];
     const existing = readPickupTicks(startEl) !== null ? startEl : null;
 
-    if (beats <= 0) {
+    if (eighths <= 0) {
       if (!existing) return false;
       this.removePickupMeasure(existing);
       return true;
     }
-    if (beats >= meter.count) return false; /* a full bar isn't a pickup */
-
-    const budget = beats * unitTicks;
+    const budget = eighths * EIGHTH_TICKS;
+    /* A full bar (or more) isn't a pickup. Stated in TICKS rather than against
+       the beat count, so it holds for meters whose bar is not a whole number
+       of eighths (3/16) as well as the ordinary ones. */
+    if (budget >= this.fullBarTicksAt(sectionStartIdx)) return false;
     const pickup = existing ?? this.insertSectionPickup(sectionStartIdx);
     pickup.setAttributeNS(HKL_NS, 'hkl:' + PICKUP_TICKS_ATTR, String(budget));
     pickup.setAttribute('metcon', 'false');

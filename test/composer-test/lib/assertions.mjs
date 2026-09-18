@@ -397,6 +397,46 @@ export const ASSERTION_LIB = `
         }
       }
     }
+    /* SCORE START, horizontally (2026-09-17). Verovio draws the system-initial
+       clef, key and meter INSIDE the first measure's g.staff and gives that
+       measure the staff lines reaching back to the system origin; every later
+       measure is drawn without them. So a measure surgery that changes WHICH
+       measure is first has to re-engrave the incoming one — deleting a pickup
+       did not, and the score opened on blank paper with the brace and the
+       system's left line (system-level children, untouched by measure surgery)
+       stranded at the origin. Everything above this is a Y check and saw none
+       of it. Two statements, no pixel constants:
+         1. the first measure carries a clef — every system start does;
+         2. the run-up from the system's left edge to where the staff lines
+            actually begin is narrower than the first measure itself (it is the
+            brace's inset: measured 22px against a 279px measure). */
+    {
+      const first = measures[0];
+      if (!first.querySelector('g.clef')) {
+        fails.push('first measure (' + (first.getAttribute('id') || '?') +
+          ') carries no clef — the system-initial clef/key/meter were not drawn ' +
+          '(a measure surgery promoted a mid-system measure without re-engraving it)');
+      }
+      const lineLefts = [];
+      for (const st of Array.from(first.querySelectorAll(':scope > g.staff'))) {
+        for (const pth of Array.from(st.querySelectorAll(':scope > path'))) {
+          let bb; try { bb = pth.getBBox(); } catch (e) { continue; }
+          if (bb.height >= 1) continue;                  // vertical, not a staff line
+          const rr = pth.getBoundingClientRect();
+          if (rr.width > 0) lineLefts.push(rr.left);
+        }
+      }
+      const sysRect = sys.getBoundingClientRect();
+      const firstRect = first.getBoundingClientRect();
+      if (lineLefts.length && firstRect.width > 0) {
+        const runUp = Math.min.apply(null, lineLefts) - sysRect.left;
+        if (runUp >= firstRect.width) {
+          fails.push('staff lines begin ' + runUp.toFixed(1) + 'px right of the system edge, ' +
+            'wider than the first measure itself (' + firstRect.width.toFixed(1) + 'px) — ' +
+            'the score start is blank paper');
+        }
+      }
+    }
     const pm = inner.querySelector('g.page-margin');
     const vb = (inner.getAttribute('viewBox') || '').trim().split(/[\\s,]+/).map(Number);
     if (pm && vb.length === 4 && vb.every((n) => isFinite(n))) {

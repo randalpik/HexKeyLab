@@ -8455,3 +8455,31 @@ the `composer-playback` message and OBS overlay rebuild `bars` wholesale from `g
 Fixtures: `perfLateVoiceDormant` (late entry dormant + no cue + ended-voice bar clears + end-of-score
 freeze), `perfVoiceRestGapHidesBar` (mid-piece gap; the gap note unclaimable until its measure),
 `perfWrittenRestKeepsBar` (the written-rest-vs-empty-layer distinction).
+
+## Pickup length is counted in EIGHTH NOTES, not in denominator beats (2026-09-17)
+
+**Decision** (Max, backlog Composer/Features): `Ctrl+Shift+A` takes the anacrusis length in eighth
+notes — anything shorter than a full bar — rather than in beats of the meter's denominator.
+
+**Why**: beats cannot express a half-beat pickup in 4/4, which is the commonest anacrusis there is,
+and in 2/2 could not express a sub-bar pickup *at all* — the only beat there is a half note, so the
+old `0..count-1` range was `{0, 1}` and `1` was already the whole bar. Max's framing: eighths "cover
+all cases at the expense of a little more effort to create one", the effort being a larger number for
+the ordinary cases (a quarter-note pickup in 4/4 is now `2`, not `1`).
+
+**Not a storage change.** `hkl:pickup-ticks` was always an absolute tick budget on the 64-per-whole-
+note grid, so an eighth is 8 ticks in every meter and every `.hkc` written before this reads back
+identically. Only the dialog's unit and the model's two conversion helpers moved.
+
+**Consequences worth stating**:
+- the full-bar guard is now `budget >= fullBarTicksAt(idx)` rather than `beats >= meter.count`, so it
+  holds for meters whose bar is not a whole number of eighths (3/16) instead of accidentally passing;
+- `maxPickupEighthsAt` is `ceil(fullBar / 8) - 1`, which is the largest whole eighth strictly shorter
+  than a bar — 7 in 4/4 and 2/2, 5 in 3/4 and 6/8;
+- `pickupEighthsForSection` reports a **sub-eighth** pickup as `1`, never `0`. Sub-eighth pickups are
+  import-only (MusicXML carries whatever duration the file had) and `0` is the value the dialog
+  REMOVES on, so reporting it truthfully would turn an innocent OK into a deleted measure. Re-applying
+  quantizes that bar up to an eighth, which is visible and explainable; losing it is neither.
+
+Fixtures: `phase4_pickup_eighthGranularity` (a 1-eighth pickup in 4/4 driven through the dialog),
+`phase4_pickup_add` (now 4 eighths for the same half-bar pickup, plus the `maxPickupEighthsAt` bound).

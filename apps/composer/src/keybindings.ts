@@ -309,7 +309,7 @@ export const KEYBINDINGS: KeySection[] = [
       },
       {
         keys: "Ctrl+Shift+A",
-        desc: "Pickup / anacrusis at the start of the cursor's section: choose 0..(beats−1) pickup beats. A pickup is a short measure 0 (full time signature still shown); the following measure stays numbered 1. Set to 0 to remove it.",
+        desc: "Pickup / anacrusis at the start of the cursor's section: give its length in EIGHTH NOTES (anything shorter than a full bar). A pickup is a short measure 0 (full time signature still shown); the following measure stays numbered 1. Set to 0 to remove it.",
       },
     ],
   },
