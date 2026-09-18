@@ -17,6 +17,7 @@ import { readTimeSig } from '../notation/beams.js';
 import { realTicks } from './ticks.js';
 import { decomposeBeatAlignedRests } from './restfill.js';
 import { normalizeTies } from './ties.js';
+import { isPlaceholder } from './placeholders.js';
 import { el, newId, type ComposerModel, type Voice } from './index.js';
 
 export function clearBeatRange(
@@ -152,3 +153,104 @@ export function clearMeasureRange(
   }
 }
 
+
+/* ── move a voice's whole measures to its partner voice ────────────────────
+ * Correcting notes entered into the wrong voice, which is easy to do (Max,
+ * backlog Composer/Features — 2026-09-17). Driven from a BEAT selection: the
+ * measures the selection covers ENTIRELY and that actually hold something move
+ * to the other voice on the same staff, provided that voice is free in each of
+ * them. Anything less is an error rather than a partial result — this exists to
+ * undo a mistake, so it must not create a second, subtler one. */
+
+export type VoiceMoveResult =
+  | { ok: true; movedMeasures: number[]; toVoice: Voice }
+  | { ok: false; reason: string };
+
+/** True when a layer holds nothing but placeholder `<space>`s — the state
+ *  `normalizePlaceholders` leaves an empty cell in. Stricter than
+ *  `layerIsEmpty` (model/empty-flags.ts), which also calls a layer holding an
+ *  `<mRest>` empty: an `<mRest>` is a written whole-measure rest, so moving
+ *  notes on top of one would produce a measure with both. */
+function holdsOnlyPlaceholders(layer: Element): boolean {
+  for (let c = layer.firstElementChild; c; c = c.nextElementSibling) {
+    if (!isPlaceholder(c)) return false;
+  }
+  return true;
+}
+
+/** Printed number of a measure, for error messages — `@n`, so a pickup reads
+ *  as 0 and everything after it matches what the user sees. */
+function measureLabel(measure: Element, idx: number): string {
+  return measure.getAttribute('n') ?? String(idx + 1);
+}
+
+export function moveFullMeasuresToSiblingVoice(
+  model: ComposerModel,
+  voice: Voice,
+  tLoAbs: number,
+  tHiAbs: number,
+): VoiceMoveResult {
+  const target = model.siblingVoiceOf(voice);
+  if (target === null) {
+    return { ok: false, reason: 'Voice ' + voice + ' has no partner voice on its staff.' };
+  }
+  const measures = model.allMeasures();
+  /* Measures the span covers in FULL — the same tick test `clearBeatRange`
+     uses to decide that a bar was emptied outright. */
+  const whole: number[] = [];
+  for (let mi = 0; mi < measures.length; mi++) {
+    const cap = model.measureTicksAt(mi);
+    const start = model.measureStartTick(mi);
+    if (start + cap <= tLoAbs) continue;
+    if (start >= tHiAbs) break;
+    if (start >= tLoAbs - 1e-6 && start + cap <= tHiAbs + 1e-6) whole.push(mi);
+  }
+  if (!whole.length) {
+    return { ok: false, reason: 'Select at least one whole measure to move it to the other voice.' };
+  }
+  /* Only measures that actually carry something move; a fully-selected but
+     empty bar is a no-op, not a failure, and must not make the destination
+     check fail for a bar nothing would be written into. */
+  const move: number[] = [];
+  for (const mi of whole) {
+    const src = model.layerInMeasure(measures[mi], voice);
+    if (src && !holdsOnlyPlaceholders(src)) move.push(mi);
+  }
+  if (!move.length) {
+    return { ok: false, reason: 'Nothing to move — voice ' + voice + ' is empty in the selected measures.' };
+  }
+  /* The destination must be free in every measure we would write into. */
+  for (const mi of move) {
+    const dst = model.layerInMeasure(measures[mi], target);
+    if (!dst) {
+      return { ok: false, reason: 'Voice ' + target + ' has no layer in measure ' + measureLabel(measures[mi], mi) + '.' };
+    }
+    if (!holdsOnlyPlaceholders(dst)) {
+      return {
+        ok: false,
+        reason: 'Voice ' + target + ' already has content in measure ' + measureLabel(measures[mi], mi) + '.',
+      };
+    }
+  }
+  for (const mi of move) {
+    const src = model.layerInMeasure(measures[mi], voice) as Element;
+    const dst = model.layerInMeasure(measures[mi], target) as Element;
+    /* Drop the destination's placeholders, then hand over the source's own
+       children in order. The elements MOVE — same `xml:id`s — so ties, slurs
+       and anything else addressing them by id stays resolved; only their layer
+       changes. Placeholders on either side are dropped and rebuilt by
+       `normalizePlaceholdersAll` below. */
+    for (const c of Array.from(dst.children)) dst.removeChild(c);
+    for (const c of Array.from(src.children)) {
+      src.removeChild(c);
+      if (!isPlaceholder(c)) dst.appendChild(c);
+    }
+  }
+  model.setBarlines();
+  normalizeTies(model);
+  model.normalizePlaceholdersAll();
+  for (let vi = 1; vi <= model.totalVoices(); vi++) {
+    model.setCursor(Math.min(model.getCursor(vi), model.getVoiceLength(vi)), vi);
+  }
+  return { ok: true, movedMeasures: move, toVoice: target };
+}

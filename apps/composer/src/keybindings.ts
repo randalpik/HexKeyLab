@@ -336,6 +336,11 @@ export const KEYBINDINGS: KeySection[] = [
         desc: "Toggle the hide-empty / multimeasure-rest flag on every empty measure the selection touches, on the selected staves.",
         note: "The selection stays active, so repeated presses cycle (all take the state the fewest had).",
       },
+      {
+        keys: "Alt+V",
+        desc: "Move the selected whole measures into the other voice on the same staff (beat selection only).",
+        note: "Needs at least one WHOLE measure holding something, and the other voice free in each of them — otherwise it refuses and says why. The selection follows the music into its new voice, so pressing Alt+V again moves it straight back.",
+      },
       { keys: "Ctrl+C", desc: "Copy selection to clipboard." },
       { keys: "Ctrl+X", desc: "Cut selection to clipboard." },
       {

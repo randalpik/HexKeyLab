@@ -3246,6 +3246,91 @@ const SELECTION = {
     ],
   },
 
+  /* Alt+V — move the selected whole measures into the other voice on the same
+     staff (Max, backlog Composer/Features, 2026-09-17; his hotkey choice).
+     Correcting notes entered into the wrong voice. Asserted via
+     FIXTURE_ASSERTIONS.sel_altV_movesToOtherVoice. */
+  sel_altV_movesToOtherVoice: {
+    setup: `${FILL_M1_4N_V1}
+      /* a second measure, so "the rest of the score is untouched" is testable */
+      m.cursorToEnd(1);
+      for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [${A4_NOTE}], duration: '4', dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+    `,
+    setupKeys: [
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      { key: 'v', alt: true },
+    ],
+  },
+
+  /* Alt+V is its OWN INVERSE: the voice it left is empty afterwards, and the
+     selection followed the music, so a second press sends it straight back.
+     That is the property that makes it safe to reach for. */
+  sel_altV_roundTripsBack: {
+    setup: `${FILL_M1_4N_V1} m.setCursor(0, 1);`,
+    setupKeys: [
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      { key: 'v', alt: true },
+      { key: 'v', alt: true },
+    ],
+  },
+
+  /* Undo puts it back in one step (the move is one history entry). */
+  sel_altV_undoRestores: {
+    setup: `${FILL_M1_4N_V1} m.setCursor(0, 1);`,
+    setupKeys: [
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      { key: 'v', alt: true },
+      { key: 'z', ctrl: true },
+    ],
+  },
+
+  /* Refusal 1: the other voice already has something in that measure. All-or-
+     nothing — this exists to undo a mistake, so it must not make a subtler one. */
+  sel_altV_refusesOccupiedVoice: {
+    setup: `${FILL_M1_4N_V1}
+      m.setVoice(2); m.setCursor(0, 2);
+      m.insertChordAtCursor({ notes: [${A4_NOTE}], duration: '4', dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+    `,
+    setupKeys: [
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      { key: 'v', alt: true },
+    ],
+  },
+
+  /* Refusal 2: no WHOLE measure in the selection (2 of 4 beats). */
+  sel_altV_refusesPartialSelection: {
+    setup: `${FILL_M1_4N_V1} m.setCursor(0, 1);`,
+    setupKeys: [
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      { key: 'v', alt: true },
+    ],
+  },
+
+  /* Refusal 3: measure mode. Measure selection is staff-scoped and already
+     spans both voices, so "the other voice" has no meaning there. */
+  sel_altV_refusesMeasureMode: {
+    setup: `${FILL_M1_4N_V1} m.setCursor(0, 1);`,
+    setupKeys: [
+      { key: 'ArrowDown', shift: true },
+      { key: 'v', alt: true },
+    ],
+  },
+
   /* Emptying a WHOLE measure from BEAT mode leaves the voice's cell empty —
      one whole-measure placeholder — not a bar of rests (Max, backlog
      Composer/Features, 2026-09-17). Measure-mode selection always behaved this
@@ -15300,6 +15385,129 @@ export const FIXTURE_ASSERTIONS = {
         return s.cursorMode === 'voice' && s.selection === null
           ? { ok: true }
           : { ok: false, detail: 'cursorMode=' + s.cursorMode };
+      })()` },
+  ],
+  /* ── Alt+V: move selected whole measures to the other voice ────────────── */
+  sel_altV_movesToOtherVoice: [
+    { name: 'M1 moved from V1 to V2: V1 empty, V2 holds the 4 notes, M2 untouched',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const L = (mi, v) => {
+          const st = m.allMeasures()[mi].querySelector('staff[n="' + m.staffForVoice(v) + '"]');
+          return st.querySelectorAll('layer')[m.layerForVoice(v) - 1];
+        };
+        const kids = (mi, v) => Array.from(L(mi, v).children).map(c => c.localName);
+        const notes = (mi, v) => L(mi, v).querySelectorAll(':scope > note, :scope > chord').length;
+        if (notes(0, 1) !== 0) return { ok: false, detail: 'V1 M1 still has ' + notes(0, 1) + ' notes: [' + kids(0, 1) + ']' };
+        const ph = Array.from(L(0, 1).children).filter(c => c.localName === 'space' && c.getAttribute('data-placeholder') === 'true');
+        if (ph.length !== 1) return { ok: false, detail: 'V1 M1 = [' + kids(0, 1) + '] (expected one placeholder)' };
+        if (notes(0, 2) !== 4) return { ok: false, detail: 'V2 M1 has ' + notes(0, 2) + ' notes: [' + kids(0, 2) + ']' };
+        /* The rest of the score is untouched. */
+        if (notes(1, 1) !== 4) return { ok: false, detail: 'M2 V1 note count=' + notes(1, 1) };
+        if (notes(1, 2) !== 0) return { ok: false, detail: 'M2 V2 gained content' };
+        return { ok: true };
+      })()` },
+    { name: 'still in selection mode, and the selection followed the music into V2',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const st = H.inputState();
+        if (st.cursorMode !== 'select') return { ok: false, detail: 'cursorMode=' + st.cursorMode };
+        const sel = st.selection;
+        if (!sel || sel.kind !== 'beat') return { ok: false, detail: 'selection=' + JSON.stringify(sel) };
+        if (sel.voice !== 2) return { ok: false, detail: 'selection voice=' + sel.voice + ' (expected 2 — it should follow the notes)' };
+        if (sel.first !== 0 || sel.last !== 3) return { ok: false, detail: 'beats ' + sel.first + '..' + sel.last + ' (expected 0..3)' };
+        if (H.model.getCurrentVoice() !== 2) return { ok: false, detail: 'model voice=' + H.model.getCurrentVoice() };
+        return { ok: true };
+      })()` },
+    { name: 'status reports the move',
+      expr: `(() => {
+        const el = document.getElementById('composerStatus');
+        if (!el) return { ok: false, detail: 'no #composerStatus' };
+        return el.textContent.indexOf('Moved 1 measure to voice 2') >= 0
+          ? { ok: true } : { ok: false, detail: 'text=' + el.textContent };
+      })()` },
+  ],
+  sel_altV_roundTripsBack: [
+    { name: 'a second Alt+V brings the same bar back to V1',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const L = (mi, v) => {
+          const st = m.allMeasures()[mi].querySelector('staff[n="' + m.staffForVoice(v) + '"]');
+          return st.querySelectorAll('layer')[m.layerForVoice(v) - 1];
+        };
+        const notes = (mi, v) => L(mi, v).querySelectorAll(':scope > note, :scope > chord').length;
+        if (notes(0, 1) !== 4) return { ok: false, detail: 'V1 note count=' + notes(0, 1) + ' (expected the 4 back)' };
+        if (notes(0, 2) !== 0) return { ok: false, detail: 'V2 still holds ' + notes(0, 2) + ' notes' };
+        const sel = window.__hkl_composer.inputState().selection;
+        if (!sel || sel.voice !== 1) return { ok: false, detail: 'selection voice=' + (sel && sel.voice) + ' (expected 1)' };
+        return { ok: true };
+      })()` },
+  ],
+  sel_altV_undoRestores: [
+    { name: 'Ctrl+Z undoes the move in one step',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const L = (mi, v) => {
+          const st = m.allMeasures()[mi].querySelector('staff[n="' + m.staffForVoice(v) + '"]');
+          return st.querySelectorAll('layer')[m.layerForVoice(v) - 1];
+        };
+        const notes = (mi, v) => L(mi, v).querySelectorAll(':scope > note, :scope > chord').length;
+        if (notes(0, 1) !== 4) return { ok: false, detail: 'V1 note count=' + notes(0, 1) + ' after undo' };
+        if (notes(0, 2) !== 0) return { ok: false, detail: 'V2 note count=' + notes(0, 2) + ' after undo' };
+        return { ok: true };
+      })()` },
+  ],
+  sel_altV_refusesOccupiedVoice: [
+    { name: 'refused with an error naming the measure; nothing moved',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const L = (mi, v) => {
+          const st = m.allMeasures()[mi].querySelector('staff[n="' + m.staffForVoice(v) + '"]');
+          return st.querySelectorAll('layer')[m.layerForVoice(v) - 1];
+        };
+        const notes = (mi, v) => L(mi, v).querySelectorAll(':scope > note, :scope > chord').length;
+        if (notes(0, 1) !== 4) return { ok: false, detail: 'V1 note count=' + notes(0, 1) + ' (the move should have been refused)' };
+        if (notes(0, 2) !== 1) return { ok: false, detail: 'V2 note count=' + notes(0, 2) + ' (expected its own 1 note, untouched)' };
+        const el = document.getElementById('composerStatus');
+        if (!el || !el.classList.contains('status-error')) return { ok: false, detail: 'status class=' + (el && el.className) };
+        return el.textContent.indexOf('already has content in measure') >= 0
+          ? { ok: true } : { ok: false, detail: 'text=' + el.textContent };
+      })()` },
+  ],
+  sel_altV_refusesPartialSelection: [
+    { name: 'a 2-of-4-beat selection is refused; nothing moved',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const L = (mi, v) => {
+          const st = m.allMeasures()[mi].querySelector('staff[n="' + m.staffForVoice(v) + '"]');
+          return st.querySelectorAll('layer')[m.layerForVoice(v) - 1];
+        };
+        const notes = (mi, v) => L(mi, v).querySelectorAll(':scope > note, :scope > chord').length;
+        if (notes(0, 1) !== 4 || notes(0, 2) !== 0) {
+          return { ok: false, detail: 'V1=' + notes(0, 1) + ' V2=' + notes(0, 2) + ' — a partial selection must not move anything' };
+        }
+        const el = document.getElementById('composerStatus');
+        if (!el || !el.classList.contains('status-error')) return { ok: false, detail: 'status class=' + (el && el.className) };
+        return el.textContent.indexOf('at least one whole measure') >= 0
+          ? { ok: true } : { ok: false, detail: 'text=' + el.textContent };
+      })()` },
+  ],
+  sel_altV_refusesMeasureMode: [
+    { name: 'measure-mode selection is refused (the other voice has no meaning there)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const L = (mi, v) => {
+          const st = m.allMeasures()[mi].querySelector('staff[n="' + m.staffForVoice(v) + '"]');
+          return st.querySelectorAll('layer')[m.layerForVoice(v) - 1];
+        };
+        const notes = (mi, v) => L(mi, v).querySelectorAll(':scope > note, :scope > chord').length;
+        if (notes(0, 1) !== 4 || notes(0, 2) !== 0) return { ok: false, detail: 'V1=' + notes(0, 1) + ' V2=' + notes(0, 2) };
+        const st = window.__hkl_composer.inputState();
+        if (!st.selection || st.selection.kind !== 'measure') return { ok: false, detail: 'selection=' + JSON.stringify(st.selection) };
+        const el = document.getElementById('composerStatus');
+        if (!el || !el.classList.contains('status-error')) return { ok: false, detail: 'status class=' + (el && el.className) };
+        return el.textContent.indexOf('beat selection') >= 0
+          ? { ok: true } : { ok: false, detail: 'text=' + el.textContent };
       })()` },
   ],
   /* A bar emptied IN FULL from beat mode is an EMPTY CELL, not a bar of rests. */

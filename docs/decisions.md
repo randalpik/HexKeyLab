@@ -8513,3 +8513,43 @@ Fixtures: `sel_beat_cut_fullMeasure_empties`, `sel_beat_delete_partFullMeasure_e
 `sel_beat_cut_partialMeasure_keepsRests` (the guard that the ordinary partial case still fills — it
 passes on both old and new code by design, which is what makes it a regression guard rather than a
 restatement of the change).
+
+## Alt+V moves selected whole measures to the other voice (2026-09-17)
+
+**Decision** (Max; hotkey his call after I surveyed what was free): in a BEAT selection, `Alt+V` moves
+the measures the selection covers in full into the other voice on the same staff. Purpose: correcting
+notes entered into the wrong voice, which is easy to do.
+
+**Why Alt+V, and why the alternatives lost.** Every branch in `dispatchSelectionMode` explicitly excludes
+Alt, so the whole Alt namespace was free there. I first proposed `Alt+↑`/`Alt+↓` — it reads off voice
+mode's plain `↑`/`↓` ("previous / next voice") and avoids `Alt+←`/`Alt+→`, which are Back/Forward in
+Firefox. Max ruled that directionality is meaningless with two voices per staff and chose the single
+combo. `Ctrl+Shift+V` was rejected as Firefox's paste-plain-text sitting next to Ctrl+V; `Alt+V` carries
+the same class of risk (menu accelerators), which `preventDefault` is relied on to suppress — flagged to
+Max, who confirmed. **Not verified in Firefox from here** (no browser testing on Max's machine).
+
+**All-or-nothing, deliberately.** It refuses when no whole measure with content is covered, when the
+destination is occupied in any measure it would write into, or when the staff has no partner voice — with
+a reason naming the measure by `@n`. A feature whose job is to undo a mistake must not half-apply and
+create a subtler one. A fully-selected measure that is EMPTY in the source voice is skipped rather than
+refused, so it cannot make the destination check fail for a bar nothing would be written into.
+
+**The destination test is stricter than `layerIsEmpty`**: "nothing but placeholder `<space>`s". The house
+predicate (model/empty-flags.ts, used by hide-empty and multirest) also calls a layer holding an `<mRest>`
+empty, and an `<mRest>` is a written whole-measure rest — moving notes onto one would yield a measure with
+both.
+
+**The selection follows the music.** "Stay in selection mode" (Max) is implemented as retargeting the beat
+range onto the sibling voice over the moved measures, not leaving the highlight on the now-empty source.
+The highlight is *of the notes*, and the notes moved — and it makes `Alt+V` its own inverse, which is what
+you want from a fix-a-mistake key. It spans first-to-last moved measure, since the move set can skip a bar
+that was empty in the source.
+
+**Beat mode only.** Measure selection is staff-scoped and already spans both voices, so "the other voice"
+has no referent there; it errors.
+
+**`e.code === 'KeyV'` is matched before `e.key`** — Alt+letter does not give a plain letter in `e.key` on
+every platform (macOS composes Alt+V into '√'), and the binding means the physical key.
+
+Fixtures: `sel_altV_movesToOtherVoice`, `sel_altV_roundTripsBack`, `sel_altV_undoRestores`,
+`sel_altV_refusesOccupiedVoice`, `sel_altV_refusesPartialSelection`, `sel_altV_refusesMeasureMode`.

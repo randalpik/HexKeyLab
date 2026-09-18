@@ -196,7 +196,9 @@ Hold **Shift** while moving the cursor to select:
 - **Shift+↑/↓**: select measures across staves.
 - **Ctrl+Shift+←/→**: extend the selection to the next bar line.
 
-Then **Ctrl+C** / **Ctrl+X** / **Ctrl+V** copy, cut, and paste through the real OS clipboard, so you can move material within a score. Paste snaps to the current beat and pushes following content as needed. **Backspace** / **Delete** clear the selection. Clearing part of a bar leaves rests in the gap; clearing a **whole** bar leaves it genuinely empty — the same state the bar had before you entered anything, whichever selection mode you used to point at it.
+Then **Ctrl+C** / **Ctrl+X** / **Ctrl+V** copy, cut, and paste through the real OS clipboard, so you can move material within a score. Paste snaps to the current beat and pushes following content as needed. **Alt+V** moves the selected whole measures into the **other voice on the same staff** — the fix for notes typed into the wrong voice. It needs at least one *whole* measure holding something, and the other voice has to be free in each of them; otherwise it refuses and tells you which measure is in the way, rather than moving part of it. The selection follows the music across, so pressing **Alt+V** again moves it straight back.
+
+**Backspace** / **Delete** clear the selection. Clearing part of a bar leaves rests in the gap; clearing a **whole** bar leaves it genuinely empty — the same state the bar had before you entered anything, whichever selection mode you used to point at it.
 
 ---
 

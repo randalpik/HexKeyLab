@@ -1501,6 +1501,37 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     return true;
   }
 
+  /** Rebuild a beat selection covering measures [first..last] of `measureIdxs`
+   *  in `voice`, for after the content moved there. Returns null when the span
+   *  has no beats in that voice — the caller then exits selection mode rather
+   *  than leaving a stale range behind.
+   *
+   *  Spans first-to-last rather than the exact set: a selection is contiguous,
+   *  and the move set can skip a bar that was empty in the source voice. */
+  function reselectBeatsOverMeasures(
+    voice: Voice, measureIdxs: number[],
+  ): Extract<SelectionState, { kind: 'beat' }> | null {
+    if (!measureIdxs.length) return null;
+    const mLo = measureIdxs[0];
+    const mHi = measureIdxs[measureIdxs.length - 1];
+    const tStart = model.measureStartTick(mLo);
+    const tEnd = model.measureStartTick(mHi) + model.measureTicksAt(mHi);
+    const bounds = beatBoundariesInVoice(model, voice);
+    let first = -1, last = -1;
+    for (let i = 0; i < bounds.length - 1; i++) {
+      const a = model.getTickPositionAt(voice, bounds[i]);
+      const b = model.getTickPositionAt(voice, bounds[i + 1]);
+      if (a >= tStart - 1e-6 && b <= tEnd + 1e-6) {
+        if (first < 0) first = i;
+        last = i;
+      }
+    }
+    if (first < 0) return null;
+    model.setVoice(voice);
+    model.setCursor(bounds[last + 1] ?? model.getVoiceLength(voice), voice);
+    return { kind: 'beat', voice, origin: first, first, last, lastMoved: 'last' };
+  }
+
   /** Enter selection mode from voice mode based on the Shift+arrow direction.
    *  Returns true on success. Both Shift+Left and Shift+Right enter beat
    *  mode with the current beat selected (single-beat selection); the
@@ -1792,6 +1823,64 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
        bounded restore after the range (Phase 4a). Works for beat or measure
        selection (the touched measures). The modal opens over the live
        selection; on apply we exit to voice mode. */
+    /* Alt+V — move the selected WHOLE measures into the other voice on this
+       staff (Max, 2026-09-17; hotkey his choice). Exists to correct notes
+       entered into the wrong voice, which is easy to do, so it is all-or-
+       nothing: it refuses rather than half-moving, and the refusal says why.
+       Beat mode only — measure selection is staff-scoped and already spans both
+       voices, so "the other voice" has no meaning there.
+
+       Matched on `e.code` first: Alt+letter does not reliably give a plain
+       letter in `e.key` on every platform (macOS composes Alt+V into '√'), and
+       the physical key is what the binding means. preventDefault keeps the
+       browser's own Alt accelerators (Firefox's menu bar) out of it. */
+    if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey
+        && (e.code === 'KeyV' || e.key === 'v' || e.key === 'V')) {
+      e.preventDefault();
+      if (hooks.isPlaybackActive()) return true;
+      if (sel.kind !== 'beat') {
+        hooks.setStatus?.('Move to the other voice needs a beat selection (Shift+←/→).', 'error');
+        return true;
+      }
+      const bounds = beatBoundariesInVoice(model, sel.voice);
+      const tLo = model.getTickPositionAt(sel.voice, bounds[sel.first]);
+      const tHi = model.getTickPositionAt(sel.voice, bounds[sel.last + 1]);
+      const captured: SelectionState = sel;
+      let res: ReturnType<typeof model.moveFullMeasuresToSiblingVoice> | null = null;
+      withHistory(
+        'move-voice',
+        () => {
+          res = model.moveFullMeasuresToSiblingVoice(sel.voice, tLo, tHi);
+          return res.ok;
+        },
+        { sourceSelection: captured },
+      );
+      const done = res as ReturnType<typeof model.moveFullMeasuresToSiblingVoice> | null;
+      if (!done || !done.ok) {
+        hooks.setStatus?.(done ? done.reason : 'Move to the other voice failed.', 'error');
+        return true;
+      }
+      /* The selection FOLLOWS THE MUSIC into its new voice: the highlight is on
+         the notes, and they moved. It also makes the operation its own inverse
+         — press Alt+V again and the same bars come back, the voice they left
+         now being empty — which is what you want from a fix-a-mistake key. */
+      const reselected = reselectBeatsOverMeasures(done.toVoice, done.movedMeasures);
+      if (reselected) {
+        state.selection = reselected;
+      } else {
+        state.selection = null;
+        state.cursorMode = 'voice';
+      }
+      const n = done.movedMeasures.length;
+      hooks.setStatus?.(
+        'Moved ' + n + (n === 1 ? ' measure' : ' measures') + ' to voice ' + done.toVoice + '.',
+        'action',
+      );
+      hooks.onStateChange();
+      hooks.onChange();
+      return true;
+    }
+
     if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && (e.key === 's' || e.key === 'S')) {
       e.preventDefault();
       if (hooks.isPlaybackActive()) return true;

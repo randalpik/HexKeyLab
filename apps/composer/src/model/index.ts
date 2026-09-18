@@ -89,6 +89,8 @@ import {
 import {
   clearBeatRange as clearBeatRangeImpl,
   clearMeasureRange as clearMeasureRangeImpl,
+  moveFullMeasuresToSiblingVoice as moveFullMeasuresToSiblingVoiceImpl,
+  type VoiceMoveResult,
 } from './measure-ops.js';
 import {
   emptyCellsIn as emptyCellsInImpl,
@@ -2151,6 +2153,20 @@ export class ComposerModel {
   /** Layer @n (1|2) that flat voice `v` lives on (defaults to 1). */
   layerForVoice(v: number): number {
     return this.instrumentTable().layerForVoice[v] ?? 1;
+  }
+
+  /** The OTHER voice on the same staff as `v` — the one sharing its staff @n on
+   *  the other layer @n — or null when that staff carries only one voice.
+   *  Derived from the instrument table rather than assumed to be `v ± 1`, so it
+   *  stays correct for any instrument layout. */
+  siblingVoiceOf(v: Voice): Voice | null {
+    const staff = this.staffForVoice(v);
+    const layer = this.layerForVoice(v);
+    const total = this.totalVoices();
+    for (let o = 1 as Voice; o <= total; o++) {
+      if (o !== v && this.staffForVoice(o) === staff && this.layerForVoice(o) !== layer) return o;
+    }
+    return null;
   }
 
   /** The instrument owning flat voice `v` (defaults to the first instrument). */
@@ -4771,6 +4787,14 @@ export class ComposerModel {
    *  Runs normalizeTies + normalizePlaceholders at the end. */
   clearBeatRange(voice: Voice, tLoAbs: number, tHiAbs: number): void {
     clearBeatRangeImpl(this, voice, tLoAbs, tHiAbs);
+  }
+
+  /** Move `voice`'s content, in every measure the tick span [tLoAbs, tHiAbs)
+   *  covers ENTIRELY, to the other voice on the same staff. All-or-nothing: it
+   *  refuses unless at least one whole measure with content is covered and the
+   *  destination is free in each of them. See model/measure-ops.ts. */
+  moveFullMeasuresToSiblingVoice(voice: Voice, tLoAbs: number, tHiAbs: number): VoiceMoveResult {
+    return moveFullMeasuresToSiblingVoiceImpl(this, voice, tLoAbs, tHiAbs);
   }
 
   /** Paste a list of cloned source elements (chord/note/rest/tuplet) into
