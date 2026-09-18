@@ -2663,6 +2663,77 @@ const PERFORMANCE = {
       ], duration: '4', dots: 0 });
     `,
   },
+
+  /* MEASURE GATE — the headline case. V1 has whole notes in m1 and m2 and
+   * NOTHING in m3; V3's only note is a whole in m3, deliberately the SAME
+   * pitch+color as V1's m1 note. Before the measure gate, striking V1's m1 A3
+   * also advanced V3 (its frontier was open from the downbeat) and V3 drew a
+   * bar over the whole intro. Asserted by FIXTURE_ASSERTIONS.perfLateVoiceDormant,
+   * which also pins the ended-voice bar clearing mid-piece and the end-of-score
+   * freeze. */
+  perfLateVoiceDormant: {
+    setup: `
+      window.__bridgeMock.reset();
+      m.appendMeasure();
+      m.appendMeasure();
+      m.setVoice(1);
+      m.setCursor(m.getMeasureStartCursor(1, 0), 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', lightColorHex: '#888', velocity: 80 }], duration: '1', dots: 0 });
+      m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 2, pname: 'b', accid: '', oct: 3, midi: 59, colorHex: '#888', lightColorHex: '#888', velocity: 80 }], duration: '1', dots: 0 });
+      m.setVoice(3);
+      m.setCursor(m.getMeasureStartCursor(3, 2), 3);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', lightColorHex: '#888', velocity: 80 }], duration: '1', dots: 0 });
+    `,
+  },
+
+  /* MEASURE GATE — mid-piece gap. V1 plays m1/m2/m3; V3 plays m1, is EMPTY in
+   * m2 (invisible placeholders), and resumes in m3 with the same pitch as V1's
+   * m2 note. V3's bar must disappear for m2, V1's m2 strike must not advance
+   * V3, and V3's bar must return only when V3 itself strikes in m3 (no entry
+   * cue). Asserted by FIXTURE_ASSERTIONS.perfVoiceRestGapHidesBar. */
+  perfVoiceRestGapHidesBar: {
+    setup: `
+      window.__bridgeMock.reset();
+      m.appendMeasure();
+      m.appendMeasure();
+      m.setVoice(1);
+      m.setCursor(m.getMeasureStartCursor(1, 0), 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', lightColorHex: '#888', velocity: 80 }], duration: '1', dots: 0 });
+      m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 1, pname: 'e', accid: '', oct: 4, midi: 64, colorHex: '#888', lightColorHex: '#888', velocity: 80 }], duration: '1', dots: 0 });
+      m.setCursor(m.getMeasureStartCursor(1, 2), 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 2, pname: 'b', accid: '', oct: 3, midi: 59, colorHex: '#888', lightColorHex: '#888', velocity: 80 }], duration: '1', dots: 0 });
+      m.setVoice(3);
+      m.setCursor(m.getMeasureStartCursor(3, 0), 3);
+      m.insertChordAtCursor({ notes: [{ q: -4, r: -2, pname: 'c', accid: '', oct: 4, midi: 60, colorHex: '#888', lightColorHex: '#888', velocity: 80 }], duration: '1', dots: 0 });
+      m.setCursor(m.getMeasureStartCursor(3, 2), 3);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 1, pname: 'e', accid: '', oct: 4, midi: 64, colorHex: '#888', lightColorHex: '#888', velocity: 80 }], duration: '1', dots: 0 });
+    `,
+  },
+
+  /* MEASURE GATE — a WRITTEN rest is content, so it keeps the voice on stage.
+   * V1 plays m1 and m2; V3 plays m1 and has a visible whole REST in m2. When
+   * the current measure becomes m2, V3's bar must STAY parked past its m1 note
+   * (unlike perfVoiceRestGapHidesBar's empty layer, which hides it) — the
+   * isMeasureEmptyInVoice distinction. Asserted by
+   * FIXTURE_ASSERTIONS.perfWrittenRestKeepsBar. */
+  perfWrittenRestKeepsBar: {
+    setup: `
+      window.__bridgeMock.reset();
+      m.appendMeasure();
+      m.setVoice(1);
+      m.setCursor(m.getMeasureStartCursor(1, 0), 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', lightColorHex: '#888', velocity: 80 }], duration: '1', dots: 0 });
+      m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 2, pname: 'b', accid: '', oct: 3, midi: 59, colorHex: '#888', lightColorHex: '#888', velocity: 80 }], duration: '1', dots: 0 });
+      m.setVoice(3);
+      m.setCursor(m.getMeasureStartCursor(3, 0), 3);
+      m.insertChordAtCursor({ notes: [{ q: -4, r: -2, pname: 'c', accid: '', oct: 4, midi: 60, colorHex: '#888', lightColorHex: '#888', velocity: 80 }], duration: '1', dots: 0 });
+      m.setCursor(m.getMeasureStartCursor(3, 1), 3);
+      m.insertRestAtCursor({ duration: '1', dots: 0 });
+    `,
+  },
 };
 
 /* ── Export fixtures ──────────────────────────────────────────────────── */
@@ -8362,6 +8433,155 @@ export const FIXTURE_ASSERTIONS = {
         if (at() !== chordId + '@right') return { ok: false, detail: 'bar did not trail the completed chord: ' + at() };
         if (!M.__performance.isActive()) return { ok: false, detail: 'auto-exited on reaching the end' };
         return { ok: true, detail: 'chord waits for all members, then the bar trails it' };
+      })()` },
+  ],
+  /* The headline case: a voice that doesn't enter until m3 must not be expected
+   * — or draw a bar — while the player is in m1/m2, even when its entry note is
+   * identical to one being played there. Also pins the two consequences of the
+   * measure gate: an ended voice's bar clears once the current measure has no
+   * content for it, and at the end of the score every bar freezes. */
+  perfLateVoiceDormant: [
+    { name: 'a late-entering voice is neither expected nor shown until its measure',
+      expr: `(() => {
+        const M = window.__hkl_composer;
+        const m = M.model;
+        const colorOf = (meiId) => {
+          const loc = m.findElement(meiId);
+          const el = m.flatChildren(loc.voice)[loc.index];
+          const n = el.localName === 'chord' ? el.querySelector('note') : el;
+          return n.getAttribute('color');
+        };
+        const strikeAt = (q, r, color) => M.__performance.strike(
+          { q, r, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: color, lightColorHex: '#888', velocity: 80 });
+        const at = (v) => { const b = M.__performance.bars()[v]; return b ? b.meiId + '@' + b.edge : 'none'; };
+        const exp = () => M.__performance.expected().slice().sort((a, b) => a - b).join(',');
+        const evs = M.buildPlayback(m).filter(e => e.notes.length && e.meiId);
+        const v1 = evs.filter(e => e.voice === 1), v3 = evs.filter(e => e.voice === 3);
+        if (v1.length !== 2 || v3.length !== 1)
+          return { ok: false, detail: 'events v1=' + v1.length + ' v3=' + v3.length + ' (expected 2,1)' };
+        const a3 = v1[0].meiId, b3 = v1[1].meiId, a3late = v3[0].meiId;
+        M.__performance.start();
+        if (!M.__performance.isActive()) return { ok: false, detail: 'not active after start' };
+        /* m1: only V1 is in play. V3 (enters m3) has NO bar and is not expected. */
+        if (at(1) !== a3 + '@left') return { ok: false, detail: 'V1 initial bar ' + at(1) };
+        if (at(3) !== 'none') return { ok: false, detail: 'V3 drew a bar before entering: ' + at(3) };
+        if (exp() !== '1') return { ok: false, detail: 'expected voices in m1: ' + exp() };
+        /* THE BUG: V3's m3 note is the same pitch+color as V1's m1 A3. This
+           strike must advance V1 and ONLY V1. */
+        strikeAt(0, 0, colorOf(a3));
+        if (at(1) !== a3 + '@right') return { ok: false, detail: 'V1 bar after A3: ' + at(1) };
+        if (at(3) !== 'none') return { ok: false, detail: 'V3 claimed an m1 strike: ' + at(3) };
+        /* m2 is V1's alone too; a stray A3 reaches nobody. */
+        if (exp() !== '1') return { ok: false, detail: 'expected voices in m2: ' + exp() };
+        strikeAt(0, 0, colorOf(a3));
+        if (at(3) !== 'none') return { ok: false, detail: 'V3 advanced on a stray A3: ' + at(3) };
+        /* V1's last note. The current measure becomes m3, which has no V1
+           content → V1's bar disappears. V3 is now expected but still shows
+           nothing: no entry cue, the bar comes with the strike. */
+        strikeAt(0, 2, colorOf(b3));
+        if (exp() !== '3') return { ok: false, detail: 'expected voices in m3: ' + exp() };
+        if (at(1) !== 'none') return { ok: false, detail: 'ended V1 kept its bar in m3: ' + at(1) };
+        if (at(3) !== 'none') return { ok: false, detail: 'V3 was cued before striking: ' + at(3) };
+        /* V3 enters: its bar appears trailing the note it just played. */
+        strikeAt(0, 0, colorOf(a3late));
+        if (at(3) !== a3late + '@right') return { ok: false, detail: 'V3 bar on entry: ' + at(3) };
+        if (!M.__performance.isFinished()) return { ok: false, detail: 'not finished after every step' };
+        if (!M.__performance.isActive()) return { ok: false, detail: 'auto-exited at end of score' };
+        /* End of score: no current measure, so every bar stays put. */
+        if (at(3) !== a3late + '@right') return { ok: false, detail: 'V3 bar moved at end: ' + at(3) };
+        document.getElementById('btnPerform').click();
+        return { ok: true, detail: 'dormant late voice + no cue + ended-voice bar clears + end freeze' };
+      })()` },
+  ],
+  /* A mid-piece gap is the same problem as a late entry: V3 is empty in m2, so
+   * its bar disappears there and V1's m2 note cannot advance it — even though
+   * that note is exactly V3's m3 entry pitch. */
+  perfVoiceRestGapHidesBar: [
+    { name: 'a voice empty in this measure loses its bar and stops listening',
+      expr: `(() => {
+        const M = window.__hkl_composer;
+        const m = M.model;
+        const colorOf = (meiId) => {
+          const loc = m.findElement(meiId);
+          const el = m.flatChildren(loc.voice)[loc.index];
+          const n = el.localName === 'chord' ? el.querySelector('note') : el;
+          return n.getAttribute('color');
+        };
+        const strikeAt = (q, r, color) => M.__performance.strike(
+          { q, r, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: color, lightColorHex: '#888', velocity: 80 });
+        const at = (v) => { const b = M.__performance.bars()[v]; return b ? b.meiId + '@' + b.edge : 'none'; };
+        const exp = () => M.__performance.expected().slice().sort((a, b) => a - b).join(',');
+        const evs = M.buildPlayback(m).filter(e => e.notes.length && e.meiId);
+        const v1 = evs.filter(e => e.voice === 1), v3 = evs.filter(e => e.voice === 3);
+        if (v1.length !== 3 || v3.length !== 2)
+          return { ok: false, detail: 'events v1=' + v1.length + ' v3=' + v3.length + ' (expected 3,2)' };
+        const a3 = v1[0].meiId, e4a = v1[1].meiId, b3 = v1[2].meiId;
+        const c4 = v3[0].meiId, e4b = v3[1].meiId;
+        M.__performance.start();
+        if (at(1) !== a3 + '@left' || at(3) !== c4 + '@left')
+          return { ok: false, detail: 'initial bars ' + at(1) + ' / ' + at(3) };
+        if (exp() !== '1,3') return { ok: false, detail: 'expected voices in m1: ' + exp() };
+        strikeAt(0, 0, colorOf(a3));
+        if (at(1) !== a3 + '@right') return { ok: false, detail: 'V1 bar after A3: ' + at(1) };
+        if (at(3) !== c4 + '@left') return { ok: false, detail: 'V3 moved on V1 m1: ' + at(3) };
+        /* V3 finishes m1 → the current measure becomes m2, where V3 is empty. */
+        strikeAt(-4, -2, colorOf(c4));
+        if (at(3) !== 'none') return { ok: false, detail: 'V3 kept a bar through its empty m2: ' + at(3) };
+        if (exp() !== '1') return { ok: false, detail: 'expected voices in m2: ' + exp() };
+        /* V1's m2 note is the SAME pitch as V3's m3 entry — it must not reach V3. */
+        strikeAt(0, 1, colorOf(e4a));
+        if (at(1) !== e4a + '@right') return { ok: false, detail: 'V1 bar after m2: ' + at(1) };
+        if (at(3) !== 'none') return { ok: false, detail: 'V3 claimed V1 m2 strike: ' + at(3) };
+        /* m3: V3 is expected again, but still no bar until it plays. */
+        if (exp() !== '1,3') return { ok: false, detail: 'expected voices in m3: ' + exp() };
+        if (at(3) !== 'none') return { ok: false, detail: 'V3 was cued on re-entry: ' + at(3) };
+        strikeAt(0, 1, colorOf(e4b));
+        if (at(3) !== e4b + '@right') return { ok: false, detail: 'V3 bar on re-entry: ' + at(3) };
+        strikeAt(0, 2, colorOf(b3));
+        if (!M.__performance.isFinished()) return { ok: false, detail: 'not finished after every step' };
+        document.getElementById('btnPerform').click();
+        return { ok: true, detail: 'bar hides over the gap; the gap note is unclaimable until its measure' };
+      })()` },
+  ],
+  /* The isMeasureEmptyInVoice distinction: a WRITTEN rest is content, so a voice
+   * notated tacet for a bar is still on stage and keeps its bar — unlike
+   * perfVoiceRestGapHidesBar's empty (invisible-placeholder) layer. */
+  perfWrittenRestKeepsBar: [
+    { name: 'a written rest keeps the voice on stage, bar and all',
+      expr: `(() => {
+        const M = window.__hkl_composer;
+        const m = M.model;
+        const colorOf = (meiId) => {
+          const loc = m.findElement(meiId);
+          const el = m.flatChildren(loc.voice)[loc.index];
+          const n = el.localName === 'chord' ? el.querySelector('note') : el;
+          return n.getAttribute('color');
+        };
+        const strikeAt = (q, r, color) => M.__performance.strike(
+          { q, r, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: color, lightColorHex: '#888', velocity: 80 });
+        const at = (v) => { const b = M.__performance.bars()[v]; return b ? b.meiId + '@' + b.edge : 'none'; };
+        const exp = () => M.__performance.expected().slice().sort((a, b) => a - b).join(',');
+        const evs = M.buildPlayback(m).filter(e => e.notes.length && e.meiId);
+        const v1 = evs.filter(e => e.voice === 1), v3 = evs.filter(e => e.voice === 3);
+        if (v1.length !== 2 || v3.length !== 1)
+          return { ok: false, detail: 'events v1=' + v1.length + ' v3=' + v3.length + ' (expected 2,1)' };
+        const a3 = v1[0].meiId, b3 = v1[1].meiId, c4 = v3[0].meiId;
+        M.__performance.start();
+        if (at(1) !== a3 + '@left' || at(3) !== c4 + '@left')
+          return { ok: false, detail: 'initial bars ' + at(1) + ' / ' + at(3) };
+        strikeAt(0, 0, colorOf(a3));
+        strikeAt(-4, -2, colorOf(c4));
+        /* V3 has consumed everything it has, and m2 holds only its whole rest —
+           it is tacet, not absent, so the bar stays past its last note. */
+        if (exp() !== '1') return { ok: false, detail: 'expected voices in m2: ' + exp() };
+        if (at(3) !== c4 + '@right')
+          return { ok: false, detail: 'V3 bar cleared over a written rest: ' + at(3) };
+        strikeAt(0, 2, colorOf(b3));
+        if (!M.__performance.isFinished()) return { ok: false, detail: 'not finished after every step' };
+        if (at(3) !== c4 + '@right') return { ok: false, detail: 'V3 bar moved at end: ' + at(3) };
+        if (at(1) !== b3 + '@right') return { ok: false, detail: 'V1 bar at end: ' + at(1) };
+        document.getElementById('btnPerform').click();
+        return { ok: true, detail: 'written rest keeps the bar; empty layer does not' };
       })()` },
   ],
   /* Every system's staff lines must land on the device-pixel grid (crisp) in a

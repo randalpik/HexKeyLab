@@ -8394,3 +8394,64 @@ release-duration parameter, so it is real scope; not folded in.
 **Where**: `apps/hkl/src/audio/engine.ts`, `apps/hkl/src/state/audio.ts`,
 `apps/hkl/src/ui/pedalHud.ts` (stale-tint gate moved onto the shared threshold so a resting partial
 press is not flagged as divergence), `apps/hkl/src/midi/handler.ts` (comment only).
+
+---
+
+**Performance mode expects voices only in the measures where they exist (2026-09-17).**
+A voice that didn't enter until later in the piece drew a playback bar from m1 and matched strikes
+from the downbeat, independently of every other voice. Root cause: `PerformanceMatcher` discarded
+`atMs` at construction (`list.map((x) => x.step)`) and so held **no position information at all** —
+`onStrike` tested every voice against every strike forever. A voice entering at m20 was advanced by
+any m1 strike whose `(name, octave, color)` identity matched its entry note, teleporting its bar 19
+bars ahead; the far side of every mid-piece rest had the same hole, since rests are filtered out of
+the step list entirely.
+
+**Not a redesign** (Max, explicitly): per-voice frontiers and per-voice bars are the intended visual
+and are untouched, as are identity matching, strict chord completion, independent advance and the
+trailing bar. What was added is a measure-scoped notion of where the performance is:
+
+- **Current measure** = the measure of the earliest **pending** step across unfinished voices.
+  Pending rather than last-played is load-bearing: the instant m19's last note is consumed the
+  current measure becomes m20, so a voice entering on the m20 downbeat is already listening when
+  that downbeat is struck — including when it is struck simultaneously with another voice's, which
+  a last-played definition would drop.
+- **`listening(V)`** = V's pending step is in the current measure. This is the whole fix: a late
+  entry, or a note on the far side of a rest, is simply not matchable until the performance
+  arrives. Within a measure nothing changes.
+- **`barVisible(V)`** = V has content in the current measure — Max's rule verbatim: "if the current
+  measure does not have a voice that has an active cursor in a previous measure, that cursor should
+  disappear." Uses `model.isMeasureEmptyInVoice` (index.ts:1310), which was dead code until now.
+  It counts **written** rests as content, so a voice notated tacet for a bar keeps its bar (it is on
+  stage, just silent) and only a truly empty layer — invisible placeholders / `<mRest>` — hides it.
+- The two rules deliberately differ: a voice can be on stage without being listened to, when it is
+  present in the measure but has already consumed its notes there.
+- **No cue on re-entry** (Max's call): a returning voice's bar stays hidden until it strikes, then
+  reappears trailing the note just played. The pre-first-strike left-edge bar survives only for
+  voices in play in the first sounding measure.
+- **No deadlock by construction**: the voice attaining the earliest pending step is always listening.
+
+**Repeat-safety**: steps carry a measure **occurrence** ordinal, not a measure index — assigned in
+one pass over `buildPlayback`'s globally atMs-sorted stream, opening a new occurrence whenever the
+measure changes. Measures are global, so a measure's attacks are contiguous in that stream whatever
+voices they belong to, and a repeated measure opens a second, distinct occurrence. Comparing raw
+indices would make a repeat's two passes indistinguishable.
+
+**Supersedes, in part, "Performance mode's bar trails the player" (2026-09-14)**: a voice that ends
+mid-piece no longer keeps its bar parked once the current measure has no content for it. The
+end-of-score half of that ruling is preserved and now falls out of the gate for free — with every
+voice finished there are no pending steps, hence no current measure, so every bar freezes where it
+is and the mode stays on.
+
+**Cost**: none at runtime worth measuring — the single-instrument gate caps this at 4 voices, so the
+current measure is a 4-element min per strike. Construction resolves each step's measure off the
+cached voice index (`findElement` + `getFlatStopInfo`, O(1)) rather than `getMeasureIdxForId`'s
+per-call scan, folded into the `findElement` lookup `colorsForElement` already performed.
+
+**Where**: `apps/composer/src/render/performance.ts` (the whole substance), plus one `expected()`
+line on main.ts's `__performance` test hook. No bridge, cursor or overlay change was needed:
+`PerfAdvance.meiId` is already nullable, `cursor.setPlaybackPosition(voice, null)` already deletes
+and hides a bar, main.ts's advance loop already guards scroll/head-tracking with `if (a.meiId)`, and
+the `composer-playback` message and OBS overlay rebuild `bars` wholesale from `getPlaybackBars()`.
+Fixtures: `perfLateVoiceDormant` (late entry dormant + no cue + ended-voice bar clears + end-of-score
+freeze), `perfVoiceRestGapHidesBar` (mid-piece gap; the gap note unclaimable until its measure),
+`perfWrittenRestKeepsBar` (the written-rest-vs-empty-layer distinction).

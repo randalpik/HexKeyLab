@@ -1856,5 +1856,8 @@ void bootRenderer();
     bars: (): Record<number, { meiId: string; edge: string }> =>
       Object.fromEntries(cursor.getPlaybackBars().map((b) => [b.voice, { meiId: b.meiId, edge: b.edge }])),
     isFinished: (): boolean => perfMatcher?.isFinished() ?? false,
+    /** The voices a strike is currently matched against — those whose pending
+     *  step is in the measure the performance is in. */
+    expected: (): number[] => perfMatcher?.expected() ?? [],
   },
 };

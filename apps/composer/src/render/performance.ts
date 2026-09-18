@@ -10,8 +10,21 @@
 // stay distinct) and, in the duplicate-key layouts (Pythagorean 'P' /
 // Semiditonal 'D'), a frequency fallback additionally accepts any same-pitch
 // variant ("allow any variant"). Strict otherwise: a voice advances only when
-// its full expected set is struck; a strike matching no current-frontier voice
-// is silently ignored (no failure state).
+// its full expected set is struck; a strike matching no expected voice is
+// silently ignored (no failure state).
+//
+// MEASURE GATE (2026-09-17): voices are expected only in the measures where
+// they exist. The "current measure" is the measure of the EARLIEST PENDING step
+// across unfinished voices — pending rather than last-played, so that the
+// instant the last note of m19 is consumed the current measure becomes m20 and
+// a voice entering on the m20 downbeat is already listening when that downbeat
+// is struck (including simultaneously with another voice's). Two rules:
+//   listening(V)  = V's pending step is in the current measure
+//   barVisible(V) = V has content in the current measure
+// They differ on purpose: a voice can be on stage (bar shown) without being
+// listened to, when it is present in the measure but has already consumed its
+// notes there. Without this gate the matcher kept no position information at
+// all, so a voice entering at m20 was matchable — and drew a bar — from m1.
 //
 // Reuses buildPlayback for structure (per-voice ordered attacks, sounding
 // coords post-8va, tie-chain coalescing, rest-skipping). Color — which
@@ -43,6 +56,10 @@ interface ExpectedNote {
 interface Step {
   meiId: string;
   notes: ExpectedNote[];
+  /** Measure OCCURRENCE this step lives in — an ordinal over the play-order
+   *  measure timeline, not a measure index, so a repeated measure is a second
+   *  distinct occurrence. The gate compares these, never raw indices. */
+  occ: number;
 }
 
 interface VoiceState {
@@ -59,8 +76,9 @@ interface VoiceState {
  *  never moves backward, which keeps the follow-scroll monotonic.
  *  `meiId` is the element the bar sits on, `edge` which side: 'right' for a
  *  completed note, 'left' only for the pre-performance start position (nothing
- *  played yet → the bar sits before the first note). null only if a voice has
- *  no steps at all. */
+ *  played yet → the bar sits before the first note). `meiId: null` CLEARS the
+ *  voice's bar — a voice with no steps at all, one that hasn't entered yet, or
+ *  one the current measure has no content for. */
 export interface PerfAdvance {
   voice: Voice;
   meiId: string | null;
@@ -76,17 +94,30 @@ function idKeyFor(q: number, r: number, color: string): string {
 }
 
 /** Per-member @color of the chord/note at `meiId`, in DOM order (zips 1:1 with
- *  buildPlayback's event.notes, which walk the same <note> children). */
-function colorsForElement(model: ComposerModel, meiId: string): string[] {
+ *  buildPlayback's event.notes, which walk the same <note> children), plus the
+ *  index of the measure it lives in. One findElement lookup serves both, and
+ *  the measure comes off the cached voice index (O(1)) rather than
+ *  getMeasureIdxForId's per-call scan. */
+function elementInfo(model: ComposerModel, meiId: string): { colors: string[]; mi: number } {
   const loc = model.findElement(meiId);
-  if (!loc) return [];
+  if (!loc) return { colors: [], mi: -1 };
   const el = model.flatChildren(loc.voice)[loc.index];
-  if (!el) return [];
-  return extractResolvedFromElement(el).map((n) => n.colorHex);
+  if (!el) return { colors: [], mi: -1 };
+  const info = model.getFlatStopInfo(loc.voice, loc.index);
+  return {
+    colors: extractResolvedFromElement(el).map((n) => n.colorHex),
+    mi: info ? info.measureIdx : -1,
+  };
 }
 
 export class PerformanceMatcher {
   private voices = new Map<Voice, VoiceState>();
+  /** Per voice, the measure occurrences it has content in — drives bar
+   *  visibility ("is this voice on stage here"), independently of what it is
+   *  waiting for. */
+  private present = new Map<Voice, Set<number>>();
+  /** Voices currently showing a bar, so a hide is emitted once, not per strike. */
+  private shown = new Set<Voice>();
   private mode: TuningMode;
   private dupMode: boolean;
 
@@ -100,13 +131,27 @@ export class PerformanceMatcher {
       (e) => e.notes.length > 0 && e.voice != null && e.meiId,
     );
 
+    /* Measure OCCURRENCES: walk the globally atMs-sorted stream and open a new
+       occurrence whenever the measure changes. Every voice shares one measure
+       timeline (measures are global), so a measure's attacks are contiguous
+       here regardless of which voices they belong to — and a repeat revisiting
+       the same measure opens a second, distinct occurrence. */
+    const occMeasure: number[] = [];
+    let occ = -1;
+    let prevMi = -2;
+
     /* Group per voice in atMs order, merging attacks that share an onset within
        a voice into one step (a chord split by a partial tie emits several
        same-atMs events — the player strikes it once). */
     const byVoice = new Map<Voice, { atMs: number; step: Step }[]>();
     for (const e of events) {
       const v = e.voice as Voice;
-      const colors = colorsForElement(model, e.meiId!);
+      const { colors, mi } = elementInfo(model, e.meiId!);
+      if (mi !== prevMi) {
+        occ++;
+        occMeasure.push(mi);
+        prevMi = mi;
+      }
       const notes: ExpectedNote[] = e.notes.map((c, i) => ({
         idKey: idKeyFor(c.q, c.r, colors[i] ?? ''),
         hz: freqAt(c.q, c.r, this.mode),
@@ -118,35 +163,83 @@ export class PerformanceMatcher {
       if (prev && Math.abs(prev.atMs - e.atMs) < 1e-6) {
         prev.step.notes.push(...notes);
       } else {
-        list.push({ atMs: e.atMs, step: { meiId: e.meiId!, notes } });
+        list.push({ atMs: e.atMs, step: { meiId: e.meiId!, notes, occ } });
       }
     }
     for (const [v, list] of byVoice) {
       this.voices.set(v, { steps: list.map((x) => x.step), stepIdx: 0 });
     }
+
+    /* Which voices are on stage in each occurrence. isMeasureEmptyInVoice
+       counts WRITTEN rests as content, so a voice notated tacet for a bar keeps
+       its bar; only a truly empty layer (invisible placeholders / <mRest>,
+       which render as nothing) hides it. */
+    for (const v of this.voices.keys()) {
+      const present = new Set<number>();
+      for (let o = 0; o < occMeasure.length; o++) {
+        if (!model.isMeasureEmptyInVoice(v, occMeasure[o])) present.add(o);
+      }
+      this.present.set(v, present);
+    }
+  }
+
+  /** The measure the performance is in: the occurrence of the earliest PENDING
+   *  step across unfinished voices. Infinity once every voice is done — at
+   *  which point there is no current measure, so bars freeze where they are
+   *  (the end of the score is not an exit, per 2026-09-14). */
+  private currentOcc(): number {
+    let min = Infinity;
+    for (const vs of this.voices.values()) {
+      const step = vs.steps[vs.stepIdx];
+      if (step && step.occ < min) min = step.occ;
+    }
+    return min;
+  }
+
+  /** The voices a strike is matched against: those whose pending step lives in
+   *  the current measure. */
+  expected(): Voice[] {
+    const cur = this.currentOcc();
+    const out: Voice[] = [];
+    for (const [voice, vs] of this.voices) {
+      const step = vs.steps[vs.stepIdx];
+      if (step && step.occ === cur) out.push(voice);
+    }
+    return out;
   }
 
   /** Each voice's starting bar position: before (left of) its first expected
-   *  element, since nothing has been played yet. */
+   *  element, since nothing has been played yet — but only for voices in play
+   *  in the first sounding measure. A voice that enters later starts with NO
+   *  bar and gets none until it strikes (no entry cue, per Max). */
   initialPositions(): PerfAdvance[] {
+    const cur = this.currentOcc();
     const out: PerfAdvance[] = [];
     for (const [voice, vs] of this.voices) {
-      out.push({ voice, meiId: vs.steps[0]?.meiId ?? null, edge: 'left' });
+      const step = vs.steps[vs.stepIdx];
+      const show = !!step && step.occ === cur;
+      if (show) this.shown.add(voice);
+      out.push({ voice, meiId: show ? step!.meiId : null, edge: 'left' });
     }
     return out;
   }
 
   /** Feed a live strike. Returns the voices that advanced as a result, each
    *  with the element it just completed (bar goes to that element's right
-   *  edge). A voice that finishes its last step keeps its bar there rather than
-   *  clearing it. A strike that matches no current-frontier voice returns []. */
+   *  edge), followed by any voice whose bar the new current measure has no
+   *  content for (`meiId: null` — the bar disappears). A voice that finishes
+   *  its last step keeps its bar until the current measure moves past its
+   *  content; at the end of the score every bar stays put. A strike that
+   *  matches no expected voice returns []. */
   onStrike(note: ResolvedNote): PerfAdvance[] {
     const pid = idKeyFor(note.q, note.r, note.colorHex);
     const phz = freqAt(note.q, note.r, this.mode);
+    const cur = this.currentOcc();
     const advanced: PerfAdvance[] = [];
     for (const [voice, vs] of this.voices) {
       const step = vs.steps[vs.stepIdx];
-      if (!step) continue;
+      /* Not expected here: this voice's next note is in a later measure. */
+      if (!step || step.occ !== cur) continue;
       let matched = false;
       for (const en of step.notes) {
         if (en.satisfied) continue;
@@ -159,7 +252,21 @@ export class PerformanceMatcher {
       }
       if (matched && step.notes.every((n) => n.satisfied)) {
         vs.stepIdx++;
+        this.shown.add(voice);
         advanced.push({ voice, meiId: step.meiId, edge: 'right' });
+      }
+    }
+    /* Only a consumed step can move the current measure. When it moves, any
+       voice the new measure has no content for loses its bar. */
+    if (advanced.length) {
+      const next = this.currentOcc();
+      if (next !== cur && next !== Infinity) {
+        for (const voice of [...this.shown]) {
+          if (!this.present.get(voice)?.has(next)) {
+            this.shown.delete(voice);
+            advanced.push({ voice, meiId: null, edge: 'left' });
+          }
+        }
       }
     }
     return advanced;
