@@ -196,7 +196,7 @@ Hold **Shift** while moving the cursor to select:
 - **Shift+↑/↓**: select measures across staves.
 - **Ctrl+Shift+←/→**: extend the selection to the next bar line.
 
-Then **Ctrl+C** / **Ctrl+X** / **Ctrl+V** copy, cut, and paste through the real OS clipboard, so you can move material within a score. Paste snaps to the current beat and pushes following content as needed. **Backspace** / **Delete** clear the selection.
+Then **Ctrl+C** / **Ctrl+X** / **Ctrl+V** copy, cut, and paste through the real OS clipboard, so you can move material within a score. Paste snaps to the current beat and pushes following content as needed. **Backspace** / **Delete** clear the selection. Clearing part of a bar leaves rests in the gap; clearing a **whole** bar leaves it genuinely empty — the same state the bar had before you entered anything, whichever selection mode you used to point at it.
 
 ---
 

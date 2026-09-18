@@ -8483,3 +8483,33 @@ identically. Only the dialog's unit and the model's two conversion helpers moved
 
 Fixtures: `phase4_pickup_eighthGranularity` (a 1-eighth pickup in 4/4 driven through the dialog),
 `phase4_pickup_add` (now 4 eighths for the same half-bar pickup, plus the `maxPickupEighthsAt` bound).
+
+## A bar emptied in full is an empty cell, whatever selection mode pointed at it (2026-09-17)
+
+**Decision** (Max, backlog Composer/Features): clearing a beat selection that covers a whole measure
+leaves that voice's cell EMPTY — the whole-measure `<space data-placeholder>` — instead of refilling it
+with beat-aligned rests. Partial spans are unchanged.
+
+**Why**: measure-mode selection already did this (`clearMeasureRange` strips the layer and lets
+`normalizePlaceholders` install the placeholder), and beat mode refilled unconditionally. The same bar,
+emptied by the same keystroke, produced a different document depending on which mode the user had
+pointed with. Selection mode is how you point at music; it should not be an assertion about what you
+want left behind.
+
+**Where**: one condition in `clearBeatRange` (`model/measure-ops.ts`), `clearsWholeMeasure =
+tLoIn <= 0 && tHiIn >= cap`, gating the `decomposeBeatAlignedRests` refill. Both delete paths inherit it
+(`deleteSelectionContent` for Ctrl+X and Backspace/Delete, `deleteSelectionWithoutCopy` for
+paste-over-selection), and paste is unaffected in substance since it clears its destination range anyway.
+
+**Stated in ticks, not in "did we remove everything"** — deliberately. The refill is sized by
+`removedTicks`, which counts only the content that was actually present, so a PART-FULL bar (one quarter
+plus trailing placeholder) selected in full used to come back as a lone quarter rest at the head of an
+otherwise empty bar. The tick test covers that case as the same rule rather than as a special one.
+
+**Per measure**, so a span from mid-bar 1 through mid-bar 3 empties bar 2 and leaves rests in the two
+partial ends — each measure answers the question for itself.
+
+Fixtures: `sel_beat_cut_fullMeasure_empties`, `sel_beat_delete_partFullMeasure_empties`, and
+`sel_beat_cut_partialMeasure_keepsRests` (the guard that the ordinary partial case still fills — it
+passes on both old and new code by design, which is what makes it a regression guard rather than a
+restatement of the change).

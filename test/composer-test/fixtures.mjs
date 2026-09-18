@@ -3115,6 +3115,15 @@ const FILL_M1_4Q_V1 = `
   for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
 `;
 
+/* One A4. Spelled out so the whole-measure-empties fixtures can fill a bar with
+   NOTES — cutting RESTS yields rests either way, so a rest-filled bar cannot
+   tell "refilled with rests" from "left empty". */
+const A4_NOTE = `{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }`;
+const FILL_M1_4N_V1 = `
+  m.setCursor(0, 1);
+  for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [${A4_NOTE}], duration: '4', dots: 0 });
+`;
+
 const SELECTION = {
   /* Enter beat selection via Shift+Left from end-of-M1 (= cursor past last
      quarter, current beat = beat 3). Should select that single beat. */
@@ -3230,6 +3239,59 @@ const SELECTION = {
      model side-effect should still be a re-fill via decomposeBeatAlignedRests). */
   sel_beat_cut_replaces_with_rests: {
     setup: `${FILL_M1_4Q_V1} m.setCursor(0, 1);`,
+    setupKeys: [
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      { key: 'x', ctrl: true },
+    ],
+  },
+
+  /* Emptying a WHOLE measure from BEAT mode leaves the voice's cell empty —
+     one whole-measure placeholder — not a bar of rests (Max, backlog
+     Composer/Features, 2026-09-17). Measure-mode selection always behaved this
+     way (`clearMeasureRange` leaves the layer bare); beat mode refilled the
+     cleared span with beat-aligned rests unconditionally, so which MODE you
+     had used to point at the bar decided what the document said. Four quarter
+     NOTES so the rests would be visible if they came back. Asserted via
+     FIXTURE_ASSERTIONS.sel_beat_cut_fullMeasure_empties. */
+  sel_beat_cut_fullMeasure_empties: {
+    setup: `${FILL_M1_4N_V1} m.setCursor(0, 1);`,
+    setupKeys: [
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      { key: 'x', ctrl: true },
+    ],
+  },
+
+  /* The same rule via the DELETE path, on a PART-FULL measure: one quarter note
+     plus trailing placeholder, whole bar selected. The refill is sized by the
+     ticks actually removed, so the old behavior left a stray quarter rest at the
+     head of an otherwise empty bar — the tick test covers this case too.
+     Asserted via FIXTURE_ASSERTIONS.sel_beat_delete_partFullMeasure_empties. */
+  sel_beat_delete_partFullMeasure_empties: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [${A4_NOTE}], duration: '4', dots: 0 });
+      m.setCursor(0, 1);
+    `,
+    setupKeys: [
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      { key: 'ArrowRight', shift: true },
+      'Backspace',
+    ],
+  },
+
+  /* The other side of the same rule: a PARTIAL span is still refilled with
+     beat-aligned rests — a hole inside a bar is rests, and only a bar emptied
+     in full becomes an empty cell. Guards against the whole-measure test
+     swallowing the ordinary case. Asserted via
+     FIXTURE_ASSERTIONS.sel_beat_cut_partialMeasure_keepsRests. */
+  sel_beat_cut_partialMeasure_keepsRests: {
+    setup: `${FILL_M1_4N_V1} m.setCursor(0, 1);`,
     setupKeys: [
       { key: 'ArrowRight', shift: true },
       { key: 'ArrowRight', shift: true },
@@ -15238,6 +15300,72 @@ export const FIXTURE_ASSERTIONS = {
         return s.cursorMode === 'voice' && s.selection === null
           ? { ok: true }
           : { ok: false, detail: 'cursorMode=' + s.cursorMode };
+      })()` },
+  ],
+  /* A bar emptied IN FULL from beat mode is an EMPTY CELL, not a bar of rests. */
+  sel_beat_cut_fullMeasure_empties: [
+    { name: 'M1 V_1 holds only the whole-measure placeholder — no rests, no notes',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const layer = m.allMeasures()[0].querySelector('staff[n="1"] layer[n="1"]');
+        const kids = Array.from(layer.children).map(c => c.localName);
+        const rests = layer.querySelectorAll(':scope > rest').length;
+        const notes = layer.querySelectorAll(':scope > note, :scope > chord').length;
+        if (rests || notes) return { ok: false, detail: 'layer = [' + kids.join(',') + '] — expected placeholder only' };
+        const ph = Array.from(layer.children).filter(c => c.localName === 'space' && c.getAttribute('data-placeholder') === 'true');
+        if (ph.length !== 1) return { ok: false, detail: 'placeholders=' + ph.length + ' in [' + kids.join(',') + ']' };
+        if (ph[0].getAttribute('dur') !== '1') return { ok: false, detail: 'placeholder dur=' + ph[0].getAttribute('dur') + ' (expected 1 = the whole 4/4 bar)' };
+        /* The cell reads as empty to everything downstream (hide-empty, multirest). */
+        if (!m.cellIsEmpty(0, 1)) return { ok: false, detail: 'cellIsEmpty(measure 0, staff 1) is false' };
+        return { ok: true };
+      })()` },
+    { name: 'the NEXT measure is untouched (4 notes) and selection mode exited',
+      expr: `(() => {
+        const H = window.__hkl_composer, m = H.model;
+        const st = H.inputState();
+        if (st.cursorMode !== 'voice' || st.selection !== null) return { ok: false, detail: 'cursorMode=' + st.cursorMode };
+        const ms = m.allMeasures();
+        if (ms.length < 2) return { ok: true, detail: 'single-measure doc' };
+        const n = ms[1].querySelectorAll('staff[n="1"] layer[n="1"] > note, staff[n="1"] layer[n="1"] > chord').length;
+        return n === 4 ? { ok: true } : { ok: false, detail: 'M2 note count=' + n };
+      })()` },
+  ],
+  /* Same rule, DELETE path, on a part-full bar: no stray head rest. */
+  sel_beat_delete_partFullMeasure_empties: [
+    { name: 'a part-full bar emptied in full leaves the placeholder alone — no leading quarter rest',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const layer = m.allMeasures()[0].querySelector('staff[n="1"] layer[n="1"]');
+        const kids = Array.from(layer.children).map(c => c.localName + (c.getAttribute('dur') ? '@' + c.getAttribute('dur') : ''));
+        if (layer.querySelectorAll(':scope > rest').length) {
+          return { ok: false, detail: 'layer = [' + kids.join(',') + '] — the refill left a rest sized by the content that was there' };
+        }
+        if (layer.querySelectorAll(':scope > note, :scope > chord').length) return { ok: false, detail: 'layer = [' + kids.join(',') + ']' };
+        const ph = Array.from(layer.children).filter(c => c.localName === 'space' && c.getAttribute('data-placeholder') === 'true');
+        if (ph.length !== 1 || ph[0].getAttribute('dur') !== '1') {
+          return { ok: false, detail: 'expected one whole-bar placeholder, got [' + kids.join(',') + ']' };
+        }
+        return { ok: true };
+      })()` },
+  ],
+  /* And the ordinary case is unchanged: a partial span is still rests. */
+  sel_beat_cut_partialMeasure_keepsRests: [
+    { name: 'cutting 2 of 4 beats leaves 2 beat-aligned rests and the 2 untouched notes',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const layer = m.allMeasures()[0].querySelector('staff[n="1"] layer[n="1"]');
+        const kids = Array.from(layer.children).map(c => c.localName + (c.getAttribute('dur') ? '@' + c.getAttribute('dur') : ''));
+        const rests = layer.querySelectorAll(':scope > rest').length;
+        const notes = layer.querySelectorAll(':scope > note, :scope > chord').length;
+        if (rests !== 2 || notes !== 2) {
+          return { ok: false, detail: 'rests=' + rests + ' notes=' + notes + ' in [' + kids.join(',') +
+            '] — a hole inside a bar must stay rests' };
+        }
+        /* Rests first: the cut span was the bar's opening two beats. */
+        if (kids[0].indexOf('rest') !== 0 || kids[1].indexOf('rest') !== 0) {
+          return { ok: false, detail: 'order = [' + kids.join(',') + '] (expected the rests at the head)' };
+        }
+        return { ok: true };
       })()` },
   ],
   sel_beat_cut_replaces_with_rests: [
