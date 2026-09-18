@@ -226,8 +226,21 @@ export function snapBarlines(container: Element, scale: number, evenWidth: boole
  *  them coincident (clean corner) while landing the edge on the grid (no poke).
  *  Only acts when a terminal barline sits at the staff ends (open system-break
  *  ends, with no terminal bar, are left alone). Horizontal analog of
- *  snapSystemsToGrid; call after pinExactScale so the device scale is exact. */
-export function snapSystemRightEdge(container: Element, scale: number): void {
+ *  snapSystemsToGrid; call after pinExactScale so the device scale is exact.
+ *
+ *  `originPhaseX` (2026-09-18) is the horizontal twin of the vertical
+ *  `originPhaseOf` phase transfer. The snap target is an ABSOLUTE device pixel,
+ *  so it depends on where the host sits in the viewport: an offscreen host at
+ *  `left:-99999px` lands on a different sub-pixel phase than the live page and
+ *  snaps the same staff end to a different pixel. One snap moves at most half a
+ *  device pixel, so two hosts can disagree by a whole one — `1 / ctm.a` user
+ *  units, i.e. 10 at scale 100 but 20 at scale 50, which is how this cleared the
+ *  splice gate's 10-unit tolerance at zoom 50 and never at zoom 100
+ *  (`lock_after_zoom_reflows`; lessons.md, same date). Pass the LIVE page's
+ *  fractional device x and an offscreen host snaps exactly as the live page
+ *  does. Omitted, the behaviour is unchanged: the host snaps by its own
+ *  position, which is what a real on-screen page must do to be crisp. */
+export function snapSystemRightEdge(container: Element, scale: number, originPhaseX?: number): void {
   const ds = scale / 1000;
   /* `container` may itself be a system (the page splicer scopes post-processing
      to the systems it will import — A8); querySelectorAll finds descendants only. */
@@ -256,7 +269,17 @@ export function snapSystemRightEdge(container: Element, scale: number): void {
     const ref = lines.find(l => l.x2 === staffEnd)!.p as SVGGraphicsElement;
     const ctm = ref.getScreenCTM();
     if (!ctm) continue;
-    const deviceX = ctm.e + staffEnd * ctm.a;
+    /* Only frac(deviceX) matters (Math.round(x) - x), so re-basing the host's
+       own page-margin phase onto the supplied one is enough to make the snap
+       host-independent. Both phases come from `g.page-margin`, the group the
+       vertical transfer reads too, so the two axes agree on what "the page's
+       origin" means. Any piece missing → snap by absolute position, as before. */
+    let deviceX = ctm.e + staffEnd * ctm.a;
+    if (originPhaseX !== undefined) {
+      const marginCtm = (ref.ownerSVGElement?.querySelector('g.page-margin') as SVGGraphicsElement | null)
+        ?.getScreenCTM?.();
+      if (marginCtm) deviceX += originPhaseX - (((marginCtm.e % 1) + 1) % 1);
+    }
     const deltaUser = (Math.round(deviceX) - deviceX) / ctm.a;
     if (Math.abs(deltaUser) < 1e-3) continue;                       /* already on-grid */
     for (const l of lines) {

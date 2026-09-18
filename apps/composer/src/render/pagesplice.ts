@@ -99,7 +99,7 @@ export interface PageSpliceCtx {
    *  theme). The page splicer calls it on the LIVE page with `scope` = the
    *  systems it just imported (A11): the window itself is never laid out, so
    *  every geometry-dependent pass runs where the systems actually sit. */
-  postProcess: (el: HTMLElement, scope?: Element[]) => void;
+  postProcess: (el: HTMLElement, scope?: Element[], originPhaseX?: number) => void;
   /** Non-geometry page decorations that live in main.ts for mounted pages
    *  (volta number styling) — idempotent, content-level. */
   decorateHost: (el: HTMLElement) => void;
@@ -120,6 +120,9 @@ export interface PageSpliceCtx {
   alignStaves: (host: HTMLElement, originPhase?: number) => void;
   /** Fractional device y of a live page's margin group (see alignStaves). */
   originPhaseOf: (pageEl: HTMLElement) => number | undefined;
+  /** Fractional device X of a live page's margin group — the horizontal twin,
+   *  for `snapSystemRightEdge`'s absolute pixel snap (see postProcess). */
+  originPhaseXOf: (pageEl: HTMLElement) => number | undefined;
   /** Mount a lazily-virtualized page so its systems can be measured and
    *  spliced (B5). Returns false when mounting would be expensive or would
    *  draw POST-edit content — the splice then refuses, as it always did. */
@@ -1072,7 +1075,15 @@ export class PageSystemSplicer {
          reference would compare its E260 flats against a live page that has
          none — a false divergence, not a wrong render (seen on the sonata's
          line 0 the day the glyph check landed). Geometry is unaffected. */
-      ctx.postProcess(refHost);
+      /* Snap the reference's system right edges on the LIVE page's horizontal
+         phase. `snapSystemRightEdge` lands them on an ABSOLUTE device pixel, so
+         a host at left:-99999px otherwise snaps to a different one — up to a
+         whole device pixel of disagreement, which is 10 user units at scale 100
+         (exactly TOL, so invisible here) but 20 at scale 50, and that is the
+         entire content of `lock_after_zoom_reflows` (2026-09-18). Same argument,
+         and the same `g.page-margin` origin, as the vertical `alignStaves`
+         transfer below. */
+      ctx.postProcess(refHost, undefined, ctx.originPhaseXOf(pageEl));
       /* The reference must be prepared EXACTLY as a live page is, decoration
          included. `decorateHost` (styleVoltaNumbers) restyles a tspan inside
          `g.voltaBracket` — font, weight and a trailing '.' — which changes the
@@ -1117,7 +1128,9 @@ export class PageSystemSplicer {
           for (let j = 0; j < rpm.length; j++) {
             if (Math.abs(rpm[j].relX - lpm[j].relX) > TOL ||
                 Math.abs(rpm[j].w - lpm[j].w) > TOL) {
-              throw new Error(`[page-splice] page ${pno} system ${i} measure ${rpm[j].id}: x/width diverged from reference`);
+              throw new Error(`[page-splice] page ${pno} system ${i} measure ${rpm[j].id}: x/width diverged from reference`
+                + ` (relX live ${lpm[j].relX.toFixed(1)} vs ref ${rpm[j].relX.toFixed(1)}, d=${(lpm[j].relX - rpm[j].relX).toFixed(1)};`
+                + ` w live ${lpm[j].w.toFixed(1)} vs ref ${rpm[j].w.toFixed(1)}, d=${(lpm[j].w - rpm[j].w).toFixed(1)}; TOL ${TOL})`);
             }
           }
           /* Glyph IDENTITY of the signatures, not only their geometry: a clef,

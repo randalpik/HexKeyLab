@@ -8623,3 +8623,112 @@ the `commitPartition` hook. `Renderer.applyPartitionChange` stays — line-break
 - **The instrument-name indent was free.** The first system's staff starts at 1342–2009 while every
   later system's starts at 0 — up to 10.7 % of the budget, charged to nothing. `sigWForLine(0)` now
   returns it, carried through `OwnerWidths` so a partition-cache restore cannot blank it.
+
+
+## 2026-09-18 — Page overflow repair covers the ONE-page document, and a created page draws itself
+
+**What.** `repairPagination` / `repairAtMount` are gated on a new `paginationRepairable()`
+(`ownershipActive() && pageStartIds.length >= 1`) instead of `paginationOwned()`
+(`pageStartIds.length > 1`). `paginationOwned()` is unchanged and still governs `<pb>` emission
+(`pageSet()`) and the painted breaks strategy.
+
+**Why.** The two predicates answer different questions and diverge on exactly one state — a one-page
+owned document — where no `<pb>` is pinned but the paint is still `'encoded'`, which never paginates by
+height. Gating the repair on the pin question made page growth unreachable from a one-page score: the
+cascade is the only thing that can add a page on the splice path, and it required a page to already have
+been added. Composing into an empty score never produced page 2 (measured: 1 page live vs 4 imported for
+the same 161 measures), violating the contract that populating content live equals importing it. See
+lessons.md, same date.
+
+**A created page is never a header page (Max's ruling).** The header page always already exists, so the
+cascade never has to build one. That also settles how to grow 1→2: page 1's `g.pgHead` is the TITLE
+block, so `createPageFromShell` cannot clone a correct running header from it — its number-bump scan
+finds no page number and drops the header entirely, leaving a page placed at C0 with no page number,
+which is NOT what the same document imported produces. So when the spilling page's head is a title block
+(`headIsTitleBlock`, mirroring the bump scan so the two cannot disagree), the new page is appended as a
+PLACEHOLDER and draws itself from the pins — which now carry a `<pb>` — instead of being transplanted
+into a cloned shell. It is then identical to a derived page by construction, headers included. Only
+reachable on the 1→2 growth of a one-page score; every later page is cloned from a numbered header and
+renumbers correctly, which is why pages 3+ were wrong too until page 2 became right. Verified: live
+composition and a forced full render of the same document now agree on page count, page starts, per-page
+system counts, page headers and first-system tops.
+
+**Rejected: hand pagination back to Verovio at the 1→2 boundary.** A derive there would be cheap (the
+document is one page by definition) and reuses a proven path, but it reintroduces the edit-path hand-back
+Phase 2 removed, and it does not fix the symmetric case of a score that collapses to one page and then
+grows again. "We own pagination, we create new pages and populate them" (Max).
+
+**Also.** Under `HKL_INDEX_CHECK`, a landed splice now asserts `overflowingPage() === 0`. The cascade was
+the only fit check on that path and nothing asserted it had actually run — which is how this shipped
+silently. Zero production cost.
+
+
+## 2026-09-18 — The refill always paints `'encoded'`; `'line'` keeps only its discovery role
+
+**What.** `refill.strategy` (`linebreaks.ts`) was `newPageStartIds.length > 1 ? 'encoded' : 'line'` and is
+now unconditionally `'encoded'`.
+
+**Why the fallback existed.** A one-page document pins no `<pb>` (`pageSet()` is null), so painting it
+`'encoded'` yields exactly one page however tall it grows. `'line'` handed height pagination back to Verovio,
+and that is what kept one-page scores paginating at all. It is not needed now the overflow cascade covers a
+one-page document (same-date entry above): an overfull page is grown by the repair. Verified by experiment —
+with the cascade guard reverted and the strategy forced to `'encoded'`, `pageGrowFromOnePage` fails; with the
+cascade fix in, the full suite is green.
+
+**Why it had to go.** `'line'` ignores `<pb>` (1 page vs 2 on identical data). A user page break therefore
+survived the derive and was destroyed by the next edit — Ctrl+B, type one note, the break is gone, with the
+`<pb>` still in the model. Fixture `pageUserBreakSurvivesEdit`.
+
+**What still chooses `'line'`, and why that is right.** Two sites, both about DISCOVERY rather than painting:
+`castoffPlan` uses `'line'` for `<pb>`-bearing data because `'encoded'` paginates ONLY at explicit breaks and
+so cannot discover where pages belong (one Ctrl+B on the sonata gave pages of 15 and 104 systems — the C1
+measurement in that function's comment); and `paintedBreaks()` uses `'line'` before ownership is active,
+where there are no pins to honor. Neither can repaint an owned document, so neither can lose a `<pb>`.
+
+**Not fixed here.** An edit in a document with a user `<pb>` still falls back to the full refill render: the
+splice window carries the `<pb>`, paginates, and trips `'window paginated'`. Pre-existing and measured both
+ways (2 full renders under the old strategy, 1 under this one).
+
+
+## 2026-09-18 — The segmented castoff's single-line bail moves onto the merged line set
+
+**What.** `castoffSegmentedByUserBreaks` judged `baked.lines.length <= 1` on the raw whole-document castoff,
+before merging in the user's break measures; it now judges `mergedLines.length <= 1` after the merge.
+
+**Why.** A user page break always splits its line, and the merge twenty lines below the old guard is what
+encodes that. Judging the raw castoff meant any score short enough to cast off as ONE line — two measures —
+could never have a page break adopted, so the owner held one page start against a two-page paint. That
+mismatch is what forced the cascade to tolerate pages beyond its own index (same-date entry).
+
+**Verified before/after** on a 2-measure document with one Ctrl+B, partition cache cleared so the derive
+reaches the branch: `pageStarts` 1 → 2 and `paginationOwned` false → true, with an 18-bar control at 2/true
+in both runs. The natural flow needs no cache poking: Ctrl+B now yields `pageStarts` 2 / owned, and it
+survives the following edit. Fixture `pageUserBreakSurvivesEdit` carries both assertions and was confirmed to
+fail without the change ("owner holds 1 page start(s) for a 2-page render").
+
+**Correction to a comment.** `castoffPlan` claims `'line'` "honors the user's `<pb>` AND still paginates the
+rest by height". The first half is false — measured on the baked data it produces, `'line'` gives 1 page
+where `'encoded'` gives 2. Honoring `<pb>` is precisely what the segmented path is for.
+
+
+## 2026-09-18 — An offscreen host must be handed the live page's HORIZONTAL phase too
+
+**What.** `snapSystemRightEdge` takes an optional `originPhaseX`; `Renderer.originPhaseXOf` supplies it from
+the live page's `g.page-margin` (`ctm.e`, where the existing `originPhaseOf` reads `ctm.f`); the splice
+gate's reference host is post-processed with it.
+
+**Why.** That snap lands a system's right edge on an ABSOLUTE device pixel, read through
+`getScreenCTM()`, so it depends on where the host sits in the viewport. The gate's reference host lives at
+`left:-99999px` and therefore snapped the same staff end to a different pixel than the live page. One snap
+moves at most half a device pixel, so two hosts disagree by at most a whole one — `1 / ctm.a` user units:
+10 at scale 100, 13.3 at 75, 20 at 50. TOL is 10, so the worst case EQUALS the tolerance at zoom 100 and can
+never trip it, while at zoom 50 it is twice the tolerance. That is the whole of `lock_after_zoom_reflows`,
+and why it was zoom-50-only: not a splice defect, and not something to fix by widening TOL.
+
+**Scope.** One call site. The splice window is post-processed inside the live page, so its imported systems
+already snap on the live phase — a spliced page always agreed with a full re-engrave; only the reference
+disagreed. Default behaviour is unchanged when the phase is omitted, which a real on-screen page relies on.
+
+**Verified.** Whole-document inventory 0 diverging measures at zoom 50/75/100 (was 4 at zoom 50, one per
+system — the last measure of each, `dRelX` 0, music and bar lines identical). Flagged gate 499/499, up from
+498/499; unflagged suite 499/499.

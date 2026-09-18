@@ -823,6 +823,15 @@ class Renderer {
     return ctm ? ((ctm.f % 1) + 1) % 1 : undefined;
   }
 
+  /** Fractional device X of a live page's margin group — the horizontal twin of
+   *  `originPhaseOf`, handed to `snapSystemRightEdge` so an offscreen host snaps
+   *  its system right edges exactly where the live page does. */
+  originPhaseXOf(pageEl: HTMLElement): number | undefined {
+    const margin = pageEl.querySelector('svg g.page-margin') as SVGGraphicsElement | null;
+    const ctm = margin?.getScreenCTM?.();
+    return ctm ? ((ctm.e % 1) + 1) % 1 : undefined;
+  }
+
   /** Phase-align every staff row on a page. The page-margin group's fractional
    *  device y is read ONCE here and handed to `alignStaffRows`; it is not a
    *  global constant (at zoom 75 it differs between pages, since pages stack at
@@ -950,7 +959,6 @@ class Renderer {
     const breaks = this.userPageBreakIndices(model);
     if (!breaks.length) return null;
     const baked = this.layoutBreaksWithLines(mei);
-    if (baked.lines.length <= 1) return null;
     const ids = model.allMeasures().map((m) => m.getAttribute('xml:id') ?? '');
     const idxOf = new Map<string, number>();
     ids.forEach((id, i) => { if (id) idxOf.set(id, i); });
@@ -972,6 +980,16 @@ class Renderer {
     for (const b of breaks) lineIdx.add(b);
     const mergedLines = Array.from(lineIdx).sort((a, b) => a - b).map((i) => ids[i]);
     if (mergedLines.some((id) => !id)) return null;
+    /* The single-line bail belongs HERE, on the merged set, not on the raw
+       castoff above it (2026-09-18). A short document whose natural castoff is
+       one line — two measures, say — still becomes TWO lines once the user's
+       break measures are merged in, and it is precisely the document that
+       needs this path: it would otherwise fall through to the ordinary castoff,
+       which runs `breaks:'line'`, which ignores `<pb>` entirely, so the owner
+       adopted ONE page start for a document the paint gives two pages. Testing
+       `baked.lines` meant a user page break could never be adopted on a score
+       short enough to fit one system. */
+    if (mergedLines.length <= 1) return null;
     /* Segment bounds: [0..b1-1], [b1..b2-1], … [bk..last]. */
     const bounds: Array<[number, number]> = [];
     let from = 0;
@@ -1023,8 +1041,11 @@ class Renderer {
   /** Which breaks strategy lets Verovio CAST OFF this document, and the data
    *  to feed it. Section/system breaks alone → 'smart' + breaksSmartSb:0
    *  (honors them and auto-wraps). Page breaks → bake the natural system
-   *  breaks first, then **'line'**, which honors the user's `<pb>` AND still
-   *  paginates the rest by height. No manual breaks → plain 'auto'. This is the
+   *  breaks first, then **'line'**, which paginates by height. Note 'line' does
+   *  NOT honor `<pb>` — measured 2026-09-18 on the baked data this returns, it
+   *  gives 1 page where 'encoded' gives 2. That is exactly why user page breaks
+   *  go through `castoffSegmentedByUserBreaks`, which casts off each
+   *  inter-break segment separately, rather than relying on this pass. No manual breaks → plain 'auto'. This is the
    *  pass that DECIDES a partition; with line/page ownership it is a bootstrap
    *  whose output is read, not painted.
    *
@@ -1398,7 +1419,7 @@ class Renderer {
    *  pages a repair touched are verified against a fresh full render exactly
    *  like an edit-path splice. */
   private repairAtMount(pages: number[]): void {
-    if (this.spliceDepth !== 0 || !this.pageBreaks.paginationOwned() || !this.lastModel) return;
+    if (this.spliceDepth !== 0 || !this.pageBreaks.paginationRepairable() || !this.lastModel) return;
     this.spliceDepth++;
     this.touchedPages = [];
     try {
@@ -1946,6 +1967,19 @@ class Renderer {
                past what the refill committed. */
             if (indexCheckEnabled()) {
               this.pageSplicer.verifyAgainstReference(this.pinnedMeiForCurrentModel(), this.touchedPages, this.pageSpliceCtx());
+              /* The cascade is the ONLY fit check on this path — overflowingPage
+                 runs on the full-render branches alone. Nothing asserted that it
+                 had actually run, which is exactly how a one-page score piled
+                 every new system past the bottom of page 1, silently and without
+                 a warning, until a full render happened to rebuild it
+                 (2026-09-18). Assert the OUTCOME, so any future path that skips
+                 the repair fails the suite instead of shipping. */
+              const over = this.overflowingPage();
+              if (over !== 0) {
+                throw new Error('[page-splice] page ' + over + ' is drawn past its paper after a landed splice'
+                  + ' (pageStarts=' + this.pageBreaks.pageStarts().length
+                  + ', repairable=' + this.pageBreaks.paginationRepairable() + ')');
+              }
             }
             return false;
           }
@@ -2271,15 +2305,16 @@ class Renderer {
          swapped before the per-system passes measure it; the reference host
          of the index-check gate goes through the same wrapper, so live and
          reference agree. */
-      postProcess: (el: HTMLElement, scope?: Element[]) => {
-        if (scope !== undefined) this.postProcessRendered(el, this.substituteHiddenStaffSystems(el, scope));
-        else { this.substituteHiddenStaffSystems(el); this.postProcessRendered(el); }
+      postProcess: (el: HTMLElement, scope?: Element[], originPhaseX?: number) => {
+        if (scope !== undefined) this.postProcessRendered(el, this.substituteHiddenStaffSystems(el, scope), originPhaseX);
+        else { this.substituteHiddenStaffSystems(el); this.postProcessRendered(el, undefined, originPhaseX); }
       },
       decorateHost: (el: HTMLElement) => styleVoltaNumbers(el),
       placePage: (el: HTMLElement) => this.placePage(el),
       placeFor: (systems: Element[], opts?: PlaceOpts) => this.placeFor(systems, opts),
       alignStaves: (host: HTMLElement, originPhase?: number) => this.alignStavesIn(host, originPhase),
       originPhaseOf: (pageEl: HTMLElement) => this.originPhaseOf(pageEl),
+      originPhaseXOf: (pageEl: HTMLElement) => this.originPhaseXOf(pageEl),
       ensurePageMounted: (p: number) => this.mountPageIfCheap(p),
       isPageMounted: (p: number) => this.isPageMounted(p),
     };
@@ -2449,7 +2484,7 @@ class Renderer {
    *  pagination before returning. `lastCascade` records the step kinds. */
   private repairPagination(pages: number[]): boolean {
     const st = this.pageVirt;
-    if (!st || !this.container || !this.pageBreaks.paginationOwned()) return true;
+    if (!st || !this.container || !this.pageBreaks.paginationRepairable()) return true;
     this.lastCascade = { steps: 0, transplanted: 0, arithmetic: 0, parked: 0, created: 0, ms: 0, msFold: 0, msClone: 0, msMove: 0, msPlace: 0, msSnap: 0, msMount: 0 };
     const cas = this.lastCascade;
     const tRepair = performance.now();
@@ -2466,8 +2501,18 @@ class Renderer {
       const lines = this.pageBreaks.lineStarts();
       const lineAt = new Map(lines.map((id, i) => [id, i]));
       const oldPages = this.pageBreaks.pageStarts();
+      /* A page BEYOND the owner's page index is not one we track, so it is not
+         ours to repair — skip it. Verovio paginates a document containing user
+         `<pb>`s at those breaks whether or not the owner adopted a page start
+         for each, so `pageVirt.pageCount` can legitimately exceed
+         `pageStarts().length`; before the repair covered one-page documents
+         this was unreachable, and treating it as a cascade FAILURE made
+         `repairAtMount` warn on documents that were perfectly well laid out
+         (phase3_pagebreak, 2026-09-18). A page INSIDE the index whose start is
+         not a line start is genuine corruption and still fails below. */
+      if (p - 1 >= oldPages.length) continue;
       /* Page p's lines under the current pins: [pFirst, pEnd). */
-      const pFirst = p - 1 < oldPages.length ? lineAt.get(oldPages[p - 1]) : undefined;
+      const pFirst = lineAt.get(oldPages[p - 1]);
       const pEnd = p < oldPages.length ? lineAt.get(oldPages[p]) : lines.length;
       if (pFirst === undefined || pEnd === undefined) {
         this.pageSplicer.lastSkipReason = 'page ' + p + ': page start is not a partition line';
@@ -2528,6 +2573,27 @@ class Renderer {
         st.stalePages.add(p);
         if (isLast) this.appendPlaceholderPage();
         st.stalePages.add(p + 1);
+        pending = [p + 1, ...pending.filter((q) => q !== p + 1)];
+        continue;
+      }
+      if (isLast && this.headIsTitleBlock(div)) {
+        /* A created page is NEVER a header page (Max, 2026-09-18), and the
+           header page's shell cannot supply what a created page needs: page
+           1's `g.pgHead` is the TITLE BLOCK, so cloning it drops the header
+           entirely and places the new page at C0 — while the SAME document
+           imported gets a running page-number header and is placed below it.
+           That divergence is the contract this whole cascade exists to keep,
+           so when the header page spills, the new page DRAWS ITSELF from the
+           pins (which now carry a `<pb>`) instead of being transplanted:
+           identical to a derived page by construction. Only reachable on the
+           1 -> 2 growth of a one-page score; every later page is cloned from a
+           numbered header, which renumbers correctly. */
+        this.lazyMoveOut(div, block);
+        this.placePage(div);
+        this.appendPlaceholderPage();
+        this.lastCascade.created++;
+        st.stalePages.add(p);
+        touch(div);
         pending = [p + 1, ...pending.filter((q) => q !== p + 1)];
         continue;
       }
@@ -2702,10 +2768,26 @@ class Renderer {
     for (const s of block) s.remove();
   }
 
+  /** True when this page's `g.pgHead` is the TITLE BLOCK rather than a running
+   *  page-number header — i.e. cloning its shell cannot give the new page the
+   *  header a derived page would have. Mirrors `createPageFromShell`'s bump
+   *  scan, so the two cannot disagree. A page with NO header at all is not a
+   *  title page: there the clone is already faithful. */
+  private headIsTitleBlock(div: HTMLElement): boolean {
+    const hd = div.querySelector('g.pgHead');
+    if (!hd) return false;
+    const no = String(Number(div.dataset.page));
+    for (const t of Array.from(hd.querySelectorAll('tspan, text'))) {
+      if (t.children.length === 0 && (t.textContent ?? '').trim() === no) return false;
+    }
+    return true;
+  }
+
   /** A new last page from the spilling page's own SVG (Phase 2): systems,
    *  titles, injected texts and selection rects stripped, the page-number
-   *  header bumped. Page 1's header is the title, not a number: a page cloned
-   *  from it drops the header and is placed as a header-less page (C0). */
+   *  header bumped. The caller routes a TITLE-block source away from here
+   *  (`headIsTitleBlock`), so the `hd.remove()` path below is only reached by
+   *  a source that genuinely has no header to carry. */
   private createPageFromShell(p: number, from: HTMLElement): HTMLElement | null {
     const svg = from.querySelector('svg');
     if (!svg) return null;
@@ -3276,7 +3358,7 @@ class Renderer {
 
   /** Post-render DOM treatment shared by page + scroll: crisp pinning, notehead
    *  z-order, HEJI/stacked-accidental glyph injection, and theming. */
-  private postProcessRendered(container: HTMLElement, scope?: Element[]): void {
+  private postProcessRendered(container: HTMLElement, scope?: Element[], originPhaseX?: number): void {
     /* `scope` (A8, page splicer): run the per-system passes ONLY on these
        systems — the ones that will be imported into the live page. A splice
        window is 3–4 lines plus leader/trailer of which one line is typically
@@ -3319,7 +3401,7 @@ class Renderer {
     for (const el of targets) snapBarlines(el, this.currentScale(), CRISP_PRESETS[this.zoom].evenWidth);
     st.snapBar = performance.now() - t;
     t = performance.now();
-    for (const el of targets) snapSystemRightEdge(el, this.currentScale());
+    for (const el of targets) snapSystemRightEdge(el, this.currentScale(), originPhaseX);
     st.snapEdge = performance.now() - t;
     /* Bring noteheads to the front. Verovio renders each <g class="note"> as
        [notehead, dots, stem]; SVG z-order is document order, so the stem draws

@@ -332,6 +332,13 @@ a `SpliceRequest` — old/new partition, old/new pagination, the changed run.
   the post-processing passes.
 - **Pagination repair — the overflow cascade on the model**
   (`Renderer.repairPagination`, B2; on the model since Phase 2, 2026-09-02).
+  Gated on `paginationRepairable()` (adopted, `pageStartIds.length >= 1`), NOT
+  on `paginationOwned()` (`> 1`): a one-page owned document pins no `<pb>` yet
+  still paints `'encoded'`, which never paginates by height, so its overflow is
+  ours too — gating on the pin question made page growth unreachable from a
+  one-page score (2026-09-18, see decisions.md). A page beyond the owner's page
+  index is skipped rather than failing the cascade: Verovio paginates at a user
+  `<pb>` whether or not a page start was adopted for it.
   After a landed splice (and after any lazy mount) every touched page is
   checked for its FOLD, PREDICTED from the placement rule: `foldIndex` over the
   read-only placement of a mounted page's measured extents (`foldOf`), or over
@@ -356,6 +363,12 @@ a `SpliceRequest` — old/new partition, old/new pagination, the changed run.
   - a **CREATED page** when the last page spills: the spilling page's own SVG
     shell (systems, titles and injected texts stripped, the page-number header
     bumped — `createPageFromShell`), the block transplanted in, the mount pass.
+    EXCEPT when the spilling page's head is the TITLE block (`headIsTitleBlock`
+    — in practice the 1 -> 2 growth of a one-page score): a created page is
+    never a header page, and page 1's shell cannot supply the running
+    page-number header a derived page has, so the new page is appended as a
+    placeholder and DRAWS ITSELF from the pins (which now carry a `<pb>`),
+    making it identical to a derived page by construction (2026-09-18).
   - **ARITHMETIC** when the receiving page is a placeholder that cannot be
     mounted cheaply but whose lines' extents are known (a mount or the extents
     job measured them): the block leaves the spilling page, pins move, both
@@ -467,7 +480,10 @@ full`.
   mechanism above — B2's are `pageSpliceNewLineAtEnd` (N→N+1),
   `pageSpliceNewPageAtEnd` (spill onto a created page), `pageSpliceLineMerge`
   (N→N−1), `pageSplicePageCollapse` (page count −1, renumbered) and
-  `pageSystemSpliceCascadeOverflow` (a spill moves the tail onto the next page); the courtesy stub's are `pageSystemSpliceCourtesyStubChain` (two
+  `pageSystemSpliceCascadeOverflow` (a spill moves the tail onto the next page)
+  and `pageGrowFromOnePage` (the 1 -> 2 transition, started from the BLANK
+  document and deliberately NOT gated on `paginationOwned()` — that precondition
+  is what blinded `pageSpliceNewPageAtEnd` to this state); the courtesy stub's are `pageSystemSpliceCourtesyStubChain` (two
   consecutive signature lines: one stub measure, the second line stays out)
   and `pageSystemSpliceCourtesyStubAfterEnding` (ending closure first, then
   the stub); Phase 1's are `pagePlacementOwned` (every mounted page satisfies

@@ -2121,6 +2121,65 @@ const PAGE_SPLICE = {
     skipCursorTrace: true,
   },
 
+  /* B2, the 1 -> 2 transition: composing into an EMPTY score in page view.
+   * The overflow cascade was gated on paginationOwned() (pageStartIds > 1), so
+   * a ONE-page score could never grow a second one — the cascade was the only
+   * thing that could add a page, and it required a page to already have been
+   * added. Every new system piled past the bottom of page 1, silently, with no
+   * warning, until some unrelated full render rebuilt the score. Live
+   * composition therefore disagreed with importing the same content (measured
+   * 2026-09-18: 161 measures = 1 page live, 4 pages imported).
+   *
+   * This fixture starts from the BLANK document and deliberately does NOT gate
+   * on paginationOwned(): that precondition is exactly what blinded
+   * pageSpliceNewPageAtEnd (which pre-builds a multi-page score) to this state.
+   * Asserted via FIXTURE_ASSERTIONS.pageGrowFromOnePage. */
+  pageGrowFromOnePage: {
+    setup: `
+      window.__hkl_composer.renderer.setViewMode('page');
+      r();
+    `,
+    /* The walk would scroll every stop of a multi-page score into view for
+       coverage the small cursor fixtures already give. */
+    skipCursorTrace: true,
+    /* Two unavoidable full renders, neither of them the thing under test: the
+       blank document is ONE system until ownership engages (the documented
+       `single-line partition` bail), and the assertion then deliberately calls
+       forceFullRerender() to compare the live result against a derived one —
+       that comparison IS the contract being tested. The splice invariant is
+       replaced here by a stricter, more specific check: the assertion requires
+       lastCascade.created >= 1, so a second page arriving from a full render
+       instead of the repair still fails. */
+    fullRender: 'the blank doc derives while it is one system, and the assertion force-renders on purpose to compare live output against derived output',
+  },
+
+  /* A USER page break must survive the next edit. The derive paints 'encoded'
+   * (which honors `<pb>`) and produced 2 pages, but the refill then repainted
+   * with breaks:'line' whenever the owner held one page start — and 'line'
+   * IGNORES `<pb>` (measured on identical data: 1 page vs 2). So Ctrl+B gave a
+   * page break and the very next note took it away, with the `<pb>` still
+   * sitting in the model (2026-09-18). Asserted via
+   * FIXTURE_ASSERTIONS.pageUserBreakSurvivesEdit. */
+  pageUserBreakSurvivesEdit: {
+    setup: `
+      window.__hkl_composer.renderer.setViewMode('page');
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.appendMeasure();
+      m.togglePageBreakAt(1);
+      r();
+    `,
+    skipCursorTrace: true,
+    /* PRE-EXISTING, not what this fixture is about: the splice window carries
+       the user `<pb>`, so the window render paginates, `getPageCount() !==
+       wantPages` trips and the splicer refuses with 'window paginated' — an
+       edit anywhere in a document with a user page break falls back to the
+       full refill render. Measured the same with the old refill strategy (2
+       full renders there against 1 here), so it is independent of the encoded
+       fix this fixture guards. Worth its own work; see decisions.md. */
+    fullRender: 'the splice window contains the user <pb> and paginates, so the splicer refuses (pre-existing, measured both ways)',
+  },
+
   /* B2: the other direction — a line whose every measure is deleted vanishes
    * (membership carry), an N−1 partition. The hunk replaces two old systems
    * (the vanished line and the line the deletion anchored on) with one.
@@ -14019,6 +14078,96 @@ export const FIXTURE_ASSERTIONS = {
         if (!(hd.textContent || '').includes(String(pages0 + 1))) return { ok: false, detail: 'created page header reads "' + (hd.textContent || '').trim() + '", expected page number ' + (pages0 + 1) };
         const verified = pb.verifyRenderedPartition(H.renderer['container'], m, st0.pageCount, H.renderer['pageBreaksCtx']());
         if (!verified) return { ok: false, detail: 'rendered partition diverged from the pins after the page was created' };
+        return { ok: true };
+      })()` },
+  ],
+  pageGrowFromOnePage: [
+    { name: 'composing into an empty score grows a second page through the cascade, and the live result equals a full render of the same document',
+      expr: `(async () => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const rd = H.renderer;
+        const pb = rd['pageBreaks'];
+        const pageEls = () => [...document.querySelectorAll('#score .score-page')];
+        const overflowing = () => [...document.querySelectorAll('#score .score-page:not(.score-page-pending)')].filter((pg) => {
+          const svg = pg.querySelector('svg'); const s = [...pg.querySelectorAll('g.system')];
+          return svg && s.length && s[s.length - 1].getBoundingClientRect().bottom > svg.getBoundingClientRect().bottom + 2;
+        }).map((pg) => pg.dataset.page);
+        /* Per-page shape: the page number header a created page must carry, and
+           how many systems landed on it. Compared live-vs-derived below. */
+        const shape = () => pageEls().map((pg) => {
+          const hd = pg.querySelector('g.pgHead');
+          return { p: pg.dataset.page, head: hd ? (hd.textContent || '').trim() : null, sys: pg.querySelectorAll('g.system').length };
+        });
+        const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+        if (pageEls().length !== 1) return { ok: false, detail: 'expected a one-page blank document, got ' + pageEls().length };
+        let grewAt = -1, created = 0;
+        for (let step = 0; step < 80 && grewAt < 0; step++) {
+          const high = (step % 4) < 2;
+          for (let q = 0; q < 4; q++) {
+            m.setCursor(m['flatChildren'](1).length, 1);
+            if (!m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 })) return { ok: false, detail: 'append rejected at step ' + step };
+          }
+          H.reRender();
+          await window.__waitForRender();
+          const over = overflowing();
+          if (over.length) return { ok: false, detail: 'step ' + step + ': page ' + over.join(',') + ' drawn past its paper (pageStarts=' + pb.pageStarts().length + ', repairable=' + pb.paginationRepairable() + ')' };
+          if (rd['lastCascade']) created += rd['lastCascade'].created;
+          if (pageEls().length > 1) grewAt = step;
+        }
+        if (grewAt < 0) return { ok: false, detail: '80 appended measures never produced a second page (systems=' + document.querySelectorAll('#score g.system').length + ')' };
+        if (created < 1) return { ok: false, detail: 'page 2 appeared without a cascade creation (lastCascade=' + JSON.stringify(rd['lastCascade']) + ') — a full render, not the repair' };
+        /* A created page is never a header page, but it must still carry the
+           running page-number header a derived page has: cloning page 1's shell
+           (whose pgHead is the TITLE block) used to drop the header entirely. */
+        const headless = shape().filter((h) => h.p !== '1' && !h.head);
+        if (headless.length) return { ok: false, detail: 'created page(s) ' + headless.map((h) => h.p).join(',') + ' carry no page header' };
+        /* The contract: populating content live must equal importing it. */
+        const liveShape = JSON.stringify(shape());
+        const liveStarts = JSON.stringify(pb.pageStarts());
+        rd.forceFullRerender();
+        H.reRender();
+        await window.__waitForRender();
+        const fullStarts = JSON.stringify(pb.pageStarts());
+        if (liveStarts !== fullStarts) return { ok: false, detail: 'live page starts ' + liveStarts + ' != full render ' + fullStarts };
+        const fullShape = JSON.stringify(shape());
+        if (liveShape !== fullShape) return { ok: false, detail: 'live page shape ' + liveShape + ' != full render ' + fullShape };
+        const overFull = overflowing();
+        if (overFull.length) return { ok: false, detail: 'full render itself overflows page ' + overFull.join(',') };
+        return { ok: true };
+      })()` },
+  ],
+  pageUserBreakSurvivesEdit: [
+    { name: 'a user page break survives the next edit (the refill must repaint encoded, which honors <pb>)',
+      expr: `(async () => {
+        const H = window.__hkl_composer;
+        const m = H.model;
+        const pages = () => document.querySelectorAll('#score .score-page').length;
+        const pbCount = () => m.getDoc().querySelectorAll('pb').length;
+        if (pbCount() !== 1) return { ok: false, detail: 'setup left ' + pbCount() + ' user <pb> in the model, expected 1' };
+        if (pages() !== 2) return { ok: false, detail: 'expected 2 pages after the page break, got ' + pages() };
+        m.setCursor(m['flatChildren'](1).length, 1);
+        if (!m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'b', accid: '', oct: 4, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 }], duration: '4', dots: 0 })) return { ok: false, detail: 'append rejected' };
+        H.reRender();
+        await window.__waitForRender();
+        if (pbCount() !== 1) return { ok: false, detail: 'the edit removed the user <pb> from the MODEL (a different bug from the render losing it)' };
+        if (pages() !== 2) return { ok: false, detail: 'the user page break was lost on the next edit: ' + pages() + ' page(s) rendered while the <pb> is still in the model — the refill repainted with breaks:line, which ignores <pb>' };
+        return { ok: true };
+      })()` },
+    { name: 'the owner adopts a page start for a user page break even when the natural castoff is a single line',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const pb = H.renderer['pageBreaks'];
+        /* castoffSegmentedByUserBreaks used to bail on \`baked.lines.length <= 1\`,
+           tested on the RAW castoff — above the merge that folds the user's break
+           measures into the line set. Two measures are one natural line, so this
+           document could never have its page break adopted: the owner kept ONE
+           page start while the paint (encoded, which honors <pb>) gave two pages,
+           and the cascade then had a page it did not track. */
+        const ps = pb.pageStarts().length;
+        const pages = document.querySelectorAll('#score .score-page').length;
+        if (ps !== pages) return { ok: false, detail: 'owner holds ' + ps + ' page start(s) for a ' + pages + '-page render — the user page break was not adopted' };
+        if (!pb.paginationOwned()) return { ok: false, detail: 'pagination not owned despite a user page break (pageStarts=' + ps + ')' };
         return { ok: true };
       })()` },
   ],

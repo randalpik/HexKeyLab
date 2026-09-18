@@ -4426,3 +4426,162 @@ shell's status.
 Assertion bodies are template literals, so a backticked identifier in a *comment* inside one closes the
 string and the whole module fails to parse with something unrelated-looking ("Unexpected identifier").
 Hit twice in one session. Write `applied >= 1`, not the backticked form, inside an assertion.
+
+## One predicate answering two different questions — page-view pagination could never grow past page 1 (2026-09-18)
+
+`PageLineBreaks.paginationOwned()` (`pageStartIds.length > 1`) was written for the PIN question: are we
+emitting `<pb>`, or is Verovio paginating? It was then reused as the gate on the pagination REPAIR
+(`Renderer.repairPagination`, `repairAtMount`), where the question is different: is this partition's
+overflow ours to fix? On a ONE-page owned document the two answers diverge — no `<pb>` is pinned
+(`pageSet()` is null), but the painted strategy is still `'encoded'`, which does no height-based
+pagination at all, so nobody paginates it unless we do. The cascade therefore returned `true`
+("landed, nothing to repair") without ever calling `foldOf`, and because the cascade is the ONLY thing
+that can add a page on the splice path (`overflowingPage()` runs on the full-render branches alone),
+this was a **self-perpetuating trap**: growing to two pages needed the cascade, and the cascade needed
+two pages. Composing into an empty score piled every system past the bottom of page 1 forever, silently,
+with `lastCascade` all zeros and not one console warning. Measured: 161 appended measures rendered as
+1 page / 21 systems live, against 4 pages for the same document full-rendered — so live composition and
+import disagreed, which is the contract the whole splice architecture exists to keep. The fix is to stop
+overloading the predicate (`paginationRepairable()` = `ownershipActive() && pageStartIds.length >= 1`),
+not to loosen the old one, because `pageSet()` still needs the strict answer. Generalizes: when a
+predicate's NAME and its USE ask different questions, the gap is a silent behaviour hole, and the tell is
+a boolean whose doc comment has to explain two things.
+
+## A fixture that asserts its own precondition cannot see the state that breaks it (2026-09-18)
+
+`pageSpliceNewPageAtEnd` is the fixture for "composing past a full last page creates a new page", and it
+passed throughout the year the bug above was live. Its third line is
+`if (!st0 || !pb.paginationOwned()) return { ok: false, ... }` — it pre-builds a 400-chord multi-page
+score and bails unless pagination is already owned, i.e. it asserts the absence of the very state that
+fails. It could only ever test N→N+1 for N≥2. A precondition that narrows a fixture to the healthy case
+is invisible in a green suite; the only signal was the *starting* state nobody had written a fixture for.
+When a mechanism has a bootstrap case (zero→one, one→two, empty→populated), the fixture must START there
+rather than arrange its way past it. The replacement (`pageGrowFromOnePage`) begins at the BLANK document
+and was confirmed to fail without the fix ("step 13: page 1 drawn past its paper") before being kept —
+a regression test never verified to fail is a regression test you do not have.
+
+## Verovio can paginate past the owner's page index on documents with user `<pb>`s (2026-09-18)
+
+Exposed the moment the repair started covering one-page documents: `pageVirt.pageCount` (from
+`tk.getPageCount()`) can exceed `pageStarts().length`, because a user `<pb>` in the model paginates the
+render whether or not the owner adopted a page start for it. The cascade indexes pages through
+`pageStarts()`, so page 2 of such a document resolved to `pFirst === undefined` and the whole cascade
+hard-failed with "page start is not a partition line" — making `repairAtMount` warn on two documents
+(`phase3_pagebreak`, `phase3_cursor_across_pagebreak`) that were laid out perfectly well. A page BEYOND
+the owner's index is not corruption, it is simply not ours; it is skipped. A page INSIDE the index whose
+start is not a line start still fails, because that one really is corruption.
+
+## `breaks:'line'` silently discards `<pb>` — so anything that repaints with it deletes the user's page break (2026-09-18)
+
+Measured on byte-identical data holding one user `<pb>`: `'line'` → 1 page, `'encoded'` → 2, `'auto'` and
+`'smartSb0'` → 1. Only `'encoded'` honors `<pb>` at all. The refill picked `'line'` whenever the owner held
+≤ 1 page start, so Ctrl+B painted two pages on the derive and the very next note repainted one — with the
+`<pb>` still in the model and still in the pinned MEI. The tell was that `paintedBreaks()` reported
+`'encoded'` while the render showed one page: the strategy that actually paints a refill is
+`refill.strategy`, not `paintedBreaks()`, and they disagreed. When a render contradicts the mode you think
+it used, find every place that chooses a mode before concluding Verovio is at fault.
+
+## A tolerance expressed in USER UNITS is zoom-dependent in pixels — `TOL 10` is half a pixel at zoom 50 (2026-09-18)
+
+The splice reference gate's `TOL` is 10 SVG user units, documented as "one device pixel". That holds at
+zoom 100, where `scale` 100 gives 0.1 px per unit. At zoom 50 the measured ratio is **0.05 px per unit**
+(`getBoundingClientRect().width / getBBox().width` on a live measure, dpr 1), so the same constant is a
+HALF-pixel tolerance — the gate is twice as strict, in visual terms, at the zoom where Verovio's spacing is
+least like zoom 100's. A 15-unit width divergence there is 0.75 device px, which is why the pixel heatmap of
+the same pair came back diff=0. Read a units-based tolerance as a pixel budget only at the scale it was
+calibrated for.
+
+## The `lock_after_zoom_reflows` gate failure is a STAFF-LINE OVERSHOOT in the reference host at zoom 50 (2026-09-18, FIXED)
+
+Run to ground. The gate throws on the first divergence, which made it look like a single measure on system 0;
+a whole-document inventory shows it is **the last measure of EVERY system**, uniformly, and nothing else
+(14 of 18 measures exact, `dRelX` 0 everywhere, music content edge identical, final barline at the same x in
+both). The element that sets the divergent edge is `g.staff`, and the paths say it outright — same measure,
+same id, both sides through the gate's own postProcess → decorate → alignStaves pipeline:
+
+    live  M14353 1373 L18785
+    ref   M14353 1373 L18800.000000000116     (barline in BOTH: M18783 ... L18783)
+
+So the music, the spacing and the bar line agree exactly; the REFERENCE simply runs its staff lines ~17
+units past the final bar line where the live page stops 2 units past it, and the float residue marks the
+reference value as computed rather than snapped. It is **zoom-50-only** — the same inventory at zoom 75 and
+zoom 100 reports zero divergences — and it is **not the splice**: a full re-engrave into the live container
+still measures 18785, so the pair that disagrees is live-container vs offscreen-host, not spliced vs fresh.
+At 0.05 px per unit (zoom 50) the 15 units are 0.75 device px, which is why a pixel heatmap of the pair is
+empty.
+
+**The cause is `snapSystemRightEdge` (render-presets.ts) snapping to the ABSOLUTE device grid.** It ends
+with `const ctm = ref.getScreenCTM(); const deviceX = ctm.e + staffEnd * ctm.a; const deltaUser =
+(Math.round(deviceX) - deviceX) / ctm.a;` — `ctm.e` is the element's position ON SCREEN, so the snap target
+depends on where the host sits in the viewport. Measured at zoom 50: the live page has `ctm.e` 322.75 and a
+staff end already at device-x 1262.0 (fraction .0, delta 0), while the gate's reference host at
+`left:-99999px` has `ctm.e` −99928.75 and lands on fraction .9 (delta +2 from a different raw end). Two
+hosts therefore snap the same staff end to two different pixels.
+
+**Why zoom 50 and not zoom 100** falls straight out of the arithmetic. One snap moves at most half a device
+pixel, so two hosts can disagree by at most a whole one — `1 / ctm.a` user units: **10 units at zoom 100,
+13.3 at zoom 75, 20 at zoom 50**. TOL is 10 (one device pixel at scale 100). So at zoom 100 the worst case
+EQUALS the tolerance and the gate can never trip; at zoom 50 it is twice the tolerance and trips whenever the
+phases differ enough (observed 15). Zoom 75 is borderline at 13.3 and should be expected to fail
+intermittently, by phase luck, rather than never.
+
+**There was already a precedent for the fix, on the other axis.** `Renderer.originPhaseOf` reads
+`((ctm.f % 1) + 1) % 1` — the fractional device Y — from the LIVE page's `g.page-margin` and the gate hands
+it to `alignStaves(refHost, phase)`, with the comment "aligning the reference by its own (offscreen,
+unscrolled) phase instead leaves a residue of up to a device pixel per system". That was this bug, verbatim,
+for vertical staff ROWS; the horizontal edge snap had never got the same treatment.
+
+**Fixed** by building the horizontal twin: `originPhaseXOf` (same `g.page-margin`, `ctm.e` instead of
+`ctm.f`), threaded through `postProcessRendered` into an optional `snapSystemRightEdge(..., originPhaseX)`
+that re-bases the host's own margin phase onto the supplied one. Only `frac(deviceX)` feeds
+`Math.round(x) - x`, so that is sufficient; omitted, the behaviour is unchanged, which matters because a
+real on-screen page MUST snap by its own position to be crisp. Exactly one call site needed it — the gate's
+reference host. The splice WINDOW does not: the splicer post-processes imported systems inside the live page
+(`ctx.postProcess(pageEl, imported)`), so they already carry the live phase, which is why a spliced page had
+always agreed with a full re-engrave and only the offscreen reference disagreed. After: the whole-document
+inventory reports 0 diverging measures at zoom 50, 75 and 100 (was 4 at zoom 50, one per system), and the
+flagged gate is 499/499.
+
+## The splice reference gate's offscreen host can be the outlier, not the splice (2026-09-18)
+
+`lock_after_zoom_reflows` fails the gate at zoom 50 with one measure's width 15 units off
+(`relX` d=0.0 exactly, `w` live 4432 vs ref 4447). The live spliced page and a FULL re-engrave **in the real
+container** both measure 4432 — byte-identical bboxes, and a heatmap of the two is empty. Only the gate's
+offscreen reference host says 4447. So the geometry the splice produced is reproducible and the reference is
+the odd one out, which inverts the usual reading of that failure. The gate throws without any numbers, which
+is why this looked like an opaque splice defect for as long as it did; it now prints both values, both
+deltas and the tolerance. When a self-consistency gate fires, measure the THIRD render (an in-container full
+re-engrave) before believing either side.
+
+## `castoffSegmentedByUserBreaks` bails before it merges the breaks in (2026-09-18, OPEN)
+
+`if (baked.lines.length <= 1) return null;` is evaluated on the RAW castoff, twenty lines above the merge
+that adds the user break measures to the line set. A short document whose natural castoff is one line — two
+measures, say — therefore never gets segmented pagination, falls through to the ordinary castoff (which runs
+`'line'`, which ignores `<pb>`), and the owner adopts ONE page start for a document the paint gives two
+pages. Hence `pageVirt.pageCount` > `pageStarts().length`, which the overflow cascade then has to tolerate.
+Testing the MERGED line set instead looks like a one-line fix, but it changes castoff for every user-break
+document, so it is written down rather than done.
+
+## The single-line bail in `castoffSegmentedByUserBreaks` was tested on the wrong set (2026-09-18, FIXED)
+
+`if (baked.lines.length <= 1) return null` sat twenty lines ABOVE the merge that folds the user's break
+measures into the line set — so it judged the RAW castoff. Two measures are one natural line, so a short
+score could never have its page break adopted: the segmented path bailed, the ordinary castoff ran
+`breaks:'line'` (which ignores `<pb>`), and the owner took ONE page start for a document the paint gave TWO
+pages. The same document at 18 bars worked, which is what made it look like a pagination problem rather than
+a guard problem. Moved onto `mergedLines`, where the break measures are already counted. Before/after on the
+same 2-measure document, cache cleared so the derive actually reaches the branch: `pageStarts` 1 → 2,
+`paginationOwned` false → true; the 18-bar control is 2/true either way. Rule: a guard that exists to say
+"too small to be worth owning" must run on the set the decision will actually use, not on an input to it.
+
+## `forceFullRerender()` does not clear the partition cache, so a derive can keep a partition that is wrong (2026-09-18, OPEN)
+
+Found while before/after-testing the above: with a user `<pb>`, the refill path never adds a page start, and
+`rememberPartition` then caches that one-page partition against the current docVersion. A later
+`forceFullRerender()` clears `pageBreaks` and `modeCache` but deliberately NOT `partitionCache`, so the
+derive takes the cache-hit branch, restores the stale one-page partition, repaints — and the user's `<pb>`
+keeps the page from overflowing, so `overflowingPage() === 0` and it returns before ever reaching the
+segmented castoff that would have fixed it. The cache's only correctness guard is the overflow check, which
+cannot see a partition that is wrong without being overfull. Reproduced by clearing `partitionCache` in the
+probe, which is what made the guard fix measurable at all.

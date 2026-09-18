@@ -763,9 +763,29 @@ export class PageLineBreaks {
     return this.pageStartIds.slice();
   }
 
-  /** True when pagination is owned (pinned `<pb>`), not left to Verovio. */
+  /** True when pagination is owned (pinned `<pb>`), not left to Verovio.
+   *  This is the PIN-EMISSION question (it mirrors `pageSet()`), and it is NOT
+   *  the right gate for a pagination REPAIR — see `paginationRepairable()`. */
   paginationOwned(): boolean {
     return this.pageStartIds.length > 1;
+  }
+
+  /** True when an adopted page partition's overflow is OURS to repair.
+   *
+   *  Distinct from `paginationOwned()` on exactly one state: a ONE-PAGE owned
+   *  document. There `pageSet()` pins no `<pb>`, yet the painted strategy is
+   *  still `'encoded'` (`ownershipActive()`), and `breaks:'encoded'` does no
+   *  height-based pagination at all (lessons.md 2026-08-30) — so nobody
+   *  paginates it unless we do. Gating the repair on `paginationOwned()` made
+   *  that a self-perpetuating trap: growing to two pages needs the cascade,
+   *  and the cascade needed two pages, so composing into an empty score piled
+   *  every system onto page 1 forever (2026-09-18).
+   *
+   *  A single-SYSTEM document is deliberately excluded (`ownershipActive()` is
+   *  false): it paints `breaks:'line'`, where Verovio paginates by height
+   *  correctly and we must not interfere. */
+  paginationRepairable(): boolean {
+    return this.ownershipActive() && this.pageStartIds.length >= 1;
   }
 
   /** Commit a pagination the renderer's overflow repair decided (B2): the
@@ -1196,7 +1216,19 @@ export class PageLineBreaks {
     if (newPageStartIds.length && newPageStartIds[0] !== newStartIds[0]) return bail('page 1 does not start the document');
     if (!newPageStartIds.every((id) => newLineStarts.has(id))) return bail('page start is not a line start');
 
-    const strategy: RefillStrategy = newPageStartIds.length > 1 ? 'encoded' : 'line';
+    /* ALWAYS 'encoded' (2026-09-18). This used to fall back to 'line' when the
+       owner held one page start, because a one-page document pins no `<pb>`
+       and 'encoded' would then paint it as a single page however tall it grew
+       — 'line' delegated height pagination to Verovio. That fallback is what
+       kept one-page scores paginating, and it is no longer needed now the
+       overflow cascade covers them (`paginationRepairable`): an overfull page
+       is grown by the repair, not by Verovio.
+       It also has to go, because 'line' IGNORES `<pb>` — measured on identical
+       data, 'line' gives 1 page where 'encoded' gives 2. So a document with a
+       USER page break rendered correctly on the derive (painted 'encoded') and
+       then lost the break on the very next edit, which came through here and
+       repainted it 'line': Ctrl+B, type one note, the page break is gone. */
+    const strategy: RefillStrategy = 'encoded';
     this.startIds = newStartIds;
     this.pageStartIds = newPageStartIds;
     this.captureSigs(model.getDoc(), meiMeasures, ids, cur);
