@@ -4615,3 +4615,36 @@ yet. A performance-mode fixture failed this way while the identical clock-playba
 because the latter already awaited frames. Confirmed by wrapping `bridge.send` in a probe and watching the
 send happen. Also: both ref tiers are diff-gated by module-global snapshots, so `__testReset` has to clear
 them or one fixture's last broadcast suppresses the next fixture's first.
+
+## A per-event light and a per-voice note-off are different lifetimes (2026-09-18)
+
+Composer playback left keys lit on the HKL lattice after the score ended — silently, since the *audio*
+teardown was correct. Cause: HKL's playback highlight is a per-coord refcount (`playbackVoiceCount`), and
+the off handler's `voiceSeq` guard in `scheduleOffVisualAt` skipped the whole teardown — not just the audio
+part — whenever a later event had re-articulated the same voice. That guard is right about the audio (the
+successor owns the live voice; note-offing it there would cut the fresh note), but the *light* is taken
+per-EVENT: the successor's visual-on called `lightPlaybackKey` again. Two lights, one unlight, so the count
+never returned to 0 and the coord stayed in `selectedKeys` forever.
+
+The trigger window is what made it look intermittent: the successor's `voiceSeq` bump happens at driver-tick
+time, up to `LOOKAHEAD_MS` (100 ms) *before* its onset, while the predecessor's off fires at its own off
+time. So the guard mismatches on any same-coord re-attack landing within ~100 ms of the predecessor's
+release — i.e. essentially every contiguous repeated note, while a repeat separated by a real gap
+(staccato, a rest) releases cleanly. A probe that spaces the repeats by 1.2 s shows nothing wrong.
+
+Two general shapes worth keeping:
+
+- **When one guard protects two resources with different owners, it can't be a single `continue`.** Audio
+  ownership transferred to the successor; the highlight refcount did not. Ask per resource, not per branch.
+- **Teardown that trusts per-step bookkeeping needs a sweep at the end.** `abortActive` had always
+  force-offed everything left in `pb.heldKeys`; natural finish did not, so any voice whose off never fired
+  (a `noOff` glide predecessor whose successor's `canGlide` re-check failed, or an off handler that threw
+  into `logPlaybackError` — which deliberately keeps the transport alive) rang and stayed lit permanently.
+  Permanently is literal: finish sets `active = null`, so a later stop-playback early-returns in
+  `abortActive` and can never reach it. `sweepOrphanedVoices` now runs in finish's `finally` and warns.
+
+Method note: the repro was a CDP probe driving `play-score` over the BroadcastChannel and reading HKL's
+post-finish `held-keys` broadcast — the leak is externally observable, no internals needed. The first
+version of that probe emitted a broken template literal and "proved" the opposite; it only became evidence
+after a same-coord/distinct-coord control pair moved in opposite directions. Cf. "Confirm an A/B probe is
+sensitive before trusting 'identical output'".

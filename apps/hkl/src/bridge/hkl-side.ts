@@ -392,6 +392,39 @@ function releasePlaybackPedal(pb: ActivePlayback): void {
   resetGlobalDamperFlags(pb);
 }
 
+/** Force-off any voices still held when a run ends normally. Every scheduled
+ *  off has fired by lastEndMs+50, so anything still in heldKeys at that point
+ *  is an ORPHAN — an event whose off was never scheduled (a `noOff` glide
+ *  predecessor whose successor fell back to a plain attack, because the
+ *  predecessor's voice was gone from activeOscs at tick time) or whose off
+ *  handler threw and was swallowed by logPlaybackError. Without this sweep the
+ *  voice rings on and stays lit forever, and UNRECOVERABLY: finish clears
+ *  `active`, so a later stop-playback early-returns in abortActive and can
+ *  never reach it. Abort has always swept; natural finish did not.
+ *
+ *  Reaching this with a non-empty set means a scheduling bug upstream, not
+ *  ordinary teardown, so it warns with the offending voices — the hkl-inspect
+ *  console scanners surface that. */
+function sweepOrphanedVoices(pb: ActivePlayback): void {
+  if (pb.heldKeys.size === 0) return;
+  const orphans = Array.from(pb.heldKeys);
+  pb.heldKeys.clear();
+  for (const vid of orphans) {
+    try {
+      pb.voiceSeq.delete(vid);
+      noteOff(vid); /* vid-as-key → engine resolves to this exact voice */
+      unlightPlaybackKey(coordOf(vid));
+    } catch (err) {
+      logPlaybackError('finish-sweep', { vid }, err);
+    }
+  }
+  /* The sweep changed both the sounding set and the highlight, and it runs
+     AFTER the finish handler's own syncPianoOut — so re-mirror + redraw. */
+  try { syncPianoOut(); requestDraw(); } catch { /* teardown must not throw */ }
+  console.warn('[playback] finish: released ' + orphans.length
+    + ' orphaned voice(s) whose note-off never fired', orphans);
+}
+
 /** Release only the voices held by ONE instrument's pedal (a per-instrument
  *  pedal-up). The global damper flags reset only once no instrument's pedal
  *  remains down. */
@@ -676,7 +709,17 @@ function scheduleOffVisualAt(
     try {
     let mutated = false;
     for (const vid of offVids) {
-      if (pb.voiceSeq.get(vid) !== ownedSeq.get(vid)) continue;
+      if (pb.voiceSeq.get(vid) !== ownedSeq.get(vid)) {
+        /* A later event re-articulated this voice; IT owns the audio teardown
+           (its own off handler releases the voice). But the highlight refcount
+           is per-EVENT: that event's visual-on took its own lightPlaybackKey,
+           so this event must still drop the one IT took, or the coord's count
+           never returns to 0 and the key stays lit forever. Visual only — no
+           noteOff here, which would kill the live successor voice. */
+        unlightPlaybackKey(coordOf(vid));
+        mutated = true;
+        continue;
+      }
       /* Pedal captures this note's release (decided deterministically from the
          pedal timeline at schedule time — see pedalCapturesNoteEndingAt):
          defer the off, keep the voice ringing and mark it sustained, like the
@@ -1088,6 +1131,12 @@ async function playScore(wireEvents: ReadonlyArray<PlaybackEvent>, wirePedals: R
         } catch (err) {
           logPlaybackError('finish', playbackStateSnapshot(pb), err);
         } finally {
+          /* Backstop BEFORE the handshake: anything still held here had no off
+             fire (see sweepOrphanedVoices). In `finally` so a throw in the
+             pedal release above can't strand the very voices it failed to free,
+             and before broadcastHeldKeys so the corrected selection is what
+             Composer receives. */
+          sweepOrphanedVoices(pb);
           /* Always complete the handshake + tear down, even if release threw —
              otherwise Composer's transport hangs waiting for playback-finished. */
           bridge.send({ type: 'playback-finished' });
