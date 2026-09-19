@@ -123,9 +123,10 @@ export function emitMei(
   const bpm = Math.max(1, Math.round(tempo.bpm));
   const num = Math.max(1, Math.round(opts.numerator));
 
-  /* Reuse the shared skeleton for head / hkl:config / scoreDef, then rebuild the
-     section with one measure per bar. refQ/refR = 0,0: recording coords are
-     origin-relative to A3=220 (the only ref a recording carries). */
+  /* Reuse the shared skeleton for head / hkl:config / scoreDef, then rebuild
+     the section with one measure per bar. No ref is emitted: recording coords
+     are origin-relative to A3=220, and Composer derives the ref from the key
+     signature anyway. */
   const skeleton = buildScoreSkeletonXml({
     title: opts.title,
     composer: 'HexKeyLab',
@@ -133,7 +134,7 @@ export function emitMei(
     meterCount: num,
     meterUnit: 4,
     tempoBpm: bpm,
-    layoutReq: { tuningMode: snapshot.tuning, refQ: 0, refR: 0 },
+    layoutReq: { tuningMode: snapshot.tuning },
   });
   const doc = new DOMParser().parseFromString(skeleton, 'application/xml');
   const section = doc.querySelector('section');

@@ -30,8 +30,8 @@ Per-channel protocol modules define independent `In`/`Out` unions. HKL instantia
 
 **Composer → HKL** (`ComposerEvent`):
 - `composer-hello` / `composer-bye` / `request-state` — handshake. Composer re-broadcasts `composer-hello` on every inbound `hkl-hello` so HKL learns it's alive when HKL boots second.
-- `set-score-ref` (the score's Setup-dialog ref coordinates) / `set-reference-note` (cursor's prior note, sent only when non-null) — HKL's two ref-tier channels via `apps/hkl/src/state/reference.ts`. Selection-tier wins over the score-ref fallback, but a `composer`-source selection is gated on outline mode = `'piano'`. The key-sig tonic (`computeSongKeyRef`, qm=0 spine, lowest MIDI ≥ F3=53) is **no longer broadcast** — it only seeds the Setup dialog's ref-coordinate default. When HKL's "Sync to Composer" is on, a `set-score-ref` also clears the selection tier so the lattice matches the score exactly; sync off leaves the user's selection. → decisions.md "Setup ref drives HKL's score-ref tier; sync-gated selection clear".
-- `layout-req-changed` — score's pinned tuning + ref; applied when "Sync layout" on.
+- `set-score-ref` (the **key-signature tonic at Composer's current position**) / `set-reference-note` (cursor's prior note, sent only when non-null) — HKL's two ref-tier channels via `apps/hkl/src/state/reference.ts`. Selection-tier wins over the score-ref fallback, but a `composer`-source selection is gated on outline mode = `'piano'`. The score-ref is **derived, never stored**: `computeSongKeyRefAt(model, measureIdx)` places the tonic on the qm=0 Pythagorean spine at the octave nearest C4, so it tracks mid-score key changes; while a transport runs it follows the *sounding* position instead of the editing cursor. Sent on cursor moves, edits, Setup save, file load, hello, and transport steps — all diff-gated. When HKL's "Sync to Composer" is on, a `set-score-ref` also clears the selection tier so the lattice matches the score exactly; sync off leaves the user's selection. → decisions.md "Ref note derives from the key signature at the cursor".
+- `layout-req-changed` — score's pinned tuning (tuning only; the ref is not part of the pinned layout); applied when "Sync layout" on.
 - `play-score` — `{events: PlaybackEvent[]}`, per-event `{atMs, durationMs, notes, meiId?}`.
 - `stop-playback`.
 - `composer-active-instrument` / `composer-instruments` — cursor instrument + full instrument set (multi-instrument cursor-follow).
@@ -206,7 +206,7 @@ Composer is its own workspace package (`@hkl/composer`) with its own Vite config
 
 A native `<dialog>` opened by the "Setup…" button:
 - **Title** → `<titleStmt><title>`; **Composer** → `<persName role="composer">`.
-- **Key signature** → `<scoreDef key.sig>` + `<scoreDef mode="major|minor">` (defaults `'major'`). A **minor** checkbox switches displayed labels major↔relative-minor (the `sig` value is shared); drives `computeSongKeyRef`, which now only seeds the Setup dialog's ref-coordinate default (no longer broadcast to HKL). MusicXML emits `<mode>`.
+- **Key signature** → `<scoreDef key.sig>` + `<scoreDef mode="major|minor">` (defaults `'major'`). A **minor** checkbox switches displayed labels major↔relative-minor (the `sig` value is shared); drives `computeSongKeyRefAt`, i.e. the reference note HKL centers on. MusicXML emits `<mode>`. `setKeySigAt` diff-elides on the **(sig, mode) pair**: a same-sig mode flip (D major → B minor) writes `mode` alone onto the override `<scoreDef>`, so the tonic moves without rendering a redundant courtesy key signature.
 - **Time signature** → `<scoreDef meter.count meter.unit>` (num 1–16, denom 1/2/4/8/16).
 - **Tempo** → `<tempo>` first child of measure 1 (`mm`, `mm.unit`, `mm.dots`, `midi.bpm`, optional text).
 

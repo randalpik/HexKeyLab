@@ -571,13 +571,12 @@ const SIG_CHANGES = {
   `,
 
   /* Minor flag + 0 flats: tonic becomes A (r=0) instead of C (r=-3). The key
-   * tonic now only seeds the Setup dialog's ref-coordinate default (it's no
-   * longer broadcast); opening Setup on a default-ref doc seeds #setupRefR
-   * from computeSongKeyRef. */
+   * tonic IS the score-ref now, so assert on the broadcast itself. */
   keyModeMinor_0_BroadcastsA: `
     m.setKeySig('0');
     m.setKeyMode('minor');
-    document.getElementById('btnSetup').click();
+    window.__bridgeMock.reset();
+    window.__bridgeMock.sendHklHello();
   `,
 
   /* Minor + 7 sharps: tonic is a♯ at r=7 (sharp-extreme, exercises the
@@ -585,7 +584,8 @@ const SIG_CHANGES = {
   keyModeMinor_7s_BroadcastsAsharp: `
     m.setKeySig('7s');
     m.setKeyMode('minor');
-    document.getElementById('btnSetup').click();
+    window.__bridgeMock.reset();
+    window.__bridgeMock.sendHklHello();
   `,
 
   /* Major flag (default) + 3 sharps: tonic is A at r=0. Sanity-check that
@@ -593,7 +593,8 @@ const SIG_CHANGES = {
   keyModeMajor_3s_BroadcastsA: `
     m.setKeySig('3s');
     m.setKeyMode('major');
-    document.getElementById('btnSetup').click();
+    window.__bridgeMock.reset();
+    window.__bridgeMock.sendHklHello();
   `,
 
   /* Round-trip: set minor, serialize, reload via replaceDocument, confirm
@@ -750,7 +751,7 @@ const HEJI = {
      (sharp + one down arrow). */
   heji_sharp_arrow: {
     setup: `
-      m.setLayoutReq({ tuningMode: 'D', refQ: 0, refR: 0 });
+      m.setLayoutReq({ tuningMode: 'D' });
       m.setHejiEnabled(true);
       m.setCursor(0, 1);
       m.insertChordAtCursor({ notes: [{ q: 1, r: 0, pname: 'c', accid: 's', oct: 4, midi: 61, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
@@ -763,7 +764,7 @@ const HEJI = {
      (the natural-comma visibility case). */
   heji_septimal_hook: {
     setup: `
-      m.setLayoutReq({ tuningMode: '7', refQ: 0, refR: 0 });
+      m.setLayoutReq({ tuningMode: '7' });
       m.setHejiEnabled(true);
       m.setCursor(0, 1);
       m.insertChordAtCursor({ notes: [{ q: 2, r: 0, pname: 'f', accid: '', oct: 4, midi: 65, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
@@ -775,7 +776,7 @@ const HEJI = {
      hook (E2DE). Verifies ordering: sharp left, hook nearest the notehead. */
   heji_acc_plus_hook: {
     setup: `
-      m.setLayoutReq({ tuningMode: '7', refQ: 0, refR: 0 });
+      m.setLayoutReq({ tuningMode: '7' });
       m.setHejiEnabled(true);
       m.setCursor(0, 1);
       m.insertChordAtCursor({ notes: [{ q: -10, r: 7, pname: 'f', accid: 's', oct: 4, midi: 66, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
@@ -791,7 +792,7 @@ const HEJI = {
      is covered by the same baseline. */
   accidental_centered_on_line: {
     setup: `
-      m.setLayoutReq({ tuningMode: 'P', refQ: 0, refR: 0 });
+      m.setLayoutReq({ tuningMode: 'P' });
       m.setHejiEnabled(false);
       m.setCursor(0, 1);
       m.insertChordAtCursor({ notes: [{ q: 0, r: 4, pname: 'g', accid: 's', oct: 4, midi: 68, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
@@ -804,7 +805,7 @@ const HEJI = {
      decoration is gated on the HEJI flag. */
   heji_off_native: {
     setup: `
-      m.setLayoutReq({ tuningMode: 'D', refQ: 0, refR: 0 });
+      m.setLayoutReq({ tuningMode: 'D' });
       m.setHejiEnabled(false);
       m.setCursor(0, 1);
       m.insertChordAtCursor({ notes: [{ q: 1, r: 0, pname: 'c', accid: 's', oct: 4, midi: 61, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
@@ -816,7 +817,7 @@ const HEJI = {
      show. The second's accidental must NOT be hidden as redundant. */
   heji_carry_diff_comma: {
     setup: `
-      m.setLayoutReq({ tuningMode: 'D', refQ: 0, refR: 0 });
+      m.setLayoutReq({ tuningMode: 'D' });
       m.setHejiEnabled(true);
       m.setCursor(0, 1);
       m.insertChordAtCursor({ notes: [{ q: -12, r: 7, pname: 'a', accid: 's', oct: 3, midi: 58, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
@@ -2713,15 +2714,73 @@ const BRIDGE = {
     `,
   },
 
-  /* The score's Setup ref coordinates (layoutReq), not the key-sig tonic,
-     drive HKL's score-ref tier. With a non-default ref set, a hello-triggered
-     rebroadcast carries those exact coords as set-score-ref. */
-  score_ref_broadcast_carries_setup_coords: {
+  /* The key-signature tonic drives HKL's score-ref tier. 2 sharps + minor =
+     B minor → the B on the Pythagorean spine nearest C4 = B3 = (-3, 2).
+     This is the worked example the whole feature is specified against. */
+  score_ref_broadcast_carries_key_tonic: {
     setup: `
-      m.setLayoutReq({ tuningMode: '5', refQ: 0, refR: 2 });
+      m.setKeySig('2s');
+      m.setKeyMode('minor');
       window.__bridgeMock.reset();
       window.__bridgeMock.sendHklHello();
     `,
+  },
+
+  /* F major is the ONE tonic whose placement changed when the rule moved from
+     "lowest octave >= F3" to "nearest C4": F3 (53) is 7 semitones from C4,
+     F4 (65) only 5. Pins that intentional delta. */
+  score_ref_tonic_f_is_f4: {
+    setup: `
+      m.setKeySig('1f');
+      m.setKeyMode('major');
+      window.__bridgeMock.reset();
+      window.__bridgeMock.sendHklHello();
+    `,
+  },
+
+  /* The ref tracks the key at the CURSOR, not at measure 1. M_1 is C major,
+     M_2 onward is A major; a Ctrl+Right into M_2 must re-broadcast the A
+     tonic. Driven by a real keystroke so the cursor-move fan-out runs. */
+  score_ref_follows_midscore_key_change: {
+    setup: `
+      m.setKeySig('0');
+      m.setKeyMode('major');
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.appendMeasure();
+      m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setKeySigAt(1, '3s', 'major');
+      m.setCursor(0, 1);
+      window.__hkl_composer.reRender();
+      window.__bridgeMock.sendHklHello();
+      window.__bridgeMock.reset();
+    `,
+    /* Ctrl+Right lands AT the barline (still visually M_1); one more step puts
+       the cursor unambiguously inside M_2. */
+    setupKeys: [{ key: 'ArrowRight', ctrl: true }, 'ArrowRight'],
+  },
+
+  /* Same rendered signature (2 sharps), different mode: D major -> B minor at
+     M_2. Before the setKeySigAt fix this wrote nothing at all (the diff-elide
+     keyed on sig alone), so the tonic never moved. Exercises the mode-only
+     <scoreDef> override end to end. */
+  score_ref_updates_on_keymode_flip: {
+    setup: `
+      m.setKeySig('2s');
+      m.setKeyMode('major');
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.appendMeasure();
+      m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+      for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.setKeySigAt(1, '2s', 'minor');
+      m.setCursor(0, 1);
+      window.__hkl_composer.reRender();
+      window.__bridgeMock.sendHklHello();
+      window.__bridgeMock.reset();
+    `,
+    setupKeys: [{ key: 'ArrowRight', ctrl: true }, 'ArrowRight'],
   },
 };
 
@@ -2741,6 +2800,27 @@ const PERFORMANCE = {
       m.setVoice(3);
       m.setCursor(0, 3);
       m.insertChordAtCursor({ notes: [{ q: -4, r: -2, pname: 'c', accid: '', oct: 4, midi: 60, colorHex: '#888', lightColorHex: '#888', velocity: 80 }], duration: '2', dots: 0 });
+    `,
+  },
+
+  /* Transport-follow: the score-ref tracks the SOUNDING position, not the
+     parked editing cursor. M_1 is C major, M_2 is A major; advancing the
+     performance bar into M_2 must re-broadcast the A tonic. Driven through
+     the __performance hook (synchronous start + strikes). */
+  perfScoreRefFollowsPosition: {
+    setup: `
+      m.setKeySig('0');
+      m.setKeyMode('major');
+      m.setCursor(0, 1);
+      const A3 = { q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', lightColorHex: '#888', velocity: 80 };
+      m.insertChordAtCursor({ notes: [A3], duration: '1', dots: 0 });
+      m.appendMeasure();
+      m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+      m.insertChordAtCursor({ notes: [A3], duration: '1', dots: 0 });
+      m.setKeySigAt(1, '3s', 'major');
+      m.setCursor(0, 1);
+      window.__hkl_composer.reRender();
+      window.__bridgeMock.reset();
     `,
   },
 
@@ -3907,6 +3987,30 @@ const CHORD_INTERNAL = {
      Score: note A4, hidden quarter rest, note A4. Asserted in
      FIXTURE_ASSERTIONS.playback_bar_hidden_on_hidden_rest by driving the
      playback cursor onto the hidden rest then a visible note. */
+  /* Same contract as perfScoreRefFollowsPosition, for CLOCK playback: a
+     playback-position landing in the A-major bar re-broadcasts the A tonic
+     while the editing cursor stays parked in the C-major bar. */
+  playback_score_ref_follows_position: {
+    setup: `
+      window.__bridgeMock.sendHklHello();
+      m.setKeySig('0');
+      m.setKeyMode('major');
+      m.setCursor(0, 1);
+      const A3 = { q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 };
+      m.insertChordAtCursor({ notes: [A3], duration: '1', dots: 0 });
+      m.appendMeasure();
+      m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+      window.__m2NoteId = m.insertChordAtCursor({ notes: [A3], duration: '1', dots: 0 });
+      m.setKeySigAt(1, '3s', 'major');
+      m.setCursor(0, 1);
+      window.__hkl_composer.reRender();
+      window.__bridgeMock.reset();
+    `,
+    /* Space → startPlayback so isPlaying is true and refSourceMeasure follows
+       the sounding head rather than the editing cursor. */
+    setupKeys: [' '],
+  },
+
   playback_bar_hidden_on_hidden_rest: {
     setup: `
       window.__bridgeMock.sendHklHello();
@@ -3978,12 +4082,9 @@ const CHORD_INTERNAL = {
       window.__hkl_composer.reRender();
       window.__bridgeMock.reset();
       window.__bridgeMock.sendHklHello();
-      /* 7 sharps major = C# major. The key tonic now seeds the Setup ref-field
-         default (it's no longer broadcast); open Setup to read the seeded
-         coords, which come from computeSongKeyRef. The hello above still
-         exercises the empty-voice selection-tier silence + composer-hello echo
-         contract below. */
-      document.getElementById('btnSetup').click();
+      /* 7 sharps major = C# major. The hello re-broadcasts the key tonic as
+         set-score-ref, and also exercises the empty-voice selection-tier
+         silence + composer-hello echo contract below. */
     `,
   },
 
@@ -4683,7 +4784,7 @@ const PHASE1 = {
      bypassed HEJI by writing <accid> child form. */
   phase1_parenCaut_preserves_heji: {
     setup: `
-      m.setLayoutReq({ tuningMode: 'D', refQ: 0, refR: 0 });
+      m.setLayoutReq({ tuningMode: 'D' });
       m.setHejiEnabled(true);
       m.setCursor(0, 1);
       m.insertChordAtCursor({ notes: [{ q: 1, r: 0, pname: 'c', accid: 's', oct: 4, midi: 61, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
@@ -8657,6 +8758,41 @@ export const FIXTURE_ASSERTIONS = {
   /* Rendered geometry of the trailing bar: before the first note at the start,
    * then at each played note's RIGHT edge (+CURSOR_HPAD, the same offset the
    * voice cursor uses after entering a note), with x strictly increasing. */
+  perfScoreRefFollowsPosition: [
+    { name: 'advancing the performance bar into the A-major bar re-broadcasts (0, 0)',
+      expr: `(async () => {
+        /* BroadcastChannel delivery is asynchronous: the mock only sees a send
+           after a turn of the event loop, so captured() must be read behind a
+           frame wait, never straight after the strike. */
+        const frames = async () => { for (let i = 0; i < 3; i++) { await new Promise((r) => requestAnimationFrame(() => r(true))); await Promise.resolve(); } };
+        const M = window.__hkl_composer;
+        const m = M.model;
+        const evs = M.buildPlayback(m).filter(e => e.notes.length && e.meiId);
+        if (evs.length !== 2) return { ok: false, detail: 'playback events=' + evs.length + ' (expected 2)' };
+        /* The matcher compares the strike's stored @color, so read it off the
+           note rather than passing a literal (see perfTwoVoiceFrontier). */
+        const colorOf = (meiId) => {
+          const loc = m.findElement(meiId);
+          const el = m.flatChildren(loc.voice)[loc.index];
+          const n = el.localName === 'chord' ? el.querySelector('note') : el;
+          return n.getAttribute('color');
+        };
+        const strike = (meiId) => M.__performance.strike(
+          { q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57,
+            colorHex: colorOf(meiId), lightColorHex: '#888', velocity: 80 });
+        M.__performance.start();
+        window.__bridgeMock.reset();
+        strike(evs[0].meiId);   /* completes M_1's whole note */
+        strike(evs[1].meiId);   /* advances into M_2 (A major) */
+        await frames();
+        const sr = window.__bridgeMock.captured().filter((m) => m.type === 'set-score-ref');
+        if (sr.length === 0) return { ok: false, detail: 'no set-score-ref captured during performance' };
+        const last = sr[sr.length - 1];
+        return last.q === 0 && last.r === 0
+          ? { ok: true, detail: 'q=' + last.q + ' r=' + last.r }
+          : { ok: false, detail: 'q=' + last.q + ' r=' + last.r + ' (expected 0, 0 = A3)' };
+      })()` },
+  ],
   perfBarTrailsPlayed: [
     { name: 'the bar renders past the note just played, never moving backward',
       expr: `(() => {
@@ -8971,6 +9107,15 @@ export const FIXTURE_ASSERTIONS = {
       expr: `(() => {
         if (!document.getElementById('setupSigBtn')) return { ok: false, detail: 'missing #setupSigBtn' };
         for (const id of ['setupKey', 'setupKeyMinor', 'setupTimeNum', 'setupTimeDen']) {
+          if (document.getElementById(id)) return { ok: false, detail: id + ' still present in Setup' };
+        }
+        return { ok: true };
+      })()` },
+    /* The reference note is derived from the key signature, so Setup must no
+       longer offer it as a user-selectable (q, r) pair. */
+    { name: 'Setup has no reference-note fields',
+      expr: `(() => {
+        for (const id of ['setupRefQ', 'setupRefR', 'setupRefLabel']) {
           if (document.getElementById(id)) return { ok: false, detail: id + ' still present in Setup' };
         }
         return { ok: true };
@@ -10675,33 +10820,36 @@ export const FIXTURE_ASSERTIONS = {
         const k = window.__hkl_composer.model.getKeyMode();
         return k === 'minor' ? { ok: true } : { ok: false, detail: 'mode=' + k };
       })()` },
-    { name: 'Setup seeds ref field with A spine coords (r=0)',
+    { name: 'score-ref is the A-minor tonic A3 = (0, 0)',
       expr: `(() => {
-        const r = document.getElementById('setupRefR');
-        if (!r) return { ok: false, detail: 'no #setupRefR' };
-        return r.value === '0'
-          ? { ok: true, detail: 'r=' + r.value }
-          : { ok: false, detail: 'r=' + r.value + ' (expected 0)' };
+        const sr = window.__bridgeMock.captured().filter((m) => m.type === 'set-score-ref');
+        if (sr.length === 0) return { ok: false, detail: 'no set-score-ref captured' };
+        const last = sr[sr.length - 1];
+        return last.q === 0 && last.r === 0
+          ? { ok: true, detail: 'q=' + last.q + ' r=' + last.r }
+          : { ok: false, detail: 'q=' + last.q + ' r=' + last.r + ' (expected 0, 0)' };
       })()` },
   ],
   keyModeMinor_7s_BroadcastsAsharp: [
-    { name: 'Setup seeds ref field with a♯ spine coords (r=7)',
+    { name: 'score-ref is the a♯-minor tonic A♯3 = (-12, 7)',
       expr: `(() => {
-        const r = document.getElementById('setupRefR');
-        if (!r) return { ok: false, detail: 'no #setupRefR' };
-        return r.value === '7'
-          ? { ok: true, detail: 'r=' + r.value }
-          : { ok: false, detail: 'r=' + r.value + ' (expected 7)' };
+        const sr = window.__bridgeMock.captured().filter((m) => m.type === 'set-score-ref');
+        if (sr.length === 0) return { ok: false, detail: 'no set-score-ref captured' };
+        const last = sr[sr.length - 1];
+        return last.q === -12 && last.r === 7
+          ? { ok: true, detail: 'q=' + last.q + ' r=' + last.r }
+          : { ok: false, detail: 'q=' + last.q + ' r=' + last.r + ' (expected -12, 7)' };
       })()` },
   ],
   keyModeMajor_3s_BroadcastsA: [
-    { name: 'Setup seeds ref field with A spine coords (r=0) for A major',
+    { name: 'score-ref is the A-major tonic A3 = (0, 0)',
       expr: `(() => {
-        const r = document.getElementById('setupRefR');
-        if (!r) return { ok: false, detail: 'no #setupRefR' };
-        return r.value === '0'
-          ? { ok: true, detail: 'r=' + r.value }
-          : { ok: false, detail: 'r=' + r.value + ' (expected 0)' };
+        const sr = window.__bridgeMock.captured().filter((m) => m.type === 'set-score-ref');
+        if (sr.length === 0) return { ok: false, detail: 'no set-score-ref captured' };
+        const last = sr[sr.length - 1];
+        return last.q === 0 && last.r === 0
+          ? { ok: true, detail: 'q=' + last.q + ' r=' + last.r }
+          : { ok: false, detail: 'q=' + last.q + ' r=' + last.r + ' (expected 0, 0)' };
       })()` },
   ],
   keyModeRoundtrip: [
@@ -15346,15 +15494,106 @@ export const FIXTURE_ASSERTIONS = {
       })()` },
   ],
 
-  score_ref_broadcast_carries_setup_coords: [
-    { name: 'set-score-ref carries the Setup ref coords (0, 2)',
+  score_ref_tonic_f_is_f4: [
+    { name: 'F major tonic is F4 = (9, -4), not F3',
       expr: `(() => {
         const sr = window.__bridgeMock.captured().filter((m) => m.type === 'set-score-ref');
         if (sr.length === 0) return { ok: false, detail: 'no set-score-ref captured' };
         const last = sr[sr.length - 1];
-        return last.q === 0 && last.r === 2
+        return last.q === 9 && last.r === -4
           ? { ok: true, detail: 'q=' + last.q + ' r=' + last.r }
-          : { ok: false, detail: 'q=' + last.q + ' r=' + last.r + ' (expected 0, 2)' };
+          : { ok: false, detail: 'q=' + last.q + ' r=' + last.r + ' (expected 9, -4 = F4)' };
+      })()` },
+    { name: 'F4 is nearer C4 than F3 (the rule being pinned)',
+      expr: `(() => {
+        const sr = window.__bridgeMock.captured().filter((m) => m.type === 'set-score-ref');
+        if (sr.length === 0) return { ok: false, detail: 'no set-score-ref captured' };
+        const last = sr[sr.length - 1];
+        const midi = 57 + 4 * last.q + 7 * last.r;
+        return midi === 65
+          ? { ok: true, detail: 'midi=' + midi }
+          : { ok: false, detail: 'midi=' + midi + ' (expected 65 = F4)' };
+      })()` },
+  ],
+  score_ref_follows_midscore_key_change: [
+    { name: 'Ctrl+Right into the A-major bar re-broadcasts the A tonic (0, 0)',
+      expr: `(() => {
+        const sr = window.__bridgeMock.captured().filter((m) => m.type === 'set-score-ref');
+        if (sr.length === 0) return { ok: false, detail: 'no set-score-ref captured' };
+        const last = sr[sr.length - 1];
+        return last.q === 0 && last.r === 0
+          ? { ok: true, detail: 'q=' + last.q + ' r=' + last.r }
+          : { ok: false, detail: 'q=' + last.q + ' r=' + last.r + ' (expected 0, 0 = A3)' };
+      })()` },
+  ],
+  score_ref_updates_on_keymode_flip: [
+    { name: 'D major -> B minor at M_2 moves the tonic to B3 = (-3, 2)',
+      expr: `(() => {
+        const sr = window.__bridgeMock.captured().filter((m) => m.type === 'set-score-ref');
+        if (sr.length === 0) return { ok: false, detail: 'no set-score-ref captured' };
+        const last = sr[sr.length - 1];
+        return last.q === -3 && last.r === 2
+          ? { ok: true, detail: 'q=' + last.q + ' r=' + last.r }
+          : { ok: false, detail: 'q=' + last.q + ' r=' + last.r + ' (expected -3, 2 = B3)' };
+      })()` },
+    { name: 'the mode-only override is written without a redundant key.sig',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        if (m.keyModeAt(1) !== 'minor') return { ok: false, detail: 'keyModeAt(1)=' + m.keyModeAt(1) };
+        if (m.keySigAt(1) !== '2s') return { ok: false, detail: 'keySigAt(1)=' + m.keySigAt(1) };
+        const xml = m.serialize();
+        const doc = new DOMParser().parseFromString(xml, 'application/xml');
+        const section = doc.querySelector('section');
+        const interior = [...section.children].filter((e) => e.localName === 'scoreDef');
+        if (interior.length !== 1) return { ok: false, detail: 'interior scoreDefs=' + interior.length };
+        const sd = interior[0];
+        if (sd.getAttribute('mode') !== 'minor') return { ok: false, detail: 'override mode=' + sd.getAttribute('mode') };
+        if (sd.hasAttribute('key.sig')) return { ok: false, detail: 'override carries a redundant key.sig' };
+        return { ok: true };
+      })()` },
+  ],
+  score_ref_broadcast_carries_key_tonic: [
+    { name: 'B minor → set-score-ref carries B3 = (-3, 2)',
+      expr: `(() => {
+        const sr = window.__bridgeMock.captured().filter((m) => m.type === 'set-score-ref');
+        if (sr.length === 0) return { ok: false, detail: 'no set-score-ref captured' };
+        const last = sr[sr.length - 1];
+        return last.q === -3 && last.r === 2
+          ? { ok: true, detail: 'q=' + last.q + ' r=' + last.r }
+          : { ok: false, detail: 'q=' + last.q + ' r=' + last.r + ' (expected -3, 2)' };
+      })()` },
+    { name: 'the tonic sits on the Pythagorean spine, 2nd column of its band',
+      expr: `(() => {
+        const sr = window.__bridgeMock.captured().filter((m) => m.type === 'set-score-ref');
+        if (sr.length === 0) return { ok: false, detail: 'no set-score-ref captured' };
+        const last = sr[sr.length - 1];
+        const pos = ((last.q + 1) % 3 + 3) % 3;
+        const midi = 57 + 4 * last.q + 7 * last.r;
+        if (pos !== 1) return { ok: false, detail: 'posInBand=' + pos + ' (expected 1)' };
+        if (midi !== 59) return { ok: false, detail: 'midi=' + midi + ' (expected 59 = B3)' };
+        return { ok: true };
+      })()` },
+  ],
+  playback_score_ref_follows_position: [
+    { name: 'playback into the A-major bar re-broadcasts the A tonic (0, 0)',
+      expr: `(async () => {
+        const frames = async () => { for (let i = 0; i < 3; i++) { await new Promise((r) => requestAnimationFrame(() => r(true))); await Promise.resolve(); } };
+        await frames();
+        window.__bridgeMock.reset();
+        window.__bridgeMock.sendPlaybackPosition(window.__m2NoteId, 0);
+        await frames();
+        const sr = window.__bridgeMock.captured().filter((m) => m.type === 'set-score-ref');
+        if (sr.length === 0) return { ok: false, detail: 'no set-score-ref after playback-position' };
+        const last = sr[sr.length - 1];
+        return last.q === 0 && last.r === 0
+          ? { ok: true, detail: 'q=' + last.q + ' r=' + last.r }
+          : { ok: false, detail: 'q=' + last.q + ' r=' + last.r + ' (expected 0, 0 = A3)' };
+      })()` },
+    { name: 'the editing cursor stayed parked in the C-major bar',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const mi = m.cursorMeasureIdx(1, 'insert');
+        return mi === 0 ? { ok: true } : { ok: false, detail: 'cursor measure=' + mi + ' (expected 0)' };
       })()` },
   ],
   playback_bar_hidden_on_hidden_rest: [
@@ -16701,12 +16940,11 @@ export const FIXTURE_ASSERTIONS = {
       })()` },
   ],
   song_key_csharp_from_empty_voice: [
-    { name: 'Setup seeds ref field; (q,r) gives 12-TET pitch class C# (=1)',
+    { name: 'score-ref broadcast gives 12-TET pitch class C# (=1)',
       expr: `(() => {
-        const qEl = document.getElementById('setupRefQ');
-        const rEl = document.getElementById('setupRefR');
-        if (!qEl || !rEl) return { ok: false, detail: 'no #setupRefQ/#setupRefR' };
-        const last = { q: parseInt(qEl.value, 10), r: parseInt(rEl.value, 10) };
+        const sr = window.__bridgeMock.captured().filter((m) => m.type === 'set-score-ref');
+        if (sr.length === 0) return { ok: false, detail: 'no set-score-ref captured' };
+        const last = sr[sr.length - 1];
         /* coordToMidi = 57 + 4q + 7r; pitch class = midi % 12. C# == 1. */
         const midi = 57 + 4 * last.q + 7 * last.r;
         const pc = ((midi % 12) + 12) % 12;
@@ -16714,11 +16952,11 @@ export const FIXTURE_ASSERTIONS = {
           ? { ok: true }
           : { ok: false, detail: '(q,r)=(' + last.q + ',' + last.r + ') → pc=' + pc + ' (expected 1 = C#)' };
       })()` },
-    { name: 'seeded (q,r) sits on the qm=0 spine in a central octave',
+    { name: 'broadcast (q,r) sits on the qm=0 spine in a central octave',
       expr: `(() => {
-        const qEl = document.getElementById('setupRefQ');
-        const rEl = document.getElementById('setupRefR');
-        const last = { q: parseInt(qEl.value, 10), r: parseInt(rEl.value, 10) };
+        const sr = window.__bridgeMock.captured().filter((m) => m.type === 'set-score-ref');
+        if (sr.length === 0) return { ok: false, detail: 'no set-score-ref captured' };
+        const last = sr[sr.length - 1];
         const qm = ((last.q % 3) + 3) % 3;
         /* keyOctave uses the natural-letter MIDI (strips the accidental). For
          * C# the alter is +1, so natMidi = 57 + 4q + 7r - 1. The picker is

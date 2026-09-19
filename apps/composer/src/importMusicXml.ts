@@ -1482,7 +1482,7 @@ export function importMusicXml(xmlText: string): string {
   applyBeamMarkers(doc);
 
   /* Forced import settings. */
-  setLayoutReq(doc, { tuningMode: 'E', refQ: 0, refR: 0 });
+  setLayoutReq(doc, { tuningMode: 'E' });
   setHejiEnabled(doc, false);
   setIgnoreColor(doc, true);
 

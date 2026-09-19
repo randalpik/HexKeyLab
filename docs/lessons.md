@@ -4585,3 +4585,33 @@ keeps the page from overflowing, so `overflowingPage() === 0` and it returns bef
 segmented castoff that would have fixed it. The cache's only correctness guard is the overflow check, which
 cannot see a partition that is wrong without being overfull. Reproduced by clearing `partitionCache` in the
 probe, which is what made the guard fix measurable at all.
+
+## A derived value read through a cache needs every writer to invalidate it (2026-09-18)
+
+Making Composer's ref note derive from `keySigAt(cursorMeasure)` immediately failed with the ref pinned to
+C major. Cause: `keySigAt`/`keyModeAt` resolve through the cached meter table, but the head setters
+`setKeySig`/`setKeyMode` never called `invalidateMeterCache()` — only the positional `setKeySigAt` did. The
+bug had been latent for months because the only prior reader of the head key was `getKeySig()`, which reads
+the DOM attribute directly and so never saw the stale cache. The tell was the *value*: the ref reported the
+document default rather than a garbled value, which points at a stale snapshot rather than bad math.
+
+Adjacent, same commit: `setKeySigAt` diff-elided on `sig` alone, so a D major → B minor flip (both `'2s'`)
+wrote nothing at all. An elision keyed on what *renders* silently drops a change to anything that doesn't
+render — here `@mode`, which has no glyph but does pick the tonic.
+
+## Confirm an A/B probe is sensitive before trusting "identical output" (2026-09-18)
+
+Checking whether a key-center change perturbed MusicXML import, the before/after Sonata import hashed
+identically — which is exactly what a probe that *never reloaded the edited module* would also print. The
+result only became evidence after a control run (forcing the center's `r = 0`) produced a completely
+different hash, proving the probe actually saw the file. Any "no change" result from a hand-rolled A/B is
+worthless until a deliberately-wrong variant shows the measurement can move.
+
+## Bridge fixtures must read `captured()` behind a frame wait (2026-09-18)
+
+`BroadcastChannel` delivery is asynchronous, so `window.__bridgeMock.captured()` read synchronously right
+after the action that triggers a send returns nothing — the message is genuinely sent, just not delivered
+yet. A performance-mode fixture failed this way while the identical clock-playback fixture passed, purely
+because the latter already awaited frames. Confirmed by wrapping `bridge.send` in a probe and watching the
+send happen. Also: both ref tiers are diff-gated by module-global snapshots, so `__testReset` has to clear
+them or one fixture's last broadcast suppresses the next fixture's first.

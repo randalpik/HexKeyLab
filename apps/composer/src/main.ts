@@ -31,7 +31,7 @@ import { openSetupDialog } from './setupDialog.js';
 import { openHelpDialog } from './helpDialog.js';
 import { attachScoreClickHandler } from './click.js';
 import {
-  computePrevNoteRef,
+  computePrevNoteRef, computeSongKeyRefAt,
   refNoteChanged, invalidateRefNoteCache,
   scoreRefChanged, invalidateScoreRefCache,
 } from './cursor/refNote.js';
@@ -309,18 +309,19 @@ bridge.on((msg: HklEvent) => {
       break;
     case 'hkl-layout-state': {
       /* Blank-score auto-adopt: first arrival of HKL's full layout state on
-         a score with no notes silently mirrors HKL's tuning + ref into the
-         score's layoutReq. Reduces friction when starting a new piece against
-         a connected HKL instance. Latch so we only do this once per session;
-         a subsequent ref or tuning change on HKL doesn't override a Setup
-         edit the user may have made in between. */
+         a score with no notes silently mirrors HKL's TUNING into the score's
+         layoutReq (the ref is derived from the key, so there is nothing to
+         adopt there). Reduces friction when starting a new piece against a
+         connected HKL instance. Latch so we only do this once per session; a
+         subsequent tuning change on HKL doesn't override a Setup edit the
+         user may have made in between. */
       hklTuningMode = msg.tuningMode;
       if (!autoAdoptedHklLayout && !model.hasNotes()) {
         autoAdoptedHklLayout = true;
         const isMode = (s: string): s is 'E' | '5' | 'P' | 'D' | '7' | 'V' =>
           s === 'E' || s === '5' || s === 'P' || s === 'D' || s === '7' || s === 'V';
         const tuningMode = isMode(msg.tuningMode) ? msg.tuningMode : '5';
-        model.setLayoutReq({ tuningMode, refQ: msg.refQ, refR: msg.refR });
+        model.setLayoutReq({ tuningMode });
         broadcastLayoutReq();
       }
       refreshLayoutMatchIndicator();
@@ -354,6 +355,9 @@ bridge.on((msg: HklEvent) => {
         }
         const mIdx = model.getMeasureIdxForId(msg.meiId);
         if (mIdx >= 0) maybeScrollMeasureIntoView(mIdx);
+        /* The sounding position may have crossed a key change — re-derive the
+           score-ref so HKL's lattice follows the key during playback. */
+        if (hklConnected) maybeBroadcastScoreRef();
       }
       break;
     case 'playback-finished':
@@ -416,8 +420,6 @@ function broadcastLayoutReq(): void {
   bridge.send({
     type: 'layout-req-changed',
     tuningMode: lr.tuningMode,
-    refQ: lr.refQ,
-    refR: lr.refR,
   });
 }
 
@@ -430,8 +432,6 @@ export function requestApplyLayout(): void {
   bridge.send({
     type: 'apply-layout',
     tuningMode: lr.tuningMode,
-    refQ: lr.refQ,
-    refR: lr.refR,
   });
 }
 
@@ -466,13 +466,35 @@ function maybeBroadcastReference(): void {
   }
 }
 
-/** Send the score's Setup-dialog ref coordinates to HKL's score-ref tier.
- *  Called on connect / hello and on Setup save / file load, NOT on every
- *  cursor move — the score ref is independent of cursor. HKL decides (per its
- *  Sync-to-Composer toggle) whether this also clears its selection tier. */
+/** The measure whose key signature the score-ref is derived from. While either
+ *  transport runs it follows the SOUNDING position, so a key change mid-piece
+ *  moves HKL's lattice as it is reached; otherwise it follows the editing
+ *  cursor. `lastPlaybackHeadId` is maintained by both the `playback-position`
+ *  handler (clock playback) and `onPlayerNoteStruck` (Performance mode), so one
+ *  helper covers both; the position scan is the fallback for when the
+ *  pre-playback voice has nothing sounding at this point. */
+function refSourceMeasure(): number {
+  if (isPlaying || performanceActive) {
+    if (lastPlaybackHeadId) {
+      const mi = model.getMeasureIdxForId(lastPlaybackHeadId);
+      if (mi >= 0) return mi;
+    }
+    for (const [, meiId] of cursor.getPlaybackPositions()) {
+      const mi = model.getMeasureIdxForId(meiId);
+      if (mi >= 0) return mi;
+    }
+  }
+  return visualCursorMeasure();
+}
+
+/** Send the tonic of the key signature at the current position to HKL's
+ *  score-ref tier. The ref is DERIVED, never stored — see cursor/refNote.ts —
+ *  so this is called on every cursor move, edit, key change and transport step
+ *  as well as on connect / file load. The diff filter makes the common case
+ *  (moving within one key) free. HKL decides (per its Sync-to-Composer toggle)
+ *  whether this also clears its selection tier. */
 function maybeBroadcastScoreRef(): void {
-  const lr = model.getLayoutReq();
-  const coord = { q: lr.refQ, r: lr.refR };
+  const coord = computeSongKeyRefAt(model, refSourceMeasure());
   if (scoreRefChanged(coord)) {
     bridge.send({ type: 'set-score-ref', q: coord.q, r: coord.r });
   }
@@ -1162,7 +1184,10 @@ function composerOnContentChange(): void {
   /* Content change: most recent prior-to-cursor element may have changed
      (insert/delete) → recompute the reference note and broadcast. The score
      changed, so push the updated part to HKL's Composer-view frame too. */
-  if (hklConnected) { maybeBroadcastReference(); maybeBroadcastComposerScore(); maybeBroadcastComposerCursor(); }
+  if (hklConnected) {
+    maybeBroadcastReference(); maybeBroadcastScoreRef();
+    maybeBroadcastComposerScore(); maybeBroadcastComposerCursor();
+  }
 }
 
 /** Cursor/voice/mode changed (no necessarily content): refresh indicators +
@@ -1184,11 +1209,14 @@ function composerOnStateChange(): void {
   renderer.scheduleMountWindow(visualCursorMeasure());
   cursor.update(model, cursorOpts());
   selectionOverlay.update(model, getInputState().selection);
-  /* Cursor or voice may have moved — recompute reference. The diff filter
-     short-circuits when (q, r) hasn't actually changed. maybeBroadcastInstruments
+  /* Cursor or voice may have moved — recompute both ref tiers: the prior-note
+     selection tier AND the key-tonic score-ref (the cursor may have crossed a
+     key change). Both diff filters short-circuit when (q, r) hasn't actually
+     changed, so moving within one key is free. maybeBroadcastInstruments
      catches add/remove/reorder (diff-filtered, so it's a no-op otherwise). */
   if (hklConnected) {
-    maybeBroadcastReference(); maybeBroadcastInstruments(); maybeBroadcastActiveInstrument();
+    maybeBroadcastReference(); maybeBroadcastScoreRef();
+    maybeBroadcastInstruments(); maybeBroadcastActiveInstrument();
     maybeBroadcastComposerScoreOnInstrChange(); maybeBroadcastComposerCursor();
   }
 }
@@ -1403,7 +1431,12 @@ function restoreEditingTransport(statusMsg: string): void {
      frame redraws a stale anchor (the last note it played). Force past the
      diff-gate so it fires even when the restored position equals the
      pre-playback one HKL last saw. */
-  if (hklConnected) { lastComposerCursorSig = null; maybeBroadcastComposerCursor(); }
+  if (hklConnected) {
+    lastComposerCursorSig = null; maybeBroadcastComposerCursor();
+    /* Same reason: the score-ref followed the SOUNDING position while the
+       transport ran, so re-derive it from the restored editing cursor. */
+    maybeBroadcastScoreRef();
+  }
   refreshIndicators();
   refreshPlayButton();
   refreshPerformButton();
@@ -1480,6 +1513,8 @@ function onPlayerNoteStruck(note: ResolvedNote): void {
       if (mIdx >= 0) maybeScrollMeasureIntoView(mIdx);
     }
   }
+  /* Same as clock playback: the advanced bars may have crossed a key change. */
+  if (hklConnected) maybeBroadcastScoreRef();
   if (!perfFinishedAnnounced && perfMatcher.isFinished()) {
     perfFinishedAnnounced = true;
     setStatus('End of score — Performance mode still on (press ■ to exit).', 'state');
@@ -1528,10 +1563,11 @@ $('btnSetup')?.addEventListener('click', () => {
     reRender();
     refreshIndicators();
     setStatus('Setup applied.', 'action');
-    /* The Setup ref coordinates may have changed — broadcast the score-ref
-     * tier. Do NOT re-broadcast the selection (reference-note) tier here: it's
-     * cursor-driven, and triggering it from a Setup apply is what would let an
-     * unrelated event clobber a user's manual Ctrl+click selection on HKL. */
+    /* Setup's Time / key… button applies a measure-1 signature independently,
+     * which can move the key tonic — re-derive the score-ref tier. Do NOT
+     * re-broadcast the selection (reference-note) tier here: it's cursor-driven,
+     * and triggering it from a Setup apply is what would let an unrelated event
+     * clobber a user's manual Ctrl+click selection on HKL. */
     if (hklConnected) maybeBroadcastScoreRef();
     /* Instruments may have changed (add / remove / reorder via the Instruments
        modal routes through here) — re-broadcast the set + the cursor's
@@ -1815,6 +1851,13 @@ void bootRenderer();
     hklTuningMode = null;
     autoAdoptedHklLayout = false;
     footprintColors = null;
+    /* Both ref tiers are diff-gated by module-global snapshots. The score-ref
+       is now derived and broadcast on every cursor move / edit / transport
+       step, so a snapshot left behind by the previous fixture would silently
+       suppress the next one's first broadcast. Clear last (stopPerformance
+       above can itself broadcast). */
+    invalidateRefNoteCache();
+    invalidateScoreRefCache();
     setConn('no-hkl');
   },
   /* Test-only: stage playback-active state pointing at a specific meiId so

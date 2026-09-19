@@ -1108,8 +1108,6 @@ async function playScore(wireEvents: ReadonlyArray<PlaybackEvent>, wirePedals: R
 
 interface ComposerLayoutReq {
   tuningMode: TuningMode;
-  refQ: number;
-  refR: number;
 }
 
 /** Most-recently-broadcast layout requirement from Composer's `<hkl:layoutReq>`.
@@ -1240,9 +1238,9 @@ function tuningLabelFor(m: string): string {
   return TUNING_LABELS[m as TuningMode] ?? m;
 }
 
-/** Push tuning + ref into HKL state as if the user had selected them via the
- *  toolbar / Ctrl+click. Fires the same onTuningChanged / onRefChanged effects
- *  so audio, view, MIDI, and Composer broadcasts all update normally. */
+/** Push the score's tuning into HKL state as if the user had selected it via
+ *  the toolbar. Fires the same onTuningChanged effects so audio, view, MIDI,
+ *  and Composer broadcasts all update normally. */
 function applyLayoutFromComposer(req: ComposerLayoutReq): void {
   /* Tuning mode — drive through the toolbar select so persistence + listeners
      stay coherent. setTuning() reads #selTuning, runs validation, mutates
@@ -1252,11 +1250,12 @@ function applyLayoutFromComposer(req: ComposerLayoutReq): void {
     selTuning.value = req.tuningMode;
     setTuning();
   }
-  /* Ref is NOT applied here. The score's ref reaches HKL via its own
-     `set-score-ref` message → the score-ref tier (reference.ts), independent
-     of this layout (tuning) sync and of the Sync-to-Composer gate's piano-
-     outline constraint. Keeping layout (tuning) and ref on separate paths is
-     what lets the score-ref drive the lattice even when Sync is off. */
+  /* No ref here — the score carries none. The ref reaches HKL via its own
+     `set-score-ref` message → the score-ref tier (reference.ts), derived from
+     the key signature at Composer's current position, independent of this
+     layout (tuning) sync and of the Sync-to-Composer gate's piano-outline
+     constraint. Keeping tuning and ref on separate paths is what lets the
+     score-ref drive the lattice even when Sync is off. */
 }
 
 /* ── inbound message dispatch ────────────────────────────────────────────── */
@@ -1345,7 +1344,7 @@ bridge.on((msg: ComposerEvent) => {
       break;
     case 'layout-req-changed': {
       const mode = isTuningMode(msg.tuningMode) ? msg.tuningMode : '5';
-      composerRequiredLayout = { tuningMode: mode, refQ: msg.refQ, refR: msg.refR };
+      composerRequiredLayout = { tuningMode: mode };
       updateComposerToolbar();
       if (loadPrefs().syncToComposer) {
         applyLayoutFromComposer(composerRequiredLayout);
@@ -1354,7 +1353,7 @@ bridge.on((msg: ComposerEvent) => {
     }
     case 'apply-layout': {
       const mode = isTuningMode(msg.tuningMode) ? msg.tuningMode : '5';
-      applyLayoutFromComposer({ tuningMode: mode, refQ: msg.refQ, refR: msg.refR });
+      applyLayoutFromComposer({ tuningMode: mode });
       break;
     }
     case 'composer-active-instrument':

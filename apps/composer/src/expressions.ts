@@ -853,23 +853,23 @@ function seedDefaults(cfg: Element, doc: Document): void {
     level.setAttribute('velocity', String(DEFAULT_DYNAMIC_MAP[name]));
     dm.appendChild(level);
   }
-  /* layoutReq — the tuning mode + ref note pinned by this score. Default '5'
-     (Ptolemaic) matches HKL's default tuning so legacy files without the block
-     load as Ptolemaic, which is what they almost certainly were entered in. */
+  /* layoutReq — the tuning mode pinned by this score. Default '5' (Ptolemaic)
+     matches HKL's default tuning so legacy files without the block load as
+     Ptolemaic, which is what they almost certainly were entered in. */
   let lr = childInHklNs(cfg, 'layoutReq');
   if (!lr) {
     lr = doc.createElementNS(HKL_NS, 'hkl:layoutReq');
     lr.setAttribute('tuningMode', '5');
-    lr.setAttribute('refQ', '0');
-    lr.setAttribute('refR', '0');
     cfg.appendChild(lr);
   }
 }
 
+/** What the score pins about HKL's layout. Tuning mode only: the reference
+ *  note is DERIVED from the key signature at the current position (see
+ *  cursor/refNote.ts), never stored. Legacy files carry `refQ`/`refR` here;
+ *  those attributes are simply never read, so no migration is needed. */
 export interface LayoutReq {
   tuningMode: TuningMode;
-  refQ: number;
-  refR: number;
 }
 
 function isTuningMode(s: string): s is TuningMode {
@@ -885,18 +885,10 @@ export function getLayoutReq(doc: Document): LayoutReq {
     const lr = childInHklNs(cfg, 'layoutReq');
     if (lr) {
       const m = lr.getAttribute('tuningMode') ?? '5';
-      const qStr = lr.getAttribute('refQ') ?? '0';
-      const rStr = lr.getAttribute('refR') ?? '0';
-      const q = parseInt(qStr, 10);
-      const r = parseInt(rStr, 10);
-      return {
-        tuningMode: isTuningMode(m) ? m : '5',
-        refQ: Number.isFinite(q) ? q : 0,
-        refR: Number.isFinite(r) ? r : 0,
-      };
+      return { tuningMode: isTuningMode(m) ? m : '5' };
     }
   }
-  return { tuningMode: '5', refQ: 0, refR: 0 };
+  return { tuningMode: '5' };
 }
 
 /** Write the score's required layout. Creates the block via ensureExtMetaConfig
@@ -909,8 +901,9 @@ export function setLayoutReq(doc: Document, req: LayoutReq): void {
     cfg.appendChild(lr);
   }
   lr.setAttribute('tuningMode', req.tuningMode);
-  lr.setAttribute('refQ', String(req.refQ));
-  lr.setAttribute('refR', String(req.refR));
+  /* Legacy ref attributes are dead weight — drop them as documents are saved. */
+  lr.removeAttribute('refQ');
+  lr.removeAttribute('refR');
 }
 
 /** Document-level "show HEJI accidentals" flag, stored on <hkl:config>.

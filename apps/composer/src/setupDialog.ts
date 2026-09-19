@@ -13,10 +13,8 @@ import { openTempoModal } from './tempoDialog.js';
 import { openSignatureModal } from './sigDialog.js';
 import { openInstrumentsModal, instrEditsFromModel, summarizeInstrEdits, reconcileInstruments, type InstrEdit } from './instrumentsDialog.js';
 import { DYNAMIC_NAMES, DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
-import { TUNING_MODES, type TuningMode, coordToMidi, MIDI_LOW, MIDI_HIGH } from '@hkl/shared/freq.js';
-import { noteName, keyOctave, fmtNote } from '@hkl/shared/notes.js';
+import { TUNING_MODES, type TuningMode } from '@hkl/shared/freq.js';
 import { planRetune, summarizePlan, applyRetune } from './notation/retune.js';
-import { computeSongKeyRef } from './cursor/refNote.js';
 import type { HistoryManager } from './history.js';
 
 const $ = <T extends HTMLElement>(id: string): T | null =>
@@ -54,28 +52,6 @@ function setupSelects(model: ComposerModel): void {
   if (hejiChk) hejiChk.checked = model.getHejiEnabled();
   const ignoreColorChk = $<HTMLInputElement>('setupIgnoreColor');
   if (ignoreColorChk) ignoreColorChk.checked = model.getIgnoreColor();
-  const refQEl = $<HTMLInputElement>('setupRefQ');
-  const refREl = $<HTMLInputElement>('setupRefR');
-  /* When the score's ref is still the doc default (0, 0 = A3), seed the field
-     from the key-signature tonic instead — the key tonic is the suggested
-     ref for a fresh score. A ref the user has explicitly set (non-default) is
-     shown verbatim. This is the ONLY place the key tonic feeds the ref. */
-  let seedQ = layoutReq.refQ, seedR = layoutReq.refR;
-  if (seedQ === 0 && seedR === 0) {
-    const tonic = computeSongKeyRef(model);
-    seedQ = tonic.q; seedR = tonic.r;
-  }
-  if (refQEl) refQEl.value = String(seedQ);
-  if (refREl) refREl.value = String(seedR);
-  updateRefLabel(seedQ, seedR);
-  /* Live label update as the user edits (q, r). */
-  const updateFromForm = (): void => {
-    const q = parseInt(refQEl?.value ?? '0', 10);
-    const r = parseInt(refREl?.value ?? '0', 10);
-    if (Number.isFinite(q) && Number.isFinite(r)) updateRefLabel(q, r);
-  };
-  refQEl?.addEventListener('input', updateFromForm);
-  refREl?.addEventListener('input', updateFromForm);
 }
 
 function readForm(): {
@@ -102,12 +78,7 @@ function readForm(): {
   };
   const tuningRaw = $<HTMLSelectElement>('setupTuningMode')?.value ?? '5';
   const tuningMode: TuningMode = isTuningMode(tuningRaw) ? tuningRaw : '5';
-  const refQ = parseInt($<HTMLInputElement>('setupRefQ')?.value ?? '0', 10);
-  const refR = parseInt($<HTMLInputElement>('setupRefR')?.value ?? '0', 10);
-  if (!Number.isFinite(refQ) || !Number.isFinite(refR)) return null;
-  const refMidi = coordToMidi(refQ, refR);
-  if (refMidi < MIDI_LOW || refMidi > MIDI_HIGH) return null;
-  const layoutReq: LayoutReq = { tuningMode, refQ, refR };
+  const layoutReq: LayoutReq = { tuningMode };
   const hejiEnabled = $<HTMLInputElement>('setupHeji')?.checked ?? false;
   const ignoreColor = $<HTMLInputElement>('setupIgnoreColor')?.checked ?? false;
   const pageScaleRaw = parseInt($<HTMLInputElement>('setupPageScale')?.value ?? '', 10);
@@ -117,19 +88,6 @@ function readForm(): {
 
 function isTuningMode(s: string): s is TuningMode {
   return (TUNING_MODES as ReadonlyArray<string>).indexOf(s) >= 0;
-}
-
-function updateRefLabel(q: number, r: number): void {
-  const label = $('setupRefLabel');
-  if (!label) return;
-  const midi = coordToMidi(q, r);
-  if (midi < MIDI_LOW || midi > MIDI_HIGH) {
-    label.textContent = '(out of range)';
-    return;
-  }
-  const name = noteName(q, r);
-  const oct = keyOctave(q, r);
-  label.textContent = '= ' + fmtNote(name) + oct;
 }
 
 export function openSetupDialog(
@@ -232,14 +190,15 @@ export function openSetupDialog(
        no-op push will be skipped by HistoryManager when before === after). */
     const beforeSnapshot = history ? model.snapshotState() : null;
 
-    /* Layout requirement change. Tuning-mode change retunes existing notes
-       (frequency invariant: each note's old freq is preserved as closely as
-       possible by moving to a different (q, r) under the new mode). Ref
-       changes are informational — they don't affect (q, r) → Hz. */
+    /* Layout requirement change. Tuning mode is the only thing the score pins
+       now — the ref note is derived from the key signature at the current
+       position (cursor/refNote.ts), not stored. A tuning-mode change retunes
+       existing notes (frequency invariant: each note's old freq is preserved
+       as closely as possible by moving to a different (q, r) under the new
+       mode). */
     const prevLayout = model.getLayoutReq();
     const tuningChanged = prevLayout.tuningMode !== values.layoutReq.tuningMode;
-    const refChanged = prevLayout.refQ !== values.layoutReq.refQ || prevLayout.refR !== values.layoutReq.refR;
-    const layoutChanged = tuningChanged || refChanged;
+    const layoutChanged = tuningChanged;
     let proceedWithLayout = true;
     if (tuningChanged && model.hasNotes()) {
       const plan = planRetune(model.getDoc(), prevLayout.tuningMode, values.layoutReq.tuningMode);

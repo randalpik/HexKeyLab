@@ -159,8 +159,9 @@ export interface ScoreSkeletonSetup {
   tempoUnit?: '1' | '2' | '4' | '8';
   tempoDots?: 0 | 1;
   tempoText?: string;
-  /* Required layout for this score. Default Ptolemaic / A3-at-origin. */
-  layoutReq?: { tuningMode: string; refQ: number; refR: number };
+  /* Required layout for this score. Tuning mode only — the reference note is
+     derived from the key signature, not stored. Default Ptolemaic. */
+  layoutReq?: { tuningMode: string };
 }
 
 /** Build a complete empty `.hkc` document as an XML string: meiHead with the
@@ -182,8 +183,8 @@ export function buildScoreSkeletonXml(setup: ScoreSkeletonSetup = {}): string {
     : '';
   const tempoTextSpan = tempoText ? escapeXml(tempoText) + ' ' : '';
   const tempoDotsAttr = tempoDots > 0 ? ` mm.dots="${tempoDots}"` : '';
-  const lr = setup.layoutReq ?? { tuningMode: '5', refQ: 0, refR: 0 };
-  const layoutReqBlock = `<hkl:layoutReq tuningMode="${lr.tuningMode}" refQ="${lr.refQ}" refR="${lr.refR}"/>`;
+  const lr = setup.layoutReq ?? { tuningMode: '5' };
+  const layoutReqBlock = `<hkl:layoutReq tuningMode="${lr.tuningMode}"/>`;
   /* Dynamic→velocity defaults are sourced from @hkl/shared so they track the
      house curve; hardcoding them here let them go stale once already. */
   const dynamicLevelsBlock = DYNAMIC_NAMES

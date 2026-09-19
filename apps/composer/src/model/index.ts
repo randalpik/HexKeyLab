@@ -1629,6 +1629,10 @@ export class ComposerModel {
     const sd = this.doc.querySelector("scoreDef");
     if (!sd) return;
     sd.setAttribute("key.sig", sig);
+    /* keySigAt()/keyModeAt() resolve through the cached meter table, whose
+       keyByEl map is seeded from these head attributes — a stale cache would
+       keep reporting the OLD key for every measure. */
+    this.invalidateMeterCache();
   }
 
   /** Read whether the key signature is being used as major or relative minor.
@@ -1643,10 +1647,12 @@ export class ComposerModel {
     const sd = this.doc.querySelector("scoreDef");
     if (!sd) return;
     sd.setAttribute("mode", mode);
+    this.invalidateMeterCache(); /* see setKeySig */
   }
 
-  /** Read the score's required layout (tuning mode + ref note). The block is
-   *  seeded by ensureExpressionDefaults so this always returns a valid value. */
+  /** Read the score's required layout (tuning mode; the ref note is derived
+   *  from the key signature, not stored). The block is seeded by
+   *  ensureExpressionDefaults so this always returns a valid value. */
   getLayoutReq(): LayoutReq {
     return getLayoutReq(this.doc);
   }
@@ -2447,19 +2453,36 @@ export class ComposerModel {
    *  keep the prior key's spelling; the accidental pipeline resets carry-state
    *  to the new key at `mi` (silent switch — no courtesy naturals).
    *
-   *  Diff-aware (keyed on `sig` — the rendered key signature): equal to the
-   *  inherited sig → no override written + existing key attrs cleared, so an
-   *  unchanged key never renders a redundant key change at `mi`. */
+   *  Diff-aware on the (sig, mode) PAIR. `sig` alone is what renders, so an
+   *  unchanged sig still writes no `key.sig` (no redundant courtesy key
+   *  signature at `mi`) — but a same-sig mode flip (D major → B minor, both
+   *  '2s') must still be recorded, because the mode picks the tonic and the
+   *  tonic drives HKL's score-ref (see cursor/refNote.ts). Such a change
+   *  writes `mode` ALONE onto the override scoreDef: `meterTable` reads the
+   *  two attributes independently so the running sig is untouched,
+   *  `pruneEmptyScoreDef` keeps a node that still has an attribute, and
+   *  sectionRestart keys on `key.sig` so no spurious restart appears. */
   setKeySigAt(mi: number, sig: string, mode: 'major' | 'minor'): void {
     if (mi <= 0) { this.setKeySig(sig); this.setKeyMode(mode); this.invalidateMeterCache(); return; }
     const inheritedSig = this.keySigAt(mi - 1);
+    const inheritedMode = this.keyModeAt(mi - 1);
     const existing = this.overrideScoreDefBefore(mi);
     if (sig === inheritedSig) {
-      if (existing && existing.hasAttribute('key.sig')) {
-        existing.removeAttribute('key.sig');
-        existing.removeAttribute('mode');
-        this.pruneEmptyScoreDef(existing);
+      if (mode === inheritedMode) {
+        /* Fully inherited — drop any override attrs we'd previously written. */
+        if (existing && (existing.hasAttribute('key.sig') || existing.hasAttribute('mode'))) {
+          existing.removeAttribute('key.sig');
+          existing.removeAttribute('mode');
+          this.pruneEmptyScoreDef(existing);
+        }
+        this.invalidateMeterCache();
+        return;
       }
+      /* Same rendered signature, different mode: record the mode only. */
+      const sdMode = this.ensureScoreDefBefore(mi);
+      if (!sdMode) return;
+      sdMode.removeAttribute('key.sig');
+      sdMode.setAttribute('mode', mode);
       this.invalidateMeterCache();
       return;
     }

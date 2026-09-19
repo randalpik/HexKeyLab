@@ -8732,3 +8732,66 @@ disagreed. Default behaviour is unchanged when the phase is omitted, which a rea
 **Verified.** Whole-document inventory 0 diverging measures at zoom 50/75/100 (was 4 at zoom 50, one per
 system — the last measure of each, `dRelX` 0, music and bar lines identical). Flagged gate 499/499, up from
 498/499; unflagged suite 499/499.
+
+**Ref note derives from the key signature at the cursor (2026-09-18).**
+Reverses "Setup ref drives HKL's score-ref tier" (2026-06-06) and revises "Song-key picker: qm=0 spine,
+lowest MIDI ≥ F3". The reference note is **no longer a user-selectable property**: the Setup dialog's
+`(q, r)` inputs are gone, `LayoutReq` shrinks to `{ tuningMode }`, and `refQ`/`refR` are dropped from
+`<hkl:layoutReq>`, from `layout-req-changed`/`apply-layout`, and from the blank-score auto-adopt. Legacy
+`.hkc` files keep the attributes; they are simply never read, so no migration is needed (`setLayoutReq`
+strips them as documents are re-saved). HKL's score-ref tier is now fed by `computeSongKeyRefAt(model,
+measureIdx)` — the tonic of the key signature **in effect at Composer's current position**, placed on the
+qm=0 Pythagorean spine at the octave **nearest C4**.
+
+**Why**: the ref was *stored state*, so a stale value rode the document forever ("ref stuck at the wrong
+coordinates") and had no relationship to the key ("ref doesn't update on key change", backlog:102/108).
+Deriving it leaves the bug class nowhere to live. Max's accepted cost: the ref can change unexpectedly as
+the cursor crosses a key change — cheap, because syncing to Composer is opt-in.
+
+**Placement rule**: window `[54, 66)` replaces `[53, 65)`. Verified against `VALID_REF_TABLE` for all 18
+tonics × all 6 tuning modes: every coord is a valid ref (no silent `validateRefNoteCandidate` rejection),
+and **exactly one tonic moves** — F, from F3 (53) to F4 (65), since 65 is 5 semitones from C4 and 53 is 7.
+The tritone (F♯/G♭) is genuinely equidistant (54 vs 66) and the half-open window resolves it **downward**,
+preserving F♯3. B minor → `(-3, 2)` = B3, posInBand 1 — the worked example the feature was specified against.
+
+**Import is unaffected** by the window change. `findTonicCoord`'s other caller is the MusicXML comma-variant
+key center, which feeds `coordForSpelling` → `tenneyHeightFromExps` → `reduceExps`, and that octave- *and*
+complement-reduces: shifting the center's `e₂` by a constant shifts every candidate's `log2r` equally, so
+`r0 = e0 − oct` is unchanged and the ranking is identical. Confirmed empirically — a 9099-note Sonata import
+hashes identically under both windows, against a control (forcing `r = 0`) that changes the hash completely.
+
+**Transport follow (Max)**: while either transport runs, `refSourceMeasure()` returns the **sounding**
+measure (`lastPlaybackHeadId`, which both the `playback-position` handler and `onPlayerNoteStruck` already
+maintain, falling back to a scan of `cursor.getPlaybackPositions()`), so the lattice follows the music
+through a key change during *both* clock playback and Performance mode; transport teardown re-derives from
+the restored editing cursor. Playback pitch is unaffected — `onRefChanged` migrates only physical-input held
+voices, and Composer-driven notes are coordinate-anchored.
+
+**Kept** (Max): the prior-note **selection** tier (`set-reference-note`) is unchanged and still outranks the
+score-ref tier in piano outline mode.
+
+**Two latent bugs this surfaced, both fixed because the feature depends on them:**
+- `setKeySigAt` diff-elided on `sig` alone, so a same-sig mode flip (D major → B minor, both `'2s'`) wrote
+  nothing and was silently dropped. Now keyed on the `(sig, mode)` pair; an unchanged sig with a changed mode
+  writes `mode` **alone** onto the override `<scoreDef>` — `meterTable` reads the two attributes
+  independently, `pruneEmptyScoreDef` keeps a node that still has an attribute, and `sectionRestart` keys on
+  `key.sig`, so no redundant courtesy key signature and no spurious restart.
+- `setKeySig`/`setKeyMode` (the head setters) never called `invalidateMeterCache()`, so `keySigAt`/`keyModeAt`
+  kept reporting the *old* key for every measure. Harmless while only `getKeySig()` read the head directly;
+  load-bearing now.
+
+Also removed the **silent total-save abort**: a blank or out-of-range ref made `readForm()` return `null`, and
+the submit handler's `if (!values) return` discarded every *other* Setup edit while the dialog still closed.
+
+**Test-harness note**: both ref tiers are diff-gated by module-global snapshots, and the score-ref now
+broadcasts constantly, so `__testReset` clears both caches — otherwise a snapshot left by the previous fixture
+silently suppresses the next one's first broadcast. Fixtures must also read `__bridgeMock.captured()` behind a
+frame wait: BroadcastChannel delivery is asynchronous, so a synchronous read straight after a strike sees nothing.
+
+**Files**: `apps/composer/src/{cursor/refNote.ts,main.ts,setupDialog.ts,importMusicXml.ts,expressions.ts,model/index.ts}`,
+`apps/composer/index.html`, `packages/{notation/src/mei-build.ts,bridge/src/protocol.ts}`,
+`apps/hkl/src/{bridge/hkl-side.ts,transcription/meiEmit.ts}`. Fixtures: `score_ref_broadcast_carries_key_tonic`,
+`score_ref_tonic_f_is_f4`, `score_ref_follows_midscore_key_change`, `score_ref_updates_on_keymode_flip`,
+`playback_score_ref_follows_position`, `perfScoreRefFollowsPosition`, plus the rewritten `keyMode*` /
+`song_key_csharp_from_empty_voice` (now assert on the broadcast, not a dialog seed) and a no-ref-fields check
+in `phase4_setup_sig_button`. Suite 504/504.

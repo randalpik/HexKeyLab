@@ -197,11 +197,14 @@ export type ComposerEvent =
    *  HKL via Ctrl+click of the current ref or via composer-bye. */
   | { type: 'set-reference-note'; q: number; r: number }
   /** Set the SCORE-REF tier of HKL's reference-note state to (q, r) — the
-   *  cursor-independent fallback ref, fed by the score's Setup-dialog ref
-   *  coordinates (NOT the key-sig tonic, which now only seeds the Setup field
-   *  default). Composer sends this on connect / hello / request-state, and
-   *  whenever the user saves Setup. Not sent on every cursor move — see
-   *  set-reference-note docstring for why broadcasting must be conservative.
+   *  TONIC OF THE KEY SIGNATURE at Composer's current position, placed on the
+   *  Pythagorean spine nearest C4. It is derived on every send, never stored,
+   *  so it tracks mid-score key changes; while a transport runs it follows the
+   *  sounding position rather than the editing cursor. Composer sends it on
+   *  connect / hello / request-state, cursor moves, edits, Setup save, file
+   *  load, and transport steps — all diff-gated, so moving within one key is
+   *  silent. Unlike set-reference-note this one is safe to send freely: it
+   *  carries a fact about the score, not about the cursor's neighbourhood.
    *  HKL gates whether this also clears the selection tier on its
    *  "Sync to Composer" toggle (sync on → clear, so the lattice matches the
    *  score exactly; sync off → leave the user's explicit selection alone). */
@@ -211,16 +214,16 @@ export type ComposerEvent =
    *  caches this and uses it to gate playback (prompt on mismatch). When
    *  HKL's "Sync to Composer" toggle is on, HKL aggressively applies this
    *  layout on receipt; otherwise it's informational until the user takes
-   *  an action that requires the layouts to match. tuningMode is the hard
-   *  gate (it determines (q,r)→Hz). refQ/refR are informational — they only
-   *  affect physical-key→(q,r) mapping during entry, not playback frequency. */
-  | { type: 'layout-req-changed'; tuningMode: string; refQ: number; refR: number }
+   *  an action that requires the layouts to match. tuningMode is the whole
+   *  message: it determines (q,r)→Hz. The ref is NOT part of the pinned
+   *  layout — it arrives separately via set-score-ref. */
+  | { type: 'layout-req-changed'; tuningMode: string }
   /** Tell HKL to apply this layout immediately. Sent by Composer after the
    *  user confirms an entry-side mismatch prompt with "Apply". Distinct from
    *  layout-req-changed: that one is informational (apply only if Sync is on);
-   *  this one is an explicit user-driven command. HKL switches tuning + ref
-   *  and emits tuning-changed so Composer can re-check and unblock entry. */
-  | { type: 'apply-layout'; tuningMode: string; refQ: number; refR: number }
+   *  this one is an explicit user-driven command. HKL switches tuning and
+   *  emits tuning-changed so Composer can re-check and unblock entry. */
+  | { type: 'apply-layout'; tuningMode: string }
   /** The user-facing name of the instrument the Composer editing cursor currently
    *  sits in (verbatim from `<label>`). Sent on cursor moves between instruments
    *  in voice mode (multi-instrument scores). When HKL's "Sync to Composer" toggle

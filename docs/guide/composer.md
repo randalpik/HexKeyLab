@@ -219,7 +219,9 @@ The **Setup…** button opens a dialog for the whole-document settings:
 - **Time / key…** and **Tempo…** buttons open the measure-1 signature and tempo dialogs (the same ones you can apply mid-piece; see [Mid-piece signatures, clefs & pickups](#mid-piece-signatures-clefs-pickups)).
 - **Instruments**: a **Manage…** button to add / remove / reorder (see [Multiple instruments](#multiple-instruments)).
 - **Tuning**: the tuning system the score is pinned to; it drives the spelling and the layout HKL adopts when the score is sent over.
-- **Reference note**: the lattice cell `(q, r)` the score is centered on.
+  There is no reference-note setting: HKL always centers its lattice on the **root of the key signature where you are** — the tonic on
+  the Pythagorean spine nearest C4, so a piece in B minor centers on B3. It follows you across a mid-piece key change, and during
+  playback or Performance mode it follows the music rather than the parked editing cursor.
 - **Page size** (%): how big the page is relative to the notation. A *larger* page fits more bars per line and makes the score look smaller on the page; a *smaller* page does the reverse. This changes the paper, not the note size — use **zoom** (`Shift`+`=` / `Shift`+`-`) to change how big the notation itself appears. Saved with the document (and reflected in PDF export). Page view only.
 - **HEJI accidentals**: show comma arrows & septimal hooks.
 - **Ignore color**: render noteheads plain black instead of in lattice colors.
