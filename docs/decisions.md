@@ -8795,3 +8795,53 @@ frame wait: BroadcastChannel delivery is asynchronous, so a synchronous read str
 `playback_score_ref_follows_position`, `perfScoreRefFollowsPosition`, plus the rewritten `keyMode*` /
 `song_key_csharp_from_empty_voice` (now assert on the broadcast, not a dialog seed) and a no-ref-fields check
 in `phase4_setup_sig_button`. Suite 504/504.
+
+## 2026-09-18 — A tuplet at a bar line is a cursor RE-READING, not overflow
+
+Entering tuplets back to back was impossible across a bar line: at the end of a full measure
+`createTupletAtCursor` always rejected with `Tuplet span exceeds remaining measure space`.
+
+**Cause.** Cursor stops are element-anchored (`c` = "past `flat[c]`") and `locateCursor` resolves an
+anchor to an insertion point *inside the anchor's own parent* — so the stop past the last note of
+measure M is expressed in M's coordinates, `withinIdx === cc.length`. `shouldEmitWrapper` suppresses
+M+1's wrapper stop **exactly when M is full**, so that one stop denotes two locations. Every insertion
+there has to know it; `planInsert` does (bounded M→M+1 overflow), and `createTupletAtCursor` was the
+one layer-level insertion that bypassed it for a hand-rolled `spanTicks > capM0 − usedBefore` check.
+At the end stop `remaining` is 0, so it could never succeed. The same check was copied a third time
+into the tuplet paste path (`insertClonedAtCursor`).
+
+**Rejected: route tuplets through `planInsert`.** That planner's overflow rule is *more permissive*
+than what we want — it would also spill an oversized tuplet out of a PARTIAL measure. Its bounded
+overflow exists so a NOTE can be split across the bar line and tied; a tuplet is atomic and can do
+neither. Max's ruling: spill only from a stop that is truly past the last moment of a **full** measure;
+anywhere in a partial measure, reject for lack of space.
+
+**Decision.** Treat this as disambiguating the cursor, not as overflow — which shrinks the fix rather
+than growing it. `resolveTupletTarget` re-reads the location as the head of M+1 iff the cursor is past
+all content of a full measure; the M-side reading has zero capacity and can never host anything, so the
+M+1 reading is the only viable one. Then an unchanged one-measure fit test applies, now counting
+post-cursor content. No eviction, no bar-line straddling, no shared applier, no `planInsert` change.
+
+The second rule fixed a **latent dual bug** in the same gate, in the opposite direction: measuring only
+cursor→barline (not cursor→next element) accepted a mid-measure tuplet in a full bar and silently
+produced a 5-quarter 4/4 measure. Verified live before and after.
+
+A partial measure keeps its own M+1 wrapper stop, so its end is unambiguous and needs no spill — the
+two conditions are exactly complementary, which is why no new cursor stop was added. Adding one would
+undo the deliberate navigational-smoothness tradeoff in `shouldEmitWrapper`. The target measure is
+materialized only after the fit test passes, so a rejection leaves no stray measure; `createTupletAtCursor`
+also gained the `setBarlines()` it never called and now seats the cursor by xml:id (the old `+1` assumed
+the tuplet stayed in the cursor's measure).
+
+**Ruling — displacement is not creation** (Max, 2026-09-18). `insertWithSplit` can push an EXISTING
+tuplet wholesale across a bar line when an insert displaces it. That was raised as a possible remaining
+inconsistency (a tuplet ending up in a measure it could not have been created in) and is explicitly
+INTENDED. The two are categorically different: a displaced tuplet keeps its identity and its contents and
+got there by a deliberate edit at an earlier point, whereas creating a tuplet in M+1 while M still has
+room reads as a bug. Rule 1's `remaining === 0` trigger is precisely what keeps creation out of that case,
+which is why the spill is scoped to a stop with zero remaining capacity rather than made a general
+overflow. The two paths are not to be unified.
+
+**Files**: `apps/composer/src/model/{tuplet-ops.ts,index.ts}`. Fixtures: `tupletAtBarlineOpensNextMeasure`,
+`tupletAtBarlineBeforeExistingContent`, `tupletMidFullMeasureRejected`, `tupletPartialMeasureNoSpill`,
+`tupletBarlineBothMeasuresFull`, `tupletSequentialAcrossBarline`. Suite 510/510.

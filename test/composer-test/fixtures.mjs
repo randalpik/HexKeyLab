@@ -538,6 +538,85 @@ const TUPLETS = {
     });
   `,
 
+  /* ── Atomic tuplet placement at the bar line (2026-09-18) ──────────────
+     The stop "past the last element of M" is ambiguous exactly when M is
+     FULL (shouldEmitWrapper suppresses M+1's wrapper stop there), so it also
+     means "head of M+1". A tuplet is atomic and can never straddle a bar, so
+     it is placed at whichever reading has room — which for a full M is only
+     ever the M+1 one. A PARTIAL measure keeps its own M+1 wrapper stop, so
+     its end is unambiguous and an oversized tuplet is simply rejected. */
+
+  /* M1 full, M2 does not exist yet → tuplet opens M2. */
+  tupletAtBarlineOpensNextMeasure: `
+    m.setCursor(0, 1);
+    for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: "4", dots: 0 });
+    window.__tupletBarlineResult = m.createTupletAtCursor({
+      num: 3, numbase: 2, atomicDur: '8', spanDur: '4', spanDots: 0,
+    });
+  `,
+
+  /* M1 full, M2 already holds a quarter, cursor seated on the end-of-M1 stop
+     → tuplet lands at the HEAD of M2 and pushes the quarter right. */
+  tupletAtBarlineBeforeExistingContent: `
+    m.setCursor(0, 1);
+    for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: "4", dots: 0 });
+    m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+    /* Seat the cursor back on the end-of-M1 stop (past M1's last rest). */
+    const l1 = m.layerInMeasure(m.allMeasures()[0], 1);
+    const lastM1 = m.contentChildren(l1)[3];
+    m.setCursor(m.flatChildren(1).indexOf(lastM1), 1);
+    window.__tupletBarlineResult = m.createTupletAtCursor({
+      num: 3, numbase: 2, atomicDur: '8', spanDur: '4', spanDots: 0,
+    });
+  `,
+
+  /* Cursor MID-measure in a full bar: the span fits between cursor and bar
+     line but not past the post-cursor content → reject, never overfill. */
+  tupletMidFullMeasureRejected: `
+    m.setCursor(0, 1);
+    for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: "4", dots: 0 });
+    const lm = m.layerInMeasure(m.allMeasures()[0], 1);
+    m.setCursor(m.flatChildren(1).indexOf(m.contentChildren(lm)[0]), 1);
+    window.__tupletBarlineResult = m.createTupletAtCursor({
+      num: 3, numbase: 2, atomicDur: '8', spanDur: '4', spanDots: 0,
+    });
+  `,
+
+  /* End of a PARTIAL measure (3 quarters in 4/4) with a half-note-span
+     triplet → rejected for lack of space; must NOT spill into M2. */
+  tupletPartialMeasureNoSpill: `
+    m.setCursor(0, 1);
+    for (let i = 0; i < 3; i++) m.insertRestAtCursor({ duration: "4", dots: 0 });
+    window.__tupletBarlineResult = m.createTupletAtCursor({
+      num: 3, numbase: 2, atomicDur: '4', spanDur: '2', spanDots: 0,
+    });
+  `,
+
+  /* M1 full AND M2 full → the re-read target has no room either → reject,
+     leaving no stray appended measure. */
+  tupletBarlineBothMeasuresFull: `
+    m.setCursor(0, 1);
+    for (let i = 0; i < 8; i++) m.insertRestAtCursor({ duration: "4", dots: 0 });
+    const lf = m.layerInMeasure(m.allMeasures()[0], 1);
+    m.setCursor(m.flatChildren(1).indexOf(m.contentChildren(lf)[3]), 1);
+    window.__tupletBarlineResult = m.createTupletAtCursor({
+      num: 3, numbase: 2, atomicDur: '8', spanDur: '4', spanDots: 0,
+    });
+  `,
+
+  /* The workflow this enables: five filled quarter-triplets entered back to
+     back. Four fill M1; the fifth opens M2 with no cursor intervention. */
+  tupletSequentialAcrossBarline: `
+    m.setCursor(0, 1);
+    window.__tupletSeqLog = [];
+    for (let i = 0; i < 5; i++) {
+      const r = m.createTupletAtCursor({ num: 3, numbase: 2, atomicDur: '8', spanDur: '4', spanDots: 0 });
+      window.__tupletSeqLog.push(r.ok ? 'ok' : 'REJECT:' + r.reason);
+      if (!r.ok) break;
+      for (let k = 0; k < 3; k++) m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }], duration: '8', dots: 0 });
+    }
+  `,
+
   /* Triplet of wholes (= 3 wholes scaled by 2/3 = 2 wholes span = 128
    * ticks) doesn't fit in 4/4 (16 ticks) → must be rejected. */
   m1TupletExceedsMeasure: `
@@ -10771,6 +10850,141 @@ export const FIXTURE_ASSERTIONS = {
         return ts.length === 1
           ? { ok: true }
           : { ok: false, detail: ts.length + ' tuplets (expected 1)' };
+      })()` },
+  ],
+  /* Atomic tuplet placement at the bar line. Shared shape helper: report the
+     per-measure layer contents so a failure names the actual layout. */
+  tupletAtBarlineOpensNextMeasure: [
+    { name: 'tuplet accepted at the end-of-full-measure stop',
+      expr: `(() => {
+        const r = window.__tupletBarlineResult;
+        return r && r.ok === true
+          ? { ok: true }
+          : { ok: false, detail: 'expected accepted, got ' + JSON.stringify(r) };
+      })()` },
+    { name: 'M2 created and holds the tuplet; M1 untouched',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const shape = m.allMeasures().map(mm => {
+          const L = m.layerInMeasure(mm, 1);
+          return L ? m.contentChildren(L).map(c => c.localName).join(',') : 'nolayer';
+        });
+        const want = ['rest,rest,rest,rest', 'tuplet'];
+        return JSON.stringify(shape) === JSON.stringify(want)
+          ? { ok: true }
+          : { ok: false, detail: 'shape=' + JSON.stringify(shape) + ' want=' + JSON.stringify(want) };
+      })()` },
+    { name: 'cursor seated on the entered-tuplet stop',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const t = m.getDoc().querySelector('tuplet');
+        const flat = m.flatChildren(1);
+        const want = flat.findIndex(e => e === t);
+        const got = m.getCursor(1);
+        return got === want
+          ? { ok: true }
+          : { ok: false, detail: 'cursor=' + got + ' expected ' + want + ' (tuplet wrapper stop)' };
+      })()` },
+  ],
+  tupletAtBarlineBeforeExistingContent: [
+    { name: 'tuplet accepted at the merged bar-line stop',
+      expr: `(() => {
+        const r = window.__tupletBarlineResult;
+        return r && r.ok === true
+          ? { ok: true }
+          : { ok: false, detail: 'expected accepted, got ' + JSON.stringify(r) };
+      })()` },
+    { name: 'tuplet is FIRST in M2, existing note pushed right',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const shape = m.allMeasures().map(mm => {
+          const L = m.layerInMeasure(mm, 1);
+          return L ? m.contentChildren(L).map(c => c.localName).join(',') : 'nolayer';
+        });
+        const want = ['rest,rest,rest,rest', 'tuplet,note'];
+        return JSON.stringify(shape) === JSON.stringify(want)
+          ? { ok: true }
+          : { ok: false, detail: 'shape=' + JSON.stringify(shape) + ' want=' + JSON.stringify(want) };
+      })()` },
+  ],
+  tupletMidFullMeasureRejected: [
+    { name: 'mid-measure tuplet in a full bar is rejected',
+      expr: `(() => {
+        const r = window.__tupletBarlineResult;
+        return r && r.ok === false
+          ? { ok: true }
+          : { ok: false, detail: 'expected rejected, got ' + JSON.stringify(r) };
+      })()` },
+    { name: 'bar not overfilled (still 4 rests, no tuplet anywhere)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const L = m.layerInMeasure(m.allMeasures()[0], 1);
+        const kids = m.contentChildren(L).map(c => c.localName).join(',');
+        const tups = m.getDoc().querySelectorAll('tuplet').length;
+        return kids === 'rest,rest,rest,rest' && tups === 0
+          ? { ok: true }
+          : { ok: false, detail: 'M1=' + kids + ' tuplets=' + tups };
+      })()` },
+  ],
+  tupletPartialMeasureNoSpill: [
+    { name: 'oversized tuplet at end of a PARTIAL measure is rejected',
+      expr: `(() => {
+        const r = window.__tupletBarlineResult;
+        return r && r.ok === false
+          ? { ok: true }
+          : { ok: false, detail: 'expected rejected, got ' + JSON.stringify(r) };
+      })()` },
+    { name: 'no spill: still one measure, no tuplet',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const n = m.allMeasures().length;
+        const tups = m.getDoc().querySelectorAll('tuplet').length;
+        return n === 1 && tups === 0
+          ? { ok: true }
+          : { ok: false, detail: 'measures=' + n + ' tuplets=' + tups + ' (expected 1 / 0)' };
+      })()` },
+  ],
+  tupletBarlineBothMeasuresFull: [
+    { name: 'rejected when the next measure is also full',
+      expr: `(() => {
+        const r = window.__tupletBarlineResult;
+        return r && r.ok === false
+          ? { ok: true }
+          : { ok: false, detail: 'expected rejected, got ' + JSON.stringify(r) };
+      })()` },
+    { name: 'no stray measure appended by the rejected spill',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const n = m.allMeasures().length;
+        const tups = m.getDoc().querySelectorAll('tuplet').length;
+        return n === 2 && tups === 0
+          ? { ok: true }
+          : { ok: false, detail: 'measures=' + n + ' tuplets=' + tups + ' (expected 2 / 0)' };
+      })()` },
+  ],
+  tupletSequentialAcrossBarline: [
+    { name: 'all five tuplets accepted in sequence',
+      expr: `(() => {
+        const log = window.__tupletSeqLog || [];
+        return log.length === 5 && log.every(x => x === 'ok')
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify(log) };
+      })()` },
+    { name: 'four filled triplets in M1, the fifth in M2',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const shape = m.allMeasures().map(mm => {
+          const L = m.layerInMeasure(mm, 1);
+          return L ? m.contentChildren(L).map(c => c.localName).join(',') : 'nolayer';
+        });
+        const want = ['tuplet,tuplet,tuplet,tuplet', 'tuplet'];
+        if (JSON.stringify(shape) !== JSON.stringify(want))
+          return { ok: false, detail: 'shape=' + JSON.stringify(shape) + ' want=' + JSON.stringify(want) };
+        const tups = [...m.getDoc().querySelectorAll('tuplet')];
+        const bad = tups.filter(t => t.querySelectorAll('note').length !== 3);
+        return bad.length === 0
+          ? { ok: true }
+          : { ok: false, detail: bad.length + ' tuplet(s) not filled with 3 notes' };
       })()` },
   ],
   m1TupletExceedsMeasure: [

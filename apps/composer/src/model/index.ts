@@ -80,6 +80,7 @@ import {
   cursorTupletRemainingWrittenTicks as cursorTupletRemainingWrittenTicksImpl,
   canInsertHere as canInsertHereImpl,
   createTupletAtCursor as createTupletAtCursorImpl,
+  resolveTupletTarget,
 } from './tuplet-ops.js';
 import {
   planInsert,
@@ -4993,12 +4994,22 @@ export class ComposerModel {
       const loc = locateCursor(this, v, this.cursors[v]);
       if (!loc || loc.inTuplet) return false;
       const tupletTicks = realTicks(src);
-      const used = this.timeWithinMeasure(v, loc.measureIdx, loc.withinIdx);
-      if (used + tupletTicks > this.measureTicksAt(loc.measureIdx) + 1e-6) return false;
+      /* Same atomic placement rule as createTupletAtCursor: one measure, free
+         room required, and the end-of-full-measure stop re-read as the head of
+         the next measure. */
+      const target = resolveTupletTarget(this, v, loc);
+      if (target.usedBefore + tupletTicks + target.postTicks > target.cap + 1e-6)
+        return false;
+      let targetLayer = target.layer;
+      if (!targetLayer) {
+        while (this.allMeasures().length <= target.measureIdx) this.appendMeasure();
+        targetLayer = this.allLayers(v)[target.measureIdx] ?? null;
+        if (!targetLayer) return false;
+      }
       /* Clone into our doc with fresh ids. */
       const fresh = src.cloneNode(true) as Element;
       this.regenerateIds(fresh);
-      insertAt(this, loc.layer, fresh, loc.withinIdx);
+      insertAt(this, targetLayer, fresh, target.withinIdx);
       /* Advance cursor past the tuplet's contributed flat stops. The simplest
          way is to compute the new cursor via tstamp lookup. */
       const newTstamp = this.getCursorAbsoluteTicks(v) + tupletTicks;
