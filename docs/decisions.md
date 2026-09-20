@@ -8845,3 +8845,62 @@ overflow. The two paths are not to be unified.
 **Files**: `apps/composer/src/model/{tuplet-ops.ts,index.ts}`. Fixtures: `tupletAtBarlineOpensNextMeasure`,
 `tupletAtBarlineBeforeExistingContent`, `tupletMidFullMeasureRejected`, `tupletPartialMeasureNoSpill`,
 `tupletBarlineBothMeasuresFull`, `tupletSequentialAcrossBarline`. Suite 510/510.
+
+---
+
+## Page partition: no balance gate — every touched section rebalances, always (2026-09-19)
+
+**Picked**: `balanceSectionLines` runs on every section an edit touches, unconditionally. The
+`structural` flag (`oN !== nN || hasEdit || lockDiff !== null`) and the `force` parameter it fed are
+gone, along with the gate `if (!force && lastFill >= MIN_FILL) return none('')`.
+
+**Rejected**: keeping the gate and widening its trigger — the obvious repair was to also open it when
+`greedyLines` over the current widths disagrees with the live line count. That works, but it needs the
+greedy N recorded per section to avoid a permanent mismatch whenever `balanceSection` settles on N0±1
+(the min-fill fallback), i.e. new state to keep in sync. A gate that costs state to protect a 1.8 ms
+no-op is not worth having.
+
+**Why**: with `BALANCE_LAMBDA` 0 the partition is a pure function of content, so re-balancing unchanged
+content is *idempotent* — it reports `changed = 0` and returns. There is therefore nothing for a gate to
+save, and every gate tried so far has instead frozen a stale partition on screen. The previous rule
+(Max, 2026-09-17: "sub-measure edits should still hold divisions unless they trigger an absolute min or
+max") only ever implemented the MIN, and only on the section-final line. Widening measures IN PLACE —
+note entry, the common case — therefore tripped nothing at all: 20 whole rests in voice 1 plus quarter
+rests taken in voice 3 from bar 11 held two lines for 26 consecutive keystrokes, compressing to fill
+**1.433** (43% over natural — stems into accidentals) while a fresh derive wanted three lines from the
+4th keystroke on. It escaped only when the line crossed FIT_MAX and the *repair* loop split it. Undo
+then looked like it broke its contract, but the asymmetry was a symptom, not a second bug: the layout
+on screen had never been the one the content implied, so restoring the correct one looked like a change.
+After the fix the same trace is a balancer fixed point at **every** step and peaks at fill 1.018.
+
+**Cost, measured before committing** (Max: "I want to quantify that if that's what the blocker is"):
+
+| section (sonata) | lines | measures | balance | boundaries moved |
+|---|---|---|---|---|
+| movement I | 36 | 139 | 1.2 ms med / 1.8 max | 0 |
+| movement II | 21 | 91 | 0.2 / 0.3 | 0 |
+| movement III | 22 | 100 | 0.3 / 1.5 | 0 |
+| movement IV | 37 | 116 | 0.4 / 0.5 | 0 |
+
+Worst case is 1.2 ms against a **342 ms** edit (0.35%), and a 16-edit sub-measure battery moved zero
+boundaries, derived nothing and spliced every time — median wall 342 ms gated vs 345 ms ungated, inside
+noise. The O(M²·N) worst-case bound on `dpPartition` badly overstates it: the `minFill`/`fitMax`
+feasibility check prunes the inner loop to a narrow legal band, making it O(M·band·N) in practice.
+
+**Ruling — correctness over churn** (Max, 2026-09-19): "I would always rather have the correct partition
+immediately than hold it to avoid churn." The `force` distinction was a holdout from the minimal-change
+philosophy that predates the balancing rework; once λ = 0 made the partition pure, the gate and the
+purity were redundant.
+
+**Known, separate, NOT addressed here**: the line COUNT is chosen by `greedyLines` at
+`BALANCE_SOFT_MAX` 1.00 while `MIN_FILL` 0.65 tolerates 54% stretch, so the two bounds are maximally
+asymmetric and N flips late — measured on the same trace, the balancer takes 53% stretch to avoid 3.6%
+compression, and escapes only when the 3-line option becomes *illegal* rather than when the 2-line one
+becomes better. Max's position: compression must be avoided because it always has the potential to cause
+collisions, though whether fill > 1.0 is *always* a collision risk depends on how Verovio counts fill,
+which is unverified. A symmetric `(ln fill)²` cost was tried on the trace and overshoots badly (it picks
++30% compression at the other end), so any fix needs asymmetric weighting and Max's eye on real renders.
+
+**Files**: `apps/composer/src/render/linebreaks.ts` (gate + `structural`/`force` threading removed),
+`docs/architecture/composer.md`. Fixture: `pageBalanceSubMeasureWiden` — verified to FAIL against the
+gated code ("stale partition after quarter #3: 2 lines on screen, a fresh balance moves 3 boundaries").

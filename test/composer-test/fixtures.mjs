@@ -1740,6 +1740,27 @@ const PAGE_LINEBREAKS = {
     `,
     skipCursorTrace: true,
   },
+
+  /* Sub-measure widening (2026-09-19). 20 whole rests in voice 1 castoff to
+   * two lines; voice 3 then takes quarter rests from bar 11, widening measures
+   * IN PLACE — no measure count change, no lock, so the old `structural` flag
+   * was false on every keystroke and the balance gate (`!force && lastFill >=
+   * MIN_FILL`) held the divisions. Only the section-final line's MIN was ever
+   * checked, never a max, so the line compressed to fill 1.433 across 26
+   * consecutive keystrokes while a fresh derive wanted three lines from the
+   * 4th on; it escaped only when FIT_MAX tripped the REPAIR loop. Undo then
+   * appeared to break its contract because the layout on screen had never been
+   * the one the content implied. The gate is gone: every touched section
+   * rebalances, always. Asserted via
+   * FIXTURE_ASSERTIONS.pageBalanceSubMeasureWiden. */
+  pageBalanceSubMeasureWiden: {
+    setup: `
+      m.setCursor(0, 1);
+      for (let i = 0; i < 20; i++) m.insertRestAtCursor({ duration: '1', dots: 0 });
+      r();
+    `,
+    skipCursorTrace: true,
+  },
 };
 
 /* ── Page-view system splice (Phase C-B, render/pagesplice.ts) ─────────── */
@@ -12869,6 +12890,61 @@ export const FIXTURE_ASSERTIONS = {
         return { ok: true };
       })()` },
   ],
+  pageBalanceSubMeasureWiden: [
+    { name: 'widening measures in place re-partitions immediately: every keystroke leaves a balancer fixed point, no line is compressed, and emptying voice 3 restores the original layout exactly',
+      expr: `(() => {
+        const H = window.__hkl_composer; const m = H.model; const pb = H.renderer['pageBreaks'];
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
+        /* Re-balancing a COPY of the live partition: balanceSectionLines
+           mutates only the arrays handed to it, so this reads what a fresh
+           derive would choose without disturbing what is on screen. */
+        const state = () => {
+          const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+          const idIdx = new Map(ids.map((id, i) => [id, i]));
+          const starts = pb['startIds'].map((id) => idIdx.get(id));
+          const fills = starts.map((_, k) => pb['lineFill'](starts, k, ids));
+          const cp = starts.slice();
+          const pl = pb.pageStarts().map((id) => pb.lineStarts().indexOf(id));
+          const again = pb['balanceSectionLines'](cp, pl, 0, starts.length - 1, ids, 0, m.renderUnits(pb['viewStaves']));
+          return { lines: starts.length, fills, changed: again.changed,
+                   sig: fills.map((f) => f === null ? 'x' : f.toFixed(3)).join(',') };
+        };
+        const base = state();
+        if (base.changed !== 0) return { ok: false, detail: 'baseline is not a fixed point: ' + JSON.stringify(base) };
+        if (base.lines !== 2) return { ok: false, detail: '20 whole rests expected 2 lines, got ' + base.lines };
+        const v30 = m.getVoiceLength(3);
+        /* Bar 11 = the second line's first measure, in voice 3. */
+        m.setCursor(m.getMeasureStartCursor(1, 10), 1);
+        m.setVoicePreservingMeasure(3);
+        let worst = 0;
+        for (let i = 0; i < 30; i++) {
+          if (m.insertRestAtCursor({ duration: '4', dots: 0 }) === null) return { ok: false, detail: 'insert rejected at quarter #' + (i + 1) };
+          H.reRender();
+          const st = state();
+          if (st.fills.some((f) => f === null)) return { ok: false, detail: 'naturals cold after quarter #' + (i + 1) };
+          if (st.changed !== 0) return { ok: false, detail: 'stale partition after quarter #' + (i + 1) + ': ' + st.lines + ' lines on screen, a fresh balance moves ' + st.changed + ' boundaries (' + st.sig + ')' };
+          worst = Math.max(worst, ...st.fills);
+        }
+        /* The defect this fixture exists for: the held partition let a line
+           reach fill 1.433 (43% compression - stems into accidentals) before
+           FIT_MAX finally tripped the repair loop. */
+        if (worst > 1.10) return { ok: false, detail: 'a line was compressed to fill ' + worst.toFixed(3) + ' (held-partition defect; 1.433 before the 2026-09-19 fix)' };
+        /* Undo contract: emptying voice 3 again must restore the ORIGINAL
+           partition exactly, not merely a legal one. */
+        m.setCursor(m.getVoiceLength(3), 3);
+        for (let g = 0; g < 90 && m.getVoiceLength(3) > v30; g++) {
+          if (!m.deleteAtCursor()) break;
+          H.reRender();
+          const st = state();
+          if (st.changed !== 0) return { ok: false, detail: 'stale partition after delete #' + (g + 1) + ': ' + st.lines + ' lines, a fresh balance moves ' + st.changed + ' boundaries' };
+        }
+        if (m.getVoiceLength(3) !== v30) return { ok: false, detail: 'voice 3 not emptied: ' + m.getVoiceLength(3) + ' vs ' + v30 };
+        const end = state();
+        if (end.sig !== base.sig) return { ok: false, detail: 'layout not restored: ' + end.sig + ' vs baseline ' + base.sig };
+        return { ok: true };
+      })()` },
+  ],
   pageBalanceDeleteAtSectionEnd: [
     { name: 'emptying bars at a section end: once the final line falls below MIN_FILL the balancer repairs the section locally, on the splice path',
       expr: `(() => {
@@ -13404,21 +13480,33 @@ export const FIXTURE_ASSERTIONS = {
         /* Put a key change at the START of a line, so the PREVIOUS line gets an
            end-of-line courtesy signature — the thing the window must reproduce. */
         const sigLine = 3;
-        const ids0 = m.allMeasures().map((x) => x.getAttribute('xml:id'));
-        const sigMi = ids0.indexOf(startIds[sigLine]);
-        if (sigMi < 0) return { ok: false, detail: 'line start not in model' };
-        m.setKeySigAt(sigMi, '3s', 'major');
-        H.reRender();
-        await window.__waitForRender();
-        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
-        await window.__waitForRender();
-        /* The key change may re-break the score; re-read the partition and find
-           the line that now begins it. */
+        /* The partition is a pure function of content (2026-09-19): adding a key
+           signature widens its measure, so the section re-breaks and the measure
+           the change was placed on may no longer START a line. Re-place it on
+           the line start the NEW partition chose until it stays put (converges
+           on the second attempt for this document). */
+        let sigMi = -1, lineOfSig = -1;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          const idsN = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+          const cand = idsN.indexOf(pb['startIds'][sigLine]);
+          if (cand < 0) return { ok: false, detail: 'line start not in model' };
+          if (sigMi >= 0 && sigMi !== cand) m.setKeySigAt(sigMi, '0', 'major');
+          m.setKeySigAt(cand, '3s', 'major');
+          sigMi = cand;
+          H.reRender();
+          await window.__waitForRender();
+          for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+          await window.__waitForRender();
+          const idsA = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+          lineOfSig = pb['startIds'].indexOf(idsA[sigMi]);
+          if (lineOfSig >= 3) break;
+        }
         startIds = pb['startIds'];
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
-        const sigId = ids[sigMi];
-        const lineOfSig = startIds.indexOf(sigId);
         if (lineOfSig < 3) return { ok: false, detail: 'key change is not a line start (line ' + lineOfSig + ') — fixture cannot pose the case' };
+        /* The retarget above is SETUP, not the thing under test: only the edit
+           below must splice. */
+        H.renderer.renderLedger().length = 0;
         /* Edit TWO lines before the key change. The line between them is then
            the compared context line, its last measure carries the courtesy, and
            the line that GENERATES that courtesy sits just beyond the window —
@@ -13543,22 +13631,43 @@ export const FIXTURE_ASSERTIONS = {
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         let startIds = pb['startIds'];
         if (startIds.length < 7) return { ok: false, detail: 'need >= 7 lines, got ' + startIds.length };
-        const ids0 = m.allMeasures().map((x) => x.getAttribute('xml:id'));
-        /* the later RESET first (line 5), rendered by whatever path */
-        const resetMi = ids0.indexOf(startIds[5]);
         const chordAt = (mi) => { const flat = m['flatChildren'](1); return flat.findIndex((el) => (el.localName === 'note' || el.localName === 'chord') && el.closest('measure') === m.allMeasures()[mi]); };
-        /* Resets must DIFFER from the document's defaults (4/4, staff 1 in G2):
-           setMeterAt / setClefAtCursor are diff-aware and write nothing for a
-           redundant value — which would leave the edit's range unbounded. */
-        if (KIND === 'key') m.setKeySigAt(resetMi, '2f', 'major');
-        else if (KIND === 'meter') m.setMeterAt(resetMi, 2, 2);
-        else { if (!m.setClefAtCursor(1, chordAt(resetMi), 'C', '3', null, null)) return { ok: false, detail: 'reset clef refused' }; }
-        H.reRender(); await settle();
-        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) { H.reRender(); await settle(); }
+        /* The later RESET first (line 5), rendered by whatever path. Resets must
+           DIFFER from the document's defaults (4/4, staff 1 in G2): setMeterAt /
+           setClefAtCursor are diff-aware and write nothing for a redundant
+           value — which would leave the edit's range unbounded.
+           The partition is a pure function of content (2026-09-19), so the reset
+           widens its measure and re-breaks the section: the measure it was placed
+           on may no longer START a line. Re-place it on the line start the NEW
+           partition chose until it stays put. Withdrawing is non-destructive for
+           both retargeted kinds (key → inherited; meter 2/2 → 4/4 keeps every
+           measure's content — a truncating change like 2/4 would not). A clef
+           reset cannot be withdrawn the same way, so it keeps its single
+           attempt, exactly as before. */
+        let resetMi = -1, resetLine = -1;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          const idsN = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+          const cand = idsN.indexOf(pb['startIds'][5]);
+          if (cand < 0) return { ok: false, detail: 'line start not in model' };
+          if (resetMi >= 0 && resetMi !== cand) {
+            if (KIND === 'key') m.setKeySigAt(resetMi, '0', 'major');
+            else if (KIND === 'meter') m.setMeterAt(resetMi, 4, 4);
+          }
+          if (KIND === 'key') m.setKeySigAt(cand, '2f', 'major');
+          else if (KIND === 'meter') m.setMeterAt(cand, 2, 2);
+          else { if (!m.setClefAtCursor(1, chordAt(cand), 'C', '3', null, null)) return { ok: false, detail: 'reset clef refused' }; }
+          resetMi = cand;
+          H.reRender(); await settle();
+          for (let i = 0; i < 2 && !pb.ownershipActive(); i++) { H.reRender(); await settle(); }
+          const idsA = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+          resetLine = pb['startIds'].indexOf(idsA[resetMi]);
+          if (resetLine >= 4 || KIND === 'clef') break;
+        }
         startIds = pb['startIds'];
         let ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
-        const resetLine = startIds.indexOf(ids[resetMi]);
         if (resetLine < 4) return { ok: false, detail: 'reset is not a line start >= 4 (line ' + resetLine + ') — fixture cannot pose the case' };
+        /* The retarget above is SETUP, not the thing under test. */
+        H.renderer.renderLedger().length = 0;
         /* the edit under test: the same kind of change at line 2. Clear the
            splicer's diagnostics first — a derive leaves them from the previous
            render, which would read as a stale "spliced". */
@@ -13580,18 +13689,33 @@ export const FIXTURE_ASSERTIONS = {
         if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice of the governed range, got "' + ps.lastOutcome + '" (skip: ' + ps.lastSkipReason + '; derive reason: ' + pb.lastDeriveReason + '; refill moved lines: ' + pb.lastRefillLines + '; lines now ' + pb['startIds'].length + ')' };
         ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         startIds = pb['startIds'];
-        const editLine = startIds.indexOf(ids[editMi]);
-        const resetLineNow = startIds.indexOf(ids[resetMi]);
+        /* Line CONTAINING the measure, not the line STARTING with it (2026-09-19).
+           The signature change widens its measure, the section re-breaks, and the
+           edited measure need not start a line any more — indexOf then read -1
+           and every bound below compared against nonsense. */
+        const lineOf = (mi) => { let k = -1; for (let i = 0; i < startIds.length; i++) { const st = ids.indexOf(startIds[i]); if (st >= 0 && st <= mi) k = i; } return k; };
+        const editLine = lineOf(editMi);
+        const resetLineNow = lineOf(resetMi);
         const run = ps.lastRun;
         /* the run may begin one line early: the measure before the change takes
-           the end-of-line courtesy, so its line is replaced too */
+           the end-of-line courtesy, so its line is replaced too. This bound is
+           UNCHANGED by the 2026-09-19 balance work — only the line LOOKUPS moved
+           to lineOf; the run stayed local. */
         if (!run || run.a > editLine || run.a < editLine - 1) return { ok: false, detail: 'run does not start at (or one line above) the edit line: run=' + JSON.stringify(run) + ' editLine=' + editLine + ' | diag: sigW=' + pb['sigW'] + ' budgetW=' + pb['budgetW'] + ' refillLines=' + pb.lastRefillLines + ' lines=' + startIds.length + ' editStart=' + ids[editMi] + ' startsNow=' + JSON.stringify(startIds.slice(0, 6)) + ' zoom=' + (window.__hkl_composer.renderer['zoom']) + ' mounted=' + document.querySelectorAll('#score .score-page:not(.score-page-pending)').length + '/' + document.querySelectorAll('#score .score-page').length + ' derive=' + pb.lastDeriveReason + ' adoptionInFlight=' + !!pb['adoption'] + ' tkCurrent=' + (window.__hkl_composer.renderer['pageVirt'] && window.__hkl_composer.renderer['pageVirt'].tkCurrent) + ' stale=' + (window.__hkl_composer.renderer['pageVirt'] ? [...window.__hkl_composer.renderer['pageVirt'].stalePages].join('/') : '-') + ' outcome=' + ps.lastOutcome + ' warns=' + JSON.stringify(__warns) };
         /* key/meter resets sit BEFORE their measure, so the run ends on the line
            before the reset; a mid-measure reset CLEF leaves the start of its own
            measure in the changed clef, so that line joins the range too */
-        const maxB = KIND === 'clef' ? resetLineNow : resetLineNow - 1;
-        if (run.b < resetLineNow - 1) return { ok: false, detail: 'run stops before the governed range ends: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow };
-        if (run.b > maxB) return { ok: false, detail: 'run overshoots the reset: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow };
+        /* Last measure the change GOVERNS is the one before the reset; the run
+           must reach the line holding it and stop there. Computed via lineOf
+           rather than resetLineNow - 1 (2026-09-19): the reset need not start a
+           line any more, and when it sits mid-line the governed range reaches
+           into that same line. Identical to the old bound whenever the reset IS
+           a line start. A mid-measure reset CLEF leaves the start of its own
+           measure in the changed clef, so that line joins the range too. */
+        const lastGoverned = KIND === 'clef' ? resetLineNow : lineOf(resetMi - 1);
+        const maxB = lastGoverned;
+        if (run.b < lastGoverned) return { ok: false, detail: 'run stops before the governed range ends: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow + ' lastGoverned=' + lastGoverned };
+        if (run.b > maxB) return { ok: false, detail: 'run overshoots the reset: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow + ' lastGoverned=' + lastGoverned };
         /* The UNDO is the same range in reverse and must splice too. restoreSnapshot
            swaps the document object: interior scoreDefs are matched by their
            successor measure's id, never by element identity — identity read every
@@ -13623,22 +13747,43 @@ export const FIXTURE_ASSERTIONS = {
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         let startIds = pb['startIds'];
         if (startIds.length < 7) return { ok: false, detail: 'need >= 7 lines, got ' + startIds.length };
-        const ids0 = m.allMeasures().map((x) => x.getAttribute('xml:id'));
-        /* the later RESET first (line 5), rendered by whatever path */
-        const resetMi = ids0.indexOf(startIds[5]);
         const chordAt = (mi) => { const flat = m['flatChildren'](1); return flat.findIndex((el) => (el.localName === 'note' || el.localName === 'chord') && el.closest('measure') === m.allMeasures()[mi]); };
-        /* Resets must DIFFER from the document's defaults (4/4, staff 1 in G2):
-           setMeterAt / setClefAtCursor are diff-aware and write nothing for a
-           redundant value — which would leave the edit's range unbounded. */
-        if (KIND === 'key') m.setKeySigAt(resetMi, '2f', 'major');
-        else if (KIND === 'meter') m.setMeterAt(resetMi, 2, 2);
-        else { if (!m.setClefAtCursor(1, chordAt(resetMi), 'C', '3', null, null)) return { ok: false, detail: 'reset clef refused' }; }
-        H.reRender(); await settle();
-        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) { H.reRender(); await settle(); }
+        /* The later RESET first (line 5), rendered by whatever path. Resets must
+           DIFFER from the document's defaults (4/4, staff 1 in G2): setMeterAt /
+           setClefAtCursor are diff-aware and write nothing for a redundant
+           value — which would leave the edit's range unbounded.
+           The partition is a pure function of content (2026-09-19), so the reset
+           widens its measure and re-breaks the section: the measure it was placed
+           on may no longer START a line. Re-place it on the line start the NEW
+           partition chose until it stays put. Withdrawing is non-destructive for
+           both retargeted kinds (key → inherited; meter 2/2 → 4/4 keeps every
+           measure's content — a truncating change like 2/4 would not). A clef
+           reset cannot be withdrawn the same way, so it keeps its single
+           attempt, exactly as before. */
+        let resetMi = -1, resetLine = -1;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          const idsN = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+          const cand = idsN.indexOf(pb['startIds'][5]);
+          if (cand < 0) return { ok: false, detail: 'line start not in model' };
+          if (resetMi >= 0 && resetMi !== cand) {
+            if (KIND === 'key') m.setKeySigAt(resetMi, '0', 'major');
+            else if (KIND === 'meter') m.setMeterAt(resetMi, 4, 4);
+          }
+          if (KIND === 'key') m.setKeySigAt(cand, '2f', 'major');
+          else if (KIND === 'meter') m.setMeterAt(cand, 2, 2);
+          else { if (!m.setClefAtCursor(1, chordAt(cand), 'C', '3', null, null)) return { ok: false, detail: 'reset clef refused' }; }
+          resetMi = cand;
+          H.reRender(); await settle();
+          for (let i = 0; i < 2 && !pb.ownershipActive(); i++) { H.reRender(); await settle(); }
+          const idsA = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+          resetLine = pb['startIds'].indexOf(idsA[resetMi]);
+          if (resetLine >= 4 || KIND === 'clef') break;
+        }
         startIds = pb['startIds'];
         let ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
-        const resetLine = startIds.indexOf(ids[resetMi]);
         if (resetLine < 4) return { ok: false, detail: 'reset is not a line start >= 4 (line ' + resetLine + ') — fixture cannot pose the case' };
+        /* The retarget above is SETUP, not the thing under test. */
+        H.renderer.renderLedger().length = 0;
         /* the edit under test: the same kind of change at line 2. Clear the
            splicer's diagnostics first — a derive leaves them from the previous
            render, which would read as a stale "spliced". */
@@ -13660,18 +13805,33 @@ export const FIXTURE_ASSERTIONS = {
         if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice of the governed range, got "' + ps.lastOutcome + '" (skip: ' + ps.lastSkipReason + '; derive reason: ' + pb.lastDeriveReason + '; refill moved lines: ' + pb.lastRefillLines + '; lines now ' + pb['startIds'].length + ')' };
         ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         startIds = pb['startIds'];
-        const editLine = startIds.indexOf(ids[editMi]);
-        const resetLineNow = startIds.indexOf(ids[resetMi]);
+        /* Line CONTAINING the measure, not the line STARTING with it (2026-09-19).
+           The signature change widens its measure, the section re-breaks, and the
+           edited measure need not start a line any more — indexOf then read -1
+           and every bound below compared against nonsense. */
+        const lineOf = (mi) => { let k = -1; for (let i = 0; i < startIds.length; i++) { const st = ids.indexOf(startIds[i]); if (st >= 0 && st <= mi) k = i; } return k; };
+        const editLine = lineOf(editMi);
+        const resetLineNow = lineOf(resetMi);
         const run = ps.lastRun;
         /* the run may begin one line early: the measure before the change takes
-           the end-of-line courtesy, so its line is replaced too */
+           the end-of-line courtesy, so its line is replaced too. This bound is
+           UNCHANGED by the 2026-09-19 balance work — only the line LOOKUPS moved
+           to lineOf; the run stayed local. */
         if (!run || run.a > editLine || run.a < editLine - 1) return { ok: false, detail: 'run does not start at (or one line above) the edit line: run=' + JSON.stringify(run) + ' editLine=' + editLine + ' | diag: sigW=' + pb['sigW'] + ' budgetW=' + pb['budgetW'] + ' refillLines=' + pb.lastRefillLines + ' lines=' + startIds.length + ' editStart=' + ids[editMi] + ' startsNow=' + JSON.stringify(startIds.slice(0, 6)) + ' zoom=' + (window.__hkl_composer.renderer['zoom']) + ' mounted=' + document.querySelectorAll('#score .score-page:not(.score-page-pending)').length + '/' + document.querySelectorAll('#score .score-page').length + ' derive=' + pb.lastDeriveReason + ' adoptionInFlight=' + !!pb['adoption'] + ' tkCurrent=' + (window.__hkl_composer.renderer['pageVirt'] && window.__hkl_composer.renderer['pageVirt'].tkCurrent) + ' stale=' + (window.__hkl_composer.renderer['pageVirt'] ? [...window.__hkl_composer.renderer['pageVirt'].stalePages].join('/') : '-') + ' outcome=' + ps.lastOutcome + ' warns=' + JSON.stringify(__warns) };
         /* key/meter resets sit BEFORE their measure, so the run ends on the line
            before the reset; a mid-measure reset CLEF leaves the start of its own
            measure in the changed clef, so that line joins the range too */
-        const maxB = KIND === 'clef' ? resetLineNow : resetLineNow - 1;
-        if (run.b < resetLineNow - 1) return { ok: false, detail: 'run stops before the governed range ends: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow };
-        if (run.b > maxB) return { ok: false, detail: 'run overshoots the reset: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow };
+        /* Last measure the change GOVERNS is the one before the reset; the run
+           must reach the line holding it and stop there. Computed via lineOf
+           rather than resetLineNow - 1 (2026-09-19): the reset need not start a
+           line any more, and when it sits mid-line the governed range reaches
+           into that same line. Identical to the old bound whenever the reset IS
+           a line start. A mid-measure reset CLEF leaves the start of its own
+           measure in the changed clef, so that line joins the range too. */
+        const lastGoverned = KIND === 'clef' ? resetLineNow : lineOf(resetMi - 1);
+        const maxB = lastGoverned;
+        if (run.b < lastGoverned) return { ok: false, detail: 'run stops before the governed range ends: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow + ' lastGoverned=' + lastGoverned };
+        if (run.b > maxB) return { ok: false, detail: 'run overshoots the reset: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow + ' lastGoverned=' + lastGoverned };
         /* The UNDO is the same range in reverse and must splice too. restoreSnapshot
            swaps the document object: interior scoreDefs are matched by their
            successor measure's id, never by element identity — identity read every
@@ -13703,22 +13863,43 @@ export const FIXTURE_ASSERTIONS = {
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         let startIds = pb['startIds'];
         if (startIds.length < 7) return { ok: false, detail: 'need >= 7 lines, got ' + startIds.length };
-        const ids0 = m.allMeasures().map((x) => x.getAttribute('xml:id'));
-        /* the later RESET first (line 5), rendered by whatever path */
-        const resetMi = ids0.indexOf(startIds[5]);
         const chordAt = (mi) => { const flat = m['flatChildren'](1); return flat.findIndex((el) => (el.localName === 'note' || el.localName === 'chord') && el.closest('measure') === m.allMeasures()[mi]); };
-        /* Resets must DIFFER from the document's defaults (4/4, staff 1 in G2):
-           setMeterAt / setClefAtCursor are diff-aware and write nothing for a
-           redundant value — which would leave the edit's range unbounded. */
-        if (KIND === 'key') m.setKeySigAt(resetMi, '2f', 'major');
-        else if (KIND === 'meter') m.setMeterAt(resetMi, 2, 2);
-        else { if (!m.setClefAtCursor(1, chordAt(resetMi), 'C', '3', null, null)) return { ok: false, detail: 'reset clef refused' }; }
-        H.reRender(); await settle();
-        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) { H.reRender(); await settle(); }
+        /* The later RESET first (line 5), rendered by whatever path. Resets must
+           DIFFER from the document's defaults (4/4, staff 1 in G2): setMeterAt /
+           setClefAtCursor are diff-aware and write nothing for a redundant
+           value — which would leave the edit's range unbounded.
+           The partition is a pure function of content (2026-09-19), so the reset
+           widens its measure and re-breaks the section: the measure it was placed
+           on may no longer START a line. Re-place it on the line start the NEW
+           partition chose until it stays put. Withdrawing is non-destructive for
+           both retargeted kinds (key → inherited; meter 2/2 → 4/4 keeps every
+           measure's content — a truncating change like 2/4 would not). A clef
+           reset cannot be withdrawn the same way, so it keeps its single
+           attempt, exactly as before. */
+        let resetMi = -1, resetLine = -1;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          const idsN = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+          const cand = idsN.indexOf(pb['startIds'][5]);
+          if (cand < 0) return { ok: false, detail: 'line start not in model' };
+          if (resetMi >= 0 && resetMi !== cand) {
+            if (KIND === 'key') m.setKeySigAt(resetMi, '0', 'major');
+            else if (KIND === 'meter') m.setMeterAt(resetMi, 4, 4);
+          }
+          if (KIND === 'key') m.setKeySigAt(cand, '2f', 'major');
+          else if (KIND === 'meter') m.setMeterAt(cand, 2, 2);
+          else { if (!m.setClefAtCursor(1, chordAt(cand), 'C', '3', null, null)) return { ok: false, detail: 'reset clef refused' }; }
+          resetMi = cand;
+          H.reRender(); await settle();
+          for (let i = 0; i < 2 && !pb.ownershipActive(); i++) { H.reRender(); await settle(); }
+          const idsA = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+          resetLine = pb['startIds'].indexOf(idsA[resetMi]);
+          if (resetLine >= 4 || KIND === 'clef') break;
+        }
         startIds = pb['startIds'];
         let ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
-        const resetLine = startIds.indexOf(ids[resetMi]);
         if (resetLine < 4) return { ok: false, detail: 'reset is not a line start >= 4 (line ' + resetLine + ') — fixture cannot pose the case' };
+        /* The retarget above is SETUP, not the thing under test. */
+        H.renderer.renderLedger().length = 0;
         /* the edit under test: the same kind of change at line 2. Clear the
            splicer's diagnostics first — a derive leaves them from the previous
            render, which would read as a stale "spliced". */
@@ -13740,18 +13921,33 @@ export const FIXTURE_ASSERTIONS = {
         if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice of the governed range, got "' + ps.lastOutcome + '" (skip: ' + ps.lastSkipReason + '; derive reason: ' + pb.lastDeriveReason + '; refill moved lines: ' + pb.lastRefillLines + '; lines now ' + pb['startIds'].length + ')' };
         ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         startIds = pb['startIds'];
-        const editLine = startIds.indexOf(ids[editMi]);
-        const resetLineNow = startIds.indexOf(ids[resetMi]);
+        /* Line CONTAINING the measure, not the line STARTING with it (2026-09-19).
+           The signature change widens its measure, the section re-breaks, and the
+           edited measure need not start a line any more — indexOf then read -1
+           and every bound below compared against nonsense. */
+        const lineOf = (mi) => { let k = -1; for (let i = 0; i < startIds.length; i++) { const st = ids.indexOf(startIds[i]); if (st >= 0 && st <= mi) k = i; } return k; };
+        const editLine = lineOf(editMi);
+        const resetLineNow = lineOf(resetMi);
         const run = ps.lastRun;
         /* the run may begin one line early: the measure before the change takes
-           the end-of-line courtesy, so its line is replaced too */
+           the end-of-line courtesy, so its line is replaced too. This bound is
+           UNCHANGED by the 2026-09-19 balance work — only the line LOOKUPS moved
+           to lineOf; the run stayed local. */
         if (!run || run.a > editLine || run.a < editLine - 1) return { ok: false, detail: 'run does not start at (or one line above) the edit line: run=' + JSON.stringify(run) + ' editLine=' + editLine + ' | diag: sigW=' + pb['sigW'] + ' budgetW=' + pb['budgetW'] + ' refillLines=' + pb.lastRefillLines + ' lines=' + startIds.length + ' editStart=' + ids[editMi] + ' startsNow=' + JSON.stringify(startIds.slice(0, 6)) + ' zoom=' + (window.__hkl_composer.renderer['zoom']) + ' mounted=' + document.querySelectorAll('#score .score-page:not(.score-page-pending)').length + '/' + document.querySelectorAll('#score .score-page').length + ' derive=' + pb.lastDeriveReason + ' adoptionInFlight=' + !!pb['adoption'] + ' tkCurrent=' + (window.__hkl_composer.renderer['pageVirt'] && window.__hkl_composer.renderer['pageVirt'].tkCurrent) + ' stale=' + (window.__hkl_composer.renderer['pageVirt'] ? [...window.__hkl_composer.renderer['pageVirt'].stalePages].join('/') : '-') + ' outcome=' + ps.lastOutcome + ' warns=' + JSON.stringify(__warns) };
         /* key/meter resets sit BEFORE their measure, so the run ends on the line
            before the reset; a mid-measure reset CLEF leaves the start of its own
            measure in the changed clef, so that line joins the range too */
-        const maxB = KIND === 'clef' ? resetLineNow : resetLineNow - 1;
-        if (run.b < resetLineNow - 1) return { ok: false, detail: 'run stops before the governed range ends: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow };
-        if (run.b > maxB) return { ok: false, detail: 'run overshoots the reset: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow };
+        /* Last measure the change GOVERNS is the one before the reset; the run
+           must reach the line holding it and stop there. Computed via lineOf
+           rather than resetLineNow - 1 (2026-09-19): the reset need not start a
+           line any more, and when it sits mid-line the governed range reaches
+           into that same line. Identical to the old bound whenever the reset IS
+           a line start. A mid-measure reset CLEF leaves the start of its own
+           measure in the changed clef, so that line joins the range too. */
+        const lastGoverned = KIND === 'clef' ? resetLineNow : lineOf(resetMi - 1);
+        const maxB = lastGoverned;
+        if (run.b < lastGoverned) return { ok: false, detail: 'run stops before the governed range ends: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow + ' lastGoverned=' + lastGoverned };
+        if (run.b > maxB) return { ok: false, detail: 'run overshoots the reset: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow + ' lastGoverned=' + lastGoverned };
         /* The UNDO is the same range in reverse and must splice too. restoreSnapshot
            swaps the document object: interior scoreDefs are matched by their
            successor measure's id, never by element identity — identity read every
@@ -13943,19 +14139,36 @@ export const FIXTURE_ASSERTIONS = {
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         let startIds = pb['startIds'];
         if (startIds.length < 7) return { ok: false, detail: 'need >= 7 lines, got ' + startIds.length };
-        const ids0 = m.allMeasures().map((x) => x.getAttribute('xml:id'));
-        const sig1 = ids0.indexOf(startIds[4]), sig2 = ids0.indexOf(startIds[5]);
-        if (sig1 < 0 || sig2 < 0) return { ok: false, detail: 'line start not in model' };
-        m.setKeySigAt(sig1, '3s', 'major');
-        m.setKeySigAt(sig2, '2f', 'major');
-        H.reRender();
-        await window.__waitForRender();
-        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
-        await window.__waitForRender();
+        /* The partition is a pure function of content (2026-09-19): two key
+           signatures widen two measures, so the section re-breaks and the
+           measures they were placed on may no longer START consecutive lines.
+           Re-place them on the line starts the NEW partition chose until they
+           stay put. Clearing is order-sensitive — sig2 inherits sig1, so it
+           goes back to '3s' and must be cleared BEFORE sig1 returns to '0'. */
+        let sig1 = -1, sig2 = -1, L1 = -1, L2 = -1;
+        for (let attempt = 0; attempt < 6; attempt++) {
+          const idsN = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+          const c1 = idsN.indexOf(pb['startIds'][4]), c2 = idsN.indexOf(pb['startIds'][5]);
+          if (c1 < 0 || c2 < 0) return { ok: false, detail: 'line start not in model' };
+          if (sig1 === c1 && sig2 === c2) break;          // already there; the shape is what it is
+          if (sig2 >= 0) m.setKeySigAt(sig2, '3s', 'major');
+          if (sig1 >= 0) m.setKeySigAt(sig1, '0', 'major');
+          m.setKeySigAt(c1, '3s', 'major');
+          m.setKeySigAt(c2, '2f', 'major');
+          sig1 = c1; sig2 = c2;
+          H.reRender();
+          await window.__waitForRender();
+          for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+          await window.__waitForRender();
+          const idsA = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+          L1 = pb['startIds'].indexOf(idsA[sig1]); L2 = pb['startIds'].indexOf(idsA[sig2]);
+          if (L1 >= 3 && L2 === L1 + 1) break;
+        }
         startIds = pb['startIds'];
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
-        const L1 = startIds.indexOf(ids[sig1]), L2 = startIds.indexOf(ids[sig2]);
         if (L1 < 3 || L2 !== L1 + 1) return { ok: false, detail: 'fixture cannot pose the case: key changes sit on lines ' + L1 + ' and ' + L2 };
+        /* The retarget above is SETUP, not the thing under test. */
+        H.renderer.renderLedger().length = 0;
         /* Edit one line above the first change: the line between is the compared
            context line, the first signature line generates its courtesy, and the
            second signature line is what the old whole-line rule chained in. */
@@ -13994,11 +14207,30 @@ export const FIXTURE_ASSERTIONS = {
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
         let startIds = pb['startIds'];
         if (startIds.length < 7) return { ok: false, detail: 'need >= 7 lines, got ' + startIds.length };
-        const ids0 = m.allMeasures().map((x) => x.getAttribute('xml:id'));
-        const sig1 = ids0.indexOf(startIds[4]), sig2 = ids0.indexOf(startIds[5]);
-        if (sig1 < 0 || sig2 < 0 || sig1 + 1 >= sig2) return { ok: false, detail: 'line starts not usable (' + sig1 + ', ' + sig2 + ')' };
-        m.setKeySigAt(sig1, '3s', 'major');
-        m.setKeySigAt(sig2, '2f', 'major');
+        /* The partition is a pure function of content (2026-09-19): the two key
+           signatures widen their measures and re-break the section, so they may
+           no longer START consecutive lines. Settle them onto the line starts
+           the NEW partition chose before the ending is built on top. Clearing is
+           order-sensitive — sig2 inherits sig1. */
+        let sig1 = -1, sig2 = -1;
+        for (let attempt = 0; attempt < 6; attempt++) {
+          const idsN = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+          const c1 = idsN.indexOf(pb['startIds'][4]), c2 = idsN.indexOf(pb['startIds'][5]);
+          if (c1 < 0 || c2 < 0 || c1 + 1 >= c2) return { ok: false, detail: 'line starts not usable (' + c1 + ', ' + c2 + ')' };
+          if (sig1 === c1 && sig2 === c2) break;
+          if (sig2 >= 0) m.setKeySigAt(sig2, '3s', 'major');
+          if (sig1 >= 0) m.setKeySigAt(sig1, '0', 'major');
+          m.setKeySigAt(c1, '3s', 'major');
+          m.setKeySigAt(c2, '2f', 'major');
+          sig1 = c1; sig2 = c2;
+          H.reRender();
+          await window.__waitForRender();
+          for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+          await window.__waitForRender();
+          const idsA = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+          const l1 = pb['startIds'].indexOf(idsA[sig1]), l2 = pb['startIds'].indexOf(idsA[sig2]);
+          if (l1 >= 3 && l2 === l1 + 1) break;
+        }
         /* A two-measure 1st ending whose FIRST member is the first key-change
            measure: create it on the next measure (it needs a backward repeat),
            then extend backwards. */

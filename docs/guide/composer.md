@@ -142,7 +142,7 @@ Staccato, accent, and tenuto shape playback (shorter, louder, fuller).
 
 ## Manual line breaks
 
-Page view lays systems out for you and only re-breaks a line when an edit makes it too sparse or too dense. When a phrase has to start a system anyway, lock a break: **`Alt+Shift+↓`** locks the line break **before** the current measure, so it and everything after it on its system start the next system. The measures left behind reflow like after any edit: a short remainder folds into the previous system when it fits, a longer stretch re-breaks into even lines. To move measures *up* onto the previous system, lock the break after them instead (`Alt+Shift+↓` on the measure that follows) — a lock can say where a break must be, never where one must not be.
+Page view lays systems out for you, re-breaking a section whenever its music no longer fits its systems evenly. When a phrase has to start a system anyway, lock a break: **`Alt+Shift+↓`** locks the line break **before** the current measure, so it and everything after it on its system start the next system. The measures left behind reflow like after any edit: a short remainder folds into the previous system when it fits, a longer stretch re-breaks into even lines. To move measures *up* onto the previous system, lock the break after them instead (`Alt+Shift+↓` on the measure that follows) — a lock can say where a break must be, never where one must not be.
 
 A locked break shows a small **padlock** at the end of its system. Locked breaks never move during reflow — measures flow freely on either side of them but not across — and because a lock is part of the score, a reload lays the score out the same way. **Click the padlock to unlock**: the break becomes an ordinary one again (the layout stays as it is until a later edit reflows it). Locks are saved with the score and export to MusicXML as system breaks; `Ctrl+Z` puts the layout back exactly as it was before the command. Page view only — scroll view is one continuous line.
 
@@ -250,23 +250,26 @@ Two selectors in the top bar (remembered across reloads):
 - **View mode**: **Page** (paginated, for reading/printing) or **Scroll** (one continuous system).
 - **Theme**: **Light**, **Dark**, or **Transparent** (no background, for video/overlay use).
 
-**How page view reflows when you edit**: line breaks stay exactly where they
-are unless an edit makes a system genuinely unworkable — too crammed to fit, or
-too empty to stand. Only then does the layout move, and only by as much as it
-must: one bar shifts to the next line (or back from it), and the neighbouring
-lines follow if that leaves *them* unworkable. Everything else keeps its
-position, so editing a passage doesn't rearrange the page around it, and undo
-puts the layout back exactly as it was. The last system of a movement, or of
-the piece, is never left as a lone bar stretched across the page: when a
-section's final system falls below the minimum fill, the bars of that section
-are redistributed so its systems are similarly full — folding a sparse last
-system into the one before it where that fits, otherwise moving a bar or two
-back. When a document loads, the first pages are balanced before they appear
-and the rest a moment later, out of view. The one exception is a piece too
-short to balance: its short last system keeps its natural width, as before. A few actions re-derive the whole layout
-from scratch, so the page may re-flow: loading a document, zoom or page-size
-changes, switching to a single-instrument view, adding or removing a page break
-or section header, and changes to the key, time signature or staff set.
+**How page view reflows when you edit**: the layout is a function of the music
+itself, not of how you arrived at it. The same score always breaks into the
+same systems — however you typed it, whatever you undid along the way — so
+undo puts the layout back exactly as it was, and reloading never rearranges
+anything. Editing a passage re-breaks the systems of that section so they come
+out evenly filled. In practice most edits move nothing, because a section that
+is already even stays as it is. But when you add enough to a bar that its
+system no longer has room, the section re-breaks **immediately** rather than
+letting the system squeeze up until noteheads and accidentals start colliding.
+The last system of a movement, or of the piece, is never left as a lone bar
+stretched across the page: a section's bars are redistributed so its systems
+are similarly full — folding a sparse last system into the one before it where
+that fits, otherwise moving a bar or two back. Bars never flow across a locked
+break, a movement start or a page break. When a document loads, the whole score
+is balanced before the first page appears. The one exception is a piece too
+short to balance: its short last system keeps its natural width. A few actions
+re-derive the whole layout from scratch, so the page may re-flow: loading a
+document, zoom or page-size changes, switching to a single-instrument view,
+adding or removing a page break or section header, and changes to the key, time
+signature or staff set.
 
 **How systems are spaced on a page**: the systems on each page are spread out
 evenly so the last one reaches the bottom margin — the gaps between systems,

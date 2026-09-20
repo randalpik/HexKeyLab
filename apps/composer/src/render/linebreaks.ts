@@ -1183,14 +1183,9 @@ export class PageLineBreaks {
          a surviving line never changes page, and a page whose lines all
          vanished collapses. The renderer compares old and new page COUNTS to
          decide whether the page grid itself changed. */
-      /* A measure-count change or a line lock rebalances the section; a
-         sub-measure edit holds its divisions (Max's rule, 2026-09-17). A lock
-         counts because it SPLITS a line, leaving two halves the balancer must
-         redistribute either side of the new hard boundary. */
-      const structural = oN !== nN || hasEdit || lockDiff !== null;
       const repaired = this.repartition(
         model, meiMeasures, ids, idIdx, hard, { lo: run.lo, hi: run.hi }, ctx,
-        hasEdit ? { addStarts } : null, structural,
+        hasEdit ? { addStarts } : null,
       );
       if (!repaired) return bail('repartition window/cap exhausted');
       newStartIds = repaired.starts;
@@ -1266,10 +1261,6 @@ export class PageLineBreaks {
     dirty: { lo: number; hi: number },
     ctx: PageBreaksCtx,
     edit: PartitionEdit | null = null,
-    /* True when the edit changed the MEASURE COUNT or a line lock — the
-       structural changes that rebalance a whole section (Max, 2026-09-17).
-       A sub-measure edit holds the section's divisions. */
-    structural = false,
   ): { starts: string[]; pages: string[] } | null {
     const n = ids.length;
     /* The per-measure signature-context keys are rebuilt here, not as a side
@@ -1498,7 +1489,7 @@ export class PageLineBreaks {
        is balanced here (the adoption job warms them); one still missing
        naturals keeps today's behaviour and the job balances it when it gets
        there — never a whole-section window on the hot path. */
-    this.balanceTouched(starts, pageLines, ids, hard, first, Math.min(through, starts.length - 1), BALANCE_LAMBDA, units, structural);
+    this.balanceTouched(starts, pageLines, ids, hard, first, Math.min(through, starts.length - 1), BALANCE_LAMBDA, units);
 
     const out = starts.map((i) => ids[i]);
     let movedLines = 0;
@@ -1525,34 +1516,44 @@ export class PageLineBreaks {
     return acc / this.budgetW;
   }
 
-  /** Balance the section occupying lines [kLo..kHi] of `starts` in place when
-   *  its final line is defective (fill < MIN_FILL): `starts` and `pageLines`
-   *  (page-start line indices) are updated; the line count may shrink (merge
-   *  rule / N−1 fallback), never grow. Requires every natural of the section
-   *  to be cached. Reasons: '' (nothing to do), 'naturals incomplete',
-   *  'no legal balance: stub kept' (document-final — Max's rule 2), 'no legal
-   *  balance: section kept', 'single-line result'. */
+  /** Balance the section occupying lines [kLo..kHi] of `starts` in place:
+   *  `starts` and `pageLines` (page-start line indices) are updated, and the
+   *  line count may shrink OR grow — it is `greedyLines` over the CURRENT
+   *  content (balance.ts), never a function of the incumbent. Requires every
+   *  natural of the section to be cached. Reasons: '' (nothing to do),
+   *  'naturals incomplete', 'no legal balance: stub kept' (document-final —
+   *  Max's rule 2), 'no legal balance: section kept', 'single-line result'. */
   private balanceSectionLines(
     starts: number[], pageLines: number[], kLo: number, kHi: number, ids: string[], lambda: number,
-    units: RenderUnitIndex, force = true,
+    units: RenderUnitIndex,
   ): { applied: boolean; reason: string; changed: number; removed: number } {
     const none = (reason: string) => ({ applied: false, reason, changed: 0, removed: 0 });
     const n = ids.length;
     const mFrom = starts[kLo], mTo = kHi + 1 < starts.length ? starts[kHi + 1] : n;
-    /* `force` (a derive, or an edit that changed the MEASURE COUNT or a line
-       lock) rebalances the section unconditionally: the partition is a pure
-       function of content, so there is no "already fine" shortcut — the old
-       `last >= MIN_FILL` gate is exactly what let a section drift to 4,5,5,9
-       while every line was merely legal.
-       Without `force` — a sub-measure edit — divisions are HELD unless the
-       section-final line is defective, which is the one illegality the repair
-       loop cannot fix (it pulls only from the next line). Holding is what
-       keeps note entry from re-flowing a section on every keystroke (Max,
-       2026-09-17: "sub-measure edits should still hold divisions unless they
-       trigger an absolute min or max"). */
-    const lastFill = this.lineFill(starts, kHi, ids);
-    if (lastFill === null) return none('naturals incomplete');
-    if (!force && lastFill >= MIN_FILL) return none('');
+    /* NO GATE (2026-09-19). Every touched section rebalances, always: the
+       partition is a pure function of content (λ = 0), so re-balancing
+       unchanged content is idempotent — it reports changed = 0 and returns.
+       There is therefore nothing for a gate to save, and every gate we have
+       tried instead FROZE a stale partition on screen.
+       The gate this replaces held a section's divisions on any sub-measure
+       edit unless its final line fell below MIN_FILL (Max, 2026-09-17:
+       "sub-measure edits should still hold divisions unless they trigger an
+       absolute min or max"). Only the MIN was ever implemented, so widening
+       measures in place — note entry, the common case — hit nothing at all:
+       a 20-bar document took 26 consecutive keystrokes at up to fill 1.433
+       (43% compression, stems into accidentals) while a fresh derive wanted
+       three lines from the 4th keystroke on, and only escaped when the line
+       crossed FIT_MAX and the REPAIR loop split it. Undo then "failed" to
+       restore the layout because the layout on screen had never been the one
+       the content implied (2026-09-19).
+       Cost of dropping it, measured on the sonata: the balance is ≤ 1.8 ms on
+       the 139-bar movement against a 342 ms edit, and moved zero boundaries
+       across a 16-edit battery — an idempotent no-op, as designed. The
+       feasibility bounds prune `dpPartition`'s inner loop to a narrow legal
+       band, so it is O(M · band · N), not the O(M²·N) worst case.
+       `lineFill` is still called to reject a section whose naturals are cold:
+       acting on partial widths would balance against a phantom document. */
+    if (this.lineFill(starts, kHi, ids) === null) return none('naturals incomplete');
     const budget = this.budgetW;
     /* Atoms are render UNITS (model/multirest.ts): a multimeasure-rest run is
        one atom whose width is its members' naturals summed (interiors are 0),
@@ -1609,7 +1610,7 @@ export class PageLineBreaks {
    *  removal in one never shifts the indices of one still to visit. */
   private balanceTouched(
     starts: number[], pageLines: number[], ids: string[], hard: Set<string>,
-    kFrom: number, kTo: number, lambda: number, units: RenderUnitIndex, force: boolean,
+    kFrom: number, kTo: number, lambda: number, units: RenderUnitIndex,
   ): void {
     const t0 = performance.now();
     const lb: BalanceStats = { sections: 0, applied: 0, changed: 0, removed: 0, reasons: [], ms: 0 };
@@ -1617,7 +1618,7 @@ export class PageLineBreaks {
     for (let s = secs.length - 1; s >= 0; s--) {
       const [kLo, kHi] = secs[s];
       lb.sections++;
-      const r = this.balanceSectionLines(starts, pageLines, kLo, kHi, ids, lambda, units, force);
+      const r = this.balanceSectionLines(starts, pageLines, kLo, kHi, ids, lambda, units);
       if (r.reason) lb.reasons.push(r.reason);
       if (r.applied) { lb.applied++; lb.changed += r.changed; lb.removed += r.removed; }
     }
