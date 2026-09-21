@@ -9006,3 +9006,50 @@ evidence set for the ornament shadow's lift test.
 `docs/guide/composer.md`. Fixtures: `perfEarliestOnsetWins` (verified to FAIL with the tiebreak neutralized:
 "beat-1 strike captured the beat-4 voice"), `perfSameOnsetUnisonBoth` (passes either way by design — it
 guards behavior the tiebreak must preserve).
+
+## Pitch bend is the Lumatone's departure tell, not a musical event (2026-09-21)
+
+**Symptom**: powering the Lumatone off with HKL open latched a seemingly random set of keys that sounded
+indefinitely, clearable only by hand.
+
+**Root cause**: the spurious note-ons are *protocol-valid* frames. As the rails collapse, the octave boards'
+key scanners misfire and report genuine-looking presses, which the still-alive BBB forwards as ordinary MIDI;
+the PICs then die before sending the matching note-offs. Nothing in HKL ever released them, because on Firefox
+HKL never learns the device is gone — `MIDIAccess` is a snapshot, no `statechange` fires, and the hotplug poll
+is deliberately suspended while connected (see the Firefox entries in lessons.md).
+
+**Decision (Max)**: treat **any inbound pitch bend on the Lumatone port as a disconnection**. The firmware's
+`readWheelADC` polls the wheel over I2C on *every* pass of its main loop, whereas a keystroke first requires a
+PIC to raise its data line and complete a CTS handshake — so the degenerate ADC read at power-off emits a bend
+a full loop-iteration *before* any keystroke frame can escape. That ordering is structural, not incidental,
+which is what makes the bend usable as a trigger rather than an after-the-fact cleanup. The firmware also
+keeps a dead-zone around centre (`SetPitchBendZeroThreshold`), so an emitted bend is always a large excursion.
+Confirmed empirically: every capture showed a bend preceding the burst, and HKL ignored 0xE0 entirely before
+this change, so there is no behaviour to regress.
+
+**The action is a detach, not a cleanup.** `markLumatoneGone` nulls `midiIn.onmidimessage` *first*: the burst is
+still in flight when the bend is handled, and an unhooked port is what stops those note-ons ever being latched.
+Releasing the already-held voices and forcing the pedal to released are the second half — a dead port can
+deliver neither a note-off nor a pedal release, so the damper would otherwise stay down forever too.
+
+**Rejected — filtering the burst by velocity.** Every degenerate note arrived at velocity 127, which is nearly
+a discriminator, but velocity is reconstructed on the BBB from a 12-bit key-travel timing value and 127 is a
+value real fortissimo playing reaches. Filtering it would silently eat the loudest notes of a performance.
+
+**Rejected — a SysEx liveness watchdog.** Proposed first: probe the device when it goes quiet while still
+holding notes, and panic on a missed ACK. It works, but it is a detection *latency* (≈2s of garbage sounding,
+or ≈400ms with a burst fast-path) where the bend is a detection *certainty* at zero cost. Max's call: "a short
+burst of garbage notes is only marginally better than an indefinite burst I can clear with one click."
+
+**False positives self-heal.** Nulling `midiOut` re-arms the hotplug poll, which re-attaches within ~1.5s if
+the device is in fact still there, so a spurious bend costs a brief dropout rather than a dead input. The poll's
+"skip while the Lumatone toolbar is hidden" gate is bypassed while a self-declared departure is pending, or
+that recovery would not exist for a hidden toolbar.
+
+**If a pitch wheel is ever reconnected**, tighten the check to fire only on a full-scale excursion — the
+degenerate read pins to 0 or 16383, which a played wheel reaches only at its extremes. One line, at the 0xE0
+check in `handler.ts`.
+
+**Files**: `apps/hkl/src/midi/handler.ts` (0xE0 route + `releaseLumatoneInput`),
+`apps/hkl/src/midi/engine.ts` (`markLumatoneGone`, `setLumatoneLostHandler`, status-UI extraction, poll gate),
+`docs/architecture/hkl.md`, `docs/lessons.md`, `CLAUDE.md`.

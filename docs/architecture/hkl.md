@@ -222,8 +222,34 @@ Consequence: 10:7 reads as "greater augmented 4th + septimal comma", 7:5 as "les
 | CC 64 (sustain) | role per `pedal.mode`: `'sustain'` → binary damper (`cc64Depth = d2≥64?1:0` + `setDamperDepth()`); `'sostenuto'` → `sostenutoOn/Off()`, no damper touch. |
 | Note on/off | audio + selection. Note-off branches on `sustainPedalDown ‖ sostenutoLockedKeys.has(key)`: keep or release. `sustainPedalDown` is `damperDepth > DAMPER_RELEASE_FLOOR`, the same threshold the release loop uses — so there is no depth band that defers a note-off the release loop would never claim. |
 | Poly aftertouch (0xA0) | per-voice volume modulation. |
+| **Pitch bend (0xE0)** | **not a musical event** — `markLumatoneGone()`. See *Departure detection* below. |
 
 Note routing uses the **fixed MIDI layout**: stable (channel, note) per physical key. `fixedMidiToKey(ch, note)` converts at input time — channels 0–4 = the five board groups, notes 0–55 = key index within board.
+
+#### Departure detection
+
+Powering the Lumatone off emits a burst of spurious note-ons that never receive note-offs. They are
+*protocol-valid* frames from a browning-out key scanner, so they cannot be recognised by content (lessons.md).
+HKL instead uses the firmware's own ordering: `readWheelADC` polls the pitch wheel over I2C on every main-loop
+pass, while a keystroke first needs a PIC GPIO + CTS handshake, so the collapsing rail always emits a
+**pitch bend before any garbage note**.
+
+Inbound `0xE0` therefore routes to `markLumatoneGone()` (`midi/engine.ts`), which:
+
+1. **nulls `midiIn.onmidimessage`** — the load-bearing step. The burst is still in flight, and an unhooked
+   port is what prevents it being latched.
+2. nulls `midiOut`/`midiIn`, clears `activeMidiNotes`, cancels the SysEx queue, forgets `deviceColors` /
+   `fixedLayoutSent`, updates the status indicator.
+3. calls `releaseLumatoneInput()` (`midi/handler.ts`, registered via `setLumatoneLostHandler` to avoid an
+   import cycle): drops every `heldLumatonePhys` key from `selectedKeys` / `sustainedKeys` / `keyVelocity` /
+   `aftertouchSnapshot` / `paFilter`, **and forces the pedal released** (`cc4Depth = cc64Depth = 0`,
+   `setDamperDepth()`, `sostenutoOff()`) — CC 4 / CC 64 come from the Lumatone's jacks too, so a damper that
+   was down would otherwise hold notes forever. Mouse/computer-keyboard voices are untouched.
+
+The same `releaseLumatoneInput()` runs from `findLumatone`'s port-loss branch, which is how Chromium reaches it
+via `statechange`. Nulling `midiOut` re-arms the hotplug poll (whose "skip while the Lumatone toolbar is hidden"
+gate is bypassed while a self-declared departure is pending), so a false positive re-attaches within ~1.5s
+rather than leaving the input dead.
 
 ### Piano output (external-synth JI playback)
 

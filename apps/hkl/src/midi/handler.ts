@@ -11,6 +11,10 @@
 //     'sustain' mode, or sostenutoOn/Off in 'sostenuto' mode (per pedal.mode).
 //   • Polyphonic aftertouch (0xA0) → handleAftertouch, also stashed in
 //     audio.aftertouchSnapshot for debug polling.
+//   • Pitch bend (0xE0) → NOT a musical event: it is the device's power-off
+//     tell, and routes to markLumatoneGone so the port is detached before the
+//     spurious keystrokes that follow it can be latched (see the comment at
+//     the check itself for why the ordering is guaranteed).
 //   • Note-on/off → mutate selection.selectedKeys + audio.sustainedKeys +
 //     audio.keyVelocity, fire re-articulation flash if striking a sustaining
 //     voice, then onSelectionChanged() to drive audio + MIDI + redraw.
@@ -29,7 +33,7 @@ import {
 } from '../audio/engine.js';
 import { filterPA } from '../audio/aftertouch.js';
 import { velocityCal } from '../audio/velocityCal.js';
-import { fixedMidiToKey, fixedMidiToKeyAt } from './engine.js';
+import { fixedMidiToKey, fixedMidiToKeyAt, markLumatoneGone, setLumatoneLostHandler } from './engine.js';
 import { restrikePianoOut } from './piano-out.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import { broadcastPlayerNote } from '../bridge/hkl-side.js';
@@ -46,6 +50,42 @@ import { flashKey } from '../render/key-flash.js';
    kbAnchor shifts under the static Lumatone outline. Format: "ch,note". */
 const heldLumatonePhys = new Set<string>();
 export function clearHeldLumatoneTracking(): void { heldLumatonePhys.clear(); }
+
+/* Release everything the Lumatone was holding, because the device is gone.
+   Registered with midi/engine.ts, which calls this from both departure paths
+   (observed port loss, and the pitch-bend tell below).
+
+   A dead port can never deliver the note-offs or the pedal release, so every
+   voice it was holding would otherwise ring indefinitely. That includes the
+   pedal: CC 4 / CC 64 come from the Lumatone's own jacks, so a damper that
+   was down at power-off stays down forever. Mouse and computer-keyboard
+   voices are deliberately untouched — they have their own release paths — but
+   forcing the damper to released does drop anything IT was sustaining, which
+   is correct: the pedal is a Lumatone peripheral. */
+export function releaseLumatoneInput(): void {
+  const keys: KeyId[] = [];
+  heldLumatonePhys.forEach((id) => {
+    const ci = id.indexOf(',');
+    const key = fixedMidiToKey(+id.slice(0, ci), +id.slice(ci + 1));
+    if (key) keys.push(key);
+  });
+  heldLumatonePhys.clear();
+  keys.forEach((key) => {
+    selection.selectedKeys.delete(key);
+    audio.sustainedKeys.delete(key);
+    delete audio.keyVelocity[key];
+    delete audio.aftertouchSnapshot[key];
+    delete audio.paFilter[key];
+  });
+  pedal.cc4Depth = 0;
+  pedal.cc64Depth = 0;
+  setDamperDepth();  /* walks sustainedKeys and releases them */
+  sostenutoOff();    /* no-op unless a sostenuto lock is active */
+  onSelectionChanged();
+  if (keys.length) console.warn('Lumatone: released ' + keys.length + ' held key(s) on departure');
+}
+setLumatoneLostHandler(releaseLumatoneInput);
+
 export function migrateHeldLumatoneVoices(dq: number, dr: number): void {
   if (heldLumatonePhys.size === 0) return;
   if (dq === 0 && dr === 0) return;
@@ -136,6 +176,31 @@ export function handleMidiMessage(e: MIDIMessageEvent): void {
   const ch = (data[0] & 0x0f) + 1;
   const d1 = data[1];
   const d2 = data.length > 2 ? data[2] : 0;
+  /* Pitch bend (0xE0) is the Lumatone's power-off tell, not a musical event.
+     The wheel is read over I2C by the firmware's readWheelADC, which runs on
+     every pass of its main loop, whereas a keystroke first needs the octave
+     board's PIC to raise its data line and complete a CTS handshake. So when
+     the rails collapse at power-off, the wheel's ADC read degenerates and
+     emits a bend a full loop-iteration BEFORE any PIC can get a keystroke
+     frame out — which is what makes this a usable trigger rather than a
+     post-hoc cleanup. The firmware also keeps a dead-zone around centre
+     (SetPitchBendZeroThreshold), so an emitted bend is always a large
+     excursion, never idle noise.
+
+     The spurious note-ons that follow are protocol-valid frames from a
+     browning-out key scanner — indistinguishable from real playing at the
+     byte level — so filtering them after the fact isn't possible. Acting on
+     the bend instead means detaching the input port before they arrive.
+
+     Nothing on this unit emits bend in normal use (the wheel is physically
+     disconnected). If one is ever reconnected, tighten this to fire only on
+     a full-scale excursion — the degenerate read pins to 0 or 16383, which
+     a played wheel reaches only at its extremes. */
+  if (status === 0xE0) {
+    const bend = (d2 << 7) | d1;
+    markLumatoneGone('pitch bend received (value ' + bend + ')');
+    return;
+  }
   /* CC messages: foot controller (CC 4, expression jack — continuous damper)
      and sustain (CC 64, sustain jack — binary, role per pedal.mode). The
      expression pedal's CC# is hardcoded to 4 in firmware and cannot be

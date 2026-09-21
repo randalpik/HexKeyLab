@@ -126,6 +126,60 @@ export function fixedMidiToKey(ch: number, note: number): KeyId | null {
 
 type MidiMessageHandler = (e: MIDIMessageEvent) => void;
 
+/* Invoked when the Lumatone is determined to be gone, to release everything
+   the device was holding (see midi/handler.ts releaseLumatoneInput). Wired by
+   handler.ts at module load rather than imported directly: handler.ts already
+   imports this module, so importing it back would make a cycle. */
+let deviceLostHandler: (() => void) | null = null;
+export function setLumatoneLostHandler(fn: () => void): void { deviceLostHandler = fn; }
+
+/* Set when WE declared the device gone (rather than observing the port
+   vanish). The hotplug poll normally skips work while the Lumatone toolbar is
+   hidden; after a self-declared departure we still need it to run, or a
+   false positive would leave the device deaf until a manual re-check. */
+let pendingReconnect = false;
+
+function updateLumatoneStatusUI(): void {
+  const statusEl = document.getElementById('lumaStatus');
+  const lumaGroup = document.getElementById('tb-group-lumatone');
+  if (!statusEl) return;
+  if (midi.midiOut) {
+    statusEl.textContent = 'Lumatone connected';
+    statusEl.className = 'luma-connected';
+    if (lumaGroup) lumaGroup.classList.add('lumatone-connected');
+  } else {
+    statusEl.textContent = 'Lumatone Not Connected';
+    statusEl.className = 'luma-disconnected';
+    if (lumaGroup) lumaGroup.classList.remove('lumatone-connected');
+  }
+}
+
+/* Declare the Lumatone gone on evidence other than the port vanishing.
+   The live trigger is an inbound pitch bend (midi/handler.ts) — the device's
+   power-off tell, which arrives BEFORE the spurious keystrokes it precedes.
+
+   Detaching onmidimessage is the load-bearing step, not a tidy-up: the
+   garbage note-ons are still in flight when this runs, and an unhooked port
+   is what stops them being latched as held voices. Nulling midiOut also
+   re-arms the hotplug poll, which re-attaches within ~1.5s if the device is
+   in fact still there — so a false positive costs a brief dropout, not a
+   dead input. */
+export function markLumatoneGone(reason: string): void {
+  if (!midi.midiOut && !midi.midiIn) return; /* already gone */
+  console.warn('Lumatone: treating as disconnected \u2014 ' + reason);
+  if (midi.midiIn) { midi.midiIn.onmidimessage = null; midi.midiIn = null; }
+  midi.midiOut = null;
+  /* the device can't receive these; drop them so a later reconnect doesn't
+     inherit a stale active-note set */
+  midi.activeMidiNotes = {};
+  sysex.cancel();
+  lumatone.deviceColors = null;
+  lumatone.fixedLayoutSent = false;
+  if (deviceLostHandler) deviceLostHandler();
+  pendingReconnect = true;
+  updateLumatoneStatusUI();
+}
+
 /* MIDI port discovery. Auto-detects a "Lumatone" output + input port. Caller
    provides the inbound message handler — typically lives in main.ts because
    it routes across audio + sysex + selection state. */
@@ -158,11 +212,17 @@ export function findLumatone(handleMidiMessage: MidiMessageHandler): void {
   /* update output */
   midi.midiOut = foundOut;
   if (!midi.midiOut && oldOut) {
-    /* Lost connection: cancel any in-flight work and forget device state */
+    /* Lost connection: cancel any in-flight work and forget device state.
+       Also release everything the device was holding — note-offs and pedal
+       CCs can never arrive from a port that's gone, so held voices would
+       otherwise hang forever (Chromium reaches here via statechange; on
+       Firefox the pitch-bend tell in handler.ts is what gets us here). */
     stopAllMidi();
+    midi.activeMidiNotes = {};
     sysex.cancel();
     lumatone.deviceColors = null;
     lumatone.fixedLayoutSent = false;
+    if (deviceLostHandler) deviceLostHandler();
   } else if (midi.midiOut && oldOutId !== newOutId) {
     syncMidi();
   }
@@ -179,23 +239,15 @@ export function findLumatone(handleMidiMessage: MidiMessageHandler): void {
     foundIn.onmidimessage = handleMidiMessage;
   }
   /* update UI */
-  const statusEl = document.getElementById('lumaStatus')!;
-  const lumaGroup = document.getElementById('tb-group-lumatone');
+  updateLumatoneStatusUI();
   if (midi.midiOut) {
-    const isNewConnection = oldOutId !== newOutId;
-    statusEl.textContent = "Lumatone connected";
-    statusEl.className = 'luma-connected';
-    if (lumaGroup) lumaGroup.classList.add('lumatone-connected');
-    if (isNewConnection) {
+    pendingReconnect = false;
+    if (oldOutId !== newOutId) {
       /* Silent firmware probe, then (only if user opted in) sync colors.
          We DO NOT auto-configure the device without Auto-sync checked. */
       sysex.queryFirmware();
       if (lumatone.autoSyncEnabled) syncLumatoneColors();
     }
-  } else {
-    statusEl.textContent = 'Lumatone Not Connected';
-    statusEl.className = 'luma-disconnected';
-    if (lumaGroup) lumaGroup.classList.remove('lumatone-connected');
   }
   if (changed) {
     console.log('Lumatone search: out=' + (midi.midiOut ? (midi.midiOut as MIDIOutput).name : 'none')
@@ -274,7 +326,8 @@ export function requestMidi(handleMidiMessage: MidiMessageHandler): void {
            Hidden toolbar = the user has opted out of seeing this, so don't
            do any background work for it. */
         const lumaGroup = document.getElementById('tb-group-lumatone');
-        if (!lumaGroup || lumaGroup.classList.contains('tb-hidden')) return;
+        const hidden = !lumaGroup || lumaGroup.classList.contains('tb-hidden');
+        if (hidden && !pendingReconnect) return;
         refreshMidiAccess(handleMidiMessage);
       }, HOTPLUG_POLL_MS);
     }

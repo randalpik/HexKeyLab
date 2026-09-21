@@ -284,6 +284,8 @@ When a Lumatone is plugged in over USB, HKL becomes a full controller for it:
 
 HKL pushes a single fixed (channel, note) MIDI mapping to the Lumatone on first connect, then never re-maps the device. All tuning interpretation happens in software.
 
+**Switching the Lumatone off while HKL is open** used to leave a scattering of keys sounding indefinitely: as the instrument loses power its key scanners briefly report presses that are never followed by releases. HKL now recognises the power-down from a signal the instrument emits just before those stray presses, and treats it as a disconnection — it drops the input, releases everything the instrument was holding (including anything the pedal was sustaining), and the status badge turns red. Nothing to clear by hand. If the device turns out to still be there, HKL reconnects on its own within a second or two.
+
 > **Note — boards 3 & 4 swap**: a few Lumatone units (including the developer's) have physical boards 3 and 4 transposed, which makes color sync and remapping land on the wrong boards. If yours is affected, open **Calibrate Keys** and tick **"Swap boards 3 ↔ 4"**. It's **off by default** (standard units need nothing) and your choice is remembered across sessions.
 
 ---

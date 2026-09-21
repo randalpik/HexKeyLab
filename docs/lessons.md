@@ -4693,3 +4693,47 @@ deferred voices corroborate each other circularly. The event form has neither fa
 
 Also: `∀` over a possibly-empty set is a live bug, not a corner case. Any quorum rule needs a non-empty
 witness, or a reformulation that can't be satisfied by emptiness.
+
+## The Lumatone's PIC→BBB link is terminator-framed with no integrity check (2026-09-21)
+
+Reverse-engineered from `TerpstraController` (ARM, unstripped, full DWARF — `gdb -batch -ex "disassemble X"`
+works; Arch's binutils has no ARM target so `objdump -d` does not). Source file `MidiPicCommunication.c`.
+
+`readFromPic(pic)` waits on a per-board GPIO (P8 pins 12–16 for PICs 1–5), flushes the tty, asserts CTS, spins
+until the PIC drops the line, clears CTS, sleeps 10µs, then `extractPicmsg`. `extractPicmsg` reads **one byte at
+a time** into a global `fromPicBuffer`; **the instant a byte reads `0xFF` it calls `decodePicMessage(pic, len)`
+and resets the index**. There is no checksum, no length field and no sync word — `0xFF` is purely a terminator.
+
+`decodePicMessage` gates on: `buf[0] == 0x30` (`'0'`); `buf[1]` dispatched through a jump table at `buf[1] - 'A'`
+(range ≤ 111); and an exact length. The command byte is a **MIDI status byte**: `0x90` note-on and `0x80`
+note-off both require `len == 6`, `0xA0` aftertouch requires `len == 5`. `isValidBoardAndKey` then gates key ≤ 55.
+So a note-on frame is exactly `30 90 <key> <b3> <b4> FF`.
+
+**Velocity is not transmitted.** `SendMidiKeyStroke` reconstructs it from a 12-bit key-travel timing value,
+`raw = (b3 << 4) | (b4 & 0x0F)` (0–4095), through `binary_search` against the 127-entry ascending threshold table
+in `files/VelocityLookUp_N`. Channel and note come from `kbd_preset_params[638*(board-1) + key]` — `&0x0F` for the
+channel, `+56` for the note. Note that `b3`/`b4` can never be `0xFF` in a decoded frame, since that byte would
+have terminated it early and failed the length gate.
+
+**Consequence: the power-off note burst cannot be filtered after the fact.** Faking a spurious note would need
+two fixed magic bytes, a terminator landing at exactly offset 5, and key ≤ 55 — roughly 2⁻²⁴ per alignment, so
+line noise is not the source. A dozen stuck notes means a dozen well-formed frames: these are genuine key events
+from a browning-out scanner, byte-for-byte indistinguishable from real playing. Anything downstream trying to
+recognise them by content is guessing. See decisions.md "Pitch bend is the Lumatone's departure tell" for what
+is used instead, and why the wheel's I2C read is structurally guaranteed to come out first.
+
+## A device-loss path must release the pedal, not just the notes (2026-09-21)
+
+The obvious half of "the Lumatone vanished" is releasing its held notes. The half that is easy to miss: **CC 4 and
+CC 64 come from the Lumatone's own jacks too.** If the damper is down when the device dies, the release CC can
+never arrive, so `audio.sustainPedalDown` stays true forever and every subsequent note-off defers into
+`sustainedKeys` — notes hang lit and sounding exactly as if the note-offs had been lost. `releaseLumatoneInput`
+therefore forces `cc4Depth`/`cc64Depth` to 0 and calls `setDamperDepth()` + `sostenutoOff()`. This is the same
+failure shape as the stuck-sustain entries above, reached by a different route. Mouse and computer-keyboard
+voices are deliberately left alone (they have their own release paths), but forcing the damper released does drop
+whatever *it* was sustaining, which is correct — the pedal is a Lumatone peripheral.
+
+Related pre-existing gap, still open: `clearSelection()` (`ui/controls.ts`) does not call
+`clearHeldLumatoneTracking()`, so `heldLumatonePhys` goes stale after the Clear button and
+`migrateHeldLumatoneVoices` can chase voices that are no longer held. The export exists for exactly this and has
+never had a caller.
