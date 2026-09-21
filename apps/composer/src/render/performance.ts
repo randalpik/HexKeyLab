@@ -43,6 +43,15 @@
 // resolution lies wholly inside P, since otherwise its non-P member must be
 // struck and the advance lands exactly there.
 //
+// EARLIEST ONSET WINS (2026-09-20): one strike may satisfy several voices, but
+// only those whose pending step shares the earliest onset among the voices that
+// would match it. Same-onset voices converge on one real key press and all take
+// it; a voice expecting that pitch LATER does not, so playing bar 1 no longer
+// consumes the beat-4 entry of a voice that has not come in yet. This is the
+// measure gate carried down to onset resolution, but as a TIEBREAK, not a gate:
+// a lone matcher still takes the strike whatever its onset, so nothing is
+// rejected merely for arriving out of written order.
+//
 // MEASURE GATE (2026-09-17): voices are expected only in the measures where
 // they exist. The "current measure" is the measure of the EARLIEST PENDING step
 // across unfinished voices — pending rather than last-played, so that the
@@ -373,24 +382,37 @@ export class PerformanceMatcher {
     const advanced: PerfAdvance[] = [];
     const hits = (en: ExpectedNote): boolean => this.matches(en, pid, phz, note.colorHex);
 
-    /* PHASE 1 — matching. Satisfy at most one expected note per listening
-       voice, and record the ONSETS the strike landed on: those are the
-       evidence a shadow lifts on. Nothing advances yet. */
-    const matchedAt: number[] = [];
+    /* PHASE 1 — matching, EARLIEST ONSET WINS. Dry-run every listening voice
+       for the one note it would satisfy, then commit only those whose pending
+       step sits at the earliest onset among the candidates. Two voices
+       expecting this pitch at the SAME onset both take it — they converge on
+       one real key press, which is the whole point of a shared note — while a
+       voice expecting it LATER does not, because a strike meant for the beat-1
+       note must not also consume the beat-4 note of a voice that has not been
+       played yet. This completes the measure gate at onset resolution; it is a
+       tiebreak among contending voices rather than a gate, so a lone matcher
+       still takes the strike whatever its onset, and no strike is ever
+       rejected for arriving out of written order.
+       Dry-run-then-commit, not match-and-undo: satisfying mutates. */
+    const cands: { step: Step; en: ExpectedNote; P: ExpectedNote[] | null }[] = [];
     for (const [, vs] of this.voices) {
       const step = vs.steps[vs.stepIdx];
       /* Not expected here: this voice's next note is in a later measure. */
       if (!step || step.occ !== cur) continue;
+      const en = step.notes.find((n) => !n.satisfied && hits(n));
+      if (!en) continue;
       const prev = vs.stepIdx > 0 ? vs.steps[vs.stepIdx - 1] : null;
-      const P = prev?.ornament ? prev.notes : null;
-      for (const en of step.notes) {
-        if (en.satisfied) continue;
-        if (!hits(en)) continue;
-        en.satisfied = true;
-        en.fromP = !!P && P.some(hits);
-        matchedAt.push(step.atMs);
-        break;
-      }
+      cands.push({ step, en, P: prev?.ornament ? prev.notes : null });
+    }
+    const earliest = cands.reduce((mn, c) => Math.min(mn, c.step.atMs), Infinity);
+    /* Every committed match is at `earliest` by construction, so one onset is
+       the entire evidence set for the shadow lift below. */
+    let committedAt: number | null = null;
+    for (const c of cands) {
+      if (c.step.atMs > earliest + 1e-6) continue;
+      c.en.satisfied = true;
+      c.en.fromP = !!c.P && c.P.some(hits);
+      committedAt = earliest;
     }
 
     /* PHASE 2 — lift. A shadow lifts on any match, in any voice, whose strike
@@ -401,7 +423,7 @@ export class PerformanceMatcher {
       const sh = vs.shadow;
       if (!sh) continue;
       if (sh.pitches.some(hits)) continue;
-      if (!matchedAt.some((t) => t >= sh.atMs - 1e-6)) continue;
+      if (committedAt === null || committedAt < sh.atMs - 1e-6) continue;
       advanced.push(sh.owed);
       this.shown.add(voice);
       vs.shadow = null;

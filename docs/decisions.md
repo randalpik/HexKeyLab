@@ -8944,3 +8944,65 @@ owes the trill's measure, which is why the cross-barline case is *not* automatic
 **Files**: `apps/composer/src/render/performance.ts`, `docs/architecture/composer.md`, `docs/guide/composer.md`.
 Fixtures: `perfTrillSoloLags`, `perfTrillLiftsAtResolution`, `perfTrillChordCapDFirst`/`FFirst`,
 `perfTrillResolutionNonP`, `perfTrillFinalResolution`, `perfTrillCrossBarHandoff`.
+
+## Performance mode halts on deviation, by design — no recovery, no resync (2026-09-20)
+
+**Context**: repeatedly (twice in one design session) flagged as a robustness hole that a missed note stalls
+a voice, and that a stalled voice holds `currentOcc()` back so the whole follow stops at the next barline.
+It is neither a hole nor an accident.
+
+**Decision (Max)**: performance mode is designed on the premise that **the score is performed correctly, in
+order**. A deviation halts the follow, and that is the desired behavior.
+
+**Rationale, in Max's terms**: the entire purpose of performance mode is for the score to automatically
+follow a *recorded* performance. A missed note means the take is discarded and played again — "stall
+recovery" is playing the note that should have been played. More importantly, for a note played *differently
+from the score without the player realizing it*, stopping outright is strictly better than an auto-recovery
+that re-syncs quietly: recovery can be missed depending on context, so it would let an unnoticed wrong note
+through. Halting is therefore an error-DETECTION property, deliberately chosen over forgiveness.
+
+**Consequences for future design work**:
+- Do not propose recovery, resync, timing tolerance or soft-failure behavior for the matcher.
+- Do not weigh a matcher design against how it degrades under a dropped note; that comparison is void. The
+  cross-voice earliest-onset rule, for instance, lets a stalled voice capture a later voice's strike — an
+  acceptable non-issue, not a cost to be mitigated.
+- "No failure state" in the older notes means an unmatched strike corrupts nothing. It does NOT mean the
+  matcher is meant to keep going after a deviation.
+
+**Corollary, same conversation**: a note in one voice that coincides with a trill's pitch set P at the same
+onset needs no special handling. One physical key press genuinely IS both notes — it is not playable
+separately from the trill — so satisfying both voices is correct, and the mooted "performance-wide P /
+cross-voice ornament deferral" work item is dropped rather than deferred.
+
+## Cross-voice capture: earliest onset wins, as a tiebreak not a gate (2026-09-20)
+
+**Context**: one strike could satisfy every voice whose pending step held that pitch, regardless of *when*
+those steps occur. Desirable when the onsets coincide — two voices sharing a note converge on one real key
+press — and never desirable otherwise: V1's beat-1 C also ticked off V3's beat-4 entry, which is the
+within-measure residue of the bug the measure gate (2026-09-17, `perfLateVoiceDormant`) fixed at measure
+resolution.
+
+**Decision (Max)**: a strike is committed only to the voices whose pending step is at the **earliest onset**
+among those that would match it. Same-onset voices all take it; later ones don't. Reuses `Step.atMs`, added
+for the ornament lift test — no new state.
+
+**Rejected — a global onset gate** (only voices at the earliest *pending* onset across the score may match
+at all). It subsumes the rule and makes early capture impossible by construction, but converts conflict
+resolution into **rejection**: any strike arriving when no voice sits at the current onset is dropped, so a
+tuplet grid against a straight one, a spread voicing, or a voice entering a hair early produces an ignored
+strike and a stalled voice. The tiebreak form only chooses *between* contending voices and never rejects,
+so a lone matcher still takes the strike whatever its onset.
+
+**Not covered, and deliberately so**: equal-onset capture. A note in another voice coinciding with a trill's
+pitch set is not playable separately from the trill — one key press genuinely is both notes — so satisfying
+both is correct. See the corollary in "Performance mode halts on deviation, by design".
+
+**Implementation**: dry-run every listening voice for the note it would satisfy, take the minimum
+`step.atMs` among the candidates, commit only at that minimum. Dry-run-then-commit rather than
+match-and-undo, since satisfying mutates. Every committed match then shares one onset, which is the whole
+evidence set for the ornament shadow's lift test.
+
+**Files**: `apps/composer/src/render/performance.ts`, `docs/architecture/composer.md`,
+`docs/guide/composer.md`. Fixtures: `perfEarliestOnsetWins` (verified to FAIL with the tiebreak neutralized:
+"beat-1 strike captured the beat-4 voice"), `perfSameOnsetUnisonBoth` (passes either way by design — it
+guards behavior the tiebreak must preserve).

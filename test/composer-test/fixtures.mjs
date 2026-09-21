@@ -3170,6 +3170,45 @@ const PERFORMANCE = {
       m.insertChordAtCursor({ notes: [${T_G3}], duration: '4', dots: 0 });
     `,
   },
+
+  /* EARLIEST ONSET WINS (2026-09-20). V1 plays four distinct quarters; V3's
+   * ONLY note is on beat 4 and is deliberately the same pitch+color as V1's
+   * BEAT 1. Striking V1's downbeat must not also consume V3's beat-4 entry —
+   * the within-measure residue of the bug the measure gate fixed at measure
+   * resolution (cf. perfLateVoiceDormant). Asserted by
+   * FIXTURE_ASSERTIONS.perfEarliestOnsetWins. */
+  perfEarliestOnsetWins: {
+    setup: `
+      window.__bridgeMock.reset();
+      m.setVoice(1); m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [${T_C5}], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [${T_D5}], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [${T_E5}], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [${T_F5}], duration: '4', dots: 0 });
+      m.setVoice(3);
+      m.setCursor(m.getMeasureStartCursor(3, 0), 3);
+      m.insertRestAtCursor({ duration: '2', dots: 0 });
+      m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [${T_C5}], duration: '4', dots: 0 });
+    `,
+  },
+
+  /* The other half of the same rule: two voices expecting the SAME pitch at
+   * the SAME onset converge on one real key press, so one strike must still
+   * advance BOTH. V1 and V3 share a C5 downbeat and diverge afterwards.
+   * Asserted by FIXTURE_ASSERTIONS.perfSameOnsetUnisonBoth. */
+  perfSameOnsetUnisonBoth: {
+    setup: `
+      window.__bridgeMock.reset();
+      m.setVoice(1); m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [${T_C5}], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [${T_D5}], duration: '4', dots: 0 });
+      m.setVoice(3);
+      m.setCursor(m.getMeasureStartCursor(3, 0), 3);
+      m.insertChordAtCursor({ notes: [${T_C5}], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [${T_E5}], duration: '4', dots: 0 });
+    `,
+  },
 };
 
 /* ── Export fixtures ──────────────────────────────────────────────────── */
@@ -9534,6 +9573,70 @@ export const FIXTURE_ASSERTIONS = {
         if (!P.isFinished()) return { ok: false, detail: 'not finished' };
         document.getElementById('btnPerform').click();
         return { ok: true, detail: 'gate holds, then the shadow takes over and lifts at the barline' };
+      })()` },
+  ],
+  perfEarliestOnsetWins: [
+    { name: "a beat-1 strike does not consume a later voice's same-pitch beat-4 entry",
+      expr: `(() => {
+        const M = window.__hkl_composer, m = M.model;
+        const P = M.__performance;
+        const N = (q, r, c) => ({ q, r, pname: 'a', accid: '', oct: 4, midi: 60, colorHex: c, lightColorHex: c, velocity: 80 });
+        const C5 = N(0, 0, '#ff0000'), D5 = N(3, -1, '#00ff00');
+        const E5 = N(1, 0, '#0000ff'), F5 = N(2, -1, '#ff00ff');
+        const at = (v) => { const b = P.bars()[v]; return b ? b.meiId + '@' + b.edge : 'none'; };
+
+        const v3 = m.flatChildren(3).filter(e => e.localName === 'chord' || e.localName === 'note');
+        if (v3.length !== 1) return { ok: false, detail: 'v3 sounding slots=' + v3.length };
+        const v3id = v3[0].getAttribute('xml:id');
+        P.start();
+        if (at(3) !== v3id + '@left') return { ok: false, detail: 'v3 initial ' + at(3) };
+        /* V1's beat-1 C5 is the same pitch+color as V3's beat-4 entry. V1 is
+           the earlier onset, so it alone takes the strike. */
+        P.strike(C5);
+        if (at(3) !== v3id + '@left')
+          return { ok: false, detail: 'beat-1 strike captured the beat-4 voice: ' + at(3) };
+        P.strike(D5); P.strike(E5);
+        if (at(3) !== v3id + '@left') return { ok: false, detail: 'v3 advanced mid-bar: ' + at(3) };
+        /* Beat 4: V1 wants F5, V3 wants C5 — now V3 is the only matcher for C5
+           and must take it whatever its onset (tiebreak, not a gate). */
+        P.strike(F5);
+        if (at(3) !== v3id + '@left') return { ok: false, detail: 'v3 took V1 beat 4: ' + at(3) };
+        P.strike(C5);
+        if (at(3) !== v3id + '@right')
+          return { ok: false, detail: 'v3 never advanced on its own note: ' + at(3) };
+        if (!P.isFinished()) return { ok: false, detail: 'not finished' };
+        document.getElementById('btnPerform').click();
+        return { ok: true, detail: 'earliest onset took the downbeat; the late voice kept its entry' };
+      })()` },
+  ],
+  perfSameOnsetUnisonBoth: [
+    { name: 'one strike still advances both voices when they share an onset',
+      expr: `(() => {
+        const M = window.__hkl_composer, m = M.model;
+        const P = M.__performance;
+        const N = (q, r, c) => ({ q, r, pname: 'a', accid: '', oct: 4, midi: 60, colorHex: c, lightColorHex: c, velocity: 80 });
+        const C5 = N(0, 0, '#ff0000'), D5 = N(3, -1, '#00ff00');
+        const E5 = N(1, 0, '#0000ff'), F5 = N(2, -1, '#ff00ff');
+        const at = (v) => { const b = P.bars()[v]; return b ? b.meiId + '@' + b.edge : 'none'; };
+
+        const id1 = m.flatChildren(1).filter(e => e.localName !== 'measure').map(e => e.getAttribute('xml:id'));
+        const id3 = m.flatChildren(3).filter(e => e.localName !== 'measure').map(e => e.getAttribute('xml:id'));
+        P.start();
+        /* Same pitch, same onset, two voices: one real key press is both
+           notes, so BOTH must advance — the converging case the tiebreak must
+           not break. */
+        P.strike(C5);
+        if (at(1) !== id1[0] + '@right' || at(3) !== id3[0] + '@right')
+          return { ok: false, detail: 'unison did not advance both: ' + at(1) + ' / ' + at(3) };
+        /* They diverge on beat 2; each takes only its own note. */
+        P.strike(D5);
+        if (at(1) !== id1[1] + '@right') return { ok: false, detail: 'v1 beat2 ' + at(1) };
+        if (at(3) !== id3[0] + '@right') return { ok: false, detail: 'v3 moved on V1 beat2: ' + at(3) };
+        P.strike(E5);
+        if (at(3) !== id3[1] + '@right') return { ok: false, detail: 'v3 beat2 ' + at(3) };
+        if (!P.isFinished()) return { ok: false, detail: 'not finished' };
+        document.getElementById('btnPerform').click();
+        return { ok: true, detail: 'same-onset unison advances both; divergent notes stay separate' };
       })()` },
   ],
   /* Every system's staff lines must land on the device-pixel grid (crisp) in a
