@@ -3022,6 +3022,36 @@ const PERFORMANCE = {
       m.insertRestAtCursor({ duration: '1', dots: 0 });
     `,
   },
+
+  /* PARTIAL TIE — a chord whose members are not ALL tied in. V1: quarter
+   * [F3, C4] then quarter [C4, E4], with only the C4 tied across. The tied C4
+   * emits no attack, so chord 2 must be satisfied by striking E4 ALONE; chord 1
+   * meanwhile splits into two same-onset playback events (F3 at a quarter, C4
+   * coalesced to a half through the tie). Every note gets a DISTINCT color
+   * on purpose: color is part of the match identity, and the pre-2026-09-20
+   * positional color zip handed a note its neighbour's @color as soon as a tie
+   * or a duration split desynced event.notes from the element's <note>
+   * children — no strike could then satisfy either chord and the voice wedged.
+   * Asserted by FIXTURE_ASSERTIONS.perfPartialTieChord. */
+  perfPartialTieChord: {
+    setup: `
+      window.__bridgeMock.reset();
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [
+        { q: -1, r: 0, pname: 'f', accid: '', oct: 3, midi: 53, colorHex: '#ff0000', lightColorHex: '#ff0000', velocity: 80 },
+        { q: -1, r: 1, pname: 'c', accid: '', oct: 4, midi: 60, colorHex: '#00ff00', lightColorHex: '#00ff00', velocity: 80 },
+      ], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [
+        { q: -1, r: 1, pname: 'c', accid: '', oct: 4, midi: 60, colorHex: '#00ff00', lightColorHex: '#00ff00', velocity: 80 },
+        { q: 0, r: 1, pname: 'e', accid: '', oct: 4, midi: 64, colorHex: '#0000ff', lightColorHex: '#0000ff', velocity: 80 },
+      ], duration: '4', dots: 0 });
+      /* flat = [wrapper, chord1, chord2]; cursor=1 makes chord1 the toggle
+         target, whose DOM order is [F3, C4] — so member index 1 ties the C4
+         and only the C4. */
+      m.setCursor(1, 1);
+      m.toggleTieOnCurrent('insert', 1);
+    `,
+  },
 };
 
 /* ── Export fixtures ──────────────────────────────────────────────────── */
@@ -9118,6 +9148,55 @@ export const FIXTURE_ASSERTIONS = {
         if (at(1) !== b3 + '@right') return { ok: false, detail: 'V1 bar at end: ' + at(1) };
         document.getElementById('btnPerform').click();
         return { ok: true, detail: 'written rest keeps the bar; empty layer does not' };
+      })()` },
+  ],
+  /* Partial-tie chord: the matcher must expect only the notes that ATTACK.
+   * Walks the real strike path over the fixture's two chords. */
+  perfPartialTieChord: [
+    { name: 'a chord with a tied-in member advances on its NEW notes alone',
+      expr: `(() => {
+        const M = window.__hkl_composer;
+        const m = M.model;
+        const flat = m.flatChildren(1);
+        const id1 = flat[1].getAttribute('xml:id'), id2 = flat[2].getAttribute('xml:id');
+        const noteAt = (fi, ni) => flat[fi].querySelectorAll('note')[ni];
+        const colorAt = (fi, ni) => noteAt(fi, ni).getAttribute('color');
+        const tieAt = (fi, ni) => noteAt(fi, ni).getAttribute('tie');
+        if (tieAt(1, 1) !== 'i' || tieAt(2, 0) !== 't')
+          return { ok: false, detail: 'partial tie not formed: ' + tieAt(1, 1) + ' / ' + tieAt(2, 0) };
+        if (tieAt(1, 0) !== null || tieAt(2, 1) !== null)
+          return { ok: false, detail: 'tie leaked to the untied members' };
+        /* Distinct colors are the whole point — a shared color would mask a
+           misassignment. */
+        const cols = [colorAt(1, 0), colorAt(1, 1), colorAt(2, 1)];
+        if (new Set(cols).size !== 3) return { ok: false, detail: 'colors not distinct: ' + cols.join(',') };
+        /* Chord 1 splits in two (F3 quarter, C4 half); chord 2 attacks E4 only. */
+        const evs = M.buildPlayback(m).filter(e => e.notes.length && e.meiId);
+        const shape = evs.map(e => e.notes.map(c => c.q + ',' + c.r).join('+')).join(' | ');
+        if (shape !== '-1,0 | -1,1 | 0,1') return { ok: false, detail: 'playback shape: ' + shape };
+        const strikeAt = (q, r, color) => M.__performance.strike(
+          { q, r, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: color, lightColorHex: '#888', velocity: 80 });
+        const at = () => { const b = M.__performance.bars()[1]; return b ? b.meiId + '@' + b.edge : 'none'; };
+        M.__performance.start();
+        if (at() !== id1 + '@left') return { ok: false, detail: 'initial bar ' + at() };
+        /* F3 alone must NOT advance — chord 1 still owes its C4. */
+        strikeAt(-1, 0, colorAt(1, 0));
+        if (at() !== id1 + '@left') return { ok: false, detail: 'advanced on a partial chord: ' + at() };
+        /* C4 completes chord 1. Before the fix its expected color was F3's, so
+           nothing could satisfy it and the voice stuck here. */
+        strikeAt(-1, 1, colorAt(1, 1));
+        if (at() !== id1 + '@right') return { ok: false, detail: 'chord 1 not completed by its two notes: ' + at() };
+        /* Re-striking the held/tied C4 at chord 2 is a harmless no-op: it is
+           not in chord 2's expected set. */
+        strikeAt(-1, 1, colorAt(1, 1));
+        if (at() !== id1 + '@right') return { ok: false, detail: 'restruck tied note advanced the voice: ' + at() };
+        /* E4 ALONE advances past chord 2 — the tied C4 is never re-expected. */
+        strikeAt(0, 1, colorAt(2, 1));
+        if (at() !== id2 + '@right')
+          return { ok: false, detail: 'tied-in chord did not advance on its new note alone: ' + at() };
+        if (!M.__performance.isFinished()) return { ok: false, detail: 'matcher not finished after every step' };
+        document.getElementById('btnPerform').click();
+        return { ok: true, detail: 'chord 1 waits for both; chord 2 advances on E4 alone' };
       })()` },
   ],
   /* Every system's staff lines must land on the device-pixel grid (crisp) in a

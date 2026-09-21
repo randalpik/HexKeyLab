@@ -5,13 +5,18 @@
 // holds the per-voice "frontier" and advances each voice's playback cursor when
 // its current note/chord has been fully played.
 //
-// Identity match (per Max): exact frequency, expressed as (note name, octave,
-// color) — `idKey`. This is exact in Equal/JI modes (enharmonic/comma variants
-// stay distinct) and, in the duplicate-key layouts (Pythagorean 'P' /
-// Semiditonal 'D'), a frequency fallback additionally accepts any same-pitch
-// variant ("allow any variant"). Strict otherwise: a voice advances only when
-// its full expected set is struck; a strike matching no expected voice is
-// silently ignored (no failure state).
+// Identity match (per Max): exact frequency, expressed as (note name, octave)
+// — `pitchKey` — plus the note's color. This is exact in Equal/JI modes
+// (enharmonic/comma variants stay distinct) and, in the duplicate-key layouts
+// (Pythagorean 'P' / Semiditonal 'D'), a frequency fallback additionally
+// accepts any same-pitch variant ("allow any variant"). Strict otherwise: a
+// voice advances only when its full expected set is struck; a strike matching
+// no expected voice is silently ignored (no failure state).
+//
+// A chord expects only the notes that ATTACK on it: a member tied in from the
+// previous chord emits no attack (buildPlayback coalesces it into its
+// predecessor), so it is absent from the expected set and the player advances
+// the voice by striking the new members alone.
 //
 // MEASURE GATE (2026-09-17): voices are expected only in the measures where
 // they exist. The "current measure" is the measure of the EARLIEST PENDING step
@@ -46,8 +51,14 @@ import type { PlaybackBarEdge } from '@hkl/shared/cursor-geom.js';
 const HZ_REL_EPS = 1e-4;
 
 interface ExpectedNote {
-  /** (note name, octave, color) identity. */
-  idKey: string;
+  /** (note name, octave) identity. */
+  pitchKey: string;
+  /** The written note's @color, or null when the element has no written note
+   *  at this sounding pitch class (a string harmonic's sounding coord, a
+   *  trill's alternation cell) — null means "any color", so an
+   *  underdetermined color degrades to a pitch-only match instead of a
+   *  never-matching one that would wedge the voice. */
+  color: string | null;
   /** Sounding frequency under the score's tuning, for the P/D variant match. */
   hz: number;
   satisfied: boolean;
@@ -85,27 +96,45 @@ export interface PerfAdvance {
   edge: PlaybackBarEdge;
 }
 
-/** (note name, octave, color) identity key. Both sides compute name/octave from
- *  (q, r) via @hkl/shared so the form is identical; color is supplied (from
+/** (note name, octave) identity key. Both sides compute it from (q, r) via
+ *  @hkl/shared so the form is identical. Color is matched separately (from
  *  @color for expected notes, from ResolvedNote.colorHex for played notes —
  *  both are darkColorHex(q,r), so equal for the same note). */
-function idKeyFor(q: number, r: number, color: string): string {
-  return noteName(q, r) + '|' + keyOctave(q, r) + '|' + color;
+function pitchKeyFor(q: number, r: number): string {
+  return noteName(q, r) + '|' + keyOctave(q, r);
 }
 
-/** Per-member @color of the chord/note at `meiId`, in DOM order (zips 1:1 with
- *  buildPlayback's event.notes, which walk the same <note> children), plus the
- *  index of the measure it lives in. One findElement lookup serves both, and
- *  the measure comes off the cached voice index (O(1)) rather than
- *  getMeasureIdxForId's per-call scan. */
-function elementInfo(model: ComposerModel, meiId: string): { colors: string[]; mi: number } {
+/** Octave-invariant lattice class. An octave is q ± 3 at the same r, and key
+ *  color is octave-invariant, so (q mod 3, r) identifies a color — which lets
+ *  a SOUNDING coord (post-8va) find its written note's @color. Two chord
+ *  members an exact octave apart collide here, harmlessly: same color. */
+function octClass(q: number, r: number): string {
+  return (((q % 3) + 3) % 3) + '|' + r;
+}
+
+/** A @color lookup for the chord/note at `meiId`, keyed by octave-invariant
+ *  lattice class, plus the index of the measure it lives in. Keyed rather than
+ *  positional (2026-09-20): buildPlayback's event.notes do NOT zip 1:1 with the
+ *  element's <note> children — a tie continuation emits no attack and so is
+ *  absent from event.notes, and a partial-tie chord is split into several
+ *  same-onset events that each start at index 0. A positional zip therefore
+ *  handed a note its neighbour's color, whose idKey then matched no strike at
+ *  all, wedging the voice on any chord mixing tied and untied members.
+ *  One findElement lookup serves both results, and the measure comes off the
+ *  cached voice index (O(1)) rather than getMeasureIdxForId's per-call scan. */
+function elementInfo(
+  model: ComposerModel, meiId: string,
+): { colorOf: (q: number, r: number) => string | null; mi: number } {
+  const miss = { colorOf: () => null, mi: -1 };
   const loc = model.findElement(meiId);
-  if (!loc) return { colors: [], mi: -1 };
+  if (!loc) return miss;
   const el = model.flatChildren(loc.voice)[loc.index];
-  if (!el) return { colors: [], mi: -1 };
+  if (!el) return miss;
   const info = model.getFlatStopInfo(loc.voice, loc.index);
+  const byClass = new Map<string, string>();
+  for (const n of extractResolvedFromElement(el)) byClass.set(octClass(n.q, n.r), n.colorHex);
   return {
-    colors: extractResolvedFromElement(el).map((n) => n.colorHex),
+    colorOf: (q, r) => byClass.get(octClass(q, r)) ?? null,
     mi: info ? info.measureIdx : -1,
   };
 }
@@ -146,14 +175,15 @@ export class PerformanceMatcher {
     const byVoice = new Map<Voice, { atMs: number; step: Step }[]>();
     for (const e of events) {
       const v = e.voice as Voice;
-      const { colors, mi } = elementInfo(model, e.meiId!);
+      const { colorOf, mi } = elementInfo(model, e.meiId!);
       if (mi !== prevMi) {
         occ++;
         occMeasure.push(mi);
         prevMi = mi;
       }
-      const notes: ExpectedNote[] = e.notes.map((c, i) => ({
-        idKey: idKeyFor(c.q, c.r, colors[i] ?? ''),
+      const notes: ExpectedNote[] = e.notes.map((c) => ({
+        pitchKey: pitchKeyFor(c.q, c.r),
+        color: colorOf(c.q, c.r),
         hz: freqAt(c.q, c.r, this.mode),
         satisfied: false,
       }));
@@ -232,7 +262,7 @@ export class PerformanceMatcher {
    *  content; at the end of the score every bar stays put. A strike that
    *  matches no expected voice returns []. */
   onStrike(note: ResolvedNote): PerfAdvance[] {
-    const pid = idKeyFor(note.q, note.r, note.colorHex);
+    const pid = pitchKeyFor(note.q, note.r);
     const phz = freqAt(note.q, note.r, this.mode);
     const cur = this.currentOcc();
     const advanced: PerfAdvance[] = [];
@@ -243,7 +273,7 @@ export class PerformanceMatcher {
       let matched = false;
       for (const en of step.notes) {
         if (en.satisfied) continue;
-        if (en.idKey === pid
+        if ((en.pitchKey === pid && (en.color === null || en.color === note.colorHex))
           || (this.dupMode && Math.abs(en.hz - phz) / en.hz < HZ_REL_EPS)) {
           en.satisfied = true;
           matched = true;
