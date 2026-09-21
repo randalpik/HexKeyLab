@@ -2886,6 +2886,26 @@ const BRIDGE = {
 
 /* ── Performance mode (input-driven playback) ─────────────────────────── */
 
+/* Trill scenarios (2026-09-20). C5/D5 are the ornament's two cells — the
+   selection-mode trill requires a diatonic step — and every pitch carries its
+   own color so a mis-keyed identity cannot pass by coincidence. */
+const T_C5 = `{ q: 0, r: 0, pname: 'c', accid: '', oct: 5, midi: 72, colorHex: '#ff0000', lightColorHex: '#ff0000', velocity: 80 }`;
+const T_D5 = `{ q: 3, r: -1, pname: 'd', accid: '', oct: 5, midi: 74, colorHex: '#00ff00', lightColorHex: '#00ff00', velocity: 80 }`;
+const T_E5 = `{ q: 1, r: 0, pname: 'e', accid: '', oct: 5, midi: 76, colorHex: '#0000ff', lightColorHex: '#0000ff', velocity: 80 }`;
+const T_F5 = `{ q: 2, r: -1, pname: 'f', accid: '', oct: 5, midi: 77, colorHex: '#ff00ff', lightColorHex: '#ff00ff', velocity: 80 }`;
+const T_G3 = `{ q: 0, r: -1, pname: 'g', accid: '', oct: 3, midi: 55, colorHex: '#ffff00', lightColorHex: '#ffff00', velocity: 80 }`;
+
+/* Two quarters collapsed by the selection ornament into a HALF-note trill on
+   C5 (upper cell D5) over beats 1–2 of m1, cursor left just past it. */
+const TRILL_HEAD = `
+  window.__bridgeMock.reset();
+  m.setVoice(1); m.setCursor(0, 1);
+  m.insertChordAtCursor({ notes: [${T_C5}], duration: '4', dots: 0 });
+  m.insertChordAtCursor({ notes: [${T_D5}], duration: '4', dots: 0 });
+  m.toggleTrillOrTremoloOnSelection(1, 0, m.getTickPositionAt(1, m.getCursor()));
+  m.setCursor(1, 1);
+`;
+
 const PERFORMANCE = {
   /* Two voices: V1 = quarter A3 + quarter E4; V3 = half C4. The matcher's
    * per-voice frontiers are asserted by FIXTURE_ASSERTIONS.perfTwoVoiceFrontier,
@@ -3050,6 +3070,104 @@ const PERFORMANCE = {
          and only the C4. */
       m.setCursor(1, 1);
       m.toggleTieOnCurrent('insert', 1);
+    `,
+  },
+
+  /* ORNAMENT AMBIGUITY (2026-09-20). The first six share the half-note trill
+   * on C5 (cells C5/D5 = the absorbing set P) over beats 1-2 of m1 and differ
+   * only in what follows. See FIXTURE_ASSERTIONS for what each pins.
+   *
+   * SOLO - resolution D5 (in P) on beat 3, E5 (outside P) on beat 4. Nothing
+   * distinguishes the resolution strike from a trill continuation, so the bar
+   * must HOLD on the trill through beat 3 and catch up on beat 4. Lagging is
+   * the benign direction; running ahead is the failure. */
+  perfTrillSoloLags: {
+    setup: TRILL_HEAD + `
+      m.insertChordAtCursor({ notes: [${T_D5}], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [${T_E5}], duration: '4', dots: 0 });
+    `,
+  },
+
+  /* MULTI-VOICE - the headline case. Same V1, plus V3 on four G3 quarters
+   * (outside P). V3's BEAT-2 G3 must NOT lift the shadow (it is before the
+   * owed step's onset); V3's BEAT-3 G3 must, landing V1's bar on the
+   * resolution exactly when the player resolves. */
+  perfTrillLiftsAtResolution: {
+    setup: TRILL_HEAD + `
+      m.insertChordAtCursor({ notes: [${T_D5}], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [${T_E5}], duration: '4', dots: 0 });
+      m.setVoice(3);
+      m.setCursor(m.getMeasureStartCursor(3, 0), 3);
+      m.insertChordAtCursor({ notes: [${T_G3}], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [${T_G3}], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [${T_G3}], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [${T_G3}], duration: '4', dots: 0 });
+    `,
+  },
+
+  /* CAP + ARRIVAL ORDER - resolution D5 on beat 3, then a chord [D5, F5] on
+   * beat 4 mixing a P member with a non-P one. The strikes are simultaneous
+   * but ARRIVE in some order; both orders must land identically, which is why
+   * the cap suppresses advancing rather than matching - dropping the D would
+   * leave the chord permanently one note short. Two fixtures, one setup,
+   * because a fixture drives one strike sequence. */
+  perfTrillChordCapDFirst: {
+    setup: TRILL_HEAD + `
+      m.insertChordAtCursor({ notes: [${T_D5}], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [${T_D5}, ${T_F5}], duration: '4', dots: 0 });
+    `,
+  },
+  perfTrillChordCapFFirst: {
+    setup: TRILL_HEAD + `
+      m.insertChordAtCursor({ notes: [${T_D5}], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [${T_D5}, ${T_F5}], duration: '4', dots: 0 });
+    `,
+  },
+
+  /* INERT - the resolution is a chord [D5, F5] with a member OUTSIDE P, so it
+   * can never be satisfied by trill strikes alone and no shadow opens: the
+   * advance lands exactly on the F5 strike, with no deferral at all. */
+  perfTrillResolutionNonP: {
+    setup: TRILL_HEAD + `
+      m.insertChordAtCursor({ notes: [${T_D5}, ${T_F5}], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [${T_E5}], duration: '4', dots: 0 });
+    `,
+  },
+
+  /* FLUSH ON FINISH - the resolution is the LAST element, so no later strike
+   * can ever lift the shadow. Once every voice is done the owed advance must
+   * flush, or the bar parks a note short forever. */
+  perfTrillFinalResolution: {
+    setup: TRILL_HEAD + `
+      m.insertChordAtCursor({ notes: [${T_D5}], duration: '4', dots: 0 });
+    `,
+  },
+
+  /* CROSS-BARLINE - the measure gate and the shadow hand off to each other.
+   * A whole-note trill fills m1 and its resolution D5 (in P) opens m2; V3 has
+   * TWO halves in m1 and a quarter on the m2 downbeat. While V3 still has an
+   * unconsumed m1 half the gate keeps V1 deaf, so the early alternation
+   * reaches nothing. Once V3 clears m1 the gate opens and a continuation
+   * strike does satisfy the m2 resolution - so the shadow takes over from
+   * there, and V3's m2 downbeat lifts it. Pins that the gate alone is NOT a
+   * cross-barline guarantee: it holds only while some voice still owes the
+   * trill's measure. */
+  perfTrillCrossBarHandoff: {
+    setup: `
+      window.__bridgeMock.reset();
+      m.appendMeasure();
+      m.setVoice(1); m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [${T_C5}], duration: '2', dots: 0 });
+      m.insertChordAtCursor({ notes: [${T_D5}], duration: '2', dots: 0 });
+      m.toggleTrillOrTremoloOnSelection(1, 0, m.getTickPositionAt(1, m.getCursor()));
+      m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+      m.insertChordAtCursor({ notes: [${T_D5}], duration: '4', dots: 0 });
+      m.setVoice(3);
+      m.setCursor(m.getMeasureStartCursor(3, 0), 3);
+      m.insertChordAtCursor({ notes: [${T_G3}], duration: '2', dots: 0 });
+      m.insertChordAtCursor({ notes: [${T_G3}], duration: '2', dots: 0 });
+      m.setCursor(m.getMeasureStartCursor(3, 1), 3);
+      m.insertChordAtCursor({ notes: [${T_G3}], duration: '4', dots: 0 });
     `,
   },
 };
@@ -9197,6 +9315,225 @@ export const FIXTURE_ASSERTIONS = {
         if (!M.__performance.isFinished()) return { ok: false, detail: 'matcher not finished after every step' };
         document.getElementById('btnPerform').click();
         return { ok: true, detail: 'chord 1 waits for both; chord 2 advances on E4 alone' };
+      })()` },
+  ],
+  /* ORNAMENT AMBIGUITY (2026-09-20). `slotN` below is an index into the
+   * voice-1 elements: slot0 = the trill, slot1 = the beat-3 element, slot2 =
+   * the beat-4 element. */
+  perfTrillSoloLags: [
+    { name: 'one strike clears the trill; the bar holds through an in-P resolution, never ahead',
+      expr: `(() => {
+        const M = window.__hkl_composer, m = M.model;
+        const P = M.__performance;
+        const N = (q, r, c) => ({ q, r, pname: 'a', accid: '', oct: 4, midi: 60, colorHex: c, lightColorHex: c, velocity: 80 });
+        const C5 = N(0, 0, '#ff0000'), D5 = N(3, -1, '#00ff00');
+        const E5 = N(1, 0, '#0000ff'), F5 = N(2, -1, '#ff00ff'), G3 = N(0, -1, '#ffff00');
+        const ids = m.flatChildren(1).filter(e => e.localName !== 'measure').map(e => e.getAttribute('xml:id'));
+        const at = (v) => { const b = P.bars()[v || 1]; return b ? b.meiId + '@' + b.edge : 'none'; };
+        const nameOf = (id) => { const i = ids.indexOf(id); return i < 0 ? id : 'slot' + i; };
+        const where = (v) => { const b = P.bars()[v || 1]; return b ? nameOf(b.meiId) + '@' + b.edge : 'none'; };
+
+        if (ids.length !== 3) return { ok: false, detail: 'v1 slots=' + ids.length };
+        /* The N alternation attacks collapse to ONE step: 3 elements, 3 steps. */
+        const evs = M.buildPlayback(m).filter(e => e.notes.length && e.meiId);
+        if (evs.filter(e => e.meiId === ids[0]).length < 2)
+          return { ok: false, detail: 'trill did not expand; nothing to collapse' };
+        P.start();
+        if (where() !== 'slot0@left') return { ok: false, detail: 'initial ' + where() };
+        P.strike(C5);
+        if (where() !== 'slot0@right') return { ok: false, detail: 'one strike did not clear the trill: ' + where() };
+        /* Alternation continues; the bar must not budge. */
+        P.strike(D5); P.strike(C5); P.strike(D5); P.strike(C5);
+        if (where() !== 'slot0@right') return { ok: false, detail: 'trill continuation moved the bar: ' + where() };
+        /* Beat 3: the resolution is IN P, so this strike is indistinguishable
+           from a continuation. Hold — lagging is benign, ahead is not. */
+        P.strike(D5);
+        if (where() !== 'slot0@right') return { ok: false, detail: 'ran ahead on an ambiguous resolution: ' + where() };
+        /* Beat 4: E5 is outside P and at/after the owed onset → lift, then the
+           voice drains, so the bar lands past the note just played. */
+        P.strike(E5);
+        if (where() !== 'slot2@right') return { ok: false, detail: 'did not catch up on the non-P note: ' + where() };
+        if (!P.isFinished()) return { ok: false, detail: 'not finished' };
+        document.getElementById('btnPerform').click();
+        return { ok: true, detail: 'held through the resolution, caught up on beat 4' };
+      })()` },
+  ],
+  perfTrillLiftsAtResolution: [
+    { name: "another voice's note lifts the shadow at the resolution, but not before it",
+      expr: `(() => {
+        const M = window.__hkl_composer, m = M.model;
+        const P = M.__performance;
+        const N = (q, r, c) => ({ q, r, pname: 'a', accid: '', oct: 4, midi: 60, colorHex: c, lightColorHex: c, velocity: 80 });
+        const C5 = N(0, 0, '#ff0000'), D5 = N(3, -1, '#00ff00');
+        const E5 = N(1, 0, '#0000ff'), F5 = N(2, -1, '#ff00ff'), G3 = N(0, -1, '#ffff00');
+        const ids = m.flatChildren(1).filter(e => e.localName !== 'measure').map(e => e.getAttribute('xml:id'));
+        const at = (v) => { const b = P.bars()[v || 1]; return b ? b.meiId + '@' + b.edge : 'none'; };
+        const nameOf = (id) => { const i = ids.indexOf(id); return i < 0 ? id : 'slot' + i; };
+        const where = (v) => { const b = P.bars()[v || 1]; return b ? nameOf(b.meiId) + '@' + b.edge : 'none'; };
+
+        P.start();
+        P.strike(C5); P.strike(G3);                    /* beat 1 */
+        if (where() !== 'slot0@right') return { ok: false, detail: 'beat1 v1 ' + where() };
+        P.strike(D5); P.strike(C5);                    /* trilling */
+        /* V3's BEAT-2 note is outside P but BEFORE the owed onset: no lift. */
+        P.strike(G3);
+        if (where() !== 'slot0@right')
+          return { ok: false, detail: 'an earlier non-P note lifted the shadow: ' + where() };
+        P.strike(D5);                                  /* still trilling */
+        if (where() !== 'slot0@right') return { ok: false, detail: 'bar moved mid-trill: ' + where() };
+        /* Beat 3: V1's resolution (absorbed) + V3's G3 AT the owed onset → lift. */
+        P.strike(D5); P.strike(G3);
+        if (where() !== 'slot1@right')
+          return { ok: false, detail: 'no lift at the resolution: ' + where() };
+        P.strike(E5); P.strike(G3);                    /* beat 4 */
+        if (where() !== 'slot2@right') return { ok: false, detail: 'beat4 ' + where() };
+        if (!P.isFinished()) return { ok: false, detail: 'not finished' };
+        document.getElementById('btnPerform').click();
+        return { ok: true, detail: 'held past beat 2, lifted exactly at the resolution' };
+      })()` },
+  ],
+  perfTrillChordCapDFirst: [
+    { name: 'a P+non-P chord after the shadow completes when its P member arrives FIRST',
+      expr: `(() => {
+        const M = window.__hkl_composer, m = M.model;
+        const P = M.__performance;
+        const N = (q, r, c) => ({ q, r, pname: 'a', accid: '', oct: 4, midi: 60, colorHex: c, lightColorHex: c, velocity: 80 });
+        const C5 = N(0, 0, '#ff0000'), D5 = N(3, -1, '#00ff00');
+        const E5 = N(1, 0, '#0000ff'), F5 = N(2, -1, '#ff00ff'), G3 = N(0, -1, '#ffff00');
+        const ids = m.flatChildren(1).filter(e => e.localName !== 'measure').map(e => e.getAttribute('xml:id'));
+        const at = (v) => { const b = P.bars()[v || 1]; return b ? b.meiId + '@' + b.edge : 'none'; };
+        const nameOf = (id) => { const i = ids.indexOf(id); return i < 0 ? id : 'slot' + i; };
+        const where = (v) => { const b = P.bars()[v || 1]; return b ? nameOf(b.meiId) + '@' + b.edge : 'none'; };
+
+        P.start();
+        P.strike(C5); P.strike(D5); P.strike(C5);      /* trill; shadow opens */
+        if (where() !== 'slot0@right') return { ok: false, detail: 'bar moved mid-trill: ' + where() };
+        P.strike(D5);                                  /* beat 3 resolution, absorbed */
+        P.strike(D5); P.strike(F5);                    /* beat 4 chord, D first */
+        if (where() !== 'slot2@right')
+          return { ok: false, detail: 'chord short a note (D dropped while capped): ' + where() };
+        if (!P.isFinished()) return { ok: false, detail: 'not finished' };
+        document.getElementById('btnPerform').click();
+        return { ok: true, detail: 'D-first completes the chord' };
+      })()` },
+  ],
+  perfTrillChordCapFFirst: [
+    { name: 'the same chord completes identically when its non-P member arrives FIRST',
+      expr: `(() => {
+        const M = window.__hkl_composer, m = M.model;
+        const P = M.__performance;
+        const N = (q, r, c) => ({ q, r, pname: 'a', accid: '', oct: 4, midi: 60, colorHex: c, lightColorHex: c, velocity: 80 });
+        const C5 = N(0, 0, '#ff0000'), D5 = N(3, -1, '#00ff00');
+        const E5 = N(1, 0, '#0000ff'), F5 = N(2, -1, '#ff00ff'), G3 = N(0, -1, '#ffff00');
+        const ids = m.flatChildren(1).filter(e => e.localName !== 'measure').map(e => e.getAttribute('xml:id'));
+        const at = (v) => { const b = P.bars()[v || 1]; return b ? b.meiId + '@' + b.edge : 'none'; };
+        const nameOf = (id) => { const i = ids.indexOf(id); return i < 0 ? id : 'slot' + i; };
+        const where = (v) => { const b = P.bars()[v || 1]; return b ? nameOf(b.meiId) + '@' + b.edge : 'none'; };
+
+        P.start();
+        P.strike(C5); P.strike(D5); P.strike(C5);
+        P.strike(D5);
+        P.strike(F5); P.strike(D5);                    /* beat 4 chord, F first */
+        if (where() !== 'slot2@right')
+          return { ok: false, detail: 'F-first landed elsewhere: ' + where() };
+        if (!P.isFinished()) return { ok: false, detail: 'not finished' };
+        document.getElementById('btnPerform').click();
+        return { ok: true, detail: 'F-first matches D-first' };
+      })()` },
+  ],
+  perfTrillResolutionNonP: [
+    { name: 'a resolution with a non-P member never defers: it advances on that strike',
+      expr: `(() => {
+        const M = window.__hkl_composer, m = M.model;
+        const P = M.__performance;
+        const N = (q, r, c) => ({ q, r, pname: 'a', accid: '', oct: 4, midi: 60, colorHex: c, lightColorHex: c, velocity: 80 });
+        const C5 = N(0, 0, '#ff0000'), D5 = N(3, -1, '#00ff00');
+        const E5 = N(1, 0, '#0000ff'), F5 = N(2, -1, '#ff00ff'), G3 = N(0, -1, '#ffff00');
+        const ids = m.flatChildren(1).filter(e => e.localName !== 'measure').map(e => e.getAttribute('xml:id'));
+        const at = (v) => { const b = P.bars()[v || 1]; return b ? b.meiId + '@' + b.edge : 'none'; };
+        const nameOf = (id) => { const i = ids.indexOf(id); return i < 0 ? id : 'slot' + i; };
+        const where = (v) => { const b = P.bars()[v || 1]; return b ? nameOf(b.meiId) + '@' + b.edge : 'none'; };
+
+        P.start();
+        P.strike(C5); P.strike(D5); P.strike(C5); P.strike(D5);
+        /* The chord's D5 is satisfiable from P, but its F5 is not, so the step
+           cannot complete on trill strikes and no shadow ever opens. */
+        if (where() !== 'slot0@right') return { ok: false, detail: 'moved during the trill: ' + where() };
+        P.strike(F5);
+        if (where() !== 'slot1@right')
+          return { ok: false, detail: 'did not advance on the non-P member: ' + where() };
+        P.strike(E5);
+        if (where() !== 'slot2@right') return { ok: false, detail: 'beat4 ' + where() };
+        document.getElementById('btnPerform').click();
+        return { ok: true, detail: 'inert when the resolution is not wholly inside P' };
+      })()` },
+  ],
+  perfTrillFinalResolution: [
+    { name: 'an owed advance flushes once every voice is finished',
+      expr: `(() => {
+        const M = window.__hkl_composer, m = M.model;
+        const P = M.__performance;
+        const N = (q, r, c) => ({ q, r, pname: 'a', accid: '', oct: 4, midi: 60, colorHex: c, lightColorHex: c, velocity: 80 });
+        const C5 = N(0, 0, '#ff0000'), D5 = N(3, -1, '#00ff00');
+        const E5 = N(1, 0, '#0000ff'), F5 = N(2, -1, '#ff00ff'), G3 = N(0, -1, '#ffff00');
+        const ids = m.flatChildren(1).filter(e => e.localName !== 'measure').map(e => e.getAttribute('xml:id'));
+        const at = (v) => { const b = P.bars()[v || 1]; return b ? b.meiId + '@' + b.edge : 'none'; };
+        const nameOf = (id) => { const i = ids.indexOf(id); return i < 0 ? id : 'slot' + i; };
+        const where = (v) => { const b = P.bars()[v || 1]; return b ? nameOf(b.meiId) + '@' + b.edge : 'none'; };
+
+        if (ids.length !== 2) return { ok: false, detail: 'v1 slots=' + ids.length };
+        P.start();
+        P.strike(C5);
+        if (where() !== 'slot0@right') return { ok: false, detail: 'trill ' + where() };
+        /* This satisfies the final resolution from P. Nothing can ever lift the
+           shadow, so the finish-flush must land the bar on it rather than
+           leaving it parked a note short for good. */
+        P.strike(D5);
+        if (!P.isFinished()) return { ok: false, detail: 'matcher not finished' };
+        if (where() !== 'slot1@right')
+          return { ok: false, detail: 'owed advance never flushed at the end: ' + where() };
+        document.getElementById('btnPerform').click();
+        return { ok: true, detail: 'flushed on finish' };
+      })()` },
+  ],
+  perfTrillCrossBarHandoff: [
+    { name: 'the measure gate holds only while a voice still owes the trill bar; the shadow covers the rest',
+      expr: `(() => {
+        const M = window.__hkl_composer, m = M.model;
+        const P = M.__performance;
+        const N = (q, r, c) => ({ q, r, pname: 'a', accid: '', oct: 4, midi: 60, colorHex: c, lightColorHex: c, velocity: 80 });
+        const C5 = N(0, 0, '#ff0000'), D5 = N(3, -1, '#00ff00');
+        const E5 = N(1, 0, '#0000ff'), F5 = N(2, -1, '#ff00ff'), G3 = N(0, -1, '#ffff00');
+        const ids = m.flatChildren(1).filter(e => e.localName !== 'measure').map(e => e.getAttribute('xml:id'));
+        const at = (v) => { const b = P.bars()[v || 1]; return b ? b.meiId + '@' + b.edge : 'none'; };
+        const nameOf = (id) => { const i = ids.indexOf(id); return i < 0 ? id : 'slot' + i; };
+        const where = (v) => { const b = P.bars()[v || 1]; return b ? nameOf(b.meiId) + '@' + b.edge : 'none'; };
+
+        P.start();
+        P.strike(C5); P.strike(G3);        /* m1 beat 1: trill onset + V3's first half */
+        if (where() !== 'slot0@right') return { ok: false, detail: 'm1 v1 ' + where() };
+        /* V3 still owes its second m1 half, so the gate keeps V1 deaf and
+           these continuations reach nothing at all. */
+        if (P.expected().indexOf(1) !== -1)
+          return { ok: false, detail: 'V1 listening while V3 still owes m1' };
+        P.strike(D5); P.strike(C5);
+        if (where() !== 'slot0@right') return { ok: false, detail: 'bar moved while gated: ' + where() };
+        /* V3 clears m1 → the gate opens and V1 is listening again. */
+        P.strike(G3);
+        if (P.expected().indexOf(1) === -1)
+          return { ok: false, detail: 'V1 still deaf after V3 cleared m1' };
+        /* Now a continuation DOES satisfy the m2 resolution — so the shadow
+           takes over and the bar must still not move. */
+        P.strike(D5); P.strike(C5);
+        if (where() !== 'slot0@right')
+          return { ok: false, detail: 'ran ahead once the gate opened: ' + where() };
+        /* m2 downbeat: V3's quarter is outside P and at the owed onset → lift. */
+        P.strike(D5); P.strike(G3);
+        if (where() !== 'slot1@right')
+          return { ok: false, detail: 'no lift at the m2 downbeat: ' + where() };
+        if (!P.isFinished()) return { ok: false, detail: 'not finished' };
+        document.getElementById('btnPerform').click();
+        return { ok: true, detail: 'gate holds, then the shadow takes over and lifts at the barline' };
       })()` },
   ],
   /* Every system's staff lines must land on the device-pixel grid (crisp) in a

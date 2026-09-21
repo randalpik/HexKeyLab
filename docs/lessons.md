@@ -4648,3 +4648,48 @@ post-finish `held-keys` broadcast — the leak is externally observable, no inte
 version of that probe emitted a broken template literal and "proved" the opposite; it only became evidence
 after a same-coord/distinct-coord control pair moved in opposite directions. Cf. "Confirm an A/B probe is
 sensitive before trusting 'identical output'".
+
+## A derived stream's items do not zip 1:1 with the source element's children (2026-09-20)
+
+`PerformanceMatcher` read each expected note's `@color` positionally — `extractResolvedFromElement(el)[i]`
+against `buildPlayback` event's `notes[i]` — on the assumption that both walk the same `<note>` children in
+the same order. They don't, in two independent ways: a tie continuation (`@tie="t"/"m"`) emits **no attack**,
+so it is absent from `event.notes` while still present among the children; and a partial-tie chord is split
+into several **same-onset** events by coalesced duration, each of which restarts at index 0. Either one
+shifts the zip, the note gets its neighbour's color, its identity key then matches no strike, and the voice
+wedges forever — Max's report was "no input can advance past a chord where not all notes have a leading tie",
+and the actual block was one step *earlier* than it looked.
+
+It survived a year of fixtures because every performance-mode fixture used `colorHex: '#888'` for every note,
+so a mis-keyed color was indistinguishable from a correct one. **A fixture whose inputs are all identical
+cannot detect a mis-indexing bug** — give each input a distinguishable value when the thing under test is an
+association between two lists.
+
+The fix is to key the lookup by identity rather than position (here: octave-invariant lattice class
+`(q mod 3, r)`, since an octave is `q ± 3` and key color is octave-invariant, so a post-8va *sounding* coord
+still finds its *written* note's color). Generally: when a pipeline stage filters, splits or reorders, any
+downstream stage that re-associates its output with the original source must do so **by identity, not by
+index** — and should have a defined answer for "no source item corresponds", which positional code silently
+lacks. Here that answer is `color: null` = *any color*, so an underdetermined color degrades to a weaker
+match rather than an impossible one.
+
+## Pitch-only score following cannot resolve a trill into its own resolution (2026-09-20)
+
+Performance mode matches strikes to score position with no clock, by design. That is decidable for ordinary
+notes and **undecidable** for the note after a trill when it is one of the trill's own pitches: the strike
+stream carries nothing that separates "still trilling" from "moved on" — a human listener uses timing. Every
+pitch-only rule fails here, including the tempting ones (collapse the ornament and match normally → matched
+early; absorb the trill's pitches until something else arrives → the resolution *is* something else, stall).
+
+The escape is not a better matching rule but a **deferred** one: match provisionally, and let a later,
+unambiguous event collapse it. Two design points made it work. First, when a system's output is a *position
+indicator*, its two error directions are not symmetric — this bar trails by design, so lagging is the
+documented semantic while running ahead points the player at a note they haven't played. Resolve ambiguity
+toward the benign direction and the worst case is a delay, not a wrong answer. Second, an **existential over
+match events** ("some voice matched a non-P note at or after the owed onset") beats a **universal over voice
+states** ("all other voices have passed it"): the universal is vacuously true in a single-voice score, which
+fires the lift immediately — precisely the case it was meant to protect — and it makes two simultaneously
+deferred voices corroborate each other circularly. The event form has neither failure.
+
+Also: `∀` over a possibly-empty set is a live bug, not a corner case. Any quorum rule needs a non-empty
+witness, or a reformulation that can't be satisfied by emptiness.

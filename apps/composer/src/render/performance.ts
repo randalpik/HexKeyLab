@@ -18,6 +18,31 @@
 // predecessor), so it is absent from the expected set and the player advances
 // the voice by striking the new members alone.
 //
+// ORNAMENT AMBIGUITY (2026-09-20): buildPlayback expands a trill/tremolo into
+// N alternation attacks whose count comes from TRILL_NOTE_MS — an audio
+// constant. Requiring N strikes made leaving an ornament depend on the player
+// matching a nominal trill speed, so the matcher collapses the run to ONE step
+// satisfied by a single strike of ANY constituent.
+//
+// That leaves the real problem: when the note AFTER the trill is one of the
+// trill's own pitches (a resolution, very common), no pitch-only rule can tell
+// "still trilling" from "moved on" — a listener uses timing, which this matcher
+// deliberately has none of. So the decision is DEFERRED rather than guessed.
+// When the post-ornament step is satisfied ENTIRELY by strikes drawn from the
+// ornament's pitch set P, its advance is OWED instead of emitted: the bar stays
+// on the ornament and the voice stops advancing (the cap), though its notes
+// keep accumulating so a chord is immune to intra-chord arrival order. The
+// shadow LIFTS on the first match — in ANY voice — whose strike is outside P
+// and whose step is at or after the owed step's onset; then the owed advance
+// flushes and the voice drains. Both halves matter: outside-P rules out a trill
+// continuation, at-or-after rules out an unrelated voice's earlier note (which
+// would otherwise jump the bar mid-trill). With no such evidence the bar simply
+// lags — never runs ahead, which is the benign direction given the bar trails
+// by design. A single-voice texture therefore lags to the next non-P note; that
+// is the irreducible cost of having no clock. The mechanism is inert unless the
+// resolution lies wholly inside P, since otherwise its non-P member must be
+// struck and the advance lands exactly there.
+//
 // MEASURE GATE (2026-09-17): voices are expected only in the measures where
 // they exist. The "current measure" is the measure of the EARLIEST PENDING step
 // across unfinished voices — pending rather than last-played, so that the
@@ -62,6 +87,10 @@ interface ExpectedNote {
   /** Sounding frequency under the score's tuning, for the P/D variant match. */
   hz: number;
   satisfied: boolean;
+  /** Whether the strike that satisfied this note was also a member of the
+   *  preceding ornament's set — i.e. could equally have been a trill
+   *  continuation. A step every one of whose notes is `fromP` is ambiguous. */
+  fromP: boolean;
 }
 
 interface Step {
@@ -71,12 +100,33 @@ interface Step {
    *  measure timeline, not a measure index, so a repeated measure is a second
    *  distinct occurrence. The gate compares these, never raw indices. */
   occ: number;
+  /** Onset, in playback ms. Compared only for ordering/equality against other
+   *  steps, never measured — it is score position (its ordering is identical to
+   *  written-tick ordering), and it is what "at or after" tests. */
+  atMs: number;
+  /** A collapsed trill/tremolo: satisfied by ANY one constituent, and its note
+   *  set is the absorbing set P for the step that follows. */
+  ornament: boolean;
+}
+
+/** A deferred bar advance — see the ORNAMENT AMBIGUITY note. A shadowed voice
+ *  holds: it accumulates note satisfaction but emits nothing and advances no
+ *  further until the shadow lifts, so at most one advance is ever owed. */
+interface Shadow {
+  /** The preceding ornament's constituents: the absorbing set P. */
+  pitches: ExpectedNote[];
+  /** Onset of the owed step; lifting evidence must be at or after it. */
+  atMs: number;
+  owed: PerfAdvance;
 }
 
 interface VoiceState {
   steps: Step[];
   /** Index of the current (awaiting-input) step; === steps.length when done. */
   stepIdx: number;
+  /** Open when this voice's last advance was ambiguous (post-ornament, all
+   *  notes satisfied from P). Null otherwise, which is the normal case. */
+  shadow: Shadow | null;
 }
 
 /** A voice advance, surfaced to the caller to reposition that voice's bar.
@@ -110,6 +160,34 @@ function pitchKeyFor(q: number, r: number): string {
  *  members an exact octave apart collide here, harmlessly: same color. */
 function octClass(q: number, r: number): string {
   return (((q % 3) + 3) % 3) + '|' + r;
+}
+
+/** Ids whose playback is an ornament EXPANSION (buildPlayback's
+ *  emitAlternation): a `<trill>`'s startid, or an `<fTrem>`/`<bTrem>` wrapper,
+ *  whose own id is the meiId those events carry. Used alongside the structural
+ *  signature below, which cannot see an ornament short enough to expand to a
+ *  single attack. */
+function ornamentIds(model: ComposerModel): Set<string> {
+  const doc = model.getDoc();
+  const out = new Set<string>();
+  for (const tr of Array.from(doc.querySelectorAll('trill'))) {
+    const sid = (tr.getAttribute('startid') ?? '').replace('#', '');
+    if (sid) out.add(sid);
+  }
+  for (const w of Array.from(doc.querySelectorAll('fTrem, bTrem'))) {
+    const id = w.getAttribute('xml:id');
+    if (id) out.add(id);
+  }
+  return out;
+}
+
+/** An ordinary step needs every note struck; an ornament needs only ONE of its
+ *  constituents — the player strikes a trill to be "on" it, and how many
+ *  alternations they play is theirs to choose, not ours to count. */
+function stepComplete(step: Step): boolean {
+  return step.ornament
+    ? step.notes.some((n) => n.satisfied)
+    : step.notes.every((n) => n.satisfied);
 }
 
 /** A @color lookup for the chord/note at `meiId`, keyed by octave-invariant
@@ -154,6 +232,8 @@ export class PerformanceMatcher {
     this.mode = model.getLayoutReq().tuningMode as TuningMode;
     this.dupMode = this.mode === 'P' || this.mode === 'D';
 
+    const ornaments = ornamentIds(model);
+
     /* buildPlayback returns attacks sorted by atMs, tie-chains coalesced, rests
        as empty-notes pulses. Keep only sounding attacks of a known voice. */
     const events = buildPlayback(model).filter(
@@ -186,18 +266,34 @@ export class PerformanceMatcher {
         color: colorOf(c.q, c.r),
         hz: freqAt(c.q, c.r, this.mode),
         satisfied: false,
+        fromP: false,
       }));
       let list = byVoice.get(v);
       if (!list) byVoice.set(v, (list = []));
       const prev = list.length ? list[list.length - 1] : null;
-      if (prev && Math.abs(prev.atMs - e.atMs) < 1e-6) {
-        prev.step.notes.push(...notes);
+      const sameOnset = !!prev && Math.abs(prev.atMs - e.atMs) < 1e-6;
+      /* The SAME meiId at a LATER onset is emitAlternation's ornament
+         expansion, and nothing else produces it — every other path emits a
+         slot's attacks at one onset (a partial-tie chord splits by duration,
+         not by time). Collapse the whole run into the one step the player
+         satisfies with a single strike. */
+      const ornamentRun = !!prev && !sameOnset && prev.step.meiId === e.meiId;
+      if (sameOnset || ornamentRun) {
+        /* Dedupe: an alternation repeats the same two cells N times. */
+        for (const n of notes) {
+          if (!prev!.step.notes.some((x) => x.pitchKey === n.pitchKey && x.color === n.color))
+            prev!.step.notes.push(n);
+        }
+        if (ornamentRun) prev!.step.ornament = true;
       } else {
-        list.push({ atMs: e.atMs, step: { meiId: e.meiId!, notes, occ } });
+        list.push({
+          atMs: e.atMs,
+          step: { meiId: e.meiId!, notes, occ, atMs: e.atMs, ornament: ornaments.has(e.meiId!) },
+        });
       }
     }
     for (const [v, list] of byVoice) {
-      this.voices.set(v, { steps: list.map((x) => x.step), stepIdx: 0 });
+      this.voices.set(v, { steps: list.map((x) => x.step), stepIdx: 0, shadow: null });
     }
 
     /* Which voices are on stage in each occurrence. isMeasureEmptyInVoice
@@ -254,6 +350,15 @@ export class PerformanceMatcher {
     return out;
   }
 
+  /** Does a strike satisfy this expected note? (name, octave) plus the written
+   *  color when it is known; the duplicate-key layouts (P/D) additionally
+   *  accept any same-pitch variant. Shared by note matching and P-membership
+   *  so the two can never drift apart. */
+  private matches(en: ExpectedNote, pitchKey: string, hz: number, color: string): boolean {
+    if (en.pitchKey === pitchKey && (en.color === null || en.color === color)) return true;
+    return this.dupMode && Math.abs(en.hz - hz) / en.hz < HZ_REL_EPS;
+  }
+
   /** Feed a live strike. Returns the voices that advanced as a result, each
    *  with the element it just completed (bar goes to that element's right
    *  edge), followed by any voice whose bar the new current measure has no
@@ -266,24 +371,72 @@ export class PerformanceMatcher {
     const phz = freqAt(note.q, note.r, this.mode);
     const cur = this.currentOcc();
     const advanced: PerfAdvance[] = [];
-    for (const [voice, vs] of this.voices) {
+    const hits = (en: ExpectedNote): boolean => this.matches(en, pid, phz, note.colorHex);
+
+    /* PHASE 1 — matching. Satisfy at most one expected note per listening
+       voice, and record the ONSETS the strike landed on: those are the
+       evidence a shadow lifts on. Nothing advances yet. */
+    const matchedAt: number[] = [];
+    for (const [, vs] of this.voices) {
       const step = vs.steps[vs.stepIdx];
       /* Not expected here: this voice's next note is in a later measure. */
       if (!step || step.occ !== cur) continue;
-      let matched = false;
+      const prev = vs.stepIdx > 0 ? vs.steps[vs.stepIdx - 1] : null;
+      const P = prev?.ornament ? prev.notes : null;
       for (const en of step.notes) {
         if (en.satisfied) continue;
-        if ((en.pitchKey === pid && (en.color === null || en.color === note.colorHex))
-          || (this.dupMode && Math.abs(en.hz - phz) / en.hz < HZ_REL_EPS)) {
-          en.satisfied = true;
-          matched = true;
+        if (!hits(en)) continue;
+        en.satisfied = true;
+        en.fromP = !!P && P.some(hits);
+        matchedAt.push(step.atMs);
+        break;
+      }
+    }
+
+    /* PHASE 2 — lift. A shadow lifts on any match, in any voice, whose strike
+       is OUTSIDE that shadow's P and whose step is AT OR AFTER the owed step's
+       onset. An unmatched strike is not evidence, so a wrong note can't lift
+       one. */
+    for (const [voice, vs] of this.voices) {
+      const sh = vs.shadow;
+      if (!sh) continue;
+      if (sh.pitches.some(hits)) continue;
+      if (!matchedAt.some((t) => t >= sh.atMs - 1e-6)) continue;
+      advanced.push(sh.owed);
+      this.shown.add(voice);
+      vs.shadow = null;
+    }
+
+    /* PHASE 3 — advance. A still-shadowed voice is capped and holds. Every
+       other voice drains whatever is fully satisfied, which is how a voice
+       that just lifted catches up on steps it accumulated while held. */
+    for (const [voice, vs] of this.voices) {
+      while (!vs.shadow) {
+        const step = vs.steps[vs.stepIdx];
+        if (!step || !stepComplete(step)) break;
+        const prev = vs.stepIdx > 0 ? vs.steps[vs.stepIdx - 1] : null;
+        const adv: PerfAdvance = { voice, meiId: step.meiId, edge: 'right' };
+        vs.stepIdx++;
+        /* Ambiguous: the step right after an ornament, every note of which was
+           satisfied by a strike that could equally have been a continuation of
+           that ornament. Owe the bar rather than move it. */
+        if (prev?.ornament && !step.ornament && step.notes.every((n) => n.fromP)) {
+          vs.shadow = { pitches: prev.notes, atMs: step.atMs, owed: adv };
           break;
         }
-      }
-      if (matched && step.notes.every((n) => n.satisfied)) {
-        vs.stepIdx++;
         this.shown.add(voice);
-        advanced.push({ voice, meiId: step.meiId, edge: 'right' });
+        advanced.push(adv);
+      }
+    }
+
+    /* Nothing can arrive to lift a shadow once every voice is done, so a voice
+       that ended inside one would park its bar a note short. Flush. */
+    if (this.isFinished()) {
+      for (const [voice, vs] of this.voices) {
+        if (!vs.shadow) continue;
+        advanced.push(vs.shadow.owed);
+        this.shown.add(voice);
+        vs.shadow = null;
       }
     }
     /* Only a consumed step can move the current measure. When it moves, any

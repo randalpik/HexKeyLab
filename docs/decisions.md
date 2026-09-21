@@ -8904,3 +8904,43 @@ which is unverified. A symmetric `(ln fill)²` cost was tried on the trace and o
 **Files**: `apps/composer/src/render/linebreaks.ts` (gate + `structural`/`force` threading removed),
 `docs/architecture/composer.md`. Fixture: `pageBalanceSubMeasureWiden` — verified to FAIL against the
 gated code ("stale partition after quarter #3: 2 lines on screen, a fresh balance moves 3 boundaries").
+
+## Performance mode defers an ambiguous post-ornament advance rather than guessing (2026-09-20)
+
+**Context**: `buildPlayback` expands a trill/tremolo into N alternation attacks, N derived from
+`TRILL_NOTE_MS`. The matcher treated each as a step, so *leaving* an ornament required the player to strike
+exactly N times — progress gated on matching a nominal trill speed, the one clock dependence input-driven
+playback exists to avoid. Undershoot wedged the voice and let later notes be eaten by leftover trill steps;
+overshoot spilled forward.
+
+**Decision**: collapse the run to one step satisfied by a single strike of **any** constituent (trills
+starting on the upper auxiliary are normal practice), and handle the residual ambiguity — the note after the
+trill being one of the trill's own pitches — by **deferring the bar**, not by guessing:
+
+- The post-ornament step, when satisfied *entirely* from the ornament's pitch set **P**, has its advance
+  **owed** rather than emitted; the voice then holds (**the cap**).
+- The cap suppresses **advancing**, not **matching**. Notes keep accumulating, so a following chord mixing P
+  and non-P members is immune to intra-chord arrival order. (Suppressing matching instead drops the chord's
+  P member when it happens to arrive first, leaving the chord permanently one note short — a stall, which is
+  worse than the over-shoot it prevents.)
+- **Lift** on the first match, in **any** voice, whose strike is outside P *and* whose step is at or after
+  the owed onset. Rejected alternatives: *any* non-P match anywhere (another voice's earlier note jumps the
+  bar mid-trill); a voice-local-only rule (gives up the cross-voice evidence that resolves the common
+  chordal case right on the beat); "all other voices have passed it" (vacuously true in a single-voice
+  score, and circular between two deferred voices).
+- No timing, not even a relative inter-onset heuristic: it is nondeterministic and its failure mode — a
+  player hesitating mid-trill — commits early, the bad direction.
+
+**Rationale**: the bar trails the player by decision (2026-09-14), which makes lagging the documented
+semantic and running ahead an active hazard (it points at a note not yet played). Ambiguity therefore
+resolves toward lagging. A single-voice texture lags to the next non-P note; that is the irreducible cost of
+having no clock, accepted.
+
+**Scope**: inert unless the resolution lies wholly inside P — otherwise its non-P member must be struck and
+the advance lands exactly there. Owed advances flush once every voice is finished. The measure gate and the
+shadow hand off rather than one subsuming the other: the gate holds a voice deaf only while some voice still
+owes the trill's measure, which is why the cross-barline case is *not* automatically safe.
+
+**Files**: `apps/composer/src/render/performance.ts`, `docs/architecture/composer.md`, `docs/guide/composer.md`.
+Fixtures: `perfTrillSoloLags`, `perfTrillLiftsAtResolution`, `perfTrillChordCapDFirst`/`FFirst`,
+`perfTrillResolutionNonP`, `perfTrillFinalResolution`, `perfTrillCrossBarHandoff`.
