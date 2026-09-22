@@ -222,34 +222,57 @@ Consequence: 10:7 reads as "greater augmented 4th + septimal comma", 7:5 as "les
 | CC 64 (sustain) | role per `pedal.mode`: `'sustain'` → binary damper (`cc64Depth = d2≥64?1:0` + `setDamperDepth()`); `'sostenuto'` → `sostenutoOn/Off()`, no damper touch. |
 | Note on/off | audio + selection. Note-off branches on `sustainPedalDown ‖ sostenutoLockedKeys.has(key)`: keep or release. `sustainPedalDown` is `damperDepth > DAMPER_RELEASE_FLOOR`, the same threshold the release loop uses — so there is no depth band that defers a note-off the release loop would never claim. |
 | Poly aftertouch (0xA0) | per-voice volume modulation. |
-| **Pitch bend (0xE0)** | **not a musical event** — `markLumatoneGone()`. See *Departure detection* below. |
+| Pitch bend (0xE0) | ignored (see *Departure detection* — it was tried as a power-off tell and removed). |
 
 Note routing uses the **fixed MIDI layout**: stable (channel, note) per physical key. `fixedMidiToKey(ch, note)` converts at input time — channels 0–4 = the five board groups, notes 0–55 = key index within board.
 
-#### Departure detection
+#### Departure detection and the power-off note guard
 
 Powering the Lumatone off emits a burst of spurious note-ons that never receive note-offs. They are
-*protocol-valid* frames from a browning-out key scanner, so they cannot be recognised by content (lessons.md).
-HKL instead uses the firmware's own ordering: `readWheelADC` polls the pitch wheel over I2C on every main-loop
-pass, while a keystroke first needs a PIC GPIO + CTS handshake, so the collapsing rail always emits a
-**pitch bend before any garbage note**.
+*protocol-valid* frames from a browning-out key scanner, byte-for-byte identical to real playing, so they
+cannot be recognised by content (lessons.md). Every signal that looked like a tell was ruled out
+empirically — the wheel-ADC pitch bend (intermittent), board spread (random), and any SysEx liveness probe
+(its round trip is timestamped on HKL's own main thread, so under load it measures our jank, not the
+device). See decisions.md, 2026-09-21, for the full list and why each died.
 
-Inbound `0xE0` therefore routes to `markLumatoneGone()` (`midi/engine.ts`), which:
+**The guard** (`midi/handler.ts`, opt-in via *Calibrate Keys → Power-off note guard*, pref
+`powerOffNoteGuard`, default off) keys off the burst's one consistent signature: several notes at velocity
+127 within a few milliseconds.
 
-1. **nulls `midiIn.onmidimessage`** — the load-bearing step. The burst is still in flight, and an unhooked
-   port is what prevents it being latched.
+- A velocity-127 note-on opens a **quarantine**: it is buffered, not routed, and a `GUARD_WINDOW_MS` (25)
+  timer starts. Once open, **every** channel-voice message is buffered — not just note-ons — so replay
+  preserves arrival order exactly. SysEx is never held.
+- A **second** velocity-127 note-on inside the window condemns immediately (no need to wait the window out,
+  since nothing held has sounded): the buffer is discarded unplayed and `markLumatoneGone()` runs.
+- Otherwise the window expires and the buffer **replays in order** through `routeChannelMessage()`.
+
+Velocity 127 is reachable by real playing on keys whose per-key `KeyData_N` thresholds are compressed, which
+is why a lone v127 note is *delayed* rather than dropped — and why the guard is opt-in: the 25ms hold is real
+latency on genuine fortissimo strikes, consistently on the same keys.
+
+**`markLumatoneGone()`** (`midi/engine.ts`) then:
+
+1. **nulls `midiIn.onmidimessage`** — the load-bearing step. Anything still in flight cannot be latched.
 2. nulls `midiOut`/`midiIn`, clears `activeMidiNotes`, cancels the SysEx queue, forgets `deviceColors` /
-   `fixedLayoutSent`, updates the status indicator.
-3. calls `releaseLumatoneInput()` (`midi/handler.ts`, registered via `setLumatoneLostHandler` to avoid an
-   import cycle): drops every `heldLumatonePhys` key from `selectedKeys` / `sustainedKeys` / `keyVelocity` /
-   `aftertouchSnapshot` / `paFilter`, **and forces the pedal released** (`cc4Depth = cc64Depth = 0`,
-   `setDamperDepth()`, `sostenutoOff()`) — CC 4 / CC 64 come from the Lumatone's jacks too, so a damper that
-   was down would otherwise hold notes forever. Mouse/computer-keyboard voices are untouched.
+   `fixedLayoutSent`, and updates the status indicator. This happens **before** step 3, so a failure there
+   cannot leave the badge claiming the device is still connected.
+3. calls `releaseLumatoneInput()` (registered via `setLumatoneLostHandler` to avoid an import cycle), wrapped
+   so a throw is logged rather than swallowed. It discards any open quarantine, drops every
+   `heldLumatonePhys` key from `selectedKeys` / `sustainedKeys` / `keyVelocity` / `aftertouchSnapshot` /
+   `paFilter`, **and forces the pedal released** (`cc4Depth = cc64Depth = 0`, `setDamperDepth()`,
+   `sostenutoOff()`) — CC 4 / CC 64 come from the Lumatone's own jacks, so a damper that was down would
+   otherwise hold notes forever. Mouse/computer-keyboard voices are untouched.
 
-The same `releaseLumatoneInput()` runs from `findLumatone`'s port-loss branch, which is how Chromium reaches it
-via `statechange`. Nulling `midiOut` re-arms the hotplug poll (whose "skip while the Lumatone toolbar is hidden"
-gate is bypassed while a self-declared departure is pending), so a false positive re-attaches within ~1.5s
-rather than leaving the input dead.
+The same `releaseLumatoneInput()` runs from `findLumatone`'s port-loss branch, which is how Chromium reaches
+it via `statechange`. Nulling `midiOut` re-arms the hotplug poll (whose "skip while the Lumatone toolbar is
+hidden" gate is bypassed while a self-declared departure is pending), so a false positive re-attaches within
+~1.5s rather than leaving the input dead.
+
+**Gate**: `test/hkl-midi/departure.mjs` — 42 checks over departure, pedal release, badge state, and all seven
+guard behaviours. Run it before declaring any change to `midi/handler.ts` or `midi/engine.ts` done.
+
+**Instrument**: `apps/hkl/src/lumatone/probe.ts` exposes `lumaprobe.latency()` / `watchGuard()` / `dump()`
+for Lumatone round-trip and teardown timing. It attaches its MIDI monitor only while a run is active.
 
 ### Piano output (external-synth JI playback)
 

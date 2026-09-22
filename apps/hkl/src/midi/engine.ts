@@ -175,9 +175,16 @@ export function markLumatoneGone(reason: string): void {
   sysex.cancel();
   lumatone.deviceColors = null;
   lumatone.fixedLayoutSent = false;
-  if (deviceLostHandler) deviceLostHandler();
   pendingReconnect = true;
+  /* Port state has already changed, so the badge must reflect it NOW — before
+     the voice release, which is the part with any chance of failing. Ordering
+     it the other way round made a throw in cleanup leave the indicator still
+     claiming "connected" while the notes had in fact been released. */
   updateLumatoneStatusUI();
+  if (deviceLostHandler) {
+    try { deviceLostHandler(); }
+    catch (e) { console.error('Lumatone: releasing held input on departure failed', e); }
+  }
 }
 
 /* MIDI port discovery. Auto-detects a "Lumatone" output + input port. Caller
@@ -222,7 +229,10 @@ export function findLumatone(handleMidiMessage: MidiMessageHandler): void {
     sysex.cancel();
     lumatone.deviceColors = null;
     lumatone.fixedLayoutSent = false;
-    if (deviceLostHandler) deviceLostHandler();
+    if (deviceLostHandler) {
+      try { deviceLostHandler(); }
+      catch (e) { console.error('Lumatone: releasing held input on departure failed', e); }
+    }
   } else if (midi.midiOut && oldOutId !== newOutId) {
     syncMidi();
   }

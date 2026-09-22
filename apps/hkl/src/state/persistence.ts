@@ -103,6 +103,12 @@ export interface PrefsV1 {
   /** Route SysEx to boards 3 & 4 swapped (for units with those boards
    *  physically transposed). Off by default — standard units need no swap. */
   swapBoards34: boolean;
+  /** Power-off note guard: hold every velocity-127 note-on briefly and drop it
+   *  if a second one arrives inside the window, which is the only surviving
+   *  signature of the spurious burst a Lumatone emits as it powers down.
+   *  Off by default — it costs latency on genuine velocity-127 strikes, and
+   *  whether that trade is worth taking depends on the unit's calibration. */
+  powerOffNoteGuard: boolean;
   captureAudio: boolean;
   /** Inter-layer matching blend for re-gained layered decay instruments:
    *  0 = layers matched in K-weighted level, 1 = matched in Bark-sones (the
@@ -186,6 +192,7 @@ export const DEFAULT_PREFS: PrefsV1 = {
   showDiagnostics: false,
   calibrateKeys: false,
   swapBoards34: false,
+  powerOffNoteGuard: false,
   captureAudio: false,
   layerBlend: 1,
   pianoInputDeviceId: null,
@@ -307,6 +314,10 @@ export function loadPrefs(): PrefsV1 {
       typeof o.swapBoards34 === "boolean"
         ? o.swapBoards34
         : DEFAULT_PREFS.swapBoards34,
+    powerOffNoteGuard:
+      typeof o.powerOffNoteGuard === "boolean"
+        ? o.powerOffNoteGuard
+        : DEFAULT_PREFS.powerOffNoteGuard,
     captureAudio:
       typeof o.captureAudio === "boolean"
         ? o.captureAudio

@@ -40,7 +40,7 @@ import {
   setDamperDepth, sostenutoOn, sostenutoOff,
 } from '../audio/engine.js';
 import { requestMidi } from '../midi/engine.js';
-import { handleMidiMessage } from '../midi/handler.js';
+import { handleMidiMessage, setPowerOffNoteGuard } from '../midi/handler.js';
 import { initPiano } from '../midi/piano.js';
 import { initPianoOut } from '../midi/piano-out.js';
 import {
@@ -62,6 +62,9 @@ import {
   ensureLoopOverlay, setLoopOverlayVisible,
 } from '../audio/diagnostics/loopOverlay.js';
 import { ensurePedalHud, setPedalHudVisible } from './pedalHud.js';
+/* Lumatone liveness-probe instrument: attaches its passive MIDI monitor and
+   exposes window.lumaprobe. Diagnostic only — nothing calls into it. */
+import '../lumatone/probe.js';
 import { SampleEngine } from '../audio/samples.js';
 import { applyToolbarVisibility, initToolbarSelector } from './toolbars.js';
 import { applyTooltips } from './tooltips.js';
@@ -141,6 +144,7 @@ tuning.hejiEnabled = prefs.hejiEnabled;
    in the Calibrate Keys overlay, but the routing must be correct even if it's
    never opened. */
 setBoards34Swapped(prefs.swapBoards34);
+setPowerOffNoteGuard(prefs.powerOffNoteGuard);
 
 initAudio();
 /* Load the persisted instrument. Fires regardless of audioEnabled so the

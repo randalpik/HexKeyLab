@@ -9007,7 +9007,13 @@ evidence set for the ornament shadow's lift test.
 "beat-1 strike captured the beat-4 voice"), `perfSameOnsetUnisonBoth` (passes either way by design — it
 guards behavior the tiebreak must preserve).
 
-## Pitch bend is the Lumatone's departure tell, not a musical event (2026-09-21)
+## Pitch bend is the Lumatone's departure tell, not a musical event (2026-09-21) — SUPERSEDED
+**Superseded the same day** by "The power-off note guard is a 25ms hold on velocity 127" below. The pitch
+bend turned out to be intermittent: it fires only when the wheel's I2C ADC browns out into a garbage-but-valid
+reading, not when the transaction fails outright, so most power-offs produce no bend at all. The 0xE0 handling
+described here was removed. The firmware analysis in this entry remains accurate and is why the bend was
+believed reliable; the reasoning about ordering was correct, the premise that it always fires was not.
+
 
 **Symptom**: powering the Lumatone off with HKL open latched a seemingly random set of keys that sounded
 indefinitely, clearable only by hand.
@@ -9032,6 +9038,11 @@ still in flight when the bend is handled, and an unhooked port is what stops tho
 Releasing the already-held voices and forcing the pedal to released are the second half — a dead port can
 deliver neither a note-off nor a pedal release, so the damper would otherwise stay down forever too.
 
+**Ordering inside `markLumatoneGone`: port state and the status badge update BEFORE the voice release.**
+The release is the only step with a realistic chance of throwing, and with it ordered first a failure left the
+badge still reading "Lumatone connected" while the notes had in fact been released — a UI that lies about
+connection state. The release call is now wrapped so a failure is logged loudly rather than swallowed.
+
 **Rejected — filtering the burst by velocity.** Every degenerate note arrived at velocity 127, which is nearly
 a discriminator, but velocity is reconstructed on the BBB from a 12-bit key-travel timing value and 127 is a
 value real fortissimo playing reaches. Filtering it would silently eat the loudest notes of a performance.
@@ -9053,3 +9064,51 @@ check in `handler.ts`.
 **Files**: `apps/hkl/src/midi/handler.ts` (0xE0 route + `releaseLumatoneInput`),
 `apps/hkl/src/midi/engine.ts` (`markLumatoneGone`, `setLumatoneLostHandler`, status-UI extraction, poll gate),
 `docs/architecture/hkl.md`, `docs/lessons.md`, `CLAUDE.md`.
+
+## The power-off note guard is a 25ms hold on velocity 127, opt-in (2026-09-21)
+
+**Problem**: switching the Lumatone off with HKL open latches a random set of keys that sound indefinitely.
+The spurious note-ons are protocol-valid frames from a browning-out key scanner — byte-for-byte
+indistinguishable from real playing (lessons.md) — so they cannot be recognised by content.
+
+**Every alternative was ruled out empirically, in this order. Do not re-propose them:**
+
+- **Pitch bend from the wheel ADC.** Real, and structurally *first* (`readWheelADC` polls over I2C every
+  main-loop pass; a keystroke first needs a PIC GPIO + CTS handshake). But it only fires when the ADC browns
+  out into a garbage-but-valid read; when the I2C transaction fails outright there is no bend. Absent from
+  most power-offs. Shipped, then removed.
+- **Board spread.** Random in the burst, and real clusters can be too.
+- **Velocity 127 alone, as a committing trigger.** Reachable by real playing on keys whose per-key
+  `KeyData_N` thresholds are compressed, so it cannot decide anything by itself.
+- **A SysEx liveness probe.** Dead for a structural reason, not a tuning one: the round trip is timestamped
+  on HKL's own main thread, so under load it reports *our* jank rather than the device (hundreds of ms
+  observed). Web MIDI is unavailable in workers, so the clock cannot be moved off that thread. It also
+  cannot test the thing that actually dies — `getMaxPic`/`getMinPic`/`getValidPic` are reachable only from
+  `writeToPic` (the main poll loop), and every `sysexResponse*` handler answers from the BBB's own
+  `kbd_preset_params`, so **no SysEx command forces a PIC round trip**.
+- **Polyphonic aftertouch as PIC-sourced liveness.** The right *kind* of signal — it originates at the PIC,
+  unlike any SysEx — but there is a ~250ms engagement window between key-down and aftertouch, far outside
+  any useful hold.
+
+**Decision (Max)**: the only surviving signature is *several notes at velocity 127 within a few
+milliseconds*. The guard holds every velocity-127 note-on for `GUARD_WINDOW_MS` (25) and discards it,
+unplayed, if a second one lands inside the window; otherwise it replays. Condemnation is immediate on the
+second note rather than at window end — nothing held has sounded, so deciding early only shortens the hold.
+
+**Hold, don't drop.** Since velocity 127 is reachable by real playing, a v127 note is *delayed*, never
+discarded on its own. Once a hold is open, every channel-voice message is buffered — not just note-ons — so
+replay preserves arrival order exactly; SysEx is never held.
+
+**Opt-in, default off** (Calibrate Keys → Power-off note guard, `powerOffNoteGuard`). The cost is real and
+falls on genuine velocity-127 strikes: 25ms of latency, and on a unit where certain keys reach 127 under
+normal playing those keys are *consistently* late, which is a per-key rhythmic artifact rather than uniform
+latency. Recalibrating such keys is the better fix where available (out of scope here, Max's call), which is
+also why this must not be on by default for other units.
+
+**Known residual risk, accepted**: a power-off that produced exactly *one* v127 note would not fire the
+guard. Every capture has shown several, but unlike the ordering guarantee behind the pitch-bend theory there
+is no firmware mechanism forcing it to be more than one.
+
+**Files**: `apps/hkl/src/midi/handler.ts` (guard + quarantine + `routeChannelMessage` split),
+`apps/hkl/src/state/persistence.ts`, `apps/hkl/src/lumatone/lumadiag.ts`, `apps/hkl/src/ui/init.ts`.
+Gate: `test/hkl-midi/departure.mjs` (42 checks). Instrument retained: `apps/hkl/src/lumatone/probe.ts`.

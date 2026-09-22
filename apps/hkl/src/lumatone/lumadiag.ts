@@ -52,6 +52,7 @@ import { velocityCal, DEFAULT_INPUT_CURVE, DEFAULT_INTERVAL_CURVE, STATS_MIN_N, 
 import { baseKeys } from '../layout/baseKeys.js';
 import { lumatone } from '../state/lumatone.js';
 import { savePrefs, loadPrefs } from '../state/persistence.js';
+import { setPowerOffNoteGuard } from '../midi/handler.js';
 import { SampleEngine } from '../audio/samples.js';
 import { syncLumatoneColors } from './sync.js';
 
@@ -324,6 +325,46 @@ function makeSwapSection(): HTMLDivElement {
     fontSize: '10px', color: 'rgba(255,255,255,0.55)', marginTop: '3px',
   });
   sec.appendChild(hint);
+  return sec;
+}
+
+/* Power-off note guard. A Lumatone losing power emits a burst of spurious
+   note-ons that are byte-identical to real playing; the only surviving
+   signature is several notes at velocity 127 within a few milliseconds. The
+   guard holds every velocity-127 note-on briefly and drops it, unplayed, if a
+   second one lands inside the window. Off by default: the hold is real latency
+   on genuine velocity-127 strikes, so it is a trade the user opts into. */
+function makePowerOffGuardSection(): HTMLDivElement {
+  const sec = document.createElement('div');
+  Object.assign(sec.style, {
+    borderTop: '1px solid rgba(255,255,255,0.12)',
+    padding: '6px 8px',
+  });
+  const label = document.createElement('label');
+  Object.assign(label.style, {
+    display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer',
+    fontSize: '12px',
+  });
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = loadPrefs().powerOffNoteGuard;
+  cb.addEventListener('change', () => {
+    setPowerOffNoteGuard(cb.checked);
+    savePrefs({ powerOffNoteGuard: cb.checked });
+  });
+  label.appendChild(cb);
+  label.appendChild(document.createTextNode('Power-off note guard'));
+  sec.appendChild(label);
+  const note = document.createElement('div');
+  Object.assign(note.style, {
+    fontSize: '11px', opacity: '0.65', marginTop: '4px', lineHeight: '1.35',
+  });
+  note.textContent =
+    'Stops the stuck notes a Lumatone emits when switched off, by holding every '
+    + 'velocity-127 strike for 25 ms and discarding it if a second one arrives. '
+    + 'Costs 25 ms of latency on genuine velocity-127 notes \u2014 leave it off '
+    + 'unless you switch the instrument off with HexKeyLab open.';
+  sec.appendChild(note);
   return sec;
 }
 
@@ -1612,6 +1653,7 @@ export function ensureLumaDiag(): void {
   });
   panel.appendChild(header);
   panel.appendChild(makeSwapSection());
+  panel.appendChild(makePowerOffGuardSection());
   for (let i = 0; i < 5; i++) panel.appendChild(makeBoardSection(i));
   panel.appendChild(makeVelocityCalSection());
   panel.appendChild(makePerKeyStatsSection());

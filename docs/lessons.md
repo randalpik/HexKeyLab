@@ -4737,3 +4737,38 @@ Related pre-existing gap, still open: `clearSelection()` (`ui/controls.ts`) does
 `clearHeldLumatoneTracking()`, so `heldLumatonePhys` goes stale after the Clear button and
 `migrateHeldLumatoneVoices` can chase voices that are no longer held. The export exists for exactly this and has
 never had a caller.
+
+## A Web MIDI round trip cannot measure device health — it measures your own main thread (2026-09-21)
+
+A SysEx probe (send a query, time the ACK) looks like a clean liveness test for the Lumatone. It is not,
+and the reason is structural rather than a matter of picking a better threshold.
+
+`t0` is taken when `send()` is called, but the response arrives via `onmidimessage`, **dispatched on the main
+thread**. If the main thread is busy the dispatch waits, and the measured round trip is device latency *plus*
+our own event-loop delay, with no way to separate them. Measured on an idle HKL the round trip is 0–3ms; under
+load it reaches **hundreds of ms** — with the device perfectly healthy. So the probe degrades exactly when you
+most need it, and any "slow ACK means dying device" threshold is really "slow ACK means HKL was busy".
+
+There is no fix: **Web MIDI is not available in workers**, so the clock cannot be moved off the blocked thread.
+
+Two corollaries found alongside it:
+
+- **No SysEx command can test whether the octave boards are alive.** `getMaxPic`/`getMinPic`/`getValidPic`
+  are reachable only from `writeToPic`, which only `main`'s poll loop calls; every `sysexResponse*` handler
+  answers from the BBB's own `kbd_preset_params`. A probe only ever proves the BBB's MIDI thread is running,
+  and the BBB can outlive the keybed.
+- **Polyphonic aftertouch is the only PIC-sourced liveness signal** — it originates at the octave board, not
+  the BBB — but there is a **~250ms engagement window** between key-down and the first aftertouch, so it
+  cannot confirm anything inside a low-latency window.
+
+Consequence for the power-off guard: confirmation-by-probe was abandoned entirely in favour of a pure timing
+rule (decisions.md, "The power-off note guard is a 25ms hold on velocity 127"). The instrument that produced
+these numbers is kept at `apps/hkl/src/lumatone/probe.ts` (`lumaprobe.latency()`, `lumaprobe.watchGuard()`).
+
+## `readFromPic` spins on a GPIO with no timeout, so a dying PIC stalls the whole BBB loop (2026-09-21)
+
+`readFromPic` does `while (is_high(gpio)) ;` waiting for the octave board to drop its data line — unbounded,
+no timeout. A PIC browning out with that line stuck high stalls the BBB's entire main loop, which is why
+probe responses degraded to ~18ms shortly before the device stopped answering altogether: the device does not
+fall off a cliff, it gets progressively slower first. That made "response latency as a continuous health
+signal" look attractive — until the main-thread lesson above showed we cannot measure it from HKL anyway.

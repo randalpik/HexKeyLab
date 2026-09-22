@@ -11,10 +11,9 @@
 //     'sustain' mode, or sostenutoOn/Off in 'sostenuto' mode (per pedal.mode).
 //   • Polyphonic aftertouch (0xA0) → handleAftertouch, also stashed in
 //     audio.aftertouchSnapshot for debug polling.
-//   • Pitch bend (0xE0) → NOT a musical event: it is the device's power-off
-//     tell, and routes to markLumatoneGone so the port is detached before the
-//     spurious keystrokes that follow it can be latched (see the comment at
-//     the check itself for why the ordering is guaranteed).
+//   • Power-off note guard (opt-in) → intercepts velocity-127 note-ons ahead
+//     of all of the above and holds them briefly; see the block comment at
+//     GUARD_WINDOW_MS.
 //   • Note-on/off → mutate selection.selectedKeys + audio.sustainedKeys +
 //     audio.keyVelocity, fire re-articulation flash if striking a sustaining
 //     voice, then onSelectionChanged() to drive audio + MIDI + redraw.
@@ -63,6 +62,7 @@ export function clearHeldLumatoneTracking(): void { heldLumatonePhys.clear(); }
    forcing the damper to released does drop anything IT was sustaining, which
    is correct: the pedal is a Lumatone peripheral. */
 export function releaseLumatoneInput(): void {
+  cancelQuarantine(); /* anything held is unplayed garbage — never flush it */
   const keys: KeyId[] = [];
   heldLumatonePhys.forEach((id) => {
     const ci = id.indexOf(',');
@@ -156,9 +156,114 @@ export function migrateHeldLumatoneVoices(dq: number, dr: number): void {
   });
 }
 
+/* Passive inbound-message observer. Registered by diagnostics (lumatone/probe.ts)
+   that need to see raw traffic without altering routing: the monitor cannot
+   consume a message, so the SysEx queue and note path behave identically
+   whether or not one is attached. */
+let midiMonitor: ((data: Uint8Array) => void) | null = null;
+export function setMidiMonitor(fn: ((data: Uint8Array) => void) | null): void { midiMonitor = fn; }
+
+/* ── Power-off note guard ───────────────────────────────────────────────────
+   A Lumatone losing power emits a burst of spurious note-ons. They are
+   protocol-valid frames from a browning-out key scanner and are byte-for-byte
+   indistinguishable from real playing (lessons.md), so they cannot be
+   recognised by content. Every other candidate signal was ruled out
+   empirically:
+
+     • the pitch bend the wheel's I2C ADC emits as it collapses is real, and
+       structurally precedes the burst, but only fires when the ADC browns out
+       instead of failing outright — it is absent from most power-offs;
+     • board spread is random, and real clusters can be too;
+     • a SysEx liveness probe cannot work at all: its round trip is timestamped
+       on HKL's own main thread, so under load it measures our jank rather than
+       the device (and Web MIDI is unavailable in workers, so the clock cannot
+       be moved off that thread).
+
+   What survives is the burst's one consistent signature: several notes at
+   velocity 127 within a few milliseconds. Velocity 127 needs the firmware's
+   12-bit travel value to reach the top of the per-key threshold table, so it
+   is rare in real playing but NOT unreachable — which is why the guard HOLDS
+   a velocity-127 note rather than dropping it, and condemns only once a
+   second one lands inside the window.
+
+   The cost is real and falls on genuine velocity-127 strikes: they are
+   delayed by GUARD_WINDOW_MS. On a unit where certain keys reach 127 under
+   normal playing, those keys are consistently late. That is why this is
+   opt-in and off by default, and why recalibrating such keys is the better
+   fix where it is available. */
+const GUARD_WINDOW_MS = 25;
+const GUARD_VELOCITY = 127;
+/* velocity-127 note-ons inside one window that together mean "burst" */
+const GUARD_CONDEMN_COUNT = 2;
+
+let guardEnabled = false;
+export function setPowerOffNoteGuard(on: boolean): void {
+  guardEnabled = on;
+  /* Turning it off must not strand whatever is being held. */
+  if (!on) flushQuarantine();
+}
+
+interface Quarantine {
+  /** every channel-voice message since the hold began, in arrival order */
+  events: Uint8Array[];
+  v127: number;
+  timer: number;
+}
+let quarantine: Quarantine | null = null;
+
+function isGuardVelocityNoteOn(data: Uint8Array): boolean {
+  return (data[0] & 0xf0) === 0x90 && data.length > 2 && data[2] === GUARD_VELOCITY;
+}
+
+/** Replay everything held, in order, and resume normal routing. */
+function flushQuarantine(): void {
+  if (!quarantine) return;
+  const q = quarantine;
+  quarantine = null;            /* clear first: routing re-enters the handler */
+  clearTimeout(q.timer);
+  for (const ev of q.events) routeChannelMessage(ev);
+}
+
+/** Drop everything held without sounding it. Used when the device departs. */
+export function cancelQuarantine(): void {
+  if (!quarantine) return;
+  clearTimeout(quarantine.timer);
+  quarantine = null;
+}
+
+/** True when the guard took the message; the caller must not route it. */
+function interceptForGuard(data: Uint8Array): boolean {
+  if (quarantine) {
+    /* Copy: the event's buffer belongs to the caller and we outlive the call. */
+    quarantine.events.push(data.slice());
+    if (isGuardVelocityNoteOn(data) && ++quarantine.v127 >= GUARD_CONDEMN_COUNT) {
+      /* Condemn as soon as the count is met rather than waiting the window
+         out — nothing held has sounded, so deciding early only shortens how
+         much of the burst we carry. */
+      const held = quarantine.events.length;
+      cancelQuarantine();
+      markLumatoneGone(burstReason(held));
+    }
+    return true;
+  }
+  if (!isGuardVelocityNoteOn(data)) return false;
+  quarantine = {
+    events: [data.slice()],
+    v127: 1,
+    timer: window.setTimeout(flushQuarantine, GUARD_WINDOW_MS),
+  };
+  return true;
+}
+
+function burstReason(held: number): string {
+  return GUARD_CONDEMN_COUNT + '+ notes at velocity ' + GUARD_VELOCITY
+    + ' within ' + GUARD_WINDOW_MS + 'ms (' + held + ' messages discarded unplayed)';
+}
+
 export function handleMidiMessage(e: MIDIMessageEvent): void {
   const data = e.data;
   if (!data) return;
+  if (midiMonitor) { try { midiMonitor(data); } catch { /* a diagnostic must never break input */ } }
   /* route SysEx responses to push-color ACK handler, except spontaneous
      calibration packets (CMD 3Eh) which are not ACKs to a sent message
      but periodic firmware status emissions during calibration mode. */
@@ -172,35 +277,18 @@ export function handleMidiMessage(e: MIDIMessageEvent): void {
     sysex.handleResponse(data);
     return;
   }
+  /* The guard sits ahead of all channel-voice routing: once a hold is open,
+     EVERY channel message is buffered, not just note-ons, so that replay
+     preserves arrival order exactly. SysEx above is never held. */
+  if (guardEnabled && interceptForGuard(data)) return;
+  routeChannelMessage(data);
+}
+
+function routeChannelMessage(data: Uint8Array): void {
   const status = data[0] & 0xf0;
   const ch = (data[0] & 0x0f) + 1;
   const d1 = data[1];
   const d2 = data.length > 2 ? data[2] : 0;
-  /* Pitch bend (0xE0) is the Lumatone's power-off tell, not a musical event.
-     The wheel is read over I2C by the firmware's readWheelADC, which runs on
-     every pass of its main loop, whereas a keystroke first needs the octave
-     board's PIC to raise its data line and complete a CTS handshake. So when
-     the rails collapse at power-off, the wheel's ADC read degenerates and
-     emits a bend a full loop-iteration BEFORE any PIC can get a keystroke
-     frame out — which is what makes this a usable trigger rather than a
-     post-hoc cleanup. The firmware also keeps a dead-zone around centre
-     (SetPitchBendZeroThreshold), so an emitted bend is always a large
-     excursion, never idle noise.
-
-     The spurious note-ons that follow are protocol-valid frames from a
-     browning-out key scanner — indistinguishable from real playing at the
-     byte level — so filtering them after the fact isn't possible. Acting on
-     the bend instead means detaching the input port before they arrive.
-
-     Nothing on this unit emits bend in normal use (the wheel is physically
-     disconnected). If one is ever reconnected, tighten this to fire only on
-     a full-scale excursion — the degenerate read pins to 0 or 16383, which
-     a played wheel reaches only at its extremes. */
-  if (status === 0xE0) {
-    const bend = (d2 << 7) | d1;
-    markLumatoneGone('pitch bend received (value ' + bend + ')');
-    return;
-  }
   /* CC messages: foot controller (CC 4, expression jack — continuous damper)
      and sustain (CC 64, sustain jack — binary, role per pedal.mode). The
      expression pedal's CC# is hardcoded to 4 in firmware and cannot be
