@@ -9179,3 +9179,21 @@ one-time note-layout setup retain their existing behavior.
 
 Implementation: `apps/hkl/src/lumatone/sync-order.ts`, used by `sync.ts`.
 Hardware-free geometry/routing checks: `test/hkl-midi/sync-order.mjs`.
+
+## Lumatone benchmark wrap-up and hardware confirmation (2026-09-22)
+
+Max confirmed the interleaved top-to-bottom HKL color sync "works flawlessly"
+on his Lumatone. The ordering gate, typecheck, build and package-boundary checks
+passed before that hardware check.
+
+The standalone Bad Apple benchmark is parked after successful binary and
+four-level playback. It uses 30 fps targets, 25% vertical compression and a
+bounded latest-value queue; board alternation always takes priority, followed by
+oldest continuous outstanding age and distance from the physical center. Four
+levels use RGB channel values 0/32/64/96 at the default brightness, with six-point
+source-gray hysteresis and no temporal dithering. Max called the result excellent.
+
+Only the interleaved color-sync ordering was brought into HKL. Animation-controlled
+HKL/device colors and synchronized backing audio remain future work. Reproduction
+commands, measured transport findings, simulation comparison and local artifact
+locations are in `tools/lumatone-bench/README.md`.

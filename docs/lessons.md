@@ -370,6 +370,28 @@ Color sync should show progress in the status badge. Firmware queries and calibr
 
 When a new sync starts mid-push, the in-flight message is NOT cancelled. It finishes, ACKs, then the new queue takes over. The `predicted` snapshot folds the in-flight message's intended state into the diff so the new queue accounts for it. Don't try to abort the in-flight message — that creates ACK/timeout races.
 
+### Interleave Lumatone boards before optimizing anything else (2026-09-22)
+
+The apparent ~100-key/s LED limit was not a global transport ceiling. Standalone
+USB MIDI measurements reached ~121 changed-key updates/s on one board and ~318/s
+with interleaving. Two boards already provide the full gain; more boards are not
+required. Max repeated the benchmark while playing and observed the same timing.
+These are measured ACK rates on his unit, not proof of the ultimate hardware limit.
+
+Always serve a different board when another useful update is pending. Interleaving
+even makes the next visit to the original board faster than immediately repeating
+it. An age override that forced same-board writes hurt the animation simulation;
+age or visual sweep order should rank candidates only after board eligibility.
+Repeat a board only when no other board has pending work. Unchanged-color ACKs
+are not evidence of changed-LED throughput; do not pad the queue with no-op writes.
+
+HKL's full color sync now sweeps physical rows from top to bottom (`2q + 7r`,
+descending), with no consecutive same-board writes across all 280 keys. Seed
+replacement ordering from the in-flight board as well as predicting its color.
+Max confirmed the new sweep works flawlessly on the device. Benchmark commands,
+animation queue rules and simulation caveats live in
+[`tools/lumatone-bench/README.md`](../tools/lumatone-bench/README.md).
+
 ---
 
 ## Process / workflow
@@ -4803,4 +4825,3 @@ Two companions from the same census:
 - **A curve's box is the region under its arc.** Test against its outline instead.
 - **Post-render passes can't assume one frame per system.** `render/instrgap.ts` translates an
   instrument's staves and ties, so map each element through its own CTM.
-

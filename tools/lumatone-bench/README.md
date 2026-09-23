@@ -17,8 +17,9 @@ close the Lumatone Editor/other SysEx writers. HKL can remain open for audio;
 avoid calibration, tuning controls that send SysEx, and reconnecting it during
 the run. The protocol has no transaction/key ID in ACKs, so another writer can
 invalidate measurements and restoration. The benchmark never sends note events,
-changes mappings/aftertouch/pedals, or saves a preset. Keystroke lighting is left
-as configured; it can temporarily change visible brightness while you play.
+changes mappings/aftertouch/pedals, or saves a preset. The timing suites leave
+keystroke lighting as configured; animation playback temporarily disables it
+and restores it afterward.
 
 If auto-detection is ambiguous, copy exact names from `--list`:
 
@@ -27,6 +28,35 @@ If auto-detection is ambiguous, copy exact names from `--list`:
 ```
 
 ## What runs
+
+### Completed findings and parked state (2026-09-22)
+
+The rotation follow-up established ~121 changed-key updates/s on one board versus
+~318/s interleaved. Alternating **two boards is sufficient** for the full gain.
+Max repeated the timing benchmark while playing and observed the same results.
+The earlier ~100/s estimate is not a global LED-update ceiling.
+
+Bad Apple is working as a standalone USB animation benchmark: 30 fps source
+targets, 280 physical key samples, 25% vertical compression, binary and four-level
+grayscale. Max reported that binary looked very good and four-level was excellent.
+The experiment is parked here; HKL animation ownership and synchronized backing
+audio remain future work. HKL has adopted the board-interleaving improvement for
+its normal top-to-bottom color sync, which Max confirmed works flawlessly.
+
+For the 232.07-second reference clip, the constant-RTT **simulation** predicts:
+
+| Metric | Binary | Four-level, hysteresis 6 |
+| --- | ---: | ---: |
+| Source key-value changes/s | 283.6 | 533.7 |
+| Sent updates/s after coalescing | 187.1 | 244.3 |
+| Exact target match at frame boundaries | 90.6% | 86.3% |
+
+These are simulation results, not measured playback rates. Exact matching is
+stricter with four levels; visual quality was assessed on the physical board.
+Local reports: `out/apple-simulation-final/report.json` and
+`out/apple-simulation-4level/report.json`. Timing runs: `out/20260922-225535-512672/`
+and `out/20260922-230547-208442/`. All `out/` assets and reports are ignored local
+artifacts, so a fresh checkout needs a local source video and conversion.
 
 ### Animation benchmark
 
@@ -175,10 +205,9 @@ The rotation suite's one-board baseline uses its first entry; `--board` still
 selects the single-board target in the original baseline suite.
 
 The initial measured run reached ~316 changed keys/sec interleaved versus
-~121–126/sec for same-board/grouped traffic. Max reports the same timing while
-playing. This follow-up focuses on board pacing: whether two-board alternation
-already gets the gain, and whether it survives reversing order/direction. No
-extra playing-versus-idle run is required for this question.
+~121–126/sec for same-board/grouped traffic. The completed rotation follow-up
+confirmed that two-board alternation already gives the full ~318/s gain. Max
+reports the same timing while playing; no extra playing-versus-idle run is needed.
 
 The **original suite** is still the default (`bench.py` or `--suite baseline`):
 
@@ -275,7 +304,8 @@ afterward if desired. No presets are saved by this tool.
 For display planning use **changed updates/sec**, its tail latency, and the
 idle-versus-playing difference. At rate R, a fully changed frame takes at least
 280/R seconds; a target rate F can sustain R/F changed keys/frame on average.
-Actual Bad Apple demand and visual loss still need the spatial-frame simulation.
+The completed Bad Apple simulation comparison is recorded above; use its replay
+and physical playback to judge the tradeoff between update demand and clarity.
 
 ## Hardware-free checks
 

@@ -127,6 +127,7 @@ The suite exposes `window.__hkl_composer.bridge` for direct send/receive, plus i
 
 ## Critical Lumatone protocol context
 
+- **LED throughput depends on board ordering**: the standalone USB MIDI benchmark measured ~121 changed-key updates/s on one board versus ~318/s interleaved; alternating just two boards gives the full gain. Max observed unchanged timing while playing. Always prefer another board when useful updates are pending; ~100/s is not a global LED ceiling. HKL color sync now uses a physical top-to-bottom interleaved sweep, confirmed working on Max's unit. Details and the parked Bad Apple experiment: [`tools/lumatone-bench/README.md`](tools/lumatone-bench/README.md); ordering gate: `test/hkl-midi/sync-order.mjs`.
 - **SysEx envelope**: `F0 00 21 50 <board> <cmd> <data1-4> F7`
 - **Manufacturer ID**: `[0x00, 0x21, 0x50]`
 - **Reference repo**: https://github.com/hsstraub/TerpstraSysEx.2014 — the Terpstra Editor source. Has the authoritative command list.
