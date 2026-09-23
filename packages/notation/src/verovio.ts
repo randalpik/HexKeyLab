@@ -36,7 +36,7 @@ const VEROVIO_CDN = 'https://www.verovio.org/javascript/latest/verovio-toolkit-w
 /* Mirrors Composer's BASE_OPTIONS svgAdditionalAttribute exactly (incl.
    note@hkl-paren-caut, which injectHejiGlyphs reads to nudge paren-cautionary
    accidentals — omitting it would render those differently). */
-const ADDITIONAL_ATTRS = ['note@data-q', 'note@data-r', 'note@color', 'note@data-light-color', 'note@hkl-paren-caut', 'rest@data-tuplet-placeholder', 'rest@visible', 'accid@type',
+const ADDITIONAL_ATTRS = ['note@data-q', 'note@data-r', 'note@color', 'note@data-light-color', 'note@hkl-paren-caut', 'rest@data-tuplet-placeholder', 'rest@visible', 'rest@data-hkl-cosmetic', 'accid@type',
   'staff@n', 'dynam@staff', 'dynam@place', 'dir@staff', 'dir@place', 'hairpin@staff', 'hairpin@place',
   'tempo@staff', 'tempo@place', 'dynam@tstamp', 'dir@tstamp',
   'tie@startid', 'fermata@startid', 'trill@startid', 'lv@startid', 'octave@staff',

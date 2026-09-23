@@ -77,7 +77,7 @@ A new document is a grand staff (treble + bass) with two voices per staff, four 
 | 3 | bass (upper) |
 | 4 | bass (lower) |
 
-`↑`/`↓` cycle through the voices, plus the virtual **dynamics**, **pedal**, and **tempo** layers (shown as `E`, `P`, `T` in the voice indicator). Empty measures autofill with rests so the notation always reads correctly; delete the rests to extend a measure.
+`↑`/`↓` cycle through the voices, plus the virtual **dynamics**, **pedal**, and **tempo** layers (shown as `E`, `P`, `T` in the voice indicator). Empty measures autofill with rests so the notation always reads correctly; delete the rests to extend a measure. A bar with nothing entered on a staff shows a whole-bar rest, centred in the bar whatever the meter (a pickup bar shows a single rest of its length instead — two only when no single value fits). It is display only: the cursor doesn't stop on it, and anything you enter replaces it.
 
 ---
 

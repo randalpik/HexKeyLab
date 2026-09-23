@@ -40,9 +40,13 @@ function noteOrRestId(g: Element): string | null {
 }
 
 /** True for a glyph the user can actually target: visible (not a CSS-hidden
- *  tuplet placeholder / hidden rest) and laid out (non-zero box). */
+ *  tuplet placeholder / hidden rest), in the model (not a cosmetic rest) and
+ *  laid out (non-zero box). */
 function isRealGlyph(g: Element): boolean {
   if (g.getAttribute('data-data-tuplet-placeholder') === 'true') return false;
+  /* A render-only pickup rest in an empty cell (notation/measurerests.ts) —
+     not in the model; the click belongs to the empty staff. */
+  if (g.getAttribute('data-data-hkl-cosmetic') === 'true') return false;
   const r = g.getBoundingClientRect();
   if (r.width === 0 && r.height === 0) return false;
   try { if (getComputedStyle(g).visibility === 'hidden') return false; } catch { /* jsdom */ }

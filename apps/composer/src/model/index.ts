@@ -27,6 +27,7 @@
 import type { ResolvedNote } from '@hkl/bridge/protocol.js';
 import { regroupBeams, readTimeSig } from '../notation/beams.js';
 import { settleRestLocations } from '../notation/restlayout.js';
+import { fillEmptyMeasureRests } from '../notation/measurerests.js';
 import { duplicateTempiAcrossParts, settleFermataSides } from '../notation/parts.js';
 import { applySectionRestarts } from '../notation/sectionRestart.js';
 import { settleSlurSides } from '../notation/slurSides.js';
@@ -48,7 +49,8 @@ import { ensureExpressionDefaults, getLayoutReq, setLayoutReq, getHejiEnabled, s
 import { toggleArticulation, toggleTrill, type ArticKind } from '../articulations.js';
 import { transformDocForHeji } from '@hkl/notation/heji-render.js';
 import type { TuningMode } from '@hkl/shared/freq.js';
-import { realTicks, writtenTicks } from './ticks.js';
+import { realTicks, writtenTicks, decomposeTicks } from './ticks.js';
+export { decomposeTicks };
 import {
   buildChordElement,
   buildNoteElement,
@@ -295,32 +297,9 @@ export function isTupletPlaceholder(el: Element): boolean {
 
 /* ── tick math ──────────────────────────────────────────────────────────── */
 
-/* 64th-note tick table for representable durations (greedy decomposition).
-   Largest first. The @dur values here MUST be consistent with ticksOf —
-   e.g. dotted half = ticksOf('2', 1) = 48, so the 48-tick entry must carry
-   dur='2' dots=1, not dur='1' dots=1 (= 96). */
 /* Tolerance for tstamp-equality comparisons in tick math (used by
    measureBoundaryCursors). 1e-6 is the same tolerance selection.ts uses. */
 const TICK_EPS = 1e-6;
-
-const TICK_TABLE: ReadonlyArray<{ ticks: number; dur: Duration; dots: Dots }> = [
-  { ticks: 64, dur: '1',  dots: 0 },   /* whole */
-  { ticks: 56, dur: '2',  dots: 2 },   /* double-dotted half */
-  { ticks: 48, dur: '2',  dots: 1 },   /* dotted half */
-  { ticks: 32, dur: '2',  dots: 0 },   /* half */
-  { ticks: 28, dur: '4',  dots: 2 },   /* double-dotted quarter */
-  { ticks: 24, dur: '4',  dots: 1 },   /* dotted quarter */
-  { ticks: 16, dur: '4',  dots: 0 },   /* quarter */
-  { ticks: 14, dur: '8',  dots: 2 },   /* double-dotted 8th */
-  { ticks: 12, dur: '8',  dots: 1 },   /* dotted 8th */
-  { ticks: 8,  dur: '8',  dots: 0 },   /* 8th */
-  { ticks: 7,  dur: '16', dots: 2 },   /* double-dotted 16th */
-  { ticks: 6,  dur: '16', dots: 1 },   /* dotted 16th */
-  { ticks: 4,  dur: '16', dots: 0 },   /* 16th */
-  { ticks: 3,  dur: '32', dots: 1 },   /* dotted 32nd */
-  { ticks: 2,  dur: '32', dots: 0 },   /* 32nd */
-  { ticks: 1,  dur: '64', dots: 0 },   /* 64th */
-];
 
 export function ticksOf(dur: Duration, dots: Dots = 0): number {
   const denom = parseInt(dur, 10);
@@ -328,24 +307,6 @@ export function ticksOf(dur: Duration, dots: Dots = 0): number {
   if (dots === 1) return base * 1.5;
   if (dots === 2) return base * 1.75;
   return base;
-}
-
-export function decomposeTicks(n: number): Array<{ dur: Duration; dots: Dots }> {
-  const out: Array<{ dur: Duration; dots: Dots }> = [];
-  let remaining = n;
-  while (remaining > 0) {
-    let picked = false;
-    for (const entry of TICK_TABLE) {
-      if (entry.ticks <= remaining) {
-        out.push({ dur: entry.dur, dots: entry.dots });
-        remaining -= entry.ticks;
-        picked = true;
-        break;
-      }
-    }
-    if (!picked) break; /* shouldn't happen — TICK_TABLE has a 1-tick entry */
-  }
-  return out;
 }
 
 /** Element duration in 64th-note ticks (real / sounding ticks). Tuplet-aware:
@@ -594,10 +555,15 @@ export function normalizeStaffGroupConventions(doc: Document): void {
  *  every other render pass (2026-09-04): rests that coincide or stand alone at
  *  their single-layer place, section boundaries without a courtesy meter, one
  *  stem direction under a slur, and slurs on the notehead side in two-voice
- *  passages. Each is documented in its
+ *  passages, and a whole-bar rest in every content-free staff cell
+ *  (2026-09-22). Each is documented in its
  *  module; none touches the saved document. */
 function applyRenderConventions(clone: Document, units: RenderUnitIndex | null = null): void {
   unifySlurStems(clone);   // first: the rest pass reads the explicit @stem.dir it writes; unified stems put a single-voice slur on the notehead side by themselves
+  /* Whole-bar rests in content-free cells (notation/measurerests.ts). BEFORE
+     the rest pass, which pins them at their single-layer place when a second
+     layer holds only placeholders. */
+  fillEmptyMeasureRests(clone);
   settleRestLocations(clone);
   applySectionRestarts(clone);
   settleSlurSides(clone);

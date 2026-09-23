@@ -1,4 +1,4 @@
-// Shared tick math for the composer. Two functions:
+// Shared tick math for the composer. Two element functions:
 //   writtenTicks(el)  — @dur + @dots from the element itself (the value as it
 //                       appears on paper).
 //   realTicks(el)     — performed/sounding duration: equals writtenTicks for
@@ -11,6 +11,13 @@
 // Centralizing the math here is the single place where tuplet scaling lives.
 // All time arithmetic in the composer (cursor positions, measure-fill, beat
 // boundaries, playback timing, expression tstamps) flows through realTicks.
+//
+// Plus decomposeTicks(n) — the greedy split of a tick count into written
+// values (placeholders, overflow splits, cosmetic pickup rests). Lives here,
+// re-exported by model/index.ts, so render-clone passes can use it without a
+// runtime import cycle through the model.
+
+import type { Duration, Dots } from './index.js';
 
 /** Element written-ticks from @dur + @dots. 16 (quarter-note) fallback for
  *  malformed/missing attributes — matches the historical behavior of every
@@ -110,4 +117,47 @@ export function realTicks(el: Element): number {
     return writtenTicks(el) * numbase / num;
   }
   return writtenTicks(el);
+}
+
+/* 64th-note tick table for representable durations (greedy decomposition).
+   Largest first. The @dur values here MUST be consistent with ticksOf —
+   e.g. dotted half = ticksOf('2', 1) = 48, so the 48-tick entry must carry
+   dur='2' dots=1, not dur='1' dots=1 (= 96). */
+const TICK_TABLE: ReadonlyArray<{ ticks: number; dur: Duration; dots: Dots }> = [
+  { ticks: 64, dur: '1',  dots: 0 },   /* whole */
+  { ticks: 56, dur: '2',  dots: 2 },   /* double-dotted half */
+  { ticks: 48, dur: '2',  dots: 1 },   /* dotted half */
+  { ticks: 32, dur: '2',  dots: 0 },   /* half */
+  { ticks: 28, dur: '4',  dots: 2 },   /* double-dotted quarter */
+  { ticks: 24, dur: '4',  dots: 1 },   /* dotted quarter */
+  { ticks: 16, dur: '4',  dots: 0 },   /* quarter */
+  { ticks: 14, dur: '8',  dots: 2 },   /* double-dotted 8th */
+  { ticks: 12, dur: '8',  dots: 1 },   /* dotted 8th */
+  { ticks: 8,  dur: '8',  dots: 0 },   /* 8th */
+  { ticks: 7,  dur: '16', dots: 2 },   /* double-dotted 16th */
+  { ticks: 6,  dur: '16', dots: 1 },   /* dotted 16th */
+  { ticks: 4,  dur: '16', dots: 0 },   /* 16th */
+  { ticks: 3,  dur: '32', dots: 1 },   /* dotted 32nd */
+  { ticks: 2,  dur: '32', dots: 0 },   /* 32nd */
+  { ticks: 1,  dur: '64', dots: 0 },   /* 64th */
+];
+
+/** Greedy largest-first split of `n` ticks into representable values (up to
+ *  two dots): ONE value whenever `n` is itself representable. */
+export function decomposeTicks(n: number): Array<{ dur: Duration; dots: Dots }> {
+  const out: Array<{ dur: Duration; dots: Dots }> = [];
+  let remaining = n;
+  while (remaining > 0) {
+    let picked = false;
+    for (const entry of TICK_TABLE) {
+      if (entry.ticks <= remaining) {
+        out.push({ dur: entry.dur, dots: entry.dots });
+        remaining -= entry.ticks;
+        picked = true;
+        break;
+      }
+    }
+    if (!picked) break; /* shouldn't happen — TICK_TABLE has a 1-tick entry */
+  }
+  return out;
 }

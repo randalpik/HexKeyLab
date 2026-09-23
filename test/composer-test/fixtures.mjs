@@ -8868,6 +8868,75 @@ const LINE_LOCKS = {
   },
 };
 
+/* ── Whole-bar rests in empty cells (2026-09-22, notation/measurerests.ts) ──
+   Every content-free staff cell renders a cosmetic rest, on the render clone
+   only: an <mRest> (whole rest centred between the barlines) for a full bar in
+   any meter, beat-aligned rests sized to a pickup. Default doc = piano grand
+   staff, two layers per staff. */
+const ERC = `new DOMParser().parseFromString(window.__hkl_composer.model.serialize({ hejiEnabled: false }), 'application/xml')`;
+const EMPTY_BAR_RESTS = {
+  /* m1 staff 1 holds a note; m1 staff 2 and both staves of m2, m3 are empty →
+     five whole-bar rests. */
+  erest_empty_cells_whole_rest: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [${A4}], duration: '4', dots: 0 });
+      m.appendMeasure(); m.appendMeasure();
+      m.setCursor(0, 1);
+      r();
+    `,
+    visualBaseline: 'erest_empty_cells_whole_rest',
+  },
+  /* 4/4, 3/4, 6/8, 5/4 — the same single whole rest in every empty bar. */
+  erest_any_meter: {
+    setup: `
+      m.appendMeasure(); m.appendMeasure(); m.appendMeasure();
+      m.setMeterAt(1, 3, 4);
+      m.setMeterAt(2, 6, 8);
+      m.setMeterAt(3, 5, 4);
+      m.setCursor(0, 1);
+      r();
+    `,
+    visualBaseline: 'erest_any_meter',
+  },
+  /* A 3-eighth pickup: its empty cells show ONE dotted-quarter rest, not a
+     whole rest (and not quarter + eighth — Max: one rest wherever a single
+     value spells the pickup); the full bar after it keeps its mRest. */
+  erest_pickup_sized_rests: {
+    setup: `
+      m.appendMeasure();
+      m.setPickupAt(0, 3);
+      m.setCursor(0, 1);
+      r();
+    `,
+    visualBaseline: 'erest_pickup_sized_rests',
+  },
+  /* A 5-eighth pickup has no single value: the fewest, largest first —
+     half + eighth. */
+  erest_pickup_split_fewest: {
+    setup: `
+      m.appendMeasure();
+      m.setPickupAt(0, 5);
+      m.setCursor(0, 1);
+      r();
+    `,
+  },
+  /* A click on a cosmetic pickup rest is a click on the empty staff: the
+     cursor lands at that cell's measure-start stop, no error. */
+  erest_click_cosmetic_rest: {
+    setup: `
+      m.appendMeasure();
+      m.setPickupAt(0, 3);
+      m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+      r();
+      const g = document.querySelector('#score g.rest[data-data-hkl-cosmetic="true"]');
+      const b = g.getBoundingClientRect();
+      document.getElementById('score').dispatchEvent(new MouseEvent('click',
+        { clientX: b.left + b.width / 2, clientY: b.top + b.height / 2, button: 0, bubbles: true }));
+    `,
+  },
+};
+
 export const FIXTURES = {
   ...mapTier(EXISTING, 'fast'),
   ...mapTier(CURSOR_CONVENTION, 'fast'),
@@ -8902,6 +8971,7 @@ export const FIXTURES = {
   ...mapKbdTier(HIDE_EMPTY, 'full'),
   ...mapKbdTier(MULTIREST_SPLICE, 'full'),
   ...mapKbdTier(XML_FLAGS, 'full'),
+  ...mapKbdTier(EMPTY_BAR_RESTS, 'full'),
 };
 
 /** Fixture-specific assertions. Map fixture name → list of {name, expr}.
@@ -20519,6 +20589,27 @@ export const FIXTURE_ASSERTIONS = {
 
   mrest_other_staff_slur_keeps_run: [
     { name: 'violin run m2–m4 survives a piano slur hosted in m3', expr: `(() => { const M = window.__hkl_composer, m = M.model; const u = m.renderUnits([3]); return { ok: u.sig === '1-3', detail: u.sig }; })()` },
+  ],
+
+  /* ── Whole-bar rests in empty cells ── */
+  erest_empty_cells_whole_rest: [
+    { name: 'five g.mRest rendered; m1 staff 1 (the note) has none', expr: `(() => { const ms = [...document.querySelectorAll('#score g.measure')]; const per = ms.map(g => [...g.querySelectorAll('g.staff')].map(s => s.querySelectorAll('g.mRest').length)); const ok = JSON.stringify(per) === JSON.stringify([[0,1],[1,1],[1,1]]); return { ok, detail: JSON.stringify(per) }; })()` },
+    { name: 'each whole rest is centred between its barlines (m2, m3)', expr: `(() => { const ms = [...document.querySelectorAll('#score g.measure')].slice(1); const off = []; for (const g of ms) for (const s of g.querySelectorAll('g.staff')) { const mr = s.querySelector('g.mRest'); const lines = [...s.children].filter(c => c.localName === 'path'); if (!mr || !lines.length) { off.push('missing'); continue; } /* Verovio centres on [left edge, right barline's LEFT edge]: the staff lines run on through a final barline's thick stroke. */ const L = Math.min(...lines.map(p => p.getBoundingClientRect().left)); const bars = [...g.querySelectorAll('g.barLine')].map(e => e.getBoundingClientRect().left); const R = bars.length ? Math.max(...bars) : Math.max(...lines.map(p => p.getBoundingClientRect().right)); const b = mr.getBoundingClientRect(); off.push(Math.round(((b.left + b.right) / 2 - (L + R) / 2) * 10) / 10); } return { ok: off.length === 4 && off.every(d => typeof d === 'number' && Math.abs(d) < 2), detail: JSON.stringify(off) }; })()` },
+    { name: 'render clone: one mRest per empty cell, in layer 1, pinned loc 6; saved doc has none', expr: `(() => { const d = ${ERC}; const mrs = [...d.querySelectorAll('mRest')]; const okClone = mrs.length === 5 && mrs.every(x => x.parentElement.getAttribute('n') === '1' && x.getAttribute('loc') === '6'); const live = window.__hkl_composer.model.getDoc().querySelectorAll('mRest').length; const saved = (window.__hkl_composer.model.serialize().match(/<mRest/g) || []).length; return { ok: okClone && live === 0 && saved === 0, detail: JSON.stringify({ clone: mrs.map(x => [x.parentElement.getAttribute('n'), x.getAttribute('loc')]), live, saved }) }; })()` },
+  ],
+  erest_any_meter: [
+    { name: 'every cell of the 4/4, 3/4, 6/8, 5/4 bars draws exactly one whole rest', expr: `(() => { const per = [...document.querySelectorAll('#score g.measure')].map(g => [...g.querySelectorAll('g.staff')].map(s => s.querySelectorAll('g.mRest').length)); const ok = per.length === 4 && per.every(r => r.length === 2 && r.every(n => n === 1)); return { ok, detail: JSON.stringify(per) }; })()` },
+    { name: 'render clone: no placeholder space left in any layer 1', expr: `(() => { const d = ${ERC}; const left = [...d.querySelectorAll('layer[n="1"] > space')].length; return { ok: left === 0, detail: 'spaces ' + left }; })()` },
+  ],
+  erest_pickup_sized_rests: [
+    { name: 'pickup cells: ONE cosmetic dotted quarter in layer 1, no mRest; m2 keeps two mRests', expr: `(() => { const d = ${ERC}; const [p, full] = [...d.querySelectorAll('measure')]; const cells = [...p.querySelectorAll('staff')].map(st => [...st.querySelector('layer[n="1"]').children].map(c => c.localName + ':' + (c.getAttribute('dur') || '') + '.' + (c.getAttribute('dots') || '0') + ':' + (c.getAttribute('data-hkl-cosmetic') || ''))); const ok = JSON.stringify(cells) === JSON.stringify([['rest:4.1:true'],['rest:4.1:true']]) && p.querySelectorAll('mRest').length === 0 && full.querySelectorAll('mRest').length === 2; return { ok, detail: JSON.stringify(cells) }; })()` },
+    { name: 'SVG carries the marker on both pickup rests; the live doc has no rest', expr: `(() => { const n = document.querySelectorAll('#score g.rest[data-data-hkl-cosmetic="true"]').length; const live = window.__hkl_composer.model.getDoc().querySelectorAll('rest').length; return { ok: n === 2 && live === 0, detail: JSON.stringify({ n, live }) }; })()` },
+  ],
+  erest_pickup_split_fewest: [
+    { name: '5-eighth pickup cells: cosmetic half + eighth, largest first', expr: `(() => { const d = ${ERC}; const p = d.querySelector('measure'); const cells = [...p.querySelectorAll('staff')].map(st => [...st.querySelector('layer[n="1"]').children].map(c => c.localName + ':' + (c.getAttribute('dur') || '') + '.' + (c.getAttribute('dots') || '0'))); const ok = JSON.stringify(cells) === JSON.stringify([['rest:2.0','rest:8.0'],['rest:2.0','rest:8.0']]); return { ok, detail: JSON.stringify(cells) }; })()` },
+  ],
+  erest_click_cosmetic_rest: [
+    { name: 'the click lands on the pickup cell\'s measure-start stop', expr: `(() => { const M = window.__hkl_composer, m = M.model; const v = m.getCurrentVoice ? m.getCurrentVoice() : 1; const mi = m.cursorMeasureIdx(v, M.inputState().mode); return { ok: mi === 0 && m.getCursor(v) === m.getMeasureStartCursor(v, 0), detail: JSON.stringify({ v, mi, cur: m.getCursor(v), start: m.getMeasureStartCursor(v, 0) }) }; })()` },
   ],
 };
 

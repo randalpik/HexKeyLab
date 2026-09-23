@@ -176,7 +176,7 @@ const BASE_OPTIONS = {
      layout (render/textlayout.ts): Verovio otherwise emits g.dynam/g.dir/
      g.hairpin with no trace of which staff they belong to. Verovio prefixes
      each with `data-` in the SVG (`data-n`, `data-staff`, `data-place`). */
-  svgAdditionalAttribute: ['note@data-q', 'note@data-r', 'note@color', 'note@data-light-color', 'note@hkl-paren-caut', 'rest@data-tuplet-placeholder', 'rest@visible', 'accid@type',
+  svgAdditionalAttribute: ['note@data-q', 'note@data-r', 'note@color', 'note@data-light-color', 'note@hkl-paren-caut', 'rest@data-tuplet-placeholder', 'rest@visible', 'rest@data-hkl-cosmetic', 'accid@type',
     'staff@n', 'dynam@staff', 'dynam@place', 'dir@staff', 'dir@place', 'hairpin@staff', 'hairpin@place',
     /* Tempo marks join the above-staff slur-clearance rule (render/textlayout.ts). */
     'tempo@staff', 'tempo@place',

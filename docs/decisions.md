@@ -9112,3 +9112,29 @@ is no firmware mechanism forcing it to be more than one.
 **Files**: `apps/hkl/src/midi/handler.ts` (guard + quarantine + `routeChannelMessage` split),
 `apps/hkl/src/state/persistence.ts`, `apps/hkl/src/lumatone/lumadiag.ts`, `apps/hkl/src/ui/init.ts`.
 Gate: `test/hkl-midi/departure.mjs` (42 checks). Instrument retained: `apps/hkl/src/lumatone/probe.ts`.
+
+## Empty-cell whole-bar rests are render-only, not model `<mRest>`s (2026-09-22)
+
+**Context**: Max — "there is never a situation where I want to see a fully empty measure frame on a
+staff." A cell with no content held only `<space>` placeholders and engraved as a bare frame.
+
+**Decision**: a render-clone pass (`notation/measurerests.ts`, in `applyRenderConventions` before
+`settleRestLocations`) replaces the first layer's placeholders of every content-free cell with an
+`<mRest>` (any meter); a pickup bar gets beat-aligned rests summing to its budget instead.
+
+**Why not write `<mRest>` into the model** (the importer already does, for empty imported bars): the
+placeholders ARE the empty cell's cursor home and insertion target; `normalizePlaceholders`, the
+empty-cell flags, multirest units, refill, splice signatures and every edit path assume them. A model
+rest would have to be created and destroyed on every edit that empties or fills a cell. On the clone
+it costs nothing, and "cosmetic, non-interactive" falls out: the cursor reads the model, click
+hit-testing never collects `g.mRest`, and the pickup rests carry `data-hkl-cosmetic`, which `click.ts`
+skips.
+
+**Pickups**: a whole rest would claim a full bar the anacrusis doesn't have, so the pickup shows a rest
+of its own length — ONE rest whenever a single value up to two dots spells it, else the fewest values
+largest first (`decomposeTicks`). The first cut reused the importer's beat-aligned split
+(`beatAlignedRestEvents`); Max rejected it the same day: a half-bar pickup drew two quarter rests,
+which widened the bar and displaced its barline. (The importer's own pickup rests are real model
+content and were not changed.)
+
+**Not covered**: MusicXML export still writes an empty cell as `<forward>` (the saved doc has no rest).
