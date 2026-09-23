@@ -9138,3 +9138,25 @@ which widened the bar and displaced its barline. (The importer's own pickup rest
 content and were not changed.)
 
 **Not covered**: MusicXML export still writes an empty cell as `<forward>` (the saved doc has no rest).
+
+## A tie through another voice is re-arched after the render, lowest clear arch within its width (2026-09-22)
+
+**Context**: Verovio places ties from their two noteheads alone, so a voice crossing the tie's pitch is
+drawn straight through (repro: V1 A4 dotted half tied to a quarter, V2 quarter rest + C5 on beat 2). The
+real case is an arpeggio under a long tie that crosses its pitch.
+
+**Rejected**: flipping the side with `@curvedir`. Max: the side follows voice order (a crossing in a toy
+bar is fixed by swapping voices), and under an arpeggio the other side collides with something else. A
+worthwhile fix has to be precise.
+
+**Decision (Max)**: follow the flipped-slur re-draw (`render/slurlayout.ts`). A tie whose drawn outline
+overlaps a glyph gets the LOWEST arch that clears everything, keeping its endpoints and side. The arch may
+be tall, but never taller than the tie is wide. With no such arch, Verovio's tie stays as drawn.
+`render/tielayout.ts`. It runs after the glyph injection and after the slur pass, whose final curves are
+its obstacles. The slur pass sees Verovio's ties, which are restored before it runs.
+
+**Measured on the ink, not the boxes (Max: "calculate the bounding boxes more carefully to prevent
+unnecessary shifting")**: text by per-character canvas ink, curves by their outlines, everything in the
+system's frame. Before those three rules, the sonata census reported every one of 55 → 9 → 5 "collisions"
+wrongly: cell boxes, curve boxes and instrgap-shifted frames. With them it reports 0 of 309, the right
+answer for a score Max says doesn't show the case.

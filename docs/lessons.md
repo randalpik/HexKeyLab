@@ -4772,3 +4772,35 @@ no timeout. A PIC browning out with that line stuck high stalls the BBB's entire
 probe responses degraded to ~18ms shortly before the device stopped answering altogether: the device does not
 fall off a cliff, it gets progressively slower first. That made "response latency as a continuous health
 signal" look attractive — until the main-thread lesson above showed we cannot measure it from HKL anyway.
+
+## Verovio ties avoid nothing outside their own note (2026-09-22)
+
+Read in `src/tie.cpp` at 6.3.0-425dd7b, so it doesn't have to be re-derived:
+- **Side**: `Tie::GetPreferredCurveDirection` — `@curvedir` first, then the LAYER's drawing stem direction
+  (layer 1 up → tie above), then chord position, then the note's stem.
+- **Shape**: fixed. Control points sit at ¼ and ¾ of the span, a constant `(1.6 − staffLineWidth)` units off
+  the endpoints, whatever the length.
+- **Obstacles**: `UpdateTiePositioning` searches only the start element's own `DOT`/`DOTS`/`FLAG`
+  descendants. The only other adjustments are the staff-line-aware height and `AdjustEnharmonicTies`.
+- **What reaches the tie code from MEI**: `@curvedir` only. `@bulge`, `@bezier`, `@startvo` / `@ho` are
+  not read.
+- **The slur-adjust functor never touches ties**: every "tie" in `adjustslursfunctor.cpp` is `std::tie`.
+
+So another voice crossing the tie's pitch is drawn straight through, and no Verovio option or MEI attribute
+changes that. The fix lives in the DOM (`render/tielayout.ts`, decisions.md 2026-09-22).
+
+## `getBBox` on SVG `<text>` is the character cell, not the ink (2026-09-22)
+
+A `<text>` element's `getBBox` (and `getBoundingClientRect`) covers the whole cell: the font's ascent plus
+descent, times the advance. In Composer every accidental becomes a BravuraText `<text>` once
+`injectHejiGlyphs` has run, plain accidentals included. A sharp's cell is 4 staff spaces tall while its ink
+is 2.3, so any collision logic that trusts the box sees contacts that aren't there. That cost a round with
+Max: two "collisions" on the sonata that weren't. Measure text ink per character with canvas
+`measureText(ch)` (`actualBoundingBox*`) in the computed font, at `getStartPositionOfChar(i)`
+(`render/tielayout.ts` `inkBox`). Geometry (`<use>`, `<path>`, `<polygon>`) is fine: its `getBBox` is tight.
+
+Two companions from the same census:
+- **A curve's box is the region under its arc.** Test against its outline instead.
+- **Post-render passes can't assume one frame per system.** `render/instrgap.ts` translates an
+  instrument's staves and ties, so map each element through its own CTM.
+

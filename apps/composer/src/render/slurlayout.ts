@@ -54,7 +54,7 @@ const END_GAP = 0.75;      // endpoint clearance from the notehead
 const OPEN_DROP = 0.75;    // extra reach of a broken slur's open end past its last covered notehead
 const OPEN_LIFT_MAX = 2;   // how far a broken slur's open end may move back toward its notes to clear
 const END_GAP_TIGHT = 0.4, MARGIN_TIGHT = 0.25;   // second attempt when a lower voice sits right under the end note
-const MARGIN = 0.5;        // clearance kept from every other glyph
+export const MARGIN = 0.5; // clearance kept from every other glyph (also render/tielayout.ts)
 const H_MIN = 1.25, H_START_MAX = 3.5, H_MAX = 6, H_STEP = 0.5;   // bulge range
 const H_RATE = 0.12;       // bulge per unit of span
 const THICK = 0.4;         // control-point offset giving Verovio's 0.6-unit midpoint thickness
@@ -63,9 +63,9 @@ const SAMPLES = 40;
 /* Ledger lines are NOT obstacles: a slur's own endpoint hangs at the level of
    the ledger line under (over) its notehead, so treating the line as a glyph
    made every slur ending on a note beyond the staff unsolvable (m. 43→44). */
-const OBSTACLE_SEL = 'g.notehead, g.stem, g.flag, g.accid, g.dots, g.beam > polygon, g.tupletNum, g.tupletBracket, g.artic, g.rest, g.slur > path, g.tie > path';
+export const OBSTACLE_SEL = 'g.notehead, g.stem, g.flag, g.accid, g.dots, g.beam > polygon, g.tupletNum, g.tupletBracket, g.artic, g.rest, g.slur > path, g.tie > path';
 
-interface Pt { x: number; y: number }
+export interface Pt { x: number; y: number }
 
 /** The notehead a slur endpoint hangs from: a note's own, or the extreme
  *  notehead of a chord on the slur side. */
@@ -82,12 +82,12 @@ function endHead(el: Element, side: 'below' | 'above', frameInv: DOMMatrix): { e
   return best;
 }
 
-const bez = (p0: Pt, p1: Pt, p2: Pt, p3: Pt, t: number): Pt => {
+export const bez = (p0: Pt, p1: Pt, p2: Pt, p3: Pt, t: number): Pt => {
   const u = 1 - t, a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
   return { x: a * p0.x + b * p1.x + c * p2.x + d * p3.x, y: a * p0.y + b * p1.y + c * p2.y + d * p3.y };
 };
-const inside = (p: Pt, b: Box): boolean => p.x >= b.left && p.x <= b.right && p.y >= b.top && p.y <= b.bottom;
-const fmt = (p: Pt): string => `${Math.round(p.x)},${Math.round(p.y)}`;
+export const inside = (p: Pt, b: Box): boolean => p.x >= b.left && p.x <= b.right && p.y >= b.top && p.y <= b.bottom;
+export const fmt = (p: Pt): string => `${Math.round(p.x)},${Math.round(p.y)}`;
 
 /** Re-draw the displaced flipped slurs of every system under `root`. */
 export function layoutFlippedSlurs(root: Element, opts: SlurLayoutOpts): void {

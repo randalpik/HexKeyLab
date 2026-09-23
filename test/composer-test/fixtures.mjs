@@ -8868,6 +8868,58 @@ const LINE_LOCKS = {
   },
 };
 
+/* ── Tie clearance (2026-09-22, render/tielayout.ts) ──
+   Verovio draws a tie from its two noteheads alone; a tie through another
+   voice's glyph is re-arched to the lowest clear height within its width, or
+   kept as Verovio drew it. */
+const TIE_P = `const P = (pname, oct, midi) => ({ q: 0, r: 0, pname, accid: '', oct, midi, colorHex: '#888', velocity: 80 });`;
+const TIE_LAYOUT = {
+  /* Max's repro: V1 A4 dotted half tied to A4 quarter; V2 quarter rest, C5 —
+     the C5 head sat on Verovio's tie. */
+  engr_tieArchesOverOtherVoice: {
+    setup: `
+      ${TIE_P}
+      m.setVoice(1); m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [P('a', 4, 69)], duration: '2', dots: 1 });
+      m.insertChordAtCursor({ notes: [P('a', 4, 69)], duration: '4', dots: 0 });
+      m.setCursor(1, 1); m.toggleTieOnCurrent('insert');
+      m.setVoice(2); m.setCursor(0, 2);
+      m.insertRestAtCursor({ duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [P('c', 5, 72)], duration: '4', dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+    visualBaseline: 'engr_tieArchesOverOtherVoice',
+  },
+  /* A tall V2 chord between two tied quarters: no clear arch within the tie's
+     width, so Verovio's tie stays. */
+  engr_tieKeptWhenTallerThanWide: {
+    setup: `
+      ${TIE_P}
+      m.setVoice(1); m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [P('a', 4, 69)], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [P('a', 4, 69)], duration: '4', dots: 0 });
+      m.setCursor(1, 1); m.toggleTieOnCurrent('insert');
+      m.setVoice(2); m.setCursor(0, 2);
+      m.insertRestAtCursor({ duration: '8', dots: 0 });
+      m.insertChordAtCursor({ notes: [P('b', 4, 71), P('d', 5, 74), P('f', 5, 77), P('a', 5, 81), P('c', 6, 84)], duration: '8', dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+  },
+  /* Nothing in the way: the tie is Verovio's, untouched. */
+  engr_tieClearUntouched: {
+    setup: `
+      ${TIE_P}
+      m.setVoice(1); m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [P('a', 4, 69)], duration: '2', dots: 0 });
+      m.insertChordAtCursor({ notes: [P('a', 4, 69)], duration: '2', dots: 0 });
+      m.setCursor(1, 1); m.toggleTieOnCurrent('insert');
+      r();
+    `,
+  },
+};
+
 /* ── Whole-bar rests in empty cells (2026-09-22, notation/measurerests.ts) ──
    Every content-free staff cell renders a cosmetic rest, on the render clone
    only: an <mRest> (whole rest centred between the barlines) for a full bar in
@@ -8972,6 +9024,7 @@ export const FIXTURES = {
   ...mapKbdTier(MULTIREST_SPLICE, 'full'),
   ...mapKbdTier(XML_FLAGS, 'full'),
   ...mapKbdTier(EMPTY_BAR_RESTS, 'full'),
+  ...mapKbdTier(TIE_LAYOUT, 'full'),
 };
 
 /** Fixture-specific assertions. Map fixture name → list of {name, expr}.
@@ -20610,6 +20663,17 @@ export const FIXTURE_ASSERTIONS = {
   ],
   erest_click_cosmetic_rest: [
     { name: 'the click lands on the pickup cell\'s measure-start stop', expr: `(() => { const M = window.__hkl_composer, m = M.model; const v = m.getCurrentVoice ? m.getCurrentVoice() : 1; const mi = m.cursorMeasureIdx(v, M.inputState().mode); return { ok: mi === 0 && m.getCursor(v) === m.getMeasureStartCursor(v, 0), detail: JSON.stringify({ v, mi, cur: m.getCursor(v), start: m.getMeasureStartCursor(v, 0) }) }; })()` },
+  ],
+  /* ── Tie clearance ── */
+  engr_tieArchesOverOtherVoice: [
+    { name: 'the tie is re-drawn and its outline misses the V2 C5 notehead', expr: `(() => { const g = document.querySelector('#score g.tie'); const path = g && g.querySelector('path'); if (!path) return { ok: false, detail: 'no tie' }; const ctm = path.getScreenCTM(); const L = path.getTotalLength(); const pts = []; for (let i = 0; i <= 200; i++) { const q = path.getPointAtLength(L * i / 200); pts.push(new DOMPoint(q.x, q.y).matrixTransform(ctm)); } const heads = [...document.querySelectorAll('#score g.layer[data-n="2"] g.note g.notehead')].map(h => h.getBoundingClientRect()); const hit = pts.some(p => heads.some(b => p.x >= b.left && p.x <= b.right && p.y >= b.top && p.y <= b.bottom)); return { ok: g.getAttribute('data-hkl-tie') === 'redrawn' && heads.length === 1 && !hit, detail: JSON.stringify({ mark: g.getAttribute('data-hkl-tie'), heads: heads.length, hit }) }; })()` },
+    { name: 'the arch is no taller than it is wide', expr: `(() => { const g = document.querySelector('#score g.tie'); const path = g && g.querySelector('path'); if (!path) return { ok: false, detail: 'no tie' }; const ctm = path.getScreenCTM(); const L = path.getTotalLength(); const pts = []; for (let i = 0; i <= 200; i++) { const q = path.getPointAtLength(L * i / 200); pts.push(new DOMPoint(q.x, q.y).matrixTransform(ctm)); } const xs = pts.map(p => p.x), ys = pts.map(p => p.y); const w = Math.max(...xs) - Math.min(...xs), h = Math.max(...ys) - Math.min(...ys); return { ok: h > 0 && h <= w, detail: JSON.stringify({ w: Math.round(w), h: Math.round(h) }) }; })()` },
+  ],
+  engr_tieKeptWhenTallerThanWide: [
+    { name: 'no clear arch within the width: marked kept, Verovio path untouched', expr: `(() => { const g = document.querySelector('#score g.tie'); const path = g && g.querySelector('path'); return { ok: !!path && g.getAttribute('data-hkl-tie') === 'kept' && !path.hasAttribute('data-hkl-orig-d'), detail: g ? String(g.getAttribute('data-hkl-tie')) : 'no tie' }; })()` },
+  ],
+  engr_tieClearUntouched: [
+    { name: 'a clear tie carries no mark and no re-draw', expr: `(() => { const g = document.querySelector('#score g.tie'); const path = g && g.querySelector('path'); return { ok: !!path && !g.hasAttribute('data-hkl-tie') && !path.hasAttribute('data-hkl-orig-d'), detail: g ? String(g.getAttribute('data-hkl-tie')) : 'no tie' }; })()` },
   ],
 };
 

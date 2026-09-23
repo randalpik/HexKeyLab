@@ -27,6 +27,7 @@ import { layoutBelowStaffText } from './textlayout.js';
 import { layoutInstrumentGaps } from './instrgap.js';
 import { styleTitleBlock } from './pageheader.js';
 import { layoutFlippedSlurs } from './slurlayout.js';
+import { layoutCollidingTies, restoreTieRedraws } from './tielayout.js';
 import { layoutTupletNums } from './tupletnums.js';
 import { repairBarLines } from './barlines.js';
 import type { ComposerModel } from '../model/index.js';
@@ -3372,7 +3373,7 @@ class Renderer {
        tagged). An EMPTY scope means "no systems on this host are imported" and
        must not fall back to the whole host. */
     const t0 = performance.now();
-    const st = { pin: 0, snapBar: 0, snapEdge: 0, noteheads: 0, heji: 0, theme: 0, total: 0, scoped: scope !== undefined, targets: scope ? scope.length : 1 };
+    const st = { pin: 0, snapBar: 0, snapEdge: 0, noteheads: 0, ties: 0, heji: 0, theme: 0, total: 0, scoped: scope !== undefined, targets: scope ? scope.length : 1 };
     const targets: Element[] = scope !== undefined ? scope : [container];
     /* Pin device scale exact so thin staff lines stay grid-aligned (crisp) —
        counters Verovio's whole-px ceil of the root <svg> box. */
@@ -3451,12 +3452,14 @@ class Renderer {
       }
       /* Bracketless tuplet numerals off their beams (render/tupletnums.ts),
          then flipped slurs Verovio carried away from their notes re-drawn at
-         them (render/slurlayout.ts; the numerals are its obstacles, so they
-         settle first) — both before placement: the numeral can grow a system
-         by a few units, and a re-drawn slur hugs its notes, so it only ever
-         shrinks the extents. */
+         them (render/slurlayout.ts; the numerals and Verovio's ties are its
+         obstacles, so the numerals settle first and any tie re-arched by a
+         previous run is put back) — both before placement: the numeral can
+         grow a system by a few units, and a re-drawn slur hugs its notes, so
+         it only ever shrinks the extents. */
       const unitUser = CRISP_PRESETS[this.zoom].unit * 10;
       for (const el of targets) layoutTupletNums(el, { unitUser });
+      for (const el of targets) restoreTieRedraws(el);
       for (const el of targets) layoutFlippedSlurs(el, { unitUser });
     }
     /* Replace tagged placeholder accidentals with BravuraText HEJI / stacked
@@ -3464,6 +3467,17 @@ class Renderer {
     t = performance.now();
     injectHejiGlyphs(container);
     st.heji = performance.now() - t;
+    /* Ties Verovio drew through another voice, re-arched over it
+       (render/tielayout.ts). AFTER the glyph injection — every accidental is a
+       BravuraText <text> from here on, measured by its ink — and after the
+       slur pass, whose final curves are obstacles. Still before placement: a
+       raised tie can grow a system's extents. */
+    t = performance.now();
+    {
+      const unitUser = CRISP_PRESETS[this.zoom].unit * 10;
+      for (const el of targets) layoutCollidingTies(el, { unitUser });
+    }
+    st.ties = performance.now() - t;
     /* Theme: tag the container for the shared notation-theme CSS and repaint
        noteheads with their light-source variant in dark/transparent themes.
        'transparent' shares dark's ink; the .theme-transparent class drops fills.
@@ -3479,7 +3493,7 @@ class Renderer {
 
   /** Per-pass wall of the last `postProcessRendered` call (diagnostics for
    *  `cb-splicecost.js`; A8). */
-  lastPostStats: { pin: number; snapBar: number; snapEdge: number; noteheads: number; heji: number; theme: number; total: number; scoped: boolean; targets: number } | null = null;
+  lastPostStats: { pin: number; snapBar: number; snapEdge: number; noteheads: number; ties: number; heji: number; theme: number; total: number; scoped: boolean; targets: number } | null = null;
 
   /** Page mode: mount the page holding this measure so rectForId / the cursor
    *  overlay can resolve it (a cursor move, scroll-into-view, or playback bar
