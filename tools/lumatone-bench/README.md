@@ -28,6 +28,119 @@ If auto-detection is ambiguous, copy exact names from `--list`:
 
 ## What runs
 
+### Animation benchmark
+
+The standalone animation path uses the same ACK client, snapshot, verification,
+and restoration as the timing benchmark. No HKL app changes. Python standard
+library plus the existing MIDI venv; conversion additionally needs `ffmpeg` and
+`ffprobe`. The source video and generated artifacts stay in ignored `out/`.
+
+The reference is [Alstroemeria Records' official shadow animation](https://www.youtube.com/watch?v=i41KoE0iMYU).
+The downloaded reference is `out/assets/bad-apple.mp4`; its converted 30 fps,
+232.07-second animation is `out/assets/bad-apple.luma.json`. This first benchmark
+plays **silent video**; it does not start backing audio or synthesize notes.
+
+```sh
+# From tools/lumatone-bench; convert any local video to a NEW output filename.
+.venv/bin/python animation.py convert out/assets/bad-apple.mp4 \
+  --vertical-scale .75 --out out/assets/bad-apple.luma.json
+
+# Offline, using measured mean RTT approximations; open replay.html afterward.
+.venv/bin/python animation.py simulate out/assets/bad-apple.luma.json \
+  --out out/apple-simulation-final
+
+# Physical playback on Max's unit (requires its board swap).
+.venv/bin/python bench.py --animation out/assets/bad-apple.luma.json --swap-boards-34
+
+# Short physical excerpt from the beginning.
+.venv/bin/python bench.py --animation out/assets/bad-apple.luma.json --swap-boards-34 --duration 30
+
+# Four-level antialiasing, same geometry, frame rate and peak brightness.
+.venv/bin/python animation.py convert out/assets/bad-apple.mp4 \
+  --levels 4 --vertical-scale .75 --out out/assets/bad-apple-4level.luma.json
+.venv/bin/python animation.py simulate out/assets/bad-apple-4level.luma.json \
+  --out out/apple-simulation-4level
+.venv/bin/python bench.py --animation out/assets/bad-apple-4level.luma.json --swap-boards-34
+```
+
+Four-level output uses RGB channel values **0, 32, 64, 96** with the default
+`--white 96`; changing `--white` scales the entire palette. It uses the same
+spatial averages as binary conversion, quantized to four equally spaced levels.
+A six-point source-gray hysteresis margin around thresholds 42.5/127.5/212.5
+reduces flicker from tiny crossings (`--hysteresis 0` disables it). Large changes
+can jump levels immediately. No temporal dithering or extra packets per update.
+The extra cost comes from more keys changing values as edges move. The converter
+still defaults to binary, with zero hysteresis; existing binary files remain valid.
+
+Disable other SysEx writers as above. Playback saves all RGB values **and** the
+keystroke-lighting flag (GET 0x47), temporarily disables reactive lighting (SET
+0x07), and fully initializes frame zero before starting its monotonic clock.
+Musical mapping, note traffic, aftertouch and pedal configuration stay intact.
+Ctrl+C finishes the outstanding exchange, then restores colors and lighting.
+The existing `--restore snapshot.json` command also restores lighting from new
+snapshots. It remains compatible with older RGB-only snapshots.
+
+**Geometry:** `animation.py` reads HKL's canonical `baseKeys.ts` and applies its
+Lumatone rotation, independently of musical reference/tuning. A small area at
+each physical key position is averaged and quantized to two or four levels. The
+default is width-fit with centered cropping and 25% vertical compression;
+`--vertical-scale .35` approximately fits the whole 4:3 image height, while `.75`
+preserves more vertical shape at the cost of cropping. `--zoom` >1 enlarges the
+image; `--y-offset` moves the sampled source center by a fraction of image height.
+`--threshold` defaults to 128 for binary conversion. Output records levels,
+hysteresis, transform settings, positions and
+source SHA-256. Files use logical physical indices; `--swap-boards-34` changes
+only their SysEx routing at playback, exactly as HKL's setting does.
+
+**Queue protocol:**
+
+1. One globally outstanding SysEx transaction; ACK/error handling stays serialized.
+2. At most one unsent target per key (280 total). Each video frame updates the
+   desired values. Unchanged keys cost nothing. Obsolete transitions are cancelled;
+   no historical frame backlog is replayed.
+3. A continuously outstanding key retains its first-needed frame timestamp.
+   Returning to the predicted device value cancels it; becoming different again
+   starts a fresh age. The pending value always comes from the latest frame.
+4. Always choose a different physical board from the preceding write whenever possible.
+   Within eligible keys choose oldest outstanding frame, then physical center
+   distance, then key index for deterministic ties. If only one board needs work,
+   use it immediately. No no-op writes are inserted as padding.
+5. Age never overrides board alternation. Serving another board makes the previous
+   board eligible again, where oldest-first ordering advances its waiting keys.
+   An early 100 ms age override reduced simulated frame-boundary matching from
+   90.6% to 86.3% by forcing slower same-board writes; all age overrides have been
+   removed. Only repeat a board when no other board has a useful pending update.
+6. Fold the in-flight intent into predicted state. If a frame changes that key
+   while the transaction finishes, schedule the compensating value afterward.
+   Never cancel an in-flight packet. A timeout/rejected write aborts and restores.
+7. The video clock never waits for the queue to empty. At EOF/stop discard unsent
+   animation targets, finish the active exchange, verify known RGB state, restore.
+
+Simulation drives this scheduler with frame events and one completion event at a
+time, using 8.2 ms same-board and 3.1 ms switched-board transactions by default.
+It excludes preparation/restoration and assumes constant RTTs, so its prediction
+is not a substitute for hardware/visual results. Override with `--same-ms` and
+`--other-ms` for comparison.
+
+Physical output adds `animation-trace.json` and a standalone `replay.html` beside
+the usual report/CSV/snapshot. Replay shows target versus ACK-tracked pixels;
+simulation produces the same interactive replay. Both support Play/Pause, a seek
+slider and a `#30` URL fragment to inspect 30 seconds. They work as local files.
+The physical keyboard itself is the live display; browser replay is generated
+after playback. This is not yet an HKL canvas mode.
+
+`report.animation` measures updates/sec across the whole clip, source change
+demand, outstanding age at ACK, queue cancellations/peak size, and Hamming error
+against target frames reconstructed from ACK timestamps at each frame boundary.
+It also records normalized absolute brightness error: a one-level miss in the
+four-level movie counts as one third of a black/white miss. Exact matching becomes
+stricter with more levels; both metrics compare each run to its own target movie,
+and neither establishes whether antialiasing improves perceived image quality.
+Matching fraction includes easy static/black areas; inspect the replay for
+recognizability. The observed maximum transport rate is higher than whole-clip
+updates/sec because unchanged periods naturally leave the queue idle. Readback
+and ACK replay are controller evidence, not optical verification of each LED.
+
 For the **board-rotation follow-up**, run:
 
 ```sh

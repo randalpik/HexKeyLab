@@ -9160,3 +9160,22 @@ unnecessary shifting")**: text by per-character canvas ink, curves by their outl
 system's frame. Before those three rules, the sonata census reported every one of 55 → 9 → 5 "collisions"
 wrongly: cell boxes, curve boxes and instrgap-shifted frames. With them it reports 0 of 309, the right
 answer for a score Max says doesn't show the case.
+
+## Lumatone color sync interleaves boards in a physical top-to-bottom sweep (2026-09-22)
+
+The standalone USB MIDI benchmark measured roughly 121 changed-color updates/s
+when repeating a board versus 318/s when alternating boards; two boards already
+provide the full gain. Max observed the same timings while playing. HKL's old
+left-to-right color wipe repeatedly hit the same board.
+
+Color diffs now sort by physical height (`2q + 7r`, descending), then left-to-right
+within each row. The next key must belong to another SysEx board whenever one has
+pending changes, even if this briefly advances the sweep on a sparse diff. No
+padding writes are added. A full 280-key wipe has no consecutive same-board
+writes. The physical ordering is independent of canvas rotation and uses the
+existing runtime board routing. Queue replacement accounts for the in-flight
+board as well as its predicted color. The serialized ACK/retry transport and
+one-time note-layout setup retain their existing behavior.
+
+Implementation: `apps/hkl/src/lumatone/sync-order.ts`, used by `sync.ts`.
+Hardware-free geometry/routing checks: `test/hkl-midi/sync-order.mjs`.

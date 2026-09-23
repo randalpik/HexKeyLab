@@ -1,0 +1,33 @@
+<!doctype html><meta charset="utf-8"><title>Lumatone animation replay</title>
+<style>
+body{background:#151719;color:#eee;font:16px system-ui;max-width:1100px;margin:30px auto;padding:0 20px}
+canvas{width:100%;background:#08090a;border-radius:10px}button,input{accent-color:#8ec9ce}
+button{padding:8px 20px}input{width:70%}p{color:#aaa}h2{font-size:17px;font-weight:500}
+</style>
+<h1>Lumatone animation</h1><p id="description"></p>
+<button id="play">Play</button> <input id="seek" type="range" min="0" step=".01" value="0"> <span id="time"></span>
+<h2>Target frame</h2><canvas id="target" width="1100" height="290"></canvas>
+<h2 id="label"></h2><canvas id="device" width="1100" height="290"></canvas>
+<p>Replay shows target pixels and ACK-tracked or simulated state, not an optical measurement. Space toggles playback.</p>
+<script>
+const data=/*DATA*/null;
+if(data){
+const {movie,events,initial,duration}=data;
+const levels=movie.levels??2;
+document.getElementById('description').textContent=`${movie.frames.length} frames · ${movie.fps} fps · ${levels} levels · vertical scale ${movie.mapping.vertical_scale}`;
+document.getElementById('label').textContent=data.label;
+const slider=document.getElementById('seek'), button=document.getElementById('play');slider.max=duration;
+let running=false, origin=0, position=Math.max(0,Math.min(duration,Number(location.hash.slice(1))||0)),cursor=0,state=initial.slice(),last=-1;
+function draw(id,values){const ctx=document.getElementById(id).getContext('2d');ctx.clearRect(0,0,1100,290);
+ const angle=Math.atan(1.54/(3*1.78)),scale=17.5;
+ movie.points.forEach(([x,y],i)=>{ctx.beginPath();for(let j=0;j<6;j++){const a=Math.PI/6+j*Math.PI/3-angle;
+ ctx.lineTo(550+(x+.89*Math.cos(a))*scale,145+(y+.89*Math.sin(a))*scale)}ctx.closePath();const gray=Math.round(32+206*Number(values[i])/(levels-1));ctx.fillStyle=`rgb(${gray},${gray},${gray})`;ctx.fill();ctx.strokeStyle='#444';ctx.stroke()});}
+function render(t){if(t<last){cursor=0;state=initial.slice()}while(cursor<events.length&&events[cursor][0]<=t){const e=events[cursor++];state[e[1]]=e[2]}
+ const frame=movie.frames[Math.min(movie.frames.length-1,Math.floor(t*movie.fps))];draw('target',frame);draw('device',data.has_trace?state:frame);
+ document.getElementById('time').textContent=`${t.toFixed(1)} / ${duration.toFixed(1)} s`;slider.value=t;last=t;}
+function toggle(){if(position>=duration){position=0;render(0)}running=!running;origin=performance.now()/1000-position;button.textContent=running?'Pause':'Play'}
+button.onclick=toggle;slider.oninput=()=>{position=Number(slider.value);origin=performance.now()/1000-position;render(position)};
+document.onkeydown=e=>{if(e.code==='Space'){e.preventDefault();toggle()}};
+function tick(){if(running){position=Math.min(duration,performance.now()/1000-origin);render(position);if(position>=duration){running=false;button.textContent='Play'}}requestAnimationFrame(tick)}render(position);tick();
+}
+</script>

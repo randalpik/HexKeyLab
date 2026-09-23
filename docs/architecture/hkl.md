@@ -195,7 +195,7 @@ Consequence: 10:7 reads as "greater augmented 4th + septimal comma", 7:5 as "les
 
 **Auto-sync** (checkbox + status badge):
 - On every color-affecting state change, `syncLumatoneColors()` computes the 280-entry target, diffs against tracked `deviceColors`, queues only changes.
-- **Visual wipe sort**: changed keys pushed +q (L→R), −r (top→bottom).
+- **Interleaved top-to-bottom wipe**: `lumatone/sync-order.ts` ranks changed keys by physical Lumatone height (`2q + 7r`, descending), then left-to-right within a row. Always select a different SysEx board when another board has pending changes; sparse diffs may step ahead in the wipe to do so. Only repeat when all remaining changes belong to the same board. Routing honors the board-swap toggle; canvas rotation does not affect physical ordering. A replacement batch seeds this order from the in-flight board (or the last setup message when setup precedes colors).
 - **In-flight race**: an awaiting-ACK SysEx's color is folded into the predicted snapshot so the diff accounts for the device's near-future state.
 - **Queue swap, not restart**: a new sync replaces `sysexQueue` without cancelling the in-flight message (which finishes naturally). `sysexCancelAll()` tears everything down when Auto-sync is turned off.
 

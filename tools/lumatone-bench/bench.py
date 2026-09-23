@@ -299,6 +299,9 @@ def main():
     parser.add_argument('--timeout', type=float, default=2, help='ACK timeout seconds (default 2)')
     parser.add_argument('--out', type=Path, help='New output directory')
     parser.add_argument('--restore', type=Path, help='Restore snapshot.json from an earlier run, then exit')
+    parser.add_argument('--animation', type=Path, help='Play a converted animation instead of benchmark phases')
+    parser.add_argument('--duration', type=float, help='Limit animation playback seconds (default full movie)')
+    parser.add_argument('--swap-boards-34', action='store_true', help='Use HKL swapped physical-board routing (Max\'s unit)')
     args = parser.parse_args()
     if (not math.isfinite(args.seconds) or args.seconds <= 0
             or not math.isfinite(args.timeout) or args.timeout <= 0
@@ -306,7 +309,15 @@ def main():
         parser.error('seconds/timeout must be finite and positive; white must be 1–255')
     if sorted(args.boards) != [1, 2, 3, 4, 5] or (args.repeats is not None and args.repeats < 1):
         parser.error('boards must be a permutation of 1 2 3 4 5; repeats must be positive')
-    schedule = schedule_for(args)
+    if args.duration is not None and (not math.isfinite(args.duration) or args.duration <= 0):
+        parser.error('duration must be finite and positive')
+    if args.animation and args.restore:
+        parser.error('--animation and --restore are mutually exclusive')
+    movie = None
+    if args.animation:
+        from animation import load_movie
+        movie = load_movie(args.animation)
+    schedule = [] if movie else schedule_for(args)
     try:
         import mido
         mido.set_backend('mido.backends.rtmidi')
@@ -328,12 +339,13 @@ def main():
 
     signal.signal(signal.SIGINT, request_stop)
     signal.signal(signal.SIGTERM, request_stop)
-    report = {'benchmark_version': 2, 'started_utc': datetime.now(timezone.utc).isoformat(),
+    report = {'benchmark_version': 3, 'started_utc': datetime.now(timezone.utc).isoformat(),
               'platform': platform.platform(), 'python': sys.version,
               'input': input_name, 'output': output_name,
               'settings': {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
               'schedule': schedule, 'phases': [], 'restored': False}
     original = None
+    original_lights = None
     writes_started = False
     exit_code = 0
     print(f'Results: {out.resolve()}\nStop HKL Auto-sync and other SysEx writers before running.', flush=True)
@@ -354,18 +366,35 @@ def main():
                     if snapshot.get('format') != 'hkl-lumatone-rgb-v1':
                         raise ValueError('Unrecognized snapshot format')
                     original = validate_colors(snapshot['colors'])
+                    original_lights = snapshot.get('lights_on_keystroke')
+                    if original_lights is not None and (type(original_lights) is not int or original_lights not in (0, 1)):
+                        raise ValueError('Invalid saved keystroke-lighting flag')
                     writes_started = True
                     client.restore(original)
                     report['restored'] = True
                 else:
                     print('Reading and saving all 280 original colors…', flush=True)
                     original = client.read_colors()
+                    if movie:
+                        flags = client.exchange(packet(0, 0x47))
+                        if len(flags) != 4 or flags[1] not in (0, 1):
+                            raise RuntimeError('Cannot snapshot keystroke-lighting flag; refusing animation')
+                        original_lights = flags[1]
                     write_json(out / 'snapshot.json', {
                         'format': 'hkl-lumatone-rgb-v1', 'firmware': report['firmware'],
-                        'output': output_name, 'colors': [original[k] for k in ALL_KEYS]})
+                        'output': output_name, 'colors': [original[k] for k in ALL_KEYS],
+                        'lights_on_keystroke': original_lights})
                     state = original.copy()
-                    print(f'{len(schedule)} phases; {len(schedule) * args.seconds:g}s timed work '
-                          'plus RGB verification/restoration.', flush=True)
+                    if movie and not stop:
+                        from animation import play
+                        writes_started = True
+                        if original_lights:
+                            client.exchange(packet(0, 0x07, (0, 0, 0, 0)))
+                        print('Preparing animation frame zero…', flush=True)
+                        play(client, movie, state, args, lambda: stop, report, out)
+                    if schedule:
+                        print(f'{len(schedule)} phases; {len(schedule) * args.seconds:g}s timed work '
+                              'plus RGB verification/restoration.', flush=True)
                     for spec in schedule:
                         if stop:
                             break
@@ -387,6 +416,19 @@ def main():
                         report['restore_error'] = str(exc)
                         print(f'RESTORATION FAILED: {exc}. Use --restore with snapshot.json after reconnecting.',
                               file=sys.stderr, flush=True)
+                        exit_code = 1
+                if writes_started and original_lights is not None:
+                    try:
+                        client.phase = client.run_id = 'restore-lighting'
+                        client.exchange(packet(0, 0x07, (original_lights, 0, 0, 0)))
+                        flags = client.exchange(packet(0, 0x47))
+                        if len(flags) != 4 or flags[1] != original_lights:
+                            raise RuntimeError('Keystroke-lighting restoration mismatch')
+                        report['lighting_restored'] = True
+                    except Exception as exc:
+                        report['restored'] = False
+                        report['lighting_restore_error'] = str(exc)
+                        print(f'LIGHTING RESTORATION FAILED: {exc}. Use --restore with snapshot.json.', file=sys.stderr)
                         exit_code = 1
     except Exception as exc:
         report['port_error'] = str(exc)

@@ -270,7 +270,7 @@ This section is for the small audience that owns a Lumatone. None of it is neede
 
 When a Lumatone is plugged in over USB, HKL becomes a full controller for it:
 
-- **Auto-sync colors**: tick **Auto-sync** and the Lumatone's LEDs match the on-screen colors. Reference-note shifts, tuning changes, and selection highlights all push to the device. The sync is diff-based and message-throttled, so only the bytes that actually need to change ride the wire.
+- **Auto-sync colors**: tick **Auto-sync** and the Lumatone's LEDs match the on-screen colors. Reference-note shifts, tuning changes, and selection highlights all push to the device. Changed keys update in a top-to-bottom sweep, alternating boards for faster transfer. Only keys whose colors change are sent.
 - **Status badge**: green "Lumatone Connected" / red "Not Connected", plus a sync activity indicator.
 - **MIDI input**: physical key presses route through HKL's audio engine using the same tuning math as on-screen play. Polyphonic aftertouch (per-key pressure, modulating per-voice volume) is supported.
 - **Pedal modes**: a dropdown selects between two interpretations of the sustain jack:

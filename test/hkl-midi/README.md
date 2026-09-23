@@ -1,5 +1,18 @@
 # test/hkl-midi
 
+## Color sync ordering (hardware-free)
+
+```sh
+node --import ./test/orchestrator-smoke/register-ts.mjs test/hkl-midi/sync-order.mjs
+```
+
+Checks full/sparse diffs, an initial in-flight board, single-board exhaustion,
+both board maps, and physical top-to-bottom ordering independent of canvas
+rotation. Full sweeps must have zero same-board transitions. No dev server or
+MIDI device is needed.
+
+## Device departure and power-off guard
+
 Behavioral gate for HKL's **Lumatone MIDI input path** — device-departure
 handling and the opt-in power-off note guard.
 

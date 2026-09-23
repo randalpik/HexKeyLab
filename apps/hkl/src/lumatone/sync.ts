@@ -22,6 +22,7 @@ import {
   buildNoteSysEx, buildColorSysEx, buildToggleSysEx,
 } from './protocol.js';
 import { sysex } from './sysex.js';
+import { orderColorSync } from './sync-order.js';
 import type { SysexMessage } from '../types.js';
 
 /* Unified sync entry point. Builds the full queue (setup if needed + color diff),
@@ -74,14 +75,11 @@ export function syncLumatoneColors(): void {
     if (predicted[i] === target[i]) continue;
     changedIdx.push(i);
   }
-  /* Sort left→right: +q overall, −r within same q (visual wipe) */
-  changedIdx.sort(function (a, b) {
-    const dq = baseKeys[a][0] - baseKeys[b][0];
-    if (dq !== 0) return dq;
-    return baseKeys[b][1] - baseKeys[a][1];
-  });
-  for (let j = 0; j < changedIdx.length; j++) {
-    const i = changedIdx[j];
+  /* Top→bottom physical wipe with unconditional board alternation where
+     possible. Setup precedes colors; otherwise the in-flight board seeds
+     ordering so a mid-push replacement also avoids repeating that board. */
+  const previousBoard = newQ.length ? newQ[newQ.length - 1][4] : inFlight?.[4];
+  for (const i of orderColorSync(changedIdx, previousBoard)) {
     const group = Math.floor(i / 56), keyIdx = i % 56;
     const board = sysexBoardFor(group);
     newQ.push(buildColorSysEx(board, keyIdx, target[i], i));
