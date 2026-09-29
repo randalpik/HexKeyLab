@@ -261,7 +261,7 @@ function makeClef(doc: Document, spec: ClefSpec): Element {
 }
 
 /** True iff a layer holds any real content (note/chord/rest/tuplet/tremolo) —
- *  not just a layout `<space>` placeholder or an `<mRest>`. A layer whose only
+ *  not just a layout `<space>` placeholder. A layer whose only
  *  content is `<tuplet>`s still counts (else a mid-measure clef change over a
  *  tripleted voice is dropped — the clef must be inserted into that layer). */
 function layerHasContent(layerEl: Element): boolean {
@@ -1349,11 +1349,13 @@ export function importMusicXml(xmlText: string): string {
                  reduced pickup budget, NOT a whole-measure <mRest> (which would
                  draw a whole rest spanning the short bar). */
               appendLayerChildren(doc, layerEl, beatAlignedRestEvents(pickupTicks, runCount, runUnit), measureEl, voice, partIdx, ctx);
-            } else {
-              /* Empty full bar → a single <mRest> (centered whole rest,
-                 meter-agnostic — the conventional empty-measure glyph). */
-              layerEl.appendChild(el(doc, 'mRest', { 'xml:id': newId('mr') }));
             }
+            /* Empty full bar → an EMPTY layer (normalizePlaceholders fills it).
+               Never a stored <mRest>: the whole-bar rest is a render-time
+               function of the cell (notation/measurerests.ts), drawn only while
+               every layer of the cell is empty. Stored, it went stale the moment
+               the other voice got content — drawn beside it, and typed into as
+               a zero-tick element (2026-09-28). */
           } else {
             appendLayerChildren(doc, layerEl, evs, measureEl, voice, partIdx, ctx);
             recordOctaveAnchors(evs, mi);

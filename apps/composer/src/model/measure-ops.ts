@@ -168,9 +168,9 @@ export type VoiceMoveResult =
 
 /** True when a layer holds nothing but placeholder `<space>`s — the state
  *  `normalizePlaceholders` leaves an empty cell in. Stricter than
- *  `layerIsEmpty` (model/empty-flags.ts), which also calls a layer holding an
- *  `<mRest>` empty: an `<mRest>` is a written whole-measure rest, so moving
- *  notes on top of one would produce a measure with both. */
+ *  `layerIsEmpty` (model/empty-flags.ts), which ignores every `<space>`, not
+ *  just placeholders. (The document never holds an `<mRest>`: the whole-bar
+ *  rest is drawn at render time — model/placeholders.ts.) */
 function holdsOnlyPlaceholders(layer: Element): boolean {
   for (let c = layer.firstElementChild; c; c = c.nextElementSibling) {
     if (!isPlaceholder(c)) return false;

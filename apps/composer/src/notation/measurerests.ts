@@ -25,8 +25,13 @@
 // Only the FIRST layer gets the rest; the other layers keep their
 // placeholders, and settleRestLocations (which runs after this) pins the rest
 // at its single-layer place, since nothing visible meets it. A cell already
-// drawing a full-measure glyph (an imported <mRest>, a collapsed <multiRest>)
-// is left alone.
+// drawing a full-measure glyph (a collapsed <multiRest>) is left alone.
+//
+// This pass is the ONLY source of a whole-bar rest (2026-09-28). The document
+// never stores an <mRest>: the importer writes an empty layer for a MusicXML
+// measure rest, and normalizePlaceholders scrubs one from an older file. A
+// stored rest could not follow the cell's content — it stayed drawn after the
+// other voice was filled and took typed notes as a zero-tick sibling.
 
 import { el } from '@hkl/notation/mei-build.js';
 import { HKL_NS } from '../expressions.js';
@@ -36,8 +41,8 @@ import { decomposeTicks } from '../model/ticks.js';
 export const COSMETIC_ATTR = 'data-hkl-cosmetic';
 
 /** Anything that makes a cell NOT empty. A <clef> does not: a clef change in
- *  an otherwise empty bar still wants its rest. <mRest>/<multiRest> already
- *  draw one. */
+ *  an otherwise empty bar still wants its rest. <mRest> (this pass's own
+ *  output, for idempotency) and <multiRest> already draw one. */
 const FILLED: ReadonlySet<string> = new Set([
   'chord', 'note', 'rest', 'tuplet', 'fTrem', 'bTrem', 'beam', 'mRest', 'multiRest',
 ]);

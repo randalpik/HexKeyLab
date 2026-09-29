@@ -26,7 +26,14 @@ export function isPlaceholder(elem: Element): boolean {
  *
  *  Tuplet-internal placeholders (data-tuplet-placeholder) are never touched
  *  here — those live inside <tuplet> elements and are managed by
- *  tuplet-specific code. */
+ *  tuplet-specific code.
+ *
+ *  A layer-level `<mRest>` is stripped like a placeholder: the whole-bar rest
+ *  is never document state. It is a render-time function of the cell
+ *  (notation/measurerests.ts draws one while every layer is empty), so a
+ *  stored one — a file saved before 2026-09-28, when the MusicXML importer
+ *  still wrote them — is scrubbed on load (every load path ends here) and by
+ *  any later edit that touches its layer. */
 export function normalizePlaceholders(
   doc: Document,
   ticksForLayer: (layer: Element) => number,
@@ -42,15 +49,14 @@ export function normalizePlaceholders(
   for (const layer of layers) {
     /* ONE children snapshot per layer (Phase D): this runs over every layer in
        the document on every edit — ~1800 on the sonata — and used to materialise
-       `layer.children` three separate times (content sum, mRest test, and the
-       idempotency check). Nothing mutates the layer between them. */
+       `layer.children` twice (content sum and the idempotency check). Nothing
+       mutates the layer between them. */
     const kids = Array.from(layer.children);
     /* Compute the desired trailing placeholder decomposition for this layer. */
     let used = 0;
-    /* An <mRest> is a full-measure rest — it fills the measure by definition, so
-       the layer needs NO trailing placeholder. (Adding one made Verovio size the
-       measure as a breve rest — the "double whole rest" bug.) */
-    let hasMRest = false;
+    /* Stored <mRest>s to scrub (see the doc comment). They count for nothing:
+       the layer's placeholders are sized from its real content alone. */
+    const staleMRests: Element[] = [];
     let hasContent = false;
     for (const c of kids) {
       const ln = c.localName;
@@ -65,7 +71,7 @@ export function normalizePlaceholders(
         used += realTicks(c);
         hasContent = true;
       } else if (ln === 'mRest') {
-        hasMRest = true;
+        staleMRests.push(c);
       } else if (isCellContent(ln)) {
         hasContent = true;             // a layer <clef> also un-empties the cell
       }
@@ -79,7 +85,7 @@ export function normalizePlaceholders(
       const staff = layer.parentElement;
       if (staff && staff.localName === 'staff') clearEmptyFlags(staff);
     }
-    const remaining = hasMRest ? 0 : ticksForLayer(layer) - used;
+    const remaining = ticksForLayer(layer) - used;
     const desired = remaining > 0 ? decomposeTicks(remaining) : [];
 
     /* IDEMPOTENT: if the layer's placeholders already match `desired` exactly
@@ -103,17 +109,20 @@ export function normalizePlaceholders(
     const trailing = body.slice(body.length - desired.length);
     const dotsOf = (c: Element) => parseInt(c.getAttribute('dots') ?? '0', 10) || 0;
     const matches =
+      staleMRests.length === 0 &&
       existingPh.length === desired.length &&
       trailing.length === desired.length &&
       trailing.every((c, i) =>
         isPlaceholder(c) && c.getAttribute('dur') === desired[i].dur && dotsOf(c) === desired[i].dots);
     if (matches) continue;                       // already correct — don't churn ids
 
-    /* Otherwise rebuild: strip existing placeholders, insert fresh ones at the
-       tail — before a trailing clef run, else appended. */
+    /* Otherwise rebuild: strip existing placeholders (and any stored <mRest>),
+       insert fresh ones at the tail — before a trailing clef run, else
+       appended. */
     rebuilt++;
     const tailAnchor = kids[tailStart] ?? null;
     for (const c of existingPh) layer.removeChild(c);
+    for (const c of staleMRests) layer.removeChild(c);
     for (const p of desired) {
       const space = el(doc, 'space', {
         'xml:id': newId('sp'),

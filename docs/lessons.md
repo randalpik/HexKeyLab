@@ -1626,6 +1626,8 @@ Two non-obvious Verovio facts, found reproducing a Finale import bug (measure 75
 
 ## An `<mRest>` needs the placeholder-fill and placeholder-invariant to treat it as a full measure, or it renders as a double-whole (breve) rest
 
+**Superseded 2026-09-28**: the document no longer stores `<mRest>` at all (the importer writes an empty layer; `normalizePlaceholders` scrubs stored ones), so this accommodation is gone — see the lesson "A render concern stored in the document goes stale". Kept for the SMuFL gotcha below.
+
 An empty imported bar (`<rest measure="yes"/>`) becomes a single `<mRest>` — Verovio's centered whole rest, meter-agnostic (the conventional empty-bar glyph). But the Composer model's tick math doesn't count `<mRest>` (it's not in `contentChildren`, and `realTicks` has no case for it → 16-tick fallback). So `normalizePlaceholders` saw the layer as underfull and appended a `<space>` placeholder next to the mRest — and Verovio, seeing `mRest` + a `space`, sized the bar as a **double-whole (breve) rest** ("double whole rest destroying alignment"). Fix: `normalizePlaceholders` treats a layer containing an `<mRest>` as full (no placeholder), and the composer-test `assertPlaceholderInvariant` skips mRest layers (full by definition). `<mRest>` isn't a cursor stop (not in `layerStops`/`contentChildren`), so an mRest layer is treated as an empty voice — consistent with the existing empty-measure nav model (the measure wrapper is the stop). (SMuFL gotcha that cost time here: `E4E3` is `restWhole`, `E4E2` is `restDoubleWhole` — off-by-one in the codepoint table sent me chasing a phantom breve.)
 
 ## MusicXML slur/wavy pairing is per-PART, not global-by-number
@@ -4862,3 +4864,19 @@ slot's reference, so at a barline it sees M's tail run AND M+1's head run.
   starting at `c`), and each further press extends by one beat; a range
   fixture that assumes "the beat just passed" lands one note early.
 
+## A render concern stored in the document goes stale — and carving it out of a later contract keeps it alive
+
+The whole-bar rest was two things at once: a stored `<mRest>` from the MusicXML importer, and (from
+2026-09-22) a render-clone rest for empty cells. The render pass explicitly left cells "already drawing an
+`<mRest>`" alone, so the stored one kept every property the contract was meant to rule out. It could not
+track its cell: once the other voice got content it stayed drawn beside it, and a note typed into its own
+voice was appended after it (the model counted it as zero ticks, so a whole bar of notes still "fit"),
+producing an overfull bar. Each earlier symptom had been fixed by teaching one more module about the stored
+element (placeholder fill, `Alt+V`'s destination test, playback's full-bar advance) while the cursor and
+insertion code still treated it as nothing. Rules:
+- **If a glyph is a function of content, never store it.** A stored copy is a cache with no invalidation.
+- **When a new contract lands, migrate the old representation; don't grandfather it.** "The importer
+  already does X" in a design note is a TODO, not a justification.
+- **Patching a symptom by making one more module tolerate a foreign element spreads the inconsistency.**
+  Count how many modules disagree about the element before adding another special case — here it was five.
+Resolved 2026-09-28 by scrubbing stored `<mRest>` in `normalizePlaceholders` (decisions.md).

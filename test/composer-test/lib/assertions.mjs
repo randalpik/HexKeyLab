@@ -134,7 +134,10 @@ export const ASSERTION_LIB = `
   }
 
   /** Per-measure placeholder invariant: every layer's contentTicks +
-   *  placeholderTicks equals measureTicks. */
+   *  placeholderTicks equals measureTicks, and no layer holds a stored
+   *  <mRest> — the whole-bar rest is render-only (2026-09-28; see
+   *  model/placeholders.ts), so one in the live document is a contract
+   *  breach in every fixture, not a full layer. */
   function assertPlaceholderInvariant() {
     const ticksOf = (dur, dots) => {
       const denom = parseInt(dur, 10);
@@ -175,9 +178,12 @@ export const ASSERTION_LIB = `
          ticks-per-measure; measureTicksForLayer resolves the layer's measure). */
       const layers = measures[mi].querySelectorAll('layer');
       for (const layer of layers) {
-        /* An <mRest> is a full-measure rest — it fills the bar by definition
-           (no @dur, no trailing placeholder), so the layer is complete. */
-        if (Array.from(layer.children).some((c) => c.localName === 'mRest')) continue;
+        if (Array.from(layer.children).some((c) => c.localName === 'mRest')) {
+          fails.push('measure ' + mi + ' staff/layer n=' +
+            layer.parentElement?.getAttribute('n') + '/' + layer.getAttribute('n') +
+            ': stored <mRest> (whole-bar rests are render-only)');
+          continue;
+        }
         const mTicks = m().measureTicksForLayer(layer);
         const t = layerTicks(layer);
         if (Math.abs(t - mTicks) > 0.001) {

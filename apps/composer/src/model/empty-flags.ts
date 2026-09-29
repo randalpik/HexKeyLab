@@ -14,8 +14,8 @@
  * Neither touches playback or the cursor's flat index.
  *
  * Empty = every <layer> of the staff has no content child (chord | note | rest
- * | tuplet | fTrem | bTrem — <space> placeholders and an imported <mRest> both
- * count as empty) and no <clef>. */
+ * | tuplet | fTrem | bTrem — <space> placeholders count as empty) and no <clef>.
+ * (A whole-bar <mRest> is never document state; see model/placeholders.ts.) */
 
 import type { ComposerModel } from './index.js';
 
@@ -51,8 +51,8 @@ export function isCellContent(localName: string): boolean {
   return CONTENT_NAMES.has(localName) || localName === 'clef';
 }
 
-/** True iff the layer holds no musical content: only placeholders / spaces /
- *  an <mRest>, and no <clef>. */
+/** True iff the layer holds no musical content: only placeholders / spaces,
+ *  and no <clef>. */
 export function layerIsEmpty(layer: Element): boolean {
   for (let c = layer.firstElementChild; c; c = c.nextElementSibling) {
     if (isCellContent(c.localName)) return false;

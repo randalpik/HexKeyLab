@@ -3914,14 +3914,17 @@ const SELECTION = {
     setupKeys: [{ key: 'ArrowRight', shift: true }],
   },
 
-  /* Imported whole-measure rest: the layer holds an <mRest> and nothing else
-     (no placeholders — normalizePlaceholders treats mRest as full). */
+  /* A file saved before 2026-09-28 whose layer holds a stored <mRest> and
+     nothing else. Load scrubs it to placeholders (the whole rest is drawn
+     cosmetically), so the beat is an ordinary empty one. */
   sel_beat_enter_mRest: {
     setup: `
-      const layer = m.allMeasures()[0].querySelector('staff[n="1"] layer[n="1"]');
-      for (const c of Array.from(layer.children)) layer.removeChild(c);
-      const mr = m.getDoc().createElementNS('http://www.music-encoding.org/ns/mei', 'mRest');
+      const d = new DOMParser().parseFromString(m.serialize(), 'application/xml');
+      const layer = d.querySelector('measure staff[n="1"] layer[n="1"]');
+      while (layer.firstChild) layer.removeChild(layer.firstChild);
+      const mr = d.createElementNS('http://www.music-encoding.org/ns/mei', 'mRest');
       mr.setAttribute('xml:id', 'mr_sel_test'); layer.appendChild(mr);
+      m.replaceDocument(new XMLSerializer().serializeToString(d));
       m.setCursor(0, 1);
     `,
     setupKeys: [{ key: 'ArrowRight', shift: true }],
@@ -6536,11 +6539,12 @@ const PHASE1 = {
   },
 
   /* MusicXML import — empty middle measure (full-measure rest). m1 whole note,
-     m2 an empty bar (<rest measure="yes"/> → <mRest>), m3 whole note. Regression
-     guard: an <mRest> must advance the voice by a FULL measure so m3's note
-     stays measure-aligned. Before the fix, mRest was dropped from the playback
-     walk → m3's note played a measure early (staves desync). Asserted in
-     FIXTURE_ASSERTIONS.mRest_emptyMeasureStaysInSync via buildPlayback. */
+     m2 an empty bar (<rest measure="yes"/> → an empty layer; the whole rest is
+     cosmetic since 2026-09-28), m3 whole note. Regression guard: the empty bar
+     must advance the voice by a FULL measure so m3's note stays
+     measure-aligned. Originally an imported <mRest> was dropped from the
+     playback walk → m3's note played a measure early (staves desync). Asserted
+     in FIXTURE_ASSERTIONS.mRest_emptyMeasureStaysInSync via buildPlayback. */
   mRest_emptyMeasureStaysInSync: {
     setup: `
       const A = '<attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
@@ -9176,6 +9180,25 @@ const TIE_LAYOUT = {
    any meter, beat-aligned rests sized to a pickup. Default doc = piano grand
    staff, two layers per staff. */
 const ERC = `new DOMParser().parseFromString(window.__hkl_composer.model.serialize({ hejiEnabled: false }), 'application/xml')`;
+/* Imported empty bars (2026-09-28): a MusicXML <rest measure="yes"/> must not
+   survive import as a stored <mRest> — the whole-bar rest is a render-time
+   function of the cell (fillEmptyMeasureRests), never document state. Single
+   part, single staff, 4/4; MR_TWO_VOICE declares voice 2 in m1 so the part maps
+   voice 1 → layer 1, voice 2 → layer 2. */
+const MR_ATTR = '<attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+  + '<time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>';
+const mrWhole = (step, oct, voice = 1) => '<note><pitch><step>' + step + '</step><octave>' + oct + '</octave></pitch>'
+  + '<duration>96</duration><voice>' + voice + '</voice><type>whole</type></note>';
+const MR_MEASURE_REST = '<note><rest measure="yes"/><duration>96</duration><voice>1</voice></note>';
+const mrScore = (...bars) => '<?xml version="1.0"?><score-partwise version="3.0">'
+  + '<part-list><score-part id="P1"><part-name>T</part-name></score-part></part-list><part id="P1">'
+  + bars.map((b, i) => '<measure number="' + (i + 1) + '">' + (i === 0 ? MR_ATTR : '') + b + '</measure>').join('')
+  + '</part></score-partwise>';
+const MR_EMPTY_BAR = JSON.stringify(mrScore(mrWhole('C', 5), MR_MEASURE_REST, mrWhole('E', 5)));
+const MR_TWO_VOICE = JSON.stringify(mrScore(
+  mrWhole('C', 5) + '<backup><duration>96</duration></backup>' + mrWhole('C', 4, 2),
+  MR_MEASURE_REST, mrWhole('E', 5)));
+
 const EMPTY_BAR_RESTS = {
   /* m1 staff 1 holds a note; m1 staff 2 and both staves of m2, m3 are empty →
      five whole-bar rests. */
@@ -9235,6 +9258,63 @@ const EMPTY_BAR_RESTS = {
       const b = g.getBoundingClientRect();
       document.getElementById('score').dispatchEvent(new MouseEvent('click',
         { clientX: b.left + b.width / 2, clientY: b.top + b.height / 2, button: 0, bubbles: true }));
+    `,
+  },
+  /* Imported empty bar: no stored <mRest>, the layer holds placeholders only,
+     and the render still draws exactly one (cosmetic) whole-bar rest there. */
+  erest_import_mrest_scrubbed: {
+    setup: `
+      window.__composerImportMusicXml(${MR_EMPTY_BAR});
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+  },
+  /* The sonata m75 shape: V1's bar was an imported measure rest, then V2 got
+     content. The cell is no longer empty, so no whole rest may be drawn. */
+  erest_import_mrest_siblingEdit: {
+    setup: `
+      window.__composerImportMusicXml(${MR_TWO_VOICE});
+      m.setVoice(2); m.setCursor(m.getMeasureStartCursor(2, 1), 2);
+      m.insertChordAtCursor({ notes: [${A4}], duration: '4', dots: 0 });
+      r();
+    `,
+  },
+  /* Max's repro: a quarter rest typed at the measure-start stop of an imported
+     measure-rest bar lands at the HEAD of the bar (placeholders fill the
+     remaining 3/4), not appended after a stale whole-bar rest. */
+  erest_import_mrest_insertAtHead: {
+    setup: `
+      window.__composerImportMusicXml(${MR_EMPTY_BAR});
+      m.setVoice(1); m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+      m.insertRestAtCursor({ duration: '4', dots: 0 });
+      r();
+    `,
+  },
+  /* A saved file from before the scrub: m1 staff 1 holds a lone <mRest>, m2
+     staff 1 the broken [mRest, rest(4)] an edit could produce. Load repairs
+     both: placeholders in m1 (cosmetic rest drawn), [rest(4), placeholders]
+     in m2 (no whole rest drawn). */
+  erest_legacy_mrest_scrubbed_on_load: {
+    setup: `
+      m.appendMeasure();
+      const NS = 'http://www.music-encoding.org/ns/mei';
+      const d = new DOMParser().parseFromString(m.serialize(), 'application/xml');
+      const L = [...d.querySelectorAll('measure')].map((me) => me.querySelector('staff[n="1"] > layer[n="1"]'));
+      const put = (layer, specs) => {
+        while (layer.firstChild) layer.removeChild(layer.firstChild);
+        for (const [name, attrs] of specs) {
+          const e = d.createElementNS(NS, name);
+          for (const k in attrs) e.setAttribute(k, attrs[k]);
+          layer.appendChild(e);
+        }
+      };
+      put(L[0], [['mRest', { 'xml:id': 'mr_legacy_a' }]]);
+      put(L[1], [['mRest', { 'xml:id': 'mr_legacy_b' }], ['rest', { 'xml:id': 'r_legacy', dur: '4' }]]);
+      const legacy = new XMLSerializer().serializeToString(d);
+      if ((legacy.match(/<mRest/g) || []).length !== 2) throw new Error('legacy shape not constructed');
+      m.replaceDocument(legacy);
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
     `,
   },
 };
@@ -10873,7 +10953,7 @@ export const FIXTURE_ASSERTIONS = {
   ],
 
   mRest_emptyMeasureStaysInSync: [
-    { name: 'empty measure (mRest) advances the voice a full bar; m3 note stays aligned',
+    { name: 'empty measure advances the voice a full bar; m3 note stays aligned',
       expr: `(() => {
         const h = window.__hkl_composer;
         const evs = h.buildPlayback(h.model);
@@ -10885,10 +10965,7 @@ export const FIXTURE_ASSERTIONS = {
            one measure (== first.durationMs). */
         const expected = 2 * first.durationMs;
         if (Math.abs(last.atMs - expected) > 1)
-          return { ok: false, detail: 'm3 atMs=' + last.atMs + ' expected~' + expected + ' (m2 mRest skipped?)' };
-        /* mRest also emits a silent cursor event at the empty bar's onset. */
-        const restEv = evs.find(e => e.notes.length === 0 && Math.abs(e.atMs - first.durationMs) < 1);
-        if (!restEv) return { ok: false, detail: 'no mRest cursor event at m2 onset' };
+          return { ok: false, detail: 'm3 atMs=' + last.atMs + ' expected~' + expected + ' (empty m2 skipped?)' };
         return { ok: true };
       })()` },
   ],
@@ -10933,22 +11010,20 @@ export const FIXTURE_ASSERTIONS = {
       })()` },
   ],
 
-  /* Empty bar (<rest measure="yes"/>) → a single <mRest> (centered whole rest,
-     meter-agnostic), not a lone quarter or a beat-aligned decomposition. */
+  /* Empty bar (<rest measure="yes"/>) → an EMPTY layer (placeholders only): the
+     whole-bar rest is cosmetic, drawn by the render pass for an empty cell
+     (2026-09-28 — a stored <mRest> went stale once the cell got content). Still
+     never a lone quarter or a beat-aligned decomposition. */
   phase5_musicxml_measure_rest: [
-    { name: 'empty bar → one <mRest>, no plain <rest>',
+    { name: 'empty bar → placeholders only (no stored <mRest>/<rest>); one cosmetic whole rest drawn',
       expr: `(() => {
         const doc = window.__hkl_composer.model.getDoc();
         const layer = doc.querySelector('measure staff[n="1"] layer[n="1"]');
-        const mrests = [...layer.children].filter(k => k.localName === 'mRest');
-        const rests = [...layer.children].filter(k => k.localName === 'rest');
-        const spaces = [...layer.children].filter(k => k.localName === 'space');
-        if (mrests.length !== 1) return { ok: false, detail: 'mRest count=' + mrests.length };
-        if (rests.length !== 0) return { ok: false, detail: 'unexpected plain rests=' + rests.length };
-        /* No trailing placeholder — a <space> beside the mRest made Verovio size
-           the bar as a double-whole (breve) rest. */
-        if (spaces.length !== 0) return { ok: false, detail: 'unexpected placeholder spaces=' + spaces.length };
-        return { ok: true };
+        const kids = [...layer.children].map((k) => k.localName + (k.getAttribute('data-placeholder') === 'true' ? '*' : ''));
+        if (doc.querySelectorAll('mRest').length !== 0) return { ok: false, detail: 'stored mRest: ' + JSON.stringify(kids) };
+        if (!kids.length || !kids.every((k) => k === 'space*')) return { ok: false, detail: 'layer=' + JSON.stringify(kids) };
+        const drawn = document.querySelectorAll('#score g.measure g.staff:first-of-type g.mRest').length;
+        return drawn === 1 ? { ok: true } : { ok: false, detail: 'drawn g.mRest=' + drawn };
       })()` },
   ],
 
@@ -17839,12 +17914,14 @@ export const FIXTURE_ASSERTIONS = {
       })()` },
   ],
   sel_beat_enter_mRest: [
-    { name: 'premise: V1 flat stream is the wrapper only, mRest rendered',
+    { name: 'premise: stored mRest scrubbed on load, V1 flat stream is the wrapper only, cosmetic whole rest drawn',
       expr: `(() => {
         const M = window.__hkl_composer.model;
+        if (M.getDoc().querySelectorAll('mRest').length !== 0) return { ok: false, detail: 'stored mRest survived load' };
         const flat = M.flatChildren(1).map(e => e.localName);
         if (flat.length !== 1 || flat[0] !== 'measure') return { ok: false, detail: 'flat=' + JSON.stringify(flat) };
-        return document.getElementById('mr_sel_test') ? { ok: true } : { ok: false, detail: 'mRest not rendered' };
+        const drawn = document.querySelector('#score g.measure g.staff g.mRest');
+        return drawn ? { ok: true } : { ok: false, detail: 'no whole rest drawn' };
       })()` },
     { name: 'beat selection V1 beat 0..0',
       expr: `(() => {
@@ -21106,6 +21183,73 @@ export const FIXTURE_ASSERTIONS = {
   ],
   erest_click_cosmetic_rest: [
     { name: 'the click lands on the pickup cell\'s measure-start stop', expr: `(() => { const M = window.__hkl_composer, m = M.model; const v = m.getCurrentVoice ? m.getCurrentVoice() : 1; const mi = m.cursorMeasureIdx(v, M.inputState().mode); return { ok: mi === 0 && m.getCursor(v) === m.getMeasureStartCursor(v, 0), detail: JSON.stringify({ v, mi, cur: m.getCursor(v), start: m.getMeasureStartCursor(v, 0) }) }; })()` },
+  ],
+  erest_import_mrest_scrubbed: [
+    { name: 'live doc: no <mRest>; m2 layer 1 holds placeholders only',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const live = m.getDoc().querySelectorAll('mRest').length;
+        const kids = [...m.allMeasures()[1].querySelector('staff[n="1"] > layer[n="1"]').children]
+          .map((c) => c.localName + (c.getAttribute('data-placeholder') === 'true' ? '*' : ''));
+        const ok = live === 0 && kids.length > 0 && kids.every((k) => k === 'space*');
+        return { ok, detail: JSON.stringify({ live, kids }) };
+      })()` },
+    { name: 'render: exactly one whole-bar rest, in m2',
+      expr: `(() => {
+        const per = [...document.querySelectorAll('#score g.measure')].map((g) => g.querySelectorAll('g.mRest').length);
+        return { ok: JSON.stringify(per) === '[0,1,0]', detail: JSON.stringify(per) };
+      })()` },
+  ],
+  erest_import_mrest_siblingEdit: [
+    { name: 'live doc: no <mRest>; V1 m2 placeholders only, V2 m2 starts with the entered note',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const live = m.getDoc().querySelectorAll('mRest').length;
+        const k = (ly) => [...m.allMeasures()[1].querySelector('staff[n="1"] > layer[n="' + ly + '"]').children]
+          .map((c) => c.localName + (c.getAttribute('data-placeholder') === 'true' ? '*' : ''));
+        const v1 = k(1), v2 = k(2);
+        const ok = live === 0 && v1.every((x) => x === 'space*') && (v2[0] === 'note' || v2[0] === 'chord');
+        return { ok, detail: JSON.stringify({ live, v1, v2 }) };
+      })()` },
+    { name: 'render: no whole-bar rest anywhere (m2 is no longer an empty cell)',
+      expr: `(() => {
+        const per = [...document.querySelectorAll('#score g.measure')].map((g) => g.querySelectorAll('g.mRest').length);
+        return { ok: per.length === 3 && per.every((n) => n === 0), detail: JSON.stringify(per) };
+      })()` },
+  ],
+  erest_import_mrest_insertAtHead: [
+    { name: 'live doc: m2 layer 1 = [rest(4), placeholders…], no <mRest>',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const live = m.getDoc().querySelectorAll('mRest').length;
+        const kids = [...m.allMeasures()[1].querySelector('staff[n="1"] > layer[n="1"]').children]
+          .map((c) => c.localName + (c.getAttribute('data-placeholder') === 'true' ? '*' : '') + ':' + (c.getAttribute('dur') || ''));
+        const ok = live === 0 && kids[0] === 'rest:4' && kids.length > 1 && kids.slice(1).every((x) => x.startsWith('space*'));
+        return { ok, detail: JSON.stringify({ live, kids }) };
+      })()` },
+    { name: 'render: no whole-bar rest in m2',
+      expr: `(() => {
+        const per = [...document.querySelectorAll('#score g.measure')].map((g) => g.querySelectorAll('g.mRest').length);
+        return { ok: JSON.stringify(per) === '[0,0,0]', detail: JSON.stringify(per) };
+      })()` },
+  ],
+  erest_legacy_mrest_scrubbed_on_load: [
+    { name: 'live doc: no <mRest>; m1 placeholders only; m2 = [r_legacy, placeholders…]',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const live = m.getDoc().querySelectorAll('mRest').length;
+        const k = (mi) => [...m.allMeasures()[mi].querySelector('staff[n="1"] > layer[n="1"]').children]
+          .map((c) => (c.getAttribute('xml:id') === 'r_legacy' ? 'r_legacy' : c.localName + (c.getAttribute('data-placeholder') === 'true' ? '*' : '')));
+        const a = k(0), b = k(1);
+        const ok = live === 0 && a.length > 0 && a.every((x) => x === 'space*')
+          && b[0] === 'r_legacy' && b.length > 1 && b.slice(1).every((x) => x === 'space*');
+        return { ok, detail: JSON.stringify({ live, a, b }) };
+      })()` },
+    { name: 'render: whole-bar rests only in the empty cells (m1 both staves, m2 staff 2)',
+      expr: `(() => {
+        const per = [...document.querySelectorAll('#score g.measure')].map((g) => [...g.querySelectorAll('g.staff')].map((s) => s.querySelectorAll('g.mRest').length));
+        return { ok: JSON.stringify(per) === '[[1,1],[0,1]]', detail: JSON.stringify(per) };
+      })()` },
   ],
   /* ── Tie clearance ── */
   engr_tieArchesOverOtherVoice: [

@@ -222,10 +222,10 @@ interface DrawRect {
  *  movable cursors), skipping wrappers, and takes min/max measureIdx.
  *
  *  A beat with NO content between its boundaries is not degenerate — it is
- *  the common case: an empty measure, an imported <mRest>, a voice with
- *  nothing in the bar, or the placeholder remainder after the last entered
- *  note (<space> placeholders and <mRest> are not cursor stops, see
- *  model/cursor-location.ts layerStops). Fall back to the measures the
+ *  the common case: an empty measure, a voice with nothing in the bar, or
+ *  the placeholder remainder after the last entered note (<space>
+ *  placeholders are not cursor stops, see model/cursor-location.ts
+ *  layerStops). Fall back to the measures the
  *  boundary TICKS lie in — [tick(a), tick(b)) — so the box still draws (at
  *  staff height, via staffYRangeForMeasure's fallback). Returning null here
  *  dropped every rect while the status line still announced the selection

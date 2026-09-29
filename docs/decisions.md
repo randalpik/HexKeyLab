@@ -9247,3 +9247,45 @@ Deferred (P1/P2 in the plan): past-end clef creating the next measure,
 overflow insert leaving clefs behind, measure-0 head clef vs staffDef,
 per-staff vs per-voice writes, the five disagreeing "empty" predicates.
 
+## The whole-bar rest is never document state: stored `<mRest>` scrubbed on import and load (2026-09-28)
+
+**Context**: the sonata, imported and then edited, had piano RH m75 V3 = a lone `<mRest>` beside V4
+content. It drew a whole rest parallel to the V4 music, and a quarter rest typed at V3's measure-start
+stop was appended AFTER it — `[mRest, rest(4)]`, then three more quarters still fit (the model counted the
+`<mRest>` as zero ticks) and Verovio drew a whole rest plus the quarters. Max's contract: a whole-bar rest
+in Composer is purely cosmetic, a runtime function of the cell's content, visible only in a completely
+empty bar, and never affects interaction.
+
+**How the contract was broken**: the MusicXML importer wrote a stored `<mRest>` for every
+`<rest measure="yes"/>` voice. Code then grew around the stored element instead of removing it — the
+"double whole rest" fix made `normalizePlaceholders` treat an mRest layer as full (lessons.md), and
+`Alt+V`'s destination test called it "a written whole-measure rest" — while the cursor and tick code
+(`contentChildren`, `flatChildren`, `layerIsFull`, `planInsert`, `insertAt`) treated it as nothing. The
+2026-09-22 render-only whole-bar rest (entry above) established the contract for native empty bars but
+explicitly exempted the importer's ("the importer already does, for empty imported bars"; "a cell
+already drawing an `<mRest>` … is left alone"). A stored rest cannot follow its cell: filling the other
+voice left it drawn, and typing into its own voice appended beside it. In the sonata m75 the import was
+correct (V4 had no children — ids `layer:1p3` → `staff:1p4`); Max's later V4 edits made it stale.
+
+**Decision**: own the rest entirely at render time.
+1. The importer writes an EMPTY layer for a full-bar measure rest (placeholders fill it); the pickup
+   branch is unchanged (it writes real rests sized to the pickup, not an `<mRest>`).
+2. `normalizePlaceholders` strips any layer-level `<mRest>` like a placeholder: its ticks are not
+   counted and its presence forces a rebuild. Every load path (`replaceDocument` → fresh document →
+   `dirtyLayersAll` → full pass) ends there, so older `.hkc` files are repaired on load — a lone mRest
+   becomes placeholders, a broken `[mRest, content]` keeps its content — and nothing can reintroduce one
+   (undo snapshots, pasted MEI) past the next edit.
+3. `notation/measurerests.ts` is the only producer of a whole-bar rest.
+
+**Consequences, accepted**: imported empty bars now behave exactly like native ones — the playback cursor
+no longer steps onto them (playback emitted a silent event for a stored `<mRest>`; empty layers are
+silent clock advance, as for native bars), and MusicXML export writes no note for them (an all-placeholder
+voice is skipped; other tools draw their own rest), where a stored `<mRest>` exported as
+`<rest measure="yes"/>`. The `mRest`/`mSpace` branches in playback and export are now unreachable from the
+model but left in place. The "double whole rest" can no longer arise: there is no stored rest for a
+placeholder to sit beside.
+
+Fixtures: `erest_import_mrest_scrubbed`, `erest_import_mrest_siblingEdit` (the sonata m75 shape),
+`erest_import_mrest_insertAtHead` (Max's repro), `erest_legacy_mrest_scrubbed_on_load`; updated
+`phase5_musicxml_measure_rest` (placeholders, one drawn rest), `mRest_emptyMeasureStaysInSync` (timing
+only), `sel_beat_enter_mRest` (legacy file through the load path).
