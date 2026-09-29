@@ -90,7 +90,17 @@ export function normalizePlaceholders(
        saw the whole score as dirty and full-re-engraved (O(total), seconds).
        Skipping unchanged layers keeps placeholder ids stable. */
     const existingPh = kids.filter(isPlaceholder);
-    const trailing = kids.slice(kids.length - desired.length);
+    /* A run of <clef> at the very END of the layer — after the placeholders —
+       is a barline clef in its courtesy spelling (model/clef-slot.ts; what the
+       render relocation writes and a reload reads back). Placeholders live
+       BEFORE it: appending them after it turned `[sp, clef]` into `[clef, sp]`
+       on every load, i.e. a clef in an empty bar became that bar's HEAD clef
+       and the next save relocated it a bar earlier again (2026-09-27, the
+       "clef on an empty layer does not roundtrip" note). */
+    let tailStart = kids.length;
+    while (tailStart > 0 && kids[tailStart - 1].localName === 'clef') tailStart--;
+    const body = kids.slice(0, tailStart);
+    const trailing = body.slice(body.length - desired.length);
     const dotsOf = (c: Element) => parseInt(c.getAttribute('dots') ?? '0', 10) || 0;
     const matches =
       existingPh.length === desired.length &&
@@ -99,8 +109,10 @@ export function normalizePlaceholders(
         isPlaceholder(c) && c.getAttribute('dur') === desired[i].dur && dotsOf(c) === desired[i].dots);
     if (matches) continue;                       // already correct — don't churn ids
 
-    /* Otherwise rebuild: strip existing placeholders, append fresh trailing. */
+    /* Otherwise rebuild: strip existing placeholders, insert fresh ones at the
+       tail — before a trailing clef run, else appended. */
     rebuilt++;
+    const tailAnchor = kids[tailStart] ?? null;
     for (const c of existingPh) layer.removeChild(c);
     for (const p of desired) {
       const space = el(doc, 'space', {
@@ -109,7 +121,7 @@ export function normalizePlaceholders(
         dots: p.dots > 0 ? p.dots : undefined,
       });
       space.setAttribute(PLACEHOLDER_ATTR, 'true');
-      layer.appendChild(space);
+      layer.insertBefore(space, tailAnchor);
     }
   }
   return rebuilt;

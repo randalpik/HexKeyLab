@@ -109,4 +109,15 @@ export const SCENARIOS = {
     window.__hkl_composer.reRender();
     m.setCursor(0, 1);
   `,
+
+  /* Clef slot model (2026-09-27): empty M1, then M2 holding only a bass clef.
+     The render relocates that clef to M1's end (a courtesy clef beside an
+     mRest); M1's wrapper stop must still draw at the bar's START, and the
+     three stops (M1 wrapper, M2 wrapper, past-end) must stay distinct. */
+  m1EmptyM2ClefOnly: `
+    m.appendMeasure();
+    m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+    m.setClefAt("F", "4", null, null);
+    m.setCursor(0, 1);
+  `,
 };

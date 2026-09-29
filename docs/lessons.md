@@ -4825,3 +4825,40 @@ Two companions from the same census:
 - **A curve's box is the region under its arc.** Test against its outline instead.
 - **Post-render passes can't assume one frame per system.** `render/instrgap.ts` translates an
   instrument's staves and ties, so map each element through its own CTM.
+
+## The barline of a full measure is ONE position with two cursors and two model spellings (2026-09-27)
+
+Max's minimal repro: empty doc → add M2 → bass clef at M2's wrapper → back to
+M1's wrapper → whole rest → alto clef. Two overlapping clef glyphs. `setClefAtCursor`
+found "the clef here" by `previousElementSibling` of its insertion reference:
+at "past the whole rest" (full M1, no reference, no placeholder) it looked at
+M1's last child, saw no clef, computed the inherited clef as treble because it
+only walked M1, and appended alto to M1's tail — while the bass sat at M2's
+head, one barline, two cursors ("past last of full M" and "M+1 wrapper"), two
+spellings (M's tail; M+1's head), treated as two places. The same blindness
+made the clef unremovable from that cursor, and made the dialog pre-select
+treble when bass was in force. `model/clef-slot.ts` now resolves both cursors
+to one slot that lists both spellings; `effectiveClefForVoice` walks up to the
+slot's reference, so at a barline it sees M's tail run AND M+1's head run.
+
+- **Never rediscover a positional annotation by sibling adjacency at more than
+  one call site.** One resolver, every reader and writer through it.
+- **"Clef on an empty layer does not roundtrip" (2026-09-01) was placeholder
+  ordering, not the clef code.** `serialize()` writes the courtesy spelling
+  `[space, clef]`; `normalizePlaceholders` rebuilt by stripping the space and
+  APPENDING a fresh one — after the clef — so a reload produced `[clef, space]`
+  (a head clef, one bar early), and the next save relocated it again. A clef
+  in an empty bar walked one bar toward the score start per save/load cycle.
+  Any "strip and re-append at the tail" rebuild must respect trailing
+  non-content siblings.
+- **A cursor that "inserts into the next measure" addresses the next measure**
+  for anything positional, not the measure whose stop it is.
+- **`beatBoundariesInVoice` already deduped these two cursors** ("keep the
+  later one") — the selection code knew the fact the clef code didn't.
+- Fixture harness gotcha: setup snippets run with `m`, `c`, `r`, `bridge` in
+  scope — `const c = …` in a snippet is a SyntaxError reported as
+  `Identifier 'c' has already been declared`.
+- `Shift+→` from cursor `c` selects the beat to the cursor's RIGHT (the beat
+  starting at `c`), and each further press extends by one beat; a range
+  fixture that assumes "the beat just passed" lands one note early.
+

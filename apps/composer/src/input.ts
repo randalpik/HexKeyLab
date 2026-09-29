@@ -1920,9 +1920,10 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       openClefModal(model, {
         history: hooks.history,
         range: { voice, startCursor, endCursor },
-        onApply: () => {
+        onApply: (res) => {
           exitSelectionToMovable();
-          hooks.setStatus?.('Clef applied to selection.', 'action');
+          if (res.kind === 'noop') hooks.setStatus?.('Selection is already in that clef.', 'info');
+          else hooks.setStatus?.(res.kind === 'removed' ? 'Clef changes removed from selection.' : 'Clef applied to selection.', 'action');
           hooks.onStateChange();
           hooks.onChange();
         },
@@ -2409,8 +2410,9 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       if (state.cursorMode !== 'voice') { hooks.setStatus?.('Clef change requires voice mode.', 'error'); return; }
       openClefModal(model, {
         history: hooks.history,
-        onApply: () => {
-          hooks.setStatus?.('Clef changed.', 'action');
+        onApply: (res) => {
+          if (res.kind === 'noop') hooks.setStatus?.('No clef change here.', 'info');
+          else hooks.setStatus?.(res.kind === 'removed' ? 'Clef removed.' : 'Clef changed.', 'action');
           hooks.onChange();
           hooks.onStateChange();
         },
@@ -3197,6 +3199,8 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         if (deleted) state.chordInternalSel = null;
         return deleted;
       });
+      const bsNote = model.consumeDeleteNote();
+      if (bsNote) hooks.setStatus?.(bsNote, 'error');
       if (deleted) {
         /* Voice mutation may have changed the expression moment list. */
         refreshExprCursor(model);
@@ -3229,6 +3233,8 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
           deleted = model.deleteAtCursor();
           return deleted;
         });
+        const delNote = model.consumeDeleteNote();
+        if (delNote) hooks.setStatus?.(delNote, 'error');
         if (deleted) {
           refreshExprCursor(model);
           hooks.onStateChange();

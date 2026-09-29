@@ -172,7 +172,7 @@ These are navigable layers alongside dynamics:
 From any measure forward (or, in select mode, over the selected span):
 
 - **Time / key signature**: `Ctrl+Shift+S`. The dialog also offers common/cut-time symbols and additive beat groups (e.g. `2+2+3` for 7/8; affects beaming only).
-- **Clef change**: `Ctrl+Shift+C` inserts a mid-measure clef; it carries forward until the next change.
+- **Clef change**: `Ctrl+Shift+C` inserts a clef at the cursor (mid-measure, or at a barline from either side of it); it carries forward until the next change. The dialog pre-selects the clef in force there; **Remove clef change** takes it away again, as does choosing the clef it already inherits. Clefs only ever change through this dialog — deleting notes, a selection, or an empty bar never removes one (Backspace on a bar holding a clef change moves left and says so). Over a beat selection the whole span is set to the chosen clef: clefs inside it go, and the music after it keeps the clef it had.
 - **Pickup / anacrusis**: `Ctrl+Shift+A` sets a short pickup measure at the start of a section. Give its length in **eighth notes** — 2 for a quarter-note pickup in 4/4, 1 for a single eighth, 3 for a dotted quarter — anything shorter than a full bar; `0` removes it. (Counting eighths rather than beats is what makes a half-beat pickup possible, and the only kind of pickup you can have in cut time.) The time signature still shows in full and the next measure is still bar 1. A downbeat tempo marking travels with it.
 
 ---

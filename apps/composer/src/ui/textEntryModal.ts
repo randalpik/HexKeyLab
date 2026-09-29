@@ -44,6 +44,10 @@ export interface TextEntryModalOpts {
   /** Field name to focus on open. Defaults to the first text field (or, absent
    *  one, the first field). */
   focusField?: string;
+  /** Extra action buttons, rendered left of Cancel. Clicking one closes the
+   *  dialog and runs its handler — onOk is NOT called. `action` is exposed as
+   *  data-action (tests click it). */
+  extraButtons?: Array<{ label: string; action: string; disabled?: boolean; onClick: () => void }>;
 }
 
 function esc(s: string): string {
@@ -90,6 +94,8 @@ export function openTextEntryModal(opts: TextEntryModalOpts): void {
     + opts.fields.map(fieldRowHtml).join('')
     + presetsHtml
     + `<div class="actions">`
+    + (opts.extraButtons ?? []).map((b) =>
+        `<button type="button" class="te-extra" data-action="${esc(b.action)}"${b.disabled ? ' disabled' : ''}>${esc(b.label)}</button>`).join('')
     + `<button type="button" class="te-cancel">Cancel</button>`
     + `<button type="submit" value="ok" class="te-ok">${esc(opts.okLabel ?? 'OK')}</button>`
     + `</div></form>`;
@@ -121,6 +127,11 @@ export function openTextEntryModal(opts: TextEntryModalOpts): void {
   const okBtn = dlg.querySelector('.te-ok') as HTMLButtonElement | null;
   const onCancel = (): void => dlg.close();
   cancelBtn?.addEventListener('click', onCancel);
+  /* Extra buttons: close first (their handler may mutate + re-render), then run. */
+  for (const b of opts.extraButtons ?? []) {
+    const btn = dlg.querySelector(`.te-extra[data-action="${CSS.escape(b.action)}"]`) as HTMLButtonElement | null;
+    btn?.addEventListener('click', () => { dlg.close(); b.onClick(); });
+  }
 
   /* Enter finalizes from ANY field — including a focused <select>, where the
      browser would otherwise just close the dropdown without submitting. We

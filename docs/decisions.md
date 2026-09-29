@@ -9197,3 +9197,53 @@ Only the interleaved color-sync ordering was brought into HKL. Animation-control
 HKL/device colors and synchronized backing audio remain future work. Reproduction
 commands, measured transport findings, simulation comparison and local artifact
 locations are in `tools/lumatone-bench/README.md`.
+
+## 2026-09-27 — Clefs change only through the clef dialog; one slot per position (Max)
+
+**Direct-only.** A clef is removed by the dialog's *Remove clef change* button
+or by choosing the clef the slot already inherits — nothing else. Selection
+delete keeps skipping clefs, and Backspace at the wrapper of a measure holding
+a `<clef>` skips left (status: remove it with Ctrl+Shift+C first) instead of
+deleting the measure with the clef inside it. Rationale (Max): an indirect
+removal can cascade a clef change into every later bar; if the only mechanism
+is direct, every change is intentional. **Rejected**: selection-delete of clefs.
+
+**The bounded exception.** A clef change over a beat selection sets the WHOLE
+span: clefs strictly inside `[start, end)` are removed, the new clef goes at
+the start slot, and the clef in force at `end` (captured before mutating,
+including one sitting exactly at the end slot) is restored there. Bounded by
+definition, so it cannot cascade.
+
+**One slot per position** (`model/clef-slot.ts`). The barline after a full
+measure M has two cursors and two spellings (M's tail run; M+1's head run).
+Both cursors resolve to the same slot; `existing` lists both spellings; a
+fresh clef is written head-of-M+1 (the form every downstream pass keys on),
+an existing one is edited in place and any other spelling/duplicate dropped.
+Save/load is unchanged (Max: a head clef is always rendered before the
+barline; the reload's tail form is fine) — the slot reads both.
+
+**Empty-bar cursor**: `findSigEndXForStaff` counts `g.mRest`/`g.multiRest` as
+content, so a courtesy clef beside an mRest no longer passes as a leading
+signature and drags the wrapper cursor to the barline.
+
+**Placeholders stay BEFORE a trailing clef run** (`normalizePlaceholders`).
+The one addition beyond the approved P0: the suite's round-trip invariant on
+the new empty-bar fixture exposed the documented "clef on an empty layer does
+not roundtrip" bug's mechanism — the save writes the courtesy spelling
+`[space, clef]`, the load's placeholder rebuild stripped the space and
+re-appended it AFTER the clef, so the clef became that bar's head clef and the
+next save relocated it another bar earlier (one bar of drift per save/load
+cycle; a single Load runs normalize→serialize→normalize, i.e. two bars). Fresh
+placeholders are now inserted before the layer's trailing clef run and the
+idempotency check ignores that run (no id churn). Save/load itself is
+untouched. Fixture `clef_emptyBar_tailForm_roundtrip`.
+
+Fixtures: `clef_repro_barlineOverlap` (Max's five steps verbatim),
+`clef_barline_twoCursorsOneSlot`, `clef_dialog_remove{,_tailForm}`,
+`clef_selectionDelete_keepsClefs` (guard), `clef_range_{clearsInterior,
+endSlotClef,endSlotClefRedundant,barlineEnd}`, `clef_backspace_clefMeasure_skipsLeft`,
+`clef_emptyBar_cursorLeftOfCourtesyClef`; scenario `m1EmptyM2ClefOnly`.
+Deferred (P1/P2 in the plan): past-end clef creating the next measure,
+overflow insert leaving clefs behind, measure-0 head clef vs staffDef,
+per-staff vs per-voice writes, the five disagreeing "empty" predicates.
+

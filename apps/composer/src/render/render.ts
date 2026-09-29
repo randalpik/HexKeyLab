@@ -3567,7 +3567,11 @@ class Renderer {
        up and the measure-left cursor anchor would jump past it (see lessons.md
        "mid-measure clef vs sig-end"). */
     let firstContentLeft = Infinity;
-    for (const n of Array.from(this.container.querySelectorAll('g.note, g.chord, g.rest'))) {
+    /* g.mRest / g.multiRest count as content too: an empty bar renders as
+       [mRest, courtesy clef] once a clef change follows it, and without the
+       rest as a bound that courtesy clef passed as the LEADING sig, pulling
+       the empty bar's wrapper cursor to the barline (2026-09-27). */
+    for (const n of Array.from(this.container.querySelectorAll('g.note, g.chord, g.rest, g.mRest, g.multiRest'))) {
       const r = (n as Element).getBoundingClientRect();
       const cy = (r.top + r.bottom) / 2;
       const cx = (r.left + r.right) / 2;

@@ -63,6 +63,7 @@ import {
   elementHasTieTerminal,
 } from './note-elements.js';
 import { isPlaceholder, normalizePlaceholders } from './placeholders.js';
+import { clefSlotAt, sameClefSlot } from './clef-slot.js';
 import {
   flatChildren as flatChildrenImpl,
   layerIsFull,
@@ -114,6 +115,18 @@ import { collapsibleRuns, collapseMultiRests, identityUnits, RenderUnitIndex } f
  *  layer) mapping is owned by the instrument table — never recompute it from a
  *  `voice<=2?1:2` ternary; route through `staffForVoice`/`layerForVoice`. */
 export type Voice = number;
+
+/** Inline clef attributes (MEI @shape / @line / @dis / @dis.place). */
+export interface ClefSpec { shape: string; line: string; dis: string | null; disPlace: string | null }
+/** What a clef write/remove did — or why it was refused (see clef-slot.ts). */
+export type ClefOutcome = 'inserted' | 'replaced' | 'removed' | 'noop' | 'pastEnd' | 'inTuplet';
+export type ClefRangeResult =
+  | { ok: true; start: ClefOutcome; end: ClefOutcome | null }
+  | { ok: false; endpoint: 'start' | 'end'; reason: 'pastEnd' | 'inTuplet' };
+function sameClefSpec(a: ClefSpec, b: ClefSpec): boolean {
+  return a.shape === b.shape && a.line === b.line
+    && (a.dis ?? '') === (b.dis ?? '') && (a.disPlace ?? '') === (b.disPlace ?? '');
+}
 /* Duration / Dots / el / newId / MEI_NS now live in @hkl/notation/mei-build
    (single source of truth for the .hkc dialect). Re-exported here so the many
    Composer modules that import them from './index.js' stay zero-touch. */
@@ -2507,13 +2520,14 @@ export class ComposerModel {
     if (sd.attributes.length === 0) sd.parentNode?.removeChild(sd);
   }
 
-  /** Clef in effect at the current cursor for its staff. Inline `<clef>` changes
-   *  persist FORWARD across measures (like Verovio renders them), so this walks
-   *  every measure up to the cursor's — applying each inline `<clef>` in the
-   *  voice's layer — then the cursor measure up to the cursor; falling back to
-   *  the head `<staffDef>`. `exclude` skips one inline clef (the one being
-   *  edited) so callers can ask "what would be in effect WITHOUT this clef". */
-  private effectiveClefForVoice(voice: Voice, cursor: number, exclude?: Element | null): { shape: string; line: string; dis: string | null; disPlace: string | null } {
+  /** Clef in effect for `voice` at `cursor`: the head `<staffDef>` default,
+   *  then every inline `<clef>` carried forward measure by measure up to the
+   *  cursor's slot (model/clef-slot.ts). Clefs sitting AT the slot count —
+   *  they are what the next note typed there is drawn in — unless listed in
+   *  `exclude` (the slot's own clefs, for the "what would be inherited without
+   *  them" question). At a barline slot the walk covers the previous measure's
+   *  tail run AND the next measure's head run (both spellings). */
+  private effectiveClefForVoice(voice: Voice, cursor: number, opts?: { exclude?: ReadonlySet<Element> }): ClefSpec {
     const v = voice;
     const staffN = this.staffForVoice(v);
     let shape = staffN === 1 ? 'G' : 'F';
@@ -2528,23 +2542,20 @@ export class ComposerModel {
       dis = headDef.getAttribute('clef.dis');
       disPlace = headDef.getAttribute('clef.dis.place');
     }
-    const loc = locateCursor(this, v, cursor);
-    const cursorMi = loc && !loc.inTuplet ? loc.measureIdx : -1;
     const measures = this.allMeasures();
-    const lastMi = cursorMi >= 0 ? cursorMi : measures.length - 1;
+    const slot = clefSlotAt(this, v, cursor);
+    let lastMi: number;
+    let limit: Element | null = null;
+    if (slot.kind === 'slot') { lastMi = slot.measureIdx; limit = slot.ref; }
+    else if (slot.kind === 'inTuplet') { lastMi = slot.measureIdx; limit = slot.limit; }
+    else lastMi = measures.length - 1;
+    const exclude = opts?.exclude;
     for (let mi = 0; mi <= lastMi && mi < measures.length; mi++) {
       const layer = this.layerInMeasure(measures[mi], v);
       if (!layer) continue;
-      /* In the cursor's own measure, stop at the cursor; earlier measures
-         contribute every clef they hold (a clef change carries forward). */
-      let limit: Element | null = null;
-      if (mi === cursorMi && loc) {
-        const content = this.contentChildren(loc.layer);
-        limit = loc.withinIdx < content.length ? content[loc.withinIdx] : null;
-      }
       for (const c of Array.from(layer.children)) {
-        if (limit && c === limit) break;
-        if (c === exclude) continue;
+        if (mi === lastMi && limit && c === limit) break;
+        if (exclude && exclude.has(c)) continue;
         if (c.localName === 'clef') {
           shape = c.getAttribute('shape') ?? shape;
           line = c.getAttribute('line') ?? line;
@@ -2556,91 +2567,153 @@ export class ComposerModel {
     return { shape, line, dis, disPlace };
   }
 
+  /** Clef in force at `cursor` INCLUDING a clef attached to its slot — what
+   *  the next note typed there is drawn in (dialog pre-select; the restore
+   *  value of a range change). */
+  clefInEffectAt(voice: Voice, cursor: number): ClefSpec {
+    return this.effectiveClefForVoice(voice, cursor);
+  }
+
+  /** Clef the slot at `cursor` would inherit if its own clef(s) were absent
+   *  — the diff-aware reference: writing this value REMOVES the slot's clef. */
+  clefInheritedAt(voice: Voice, cursor: number): ClefSpec {
+    const slot = clefSlotAt(this, voice, cursor);
+    const exclude = slot.kind === 'slot' ? new Set(slot.existing) : undefined;
+    return this.effectiveClefForVoice(voice, cursor, { exclude });
+  }
+
   /** Clef in effect at the current cursor for its staff (head staffDef + inline
-   *  clef changes carried forward). Used to pre-select the clef modal. */
-  clefAtCursor(): { shape: string; line: string; dis: string | null; disPlace: string | null } {
+   *  clef changes carried forward, including one at the cursor's own slot).
+   *  Used to pre-select the clef modal. */
+  clefAtCursor(): ClefSpec {
     const v = this.currentVoice;
-    return this.effectiveClefForVoice(v, this.cursors[v]);
+    return this.clefInEffectAt(v, this.cursors[v]);
+  }
+
+  /** Whether an inline clef is attached to the slot at `cursor`. */
+  hasClefAt(voice: Voice, cursor: number): boolean {
+    const slot = clefSlotAt(this, voice, cursor);
+    return slot.kind === 'slot' && slot.existing.length > 0;
+  }
+
+  /** Whether any inline clef is attached to a slot in `[start, end)`. */
+  rangeHasClefs(voice: Voice, start: number, end: number): boolean {
+    for (let c = start; c < end; c++) if (this.hasClefAt(voice, c)) return true;
+    return false;
   }
 
   /** Insert (or replace) an inline `<clef>` at the current cursor — a
    *  mid-measure clef change for the cursor's staff. Zero-duration: it changes
    *  no ticks/placeholders, only notation. Returns false if the cursor is
-   *  inside a tuplet (unsupported in v1). Re-running at the same spot edits the
-   *  clef already there. `dis`/`disPlace` give octave clefs (treble+8 etc.). */
+   *  inside a tuplet (unsupported in v1) or past the end of the document.
+   *  Re-running at the same spot edits the clef already there. `dis`/`disPlace`
+   *  give octave clefs (treble+8 etc.). */
   setClefAt(shape: string, line: string, dis: string | null, disPlace: string | null): boolean {
     const v = this.currentVoice;
     return this.setClefAtCursor(v, this.cursors[v], shape, line, dis, disPlace);
   }
 
-  /** Insert/replace an inline `<clef>` at an EXPLICIT (voice, cursor) — the
-   *  cursor-parameterized core that `setClefAt` (current cursor) and
-   *  `setClefRange` (span endpoints) both call. Zero-duration; clefs aren't
-   *  content children, so inserting one never shifts flat-cursor indices. */
+  /** Boolean form of `applyClefAt` (true = applied, replaced, removed or
+   *  no-op; false = refused). Kept for callers that only need pass/fail. */
   setClefAtCursor(voice: Voice, cursor: number, shape: string, line: string, dis: string | null, disPlace: string | null): boolean {
-    const v = voice;
-    const loc = locateCursor(this, v, cursor);
-    if (!loc || loc.inTuplet) return false;
-    const layer = loc.layer;
-    const content = this.contentChildren(layer);
-    /* Insertion ref = the element at the cursor's tick: the content child at
-       withinIdx, else the first trailing placeholder (cursor past content), so
-       the clef lands at the cursor's x — not after the invisible padding. */
-    let ref: Element | null = loc.withinIdx < content.length ? content[loc.withinIdx] : null;
-    if (!ref) ref = Array.from(layer.children).find((c) => isPlaceholder(c)) ?? null;
-    /* Reuse a clef already at this spot (re-edit), else create one. */
-    const prev = ref ? ref.previousElementSibling : layer.lastElementChild;
-    const here = prev && prev.localName === 'clef' ? prev : null;
-
-    /* Diff-aware (mirrors setMeterAt/setKeySigAt): if the requested clef equals
-       the clef INHERITED at this spot — the staffDef default plus every inline
-       clef carried forward from earlier in the staff, EXCLUDING the one here —
-       then writing it would be redundant. Remove the inline clef here instead
-       (or no-op if none), so setting a clef back to the prevailing one clears
-       the override rather than stacking a redundant clef. */
-    const inh = this.effectiveClefForVoice(v, cursor, here);
-    const redundant = inh.shape === shape && inh.line === line
-      && (inh.dis ?? '') === (dis ?? '') && (inh.disPlace ?? '') === (disPlace ?? '');
-    if (redundant) {
-      if (here) here.remove();
-      return true;
-    }
-
-    let clef: Element;
-    if (here) {
-      clef = here;
-    } else {
-      clef = el(this.doc, 'clef', { 'xml:id': newId('clf') });
-      if (ref) layer.insertBefore(clef, ref);
-      else layer.appendChild(clef);
-    }
-    clef.setAttribute('shape', shape);
-    clef.setAttribute('line', line);
-    if (dis) {
-      clef.setAttribute('dis', dis);
-      clef.setAttribute('dis.place', disPlace ?? 'above');
-    } else {
-      clef.removeAttribute('dis');
-      clef.removeAttribute('dis.place');
-    }
-    return true;
+    const o = this.applyClefAt(voice, cursor, { shape, line, dis, disPlace });
+    return o !== 'pastEnd' && o !== 'inTuplet';
   }
 
-  /** Apply a clef across the beat span `[startCursor, endCursor)` for `voice`,
-   *  confined to the span: the new clef is inserted at `startCursor` and the
-   *  clef that prevailed at `endCursor` is restored there (Phase 4a, selection-
-   *  driven). Captures the restore clef BEFORE mutating. Returns false if either
-   *  endpoint is inside a tuplet. */
-  setClefRange(voice: Voice, startCursor: number, endCursor: number, shape: string, line: string, dis: string | null, disPlace: string | null): boolean {
-    /* The clef in effect just before endCursor today — restored after the new
-       clef is laid down so the change doesn't leak past the selection. */
-    const restore = this.effectiveClefForVoice(voice, endCursor);
-    if (!this.setClefAtCursor(voice, startCursor, shape, line, dis, disPlace)) return false;
-    /* endCursor at/after the voice end has nothing to restore onto. */
-    if (endCursor < this.getVoiceLength(voice)) {
-      this.setClefAtCursor(voice, endCursor, restore.shape, restore.line, restore.dis, restore.disPlace);
+  /** Write `spec` at the slot the (voice, cursor) addresses — see
+   *  model/clef-slot.ts for how the barline of a full measure resolves from
+   *  either of its two cursors. Diff-aware (mirrors setMeterAt/setKeySigAt):
+   *  a spec equal to the clef INHERITED at the slot (everything before it,
+   *  excluding its own clefs) is redundant, so the slot's clef is REMOVED
+   *  rather than a redundant one stacked. Otherwise one clef survives at the
+   *  slot with `spec`'s attributes: the one already there (kept in place,
+   *  duplicates and the other spelling dropped) or a fresh one before
+   *  `slot.ref`. Clefs are not content children, so nothing here shifts a
+   *  flat-cursor index. */
+  applyClefAt(voice: Voice, cursor: number, spec: ClefSpec): ClefOutcome {
+    const slot = clefSlotAt(this, voice, cursor);
+    if (slot.kind !== 'slot') return slot.kind;
+    const inh = this.effectiveClefForVoice(voice, cursor, { exclude: new Set(slot.existing) });
+    if (sameClefSpec(inh, spec)) {
+      if (slot.existing.length === 0) return 'noop';
+      for (const e of slot.existing) e.remove();
+      return 'removed';
     }
-    return true;
+    let clef: Element;
+    let changed = false;
+    const had = slot.existing.length > 0;
+    if (had) {
+      /* Keep the LAST clef in the write layer (the one Verovio applies last
+         and the canonical spelling at a barline), else the last of the run. */
+      const inLayer = slot.existing.filter((e) => e.parentElement === slot.layer);
+      clef = inLayer.length > 0 ? inLayer[inLayer.length - 1] : slot.existing[slot.existing.length - 1];
+      for (const e of slot.existing) if (e !== clef) { e.remove(); changed = true; }
+    } else {
+      clef = el(this.doc, 'clef', { 'xml:id': newId('clf') });
+      if (slot.ref) slot.layer.insertBefore(clef, slot.ref);
+      else slot.layer.appendChild(clef);
+      changed = true;
+    }
+    const setAttr = (name: string, value: string | null): void => {
+      if ((clef.getAttribute(name) ?? null) === value) return;
+      changed = true;
+      if (value === null) clef.removeAttribute(name); else clef.setAttribute(name, value);
+    };
+    setAttr('shape', spec.shape);
+    setAttr('line', spec.line);
+    if (spec.dis) {
+      setAttr('dis', spec.dis);
+      setAttr('dis.place', spec.disPlace ?? 'above');
+    } else {
+      setAttr('dis', null);
+      setAttr('dis.place', null);
+    }
+    return !had ? 'inserted' : changed ? 'replaced' : 'noop';
+  }
+
+  /** Remove every inline clef attached to the slot at `cursor` (both
+   *  spellings at a barline). The ONLY removal path besides writing the
+   *  inherited clef — clefs never go away as a side effect of deleting
+   *  content (Max, 2026-09-27). */
+  removeClefAt(voice: Voice, cursor: number): ClefOutcome {
+    const slot = clefSlotAt(this, voice, cursor);
+    if (slot.kind !== 'slot') return slot.kind;
+    if (slot.existing.length === 0) return 'noop';
+    for (const e of slot.existing) e.remove();
+    return 'removed';
+  }
+
+  /** Boolean form of `applyClefRange`. */
+  setClefRange(voice: Voice, startCursor: number, endCursor: number, shape: string, line: string, dis: string | null, disPlace: string | null): boolean {
+    return this.applyClefRange(voice, startCursor, endCursor, { shape, line, dis, disPlace }).ok;
+  }
+
+  /** Set the beat span `[startCursor, endCursor)` of `voice` to `spec`, and
+   *  ONLY that span (Phase 4a, selection-driven; the one bounded exception to
+   *  direct-only clef changes): clefs attached to slots strictly inside the
+   *  span are removed, `spec` goes at the start, and the clef in force at
+   *  `endCursor` — captured BEFORE mutating, including a clef sitting exactly
+   *  at the end slot — is restored there (diff-aware: a clef at the end that
+   *  now equals `spec` is redundant and goes). Both endpoint slots are
+   *  resolved first; a refusal (tuplet, past-end) mutates nothing. */
+  applyClefRange(voice: Voice, startCursor: number, endCursor: number, spec: ClefSpec): ClefRangeResult {
+    const startSlot = clefSlotAt(this, voice, startCursor);
+    if (startSlot.kind !== 'slot') return { ok: false, endpoint: 'start', reason: startSlot.kind };
+    /* endCursor at/after the voice end has nothing to restore onto. */
+    const endSlot = endCursor < this.getVoiceLength(voice) ? clefSlotAt(this, voice, endCursor) : null;
+    if (endSlot && endSlot.kind !== 'slot') return { ok: false, endpoint: 'end', reason: endSlot.kind };
+    const restore = this.effectiveClefForVoice(voice, endCursor);
+    for (let c = startCursor + 1; c < endCursor; c++) {
+      const s = clefSlotAt(this, voice, c);
+      if (s.kind !== 'slot' || s.existing.length === 0) continue;
+      /* The two barline cursors resolve to one slot: never strip the start or
+         end slot's clef here — the endpoint writes below own those. */
+      if (sameClefSlot(s, startSlot) || (endSlot !== null && sameClefSlot(s, endSlot))) continue;
+      for (const e of s.existing) e.remove();
+    }
+    const start = this.applyClefAt(voice, startCursor, spec);
+    const end = endSlot ? this.applyClefAt(voice, endCursor, restore) : null;
+    return { ok: true, start, end };
   }
 
   /* ── pickup / anacrusis (Phase 4c) ────────────────────────────────────────
@@ -4654,6 +4727,15 @@ export class ComposerModel {
        the empty measure's one nav stop and doubles as the delete target.
        Skip when it's the only measure left. */
     if (target.localName === "measure") {
+      /* A measure holding an inline clef change is not "empty" for deletion:
+         removing it would silently drop the clef and revert every later
+         measure — a cascade the direct-only clef rule forbids (Max,
+         2026-09-27). Skip left, as for a non-empty wrapper, and say why. */
+      if (this.measureHoldsClef(target)) {
+        this.deleteNote = 'Measure holds a clef change — remove it with Ctrl+Shift+C first.';
+        this.cursors[v] = Math.max(0, c - 1);
+        return true;
+      }
       if (this.measureIsEmpty(target) && this.allMeasures().length > 1) {
         const measureIdx = c; /* flat[c] === target === measure wrapper */
         /* A multimeasure rest is ONE stop (model/multirest.ts): deleting it
@@ -5085,6 +5167,19 @@ export class ComposerModel {
    *  consistent. Used by Ctrl+X on a measure selection. */
   clearMeasureRange(mLo: number, mHi: number, firstStaff: number, lastStaff: number): void {
     clearMeasureRangeImpl(this, mLo, mHi, firstStaff, lastStaff);
+  }
+
+  /** Why the last `deleteAtCursor` declined to delete (shown as status by
+   *  input.ts), consumed on read. */
+  private deleteNote: string | null = null;
+  consumeDeleteNote(): string | null {
+    const n = this.deleteNote;
+    this.deleteNote = null;
+    return n;
+  }
+
+  private measureHoldsClef(measure: Element): boolean {
+    return measure.querySelector('layer > clef') !== null;
   }
 
   private measureIsEmpty(measure: Element): boolean {
