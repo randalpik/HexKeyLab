@@ -38,6 +38,11 @@ export const KEYBINDINGS: KeySection[] = [
       },
       { keys: "Ctrl+Z", desc: "Undo." },
       { keys: "Ctrl+Y  /  Ctrl+Shift+Z", desc: "Redo." },
+      {
+        keys: "Ctrl+S",
+        desc: "Save. With the local host running, overwrites the open file in place (asks first if it changed on disk); a new score opens a save dialog; otherwise downloads under the score's title.",
+      },
+      { keys: "Ctrl+O", desc: "Open a .hkc (the local host's file dialog, else the browser's)." },
       { keys: "Shift+=", desc: "Zoom in." },
       { keys: "Shift+-", desc: "Zoom out." },
       { keys: "Escape", desc: "Cancel pending hairpin or pending tuplet." },

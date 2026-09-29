@@ -2,7 +2,9 @@
 //
 // One small local server that (a) serves the embedded lean read-only overlay
 // build (apps/hkl/dist-overlay, copied into ./embedded by assemble-overlay-host)
-// and (b) hosts the WebSocket relay at /overlay-ws — both on ONE local origin.
+// and (b) hosts the WebSocket relay at /overlay-ws — both on ONE local origin —
+// and (c) the local file bridge at /fs/* (fs-bridge.mjs), which lets Composer in
+// Firefox open files by path and save them back in place.
 //
 // Why local-served: OBS Browser Source is its own Chromium (CEF). Since Chrome
 // 142/147, a PUBLIC page (Netlify) → ws://127.0.0.1 is blocked by Local Network
@@ -21,6 +23,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { attachOverlayRelay } from './overlay-relay.mjs';
 import { staticHandler } from './static.mjs';
+import { createFsBridge } from './fs-bridge.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(__dirname, '..');
@@ -35,7 +38,12 @@ const HOST = '127.0.0.1';
 
 const serveStatic = staticHandler(path.join(appRoot, 'embedded'));
 
-const server = http.createServer((req, res) => { serveStatic(req, res); });
+const fsBridge = await createFsBridge({ port: PORT });
+
+const server = http.createServer((req, res) => {
+  if (fsBridge.owns(req.url || '')) fsBridge.handle(req, res);
+  else serveStatic(req, res);
+});
 
 const relay = attachOverlayRelay(server, '/overlay-ws');
 server.on('upgrade', (req, socket, head) => {
@@ -47,7 +55,8 @@ server.listen(PORT, HOST, () => {
   console.log(`\n  HKL OBS overlay host → http://${HOST}:${PORT}/`);
   console.log(`    OBS Browser Source  → http://${HOST}:${PORT}/?overlay`);
   console.log(`    relay               → ws://${HOST}:${PORT}/overlay-ws`);
-  console.log(`    performer (Netlify) dials ws://127.0.0.1:${PORT}/overlay-ws\n`);
+  console.log(`    performer (Netlify) dials ws://127.0.0.1:${PORT}/overlay-ws`);
+  console.log(`    file bridge         → http://${HOST}:${PORT}/fs/  (dialog: ${fsBridge.pickerName ?? 'none — install kdialog or zenity'}; roots: ${fsBridge.roots.join(', ')})\n`);
 });
 
 server.on('error', (e) => {

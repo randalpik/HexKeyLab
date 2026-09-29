@@ -239,6 +239,31 @@ The **Setup…** button opens a dialog for the whole-document settings:
 | Import | **MusicXML** | Loads a `.musicxml` score authored in Finale / MuseScore / Sibelius (notes, chords, multiple voices and instruments, tuplets, ties, slurs, articulations, dynamics, hairpins, every tempo marking (verbal, metronome, and Finale's hidden playback tempi), key/meter/clef changes). The document is set to **Equal tuning, HEJI off, colors ignored** — the imported score is a starting point you then retune toward just intonation. Each note keeps its original spelling (a G♭ stays a G♭). |
 | Export | **PDF** | Vector, and exactly the page view as shown on screen, page for page — HEJI accidentals, colors, headers, footers, section titles — honoring the current single-part view. From scroll view it exports the page layout (switching to page view for the moment of the export). Always US Letter; **Page size** changes how much score sits on each sheet, not the sheet. |
 
+### Where files are saved
+
+Run the **local host** (`pnpm overlay:host` — the same small server the OBS overlay uses) and Composer
+works like a desktop editor, in Firefox too:
+
+- **Load .hkc** / **Ctrl+O** and **Import .musicxml** open your desktop's own file dialog.
+- **Save .hkc** / **Ctrl+S** writes straight back to the file you opened. If that file was changed on
+  disk since (another tab, a sync client), Composer asks before overwriting it.
+- After an **Import**, the first Save writes `<name>.hkc` next to the MusicXML file (`<name> (1).hkc` if
+  that is taken) — the MusicXML itself is never overwritten — and later Saves update that `.hkc`.
+- A **new** score's first Save asks where to put it, suggesting `<title>.hkc` in the folder you last used.
+  **Save As…** always asks.
+- **Export** always asks where to put the PDF / MusicXML, suggesting the score's folder and name.
+- The file Save will write to is shown in the toolbar (hover for the full path).
+
+The host only opens and saves inside your home folder (and never in hidden folders), and only score
+files (`.hkc`, `.mei`, `.xml`, `.musicxml`, `.pdf`). The dialog needs **kdialog**, **zenity** or **yad**
+installed; the host prints which one it found at startup. On a desktop with an XDG file-chooser portal
+(KDE Plasma, GNOME), zenity already shows your desktop's own dialog — on Plasma the KDE one — so there is
+no need to install kdialog.
+
+Without the host, Load/Import use the browser's picker and Save/Export **download** the file, named after
+the file you opened or the score's title (`Sonata No. 1.hkc`); the browser decides the folder and adds
+`(1)` when the name is taken.
+
 `.hkc` files also arrive straight from HKL's **Export to Composer** (HKL transcribes a recording into notation and sends it over; see the [Core guide](core.md#export-to-sheet-music-composer)).
 
 ---

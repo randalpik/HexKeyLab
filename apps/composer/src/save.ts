@@ -4,8 +4,9 @@
 //     where the spec allows; advanced markings like dynamics aren't emitted
 //     because the model doesn't carry them yet).
 //
-// Uses simple download/upload via Blob + <input type="file"> — no File System
-// Access API yet.
+// This module builds the bytes and names; WHERE they go is files.ts — the
+// overlay host's local file bridge when it is running (save in place), else a
+// browser download named after the title.
 
 import { ComposerModel } from './model/index.js';
 import { cellHasFlag } from './model/empty-flags.js';
@@ -16,7 +17,7 @@ import { applyNotationTheme } from '@hkl/notation/verovio.js';
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
 
-function downloadBlob(filename: string, blob: Blob): void {
+export function downloadBlob(filename: string, blob: Blob): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -36,8 +37,17 @@ function readFileAsText(file: File): Promise<string> {
   });
 }
 
-function isoStamp(): string {
-  return new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, -5);
+/** A file base name (no extension) for a score title: characters reserved on
+ *  any common filesystem (and control characters) become spaces, whitespace
+ *  runs collapse, leading/trailing dots and spaces go. Empty → "Untitled". */
+export function fileBaseFromTitle(title: string): string {
+  const base = title
+    .replace(/[<>:"/\\|?*\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s.]+|[\s.]+$/g, '')
+    .slice(0, 150)
+    .trim();
+  return base || 'Untitled';
 }
 
 function escapeXml(s: string): string {
@@ -47,10 +57,8 @@ function escapeXml(s: string): string {
 
 /* ── .hkc save / load ────────────────────────────────────────────────────── */
 
-export function saveHkc(model: ComposerModel, name?: string): void {
-  const xml = model.serialize();
-  const filename = (name ? name.replace(/\.[^.]*$/, '') : 'hkc-' + isoStamp()) + '.hkc';
-  downloadBlob(filename, new Blob([xml], { type: 'application/xml' }));
+export function hkcBlob(model: ComposerModel): Blob {
+  return new Blob([model.serialize()], { type: 'application/xml' });
 }
 
 export async function loadHkcFromFile(file: File): Promise<ComposerModel> {
@@ -1307,10 +1315,8 @@ function dotXml(dots: number): string {
   return s;
 }
 
-export function downloadMusicXml(model: ComposerModel): void {
-  const xml = exportMusicXml(model);
-  const filename = 'hkc-' + isoStamp() + '.musicxml';
-  downloadBlob(filename, new Blob([xml], { type: 'application/vnd.recordare.musicxml+xml' }));
+export function musicXmlBlob(model: ComposerModel): Blob {
+  return new Blob([exportMusicXml(model)], { type: 'application/vnd.recordare.musicxml+xml' });
 }
 
 /* ── .pdf export ─────────────────────────────────────────────────────────── */
@@ -1434,7 +1440,11 @@ function inlineComputedStroke(svg: SVGSVGElement): void {
  *  injected HEJI <text>, as vectors + embedded glyphs. See decisions.md
  *  "Composer PDF export uses PDFKit, not jsPDF". Lazy-loaded so the PDF stack
  *  only lands in the bundle on first export. */
-export async function downloadPdf(pages: SVGSVGElement[]): Promise<void> {
+export async function downloadPdf(pages: SVGSVGElement[], base = 'Untitled'): Promise<void> {
+  downloadBlob(base + '.pdf', await renderPdf(pages));
+}
+
+export async function renderPdf(pages: SVGSVGElement[]): Promise<Blob> {
   if (!pages.length) throw new Error('nothing to export — no rendered pages');
   /* Snapshot every page NOW, before the first await: the mount window may
      evict far pages (innerHTML = '') on the next idle tick, and the export
@@ -1492,7 +1502,7 @@ export async function downloadPdf(pages: SVGSVGElement[]): Promise<void> {
     if (warnings.length) console.error('[composer] pdf export: svg-to-pdfkit reported ' + warnings.length + ' problem(s):', warnings.slice(0, 20));
     doc.end();
     await ended;
-    downloadBlob('hkc-' + isoStamp() + '.pdf', new Blob(chunks, { type: 'application/pdf' }));
+    return new Blob(chunks, { type: 'application/pdf' });
   } finally {
     document.body.removeChild(host);
   }

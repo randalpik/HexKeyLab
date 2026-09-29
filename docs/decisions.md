@@ -9289,3 +9289,41 @@ Fixtures: `erest_import_mrest_scrubbed`, `erest_import_mrest_siblingEdit` (the s
 `erest_import_mrest_insertAtHead` (Max's repro), `erest_legacy_mrest_scrubbed_on_load`; updated
 `phase5_musicxml_measure_rest` (placeholders, one drawn rest), `mRest_emptyMeasureStaysInSync` (timing
 only), `sel_beat_enter_mRest` (legacy file through the load path).
+
+---
+## Composer saves in place through a local file bridge on the overlay host (2026-09-28, Max)
+
+**Problem**: Composer's Save always downloaded `hkc-<timestamp>.hkc` into Downloads; there was no way to
+overwrite the file you had opened. Firefox (the primary browser) has no File System Access API
+(`showOpenFilePicker` / `showSaveFilePicker` / writable handles) and Mozilla has declined the picker
+parts, so a page can neither learn a picked file's path nor write anywhere but Downloads. A
+Chromium-only File System Access path was rejected outright by Max: no functionality only Chromium gets.
+
+**Decision**: the overlay host (the local Node server Max always runs) gains `/fs/*` routes; Composer uses
+them when they answer and falls back to downloads when not.
+- **Native dialogs spawned by the host** (`kdialog` → `zenity` → `yad`), not an in-app file browser — the
+  desktop's own dialog with its bookmarks; the page only ever sees paths the user chose. Risk accepted and
+  to be checked by hand: KWin focus-stealing prevention may open the dialog behind Firefox.
+- **Security gates before any fs work**: Host header (DNS rebinding), Origin allowlist (no Origin → 403),
+  roots with symlinks resolved and no dot-components (default `$HOME`), extension allowlists. A localhost
+  server that writes files is reachable by every page the user visits; these are not optional.
+- **Save semantics**: loaded `.hkc` → overwrite, conditioned on the mtime read (409 → confirm).
+  MusicXML import → `<dir>/<base>.hkc`, numbered `(1)`, `(2)`… when taken, never the source. New doc →
+  save dialog with `<title>.hkc`. Exports always go through the dialog (a lossy MusicXML export must not
+  silently replace an imported source of the same name).
+- **Names come from the title** when there is no file (`fileBaseFromTitle`), host or not — replacing
+  the timestamp names.
+- **No probe at page load**: only a Save / Load / Export click contacts the host, so public visitors
+  without one never poke localhost, and the test suite (which disables the client in `__testReset`) can
+  never reach a live host or open a real dialog.
+
+**Rejected**: Chromium File System Access (Chromium-only); an HTTP route in the dev proxy (production
+Composer would lack it; the host already runs everywhere Max works); guessing a picked file's path by
+name + content hash (fragile). Other apps (`.hkr`, `.mid`, `.hki`) are deliberately NOT migrated yet —
+Composer first, to prove the dialog focus + CORS-from-production paths (Max, 2026-09-28).
+
+**Addendum (2026-09-29)**: verified by Max in Firefox — dialogs, save-in-place and the rest work as
+designed. The feared KWin focus problem did not occur: on Plasma the host spawns zenity, but zenity 4
+(GTK4) routes through the XDG FileChooser portal, so the window is `xdg-desktop-portal-kde`'s KDE dialog,
+which KWin raises. kdialog is therefore optional on Plasma; the host's `picker` field names the spawned
+command, not the dialog.

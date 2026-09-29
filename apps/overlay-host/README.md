@@ -57,6 +57,26 @@ dials the right port — it's hardcoded to the default otherwise).
 **Internet required:** the Bravura font + Verovio WASM load from CDNs (no local
 copies in the lean build) — fine for a machine that's online while streaming.
 
+## Local file bridge (Composer save-in-place)
+
+The same server also answers `/fs/*`, which lets HKL Composer — in Firefox, which has no File System
+Access API — open files by path through a **native dialog** and **save them back in place**
+(Ctrl+S overwrites the file you loaded). Composer uses it automatically whenever this host is running and
+falls back to browser downloads when it isn't.
+
+- **Dialog tool**: `kdialog`, else `zenity`, else `yad` (printed at startup). `HKL_FS_PICKER=zenity`
+  forces one; `none` disables dialogs (Save of an already-open file still works). The name is only the
+  command spawned, not necessarily what draws the dialog: zenity 4 is GTK4, and GTK4's file dialog goes
+  through the XDG FileChooser portal whenever one is running — so on KDE Plasma
+  (`xdg-desktop-portal-kde`) zenity shows the **KDE** dialog, owned by the portal process (hence its
+  taskbar icon). kdialog is therefore optional on Plasma.
+- **Where it may read/write**: under `HKL_FS_ROOTS` (`:`-separated; default your home directory), never
+  inside a dot-directory, and only `.hkc .mei .xml .musicxml` (+ `.pdf` for writes).
+- **Who may call it**: only the HKL origins (dev `localhost:5170`, `hexkeylab.com`,
+  `hexkeylab.maxrandalmusic.com`); `HKL_FS_ORIGINS` (comma-separated) adds more. Any other web page gets 403.
+
+Test: `node test/fs-bridge/run.mjs` (`--host` = without the browser half / dev server).
+
 ## Dev
 
 The overlay-host is the **only** relay (no separate dev-proxy relay). For local

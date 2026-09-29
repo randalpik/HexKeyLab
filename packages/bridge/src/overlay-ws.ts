@@ -36,7 +36,7 @@ import { OVERLAY_WS_PATH, OVERLAY_RELAY_PORT, type OverlayMsg } from './overlay-
 const MIN_BACKOFF_MS = 500;
 const MAX_BACKOFF_MS = 5000;
 
-function readPortOverride(): number | null {
+export function readPortOverride(): number | null {
   /* Explicit override (precedence over origin): `?obsrelay=PORT` on the page URL
      or localStorage.hklOverlayPort. Lets a LOCAL performer (e.g. dev
      localhost:5170) target the standalone distributable's relay (127.0.0.1:5190)

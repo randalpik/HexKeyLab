@@ -22,7 +22,8 @@ import { scTransposeChordNote, type FootprintColorMap } from './notation/scTrans
 import { HistoryManager } from './history.js';
 import type { CursorUpdateOpts } from './cursor/cursor.js';
 import { selectionOverlay } from './selection/selectionOverlay.js';
-import { saveHkc, loadHkcFromFile, downloadMusicXml, downloadPdf, exportMusicXml } from './save.js';
+import { loadHkcFromFile, musicXmlBlob, renderPdf, exportMusicXml } from './save.js';
+import { openFile, saveDocument, exportDocument, resetFile, bindBrowserFile, onFileChange, fileState, setLocalFs, type OpenedFile } from './files.js';
 import { importMusicXml } from './importMusicXml.js';
 import { buildPlayback, buildPedalEvents, playbackStartMs, highlightElement, clearHighlights, readTempo, tickMsFromTempo } from './render/playback.js';
 import { PerformanceMatcher } from './render/performance.js';
@@ -1228,6 +1229,7 @@ cursor.onPlaybackChange = () => maybeBroadcastComposerPlayback();
 
 initInput(model, {
   getHeldKeys: () => lastHeldKeys,
+  fileCommand: (cmd) => { if (cmd === 'save') saveCommand(false); else openCommand('score'); },
   onChange: composerOnContentChange,
   onStateChange: composerOnStateChange,
   onCursorMove: composerOnCursorMove,
@@ -1587,28 +1589,78 @@ $('btnHelp')?.addEventListener('click', () => {
 });
 
 /* ── save / load / export ────────────────────────────────────────────────── */
+/* Where a file goes — the overlay host's local file bridge (save in place) or a
+   browser download — is files.ts; this block is the toolbar/keystroke wiring
+   and the document swap. */
 
-$('btnSave')?.addEventListener('click', () => {
+/** Status line for a failed file action. A local-host refusal carries its own
+ *  code (outside-roots, bad-extension, …) — surface it verbatim. */
+function fileError(verb: string, e: unknown): void {
+  console.error('[composer] ' + verb + ' failed', e);
+  setStatus(verb + ' failed: ' + (e as Error).message, 'error');
+}
+
+function saveCommand(as: boolean): void {
+  saveDocument(model, as).then(
+    (msg) => setStatus(msg, 'info'),
+    (e) => fileError('Save', e),
+  );
+}
+
+$('btnSave')?.addEventListener('click', () => saveCommand(false));
+$('btnSaveAs')?.addEventListener('click', () => saveCommand(true));
+
+/** Busy badge across parse + render: yield one frame so the badge paints
+ *  before the heavy synchronous work, hide once the (possibly deferred) render
+ *  has landed. The timer caps the wait — rAF never fires in a hidden tab, and
+ *  the native dialog can leave Firefox's window in the background. */
+async function loadWithBusy(busyText: string, work: () => void): Promise<void> {
+  showBusy(busyText);
   try {
-    saveHkc(model);
-    setStatus('Saved .hkc.', 'info');
-  } catch (e) {
-    console.error('[composer] save failed', e);
-    setStatus('Save failed: ' + (e as Error).message, 'error');
+    await new Promise<void>((resolve) => {
+      const t = setTimeout(resolve, 100);
+      requestAnimationFrame(() => setTimeout(() => { clearTimeout(t); resolve(); }, 0));
+    });
+    work();
+  } finally {
+    afterRender(() => hideBusy());
   }
-});
+}
 
-$('btnLoad')?.addEventListener('click', () => {
-  $<HTMLInputElement>('fileInputHkc')?.click();
+function openCommand(kind: 'score' | 'musicxml'): void {
+  const load = kind === 'score'
+    ? (f: OpenedFile) => loadWithBusy('Loading…', () => applyLoadedDocument(new ComposerModel(f.text).serialize(), 'Loaded ' + f.name))
+    : (f: OpenedFile) => loadWithBusy('Importing…', () => applyLoadedDocument(importMusicXml(f.text), 'Imported ' + f.name));
+  openFile(kind, load).then(
+    (r) => {
+      if (r === 'browser') $<HTMLInputElement>(kind === 'score' ? 'fileInputHkc' : 'fileInputMusicXml')?.click();
+      else if (r === 'busy') setStatus('A file operation is already in progress.', 'info');
+    },
+    (e) => fileError(kind === 'score' ? 'Load' : 'Import', e),
+  );
+}
+
+$('btnLoad')?.addEventListener('click', () => openCommand('score'));
+
+/** The toolbar's file label: the file Save writes to, full path on hover. */
+onFileChange((f) => {
+  const el = $('fileName');
+  if (!el) return;
+  const name = f.path ? f.path.slice(Math.max(f.path.lastIndexOf('/'), f.path.lastIndexOf('\\')) + 1) : null;
+  el.textContent = name ?? '';
+  el.title = f.path ?? '';
+  el.hidden = !name;
 });
 
 /** Swap in a whole new document (file load or HKL transcription import) and run
  *  the identical post-load wiring: reset history, re-render, refresh indicators,
  *  scroll the cursor into view, and treat the loaded layoutReq as authoritative
  *  (disabling blank-score auto-adopt so a stray hkl-layout-state can't overwrite
- *  it) before telling HKL about it. */
+ *  it) before telling HKL about it. Forgets the previous document's file — the
+ *  caller that loaded from a file binds the new one after this returns. */
 function applyLoadedDocument(meiXml: string, statusMsg: string): void {
   model.replaceDocument(meiXml);
+  resetFile();
   /* File load resets editing history — undo must not cross document boundaries. */
   history.clear();
   /* A new document may have a different instrument set — drop any single-part
@@ -1638,6 +1690,7 @@ $<HTMLInputElement>('fileInputHkc')?.addEventListener('change', async (e) => {
   try {
     const loaded = await loadHkcFromFile(file);
     applyLoadedDocument(loaded.serialize(), 'Loaded ' + file.name);
+    bindBrowserFile(file.name);
   } catch (err) {
     setStatus('Load failed: ' + (err as Error).message, 'error');
   } finally {
@@ -1651,9 +1704,7 @@ function hideExportMenu(): void {
     ?.hidePopover?.();
 }
 
-$('btnImportXml')?.addEventListener('click', () => {
-  $<HTMLInputElement>('fileInputMusicXml')?.click();
-});
+$('btnImportXml')?.addEventListener('click', () => openCommand('musicxml'));
 
 $<HTMLInputElement>('fileInputMusicXml')?.addEventListener('change', async (e) => {
   const input = e.target as HTMLInputElement;
@@ -1665,6 +1716,7 @@ $<HTMLInputElement>('fileInputMusicXml')?.addEventListener('change', async (e) =
   try {
     const text = await file.text();
     applyLoadedDocument(importMusicXml(text), 'Imported ' + file.name);
+    bindBrowserFile(file.name);
   } catch (err) {
     setStatus('Import failed: ' + (err as Error).message, 'error');
   } finally {
@@ -1680,38 +1732,42 @@ $<HTMLInputElement>('fileInputMusicXml')?.addEventListener('change', async (e) =
   };
 
 $('btnExportXml')?.addEventListener('click', () => {
-  try {
-    downloadMusicXml(model);
-    setStatus('Exported .musicxml.', 'info');
-  } catch (e) {
-    console.error('[composer] musicxml export failed', e);
-    setStatus('Export failed: ' + (e as Error).message, 'error');
-  } finally {
-    hideExportMenu();
-  }
+  hideExportMenu();
+  exportDocument(model, 'musicxml', async () => musicXmlBlob(model)).then(
+    (msg) => { if (msg) setStatus(msg, 'info'); },
+    (e) => fileError('Export', e),
+  );
 });
 
 $('btnExportPdf')?.addEventListener('click', async () => {
-  setStatus('Rendering PDF…', 'info');
   hideExportMenu();
-  /* The PDF is the page view's DOM, page for page (save.ts downloadPdf,
+  /* The PDF is the page view's DOM, page for page (save.ts renderPdf,
      2026-09-05). Scroll view has no pages, so it exports FROM page view:
      switched to for the export and back afterwards — the view-switch stash
-     makes both directions cheap, and the deferred render is awaited. */
+     makes both directions cheap, and the deferred render is awaited. The
+     switch happens inside `make`, i.e. after the save dialog (files.ts), so a
+     cancelled dialog costs nothing. */
   const prevMode = renderer.getViewMode();
+  let rendered = false;
   try {
-    if (prevMode !== 'page') {
-      renderer.setViewMode('page');
-      reRender();
-      await new Promise<void>((resolve) => afterRender(resolve));
-    }
-    await downloadPdf(renderer.mountAllPages());
-    setStatus('Exported .pdf.', 'info');
+    const msg = await exportDocument(model, 'pdf', async () => {
+      setStatus('Rendering PDF…', 'info');
+      rendered = true;
+      if (prevMode !== 'page') {
+        renderer.setViewMode('page');
+        reRender();
+        await new Promise<void>((resolve) => afterRender(resolve));
+      }
+      return renderPdf(renderer.mountAllPages());
+    });
+    if (msg) setStatus(msg, 'info');
   } catch (e) {
     console.error('[composer] pdf export failed', e);
     setStatus('PDF export failed: ' + (e as Error).message, 'error');
   } finally {
-    if (prevMode !== 'page') {
+    if (!rendered) {
+      /* cancelled before rendering — nothing to restore */
+    } else if (prevMode !== 'page') {
       renderer.setViewMode(prevMode);
       reRender();
       afterRender(() => maybeScrollMeasureIntoView(visualCursorMeasure()));
@@ -1830,6 +1886,11 @@ void bootRenderer();
   buildPlayback,
   buildPedalEvents,
   exportMusicXml,
+  /* Test-only: the document's file binding (files.ts), and a LocalFs
+     substitute — null disables the local-host path (browser download/picker).
+     __testReset sets null, so no fixture can reach a live host. */
+  fileState,
+  __setLocalFs: setLocalFs,
   /* Test-only: add an expressive-text <dir> directly (bypasses the async modal
      flow) so fixtures can place pizz./arco cues deterministically. */
   __addDir: (measureIdx: number, tstamp: number, text: string, staff: number): void => {
@@ -1859,6 +1920,8 @@ void bootRenderer();
     invalidateRefNoteCache();
     invalidateScoreRefCache();
     setConn('no-hkl');
+    setLocalFs(null);
+    resetFile();
   },
   /* Test-only: stage playback-active state pointing at a specific meiId so
    * subsequent plain-arrow can exercise stopPlaybackAtHead without an actual

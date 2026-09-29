@@ -199,6 +199,8 @@ export interface InputHooks {
   systemOfMeasure?: (measureIdx: number) => { lineIdx: number; startIdx: number; endIdx: number } | null;
   captureLayout?: () => LayoutSnapshot | null;
   restoreLayout?: (snap: LayoutSnapshot) => boolean;
+  /** Ctrl+S (save) / Ctrl+O (open .hkc) — main.ts owns the file flows. */
+  fileCommand?: (cmd: 'save' | 'open') => void;
   /** Undo/redo manager. Constructed once in main.ts and shared with any
    *  module that performs user-initiated mutations (input dispatch, setup
    *  dialog, SC-transpose callback). */
@@ -2036,6 +2038,15 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
        Pure-modifier keys (still arming a combo) don't clear. */
     if (e.key !== 'Shift' && e.key !== 'Control' && e.key !== 'Alt' && e.key !== 'Meta') {
       hooks.clearStatusIfTransient?.();
+    }
+
+    /* Ctrl+S / Ctrl+O → save / open, in every mode and during playback. The
+       browser defaults (Save Page As / Open File) MUST be suppressed. */
+    if (hooks.fileCommand && e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey
+        && (e.key === 's' || e.key === 'S' || e.key === 'o' || e.key === 'O')) {
+      e.preventDefault();
+      hooks.fileCommand(e.key === 's' || e.key === 'S' ? 'save' : 'open');
+      return;
     }
 
     /* Bare Space → stop whichever transport is running, else start playback.

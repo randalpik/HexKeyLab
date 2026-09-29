@@ -35,6 +35,8 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
 #composerToolbar .conn { font-size: 11px; padding: 2px 8px; border-radius: 4px; background: #2a1a1a; color: #FF4C79; border: 1px solid #4a2a3a }
 #composerToolbar .conn.connected { background: #1a2a1a; color: #4CFFBA; border-color: #2a4a3a }
 #composerToolbar .conn.standalone { background: #2a2a1a; color: #FFF94C; border-color: #4a4a2a }
+/* The file Save writes to (files.ts); full path in the title tooltip. */
+#composerToolbar .file-name { color: #888; font-size: 11px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 #composerToolbar .btn { padding: 3px 12px; background: #222; color: #ccc; border: 1.5px solid #555; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 12px }
 #composerToolbar .btn:hover { border-color: #888 }
 /* Top-bar dropdowns: bare, dark-styled (matches the setup dialog's selects +
@@ -360,8 +362,10 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
     <button class="btn" id="btnHelp" title="Keybinding reference">Help</button>
   </div>
   <div class="spacer"></div>
-  <button class="btn" id="btnSave">Save .hkc</button>
-  <button class="btn" id="btnLoad">Load .hkc</button>
+  <span class="file-name" id="fileName" hidden></span>
+  <button class="btn" id="btnSave" title="Save (Ctrl+S)">Save .hkc</button>
+  <button class="btn" id="btnSaveAs" title="Save to a new file">Save As…</button>
+  <button class="btn" id="btnLoad" title="Open (Ctrl+O)">Load .hkc</button>
   <button class="btn" id="btnImportXml">Import .musicxml</button>
   <button class="btn" id="btnExportMenu" popovertarget="exportMenu" aria-haspopup="menu">Export ▾</button>
   <div id="exportMenu" popover="auto" role="menu">

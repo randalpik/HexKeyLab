@@ -55,6 +55,8 @@ relay**, for both dev and production.
   `.woff2`/`.wasm`, extensionless → `index.html`).
 - **`src/overlay-relay.mjs`** — the relay (`ws` `noServer`): pub/sub fan-out that **retains
   last-value per message type**, so an OBS source opened mid-performance reconstructs immediately.
+- **`src/fs-bridge.mjs`** — the Composer **local file bridge** at `/fs/*` (see below). Not
+  overlay-related; it lives here because this is the one local server Max always has running.
 - **`embedded/`** — the lean overlay build, copied in by `vite/assemble-overlay-host.mjs`
   (gitignored). The app's `build` is a no-op so `pnpm -r build` ordering is untouched (it has no
   `@hkl/*` dep); embedding is the explicit `assemble:overlay-host` step.
@@ -71,6 +73,39 @@ CDN-loaded by `@hkl/notation` — fine for a machine online while streaming.
 
 Future: package as a single executable (bun compile / Node SEA) so non-developers don't need Node —
 would swap `static.mjs`'s on-disk `embedded/` root for an embedded VFS.
+
+### Local file bridge — `/fs/*`
+
+Firefox has no File System Access API: a page never learns where a picked file lives and can write only
+to Downloads. The host does both for Composer (`apps/composer/src/files.ts`, client
+`packages/bridge/src/local-fs.ts`; → [composer.md](composer.md#save--load--export-appscomposersrcsavets-filests)).
+Routes: `GET status`, `POST pick-open` / `pick-save` (spawn a **native dialog** — `kdialog` → `zenity` →
+`yad`, first found, `HKL_FS_PICKER` overrides, `none` disables; one at a time — see the portal note
+below), `POST read` (JSON text +
+`mtimeMs`), `POST write?path=…[&ifMtime|&ifAbsent|&unique]` (raw body; temp + fsync + rename, mode
+preserved; 409 with the current mtime on a failed condition; `unique` = exclusive create of `name.ext`,
+`name (1).ext`, …). Full protocol in the module header.
+
+It is a localhost server that writes files, so **every request passes four gates first**:
+1. `Host` is `127.0.0.1:<port>` / `localhost:<port>` (DNS rebinding);
+2. `Origin` is on the allowlist (`localhost:5170`, `127.0.0.1:5170`, `hexkeylab.com`,
+   `www.hexkeylab.com`, `hexkeylab.maxrandalmusic.com`; `HKL_FS_ORIGINS` adds) — no Origin → 403;
+3. the path, symlinks resolved, is inside a root (`HKL_FS_ROOTS`, default `$HOME`) with no dot-component;
+4. the extension (after resolution too) is on the read (`.hkc .mei .xml .musicxml`) / write (+ `.pdf`) list.
+
+**The picker name is the spawned command, not the dialog.** zenity 4 is GTK4, whose file dialog routes
+through the XDG `org.freedesktop.portal.FileChooser` whenever a portal is running — no env var needed
+(none is set on Max's Plasma session; `kde-portals.conf` maps FileChooser to `xdg-desktop-portal-kde`).
+So on Plasma the host reports `zenity` while the window is KDE's own dialog, owned by the portal process
+— the same dialog Firefox shows. Observed 2026-09-29 (Max): correct styling, taskbar icon, and focus
+(KWin raises portal dialogs, so the feared focus-stealing problem did not occur). kdialog only skips the
+GTK → portal hop.
+
+CORS is granted only to allowed origins, including Chromium's Private Network Access preflight. The
+client never probes at page load — only on a Save / Load / Export click — so public visitors without a
+host never poke localhost. Gate: `node test/fs-bridge/run.mjs` (in-process host with a stub picker:
+gates, conditional/atomic/numbered writes, pick routes; then a real Composer page driving Load / Ctrl+S /
+conflict / Import / PDF / Save As against it; `--host` skips the browser half).
 
 ---
 
@@ -246,6 +281,7 @@ same-origin-routed; it dials `127.0.0.1:5190` exactly like production does.)
 | Concern | File |
 |---|---|
 | Distributable server + static + relay | `apps/overlay-host/src/{server,static,overlay-relay}.mjs` |
+| Composer local file bridge | `apps/overlay-host/src/fs-bridge.mjs`, client `packages/bridge/src/local-fs.ts`, gate `test/fs-bridge/run.mjs` |
 | Embed lean build | `vite/assemble-overlay-host.mjs` (root script `assemble:overlay-host`) |
 | Lean build | `apps/hkl/vite.overlay.config.ts`, `apps/hkl/src/overlay-main.ts` → `dist-overlay/` |
 | Render decoupling | `apps/hkl/src/render/controls-core.ts`, `ui/controls.ts`, `effects/onTuningChanged.ts` |
