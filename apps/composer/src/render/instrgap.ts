@@ -57,7 +57,7 @@
 // `postProcessRendered` precedes `placePage`. Every measurement is in the
 // page-margin group's user space (`svgBox`), never screen rectangles.
 
-import { svgBox, type Box } from './textlayout.js';
+import { strokedBox, svgBox, type Box } from './textlayout.js';
 
 /* ── ALWAYS ON (2026-09-09) ──
    This pass was gated behind an `ENABLED` flag while a pagination defect was
@@ -238,7 +238,7 @@ function inkOf(sys: Element, staffNs: ReadonlyArray<number>, frameInv: DOMMatrix
     const n = attrNum(st, 'data-n');
     if (n === null || !want.has(n)) continue;
     for (const o of Array.from(st.querySelectorAll(OBSTACLE_SEL))) {
-      const b = svgBox(o as SVGGraphicsElement, frameInv);
+      const b = strokedBox(o, frameInv);
       if (isInk(b)) out.push(b);
     }
   }

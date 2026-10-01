@@ -3914,6 +3914,36 @@ until proven otherwise. Check the DISTRIBUTION of the outliers before reporting
 a count — the shape of the 78 zeros identified the cause in one look, where the
 headline "90 violations" read as a real finding.
 
+## A stem's `getBBox` is zero-wide: stroked lines have no fill geometry (2026-09-29)
+
+Verovio draws a stem as `<path d="M x y1 L x y2" stroke-width="20">`, and
+`getBBox()` is FILL geometry — it ignores the stroke — so a stem measures
+**zero wide** (144 of 164 stems on sonata p. 6). Every obstacle loop drops
+width-less boxes (the guard the entry above calls for), so stems were silently
+not obstacles anywhere. A single note's stem still counted through its `g.note`
+box, which unions notehead and stem; a **chord's** stem hangs off `g.chord`,
+which no obstacle selector names, so it counted nowhere. Symptom: the piano's
+"cresc." centred in the grand-staff gap by `textlayout.ts` ran straight through
+the left hand's up-stem (sonata p. 6, third system, m. 90: centred to the gap
+midpoint, 430 user units down, onto a stem the clamp should have stopped at 149).
+Deleting and re-entering the mark changed nothing — the tell that it was layout,
+not import.
+
+Fix shape: `strokedBox` (textlayout.ts) widens a box degenerate in ONE axis by
+half its paths' `stroke-width`, at the obstacle consumers only (textlayout,
+tielayout, instrgap). Not in `svgBox`: staff lines and barlines are the same
+kind of stroked path, and every row and barline measurement is built on their
+fill boxes — widening them centrally would shift every row by half a stroke.
+A 0×0 box (the `g.accid` case) stays degenerate and stays dropped.
+
+Open: `slurlayout.ts` has the same blind spot — its `OBSTACLE_SEL` names
+`g.stem` and uses `g.notehead`, not `g.note`, so slurs skip EVERY stem — but it
+excludes only the endpoint noteheads, not their stems, so counting stems there
+needs an endpoint-stem rule first. Not changed.
+
+Corollary: when a geometry pass "ignores" a glyph class, check that class's
+bbox dimensions before checking the selector — `g.stem` was in every selector.
+
 ## Wait for the PARTITION to stop changing, not for a busy flag (2026-09-08)
 
 `pb.balanceJobActive()` is false **before the balance job is armed**, so

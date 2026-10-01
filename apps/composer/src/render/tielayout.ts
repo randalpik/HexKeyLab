@@ -43,7 +43,7 @@
 // them again itself, so it is idempotent. A raised tie can grow a system's
 // extents; it still runs before placement measures them.
 
-import { svgBox, type Box } from './textlayout.js';
+import { strokedBox, svgBox, type Box } from './textlayout.js';
 import { bez, fmt, MARGIN, OBSTACLE_SEL, type Pt } from './slurlayout.js';
 
 export interface TieLayoutOpts {
@@ -261,7 +261,7 @@ export function layoutCollidingTies(root: Element, opts: TieLayoutOpts): void {
       const obs: Obstacle[] = [];
       for (const el of Array.from(sys.querySelectorAll(TIE_OBSTACLE_SEL))) {
         if (el.matches(HIDDEN_SEL)) continue;
-        const b = inkBox(el, frameInv);
+        const b = strokedBox(el, frameInv, inkBox(el, frameInv));
         if (!b || !(b.right > b.left)) continue;
         obs.push({ el, box: b, poly: el.localName === 'path' ? undefined : null });
       }

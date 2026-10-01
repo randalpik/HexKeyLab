@@ -8201,6 +8201,41 @@ const ENGRAVING = {
     `,
   },
 
+  /* A grand-staff <dir> centred in the gap stops short of a CHORD's stem
+     (render/textlayout.ts, 2026-09-29; sonata p. 6, the piano's "cresc." over
+     the left hand's A♭–C–E♭ in m. 90). A stem is a stroked zero-width path, so its
+     getBBox has no width and the obstacle filter dropped it; a single note's
+     stem still counted through its g.note box, but a chord's stem hangs off
+     g.chord, which is no obstacle — the centring move ran straight through it. */
+  engr_dirCenteredClearsChordStem: {
+    setup: `
+      const P = (step, alter, oct, dur, type, staff, extra) => '<note>' + (extra || '') + '<pitch><step>' + step + '</step>'
+        + (alter ? '<alter>' + alter + '</alter>' : '') + '<octave>' + oct + '</octave></pitch>'
+        + '<duration>' + dur + '</duration><voice>' + (staff === 2 ? 5 : 1) + '</voice><type>' + type + '</type>'
+        + (alter ? '<accidental>flat</accidental>' : '') + '<staff>' + staff + '</staff></note>';
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>'
+        + '<part id="P1"><measure number="1">'
+        + '<attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>4</beats><beat-type>4</beat-type></time><staves>2</staves>'
+        + '<clef number="1"><sign>G</sign><line>2</line></clef><clef number="2"><sign>F</sign><line>4</line></clef></attributes>'
+        + '<direction placement="below"><direction-type><words font-style="italic">cresc.</words></direction-type><staff>1</staff></direction>'
+        + P('D', 0, 5, 96, 'whole', 1)
+        + '<backup><duration>96</duration></backup>'
+        /* The chords sit INSIDE the bass staff so their noteheads cannot clamp
+           the move; only the up-stems, 3.5 spaces tall, reach the gap. The
+           importer drops <stem>, so the stems are forced up the way the
+           sonata's were: a second layer (voice 6's low C) under the chords. */
+        + P('C', 0, 3, 48, 'half', 2, '') + P('E', 0, 3, 48, 'half', 2, '<chord/>') + P('A', 0, 3, 48, 'half', 2, '<chord/>')
+        + P('C', 0, 3, 48, 'half', 2, '') + P('E', 0, 3, 48, 'half', 2, '<chord/>') + P('A', 0, 3, 48, 'half', 2, '<chord/>')
+        + '<backup><duration>96</duration></backup>'
+        + '<note><pitch><step>C</step><octave>2</octave></pitch><duration>96</duration><voice>6</voice><type>whole</type><staff>2</staff></note>'
+        + '</measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+
   /* Two voices on one staff: voice 1's rest inside a tuplet stays ON the staff
      (raised to loc 6) when voice 2's low note leaves room, instead of
      Verovio's lift into the tuplet bracket (notation/restlayout.ts,
@@ -20799,6 +20834,35 @@ export const FIXTURE_ASSERTIONS = {
         const L = path.getTotalLength(); const ctm = path.getScreenCTM(); let top = Infinity;
         for (let i = 0; i <= 48; i++) { const p = new DOMPoint(path.getPointAtLength(L * i / 48).x, path.getPointAtLength(L * i / 48).y).matrixTransform(ctm); if (p.x >= box.left && p.x <= box.right) top = Math.min(top, p.y); }
         if (!(top > box.bottom - 1)) return { ok: false, detail: 'slur top ' + top.toFixed(1) + ' still inside the dir box (bottom ' + box.bottom.toFixed(1) + ')' };
+        return { ok: true };
+      })()` },
+  ],
+  engr_dirCenteredClearsChordStem: [
+    { name: 'the centred grand-staff dir stops above the lower staff\'s chord stem instead of running through it',
+      expr: `(() => {
+        const sys = document.querySelector('#score g.system');
+        const st = (n) => sys && sys.querySelector('g.measure g.staff[data-n="' + n + '"]');
+        const s1 = st(1), s2 = st(2);
+        if (!s1 || !s2) return { ok: false, detail: 'staves 1=' + !!s1 + ' 2=' + !!s2 };
+        const band = (s) => {
+          const rs = [...s.children].filter((p) => p.tagName === 'path').map((p) => p.getBoundingClientRect()).filter((b) => b.height <= 2.5);
+          return rs.length ? { top: Math.min(...rs.map((b) => b.top)), bottom: Math.max(...rs.map((b) => b.bottom)) } : null;
+        };
+        const b1 = band(s1), b2 = band(s2);
+        if (!b1 || !b2) return { ok: false, detail: 'could not measure staff lines' };
+        const dirs = [...document.querySelectorAll('#score g.dir')];
+        if (dirs.length !== 1) return { ok: false, detail: 'dirs rendered: ' + dirs.length + ' (want 1)' };
+        const d = dirs[0].getBoundingClientRect();
+        const stems = [...s2.querySelectorAll('g.chord > g.stem')].map((g) => g.getBoundingClientRect())
+          .filter((r) => r.left <= d.right && r.right >= d.left);
+        if (!stems.length) return { ok: false, detail: 'no chord stem under the dir\u2019s x-range: the fixture tests nothing' };
+        const stemTop = Math.min(...stems.map((r) => r.top));
+        /* Meaningful only if an UNCLAMPED centring would reach the stem. */
+        const centredBottom = (b1.bottom + b2.top) / 2 + d.height / 2;
+        if (!(stemTop < centredBottom - 1)) return { ok: false, detail: 'stem top ' + stemTop.toFixed(1)
+          + ' is below the centred dir\u2019s bottom ' + centredBottom.toFixed(1) + ': the fixture tests nothing' };
+        if (!(d.top > b1.bottom)) return { ok: false, detail: 'dir top ' + d.top.toFixed(1) + ' is on the upper staff (bottom line ' + b1.bottom.toFixed(1) + ')' };
+        if (!(d.bottom < stemTop)) return { ok: false, detail: 'dir bottom ' + d.bottom.toFixed(1) + ' overlaps the chord stem (top ' + stemTop.toFixed(1) + ')' };
         return { ok: true };
       })()` },
   ],

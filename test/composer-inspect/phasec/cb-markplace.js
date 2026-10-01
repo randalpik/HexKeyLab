@@ -65,6 +65,24 @@ const boxIn = (el, inv) => {
   return { left: Math.min(a.x, c.x), right: Math.max(a.x, c.x), top: Math.min(a.y, c.y), bottom: Math.max(a.y, c.y) };
 };
 const isInk = (b) => !!b && b.right > b.left && b.bottom > b.top;
+/* An obstacle's box with a stroked line's thickness put back — textlayout's
+   `strokedBox`. A stem is a stroked zero-width path, so its fill box has no
+   width and `isInk` dropped every chord stem: this inventory could not see the
+   p. 6 m. 90 "cresc." sitting on one (2026-09-29). */
+const strokedIn = (el, inv) => {
+  const b = boxIn(el, inv); if (!b) return b;
+  const noW = !(b.right > b.left), noH = !(b.bottom > b.top);
+  if (noW === noH) return b;
+  let half = 0;
+  for (const p of el.localName === 'path' ? [el] : el.querySelectorAll('path')) {
+    const sw = parseFloat(p.getAttribute('stroke-width') || ''); if (!(sw > 0)) continue;
+    const ctm = p.getCTM && p.getCTM(); if (!ctm) continue;
+    const m = inv.multiply(ctm);
+    half = Math.max(half, (sw / 2) * (noW ? Math.hypot(m.a, m.b) : Math.hypot(m.c, m.d)));
+  }
+  if (!(half > 0)) return b;
+  return noW ? { ...b, left: b.left - half, right: b.right + half } : { ...b, top: b.top - half, bottom: b.bottom + half };
+};
 /* Staff rows of ONE measure, from its staves' own line paths — the rows
    textlayout.ts measures against (rowsOf). */
 const rowsOfMeasure = (measure, inv) => {
@@ -101,7 +119,7 @@ for (let pi = 0; pi < pages.length; pi++) {
     for (const st of sys.querySelectorAll('g.staff')) {
       const n = parseInt(st.getAttribute('data-n') || '', 10);
       for (const o of st.querySelectorAll(OBSTACLE_SEL)) {
-        const b = boxIn(o, inv); if (isInk(b)) ink.push({ ...b, n, cls: [...o.classList][0] });
+        const b = strokedIn(o, inv); if (isInk(b)) ink.push({ ...b, n, cls: [...o.classList][0] });
       }
     }
     /* Staff line bands, per staff, across the system (for the clearance term). */

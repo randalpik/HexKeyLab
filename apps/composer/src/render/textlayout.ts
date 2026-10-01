@@ -177,6 +177,39 @@ export function svgBox(el: Element, frameInv: DOMMatrix): Box | null {
   return { left: Math.min(x1, x2), right: Math.max(x1, x2), top: Math.min(y1, y2), bottom: Math.max(y1, y2) };
 }
 
+/** `svgBox` with a stroked line's thickness put back — for OBSTACLE boxes.
+ *  `getBBox()` is fill geometry, and Verovio draws a stem as a stroked
+ *  `M x y1 L x y2` path, so a stem measures zero wide, and every obstacle
+ *  filter drops a box without width (it must: Verovio's zero-size `g.accid`
+ *  groups map to the frame origin — lessons.md). A single note's stem still
+ *  counted through its `g.note` box; a CHORD's stem hangs off `g.chord`, which
+ *  is no obstacle, so it counted nowhere, and a grand-staff <dir> centred in
+ *  the gap ran straight through it (sonata p. 6, 2026-09-29: 144 of the
+ *  page's 164 stems measured zero wide). A box degenerate in ONE axis is
+ *  widened in that axis by half the widest stroke among its paths, each side;
+ *  a box with area, or with none in either axis, is returned unchanged — so
+ *  no obstacle that counted before moves by a unit. Never for staff lines or
+ *  barlines: every row and barline measurement is built on their fill boxes.
+ *  `b` is the element's box when the caller measured it another way
+ *  (tielayout's text-aware `inkBox`). */
+export function strokedBox(el: Element, frameInv: DOMMatrix, b: Box | null = svgBox(el, frameInv)): Box | null {
+  if (!b) return b;
+  const noW = !(b.right > b.left), noH = !(b.bottom > b.top);
+  if (noW === noH) return b;
+  let half = 0;
+  const paths = el.localName === 'path' ? [el] : Array.from(el.querySelectorAll('path'));
+  for (const p of paths) {
+    const sw = parseFloat(p.getAttribute('stroke-width') ?? '');
+    if (!(sw > 0) || typeof (p as SVGGraphicsElement).getCTM !== 'function') continue;
+    const ctm = (p as SVGGraphicsElement).getCTM();
+    if (!ctm) continue;
+    const m = frameInv.multiply(ctm);
+    half = Math.max(half, (sw / 2) * (noW ? Math.hypot(m.a, m.b) : Math.hypot(m.c, m.d)));
+  }
+  if (!(half > 0)) return b;
+  return noW ? { ...b, left: b.left - half, right: b.right + half } : { ...b, top: b.top - half, bottom: b.bottom + half };
+}
+
 /** A curve's outline sampled into the reference frame, or null when the path
  *  cannot be measured. */
 function curvePoints(path: Element, frameInv: DOMMatrix): Array<{ x: number; y: number }> | null {
@@ -458,7 +491,7 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
     const rowEls = Array.from(sys.querySelectorAll('g.staff')).filter((s) => attrNum(s, 'data-n') === row.n);
     for (const s of rowEls) {
       for (const g of Array.from(s.querySelectorAll(OBSTACLE_SEL))) {
-        const b = svgBox(g, frameInv);
+        const b = strokedBox(g, frameInv);
         if (!b || b.right < left - PAD || b.left > right + PAD || !(b.right > b.left)) continue;
         out.push(b);
       }
