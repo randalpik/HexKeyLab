@@ -13,7 +13,7 @@ import { join } from 'node:path';
 const OUT = process.argv[2];
 const PAGES = (process.argv[3] ?? '1,2').split(',').map(Number);
 const url = 'http://localhost:5170/composer/';
-const SONATA = process.env.SONATA ?? '/home/max/Documents/sonataBr1.musicxml';
+const SONATA = process.env.SONATA ?? '/home/max/Documents/sonata.hkc';   // Max's working copy (2026-09-30); SONATA=…musicxml imports instead
 const DEBUG_PORT = 9222 + Math.floor(Math.random() * 1000);
 const profileDir = mkdtempSync(join(tmpdir(), 'hkl-pdfw-'));
 const chromium = spawn('chromium', ['--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run',
@@ -64,7 +64,7 @@ try {
   for (let i = 0; i < 200; i++) { if (await evalIn(cdp, `!!(window.__hkl_composer && window.__hkl_composer.renderer && document.querySelector('#score svg'))`) === 'true') break; await new Promise((r) => setTimeout(r, 250)); }
   const xml = readFileSync(SONATA, 'utf8');
   await evalIn(cdp, `(window.__sonataXml = ${JSON.stringify(xml)}, true)`);
-  await evalIn(cdp, `(window.__composerImportMusicXml(window.__sonataXml), true)`);
+  await evalIn(cdp, `(window.${SONATA.endsWith('.hkc') ? '__composerLoadHkc' : '__composerImportMusicXml'}(window.__sonataXml), true)`);
   for (let i = 0; i < 400; i++) { if (await evalIn(cdp, `(() => { const b = document.getElementById('renderBusy'); return !!document.querySelector('.score-page svg') && (!b || b.hidden); })()`) === 'true') break; await new Promise((r) => setTimeout(r, 250)); }
   const out = JSON.parse(await evalIn(cdp, PROBE));
   if (out.__error || out.error) { console.error(out); cleanup(1); }

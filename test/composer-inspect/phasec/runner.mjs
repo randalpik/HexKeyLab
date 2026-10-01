@@ -21,7 +21,7 @@ const shotIdx = process.argv.indexOf('--screenshot');
 const shotPath = shotIdx >= 0 ? process.argv[shotIdx + 1] : null;
 const probeSrc = readFileSync(probeFile, 'utf8');
 const url = process.env.COMPOSER_URL ?? 'http://localhost:5170/composer/';
-const SONATA = process.env.SONATA ?? '/home/max/Documents/sonataBr1.musicxml';
+const SONATA = process.env.SONATA ?? '/home/max/Documents/sonata.hkc';   // Max's working copy (2026-09-30); SONATA=…musicxml imports instead
 
 const DEBUG_PORT = 9222 + Math.floor(Math.random() * 1000);
 const profileDir = mkdtempSync(join(tmpdir(), 'hkl-probe-'));
@@ -115,7 +115,7 @@ try {
   if (!noSonata) {
     const xml = readFileSync(SONATA, 'utf8');
     await evalIn(cdp, `(window.__sonataXml = ${JSON.stringify(xml)}, true)`);
-    await evalIn(cdp, `(window.__composerImportMusicXml(window.__sonataXml), true)`);
+    await evalIn(cdp, `(window.${SONATA.endsWith('.hkc') ? '__composerLoadHkc' : '__composerImportMusicXml'}(window.__sonataXml), true)`);
     // Import triggers a deferred heavy render behind the busy badge; wait it out.
     for (let i = 0; i < 400; i++) {
       const v = await evalIn(cdp, `(() => { const b = document.getElementById('renderBusy'); return !!document.querySelector('.score-page svg') && (!b || b.hidden); })()`);

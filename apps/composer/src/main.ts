@@ -1730,6 +1730,12 @@ $<HTMLInputElement>('fileInputMusicXml')?.addEventListener('change', async (e) =
   .__composerImportMusicXml = (xml: string) => {
     applyLoadedDocument(importMusicXml(xml), 'Imported MusicXML (test)');
   };
+/* Test hook: load an .hkc the way Open does (headless probes work from Max's
+   working copy, ~/Documents/sonata.hkc, not the original MusicXML). */
+(window as unknown as { __composerLoadHkc?: (text: string) => void })
+  .__composerLoadHkc = (text: string) => {
+    applyLoadedDocument(new ComposerModel(text).serialize(), 'Loaded .hkc (test)');
+  };
 
 $('btnExportXml')?.addEventListener('click', () => {
   hideExportMenu();

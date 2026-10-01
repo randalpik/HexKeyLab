@@ -24,7 +24,7 @@ const optOf = (name, dflt) => { const i = args.indexOf(name); return i >= 0 ? ar
 const DPRS = optOf('--dpr', '1').split(',');
 const WINS = optOf('--win', '1600x1200').split(',');
 const MODES = args.includes('--headed') ? ['headed'] : optOf('--mode', 'new').split(',');
-const SONATA = process.env.SONATA ?? '/home/max/Documents/sonataBr1.musicxml';
+const SONATA = process.env.SONATA ?? '/home/max/Documents/sonata.hkc';   // Max's working copy (2026-09-30); SONATA=…musicxml imports instead
 const URL_ = process.env.COMPOSER_URL ?? 'http://localhost:5170/composer/';
 const xml = readFileSync(SONATA, 'utf8');
 
@@ -91,7 +91,7 @@ const runOne = async (mode, win, dpr) => {
     await new Promise((res) => cdp.ws.addEventListener('message', (ev) => { if (JSON.parse(ev.data).method === 'Page.loadEventFired') res(); }));
     for (let i = 0; i < 240; i++) { if (await evalIn(cdp, `!!(window.__hkl_composer && window.__hkl_composer.renderer && document.querySelector('#score svg'))`) === 'true') break; await new Promise((r) => setTimeout(r, 250)); }
     await evalIn(cdp, `(window.__sonataXml = ${JSON.stringify(xml)}, true)`);
-    await evalIn(cdp, `(window.__composerImportMusicXml(window.__sonataXml), true)`);
+    await evalIn(cdp, `(window.${SONATA.endsWith('.hkc') ? '__composerLoadHkc' : '__composerImportMusicXml'}(window.__sonataXml), true)`);
     const out = JSON.parse(await evalIn(cdp, PARTITION));
     cdp.close();
     return out;

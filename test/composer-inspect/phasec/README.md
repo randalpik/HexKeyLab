@@ -7,7 +7,7 @@ session scratchpad (the spike-1/2/3/5 probes did — re-deriving them costs a
 session).
 
 Requires: `pnpm dev` running, `chromium` in PATH, and the sonata at
-`~/Documents/sonataBr1.musicxml` (override with `SONATA=<path>`).
+`~/Documents/sonata.hkc` — Max's working copy, loaded through the `__composerLoadHkc` test hook; quote page/measure numbers from it, not the original import (override with `SONATA=<path>`; a `.musicxml` path is imported instead).
 
 ```
 node test/composer-inspect/phasec/runner.mjs test/composer-inspect/phasec/refill-smoke.js

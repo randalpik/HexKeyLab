@@ -25,7 +25,7 @@ const noSonata = process.argv.includes('--no-sonata');
 if (!OUT) { console.error('usage: pageshots.mjs <outDir> <pages> [probe.js] [--arg v] [--no-sonata]'); process.exit(2); }
 mkdirSync(OUT, { recursive: true });
 const url = process.env.COMPOSER_URL ?? 'http://localhost:5170/composer/';
-const SONATA = process.env.SONATA ?? '/home/max/Documents/sonataBr1.musicxml';
+const SONATA = process.env.SONATA ?? '/home/max/Documents/sonata.hkc';   // Max's working copy (2026-09-30); SONATA=…musicxml imports instead
 const DEBUG_PORT = 9222 + Math.floor(Math.random() * 1000);
 const profileDir = mkdtempSync(join(tmpdir(), 'hkl-shots-'));
 const chromium = spawn('chromium', ['--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run',
@@ -74,7 +74,7 @@ try {
   if (!noSonata) {
     const xml = readFileSync(SONATA, 'utf8');
     await evalIn(cdp, `(window.__sonataXml = ${JSON.stringify(xml)}, true)`);
-    await evalIn(cdp, `(window.__composerImportMusicXml(window.__sonataXml), true)`);
+    await evalIn(cdp, `(window.${SONATA.endsWith('.hkc') ? '__composerLoadHkc' : '__composerImportMusicXml'}(window.__sonataXml), true)`);
     await waitIdle(cdp);
   }
   if (probeArg !== null) await evalIn(cdp, `(window.__probeArg = ${JSON.stringify(probeArg)}, true)`);

@@ -3944,6 +3944,23 @@ needs an endpoint-stem rule first. Not changed.
 Corollary: when a geometry pass "ignores" a glyph class, check that class's
 bbox dimensions before checking the selector — `g.stem` was in every selector.
 
+**A collision inventory built on bounding rectangles is a false-positive
+generator (2026-09-30).** After the stem fix, `cb-markplace.js` still reported
+11 mark collisions on the sonata; Max checked every one — none real. Four
+over-reports compounded: a `g.note` box unions notehead and stem (the empty
+corner beside the stem reads as ink); a sloped beam's box covers the triangle
+under it; a `<text>` mark's box is its character cell (full ascent + descent);
+and the x-test admitted obstacles a quarter unit to the SIDE of a mark as
+overlapping. The rebuilt inventory measures exact convex shapes — glyph boxes
+per `<use>`, per-character ink for text, the beam polygon itself, every
+stroked segment widened by half its stroke — clipped to each ink rect's x-slab,
+which gives the exact vertical gap or overlap for a flat-edged rect. Result on
+`~/Documents/sonata.hkc`: 0 collisions in 332 marks, closest approach 30 user
+units; on the unfixed p. 6 it flags exactly the one real stem collision. Before
+handing Max a collision list, run the true-positive check (the inventory must
+flag a known collision on unfixed code) — a list he has to refute item by item
+costs more than the bug.
+
 ## Wait for the PARTITION to stop changing, not for a busy flag (2026-09-08)
 
 `pb.balanceJobActive()` is false **before the balance job is armed**, so
